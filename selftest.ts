@@ -72,7 +72,9 @@ import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src
 import { BUILD_OWNS } from './src/build.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, shiftRight, writeCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
-import { LONG_ROBE_PARTS, LONG_ROBE_RIG, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, writeProposeFixture } from './fixtures/propose.ts';
+import { BARE_CROWN_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
+// The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
+import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'spine-rigc/src/render.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
 import { assemble, type AssembleInput, belowCrop, checkGeometry, cleanGhosts, DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, figuresLine, growRim, layerToRig, PROJECT_RULES, proposeFields, proposePlan, stageFields, visibilityCounts } from './src/assemble.ts';
 import { chainLine, findRigc, gateGreen, JUDGEMENT_LINES, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
@@ -1777,10 +1779,182 @@ function runProposeSuite(): number {
       `clasped: region ${robe.regions.hands ?? 'none'}, sleeve chains [${sleeveChains(robe).join(', ')}], note ${claspedNote === undefined ? 'ABSENT' : 'present'}; off the axis: [${sleeveChains(offAxis).join(', ')}]; 50 px wide: [${sleeveChains(wide).join(', ')}]; two blobs (PR01): [${sleeveChains(prop).join(', ')}]`,
       'issue #23: hands clasped in front of the waist are one small blob at the midline, and the one-blob rule read it as both sleeves — two chains on one vertical line, six LINT lines once pasted. Two sleeves hanging from the shoulders are at least as wide as them, so a blob half as wide cannot be both',
     );
+
+    runStrandCases(dir, say);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
   return bad();
+}
+
+/**
+ * How far a mesh part's pixels leave the rigid motion of one bone over the
+ * idle, posed by spine-core through spine-rigc's sampler: per pixel centre in
+ * `groups`, its setup-pose triangle's barycentric weights carried to every
+ * frame (60 fps), against the same point carried by `bone`'s world transform.
+ * Returns the largest offset per group, in world units (= rig px at scale 1).
+ */
+function offBone(buildDir: string, slot: string, bone: string, at: readonly [number, number], H: number, groups: Record<string, Array<[number, number]>>): Record<string, number> {
+  const { data } = loadPosable(join(buildDir, 'skeleton.json'), join(buildDir, 'skeleton.atlas'), buildDir);
+  const setup = sampleSetupPose(data, { bones: true })[0];
+  const frames = sampleAnimation(data, 'idle', 60, { bones: true });
+  const mesh = (f: Frame): Mesh => f.pieces.find((q) => q.slot === slot && q.kind === 'mesh') as Mesh;
+  const boneOf = (f: Frame): BoneSnapshot => (f.bones ?? []).find((b) => b.name === bone) as BoneSnapshot;
+  const b0 = boneOf(setup);
+  // The crop-to-world offset, read off the bone rather than assumed: its crop origin is `at`.
+  const ox = b0.worldX - at[0];
+  const oy = b0.worldY - cropToSpineY(at[1], H);
+  const s0 = mesh(setup).world;
+  const tri = mesh(setup).triangles;
+  const out: Record<string, number> = {};
+  const located = Object.entries(groups).map(([g, pts]) => [
+    g,
+    pts.map(([cx, cy]) => {
+      const X = cx + ox;
+      const Y = cropToSpineY(cy, H) + oy;
+      for (let t = 0; t < tri.length; t += 3) {
+        const [i, j, l] = [tri[t], tri[t + 1], tri[t + 2]];
+        const det = (s0[2 * j + 1] - s0[2 * l + 1]) * (s0[2 * i] - s0[2 * l]) + (s0[2 * l] - s0[2 * j]) * (s0[2 * i + 1] - s0[2 * l + 1]);
+        const u = ((s0[2 * j + 1] - s0[2 * l + 1]) * (X - s0[2 * l]) + (s0[2 * l] - s0[2 * j]) * (Y - s0[2 * l + 1])) / det;
+        const v = ((s0[2 * l + 1] - s0[2 * i + 1]) * (X - s0[2 * l]) + (s0[2 * i] - s0[2 * l]) * (Y - s0[2 * l + 1])) / det;
+        if (u >= -1e-9 && v >= -1e-9 && 1 - u - v >= -1e-9) return { X, Y, i, j, l, u, v };
+      }
+      return null;
+    }),
+  ] as const);
+  for (const [g, pts] of located) {
+    let worst = pts.some((q) => q === null) ? Number.POSITIVE_INFINITY : 0;
+    for (const f of frames) {
+      const w = mesh(f).world;
+      const b = boneOf(f);
+      for (const q of pts) {
+        if (q === null) continue;
+        const x = q.u * w[2 * q.i] + q.v * w[2 * q.j] + (1 - q.u - q.v) * w[2 * q.l];
+        const y = q.u * w[2 * q.i + 1] + q.v * w[2 * q.j + 1] + (1 - q.u - q.v) * w[2 * q.l + 1];
+        const dx = q.X - b0.worldX;
+        const dy = q.Y - b0.worldY;
+        const det = b0.a * b0.d - b0.b * b0.c;
+        const lx = (b0.d * dx - b0.b * dy) / det;
+        const ly = (-b0.c * dx + b0.a * dy) / det;
+        worst = Math.max(worst, Math.hypot(x - (b.worldX + b.a * lx + b.b * ly), y - (b.worldY + b.c * lx + b.d * ly)));
+      }
+    }
+    out[g] = worst;
+  }
+  return out;
+}
+
+/** Pixel centres of a part's rectangle `[x, y, w, h]` (rig px, as `rects` holds them); `row` keeps one rig row only. */
+function rectPixels(p: ProposeFixturePart, k: number, row?: number): Array<[number, number]> {
+  const [x0, y0, w, h] = (p.rects ?? [[p.x, p.y, p.w, p.h]])[k];
+  const out: Array<[number, number]> = [];
+  for (let y = y0; y < y0 + h; y++) if (row === undefined || y === row) for (let x = x0; x < x0 + w; x++) out.push([x + 0.5, y + 0.5]);
+  return out;
+}
+
+/** Issue #24: hanging strands on an accessory are found, noted, and given pendulum chains; the body they hang from stays on its bone. */
+function runStrandCases(dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const sdir = join(dir, 'strands');
+  writeProposeFixture(sdir, STRAND_PARTS, STRAND_RIG, true);
+  const P = readPartSet(sdir);
+  const prop = propose(P);
+  const again = serializeProposal(propose(readPartSet(sdir)));
+  // Hand-derived from fixtures/propose.ts: strands at column centroids 7 and 92, rows 16..55, 5 wide;
+  // each chain's links at the strand's top and 0.45 x 40 = 18 rows down, its tip on the last row.
+  const wantNote = 'crown (head:headwear): 2 hanging strands at x=7,92, y 16-55,16-55, width 5,5 -> pendulum chains hairpin_strand0_, hairpin_strand1_';
+  const chains = prop.bones.filter((b) => 'chain' in b).map((b) => JSON.stringify(b));
+  const wantChains = [
+    '{"chain":"hairpin_strand0_","parent":"hairpin","points":[[7,16],[7,34]],"tip":[7,55]}',
+    '{"chain":"hairpin_strand1_","parent":"hairpin","points":[[92,16],[92,34]],"tip":[92,55]}',
+  ];
+  const strandTracks = prop.motion.tracks.filter((t) => 'chain' in t).map((t) => JSON.stringify(t));
+  const wantTrack = (c: string): string => `{"chain":"${c}","amps":[4,7],"period":2,"phase":0.2,"lag":0.12}`;
+  // The body: 100 px wide, rows 0..15 -> its mean row 7.5, which rounds to even 8; the hold segment spans it.
+  const segs = JSON.stringify(prop.meshes.crown?.segments ?? null);
+  const segsOk = segs.endsWith(',["hairpin",[0,8],[99,8]],"hairpin_strand0_","hairpin_strand1_"]');
+  const loads = refusals(() => parseConfig(proposalConfig(STRAND_PARTS, prop)));
+  say(
+    'PR12_TWO_HANGING_STRANDS_ARE_NOTED_AND_EACH_GETS_A_PENDULUM_CHAIN',
+    prop.notes.includes(wantNote) &&
+      prop.notes.filter((n) => n.includes('hanging strand')).length === 1 &&
+      chains.join('|') === wantChains.join('|') &&
+      strandTracks.join('|') === [wantTrack('hairpin_strand0_'), wantTrack('hairpin_strand1_')].join('|') &&
+      segsOk &&
+      loads === null &&
+      again === serializeProposal(prop),
+    `notes ${JSON.stringify(prop.notes.filter((n) => n.includes('strand')))}; chains ${chains.join(' ')}; tracks ${strandTracks.join(' ')}; crown segments ${segs}; config loader ${codes(loads)}; two runs ${again === serializeProposal(prop) ? 'identical' : 'DIFFERENT'}`,
+    "issue #24: a crown with two tassels got one fixed bone and no chain, with no note, and hung stiff until the columns were measured by hand; a strand is a sub-shape of the pendant rows at least 3x as tall as wide and 0.2 of the part, and each gets the reference tassel's chain and sway",
+  );
+
+  const bdir = join(dir, 'bare-crown');
+  writeProposeFixture(bdir, BARE_CROWN_PARTS, STRAND_RIG, true);
+  const bare = propose(readPartSet(bdir));
+  const bareChains = bare.bones.filter((b) => 'chain' in b).map((b) => ('chain' in b ? b.chain : ''));
+  say(
+    'PR13_A_STRAND_FREE_CROWN_GETS_NO_STRAND_NOTE_AND_NO_CHAIN',
+    bare.notes.every((n) => !n.includes('strand')) && bareChains.length === 0 && JSON.stringify(bare.meshes.crown?.segments) === '[["hairpin",[22,7],[0,7]],["hairpin",[99,-5],[22,25]]]',
+    `notes ${JSON.stringify(bare.notes)}; chains [${bareChains.join(', ')}]; crown segments ${JSON.stringify(bare.meshes.crown?.segments)}`,
+    "the positive control: the same crown without its tassels is 100 px wide in every row, so its only pendant row is its last and nothing in it is a strand — the reference's rigid bone and its two segments, unchanged",
+  );
+
+  // The proposal, pasted into a config as an agent would, through the rig and check stages.
+  const cfg = join(sdir, 'config.json');
+  writeFileSync(cfg, JSON.stringify(proposalConfig(STRAND_PARTS, prop)));
+  const rig = runCli(['rig', '--config', cfg, '--parts', sdir, '--out', join(sdir, 'rig')]);
+  const chk = runCli(['check', '--rig', join(sdir, 'rig'), '--parts', sdir, '--out', join(sdir, 'check')]);
+  const crown = STRAND_PARTS.find((q) => q.name === 'crown') as ProposeFixturePart;
+  const hairpin = prop.bones.find((b) => 'name' in b && b.name === 'hairpin');
+  const at: [number, number] = hairpin !== undefined && 'name' in hairpin ? hairpin.at : [0, 0];
+  const groups = { body: rectPixels(crown, 0), tips: [...rectPixels(crown, 1, 55), ...rectPixels(crown, 2, 55)] };
+  const built = existsSync(join(sdir, 'check', 'build', 'skeleton.json')) ? offBone(join(sdir, 'check', 'build'), 'crown', 'hairpin', at, STRAND_RIG.h, groups) : null;
+  // The mutant: the same proposal without the body-hold segment.
+  const mdir = join(dir, 'strands-unheld');
+  writeProposeFixture(mdir, STRAND_PARTS, STRAND_RIG, true);
+  const unheld = proposalConfig(STRAND_PARTS, prop) as { meshes: Record<string, { segments: unknown[] }> } & Record<string, unknown>;
+  unheld.meshes = { ...prop.meshes, crown: { ...prop.meshes.crown, segments: prop.meshes.crown.segments.filter((sg) => JSON.stringify(sg) !== '["hairpin",[0,8],[99,8]]') } };
+  writeFileSync(join(mdir, 'config.json'), JSON.stringify(unheld));
+  const mrig = runCli(['rig', '--config', join(mdir, 'config.json'), '--parts', mdir, '--out', join(mdir, 'rig')]);
+  runCli(['check', '--rig', join(mdir, 'rig'), '--parts', mdir, '--out', join(mdir, 'check')]);
+  const loose = existsSync(join(mdir, 'check', 'build', 'skeleton.json')) ? offBone(join(mdir, 'check', 'build'), 'crown', 'hairpin', at, STRAND_RIG.h, groups) : null;
+  const f = (v: number | undefined): string => (v === undefined ? 'absent' : v.toFixed(3));
+  say(
+    'PR14_THE_STRAND_PROPOSAL_BUILDS_CHECKS_GREEN_AND_ONLY_THE_TASSELS_SWING',
+    rig.status === 0 &&
+      chk.status === 0 &&
+      chk.out.includes('check: PASS') &&
+      built !== null &&
+      built.body < 1 &&
+      built.tips > 2 &&
+      mrig.status === 0 &&
+      loose !== null &&
+      loose.body >= 1 &&
+      unheld.meshes.crown.segments.length === prop.meshes.crown.segments.length - 1,
+    `rig exit ${rig.status}, check exit ${chk.status} (${chk.out.includes('check: PASS') ? 'PASS' : 'not PASS'}); over the idle at 60 fps the body's ${groups.body.length} pixels leave the hairpin bone by at most ${f(built?.body)} px (< 1 required) while the ${groups.tips.length} tassel-tip pixels swing ${f(built?.tips)} px (> 2 required); without the body-hold segment (rig exit ${mrig.status}) the body leaves it by ${f(loose?.body)} px (>= 1 required)`,
+    'the body rides its bone and the tassels ride their chains: the offset is measured against the bone rather than the screen, because the head roll moves the whole crown and that is the head, not a swing; the mutant shows the hold segment is what keeps the body under the pixel',
+  );
+
+  const xdir = join(dir, 'strands-mixed');
+  writeProposeFixture(xdir, MIXED_STRAND_PARTS);
+  const X = propose(readPartSet(xdir));
+  const want = [
+    'veil (full:headwear): 1 hanging strand at x=20, y 120-159, width 5 -- no chain proposed (it rides the head as a region)',
+    'crown (head:headwear): 2 hanging strands at x=52,151, y 20-79,20-79, width 5,19 -> pendulum chain hairpin_strand0_; no chain proposed at x=151 (a chain down it would run off the art)',
+    'drops (full:earwear): 2 hanging strands at x=62,97, y 120-159,120-159, width 5,5 -> pendulum chains earring_strand0_, earring_strand1_',
+  ];
+  const got = X.notes.filter((n) => n.includes('hanging strand'));
+  const xchains = X.bones.filter((b) => 'chain' in b).map((b) => JSON.stringify(b));
+  const wantX = [
+    '{"chain":"hairpin_strand0_","parent":"hairpin","points":[[52,20],[52,47]],"tip":[52,79]}',
+    '{"chain":"earring_strand0_","parent":"head","points":[[62,120],[62,138]],"tip":[62,159]}',
+    '{"chain":"earring_strand1_","parent":"head","points":[[97,120],[97,138]],"tip":[97,159]}',
+  ];
+  const xloads = refusals(() => parseConfig(proposalConfig(MIXED_STRAND_PARTS, X)));
+  say(
+    'PR15_A_STRAND_WITH_NO_CHAIN_IS_NOTED_AS_SUCH_ON_A_REGION_AN_OFF_ART_LINK_AND_AN_ALL_PENDANT_PART',
+    got.join('|') === want.join('|') && xchains.join('|') === wantX.join('|') && X.regions.veil === 'head' && !('drops' in X.regions) && xloads === null,
+    `notes ${JSON.stringify(got)}; chains ${xchains.join(' ')}; veil -> region ${X.regions.veil ?? 'none'}; config loader ${codes(xloads)}`,
+    "the note is the issue's must: whenever a strand is found and gets no chain — a second layer riding the head, a chain that would leave the art, a Z-shaped strand's second link — it is said with the strand's figures, never left silent; an all-pendant earring hangs one chain per strand from the head, as its single chain did",
+  );
 }
 
 /**

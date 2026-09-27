@@ -72,7 +72,9 @@ usage:
       against, <out>/render/landmarks.png and landmarks_head.png. Prints every
       note and a LINT line for each chain link that lies off its mesh's art, for a
       hip that is not below the chest, and for a hip above ${HIP_MIN_FRACTION} of the figure's
-      height (the shoulders).
+      height (the shoulders); a headwear/earwear layer with hanging strands
+      gets one pendulum chain per strand and a note with each strand's x, rows
+      and width ("-- no chain proposed" is the one to act on; AUTHORING §3).
       --compare prints each shared bone's distance, proposal to config, in px.
 
   spine-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
