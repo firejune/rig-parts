@@ -162,6 +162,7 @@ usage:
       verbatim, checkpoint, LoRAs, sampler, control, elapsed) for --seeds
       seeds from --seed0, and control_<skeleton>.png when generation.control
       is set. The pose words are generation.pose, or the control skeleton's own.
+      The config needs only key and generation here; the rest comes later.
 
   spine-parts build --config <config.json> --source <painting.png> --full <dir|psd>
                     --head <dir|psd> --out <dir> [--seam near-white|silhouette] [--loop]
@@ -497,7 +498,7 @@ function cmdAssemble(args: string[]): number {
     if (propose) {
       const src = readSource(source);
       const runs = readRuns(full, head);
-      const g = proposeFields(loadEarlyConfig(config));
+      const g = proposeFields(loadEarlyConfig(config, 'layers'));
       const proposal = proposePlan(runs.full, runs.head, { sourceW: src.width, sourceH: src.height, ...g });
       console.log(JSON.stringify(proposal, null, 2));
       return EXIT_OK;
@@ -567,7 +568,12 @@ async function cmdComfy(args: string[]): Promise<number> {
   for (const x of [wait, timeout, poll]) if (typeof x === 'string') return usage(x);
   const out = v.get('--out');
   if (out === undefined) return usage(`comfy ${sub} needs --out <dir>`);
+  const configPath = v.get('--config');
+  if (sub === 'paint' && configPath === undefined) return usage('comfy paint needs --config <config.json>');
   try {
+    // The config is a local file, so it is answered before any host is: a
+    // config comfy paint cannot paint from is refused with no box named.
+    const cfg = sub === 'paint' ? loadEarlyConfig(configPath as string, 'paint') : null;
     const host = resolveHost(v.get('--host'), process.env.COMFY_HOST);
     const client = new ComfyClient(host, { poll: poll as number, request: 30 });
     if (sub === 'seethrough') {
@@ -599,12 +605,10 @@ async function cmdComfy(args: string[]): Promise<number> {
       console.log(`  wrote ${join(out, 'layers.json')}, meta.json, parts/ (${r.layers.length} PNG) and previews/ (${r.previews.length} PNG); GPU job ended`);
       return EXIT_OK;
     }
-    const configPath = v.get('--config');
-    if (configPath === undefined) return usage('comfy paint needs --config <config.json>');
-    const cfg = loadConfig(configPath);
+    if (cfg === null) return usage('comfy paint needs --config <config.json>');
     const seeds = intFlag(v, '--seeds', 1, 1);
     if (typeof seeds === 'string') return usage(seeds);
-    const seed0 = intFlag(v, '--seed0', cfg.generation?.seed ?? 0, 0);
+    const seed0 = intFlag(v, '--seed0', cfg.generation.seed, 0);
     if (typeof seed0 === 'string') return usage(seed0);
     console.log(`spine-parts comfy paint: ${cfg.key} -> ${out}`);
     console.log(`  ${seeds} seed(s) from ${seed0}${v.has('--seed0') ? '' : ' (generation.seed)'}; wait <= ${wait} s per seed, timeout ${timeout} s`);
@@ -623,7 +627,7 @@ function cmdInputs(args: string[]): number {
   const out = f.get('--out') as string;
   try {
     if (!existsSync(source)) throw new PartsError([{ code: 'INPUTS_SOURCE_PRESENT', object: source, detail: 'no such file; the painting is required' }]);
-    const cfg = loadEarlyConfig(f.get('--config') as string);
+    const cfg = loadEarlyConfig(f.get('--config') as string, 'layers');
     const painting = readPng(source);
     const r = makeInputs(painting, cfg, source);
     mkdirSync(out, { recursive: true });

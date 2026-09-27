@@ -2620,8 +2620,8 @@ function runAssembleSuite(): number {
       ['a landscape painting', 'ASSEMBLE_SOURCE_PORTRAIT', () => assemble({ ...base, source: flatPainting(SOURCE_SIDE, SOURCE_SIDE + 32), seamRule: 'near-white' })],
       ['a rig scale that makes no rig', 'ASSEMBLE_RIG_SIZE', () => assemble({ ...base, rigScale: 0.001, seamRule: 'near-white' })],
       ['a config with no seethrough block', 'ASSEMBLE_FIELD_PRESENT', () => stageFields(parseConfig(assembleConfig({ seethrough: false })))],
-      ['a proposal config with no rig_scale', 'CONFIG_FIELD_PRESENT', () => proposeFields(parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false, head_box: HEAD_BOX }, assemble: {} }))],
-      ['a proposal config with no head box yet', 'ASSEMBLE_FIELD_PRESENT', () => proposeFields(parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false }, assemble: { rig_scale: 0.5 } }))],
+      ['a proposal config with no rig_scale', 'CONFIG_FIELD_PRESENT', () => proposeFields(parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false, head_box: HEAD_BOX }, assemble: {} }, 'layers'))],
+      ['a proposal config with no head box yet', 'ASSEMBLE_FIELD_PRESENT', () => proposeFields(parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false }, assemble: { rig_scale: 0.5 } }, 'layers'))],
     ];
     const outcomes = mutants.map(([what, code, run]) => {
       const err = refusals(run);
@@ -3228,6 +3228,52 @@ function runComfySuite(): number {
       nohost.status === 1 && failLine(nohostOut, 'COMFY_HOST_GIVEN') !== null && emptyHost.status === 1 && failLine(`${emptyHost.stdout ?? ''}`, 'COMFY_HOST_GIVEN') !== null,
       `no --host, no COMFY_HOST -> exit ${nohost.status} "${failLine(nohostOut, 'COMFY_HOST_GIVEN') ?? nohostOut.slice(0, 200)}"; COMFY_HOST="" -> exit ${emptyHost.status}`,
       "the reference defaulted to one person's LAN address; a host is the user's, supplied at run time, and an empty one is not one",
+    );
+
+    // The early door: a config that holds only what exists before the painting.
+    const only = R['paint-only'];
+    const onlyGen = (readJsonFile(join(dir, 'paint_only.json')) as { generation: Generation }).generation;
+    const onlySent = JSON.parse(readFileSync(join(dir, 'paint-only.prompts.json'), 'utf8')) as Array<Record<string, { inputs: Record<string, unknown> }>>;
+    const onlyMeta = readJsonFile(join(dir, 'paint-only', 'painting_11_meta.json'));
+    const sentText = onlySent[0]?.['6']?.inputs.text;
+    const sentSeed = onlySent[0]?.['3']?.inputs.seed;
+    say(
+      'CF10_A_CONFIG_OF_ONLY_KEY_AND_GENERATION_REACHES_THE_BOX_WITH_ITS_PROMPT_AND_SEED',
+      only.status === 0 &&
+        onlySent.length === 1 &&
+        sentSeed === onlyGen.seed &&
+        sentText === buildPrompts(onlyGen).positive &&
+        existsSync(join(dir, 'paint-only', 'painting_11.png')) &&
+        onlyMeta?.key === 'paint_only' &&
+        failLine(only.out, '') === null,
+      `exit ${only.status}; ${onlySent.length} prompt(s) queued, KSampler seed ${JSON.stringify(sentSeed)} (generation.seed ${onlyGen.seed}), positive ${sentText === buildPrompts(onlyGen).positive ? '= buildPrompts(generation)' : 'DIFFERS from buildPrompts(generation)'}; meta key ${JSON.stringify(onlyMeta?.key)}${failLine(only.out, '') === null ? '' : `; "${failLine(only.out, '')}"`}`,
+      'comfy paint runs before See-through and before the rig, so a config that holds only key and generation is what exists then; the full loader refused it with five CONFIG_FIELD_PRESENT lines before a painting was generated',
+    );
+
+    const rigOnly = runCli(['rig', '--config', join(dir, 'paint_only.json'), '--parts', dir, '--out', join(dir, 'paint_only_rig')]);
+    const rigSections = ['config.assemble', 'config.bones', 'config.meshes', 'config.regions', 'config.motion'];
+    const rigNamed = rigSections.filter((f) => rigOnly.out.includes(`FAIL  CONFIG_FIELD_PRESENT: ${f} `));
+    say(
+      'CF11_THE_SAME_CONFIG_IS_STILL_REFUSED_BY_RIG_NAMING_EACH_SECTION',
+      rigOnly.status === 1 && rigNamed.length === rigSections.length && !existsSync(join(dir, 'paint_only_rig')),
+      `rig --config paint_only.json -> exit ${rigOnly.status}; CONFIG_FIELD_PRESENT for ${rigNamed.length}/${rigSections.length} of ${rigSections.join(', ')}`,
+      'the early door narrows what one step requires; it does not open the full loader, which still stands in front of rig',
+    );
+
+    const noGen = R['paint-no-generation'];
+    const noGenLine = failLine(noGen.out, 'CONFIG_FIELD_PRESENT: config.generation');
+    const noGenFails = noGen.out.split('\n').filter((l) => l.startsWith('  FAIL  ')).length;
+    say(
+      'CF12_COMFY_PAINT_ON_A_CONFIG_WITHOUT_GENERATION_IS_REFUSED_NAMING_IT_BEFORE_THE_BOX_IS_ASKED',
+      noGen.status === 1 &&
+        noGenLine !== null &&
+        noGenLine.includes('checkpoint') &&
+        noGenLine.includes('pose or control') &&
+        noGenFails === 1 &&
+        noGen.paths.length === 0 &&
+        !existsSync(join(dir, 'paint-no-generation')),
+      `exit ${noGen.status}; "${noGenLine ?? 'no CONFIG_FIELD_PRESENT line for config.generation'}"; ${noGenFails} FAIL line(s); requests to the box: ${noGen.paths.length}`,
+      'generation is the one block this step paints from, so on this door it is required, and its absence names the fields it has to hold; seethrough and assemble are not asked for, because they do not exist yet',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
