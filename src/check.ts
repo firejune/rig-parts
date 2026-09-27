@@ -17,8 +17,9 @@
  *
  * Input — a rig directory holding what the rig stage writes:
  * `rig.json`, `motion.json` (with an `idle` animation), `parts.json`, and
- * `parts/<name>.png` for every part. The directory is read only; everything is
- * written under the output directory:
+ * `parts/<name>.png` for every part (the last two may sit in a directory of
+ * their own, `partsHome`). The inputs are read only; everything is written
+ * under the output directory:
  *
  * | output | what |
  * | --- | --- |
@@ -166,17 +167,26 @@ function readJson(path: string, problems: Problem[]): Record<string, unknown> | 
   return null;
 }
 
-/** Read and cross-check the rig directory. Every problem is collected before one refusal. */
-export function readCheckInputs(rigDir: string): CheckInputs {
+/**
+ * Read and cross-check the rig directory. Every problem is collected before
+ * one refusal. `partsHome` is the directory holding `parts.json` and `parts/`
+ * when they do not sit beside `rig.json` — `build` keeps the parts at the top
+ * of its output and the rig under `rig/`; the default is the rig directory.
+ */
+export function readCheckInputs(rigDir: string, partsHome: string = rigDir): CheckInputs {
   const dir = resolve(rigDir);
+  const home = resolve(partsHome);
   const problems: Problem[] = [];
   if (!existsSync(dir) || !statSync(dir).isDirectory()) {
     refuseIfAny([{ code: 'CHECK_INPUT_PRESENT', object: dir, detail: 'is not a directory; --rig names the directory holding rig.json, motion.json, parts.json and parts/' }]);
   }
   const rigPath = join(dir, 'rig.json');
   const motionPath = join(dir, 'motion.json');
-  const partsPath = join(dir, 'parts.json');
-  const partsDir = join(dir, 'parts');
+  const partsPath = join(home, 'parts.json');
+  const partsDir = join(home, 'parts');
+  if (home !== dir && (!existsSync(home) || !statSync(home).isDirectory())) {
+    refuseIfAny([{ code: 'CHECK_INPUT_PRESENT', object: home, detail: 'is not a directory; --parts names the directory holding parts.json and parts/' }]);
+  }
   const rig = readJson(rigPath, problems);
   const motion = readJson(motionPath, problems);
   let parts: PartsFile | null = null;
@@ -592,8 +602,8 @@ function rigcFailed(what: string, call: RigcCall, lines: readonly string[]): Pro
  * returns the report; `report.problems` names each bar that was not met, and
  * `figures.PASS` is true exactly when it is empty.
  */
-export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner): CheckReport {
-  const inp = readCheckInputs(rigDir);
+export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome: string = rigDir): CheckReport {
+  const inp = readCheckInputs(rigDir, partsHome);
   const out = resolve(outDir);
   mkdirSync(out, { recursive: true });
   const buildDir = join(out, 'build');

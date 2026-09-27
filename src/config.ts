@@ -273,7 +273,8 @@ function partNameOk(name: string): boolean {
 // the loader
 // ---------------------------------------------------------------------------
 
-export function loadConfig(path: string): CharacterConfig {
+/** The file as parsed JSON, or a refusal naming why not. Both loaders read through it. */
+function readConfigFile(path: string): Json {
   if (!existsSync(path)) refuseIfAny([{ code: 'CONFIG_FILE_PRESENT', object: path, detail: 'no such file' }]);
   let raw: Json;
   try {
@@ -281,7 +282,59 @@ export function loadConfig(path: string): CharacterConfig {
   } catch (err) {
     refuseIfAny([{ code: 'CONFIG_IS_JSON', object: path, detail: `does not parse as JSON: ${(err as Error).message}` }]);
   }
-  return parseConfig(raw);
+  return raw;
+}
+
+export function loadConfig(path: string): CharacterConfig {
+  return parseConfig(readConfigFile(path));
+}
+
+// ---------------------------------------------------------------------------
+// the early loader — before the rig exists
+// ---------------------------------------------------------------------------
+
+/**
+ * What a character's config holds before its layers exist: a key, the
+ * See-through block (`head_box` absent until `propose --head-box` has run) and
+ * the rig scale. `inputs` and `assemble --propose-plan` run at that point, and
+ * the full loader would refuse the config for the plan, bones, meshes, regions
+ * and motion that are written only after them.
+ */
+export interface EarlyConfig {
+  key: string;
+  seethrough: SeeThrough;
+  assemble: { rig_scale: number };
+}
+
+/**
+ * The one partial entry point. It validates exactly `key`, `seethrough` and
+ * `assemble.rig_scale` — with the full loader's own rules for each — and, when
+ * present, `generation`, because that block is complete before any image
+ * exists. The sections written later (`assemble.plan`, `extend_below_crop`,
+ * `bones`, `meshes`, `regions`, `motion`) may be present and are NOT read or
+ * vouched for; a caller that needs them uses {@link parseConfig}. Every other
+ * key is still refused by name, and a retired one (`generation.character_file`
+ * and its kin) still with what replaces it: a config is not allowed to be
+ * half-known at any stage.
+ */
+export function parseEarlyConfig(raw: Json): EarlyConfig {
+  const c = new Check();
+  const top = c.object('config', raw, ['key', 'seethrough', 'assemble'], ['generation', 'bones', 'meshes', 'regions', 'motion']);
+  if (top === null) refuseIfAny(c.problems);
+  const t = top as Record<string, Json>;
+  if ('key' in t) c.string('config.key', t.key);
+  if ('generation' in t) checkGeneration(c, t.generation);
+  if ('seethrough' in t) checkSeeThrough(c, t.seethrough);
+  if ('assemble' in t) {
+    const a = c.object('config.assemble', t.assemble, ['rig_scale'], ['plan', 'extend_below_crop']);
+    if (a !== null && 'rig_scale' in a) c.number('config.assemble.rig_scale', a.rig_scale, 'positive');
+  }
+  refuseIfAny(c.problems);
+  return raw as EarlyConfig;
+}
+
+export function loadEarlyConfig(path: string): EarlyConfig {
+  return parseEarlyConfig(readConfigFile(path));
 }
 
 /** Validate a parsed config. Every problem found is thrown at once, as one `PartsError`. */

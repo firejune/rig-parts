@@ -80,11 +80,22 @@ its coordinate conversion (`src/transform.ts`). Those are spine-rigc's MIT code.
 
 ## 3. Checkpoints
 
-Generating the painting is an **optional** adapter, not implemented in this
-version (`spine-parts comfy` exits 2). When it exists, the checkpoint, any LoRA
-and any ControlNet are the user's: spine-parts names none, ships none and
-downloads none, and the terms that govern an image they produce are the terms
-of those models. A painting from any other source works the same way.
+Generating the painting is an **optional** adapter (`spine-parts comfy paint`).
+The checkpoint, any LoRA and any ControlNet it runs are the user's: spine-parts
+ships none and downloads none, and the terms that govern an image they produce
+are the terms of those models. A painting from any other source works the same
+way.
+
+The images this repository ships — `assets/demo-*` and `assets/sample-parts.png`
+— and the public examples' paintings were generated with
+`ponyDiffusionV6XL_v6StartWithThisOne.safetensors`,
+[Pony Diffusion V6 XL](https://civitai.com/models/257749), with no LoRA. The
+checkpoint itself is not redistributed. **[observed 2026-09-27]** CivitAI's model
+API reported for it `allowCommercialUse: ["Image", "RentCivit"]`,
+`allowNoCredit: false`, `allowDerivatives: true` and
+`allowDifferentLicense: false`: generated images may be used commercially and
+the model must be credited, which this line and the
+[spine-parts-examples](https://github.com/firejune/spine-parts-examples) README do.
 
 ## 4. Behaviour reimplemented, not code copied
 

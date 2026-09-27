@@ -44,7 +44,7 @@
  *
  * Pure: no clock, no randomness, no file access. The CLI reads and writes.
  */
-import type { CharacterConfig, Extend, PlanEntry, Run } from './config.ts';
+import type { CharacterConfig, EarlyConfig, Extend, PlanEntry, Run } from './config.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { type Layer, type LayerSet, OPAQUE_ALPHA_ABOVE } from './layers.ts';
 import type { PartRecord, PartsFile } from './parts.ts';
@@ -1059,40 +1059,15 @@ export function stageFields(cfg: CharacterConfig): { resolution: number; headBox
 }
 
 /**
- * The three numbers `--propose-plan` reads, from a config that does not have
- * a plan yet — which `loadConfig` refuses, since `assemble.plan`, `bones`,
- * `meshes`, `regions` and `motion` are required there and are written AFTER
- * the proposal. Only these fields are checked, with `loadConfig`'s rules for
- * them (a positive integer resolution, a non-empty integer square head box, a
- * positive scale); nothing else in the file is read or vouched for.
+ * The three numbers `--propose-plan` reads, from a config that does not have a
+ * plan yet. The config comes through `parseEarlyConfig` (`src/config.ts`), the
+ * one partial entry point, which has already checked the fields with the full
+ * loader's rules; what is left here is that this stage needs the head box,
+ * which that loader leaves optional.
  */
-export function proposeFields(raw: unknown): { resolution: number; headBox: [number, number, number, number]; rigScale: number } {
-  const problems: Problem[] = [];
-  const fail = (object: string, detail: string, code = 'CONFIG_FIELD_TYPE'): void => {
-    problems.push({ code, object, detail });
-  };
-  const obj = (v: unknown): Record<string, unknown> | null => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
-  const show = (v: unknown): string => (v === undefined ? 'absent' : JSON.stringify(v));
-  const top = obj(raw);
-  const st = top === null ? null : obj(top.seethrough);
-  const as = top === null ? null : obj(top.assemble);
-  if (st === null) fail('config.seethrough', `is ${show(top?.seethrough)}; an object holding resolution and head_box is required`, 'CONFIG_FIELD_PRESENT');
-  if (as === null) fail('config.assemble', `is ${show(top?.assemble)}; an object holding rig_scale is required`, 'CONFIG_FIELD_PRESENT');
-  const res = st?.resolution;
-  const box = st?.head_box;
-  const scale = as?.rig_scale;
-  if (st !== null && !(typeof res === 'number' && Number.isInteger(res) && res >= 1)) fail('config.seethrough.resolution', `is ${show(res)}; an integer at or above 1 is required`);
-  if (st !== null) {
-    const ints = Array.isArray(box) && box.length === 4 && box.every((n) => typeof n === 'number' && Number.isInteger(n));
-    if (!ints) fail('config.seethrough.head_box', `is ${show(box)}; [x0, y0, x1, y1] in integer source pixels is required`);
-    else {
-      const [x0, y0, x1, y1] = box as number[];
-      if (!(x1 > x0 && y1 > y0 && x1 - x0 === y1 - y0)) {
-        fail('config.seethrough.head_box', `is ${x1 - x0}x${y1 - y0}; a non-empty square is required (the head run is fed a square crop)`, 'CONFIG_HEAD_BOX_SQUARE');
-      }
-    }
+export function proposeFields(cfg: EarlyConfig): { resolution: number; headBox: [number, number, number, number]; rigScale: number } {
+  if (cfg.seethrough.head_box === undefined) {
+    refuseIfAny([{ code: 'ASSEMBLE_FIELD_PRESENT', object: 'config.seethrough.head_box', detail: 'is absent; the plan is proposed from both runs, and the head run cannot be placed on the painting without the box it was cropped from — run `propose --head-box` first' }]);
   }
-  if (as !== null && !(typeof scale === 'number' && Number.isFinite(scale) && scale > 0)) fail('config.assemble.rig_scale', `is ${show(scale)}; a number above 0 is required`);
-  refuseIfAny(problems);
-  return { resolution: res as number, headBox: box as [number, number, number, number], rigScale: scale as number };
+  return { resolution: cfg.seethrough.resolution, headBox: cfg.seethrough.head_box as [number, number, number, number], rigScale: cfg.assemble.rig_scale };
 }

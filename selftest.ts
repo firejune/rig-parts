@@ -44,7 +44,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import ts from 'typescript';
 import {
@@ -66,13 +66,14 @@ import {
   writeRun,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng } from './src/apng.ts';
+import { BUILD_OWNS } from './src/build.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, shiftRight, writeCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, writeProposeFixture } from './fixtures/propose.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
 import { assemble, type AssembleInput, belowCrop, checkGeometry, cleanGhosts, DEFAULT_SEAM_RULE, figuresLine, growRim, layerToRig, proposeFields, proposePlan, stageFields } from './src/assemble.ts';
 import { findRigc, gateGreen, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
-import { type BoneEntry, type CharacterConfig, type Generation, loadConfig, parseConfig } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, type Generation, loadConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
 import { PartsError } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
@@ -1156,13 +1157,13 @@ function runCliSuite(): number {
     'the version a user reports is the one the package carries, read at run time rather than copied',
   );
 
-  const later = ['build'];
+  const later: string[] = [];
   const help = runCli(['--help']);
   const stubs = later.map((c) => ({ c, r: runCli([c]) }));
   const honest = stubs.filter(({ r }) => r.status === 2 && r.out.includes('NOT_IMPLEMENTED') && r.out.includes('not implemented in this version'));
   say(
     'CL02_EVERY_LATER_COMMAND_IS_LISTED_AND_EXITS_TWO_SAYING_SO',
-    help.status === 0 && [...later, 'layers', 'sheet', 'assemble', 'propose', 'rig', 'check', 'loop', 'comfy', 'inputs', 'comfy seethrough', 'comfy paint'].every((c) => help.out.includes(c)) && honest.length === later.length,
+    help.status === 0 && [...later, 'layers', 'sheet', 'assemble', 'propose', 'rig', 'check', 'loop', 'inputs', 'comfy seethrough', 'comfy paint', 'build'].every((c) => help.out.includes(c)) && honest.length === later.length,
     `${honest.length} of ${later.length} stubs exit 2 with NOT_IMPLEMENTED (${stubs.map(({ c, r }) => `${c}=${r.status}`).join(', ')}); --help names all of them`,
     'the surface is visible before it exists, and the help does not promise a command that would do nothing',
   );
@@ -1462,53 +1463,6 @@ function runRigSuite(): number {
   return bad();
 }
 
-/** The corpus of worked examples, when the tree carries one: `examples/<name>/inputs/{config.json, parts.json, parts/}`. */
-function runRigExamplesSuite(): number | null {
-  section('rig-examples: every examples/*/inputs builds green and twice the same');
-  const root = join(ROOT, 'examples');
-  const inputs = existsSync(root)
-    ? readdirSync(root)
-        .sort()
-        .map((n) => join(root, n, 'inputs'))
-        .filter((d) => existsSync(join(d, 'config.json')) && existsSync(join(d, 'parts.json')))
-    : [];
-  if (inputs.length === 0) {
-    console.log(`  SKIP  no examples/*/inputs holding config.json and parts.json under ${root}, so no worked example was rigged`);
-    console.log('          ⚠️ This is a HOLE in this run, not a pass — the rig stage was exercised on the synthetic fixture only.');
-    return null;
-  }
-  const { say, bad } = counter();
-  const rows: string[] = [];
-  const failed: string[] = [];
-  for (const d of inputs) {
-    const label = relative(ROOT, d);
-    try {
-      const cfg = loadConfig(join(d, 'config.json'));
-      const parts = readParts(join(d, 'parts.json'));
-      const images = new Map<string, Raster>();
-      for (const p of parts.parts) {
-        const f = join(d, 'parts', `${p.name}.png`);
-        if (existsSync(f)) images.set(p.name, decodePngBytes(new Uint8Array(readFileSync(f)), f));
-      }
-      const one = buildRig(cfg, parts, images);
-      const two = buildRig(cfg, parts, images);
-      const same = rigJsonText(one.rig) === rigJsonText(two.rig) && rigJsonText(one.motion) === rigJsonText(two.motion);
-      const cover = one.meshReport.every((m) => m.art_coverage === 1);
-      rows.push(`${label}: ${one.rig.bones.length} bones, ${one.meshReport.length} meshes, ${one.meshReport.reduce((s, m) => s + m.vertices, 0)} vertices, coverage 1 ${cover}, deterministic ${same}`);
-      if (!same || !cover) failed.push(label);
-    } catch (err) {
-      failed.push(`${label}: ${(err as Error).message.split('\n')[0]}`);
-    }
-  }
-  say(
-    'RX01_EVERY_WORKED_EXAMPLE_RIGS_GREEN_WITH_FULL_COVERAGE_AND_THE_SAME_BYTES_TWICE',
-    failed.length === 0,
-    `${inputs.length - failed.length} of ${inputs.length}: ${rows.join(' | ')}${failed.length > 0 ? `; red: ${failed.join(' | ')}` : ''}`,
-    'the fixture is two blocks; the examples are real parts, and the question only they answer is whether the stage takes what assemble actually writes',
-  );
-  return bad();
-}
-
 // ---------------------------------------------------------------------------
 // the propose stage
 // ---------------------------------------------------------------------------
@@ -1688,9 +1642,9 @@ function runProposeSuite(): number {
  * The public examples, where they have been fetched: `examples/<key>/` tracks
  * `config.json` and `proposal.json` (the reference proposer's output), and
  * `bun run fetch-examples` puts `inputs/painting.png` and the See-through
- * layer sets `inputs/layers/{full,head}` beside them. Assembled parts are the
- * assemble stage's output; where an example carries them (`parts.json` beside
- * a `parts/` directory, under `inputs/` or `expected/`), the proposal half runs.
+ * layer sets `inputs/layers/{full,head}` beside them. The proposal itself is
+ * compared by the chain suite, which proposes from the parts its own build
+ * assembled (`CH06`).
  */
 function exampleDirs(): string[] {
   const root = join(ROOT, 'examples');
@@ -1699,25 +1653,6 @@ function exampleDirs(): string[] {
     .sort()
     .map((n) => join(root, n))
     .filter((d) => existsSync(join(d, 'config.json')) && existsSync(join(d, 'inputs', 'painting.png')) && existsSync(join(d, 'inputs', 'layers', 'full')));
-}
-
-function assembledParts(example: string): string | null {
-  for (const sub of ['inputs', 'expected']) {
-    const d = join(example, sub);
-    if (existsSync(join(d, 'parts.json')) && existsSync(join(d, 'parts'))) return d;
-  }
-  return null;
-}
-
-/** Deep equality of two parsed JSON values, numbers by value: 4 and 4.0 are one number once parsed. */
-function sameJson(a: unknown, b: unknown): boolean {
-  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => sameJson(x, b[i]));
-  if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
-    const ka = Object.keys(a);
-    const kb = Object.keys(b);
-    return ka.length === kb.length && ka.every((k) => k in b && sameJson((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
-  }
-  return a === b;
 }
 
 function runProposeCorpusSuite(): number | null {
@@ -1752,33 +1687,6 @@ function runProposeCorpusSuite(): number | null {
     "each example's config carries the head box its head run was actually fed, a clamped one included; a proposer that reproduces it from the full run's layers reproduces the input stage",
   );
 
-  const withParts = examples.map((d) => [d, assembledParts(d)] as const).filter(([, p]) => p !== null) as Array<readonly [string, string]>;
-  if (withParts.length === 0) {
-    console.log('  SKIP  PC02: no example carries assembled parts (parts.json beside parts/), so no proposal was compared');
-    console.log('          ⚠️ This half is a HOLE: the proposal needs the assemble stage\'s parts.');
-  } else {
-    const failed: string[] = [];
-    for (const [d, parts] of withParts) {
-      const key = relative(join(ROOT, 'examples'), d);
-      try {
-        const P = readPartSet(parts);
-        const a = propose(P);
-        checkProposal(P, a);
-        const again = serializeProposal(propose(readPartSet(parts)));
-        const tracked = JSON.parse(readFileSync(join(d, 'proposal.json'), 'utf8')) as unknown;
-        if (again !== serializeProposal(a)) failed.push(`${key}: two runs differ`);
-        if (!sameJson(JSON.parse(serializeProposal(a)), tracked)) failed.push(`${key}: differs from the tracked proposal.json`);
-      } catch (err) {
-        failed.push(`${key}: ${(err as Error).message.split('\n')[0]}`);
-      }
-    }
-    say(
-      'PC02_EVERY_EXAMPLE_WITH_PARTS_PROPOSES_THE_TRACKED_PROPOSAL_FIELD_BY_FIELD',
-      failed.length === 0,
-      `${withParts.length - failed.length} of ${withParts.length} example(s) with assembled parts${failed.length > 0 ? `; ${failed.join(' | ')}` : ''}`,
-      "the tracked proposal.json is what the reference proposer wrote from the same parts; the port is deterministic, so it must be equal field by field, and loadable, and the same twice",
-    );
-  }
   return bad();
 }
 
@@ -2235,35 +2143,322 @@ function runLoopSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
-// examples: the committed example rigs, when there are any
+// build: the driver, on the generated assemble fixture
 // ---------------------------------------------------------------------------
 
-function runExamplesSuite(): number | null {
-  section('examples: check on every examples/*/inputs rig');
-  const root = join(ROOT, 'examples');
-  const inputs = existsSync(root)
-    ? readdirSync(root)
-        .sort()
-        .map((e) => join(root, e, 'inputs'))
-        .filter((p) => existsSync(join(p, 'rig.json')))
-    : [];
-  if (inputs.length === 0) {
-    console.log(`  SKIP  ${existsSync(root) ? 'examples/ holds no */inputs/rig.json' : 'no examples/ directory'}, so no committed example rig was checked`);
-    console.log('          ⚠️ This is a HOLE in this run, not a pass — check ran on the generated fixture only.');
+/** `build`'s flags over a fixture directory written by `writeAssembleFixture`. */
+function buildArgs(dir: string, out: string, config = 'config.json'): string[] {
+  return ['build', '--config', join(dir, config), '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--out', out];
+}
+
+/** The last non-empty lines a run printed. */
+function lastLines(out: string, n: number): string[] {
+  return out.split('\n').filter((l) => l.trim() !== '').slice(-n);
+}
+
+/** The top-level entries of a directory, sorted; none when it is absent. */
+function entries(dir: string): string[] {
+  return existsSync(dir) ? readdirSync(dir).sort() : [];
+}
+
+function runBuildSuite(): number {
+  section('build: assemble, rig and check in one process, on generated runs');
+  const { say, bad } = counter();
+  const dir = temp('build');
+  try {
+    // The fixture's own config has an idle with no track, which rigc refuses
+    // (a declared duration with no key at it); one sine on the anchor is the
+    // smallest idle it builds.
+    const moving = assembleConfig();
+    moving.motion = { duration: 1, tracks: [{ bone: 'anchor', prop: 'rotate', amp: 2, period: 1, phase: 0 }] };
+    writeAssembleFixture(dir, moving);
+    writeFileSync(join(dir, 'still.json'), `${JSON.stringify(assembleConfig(), null, 2)}\n`);
+    writeFileSync(join(dir, 'wrongtag.json'), `${JSON.stringify(assembleConfig({ plan: [...PLAN, ['wings', 'head', 'wings']] }), null, 2)}\n`);
+
+    const out = join(dir, 'out');
+    const green = runCli([...buildArgs(dir, out), '--loop']);
+    const tail = lastLines(green.out, 4);
+    const expectedTree = [...BUILD_OWNS].sort();
+    const tree = entries(out);
+    const artifacts = tail.slice(1).map((l) => l.trim());
+    const stageOrder = ['[assemble]', '[rig]', '[check]', '[loop]'].map((p) => green.out.indexOf(`\n${p} `));
+    const partsSame = existsSync(join(out, 'parts.json')) && serializeParts(readParts(join(out, 'parts.json'))) === serializeParts(EXPECTED_PARTS);
+    say(
+      'BU01_A_GREEN_BUILD_WRITES_ITS_TREE_AND_ENDS_WITH_THE_PACK_LINE_AND_THE_THREE_ARTIFACT_PATHS',
+      green.status === 0 &&
+        tree.join(',') === expectedTree.join(',') &&
+        /^pack: skeleton\.png \d+x\d+, \d+ region\(s\), [\d.]+% covered, padding \d+; page opaque [\d.]+% \(alpha > 0\) — spineboy yardstick /.test(tail[0]?.trim() ?? '') &&
+        artifacts.map((a) => a.split('/').pop()).join(',') === 'skeleton.json,skeleton.atlas,skeleton.png' &&
+        artifacts.every((a) => a.startsWith(join(out, 'check', 'build')) && existsSync(a)) &&
+        stageOrder.every((at, i) => at > 0 && (i === 0 || at > stageOrder[i - 1])) &&
+        partsSame,
+      `exit ${green.status}; --out holds [${tree.join(', ')}]; last lines: ${tail.map((l) => l.trim()).join(' | ')}; stage prefixes at ${stageOrder.join(', ')}; parts.json equals the fixture's hand-derived one: ${partsSame}`,
+      "issue #2: the packed page is the artifact and the loose parts an intermediate, so the lines a reader stops at are the pack line and the three files; the parts.json equality is what shows build called the assemble stage rather than something like it",
+    );
+
+    // A stale file where build writes: it must be gone after a refusal, not left looking current.
+    const stale = join(dir, 'stale');
+    mkdirSync(join(stale, 'check'), { recursive: true });
+    writeFileSync(join(stale, 'check', 'check.json'), '{"PASS": true}\n');
+    writeFileSync(join(stale, 'idle.gif'), 'stale');
+    writeFileSync(join(stale, 'keep.txt'), 'not build\'s');
+    const still = runCli(buildArgs(dir, stale, 'still.json'));
+    const stillTree = entries(stale);
+    const rigFail = still.out.split('\n').find((l) => l.startsWith('[rig]   FAIL  RIG_RIGC_GREEN: ')) ?? null;
+    say(
+      'BU02_A_RIG_THAT_RIGC_REFUSES_STOPS_THE_BUILD_AT_RIG_WITH_RIGC_S_OWN_LINE_AND_NOTHING_AFTER_IT',
+      still.status === 1 &&
+        rigFail !== null &&
+        rigFail.includes('declares duration 1s but its last key is at 0s') &&
+        still.out.includes('build: stopped at rig; no later stage ran') &&
+        !still.out.includes('[check]') &&
+        stillTree.join(',') === 'keep.txt,parts,parts.json,recomposite_rig.png',
+      `exit ${still.status}; ${rigFail ?? 'no [rig] FAIL line'}; --out afterwards [${stillTree.join(', ')}] (a planted check/check.json and idle.gif were there before, and keep.txt, which build does not own)`,
+      'emit only after green, across stages: a red stage stops everything after it, its own refusal is what is printed, and a file an earlier run left where build writes is cleared rather than left beside the refusal looking current',
+    );
+
+    const early = join(dir, 'early');
+    const wrong = runCli(buildArgs(dir, early, 'wrongtag.json'));
+    const planFail = wrong.out.split('\n').find((l) => l.startsWith('[assemble]   FAIL  ASSEMBLE_PLAN_TAG_IN_RUN: ')) ?? null;
+    const noOut = runCli(buildArgs(dir, early).slice(0, -2));
+    const badSeam = runCli([...buildArgs(dir, early), '--seam', 'whiteish']);
+    say(
+      'BU03_AN_ASSEMBLE_REFUSAL_STOPS_THE_BUILD_FIRST_AND_A_MALFORMED_CALL_IS_A_USAGE_ERROR',
+      wrong.status === 1 &&
+        planFail !== null &&
+        planFail.includes('no layer "wings"') &&
+        wrong.out.includes('build: stopped at assemble; no later stage ran') &&
+        !wrong.out.includes('[rig]') &&
+        entries(early).length === 0 &&
+        noOut.status === 2 &&
+        noOut.out.includes('build needs --out') &&
+        badSeam.status === 2 &&
+        badSeam.out.includes('--seam whiteish'),
+      `plan tag absent -> exit ${wrong.status}, ${planFail ?? 'no [assemble] FAIL line'}, --out holds [${entries(early).join(', ')}]; no --out -> exit ${noOut.status}; --seam whiteish -> exit ${badSeam.status}`,
+      'the first stage refuses by name under its own prefix and writes nothing; exit 2 stays the malformed call, as for every other command',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return bad();
+}
+
+// ---------------------------------------------------------------------------
+// chain: build on every fetched public example, against its expected/
+// ---------------------------------------------------------------------------
+
+/**
+ * Where two parsed JSON values differ, as `path: expected X, built Y` lines.
+ * `tolerance(path)` may allow a numeric difference at a path: an absolute
+ * band, or a number of decimals both sides are rounded to. A difference inside
+ * its tolerance is reported in `within`, so a pass says what it forgave.
+ */
+interface Tolerance {
+  abs?: number;
+  decimals?: number;
+}
+
+function jsonDiffs(expected: unknown, built: unknown, tolerance: (path: string) => Tolerance | null, path = ''): { over: string[]; within: string[] } {
+  const over: string[] = [];
+  const within: string[] = [];
+  const show = (v: unknown): string => (v === undefined ? 'absent' : JSON.stringify(v));
+  const walk = (a: unknown, b: unknown, at: string): void => {
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) over.push(`${at}: expected ${a.length} item(s), built ${b.length}`);
+      for (let i = 0; i < Math.min(a.length, b.length); i++) walk(a[i], b[i], `${at}[${i}]`);
+      return;
+    }
+    if (typeof a === 'object' && a !== null && !Array.isArray(a) && typeof b === 'object' && b !== null && !Array.isArray(b)) {
+      const ka = Object.keys(a);
+      const kb = Object.keys(b);
+      for (const k of ka) walk((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], at === '' ? k : `${at}.${k}`);
+      for (const k of kb) if (!ka.includes(k)) over.push(`${at === '' ? k : `${at}.${k}`}: expected absent, built ${show((b as Record<string, unknown>)[k])}`);
+      return;
+    }
+    if (a === b) return;
+    const tol = typeof a === 'number' && typeof b === 'number' ? tolerance(at) : null;
+    if (tol !== null && typeof a === 'number' && typeof b === 'number') {
+      const inside = tol.decimals !== undefined ? a.toFixed(tol.decimals) === b.toFixed(tol.decimals) : Math.abs(a - b) <= (tol.abs ?? 0) + 1e-12;
+      if (inside) {
+        within.push(`${at} ${a} vs ${b}`);
+        return;
+      }
+    }
+    over.push(`${at}: expected ${show(a)}, built ${show(b)}`);
+  };
+  walk(expected, built, path);
+  return { over, within };
+}
+
+/**
+ * The tolerances, each one measured and each one narrow:
+ *
+ * - parts.json — every count exact except `seam_override_px`, ±1. The assemble
+ *   oracle (the ten reference characters, 2,282 of 2,288 fields exact) traced
+ *   every one of its six misses to one cause: cv2 accumulates `warpAffine` in
+ *   float32 and `src/raster/warp.ts` in float64, so an alpha the reference
+ *   truncates to 254 is 255 here, and that pixel's composite difference lands
+ *   on the seam limit's other side. On the two public examples it is one field:
+ *   demo's `sleeves`, 4616 expected and 4615 built.
+ * - motion.json — key times `t` to 6 decimals: the reference's blink times
+ *   carry float64 sums (2.3699999999999997) that this port writes rounded (2.37).
+ * - check.json — `seam_mean` ±0.005, every other field exact. The seam is
+ *   measured on the parts this chain assembled, which are the reference's to
+ *   within one level on a few pixels (above), so the mean moves in the third
+ *   place: 0.209 vs 0.207 on sample, 0.328 vs 0.326 on demo. The check oracle
+ *   itself is exact (0 difference) when handed the reference's own parts.
+ */
+function chainTolerance(file: string): (path: string) => Tolerance | null {
+  if (file === 'parts.json') return (p) => (/^parts\[\d+\]\.seam_override_px$/.test(p) ? { abs: 1 } : null);
+  if (file === 'motion.json') return (p) => (/\.t$/.test(p) ? { decimals: 6 } : null);
+  if (file === 'check.json') return (p) => (p === 'seam_mean' ? { abs: 0.005 } : null);
+  return () => null;
+}
+
+/** parts.json's records are named by part in a diff, not by index alone. */
+function namedPartsPath(parts: PartsFile, line: string): string {
+  return line.replace(/^parts\[(\d+)\]/, (m, i: string) => `${m} ${parts.parts[Number(i)]?.name ?? '?'}`);
+}
+
+/** Two text files line by line: the first differing line, or null when equal. */
+function firstLineDiff(expected: string, built: string): string | null {
+  const a = expected.replace(/\n$/, '').split('\n');
+  const b = built.replace(/\n$/, '').split('\n');
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (a[i] !== b[i]) return `line ${i + 1}: expected ${JSON.stringify(a[i] ?? '(end of file)')}, built ${JSON.stringify(b[i] ?? '(end of file)')}`;
+  }
+  return null;
+}
+
+function readJsonAt(path: string): unknown {
+  return JSON.parse(readFileSync(path, 'utf8')) as unknown;
+}
+
+function summarise(d: { over: string[]; within: string[] }, limit = 3): string {
+  const over = d.over.length === 0 ? 'no difference over tolerance' : `${d.over.length} over tolerance: ${d.over.slice(0, limit).join('; ')}${d.over.length > limit ? '; …' : ''}`;
+  return `${over}${d.within.length > 0 ? `; ${d.within.length} within: ${d.within.slice(0, limit).join('; ')}${d.within.length > limit ? '; …' : ''}` : ''}`;
+}
+
+function runChainSuite(): number | null {
+  section('chain: build on every fetched example, against its expected/');
+  const found = exampleDirs().filter((d) => existsSync(join(d, 'inputs', 'layers', 'head')));
+  if (found.length === 0) {
+    console.log('  SKIP  no fetched example (examples/<key>/config.json + inputs/painting.png + inputs/layers/{full,head}), so the chain assemble -> rig -> check ran on no real painting');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — run `bun run fetch-examples` (CI does) to compare the whole chain with each expected/.');
     return null;
   }
   const { say, bad } = counter();
-  const dir = temp('examples');
+  const dir = temp('chain');
+  let planted: { key: string; out: string; exp: string } | null = null;
   try {
-    for (const p of inputs) {
-      const name = relative(root, dirname(p));
-      const r = runCli(['check', '--rig', p, '--out', join(dir, name)]);
-      const fig = readJsonFile(join(dir, name, 'check.json'));
+    for (const ex of found) {
+      const key = relative(join(ROOT, 'examples'), ex);
+      const exp = join(ex, 'expected');
+      const out = join(dir, key);
+      const inputs = join(ex, 'inputs');
+      const r = runCli(['build', '--config', join(ex, 'config.json'), '--source', join(inputs, 'painting.png'), '--full', join(inputs, 'layers', 'full'), '--head', join(inputs, 'layers', 'head'), '--out', out]);
+      const tail = lastLines(r.out, 4);
+      const stopped = r.out.split('\n').find((l) => l.startsWith('build: stopped at')) ?? null;
+      const refusal = r.out.split('\n').filter((l) => /^\[[a-z]+\] {3}FAIL {2}/.test(l)).slice(0, 3);
       say(
-        `EX01_EXAMPLE_${name.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_PASSES_CHECK`,
-        r.status === 0 && fig?.PASS === true,
-        `exit ${r.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig)}`,
-        'a committed example is a claim that the pipeline produces a passing rig; this is the run that keeps the claim true',
+        `CH01_BUILD_IS_GREEN_AND_ENDS_WITH_THE_ARTIFACT[${key}]`,
+        r.status === 0 && tail.length === 4 && tail[0].trim().startsWith('pack: ') && tail.slice(1).every((l) => existsSync(l.trim())),
+        r.status === 0 ? `exit 0; ${tail.map((l) => l.trim().replace(`${out}/`, '')).join(' | ')}` : `exit ${r.status}; ${stopped ?? 'no stop line'}; ${refusal.join(' | ') || lastLines(r.out, 3).join(' | ')}`,
+        'a fetched example is a published claim that the pipeline takes this painting to a green rig; this run keeps the claim true end to end',
+      );
+      if (r.status !== 0) continue;
+      if (planted === null) planted = { key, out, exp };
+
+      const expParts = readParts(join(exp, 'parts.json'));
+      const parts = jsonDiffs(readJsonAt(join(exp, 'parts.json')), readJsonAt(join(out, 'parts.json')), chainTolerance('parts.json'));
+      const named = { over: parts.over.map((l) => namedPartsPath(expParts, l)), within: parts.within.map((l) => namedPartsPath(expParts, l)) };
+      say(
+        `CH02_PARTS_JSON_IS_THE_EXPECTED_FIELD_BY_FIELD[${key}]`,
+        parts.over.length === 0,
+        `${expParts.parts.length} part(s): ${summarise(named)}`,
+        'every count exact but seam_override_px, ±1 — the float32/float64 warp accumulation the assemble oracle traced every miss to (see chainTolerance)',
+      );
+
+      const rigFiles = ['rig.json', 'motion.json', 'mesh_report.json'].map((f) => [f, jsonDiffs(readJsonAt(join(exp, f)), readJsonAt(join(out, 'rig', f)), chainTolerance(f))] as const);
+      say(
+        `CH03_RIG_MOTION_AND_MESH_REPORT_ARE_THE_EXPECTED_AS_PARSED_VALUES[${key}]`,
+        rigFiles.every(([, d]) => d.over.length === 0),
+        rigFiles.map(([f, d]) => `${f}: ${summarise(d)}`).join(' | '),
+        'the rig stage is exact against the reference given the same parts; motion key times are compared to 6 decimals, which is where the reference writes float64 sums',
+      );
+
+      const check = jsonDiffs(readJsonAt(join(exp, 'check.json')), readJsonAt(join(out, 'check', 'check.json')), chainTolerance('check.json'));
+      say(
+        `CH04_CHECK_JSON_IS_THE_EXPECTED_FIELD_BY_FIELD[${key}]`,
+        check.over.length === 0,
+        summarise(check),
+        'gates, loop and both seam pixel counts exact; seam_mean ±0.005, because the seam is measured on this chain\'s own parts (see chainTolerance)',
+      );
+
+      const gates = ['gate_spine-html.txt', 'gate_spine.txt'].map((f) => [f, firstLineDiff(readFileSync(join(exp, f), 'utf8'), readFileSync(join(out, 'check', f), 'utf8'))] as const);
+      const pack = parsePackLines(readFileSync(join(out, 'check', 'gate_spine-html.txt'), 'utf8').split('\n'));
+      say(
+        `CH05_BOTH_GATE_FILES_ARE_THE_EXPECTED_LINE_BY_LINE_AND_THE_PACK_HOLDS_EVERY_PART[${key}]`,
+        gates.every(([, d]) => d === null) && pack.length === 1 && pack[0].regions === expParts.parts.length,
+        `${gates.map(([f, d]) => `${f}: ${d ?? 'identical'}`).join('; ')}; ${pack.map((p) => p.line).join(', ') || 'no pack line'} for ${expParts.parts.length} part(s)`,
+        "issue #2's control: the pack line is one of the gate lines, so its page size, region count and coverage are held exactly (tolerance 0), and one region per part is asserted by itself",
+      );
+
+      let proposal: string;
+      let proposalOk = false;
+      try {
+        const P = readPartSet(out);
+        const prop = propose(P);
+        checkProposal(P, prop);
+        const d = jsonDiffs(readJsonAt(join(ex, 'proposal.json')), JSON.parse(serializeProposal(prop)) as unknown, () => null);
+        proposalOk = d.over.length === 0;
+        proposal = summarise(d);
+      } catch (err) {
+        proposal = `refused or crashed: ${(err as Error).message.split('\n')[0]}`;
+      }
+      say(
+        `CH06_PROPOSE_ON_THE_BUILT_PARTS_IS_THE_TRACKED_PROPOSAL[${key}]`,
+        proposalOk,
+        proposal,
+        "the tracked proposal.json is what the reference proposer wrote from the reference's parts; the port's proposer on the port's parts must write the same, which is the proposer's half the examples could not reach before a build existed",
+      );
+    }
+
+    // The comparators themselves, planted: each difference must be named, and a difference inside its tolerance must not be.
+    if (planted !== null) {
+      const { out, exp } = planted;
+      const rig = readJsonAt(join(out, 'rig', 'rig.json')) as { skins: { default: Record<string, Record<string, { weights?: Array<Array<{ weight: number }>> }>> } };
+      let weightPath = '';
+      for (const [slot, atts] of Object.entries(rig.skins.default)) {
+        for (const [name, att] of Object.entries(atts)) {
+          if (weightPath === '' && att.weights !== undefined && att.weights[0]?.length > 0) {
+            att.weights[0][0].weight += 0.01;
+            weightPath = `skins.default.${slot}.${name}.weights[0][0].weight`;
+          }
+        }
+      }
+      const rigPlant = jsonDiffs(readJsonAt(join(exp, 'rig.json')), rig, chainTolerance('rig.json'));
+      const partsBuilt = readJsonAt(join(out, 'parts.json')) as { parts: Array<{ seam_override_px: number }> };
+      partsBuilt.parts[0].seam_override_px += 2;
+      const partsPlant = jsonDiffs(readJsonAt(join(exp, 'parts.json')), partsBuilt, chainTolerance('parts.json'));
+      const checkBuilt = readJsonAt(join(out, 'check', 'check.json')) as { seam_mean: number };
+      checkBuilt.seam_mean += 0.01;
+      const checkPlant = jsonDiffs(readJsonAt(join(exp, 'check.json')), checkBuilt, chainTolerance('check.json'));
+      const gateText = readFileSync(join(out, 'check', 'gate_spine-html.txt'), 'utf8');
+      const gatePlant = firstLineDiff(readFileSync(join(exp, 'gate_spine-html.txt'), 'utf8'), gateText.replace(/padding (\d+)/, (_, n: string) => `padding ${Number(n) + 1}`));
+      const insideTol = jsonDiffs({ parts: [{ seam_override_px: 10 }] }, { parts: [{ seam_override_px: 11 }] }, chainTolerance('parts.json'));
+      say(
+        'CH07_A_PLANTED_DIFFERENCE_IN_EACH_COMPARED_FILE_IS_NAMED_AND_ONE_INSIDE_ITS_TOLERANCE_IS_NOT',
+        weightPath !== '' &&
+          rigPlant.over.some((l) => l.startsWith(`${weightPath}:`)) &&
+          partsPlant.over.some((l) => l.startsWith('parts[0].seam_override_px:')) &&
+          checkPlant.over.some((l) => l.startsWith('seam_mean:')) &&
+          gatePlant !== null &&
+          gatePlant.includes('padding') &&
+          insideTol.over.length === 0 &&
+          insideTol.within.length === 1,
+        `on ${planted.key}: a weight +0.01 -> ${rigPlant.over[0] ?? 'not named'}; seam_override_px +2 -> ${partsPlant.over.find((l) => l.startsWith('parts[0]')) ?? 'not named'}; seam_mean +0.01 -> ${checkPlant.over.find((l) => l.startsWith('seam_mean')) ?? 'not named'}; padding +1 in the pack line -> ${gatePlant ?? 'not named'}; a ±1 seam override -> forgiven (${insideTol.within.join('') || 'not reported'})`,
+        'a comparator that forgave everything would print the same green; each tolerance is shown to stop exactly where it says it stops',
       );
     }
   } finally {
@@ -2425,7 +2620,8 @@ function runAssembleSuite(): number {
       ['a landscape painting', 'ASSEMBLE_SOURCE_PORTRAIT', () => assemble({ ...base, source: flatPainting(SOURCE_SIDE, SOURCE_SIDE + 32), seamRule: 'near-white' })],
       ['a rig scale that makes no rig', 'ASSEMBLE_RIG_SIZE', () => assemble({ ...base, rigScale: 0.001, seamRule: 'near-white' })],
       ['a config with no seethrough block', 'ASSEMBLE_FIELD_PRESENT', () => stageFields(parseConfig(assembleConfig({ seethrough: false })))],
-      ['a proposal config with no rig_scale', 'CONFIG_FIELD_TYPE', () => proposeFields({ seethrough: { resolution: 64, head_box: HEAD_BOX }, assemble: {} })],
+      ['a proposal config with no rig_scale', 'CONFIG_FIELD_PRESENT', () => proposeFields(parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false, head_box: HEAD_BOX }, assemble: {} }))],
+      ['a proposal config with no head box yet', 'ASSEMBLE_FIELD_PRESENT', () => proposeFields(parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false }, assemble: { rig_scale: 0.5 } }))],
     ];
     const outcomes = mutants.map(([what, code, run]) => {
       const err = refusals(run);
@@ -2631,6 +2827,40 @@ function runInputsSuite(): number {
       run.status === 0 && same(full, r.full) && same(head, r.head) && run.out.includes('st_input_full.png 10x10') && run.out.includes('st_input_head.png 4x4'),
       `exit ${run.status}; st_input_full ${full === null ? 'absent' : `${full.width}x${full.height}`}, st_input_head ${head === null ? 'absent' : `${head.width}x${head.height}`}, both equal to makeInputs'`,
       'the command is what an agent runs; the file it writes is the one the See-through run is fed',
+    );
+
+    // A new character's config at the first `inputs` call: no plan, bones, meshes, regions or motion, and no head box yet.
+    const seethrough = { resolution: 1024, steps: 30, seed: 42, offload: true };
+    const fresh = { key: 'fresh', seethrough, assemble: { rig_scale: 0.5 } };
+    const write = (name: string, cfgObj: unknown): string => {
+      const at = join(dir, name);
+      writeFileSync(at, JSON.stringify(cfgObj));
+      return at;
+    };
+    const first = runCli(['inputs', '--source', src, '--config', write('fresh.json', fresh), '--out', join(dir, 'fresh1')]);
+    const firstFiles = existsSync(join(dir, 'fresh1')) ? readdirSync(join(dir, 'fresh1')).sort() : [];
+    const second = runCli(['inputs', '--source', src, '--config', write('fresh_box.json', { ...fresh, seethrough: { ...seethrough, head_box: [1, 2, 5, 6] } }), '--out', join(dir, 'fresh2')]);
+    const secondFiles = existsSync(join(dir, 'fresh2')) ? readdirSync(join(dir, 'fresh2')).sort() : [];
+    const rigRun = runCli(['rig', '--config', join(dir, 'fresh_box.json'), '--parts', dir, '--out', join(dir, 'fresh_rig')]);
+    const rigNamed = ['config.bones', 'config.meshes', 'config.regions', 'config.motion', 'config.assemble.plan'].every((f) => rigRun.out.includes(`FAIL  CONFIG_FIELD_PRESENT: ${f} `));
+    const retired = runCli(['inputs', '--source', src, '--config', write('retired.json', { ...fresh, generation: { character_file: 'elsewhere.json' } }), '--out', join(dir, 'fresh3')]);
+    const unknown = runCli(['inputs', '--source', src, '--config', write('unknown.json', { ...fresh, status: 'draft' }), '--out', join(dir, 'fresh4')]);
+    say(
+      'IN06_A_NEW_CHARACTER_CONFIG_PASSES_INPUTS_HEAD_BOX_OPTIONAL_AND_THE_FULL_LOADER_STILL_REFUSES_IT_FOR_RIG',
+      first.status === 0 &&
+        firstFiles.join(',') === 'st_input_full.png' &&
+        second.status === 0 &&
+        secondFiles.join(',') === 'st_input_full.png,st_input_head.png' &&
+        rigRun.status === 1 &&
+        rigNamed &&
+        !existsSync(join(dir, 'fresh_rig')) &&
+        retired.status === 1 &&
+        retired.out.includes('FAIL  CONFIG_KEY_RETIRED: config.generation.character_file') &&
+        unknown.status === 1 &&
+        unknown.out.includes('FAIL  CONFIG_KEY_KNOWN: config.status'),
+      `key + seethrough + assemble.rig_scale -> exit ${first.status}, wrote [${firstFiles.join(', ')}]; with head_box -> exit ${second.status}, wrote [${secondFiles.join(', ')}]; ` +
+        `the same config to rig -> exit ${rigRun.status}, all five sections named: ${rigNamed}; generation.character_file -> exit ${retired.status}; an unknown "status" -> exit ${unknown.status}`,
+      'inputs runs before the plan and the bones exist, so it reads through the partial entry point; that door narrows what is required, never what is known — the full loader still stands in front of rig',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -3642,12 +3872,10 @@ function main(): void {
   tally.of('sheet', runSheetSuite);
   tally.of('cli', runCliSuite);
   tally.of('rig', runRigSuite);
-  tally.of('rig-examples', runRigExamplesSuite);
   tally.of('propose', runProposeSuite);
   tally.of('propose-corpus', runProposeCorpusSuite);
   tally.of('check', runCheckSuite);
   tally.of('loop', runLoopSuite);
-  tally.of('examples', runExamplesSuite);
   tally.of('assemble', runAssembleSuite);
   tally.of('assemble-examples', runAssembleExamplesSuite);
   tally.of('skeleton', runSkeletonSuite);
@@ -3655,6 +3883,8 @@ function main(): void {
   tally.of('inputs-examples', runInputsExamplesSuite);
   tally.of('prompt', runPromptSuite);
   tally.of('comfy', runComfySuite);
+  tally.of('build', runBuildSuite);
+  tally.of('chain', runChainSuite);
   tally.of('tree', runTreeSuite);
   tally.of('corpus', () => runCorpusSuite(corpus));
   tally.of('run-tally', () => runTallySuite(tally));
@@ -3678,15 +3908,14 @@ function main(): void {
   const holes = tally.blocks.filter((b) => !b.ran).map((b) => b.key);
   const ran = tally.blocks.length - holes.length;
   const corpusClause = holes.includes('corpus') ? '' : `, + ${n('corpus')} corpus`;
-  const examplesClause = holes.includes('rig-examples') ? '' : `, + ${n('rig-examples')} rig-example`;
-  const checkExamplesClause = holes.includes('examples') ? '' : `, + ${n('examples')} examples`;
+  const chainClause = holes.includes('chain') ? '' : `, + ${n('chain')} example-chain`;
   const proposeClause = holes.includes('propose-corpus') ? '' : `, + ${n('propose-corpus')} example-propose`;
   const assembleExamplesClause = holes.includes('assemble-examples') ? '' : `, + ${n('assemble-examples')} assemble-example`;
   const inputsClause = holes.includes('inputs-examples') ? '' : `, + ${n('inputs-examples')} example-inputs`;
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${examplesClause}${proposeClause}${checkExamplesClause}${assembleExamplesClause}${inputsClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here

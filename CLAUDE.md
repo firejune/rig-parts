@@ -12,9 +12,10 @@ provenance and measurements), and `rig.json` / `motion.json` in
 [spine-rigc](https://github.com/firejune/rigc)'s spec — then calls spine-rigc to
 compile, gate, render and check. It is a port of a working reference
 implementation that lives in a private repository (see *Where the private
-oracle lives*). Version 0.1.0 is the skeleton: readers, contracts, the raster
-library, the layer table and the contact sheet; README's banner says what is
-next.
+oracle lives*). Version 0.1.0 carries every stage — layers, sheet, assemble,
+propose, rig, check, loop — and `build`, which runs assemble, rig and check in
+one process (`src/build.ts`); the optional ComfyUI adapter is the one command
+still registered as not implemented.
 
 ## The doctrine: a tool for AI, not for people
 
