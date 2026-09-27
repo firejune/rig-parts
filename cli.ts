@@ -24,7 +24,7 @@ import { type CharacterConfig, loadConfig, loadEarlyConfig } from './src/config.
 import { PartsError, problemLine } from './src/errors.ts';
 import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs } from './src/inputs.ts';
-import { type LayerSet, readLayers } from './src/layers.ts';
+import { figuresPhrase, implausibleRules, layerFigures, type LayerSet, pct, readLayers, ruleSummary, times } from './src/layers.ts';
 import { checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { readPng, writePng } from './src/raster/png.ts';
 import { buildSheet, defaultCaption, type Tile, tilesFrom } from './src/sheet.ts';
@@ -52,9 +52,14 @@ usage:
   spine-parts layers <dir | layers.json | file.psd>
       Read a See-through decomposition — the ComfyUI wrapper form (a directory
       holding layers.json and one PNG per layer) or an upstream .psd — and print
-      every layer: draw order, name, tag group, box, size, opaque pixels, depth.
-      Refuses, by name, a missing file, an unknown tag, a PNG whose size is not
-      its box, and anything else outside the input contract.
+      every layer: draw order, name, tag group, box, size, opaque pixels, depth,
+      and three plausibility figures over its opaque pixels — translucent share
+      (alpha below 128), background share (min channel above 235) and area as a
+      multiple of the rest of the figure (the other layers' union). A layer that
+      crosses a plausibility rule gets a WARN line naming the rule and the bar;
+      --propose-plan leaves it out. Refuses, by name, a missing file, an
+      unknown tag, a PNG whose size is not its box, and anything else outside
+      the input contract — never a WARN.
 
   spine-parts sheet --source <painting.png> --layers <path> [--layers <path> ...]
                     --out <sheet.png> [--cell <px>] [--cols <n>]
@@ -162,8 +167,11 @@ usage:
   spine-parts assemble --propose-plan --source <painting.png> --full <dir|psd>
                        --head <dir|psd> --config <config.json>
       Print {plan, extend_below_crop, notes} for config.assemble, from the two
-      runs. Reads only config.seethrough.head_box, config.seethrough.resolution
-      and config.assemble.rig_scale — the rest of the config need not exist yet.
+      runs. A layer \`layers\` WARNs about (PLAN_LAYER_TRANSLUCENT,
+      PLAN_LAYER_BACKGROUND, PLAN_LAYER_OVERSIZED) is not proposed, and a note
+      names it, its figures and the rule. Reads only config.seethrough.head_box,
+      config.seethrough.resolution and config.assemble.rig_scale — the rest of
+      the config need not exist yet.
 
   spine-parts inputs --source <painting.png> --config <config.json> --out <dir>
       Cut the two images See-through is fed: <out>/st_input_full.png (the
@@ -241,7 +249,8 @@ function fixed(v: number | null): string {
 function printLayerTable(set: LayerSet): void {
   console.log(`spine-parts layers: ${set.form === 'wrapper' ? 'ComfyUI wrapper form' : 'PSD'}, ${set.source}`);
   console.log(`  canvas ${set.canvas.w}x${set.canvas.h}, ${set.layers.length} layer(s), back to front`);
-  const rows = set.layers.map((l) => [
+  const figures = layerFigures(set);
+  const rows = set.layers.map((l, i) => [
     String(l.drawOrder),
     l.name,
     l.tag.group,
@@ -250,14 +259,26 @@ function printLayerTable(set: LayerSet): void {
     `${l.pixels.width}x${l.pixels.height}`,
     String(l.opaquePx),
     fixed(l.depth),
+    pct(figures[i].translucent),
+    pct(figures[i].background),
+    times(figures[i].areaRatio),
   ]);
-  const head = ['order', 'name', 'group', 'left,top', 'right,bottom', 'size', 'opaque_px', 'depth'];
+  const head = ['order', 'name', 'group', 'left,top', 'right,bottom', 'size', 'opaque_px', 'depth', 'translucent', 'background', 'area'];
   const widths = head.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
   const line = (cells: string[]): string => `  ${cells.map((c, i) => c.padEnd(widths[i])).join('  ')}`.trimEnd();
   console.log(line(head));
   for (const r of rows) console.log(line(r));
   const painted = set.layers.filter((l) => l.opaquePx > 0).length;
   console.log(`  ${set.layers.length} layer(s): ${painted} with opaque pixels, ${set.layers.length - painted} with none`);
+  // A reader refuses nothing on plausibility: it says what --propose-plan will leave out, and why.
+  let warned = 0;
+  for (const f of figures) {
+    for (const rule of implausibleRules(f)) {
+      console.log(`  WARN  ${rule}: layer "${f.name}" — ${figuresPhrase(f)}; ${ruleSummary(rule)} is required, so --propose-plan leaves it out`);
+      warned++;
+    }
+  }
+  console.log(`  ${warned} WARN line(s)`);
 }
 
 function cmdLayers(args: string[]): number {

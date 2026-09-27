@@ -37,7 +37,9 @@ stage writes are the whole interface.
    `st_input_full.png`, the painting on a white square. The config needs only `key`,
    `seethrough` and `assemble.rig_scale` at this point. Run See-through on it — any
    route; the optional `comfy seethrough` adapter only talks to a ComfyUI box.
-2. `spine-parts layers <full run>` — read the table.
+2. `spine-parts layers <full run>` — read the table. A `WARN  PLAN_LAYER_…` line names
+   a layer See-through invented (a translucent haze, or one out of proportion);
+   the plan step leaves it out and says so in its `notes`.
 3. `spine-parts propose --head-box --full <full run> --canvas <W>x<H>` → put
    `head_box` in the config, run `inputs` again (it now also writes
    `st_input_head.png`, the crop at that box), and run See-through on the crop.

@@ -52,6 +52,7 @@ import {
   C,
   EXPECTED_PARTS,
   EXPECTED_PROPOSAL,
+  FULL_LAYERS,
   FRAMED_FULL,
   FRAMED_HEAD,
   FRAMED_PLAN,
@@ -80,14 +81,14 @@ import { assemble, type AssembleInput, belowCrop, checkGeometry, cleanGhosts, DE
 import { chainLine, findRigc, type FrameSet, gateGreen, JUDGEMENT_LINES, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { sineTrack } from './src/motion.ts';
-import { type BoneEntry, type CharacterConfig, type Generation, loadConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
 import { PartsError, type Problem } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
 import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paintingGraph, POSITIVE_HEAD, stripWords } from './src/graphs.ts';
 import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs } from './src/inputs.ts';
-import { type LayerSet, readLayers, readPsdLayers, readWrapperLayers } from './src/layers.ts';
+import { implausibleRules, type Layer, layerFigures, type LayerSet, PLAUSIBLE_AREA_RATIO_MAX, PLAUSIBLE_JUDGED_AREA_RATIO, PLAUSIBLE_TRANSLUCENT_MAX, PLAUSIBLE_BACKGROUND_MAX, PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN, readLayers, readPsdLayers, readWrapperLayers, ruleSummary } from './src/layers.ts';
 import { type PartsFile, readParts, serializeParts, writeParts } from './src/parts.ts';
 import {
   alphaComposite,
@@ -3662,6 +3663,204 @@ function rowRun(r: Raster, y: number, rgb: readonly number[]): number {
   return n;
 }
 
+/**
+ * A layer of `w x h` at (`left`, `top`), each pixel given by `fill(i)` in raster
+ * order (null = transparent). The plausibility controls build their layers in
+ * memory so every count below is the loop bound that made it.
+ */
+function paintedLayer(name: string, box: [number, number, number, number], fill: (i: number) => [number, number, number, number] | null, drawOrder = 0): Layer {
+  const [left, top, w, h] = box;
+  const pixels = newRaster(w, h);
+  let opaquePx = 0;
+  for (let i = 0; i < w * h; i++) {
+    const v = fill(i);
+    if (v === null) continue;
+    pixels.data.set(v, i * 4);
+    if (v[3] > 8) opaquePx++;
+  }
+  return { name, tag: readTag(name) as TagReading, file: null, pixels, left, top, right: left + w, bottom: top + h, depth: null, drawOrder, opaquePx };
+}
+
+/** `set` with `layer` in place of the layer of the same name, or put furthest back when there is none. */
+function withLayer(set: LayerSet, layer: Layer): LayerSet {
+  const at = set.layers.findIndex((l) => l.name === layer.name);
+  const layers = at >= 0 ? set.layers.map((l, i) => (i === at ? { ...layer, depth: l.depth, drawOrder: l.drawOrder } : l)) : [layer, ...set.layers.map((l) => ({ ...l, drawOrder: l.drawOrder + 1 }))];
+  return { ...set, layers };
+}
+
+/**
+ * The haze the issue describes, as a planted layer: near-white (245), four in
+ * five pixels at alpha 40 and every fifth at alpha 200, over the first `n`
+ * pixels of a `side x side` canvas in raster order.
+ */
+function hazeLayer(name: string, side: number, n: number): Layer {
+  return paintedLayer(name, [0, 0, side, side], (i) => (i >= n ? null : [245, 245, 245, i % 5 === 0 ? 200 : 40]));
+}
+
+/**
+ * `--propose-plan`'s plausibility rules (`implausibleRules`, `src/layers.ts`).
+ *
+ * Derivation on the flat fixture (fixtures/assemble_fixture.ts): the full
+ * run's six layers are disjoint rectangles — headwear 16 x 12 = 192, back hair
+ * 6 x 22 = 132, bottomwear 14 x 24 = 336, topwear 20 x 30 = 600, footwear
+ * 20 x 6 + 2 x 2 = 124, neck 3 x 3 = 9 — disjoint but for neck's column 4 over
+ * rows 2..4 (3 px under headwear), so a planted layer's rest of the figure is
+ * their union, 1,393 - 3 = 1,390 px, wherever it lies.
+ */
+function runPlausibilitySuite(): number {
+  section('plausibility: --propose-plan leaves out a translucent, background-coloured or oversized layer, by rule');
+  const { say, bad } = counter();
+  const dir = temp('plausible');
+  try {
+    // Counting: one 10 x 4 layer — row 0 opaque C, row 1 alpha 100 C, row 2
+    // opaque white 245, row 3 alpha 5 (not opaque) — over a second 10 x 2
+    // layer covering rows 0..1. Opaque 30; translucent 10 (row 1); background
+    // 10 (row 2); rest = the other layer's 20.
+    const probe: LayerSet = {
+      form: 'wrapper',
+      source: 'probe',
+      canvas: { w: 10, h: 4 },
+      layers: [
+        paintedLayer('topwear', [0, 0, 10, 2], () => [100, 60, 40, 255]),
+        paintedLayer('bottomwear', [0, 0, 10, 4], (i) => (i < 10 ? [100, 60, 40, 255] : i < 20 ? [100, 60, 40, 100] : i < 30 ? [245, 245, 245, 255] : [245, 245, 245, 5]), 1),
+      ],
+    };
+    const [pt, pb] = layerFigures(probe);
+    say(
+      'PL01_THE_THREE_FIGURES_COUNT_WHAT_THEIR_DEFINITIONS_SAY',
+      pb.opaquePx === 30 && pb.translucentPx === 10 && pb.backgroundPx === 10 && pb.restPx === 20 && pb.areaRatio === 1.5 && pt.restPx === 30 && pt.translucent === 0 && pt.areaRatio === 20 / 30,
+      `bottomwear: opaque ${pb.opaquePx}, translucent ${pb.translucentPx}, background ${pb.backgroundPx}, rest ${pb.restPx}, area ${pb.areaRatio}; topwear: rest ${pt.restPx}, area ${pt.areaRatio?.toFixed(4)}`,
+      'alpha 1..8 is not a pixel of the layer (See-through hazes whole canvases at that alpha), alpha below 128 is translucent, a min channel above 235 is the seam rule\'s near-white, and the rest of the figure is the OTHER layers\' union',
+    );
+
+    // Each bar, at the bar and one step past it: the smallest edit that crosses.
+    // A 100-px layer beside a rest of `rest` px, with `t` translucent and `b` background pixels.
+    const judge = (t: number, b: number, rest: number, n = 100): string[] => {
+      const set: LayerSet = {
+        form: 'wrapper',
+        source: 'bars',
+        canvas: { w: 100, h: 200 },
+        layers: [
+          paintedLayer('topwear', [0, 100, 100, 100], (i) => (i < rest ? [100, 60, 40, 255] : null)),
+          paintedLayer('wings', [0, 0, 100, 100], (i) => (i >= n ? null : [i < b ? 245 : 100, i < b ? 245 : 60, i < b ? 245 : 40, i < t ? 100 : 255]), 1),
+        ],
+      };
+      return implausibleRules(layerFigures(set)[1]);
+    };
+    const cases: Array<[string, string[], string[]]> = [
+      ['50 translucent of 100 (at the bar)', judge(50, 0, 1000), []],
+      ['51 translucent of 100', judge(51, 0, 1000), ['PLAN_LAYER_TRANSLUCENT']],
+      ['51 translucent of 100 at 100/2001 of the rest (below the judged floor)', judge(51, 0, 2001), []],
+      ['51 translucent of 100 at 100/2000 = 0.05 of the rest (on the floor)', judge(51, 0, 2000), ['PLAN_LAYER_TRANSLUCENT']],
+      ['100 background, 25 translucent', judge(25, 100, 1000), []],
+      ['100 background, 26 translucent', judge(26, 100, 1000), ['PLAN_LAYER_BACKGROUND']],
+      ['50 background, 40 translucent', judge(40, 50, 1000), []],
+      ['51 background, 40 translucent', judge(40, 51, 1000), ['PLAN_LAYER_BACKGROUND']],
+      ['100 opaque background (a white garment)', judge(0, 100, 1000), []],
+      ['100 px beside a rest of 25 (4x, at the bar)', judge(0, 0, 25), []],
+      ['100 px beside a rest of 24', judge(0, 0, 24), ['PLAN_LAYER_OVERSIZED']],
+    ];
+    const wrong = cases.filter(([, got, want]) => got.join(',') !== want.join(','));
+    say(
+      'PL02_EACH_RULE_FIRES_ONE_STEP_PAST_ITS_BAR_AND_NOT_AT_IT',
+      wrong.length === 0 && PLAUSIBLE_TRANSLUCENT_MAX === 0.5 && PLAUSIBLE_BACKGROUND_MAX === 0.5 && PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN === 0.25 && PLAUSIBLE_AREA_RATIO_MAX === 4 && PLAUSIBLE_JUDGED_AREA_RATIO === 0.05,
+      wrong.length === 0 ? cases.map(([what, got]) => `${what} -> ${got.length === 0 ? 'kept' : got.join('+')}`).join('; ') : wrong.map(([what, got, want]) => `${what}: got ${got.join('+') || 'kept'}, wanted ${want.join('+') || 'kept'}`).join('; '),
+      'a bar is a line: the control stands on it and one pixel past it, so a bar that moved, or a comparison that turned from > into >=, is named',
+    );
+
+    writeAssembleFixture(dir);
+    const base = fixtureInput(dir);
+    const g = { sourceW: SOURCE_SIDE, sourceH: SOURCE_SIDE, resolution: RESOLUTION, headBox: HEAD_BOX, rigScale: RIG_SCALE };
+    const clean = proposePlan(base.full, base.head, g);
+    const expectedNotes = EXPECTED_PROPOSAL.notes;
+    const samePlan = (p: { plan: unknown; extend_below_crop: unknown }): boolean => JSON.stringify(p.plan) === JSON.stringify(EXPECTED_PROPOSAL.plan) && JSON.stringify(p.extend_below_crop) === JSON.stringify(EXPECTED_PROPOSAL.extend_below_crop);
+
+    // The issue's layer: the haze over 2,780 px = 2.000x the rest (1,390).
+    // 2,780 / 5 = 556 at alpha 200, 2,224 at alpha 40: 80.0 % translucent, all 245: 100.0 % background.
+    const hazed = proposePlan(withLayer(base.full, hazeLayer('wings', RESOLUTION, 2780)), base.head, g);
+    const hazeNote = hazed.notes.at(-1) ?? '';
+    const wantPrefix = 'wings: full run layer 80.0% translucent, 100.0% background-coloured, 2.000x the rest of the figure -> not proposed by ';
+    const wantRules = `PLAN_LAYER_TRANSLUCENT (${ruleSummary('PLAN_LAYER_TRANSLUCENT')}), PLAN_LAYER_BACKGROUND (${ruleSummary('PLAN_LAYER_BACKGROUND')})`;
+    say(
+      'PL03_THE_ISSUES_HAZE_IS_LEFT_OUT_BY_NAME_AND_THE_REST_OF_THE_PROPOSAL_IS_UNMOVED',
+      JSON.stringify(clean) === JSON.stringify(EXPECTED_PROPOSAL) && samePlan(hazed) && hazed.notes.length === expectedNotes.length + 1 && hazed.notes.slice(0, -1).join('|') === expectedNotes.join('|') && hazeNote === wantPrefix + wantRules,
+      `plan ${hazed.plan.map((p) => p[0]).join(', ')}; note "${hazeNote}"`,
+      'See-through hallucinated a wings layer of mostly translucent grey on a character with none; proposed as an ordinary part it became an 832 x 1096 part and the recomposite error rose to mean |d| 15.01 (issue #21)',
+    );
+
+    // A real layer copied under the planted tag: topwear's own 600 opaque C px.
+    const topwear = base.full.layers.find((l) => l.name === 'topwear') as Layer;
+    const copied = proposePlan(withLayer(base.full, { ...topwear, name: 'wings', tag: readTag('wings') as TagReading }), base.head, g);
+    // The white garment: the fixture's own bottomwear is opaque Z (250, 250, 250), 100 % background-coloured and 0 % translucent.
+    const bottom = layerFigures(base.full).find((f) => f.name === 'bottomwear');
+    say(
+      'PL04_A_REAL_LAYER_COPY_AND_AN_OPAQUE_WHITE_GARMENT_ARE_PROPOSED',
+      copied.plan.some((p) => p[2] === 'wings') && !copied.notes.some((n) => n.includes('PLAN_LAYER_')) && bottom !== undefined && bottom.background === 1 && bottom.translucent === 0 && clean.plan.some((p) => p[2] === 'bottomwear'),
+      `a copy of topwear as wings -> plan ${copied.plan.map((p) => p[0]).join(', ')}, ${copied.notes.length} note(s); bottomwear ${bottom === undefined ? 'absent' : `${(bottom.background ?? 0) * 100}% background, ${(bottom.translucent ?? 0) * 100}% translucent`} -> proposed`,
+      "the positive control: the rules read a haze, not a tag and not a colour — a white dress is the page's colour at full alpha",
+    );
+
+    // One rule each, through the paths that consult a layer.
+    // TRANSLUCENT: 700 px of C at alpha 100 (0.504x the rest, judged): 100 % translucent, 0 % background.
+    const dim = (tag: string): Layer => paintedLayer(tag, [0, 0, 64, 64], (i) => (i < 700 ? [100, 60, 40, 100] : null));
+    const tr = proposePlan(withLayer(base.full, dim('wings')), base.head, g);
+    // BACKGROUND: 700 px of 245, i % 5 < 2 at alpha 100 (280, 40 %) and the rest opaque: 100 % background, 40 % translucent.
+    const bg = proposePlan(withLayer(base.full, paintedLayer('wings', [0, 0, 64, 64], (i) => (i < 700 ? [245, 245, 245, i % 5 < 2 ? 100 : 255] : null))), base.head, g);
+    // OVERSIZED: a full run of topwear (600) and 64 x 40 = 2,560 opaque C as wings: 4.267x.
+    const bigRun: LayerSet = { ...base.full, layers: [paintedLayer('wings', [0, 0, 64, 40], () => [100, 60, 40, 255]), { ...topwear, drawOrder: 1 }] };
+    const big = proposePlan(bigRun, base.head, g);
+    // The extend path: the full run's back hair replaced by the translucent layer — the head run's back hair is still proposed, but not extended from it.
+    const ext = proposePlan(withLayer(base.full, dim('back hair')), base.head, g);
+    // The fallback path: the full run's headwear replaced by it — no hairpin, and no fallback note.
+    const fall = proposePlan(withLayer(base.full, dim('headwear')), base.head, g);
+    const only = (p: { notes: string[] }, tag: string, rule: string, what: string): boolean => {
+      const n = p.notes.filter((x) => x.includes('PLAN_LAYER_'));
+      return n.length === 1 && n[0].startsWith(`${tag}: full run layer `) && n[0].includes(`-> ${what} by ${rule} (`) && ['PLAN_LAYER_TRANSLUCENT', 'PLAN_LAYER_BACKGROUND', 'PLAN_LAYER_OVERSIZED'].filter((r) => n[0].includes(r)).length === 1;
+    };
+    const outcomes: Array<[string, boolean, string]> = [
+      ['translucent wings', only(tr, 'wings', 'PLAN_LAYER_TRANSLUCENT', 'not proposed') && samePlan(tr), tr.notes.at(-1) ?? ''],
+      ['background-coloured wings', only(bg, 'wings', 'PLAN_LAYER_BACKGROUND', 'not proposed') && samePlan(bg), bg.notes.at(-1) ?? ''],
+      ['oversized wings', only(big, 'wings', 'PLAN_LAYER_OVERSIZED', 'not proposed') && !big.plan.some((p) => p[2] === 'wings') && big.plan.some((p) => p[2] === 'topwear'), big.notes.at(-1) ?? ''],
+      ['hazy full-run back hair', only(ext, 'back hair', 'PLAN_LAYER_TRANSLUCENT', 'not extended below the crop') && ext.extend_below_crop.length === 0 && ext.plan.some((p) => p[1] === 'head' && p[2] === 'back hair'), ext.notes.at(-1) ?? ''],
+      ['hazy full-run headwear', only(fall, 'headwear', 'PLAN_LAYER_TRANSLUCENT', 'not proposed') && !fall.plan.some((p) => p[2] === 'headwear') && !fall.notes.some((n) => n.includes('0.8 x full run')), fall.notes.at(-1) ?? ''],
+    ];
+    const missed = outcomes.filter(([, ok]) => !ok);
+    say(
+      'PL05_EACH_RULE_LEAVES_ITS_MUTANT_OUT_THROUGH_EVERY_PATH_THAT_READS_A_LAYER',
+      missed.length === 0,
+      missed.length === 0 ? `${outcomes.length} planted layers, each left out under its one rule; e.g. "${outcomes[2][2]}"` : missed.map(([what, , note]) => `${what}: "${note}"`).join('; '),
+      'the body order, the head-run fallback and the extend below the crop each read a layer; a rule that guarded one of them would let the haze in through another',
+    );
+
+    // The reader: `layers` prints the figures and a WARN line per rule crossed, and refuses nothing.
+    writeRun(join(dir, 'hazed'), FULL_LAYERS);
+    const manifest = JSON.parse(readFileSync(join(dir, 'hazed', 'layers.json'), 'utf8')) as { layers: unknown[]; width: number; height: number };
+    manifest.layers.push({ name: 'wings', filename: 'wings.png', left: 0, top: 0, right: RESOLUTION, bottom: RESOLUTION, depth_median: 0.99 });
+    writeFileSync(join(dir, 'hazed', 'wings.png'), encodePngBytes(hazeLayer('wings', RESOLUTION, 2780).pixels));
+    writeFileSync(join(dir, 'hazed', 'layers.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+    const warned = runCli(['layers', join(dir, 'hazed')]);
+    const quiet = runCli(['layers', join(dir, 'full')]);
+    const warnLines = warned.out.split('\n').filter((l) => l.startsWith('  WARN  '));
+    const wingsRow = warned.out.split('\n').find((l) => /^ {2}0 +wings /.test(l)) ?? '';
+    say(
+      'PL06_LAYERS_PRINTS_THE_FIGURES_AND_WARNS_WITHOUT_REFUSING',
+      warned.status === 0 &&
+        warnLines.length === 2 &&
+        warnLines[0].startsWith('  WARN  PLAN_LAYER_TRANSLUCENT: layer "wings" — 80.0% translucent, 100.0% background-coloured, 2.000x the rest of the figure; ') &&
+        warnLines[1].startsWith('  WARN  PLAN_LAYER_BACKGROUND: layer "wings" — ') &&
+        warned.out.includes('  2 WARN line(s)') &&
+        /80\.0%\s+100\.0%\s+2\.000x$/.test(wingsRow) &&
+        quiet.status === 0 &&
+        quiet.out.includes('  0 WARN line(s)'),
+      `hazed run -> exit ${warned.status}, ${warnLines.length} WARN line(s), first "${warnLines[0]?.trim() ?? ''}"; wings row "${wingsRow.trim()}"; the fixture's run -> exit ${quiet.status}, ${quiet.out.includes('  0 WARN line(s)') ? '0 WARN lines' : 'WARN lines'}`,
+      'the reader says what the plan will leave out and why, in the same words as the note, and exits 0: a WARN is a finding, and the plan step is where it acts',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return bad();
+}
+
 function runSkeletonSuite(): number {
   section('skeleton: the OpenPose body-18 control image');
   const { say, bad } = counter();
@@ -3867,6 +4066,46 @@ function runAssembleExamplesSuite(): number | null {
       detail = `refused or crashed: ${(err as Error).message.split('\n')[0]}`;
     }
     say(`AE01_EXAMPLE_ASSEMBLES_GREEN_AND_DETERMINISTIC[${name}]`, ok, detail, 'a public painting and its real See-through runs: the question the generated rectangles cannot answer is whether real layers go through green');
+
+    // Plausibility on real layers: no layer crosses a rule, and the issue's haze
+    // planted in place of the full run's (empty) wings layer is left out with the
+    // rest of the proposal unmoved, while a copy of the real topwear is proposed.
+    let pDetail: string;
+    let pOk = false;
+    try {
+      const painting = readPng(join(ex, 'inputs', 'painting.png'));
+      const full = readLayers(join(ex, 'inputs', 'layers', 'full'));
+      const head = readLayers(join(ex, 'inputs', 'layers', 'head'));
+      const g = { sourceW: painting.width, sourceH: painting.height, ...proposeFields(loadEarlyConfig(join(ex, 'config.json'), 'layers')) };
+      const crossed = [...layerFigures(full).map((f) => ['full', f] as const), ...layerFigures(head).map((f) => ['head', f] as const)].filter(([, f]) => implausibleRules(f).length > 0);
+      const clean = proposePlan(full, head, g);
+      const rest = layerFigures(full).find((f) => f.name === 'wings');
+      const side = full.canvas.w;
+      const hazed = rest === undefined ? null : proposePlan(withLayer(full, hazeLayer('wings', side, 2 * rest.restPx)), head, g);
+      const topwear = full.layers.find((l) => l.name === 'topwear');
+      const copied = topwear === undefined ? null : proposePlan(withLayer(full, { ...topwear, name: 'wings', tag: readTag('wings') as TagReading }), head, g);
+      const note = hazed?.notes.at(-1) ?? '';
+      pOk =
+        crossed.length === 0 &&
+        !clean.notes.some((n) => n.includes('PLAN_LAYER_')) &&
+        hazed !== null &&
+        JSON.stringify(hazed.plan) === JSON.stringify(clean.plan) &&
+        JSON.stringify(hazed.extend_below_crop) === JSON.stringify(clean.extend_below_crop) &&
+        hazed.notes.slice(0, -1).join('|') === clean.notes.join('|') &&
+        note.startsWith('wings: full run layer 80.0% translucent, 100.0% background-coloured, 2.000x the rest of the figure -> not proposed by PLAN_LAYER_TRANSLUCENT') &&
+        copied !== null &&
+        copied.plan.some((p) => p[2] === 'wings') &&
+        !copied.notes.some((n) => n.includes('PLAN_LAYER_'));
+      pDetail = `${full.layers.length + head.layers.length} layers, ${crossed.length} crossing a rule${crossed.length > 0 ? ` (${crossed.map(([run, f]) => `${run}:${f.name} ${implausibleRules(f).join('+')}`).join(', ')})` : ''}; haze over ${rest === undefined ? '?' : 2 * rest.restPx} px -> "${note}"; a topwear copy as wings -> ${copied?.plan.some((p) => p[2] === 'wings') ? 'proposed' : 'NOT proposed'}`;
+    } catch (err) {
+      pDetail = `refused or crashed: ${(err as Error).message.split('\n')[0]}`;
+    }
+    say(
+      `AE02_EXAMPLE_LAYERS_PASS_EVERY_PLAUSIBILITY_RULE_AND_A_PLANTED_HAZE_DOES_NOT[${name}]`,
+      pOk,
+      pDetail,
+      'the bars were set off these layers with margin, so a real layer crossing one means the bar is wrong; the planted haze is the issue\'s layer on a real run, whose other layers are the figure it is measured against',
+    );
   }
   return bad();
 }
@@ -4887,6 +5126,7 @@ function main(): void {
   tally.of('check', runCheckSuite);
   tally.of('loop', runLoopSuite);
   tally.of('assemble', runAssembleSuite);
+  tally.of('plausibility', runPlausibilitySuite);
   tally.of('assemble-examples', runAssembleExamplesSuite);
   tally.of('skeleton', runSkeletonSuite);
   tally.of('inputs', runInputsSuite);
@@ -4925,7 +5165,7 @@ function main(): void {
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
