@@ -31,8 +31,10 @@ bun run lint         # one rule: @typescript-eslint/no-explicit-any, as an error
 bun run selftest     # every gate's negative controls, on fixtures it generates
 ```
 
-`bun run selftest` needs no arguments and no assets. Without `--corpus` the
-corpus suite reports a HOLE rather than a result, and the summary says so.
+`bun run selftest` needs no arguments and no assets. Without `--corpus`, and
+without the public examples' inputs fetched (`bun run fetch-examples`, which
+CI runs first), the corpus suite reports a HOLE rather than a result, and the
+summary says so.
 
 A fourth needs a network, because it installs packages:
 
@@ -56,7 +58,8 @@ green cases, so a run that passes has watched the check fail three times.
   OpenCV / SciPy / PIL call whose semantics it matches and what it was measured
   against; a deviation goes in its doc comment.
 - **Nothing from the private corpus.** No image, layer, manifest, config or
-  character name from it — CLAUDE.md, *Where the private oracle lives*.
+  character name from it — CLAUDE.md, *Where the private oracle lives*. The
+  public examples under `examples/` are not it, and the same section says why.
 - **English only**, in every tracked file.
 - **Determinism is a contract.** Fixed key order, stable sorts, no clock, no
   randomness in `src/` outside `src/comfy/`.

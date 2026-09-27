@@ -12,6 +12,12 @@
  *   bun selftest.ts --corpus <dir>    plus an extra suite that reads real
  *   SPINE_PARTS_CORPUS=<dir> bun selftest.ts   See-through output under <dir>
  *
+ * The same extra suite also reads the public examples' fetched inputs,
+ * `examples/<key>/inputs` (`bun run fetch-examples`), whenever any are on
+ * disk, and compares what the readers see there against each example's
+ * tracked `expected/parts.json` and `config.json`. With neither a corpus nor
+ * fetched inputs it is a SKIP and a HOLE.
+ *
  * ## Self-contained
  *
  * No arguments, no art, no network, no private repository: every input is
@@ -41,7 +47,7 @@ import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import ts from 'typescript';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
-import { parseConfig } from './src/config.ts';
+import { loadConfig, parseConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
 import { PartsError } from './src/errors.ts';
 import { readPsdLayers, readWrapperLayers } from './src/layers.ts';
@@ -1216,14 +1222,150 @@ function findFiles(dir: string, name: string, depth: number, out: string[] = [])
 /** How deep under the corpus root a `layers.json` or `parts.json` is looked for. */
 const CORPUS_DEPTH = 6;
 
+/** The public examples: `examples/<key>/` holding a `config.json`, with the heavy inputs fetched into `inputs/`. */
+const EXAMPLES_DIR = join(ROOT, 'examples');
+const EXAMPLE_RUNS = ['full', 'head'] as const;
+const EXAMPLE_INPUT_FILES = ['painting.png', 'st_input_full.png', 'st_input_head.png'] as const;
+
+interface ExampleKeys {
+  /** Every key with a config.json. */
+  all: string[];
+  /** Those whose inputs/ exists. */
+  fetched: string[];
+}
+
+function exampleKeys(): ExampleKeys {
+  if (!existsSync(EXAMPLES_DIR)) return { all: [], fetched: [] };
+  const all = readdirSync(EXAMPLES_DIR)
+    .sort()
+    .filter((k) => existsSync(join(EXAMPLES_DIR, k, 'config.json')));
+  return { all, fetched: all.filter((k) => existsSync(join(EXAMPLES_DIR, k, 'inputs'))) };
+}
+
+/**
+ * Where what the readers saw disagrees with what the reference's parts.json
+ * records. `seen` is every `<run>:<layer name>` the wrapper reader returned for
+ * the example's two runs. The reference assembler writes a `ghost_px` entry for
+ * every layer it read, so its keys are the layer set it saw, and every part's
+ * `from` must be one of them. Empty means the two agree.
+ */
+function layerSetMismatch(seen: ReadonlySet<string>, expected: PartsFile): string[] {
+  const out: string[] = [];
+  const recorded = new Set(Object.keys(expected.ghost_px));
+  const onlySeen = [...seen].filter((k) => !recorded.has(k)).sort();
+  const onlyRecorded = [...recorded].filter((k) => !seen.has(k)).sort();
+  if (onlySeen.length > 0) out.push(`read here but absent from ghost_px: ${onlySeen.join(', ')}`);
+  if (onlyRecorded.length > 0) out.push(`in ghost_px but not read here: ${onlyRecorded.join(', ')}`);
+  const unsourced = expected.parts.filter((p) => !seen.has(p.from)).map((p) => `${p.name} <- ${p.from}`);
+  if (unsourced.length > 0) out.push(`parts whose from is no layer read here: ${unsourced.join(', ')}`);
+  return out;
+}
+
+/** Where a config's plan disagrees with the expected parts list: same names, same `<run>:<tag>`, same order. */
+function planMismatch(plan: ReadonlyArray<readonly [string, string, string]>, expected: PartsFile): string[] {
+  const want = plan.map(([name, run, tag]) => `${name}=${run}:${tag}`);
+  const got = expected.parts.map((p) => `${p.name}=${p.from}`);
+  if (want.join('|') === got.join('|')) return [];
+  const at = want.findIndex((w, i) => w !== got[i]);
+  const i = at === -1 ? Math.min(want.length, got.length) : at;
+  return [`plan has ${want.length} part(s), parts.json ${got.length}; first difference at [${i}]: plan ${want[i] ?? 'ends'}, parts.json ${got[i] ?? 'ends'}`];
+}
+
+function runExamplesHalf(keys: ExampleKeys, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const unfetched = keys.all.filter((k) => !keys.fetched.includes(k));
+  let layerSets = 0;
+  let layerCount = 0;
+  const readFailed: string[] = [];
+  const agree: string[] = [];
+  const disagree: string[] = [];
+  const configs: string[] = [];
+  const configFailed: string[] = [];
+  for (const key of keys.fetched) {
+    const inputs = join(EXAMPLES_DIR, key, 'inputs');
+    const absentFiles = EXAMPLE_INPUT_FILES.filter((f) => !existsSync(join(inputs, f)));
+    if (absentFiles.length > 0) readFailed.push(`${key}: inputs/ lacks ${absentFiles.join(', ')}`);
+    const seen = new Set<string>();
+    let readAll = true;
+    for (const run of EXAMPLE_RUNS) {
+      try {
+        const set = readWrapperLayers(join(inputs, 'layers', run));
+        layerSets++;
+        layerCount += set.layers.length;
+        for (const l of set.layers) seen.add(`${run}:${l.name}`);
+      } catch (err) {
+        readAll = false;
+        readFailed.push(`${key}/${run}: ${(err as Error).message.split('\n')[0]}`);
+      }
+    }
+    let expected: PartsFile | null = null;
+    try {
+      expected = readParts(join(EXAMPLES_DIR, key, 'expected', 'parts.json'));
+    } catch (err) {
+      disagree.push(`${key}: expected/parts.json refused: ${(err as Error).message.split('\n')[0]}`);
+    }
+    if (expected !== null && readAll) {
+      const miss = layerSetMismatch(seen, expected);
+      if (miss.length === 0) agree.push(`${key} ${seen.size} layer(s), ${expected.parts.length} part(s)`);
+      else disagree.push(`${key}: ${miss.join('; ')}`);
+    }
+    if (expected !== null) {
+      try {
+        const config = loadConfig(join(EXAMPLES_DIR, key, 'config.json'));
+        const miss = planMismatch(config.assemble.plan, expected);
+        const extendTags = (config.assemble.extend_below_crop ?? []).map((e) => `${e.run}:${e.tag}`).filter((t) => readAll && !seen.has(t));
+        if (miss.length === 0 && extendTags.length === 0) configs.push(`${key} ${config.assemble.plan.length} part(s)`);
+        else configFailed.push(`${key}: ${[...miss, ...(extendTags.length > 0 ? [`extend_below_crop takes ${extendTags.join(', ')}, which no layer read here is`] : [])].join('; ')}`);
+      } catch (err) {
+        configFailed.push(`${key}: ${err instanceof PartsError ? err.problems.map((q) => `${q.code} ${q.object}`).join(', ') : (err as Error).message.split('\n')[0]}`);
+      }
+    }
+  }
+  say(
+    'CO03_EVERY_FETCHED_EXAMPLE_HOLDS_ITS_INPUTS_AND_THEY_READ_GREEN',
+    keys.fetched.length > 0 && unfetched.length === 0 && readFailed.length === 0 && layerSets === keys.fetched.length * EXAMPLE_RUNS.length,
+    `${keys.fetched.length} of ${keys.all.length} example(s) fetched (${keys.fetched.join(', ')}), ${layerSets} layer set(s) read, ${layerCount} layer(s)` +
+      (unfetched.length > 0 ? `; no inputs/ for ${unfetched.join(', ')} while others have one, so the fetch was partial` : '') +
+      (readFailed.length > 0 ? `; refused: ${readFailed.join(' | ')}` : ''),
+    'the examples are real See-through output with a published source, so they are the corpus a public run can read; a key without its inputs beside keys that have them is a partial fetch, not a smaller corpus',
+  );
+  const plantSeen = new Set(['full:face', 'head:face']);
+  const plantParts: PartsFile = {
+    rig_size: [4, 4],
+    scale_rig_per_source: 1,
+    parts: [{ name: 'face', from: 'head:face', x: 0, y: 0, w: 1, h: 1, opaque_px: 1, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 }],
+    ghost_px: { 'full:face': 0, 'head:face': 0 },
+  };
+  const plantAgrees = layerSetMismatch(plantSeen, plantParts).length === 0;
+  const plantDropped = layerSetMismatch(new Set(['full:face']), plantParts).length;
+  const plantExtra = layerSetMismatch(new Set([...plantSeen, 'head:nose']), plantParts).length;
+  say(
+    'CO04_THE_READERS_SEE_EXACTLY_THE_LAYER_SET_THE_EXPECTED_PARTS_JSON_RECORDS',
+    keys.fetched.length > 0 && disagree.length === 0 && agree.length === keys.fetched.length && plantAgrees && plantDropped > 0 && plantExtra > 0,
+    `${agree.length} of ${keys.fetched.length} agree${agree.length > 0 ? ` (${agree.join('; ')})` : ''}${disagree.length > 0 ? `; disagree: ${disagree.join(' | ')}` : ''}; ` +
+      `planted: a matching pair agrees (${plantAgrees}), one dropped layer is named (${plantDropped} problem(s)), one extra layer is named (${plantExtra})`,
+    "the reference assembler records a ghost_px entry for every layer it read, and a part's from names the layer it came from; a reader that dropped, renamed or invented a layer would disagree with both",
+  );
+  const plantPlan = planMismatch([['face', 'head', 'nose']], plantParts).length;
+  say(
+    'CO05_EVERY_FETCHED_EXAMPLE_CONFIG_LOADS_AND_ITS_PLAN_IS_THE_EXPECTED_PART_LIST',
+    keys.fetched.length > 0 && configFailed.length === 0 && configs.length === keys.fetched.length && plantPlan > 0 && planMismatch([['face', 'head', 'face']], plantParts).length === 0,
+    `${configs.length} of ${keys.fetched.length} config(s) load and match${configs.length > 0 ? ` (${configs.join('; ')})` : ''}${configFailed.length > 0 ? `; refused: ${configFailed.join(' | ')}` : ''}; a planted plan taking the wrong tag is named (${plantPlan} problem(s))`,
+    "each example's config is the reference's, converted to this schema; its plan is what made expected/parts.json, so a conversion that lost or reordered a part shows here",
+  );
+}
+
 function runCorpusSuite(dir: string | null): number | null {
   section('corpus: real See-through output (extra, read only)');
-  if (dir === null) {
-    console.log('  SKIP  no --corpus <dir> and no SPINE_PARTS_CORPUS, so no real layer set was read');
+  const keys = exampleKeys();
+  if (dir === null && keys.fetched.length === 0) {
+    const why = keys.all.length > 0 ? `the example(s) ${keys.all.join(', ')} have no inputs/ (run \`bun run fetch-examples\`)` : 'there is no examples/<key>/config.json';
+    console.log(`  SKIP  no --corpus <dir>, no SPINE_PARTS_CORPUS, and ${why}, so no real layer set was read`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — the readers were exercised on fixtures only.');
     return null;
   }
   const { say, bad } = counter();
+  if (keys.fetched.length > 0) runExamplesHalf(keys, say);
+  if (dir === null) return bad();
   const manifests = findFiles(dir, 'layers.json', CORPUS_DEPTH);
   const partsFiles = findFiles(dir, 'parts.json', CORPUS_DEPTH);
   let layers = 0;
@@ -1316,7 +1458,9 @@ function treeFiles(): string[] {
   return out;
 }
 
-const TEXT_FILE = /\.(ts|js|cjs|mjs|json|md|yml|yaml|lock|txt)$|(^|\/)(\.gitignore|LICENSE)$/;
+const TEXT_FILE = /\.(ts|js|cjs|mjs|json|md|yml|yaml|lock|txt|sh)$|(^|\/)(\.gitignore|LICENSE)$/;
+/** The binary files the tree may carry: fixture PNGs and PSDs, and the examples' contact sheets and reference renders. */
+const IMAGE_FILE = /\.(png|psd|jpg|webp|gif)$/;
 
 function scanText(files: ReadonlyArray<readonly [string, string]>, test: (text: string) => string | null): string[] {
   const hits: string[] = [];
@@ -1470,7 +1614,7 @@ function runTreeSuite(): number {
   const readerFaults = ignoreReaderFaults(patterns);
   const files = treeFiles();
   const text: Array<readonly [string, string]> = files.filter((f) => TEXT_FILE.test(f)).map((f) => [f, readFileSync(join(ROOT, f), 'utf8')] as const);
-  const unclassified = files.filter((f) => !TEXT_FILE.test(f) && !/\.(png|psd)$/.test(f));
+  const unclassified = files.filter((f) => !TEXT_FILE.test(f) && !IMAGE_FILE.test(f));
   say(
     'TY00_THE_TREE_WALK_READS_EVERY_FILE_A_COMMIT_WOULD_CARRY',
     text.length > 0 && readerFaults.length === 0 && unclassified.length === 0 && text.some(([f]) => f === 'selftest.ts') && !files.some((f) => f.startsWith('node_modules/')),

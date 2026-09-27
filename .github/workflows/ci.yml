@@ -29,9 +29,27 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+
+      # The public examples' heavy inputs (paintings, See-through layer sets)
+      # live in the spine-parts-examples repository and are fetched, at the
+      # commit scripts/fetch-examples.sh pins, into the gitignored
+      # examples/*/inputs — so a fresh checkout has none, and without this step
+      # the corpus suite reports a HOLE.
+      #
+      # Deliberately not cached: the script keeps any file already on disk, so
+      # a restored cache would freeze the inputs at whatever an earlier run
+      # fetched and hide a re-pin that changed them. A yardstick that is never
+      # re-measured is not a yardstick.
+      #
+      # ⚠️ The script refuses to run while PINNED_COMMIT is its placeholder, so
+      # this step is red until the examples repository has a commit to pin.
+      - name: Fetch the public example inputs
+        run: bun run fetch-examples
+
       - run: bun run typecheck
       - run: bun run lint
-      # Self-contained by contract: no corpus, no network, no private repository.
+      # Every suite but the corpus one is self-contained: no network, no
+      # private repository. The corpus suite reads the inputs fetched above.
       - run: bun run selftest
 
   # Whether the PACKAGE runs, which nothing else here asks. `prepublishOnly`

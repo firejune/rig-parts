@@ -1,0 +1,5 @@
+  ..    49 assertions: 23 measured (23 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"
+  ..    pages=22 regions=22 bones=72 slots=22 animations=1 version=4.3.13 regionAttachments=14 meshAttachments=8 physicsConstraints=0 rig=demo_painting profile=spine-html
+  ..    pack: skeleton.png 1024x2048, 22 region(s), 56.3% covered, padding 2
+  ..    49 assertions: 23 measured (23 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"
+  ..    pages=1 regions=22 bones=72 slots=22 animations=1 version=4.3.13 regionAttachments=14 meshAttachments=8 physicsConstraints=0 rig=demo_painting profile=spine-html
