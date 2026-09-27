@@ -23,7 +23,7 @@
  * | `parts/<name>.png`, `parts.json`, `recomposite_rig.png` | assemble — the loose parts, an intermediate |
  * | `rig/` (`rig.json`, `motion.json`, `mesh_report.json`, `images/`) | rig |
  * | `check/` (`build/` with the packed atlas, both gate files, `idle_frames/`, `contact.png`, `motion_heat.png`, `check.json`) | check |
- * | `idle.gif`, `idle.png` (APNG) | loop, with `--loop`, from `check/idle_frames/` |
+ * | `idle.png` (lossless APNG), `idle-indexed.png` (indexed APNG), `idle.gif` | loop, with `--loop`, from `check/idle_frames/` |
  *
  * The artifact is `check/build/skeleton.json`, `.atlas` and the packed page
  * (issue #2): the last lines of a green build are the pack line and those
@@ -42,12 +42,13 @@
  */
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { type AnimFrame, EncodeError, encodeApng } from './apng.ts';
+import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, type SeamRule, stageFields } from './assemble.ts';
 import { type CheckReport, readFrameSet, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
 import { encodeGif } from './gif.ts';
+import type { PaletteError } from './palette.ts';
 import { type LayerSet, readLayers } from './layers.ts';
 import { readParts, writeParts } from './parts.ts';
 import { encodePngBytes, readPng, writePng } from './raster/png.ts';
@@ -296,14 +297,25 @@ function sameRgba(a: Uint8ClampedArray, b: Uint8ClampedArray): boolean {
   return true;
 }
 
-/** The loop file's format, from its extension; anything else is the caller's usage error. */
-export type LoopFormat = 'apng' | 'gif';
+/**
+ * The loop file's format: `apng` is the lossless APNG, the exactness record;
+ * `indexed` the colour-type-3 APNG with one shared palette, the README-sized
+ * file; `gif` the GIF89a. The CLI picks it from the extension and `--palette`.
+ */
+export type LoopFormat = 'apng' | 'indexed' | 'gif';
+
+export interface LoopResult {
+  bytes: number;
+  /** The palette error over every encoded frame; null for the lossless APNG, which has none. */
+  error: PaletteError | null;
+}
 
 /**
- * Encode a rigc frame set as a looping APNG or GIF and write it. An encoder
- * refusal is a PartsError coded `LOOP_ENCODE`, so it prints like every other.
+ * Encode a rigc frame set as a looping APNG, indexed APNG or GIF and write it.
+ * An encoder refusal is a PartsError coded `LOOP_ENCODE`, so it prints like
+ * every other.
  */
-export function loopStage(frames: string, out: string, format: LoopFormat, log: Log): { bytes: number } {
+export function loopStage(frames: string, out: string, format: LoopFormat, log: Log): LoopResult {
   const set = readFrameSet(frames);
   const images = set.frames.map((fr) => fr.image);
   log(`spine-parts loop: ${set.dir} -> ${out}`);
@@ -324,18 +336,33 @@ export function loopStage(frames: string, out: string, format: LoopFormat, log: 
       writeFileSync(out, bytes);
       log(`  APNG: ${stats.frames} frame(s) after merging identical neighbours, ${stats.overFrames} of ${Math.max(0, stats.frames - 1)} later frame(s) blended OVER with unchanged pixels cleared, lossless`);
       log(`  wrote ${out}: ${stats.bytes} bytes`);
-      return { bytes: stats.bytes };
+      return { bytes: stats.bytes, error: null };
+    }
+    if (format === 'indexed') {
+      const { bytes, stats } = encodeIndexedApng(anim, set.fps);
+      writeFileSync(out, bytes);
+      log(
+        `  indexed APNG: ${stats.frames} frame(s) after merging, ${stats.overFrames} of ${Math.max(0, stats.frames - 1)} later frame(s) blended OVER; ${stats.entries} palette entries (1 transparent, ${stats.entries - 1} cut from ${stats.distinct} distinct), ${stats.bitDepth}-bit, ${INDEXED_DEFAULTS.dither ? 'Floyd–Steinberg dithering' : 'no dithering'}, filter ${INDEXED_DEFAULTS.adaptiveFilter ? 'adaptive' : 'None'}`,
+      );
+      log(`  ${errorText(stats.all)}`);
+      log(`  wrote ${out}: ${stats.bytes} bytes`);
+      return { bytes: stats.bytes, error: stats.all };
     }
     const { bytes, stats } = encodeGif(anim, set.fps);
     writeFileSync(out, bytes);
     log(`  GIF: ${stats.frames} frame(s) after merging, ${stats.colours} palette colour(s) cut from ${stats.distinct} distinct, no dithering`);
     log(`  palette error (per channel, of 255): frame 0 max ${stats.frame0.max}, mean ${stats.frame0.mean.toFixed(3)}; all frames max ${stats.all.max}, mean ${stats.all.mean.toFixed(3)}`);
     log(`  wrote ${out}: ${stats.bytes} bytes`);
-    return { bytes: stats.bytes };
+    return { bytes: stats.bytes, error: stats.all };
   } catch (err) {
     if (err instanceof EncodeError) throw new PartsError([{ code: 'LOOP_ENCODE', object: out, detail: err.message }]);
     throw err;
   }
+}
+
+/** A palette error as the loop lines print it: R, G, B per channel over every frame, and alpha. */
+function errorText(e: PaletteError): string {
+  return `palette error (per channel, of 255, all frames): max ${e.max}, mean ${e.mean.toFixed(3)}; alpha max ${e.alphaMax}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -363,7 +390,7 @@ export interface BuildRunners {
 }
 
 /** Every path `build` writes under `--out`, relative — and so every path it clears first. */
-export const BUILD_OWNS: readonly string[] = ['parts', 'parts.json', 'recomposite_rig.png', 'rig', 'check', 'idle.gif', 'idle.png'];
+export const BUILD_OWNS: readonly string[] = ['parts', 'parts.json', 'recomposite_rig.png', 'rig', 'check', 'idle.gif', 'idle.png', 'idle-indexed.png'];
 
 export type BuildStage = 'assemble' | 'rig' | 'check' | 'loop' | 'artifact';
 
@@ -442,8 +469,12 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   if (input.loop) {
     const frames = join(out, 'check', 'idle_frames');
     try {
-      loopStage(frames, join(out, 'idle.gif'), 'gif', prefixed('loop'));
-      loopStage(frames, join(out, 'idle.png'), 'apng', prefixed('loop'));
+      const say = prefixed('loop');
+      const lossless = loopStage(frames, join(out, 'idle.png'), 'apng', say);
+      const indexed = loopStage(frames, join(out, 'idle-indexed.png'), 'indexed', say);
+      const gif = loopStage(frames, join(out, 'idle.gif'), 'gif', say);
+      const fig = (e: PaletteError | null): string => (e === null ? 'lossless' : `max ${e.max}, mean ${e.mean.toFixed(3)}`);
+      say(`loop: idle.png ${lossless.bytes} B (${fig(lossless.error)}); idle-indexed.png ${indexed.bytes} B (${fig(indexed.error)}); idle.gif ${gif.bytes} B (${fig(gif.error)}) — palette error per channel over all frames`);
     } catch (err) {
       return refused('loop', err, report);
     }

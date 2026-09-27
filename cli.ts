@@ -108,14 +108,19 @@ usage:
       Exit 0 on PASS, 1 on FAIL — every FAIL line names the bar, the value and the
       value required.
 
-  spine-parts loop --frames <dir> --out <file.png | file.gif>
+  spine-parts loop --frames <dir> --out <file.png | file.gif> [--palette]
       Encode a frame set rigc render wrote (its --out directory, or the set
       directory inside it) as a looping animation: .png writes an APNG
-      (acTL/fcTL/fdAT, lossless), .gif a GIF89a (one 255-colour median-cut
-      palette, no dithering, LZW, delays rounded so the loop's length is exact).
-      The fps is read from frames.json. When the last frame equals frame 0 it is
-      dropped, and the output says so: the loop wraps onto frame 0 itself.
-      Animated WebP is not written — it needs a VP8/VP8L encoder, out of scope.
+      (acTL/fcTL/fdAT, lossless — the exactness record), .png with --palette an
+      indexed APNG (colour type 3, one palette for every frame: 255 median-cut
+      colours plus one transparent entry, alpha graded per entry, no dithering,
+      filter None — the README-sized file), .gif a GIF89a (the same 255-colour
+      median cut, no dithering, LZW, delays rounded so the loop's length is
+      exact). The indexed APNG and the GIF print their palette error, per
+      channel over every frame. The fps is read from frames.json. When the last
+      frame equals frame 0 it is dropped, and the output says so: the loop wraps
+      onto frame 0 itself. Animated WebP is not written — it needs a VP8/VP8L
+      encoder, out of scope.
 
   spine-parts assemble --source <painting.png> --full <dir|psd> --head <dir|psd>
                        --config <config.json> --out <dir> [--seam near-white|silhouette]
@@ -173,11 +178,13 @@ usage:
       correct the proposal against its overlay, and write the result into the
       config. Into --out: parts/ + parts.json + recomposite_rig.png (assemble),
       rig/ (rig), check/ (check, with the packed build in check/build/), and with
-      --loop idle.gif and idle.png (APNG) from check/idle_frames/. The paths it
-      writes are cleared first. A green build ends with the pack line beside the
-      spineboy yardstick and the three artifact paths — skeleton .json, .atlas
-      and the packed page: the packed atlas is the result, the loose parts are
-      the intermediate it was made from. --seam defaults to ${DEFAULT_SEAM_RULE}.
+      --loop idle.png (lossless APNG), idle-indexed.png (indexed APNG) and
+      idle.gif from check/idle_frames/, then one loop: line with the three sizes
+      and the two palette errors. The paths it writes are cleared first. A
+      green build ends with the pack line beside the spineboy yardstick and the
+      three artifact paths — skeleton .json, .atlas and the packed page: the
+      packed atlas is the result, the loose parts are the intermediate it was
+      made from. --seam defaults to ${DEFAULT_SEAM_RULE}.
 
   spine-parts --version
   spine-parts --help
@@ -457,14 +464,21 @@ function cmdPropose(args: string[]): number {
 }
 
 function cmdLoop(args: string[]): number {
-  const f = flags(args, ['--frames', '--out'], 'loop');
+  const palettes = args.filter((a) => a === '--palette').length;
+  if (palettes > 1) return usage('--palette is given twice');
+  const f = flags(
+    args.filter((a) => a !== '--palette'),
+    ['--frames', '--out'],
+    'loop',
+  );
   if (typeof f === 'string') return usage(f);
   const out = f.get('--out') as string;
   const ext = extname(out).toLowerCase();
   if (ext === '.webp') return usage(`--out ${out}: animated WebP needs a VP8/VP8L encoder, which is out of scope; write .png (APNG) or .gif`);
   if (ext !== '.png' && ext !== '.gif') return usage(`--out ${out} is neither .png (APNG) nor .gif`);
+  if (palettes === 1 && ext !== '.png') return usage(`--palette selects the indexed APNG, so --out must be a .png; ${out} is a GIF, which is always one palette`);
   try {
-    loopStage(f.get('--frames') as string, out, ext === '.png' ? 'apng' : 'gif', console.log);
+    loopStage(f.get('--frames') as string, out, ext === '.gif' ? 'gif' : palettes === 1 ? 'indexed' : 'apng', console.log);
     return EXIT_OK;
   } catch (err) {
     return printRefusal(err);

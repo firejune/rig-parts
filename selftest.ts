@@ -65,7 +65,7 @@ import {
   writeAssembleFixture,
   writeRun,
 } from './fixtures/assemble_fixture.ts';
-import { type AnimFrame, chunkTypes, encodeApng } from './src/apng.ts';
+import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
 import { BUILD_OWNS } from './src/build.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, shiftRight, writeCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
@@ -2025,6 +2025,144 @@ function lcg(seed: number): () => number {
   };
 }
 
+/** Undo PNG scanline filters over `height` rows of `stride` bytes, `bpp` bytes to the left neighbour. */
+function unfilterRows(raw: Uint8Array, stride: number, height: number, bpp: number): Uint8Array {
+  const out = new Uint8Array(stride * height);
+  for (let y = 0; y < height; y++) {
+    const type = raw[y * (stride + 1)];
+    for (let i = 0; i < stride; i++) {
+      const x = raw[y * (stride + 1) + 1 + i];
+      const a = i >= bpp ? out[y * stride + i - bpp] : 0;
+      const b = y > 0 ? out[(y - 1) * stride + i] : 0;
+      const c = i >= bpp && y > 0 ? out[(y - 1) * stride + i - bpp] : 0;
+      const p = a + b - c;
+      const pr = Math.abs(p - a) <= Math.abs(p - b) && Math.abs(p - a) <= Math.abs(p - c) ? a : Math.abs(p - b) <= Math.abs(p - c) ? b : c;
+      const pred = type === 0 ? 0 : type === 1 ? a : type === 2 ? b : type === 3 ? (a + b) >>> 1 : pr;
+      out[y * stride + i] = (x + pred) & 255;
+    }
+  }
+  return out;
+}
+
+interface IndexedApngRead {
+  /** Every structural fact the controls name, as text, so a failing detail quotes it. */
+  faults: string[];
+  colourType: number;
+  bitDepth: number;
+  entries: number;
+  trns: number[] | null;
+  numFrames: number;
+  plays: number;
+  frames: DecodedFrame[];
+}
+
+/**
+ * A minimal indexed APNG reader written independently of `encodeIndexedApng`:
+ * a chunk walker (signature, CRC-free lengths, IHDR, PLTE, tRNS, acTL, the
+ * fcTL/fdAT sequence) and a decoder for colour type 3 at any bit depth,
+ * dispose NONE, blend SOURCE or OVER (OVER skipping alpha-0 entries, which is
+ * exact only when every other written entry is opaque — the reader checks that
+ * too, as a fault).
+ */
+function readIndexedApng(bytes: Uint8Array): IndexedApngRead {
+  const faults: string[] = [];
+  const sig = [137, 80, 78, 71, 13, 10, 26, 10];
+  if (!sig.every((v, i) => bytes[i] === v)) faults.push('no PNG signature');
+  let at = 8;
+  let w = 0;
+  let h = 0;
+  let colourType = -1;
+  let bitDepth = -1;
+  let palette = new Uint8Array(0);
+  let trns: number[] | null = null;
+  let numFrames = -1;
+  let plays = -1;
+  let expectSeq = 0;
+  let canvas = new Uint8ClampedArray(0);
+  let pending: { x: number; y: number; w: number; h: number; delay: number; blend: number; data: Uint8Array[] } | null = null;
+  const frames: DecodedFrame[] = [];
+  const seq = (n: number, type: string): void => {
+    if (n !== expectSeq) faults.push(`${type} sequence ${n} where ${expectSeq} is next`);
+    expectSeq = n + 1;
+  };
+  const flush = (): void => {
+    if (pending === null) return;
+    const stride = Math.ceil((pending.w * bitDepth) / 8);
+    const rows = unfilterRows(new Uint8Array(inflateSync(Buffer.concat(pending.data))), stride, pending.h, 1);
+    const perByte = 8 / bitDepth;
+    for (let y = 0; y < pending.h; y++) {
+      for (let x = 0; x < pending.w; x++) {
+        const byte = rows[y * stride + Math.floor(x / perByte)];
+        const ix = (byte >> (8 - bitDepth * ((x % perByte) + 1))) & ((1 << bitDepth) - 1);
+        if (ix * 3 >= palette.length) faults.push(`index ${ix} past a palette of ${palette.length / 3}`);
+        const alpha = trns !== null && ix < trns.length ? trns[ix] : 255;
+        if (pending.blend === 1 && alpha === 0) continue;
+        if (pending.blend === 1 && alpha !== 255) faults.push(`OVER frame writes translucent entry ${ix}`);
+        canvas.set([palette[ix * 3], palette[ix * 3 + 1], palette[ix * 3 + 2], alpha], ((pending.y + y) * w + pending.x + x) * 4);
+      }
+    }
+    frames.push({ image: { width: w, height: h, data: new Uint8ClampedArray(canvas) }, delay: pending.delay });
+    pending = null;
+  };
+  while (at + 8 <= bytes.length) {
+    const len = be32(bytes, at);
+    const type = String.fromCharCode(...bytes.subarray(at + 4, at + 8));
+    const body = bytes.subarray(at + 8, at + 8 + len);
+    if (type === 'IHDR') {
+      w = be32(body, 0);
+      h = be32(body, 4);
+      bitDepth = body[8];
+      colourType = body[9];
+      canvas = new Uint8ClampedArray(w * h * 4);
+    } else if (type === 'PLTE') {
+      palette = body.slice();
+      if (len % 3 !== 0 || len / 3 > 256 || len === 0) faults.push(`PLTE of ${len} bytes`);
+    } else if (type === 'tRNS') {
+      trns = [...body];
+      if (trns.length > palette.length / 3) faults.push(`tRNS of ${trns.length} entries for a palette of ${palette.length / 3}`);
+    } else if (type === 'acTL') {
+      numFrames = be32(body, 0);
+      plays = be32(body, 4);
+    } else if (type === 'fcTL') {
+      flush();
+      seq(be32(body, 0), 'fcTL');
+      pending = { w: be32(body, 4), h: be32(body, 8), x: be32(body, 12), y: be32(body, 16), delay: ((body[20] << 8) | body[21]) / ((body[22] << 8) | body[23]), blend: body[25], data: [] };
+    } else if (type === 'IDAT') pending?.data.push(body);
+    else if (type === 'fdAT') {
+      seq(be32(body, 0), 'fdAT');
+      pending?.data.push(body.subarray(4));
+    } else if (type === 'IEND') flush();
+    at += 12 + len;
+  }
+  if (colourType !== 3) faults.push(`IHDR colour type ${colourType}`);
+  if (trns === null) faults.push('no tRNS');
+  if (numFrames !== frames.length) faults.push(`acTL says ${numFrames} frame(s), ${frames.length} decoded`);
+  return { faults, colourType, bitDepth, entries: palette.length / 3, trns, numFrames, plays, frames };
+}
+
+/** Per-channel R, G, B error over a whole frame list, and alpha's max, the way `loop` states it. */
+function framesError(got: readonly DecodedFrame[], want: readonly Raster[]): { max: number; mean: number; alphaMax: number } {
+  let max = 0;
+  let alphaMax = 0;
+  let sum = 0;
+  let count = 0;
+  want.forEach((im, f) => {
+    const d = got[f]?.image.data;
+    for (let p = 0; p < im.width * im.height; p++) {
+      for (let c = 0; c < 4; c++) {
+        const e = Math.abs(im.data[p * 4 + c] - (d === undefined ? -999 : d[p * 4 + c]));
+        if (c === 3) alphaMax = Math.max(alphaMax, e);
+        else {
+          max = Math.max(max, e);
+          sum += e;
+          count++;
+        }
+      }
+    }
+  });
+  return { max, mean: count === 0 ? 0 : sum / count, alphaMax };
+}
+
 function runLoopSuite(): number {
   section('loop: the APNG and GIF encoders, read back');
   const { say, bad } = counter();
@@ -2077,6 +2215,34 @@ function runLoopSuite(): number {
       'a GIF is 255 colours, so it is lossy by construction; what is checkable is that the error printed is the error in the file, read back by a decoder that shares nothing with the encoder',
     );
 
+    const idxPath = join(dir, 'idle-indexed.png');
+    const idx = runCli(['loop', '--frames', join(dir, 'out', 'idle_frames'), '--out', idxPath, '--palette']);
+    const ib = existsSync(idxPath) ? new Uint8Array(readFileSync(idxPath)) : new Uint8Array(0);
+    const ir = ib.length > 0 ? readIndexedApng(ib) : null;
+    const iStated = /all frames\): max (\d+), mean ([\d.]+); alpha max (\d+)/.exec(idx.out);
+    const iErr = ir === null ? null : framesError(ir.frames, expected);
+    const iPlain = ib.length > 0 ? decodePngBytes(ib, idxPath) : null;
+    const iF0 = iPlain !== null && ir !== null && ir.frames.length > 0 && Buffer.compare(Buffer.from(iPlain.data), Buffer.from(ir.frames[0].image.data)) === 0;
+    const iTime = ir === null ? -1 : ir.frames.reduce((t, f) => t + f.delay, 0);
+    say(
+      'LP07_THE_INDEXED_APNG_OF_A_RENDERED_IDLE_DECODES_BACK_TO_THE_ERROR_IT_STATES_OVER_EVERY_FRAME',
+      idx.status === 0 &&
+        ir !== null &&
+        ir.faults.length === 0 &&
+        iStated !== null &&
+        iErr !== null &&
+        ir.frames.length === expected.length &&
+        ir.plays === 0 &&
+        iErr.max === Number(iStated[1]) &&
+        iErr.mean.toFixed(3) === iStated[2] &&
+        iErr.alphaMax === Number(iStated[3]) &&
+        iF0 &&
+        Math.abs(iTime - expected.length / set.fps) < 1e-9 &&
+        idx.out.includes('is dropped'),
+      `exit ${idx.status}; stated ${iStated === null ? 'nothing' : iStated[0]}; read ${ir === null ? 'nothing' : `colour type ${ir.colourType}, ${ir.bitDepth}-bit, ${ir.entries} entries, ${ir.frames.length} frame(s), plays ${ir.plays}, faults [${ir.faults.slice(0, 3).join('; ')}]`}; measured over every frame max ${iErr?.max}, mean ${iErr?.mean.toFixed(3)}, alpha max ${iErr?.alphaMax}; spine-rigc's decodePng frame 0 ${iF0 ? 'equals' : 'does NOT equal'} the reader's; ${iTime.toFixed(4)}s per loop`,
+      'the indexed file is the README artifact and is lossy by construction, so the one checkable claim is that the error it prints is the error in the file — over all frames, not frame 0 — read back by a reader that shares nothing with the writer',
+    );
+
     // Hand-computable: four colours, a repeated frame, and a noise frame long enough to reset the LZW table.
     const W = 40;
     const H = 30;
@@ -2123,6 +2289,83 @@ function runLoopSuite(): number {
       kept.status === 0 && keptFrames === 3 && kept.out.includes('differs from f0000.png') && !kept.out.includes('is dropped'),
       `exit ${kept.status}; ${keptFrames} frame(s) in the APNG for 3 rendered`,
       'the drop is a consequence of a measured equality, not a habit: when the last frame is not frame 0, dropping it would cut a real pose',
+    );
+
+    const openIdx = join(dir, 'open-indexed.png');
+    const once = runCli(['loop', '--frames', join(dir, 'open'), '--out', openIdx, '--palette']);
+    const first = existsSync(openIdx) ? new Uint8Array(readFileSync(openIdx)) : new Uint8Array(0);
+    const twice = runCli(['loop', '--frames', join(dir, 'open'), '--out', openIdx, '--palette']);
+    const second = existsSync(openIdx) ? new Uint8Array(readFileSync(openIdx)) : new Uint8Array(0);
+    const or = first.length > 0 ? readIndexedApng(first) : null;
+    const oPlain = first.length > 0 ? decodePngBytes(first, openIdx) : null;
+    const oErr = or === null ? null : framesError(or.frames, open);
+    const oStated = /all frames\): max (\d+), mean ([\d.]+); alpha max (\d+)/.exec(once.out);
+    const oF0 = oPlain === null ? null : channelError(oPlain, open[0]);
+    say(
+      'LP08_A_THREE_FRAME_INDEXED_APNG_WALKS_AS_TYPE_3_WITH_ONE_PALETTE_TRNS_ACTL_3_AND_IN_ORDER_SEQUENCES_AND_TWO_RUNS_ARE_ONE_FILE',
+      once.status === 0 &&
+        twice.status === 0 &&
+        or !== null &&
+        or.faults.length === 0 &&
+        or.colourType === 3 &&
+        or.entries <= 256 &&
+        or.trns !== null &&
+        or.numFrames === 3 &&
+        or.bitDepth === 4 &&
+        oErr !== null &&
+        oStated !== null &&
+        oErr.max === Number(oStated[1]) &&
+        oF0 !== null &&
+        oF0.max <= Number(oStated[1]) &&
+        oF0.max === 0 &&
+        first.length > 0 &&
+        Buffer.compare(Buffer.from(first), Buffer.from(second)) === 0,
+      `exits ${once.status}, ${twice.status}; ${or === null ? 'nothing read' : `colour type ${or.colourType}, ${or.bitDepth}-bit, ${or.entries} PLTE entries, tRNS ${or.trns === null ? 'absent' : `[${or.trns.join(',')}]`}, acTL ${or.numFrames}, faults [${or.faults.join('; ')}]`}; stated ${oStated === null ? 'nothing' : oStated[0]}; spine-rigc's decodePng frame 0 max ${oF0?.max}; every frame max ${oErr?.max}; two runs ${Buffer.compare(Buffer.from(first), Buffer.from(second)) === 0 ? 'byte-identical' : 'DIFFERENT'} (${first.length} bytes)`,
+      'four colours and the transparent entry are five, so the fewest bits that hold them are 4 and the palette has no excuse for error; the default image must be readable by the one PNG decoder in this package, which knows nothing of APNG',
+    );
+
+    const many = newRaster(30, 10);
+    for (let p = 0; p < 300; p++) many.data.set([p % 256, Math.floor(p / 256) * 97 + ((p * 7) % 50), (p * 13) % 256, 255], p * 4);
+    const manyDistinct = new Set(Array.from({ length: 300 }, (_, p) => many.data.slice(p * 4, p * 4 + 4).join(','))).size;
+    const moved = newRaster(30, 10);
+    moved.data.set(many.data);
+    moved.data.set([255, 255, 255, 255], 0);
+    const q = encodeIndexedApng(
+      [
+        { image: many, ticks: 1 },
+        { image: moved, ticks: 1 },
+      ],
+      12,
+    );
+    const qr = readIndexedApng(q.bytes);
+    const qErr = framesError(qr.frames, [many, moved]);
+    say(
+      'LP09_THREE_HUNDRED_DISTINCT_COLOURS_QUANTISE_TO_AT_MOST_256_ENTRIES_AND_THE_ERROR_REPORTED_IS_ABOVE_ZERO_AND_IS_THE_FILES',
+      manyDistinct === 300 && qr.faults.length === 0 && qr.frames.length === 2 && q.stats.overFrames === 1 && qr.entries <= 256 && q.stats.entries === qr.entries && q.stats.all.max > 0 && qErr.max === q.stats.all.max && qErr.mean.toFixed(6) === q.stats.all.mean.toFixed(6) && qr.bitDepth === 8,
+      `${manyDistinct} distinct colours -> ${qr.entries} entries (${q.stats.entries} stated), ${qr.bitDepth}-bit, ${qr.frames.length} frame(s), ${q.stats.overFrames} OVER; stated max ${q.stats.all.max}, mean ${q.stats.all.mean.toFixed(6)}; decoded max ${qErr.max}, mean ${qErr.mean.toFixed(6)}; faults [${qr.faults.join('; ')}]`,
+      'a palette of 256 entries cannot hold 300 colours, so an error of 0 here would be a figure the encoder did not measure; the frame that moves one pixel exercises the OVER path on a lossy palette',
+    );
+
+    const edge = newRaster(8, 4);
+    for (let p = 0; p < 32; p++) edge.data.set([200, 40, 40, [0, 64, 128, 255][p % 4]], p * 4);
+    const edge2 = newRaster(8, 4);
+    edge2.data.set(edge.data);
+    edge2.data.set([200, 40, 40, 32], 5 * 4);
+    const t = encodeIndexedApng(
+      [
+        { image: edge, ticks: 1 },
+        { image: edge2, ticks: 2 },
+      ],
+      12,
+    );
+    const tr = readIndexedApng(t.bytes);
+    const tErr = framesError(tr.frames, [edge, edge2]);
+    const palettesOnly = runCli(['loop', '--frames', join(dir, 'open'), '--out', join(dir, 'x.gif'), '--palette']);
+    say(
+      'LP10_GRADED_ALPHA_IS_KEPT_PER_ENTRY_A_TRANSLUCENT_CHANGE_BLENDS_SOURCE_AND_PALETTE_WITH_A_GIF_IS_REFUSED',
+      tr.faults.length === 0 && tErr.max === 0 && tErr.alphaMax === 0 && t.stats.overFrames === 0 && tr.trns !== null && tr.trns.length > 1 && palettesOnly.status === 2 && palettesOnly.out.includes('--palette selects the indexed APNG'),
+      `alpha 0/64/128/255 and 32 -> tRNS [${tr.trns?.join(',')}], decoded max ${tErr.max}, alpha max ${tErr.alphaMax}, OVER frames ${t.stats.overFrames}; faults [${tr.faults.join('; ')}]; --palette with .gif -> exit ${palettesOnly.status}`,
+      'a translucent edge that went through a binary-alpha palette would print an alpha error the rendered idle never has; OVER would mix a translucent entry with what is under it, so that frame must be SOURCE',
     );
 
     const webp = runCli(['loop', '--frames', join(dir, 'open'), '--out', join(dir, 'x.webp')]);
