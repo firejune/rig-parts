@@ -17,13 +17,14 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type AnimFrame, EncodeError, encodeApng } from './src/apng.ts';
+import { assemble, DEFAULT_SEAM_RULE, figuresLine, proposeFields, proposePlan, SEAM_RULES, type SeamRule, stageFields } from './src/assemble.ts';
 import { findRigc, readFrameSet, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { type CharacterConfig, loadConfig } from './src/config.ts';
 import { PartsError, type Problem, problemLine } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
 import { proposeHeadBox } from './src/headbox.ts';
 import { type LayerSet, readLayers } from './src/layers.ts';
-import { readParts } from './src/parts.ts';
+import { readParts, writeParts } from './src/parts.ts';
 import { checkProposal, compare, compareLines, drawLandmarks, lint, lintLine, type PartSet, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import type { Raster } from './src/raster/types.ts';
 import { encodePngBytes, readPng, writePng } from './src/raster/png.ts';
@@ -45,7 +46,6 @@ function version(): string {
  * sentence, and the selftest holds every name here to that.
  */
 const LATER: ReadonlyArray<[string, string]> = [
-  ['assemble', 'merge the See-through runs into rig-space parts/*.png + parts.json'],
   ['build', 'assemble, rig and check in one pass'],
   ['comfy', 'drive ComfyUI for the painting and the See-through runs (optional)'],
 ];
@@ -119,6 +119,24 @@ usage:
       The fps is read from frames.json. When the last frame equals frame 0 it is
       dropped, and the output says so: the loop wraps onto frame 0 itself.
       Animated WebP is not written — it needs a VP8/VP8L encoder, out of scope.
+
+  spine-parts assemble --source <painting.png> --full <dir|psd> --head <dir|psd>
+                       --config <config.json> --out <dir> [--seam near-white|silhouette]
+      Merge the full-body and head-crop See-through runs into rig-space parts:
+      <out>/rig/parts/<name>.png (each cropped to its alpha box), <out>/rig/parts.json
+      and <out>/render/recomposite_rig.png. Reads config.seethrough.head_box and
+      .resolution and config.assemble.rig_scale, .plan and .extend_below_crop.
+      Prints one line per part, the seam override counts, and
+      \`recomposite vs source\` (mean |d| and % within 8 over the mean channel;
+      error px: max channel > 40; uncovered: of those, where no part has alpha
+      above 128). Writes nothing unless every check passed. --seam defaults to
+      ${DEFAULT_SEAM_RULE}.
+
+  spine-parts assemble --propose-plan --source <painting.png> --full <dir|psd>
+                       --head <dir|psd> --config <config.json>
+      Print {plan, extend_below_crop, notes} for config.assemble, from the two
+      runs. Reads only config.seethrough.head_box, config.seethrough.resolution
+      and config.assemble.rig_scale — the rest of the config need not exist yet.
 
   spine-parts --version
   spine-parts --help
@@ -544,6 +562,108 @@ function cmdLoop(args: string[]): number {
   }
 }
 
+function readSource(path: string): Raster {
+  if (!existsSync(path)) {
+    throw new PartsError([{ code: 'ASSEMBLE_SOURCE_PRESENT', object: path, detail: 'no such file; the painting the two runs were made from is required' }]);
+  }
+  try {
+    return readPng(path);
+  } catch (err) {
+    throw new PartsError([{ code: 'ASSEMBLE_SOURCE_DECODES', object: path, detail: `${(err as Error).message}; a PNG is required` }]);
+  }
+}
+
+function readConfigJson(path: string): unknown {
+  if (!existsSync(path)) throw new PartsError([{ code: 'CONFIG_FILE_PRESENT', object: path, detail: 'no such file' }]);
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    throw new PartsError([{ code: 'CONFIG_IS_JSON', object: path, detail: `does not parse as JSON: ${(err as Error).message}` }]);
+  }
+}
+
+/** Read both runs, collecting the refusals of both before throwing. */
+function readRuns(full: string, head: string): { full: LayerSet; head: LayerSet } {
+  const problems: Problem[] = [];
+  const one = (path: string): LayerSet | null => {
+    try {
+      return readLayers(path);
+    } catch (err) {
+      if (err instanceof PartsError) {
+        problems.push(...err.problems);
+        return null;
+      }
+      throw err;
+    }
+  };
+  const f = one(full);
+  const h = one(head);
+  if (problems.length > 0) throw new PartsError(problems);
+  return { full: f as LayerSet, head: h as LayerSet };
+}
+
+function cmdAssemble(args: string[]): number {
+  const flags = new Map<string, string>();
+  let propose = false;
+  const valued = ['--source', '--full', '--head', '--config', '--out', '--seam'];
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    if (flag === '--propose-plan') {
+      propose = true;
+      continue;
+    }
+    if (!valued.includes(flag)) return usage(`assemble does not take "${flag}"`);
+    const value = args[i + 1];
+    if (value === undefined) return usage(`${flag} needs a value`);
+    if (flags.has(flag)) return usage(`${flag} is given twice`);
+    flags.set(flag, value);
+    i++;
+  }
+  for (const f of ['--source', '--full', '--head', '--config']) if (!flags.has(f)) return usage(`assemble needs ${f}`);
+  if (propose && (flags.has('--out') || flags.has('--seam'))) return usage('--propose-plan prints to the console; it takes neither --out nor --seam');
+  if (!propose && !flags.has('--out')) return usage('assemble needs --out <dir>');
+  const seam = flags.get('--seam') ?? DEFAULT_SEAM_RULE;
+  if (!(SEAM_RULES as readonly string[]).includes(seam)) return usage(`--seam ${seam}; one of ${SEAM_RULES.join(', ')} is required`);
+  const [source, full, head, config] = ['--source', '--full', '--head', '--config'].map((f) => flags.get(f) as string);
+  try {
+    const src = readSource(source);
+    const runs = readRuns(full, head);
+    if (propose) {
+      const g = proposeFields(readConfigJson(config));
+      const proposal = proposePlan(runs.full, runs.head, { sourceW: src.width, sourceH: src.height, ...g });
+      console.log(JSON.stringify(proposal, null, 2));
+      return EXIT_OK;
+    }
+    const cfg = loadConfig(config);
+    const fields = stageFields(cfg);
+    const result = assemble({ source: src, full: runs.full, head: runs.head, ...fields, seamRule: seam as SeamRule });
+    // Emit only after green: every refusal above has already thrown.
+    const out = flags.get('--out') as string;
+    const partsDir = join(out, 'rig', 'parts');
+    mkdirSync(partsDir, { recursive: true });
+    mkdirSync(join(out, 'render'), { recursive: true });
+    writeParts(join(out, 'rig', 'parts.json'), result.parts);
+    for (const { record, image } of result.images) writePng(join(partsDir, `${record.name}.png`), image);
+    writePng(join(out, 'render', 'recomposite_rig.png'), result.recomposite);
+    const [W, H] = result.parts.rig_size;
+    console.log(`spine-parts assemble: ${result.images.length} part(s) on a ${W}x${H} rig (${result.parts.scale_rig_per_source} rig px per source px), seam rule ${result.seamRule}`);
+    for (const p of result.parts.parts) {
+      console.log(
+        `  ${p.name.padEnd(11)} ${p.from.padEnd(16)} ${`${p.w}x${p.h}`.padEnd(9)} @${String(p.x).padStart(4)},${String(p.y).padStart(4)} ` +
+          `op=${String(p.opaque_px).padStart(6)} src=${String(p.source_px_taken).padStart(6)}/${String(p.projected_core_px).padStart(6)} ` +
+          `drift=${String(p.refused_drift_px).padStart(5)} merged=${p.merged_px} seam=${p.seam_override_px}`,
+      );
+    }
+    const ghosts = Object.values(result.parts.ghost_px).reduce((a, b) => a + b, 0);
+    console.log(`  ghost px removed: ${ghosts} over ${Object.keys(result.parts.ghost_px).length} layer(s)`);
+    console.log(figuresLine(result.figures));
+    console.log(`wrote ${join(out, 'rig', 'parts.json')}, ${result.images.length} PNG(s) in ${partsDir}, ${join(out, 'render', 'recomposite_rig.png')}`);
+    return EXIT_OK;
+  } catch (err) {
+    return printRefusal(err);
+  }
+}
+
 function main(argv: string[]): number {
   const [command, ...rest] = argv;
   if (command === undefined || command === '--help' || command === '-h' || command === 'help') {
@@ -560,6 +680,7 @@ function main(argv: string[]): number {
   if (command === 'propose') return cmdPropose(rest);
   if (command === 'check') return cmdCheck(rest);
   if (command === 'loop') return cmdLoop(rest);
+  if (command === 'assemble') return cmdAssemble(rest);
   const later = LATER.find(([name]) => name === command);
   if (later !== undefined) {
     console.log(`  FAIL  NOT_IMPLEMENTED: \`spine-parts ${command}\` (${later[1]}) is not implemented in this version, ${version()}`);

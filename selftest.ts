@@ -47,10 +47,29 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import ts from 'typescript';
+import {
+  assembleConfig,
+  C,
+  EXPECTED_PARTS,
+  EXPECTED_PROPOSAL,
+  FRAMED_FULL,
+  FRAMED_HEAD,
+  FRAMED_PLAN,
+  flatPainting,
+  framedPainting,
+  HEAD_BOX,
+  PLAN,
+  RESOLUTION,
+  RIG_SCALE,
+  SOURCE_SIDE,
+  writeAssembleFixture,
+  writeRun,
+} from './fixtures/assemble_fixture.ts';
+import { type AnimFrame, chunkTypes, encodeApng } from './src/apng.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, shiftRight, writeCheckRig } from './fixtures/checkrig.ts';
 import { PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, writeProposeFixture } from './fixtures/propose.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
-import { type AnimFrame, chunkTypes, encodeApng } from './src/apng.ts';
+import { assemble, type AssembleInput, belowCrop, checkGeometry, cleanGhosts, DEFAULT_SEAM_RULE, figuresLine, growRim, layerToRig, proposeFields, proposePlan, stageFields } from './src/assemble.ts';
 import { findRigc, gateGreen, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { type BoneEntry, type CharacterConfig, loadConfig, parseConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
@@ -76,6 +95,7 @@ import {
   type Mask,
   morphClose,
   morphGradient,
+  newMask,
   newRaster,
   pad,
   type Raster,
@@ -1132,13 +1152,13 @@ function runCliSuite(): number {
     'the version a user reports is the one the package carries, read at run time rather than copied',
   );
 
-  const later = ['assemble', 'build', 'comfy'];
+  const later = ['build', 'comfy'];
   const help = runCli(['--help']);
   const stubs = later.map((c) => ({ c, r: runCli([c]) }));
   const honest = stubs.filter(({ r }) => r.status === 2 && r.out.includes('NOT_IMPLEMENTED') && r.out.includes('not implemented in this version'));
   say(
     'CL02_EVERY_LATER_COMMAND_IS_LISTED_AND_EXITS_TWO_SAYING_SO',
-    help.status === 0 && [...later, 'layers', 'sheet', 'rig', 'propose', 'check', 'loop'].every((c) => help.out.includes(c)) && honest.length === later.length,
+    help.status === 0 && [...later, 'layers', 'sheet', 'rig', 'propose', 'check', 'loop', 'assemble'].every((c) => help.out.includes(c)) && honest.length === later.length,
     `${honest.length} of ${later.length} stubs exit 2 with NOT_IMPLEMENTED (${stubs.map(({ c, r }) => `${c}=${r.status}`).join(', ')}); --help names all of them`,
     'the surface is visible before it exists, and the help does not promise a command that would do nothing',
   );
@@ -2249,6 +2269,259 @@ function runExamplesSuite(): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// the assemble stage
+// ---------------------------------------------------------------------------
+
+function fixtureInput(dir: string, painting = 'painting.png'): Omit<AssembleInput, 'seamRule'> {
+  return {
+    source: readPng(join(dir, painting)),
+    full: readWrapperLayers(join(dir, 'full')),
+    head: readWrapperLayers(join(dir, 'head')),
+    ...stageFields(loadConfig(join(dir, 'config.json'))),
+  };
+}
+
+
+function runAssembleSuite(): number {
+  section('assemble: the stage, on generated runs');
+  const { say, bad } = counter();
+  const dir = temp('assemble');
+  try {
+    writeAssembleFixture(dir);
+    const base = fixtureInput(dir);
+    const result = assemble({ ...base, seamRule: 'near-white' });
+    const got = serializeParts(result.parts);
+    const want = serializeParts(EXPECTED_PARTS);
+    say(
+      'AS01_FIXTURE_PARTS_JSON_IS_THE_HAND_DERIVED_ONE',
+      got === want,
+      got === want ? `${result.parts.parts.length} parts, every field of every record and all ${Object.keys(EXPECTED_PARTS.ghost_px).length} ghost counts equal` : `got ${got}`,
+      'fixtures/assemble_fixture.ts derives every count in its doc comment: exact resamples, a flat painting, rectangles whose erosions and rims are counted by hand',
+    );
+
+    const covered = EXPECTED_PARTS.parts.reduce((s, p) => s + p.opaque_px, 0);
+    const [W, H] = EXPECTED_PARTS.rig_size;
+    const f = result.figures;
+    const boxes = result.images.every(({ record, image }) => image.width === record.w && image.height === record.h);
+    say(
+      'AS02_RECOMPOSITE_FIGURES_COUNT_ONLY_THE_UNCOVERED_PAGE',
+      boxes && f.errorPx === W * H - covered && f.uncoveredErrorPx === W * H - covered,
+      `error px > 40: ${f.errorPx}, uncovered: ${f.uncoveredErrorPx}; the ${W}x${H} rig less the ${covered} opaque px of five disjoint parts is ${W * H - covered}; every PNG is its record's box: ${boxes}`,
+      'on a flat painting every covered pixel ends within 1 level of it (the one refused part is recoloured by the seam override), so every error pixel is uncovered white page over the painting colour',
+    );
+
+    const ghostIn = newRaster(12, 12);
+    const put = (x: number, y: number, a: number): void => ghostIn.data.set([9, 9, 9, a], (y * 12 + x) * 4);
+    for (let i = 0; i < 40; i++) put(i % 8, Math.floor(i / 8), 255); // 40 px: kept (the floor is inclusive)
+    for (let i = 0; i < 39; i++) put(i % 12, 6 + Math.floor(i / 12), 200); // 39 px, rows 6..9: dropped
+    put(11, 0, 8); // alpha 8 is not "above 8": zeroed and not counted
+    const cleaned = cleanGhosts(ghostIn);
+    const kept = Array.from({ length: 144 }, (_, i) => cleaned.canvas.data[i * 4 + 3]).filter((a) => a > 0).length;
+    say(
+      'AS03_GHOST_CLEANUP_KEEPS_COMPONENTS_AT_THE_FLOOR_AND_ZEROES_THE_REST',
+      cleaned.ghostPx === 39 && kept === 40 && cleaned.canvas.data[(0 * 12 + 11) * 4 + 3] === 0 && cleaned.canvas.data[0] === 9,
+      `a 40-px and a 39-px component and one alpha-8 pixel -> ${kept} px kept, ghost ${cleaned.ghostPx}, the alpha-8 pixel's alpha ${cleaned.canvas.data[11 * 4 + 3]}`,
+      'the 40-px floor is inclusive, a pixel of alpha 8 or less is cleared without being counted as a ghost, colour is untouched — each is a line of assemble_parts.py clean() that a plausible rewrite gets wrong',
+    );
+
+    const framed = temp('assemble-framed');
+    try {
+      writeRun(join(framed, 'full'), FRAMED_FULL);
+      writeRun(join(framed, 'head'), FRAMED_HEAD);
+      writeFileSync(join(framed, 'painting.png'), encodePngBytes(framedPainting()));
+      writeFileSync(join(framed, 'config.json'), JSON.stringify(assembleConfig({ plan: FRAMED_PLAN, extend: [] })));
+      const input = fixtureInput(framed);
+      const faithful = assemble({ ...input, seamRule: 'near-white' });
+      const sil = assemble({ ...input, seamRule: 'silhouette' });
+      const seam = (r: typeof faithful, name: string): number => r.parts.parts.find((p) => p.name === name)?.seam_override_px ?? -1;
+      const [hole0, hole1, line0, line1] = [seam(faithful, 'topwear'), seam(sil, 'topwear'), seam(faithful, 'bottomwear'), seam(sil, 'bottomwear')];
+      say(
+        'AS04_THE_SILHOUETTE_RULE_REPAIRS_A_NEAR_WHITE_PIXEL_INSIDE_THE_FIGURE_AND_KEEPS_THE_REFERENCE_RULE',
+        hole0 === 0 && hole1 === 64 && line0 > 0 && line1 >= line0 && faithful.figures.errorPx - sil.figures.errorPx === 64 + (line1 - line0) && faithful.figures.uncoveredErrorPx === sil.figures.uncoveredErrorPx,
+        `navy 8x8 over the white hole of a painted frame: recoloured ${hole0} (near-white rule) / ${hole1} (silhouette); Z over a painted line the silhouette's opening removes: ${line0} / ${line1}; error px ${faithful.figures.errorPx} -> ${sil.figures.errorPx}`,
+        'the reference skips every near-white painting pixel, so See-through colour over a white garment is never repaired; the silhouette admits the enclosed hole, still admits every painted pixel the reference did (a replacement rule would drop the thin line), and leaves the page round the figure protected',
+      );
+    } finally {
+      rmSync(framed, { recursive: true, force: true });
+    }
+
+    // A full run at k = 2 samples run x / 2, so rig column 29 reads run 14.5.
+    // Run columns 0..15 hold red 100 and 16.. hold 200, all opaque. cv2's
+    // bicubic weights at a 0.5 fraction are (-0.09375, 0.59375, 0.59375,
+    // -0.09375): taps 13..16 = 100, 100, 100, 200 give 90.625 -> 90, and column 33
+    // (run 16.5, taps 100, 200, 200, 200) gives 209.375 -> 209. Bilinear would
+    // give 100 and 200.
+    const stepFrame = checkGeometry({ sourceW: 64, sourceH: 64, resolution: 32, headBox: [0, 0, 32, 32], rigScale: 1 });
+    const step = newRaster(32, 32);
+    for (let i = 0; i < 32 * 32; i++) step.data.set([i % 32 < 16 ? 100 : 200, 0, 0, 255], i * 4);
+    const warped = layerToRig(step, stepFrame, 'full');
+    const red = (x: number): number => warped.data[(10 * warped.width + x) * 4];
+    say(
+      'AS10_AN_ENLARGING_RUN_IS_RESAMPLED_BICUBIC',
+      red(29) === 90 && red(33) === 209 && red(20) === 100 && red(40) === 200,
+      `rig columns 20, 29, 33, 40 read red ${red(20)}, ${red(29)}, ${red(33)}, ${red(40)}`,
+      'the fixture above samples only at whole run pixels, where every filter agrees; this is the one place the filter choice (cubic for k >= 1, the reference\'s INTER_AREA, answered bilinear, below) is visible',
+    );
+
+    // belowCrop + growRim by hand on a 40x16 rig, crop line row 6 (probe row 4).
+    // The head part is opaque on columns 2..3, rows 0..5, so the seed band is
+    // columns 0..15. The extra layer has three components below the line:
+    // A (columns 4..5, rows 6..9) touches the seed rows inside the band; B
+    // (columns 30..31, rows 6..9) touches them outside it; C (columns 8..9,
+    // rows 12..15) is inside the band but never reaches rows 6..11. So sel = A,
+    // 8 px. Its 3x3 dilation is columns 3..6, rows 5..10 = 24 px, less A (8) and
+    // less (3, 5), where the head part is already opaque = 15; a front part over
+    // column 6 takes 6 more, so the rim is 9.
+    const bw = 40;
+    const bh = 16;
+    const opaqueAt = (r: Raster, cells: Array<[number, number, number, number]>): void => {
+      for (const [x0, y0, x1, y1] of cells) for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) r.data.set([...C, 255], (y * bw + x) * 4);
+    };
+    const headPart = newRaster(bw, bh);
+    opaqueAt(headPart, [[2, 0, 4, 6]]);
+    const extra = newRaster(bw, bh);
+    opaqueAt(extra, [[4, 6, 6, 10], [30, 6, 32, 10], [8, 12, 10, 16]]);
+    const sel = belowCrop(headPart, extra, 6);
+    const selPx = Array.from(sel.data).reduce((a, b) => a + b, 0);
+    const front = newMask(bw, bh);
+    for (let y = 0; y < bh; y++) front.data[y * bw + 6] = 1;
+    const painting = newRaster(bw, bh);
+    opaqueAt(painting, [[0, 0, bw, bh]]);
+    const withSel: Raster = { width: bw, height: bh, data: new Uint8ClampedArray(headPart.data) };
+    for (let p = 0; p < bw * bh; p++) if (sel.data[p] === 1) withSel.data.set(extra.data.subarray(p * 4, p * 4 + 4), p * 4);
+    const rim = growRim(withSel, sel, painting, front);
+    say(
+      'AS11_BELOW_CROP_TAKES_WHOLE_SEEDED_COMPONENTS_AND_THE_RIM_STAYS_OFF_FRONT_PARTS',
+      selPx === 8 && sel.data[6 * bw + 4] === 1 && sel.data[6 * bw + 30] === 0 && sel.data[12 * bw + 8] === 0 && rim === 9,
+      `sel ${selPx} px (component A only: B at column 30 ${sel.data[6 * bw + 30] === 1 ? 'taken' : 'left'}, C below the seed rows ${sel.data[12 * bw + 8] === 1 ? 'taken' : 'left'}); rim ${rim} px`,
+      'the flat fixture keeps every later part away from its rim and has one component, so the two rules it cannot see — the seed column band and the front exclusion — are held here',
+    );
+
+    // Derivation (fixtures/assemble_fixture.ts): full-run tags with >= 150 run px
+    // are headwear (192), bottomwear (336) and topwear (600) — back hair (132) and
+    // footwear (120 after its speck) fall short; head-run tags: back hair (704) and
+    // face (576). back hair first; headwear is a head tag the head run lacks while
+    // the full run has 192 rig px (k = 1), so it goes after back hair with a note;
+    // then bottomwear and topwear in the full run's draw order; then face. The full
+    // run's back hair ends on run row 43, and 44 * 1 = 44 > the crop line 28 + 8.
+    const prop = proposePlan(base.full, base.head, { sourceW: SOURCE_SIDE, sourceH: SOURCE_SIDE, resolution: RESOLUTION, headBox: HEAD_BOX, rigScale: RIG_SCALE });
+    say(
+      'AS05_PROPOSE_PLAN_IS_THE_HAND_DERIVED_ONE',
+      JSON.stringify(prop) === JSON.stringify(EXPECTED_PROPOSAL),
+      `plan ${prop.plan.map((p) => p[0]).join(', ')}; extend ${prop.extend_below_crop.map((e) => e.part).join(', ')}; notes: ${prop.notes.join(' | ')}`,
+      'the order rules, the 150-px floor, the head-run shortfall note and the extend rule of assemble_parts.py propose_plan, each exercised once',
+    );
+
+    const mutants: Array<[string, string, () => unknown]> = [
+      ['a plan entry naming a tag its run does not hold', 'ASSEMBLE_PLAN_TAG_IN_RUN', () => assemble({ ...base, plan: [...base.plan, ['wings', 'full', 'wings']], seamRule: 'near-white' })],
+      ['an extend entry naming a tag its run does not hold', 'ASSEMBLE_EXTEND_TAG_IN_RUN', () => assemble({ ...base, extend: [{ part: 'hair_back', run: 'full', tag: 'front hair' }], seamRule: 'near-white' })],
+      ['a part whose layer is all ghost', 'ASSEMBLE_PART_OPAQUE', () => assemble({ ...base, plan: [...base.plan, ['neck', 'full', 'neck']], seamRule: 'near-white' })],
+      ['a head box past the painting', 'ASSEMBLE_HEAD_BOX_INSIDE', () => assemble({ ...base, headBox: [96, 0, 160, 64], seamRule: 'near-white' })],
+      ['a resolution the runs were not made at', 'ASSEMBLE_RUN_CANVAS', () => assemble({ ...base, resolution: 32, seamRule: 'near-white' })],
+      ['a landscape painting', 'ASSEMBLE_SOURCE_PORTRAIT', () => assemble({ ...base, source: flatPainting(SOURCE_SIDE, SOURCE_SIDE + 32), seamRule: 'near-white' })],
+      ['a rig scale that makes no rig', 'ASSEMBLE_RIG_SIZE', () => assemble({ ...base, rigScale: 0.001, seamRule: 'near-white' })],
+      ['a config with no seethrough block', 'ASSEMBLE_FIELD_PRESENT', () => stageFields(parseConfig(assembleConfig({ seethrough: false })))],
+      ['a proposal config with no rig_scale', 'CONFIG_FIELD_TYPE', () => proposeFields({ seethrough: { resolution: 64, head_box: HEAD_BOX }, assemble: {} })],
+    ];
+    const outcomes = mutants.map(([what, code, run]) => {
+      const err = refusals(run);
+      return { what, code, ok: err !== null && err.problems.some((p) => p.code === code), got: codes(err), line: err?.problems.find((p) => p.code === code) };
+    });
+    const missed = outcomes.filter((o) => !o.ok);
+    say(
+      'AS06_EVERY_REFUSAL_PATH_FIRES_BY_NAME',
+      missed.length === 0,
+      missed.length === 0
+        ? `${outcomes.length} planted inputs, each refused under its code; e.g. ${outcomes[0].line?.code}: ${outcomes[0].line?.object} — ${outcomes[0].line?.detail}`
+        : missed.map((o) => `${o.what}: wanted ${o.code}, got ${o.got}`).join('; '),
+      'the reference raised a KeyError, printed EMPTY and went on, read row -1, or assumed 1024 on each of these; here each is a refusal naming the object, the value found and the value required',
+    );
+
+    const out1 = join(dir, 'out1');
+    const out2 = join(dir, 'out2');
+    const args = (out: string): string[] => ['assemble', '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--config', join(dir, 'config.json'), '--out', out];
+    const r1 = runCli(args(out1));
+    const r2 = runCli(args(out2));
+    const files = filesUnder(out1);
+    const same = files.length > 0 && files.join(',') === filesUnder(out2).join(',') && files.every((f) => Buffer.compare(readFileSync(join(out1, f)), readFileSync(join(out2, f))) === 0);
+    const readBack = r1.status === 0 ? serializeParts(readParts(join(out1, 'rig', 'parts.json'))) : '';
+    say(
+      'AS07_THE_CLI_WRITES_THE_SAME_BYTES_TWICE_AND_THE_RECORD_READS_BACK',
+      r1.status === 0 && r2.status === 0 && same && readBack === want && files.length === EXPECTED_PARTS.parts.length + 2 && r1.out.includes('recomposite vs source: mean |d|='),
+      `exit ${r1.status}/${r2.status}; ${files.length} file(s) (${files.join(', ')}), byte-identical across two runs: ${same}; parts.json reads back equal: ${readBack === want}`,
+      'determinism is a contract, and the parts.json the CLI writes is the one the in-memory control checked',
+    );
+
+    const refusedOut = join(dir, 'refused');
+    writeFileSync(join(dir, 'bad.json'), JSON.stringify(assembleConfig({ plan: [...PLAN, ['neck', 'full', 'neck']] })));
+    const rr = runCli(['assemble', '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--config', join(dir, 'bad.json'), '--out', refusedOut]);
+    say(
+      'AS08_A_REFUSED_ASSEMBLY_WRITES_NOTHING',
+      rr.status === 1 && /^ {2}FAIL {2}ASSEMBLE_PART_OPAQUE: part "neck"/m.test(rr.out) && !existsSync(refusedOut),
+      `exit ${rr.status}, "${rr.out.split('\n')[0].trim()}"; ${existsSync(refusedOut) ? `wrote ${filesUnder(refusedOut).join(', ')}` : 'the out directory was never created'}`,
+      'emit only after green: a wrong file on disk outlives the console that warned about it',
+    );
+
+    const pp = runCli(['assemble', '--propose-plan', '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--config', join(dir, 'config.json')]);
+    let printed: unknown = null;
+    try {
+      printed = JSON.parse(pp.out);
+    } catch {
+      printed = null;
+    }
+    const noOut = runCli(['assemble', '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--config', join(dir, 'config.json')]);
+    say(
+      'AS09_PROPOSE_PLAN_PRINTS_THE_PROPOSAL_AND_A_MISSING_FLAG_IS_A_USAGE_ERROR',
+      pp.status === 0 && JSON.stringify(printed) === JSON.stringify(EXPECTED_PROPOSAL) && noOut.status === 2 && noOut.out.includes('--out'),
+      `--propose-plan -> exit ${pp.status}, ${printed === null ? 'not JSON' : 'JSON equal to the derived proposal'}; no --out -> exit ${noOut.status}`,
+      'the proposal is read by an agent and pasted into the config, so it is printed as the JSON it is and nothing else',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return bad();
+}
+
+
+/**
+ * The assemble stage on the public examples, where they have been fetched
+ * (`exampleDirs`: `examples/<key>/config.json` tracked, `inputs/painting.png`
+ * and `inputs/layers/{full,head}` from `bun run fetch-examples`).
+ */
+function runAssembleExamplesSuite(): number | null {
+  section('assemble: the public examples (examples/<key>/inputs)');
+  const found = exampleDirs().filter((d) => existsSync(join(d, 'inputs', 'layers', 'head')));
+  if (found.length === 0) {
+    console.log('  SKIP  no fetched example (examples/<key>/config.json + inputs/painting.png + inputs/layers/{full,head}); run bun run fetch-examples');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — assemble-examples measured no real painting.');
+    return null;
+  }
+  const { say, bad } = counter();
+  for (const ex of found) {
+    const name = relative(join(ROOT, 'examples'), ex);
+    let detail: string;
+    let ok = false;
+    try {
+      const input = {
+        source: readPng(join(ex, 'inputs', 'painting.png')),
+        full: readLayers(join(ex, 'inputs', 'layers', 'full')),
+        head: readLayers(join(ex, 'inputs', 'layers', 'head')),
+        ...stageFields(loadConfig(join(ex, 'config.json'))),
+      };
+      const a = assemble({ ...input, seamRule: DEFAULT_SEAM_RULE });
+      const b = assemble({ ...input, seamRule: DEFAULT_SEAM_RULE });
+      const same = serializeParts(a.parts) === serializeParts(b.parts) && a.images.every((p, i) => Buffer.compare(Buffer.from(encodePngBytes(p.image)), Buffer.from(encodePngBytes(b.images[i].image))) === 0);
+      ok = same && a.parts.parts.every((p) => p.opaque_px > 0);
+      detail = `${a.parts.parts.length} parts, two runs identical: ${same}; ${figuresLine(a.figures)}`;
+    } catch (err) {
+      detail = `refused or crashed: ${(err as Error).message.split('\n')[0]}`;
+    }
+    say(`AE01_EXAMPLE_ASSEMBLES_GREEN_AND_DETERMINISTIC[${name}]`, ok, detail, 'a public painting and its real See-through runs: the question the generated rectangles cannot answer is whether real layers go through green');
+  }
+  return bad();
+}
+
+// ---------------------------------------------------------------------------
 // the extra suite: a corpus of real See-through output, read only
 // ---------------------------------------------------------------------------
 
@@ -2891,6 +3164,8 @@ function main(): void {
   tally.of('check', runCheckSuite);
   tally.of('loop', runLoopSuite);
   tally.of('examples', runExamplesSuite);
+  tally.of('assemble', runAssembleSuite);
+  tally.of('assemble-examples', runAssembleExamplesSuite);
   tally.of('tree', runTreeSuite);
   tally.of('corpus', () => runCorpusSuite(corpus));
   tally.of('run-tally', () => runTallySuite(tally));
@@ -2917,10 +3192,11 @@ function main(): void {
   const examplesClause = holes.includes('rig-examples') ? '' : `, + ${n('rig-examples')} rig-example`;
   const checkExamplesClause = holes.includes('examples') ? '' : `, + ${n('examples')} examples`;
   const proposeClause = holes.includes('propose-corpus') ? '' : `, + ${n('propose-corpus')} example-propose`;
+  const assembleExamplesClause = holes.includes('assemble-examples') ? '' : `, + ${n('assemble-examples')} assemble-example`;
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${examplesClause}${proposeClause}${checkExamplesClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${examplesClause}${proposeClause}${checkExamplesClause}${assembleExamplesClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
