@@ -35,6 +35,16 @@
  * both gate summaries `0 failed`; seam mean |d| <= 1.0 of 255 and at most 50
  * pixels differing by more than 40; loop max |d| == 0.
  *
+ * Beside them, five judgement lines (issue #11) measure what used to be left
+ * to an eye — `BREATH_VISIBLE`, `BLINK_NO_HOLE`, `CHAIN_LAG`,
+ * `TIP_OVER_ROOT`, `STILL_REGIONS_DARK` — from rigc renders of the idle (the
+ * whole rig, or a part alone through `--slot`), from the setup still with the
+ * blink held shut, or from `motion.json` read as sines. Each reports SKIP,
+ * with the reason, when the rig has nothing for it to read. The instruments
+ * are `src/instruments.ts`; the bars are below and in AUTHORING §7. The
+ * part-alone renders and the shut-eye still are scratch (`_isolated/`,
+ * `_still/`), removed before the stage returns.
+ *
  * Where this port deliberately differs from the reference, each written where
  * it applies below: a gate summary is read with a pattern rather than the
  * substring `"0 failed"` (which `"10 failed"` contains); a gate with no summary
@@ -49,10 +59,33 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { cropToSpineY } from './coords.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
-import { type PartsFile, readParts } from './parts.ts';
+import {
+  bandExcursion,
+  blinkFigures,
+  blinkTracks,
+  boxLabel,
+  chainFigures,
+  EYE_TAGS,
+  eyeBones,
+  FACE_FEATURE_TAGS,
+  FACE_TAGS,
+  FEET_TAGS,
+  frameBox,
+  heatField,
+  partsTagged,
+  type PixelBox,
+  regionHeat,
+  rowHalves,
+  SWING_TAGS,
+  topmostIndex,
+  TORSO_TAGS,
+  visibleMask,
+} from './instruments.ts';
+import { type PartRecord, type PartsFile, readParts } from './parts.ts';
 import { alphaComposite } from './raster/composite.ts';
 import { readPng, writePng } from './raster/png.ts';
 import { newFloatImage, newRaster, type Raster } from './raster/types.ts';
+import type { BaseTag } from './tags.ts';
 import { warpAffine } from './raster/warp.ts';
 
 // ---------------------------------------------------------------------------
@@ -75,6 +108,25 @@ export const IDLE_MAX_PX = 640;
 /** The throwaway setup-pose animation: one key at 0 and one at this time, rendered at this rate. */
 const STILL_DURATION = 0.1;
 const STILL_FPS = 10;
+
+/**
+ * The judgement lines' bars (issue #11). Each is derived from the two public
+ * examples by one stated rule, and AUTHORING §7 quotes what each example
+ * measures beside it: a floor is half the weaker example's figure, a ceiling
+ * twice the worse one's, so the weaker example clears every bar by a factor of
+ * two; a bar the model itself fixes (a still part does not move, a lag is
+ * above 0, a hole is 0 pixels) is that value, not a margin.
+ */
+export const BREATH_TORSO_MEAN_FLOOR = 3.809;
+export const BREATH_FEET_MAX_CEILING = 0;
+export const BLINK_HOLE_BAR = 0;
+/** The reported colour-patch level: the seam's own "differs by more than 40". */
+export const BLINK_PATCH_LEVEL = SEAM_PX_LEVEL;
+/** The smallest lag the reading resolves, in cycles: phases are written to three places. */
+export const CHAIN_LAG_MIN_STEP = 0.001;
+export const TIP_RATIO_FLOOR = 1.4725;
+export const STILL_FACE_MEAN_CEILING = 33.976;
+export const STILL_FEET_MEAN_CEILING = 3.244;
 
 /** Issue #2's yardstick, measured on the Spine example export `spineboy.png` (alpha > 0). */
 export const SPINEBOY_YARDSTICK = '1024x256, 40 region(s), 45.8% opaque (alpha > 0)';
@@ -227,6 +279,18 @@ export function readCheckInputs(rigDir: string, partsHome: string = rigDir): Che
           object: `${rigPath} field "skeleton"`,
           detail: `is ${stage.width}x${stage.height}; parts.json's rig_size is ${parts.rig_size[0]}x${parts.rig_size[1]}, and the seam compares the two pixel for pixel`,
         });
+      }
+    }
+    const slots = new Set((Array.isArray(rig.slots) ? rig.slots : []).filter(isRecord).map((s) => s.name));
+    if (parts !== null) {
+      for (const p of parts.parts) {
+        if (!slots.has(p.name)) {
+          problems.push({
+            code: 'CHECK_PART_SLOT_PRESENT',
+            object: `part "${p.name}"`,
+            detail: `${rigPath} has no slot named "${p.name}"; the rig stage draws every part by the slot of its own name, and the judgement lines render a part alone by that slot`,
+          });
+        }
       }
     }
     const bones = rig.bones;
@@ -459,15 +523,7 @@ export function maxRgbDiff(a: Raster, b: Raster): { max: number; x: number; y: n
 export function motionHeat(frames: readonly Raster[]): Raster {
   const f0 = frames[0];
   const n = f0.width * f0.height;
-  const d = new Uint8Array(n);
-  for (const f of frames) {
-    for (let p = 0; p < n; p++) {
-      for (let c = 0; c < 3; c++) {
-        const v = Math.abs(f.data[p * 4 + c] - f0.data[p * 4 + c]);
-        if (v > d[p]) d[p] = v;
-      }
-    }
-  }
+  const d = heatField(frames);
   const alpha = Math.fround(0.6);
   // One rounding, to float32, of the exact `in1 + alpha * (in2 - in1)`: the
   // build of Pillow 12.2.0 measured here contracts the expression to a fused
@@ -563,7 +619,14 @@ function round3(x: number): number {
 // the stage
 // ---------------------------------------------------------------------------
 
-/** check.json — the reference's fields, in its order. */
+/** One judgement line (issue #11): its status, the figures it measured, and the bars it held them to — or why it measured nothing. */
+export type JudgementLine = { status: 'PASS' | 'FAIL'; [figure: string]: unknown } | { status: 'SKIP'; reason: string };
+
+/** The judgement lines, in the order check.json and the console carry them. */
+export const JUDGEMENT_LINES = ['BREATH_VISIBLE', 'BLINK_NO_HOLE', 'CHAIN_LAG', 'TIP_OVER_ROOT', 'STILL_REGIONS_DARK'] as const;
+export type JudgementName = (typeof JUDGEMENT_LINES)[number];
+
+/** check.json — the reference's fields in its order, then the judgement lines, then PASS. */
 export interface CheckFigures {
   gate_spine_html_green: boolean;
   gate_spine_green: boolean;
@@ -571,6 +634,11 @@ export interface CheckFigures {
   seam_mean: number;
   seam_px_over_40: number;
   seam_px_over_80: number;
+  BREATH_VISIBLE: JudgementLine;
+  BLINK_NO_HOLE: JudgementLine;
+  CHAIN_LAG: JudgementLine;
+  TIP_OVER_ROOT: JudgementLine;
+  STILL_REGIONS_DARK: JudgementLine;
   PASS: boolean;
 }
 
@@ -609,7 +677,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   const buildDir = join(out, 'build');
   const idleDir = join(out, 'idle_frames');
   const stillDir = join(out, '_still');
-  for (const d of [buildDir, idleDir, stillDir]) rmSync(d, { recursive: true, force: true });
+  const isoDir = join(out, '_isolated');
+  for (const d of [buildDir, idleDir, stillDir, isoDir]) rmSync(d, { recursive: true, force: true });
   const written: string[] = [];
   const write = (name: string, data: string): void => {
     writeFileSync(join(out, name), data);
@@ -651,21 +720,53 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     written.push('contact.png');
   }
   const loop = maxRgbDiff(idle.frames[0].image, last.image);
-  writePng(join(out, 'motion_heat.png'), motionHeat(idle.frames.map((f) => f.image)));
+  const idleImages = idle.frames.map((f) => f.image);
+  writePng(join(out, 'motion_heat.png'), motionHeat(idleImages));
   written.push('motion_heat.png');
+  const idleHeat = heatField(idleImages);
+  const H = inp.parts.rig_size[1];
+  const problems: Problem[] = [];
 
-  // 4. the seam: the setup pose as a one-key throwaway animation
+  // 3b. the parts a judgement reads alone: each rendered by its own slots, on the whole rig's grid
+  const isolated = (label: string, ps: readonly PartRecord[]): FrameSet => {
+    const dir = join(isoDir, label);
+    const r = rigc(['render', '--candidate', buildDir, '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--slot', ps.map((p) => p.name).join(','), '--out', dir]);
+    if (r.status !== 0) refuseIfAny(rigcFailed(`render --animation idle --slot ${ps.map((p) => p.name).join(',')}`, r, r.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+    return readFrameSet(dir);
+  };
+  let breath: JudgementLine;
+  let tip: JudgementLine;
+  try {
+    breath = breathLine(inp, isolated, problems);
+    tip = tipLine(inp, isolated, problems);
+  } finally {
+    rmSync(isoDir, { recursive: true, force: true });
+  }
+  const still = stillLine(inp, idleHeat, idle.viewport, H, problems);
+  const chain = chainLine(inp, problems);
+
+  // 4. the seam: the setup pose as a one-key throwaway animation — and, beside it, the same pose with the eyes shut
   let seam: SeamFigures;
   let seamViewport: Viewport;
+  let blink: JudgementLine;
   try {
     mkdirSync(stillDir, { recursive: true });
     const images = typeof inp.rig.images === 'string' ? resolve(inp.rigDir, inp.rig.images) : inp.rig.images;
     writeFileSync(join(stillDir, 'rig.json'), JSON.stringify({ ...inp.rig, images }));
-    const still = {
-      ...inp.motion,
-      animations: { still: { duration: STILL_DURATION, loop: false, tracks: [{ bone: inp.rootBone, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: STILL_DURATION, v: [0] }] }] } },
+    const eyes = partsTagged(inp.parts, EYE_TAGS);
+    const slotBone = new Map((Array.isArray(inp.rig.slots) ? inp.rig.slots : []).filter(isRecord).map((sl) => [String(sl.name), String(sl.bone)]));
+    const shut = blinkTracks(inp.motion, eyeBones(inp.rig, eyes.map((p) => slotBone.get(p.name) ?? '')));
+    const animations: Record<string, unknown> = {
+      still: { duration: STILL_DURATION, loop: false, tracks: [{ bone: inp.rootBone, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: STILL_DURATION, v: [0] }] }] },
     };
-    writeFileSync(join(stillDir, 'motion.json'), JSON.stringify(still));
+    if (eyes.length > 0 && shut.length > 0) {
+      animations[BLINK_ANIMATION] = {
+        duration: STILL_DURATION,
+        loop: false,
+        tracks: shut.map((b) => ({ ...b.target, property: 'scaley', keys: [{ t: 0, v: [b.closed] }, { t: STILL_DURATION, v: [b.closed] }] })),
+      };
+    }
+    writeFileSync(join(stillDir, 'motion.json'), JSON.stringify({ ...inp.motion, animations }));
     const sb = rigc(['build', '--rig', join(stillDir, 'rig.json'), '--motion', join(stillDir, 'motion.json'), '--out', join(stillDir, 'build'), '--profile', 'spine']);
     if (sb.status !== 0) refuseIfAny(rigcFailed('build (the setup-pose still)', sb, buildGateLines(sb.out)));
     const maxSide = Math.max(inp.parts.rig_size[0], inp.parts.rig_size[1]);
@@ -675,6 +776,13 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     seamViewport = stillSet.viewport;
     const composite = flatComposite(inp.parts, inp.partsDir, stillSet.background);
     seam = seamFigures(composite, stillSet.frames[0].image, inp.stage, stillSet.viewport, stillSet.background);
+    if (eyes.length === 0) blink = skip(`no part comes from a See-through ${tagWords(EYE_TAGS)} layer, so there is no eye to look behind`);
+    else if (shut.length === 0) blink = skip(`no idle "scaley" track on the bones of ${quoteParts(eyes)} goes below its first key, so the idle has no blink`);
+    else {
+      const br = rigc(['render', '--candidate', join(stillDir, 'build'), '--animation', BLINK_ANIMATION, '--fps', String(STILL_FPS), '--max', String(maxSide), '--out', join(stillDir, 'blink')]);
+      if (br.status !== 0) refuseIfAny(rigcFailed(`render (the setup pose with the eyes shut, "${BLINK_ANIMATION}")`, br, br.out.split('\n').filter((l) => l.includes('FAIL'))));
+      blink = blinkLine(inp, eyes, shut, stillSet, readFrameSet(join(stillDir, 'blink')), idle, H, problems);
+    }
   } finally {
     rmSync(stillDir, { recursive: true, force: true });
   }
@@ -686,25 +794,33 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     seam_mean: round3(seam.mean),
     seam_px_over_40: seam.over40,
     seam_px_over_80: seam.over80,
+    BREATH_VISIBLE: breath,
+    BLINK_NO_HOLE: blink,
+    CHAIN_LAG: chain,
+    TIP_OVER_ROOT: tip,
+    STILL_REGIONS_DARK: still,
     PASS: false,
   };
-  const problems: Problem[] = [];
-  if (!htmlGreen) problems.push(...rigcFailed('build --profile spine-html --pack', build, gateHtml));
-  if (!spineGreen) problems.push(...rigcFailed('validate --profile spine', validate, gateSpine));
+  const barProblems: Problem[] = [];
+  if (!htmlGreen) barProblems.push(...rigcFailed('build --profile spine-html --pack', build, gateHtml));
+  if (!spineGreen) barProblems.push(...rigcFailed('validate --profile spine', validate, gateSpine));
   if (figures.loop_max_diff !== LOOP_MAX_BAR) {
-    problems.push({
+    barProblems.push({
       code: 'CHECK_LOOP_CLOSES',
       object: `idle frame f0000.png vs ${last.name} (t = ${idle.duration}s)`,
       detail: `max |d| ${figures.loop_max_diff}/255, first at pixel ${loop.x},${loop.y} of ${idle.viewport.pixelWidth}x${idle.viewport.pixelHeight}; ${LOOP_MAX_BAR} is required — the idle's last key must equal its first`,
     });
   }
   if (figures.seam_mean > SEAM_MEAN_BAR || figures.seam_px_over_40 > SEAM_PX_BAR) {
-    problems.push({
+    barProblems.push({
       code: 'CHECK_SEAM_WITHIN_BAR',
       object: 'the setup-pose render vs the flat composite of parts/',
       detail: `mean |d| ${figures.seam_mean}/255 and ${figures.seam_px_over_40} px over ${SEAM_PX_LEVEL} (${figures.seam_px_over_80} over ${SEAM_PX_LEVEL_HIGH}); mean <= ${SEAM_MEAN_BAR.toFixed(1)} and <= ${SEAM_PX_BAR} px over ${SEAM_PX_LEVEL} are required`,
     });
   }
+  const rank = (q: Problem): number => JUDGEMENT_LINES.findIndex((n) => q.code === `CHECK_${n}`);
+  problems.sort((a, b) => rank(a) - rank(b));
+  problems.unshift(...barProblems);
   figures.PASS = problems.length === 0;
   write('check.json', `${JSON.stringify(figures, null, 1)}\n`);
   return {
@@ -717,5 +833,220 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     seamViewport,
     problems,
     written,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// the judgement lines (issue #11)
+// ---------------------------------------------------------------------------
+
+/** The throwaway animation that holds the blink tracks at their closed value, rendered beside the setup-pose still. */
+export const BLINK_ANIMATION = 'blink_shut';
+
+function skip(reason: string): JudgementLine {
+  return { status: 'SKIP', reason };
+}
+
+function tagWords(tags: readonly BaseTag[]): string {
+  return tags.map((t) => `"${t}"`).join(' or ');
+}
+
+function quoteParts(ps: readonly PartRecord[]): string {
+  return ps.map((p) => `"${p.name}"`).join(', ');
+}
+
+type Isolate = (label: string, ps: readonly PartRecord[]) => FrameSet;
+
+/** (1) The torso moves while the feet do not: each rendered alone, heat over its own box. */
+function breathLine(inp: CheckInputs, isolated: Isolate, problems: Problem[]): JudgementLine {
+  const torso = partsTagged(inp.parts, TORSO_TAGS);
+  const feet = partsTagged(inp.parts, FEET_TAGS);
+  if (torso.length === 0) return skip(`no part comes from a See-through ${tagWords(TORSO_TAGS)} layer, so there is no torso to see breathe`);
+  if (feet.length === 0) return skip(`no part comes from a See-through ${tagWords(FEET_TAGS)} layer, so there are no feet to hold still`);
+  const H = inp.parts.rig_size[1];
+  const ts = isolated('torso', torso);
+  const fs = isolated('feet', feet);
+  const tb = frameBox(torso, H, inp.stage, ts.viewport);
+  const fb = frameBox(feet, H, inp.stage, fs.viewport);
+  if (tb === null || fb === null) return skip(`the ${tb === null ? 'torso' : 'feet'} box falls outside the idle frame`);
+  const th = regionHeat(heatField(ts.frames.map((f) => f.image)), ts.viewport.pixelWidth, tb);
+  const fh = regionHeat(heatField(fs.frames.map((f) => f.image)), fs.viewport.pixelWidth, fb);
+  const mean = round3(th.mean);
+  const ok = mean >= BREATH_TORSO_MEAN_FLOOR && fh.max <= BREATH_FEET_MAX_CEILING;
+  if (mean < BREATH_TORSO_MEAN_FLOOR) {
+    problems.push({
+      code: 'CHECK_BREATH_VISIBLE',
+      object: `torso ${quoteParts(torso)} rendered alone, frame box ${boxLabel(tb)}`,
+      detail: `heat mean ${mean}/255 over the idle; >= ${BREATH_TORSO_MEAN_FLOOR} is required — the chest's breath track moves too little, or the torso is not weighted to the bone it keys`,
+    });
+  }
+  if (fh.max > BREATH_FEET_MAX_CEILING) {
+    problems.push({
+      code: 'CHECK_BREATH_VISIBLE',
+      object: `feet ${quoteParts(feet)} rendered alone, frame box ${boxLabel(fb)}`,
+      detail: `heat max ${fh.max}/255 over the idle; <= ${BREATH_FEET_MAX_CEILING} is required — the feet move: their slot rides, or their mesh is weighted to, a bone the idle keys`,
+    });
+  }
+  return {
+    status: ok ? 'PASS' : 'FAIL',
+    torso_parts: torso.map((p) => p.name),
+    torso_heat_mean: mean,
+    torso_floor: BREATH_TORSO_MEAN_FLOOR,
+    feet_parts: feet.map((p) => p.name),
+    feet_heat_max: fh.max,
+    feet_ceiling: BREATH_FEET_MAX_CEILING,
+  };
+}
+
+/** (4) Each swinging part's tip travels further than its root: the part rendered alone, its box's lower half against its upper half. */
+function tipLine(inp: CheckInputs, isolated: Isolate, problems: Problem[]): JudgementLine {
+  const swing = partsTagged(inp.parts, SWING_TAGS);
+  if (swing.length === 0) return skip(`no part comes from a See-through ${tagWords(SWING_TAGS)} layer, so there is no hem or sleeve to swing`);
+  const H = inp.parts.rig_size[1];
+  const rows: Array<Record<string, unknown>> = [];
+  let measured = 0;
+  let failed = false;
+  for (const p of swing) {
+    const set = isolated(`swing-${p.name}`, [p]);
+    const box = frameBox([p], H, inp.stage, set.viewport);
+    const halves = box === null ? null : rowHalves(box);
+    const images = set.frames.map((f) => f.image);
+    const root = halves === null ? null : bandExcursion(images, set.background, halves.root);
+    const tipPx = halves === null ? null : bandExcursion(images, set.background, halves.tip);
+    if (root === null || tipPx === null) {
+      rows.push({ part: p.name, unmeasured: `${box === null ? 'its box falls outside the idle frame' : `the ${root === null ? 'upper' : 'lower'} half of its box holds no art in frame 0`}` });
+      continue;
+    }
+    measured++;
+    const ratio = root > 0 ? round3(tipPx / root) : null;
+    const ok = ratio === null ? tipPx > 0 : ratio >= TIP_RATIO_FLOOR;
+    rows.push({ part: p.name, root_px: round3(root), tip_px: round3(tipPx), ratio });
+    if (!ok) {
+      failed = true;
+      problems.push({
+        code: 'CHECK_TIP_OVER_ROOT',
+        object: `part "${p.name}" rendered alone, frame box ${boxLabel(box as PixelBox)}`,
+        detail: `its lower half travels ${round3(tipPx)} px and its upper half ${round3(root)} px (ratio ${ratio ?? 'undefined: nothing moves'}); a ratio >= ${TIP_RATIO_FLOOR} is required — the chain's amplitudes do not grow toward the tip, or the mesh is not weighted to the chain`,
+      });
+    }
+  }
+  if (measured === 0) return { status: 'SKIP', reason: `none of ${quoteParts(swing)} could be measured: ${rows.map((r) => `${String(r.part)}: ${String(r.unmeasured)}`).join('; ')}` };
+  return { status: failed ? 'FAIL' : 'PASS', parts: rows, ratio_floor: TIP_RATIO_FLOOR };
+}
+
+/** (7) The idle's heat map, over the face outline and the feet as they show in the flat stack. */
+function stillLine(inp: CheckInputs, heat: Uint8Array, vp: Viewport, H: number, problems: Problem[]): JudgementLine {
+  const face = partsTagged(inp.parts, FACE_TAGS);
+  const feet = partsTagged(inp.parts, FEET_TAGS);
+  if (face.length === 0 && feet.length === 0) return skip(`no part comes from a See-through ${tagWords([...FACE_TAGS, ...FEET_TAGS])} layer, so the heat map has no still region to read`);
+  const top = topmostIndex(inp.parts, (i) => readPng(join(inp.partsDir, `${inp.parts.parts[i].name}.png`)));
+  const index = new Map(inp.parts.parts.map((p, i) => [p.name, i]));
+  const region = (ps: readonly PartRecord[], exclude: readonly PartRecord[], ceiling: number, label: string): Record<string, unknown> | string => {
+    if (ps.length === 0) return `no part comes from a See-through ${label === 'face' ? tagWords(FACE_TAGS) : tagWords(FEET_TAGS)} layer`;
+    const box = frameBox(ps, H, inp.stage, vp);
+    if (box === null) return 'its box falls outside the idle frame';
+    const ex = exclude.map((p) => frameBox([p], H, inp.stage, vp)).filter((b): b is PixelBox => b !== null);
+    const mask = visibleMask(top, inp.parts, new Set(ps.map((p) => index.get(p.name) as number)), box, ex, inp.stage, vp);
+    const rh = regionHeat(heat, vp.pixelWidth, box, mask);
+    if (rh.px === 0) return 'none of its pixels is on top of the flat stack';
+    const mean = round3(rh.mean);
+    if (mean > ceiling) {
+      problems.push({
+        code: 'CHECK_STILL_REGIONS_DARK',
+        object: `the ${label} region of motion_heat.png (${quoteParts(ps)} where on top${exclude.length > 0 ? `, less the boxes of ${quoteParts(exclude)}` : ''}; ${rh.px} px in ${boxLabel(box)})`,
+        detail: `heat mean ${mean}/255 (max ${rh.max}); <= ${ceiling} is required — something that should hold still moves: a mesh weighted to a swinging bone, or a part that rides the wrong bone`,
+      });
+    }
+    return { parts: ps.map((p) => p.name), px: rh.px, heat_mean: mean, heat_max: rh.max, mean_ceiling: ceiling };
+  };
+  const f = region(face, partsTagged(inp.parts, FACE_FEATURE_TAGS), STILL_FACE_MEAN_CEILING, 'face');
+  const t = region(feet, [], STILL_FEET_MEAN_CEILING, 'feet');
+  const ok = (r: Record<string, unknown> | string): boolean => typeof r === 'string' || (r.heat_mean as number) <= (r.mean_ceiling as number);
+  if (typeof f === 'string' && typeof t === 'string') return skip(`face: ${f}; feet: ${t}`);
+  return { status: ok(f) && ok(t) ? 'PASS' : 'FAIL', face: typeof f === 'string' ? { unmeasured: f } : f, feet: typeof t === 'string' ? { unmeasured: t } : t };
+}
+
+function fmt3(x: number): string {
+  return x.toFixed(3);
+}
+
+/** (3) Down every chain the phase lags and the amplitude does not shrink, read off motion.json's rotate tracks. */
+export function chainLine(inp: Pick<CheckInputs, 'rig' | 'motion'>, problems: Problem[]): JudgementLine {
+  const cf = chainFigures(inp.rig, inp.motion);
+  const long = cf.chains.filter((c) => c.length >= 2);
+  if (cf.edges.length === 0 && long.length === 0) {
+    return skip(`no idle "rotate" track sits under another at the same period${cf.unread.length > 0 ? ` (unread, not sampled sines: ${cf.unread.join(', ')})` : ''}, so there is no chain to lag`);
+  }
+  const violations: string[] = [];
+  for (const e of cf.edges) {
+    if (round3(e.step) < CHAIN_LAG_MIN_STEP) {
+      const v = `"${e.child}" follows its keyed ancestor "${e.parent}" by ${fmt3(e.step)} cycle(s)`;
+      violations.push(v);
+      problems.push({ code: 'CHECK_CHAIN_LAG', object: `bone "${e.child}" under "${e.parent}"`, detail: `phase step ${fmt3(e.step)} cycle(s); >= ${CHAIN_LAG_MIN_STEP} is required — a link must lag the one above it (a larger "phase", or a positive "lag" on the chain track)` });
+    }
+  }
+  for (const c of long) {
+    for (let i = 1; i < c.length; i++) {
+      const a = round3(c[i - 1].reading.amp);
+      const b = round3(c[i].reading.amp);
+      if (b < a) {
+        violations.push(`"${c[i].bone}" swings ${fmt3(b)} under "${c[i - 1].bone}"'s ${fmt3(a)}`);
+        problems.push({ code: 'CHECK_CHAIN_LAG', object: `bone "${c[i].bone}" in the chain from "${c[0].bone}"`, detail: `amplitude ${fmt3(b)} below the link above's ${fmt3(a)}; non-decreasing down the chain is required — "amps" grow toward the tip` });
+      }
+    }
+  }
+  const minStep = cf.edges.length === 0 ? null : round3(Math.min(...cf.edges.map((e) => e.step)));
+  return {
+    status: violations.length === 0 ? 'PASS' : 'FAIL',
+    chains: long.map((c) => `${c.map((l) => l.bone).join(' > ')}: period ${round3(c[0].reading.period)}s, phase ${c.map((l) => fmt3(l.reading.phase)).join(' ')}, amp ${c.map((l) => fmt3(l.reading.amp)).join(' ')}`),
+    lags: cf.edges.map((e) => `${e.parent} > ${e.child} ${e.step >= 0 ? '+' : ''}${fmt3(e.step)}`),
+    min_step: minStep,
+    step_floor: CHAIN_LAG_MIN_STEP,
+    other_period: cf.otherPeriod.map((e) => `${e.parent} > ${e.child}`),
+    unread: cf.unread,
+    first_violation: violations[0] ?? null,
+  };
+}
+
+function sameViewport(a: Viewport, b: Viewport): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height && a.scale === b.scale && a.pixelWidth === b.pixelWidth && a.pixelHeight === b.pixelHeight;
+}
+
+/** (2) The setup pose with the blink tracks held at their closed value, against the setup pose, inside the eye box. */
+function blinkLine(
+  inp: CheckInputs,
+  eyes: readonly PartRecord[],
+  shut: ReturnType<typeof blinkTracks>,
+  open: FrameSet,
+  closed: FrameSet,
+  idle: FrameSet,
+  H: number,
+  problems: Problem[],
+): JudgementLine {
+  if (!sameViewport(open.viewport, closed.viewport)) return skip(`the closed-eye render's grid ${JSON.stringify(closed.viewport)} is not the setup still's ${JSON.stringify(open.viewport)}, so the two cannot be compared pixel for pixel`);
+  const box = frameBox(eyes, H, inp.stage, open.viewport);
+  if (box === null) return skip('the eye box falls outside the setup-pose frame');
+  const b = blinkFigures(open.frames[0].image, closed.frames[0].image, open.background, box, BLINK_PATCH_LEVEL);
+  const from = Math.max(...shut.map((s) => s.window[0]));
+  const to = Math.min(...shut.map((s) => s.window[1]));
+  const frames: number[] = [];
+  for (let k = 0; k < idle.sampled; k++) if (k / idle.fps >= from - 1e-9 && k / idle.fps <= to + 1e-9) frames.push(k);
+  if (b.holePx > BLINK_HOLE_BAR) {
+    problems.push({
+      code: 'CHECK_BLINK_NO_HOLE',
+      object: `the eye box ${boxLabel(box)} (${quoteParts(eyes)}) with the eyes shut`,
+      detail: `${b.holePx} px show the background where the open eye had art; ${BLINK_HOLE_BAR} is required — the layer under the eye has no art there (See-through left it empty), so a closed eye opens a hole`,
+    });
+  }
+  return {
+    status: b.holePx > BLINK_HOLE_BAR ? 'FAIL' : 'PASS',
+    eye_parts: eyes.map((p) => p.name),
+    closed: shut.map((s) => `${'bone' in s.target ? `bone ${s.target.bone}` : `group ${s.target.group}`} scaley ${s.closed} from ${s.window[0]}s to ${s.window[1]}s`),
+    idle_frames_closed: frames,
+    box_px: b.px,
+    hole_px: b.holePx,
+    hole_bar: BLINK_HOLE_BAR,
+    patch_max: b.patchMax,
+    patch_px_over_40: b.patchOver,
   };
 }

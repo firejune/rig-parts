@@ -210,7 +210,7 @@ agent skill.
 | `propose --parts --source --out [--compare <config>]` | propose bones, meshes, regions and an idle; draw the overlay |
 | `propose … --from-config <config>` | draw and LINT the config's current bones |
 | `rig --config --parts --out` | author `rig.json` + `motion.json`, written only after spine-rigc's round trip is green |
-| `check --rig --out [--parts]` | build packed, gate under both profiles, render the idle, measure seam and loop |
+| `check --rig --out [--parts]` | build packed, gate under both profiles, render the idle, measure seam, loop and the five judgement lines |
 | `loop --frames <dir> --out <file.gif \| file.png> [--palette]` | encode a rendered idle as a looping GIF, lossless APNG, or indexed APNG (`--palette`) |
 | `build --config --source --full --head --out [--seam] [--project] [--loop]` | assemble, rig and check in one process, stopping at the first refusal |
 
@@ -231,8 +231,10 @@ These are limits of the approach, stated so nobody reads more into a green run:
   that is, is below.
 - **No success rate is claimed.** Ten characters have been measured stage by stage
   against the reference implementation this package ports — the two public examples
-  here and eight private ones, one See-through seed each — and all ten check green.
-  That is an existence proof, not a rate.
+  here and eight private ones, one See-through seed each — and all ten check green
+  on the gates, the seam and the loop. The judgement lines `check` added since
+  (issue #11) have been measured on the two public examples only. That is an
+  existence proof, not a rate.
 - **`loop` writes GIF and APNG (lossless and indexed), not WebP**: an animated WebP needs a VP8/VP8L
   encoder, which this package does not carry.
 - **The proposer reads tags, not pictures.** A swinging element painted inside another

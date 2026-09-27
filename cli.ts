@@ -103,10 +103,21 @@ usage:
       contact.png, motion_heat.png and check.json. PASS needs both gates
       "0 failed", the seam (setup pose vs the flat composite of parts/) at mean
       |d| <= ${SEAM_MEAN_BAR.toFixed(1)} with <= ${SEAM_PX_BAR} px over ${SEAM_PX_LEVEL}, and the loop (idle frame 0 vs the
-      frame at t = duration) at max |d| 0. Prints the pack line beside the
-      spineboy yardstick (${SPINEBOY_YARDSTICK}), a reference and not a bar.
-      Exit 0 on PASS, 1 on FAIL — every FAIL line names the bar, the value and the
-      value required.
+      frame at t = duration) at max |d| 0. Then five judgement lines, each in
+      check.json and on the console as NAME: PASS|FAIL|SKIP with its figures and
+      bars (AUTHORING §7): BREATH_VISIBLE (the topwear moves, the footwear does
+      not, each rendered alone), BLINK_NO_HOLE (the setup pose with the blink
+      held shut shows no background inside the eyewhite box), CHAIN_LAG (every
+      rotate track lags its keyed ancestor and amplitude grows down each
+      chain, read off motion.json), TIP_OVER_ROOT (each handwear/bottomwear
+      part's lower half travels further than its upper half) and
+      STILL_REGIONS_DARK (the heat map over the face outline and the feet).
+      Regions come from parts.json's See-through tags; a line with nothing to
+      read says SKIP and why — neither a pass nor a failure — and PASS needs
+      every line that measured to be PASS. Prints the pack line
+      beside the spineboy yardstick (${SPINEBOY_YARDSTICK}), a reference and not
+      a bar. Exit 0 on PASS, 1 on FAIL — every FAIL line names the bar, the value
+      and the value required.
 
   spine-parts loop --frames <dir> --out <file.png | file.gif> [--palette]
       Encode a frame set rigc render wrote (its --out directory, or the set

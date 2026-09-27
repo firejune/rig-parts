@@ -75,10 +75,12 @@ import { fakePainting } from './fixtures/fakecomfy.ts';
 import { PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, writeProposeFixture } from './fixtures/propose.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
 import { assemble, type AssembleInput, belowCrop, checkGeometry, cleanGhosts, DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, figuresLine, growRim, layerToRig, PROJECT_RULES, proposeFields, proposePlan, stageFields, visibilityCounts } from './src/assemble.ts';
-import { findRigc, gateGreen, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
+import { chainLine, findRigc, gateGreen, JUDGEMENT_LINES, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
+import { lagStep, readSine } from './src/instruments.ts';
+import { sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, type Generation, loadConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
-import { PartsError } from './src/errors.ts';
+import { PartsError, type Problem } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
 import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paintingGraph, POSITIVE_HEAD, stripWords } from './src/graphs.ts';
 import { proposeHeadBox } from './src/headbox.ts';
@@ -1735,7 +1737,13 @@ function readJsonFile(path: string): Record<string, unknown> | null {
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>) : null;
 }
 
-const CHECK_KEYS = ['gate_spine_html_green', 'gate_spine_green', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', 'PASS'];
+const CHECK_KEYS = ['gate_spine_html_green', 'gate_spine_green', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', ...JUDGEMENT_LINES, 'PASS'];
+
+/** A judgement line's status in a check.json read back, or null. */
+function lineStatus(fig: Record<string, unknown> | null, name: string): string | null {
+  const l = fig?.[name];
+  return typeof l === 'object' && l !== null && 'status' in l ? String((l as { status: unknown }).status) : null;
+}
 
 function failLine(out: string, code: string): string | null {
   return out.split('\n').find((l) => l.startsWith(`  FAIL  ${code}`)) ?? null;
@@ -1767,9 +1775,11 @@ function runCheckSuite(): number {
         pack[0].regions === CHECK_PARTS.length &&
         ok.out.includes(SPINEBOY_YARDSTICK) &&
         listing(rig).join('|') === before.join('|') &&
-        !existsSync(join(out, '_still')),
-      `exit ${ok.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig)}; missing outputs: ${missing.join(', ') || 'none'}; pack ${pack.map((p) => p.line).join(' | ') || 'none'} for ${CHECK_PARTS.length} part(s); --rig ${listing(rig).join('|') === before.join('|') ? 'unchanged' : 'CHANGED'}`,
-      'the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from both profiles, with the reference\'s seven check.json keys in its order, the packed page as the build, and nothing written into the input',
+        !existsSync(join(out, '_still')) &&
+        !existsSync(join(out, '_isolated')) &&
+        JUDGEMENT_LINES.every((n) => lineStatus(fig, n) === 'SKIP' && ok.out.includes(`  ${n}: SKIP — `)),
+      `exit ${ok.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig).slice(0, 220)}…; judgement lines ${JUDGEMENT_LINES.map((n) => `${n} ${lineStatus(fig, n) ?? 'absent'}`).join(', ')}; missing outputs: ${missing.join(', ') || 'none'}; pack ${pack.map((p) => p.line).join(' | ') || 'none'} for ${CHECK_PARTS.length} part(s); --rig ${listing(rig).join('|') === before.join('|') ? 'unchanged' : 'CHANGED'}`,
+      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from both profiles, with the reference's seven check.json keys in its order and the five judgement lines between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line has nothing to read and must say SKIP, by name, with its reason — never PASS",
     );
 
     const again = runCli(['check', '--rig', rig, '--out', join(dir, 'out2')]);
@@ -1833,6 +1843,63 @@ function runCheckSuite(): number {
       'readers collect every problem and throw once, so one run names everything that is missing',
     );
 
+    // The judgement lines (issue #11): each one's bar made to fire on the fixture, by name.
+    const judged = (label: string, opts: Parameters<typeof writeCheckRig>[1]): { status: number; out: string; fig: Record<string, unknown> | null } => {
+      const r = join(dir, label);
+      writeCheckRig(r, opts);
+      const res = runCli(['check', '--rig', r, '--out', join(dir, `${label}-out`)]);
+      return { ...res, fig: readJsonFile(join(dir, `${label}-out`, 'check.json')) };
+    };
+    const lineOf = (o: string, name: string): string => o.split('\n').find((l) => l.startsWith(`  ${name}: `))?.trim() ?? `no ${name} line`;
+    const still = judged('breath-still', { from: ['full:topwear', 'full:footwear'], peak: 0 });
+    const stillFail = failLine(still.out, 'CHECK_BREATH_VISIBLE');
+    say(
+      'CK09_A_TORSO_THE_IDLE_DOES_NOT_MOVE_FAILS_BREATH_VISIBLE_BY_NAME',
+      still.status === 1 && lineStatus(still.fig, 'BREATH_VISIBLE') === 'FAIL' && stillFail !== null && stillFail.includes('torso') && stillFail.includes('heat mean 0/255') && failLine(still.out, 'CHECK_LOOP_CLOSES') === null,
+      `exit ${still.status}; ${lineOf(still.out, 'BREATH_VISIBLE')}; ${stillFail?.trim() ?? 'no CHECK_BREATH_VISIBLE line'}`,
+      'a zero-amplitude breath is a closed loop and an exact seam — both gates and both old bars pass it — so the torso rendered alone is the only thing that sees it does not breathe',
+    );
+    const walk = judged('breath-feet', { from: ['full:topwear', 'full:footwear'] });
+    const feetFail = walk.out.split('\n').filter((l) => l.startsWith('  FAIL  CHECK_BREATH_VISIBLE') && l.includes('feet'));
+    const darkFail = failLine(walk.out, 'CHECK_STILL_REGIONS_DARK');
+    say(
+      'CK10_FEET_ON_A_KEYED_BONE_FAIL_BREATH_VISIBLE_AND_STILL_REGIONS_DARK',
+      walk.status === 1 && feetFail.length === 1 && lineStatus(walk.fig, 'BREATH_VISIBLE') === 'FAIL' && lineStatus(walk.fig, 'STILL_REGIONS_DARK') === 'FAIL' && darkFail !== null && darkFail.includes('feet region'),
+      `exit ${walk.status}; ${feetFail[0]?.trim() ?? 'no feet CHECK_BREATH_VISIBLE line'}; ${darkFail?.trim().slice(0, 160) ?? 'no CHECK_STILL_REGIONS_DARK line'}…`,
+      'the fixture\'s footwear part rides the root the idle slides: rendered alone it moves (the feet half of the breath line, bar 0) and in the heat map it is lit (the still-region line), and neither gate can tell',
+    );
+    const slide = judged('tip-slide', { from: ['head:face', 'full:handwear-r'], peak: 8 });
+    const tipFail = failLine(slide.out, 'CHECK_TIP_OVER_ROOT');
+    const faceFail = failLine(slide.out, 'CHECK_STILL_REGIONS_DARK');
+    say(
+      'CK11_A_SLEEVE_THAT_SLIDES_WHOLE_FAILS_TIP_OVER_ROOT_AND_A_SLIDING_FACE_FAILS_STILL_REGIONS_DARK',
+      slide.status === 1 && tipFail !== null && /ratio 1\b/.test(tipFail) && faceFail !== null && faceFail.includes('face region'),
+      `exit ${slide.status}; ${tipFail?.trim() ?? 'no CHECK_TIP_OVER_ROOT line'}; ${faceFail?.trim().slice(0, 160) ?? 'no CHECK_STILL_REGIONS_DARK line'}…`,
+      'a sleeve translated whole has its tip travel exactly as far as its root — the swing a chain is for is absent — and a face that slides a sixth of its width is the unintended motion the face-outline ceiling is for',
+    );
+    const shut = judged('blink-hole', { from: ['head:face', 'head:eyewhite-r'], peak: 0, blinkSquash: 0.1 });
+    const holeFail = failLine(shut.out, 'CHECK_BLINK_NO_HOLE');
+    const holeFig = shut.fig?.BLINK_NO_HOLE as { hole_px?: number; idle_frames_closed?: number[] } | undefined;
+    say(
+      'CK12_A_SHUT_EYE_OVER_NOTHING_FAILS_BLINK_NO_HOLE_WITH_THE_COUNT_AND_THE_FRAMES',
+      shut.status === 1 && holeFail !== null && holeFig !== undefined && (holeFig.hole_px ?? 0) > 0 && holeFail.includes(`${holeFig.hole_px} px show the background`) && JSON.stringify(holeFig.idle_frames_closed) === '[6,7]',
+      `exit ${shut.status}; ${holeFail?.trim() ?? 'no CHECK_BLINK_NO_HOLE line'}; idle frames closed ${JSON.stringify(holeFig?.idle_frames_closed)}`,
+      'the eye part reaches past the face on one side, so squashing it shows the page there; the blink holds 0.5 s to 0.6 s, which at 12 fps is frames 6 and 7 (0.5 and 0.583 s)',
+    );
+
+    const slotless = join(dir, 'slotless');
+    writeCheckRig(slotless);
+    const sr = JSON.parse(readFileSync(join(slotless, 'rig.json'), 'utf8')) as { slots: Array<{ name: string }> };
+    sr.slots = sr.slots.filter((sl) => sl.name !== CHECK_PARTS[1].name);
+    writeFileSync(join(slotless, 'rig.json'), JSON.stringify(sr));
+    const noSlot = refusals(() => readCheckInputs(slotless));
+    say(
+      'CK14_A_PART_WITH_NO_SLOT_OF_ITS_NAME_IS_REFUSED_BEFORE_ANYTHING_IS_RENDERED',
+      noSlot !== null && noSlot.problems.length === 1 && noSlot.problems[0].code === 'CHECK_PART_SLOT_PRESENT' && noSlot.problems[0].object === `part "${CHECK_PARTS[1].name}"`,
+      `refused: ${codes(noSlot)}; ${noSlot?.problems[0].detail.slice(0, 120) ?? ''}`,
+      'the judgement lines render a part alone by the slot of its own name; a rig that broke that contract would make them measure another part, or nothing, in silence',
+    );
+
     const found = findRigc(ROOT, '');
     const nowhere = refusals(() => findRigc(dir, ''));
     say(
@@ -1853,6 +1920,41 @@ function runCheckSuite(): number {
       pack.length === 1 && pack[0].width === 1024 && pack[0].height === 2048 && pack[0].regions === 21 && pack[0].coveredPct === 49.2 && pack[0].padding === 2,
     `"10 failed" contains "0 failed" (${tenFailed.includes('0 failed')}) and reads ${gateGreen(0, [tenFailed]) ? 'GREEN' : 'red'}; no summary line reads ${gateGreen(0, []) ? 'GREEN' : 'red'}; a pack line parses to ${JSON.stringify(pack[0] ?? null)}`,
     "the reference judged a gate by the substring \"0 failed\", which \"10 failed\" contains, and by Python's all() over the summary lines, which is True of none; both would print green over a red build",
+  );
+
+  // CHAIN_LAG reads motion.json and the bone tree only, so its controls need no render.
+  const chainRig = { bones: [{ name: 'root' }, { name: 'a', parent: 'root' }, { name: 'b', parent: 'a' }, { name: 'c', parent: 'b' }] };
+  const chainMotion = (phases: number[], amps: number[]): Record<string, unknown> => ({
+    groups: {},
+    animations: { idle: { duration: 4, tracks: ['a', 'b', 'c'].map((b, i) => sineTrack(b, 'rotate', amps[i], 4, phases[i], 0, 4)) } },
+  });
+  const judge = (m: Record<string, unknown>): { line: Record<string, unknown>; codes: string[] } => {
+    const ps: Problem[] = [];
+    const line = chainLine({ rig: chainRig, motion: m }, ps) as Record<string, unknown>;
+    return { line, codes: ps.map((p) => p.code) };
+  };
+  const good = judge(chainMotion([0.1, 0.2, 0.3], [1, 2, 3]));
+  const back = judge(chainMotion([0.3, 0.2, 0.1], [1, 2, 3]));
+  const shrink = judge(chainMotion([0.1, 0.2, 0.3], [3, 2, 1]));
+  const mirrored = judge(chainMotion([0.1, 0.2, 0.3], [-1, -2, -3]));
+  const read = readSine(sineTrack('a', 'rotate', 0.25, 2, 0.37, 0, 4).keys, 4);
+  say(
+    'CK13_CHAIN_LAG_READS_EACH_LINKS_PHASE_AND_NAMES_A_REVERSED_OR_SHRINKING_CHAIN',
+    good.line.status === 'PASS' &&
+      good.line.min_step === 0.1 &&
+      back.line.status === 'FAIL' &&
+      String(back.line.first_violation).includes('"b" follows its keyed ancestor "a" by -0.100') &&
+      back.codes.every((c) => c === 'CHECK_CHAIN_LAG') &&
+      shrink.line.status === 'FAIL' &&
+      String(shrink.line.first_violation).includes('"b" swings 2.000 under "a"\'s 3.000') &&
+      mirrored.line.status === 'PASS' &&
+      read !== null &&
+      Math.abs(read.phase - 0.37) < 1e-3 &&
+      Math.abs(read.amp - 0.25) < 1e-3 &&
+      read.period === 2 &&
+      Math.abs(lagStep(0.9, 0.05) - 0.15) < 1e-12,
+    `in order: ${String((good.line.chains as string[] | undefined)?.[0])}; reversed: ${String(back.line.first_violation)}; shrinking: ${String(shrink.line.first_violation)}; mirrored (negative amps) ${String(mirrored.line.status)}; a 2 s sine at phase 0.37, amp 0.25 reads ${JSON.stringify(read)}; a lag across the cycle's end (0.9 -> 0.05) reads ${lagStep(0.9, 0.05).toFixed(3)}`,
+    'the model writes phase + lag*i and one amplitude per link (src/motion.ts); the reading recovers them from the keys alone, a mirrored chain (negative amps, half a cycle) is the same lag, and a chain that leads or shrinks toward its tip is named at its first link that does',
   );
   return bad();
 }
@@ -2436,10 +2538,29 @@ function runBuildSuite(): number {
   const dir = temp('build');
   try {
     // The fixture's own config has an idle with no track, which rigc refuses
-    // (a declared duration with no key at it); one sine on the anchor is the
-    // smallest idle it builds.
+    // (a declared duration with no key at it). The green build's idle is the
+    // smallest one the judgement lines (issue #11) also accept: the topwear
+    // rides a bone that breathes, the bottomwear a bone that swings from the
+    // top of its own box, and the face and the shoes stay on the still anchor.
+    // One sine on the anchor under everything was the idle here before those
+    // lines existed; it swings the shoes and slides the skirt whole, and
+    // STILL_REGIONS_DARK and TIP_OVER_ROOT say so.
     const moving = assembleConfig();
-    moving.motion = { duration: 1, tracks: [{ bone: 'anchor', prop: 'rotate', amp: 2, period: 1, phase: 0 }] };
+    const skirtTop = EXPECTED_PARTS.parts.find((p) => p.name === 'bottomwear') as { x: number; y: number; w: number };
+    const torsoTop = EXPECTED_PARTS.parts.find((p) => p.name === 'topwear') as { x: number; y: number; w: number };
+    moving.bones = [
+      { name: 'anchor', parent: 'root', at: [0, 0] },
+      { name: 'chest', parent: 'root', at: [torsoTop.x + torsoTop.w / 2, torsoTop.y] },
+      { name: 'skirt', parent: 'root', at: [skirtTop.x + skirtTop.w / 2, skirtTop.y] },
+    ];
+    moving.regions = { ...(moving.regions as Record<string, string>), topwear: 'chest', bottomwear: 'skirt' };
+    moving.motion = {
+      duration: 1,
+      tracks: [
+        { bone: 'chest', prop: 'translatey', amp: 1, period: 1, phase: 0 },
+        { bone: 'skirt', prop: 'rotate', amp: 2, period: 1, phase: 0 },
+      ],
+    };
     writeAssembleFixture(dir, moving);
     writeFileSync(join(dir, 'still.json'), `${JSON.stringify(assembleConfig(), null, 2)}\n`);
     writeFileSync(join(dir, 'wrongtag.json'), `${JSON.stringify(assembleConfig({ plan: [...PLAN, ['wings', 'head', 'wings']] }), null, 2)}\n`);
@@ -2578,11 +2699,15 @@ function jsonDiffs(expected: unknown, built: unknown, tolerance: (path: string) 
  *   reference's fields, and are held exactly like the rest.
  * - motion.json — key times `t` to 6 decimals: the reference's blink times
  *   carry float64 sums (2.3699999999999997) that this port writes rounded (2.37).
- * - check.json — `seam_mean` ±0.005, every other field exact. The seam is
- *   measured on the parts this chain assembled, which are the reference's to
- *   within one level on a few pixels (above), so the mean moves in the third
- *   place: 0.209 vs 0.207 on sample, 0.328 vs 0.326 on demo. The check oracle
- *   itself is exact (0 difference) when handed the reference's own parts.
+ * - check.json — `seam_mean` ±0.005, every other field exact, the judgement
+ *   lines included. Until issue #11 the file was the reference's, and the seam
+ *   was measured on the parts this chain assembled, which are the reference's
+ *   to within one level on a few pixels (above), so the mean moved in the third
+ *   place: reference 0.209 vs 0.207 on sample, 0.328 vs 0.326 on demo. The
+ *   reference has no judgement lines, so the file is now regenerated by this
+ *   port's `build` and carries its own seam mean; the band stays, because it is
+ *   the size of that measured parts difference. The check oracle itself is
+ *   exact (0 difference) when handed the reference's own parts.
  */
 function chainTolerance(file: string): (path: string) => Tolerance | null {
   if (file === 'parts.json') return (p) => (/^parts\[\d+\]\.seam_override_px$/.test(p) ? { abs: 1 } : null);
@@ -2668,7 +2793,16 @@ function runChainSuite(): number | null {
         `CH04_CHECK_JSON_IS_THE_EXPECTED_FIELD_BY_FIELD[${key}]`,
         check.over.length === 0,
         summarise(check),
-        'gates, loop and both seam pixel counts exact; seam_mean ±0.005, because the seam is measured on this chain\'s own parts (see chainTolerance)',
+        'gates, loop, both seam pixel counts and every judgement figure exact; seam_mean ±0.005, the measured size of the parts difference against the reference (see chainTolerance)',
+      );
+
+      const builtCheck = readJsonAt(join(out, 'check', 'check.json')) as Record<string, unknown>;
+      const statuses = JUDGEMENT_LINES.map((n) => `${n} ${lineStatus(builtCheck, n) ?? 'absent'}`);
+      say(
+        `CH08_EVERY_JUDGEMENT_LINE_MEASURES_THE_EXAMPLE_AND_PASSES[${key}]`,
+        JUDGEMENT_LINES.every((n) => lineStatus(builtCheck, n) === 'PASS') && JUDGEMENT_LINES.every((n) => r.out.includes(`[check]   ${n}: PASS — `)),
+        statuses.join(', '),
+        "issue #11's positive control: a published example has a torso, feet, eyes, chains and a skirt, so no judgement line may SKIP on it, and each bar was set so both examples clear it (AUTHORING §7 quotes the margin)",
       );
 
       const gates = ['gate_spine-html.txt', 'gate_spine.txt'].map((f) => [f, firstLineDiff(readFileSync(join(exp, f), 'utf8'), readFileSync(join(out, 'check', f), 'utf8'))] as const);
@@ -2717,8 +2851,9 @@ function runChainSuite(): number | null {
       const partsBuilt = readJsonAt(join(out, 'parts.json')) as { parts: Array<{ seam_override_px: number }> };
       partsBuilt.parts[0].seam_override_px += 2;
       const partsPlant = jsonDiffs(readJsonAt(join(exp, 'parts.json')), partsBuilt, chainTolerance('parts.json'));
-      const checkBuilt = readJsonAt(join(out, 'check', 'check.json')) as { seam_mean: number };
+      const checkBuilt = readJsonAt(join(out, 'check', 'check.json')) as { seam_mean: number; BREATH_VISIBLE: { torso_heat_mean: number } };
       checkBuilt.seam_mean += 0.01;
+      checkBuilt.BREATH_VISIBLE.torso_heat_mean += 0.001;
       const checkPlant = jsonDiffs(readJsonAt(join(exp, 'check.json')), checkBuilt, chainTolerance('check.json'));
       const gateText = readFileSync(join(out, 'check', 'gate_spine-html.txt'), 'utf8');
       const gatePlant = firstLineDiff(readFileSync(join(exp, 'gate_spine-html.txt'), 'utf8'), gateText.replace(/padding (\d+)/, (_, n: string) => `padding ${Number(n) + 1}`));
@@ -2729,11 +2864,12 @@ function runChainSuite(): number | null {
           rigPlant.over.some((l) => l.startsWith(`${weightPath}:`)) &&
           partsPlant.over.some((l) => l.startsWith('parts[0].seam_override_px:')) &&
           checkPlant.over.some((l) => l.startsWith('seam_mean:')) &&
+          checkPlant.over.some((l) => l.startsWith('BREATH_VISIBLE.torso_heat_mean:')) &&
           gatePlant !== null &&
           gatePlant.includes('padding') &&
           insideTol.over.length === 0 &&
           insideTol.within.length === 1,
-        `on ${planted.key}: a weight +0.01 -> ${rigPlant.over[0] ?? 'not named'}; seam_override_px +2 -> ${partsPlant.over.find((l) => l.startsWith('parts[0]')) ?? 'not named'}; seam_mean +0.01 -> ${checkPlant.over.find((l) => l.startsWith('seam_mean')) ?? 'not named'}; padding +1 in the pack line -> ${gatePlant ?? 'not named'}; a ±1 seam override -> forgiven (${insideTol.within.join('') || 'not reported'})`,
+        `on ${planted.key}: a weight +0.01 -> ${rigPlant.over[0] ?? 'not named'}; seam_override_px +2 -> ${partsPlant.over.find((l) => l.startsWith('parts[0]')) ?? 'not named'}; seam_mean +0.01 -> ${checkPlant.over.find((l) => l.startsWith('seam_mean')) ?? 'not named'}; a judgement figure +0.001 -> ${checkPlant.over.find((l) => l.startsWith('BREATH_VISIBLE.')) ?? 'not named'}; padding +1 in the pack line -> ${gatePlant ?? 'not named'}; a ±1 seam override -> forgiven (${insideTol.within.join('') || 'not reported'})`,
         'a comparator that forgave everything would print the same green; each tolerance is shown to stop exactly where it says it stops',
       );
     }
