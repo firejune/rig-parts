@@ -39,6 +39,7 @@
     "bin/spine-parts.cjs",
     "cli.ts",
     "src",
+    "workflows",
     "NOTICE.md"
   ],
   "publishConfig": {
