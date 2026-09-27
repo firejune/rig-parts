@@ -53,7 +53,7 @@
  */
 import type { CharacterConfig, EarlyConfig, Extend, PlanEntry, Run } from './config.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
-import { type Layer, type LayerSet, OPAQUE_ALPHA_ABOVE } from './layers.ts';
+import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
 import type { PartRecord, PartsFile } from './parts.ts';
 import {
   alphaComposite,
@@ -105,8 +105,8 @@ export const CROP_SEED_COLUMNS = 12;
 export const CROP_PROBE_ALPHA = 128;
 /** Alpha at or above this in a later plan part keeps `growRim`'s ring off the pixel. */
 export const FRONT_ALPHA = 128;
-/** A painting pixel whose min channel is above this is "near-white" (the faithful rim and seam guard). */
-export const NEAR_WHITE_MIN = 235;
+/** A painting pixel whose min channel is above this is "near-white" (the faithful rim and seam guard). Defined beside the layer reader, which applies the same test to a layer's colour (`layerFigures`). */
+export { NEAR_WHITE_MIN };
 /** The seam override acts where the flat composite differs from the painting by more than this, max channel. */
 export const SEAM_LIMIT = 60;
 /** `--propose-plan` drops a tag with fewer run-space opaque pixels than this after ghost clean-up. */
@@ -1133,14 +1133,37 @@ function fmt0(v: number): string {
  * `back hair` taken from the head run are extended below the crop from the
  * full run when the full run's layer reaches more than 8 rig pixels below the
  * crop line. A lone `handwear` layer is named `sleeves`.
+ *
+ * ⚖️ This port's, not the reference's: a layer that crosses a plausibility
+ * rule (`implausibleRules` in `src/layers.ts` — mostly translucent, a pale
+ * background-coloured haze, or out of proportion with the rest of its run's
+ * figure) is neither proposed, nor taken as the head-run fallback, nor extended
+ * below the crop, and a note names the layer, its three figures and every rule
+ * it crossed with the bar. Those notes follow the reference's. [observed] No
+ * layer of either public example crosses a rule, so their proposals are the
+ * reference's byte for byte.
  */
 export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx = PROPOSE_MIN_PX): PlanProposal {
   const frame = checkGeometry(g, { full, head });
   const runs = { full: runLayers(full, g.resolution), head: runLayers(head, g.resolution) };
   const find = (run: Run, tag: string): RunLayer | undefined => runs[run].find((l) => l.tag === tag);
+  const figures: Record<Run, LayerFigures[]> = { full: layerFigures(full), head: layerFigures(head) };
+  const dropNotes: string[] = [];
+  const noted = new Set<string>();
+  /** The plausibility rules `run:tag` crosses; the first time a consulted layer crosses any, a note says so. */
+  const implausible = (run: Run, tag: string, what: string): boolean => {
+    const f = figures[run].find((x) => x.name === tag);
+    const rules = f === undefined ? [] : implausibleRules(f);
+    if (f === undefined || rules.length === 0) return false;
+    if (!noted.has(`${run}:${tag}`)) {
+      noted.add(`${run}:${tag}`);
+      dropNotes.push(`${tag}: ${run} run layer ${figuresPhrase(f)} -> ${what} by ${rules.map((r) => `${r} (${ruleSummary(r)})`).join(', ')}`);
+    }
+    return true;
+  };
   const ok = (run: Run, tag: string): boolean => {
     const l = find(run, tag);
-    return tag !== 'nose' && l !== undefined && l.opaqueRunPx >= minPx;
+    return tag !== 'nose' && l !== undefined && l.opaqueRunPx >= minPx && !implausible(run, tag, 'not proposed');
   };
   const body = runs.full.filter((l) => !PROPOSE_HEAD_TAGS.includes(l.tag) && ok('full', l.tag)).map((l) => l.tag);
   const heads = runs.head.filter((l) => PROPOSE_HEAD_TAGS.includes(l.tag) && ok('head', l.tag)).map((l) => l.tag);
@@ -1183,6 +1206,7 @@ export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx =
   for (const t of ['front hair', 'back hair']) {
     const fl = find('full', t);
     if (fl === undefined || !plan.some((p) => p[1] === 'head' && p[2] === t)) continue;
+    if (implausible('full', t, 'not extended below the crop')) continue;
     let last = -1;
     const n = g.resolution;
     for (let y = 0; y < n; y++) {
@@ -1195,7 +1219,7 @@ export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx =
     }
     if (last >= 0 && (last + 1) * frame.fullK * frame.S > frame.headBottom + 8) extend.push({ part: PROPOSE_ALIAS[t], run: 'full', tag: t });
   }
-  return { plan, extend_below_crop: extend, notes };
+  return { plan, extend_below_crop: extend, notes: [...notes, ...dropNotes] };
 }
 
 // ---------------------------------------------------------------------------

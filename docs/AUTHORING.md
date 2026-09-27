@@ -189,7 +189,9 @@ Two steps are external: the See-through runs (by any route; the optional `comfy 
    painting is refused (`INPUTS_PAINTING_PORTRAIT`, `INPUTS_PAINTING_OPAQUE`).
 2. **See-through, full run** (external).
 3. `spine-parts layers inputs/layers/full` — read it. A refusal here is about the
-   files, not the art (§6, *layers*).
+   files, not the art (§6, *Reading the inputs*). A `WARN` line is about the art: a
+   layer See-through made that is not plausibly part of the figure, which step 6
+   leaves out (§6, *Plausibility*). It refuses nothing.
 4. `spine-parts propose --head-box --full inputs/layers/full --canvas <W>x<H>` →
    `seethrough.head_box`. Run `spine-parts inputs` again: it now also writes
    `st_input_head.png`, the painting cropped to that box at its exact size.
@@ -197,6 +199,8 @@ Two steps are external: the See-through runs (by any route; the optional `comfy 
 6. `spine-parts assemble --propose-plan --source … --full … --head … --config config.json`
    → paste `plan` and `extend_below_crop` into `config.assemble`. It reads the config
    through the same partial loader as `inputs`, and needs `seethrough.head_box` set.
+   Read `notes`: a layer left out by a plausibility rule is named there with its
+   figures and the rule (§6, *Plausibility*).
 7. `spine-parts assemble … --out work` then
    `spine-parts propose --parts work/rig --source inputs/painting.png --out work` →
    `work/proposal.json` and `work/render/landmarks.png` (+ `_head`). Copy
@@ -214,7 +218,7 @@ Two steps are external: the See-through runs (by any route; the optional `comfy 
 
 | stage | read | green looks like | a common red |
 | --- | --- | --- | --- |
-| `layers` | the table | every tag the plan will need has opaque pixels; one `face` in the head run | a run whose layer PNG is not its box's size (`LAYERS_PNG_MATCHES_BBOX`) |
+| `layers` | the table, then the `WARN` lines | every tag the plan will need has opaque pixels; one `face` in the head run; `0 WARN line(s)` | a run whose layer PNG is not its box's size (`LAYERS_PNG_MATCHES_BBOX`); a `WARN  PLAN_LAYER_…` line (§6, *Plausibility*) |
 | `sheet` of both runs | the tile list (and the sheet, if you can see) | eyes, irises, lashes and brows as left/right pairs in the head run | a head box that cut off an ornament: move `head_box`, re-run the head crop |
 | `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185; `demo` 2.39 / 95.8 % / 11,050 / 1,564 (default rule) | `uncovered error px` high: part of the figure is in no layer — a plan entry is missing, or hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason) |
 | `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck); a `hanging strand … -- no chain proposed` note — that strand hangs stiff until you add a chain down the x and rows it names (§3) |
@@ -291,6 +295,58 @@ stage's prefix (`[assemble]   FAIL  …`), and the build stops there.
 | `PSD_FILE_PRESENT`, `PSD_PARSES`, `PSD_IS_RGB8`, `PSD_HAS_LAYERS`, `PSD_LAYER_PLAIN`, `PSD_LAYER_HAS_PIXELS` | the `.psd` is missing, unreadable, not 8-bit RGB, has no layer, or has a layer that is hidden, not at full opacity, or without pixels | the `.psd` |
 | `ASSEMBLE_SOURCE_PRESENT`, `ASSEMBLE_SOURCE_DECODES` | the painting is missing or not a PNG | `--source` |
 | `SHEET_SOURCE_PRESENT`, `SHEET_PNG_PRESENT` | `sheet`'s painting, or a part PNG a `parts.json` lists, is missing | `--source`, `--layers` |
+
+### Plausibility (`WARN` in `layers`, a note in `assemble --propose-plan`)
+
+See-through writes every tag, and on some seeds it paints a layer the character does
+not have: **[observed]** on one full-figure seed (issue #21), a `wings` layer of
+490,296 px, mostly translucent grey that had absorbed the white background, on a
+character with no wings. Proposed as an ordinary part it became an 832 x 1096 part and
+the recomposite error rose to mean |d| 15.01. These are not refusals — the files are
+fine — so `layers` prints a `WARN` line and exits 0, and `--propose-plan` leaves the
+layer out of the plan, out of the head-run fallback and out of `extend_below_crop`.
+
+`layers` prints three figures for every layer, each over its **opaque** pixels (alpha
+above 8, the table's `opaque_px`), on the layer as read:
+
+| column | figure |
+| --- | --- |
+| `translucent` | the share of opaque pixels with alpha below 128 |
+| `background` | the share of opaque pixels whose own colour (straight alpha) has a min channel above 235 — the seam rule's "near-white", applied to the layer |
+| `area` | opaque pixels over the opaque pixels of the union of every **other** layer of the run ("the rest of the figure"); `-` when no other layer has any |
+
+Not over alpha above 0: See-through hazes whole canvases at alpha 1..8 (the demo's
+full-run face is 99.1 % translucent that way and 4.2 % over its opaque pixels). Not
+over the whole union: a layer is part of it, so it could never be more than 1x.
+
+| rule | crossed when | [observed] on the two examples' 116 layers (four runs) |
+| --- | --- | --- |
+| `PLAN_LAYER_TRANSLUCENT` | judged, and `translucent` above 50 % | the most translucent judged layer is 17.8 % (sample, full run, `front hair`) |
+| `PLAN_LAYER_BACKGROUND` | judged, `background` above 50 %, and `translucent` above 25 % | the most background-coloured judged layer is 21.9 % (demo, head run, `topwear`, a white dress); of judged layers above 10 % background, the most translucent is 5.6 % (demo, full run, `handwear-r`) |
+| `PLAN_LAYER_OVERSIZED` | `area` above 4x | the largest is 1.681x (demo, head run, `back hair`, which fills the crop) |
+
+**Judged** means `area` at least 0.05x (or `-`). The two colour rules skip smaller
+layers on purpose: **[observed]** all 27 example layers of 150 px or more that are above
+25 % translucent are small features — lashes, brows, mouths, noses, ears, irises, eye
+whites, an earring — antialiased strokes that are mostly rim, and the largest of them is
+0.011x; 23 of the 116 layers are judged. The background rule needs translucency too,
+because an opaque white garment has the page's colour and is a real part.
+
+No example layer crosses a rule, so their proposals are unchanged. For the haze the
+selftest plants (`PL03`, `PL06`: near-white, four pixels in five at alpha 40, 2.000x the
+rest of the figure), the `WARN` line and the note say the same thing:
+
+```
+  WARN  PLAN_LAYER_TRANSLUCENT: layer "wings" — 80.0% translucent, 100.0% background-coloured, 2.000x the rest of the figure; at most 50% translucent (alpha below 128) for a layer at least 0.05x the rest of the figure is required, so --propose-plan leaves it out
+"wings: full run layer 80.0% translucent, 100.0% background-coloured, 2.000x the rest of the figure -> not proposed by PLAN_LAYER_TRANSLUCENT (…), PLAN_LAYER_BACKGROUND (…)"
+```
+
+A full-run hair layer the head-run hair would have been extended from says `-> not
+extended below the crop by …` instead. **Change:** nothing, when the character does not
+have that part. When it does (a real translucent veil, a real white cape that the run
+drew faintly), the layer is See-through's best attempt at it: add the entry to
+`assemble.plan` by hand and read `assemble`'s `recomposite vs source` figures — or re-run
+See-through with another seed.
 
 ### The config
 

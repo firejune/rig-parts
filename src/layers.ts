@@ -36,6 +36,13 @@ import { acceptedTagNames, readTag, type TagReading } from './tags.ts';
 
 /** Alpha strictly above this counts as painted. The reference uses the same cut for its ghost clean-up and its sheets. */
 export const OPAQUE_ALPHA_ABOVE = 8;
+/**
+ * A pixel whose min channel is above this is "near-white". The assemble stage's
+ * rim and seam guard apply it to the painting (`src/assemble.ts` re-exports it
+ * from here); `layerFigures` applies the same test to a layer's own colour, so
+ * "background-coloured" means one thing in this repository.
+ */
+export const NEAR_WHITE_MIN = 235;
 
 export interface Layer {
   /** As the input names it; always a v3 tag, possibly with a `-r`/`-l` side. */
@@ -426,4 +433,166 @@ export function readLayers(path: string): LayerSet {
     },
   ]);
   throw new Error('unreachable');
+}
+
+// ---------------------------------------------------------------------------
+// plausibility: three figures per layer, and the rules `--propose-plan` drops by
+// ---------------------------------------------------------------------------
+
+/**
+ * An opaque pixel (alpha above `OPAQUE_ALPHA_ABOVE`) whose alpha is below this
+ * is "translucent". 128 is the tree's half-covered cut (`FRONT_ALPHA`,
+ * `COVERED_ALPHA` in `src/assemble.ts`).
+ */
+export const TRANSLUCENT_ALPHA_BELOW = 128;
+/**
+ * `PLAN_LAYER_TRANSLUCENT` and `PLAN_LAYER_BACKGROUND` judge only a layer at
+ * least this large against the rest of its run's figure. [observed] Every
+ * example layer of 150 px or more that is above 25 % translucent is a small
+ * feature — a lash, a brow, a mouth, a nose, an ear, an iris, an eye white, an
+ * earring (27 of the 116 layers of the two examples' four runs) — and the
+ * largest of them is 0.011x the rest of its figure (a lash of the sample's head
+ * run). An antialiased stroke is mostly rim, so its translucency says nothing
+ * about plausibility; 23 of the 116 layers are judged.
+ */
+export const PLAUSIBLE_JUDGED_AREA_RATIO = 0.05;
+/** [observed] Above this translucent share a judged layer is dropped. The most translucent judged example layer is 17.8 % (the sample's full-run front hair). */
+export const PLAUSIBLE_TRANSLUCENT_MAX = 0.5;
+/**
+ * [observed] Above this background share, with a translucent share above
+ * `PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN`, a judged layer is dropped. The most
+ * background-coloured judged example layer is 21.9 % (the demo's head-run
+ * topwear, a white dress). The second condition is what keeps an opaque white
+ * garment: its colour is the page's, its alpha is not the haze's.
+ */
+export const PLAUSIBLE_BACKGROUND_MAX = 0.5;
+/** [observed] Of the judged example layers more than 10 % background-coloured, the most translucent is 5.6 % (the demo's full-run handwear-r). */
+export const PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN = 0.25;
+/** [observed] Above this area ratio any layer is dropped. The largest example layer is 1.681x the rest of its figure (the demo's head-run back hair, which fills the crop). */
+export const PLAUSIBLE_AREA_RATIO_MAX = 4;
+
+export type PlausibilityRule = 'PLAN_LAYER_TRANSLUCENT' | 'PLAN_LAYER_BACKGROUND' | 'PLAN_LAYER_OVERSIZED';
+
+export interface LayerFigures {
+  name: string;
+  /** Pixels with alpha above `OPAQUE_ALPHA_ABOVE` — the table's `opaque_px`. */
+  opaquePx: number;
+  /** Opaque pixels with alpha below `TRANSLUCENT_ALPHA_BELOW`. */
+  translucentPx: number;
+  /** Opaque pixels whose own colour (straight alpha) has a min channel above `NEAR_WHITE_MIN`. */
+  backgroundPx: number;
+  /** Opaque pixels of the union of every OTHER layer of the set, on the canvas. */
+  restPx: number;
+  /** `translucentPx / opaquePx`, or null for a layer with no opaque pixel. */
+  translucent: number | null;
+  /** `backgroundPx / opaquePx`, or null for a layer with no opaque pixel. */
+  background: number | null;
+  /** `opaquePx / restPx`, or null when no other layer has an opaque pixel. */
+  areaRatio: number | null;
+}
+
+/**
+ * The three plausibility figures of every layer of a set, in the set's order.
+ *
+ * ⚖️ Invariant: every figure is a ratio of pixel counts over the layer as read
+ * (no ghost clean-up), over its opaque pixels (alpha above 8) — never over
+ * alpha above 0, because See-through leaves a haze of alpha 1..8 over whole
+ * canvases (the demo's full-run face: 99.1 % of its alpha-above-0 pixels are
+ * below 128, 4.2 % of its opaque ones). The area ratio is taken against the
+ * REST of the figure, the other layers' union: over the whole union a layer
+ * could never exceed 1, and "twice the figure" could not be said.
+ */
+export function layerFigures(set: LayerSet): LayerFigures[] {
+  const W = set.canvas.w;
+  const H = set.canvas.h;
+  // Cover counts saturate at 2: "this layer only" versus "some other layer too" is all the rest needs.
+  const cover = new Uint8Array(W * H);
+  for (const l of set.layers) {
+    const p = l.pixels;
+    for (let y = 0; y < p.height; y++) {
+      for (let x = 0; x < p.width; x++) {
+        if (p.data[(y * p.width + x) * 4 + 3] <= OPAQUE_ALPHA_ABOVE) continue;
+        const c = (l.top + y) * W + l.left + x;
+        if (cover[c] < 2) cover[c]++;
+      }
+    }
+  }
+  let union = 0;
+  for (let i = 0; i < W * H; i++) if (cover[i] > 0) union++;
+  return set.layers.map((l) => {
+    const p = l.pixels;
+    let opaquePx = 0;
+    let translucentPx = 0;
+    let backgroundPx = 0;
+    let alone = 0;
+    for (let y = 0; y < p.height; y++) {
+      for (let x = 0; x < p.width; x++) {
+        const i = (y * p.width + x) * 4;
+        const a = p.data[i + 3];
+        if (a <= OPAQUE_ALPHA_ABOVE) continue;
+        opaquePx++;
+        if (a < TRANSLUCENT_ALPHA_BELOW) translucentPx++;
+        if (Math.min(p.data[i], p.data[i + 1], p.data[i + 2]) > NEAR_WHITE_MIN) backgroundPx++;
+        if (cover[(l.top + y) * W + l.left + x] === 1) alone++;
+      }
+    }
+    const restPx = union - alone;
+    return {
+      name: l.name,
+      opaquePx,
+      translucentPx,
+      backgroundPx,
+      restPx,
+      translucent: opaquePx > 0 ? translucentPx / opaquePx : null,
+      background: opaquePx > 0 ? backgroundPx / opaquePx : null,
+      areaRatio: restPx > 0 ? opaquePx / restPx : null,
+    };
+  });
+}
+
+/**
+ * The rules a layer crosses, in a fixed order. A layer with no opaque pixel
+ * crosses none (the plan's pixel floor already leaves it out).
+ *
+ * - `PLAN_LAYER_TRANSLUCENT`: judged, and translucent share above `PLAUSIBLE_TRANSLUCENT_MAX`.
+ * - `PLAN_LAYER_BACKGROUND`: judged, background share above `PLAUSIBLE_BACKGROUND_MAX`
+ *   and translucent share above `PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN` — a pale haze.
+ * - `PLAN_LAYER_OVERSIZED`: area ratio above `PLAUSIBLE_AREA_RATIO_MAX`.
+ *
+ * "Judged" is an area ratio of at least `PLAUSIBLE_JUDGED_AREA_RATIO`, or no
+ * ratio at all (a layer alone in its set is the whole figure, not a stroke).
+ */
+export function implausibleRules(f: LayerFigures): PlausibilityRule[] {
+  if (f.opaquePx === 0 || f.translucent === null || f.background === null) return [];
+  const judged = f.areaRatio === null || f.areaRatio >= PLAUSIBLE_JUDGED_AREA_RATIO;
+  const out: PlausibilityRule[] = [];
+  if (judged && f.translucent > PLAUSIBLE_TRANSLUCENT_MAX) out.push('PLAN_LAYER_TRANSLUCENT');
+  if (judged && f.background > PLAUSIBLE_BACKGROUND_MAX && f.translucent > PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN) out.push('PLAN_LAYER_BACKGROUND');
+  if (f.areaRatio !== null && f.areaRatio > PLAUSIBLE_AREA_RATIO_MAX) out.push('PLAN_LAYER_OVERSIZED');
+  return out;
+}
+
+/** A share as `12.3%`. */
+export function pct(v: number | null): string {
+  return v === null ? '-' : `${(v * 100).toFixed(1)}%`;
+}
+
+/** An area ratio as `1.681x`. */
+export function times(v: number | null): string {
+  return v === null ? '-' : `${v.toFixed(3)}x`;
+}
+
+/** The figures, as a plan note and a WARN line say them. */
+export function figuresPhrase(f: LayerFigures): string {
+  return `${pct(f.translucent)} translucent, ${pct(f.background)} background-coloured, ${f.areaRatio === null ? 'no other layer to compare with' : `${times(f.areaRatio)} the rest of the figure`}`;
+}
+
+/** What a rule requires, in words, so the line that names it says the bar. */
+export function ruleSummary(rule: PlausibilityRule): string {
+  const judged = `for a layer at least ${PLAUSIBLE_JUDGED_AREA_RATIO}x the rest of the figure`;
+  if (rule === 'PLAN_LAYER_TRANSLUCENT') return `at most ${PLAUSIBLE_TRANSLUCENT_MAX * 100}% translucent (alpha below ${TRANSLUCENT_ALPHA_BELOW}) ${judged}`;
+  if (rule === 'PLAN_LAYER_BACKGROUND') {
+    return `at most ${PLAUSIBLE_BACKGROUND_MAX * 100}% background-coloured (min channel above ${NEAR_WHITE_MIN}), or at most ${PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN * 100}% translucent, ${judged}`;
+  }
+  return `at most ${PLAUSIBLE_AREA_RATIO_MAX}x the rest of the figure`;
 }

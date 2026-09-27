@@ -170,7 +170,7 @@ than queueing behind someone else's job.
 ```sh
 spine-parts inputs --source painting.png --config config.json --out inputs   # st_input_full.png; the config needs only key, seethrough, assemble.rig_scale
 #    See-through on st_input_full.png (external, or `spine-parts comfy seethrough`) -> layers/full
-spine-parts layers layers/full                      # every layer: box, opaque px, depth
+spine-parts layers layers/full                      # every layer: box, opaque px, depth, plausibility figures; WARN lines
 spine-parts propose --head-box --full layers/full --canvas 1664x2432
 #    -> seethrough.head_box into config.json
 spine-parts inputs --source painting.png --config config.json --out inputs   # now st_input_head.png too
@@ -202,9 +202,9 @@ agent skill.
 | `inputs --source <png> --config <json> --out <dir>` | the two images See-through is fed: the painting on a white square, and the head box's crop once the config has one |
 | `comfy paint --config --out [--host]` | optional: generate the painting on a ComfyUI box from the config's `generation` block |
 | `comfy seethrough --image --out [--host]` | optional: run the ComfyUI See-through wrapper on one image and write the form `layers` reads |
-| `layers <dir \| layers.json \| file.psd>` | print every layer of a decomposition: draw order, name, tag group, box, size, opaque pixels, depth |
+| `layers <dir \| layers.json \| file.psd>` | print every layer of a decomposition: draw order, name, tag group, box, size, opaque pixels, depth, and its translucent, background and area figures; a `WARN` line for a layer `--propose-plan` will leave out |
 | `sheet --source <png> --layers <path>… --out <png>` | a labelled contact sheet of the painting and every layer or part |
-| `assemble --propose-plan …` | propose `assemble.plan` and `extend_below_crop` from the two runs |
+| `assemble --propose-plan …` | propose `assemble.plan` and `extend_below_crop` from the two runs, leaving out an implausible layer with a note naming the rule |
 | `assemble --source --full --head --config --out [--seam] [--project]` | merge the two runs into rig-space parts, `parts.json` and the recomposite |
 | `propose --head-box --full <run> --canvas WxH` | propose `seethrough.head_box` from the full run, held inside the painting |
 | `propose --parts --source --out [--compare <config>]` | propose bones, meshes, regions and an idle; draw the overlay |
