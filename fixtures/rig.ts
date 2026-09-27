@@ -143,3 +143,86 @@ export function writeRigFixture(dir: string, config: Record<string, unknown> = r
   for (const [name, img] of images) writeFileSync(join(partsDir, 'parts', `${name}.png`), encodePngBytes(img));
   return { config: join(dir, 'config.json'), parts: partsDir };
 }
+
+/**
+ * The blink-still fixture (issue #26): an eye whose eyelash layer also carries
+ * a crease above the lid, on a 48x64 rig. Bones: `head` at (24, 40) under
+ * `root`, `eye` at the eyewhite's centre (22, 27) and `brow` at (22, 14), both
+ * under `head`. The idle rolls `head` (a 2-degree sine over 4 s) and blinks at
+ * t = 1 s — so the rest frames are not all axis-aligned, which is where a cut
+ * through art would show.
+ *
+ * - `face` (head:face) 8,8 32x40, opaque — the layer under the eye, so a shut
+ *   eye shows face, never the page.
+ * - `eyewhite` (head:eyewhite-r) 16,24 12x6, opaque.
+ * - `lash` (head:eyelash-r) 14,17 16x9: rows 17-18 are the crease (x 16..27),
+ *   rows 19-20 carry no art, rows 21-25 the lash line across the full width.
+ *   It reaches 24 - 17 = **7 px** above the eyewhite, 7 / 9 = **78 %** of its
+ *   height. Rows 19 and 20 are clear, so the lowest clear row above the lid is
+ *   **20**: `motion.blink.still.lash = {row: 20, bone: "head"}` cuts off rows
+ *   17-19 (the crease, 12 x 2 = **24 px**) as `lash_still`.
+ */
+export const LASH_RIG: [number, number] = [48, 64];
+export const LASH_CREASE = { x0: 16, x1: 28, y0: 17, y1: 19, px: 24 } as const;
+export const LASH_ROW = 20;
+
+function lashRaster(): Raster {
+  const r = newRaster(16, 9);
+  for (let y = 0; y < 9; y++) {
+    for (let x = 0; x < 16; x++) {
+      const crease = y < 2 && x >= 2 && x < 14;
+      const line = y >= 4;
+      if (crease) r.data.set([90, 40, 40, 255], (y * 16 + x) * 4);
+      else if (line) r.data.set([30, 20, 20, 255], (y * 16 + x) * 4);
+    }
+  }
+  return r;
+}
+
+function lashRec(name: string, from: string, x: number, y: number, w: number, h: number, opaque: number): PartsFile['parts'][number] {
+  return { name, from, x, y, w, h, opaque_px: opaque, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 };
+}
+
+export function lashParts(): PartsFile {
+  return {
+    rig_size: [...LASH_RIG],
+    scale_rig_per_source: 0.5,
+    parts: [lashRec('face', 'head:face', 8, 8, 32, 40, 1280), lashRec('eyewhite', 'head:eyewhite-r', 16, 24, 12, 6, 72), lashRec('lash', 'head:eyelash-r', 14, 17, 16, 9, 24 + 80)],
+    ghost_px: {},
+  };
+}
+
+export function lashImages(): Map<string, Raster> {
+  const white = newRaster(12, 6);
+  for (let i = 0; i < 72; i++) white.data.set([250, 250, 250, 255], i * 4);
+  return new Map([
+    ['face', block(32, 40)],
+    ['eyewhite', white],
+    ['lash', lashRaster()],
+  ]);
+}
+
+/** The fixture's config; `still` false leaves `motion.blink.still` out — the same rig with the whole lash blinking. */
+export function lashConfig(still = true): Record<string, unknown> {
+  const blink: Record<string, unknown> = { t: 1, eyes: ['eye'], brows: ['brow'], squash: 0.12, brow_drop: 1 };
+  if (still) blink.still = { lash: { row: LASH_ROW, bone: 'head' } };
+  return {
+    key: 'lash_fixture',
+    assemble: {
+      rig_scale: 0.5,
+      plan: [
+        ['face', 'head', 'face'],
+        ['eyewhite', 'head', 'eyewhite-r'],
+        ['lash', 'head', 'eyelash-r'],
+      ],
+    },
+    bones: [
+      { name: 'head', parent: 'root', at: [24, 40] },
+      { name: 'eye', parent: 'head', at: [22, 27] },
+      { name: 'brow', parent: 'head', at: [22, 14] },
+    ],
+    meshes: {},
+    regions: { face: 'head', eyewhite: 'eye', lash: 'eye' },
+    motion: { duration: 4, tracks: [{ bone: 'head', prop: 'rotate', amp: 2, period: 4, phase: 0 }], blink },
+  };
+}

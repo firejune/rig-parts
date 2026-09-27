@@ -18,7 +18,14 @@
  *   written in rigc's by-name `weights` form. The slot's bone is the first
  *   segment's bone.
  * - **Regions** for the parts named in `regions`: the image centred where the
- *   part sits, offset from its bone.
+ *   part sits, offset from its bone. A part named in `motion.blink.still` is
+ *   two regions cut at its row: the rows from `row` down on the part's own
+ *   slot and bone (they blink), the rows above on `<part>_still` and the
+ *   entry's `bone`, drawn right after it (they do not). The cut row must carry
+ *   no art: cut through art, each piece is resampled against its own
+ *   transparent edge and the render changes at rest — measured on the demo
+ *   example, 36 px of the setup pose (max 7 levels) — while a clear-row cut
+ *   changes no pixel outside the blink (issue #26, `RG16`).
  * - **The idle** and its control bones (`src/motion.ts`).
  *
  * Every part image is padded by {@link PAD} transparent pixels on each side
@@ -40,7 +47,7 @@ import { type Problem, refuseIfAny } from './errors.ts';
 import { artCoverage, ART_ALPHA, latticeMesh, ONE_LOOP_PASSES } from './mesh.ts';
 import { BLINK_SPAN, CONTROL_SUFFIX, controlledBones, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
 import type { PartsFile } from './parts.ts';
-import { alphaAbove, pad, type Raster } from './raster/index.ts';
+import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
 import { influences, type Segment } from './weights.ts';
 
@@ -117,6 +124,16 @@ export interface RigOutput {
   controls: string[];
   /** The one-loop passes each mesh took, for the printed report. */
   loopPasses: Record<string, number>;
+}
+
+/** The slot, attachment and image name suffix of a `motion.blink.still` part's upper piece. */
+export const STILL_SUFFIX = '_still';
+
+/** Pixels with alpha above 0 in rows [y0, y1) of `img`. */
+function alphaCount(img: Raster, y0: number, y1: number): number {
+  let n = 0;
+  for (let y = y0; y < y1; y++) for (let x = 0; x < img.width; x++) if (img.data[(y * img.width + x) * 4 + 3] > 0) n++;
+  return n;
 }
 
 function same(a: Point, b: Point): boolean {
@@ -246,6 +263,40 @@ export function buildRig(cfg: CharacterConfig, parts: PartsFile, images: Readonl
       `is ${bl.t} s; the blink's keys run from t to t + ${pyRound(BLINK_SPAN, 6)} s between the idle's first key at 0 and its last at ${cfg.motion.duration} s, so 0 < t < ${pyRound(cfg.motion.duration - BLINK_SPAN, 6)} is required`,
     );
   }
+  // ---- blink.still: a blinking region cut at a row ----------------------
+  const stills = bl?.still ?? {};
+  const partNames = new Set(parts.parts.map((p) => p.name));
+  for (const [part, st] of Object.entries(stills)) {
+    const at = `config.motion.blink.still.${part}`;
+    const p = byPart.get(part);
+    if (!(part in cfg.regions)) fail('RIG_NAME_RESOLVES', at, `names "${part}", which config.regions does not attach; a region part is required`);
+    if (!B.has(st.bone)) fail('RIG_NAME_RESOLVES', `${at}.bone`, `names the bone "${st.bone}", which config.bones does not declare`);
+    if (p === undefined) continue;
+    const still = `${part}${STILL_SUFFIX}`;
+    if (partNames.has(still)) fail('RIG_STILL_NAME_FREE', at, `the still piece is drawn by the slot "${still}", and parts.json already holds a part of that name; rename that part`);
+    if (!(st.row > p.y && st.row < p.y + p.h)) {
+      fail('RIG_STILL_ROW_INSIDE_PART', `${at}.row`, `is ${st.row}; "${part}" spans rows ${p.y}..${p.y + p.h - 1}, so a row with part rows on both sides, ${p.y + 1}..${p.y + p.h - 1}, is required`);
+      continue;
+    }
+    const img = images.get(part);
+    if (img === undefined || img.width !== p.w || img.height !== p.h) continue;
+    const r = st.row - p.y;
+    const crossing: number[] = [];
+    for (let x = 0; x < img.width; x++) if (img.data[(r * img.width + x) * 4 + 3] > 0) crossing.push(x);
+    if (crossing.length > 0) {
+      fail(
+        'RIG_STILL_ROW_CLEAR',
+        `${at}.row`,
+        `is ${st.row}, and "${part}" has ${crossing.length} pixel(s) with alpha above 0 on that row (the first at x = ${p.x + crossing[0]}); a row with no art across the part's whole width is required — two pieces cut through art are each resampled against their own transparent edge, so the render changes at rest, not only while the eye moves`,
+      );
+      continue;
+    }
+    const artAbove = alphaCount(img, 0, r);
+    const artBelow = alphaCount(img, r, img.height);
+    if (artAbove === 0 || artBelow === 0) {
+      fail('RIG_STILL_PIECES_HAVE_ART', `${at}.row`, `is ${st.row}; "${part}" has ${artAbove} art pixel(s) above it and ${artBelow} below; both pieces need art, or the cut holds nothing still (or nothing blinks)`);
+    }
+  }
   refuseIfAny(problems);
 
   const motion = idleMotion(cfg, chains);
@@ -301,6 +352,27 @@ export function buildRig(cfg: CharacterConfig, parts: PartsFile, images: Readonl
     if (mesh === undefined) {
       const bone = B.get(cfg.regions[p.name]) as Bone;
       const cx = p.x + p.w / 2;
+      const st = stills[p.name];
+      if (st !== undefined) {
+        // The part cut at st.row: the lower piece keeps the part's slot and
+        // blinks; the upper one is drawn right after it, by <part>_still on
+        // st.bone. Each piece sits exactly where its rows sat in the part.
+        const src = images.get(p.name) as Raster;
+        const r = st.row - p.y;
+        const still = `${p.name}${STILL_SUFFIX}`;
+        const stillFile = `${still}.png`;
+        const lower = pad(crop(src, 0, r, p.w, p.h - r), PAD, PAD, PAD, PAD, [0, 0, 0, 0]);
+        const upper = pad(crop(src, 0, 0, p.w, r), PAD, PAD, PAD, PAD, [0, 0, 0, 0]);
+        const sb = B.get(st.bone) as Bone;
+        outImages[outImages.length - 1] = [file, lower];
+        outImages.push([stillFile, upper]);
+        const cyLow = st.row + (p.h - r) / 2;
+        const cyUp = p.y + r / 2;
+        skin[p.name] = { [p.name]: { image: file, x: pyRound(spineX(cx) - spineX(bone.x), 3), y: pyRound(spineY(cyLow) - spineY(bone.y), 3) } };
+        skin[still] = { [still]: { image: stillFile, x: pyRound(spineX(cx) - spineX(sb.x), 3), y: pyRound(spineY(cyUp) - spineY(sb.y), 3) } };
+        slots.push({ name: p.name, bone: bone.name, attachment: p.name }, { name: still, bone: sb.name, attachment: still });
+        continue;
+      }
       const cy = p.y + p.h / 2;
       skin[p.name] = { [p.name]: { image: file, x: pyRound(spineX(cx) - spineX(bone.x), 3), y: pyRound(spineY(cy) - spineY(bone.y), 3) } };
       slots.push({ name: p.name, bone: bone.name, attachment: p.name });

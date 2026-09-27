@@ -140,12 +140,24 @@ export interface ChainTrack {
 
 export type Track = SingleTrack | ChainTrack;
 
+/**
+ * A region part the blink moves, cut at a rig row: the rows above `row` are
+ * drawn by a second slot `<part>_still` on `bone`, which the blink does not
+ * key, and the rows from `row` down stay on the part's own slot and blink.
+ * For an eyelash layer that also carries the eyelid crease (issue #26).
+ */
+export interface BlinkStill {
+  row: number;
+  bone: string;
+}
+
 export interface Blink {
   t: number;
   eyes: string[];
   brows: string[];
   squash: number;
   brow_drop: number;
+  still?: Record<string, BlinkStill>;
 }
 
 export interface Motion {
@@ -396,9 +408,46 @@ export function parseConfig(raw: Json): CharacterConfig {
   if ('meshes' in t) checkMeshes(c, t.meshes, names.bones, names.chains);
   if ('regions' in t) checkRegions(c, t.regions, names.bones);
   if ('meshes' in t && 'regions' in t && 'assemble' in t) checkCoverage(c, parts, t.meshes, t.regions);
-  if ('motion' in t) checkMotion(c, t.motion, names.bones, names.chains);
+  if ('motion' in t) checkMotion(c, t.motion, names.bones, names.chains, 'regions' in t ? t.regions : undefined);
   refuseIfAny(c.problems);
   return raw as CharacterConfig;
+}
+
+/**
+ * `motion.blink.still`: part name -> `{row, bone}`. The part must be a region
+ * whose bone the blink's `eyes` names — a cut on anything else holds nothing
+ * still that was moving — and `bone` must be declared and must not be one of
+ * the blink's eyes, or the still piece would blink with the rest.
+ */
+function checkBlinkStill(c: Check, v: Json, eyes: Json, bones: Set<string>, regions: Json): void {
+  const at = 'config.motion.blink.still';
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+    c.fail('CONFIG_FIELD_TYPE', at, `is ${show(v)}; an object of part name -> {row, bone} is required`);
+    return;
+  }
+  const eyeList = Array.isArray(eyes) ? eyes.filter((e): e is string => typeof e === 'string') : [];
+  const regionOf = typeof regions === 'object' && regions !== null && !Array.isArray(regions) ? (regions as Record<string, Json>) : {};
+  for (const [part, entry] of Object.entries(v as Record<string, Json>)) {
+    const e = c.object(`${at}.${part}`, entry, ['row', 'bone'], []);
+    if (e === null) continue;
+    if ('row' in e) c.int(`${at}.${part}.row`, e.row, 0);
+    if ('bone' in e) {
+      if (typeof e.bone !== 'string' || !bones.has(e.bone)) c.fail('CONFIG_NAME_RESOLVES', `${at}.${part}.bone`, `is ${show(e.bone)}; a declared bone is required`);
+      else if (eyeList.includes(e.bone)) {
+        c.fail('CONFIG_STILL_OFF_THE_BLINK', `${at}.${part}.bone`, `is "${e.bone}", which config.motion.blink.eyes names, so the still piece would blink too; a bone the blink does not key is required (the eye bone's parent, as propose writes it)`);
+      }
+    }
+    const rb = Object.prototype.hasOwnProperty.call(regionOf, part) ? regionOf[part] : undefined;
+    if (typeof rb !== 'string') {
+      c.fail('CONFIG_NAME_RESOLVES', `${at}.${part}`, `names "${part}", which config.regions does not attach; a region part is required — a mesh is not cut`);
+    } else if (!eyeList.includes(rb)) {
+      c.fail(
+        'CONFIG_STILL_OFF_THE_BLINK',
+        `${at}.${part}`,
+        `names a region on "${rb}", which config.motion.blink.eyes (${eyeList.join(', ') || 'none'}) does not name, so the blink never moves it and there is nothing to hold still; a region on a blinking eye bone is required`,
+      );
+    }
+  }
 }
 
 /** The fields every generation block carries; `pose` or `control` is required besides, checked below. */
@@ -626,7 +675,7 @@ function checkCoverage(c: Check, parts: string[], meshes: Json, regions: Json): 
   }
 }
 
-function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, number>): void {
+function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, number>, regions: Json): void {
   const m = c.object('config.motion', v, ['duration', 'tracks'], ['blink']);
   if (m === null) return;
   const p = 'config.motion';
@@ -675,7 +724,7 @@ function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
     });
   }
   if ('blink' in m) {
-    const b = c.object(`${p}.blink`, m.blink, ['t', 'eyes', 'brows', 'squash', 'brow_drop'], []);
+    const b = c.object(`${p}.blink`, m.blink, ['t', 'eyes', 'brows', 'squash', 'brow_drop'], ['still']);
     if (b === null) return;
     if ('t' in b) c.number(`${p}.blink.t`, b.t, 'non-negative');
     if ('squash' in b) c.number(`${p}.blink.squash`, b.squash, 'positive');
@@ -687,5 +736,6 @@ function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
         });
       }
     }
+    if ('still' in b) checkBlinkStill(c, b.still, b.eyes, bones, regions);
   }
 }

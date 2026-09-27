@@ -96,7 +96,7 @@ export interface Proposal {
   motion: {
     duration: number;
     tracks: Array<ProposedSingleTrack | ProposedChainTrack>;
-    blink: { t: number; eyes: string[]; brows: string[]; squash: number; brow_drop: number };
+    blink: { t: number; eyes: string[]; brows: string[]; squash: number; brow_drop: number; still?: Record<string, { row: number; bone: string }> };
   };
   notes: string[];
 }
@@ -651,13 +651,15 @@ export function propose(P: PartSet): Proposal {
     if (browOf.has(p.name)) role = browOf.get(p.name);
     if (role !== undefined) regions[p.name] = role;
   }
-  const blink = {
+  const blink: Proposal['motion']['blink'] = {
     t: 2.3,
     eyes: (['r', 'l'] as const).filter((s) => eyes.has(s)).map((s) => `eye_${s}`),
     brows: (['r', 'l'] as const).filter((s) => bySide.has(s)).map((s) => `brow_${s}`),
     squash: 0.12,
     brow_drop: 1.2,
   };
+  const still = lashStills(P, ew, notes);
+  if (Object.keys(still).length > 0) blink.still = still;
   tracks.push(
     { bone: 'chest', prop: 'translatey', amp: 1.3, period: 4.0, phase: 0.0, base: 1.3 },
     { bone: 'chest', prop: 'scalex', amp: 0.004, period: 4.0, phase: 0.0, base: 1.004 },
@@ -1046,6 +1048,80 @@ export function propose(P: PartSet): Proposal {
     }
   }
   return { bones, meshes, regions, motion: { duration: 4.0, tracks, blink }, notes };
+}
+
+// ---------------------------------------------------------------------------
+// the lash that carries the crease (issue #26)
+// ---------------------------------------------------------------------------
+
+/**
+ * A lash reaching more than this share of its own height above its eyewhite's
+ * top is noted. Measured on the two public examples: their four lashes reach
+ * 4-6 px above the eyewhite, 17-26 % of their height (demo 26 % / 17 %,
+ * sample 18 % / 23 %), which is the lash line itself. The bar sits above that
+ * with a 9-point margin; the character issue #26 reported is not in this tree,
+ * so no figure of its crease is quoted here.
+ */
+export const LASH_ABOVE_SHARE_BAR = 0.35;
+
+/**
+ * A lash more than this many times the height of its pair is noted. The two
+ * public examples' pairs are 24 / 23 px (1.04) and 22 / 22 px (1.00); the
+ * pair issue #26 reported, 36x24 against 30x17, is 24 / 17 px (1.41).
+ */
+export const LASH_PAIR_RATIO_BAR = 1.2;
+
+function pct(v: number): string {
+  return `${Math.round(v * 100)} %`;
+}
+
+/**
+ * The blink squashes each eye's parts about the eye bone, so anything painted
+ * into the eyelash layer above the lid — a double-eyelid crease — is squashed
+ * with it. A lash that reaches far above its eyewhite, or is much taller than
+ * its pair, is noted; when some row between its top and the eyewhite's top
+ * carries no art across the lash's whole width, the rows above the lowest such
+ * row are proposed as a still piece (`motion.blink.still`) on the eye bone's
+ * parent, `head`. The cut must be a clear row because the rig stage refuses
+ * any other (`RIG_STILL_ROW_CLEAR`).
+ */
+function lashStills(P: PartSet, ew: Record<'r' | 'l', PartRecord | null>, notes: string[]): Record<string, { row: number; bone: string }> {
+  const out: Record<string, { row: number; bone: string }> = {};
+  const lash: Record<'r' | 'l', PartRecord | null> = { r: P.byTag('eyelash-r')[0] ?? null, l: P.byTag('eyelash-l')[0] ?? null };
+  for (const s of ['r', 'l'] as const) {
+    const la = lash[s];
+    const eye = ew[s];
+    if (la === null || eye === null) continue;
+    const pair = lash[s === 'r' ? 'l' : 'r'];
+    const above = eye.y - la.y;
+    const share = above / la.h;
+    const ratio = pair === null ? null : la.h / pair.h;
+    const tall = share > LASH_ABOVE_SHARE_BAR;
+    const odd = ratio !== null && ratio > LASH_PAIR_RATIO_BAR;
+    if (!tall && !odd) continue;
+    const im = P.images.get(la.name) as Raster;
+    let row: number | null = null;
+    for (let y = eye.y - 1; y > la.y && row === null; y--) {
+      const r = y - la.y;
+      if (r >= la.h) continue;
+      let clear = true;
+      for (let x = 0; x < la.w && clear; x++) if (im.data[(r * la.w + x) * 4 + 3] > 0) clear = false;
+      if (clear) row = y;
+    }
+    const why = [
+      `reaches ${above} px above ${eye.name}'s top, ${pct(share)} of its ${la.h} px height (noted above ${pct(LASH_ABOVE_SHARE_BAR)})`,
+      ...(pair === null || ratio === null ? [] : [`is ${pyFixed(ratio, 2)}x the height of ${pair.name}, ${pair.h} px (noted above ${pyFixed(LASH_PAIR_RATIO_BAR, 2)}x)`]),
+    ].join(' and ');
+    if (row !== null) {
+      out[la.name] = { row, bone: 'head' };
+      notes.push(`${la.name} (${la.from}) ${why}: the blink would squash whatever is painted there, a crease included — rows above ${row} (a row with no art) split off as ${la.name}_still on head (motion.blink.still), which the blink does not move`);
+    } else {
+      notes.push(
+        `${la.name} (${la.from}) ${why}: the blink squashes whatever is painted there, a crease included — no row between its top and the lid is clear across its width, so it is not split; if a crease is painted in, clear a row between it and the lash line and set motion.blink.still by hand`,
+      );
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
