@@ -11,13 +11,11 @@
  * - **One palette for every frame**, 255 colours cut from the histogram of all
  *   frames together, plus one transparent index. A per-frame palette would make
  *   a still background shimmer between frames and would forbid the next step.
- *   The cut is variance-driven median cut: the box whose pixels have the
- *   largest summed squared error round their mean is split next, on its widest
- *   channel, at the pixel-weighted median. Each box's colour is its weighted
- *   mean. Every colour then maps to its nearest palette entry (squared RGB
- *   distance, lowest index on a tie). **No dithering**: it would add noise the
- *   frame differencing below has to pay for, and the palette error is reported
- *   instead of hidden.
+ *   The cut is `src/palette.ts`'s variance-driven median cut, the one the
+ *   indexed APNG uses too, so the two files' palette errors are one figure;
+ *   every colour maps to its nearest entry. **No dithering**: it would add
+ *   noise the frame differencing below has to pay for, and the palette error is
+ *   reported instead of hidden.
  * - **Consecutive frames whose quantised pixels are identical are merged**,
  *   and every later frame is cropped to the box of indices that changed, with
  *   the unchanged ones written as the transparent index over the previous frame
@@ -36,17 +34,12 @@
  * and none ships here.
  */
 import { type AnimFrame, checkFrames, EncodeError } from './apng.ts';
-import type { Raster } from './raster/types.ts';
+import { histogram, mapToPalette, medianCut, type PaletteError, paletteError } from './palette.ts';
 
 export const PALETTE_COLOURS = 255;
 export const TRANSPARENT_INDEX = 255;
 
-export interface PaletteError {
-  /** Largest per-channel |original - palette| over every pixel measured. */
-  max: number;
-  /** Mean per-channel |original - palette|, in levels of 255. */
-  mean: number;
-}
+export type { PaletteError };
 
 export interface GifStats {
   frames: number;
@@ -58,16 +51,8 @@ export interface GifStats {
   bytes: number;
 }
 
-interface Colour {
-  key: number;
-  r: number;
-  g: number;
-  b: number;
-  n: number;
-}
-
-function histogram(frames: readonly AnimFrame[]): Colour[] {
-  const counts = new Map<number, number>();
+/** GIF has one bit of alpha: a translucent pixel is refused by name, not thresholded. */
+function refuseTranslucent(frames: readonly AnimFrame[]): void {
   frames.forEach((f, fi) => {
     const d = f.image.data;
     for (let i = 0; i < d.length; i += 4) {
@@ -75,78 +60,8 @@ function histogram(frames: readonly AnimFrame[]): Colour[] {
         const p = i / 4;
         throw new EncodeError(`frame ${fi} pixel ${p % f.image.width},${Math.floor(p / f.image.width)} has alpha ${d[i + 3]}; GIF holds no partial alpha, so every pixel must be opaque (255)`);
       }
-      const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
-      counts.set(key, (counts.get(key) ?? 0) + 1);
     }
   });
-  return [...counts.entries()].sort((a, b) => a[0] - b[0]).map(([key, n]) => ({ key, r: key >>> 16, g: (key >>> 8) & 255, b: key & 255, n }));
-}
-
-interface Box {
-  colours: Colour[];
-  n: number;
-  sse: number;
-  axis: 0 | 1 | 2;
-}
-
-const CH = ['r', 'g', 'b'] as const;
-
-function makeBox(colours: Colour[]): Box {
-  let n = 0;
-  const sum = [0, 0, 0];
-  const sq = [0, 0, 0];
-  for (const c of colours) {
-    n += c.n;
-    for (let k = 0; k < 3; k++) {
-      const v = c[CH[k]];
-      sum[k] += v * c.n;
-      sq[k] += v * v * c.n;
-    }
-  }
-  const variance = [0, 1, 2].map((k) => sq[k] - (sum[k] * sum[k]) / n);
-  const axis = (variance[0] >= variance[1] && variance[0] >= variance[2] ? 0 : variance[1] >= variance[2] ? 1 : 2) as 0 | 1 | 2;
-  return { colours, n, sse: colours.length < 2 ? 0 : variance[0] + variance[1] + variance[2], axis };
-}
-
-/** Median cut to at most `size` colours. Deterministic: ties go to the lower box index and the lower colour key. */
-export function medianCut(colours: Colour[], size: number): Array<[number, number, number]> {
-  const boxes: Box[] = [makeBox(colours)];
-  while (boxes.length < size) {
-    let pick = -1;
-    for (let i = 0; i < boxes.length; i++) if (boxes[i].sse > 0 && (pick < 0 || boxes[i].sse > boxes[pick].sse)) pick = i;
-    if (pick < 0) break;
-    const box = boxes[pick];
-    const ch = CH[box.axis];
-    const sorted = [...box.colours].sort((a, b) => a[ch] - b[ch] || a.key - b.key);
-    let acc = 0;
-    let cut = 1;
-    for (let i = 0; i < sorted.length - 1; i++) {
-      acc += sorted[i].n;
-      cut = i + 1;
-      if (acc * 2 >= box.n) break;
-    }
-    // Both halves are non-empty because the box holds at least two colours.
-    boxes.splice(pick, 1, makeBox(sorted.slice(0, cut)), makeBox(sorted.slice(cut)));
-  }
-  return boxes.map((b) => {
-    const m = [0, 0, 0];
-    for (const c of b.colours) for (let k = 0; k < 3; k++) m[k] += c[CH[k]] * c.n;
-    return [Math.round(m[0] / b.n), Math.round(m[1] / b.n), Math.round(m[2] / b.n)];
-  });
-}
-
-function nearest(palette: ReadonlyArray<readonly [number, number, number]>, r: number, g: number, b: number): number {
-  let best = 0;
-  let bestD = Infinity;
-  for (let i = 0; i < palette.length; i++) {
-    const p = palette[i];
-    const d = (p[0] - r) ** 2 + (p[1] - g) ** 2 + (p[2] - b) ** 2;
-    if (d < bestD) {
-      bestD = d;
-      best = i;
-    }
-  }
-  return best;
 }
 
 /** LZW-compress palette indices the way GIF wants it, with `minCode` bits for the root alphabet. */
@@ -216,44 +131,17 @@ function le16(n: number): number[] {
   return [n & 255, (n >>> 8) & 255];
 }
 
-function errorOf(images: readonly Raster[], index: readonly Uint8Array[], palette: ReadonlyArray<readonly [number, number, number]>): PaletteError {
-  let max = 0;
-  let sum = 0;
-  let count = 0;
-  images.forEach((im, f) => {
-    for (let p = 0; p < im.width * im.height; p++) {
-      const c = palette[index[f][p]];
-      for (let k = 0; k < 3; k++) {
-        const e = Math.abs(im.data[p * 4 + k] - c[k]);
-        if (e > max) max = e;
-        sum += e;
-        count++;
-      }
-    }
-  });
-  return { max, mean: count === 0 ? 0 : sum / count };
-}
-
 /** Encode frames as a looping GIF, each frame shown for `ticks / fps` seconds. */
 export function encodeGif(input: readonly AnimFrame[], fps: number): { bytes: Uint8Array; stats: GifStats } {
   checkFrames(input, fps);
-  const colours = histogram(input);
+  refuseTranslucent(input);
+  const images = input.map((f) => f.image);
+  const colours = histogram(images);
   const palette = medianCut(colours, PALETTE_COLOURS);
-  const map = new Map<number, number>();
-  for (const c of colours) map.set(c.key, nearest(palette, c.r, c.g, c.b));
   const { width, height } = input[0].image;
-  const indexed = input.map((f) => {
-    const d = f.image.data;
-    const ix = new Uint8Array(width * height);
-    for (let p = 0; p < ix.length; p++) ix[p] = map.get((d[p * 4] << 16) | (d[p * 4 + 1] << 8) | d[p * 4 + 2]) ?? 0;
-    return ix;
-  });
-  const frame0 = errorOf([input[0].image], [indexed[0]], palette);
-  const all = errorOf(
-    input.map((f) => f.image),
-    indexed,
-    palette,
-  );
+  const indexed = mapToPalette(images, palette, false);
+  const frame0 = paletteError([images[0]], [indexed[0]], palette);
+  const all = paletteError(images, indexed, palette);
 
   // Merge neighbours that quantise to the same indices.
   const runs: Array<{ ix: Uint8Array; ticks: number }> = [];

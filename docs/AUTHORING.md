@@ -138,6 +138,20 @@ Two steps are external: the See-through runs (by any route; the optional `comfy 
 | `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art | a link off the art (a bone on the background) — move it onto the layer |
 | `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; then rigc's gate lines | `cover 1.00000` on every mesh, both gates `0 failed` | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
 | `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, `check.json` | `check: PASS` | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
+| `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line, each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
+
+`loop` writes three files from one frame set, and they are not interchangeable.
+`idle.png` (`loop --out x.png`) is the lossless APNG: every frame decodes to the
+rendered frame byte for byte, so it is the exactness record. `idle-indexed.png`
+(`loop --out x.png --palette`) is an indexed APNG — colour type 3, one palette for
+every frame (255 median-cut colours and one transparent entry, alpha graded per
+entry, no dithering, filter None) — and is the small file to show. `idle.gif`
+(`loop --out x.gif`) is the same median cut in a GIF. The indexed APNG and the GIF
+print their palette error, per channel over R, G and B of every frame (and alpha's
+max for the APNG); a figure is a measurement of the file, not a bar. On the demo:
+13,645,611 B lossless, 1,706,468 B indexed and 1,812,041 B GIF, both palette files at
+max 57, mean 1.601 — the two share one quantiser, so their error is the same by
+construction and the size is the difference.
 
 `--seam near-white` (the default) is the reference implementation's rule: where the
 flat stack of parts differs from the painting by more than 60, the top part takes the
@@ -242,7 +256,7 @@ stage's prefix (`[assemble]   FAIL  …`), and the build stops there.
 | `CHECK_LOOP_CLOSES` | frame 0 and the frame at `duration` differ (max and first pixel quoted) | a track whose last key is not its first |
 | `CHECK_SEAM_WITHIN_BAR` | the setup pose does not reproduce the flat stack of parts | usually a region or mesh placed off its part; compare with `recomposite_rig.png` |
 | `CHECK_SEAM_FRAME_SIZE`, `FRAMES_SIDECAR` | rigc's render is not what its `frames.json` says | a rigc problem; report it |
-| `LOOP_ENCODE` | the loop encoder refused a frame (translucent pixel in a GIF, a size change) | the frames |
+| `LOOP_ENCODE` | the loop encoder refused a frame (translucent pixel in a GIF, a size change) | the frames; for a translucent frame write the lossless or the indexed APNG, which keep alpha |
 | `BUILD_ARTIFACT_PRESENT` | the packed build lacks its `.json`, `.atlas` or page | a rigc problem; report it |
 
 ## 7. The bars `check` enforces, and what only an eye answers today

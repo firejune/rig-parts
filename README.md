@@ -15,7 +15,7 @@ input is silent.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/firejune/spine-parts/main/assets/demo-source.png" alt="The demo painting: a generated full-body character in a white and pink frilled dress with long pink twin tails, standing with her hands clasped" height="420" />
-  <img src="https://raw.githubusercontent.com/firejune/spine-parts/main/assets/demo-idle.gif" alt="The same character as a Spine rig, breathing, blinking once and swaying her hair, sleeves and skirt in a four-second loop" height="420" />
+  <img src="https://raw.githubusercontent.com/firejune/spine-parts/main/assets/demo-idle.png" alt="The same character as a Spine rig, breathing, blinking once and swaying her hair, sleeves and skirt in a four-second loop" height="420" />
 </p>
 
 <p align="center">
@@ -42,8 +42,10 @@ is taken from the full run, because the twin tails leave the head crop sideways
 <code>--seam silhouette</code> repaired the navy blobs the default rule leaves on the white
 blouse (recomposite error pixels 11,050 → 9,540); the default stays
 <code>near-white</code>, the reference implementation's rule, so the examples stay
-comparable with it. The loop is <code>spine-parts loop</code>'s GIF, 48 frames at
-12 fps, 1,812,041 bytes; the painting is shown at half size, resampled and written
+comparable with it. The loop is <code>spine-parts loop --palette</code>'s indexed APNG, 48 frames at
+12 fps, 1,706,468 bytes, one 256-entry palette at a measured error of max 57, mean 1.601
+per channel over every frame (the lossless APNG beside it, the exactness record, is
+13,645,611 bytes; the GIF, at the same error, 1,812,041); the painting is shown at half size, resampled and written
 by this package's PNG codec (nothing here encodes JPEG). <code>spine-parts sheet</code>
 made the contact sheet.
 </em></p>
@@ -86,7 +88,7 @@ page** (issue #2):
 | `parts/*.png`, `parts.json`, `recomposite_rig.png` | the loose parts, each cropped to its alpha box; the record of where every part came from and how many of its pixels were re-taken from the painting; the flat stack of parts |
 | `rig/` | `rig.json` and `motion.json` in spine-rigc's spec, `mesh_report.json`, the padded `images/` |
 | `check/` | both gate files verbatim, the idle's frames, `contact.png`, `motion_heat.png`, `check.json` |
-| `idle.gif`, `idle.png` | with `--loop`: the idle as a GIF and a lossless APNG |
+| `idle.png`, `idle-indexed.png`, `idle.gif` | with `--loop`: the idle as a lossless APNG (the exactness record), an indexed APNG with one shared palette (the small one) and a GIF; the last two print their palette error |
 
 The last lines of a green build are the pack line, printed beside the Spine example
 export's `spineboy.png` as a yardstick (a reference, not a bar), and the three
@@ -209,7 +211,7 @@ agent skill.
 | `propose … --from-config <config>` | draw and LINT the config's current bones |
 | `rig --config --parts --out` | author `rig.json` + `motion.json`, written only after spine-rigc's round trip is green |
 | `check --rig --out [--parts]` | build packed, gate under both profiles, render the idle, measure seam and loop |
-| `loop --frames <dir> --out <file.gif \| file.png>` | encode a rendered idle as a looping GIF or APNG |
+| `loop --frames <dir> --out <file.gif \| file.png> [--palette]` | encode a rendered idle as a looping GIF, lossless APNG, or indexed APNG (`--palette`) |
 | `build --config --source --full --head --out [--seam] [--loop]` | assemble, rig and check in one process, stopping at the first refusal |
 
 `spine-parts --help` has every flag. Exit codes: 0 done, 1 input refused (every
@@ -231,7 +233,7 @@ These are limits of the approach, stated so nobody reads more into a green run:
   against the reference implementation this package ports — the two public examples
   here and eight private ones, one See-through seed each — and all ten check green.
   That is an existence proof, not a rate.
-- **`loop` writes GIF and APNG, not WebP**: an animated WebP needs a VP8/VP8L
+- **`loop` writes GIF and APNG (lossless and indexed), not WebP**: an animated WebP needs a VP8/VP8L
   encoder, which this package does not carry.
 - **The proposer reads tags, not pictures.** A swinging element painted inside another
   layer (a sash tail in the skirt), hair that is none of the shapes it knows, and
