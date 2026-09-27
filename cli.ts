@@ -19,10 +19,12 @@ import { fileURLToPath } from 'node:url';
 import { type AnimFrame, EncodeError, encodeApng } from './src/apng.ts';
 import { assemble, DEFAULT_SEAM_RULE, figuresLine, proposeFields, proposePlan, SEAM_RULES, type SeamRule, stageFields } from './src/assemble.ts';
 import { findRigc, readFrameSet, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './src/check.ts';
+import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
 import { type CharacterConfig, loadConfig } from './src/config.ts';
 import { PartsError, type Problem, problemLine } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
 import { proposeHeadBox } from './src/headbox.ts';
+import { makeInputs } from './src/inputs.ts';
 import { type LayerSet, readLayers } from './src/layers.ts';
 import { readParts, writeParts } from './src/parts.ts';
 import { checkProposal, compare, compareLines, drawLandmarks, lint, lintLine, type PartSet, propose, readPartSet, serializeProposal } from './src/propose.ts';
@@ -47,7 +49,6 @@ function version(): string {
  */
 const LATER: ReadonlyArray<[string, string]> = [
   ['build', 'assemble, rig and check in one pass'],
-  ['comfy', 'drive ComfyUI for the painting and the See-through runs (optional)'],
 ];
 
 const HELP = `spine-parts ${version()} — Spine-ready parts from one painting and its See-through layers
@@ -137,6 +138,34 @@ usage:
       Print {plan, extend_below_crop, notes} for config.assemble, from the two
       runs. Reads only config.seethrough.head_box, config.seethrough.resolution
       and config.assemble.rig_scale — the rest of the config need not exist yet.
+
+  spine-parts inputs --source <painting.png> --config <config.json> --out <dir>
+      Cut the two images See-through is fed: <out>/st_input_full.png (the
+      painting centred on a white square as tall as it is) and, when the config
+      sets seethrough.head_box, <out>/st_input_head.png (that box, cropped at
+      its exact size). Refuses a landscape or translucent painting and a head
+      box outside the painting, by name.
+
+  spine-parts comfy seethrough --image <png> --out <dir> [--host <url>]
+                    [--resolution 1024] [--steps 30] [--seed 42] [--offload] [--lama] [--nf4]
+                    [--prefix spine_parts] [--wait 1800] [--timeout 3600] [--poll 3]
+      Optional. Run See-through on a ComfyUI box with the jtydhr88/ComfyUI-See-through
+      wrapper installed, and write the wrapper form \`layers\` reads into <out>
+      (absent or empty): layers.json, parts/<tag>.png, meta.json, previews/.
+      The host is --host or COMFY_HOST and has no default. Checks every node and
+      input against the box's /object_info before uploading, waits for an empty
+      queue (at most --wait s), polls /history (at most --timeout s), and
+      writes <out> only after the layer reader accepts what came back.
+      --lama turns the wrapper's LaMa inpainting on and --nf4 its nf4
+      quantisation; both are off unless given, as --offload is.
+
+  spine-parts comfy paint --config <config.json> --out <dir> [--host <url>]
+                    [--seeds 1] [--seed0 <generation.seed>] [--wait 1800] [--timeout 3600] [--poll 3]
+      Optional. Generate the painting from the config's inline generation block:
+      <out>/painting_<seed>.png and painting_<seed>_meta.json (the prompts
+      verbatim, checkpoint, LoRAs, sampler, control, elapsed) for --seeds
+      seeds from --seed0, and control_<skeleton>.png when generation.control
+      is set. The pose words are generation.pose, or the control skeleton's own.
 
   spine-parts --version
   spine-parts --help
@@ -664,7 +693,135 @@ function cmdAssemble(args: string[]): number {
   }
 }
 
-function main(argv: string[]): number {
+/** Parse `--flag value` pairs and bare `--switch`es; a string is a usage error. */
+function comfyFlags(args: string[], valued: readonly string[], switches: readonly string[], command: string): { v: Map<string, string>; on: Set<string> } | string {
+  const v = new Map<string, string>();
+  const on = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    if (switches.includes(flag)) {
+      if (on.has(flag)) return `${flag} is given twice`;
+      on.add(flag);
+      continue;
+    }
+    if (!valued.includes(flag)) return `${command} does not take "${flag}"; it takes ${[...valued, ...switches].join(', ')}`;
+    const value = args[i + 1];
+    if (value === undefined) return `${flag} needs a value`;
+    if (v.has(flag)) return `${flag} is given twice`;
+    v.set(flag, value);
+    i++;
+  }
+  return { v, on };
+}
+
+/** An integer flag at or above `min`, or its stated default; a string is a usage error. */
+function intFlag(v: Map<string, string>, flag: string, fallback: number, min: number): number | string {
+  const raw = v.get(flag);
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= min ? n : `${flag} ${raw} is not an integer of at least ${min}`;
+}
+
+/** A seconds flag above 0, or its stated default. */
+function secondsFlag(v: Map<string, string>, flag: string, fallback: number): number | string {
+  const raw = v.get(flag);
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : `${flag} ${raw} is not a number of seconds above 0`;
+}
+
+const COMFY_TIMING = ['--host', '--wait', '--timeout', '--poll'] as const;
+
+async function cmdComfy(args: string[]): Promise<number> {
+  const [sub, ...rest] = args;
+  if (sub !== 'seethrough' && sub !== 'paint') return usage(`comfy takes seethrough or paint; got ${sub === undefined ? 'nothing' : `"${sub}"`}`);
+  const valued = sub === 'seethrough' ? ['--image', '--out', '--resolution', '--steps', '--seed', '--prefix', ...COMFY_TIMING] : ['--config', '--out', '--seeds', '--seed0', ...COMFY_TIMING];
+  const switches = sub === 'seethrough' ? ['--offload', '--lama', '--nf4'] : [];
+  const f = comfyFlags(rest, valued, switches, `comfy ${sub}`);
+  if (typeof f === 'string') return usage(f);
+  const { v, on } = f;
+  const wait = secondsFlag(v, '--wait', 1800);
+  const timeout = secondsFlag(v, '--timeout', 3600);
+  const poll = secondsFlag(v, '--poll', 3);
+  for (const x of [wait, timeout, poll]) if (typeof x === 'string') return usage(x);
+  const out = v.get('--out');
+  if (out === undefined) return usage(`comfy ${sub} needs --out <dir>`);
+  try {
+    const host = resolveHost(v.get('--host'), process.env.COMFY_HOST);
+    const client = new ComfyClient(host, { poll: poll as number, request: 30 });
+    if (sub === 'seethrough') {
+      const image = v.get('--image');
+      if (image === undefined) return usage('comfy seethrough needs --image <png>');
+      const resolution = intFlag(v, '--resolution', 1024, 64);
+      const steps = intFlag(v, '--steps', 30, 1);
+      const seed = intFlag(v, '--seed', 42, 0);
+      for (const x of [resolution, steps, seed]) if (typeof x === 'string') return usage(x);
+      const prefix = v.get('--prefix') ?? 'spine_parts';
+      if (!/^[A-Za-z0-9_-]+$/.test(prefix)) return usage(`--prefix ${prefix} is not letters, digits, "_" and "-"`);
+      const run = {
+        image,
+        out,
+        prefix,
+        resolution: resolution as number,
+        steps: steps as number,
+        seed: seed as number,
+        offload: on.has('--offload'),
+        lama: on.has('--lama'),
+        quant: on.has('--nf4') ? ('nf4' as const) : ('none' as const),
+        wait: wait as number,
+        timeout: timeout as number,
+      };
+      console.log(`spine-parts comfy seethrough: ${image} -> ${out}`);
+      console.log(`  resolution ${run.resolution}, steps ${run.steps}, seed ${run.seed}, offload ${run.offload}, lama ${run.lama}, quant ${run.quant}; wait <= ${run.wait} s, timeout ${run.timeout} s`);
+      const r = await runSeeThrough(client, run, (l) => console.log(l));
+      console.log(`  ${r.layers.length} layer(s) on a ${r.canvas[0]}x${r.canvas[1]} canvas, read back green by the layer reader: ${r.layers.join(', ')}`);
+      console.log(`  wrote ${join(out, 'layers.json')}, meta.json, parts/ (${r.layers.length} PNG) and previews/ (${r.previews.length} PNG); GPU job ended`);
+      return EXIT_OK;
+    }
+    const configPath = v.get('--config');
+    if (configPath === undefined) return usage('comfy paint needs --config <config.json>');
+    const cfg = loadConfig(configPath);
+    const seeds = intFlag(v, '--seeds', 1, 1);
+    if (typeof seeds === 'string') return usage(seeds);
+    const seed0 = intFlag(v, '--seed0', cfg.generation?.seed ?? 0, 0);
+    if (typeof seed0 === 'string') return usage(seed0);
+    console.log(`spine-parts comfy paint: ${cfg.key} -> ${out}`);
+    console.log(`  ${seeds} seed(s) from ${seed0}${v.has('--seed0') ? '' : ' (generation.seed)'}; wait <= ${wait} s per seed, timeout ${timeout} s`);
+    const done = await runPainting(client, { config: cfg, out, seeds, seed0, wait: wait as number, timeout: timeout as number }, (l) => console.log(l));
+    console.log(`  wrote ${done.length} painting(s): ${done.map((d) => `${d.file} ${d.size[0]}x${d.size[1]} in ${d.elapsed.toFixed(1)} s`).join(', ')}; GPU job(s) ended`);
+    return EXIT_OK;
+  } catch (err) {
+    return printRefusal(err);
+  }
+}
+
+function cmdInputs(args: string[]): number {
+  const f = flags(args, ['--source', '--config', '--out'], 'inputs');
+  if (typeof f === 'string') return usage(f);
+  const source = f.get('--source') as string;
+  const out = f.get('--out') as string;
+  try {
+    if (!existsSync(source)) throw new PartsError([{ code: 'INPUTS_SOURCE_PRESENT', object: source, detail: 'no such file; the painting is required' }]);
+    const cfg = loadConfig(f.get('--config') as string);
+    const painting = readPng(source);
+    const r = makeInputs(painting, cfg, source);
+    mkdirSync(out, { recursive: true });
+    writePng(join(out, 'st_input_full.png'), r.full);
+    console.log(`spine-parts inputs: ${source} (${painting.width}x${painting.height}) -> ${out}`);
+    console.log(`  st_input_full.png ${r.full.width}x${r.full.height}: the painting at x ${r.padLeft}, white either side (${r.padLeft} + ${r.full.width - painting.width - r.padLeft} px)`);
+    if (r.head !== null && r.headBox !== null) {
+      writePng(join(out, 'st_input_head.png'), r.head);
+      console.log(`  st_input_head.png ${r.head.width}x${r.head.height}: seethrough.head_box [${r.headBox.join(', ')}]`);
+    } else {
+      console.log('  no seethrough.head_box in the config, so no st_input_head.png: run the full See-through pass, then `propose --head-box`, then this again');
+    }
+    return EXIT_OK;
+  } catch (err) {
+    return printRefusal(err);
+  }
+}
+
+function main(argv: string[]): number | Promise<number> {
   const [command, ...rest] = argv;
   if (command === undefined || command === '--help' || command === '-h' || command === 'help') {
     console.log(HELP);
@@ -681,6 +838,8 @@ function main(argv: string[]): number {
   if (command === 'check') return cmdCheck(rest);
   if (command === 'loop') return cmdLoop(rest);
   if (command === 'assemble') return cmdAssemble(rest);
+  if (command === 'inputs') return cmdInputs(rest);
+  if (command === 'comfy') return cmdComfy(rest);
   const later = LATER.find(([name]) => name === command);
   if (later !== undefined) {
     console.log(`  FAIL  NOT_IMPLEMENTED: \`spine-parts ${command}\` (${later[1]}) is not implemented in this version, ${version()}`);
@@ -689,4 +848,4 @@ function main(argv: string[]): number {
   return usage(`unknown command "${command}"`);
 }
 
-process.exit(main(process.argv.slice(2)));
+process.exit(await main(process.argv.slice(2)));

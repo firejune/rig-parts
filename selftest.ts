@@ -67,15 +67,18 @@ import {
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng } from './src/apng.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, shiftRight, writeCheckRig } from './fixtures/checkrig.ts';
+import { fakePainting } from './fixtures/fakecomfy.ts';
 import { PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, writeProposeFixture } from './fixtures/propose.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
 import { assemble, type AssembleInput, belowCrop, checkGeometry, cleanGhosts, DEFAULT_SEAM_RULE, figuresLine, growRim, layerToRig, proposeFields, proposePlan, stageFields } from './src/assemble.ts';
 import { findRigc, gateGreen, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
-import { type BoneEntry, type CharacterConfig, loadConfig, parseConfig } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, type Generation, loadConfig, parseConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
 import { PartsError } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
+import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paintingGraph, POSITIVE_HEAD, stripWords } from './src/graphs.ts';
 import { proposeHeadBox } from './src/headbox.ts';
+import { makeInputs } from './src/inputs.ts';
 import { type LayerSet, readLayers, readPsdLayers, readWrapperLayers } from './src/layers.ts';
 import { type PartsFile, readParts, serializeParts, writeParts } from './src/parts.ts';
 import {
@@ -108,6 +111,7 @@ import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { islandImages, RIG_EXPECT, rigConfig, rigImages, rigParts, writeRigFixture } from './fixtures/rig.ts';
 import { buildRig, type MeshAttachment, type RegionAttachment, rigJsonText } from './src/rig.ts';
 import { pyRound } from './src/round.ts';
+import { COLORS, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
 import { readTag, type TagReading } from './src/tags.ts';
 
 const ROOT = import.meta.dir;
@@ -1152,13 +1156,13 @@ function runCliSuite(): number {
     'the version a user reports is the one the package carries, read at run time rather than copied',
   );
 
-  const later = ['build', 'comfy'];
+  const later = ['build'];
   const help = runCli(['--help']);
   const stubs = later.map((c) => ({ c, r: runCli([c]) }));
   const honest = stubs.filter(({ r }) => r.status === 2 && r.out.includes('NOT_IMPLEMENTED') && r.out.includes('not implemented in this version'));
   say(
     'CL02_EVERY_LATER_COMMAND_IS_LISTED_AND_EXITS_TWO_SAYING_SO',
-    help.status === 0 && [...later, 'layers', 'sheet', 'rig', 'propose', 'check', 'loop', 'assemble'].every((c) => help.out.includes(c)) && honest.length === later.length,
+    help.status === 0 && [...later, 'layers', 'sheet', 'assemble', 'propose', 'rig', 'check', 'loop', 'comfy', 'inputs', 'comfy seethrough', 'comfy paint'].every((c) => help.out.includes(c)) && honest.length === later.length,
     `${honest.length} of ${later.length} stubs exit 2 with NOT_IMPLEMENTED (${stubs.map(({ c, r }) => `${c}=${r.status}`).join(', ')}); --help names all of them`,
     'the surface is visible before it exists, and the help does not promise a command that would do nothing',
   );
@@ -2482,6 +2486,158 @@ function runAssembleSuite(): number {
   return bad();
 }
 
+// ---------------------------------------------------------------------------
+// the control skeleton, the See-through inputs, the prompt, the ComfyUI adapter
+// ---------------------------------------------------------------------------
+
+function sameColour(r: Raster, x: number, y: number, rgb: readonly number[]): boolean {
+  const i = (y * r.width + x) * 4;
+  return r.data[i] === rgb[0] && r.data[i + 1] === rgb[1] && r.data[i + 2] === rgb[2];
+}
+
+/** The horizontal run of `rgb` on row `y`: how many pixels of the row hold it. */
+function rowRun(r: Raster, y: number, rgb: readonly number[]): number {
+  let n = 0;
+  for (let x = 0; x < r.width; x++) if (sameColour(r, x, y, rgb)) n++;
+  return n;
+}
+
+function runSkeletonSuite(): number {
+  section('skeleton: the OpenPose body-18 control image');
+  const { say, bad } = counter();
+  const scales = [[400, 1], [499, 1], [500, 2], [832, 2], [1000, 3], [1216, 3], [2048, 4], [5000, 7], [99999, 7]] as const;
+  const wrong = scales.filter(([side, want]) => stickScale(side) !== want);
+  say(
+    'SK01_THE_STICK_SCALE_IS_XINSIRS_RULE',
+    wrong.length === 0,
+    `${scales.map(([s]) => `${s}->${stickScale(s)}`).join(', ')}; expected 1 below 500, then min(2 + side // 1000, 7)`,
+    "xinsir's controlnet-openpose-sdxl-1.0 was trained on sticks scaled this way; the canonical 4 px width is three times too thin at the painting latent",
+  );
+
+  const [W, H] = SKELETON_BASE;
+  const failedKp: string[] = [];
+  for (const name of ['stand_sides', 'stand_clasp'] as const) {
+    const r = renderSkeleton(name, W, H);
+    const pts = scaledPoints(name, W, H);
+    KEYPOINT_NAMES.forEach((k, i) => {
+      const [x, y] = pts[k];
+      if (!sameColour(r, x, y, COLORS[i])) failedKp.push(`${name}.${k} at ${x},${y} is ${px(r, x, y).slice(0, 3).join(',')}, not ${COLORS[i].join(',')}`);
+    });
+    if (!(pts.r_shoulder[0] < pts.l_shoulder[0])) failedKp.push(`${name}: r_shoulder is not on the image left`);
+    if (px(r, 0, 0).join(',') !== '0,0,0,255') failedKp.push(`${name}: the background is ${px(r, 0, 0).join(',')}, not opaque black`);
+  }
+  const scaledOk = scaledPoints('stand_sides', 416, 608).nose.join(',') === '208,88';
+  say(
+    'SK02_EVERY_KEYPOINT_IS_ITS_COLOUR_AT_ITS_POINT_ON_BLACK',
+    failedKp.length === 0 && scaledOk,
+    `${KEYPOINT_NAMES.length} keypoints x 2 skeletons at ${W}x${H}: ${failedKp.length === 0 ? 'every centre pixel is its full colour' : failedKp.join('; ')}; stand_sides at 416x608 puts the nose at ${scaledPoints('stand_sides', 416, 608).nose.join(',')} (208,88 by hand)`,
+    'the keypoints are drawn last, at full colour, so each centre pixel is its own colour whatever the limbs under it; r/l are the subject\'s sides',
+  );
+
+  // stand_sides' shin r_knee (384,862) -> r_ankle (388,1100) is limb 8, drawn at 0.6 x COLORS[8]; at its middle row it is
+  // all but vertical, so the row crosses the stick where it is widest: 2 x the half-width, within one pixel either side.
+  const shin = COLORS[8].map((c) => Math.trunc(c * 0.6));
+  const row = 981;
+  const half = 4 * stickScale(Math.max(W, H));
+  const run = rowRun(renderSkeleton('stand_sides', W, H), row, shin);
+  const thin = rowRun(renderSkeleton('stand_sides', W, H, 4), row, shin);
+  const widthOk = (n: number): boolean => Math.abs(n - 2 * half) <= 1;
+  say(
+    'SK03_THE_STICK_IS_DRAWN_AT_THE_XINSIR_WIDTH_AND_A_CANONICAL_ONE_IS_CAUGHT',
+    widthOk(run) && !widthOk(thin),
+    `the right shin crosses row ${row} ${run} px wide (2 x ${half} +-1 required); planted at the canonical half-width 4 it is ${thin} px, and the check refuses it`,
+    'a skeleton drawn at the canonical width is a different conditioning image, and only the width says which one was drawn',
+  );
+
+  const a = encodePngBytes(renderSkeleton('stand_clasp', W, H));
+  const b = encodePngBytes(renderSkeleton('stand_clasp', W, H));
+  say(
+    'SK04_THE_SAME_SKELETON_IS_THE_SAME_BYTES',
+    a.length === b.length && a.every((v, i) => v === b[i]),
+    `two renders of stand_clasp at ${W}x${H}: ${a.length} bytes each, identical`,
+    'the skeleton is uploaded as the ControlNet image, and determinism is a contract',
+  );
+  return bad();
+}
+
+function runInputsSuite(): number {
+  section('inputs: the two images See-through is fed');
+  const { say, bad } = counter();
+  // a 6x10 painting whose every pixel is distinct, so any shift or crop is visible
+  const painting = newRaster(6, 10);
+  for (let i = 0; i < 60; i++) painting.data.set([i * 4, 255 - i * 4, (i * 7) % 256, 255], i * 4);
+  const cfg = (box?: [number, number, number, number]): Pick<CharacterConfig, 'seethrough'> => ({ seethrough: { resolution: 1024, steps: 30, seed: 42, offload: true, ...(box ? { head_box: box } : {}) } });
+  const r = makeInputs(painting, cfg([1, 2, 5, 6]), 'painting');
+  let placed = r.full.width === 10 && r.full.height === 10 && r.padLeft === 2;
+  for (let y = 0; y < 10 && placed; y++) {
+    for (let x = 0; x < 10; x++) {
+      const want = x < 2 || x >= 8 ? [255, 255, 255, 255] : px(painting, x - 2, y);
+      if (px(r.full, x, y).join(',') !== want.join(',')) placed = false;
+    }
+  }
+  say(
+    'IN01_THE_FULL_INPUT_IS_THE_PAINTING_CENTRED_ON_WHITE',
+    placed,
+    `6x10 -> ${r.full.width}x${r.full.height}, painting at x ${r.padLeft} (2 by hand), columns 0-1 and 8-9 white, every painting pixel where it was put`,
+    "See-through pads with black, which reads as figure; the reference fed a white square with the painting at ((side - w) // 2, 0)",
+  );
+  const seven = newRaster(7, 10);
+  seven.data.fill(255);
+  const odd = makeInputs(seven, cfg(), 'odd');
+  say(
+    'IN02_AN_ODD_PAD_PUTS_THE_EXTRA_COLUMN_ON_THE_RIGHT',
+    odd.padLeft === 1 && odd.full.width === 10 && odd.head === null,
+    `7x10 -> pad ${odd.padLeft} left, ${odd.full.width - 7 - odd.padLeft} right; no head box, so no head input (${odd.head === null ? 'none' : 'one'})`,
+    "the reference's `(side - w) // 2` floors, so a one-pixel disagreement here would shift the whole full run against proposeHeadBox's mapping",
+  );
+  let cropped = r.head !== null && r.head.width === 4 && r.head.height === 4;
+  for (let y = 0; y < 4 && cropped; y++) for (let x = 0; x < 4; x++) if (px(r.head!, x, y).join(',') !== px(painting, 1 + x, 2 + y).join(',')) cropped = false;
+  say(
+    'IN03_THE_HEAD_INPUT_IS_THE_HEAD_BOX_AT_ITS_EXACT_SIZE',
+    cropped,
+    `head_box [1, 2, 5, 6] -> ${r.head?.width}x${r.head?.height}, every pixel the painting's at (1 + x, 2 + y)`,
+    'the head run is See-through at a higher resolution on this crop; a resampled or shifted crop would move every head part',
+  );
+  const landscape = refusals(() => makeInputs(newRaster(10, 6), cfg(), 'wide.png'));
+  const glass = newRaster(6, 10);
+  glass.data.fill(255);
+  glass.data[4 * 13 + 3] = 128;
+  const translucent = refusals(() => makeInputs(glass, cfg(), 'glass.png'));
+  const outside = refusals(() => makeInputs(painting, cfg([3, 4, 9, 10]), 'painting'));
+  const square = refusals(() => parseConfig({ ...minimalConfig(), seethrough: { resolution: 1024, steps: 30, seed: 42, offload: true, head_box: [0, 0, 4, 5] } }));
+  say(
+    'IN04_A_LANDSCAPE_OR_TRANSLUCENT_PAINTING_AND_A_BOX_OUTSIDE_OR_NOT_SQUARE_ARE_REFUSED',
+    landscape?.problems[0]?.code === 'INPUTS_PAINTING_PORTRAIT' &&
+      translucent?.problems[0]?.code === 'INPUTS_PAINTING_OPAQUE' &&
+      translucent.problems[0].detail.includes('1 pixel(s)') &&
+      outside?.problems[0]?.code === 'INPUTS_HEAD_BOX_INSIDE' &&
+      square?.problems.some((p) => p.code === 'CONFIG_HEAD_BOX_SQUARE') === true,
+    `10x6 -> ${codes(landscape)}; one alpha-128 pixel -> ${translucent?.problems[0]?.detail ?? 'nothing'}; [3, 4, 9, 10] on 6x10 -> ${codes(outside)}; 4x5 box -> ${codes(square)}`,
+    'the reference top-aligned a landscape painting, dropped alpha, and scaled a non-square box by its width, each silently',
+  );
+
+  const dir = temp('inputs');
+  try {
+    const src = join(dir, 'painting.png');
+    writeFileSync(src, encodePngBytes(painting));
+    const c = { ...minimalConfig(), seethrough: { resolution: 1024, steps: 30, seed: 42, offload: true, head_box: [1, 2, 5, 6] } };
+    writeFileSync(join(dir, 'config.json'), JSON.stringify(c));
+    const run = runCli(['inputs', '--source', src, '--config', join(dir, 'config.json'), '--out', join(dir, 'out')]);
+    const full = existsSync(join(dir, 'out', 'st_input_full.png')) ? readPng(join(dir, 'out', 'st_input_full.png')) : null;
+    const head = existsSync(join(dir, 'out', 'st_input_head.png')) ? readPng(join(dir, 'out', 'st_input_head.png')) : null;
+    const same = (a: Raster | null, b: Raster | null): boolean => a !== null && b !== null && a.width === b.width && a.data.every((v, i) => v === b.data[i]);
+    say(
+      'IN05_THE_CLI_WRITES_BOTH_INPUTS_AND_SAYS_WHAT_IT_WROTE',
+      run.status === 0 && same(full, r.full) && same(head, r.head) && run.out.includes('st_input_full.png 10x10') && run.out.includes('st_input_head.png 4x4'),
+      `exit ${run.status}; st_input_full ${full === null ? 'absent' : `${full.width}x${full.height}`}, st_input_head ${head === null ? 'absent' : `${head.width}x${head.height}`}, both equal to makeInputs'`,
+      'the command is what an agent runs; the file it writes is the one the See-through run is fed',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return bad();
+}
+
 
 /**
  * The assemble stage on the public examples, where they have been fetched
@@ -2517,6 +2673,334 @@ function runAssembleExamplesSuite(): number | null {
       detail = `refused or crashed: ${(err as Error).message.split('\n')[0]}`;
     }
     say(`AE01_EXAMPLE_ASSEMBLES_GREEN_AND_DETERMINISTIC[${name}]`, ok, detail, 'a public painting and its real See-through runs: the question the generated rectangles cannot answer is whether real layers go through green');
+  }
+  return bad();
+}
+
+function runInputsExamplesSuite(): number | null {
+  section('inputs-examples: inputs reproduces every fetched example\'s st_input_full.png and st_input_head.png');
+  const keys = exampleKeys().fetched.filter((k) => existsSync(join(EXAMPLES_DIR, k, 'inputs', 'painting.png')));
+  if (keys.length === 0) {
+    console.log('  SKIP  no examples/*/inputs/painting.png on disk (bun run fetch-examples), so the cut was not compared with the reference\'s');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — inputs was exercised on the synthetic painting only.');
+    return null;
+  }
+  const { say, bad } = counter();
+  for (const k of keys) {
+    const d = join(EXAMPLES_DIR, k);
+    const r = makeInputs(readPng(join(d, 'inputs', 'painting.png')), loadConfig(join(d, 'config.json')), k);
+    const rows: string[] = [];
+    let ok = true;
+    for (const [file, img] of [['st_input_full.png', r.full], ['st_input_head.png', r.head]] as const) {
+      const ref = readPng(join(d, 'inputs', file));
+      let diff = 0;
+      if (img === null || img.width !== ref.width || img.height !== ref.height) diff = -1;
+      else for (let i = 0; i < ref.data.length; i++) if (ref.data[i] !== img.data[i]) diff++;
+      rows.push(`${file} ${ref.width}x${ref.height}: ${diff < 0 ? 'size differs' : `${diff} byte(s) differ`}`);
+      if (diff !== 0) ok = false;
+    }
+    say(
+      `IE01_EXAMPLE_${k.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_INPUTS_MATCH_THE_REFERENCE_PIXEL_FOR_PIXEL`,
+      ok,
+      rows.join('; '),
+      "the reference cut these two files from this painting; the port has to cut the same pixels, or every See-through layer downstream moves",
+    );
+  }
+  return bad();
+}
+
+/** The reference's default pose words when generation.pose was absent — the planted mutant, private tail included. */
+function referencePoseWords(skeleton: 'stand_sides' | 'stand_clasp'): string {
+  return `${FRAMING}, ${SKELETONS[skeleton].words}, gentle smile, long robe to the ankles, feet visible, shoes`;
+}
+
+/** Every positive term that none of its named sources holds. Empty means each word is traceable to the config, the head or the skeleton. */
+function untraceable(positive: string, g: Generation): string[] {
+  const terms = (s: string): string[] => s.split(',').map((t) => t.trim()).filter((t) => t !== '');
+  const pose = g.pose !== undefined ? g.pose : g.control !== undefined ? `${FRAMING}, ${SKELETONS[g.control.skeleton].words}` : '';
+  const known = new Set([POSITIVE_HEAD, g.trigger, g.identity, g.costume, pose, g.style].flatMap(terms));
+  return terms(positive).filter((t) => !known.has(t));
+}
+
+function runPromptSuite(): number {
+  section('prompt: the words and the graphs the ComfyUI adapter submits');
+  const { say, bad } = counter();
+  const s = stripWords('a, Symmetry, , b ,character sheet, symmetrical composition, c');
+  say(
+    'PR01_DUP_WORDS_ARE_STRIPPED_CASE_INSENSITIVELY_PER_TERM',
+    s.text === 'a, b, c' && s.dropped.join('|') === 'Symmetry|character sheet|symmetrical composition' && stripWords('asymmetry').text === 'asymmetry',
+    `"${s.text}", dropped ${s.dropped.join(' | ')}; "asymmetry" kept ("${stripWords('asymmetry').text}")`,
+    'prompt-only batches drew two figures side by side in 21 of 24 images with these terms in; the match is per term, so a word containing one is kept',
+  );
+
+  const g: Generation = {
+    checkpoint: 'base.safetensors',
+    loras: [{ name: 'style.safetensors', strength: 0.6 }],
+    trigger: '',
+    identity: '1girl, solo, adult woman',
+    sampler: { steps: 30, cfg: 6, sampler: 'euler_ancestral', scheduler: 'normal' },
+    costume: 'grey coat, black boots',
+    negative_extra: '2girls',
+    style: 'anime illustration',
+    negative_pose: 'cropped',
+    latent: [832, 1216],
+    seed: 1,
+    control: { skeleton: 'stand_clasp', strength: 0.8, end_percent: 0.7 },
+  };
+  const p = buildPrompts(g);
+  const want = `${POSITIVE_HEAD}, 1girl, solo, adult woman, grey coat, black boots, ${FRAMING}, ${SKELETONS.stand_clasp.words}, anime illustration`;
+  const planted = stripWords([POSITIVE_HEAD, g.trigger, g.identity, g.costume, referencePoseWords('stand_clasp'), g.style].join(', ')).text;
+  const examples = exampleKeys().all.map((k) => [k, loadConfig(join(EXAMPLES_DIR, k, 'config.json')).generation] as const).filter((e): e is readonly [string, Generation] => e[1] !== undefined);
+  const exampleHits = examples.flatMap(([k, eg]) => {
+    const pos = buildPrompts(eg).positive;
+    const cfgText = JSON.stringify(eg);
+    return [...untraceable(pos, eg).map((t) => `${k}: "${t}"`), ...(pos.includes('long robe') && !cfgText.includes('long robe') ? [`${k}: long robe`] : [])];
+  });
+  const cleanOk = p.positive === want && !p.positive.includes('long robe') && untraceable(p.positive, g).length === 0 && p.poseFrom === 'the stand_clasp skeleton';
+  const plantCaught = planted.includes('long robe') && untraceable(planted, g).length > 0;
+  say(
+    'PR02_WITHOUT_A_POSE_THE_POSE_WORDS_ARE_THE_SKELETONS_AND_NO_CAST_WORD_IS_EMITTED',
+    cleanOk && plantCaught && exampleHits.length === 0,
+    `positive = head, identity, costume, FRAMING, the stand_clasp words, style (${p.positive.length} chars, ${p.positive === want ? 'as assembled by hand' : `differs: ${p.positive}`}); ` +
+      `no "long robe", 0 untraceable terms; the reference's default planted -> untraceable ${untraceable(planted, g).map((t) => `"${t}"`).join(', ')}; ` +
+      `${examples.length} example config(s): ${exampleHits.length === 0 ? '0 untraceable terms' : exampleHits.join('; ')}`,
+    "the reference appended one private cast's expression and costume words after the skeleton's; a word no config and no skeleton holds is a word the tool invented",
+  );
+
+  const posed = buildPrompts({ ...g, pose: 'standing, arms crossed' });
+  say(
+    'PR03_A_POSE_IN_THE_CONFIG_IS_THE_WHOLE_OF_THE_POSE_WORDS',
+    posed.positive.includes('standing, arms crossed') && !posed.positive.includes(SKELETONS.stand_clasp.words) && !posed.positive.includes('head to toe') && posed.poseFrom === 'generation.pose',
+    `pose "standing, arms crossed" with a stand_clasp control -> skeleton words ${posed.positive.includes(SKELETONS.stand_clasp.words) ? 'present' : 'absent'}, framing ${posed.positive.includes('head to toe') ? 'present' : 'absent'}`,
+    'the skeleton is a fallback for the words and never an addition to what the config wrote',
+  );
+
+  const bare = buildPrompts({ ...g, negative_extra: '' });
+  say(
+    'PR04_THE_NEGATIVE_IS_HEAD_EXTRA_POSE_AND_AN_EMPTY_EXTRA_LEAVES_NO_GAP',
+    p.negative === `${NEGATIVE_HEAD}, 2girls, cropped` && bare.negative === `${NEGATIVE_HEAD}, cropped` && NEGATIVE_HEAD.includes('child, loli, shota') && NEGATIVE_HEAD.includes('nsfw, nude'),
+    `"...${p.negative.slice(-24)}"; with negative_extra "" -> "...${bare.negative.slice(-24)}"; the safety terms of the head are present`,
+    "the reference's negative is NEG_HEAD + extra + ', ' + pose; the head's nudity and minor terms are a guard, not a cast",
+  );
+
+  const graph = paintingGraph(g, 9, p, 'pfx', 'skel.png');
+  const ks = graph['3'].inputs;
+  const wired =
+    JSON.stringify(ks.positive) === '["32",0]' &&
+    JSON.stringify(ks.negative) === '["32",1]' &&
+    JSON.stringify(ks.model) === '["20",0]' &&
+    ks.seed === 9 &&
+    graph['20'].inputs.strength_clip === 0.6 &&
+    graph['31'].inputs.control_net_name === 'controlnet-openpose-sdxl-1.0.safetensors' &&
+    graph['30'].inputs.image === 'skel.png' &&
+    graph['14'].inputs.scale_by === 0.5;
+  const noControl = paintingGraph({ ...g, control: undefined, pose: 'standing' }, 9, p, 'pfx', null);
+  say(
+    'PR05_THE_PAINTING_GRAPH_CHAINS_LORAS_AND_CONTROL_INTO_THE_SAMPLER',
+    wired && !('32' in noControl) && JSON.stringify(noControl['3'].inputs.positive) === '["6",0]',
+    `KSampler positive ${JSON.stringify(ks.positive)}, negative ${JSON.stringify(ks.negative)}, model ${JSON.stringify(ks.model)}, seed ${ks.seed}; LoRA strength_clip ${graph['20'].inputs.strength_clip} (= strength when absent); without control the sampler reads node 6 directly`,
+    "checkpoint -> LoRAs -> encoders -> ControlNetApplyAdvanced -> KSampler -> 4x-AnimeSharp -> 0.5 is the reference's graph; a link to the wrong node is a valid graph that ignores the control",
+  );
+
+  const template: unknown = JSON.parse(readFileSync(join(ROOT, 'workflows', 'seethrough.json'), 'utf8'));
+  const params = { image: 'in.png', seed: 7, resolution: 512, steps: 3, quant: 'none' as const, offload: true, lama: false, prefix: 'run1' };
+  const st = fillSeeThrough(template, params);
+  const stray = threw(() => fillSeeThrough({ '1': { class_type: 'X', inputs: { a: '%NOBODY%' } } }, params));
+  const filled = !JSON.stringify(st).includes('%') && !('_comment' in st) && st['3'].inputs.seed === 7 && st['3'].inputs.resolution === 512 && st['2'].inputs.group_offload === true && st['9'].inputs.filename_prefix === 'run1_preview_parts';
+  say(
+    'PR06_THE_SEETHROUGH_TEMPLATE_IS_FILLED_TYPED_AND_A_STRAY_PLACEHOLDER_IS_REFUSED',
+    filled && stray !== null && stray.includes('%NOBODY%'),
+    `${Object.keys(st).length} nodes, no "%" left, seed ${String(st['3'].inputs.seed)} (a number), offload ${String(st['2'].inputs.group_offload)}; a template holding %NOBODY% -> ${stray ?? 'nothing thrown'}`,
+    'a placeholder sent unfilled is a string where the node wants an integer, which the box refuses only after the upload',
+  );
+
+  const info = {
+    CheckpointLoaderSimple: { input: { required: { ckpt_name: [['base.safetensors']] } } },
+    UpscaleModelLoader: { input: { required: { model_name: ['COMBO', { options: ['4x-AnimeSharp.pth'] }] } } },
+    SaveImage: { input: { required: { images: ['IMAGE'], filename_prefix: ['STRING'] }, hidden: { prompt: 'PROMPT' } } },
+  };
+  const probe = {
+    '4': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'base.safetensors' } },
+    '12': { class_type: 'UpscaleModelLoader', inputs: { model_name: '4x-AnimeSharp.pth' } },
+    '9': { class_type: 'SaveImage', inputs: { images: ['14', 0] as [string, number], filename_prefix: 'p' } },
+  };
+  const green = checkGraph(probe, info, 'box');
+  const red = checkGraph(
+    {
+      ...probe,
+      '4': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'other.safetensors' } },
+      '12': { class_type: 'UpscaleModelLoader', inputs: { model_name: 'nope.pth' } },
+      '9': { class_type: 'SaveImage', inputs: { images: ['14', 0] as [string, number], fps: 3 } },
+      '40': { class_type: 'SeeThrough_SavePSD', inputs: {} },
+    },
+    info,
+    'box',
+  );
+  const got = red.map((q) => q.code).sort().join(',');
+  say(
+    'PR07_A_GRAPH_IS_CHECKED_AGAINST_OBJECT_INFO_NODE_BY_NODE',
+    green.length === 0 && got === 'COMFY_CHOICE_PRESENT,COMFY_CHOICE_PRESENT,COMFY_INPUT_KNOWN,COMFY_INPUT_SET,COMFY_NODE_PRESENT',
+    `a matching graph -> ${green.length} problem(s); planted -> ${red.map((q) => `${q.code} ${q.object}`).join('; ')}`,
+    'both enum spellings /object_info uses are read, hidden inputs are inputs, and a missing node class is named before anything is uploaded',
+  );
+  return bad();
+}
+
+interface HarnessResult {
+  status: number;
+  out: string;
+  paths: string[];
+  uploads: string[];
+  prompts: number;
+}
+
+function runComfySuite(): number {
+  section('comfy: the adapter against a fake ComfyUI on 127.0.0.1');
+  const { say, bad } = counter();
+  const dir = temp('comfy');
+  try {
+    const h = spawnSync('bun', [join(ROOT, 'fixtures', 'comfyharness.ts'), dir], { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26 });
+    let parsed: { image: string; results: Record<string, HarnessResult> } | null = null;
+    try {
+      parsed = JSON.parse((h.stdout ?? '').trim().split('\n').pop() ?? '');
+    } catch {
+      parsed = null;
+    }
+    if (parsed === null) {
+      say('CF00_THE_HARNESS_RAN', false, `exit ${h.status}; ${(h.stdout ?? '').slice(-400)} ${(h.stderr ?? '').slice(-400)}`, 'the scenarios run in a child process that serves the fake box');
+      return bad();
+    }
+    const R = parsed.results;
+    const fail = (r: HarnessResult | undefined, code: string): string | null => (r === undefined ? null : failLine(r.out, code));
+    const nothingSent = (r: HarnessResult | undefined): boolean => r !== undefined && r.uploads.length === 0 && r.prompts === 0;
+    const leftovers = (name: string): string[] => readdirSync(dir).filter((f) => f === name || f.startsWith(`.${name}.partial`));
+
+    const ok = R['st-ok'];
+    const out = join(dir, 'st-ok');
+    const meta = readJsonFile(join(out, 'meta.json'));
+    let set: LayerSet | null = null;
+    try {
+      set = readWrapperLayers(out);
+    } catch {
+      set = null;
+    }
+    const prompts = JSON.parse(readFileSync(join(dir, 'st-ok.prompts.json'), 'utf8')) as Array<Record<string, { inputs: Record<string, unknown> }>>;
+    const g = prompts[0];
+    const uploaded = ok.uploads.length === 1 ? readFileSync(join(dir, 'st-ok.uploads', ok.uploads[0])) : null;
+    const input = readFileSync(parsed.image);
+    const layersRight =
+      set !== null &&
+      set.layers.map((l) => l.name).sort().join('|') === WRAPPER_LAYERS.map((l) => l.name).sort().join('|') &&
+      set.layers.every((l) => l.opaquePx === (WRAPPER_LAYERS.find((w) => w.name === l.name)?.painted ?? -1));
+    const graphRight =
+      g !== undefined &&
+      g['3'].inputs.seed === 7 &&
+      g['3'].inputs.resolution === 512 &&
+      g['3'].inputs.num_inference_steps === 3 &&
+      g['2'].inputs.group_offload === true &&
+      g['6'].inputs.use_lama === false &&
+      g['7'].inputs.filename_prefix === meta?.prefix &&
+      !JSON.stringify(g).includes('%');
+    const written = ['layers.json', 'meta.json'].map((f) => readFileSync(join(out, f), 'utf8'));
+    const hostFree = written.every((t) => !t.includes('127.0.0.1'));
+    const previews = existsSync(join(out, 'previews')) ? readdirSync(join(out, 'previews')).length : 0;
+    say(
+      'CF01_A_GREEN_RUN_WRITES_THE_WRAPPER_FORM_THE_LAYER_READER_ACCEPTS',
+      ok.status === 0 && layersRight && graphRight && uploaded !== null && uploaded.equals(input) && hostFree && previews === 2 && meta?.seed === 7 && leftovers('st-ok').length === 1,
+      `exit ${ok.status}; ${set === null ? 'the layer reader refused the output' : `${set.layers.length} layers read back, opaque counts ${layersRight ? 'equal to the fixture' : 'DIFFER'}`}; ` +
+        `graph seed/resolution/steps/offload/lama/prefix ${graphRight ? 'as passed' : 'WRONG'}; upload ${uploaded === null ? 'absent' : uploaded.equals(input) ? 'byte-identical to the input' : 'differs'}; ${previews} preview(s); host in written files: ${hostFree ? 'no' : 'YES'}; routes ${[...new Set(ok.paths)].join(', ')}`,
+      'the positive control: the refusals below are only worth something if a box that answers correctly yields a layer set the next stage reads',
+    );
+
+    const busy = R['st-busy'];
+    say(
+      'CF02_A_QUEUE_THAT_NEVER_EMPTIES_IS_REFUSED_BY_NAME_BEFORE_ANYTHING_IS_SENT',
+      busy.status === 1 && fail(busy, 'COMFY_QUEUE_EMPTY') !== null && nothingSent(busy) && leftovers('st-busy').length === 0,
+      `exit ${busy.status}; "${fail(busy, 'COMFY_QUEUE_EMPTY') ?? 'no COMFY_QUEUE_EMPTY line'}"; uploads ${busy.uploads.length}, prompts ${busy.prompts}`,
+      "the adapter never queues behind someone else's job, and a wait that runs out says how long it waited for what",
+    );
+
+    const empty = R['st-no-outputs'];
+    say(
+      'CF03_A_HISTORY_ENTRY_WITH_NO_OUTPUTS_IS_REFUSED_AND_NOTHING_IS_WRITTEN',
+      empty.status === 1 && fail(empty, 'COMFY_HISTORY_OUTPUTS') !== null && leftovers('st-no-outputs').length === 0,
+      `exit ${empty.status}; "${fail(empty, 'COMFY_HISTORY_OUTPUTS') ?? 'no COMFY_HISTORY_OUTPUTS line'}"; left on disk: ${leftovers('st-no-outputs').join(', ') || 'nothing'}`,
+      'a job that finished and saved nothing is not a result, and an empty directory at --out would read as one',
+    );
+
+    const bare = R['st-no-seethrough'];
+    const missing = (bare.out.match(/COMFY_NODE_PRESENT: graph node \d+ — is a (SeeThrough_\w+)/g) ?? []).length;
+    say(
+      'CF04_A_BOX_WITHOUT_THE_SEETHROUGH_NODES_IS_REFUSED_NAMING_EACH_CLASS_BEFORE_UPLOAD',
+      bare.status === 1 && missing === 6 && nothingSent(bare),
+      `exit ${bare.status}; ${missing} SeeThrough_* class(es) named missing (6 in the workflow); uploads ${bare.uploads.length}, prompts ${bare.prompts}`,
+      'the wrapper not installed is the likeliest failure on a fresh box, and /object_info answers it before a GPU is touched',
+    );
+
+    const stale = R['st-stale'];
+    say(
+      'CF05_A_MANIFEST_FROM_ANOTHER_RUN_IS_REFUSED',
+      stale.status === 1 && fail(stale, 'COMFY_MANIFEST_IS_THIS_RUN') !== null && leftovers('st-stale').length === 0,
+      `exit ${stale.status}; "${fail(stale, 'COMFY_MANIFEST_IS_THIS_RUN') ?? 'no COMFY_MANIFEST_IS_THIS_RUN line'}"`,
+      'seethrough_psd_info.log names the last manifest ANY run wrote; reading it without checking the prefix would hand back somebody else\'s layers',
+    );
+
+    const paint = R['paint-ok'];
+    const pdir = join(dir, 'paint-ok');
+    const pm = readJsonFile(join(pdir, 'painting_5_meta.json'));
+    const pprompts = JSON.parse(readFileSync(join(dir, 'paint-ok.prompts.json'), 'utf8')) as Array<Record<string, { inputs: Record<string, unknown> }>>;
+    const skel = encodePngBytes(renderSkeleton('stand_clasp', 16, 24));
+    const control = existsSync(join(pdir, 'control_stand_clasp.png')) ? new Uint8Array(readFileSync(join(pdir, 'control_stand_clasp.png'))) : null;
+    const up = paint.uploads.length === 1 ? new Uint8Array(readFileSync(join(dir, 'paint-ok.uploads', paint.uploads[0]))) : null;
+    const eq = (a: Uint8Array | null, b: Uint8Array): boolean => a !== null && a.length === b.length && a.every((v, i) => v === b[i]);
+    const painted = [5, 6].every((s) => existsSync(join(pdir, `painting_${s}.png`)) && eq(new Uint8Array(readFileSync(join(pdir, `painting_${s}.png`))), encodePngBytes(fakePainting(32, 48))));
+    const positive = typeof pm?.positive === 'string' ? pm.positive : '';
+    const seeds = pprompts.map((q) => q['3']?.inputs.seed);
+    say(
+      'CF06_A_GREEN_PAINT_WRITES_EACH_SEED_WITH_ITS_VERBATIM_PROMPTS_AND_THE_SKELETON_IT_UPLOADED',
+      paint.status === 0 &&
+        painted &&
+        eq(control, skel) &&
+        eq(up, skel) &&
+        JSON.stringify(seeds) === '[5,6]' &&
+        positive.includes(SKELETONS.stand_clasp.words) &&
+        !positive.includes('symmetrical composition') &&
+        JSON.stringify(pm?.dropped) === '["symmetrical composition"]' &&
+        (pm?.control as Record<string, unknown> | undefined)?.model === 'controlnet-openpose-sdxl-1.0.safetensors' &&
+        pprompts[0]?.['6']?.inputs.text === positive,
+      `exit ${paint.status}; painting_5/6 ${painted ? 'byte-identical to what the box saved' : 'missing or different'}; control_stand_clasp.png ${eq(control, skel) ? '= the rendered skeleton' : 'differs'}, upload ${eq(up, skel) ? '= it' : 'differs'}; KSampler seeds ${JSON.stringify(seeds)}; dropped ${JSON.stringify(pm?.dropped)}; meta positive ${pprompts[0]?.['6']?.inputs.text === positive ? '= the text sent' : 'differs from the text sent'}`,
+      'the meta is the record of what produced the painting, so the prompt in it is the prompt that was sent, and the control image is the one that was uploaded',
+    );
+
+    const ckpt = R['paint-missing-ckpt'];
+    say(
+      'CF07_A_CHECKPOINT_THE_BOX_DOES_NOT_LIST_IS_REFUSED_BEFORE_UPLOAD',
+      ckpt.status === 1 && (fail(ckpt, 'COMFY_CHOICE_PRESENT') ?? '').includes('not_on_the_box.safetensors') && nothingSent(ckpt) && !existsSync(join(dir, 'paint-missing-ckpt', 'painting_5.png')),
+      `exit ${ckpt.status}; "${fail(ckpt, 'COMFY_CHOICE_PRESENT') ?? 'no COMFY_CHOICE_PRESENT line'}"; uploads ${ckpt.uploads.length}, prompts ${ckpt.prompts}`,
+      'a model name the box does not have fails the job after the queue wait; /object_info names it before',
+    );
+
+    const gone = R['st-unreachable'];
+    say(
+      'CF08_A_BOX_THAT_DOES_NOT_ANSWER_IS_REFUSED_NAMING_THE_HOST',
+      gone.status === 1 && (fail(gone, 'COMFY_REACHABLE') ?? '').includes('127.0.0.1') && !existsSync(join(dir, 'st-unreachable')),
+      `exit ${gone.status}; "${fail(gone, 'COMFY_REACHABLE') ?? 'no COMFY_REACHABLE line'}"`,
+      'an unreachable host is the first thing an agent with a wrong address meets, and the line has to say which address',
+    );
+
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (k !== 'COMFY_HOST' && v !== undefined) env[k] = v;
+    const nohost = spawnSync('bun', [join(ROOT, 'cli.ts'), 'comfy', 'seethrough', '--image', parsed.image, '--out', join(dir, 'nohost')], { cwd: ROOT, encoding: 'utf8', env });
+    const nohostOut = `${nohost.stdout ?? ''}${nohost.stderr ?? ''}`;
+    const emptyHost = spawnSync('bun', [join(ROOT, 'cli.ts'), 'comfy', 'paint', '--config', join(dir, 'paint.json'), '--out', join(dir, 'nohost2')], { cwd: ROOT, encoding: 'utf8', env: { ...env, COMFY_HOST: '' } });
+    say(
+      'CF09_NO_HOST_IS_REFUSED_BY_NAME_AND_THERE_IS_NO_DEFAULT',
+      nohost.status === 1 && failLine(nohostOut, 'COMFY_HOST_GIVEN') !== null && emptyHost.status === 1 && failLine(`${emptyHost.stdout ?? ''}`, 'COMFY_HOST_GIVEN') !== null,
+      `no --host, no COMFY_HOST -> exit ${nohost.status} "${failLine(nohostOut, 'COMFY_HOST_GIVEN') ?? nohostOut.slice(0, 200)}"; COMFY_HOST="" -> exit ${emptyHost.status}`,
+      "the reference defaulted to one person's LAN address; a host is the user's, supplied at run time, and an empty one is not one",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
   return bad();
 }
@@ -3166,6 +3650,11 @@ function main(): void {
   tally.of('examples', runExamplesSuite);
   tally.of('assemble', runAssembleSuite);
   tally.of('assemble-examples', runAssembleExamplesSuite);
+  tally.of('skeleton', runSkeletonSuite);
+  tally.of('inputs', runInputsSuite);
+  tally.of('inputs-examples', runInputsExamplesSuite);
+  tally.of('prompt', runPromptSuite);
+  tally.of('comfy', runComfySuite);
   tally.of('tree', runTreeSuite);
   tally.of('corpus', () => runCorpusSuite(corpus));
   tally.of('run-tally', () => runTallySuite(tally));
@@ -3193,10 +3682,11 @@ function main(): void {
   const checkExamplesClause = holes.includes('examples') ? '' : `, + ${n('examples')} examples`;
   const proposeClause = holes.includes('propose-corpus') ? '' : `, + ${n('propose-corpus')} example-propose`;
   const assembleExamplesClause = holes.includes('assemble-examples') ? '' : `, + ${n('assemble-examples')} assemble-example`;
+  const inputsClause = holes.includes('inputs-examples') ? '' : `, + ${n('inputs-examples')} example-inputs`;
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${examplesClause}${proposeClause}${checkExamplesClause}${assembleExamplesClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${examplesClause}${proposeClause}${checkExamplesClause}${assembleExamplesClause}${inputsClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here

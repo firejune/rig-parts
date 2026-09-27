@@ -53,10 +53,36 @@ spine-parts sheet --source painting.png --layers <path> [--layers <path> ...] --
 writes a contact sheet — the painting, then every layer or part on a
 checkerboard, labelled — and prints the same information as text.
 
+```sh
+spine-parts inputs --source painting.png --config config.json --out <dir>
+```
+
+cuts the two images See-through is fed: the painting centred on a white square
+(`st_input_full.png`) and, when the config sets `seethrough.head_box`, that
+box at its exact size (`st_input_head.png`). Pure raster, no GPU.
+
+**The optional ComfyUI adapter.** For a user who has a ComfyUI box, two
+commands drive it; nothing else in the pipeline needs one:
+
+```sh
+spine-parts comfy paint --config config.json --out <dir> --host http://<box>:8188
+spine-parts comfy seethrough --image st_input_full.png --out layers/full --host http://<box>:8188 --offload
+```
+
+`comfy paint` generates `painting_<seed>.png` from the config's inline
+`generation` block — checkpoint, LoRAs, sampler, and an optional OpenPose
+control skeleton it draws itself — and records the prompts verbatim beside it.
+`comfy seethrough` runs the [ComfyUI-See-through](https://github.com/jtydhr88/ComfyUI-See-through)
+wrapper on one image and writes the wrapper form `layers` reads. The host comes
+from `--host` or `COMFY_HOST` and has no default; before anything is uploaded
+the graph is checked against the box's `/object_info`, so a missing node class
+or model is refused by name, and the adapter waits for an empty queue rather
+than queueing behind someone else's job.
+
 Next (not in this version): `assemble` (rig-space `parts/*.png` + `parts.json`),
 `propose` (bones, meshes and an idle for the config), `rig` (`rig.json` +
 `motion.json`), `check` (spine-rigc's gate plus seam and loop measurements),
-`build` (all of it), and the optional `comfy` adapter.
+and `build` (all of it).
 
 ## See-through routes
 
@@ -69,9 +95,11 @@ point spine-parts at the output:
 | Hugging Face Space | [24yearsold/see-through-demo](https://huggingface.co/spaces/24yearsold/see-through-demo) (ZeroGPU; upstream states 1-2 extractions a day for a registered user) | the `.psd` it produces |
 | ModelScope demo | [ljsabc/See-Through](https://modelscope.cn/studios/ljsabc/See-Through), linked from the upstream README | the `.psd` it produces |
 | Upstream CLI | `python inference/scripts/inference_psd.py --srcp <image> --save_to_psd` in a checkout of [shitagaki-lab/see-through](https://github.com/shitagaki-lab/see-through) | the `.psd` in `workspace/layerdiff_output/` |
-| ComfyUI wrapper | [jtydhr88/ComfyUI-See-through](https://github.com/jtydhr88/ComfyUI-See-through) | the `layers.json` + PNGs it writes |
+| ComfyUI wrapper | [jtydhr88/ComfyUI-See-through](https://github.com/jtydhr88/ComfyUI-See-through) on your own ComfyUI box; `spine-parts comfy seethrough` drives it (optional) | the `layers.json` + PNGs it writes |
 
-**ComfyUI is not required.** It is one route among four.
+**See-through is required; ComfyUI is not.** The wrapper is one route among
+four, and `spine-parts comfy` is only a convenience for that route: every
+stage after See-through reads files, whichever route wrote them.
 
 ## What this does not do
 
