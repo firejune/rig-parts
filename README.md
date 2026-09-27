@@ -239,7 +239,9 @@ These are limits of the approach, stated so nobody reads more into a green run:
   encoder, which this package does not carry.
 - **The proposer reads tags, not pictures.** A swinging element painted inside another
   layer (a sash tail in the skirt), hair that is none of the shapes it knows, and
-  whether an accessory swings are the corrector's to add.
+  whether an accessory swings are the corrector's to add. The one accessory shape it
+  measures is a hanging strand on a headwear or earwear layer: each gets a pendulum
+  chain, and a strand it cannot chain is named in a note rather than left stiff.
 
 ### How much of a rig the model painted
 

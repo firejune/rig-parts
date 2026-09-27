@@ -20,6 +20,17 @@
  *
  * The part names are deliberately not their roles: the proposer must read the
  * tag in `from`, never the name.
+ *
+ * {@link STRAND_PARTS} is a second set for the hanging-strand rule, on its own
+ * 100x90 canvas ({@link STRAND_RIG}): a face 30,40 40x50 with two eyes and two
+ * brows, and a `crown` (head:headwear) at 0,0, 100x56, drawn as three
+ * rectangles (rig px, which at 0,0 are also its own pixels) — a body 0,0 100x16 and two tassels 5,16 5x40
+ * and 90,16 5x40. Its rows are 100 px wide for 16 rows and 10 px (two tassels)
+ * for 40, under 35 % of 100, so rows 16..55 are its pendant rows (40 of 56, not
+ * over 0.8, so the crown has a body); each tassel is 40/5 = 8 times as tall as
+ * wide and 40/56 of the part, so both are strands, at column centroids x 7 and
+ * 92, rows 16..55. {@link BARE_CROWN_PARTS} is the same crown with no tassels
+ * (100x16): its only pendant row is its last, 100 px wide, so it has no strand.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -80,11 +91,137 @@ export const LONG_ROBE_PARTS: ProposeFixturePart[] = [
   { name: 'face', from: 'head:face', x: 80, y: 40, w: 40, h: 50, colour: [240, 210, 190] },
 ];
 
-function paint(p: ProposeFixturePart): Raster {
+/** The strand fixtures' canvas: the figure spans it, so `check`'s setup render sits near scale 1 (see fixtures/checkrig.ts). */
+export const STRAND_RIG = { w: 100, h: 90 };
+
+/**
+ * A face with two eyes and two brows, so the proposed blink names a member in
+ * each group: a proposal with no eyewhite and no eyebrow writes a blink whose
+ * groups are empty, which rigc refuses (`group "eyes" declares no members`),
+ * and the strand controls need a proposal that builds.
+ */
+const STRAND_HEAD: ProposeFixturePart[] = [
+  { name: 'face', from: 'head:face', x: 30, y: 40, w: 40, h: 50, colour: [240, 210, 190] },
+  { name: 'eye_a', from: 'head:eyewhite-r', x: 36, y: 60, w: 10, h: 4, colour: [250, 250, 250] },
+  { name: 'eye_b', from: 'head:eyewhite-l', x: 54, y: 60, w: 10, h: 4, colour: [250, 250, 250] },
+  { name: 'brow_a', from: 'head:eyebrow-r', x: 36, y: 54, w: 10, h: 2, colour: [60, 40, 30] },
+  { name: 'brow_b', from: 'head:eyebrow-l', x: 54, y: 54, w: 10, h: 2, colour: [60, 40, 30] },
+];
+
+export const STRAND_PARTS: ProposeFixturePart[] = [
+  ...STRAND_HEAD,
+  {
+    name: 'crown',
+    from: 'head:headwear',
+    x: 0,
+    y: 0,
+    w: 100,
+    h: 56,
+    colour: [220, 180, 60],
+    rects: [
+      [0, 0, 100, 16],
+      [5, 16, 5, 40],
+      [90, 16, 5, 40],
+    ],
+  },
+];
+
+export const BARE_CROWN_PARTS: ProposeFixturePart[] = [...STRAND_HEAD, { name: 'crown', from: 'head:headwear', x: 0, y: 0, w: 100, h: 16, colour: [220, 180, 60] }];
+
+/**
+ * Every other branch of the strand rule at once, on the 200x300 canvas with the
+ * first set's face (proposed, never built). Positions in this list are in each
+ * part's own pixels; `rects` holds the same rectangles in rig px, the
+ * convention of {@link ProposeFixturePart.rects}:
+ *
+ * - `crown` (head:headwear) 40,0 120x80: a body 0,0 120x20, a straight tassel
+ *   10,20 5x60 (column centroid 12, rig x 52) and a Z-shaped one — 100,20 2x18,
+ *   then 100,38 19x2, then 117,40 2x40 — 19 wide and 60 tall (60 >= 3 x 19),
+ *   centroid (36 x 100.5 + 38 x 109 + 80 x 117.5) / 154 = 111.4, rig x 151.
+ *   Its second link sits 0.45 x 60 = 27 rows down, at y 47, where the column
+ *   centroid of rows 35..58 is 9210 / 82 = 112.3 while the only art within 3
+ *   rows is x 117..118: more than 3 px (the 7x7 dilation) off it, so that chain
+ *   is dropped and the straight one is kept.
+ * - `veil` (full:headwear, the smaller layer, so a region on the head) 10,100
+ *   20x60: a body 20x20 and a tassel 8,20 5x40 (rig x 20, rows 120..159) —
+ *   noted, with no chain, because a region cannot swing.
+ * - `drops` (full:earwear, all pendant) 60,120 40x40: two strands 0,0 5x40 and
+ *   35,0 5x40 (rig x 62 and 97) — one chain each, hung from the head.
+ */
+export const MIXED_STRAND_PARTS: ProposeFixturePart[] = [
+  { name: 'face', from: 'head:face', x: 80, y: 40, w: 40, h: 50, colour: [240, 210, 190] },
+  {
+    name: 'crown',
+    from: 'head:headwear',
+    x: 40,
+    y: 0,
+    w: 120,
+    h: 80,
+    colour: [220, 180, 60],
+    rects: [
+      [40, 0, 120, 20],
+      [50, 20, 5, 60],
+      [140, 20, 2, 18],
+      [140, 38, 19, 2],
+      [157, 40, 2, 40],
+    ],
+  },
+  {
+    name: 'veil',
+    from: 'full:headwear',
+    x: 10,
+    y: 100,
+    w: 20,
+    h: 60,
+    colour: [200, 200, 230],
+    rects: [
+      [10, 100, 20, 20],
+      [18, 120, 5, 40],
+    ],
+  },
+  {
+    name: 'drops',
+    from: 'full:earwear',
+    x: 60,
+    y: 120,
+    w: 40,
+    h: 40,
+    colour: [90, 200, 160],
+    rects: [
+      [60, 120, 5, 40],
+      [95, 120, 5, 40],
+    ],
+  },
+];
+
+function solid(w: number, h: number, colour: [number, number, number]): Raster {
+  const r = newRaster(w, h);
+  for (let i = 0; i < w * h; i++) r.data.set([...colour, 255], i * 4);
+  return r;
+}
+
+/**
+ * Soft edges: alpha ramps to `(d + 0.5) / SOFT_RAMP` of 255 at `d` pixels in
+ * from a rectangle's edge, so the outermost pixel is 255/6 = 42 — above the
+ * alpha-8 line every mask reads, so no mask, box or count changes. A rendered
+ * rig is resampled, and a hard edge would make `check`'s seam a measure of the
+ * resampler rather than of the stack (see fixtures/checkrig.ts).
+ */
+const SOFT_RAMP = 3;
+
+/** The part's pixels: its rig-space rectangles (the whole box when it has none) in its colour, the rest transparent; `soft` ramps their edges. */
+function paint(p: ProposeFixturePart, soft: boolean): Raster {
   const r = newRaster(p.w, p.h);
   const rects = p.rects ?? [[p.x, p.y, p.w, p.h]];
   for (const [rx, ry, rw, rh] of rects) {
-    for (let y = ry; y < ry + rh; y++) for (let x = rx; x < rx + rw; x++) r.data.set([...p.colour, 255], ((y - p.y) * p.w + x - p.x) * 4);
+    for (let y = ry; y < ry + rh; y++) {
+      for (let x = rx; x < rx + rw; x++) {
+        const d = Math.min(x - rx, rx + rw - 1 - x, y - ry, ry + rh - 1 - y);
+        const a = soft ? Math.round(255 * Math.min(1, (d + 0.5) / SOFT_RAMP)) : 255;
+        const i = ((y - p.y) * p.w + x - p.x) * 4;
+        if (a > r.data[i + 3]) r.data.set([...p.colour, a], i);
+      }
+    }
   }
   return r;
 }
@@ -93,14 +230,11 @@ function opaque(p: ProposeFixturePart): number {
   return (p.rects ?? [[p.x, p.y, p.w, p.h]]).reduce((n, [, , rw, rh]) => n + rw * rh, 0);
 }
 
-function solid(w: number, h: number, colour: [number, number, number]): Raster {
-  const r = newRaster(w, h);
-  for (let i = 0; i < w * h; i++) r.data.set([...colour, 255], i * 4);
-  return r;
-}
-
-/** `dir/parts.json`, `dir/parts/<name>.png` and `dir/painting.png` (the rig size, mid grey), on `rig` (default `PROPOSE_RIG`). Returns the painting's path. */
-export function writeProposeFixture(dir: string, parts: ProposeFixturePart[] = PROPOSE_PARTS, rig: { w: number; h: number } = PROPOSE_RIG): string {
+/**
+ * `dir/parts.json`, `dir/parts/<name>.png` and `dir/painting.png` (the rig size, mid grey), on `rig` (default `PROPOSE_RIG`). Returns the painting's path.
+ * `soft` ramps every part's edge alpha (see `SOFT_RAMP`).
+ */
+export function writeProposeFixture(dir: string, parts: ProposeFixturePart[] = PROPOSE_PARTS, rig: { w: number; h: number } = PROPOSE_RIG, soft = false): string {
   mkdirSync(join(dir, 'parts'), { recursive: true });
   const recs: PartRecord[] = parts.map((p) => ({
     name: p.name,
@@ -116,7 +250,7 @@ export function writeProposeFixture(dir: string, parts: ProposeFixturePart[] = P
     merged_px: 0,
     seam_override_px: 0,
   }));
-  for (const p of parts) writeFileSync(join(dir, 'parts', `${p.name}.png`), encodePngBytes(paint(p)));
+  for (const p of parts) writeFileSync(join(dir, 'parts', `${p.name}.png`), encodePngBytes(paint(p, soft)));
   writeParts(join(dir, 'parts.json'), { rig_size: [rig.w, rig.h], scale_rig_per_source: 1, parts: recs, ghost_px: {} });
   const painting = join(dir, 'painting.png');
   writeFileSync(painting, encodePngBytes(solid(rig.w, rig.h, [128, 128, 128])));

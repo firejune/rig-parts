@@ -29,7 +29,11 @@
  *   hanging chains.
  * - `headwear` / `earwear` -> the biggest layer of the tag gets a rigid bone
  *   and a pendant chain where the part narrows (dropped if any chain point is
- *   off the art); any other layer of the tag rides the head as a region.
+ *   off the art); any other layer of the tag rides the head as a region. A
+ *   layer with hanging strands ({@link Strand}) gets one pendulum chain per
+ *   strand instead of the single pendant chain, and one note naming every
+ *   strand and what became of it — a strand left without a chain is never
+ *   silent (issue #24).
  * - anything no rule claims rides its nearest trunk bone as a region.
  *
  * What it cannot know is written into `notes` when it guessed, and otherwise
@@ -434,6 +438,95 @@ const TAG_REGION: Readonly<Record<string, string>> = {
   footwear: 'root',
 };
 
+/**
+ * A hanging strand: a connected sub-shape (8-connected) of an accessory's mask,
+ * searched below the part's body — in its pendant rows, the run of rows at the
+ * bottom narrower than {@link PENDANT_NARROW} of the widest row — or over the
+ * whole part when the part is all pendant. It is a strand when it is at least
+ * {@link STRAND_ASPECT} times as tall as it is wide, at least
+ * {@link STRAND_SHARE} of the part's height, and at least
+ * {@link PENDANT_MIN_ROWS} rows tall.
+ *
+ * Measured on the public examples' two accessories (the sub-shapes this
+ * definition reads, height/width): `demo` `hairpin` (head:headwear, 133 rows)
+ * has two in its pendant rows, 22/41 = 0.54 and 41/46 = 0.89 (the bows' tips,
+ * the second carrying the star dangle); `demo` `earring` (full:earwear, all
+ * pendant, 29 rows) has two, 26/25 = 1.04 and 28/26 = 1.08. None reaches 3,
+ * so neither proposal changes; `sample` has no headwear or earwear.
+ */
+export interface Strand {
+  /** Column centroid, rig px. */
+  x: number;
+  /** First and last row, rig px, inclusive. */
+  top: number;
+  bottom: number;
+  /** Bounding-box width, px. */
+  width: number;
+  /** The strand alone, full canvas. */
+  mask: Mask;
+}
+
+/** Pendant rows are the rows at the bottom narrower than this share of the widest row — the reference's 35 %. */
+export const PENDANT_NARROW = 0.35;
+/** A pendant (or strand) shorter than this many rows gets no chain — the reference's tassel floor. */
+export const PENDANT_MIN_ROWS = 10;
+/** A strand is at least this many times as tall as it is wide. */
+export const STRAND_ASPECT = 3;
+/** A strand is at least this share of its part's height. */
+export const STRAND_SHARE = 0.2;
+/** A pendant chain's second link sits this far down it — the reference's tassel. */
+export const STRAND_LINK_AT = 0.45;
+/** A pendant chain's two link amplitudes, degrees — the reference's tassel, which every strand chain takes. */
+export const STRAND_AMPS: readonly [number, number] = [4.0, 7.0];
+
+/** An accessory's opaque pixels per row, and where its pendant rows start (`j`, part rows) and how many there are. */
+function pendantRows(P: PartSet, p: PartRecord): { rows: number[]; j: number; pendH: number } {
+  const im = P.images.get(p.name) as Raster;
+  const rows: number[] = [];
+  for (let y = 0; y < p.h; y++) {
+    let n = 0;
+    for (let x = 0; x < p.w; x++) n += im.data[(y * p.w + x) * 4 + 3] > OPAQUE_ALPHA_ABOVE ? 1 : 0;
+    rows.push(n);
+  }
+  const wmax = Math.max(...rows);
+  // The pendant: the longest run of rows at the bottom whose width is under 35 % of the widest row.
+  const narrow = rows.map((n) => n < PENDANT_NARROW * wmax);
+  let j = rows.length - 1;
+  while (j > 0 && narrow[j - 1] && rows[j - 1] > 0) j--;
+  return { rows, j, pendH: rows.length - j };
+}
+
+/** The strands of `p` in its rows from `fromRow` down, left to right. See {@link Strand}. */
+export function hangingStrands(P: PartSet, p: PartRecord, fromRow: number): Strand[] {
+  const im = P.images.get(p.name) as Raster;
+  const local = newMask(p.w, p.h);
+  for (let y = fromRow; y < p.h; y++) for (let x = 0; x < p.w; x++) local.data[y * p.w + x] = im.data[(y * p.w + x) * 4 + 3] > OPAQUE_ALPHA_ABOVE ? 1 : 0;
+  const cc = connectedComponents(local, 8);
+  const out: Strand[] = [];
+  for (let i = 1; i < cc.count; i++) {
+    const st = cc.stats[i];
+    if (st.height < STRAND_ASPECT * st.width || st.height < STRAND_SHARE * p.h || st.height < PENDANT_MIN_ROWS) continue;
+    const mask = newMask(P.W, P.H);
+    for (let y = st.top; y < st.top + st.height; y++) {
+      for (let x = st.left; x < st.left + st.width; x++) if (cc.labels[y * p.w + x] === i) mask.data[(p.y + y) * P.W + p.x + x] = 1;
+    }
+    out.push({ x: p.x + st.cx, top: p.y + st.top, bottom: p.y + st.top + st.height - 1, width: st.width, mask });
+  }
+  // Stable: two strands at one x keep their scan order.
+  return out.sort((a, b) => a.x - b.x);
+}
+
+/** The one note a part with strands gets: every strand's figures, and which chain each got or why none. */
+function strandNote(p: PartRecord, strands: readonly Strand[], chained: readonly string[], dropped: readonly Strand[], why: string): string {
+  const n = strands.length;
+  const at = `x=${strands.map((s) => pyFixed(s.x, 0)).join(',')}, y ${strands.map((s) => `${s.top}-${s.bottom}`).join(',')}, width ${strands.map((s) => s.width).join(',')}`;
+  const head = `${p.name} (${p.from}): ${n} hanging strand${n === 1 ? '' : 's'} at ${at}`;
+  if (chained.length === 0) return `${head} -- no chain proposed (${why})`;
+  const made = `pendulum chain${chained.length === 1 ? '' : 's'} ${chained.join(', ')}`;
+  if (dropped.length === 0) return `${head} -> ${made}`;
+  return `${head} -> ${made}; no chain proposed at x=${dropped.map((s) => pyFixed(s.x, 0)).join(',')} (${why})`;
+}
+
 const SIDES = [
   ['r', 1],
   ['l', -1],
@@ -649,7 +742,7 @@ export function propose(P: PartSet): Proposal {
     meshes[p.name] = { grid: g, r, segments: segs };
   }
 
-  // ---- accessories: rigid body + pendant chain where the part narrows
+  // ---- accessories: rigid body + pendant chain where the part narrows, or one pendulum chain per hanging strand
   for (const [tag, bname, par] of [
     ['headwear', 'hairpin', 'head'],
     ['earwear', 'earring', 'head'],
@@ -661,6 +754,10 @@ export function propose(P: PartSet): Proposal {
     for (const q of cands.slice(1)) {
       regions[q.name] = 'head';
       notes.push(`${q.name} (${q.from}): second ${tag} layer, rigid on head`);
+      // A region cannot swing, so strands found on it are only said.
+      const pr = pendantRows(P, q);
+      const strands = hangingStrands(P, q, tag === 'earwear' || pr.pendH > 0.8 * q.h ? 0 : pr.j);
+      if (strands.length > 0) notes.push(strandNote(q, strands, [], strands, 'it rides the head as a region'));
     }
     for (const p of cands.slice(0, 1)) {
       const [g, r] = gridR(p);
@@ -668,18 +765,7 @@ export function propose(P: PartSet): Proposal {
       const onArt = (pts: ReadonlyArray<readonly [number, number]>): boolean => pts.every((q) => isOn(fullMask, q[0], q[1]));
       const im = P.images.get(p.name) as Raster;
       const own = (x: number, y: number): number => (im.data[(y * p.w + x) * 4 + 3] > OPAQUE_ALPHA_ABOVE ? 1 : 0);
-      const rows: number[] = [];
-      for (let y = 0; y < p.h; y++) {
-        let n = 0;
-        for (let x = 0; x < p.w; x++) n += own(x, y);
-        rows.push(n);
-      }
-      const wmax = Math.max(...rows);
-      // The pendant: the longest run of rows at the bottom whose width is under 35 % of the widest row.
-      const narrow = rows.map((n) => n < 0.35 * wmax);
-      let j = rows.length - 1;
-      while (j > 0 && narrow[j - 1] && rows[j - 1] > 0) j--;
-      const pendH = rows.length - j;
+      const { rows, j, pendH } = pendantRows(P, p);
       const bodyRows = j > 0 ? j : rows.length;
       const colsIn = (r0: number, r1: number): number[] => {
         const out: number[] = [];
@@ -694,7 +780,43 @@ export function propose(P: PartSet): Proposal {
         return out;
       };
       const byx = colsIn(0, bodyRows);
-      if (tag === 'earwear' || pendH > 0.8 * rows.length) {
+      const allPendant = tag === 'earwear' || pendH > 0.8 * rows.length;
+      // Strands: searched below the body, or over the whole part when it is all pendant.
+      const strands = hangingStrands(P, p, allPendant ? 0 : j);
+      // One pendulum chain per strand, in place of the part's single pendant
+      // chain: a chain at the mean x of several strands hangs between them.
+      const strandChains = (parent: string): { segs: Segment[]; chained: string[]; dropped: Strand[] } => {
+        const segs: Segment[] = [];
+        const chained: string[] = [];
+        const dropped: Strand[] = [];
+        strands.forEach((st, k) => {
+          const h = st.bottom - st.top + 1;
+          const pts: Array<[number, number]> = [st.top, st.top + h * STRAND_LINK_AT].map((y) => [or(bandX(st.mask, y), st.x), y]);
+          const tip: [number, number] = [or(bandX(st.mask, st.bottom), pts[pts.length - 1][0]), st.bottom];
+          if (!onArt([...pts, tip])) {
+            dropped.push(st);
+            return;
+          }
+          const name = `${bname}_strand${k}_`;
+          C(name, parent, pts, tip);
+          // The head stub at the strand's top is what an all-pendant part hangs from, as the single pendant chain's mesh does.
+          if (parent === par) segs.push(['head', rnd([pts[0][0], st.top - 7]), rnd([pts[0][0], st.top + 1])]);
+          segs.push(name);
+          chained.push(name);
+          tracks.push({ chain: name, amps: [...STRAND_AMPS], period: 2.0, phase: 0.2, lag: 0.12 });
+        });
+        return { segs, chained, dropped };
+      };
+      if (allPendant && strands.length > 0) {
+        const sc = strandChains(par);
+        notes.push(strandNote(p, strands, sc.chained, sc.dropped, 'a chain down it would run off the art'));
+        if (sc.chained.length > 0) {
+          delete regions[p.name];
+          meshes[p.name] = { grid: g, r, segments: sc.segs };
+          continue;
+        }
+      }
+      if (allPendant) {
         // All pendant: a chain from the part's own top.
         const cols = colsIn(0, Math.min(p.h, Math.max(4, Math.floor(rows.length / 5))));
         const x = p.x + (cols.length > 0 ? npMean(cols) : p.w / 2);
@@ -734,22 +856,35 @@ export function propose(P: PartSet): Proposal {
       const far = near === xl ? xr : xl;
       const start: [number, number] = [near + (px - near) * 0.6 + (near === xl ? 47 : -47), cy];
       B(bname, par, start, [far, cy]);
+      // The body's two fixed segments come first and stay: they are what holds the body still while a strand swings.
       const segs: Segment[] = [
         [bname, rnd(start), rnd([far, cy])],
         [bname, rnd([near, cy - 12]), rnd([start[0], cy + 18])],
       ];
+      if (strands.length > 0) {
+        // The body's full width at its mean row: without it the body's near side
+        // is held only by the reference's two segments, and a strand's pull
+        // reaches it (measured on the synthetic crown: 1.07 px off its bone
+        // without this segment, 0.55 px with it).
+        segs.push([bname, rnd([xl, cy]), rnd([xr, cy])]);
+        const sc = strandChains(bname);
+        segs.push(...sc.segs);
+        notes.push(strandNote(p, strands, sc.chained, sc.dropped, 'a chain down it would run off the art'));
+        meshes[p.name] = { grid: g, r, segments: segs };
+        continue;
+      }
       const tpts: Array<[number, number]> = [
         [px, p.y + j],
         [px, p.y + j + pendH * 0.45],
         [px, p.y + p.h - 1],
       ];
-      if (pendH >= 10 && !onArt(tpts)) {
+      if (pendH >= PENDANT_MIN_ROWS && !onArt(tpts)) {
         notes.push(`${p.name}: pendant chain would run off the art -> no tassel chain (add one by hand if it swings)`);
-      } else if (pendH >= 10) {
+      } else if (pendH >= PENDANT_MIN_ROWS) {
         const y0 = p.y + j;
         C(`${bname}_tassel`, bname, [[px, y0], [px, y0 + pendH * 0.45]], [px, p.y + p.h - 1]);
         segs.push(`${bname}_tassel`);
-        tracks.push({ chain: `${bname}_tassel`, amps: [4.0, 7.0], period: 2.0, phase: 0.2, lag: 0.12 });
+        tracks.push({ chain: `${bname}_tassel`, amps: [...STRAND_AMPS], period: 2.0, phase: 0.2, lag: 0.12 });
       }
       meshes[p.name] = { grid: g, r, segments: segs };
     }
