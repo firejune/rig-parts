@@ -44,7 +44,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:
 import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
-import { type CheckReport, readFrameSet, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
+import { type CheckReport, JUDGEMENT_LINES, type JudgementLine, readFrameSet, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
 import { encodeGif } from './gif.ts';
@@ -267,6 +267,21 @@ export function packLines(r: CheckReport): string[] {
   });
 }
 
+function showFigure(v: unknown): string {
+  if (Array.isArray(v)) return v.length === 0 ? 'none' : v.map(showFigure).join(' | ');
+  if (typeof v === 'object' && v !== null) return Object.entries(v).map(([k, x]) => `${k} ${showFigure(x)}`).join(', ');
+  return String(v);
+}
+
+/** A judgement line as the console prints it: its name, its status, then its figures and bars as check.json holds them (a SKIP prints its reason). */
+export function judgementLine(name: string, line: JudgementLine): string {
+  if (line.status === 'SKIP') return `${name}: SKIP — ${String(line.reason)}`;
+  return `${name}: ${line.status} — ${Object.entries(line)
+    .filter(([k]) => k !== 'status')
+    .map(([k, v]) => `${k} ${showFigure(v)}`)
+    .join('; ')}`;
+}
+
 /**
  * Run the check and print its report. Returns the report; `figures.PASS` says
  * whether every bar was met, and each one that was not is printed as a FAIL
@@ -288,6 +303,7 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
     `  seam: setup pose at ${r.seamViewport.pixelWidth}x${r.seamViewport.pixelHeight}, scale ${r.seamViewport.scale.toFixed(4)}: mean |d| ${fig.seam_mean} (<= ${SEAM_MEAN_BAR.toFixed(1)}), ` +
       `${fig.seam_px_over_40} px over ${SEAM_PX_LEVEL} (<= ${SEAM_PX_BAR}), ${fig.seam_px_over_80} px over ${SEAM_PX_LEVEL_HIGH} (reported)`,
   );
+  for (const name of JUDGEMENT_LINES) log(`  ${judgementLine(name, fig[name])}`);
   log(`  gates: spine-html ${fig.gate_spine_html_green ? 'green' : 'RED'}, spine ${fig.gate_spine_green ? 'green' : 'RED'}`);
   log(`  wrote ${r.written.map((w) => join(input.out, w)).join(', ')}, ${join(input.out, 'build')}/, ${join(input.out, 'idle_frames')}/`);
   for (const p of r.problems) log(`  FAIL  ${problemLine(p)}`);

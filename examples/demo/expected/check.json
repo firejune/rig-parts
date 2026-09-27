@@ -2,8 +2,126 @@
  "gate_spine_html_green": true,
  "gate_spine_green": true,
  "loop_max_diff": 0,
- "seam_mean": 0.328,
+ "seam_mean": 0.326,
  "seam_px_over_40": 2,
  "seam_px_over_80": 0,
+ "BREATH_VISIBLE": {
+  "status": "PASS",
+  "torso_parts": [
+   "topwear"
+  ],
+  "torso_heat_mean": 15.252,
+  "torso_floor": 3.809,
+  "feet_parts": [
+   "shoes"
+  ],
+  "feet_heat_max": 0,
+  "feet_ceiling": 0
+ },
+ "BLINK_NO_HOLE": {
+  "status": "PASS",
+  "eye_parts": [
+   "eyewhite_r",
+   "eyewhite_l"
+  ],
+  "closed": [
+   "group eyes scaley 0.12 from 2.37s to 2.41s"
+  ],
+  "idle_frames_closed": [],
+  "box_px": 1425,
+  "hole_px": 0,
+  "hole_bar": 0,
+  "patch_max": 15,
+  "patch_px_over_40": 0
+ },
+ "CHAIN_LAG": {
+  "status": "PASS",
+  "chains": [
+   "neck > head_ctl: period 4s, phase 0.080 0.120, amp 0.350 0.900",
+   "hairback_r0_ctl > hairback_r1_ctl > hairback_r2_ctl: period 4s, phase 0.200 0.280 0.360, amp 0.600 1.400 2.400",
+   "hairback_l0_ctl > hairback_l1_ctl > hairback_l2_ctl: period 4s, phase 0.700 0.780 0.860, amp 0.600 1.400 2.400",
+   "bang_r0_ctl > bang_r1_ctl: period 4s, phase 0.180 0.280, amp 1.000 2.200",
+   "bang_c0_ctl > bang_c1_ctl: period 4s, phase 0.180 0.280, amp 0.800 1.760",
+   "bang_l0_ctl > bang_l1_ctl: period 4s, phase 0.180 0.280, amp 1.000 2.200",
+   "hairpin_tassel0_ctl > hairpin_tassel1_ctl: period 2s, phase 0.200 0.320, amp 4.000 7.000",
+   "sleeve_r0_ctl > sleeve_r1_ctl > sleeve_r2_ctl: period 4s, phase 0.220 0.300 0.380, amp 0.250 0.900 1.800",
+   "sleeve_l0_ctl > sleeve_l1_ctl > sleeve_l2_ctl: period 4s, phase 0.770 0.850 0.930, amp 0.250 0.900 1.800",
+   "skirt_r0_ctl > skirt_r1_ctl > skirt_r2_ctl: period 4s, phase 0.300 0.370 0.440, amp 0.150 0.350 0.700",
+   "skirt_c0_ctl > skirt_c1_ctl > skirt_c2_ctl: period 4s, phase 0.340 0.410 0.480, amp 0.150 0.350 0.700",
+   "skirt_l0_ctl > skirt_l1_ctl > skirt_l2_ctl: period 4s, phase 0.380 0.450 0.520, amp 0.150 0.350 0.700"
+  ],
+  "lags": [
+   "neck > head_ctl +0.040",
+   "head_ctl > hairback_r0_ctl +0.080",
+   "hairback_r0_ctl > hairback_r1_ctl +0.080",
+   "hairback_r1_ctl > hairback_r2_ctl +0.080",
+   "head_ctl > hairback_l0_ctl +0.080",
+   "hairback_l0_ctl > hairback_l1_ctl +0.080",
+   "hairback_l1_ctl > hairback_l2_ctl +0.080",
+   "head_ctl > bang_r0_ctl +0.060",
+   "bang_r0_ctl > bang_r1_ctl +0.100",
+   "head_ctl > bang_c0_ctl +0.060",
+   "bang_c0_ctl > bang_c1_ctl +0.100",
+   "head_ctl > bang_l0_ctl +0.060",
+   "bang_l0_ctl > bang_l1_ctl +0.100",
+   "hairpin_tassel0_ctl > hairpin_tassel1_ctl +0.120",
+   "sleeve_r0_ctl > sleeve_r1_ctl +0.080",
+   "sleeve_r1_ctl > sleeve_r2_ctl +0.080",
+   "sleeve_l0_ctl > sleeve_l1_ctl +0.080",
+   "sleeve_l1_ctl > sleeve_l2_ctl +0.080",
+   "skirt_r0_ctl > skirt_r1_ctl +0.070",
+   "skirt_r1_ctl > skirt_r2_ctl +0.070",
+   "skirt_c0_ctl > skirt_c1_ctl +0.070",
+   "skirt_c1_ctl > skirt_c2_ctl +0.070",
+   "skirt_l0_ctl > skirt_l1_ctl +0.070",
+   "skirt_l1_ctl > skirt_l2_ctl +0.070"
+  ],
+  "min_step": 0.04,
+  "step_floor": 0.001,
+  "other_period": [
+   "head_ctl > hairpin_tassel0_ctl"
+  ],
+  "unread": [],
+  "first_violation": null
+ },
+ "TIP_OVER_ROOT": {
+  "status": "PASS",
+  "parts": [
+   {
+    "part": "bottomwear",
+    "root_px": 0.531,
+    "tip_px": 1.563,
+    "ratio": 2.945
+   },
+   {
+    "part": "sleeves",
+    "root_px": 0.531,
+    "tip_px": 1.974,
+    "ratio": 3.716
+   }
+  ],
+  "ratio_floor": 1.4725
+ },
+ "STILL_REGIONS_DARK": {
+  "status": "PASS",
+  "face": {
+   "parts": [
+    "face"
+   ],
+   "px": 515,
+   "heat_mean": 16.988,
+   "heat_max": 170,
+   "mean_ceiling": 33.976
+  },
+  "feet": {
+   "parts": [
+    "shoes"
+   ],
+   "px": 3961,
+   "heat_mean": 1.622,
+   "heat_max": 64,
+   "mean_ceiling": 3.244
+  }
+ },
  "PASS": true
 }

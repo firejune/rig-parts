@@ -25,9 +25,11 @@ stage writes are the whole interface.
 - **The refusal is the instruction.** `FAIL  RULE: object — detail` names the object,
   the value found and the value required; AUTHORING §6 maps every rule to the field
   or input that has to change.
-- **Green is not "looks right".** `check` measures the gates, the seam and the loop;
-  seven judgements still need an eye (AUTHORING §7, issue #11). Say which you could
-  not verify rather than reporting them as passed.
+- **Green is not "looks right".** `check` measures the gates, the seam, the loop and
+  five judgement lines (`BREATH_VISIBLE`, `BLINK_NO_HOLE`, `CHAIN_LAG`,
+  `TIP_OVER_ROOT`, `STILL_REGIONS_DARK`); texture stretch and the face outline in
+  the head's own frame still need an eye (AUTHORING §7). A judgement line that says
+  SKIP was not verified: report it as such, with its reason, never as passed.
 
 ## The loop
 
@@ -49,7 +51,8 @@ stage writes are the whole interface.
 7. `spine-parts build --config … --source … --full … --head … --out out --loop`.
    It stops at the first stage that refuses, printing that stage's lines under
    `[assemble]`, `[rig]` or `[check]`. Fix what the FAIL line names and build again.
-8. Read `out/check/check.json`. The artifact is the three paths the build prints
+8. Read `out/check/check.json` — the five judgement lines the same way as the seam
+   and the loop: a FAIL names the field to change (AUTHORING §6). The artifact is the three paths the build prints
    last: `check/build/skeleton.json`, `skeleton.atlas` and the packed page. Report
    them with the pack line and the check figures verbatim.
 

@@ -9,7 +9,8 @@ has to change.
 The worked example throughout is [`examples/sample`](../examples/sample): its
 `config.json` is a complete, loading config, `proposal.json` is what the proposer
 wrote for it, and `expected/` is what the reference implementation produced from
-the same inputs. `bun run fetch-examples` puts its painting and See-through layers
+the same inputs — except `check.json`, which this port's `build` regenerates since
+the reference has no judgement lines (§7). `bun run fetch-examples` puts its painting and See-through layers
 into `examples/sample/inputs/`.
 
 ## 1. Prerequisites
@@ -137,7 +138,7 @@ Two steps are external: the See-through runs (by any route; the optional `comfy 
 | `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185; `demo` 2.39 / 95.8 % / 11,050 / 1,564 (default rule) | `uncovered error px` high: part of the figure is in no layer — a plan entry is missing, or hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason) |
 | `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art | a link off the art (a bone on the background) — move it onto the layer |
 | `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; then rigc's gate lines | `cover 1.00000` on every mesh, both gates `0 failed` | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
-| `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, `check.json` | `check: PASS` | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
+| `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the five judgement lines (§7), `check.json` | `check: PASS`, and a judgement line SKIP only where the character lacks what it reads | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
 | `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line, each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
 
 `loop` writes three files from one frame set, and they are not interchangeable.
@@ -283,11 +284,16 @@ stage's prefix (`[assemble]   FAIL  …`), and the build stops there.
 | rule | means | change |
 | --- | --- | --- |
 | `CHECK_RIGC_PRESENT` | no `rigc` binary found (every place looked is listed) | `bun install` |
-| `CHECK_INPUT_PRESENT`, `CHECK_INPUT_IS_JSON`, `CHECK_PART_PNG_PRESENT`, `CHECK_PART_PNG_MATCHES_BOX`, `CHECK_RIG_STAGE_PRESENT`, `CHECK_RIG_STAGE_IS_THE_CANVAS`, `CHECK_RIG_ROOT_BONE`, `CHECK_IDLE_PRESENT` | the rig directory is incomplete or disagrees with `parts.json` | re-run rig (`build` does both) |
+| `CHECK_INPUT_PRESENT`, `CHECK_INPUT_IS_JSON`, `CHECK_PART_PNG_PRESENT`, `CHECK_PART_PNG_MATCHES_BOX`, `CHECK_PART_SLOT_PRESENT`, `CHECK_RIG_STAGE_PRESENT`, `CHECK_RIG_STAGE_IS_THE_CANVAS`, `CHECK_RIG_ROOT_BONE`, `CHECK_IDLE_PRESENT` | the rig directory is incomplete or disagrees with `parts.json` (`CHECK_PART_SLOT_PRESENT`: a part with no slot of its own name, which the judgement lines render it by) | re-run rig (`build` does both) |
 | `CHECK_RIGC_GREEN` | a rigc step failed; its line is quoted | as `RIG_RIGC_GREEN` |
 | `CHECK_LOOP_LAST_FRAME_AT_DURATION` | the idle's last frame does not sit at `duration` | `motion.duration` — a whole number of 1/12 s |
 | `CHECK_LOOP_CLOSES` | frame 0 and the frame at `duration` differ (max and first pixel quoted) | a track whose last key is not its first |
 | `CHECK_SEAM_WITHIN_BAR` | the setup pose does not reproduce the flat stack of parts | usually a region or mesh placed off its part; compare with `recomposite_rig.png` |
+| `CHECK_BREATH_VISIBLE` | the torso (`topwear`), rendered alone, barely moves over the idle — or the feet (`footwear`), rendered alone, move at all | the chest's breath tracks (`motion.tracks` on `chest`), or the torso mesh's `segments`; for the feet, the bone their region rides (`regions.<part>`, `root` in both examples) |
+| `CHECK_BLINK_NO_HOLE` | with the blink held shut, the eyewhite box shows the page where the open eye had art | the layer under the eye: the `face` part has no art there. Take the face from the other run, or add a part under the eye; `motion.blink.squash` only hides the hole less |
+| `CHECK_CHAIN_LAG` | a rotate track leads (or does not lag) the keyed bone above it, or a chain link swings less than the link above | that chain track's `phase`/`lag` (a positive `lag`, a child `phase` above its parent's) or its `amps` (non-decreasing toward the tip) |
+| `CHECK_TIP_OVER_ROOT` | a `handwear`/`bottomwear` part's lower half travels less than 1.4725 times as far as its upper half | the chain track's `amps` (grow toward the tip), or the mesh's `segments` (the chain must be among them) |
+| `CHECK_STILL_REGIONS_DARK` | the heat map is brighter than the ceiling over the face outline or over the feet | the part that moves there: a mesh weighted to a swinging bone (`segments`), or a region on the wrong bone |
 | `CHECK_SEAM_FRAME_SIZE`, `FRAMES_SIDECAR` | rigc's render is not what its `frames.json` says | a rigc problem; report it |
 | `LOOP_ENCODE` | the loop encoder refused a frame (translucent pixel in a GIF, a size change) | the frames; for a translucent frame write the lossless or the indexed APNG, which keep alpha |
 | `BUILD_ARTIFACT_PRESENT` | the packed build lacks its `.json`, `.atlas` or page | a rigc problem; report it |
@@ -307,16 +313,76 @@ implementation's bars):
 On the examples: `sample` 23/23 and 14/14, seam 0.207 with 0 pixels over 40, loop 0;
 `demo` (default rule) 23/23 and 14/14, seam 0.326 with 2 pixels over 40, loop 0.
 
-A green check cannot see a wrong animation. Seven judgements still need an eye, and
-each is a missing instrument (issue #11), not a question to ask a person:
+A green gate cannot see a wrong animation, so `check` also writes five **judgement
+lines** (issue #11), each a key of `check.json` and a console line
+`NAME: PASS|FAIL|SKIP — <figures and bars>`, read the same way as the lines above: a
+FAIL makes `PASS` false and prints its own `FAIL  CHECK_<NAME>` line (§6); a SKIP
+says why the rig gave the line nothing to read, and is neither a pass nor a failure —
+report it as not verified. Every region is chosen by the See-through tag in
+`parts.json`'s `from`, never by a part's name. Heat is a pixel's largest per-channel
+change from idle frame 0, in levels of 255, on the idle's 640-pixel grid.
 
-- breathing is visible (chest to waist) while the feet stay put;
-- one blink, and no hole or colour patch behind the closed eye;
-- hair and accessories lag the head (phase delay down each chain);
-- sleeve ends, hems and skirt edges swing while their roots barely move;
-- at rest, no gap, white rim or doubled line between layers;
-- no visible texture stretch (it appears when amplitudes grow);
-- `motion_heat.png` is dark where nothing should move (face outline, shoes).
+Each bar follows one rule: a floor is half the weaker example's figure and a ceiling
+twice the worse one's, so the weaker example clears it by a factor of two; a bar the
+model itself fixes (a part on an unkeyed bone does not move, a lag is above 0, a hole
+is 0 pixels) is that value, not a margin. The figures are this port's, measured on
+the two examples [observed]:
+
+| line | measures | bar | `demo` | `sample` | SKIP when |
+| --- | --- | --- | --- | --- | --- |
+| `BREATH_VISIBLE` | `topwear` parts rendered alone (`rigc render --slot`): heat mean over their box; `footwear` parts alone: heat max over theirs | torso mean ≥ 3.809; feet max ≤ 0 | 15.252; 0 | 7.618; 0 | no `topwear` or no `footwear` part |
+| `BLINK_NO_HOLE` | the setup pose with every `scaley` track on the eyewhite slots' bones held at its closed value, against the setup pose, at full size: pixels in the eyewhite box that show the page where the open eye had art | 0 px | 0 | 0 | no `eyewhite` part, or no `scaley` track on its bones goes below its first key |
+| ″ (reported) | the same box: each closed-eye pixel's max-channel distance to the nearest colour the open eye's box holds — max, and pixels over 40 | none | 15; 0 | 11; 0 | as above |
+| `CHAIN_LAG` | `motion.json`'s rotate tracks read as sines (DFT of the keys: period, amplitude, phase) and arranged by the bone tree — a keyed bone's parent is its nearest keyed ancestor | every lag ≥ 0.001 cycle; amplitude non-decreasing down each unbranched chain | lags 0.040 (neck to head) to 0.120; 12 chains | lags 0.040 to 0.100; 9 chains | no rotate track under another of the same period |
+| `TIP_OVER_ROOT` | each `handwear`/`bottomwear` part alone: how far the centroid of its art travels in the lower half of its box against the upper half | ratio ≥ 1.4725 | `bottomwear` 2.945, `sleeves` 3.716 | `bottomwear` 4.396, `sleeves` 12.475 | no such part |
+| `STILL_REGIONS_DARK` | the idle's heat over the face outline (where `face` is the top part of the flat stack, less the boxes of `eyewhite`, `irides`, `eyelash`, `eyebrow` and `mouth`) and over the feet (where `footwear` is on top); max reported | face mean ≤ 33.976; feet mean ≤ 3.244 | 16.988; 1.622 | 11.475; 0 | no `face` and no `footwear` part (one of the two absent leaves that half unmeasured) |
+
+What each figure is, and is not:
+
+- **The seam is the answer to "at rest, no gap, white rim or doubled line between
+  layers".** A gap shows the page, a rim a colour no part has there, a doubled line a
+  part drawn off its place; each changes the setup-pose render against the flat stack,
+  which is what the seam bar measures. No separate line is written for it.
+- **The blink is measured at the setup pose, not in an idle frame.** On both examples
+  the eyes are fully shut from 2.37 s to 2.41 s, and no 12 fps idle frame falls inside
+  that window (`idle_frames_closed` is empty: frames 28 and 29 are 2.333 s and
+  2.417 s), so the idle render and the loop encoded from it never show the closed eye.
+  rigc's `render` takes no time, so the closed pose is a throwaway animation holding
+  the blink tracks' closed value, built and rendered beside the seam's still on the
+  same grid — the comparison is then of what the blink alone changed.
+- **The colour-patch figure is not reliable enough for a bar.** "Nearest colour in the
+  open eye's box" counts a legitimate colour the open eye never showed (skin under the
+  lid) as a patch, and a patch the open eye happened to contain as none. It is
+  reported, and 15 and 11 on the examples are what a clean lid looks like.
+- **A lag is read modulo half a cycle.** A sine's sign is half a cycle of phase, and
+  the keys cannot tell `amp −0.6, phase 0.2` from `amp 0.6, phase 0.7` — the mirrored
+  chains of both examples are written the first way — so the reading folds a step into
+  (−¼, ¼] of a cycle and reports amplitudes unsigned. A lag of a quarter cycle or more
+  cannot be told from a lead. Tracks whose keys are not a sampled sine are listed as
+  `unread`, and a keyed bone under a keyed ancestor of another period (the demo's
+  tassel under the head) is listed in `other_period` and not compared.
+- **Tip over root is a centroid, not a displacement.** Art entering or leaving a half
+  moves its centroid too. The halves' mean heat was the brief's first choice and was
+  rejected: heat is texture times motion, and on the demo's sleeves the lower half's
+  mean heat is 1.1 times the upper half's while its centroid travels 3.7 times as far.
+  The halves split the box across its rows, which assumes the part hangs — true of a
+  front-facing standing figure, the only input this tool takes.
+- **The face ceiling is weak, and the reason is in the examples.** The head rolls, so
+  the face outline is lit in both (16.988 and 11.475); twice the worse is a ceiling a
+  smooth face sliding two rig pixels stays under (the selftest's fixture measures 24.8
+  at that slide and 85.5 at eight). A face-outline instrument that removes the head's
+  own motion needs the head bone's world transform per frame, which rigc's `render`
+  does not export. The feet half has the same shape on the demo: its long skirt swings
+  over the shoes, which lights 1.622.
+
+Still only an eye answers, each a missing instrument rather than a question to ask:
+
+- **no visible texture stretch** (it appears when amplitudes grow): the measure is a
+  mesh triangle's deformed edge length over its rest length, frame by frame, and
+  nothing this package runs gives deformed vertices — spine-parts does not link
+  `spine-core`, and rigc's `render` exports pixels, not vertices;
+- **the face outline held still in the head's own frame** (above): the heat map
+  without the head's roll.
 
 ## 8. What one character costs
 

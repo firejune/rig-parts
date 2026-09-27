@@ -78,6 +78,17 @@ export interface CheckRigOptions {
   lastKey?: number;
   /** Write `images/front.png` fully opaque, which spine-rigc's A19 refuses under spine-html. */
   opaqueFront?: boolean;
+  /** The two parts' `from`, back then front — the See-through tags the judgement lines choose regions by. Default both `full:topwear`. */
+  from?: readonly [string, string];
+  /** The idle's peak `translatex` on the root; 0 makes an idle that moves nothing. */
+  peak?: number;
+  /**
+   * Hang the front part on a bone `eye` at its centre and give the idle a
+   * blink: group `eyes` = [`eye`], `scaley` 1 -> `squash` -> 1. The front part
+   * reaches past the back one on the right, so the shut eye shows the
+   * background there — the hole `BLINK_NO_HOLE` exists to name.
+   */
+  blinkSquash?: number;
 }
 
 export const IDLE_PEAK = 2;
@@ -91,15 +102,28 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
     writeFileSync(join(dir, 'parts', `${p.name}.png`), encodePngBytes(checkPartRaster(p)));
   }
   const stage = { x: -W / 2, y: 0, width: W, height: H };
+  const blink = opts.blinkSquash !== undefined;
+  const front = CHECK_PARTS[1];
+  const eyeAt = { x: stage.x + front.x + front.w / 2, y: stage.y + cropToSpineY(front.y + front.h / 2, H) };
+  const peak = opts.peak ?? IDLE_PEAK;
+  const blinkTracks =
+    opts.blinkSquash === undefined
+      ? []
+      : [{ group: 'eyes', property: 'scaley', keys: [{ t: 0, v: [1] }, { t: 0.4, v: [1] }, { t: 0.5, v: [opts.blinkSquash] }, { t: 0.6, v: [opts.blinkSquash] }, { t: 0.7, v: [1] }, { t: 1, v: [1] }] }];
   const rig = {
     spec: 'rigc-rig/1',
     name: 'check_probe',
     images: 'images',
     skeleton: stage,
-    bones: [{ name: 'root', x: 0, y: 0 }],
-    slots: CHECK_PARTS.map((p) => ({ name: p.name, bone: 'root', attachment: p.name })),
+    bones: blink ? [{ name: 'root', x: 0, y: 0 }, { name: 'eye', parent: 'root', x: eyeAt.x, y: eyeAt.y }] : [{ name: 'root', x: 0, y: 0 }],
+    slots: CHECK_PARTS.map((p, i) => ({ name: p.name, bone: blink && i === 1 ? 'eye' : 'root', attachment: p.name })),
     skins: {
-      default: Object.fromEntries(CHECK_PARTS.map((p) => [p.name, { [p.name]: { image: `${p.name}.png`, x: stage.x + p.x + p.w / 2, y: stage.y + cropToSpineY(p.y + p.h / 2, H) } }])),
+      default: Object.fromEntries(
+        CHECK_PARTS.map((p, i) => {
+          const at = { x: stage.x + p.x + p.w / 2, y: stage.y + cropToSpineY(p.y + p.h / 2, H) };
+          return [p.name, { [p.name]: { image: `${p.name}.png`, ...(blink && i === 1 ? { x: at.x - eyeAt.x, y: at.y - eyeAt.y } : at) } }];
+        }),
+      ),
     },
   };
   writeFileSync(join(dir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
@@ -108,12 +132,12 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
     archetype: 'check_probe',
     cut: 'check_probe',
     easings: {},
-    groups: {},
+    groups: blink ? { eyes: ['eye'] } : {},
     animations: {
       idle: {
         duration: 1,
         loop: true,
-        tracks: [{ bone: 'root', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [IDLE_PEAK] }, { t: 1, v: [opts.lastKey ?? 0] }] }],
+        tracks: [{ bone: 'root', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [peak] }, { t: 1, v: [opts.lastKey ?? 0] }] }, ...blinkTracks],
       },
     },
   };
@@ -121,9 +145,9 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
   const parts: PartsFile = {
     rig_size: [W, H],
     scale_rig_per_source: 1,
-    parts: CHECK_PARTS.map((p) => ({
+    parts: CHECK_PARTS.map((p, i) => ({
       name: p.name,
-      from: 'full:topwear',
+      from: opts.from?.[i] ?? 'full:topwear',
       x: p.x,
       y: p.y,
       w: p.w,
