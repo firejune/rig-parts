@@ -1,57 +1,139 @@
 # spine-parts
 
-> **0.1.0 — skeleton; the assemble/propose/rig/check stages land next.** What
-> exists today: the two input readers, the layer table, the contact sheet, the
-> config and `parts.json` contracts, and the raster library the later stages
-> stand on. Every other command is registered and exits 2 saying it is not
-> implemented in this version.
-
-**AI Spine 2D rigging from one anime painting and its See-through layer
-decomposition.** spine-parts takes a single character painting plus the layers
+**AI-authored Spine 2D character rigs from one anime painting, verified before they
+are written.** spine-parts takes a single character painting and the layers
 [See-through](https://github.com/shitagaki-lab/see-through) decomposed it into,
-and is built to turn them into Spine-ready character parts: `parts/*.png`, a
-`parts.json` recording where every part came from and what was measured, and a
-rig spec and motion spec for [spine-rigc](https://github.com/firejune/rigc) —
-weighted meshes over the layers, chains for what hangs, one `idle` — which
-spine-rigc then compiles, gates, renders and checks.
-
-It is a tool for AI agents that cannot see the image. Every stage prints named,
-numeric findings; a failure names the object, the value found and the value
-required; nothing is written after a red; and no value is invented where the
+merges them into measured rig-space parts, authors weighted meshes, bone chains
+and a looping idle over them in [spine-rigc](https://github.com/firejune/rigc)'s
+spec, and hands that spec to spine-rigc to compile, gate, pack, render and check.
+It is built for agents that cannot see the image: every stage prints named,
+numeric findings, a refusal names the object, the value found and the value
+required, nothing is written after a red, and no value is invented where the
 input is silent.
+
+## What you get
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/firejune/spine-parts/main/assets/demo-source.png" alt="The demo painting: a generated full-body character in a white and pink frilled dress with long pink twin tails, standing with her hands clasped" height="420" />
+  <img src="https://raw.githubusercontent.com/firejune/spine-parts/main/assets/demo-idle.gif" alt="The same character as a Spine rig, breathing, blinking once and swaying her hair, sleeves and skirt in a four-second loop" height="420" />
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/firejune/spine-parts/main/assets/demo-parts.png" alt="Contact sheet of the painting and the 22 assembled parts it was split into: hair, dress, sleeves, shoes, face, eyes, brows, mouth and ornaments" width="100%" />
+</p>
+
+<p align="center"><em>
+The painting was generated for this repository with a public checkpoint (Pony
+Diffusion V6 XL) and no LoRA; its generation record, See-through layers and licence
+are in <a href="https://github.com/firejune/spine-parts-examples">spine-parts-examples</a>.
+See-through ran twice, once on the whole figure and once on a square head crop.
+Then one command: <code>spine-parts build --seam silhouette --loop</code>. The
+proposer's bones, meshes, regions and motion were used <b>unedited</b>. Two input-stage
+edits were made by hand for the reference run this example reproduces: the head box
+was shifted down into the canvas (its proposal ran 118 px above the top edge;
+<code>propose --head-box</code> now makes that shift itself), and <code>hair_back</code>
+is taken from the full run, because the twin tails leave the head crop sideways
+(a plan edit). <code>check</code> printed, verbatim:<br/>
+<code>49 assertions: 23 measured (23 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"</code><br/>
+<code>49 assertions: 14 measured (14 passed, 0 failed), 20 skipped, 15 not in profile "spine"</code><br/>
+<code>loop: idle 49 frame(s) at 12 fps, f0000 vs f0048 (t = 4s): max |d| 0 (0 required)</code><br/>
+<code>seam: setup pose at 714x1216, scale 0.9422: mean |d| 0.324 (&lt;= 1.0), 2 px over 40 (&lt;= 50), 0 px over 80 (reported)</code><br/>
+<code>pack: skeleton.png 1024x2048, 22 region(s), 56.3% covered, padding 2</code><br/>
+<code>--seam silhouette</code> repaired the navy blobs the default rule leaves on the white
+blouse (recomposite error pixels 11,050 → 9,540); the default stays
+<code>near-white</code>, the reference implementation's rule, so the examples stay
+comparable with it. The loop is <code>spine-parts loop</code>'s GIF, 48 frames at
+12 fps, 1,812,041 bytes; the painting is shown at half size, resampled and written
+by this package's PNG codec (nothing here encodes JPEG). <code>spine-parts sheet</code>
+made the contact sheet.
+</em></p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/firejune/spine-parts/main/assets/sample-parts.png" alt="Contact sheet of the sample character's painting and its 20 parts" width="560" />
+</p>
+
+<p align="center"><em>
+The plain fixture, <code>examples/sample</code>: same checkpoint, no LoRA, and a rig
+built from its own proposal with no hand edit at all —
+<code>seam: … mean |d| 0.207 (&lt;= 1.0), 0 px over 40 (&lt;= 50)</code>, loop max |d| 0.
+</em></p>
 
 ## What it takes in
 
-- **One painting** — a PNG of the character, front-facing, full body.
-- **Its See-through layers**, in either form See-through reaches a user in:
-  - the **ComfyUI wrapper form**: a directory holding `layers.json` and one RGBA
-    PNG per layer (flat beside the manifest, as the wrapper writes it, or under
-    `parts/<tag>.png`);
-  - an **upstream `.psd`**: one pixel layer per tag, the layer name being the
-    tag, the stacking order being the draw order.
-- **A character config** (`config.json`) — the part plan, bones, which bones
-  may pull which layer, and the idle's sines. Its schema is `src/config.ts`,
-  which documents every field; the loader refuses an unknown or missing field by
-  name.
+- **One painting** — a PNG of one character, front-facing, full body, taller than
+  wide.
+- **Its See-through layers, twice**: one run on the whole figure (the painting padded
+  white to a square) and one on a square crop around the head, because the eyes of a
+  full-figure run are too small to separate. Either form See-through reaches you in
+  is read:
+  - the **ComfyUI wrapper form** — a directory holding `layers.json` and one RGBA PNG
+    per layer (flat beside the manifest, or under `parts/<tag>.png`);
+  - an **upstream `.psd`** — one pixel layer per tag, the layer name being the tag,
+    the stacking order being the draw order.
+- **A character config** (`config.json`) — the part plan, the head box, the bones,
+  which bones may pull which layer, and the idle's sines. `src/config.ts` is its
+  schema and documents every field; the loader refuses an unknown or a missing field
+  by name. [docs/AUTHORING.md](docs/AUTHORING.md) says where each value comes from.
 
 ## What it gives out
 
-Today:
+`spine-parts build` ends the way a Spine editor export does — with **one packed atlas
+page** (issue #2):
 
-```sh
-spine-parts layers <dir | layers.json | file.psd>
+| path under `--out` | what |
+| --- | --- |
+| `check/build/skeleton.json`, `skeleton.atlas`, `skeleton.png` | **the artifact** — Spine 4.3 skeleton data and one packed page, written by `rigc build --pack` and gated under both profiles |
+| `parts/*.png`, `parts.json`, `recomposite_rig.png` | the loose parts, each cropped to its alpha box; the record of where every part came from and how many of its pixels were re-taken from the painting; the flat stack of parts |
+| `rig/` | `rig.json` and `motion.json` in spine-rigc's spec, `mesh_report.json`, the padded `images/` |
+| `check/` | both gate files verbatim, the idle's frames, `contact.png`, `motion_heat.png`, `check.json` |
+| `idle.gif`, `idle.png` | with `--loop`: the idle as a GIF and a lossless APNG |
+
+The last lines of a green build are the pack line, printed beside the Spine example
+export's `spineboy.png` as a yardstick (a reference, not a bar), and the three
+artifact paths — here for `examples/sample`:
+
+```
+build: PASS — the packed atlas is the artifact; parts/ and rig/ are the intermediates it was made from
+  pack: skeleton.png 512x2048, 20 region(s), 49.7% covered, padding 2; page opaque 28.7% (alpha > 0) — spineboy yardstick 1024x256, 40 region(s), 45.8% opaque (alpha > 0), a reference and not a bar
+  out/check/build/skeleton.json
+  out/check/build/skeleton.atlas
+  out/check/build/skeleton.png
 ```
 
-prints every layer of a decomposition — draw order, name, tag group, box, size,
-opaque pixels, depth — and refuses, by name, a missing PNG, an unknown tag, a
-PNG whose size is not its box, and anything else outside the input contract.
+The packer is spine-rigc's, and no other: a packed region is a lossless copy, and an
+atlas written by anything else would have no oracle behind it.
 
-```sh
-spine-parts sheet --source painting.png --layers <path> [--layers <path> ...] --out sheet.png
-```
+## Painting → parts → rig → browser
 
-writes a contact sheet — the painting, then every layer or part on a
-checkerboard, labelled — and prints the same information as text.
+| stage | tool | what it owns |
+| --- | --- | --- |
+| painting + See-through layers → parts and specs | **spine-parts** | the merge of two runs, the measurements, the rig spec and motion spec |
+| specs → Spine skeleton data | **[spine-rigc](https://github.com/firejune/rigc)** | compile, the round trip through `spine-core`, the named assertions, the packer, the renderer |
+| skeleton data → a page | **[spine-html](https://github.com/firejune/spine-html)**, a sibling project | a DOM renderer; rigc's `spine-html` profile is its policy, and every build here is gated under that profile as well as under `spine` |
+
+spine-parts never writes Spine data itself. Everything on disk under `check/build/`
+was written by spine-rigc after its own gate passed.
+
+## Getting See-through layers
+
+See-through is required; how you run it is not. spine-parts does not vendor, embed or
+redistribute See-through code or weights — run it by any of these and point
+spine-parts at what it wrote:
+
+| Route | Where | Output spine-parts reads |
+| --- | --- | --- |
+| Hugging Face Space | [24yearsold/see-through-demo](https://huggingface.co/spaces/24yearsold/see-through-demo) (ZeroGPU; upstream states 1-2 extractions a day for a registered user) | the `.psd` it produces |
+| ModelScope demo | [ljsabc/See-Through](https://modelscope.cn/studios/ljsabc/See-Through), linked from the upstream README | the `.psd` it produces |
+| Upstream CLI | `python inference/scripts/inference_psd.py --srcp <image> --save_to_psd` in a checkout of [shitagaki-lab/see-through](https://github.com/shitagaki-lab/see-through) | the `.psd` in `workspace/layerdiff_output/` |
+| ComfyUI wrapper | [jtydhr88/ComfyUI-See-through](https://github.com/jtydhr88/ComfyUI-See-through) on your own ComfyUI box; the optional `comfy` adapter (`spine-parts comfy seethrough`) drives it | the `layers.json` + PNGs it writes |
+
+**See-through is required; ComfyUI is not.** The wrapper is one route among
+four, and `spine-parts comfy` is only a convenience for that route: every
+stage after See-through reads files, whichever route wrote them. On the two
+public examples each run took 171–199 s through the wrapper (each run's
+`meta.json`, in [spine-parts-examples](https://github.com/firejune/spine-parts-examples)).
+
+### The two images See-through is fed: `inputs`
 
 ```sh
 spine-parts inputs --source painting.png --config config.json --out <dir>
@@ -61,7 +143,9 @@ cuts the two images See-through is fed: the painting centred on a white square
 (`st_input_full.png`) and, when the config sets `seethrough.head_box`, that
 box at its exact size (`st_input_head.png`). Pure raster, no GPU.
 
-**The optional ComfyUI adapter.** For a user who has a ComfyUI box, two
+### The optional ComfyUI adapter
+
+For a user who has a ComfyUI box, two
 commands drive it; nothing else in the pipeline needs one:
 
 ```sh
@@ -79,66 +163,113 @@ the graph is checked against the box's `/object_info`, so a missing node class
 or model is refused by name, and the adapter waits for an empty queue rather
 than queueing behind someone else's job.
 
-Next (not in this version): `assemble` (rig-space `parts/*.png` + `parts.json`),
-`propose` (bones, meshes and an idle for the config), `rig` (`rig.json` +
-`motion.json`), `check` (spine-rigc's gate plus seam and loop measurements),
-and `build` (all of it).
+## The loop, for an agent
 
-## See-through routes
+```sh
+spine-parts inputs --source painting.png --config config.json --out inputs   # st_input_full.png; the config needs only key, seethrough, assemble.rig_scale
+#    See-through on st_input_full.png (external, or `spine-parts comfy seethrough`) -> layers/full
+spine-parts layers layers/full                      # every layer: box, opaque px, depth
+spine-parts propose --head-box --full layers/full --canvas 1664x2432
+#    -> seethrough.head_box into config.json
+spine-parts inputs --source painting.png --config config.json --out inputs   # now st_input_head.png too
+#    See-through on st_input_head.png (external, or `spine-parts comfy seethrough`) -> layers/head
+spine-parts sheet --source painting.png --layers layers/full --layers layers/head --out sheets/layers.png
+spine-parts assemble --propose-plan --source painting.png --full layers/full --head layers/head --config config.json
+#    -> assemble.plan and extend_below_crop
+spine-parts assemble --source painting.png --full layers/full --head layers/head --config config.json --out work
+spine-parts propose --parts work/rig --source painting.png --out work
+#    -> proposal.json and render/landmarks.png; correct it, copy bones/meshes/regions/motion into config.json
+spine-parts propose --parts work/rig --source painting.png --out work --from-config config.json
+#    -> LINT lines; exit 1 while any remain
+spine-parts build --config config.json --source painting.png --full layers/full --head layers/head --out out --loop
+#    -> read out/check/check.json; every FAIL line names what has to change
+```
 
-See-through is required; how you run it is not. spine-parts does not vendor,
-embed or redistribute See-through code or weights — run it by any of these and
-point spine-parts at the output:
+`propose` is deliberately not a step of `build`: the proposal is a draft to correct
+against its overlay, and a config with bones is `build`'s input. `rig`, `check` and
+`loop` are the same stages one at a time. [docs/AUTHORING.md](docs/AUTHORING.md) is
+the guide an agent authors from — every config field, what to look at after each
+stage, what each refusal means and which field it points at — and
+[`skills/spine-parts/SKILL.md`](skills/spine-parts/SKILL.md) is the same loop as an
+agent skill.
 
-| Route | Where | Output spine-parts reads |
-| --- | --- | --- |
-| Hugging Face Space | [24yearsold/see-through-demo](https://huggingface.co/spaces/24yearsold/see-through-demo) (ZeroGPU; upstream states 1-2 extractions a day for a registered user) | the `.psd` it produces |
-| ModelScope demo | [ljsabc/See-Through](https://modelscope.cn/studios/ljsabc/See-Through), linked from the upstream README | the `.psd` it produces |
-| Upstream CLI | `python inference/scripts/inference_psd.py --srcp <image> --save_to_psd` in a checkout of [shitagaki-lab/see-through](https://github.com/shitagaki-lab/see-through) | the `.psd` in `workspace/layerdiff_output/` |
-| ComfyUI wrapper | [jtydhr88/ComfyUI-See-through](https://github.com/jtydhr88/ComfyUI-See-through) on your own ComfyUI box; `spine-parts comfy seethrough` drives it (optional) | the `layers.json` + PNGs it writes |
+## Commands
 
-**See-through is required; ComfyUI is not.** The wrapper is one route among
-four, and `spine-parts comfy` is only a convenience for that route: every
-stage after See-through reads files, whichever route wrote them.
+| command | does |
+| --- | --- |
+| `inputs --source <png> --config <json> --out <dir>` | the two images See-through is fed: the painting on a white square, and the head box's crop once the config has one |
+| `comfy paint --config --out [--host]` | optional: generate the painting on a ComfyUI box from the config's `generation` block |
+| `comfy seethrough --image --out [--host]` | optional: run the ComfyUI See-through wrapper on one image and write the form `layers` reads |
+| `layers <dir \| layers.json \| file.psd>` | print every layer of a decomposition: draw order, name, tag group, box, size, opaque pixels, depth |
+| `sheet --source <png> --layers <path>… --out <png>` | a labelled contact sheet of the painting and every layer or part |
+| `assemble --propose-plan …` | propose `assemble.plan` and `extend_below_crop` from the two runs |
+| `assemble --source --full --head --config --out [--seam]` | merge the two runs into rig-space parts, `parts.json` and the recomposite |
+| `propose --head-box --full <run> --canvas WxH` | propose `seethrough.head_box` from the full run, held inside the painting |
+| `propose --parts --source --out [--compare <config>]` | propose bones, meshes, regions and an idle; draw the overlay |
+| `propose … --from-config <config>` | draw and LINT the config's current bones |
+| `rig --config --parts --out` | author `rig.json` + `motion.json`, written only after spine-rigc's round trip is green |
+| `check --rig --out [--parts]` | build packed, gate under both profiles, render the idle, measure seam and loop |
+| `loop --frames <dir> --out <file.gif \| file.png>` | encode a rendered idle as a looping GIF or APNG |
+| `build --config --source --full --head --out [--seam] [--loop]` | assemble, rig and check in one process, stopping at the first refusal |
 
-## What this does not do
+`spine-parts --help` has every flag. Exit codes: 0 done, 1 input refused (every
+reason is a FAIL line), 2 a usage error or a command this version does not implement.
 
-These are limits of the approach the tool ports, measured on the reference
-implementation, and they are stated so nobody reads more into a green run:
+## What it does not do
 
-- **No joint caps.** Parts are See-through's layers, not cut limbs; nothing
-  builds overlap caps at joints.
-- **No expression or lip-sync.** The mouth is one layer; there is no mouth
-  shape set, and no expression axes.
-- **One depth value per layer.** See-through gives each layer a single
-  `depth_median`, so a layer that is in front of another in one place and behind
-  it in another cannot be drawn correctly when it moves; the flat still can be
-  made to match the painting, the motion cannot.
-- **No success-rate claim.** The reference implementation was carried through
-  on a small private set of characters, one See-through seed each. That is an
-  existence proof, not a rate, and none is claimed.
-- **Occluded pixels are See-through's synthesis**, not the artist's; nothing
-  here makes them faithful to what the painting would have shown.
+These are limits of the approach, stated so nobody reads more into a green run:
+
+- **One depth value per layer.** See-through gives each layer a single depth, so a
+  layer that is in front of another in one place and behind it in another is drawn
+  right in the still (the painting's own pixels are projected onto it) and wrong once
+  it moves.
+- **No expression or lip-sync.** The mouth is one layer; there is no mouth-shape set
+  and no expression axis.
+- **Occluded pixels are See-through's synthesis**, not the artist's. How much of a rig
+  that is, is below.
+- **No success rate is claimed.** Ten characters have been measured stage by stage
+  against the reference implementation this package ports — the two public examples
+  here and eight private ones, one See-through seed each — and all ten check green.
+  That is an existence proof, not a rate.
+- **`loop` writes GIF and APNG, not WebP**: an animated WebP needs a VP8/VP8L
+  encoder, which this package does not carry.
+- **The proposer reads tags, not pictures.** A swinging element painted inside another
+  layer (a sash tail in the skirt), hair that is none of the shapes it knows, and
+  whether an accessory swings are the corrector's to add.
+
+### How much of a rig the model painted
+
+`parts.json` records, per part, how many opaque pixels were re-taken from the painting
+(`source_px_taken`) against the part's opaque pixels (`opaque_px`); the rest is
+See-through's synthesis. Across the ten reference rigs, **41.8 %** of all rig pixels
+are not source pixels (issue #9); on the two public examples it is 38.6 % (`sample`)
+and 36.4 % (`demo`), from their `expected/parts.json`. Most of it is art that really
+is hidden — a back-hair layer, a neck — but the figure **over-counts**: a thin part
+that is fully visible (a brow, a lash, an iris) has no eroded opaque core, so none of
+its pixels qualify for projection and they count as synthesized (issue #9).
 
 ## Requirements
 
 [Bun](https://bun.sh) 1.2 or later. `npm install -g spine-parts` installs the
-`spine-parts` command; it hands off to Bun and says so in one sentence if Bun
-is not on PATH.
+`spine-parts` command; it hands off to Bun and says so in one sentence if Bun is not
+on `PATH`. spine-rigc comes with it as a dependency.
 
-Using spine-rigc's output in a product requires a Spine Editor license — see
-[NOTICE.md](NOTICE.md), which also records every third-party licence this
-package touches.
+## Licence posture
+
+spine-parts is MIT, and it depends on spine-rigc, which links Esoteric Software's
+`spine-core`: using what it produces in a product requires a Spine Editor licence, as
+any Spine data does. [NOTICE.md](NOTICE.md) records that chain and every other
+third-party term this package touches, See-through's included.
 
 ## Development
 
 ```sh
 bun install
-bun run typecheck    # tsc --noEmit, strict
-bun run lint         # one rule: no explicit any
-bun run fetch-examples  # the public examples' paintings and layers, into examples/*/inputs (needs a network)
-bun run selftest     # every gate's negative controls, on fixtures it generates; reads the examples when fetched
-bun run smoke        # pack, install into an empty directory, run from the install (needs a network)
+bun run typecheck        # tsc --noEmit, strict
+bun run lint             # one rule: no explicit any
+bun run fetch-examples   # the public examples' paintings and layers, into examples/*/inputs (needs a network)
+bun run selftest         # every gate's controls; with the examples fetched, build on each of them against its expected/
+bun run smoke            # pack, install into an empty directory, run from the install (needs a network)
 ```
 
 [CLAUDE.md](CLAUDE.md) is the doctrine, [CONTRIBUTING.md](CONTRIBUTING.md) the

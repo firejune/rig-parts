@@ -40,6 +40,8 @@
     "cli.ts",
     "src",
     "workflows",
+    "docs/AUTHORING.md",
+    "skills",
     "NOTICE.md"
   ],
   "publishConfig": {
