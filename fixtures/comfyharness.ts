@@ -48,10 +48,23 @@ function paintConfig(checkpoint: string): Record<string, unknown> {
   };
 }
 
+/**
+ * A config as it stands before anything else exists: `key` and `generation`,
+ * no See-through block, no rig. `comfy paint` reads it through the early door;
+ * its seed differs from `paintConfig`'s so the request can only have carried it
+ * from this file.
+ */
+function paintOnlyConfig(): Record<string, unknown> {
+  const g = paintConfig(FAKE_CHECKPOINT).generation as Record<string, unknown>;
+  return { key: 'paint_only', generation: { ...g, seed: 11 } };
+}
+
 const image = join(work, 'input.png');
 writeFileSync(image, encodePngBytes(layerRaster(WRAPPER_LAYERS[0])));
 writeFileSync(join(work, 'paint.json'), JSON.stringify(paintConfig(FAKE_CHECKPOINT)));
 writeFileSync(join(work, 'paint_missing_ckpt.json'), JSON.stringify(paintConfig('not_on_the_box.safetensors')));
+writeFileSync(join(work, 'paint_only.json'), JSON.stringify(paintOnlyConfig()));
+writeFileSync(join(work, 'paint_no_generation.json'), JSON.stringify({ key: 'paint_only' }));
 
 const env: Record<string, string> = {};
 for (const [k, v] of Object.entries(process.env)) if (k !== 'COMFY_HOST' && v !== undefined) env[k] = v;
@@ -79,6 +92,8 @@ const scenarios: Scenario[] = [
   { name: 'st-no-seethrough', mode: 'no-seethrough', args: (u, o) => st(u, o) },
   { name: 'st-stale', mode: 'stale-manifest', args: (u, o) => st(u, o) },
   { name: 'paint-ok', mode: 'ok', args: (u, o) => ['comfy', 'paint', '--config', join(work, 'paint.json'), '--out', o, '--host', u, '--seeds', '2', '--wait', '2', ...fast] },
+  { name: 'paint-only', mode: 'ok', args: (u, o) => ['comfy', 'paint', '--config', join(work, 'paint_only.json'), '--out', o, '--host', u, '--wait', '2', ...fast] },
+  { name: 'paint-no-generation', mode: 'ok', args: (u, o) => ['comfy', 'paint', '--config', join(work, 'paint_no_generation.json'), '--out', o, '--host', u, '--wait', '2', ...fast] },
   { name: 'paint-missing-ckpt', mode: 'ok', args: (u, o) => ['comfy', 'paint', '--config', join(work, 'paint_missing_ckpt.json'), '--out', o, '--host', u, '--wait', '2', ...fast] },
 ];
 

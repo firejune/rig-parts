@@ -24,7 +24,7 @@
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CharacterConfig } from '../config.ts';
+import type { PaintConfig } from '../config.ts';
 import { type Problem, refuseIfAny } from '../errors.ts';
 import { buildPrompts, checkGraph, paintingGraph, resolvedControl, resolvedLoras } from '../graphs.ts';
 import { decodePngBytes, encodePngBytes } from '../raster/png.ts';
@@ -32,7 +32,8 @@ import { renderSkeleton } from '../skeleton.ts';
 import { ComfyClient, historyImages, refuse } from './client.ts';
 
 export interface PaintRun {
-  config: CharacterConfig;
+  /** Read through `loadEarlyConfig(path, 'paint')`, which has already required and checked `generation`. */
+  config: PaintConfig;
   out: string;
   seeds: number;
   seed0: number;
@@ -49,7 +50,6 @@ export interface Painted {
 
 export async function runPainting(client: ComfyClient, run: PaintRun, say: (line: string) => void): Promise<Painted[]> {
   const g = run.config.generation;
-  if (g === undefined) refuse('COMFY_CONFIG_GENERATION', 'config.generation', 'is absent; comfy paint generates from the config\'s inline generation block, and nothing else is guessed');
   const seeds = Array.from({ length: run.seeds }, (_, i) => run.seed0 + i);
   const taken: Problem[] = seeds
     .filter((s) => existsSync(join(run.out, `painting_${s}.png`)))

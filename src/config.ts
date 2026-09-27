@@ -294,11 +294,32 @@ export function loadConfig(path: string): CharacterConfig {
 // ---------------------------------------------------------------------------
 
 /**
+ * Which step is reading the config before the rig exists, and so which fields
+ * that step requires. The requirement is the caller's to name because it is a
+ * fact about the step, not about the file: the same config legitimately lacks
+ * `seethrough` when the painting is generated and must carry it when the
+ * See-through images are cut.
+ *
+ * - `paint` — `comfy paint`, the first step of all: `key` and `generation`.
+ *   Nothing else exists yet, and nothing else is read.
+ * - `layers` — `inputs` and `assemble --propose-plan`: `key`, `seethrough`
+ *   (`head_box` absent until `propose --head-box` has run) and
+ *   `assemble.rig_scale`; `generation` is checked when present, because that
+ *   block is complete before any image exists.
+ */
+export type EarlyDoor = 'paint' | 'layers';
+
+/** What `comfy paint` reads: the key its files are named for and the generation block it paints from. */
+export interface PaintConfig {
+  key: string;
+  generation: Generation;
+}
+
+/**
  * What a character's config holds before its layers exist: a key, the
- * See-through block (`head_box` absent until `propose --head-box` has run) and
- * the rig scale. `inputs` and `assemble --propose-plan` run at that point, and
- * the full loader would refuse the config for the plan, bones, meshes, regions
- * and motion that are written only after them.
+ * See-through block and the rig scale. `inputs` and `assemble --propose-plan`
+ * run at that point, and the full loader would refuse the config for the plan,
+ * bones, meshes, regions and motion that are written only after them.
  */
 export interface EarlyConfig {
   key: string;
@@ -306,35 +327,59 @@ export interface EarlyConfig {
   assemble: { rig_scale: number };
 }
 
+/** The top-level keys each door requires; every other known section may be present. */
+const EARLY_REQUIRED: Record<EarlyDoor, readonly string[]> = {
+  paint: ['key', 'generation'],
+  layers: ['key', 'seethrough', 'assemble'],
+};
+const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'bones', 'meshes', 'regions', 'motion'] as const;
+
 /**
- * The one partial entry point. It validates exactly `key`, `seethrough` and
- * `assemble.rig_scale` — with the full loader's own rules for each — and, when
- * present, `generation`, because that block is complete before any image
- * exists. The sections written later (`assemble.plan`, `extend_below_crop`,
- * `bones`, `meshes`, `regions`, `motion`) may be present and are NOT read or
- * vouched for; a caller that needs them uses {@link parseConfig}. Every other
+ * The one partial entry point. It validates exactly what its door requires —
+ * with the full loader's own rules for each — plus `generation` whenever it is
+ * present. The sections a later step writes may be present and are NOT read or
+ * vouched for (for `paint` that is everything but `key` and `generation`; for
+ * `layers`, `assemble.plan`, `extend_below_crop`, `bones`, `meshes`, `regions`
+ * and `motion`); a caller that needs them uses {@link parseConfig}. Every other
  * key is still refused by name, and a retired one (`generation.character_file`
  * and its kin) still with what replaces it: a config is not allowed to be
  * half-known at any stage.
  */
-export function parseEarlyConfig(raw: Json): EarlyConfig {
+export function parseEarlyConfig(raw: Json, door: 'paint'): PaintConfig;
+export function parseEarlyConfig(raw: Json, door: 'layers'): EarlyConfig;
+export function parseEarlyConfig(raw: Json, door: EarlyDoor): PaintConfig | EarlyConfig {
   const c = new Check();
-  const top = c.object('config', raw, ['key', 'seethrough', 'assemble'], ['generation', 'bones', 'meshes', 'regions', 'motion']);
+  // `generation` is taken out of the generic presence check so its absence can
+  // say what the block has to hold, rather than only that it is missing.
+  const required = EARLY_REQUIRED[door].filter((k) => k !== 'generation');
+  const top = c.object('config', raw, required, TOP_KEYS.filter((k) => !required.includes(k)));
   if (top === null) refuseIfAny(c.problems);
   const t = top as Record<string, Json>;
   if ('key' in t) c.string('config.key', t.key);
   if ('generation' in t) checkGeneration(c, t.generation);
-  if ('seethrough' in t) checkSeeThrough(c, t.seethrough);
-  if ('assemble' in t) {
-    const a = c.object('config.assemble', t.assemble, ['rig_scale'], ['plan', 'extend_below_crop']);
-    if (a !== null && 'rig_scale' in a) c.number('config.assemble.rig_scale', a.rig_scale, 'positive');
+  else if (EARLY_REQUIRED[door].includes('generation')) {
+    c.fail(
+      'CONFIG_FIELD_PRESENT',
+      'config.generation',
+      `is absent and required; comfy paint generates from it and nothing else — ${GENERATION_REQUIRED.join(', ')}, and pose or control`,
+    );
+  }
+  if (door === 'layers') {
+    if ('seethrough' in t) checkSeeThrough(c, t.seethrough);
+    if ('assemble' in t) {
+      const a = c.object('config.assemble', t.assemble, ['rig_scale'], ['plan', 'extend_below_crop']);
+      if (a !== null && 'rig_scale' in a) c.number('config.assemble.rig_scale', a.rig_scale, 'positive');
+    }
   }
   refuseIfAny(c.problems);
-  return raw as EarlyConfig;
+  return door === 'paint' ? (raw as PaintConfig) : (raw as EarlyConfig);
 }
 
-export function loadEarlyConfig(path: string): EarlyConfig {
-  return parseEarlyConfig(readConfigFile(path));
+export function loadEarlyConfig(path: string, door: 'paint'): PaintConfig;
+export function loadEarlyConfig(path: string, door: 'layers'): EarlyConfig;
+export function loadEarlyConfig(path: string, door: EarlyDoor): PaintConfig | EarlyConfig {
+  const raw = readConfigFile(path);
+  return door === 'paint' ? parseEarlyConfig(raw, 'paint') : parseEarlyConfig(raw, 'layers');
 }
 
 /** Validate a parsed config. Every problem found is thrown at once, as one `PartsError`. */
@@ -356,13 +401,11 @@ export function parseConfig(raw: Json): CharacterConfig {
   return raw as CharacterConfig;
 }
 
+/** The fields every generation block carries; `pose` or `control` is required besides, checked below. */
+const GENERATION_REQUIRED = ['checkpoint', 'loras', 'trigger', 'identity', 'sampler', 'costume', 'negative_extra', 'style', 'negative_pose', 'latent', 'seed'] as const;
+
 function checkGeneration(c: Check, v: Json): void {
-  const g = c.object(
-    'config.generation',
-    v,
-    ['checkpoint', 'loras', 'trigger', 'identity', 'sampler', 'costume', 'negative_extra', 'style', 'negative_pose', 'latent', 'seed'],
-    ['pose', 'control'],
-  );
+  const g = c.object('config.generation', v, GENERATION_REQUIRED, ['pose', 'control']);
   if (g === null) return;
   const p = 'config.generation';
   for (const key of ['checkpoint', 'identity', 'costume', 'style', 'negative_pose'] as const) if (key in g) c.string(`${p}.${key}`, g[key]);

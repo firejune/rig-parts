@@ -90,11 +90,22 @@ swing, hair of another shape, whether an accessory swings — is yours to add, a
 
 Two steps are external: the See-through runs (by any route; the optional `comfy seethrough` adapter is only a client for a ComfyUI box). Everything else is this tool.
 
+0. **The painting (optional).** `spine-parts comfy paint --config config.json --out inputs --host <url>`
+   generates `painting_<seed>.png` on a ComfyUI box; any other route to a painting
+   skips this step and leaves `generation` out. At this point the config needs only
+   `key` and `generation`: `comfy paint` reads it through the partial loader's `paint`
+   door (`parseEarlyConfig(raw, 'paint')`), which requires those two, reads nothing
+   else, and refuses unknown and retired keys like the full loader. A config without
+   `generation` is refused as `CONFIG_FIELD_PRESENT: config.generation`, naming the
+   fields the block holds. Everything else arrives later: `seethrough` and
+   `assemble.rig_scale` before step 1, `head_box` from step 4, the plan from step 6,
+   and `bones`, `meshes`, `regions` and `motion` from `propose` in step 7.
 1. **The full image.** `spine-parts inputs --source inputs/painting.png --config config.json --out inputs`
    writes `st_input_full.png`, the painting centred on a white square as tall as it is.
    At this point the config needs only `key`, `seethrough` (without `head_box`) and
    `assemble.rig_scale`: `inputs` and `assemble --propose-plan` read it through the
-   partial loader (`parseEarlyConfig`), which refuses unknown and retired keys like the
+   partial loader's `layers` door (`parseEarlyConfig(raw, 'layers')`), which checks
+   `generation` too when it is present, and which refuses unknown and retired keys like the
    full one and leaves the later sections for later. A landscape or translucent
    painting is refused (`INPUTS_PAINTING_PORTRAIT`, `INPUTS_PAINTING_OPAQUE`).
 2. **See-through, full run** (external).
@@ -184,7 +195,7 @@ stage's prefix (`[assemble]   FAIL  …`), and the build stops there.
 | `COMFY_QUEUE_EMPTY`, `COMFY_PROMPT_ACCEPTED`, `COMFY_HISTORY_WITHIN`, `COMFY_RUN_OK` | someone else's job kept the queue busy past `--wait`, the box rejected the graph, the job did not finish within `--timeout`, or it ended in error (quoted) | `--wait`/`--timeout`, or what the quoted error names |
 | `COMFY_HISTORY_OUTPUTS`, `COMFY_VIEW_PRESENT`, `COMFY_MANIFEST_NAMED`, `COMFY_MANIFEST_IS_THIS_RUN`, `COMFY_LAYER_NAME` | the job's outputs are missing, unreadable, belong to another run, or name a layer that is not a plain file name | the wrapper's version on the box; report it |
 | `COMFY_IMAGE_PRESENT`, `COMFY_OUT_EMPTY`, `COMFY_OUT_FREE` | no `--image`, an `--out` that already holds files, or a seed whose painting is already on disk | `--image`, `--out`, `--seed0` |
-| `COMFY_CONFIG_GENERATION`, `COMFY_PAINTING_SIZE` | the config has no `generation` block, or the painting that came back is not twice the latent | `config.generation` |
+| `CONFIG_FIELD_PRESENT` on `config.generation`, `COMFY_PAINTING_SIZE` | `comfy paint` was given a config with no `generation` block (the line names the fields it holds), or the painting that came back is not twice the latent | `config.generation` |
 
 ### assemble
 
