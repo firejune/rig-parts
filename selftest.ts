@@ -47,7 +47,7 @@ import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import ts from 'typescript';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
-import { loadConfig, parseConfig } from './src/config.ts';
+import { type CharacterConfig, loadConfig, parseConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
 import { PartsError } from './src/errors.ts';
 import { readPsdLayers, readWrapperLayers } from './src/layers.ts';
@@ -76,6 +76,9 @@ import {
   warpAffine,
 } from './src/raster/index.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
+import { islandImages, RIG_EXPECT, rigConfig, rigImages, rigParts, writeRigFixture } from './fixtures/rig.ts';
+import { buildRig, type MeshAttachment, type RegionAttachment, rigJsonText } from './src/rig.ts';
+import { pyRound } from './src/round.ts';
 
 const ROOT = import.meta.dir;
 
@@ -1119,13 +1122,13 @@ function runCliSuite(): number {
     'the version a user reports is the one the package carries, read at run time rather than copied',
   );
 
-  const later = ['assemble', 'propose', 'rig', 'check', 'build', 'comfy'];
+  const later = ['assemble', 'propose', 'check', 'build', 'comfy'];
   const help = runCli(['--help']);
   const stubs = later.map((c) => ({ c, r: runCli([c]) }));
   const honest = stubs.filter(({ r }) => r.status === 2 && r.out.includes('NOT_IMPLEMENTED') && r.out.includes('not implemented in this version'));
   say(
     'CL02_EVERY_LATER_COMMAND_IS_LISTED_AND_EXITS_TWO_SAYING_SO',
-    help.status === 0 && [...later, 'layers', 'sheet'].every((c) => help.out.includes(c)) && honest.length === later.length,
+    help.status === 0 && [...later, 'layers', 'sheet', 'rig'].every((c) => help.out.includes(c)) && honest.length === later.length,
     `${honest.length} of ${later.length} stubs exit 2 with NOT_IMPLEMENTED (${stubs.map(({ c, r }) => `${c}=${r.status}`).join(', ')}); --help names all of them`,
     'the surface is visible before it exists, and the help does not promise a command that would do nothing',
   );
@@ -1179,6 +1182,296 @@ function runCliSuite(): number {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+  return bad();
+}
+
+// ---------------------------------------------------------------------------
+// the rig stage
+// ---------------------------------------------------------------------------
+
+/** The fixture config through the loader, so every control starts from a config the loader accepts. */
+function rigCfg(edit: (c: Record<string, unknown>) => void = () => {}): CharacterConfig {
+  const c = rigConfig();
+  edit(c);
+  return parseConfig(c);
+}
+
+/** The same edit applied without the loader — for the rig stage's own checks on a caller that skipped it. */
+function rawRigCfg(edit: (c: Record<string, unknown>) => void): CharacterConfig {
+  const c = rigConfig();
+  edit(c);
+  return c as unknown as CharacterConfig;
+}
+
+function filesUnder(dir: string): string[] {
+  const out: string[] = [];
+  const walk = (d: string): void => {
+    for (const e of readdirSync(d).sort()) {
+      const p = join(d, e);
+      if (statSync(p).isDirectory()) walk(p);
+      else out.push(relative(dir, p));
+    }
+  };
+  if (existsSync(dir)) walk(dir);
+  return out;
+}
+
+function runRigSuite(): number {
+  section('rig: bones, lattice meshes, weights, regions and the idle');
+  const { say, bad } = counter();
+  const r = buildRig(rigCfg(), rigParts(), rigImages());
+  const cloth = r.rig.skins.default.cloth.cloth as MeshAttachment;
+  const eye = r.rig.skins.default.eye.eye as RegionAttachment;
+  const uvAt = (u: number, v: number): number => {
+    for (let i = 0; i < cloth.uvs.length / 2; i++) if (cloth.uvs[2 * i] === u && cloth.uvs[2 * i + 1] === v) return i;
+    return -1;
+  };
+  const vi = uvAt(RIG_EXPECT.weighed.uv[0], RIG_EXPECT.weighed.uv[1]);
+  const got = vi < 0 ? [] : cloth.weights[vi];
+  const sums = cloth.weights.map((ws) => pyRound(ws.reduce((a, w) => a + w.weight, 0), 5));
+  const report = r.meshReport[0];
+  say(
+    'RG01_THE_FIXTURE_RIG_HAS_THE_COUNTS_AND_THE_WEIGHT_DERIVED_BY_HAND',
+    cloth.uvs.length / 2 === RIG_EXPECT.vertices &&
+      cloth.triangles.length / 3 === RIG_EXPECT.triangles &&
+      cloth.hull === RIG_EXPECT.hull &&
+      JSON.stringify(got) === JSON.stringify(RIG_EXPECT.weighed.weights) &&
+      sums.every((x) => x === 1) &&
+      eye.x === RIG_EXPECT.region.x &&
+      eye.y === RIG_EXPECT.region.y &&
+      report.art_coverage === 1 &&
+      r.rig.bones.map((b) => b.name).join(',') === RIG_EXPECT.bones.join(','),
+    `cloth: ${cloth.uvs.length / 2} vertices, ${cloth.triangles.length / 3} triangles, hull ${cloth.hull}, coverage ${report.art_coverage}; the vertex at uv ${RIG_EXPECT.weighed.uv.join(',')} -> ${JSON.stringify(got)}; every vertex's weights sum to 1: ${sums.every((x) => x === 1)}; eye offset ${eye.x},${eye.y}; bones ${r.rig.bones.map((b) => b.name).join(',')}`,
+    'the positive control, every figure derived in fixtures/rig.ts: 3x2 cells make 12 vertices, 12 triangles and a 10-vertex outline; w = 1/(d+r)^2 at d = 0 and d = 8 with r = 8 is 1/64 : 1/256, i.e. 0.8 / 0.2',
+  );
+
+  const idle = r.motion.animations.idle;
+  const byTarget = new Map(idle.tracks.map((t) => [`${t.bone ?? t.group}.${t.property}`, t]));
+  const link0 = byTarget.get('hem0_ctl.rotate');
+  const link1 = byTarget.get('hem1_ctl.rotate');
+  const eyes = byTarget.get('eyes.scaley');
+  // hem1 at phase 0 + 0.1 * 1: v(0) = 2 sin(-0.2 pi); its first handle is v(0) + v'(0) dt / 3 with dt = 0.5 and v' = 2 (2 pi / 4) cos(-0.2 pi).
+  const v0 = 2 * Math.sin(-0.2 * Math.PI);
+  const h0 = v0 + (2 * (Math.PI / 2) * Math.cos(-0.2 * Math.PI) * 0.5) / 3;
+  const closes = link0 !== undefined && link0.keys[0].v[0] === link0.keys[link0.keys.length - 1].v[0];
+  say(
+    'RG02_THE_IDLE_IS_SINES_WITH_EXACT_TANGENTS_ON_THE_CONTROLS_AND_ONE_BLINK',
+    link0 !== undefined &&
+      link1 !== undefined &&
+      link0.keys.length === RIG_EXPECT.keysPerLink &&
+      link1.keys[0].v[0] === pyRound(v0, 4) &&
+      link1.keys[0].curve !== undefined &&
+      link1.keys[0].curve[1] === pyRound(h0, 4) &&
+      link1.keys[0].curve[0] === pyRound(0.5 / 3, 6) &&
+      link1.keys[link1.keys.length - 1].curve === undefined &&
+      closes &&
+      eyes !== undefined &&
+      eyes.keys.map((k) => `${k.t}:${k.v[0]}${k.ease === undefined ? '' : `:${k.ease}`}`).join(' ') === '0:1 1:1:shut 1.07:0.12 1.11:0.12:open 1.27:1 4:1' &&
+      JSON.stringify(r.motion.groups) === '{"eyes":["eye"],"brows":["eye"]}' &&
+      r.controls.join(',') === 'hem0,hem1',
+    `hem0_ctl: ${link0?.keys.length ?? 0} keys, first ${link0?.keys[0].v[0]}, last ${link0?.keys[link0.keys.length - 1].v[0]}; hem1_ctl first ${link1?.keys[0].v[0]} (by hand ${pyRound(v0, 4)}), handle ${link1?.keys[0].curve?.join(',')} (by hand ${pyRound(0.5 / 3, 6)},${pyRound(h0, 4)}); eyes ${eyes?.keys.map((k) => `${k.t}:${k.v[0]}`).join(' ')}; controls ${r.controls.join(',')}`,
+    'a period of 4 s in a 4 s idle is 8 spans and 9 keys; the lag puts link 1 at phase 0.1; the handle is the Hermite tangent a third of a span out; the blink shuts in 0.07 s, holds 0.04 s and opens in 0.16 s',
+  );
+
+  const a = [rigJsonText(r.rig), rigJsonText(r.motion), rigJsonText(r.meshReport)];
+  const again = buildRig(rigCfg(), rigParts(), rigImages());
+  const b = [rigJsonText(again.rig), rigJsonText(again.motion), rigJsonText(again.meshReport)];
+  const dir = temp('rig');
+  try {
+    const one = writeRigFixture(join(dir, 'one'));
+    const two = writeRigFixture(join(dir, 'two'));
+    const run1 = runCli(['rig', '--config', one.config, '--parts', one.parts, '--out', join(dir, 'one', 'out')]);
+    const run2 = runCli(['rig', '--config', two.config, '--parts', two.parts, '--out', join(dir, 'two', 'out')]);
+    const files1 = filesUnder(join(dir, 'one', 'out'));
+    const files2 = filesUnder(join(dir, 'two', 'out'));
+    const sameBytes = files1.length > 0 && files1.join() === files2.join() && files1.every((f) => readFileSync(join(dir, 'one', 'out', f)).equals(readFileSync(join(dir, 'two', 'out', f))));
+    say(
+      'RG03_TWO_BUILDS_WRITE_THE_SAME_BYTES',
+      a.every((t, i) => t === b[i]) && sameBytes,
+      `in memory: rig.json, motion.json and mesh_report.json ${a.every((t, i) => t === b[i]) ? 'identical' : 'DIFFERENT'} across two builds; on disk: ${files1.length} file(s) from two CLI runs into two directories, ${sameBytes ? 'byte-identical' : 'DIFFERENT'}`,
+      'determinism is a contract: spine-rigc compares a second compile byte for byte (A18), and the spec it compiles has to hold still first',
+    );
+
+    const wroteAll = ['images/cloth.png', 'images/eye.png', 'mesh_report.json', 'motion.json', 'rig.json'].join() === files1.join();
+    const gateLines = run1.out.split('\n').filter((l) => /assertions: \d+ measured \(\d+ passed, 0 failed\)/.test(l));
+    say(
+      'RG04_THE_RIG_COMMAND_WRITES_ONLY_AFTER_SPINE_RIGC_IS_GREEN_ON_IT',
+      run1.status === 0 && run2.status === 0 && wroteAll && gateLines.length >= 2 && /rigc build --profile spine-html --pack: exit 0/.test(run1.out) && /rigc validate --profile spine: exit 0/.test(run1.out),
+      `exit ${run1.status}; wrote ${files1.join(', ')}; ${gateLines.length} green rigc assertion line(s), e.g. "${gateLines[0]?.trim() ?? ''}"`,
+      "CLAUDE.md: the rig stages write only after spine-rigc's round trip has passed — so the command builds the staged spec through rigc before --out sees a byte",
+    );
+
+    const red = writeRigFixture(join(dir, 'red'), (() => {
+      const c = rigConfig();
+      ((c.motion as Record<string, unknown>).blink as Record<string, unknown>).brows = [];
+      return c;
+    })());
+    const redRun = runCli(['rig', '--config', red.config, '--parts', red.parts, '--out', join(dir, 'red', 'out')]);
+    say(
+      'RG05_A_SPEC_SPINE_RIGC_REFUSES_IS_REFUSED_AND_NOTHING_IS_WRITTEN',
+      redRun.status === 1 && /^ {2}FAIL {2}RIG_RIGC_GREEN: rigc build --profile spine-html --pack/m.test(redRun.out) && redRun.out.includes('group "brows" declares no members') && !existsSync(join(dir, 'red', 'out')),
+      `a blink whose brows list is empty — which the loader accepts — -> exit ${redRun.status}, ${(redRun.out.split('\n').find((l) => l.includes('RIG_RIGC_GREEN')) ?? '').trim().slice(0, 160)}…; --out exists: ${existsSync(join(dir, 'red', 'out'))}`,
+      "the round trip is only a gate if a red one stops the write; rigc's own refusal is carried into the FAIL line so the reader sees what rigc said",
+    );
+
+    const bogus = writeRigFixture(join(dir, 'bogus'), (() => {
+      const c = rigConfig();
+      (c.meshes as Record<string, Record<string, unknown>>).cloth.segments = ['sash'];
+      return c;
+    })());
+    const bogusRun = runCli(['rig', '--config', bogus.config, '--parts', bogus.parts, '--out', join(dir, 'bogus', 'out')]);
+    const direct = refusals(() => buildRig(rawRigCfg((c) => ((c.meshes as Record<string, Record<string, unknown>>).cloth.segments = ['sash'])), rigParts(), rigImages()));
+    say(
+      'RG06_A_MESH_NAMING_AN_UNDECLARED_BONE_IS_REFUSED_BY_NAME',
+      bogusRun.status === 1 &&
+        /FAIL {2}CONFIG_NAME_RESOLVES: config\.meshes\.cloth\.segments\[0\] — names "sash"/.test(bogusRun.out) &&
+        direct !== null &&
+        direct.problems.length === 1 &&
+        direct.problems[0].code === 'RIG_NAME_RESOLVES' &&
+        direct.problems[0].object === 'config.meshes.cloth.segments[0]',
+      `through the CLI -> exit ${bogusRun.status}, ${(bogusRun.out.split('\n').find((l) => l.includes('FAIL')) ?? '').trim()}; handed to buildRig without the loader -> ${codes(direct)}: ${direct?.problems[0]?.detail ?? ''}`,
+      'a weight bound to a bone that does not exist is the silence rigc was built to end; the loader names it first, and the stage names it again for a caller that skipped the loader',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  const noCloth: PartsFile = { ...rigParts(), parts: [] };
+  noCloth.parts = rigParts().parts.filter((p) => p.name === 'eye');
+  const e1 = refusals(() => buildRig(rigCfg(), noCloth, rigImages()));
+  const extra: PartsFile = rigParts();
+  extra.parts.push({ ...extra.parts[1], name: 'sash' });
+  const e1b = refusals(() => buildRig(rigCfg(), extra, new Map([...rigImages(), ['sash', rigImages().get('eye') as Raster]])));
+  say(
+    'RG07_A_CONFIG_PART_MISSING_FROM_PARTS_JSON_AND_A_PART_NOBODY_ATTACHES_ARE_REFUSED',
+    e1 !== null &&
+      e1.problems.length === 1 &&
+      e1.problems[0].code === 'RIG_PART_PRESENT' &&
+      e1.problems[0].object === 'config.meshes.cloth' &&
+      e1b !== null &&
+      e1b.problems.length === 1 &&
+      e1b.problems[0].code === 'RIG_PART_ATTACHED' &&
+      e1b.problems[0].object === 'part "sash"',
+    `parts.json without "cloth" -> ${codes(e1)}: ${e1?.problems[0]?.detail ?? ''}; parts.json with an extra "sash" -> ${codes(e1b)}`,
+    'the reference stopped at the first unattached part and never checked the other direction, so a mesh whose part was renamed away vanished from the rig with no word',
+  );
+
+  const flat = refusals(() =>
+    buildRig(
+      rigCfg((c) => {
+        (c.bones as Array<Record<string, unknown>>)[1] = { chain: 'hem', parent: 'body', points: [[14, 14]], tip: [14, 14] };
+        ((c.motion as Record<string, unknown>).tracks as Array<Record<string, unknown>>)[0].amps = [1];
+      }),
+      rigParts(),
+      rigImages(),
+    ),
+  );
+  const noPoints = refusals(() => buildRig(rawRigCfg((c) => ((c.bones as Array<Record<string, unknown>>)[1] = { chain: 'hem', parent: 'body', points: [], tip: [30, 14] })), rigParts(), rigImages()));
+  say(
+    'RG08_A_CHAIN_WITH_FEWER_THAN_TWO_POINTS_IS_REFUSED',
+    flat !== null &&
+      flat.problems.some((p) => p.code === 'RIG_CHAIN_POINTS' && p.object === 'config.bones[1] chain "hem" link 0') &&
+      noPoints !== null &&
+      noPoints.problems.some((p) => p.code === 'RIG_CHAIN_POINTS' && p.object === 'config.bones[1] chain "hem"'),
+    `one point and a tip on the same spot -> ${codes(flat)}; no point at all, past the loader -> ${codes(noPoints)}`,
+    'a link is a segment from its origin to the next point; with one distinct point there is no segment and distance-to-segment silently becomes distance-to-a-point',
+  );
+
+  const noTip = refusals(() => buildRig(rigCfg((c) => ((c.meshes as Record<string, Record<string, unknown>>).cloth.segments = ['hem', 'body'])), rigParts(), rigImages()));
+  say(
+    'RG09_A_SEGMENT_THE_CONFIG_DOES_NOT_DEFINE_IS_REFUSED_NOT_INVENTED',
+    noTip !== null && noTip.problems.length === 1 && noTip.problems[0].code === 'RIG_SEGMENT_DEFINED' && noTip.problems[0].object === 'config.meshes.cloth.segments[1]',
+    `"body" (no tip, no chain child) as a segment -> ${codes(noTip)}: ${noTip?.problems[0]?.detail ?? ''}`,
+    'the reference gave such a bone the segment (x, y) -> (x, y + 1): one pixel straight down, a direction no field states',
+  );
+
+  const oneLoopTwoIslands = refusals(() => buildRig(rigCfg(), rigParts(), islandImages(), 0));
+  const joined = refusals(() => buildRig(rigCfg(), rigParts(), islandImages()));
+  const joinedRig = joined === null ? buildRig(rigCfg(), rigParts(), islandImages()) : null;
+  say(
+    'RG10_A_LATTICE_THAT_IS_NOT_ONE_LOOP_IS_REFUSED_AND_TWO_ISLANDS_ARE_JOINED',
+    oneLoopTwoIslands !== null &&
+      oneLoopTwoIslands.problems.length === 1 &&
+      oneLoopTwoIslands.problems[0].code === 'RIG_LATTICE_ONE_LOOP' &&
+      oneLoopTwoIslands.problems[0].detail.includes('2 outline loop(s)') &&
+      joinedRig !== null &&
+      joinedRig.meshReport[0].vertices === RIG_EXPECT.vertices &&
+      joinedRig.meshReport[0].art_coverage === 1,
+    `cloth as two islands with the pass limit at 0 -> ${codes(oneLoopTwoIslands)}: ${oneLoopTwoIslands?.problems[0]?.detail ?? ''}; with the default limit -> ${joined === null ? `green, ${joinedRig?.meshReport[0].vertices} vertices (the bridge refills the middle column), coverage ${joinedRig?.meshReport[0].art_coverage}` : codes(joined)}`,
+    'spine-rigc refuses an outline that is not one closed loop; the reference returned whatever it had when its passes ran out, and this port checks the outline instead of trusting the loop',
+  );
+
+  const wrongSize = new Map(rigImages());
+  wrongSize.set('eye', rigImages().get('cloth') as Raster);
+  const missing = new Map(rigImages());
+  missing.delete('cloth');
+  const e3 = refusals(() => buildRig(rigCfg(), rigParts(), wrongSize));
+  const e4 = refusals(() => buildRig(rigCfg(), rigParts(), missing));
+  const blank = new Map(rigImages());
+  blank.set('cloth', newRaster(16, 8));
+  const e5 = refusals(() => buildRig(rigCfg(), rigParts(), blank));
+  say(
+    'RG11_A_PART_PNG_MISSING_THE_WRONG_SIZE_OR_EMPTY_IS_REFUSED',
+    e3?.problems.map((p) => p.code).join() === 'RIG_PNG_MATCHES_BOX' && e4?.problems.map((p) => p.code).join() === 'RIG_PNG_PRESENT' && e5?.problems.map((p) => p.code).join() === 'RIG_PART_HAS_ART',
+    `eye given a 16x8 PNG -> ${codes(e3)}: ${e3?.problems[0]?.detail ?? ''}; cloth absent -> ${codes(e4)}; cloth fully transparent -> ${codes(e5)}`,
+    'parts.json places a part by its box; a PNG of another size would put every vertex and offset somewhere the record does not say',
+  );
+
+  const late = refusals(() => buildRig(rigCfg((c) => (((c.motion as Record<string, unknown>).blink as Record<string, unknown>).t = 3.9)), rigParts(), rigImages()));
+  const taken = refusals(() => buildRig(rigCfg((c) => (c.bones as Array<Record<string, unknown>>).push({ name: 'hem0_ctl', parent: 'body', at: [1, 1] })), rigParts(), rigImages()));
+  say(
+    'RG12_A_BLINK_OUTSIDE_THE_IDLE_AND_A_TAKEN_CONTROL_NAME_ARE_REFUSED',
+    late?.problems.map((p) => p.code).join() === 'RIG_BLINK_INSIDE_IDLE' && taken?.problems.map((p) => `${p.code} ${p.object}`).join() === 'RIG_CONTROL_NAME_FREE bone "hem0"',
+    `blink at 3.9 s in a 4 s idle -> ${codes(late)}: ${late?.problems[0]?.detail ?? ''}; a declared "hem0_ctl" -> ${codes(taken)}`,
+    'a blink running past the last key writes keys out of order; a control whose name is taken would silently replace a declared bone',
+  );
+  return bad();
+}
+
+/** The corpus of worked examples, when the tree carries one: `examples/<name>/inputs/{config.json, parts.json, parts/}`. */
+function runRigExamplesSuite(): number | null {
+  section('rig-examples: every examples/*/inputs builds green and twice the same');
+  const root = join(ROOT, 'examples');
+  const inputs = existsSync(root)
+    ? readdirSync(root)
+        .sort()
+        .map((n) => join(root, n, 'inputs'))
+        .filter((d) => existsSync(join(d, 'config.json')) && existsSync(join(d, 'parts.json')))
+    : [];
+  if (inputs.length === 0) {
+    console.log(`  SKIP  no examples/*/inputs holding config.json and parts.json under ${root}, so no worked example was rigged`);
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — the rig stage was exercised on the synthetic fixture only.');
+    return null;
+  }
+  const { say, bad } = counter();
+  const rows: string[] = [];
+  const failed: string[] = [];
+  for (const d of inputs) {
+    const label = relative(ROOT, d);
+    try {
+      const cfg = loadConfig(join(d, 'config.json'));
+      const parts = readParts(join(d, 'parts.json'));
+      const images = new Map<string, Raster>();
+      for (const p of parts.parts) {
+        const f = join(d, 'parts', `${p.name}.png`);
+        if (existsSync(f)) images.set(p.name, decodePngBytes(new Uint8Array(readFileSync(f)), f));
+      }
+      const one = buildRig(cfg, parts, images);
+      const two = buildRig(cfg, parts, images);
+      const same = rigJsonText(one.rig) === rigJsonText(two.rig) && rigJsonText(one.motion) === rigJsonText(two.motion);
+      const cover = one.meshReport.every((m) => m.art_coverage === 1);
+      rows.push(`${label}: ${one.rig.bones.length} bones, ${one.meshReport.length} meshes, ${one.meshReport.reduce((s, m) => s + m.vertices, 0)} vertices, coverage 1 ${cover}, deterministic ${same}`);
+      if (!same || !cover) failed.push(label);
+    } catch (err) {
+      failed.push(`${label}: ${(err as Error).message.split('\n')[0]}`);
+    }
+  }
+  say(
+    'RX01_EVERY_WORKED_EXAMPLE_RIGS_GREEN_WITH_FULL_COVERAGE_AND_THE_SAME_BYTES_TWICE',
+    failed.length === 0,
+    `${inputs.length - failed.length} of ${inputs.length}: ${rows.join(' | ')}${failed.length > 0 ? `; red: ${failed.join(' | ')}` : ''}`,
+    'the fixture is two blocks; the examples are real parts, and the question only they answer is whether the stage takes what assemble actually writes',
+  );
   return bad();
 }
 
@@ -1818,6 +2111,8 @@ function main(): void {
   tally.of('parts', runPartsSuite);
   tally.of('sheet', runSheetSuite);
   tally.of('cli', runCliSuite);
+  tally.of('rig', runRigSuite);
+  tally.of('rig-examples', runRigExamplesSuite);
   tally.of('tree', runTreeSuite);
   tally.of('corpus', () => runCorpusSuite(corpus));
   tally.of('run-tally', () => runTallySuite(tally));
@@ -1841,10 +2136,11 @@ function main(): void {
   const holes = tally.blocks.filter((b) => !b.ran).map((b) => b.key);
   const ran = tally.blocks.length - holes.length;
   const corpusClause = holes.includes('corpus') ? '' : `, + ${n('corpus')} corpus`;
+  const examplesClause = holes.includes('rig-examples') ? '' : `, + ${n('rig-examples')} rig-example`;
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('rig')} rig, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${examplesClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
