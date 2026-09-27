@@ -16,8 +16,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { type AnimFrame, EncodeError, encodeApng } from './src/apng.ts';
+import { findRigc, readFrameSet, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { type CharacterConfig, loadConfig } from './src/config.ts';
 import { PartsError, type Problem, problemLine } from './src/errors.ts';
+import { encodeGif } from './src/gif.ts';
 import { proposeHeadBox } from './src/headbox.ts';
 import { type LayerSet, readLayers } from './src/layers.ts';
 import { readParts } from './src/parts.ts';
@@ -43,7 +46,6 @@ function version(): string {
  */
 const LATER: ReadonlyArray<[string, string]> = [
   ['assemble', 'merge the See-through runs into rig-space parts/*.png + parts.json'],
-  ['check', 'build through spine-rigc, then the seam, loop and landmark checks'],
   ['build', 'assemble, rig and check in one pass'],
   ['comfy', 'drive ComfyUI for the painting and the See-through runs (optional)'],
 ];
@@ -94,6 +96,29 @@ usage:
       profile spine) in a scratch directory first, and --out receives
       images/*.png, rig.json, motion.json and mesh_report.json only when both
       are green. Prints one line per mesh and the rigc gate lines.
+  spine-parts check --rig <dir> --out <dir>
+      Build, gate, render and measure a rig through spine-rigc's CLI (the rigc at
+      node_modules/.bin/rigc, or on PATH). --rig holds rig.json, motion.json
+      (with an "idle"), parts.json and parts/; it is only read. Into --out:
+      build/ (rigc build --profile spine-html --pack: the packed atlas is the
+      artifact), gate_spine-html.txt and gate_spine.txt (the gate lines
+      verbatim), idle_frames/ (rigc render --animation idle --fps 12 --max 640),
+      contact.png, motion_heat.png and check.json. PASS needs both gates
+      "0 failed", the seam (setup pose vs the flat composite of parts/) at mean
+      |d| <= ${SEAM_MEAN_BAR.toFixed(1)} with <= ${SEAM_PX_BAR} px over ${SEAM_PX_LEVEL}, and the loop (idle frame 0 vs the
+      frame at t = duration) at max |d| 0. Prints the pack line beside the
+      spineboy yardstick (${SPINEBOY_YARDSTICK}), a reference and not a bar.
+      Exit 0 on PASS, 1 on FAIL — every FAIL line names the bar, the value and the
+      value required.
+
+  spine-parts loop --frames <dir> --out <file.png | file.gif>
+      Encode a frame set rigc render wrote (its --out directory, or the set
+      directory inside it) as a looping animation: .png writes an APNG
+      (acTL/fcTL/fdAT, lossless), .gif a GIF89a (one 255-colour median-cut
+      palette, no dithering, LZW, delays rounded so the loop's length is exact).
+      The fps is read from frames.json. When the last frame equals frame 0 it is
+      dropped, and the output says so: the loop wraps onto frame 0 itself.
+      Animated WebP is not written — it needs a VP8/VP8L encoder, out of scope.
 
   spine-parts --version
   spine-parts --help
@@ -314,6 +339,65 @@ function cmdRig(args: string[]): number {
   }
 }
 
+/** The rigc process: `src/check.ts` is pure and takes the spawn from here. */
+function rigcRunner(bin: string): RigcRunner {
+  return (args) => {
+    const r = spawnSync(bin, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
+    if (r.error !== undefined) return { status: 127, out: `could not start ${bin}: ${r.error.message}` };
+    return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  };
+}
+
+function flags(args: string[], known: readonly string[], command: string): Map<string, string> | string {
+  const got = new Map<string, string>();
+  for (let i = 0; i < args.length; i += 2) {
+    const flag = args[i];
+    if (!known.includes(flag)) return `${command} does not take "${flag}"; it takes ${known.join(', ')}`;
+    if (args[i + 1] === undefined) return `${flag} needs a value`;
+    if (got.has(flag)) return `${flag} is given twice`;
+    got.set(flag, args[i + 1]);
+  }
+  for (const k of known) if (!got.has(k)) return `${command} needs ${k} <value>`;
+  return got;
+}
+
+function cmdCheck(args: string[]): number {
+  const f = flags(args, ['--rig', '--out'], 'check');
+  if (typeof f === 'string') return usage(f);
+  const rig = f.get('--rig') as string;
+  const out = f.get('--out') as string;
+  try {
+    const bin = findRigc(import.meta.dir, process.env.PATH ?? '');
+    const run = rigcRunner(bin);
+    const v = run(['--version']);
+    console.log(`spine-parts check: ${rig} -> ${out}`);
+    console.log(`  rigc ${v.out.trim().split('\n')[0]} at ${bin}`);
+    const r = runCheck(rig, out, run);
+    console.log('  gate spine-html (rigc build --profile spine-html --pack), verbatim:');
+    for (const l of r.gateHtml) console.log(l);
+    console.log('  gate spine (rigc validate build --profile spine), verbatim:');
+    for (const l of r.gateSpine) console.log(l);
+    if (r.pack.length === 0) console.log('  pack: no pack line in the build output');
+    for (const p of r.pack) {
+      const op = r.packOpaque.find((o) => o.page === p.page);
+      console.log(`  ${p.line}; page opaque ${op === undefined ? 'not measured (page not on disk)' : `${(op.share * 100).toFixed(1)}%`} (alpha > 0) — spineboy yardstick ${SPINEBOY_YARDSTICK}, a reference and not a bar`);
+    }
+    const fig = r.figures;
+    console.log(`  loop: idle ${r.idle.frames} frame(s) at ${r.idle.fps} fps, f0000 vs f${String(r.idle.lastIndex).padStart(4, '0')} (t = ${r.idle.duration}s): max |d| ${fig.loop_max_diff} (0 required)`);
+    console.log(
+      `  seam: setup pose at ${r.seamViewport.pixelWidth}x${r.seamViewport.pixelHeight}, scale ${r.seamViewport.scale.toFixed(4)}: mean |d| ${fig.seam_mean} (<= ${SEAM_MEAN_BAR.toFixed(1)}), ` +
+        `${fig.seam_px_over_40} px over ${SEAM_PX_LEVEL} (<= ${SEAM_PX_BAR}), ${fig.seam_px_over_80} px over ${SEAM_PX_LEVEL_HIGH} (reported)`,
+    );
+    console.log(`  gates: spine-html ${fig.gate_spine_html_green ? 'green' : 'RED'}, spine ${fig.gate_spine_green ? 'green' : 'RED'}`);
+    console.log(`  wrote ${r.written.map((w) => join(out, w)).join(', ')}, ${join(out, 'build')}/, ${join(out, 'idle_frames')}/`);
+    for (const p of r.problems) console.log(`  FAIL  ${problemLine(p)}`);
+    console.log(fig.PASS ? 'check: PASS' : `check: FAIL — ${r.problems.length} bar(s) not met`);
+    return fig.PASS ? EXIT_OK : EXIT_REFUSED;
+  } catch (err) {
+    return printRefusal(err);
+  }
+}
+
 function parseCanvas(v: string): { w: number; h: number } | null {
   const m = /^(\d+)x(\d+)$/.exec(v);
   return m === null ? null : { w: Number(m[1]), h: Number(m[2]) };
@@ -409,6 +493,57 @@ function cmdPropose(args: string[]): number {
   }
 }
 
+function sameRgba(a: Uint8ClampedArray, b: Uint8ClampedArray): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function cmdLoop(args: string[]): number {
+  const f = flags(args, ['--frames', '--out'], 'loop');
+  if (typeof f === 'string') return usage(f);
+  const out = f.get('--out') as string;
+  const ext = extname(out).toLowerCase();
+  if (ext === '.webp') return usage(`--out ${out}: animated WebP needs a VP8/VP8L encoder, which is out of scope; write .png (APNG) or .gif`);
+  if (ext !== '.png' && ext !== '.gif') return usage(`--out ${out} is neither .png (APNG) nor .gif`);
+  try {
+    const set = readFrameSet(f.get('--frames') as string);
+    const images = set.frames.map((fr) => fr.image);
+    console.log(`spine-parts loop: ${set.dir} -> ${out}`);
+    console.log(`  ${images.length} frame(s) ${images[0]?.width ?? 0}x${images[0]?.height ?? 0} at ${set.fps} fps (from frames.json), animation ${set.animation ?? '(none)'}`);
+    let used = images;
+    const lastName = set.frames[set.frames.length - 1]?.name ?? '';
+    if (images.length > 1 && sameRgba(images[0].data, images[images.length - 1].data)) {
+      used = images.slice(0, -1);
+      console.log(`  ${lastName} equals f0000.png byte for byte, so it is dropped: the loop wraps onto frame 0, and showing it twice would hold that pose for two ticks`);
+    } else if (images.length > 1) {
+      console.log(`  ${lastName} differs from f0000.png, so every frame is kept and the loop will jump at the wrap`);
+    }
+    const frames: AnimFrame[] = used.map((image) => ({ image, ticks: 1 }));
+    console.log(`  ${frames.length} frame(s) encoded, ${(frames.length / set.fps).toFixed(3)}s per loop, looping forever`);
+    if (ext === '.png') {
+      const { bytes, stats } = encodeApng(frames, set.fps);
+      writeFileSync(out, bytes);
+      console.log(`  APNG: ${stats.frames} frame(s) after merging identical neighbours, ${stats.overFrames} of ${Math.max(0, stats.frames - 1)} later frame(s) blended OVER with unchanged pixels cleared, lossless`);
+      console.log(`  wrote ${out}: ${stats.bytes} bytes`);
+    } else {
+      const { bytes, stats } = encodeGif(frames, set.fps);
+      writeFileSync(out, bytes);
+      console.log(`  GIF: ${stats.frames} frame(s) after merging, ${stats.colours} palette colour(s) cut from ${stats.distinct} distinct, no dithering`);
+      console.log(`  palette error (per channel, of 255): frame 0 max ${stats.frame0.max}, mean ${stats.frame0.mean.toFixed(3)}; all frames max ${stats.all.max}, mean ${stats.all.mean.toFixed(3)}`);
+      console.log(`  wrote ${out}: ${stats.bytes} bytes`);
+    }
+    return EXIT_OK;
+  } catch (err) {
+    if (err instanceof EncodeError) {
+      console.log(`  FAIL  LOOP_ENCODE: ${out} — ${err.message}`);
+      console.log('refused: 1 problem(s)');
+      return EXIT_REFUSED;
+    }
+    return printRefusal(err);
+  }
+}
+
 function main(argv: string[]): number {
   const [command, ...rest] = argv;
   if (command === undefined || command === '--help' || command === '-h' || command === 'help') {
@@ -423,6 +558,8 @@ function main(argv: string[]): number {
   if (command === 'sheet') return cmdSheet(rest);
   if (command === 'rig') return cmdRig(rest);
   if (command === 'propose') return cmdPropose(rest);
+  if (command === 'check') return cmdCheck(rest);
+  if (command === 'loop') return cmdLoop(rest);
   const later = LATER.find(([name]) => name === command);
   if (later !== undefined) {
     console.log(`  FAIL  NOT_IMPLEMENTED: \`spine-parts ${command}\` (${later[1]}) is not implemented in this version, ${version()}`);

@@ -42,15 +42,20 @@
  * constant that only the summary reads.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
+import { inflateSync } from 'node:zlib';
 import ts from 'typescript';
+import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, shiftRight, writeCheckRig } from './fixtures/checkrig.ts';
 import { PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, writeProposeFixture } from './fixtures/propose.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
+import { type AnimFrame, chunkTypes, encodeApng } from './src/apng.ts';
+import { findRigc, gateGreen, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { type BoneEntry, type CharacterConfig, loadConfig, parseConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
 import { PartsError } from './src/errors.ts';
+import { encodeGif } from './src/gif.ts';
 import { proposeHeadBox } from './src/headbox.ts';
 import { type LayerSet, readLayers, readPsdLayers, readWrapperLayers } from './src/layers.ts';
 import { type PartsFile, readParts, serializeParts, writeParts } from './src/parts.ts';
@@ -1127,13 +1132,13 @@ function runCliSuite(): number {
     'the version a user reports is the one the package carries, read at run time rather than copied',
   );
 
-  const later = ['assemble', 'check', 'build', 'comfy'];
+  const later = ['assemble', 'build', 'comfy'];
   const help = runCli(['--help']);
   const stubs = later.map((c) => ({ c, r: runCli([c]) }));
   const honest = stubs.filter(({ r }) => r.status === 2 && r.out.includes('NOT_IMPLEMENTED') && r.out.includes('not implemented in this version'));
   say(
     'CL02_EVERY_LATER_COMMAND_IS_LISTED_AND_EXITS_TWO_SAYING_SO',
-    help.status === 0 && [...later, 'layers', 'sheet', 'rig', 'propose'].every((c) => help.out.includes(c)) && honest.length === later.length,
+    help.status === 0 && [...later, 'layers', 'sheet', 'rig', 'propose', 'check', 'loop'].every((c) => help.out.includes(c)) && honest.length === later.length,
     `${honest.length} of ${later.length} stubs exit 2 with NOT_IMPLEMENTED (${stubs.map(({ c, r }) => `${c}=${r.status}`).join(', ')}); --help names all of them`,
     'the surface is visible before it exists, and the help does not promise a command that would do nothing',
   );
@@ -1749,6 +1754,496 @@ function runProposeCorpusSuite(): number | null {
       `${withParts.length - failed.length} of ${withParts.length} example(s) with assembled parts${failed.length > 0 ? `; ${failed.join(' | ')}` : ''}`,
       "the tracked proposal.json is what the reference proposer wrote from the same parts; the port is deterministic, so it must be equal field by field, and loadable, and the same twice",
     );
+  }
+  return bad();
+}
+
+// ---------------------------------------------------------------------------
+// check: the whole stage, through the installed spine-rigc, on a rig authored here
+// ---------------------------------------------------------------------------
+
+/** Every file under a directory, relative, sorted — to prove a read-only input stayed read-only. */
+function listing(dir: string, base = dir): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(dir).sort()) {
+    const p = join(dir, e);
+    if (statSync(p).isDirectory()) out.push(...listing(p, base));
+    else out.push(`${relative(base, p)}:${statSync(p).size}`);
+  }
+  return out;
+}
+
+function readJsonFile(path: string): Record<string, unknown> | null {
+  return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>) : null;
+}
+
+const CHECK_KEYS = ['gate_spine_html_green', 'gate_spine_green', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', 'PASS'];
+
+function failLine(out: string, code: string): string | null {
+  return out.split('\n').find((l) => l.startsWith(`  FAIL  ${code}`)) ?? null;
+}
+
+function runCheckSuite(): number {
+  section('check: build, gates, seam and loop through the installed spine-rigc');
+  const { say, bad } = counter();
+  const dir = temp('check');
+  try {
+    const rig = join(dir, 'rig');
+    writeCheckRig(rig);
+    const before = listing(rig);
+    const out = join(dir, 'out');
+    const ok = runCli(['check', '--rig', rig, '--out', out]);
+    const fig = readJsonFile(join(out, 'check.json'));
+    const pack = parsePackLines(existsSync(join(out, 'gate_spine-html.txt')) ? readFileSync(join(out, 'gate_spine-html.txt'), 'utf8').split('\n') : []);
+    const outputs = ['gate_spine-html.txt', 'gate_spine.txt', 'contact.png', 'motion_heat.png', 'check.json', 'build/skeleton.json', 'build/skeleton.atlas', 'build/skeleton.png', 'idle_frames/frames.json', 'idle_frames/idle/f0000.png'];
+    const missing = outputs.filter((o) => !existsSync(join(out, o)));
+    say(
+      'CK01_THE_AUTHORED_RIG_PASSES_AND_EVERY_OUTPUT_IS_WRITTEN_OUTSIDE_THE_RIG',
+      ok.status === 0 &&
+        ok.out.includes('check: PASS') &&
+        fig !== null &&
+        Object.keys(fig).join(',') === CHECK_KEYS.join(',') &&
+        fig.PASS === true &&
+        missing.length === 0 &&
+        pack.length === 1 &&
+        pack[0].regions === CHECK_PARTS.length &&
+        ok.out.includes(SPINEBOY_YARDSTICK) &&
+        listing(rig).join('|') === before.join('|') &&
+        !existsSync(join(out, '_still')),
+      `exit ${ok.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig)}; missing outputs: ${missing.join(', ') || 'none'}; pack ${pack.map((p) => p.line).join(' | ') || 'none'} for ${CHECK_PARTS.length} part(s); --rig ${listing(rig).join('|') === before.join('|') ? 'unchanged' : 'CHANGED'}`,
+      'the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from both profiles, with the reference\'s seven check.json keys in its order, the packed page as the build, and nothing written into the input',
+    );
+
+    const again = runCli(['check', '--rig', rig, '--out', join(dir, 'out2')]);
+    const same = ['check.json', 'motion_heat.png', 'gate_spine-html.txt', 'gate_spine.txt', 'build/skeleton.json', 'build/skeleton.png'].filter(
+      (f) => existsSync(join(out, f)) && existsSync(join(dir, 'out2', f)) && Buffer.compare(readFileSync(join(out, f)), readFileSync(join(dir, 'out2', f))) === 0,
+    );
+    say(
+      'CK02_TWO_RUNS_WRITE_THE_SAME_BYTES',
+      again.status === 0 && same.length === 6,
+      `second run exit ${again.status}; ${same.length} of 6 outputs byte-identical (${same.join(', ')})`,
+      'determinism is a contract: the same rig must write the same check.json, heat map and gate files, or no diff of them means anything',
+    );
+
+    const loopRig = join(dir, 'loop');
+    writeCheckRig(loopRig, { lastKey: IDLE_PEAK + 1 });
+    const loop = runCli(['check', '--rig', loopRig, '--out', join(dir, 'loop-out')]);
+    const lf = readJsonFile(join(dir, 'loop-out', 'check.json'));
+    const ll = failLine(loop.out, 'CHECK_LOOP_CLOSES');
+    const quoted = ll === null ? null : /max \|d\| (\d+)\/255/.exec(ll);
+    say(
+      'CK03_AN_IDLE_WHOSE_LAST_KEY_IS_NOT_ITS_FIRST_FAILS_THE_LOOP_WITH_THE_MAX_QUOTED',
+      loop.status === 1 && quoted !== null && Number(quoted[1]) > 0 && lf !== null && lf.loop_max_diff === Number(quoted[1]) && lf.PASS === false && failLine(loop.out, 'CHECK_SEAM') === null,
+      `exit ${loop.status}; ${ll?.trim() ?? 'no CHECK_LOOP_CLOSES line'}; check.json loop_max_diff ${lf?.loop_max_diff ?? 'absent'}`,
+      'the gate cannot see a loop that jumps — both profiles pass it — so the loop check is the only thing between that idle and a README; the setup pose is unchanged, so the seam must stay quiet',
+    );
+
+    const seamRig = join(dir, 'seam');
+    writeCheckRig(seamRig);
+    writeFileSync(join(seamRig, 'parts', `${CHECK_PARTS[0].name}.png`), encodePngBytes(shiftRight(checkPartRaster(CHECK_PARTS[0]), 3)));
+    const seam = runCli(['check', '--rig', seamRig, '--out', join(dir, 'seam-out')]);
+    const sf = readJsonFile(join(dir, 'seam-out', 'check.json'));
+    const sl = failLine(seam.out, 'CHECK_SEAM_WITHIN_BAR');
+    say(
+      'CK04_A_PART_SHIFTED_THREE_PIXELS_FAILS_THE_SEAM_WITH_THE_NUMBERS',
+      seam.status === 1 && sl !== null && sf !== null && sl.includes(`mean |d| ${String(sf.seam_mean)}/255`) && sl.includes(`${String(sf.seam_px_over_40)} px over`) && sf.loop_max_diff === 0 && sf.gate_spine_html_green === true,
+      `exit ${seam.status}; ${sl?.trim() ?? 'no CHECK_SEAM_WITHIN_BAR line'}`,
+      'parts/ is what the seam composites and images/ is what rigc draws; a part moved 3 px in one and not the other is the drift an assembler bug produces, and both gates pass it',
+    );
+
+    const redRig = join(dir, 'red');
+    writeCheckRig(redRig, { opaqueFront: true });
+    const red = runCli(['check', '--rig', redRig, '--out', join(dir, 'red-out')]);
+    const rl = failLine(red.out, 'CHECK_RIGC_GREEN');
+    const gateFile = existsSync(join(dir, 'red-out', 'gate_spine-html.txt')) ? readFileSync(join(dir, 'red-out', 'gate_spine-html.txt'), 'utf8') : '';
+    say(
+      'CK05_A_RIG_RIGC_REFUSES_SURFACES_RIGCS_ASSERTION_BY_NAME_AND_WRITES_NO_VERDICT',
+      red.status === 1 && rl !== null && rl.includes('A19_OVERLAY_PNGS_HAVE_ALPHA') && gateFile.includes('A19_OVERLAY_PNGS_HAVE_ALPHA') && !existsSync(join(dir, 'red-out', 'check.json')),
+      `exit ${red.status}; ${rl === null ? 'no CHECK_RIGC_GREEN line' : rl.trim().slice(0, 140)}…; gate file ${gateFile.includes('A19_') ? 'quotes A19' : 'does not quote A19'}; check.json ${existsSync(join(dir, 'red-out', 'check.json')) ? 'WRITTEN' : 'not written'}`,
+      "an opaque part is refused by rigc's own A19 under spine-html; the refusal an agent reads has to be rigc's line, not a paraphrase of it, and a red build leaves no check.json that could be mistaken for a verdict",
+    );
+
+    const holeRig = join(dir, 'hole');
+    writeCheckRig(holeRig);
+    rmSync(join(holeRig, 'motion.json'));
+    rmSync(join(holeRig, 'parts', `${CHECK_PARTS[1].name}.png`));
+    const hole = refusals(() => readCheckInputs(holeRig));
+    say(
+      'CK06_A_RIG_DIRECTORY_MISSING_TWO_INPUTS_IS_REFUSED_NAMING_BOTH',
+      codes(hole).includes('CHECK_INPUT_PRESENT') && codes(hole).includes('CHECK_PART_PNG_PRESENT') && (hole?.problems.length ?? 0) === 2,
+      `refused: ${codes(hole)}`,
+      'readers collect every problem and throw once, so one run names everything that is missing',
+    );
+
+    const found = findRigc(ROOT, '');
+    const nowhere = refusals(() => findRigc(dir, ''));
+    say(
+      'CK07_RIGC_IS_FOUND_BESIDE_THE_PACKAGE_AND_A_MISS_IS_REFUSED_NAMING_WHERE_IT_LOOKED',
+      found.endsWith(join('node_modules', '.bin', 'rigc')) && codes(nowhere).startsWith('CHECK_RIGC_PRESENT') && (nowhere?.problems[0].detail.includes(join(dir, 'node_modules', '.bin', 'rigc')) ?? false),
+      `from the package: ${relative(ROOT, found)}; from ${relative(tmpdir(), dir)} with an empty PATH: ${nowhere?.problems[0].detail.slice(0, 120) ?? 'found one'}…`,
+      'a missing rigc must say which binary and where it looked, not surface as a spawn error',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  const tenFailed = '  ..    49 assertions: 23 measured (13 passed, 10 failed), 26 skipped';
+  const pack = parsePackLines(['  ..    pack: skeleton.png 1024x2048, 21 region(s), 49.2% covered, padding 2']);
+  say(
+    'CK08_A_GATE_IS_READ_BY_ITS_COUNT_NOT_BY_A_SUBSTRING_AND_NO_SUMMARY_IS_NOT_GREEN',
+    tenFailed.includes('0 failed') && !gateGreen(0, [tenFailed]) && !gateGreen(0, []) && gateGreen(0, ['  ..    49 assertions: 14 measured (14 passed, 0 failed)']) && !gateGreen(1, ['  ..    49 assertions: 14 measured (14 passed, 0 failed)']) &&
+      pack.length === 1 && pack[0].width === 1024 && pack[0].height === 2048 && pack[0].regions === 21 && pack[0].coveredPct === 49.2 && pack[0].padding === 2,
+    `"10 failed" contains "0 failed" (${tenFailed.includes('0 failed')}) and reads ${gateGreen(0, [tenFailed]) ? 'GREEN' : 'red'}; no summary line reads ${gateGreen(0, []) ? 'GREEN' : 'red'}; a pack line parses to ${JSON.stringify(pack[0] ?? null)}`,
+    "the reference judged a gate by the substring \"0 failed\", which \"10 failed\" contains, and by Python's all() over the summary lines, which is True of none; both would print green over a red build",
+  );
+  return bad();
+}
+
+// ---------------------------------------------------------------------------
+// loop: the APNG and GIF encoders, read back by decoders written here
+// ---------------------------------------------------------------------------
+
+interface DecodedFrame {
+  image: Raster;
+  /** Display time in the file's own unit: APNG delay_num over delay_den as seconds, GIF centiseconds. */
+  delay: number;
+}
+
+function be32(b: Uint8Array, at: number): number {
+  return ((b[at] << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3]) >>> 0;
+}
+
+function unfilter(raw: Uint8Array, w: number, h: number): Uint8Array {
+  const stride = w * 4;
+  const out = new Uint8Array(stride * h);
+  for (let y = 0; y < h; y++) {
+    const type = raw[y * (stride + 1)];
+    for (let i = 0; i < stride; i++) {
+      const x = raw[y * (stride + 1) + 1 + i];
+      const a = i >= 4 ? out[y * stride + i - 4] : 0;
+      const b = y > 0 ? out[(y - 1) * stride + i] : 0;
+      const c = i >= 4 && y > 0 ? out[(y - 1) * stride + i - 4] : 0;
+      const p = a + b - c;
+      const pr = Math.abs(p - a) <= Math.abs(p - b) && Math.abs(p - a) <= Math.abs(p - c) ? a : Math.abs(p - b) <= Math.abs(p - c) ? b : c;
+      const pred = type === 0 ? 0 : type === 1 ? a : type === 2 ? b : type === 3 ? (a + b) >>> 1 : pr;
+      out[y * stride + i] = (x + pred) & 255;
+    }
+  }
+  return out;
+}
+
+/** A minimal APNG reader: 8-bit RGBA only, dispose NONE, blend SOURCE or OVER on opaque-or-cleared pixels. */
+function decodeApng(bytes: Uint8Array): { frames: DecodedFrame[]; numFrames: number; plays: number } {
+  let at = 8;
+  let w = 0;
+  let h = 0;
+  let numFrames = -1;
+  let plays = -1;
+  let canvas = new Uint8Array(0);
+  let pending: { x: number; y: number; w: number; h: number; delay: number; blend: number; data: Uint8Array[] } | null = null;
+  const frames: DecodedFrame[] = [];
+  const flush = (): void => {
+    if (pending === null) return;
+    const px = unfilter(new Uint8Array(inflateSync(Buffer.concat(pending.data))), pending.w, pending.h);
+    for (let y = 0; y < pending.h; y++) {
+      for (let x = 0; x < pending.w; x++) {
+        const s = (y * pending.w + x) * 4;
+        const d = ((pending.y + y) * w + pending.x + x) * 4;
+        if (pending.blend === 1 && px[s + 3] === 0) continue;
+        canvas.set(px.subarray(s, s + 4), d);
+      }
+    }
+    frames.push({ image: { width: w, height: h, data: new Uint8ClampedArray(canvas) }, delay: pending.delay });
+    pending = null;
+  };
+  while (at < bytes.length) {
+    const len = be32(bytes, at);
+    const type = String.fromCharCode(...bytes.subarray(at + 4, at + 8));
+    const body = bytes.subarray(at + 8, at + 8 + len);
+    if (type === 'IHDR') {
+      w = be32(body, 0);
+      h = be32(body, 4);
+      canvas = new Uint8Array(w * h * 4);
+    } else if (type === 'acTL') {
+      numFrames = be32(body, 0);
+      plays = be32(body, 4);
+    } else if (type === 'fcTL') {
+      flush();
+      pending = { w: be32(body, 4), h: be32(body, 8), x: be32(body, 12), y: be32(body, 16), delay: ((body[20] << 8) | body[21]) / ((body[22] << 8) | body[23]), blend: body[25], data: [] };
+    } else if (type === 'IDAT' || type === 'fdAT') pending?.data.push(type === 'IDAT' ? body : body.subarray(4));
+    else if (type === 'IEND') flush();
+    at += 12 + len;
+  }
+  return { frames, numFrames, plays };
+}
+
+/** A minimal GIF LZW decoder, written independently of `src/gif.ts`'s encoder. */
+function lzwDecode(data: Uint8Array, minCode: number, count: number): Uint8Array {
+  const clear = 1 << minCode;
+  const eoi = clear + 1;
+  const out = new Uint8Array(count);
+  let n = 0;
+  let size = minCode + 1;
+  let dict: number[][] = [];
+  const reset = (): void => {
+    dict = [];
+    for (let i = 0; i < clear; i++) dict.push([i]);
+    dict.push([], []);
+    size = minCode + 1;
+  };
+  reset();
+  let prev: number[] | null = null;
+  let bitPos = 0;
+  const total = data.length * 8;
+  while (bitPos + size <= total) {
+    let code = 0;
+    for (let i = 0; i < size; i++) code |= ((data[(bitPos + i) >> 3] >> ((bitPos + i) & 7)) & 1) << i;
+    bitPos += size;
+    if (code === clear) {
+      reset();
+      prev = null;
+      continue;
+    }
+    if (code === eoi) break;
+    let entry: number[];
+    if (code < dict.length) entry = dict[code];
+    else if (code === dict.length && prev !== null) entry = [...prev, prev[0]];
+    else throw new Error(`LZW code ${code} with a table of ${dict.length}`);
+    for (const v of entry) if (n < count) out[n++] = v;
+    if (prev !== null && dict.length < 4096) dict.push([...prev, entry[0]]);
+    if (dict.length === 1 << size && size < 12) size++;
+    prev = entry;
+  }
+  if (n !== count) throw new Error(`LZW decoded ${n} index(es); the frame needs ${count}`);
+  return out;
+}
+
+/** A minimal GIF89a reader: global palette, GCE transparency and delay, disposal "do not dispose". */
+function decodeGif(b: Uint8Array): { frames: DecodedFrame[]; loops: number | null } {
+  const w = b[6] | (b[7] << 8);
+  const h = b[8] | (b[9] << 8);
+  const gct = b[10] & 0x80 ? 3 * (1 << ((b[10] & 7) + 1)) : 0;
+  const palette = b.subarray(13, 13 + gct);
+  let at = 13 + gct;
+  const canvas = new Uint8ClampedArray(w * h * 4);
+  const frames: DecodedFrame[] = [];
+  let delay = 0;
+  let transparent = -1;
+  let loops: number | null = null;
+  const blocks = (): Uint8Array => {
+    const parts: number[] = [];
+    while (b[at] !== 0) {
+      const n = b[at];
+      for (let i = 1; i <= n; i++) parts.push(b[at + i]);
+      at += n + 1;
+    }
+    at++;
+    return new Uint8Array(parts);
+  };
+  while (at < b.length && b[at] !== 0x3b) {
+    if (b[at] === 0x21 && b[at + 1] === 0xf9) {
+      transparent = b[at + 3] & 1 ? b[at + 6] : -1;
+      delay = b[at + 4] | (b[at + 5] << 8);
+      at += 8;
+    } else if (b[at] === 0x21) {
+      const label = b[at + 1];
+      at += 2;
+      const body = blocks();
+      if (label === 0xff && body.length >= 14) loops = body[12] | (body[13] << 8);
+    } else if (b[at] === 0x2c) {
+      const x0 = b[at + 1] | (b[at + 2] << 8);
+      const y0 = b[at + 3] | (b[at + 4] << 8);
+      const fw = b[at + 5] | (b[at + 6] << 8);
+      const fh = b[at + 7] | (b[at + 8] << 8);
+      at += 10;
+      const minCode = b[at++];
+      const ix = lzwDecode(blocks(), minCode, fw * fh);
+      for (let y = 0; y < fh; y++) {
+        for (let x = 0; x < fw; x++) {
+          const v = ix[y * fw + x];
+          if (v === transparent) continue;
+          canvas.set([palette[v * 3], palette[v * 3 + 1], palette[v * 3 + 2], 255], ((y0 + y) * w + x0 + x) * 4);
+        }
+      }
+      frames.push({ image: { width: w, height: h, data: new Uint8ClampedArray(canvas) }, delay });
+    } else throw new Error(`GIF byte ${at} is 0x${b[at].toString(16)}; a block introducer is required`);
+  }
+  return { frames, loops };
+}
+
+function channelError(a: Raster, b: Raster): { max: number; mean: number } {
+  let max = 0;
+  let sum = 0;
+  for (let p = 0; p < a.width * a.height; p++) {
+    for (let c = 0; c < 3; c++) {
+      const e = Math.abs(a.data[p * 4 + c] - b.data[p * 4 + c]);
+      if (e > max) max = e;
+      sum += e;
+    }
+  }
+  return { max, mean: sum / (a.width * a.height * 3) };
+}
+
+/** A deterministic pseudo-random sequence (a 32-bit LCG) — the selftest reads no randomness either. */
+function lcg(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s;
+  };
+}
+
+function runLoopSuite(): number {
+  section('loop: the APNG and GIF encoders, read back');
+  const { say, bad } = counter();
+  const dir = temp('loop');
+  try {
+    // A real frame set: the check fixture's idle, rendered by the installed rigc.
+    const rig = join(dir, 'rig');
+    writeCheckRig(rig);
+    const checked = runCli(['check', '--rig', rig, '--out', join(dir, 'out')]);
+    const set = readFrameSet(join(dir, 'out', 'idle_frames'));
+    const src = set.frames.map((f) => f.image);
+
+    const apngPath = join(dir, 'idle.png');
+    const apng = runCli(['loop', '--frames', join(dir, 'out', 'idle_frames'), '--out', apngPath]);
+    const bytes = existsSync(apngPath) ? new Uint8Array(readFileSync(apngPath)) : new Uint8Array(0);
+    const types = bytes.length > 0 ? chunkTypes(bytes) : [];
+    const shape = types.join(',').replace(/(,fcTL,fdAT)+/, ',(fcTL,fdAT)*');
+    const plain = bytes.length > 0 ? decodePngBytes(bytes, apngPath) : null;
+    const f0 = plain !== null && Buffer.compare(Buffer.from(plain.data), Buffer.from(src[0].data)) === 0;
+    say(
+      'LP01_THE_APNG_IS_ACTL_FCTL_IDAT_THEN_FCTL_FDAT_AND_RIGCS_PNG_READER_SEES_FRAME_ZERO',
+      checked.status === 0 && apng.status === 0 && shape === 'IHDR,acTL,fcTL,IDAT,(fcTL,fdAT)*,IEND' && f0,
+      `check exit ${checked.status}, loop exit ${apng.status}; chunks ${shape}; spine-rigc's decodePng on the APNG ${plain === null ? 'read nothing' : `reads ${plain.width}x${plain.height}, ${f0 ? 'equal to' : 'NOT equal to'} f0000.png`}`,
+      'a decoder that knows nothing of APNG shows the default image, so frame 0 has to be the IDAT — and the one PNG reader in this package has to read the file at all',
+    );
+
+    const dec = bytes.length > 0 ? decodeApng(bytes) : { frames: [], numFrames: -1, plays: -1 };
+    const closes = src.length > 1 && Buffer.compare(Buffer.from(src[0].data), Buffer.from(src[src.length - 1].data)) === 0;
+    const expected = closes ? src.slice(0, -1) : src;
+    const lossless = dec.frames.length === expected.length && dec.frames.every((f, i) => Buffer.compare(Buffer.from(f.image.data), Buffer.from(expected[i].data)) === 0);
+    const totalTime = dec.frames.reduce((s, f) => s + f.delay, 0);
+    say(
+      'LP02_EVERY_APNG_FRAME_DECODES_EXACT_AND_THE_DUPLICATED_LAST_FRAME_IS_DROPPED_SAYING_SO',
+      closes && lossless && dec.numFrames === dec.frames.length && dec.plays === 0 && Math.abs(totalTime - expected.length / set.fps) < 1e-9 && apng.out.includes('is dropped'),
+      `${src.length} rendered frame(s), last ${closes ? 'equals' : 'differs from'} frame 0; decoded ${dec.frames.length} (acTL says ${dec.numFrames}, plays ${dec.plays}), ${lossless ? 'all byte-exact' : 'NOT exact'}, ${totalTime.toFixed(4)}s per loop`,
+      'the rendered idle ends on the pose it starts with (that is what check measured), so a loop that also showed the last frame would hold that pose for two ticks; the reader here is independent of the writer',
+    );
+
+    const gifPath = join(dir, 'idle.gif');
+    const gif = runCli(['loop', '--frames', join(dir, 'out', 'idle_frames', 'idle'), '--out', gifPath]);
+    const g = existsSync(gifPath) ? decodeGif(new Uint8Array(readFileSync(gifPath))) : { frames: [], loops: null };
+    const stated = /frame 0 max (\d+), mean ([\d.]+); all frames max (\d+), mean ([\d.]+)/.exec(gif.out);
+    const e0 = g.frames.length > 0 ? channelError(g.frames[0].image, src[0]) : { max: -1, mean: -1 };
+    const eAll = g.frames.map((f, i) => channelError(f.image, expected[i]));
+    const worst = Math.max(...eAll.map((e) => e.max));
+    say(
+      'LP03_THE_GIF_DECODES_BACK_WITHIN_THE_PALETTE_ERROR_IT_STATES',
+      gif.status === 0 && stated !== null && g.loops === 0 && g.frames.length === expected.length && e0.max === Number(stated[1]) && e0.mean.toFixed(3) === stated[2] && worst <= Number(stated[3]),
+      `exit ${gif.status}; stated ${stated === null ? 'nothing' : stated[0]}; decoded ${g.frames.length} frame(s), loop count ${g.loops}; frame 0 measured max ${e0.max}, mean ${e0.mean.toFixed(3)}; worst frame max ${worst}`,
+      'a GIF is 255 colours, so it is lossy by construction; what is checkable is that the error printed is the error in the file, read back by a decoder that shares nothing with the encoder',
+    );
+
+    // Hand-computable: four colours, a repeated frame, and a noise frame long enough to reset the LZW table.
+    const W = 40;
+    const H = 30;
+    const flat = (rgb: [number, number, number], mark: number): Raster => {
+      const r = newRaster(W, H);
+      for (let p = 0; p < W * H; p++) r.data.set(p % W < mark ? [250, 250, 250, 255] : [...rgb, 255], p * 4);
+      return r;
+    };
+    const next = lcg(7);
+    const noise = newRaster(W * 5, H * 5);
+    for (let p = 0; p < noise.width * noise.height; p++) {
+      const v = next() % 200;
+      noise.data.set([v, (v * 3) % 256, 255 - v, 255], p * 4);
+    }
+    const a = flat([200, 30, 30], 10);
+    const b2 = flat([30, 30, 200], 20);
+    const seq: AnimFrame[] = [a, a, b2, flat([30, 200, 30], 5)].map((image) => ({ image, ticks: 1 }));
+    const small = encodeGif(seq, 12);
+    const sd = decodeGif(small.bytes);
+    const exact = sd.frames.length === 3 && [a, b2, seq[3].image].every((im, i) => channelError(sd.frames[i].image, im).max === 0);
+    const delays = sd.frames.map((f) => f.delay);
+    const big = encodeGif([{ image: noise, ticks: 1 }], 12);
+    const bd = decodeGif(big.bytes);
+    const noiseExact = bd.frames.length === 1 && channelError(bd.frames[0].image, noise).max === 0;
+    say(
+      'LP04_FRAMES_OF_AT_MOST_255_COLOURS_DECODE_EXACT_THE_REPEAT_IS_MERGED_AND_THE_LZW_TABLE_RESETS',
+      exact && delays.join(',') === '17,8,8' && small.stats.all.max === 0 && noiseExact && big.stats.distinct === 200 && big.bytes.length > 4096,
+      `4 frames of 4 colours -> ${sd.frames.length} decoded, ${exact ? 'exact' : 'NOT exact'}, delays ${delays.join(',')} cs (the repeat merged: round(200/12) - 0, then 8, 8); a ${noise.width}x${noise.height} frame of ${big.stats.distinct} colours -> ${big.bytes.length} bytes, ${noiseExact ? 'exact' : 'NOT exact'}`,
+      'with no more colours than the palette holds a GIF has no excuse for error, so any is an encoder defect; 30,000 noise pixels outrun the 4096-code table, which is the path a small fixture never takes',
+    );
+
+    const open = [a, b2, flat([30, 200, 30], 5)];
+    const openDir = join(dir, 'open', 'idle');
+    mkdirSync(openDir, { recursive: true });
+    open.forEach((im, i) => writeFileSync(join(openDir, `f${String(i).padStart(4, '0')}.png`), encodePngBytes(im)));
+    writeFileSync(
+      join(dir, 'open', 'frames.json'),
+      JSON.stringify({ spec: 'rigc-frames/1', background: [232, 232, 232, 255], viewport: { x: 0, y: 0, width: W, height: H, scale: 1, pixelWidth: W, pixelHeight: H }, sets: [{ dir: 'idle', animation: 'idle', fps: 12, sampled: 3, written: 3, stride: 1, duration: 2 / 12 }] }),
+    );
+    const kept = runCli(['loop', '--frames', join(dir, 'open'), '--out', join(dir, 'open.png')]);
+    const keptFrames = existsSync(join(dir, 'open.png')) ? decodeApng(new Uint8Array(readFileSync(join(dir, 'open.png')))).frames.length : -1;
+    say(
+      'LP05_A_LOOP_THAT_DOES_NOT_CLOSE_KEEPS_EVERY_FRAME_AND_SAYS_SO',
+      kept.status === 0 && keptFrames === 3 && kept.out.includes('differs from f0000.png') && !kept.out.includes('is dropped'),
+      `exit ${kept.status}; ${keptFrames} frame(s) in the APNG for 3 rendered`,
+      'the drop is a consequence of a measured equality, not a habit: when the last frame is not frame 0, dropping it would cut a real pose',
+    );
+
+    const webp = runCli(['loop', '--frames', join(dir, 'open'), '--out', join(dir, 'x.webp')]);
+    const translucent = flat([200, 30, 30], 0);
+    translucent.data[3] = 128;
+    const alphaRefused = threw(() => encodeGif([{ image: translucent, ticks: 1 }], 12));
+    const sizeRefused = threw(() => encodeApng([{ image: a, ticks: 1 }, { image: noise, ticks: 1 }], 12));
+    say(
+      'LP06_WEBP_A_TRANSLUCENT_GIF_FRAME_AND_A_SIZE_CHANGE_ARE_REFUSED_BY_NAME',
+      webp.status === 2 && webp.out.includes('VP8') && alphaRefused !== null && alphaRefused.includes('pixel 0,0 has alpha 128') && sizeRefused !== null && sizeRefused.includes(`frame 1 is ${noise.width}x${noise.height}`),
+      `.webp -> exit ${webp.status}; translucent: ${alphaRefused ?? 'accepted'}; size change: ${sizeRefused ?? 'accepted'}`,
+      'animated WebP is out of scope and says why; GIF has one bit of alpha, so a translucent pixel is refused rather than thresholded in silence',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return bad();
+}
+
+// ---------------------------------------------------------------------------
+// examples: the committed example rigs, when there are any
+// ---------------------------------------------------------------------------
+
+function runExamplesSuite(): number | null {
+  section('examples: check on every examples/*/inputs rig');
+  const root = join(ROOT, 'examples');
+  const inputs = existsSync(root)
+    ? readdirSync(root)
+        .sort()
+        .map((e) => join(root, e, 'inputs'))
+        .filter((p) => existsSync(join(p, 'rig.json')))
+    : [];
+  if (inputs.length === 0) {
+    console.log(`  SKIP  ${existsSync(root) ? 'examples/ holds no */inputs/rig.json' : 'no examples/ directory'}, so no committed example rig was checked`);
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — check ran on the generated fixture only.');
+    return null;
+  }
+  const { say, bad } = counter();
+  const dir = temp('examples');
+  try {
+    for (const p of inputs) {
+      const name = relative(root, dirname(p));
+      const r = runCli(['check', '--rig', p, '--out', join(dir, name)]);
+      const fig = readJsonFile(join(dir, name, 'check.json'));
+      say(
+        `EX01_EXAMPLE_${name.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_PASSES_CHECK`,
+        r.status === 0 && fig?.PASS === true,
+        `exit ${r.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig)}`,
+        'a committed example is a claim that the pipeline produces a passing rig; this is the run that keeps the claim true',
+      );
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
   return bad();
 }
@@ -2393,6 +2888,9 @@ function main(): void {
   tally.of('rig-examples', runRigExamplesSuite);
   tally.of('propose', runProposeSuite);
   tally.of('propose-corpus', runProposeCorpusSuite);
+  tally.of('check', runCheckSuite);
+  tally.of('loop', runLoopSuite);
+  tally.of('examples', runExamplesSuite);
   tally.of('tree', runTreeSuite);
   tally.of('corpus', () => runCorpusSuite(corpus));
   tally.of('run-tally', () => runTallySuite(tally));
@@ -2417,11 +2915,12 @@ function main(): void {
   const ran = tally.blocks.length - holes.length;
   const corpusClause = holes.includes('corpus') ? '' : `, + ${n('corpus')} corpus`;
   const examplesClause = holes.includes('rig-examples') ? '' : `, + ${n('rig-examples')} rig-example`;
+  const checkExamplesClause = holes.includes('examples') ? '' : `, + ${n('examples')} examples`;
   const proposeClause = holes.includes('propose-corpus') ? '' : `, + ${n('propose-corpus')} example-propose`;
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${examplesClause}${proposeClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${examplesClause}${proposeClause}${checkExamplesClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
