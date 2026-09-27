@@ -168,7 +168,7 @@ than queueing behind someone else's job.
 ## The loop, for an agent
 
 ```sh
-spine-parts inputs --source painting.png --config config.json --out inputs   # st_input_full.png; the config needs only key, seethrough, assemble.rig_scale
+spine-parts inputs --source painting.png --config config.json --out inputs   # st_input_full.png
 #    See-through on st_input_full.png (external, or `spine-parts comfy seethrough`) -> layers/full
 spine-parts layers layers/full                      # every layer: box, opaque px, depth, plausibility figures; WARN lines
 spine-parts propose --head-box --full layers/full --canvas 1664x2432
@@ -179,6 +179,7 @@ spine-parts sheet --source painting.png --layers layers/full --layers layers/hea
 spine-parts assemble --propose-plan --source painting.png --full layers/full --head layers/head --config config.json
 #    -> assemble.plan and extend_below_crop
 spine-parts assemble --source painting.png --full layers/full --head layers/head --config config.json --out work
+#    -> work/rig: parts.json and parts/; the config holds no bones, meshes, regions or motion yet
 #    -> read the `uncovered hole N:` lines and look at work/render/recomposite_error_rig.png:
 #       red is painting that no part holds, and no later gate can see it
 spine-parts propose --parts work/rig --source painting.png --out work
@@ -188,6 +189,11 @@ spine-parts propose --parts work/rig --source painting.png --out work --from-con
 spine-parts build --config config.json --source painting.png --full layers/full --head layers/head --out out --loop
 #    -> read out/check/check.json; every FAIL line names what has to change
 ```
+
+At each step the config holds only what that step reads; the one table of what
+that is, step by step, is [docs/AUTHORING.md §4](docs/AUTHORING.md#4-the-command-order).
+The selftest runs this block in order, command by command, on each fetched example,
+from a config holding only what the first step reads (`RL01`).
 
 `propose` is deliberately not a step of `build`: the proposal is a draft to correct
 against its overlay, and a config with bones is `build`'s input. `rig`, `check` and

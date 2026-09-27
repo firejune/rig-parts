@@ -169,23 +169,32 @@ holds the crease.
 
 Two steps are external: the See-through runs (by any route; the optional `comfy seethrough` adapter is only a client for a ComfyUI box). Everything else is this tool.
 
+**What the config holds at each step.** The config fills in as the loop runs, and
+each step reads it through the loader for that point, which requires exactly what
+the step reads. `src/config.ts` states it once (`CONFIG_REQUIRES`), the loaders take
+their required keys from there, and the selftest compares this table with it
+(`AS15`). Every loader refuses unknown and retired keys and checks `generation`
+whenever it is present; a section a later step writes may already be there, and an
+early loader does not read it.
+
+| loader | steps | requires | the step also refuses without |
+| --- | --- | --- | --- |
+| `paint` | 0 `comfy paint` | `key`, `generation` | — |
+| `layers` | 1 and 4 `inputs`, 6 `assemble --propose-plan` | `key`, `seethrough`, `assemble.rig_scale` | `seethrough.head_box`, for `--propose-plan` only (`ASSEMBLE_FIELD_PRESENT`) |
+| `assemble` | 7 `assemble` | `key`, `seethrough`, `assemble.rig_scale`, `assemble.plan` | `seethrough.head_box` (`ASSEMBLE_FIELD_PRESENT`) |
+| `full` | 8 `propose --from-config`, `propose --compare`, `rig`, 9 `build` | `key`, `assemble.rig_scale`, `assemble.plan`, `bones`, `meshes`, `regions`, `motion` | for `build`, the `assemble` row's too: its assemble stage reads through that loader after this one |
+
+A missing field is `CONFIG_FIELD_PRESENT` naming it; a missing `generation` names
+the fields the block holds, and a missing `assemble.plan` names
+`assemble --propose-plan`, which prints one. `build` runs `rig`, so it asks the
+full loader before its assemble stage writes anything.
+
 0. **The painting (optional).** `spine-parts comfy paint --config config.json --out inputs --host <url>`
    generates `painting_<seed>.png` on a ComfyUI box; any other route to a painting
-   skips this step and leaves `generation` out. At this point the config needs only
-   `key` and `generation`: `comfy paint` reads it through the partial loader's `paint`
-   door (`parseEarlyConfig(raw, 'paint')`), which requires those two, reads nothing
-   else, and refuses unknown and retired keys like the full loader. A config without
-   `generation` is refused as `CONFIG_FIELD_PRESENT: config.generation`, naming the
-   fields the block holds. Everything else arrives later: `seethrough` and
-   `assemble.rig_scale` before step 1, `head_box` from step 4, the plan from step 6,
-   and `bones`, `meshes`, `regions` and `motion` from `propose` in step 7.
+   skips this step and leaves `generation` out. Config: the `paint` row.
 1. **The full image.** `spine-parts inputs --source inputs/painting.png --config config.json --out inputs`
    writes `st_input_full.png`, the painting centred on a white square as tall as it is.
-   At this point the config needs only `key`, `seethrough` (without `head_box`) and
-   `assemble.rig_scale`: `inputs` and `assemble --propose-plan` read it through the
-   partial loader's `layers` door (`parseEarlyConfig(raw, 'layers')`), which checks
-   `generation` too when it is present, and which refuses unknown and retired keys like the
-   full one and leaves the later sections for later. A landscape or translucent
+   Config: the `layers` row, `head_box` not yet. A landscape or translucent
    painting is refused (`INPUTS_PAINTING_PORTRAIT`, `INPUTS_PAINTING_OPAQUE`).
 2. **See-through, full run** (external).
 3. `spine-parts layers inputs/layers/full` — read it. A refusal here is about the
@@ -197,8 +206,8 @@ Two steps are external: the See-through runs (by any route; the optional `comfy 
    `st_input_head.png`, the painting cropped to that box at its exact size.
 5. **See-through, head run** (external), on that crop.
 6. `spine-parts assemble --propose-plan --source … --full … --head … --config config.json`
-   → paste `plan` and `extend_below_crop` into `config.assemble`. It reads the config
-   through the same partial loader as `inputs`, and needs `seethrough.head_box` set.
+   → paste `plan` and `extend_below_crop` into `config.assemble`. Config: the
+   `layers` row, with `head_box`.
    Read `notes`: a layer left out by a plausibility rule is named there with its
    figures and the rule (§6, *Plausibility*).
 7. `spine-parts assemble … --out work` — read its `uncovered hole` lines and look at
@@ -206,15 +215,21 @@ Two steps are external: the See-through runs (by any route; the optional `comfy 
    no later stage can see — then
    `spine-parts propose --parts work/rig --source inputs/painting.png --out work` →
    `work/proposal.json` and `work/render/landmarks.png` (+ `_head`). Copy
-   `bones`, `meshes`, `regions` and `motion` into the config.
+   `bones`, `meshes`, `regions` and `motion` into the config. Config for
+   `assemble`: the `assemble` row — no rig section yet, because this `propose`
+   drafts them from the parts `assemble` writes.
 8. Correct, then `spine-parts propose … --from-config config.json` to redraw the
    config's own bones and LINT them — every chain link against its mesh's art, and
    the single bones `hip` and `chest` against each other and the figure (a config
    without them prints a `note:` that those lines did not run); repeat until it
-   prints no LINT line (exit 0).
+   prints no LINT line (exit 0). Config from here on: the `full` row.
 9. `spine-parts build --config config.json --source inputs/painting.png --full … --head … --out out [--loop]`
    — assemble, rig and check in one process. `propose` is not part of it, on purpose:
    a proposal is a draft, and the config you corrected is the input.
+
+The selftest runs this order, with the README's flags, on each fetched example from
+a config holding only `key`, `seethrough` and `assemble.rig_scale`, pasting each
+proposal in as the steps above say (`RL01`); every step must exit 0.
 
 ## 5. After each stage: what to read
 
@@ -415,7 +430,7 @@ See-through with another seed.
 
 | rule | means | change |
 | --- | --- | --- |
-| `ASSEMBLE_FIELD_PRESENT` | `seethrough` or `seethrough.head_box` is missing | add them (§3) |
+| `ASSEMBLE_FIELD_PRESENT` | `seethrough.head_box` is missing | `propose --head-box` proposes it (§3) |
 | `ASSEMBLE_SOURCE_PORTRAIT` | the painting is wider than tall | the painting |
 | `ASSEMBLE_RIG_SIZE` | `rig_scale` makes an empty rig | `assemble.rig_scale` |
 | `ASSEMBLE_HEAD_BOX_INSIDE` | the head box is outside the painting | `head_box` — `propose --head-box` holds it inside |
