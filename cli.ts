@@ -12,14 +12,16 @@
  *   2  a usage error, or a command this version does not implement
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, extname, join } from 'node:path';
+import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig } from './src/config.ts';
+import { type CharacterConfig, loadConfig } from './src/config.ts';
 import { PartsError, type Problem, problemLine } from './src/errors.ts';
+import { proposeHeadBox } from './src/headbox.ts';
 import { type LayerSet, readLayers } from './src/layers.ts';
 import { readParts } from './src/parts.ts';
+import { checkProposal, compare, compareLines, drawLandmarks, lint, lintLine, type PartSet, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import type { Raster } from './src/raster/types.ts';
 import { encodePngBytes, readPng, writePng } from './src/raster/png.ts';
 import { buildRig, rigJsonText, type RigOutput } from './src/rig.ts';
@@ -41,7 +43,6 @@ function version(): string {
  */
 const LATER: ReadonlyArray<[string, string]> = [
   ['assemble', 'merge the See-through runs into rig-space parts/*.png + parts.json'],
-  ['propose', 'propose bones, meshes, regions and an idle from the parts, for the config'],
   ['check', 'build through spine-rigc, then the seam, loop and landmark checks'],
   ['build', 'assemble, rig and check in one pass'],
   ['comfy', 'drive ComfyUI for the painting and the See-through runs (optional)'],
@@ -64,6 +65,24 @@ usage:
       --layers takes anything \`layers\` reads, or a parts.json (its PNGs are read
       from parts/ beside it). --cell defaults to 220, --cols to 8; both are
       printed. The same information is printed as text.
+
+  spine-parts propose --parts <dir> --source <painting.png> --out <dir> [--compare <config.json>]
+      Propose bones, meshes, regions and an idle from the assembled parts (<dir>
+      holds parts.json and parts/). Roles come from each part's See-through tag,
+      never its name. Writes <out>/proposal.json (config-shaped: bones, meshes,
+      regions, motion with its blink, and notes) and the overlay to correct
+      against, <out>/render/landmarks.png and landmarks_head.png. Prints every
+      note and a LINT line for each chain link that lies off its mesh's art.
+      --compare prints each shared bone's distance, proposal to config, in px.
+
+  spine-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
+      Draw the config's CURRENT bones instead (<out>/render/landmarks_config.png
+      and _head) and LINT them. Exits 1 when any LINT line is printed.
+
+  spine-parts propose --head-box --full <dir | layers.json | file.psd> --canvas <W>x<H>
+      Propose seethrough.head_box (source px, square) from the full run's
+      layers for a painting of WxH px, held inside the painting; a shift is
+      printed when one was needed.
 
   spine-parts rig --config <config.json> --parts <dir> --out <dir>
       Author the rig: unrotated bones at the config's landmarks (a chain makes
@@ -295,6 +314,101 @@ function cmdRig(args: string[]): number {
   }
 }
 
+function parseCanvas(v: string): { w: number; h: number } | null {
+  const m = /^(\d+)x(\d+)$/.exec(v);
+  return m === null ? null : { w: Number(m[1]), h: Number(m[2]) };
+}
+
+function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: CharacterConfig['meshes'] }): number {
+  const res = lint(P, spec);
+  for (const f of res.findings) console.log(lintLine(f));
+  for (const m of res.unknownMeshes) console.log(`note: mesh ${JSON.stringify(m)} names no part in parts.json, so it was not linted`);
+  console.log(`${res.findings.length} LINT line(s) over ${Object.keys(spec.meshes).length - res.unknownMeshes.length} mesh(es)`);
+  return res.findings.length;
+}
+
+function cmdPropose(args: string[]): number {
+  const flags = new Map<string, string>();
+  let headBox = false;
+  const valued = ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--canvas'];
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    if (flag === '--head-box') {
+      headBox = true;
+      continue;
+    }
+    if (!valued.includes(flag)) return usage(`propose does not take "${flag}"; it takes --head-box and ${valued.join(', ')}`);
+    const value = args[i + 1];
+    if (value === undefined) return usage(`${flag} needs a value`);
+    if (flags.has(flag)) return usage(`${flag} is given twice`);
+    flags.set(flag, value);
+    i++;
+  }
+  try {
+    if (headBox) {
+      const stray = [...flags.keys()].filter((f) => f !== '--full' && f !== '--canvas');
+      if (stray.length > 0) return usage(`--head-box takes --full and --canvas only; got ${stray.join(', ')}`);
+      const full = flags.get('--full');
+      const canvasArg = flags.get('--canvas');
+      if (full === undefined) return usage('--head-box needs --full <dir | layers.json | file.psd>, the full run\'s layers');
+      if (canvasArg === undefined) return usage('--head-box needs --canvas <W>x<H>, the painting\'s size in px');
+      const canvas = parseCanvas(canvasArg);
+      if (canvas === null) return usage(`--canvas ${canvasArg} is not <W>x<H> in integer px`);
+      const r = proposeHeadBox(readLayers(full), canvas);
+      console.log(`spine-parts propose --head-box: ${full}`);
+      console.log(`  painting ${canvas.w}x${canvas.h}; head layers ${r.layers.map(([n, c]) => `${n} ${c} px`).join(', ')}`);
+      if (r.shift[0] !== 0 || r.shift[1] !== 0) {
+        console.log(`  clamped: the proposed box [${r.unclamped.join(', ')}] leaves the ${canvas.w}x${canvas.h} painting; shifted by ${r.shift[0]},${r.shift[1]} px at the same size`);
+      } else console.log('  inside the painting, no shift');
+      console.log(`  head_box [${r.head_box.join(', ')}], ${r.head_box[2] - r.head_box[0]}x${r.head_box[3] - r.head_box[1]}`);
+      console.log(JSON.stringify({ head_box: r.head_box }));
+      return EXIT_OK;
+    }
+    for (const f of ['--full', '--canvas']) if (flags.has(f)) return usage(`${f} belongs to --head-box`);
+    const partsArg = flags.get('--parts');
+    const source = flags.get('--source');
+    const out = flags.get('--out');
+    if (partsArg === undefined) return usage('propose needs --parts <dir>, the directory holding parts.json and parts/');
+    if (source === undefined) return usage('propose needs --source <painting.png>, drawn under the overlay');
+    if (out === undefined) return usage('propose needs --out <dir>');
+    if (flags.has('--from-config') && flags.has('--compare')) return usage('--from-config and --compare are two modes; give one');
+    const partsDir = existsSync(partsArg) && statSync(partsArg).isFile() ? dirname(partsArg) : partsArg;
+    if (!existsSync(source)) {
+      throw new PartsError([{ code: 'PROPOSE_SOURCE_PRESENT', object: source, detail: 'no such file; the painting is drawn under the overlay' }]);
+    }
+    const P = readPartSet(partsDir);
+    const painting = readPng(source);
+    const render = join(out, 'render');
+    const fromConfig = flags.get('--from-config');
+    if (fromConfig !== undefined) {
+      const cfg = loadConfig(fromConfig);
+      const img = drawLandmarks(P, painting, cfg.bones, 'config bones');
+      mkdirSync(render, { recursive: true });
+      writePng(join(render, 'landmarks_config.png'), img.full);
+      if (img.head !== null) writePng(join(render, 'landmarks_config_head.png'), img.head);
+      console.log(`wrote ${join(render, 'landmarks_config.png')}${img.head !== null ? ' (+_head)' : ' (no bone named "head", so no head crop)'}`);
+      return printLint(P, cfg) > 0 ? EXIT_REFUSED : EXIT_OK;
+    }
+    const cmpPath = flags.get('--compare');
+    const cfg = cmpPath === undefined ? null : loadConfig(cmpPath);
+    const prop = propose(P);
+    // Emit only after green: a proposal the config loader would refuse is not written.
+    checkProposal(P, prop);
+    const img = drawLandmarks(P, painting, prop.bones, 'PROPOSAL - CORRECT ME');
+    mkdirSync(render, { recursive: true });
+    writeFileSync(join(out, 'proposal.json'), serializeProposal(prop));
+    writePng(join(render, 'landmarks.png'), img.full);
+    if (img.head !== null) writePng(join(render, 'landmarks_head.png'), img.head);
+    console.log(`wrote proposal.json (${prop.bones.length} bone entries, ${Object.keys(prop.meshes).length} meshes) and render/landmarks.png (+_head) under ${out}`);
+    for (const n of prop.notes) console.log(`note: ${n}`);
+    printLint(P, prop);
+    if (cfg !== null) for (const l of compareLines(compare(prop.bones, cfg.bones))) console.log(l);
+    return EXIT_OK;
+  } catch (err) {
+    return printRefusal(err);
+  }
+}
+
 function main(argv: string[]): number {
   const [command, ...rest] = argv;
   if (command === undefined || command === '--help' || command === '-h' || command === 'help') {
@@ -308,6 +422,7 @@ function main(argv: string[]): number {
   if (command === 'layers') return cmdLayers(rest);
   if (command === 'sheet') return cmdSheet(rest);
   if (command === 'rig') return cmdRig(rest);
+  if (command === 'propose') return cmdPropose(rest);
   const later = LATER.find(([name]) => name === command);
   if (later !== undefined) {
     console.log(`  FAIL  NOT_IMPLEMENTED: \`spine-parts ${command}\` (${later[1]}) is not implemented in this version, ${version()}`);

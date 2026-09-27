@@ -46,11 +46,13 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, w
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import ts from 'typescript';
+import { PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, writeProposeFixture } from './fixtures/propose.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
-import { type CharacterConfig, loadConfig, parseConfig } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, loadConfig, parseConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
 import { PartsError } from './src/errors.ts';
-import { readPsdLayers, readWrapperLayers } from './src/layers.ts';
+import { proposeHeadBox } from './src/headbox.ts';
+import { type LayerSet, readLayers, readPsdLayers, readWrapperLayers } from './src/layers.ts';
 import { type PartsFile, readParts, serializeParts, writeParts } from './src/parts.ts';
 import {
   alphaComposite,
@@ -72,13 +74,16 @@ import {
   newRaster,
   pad,
   type Raster,
+  readPng,
   resize,
   warpAffine,
 } from './src/raster/index.ts';
+import { checkProposal, compare, compareLines, lint, lintLine, type Proposal, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { islandImages, RIG_EXPECT, rigConfig, rigImages, rigParts, writeRigFixture } from './fixtures/rig.ts';
 import { buildRig, type MeshAttachment, type RegionAttachment, rigJsonText } from './src/rig.ts';
 import { pyRound } from './src/round.ts';
+import { readTag, type TagReading } from './src/tags.ts';
 
 const ROOT = import.meta.dir;
 
@@ -1122,13 +1127,13 @@ function runCliSuite(): number {
     'the version a user reports is the one the package carries, read at run time rather than copied',
   );
 
-  const later = ['assemble', 'propose', 'check', 'build', 'comfy'];
+  const later = ['assemble', 'check', 'build', 'comfy'];
   const help = runCli(['--help']);
   const stubs = later.map((c) => ({ c, r: runCli([c]) }));
   const honest = stubs.filter(({ r }) => r.status === 2 && r.out.includes('NOT_IMPLEMENTED') && r.out.includes('not implemented in this version'));
   say(
     'CL02_EVERY_LATER_COMMAND_IS_LISTED_AND_EXITS_TWO_SAYING_SO',
-    help.status === 0 && [...later, 'layers', 'sheet', 'rig'].every((c) => help.out.includes(c)) && honest.length === later.length,
+    help.status === 0 && [...later, 'layers', 'sheet', 'rig', 'propose'].every((c) => help.out.includes(c)) && honest.length === later.length,
     `${honest.length} of ${later.length} stubs exit 2 with NOT_IMPLEMENTED (${stubs.map(({ c, r }) => `${c}=${r.status}`).join(', ')}); --help names all of them`,
     'the surface is visible before it exists, and the help does not promise a command that would do nothing',
   );
@@ -1472,6 +1477,279 @@ function runRigExamplesSuite(): number | null {
     `${inputs.length - failed.length} of ${inputs.length}: ${rows.join(' | ')}${failed.length > 0 ? `; red: ${failed.join(' | ')}` : ''}`,
     'the fixture is two blocks; the examples are real parts, and the question only they answer is whether the stage takes what assemble actually writes',
   );
+  return bad();
+}
+
+// ---------------------------------------------------------------------------
+// the propose stage
+// ---------------------------------------------------------------------------
+
+function boneAt(bones: readonly BoneEntry[], name: string): string {
+  const b = bones.find((e) => ('name' in e ? e.name : e.chain) === name);
+  if (b === undefined) return 'absent';
+  return 'chain' in b ? `${JSON.stringify(b.points)}->${JSON.stringify(b.tip)}` : JSON.stringify(b.at);
+}
+
+/** A proposal as a config the loader accepts: the plan is the parts themselves. */
+function proposalConfig(parts: readonly ProposeFixturePart[], prop: Proposal): Record<string, unknown> {
+  return {
+    key: 'fixture',
+    assemble: { rig_scale: 1, plan: parts.map((p) => [p.name, ...p.from.split(':')]) },
+    bones: prop.bones,
+    meshes: prop.meshes,
+    regions: prop.regions,
+    motion: prop.motion,
+  };
+}
+
+/** A full-run layer set built in memory: one opaque rectangle per layer on a square canvas. */
+function headRun(side: number, rects: Array<[string, number, number, number, number]>): LayerSet {
+  return {
+    form: 'wrapper',
+    source: 'fixture layers.json',
+    canvas: { w: side, h: side },
+    layers: rects.map(([name, left, top, w, h], i) => {
+      const pixels = newRaster(w, h);
+      for (let j = 0; j < w * h; j++) pixels.data.set([200, 180, 170, 255], j * 4);
+      return { name, tag: readTag(name) as TagReading, file: null, pixels, left, top, right: left + w, bottom: top + h, depth: null, drawOrder: i, opaquePx: w * h };
+    }),
+  };
+}
+
+function runProposeSuite(): number {
+  section('propose: bones, meshes and regions from the parts');
+  const { say, bad } = counter();
+  const dir = temp('propose');
+  try {
+    writeProposeFixture(dir);
+    const P = readPartSet(dir);
+    const prop = propose(P);
+    // Hand-derived from fixtures/propose.ts (face 80,40 40x50; skirt 60,150 80x100; sleeves 20,100 and 160,100 20x60):
+    //   axis = 80 + 40/2 = 100; chin = 90; no neck part -> neck y = 90 + 0.12*50 = 96; head y = 40 + 0.88*50 = 84.
+    //   hip = (60 + 80/2, 150 + 0.14*50) = (100, 157); chest y = 96 + 0.5*(157 - 96) = 126.5, which Python's round takes to EVEN: 126.
+    //   skirt chains: y = 177 + k*(250 - 4 - 177)/3 = 177, 200, 223, tip 246; x = 60 + f*79 = 83.7 -> 84, 99.5 -> 100 (even), 115.3 -> 115.
+    //   sleeves: rows 100..159, y0 = 115, span = 159 - 6 - 115 = 38 -> y 115, 127.67 -> 128, 140.33 -> 140, tip 156;
+    //   x = the band centroid 29.5 -> 30 and 169.5 -> 170 (ties, to even; ties-up agrees on these two).
+    const want: Record<string, string> = {
+      hip: '[100,157]',
+      chest: '[100,126]',
+      neck: '[100,96]',
+      head: '[100,84]',
+      skirt_r: '[[84,177],[84,200],[84,223]]->[84,246]',
+      skirt_c: '[[100,177],[100,200],[100,223]]->[100,246]',
+      skirt_l: '[[115,177],[115,200],[115,223]]->[115,246]',
+      sleeve_r: '[[30,115],[30,128],[30,140]]->[30,156]',
+      sleeve_l: '[[170,115],[170,128],[170,140]]->[170,156]',
+    };
+    const wrong = Object.entries(want).filter(([n, v]) => boneAt(prop.bones, n) !== v).map(([n, v]) => `${n} ${boneAt(prop.bones, n)} (want ${v})`);
+    const names = prop.bones.map((b) => ('name' in b ? b.name : b.chain));
+    say(
+      'PR01_HAND_COMPUTED_PARTS_YIELD_THE_HAND_COMPUTED_BONES',
+      wrong.length === 0 && names.join(',') === 'hip,chest,neck,head,sleeve_r,sleeve_l,skirt_r,skirt_c,skirt_l',
+      `${names.length} bone entries (${names.join(', ')}); ${wrong.length === 0 ? 'face -> hip/chest/neck/head, bottomwear -> three skirt chains, two handwear blobs -> two sleeve chains, every coordinate as derived' : `wrong: ${wrong.join('; ')}`}`,
+      "the rules are the reference proposer's; the fixture's rectangles make every one of them checkable by hand, and chest y 126.5 is an exact tie that only a round-half-to-even port takes to 126 (measured: a ties-up round makes this case FAIL on chest alone; the other ties, 29.5, 99.5 and 169.5, land on the same integer either way)",
+    );
+
+    const segs = (m: string): string => JSON.stringify(prop.meshes[m]?.segments ?? null);
+    const regionsOk = JSON.stringify(prop.regions) === '{"face":"head"}';
+    const meshOk =
+      segs('sleeve_a') === '[["chest",[30,101],[30,117]],"sleeve_r"]' &&
+      segs('sleeve_b') === '[["chest",[170,101],[170,117]],"sleeve_l"]' &&
+      segs('skirt') === '[["chest",[100,96],[100,137]],["hip",[67,162],[133,162]],"skirt_r","skirt_c","skirt_l"]';
+    const bytes = serializeProposal(prop);
+    const again = serializeProposal(propose(readPartSet(dir)));
+    const loads = refusals(() => parseConfig(proposalConfig(PROPOSE_PARTS, prop)));
+    say(
+      'PR02_ROLES_COME_FROM_THE_TAG_AND_THE_PROPOSAL_IS_A_LOADABLE_DETERMINISTIC_CONFIG',
+      meshOk && regionsOk && bytes === again && loads === null,
+      `sleeve_a (handwear-r) -> ${segs('sleeve_a')}; sleeve_b (handwear-l) -> ${segs('sleeve_b')}; regions ${JSON.stringify(prop.regions)}; two runs ${bytes === again ? 'identical' : 'DIFFERENT'} (${bytes.length} bytes); config loader: ${codes(loads)}`,
+      'the parts are named sleeve_a/sleeve_b/skirt, not by role, so a name-based rule would miss them; and a proposal is pasted into a config, so it must load as one',
+    );
+
+    // A planted config: skirt_c moved to x = 190, outside the skirt (60..139) dilated 15 px (45..154).
+    const planted = proposalConfig(PROPOSE_PARTS, prop) as { bones: BoneEntry[] } & Record<string, unknown>;
+    planted.bones = prop.bones.map((b) => ('chain' in b && b.chain === 'skirt_c' ? { ...b, points: b.points.map((q): [number, number] => [190, q[1]]) } : b));
+    const clean = lint(P, prop).findings.map(lintLine);
+    const found = lint(P, { bones: planted.bones, meshes: prop.meshes }).findings.map(lintLine);
+    const wantLint = [0, 1, 2].map((k) => `LINT skirt_c${k} at [190, ${177 + 23 * k}] is off the art of mesh 'skirt'`);
+    const cfgClean = join(dir, 'clean.json');
+    const cfgPlanted = join(dir, 'planted.json');
+    writeFileSync(cfgClean, JSON.stringify(proposalConfig(PROPOSE_PARTS, prop)));
+    writeFileSync(cfgPlanted, JSON.stringify(planted));
+    const out = join(dir, 'out');
+    const cliClean = runCli(['propose', '--parts', dir, '--source', join(dir, 'painting.png'), '--out', out, '--from-config', cfgClean]);
+    const cliPlanted = runCli(['propose', '--parts', dir, '--source', join(dir, 'painting.png'), '--out', out, '--from-config', cfgPlanted]);
+    const printed = cliPlanted.out.split('\n').filter((l) => l.startsWith('LINT '));
+    say(
+      'PR03_A_CHAIN_POINT_ON_TRANSPARENT_ART_IS_A_LINT_LINE_IN_THE_REFERENCE_FORMAT',
+      clean.length === 0 && found.join('|') === wantLint.join('|') && cliClean.status === 0 && cliPlanted.status === 1 && printed.join('|') === wantLint.join('|'),
+      `the proposal lints ${clean.length}; skirt_c planted at x 190 -> ${found.length} line(s): ${found.join(' | ')}; --from-config exits ${cliClean.status} clean and ${cliPlanted.status} planted, printing ${printed.length}`,
+      "the LINT line is the reference's, verbatim, so an agent reading either tool reads the same finding; a mesh's candidate bone sitting in the background still weights by distance, which is how a rig moves the wrong pixels in silence",
+    );
+
+    const unknownDir = join(dir, 'unknown');
+    // writeParts refuses an unknown tag itself, so the plant is made in the file after a green write.
+    writeProposeFixture(unknownDir);
+    writeFileSync(join(unknownDir, 'parts.json'), readFileSync(join(unknownDir, 'parts.json'), 'utf8').replace('"full:bottomwear"', '"full:skirt"'));
+    const e = refusals(() => readPartSet(unknownDir));
+    const cliUnknown = runCli(['propose', '--parts', unknownDir, '--source', join(unknownDir, 'painting.png'), '--out', join(dir, 'out2')]);
+    const noFaceDir = join(dir, 'noface');
+    writeProposeFixture(noFaceDir, PROPOSE_PARTS.filter((p) => p.name !== 'face'));
+    const noFace = refusals(() => propose(readPartSet(noFaceDir)));
+    say(
+      'PR04_AN_UNKNOWN_TAG_AND_A_MISSING_FACE_ARE_REFUSED_BY_NAME',
+      e !== null &&
+        e.problems.some((p) => p.code === 'PARTS_FROM_KNOWN' && p.object.includes('part "skirt"') && p.detail.includes('"full:skirt"')) &&
+        cliUnknown.status === 1 &&
+        !existsSync(join(dir, 'out2', 'proposal.json')) &&
+        noFace !== null &&
+        noFace.problems[0].code === 'PROPOSE_FACE_PRESENT',
+      `"full:skirt" -> ${codes(e)} (CLI exit ${cliUnknown.status}, proposal.json ${existsSync(join(dir, 'out2', 'proposal.json')) ? 'WRITTEN' : 'not written'}); no face part -> ${codes(noFace)}`,
+      'a role is read from the tag, so a tag the vocabulary does not hold is refused rather than mapped to a near one; the reference crashed with an IndexError on a missing face',
+    );
+
+    // Compare: the config's head moved by (3, 4) -> exactly 5.0 px; everything else 0.0.
+    const moved = prop.bones.map((b) => ('name' in b && b.name === 'head' ? { ...b, at: [b.at[0] + 3, b.at[1] + 4] as [number, number] } : b));
+    const lines = compareLines(compare(prop.bones, moved));
+    say(
+      'PR05_COMPARE_PRINTS_EACH_SHARED_BONE_S_DISTANCE_IN_THE_REFERENCE_FORMAT',
+      lines.includes('  head            5.0 px') && lines.includes('  hip             0.0 px') && lines.includes('matched 19 bones: median 0.0 px, mean 0.3, p90 0.0, max 5.0; <=10 px 19, <=25 px 19'),
+      lines.filter((l) => l.startsWith('  head') || l.startsWith('matched')).join(' | '),
+      'the head moved (3, 4) is a 3-4-5 triangle; 19 origins (4 single bones + 5 chains of 3 links), one of them 5 px off: mean 5/19 = 0.263 -> "0.3"; p90 by numpy\'s linear rule sits at index 19*0.9 + 0.1 - 1 = 16.2, between two zeros',
+    );
+
+    const inside = proposeHeadBox(headRun(100, [['face', 40, 40, 20, 20]]), { w: 100, h: 100 });
+    const leaving = proposeHeadBox(headRun(100, [['face', 40, 0, 20, 20]]), { w: 100, h: 100 });
+    const tooBig = refusals(() => proposeHeadBox(headRun(100, [['face', 4, 4, 92, 92]]), { w: 100, h: 100 }));
+    const faceless = refusals(() => proposeHeadBox(headRun(100, [['front hair', 40, 40, 20, 20]]), { w: 100, h: 100 }));
+    // The face 40..59 x 40..59: size = 19*1.12 = 21.28 about (49.5, 49.5): edges round(38.86) = 39, round(60.14) = 60 -> [39, 39, 60, 60].
+    // At y 0..19 the same box is [39, -1, 60, 20]: one pixel above the canvas, so it moves down 1 at the same size.
+    // A 92 px face spans 91 px: 91*1.12 = 101.92, so its box is 102 px and no 100 px canvas holds it.
+    say(
+      'PR06_A_HEAD_BOX_THAT_LEAVES_THE_CANVAS_IS_SHIFTED_INSIDE_AT_THE_SAME_SIZE',
+      inside.head_box.join(',') === '39,39,60,60' &&
+        inside.shift.join(',') === '0,0' &&
+        leaving.unclamped.join(',') === '39,-1,60,20' &&
+        leaving.head_box.join(',') === '39,0,60,21' &&
+        leaving.shift.join(',') === '0,1' &&
+        tooBig?.problems[0].code === 'HEADBOX_FITS_CANVAS' &&
+        faceless?.problems[0].code === 'HEADBOX_FACE_PRESENT',
+      `inside: [${inside.head_box.join(', ')}] shift ${inside.shift.join(',')}; at the top edge: [${leaving.unclamped.join(', ')}] -> [${leaving.head_box.join(', ')}] shift ${leaving.shift.join(',')}; a box larger than the canvas -> ${codes(tooBig)}; no face -> ${codes(faceless)}`,
+      'the reference proposed a box 118 px above the public demo painting and the crop filled that band with black; the control is the same geometry on a 100 px canvas',
+    );
+
+    const cliOut = join(dir, 'cli');
+    const cli = runCli(['propose', '--parts', dir, '--source', join(dir, 'painting.png'), '--out', cliOut, '--compare', cfgClean]);
+    const written = existsSync(join(cliOut, 'proposal.json')) ? readFileSync(join(cliOut, 'proposal.json'), 'utf8') : '';
+    const overlay = existsSync(join(cliOut, 'render', 'landmarks.png')) ? decodePngBytes(new Uint8Array(readFileSync(join(cliOut, 'render', 'landmarks.png'))), 'landmarks.png') : null;
+    const head = existsSync(join(cliOut, 'render', 'landmarks_head.png')) ? decodePngBytes(new Uint8Array(readFileSync(join(cliOut, 'render', 'landmarks_head.png'))), 'landmarks_head.png') : null;
+    say(
+      'PR07_THE_CLI_WRITES_THE_PROPOSAL_AND_BOTH_OVERLAYS_AND_PRINTS_THE_COMPARISON',
+      cli.status === 0 && written === bytes && overlay?.width === PROPOSE_RIG.w && overlay.height === PROPOSE_RIG.h && head?.width === 600 && head.height === 640 && cli.out.includes('matched 19 bones: median 0.0 px'),
+      `exit ${cli.status}; proposal.json ${written === bytes ? 'is' : 'is NOT'} the serialised proposal; landmarks.png ${overlay === null ? 'absent' : `${overlay.width}x${overlay.height}`}, landmarks_head.png ${head === null ? 'absent' : `${head.width}x${head.height}`}`,
+      'the overlay is the rig size and the head crop is 300x320 rig px at 2x, as the reference draws them; the proposal file is the same bytes the function serialises',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return bad();
+}
+
+/**
+ * The public examples, where they have been fetched: `examples/<key>/` tracks
+ * `config.json` and `proposal.json` (the reference proposer's output), and
+ * `bun run fetch-examples` puts `inputs/painting.png` and the See-through
+ * layer sets `inputs/layers/{full,head}` beside them. Assembled parts are the
+ * assemble stage's output; where an example carries them (`parts.json` beside
+ * a `parts/` directory, under `inputs/` or `expected/`), the proposal half runs.
+ */
+function exampleDirs(): string[] {
+  const root = join(ROOT, 'examples');
+  if (!existsSync(root)) return [];
+  return readdirSync(root)
+    .sort()
+    .map((n) => join(root, n))
+    .filter((d) => existsSync(join(d, 'config.json')) && existsSync(join(d, 'inputs', 'painting.png')) && existsSync(join(d, 'inputs', 'layers', 'full')));
+}
+
+function assembledParts(example: string): string | null {
+  for (const sub of ['inputs', 'expected']) {
+    const d = join(example, sub);
+    if (existsSync(join(d, 'parts.json')) && existsSync(join(d, 'parts'))) return d;
+  }
+  return null;
+}
+
+/** Deep equality of two parsed JSON values, numbers by value: 4 and 4.0 are one number once parsed. */
+function sameJson(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => sameJson(x, b[i]));
+  if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    return ka.length === kb.length && ka.every((k) => k in b && sameJson((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
+  }
+  return a === b;
+}
+
+function runProposeCorpusSuite(): number | null {
+  section('propose: the public examples (corpus)');
+  const examples = exampleDirs();
+  if (examples.length === 0) {
+    console.log('  SKIP  no fetched examples/<key>/inputs (painting.png + layers/full) in this tree, so the proposer ran on the generated fixture only');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — run `bun run fetch-examples` to cover the head box and the proposal on real layers.');
+    return null;
+  }
+  const { say, bad } = counter();
+  const boxes: string[] = [];
+  const wrongBox: string[] = [];
+  for (const d of examples) {
+    const key = relative(join(ROOT, 'examples'), d);
+    try {
+      const painting = readPng(join(d, 'inputs', 'painting.png'));
+      const r = proposeHeadBox(readLayers(join(d, 'inputs', 'layers', 'full')), { w: painting.width, h: painting.height });
+      const cfg = JSON.parse(readFileSync(join(d, 'config.json'), 'utf8')) as { seethrough?: { head_box?: number[] } };
+      const want = cfg.seethrough?.head_box;
+      const line = `${key} [${r.head_box.join(', ')}]${r.shift[0] !== 0 || r.shift[1] !== 0 ? ` (clamped from [${r.unclamped.join(', ')}])` : ''}`;
+      boxes.push(line);
+      if (want === undefined || want.join(',') !== r.head_box.join(',')) wrongBox.push(`${line}; config.json holds ${want === undefined ? 'no head_box' : `[${want.join(', ')}]`}`);
+    } catch (err) {
+      wrongBox.push(`${key}: ${(err as Error).message.split('\n')[0]}`);
+    }
+  }
+  say(
+    'PC01_EVERY_EXAMPLE_HEAD_BOX_PROPOSED_FROM_ITS_FULL_RUN_IS_THE_ONE_ITS_CONFIG_CARRIES',
+    wrongBox.length === 0,
+    wrongBox.length === 0 ? `${examples.length} example(s): ${boxes.join('; ')}` : `${examples.length - wrongBox.length} of ${examples.length}; ${wrongBox.join(' | ')}`,
+    "each example's config carries the head box its head run was actually fed, a clamped one included; a proposer that reproduces it from the full run's layers reproduces the input stage",
+  );
+
+  const withParts = examples.map((d) => [d, assembledParts(d)] as const).filter(([, p]) => p !== null) as Array<readonly [string, string]>;
+  if (withParts.length === 0) {
+    console.log('  SKIP  PC02: no example carries assembled parts (parts.json beside parts/), so no proposal was compared');
+    console.log('          ⚠️ This half is a HOLE: the proposal needs the assemble stage\'s parts.');
+  } else {
+    const failed: string[] = [];
+    for (const [d, parts] of withParts) {
+      const key = relative(join(ROOT, 'examples'), d);
+      try {
+        const P = readPartSet(parts);
+        const a = propose(P);
+        checkProposal(P, a);
+        const again = serializeProposal(propose(readPartSet(parts)));
+        const tracked = JSON.parse(readFileSync(join(d, 'proposal.json'), 'utf8')) as unknown;
+        if (again !== serializeProposal(a)) failed.push(`${key}: two runs differ`);
+        if (!sameJson(JSON.parse(serializeProposal(a)), tracked)) failed.push(`${key}: differs from the tracked proposal.json`);
+      } catch (err) {
+        failed.push(`${key}: ${(err as Error).message.split('\n')[0]}`);
+      }
+    }
+    say(
+      'PC02_EVERY_EXAMPLE_WITH_PARTS_PROPOSES_THE_TRACKED_PROPOSAL_FIELD_BY_FIELD',
+      failed.length === 0,
+      `${withParts.length - failed.length} of ${withParts.length} example(s) with assembled parts${failed.length > 0 ? `; ${failed.join(' | ')}` : ''}`,
+      "the tracked proposal.json is what the reference proposer wrote from the same parts; the port is deterministic, so it must be equal field by field, and loadable, and the same twice",
+    );
+  }
   return bad();
 }
 
@@ -2113,6 +2391,8 @@ function main(): void {
   tally.of('cli', runCliSuite);
   tally.of('rig', runRigSuite);
   tally.of('rig-examples', runRigExamplesSuite);
+  tally.of('propose', runProposeSuite);
+  tally.of('propose-corpus', runProposeCorpusSuite);
   tally.of('tree', runTreeSuite);
   tally.of('corpus', () => runCorpusSuite(corpus));
   tally.of('run-tally', () => runTallySuite(tally));
@@ -2137,10 +2417,11 @@ function main(): void {
   const ran = tally.blocks.length - holes.length;
   const corpusClause = holes.includes('corpus') ? '' : `, + ${n('corpus')} corpus`;
   const examplesClause = holes.includes('rig-examples') ? '' : `, + ${n('rig-examples')} rig-example`;
+  const proposeClause = holes.includes('propose-corpus') ? '' : `, + ${n('propose-corpus')} example-propose`;
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('rig')} rig, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${examplesClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${examplesClause}${proposeClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
