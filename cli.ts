@@ -25,7 +25,7 @@ import { PartsError, problemLine } from './src/errors.ts';
 import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs } from './src/inputs.ts';
 import { type LayerSet, readLayers } from './src/layers.ts';
-import { checkProposal, compare, compareLines, drawLandmarks, lint, lintLine, type PartSet, propose, readPartSet, serializeProposal } from './src/propose.ts';
+import { checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { readPng, writePng } from './src/raster/png.ts';
 import { buildSheet, defaultCaption, type Tile, tilesFrom } from './src/sheet.ts';
 
@@ -70,7 +70,9 @@ usage:
       never its name. Writes <out>/proposal.json (config-shaped: bones, meshes,
       regions, motion with its blink, and notes) and the overlay to correct
       against, <out>/render/landmarks.png and landmarks_head.png. Prints every
-      note and a LINT line for each chain link that lies off its mesh's art.
+      note and a LINT line for each chain link that lies off its mesh's art, for a
+      hip that is not below the chest, and for a hip above ${HIP_MIN_FRACTION} of the figure's
+      height (the shoulders).
       --compare prints each shared bone's distance, proposal to config, in px.
 
   spine-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
@@ -396,7 +398,8 @@ function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: 
   const res = lint(P, spec);
   for (const f of res.findings) console.log(lintLine(f));
   for (const m of res.unknownMeshes) console.log(`note: mesh ${JSON.stringify(m)} names no part in parts.json, so it was not linted`);
-  console.log(`${res.findings.length} LINT line(s) over ${Object.keys(spec.meshes).length - res.unknownMeshes.length} mesh(es)`);
+  for (const b of res.missingTorsoBones) console.log(`note: no single bone named ${JSON.stringify(b)}, so the hip was not linted against the chest${b === 'hip' ? ' or the figure height' : ''}`);
+  console.log(`${res.findings.length} LINT line(s) over ${Object.keys(spec.meshes).length - res.unknownMeshes.length} mesh(es) and the hip`);
   return res.findings.length;
 }
 

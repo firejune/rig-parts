@@ -12,12 +12,17 @@
  *   (stray pixels inflate a box); `eyebrow-*` -> `brow_r`/`brow_l` by POSITION
  *   left or right of the eye axis, never by tag, because the head run has been
  *   observed to swap the two brow tags.
- * - `bottomwear` -> `hip` at its top edge + three skirt chains.
+ * - `bottomwear` -> `hip` at its top edge + three skirt chains — unless that
+ *   hip would sit above `HIP_MIN_FRACTION` of the figure's height (a long
+ *   robe tagged `bottomwear` starts at the collar): then `hip` is the waist,
+ *   the narrowest torso row between the shoulder line and the figure's
+ *   middle, and 0.32 of the figure height when no row narrows enough.
  * - `topwear` -> two outer-robe chains, only when it hangs below the hip line;
  *   a side whose link falls off the art is dropped.
  * - `handwear-*` -> two blobs: one sleeve chain per blob, its mesh taking that
  *   chain and a chest stub at the shoulder; one blob: both chains and the chest
- *   midline, split at the eye axis.
+ *   midline, split at the eye axis — unless the blob is clasped hands (at the
+ *   axis and at most half the shoulders' width), which ride `hip` as a region.
  * - `front hair` -> three fringe chains + one lock chain per strand that hangs
  *   0.3 face heights below the chin.
  * - `back hair` -> one `bun` bone if it ends above the shoulders, else two
@@ -35,10 +40,13 @@
  * Port of the reference `landmarks.py` (`propose`, `expand`, `lint`,
  * `compare`, `draw`). Every rule, constant and evaluation order is the
  * reference's, including three Python behaviours `src/pyfmt.ts` reproduces
- * (`round` to even, `or` treating 0.0 as missing, negative slice starts). Two
- * departures, both stated where they happen: a missing face is refused rather
- * than crashing, and the eye regions are keyed by the eyewhite part's own name
- * rather than by the literal `eyewhite_r`.
+ * (`round` to even, `or` treating 0.0 as missing, negative slice starts).
+ * Five departures, each stated where it happens: a missing face is refused
+ * rather than crashing; the eye regions are keyed by the eyewhite part's own
+ * name rather than by the literal `eyewhite_r`; the long-robe hip and the
+ * clasped-hands region (issues #22, #23), which fire on neither published
+ * example — both proposals are byte-identical with and without them; and
+ * `lint`'s two torso lines, which the reference did not have.
  *
  * Coordinates are rig pixels, y down, origin top-left — the parts' own space.
  */
@@ -288,6 +296,126 @@ function union(a: Mask, b: Mask): Mask {
 // the proposer
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// the torso, read off the figure
+// ---------------------------------------------------------------------------
+
+/**
+ * The hip may not sit above this fraction of the figure's height, measured
+ * from its top. Below it the proposer takes `bottomwear`'s top edge as the
+ * waist; above it that edge is the collar of a long robe and the waist is read
+ * off the silhouette. `lint` holds any config to the same line. The published
+ * examples' hips sit at 0.436 (`demo`) and 0.342 (`sample`) of their figures;
+ * a figure four heads tall has its whole head in the top quarter.
+ */
+export const HIP_MIN_FRACTION = 0.25;
+
+/** A row is a waist when the torso there is at most this fraction of the shoulders' width (the examples' torsos narrow to 0.648 of their shoulders in `demo` and 0.710 in `sample`). */
+export const WAIST_MAX_OF_SHOULDERS = 0.8;
+
+/**
+ * One handwear blob is clasped hands, not two sleeves, when it is at most this
+ * fraction of the shoulders' width: two sleeves that hang from the shoulders
+ * are at least as wide as them (the examples' one-blob sleeves are 1.506 and
+ * 1.580 shoulder widths).
+ */
+export const CLASPED_MAX_OF_SHOULDERS = 0.5;
+
+/** ... and when its centre is within this fraction of the shoulders' width of the eye axis. */
+export const CLASPED_AXIS_OF_SHOULDERS = 0.25;
+
+/**
+ * The tags whose layers make the torso's silhouette: the body without hair,
+ * hands, head parts, tail, wings or held objects — the layers whose width at
+ * a row is the body's width there.
+ */
+export const TORSO_TAGS = ['neck', 'neckwear', 'topwear', 'bottomwear', 'legwear', 'footwear'] as const;
+
+/** The first and last rows holding any part's pixel. */
+function figureExtent(P: PartSet): { top: number; bot: number } {
+  let fig = newMask(P.W, P.H);
+  for (const p of P.recs) fig = union(fig, P.alpha(p));
+  const ys = rowsAny(fig);
+  return { top: ys[0], bot: ys[ys.length - 1] };
+}
+
+/** Per row, the leftmost and rightmost torso pixel (-1 on an empty row). */
+function torsoRows(P: PartSet): { lo: Int32Array; hi: Int32Array } {
+  const lo = new Int32Array(P.H).fill(-1);
+  const hi = new Int32Array(P.H).fill(-1);
+  for (const p of P.recs) {
+    if (!(TORSO_TAGS as readonly string[]).includes(splitFrom(p.from)[1])) continue;
+    const m = P.alpha(p);
+    for (let y = p.y; y < p.y + p.h; y++) {
+      for (let x = p.x; x < p.x + p.w; x++) {
+        if (!m.data[y * P.W + x]) continue;
+        if (lo[y] < 0 || x < lo[y]) lo[y] = x;
+        if (x > hi[y]) hi[y] = x;
+      }
+    }
+  }
+  return { lo, hi };
+}
+
+interface TorsoRow {
+  y: number;
+  width: number;
+  cx: number;
+}
+
+function rowAt(t: { lo: Int32Array; hi: Int32Array }, y: number): TorsoRow | null {
+  return t.lo[y] < 0 ? null : { y, width: t.hi[y] - t.lo[y] + 1, cx: (t.lo[y] + t.hi[y]) / 2 };
+}
+
+/** The widest torso row within one face height below the neck (the first, on a tie): the shoulder line. */
+function shoulderOf(t: { lo: Int32Array; hi: Int32Array }, neckY: number, fh: number): TorsoRow | null {
+  let best: TorsoRow | null = null;
+  for (let y = Math.max(0, Math.ceil(neckY)); y <= Math.min(t.lo.length - 1, Math.floor(neckY + fh)); y++) {
+    const r = rowAt(t, y);
+    if (r !== null && (best === null || r.width > best.width)) best = r;
+  }
+  return best;
+}
+
+/**
+ * The narrowest torso row from the shoulder line down to `bandEnd` (the
+ * figure's middle: below it legs are narrower than any waist — the sample's
+ * legs are 89 px wide at y 1046, its waist 125 px at y 435), when it is a waist at all.
+ */
+function waistOf(t: { lo: Int32Array; hi: Int32Array }, shoulders: TorsoRow, bandEnd: number): TorsoRow | null {
+  let best: TorsoRow | null = null;
+  for (let y = shoulders.y; y <= Math.min(t.lo.length - 1, Math.floor(bandEnd)); y++) {
+    const r = rowAt(t, y);
+    if (r !== null && (best === null || r.width < best.width)) best = r;
+  }
+  return best !== null && best.width <= WAIST_MAX_OF_SHOULDERS * shoulders.width ? best : null;
+}
+
+/**
+ * The note saying the handwear is clasped hands, or `null` when it is not:
+ * every handwear part together is ONE connected component over 500 px (the
+ * floor the sleeve rule applies to a part), at most
+ * `CLASPED_MAX_OF_SHOULDERS` of the shoulder width wide, centred within
+ * `CLASPED_AXIS_OF_SHOULDERS` of it of the eye axis. No shoulder line
+ * measured -> `null`, and the sleeve rule runs as before.
+ */
+function claspedOf(P: PartSet, hw: readonly PartRecord[], shoulders: TorsoRow | null, axis: number): string | null {
+  if (shoulders === null) return null;
+  let mask = newMask(P.W, P.H);
+  for (const p of hw) mask = union(mask, P.alpha(p));
+  const cc = connectedComponents(mask, 8);
+  const blobs = cc.stats.slice(1).filter((st) => st.area > 500);
+  if (blobs.length !== 1) return null;
+  const b = blobs[0];
+  const cx = b.left + b.width / 2;
+  if (b.width > CLASPED_MAX_OF_SHOULDERS * shoulders.width || Math.abs(cx - axis) > CLASPED_AXIS_OF_SHOULDERS * shoulders.width) return null;
+  return (
+    `handwear is one blob (${hw.map((p) => p.name).join(', ')}) ${b.width}x${b.height} px centred at x=${pyFixed(cx, 0)}: ` +
+    `at most ${CLASPED_MAX_OF_SHOULDERS} of the shoulder width (${shoulders.width} px at y=${shoulders.y}) and within ${CLASPED_AXIS_OF_SHOULDERS} of it of the eye axis x=${pyFixed(axis, 0)}, ` +
+    'so clasped hands: a region on hip, no sleeve chains (sleeves painted inside another layer move with it)'
+  );
+}
+
 /** The region role of each tag that has one. Brows are overridden by position below. */
 const TAG_REGION: Readonly<Record<string, string>> = {
   face: 'head',
@@ -346,17 +474,34 @@ export function propose(P: PartSet): Proposal {
   const neckY = neckp.length > 0 ? (chin + neckp[0].y + neckp[0].h) / 2 : chin + 0.12 * fh;
   const bw = P.byTag('bottomwear');
   const tw = P.byTag('topwear');
+  const { top: ftop, bot: fbot } = figureExtent(P);
+  const torso = torsoRows(P);
+  const shoulders = shoulderOf(torso, neckY, fh);
   let hip: [number, number];
-  if (bw.length > 0) hip = [bw[0].x + bw[0].w / 2, bw[0].y + 0.14 * fh];
-  else {
-    // Only this branch reads the figure's extent, so only it builds the union.
-    let fig = newMask(P.W, P.H);
-    for (const p of P.recs) fig = union(fig, P.alpha(p));
-    const ys = rowsAny(fig);
-    const ftop = ys[0];
-    const fbot = ys[ys.length - 1];
+  if (bw.length > 0 && bw[0].y + 0.14 * fh >= ftop + HIP_MIN_FRACTION * (fbot - ftop)) hip = [bw[0].x + bw[0].w / 2, bw[0].y + 0.14 * fh];
+  else if (bw.length === 0) {
     hip = [axis, ftop + 0.32 * (fbot - ftop)];
     notes.push('no bottomwear: hip from 0.32 of figure height');
+  } else {
+    // A long under-robe tagged bottomwear starts at the collar: its top edge
+    // is not the waist, and a hip read off it sits at the shoulders with the
+    // chest above it by half a neck. The waist is read off the figure instead.
+    const limit = ftop + HIP_MIN_FRACTION * (fbot - ftop);
+    notes.push(
+      `hip: ${bw[0].name} (${bw[0].from}) starts at y=${bw[0].y}, so its top + 0.14 face heights (y=${pyFixed(bw[0].y + 0.14 * fh, 0)}) is above ${HIP_MIN_FRACTION} of the figure height (y=${pyFixed(limit, 0)}, figure y ${ftop}..${fbot}): its top edge is not the waist`,
+    );
+    const waist = shoulders === null ? null : waistOf(torso, shoulders, ftop + 0.5 * (fbot - ftop));
+    if (shoulders !== null && waist !== null) {
+      hip = [waist.cx, waist.y + 0.14 * fh];
+      notes.push(`hip from the waist: silhouette narrowest at y=${waist.y} (width ${waist.width} px, shoulders ${shoulders.width} px at y=${shoulders.y}), hip 0.14 face heights below it`);
+    } else {
+      hip = [axis, ftop + 0.32 * (fbot - ftop)];
+      const why =
+        shoulders === null
+          ? `no torso layer (${TORSO_TAGS.join(', ')}) in the shoulder band y ${pyFixed(neckY, 0)}..${pyFixed(neckY + fh, 0)}`
+          : `the silhouette never narrows to ${WAIST_MAX_OF_SHOULDERS} of the shoulders (${shoulders.width} px at y=${shoulders.y}) above the figure's middle, y=${pyFixed(ftop + 0.5 * (fbot - ftop), 0)}`;
+      notes.push(`hip from 0.32 of figure height (no waist found: ${why})`);
+    }
   }
   const chest: [number, number] = [hip[0], neckY + 0.5 * (hip[1] - neckY)];
   const B = (name: string, parent: string, at: readonly [number, number], tip?: readonly [number, number]): void => {
@@ -631,7 +776,14 @@ export function propose(P: PartSet): Proposal {
     if (!sides.has(s)) sides.set(s, []);
     (sides.get(s) as PartRecord[]).push(p);
   }
-  if (hw.length === 2 && sides.size === 2) {
+  const clasped = hw.length > 0 && !(hw.length === 2 && sides.size === 2) ? claspedOf(P, hw, shoulders, axis) : null;
+  if (clasped !== null) {
+    // One blob at the midline, narrower than the shoulders: the hands, clasped
+    // in front. The sleeves are inside another layer and move with it; two
+    // sleeve chains on this blob would stand on one vertical line.
+    for (const p of hw) regions[p.name] = 'hip';
+    notes.push(clasped);
+  } else if (hw.length === 2 && sides.size === 2) {
     // Arms apart: two blobs. Each mesh gets ONLY its own sleeve chain and a
     // short chest segment at its shoulder; the one-blob recipe made hanging
     // hands breathe with the sternum.
@@ -792,17 +944,39 @@ export function expand(bones: readonly BoneEntry[]): { byName: Map<string, Expan
   return { byName, chains };
 }
 
-export interface LintFinding {
+/** A chain link off the art of a mesh it is a candidate for. */
+export interface OffArtFinding {
+  kind: 'off-art';
   bone: string;
   mesh: string;
   at: [number, number];
 }
 
-/** What a mesh check could not look at, said rather than skipped. */
+/** The hip at or above the chest: breathing and every skirt chain hang from the wrong end of the torso. */
+export interface HipAboveChestFinding {
+  kind: 'hip-not-below-chest';
+  hip: [number, number];
+  chest: [number, number];
+}
+
+/** The hip above `HIP_MIN_FRACTION` of the figure's height: a hip at the shoulders. */
+export interface HipTooHighFinding {
+  kind: 'hip-too-high';
+  hip: [number, number];
+  /** The lowest y the hip may take, `figure.top + HIP_MIN_FRACTION * (figure.bot - figure.top)`. */
+  limit: number;
+  figure: { top: number; bot: number };
+}
+
+export type LintFinding = OffArtFinding | HipAboveChestFinding | HipTooHighFinding;
+
+/** What a check could not look at, said rather than skipped. */
 export interface LintResult {
   findings: LintFinding[];
   /** Meshes naming no part in parts.json: nothing to lint them against. */
   unknownMeshes: string[];
+  /** Single bones the torso checks read (`hip`, `chest`) that the bones do not hold: those checks did not run. */
+  missingTorsoBones: string[];
 }
 
 /**
@@ -813,6 +987,12 @@ export interface LintResult {
  * As in the reference, only CHAIN segments are linted: a string segment names
  * the links `<segment><digits>`, so a single bone named as a segment has none,
  * and an explicit `[bone, from, to]` segment is a line, not an origin.
+ *
+ * Then the torso, which the reference did not lint: a single bone `hip` that
+ * is not below a single bone `chest` (larger y), and a `hip` above
+ * `HIP_MIN_FRACTION` of the figure's height (every part's union, top row to
+ * bottom row). Either one is a rig whose breath and skirt hang from the
+ * shoulders, and a mesh check cannot see it.
  */
 export function lint(P: PartSet, spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>> }): LintResult {
   const { byName } = expand(spec.bones);
@@ -835,15 +1015,39 @@ export function lint(P: PartSet, spec: { bones: readonly BoneEntry[]; meshes: Re
       const b = byName.get(n) as ExpandedBone;
       const x = pyInt(b.x);
       const y = pyInt(b.y);
-      if (!isOn(mask, x, y)) findings.push({ bone: n, mesh: mname, at: [x, y] });
+      if (!isOn(mask, x, y)) findings.push({ kind: 'off-art', bone: n, mesh: mname, at: [x, y] });
     }
   }
-  return { findings, unknownMeshes };
+  const single = (n: string): [number, number] | null => {
+    const e = spec.bones.find((b) => 'name' in b && b.name === n);
+    return e !== undefined && 'name' in e ? [e.at[0], e.at[1]] : null;
+  };
+  const hip = single('hip');
+  const chest = single('chest');
+  const missingTorsoBones = [hip === null ? 'hip' : null, chest === null ? 'chest' : null].filter((n): n is string => n !== null);
+  if (hip !== null && chest !== null && hip[1] <= chest[1]) findings.push({ kind: 'hip-not-below-chest', hip, chest });
+  if (hip !== null) {
+    const figure = figureExtent(P);
+    const limit = figure.top + HIP_MIN_FRACTION * (figure.bot - figure.top);
+    if (hip[1] < limit) findings.push({ kind: 'hip-too-high', hip, limit, figure });
+  }
+  return { findings, unknownMeshes, missingTorsoBones };
 }
 
-/** The reference's LINT line, verbatim: `LINT sleeve_r0 at [335, 330] is off the art of mesh 'sleeves'`. */
+/**
+ * The LINT line. The off-art line is the reference's, verbatim:
+ * `LINT sleeve_r0 at [335, 330] is off the art of mesh 'sleeves'`; the two
+ * torso lines keep its shape, `LINT <bone> at [x, y] …`.
+ */
 export function lintLine(f: LintFinding): string {
-  return `LINT ${f.bone} at ${pyIntList(f.at)} is off the art of mesh ${pyRepr(f.mesh)}`;
+  switch (f.kind) {
+    case 'off-art':
+      return `LINT ${f.bone} at ${pyIntList(f.at)} is off the art of mesh ${pyRepr(f.mesh)}`;
+    case 'hip-not-below-chest':
+      return `LINT hip at ${pyIntList(f.hip)} is not below chest at ${pyIntList(f.chest)}: the hip must have the larger y, or breathing and the skirt hang from the shoulders`;
+    case 'hip-too-high':
+      return `LINT hip at ${pyIntList(f.hip)} is above ${HIP_MIN_FRACTION} of the figure height (figure y ${f.figure.top}..${f.figure.bot}, so hip y must be at least ${pyFixed(f.limit, 1)}): a hip at the shoulders`;
+  }
 }
 
 export interface Comparison {

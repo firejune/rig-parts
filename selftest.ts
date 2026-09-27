@@ -72,7 +72,7 @@ import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src
 import { BUILD_OWNS } from './src/build.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, shiftRight, writeCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
-import { PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, writeProposeFixture } from './fixtures/propose.ts';
+import { LONG_ROBE_PARTS, LONG_ROBE_RIG, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, writeProposeFixture } from './fixtures/propose.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
 import { assemble, type AssembleInput, belowCrop, checkGeometry, cleanGhosts, DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, figuresLine, growRim, layerToRig, PROJECT_RULES, proposeFields, proposePlan, stageFields, visibilityCounts } from './src/assemble.ts';
 import { chainLine, findRigc, gateGreen, JUDGEMENT_LINES, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
@@ -1659,6 +1659,123 @@ function runProposeSuite(): number {
       cli.status === 0 && written === bytes && overlay?.width === PROPOSE_RIG.w && overlay.height === PROPOSE_RIG.h && head?.width === 600 && head.height === 640 && cli.out.includes('matched 19 bones: median 0.0 px'),
       `exit ${cli.status}; proposal.json ${written === bytes ? 'is' : 'is NOT'} the serialised proposal; landmarks.png ${overlay === null ? 'absent' : `${overlay.width}x${overlay.height}`}, landmarks_head.png ${head === null ? 'absent' : `${head.width}x${head.height}`}`,
       'the overlay is the rig size and the head crop is 300x320 rig px at 2x, as the reference draws them; the proposal file is the same bytes the function serialises',
+    );
+
+    // ---- issues #22 and #23: the long robe (fixtures/propose.ts LONG_ROBE_PARTS), hand-derived there:
+    //   figure y 40..389 -> 0.25 of it is y 127.25; the robe's top 95 + 0.14*50 = 102 is above it, so the hip comes from the waist.
+    //   shoulder band y 96..146: 80 px (60..139) from y 96; waist band y 96..214 (the figure's middle, 214.5): the belt, 51 px at y 170,
+    //   51 <= 0.8*80 = 64 -> waist; x (75 + 125)/2 = 100; hip y 170 + 7 = 177; chest 96 + 0.5*(177 - 96) = 136.5 -> 136 (to even).
+    //   hands 88,160 24x24: one 576 px blob, 24 <= 0.5*80 = 40 wide, centre 100 on the axis -> clasped, a region on hip.
+    // The reference rule on the same parts: hip [100, 102], chest [100, 99] (three px apart, at the collar), and two sleeve chains on the
+    // 24 px blob starting on one point [100, 99] — four LINT lines (measured with the two departures switched off).
+    const robeDir = join(dir, 'robe');
+    writeProposeFixture(robeDir, LONG_ROBE_PARTS, LONG_ROBE_RIG);
+    const RP = readPartSet(robeDir);
+    const robe = propose(RP);
+    const robeLint = lint(RP, robe).findings.map(lintLine);
+    const robeNames = robe.bones.map((b) => ('name' in b ? b.name : b.chain));
+    const waistNote = 'hip from the waist: silhouette narrowest at y=170 (width 51 px, shoulders 80 px at y=96), hip 0.14 face heights below it';
+    const topNote = robe.notes.find((n) => n.startsWith('hip: robe (full:bottomwear) starts at y=95'));
+    say(
+      'PR08_A_ROBE_TAGGED_BOTTOMWEAR_FROM_THE_COLLAR_TAKES_ITS_HIP_FROM_THE_WAIST_BELOW_THE_CHEST',
+      boneAt(robe.bones, 'hip') === '[100,177]' &&
+        boneAt(robe.bones, 'chest') === '[100,136]' &&
+        robe.notes.includes(waistNote) &&
+        topNote !== undefined &&
+        topNote.includes('above 0.25 of the figure height (y=127, figure y 40..389)') &&
+        robeLint.length === 0 &&
+        boneAt(robe.bones, 'skirt_c') === '[[100,197],[100,250],[100,303]]->[100,356]',
+      `hip ${boneAt(robe.bones, 'hip')} (want [100,177]), chest ${boneAt(robe.bones, 'chest')} (want [100,136]), skirt_c ${boneAt(robe.bones, 'skirt_c')}; notes: ${robe.notes.filter((n) => n.startsWith('hip')).join(' | ')}; ${robeLint.length} LINT line(s)${robeLint.length > 0 ? `: ${robeLint.join(' | ')}` : ''}`,
+      "issue #22: a long under-robe tagged bottomwear starts at the collar, and the reference put the hip 0.14 face heights below that edge — three px under the chest at the collar, with breath and skirt sway hanging from the shoulders and no line saying so",
+    );
+
+    // No waist: the same robe as one 80 px column (60,95 80x265). Every torso row is the shoulders' 80 px, none reaches 64 ->
+    // hip 40 + 0.32*349 = 151.68 -> 152 on the axis; chest 96 + 0.5*(151.68 - 96) = 123.84 -> 124.
+    const straightDir = join(dir, 'straight');
+    writeProposeFixture(
+      straightDir,
+      LONG_ROBE_PARTS.map((p) => (p.name === 'robe' ? { ...p, x: 60, w: 80, rects: undefined } : p)),
+      LONG_ROBE_RIG,
+    );
+    const SP = readPartSet(straightDir);
+    const straight = propose(SP);
+    const fallback = straight.notes.find((n) => n.startsWith('hip from 0.32 of figure height (no waist found: the silhouette never narrows to 0.8 of the shoulders (80 px at y=96)'));
+    say(
+      'PR09_A_ROBE_WITH_NO_WAIST_TAKES_ITS_HIP_FROM_A_STATED_PROPORTION_AND_SAYS_SO',
+      boneAt(straight.bones, 'hip') === '[100,152]' && boneAt(straight.bones, 'chest') === '[100,124]' && fallback !== undefined && lint(SP, straight).findings.length === 0,
+      `hip ${boneAt(straight.bones, 'hip')} (want [100,152]), chest ${boneAt(straight.bones, 'chest')} (want [100,124]); note: ${fallback ?? `ABSENT (notes: ${straight.notes.join(' | ')})`}`,
+      'a waist that is not there is not measured: the fallback is the proportion the reference already uses without bottomwear, and the note names why the waist rule found nothing',
+    );
+
+    // Two planted configs on the robe: hip [100,140] under chest [100,150] (below 127.25, so only the chest line), and hip [100,120]
+    // with chest [100,110] (below the chest, above the figure line: only the height line). Both exit 1 from --from-config.
+    const plantHip = (hipAt: [number, number], chestAt: [number, number]): Record<string, unknown> => {
+      const c = proposalConfig(LONG_ROBE_PARTS, robe) as { bones: BoneEntry[] } & Record<string, unknown>;
+      c.bones = robe.bones.map((b) => ('name' in b && b.name === 'hip' ? { ...b, at: hipAt } : 'name' in b && b.name === 'chest' ? { ...b, at: chestAt } : b));
+      return c;
+    };
+    const aboveChest = plantHip([100, 140], [100, 150]);
+    const tooHigh = plantHip([100, 120], [100, 110]);
+    const lintOf = (c: Record<string, unknown>): string[] =>
+      lint(RP, { bones: (c as { bones: BoneEntry[] }).bones, meshes: robe.meshes })
+        .findings.filter((f) => f.kind !== 'off-art')
+        .map(lintLine);
+    const wantChest = 'LINT hip at [100, 140] is not below chest at [100, 150]: the hip must have the larger y, or breathing and the skirt hang from the shoulders';
+    const wantHigh = 'LINT hip at [100, 120] is above 0.25 of the figure height (figure y 40..389, so hip y must be at least 127.2): a hip at the shoulders';
+    const cfgRobe = join(dir, 'robe.json');
+    const cfgAbove = join(dir, 'robe-above.json');
+    const cfgHigh = join(dir, 'robe-high.json');
+    writeFileSync(cfgRobe, JSON.stringify(proposalConfig(LONG_ROBE_PARTS, robe)));
+    writeFileSync(cfgAbove, JSON.stringify(aboveChest));
+    writeFileSync(cfgHigh, JSON.stringify(tooHigh));
+    const robeOut = join(dir, 'robe-out');
+    const cliRobe = runCli(['propose', '--parts', robeDir, '--source', join(robeDir, 'painting.png'), '--out', robeOut, '--from-config', cfgRobe]);
+    const cliAbove = runCli(['propose', '--parts', robeDir, '--source', join(robeDir, 'painting.png'), '--out', robeOut, '--from-config', cfgAbove]);
+    const cliHigh = runCli(['propose', '--parts', robeDir, '--source', join(robeDir, 'painting.png'), '--out', robeOut, '--from-config', cfgHigh]);
+    const printedOf = (r: { out: string }): string[] => r.out.split('\n').filter((l) => l.startsWith('LINT hip'));
+    say(
+      'PR10_A_HIP_NOT_BELOW_THE_CHEST_OR_ABOVE_A_QUARTER_OF_THE_FIGURE_IS_A_LINT_LINE',
+      lintOf(aboveChest).join('|') === wantChest &&
+        lintOf(tooHigh).join('|') === wantHigh &&
+        cliRobe.status === 0 &&
+        cliAbove.status === 1 &&
+        cliHigh.status === 1 &&
+        printedOf(cliAbove).join('|') === wantChest &&
+        printedOf(cliHigh).join('|') === wantHigh,
+      `hip under chest -> ${lintOf(aboveChest).join(' | ') || 'no line'}; hip at y 120 -> ${lintOf(tooHigh).join(' | ') || 'no line'}; --from-config exits ${cliRobe.status} on the proposal, ${cliAbove.status} and ${cliHigh.status} planted`,
+      "issue #22: no LINT line or note flagged a hip at shoulder height, and a mesh lint cannot see it — every chain link was on its art. The two lines are separate because a proposal's chest is half-way to the neck, so a hip at the collar is still below its chest (the issue's hip y 270 under chest y 259): only the height line catches that case",
+    );
+
+    // Clasped hands vs the three shapes that must keep the sleeve rule: the same hands moved off the axis (20,160: centre 32,
+    // 68 px from the axis, over 0.25*80 = 20), widened to 50 px at the axis (75,160 50x24: over 0.5*80 = 40), and PR01's two blobs.
+    const handsCase = (name: string, hands: Partial<ProposeFixturePart>): Proposal => {
+      const d = join(dir, name);
+      writeProposeFixture(
+        d,
+        LONG_ROBE_PARTS.map((p) => (p.name === 'hands' ? { ...p, ...hands } : p)),
+        LONG_ROBE_RIG,
+      );
+      return propose(readPartSet(d));
+    };
+    const offAxis = handsCase('offaxis', { x: 20 });
+    const wide = handsCase('wide', { x: 75, w: 50 });
+    const sleeveChains = (p: Proposal): string[] => p.bones.filter((b) => 'chain' in b && b.chain.startsWith('sleeve_')).map((b) => ('chain' in b ? b.chain : ''));
+    const claspedNote = robe.notes.find((n) => n.startsWith('handwear is one blob (hands) 24x24 px centred at x=100: at most 0.5 of the shoulder width (80 px at y=96)'));
+    say(
+      'PR11_ONE_NARROW_BLOB_AT_THE_AXIS_IS_CLASPED_HANDS_A_REGION_WITH_NO_SLEEVE_CHAINS',
+      robe.regions.hands === 'hip' &&
+        !('hands' in robe.meshes) &&
+        sleeveChains(robe).length === 0 &&
+        claspedNote !== undefined &&
+        robeNames.join(',') === 'hip,chest,neck,head,skirt_r,skirt_c,skirt_l' &&
+        sleeveChains(offAxis).join(',') === 'sleeve_r,sleeve_l' &&
+        'hands' in offAxis.meshes &&
+        sleeveChains(wide).join(',') === 'sleeve_r,sleeve_l' &&
+        'hands' in wide.meshes &&
+        sleeveChains(prop).join(',') === 'sleeve_r,sleeve_l' &&
+        prop.notes.includes('handwear is two blobs: one sleeve chain per mesh, chest only at the shoulder'),
+      `clasped: region ${robe.regions.hands ?? 'none'}, sleeve chains [${sleeveChains(robe).join(', ')}], note ${claspedNote === undefined ? 'ABSENT' : 'present'}; off the axis: [${sleeveChains(offAxis).join(', ')}]; 50 px wide: [${sleeveChains(wide).join(', ')}]; two blobs (PR01): [${sleeveChains(prop).join(', ')}]`,
+      'issue #23: hands clasped in front of the waist are one small blob at the midline, and the one-blob rule read it as both sleeves — two chains on one vertical line, six LINT lines once pasted. Two sleeves hanging from the shoulders are at least as wide as them, so a blob half as wide cannot be both',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
