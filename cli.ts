@@ -158,7 +158,9 @@ usage:
       <out>/render/recomposite_rig.png and <out>/render/${ERROR_MAP_FILE} (the error
       map: uncovered error px red, covered error px blue, the rest the painting in
       light grey). Reads config.seethrough.head_box and
-      .resolution and config.assemble.rig_scale, .plan and .extend_below_crop.
+      .resolution and config.assemble.rig_scale, .plan and .extend_below_crop,
+      and no rig section: bones, meshes, regions and motion need not exist yet,
+      because propose drafts them from these parts (AUTHORING §4, the table).
       Prints one line per part, the seam override counts, the \`pixels:\` totals
       (opaque = visible + occluded; taken from the painting; visible but not
       projected), and \`recomposite vs source\` (mean |d| and % within 8 over the
@@ -337,6 +339,9 @@ function cmdSheet(args: string[]): number {
     const tiles: Tile[] = [{ name: 'source', image: src, caption: basename(source) }];
     for (const path of layers) tiles.push(...tilesFrom(path));
     const sheet = buildSheet(tiles, cols, cell);
+    // The README's loop writes sheets/layers.png into a folder nothing made yet;
+    // every other command creates its --out, so this one does too.
+    mkdirSync(dirname(out), { recursive: true });
     writePng(out, sheet);
     console.log(`spine-parts sheet: ${out}`);
     console.log(`  ${tiles.length} tile(s) in ${cols} column(s) of ${cell} px, sheet ${sheet.width}x${sheet.height}`);

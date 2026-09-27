@@ -56,7 +56,9 @@ stage writes are the whole interface.
    gap See-through left (a skirt split into two legs), fixed in the plan or the layers,
    not in the rig. Then `spine-parts propose --parts work/rig
    --source <painting> --out work` → copy `bones`, `meshes`, `regions`, `motion`
-   from `proposal.json` into the config.
+   from `proposal.json` into the config. `assemble` needs the plan and none of
+   those four; do not stub them to get past it (AUTHORING §4 says what each step
+   requires).
 6. Correct against `render/landmarks.png` and `note:` lines; `propose …
    --from-config config.json` until it prints no `LINT` line.
 7. `spine-parts build --config … --source … --full … --head … --out out --loop`.

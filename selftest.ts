@@ -105,7 +105,7 @@ import {
 import { chainLine, findRigc, type FrameSet, gateGreen, JUDGEMENT_LINES, parsePackLines, readCheckInputs, readFrameSet, REPORTED_LINES, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { sineTrack } from './src/motion.ts';
-import { type BoneEntry, type CharacterConfig, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
 import { PartsError, type Problem } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
@@ -3481,8 +3481,183 @@ function runChainSuite(): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// the README loop, run in order on a fresh config (issue #20)
+// ---------------------------------------------------------------------------
+
+/** The `spine-parts …` lines of README.md's "The loop, for an agent" block, in order, comments dropped; a string says why none could be read. */
+function readmeLoopLines(readme: string): string[] | string {
+  const at = readme.indexOf('## The loop, for an agent');
+  if (at < 0) return 'README.md has no "## The loop, for an agent" section';
+  const open = readme.indexOf('```sh\n', at);
+  const close = open < 0 ? -1 : readme.indexOf('\n```', open + 6);
+  if (open < 0 || close < 0) return 'the loop section has no ```sh block';
+  const lines = readme
+    .slice(open + 6, close)
+    .split('\n')
+    .map((l) => l.replace(/\s+#.*$/, '').trim())
+    .filter((l) => l.startsWith('spine-parts '));
+  return lines.length === 0 ? 'the loop block holds no spine-parts line' : lines;
+}
+
+interface LoopRun {
+  /** Each step as `command status`, in the order run. */
+  ran: string[];
+  /** The first step that did not exit 0, its status and its first FAIL line (or its last line, when it printed none). */
+  refused: { line: string; status: number; first: string } | null;
+}
+
+/**
+ * Run the README's loop lines against one fetched example, in `work`, as an
+ * agent following the README would: the See-through runs are the fetched
+ * layers, every relative path in a line lands in `work` except the painting and
+ * the two runs, and what a `#    ->` comment says to paste into the config is
+ * pasted — the head box, the plan, and the proposal's rig sections, nothing
+ * else and nothing corrected. The config starts as the state after the first
+ * step's own fields are authored: `key`, `seethrough` without `head_box`, and
+ * `assemble.rig_scale`, copied from the example's config.
+ */
+function runReadmeLoop(lines: readonly string[], ex: string, work: string): LoopRun {
+  const inputs = join(ex, 'inputs');
+  const painting = readPng(join(inputs, 'painting.png'));
+  const recorded = JSON.parse(readFileSync(join(ex, 'config.json'), 'utf8')) as { key: string; seethrough: Record<string, unknown>; assemble: { rig_scale: number } };
+  const { head_box: _box, ...seethrough } = recorded.seethrough;
+  const configPath = join(work, 'config.json');
+  const cfg: Record<string, unknown> & { seethrough: Record<string, unknown>; assemble: Record<string, unknown> } = {
+    key: recorded.key,
+    seethrough,
+    assemble: { rig_scale: recorded.assemble.rig_scale },
+  };
+  mkdirSync(work, { recursive: true });
+  const save = (): void => writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`);
+  save();
+  const fixed: Record<string, string> = {
+    'painting.png': join(inputs, 'painting.png'),
+    'layers/full': join(inputs, 'layers', 'full'),
+    'layers/head': join(inputs, 'layers', 'head'),
+    'config.json': configPath,
+  };
+  const place = (token: string): string => {
+    if (token.startsWith('--')) return token;
+    if (/^\d+x\d+$/.test(token)) return `${painting.width}x${painting.height}`;
+    return fixed[token] ?? join(work, token);
+  };
+  const ran: string[] = [];
+  const known = ['inputs', 'layers', 'sheet', 'propose', 'assemble', 'build'];
+  for (const line of lines) {
+    const [command, ...rest] = line.split(/\s+/).slice(1);
+    const args = [command, ...rest.map(place)];
+    if (!known.includes(command)) return { ran, refused: { line, status: -1, first: `"${command}" is not a command this control knows how to run; teach runReadmeLoop what the README says to do with it` } };
+    const r = runCli(args);
+    ran.push(`${command}${args.includes('--head-box') ? ' --head-box' : args.includes('--propose-plan') ? ' --propose-plan' : args.includes('--from-config') ? ' --from-config' : ''} ${r.status}`);
+    if (r.status !== 0) {
+      const printed = r.out.split('\n').filter((l) => l.trim() !== '');
+      // A refusal's first FAIL line; for a crash, its first error line rather than the runtime's banner.
+      const first = printed.find((l) => /FAIL {2}/.test(l)) ?? printed.find((l) => /\b(?:[A-Z]+[a-z]*Error|E[A-Z]{3,}):/.test(l)) ?? printed[printed.length - 1] ?? '(nothing printed)';
+      return { ran, refused: { line, status: r.status, first: first.trim() } };
+    }
+    const out = (): string => args[args.indexOf('--out') + 1];
+    if (command === 'propose' && args.includes('--head-box')) {
+      const last = r.out.split('\n').filter((l) => l.trim() !== '').pop() ?? '';
+      cfg.seethrough.head_box = (JSON.parse(last) as { head_box: unknown }).head_box;
+      save();
+    } else if (command === 'assemble' && args.includes('--propose-plan')) {
+      const p = JSON.parse(r.out) as { plan: unknown; extend_below_crop: unknown };
+      cfg.assemble.plan = p.plan;
+      cfg.assemble.extend_below_crop = p.extend_below_crop;
+      save();
+    } else if (command === 'propose' && !args.includes('--from-config') && !args.includes('--compare')) {
+      const p = JSON.parse(readFileSync(join(out(), 'proposal.json'), 'utf8')) as Record<string, unknown>;
+      for (const k of ['bones', 'meshes', 'regions', 'motion']) cfg[k] = p[k];
+      save();
+    }
+  }
+  return { ran, refused: null };
+}
+
+function runReadmeLoopSuite(): number | null {
+  section('readme-loop: the README\'s loop, in order, on a fresh config, on every fetched example');
+  const found = exampleDirs().filter((d) => existsSync(join(d, 'inputs', 'layers', 'head')));
+  if (found.length === 0) {
+    console.log('  SKIP  no fetched example (examples/<key>/config.json + inputs/painting.png + inputs/layers/{full,head}), so the README loop ran on no painting');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — run `bun run fetch-examples` (CI does) to follow the README from a fresh config.');
+    return null;
+  }
+  const { say, bad } = counter();
+  const lines = readmeLoopLines(readFileSync(join(ROOT, 'README.md'), 'utf8'));
+  const dir = temp('readme-loop');
+  try {
+    if (typeof lines === 'string') {
+      say('RL01_THE_README_LOOP_RUNS_IN_ORDER_ON_A_FRESH_CONFIG', false, lines, '');
+      return bad();
+    }
+    for (const ex of found) {
+      const key = relative(join(ROOT, 'examples'), ex);
+      const r = runReadmeLoop(lines, ex, join(dir, key));
+      say(
+        `RL01_THE_README_LOOP_RUNS_IN_ORDER_ON_A_FRESH_CONFIG[${key}]`,
+        r.refused === null && r.ran.length === lines.length,
+        r.refused === null
+          ? `${r.ran.length} README step(s) in order, each exit 0: ${r.ran.join(', ')}; the config started with key, seethrough (no head_box) and assemble.rig_scale, and got the head box, the plan and the proposal's four rig sections pasted, uncorrected`
+          : `step ${r.ran.length + (r.refused.status === -1 ? 1 : 0)} of ${lines.length} refused (exit ${r.refused.status}): \`${r.refused.line}\` — ${r.refused.first}`,
+        'issue #20: the README loop is what an agent follows, so it is run as written; plain assemble once refused the config for the four sections the next step drafts, and the only way past was a stub of invented rig fields',
+      );
+    }
+    // The planted order: assemble before the plan exists. It must stop at
+    // that step, name it, and quote the loader's line — the reporter has to be
+    // seen naming a refusal, and the refusal has to say which command writes a plan.
+    const assembleAt = lines.findIndex((l) => /^spine-parts assemble /.test(l) && !l.includes('--propose-plan'));
+    const planAt = lines.findIndex((l) => l.includes('--propose-plan'));
+    const early = assembleAt > planAt && planAt >= 0 ? [...lines.slice(0, planAt), lines[assembleAt]] : null;
+    const planted = early === null ? null : runReadmeLoop(early, found[0], join(dir, 'planted'));
+    const unknown = runReadmeLoop(['spine-parts animate --config config.json'], found[0], join(dir, 'unknown'));
+    const plantedLine = planted?.refused?.first ?? '';
+    say(
+      'RL02_AN_ASSEMBLE_BEFORE_ITS_PLAN_AND_A_LINE_THE_CONTROL_CANNOT_RUN_ARE_NAMED_AS_THE_STEP_THAT_STOPPED',
+      planted !== null &&
+        planted.refused !== null &&
+        planted.refused.line === lines[assembleAt] &&
+        plantedLine.startsWith('FAIL  CONFIG_FIELD_PRESENT: config.assemble.plan') &&
+        plantedLine.includes('assemble --propose-plan') &&
+        unknown.refused !== null &&
+        unknown.refused.status === -1 &&
+        unknown.ran.length === 0,
+      `the README's steps up to --propose-plan, then plain assemble -> ${planted === null ? 'the README has no such pair' : `stopped at \`${planted.refused?.line ?? 'nothing'}\`: ${plantedLine}`}; an unknown "animate" line -> ${unknown.refused?.first ?? 'ran'}`,
+      'a control that has never been seen to stop is not a control; the planted order is also the message an agent meets when it skips --propose-plan',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return bad();
+}
+
+// ---------------------------------------------------------------------------
 // the assemble stage
 // ---------------------------------------------------------------------------
+
+/**
+ * Where docs/AUTHORING.md §4's table of loaders disagrees with
+ * `CONFIG_REQUIRES`: a loader with no row, a row for no loader, or a row whose
+ * "requires" cell is not that loader's fields in order. Empty is agreement.
+ */
+function doorTableFaults(guide: string): string[] {
+  const lines = guide.split('\n');
+  const head = lines.findIndex((l) => /^\| loader \| steps \| requires \|/.test(l));
+  if (head < 0) return ['docs/AUTHORING.md has no "| loader | steps | requires |" table'];
+  const rows = new Map<string, string[]>();
+  for (const l of lines.slice(head + 2)) {
+    if (!l.startsWith('|')) break;
+    const cells = l.split(/(?<!\\)\|/).slice(1, -1).map((c) => c.trim());
+    rows.set(cells[0].replace(/`/g, ''), [...(cells[2] ?? '').matchAll(/`([^`]+)`/g)].map((m) => m[1]));
+  }
+  const faults: string[] = [];
+  for (const [door, fields] of Object.entries(CONFIG_REQUIRES) as Array<[ConfigDoor, readonly string[]]>) {
+    const row = rows.get(door);
+    if (row === undefined) faults.push(`no row for the ${door} loader`);
+    else if (row.join(',') !== fields.join(',')) faults.push(`the ${door} row requires [${row.join(', ')}]; the loader requires [${fields.join(', ')}]`);
+  }
+  for (const door of rows.keys()) if (!(door in CONFIG_REQUIRES)) faults.push(`a row for "${door}", which is no loader`);
+  return faults;
+}
 
 function fixtureInput(dir: string, painting = 'painting.png'): Omit<AssembleInput, 'seamRule'> {
   return {
@@ -3753,6 +3928,8 @@ function runAssembleSuite(): number {
       ['a config with no seethrough block', 'ASSEMBLE_FIELD_PRESENT', () => stageFields(parseConfig(assembleConfig({ seethrough: false })))],
       ['a proposal config with no rig_scale', 'CONFIG_FIELD_PRESENT', () => proposeFields(parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false, head_box: HEAD_BOX }, assemble: {} }, 'layers'))],
       ['a proposal config with no head box yet', 'ASSEMBLE_FIELD_PRESENT', () => proposeFields(parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false }, assemble: { rig_scale: 0.5 } }, 'layers'))],
+      ['an assemble config with no plan yet', 'CONFIG_FIELD_PRESENT', () => stageFields(parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false, head_box: HEAD_BOX }, assemble: { rig_scale: 0.5 } }, 'assemble'))],
+      ['an assemble config with no head box yet', 'ASSEMBLE_FIELD_PRESENT', () => stageFields(parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false }, assemble: { rig_scale: 0.5, plan: PLAN } }, 'assemble'))],
     ];
     const outcomes = mutants.map(([what, code, run]) => {
       const err = refusals(run);
@@ -3815,6 +3992,56 @@ function runAssembleSuite(): number {
         !existsSync(badProjectOut),
       `--propose-plan -> exit ${pp.status}, ${printed === null ? 'not JSON' : 'JSON equal to the derived proposal'}; no --out -> exit ${noOut.status}; --project thin -> exit ${badProject.status}, "${badProjectLine.trim()}", ${existsSync(badProjectOut) ? 'wrote an out directory' : 'nothing written'}`,
       'the proposal is read by an agent and pasted into the config, so it is printed as the JSON it is and nothing else',
+    );
+
+    // AUTHORING §4's table against the loaders' one statement of what they require.
+    const guide = readFileSync(join(ROOT, 'docs', 'AUTHORING.md'), 'utf8');
+    const tableFaults = doorTableFaults(guide);
+    const assembleRow = guide.split('\n').find((l) => l.startsWith('| `assemble` |')) ?? '';
+    const plantedFaults = doorTableFaults(guide.replace(assembleRow, assembleRow.replace(', `assemble.plan`', '')));
+    say(
+      'AS15_AUTHORING_S_TABLE_OF_WHAT_EACH_STEP_REQUIRES_IS_THE_LOADERS',
+      tableFaults.length === 0 && plantedFaults.length === 1 && plantedFaults[0].includes('assemble'),
+      `${Object.keys(CONFIG_REQUIRES).length} loader row(s) equal CONFIG_REQUIRES: ${tableFaults.length === 0 ? 'yes' : tableFaults.join('; ')}; the assemble row without assemble.plan -> ${plantedFaults.join('; ') || 'not caught'}`,
+      'issue #20: the step list said what the config held at each step in prose, twice, and plain assemble required four sections no step before it writes; the loaders now take their required keys from one constant and the guide is held to it',
+    );
+
+    // The README's order on the flat fixture, as far as the fixture can go:
+    // a fresh config, --propose-plan pasted, then plain assemble. Past this the
+    // fixture's 14x24 skirt makes a proposal rig refuses (RIG_CHAIN_POINTS),
+    // so the whole loop is run on the fetched examples (RL01).
+    const fresh = join(dir, 'fresh');
+    const early: Record<string, unknown> = { key: 'fresh', seethrough: { resolution: RESOLUTION, steps: 1, seed: 0, offload: false, head_box: HEAD_BOX }, assemble: { rig_scale: RIG_SCALE } };
+    writeAssembleFixture(fresh, early);
+    const freshArgs = (config: string, out: string | null): string[] => [
+      'assemble', ...(out === null ? ['--propose-plan'] : []), '--source', join(fresh, 'painting.png'), '--full', join(fresh, 'full'), '--head', join(fresh, 'head'), '--config', join(fresh, config), ...(out === null ? [] : ['--out', join(fresh, out)]),
+    ];
+    const noPlan = runCli(freshArgs('config.json', 'noplan'));
+    const noPlanLine = noPlan.out.split('\n').find((l) => l.includes('FAIL  CONFIG_FIELD_PRESENT: config.assemble.plan')) ?? '';
+    const proposed = runCli(freshArgs('config.json', null));
+    const proposal = proposed.status === 0 ? (JSON.parse(proposed.out) as { plan: unknown; extend_below_crop: unknown }) : null;
+    const planned = { ...early, assemble: { rig_scale: RIG_SCALE, plan: proposal?.plan, extend_below_crop: proposal?.extend_below_crop } };
+    writeFileSync(join(fresh, 'planned.json'), JSON.stringify(planned));
+    const assembled = runCli(freshArgs('planned.json', 'work'));
+    const wrote = filesUnder(join(fresh, 'work'));
+    const buildEarly = runCli(buildArgs(fresh, join(fresh, 'built'), 'planned.json'));
+    const buildLine = buildEarly.out.split('\n').find((l) => l.startsWith('[assemble]   FAIL  CONFIG_FIELD_PRESENT: config.bones')) ?? '';
+    say(
+      'AS16_A_FRESH_CONFIG_WITH_ITS_PLAN_PASTED_ASSEMBLES_AND_BUILD_STILL_ASKS_THE_FULL_LOADER',
+      noPlan.status === 1 &&
+        noPlanLine.includes('assemble --propose-plan') &&
+        !existsSync(join(fresh, 'noplan')) &&
+        proposal !== null &&
+        assembled.status === 0 &&
+        wrote.includes(join('rig', 'parts.json')) &&
+        wrote.filter((f) => f.startsWith(join('rig', 'parts'))).length === (proposal.plan as unknown[]).length + 1 &&
+        buildEarly.status === 1 &&
+        buildLine !== '' &&
+        buildEarly.out.includes('build: stopped at assemble; no later stage ran') &&
+        entries(join(fresh, 'built')).length === 0,
+      `key + seethrough + rig_scale, no plan -> exit ${noPlan.status}, "${noPlanLine.trim()}"; --propose-plan pasted -> assemble exit ${assembled.status}, wrote ${wrote.length} file(s); ` +
+        `the same config to build -> exit ${buildEarly.status}, "${buildLine.trim()}", --out holds [${entries(join(fresh, 'built')).join(', ')}]`,
+      'issue #20: assemble reads the plan and the See-through block and nothing of the rig, so it reads through the early door; build runs rig next, so it still asks the full loader before its assemble writes anything',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -5310,6 +5537,7 @@ function main(): void {
   tally.of('comfy', runComfySuite);
   tally.of('build', runBuildSuite);
   tally.of('chain', runChainSuite);
+  tally.of('readme-loop', runReadmeLoopSuite);
   tally.of('tree', runTreeSuite);
   tally.of('corpus', () => runCorpusSuite(corpus));
   tally.of('run-tally', () => runTallySuite(tally));
@@ -5334,13 +5562,14 @@ function main(): void {
   const ran = tally.blocks.length - holes.length;
   const corpusClause = holes.includes('corpus') ? '' : `, + ${n('corpus')} corpus`;
   const chainClause = holes.includes('chain') ? '' : `, + ${n('chain')} example-chain`;
+  const readmeLoopClause = holes.includes('readme-loop') ? '' : `, + ${n('readme-loop')} readme-loop`;
   const proposeClause = holes.includes('propose-corpus') ? '' : `, + ${n('propose-corpus')} example-propose`;
   const assembleExamplesClause = holes.includes('assemble-examples') ? '' : `, + ${n('assemble-examples')} assemble-example`;
   const inputsClause = holes.includes('inputs-examples') ? '' : `, + ${n('inputs-examples')} example-inputs`;
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here

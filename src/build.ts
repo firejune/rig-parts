@@ -45,7 +45,7 @@ import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
 import { type CheckReport, JUDGEMENT_LINES, type JudgementLine, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
-import { loadConfig } from './config.ts';
+import { loadConfig, loadEarlyConfig } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
 import { encodeGif } from './gif.ts';
 import type { PaletteError } from './palette.ts';
@@ -118,8 +118,9 @@ export const ERROR_MAP_FILE = 'recomposite_error_rig.png';
 export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, log: Log): AssembleResult {
   const src = readSource(input.source);
   const runs = readRuns(input.full, input.head);
-  const cfg = loadConfig(input.config);
-  const fields = stageFields(cfg);
+  // The early door: assemble runs before propose has drafted bones, meshes,
+  // regions and motion, so it requires only what it reads (issue #20).
+  const fields = stageFields(loadEarlyConfig(input.config, 'assemble'));
   const result = assemble({ source: src, full: runs.full, head: runs.head, ...fields, seamRule: input.seam, projectRule: input.project });
   // Emit only after green: every refusal above has already thrown.
   mkdirSync(outs.partsDir, { recursive: true });
@@ -473,6 +474,11 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   log(`spine-parts build: ${input.config} -> ${out}, seam rule ${input.seam}, projection rule ${input.project}${input.loop ? ', with the idle loop' : ''}`);
 
   try {
+    // build runs rig next, which needs the whole config, so the full loader is
+    // asked first: a config rig would refuse is refused before assemble writes
+    // anything, and under [assemble], as it was before the stage had its own
+    // narrower door.
+    loadConfig(input.config);
     assembleStage(
       { source: input.source, full: input.full, head: input.head, config: input.config, seam: input.seam, project: input.project },
       { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, ERROR_MAP_FILE) },

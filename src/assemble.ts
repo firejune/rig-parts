@@ -54,7 +54,7 @@
  *
  * Pure: no clock, no randomness, no file access. The CLI reads and writes.
  */
-import type { CharacterConfig, EarlyConfig, Extend, PlanEntry, Run } from './config.ts';
+import type { CharacterConfig, EarlyConfig, Extend, PlanEntry, Run, SeeThrough } from './config.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
 import type { PartRecord, PartsFile, RecompositeRecord } from './parts.ts';
@@ -1416,8 +1416,15 @@ export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx =
 // what the stage reads from a config
 // ---------------------------------------------------------------------------
 
-/** The config fields the stage reads, from a config `loadConfig` accepted. `seethrough` is optional there and required here. */
-export function stageFields(cfg: CharacterConfig): { resolution: number; headBox: [number, number, number, number]; rigScale: number; plan: PlanEntry[]; extend: Extend[] } {
+/**
+ * The config fields the stage reads: `seethrough.resolution` and `.head_box`,
+ * `assemble.rig_scale`, `.plan` and `.extend_below_crop` — and nothing of the
+ * rig. The CLI hands it a config from `parseEarlyConfig(raw, 'assemble')`; a
+ * config the full loader accepted is the same shape with more in it. The head
+ * box is refused here rather than by the loader, because `inputs` runs before
+ * it exists; `seethrough` too, for a full-loader config, where it is optional.
+ */
+export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble'>): { resolution: number; headBox: [number, number, number, number]; rigScale: number; plan: PlanEntry[]; extend: Extend[] } {
   const problems: Problem[] = [];
   if (cfg.seethrough === undefined) {
     problems.push({ code: 'ASSEMBLE_FIELD_PRESENT', object: 'config.seethrough', detail: 'is absent; assemble reads seethrough.resolution and seethrough.head_box, which place the two runs on the painting' });
@@ -1425,7 +1432,7 @@ export function stageFields(cfg: CharacterConfig): { resolution: number; headBox
     problems.push({ code: 'ASSEMBLE_FIELD_PRESENT', object: 'config.seethrough.head_box', detail: 'is absent; the head run cannot be placed on the painting without the box it was cropped from' });
   }
   refuseIfAny(problems);
-  const st = cfg.seethrough as NonNullable<CharacterConfig['seethrough']>;
+  const st = cfg.seethrough as SeeThrough;
   return {
     resolution: st.resolution,
     headBox: st.head_box as [number, number, number, number],
