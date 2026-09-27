@@ -182,6 +182,7 @@ spine-parts assemble --source painting.png --full layers/full --head layers/head
 #    -> work/rig: parts.json and parts/; the config holds no bones, meshes, regions or motion yet
 #    -> read the `uncovered hole N:` lines and look at work/render/recomposite_error_rig.png:
 #       red is painting that no part holds, and no later gate can see it
+#    -> a large red hole neither run holds? add an assemble.patches entry (cut from the painting) and assemble again
 spine-parts propose --parts work/rig --source painting.png --out work
 #    -> proposal.json and render/landmarks.png; correct it, copy bones/meshes/regions/motion into config.json
 spine-parts propose --parts work/rig --source painting.png --out work --from-config config.json

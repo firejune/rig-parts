@@ -25,7 +25,9 @@
  *   no art: cut through art, each piece is resampled against its own
  *   transparent edge and the render changes at rest — measured on the demo
  *   example, 36 px of the setup pose (max 7 levels) — while a clear-row cut
- *   changes no pixel outside the blink (issue #26, `RG16`).
+ *   changes no pixel outside the blink (issue #26, `RG16`). A `painting:`
+ *   patch (`assemble.patches`) is always a region; its slot sits where
+ *   parts.json puts it, which is where its `draw` put it.
  * - **The idle** and its control bones (`src/motion.ts`).
  *
  * Every part image is padded by {@link PAD} transparent pixels on each side
@@ -46,7 +48,7 @@ import { cropToSpineY } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { artCoverage, ART_ALPHA, latticeMesh, ONE_LOOP_PASSES } from './mesh.ts';
 import { BLINK_SPAN, CONTROL_SUFFIX, controlledBones, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
-import type { PartsFile } from './parts.ts';
+import { PAINTING_RUN, type PartsFile, readFrom } from './parts.ts';
 import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
 import { influences, type Segment } from './weights.ts';
@@ -247,6 +249,9 @@ export function buildRig(cfg: CharacterConfig, parts: PartsFile, images: Readonl
     const inR = p.name in cfg.regions;
     if (!inM && !inR) fail('RIG_PART_ATTACHED', `part "${p.name}"`, 'is in parts.json and has neither a config.meshes nor a config.regions entry; exactly one is required');
     if (inM && inR) fail('RIG_PART_ATTACHED', `part "${p.name}"`, 'has both a config.meshes and a config.regions entry; exactly one is required');
+    else if (inM && readFrom(p.from)?.run === PAINTING_RUN) {
+      fail('RIG_PART_ATTACHED', `part "${p.name}"`, `is a painting patch (${p.from}) and has a config.meshes entry; a patch is a region — config.regions.${p.name} names its bone`);
+    }
     const img = images.get(p.name);
     if (img === undefined) fail('RIG_PNG_PRESENT', `part "${p.name}"`, `has no parts/${p.name}.png`);
     else if (img.width !== p.w || img.height !== p.h) {

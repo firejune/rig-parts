@@ -4,7 +4,9 @@
  *
  * It is a MEASUREMENT record as much as a manifest. Each part says where it
  * came from (`from` = `<run>:<tag>`, the See-through run and tag — the only
- * thing downstream stages classify a part by), where it sits in rig pixels
+ * thing downstream stages classify a part by — or `painting:<name>` for an
+ * `assemble.patches` entry, cut from the painting itself and named for the
+ * part it made, which no tag classifies), where it sits in rig pixels
  * (`x`/`y`/`w`/`h`, y down, origin top-left: the PNG's own box), and what the
  * assembler did to its pixels, counted:
  *
@@ -26,6 +28,13 @@
  *   pixel and the painting's disagreed by more than the drift limit;
  * - `merged_px` — pixels brought in from the other run below the head crop;
  * - `seam_override_px` — pixels whose colour the seam pass replaced.
+ *
+ * ⭐ **A patch is 100 % source.** Every pixel of a `painting:` part is the
+ * painting's own, so it is all visible (the painting shows it; nothing of it
+ * is synthesis), all candidates and all taken: `visible_px =
+ * projected_core_px = source_px_taken = opaque_px`, and `occluded_px`,
+ * `visible_not_projected_px`, `refused_drift_px` and `merged_px` are 0. The
+ * reader holds a `painting:` record to exactly that.
  *
  * The three visibility counts are this port's, not the reference's: a
  * `parts.json` the reference wrote has none of them and reads as it always
@@ -134,11 +143,25 @@ const COUNT_KEYS = PART_KEYS.slice(2) as ReadonlyArray<(typeof PART_KEYS)[number
 export const VISIBILITY_KEYS = ['visible_px', 'occluded_px', 'visible_not_projected_px'] as const;
 const REQUIRED_KEYS = PART_KEYS.filter((k) => !(VISIBILITY_KEYS as readonly string[]).includes(k));
 
-/** `<run>:<tag>` with run `full` or `head` and a v3 tag, or null. */
-export function readFrom(from: string): { run: 'full' | 'head'; tag: string } | null {
+/** Where a part came from: a See-through run and a v3 tag, or the painting itself for a patch. */
+export type From = { run: 'full' | 'head'; tag: string } | { run: 'painting'; patch: string };
+
+/** The `from` a patch's record carries. */
+export const PAINTING_RUN = 'painting';
+
+/** `<run>:<tag>` with run `full` or `head` and a v3 tag, `painting:<patch name>`, or null. */
+export function readFrom(from: string): From | null {
+  const p = /^painting:(.+)$/.exec(from);
+  if (p !== null) return { run: 'painting', patch: p[1] };
   const m = /^(full|head):(.+)$/.exec(from);
   if (m === null || readTag(m[2]) === null) return null;
   return { run: m[1] as 'full' | 'head', tag: m[2] };
+}
+
+/** The See-through tag a part came from, or null for a `painting:` patch (or a `from` that is neither). */
+export function tagOf(from: string): string | null {
+  const f = readFrom(from);
+  return f === null || f.run === 'painting' ? null : f.tag;
 }
 
 export function serializeParts(file: PartsFile): string {
@@ -205,7 +228,7 @@ function checkParts(raw: unknown, path: string): PartsFile {
     if (typeof g !== 'object' || g === null || Array.isArray(g)) fail('PARTS_FIELD_TYPE', `${path} field "ghost_px"`, `is ${show(g)}; an object of "<run>:<tag>" -> pixels is required`);
     else {
       for (const [k, v] of Object.entries(g as Record<string, unknown>)) {
-        if (readFrom(k) === null) fail('PARTS_FROM_KNOWN', `${path} ghost_px key "${k}"`, 'is not "<full|head>:<v3 tag>"');
+        if (tagOf(k) === null) fail('PARTS_FROM_KNOWN', `${path} ghost_px key "${k}"`, 'is not "<full|head>:<v3 tag>" (a patch has no See-through layer, so no ghost count)');
         if (!(Number.isInteger(v) && (v as number) >= 0)) fail('PARTS_FIELD_TYPE', `${path} ghost_px "${k}"`, `is ${show(v)}; a pixel count is required`);
       }
     }
@@ -231,7 +254,11 @@ function checkParts(raw: unknown, path: string): PartsFile {
         fail('PARTS_FIELD_TYPE', `${label} field "name"`, `is ${show(r.name)}; a file-name-safe part name is required`);
       } else if (seen.has(r.name)) fail('PARTS_NAME_UNIQUE', label, `appears at parts[${seen.get(r.name)}] and parts[${i}]`);
       else seen.set(r.name, i);
-      if (typeof r.from !== 'string' || readFrom(r.from) === null) fail('PARTS_FROM_KNOWN', `${label} field "from"`, `is ${show(r.from)}; "<full|head>:<v3 tag>" is required`);
+      const from = typeof r.from === 'string' ? readFrom(r.from) : null;
+      if (from === null) fail('PARTS_FROM_KNOWN', `${label} field "from"`, `is ${show(r.from)}; "<full|head>:<v3 tag>", or "painting:<the part's own name>" for a patch, is required`);
+      else if (from.run === 'painting' && from.patch !== r.name) {
+        fail('PARTS_FROM_KNOWN', `${label} field "from"`, `is ${show(r.from)}; a patch's provenance names the patch itself, so "painting:${String(r.name)}" is required`);
+      }
       for (const k of COUNT_KEYS) {
         if (k in r && !(Number.isInteger(r[k]) && (r[k] as number) >= 0)) fail('PARTS_FIELD_TYPE', `${label} field "${k}"`, `is ${show(r[k])}; a non-negative integer is required`);
       }
@@ -240,6 +267,15 @@ function checkParts(raw: unknown, path: string): PartsFile {
       if (held.length === VISIBILITY_KEYS.length && op !== null && vis !== null && occ !== null && vnp !== null) {
         if (vis + occ !== op) fail('PARTS_COUNTS_ADD_UP', `${label}`, `visible_px ${vis} + occluded_px ${occ} = ${vis + occ}; opaque_px ${op} is required`);
         if (vnp > vis) fail('PARTS_COUNTS_ADD_UP', `${label}`, `visible_not_projected_px ${vnp} is above visible_px ${vis}; at most visible_px is required`);
+      }
+      if (from !== null && from.run === 'painting' && op !== null) {
+        // A patch is 100 % source: every count is opaque_px or 0 (module doc).
+        const whole = ['visible_px', 'projected_core_px', 'source_px_taken'].filter((k) => k in r && count(k) !== op);
+        const none = ['occluded_px', 'visible_not_projected_px', 'refused_drift_px', 'merged_px'].filter((k) => k in r && count(k) !== 0);
+        if (whole.length > 0 || none.length > 0) {
+          const said = [...whole.map((k) => `${k} ${show(r[k])} (opaque_px ${op} required)`), ...none.map((k) => `${k} ${show(r[k])} (0 required)`)].join(', ');
+          fail('PARTS_COUNTS_ADD_UP', `${label}`, `is a painting patch (${String(r.from)}), which is 100 % source; ${said}`);
+        }
       }
       if (sizeOk && [r.x, r.y, r.w, r.h].every((n) => Number.isInteger(n))) {
         const [W, H] = size as [number, number];

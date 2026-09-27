@@ -130,6 +130,43 @@
  *   it is recoloured by the near-white rule wherever the line is painted, and
  *   the silhouette rule must recolour at least those — it widens the
  *   reference's rule, it does not replace it.
+ *
+ * ## The hem fixture (`assemble.patches`)
+ *
+ * `hemPainting`: white, with a `C` block over source [16, 112)^2 — rig
+ * [8, 56)^2. At a 2x reduction a rig pixel X reads source pixels 2X - 5 ..
+ * 2X + 6 (the Lanczos support above), so the rig pixels whose whole support
+ * lies in the block, and which are therefore exactly `C`, are X in [11, 53)
+ * each way.
+ *
+ * `HEM_FULL`: a full-run `topwear` over rig [8, 56) x [8, 36) — the block's
+ * own width — and a narrower `bottomwear` over rig [24, 40) x [40, 56), both
+ * `C`, so rows 36..39 are a gap no layer holds across the figure: the planted
+ * hem hole. (The skirt is 16 px square rather than the block's width because
+ * `check`'s TIP_OVER_ROOT reads a part that hangs: rotated about its top
+ * centre, a 48x16 skirt was measured moving its upper half's centroid further
+ * than its lower half's, ratio 0.702 at 2 degrees and 0.565 at 8.) Over it the recomposite is the
+ * white page, so every gap pixel whose painting colour is more than 40 off
+ * white is an uncovered error pixel. The plan is those two parts; the head
+ * run (`FRAMED_HEAD`) is read and planned from by nothing.
+ *
+ * - A patch `{box: [11, 36, 53, 40], alpha: "box"}` takes 42 x 4 = 168
+ *   pixels, all exactly `C`, all uncovered error pixels before it (C is 215
+ *   off white in its blue channel); after it the recomposite there is the
+ *   painting, so error px and uncovered error px each drop by exactly 168,
+ *   and its record is 168 in every count that is not 0.
+ * - With `alpha: "silhouette"` over the whole gap row band [0, 36, 64, 40)
+ *   the patch is `figureSilhouette` inside the box, pixel for pixel, and the
+ *   uncovered error px drop by the gap pixels it holds that were error px.
+ * - `HEM_UNDER` [11, 34, 53, 42], drawn `"back"`, reaches two rows under the
+ *   topwear and two into the skirt's rows: 42 x 8 = 336 pixels, all exactly
+ *   `C`. Rows 34..35 were covered by the topwear already; rows 36..39 are
+ *   the gap (168); rows 40..41 are uncovered beside the 16-px skirt, columns
+ *   11..23 and 40..52, 2 x 26 = 52. So the uncovered error px drop by 220.
+ *   This is the shape to author: a patch drawn behind its neighbours and
+ *   overlapping them, so the render has no edge between them (on the build
+ *   fixture the abutting box raised `check`'s seam from 0.323 to 0.86 with
+ *   16 px over 40; the overlapping one measured 0.267 with none).
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -289,6 +326,28 @@ export const STRIP_EXPECTED: Record<'core' | 'visible', Record<string, [number, 
   core: { topwear: [810, 90, 494, 316], neckwear: [135, 0, 0, 135] },
   visible: { topwear: [810, 90, 690, 120], neckwear: [135, 0, 135, 0] },
 };
+export function hemPainting(): Raster {
+  return paint(SOURCE_SIDE, SOURCE_SIDE, WHITE, [rect(16, 16, 112, 112, C)]);
+}
+
+export const HEM_FULL: RunLayerSpec[] = [
+  { name: 'topwear', depth: 0.5, rects: [rect(8, 8, 56, 36, C)] },
+  { name: 'bottomwear', depth: 0.6, rects: [rect(24, 40, 40, 56, C)] },
+];
+export const HEM_PLAN: Array<[string, 'full' | 'head', string]> = [
+  ['topwear', 'full', 'topwear'],
+  ['bottomwear', 'full', 'bottomwear'],
+];
+/** The rig pixels of the gap that are exactly the painting's `C`, as derived above. */
+export const HEM_BOX: [number, number, number, number] = [11, 36, 53, 40];
+export const HEM_BOX_PX = 42 * 4;
+/** The same patch reaching under both neighbours, and what it takes and uncovers, as derived above. */
+export const HEM_UNDER: [number, number, number, number] = [11, 34, 53, 42];
+export const HEM_UNDER_PX = 42 * 8;
+export const HEM_UNDER_DROP = 42 * 4 + 2 * 26;
+/** The whole gap band, through the figure's edge and the white page either side. */
+export const HEM_BAND: [number, number, number, number] = [0, 36, 64, 40];
+
 export const FRAMED_HEAD: RunLayerSpec[] = [{ name: 'face', depth: 0.5, rects: [rect(0, 0, 8, 8, C)] }];
 
 /** One run in the wrapper form: `layers.json` plus one PNG per layer, each cut to its rectangles' bounding box. */
@@ -307,14 +366,18 @@ export function writeRun(dir: string, layers: RunLayerSpec[], canvas = RESOLUTIO
 }
 
 /** A config the loader accepts, carrying the stage's fields and one-bone placeholders for the rest. */
-export function assembleConfig(overrides: { plan?: unknown; extend?: unknown; headBox?: unknown; resolution?: number; rigScale?: number; seethrough?: boolean } = {}): Record<string, unknown> {
+export function assembleConfig(
+  overrides: { plan?: unknown; extend?: unknown; patches?: Array<Record<string, unknown>>; headBox?: unknown; resolution?: number; rigScale?: number; seethrough?: boolean } = {},
+): Record<string, unknown> {
   const plan = (overrides.plan ?? PLAN) as Array<[string, string, string]>;
+  const assemble: Record<string, unknown> = { rig_scale: overrides.rigScale ?? RIG_SCALE, plan, extend_below_crop: overrides.extend ?? EXTEND };
+  if (overrides.patches !== undefined) assemble.patches = overrides.patches;
   const cfg: Record<string, unknown> = {
     key: 'assemble-fixture',
-    assemble: { rig_scale: overrides.rigScale ?? RIG_SCALE, plan, extend_below_crop: overrides.extend ?? EXTEND },
+    assemble,
     bones: [{ name: 'anchor', parent: 'root', at: [0, 0] }],
     meshes: {},
-    regions: Object.fromEntries(plan.map((p) => [p[0], 'anchor'])),
+    regions: Object.fromEntries([...plan.map((p) => p[0]), ...(overrides.patches ?? []).map((q) => String(q.name))].map((n) => [n, 'anchor'])),
     motion: { duration: 1, tracks: [] },
   };
   if (overrides.seethrough !== false) {
@@ -324,10 +387,10 @@ export function assembleConfig(overrides: { plan?: unknown; extend?: unknown; he
 }
 
 /** The whole flat fixture in `dir`: `painting.png`, `full/`, `head/`, `config.json`. */
-export function writeAssembleFixture(dir: string, config: Record<string, unknown> = assembleConfig(), painting: Raster = flatPainting()): void {
+export function writeAssembleFixture(dir: string, config: Record<string, unknown> = assembleConfig(), painting: Raster = flatPainting(), runs: { full: RunLayerSpec[]; head: RunLayerSpec[] } = { full: FULL_LAYERS, head: HEAD_LAYERS }): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'painting.png'), encodePngBytes(painting));
-  writeRun(join(dir, 'full'), FULL_LAYERS);
-  writeRun(join(dir, 'head'), HEAD_LAYERS);
+  writeRun(join(dir, 'full'), runs.full);
+  writeRun(join(dir, 'head'), runs.head);
   writeFileSync(join(dir, 'config.json'), `${JSON.stringify(config, null, 2)}\n`);
 }

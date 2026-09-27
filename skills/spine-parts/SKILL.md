@@ -58,7 +58,11 @@ stage writes are the whole interface.
    --source <painting> --out work` → copy `bones`, `meshes`, `regions`, `motion`
    from `proposal.json` into the config. `assemble` needs the plan and none of
    those four; do not stub them to get past it (AUTHORING §4 says what each step
-   requires).
+   requires). If an `uncovered hole` stays large with the plan right — a piece
+   of the figure neither run holds, red in `recomposite_error_rig.png` — add an
+   `assemble.patches` entry (a rig-pixel box, `alpha: "silhouette"`, drawn
+   `"back"` and reaching under its neighbours, its bone in `regions`) and assemble
+   again; never add a part to `rig/` or `parts/` by hand (AUTHORING §5).
 6. Correct against `render/landmarks.png` and `note:` lines; `propose …
    --from-config config.json` until it prints no `LINT` line.
 7. `spine-parts build --config … --source … --full … --head … --out out --loop`.
