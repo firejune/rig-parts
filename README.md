@@ -108,7 +108,8 @@ package touches.
 bun install
 bun run typecheck    # tsc --noEmit, strict
 bun run lint         # one rule: no explicit any
-bun run selftest     # every gate's negative controls, on fixtures it generates
+bun run fetch-examples  # the public examples' paintings and layers, into examples/*/inputs (needs a network)
+bun run selftest     # every gate's negative controls, on fixtures it generates; reads the examples when fetched
 bun run smoke        # pack, install into an empty directory, run from the install (needs a network)
 ```
 

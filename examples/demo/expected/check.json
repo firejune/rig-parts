@@ -1,0 +1,9 @@
+{
+ "gate_spine_html_green": true,
+ "gate_spine_green": true,
+ "loop_max_diff": 0,
+ "seam_mean": 0.328,
+ "seam_px_over_40": 2,
+ "seam_px_over_80": 0,
+ "PASS": true
+}

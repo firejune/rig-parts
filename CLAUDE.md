@@ -102,6 +102,18 @@ paintings, their See-through runs, the parts and configs the reference produced
 - The fixtures that DO live here (`fixtures/synthetic.ts`) are flat colour
   blocks with hand-computable counts, and no claim about appearance is made
   from them.
+- ✅ **The public examples are not that corpus.** `examples/<key>/` holds
+  characters generated to be published — a public checkpoint, no identity
+  LoRA, no private character text; the generation record and the licence are
+  in the [spine-parts-examples](https://github.com/firejune/spine-parts-examples)
+  repository. Their config, proposal, contact sheets and the reference's
+  outputs (`expected/`) are tracked here; the painting and the See-through
+  layers are fetched by `bun run fetch-examples`, at the commit that script
+  pins, into the gitignored `examples/*/inputs`. The rules above are about
+  where a file came from, not what it is called: a `config.json` or
+  `parts.json` belongs here exactly when its character was made public on
+  purpose, and the forbidden-name scan (`TY04`) covers `examples/` like every
+  other tracked file.
 
 ## Conventions
 
@@ -137,7 +149,7 @@ paintings, their See-through runs, the parts and configs the reference produced
 | --- | --- |
 | `bun run typecheck` | `tsc --noEmit` over the paths `tsconfig.json`'s `include` names |
 | `bun run lint` | one rule: `@typescript-eslint/no-explicit-any` as an error |
-| `bun run selftest` | every suite's positive and negative controls on generated fixtures, and the tree rules; `-- --corpus <dir>` adds the read-only corpus suite |
+| `bun run selftest` | every suite's positive and negative controls on generated fixtures, and the tree rules; `-- --corpus <dir>`, or fetched `examples/*/inputs` (`bun run fetch-examples`), adds the read-only corpus suite |
 | `bun run smoke` | the **package** rather than the tree: pack, install into an empty directory, run `--version`, `layers` (wrapper and PSD) and `sheet` from the install, with three planted broken packages that must go red. Needs a network |
 
 ## The selftest and its fixtures
@@ -155,8 +167,8 @@ private repository. The rules that hold it together:
   unknown gutter word, a returned failure count that disagrees with the printed
   FAIL lines — each is a fault, and a run with a fault exits **2**. `RT01`–`RT05`
   plant each one.
-- **An absent input is a HOLE.** The corpus suite without a corpus opens its
-  section, prints `SKIP` and a HOLE line, counts as not run, and the summary
+- **An absent input is a HOLE.** The corpus suite with neither a named corpus
+  nor any fetched `examples/*/inputs` opens its section, prints `SKIP` and a HOLE line, counts as not run, and the summary
   names it.
 - **No expectation is a number measured off private data.** Every expected
   value in a control is computed by hand from the fixture or from a definition

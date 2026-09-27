@@ -45,6 +45,7 @@
     "access": "public"
   },
   "scripts": {
+    "fetch-examples": "bash scripts/fetch-examples.sh",
     "selftest": "bun selftest.ts",
     "smoke": "bun scripts/install_smoke.ts",
     "typecheck": "bunx tsc --noEmit",
