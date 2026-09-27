@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_SEAM_RULE, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
+import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
 import { assembleStage, build, checkStage, loopStage, readRuns, readSource, rigStage } from './src/build.ts';
 import { findRigc, type RigcRunner, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
@@ -124,15 +124,21 @@ usage:
 
   spine-parts assemble --source <painting.png> --full <dir|psd> --head <dir|psd>
                        --config <config.json> --out <dir> [--seam near-white|silhouette]
+                       [--project core|visible]
       Merge the full-body and head-crop See-through runs into rig-space parts:
       <out>/rig/parts/<name>.png (each cropped to its alpha box), <out>/rig/parts.json
       and <out>/render/recomposite_rig.png. Reads config.seethrough.head_box and
       .resolution and config.assemble.rig_scale, .plan and .extend_below_crop.
-      Prints one line per part, the seam override counts, and
-      \`recomposite vs source\` (mean |d| and % within 8 over the mean channel;
-      error px: max channel > 40; uncovered: of those, where no part has alpha
-      above 128). Writes nothing unless every check passed. --seam defaults to
-      ${DEFAULT_SEAM_RULE}.
+      Prints one line per part, the seam override counts, the \`pixels:\` totals
+      (opaque = visible + occluded; taken from the painting; visible but not
+      projected), and \`recomposite vs source\` (mean |d| and % within 8 over the
+      mean channel; error px: max channel > 40; uncovered: of those, where no
+      part has alpha above 128). Writes nothing unless every check passed.
+      --seam defaults to ${DEFAULT_SEAM_RULE}. --project says where a layer takes
+      the painting's pixel: core (the reference's) erodes every layer's top-most
+      opaque area by 5x5 first, so a part a few pixels wide takes none; visible
+      erodes only along a rim where a later layer is in front. It defaults to
+      ${DEFAULT_PROJECT_RULE}.
 
   spine-parts assemble --propose-plan --source <painting.png> --full <dir|psd>
                        --head <dir|psd> --config <config.json>
@@ -170,7 +176,8 @@ usage:
       The config needs only key and generation here; the rest comes later.
 
   spine-parts build --config <config.json> --source <painting.png> --full <dir|psd>
-                    --head <dir|psd> --out <dir> [--seam near-white|silhouette] [--loop]
+                    --head <dir|psd> --out <dir> [--seam near-white|silhouette]
+                    [--project core|visible] [--loop]
       assemble, then rig, then check, in one process, each stage's own lines
       printed under [assemble], [rig] and [check]; the first stage that refuses
       stops the build with its own FAIL lines. The config must already carry
@@ -184,7 +191,8 @@ usage:
       green build ends with the pack line beside the spineboy yardstick and the
       three artifact paths — skeleton .json, .atlas and the packed page: the
       packed atlas is the result, the loose parts are the intermediate it was
-      made from. --seam defaults to ${DEFAULT_SEAM_RULE}.
+      made from. --seam defaults to ${DEFAULT_SEAM_RULE}, --project to
+      ${DEFAULT_PROJECT_RULE} (both as for assemble).
 
   spine-parts --version
   spine-parts --help
@@ -488,7 +496,7 @@ function cmdLoop(args: string[]): number {
 function cmdAssemble(args: string[]): number {
   const flags = new Map<string, string>();
   let propose = false;
-  const valued = ['--source', '--full', '--head', '--config', '--out', '--seam'];
+  const valued = ['--source', '--full', '--head', '--config', '--out', '--seam', '--project'];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--propose-plan') {
@@ -503,10 +511,12 @@ function cmdAssemble(args: string[]): number {
     i++;
   }
   for (const f of ['--source', '--full', '--head', '--config']) if (!flags.has(f)) return usage(`assemble needs ${f}`);
-  if (propose && (flags.has('--out') || flags.has('--seam'))) return usage('--propose-plan prints to the console; it takes neither --out nor --seam');
+  if (propose && (flags.has('--out') || flags.has('--seam') || flags.has('--project'))) return usage('--propose-plan prints to the console; it takes none of --out, --seam, --project');
   if (!propose && !flags.has('--out')) return usage('assemble needs --out <dir>');
   const seam = flags.get('--seam') ?? DEFAULT_SEAM_RULE;
   if (!(SEAM_RULES as readonly string[]).includes(seam)) return usage(`--seam ${seam}; one of ${SEAM_RULES.join(', ')} is required`);
+  const project = flags.get('--project') ?? DEFAULT_PROJECT_RULE;
+  if (!(PROJECT_RULES as readonly string[]).includes(project)) return usage(`--project ${project}; one of ${PROJECT_RULES.join(', ')} is required`);
   const [source, full, head, config] = ['--source', '--full', '--head', '--config'].map((f) => flags.get(f) as string);
   try {
     if (propose) {
@@ -519,7 +529,7 @@ function cmdAssemble(args: string[]): number {
     }
     const out = flags.get('--out') as string;
     assembleStage(
-      { source, full, head, config, seam: seam as SeamRule },
+      { source, full, head, config, seam: seam as SeamRule, project: project as ProjectRule },
       { partsJson: join(out, 'rig', 'parts.json'), partsDir: join(out, 'rig', 'parts'), recomposite: join(out, 'render', 'recomposite_rig.png') },
       console.log,
     );
@@ -663,7 +673,7 @@ function cmdInputs(args: string[]): number {
 function cmdBuild(args: string[]): number {
   const flags = new Map<string, string>();
   let loop = false;
-  const valued = ['--config', '--source', '--full', '--head', '--out', '--seam'];
+  const valued = ['--config', '--source', '--full', '--head', '--out', '--seam', '--project'];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--loop') {
@@ -681,6 +691,8 @@ function cmdBuild(args: string[]): number {
   for (const f of ['--config', '--source', '--full', '--head', '--out']) if (!flags.has(f)) return usage(`build needs ${f}`);
   const seam = flags.get('--seam') ?? DEFAULT_SEAM_RULE;
   if (!(SEAM_RULES as readonly string[]).includes(seam)) return usage(`--seam ${seam}; one of ${SEAM_RULES.join(', ')} is required`);
+  const project = flags.get('--project') ?? DEFAULT_PROJECT_RULE;
+  if (!(PROJECT_RULES as readonly string[]).includes(project)) return usage(`--project ${project}; one of ${PROJECT_RULES.join(', ')} is required`);
   const [config, source, full, head, out] = ['--config', '--source', '--full', '--head', '--out'].map((f) => flags.get(f) as string);
   let bin: string;
   try {
@@ -691,7 +703,7 @@ function cmdBuild(args: string[]): number {
   const scratch = mkdtempSync(join(tmpdir(), 'spine-parts-build-'));
   try {
     const r = build(
-      { config, source, full, head, out, seam: seam as SeamRule, loop },
+      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop },
       { rig: rigGateRunner(), check: rigcRunner(bin), checkBin: bin, scratch: join(scratch, 'rig-gate') },
       console.log,
     );

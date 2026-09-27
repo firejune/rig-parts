@@ -62,6 +62,9 @@ import {
   RESOLUTION,
   RIG_SCALE,
   SOURCE_SIDE,
+  STRIP_EXPECTED,
+  STRIP_FULL,
+  STRIP_PLAN,
   writeAssembleFixture,
   writeRun,
 } from './fixtures/assemble_fixture.ts';
@@ -71,7 +74,7 @@ import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, shiftRight, writeCheckRig } fr
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, writeProposeFixture } from './fixtures/propose.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
-import { assemble, type AssembleInput, belowCrop, checkGeometry, cleanGhosts, DEFAULT_SEAM_RULE, figuresLine, growRim, layerToRig, proposeFields, proposePlan, stageFields } from './src/assemble.ts';
+import { assemble, type AssembleInput, belowCrop, checkGeometry, cleanGhosts, DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, figuresLine, growRim, layerToRig, PROJECT_RULES, proposeFields, proposePlan, stageFields, visibilityCounts } from './src/assemble.ts';
 import { findRigc, gateGreen, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { type BoneEntry, type CharacterConfig, type Generation, loadConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
@@ -1082,6 +1085,29 @@ function runPartsSuite(): number {
       e !== null && e.problems.length === 4 && ['PARTS_FIELD_PRESENT', 'PARTS_FROM_KNOWN', 'PARTS_BOX_INSIDE_RIG', 'PARTS_KEY_KNOWN'].every((c) => got.has(c)),
       `a missing count, a v2 tag in "from", a box past the rig edge and an unknown key -> ${codes(e)}`,
       'downstream stages classify a part by `from` and place it by its box; either wrong is a rig built on the wrong layer',
+    );
+
+    // The three visibility counts: all or none, and adding up when present.
+    const counted = JSON.parse(first) as { parts: Array<Record<string, unknown>> } & Record<string, unknown>;
+    Object.assign(counted.parts[0], { visible_px: 90, occluded_px: 10, visible_not_projected_px: 15 });
+    writeFileSync(path, JSON.stringify(counted));
+    const countedOk = refusals(() => readParts(path));
+    const countedBytes = countedOk === null ? serializeParts(readParts(path)) : '';
+    const inOrder = countedBytes.indexOf('"opaque_px"') < countedBytes.indexOf('"visible_px"') && countedBytes.indexOf('"source_px_taken"') < countedBytes.indexOf('"visible_not_projected_px"');
+    const broken = JSON.parse(JSON.stringify(counted)) as typeof counted;
+    Object.assign(broken.parts[0], { occluded_px: 11, visible_not_projected_px: 91 });
+    writeFileSync(path, JSON.stringify(broken));
+    const eAdd = refusals(() => readParts(path));
+    const partial = JSON.parse(JSON.stringify(counted)) as typeof counted;
+    delete partial.parts[0].occluded_px;
+    writeFileSync(path, JSON.stringify(partial));
+    const ePart = refusals(() => readParts(path));
+    const adds = eAdd?.problems.filter((p) => p.code === 'PARTS_COUNTS_ADD_UP') ?? [];
+    say(
+      'PT03_THE_VISIBILITY_COUNTS_ARE_ALL_OR_NONE_AND_MUST_ADD_UP',
+      countedOk === null && inOrder && adds.length === 2 && adds[0].detail.includes('visible_px 90 + occluded_px 11 = 101; opaque_px 100 is required') && ePart !== null && ePart.problems.length === 1 && ePart.problems[0].code === 'PARTS_FIELD_PRESENT' && ePart.problems[0].detail.includes('only visible_px, visible_not_projected_px present'),
+      `90 + 10 of 100 opaque -> ${countedOk === null ? 'read' : codes(countedOk)}, written after opaque_px and source_px_taken: ${inOrder}; 90 + 11 and 91 unprojected of 90 visible -> ${adds.map((p) => p.detail).join(' | ') || codes(eAdd)}; occluded_px dropped -> ${ePart === null ? 'read' : `${ePart.problems[0].code}: ${ePart.problems[0].detail}`}; PT01's record carries none and reads, as a reference-written parts.json must`,
+      "issue #9's counts are this port's: the reference's files have none of them and must keep reading, but a record carrying some is not one either stage wrote",
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -2465,6 +2491,7 @@ function runBuildSuite(): number {
     const planFail = wrong.out.split('\n').find((l) => l.startsWith('[assemble]   FAIL  ASSEMBLE_PLAN_TAG_IN_RUN: ')) ?? null;
     const noOut = runCli(buildArgs(dir, early).slice(0, -2));
     const badSeam = runCli([...buildArgs(dir, early), '--seam', 'whiteish']);
+    const badProject = runCli([...buildArgs(dir, early), '--project', 'eroded']);
     say(
       'BU03_AN_ASSEMBLE_REFUSAL_STOPS_THE_BUILD_FIRST_AND_A_MALFORMED_CALL_IS_A_USAGE_ERROR',
       wrong.status === 1 &&
@@ -2476,8 +2503,11 @@ function runBuildSuite(): number {
         noOut.status === 2 &&
         noOut.out.includes('build needs --out') &&
         badSeam.status === 2 &&
-        badSeam.out.includes('--seam whiteish'),
-      `plan tag absent -> exit ${wrong.status}, ${planFail ?? 'no [assemble] FAIL line'}, --out holds [${entries(early).join(', ')}]; no --out -> exit ${noOut.status}; --seam whiteish -> exit ${badSeam.status}`,
+        badSeam.out.includes('--seam whiteish') &&
+        badProject.status === 2 &&
+        badProject.out.includes('--project eroded; one of core, visible is required') &&
+        entries(early).length === 0,
+      `plan tag absent -> exit ${wrong.status}, ${planFail ?? 'no [assemble] FAIL line'}, --out holds [${entries(early).join(', ')}]; no --out -> exit ${noOut.status}; --seam whiteish -> exit ${badSeam.status}; --project eroded -> exit ${badProject.status}, "${badProject.out.split('\n').find((l) => l.includes('--project')) ?? ''}"`,
       'the first stage refuses by name under its own prefix and writes nothing; exit 2 stays the malformed call, as for every other command',
     );
   } finally {
@@ -2542,7 +2572,10 @@ function jsonDiffs(expected: unknown, built: unknown, tolerance: (path: string) 
  *   float32 and `src/raster/warp.ts` in float64, so an alpha the reference
  *   truncates to 254 is 255 here, and that pixel's composite difference lands
  *   on the seam limit's other side. On the two public examples it is one field:
- *   demo's `sleeves`, 4616 expected and 4615 built.
+ *   demo's `sleeves`, 4616 expected and 4615 built. `visible_px`,
+ *   `occluded_px` and `visible_not_projected_px` have no reference value: the
+ *   expected ones are this port's default build's, inserted beside the
+ *   reference's fields, and are held exactly like the rest.
  * - motion.json — key times `t` to 6 decimals: the reference's blink times
  *   carry float64 sums (2.3699999999999997) that this port writes rounded (2.37).
  * - check.json — `seam_mean` ±0.005, every other field exact. The seam is
@@ -2720,6 +2753,7 @@ function fixtureInput(dir: string, painting = 'painting.png'): Omit<AssembleInpu
     full: readWrapperLayers(join(dir, 'full')),
     head: readWrapperLayers(join(dir, 'head')),
     ...stageFields(loadConfig(join(dir, 'config.json'))),
+    projectRule: DEFAULT_PROJECT_RULE,
   };
 }
 
@@ -2839,6 +2873,61 @@ function runAssembleSuite(): number {
       'the flat fixture keeps every later part away from its rim and has one component, so the two rules it cannot see — the seed column band and the front exclusion — are held here',
     );
 
+    // The visibility counts, in both projection rules, on the thin-strip fixture (derived in fixtures/assemble_fixture.ts).
+    const strip = temp('assemble-strip');
+    try {
+      writeRun(join(strip, 'full'), STRIP_FULL);
+      writeRun(join(strip, 'head'), FRAMED_HEAD);
+      writeFileSync(join(strip, 'painting.png'), encodePngBytes(flatPainting()));
+      writeFileSync(join(strip, 'config.json'), JSON.stringify(assembleConfig({ plan: STRIP_PLAN, extend: [] })));
+      const input = fixtureInput(strip);
+      const seen: string[] = [];
+      let exact = true;
+      for (const rule of PROJECT_RULES) {
+        const res = assemble({ ...input, seamRule: 'near-white', projectRule: rule });
+        for (const p of res.parts.parts) {
+          const got: [number, number, number, number] = [p.visible_px ?? -1, p.occluded_px ?? -1, p.source_px_taken, p.visible_not_projected_px ?? -1];
+          const want = STRIP_EXPECTED[rule][p.name];
+          if (want === undefined || got.join(',') !== want.join(',') || (p.visible_px ?? -1) + (p.occluded_px ?? -1) !== p.opaque_px) exact = false;
+          seen.push(`${rule} ${p.name} vis/occ/taken/unproj ${got.join('/')}`);
+        }
+      }
+      const fixtureAddsUp = result.parts.parts.every((p) => (p.visible_px ?? -1) + (p.occluded_px ?? -1) === p.opaque_px && (p.visible_not_projected_px ?? Infinity) <= (p.visible_px ?? -1));
+      say(
+        'AS12_A_THIN_VISIBLE_STRIP_IS_UNPROJECTED_UNDER_CORE_AND_PROJECTED_UNDER_VISIBLE',
+        exact && seen.length === 4 && fixtureAddsUp,
+        `${seen.join('; ')}; visible + occluded = opaque on every part of both fixtures: ${fixtureAddsUp && exact}`,
+        "issue #9: a part a few pixels wide has no eroded core, so under the reference's rule every visible pixel of it counts as synthesis; --project visible keeps the erosion only along a rim with a layer in front (topwear's 120 px beside the strip) and takes the rest",
+      );
+    } finally {
+      rmSync(strip, { recursive: true, force: true });
+    }
+
+    // The identity refusals, fired by forged masks: visibilityCounts is the one place the counts are made.
+    const forgePart = newRaster(4, 4);
+    for (let p = 0; p < 8; p++) forgePart.data[p * 4 + 3] = 255; // rows 0..1 opaque
+    const visOk = newMask(4, 4);
+    for (let p = 0; p < 8; p++) visOk.data[p] = 1;
+    const projOk = newMask(4, 4);
+    projOk.data[0] = 1;
+    const green = refusals(() => visibilityCounts('forge', forgePart, visOk, projOk));
+    const visLeak = newMask(4, 4);
+    visLeak.data.set(visOk.data);
+    visLeak.data[12] = 1; // a transparent pixel marked visible
+    const projHidden = newMask(4, 4);
+    projHidden.data[0] = 1;
+    projHidden.data[9] = 1; // projected, but not in the visible mask
+    const leak = refusals(() => visibilityCounts('forge "leak"', forgePart, visLeak, projOk));
+    const hidden = refusals(() => visibilityCounts('forge "hidden"', forgePart, visOk, projHidden));
+    const leakLine = leak?.problems.find((p) => p.code === 'ASSEMBLE_COUNTS_ADD_UP');
+    const hiddenLine = hidden?.problems.find((p) => p.code === 'ASSEMBLE_COUNTS_ADD_UP');
+    say(
+      'AS13_A_FORGED_MASK_BREAKS_A_COUNT_IDENTITY_AND_IS_REFUSED_BY_NAME',
+      green === null && leakLine !== undefined && leakLine.detail.includes('visible 9 + occluded 0 = 9, opaque (alpha above 8) 8') && hiddenLine !== undefined && hiddenLine.detail.includes('1 of 2 projected pixel(s) are not visible'),
+      `true masks -> ${green === null ? 'counted' : codes(green)}; a transparent pixel in the visible mask -> ${leakLine === undefined ? codes(leak) : `${leakLine.code}: ${leakLine.object} — ${leakLine.detail}`}; a projected pixel outside it -> ${hiddenLine === undefined ? codes(hidden) : `${hiddenLine.code}: ${hiddenLine.detail}`}`,
+      'visible + occluded = opaque and projected within visible hold by construction; a mask that escaped its definition is a bug, so it stops the stage rather than printing a count nobody can reason about',
+    );
+
     // Derivation (fixtures/assemble_fixture.ts): full-run tags with >= 150 run px
     // are headwear (192), bottomwear (336) and topwear (600) — back hair (132) and
     // footwear (120 after its speck) fall short; head-run tags: back hair (704) and
@@ -2913,10 +3002,19 @@ function runAssembleSuite(): number {
       printed = null;
     }
     const noOut = runCli(['assemble', '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--config', join(dir, 'config.json')]);
+    const badProjectOut = join(dir, 'bad-project');
+    const badProject = runCli([...args(badProjectOut), '--project', 'thin']);
+    const badProjectLine = badProject.out.split('\n').find((l) => l.includes('--project')) ?? '';
     say(
       'AS09_PROPOSE_PLAN_PRINTS_THE_PROPOSAL_AND_A_MISSING_FLAG_IS_A_USAGE_ERROR',
-      pp.status === 0 && JSON.stringify(printed) === JSON.stringify(EXPECTED_PROPOSAL) && noOut.status === 2 && noOut.out.includes('--out'),
-      `--propose-plan -> exit ${pp.status}, ${printed === null ? 'not JSON' : 'JSON equal to the derived proposal'}; no --out -> exit ${noOut.status}`,
+      pp.status === 0 &&
+        JSON.stringify(printed) === JSON.stringify(EXPECTED_PROPOSAL) &&
+        noOut.status === 2 &&
+        noOut.out.includes('--out') &&
+        badProject.status === 2 &&
+        badProjectLine.includes('--project thin; one of core, visible is required') &&
+        !existsSync(badProjectOut),
+      `--propose-plan -> exit ${pp.status}, ${printed === null ? 'not JSON' : 'JSON equal to the derived proposal'}; no --out -> exit ${noOut.status}; --project thin -> exit ${badProject.status}, "${badProjectLine.trim()}", ${existsSync(badProjectOut) ? 'wrote an out directory' : 'nothing written'}`,
       'the proposal is read by an agent and pasted into the config, so it is printed as the JSON it is and nothing else',
     );
   } finally {
@@ -3137,8 +3235,8 @@ function runAssembleExamplesSuite(): number | null {
         head: readLayers(join(ex, 'inputs', 'layers', 'head')),
         ...stageFields(loadConfig(join(ex, 'config.json'))),
       };
-      const a = assemble({ ...input, seamRule: DEFAULT_SEAM_RULE });
-      const b = assemble({ ...input, seamRule: DEFAULT_SEAM_RULE });
+      const a = assemble({ ...input, seamRule: DEFAULT_SEAM_RULE, projectRule: DEFAULT_PROJECT_RULE });
+      const b = assemble({ ...input, seamRule: DEFAULT_SEAM_RULE, projectRule: DEFAULT_PROJECT_RULE });
       const same = serializeParts(a.parts) === serializeParts(b.parts) && a.images.every((p, i) => Buffer.compare(Buffer.from(encodePngBytes(p.image)), Buffer.from(encodePngBytes(b.images[i].image))) === 0);
       ok = same && a.parts.parts.every((p) => p.opaque_px > 0);
       detail = `${a.parts.parts.length} parts, two runs identical: ${same}; ${figuresLine(a.figures)}`;

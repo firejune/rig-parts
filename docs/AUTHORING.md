@@ -134,7 +134,7 @@ Two steps are external: the See-through runs (by any route; the optional `comfy 
 | --- | --- | --- | --- |
 | `layers` | the table | every tag the plan will need has opaque pixels; one `face` in the head run | a run whose layer PNG is not its box's size (`LAYERS_PNG_MATCHES_BBOX`) |
 | `sheet` of both runs | the tile list (and the sheet, if you can see) | eyes, irises, lashes and brows as left/right pairs in the head run | a head box that cut off an ornament: move `head_box`, re-run the head crop |
-| `assemble` | one line per part, then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185; `demo` 2.39 / 95.8 % / 11,050 / 1,564 (default rule) | `uncovered error px` high: part of the figure is in no layer — a plan entry is missing, or hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason) |
+| `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185; `demo` 2.39 / 95.8 % / 11,050 / 1,564 (default rule) | `uncovered error px` high: part of the figure is in no layer — a plan entry is missing, or hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason) |
 | `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art | a link off the art (a bone on the background) — move it onto the layer |
 | `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; then rigc's gate lines | `cover 1.00000` on every mesh, both gates `0 failed` | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
 | `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, `check.json` | `check: PASS` | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
@@ -160,6 +160,38 @@ and also every white garment. `--seam silhouette` protects near-white pixels onl
 outside the figure. On the demo it lowered recomposite error pixels from 11,050 to
 9,540 and changed no check bar; on the sample it changed nothing. The default stays
 the reference's so the examples stay comparable with it.
+
+`--project core` (the default) is the reference's projection rule: a layer takes the
+painting's pixel only inside its top-most `alpha >= 250` area eroded by a 5x5 square,
+so a part a few pixels wide (a lash, a brow, an iris) takes none. `--project visible`
+keeps the erosion only along a rim where a later layer of the run is in front, and
+takes every other top-most `alpha >= 250` pixel; neither rule takes a fringe pixel
+(alpha below 250). On the examples it lowered the pixels that are visible but not
+projected from 36,227 to 22,476 (`sample`) and 76,801 to 49,672 (`demo`), recomposite
+error pixels from 4,512 to 4,116 and 11,050 to 9,820, and the check seam from 0.207 to
+0.206 and 0.326 to 0.325, with no other check figure changed. The default stays the
+reference's so the examples stay comparable with it. `build` takes both flags.
+
+`parts.json` holds one record per part, in plan order. Its counts:
+
+| field | counts |
+| --- | --- |
+| `opaque_px` | the part PNG's pixels with alpha above 8 |
+| `visible_px` | of those, the ones no later layer of their See-through run is opaque (alpha >= 250) in front of — a pixel copied in below the head crop is judged in its extend layer's run |
+| `occluded_px` | the rest of `opaque_px`: art the painting does not show, See-through's synthesis by necessity |
+| `projected_core_px` | the projection rule's candidates: top-most `alpha >= 250`, eroded (`core`) or kept off a front rim (`visible`) |
+| `source_px_taken` | of those, the ones that took the painting's pixel (the reference's count, before any merge) |
+| `visible_not_projected_px` | visible pixels whose colour did not come from projection — too thin for the core, a fringe, a rim, refused for drift, or a merge ring |
+| `refused_drift_px` | candidates refused because See-through's pixel and the painting's differ by more than 90 |
+| `merged_px` | pixels brought in below the head crop, and the ring that closes their seam |
+| `seam_override_px` | pixels the seam pass recoloured to the painting |
+
+`visible_px + occluded_px = opaque_px`, and every projected pixel is visible; the stage
+refuses (`ASSEMBLE_COUNTS_ADD_UP`) rather than write counts that break either, and the
+reader refuses a record that breaks them (`PARTS_COUNTS_ADD_UP`). The three visibility
+counts are this port's: a `parts.json` the reference wrote has none of them and still
+reads, but a record with only some of them is refused. The `pixels:` line after the
+per-part lines prints their totals.
 
 ## 6. Refusals: the rule, and what has to change
 
@@ -222,6 +254,7 @@ stage's prefix (`[assemble]   FAIL  …`), and the build stops there.
 | `ASSEMBLE_RUN_CANVAS` | a run's canvas is not `resolution` square | `seethrough.resolution`, or the run |
 | `ASSEMBLE_PLAN_TAG_IN_RUN`, `ASSEMBLE_EXTEND_TAG_IN_RUN` | an entry takes a tag its run does not hold (the detail lists what it does hold) | that entry's run or tag |
 | `ASSEMBLE_PART_OPAQUE` | a part ended with no opaque pixel | drop the entry, or take the tag from the other run |
+| `ASSEMBLE_COUNTS_ADD_UP` | a part's visible and occluded counts do not add up to its opaque pixels, or a projected pixel is not visible — an assembler bug, not an input problem | report it with the part named; nothing was written |
 
 ### propose
 
@@ -231,7 +264,7 @@ stage's prefix (`[assemble]   FAIL  …`), and the build stops there.
 | `PROPOSE_SOURCE_PRESENT`, `PROPOSE_PNG_PRESENT`, `PROPOSE_PNG_MATCHES_BOX` | the painting or a part PNG is missing, or a PNG is not its box | `--source`, `--parts` (re-run assemble) |
 | `PROPOSE_FACE_PRESENT` | no part comes from a `face` layer; every other rule scales by it | `assemble.plan` |
 | `PROPOSE_ACCESSORY_BODY` | an accessory has nothing above its pendant rows to hang its bone on | that part's plan entry, or author its bones by hand |
-| `PARTS_*` (`PARTS_FILE_PRESENT`, `PARTS_IS_JSON`, `PARTS_KEY_KNOWN`, `PARTS_FIELD_PRESENT`, `PARTS_FIELD_TYPE`, `PARTS_NAME_UNIQUE`, `PARTS_FROM_KNOWN`, `PARTS_BOX_INSIDE_RIG`) | the `parts.json` read is not assemble's contract | re-run assemble; do not edit `parts.json` |
+| `PARTS_*` (`PARTS_FILE_PRESENT`, `PARTS_IS_JSON`, `PARTS_KEY_KNOWN`, `PARTS_FIELD_PRESENT`, `PARTS_FIELD_TYPE`, `PARTS_NAME_UNIQUE`, `PARTS_FROM_KNOWN`, `PARTS_BOX_INSIDE_RIG`, `PARTS_COUNTS_ADD_UP`) | the `parts.json` read is not assemble's contract (`PARTS_COUNTS_ADD_UP`: `visible_px + occluded_px` is not `opaque_px`, or `visible_not_projected_px` is above `visible_px`) | re-run assemble; do not edit `parts.json` |
 
 ### rig
 

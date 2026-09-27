@@ -43,7 +43,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
-import { assemble, type AssembleResult, figuresLine, type SeamRule, stageFields } from './assemble.ts';
+import { assemble, type AssembleResult, figuresLine, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
 import { type CheckReport, readFrameSet, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
@@ -100,6 +100,7 @@ export interface AssembleStageInput {
   head: string;
   config: string;
   seam: SeamRule;
+  project: ProjectRule;
 }
 
 /** Where the assemble stage writes: `parts.json`, the directory of part PNGs, and the recomposite. */
@@ -115,7 +116,7 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   const runs = readRuns(input.full, input.head);
   const cfg = loadConfig(input.config);
   const fields = stageFields(cfg);
-  const result = assemble({ source: src, full: runs.full, head: runs.head, ...fields, seamRule: input.seam });
+  const result = assemble({ source: src, full: runs.full, head: runs.head, ...fields, seamRule: input.seam, projectRule: input.project });
   // Emit only after green: every refusal above has already thrown.
   mkdirSync(outs.partsDir, { recursive: true });
   mkdirSync(dirname(outs.partsJson), { recursive: true });
@@ -124,14 +125,21 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   for (const { record, image } of result.images) writePng(join(outs.partsDir, `${record.name}.png`), image);
   writePng(outs.recomposite, result.recomposite);
   const [W, H] = result.parts.rig_size;
-  log(`spine-parts assemble: ${result.images.length} part(s) on a ${W}x${H} rig (${result.parts.scale_rig_per_source} rig px per source px), seam rule ${result.seamRule}`);
+  log(`spine-parts assemble: ${result.images.length} part(s) on a ${W}x${H} rig (${result.parts.scale_rig_per_source} rig px per source px), seam rule ${result.seamRule}, projection rule ${result.projectRule}`);
   for (const p of result.parts.parts) {
     log(
       `  ${p.name.padEnd(11)} ${p.from.padEnd(16)} ${`${p.w}x${p.h}`.padEnd(9)} @${String(p.x).padStart(4)},${String(p.y).padStart(4)} ` +
-        `op=${String(p.opaque_px).padStart(6)} src=${String(p.source_px_taken).padStart(6)}/${String(p.projected_core_px).padStart(6)} ` +
-        `drift=${String(p.refused_drift_px).padStart(5)} merged=${p.merged_px} seam=${p.seam_override_px}`,
+        `op=${String(p.opaque_px).padStart(6)} vis=${String(p.visible_px).padStart(6)} src=${String(p.source_px_taken).padStart(6)}/${String(p.projected_core_px).padStart(6)} ` +
+        `unproj=${String(p.visible_not_projected_px).padStart(5)} drift=${String(p.refused_drift_px).padStart(5)} merged=${p.merged_px} seam=${p.seam_override_px}`,
     );
   }
+  const total = (k: 'opaque_px' | 'visible_px' | 'occluded_px' | 'source_px_taken' | 'visible_not_projected_px'): number => result.parts.parts.reduce((a, p) => a + (p[k] ?? 0), 0);
+  const [op, vis, occ, taken, unproj] = (['opaque_px', 'visible_px', 'occluded_px', 'source_px_taken', 'visible_not_projected_px'] as const).map(total);
+  const pct = (n: number): string => `${((100 * n) / op).toFixed(1)}%`;
+  log(
+    `  pixels: opaque ${op} = visible ${vis} + occluded ${occ} (${pct(occ)}); taken from the painting ${taken} (${pct(taken)}); ` +
+      `visible but not projected ${unproj} (${pct(unproj)})`,
+  );
   const ghosts = Object.values(result.parts.ghost_px).reduce((a, b) => a + b, 0);
   log(`  ghost px removed: ${ghosts} over ${Object.keys(result.parts.ghost_px).length} layer(s)`);
   log(figuresLine(result.figures));
@@ -376,6 +384,7 @@ export interface BuildInput {
   head: string;
   out: string;
   seam: SeamRule;
+  project: ProjectRule;
   loop: boolean;
 }
 
@@ -437,11 +446,11 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   const out = input.out;
   mkdirSync(out, { recursive: true });
   for (const p of BUILD_OWNS) rmSync(join(out, p), { recursive: true, force: true });
-  log(`spine-parts build: ${input.config} -> ${out}, seam rule ${input.seam}${input.loop ? ', with the idle loop' : ''}`);
+  log(`spine-parts build: ${input.config} -> ${out}, seam rule ${input.seam}, projection rule ${input.project}${input.loop ? ', with the idle loop' : ''}`);
 
   try {
     assembleStage(
-      { source: input.source, full: input.full, head: input.head, config: input.config, seam: input.seam },
+      { source: input.source, full: input.full, head: input.head, config: input.config, seam: input.seam, project: input.project },
       { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png') },
       prefixed('assemble'),
     );

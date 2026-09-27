@@ -41,6 +41,13 @@
  *   near-white pixel only OUTSIDE the figure (`figureSilhouette`). Which one
  *   is the default is decided by measurement, recorded beside
  *   `DEFAULT_SEAM_RULE`.
+ * - **`projectRule: 'visible'`** is available beside the faithful `'core'`
+ *   rule (`ProjectRule`): the reference erodes every layer's top-most opaque
+ *   area before projecting, so a part a few pixels wide takes nothing from the
+ *   painting; `visible` erodes only along a rim with a later layer in front.
+ * - **The visibility counts** (`visible_px`, `occluded_px`,
+ *   `visible_not_projected_px`) are this port's, derived from the masks
+ *   `projectSource` and `mergeBelowCrop` already build (`visibilityCounts`).
  *
  * Pure: no clock, no randomness, no file access. The CLI reads and writes.
  */
@@ -131,6 +138,24 @@ export const SEAM_RULES: readonly SeamRule[] = ['near-white', 'silhouette'];
  */
 export const DEFAULT_SEAM_RULE: SeamRule = 'near-white';
 
+/**
+ * Where a layer may take the painting's pixel (`projectSource`). `core` is the
+ * reference's rule: the layer's top-most `alpha >= 250` pixels eroded by a 5x5
+ * square, so a part a few pixels wide has no core and none of its visible
+ * pixels is projected. `visible` keeps the erosion only where it guards
+ * something — along a rim where a later layer of the run is in front — and
+ * projects every other top-most `alpha >= 250` pixel of the layer.
+ */
+export type ProjectRule = 'core' | 'visible';
+export const PROJECT_RULES: readonly ProjectRule[] = ['core', 'visible'];
+
+/**
+ * The projection rule a run uses when none is named: the reference's, so the
+ * examples stay comparable with it. `visible` was measured on both public
+ * examples against it (the change that added the flag); it is opt-in.
+ */
+export const DEFAULT_PROJECT_RULE: ProjectRule = 'core';
+
 // ---------------------------------------------------------------------------
 // inputs
 // ---------------------------------------------------------------------------
@@ -158,6 +183,7 @@ export interface AssembleInput {
   plan: PlanEntry[];
   extend: Extend[];
   seamRule: SeamRule;
+  projectRule: ProjectRule;
 }
 
 /** The derived numbers of the two runs' geometry. */
@@ -379,6 +405,15 @@ export interface ProjectionStats {
   core: number;
   taken: number;
   refused: number;
+  /**
+   * Where no later layer of the run is opaque (`alpha >= 250`) in front of
+   * this one: the run's owner of the pixel is this layer or one behind it. A
+   * pixel of this layer with alpha above 8 is VISIBLE exactly where this is
+   * set, and OCCLUDED everywhere else.
+   */
+  clear: Mask;
+  /** The pixels counted in `taken`: the accepted set, cut to the core. */
+  takenMask: Mask;
 }
 
 function maxDiff(a: Uint8ClampedArray, i: number, b: Uint8ClampedArray, j: number): number {
@@ -400,8 +435,20 @@ function maxDiff(a: Uint8ClampedArray, i: number, b: Uint8ClampedArray, j: numbe
  * keep See-through's synthesis. `core`, `taken` (accepted) and `refused` (core
  * pixels over the drift limit, before closing) are counted.
  * (`assemble_parts.py` `main`, the per-run loop.)
+ *
+ * With `rule: 'visible'` (NOT in the reference) the core is the top-most
+ * `alpha >= 250` set less every pixel within the 5x5 square of a pixel where a
+ * LATER layer of the run is the owner — the erosion kept only along a rim with
+ * a neighbour in front, where the painting's pixel may be that neighbour's
+ * edge. Every other step is the same. Fringe pixels (alpha below 250) are not
+ * projected under either rule: the painting there is this layer blended with
+ * what is behind it.
+ *
+ * Both rules return `clear` (no later layer is the owner) and `takenMask`, the
+ * masks the part counts in `parts.json` are derived from; `takenMask` is a
+ * subset of the top-most set, and so of `clear`.
  */
-export function projectSource(rigLayers: Raster[], srcr: Raster, frame: Frame, run: Run): ProjectionStats[] {
+export function projectSource(rigLayers: Raster[], srcr: Raster, frame: Frame, run: Run, rule: ProjectRule = DEFAULT_PROJECT_RULE): ProjectionStats[] {
   const { W, H } = frame;
   const owner = new Int32Array(W * H).fill(-1);
   rigLayers.forEach((r, i) => {
@@ -419,15 +466,26 @@ export function projectSource(rigLayers: Raster[], srcr: Raster, frame: Frame, r
   }
   return rigLayers.map((r, i) => {
     const top = newMask(W, H);
+    const clear = newMask(W, H);
+    const takenMask = newMask(W, H);
     let anyTop = false;
     for (let p = 0; p < W * H; p++) {
+      if (owner[p] <= i) clear.data[p] = 1;
       if (owner[p] === i && r.data[p * 4 + 3] >= CORE_ALPHA) {
         top.data[p] = 1;
         anyTop = true;
       }
     }
-    if (!anyTop) return { core: 0, taken: 0, refused: 0 };
-    const core = erode(top, CORE_KERNEL);
+    if (!anyTop) return { core: 0, taken: 0, refused: 0, clear, takenMask };
+    let core: Mask;
+    if (rule === 'core') core = erode(top, CORE_KERNEL);
+    else {
+      const front = newMask(W, H);
+      for (let p = 0; p < W * H; p++) if (owner[p] > i) front.data[p] = 1;
+      const rim = dilate(front, CORE_KERNEL);
+      core = newMask(W, H);
+      for (let p = 0; p < W * H; p++) if (top.data[p] === 1 && rim.data[p] === 0) core.data[p] = 1;
+    }
     const ok = newMask(W, H);
     let coreN = 0;
     let refused = 0;
@@ -443,6 +501,7 @@ export function projectSource(rigLayers: Raster[], srcr: Raster, frame: Frame, r
     for (let p = 0; p < W * H; p++) {
       const v = closed.data[p] === 1 && core.data[p] === 1 && (win === null || win.data[p] === 1) ? 1 : 0;
       okf.data[p] = v;
+      takenMask.data[p] = v;
       taken += v;
     }
     const blurred = gaussianBlur(okf, FEATHER_SIGMA);
@@ -455,7 +514,7 @@ export function projectSource(rigLayers: Raster[], srcr: Raster, frame: Frame, r
         r.data[p * 4 + c] = Math.trunc(v < 0 ? 0 : v > 255 ? 255 : v);
       }
     }
-    return { core: coreN, taken, refused };
+    return { core: coreN, taken, refused, clear, takenMask };
   });
 }
 
@@ -520,10 +579,11 @@ export function belowCrop(part: Raster, extra: Raster, headBottom: number): Mask
  * near-white (min channel <= 235) and no later plan part covers
  * (`front`, alpha >= 128). Every ring pixel takes the painting's colour at
  * alpha 255, so the flat composite there equals the painting; the count is
- * returned. Nothing changes when `sel` is empty.
+ * returned. Nothing changes when `sel` is empty. When `touched` is given,
+ * every ring pixel written is set in it.
  * (`assemble_parts.py` `grow_rim`.)
  */
-export function growRim(part: Raster, sel: Mask, srcr: Raster, front: Mask | null): number {
+export function growRim(part: Raster, sel: Mask, srcr: Raster, front: Mask | null, touched?: Mask): number {
   const { width: W, height: H } = part;
   const core = newMask(W, H);
   let anySel = false;
@@ -545,6 +605,7 @@ export function growRim(part: Raster, sel: Mask, srcr: Raster, front: Mask | nul
     part.data[s + 1] = srcr.data[s + 1];
     part.data[s + 2] = srcr.data[s + 2];
     part.data[s + 3] = 255;
+    if (touched !== undefined) touched.data[p] = 1;
     grown++;
   }
   return grown;
@@ -559,20 +620,101 @@ export function growRim(part: Raster, sel: Mask, srcr: Raster, front: Mask | nul
  * copied pixels plus the ring of the LAST such entry — the reference assigns
  * rather than adds, and that is kept (a part with one entry, the only case the
  * reference's corpus has, is unaffected).
+ *
+ * When `trace` is given, every pixel an entry wrote (copied or ring) has
+ * `trace.from` set to that entry's index in `extras`, a later entry
+ * overwriting an earlier one — the layer whose run says whether the pixel is
+ * visible — and `trace.ring` set when the last write was the ring's.
  */
-export function mergeBelowCrop(part: Raster, extras: Raster[], front: Mask, srcr: Raster, headBottom: number): number {
+export function mergeBelowCrop(part: Raster, extras: Raster[], front: Mask, srcr: Raster, headBottom: number, trace?: MergeTrace): number {
   let merged = 0;
-  for (const extra of extras) {
+  extras.forEach((extra, e) => {
     const sel = belowCrop(part, extra, headBottom);
     let copied = 0;
     for (let p = 0; p < sel.data.length; p++) {
       if (sel.data[p] === 0) continue;
       copied++;
       part.data.set(extra.data.subarray(p * 4, p * 4 + 4), p * 4);
+      if (trace !== undefined) {
+        trace.from[p] = e;
+        trace.ring.data[p] = 0;
+      }
     }
-    merged = copied + growRim(part, sel, srcr, front);
-  }
+    const ring = newMask(part.width, part.height);
+    merged = copied + growRim(part, sel, srcr, front, ring);
+    if (trace !== undefined) {
+      for (let p = 0; p < ring.data.length; p++) {
+        if (ring.data[p] === 1) {
+          trace.from[p] = e;
+          trace.ring.data[p] = 1;
+        }
+      }
+    }
+  });
   return merged;
+}
+
+/** Which extend entry last wrote each pixel (-1: none), and whether that write was the ring's. */
+export interface MergeTrace {
+  from: Int32Array;
+  ring: Mask;
+}
+
+export interface VisibilityCounts {
+  visible_px: number;
+  occluded_px: number;
+  visible_not_projected_px: number;
+  /** The part's projected pixels, the part layer's and any a merge copied in. */
+  projected: number;
+}
+
+/**
+ * The visibility counts of one part, from the masks its pixels were made
+ * with, refusing — as a bug, not a report — when they do not add up.
+ *
+ * ⚖️ Invariant: `opaque` is the part's `alpha > 8` pixels; `visible` the pixels
+ * set in `visible`; `occluded` the opaque pixels NOT set in it; `projected` the
+ * pixels set in `projected`. Required: `visible + occluded = opaque` (so every
+ * visible pixel is opaque) and every projected pixel is visible;
+ * `visible_not_projected = visible - projected`. The assembler builds
+ * `visible` as the opaque pixels no later layer of their run is in front of,
+ * and `projected` as the accepted set of `projectSource`, so both hold by
+ * construction and a refusal here names a mask that escaped its definition.
+ */
+export function visibilityCounts(object: string, part: Raster, visible: Mask, projected: Mask): VisibilityCounts {
+  const n = part.width * part.height;
+  let opaque = 0;
+  let vis = 0;
+  let occ = 0;
+  let proj = 0;
+  let projHidden = 0;
+  for (let p = 0; p < n; p++) {
+    const o = part.data[p * 4 + 3] > OPAQUE_ALPHA_ABOVE;
+    if (o) opaque++;
+    if (visible.data[p] === 1) vis++;
+    else if (o) occ++;
+    if (projected.data[p] === 1) {
+      proj++;
+      if (visible.data[p] !== 1) projHidden++;
+    }
+  }
+  const problems: Problem[] = [];
+  if (vis + occ !== opaque) {
+    problems.push({
+      code: 'ASSEMBLE_COUNTS_ADD_UP',
+      object,
+      detail: `visible ${vis} + occluded ${occ} = ${vis + occ}, opaque (alpha above ${OPAQUE_ALPHA_ABOVE}) ${opaque}; equal is required — the visible mask holds ${vis + occ - opaque} pixel(s) that are not opaque (a bug in the assembler, not in the inputs)`,
+    });
+  }
+  if (projHidden > 0) {
+    problems.push({
+      code: 'ASSEMBLE_COUNTS_ADD_UP',
+      object,
+      detail: `${projHidden} of ${proj} projected pixel(s) are not visible; projected <= visible, pixel by pixel, is required — a pixel a later layer covers was taken from the painting (a bug in the assembler, not in the inputs)`,
+    });
+  }
+  refuseIfAny(problems);
+  return { visible_px: vis, occluded_px: occ, visible_not_projected_px: vis - proj, projected: proj };
 }
 
 // ---------------------------------------------------------------------------
@@ -752,6 +894,7 @@ export interface AssembleResult {
   recomposite: Raster;
   figures: RecompositeFigures;
   seamRule: SeamRule;
+  projectRule: ProjectRule;
 }
 
 function tagsOf(set: LayerSet): Set<string> {
@@ -793,7 +936,7 @@ export function checkPlanAgainstRuns(plan: PlanEntry[], extend: Extend[], full: 
  * after this returned writes only after green.
  */
 export function assemble(input: AssembleInput): AssembleResult {
-  const { source, full, head, plan, extend, seamRule } = input;
+  const { source, full, head, plan, extend, seamRule, projectRule } = input;
   const frame = checkGeometry(
     { sourceW: source.width, sourceH: source.height, resolution: input.resolution, headBox: input.headBox, rigScale: input.rigScale },
     { full, head },
@@ -808,7 +951,7 @@ export function assemble(input: AssembleInput): AssembleResult {
   for (const [run, set] of [['full', full], ['head', head]] as const) {
     const layers = runLayers(set, input.resolution);
     const rigLayers = layers.map((l) => layerToRig(l.canvas, frame, run));
-    const st = projectSource(rigLayers, srcr, frame, run);
+    const st = projectSource(rigLayers, srcr, frame, run, projectRule);
     layers.forEach((l, i) => {
       rig.set(`${run}:${l.tag}`, rigLayers[i]);
       stats.set(`${run}:${l.tag}`, st[i]);
@@ -823,15 +966,30 @@ export function assemble(input: AssembleInput): AssembleResult {
     const src = rig.get(key) as Raster;
     const r: Raster = { width: W, height: H, data: new Uint8ClampedArray(src.data) };
     const st = stats.get(key) as ProjectionStats;
-    const extras = extend.filter((e) => e.part === name).map((e) => rig.get(`${e.run}:${e.tag}`) as Raster);
+    const extendKeys = extend.filter((e) => e.part === name).map((e) => `${e.run}:${e.tag}`);
+    const extras = extendKeys.map((k) => rig.get(k) as Raster);
     let merged = 0;
+    const trace: MergeTrace = { from: new Int32Array(W * H).fill(-1), ring: newMask(W, H) };
     if (extras.length > 0) {
       const front = newMask(W, H);
       for (const [, run2, tag2] of plan.slice(pi + 1)) {
         const f = rig.get(`${run2}:${tag2}`) as Raster;
         for (let p = 0; p < W * H; p++) if (f.data[p * 4 + 3] >= FRONT_ALPHA) front.data[p] = 1;
       }
-      merged = mergeBelowCrop(r, extras, front, srcr, frame.headBottom);
+      merged = mergeBelowCrop(r, extras, front, srcr, frame.headBottom, trace);
+    }
+    // A pixel the merge wrote is judged in the extend layer's run, every other
+    // in the part's own. Projected = the colour came from projectSource's
+    // accepted set: the part layer's, or for a copied pixel the extend
+    // layer's (its rig layer was projected before it was copied). A ring pixel
+    // is growRim's, counted in merged_px, and is not projection.
+    const visible = newMask(W, H);
+    const projected = newMask(W, H);
+    for (let p = 0; p < W * H; p++) {
+      const e = trace.from[p];
+      const own = e < 0 ? st : (stats.get(extendKeys[e]) as ProjectionStats);
+      if (r.data[p * 4 + 3] > OPAQUE_ALPHA_ABOVE && own.clear.data[p] === 1) visible.data[p] = 1;
+      if (trace.ring.data[p] === 0 && own.takenMask.data[p] === 1) projected.data[p] = 1;
     }
     let x0 = W;
     let y0 = H;
@@ -858,6 +1016,7 @@ export function assemble(input: AssembleInput): AssembleResult {
       });
       return;
     }
+    const vc = visibilityCounts(`part "${name}" (${key})`, r, visible, projected);
     const record: PartRecord = {
       name,
       from: key,
@@ -866,8 +1025,11 @@ export function assemble(input: AssembleInput): AssembleResult {
       w: x1 - x0 + 1,
       h: y1 - y0 + 1,
       opaque_px: opaque,
+      visible_px: vc.visible_px,
+      occluded_px: vc.occluded_px,
       projected_core_px: st.core,
       source_px_taken: st.taken,
+      visible_not_projected_px: vc.visible_not_projected_px,
       refused_drift_px: st.refused,
       merged_px: merged,
       seam_override_px: 0,
@@ -885,6 +1047,7 @@ export function assemble(input: AssembleInput): AssembleResult {
     recomposite: can,
     figures,
     seamRule,
+    projectRule,
   };
 }
 

@@ -168,7 +168,7 @@ function main(): void {
     const results = new Map<SeamRule, AssembleResult>();
     for (const rule of ['near-white', 'silhouette'] as const) {
       try {
-        results.set(rule, assemble({ source, full, head, ...fields, seamRule: rule }));
+        results.set(rule, assemble({ source, full, head, ...fields, seamRule: rule, projectRule: 'core' }));
       } catch (err) {
         if (!(err instanceof PartsError)) throw err;
         console.log(`${ch.label} ${rule}: REFUSED ${err.message}`);
