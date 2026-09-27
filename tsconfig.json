@@ -1,0 +1,31 @@
+{
+  // Type-check only. Bun runs the .ts sources directly, so nothing here emits —
+  // `bun run typecheck` exists to catch what the runtime would hit later, and to
+  // make `no-explicit-any` mean something (see eslint.config.js).
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["bun"],
+
+    // `.ts` in relative imports is this project's convention and Bun's default;
+    // TypeScript allows it only when nothing is emitted. spine-rigc ships its
+    // sources the same way, and this package imports them by deep path.
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    // Full `strict` from the first commit. spine-rigc runs `strict: false` with
+    // `strictNullChecks` because raising it there would be a refactor; this tree
+    // has nothing to refactor yet, so it starts where that one would like to end.
+    // Lowering it is a decision to write down here, not a flag to flip.
+    "strict": true
+  },
+  "include": ["cli.ts", "selftest.ts", "src/**/*.ts", "scripts/**/*.ts", "fixtures/**/*.ts"],
+  "exclude": ["node_modules"]
+}

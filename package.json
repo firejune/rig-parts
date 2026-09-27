@@ -1,0 +1,64 @@
+{
+  "name": "spine-parts",
+  "version": "0.1.0",
+  "description": "AI-authored Spine 2D character parts from one anime painting and its See-through layer decomposition: measured parts, weighted-mesh rig specs, verified through spine-rigc before anything is written. A CLI for agents that cannot see the image.",
+  "type": "module",
+  "bin": {
+    "spine-parts": "./bin/spine-parts.cjs"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "license": "MIT",
+  "author": "firejune",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/firejune/spine-parts.git"
+  },
+  "homepage": "https://github.com/firejune/spine-parts#readme",
+  "bugs": "https://github.com/firejune/spine-parts/issues",
+  "keywords": [
+    "spine",
+    "spine2d",
+    "spine-2d",
+    "ai",
+    "ai-agents",
+    "rigging",
+    "character-rigging",
+    "character-parts",
+    "layer-decomposition",
+    "see-through",
+    "anime",
+    "live2d-alternative",
+    "weighted-mesh",
+    "skeletal-animation",
+    "psd",
+    "cli"
+  ],
+  "files": [
+    "bin/spine-parts.cjs",
+    "cli.ts",
+    "src",
+    "NOTICE.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "selftest": "bun selftest.ts",
+    "smoke": "bun scripts/install_smoke.ts",
+    "typecheck": "bunx tsc --noEmit",
+    "lint": "bunx eslint .",
+    "prepublishOnly": "bun run typecheck && bun run lint && bun run selftest"
+  },
+  "dependencies": {
+    "ag-psd": "^31.0.2",
+    "spine-rigc": "^1.2.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "eslint": "^10.11.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.1"
+  }
+}

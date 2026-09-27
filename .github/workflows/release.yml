@@ -1,0 +1,146 @@
+# Release: the cut is one click, and no credential exists to leak.
+#
+# Every push to main hands the commits to release-please, which keeps a
+# "release: vX.Y.Z" pull request open — next version derived from the
+# conventional-commit subjects, CHANGELOG.md generated, package.json bumped.
+# Merging that pull request is the release: the resulting push runs this
+# workflow again, release-please tags vX.Y.Z and cuts the GitHub release, and
+# the same run publishes to npm over OIDC (trusted publishing) — no npm token,
+# no OTP. The very first version is published by hand, because npm's trusted
+# publisher is configured on a package that already exists (RELEASING.md).
+#
+# Two constraints are load-bearing, do not "simplify" them away:
+#   - The publish must stay in THIS file. npm's trusted publisher for
+#     spine-parts is pinned to the workflow filename `release.yml`.
+#   - It must stay on a GitHub-hosted runner. npm does not support OIDC from
+#     self-hosted runners.
+name: release
+
+on:
+  push:
+    branches: [main]
+  # Re-run a confirmation that ran out of wait, without publishing anything.
+  # What makes that safe is structural rather than careful: the `release` job
+  # runs only on a push, so a dispatch cannot reach release-please, the tag, the
+  # GitHub release or the publish — it reaches the `confirm` job and nothing else.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The published version to confirm, without the leading v (e.g. 0.1.1)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  # The event name is in the group so a dispatched confirmation does not queue
+  # behind a release run for the same ref, and two pushes still serialise.
+  group: release-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # 🔒 The publish, the tag and the GitHub release live in this job, and this
+    # job runs on a push to main only.
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    # The confirmation waits up to 15 minutes for the registry, on top of the
+    # gates `prepublishOnly` runs and the publish itself; a ceiling under the
+    # wait would report a late registry as a cancelled job.
+    timeout-minutes: 30
+    permissions:
+      contents: write # release commit, tag, GitHub release
+      pull-requests: write # open and update the release PR
+      issues: write # release-please labels
+      id-token: write # OIDC token for npm trusted publishing
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          # GITHUB_TOKEN is the intended default. Its one limitation is that the
+          # `pull_request` run its PR starts waits for a human approval — see
+          # RELEASING.md. A RELEASE_PLEASE_TOKEN secret, if ever created, is
+          # picked up with no edit here.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      # Everything below runs only on the push that merged the release PR.
+      - uses: actions/checkout@v4
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        with:
+          ref: ${{ steps.release.outputs.tag_name }}
+
+      - uses: oven-sh/setup-bun@v2
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+
+      - uses: actions/setup-node@v4
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # Node 22 ships npm 10; the OIDC exchange landed in npm 11.5.1.
+      - name: Use an npm that speaks OIDC
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      # The lockfile is bun.lock — there is no package-lock.json for `npm ci`.
+      # Dependencies exist only to let prepublishOnly run its gates.
+      - name: Install dependencies
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        run: bun install --frozen-lockfile
+
+      # Nothing to build — the package ships TypeScript sources and bun runs
+      # them. prepublishOnly runs `typecheck && lint && selftest` against the
+      # tagged tree, so a broken gate fails the publish rather than shipping.
+      - name: Publish to npm
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        run: npm publish --provenance --access public
+
+      # ⚖️ A confirmation beside the gate, not the gate: the `installs` job in
+      # ci.yml runs the same script over a tarball packed from the branch, with
+      # planted packages that have to make it red. This step cannot be the gate,
+      # because its own firing cannot be observed without publishing something
+      # broken. What it adds is the artifact the registry actually serves.
+      #
+      # ⏳ The wait belongs to the script: a publish returns before the registry
+      # serves it, and a version not served yet is exit 3 ("confirmation NOT
+      # taken"), never the same red as a package that does not run (exit 1).
+      - name: Confirm the published package installs and runs
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        # Through the environment rather than interpolated into the script.
+        env:
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG_NAME#v}"
+          bun run smoke -- --source registry --version "$version" --wait 15 --case clean
+
+  # The same confirmation, on demand, for a cut whose wait ran out. It
+  # publishes nothing and can publish nothing: `npm publish` exists only in the
+  # job above, which a dispatch skips.
+  confirm:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      # The tag, rather than whatever `main` holds now: the question is whether
+      # the artifact THAT cut published runs, so the script asking it is that cut's.
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Confirm the published package installs and runs
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          bun run smoke -- --source registry --version "$VERSION" --wait 15 --case clean

@@ -1,0 +1,168 @@
+# CLAUDE.md
+
+Guidance for AI-assisted sessions working on this repository. `AGENTS.md` is a
+link to this file.
+
+## What this is
+
+spine-parts takes one anime character painting and its
+[See-through](https://github.com/shitagaki-lab/see-through) layer decomposition
+and produces Spine-ready parts — `parts/*.png`, `parts.json` (per-part
+provenance and measurements), and `rig.json` / `motion.json` in
+[spine-rigc](https://github.com/firejune/rigc)'s spec — then calls spine-rigc to
+compile, gate, render and check. It is a port of a working reference
+implementation that lives in a private repository (see *Where the private
+oracle lives*). Version 0.1.0 is the skeleton: readers, contracts, the raster
+library, the layer table and the contact sheet; README's banner says what is
+next.
+
+## The doctrine: a tool for AI, not for people
+
+An agent building a character rig from a painting cannot see the painting, the
+layers or the result. A pipeline that only reports "done" lets it report
+success on a broken rig and be sincere about it. spine-parts exists, like
+spine-rigc under it, to convert that silence into named failures.
+
+- **The messages are the UI.** A refusal names the rule, the object, the value
+  found and the value required: `LAYERS_PNG_MATCHES_BBOX: layer "face" —
+  parts/face.png is 25x12; the manifest box is 26x12`. "invalid layer" is not a
+  message this repository writes. Readers collect every problem and throw once,
+  so one run names everything that is wrong.
+- **Everything resolves by name, and a miss is refused by name.** A bone's
+  parent, a mesh's segment bones, a region's bone, a plan part's tag, an
+  `extend_below_crop` part, a track's bone or chain. Parents come before
+  children, as Spine requires.
+- **Never invent a value.** No defaults guessed from the art, no "reasonable"
+  fallbacks for a missing field, no silent mapping of an unknown tag to a
+  nearby one. A missing number is a refusal naming the field. Where the
+  reference implementation silently truncated or guessed (amplitudes zipped
+  against chain links, a sine period that does not divide the idle, a
+  non-square head box scaled by its width), the loader refuses.
+- **Emit only after green.** A stage writes its outputs only when every check
+  it owns has passed, and the rig stages write only after spine-rigc's round
+  trip has passed. A wrong file on disk outlives the console that warned about
+  it.
+- 🔒 **spine-rigc's validation is not optional here either.** spine-parts does
+  not emit Spine data itself; it hands a rig spec to spine-rigc, whose build
+  validates through `spine-core` before it writes. There must never be a path
+  in this package that produces skeleton data without that round trip, nor a
+  flag or environment escape that skips it.
+- **Determinism is a contract.** The same inputs write the same bytes: fixed
+  key order in every JSON written, stable sorts, no clock, no randomness, no
+  locale-sensitive formatting. `src/` is pure except `src/comfy/` (below).
+- **A gate nobody has seen fail is not a gate.** Every check in `selftest.ts`
+  has a planted input that must make it fire, next to the positive control that
+  must not. A suite with nothing to read reports **SKIP** and a HOLE line,
+  never a pass.
+- **No `any`, no `as any`, in `src/` or `cli.ts`.** `bun run lint` enforces it,
+  and `TY01` checks that any exemption in `selftest.ts` sits between an
+  `eslint-disable`/`eslint-enable` pair (there is none today).
+- **Numbers carry their source.** A figure in a comment or a document is
+  measured (and says against what — "bit-exact against cv2 4.13 over N
+  samples") or it is not written. An unmeasured doubt is not written either.
+- **The scene belongs to the consumer.** What the rig can do — its sway, its
+  breath, its blink — is ours; when it does it, and with what else on screen,
+  is not.
+
+### The same lens governs how the repository is worked
+
+Questions that look like preferences — which reading, which name, which
+threshold — are settled by what is derivable and measurable, not by asking a
+person. What survives that lens is short: direction, licence posture, what the
+spend is worth, and text that speaks as the owner. "I cannot tell" is not a
+reason to escalate; it means an instrument is missing, and the answer is a
+check or a card. A task brief is checked against the tree before it is trusted,
+and a report says what in the brief was contradicted.
+
+The reader to write for is an agent with no memory of the conversation that
+produced the work: a decision not written into the tree did not happen. Commit
+messages and pull requests carry the argument — the claim, its measurement, and
+the alternative rejected with the reason.
+
+## Where the private oracle lives and what may not cross
+
+The port is verified against the reference implementation and its corpus — real
+paintings, their See-through runs, the parts and configs the reference produced
+— which live in a **private** repository and **never enter this tree**.
+
+- ⛔ No painting, layer PNG, part PNG, `layers.json`, `parts.json`, `config.json`
+  or rig from that corpus is copied here, in whole or in part, including as a
+  fixture or a test expectation.
+- ⛔ No character name from that corpus appears in any file. The one place the
+  names are written is the marked block in `selftest.ts`, which exists so `TY04`
+  can refuse them everywhere else.
+- ⛔ No LAN address (`TY03`), no Korean text (`TY02`): the repository is English
+  only, and a host is the user's, supplied at run time.
+- ✅ The corpus is **read** with `bun run selftest -- --corpus <dir>` (or
+  `SPINE_PARTS_CORPUS=<dir>`), which reads every `layers.json` and `parts.json`
+  under it and writes nothing. A named corpus that does not exist exits 2; no
+  corpus is a SKIP and a HOLE, never a pass.
+- ✅ Measurements taken against it may be quoted as figures ("18 of 18 layer
+  sets read green"), never as content.
+- The fixtures that DO live here (`fixtures/synthetic.ts`) are flat colour
+  blocks with hand-computable counts, and no claim about appearance is made
+  from them.
+
+## Conventions
+
+- Bun + TypeScript, ESM, `.ts` extensions in relative imports, `strict: true`.
+- `src/` is pure: no clock, no randomness, no network, no child processes.
+  **One** directory is the exception, `src/comfy/`, reserved for the optional
+  ComfyUI adapter; `TY06` scans every other file under `src/`.
+- **The y flip has one door.** Parts and configs are in crop pixels, y down,
+  origin top-left; Spine's world is y up. The conversion is spine-rigc's
+  (`spine-rigc/src/transform.ts`), re-exported by `src/coords.ts`, and `TY07`
+  refuses any other importer. Do not open-code `height - y` anywhere.
+- **spine-rigc's deep paths are an interface.** spine-rigc has no `exports`
+  map, so `spine-rigc/tools/plate.ts` (PNG codec), `spine-rigc/tools/font5x7.ts`
+  and `spine-rigc/src/transform.ts` are imported by path. A spine-rigc release
+  that moves them breaks this package by name, and `bun run smoke` is where that
+  shows first.
+- **Raster ops state which call they stand in for.** Each function in
+  `src/raster/` names the OpenCV / SciPy / PIL call whose semantics it
+  reproduces and what was measured against it; a known deviation is written in
+  the doc comment, not hidden.
+- **Do not name a function `declare`.** Bun strips a statement `declare(...)`
+  as a TypeScript ambient declaration while tsc accepts it as a call; `TY08`
+  holds the tree to it.
+- A new runtime import that crosses a directory must be inside `files` in
+  `package.json`. `npm pack --dry-run` lists what ships; no document keeps that
+  list by hand.
+- Conventional Commits, English subject and body. Pushing, tagging and
+  publishing are the owner's call.
+
+## Verification — run these before you call a unit finished
+
+| Command | Checks |
+| --- | --- |
+| `bun run typecheck` | `tsc --noEmit` over the paths `tsconfig.json`'s `include` names |
+| `bun run lint` | one rule: `@typescript-eslint/no-explicit-any` as an error |
+| `bun run selftest` | every suite's positive and negative controls on generated fixtures, and the tree rules; `-- --corpus <dir>` adds the read-only corpus suite |
+| `bun run smoke` | the **package** rather than the tree: pack, install into an empty directory, run `--version`, `layers` (wrapper and PSD) and `sheet` from the install, with three planted broken packages that must go red. Needs a network |
+
+## The selftest and its fixtures
+
+`bun run selftest` is self-contained: no arguments, no art, no network, no
+private repository. The rules that hold it together:
+
+- **The run counts itself off the lines it prints.** Every suite is wrapped by
+  `RunTally.of`; its figure is the number of `PASS`/`FAIL` case lines it
+  printed, its own positive control included. Nothing is typed into the summary
+  — `TY09` refuses a digit in the summary's text and a constant only the summary
+  reads.
+- **The floor is per suite.** A suite that ran and printed no case, a suite
+  opening more or fewer than one section, a case line outside every suite, an
+  unknown gutter word, a returned failure count that disagrees with the printed
+  FAIL lines — each is a fault, and a run with a fault exits **2**. `RT01`–`RT05`
+  plant each one.
+- **An absent input is a HOLE.** The corpus suite without a corpus opens its
+  section, prints `SKIP` and a HOLE line, counts as not run, and the summary
+  names it.
+- **No expectation is a number measured off private data.** Every expected
+  value in a control is computed by hand from the fixture or from a definition
+  (the Lanczos control evaluates the filter in float64); figures measured
+  against the private corpus or against cv2/PIL appear only in `origin:` prose.
+- **The tree population is read off the disk**, not off git: every file outside
+  `.git` and `.gitignore`, so the rules hold before the first commit as well as
+  after. `TY00` holds that walk to the tree, and refuses `.gitignore` syntax its
+  small matcher does not implement.

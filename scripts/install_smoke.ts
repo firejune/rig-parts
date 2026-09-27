@@ -1,0 +1,549 @@
+/**
+ * Does the PUBLISHED PACKAGE run on a machine that has never seen this
+ * repository?
+ *
+ *     bun run smoke                      the whole battery, on this tree's tarball
+ *     bun run smoke -- --case clean      just the green one
+ *     bun run smoke -- --source registry --version 0.1.0 --wait 15
+ *
+ * Four exit codes, because a caller has to be able to tell the outcomes apart
+ * without reading prose: **0** every case passed, **1** a case went red —
+ * against `--source registry`, the published artifact does not run — **2**
+ * nothing ran at all, and **3** the registry never served the version inside
+ * `--wait`, which says nothing about the package.
+ *
+ * Nothing else in this repository asks that question. `prepublishOnly` gates the
+ * SOURCE TREE, the `ships` job in `ci.yml` reads packed PATH LISTS, and
+ * `release.yml` publishes and never installs. This is the fact about a program:
+ * `npm pack`, `npm install` into an empty directory, and real commands run from
+ * the install — `--version`, `layers` on a wrapper directory, `layers` on a PSD,
+ * and `sheet`.
+ *
+ * 🔒 **Nothing under this repository is on the fixture's path at run time.** The
+ * fixture generator below is authored as text into the install directory and
+ * imports `spine-parts/src/raster/png.ts` and `ag-psd` as BARE specifiers, so
+ * they resolve inside the install or not at all — and the run refuses a
+ * resolution that lands anywhere else. The only thing that crosses from the
+ * checkout is the tarball this script packed, which is the subject.
+ *
+ * 🌱 **The plants are part of the tool.** A smoke nobody has seen fail proves a
+ * program ran, not that a program was checked, so three of the five cases
+ * rebuild the tarball from a PATCHED COPY of the extracted package — a module
+ * removed, a dependency removed, the other dependency removed — and INVERT the
+ * verdict: such a case is green only when the smoke went red at the step it was
+ * supposed to, naming what went missing. The worktree is never patched, and a
+ * plant that removed nothing is itself a fault.
+ *
+ * ⏳ **The wait.** A publish returns before the registry serves what it
+ * published — npm says so on the way out, with no upper bound — so `--wait
+ * <minutes>` keeps asking, 5 s, 10 s, 20 s, then every 30 s, and prints how long
+ * it has been asking. A version the registry has not served yet is exit 3 and a
+ * message saying the confirmation was NOT taken; only a case going red on an
+ * artifact the registry did serve is exit 1. ⚠️ The wait's probe is `npm view
+ * <spec> version`, the packument, not the tarball.
+ *
+ * What it cannot see: the tarball a branch packs is not the tarball npm serves
+ * until a publish makes it one (that is `--source registry`), and a green run is
+ * one platform's answer, the runner's.
+ */
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/** The repository this script packs — it is the subject, and nothing else reaches the fixture. */
+const ROOT = resolve(import.meta.dir, '..');
+
+// ---------------------------------------------------------------------------
+// the fixture, authored here because the package carries no art
+// ---------------------------------------------------------------------------
+//
+// Three flat-colour layers with known painted-pixel counts, written twice: as
+// the ComfyUI wrapper form (layers.json + PNGs, one flat and two under parts/)
+// and as a PSD. Nothing about appearance can be claimed from them, and nothing
+// is; what they carry is a draw order and three counts the run can check.
+
+const GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { initializeCanvas, writePsd } from 'ag-psd';
+import { encodePngBytes } from 'spine-parts/src/raster/png.ts';
+
+// \`fileURLToPath\` and not \`new URL(...).pathname\`: a URL path is
+// percent-encoded, so the unusual-path case would write into a directory with
+// %20 in its name.
+const HERE = fileURLToPath(new URL('.', import.meta.url));
+const OUT = join(HERE, 'wrapper');
+mkdirSync(join(OUT, 'parts'), { recursive: true });
+
+const layers = [
+  { name: 'face', left: 8, top: 4, w: 16, h: 12, depth: 0.5, painted: 100, rgb: [230, 200, 180], flat: false },
+  { name: 'back hair', left: 4, top: 0, w: 24, h: 20, depth: 0.9, painted: 300, rgb: [60, 40, 90], flat: true },
+  { name: 'eyebrow-l', left: 16, top: 6, w: 4, h: 2, depth: 0.2, painted: 5, rgb: [40, 30, 30], flat: false },
+];
+const raster = (l) => {
+  const data = new Uint8ClampedArray(l.w * l.h * 4);
+  for (let i = 0; i < l.painted; i++) data.set([...l.rgb, 255], i * 4);
+  return { width: l.w, height: l.h, data };
+};
+const fileOf = (l) => 'smoke_' + l.name.replace(' ', '_') + '.png';
+writeFileSync(join(OUT, 'layers.json'), JSON.stringify({
+  prefix: 'smoke',
+  layers: layers.map((l) => ({ name: l.name, filename: fileOf(l), left: l.left, top: l.top, right: l.left + l.w, bottom: l.top + l.h, depth_median: l.depth })),
+  width: 32,
+  height: 24,
+}, null, 2));
+for (const l of layers) writeFileSync(l.flat ? join(OUT, fileOf(l)) : join(OUT, 'parts', l.name + '.png'), encodePngBytes(raster(l)));
+writeFileSync(join(HERE, 'painting.png'), encodePngBytes(raster({ w: 32, h: 24, painted: 32 * 24, rgb: [250, 250, 250] })));
+
+initializeCanvas(() => { throw new Error('no canvas'); }, (w, h) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }));
+const bottomFirst = [...layers].sort((a, b) => b.depth - a.depth);
+const psd = { width: 32, height: 24, children: bottomFirst.map((l) => ({ name: l.name, left: l.left, top: l.top, right: l.left + l.w, bottom: l.top + l.h, imageData: raster(l) })) };
+writeFileSync(join(HERE, 'fixture.psd'), new Uint8Array(writePsd(psd, { noBackground: true })));
+
+console.log('RESOLVED ' + import.meta.resolve('spine-parts/src/raster/png.ts'));
+console.log('RESOLVED ' + import.meta.resolve('ag-psd'));
+`;
+
+/** The draw order both inputs must read back in, and the opaque count of each layer. */
+const EXPECT_ORDER = ['back hair', 'face', 'eyebrow-l'];
+const EXPECT_OPAQUE: Record<string, number> = { 'back hair': 300, face: 100, 'eyebrow-l': 5 };
+
+// ---------------------------------------------------------------------------
+// running things
+// ---------------------------------------------------------------------------
+
+interface Ran {
+  status: number;
+  out: string;
+}
+
+function run(cmd: string, args: string[], cwd: string, env?: Record<string, string | undefined>): Ran {
+  const r = spawnSync(cmd, args, { cwd, env: env ?? process.env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const failed = r.error === undefined ? '' : `\n${r.error.message}`;
+  return { status: typeof r.status === 'number' ? r.status : 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}${failed}` };
+}
+
+function onPath(cmd: string): string | null {
+  const r = spawnSync('command', ['-v', cmd], { encoding: 'utf8', shell: true });
+  const found = typeof r.stdout === 'string' ? r.stdout.trim() : '';
+  return found === '' ? null : found;
+}
+
+const EXIT_GREEN = 0;
+const EXIT_RED = 1;
+const EXIT_NOTHING_RAN = 2;
+const EXIT_NOT_SERVED = 3;
+const DEFAULT_WAIT_MINUTES = 15;
+
+function sleepMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function elapsedText(ms: number): string {
+  const whole = Math.round(ms / 1000);
+  return `${Math.floor(whole / 60)}m ${String(whole % 60).padStart(2, '0')}s`;
+}
+
+function backoffMs(attempt: number): number {
+  return Math.min(5000 * 2 ** (attempt - 1), 30000);
+}
+
+function waitForRegistry(spec: string, minutes: number, cwd: string): { served: boolean; attempts: number; ms: number; last: string } {
+  const started = Date.now();
+  const deadline = started + Math.round(minutes * 60_000);
+  let attempts = 0;
+  let last = '';
+  for (;;) {
+    attempts += 1;
+    // `--prefer-online`: npm caches a packument, a negative answer included, and
+    // a poll reading its own earlier 404 would wait out the whole ceiling.
+    const asked = run('npm', ['view', spec, 'version', '--prefer-online'], cwd);
+    if (asked.status === 0) return { served: true, attempts, ms: Date.now() - started, last: asked.out.trim() };
+    const said = asked.out.split('\n').map((l) => l.trim()).filter((l) => l !== '' && !/A complete log of this run/.test(l));
+    last = said.find((l) => /\berror code\b/.test(l)) ?? said[0] ?? '';
+    const left = deadline - Date.now();
+    if (left <= 0) return { served: false, attempts, ms: Date.now() - started, last };
+    const nap = Math.min(backoffMs(attempts), left);
+    console.log(`  the registry is not serving ${spec} yet — attempt ${attempts}, ${elapsedText(Date.now() - started)} into a ${minutes} min wait; asking again in ${Math.round(nap / 1000)}s`);
+    sleepMs(nap);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// the tarball, and the plants that patch a COPY of it
+// ---------------------------------------------------------------------------
+
+type Plant = 'none' | 'drop-src-module' | 'drop-rigc' | 'drop-psd';
+
+const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]; what: string }> = {
+  'drop-src-module': {
+    names: ['layers.ts'],
+    steps: ['layers'],
+    what: '`src/layers.ts` removed from the packed tree. `files` names the `src` DIRECTORY, so a module leaves the package by leaving the tree, and the install is where `layers` cannot find its reader',
+  },
+  'drop-rigc': {
+    names: ['spine-rigc'],
+    steps: ['fixture', 'layers'],
+    what: '`spine-rigc` removed from `dependencies`. A checkout would not notice — it is already in node_modules — and the install is where the PNG codec and the coordinate door have nothing to import',
+  },
+  'drop-psd': {
+    names: ['ag-psd'],
+    steps: ['fixture', 'layers'],
+    what: '`ag-psd` removed from `dependencies`: the PSD reader is imported by every `layers` call, so the whole command goes, not just the PSD half',
+  },
+};
+
+function tarPaths(tgz: string, cwd: string): string[] {
+  const listed = run('tar', ['-tzf', tgz], cwd);
+  if (listed.status !== 0) return [];
+  return listed.out
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '' && !l.endsWith('/'))
+    .map((l) => (l.startsWith('package/') ? l.slice('package/'.length) : l));
+}
+
+function tarballFor(work: string, source: { kind: 'tree' } | { kind: 'registry'; spec: string }, plant: Plant): { tgz: string; faults: string[]; packedPaths: number; evidence: string } {
+  const faults: string[] = [];
+  const packDir = join(work, 'pack');
+  mkdirSync(packDir, { recursive: true });
+  const packed =
+    source.kind === 'tree'
+      ? run('npm', ['pack', ROOT, '--pack-destination', packDir, '--silent'], work)
+      : run('npm', ['pack', source.spec, '--pack-destination', packDir, '--silent', '--prefer-online'], work);
+  const tarballs = existsSync(packDir) ? readdirSync(packDir).filter((f) => f.endsWith('.tgz')) : [];
+  if (packed.status !== 0 || tarballs.length !== 1) {
+    faults.push(`SMOKE_PACK_WROTE_A_TARBALL: \`npm pack\` exited ${packed.status} and left ${tarballs.length} tarball(s) in ${packDir}; one was required. ${packed.out.trim()}`);
+    return { tgz: '', faults, packedPaths: 0, evidence: '' };
+  }
+  const first = join(packDir, tarballs[0]);
+  const paths = tarPaths(first, work);
+  if (plant === 'none') return { tgz: first, faults, packedPaths: paths.length, evidence: '' };
+
+  const patchDir = join(work, 'patched');
+  mkdirSync(patchDir, { recursive: true });
+  const untar = run('tar', ['-xzf', first, '-C', patchDir], work);
+  const pkgDir = join(patchDir, 'package');
+  const pkgPath = join(pkgDir, 'package.json');
+  if (untar.status !== 0 || !existsSync(pkgPath)) {
+    faults.push(`SMOKE_PLANT_APPLIED: extracting ${first} left no package/package.json under ${patchDir}. ${untar.out.trim()}`);
+    return { tgz: '', faults, packedPaths: 0, evidence: '' };
+  }
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { dependencies?: Record<string, string> };
+  if (plant === 'drop-rigc' || plant === 'drop-psd') {
+    delete (pkg.dependencies ?? {})[plant === 'drop-rigc' ? 'spine-rigc' : 'ag-psd'];
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  } else {
+    const victim = join(pkgDir, 'src', 'layers.ts');
+    if (!existsSync(victim)) {
+      faults.push('SMOKE_PLANT_APPLIED: src/layers.ts is not in the packed tree, so removing it plants nothing');
+      return { tgz: '', faults, packedPaths: 0, evidence: '' };
+    }
+    rmSync(victim);
+  }
+  const repackDir = join(work, 'repack');
+  mkdirSync(repackDir, { recursive: true });
+  const repacked = run('npm', ['pack', pkgDir, '--pack-destination', repackDir, '--silent'], work);
+  const again = readdirSync(repackDir).filter((f) => f.endsWith('.tgz'));
+  if (repacked.status !== 0 || again.length !== 1) {
+    faults.push(`SMOKE_PLANT_APPLIED: re-packing the patched copy exited ${repacked.status} with ${again.length} tarball(s). ${repacked.out.trim()}`);
+    return { tgz: '', faults, packedPaths: 0, evidence: '' };
+  }
+  const second = join(repackDir, again[0]);
+  // 🚨 The control on the plant itself, read out of the tarball that will be
+  // installed: a plant that removed nothing would let the inverted verdict
+  // report that a correct package fails.
+  const after = tarPaths(second, work);
+  let evidence = '';
+  if (plant === 'drop-src-module') {
+    const gone = paths.filter((p) => !after.includes(p));
+    if (gone.length === 0) faults.push(`SMOKE_PLANT_APPLIED: the plant left the packed path list unchanged at ${after.length} path(s)`);
+    else evidence = `the plant took ${gone.join(', ')} out of the pack`;
+  } else {
+    const dep = plant === 'drop-rigc' ? 'spine-rigc' : 'ag-psd';
+    const shipped = run('tar', ['-xzOf', second, 'package/package.json'], work);
+    const deps = shipped.status === 0 ? ((JSON.parse(shipped.out) as { dependencies?: Record<string, string> }).dependencies ?? {}) : {};
+    if (shipped.status !== 0 || dep in deps) faults.push(`SMOKE_PLANT_APPLIED: the packed package.json still declares ${dep}, so nothing was planted`);
+    else evidence = `the packed package.json declares ${Object.keys(deps).join(', ') || 'no dependency'}, without ${dep}`;
+  }
+  return { tgz: second, faults, packedPaths: after.length, evidence };
+}
+
+// ---------------------------------------------------------------------------
+// one case
+// ---------------------------------------------------------------------------
+
+interface CaseSpec {
+  name: string;
+  source: { kind: 'tree' } | { kind: 'registry'; spec: string };
+  installer: 'npm' | 'bun';
+  plant: Plant;
+  dirName: string;
+}
+
+interface CaseResult {
+  faults: string[];
+  steps: string[];
+  notes: string[];
+  output: string;
+}
+
+/** The rows of a `layers` table: name and opaque count, in the order printed. */
+function tableRows(out: string): Array<{ name: string; opaque: number }> {
+  const rows: Array<{ name: string; opaque: number }> = [];
+  for (const line of out.split('\n')) {
+    const m = /^ {2}(\d+) {2}(.+?) {2,}(body|head) {2}/.exec(line);
+    if (m === null) continue;
+    const cells = line.trim().split(/ {2,}/);
+    rows.push({ name: m[2].trim(), opaque: Number(cells[6]) });
+  }
+  return rows;
+}
+
+function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
+  const faults: string[] = [];
+  const steps: string[] = [];
+  const notes: string[] = [];
+  let output = '';
+  const fault = (step: string, message: string): void => {
+    faults.push(message);
+    steps.push(step);
+  };
+
+  const built = tarballFor(work, spec.source, spec.plant);
+  for (const f of built.faults) fault('pack', f);
+  if (built.tgz === '') return { faults, steps, notes, output };
+  notes.push(`the tarball carries ${built.packedPaths} path(s)`);
+  if (built.evidence !== '') notes.push(built.evidence);
+
+  // An EMPTY directory with a package.json of its own, so npm resolves here and
+  // does not walk up. `realpathSync` because a module specifier resolves
+  // through the real path (macOS reaches its temp dir as /var and reports /private/var).
+  mkdirSync(join(work, spec.dirName), { recursive: true });
+  const home = realpathSync(join(work, spec.dirName));
+  writeFileSync(join(home, 'package.json'), `${JSON.stringify({ name: 'spine-parts-install-smoke', private: true, version: '0.0.0', type: 'module' }, null, 2)}\n`);
+  const install = spec.installer === 'npm' ? run('npm', ['install', built.tgz, '--no-audit', '--no-fund'], home) : run('bun', ['add', built.tgz], home);
+  output += install.out;
+  const pkgRoot = join(home, 'node_modules', 'spine-parts');
+  const bin = join(home, 'node_modules', '.bin', 'spine-parts');
+  if (!existsSync(join(pkgRoot, 'package.json')) || !existsSync(bin)) {
+    fault('install', `SMOKE_INSTALL_EMPTY_DIR: ${spec.installer} install of ${built.tgz} exited ${install.status} and left ${existsSync(pkgRoot) ? 'no .bin/spine-parts' : 'no node_modules/spine-parts'} under ${home}. ${install.out.trim().slice(0, 3000)}`);
+    if (!keep) rmSync(home, { recursive: true, force: true });
+    return { faults, steps, notes, output };
+  }
+  const installedVersion = (JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8')) as { version?: string }).version ?? '';
+
+  // --version, from the install, against the installed package.json.
+  const version = run(bin, ['--version'], home);
+  output += version.out;
+  if (version.status !== 0 || version.out.trim() !== installedVersion) {
+    fault('version', `SMOKE_VERSION_FROM_THE_INSTALL: \`spine-parts --version\` exited ${version.status} saying ${JSON.stringify(version.out.trim().slice(0, 400))}; the installed package.json says ${installedVersion}`);
+  }
+
+  // The fixture: written here, generated by the package's own modules.
+  writeFileSync(join(home, 'make_fixture.ts'), GENERATOR);
+  const gen = run('bun', [join(home, 'make_fixture.ts')], home);
+  output += gen.out;
+  if (gen.status !== 0) {
+    fault('fixture', `SMOKE_FIXTURE_FROM_THE_PACKAGE: \`bun make_fixture.ts\` exited ${gen.status}. ${gen.out.trim().slice(0, 3000)}`);
+  } else {
+    const resolved = [...gen.out.matchAll(/^RESOLVED (.+)$/gm)].map((m) => (m[1].startsWith('file://') ? fileURLToPath(m[1]) : m[1]));
+    const outsideInstall = resolved.filter((p) => !p.startsWith(join(home, 'node_modules')));
+    if (resolved.length !== 2 || outsideInstall.length > 0) {
+      fault('fixture', `SMOKE_FIXTURE_FROM_THE_PACKAGE: the generator's imports resolved to ${resolved.join(', ') || '(nothing)'}; both were required under ${join(home, 'node_modules')}`);
+    } else notes.push(`the fixture's codec and PSD writer resolved inside the install`);
+  }
+
+  // `layers`, twice: the wrapper form and the PSD form must read back the same
+  // draw order and the same opaque counts.
+  for (const [label, input] of [
+    ['wrapper', join(home, 'wrapper')],
+    ['psd', join(home, 'fixture.psd')],
+  ] as const) {
+    const table = run(bin, ['layers', input], home);
+    output += table.out;
+    const rows = tableRows(table.out);
+    const order = rows.map((r) => r.name).join(' < ');
+    const counts = rows.every((r) => EXPECT_OPAQUE[r.name] === r.opaque);
+    if (table.status !== 0 || order !== EXPECT_ORDER.join(' < ') || !counts) {
+      fault(
+        'layers',
+        `SMOKE_LAYERS_READS_THE_FIXTURE: \`spine-parts layers\` on the ${label} input exited ${table.status} with order "${order}"${counts ? '' : ` and counts ${rows.map((r) => `${r.name}=${r.opaque}`).join(', ')}`}; "${EXPECT_ORDER.join(' < ')}" with ${Object.entries(EXPECT_OPAQUE).map(([n, c]) => `${n}=${c}`).join(', ')} was required. ${table.out.trim().slice(0, 2000)}`,
+      );
+    } else notes.push(`layers read the ${label} input: ${order}`);
+  }
+
+  // `sheet`, which exercises the resampler, the compositor, rigc's font and the encoder.
+  const sheetOut = join(home, 'sheet.png');
+  const sheet = run(bin, ['sheet', '--source', join(home, 'painting.png'), '--layers', join(home, 'wrapper'), '--out', sheetOut, '--cell', '60', '--cols', '2'], home);
+  output += sheet.out;
+  const header = existsSync(sheetOut) ? readFileSync(sheetOut) : null;
+  const w = header !== null && header.length >= 24 ? header.readUInt32BE(16) : 0;
+  const h = header !== null && header.length >= 24 ? header.readUInt32BE(20) : 0;
+  if (sheet.status !== 0 || w !== 120 || h !== 120) {
+    fault('sheet', `SMOKE_SHEET_WRITES_ITS_PNG: \`spine-parts sheet\` exited ${sheet.status} and wrote ${header === null ? 'nothing' : `a ${w}x${h} file`}; 120x120 (4 tiles, 2 columns of 60) was required. ${sheet.out.trim().slice(0, 2000)}`);
+  } else notes.push('sheet wrote a 120x120 PNG');
+
+  // The shim's own promise: with bun off PATH it says so in one sentence.
+  const bunPath = onPath('bun');
+  const nodePath = onPath('node');
+  if (bunPath === null) notes.push('SKIP the without-bun control: bun is not on PATH in this run');
+  else if (nodePath !== null && dirname(nodePath) === dirname(bunPath)) notes.push(`SKIP the without-bun control: node and bun share ${dirname(bunPath)}`);
+  else {
+    const stripped = (process.env.PATH ?? '').split(delimiter).filter((part) => part !== dirname(bunPath));
+    const withoutBun = run(bin, ['--version'], home, { ...process.env, PATH: stripped.join(delimiter) });
+    if (withoutBun.status === 0 || !/runs on Bun/.test(withoutBun.out)) {
+      fault('shim', `SMOKE_SHIM_NAMES_BUN_WHEN_BUN_IS_ABSENT: with ${dirname(bunPath)} off PATH the shim exited ${withoutBun.status} saying ${JSON.stringify(withoutBun.out.trim().slice(0, 300))}`);
+    } else notes.push('with bun off PATH the shim names Bun and stops');
+  }
+
+  if (!keep) rmSync(home, { recursive: true, force: true });
+  return { faults, steps, notes, output };
+}
+
+// ---------------------------------------------------------------------------
+// the battery
+// ---------------------------------------------------------------------------
+
+const HELP = `spine-parts install smoke — does the published package run in an empty directory?
+
+usage:
+  bun run smoke                          every case below, on a tarball packed from this tree
+  bun run smoke -- --case clean          one case by name
+  bun run smoke -- --source registry --version 0.1.0 [--wait 15]
+  bun run smoke -- --installer bun       install with \`bun add\` instead of \`npm install\`
+  bun run smoke -- --keep                leave the install directories where they are
+
+exit codes:
+  0  every case passed
+  1  a case went red — against \`--source registry\`, the published artifact does not run
+  2  no case ran, so this run measured nothing
+  3  the registry did not serve the version within --wait, so the confirmation was NOT taken
+
+cases:
+  clean            a correct package installs; --version, layers (wrapper and PSD) and sheet run from it
+  unusual-path     the same, installed at an absolute path with spaces and non-ASCII in it
+  drop-src-module  src/layers.ts out of the packed tree — the smoke has to go RED naming it
+  drop-rigc        spine-rigc out of \`dependencies\` — the smoke has to go RED naming it
+  drop-psd         ag-psd out of \`dependencies\` — the smoke has to go RED naming it
+`;
+
+function main(): number {
+  const argv = process.argv.slice(2);
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(HELP);
+    return EXIT_GREEN;
+  }
+  const flag = (name: string): string | null => {
+    const at = argv.indexOf(`--${name}`);
+    return at === -1 || at === argv.length - 1 ? null : argv[at + 1];
+  };
+  const keep = argv.includes('--keep');
+  const only = flag('case');
+  const installer = flag('installer') === 'bun' ? 'bun' : 'npm';
+  const sourceKind = flag('source') === 'registry' ? 'registry' : 'tree';
+  const pkgVersion = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { version?: string }).version ?? '';
+  const wanted = flag('version') ?? pkgVersion;
+  const source: CaseSpec['source'] = sourceKind === 'registry' ? { kind: 'registry', spec: `spine-parts@${wanted}` } : { kind: 'tree' };
+
+  const waitFlag = flag('wait');
+  const waitMinutes = waitFlag === null ? DEFAULT_WAIT_MINUTES : Number(waitFlag);
+  if (waitFlag !== null && sourceKind !== 'registry') {
+    console.log('  FAIL  SMOKE_WAIT_IS_FOR_THE_REGISTRY: --wait is for `--source registry`; a tarball packed from this tree is on disk the moment `npm pack` returns');
+    return EXIT_RED;
+  }
+  if (!Number.isFinite(waitMinutes) || waitMinutes < 0) {
+    console.log(`  FAIL  SMOKE_WAIT_IS_FOR_THE_REGISTRY: --wait ${JSON.stringify(waitFlag)} is not a number of minutes`);
+    return EXIT_RED;
+  }
+
+  console.log(`spine-parts install smoke — ${source.kind === 'tree' ? `a tarball packed from ${ROOT}` : `${source.spec} from the registry`}, installed with ${installer}`);
+  for (const tool of ['npm', 'bun', 'tar', 'node']) {
+    if (onPath(tool) === null) {
+      console.log(`  FAIL  SMOKE_PREREQ_TOOLS_ON_PATH: \`${tool}\` is not on PATH, and this smoke installs and runs a package that needs it`);
+      return EXIT_RED;
+    }
+  }
+
+  let served: { served: boolean; attempts: number; ms: number; last: string } | null = null;
+  if (source.kind === 'registry') {
+    served = waitForRegistry(source.spec, waitMinutes, ROOT);
+    if (!served.served) {
+      console.log(
+        `  FAIL  SMOKE_REGISTRY_SERVED_THE_VERSION: the registry did not serve ${source.spec} within ${waitMinutes} min (${served.attempts} attempt(s), ${elapsedText(served.ms)}) — the confirmation was NOT taken, and nothing here says the package is broken. ` +
+          `Re-run it (Actions -> release -> Run workflow, version ${wanted}) or by hand: bun run smoke -- --source registry --version ${wanted} --case clean` +
+          (served.last === '' ? '' : `. The last thing npm said was: ${served.last}`),
+      );
+      return EXIT_NOT_SERVED;
+    }
+    console.log(`  the registry served ${source.spec} on attempt ${served.attempts}, ${elapsedText(served.ms)} after this run started asking`);
+  }
+
+  const battery: CaseSpec[] = [
+    { name: 'clean', source, installer, plant: 'none', dirName: 'empty' },
+    // A CORRECT package at a path nothing in the tree has seen, so a pass is not
+    // a pass about this machine's tidy temp directory.
+    { name: 'unusual-path', source, installer, plant: 'none', dirName: 'install smoke ünïcode ñ' },
+    { name: 'drop-src-module', source, installer, plant: 'drop-src-module', dirName: 'planted-src' },
+    { name: 'drop-rigc', source, installer, plant: 'drop-rigc', dirName: 'planted-rigc' },
+    { name: 'drop-psd', source, installer, plant: 'drop-psd', dirName: 'planted-psd' },
+  ];
+  const chosen = only === null ? battery : battery.filter((c) => c.name === only);
+  if (chosen.length === 0) {
+    console.log(`  FAIL  SMOKE_CASE_NAMED: no case is named "${only}" — ${battery.map((c) => c.name).join(', ')}`);
+    return EXIT_RED;
+  }
+
+  let bad = 0;
+  let ran = 0;
+  for (const spec of chosen) {
+    const work = mkdtempSync(join(tmpdir(), 'spine-parts-smoke-'));
+    try {
+      const result = runCase(spec, work, keep);
+      ran += 1;
+      if (spec.plant === 'none') {
+        if (result.faults.length === 0) console.log(`  PASS  SMOKE_CASE[${spec.name}]  ${result.notes.join('; ')}`);
+        else {
+          bad += 1;
+          console.log(`  FAIL  SMOKE_CASE[${spec.name}]`);
+          for (const f of result.faults) console.log(`          ${f}`);
+        }
+        continue;
+      }
+      // 🌱 Inverted: the plant is green when the smoke went red where it said it would, naming what went missing.
+      const planted = PLANTED[spec.plant];
+      const missed: string[] = [];
+      if (result.faults.length === 0) missed.push('the smoke passed on a package the plant broke');
+      for (const step of planted.steps) if (!result.steps.includes(step)) missed.push(`no fault came from the ${step} step, where this plant has to bite`);
+      const said = `${result.faults.join('\n')}\n${result.output}`;
+      for (const name of planted.names) if (!said.includes(name)) missed.push(`nothing in the run named ${name}, so the failure does not say what is missing`);
+      if (result.steps.includes('pack')) missed.push('the plant itself did not apply');
+      if (missed.length === 0) {
+        console.log(`  PASS  SMOKE_PLANT[${spec.name}]  ${planted.what}`);
+        for (const note of result.notes) console.log(`          ${note}`);
+        for (const f of result.faults.slice(0, 2)) console.log(`          red: ${f.split('\n')[0].slice(0, 300)}`);
+      } else {
+        bad += 1;
+        console.log(`  FAIL  SMOKE_PLANT[${spec.name}]`);
+        for (const m of missed) console.log(`          ${m}`);
+      }
+    } finally {
+      if (!keep) rmSync(work, { recursive: true, force: true });
+      else console.log(`          kept: ${work}`);
+    }
+  }
+  if (ran === 0) {
+    console.log('  FAIL  SMOKE_CASE_NAMED: no case ran, so this run measured nothing');
+    return EXIT_NOTHING_RAN;
+  }
+  console.log(bad === 0 ? `spine-parts install smoke: green — ${ran} case(s)` : `spine-parts install smoke: ${bad} of ${ran} case(s) failed`);
+  if (bad === 0) return EXIT_GREEN;
+  if (served !== null) {
+    console.log(`the published artifact does not run: the registry served ${source.kind === 'registry' ? source.spec : ''} and ${bad} of ${ran} case(s) above went red on it. This is a fault in what was published, not a wait that was too short`);
+  }
+  return EXIT_RED;
+}
+
+process.exit(main());

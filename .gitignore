@@ -1,0 +1,32 @@
+# ⚠️ NO ENTRY IN THIS FILE ENDS IN A SLASH, and that is a rule rather than a
+# style. A pattern ending in `/` matches a DIRECTORY and nothing else: of the
+# four things a path can turn out to be — a directory, a symlink, a file, or
+# absent — the trailing form covers exactly one. Every path below is here to be
+# hidden whatever it turns out to be, and the paths most likely to be pointed
+# somewhere else — a scratch area, a local corpus — are exactly the ones a
+# machine shares through a symlink. git treats a symlink as a file, so the
+# directory-only form would leave it showing as untracked in this PUBLIC
+# repository, one `git add -A` away from a commit.
+#
+# Dropping the slash costs nothing: it changes matching only for a
+# non-directory of the same name, and a component pattern does not reach a
+# sibling that merely starts the same way (`render` leaves `render.log` alone).
+#
+# 🔒 The selftest reads this file (`TY00`) to decide which files a commit would
+# carry, with a deliberately small matcher: a bare name, a `/`-anchored path,
+# and `*` inside one component. It refuses any other syntax — including a
+# trailing slash — rather than guess what it means, so this rule is enforced
+# on every run.
+node_modules
+.DS_Store
+# `npm pack` output, from checking what a publish would ship.
+/spine-parts-*.tgz
+# Local-only areas: session notes, a private corpus link, scratch output. Never
+# committed; the corpus is read with `bun run selftest -- --corpus <dir>` and
+# never copied here.
+/scratch
+/corpus
+# Where a sheet or a build lands when run from a checkout without --out.
+/render
+# Agent worktrees a harness creates inside the checkout while a squad works.
+/.claude/worktrees
