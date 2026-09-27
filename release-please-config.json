@@ -4,6 +4,7 @@
   "include-component-in-tag": false,
   "bootstrap-sha": "ffb087691194ae359784afaf117ba7b6fc4c1bb5",
   "bump-minor-pre-major": true,
+  "initial-version": "0.1.0",
   "pull-request-title-pattern": "release: v${version}",
   "changelog-sections": [
     {
