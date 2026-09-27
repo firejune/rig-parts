@@ -90,11 +90,33 @@ export interface Extend {
   tag: string;
 }
 
+/** Which pixels of a patch's box it takes: the painting's figure silhouette inside the box, or the whole box. */
+export type PatchAlpha = 'silhouette' | 'box';
+export const PATCH_ALPHAS: readonly PatchAlpha[] = ['silhouette', 'box'];
+
+/** Where a patch is drawn: behind every part, in front of every part, or immediately behind a named plan part. */
+export type PatchDraw = 'back' | 'front' | { before: string };
+
+/**
+ * An extra part cut from the PAINTING rather than from a See-through layer —
+ * for a piece of the figure no layer holds (a hem the runs dropped). Its
+ * `box` is `[x0, y0, x1, y1]` in RIG pixels, the space `parts.json` and the
+ * recomposite are in, `x1`/`y1` exclusive. Its bone is `regions.<name>`, as
+ * for every region part: a patch is always a region, never a mesh.
+ */
+export interface Patch {
+  name: string;
+  box: [number, number, number, number];
+  alpha: PatchAlpha;
+  draw: PatchDraw;
+}
+
 export interface Assemble {
   /** Rig pixels per source pixel. */
   rig_scale: number;
   plan: PlanEntry[];
   extend_below_crop?: Extend[];
+  patches?: Patch[];
 }
 
 export interface SingleBone {
@@ -390,11 +412,11 @@ const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'bones', 'meshe
  * with the full loader's own rules for each — plus `generation` whenever it is
  * present. The sections a later step writes may be present and are NOT read or
  * vouched for (for `paint` that is everything but `key` and `generation`; for
- * `layers`, `assemble.plan`, `extend_below_crop`, `bones`, `meshes`, `regions`
- * and `motion`; for `assemble`, the last four); a caller that needs them uses
- * {@link parseConfig}. Every other key is still refused by name, and a retired
- * one (`generation.character_file` and its kin) still with what replaces it: a
- * config is not allowed to be half-known at any stage.
+ * `layers`, `assemble.plan`, `extend_below_crop`, `patches`, `bones`, `meshes`,
+ * `regions` and `motion`; for `assemble`, the last four); a caller that needs
+ * them uses {@link parseConfig}. Every other key is still refused by name, and
+ * a retired one (`generation.character_file` and its kin) still with what
+ * replaces it: a config is not allowed to be half-known at any stage.
  */
 export function parseEarlyConfig(raw: Json, door: 'paint'): PaintConfig;
 export function parseEarlyConfig(raw: Json, door: 'layers'): EarlyConfig;
@@ -420,7 +442,7 @@ export function parseEarlyConfig(raw: Json, door: EarlyDoor): PaintConfig | Earl
   if (door === 'layers') {
     if ('seethrough' in t) checkSeeThrough(c, t.seethrough);
     if ('assemble' in t) {
-      const a = c.object('config.assemble', t.assemble, sectionRequired(door, 'assemble'), ['plan', 'extend_below_crop']);
+      const a = c.object('config.assemble', t.assemble, sectionRequired(door, 'assemble'), ['plan', 'extend_below_crop', 'patches']);
       if (a !== null && 'rig_scale' in a) c.number('config.assemble.rig_scale', a.rig_scale, 'positive');
     }
   }
@@ -452,11 +474,11 @@ export function parseConfig(raw: Json): CharacterConfig {
   if ('key' in t) c.string('config.key', t.key);
   if ('generation' in t) checkGeneration(c, t.generation);
   if ('seethrough' in t) checkSeeThrough(c, t.seethrough);
-  const parts = 'assemble' in t ? checkAssemble(c, t.assemble, 'full') : [];
+  const { parts, patches } = 'assemble' in t ? checkAssemble(c, t.assemble, 'full') : { parts: [], patches: [] };
   const names = 'bones' in t ? checkBones(c, t.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>() };
   if ('meshes' in t) checkMeshes(c, t.meshes, names.bones, names.chains);
   if ('regions' in t) checkRegions(c, t.regions, names.bones);
-  if ('meshes' in t && 'regions' in t && 'assemble' in t) checkCoverage(c, parts, t.meshes, t.regions);
+  if ('meshes' in t && 'regions' in t && 'assemble' in t) checkCoverage(c, parts, patches, t.meshes, t.regions);
   if ('motion' in t) checkMotion(c, t.motion, names.bones, names.chains, 'regions' in t ? t.regions : undefined);
   refuseIfAny(c.problems);
   return raw as CharacterConfig;
@@ -579,14 +601,15 @@ function checkRunTag(c: Check, path: string, run: Json, tag: Json): void {
 }
 
 /**
- * Returns the plan's part names, in plan order. `plan` is left out of the
- * generic presence check so that its absence says which command writes one —
- * the step a config without a plan has most likely skipped.
+ * Returns the plan's part names, in plan order, and the patches' names, in
+ * patch order. `plan` is left out of the generic presence check so that its
+ * absence says which command writes one — the step a config without a plan
+ * has most likely skipped.
  */
-function checkAssemble(c: Check, v: Json, door: 'assemble' | 'full'): string[] {
+function checkAssemble(c: Check, v: Json, door: 'assemble' | 'full'): { parts: string[]; patches: string[] } {
   const required = sectionRequired(door, 'assemble');
-  const a = c.object('config.assemble', v, required.filter((k) => k !== 'plan'), ['plan', 'extend_below_crop']);
-  if (a === null) return [];
+  const a = c.object('config.assemble', v, required.filter((k) => k !== 'plan'), ['plan', 'extend_below_crop', 'patches']);
+  if (a === null) return { parts: [], patches: [] };
   if (required.includes('plan') && !('plan' in a)) {
     c.fail('CONFIG_FIELD_PRESENT', 'config.assemble.plan', 'is absent and required; `assemble --propose-plan` prints one from the two runs — paste its plan and extend_below_crop into config.assemble');
   }
@@ -624,7 +647,68 @@ function checkAssemble(c: Check, v: Json, door: 'assemble' | 'full'): string[] {
       }
     });
   }
-  return parts;
+  const patches = 'patches' in a ? checkPatches(c, a.patches, parts) : [];
+  return { parts, patches };
+}
+
+/**
+ * `assemble.patches`: each entry `{name, box, alpha, draw}`, refused field by
+ * field. What the config alone cannot know — whether the box lies inside the
+ * rig, whether the rule leaves any pixel — the assemble stage refuses
+ * (`ASSEMBLE_PATCH_BOX_INSIDE`, `ASSEMBLE_PATCH_OPAQUE`). Returns the patch
+ * names, in order.
+ */
+function checkPatches(c: Check, v: Json, plan: string[]): string[] {
+  const p = 'config.assemble.patches';
+  const names: string[] = [];
+  if (!c.array(p, v, false)) return names;
+  const seen = new Map<string, number>();
+  (v as Json[]).forEach((entry, i) => {
+    const at = `${p}[${i}]`;
+    // `bone` is the field a reader expects here, and the answer is a place
+    // that already exists: one place for a region's bone, not two.
+    let fields = entry;
+    if (typeof entry === 'object' && entry !== null && !Array.isArray(entry) && 'bone' in entry) {
+      c.fail('CONFIG_KEY_KNOWN', `${at}.bone`, 'is not a field here; a patch is a region, and the bone a region rides is config.regions.<name> — write it there');
+      const { bone: _bone, ...rest } = entry as Record<string, Json>;
+      fields = rest;
+    }
+    const e = c.object(at, fields, ['name', 'box', 'alpha', 'draw'], []);
+    if (e === null) return;
+    if ('name' in e && c.string(`${at}.name`, e.name)) {
+      const name = e.name;
+      if (!partNameOk(name)) c.fail('CONFIG_PART_NAME', `${at}.name`, `names the part ${show(name)}; a part name is a file name, so it may not be empty, start with "." or hold a slash`);
+      if (plan.includes(name)) c.fail('CONFIG_PART_UNIQUE', `${at}.name`, `names the part "${name}", which assemble.plan[${plan.indexOf(name)}] already makes; a patch is a part of its own`);
+      else if (seen.has(name)) c.fail('CONFIG_PART_UNIQUE', `${at}.name`, `names the part "${name}" again (first at patches[${seen.get(name)}])`);
+      else seen.set(name, i);
+      names.push(name);
+    }
+    if ('box' in e) {
+      const b = e.box;
+      const ints = Array.isArray(b) && b.length === 4 && b.every((n) => typeof n === 'number' && Number.isInteger(n) && n >= 0);
+      if (!ints) c.fail('CONFIG_FIELD_TYPE', `${at}.box`, `is ${show(b)}; [x0, y0, x1, y1] in non-negative integer rig pixels is required`);
+      else {
+        const [x0, y0, x1, y1] = b as number[];
+        if (!(x1 > x0 && y1 > y0)) c.fail('CONFIG_PATCH_BOX', `${at}.box`, `is [${x0}, ${y0}, ${x1}, ${y1}], ${x1 - x0}x${y1 - y0}; a non-empty box is required (x1 > x0 and y1 > y0; x1 and y1 are exclusive)`);
+      }
+    }
+    if ('alpha' in e && !(PATCH_ALPHAS as readonly Json[]).includes(e.alpha)) {
+      c.fail('CONFIG_FIELD_TYPE', `${at}.alpha`, `is ${show(e.alpha)}; one of ${PATCH_ALPHAS.map((r) => `"${r}"`).join(', ')} is required — "silhouette" takes the painting's figure inside the box, "box" the whole box`);
+    }
+    if ('draw' in e) {
+      const d = e.draw;
+      if (d === 'back' || d === 'front') return;
+      if (typeof d === 'object' && d !== null && !Array.isArray(d)) {
+        const o = c.object(`${at}.draw`, d, ['before'], []);
+        if (o !== null && 'before' in o && (typeof o.before !== 'string' || !plan.includes(o.before))) {
+          c.fail('CONFIG_NAME_RESOLVES', `${at}.draw.before`, `is ${show(o.before)}; a part named in assemble.plan is required`);
+        }
+        return;
+      }
+      c.fail('CONFIG_FIELD_TYPE', `${at}.draw`, `is ${show(d)}; "back", "front" or {"before": "<plan part>"} is required`);
+    }
+  });
+  return names;
 }
 
 /** Returns every bone name (root and chain links included) and each chain's link count. */
@@ -715,10 +799,17 @@ function checkRegions(c: Check, v: Json, bones: Set<string>): void {
   }
 }
 
-/** Every plan part is exactly one of a mesh or a region, and every mesh or region is a plan part. */
-function checkCoverage(c: Check, parts: string[], meshes: Json, regions: Json): void {
+/**
+ * Every plan part is exactly one of a mesh or a region, every patch is a
+ * region, and every mesh or region is a plan part or a patch.
+ */
+function checkCoverage(c: Check, parts: string[], patches: string[], meshes: Json, regions: Json): void {
   const m = typeof meshes === 'object' && meshes !== null ? Object.keys(meshes) : [];
   const r = typeof regions === 'object' && regions !== null ? Object.keys(regions) : [];
+  for (const patch of patches) {
+    if (m.includes(patch)) c.fail('CONFIG_PART_ATTACHED', `part "${patch}"`, `is an assemble.patches entry and has a meshes entry; a patch is a region — drop config.meshes.${patch} and name its bone in config.regions.${patch}`);
+    else if (!r.includes(patch)) c.fail('CONFIG_PART_ATTACHED', `part "${patch}"`, `is an assemble.patches entry with no regions entry; a patch is a region, so config.regions.${patch} naming its bone is required`);
+  }
   for (const part of parts) {
     const inM = m.includes(part);
     const inR = r.includes(part);
@@ -726,8 +817,8 @@ function checkCoverage(c: Check, parts: string[], meshes: Json, regions: Json): 
     if (inM && inR) c.fail('CONFIG_PART_ATTACHED', `part "${part}"`, 'has both a meshes entry and a regions entry; exactly one is required');
   }
   for (const name of [...m, ...r]) {
-    if (!parts.includes(name)) {
-      c.fail('CONFIG_NAME_RESOLVES', `config.${m.includes(name) ? 'meshes' : 'regions'}.${name}`, 'names a part that assemble.plan does not make');
+    if (!parts.includes(name) && !patches.includes(name)) {
+      c.fail('CONFIG_NAME_RESOLVES', `config.${m.includes(name) ? 'meshes' : 'regions'}.${name}`, 'names a part that neither assemble.plan nor assemble.patches makes');
     }
   }
 }

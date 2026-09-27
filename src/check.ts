@@ -191,6 +191,9 @@ export interface StageBox {
   height: number;
 }
 
+/** What `--parts` is, said once for the refusals and the help. */
+export const PARTS_HOME_SENTENCE = '--parts names the directory holding parts.json and parts/, not parts/ itself (after build, that is build\'s --out, whose rig is <out>/rig); without --parts it is --rig';
+
 export interface CheckInputs {
   rigDir: string;
   rigPath: string;
@@ -242,12 +245,21 @@ export function readCheckInputs(rigDir: string, partsHome: string = rigDir): Che
   const partsPath = join(home, 'parts.json');
   const partsDir = join(home, 'parts');
   if (home !== dir && (!existsSync(home) || !statSync(home).isDirectory())) {
-    refuseIfAny([{ code: 'CHECK_INPUT_PRESENT', object: home, detail: 'is not a directory; --parts names the directory holding parts.json and parts/' }]);
+    refuseIfAny([{ code: 'CHECK_INPUT_PRESENT', object: home, detail: `is not a directory; ${PARTS_HOME_SENTENCE}` }]);
   }
   const rig = readJson(rigPath, problems);
   const motion = readJson(motionPath, problems);
   let parts: PartsFile | null = null;
-  if (!existsSync(partsPath)) problems.push({ code: 'CHECK_INPUT_PRESENT', object: partsPath, detail: 'no such file; the seam check composites the parts it lists' });
+  if (!existsSync(partsPath)) {
+    // The usual miss is passing parts/ itself; the parent is then named.
+    const parent = dirname(home);
+    const hint = existsSync(join(parent, 'parts.json')) ? ` — ${parent} holds parts.json, so --parts ${parent} is the directory meant` : '';
+    problems.push({
+      code: 'CHECK_INPUT_PRESENT',
+      object: partsPath,
+      detail: `no such file; ${PARTS_HOME_SENTENCE} (the seam check composites the parts parts.json lists)${hint}`,
+    });
+  }
   else {
     try {
       parts = readParts(partsPath);

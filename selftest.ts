@@ -59,6 +59,15 @@ import {
   flatPainting,
   framedPainting,
   HEAD_BOX,
+  HEM_BAND,
+  HEM_BOX,
+  HEM_BOX_PX,
+  HEM_FULL,
+  HEM_UNDER,
+  HEM_UNDER_DROP,
+  HEM_UNDER_PX,
+  HEM_PLAN,
+  hemPainting,
   PLAN,
   RESOLUTION,
   RIG_SCALE,
@@ -85,6 +94,7 @@ import {
   cleanGhosts,
   DEFAULT_PROJECT_RULE,
   DEFAULT_SEAM_RULE,
+  figureSilhouette,
   figuresLine,
   growRim,
   holeLines,
@@ -99,10 +109,11 @@ import {
   proposePlan,
   recomposite,
   recompositeErrorMap,
+  sourceInRig,
   stageFields,
   visibilityCounts,
 } from './src/assemble.ts';
-import { chainLine, findRigc, type FrameSet, gateGreen, JUDGEMENT_LINES, parsePackLines, readCheckInputs, readFrameSet, REPORTED_LINES, SPINEBOY_YARDSTICK } from './src/check.ts';
+import { chainLine, findRigc, type FrameSet, gateGreen, JUDGEMENT_LINES, PARTS_HOME_SENTENCE, parsePackLines, readCheckInputs, readFrameSet, REPORTED_LINES, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
@@ -1072,6 +1083,53 @@ function runConfigSuite(): number {
     `head_box [10, 10, 60, 61] -> ${codes(e5)}: ${e5?.problems[0]?.detail ?? ''}`,
     'the reference maps the head run back with ONE scale taken from the box width, so a box a pixel taller than wide is a vertical error nothing reports; its own head-box proposer rounds each corner separately and produces exactly this',
   );
+
+  // assemble.patches (issue #28): one entry that loads, then every malformed
+  // one alone, each refused exactly once under its code and its object.
+  const patchCfg = (entries: unknown[], edit: (c: Record<string, unknown>) => void = () => {}): Record<string, unknown> => {
+    const c = minimalConfig();
+    (c.assemble as Record<string, unknown>).patches = entries;
+    const regions = c.regions as Record<string, unknown>;
+    for (const e of entries) if (typeof e === 'object' && e !== null && typeof (e as { name?: unknown }).name === 'string') regions[(e as { name: string }).name] = 'hip';
+    edit(c);
+    return c;
+  };
+  const hem = { name: 'hem', box: [2, 40, 30, 44], alpha: 'silhouette', draw: 'back' };
+  const patchOk = refusals(() => parseConfig(patchCfg([hem, { ...hem, name: 'hem2', alpha: 'box', draw: { before: 'robe' } }, { ...hem, name: 'hem3', draw: 'front' }])));
+  const patchMutants: Array<[string, unknown[], string, string, ((c: Record<string, unknown>) => void)?]> = [
+    ['a name a plan part already has', [{ ...hem, name: 'face' }], 'CONFIG_PART_UNIQUE', 'config.assemble.patches[0].name'],
+    ['a name two patches share', [hem, { ...hem }], 'CONFIG_PART_UNIQUE', 'config.assemble.patches[1].name'],
+    ['a name that is a path', [{ ...hem, name: 'hem/x' }], 'CONFIG_PART_NAME', 'config.assemble.patches[0].name'],
+    ['a box of three numbers', [{ ...hem, box: [2, 40, 30] }], 'CONFIG_FIELD_TYPE', 'config.assemble.patches[0].box'],
+    ['a box with a negative corner', [{ ...hem, box: [-1, 40, 30, 44] }], 'CONFIG_FIELD_TYPE', 'config.assemble.patches[0].box'],
+    ['an empty box', [{ ...hem, box: [30, 40, 30, 44] }], 'CONFIG_PATCH_BOX', 'config.assemble.patches[0].box'],
+    ['an unknown alpha rule', [{ ...hem, alpha: 'union' }], 'CONFIG_FIELD_TYPE', 'config.assemble.patches[0].alpha'],
+    ['a draw target no plan part has', [{ ...hem, draw: { before: 'skirt' } }], 'CONFIG_NAME_RESOLVES', 'config.assemble.patches[0].draw.before'],
+    ['a draw value that is no position', [{ ...hem, draw: 'middle' }], 'CONFIG_FIELD_TYPE', 'config.assemble.patches[0].draw'],
+    ['a draw object with an unknown key', [{ ...hem, draw: { before: 'robe', after: 'face' } }], 'CONFIG_KEY_KNOWN', 'config.assemble.patches[0].draw.after'],
+    ['a bone written on the patch', [{ ...hem, bone: 'hip' }], 'CONFIG_KEY_KNOWN', 'config.assemble.patches[0].bone'],
+    ['a missing field', [{ name: 'hem', box: [2, 40, 30, 44], draw: 'back' }], 'CONFIG_FIELD_PRESENT', 'config.assemble.patches[0].alpha'],
+    ['a patch with a mesh', [hem], 'CONFIG_PART_ATTACHED', 'part "hem"', (c) => { (c.meshes as Record<string, unknown>).hem = { grid: 8, r: 4, segments: ['chest'] }; }],
+    ['a patch with no region', [hem], 'CONFIG_PART_ATTACHED', 'part "hem"', (c) => { delete (c.regions as Record<string, unknown>).hem; }],
+    ['patches that are not an array', [], 'CONFIG_FIELD_TYPE', 'config.assemble.patches', (c) => { (c.assemble as Record<string, unknown>).patches = { hem }; }],
+  ];
+  const patchOutcomes = patchMutants.map(([what, entries, code, object, edit]) => {
+    const err = refusals(() => parseConfig(patchCfg(entries, edit)));
+    const one = err !== null && err.problems.length === 1 ? err.problems[0] : null;
+    return { what, code, object, ok: one !== null && one.code === code && one.object === object, got: err === null ? 'loads' : err.problems.map((q) => `${q.code} ${q.object}`).join('; '), line: one };
+  });
+  const patchMissed = patchOutcomes.filter((o) => !o.ok);
+  const boneLine = patchOutcomes.find((o) => o.what === 'a bone written on the patch')?.line;
+  say(
+    'CF07_A_PATCH_ENTRY_LOADS_AND_EVERY_MALFORMED_ONE_IS_REFUSED_ONCE_BY_NAME',
+    patchOk === null && patchMissed.length === 0 && (boneLine?.detail.includes('config.regions.<name>') ?? false),
+    patchOk !== null
+      ? `three good patches are refused: ${codes(patchOk)}`
+      : patchMissed.length === 0
+        ? `three patches (back, before robe, front; silhouette and box) load; ${patchOutcomes.length} planted entries, each refused exactly once under its code and object; e.g. ${boneLine?.code}: ${boneLine?.object} — ${boneLine?.detail}`
+        : patchMissed.map((o) => `${o.what}: wanted ${o.code} at ${o.object}, got ${o.got}`).join(' | '),
+    'issue #28: a patch is a part the tool cuts from the painting, so every field that places it resolves by name or is refused by name; the bone is not a patch field because a region\'s bone already has one place, config.regions',
+  );
   return bad();
 }
 
@@ -1189,6 +1247,33 @@ function runPartsSuite(): number {
           ? `${forgeries.length} forged blocks, each exactly one refusal under its code; e.g. ${forgeries[7].line?.code}: ${forgeries[7].line?.object} — ${forgeries[7].line?.detail}`
           : unmet.map((f) => `${f.what}: wanted ${f.code} alone, got ${f.got}`).join('; ')),
       "a reader is only a gate on the fields it refuses: check copies this block into check.json, so a block that does not add up would be reported as a measurement",
+    );
+
+
+    // A painting patch (issue #28): its provenance names itself, and it is 100 % source.
+    const patchRec = { name: 'hem', from: 'painting:hem', x: 2, y: 20, w: 10, h: 2, opaque_px: 20, visible_px: 20, occluded_px: 0, projected_core_px: 20, source_px_taken: 20, visible_not_projected_px: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 };
+    const withPatch = (rec: Record<string, unknown>, ghost: Record<string, number> = file.ghost_px): string => {
+      writeFileSync(path, JSON.stringify({ ...file, parts: [...file.parts, rec], ghost_px: ghost }));
+      return path;
+    };
+    const patchOk = refusals(() => readParts(withPatch(patchRec)));
+    const patchFaults: Array<[string, Record<string, unknown>, Record<string, number> | undefined, string, string]> = [
+      ['a provenance naming another patch', { ...patchRec, from: 'painting:skirt' }, undefined, 'PARTS_FROM_KNOWN', '"painting:hem" is required'],
+      ['a patch that took less than its opaque pixels', { ...patchRec, source_px_taken: 19, visible_not_projected_px: 1 }, undefined, 'PARTS_COUNTS_ADD_UP', 'source_px_taken 19 (opaque_px 20 required), visible_not_projected_px 1 (0 required)'],
+      ['a patch with occluded pixels', { ...patchRec, visible_px: 18, occluded_px: 2 }, undefined, 'PARTS_COUNTS_ADD_UP', 'visible_px 18 (opaque_px 20 required), occluded_px 2 (0 required)'],
+      ['a ghost count for a patch', patchRec, { ...file.ghost_px, 'painting:hem': 0 }, 'PARTS_FROM_KNOWN', 'a patch has no See-through layer'],
+    ];
+    const patchSeen = patchFaults.map(([what, rec, ghost, code, text]) => {
+      const err = refusals(() => readParts(withPatch(rec, ghost)));
+      const one = err !== null && err.problems.length === 1 ? err.problems[0] : null;
+      return { what, ok: one !== null && one.code === code && one.detail.includes(text), got: err === null ? 'reads' : err.problems.map((q) => `${q.code}: ${q.detail}`).join('; ') };
+    });
+    const patchMissed = patchSeen.filter((o) => !o.ok);
+    say(
+      'PT05_A_PAINTING_PATCH_NAMES_ITSELF_AND_IS_100_PERCENT_SOURCE',
+      patchOk === null && patchMissed.length === 0,
+      patchOk !== null ? `a correct painting:hem record is refused: ${codes(patchOk)}` : patchMissed.length === 0 ? `painting:hem with every count 20 or 0 reads; ${patchSeen.length} planted records, each refused once: ${patchSeen.map((o) => o.got).join(' | ')}` : patchMissed.map((o) => `${o.what}: ${o.got}`).join(' | '),
+      'a patch is cut from the painting, so its record can only say one thing about where its pixels came from; a "painting:" record that says anything else is a record assemble did not write',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -1496,6 +1581,20 @@ function runRigSuite(): number {
       e1b.problems[0].object === 'part "sash"',
     `parts.json without "cloth" -> ${codes(e1)}: ${e1?.problems[0]?.detail ?? ''}; parts.json with an extra "sash" -> ${codes(e1b)}`,
     'the reference stopped at the first unattached part and never checked the other direction, so a mesh whose part was renamed away vanished from the rig with no word',
+  );
+
+  // A parts.json painting patch the config meshes (issue #28): the loader
+  // refuses that when the config names it a patch; the stage refuses it for a
+  // config that names it a plan part instead.
+  const painted: PartsFile = rigParts();
+  const clothRec = painted.parts.find((p) => p.name === 'cloth') as PartsFile['parts'][number];
+  clothRec.from = 'painting:cloth';
+  const e1c = refusals(() => buildRig(rigCfg(), painted, rigImages()));
+  say(
+    'RG17_A_PAINTING_PATCH_IS_NEVER_MESHED',
+    e1c !== null && e1c.problems.length === 1 && e1c.problems[0].code === 'RIG_PART_ATTACHED' && e1c.problems[0].object === 'part "cloth"' && e1c.problems[0].detail.includes('painting patch'),
+    `cloth recorded as painting:cloth under config.meshes.cloth -> ${codes(e1c)}: ${e1c?.problems[0]?.detail ?? ''}`,
+    'a patch has no tag and no bone segments of its own; it rides one bone as a region, and a mesh over it is a config that disagrees with parts.json about what the part is',
   );
 
   const flat = refusals(() =>
@@ -2053,6 +2152,23 @@ function runProposeSuite(): number {
         loadsWithStill === null,
       `with a clear gap: still ${JSON.stringify(withGap.motion.blink.still)}, note "${gapNote.join(' | ')}"; without one: still ${JSON.stringify(noGap.motion.blink.still ?? null)}, ${noGapNote.length} note(s); lash_b (33 %, 0.6x): ${gapNote.some((n) => n.startsWith('lash_b')) ? 'NOTED' : 'not noted'}; the proposal with its still loads: ${codes(loadsWithStill)}`,
       'every figure derived in fixtures/propose.ts: 80 % is over the 35 % bar and 1.67x over 1.2x, 33 % and 0.6x are under both; the cut is proposed only on a row the rig stage accepts (RIG_STILL_ROW_CLEAR), and the bars sit above both public examples (17-26 %, 1.00-1.04x)',
+    );
+
+
+    // A painting patch (issue #28) named like a tag: no rule may read it by
+    // that name, and the proposal must still load with it as a region.
+    const patched = join(dir, 'patched');
+    writeProposeFixture(patched, [...PROPOSE_PARTS, { name: 'bottomwear', from: 'painting:bottomwear', x: 60, y: 250, w: 80, h: 10, colour: [70, 110, 200] }]);
+    const PP = readPartSet(patched);
+    const pprop = propose(PP);
+    const pLoad = refusals(() => checkProposal(PP, pprop));
+    const same = JSON.stringify(pprop.bones) === JSON.stringify(prop.bones) && JSON.stringify(pprop.meshes) === JSON.stringify(prop.meshes) && JSON.stringify(pprop.motion) === JSON.stringify(prop.motion);
+    const pNote = pprop.notes.find((n) => n.startsWith('bottomwear (painting:bottomwear)')) ?? '';
+    say(
+      'PR17_A_PAINTING_PATCH_IS_A_REGION_NO_TAG_RULE_READS_AND_THE_PROPOSAL_STILL_LOADS',
+      same && pprop.regions.bottomwear === 'hip' && !('bottomwear' in pprop.meshes) && pNote.includes('config.regions.bottomwear is the bone it rides') && pLoad === null,
+      `bones, meshes and motion ${same ? 'identical to' : 'DIFFER from'} the unpatched proposal; regions.bottomwear = ${pprop.regions.bottomwear}; note "${pNote}"; the proposal ${pLoad === null ? 'loads' : `is refused: ${codes(pLoad)}`}`,
+      'a patch has no See-through tag, so a patch named "bottomwear" must not become a skirt; its centre (y 255) is below the hip (157), so the trunk rule puts it on hip, and the loader then holds it to a patch\'s rule (a region, never a mesh)',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -3232,6 +3348,59 @@ function runBuildSuite(): number {
       `plan tag absent -> exit ${wrong.status}, ${planFail ?? 'no [assemble] FAIL line'}, --out holds [${entries(early).join(', ')}]; no --out -> exit ${noOut.status}; --seam whiteish -> exit ${badSeam.status}; --project eroded -> exit ${badProject.status}, "${badProject.out.split('\n').find((l) => l.includes('--project')) ?? ''}"`,
       'the first stage refuses by name under its own prefix and writes nothing; exit 2 stays the malformed call, as for every other command',
     );
+
+    // The hem fixture with a patch (issue #28), end to end: the patch survives
+    // the build because it is config, its slot is where its draw put it, and
+    // the gates and bars see an ordinary region.
+    const hemDir = join(dir, 'hem');
+    const hemCfg = assembleConfig({ plan: HEM_PLAN, extend: [], patches: [{ name: 'hem', box: HEM_UNDER, alpha: 'box', draw: 'back' }] });
+    hemCfg.bones = [
+      { name: 'anchor', parent: 'root', at: [0, 0] },
+      { name: 'chest', parent: 'root', at: [32, 8] },
+      { name: 'skirt', parent: 'root', at: [32, 40] },
+    ];
+    hemCfg.regions = { ...(hemCfg.regions as Record<string, string>), topwear: 'chest', bottomwear: 'skirt' };
+    hemCfg.motion = {
+      duration: 1,
+      tracks: [
+        { bone: 'chest', prop: 'translatey', amp: 1, period: 1, phase: 0 },
+        { bone: 'skirt', prop: 'rotate', amp: 8, period: 1, phase: 0 },
+      ],
+    };
+    writeAssembleFixture(hemDir, hemCfg, hemPainting(), { full: HEM_FULL, head: FRAMED_HEAD });
+    const unpatched = assemble({ ...fixtureInput(hemDir), patches: [], seamRule: 'near-white' });
+    const hemOut = join(hemDir, 'out');
+    const hemBuild = runCli(buildArgs(hemDir, hemOut));
+    const hemParts = existsSync(join(hemOut, 'parts.json')) ? readParts(join(hemOut, 'parts.json')) : null;
+    const hemRig = readJsonFile(join(hemOut, 'rig', 'rig.json'));
+    const hemCheck = readJsonFile(join(hemOut, 'check', 'check.json'));
+    const slotNames = Array.isArray(hemRig?.slots) ? (hemRig.slots as Array<{ name: string; bone: string }>).map((q) => q.name) : [];
+    const firstSlot = Array.isArray(hemRig?.slots) ? (hemRig.slots as Array<{ name: string; bone: string }>)[0] : undefined;
+    const uncoveredLine = hemBuild.out.split('\n').find((l) => l.includes('uncovered error px:')) ?? '';
+    const wantUncovered = unpatched.figures.uncoveredErrorPx - HEM_UNDER_DROP;
+    say(
+      'BU04_A_PATCH_IN_THE_CONFIG_IS_ASSEMBLED_RIGGED_AND_CHECKED_LIKE_ANY_REGION_PART',
+      hemBuild.status === 0 &&
+        hemParts?.parts[0].name === 'hem' &&
+        hemParts.parts[0].from === 'painting:hem' &&
+        hemParts.parts[0].opaque_px === HEM_UNDER_PX &&
+        slotNames.join(',') === 'hem,topwear,bottomwear' &&
+        firstSlot?.bone === 'anchor' &&
+        hemCheck?.PASS === true &&
+        uncoveredLine.trim().endsWith(`uncovered error px: ${wantUncovered}`),
+      `exit ${hemBuild.status}; parts.json first part ${hemParts?.parts[0].name} (${hemParts?.parts[0].from}, ${hemParts?.parts[0].opaque_px} px of ${HEM_UNDER_PX}); rig slots ${slotNames.join(', ')}, the first on ${firstSlot?.bone}; check.json PASS ${String(hemCheck?.PASS)}; "${uncoveredLine.trim()}", and without the patch the stage measures ${unpatched.figures.uncoveredErrorPx}, less the hand-derived ${HEM_UNDER_DROP} (want ${wantUncovered})`,
+      'issue #28 fixed the hole by adding a region to rig.json and PNGs by hand after build, which the next build deleted; as config it is rebuilt every time, recorded as what it is, and held to every gate an ordinary part is',
+    );
+
+    const wrongHome = runCli(['check', '--rig', join(hemOut, 'rig'), '--parts', join(hemOut, 'parts'), '--out', join(hemDir, 'check2')]);
+    const homeLine = wrongHome.out.split('\n').find((l) => l.includes('CHECK_INPUT_PRESENT')) ?? '';
+    const help = runCli(['--help']);
+    say(
+      'BU05_CHECK_PARTS_GIVEN_THE_PARTS_DIRECTORY_ITSELF_SAYS_WHAT_PARTS_IS_AND_NAMES_THE_PARENT',
+      wrongHome.status === 1 && homeLine.includes(PARTS_HOME_SENTENCE) && homeLine.includes(`${hemOut} holds parts.json, so --parts ${hemOut} is the directory meant`) && help.out.includes(PARTS_HOME_SENTENCE) && !existsSync(join(hemDir, 'check2', 'check.json')),
+      `check --parts <out>/parts -> exit ${wrongHome.status}: ${homeLine.trim()}; --help carries the sentence: ${help.out.includes(PARTS_HOME_SENTENCE)}`,
+      'issue #28 item 3: two attempts passed parts/ itself before the tool said anything useful; the refusal and the help now say the same sentence, and the refusal points at the parent that holds parts.json',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -3925,6 +4094,8 @@ function runAssembleSuite(): number {
       ['a resolution the runs were not made at', 'ASSEMBLE_RUN_CANVAS', () => assemble({ ...base, resolution: 32, seamRule: 'near-white' })],
       ['a landscape painting', 'ASSEMBLE_SOURCE_PORTRAIT', () => assemble({ ...base, source: flatPainting(SOURCE_SIDE, SOURCE_SIDE + 32), seamRule: 'near-white' })],
       ['a rig scale that makes no rig', 'ASSEMBLE_RIG_SIZE', () => assemble({ ...base, rigScale: 0.001, seamRule: 'near-white' })],
+      ['a patch box past the rig', 'ASSEMBLE_PATCH_BOX_INSIDE', () => assemble({ ...base, patches: [{ name: 'hem', box: [0, 60, 65, 64], alpha: 'box', draw: 'back' }], seamRule: 'near-white' })],
+      ['a silhouette patch where the painting has no figure', 'ASSEMBLE_PATCH_OPAQUE', () => assemble({ ...base, patches: [{ name: 'hem', box: [0, 60, 4, 64], alpha: 'silhouette', draw: 'back' }], seamRule: 'near-white' })],
       ['a config with no seethrough block', 'ASSEMBLE_FIELD_PRESENT', () => stageFields(parseConfig(assembleConfig({ seethrough: false })))],
       ['a proposal config with no rig_scale', 'CONFIG_FIELD_PRESENT', () => proposeFields(parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false, head_box: HEAD_BOX }, assemble: {} }, 'layers'))],
       ['a proposal config with no head box yet', 'ASSEMBLE_FIELD_PRESENT', () => proposeFields(parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false }, assemble: { rig_scale: 0.5 } }, 'layers'))],
@@ -4043,6 +4214,75 @@ function runAssembleSuite(): number {
         `the same config to build -> exit ${buildEarly.status}, "${buildLine.trim()}", --out holds [${entries(join(fresh, 'built')).join(', ')}]`,
       'issue #20: assemble reads the plan and the See-through block and nothing of the rig, so it reads through the early door; build runs rig next, so it still asks the full loader before its assemble writes anything',
     );
+
+    // assemble.patches over the planted hem hole (issue #28; fixtures/assemble_fixture.ts, *The hem fixture*).
+    const hemDir = temp('assemble-hem');
+    try {
+      writeAssembleFixture(hemDir, assembleConfig({ plan: HEM_PLAN, extend: [] }), hemPainting(), { full: HEM_FULL, head: FRAMED_HEAD });
+      const hemIn = fixtureInput(hemDir);
+      const before = assemble({ ...hemIn, seamRule: 'near-white' });
+      const boxed = assemble({ ...hemIn, patches: [{ name: 'hem', box: HEM_BOX, alpha: 'box', draw: 'back' }], seamRule: 'near-white' });
+      const rec = boxed.parts.parts[0];
+      const [bx0, by0, bx1, by1] = HEM_BOX;
+      const want = { name: 'hem', from: 'painting:hem', x: bx0, y: by0, w: bx1 - bx0, h: by1 - by0, opaque_px: HEM_BOX_PX, visible_px: HEM_BOX_PX, occluded_px: 0, projected_core_px: HEM_BOX_PX, source_px_taken: HEM_BOX_PX, visible_not_projected_px: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 };
+      // The part records only: the recomposite block (issue #25) measures the stack, which the patch changes by design.
+      const others = JSON.stringify(boxed.parts.parts.slice(1)) === JSON.stringify(before.parts.parts) && JSON.stringify(boxed.parts.ghost_px) === JSON.stringify(before.parts.ghost_px);
+      const dropU = before.figures.uncoveredErrorPx - boxed.figures.uncoveredErrorPx;
+      const dropE = before.figures.errorPx - boxed.figures.errorPx;
+      say(
+        'AS17_A_BOX_PATCH_OVER_THE_HEM_HOLE_IS_A_PAINTING_PART_AND_THE_UNCOVERED_ERROR_PX_DROP_BY_ITS_COUNT',
+        JSON.stringify(rec) === JSON.stringify(want) && others && dropU === HEM_BOX_PX && dropE === HEM_BOX_PX && before.figures.uncoveredErrorPx >= HEM_BOX_PX,
+        `record ${JSON.stringify(rec)}; every other record unchanged: ${others}; holes ${before.parts.recomposite?.hole_count} (largest ${before.parts.recomposite?.holes[0]?.px} px) -> ${boxed.parts.recomposite?.hole_count} (largest ${boxed.parts.recomposite?.holes[0]?.px} px); uncovered error px ${before.figures.uncoveredErrorPx} -> ${boxed.figures.uncoveredErrorPx} (drop ${dropU}), error px ${before.figures.errorPx} -> ${boxed.figures.errorPx} (drop ${dropE}); the hand-derived count is ${HEM_BOX_PX}`,
+        'the hole is where no layer holds the figure; a patch cut from the painting over its exactly-C pixels covers each of them with the painting itself, so each stops being an error pixel, and nothing else about the assembly moves',
+      );
+
+      const band = assemble({ ...hemIn, patches: [{ name: 'hem', box: HEM_BAND, alpha: 'silhouette', draw: 'back' }], seamRule: 'near-white' });
+      const srcr = sourceInRig(hemIn.source, 64, 64);
+      const sil = figureSilhouette(srcr);
+      const b = band.images[0];
+      let mismatch = 0;
+      let expectDrop = 0;
+      const [ax0, ay0, ax1, ay1] = HEM_BAND;
+      for (let y = ay0; y < ay1; y++) {
+        for (let x = ax0; x < ax1; x++) {
+          const p = y * 64 + x;
+          const inside = x >= b.record.x && x < b.record.x + b.record.w && y >= b.record.y && y < b.record.y + b.record.h;
+          const a = inside ? b.image.data[((y - b.record.y) * b.record.w + (x - b.record.x)) * 4 + 3] : 0;
+          if ((a === 255) !== (sil.data[p] === 1) || (a !== 0 && a !== 255)) mismatch++;
+          const off = Math.max(255 - srcr.data[p * 4], 255 - srcr.data[p * 4 + 1], 255 - srcr.data[p * 4 + 2]);
+          if (sil.data[p] === 1 && off > 40) expectDrop++;
+        }
+      }
+      const bandPx = (ax1 - ax0) * (ay1 - ay0);
+      const dropBand = before.figures.uncoveredErrorPx - band.figures.uncoveredErrorPx;
+      say(
+        'AS18_A_SILHOUETTE_PATCH_IS_THE_PAINTING_S_FIGURE_INSIDE_ITS_BOX_PIXEL_FOR_PIXEL',
+        mismatch === 0 && b.record.from === 'painting:hem' && b.record.opaque_px > HEM_BOX_PX && b.record.opaque_px < bandPx && dropBand === expectDrop,
+        `over the ${ax1 - ax0}x${ay1 - ay0} band (${bandPx} px): ${b.record.opaque_px} px taken, ${mismatch} disagreeing with figureSilhouette; uncovered error px drop ${dropBand}, the silhouette's gap pixels more than 40 off white ${expectDrop}`,
+        'the silhouette is the painting\'s, not the layers\' union: the pixels a patch exists for are the ones no layer holds, so that union is empty over them by definition; the band runs through the figure\'s edge onto the page, and the page is not taken',
+      );
+
+      const order = assemble({
+        ...hemIn,
+        patches: [
+          { name: 'p_front', box: [11, 36, 20, 40], alpha: 'box', draw: 'front' },
+          { name: 'p_before', box: [20, 36, 30, 40], alpha: 'box', draw: { before: 'bottomwear' } },
+          { name: 'p_back', box: [30, 36, 40, 40], alpha: 'box', draw: 'back' },
+          { name: 'p_back2', box: [40, 36, 50, 40], alpha: 'box', draw: 'back' },
+        ],
+        seamRule: 'near-white',
+      });
+      const names = order.parts.parts.map((q) => q.name).join(', ');
+      const wantOrder = 'p_back, p_back2, topwear, p_before, bottomwear, p_front';
+      say(
+        'AS19_A_PATCH_IS_DRAWN_WHERE_ITS_DRAW_SAYS',
+        names === wantOrder,
+        `back, back, before bottomwear and front patches over the plan topwear, bottomwear -> ${names}`,
+        '"back" patches in their own order, each "before" patch immediately behind its plan part, "front" patches last: parts.json order is draw order, and the rig\'s slots follow it',
+      );
+    } finally {
+      rmSync(hemDir, { recursive: true, force: true });
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -23,7 +23,7 @@
 import type { StageBox, Viewport } from './check.ts';
 import { cropToSpineY } from './coords.ts';
 import { OPAQUE_ALPHA_ABOVE } from './layers.ts';
-import { type PartRecord, type PartsFile, readFrom } from './parts.ts';
+import { type PartRecord, type PartsFile, tagOf } from './parts.ts';
 import type { Raster } from './raster/types.ts';
 import { type BaseTag, readTag } from './tags.ts';
 
@@ -31,10 +31,14 @@ import { type BaseTag, readTag } from './tags.ts';
 // regions, by tag
 // ---------------------------------------------------------------------------
 
-/** The v3 base tag a part came from, or null when `from` is not `<run>:<v3 tag>` (readParts already refused that). */
+/**
+ * The v3 base tag a part came from, or null for a `painting:` patch — which no
+ * tag classifies, so no region picks it — or a `from` that is neither
+ * (readParts already refused that).
+ */
 export function baseTagOf(p: PartRecord): BaseTag | null {
-  const f = readFrom(p.from);
-  return f === null ? null : (readTag(f.tag)?.base ?? null);
+  const t = tagOf(p.from);
+  return t === null ? null : (readTag(t)?.base ?? null);
 }
 
 export function partsTagged(parts: PartsFile, tags: readonly BaseTag[]): PartRecord[] {

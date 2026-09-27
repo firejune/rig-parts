@@ -70,6 +70,7 @@ read by no CPU stage).
 | `assemble.rig_scale` | assemble | authored; rig pixels per source pixel. 0.5 in both examples (a 1664x2432 painting makes an 832x1216 rig) |
 | `assemble.plan` | assemble; also the list every `meshes`/`regions` key must come from | **proposed** by `assemble --propose-plan`. `[part name, "full" \| "head", See-through tag]`, in draw order back to front. Names are free; roles come from the tag |
 | `assemble.extend_below_crop` | assemble | **proposed** with the plan: `{part, run, tag}` — a head-run part that reaches the bottom of the head crop is continued from a full-run layer, whole connected components |
+| `assemble.patches` | assemble; `meshes`/`regions` keys may name them too | **authored**, optional: `[{name, box, alpha, draw}]` — an extra part cut from the **painting** itself, for figure no See-through layer holds (a hem both runs dropped). `box` is `[x0, y0, x1, y1]` in **rig** pixels, `x1`/`y1` exclusive — the space of `parts.json` and `recomposite_rig.png`, where the hole is found; `alpha` is `"silhouette"` (the painting's figure silhouette inside the box, the one `--seam silhouette` uses) or `"box"` (the whole box); `draw` is `"back"`, `"front"` or `{"before": "<plan part>"}`. A patch is always a region: its bone is `regions.<name>`, in the one place every region's bone lives, and a `meshes` entry for it is refused. See §5 for how to place one |
 | `bones` | rig; `propose --from-config` | **proposed** by `propose`, then corrected. A single bone `{name, parent, at, tip?}` or a chain `{chain, parent, points, tip}` whose links are named `<chain>0 … <chain>n`. Parents come before children |
 | `meshes.<part>` | rig | **proposed**, then corrected. `grid` (lattice cell size, px), `r` (added to every distance before weighting: `w = 1/(d + r)²`), `segments` (a chain name, a bone name with a `tip`, or `[bone, [x0,y0], [x1,y1]]`). The segment list is the one authored decision about a layer: which bones may pull it. The slot's bone is the first segment's |
 | `regions.<part>` | rig | **proposed**: the bone a rigid part rides. Every plan part is exactly one of a mesh or a region (`CONFIG_PART_ATTACHED`) |
@@ -237,7 +238,7 @@ proposal in as the steps above say (`RL01`); every step must exit 0.
 | --- | --- | --- | --- |
 | `layers` | the table, then the `WARN` lines | every tag the plan will need has opaque pixels; one `face` in the head run; `0 WARN line(s)` | a run whose layer PNG is not its box's size (`LAYERS_PNG_MATCHES_BBOX`); a `WARN  PLAN_LAYER_…` line (§6, *Plausibility*) |
 | `sheet` of both runs | the tile list (and the sheet, if you can see) | eyes, irises, lashes and brows as left/right pairs in the head run | a head box that cut off an ornament: move `head_box`, re-run the head crop |
-| `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px`, then `uncovered holes (8-connected): N` and the largest five as `uncovered hole K: <px> px at x,y wxh (between "<part>" <px> px, …)`; and look at `render/recomposite_error_rig.png` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185, 259 holes, the largest 94 px; `demo` 2.39 / 95.8 % / 11,050 / 1,564, 453 holes, the largest 70 px (default rule) — many slivers along part edges, no hole a region could hide | one large hole: part of the figure is in no layer — a plan entry is missing, hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason), or See-through split one garment into two and left the space between them in neither (a skirt as two trouser legs); the `between` parts say where |
+| `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px`, then `uncovered holes (8-connected): N` and the largest five as `uncovered hole K: <px> px at x,y wxh (between "<part>" <px> px, …)`; and look at `render/recomposite_error_rig.png` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185, 259 holes, the largest 94 px; `demo` 2.39 / 95.8 % / 11,050 / 1,564, 453 holes, the largest 70 px (default rule) — many slivers along part edges, no hole a region could hide | one large hole: part of the figure is in no layer — a plan entry is missing, hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason), or See-through split one garment into two and left the space between them in neither (a skirt as two trouser legs); the `between` parts say where. When neither run holds it at all, an `assemble.patches` entry cuts it from the painting (below) |
 | `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck); a `hanging strand … -- no chain proposed` note — that strand hangs stiff until you add a chain down the x and rows it names (§3) |
 | `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; then rigc's gate lines | `cover 1.00000` on every mesh, both gates `0 failed` | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
 | `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the five judgement lines and `RECOMPOSITE_HOLES` (§7), `check.json` | `check: PASS`, and a judgement line SKIP only where the character lacks what it reads | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
@@ -275,7 +276,23 @@ error pixels from 4,512 to 4,116 and 11,050 to 9,820, and the check seam from 0.
 0.206 and 0.326 to 0.325, with no other check figure changed. The default stays the
 reference's so the examples stay comparable with it. `build` takes both flags.
 
-`parts.json` holds one record per part, in plan order. Its counts:
+**Patching a hole no layer holds.** When an `uncovered hole` stays large after the
+plan is right — both See-through runs dropped a piece of the figure, red in
+`recomposite_error_rig.png` — add an `assemble.patches` entry:
+the box round the hole in rig pixels, `alpha: "silhouette"` so the page round the
+figure is not taken, and a `regions.<name>` bone. Draw it `"back"` (or
+`{"before": …}` the part it belongs under) and let the box **reach under its
+neighbours**: on the selftest's hem fixture a box that only abutted them raised
+`check`'s seam from 0.323 to 0.86 with 16 px over 40, and one reaching two rows
+under each measured 0.267 with none [observed] — two regions that merely meet
+leave a resampled edge between them in the render. The patch is config, so every
+`build` cuts it again; it is never a file added after the build. Re-run `assemble`
+and read `uncovered error px` again: a patch covering `n` of the uncovered error
+pixels lowers it by exactly `n` (the selftest's `AS17` plants that and counts it).
+
+`parts.json` holds one record per part, in draw order: the plan's, with each patch
+where its `draw` puts it (`"back"` patches first in their own order, each
+`{"before": X}` patch immediately behind `X`, `"front"` patches last). Its counts:
 
 | field | counts |
 | --- | --- |
@@ -288,6 +305,17 @@ reference's so the examples stay comparable with it. `build` takes both flags.
 | `refused_drift_px` | candidates refused because See-through's pixel and the painting's differ by more than 90 |
 | `merged_px` | pixels brought in below the head crop, and the ring that closes their seam |
 | `seam_override_px` | pixels the seam pass recoloured to the painting |
+
+A part's `from` is `<full|head>:<tag>` — the See-through run and tag, which every
+role (`propose`) and every judgement-line region (`check`) is read from — or, for a
+patch, `painting:<its own name>`. **A patch is 100 % source**: every pixel is the
+painting's, so it is all visible and all taken — `visible_px`, `projected_core_px`
+and `source_px_taken` equal `opaque_px`, and `occluded_px`,
+`visible_not_projected_px`, `refused_drift_px` and `merged_px` are 0. The reader
+refuses a `painting:` record that says anything else, or that names another part
+(`PARTS_FROM_KNOWN`, `PARTS_COUNTS_ADD_UP`). No tag rule reads a patch: `propose`
+puts it on the nearest trunk bone as a region with a note, and `check` counts it
+in no region.
 
 `visible_px + occluded_px = opaque_px`, and every projected pixel is visible; the stage
 refuses (`ASSEMBLE_COUNTS_ADD_UP`) rather than write counts that break either, and the
@@ -399,10 +427,11 @@ See-through with another seed.
 | `CONFIG_FILE_PRESENT`, `CONFIG_IS_JSON` | no such file, or not JSON | `--config` |
 | `CONFIG_KEY_KNOWN`, `CONFIG_KEY_RETIRED`, `CONFIG_FIELD_PRESENT`, `CONFIG_FIELD_TYPE` | an unknown key (a retired one says what replaces it), a missing one, a wrong type | the named field |
 | `CONFIG_HEAD_BOX_SQUARE` | `seethrough.head_box` is not a non-empty square | `head_box` — take `propose --head-box`'s |
-| `CONFIG_TAG_KNOWN`, `CONFIG_PART_NAME`, `CONFIG_PART_UNIQUE` | a plan entry names no v3 tag, a part name that is not a file name, or a part or layer twice | `assemble.plan` |
-| `CONFIG_NAME_RESOLVES` | a parent, segment, region, track, blink member, blink still part or bone, or extend part names nothing declared above it | the named reference, or the declaration it needs |
+| `CONFIG_TAG_KNOWN`, `CONFIG_PART_NAME`, `CONFIG_PART_UNIQUE` | a plan entry names no v3 tag, a part name that is not a file name, or a part or layer twice — a patch named like a plan part or another patch included | `assemble.plan`, `assemble.patches` |
+| `CONFIG_NAME_RESOLVES` | a parent, segment, region, track, blink member, blink still part or bone, extend part or patch `draw.before` names nothing declared above it | the named reference, or the declaration it needs |
 | `CONFIG_BONE_UNIQUE` | a bone or chain declared twice, or `root` declared | `bones` |
-| `CONFIG_PART_ATTACHED` | a plan part with neither or both of a mesh and a region | `meshes` / `regions` |
+| `CONFIG_PART_ATTACHED` | a plan part with neither or both of a mesh and a region; a patch with a mesh, or with no region | `meshes` / `regions` |
+| `CONFIG_PATCH_BOX` | an `assemble.patches` box with `x1 <= x0` or `y1 <= y0` | that patch's `box` (`x1`, `y1` are exclusive) |
 | `CONFIG_AMPS_MATCH_CHAIN` | a chain track's `amps` is not one per link | that track's `amps` |
 | `CONFIG_PERIOD_DIVIDES_DURATION` | a period that is not a whole fraction of the idle — the loop could not close | that track's `period`, or `motion.duration` |
 | `CONFIG_STILL_OFF_THE_BLINK` | a `motion.blink.still` entry names a region on a bone the blink's `eyes` does not name (nothing to hold still), or its `bone` is one the blink's `eyes` names (the still piece would blink) | that entry's part, or its `bone` — the eye bone's parent, `head` as proposed |
@@ -437,6 +466,8 @@ See-through with another seed.
 | `ASSEMBLE_RUN_CANVAS` | a run's canvas is not `resolution` square | `seethrough.resolution`, or the run |
 | `ASSEMBLE_PLAN_TAG_IN_RUN`, `ASSEMBLE_EXTEND_TAG_IN_RUN` | an entry takes a tag its run does not hold (the detail lists what it does hold) | that entry's run or tag |
 | `ASSEMBLE_PART_OPAQUE` | a part ended with no opaque pixel | drop the entry, or take the tag from the other run |
+| `ASSEMBLE_PATCH_BOX_INSIDE` | a patch's box reaches past the rig (the painting times `rig_scale`; the detail gives the size) | that patch's `box` — it is in rig pixels, not painting pixels |
+| `ASSEMBLE_PATCH_OPAQUE` | a patch takes no pixel: a `"silhouette"` patch whose box holds none of the figure | move the box onto the figure, or `"alpha": "box"` |
 | `ASSEMBLE_COUNTS_ADD_UP` | a part's visible and occluded counts do not add up to its opaque pixels, or a projected pixel is not visible — an assembler bug, not an input problem | report it with the part named; nothing was written |
 
 ### propose
@@ -453,7 +484,7 @@ See-through with another seed.
 
 | rule | means | change |
 | --- | --- | --- |
-| `RIG_PART_PRESENT`, `RIG_PART_ATTACHED` | a `meshes`/`regions` key that is not in `parts.json`, or a part with neither | the config and the plan must name the same parts |
+| `RIG_PART_PRESENT`, `RIG_PART_ATTACHED` | a `meshes`/`regions` key that is not in `parts.json`, a part with neither, or a `painting:` part with a mesh | the config and the plan must name the same parts; a patch is a region |
 | `RIG_PNG_PRESENT`, `RIG_PNG_MATCHES_BOX`, `RIG_PART_HAS_ART` | a part's PNG is missing, the wrong size, or has no art pixel | re-run assemble |
 | `RIG_NAME_RESOLVES`, `RIG_SEGMENT_DEFINED`, `RIG_CHAIN_POINTS` | a segment names an undeclared bone, a bone with no `tip` and no next link, or a chain too short to make a link | that bone's `tip`, or write the segment out as `[bone, [x0,y0], [x1,y1]]` |
 | `RIG_LATTICE_ONE_LOOP` | the lattice over a part does not close into one outline even after the repair passes | that mesh's `grid` |
@@ -467,6 +498,7 @@ See-through with another seed.
 | rule | means | change |
 | --- | --- | --- |
 | `CHECK_RIGC_PRESENT` | no `rigc` binary found (every place looked is listed) | `bun install` |
+| `CHECK_INPUT_PRESENT` on `…/parts.json` | `--parts` named a directory without `parts.json` — most often `parts/` itself. The detail says it: "--parts names the directory holding parts.json and parts/, not parts/ itself (after build, that is build's --out, whose rig is <out>/rig); without --parts it is --rig", and names the parent when the parent holds `parts.json` | `--parts` — the directory above `parts/` |
 | `CHECK_INPUT_PRESENT`, `CHECK_INPUT_IS_JSON`, `CHECK_PART_PNG_PRESENT`, `CHECK_PART_PNG_MATCHES_BOX`, `CHECK_PART_SLOT_PRESENT`, `CHECK_RIG_STAGE_PRESENT`, `CHECK_RIG_STAGE_IS_THE_CANVAS`, `CHECK_RIG_ROOT_BONE`, `CHECK_IDLE_PRESENT` | the rig directory is incomplete or disagrees with `parts.json` (`CHECK_PART_SLOT_PRESENT`: a part with no slot of its own name, which the judgement lines render it by) | re-run rig (`build` does both) |
 | `CHECK_RIGC_GREEN` | a rigc step failed; its line is quoted | as `RIG_RIGC_GREEN` |
 | `CHECK_LOOP_LAST_FRAME_AT_DURATION` | the idle's last frame does not sit at `duration` | `motion.duration` — a whole number of 1/12 s |

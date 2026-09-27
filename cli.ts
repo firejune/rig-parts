@@ -18,7 +18,7 @@ import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
 import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage } from './src/build.ts';
-import { findRigc, type RigcRunner, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK } from './src/check.ts';
+import { findRigc, PARTS_HOME_SENTENCE, type RigcRunner, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
 import { type CharacterConfig, loadConfig, loadEarlyConfig } from './src/config.ts';
 import { PartsError, problemLine } from './src/errors.ts';
@@ -108,8 +108,9 @@ usage:
   spine-parts check --rig <dir> --out <dir> [--parts <dir>]
       Build, gate, render and measure a rig through spine-rigc's CLI (the rigc at
       node_modules/.bin/rigc, or on PATH). --rig holds rig.json and motion.json
-      (with an "idle"); --parts holds parts.json and parts/ and defaults to
-      --rig. Both are only read. Into --out:
+      (with an "idle").
+      ${PARTS_HOME_SENTENCE}.
+      Both are only read. Into --out:
       build/ (rigc build --profile spine-html --pack: the packed atlas is the
       artifact), gate_spine-html.txt and gate_spine.txt (the gate lines
       verbatim), idle_frames/ (rigc render --animation idle --fps 12 --max 640),
@@ -158,9 +159,13 @@ usage:
       <out>/render/recomposite_rig.png and <out>/render/${ERROR_MAP_FILE} (the error
       map: uncovered error px red, covered error px blue, the rest the painting in
       light grey). Reads config.seethrough.head_box and
-      .resolution and config.assemble.rig_scale, .plan and .extend_below_crop,
-      and no rig section: bones, meshes, regions and motion need not exist yet,
-      because propose drafts them from these parts (AUTHORING §4, the table).
+      .resolution and config.assemble.rig_scale, .plan, .extend_below_crop and
+      .patches — extra parts cut from the painting itself over a rig-pixel box
+      (alpha "silhouette": the painting's figure inside it; "box": all of it),
+      drawn "back", "front" or {"before": <plan part>}, recorded in parts.json
+      as from "painting:<name>" and counted 100 % source — and no rig section:
+      bones, meshes, regions and motion need not exist yet, because propose
+      drafts them from these parts (AUTHORING §4, the table).
       Prints one line per part, the seam override counts, the \`pixels:\` totals
       (opaque = visible + occluded; taken from the painting; visible but not
       projected), and \`recomposite vs source\` (mean |d| and % within 8 over the

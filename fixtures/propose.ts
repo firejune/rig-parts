@@ -264,20 +264,25 @@ function opaque(p: ProposeFixturePart): number {
  */
 export function writeProposeFixture(dir: string, parts: ProposeFixturePart[] = PROPOSE_PARTS, rig: { w: number; h: number } = PROPOSE_RIG, soft = false): string {
   mkdirSync(join(dir, 'parts'), { recursive: true });
-  const recs: PartRecord[] = parts.map((p) => ({
-    name: p.name,
-    from: p.from,
-    x: p.x,
-    y: p.y,
-    w: p.w,
-    h: p.h,
-    opaque_px: opaque(p),
-    projected_core_px: 0,
-    source_px_taken: 0,
-    refused_drift_px: 0,
-    merged_px: 0,
-    seam_override_px: 0,
-  }));
+  // A `painting:` patch is 100 % source, and the reader holds its record to that.
+  const recs: PartRecord[] = parts.map((p) => {
+    const op = opaque(p);
+    const taken = p.from.startsWith('painting:') ? op : 0;
+    return {
+      name: p.name,
+      from: p.from,
+      x: p.x,
+      y: p.y,
+      w: p.w,
+      h: p.h,
+      opaque_px: op,
+      projected_core_px: taken,
+      source_px_taken: taken,
+      refused_drift_px: 0,
+      merged_px: 0,
+      seam_override_px: 0,
+    };
+  });
   for (const p of parts) writeFileSync(join(dir, 'parts', `${p.name}.png`), encodePngBytes(paint(p, soft)));
   writeParts(join(dir, 'parts.json'), { rig_size: [rig.w, rig.h], scale_rig_per_source: 1, parts: recs, ghost_px: {} });
   const painting = join(dir, 'painting.png');

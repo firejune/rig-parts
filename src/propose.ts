@@ -34,7 +34,11 @@
  *   strand instead of the single pendant chain, and one note naming every
  *   strand and what became of it — a strand left without a chain is never
  *   silent (issue #24).
- * - anything no rule claims rides its nearest trunk bone as a region.
+ * - anything no rule claims rides its nearest trunk bone as a region —
+ *   including every `painting:` patch (`assemble.patches`), which has no tag,
+ *   so no rule above ever reads it: it is never a mesh or a chain, it moves
+ *   no bone the rules place, and the note says the bone is the config's to
+ *   name in `regions.<name>`.
  *
  * What it cannot know is written into `notes` when it guessed, and otherwise
  * left to the person correcting: things hidden inside a layer (a sash tail
@@ -60,7 +64,7 @@ import { drawText, GLYPH_H } from 'spine-rigc/tools/font5x7.ts';
 import { type BoneEntry, type MeshSpec, parseConfig, type Point, type Segment } from './config.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { OPAQUE_ALPHA_ABOVE } from './layers.ts';
-import { type PartRecord, type PartsFile, readParts } from './parts.ts';
+import { PAINTING_RUN, type PartRecord, type PartsFile, readParts } from './parts.ts';
 import { connectedComponents } from './raster/components.ts';
 import { dilate, morphGradient } from './raster/morph.ts';
 import { readPng } from './raster/png.ts';
@@ -111,9 +115,19 @@ export interface Proposal {
  * refusals.
  */
 export function checkProposal(P: PartSet, p: Proposal): void {
+  // A patch is not a plan entry; it goes back as the patches entry it came
+  // from, so the loader holds it to its own rule (a region, never a mesh).
+  // Its box, alpha and draw are the record's own box and placeholders the
+  // loader only type-checks: nothing here is written anywhere.
+  const run = P.recs.filter((r) => splitFrom(r.from)[0] !== PAINTING_RUN);
+  const painted = P.recs.filter((r) => splitFrom(r.from)[0] === PAINTING_RUN);
   parseConfig({
     key: 'proposal',
-    assemble: { rig_scale: 1, plan: P.recs.map((r) => [r.name, ...splitFrom(r.from)]) },
+    assemble: {
+      rig_scale: 1,
+      plan: run.map((r) => [r.name, ...splitFrom(r.from)]),
+      patches: painted.map((r) => ({ name: r.name, box: [r.x, r.y, r.x + r.w, r.y + r.h], alpha: 'box', draw: 'front' })),
+    },
     bones: p.bones,
     meshes: p.meshes,
     regions: p.regions,
@@ -144,12 +158,17 @@ export class PartSet {
     this.images = images;
   }
 
-  /** Parts whose `from` tag is exactly `tag`, optionally from one run, in parts.json order. */
+  /** Parts whose `from` tag is exactly `tag`, optionally from one run, in parts.json order. A `painting:` patch has no tag and is never one. */
   byTag(tag: string, run?: 'full' | 'head'): PartRecord[] {
     return this.recs.filter((p) => {
       const [r, t] = splitFrom(p.from);
-      return t === tag && (run === undefined || r === run);
+      return r !== PAINTING_RUN && t === tag && (run === undefined || r === run);
     });
+  }
+
+  /** The See-through parts: every part but the `painting:` patches. */
+  layered(): PartRecord[] {
+    return this.recs.filter((p) => splitFrom(p.from)[0] !== PAINTING_RUN);
   }
 
   /** `byTag(tag, 'head') or byTag(tag)`: the head run's layer when it has one. */
@@ -337,8 +356,9 @@ export const TORSO_TAGS = ['neck', 'neckwear', 'topwear', 'bottomwear', 'legwear
 
 /** The first and last rows holding any part's pixel. */
 function figureExtent(P: PartSet): { top: number; bot: number } {
+  // The layers' figure: a patch adds none of its own, so adding one moves no bone.
   let fig = newMask(P.W, P.H);
-  for (const p of P.recs) fig = union(fig, P.alpha(p));
+  for (const p of P.layered()) fig = union(fig, P.alpha(p));
   const ys = rowsAny(fig);
   return { top: ys[0], bot: ys[ys.length - 1] };
 }
@@ -347,7 +367,7 @@ function figureExtent(P: PartSet): { top: number; bot: number } {
 function torsoRows(P: PartSet): { lo: Int32Array; hi: Int32Array } {
   const lo = new Int32Array(P.H).fill(-1);
   const hi = new Int32Array(P.H).fill(-1);
-  for (const p of P.recs) {
+  for (const p of P.layered()) {
     if (!(TORSO_TAGS as readonly string[]).includes(splitFrom(p.from)[1])) continue;
     const m = P.alpha(p);
     for (let y = p.y; y < p.y + p.h; y++) {
@@ -645,7 +665,7 @@ export function propose(P: PartSet): Proposal {
       B('mouth', 'head', [cc.stats[best].cx, cc.stats[best].cy]);
     } else B('mouth', 'head', center(mouth[0]));
   }
-  for (const p of P.recs) {
+  for (const p of P.layered()) {
     const t = splitFrom(p.from)[1];
     let role: string | undefined = TAG_REGION[t];
     if (browOf.has(p.name)) role = browOf.get(p.name);
@@ -1044,7 +1064,9 @@ export function propose(P: PartSet): Proposal {
     if (!(p.name in meshes) && !(p.name in regions)) {
       const cy = center(p)[1];
       regions[p.name] = cy < neckY ? 'head' : cy < hip[1] ? 'chest' : 'hip';
-      notes.push(`${p.name} (${p.from}): no rule -> region on ${regions[p.name]}`);
+      if (splitFrom(p.from)[0] === PAINTING_RUN) {
+        notes.push(`${p.name} (${p.from}): a painting patch has no tag, so no rule -> region on ${regions[p.name]}, the nearest trunk bone; config.regions.${p.name} is the bone it rides`);
+      } else notes.push(`${p.name} (${p.from}): no rule -> region on ${regions[p.name]}`);
     }
   }
   return { bones, meshes, regions, motion: { duration: 4.0, tracks, blink }, notes };

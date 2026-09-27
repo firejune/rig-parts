@@ -51,13 +51,16 @@
  * - **The recomposite's holes and error map** (`uncoveredHoles`,
  *   `recompositeErrorMap`) are this port's: the reference printed the
  *   uncovered count alone, which says a hole exists but not where.
+ * - **Patches** (`assemble.patches`, `cutPatch`) are this port's: an extra
+ *   part cut from the painting itself, for a piece of the figure no layer
+ *   holds, recorded as `painting:<name>` and 100 % source.
  *
  * Pure: no clock, no randomness, no file access. The CLI reads and writes.
  */
-import type { CharacterConfig, EarlyConfig, Extend, PlanEntry, Run, SeeThrough } from './config.ts';
+import type { CharacterConfig, EarlyConfig, Extend, Patch, PlanEntry, Run, SeeThrough } from './config.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
-import type { PartRecord, PartsFile, RecompositeRecord } from './parts.ts';
+import { PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord } from './parts.ts';
 import {
   alphaComposite,
   connectedComponents,
@@ -186,6 +189,8 @@ export interface AssembleInput {
   rigScale: number;
   plan: PlanEntry[];
   extend: Extend[];
+  /** `assemble.patches`: extra parts cut from the painting, placed per their `draw` (`placePatches`). */
+  patches: Patch[];
   seamRule: SeamRule;
   projectRule: ProjectRule;
 }
@@ -1071,6 +1076,92 @@ export function recompositeRecord(f: RecompositeFigures): RecompositeRecord {
 }
 
 // ---------------------------------------------------------------------------
+// patches — extra parts cut from the painting
+// ---------------------------------------------------------------------------
+
+/**
+ * One `assemble.patches` entry as a part: the painting's own pixels over its
+ * box, taken where its alpha rule says.
+ *
+ * ⚖️ Invariant: a pixel of the rig is in the patch exactly when it lies in
+ * `box` (`[x0, y0, x1, y1]`, rig pixels, `x1`/`y1` exclusive) and, for
+ * `alpha: "silhouette"`, `figureSilhouette(srcr)` holds it; there its colour
+ * is the painting's (`srcr`) and its alpha 255, everywhere else the pixel is
+ * transparent. The silhouette is the painting's, not the union of the
+ * layers' alpha: the pixels a patch exists for are exactly the ones no layer
+ * holds, so the layers' union is empty over them by definition. The record is
+ * the patch's alpha box and its counts, all of them `opaque_px` or 0 — a
+ * patch is 100 % source (`src/parts.ts`). `seam_override_px` is set later by
+ * `seamOverride`, as for every part.
+ */
+export function cutPatch(patch: Patch, srcr: Raster, silhouette: Mask | null): { record: PartRecord; image: Raster } | null {
+  const { width: W, height: H } = srcr;
+  const [bx0, by0, bx1, by1] = patch.box;
+  const r = newRaster(W, H);
+  let x0 = W;
+  let y0 = H;
+  let x1 = -1;
+  let y1 = -1;
+  let n = 0;
+  for (let y = by0; y < by1; y++) {
+    for (let x = bx0; x < bx1; x++) {
+      const p = y * W + x;
+      if (patch.alpha === 'silhouette' && (silhouette === null || silhouette.data[p] === 0)) continue;
+      r.data.set(srcr.data.subarray(p * 4, p * 4 + 3), p * 4);
+      r.data[p * 4 + 3] = 255;
+      n++;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (n === 0) return null;
+  const record: PartRecord = {
+    name: patch.name,
+    from: `${PAINTING_RUN}:${patch.name}`,
+    x: x0,
+    y: y0,
+    w: x1 - x0 + 1,
+    h: y1 - y0 + 1,
+    opaque_px: n,
+    visible_px: n,
+    occluded_px: 0,
+    projected_core_px: n,
+    source_px_taken: n,
+    visible_not_projected_px: 0,
+    refused_drift_px: 0,
+    merged_px: 0,
+    seam_override_px: 0,
+  };
+  return { record, image: crop(r, x0, y0, record.w, record.h) };
+}
+
+/**
+ * The draw order of plan parts and patches together, back to front: every
+ * `"back"` patch in `patches` order, then each plan part preceded by the
+ * patches drawn `{before: <that part>}` in `patches` order, then every
+ * `"front"` patch in `patches` order. The loader has already refused a
+ * `before` that names no plan part.
+ */
+export function drawOrder(plan: readonly string[], patches: readonly Patch[]): Array<{ plan: number } | { patch: number }> {
+  const out: Array<{ plan: number } | { patch: number }> = [];
+  patches.forEach((q, i) => {
+    if (q.draw === 'back') out.push({ patch: i });
+  });
+  plan.forEach((name, pi) => {
+    patches.forEach((q, i) => {
+      if (typeof q.draw === 'object' && q.draw.before === name) out.push({ patch: i });
+    });
+    out.push({ plan: pi });
+  });
+  patches.forEach((q, i) => {
+    if (q.draw === 'front') out.push({ patch: i });
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // the stage
 // ---------------------------------------------------------------------------
 
@@ -1125,7 +1216,7 @@ export function checkPlanAgainstRuns(plan: PlanEntry[], extend: Extend[], full: 
  * after this returned writes only after green.
  */
 export function assemble(input: AssembleInput): AssembleResult {
-  const { source, full, head, plan, extend, seamRule, projectRule } = input;
+  const { source, full, head, plan, extend, patches, seamRule, projectRule } = input;
   const frame = checkGeometry(
     { sourceW: source.width, sourceH: source.height, resolution: input.resolution, headBox: input.headBox, rigScale: input.rigScale },
     { full, head },
@@ -1148,7 +1239,21 @@ export function assemble(input: AssembleInput): AssembleResult {
     });
   }
 
-  const placed: PlacedPart[] = [];
+  // Patches are checked against the rig before any pixel work, like the plan.
+  const patchProblems: Problem[] = [];
+  patches.forEach((q, i) => {
+    const [, , bx1, by1] = q.box;
+    if (bx1 > W || by1 > H) {
+      patchProblems.push({
+        code: 'ASSEMBLE_PATCH_BOX_INSIDE',
+        object: `config.assemble.patches[${i}] (patch "${q.name}")`,
+        detail: `box is [${q.box.join(', ')}]; the rig is ${W}x${H} (the painting times rig_scale ${frame.S}), so x1 <= ${W} and y1 <= ${H} are required — the box is in rig pixels, x1 and y1 exclusive`,
+      });
+    }
+  });
+  refuseIfAny(patchProblems);
+
+  const planned: Array<PlacedPart | null> = plan.map(() => null);
   const empty: Problem[] = [];
   plan.forEach(([name, run, tag], pi) => {
     const key = `${run}:${tag}`;
@@ -1223,11 +1328,27 @@ export function assemble(input: AssembleInput): AssembleResult {
       merged_px: merged,
       seam_override_px: 0,
     };
-    placed.push({ record, image: crop(r, x0, y0, record.w, record.h) });
+    planned[pi] = { record, image: crop(r, x0, y0, record.w, record.h) };
+  });
+  const silhouette = seamRule === 'silhouette' || patches.some((q) => q.alpha === 'silhouette') ? figureSilhouette(srcr) : null;
+  const cut = patches.map((q, i) => {
+    const c = cutPatch(q, srcr, silhouette);
+    if (c === null) {
+      empty.push({
+        code: 'ASSEMBLE_PATCH_OPAQUE',
+        object: `patch "${q.name}" (config.assemble.patches[${i}])`,
+        detail: `takes 0 pixels: ${q.alpha === 'silhouette' ? `the painting's figure silhouette does not reach its box [${q.box.join(', ')}]` : 'its box is empty'}; a patch with at least one pixel is required — move the box onto the figure, or take "alpha": "box"`,
+      });
+    }
+    return c;
   });
   refuseIfAny(empty);
+  const placed: PlacedPart[] = drawOrder(
+    plan.map((e) => e[0]),
+    patches,
+  ).map((d) => ('plan' in d ? planned[d.plan] : cut[d.patch]) as PlacedPart);
 
-  seamOverride(placed, srcr, seamRule, seamRule === 'silhouette' ? figureSilhouette(srcr) : null);
+  seamOverride(placed, srcr, seamRule, seamRule === 'silhouette' ? silhouette : null);
   const can = recomposite(placed, W, H);
   const figures = measureRecomposite(can, srcr, placed);
   return {
@@ -1418,13 +1539,21 @@ export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx =
 
 /**
  * The config fields the stage reads: `seethrough.resolution` and `.head_box`,
- * `assemble.rig_scale`, `.plan` and `.extend_below_crop` — and nothing of the
- * rig. The CLI hands it a config from `parseEarlyConfig(raw, 'assemble')`; a
- * config the full loader accepted is the same shape with more in it. The head
- * box is refused here rather than by the loader, because `inputs` runs before
- * it exists; `seethrough` too, for a full-loader config, where it is optional.
+ * `assemble.rig_scale`, `.plan`, `.extend_below_crop` and `.patches` — and
+ * nothing of the rig. The CLI hands it a config from
+ * `parseEarlyConfig(raw, 'assemble')`; a config the full loader accepted is
+ * the same shape with more in it. The head box is refused here rather than by
+ * the loader, because `inputs` runs before it exists; `seethrough` too, for a
+ * full-loader config, where it is optional.
  */
-export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble'>): { resolution: number; headBox: [number, number, number, number]; rigScale: number; plan: PlanEntry[]; extend: Extend[] } {
+export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble'>): {
+  resolution: number;
+  headBox: [number, number, number, number];
+  rigScale: number;
+  plan: PlanEntry[];
+  extend: Extend[];
+  patches: Patch[];
+} {
   const problems: Problem[] = [];
   if (cfg.seethrough === undefined) {
     problems.push({ code: 'ASSEMBLE_FIELD_PRESENT', object: 'config.seethrough', detail: 'is absent; assemble reads seethrough.resolution and seethrough.head_box, which place the two runs on the painting' });
@@ -1439,6 +1568,7 @@ export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble'
     rigScale: cfg.assemble.rig_scale,
     plan: cfg.assemble.plan,
     extend: cfg.assemble.extend_below_crop ?? [],
+    patches: cfg.assemble.patches ?? [],
   };
 }
 
