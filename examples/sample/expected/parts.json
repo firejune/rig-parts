@@ -405,5 +405,95 @@
   "head:eyelash-r": 0,
   "head:eyelash-l": 0,
   "head:front hair": 56
+ },
+ "recomposite": {
+  "mean_abs": 0.835,
+  "within_limit": 8,
+  "within_share": 0.9795,
+  "error_limit": 40,
+  "error_px": 4512,
+  "covered_alpha": 128,
+  "uncovered_error_px": 1185,
+  "hole_count": 259,
+  "holes_listed": 5,
+  "holes": [
+   {
+    "px": 94,
+    "x": 479,
+    "y": 412,
+    "w": 7,
+    "h": 34,
+    "borders": [
+     {
+      "part": "sleeves",
+      "px": 42
+     },
+     {
+      "part": "topwear",
+      "px": 40
+     },
+     {
+      "part": "bottomwear",
+      "px": 6
+     }
+    ]
+   },
+   {
+    "px": 74,
+    "x": 351,
+    "y": 80,
+    "w": 52,
+    "h": 60,
+    "borders": [
+     {
+      "part": "hair_back",
+      "px": 113
+     }
+    ]
+   },
+   {
+    "px": 63,
+    "x": 314,
+    "y": 178,
+    "w": 30,
+    "h": 52,
+    "borders": [
+     {
+      "part": "hair_back",
+      "px": 85
+     }
+    ]
+   },
+   {
+    "px": 35,
+    "x": 504,
+    "y": 506,
+    "w": 23,
+    "h": 16,
+    "borders": [
+     {
+      "part": "sleeves",
+      "px": 41
+     },
+     {
+      "part": "bottomwear",
+      "px": 9
+     }
+    ]
+   },
+   {
+    "px": 30,
+    "x": 300,
+    "y": 257,
+    "w": 14,
+    "h": 21,
+    "borders": [
+     {
+      "part": "hair_back",
+      "px": 32
+     }
+    ]
+   }
+  ]
  }
 }

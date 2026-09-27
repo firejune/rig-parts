@@ -201,7 +201,9 @@ Two steps are external: the See-through runs (by any route; the optional `comfy 
    through the same partial loader as `inputs`, and needs `seethrough.head_box` set.
    Read `notes`: a layer left out by a plausibility rule is named there with its
    figures and the rule (§6, *Plausibility*).
-7. `spine-parts assemble … --out work` then
+7. `spine-parts assemble … --out work` — read its `uncovered hole` lines and look at
+   `work/render/recomposite_error_rig.png` (§5): red is painting no part holds, which
+   no later stage can see — then
    `spine-parts propose --parts work/rig --source inputs/painting.png --out work` →
    `work/proposal.json` and `work/render/landmarks.png` (+ `_head`). Copy
    `bones`, `meshes`, `regions` and `motion` into the config.
@@ -220,10 +222,10 @@ Two steps are external: the See-through runs (by any route; the optional `comfy 
 | --- | --- | --- | --- |
 | `layers` | the table, then the `WARN` lines | every tag the plan will need has opaque pixels; one `face` in the head run; `0 WARN line(s)` | a run whose layer PNG is not its box's size (`LAYERS_PNG_MATCHES_BBOX`); a `WARN  PLAN_LAYER_…` line (§6, *Plausibility*) |
 | `sheet` of both runs | the tile list (and the sheet, if you can see) | eyes, irises, lashes and brows as left/right pairs in the head run | a head box that cut off an ornament: move `head_box`, re-run the head crop |
-| `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185; `demo` 2.39 / 95.8 % / 11,050 / 1,564 (default rule) | `uncovered error px` high: part of the figure is in no layer — a plan entry is missing, or hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason) |
+| `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px`, then `uncovered holes (8-connected): N` and the largest five as `uncovered hole K: <px> px at x,y wxh (between "<part>" <px> px, …)`; and look at `render/recomposite_error_rig.png` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185, 259 holes, the largest 94 px; `demo` 2.39 / 95.8 % / 11,050 / 1,564, 453 holes, the largest 70 px (default rule) — many slivers along part edges, no hole a region could hide | one large hole: part of the figure is in no layer — a plan entry is missing, hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason), or See-through split one garment into two and left the space between them in neither (a skirt as two trouser legs); the `between` parts say where |
 | `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck); a `hanging strand … -- no chain proposed` note — that strand hangs stiff until you add a chain down the x and rows it names (§3) |
 | `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; then rigc's gate lines | `cover 1.00000` on every mesh, both gates `0 failed` | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
-| `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the five judgement lines (§7), `check.json` | `check: PASS`, and a judgement line SKIP only where the character lacks what it reads | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
+| `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the five judgement lines and `RECOMPOSITE_HOLES` (§7), `check.json` | `check: PASS`, and a judgement line SKIP only where the character lacks what it reads | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
 | `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line, each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
 
 `loop` writes three files from one frame set, and they are not interchangeable.
@@ -278,6 +280,33 @@ reader refuses a record that breaks them (`PARTS_COUNTS_ADD_UP`). The three visi
 counts are this port's: a `parts.json` the reference wrote has none of them and still
 reads, but a record with only some of them is refused. The `pixels:` line after the
 per-part lines prints their totals.
+
+After the records, `parts.json` holds a `recomposite` block (this port's too; the
+reference's files have none and still read): the flat stack of every part, composited
+on white in plan order, against the painting resampled into the rig.
+
+| field | holds |
+| --- | --- |
+| `mean_abs` | mean over pixels of the mean-channel \|d\|, to 3 places |
+| `within_limit`, `within_share` | the share of pixels (to 4 places) whose mean-channel \|d\| is at most `within_limit` (8) |
+| `error_limit`, `error_px` | pixels whose max-channel \|d\| is above `error_limit` (40) |
+| `covered_alpha`, `uncovered_error_px` | of those, the ones where no part has alpha above `covered_alpha` (128) |
+| `hole_count` | the 8-connected components of the uncovered error pixels |
+| `holes_listed`, `holes` | the largest `holes_listed` (5) of them, largest first (ties: top row, then left column), each `{px, x, y, w, h, borders}`: its area, its box in rig pixels (y down), and every part with a covered pixel 8-adjacent to it, as `{part, px}` — how many such pixels it covers — most first, then plan order; `borders` is empty for a hole that touches no part |
+
+The areas of every hole sum to `uncovered_error_px`; the reader refuses a block whose
+figures disagree (`PARTS_COUNTS_ADD_UP`), whose holes are not largest first
+(`PARTS_HOLES_LARGEST_FIRST`), whose box leaves the rig (`PARTS_BOX_INSIDE_RIG`) or
+whose border names no part of the file (`PARTS_HOLE_PART_KNOWN`).
+
+`recomposite_error_rig.png`, beside `recomposite_rig.png` (`render/` under `assemble
+--out`, the top of `build --out`), is the same measurement as a picture at rig size:
+**red** (255, 0, 0) is an uncovered error pixel — painting that no part holds;
+**blue** (0, 0, 255) a covered error pixel — a part there, in a colour more than 40
+off; every other pixel is the painting in light grey (`192 + luma / 4`, so 192 to
+255). The painting is dimmed rather than dropped so a hole reads against the figure it
+falls in at contact-sheet size, and grey so no painting pixel can be either flag
+colour. Opaque, and the same bytes on every run.
 
 ## 6. Refusals: the rule, and what has to change
 
@@ -403,7 +432,7 @@ See-through with another seed.
 | `PROPOSE_SOURCE_PRESENT`, `PROPOSE_PNG_PRESENT`, `PROPOSE_PNG_MATCHES_BOX` | the painting or a part PNG is missing, or a PNG is not its box | `--source`, `--parts` (re-run assemble) |
 | `PROPOSE_FACE_PRESENT` | no part comes from a `face` layer; every other rule scales by it | `assemble.plan` |
 | `PROPOSE_ACCESSORY_BODY` | an accessory has nothing above its pendant rows to hang its bone on | that part's plan entry, or author its bones by hand |
-| `PARTS_*` (`PARTS_FILE_PRESENT`, `PARTS_IS_JSON`, `PARTS_KEY_KNOWN`, `PARTS_FIELD_PRESENT`, `PARTS_FIELD_TYPE`, `PARTS_NAME_UNIQUE`, `PARTS_FROM_KNOWN`, `PARTS_BOX_INSIDE_RIG`, `PARTS_COUNTS_ADD_UP`) | the `parts.json` read is not assemble's contract (`PARTS_COUNTS_ADD_UP`: `visible_px + occluded_px` is not `opaque_px`, or `visible_not_projected_px` is above `visible_px`) | re-run assemble; do not edit `parts.json` |
+| `PARTS_*` (`PARTS_FILE_PRESENT`, `PARTS_IS_JSON`, `PARTS_KEY_KNOWN`, `PARTS_FIELD_PRESENT`, `PARTS_FIELD_TYPE`, `PARTS_NAME_UNIQUE`, `PARTS_FROM_KNOWN`, `PARTS_BOX_INSIDE_RIG`, `PARTS_COUNTS_ADD_UP`, `PARTS_HOLES_LARGEST_FIRST`, `PARTS_HOLE_PART_KNOWN`) | the `parts.json` read is not assemble's contract (`PARTS_COUNTS_ADD_UP`: `visible_px + occluded_px` is not `opaque_px`, `visible_not_projected_px` is above `visible_px`, or the `recomposite` block's figures disagree — more uncovered than error pixels, a hole larger than its box, the wrong number of holes listed, listed areas that do not sum to `uncovered_error_px`; the last two codes are the block's order and its border names, §5) | re-run assemble; do not edit `parts.json` |
 
 ### rig
 
@@ -475,6 +504,23 @@ the two examples [observed]:
 | `CHAIN_LAG` | `motion.json`'s rotate tracks read as sines (DFT of the keys: period, amplitude, phase) and arranged by the bone tree — a keyed bone's parent is its nearest keyed ancestor | every lag ≥ 0.001 cycle; amplitude non-decreasing down each unbranched chain | lags 0.040 (neck to head) to 0.120; 12 chains | lags 0.040 to 0.100; 9 chains | no rotate track under another of the same period |
 | `TIP_OVER_ROOT` | each `handwear`/`bottomwear` part alone: how far the centroid of its art travels in the lower half of its box against the upper half | ratio ≥ 1.4725 | `bottomwear` 2.945, `sleeves` 3.716 | `bottomwear` 4.396, `sleeves` 12.475 | no such part |
 | `STILL_REGIONS_DARK` | the idle's heat over the face outline (where `face` is the top part of the flat stack, less the boxes of `eyewhite`, `irides`, `eyelash`, `eyebrow` and `mouth`) and over the feet (where `footwear` is on top); max reported | face mean ≤ 33.976; feet mean ≤ 3.244 | 16.988; 1.622 | 11.475; 0 | no `face` and no `footwear` part (one of the two absent leaves that half unmeasured) |
+
+After them, one **reported line** with no bar:
+
+| line | reports | bar | `demo` | `sample` | SKIP when |
+| --- | --- | --- | --- | --- | --- |
+| `RECOMPOSITE_HOLES` | `parts.json`'s `recomposite` block (§5), read rather than measured: `error_px`, `uncovered_error_px`, `hole_count`, and the largest hole's `px`, `box` (`x,y wxh`) and `borders` (`<part> <px> px`) | none — status `REPORTED`, never FAIL, and `PASS` does not read it | 1,564 px in 453 holes; largest 70 px at 351,155 6x22, `hair_back` 53 px, `hair_front` 12 px | 1,185 px in 259 holes; largest 94 px at 479,412 7x34, `sleeves` 42 px, `topwear` 40 px, `bottomwear` 6 px | `parts.json` has no `recomposite` block (the reference's files) |
+
+It exists because no gate can see what it reports. The seam compares the setup pose
+with the flat stack **of the parts**, so a pixel of the painting that no part holds is
+missing from both sides and the seam passes over it — a white gap between two legs
+See-through made of one skirt built green with 7,671 uncovered pixels (issue #25). The line puts that class of defect into
+`check.json`, where an agent that reads only `check.json` sees it. It is not a bar for
+the reason the colour-patch half of `BLINK_NO_HOLE` is not one: no threshold is
+derivable from the examples — both hold hundreds of holes of a few dozen pixels along
+part edges, and whether a hole matters depends on where it is, which the box and the
+bordering parts say and a count cannot. Read it as a figure, quote it in a report, and
+look at `recomposite_error_rig.png` when the largest hole is more than a sliver.
 
 What each figure is, and is not:
 

@@ -85,7 +85,7 @@ page** (issue #2):
 | path under `--out` | what |
 | --- | --- |
 | `check/build/skeleton.json`, `skeleton.atlas`, `skeleton.png` | **the artifact** — Spine 4.3 skeleton data and one packed page, written by `rigc build --pack` and gated under both profiles |
-| `parts/*.png`, `parts.json`, `recomposite_rig.png` | the loose parts, each cropped to its alpha box; the record of where every part came from and how many of its pixels were re-taken from the painting; the flat stack of parts |
+| `parts/*.png`, `parts.json`, `recomposite_rig.png`, `recomposite_error_rig.png` | the loose parts, each cropped to its alpha box; the record of where every part came from, how many of its pixels were re-taken from the painting, and the recomposite's uncovered holes with their boxes; the flat stack of parts; its error map — red where no part covers a pixel the painting has, blue where a part covers it in the wrong colour |
 | `rig/` | `rig.json` and `motion.json` in spine-rigc's spec, `mesh_report.json`, the padded `images/` |
 | `check/` | both gate files verbatim, the idle's frames, `contact.png`, `motion_heat.png`, `check.json` |
 | `idle.png`, `idle-indexed.png`, `idle.gif` | with `--loop`: the idle as a lossless APNG (the exactness record), an indexed APNG with one shared palette (the small one) and a GIF; the last two print their palette error |
@@ -179,6 +179,8 @@ spine-parts sheet --source painting.png --layers layers/full --layers layers/hea
 spine-parts assemble --propose-plan --source painting.png --full layers/full --head layers/head --config config.json
 #    -> assemble.plan and extend_below_crop
 spine-parts assemble --source painting.png --full layers/full --head layers/head --config config.json --out work
+#    -> read the `uncovered hole N:` lines and look at work/render/recomposite_error_rig.png:
+#       red is painting that no part holds, and no later gate can see it
 spine-parts propose --parts work/rig --source painting.png --out work
 #    -> proposal.json and render/landmarks.png; correct it, copy bones/meshes/regions/motion into config.json
 spine-parts propose --parts work/rig --source painting.png --out work --from-config config.json
@@ -205,12 +207,12 @@ agent skill.
 | `layers <dir \| layers.json \| file.psd>` | print every layer of a decomposition: draw order, name, tag group, box, size, opaque pixels, depth, and its translucent, background and area figures; a `WARN` line for a layer `--propose-plan` will leave out |
 | `sheet --source <png> --layers <path>… --out <png>` | a labelled contact sheet of the painting and every layer or part |
 | `assemble --propose-plan …` | propose `assemble.plan` and `extend_below_crop` from the two runs, leaving out an implausible layer with a note naming the rule |
-| `assemble --source --full --head --config --out [--seam] [--project]` | merge the two runs into rig-space parts, `parts.json` and the recomposite |
+| `assemble --source --full --head --config --out [--seam] [--project]` | merge the two runs into rig-space parts, `parts.json`, the recomposite and its error map, and list the uncovered holes |
 | `propose --head-box --full <run> --canvas WxH` | propose `seethrough.head_box` from the full run, held inside the painting |
 | `propose --parts --source --out [--compare <config>]` | propose bones, meshes, regions and an idle; draw the overlay |
 | `propose … --from-config <config>` | draw and LINT the config's current bones |
 | `rig --config --parts --out` | author `rig.json` + `motion.json`, written only after spine-rigc's round trip is green |
-| `check --rig --out [--parts]` | build packed, gate under both profiles, render the idle, measure seam, loop and the five judgement lines |
+| `check --rig --out [--parts]` | build packed, gate under both profiles, render the idle, measure seam, loop and the five judgement lines, and report the recomposite's holes from `parts.json` |
 | `loop --frames <dir> --out <file.gif \| file.png> [--palette]` | encode a rendered idle as a looping GIF, lossless APNG, or indexed APNG (`--palette`) |
 | `build --config --source --full --head --out [--seam] [--project] [--loop]` | assemble, rig and check in one process, stopping at the first refusal |
 

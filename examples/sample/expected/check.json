@@ -112,5 +112,20 @@
    "mean_ceiling": 3.244
   }
  },
+ "RECOMPOSITE_HOLES": {
+  "status": "REPORTED",
+  "error_px": 4512,
+  "uncovered_error_px": 1185,
+  "hole_count": 259,
+  "largest": {
+   "px": 94,
+   "box": "479,412 7x34",
+   "borders": [
+    "sleeves 42 px",
+    "topwear 40 px",
+    "bottomwear 6 px"
+   ]
+  }
+ },
  "PASS": true
 }

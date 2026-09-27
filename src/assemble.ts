@@ -48,13 +48,16 @@
  * - **The visibility counts** (`visible_px`, `occluded_px`,
  *   `visible_not_projected_px`) are this port's, derived from the masks
  *   `projectSource` and `mergeBelowCrop` already build (`visibilityCounts`).
+ * - **The recomposite's holes and error map** (`uncoveredHoles`,
+ *   `recompositeErrorMap`) are this port's: the reference printed the
+ *   uncovered count alone, which says a hole exists but not where.
  *
  * Pure: no clock, no randomness, no file access. The CLI reads and writes.
  */
 import type { CharacterConfig, EarlyConfig, Extend, PlanEntry, Run } from './config.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
-import type { PartRecord, PartsFile } from './parts.ts';
+import type { PartRecord, PartsFile, RecompositeRecord } from './parts.ts';
 import {
   alphaComposite,
   connectedComponents,
@@ -72,6 +75,7 @@ import {
   resize,
   warpAffine,
 } from './raster/index.ts';
+import { pyRound } from './round.ts';
 
 const f32 = Math.fround;
 
@@ -837,6 +841,30 @@ export interface RecompositeFigures {
   errorPx: number;
   /** Of those, the ones no part covers (no part has alpha above `COVERED_ALPHA`). */
   uncoveredErrorPx: number;
+  /** The 8-connected components of the uncovered error pixels: how many there are … */
+  holeCount: number;
+  /** … and the largest `HOLES_LISTED` of them, largest first (`uncoveredHoles`). */
+  holes: RecompositeHole[];
+}
+
+/** How many uncovered holes the assemble summary and `parts.json` list, largest first. */
+export const HOLES_LISTED = 5;
+
+/** A part beside an uncovered hole: how many of its covered pixels touch the hole. */
+export interface HoleBorder {
+  part: string;
+  px: number;
+}
+
+/** One 8-connected component of the uncovered error pixels, in rig pixels (y down, origin top-left). */
+export interface RecompositeHole {
+  px: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Every part bordering the hole, most border pixels first, then plan order; empty when it borders none. */
+  borders: HoleBorder[];
 }
 
 /** The parts composited in plan order onto opaque white, as `PIL.Image.alpha_composite` does it. */
@@ -847,12 +875,91 @@ export function recomposite(parts: PlacedPart[], W: number, H: number): Raster {
   return can;
 }
 
-export function measureRecomposite(can: Raster, srcr: Raster, parts: PlacedPart[]): RecompositeFigures {
-  const { width: W, height: H } = srcr;
+/** Per rig pixel: 1 where some part has alpha above `COVERED_ALPHA`. */
+function coveredMask(parts: PlacedPart[], W: number, H: number): Uint8Array {
   const covered = new Uint8Array(W * H);
   for (const { record: p, image } of parts) {
     for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) if (image.data[(y * p.w + x) * 4 + 3] > COVERED_ALPHA) covered[(p.y + y) * W + p.x + x] = 1;
   }
+  return covered;
+}
+
+/** Per rig pixel: 1 where the recomposite's max-channel difference from the painting is above `ERROR_LIMIT`. */
+function errorMask(can: Raster, srcr: Raster): Uint8Array {
+  const n = srcr.width * srcr.height;
+  const err = new Uint8Array(n);
+  for (let p = 0; p < n; p++) {
+    let m = 0;
+    for (let c = 0; c < 3; c++) m = Math.max(m, Math.abs(can.data[p * 4 + c] - srcr.data[p * 4 + c]));
+    if (m > ERROR_LIMIT) err[p] = 1;
+  }
+  return err;
+}
+
+/**
+ * The uncovered error pixels as holes: every 8-connected component of the
+ * pixels whose recomposite differs from the painting by more than
+ * `ERROR_LIMIT` (max channel) and that no part covers (alpha above
+ * `COVERED_ALPHA`) — the pixels `uncoveredErrorPx` counts, so the components'
+ * areas sum to it.
+ *
+ * ⚖️ Invariant: a hole's box is its pixels' bounding box; its `borders` are
+ * the parts with a covered pixel 8-adjacent to one of its pixels, each with
+ * the number of such pixels it covers (a pixel two parts cover counts for
+ * both), most first and then in plan order. Holes are sorted by area, largest
+ * first, then by the box's top row and left column, so the order is a
+ * function of the pixels and not of a labelling scan. 8-connectivity is the
+ * reference's own for blobs (`cv2.connectedComponentsWithStats(…, 8)` in
+ * ghost clean-up): a hole joined only at a corner is one hole.
+ *
+ * This is not in the reference, whose report stopped at the count. The count
+ * cannot say where to look; a box and the parts round it can.
+ */
+export function uncoveredHoles(can: Raster, srcr: Raster, parts: PlacedPart[]): { count: number; holes: RecompositeHole[] } {
+  const { width: W, height: H } = srcr;
+  const covered = coveredMask(parts, W, H);
+  const err = errorMask(can, srcr);
+  const mask = newMask(W, H);
+  for (let p = 0; p < W * H; p++) if (err[p] === 1 && covered[p] === 0) mask.data[p] = 1;
+  const cc = connectedComponents(mask, 8);
+  const all = cc.stats.slice(1).filter((s) => s.area > 0);
+  all.sort((a, b) => b.area - a.area || a.top - b.top || a.left - b.left);
+  const listed = all.slice(0, HOLES_LISTED);
+  const holes = listed.map((s): RecompositeHole => {
+    const borders: HoleBorder[] = [];
+    parts.forEach(({ record: p, image }) => {
+      let n = 0;
+      // A part pixel can touch the hole only inside the hole's box grown by one.
+      const x0 = Math.max(p.x, s.left - 1);
+      const x1 = Math.min(p.x + p.w - 1, s.left + s.width);
+      const y0 = Math.max(p.y, s.top - 1);
+      const y1 = Math.min(p.y + p.h - 1, s.top + s.height);
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          if (image.data[((y - p.y) * p.w + (x - p.x)) * 4 + 3] <= COVERED_ALPHA) continue;
+          let touches = false;
+          for (let dy = -1; dy <= 1 && !touches; dy++) {
+            for (let dx = -1; dx <= 1 && !touches; dx++) {
+              const u = x + dx;
+              const v = y + dy;
+              if (u >= 0 && u < W && v >= 0 && v < H && cc.labels[v * W + u] === s.label) touches = true;
+            }
+          }
+          if (touches) n++;
+        }
+      }
+      if (n > 0) borders.push({ part: p.name, px: n });
+    });
+    // Array.prototype.sort is stable, so equal counts keep plan order.
+    borders.sort((a, b) => b.px - a.px);
+    return { px: s.area, x: s.left, y: s.top, w: s.width, h: s.height, borders };
+  });
+  return { count: all.length, holes };
+}
+
+export function measureRecomposite(can: Raster, srcr: Raster, parts: PlacedPart[]): RecompositeFigures {
+  const { width: W, height: H } = srcr;
+  const covered = coveredMask(parts, W, H);
   let sum = 0;
   let within = 0;
   let errorPx = 0;
@@ -873,7 +980,50 @@ export function measureRecomposite(can: Raster, srcr: Raster, parts: PlacedPart[
       if (covered[p] === 0) uncoveredErrorPx++;
     }
   }
-  return { meanAbs: sum / (W * H), within: within / (W * H), errorPx, uncoveredErrorPx };
+  const { count, holes } = uncoveredHoles(can, srcr, parts);
+  return { meanAbs: sum / (W * H), within: within / (W * H), errorPx, uncoveredErrorPx, holeCount: count, holes };
+}
+
+/** The error map's colour for an uncovered error pixel: no part is there, so the page shows through. */
+export const MAP_UNCOVERED: readonly [number, number, number] = [255, 0, 0];
+/** … for a covered error pixel: a part is there, in a colour more than `ERROR_LIMIT` off the painting's. */
+export const MAP_MISMATCHED: readonly [number, number, number] = [0, 0, 255];
+
+/**
+ * The error map, `recomposite_error_rig.png`: the rig canvas, opaque, with
+ * every uncovered error pixel `MAP_UNCOVERED` (red), every covered error pixel
+ * `MAP_MISMATCHED` (blue), and every other pixel the painting in grey, dimmed
+ * to the top quarter of the range — `192 + floor(luma / 4)`, luma the integer
+ * BT.601 `(299 R + 587 G + 114 B + 500) / 1000` truncated.
+ *
+ * Why the painting dimmed rather than transparent: the map is read at contact-
+ * sheet size, and a red blob on nothing says a hole exists but not where on
+ * the figure it is; on a faint grey figure it sits between the legs it falls
+ * between. Why grey and light: no pixel of the dimmed painting can be either
+ * flag colour (a grey has equal channels, and at 192..255 it is lighter than
+ * both), so the two colours mean exactly the two masks. Integer arithmetic
+ * only, so the bytes are deterministic.
+ */
+export function recompositeErrorMap(can: Raster, srcr: Raster, parts: PlacedPart[]): Raster {
+  const { width: W, height: H } = srcr;
+  const covered = coveredMask(parts, W, H);
+  const err = errorMask(can, srcr);
+  const map = newRaster(W, H);
+  for (let p = 0; p < W * H; p++) {
+    const s = p * 4;
+    let rgb: readonly [number, number, number];
+    if (err[p] === 1) rgb = covered[p] === 0 ? MAP_UNCOVERED : MAP_MISMATCHED;
+    else {
+      const luma = Math.floor((299 * srcr.data[s] + 587 * srcr.data[s + 1] + 114 * srcr.data[s + 2] + 500) / 1000);
+      const g = 192 + Math.floor(luma / 4);
+      rgb = [g, g, g];
+    }
+    map.data[s] = rgb[0];
+    map.data[s + 1] = rgb[1];
+    map.data[s + 2] = rgb[2];
+    map.data[s + 3] = 255;
+  }
+  return map;
 }
 
 export function figuresLine(f: RecompositeFigures): string {
@@ -881,6 +1031,43 @@ export function figuresLine(f: RecompositeFigures): string {
     `recomposite vs source: mean |d|=${f.meanAbs.toFixed(2)}, within ${WITHIN_LIMIT}: ${(100 * f.within).toFixed(1)}%, ` +
     `error px > ${ERROR_LIMIT}: ${f.errorPx}, uncovered error px: ${f.uncoveredErrorPx}`
   );
+}
+
+/** A hole's box as the part lines and refusals print a box: `x,y wxh`. */
+export function holeBox(h: RecompositeHole): string {
+  return `${h.x},${h.y} ${h.w}x${h.h}`;
+}
+
+/**
+ * The hole lines under `figuresLine`: the count, then one line per listed
+ * hole — `uncovered hole 1: 2340 px at 412,1088 30x78 (between "legwear_r"
+ * 120 px, "legwear_l" 96 px)`, or `(borders no part)`.
+ */
+export function holeLines(f: RecompositeFigures): string[] {
+  const head = `uncovered holes (8-connected): ${f.holeCount}${f.holeCount > f.holes.length ? `, the largest ${f.holes.length} listed` : ''}`;
+  return [
+    head,
+    ...f.holes.map(
+      (h, i) =>
+        `  uncovered hole ${i + 1}: ${h.px} px at ${holeBox(h)} (${h.borders.length === 0 ? 'borders no part' : `between ${h.borders.map((b) => `"${b.part}" ${b.px} px`).join(', ')}`})`,
+    ),
+  ];
+}
+
+/** The `parts.json` `recomposite` block: the four figures, the limits they were measured at, and the listed holes. */
+export function recompositeRecord(f: RecompositeFigures): RecompositeRecord {
+  return {
+    mean_abs: pyRound(f.meanAbs, 3),
+    within_limit: WITHIN_LIMIT,
+    within_share: pyRound(f.within, 4),
+    error_limit: ERROR_LIMIT,
+    error_px: f.errorPx,
+    covered_alpha: COVERED_ALPHA,
+    uncovered_error_px: f.uncoveredErrorPx,
+    hole_count: f.holeCount,
+    holes_listed: HOLES_LISTED,
+    holes: f.holes.map((h) => ({ px: h.px, x: h.x, y: h.y, w: h.w, h: h.h, borders: h.borders.map((b) => ({ part: b.part, px: b.px })) })),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -892,6 +1079,8 @@ export interface AssembleResult {
   /** In plan order, each cropped to its record's box. */
   images: PlacedPart[];
   recomposite: Raster;
+  /** `recompositeErrorMap`: uncovered error pixels red, covered ones blue, the painting dimmed grey. */
+  errorMap: Raster;
   figures: RecompositeFigures;
   seamRule: SeamRule;
   projectRule: ProjectRule;
@@ -1042,9 +1231,10 @@ export function assemble(input: AssembleInput): AssembleResult {
   const can = recomposite(placed, W, H);
   const figures = measureRecomposite(can, srcr, placed);
   return {
-    parts: { rig_size: [W, H], scale_rig_per_source: frame.S, parts: placed.map((p) => p.record), ghost_px: ghost },
+    parts: { rig_size: [W, H], scale_rig_per_source: frame.S, parts: placed.map((p) => p.record), ghost_px: ghost, recomposite: recompositeRecord(figures) },
     images: placed,
     recomposite: can,
+    errorMap: recompositeErrorMap(can, srcr, placed),
     figures,
     seamRule,
     projectRule,

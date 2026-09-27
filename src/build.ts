@@ -20,7 +20,7 @@
  *
  * | path | from |
  * | --- | --- |
- * | `parts/<name>.png`, `parts.json`, `recomposite_rig.png` | assemble — the loose parts, an intermediate |
+ * | `parts/<name>.png`, `parts.json`, `recomposite_rig.png`, `recomposite_error_rig.png` | assemble — the loose parts, an intermediate, and the error map of their flat stack |
  * | `rig/` (`rig.json`, `motion.json`, `mesh_report.json`, `images/`) | rig |
  * | `check/` (`build/` with the packed atlas, both gate files, `idle_frames/`, `contact.png`, `motion_heat.png`, `check.json`) | check |
  * | `idle.png` (lossless APNG), `idle-indexed.png` (indexed APNG), `idle.gif` | loop, with `--loop`, from `check/idle_frames/` |
@@ -43,8 +43,8 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
-import { assemble, type AssembleResult, figuresLine, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
-import { type CheckReport, JUDGEMENT_LINES, type JudgementLine, readFrameSet, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
+import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
+import { type CheckReport, JUDGEMENT_LINES, type JudgementLine, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
 import { encodeGif } from './gif.ts';
@@ -103,12 +103,16 @@ export interface AssembleStageInput {
   project: ProjectRule;
 }
 
-/** Where the assemble stage writes: `parts.json`, the directory of part PNGs, and the recomposite. */
+/** Where the assemble stage writes: `parts.json`, the directory of part PNGs, the recomposite, and its error map. */
 export interface AssembleOutputs {
   partsJson: string;
   partsDir: string;
   recomposite: string;
+  errorMap: string;
 }
+
+/** The error map's file name beside a recomposite: `recomposite_rig.png` -> `recomposite_error_rig.png`. */
+export const ERROR_MAP_FILE = 'recomposite_error_rig.png';
 
 /** Read, assemble, and write only after every refusal has had its chance. Throws a PartsError on a refusal, having written nothing. */
 export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, log: Log): AssembleResult {
@@ -121,9 +125,11 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   mkdirSync(outs.partsDir, { recursive: true });
   mkdirSync(dirname(outs.partsJson), { recursive: true });
   mkdirSync(dirname(outs.recomposite), { recursive: true });
+  mkdirSync(dirname(outs.errorMap), { recursive: true });
   writeParts(outs.partsJson, result.parts);
   for (const { record, image } of result.images) writePng(join(outs.partsDir, `${record.name}.png`), image);
   writePng(outs.recomposite, result.recomposite);
+  writePng(outs.errorMap, result.errorMap);
   const [W, H] = result.parts.rig_size;
   log(`spine-parts assemble: ${result.images.length} part(s) on a ${W}x${H} rig (${result.parts.scale_rig_per_source} rig px per source px), seam rule ${result.seamRule}, projection rule ${result.projectRule}`);
   for (const p of result.parts.parts) {
@@ -143,7 +149,8 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   const ghosts = Object.values(result.parts.ghost_px).reduce((a, b) => a + b, 0);
   log(`  ghost px removed: ${ghosts} over ${Object.keys(result.parts.ghost_px).length} layer(s)`);
   log(figuresLine(result.figures));
-  log(`wrote ${outs.partsJson}, ${result.images.length} PNG(s) in ${outs.partsDir}, ${outs.recomposite}`);
+  for (const l of holeLines(result.figures)) log(l);
+  log(`wrote ${outs.partsJson}, ${result.images.length} PNG(s) in ${outs.partsDir}, ${outs.recomposite}, ${outs.errorMap} (uncovered error px red, covered error px blue, the painting grey)`);
   return result;
 }
 
@@ -274,7 +281,7 @@ function showFigure(v: unknown): string {
 }
 
 /** A judgement line as the console prints it: its name, its status, then its figures and bars as check.json holds them (a SKIP prints its reason). */
-export function judgementLine(name: string, line: JudgementLine): string {
+export function judgementLine(name: string, line: JudgementLine | ReportedLine): string {
   if (line.status === 'SKIP') return `${name}: SKIP — ${String(line.reason)}`;
   return `${name}: ${line.status} — ${Object.entries(line)
     .filter(([k]) => k !== 'status')
@@ -304,6 +311,7 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
       `${fig.seam_px_over_40} px over ${SEAM_PX_LEVEL} (<= ${SEAM_PX_BAR}), ${fig.seam_px_over_80} px over ${SEAM_PX_LEVEL_HIGH} (reported)`,
   );
   for (const name of JUDGEMENT_LINES) log(`  ${judgementLine(name, fig[name])}`);
+  for (const name of REPORTED_LINES) log(`  ${judgementLine(name, fig[name])}`);
   log(`  gates: spine-html ${fig.gate_spine_html_green ? 'green' : 'RED'}, spine ${fig.gate_spine_green ? 'green' : 'RED'}`);
   log(`  wrote ${r.written.map((w) => join(input.out, w)).join(', ')}, ${join(input.out, 'build')}/, ${join(input.out, 'idle_frames')}/`);
   for (const p of r.problems) log(`  FAIL  ${problemLine(p)}`);
@@ -415,7 +423,7 @@ export interface BuildRunners {
 }
 
 /** Every path `build` writes under `--out`, relative — and so every path it clears first. */
-export const BUILD_OWNS: readonly string[] = ['parts', 'parts.json', 'recomposite_rig.png', 'rig', 'check', 'idle.gif', 'idle.png', 'idle-indexed.png'];
+export const BUILD_OWNS: readonly string[] = ['parts', 'parts.json', 'recomposite_rig.png', ERROR_MAP_FILE, 'rig', 'check', 'idle.gif', 'idle.png', 'idle-indexed.png'];
 
 export type BuildStage = 'assemble' | 'rig' | 'check' | 'loop' | 'artifact';
 
@@ -467,7 +475,7 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   try {
     assembleStage(
       { source: input.source, full: input.full, head: input.head, config: input.config, seam: input.seam, project: input.project },
-      { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png') },
+      { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, ERROR_MAP_FILE) },
       prefixed('assemble'),
     );
   } catch (err) {

@@ -27,7 +27,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cropToSpineY } from '../src/coords.ts';
 import { OPAQUE_ALPHA_ABOVE } from '../src/layers.ts';
-import { type PartsFile, serializeParts } from '../src/parts.ts';
+import { type PartsFile, type RecompositeRecord, serializeParts } from '../src/parts.ts';
 import { encodePngBytes } from '../src/raster/png.ts';
 import { newRaster, type Raster } from '../src/raster/types.ts';
 
@@ -89,6 +89,8 @@ export interface CheckRigOptions {
    * background there — the hole `BLINK_NO_HOLE` exists to name.
    */
   blinkSquash?: number;
+  /** A `recomposite` block for parts.json, as assemble would write one; absent by default, as in a reference-written parts.json. */
+  recomposite?: RecompositeRecord;
 }
 
 export const IDLE_PEAK = 2;
@@ -160,6 +162,7 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
       seam_override_px: 0,
     })),
     ghost_px: {},
+    ...(opts.recomposite === undefined ? {} : { recomposite: opts.recomposite }),
   };
   writeFileSync(join(dir, 'parts.json'), serializeParts(parts));
 }
