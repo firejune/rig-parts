@@ -439,5 +439,99 @@
   "head:irides-r": 0,
   "head:eyelash-r": 0,
   "head:front hair": 7
+ },
+ "recomposite": {
+  "mean_abs": 2.391,
+  "within_limit": 8,
+  "within_share": 0.9581,
+  "error_limit": 40,
+  "error_px": 11050,
+  "covered_alpha": 128,
+  "uncovered_error_px": 1564,
+  "hole_count": 453,
+  "holes_listed": 5,
+  "holes": [
+   {
+    "px": 70,
+    "x": 351,
+    "y": 155,
+    "w": 6,
+    "h": 22,
+    "borders": [
+     {
+      "part": "hair_back",
+      "px": 53
+     },
+     {
+      "part": "hair_front",
+      "px": 12
+     }
+    ]
+   },
+   {
+    "px": 54,
+    "x": 469,
+    "y": 164,
+    "w": 6,
+    "h": 32,
+    "borders": [
+     {
+      "part": "hair_back",
+      "px": 16
+     },
+     {
+      "part": "earring",
+      "px": 9
+     }
+    ]
+   },
+   {
+    "px": 51,
+    "x": 450,
+    "y": 40,
+    "w": 46,
+    "h": 31,
+    "borders": [
+     {
+      "part": "hairpin",
+      "px": 77
+     },
+     {
+      "part": "hair_back",
+      "px": 4
+     }
+    ]
+   },
+   {
+    "px": 51,
+    "x": 636,
+    "y": 637,
+    "w": 15,
+    "h": 16,
+    "borders": [
+     {
+      "part": "hair_back",
+      "px": 48
+     }
+    ]
+   },
+   {
+    "px": 50,
+    "x": 470,
+    "y": 195,
+    "w": 7,
+    "h": 25,
+    "borders": [
+     {
+      "part": "hair_back",
+      "px": 28
+     },
+     {
+      "part": "earring",
+      "px": 7
+     }
+    ]
+   }
+  ]
  }
 }

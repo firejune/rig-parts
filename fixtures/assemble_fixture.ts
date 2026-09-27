@@ -67,6 +67,33 @@
  * - `topwear` 600 - 416 = 184; `bottomwear` 336 - 0 = 336; `shoes`
  *   120 - 32 = 88; `face` 144 - 56 = 88.
  *
+ * ## The recomposite block, derived
+ *
+ * Every part pixel is opaque and ends exactly `C` (projected, copied, a rim
+ * taken from the painting, or — `bottomwear` — recoloured by the seam
+ * override), and the resample of a flat painting is exactly `C`, so every
+ * covered pixel differs by 0 and every one of the 64 x 64 - 1,485 = 2,611
+ * uncovered pixels is white page over `C`: |255 - 100| + |255 - 60| +
+ * |255 - 40| = 565, mean channel 565 / 3, max channel 215 > 40.
+ *
+ * - `mean_abs` = 2,611 x 565 / 3 / 4,096 = 120.0533… -> 120.053;
+ *   `within_share` = 1,485 / 4,096 = 0.36254… -> 0.3625; `error_px` =
+ *   `uncovered_error_px` = 2,611.
+ * - No part touches the canvas edge and none encloses a pocket, so the
+ *   uncovered pixels are ONE 8-connected hole of 2,611 px whose box is the
+ *   whole rig, 0,0 64x64.
+ * - Its borders are each part's pixels with an uncovered 8-neighbour. A
+ *   w x h rectangle alone has w h - (w - 2)(h - 2) of them: `bottomwear`
+ *   14 x 24 -> 72, `shoes` 20 x 6 -> 48. `face` [16, 28) x [8, 20) sits on
+ *   `topwear` [10, 30) x [20, 50): the face's bottom row and the topwear's top
+ *   row lose columns 17..26 (10 px each), whose every neighbour is the other
+ *   part — `face` 44 - 10 = 34, `topwear` 96 - 10 = 86. `hair_back` is rows
+ *   10..26 at columns 38..45, rows 27..31 at 37..45, rows 32..44 at 37..44;
+ *   its rim is 8 (row 10) + 2 x 16 (rows 11..26) + 3 (row 27: 37, 38, 45) +
+ *   2 x 3 (rows 28..30) + 3 (row 31: 37, 44, 45) + 2 (row 32) + 2 x 11 (rows
+ *   33..43) + 8 (row 44) = 84. Most first: topwear 86, hair_back 84,
+ *   bottomwear 72, shoes 48, face 34.
+ *
  * ## The thin-strip fixture (`--project`)
  *
  * `STRIP_FULL`: a full-run `topwear` [10, 40) x [10, 40) with a 3-pixel
@@ -182,6 +209,33 @@ export const EXPECTED_PARTS = {
     'full:topwear': 0,
     'head:back hair': 0,
     'head:face': 0,
+  },
+  recomposite: {
+    mean_abs: 120.053,
+    within_limit: 8,
+    within_share: 0.3625,
+    error_limit: 40,
+    error_px: 2611,
+    covered_alpha: 128,
+    uncovered_error_px: 2611,
+    hole_count: 1,
+    holes_listed: 5,
+    holes: [
+      {
+        px: 2611,
+        x: 0,
+        y: 0,
+        w: 64,
+        h: 64,
+        borders: [
+          { part: 'topwear', px: 86 },
+          { part: 'hair_back', px: 84 },
+          { part: 'bottomwear', px: 72 },
+          { part: 'shoes', px: 48 },
+          { part: 'face', px: 34 },
+        ],
+      },
+    ],
   },
 };
 

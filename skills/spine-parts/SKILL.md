@@ -30,6 +30,12 @@ stage writes are the whole interface.
   `TIP_OVER_ROOT`, `STILL_REGIONS_DARK`); texture stretch and the face outline in
   the head's own frame still need an eye (AUTHORING §7). A judgement line that says
   SKIP was not verified: report it as such, with its reason, never as passed.
+- **A hole in the layers is invisible to every bar.** Painting that no part holds is
+  missing from the setup pose and from the flat stack alike, so the seam passes over
+  it. `assemble` lists it (`uncovered hole N: <px> px at x,y wxh (between …)`) and
+  paints it red in `recomposite_error_rig.png`; `check` copies it into `check.json` as
+  `RECOMPOSITE_HOLES`, a REPORTED line with no bar. Read it; never report it as a
+  pass.
 
 ## The loop
 
@@ -45,7 +51,10 @@ stage writes are the whole interface.
    `st_input_head.png`, the crop at that box), and run See-through on the crop.
 4. `spine-parts assemble --propose-plan …` → `config.assemble.plan` and
    `extend_below_crop`.
-5. `spine-parts assemble … --out work`, then `spine-parts propose --parts work/rig
+5. `spine-parts assemble … --out work` — read the `uncovered hole` lines and look at
+   `work/render/recomposite_error_rig.png`; a large red hole between two parts is a
+   gap See-through left (a skirt split into two legs), fixed in the plan or the layers,
+   not in the rig. Then `spine-parts propose --parts work/rig
    --source <painting> --out work` → copy `bones`, `meshes`, `regions`, `motion`
    from `proposal.json` into the config.
 6. Correct against `render/landmarks.png` and `note:` lines; `propose …
@@ -54,7 +63,9 @@ stage writes are the whole interface.
    It stops at the first stage that refuses, printing that stage's lines under
    `[assemble]`, `[rig]` or `[check]`. Fix what the FAIL line names and build again.
 8. Read `out/check/check.json` — the five judgement lines the same way as the seam
-   and the loop: a FAIL names the field to change (AUTHORING §6). The artifact is the three paths the build prints
+   and the loop: a FAIL names the field to change (AUTHORING §6). Quote
+   `RECOMPOSITE_HOLES` (uncovered px, hole count, the largest hole's box) in the
+   report whatever `PASS` says. The artifact is the three paths the build prints
    last: `check/build/skeleton.json`, `skeleton.atlas` and the packed page. Report
    them with the pack line and the check figures verbatim.
 

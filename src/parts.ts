@@ -35,6 +35,16 @@
  * per source-painting pixel, and `ghost_px` the sub-threshold specks removed
  * from each `<run>:<tag>` layer before anything else.
  *
+ * `recomposite` is the flat stack of every part against the painting (this
+ * port's, issue #25; a `parts.json` the reference wrote has none and reads as
+ * it did): the four figures the assemble summary prints, the limits they were
+ * measured at, and the largest uncovered holes — 8-connected components of the
+ * error pixels no part covers, each with its box and the parts bordering it.
+ * A hole is a class of defect no gate downstream can see: `check`'s seam
+ * compares the setup pose with the flat stack of parts, so a pixel missing
+ * from every part is missing from both sides. `check` reports it
+ * (`RECOMPOSITE_HOLES`) from this block.
+ *
  * This file is types, a writer and a reader; the assembly that fills it in is
  * a later stage. The writer's key order is fixed, so two runs over the same
  * inputs write the same bytes.
@@ -64,14 +74,44 @@ export interface PartRecord {
   seam_override_px: number;
 }
 
+/** One listed hole: its area, its box in rig pixels, and the parts beside it (`src/assemble.ts` `uncoveredHoles`). */
+export interface HoleRecord {
+  px: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  borders: Array<{ part: string; px: number }>;
+}
+
+export interface RecompositeRecord {
+  mean_abs: number;
+  within_limit: number;
+  within_share: number;
+  error_limit: number;
+  error_px: number;
+  covered_alpha: number;
+  uncovered_error_px: number;
+  hole_count: number;
+  holes_listed: number;
+  holes: HoleRecord[];
+}
+
 export interface PartsFile {
   rig_size: [number, number];
   scale_rig_per_source: number;
   parts: PartRecord[];
   ghost_px: Record<string, number>;
+  /** Absent in a `parts.json` the reference wrote; `assemble` always writes it. */
+  recomposite?: RecompositeRecord;
 }
 
-const TOP_KEYS = ['rig_size', 'scale_rig_per_source', 'parts', 'ghost_px'] as const;
+const TOP_KEYS = ['rig_size', 'scale_rig_per_source', 'parts', 'ghost_px', 'recomposite'] as const;
+const REQUIRED_TOP_KEYS = TOP_KEYS.filter((k) => k !== 'recomposite');
+export const RECOMPOSITE_KEYS = ['mean_abs', 'within_limit', 'within_share', 'error_limit', 'error_px', 'covered_alpha', 'uncovered_error_px', 'hole_count', 'holes_listed', 'holes'] as const;
+const RECOMPOSITE_COUNTS = ['within_limit', 'error_limit', 'error_px', 'covered_alpha', 'uncovered_error_px', 'hole_count', 'holes_listed'] as const;
+export const HOLE_KEYS = ['px', 'x', 'y', 'w', 'h', 'borders'] as const;
+const BORDER_KEYS = ['part', 'px'] as const;
 export const PART_KEYS = [
   'name',
   'from',
@@ -107,6 +147,14 @@ export function serializeParts(file: PartsFile): string {
     scale_rig_per_source: file.scale_rig_per_source,
     parts: file.parts.map((p) => Object.fromEntries(PART_KEYS.filter((k) => p[k] !== undefined).map((k) => [k, p[k]]))),
     ghost_px: Object.fromEntries(Object.keys(file.ghost_px).sort().map((k) => [k, file.ghost_px[k]])),
+    ...(file.recomposite === undefined
+      ? {}
+      : {
+          recomposite: {
+            ...Object.fromEntries(RECOMPOSITE_KEYS.filter((k) => k !== 'holes').map((k) => [k, (file.recomposite as RecompositeRecord)[k]])),
+            holes: file.recomposite.holes.map((h) => ({ ...Object.fromEntries(HOLE_KEYS.filter((k) => k !== 'borders').map((k) => [k, h[k]])), borders: h.borders.map((b) => ({ part: b.part, px: b.px })) })),
+          },
+        }),
   };
   return `${JSON.stringify(ordered, null, 2)}\n`;
 }
@@ -144,7 +192,7 @@ function checkParts(raw: unknown, path: string): PartsFile {
   }
   const o = raw as Record<string, unknown>;
   for (const k of Object.keys(o)) if (!(TOP_KEYS as readonly string[]).includes(k)) fail('PARTS_KEY_KNOWN', `${path} key "${k}"`, `is not a parts.json field; known: ${TOP_KEYS.join(', ')}`);
-  for (const k of TOP_KEYS) if (!(k in o)) fail('PARTS_FIELD_PRESENT', `${path} field "${k}"`, 'is absent and required');
+  for (const k of REQUIRED_TOP_KEYS) if (!(k in o)) fail('PARTS_FIELD_PRESENT', `${path} field "${k}"`, 'is absent and required');
   const size = o.rig_size;
   const sizeOk = Array.isArray(size) && size.length === 2 && size.every((n) => Number.isInteger(n) && (n as number) > 0);
   if ('rig_size' in o && !sizeOk) fail('PARTS_FIELD_TYPE', `${path} field "rig_size"`, `is ${show(size)}; [width, height] in positive integers is required`);
@@ -202,6 +250,93 @@ function checkParts(raw: unknown, path: string): PartsFile {
       }
     });
   }
+  if ('recomposite' in o && sizeOk) {
+    const names = Array.isArray(o.parts) ? new Set(o.parts.map((p) => (typeof p === 'object' && p !== null ? (p as Record<string, unknown>).name : undefined)).filter((n): n is string => typeof n === 'string')) : new Set<string>();
+    checkRecomposite(o.recomposite, path, size as [number, number], names, fail);
+  }
   refuseIfAny(problems);
   return raw as PartsFile;
+}
+
+const isCount = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0;
+
+/**
+ * The `recomposite` block: every key known and present, every figure its
+ * type, and the counts consistent with one another — the listed holes are the
+ * largest `holes_listed` of `hole_count` (so there are `min` of the two),
+ * largest first, their areas sum to at most `uncovered_error_px` (to exactly
+ * it when every hole is listed), each area fits its box, each box is inside
+ * the rig, and each bordering part is a part of this file.
+ */
+function checkRecomposite(r: unknown, path: string, [W, H]: [number, number], names: ReadonlySet<string>, fail: (code: string, object: string, detail: string) => void): void {
+  const at = `${path} field "recomposite"`;
+  if (typeof r !== 'object' || r === null || Array.isArray(r)) {
+    fail('PARTS_FIELD_TYPE', at, `is ${show(r)}; an object is required`);
+    return;
+  }
+  const b = r as Record<string, unknown>;
+  for (const k of Object.keys(b)) if (!(RECOMPOSITE_KEYS as readonly string[]).includes(k)) fail('PARTS_KEY_KNOWN', `${at} key "${k}"`, `is not a recomposite field; known: ${RECOMPOSITE_KEYS.join(', ')}`);
+  for (const k of RECOMPOSITE_KEYS) if (!(k in b)) fail('PARTS_FIELD_PRESENT', `${at} field "${k}"`, 'is absent and required');
+  for (const k of RECOMPOSITE_COUNTS) if (k in b && !isCount(b[k])) fail('PARTS_FIELD_TYPE', `${at} field "${k}"`, `is ${show(b[k])}; a non-negative integer is required`);
+  if ('mean_abs' in b && !(typeof b.mean_abs === 'number' && b.mean_abs >= 0 && b.mean_abs <= 255)) fail('PARTS_FIELD_TYPE', `${at} field "mean_abs"`, `is ${show(b.mean_abs)}; a number from 0 to 255 is required`);
+  if ('within_share' in b && !(typeof b.within_share === 'number' && b.within_share >= 0 && b.within_share <= 1)) fail('PARTS_FIELD_TYPE', `${at} field "within_share"`, `is ${show(b.within_share)}; a number from 0 to 1 is required`);
+  const [err, unc, count, listed] = [b.error_px, b.uncovered_error_px, b.hole_count, b.holes_listed].map((v) => (isCount(v) ? v : null));
+  if (err !== null && err > W * H) fail('PARTS_COUNTS_ADD_UP', at, `error_px ${err} is above the ${W}x${H} rig's ${W * H} pixels`);
+  if (err !== null && unc !== null && unc > err) fail('PARTS_COUNTS_ADD_UP', at, `uncovered_error_px ${unc} is above error_px ${err}; at most error_px is required`);
+  if (unc !== null && count !== null && (count > unc || (count === 0) !== (unc === 0))) {
+    fail('PARTS_COUNTS_ADD_UP', at, `hole_count ${count} with uncovered_error_px ${unc}; at least one pixel per hole, and no hole exactly when no uncovered pixel, is required`);
+  }
+  if (!('holes' in b)) return;
+  if (!Array.isArray(b.holes)) {
+    fail('PARTS_FIELD_TYPE', `${at} field "holes"`, `is ${show(b.holes)}; an array is required`);
+    return;
+  }
+  if (count !== null && listed !== null && b.holes.length !== Math.min(count, listed)) {
+    fail('PARTS_COUNTS_ADD_UP', `${at} field "holes"`, `lists ${b.holes.length} hole(s); the largest min(hole_count ${count}, holes_listed ${listed}) = ${Math.min(count, listed)} is required`);
+  }
+  let sum = 0;
+  let prev: number | null = null;
+  b.holes.forEach((h, i) => {
+    const hat = `${at} holes[${i}]`;
+    if (typeof h !== 'object' || h === null || Array.isArray(h)) {
+      fail('PARTS_FIELD_TYPE', hat, `is ${show(h)}; an object is required`);
+      return;
+    }
+    const o = h as Record<string, unknown>;
+    for (const k of Object.keys(o)) if (!(HOLE_KEYS as readonly string[]).includes(k)) fail('PARTS_KEY_KNOWN', `${hat} key "${k}"`, `is not a hole field; known: ${HOLE_KEYS.join(', ')}`);
+    for (const k of HOLE_KEYS) if (!(k in o)) fail('PARTS_FIELD_PRESENT', `${hat} field "${k}"`, 'is absent and required');
+    for (const k of ['px', 'x', 'y', 'w', 'h'] as const) if (k in o && !isCount(o[k])) fail('PARTS_FIELD_TYPE', `${hat} field "${k}"`, `is ${show(o[k])}; a non-negative integer is required`);
+    const [px, x, y, w, hh] = [o.px, o.x, o.y, o.w, o.h].map((v) => (isCount(v) ? v : null));
+    if (px !== null) {
+      sum += px;
+      if (px < 1) fail('PARTS_COUNTS_ADD_UP', hat, 'px 0; a hole has at least one pixel');
+      if (prev !== null && px > prev) fail('PARTS_HOLES_LARGEST_FIRST', hat, `px ${px} is above holes[${i - 1}]'s ${prev}; the holes are listed largest first`);
+      prev = px;
+    }
+    if (x !== null && y !== null && w !== null && hh !== null) {
+      if (w < 1 || hh < 1 || x + w > W || y + hh > H) fail('PARTS_BOX_INSIDE_RIG', hat, `box ${x},${y} ${w}x${hh}; a non-empty box inside the ${W}x${H} rig is required`);
+      else if (px !== null && px > w * hh) fail('PARTS_COUNTS_ADD_UP', hat, `px ${px} is above its ${w}x${hh} box's ${w * hh} pixels`);
+    }
+    if (!('borders' in o)) return;
+    if (!Array.isArray(o.borders)) {
+      fail('PARTS_FIELD_TYPE', `${hat} field "borders"`, `is ${show(o.borders)}; an array of {part, px} is required`);
+      return;
+    }
+    o.borders.forEach((bd, j) => {
+      const bat = `${hat} borders[${j}]`;
+      if (typeof bd !== 'object' || bd === null || Array.isArray(bd)) {
+        fail('PARTS_FIELD_TYPE', bat, `is ${show(bd)}; an object {part, px} is required`);
+        return;
+      }
+      const q = bd as Record<string, unknown>;
+      for (const k of Object.keys(q)) if (!(BORDER_KEYS as readonly string[]).includes(k)) fail('PARTS_KEY_KNOWN', `${bat} key "${k}"`, `is not a border field; known: ${BORDER_KEYS.join(', ')}`);
+      for (const k of BORDER_KEYS) if (!(k in q)) fail('PARTS_FIELD_PRESENT', `${bat} field "${k}"`, 'is absent and required');
+      if ('px' in q && !(isCount(q.px) && q.px >= 1)) fail('PARTS_FIELD_TYPE', `${bat} field "px"`, `is ${show(q.px)}; a pixel count of at least 1 is required`);
+      if ('part' in q && !(typeof q.part === 'string' && names.has(q.part))) fail('PARTS_HOLE_PART_KNOWN', `${bat} field "part"`, `is ${show(q.part)}; a part this file lists is required`);
+    });
+  });
+  if (unc !== null && sum > unc) fail('PARTS_COUNTS_ADD_UP', `${at} field "holes"`, `the listed holes hold ${sum} px, above uncovered_error_px ${unc}`);
+  if (unc !== null && count !== null && b.holes.length === count && sum !== unc && sum <= unc) {
+    fail('PARTS_COUNTS_ADD_UP', `${at} field "holes"`, `every one of the ${count} hole(s) is listed and they hold ${sum} px; uncovered_error_px ${unc} is required`);
+  }
 }

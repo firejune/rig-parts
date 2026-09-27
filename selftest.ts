@@ -77,8 +77,32 @@ import { BARE_CROWN_PARTS, eyeParts, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAN
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
 import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'spine-rigc/src/render.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
-import { assemble, type AssembleInput, belowCrop, checkGeometry, cleanGhosts, DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, figuresLine, growRim, layerToRig, PROJECT_RULES, proposeFields, proposePlan, stageFields, visibilityCounts } from './src/assemble.ts';
-import { chainLine, findRigc, type FrameSet, gateGreen, JUDGEMENT_LINES, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
+import {
+  assemble,
+  type AssembleInput,
+  belowCrop,
+  checkGeometry,
+  cleanGhosts,
+  DEFAULT_PROJECT_RULE,
+  DEFAULT_SEAM_RULE,
+  figuresLine,
+  growRim,
+  holeLines,
+  HOLES_LISTED,
+  layerToRig,
+  MAP_MISMATCHED,
+  MAP_UNCOVERED,
+  measureRecomposite,
+  type PlacedPart,
+  PROJECT_RULES,
+  proposeFields,
+  proposePlan,
+  recomposite,
+  recompositeErrorMap,
+  stageFields,
+  visibilityCounts,
+} from './src/assemble.ts';
+import { chainLine, findRigc, type FrameSet, gateGreen, JUDGEMENT_LINES, parsePackLines, readCheckInputs, readFrameSet, REPORTED_LINES, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
@@ -89,7 +113,7 @@ import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paint
 import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs } from './src/inputs.ts';
 import { implausibleRules, type Layer, layerFigures, type LayerSet, PLAUSIBLE_AREA_RATIO_MAX, PLAUSIBLE_JUDGED_AREA_RATIO, PLAUSIBLE_TRANSLUCENT_MAX, PLAUSIBLE_BACKGROUND_MAX, PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN, readLayers, readPsdLayers, readWrapperLayers, ruleSummary } from './src/layers.ts';
-import { type PartsFile, readParts, serializeParts, writeParts } from './src/parts.ts';
+import { type PartsFile, type RecompositeRecord, readParts, serializeParts, writeParts } from './src/parts.ts';
 import {
   alphaComposite,
   connectedComponents,
@@ -1113,6 +1137,58 @@ function runPartsSuite(): number {
       countedOk === null && inOrder && adds.length === 2 && adds[0].detail.includes('visible_px 90 + occluded_px 11 = 101; opaque_px 100 is required') && ePart !== null && ePart.problems.length === 1 && ePart.problems[0].code === 'PARTS_FIELD_PRESENT' && ePart.problems[0].detail.includes('only visible_px, visible_not_projected_px present'),
       `90 + 10 of 100 opaque -> ${countedOk === null ? 'read' : codes(countedOk)}, written after opaque_px and source_px_taken: ${inOrder}; 90 + 11 and 91 unprojected of 90 visible -> ${adds.map((p) => p.detail).join(' | ') || codes(eAdd)}; occluded_px dropped -> ${ePart === null ? 'read' : `${ePart.problems[0].code}: ${ePart.problems[0].detail}`}; PT01's record carries none and reads, as a reference-written parts.json must`,
       "issue #9's counts are this port's: the reference's files have none of them and must keep reading, but a record carrying some is not one either stage wrote",
+    );
+
+    // The recomposite block (issue #25): optional, as the reference wrote none; when present, every figure consistent.
+    const block: RecompositeRecord = {
+      mean_abs: 2.5,
+      within_limit: 8,
+      within_share: 0.95,
+      error_limit: 40,
+      error_px: 50,
+      covered_alpha: 128,
+      uncovered_error_px: 30,
+      hole_count: 3,
+      holes_listed: 2,
+      holes: [
+        { px: 20, x: 0, y: 0, w: 5, h: 4, borders: [{ part: 'face', px: 6 }] },
+        { px: 7, x: 25, y: 20, w: 7, h: 4, borders: [] },
+      ],
+    };
+    writeParts(path, { ...file, recomposite: block });
+    const withBlock = readFileSync(path, 'utf8');
+    const blockBack = readParts(path);
+    const blockSame = serializeParts(blockBack) === withBlock && JSON.stringify(blockBack.recomposite) === JSON.stringify(block) && withBlock.indexOf('"ghost_px"') < withBlock.indexOf('"recomposite"');
+    type Forge = (b: Record<string, unknown> & { holes: Array<Record<string, unknown>> }) => void;
+    const forged: Array<[string, string, Forge]> = [
+      ['an unknown key in the block', 'PARTS_KEY_KNOWN', (b) => (b.largest = 1)],
+      ['hole_count dropped', 'PARTS_FIELD_PRESENT', (b) => delete b.hole_count],
+      ['mean_abs 300', 'PARTS_FIELD_TYPE', (b) => (b.mean_abs = 300)],
+      ['holes not an array', 'PARTS_FIELD_TYPE', (b) => (b.holes = {} as unknown as Array<Record<string, unknown>>)],
+      ['uncovered 60 of 50 error px', 'PARTS_COUNTS_ADD_UP', (b) => (b.uncovered_error_px = 60)],
+      ['holes_listed 3 with two listed of three', 'PARTS_COUNTS_ADD_UP', (b) => (b.holes_listed = 3)],
+      ['a 21 px hole in a 5x4 box', 'PARTS_COUNTS_ADD_UP', (b) => (b.holes[0].px = 21)],
+      ['both holes listed, holding 27 of 30 px', 'PARTS_COUNTS_ADD_UP', (b) => (b.hole_count = 2)],
+      ['the smaller hole first', 'PARTS_HOLES_LARGEST_FIRST', (b) => b.holes.reverse()],
+      ['a box past the rig edge', 'PARTS_BOX_INSIDE_RIG', (b) => (b.holes[1].x = 26)],
+      ['a border naming no part', 'PARTS_HOLE_PART_KNOWN', (b) => ((b.holes[0].borders as Array<Record<string, unknown>>)[0].part = 'hair')],
+    ];
+    const forgeries = forged.map(([what, code, forge]) => {
+      const raw = JSON.parse(withBlock) as { recomposite: Record<string, unknown> & { holes: Array<Record<string, unknown>> } };
+      forge(raw.recomposite);
+      writeFileSync(path, JSON.stringify(raw));
+      const err = refusals(() => readParts(path));
+      return { what, code, ok: err !== null && err.problems.length === 1 && err.problems[0].code === code, got: codes(err), line: err?.problems[0] };
+    });
+    const unmet = forgeries.filter((f) => !f.ok);
+    say(
+      'PT04_THE_RECOMPOSITE_BLOCK_ROUND_TRIPS_AND_EACH_FORGED_FIGURE_IS_ONE_NAMED_REFUSAL',
+      blockSame && unmet.length === 0,
+      `a block with two of three holes listed reads back equal and is written after ghost_px: ${blockSame}; ` +
+        (unmet.length === 0
+          ? `${forgeries.length} forged blocks, each exactly one refusal under its code; e.g. ${forgeries[7].line?.code}: ${forgeries[7].line?.object} — ${forgeries[7].line?.detail}`
+          : unmet.map((f) => `${f.what}: wanted ${f.code} alone, got ${f.got}`).join('; ')),
+      "a reader is only a gate on the fields it refuses: check copies this block into check.json, so a block that does not add up would be reported as a measurement",
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -2225,7 +2301,7 @@ function readJsonFile(path: string): Record<string, unknown> | null {
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>) : null;
 }
 
-const CHECK_KEYS = ['gate_spine_html_green', 'gate_spine_green', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', ...JUDGEMENT_LINES, 'PASS'];
+const CHECK_KEYS = ['gate_spine_html_green', 'gate_spine_green', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', ...JUDGEMENT_LINES, ...REPORTED_LINES, 'PASS'];
 
 /** A judgement line's status in a check.json read back, or null. */
 function lineStatus(fig: Record<string, unknown> | null, name: string): string | null {
@@ -2265,9 +2341,11 @@ function runCheckSuite(): number {
         listing(rig).join('|') === before.join('|') &&
         !existsSync(join(out, '_still')) &&
         !existsSync(join(out, '_isolated')) &&
-        JUDGEMENT_LINES.every((n) => lineStatus(fig, n) === 'SKIP' && ok.out.includes(`  ${n}: SKIP — `)),
-      `exit ${ok.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig).slice(0, 220)}…; judgement lines ${JUDGEMENT_LINES.map((n) => `${n} ${lineStatus(fig, n) ?? 'absent'}`).join(', ')}; missing outputs: ${missing.join(', ') || 'none'}; pack ${pack.map((p) => p.line).join(' | ') || 'none'} for ${CHECK_PARTS.length} part(s); --rig ${listing(rig).join('|') === before.join('|') ? 'unchanged' : 'CHANGED'}`,
-      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from both profiles, with the reference's seven check.json keys in its order and the five judgement lines between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line has nothing to read and must say SKIP, by name, with its reason — never PASS",
+        JUDGEMENT_LINES.every((n) => lineStatus(fig, n) === 'SKIP' && ok.out.includes(`  ${n}: SKIP — `)) &&
+        lineStatus(fig, 'RECOMPOSITE_HOLES') === 'SKIP' &&
+        ok.out.includes('  RECOMPOSITE_HOLES: SKIP — parts.json has no "recomposite" block'),
+      `exit ${ok.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig).slice(0, 220)}…; judgement lines ${JUDGEMENT_LINES.map((n) => `${n} ${lineStatus(fig, n) ?? 'absent'}`).join(', ')}; RECOMPOSITE_HOLES ${lineStatus(fig, 'RECOMPOSITE_HOLES') ?? 'absent'}; missing outputs: ${missing.join(', ') || 'none'}; pack ${pack.map((p) => p.line).join(' | ') || 'none'} for ${CHECK_PARTS.length} part(s); --rig ${listing(rig).join('|') === before.join('|') ? 'unchanged' : 'CHANGED'}`,
+      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from both profiles, with the reference's seven check.json keys in its order and the five judgement lines and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line has nothing to read and must say SKIP, by name, with its reason — never PASS — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
     );
 
     const again = runCli(['check', '--rig', rig, '--out', join(dir, 'out2')]);
@@ -2373,6 +2451,41 @@ function runCheckSuite(): number {
       shut.status === 1 && holeFail !== null && holeFig !== undefined && (holeFig.hole_px ?? 0) > 0 && holeFail.includes(`${holeFig.hole_px} px show the background`) && JSON.stringify(holeFig.idle_frames_closed) === '[6,7]',
       `exit ${shut.status}; ${holeFail?.trim() ?? 'no CHECK_BLINK_NO_HOLE line'}; idle frames closed ${JSON.stringify(holeFig?.idle_frames_closed)}`,
       'the eye part reaches past the face on one side, so squashing it shows the page there; the blink holds 0.5 s to 0.6 s, which at 12 fps is frames 6 and 7 (0.5 and 0.583 s)',
+    );
+
+    // RECOMPOSITE_HOLES (issue #25): a parts.json that records a large hole must be reported, and must not fail a rig that is otherwise green.
+    const holed = join(dir, 'holed');
+    const holeBlock = {
+      mean_abs: 3.5,
+      within_limit: 8,
+      within_share: 0.9,
+      error_limit: 40,
+      error_px: 900,
+      covered_alpha: 128,
+      uncovered_error_px: 700,
+      hole_count: 2,
+      holes_listed: 5,
+      holes: [
+        { px: 600, x: 30, y: 40, w: 18, h: 40, borders: [{ part: 'back', px: 40 }] },
+        { px: 100, x: 0, y: 0, w: 4, h: 25, borders: [] },
+      ],
+    };
+    writeCheckRig(holed, { recomposite: holeBlock });
+    const hr = runCli(['check', '--rig', holed, '--out', join(dir, 'holed-out')]);
+    const hf = readJsonFile(join(dir, 'holed-out', 'check.json'));
+    const hl = hf?.RECOMPOSITE_HOLES as Record<string, unknown> | undefined;
+    const printed = hr.out.split('\n').find((l) => l.startsWith('  RECOMPOSITE_HOLES: ')) ?? null;
+    say(
+      'CK15_A_RECORDED_HOLE_IS_REPORTED_IN_CHECK_JSON_AND_DOES_NOT_FAIL_THE_CHECK',
+      hr.status === 0 &&
+        hf?.PASS === true &&
+        hr.out.includes('check: PASS') &&
+        !hr.out.includes('FAIL  CHECK_RECOMPOSITE') &&
+        hl !== undefined &&
+        JSON.stringify(hl) === JSON.stringify({ status: 'REPORTED', error_px: 900, uncovered_error_px: 700, hole_count: 2, largest: { px: 600, box: '30,40 18x40', borders: ['back 40 px'] } }) &&
+        printed === '  RECOMPOSITE_HOLES: REPORTED — error_px 900; uncovered_error_px 700; hole_count 2; largest px 600, box 30,40 18x40, borders back 40 px',
+      `exit ${hr.status}, PASS ${String(hf?.PASS)}; check.json RECOMPOSITE_HOLES ${JSON.stringify(hl)}; console ${printed?.trim() ?? 'no RECOMPOSITE_HOLES line'}`,
+      "the hole class the seam cannot see — a pixel no part holds is missing from the setup pose and from the flat stack alike — reaches check.json from parts.json's recomposite block, figure for figure, as a line with no bar: 600 px of hole leaves a green rig green",
     );
 
     const slotless = join(dir, 'slotless');
@@ -3090,7 +3203,7 @@ function runBuildSuite(): number {
         rigFail.includes('declares duration 1s but its last key is at 0s') &&
         still.out.includes('build: stopped at rig; no later stage ran') &&
         !still.out.includes('[check]') &&
-        stillTree.join(',') === 'keep.txt,parts,parts.json,recomposite_rig.png',
+        stillTree.join(',') === 'keep.txt,parts,parts.json,recomposite_error_rig.png,recomposite_rig.png',
       `exit ${still.status}; ${rigFail ?? 'no [rig] FAIL line'}; --out afterwards [${stillTree.join(', ')}] (a planted check/check.json and idle.gif were there before, and keep.txt, which build does not own)`,
       'emit only after green, across stages: a red stage stops everything after it, its own refusal is what is printed, and a file an earlier run left where build writes is cleared rather than left beside the refusal looking current',
     );
@@ -3552,6 +3665,68 @@ function runAssembleSuite(): number {
       'visible + occluded = opaque and projected within visible hold by construction; a mask that escaped its definition is a bug, so it stops the stage rather than printing a count nobody can reason about',
     );
 
+    // Issue #25: a planted gap between two parts is listed as a hole with its box and both parts; flush parts list none.
+    {
+      const G = 32;
+      const paint = newRaster(G, G);
+      paint.data.fill(255);
+      for (let y = 4; y < 28; y++) for (let x = 4; x < 28; x++) paint.data.set([...C, 255], (y * G + x) * 4);
+      const part = (name: string, x0: number, y0: number, x1: number, y1: number, rgb: readonly number[], pin: ReadonlyArray<[number, number]> = []): PlacedPart => {
+        const image = newRaster(x1 - x0, y1 - y0);
+        for (let p = 0; p < image.width * image.height; p++) image.data.set([...rgb, 255], p * 4);
+        for (const [x, y] of pin) image.data[((y - y0) * image.width + (x - x0)) * 4 + 3] = 0;
+        const record = { name, from: 'full:legwear', x: x0, y: y0, w: x1 - x0, h: y1 - y0, opaque_px: 0, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 };
+        return { record, image };
+      };
+      const measure = (ps: PlacedPart[]): ReturnType<typeof measureRecomposite> => measureRecomposite(recomposite(ps, G, G), paint, ps);
+      // The legs [4, 15) and [17, 28) x [4, 28): the gap is columns 15..16, rows 4..27 = 2 x 24 = 48 px, and each leg's
+      // column beside it (14, and 17) touches it on all 24 rows, so each borders it by 24 px; equal counts keep plan order.
+      const gap = measure([part('leg_l', 4, 4, 15, 28, C), part('leg_r', 17, 4, 28, 28, C)]);
+      const flush = measure([part('leg_l', 4, 4, 16, 28, C), part('leg_r', 16, 4, 28, 28, C)]);
+      // Six single pixels punched out of the left leg at column 6, rows 6, 9, …, 21: seven holes; the largest five are the gap,
+      // then the four topmost pinholes, each bordered by the 8 leg pixels round it.
+      const pins: Array<[number, number]> = [6, 9, 12, 15, 18, 21].map((y) => [6, y]);
+      const pinned = measure([part('leg_l', 4, 4, 15, 28, C, pins), part('leg_r', 17, 4, 28, 28, C)]);
+      // A 4x4 patch in a wrong colour over the right leg: covered, and more than 40 off — blue in the map, not a hole.
+      const patched = [part('leg_l', 4, 4, 15, 28, C), part('leg_r', 17, 4, 28, 28, C), part('patch', 20, 8, 24, 12, [250, 250, 250])];
+      const withPatch = measure(patched);
+      const map = recompositeErrorMap(recomposite(patched, G, G), paint, patched);
+      const count = (rgb: readonly number[]): number => {
+        let n = 0;
+        for (let p = 0; p < G * G; p++) if (map.data[p * 4] === rgb[0] && map.data[p * 4 + 1] === rgb[1] && map.data[p * 4 + 2] === rgb[2]) n++;
+        return n;
+      };
+      // luma of C = trunc((299*100 + 587*60 + 114*40 + 500) / 1000) = 70 -> 192 + 17 = 209; of white 255 -> 192 + 63 = 255.
+      const hole = gap.holes[0];
+      const listedPins = pinned.holes.slice(1).map((h) => `${h.x},${h.y} ${h.px}:${h.borders.map((b) => `${b.part}${b.px}`).join('')}`);
+      const lines = holeLines(gap);
+      say(
+        'AS14_A_PLANTED_GAP_IS_LISTED_WITH_ITS_BOX_AND_BOTH_PARTS_AND_FLUSH_PARTS_LIST_NONE',
+        gap.uncoveredErrorPx === 48 &&
+          gap.holeCount === 1 &&
+          JSON.stringify(hole) === JSON.stringify({ px: 48, x: 15, y: 4, w: 2, h: 24, borders: [{ part: 'leg_l', px: 24 }, { part: 'leg_r', px: 24 }] }) &&
+          lines.join('|') === 'uncovered holes (8-connected): 1|  uncovered hole 1: 48 px at 15,4 2x24 (between "leg_l" 24 px, "leg_r" 24 px)' &&
+          flush.uncoveredErrorPx === 0 &&
+          flush.holeCount === 0 &&
+          flush.holes.length === 0 &&
+          pinned.holeCount === 7 &&
+          pinned.holes.length === HOLES_LISTED &&
+          pinned.uncoveredErrorPx === 54 &&
+          pinned.holes[0].px === 48 &&
+          listedPins.join(' ') === '6,6 1:leg_l8 6,9 1:leg_l8 6,12 1:leg_l8 6,15 1:leg_l8' &&
+          withPatch.errorPx === 48 + 16 &&
+          withPatch.uncoveredErrorPx === 48 &&
+          withPatch.holeCount === 1 &&
+          count(MAP_UNCOVERED) === 48 &&
+          count(MAP_MISMATCHED) === 16 &&
+          count([209, 209, 209]) === 24 * 24 - 48 - 16 &&
+          count([255, 255, 255]) === G * G - 24 * 24 &&
+          map.data.every((v, i) => i % 4 !== 3 || v === 255),
+        `gap: ${lines.join(' / ')}; flush: ${flush.holeCount} hole(s), ${flush.uncoveredErrorPx} uncovered px; six pinholes: ${pinned.holeCount} holes, ${pinned.holes.length} listed, then ${listedPins.join(', ')}; a wrong-colour patch: error ${withPatch.errorPx}, uncovered ${withPatch.uncoveredErrorPx}; map red ${count(MAP_UNCOVERED)}, blue ${count(MAP_MISMATCHED)}, figure grey 209 ${count([209, 209, 209])}, page 255 ${count([255, 255, 255])}`,
+        "issue #25: See-through split a skirt into two legs, and the space between them was in no layer; the count said 7671 and nothing said where. The box, the two parts and the red in the map are the where — and a fixture with no gap must list nothing, or the list is noise",
+      );
+    }
+
     // Derivation (fixtures/assemble_fixture.ts): full-run tags with >= 150 run px
     // are headwear (192), bottomwear (336) and topwear (600) — back hair (132) and
     // footwear (120 after its speck) fall short; head-run tags: back hair (704) and
@@ -3603,9 +3778,9 @@ function runAssembleSuite(): number {
     const readBack = r1.status === 0 ? serializeParts(readParts(join(out1, 'rig', 'parts.json'))) : '';
     say(
       'AS07_THE_CLI_WRITES_THE_SAME_BYTES_TWICE_AND_THE_RECORD_READS_BACK',
-      r1.status === 0 && r2.status === 0 && same && readBack === want && files.length === EXPECTED_PARTS.parts.length + 2 && r1.out.includes('recomposite vs source: mean |d|='),
+      r1.status === 0 && r2.status === 0 && same && readBack === want && files.length === EXPECTED_PARTS.parts.length + 3 && files.includes('render/recomposite_error_rig.png') && r1.out.includes('recomposite vs source: mean |d|=') && r1.out.includes('  uncovered hole 1: 2611 px at 0,0 64x64 (between "topwear" 86 px, "hair_back" 84 px, "bottomwear" 72 px, "shoes" 48 px, "face" 34 px)'),
       `exit ${r1.status}/${r2.status}; ${files.length} file(s) (${files.join(', ')}), byte-identical across two runs: ${same}; parts.json reads back equal: ${readBack === want}`,
-      'determinism is a contract, and the parts.json the CLI writes is the one the in-memory control checked',
+      'determinism is a contract — the error map included — and the parts.json the CLI writes is the one the in-memory control checked; its one hole is printed with the box and the borders the fixture derives',
     );
 
     const refusedOut = join(dir, 'refused');

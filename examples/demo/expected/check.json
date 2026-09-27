@@ -123,5 +123,19 @@
    "mean_ceiling": 3.244
   }
  },
+ "RECOMPOSITE_HOLES": {
+  "status": "REPORTED",
+  "error_px": 11050,
+  "uncovered_error_px": 1564,
+  "hole_count": 453,
+  "largest": {
+   "px": 70,
+   "box": "351,155 6x22",
+   "borders": [
+    "hair_back 53 px",
+    "hair_front 12 px"
+   ]
+  }
+ },
  "PASS": true
 }

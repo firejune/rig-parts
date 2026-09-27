@@ -41,7 +41,12 @@
  * whole rig, or a part alone through `--slot`), from the setup still with the
  * blink held shut, or from `motion.json` read as sines. Each reports SKIP,
  * with the reason, when the rig has nothing for it to read. The instruments
- * are `src/instruments.ts`; the bars are below and in AUTHORING §7. The
+ * are `src/instruments.ts`; the bars are below and in AUTHORING §7. After
+ * them, one REPORTED line with no bar, `RECOMPOSITE_HOLES` (issue #25): the
+ * uncovered holes `assemble` recorded in `parts.json`'s `recomposite` block,
+ * copied into `check.json` because the seam cannot see them — it compares the
+ * setup pose with the flat stack of parts, and a pixel no part holds is
+ * missing from both. The
  * part-alone renders and the shut-eye still are scratch (`_isolated/`,
  * `_still/`), removed before the stage returns.
  *
@@ -626,6 +631,16 @@ export type JudgementLine = { status: 'PASS' | 'FAIL'; [figure: string]: unknown
 export const JUDGEMENT_LINES = ['BREATH_VISIBLE', 'BLINK_NO_HOLE', 'CHAIN_LAG', 'TIP_OVER_ROOT', 'STILL_REGIONS_DARK'] as const;
 export type JudgementName = (typeof JUDGEMENT_LINES)[number];
 
+/**
+ * A line with no bar (issue #25): it reports figures and can never be a FAIL,
+ * so `PASS` does not read it. SKIP, with the reason, when there is nothing to
+ * report from.
+ */
+export type ReportedLine = { status: 'REPORTED'; [figure: string]: unknown } | { status: 'SKIP'; reason: string };
+
+/** The reported lines, after the judgement lines, in the order check.json and the console carry them. */
+export const REPORTED_LINES = ['RECOMPOSITE_HOLES'] as const;
+
 /** check.json — the reference's fields in its order, then the judgement lines, then PASS. */
 export interface CheckFigures {
   gate_spine_html_green: boolean;
@@ -639,6 +654,7 @@ export interface CheckFigures {
   CHAIN_LAG: JudgementLine;
   TIP_OVER_ROOT: JudgementLine;
   STILL_REGIONS_DARK: JudgementLine;
+  RECOMPOSITE_HOLES: ReportedLine;
   PASS: boolean;
 }
 
@@ -799,6 +815,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     CHAIN_LAG: chain,
     TIP_OVER_ROOT: tip,
     STILL_REGIONS_DARK: still,
+    RECOMPOSITE_HOLES: holesLine(inp.parts),
     PASS: false,
   };
   const barProblems: Problem[] = [];
@@ -839,6 +856,33 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
 // ---------------------------------------------------------------------------
 // the judgement lines (issue #11)
 // ---------------------------------------------------------------------------
+
+/**
+ * `RECOMPOSITE_HOLES`: `parts.json`'s `recomposite` block as a line — the
+ * uncovered error pixels, how many holes they make, and the largest hole's box
+ * and bordering parts. Read, not measured: the block is what assemble measured
+ * on the painting, which check never sees. REPORTED, never FAIL, because no
+ * bar for a hole is derivable by the rule the judgement bars follow: both
+ * public examples hold hundreds of holes of a few dozen pixels along part
+ * edges (453 on demo, the largest 70 px; 259 on sample, the largest 94 px),
+ * and whether a hole matters depends on where it is — which the box and the
+ * bordering parts say and a count cannot (AUTHORING §7).
+ */
+export function holesLine(parts: PartsFile): ReportedLine {
+  const r = parts.recomposite;
+  if (r === undefined) return { status: 'SKIP', reason: 'parts.json has no "recomposite" block (a parts.json the reference wrote has none); re-run assemble, which writes it' };
+  return {
+    status: 'REPORTED',
+    error_px: r.error_px,
+    uncovered_error_px: r.uncovered_error_px,
+    hole_count: r.hole_count,
+    largest: r.holes.length === 0 ? null : { px: r.holes[0].px, box: boxText(r.holes[0]), borders: r.holes[0].borders.map((b) => `${b.part} ${b.px} px`) },
+  };
+}
+
+function boxText(h: { x: number; y: number; w: number; h: number }): string {
+  return `${h.x},${h.y} ${h.w}x${h.h}`;
+}
 
 /** The throwaway animation that holds the blink tracks at their closed value, rendered beside the setup-pose still. */
 export const BLINK_ANIMATION = 'blink_shut';

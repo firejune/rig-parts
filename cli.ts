@@ -16,8 +16,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
-import { assembleStage, build, checkStage, loopStage, readRuns, readSource, rigStage } from './src/build.ts';
+import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
+import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage } from './src/build.ts';
 import { findRigc, type RigcRunner, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
 import { type CharacterConfig, loadConfig, loadEarlyConfig } from './src/config.ts';
@@ -127,7 +127,11 @@ usage:
       STILL_REGIONS_DARK (the heat map over the face outline and the feet).
       Regions come from parts.json's See-through tags; a line with nothing to
       read says SKIP and why — neither a pass nor a failure — and PASS needs
-      every line that measured to be PASS. Prints the pack line
+      every line that measured to be PASS. Then RECOMPOSITE_HOLES: REPORTED,
+      read from parts.json's recomposite block (uncovered error px, hole count,
+      the largest hole's box and the parts bordering it) — a line with no bar,
+      never a FAIL, because a pixel no part holds is missing from both sides of
+      the seam; SKIP when parts.json has no such block. Prints the pack line
       beside the spineboy yardstick (${SPINEBOY_YARDSTICK}), a reference and not
       a bar. Exit 0 on PASS, 1 on FAIL — every FAIL line names the bar, the value
       and the value required.
@@ -150,14 +154,19 @@ usage:
                        --config <config.json> --out <dir> [--seam near-white|silhouette]
                        [--project core|visible]
       Merge the full-body and head-crop See-through runs into rig-space parts:
-      <out>/rig/parts/<name>.png (each cropped to its alpha box), <out>/rig/parts.json
-      and <out>/render/recomposite_rig.png. Reads config.seethrough.head_box and
+      <out>/rig/parts/<name>.png (each cropped to its alpha box), <out>/rig/parts.json,
+      <out>/render/recomposite_rig.png and <out>/render/${ERROR_MAP_FILE} (the error
+      map: uncovered error px red, covered error px blue, the rest the painting in
+      light grey). Reads config.seethrough.head_box and
       .resolution and config.assemble.rig_scale, .plan and .extend_below_crop.
       Prints one line per part, the seam override counts, the \`pixels:\` totals
       (opaque = visible + occluded; taken from the painting; visible but not
       projected), and \`recomposite vs source\` (mean |d| and % within 8 over the
       mean channel; error px: max channel > 40; uncovered: of those, where no
-      part has alpha above 128). Writes nothing unless every check passed.
+      part has alpha above 128), then the uncovered holes (8-connected) and the
+      largest ${HOLES_LISTED}, each \`uncovered hole N: <px> px at x,y wxh (between
+      "<part>" <px> px, …)\` — the list parts.json holds under recomposite.
+      Writes nothing unless every check passed.
       --seam defaults to ${DEFAULT_SEAM_RULE}. --project says where a layer takes
       the painting's pixel: core (the reference's) erodes every layer's top-most
       opaque area by 5x5 first, so a part a few pixels wide takes none; visible
@@ -210,7 +219,8 @@ usage:
       stops the build with its own FAIL lines. The config must already carry
       bones, meshes, regions and motion — propose is not a step of build: run it,
       correct the proposal against its overlay, and write the result into the
-      config. Into --out: parts/ + parts.json + recomposite_rig.png (assemble),
+      config. Into --out: parts/ + parts.json + recomposite_rig.png +
+      ${ERROR_MAP_FILE} (assemble),
       rig/ (rig), check/ (check, with the packed build in check/build/), and with
       --loop idle.png (lossless APNG), idle-indexed.png (indexed APNG) and
       idle.gif from check/idle_frames/, then one loop: line with the three sizes
@@ -571,7 +581,7 @@ function cmdAssemble(args: string[]): number {
     const out = flags.get('--out') as string;
     assembleStage(
       { source, full, head, config, seam: seam as SeamRule, project: project as ProjectRule },
-      { partsJson: join(out, 'rig', 'parts.json'), partsDir: join(out, 'rig', 'parts'), recomposite: join(out, 'render', 'recomposite_rig.png') },
+      { partsJson: join(out, 'rig', 'parts.json'), partsDir: join(out, 'rig', 'parts'), recomposite: join(out, 'render', 'recomposite_rig.png'), errorMap: join(out, 'render', ERROR_MAP_FILE) },
       console.log,
     );
     return EXIT_OK;
