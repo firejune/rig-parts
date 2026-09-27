@@ -9,14 +9,27 @@
  * assembler did to its pixels, counted:
  *
  * - `opaque_px` — pixels with alpha above 8 in the written PNG;
+ * - `visible_px` — of those, the ones no later layer of their See-through run
+ *   is opaque (alpha >= 250) in front of: what the painting shows of this
+ *   layer, and so what projection can reach;
+ * - `occluded_px` — the rest of `opaque_px`: art the painting does not show,
+ *   so See-through's synthesis by necessity. `visible_px + occluded_px =
+ *   opaque_px`;
  * - `projected_core_px` — pixels where this layer was the top-most opaque layer
  *   of its own run, eroded: the candidates for taking the source painting's
  *   pixel instead of See-through's repaint;
  * - `source_px_taken` — of those, the ones that did take it;
+ * - `visible_not_projected_px` — visible pixels that did not take it (too thin
+ *   for the core, a fringe below alpha 250, refused for drift): synthesis where
+ *   the painting was there to be taken. At most `visible_px`;
  * - `refused_drift_px` — of those, the ones refused because See-through's
  *   pixel and the painting's disagreed by more than the drift limit;
  * - `merged_px` — pixels brought in from the other run below the head crop;
  * - `seam_override_px` — pixels whose colour the seam pass replaced.
+ *
+ * The three visibility counts are this port's, not the reference's: a
+ * `parts.json` the reference wrote has none of them and reads as it always
+ * did, and a record holds all three or none.
  *
  * `rig_size` is the rig canvas in pixels, `scale_rig_per_source` the rig pixels
  * per source-painting pixel, and `ghost_px` the sub-threshold specks removed
@@ -38,8 +51,14 @@ export interface PartRecord {
   w: number;
   h: number;
   opaque_px: number;
+  /** Absent in a `parts.json` the reference wrote; `assemble` always writes it. */
+  visible_px?: number;
+  /** Absent in a `parts.json` the reference wrote; `assemble` always writes it. */
+  occluded_px?: number;
   projected_core_px: number;
   source_px_taken: number;
+  /** Absent in a `parts.json` the reference wrote; `assemble` always writes it. */
+  visible_not_projected_px?: number;
   refused_drift_px: number;
   merged_px: number;
   seam_override_px: number;
@@ -61,13 +80,19 @@ export const PART_KEYS = [
   'w',
   'h',
   'opaque_px',
+  'visible_px',
+  'occluded_px',
   'projected_core_px',
   'source_px_taken',
+  'visible_not_projected_px',
   'refused_drift_px',
   'merged_px',
   'seam_override_px',
 ] as const;
 const COUNT_KEYS = PART_KEYS.slice(2) as ReadonlyArray<(typeof PART_KEYS)[number]>;
+/** The port's own counts: all three or none (none = a record the reference wrote). */
+export const VISIBILITY_KEYS = ['visible_px', 'occluded_px', 'visible_not_projected_px'] as const;
+const REQUIRED_KEYS = PART_KEYS.filter((k) => !(VISIBILITY_KEYS as readonly string[]).includes(k));
 
 /** `<run>:<tag>` with run `full` or `head` and a v3 tag, or null. */
 export function readFrom(from: string): { run: 'full' | 'head'; tag: string } | null {
@@ -80,7 +105,7 @@ export function serializeParts(file: PartsFile): string {
   const ordered = {
     rig_size: file.rig_size,
     scale_rig_per_source: file.scale_rig_per_source,
-    parts: file.parts.map((p) => Object.fromEntries(PART_KEYS.map((k) => [k, p[k]]))),
+    parts: file.parts.map((p) => Object.fromEntries(PART_KEYS.filter((k) => p[k] !== undefined).map((k) => [k, p[k]]))),
     ghost_px: Object.fromEntries(Object.keys(file.ghost_px).sort().map((k) => [k, file.ghost_px[k]])),
   };
   return `${JSON.stringify(ordered, null, 2)}\n`;
@@ -149,7 +174,11 @@ function checkParts(raw: unknown, path: string): PartsFile {
       const r = p as Record<string, unknown>;
       const label = typeof r.name === 'string' ? `part "${r.name}"` : at;
       for (const k of Object.keys(r)) if (!(PART_KEYS as readonly string[]).includes(k)) fail('PARTS_KEY_KNOWN', `${label} key "${k}"`, `is not a part field; known: ${PART_KEYS.join(', ')}`);
-      for (const k of PART_KEYS) if (!(k in r)) fail('PARTS_FIELD_PRESENT', `${label} field "${k}"`, 'is absent and required');
+      for (const k of REQUIRED_KEYS) if (!(k in r)) fail('PARTS_FIELD_PRESENT', `${label} field "${k}"`, 'is absent and required');
+      const held = VISIBILITY_KEYS.filter((k) => k in r);
+      if (held.length > 0 && held.length < VISIBILITY_KEYS.length) {
+        fail('PARTS_FIELD_PRESENT', `${label} fields ${VISIBILITY_KEYS.map((k) => `"${k}"`).join(', ')}`, `only ${held.join(', ')} present; all three (assemble writes them) or none (the reference's record) is required`);
+      }
       if (typeof r.name !== 'string' || r.name === '' || /[\\/]/.test(r.name) || r.name.startsWith('.')) {
         fail('PARTS_FIELD_TYPE', `${label} field "name"`, `is ${show(r.name)}; a file-name-safe part name is required`);
       } else if (seen.has(r.name)) fail('PARTS_NAME_UNIQUE', label, `appears at parts[${seen.get(r.name)}] and parts[${i}]`);
@@ -157,6 +186,12 @@ function checkParts(raw: unknown, path: string): PartsFile {
       if (typeof r.from !== 'string' || readFrom(r.from) === null) fail('PARTS_FROM_KNOWN', `${label} field "from"`, `is ${show(r.from)}; "<full|head>:<v3 tag>" is required`);
       for (const k of COUNT_KEYS) {
         if (k in r && !(Number.isInteger(r[k]) && (r[k] as number) >= 0)) fail('PARTS_FIELD_TYPE', `${label} field "${k}"`, `is ${show(r[k])}; a non-negative integer is required`);
+      }
+      const count = (k: string): number | null => (Number.isInteger(r[k]) && (r[k] as number) >= 0 ? (r[k] as number) : null);
+      const [op, vis, occ, vnp] = ['opaque_px', 'visible_px', 'occluded_px', 'visible_not_projected_px'].map(count);
+      if (held.length === VISIBILITY_KEYS.length && op !== null && vis !== null && occ !== null && vnp !== null) {
+        if (vis + occ !== op) fail('PARTS_COUNTS_ADD_UP', `${label}`, `visible_px ${vis} + occluded_px ${occ} = ${vis + occ}; opaque_px ${op} is required`);
+        if (vnp > vis) fail('PARTS_COUNTS_ADD_UP', `${label}`, `visible_not_projected_px ${vnp} is above visible_px ${vis}; at most visible_px is required`);
       }
       if (sizeOk && [r.x, r.y, r.w, r.h].every((n) => Number.isInteger(n))) {
         const [W, H] = size as [number, number];

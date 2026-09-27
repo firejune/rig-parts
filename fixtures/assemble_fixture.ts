@@ -51,6 +51,40 @@
  *   keeps 7 x 8 = 56 as taken.
  * - ghost_px: full:neck 9 (a lone 3x3 speck), full:footwear 4, every other layer 0.
  *
+ * Visibility: no two layers of one run overlap (the full run's rectangles are
+ * disjoint, and so are the head run's), and every pixel the merge writes lies
+ * in columns 37..45, which no later full-run layer reaches — so every opaque
+ * pixel is visible, `occluded_px` is 0 and `visible_px = opaque_px`
+ * throughout. `visible_not_projected_px = visible_px - projected`, where
+ * projected is the pixels whose colour came from projection:
+ *
+ * - `hair_back`: of its own 68 taken, row 28 (columns 40..43, 4 px) is
+ *   overwritten by the merge, which starts on that row; the full run's back
+ *   hair [38, 44) x [22, 44) was projected on its own core [40, 42) x [24, 42)
+ *   (36 px, no head window in the full run) before it was copied, and rows
+ *   28..41 of that core are inside sel: 28 px. The rim's 37 are growRim's,
+ *   not projection. Projected = 64 + 28 = 92, so 285 - 92 = 193.
+ * - `topwear` 600 - 416 = 184; `bottomwear` 336 - 0 = 336; `shoes`
+ *   120 - 32 = 88; `face` 144 - 56 = 88.
+ *
+ * ## The thin-strip fixture (`--project`)
+ *
+ * `STRIP_FULL`: a full-run `topwear` [10, 40) x [10, 40) with a 3-pixel
+ * `neckwear` strip [20, 23) x [5, 50) drawn in front of it, both `C` on the
+ * flat painting, planned `topwear` then `neckwear`, no extend.
+ *
+ * - `neckwear`: 3 x 45 = 135 px, nothing in front, so visible 135. Under
+ *   `core` its 5x5 erosion is empty: taken 0, visible_not_projected 135.
+ *   Under `visible` nothing is in front of it, so its core is all 135: taken
+ *   135, visible_not_projected 0.
+ * - `topwear`: 900 px, of which the strip covers [20, 23) x [10, 40) = 90:
+ *   occluded 90, visible 810. Under `core` the two blocks either side of the
+ *   strip erode to [12, 18) x [12, 38) = 156 and [25, 38) x [12, 38) = 338:
+ *   taken 494, visible_not_projected 316. Under `visible` only the rim along
+ *   the strip is kept off — the 5x5 dilation of the strip is columns 18..24,
+ *   so columns 18, 19, 23 and 24 over rows 10..39 (120 px) — and the outer
+ *   edge is projected: taken 690, visible_not_projected 120.
+ *
  * ## The silhouette fixture
  *
  * `framedPainting`: white, with a `C` block over source [16, 96)^2 holding a
@@ -133,11 +167,11 @@ export const EXPECTED_PARTS = {
   rig_size: [64, 64] as [number, number],
   scale_rig_per_source: 0.5,
   parts: [
-    { name: 'hair_back', from: 'head:back hair', x: 37, y: 10, w: 9, h: 35, opaque_px: 285, projected_core_px: 72, source_px_taken: 68, refused_drift_px: 0, merged_px: 133, seam_override_px: 0 },
-    { name: 'topwear', from: 'full:topwear', x: 10, y: 20, w: 20, h: 30, opaque_px: 600, projected_core_px: 416, source_px_taken: 416, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 },
-    { name: 'bottomwear', from: 'full:bottomwear', x: 48, y: 30, w: 14, h: 24, opaque_px: 336, projected_core_px: 200, source_px_taken: 0, refused_drift_px: 200, merged_px: 0, seam_override_px: 336 },
-    { name: 'shoes', from: 'full:footwear', x: 10, y: 54, w: 20, h: 6, opaque_px: 120, projected_core_px: 32, source_px_taken: 32, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 },
-    { name: 'face', from: 'head:face', x: 16, y: 8, w: 12, h: 12, opaque_px: 144, projected_core_px: 64, source_px_taken: 56, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 },
+    { name: 'hair_back', from: 'head:back hair', x: 37, y: 10, w: 9, h: 35, opaque_px: 285, visible_px: 285, occluded_px: 0, projected_core_px: 72, source_px_taken: 68, visible_not_projected_px: 193, refused_drift_px: 0, merged_px: 133, seam_override_px: 0 },
+    { name: 'topwear', from: 'full:topwear', x: 10, y: 20, w: 20, h: 30, opaque_px: 600, visible_px: 600, occluded_px: 0, projected_core_px: 416, source_px_taken: 416, visible_not_projected_px: 184, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 },
+    { name: 'bottomwear', from: 'full:bottomwear', x: 48, y: 30, w: 14, h: 24, opaque_px: 336, visible_px: 336, occluded_px: 0, projected_core_px: 200, source_px_taken: 0, visible_not_projected_px: 336, refused_drift_px: 200, merged_px: 0, seam_override_px: 336 },
+    { name: 'shoes', from: 'full:footwear', x: 10, y: 54, w: 20, h: 6, opaque_px: 120, visible_px: 120, occluded_px: 0, projected_core_px: 32, source_px_taken: 32, visible_not_projected_px: 88, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 },
+    { name: 'face', from: 'head:face', x: 16, y: 8, w: 12, h: 12, opaque_px: 144, visible_px: 144, occluded_px: 0, projected_core_px: 64, source_px_taken: 56, visible_not_projected_px: 88, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 },
   ],
   ghost_px: {
     'full:back hair': 0,
@@ -188,6 +222,19 @@ export const FRAMED_PLAN: Array<[string, 'full' | 'head', string]> = [
   ['bottomwear', 'full', 'bottomwear'],
   ['topwear', 'full', 'topwear'],
 ];
+export const STRIP_FULL: RunLayerSpec[] = [
+  { name: 'topwear', depth: 0.5, rects: [rect(10, 10, 40, 40, C)] },
+  { name: 'neckwear', depth: 0.3, rects: [rect(20, 5, 23, 50, C)] },
+];
+export const STRIP_PLAN: Array<[string, 'full' | 'head', string]> = [
+  ['topwear', 'full', 'topwear'],
+  ['neckwear', 'full', 'neckwear'],
+];
+/** Per rule, per part: [visible_px, occluded_px, source_px_taken, visible_not_projected_px], as derived above. */
+export const STRIP_EXPECTED: Record<'core' | 'visible', Record<string, [number, number, number, number]>> = {
+  core: { topwear: [810, 90, 494, 316], neckwear: [135, 0, 0, 135] },
+  visible: { topwear: [810, 90, 690, 120], neckwear: [135, 0, 135, 0] },
+};
 export const FRAMED_HEAD: RunLayerSpec[] = [{ name: 'face', depth: 0.5, rects: [rect(0, 0, 8, 8, C)] }];
 
 /** One run in the wrapper form: `layers.json` plus one PNG per layer, each cut to its rectangles' bounding box. */

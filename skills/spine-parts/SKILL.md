@@ -55,7 +55,11 @@ stage writes are the whole interface.
 
 `--seam silhouette` repairs more of the seam on white garments than the default
 `near-white` (the demo: 11,050 → 9,540 recomposite error pixels); the default is
-the reference implementation's rule. Name the rule you used in your report.
+the reference implementation's rule. `--project visible` lets thin visible parts
+(lashes, brows, irises) take the painting's pixels, which the default `core` rule
+erodes away. Name both rules you used in your report, and quote the assemble
+`pixels:` line: its occluded share is hidden art, its "visible but not projected"
+share is synthesis where the painting was there to be taken.
 
 ## What this will not do
 

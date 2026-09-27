@@ -205,14 +205,14 @@ agent skill.
 | `layers <dir \| layers.json \| file.psd>` | print every layer of a decomposition: draw order, name, tag group, box, size, opaque pixels, depth |
 | `sheet --source <png> --layers <path>… --out <png>` | a labelled contact sheet of the painting and every layer or part |
 | `assemble --propose-plan …` | propose `assemble.plan` and `extend_below_crop` from the two runs |
-| `assemble --source --full --head --config --out [--seam]` | merge the two runs into rig-space parts, `parts.json` and the recomposite |
+| `assemble --source --full --head --config --out [--seam] [--project]` | merge the two runs into rig-space parts, `parts.json` and the recomposite |
 | `propose --head-box --full <run> --canvas WxH` | propose `seethrough.head_box` from the full run, held inside the painting |
 | `propose --parts --source --out [--compare <config>]` | propose bones, meshes, regions and an idle; draw the overlay |
 | `propose … --from-config <config>` | draw and LINT the config's current bones |
 | `rig --config --parts --out` | author `rig.json` + `motion.json`, written only after spine-rigc's round trip is green |
 | `check --rig --out [--parts]` | build packed, gate under both profiles, render the idle, measure seam and loop |
 | `loop --frames <dir> --out <file.gif \| file.png> [--palette]` | encode a rendered idle as a looping GIF, lossless APNG, or indexed APNG (`--palette`) |
-| `build --config --source --full --head --out [--seam] [--loop]` | assemble, rig and check in one process, stopping at the first refusal |
+| `build --config --source --full --head --out [--seam] [--project] [--loop]` | assemble, rig and check in one process, stopping at the first refusal |
 
 `spine-parts --help` has every flag. Exit codes: 0 done, 1 input refused (every
 reason is a FAIL line), 2 a usage error or a command this version does not implement.
@@ -241,14 +241,31 @@ These are limits of the approach, stated so nobody reads more into a green run:
 
 ### How much of a rig the model painted
 
-`parts.json` records, per part, how many opaque pixels were re-taken from the painting
-(`source_px_taken`) against the part's opaque pixels (`opaque_px`); the rest is
-See-through's synthesis. Across the ten reference rigs, **41.8 %** of all rig pixels
-are not source pixels (issue #9); on the two public examples it is 38.6 % (`sample`)
-and 36.4 % (`demo`), from their `expected/parts.json`. Most of it is art that really
-is hidden — a back-hair layer, a neck — but the figure **over-counts**: a thin part
-that is fully visible (a brow, a lash, an iris) has no eroded opaque core, so none of
-its pixels qualify for projection and they count as synthesized (issue #9).
+`parts.json` splits each part's opaque pixels (`opaque_px`) into `visible_px` — no
+later layer of its See-through run is opaque in front of them — and `occluded_px`,
+and counts the visible ones whose colour was not taken from the painting
+(`visible_not_projected_px`). On the two public examples, from the totals of their
+`expected/parts.json` (the default `--project core`):
+
+| | opaque px | occluded | visible, not projected | taken from the painting |
+| --- | --- | --- | --- | --- |
+| `sample` | 298,632 | 79,143 (26.5 %) | 36,227 (12.1 %) | 183,262 (61.4 %) |
+| `demo` | 767,102 | 202,346 (26.4 %) | 76,801 (10.0 %) | 487,955 (63.6 %) |
+
+The occluded share is art the painting does not show — a back-hair layer, a neck, the
+parts of an ear under the hair — and is See-through's synthesis by necessity; it is
+what the decomposition is for. The visible-but-not-projected share is synthesis where
+the painting was there to be taken: a part too thin for the reference rule's 5x5
+eroded core, an anti-aliased fringe below alpha 250, a rim beside a layer in front, a
+pixel refused for drift. `--project visible` keeps the erosion only along a rim with a
+layer in front, which takes that share to 22,476 (7.5 %) on `sample` and 49,672 (6.5 %)
+on `demo` (from the `parts.json` of a `--project visible` build). On the eleven thin
+head parts — brows, lashes, irises, eye whites, ears, mouth — it takes 296 of
+`sample`'s 1,289 visible pixels where `core` takes 110, and 824 of `demo`'s 2,162
+where `core` takes 343. What neither rule takes is the fringe: a per-pixel
+classification of those parts under `visible`, recorded with the change that added
+the flag, puts 813 of `sample`'s 993 still-unprojected pixels and 879 of `demo`'s
+1,338 below alpha 250.
 
 ## Requirements
 

@@ -17,7 +17,9 @@ reference's config converted to this schema, `src/config.ts`; its `bones`,
 two input-stage corrections), `proposal.json` (what the proposer wrote — the
 `propose` stage), and under `expected/` the reference implementation's
 outputs, for the TypeScript stages to be compared against — `parts.json`
-(`assemble`), `rig.json`, `motion.json` and `mesh_report.json` (`rig`), and
+(`assemble`; its `visible_px`, `occluded_px` and `visible_not_projected_px` are
+this port's counts, which the reference does not write, inserted from this
+port's own default build with every reference value left as it was), `rig.json`, `motion.json` and `mesh_report.json` (`rig`), and
 `check.json`, `gate_spine-html.txt` and `gate_spine.txt` (`check`, the last
 two being spine-rigc's gate lines for its two profiles). `sheets/` holds the
 reference's contact sheets of the two layer sets and of the assembled parts
