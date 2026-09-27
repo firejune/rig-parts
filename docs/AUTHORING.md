@@ -87,6 +87,33 @@ chain. What it cannot know — something painted inside another layer that shoul
 swing, hair of another shape, whether an accessory swings — is yours to add, and
 `notes` in `proposal.json` says where it guessed.
 
+Two rules read the figure rather than one tag, and each says so in a note:
+
+- **The hip.** It sits 0.14 face heights below `bottomwear`'s top edge — unless
+  that is above 0.25 of the figure's height (every part's union, top row to bottom
+  row), which is a long robe tagged `bottomwear` that starts at the collar. Then
+  the note `hip: <part> (<from>) starts at y=…, so its top + 0.14 face heights
+  (y=…) is above 0.25 of the figure height (y=…, figure y …): its top edge is not
+  the waist` is followed by one of `hip from the waist: silhouette narrowest at
+  y=170 (width 51 px, shoulders 80 px at y=96), hip 0.14 face heights below it` —
+  the torso layers (`neck`, `neckwear`, `topwear`, `bottomwear`, `legwear`,
+  `footwear`) at their narrowest between the shoulder line (their widest row
+  within one face height below the neck) and the figure's middle, and at most
+  0.8 of the shoulders — or `hip from 0.32 of figure height (no waist found: …)`,
+  naming why. Without `bottomwear` the hip is 0.32 of the figure height, as before
+  (`no bottomwear: hip from 0.32 of figure height`). Neither published example
+  meets either branch: their hips sit at 0.436 (`demo`) and 0.342 (`sample`) of
+  their figures.
+- **Clasped hands.** When every `handwear` part together is one blob (over
+  500 px) at most half the shoulders' width and centred within a quarter of it
+  of the eye axis, it is the hands clasped in front, not two sleeves: it rides
+  `hip` as a region, no sleeve chain is made, and the note reads `handwear is one
+  blob (<parts>) WxH px centred at x=…: at most 0.5 of the shoulder width (… px
+  at y=…) and within 0.25 of it of the eye axis x=…, so clasped hands: a region on
+  hip, no sleeve chains`. Two sleeves hanging from the shoulders are at least as
+  wide as them: the examples' one-blob sleeves are 1.51 and 1.58 shoulder widths,
+  and keep their two chains.
+
 ## 4. The command order
 
 Two steps are external: the See-through runs (by any route; the optional `comfy seethrough` adapter is only a client for a ComfyUI box). Everything else is this tool.
@@ -124,7 +151,10 @@ Two steps are external: the See-through runs (by any route; the optional `comfy 
    `work/proposal.json` and `work/render/landmarks.png` (+ `_head`). Copy
    `bones`, `meshes`, `regions` and `motion` into the config.
 8. Correct, then `spine-parts propose … --from-config config.json` to redraw the
-   config's own bones and LINT them; repeat until it prints no LINT line (exit 0).
+   config's own bones and LINT them — every chain link against its mesh's art, and
+   the single bones `hip` and `chest` against each other and the figure (a config
+   without them prints a `note:` that those lines did not run); repeat until it
+   prints no LINT line (exit 0).
 9. `spine-parts build --config config.json --source inputs/painting.png --full … --head … --out out [--loop]`
    — assemble, rig and check in one process. `propose` is not part of it, on purpose:
    a proposal is a draft, and the config you corrected is the input.
@@ -136,7 +166,7 @@ Two steps are external: the See-through runs (by any route; the optional `comfy 
 | `layers` | the table | every tag the plan will need has opaque pixels; one `face` in the head run | a run whose layer PNG is not its box's size (`LAYERS_PNG_MATCHES_BBOX`) |
 | `sheet` of both runs | the tile list (and the sheet, if you can see) | eyes, irises, lashes and brows as left/right pairs in the head run | a head box that cut off an ornament: move `head_box`, re-run the head crop |
 | `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185; `demo` 2.39 / 95.8 % / 11,050 / 1,564 (default rule) | `uncovered error px` high: part of the figure is in no layer — a plan entry is missing, or hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason) |
-| `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art | a link off the art (a bone on the background) — move it onto the layer |
+| `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck) |
 | `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; then rigc's gate lines | `cover 1.00000` on every mesh, both gates `0 failed` | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
 | `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the five judgement lines (§7), `check.json` | `check: PASS`, and a judgement line SKIP only where the character lacks what it reads | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
 | `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line, each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
