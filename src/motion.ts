@@ -29,6 +29,10 @@
  * over {@link BLINK.open} s; brows 0.08 / 0.04 / 0.20 s. The two named easings
  * are the reference's. A blink whose window does not fit strictly inside the
  * idle would write keys out of order, and is refused (`RIG_BLINK_INSIDE_IDLE`).
+ * The squash pivots at each eye bone's origin, so a part's rows above it move
+ * down by (1 - squash) times their height above it; the rows a
+ * `motion.blink.still` entry cuts off sit on a bone no group names and do not
+ * move at all (`src/rig.ts`).
  *
  * ## Control bones — `A15_IDLE_NO_MESH_BONE_KEYS`
  *

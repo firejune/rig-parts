@@ -72,13 +72,13 @@ import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src
 import { BUILD_OWNS } from './src/build.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, shiftRight, writeCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
-import { BARE_CROWN_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
+import { BARE_CROWN_PARTS, eyeParts, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
 import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'spine-rigc/src/render.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
 import { assemble, type AssembleInput, belowCrop, checkGeometry, cleanGhosts, DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, figuresLine, growRim, layerToRig, PROJECT_RULES, proposeFields, proposePlan, stageFields, visibilityCounts } from './src/assemble.ts';
-import { chainLine, findRigc, gateGreen, JUDGEMENT_LINES, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
-import { lagStep, readSine } from './src/instruments.ts';
+import { chainLine, findRigc, type FrameSet, gateGreen, JUDGEMENT_LINES, parsePackLines, readCheckInputs, readFrameSet, SPINEBOY_YARDSTICK } from './src/check.ts';
+import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, type Generation, loadConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
@@ -116,7 +116,7 @@ import {
 } from './src/raster/index.ts';
 import { checkProposal, compare, compareLines, lint, lintLine, type Proposal, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
-import { islandImages, RIG_EXPECT, rigConfig, rigImages, rigParts, writeRigFixture } from './fixtures/rig.ts';
+import { islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_EXPECT, rigConfig, rigImages, rigParts, writeRigFixture } from './fixtures/rig.ts';
 import { buildRig, type MeshAttachment, type RegionAttachment, rigJsonText } from './src/rig.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
@@ -1490,7 +1490,174 @@ function runRigSuite(): number {
     `blink at 3.9 s in a 4 s idle -> ${codes(late)}: ${late?.problems[0]?.detail ?? ''}; a declared "hem0_ctl" -> ${codes(taken)}`,
     'a blink running past the last key writes keys out of order; a control whose name is taken would silently replace a declared bone',
   );
+
+  runBlinkStillCases(say);
   return bad();
+}
+
+function lashCfg(edit: (c: Record<string, unknown>) => void = () => {}): CharacterConfig {
+  const c = lashConfig();
+  edit(c);
+  return parseConfig(c);
+}
+
+function stillOf(c: Record<string, unknown>): Record<string, Record<string, unknown>> {
+  return ((c.motion as Record<string, unknown>).blink as Record<string, unknown>).still as Record<string, Record<string, unknown>>;
+}
+
+/**
+ * The setup pose and the setup pose with the blink held shut, rendered by the
+ * installed rigc from a rig directory the rig stage wrote — the same two
+ * throwaway animations `check` renders for BLINK_NO_HOLE, at the rig's size.
+ */
+function stillAndShut(rigDir: string, dest: string, squash: number): { open: FrameSet; shut: FrameSet } | string {
+  mkdirSync(dest, { recursive: true });
+  const rig = JSON.parse(readFileSync(join(rigDir, 'rig.json'), 'utf8')) as Record<string, unknown>;
+  const motion = JSON.parse(readFileSync(join(rigDir, 'motion.json'), 'utf8')) as Record<string, unknown>;
+  writeFileSync(join(dest, 'rig.json'), JSON.stringify({ ...rig, images: join(rigDir, 'images') }));
+  const hold = (tracks: unknown[]): Record<string, unknown> => ({ duration: 0.1, loop: false, tracks });
+  const animations = {
+    open: hold([{ bone: 'root', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.1, v: [0] }] }]),
+    shut: hold([{ group: 'eyes', property: 'scaley', keys: [{ t: 0, v: [squash] }, { t: 0.1, v: [squash] }] }]),
+  };
+  writeFileSync(join(dest, 'motion.json'), JSON.stringify({ ...motion, animations }));
+  const rigc = findRigc(ROOT, '');
+  const run = (args: string[]): string | null => {
+    const r = spawnSync(rigc, args, { encoding: 'utf8', maxBuffer: 1 << 26 });
+    return r.status === 0 ? null : `rigc ${args[0]} exit ${r.status}: ${`${r.stdout}${r.stderr}`.trim().split('\n').slice(-2).join(' | ')}`;
+  };
+  const max = String(Math.max(...LASH_RIG));
+  const err =
+    run(['build', '--rig', join(dest, 'rig.json'), '--motion', join(dest, 'motion.json'), '--out', join(dest, 'build'), '--profile', 'spine']) ??
+    run(['render', '--candidate', join(dest, 'build'), '--animation', 'open', '--fps', '10', '--max', max, '--out', join(dest, 'open')]) ??
+    run(['render', '--candidate', join(dest, 'build'), '--animation', 'shut', '--fps', '10', '--max', max, '--out', join(dest, 'shut')]);
+  return err ?? { open: readFrameSet(join(dest, 'open')), shut: readFrameSet(join(dest, 'shut')) };
+}
+
+/** Pixels of `a` and `b` that differ in any channel, inside `box` when one is given. */
+function differingPx(a: Raster, b: Raster, box?: { x0: number; y0: number; x1: number; y1: number }): number {
+  const bx = box ?? { x0: 0, y0: 0, x1: a.width, y1: a.height };
+  let n = 0;
+  for (let y = bx.y0; y < bx.y1; y++) {
+    for (let x = bx.x0; x < bx.x1; x++) {
+      const i = (y * a.width + x) * 4;
+      if (a.data[i] !== b.data[i] || a.data[i + 1] !== b.data[i + 1] || a.data[i + 2] !== b.data[i + 2] || a.data[i + 3] !== b.data[i + 3]) n++;
+    }
+  }
+  return n;
+}
+
+/** issue #26: `motion.blink.still` — the loader, the rig stage's cut, and the rendered proof that the rest pose holds and the crease does not squash. */
+function runBlinkStillCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const r = buildRig(lashCfg(), lashParts(), lashImages());
+  const low = r.rig.skins.default.lash?.lash as RegionAttachment | undefined;
+  const up = r.rig.skins.default.lash_still?.lash_still as RegionAttachment | undefined;
+  const img = new Map(r.images);
+  const lowImg = img.get('lash.png');
+  const upImg = img.get('lash_still.png');
+  const whole = buildRig(lashCfg((c) => delete ((c.motion as Record<string, unknown>).blink as Record<string, unknown>).still), lashParts(), lashImages());
+  // By hand (fixtures/rig.ts): the lash 14,17 16x9 cut at row 20 -> lower rows 20..25 (6 rows), upper 17..19 (3 rows), each padded by 4.
+  // Lower centre (14 + 8, 20 + 3) = (22, 23) on eye (22, 27): (0, (64 - 23) - (64 - 27)) = (0, 4).
+  // Upper centre (22, 17 + 1.5) = (22, 18.5) on head (24, 40): (-2, (64 - 18.5) - (64 - 40)) = (-2, 21.5).
+  say(
+    'RG13_A_BLINK_STILL_CUTS_THE_REGION_AT_ITS_ROW_INTO_A_BLINKING_AND_A_STILL_PIECE',
+    r.rig.slots.map((sl) => `${sl.name}@${sl.bone}`).join(',') === 'face@head,eyewhite@eye,lash@eye,lash_still@head' &&
+      low?.x === 0 &&
+      low.y === 4 &&
+      up?.x === -2 &&
+      up.y === 21.5 &&
+      lowImg?.width === 24 &&
+      lowImg.height === 14 &&
+      upImg?.width === 24 &&
+      upImg.height === 11 &&
+      JSON.stringify(r.motion) === JSON.stringify(whole.motion) &&
+      JSON.stringify(r.rig.bones) === JSON.stringify(whole.rig.bones),
+    `slots ${r.rig.slots.map((sl) => `${sl.name}@${sl.bone}`).join(', ')}; lash at ${low?.x},${low?.y} (${lowImg?.width}x${lowImg?.height}), lash_still at ${up?.x},${up?.y} (${upImg?.width}x${upImg?.height}); motion and bones ${JSON.stringify(r.motion) === JSON.stringify(whole.motion) && JSON.stringify(r.rig.bones) === JSON.stringify(whole.rig.bones) ? 'identical to' : 'DIFFERENT from'} the uncut rig's`,
+    'the positive control, every figure derived in fixtures/rig.ts: the rows above the cut are drawn right after the part by <part>_still on the named bone, which no blink group names; the lower piece keeps the part\'s slot, so the blink keys nothing new',
+  );
+
+  const through = refusals(() => buildRig(lashCfg((c) => (stillOf(c).lash.row = 22)), lashParts(), lashImages()));
+  const edge = refusals(() => buildRig(lashCfg((c) => (stillOf(c).lash.row = 17)), lashParts(), lashImages()));
+  const bare = lashImages();
+  const noCrease = bare.get('lash') as Raster;
+  for (let i = 0; i < 16 * 2 * 4; i++) noCrease.data[i] = 0;
+  const empty = refusals(() => buildRig(lashCfg((c) => (stillOf(c).lash.row = 18)), lashParts(), bare));
+  const takenParts = lashParts();
+  takenParts.parts.push({ ...takenParts.parts[1], name: 'lash_still' });
+  // Past the loader, whose plan does not make lash_still: the rig stage's own check, for a caller that skipped it.
+  const takenCfg = lashConfig();
+  (takenCfg.regions as Record<string, string>).lash_still = 'head';
+  const taken = refusals(() => buildRig(takenCfg as unknown as CharacterConfig, takenParts, new Map([...lashImages(), ['lash_still', lashImages().get('eyewhite') as Raster]])));
+  say(
+    'RG14_A_CUT_THROUGH_ART_ON_THE_EDGE_WITH_AN_EMPTY_PIECE_OR_ONTO_A_TAKEN_NAME_IS_REFUSED',
+    codes(through) === 'RIG_STILL_ROW_CLEAR config.motion.blink.still.lash.row' &&
+      (through?.problems[0].detail.includes('16 pixel(s)') ?? false) &&
+      codes(edge) === 'RIG_STILL_ROW_INSIDE_PART config.motion.blink.still.lash.row' &&
+      codes(empty) === 'RIG_STILL_PIECES_HAVE_ART config.motion.blink.still.lash.row' &&
+      codes(taken) === 'RIG_STILL_NAME_FREE config.motion.blink.still.lash',
+    `row 22 (lash line) -> ${codes(through)}: ${through?.problems[0]?.detail.slice(0, 90) ?? ''}…; row 17 (the part's top) -> ${codes(edge)}; the crease erased, row 18 -> ${codes(empty)}; a part already named lash_still -> ${codes(taken)}`,
+    'a cut through art is not exact even at rest — measured on the demo example cut through its lash line: the setup-pose render moved 36 px (max 7 levels) at render scale 0.942 — so only a clear row is accepted; a piece with no art holds nothing still, and a taken slot name would draw one part twice',
+  );
+
+  const off = refusals(() => parseConfig(((): Record<string, unknown> => {
+    const c = lashConfig();
+    stillOf(c).lash.bone = 'eye';
+    stillOf(c).face = { row: 20, bone: 'head' };
+    stillOf(c).cloth = { row: 20, bone: 'nowhere' };
+    stillOf(c).eyewhite = { row: 20.5, bone: 'head' };
+    return c;
+  })()));
+  const got = off?.problems.map((p) => `${p.code} ${p.object}`) ?? [];
+  const want = [
+    'CONFIG_STILL_OFF_THE_BLINK config.motion.blink.still.lash.bone',
+    'CONFIG_STILL_OFF_THE_BLINK config.motion.blink.still.face',
+    'CONFIG_NAME_RESOLVES config.motion.blink.still.cloth.bone',
+    'CONFIG_NAME_RESOLVES config.motion.blink.still.cloth',
+    'CONFIG_FIELD_TYPE config.motion.blink.still.eyewhite.row',
+  ];
+  say(
+    'RG15_THE_LOADER_REFUSES_A_STILL_PIECE_THAT_WOULD_BLINK_OR_HOLDS_NOTHING_STILL_BY_NAME',
+    refusals(() => lashCfg()) === null && got.length === want.length && want.every((w) => got.includes(w)),
+    `the fixture's still loads: ${codes(refusals(() => lashCfg()))}; planted -> ${got.join('; ')}`,
+    'a still piece on an eye bone blinks anyway, a cut of a part the blink never moves holds nothing still, and a bone or part that resolves to nothing is the silence the loader exists to name',
+  );
+
+  const dir = temp('blink-still');
+  try {
+    const cut = writeRigFixture(join(dir, 'cut'), lashConfig(true), lashImages(), lashParts());
+    const uncut = writeRigFixture(join(dir, 'uncut'), lashConfig(false), lashImages(), lashParts());
+    const a = runCli(['rig', '--config', cut.config, '--parts', cut.parts, '--out', join(dir, 'cut', 'rig')]);
+    const b = runCli(['rig', '--config', uncut.config, '--parts', uncut.parts, '--out', join(dir, 'uncut', 'rig')]);
+    const ra = a.status === 0 ? stillAndShut(join(dir, 'cut', 'rig'), join(dir, 'cut', 'r'), 0.12) : `rig exit ${a.status}`;
+    const rb = b.status === 0 ? stillAndShut(join(dir, 'uncut', 'rig'), join(dir, 'uncut', 'r'), 0.12) : `rig exit ${b.status}`;
+    let detail: string;
+    let ok = false;
+    if (typeof ra === 'string' || typeof rb === 'string') detail = `cut: ${typeof ra === 'string' ? ra : 'rendered'}; uncut: ${typeof rb === 'string' ? rb : 'rendered'}`;
+    else {
+      const H = LASH_RIG[1];
+      const stage = { x: -LASH_RIG[0] / 2, y: 0, width: LASH_RIG[0], height: H };
+      const crease = frameBox([{ ...lashParts().parts[2], x: LASH_CREASE.x0, y: LASH_CREASE.y0, w: LASH_CREASE.x1 - LASH_CREASE.x0, h: LASH_CREASE.y1 - LASH_CREASE.y0 }], H, stage, ra.open.viewport);
+      const eyeBox = frameBox([lashParts().parts[1]], H, stage, ra.open.viewport);
+      const restSame = differingPx(ra.open.frames[0].image, rb.open.frames[0].image);
+      const creaseCut = crease === null ? -1 : differingPx(ra.open.frames[0].image, ra.shut.frames[0].image, crease);
+      const creaseUncut = crease === null ? -1 : differingPx(rb.open.frames[0].image, rb.shut.frames[0].image, crease);
+      const hole = eyeBox === null ? null : blinkFigures(ra.open.frames[0].image, ra.shut.frames[0].image, ra.open.background, eyeBox, 40);
+      ok = restSame === 0 && creaseCut === 0 && creaseUncut > 0 && hole !== null && hole.holePx === 0 && hole.px > 0;
+      detail = `setup pose, cut vs uncut: ${restSame} differing px of ${ra.open.frames[0].image.width}x${ra.open.frames[0].image.height}; the crease box ${crease === null ? 'off the frame' : boxLabelOf(crease)} with the eyes shut vs open: cut ${creaseCut} px, uncut ${creaseUncut} px; the eyewhite box shut: ${hole === null ? 'off the frame' : `${hole.holePx} hole px of ${hole.px}`}`;
+    }
+    say(
+      'RG16_THE_CUT_RIG_IS_THE_UNCUT_ONE_AT_REST_AND_ITS_CREASE_DOES_NOT_MOVE_WHEN_THE_EYE_SHUTS',
+      ok,
+      detail,
+      "issue #26's proof, rendered by the installed rigc: the cut changes no pixel of the setup pose, the crease rows are the same pixels with the blink held shut, the same crease in the uncut rig moves, and the shut eye opens no hole — the face is under it",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function boxLabelOf(b: { x0: number; y0: number; x1: number; y1: number }): string {
+  return `${b.x0},${b.y0} ${b.x1 - b.x0}x${b.y1 - b.y0}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1781,6 +1948,35 @@ function runProposeSuite(): number {
     );
 
     runStrandCases(dir, say);
+
+    // issue #26: the eye parts of fixtures/propose.ts, once with a clear gap between crease and lash line and once without.
+    const eyed = join(dir, 'eyes');
+    writeProposeFixture(eyed, [...PROPOSE_PARTS, ...eyeParts(true)]);
+    const withGap = propose(readPartSet(eyed));
+    const shut = join(dir, 'eyes-shut');
+    writeProposeFixture(shut, [...PROPOSE_PARTS, ...eyeParts(false)]);
+    const noGap = propose(readPartSet(shut));
+    const plain = propose(readPartSet(dir));
+    const lashNotes = (p: Proposal): string[] => p.notes.filter((n) => n.startsWith('lash_'));
+    const gapNote = lashNotes(withGap);
+    const noGapNote = lashNotes(noGap);
+    const loadsWithStill = refusals(() => parseConfig(proposalConfig([...PROPOSE_PARTS, ...eyeParts(true)], withGap)));
+    say(
+      'PR16_A_LASH_FAR_ABOVE_ITS_EYEWHITE_IS_NOTED_AND_SPLIT_AT_A_CLEAR_ROW_AND_A_NORMAL_ONE_IS_NOT',
+      JSON.stringify(withGap.motion.blink.still) === '{"lash_a":{"row":55,"bone":"head"}}' &&
+        gapNote.length === 1 &&
+        gapNote[0].includes('reaches 8 px above white_a\'s top, 80 % of its 10 px height (noted above 35 %)') &&
+        gapNote[0].includes('is 1.67x the height of lash_b, 6 px (noted above 1.20x)') &&
+        gapNote[0].includes('rows above 55') &&
+        noGap.motion.blink.still === undefined &&
+        noGapNote.length === 1 &&
+        noGapNote[0].includes('no row between its top and the lid is clear') &&
+        plain.motion.blink.still === undefined &&
+        lashNotes(plain).length === 0 &&
+        loadsWithStill === null,
+      `with a clear gap: still ${JSON.stringify(withGap.motion.blink.still)}, note "${gapNote.join(' | ')}"; without one: still ${JSON.stringify(noGap.motion.blink.still ?? null)}, ${noGapNote.length} note(s); lash_b (33 %, 0.6x): ${gapNote.some((n) => n.startsWith('lash_b')) ? 'NOTED' : 'not noted'}; the proposal with its still loads: ${codes(loadsWithStill)}`,
+      'every figure derived in fixtures/propose.ts: 80 % is over the 35 % bar and 1.67x over 1.2x, 33 % and 0.6x are under both; the cut is proposed only on a row the rig stage accepts (RIG_STILL_ROW_CLEAR), and the bars sit above both public examples (17-26 %, 1.00-1.04x)',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

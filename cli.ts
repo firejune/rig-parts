@@ -68,8 +68,10 @@ usage:
       Propose bones, meshes, regions and an idle from the assembled parts (<dir>
       holds parts.json and parts/). Roles come from each part's See-through tag,
       never its name. Writes <out>/proposal.json (config-shaped: bones, meshes,
-      regions, motion with its blink, and notes) and the overlay to correct
-      against, <out>/render/landmarks.png and landmarks_head.png. Prints every
+      regions, motion with its blink — and a blink.still cut for a lash that
+      reaches far above its eyewhite, when a clear row allows one — and notes)
+      and the overlay to correct against, <out>/render/landmarks.png and
+      landmarks_head.png. Prints every
       note and a LINT line for each chain link that lies off its mesh's art, for a
       hip that is not below the chest, and for a hip above ${HIP_MIN_FRACTION} of the figure's
       height (the shoulders); a headwear/earwear layer with hanging strands
@@ -90,7 +92,9 @@ usage:
       Author the rig: unrotated bones at the config's landmarks (a chain makes
       <chain>0..n), a square lattice mesh over every part in config.meshes
       weighted by distance to its candidate bone segments, a region for every
-      part in config.regions, and one idle of sines and a blink. --parts is the
+      part in config.regions (a motion.blink.still part as two: the rows above
+      its row on a second slot <part>_still, which the blink does not move),
+      and one idle of sines and a blink. --parts is the
       directory holding parts.json and parts/<name>.png. The result is built
       through spine-rigc (profile spine-html, packed, then validated under
       profile spine) in a scratch directory first, and --out receives

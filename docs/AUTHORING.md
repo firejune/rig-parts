@@ -75,7 +75,8 @@ read by no CPU stage).
 | `regions.<part>` | rig | **proposed**: the bone a rigid part rides. Every plan part is exactly one of a mesh or a region (`CONFIG_PART_ATTACHED`) |
 | `motion.duration` | rig; check (the loop is measured at this time) | proposed as 4 s; a whole number of 1/12 s ticks, because `check` renders at 12 fps |
 | `motion.tracks` | rig | **proposed**, then tuned. Single `{bone, prop, amp, period, phase, base?}` or chain `{chain, amps, period, phase, lag}` — one amplitude per link, link `i` at phase `phase + lag·i`. Every `period` must divide `duration` (`CONFIG_PERIOD_DIVIDES_DURATION`) |
-| `motion.blink` | rig | **proposed**: `{t, eyes, brows, squash, brow_drop}`; the whole blink must fit inside the idle (`RIG_BLINK_INSIDE_IDLE`) |
+| `motion.blink` | rig | **proposed**: `{t, eyes, brows, squash, brow_drop}`; the whole blink must fit inside the idle (`RIG_BLINK_INSIDE_IDLE`). The `eyes` group's `scaley` squashes every part on the eye bones about the bone's origin, the eyewhite's centre |
+| `motion.blink.still` | rig | **proposed** only for a lash `propose` notes (below), then checked: `{<part>: {row, bone}}` — the rows of that region part above `row` (rig px, y down) are drawn by a second slot `<part>_still` on `bone` and do not blink; rows from `row` down keep the part's slot and blink. The part must be a region on a bone `eyes` names, `bone` one it does not (`CONFIG_STILL_OFF_THE_BLINK`), and `row` a row of the part with no art across its whole width (`RIG_STILL_ROW_CLEAR`) |
 
 The proposer's reach (from `src/propose.ts`): roles come from each part's tag —
 `face` makes `hip`/`chest`/`neck`/`head`, the eyewhites make the eye bones, brows are
@@ -144,6 +145,25 @@ idle with that segment, 1.07 without; the tassel tips swing 5.0). On an all-pend
 layer each chain hangs from `head`, with a `head` stub above each strand. Strands
 replace the single pendant chain: a chain at the mean x of two strands hangs between
 them.
+
+**The lash that carries a crease** (issue #26). See-through sometimes paints the
+double-eyelid crease into the `eyelash` layer, and the blink squashes the whole layer
+about the eye bone — so the crease is squashed with it, on one eye and not the other.
+`propose` notes an `eyelash-r`/`-l` part that reaches more than 35 % of its own height
+above its eyewhite's top, or is more than 1.2 times the height of its pair; on the two
+examples the four lashes reach 17-26 % (4-6 px, the lash line itself) and the pairs are
+1.00 and 1.04 apart, so neither is noted. When such a lash has a row between its top and
+the eyewhite's top with no art across its whole width, the lowest such row is proposed as
+`motion.blink.still` on `head`, and the rows above it stop blinking; when it has none, the
+note says so and nothing is cut — clear a row between the crease and the lash line in the
+part, or leave the crease to blink. The cut has to be a clear row: two pieces cut through
+art are each resampled against their own transparent edge, and on the demo example a cut
+through its lash line changed 36 px of the setup-pose render (up to 7 levels, at render
+scale 0.942) and up to 21 levels in the idle frames where the head rolls; a clear-row cut
+changed none, at rest or rolled. The eye bone is not moved: scaling about the eyewhite's
+top edge instead would close the eye upward onto the upper lid and still move whatever sits
+above it by (1 − squash) × its height above the pivot, so the cut, not the pivot, is what
+holds the crease.
 
 ## 4. The command order
 
@@ -280,11 +300,12 @@ stage's prefix (`[assemble]   FAIL  …`), and the build stops there.
 | `CONFIG_KEY_KNOWN`, `CONFIG_KEY_RETIRED`, `CONFIG_FIELD_PRESENT`, `CONFIG_FIELD_TYPE` | an unknown key (a retired one says what replaces it), a missing one, a wrong type | the named field |
 | `CONFIG_HEAD_BOX_SQUARE` | `seethrough.head_box` is not a non-empty square | `head_box` — take `propose --head-box`'s |
 | `CONFIG_TAG_KNOWN`, `CONFIG_PART_NAME`, `CONFIG_PART_UNIQUE` | a plan entry names no v3 tag, a part name that is not a file name, or a part or layer twice | `assemble.plan` |
-| `CONFIG_NAME_RESOLVES` | a parent, segment, region, track, blink member or extend part names nothing declared above it | the named reference, or the declaration it needs |
+| `CONFIG_NAME_RESOLVES` | a parent, segment, region, track, blink member, blink still part or bone, or extend part names nothing declared above it | the named reference, or the declaration it needs |
 | `CONFIG_BONE_UNIQUE` | a bone or chain declared twice, or `root` declared | `bones` |
 | `CONFIG_PART_ATTACHED` | a plan part with neither or both of a mesh and a region | `meshes` / `regions` |
 | `CONFIG_AMPS_MATCH_CHAIN` | a chain track's `amps` is not one per link | that track's `amps` |
 | `CONFIG_PERIOD_DIVIDES_DURATION` | a period that is not a whole fraction of the idle — the loop could not close | that track's `period`, or `motion.duration` |
+| `CONFIG_STILL_OFF_THE_BLINK` | a `motion.blink.still` entry names a region on a bone the blink's `eyes` does not name (nothing to hold still), or its `bone` is one the blink's `eyes` names (the still piece would blink) | that entry's part, or its `bone` — the eye bone's parent, `head` as proposed |
 
 ### inputs
 
@@ -338,6 +359,7 @@ stage's prefix (`[assemble]   FAIL  …`), and the build stops there.
 | `RIG_LATTICE_ONE_LOOP` | the lattice over a part does not close into one outline even after the repair passes | that mesh's `grid` |
 | `RIG_CONTROL_NAME_FREE` | a keyed, mesh-weighted bone needs `<bone>_ctl` and that name is taken | rename the declared bone |
 | `RIG_BLINK_INSIDE_IDLE` | the blink runs outside the idle | `motion.blink.t` |
+| `RIG_STILL_ROW_INSIDE_PART`, `RIG_STILL_ROW_CLEAR`, `RIG_STILL_PIECES_HAVE_ART`, `RIG_STILL_NAME_FREE` | a `motion.blink.still` row that is not strictly inside the part, that crosses art (a cut through art changes the render even at rest), that leaves one piece with no art, or whose `<part>_still` slot name another part already has | that entry's `row` — a row with no art between the crease and the lash line — or rename the other part |
 | `RIG_RIGC_GREEN` | spine-rigc refused the rig; its own FAIL or compile-error line is quoted, and nothing was written | the field rigc's line names — spine-rigc's own AUTHORING §5 maps each of its assertions (`node_modules/spine-rigc/docs/AUTHORING.md`) |
 
 ### check and build

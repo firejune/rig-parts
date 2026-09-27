@@ -201,6 +201,34 @@ function solid(w: number, h: number, colour: [number, number, number]): Raster {
 }
 
 /**
+ * The eyes of issue #26's propose control, inside `face` (80,40 40x50), in rig
+ * px like every `rects` here:
+ *
+ * - `white_a` (head:eyewhite-r) 86,60 10x6 and `white_b` (head:eyewhite-l)
+ *   104,60 10x6.
+ * - `lash_a` (head:eyelash-r) 84,52 14x10: a crease 86,52 10x2, rows 54-55
+ *   clear, the lash line 84,56 14x6. It reaches 60 - 52 = **8 px** above
+ *   `white_a`, 8/10 = **80 %** of its height, and is 10/6 = **1.67x** its
+ *   pair's; the lowest clear row above the lid is **55**. With `creaseGap`
+ *   false a 2x2 block at 90,54 joins crease and lash line, so no row is clear.
+ * - `lash_b` (head:eyelash-l) 102,58 14x6: reaches 2 px above `white_b`,
+ *   2/6 = **33 %**, under the 35 % bar, and 0.6x its pair: not noted.
+ */
+export function eyeParts(creaseGap = true): ProposeFixturePart[] {
+  const rects: Array<[number, number, number, number]> = [
+    [86, 52, 10, 2],
+    [84, 56, 14, 6],
+  ];
+  if (!creaseGap) rects.push([90, 54, 2, 2]);
+  return [
+    { name: 'white_a', from: 'head:eyewhite-r', x: 86, y: 60, w: 10, h: 6, colour: [250, 250, 250] },
+    { name: 'white_b', from: 'head:eyewhite-l', x: 104, y: 60, w: 10, h: 6, colour: [250, 250, 250] },
+    { name: 'lash_a', from: 'head:eyelash-r', x: 84, y: 52, w: 14, h: 10, colour: [40, 20, 20], rects },
+    { name: 'lash_b', from: 'head:eyelash-l', x: 102, y: 58, w: 14, h: 6, colour: [40, 20, 20] },
+  ];
+}
+
+/**
  * Soft edges: alpha ramps to `(d + 0.5) / SOFT_RAMP` of 255 at `d` pixels in
  * from a rectangle's edge, so the outermost pixel is 255/6 = 42 — above the
  * alpha-8 line every mask reads, so no mask, box or count changes. A rendered
