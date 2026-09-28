@@ -132,6 +132,27 @@ spine-parts at what it wrote:
 | Upstream CLI | `python inference/scripts/inference_psd.py --srcp <image> --save_to_psd` in a checkout of [shitagaki-lab/see-through](https://github.com/shitagaki-lab/see-through) | the `.psd` in `workspace/layerdiff_output/` |
 | ComfyUI wrapper | [jtydhr88/ComfyUI-See-through](https://github.com/jtydhr88/ComfyUI-See-through) on your own ComfyUI box; the optional `comfy` adapter (`spine-parts comfy seethrough`) drives it | the `layers.json` + PNGs it writes |
 
+**The head run is needed on every route that was read.** See-through's model
+already separates the head in a second stage of its own: it crops the head the
+first stage found, runs the face tags on that crop at the same `resolution`, and
+pastes the result back **resized to the full image's scale**. So the face comes
+back at the full run's pixel density whichever route ran it, and the separate
+head run on `st_input_head.png` is what gives the eyes more pixels
+(read on 2026-09-28 at see-through `a25a549` and wrapper 0.5.0 `98d754b`):
+
+- *Hugging Face Space* — the same two-stage code, with `resolution` capped at
+  1280 (768 by default): the head run is still needed.
+- *ModelScope demo* — its code was not read, so what the head run adds on that
+  route has not been measured.
+- *Upstream CLI* — the `.psd` frame is the `resolution`-sided square the first
+  stage ran on (1280 by default), and the head stage is pasted into it at that
+  scale: the head run is still needed.
+- *ComfyUI wrapper* — `SeeThrough_GenerateLayers` runs both stages with no input
+  to change the second, at most `resolution` 2048, which on the examples' 2432 px
+  square is 1.19 source px per layer px against 0.77 and 0.47 for their head
+  crops; at the 1024 the examples ran, the full run's right eye white is 22×13 px
+  and the head run's 60×38: the head run is still needed.
+
 **See-through is required; ComfyUI is not.** The wrapper is one route among
 four, and `spine-parts comfy` is only a convenience for that route: every
 stage after See-through reads files, whichever route wrote them. On the two

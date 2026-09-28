@@ -39,12 +39,14 @@ wrapper code.
 | Weights | Licence as stated on the model card | Observed |
 | --- | --- | --- |
 | [`layerdifforg/seethroughv0.0.2_layerdiff3d`](https://huggingface.co/layerdifforg/seethroughv0.0.2_layerdiff3d) | `license:apache-2.0` tag | 2026-09-27, Hugging Face model API |
+| (same card, after its 2026-09-28 commit *"Add licence terms, NOTICE and base model metadata"*) | `license:openrail++` tag; the card's *Licence* section says the maintainers' own contributions are Apache-2.0 and the weights also inherit the licences of the models they are derived from — Animagine XL 4.0 / Stable Diffusion XL 1.0 (CreativeML Open RAIL++-M) and LayerDiffuse (CreativeML Open RAIL-M) | 2026-09-28, Hugging Face model API and card |
 | [`layerdifforg/seethroughv0.0.1_marigold`](https://huggingface.co/layerdifforg/seethroughv0.0.1_marigold) | no licence tag on the card | 2026-09-27, Hugging Face model API |
+| (same card, after its 2026-09-28 revision) | `license:openrail++` tag | 2026-09-28, Hugging Face model API |
 
 Maintainer statement, on the Hugging Face discussion
 [`layerdifforg/seethroughv0.0.2_layerdiff3d/discussions/1`](https://huggingface.co/layerdifforg/seethroughv0.0.2_layerdiff3d/discussions/1)
 (user `24yearsold`, 2026-04-07): *"Yes all our models are aligned with our main
-repo to use Apache 2.0."*
+repo to use Apache 2.0."* The 2026-09-28 card revision above narrows that: Apache-2.0 for the maintainers' contributions, with the base models' Open RAIL terms inherited. spine-parts does not distribute these weights; a user who fetches them accepts the terms the card states on the day they fetch.
 
 ### Training data
 
