@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/firejune/spine-parts/compare/v0.4.0...v0.5.0) (2026-09-28)
+
+
+### Features
+
+* **check:** TEXTURE_STRETCH measures every mesh triangle's edge stretch over the idle from rigc's geometry export — the reference guide's judgement 6 leaves the eye-only list ([#52](https://github.com/firejune/spine-parts/issues/52)) ([0283a6b](https://github.com/firejune/spine-parts/commit/0283a6b69b084168235d6025c49a722199a01bb1)), closes [#31](https://github.com/firejune/spine-parts/issues/31)
+
+
+### Bug Fixes
+
+* **check:** STILL_REGIONS_DARK measures the face in the head's own frame — a 2 px slide the screen-space bar let through is now red ([#53](https://github.com/firejune/spine-parts/issues/53)) ([b0d3efe](https://github.com/firejune/spine-parts/commit/b0d3efe45f3a0ce38963b56d355a205b269b4533))
+* **propose:** irides without an eyewhite are placed as still regions with the cause in the note, and a blink group naming a bone twice is refused before rigc ([#51](https://github.com/firejune/spine-parts/issues/51)) ([ec963c1](https://github.com/firejune/spine-parts/commit/ec963c18f68ae3b1019ca1c2e7dc5b91263a1eef))
+
+
+### Documentation
+
+* **seethrough:** upstream's two stages, read at a named revision and measured against our head-crop run — what each route needs ([#48](https://github.com/firejune/spine-parts/issues/48)) ([912c699](https://github.com/firejune/spine-parts/commit/912c699b7ce6a77f500b8b2a9a2112a69bec57a2)), closes [#10](https://github.com/firejune/spine-parts/issues/10)
+
 ## [0.4.0](https://github.com/firejune/spine-parts/compare/v0.3.0...v0.4.0) (2026-09-28)
 
 
