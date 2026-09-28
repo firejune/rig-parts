@@ -9,7 +9,9 @@
  *
  * - `face` (head run first) -> `hip`/`chest`/`neck`/`head`; `eyewhite-r/-l`
  *   -> `eye_r`/`eye_l`, the blink's `eyes` group — no eyewhite, no blink, and
- *   no eyebrow, no `brows` in it, each said in a note (issue #35); `mouth` -> `mouth` at the centroid of its biggest blob
+ *   no eyebrow, no `brows` in it, each said in a note (issue #35); `irides-*`
+ *   and `eyelash-*` ride their side's eye bone, or `head` with a note when
+ *   that side has no eyewhite (issue #45); `mouth` -> `mouth` at the centroid of its biggest blob
  *   (stray pixels inflate a box); `eyebrow-*` -> `brow_r`/`brow_l` by POSITION
  *   left or right of the eye axis, never by tag, because the head run has been
  *   observed to swap the two brow tags.
@@ -50,12 +52,13 @@
  * `compare`, `draw`). Every rule, constant and evaluation order is the
  * reference's, including three Python behaviours `src/pyfmt.ts` reproduces
  * (`round` to even, `or` treating 0.0 as missing, negative slice starts).
- * Five departures, each stated where it happens: a missing face is refused
+ * Six departures, each stated where it happens: a missing face is refused
  * rather than crashing; the eye regions are keyed by the eyewhite part's own
- * name rather than by the literal `eyewhite_r`; the long-robe hip and the
- * clasped-hands region (issues #22, #23), which fire on neither published
- * example — both proposals are byte-identical with and without them; and
- * `lint`'s two torso lines, which the reference did not have.
+ * name rather than by the literal `eyewhite_r`; the long-robe hip, the
+ * clasped-hands region (issues #22, #23) and an eyeless side's irides and
+ * lashes on `head` (issue #45), which fire on neither published example —
+ * both proposals are byte-identical with and without them; and `lint`'s two
+ * torso lines, which the reference did not have.
  *
  * Coordinates are rig pixels, y down, origin top-left — the parts' own space.
  */
@@ -104,7 +107,7 @@ export interface ProposedBlink {
   still?: Record<string, { row: number; bone: string }>;
 }
 
-/** The tags whose parts make the eye bones, the blink's `eyes` group. Nothing else does: irides and lashes ride those bones as regions. */
+/** The tags whose parts make the eye bones, the blink's `eyes` group. Nothing else does: irides and lashes ride those bones as regions, or `head` on a side with none. */
 export const EYE_GROUP_TAGS: readonly string[] = ['eyewhite-r', 'eyewhite-l'];
 /** The tags whose parts make the brow bones, the blink's `brows` group. */
 export const BROW_GROUP_TAGS: readonly string[] = ['eyebrow-r', 'eyebrow-l'];
@@ -682,11 +685,33 @@ export function propose(P: PartSet): Proposal {
       B('mouth', 'head', [cc.stats[best].cx, cc.stats[best].cy]);
     } else B('mouth', 'head', center(mouth[0]));
   }
+  // An eye bone comes only from an eyewhite (EYE_GROUP_TAGS). An iris or a
+  // lash on a side with none has no eye bone to ride, and writing its region
+  // as `eye_<s>` anyway named a bone that does not exist — refused by the
+  // loader as the symptom (`config.regions.<part> — is "eye_r"`), never the
+  // cause (issue #45). Such a part rides `head` — the bone the eye bone would
+  // hang from and the one the face beside it already rides — so no value is
+  // invented, the proposal stays one a person can correct, and the note names
+  // the cause.
+  const eyeless: string[] = [];
+  const eyelessSides = new Set<'r' | 'l'>();
   for (const p of P.layered()) {
     const t = splitFrom(p.from)[1];
     let role: string | undefined = TAG_REGION[t];
     if (browOf.has(p.name)) role = browOf.get(p.name);
+    const side = role === 'eye_r' ? 'r' : role === 'eye_l' ? 'l' : null;
+    if (side !== null && !eyes.has(side)) {
+      role = 'head';
+      eyeless.push(`${p.name} (${p.from})`);
+      eyelessSides.add(side);
+    }
     if (role !== undefined) regions[p.name] = role;
+  }
+  if (eyeless.length > 0) {
+    const sides = (['r', 'l'] as const).filter((s) => eyelessSides.has(s));
+    notes.push(
+      `no eyewhite part for ${sides.map((s) => `eye_${s}`).join(', ')} (looked for: ${sides.map((s) => `eyewhite-${s}`).join(', ')}): ${eyeless.join(', ')} ${eyeless.length === 1 ? 'is' : 'are'} placed on head as ${eyeless.length === 1 ? 'a region' : 'regions'}, rigid with the head and not blinking — an eye bone comes only from an eyewhite`,
+    );
   }
   // A blink group rigc is handed must name a member (rigc refuses `group
   // "eyes" declares no members`), so a group with none is not written, and a

@@ -903,9 +903,23 @@ function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
         // members`) one stage later, at the gate; the stage whose input is
         // wrong is this one.
         if (list.length === 0) c.fail('CONFIG_BLINK_GROUP_MEMBERS', `${p}.blink.${key}`, BLINK_GROUP_EMPTY[key]);
+        const at = new Map<string, number[]>();
         list.forEach((name, k) => {
           if (typeof name !== 'string' || !bones.has(name)) c.fail('CONFIG_NAME_RESOLVES', `${p}.blink.${key}[${k}]`, `is ${show(name)}; a declared bone is required`);
+          if (typeof name === 'string') at.set(name, [...(at.get(name) ?? []), k]);
         });
+        // rigc refuses a member named twice (`group "eyes" names member "eye"
+        // twice`) at the gate, one stage late — issue #45, the sibling of the
+        // empty group above. One refusal per repeated name, in first-seen order.
+        for (const [name, ks] of at) {
+          if (ks.length > 1) {
+            c.fail(
+              'CONFIG_BLINK_GROUP_UNIQUE',
+              `${p}.blink.${key}`,
+              `names ${show(name)} ${ks.length === 2 ? 'twice' : `${ks.length} times`} (at ${ks.map((k) => `[${k}]`).join(', ')}); each bone is named once — the group keys every member it names, so a repeat keys one bone twice, and rigc refuses a group naming a member twice`,
+            );
+          }
+        }
       }
     }
     if ('still' in b) checkBlinkStill(c, b.still, b.eyes, bones, regions);
