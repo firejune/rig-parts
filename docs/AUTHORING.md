@@ -240,7 +240,7 @@ proposal in as the steps above say (`RL01`); every step must exit 0.
 | `sheet` of both runs | the tile list (and the sheet, if you can see) | eyes, irises, lashes and brows as left/right pairs in the head run | a head box that cut off an ornament: move `head_box`, re-run the head crop |
 | `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px`, then `uncovered holes (8-connected): N` and the largest five as `uncovered hole K: <px> px at x,y wxh (between "<part>" <px> px, …)`; and look at `render/recomposite_error_rig.png` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185, 259 holes, the largest 94 px; `demo` 2.39 / 95.8 % / 11,050 / 1,564, 453 holes, the largest 70 px (default rule) — many slivers along part edges, no hole a region could hide | one large hole: part of the figure is in no layer — a plan entry is missing, hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason), or See-through split one garment into two and left the space between them in neither (a skirt as two trouser legs); the `between` parts say where. When neither run holds it at all, an `assemble.patches` entry cuts it from the painting (below) |
 | `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck); a `hanging strand … -- no chain proposed` note — that strand hangs stiff until you add a chain down the x and rows it names (§3) |
-| `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; then rigc's gate lines | `cover 1.00000` on every mesh, both gates `0 failed` | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
+| `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; the `bones` line; the `idle keys` line; then rigc's gate lines (with A15's declared SKIP under `--idle-keys direct`) | `cover 1.00000` on every mesh, both gates `0 failed` | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
 | `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the five judgement lines and `RECOMPOSITE_HOLES` (§7), `check.json` | `check: PASS`, and a judgement line SKIP only where the character lacks what it reads | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
 | `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line, each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
 
@@ -275,6 +275,29 @@ projected from 36,227 to 22,476 (`sample`) and 76,801 to 49,672 (`demo`), recomp
 error pixels from 4,512 to 4,116 and 11,050 to 9,820, and the check seam from 0.207 to
 0.206 and 0.326 to 0.325, with no other check figure changed. The default stays the
 reference's so the examples stay comparable with it. `build` takes both flags.
+
+**`rig --idle-keys ctl|direct`.** spine-rigc's `A15_IDLE_NO_MESH_BONE_KEYS`
+(profile `spine-html`) refuses an idle that keys a bone a mesh is weighted to. `ctl`
+(the default, the reference's answer) gives every such bone a same-origin
+`<bone>_ctl` parent and moves its keys there, which passes A15 on any spine-rigc;
+the stage prints `idle keys ctl: N mesh-driving bone(s) keyed …`. `direct` keys the
+bones themselves and writes `invariants.idleDrivesMeshes: { "why": … }` into
+`rig.json` (spine-rigc 1.3.0 or later), so A15 reports
+`SKIP  A15_IDLE_NO_MESH_BONE_KEYS: declared by the rig (…): idle keys N bone(s) that
+drive M mesh attachment(s) totalling V vertices …`, which the stage prints; with no
+mesh-driving bone keyed it declares nothing, because rigc refuses a declaration
+that switches nothing off. The two write the same slots, skins and keys (`RG18`).
+Measured on the examples with `bun tools/idle_cost.ts` (spine-parts #13): `direct`
+has 41 bones for the demo's 72 and 32 for the sample's 56; every shown mesh moves on
+every idle frame under both (8 of 8 and 6 of 6, so 0 a dirty-skip renderer could
+skip); the pose costs 14.8 against 15.3 us per frame (demo) and 8.3 against 8.8 us
+(sample), the difference all in `updateWorldTransform`; the rendered idle frames
+differ by at most one level in a channel. The default stays `ctl`: the examples'
+`expected/rig.json` and `motion.json` are the reference's output, and the
+declaration is in the rig spec only, so `rigc validate <build> --profile spine-html`
+run on a `direct` build (it has no rig spec to read) refuses A15 once per keyed
+bone. `check` validates the build under `spine` only, where A15 is not in the
+profile, and is green on both.
 
 **Patching a hole no layer holds.** When an `uncovered hole` stays large after the
 plan is right — both See-through runs dropped a piece of the figure, red in

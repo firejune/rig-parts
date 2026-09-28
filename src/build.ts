@@ -53,7 +53,7 @@ import { type LayerSet, readLayers } from './layers.ts';
 import { readParts, writeParts } from './parts.ts';
 import { encodePngBytes, readPng, writePng } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
-import { buildRig, rigJsonText, type RigOutput } from './rig.ts';
+import { buildRig, DEFAULT_IDLE_KEYS, type IdleKeys, rigJsonText, type RigOutput } from './rig.ts';
 
 /** Where a stage's lines go. The commands hand it `console.log`; `build` hands it a prefixing wrapper. */
 export type Log = (line: string) => void;
@@ -162,13 +162,22 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
 interface GateRun {
   label: string;
   status: number;
-  /** rigc's FAIL lines and its assertion summary, as it printed them. */
+  /** rigc's FAIL lines, its assertion summary and the one SKIP this stage's own declaration causes, as it printed them. */
   lines: string[];
 }
 
+/**
+ * `A15_IDLE_NO_MESH_BONE_KEYS`'s SKIP under `invariants.idleDrivesMeshes` —
+ * the line in which rigc states what `--idle-keys direct` declared and what it
+ * costs. It is the one SKIP the rig stage prints: every other SKIP is a check
+ * with nothing to measure, while this one is switched off by a field this
+ * stage wrote, so it is shown rather than folded into the skipped count.
+ */
+const DECLARED_SKIP = /^ {2}SKIP {2}A15_IDLE_NO_MESH_BONE_KEYS: declared by the rig/;
+
 function gateRun(label: string, rigc: RigcRunner, args: string[]): GateRun {
   const r = rigc(args);
-  const lines = r.out.split('\n').filter((l) => /^ {2}FAIL {2}/.test(l) || /assertions: \d+ measured/.test(l) || /^rigc compile error/.test(l));
+  const lines = r.out.split('\n').filter((l) => /^ {2}FAIL {2}/.test(l) || /assertions: \d+ measured/.test(l) || /^rigc compile error/.test(l) || DECLARED_SKIP.test(l));
   return { label, status: r.status, lines };
 }
 
@@ -201,6 +210,8 @@ export interface RigStageInput {
   /** The directory holding parts.json and parts/<name>.png. */
   parts: string;
   out: string;
+  /** Where the idle's keys on mesh-driving bones go; `ctl` when absent. See `IDLE_KEYS` in `src/rig.ts`. */
+  idleKeys?: IdleKeys;
 }
 
 /** Author the rig, gate it through rigc in `scratch`, and write `out` only when both gates are green. */
@@ -212,7 +223,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     const png = join(input.parts, 'parts', `${p.name}.png`);
     if (existsSync(png)) images.set(p.name, readPng(png));
   }
-  const rig = buildRig(cfg, parts, images);
+  const rig = buildRig(cfg, parts, images, undefined, input.idleKeys ?? DEFAULT_IDLE_KEYS);
   const texts: Array<[string, string]> = [
     ['rig.json', rigJsonText(rig.rig)],
     ['motion.json', rigJsonText(rig.motion)],
@@ -232,6 +243,11 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
   const keys = tracks.reduce((n, t) => n + t.keys.length, 0);
   log(
     `  bones ${rig.rig.bones.length} (${rig.controls.length} control) slots ${rig.rig.slots.length} meshes ${rig.meshReport.length} regions ${regions} vertices ${vertices}; idle ${rig.motion.animations.idle.duration} s, ${tracks.length} track(s), ${keys} key(s)`,
+  );
+  log(
+    rig.idleKeys === 'ctl'
+      ? `  idle keys ctl: ${rig.meshKeyed.length} mesh-driving bone(s) keyed by the idle, each keyed through a same-origin <bone>_ctl parent`
+      : `  idle keys direct: ${rig.meshKeyed.length} mesh-driving bone(s) keyed in place, ${rig.rig.invariants === undefined ? 'so no invariants.idleDrivesMeshes is declared (it would switch nothing off)' : 'invariants.idleDrivesMeshes declared'}`,
   );
   const gate = gateThroughRigc(rig, texts, rigc, scratch);
   for (const g of gate) {

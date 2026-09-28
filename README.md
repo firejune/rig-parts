@@ -218,7 +218,7 @@ agent skill.
 | `propose --head-box --full <run> --canvas WxH` | propose `seethrough.head_box` from the full run, held inside the painting |
 | `propose --parts --source --out [--compare <config>]` | propose bones, meshes, regions and an idle; draw the overlay |
 | `propose … --from-config <config>` | draw and LINT the config's current bones |
-| `rig --config --parts --out` | author `rig.json` + `motion.json`, written only after spine-rigc's round trip is green |
+| `rig --config --parts --out [--idle-keys ctl\|direct]` | author `rig.json` + `motion.json`, written only after spine-rigc's round trip is green; `--idle-keys` says whether the idle's keys on mesh-driving bones go through `<bone>_ctl` parents (default) or stay on the bones with `invariants.idleDrivesMeshes` declared |
 | `check --rig --out [--parts]` | build packed, gate under both profiles, render the idle, measure seam, loop and the five judgement lines, and report the recomposite's holes from `parts.json` |
 | `loop --frames <dir> --out <file.gif \| file.png> [--palette]` | encode a rendered idle as a looping GIF, lossless APNG, or indexed APNG (`--palette`) |
 | `build --config --source --full --head --out [--seam] [--project] [--loop]` | assemble, rig and check in one process, stopping at the first refusal |

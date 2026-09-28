@@ -26,6 +26,6 @@
     // Lowering it is a decision to write down here, not a flag to flip.
     "strict": true
   },
-  "include": ["cli.ts", "selftest.ts", "src/**/*.ts", "scripts/**/*.ts", "fixtures/**/*.ts"],
+  "include": ["cli.ts", "selftest.ts", "src/**/*.ts", "scripts/**/*.ts", "fixtures/**/*.ts", "tools/**/*.ts"],
   "exclude": ["node_modules"]
 }

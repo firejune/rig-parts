@@ -38,15 +38,22 @@
  *
  * spine-rigc's `spine-html` profile refuses an `idle` that keys a bone a mesh
  * is weighted to (the player skips idle work on meshes). The reference's
- * answer, ported as is: for every keyed bone that some mesh names among its
- * candidates, add a parent `<bone>_ctl` at the SAME origin, re-parent the bone
- * under it, and move the keys to the control. The pose is identical.
+ * answer, ported as is and still the default (`rig --idle-keys ctl`): for
+ * every keyed bone that some mesh names among its candidates, add a parent
+ * `<bone>_ctl` at the SAME origin, re-parent the bone under it, and move the
+ * keys to the control. The pose is the same up to float rounding: the
+ * extra bone in each chain moves the rendered idle frames by at most one
+ * level in a channel (measured on both public examples, spine-parts #13).
  *
  * ⚠️ **This satisfies the rule's wording only.** The meshes are still
  * deformed every frame — by the control's motion, through the bone they are
  * weighted to — so whatever cost `A15` exists to keep off the player is paid
- * all the same. How a weighted-mesh painting rig should meet that rule is an
- * open question about the rule, not something this function settles.
+ * all the same. Measured (spine-parts #13): on both public examples every
+ * shown mesh has a driving bone whose world transform changes on every idle
+ * frame, with the controls and without them, so a dirty-skip renderer can
+ * skip none either way. spine-rigc 1.3.0 answered the rule's side
+ * (`invariants.idleDrivesMeshes`); `rig --idle-keys direct` keys the bones in
+ * place and declares it (`src/rig.ts`, `IDLE_KEYS`).
  *
  * One correction to the reference: it moved single-bone tracks to the control
  * but left the blink GROUPS naming the original bone, so a mesh-bound eye or
