@@ -28,7 +28,15 @@
  *   changes no pixel outside the blink (issue #26, `RG16`). A `painting:`
  *   patch (`assemble.patches`) is always a region; its slot sits where
  *   parts.json puts it, which is where its `draw` put it.
- * - **The idle** and its control bones (`src/motion.ts`).
+ * - **The idle** and, under `idleKeys: 'ctl'` (the default), its control
+ *   bones (`src/motion.ts`). Under `idleKeys: 'direct'` the keys stay on the
+ *   bones the meshes are weighted to, no `<bone>_ctl` is added, and the rig
+ *   spec declares `invariants.idleDrivesMeshes` with
+ *   {@link IDLE_DRIVES_MESHES_WHY} — spine-rigc 1.3.0's statement that this
+ *   idle deforms meshes on purpose, which `A15_IDLE_NO_MESH_BONE_KEYS` then
+ *   reports as a SKIP with its cost instead of refusing each bone. The
+ *   declaration is written only when the idle keys at least one mesh-driving
+ *   bone: rigc refuses a declaration that switches nothing off.
  *
  * Every part image is padded by {@link PAD} transparent pixels on each side
  * before it is meshed or placed, and the padded image is what `images/`
@@ -102,7 +110,39 @@ export interface RigSpec {
   bones: RigBone[];
   slots: Array<{ name: string; bone: string; attachment: string }>;
   skins: { default: Record<string, Record<string, MeshAttachment | RegionAttachment>> };
+  /** Written only under `idleKeys: 'direct'`, and only when the idle keys a mesh-driving bone. */
+  invariants?: { idleDrivesMeshes: { why: string } };
 }
+
+/**
+ * Where the idle's keys on a mesh-driving bone go (`rig --idle-keys`).
+ *
+ * - `ctl`: onto a same-origin `<bone>_ctl` parent, which passes
+ *   `A15_IDLE_NO_MESH_BONE_KEYS` under every spine-rigc this package has run
+ *   on. It satisfies the rule's wording only — see `src/motion.ts`.
+ * - `direct`: onto the bone itself, with `invariants.idleDrivesMeshes`
+ *   declared, which needs spine-rigc 1.3.0 or later (an older rigc refuses
+ *   the unknown invariant by name).
+ *
+ * Measured on the two public examples (spine-parts #13, `tools/idle_cost.ts`):
+ * `direct` removes 31 of 72 bones (demo) and 24 of 56 (sample); every shown
+ * mesh (8 and 6) has a driving bone whose world transform changes on every
+ * idle frame under both, so the meshes a dirty-skip renderer could skip are 0
+ * in both; and the per-frame pose time differs only in
+ * `updateWorldTransform` (1.2 against 0.7 us on the demo), about 3 % of a
+ * frame dominated by `computeWorldVertices`. The controls buy no renderer
+ * work. `ctl` stays the default because the examples' expected `rig.json` and
+ * `motion.json` are the reference implementation's output, and because the
+ * declaration lives in the rig spec only: `rigc validate <build> --profile
+ * spine-html`, which has no rig spec to read, refuses a `direct` build once
+ * per keyed mesh bone.
+ */
+export const IDLE_KEYS = ['ctl', 'direct'] as const;
+export type IdleKeys = (typeof IDLE_KEYS)[number];
+export const DEFAULT_IDLE_KEYS: IdleKeys = 'ctl';
+
+/** The `why` of the `invariants.idleDrivesMeshes` that `idleKeys: 'direct'` declares. */
+export const IDLE_DRIVES_MESHES_WHY = 'painting rig: the idle is meant to deform the meshes it keys (spine-parts rig --idle-keys direct)';
 
 export interface MeshReport {
   part: string;
@@ -122,8 +162,11 @@ export interface RigOutput {
   meshReport: MeshReport[];
   /** The padded images, by file name (`<part>.png`), in parts.json order. */
   images: Array<[string, Raster]>;
-  /** The bones that got a `<bone>_ctl`, sorted. */
+  /** The bones that got a `<bone>_ctl`, sorted; empty under `idleKeys: 'direct'`. */
   controls: string[];
+  /** The idle-keyed bones some mesh is weighted to, sorted — the bones `ctl` moves the keys off, and `direct` keys in place. */
+  meshKeyed: string[];
+  idleKeys: IdleKeys;
   /** The one-loop passes each mesh took, for the printed report. */
   loopPasses: Record<string, number>;
 }
@@ -150,7 +193,13 @@ function pt(p: Point): string {
  * Build the rig. `images` holds every parts.json part's PNG by part name.
  * Every problem found is thrown at once, as one `PartsError`.
  */
-export function buildRig(cfg: CharacterConfig, parts: PartsFile, images: ReadonlyMap<string, Raster>, maxLoopPasses: number = ONE_LOOP_PASSES): RigOutput {
+export function buildRig(
+  cfg: CharacterConfig,
+  parts: PartsFile,
+  images: ReadonlyMap<string, Raster>,
+  maxLoopPasses: number = ONE_LOOP_PASSES,
+  idleKeys: IdleKeys = DEFAULT_IDLE_KEYS,
+): RigOutput {
   const problems: Problem[] = [];
   const fail = (code: string, object: string, detail: string): void => {
     problems.push({ code, object, detail });
@@ -307,7 +356,8 @@ export function buildRig(cfg: CharacterConfig, parts: PartsFile, images: Readonl
   const motion = idleMotion(cfg, chains);
   const meshBones = new Set<string>();
   for (const segs of meshSegments.values()) for (const s of segs) meshBones.add(s.bone);
-  const controls = controlledBones(motion, meshBones);
+  const meshKeyed = controlledBones(motion, meshBones);
+  const controls = idleKeys === 'ctl' ? meshKeyed : [];
   for (const k of controls) {
     const ctl = `${k}${CONTROL_SUFFIX}`;
     if (B.has(ctl)) {
@@ -440,7 +490,8 @@ export function buildRig(cfg: CharacterConfig, parts: PartsFile, images: Readonl
     slots,
     skins: { default: skin },
   };
-  return { rig, motion, meshReport, images: outImages, controls, loopPasses };
+  if (idleKeys === 'direct' && meshKeyed.length > 0) rig.invariants = { idleDrivesMeshes: { why: IDLE_DRIVES_MESHES_WHY } };
+  return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses };
 }
 
 /**

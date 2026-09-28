@@ -115,7 +115,7 @@ import {
 } from './src/assemble.ts';
 import { chainLine, findRigc, type FrameSet, gateGreen, JUDGEMENT_LINES, PARTS_HOME_SENTENCE, parsePackLines, readCheckInputs, readFrameSet, REPORTED_LINES, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
-import { sineTrack } from './src/motion.ts';
+import { CONTROL_SUFFIX, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
 import { PartsError, type Problem } from './src/errors.ts';
@@ -153,7 +153,7 @@ import {
 import { checkProposal, compare, compareLines, lint, lintLine, type Proposal, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_EXPECT, rigConfig, rigImages, rigParts, writeRigFixture } from './fixtures/rig.ts';
-import { buildRig, type MeshAttachment, type RegionAttachment, rigJsonText } from './src/rig.ts';
+import { buildRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText } from './src/rig.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
 import { readTag, type TagReading } from './src/tags.ts';
@@ -1667,8 +1667,105 @@ function runRigSuite(): number {
     'a blink running past the last key writes keys out of order; a control whose name is taken would silently replace a declared bone',
   );
 
+  runIdleKeysCases(say);
   runBlinkStillCases(say);
   return bad();
+}
+
+/**
+ * `rig --idle-keys ctl|direct` (spine-parts #13). `ctl` is the default and
+ * writes what the stage always wrote; `direct` keys the mesh-driving bones in
+ * place and declares `invariants.idleDrivesMeshes`, which rigc 1.3.0's A15
+ * reads. The static counts are derived from the ctl build rather than typed:
+ * the fixture's chain `hem` (two links) is keyed and weighted to by `cloth`,
+ * so exactly those two bones get a control.
+ */
+function runIdleKeysCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const a = buildRig(rigCfg(), rigParts(), rigImages());
+  const b = buildRig(rigCfg(), rigParts(), rigImages(), undefined, 'direct');
+  const strip = (n: string): string => (n.endsWith(CONTROL_SUFFIX) ? n.slice(0, -CONTROL_SUFFIX.length) : n);
+  const aNames = a.rig.bones.map((x) => x.name);
+  const bNames = b.rig.bones.map((x) => x.name);
+  const keysOf = (m: typeof a.motion, rename: (n: string) => string): string =>
+    JSON.stringify({ groups: Object.fromEntries(Object.entries(m.groups).map(([g, ms]) => [g, ms.map(rename)])), tracks: m.animations.idle.tracks.map((t) => ({ ...t, ...(t.bone === undefined ? {} : { bone: rename(t.bone) }) })) });
+  const sameKeys = keysOf(a.motion, strip) === keysOf(b.motion, (n) => n);
+  const sameSkins = JSON.stringify(a.rig.skins) === JSON.stringify(b.rig.skins) && JSON.stringify(a.rig.slots) === JSON.stringify(b.rig.slots);
+  const aKeys = a.motion.animations.idle.tracks.reduce((n, t) => n + t.keys.length, 0);
+  const bKeys = b.motion.animations.idle.tracks.reduce((n, t) => n + t.keys.length, 0);
+  const lashDirect = buildRig(lashCfg(), lashParts(), lashImages(), undefined, 'direct');
+  const lashCtl = buildRig(lashCfg(), lashParts(), lashImages());
+  say(
+    'RG18_IDLE_KEYS_DIRECT_DROPS_EXACTLY_THE_CONTROLS_AND_MOVES_NO_KEY_OR_VERTEX',
+    a.controls.join(',') === a.meshKeyed.join(',') &&
+      b.controls.length === 0 &&
+      b.meshKeyed.join(',') === a.meshKeyed.join(',') &&
+      aNames.length - bNames.length === a.controls.length &&
+      aNames.filter((n) => !n.endsWith(CONTROL_SUFFIX)).join(',') === bNames.join(',') &&
+      sameSkins &&
+      sameKeys &&
+      aKeys === bKeys &&
+      a.rig.invariants === undefined &&
+      b.rig.invariants?.idleDrivesMeshes.why === IDLE_DRIVES_MESHES_WHY &&
+      lashDirect.meshKeyed.length === 0 &&
+      lashDirect.rig.invariants === undefined &&
+      rigJsonText(lashDirect.rig) === rigJsonText(lashCtl.rig),
+    `ctl: ${aNames.length} bones (${a.controls.length} control: ${a.controls.join(', ')}), ${a.motion.animations.idle.tracks.length} track(s), ${aKeys} key(s); direct: ${bNames.length} bones, ${b.motion.animations.idle.tracks.length} track(s), ${bKeys} key(s), mesh-keyed ${b.meshKeyed.join(', ')}; slots and skins ${sameSkins ? 'identical' : 'DIFFERENT'}; keys ${sameKeys ? 'identical once _ctl is stripped' : 'DIFFERENT'}; invariants ctl ${JSON.stringify(a.rig.invariants ?? null)}, direct ${JSON.stringify(b.rig.invariants ?? null)}; a rig whose idle keys no mesh bone (the lash fixture) under direct: ${lashDirect.rig.invariants === undefined ? 'no declaration' : 'DECLARED'}, rig.json ${rigJsonText(lashDirect.rig) === rigJsonText(lashCtl.rig) ? 'identical to ctl' : 'DIFFERENT from ctl'}`,
+    "the static-count half of #13: a same-origin control changes the bone count by one per keyed mesh bone and nothing else — no weight offset, no key — which is why the pose is the same; and a declaration is written only when some mesh-driving bone is keyed, because rigc refuses one that switches nothing off",
+  );
+
+  const dir = temp('idle-keys');
+  try {
+    const fx = writeRigFixture(join(dir, 'fx'));
+    const run = (keys: string | null, out: string): { status: number; out: string } =>
+      runCli(['rig', '--config', fx.config, '--parts', fx.parts, '--out', join(dir, out), ...(keys === null ? [] : ['--idle-keys', keys])]);
+    const none = run(null, 'none');
+    const ctl = run('ctl', 'ctl');
+    const direct = run('direct', 'direct');
+    const bogus = run('bones', 'bogus');
+    const files = filesUnder(join(dir, 'none'));
+    const ctlSame = files.length > 0 && files.join() === filesUnder(join(dir, 'ctl')).join() && files.every((f) => readFileSync(join(dir, 'none', f)).equals(readFileSync(join(dir, 'ctl', f))));
+    const green = (r: { out: string }): boolean => /rigc build --profile spine-html --pack: exit 0/.test(r.out) && /rigc validate --profile spine: exit 0/.test(r.out);
+    const skipLine = direct.out.split('\n').find((l) => l.includes('SKIP  A15_IDLE_NO_MESH_BONE_KEYS')) ?? '';
+    const directRig = existsSync(join(dir, 'direct', 'rig.json')) ? (JSON.parse(readFileSync(join(dir, 'direct', 'rig.json'), 'utf8')) as { bones: Array<{ name: string }>; invariants?: unknown }) : null;
+    // The planted half: the direct rig with its declaration taken out, built
+    // by the installed rigc as the stage builds it. A15 must go red, once per
+    // keyed mesh bone — the declaration is what keeps direct green, not luck.
+    let undeclared = 'not run (no direct rig.json)';
+    let undeclaredRed = false;
+    if (directRig !== null) {
+      const plant = join(dir, 'undeclared');
+      mkdirSync(plant, { recursive: true });
+      const raw = JSON.parse(readFileSync(join(dir, 'direct', 'rig.json'), 'utf8')) as Record<string, unknown>;
+      delete raw.invariants;
+      writeFileSync(join(plant, 'rig.json'), JSON.stringify({ ...raw, images: join(dir, 'direct', 'images') }));
+      const r = spawnSync(findRigc(ROOT, ''), ['build', '--rig', join(plant, 'rig.json'), '--motion', join(dir, 'direct', 'motion.json'), '--out', join(plant, 'build'), '--profile', 'spine-html', '--pack'], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      const fails = `${r.stdout}${r.stderr}`.split('\n').filter((l) => /^ {2}FAIL {2}A15_IDLE_NO_MESH_BONE_KEYS: idle keys bone "/.test(l));
+      const distinct = [...new Set(fails)];
+      undeclaredRed = r.status !== 0 && distinct.length === a.meshKeyed.length;
+      undeclared = `exit ${r.status}, ${distinct.length} distinct A15 FAIL line(s) for ${a.meshKeyed.length} keyed mesh bone(s)`;
+    }
+    say(
+      'RG19_BOTH_IDLE_KEYS_VALUES_BUILD_GREEN_AND_AN_UNKNOWN_ONE_IS_REFUSED_BY_NAME',
+      none.status === 0 &&
+        ctl.status === 0 &&
+        direct.status === 0 &&
+        green(ctl) &&
+        green(direct) &&
+        ctlSame &&
+        skipLine.includes(`declared by the rig ("${IDLE_DRIVES_MESHES_WHY}")`) &&
+        directRig !== null &&
+        directRig.invariants !== undefined &&
+        !directRig.bones.some((x) => x.name.endsWith(CONTROL_SUFFIX)) &&
+        bogus.status === 2 &&
+        bogus.out.includes('FAIL  USAGE: --idle-keys bones; one of ctl, direct is required') &&
+        !existsSync(join(dir, 'bogus')) &&
+        undeclaredRed,
+      `no flag exit ${none.status}; --idle-keys ctl exit ${ctl.status}, ${ctlSame ? `${files.length} file(s) byte-identical to no flag` : 'DIFFERENT from no flag'}; --idle-keys direct exit ${direct.status}, gates ${green(direct) ? 'green' : 'NOT green'}, rigc says "${skipLine.trim().slice(0, 120)}…"; --idle-keys bones -> exit ${bogus.status}, ${(bogus.out.split('\n').find((l) => l.includes('FAIL')) ?? '').trim()}; --out written: ${existsSync(join(dir, 'bogus'))}; the direct rig with invariants.idleDrivesMeshes removed -> ${undeclared}`,
+      "the switch's two values both pass spine-rigc's round trip on the synthetic fixture, the default is the old output byte for byte (so the examples' expected files do not move), and a value the stage does not know is a usage error naming the two it does",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function lashCfg(edit: (c: Record<string, unknown>) => void = () => {}): CharacterConfig {

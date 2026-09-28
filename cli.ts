@@ -24,6 +24,7 @@ import { type CharacterConfig, loadConfig, loadEarlyConfig } from './src/config.
 import { PartsError, problemLine } from './src/errors.ts';
 import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs } from './src/inputs.ts';
+import { DEFAULT_IDLE_KEYS, IDLE_KEYS, type IdleKeys } from './src/rig.ts';
 import { figuresPhrase, implausibleRules, layerFigures, type LayerSet, pct, readLayers, ruleSummary, times } from './src/layers.ts';
 import { checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { readPng, writePng } from './src/raster/png.ts';
@@ -93,7 +94,7 @@ usage:
       layers for a painting of WxH px, held inside the painting; a shift is
       printed when one was needed.
 
-  spine-parts rig --config <config.json> --parts <dir> --out <dir>
+  spine-parts rig --config <config.json> --parts <dir> --out <dir> [--idle-keys ctl|direct]
       Author the rig: unrotated bones at the config's landmarks (a chain makes
       <chain>0..n), a square lattice mesh over every part in config.meshes
       weighted by distance to its candidate bone segments, a region for every
@@ -105,6 +106,13 @@ usage:
       profile spine) in a scratch directory first, and --out receives
       images/*.png, rig.json, motion.json and mesh_report.json only when both
       are green. Prints one line per mesh and the rigc gate lines.
+      --idle-keys says where the idle's keys on a bone a mesh is weighted to go:
+      ctl (the default) keys a same-origin <bone>_ctl parent instead, which
+      passes A15_IDLE_NO_MESH_BONE_KEYS on any spine-rigc; direct keys the bone
+      itself and declares invariants.idleDrivesMeshes in rig.json, which needs
+      spine-rigc 1.3.0 or later and makes A15 a SKIP that prints its cost (the
+      stage prints that SKIP line). The pose is the same to one level of float
+      rounding, and so is the per-frame mesh work (AUTHORING §5).
   spine-parts check --rig <dir> --out <dir> [--parts <dir>]
       Build, gate, render and measure a rig through spine-rigc's CLI (the rigc at
       node_modules/.bin/rigc, or on PATH). --rig holds rig.json and motion.json
@@ -375,22 +383,28 @@ function cmdRig(args: string[]): number {
   let config: string | null = null;
   let partsDir: string | null = null;
   let out: string | null = null;
+  let idleKeys: string | null = null;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     const value = args[i + 1];
-    if (!['--config', '--parts', '--out'].includes(flag)) return usage(`rig does not take "${flag}"`);
+    if (!['--config', '--parts', '--out', '--idle-keys'].includes(flag)) return usage(`rig does not take "${flag}"`);
     if (value === undefined) return usage(`${flag} needs a value`);
     i++;
     if (flag === '--config') config = value;
     else if (flag === '--parts') partsDir = value;
-    else out = value;
+    else if (flag === '--idle-keys') {
+      if (idleKeys !== null) return usage('--idle-keys is given twice');
+      idleKeys = value;
+    } else out = value;
   }
   if (config === null) return usage('rig needs --config <config.json>');
   if (partsDir === null) return usage('rig needs --parts <dir> (the directory holding parts.json and parts/)');
   if (out === null) return usage('rig needs --out <dir>');
+  const keys = idleKeys ?? DEFAULT_IDLE_KEYS;
+  if (!(IDLE_KEYS as readonly string[]).includes(keys)) return usage(`--idle-keys ${keys}; one of ${IDLE_KEYS.join(', ')} is required`);
   const scratch = mkdtempSync(join(tmpdir(), 'spine-parts-rig-'));
   try {
-    rigStage({ config, parts: partsDir, out }, rigGateRunner(), scratch, console.log);
+    rigStage({ config, parts: partsDir, out, idleKeys: keys as IdleKeys }, rigGateRunner(), scratch, console.log);
     return EXIT_OK;
   } catch (err) {
     return printRefusal(err);
