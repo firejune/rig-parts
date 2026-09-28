@@ -226,7 +226,11 @@ full loader before its assemble stage writes anything.
 4. `spine-parts propose --head-box --full inputs/layers/full --canvas <W>x<H>` →
    `seethrough.head_box`. Run `spine-parts inputs` again: it now also writes
    `st_input_head.png`, the painting cropped to that box at its exact size.
-5. **See-through, head run** (external), on that crop.
+5. **See-through, head run** (external), on that crop. See-through's own second,
+   head stage does not replace it: that stage's layers are pasted back at the full
+   run's scale on every route that was read (README *Getting See-through layers*),
+   so the full run's eyes stay at its density — 22×13 px for the demo's right eye
+   white at `resolution` 1024, against 60×38 px in the head run.
 6. `spine-parts assemble --propose-plan --source … --full … --head … --config config.json`
    → paste `plan` and `extend_below_crop` into `config.assemble`. Config: the
    `layers` row, with `head_box`.
