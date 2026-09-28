@@ -100,7 +100,9 @@ usage:
       weighted by distance to its candidate bone segments, a region for every
       part in config.regions (a motion.blink.still part as two: the rows above
       its row on a second slot <part>_still, which the blink does not move),
-      and one idle of sines and a blink. --parts is the
+      and one idle of sines and a blink whose closed hold is at least one
+      12 fps frame, so the idle frames and the loop show the eyes shut
+      (RIG_BLINK_HOLD_SPANS_A_FRAME otherwise). --parts is the
       directory holding parts.json and parts/<name>.png. The result is built
       through spine-rigc (profile spine-html, packed, then validated under
       profile spine) in a scratch directory first, and --out receives

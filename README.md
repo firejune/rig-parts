@@ -43,9 +43,12 @@ is taken from the full run, because the twin tails leave the head crop sideways
 blouse (recomposite error pixels 11,050 → 9,540); the default stays
 <code>near-white</code>, the reference implementation's rule, so the examples stay
 comparable with it. The loop is <code>spine-parts loop --palette</code>'s indexed APNG, 48 frames at
-12 fps, 1,706,468 bytes, one 256-entry palette at a measured error of max 57, mean 1.601
+12 fps, 1,706,785 bytes, one 256-entry palette at a measured error of max 57, mean 1.601
 per channel over every frame (the lossless APNG beside it, the exactness record, is
-13,645,611 bytes; the GIF, at the same error, 1,812,041); the painting is shown at half size, resampled and written
+13,645,519 bytes; the GIF, at the same error, 1,812,625). Frame 29 (2.417 s) is the
+closed eye: the blink holds for 0.084 s, one 12 fps frame rounded up, where the
+reference implementation held 0.04 s and no frame of its loop showed the eyes shut
+(issue #32); the painting is shown at half size, resampled and written
 by this package's PNG codec (nothing here encodes JPEG). <code>spine-parts sheet</code>
 made the contact sheet.
 </em></p>

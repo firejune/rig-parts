@@ -24,10 +24,23 @@
  * ## Blink
  *
  * The `eyes` group's `scaley` goes 1 -> `squash` -> 1 and the `brows`
- * group's `translatey` 0 -> `-brow_drop` -> 0, with the reference's fixed
- * timing: eyes shut over {@link BLINK.shut} s, hold {@link BLINK.hold} s, open
- * over {@link BLINK.open} s; brows 0.08 / 0.04 / 0.20 s. The two named easings
- * are the reference's. A blink whose window does not fit strictly inside the
+ * group's `translatey` 0 -> `-brow_drop` -> 0, with a fixed timing: eyes shut
+ * over {@link BLINK.shut} s, hold {@link BLINK.hold} s, open over
+ * {@link BLINK.open} s; brows 0.08 / 0.084 / 0.20 s. The shut and open times
+ * and the two named easings are the reference's; the holds are not (issue
+ * #32). The reference held 0.04 s, under one frame of the idle the loop is
+ * encoded from ({@link IDLE_FPS} fps, a frame every 0.083333 s), so whether
+ * any frame showed the closed eye depended on `blink.t`: at the examples'
+ * 2.3 s the eyes were shut from 2.37 s to 2.41 s, between frames 28
+ * (2.333 s, scaley 0.8356) and 29 (2.417 s, 0.2435), and over every key time
+ * the 6-decimal grid can write, 129,999 of 250,000 phases against the frame
+ * grid showed none. A closed interval at least one frame period long holds a
+ * frame wherever it starts, so the hold is 1/12 s rounded up to the third
+ * place, 0.084 s; {@link blinkHoldMisses} counts the phases and the rig stage
+ * refuses a hold with any miss (`RIG_BLINK_HOLD_SPANS_A_FRAME`). The brows'
+ * hold grew by the same 0.044 s, so they still reach their drop 0.01 s after
+ * the lids shut and leave it 0.01 s after the lids open, as the reference
+ * ordered them. A blink whose window does not fit strictly inside the
  * idle would write keys out of order, and is refused (`RIG_BLINK_INSIDE_IDLE`).
  * The squash pivots at each eye bone's origin, so a part's rows above it move
  * down by (1 - squash) times their height above it; the rows a
@@ -65,13 +78,20 @@ import { pyRound } from './round.ts';
 
 export const KEYS_PER_PERIOD = 8;
 
-/** The blink's fixed timing, in seconds after `blink.t`. */
+/**
+ * The rate the idle is rendered at — `check`'s `idle_frames/`, its contact
+ * sheet, and the loop `build --loop` encodes from them. The reference renders
+ * at it too.
+ */
+export const IDLE_FPS = 12;
+
+/** The blink's fixed timing, in seconds after `blink.t`. The holds are 1/{@link IDLE_FPS} s rounded up (see the Blink section above). */
 export const BLINK = {
   shut: 0.07,
-  hold: 0.04,
+  hold: 0.084,
   open: 0.16,
   browShut: 0.08,
-  browHold: 0.04,
+  browHold: 0.084,
   browOpen: 0.2,
 } as const;
 
@@ -185,6 +205,64 @@ export function idleMotion(cfg: CharacterConfig, chains: ReadonlyMap<string, str
     animations: { idle: { duration: T, loop: true, note: IDLE_NOTE, tracks } },
   };
 }
+
+/**
+ * The idle frames `0 .. count - 1` at `fps` whose time lies in the closed
+ * window `[from, to]` — the frames that show a held key. The same reading
+ * `check` writes as `BLINK_NO_HOLE.idle_frames_closed`.
+ */
+export function framesInside(from: number, to: number, fps: number, count: number): number[] {
+  const out: number[] = [];
+  for (let k = 0; k < count; k++) if (k / fps >= from - 1e-9 && k / fps <= to + 1e-9) out.push(k);
+  return out;
+}
+
+export interface HoldMisses {
+  /** The phases tried: every microsecond key time over one period of the frame grid against the 6-decimal grid. */
+  phases: number;
+  /** Of those, the ones whose closed window holds no frame. */
+  misses: number;
+  /** The first missing `blink.t`, in seconds, or null. */
+  first: number | null;
+}
+
+/**
+ * Over every `blink.t` the idle can write, how many put no frame at `fps`
+ * inside the eyes' closed window `[t + shut, t + shut + hold]`, both ends
+ * rounded to 6 decimals as {@link idleMotion} writes them.
+ *
+ * Key times are 6-decimal numbers, and a frame falls at `k * 10^6 / fps`
+ * microseconds, so the pattern of frames against the microsecond grid
+ * repeats every `10^6 / gcd(fps, 10^6)` microseconds (250,000 at 12 fps).
+ * Trying every `t` over one such period is therefore every case, not a
+ * sample. A 1/120 s step was the brief's first choice and was rejected: it
+ * tries 30 of those 250,000 phases.
+ */
+export function blinkHoldMisses(shut: number, hold: number, fps: number): Readonly<HoldMisses> {
+  const key = `${shut} ${hold} ${fps}`;
+  const known = HOLD_MISSES.get(key);
+  if (known !== undefined) return known;
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  const period = 1e6 / gcd(fps, 1e6);
+  let misses = 0;
+  let first: number | null = null;
+  for (let j = 0; j < period; j++) {
+    const t = j / 1e6;
+    const from = pyRound(t + shut, 6);
+    const to = pyRound(t + shut + hold, 6);
+    const k = Math.ceil((from - 1e-9) * fps);
+    if (!(k / fps >= from - 1e-9 && k / fps <= to + 1e-9)) {
+      misses++;
+      if (first === null) first = pyRound(t, 6);
+    }
+  }
+  const out = { phases: period, misses, first };
+  HOLD_MISSES.set(key, out);
+  return out;
+}
+
+/** {@link blinkHoldMisses} is a pure function of its three numbers and costs a quarter of a million roundings; the rig stage asks it the same question on every build. */
+const HOLD_MISSES = new Map<string, Readonly<HoldMisses>>();
 
 /** The last time any blink key sits at before the closing key, in seconds after `blink.t`. */
 export const BLINK_SPAN = Math.max(BLINK.shut + BLINK.hold + BLINK.open, BLINK.browShut + BLINK.browHold + BLINK.browOpen);

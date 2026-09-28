@@ -115,7 +115,7 @@ import {
 } from './src/assemble.ts';
 import { chainLine, findRigc, type FrameSet, gateGreen, JUDGEMENT_LINES, PARTS_HOME_SENTENCE, parsePackLines, readCheckInputs, readFrameSet, REPORTED_LINES, SPINEBOY_YARDSTICK } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
-import { CONTROL_SUFFIX, sineTrack } from './src/motion.ts';
+import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
 import { PartsError, type Problem } from './src/errors.ts';
@@ -153,7 +153,7 @@ import {
 import { checkProposal, compare, compareLines, lint, lintLine, type Proposal, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_EXPECT, rigConfig, rigImages, rigParts, writeRigFixture } from './fixtures/rig.ts';
-import { buildRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText } from './src/rig.ts';
+import { blinkHoldProblems, buildRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText } from './src/rig.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
 import { readTag, type TagReading } from './src/tags.ts';
@@ -1493,11 +1493,11 @@ function runRigSuite(): number {
       link1.keys[link1.keys.length - 1].curve === undefined &&
       closes &&
       eyes !== undefined &&
-      eyes.keys.map((k) => `${k.t}:${k.v[0]}${k.ease === undefined ? '' : `:${k.ease}`}`).join(' ') === '0:1 1:1:shut 1.07:0.12 1.11:0.12:open 1.27:1 4:1' &&
+      eyes.keys.map((k) => `${k.t}:${k.v[0]}${k.ease === undefined ? '' : `:${k.ease}`}`).join(' ') === '0:1 1:1:shut 1.07:0.12 1.154:0.12:open 1.314:1 4:1' &&
       JSON.stringify(r.motion.groups) === '{"eyes":["eye"],"brows":["eye"]}' &&
       r.controls.join(',') === 'hem0,hem1',
     `hem0_ctl: ${link0?.keys.length ?? 0} keys, first ${link0?.keys[0].v[0]}, last ${link0?.keys[link0.keys.length - 1].v[0]}; hem1_ctl first ${link1?.keys[0].v[0]} (by hand ${pyRound(v0, 4)}), handle ${link1?.keys[0].curve?.join(',')} (by hand ${pyRound(0.5 / 3, 6)},${pyRound(h0, 4)}); eyes ${eyes?.keys.map((k) => `${k.t}:${k.v[0]}`).join(' ')}; controls ${r.controls.join(',')}`,
-    'a period of 4 s in a 4 s idle is 8 spans and 9 keys; the lag puts link 1 at phase 0.1; the handle is the Hermite tangent a third of a span out; the blink shuts in 0.07 s, holds 0.04 s and opens in 0.16 s',
+    'a period of 4 s in a 4 s idle is 8 spans and 9 keys; the lag puts link 1 at phase 0.1; the handle is the Hermite tangent a third of a span out; the blink shuts in 0.07 s, holds 0.084 s (one 12 fps frame, 0.083333 s, rounded up to the third place — issue #32) and opens in 0.16 s',
   );
 
   const a = [rigJsonText(r.rig), rigJsonText(r.motion), rigJsonText(r.meshReport)];
@@ -1668,6 +1668,35 @@ function runRigSuite(): number {
   );
 
   runIdleKeysCases(say);
+
+  // Issue #32: the eyes' hold against the frame grid the idle is rendered on.
+  const treeHold = blinkHoldMisses(BLINK.shut, BLINK.hold, IDLE_FPS);
+  const treeProblems = blinkHoldProblems(BLINK.shut, BLINK.hold, IDLE_FPS);
+  const rgEyes = eyes?.keys ?? [];
+  const rgClosed = rgEyes.length === 6 ? framesInside(rgEyes[2].t, rgEyes[3].t, IDLE_FPS, Math.round(rgEyes[5].t * IDLE_FPS) + 1) : [];
+  say(
+    'MO20_THE_TREES_BLINK_HOLD_PUTS_A_FRAME_IN_THE_CLOSED_WINDOW_FOR_EVERY_T',
+    treeHold.phases === 250000 && treeHold.misses === 0 && treeProblems.length === 0 && rgClosed.length > 0,
+    `BLINK.hold ${BLINK.hold} s at IDLE_FPS ${IDLE_FPS}: ${treeHold.misses} of ${treeHold.phases} phase(s) miss, ${treeProblems.length} refusal(s); the rig fixture's emitted closed window ${rgEyes[2]?.t}..${rgEyes[3]?.t} s holds frame(s) ${JSON.stringify(rgClosed)}`,
+    'the positive control: at 12 fps a frame falls every 10^6/12 us, a pattern that repeats every 250,000 us against the 6-decimal key grid, so trying every microsecond of one such period is every blink.t; a closed interval at least 1/12 s long holds a frame wherever it starts, and 0.084 >= 0.083334',
+  );
+  const refHold = blinkHoldProblems(0.07, 0.04, 12);
+  const refMiss = refHold[0]?.detail ?? '';
+  say(
+    'MO21_THE_REFERENCES_HOLD_UNDER_ONE_FRAME_IS_REFUSED_NAMING_THE_HOLD_THE_RATE_AND_THE_MISSES',
+    refHold.length === 1 && refHold[0].code === 'RIG_BLINK_HOLD_SPANS_A_FRAME' && refHold[0].object === 'BLINK.hold (src/motion.ts)' && refMiss.startsWith('is 0.04 s; the idle is rendered at IDLE_FPS = 12') && refMiss.includes('for 129999 of the 250000 phases') && refMiss.includes('1/12 s, is required'),
+    `hold 0.04 s at 12 fps (forged, the reference's pair) -> ${refHold.map((q) => `${q.code} ${q.object}: ${q.detail}`).join(' | ') || 'no refusal'}`,
+    'by hand: a window of 40,000 us starting at an integer microsecond a misses exactly when a frame f lies just below a and the next one after a + 40,000, i.e. a in (f, f + 43,333.33); each of the three frames in a 250,000 us period (fractional parts .0, .333, .667) leaves 43,333 integers there, 129,999 in all',
+  );
+  const under = blinkHoldProblems(0.07, 0.083332, 12);
+  const exact = blinkHoldProblems(0.07, 0.083333, 12);
+  say(
+    'MO22_A_HOLD_ONE_MICROSECOND_UNDER_THE_GRIDS_FLOOR_IS_REFUSED_AND_THE_FLOOR_IS_NOT',
+    under.length === 1 && under[0].code === 'RIG_BLINK_HOLD_SPANS_A_FRAME' && under[0].detail.includes('for 3 of the 250000 phases') && exact.length === 0,
+    `hold 0.083332 s -> ${under.map((q) => `${q.code}: ${q.detail.split(';')[1]?.trim() ?? ''}`).join(' | ') || 'no refusal'}; hold 0.083333 s -> ${exact.length} refusal(s)`,
+    'the two-sided edge, by the same count: a window of 83,332 us misses for a in (f, f + 1.33), one integer per frame, 3 per period; a window of 83,333 us misses for a in (f, f + 0.33), which holds no integer after any of the three fractional parts — so the refusal is the count, not a comparison with 1/12 typed in',
+  );
+
   runBlinkStillCases(say);
   return bad();
 }
@@ -3565,7 +3594,10 @@ function jsonDiffs(expected: unknown, built: unknown, tolerance: (path: string) 
  *   expected ones are this port's default build's, inserted beside the
  *   reference's fields, and are held exactly like the rest.
  * - motion.json — key times `t` to 6 decimals: the reference's blink times
- *   carry float64 sums (2.3699999999999997) that this port writes rounded (2.37).
+ *   carried float64 sums (2.3699999999999997) that this port writes rounded
+ *   (2.37). Since issue #32 lengthened the blink's hold the expected files are
+ *   this port's own `build` output, which writes no such sum; the band stays
+ *   because it is still the precision the rig stage writes times to.
  * - check.json — `seam_mean` ±0.005, every other field exact, the judgement
  *   lines included. Until issue #11 the file was the reference's, and the seam
  *   was measured on the parts this chain assembled, which are the reference's
@@ -3652,7 +3684,7 @@ function runChainSuite(): number | null {
         `CH03_RIG_MOTION_AND_MESH_REPORT_ARE_THE_EXPECTED_AS_PARSED_VALUES[${key}]`,
         rigFiles.every(([, d]) => d.over.length === 0),
         rigFiles.map(([f, d]) => `${f}: ${summarise(d)}`).join(' | '),
-        'the rig stage is exact against the reference given the same parts; motion key times are compared to 6 decimals, which is where the reference writes float64 sums',
+        "the rig stage is exact against the reference given the same parts, but for the blink's two hold-end and two open-end key times per example, which issue #32 moved on purpose (expected/motion.json is regenerated by build since); motion key times are compared to 6 decimals, the precision the rig stage writes",
       );
 
       const check = jsonDiffs(readJsonAt(join(exp, 'check.json')), readJsonAt(join(out, 'check', 'check.json')), chainTolerance('check.json'));
@@ -3670,6 +3702,16 @@ function runChainSuite(): number | null {
         JUDGEMENT_LINES.every((n) => lineStatus(builtCheck, n) === 'PASS') && JUDGEMENT_LINES.every((n) => r.out.includes(`[check]   ${n}: PASS — `)),
         statuses.join(', '),
         "issue #11's positive control: a published example has a torso, feet, eyes, chains and a skirt, so no judgement line may SKIP on it, and each bar was set so both examples clear it (AUTHORING §7 quotes the margin)",
+      );
+
+      const blinkFig = builtCheck.BLINK_NO_HOLE as { closed?: string[]; idle_frames_closed?: number[]; hole_px?: number } | undefined;
+      const shownClosed = blinkFig?.idle_frames_closed ?? [];
+      const windows = (blinkFig?.closed ?? []).map((c) => /from ([\d.]+)s to ([\d.]+)s$/.exec(c)).map((m) => (m === null ? null : [Number(m[1]), Number(m[2])] as const));
+      say(
+        `CK20_THE_IDLE_FRAMES_SHOW_THE_CLOSED_EYE_AND_EACH_ONE_LIES_IN_THE_HOLD[${key}]`,
+        shownClosed.length > 0 && windows.length > 0 && windows.every((w) => w !== null && shownClosed.every((k) => k / IDLE_FPS >= w[0] - 1e-9 && k / IDLE_FPS <= w[1] + 1e-9)) && blinkFig?.hole_px === 0,
+        `idle_frames_closed ${JSON.stringify(shownClosed)} at ${IDLE_FPS} fps (${shownClosed.map((k) => (k / IDLE_FPS).toFixed(6)).join(', ') || 'none'} s) against ${(blinkFig?.closed ?? []).join('; ') || 'no closed window'}; hole ${blinkFig?.hole_px} px`,
+        "issue #32: the loop is encoded from these frames, so a blink no frame lands in is a blink the idle frames, the contact sheet and the README's animation never show; with BLINK.hold at one frame or more (MO20) every example's blink.t has one",
       );
 
       const gates = ['gate_spine-html.txt', 'gate_spine.txt'].map((f) => [f, firstLineDiff(readFileSync(join(exp, f), 'utf8'), readFileSync(join(out, 'check', f), 'utf8'))] as const);
