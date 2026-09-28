@@ -64,6 +64,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { cropToSpineY } from './coords.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
+import { framesInside, IDLE_FPS } from './motion.ts';
 import {
   bandExcursion,
   blinkFigures,
@@ -107,8 +108,8 @@ export const SEAM_PX_LEVEL_HIGH = 80;
 /** Loop: frame 0 vs the frame at t = duration, largest |d|, exactly this. */
 export const LOOP_MAX_BAR = 0;
 
-/** The idle render the reference makes, and the one issue #1's loop is encoded from. */
-export const IDLE_FPS = 12;
+/** The idle render the reference makes, and the one issue #1's loop is encoded from. Defined beside the blink it has to see (`src/motion.ts`). */
+export { IDLE_FPS };
 export const IDLE_MAX_PX = 640;
 /** The throwaway setup-pose animation: one key at 0 and one at this time, rendered at this rate. */
 const STILL_DURATION = 0.1;
@@ -1085,8 +1086,7 @@ function blinkLine(
   const b = blinkFigures(open.frames[0].image, closed.frames[0].image, open.background, box, BLINK_PATCH_LEVEL);
   const from = Math.max(...shut.map((s) => s.window[0]));
   const to = Math.min(...shut.map((s) => s.window[1]));
-  const frames: number[] = [];
-  for (let k = 0; k < idle.sampled; k++) if (k / idle.fps >= from - 1e-9 && k / idle.fps <= to + 1e-9) frames.push(k);
+  const frames = framesInside(from, to, idle.fps, idle.sampled);
   if (b.holePx > BLINK_HOLE_BAR) {
     problems.push({
       code: 'CHECK_BLINK_NO_HOLE',

@@ -55,7 +55,7 @@ import { type BoneEntry, type CharacterConfig, type Point, ROOT_BONE } from './c
 import { cropToSpineY } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { artCoverage, ART_ALPHA, latticeMesh, ONE_LOOP_PASSES } from './mesh.ts';
-import { BLINK_SPAN, CONTROL_SUFFIX, controlledBones, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
+import { BLINK, BLINK_SPAN, blinkHoldMisses, CONTROL_SUFFIX, controlledBones, IDLE_FPS, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
 import { PAINTING_RUN, type PartsFile, readFrom } from './parts.ts';
 import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
@@ -169,6 +169,29 @@ export interface RigOutput {
   idleKeys: IdleKeys;
   /** The one-loop passes each mesh took, for the printed report. */
   loopPasses: Record<string, number>;
+}
+
+/**
+ * `RIG_BLINK_HOLD_SPANS_A_FRAME` (issue #32): the eyes' hold must put an
+ * idle frame inside the closed window for every `blink.t`, or the idle
+ * frames, the contact sheet and the loop show a blink that never closes. The
+ * three numbers are the tree's own constants (`BLINK.shut`, `BLINK.hold`,
+ * `IDLE_FPS`), which the rig stage passes on every build that has a blink;
+ * they are parameters so the refusal can be planted without editing them.
+ */
+export function blinkHoldProblems(shut: number, hold: number, fps: number): Problem[] {
+  const m = blinkHoldMisses(shut, hold, fps);
+  if (m.misses === 0) return [];
+  return [
+    {
+      code: 'RIG_BLINK_HOLD_SPANS_A_FRAME',
+      object: 'BLINK.hold (src/motion.ts)',
+      detail:
+        `is ${hold} s; the idle is rendered at IDLE_FPS = ${fps}, a frame every ${pyRound(1 / fps, 6)} s, so the closed window [t + ${shut}, t + ${pyRound(shut + hold, 6)}] s holds no frame ` +
+        `for ${m.misses} of the ${m.phases} phases a 6-decimal blink.t takes against the frame grid (the first at t = ${m.first} s), and the idle frames and the loop show no closed eye there; ` +
+        `a hold of at least one frame, 1/${fps} s, is required`,
+    },
+  ];
 }
 
 /** The slot, attachment and image name suffix of a `motion.blink.still` part's upper piece. */
@@ -317,6 +340,7 @@ export function buildRig(
       `is ${bl.t} s; the blink's keys run from t to t + ${pyRound(BLINK_SPAN, 6)} s between the idle's first key at 0 and its last at ${cfg.motion.duration} s, so 0 < t < ${pyRound(cfg.motion.duration - BLINK_SPAN, 6)} is required`,
     );
   }
+  if (bl !== undefined) problems.push(...blinkHoldProblems(BLINK.shut, BLINK.hold, IDLE_FPS));
   // ---- blink.still: a blinking region cut at a row ----------------------
   const stills = bl?.still ?? {};
   const partNames = new Set(parts.parts.map((p) => p.name));

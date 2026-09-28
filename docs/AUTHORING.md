@@ -76,8 +76,29 @@ read by no CPU stage).
 | `regions.<part>` | rig | **proposed**: the bone a rigid part rides. Every plan part is exactly one of a mesh or a region (`CONFIG_PART_ATTACHED`) |
 | `motion.duration` | rig; check (the loop is measured at this time) | proposed as 4 s; a whole number of 1/12 s ticks, because `check` renders at 12 fps |
 | `motion.tracks` | rig | **proposed**, then tuned. Single `{bone, prop, amp, period, phase, base?}` or chain `{chain, amps, period, phase, lag}` — one amplitude per link, link `i` at phase `phase + lag·i`. Every `period` must divide `duration` (`CONFIG_PERIOD_DIVIDES_DURATION`) |
-| `motion.blink` | rig | **proposed**: `{t, eyes, brows, squash, brow_drop}`; the whole blink must fit inside the idle (`RIG_BLINK_INSIDE_IDLE`). The `eyes` group's `scaley` squashes every part on the eye bones about the bone's origin, the eyewhite's centre |
+| `motion.blink` | rig | **proposed**: `{t, eyes, brows, squash, brow_drop}`; the whole blink, `t` to `t + 0.364` s, must fit inside the idle (`RIG_BLINK_INSIDE_IDLE`). The `eyes` group's `scaley` squashes every part on the eye bones about the bone's origin, the eyewhite's centre. The timing is fixed, not a field (table below) |
 | `motion.blink.still` | rig | **proposed** only for a lash `propose` notes (below), then checked: `{<part>: {row, bone}}` — the rows of that region part above `row` (rig px, y down) are drawn by a second slot `<part>_still` on `bone` and do not blink; rows from `row` down keep the part's slot and blink. The part must be a region on a bone `eyes` names, `bone` one it does not (`CONFIG_STILL_OFF_THE_BLINK`), and `row` a row of the part with no art across its whole width (`RIG_STILL_ROW_CLEAR`) |
+
+The blink's timing is the tree's (`BLINK` in `src/motion.ts`), in seconds after
+`motion.blink.t`:
+
+| phase | eyes (`scaley` 1 → `squash` → 1) | brows (`translatey` 0 → `-brow_drop` → 0) | easing |
+| --- | --- | --- | --- |
+| shut | 0.07 | 0.08 | `shut` |
+| hold | **0.084** (the reference: 0.04) | **0.084** (the reference: 0.04) | none |
+| open | 0.16 | 0.20 | `open` |
+
+The holds are the one departure from the reference implementation, and the reason is
+the loop (issue #32). `check` renders the idle at 12 fps, a frame every 0.083333 s, and
+the loop is encoded from those frames. A 0.04 s hold is shorter than a frame, so it
+held a frame only for some `t`: at the examples' 2.3 s the eyes were shut from 2.37 s to
+2.41 s, between frames 28 (2.333 s, `scaley` 0.8356) and 29 (2.417 s, 0.2435), and over
+every key time the 6-decimal grid can write, 129,999 of the 250,000 phases against the
+frame grid showed no closed frame. A closed window at least one frame long holds a frame
+wherever it starts, so the hold is 1/12 s rounded up to the third place; the brows' hold
+grew by the same 0.044 s, so they still reach their drop 0.01 s after the lids shut and
+leave it 0.01 s after the lids open. The rig stage refuses a hold under one frame by
+name (`RIG_BLINK_HOLD_SPANS_A_FRAME`, §6), counted over the same 250,000 phases.
 
 The proposer's reach (from `src/propose.ts`): roles come from each part's tag —
 `face` makes `hip`/`chest`/`neck`/`head`, the eyewhites make the eye bones, brows are
@@ -253,9 +274,12 @@ entry, no dithering, filter None) — and is the small file to show. `idle.gif`
 (`loop --out x.gif`) is the same median cut in a GIF. The indexed APNG and the GIF
 print their palette error, per channel over R, G and B of every frame (and alpha's
 max for the APNG); a figure is a measurement of the file, not a bar. On the demo:
-13,645,611 B lossless, 1,706,468 B indexed and 1,812,041 B GIF, both palette files at
+13,645,519 B lossless, 1,706,785 B indexed and 1,812,625 B GIF, both palette files at
 max 57, mean 1.601 — the two share one quantiser, so their error is the same by
-construction and the size is the difference.
+construction and the size is the difference. The loop shows the blink closed: the
+eyes' hold is at least one 12 fps frame (below), so whatever `motion.blink.t` is, one
+idle frame lands inside it, and `check.json`'s `BLINK_NO_HOLE.idle_frames_closed`
+names it — `[29]` on both examples.
 
 `--seam near-white` (the default) is the reference implementation's rule: where the
 flat stack of parts differs from the painting by more than 60, the top part takes the
@@ -513,6 +537,7 @@ See-through with another seed.
 | `RIG_LATTICE_ONE_LOOP` | the lattice over a part does not close into one outline even after the repair passes | that mesh's `grid` |
 | `RIG_CONTROL_NAME_FREE` | a keyed, mesh-weighted bone needs `<bone>_ctl` and that name is taken | rename the declared bone |
 | `RIG_BLINK_INSIDE_IDLE` | the blink runs outside the idle | `motion.blink.t` |
+| `RIG_BLINK_HOLD_SPANS_A_FRAME` | the tree's `BLINK.hold` is shorter than one frame at `IDLE_FPS`, so for some `motion.blink.t` no idle frame — and no frame of the loop — shows the closed eye; the detail counts the phases that miss and names the first | nothing in the config: `BLINK.hold` in `src/motion.ts`, at least `1/IDLE_FPS` s (§3) |
 | `RIG_STILL_ROW_INSIDE_PART`, `RIG_STILL_ROW_CLEAR`, `RIG_STILL_PIECES_HAVE_ART`, `RIG_STILL_NAME_FREE` | a `motion.blink.still` row that is not strictly inside the part, that crosses art (a cut through art changes the render even at rest), that leaves one piece with no art, or whose `<part>_still` slot name another part already has | that entry's `row` — a row with no art between the crease and the lash line — or rename the other part |
 | `RIG_RIGC_GREEN` | spine-rigc refused the rig; its own FAIL or compile-error line is quoted, and nothing was written | the field rigc's line names — spine-rigc's own AUTHORING §5 maps each of its assertions (`node_modules/spine-rigc/docs/AUTHORING.md`) |
 
@@ -598,13 +623,15 @@ What each figure is, and is not:
   layers".** A gap shows the page, a rim a colour no part has there, a doubled line a
   part drawn off its place; each changes the setup-pose render against the flat stack,
   which is what the seam bar measures. No separate line is written for it.
-- **The blink is measured at the setup pose, not in an idle frame.** On both examples
-  the eyes are fully shut from 2.37 s to 2.41 s, and no 12 fps idle frame falls inside
-  that window (`idle_frames_closed` is empty: frames 28 and 29 are 2.333 s and
-  2.417 s), so the idle render and the loop encoded from it never show the closed eye.
-  rigc's `render` takes no time, so the closed pose is a throwaway animation holding
-  the blink tracks' closed value, built and rendered beside the seam's still on the
-  same grid — the comparison is then of what the blink alone changed.
+- **The blink is measured at the setup pose, not in an idle frame.** Since issue #32
+  an idle frame does fall inside the closed window — on both examples the eyes are
+  fully shut from 2.37 s to 2.454 s and `idle_frames_closed` is `[29]` (2.417 s) — but
+  that frame also carries the idle's sway, so it is not a comparison of what the blink
+  alone changed. rigc's `render` takes no time, so the closed pose is a throwaway
+  animation holding the blink tracks' closed value, built and rendered beside the
+  seam's still on the same grid. `idle_frames_closed` is what says the loop shows the
+  closed eye; before #32 it was `[]` on both examples, with the 0.04 s hold between
+  frames 28 and 29.
 - **The colour-patch figure is not reliable enough for a bar.** "Nearest colour in the
   open eye's box" counts a legitimate colour the open eye never showed (skin under the
   lid) as a patch, and a patch the open eye happened to contain as none. It is

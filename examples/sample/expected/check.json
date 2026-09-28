@@ -25,9 +25,11 @@
    "eyewhite_l"
   ],
   "closed": [
-   "group eyes scaley 0.12 from 2.37s to 2.41s"
+   "group eyes scaley 0.12 from 2.37s to 2.454s"
   ],
-  "idle_frames_closed": [],
+  "idle_frames_closed": [
+   29
+  ],
   "box_px": 1520,
   "hole_px": 0,
   "hole_bar": 0,
