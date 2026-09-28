@@ -138,6 +138,21 @@ export const NO_EYE_PARTS: ProposeFixturePart[] = [STRAND_HEAD[0], BARE_CROWN_PA
 /** Issue #35: the same face with its two eyewhites and no eyebrow, so the blink is written with no `brows` group. */
 export const NO_BROW_PARTS: ProposeFixturePart[] = [STRAND_HEAD[0], STRAND_HEAD[1], STRAND_HEAD[2], BARE_CROWN_PARTS[BARE_CROWN_PARTS.length - 1]];
 
+/** Issue #45: an iris inside where the right eyewhite would be, and a left lash above where the left one would be — on the strand canvas. */
+const EYE_FEATURES: ProposeFixturePart[] = [
+  { name: 'iris_a', from: 'head:irides-r', x: 39, y: 60, w: 4, h: 4, colour: [40, 60, 120] },
+  { name: 'lash_b', from: 'head:eyelash-l', x: 54, y: 57, w: 10, h: 3, colour: [40, 20, 20] },
+];
+
+/**
+ * Issue #45: the face, an iris and a lash, and no eyewhite on either side — so
+ * no eye bone is made, and the iris and the lash have none to ride.
+ */
+export const IRIS_NO_EYEWHITE_PARTS: ProposeFixturePart[] = [STRAND_HEAD[0], ...EYE_FEATURES, BARE_CROWN_PARTS[BARE_CROWN_PARTS.length - 1]];
+
+/** Issue #45: the same, with the right eyewhite only — `eye_r` is made and blinks, the left lash still has no eye bone. */
+export const ONE_EYEWHITE_PARTS: ProposeFixturePart[] = [STRAND_HEAD[0], STRAND_HEAD[1], ...EYE_FEATURES, BARE_CROWN_PARTS[BARE_CROWN_PARTS.length - 1]];
+
 /**
  * Every other branch of the strand rule at once, on the 200x300 canvas with the
  * first set's face (proposed, never built). Positions in this list are in each

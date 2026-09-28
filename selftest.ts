@@ -82,7 +82,7 @@ import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src
 import { build, BUILD_OWNS, rigStage } from './src/build.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, shiftRight, writeCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
-import { BARE_CROWN_PARTS, eyeParts, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
+import { BARE_CROWN_PARTS, eyeParts, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
 import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'spine-rigc/src/render.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
@@ -1180,6 +1180,24 @@ function runBlinkConfigCases(say: (name: string, ok: boolean, detail: string, wh
     'brows became optional so an eyebrow-less figure can be stated; without the pairing, a drop with no brows would be a value nothing reads and brows with no drop a value the idle would have to invent',
   );
 
+  const twiceEyes = refusals(() => parseConfig(blinkCfg((b) => (b.eyes = ['head', 'head']))));
+  const thriceBrows = refusals(() => parseConfig(blinkCfg((b) => (b.brows = ['head', 'chest', 'head', 'head']))));
+  const bothOnce = refusals(() => parseConfig(blinkCfg((b) => (b.eyes = ['head', 'chest']))));
+  const te = one(twiceEyes);
+  const tb = one(thriceBrows);
+  say(
+    'CF40_A_BLINK_GROUP_NAMING_A_BONE_TWICE_IS_REFUSED_BY_NAME_WITH_ITS_INDICES',
+    te?.code === 'CONFIG_BLINK_GROUP_UNIQUE' &&
+      te.object === 'config.motion.blink.eyes' &&
+      te.detail.startsWith('names "head" twice (at [0], [1]); each bone is named once') &&
+      tb?.code === 'CONFIG_BLINK_GROUP_UNIQUE' &&
+      tb.object === 'config.motion.blink.brows' &&
+      tb.detail.startsWith('names "head" 3 times (at [0], [2], [3])') &&
+      bothOnce === null,
+    `eyes ["head", "head"] -> ${te === null ? codes(twiceEyes) : `${te.code}: ${te.object} — ${te.detail}`}; brows ["head", "chest", "head", "head"] -> ${tb === null ? codes(thriceBrows) : `${tb.code}: ${tb.detail.slice(0, 40)}…`}; eyes ["head", "chest"] -> ${codes(bothOnce)}`,
+    'issue #45: rigc refuses a group naming a member twice, but at the rig gate; the loader names the group, the bone and every index it sits at, once per repeated bone, and two distinct members still load',
+  );
+
   // The same forged config at rig and at build, with runners that count: the refusal must come before any rigc process.
   const dir = temp('blink-config');
   try {
@@ -1223,6 +1241,35 @@ function runBlinkConfigCases(say: (name: string, ok: boolean, detail: string, wh
         cleanCalls > 0,
       `rig -> ${rigCodes.join('; ') || 'nothing'}, ${rigCalls} rigc call(s); build stopped at ${built.stoppedAt ?? 'nothing'} with ${buildFail.length} FAIL line(s) (${buildFail[0]?.trim() ?? ''}), ${buildCalls} rigc call(s); the unforged config reaches the runner ${cleanCalls} time(s) (${reached?.problems[0]?.code ?? 'no refusal'} from the counting runner's red answer)`,
       'the loop\'s rule is that a refusal names the stage whose input is wrong: rig reads motion first and build asks the full loader before assemble writes anything, so neither may leave the empty group for rigc to find; the counting runner is the witness that no process was asked',
+    );
+
+    // Issue #45: a group naming one bone twice — the same forged-config walk, through the same counting runners.
+    const twice = { ...clean, motion: { ...(clean.motion as Record<string, unknown>), blink: { t: 2.3, eyes: ['head', 'head'], squash: 0.12 } } };
+    writeFileSync(join(dir, 'twice.json'), JSON.stringify(twice));
+    const before = calls.length;
+    const twiceRig = refusals(() => rigStage({ config: join(dir, 'twice.json'), parts: dir, out: join(dir, 'twice-out') }, counting('twice-rig'), scratch, quiet));
+    const twiceRigCalls = calls.length - before;
+    const twiceLines: string[] = [];
+    const twiceBuilt = build(
+      { config: join(dir, 'twice.json'), source: join(dir, 'painting.png'), full: join(dir, 'absent-full'), head: join(dir, 'absent-head'), out: join(dir, 'twice-build'), seam: 'near-white', project: 'core', loop: false },
+      { rig: counting('twice-build-rig'), check: counting('twice-build-check'), checkBin: 'counting', scratch },
+      (l) => twiceLines.push(l),
+    );
+    const twiceBuildCalls = calls.length - before - twiceRigCalls;
+    const twiceCodes = twiceRig?.problems.map((q) => `${q.code} ${q.object}`) ?? [];
+    const twiceFail = twiceLines.filter((l) => l.includes('FAIL'));
+    say(
+      'CF41_A_BLINK_GROUP_NAMING_A_BONE_TWICE_STOPS_RIG_AND_BUILD_BEFORE_ANY_RIGC_PROCESS',
+      twiceCodes.join('|') === 'CONFIG_BLINK_GROUP_UNIQUE config.motion.blink.eyes' &&
+        twiceRigCalls === 0 &&
+        twiceBuilt.stoppedAt === 'assemble' &&
+        twiceBuildCalls === 0 &&
+        twiceFail.length === 1 &&
+        twiceFail[0].includes('CONFIG_BLINK_GROUP_UNIQUE: config.motion.blink.eyes — names "head" twice') &&
+        !existsSync(join(dir, 'twice-out')) &&
+        cleanCalls > 0,
+      `rig -> ${twiceCodes.join('; ') || 'nothing'}, ${twiceRigCalls} rigc call(s); build stopped at ${twiceBuilt.stoppedAt ?? 'nothing'} with ${twiceFail.length} FAIL line(s) (${twiceFail[0]?.trim() ?? ''}), ${twiceBuildCalls} rigc call(s); the unforged config reached the runner ${cleanCalls} time(s) above`,
+      'issue #45: rigc refused a member named twice (group "eyes" names member "eye" twice) at the gate, one stage late; the loader refuses it first, so neither stage hands the group to a rigc process — CF32\'s positive control is the witness that the runner is one that gets called',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -1624,20 +1671,47 @@ function runRigSuite(): number {
       "CLAUDE.md: the rig stages write only after spine-rigc's round trip has passed — so the command builds the staged spec through rigc before --out sees a byte",
     );
 
-    const red = writeRigFixture(join(dir, 'red'), (() => {
+    // The mutant is a spec the loader accepts and rigc refuses. It was an
+    // empty brows list until issue #35 made the loader refuse that
+    // (CONFIG_BLINK_GROUP_MEMBERS), then a brows list naming "eye" twice until
+    // issue #45 made the loader refuse that too (CONFIG_BLINK_GROUP_UNIQUE,
+    // RG40). Now it is a sine track on eye.scaley beside the blink's eyes
+    // group, which keys eye.scaley as well: rigc refuses two tracks on one
+    // bone property. The loader's acceptance is asserted here, so the day it
+    // learns this refusal too, this control says so instead of passing on the
+    // loader's line.
+    const redCfg = (() => {
       const c = rigConfig();
-      // An empty brows list was this mutant until issue #35 made the loader
-      // refuse it (CONFIG_BLINK_GROUP_MEMBERS); a member named twice is the
-      // next spec the loader accepts and rigc refuses.
-      ((c.motion as Record<string, unknown>).blink as Record<string, unknown>).brows = ['eye', 'eye'];
+      ((c.motion as Record<string, unknown>).tracks as unknown[]).push({ bone: 'eye', prop: 'scaley', amp: 0.1, period: 4, phase: 0 });
       return c;
-    })());
+    })();
+    const redLoads = refusals(() => parseConfig(redCfg));
+    const red = writeRigFixture(join(dir, 'red'), redCfg);
     const redRun = runCli(['rig', '--config', red.config, '--parts', red.parts, '--out', join(dir, 'red', 'out')]);
     say(
       'RG05_A_SPEC_SPINE_RIGC_REFUSES_IS_REFUSED_AND_NOTHING_IS_WRITTEN',
-      redRun.status === 1 && /^ {2}FAIL {2}RIG_RIGC_GREEN: rigc build --profile spine-html --pack/m.test(redRun.out) && redRun.out.includes('group "brows" names member "eye" twice') && !existsSync(join(dir, 'red', 'out')),
-      `a blink whose brows list names "eye" twice — which the loader accepts — -> exit ${redRun.status}, ${(redRun.out.split('\n').find((l) => l.includes('RIG_RIGC_GREEN')) ?? '').trim().slice(0, 160)}…; --out exists: ${existsSync(join(dir, 'red', 'out'))}`,
-      "the round trip is only a gate if a red one stops the write; rigc's own refusal is carried into the FAIL line so the reader sees what rigc said",
+      redLoads === null && redRun.status === 1 && /^ {2}FAIL {2}RIG_RIGC_GREEN: rigc build --profile spine-html --pack/m.test(redRun.out) && redRun.out.includes('has two tracks on eye.scaley') && !existsSync(join(dir, 'red', 'out')),
+      `a sine track on eye.scaley beside the blink's eyes group — the loader: ${codes(redLoads)} — -> exit ${redRun.status}, ${(redRun.out.split('\n').find((l) => l.includes('RIG_RIGC_GREEN')) ?? '').trim().slice(0, 70)}… ${(/animation "idle" has two tracks on [^;]*/.exec(redRun.out) ?? ['no rigc line naming the two tracks'])[0]}; --out exists: ${existsSync(join(dir, 'red', 'out'))}`,
+      "the round trip is only a gate if a red one stops the write; rigc's own refusal is carried into the FAIL line so the reader sees what rigc said, and the mutant is one the loader lets through, or the line would be the loader's",
+    );
+
+    const dup = writeRigFixture(join(dir, 'dup'), (() => {
+      const c = rigConfig();
+      ((c.motion as Record<string, unknown>).blink as Record<string, unknown>).brows = ['eye', 'eye'];
+      return c;
+    })());
+    const dupRun = runCli(['rig', '--config', dup.config, '--parts', dup.parts, '--out', join(dir, 'dup', 'out')]);
+    const dupFail = dupRun.out.split('\n').filter((l) => l.includes('FAIL'));
+    say(
+      'RG40_RG05S_OLD_MUTANT_A_BROWS_GROUP_NAMING_A_BONE_TWICE_IS_NOW_THE_LOADERS_REFUSAL',
+      dupRun.status === 1 &&
+        dupFail.length === 1 &&
+        /^ {2}FAIL {2}CONFIG_BLINK_GROUP_UNIQUE: config\.motion\.blink\.brows — names "eye" twice \(at \[0\], \[1\]\)/.test(dupFail[0]) &&
+        !dupRun.out.includes('RIG_RIGC_GREEN') &&
+        !dupRun.out.includes('rigc build') &&
+        !existsSync(join(dir, 'dup', 'out')),
+      `brows ["eye", "eye"] through the rig CLI -> exit ${dupRun.status}, ${dupFail.length} FAIL line(s): ${dupFail[0]?.trim().slice(0, 200) ?? 'none'}; a rigc line printed: ${dupRun.out.includes('rigc build')}`,
+      'issue #45: rigc refused this at the gate (group "brows" names member "eye" twice), one stage after the input that was wrong; the loader now names the field and the indices, and no rigc line is printed because no rigc process ran',
     );
 
     const bogus = writeRigFixture(join(dir, 'bogus'), (() => {
@@ -2629,6 +2703,63 @@ function runBlinkCases(dir: string, say: (name: string, ok: boolean, detail: str
       bTracks === '["eyes.scaley"]',
     `no eyes: rig exit ${erig.status}, motion.json groups ${JSON.stringify(emo?.groups ?? null)}, group tracks ${eTracks}; check exit ${echk.status} (${echk.out.includes('check: PASS') ? 'PASS' : 'not PASS'}), "${skipLine.trim()}"; no brows: rig exit ${brig.status}, groups ${bGroups}, group tracks ${bTracks}`,
     'the loader and rigc now agree with the proposal: a blink-less idle has no blink group or track and gates green, and check does not pretend to have looked behind an eye that is not there — SKIP with its reason, never a pass',
+  );
+
+  runEyelessFeatureCases(dir, say);
+}
+
+/** Issue #45: irides and lashes on a side with no eyewhite ride head as regions, with the cause in a note — not a region on an eye bone nobody made. */
+function runEyelessFeatureCases(dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const idir = join(dir, 'iris-no-eyewhite');
+  writeProposeFixture(idir, IRIS_NO_EYEWHITE_PARTS, STRAND_RIG, true);
+  const I = readPartSet(idir);
+  const iprop = propose(I);
+  const wantNote = 'no eyewhite part for eye_r, eye_l (looked for: eyewhite-r, eyewhite-l): iris_a (head:irides-r), lash_b (head:eyelash-l) are placed on head as regions, rigid with the head and not blinking — an eye bone comes only from an eyewhite';
+  const iLoads = refusals(() => checkProposal(I, iprop));
+  const icfg = join(idir, 'config.json');
+  writeFileSync(icfg, JSON.stringify(proposalConfig(IRIS_NO_EYEWHITE_PARTS, iprop)));
+  const irig = runCli(['rig', '--config', icfg, '--parts', idir, '--out', join(idir, 'rig')]);
+  const iBones = iprop.bones.map((b) => ('name' in b ? b.name : b.chain));
+  // The mutant: the proposal as it was written before #45, both parts on the eye bones nobody made.
+  const before = { ...iprop, regions: { ...iprop.regions, iris_a: 'eye_r', lash_b: 'eye_l' } };
+  const beforeLoads = refusals(() => checkProposal(I, before));
+  say(
+    'PR40_AN_IRIS_AND_A_LASH_WITH_NO_EYEWHITE_RIDE_HEAD_WITH_THE_CAUSE_IN_A_NOTE',
+    iprop.regions.iris_a === 'head' &&
+      iprop.regions.lash_b === 'head' &&
+      !iBones.includes('eye_r') &&
+      !iBones.includes('eye_l') &&
+      !('blink' in iprop.motion) &&
+      iprop.notes.includes(wantNote) &&
+      iLoads === null &&
+      irig.status === 0 &&
+      codes(beforeLoads) === 'CONFIG_NAME_RESOLVES config.regions.iris_a; CONFIG_NAME_RESOLVES config.regions.lash_b' &&
+      serializeProposal(iprop) === serializeProposal(propose(readPartSet(idir))),
+    `regions iris_a -> ${iprop.regions.iris_a}, lash_b -> ${iprop.regions.lash_b}; eye bones ${JSON.stringify(iBones.filter((b) => b.startsWith('eye')))}; notes ${JSON.stringify(iprop.notes.filter((n) => n.includes('eyewhite')))}; loads: ${codes(iLoads)}; rig exit ${irig.status}; the pre-#45 regions (eye_r, eye_l) -> ${codes(beforeLoads)}`,
+    'issue #45: the proposer wrote the iris and the lash onto eye_r / eye_l, which only an eyewhite makes, and the loader refused the symptom (config.regions.iris_a — is "eye_r"); head is the bone the eye bone would hang from and the one the face already rides, so nothing is invented, the proposal still loads and rigs green, and the note names the cause and the tags looked for',
+  );
+
+  const odir = join(dir, 'one-eyewhite');
+  writeProposeFixture(odir, ONE_EYEWHITE_PARTS, STRAND_RIG, true);
+  const O = readPartSet(odir);
+  const oprop = propose(O);
+  const wantOne = 'no eyewhite part for eye_l (looked for: eyewhite-l): lash_b (head:eyelash-l) is placed on head as a region, rigid with the head and not blinking — an eye bone comes only from an eyewhite';
+  const oLoads = refusals(() => checkProposal(O, oprop));
+  const ocfg = join(odir, 'config.json');
+  writeFileSync(ocfg, JSON.stringify(proposalConfig(ONE_EYEWHITE_PARTS, oprop)));
+  const orig = runCli(['rig', '--config', ocfg, '--parts', odir, '--out', join(odir, 'rig')]);
+  say(
+    'PR41_WITH_ONE_EYEWHITE_ITS_IRIS_RIDES_THE_EYE_BONE_AND_THE_OTHER_SIDES_LASH_RIDES_HEAD',
+    oprop.regions.eye_a === 'eye_r' &&
+      oprop.regions.iris_a === 'eye_r' &&
+      oprop.regions.lash_b === 'head' &&
+      JSON.stringify(oprop.motion.blink?.eyes ?? null) === '["eye_r"]' &&
+      oprop.notes.includes(wantOne) &&
+      oprop.notes.filter((n) => n.includes('no eyewhite part')).length === 1 &&
+      oLoads === null &&
+      orig.status === 0,
+    `regions eye_a -> ${oprop.regions.eye_a}, iris_a -> ${oprop.regions.iris_a}, lash_b -> ${oprop.regions.lash_b}; blink eyes ${JSON.stringify(oprop.motion.blink?.eyes ?? null)}; notes ${JSON.stringify(oprop.notes.filter((n) => n.includes('eyewhite')))}; loads: ${codes(oLoads)}; rig exit ${orig.status}`,
+    'the rule is per side: the eye bone the right eyewhite makes still carries its iris and blinks, and only the side with no eyewhite falls back to head, named in the note with only that side\'s tag',
   );
 }
 
