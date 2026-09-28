@@ -267,7 +267,7 @@ proposal in as the steps above say (`RL01`); every step must exit 0.
 | `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px`, then `uncovered holes (8-connected): N` and the largest five as `uncovered hole K: <px> px at x,y wxh (between "<part>" <px> px, …)`; and look at `render/recomposite_error_rig.png` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185, 259 holes, the largest 94 px; `demo` 2.39 / 95.8 % / 11,050 / 1,564, 453 holes, the largest 70 px (default rule) — many slivers along part edges, no hole a region could hide | one large hole: part of the figure is in no layer — a plan entry is missing, hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason), or See-through split one garment into two and left the space between them in neither (a skirt as two trouser legs); the `between` parts say where. When neither run holds it at all, an `assemble.patches` entry cuts it from the painting (below) |
 | `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck); a `hanging strand … -- no chain proposed` note — that strand hangs stiff until you add a chain down the x and rows it names (§3); a `no blink: …` or `blink without brows: …` note — the idle will not blink (or its brows will not drop), because no part came from an `eyewhite` (or `eyebrow`) layer; the note names the tags looked for; a `no eyewhite part for eye_<s> …` note — the iris and lash parts it names ride `head` and do not blink, because no `eyewhite-<s>` part made that side's eye bone: take the eyewhite from the other run, or keep them on `head` |
 | `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; the `bones` line; the `idle keys` line; then rigc's gate lines (with A15's declared SKIP under `--idle-keys direct`) | `cover 1.00000` on every mesh, both gates `0 failed` | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
-| `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the five judgement lines and `RECOMPOSITE_HOLES` (§7), `check.json` | `check: PASS`, and a judgement line SKIP only where the character lacks what it reads | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
+| `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the six judgement lines and `RECOMPOSITE_HOLES` (§7), `check.json` | `check: PASS`, and a judgement line SKIP only where the character lacks what it reads | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
 | `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line, each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
 
 `loop` writes three files from one frame set, and they are not interchangeable.
@@ -556,6 +556,7 @@ See-through with another seed.
 | `CHECK_RIGC_PRESENT` | no `rigc` binary found (every place looked is listed) | `bun install` |
 | `CHECK_INPUT_PRESENT` on `…/parts.json` | `--parts` named a directory without `parts.json` — most often `parts/` itself. The detail says it: "--parts names the directory holding parts.json and parts/, not parts/ itself (after build, that is build's --out, whose rig is <out>/rig); without --parts it is --rig", and names the parent when the parent holds `parts.json` | `--parts` — the directory above `parts/` |
 | `CHECK_INPUT_PRESENT`, `CHECK_INPUT_IS_JSON`, `CHECK_PART_PNG_PRESENT`, `CHECK_PART_PNG_MATCHES_BOX`, `CHECK_PART_SLOT_PRESENT`, `CHECK_RIG_STAGE_PRESENT`, `CHECK_RIG_STAGE_IS_THE_CANVAS`, `CHECK_RIG_ROOT_BONE`, `CHECK_IDLE_PRESENT` | the rig directory is incomplete or disagrees with `parts.json` (`CHECK_PART_SLOT_PRESENT`: a part with no slot of its own name, which the judgement lines render it by) | re-run rig (`build` does both) |
+| `CHECK_RIGC_VERSION` | `rigc --version` is below 1.4.0, or prints no version: its `render` has no `--geometry`, which `TEXTURE_STRETCH` reads. Refused before anything is built | `bun install` (this package depends on spine-rigc ^1.5.1), or put a newer `rigc` first on `PATH` |
 | `CHECK_RIGC_GREEN` | a rigc step failed; its line is quoted | as `RIG_RIGC_GREEN` |
 | `CHECK_LOOP_LAST_FRAME_AT_DURATION` | the idle's last frame does not sit at `duration` | `motion.duration` — a whole number of 1/12 s |
 | `CHECK_LOOP_CLOSES` | frame 0 and the frame at `duration` differ (max and first pixel quoted) | a track whose last key is not its first |
@@ -565,7 +566,8 @@ See-through with another seed.
 | `CHECK_CHAIN_LAG` | a rotate track leads (or does not lag) the keyed bone above it, or a chain link swings less than the link above | that chain track's `phase`/`lag` (a positive `lag`, a child `phase` above its parent's) or its `amps` (non-decreasing toward the tip) |
 | `CHECK_TIP_OVER_ROOT` | a `handwear`/`bottomwear` part's lower half travels less than 1.4725 times as far as its upper half | the chain track's `amps` (grow toward the tip), or the mesh's `segments` (the chain must be among them) |
 | `CHECK_STILL_REGIONS_DARK` | the heat map is brighter than the ceiling over the face outline or over the feet | the part that moves there: a mesh weighted to a swinging bone (`segments`), or a region on the wrong bone |
-| `CHECK_SEAM_FRAME_SIZE`, `FRAMES_SIDECAR` | rigc's render is not what its `frames.json` says | a rigc problem; report it |
+| `CHECK_TEXTURE_STRETCH` | a mesh triangle's edge, in some idle frame, is more than 1.926544 times its rest length or less than 1/1.926544 of it (the mesh, triangle, its three vertices, the edge and the frame are named); or a rest edge has length 0 | the chain tracks' `amps` on the bones that mesh is weighted to (the stretch grows with them), or the mesh's `segments` — a vertex blending two bones that swing against each other |
+| `CHECK_SEAM_FRAME_SIZE`, `FRAMES_SIDECAR`, `CHECK_GEOMETRY_FILE` | rigc's render is not what its `frames.json` says, or its `geometry.json` is not a whole `rigc-geometry/1` export of the frames beside it (a frame count, or a mesh whose vertex count differs from its rest entry) | a rigc problem; report it |
 | `LOOP_ENCODE` | the loop encoder refused a frame (translucent pixel in a GIF, a size change) | the frames; for a translucent frame write the lossless or the indexed APNG, which keep alpha |
 | `BUILD_ARTIFACT_PRESENT` | the packed build lacks its `.json`, `.atlas` or page | a rigc problem; report it |
 
@@ -584,8 +586,8 @@ implementation's bars):
 On the examples: `sample` 23/23 and 14/14, seam 0.207 with 0 pixels over 40, loop 0;
 `demo` (default rule) 23/23 and 14/14, seam 0.326 with 2 pixels over 40, loop 0.
 
-A green gate cannot see a wrong animation, so `check` also writes five **judgement
-lines** (issue #11), each a key of `check.json` and a console line
+A green gate cannot see a wrong animation, so `check` also writes six **judgement
+lines** (issue #11; `TEXTURE_STRETCH`, issue #31), each a key of `check.json` and a console line
 `NAME: PASS|FAIL|SKIP — <figures and bars>`, read the same way as the lines above: a
 FAIL makes `PASS` false and prints its own `FAIL  CHECK_<NAME>` line (§6); a SKIP
 says why the rig gave the line nothing to read, and is neither a pass nor a failure —
@@ -607,6 +609,7 @@ the two examples [observed]:
 | `CHAIN_LAG` | `motion.json`'s rotate tracks read as sines (DFT of the keys: period, amplitude, phase) and arranged by the bone tree — a keyed bone's parent is its nearest keyed ancestor | every lag ≥ 0.001 cycle; amplitude non-decreasing down each unbranched chain | lags 0.040 (neck to head) to 0.120; 12 chains | lags 0.040 to 0.100; 9 chains | no rotate track under another of the same period |
 | `TIP_OVER_ROOT` | each `handwear`/`bottomwear` part alone: how far the centroid of its art travels in the lower half of its box against the upper half | ratio ≥ 1.4725 | `bottomwear` 2.945, `sleeves` 3.716 | `bottomwear` 4.396, `sleeves` 12.475 | no such part |
 | `STILL_REGIONS_DARK` | the idle's heat over the face outline (where `face` is the top part of the flat stack, less the boxes of `eyewhite`, `irides`, `eyelash`, `eyebrow` and `mouth`) and over the feet (where `footwear` is on top); max reported | face mean ≤ 33.976; feet mean ≤ 3.244 | 16.988; 1.622 | 11.475; 0 | no `face` and no `footwear` part (one of the two absent leaves that half unmeasured) |
+| `TEXTURE_STRETCH` | every mesh triangle's three edges in every idle frame, read from the `geometry.json` the idle render writes (`rigc render --geometry`, spine-rigc 1.4.0 or later): skinned length over rest length, the rest being the setup pose's bones with no deform. The figure is the rig's worst max(ratio, 1/ratio); each mesh's largest and smallest ratio, with triangle, vertices, edge and frame, is the detail | max(ratio, 1/ratio) ≤ 1.926544 | 1.388: `hair_back` triangle 449, edge 42-43 at 0.720 in frame 26 (largest stretch 1.291, frame 2) | 1.227: `sleeves` triangle 169, edge 126-51 at 0.815 in frame 28 (largest stretch 1.196, frame 5) | the rig draws no mesh, or the render wrote no `geometry.json` |
 
 After them, one **reported line** with no bar:
 
@@ -657,22 +660,33 @@ What each figure is, and is not:
   mean heat is 1.1 times the upper half's while its centroid travels 3.7 times as far.
   The halves split the box across its rows, which assumes the part hangs — true of a
   front-facing standing figure, the only input this tool takes.
+- **Stretch is read on edges, both ways, and the ceiling doubles |ln r|.** Compression
+  distorts a texture as much as stretch — an edge at half its rest length squeezes
+  the texels on it by the factor an edge at twice its length spreads them — so the
+  figure is max(ratio, 1/ratio), and on both examples the worst triangle is a
+  compression (demo 0.720, sample 0.815). The ceiling rule is applied to the quantity
+  whose zero means "nothing happened", as it is for heat: for a ratio that is |ln r|,
+  so twice demo's |ln 1.388| is ln(1.388²) = ln 1.926544 and sample clears it by 3.2
+  times. Doubling the ratio itself (2.776) was rejected: its zero is not at 1, and it
+  passes an edge drawn at 2.7 times its rest length. The rest is the art's own
+  proportions — on both examples every rest edge equals its `uvs` edge times the
+  attachment's size to within 2.4e-5, the uvs' six-decimal rounding.
 - **The face ceiling is weak, and the reason is in the examples.** The head rolls, so
   the face outline is lit in both (16.988 and 11.475); twice the worse is a ceiling a
   smooth face sliding two rig pixels stays under (the selftest's fixture measures 24.8
   at that slide and 85.5 at eight). A face-outline instrument that removes the head's
-  own motion needs the head bone's world transform per frame, which rigc's `render`
-  does not export. The feet half has the same shape on the demo: its long skirt swings
+  own motion needs the head bone's world transform per frame; since spine-rigc 1.4.0
+  the `geometry.json` beside the idle frames carries every bone's, and nothing here
+  reads it for this yet. The feet half has the same shape on the demo: its long skirt swings
   over the shoes, which lights 1.622.
 
-Still only an eye answers, each a missing instrument rather than a question to ask:
+Still only an eye answers, a missing instrument rather than a question to ask:
 
-- **no visible texture stretch** (it appears when amplitudes grow): the measure is a
-  mesh triangle's deformed edge length over its rest length, frame by frame, and
-  nothing this package runs gives deformed vertices — spine-parts does not link
-  `spine-core`, and rigc's `render` exports pixels, not vertices;
 - **the face outline held still in the head's own frame** (above): the heat map
-  without the head's roll.
+  without the head's roll. The head bone's world transform per frame is in the idle's
+  `geometry.json`; the instrument that removes it from the heat map is not built.
+
+"No visible texture stretch" left this list with issue #31: it is `TEXTURE_STRETCH`.
 
 ## 8. What one character costs
 

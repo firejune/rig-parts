@@ -113,7 +113,7 @@ import {
   stageFields,
   visibilityCounts,
 } from './src/assemble.ts';
-import { chainLine, findRigc, type FrameSet, type RigcRunner, gateGreen, JUDGEMENT_LINES, PARTS_HOME_SENTENCE, parsePackLines, readCheckInputs, readFrameSet, REPORTED_LINES, SPINEBOY_YARDSTICK } from './src/check.ts';
+import { chainLine, findRigc, type FrameSet, GEOMETRY_FILE, type JudgementLine, type RigcRunner, gateGreen, JUDGEMENT_LINES, PARTS_HOME_SENTENCE, parsePackLines, readCheckInputs, readFrameSet, readGeometry, REPORTED_LINES, requireRigcVersion, RIGC_GEOMETRY_VERSION, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
@@ -2878,7 +2878,7 @@ function runCheckSuite(): number {
         lineStatus(fig, 'RECOMPOSITE_HOLES') === 'SKIP' &&
         ok.out.includes('  RECOMPOSITE_HOLES: SKIP — parts.json has no "recomposite" block'),
       `exit ${ok.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig).slice(0, 220)}…; judgement lines ${JUDGEMENT_LINES.map((n) => `${n} ${lineStatus(fig, n) ?? 'absent'}`).join(', ')}; RECOMPOSITE_HOLES ${lineStatus(fig, 'RECOMPOSITE_HOLES') ?? 'absent'}; missing outputs: ${missing.join(', ') || 'none'}; pack ${pack.map((p) => p.line).join(' | ') || 'none'} for ${CHECK_PARTS.length} part(s); --rig ${listing(rig).join('|') === before.join('|') ? 'unchanged' : 'CHANGED'}`,
-      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from both profiles, with the reference's seven check.json keys in its order and the five judgement lines and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line has nothing to read and must say SKIP, by name, with its reason — never PASS — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
+      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from both profiles, with the reference's seven check.json keys in its order and the six judgement lines and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line has nothing to read (and neither part is a mesh, so neither has TEXTURE_STRETCH) and must say SKIP, by name, with its reason — never PASS — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
     );
 
     const again = runCli(['check', '--rig', rig, '--out', join(dir, 'out2')]);
@@ -3019,6 +3019,172 @@ function runCheckSuite(): number {
         printed === '  RECOMPOSITE_HOLES: REPORTED — error_px 900; uncovered_error_px 700; hole_count 2; largest px 600, box 30,40 18x40, borders back 40 px',
       `exit ${hr.status}, PASS ${String(hf?.PASS)}; check.json RECOMPOSITE_HOLES ${JSON.stringify(hl)}; console ${printed?.trim() ?? 'no RECOMPOSITE_HOLES line'}`,
       "the hole class the seam cannot see — a pixel no part holds is missing from the setup pose and from the flat stack alike — reaches check.json from parts.json's recomposite block, figure for figure, as a line with no bar: 600 px of hole leaves a green rig green",
+    );
+
+    // TEXTURE_STRETCH (issue #31): a mesh the idle stretches by a hand-computed ratio, the same geometry forged, the no-mesh and no-file SKIPs, the version gate.
+    const stretchRun = (label: string, by: number): { status: number; out: string; fig: Record<string, unknown> | null; geo: string } => {
+      const r = join(dir, label);
+      writeCheckRig(r, { stretchMesh: by });
+      const res = runCli(['check', '--rig', r, '--out', join(dir, `${label}-out`)]);
+      return { ...res, fig: readJsonFile(join(dir, `${label}-out`, 'check.json')), geo: join(dir, `${label}-out`, 'idle_frames', 'idle', GEOMETRY_FILE) };
+    };
+    type StretchFig = { status?: string; severity?: number; max_ratio?: number; min_ratio?: number; frames?: number; worst?: { slot: string; triangle: number; vertices: number[]; edge: number[]; frame: number; ratio: number } };
+    const rest = CHECK_PARTS[0].h;
+    const stretchBy = 8;
+    const mild = stretchRun('stretch-mild', stretchBy);
+    const mf = mild.fig?.TEXTURE_STRETCH as StretchFig | undefined;
+    const want = Number(((rest + stretchBy) / rest).toFixed(3));
+    say(
+      'CK30_A_MESH_THE_IDLE_STRETCHES_READS_THE_HAND_COMPUTED_RATIO_ON_THE_NAMED_TRIANGLE_AND_FRAME',
+      mild.status === 0 &&
+        mild.fig?.PASS === true &&
+        mf?.status === 'PASS' &&
+        mf.severity === want &&
+        mf.max_ratio === want &&
+        mf.min_ratio === 1 &&
+        mf.frames === IDLE_FPS + 1 &&
+        JSON.stringify(mf.worst) === JSON.stringify({ slot: CHECK_PARTS[0].name, triangle: 0, vertices: [0, 1, 2], edge: [1, 2], frame: IDLE_FPS / 2, ratio: want }) &&
+        existsSync(mild.geo) &&
+        mild.out.includes(`  TEXTURE_STRETCH: PASS — `),
+      `exit ${mild.status}; ${lineOf(mild.out, 'TEXTURE_STRETCH').slice(0, 260)}…; geometry.json ${existsSync(mild.geo) ? 'written' : 'ABSENT'}`,
+      `the positive control through the real render: the fixture's back part is a four-vertex mesh whose bottom edge the idle lowers ${stretchBy} units at t = 0.5 s, so its ${rest}-unit sides read (${rest} + ${stretchBy}) / ${rest} = ${want} at frame ${IDLE_FPS / 2} of ${IDLE_FPS + 1}, on triangle 0 (vertices 0 1 2, edge 1-2) — the first of the two that tie — and no edge ever shortens`,
+    );
+
+    // The same file forged: frame 3 put back at rest, then vertex 1 moved along edge 0-1 by its own length — that edge doubles, 1-2 grows to sqrt(w^2 + h^2)/h, and triangle 1 (2 3 0) does not hold vertex 1.
+    const forgedGeo = join(dir, 'forged-geometry.json');
+    let forgeNote = 'CK30 wrote no geometry.json to forge';
+    let forgedLine: Record<string, unknown> | null = null;
+    const forgedProblems: Problem[] = [];
+    if (existsSync(mild.geo)) {
+      const g = JSON.parse(readFileSync(mild.geo, 'utf8')) as { rest: Array<{ slot: string; kind: string; vertices: number[] }>; frames: Array<{ index: number; attachments: Array<{ slot: string; vertices: number[] }> }> };
+      const r0 = g.rest.find((r) => r.slot === CHECK_PARTS[0].name && r.kind === 'mesh');
+      const f3 = g.frames.find((f) => f.index === 3)?.attachments.find((a) => a.slot === CHECK_PARTS[0].name);
+      if (r0 !== undefined && f3 !== undefined) {
+        const v = [...r0.vertices];
+        v[2] = v[2] + (v[2] - v[0]);
+        v[3] = v[3] + (v[3] - v[1]);
+        f3.vertices = v;
+        writeFileSync(forgedGeo, JSON.stringify(g));
+        forgedLine = stretchLine(readGeometry(forgedGeo, g.frames.length), forgedGeo, forgedProblems) as Record<string, unknown>;
+        forgeNote = `${JSON.stringify(forgedLine.worst)}; ${forgedProblems.map((p) => `FAIL  ${p.code}: ${p.object} — ${p.detail.slice(0, 80)}`).join(' | ') || 'no problem'}`;
+      }
+    }
+    say(
+      'CK31_A_FORGED_GEOMETRY_WITH_ONE_EDGE_DOUBLED_FAILS_NAMING_THE_SLOT_TRIANGLE_EDGE_AND_FRAME',
+      forgedLine !== null &&
+        forgedLine.status === 'FAIL' &&
+        forgedLine.severity === 2 &&
+        forgedProblems.length === 1 &&
+        forgedProblems[0].code === 'CHECK_TEXTURE_STRETCH' &&
+        forgedProblems[0].object === `mesh "${CHECK_PARTS[0].name}" triangle 0 (vertices 0 1 2), edge 0-1, idle frame 3` &&
+        forgedProblems[0].detail.startsWith(`the edge is 2 times its rest length (max(ratio, 1/ratio) 2); <= ${TEXTURE_STRETCH_CEILING} is required`),
+      forgeNote,
+      "the brief's mutant: the frame the stretch is forged into is not the one the idle itself stretches most (6), so a line that named the idle's own worst, or the frame of the file's last change, would name the wrong one",
+    );
+
+    const hard = stretchRun('stretch-hard', rest);
+    const hardFail = failLine(hard.out, 'CHECK_TEXTURE_STRETCH');
+    const others = hard.out.split('\n').filter((l) => l.startsWith('  FAIL  ') && !l.startsWith('  FAIL  CHECK_TEXTURE_STRETCH'));
+    say(
+      'CK32_A_MESH_THE_IDLE_STRETCHES_TO_TWICE_ITS_LENGTH_FAILS_THE_CHECK_END_TO_END_AND_NOTHING_ELSE_DOES',
+      hard.status === 1 &&
+        hard.fig?.PASS === false &&
+        lineStatus(hard.fig, 'TEXTURE_STRETCH') === 'FAIL' &&
+        hardFail === `  FAIL  CHECK_TEXTURE_STRETCH: mesh "${CHECK_PARTS[0].name}" triangle 0 (vertices 0 1 2), edge 1-2, idle frame ${IDLE_FPS / 2} — the edge is 2 times its rest length (max(ratio, 1/ratio) 2); <= ${TEXTURE_STRETCH_CEILING} is required — the texture on it is stretched: the bones this mesh is weighted to move apart (amplitudes too large down a chain), or a vertex blends bones that move against each other` &&
+        others.length === 0,
+      `exit ${hard.status}; ${hardFail?.trim().slice(0, 200) ?? 'no CHECK_TEXTURE_STRETCH line'}…; other FAIL lines: ${others.length}`,
+      `the side lowered by its own length (${rest} units) doubles; both gates pass it, the loop closes and the seam is the setup pose, so this line is the only one that sees it`,
+    );
+
+    const stretchAgain = stretchRun('stretch-mild-2', stretchBy);
+    const sameGeo = existsSync(mild.geo) && existsSync(stretchAgain.geo) && Buffer.compare(readFileSync(mild.geo), readFileSync(stretchAgain.geo)) === 0;
+    const sameCheck = mild.fig !== null && stretchAgain.fig !== null && JSON.stringify(mild.fig) === JSON.stringify(stretchAgain.fig);
+    say(
+      'CK33_TWO_RUNS_ON_A_STRETCHED_MESH_WRITE_THE_SAME_GEOMETRY_AND_THE_SAME_TEXTURE_STRETCH',
+      stretchAgain.status === 0 && sameGeo && sameCheck,
+      `second run exit ${stretchAgain.status}; geometry.json ${sameGeo ? 'byte-identical' : 'DIFFERS'}; check.json ${sameCheck ? 'identical' : 'DIFFERS'} (TEXTURE_STRETCH ${JSON.stringify((stretchAgain.fig?.TEXTURE_STRETCH as StretchFig | undefined)?.worst ?? null)})`,
+      "CK02 compares two runs of the fixture with no mesh, where this line is a SKIP; determinism of a figure has to be shown where there is a figure",
+    );
+
+    const noMesh = fig?.TEXTURE_STRETCH as { status?: string; reason?: string } | undefined;
+    const absentPath = join(dir, 'no-such-dir', GEOMETRY_FILE);
+    const absent = stretchLine(readGeometry(absentPath, 1), absentPath, []);
+    say(
+      'CK34_TEXTURE_STRETCH_SKIPS_BY_NAME_ON_A_RIG_WITH_NO_MESH_AND_ON_A_MISSING_GEOMETRY_FILE',
+      noMesh?.status === 'SKIP' &&
+        noMesh.reason === 'the rig draws no mesh attachment (every slot is a region), so there is no triangle to stretch' &&
+        ok.out.includes('  TEXTURE_STRETCH: SKIP — the rig draws no mesh attachment') &&
+        absent.status === 'SKIP' &&
+        absent.reason.startsWith(`${absentPath} does not exist; \`rigc render --geometry\` (spine-rigc ${RIGC_GEOMETRY_VERSION} or later) writes it`),
+      `CK01's two-region fixture: ${noMesh?.status} — ${noMesh?.reason}; no file: ${absent.status} — ${'reason' in absent ? String(absent.reason).slice(0, 120) : ''}`,
+      'a rig with nothing to stretch is unmeasured, not certified, and says which of the two reasons it is',
+    );
+
+    const calls: string[] = [];
+    const oldRigc: RigcRunner = (args) => {
+      calls.push(args.join(' '));
+      return args[0] === '--version' ? { status: 0, out: '1.3.0\n' } : { status: 1, out: 'this stub builds nothing' };
+    };
+    const old = refusals(() => runCheck(rig, join(dir, 'old-rigc-out'), oldRigc));
+    const accepts = (out: string): boolean => refusals(() => requireRigcVersion(() => ({ status: 0, out }))) === null;
+    say(
+      'CK35_A_RIGC_BELOW_THE_GEOMETRY_VERSION_IS_REFUSED_BY_VERSION_BEFORE_ANYTHING_IS_BUILT',
+      old !== null &&
+        old.problems.length === 1 &&
+        old.problems[0].code === 'CHECK_RIGC_VERSION' &&
+        old.problems[0].detail.startsWith(`is 1.3.0; spine-rigc ${RIGC_GEOMETRY_VERSION} or later is required`) &&
+        calls.join('|') === '--version' &&
+        !existsSync(join(dir, 'old-rigc-out', 'build')) &&
+        accepts(`${RIGC_GEOMETRY_VERSION}\n`) &&
+        accepts('1.10.0\n') &&
+        accepts('2.0.0\n') &&
+        !accepts('1.3.9\n') &&
+        !accepts('not a version\n'),
+      `a stub printing 1.3.0: ${codes(old)} — ${old?.problems[0].detail.slice(0, 90) ?? ''}…; rigc calls ${JSON.stringify(calls)}; accepted 1.4.0 ${accepts('1.4.0\n')}, 1.10.0 ${accepts('1.10.0\n')}, 2.0.0 ${accepts('2.0.0\n')}; refused 1.3.9 ${!accepts('1.3.9\n')}, no version ${!accepts('not a version\n')}`,
+      'an old rigc would fail on --geometry only after the build and validate had run, naming a flag; the version is asked first and compared as numbers (1.10.0 is after 1.4.0, which a string comparison gets backwards)',
+    );
+
+    // The reader refuses a half-written export, and a rest edge of length 0 fails the line by name rather than dividing by it.
+    const bad1 = join(dir, 'bad-count.json');
+    const bad2 = join(dir, 'bad-frames.json');
+    const flat = join(dir, 'flat-rest.json');
+    let malformed = 'CK30 wrote no geometry.json';
+    let flatLine: JudgementLine | null = null;
+    const flatProblems: Problem[] = [];
+    let short: PartsError | null = null;
+    let fewer: PartsError | null = null;
+    if (existsSync(mild.geo)) {
+      const text = readFileSync(mild.geo, 'utf8');
+      const g1 = JSON.parse(text) as { rest: Array<{ slot: string; vertices: number[] }>; frames: Array<{ index: number; attachments: Array<{ slot: string; vertices: number[] }> }> };
+      const target = g1.frames[5].attachments.find((a) => a.slot === CHECK_PARTS[0].name);
+      if (target !== undefined) target.vertices = target.vertices.slice(0, -2);
+      writeFileSync(bad1, JSON.stringify(g1));
+      short = refusals(() => readGeometry(bad1, g1.frames.length));
+      const g2 = JSON.parse(text) as { frames: unknown[] };
+      writeFileSync(bad2, JSON.stringify(g2));
+      fewer = refusals(() => readGeometry(bad2, g2.frames.length + 1));
+      const g3 = JSON.parse(text) as { rest: Array<{ slot: string; kind: string; vertices: number[] }> };
+      const r3 = g3.rest.find((r) => r.slot === CHECK_PARTS[0].name && r.kind === 'mesh');
+      if (r3 !== undefined) {
+        r3.vertices[2] = r3.vertices[0];
+        r3.vertices[3] = r3.vertices[1];
+      }
+      writeFileSync(flat, JSON.stringify(g3));
+      flatLine = stretchLine(readGeometry(flat, (g3 as unknown as { frames: unknown[] }).frames.length), flat, flatProblems);
+      malformed = `vertex dropped in frame 5: ${codes(short)} — ${short?.problems[0].detail.slice(0, 110) ?? ''}; one frame fewer than written: ${fewer?.problems[0].detail.slice(0, 80) ?? 'accepted'}; vertex 1 on vertex 0 at rest: ${flatLine.status} — ${flatProblems[0]?.detail.slice(0, 90) ?? 'no problem'}`;
+    }
+    say(
+      'CK36_A_HALF_WRITTEN_GEOMETRY_FILE_IS_REFUSED_BY_NAME_AND_A_ZERO_REST_EDGE_FAILS_THE_LINE',
+      short !== null &&
+        short.problems[0].code === 'CHECK_GEOMETRY_FILE' &&
+        short.problems[0].detail === `frame 5 mesh "${CHECK_PARTS[0].name}" attachment "${CHECK_PARTS[0].name}" has 6 vertex number(s); its rest entry has 8` &&
+        fewer !== null &&
+        fewer.problems[0].detail === `holds ${IDLE_FPS + 1} frame(s); the frame set beside it wrote ${IDLE_FPS + 2}` &&
+        flatLine !== null &&
+        flatLine.status === 'FAIL' &&
+        flatProblems.some((p) => p.code === 'CHECK_TEXTURE_STRETCH' && p.detail.startsWith('1 rest edge(s) of length 0, the first triangle 0 edge 0-1')),
+      malformed,
+      'a figure read off a truncated export would be a wrong number printed as a measurement, and a rest edge of length 0 has no ratio — each is named, neither is divided through',
     );
 
     const slotless = join(dir, 'slotless');

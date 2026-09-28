@@ -91,6 +91,23 @@ export interface CheckRigOptions {
   blinkSquash?: number;
   /** A `recomposite` block for parts.json, as assemble would write one; absent by default, as in a reference-written parts.json. */
   recomposite?: RecompositeRecord;
+  /**
+   * Draw the back part as a four-vertex mesh (issue #31) rather than a region:
+   * vertices top-left, top-right, bottom-right, bottom-left, triangles
+   * `0 1 2` and `2 3 0`. The slot hangs from, and the top two vertices are
+   * weighted to, a bone `yoke` at the root's origin (rigc's A15 counts a mesh
+   * slot's own bone as one that drives it, and the idle keys `root`); the
+   * bottom two are weighted to
+   * a bone `hem` at the part's bottom centre, whose parent `hem_ctl` the idle
+   * moves down by this many units at t = 0.5 s and back — the control-bone
+   * indirection the rig stage uses, so the idle keys no bone a mesh is weighted
+   * to. At the peak the two vertical edges are (h + stretch) / h times their
+   * rest length and no edge is shorter than at rest, so `TEXTURE_STRETCH`
+   * reads (80 + stretch) / 80 at idle frame 6 (t = 0.5 s at 12 fps), on
+   * triangle 0 (vertices 0 1 2, edge 1-2) — the first of the two triangles
+   * that tie.
+   */
+  stretchMesh?: number;
 }
 
 export const IDLE_PEAK = 2;
@@ -108,6 +125,26 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
   const front = CHECK_PARTS[1];
   const eyeAt = { x: stage.x + front.x + front.w / 2, y: stage.y + cropToSpineY(front.y + front.h / 2, H) };
   const peak = opts.peak ?? IDLE_PEAK;
+  const mesh = opts.stretchMesh !== undefined;
+  const back = CHECK_PARTS[0];
+  const hemAt = { x: stage.x + back.x + back.w / 2, y: stage.y + cropToSpineY(back.y + back.h, H) };
+  const corners = [
+    [back.x, back.y],
+    [back.x + back.w, back.y],
+    [back.x + back.w, back.y + back.h],
+    [back.x, back.y + back.h],
+  ].map(([u, v]) => ({ x: stage.x + u, y: stage.y + cropToSpineY(v, H) }));
+  const backMesh = {
+    type: 'mesh',
+    image: `${back.name}.png`,
+    width: back.w,
+    height: back.h,
+    uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+    triangles: [0, 1, 2, 2, 3, 0],
+    hull: 4,
+    weights: corners.map((c, i) => (i < 2 ? [{ bone: 'yoke', x: c.x, y: c.y, weight: 1 }] : [{ bone: 'hem', x: c.x - hemAt.x, y: c.y - hemAt.y, weight: 1 }])),
+  };
+  const hemTracks = mesh ? [{ bone: 'hem_ctl', property: 'translatey', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [-(opts.stretchMesh as number)] }, { t: 1, v: [0] }] }] : [];
   const blinkTracks =
     opts.blinkSquash === undefined
       ? []
@@ -117,12 +154,17 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
     name: 'check_probe',
     images: 'images',
     skeleton: stage,
-    bones: blink ? [{ name: 'root', x: 0, y: 0 }, { name: 'eye', parent: 'root', x: eyeAt.x, y: eyeAt.y }] : [{ name: 'root', x: 0, y: 0 }],
-    slots: CHECK_PARTS.map((p, i) => ({ name: p.name, bone: blink && i === 1 ? 'eye' : 'root', attachment: p.name })),
+    bones: [
+      { name: 'root', x: 0, y: 0 },
+      ...(blink ? [{ name: 'eye', parent: 'root', x: eyeAt.x, y: eyeAt.y }] : []),
+      ...(mesh ? [{ name: 'yoke', parent: 'root', x: 0, y: 0 }, { name: 'hem_ctl', parent: 'root', x: hemAt.x, y: hemAt.y }, { name: 'hem', parent: 'hem_ctl', x: 0, y: 0 }] : []),
+    ],
+    slots: CHECK_PARTS.map((p, i) => ({ name: p.name, bone: blink && i === 1 ? 'eye' : mesh && i === 0 ? 'yoke' : 'root', attachment: p.name })),
     skins: {
       default: Object.fromEntries(
         CHECK_PARTS.map((p, i) => {
           const at = { x: stage.x + p.x + p.w / 2, y: stage.y + cropToSpineY(p.y + p.h / 2, H) };
+          if (mesh && i === 0) return [p.name, { [p.name]: backMesh }];
           return [p.name, { [p.name]: { image: `${p.name}.png`, ...(blink && i === 1 ? { x: at.x - eyeAt.x, y: at.y - eyeAt.y } : at) } }];
         }),
       ),
@@ -139,7 +181,7 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
       idle: {
         duration: 1,
         loop: true,
-        tracks: [{ bone: 'root', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [peak] }, { t: 1, v: [opts.lastKey ?? 0] }] }, ...blinkTracks],
+        tracks: [{ bone: 'root', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [peak] }, { t: 1, v: [opts.lastKey ?? 0] }] }, ...blinkTracks, ...hemTracks],
       },
     },
   };

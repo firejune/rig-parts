@@ -26,7 +26,7 @@
  * | `build/` | `rigc build --profile spine-html --pack` — the packed atlas is the final artifact |
  * | `gate_spine-html.txt` | that build's gate lines, verbatim |
  * | `gate_spine.txt` | `rigc validate build/ --profile spine`'s gate lines, verbatim |
- * | `idle_frames/` | `rigc render --animation idle --fps 12 --max 640`: `frames.json` + `idle/f*.png` |
+ * | `idle_frames/` | `rigc render --animation idle --fps 12 --max 640 --geometry`: `frames.json` + `idle/f*.png` + `idle/geometry.json` |
  * | `contact.png` | rigc's own contact sheet of that render, copied out |
  * | `motion_heat.png` | frame 0 in grey with each pixel's largest change across the idle in red |
  * | `check.json` | the figures below and `PASS` |
@@ -35,11 +35,14 @@
  * both gate summaries `0 failed`; seam mean |d| <= 1.0 of 255 and at most 50
  * pixels differing by more than 40; loop max |d| == 0.
  *
- * Beside them, five judgement lines (issue #11) measure what used to be left
- * to an eye — `BREATH_VISIBLE`, `BLINK_NO_HOLE`, `CHAIN_LAG`,
- * `TIP_OVER_ROOT`, `STILL_REGIONS_DARK` — from rigc renders of the idle (the
- * whole rig, or a part alone through `--slot`), from the setup still with the
- * blink held shut, or from `motion.json` read as sines. Each reports SKIP,
+ * Beside them, six judgement lines (issue #11, and #31 for the sixth) measure
+ * what used to be left to an eye — `BREATH_VISIBLE`, `BLINK_NO_HOLE`,
+ * `CHAIN_LAG`, `TIP_OVER_ROOT`, `STILL_REGIONS_DARK`, `TEXTURE_STRETCH` — from
+ * rigc renders of the idle (the whole rig, or a part alone through `--slot`),
+ * from the setup still with the blink held shut, from `motion.json` read as
+ * sines, or from the skinned mesh vertices the idle render's `--geometry`
+ * writes beside its frames (spine-rigc {@link RIGC_GEOMETRY_VERSION} or later,
+ * which `check` asks `rigc --version` for before it builds anything). Each reports SKIP,
  * with the reason, when the rig has nothing for it to read. The instruments
  * are `src/instruments.ts`; the bars are below and in AUTHORING §7. After
  * them, one REPORTED line with no bar, `RECOMPOSITE_HOLES` (issue #25): the
@@ -68,6 +71,8 @@ import { framesInside, IDLE_FPS } from './motion.ts';
 import {
   bandExcursion,
   blinkFigures,
+  type GeometryPose,
+  type MeshRest,
   blinkTracks,
   boxLabel,
   chainFigures,
@@ -82,6 +87,8 @@ import {
   type PixelBox,
   regionHeat,
   rowHalves,
+  stretchFigures,
+  stretchSeverity,
   SWING_TAGS,
   topmostIndex,
   TORSO_TAGS,
@@ -133,6 +140,22 @@ export const CHAIN_LAG_MIN_STEP = 0.001;
 export const TIP_RATIO_FLOOR = 1.4725;
 export const STILL_FACE_MEAN_CEILING = 33.976;
 export const STILL_FEET_MEAN_CEILING = 3.244;
+/**
+ * `TEXTURE_STRETCH`'s ceiling on max(ratio, 1/ratio) (issue #31): the worse
+ * example's figure (demo, 1.388) squared. The ceiling rule is "twice the worse
+ * one's", and it is applied to the quantity whose zero means "nothing
+ * happened", as it is for heat: for an edge ratio that is |ln r|, so twice
+ * |ln 1.388| is ln(1.388²). Doubling the ratio itself (2.776) was rejected —
+ * its zero is not at 1, and it would pass an edge drawn at 2.7 times its rest
+ * length, the mutant the line exists to catch included.
+ */
+export const TEXTURE_STRETCH_CEILING = 1.926544;
+
+/** The first spine-rigc whose `render` writes `geometry.json` (`--geometry`, spine-rigc 1.4.0's changelog). */
+export const RIGC_GEOMETRY_VERSION = '1.4.0';
+/** The geometry export's file name inside a frame set directory, and the format tag it carries. */
+export const GEOMETRY_FILE = 'geometry.json';
+export const GEOMETRY_SPEC = 'rigc-geometry/1';
 
 /** Issue #2's yardstick, measured on the Spine example export `spineboy.png` (alpha > 0). */
 export const SPINEBOY_YARDSTICK = '1024x256, 40 region(s), 45.8% opaque (alpha > 0)';
@@ -641,7 +664,7 @@ function round3(x: number): number {
 export type JudgementLine = { status: 'PASS' | 'FAIL'; [figure: string]: unknown } | { status: 'SKIP'; reason: string };
 
 /** The judgement lines, in the order check.json and the console carry them. */
-export const JUDGEMENT_LINES = ['BREATH_VISIBLE', 'BLINK_NO_HOLE', 'CHAIN_LAG', 'TIP_OVER_ROOT', 'STILL_REGIONS_DARK'] as const;
+export const JUDGEMENT_LINES = ['BREATH_VISIBLE', 'BLINK_NO_HOLE', 'CHAIN_LAG', 'TIP_OVER_ROOT', 'STILL_REGIONS_DARK', 'TEXTURE_STRETCH'] as const;
 export type JudgementName = (typeof JUDGEMENT_LINES)[number];
 
 /**
@@ -667,6 +690,7 @@ export interface CheckFigures {
   CHAIN_LAG: JudgementLine;
   TIP_OVER_ROOT: JudgementLine;
   STILL_REGIONS_DARK: JudgementLine;
+  TEXTURE_STRETCH: JudgementLine;
   RECOMPOSITE_HOLES: ReportedLine;
   PASS: boolean;
 }
@@ -701,6 +725,7 @@ function rigcFailed(what: string, call: RigcCall, lines: readonly string[]): Pro
  */
 export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome: string = rigDir): CheckReport {
   const inp = readCheckInputs(rigDir, partsHome);
+  requireRigcVersion(rigc);
   const out = resolve(outDir);
   mkdirSync(out, { recursive: true });
   const buildDir = join(out, 'build');
@@ -730,8 +755,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   const spineGreen = gateGreen(validate.status, gateSpine);
 
   // 3. the idle, the loop, the heat
-  const render = rigc(['render', '--candidate', buildDir, '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--out', idleDir]);
-  if (render.status !== 0) refuseIfAny(rigcFailed('render --animation idle', render, render.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+  const render = rigc(['render', '--candidate', buildDir, '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--geometry', '--out', idleDir]);
+  if (render.status !== 0) refuseIfAny(rigcFailed('render --animation idle --geometry', render, render.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
   const idle = readFrameSet(idleDir);
   const last = idle.frames[idle.frames.length - 1];
   if (idle.stride !== 1 || idle.written !== idle.sampled || idle.duration !== inp.idleDuration || last.index !== idle.sampled - 1) {
@@ -773,6 +798,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   }
   const still = stillLine(inp, idleHeat, idle.viewport, H, problems);
   const chain = chainLine(inp, problems);
+  const geometryPath = join(idle.dir, GEOMETRY_FILE);
+  const stretch = stretchLine(readGeometry(geometryPath, idle.written), geometryPath, problems);
 
   // 4. the seam: the setup pose as a one-key throwaway animation — and, beside it, the same pose with the eyes shut
   let seam: SeamFigures;
@@ -828,6 +855,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     CHAIN_LAG: chain,
     TIP_OVER_ROOT: tip,
     STILL_REGIONS_DARK: still,
+    TEXTURE_STRETCH: stretch,
     RECOMPOSITE_HOLES: holesLine(inp.parts),
     PASS: false,
   };
@@ -1104,5 +1132,166 @@ function blinkLine(
     hole_bar: BLINK_HOLE_BAR,
     patch_max: b.patchMax,
     patch_px_over_40: b.patchOver,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// texture stretch (issue #31): rigc's geometry export
+// ---------------------------------------------------------------------------
+
+/** `major.minor.patch` of a `rigc --version` line, or null when it holds none. */
+export function parseRigcVersion(out: string): [number, number, number] | null {
+  const m = /^\s*(\d+)\.(\d+)\.(\d+)/.exec(out);
+  return m === null ? null : [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+/**
+ * Refuse, before anything is built, a rigc older than
+ * {@link RIGC_GEOMETRY_VERSION}: its `render` has no `--geometry`, so the idle
+ * render would fail on the flag after the build and validate had run, and
+ * the refusal would name a flag rather than the version that lacks it.
+ */
+export function requireRigcVersion(rigc: RigcRunner): void {
+  const v = rigc(['--version']);
+  const got = v.status === 0 ? parseRigcVersion(v.out) : null;
+  const need = parseRigcVersion(RIGC_GEOMETRY_VERSION) as [number, number, number];
+  const below = got !== null && (got[0] - need[0] || got[1] - need[1] || got[2] - need[2]) < 0;
+  if (got === null || below) {
+    refuseIfAny([
+      {
+        code: 'CHECK_RIGC_VERSION',
+        object: '`rigc --version`',
+        detail: `${got === null ? `exit ${v.status}, printed ${JSON.stringify(v.out.trim().split('\n')[0] ?? '')} — no version` : `is ${got.join('.')}`}; spine-rigc ${RIGC_GEOMETRY_VERSION} or later is required — its \`render --geometry\` writes the skinned mesh vertices TEXTURE_STRETCH is measured from (\`bun install\` puts this package's own spine-rigc at node_modules/.bin/rigc)`,
+      },
+    ]);
+  }
+}
+
+export interface IdleGeometry {
+  meshes: MeshRest[];
+  frames: GeometryPose[];
+}
+
+function geometryProblem(object: string, detail: string): never {
+  refuseIfAny([{ code: 'CHECK_GEOMETRY_FILE', object, detail }]);
+  throw new Error('unreachable');
+}
+
+function numberArray(v: unknown): v is number[] {
+  return Array.isArray(v) && v.every((x) => typeof x === 'number' && Number.isFinite(x));
+}
+
+/**
+ * The mesh half of a `rigc-geometry/1` file: every `rest` entry of kind
+ * `mesh`, and each frame's attachments. Null when the file does not exist
+ * (the line then says SKIP, naming it); a file that exists and does not hold
+ * `frames` frames of well-formed vertices is refused naming what is wrong,
+ * because a figure read off a half-written export would be a wrong number
+ * printed as a measurement.
+ */
+export function readGeometry(path: string, frames: number): IdleGeometry | null {
+  if (!existsSync(path)) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    return geometryProblem(path, `does not parse as JSON: ${(err as Error).message}`);
+  }
+  if (!isRecord(raw) || raw.spec !== GEOMETRY_SPEC) return geometryProblem(path, `"spec" is ${JSON.stringify(isRecord(raw) ? raw.spec : raw)?.slice(0, 40)}; ${JSON.stringify(GEOMETRY_SPEC)} is required`);
+  if (!Array.isArray(raw.rest) || !Array.isArray(raw.frames)) return geometryProblem(path, 'lacks "rest" or "frames"; a rigc-geometry/1 file carries both');
+  if (raw.frames.length !== frames) return geometryProblem(path, `holds ${raw.frames.length} frame(s); the frame set beside it wrote ${frames}`);
+  const meshes: MeshRest[] = [];
+  for (const [i, r] of raw.rest.entries()) {
+    if (!isRecord(r) || r.kind !== 'mesh') continue;
+    const at = `rest[${i}] (slot ${JSON.stringify(r.slot)}, attachment ${JSON.stringify(r.attachment)})`;
+    if (typeof r.slot !== 'string' || typeof r.attachment !== 'string') return geometryProblem(path, `${at} has no string "slot" and "attachment"`);
+    if (!numberArray(r.vertices) || r.vertices.length % 2 !== 0) return geometryProblem(path, `${at} "vertices" is not an even-length array of finite numbers`);
+    const n = r.vertices.length / 2;
+    const tri = r.triangles;
+    if (!numberArray(tri) || tri.length % 3 !== 0 || !tri.every((x) => Number.isInteger(x) && x >= 0 && x < n)) return geometryProblem(path, `${at} "triangles" is not index triplets into its ${n} vertices`);
+    meshes.push({ slot: r.slot, attachment: r.attachment, vertices: r.vertices, triangles: tri });
+  }
+  const want = new Map(meshes.map((m) => [`${m.slot}\u0000${m.attachment}`, m.vertices.length]));
+  const poses: GeometryPose[] = [];
+  for (const [i, f] of raw.frames.entries()) {
+    if (!isRecord(f) || typeof f.index !== 'number' || !Array.isArray(f.attachments)) return geometryProblem(path, `frames[${i}] has no "index" or "attachments"`);
+    const attachments: GeometryPose['attachments'][number][] = [];
+    for (const a of f.attachments) {
+      if (!isRecord(a) || typeof a.slot !== 'string' || typeof a.attachment !== 'string') continue;
+      const n = want.get(`${a.slot}\u0000${a.attachment}`);
+      if (n === undefined) continue;
+      if (!numberArray(a.vertices) || a.vertices.length !== n) {
+        return geometryProblem(path, `frame ${f.index} mesh "${a.slot}" attachment "${a.attachment}" has ${Array.isArray(a.vertices) ? a.vertices.length : 'no'} vertex number(s); its rest entry has ${n}`);
+      }
+      attachments.push({ slot: a.slot, attachment: a.attachment, vertices: a.vertices });
+    }
+    poses.push({ index: f.index, attachments });
+  }
+  return { meshes, frames: poses };
+}
+
+function stretchAtText(s: { triangle: number; vertices: readonly number[]; edge: readonly number[]; frame: number }): string {
+  return `triangle ${s.triangle} (vertices ${s.vertices.join(' ')}), edge ${s.edge.join('-')}, idle frame ${s.frame}`;
+}
+
+/**
+ * (6) No visible texture stretch: for every mesh triangle, each edge's length
+ * in each idle frame over its rest length (the setup pose's bones, no deform —
+ * which on both examples is the art's own proportions, the attachment's `uvs`
+ * times its size, to 2.4e-5). The figure is the rig's worst max(ratio,
+ * 1/ratio); each mesh's largest and smallest ratio, and where, are the detail.
+ * SKIP when the render wrote no geometry file or the rig draws no mesh.
+ */
+export function stretchLine(geo: IdleGeometry | null, path: string, problems: Problem[]): JudgementLine {
+  if (geo === null) return skip(`${path} does not exist; \`rigc render --geometry\` (spine-rigc ${RIGC_GEOMETRY_VERSION} or later) writes it, and the skinned mesh vertices are read from it`);
+  if (geo.meshes.length === 0) return skip('the rig draws no mesh attachment (every slot is a region), so there is no triangle to stretch');
+  const figures = stretchFigures(geo.meshes, geo.frames);
+  const rows: Array<Record<string, unknown>> = [];
+  let worst: { mesh: (typeof figures)[number]; at: NonNullable<(typeof figures)[number]['max']>; severity: number } | null = null;
+  let maxAll: number | null = null;
+  let minAll: number | null = null;
+  let failed = false;
+  for (const m of figures) {
+    if (m.degenerate.length > 0) {
+      failed = true;
+      problems.push({
+        code: 'CHECK_TEXTURE_STRETCH',
+        object: `mesh "${m.slot}" attachment "${m.attachment}"`,
+        detail: `${m.degenerate.length} rest edge(s) of length 0, the first triangle ${m.degenerate[0].triangle} edge ${m.degenerate[0].edge.join('-')}; no stretch ratio can be read off an edge with no rest length — two of the mesh's vertices coincide at the setup pose`,
+      });
+    }
+    if (m.max === null || m.min === null) {
+      rows.push({ slot: m.slot, triangles: m.triangles, unmeasured: 'no idle frame shows this attachment' });
+      continue;
+    }
+    const sMax = stretchSeverity(m.max.ratio);
+    const sMin = stretchSeverity(m.min.ratio);
+    const at = sMin > sMax ? m.min : m.max;
+    const severity = round3(Math.max(sMax, sMin));
+    if (worst === null || severity > worst.severity) worst = { mesh: m, at, severity };
+    maxAll = maxAll === null ? m.max.ratio : Math.max(maxAll, m.max.ratio);
+    minAll = minAll === null ? m.min.ratio : Math.min(minAll, m.min.ratio);
+    rows.push({ slot: m.slot, triangles: m.triangles, max_ratio: round3(m.max.ratio), max_at: stretchAtText(m.max), min_ratio: round3(m.min.ratio), min_at: stretchAtText(m.min), severity });
+    if (severity > TEXTURE_STRETCH_CEILING) {
+      failed = true;
+      problems.push({
+        code: 'CHECK_TEXTURE_STRETCH',
+        object: `mesh "${m.slot}" ${stretchAtText(at)}`,
+        detail: `the edge is ${round3(at.ratio)} times its rest length (max(ratio, 1/ratio) ${severity}); <= ${TEXTURE_STRETCH_CEILING} is required — the texture on it is ${at.ratio >= 1 ? 'stretched' : 'squeezed'}: the bones this mesh is weighted to move apart (amplitudes too large down a chain), or a vertex blends bones that move against each other`,
+      });
+    }
+  }
+  if (worst === null) return { status: 'SKIP', reason: `no idle frame shows any of the rig's ${figures.length} mesh(es): ${figures.map((m) => `"${m.slot}"`).join(', ')}` };
+  return {
+    status: failed ? 'FAIL' : 'PASS',
+    meshes: figures.length,
+    triangles: figures.reduce((n, m) => n + m.triangles, 0),
+    frames: geo.frames.length,
+    severity: worst.severity,
+    severity_ceiling: TEXTURE_STRETCH_CEILING,
+    worst: { slot: worst.mesh.slot, triangle: worst.at.triangle, vertices: worst.at.vertices, edge: worst.at.edge, frame: worst.at.frame, ratio: round3(worst.at.ratio) },
+    max_ratio: round3(maxAll as number),
+    min_ratio: round3(minAll as number),
+    per_mesh: rows,
   };
 }

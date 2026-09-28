@@ -1,7 +1,8 @@
 /**
- * The instruments behind `check`'s five judgement lines (issue #11): what an
- * eye used to be asked about a rendered idle, turned into figures read off
- * rigc's frames, `parts.json` and `motion.json`.
+ * The instruments behind `check`'s six judgement lines (issue #11, and #31
+ * for texture stretch): what an eye used to be asked about a rendered idle,
+ * turned into figures read off rigc's frames, its `geometry.json`,
+ * `parts.json` and `motion.json`.
  *
  * Everything here is pure: frames, part records and specs in, figures out.
  * `src/check.ts` owns the rigc renders that produce the frames and the bars
@@ -504,4 +505,100 @@ export function blinkFigures(open: Raster, closed: Raster, bg: readonly number[]
     }
   }
   return { holePx, patchMax, patchOver, px };
+}
+
+// ---------------------------------------------------------------------------
+// texture stretch (issue #31)
+// ---------------------------------------------------------------------------
+
+/** One mesh attachment's rest shape and topology, as rigc's `geometry.json` `rest` table carries it: world units, the setup pose's bones with no deform. */
+export interface MeshRest {
+  slot: string;
+  attachment: string;
+  /** x, y per vertex. */
+  vertices: readonly number[];
+  /** Vertex index triplets. */
+  triangles: readonly number[];
+}
+
+/** One frame's skinned attachments, as `geometry.json`'s `frames[i].attachments` carries them. */
+export interface GeometryPose {
+  index: number;
+  attachments: ReadonlyArray<{ slot: string; attachment: string; vertices: readonly number[] }>;
+}
+
+/** Where one edge ratio was found: the triangle, its three vertex indices, the edge's two, the frame, and deformed length over rest length. */
+export interface StretchAt {
+  triangle: number;
+  vertices: [number, number, number];
+  edge: [number, number];
+  frame: number;
+  ratio: number;
+}
+
+export interface MeshStretch {
+  slot: string;
+  attachment: string;
+  triangles: number;
+  /** Frames that show this attachment; 0 leaves `max` and `min` null. */
+  frames: number;
+  /** The largest edge ratio over every triangle and every frame. */
+  max: StretchAt | null;
+  /** The smallest. */
+  min: StretchAt | null;
+  /** Rest edges of length 0, which no ratio can be read off: `triangle`, the edge's two vertices. */
+  degenerate: Array<{ triangle: number; edge: [number, number] }>;
+}
+
+/**
+ * How far a ratio is from 1 in either direction: `max(r, 1/r)`. Compression
+ * distorts a texture as much as stretch does — an edge at half its rest length
+ * squeezes the texels on it by the factor an edge at twice its rest length
+ * spreads them — so the one figure held to a bar reads both, as |ln r| does.
+ */
+export function stretchSeverity(ratio: number): number {
+  return ratio >= 1 ? ratio : 1 / ratio;
+}
+
+/**
+ * For every mesh in `rest`, every triangle's three edges in every frame that
+ * shows the attachment: deformed length over rest length, the largest and the
+ * smallest, each with the triangle, its vertices, the edge and the frame.
+ * Frames are walked in the order given and triangles in index order, and a
+ * later value replaces the kept one only when strictly more extreme, so a tie
+ * names the earliest frame and then the lowest triangle.
+ */
+export function stretchFigures(rest: readonly MeshRest[], frames: readonly GeometryPose[]): MeshStretch[] {
+  return rest.map((m) => {
+    const t = m.triangles;
+    const v0 = m.vertices;
+    const len = (v: readonly number[], a: number, b: number): number => Math.hypot(v[2 * a] - v[2 * b], v[2 * a + 1] - v[2 * b + 1]);
+    const out: MeshStretch = { slot: m.slot, attachment: m.attachment, triangles: t.length / 3, frames: 0, max: null, min: null, degenerate: [] };
+    const restLen: number[] = [];
+    for (let i = 0; i < t.length; i += 3) {
+      for (const [a, b] of [[t[i], t[i + 1]], [t[i + 1], t[i + 2]], [t[i + 2], t[i]]] as const) {
+        const l = len(v0, a, b);
+        restLen.push(l);
+        if (l === 0) out.degenerate.push({ triangle: i / 3, edge: [a, b] });
+      }
+    }
+    for (const f of frames) {
+      const pose = f.attachments.find((a) => a.slot === m.slot && a.attachment === m.attachment);
+      if (pose === undefined) continue;
+      out.frames++;
+      for (let i = 0; i < t.length; i += 3) {
+        const edges = [[t[i], t[i + 1]], [t[i + 1], t[i + 2]], [t[i + 2], t[i]]] as const;
+        for (let e = 0; e < 3; e++) {
+          const l0 = restLen[i + e];
+          if (l0 === 0) continue;
+          const [a, b] = edges[e];
+          const ratio = len(pose.vertices, a, b) / l0;
+          const at = (): StretchAt => ({ triangle: i / 3, vertices: [t[i], t[i + 1], t[i + 2]], edge: [a, b], frame: f.index, ratio });
+          if (out.max === null || ratio > out.max.ratio) out.max = at();
+          if (out.min === null || ratio < out.min.ratio) out.min = at();
+        }
+      }
+    }
+    return out;
+  });
 }
