@@ -565,9 +565,9 @@ See-through with another seed.
 | `CHECK_BLINK_NO_HOLE` | with the blink held shut, the eyewhite box shows the page where the open eye had art | the layer under the eye: the `face` part has no art there. Take the face from the other run, or add a part under the eye; `motion.blink.squash` only hides the hole less |
 | `CHECK_CHAIN_LAG` | a rotate track leads (or does not lag) the keyed bone above it, or a chain link swings less than the link above | that chain track's `phase`/`lag` (a positive `lag`, a child `phase` above its parent's) or its `amps` (non-decreasing toward the tip) |
 | `CHECK_TIP_OVER_ROOT` | a `handwear`/`bottomwear` part's lower half travels less than 1.4725 times as far as its upper half | the chain track's `amps` (grow toward the tip), or the mesh's `segments` (the chain must be among them) |
-| `CHECK_STILL_REGIONS_DARK` | the heat map is brighter than the ceiling over the face outline or over the feet | the part that moves there: a mesh weighted to a swinging bone (`segments`), or a region on the wrong bone |
+| `CHECK_STILL_REGIONS_DARK` | over the face outline, carried into the frame of the bone the face's slot rides: something moves there that the head does not carry, above twice the resampler's own error on this rig (both figures quoted, with the screen-space one beside them); over the feet, the heat map is brighter than the ceiling | on the face: a mesh over it weighted to a bone the head does not carry (`segments`), or a swinging part (a bang, a chain) whose art crosses the face outline; on the feet: a mesh weighted to a swinging bone, or a region on the wrong bone |
 | `CHECK_TEXTURE_STRETCH` | a mesh triangle's edge, in some idle frame, is more than 1.926544 times its rest length or less than 1/1.926544 of it (the mesh, triangle, its three vertices, the edge and the frame are named); or a rest edge has length 0 | the chain tracks' `amps` on the bones that mesh is weighted to (the stretch grows with them), or the mesh's `segments` — a vertex blending two bones that swing against each other |
-| `CHECK_SEAM_FRAME_SIZE`, `FRAMES_SIDECAR`, `CHECK_GEOMETRY_FILE` | rigc's render is not what its `frames.json` says, or its `geometry.json` is not a whole `rigc-geometry/1` export of the frames beside it (a frame count, or a mesh whose vertex count differs from its rest entry) | a rigc problem; report it |
+| `CHECK_SEAM_FRAME_SIZE`, `FRAMES_SIDECAR`, `CHECK_GEOMETRY_FILE` | rigc's render is not what its `frames.json` says, or its `geometry.json` is not a whole `rigc-geometry/1` export of the frames beside it (a frame count, a mesh whose vertex count differs from its rest entry; for the face half, another viewport than `frames.json`'s, other frame indices, the head bone or a feature's bone missing from a frame, a non-finite transform or time) | a rigc problem; report it |
 | `LOOP_ENCODE` | the loop encoder refused a frame (translucent pixel in a GIF, a size change) | the frames; for a translucent frame write the lossless or the indexed APNG, which keep alpha |
 | `BUILD_ARTIFACT_PRESENT` | the packed build lacks its `.json`, `.atlas` or page | a rigc problem; report it |
 
@@ -598,7 +598,9 @@ change from idle frame 0, in levels of 255, on the idle's 640-pixel grid.
 Each bar follows one rule: a floor is half the weaker example's figure and a ceiling
 twice the worse one's, so the weaker example clears it by a factor of two; a bar the
 model itself fixes (a part on an unkeyed bone does not move, a lag is above 0, a hole
-is 0 pixels) is that value, not a margin. The figures are this port's, measured on
+is 0 pixels) is that value, not a margin — and where the model's value is an error
+the rig itself measures (a face the head carries is still in the head's frame up to
+the resampler's error), the bar is that measurement times the same two. The figures are this port's, measured on
 the two examples [observed]:
 
 | line | measures | bar | `demo` | `sample` | SKIP when |
@@ -608,7 +610,7 @@ the two examples [observed]:
 | ″ (reported) | the same box: each closed-eye pixel's max-channel distance to the nearest colour the open eye's box holds — max, and pixels over 40 | none | 15; 0 | 11; 0 | as above |
 | `CHAIN_LAG` | `motion.json`'s rotate tracks read as sines (DFT of the keys: period, amplitude, phase) and arranged by the bone tree — a keyed bone's parent is its nearest keyed ancestor | every lag ≥ 0.001 cycle; amplitude non-decreasing down each unbranched chain | lags 0.040 (neck to head) to 0.120; 12 chains | lags 0.040 to 0.100; 9 chains | no rotate track under another of the same period |
 | `TIP_OVER_ROOT` | each `handwear`/`bottomwear` part alone: how far the centroid of its art travels in the lower half of its box against the upper half | ratio ≥ 1.4725 | `bottomwear` 2.945, `sleeves` 3.716 | `bottomwear` 4.396, `sleeves` 12.475 | no such part |
-| `STILL_REGIONS_DARK` | the idle's heat over the face outline (where `face` is the top part of the flat stack, less the boxes of `eyewhite`, `irides`, `eyelash`, `eyebrow` and `mouth`) and over the feet (where `footwear` is on top); max reported | face mean ≤ 33.976; feet mean ≤ 3.244 | 16.988; 1.622 | 11.475; 0 | no `face` and no `footwear` part (one of the two absent leaves that half unmeasured) |
+| `STILL_REGIONS_DARK` | the face outline **in the head's own frame**: each idle frame sampled (bilinear) where the head bone has carried each setup-pose pixel of the region, the heat taken over those samples. The head bone is the bone the `face` parts' slot rides in `rig.json`, and its per-frame world transform is `rigc render --geometry`'s. The region is the frame pixels whose whole footprint — 1 + 1/scale rig px each way, what the rasteriser's and this sampler's bilinear taps can reach — is `face` on top of the flat stack, clear by that reach of where `eyewhite`, `irides`, `eyelash`, `eyebrow` and `mouth` go in the head's frame over the idle. `resampler_heat_mean` is the same figure off the whole rig moved rigidly as the idle moves the head (the root keyed to the head's motion, every other key dropped), where every pixel is still in the head's frame by construction. `screen_heat_mean`/`max` over `screen_px` are the screen-space figures this line held until issue #33 (where `face` is on top, less the features' setup boxes), reported. The feet (where `footwear` is on top): the idle's heat in screen space — they ride the root, which the idle does not move, so the screen is their own frame | face `head_frame_heat_mean` ≤ 2 × `resampler_heat_mean` (`mean_ceiling`); feet mean ≤ 3.244 | face 1.321 ≤ 2.292 (resampler 1.146; screen 16.988); feet 1.622 | face 0.884 ≤ 1.765 (resampler 0.883; screen 11.475); feet 0 | no `face` and no `footwear` part (one of the two absent leaves that half unmeasured; so do face parts on two slot bones, or idle frames with no `geometry.json`) |
 | `TEXTURE_STRETCH` | every mesh triangle's three edges in every idle frame, read from the `geometry.json` the idle render writes (`rigc render --geometry`, spine-rigc 1.4.0 or later): skinned length over rest length, the rest being the setup pose's bones with no deform. The figure is the rig's worst max(ratio, 1/ratio); each mesh's largest and smallest ratio, with triangle, vertices, edge and frame, is the detail | max(ratio, 1/ratio) ≤ 1.926544 | 1.388: `hair_back` triangle 449, edge 42-43 at 0.720 in frame 26 (largest stretch 1.291, frame 2) | 1.227: `sleeves` triangle 169, edge 126-51 at 0.815 in frame 28 (largest stretch 1.196, frame 5) | the rig draws no mesh, or the render wrote no `geometry.json` |
 
 After them, one **reported line** with no bar:
@@ -671,22 +673,59 @@ What each figure is, and is not:
   passes an edge drawn at 2.7 times its rest length. The rest is the art's own
   proportions — on both examples every rest edge equals its `uvs` edge times the
   attachment's size to within 2.4e-5, the uvs' six-decimal rounding.
-- **The face ceiling is weak, and the reason is in the examples.** The head rolls, so
-  the face outline is lit in both (16.988 and 11.475); twice the worse is a ceiling a
-  smooth face sliding two rig pixels stays under (the selftest's fixture measures 24.8
-  at that slide and 85.5 at eight). A face-outline instrument that removes the head's
-  own motion needs the head bone's world transform per frame; since spine-rigc 1.4.0
-  the `geometry.json` beside the idle frames carries every bone's, and nothing here
-  reads it for this yet. The feet half has the same shape on the demo: its long skirt swings
-  over the shoes, which lights 1.622.
+- **The face is measured in the head's frame, and its bar is the model's (issue #33).**
+  Until #33 the face half read the screen-space heat map, where the head's intended
+  roll lights the outline on both examples (16.988 and 11.475, the figures now
+  reported as `screen_heat_mean`), so its ceiling was twice the worse example,
+  33.976 — a ceiling a smooth fixture face sliding two rig pixels stayed under (24.8;
+  eight pixels measured 85.5). The judgement means *nothing moves on the face that
+  the head does not move*, so the heat is now taken after each frame's face region is
+  carried back through the head bone's transform. A region the head carries is then
+  still up to the resampler's error, and nothing more. That error depends on the art
+  and the scale — 1.146 on the demo, 0.883 on the sample, 0.47 on the selftest's
+  smooth fixture face — so no one constant can be the bar: it is measured on the same
+  rig, off a throwaway animation that moves the whole rig rigidly as the idle moves
+  the head, and the ceiling is twice that (the tree's one margin). The calibration is
+  its own `rigc build`: sharing the setup still's build widened the still's viewport
+  (rigc fits it to every animation a skeleton holds) and moved the seam.
+- **The region is the pixels that read the face and nothing else.** A pixel at the
+  outline's rim, or next to a feature, reads a neighbour's art through the two
+  bilinear taps, and that neighbour moving lights it with nothing on the face moving:
+  measured over the rim, a fixture face that does not move at all over a breathing
+  torso read 1.533 against a bar of 0 (its head never moves, so its resampler error is
+  exactly 0), and the proposer's own strand fixture went red on the brows the blink
+  drops below their setup boxes. So the region keeps only pixels whose whole
+  footprint is the face (228 of the demo's 515 screen-space pixels, 271 of the
+  sample's 453), clear of where each feature goes in the head's frame over the idle
+  (its setup box carried by its own bone and back through the head's). Measured over
+  the rim instead, both examples sat at 1.31 and 1.34 times their calibration, and
+  that excess was the bangs' art sliding over the rim.
+- **What the examples show in the head's frame.** The sample is still to its
+  calibration (0.884 against 0.883). The demo reads 1.15 times it (1.321 against
+  1.146), and most of that is the calibration's own noise, not motion: the face
+  rendered alone (`--slot face`), rigid on the head by construction, reads 1.296 on
+  the idle's grid against 1.146 on the calibration's — rigc fits each render's
+  viewport to its own animation, so the two grids sit at a different sub-pixel phase
+  on the art (13 %). The rest, 0.025, is `hair_front`: rendered without it the figure
+  is the face-alone one. Both clear the bar, the demo by a factor of 1.74 and the sample by 2.00.
+- **What the line now catches, and where it stops.** The selftest's fixture face,
+  a mesh weighted wholly to a bone that slides two rig pixels under its head, reads
+  27.886 against a ceiling of 0 on a still head (screen space 26.901, which the
+  retired 33.976 passed) and 27.936 against 0.94 on a rolling one. The same plant on
+  the real examples, at their render scale of about 0.5 (one rig pixel is half a frame
+  pixel): two pixels read 3.216 on the sample (ceiling 1.765, red) and 2.181 on the
+  demo (2.292, green); one pixel reads 1.614 and 1.526 (both green). A smooth skin
+  interior sliding half a frame pixel changes little, and the rim that shows it most is
+  the rim the region leaves out. The line also does not judge a face that moves with
+  the bone its own slot rides: that is the head moving, whatever the bone, so a face
+  region on the wrong bone is the feet half's and the eye's to catch, not this line's.
+- **The feet stay in screen space.** They ride the root, which the idle does not key,
+  so the screen is their own frame. On the demo the long skirt swings over the shoes,
+  which lights 1.622.
 
-Still only an eye answers, a missing instrument rather than a question to ask:
-
-- **the face outline held still in the head's own frame** (above): the heat map
-  without the head's roll. The head bone's world transform per frame is in the idle's
-  `geometry.json`; the instrument that removes it from the heat map is not built.
-
-"No visible texture stretch" left this list with issue #31: it is `TEXTURE_STRETCH`.
+Nothing is left that only an eye answers. "No visible texture stretch" left this list
+with issue #31 (`TEXTURE_STRETCH`), and "the face outline held still in the head's own
+frame" with issue #33 (the face half of `STILL_REGIONS_DARK`, above).
 
 ## 8. What one character costs
 
@@ -700,3 +739,10 @@ Still only an eye answers, a missing instrument rather than a question to ask:
 About 6.5 minutes of GPU and under a minute of CPU per character, before any hand
 correction. The GPU figures are one run each on one machine; the painting's figure
 excludes choosing among seeds (the demo was chosen from eighteen candidates).
+Since issue #33 `check` runs one more `rigc build` and one more idle render (the face
+calibration, §7); the idle's `geometry.json` is the one issue #31 already writes. The `build` row
+was not re-measured: A/B against the tree before that change, alternating on one
+machine under a load average of 5 to 11, the difference in user + sys was +5.6 and
++0.8 s on the demo and +6.5 and −1.6 s on the sample over two rounds — inside what
+the load moves the same build by (the pre-change demo build alone took 43.6 to
+45.8 s there).

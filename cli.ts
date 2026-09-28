@@ -130,7 +130,8 @@ usage:
       build/ (rigc build --profile spine-html --pack: the packed atlas is the
       artifact), gate_spine-html.txt and gate_spine.txt (the gate lines
       verbatim), idle_frames/ (rigc render --animation idle --fps 12 --max 640
-      --geometry: the frames and geometry.json, the skinned vertices per frame),
+      --geometry: the frames and geometry.json, the skinned vertices and
+      every bone's world transform per frame),
       contact.png, motion_heat.png and check.json. PASS needs both gates
       "0 failed", the seam (setup pose vs the flat composite of parts/) at mean
       |d| <= ${SEAM_MEAN_BAR.toFixed(1)} with <= ${SEAM_PX_BAR} px over ${SEAM_PX_LEVEL}, and the loop (idle frame 0 vs the
@@ -142,7 +143,10 @@ usage:
       rotate track lags its keyed ancestor and amplitude grows down each
       chain, read off motion.json), TIP_OVER_ROOT (each handwear/bottomwear
       part's lower half travels further than its upper half),
-      STILL_REGIONS_DARK (the heat map over the face outline and the feet) and
+      STILL_REGIONS_DARK (the face outline in the frame of the bone the face's
+      slot rides, at most twice the resampler's own error on this rig — read
+      off the whole rig moved rigidly as the idle moves that bone — with the
+      screen-space figure reported beside it; the feet in screen space) and
       TEXTURE_STRETCH (every mesh triangle's edges over the idle against their
       rest length, max(ratio, 1/ratio) <= ${TEXTURE_STRETCH_CEILING}; the worst
       triangle is named by slot, triangle, vertices, edge and frame).

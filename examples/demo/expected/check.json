@@ -110,10 +110,15 @@
    "parts": [
     "face"
    ],
-   "px": 515,
-   "heat_mean": 16.988,
-   "heat_max": 170,
-   "mean_ceiling": 33.976
+   "head_bone": "head",
+   "screen_px": 515,
+   "screen_heat_mean": 16.988,
+   "screen_heat_max": 170,
+   "head_frame_px": 228,
+   "head_frame_heat_mean": 1.321,
+   "head_frame_heat_max": 12.489,
+   "resampler_heat_mean": 1.146,
+   "mean_ceiling": 2.292
   },
   "feet": {
    "parts": [
