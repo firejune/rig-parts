@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/firejune/spine-parts/compare/v0.3.0...v0.4.0) (2026-09-28)
+
+
+### Features
+
+* **rig:** --idle-keys ctl|direct — the _ctl indirection measured against direct keys with rigc 1.3.0's idleDrivesMeshes declaration ([#43](https://github.com/firejune/spine-parts/issues/43)) ([8a450cc](https://github.com/firejune/spine-parts/commit/8a450cc59c81052fe9008ea71c9bfae45d62cdd7))
+
+
+### Bug Fixes
+
+* **motion:** the blink's hold spans a loop frame — the 12 fps idle now shows the closed eye on both examples, and the README animation blinks ([#46](https://github.com/firejune/spine-parts/issues/46)) ([48e3e61](https://github.com/firejune/spine-parts/commit/48e3e610524d7b43b190fcfc3a14678533aaff12))
+* **propose:** a figure with no eye parts gets no blink — propose says so, and a config with an empty blink group is refused before rigc sees it ([#47](https://github.com/firejune/spine-parts/issues/47)) ([8bc20b4](https://github.com/firejune/spine-parts/commit/8bc20b4dbb41f7403a1b5d0b25b779c8992e5363))
+
 ## [0.3.0](https://github.com/firejune/spine-parts/compare/v0.2.0...v0.3.0) (2026-09-27)
 
 
