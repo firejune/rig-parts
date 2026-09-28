@@ -57,7 +57,7 @@
   },
   "dependencies": {
     "ag-psd": "^31.0.2",
-    "spine-rigc": "^1.3.0"
+    "spine-rigc": "^1.5.1"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",

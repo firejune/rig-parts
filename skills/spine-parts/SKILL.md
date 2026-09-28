@@ -26,9 +26,9 @@ stage writes are the whole interface.
   the value found and the value required; AUTHORING §6 maps every rule to the field
   or input that has to change.
 - **Green is not "looks right".** `check` measures the gates, the seam, the loop and
-  five judgement lines (`BREATH_VISIBLE`, `BLINK_NO_HOLE`, `CHAIN_LAG`,
-  `TIP_OVER_ROOT`, `STILL_REGIONS_DARK`); texture stretch and the face outline in
-  the head's own frame still need an eye (AUTHORING §7). A judgement line that says
+  six judgement lines (`BREATH_VISIBLE`, `BLINK_NO_HOLE`, `CHAIN_LAG`,
+  `TIP_OVER_ROOT`, `STILL_REGIONS_DARK`, `TEXTURE_STRETCH`); the face outline in
+  the head's own frame still needs an eye (AUTHORING §7). A judgement line that says
   SKIP was not verified: report it as such, with its reason, never as passed.
 - **A hole in the layers is invisible to every bar.** Painting that no part holds is
   missing from the setup pose and from the flat stack alike, so the seam passes over
@@ -68,8 +68,10 @@ stage writes are the whole interface.
 7. `spine-parts build --config … --source … --full … --head … --out out --loop`.
    It stops at the first stage that refuses, printing that stage's lines under
    `[assemble]`, `[rig]` or `[check]`. Fix what the FAIL line names and build again.
-8. Read `out/check/check.json` — the five judgement lines the same way as the seam
-   and the loop: a FAIL names the field to change (AUTHORING §6). Quote
+8. Read `out/check/check.json` — the six judgement lines the same way as the seam
+   and the loop: a FAIL names the field to change (AUTHORING §6);
+   `TEXTURE_STRETCH` names the worst mesh triangle (slot, triangle, vertices, edge,
+   frame), so quote it even on a PASS. Quote
    `RECOMPOSITE_HOLES` (uncovered px, hole count, the largest hole's box) in the
    report whatever `PASS` says. The artifact is the three paths the build prints
    last: `check/build/skeleton.json`, `skeleton.atlas` and the packed page. Report

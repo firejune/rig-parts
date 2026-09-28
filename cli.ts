@@ -18,7 +18,7 @@ import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
 import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage } from './src/build.ts';
-import { findRigc, PARTS_HOME_SENTENCE, type RigcRunner, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK } from './src/check.ts';
+import { findRigc, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
 import { type CharacterConfig, loadConfig, loadEarlyConfig } from './src/config.ts';
 import { PartsError, problemLine } from './src/errors.ts';
@@ -129,19 +129,26 @@ usage:
       Both are only read. Into --out:
       build/ (rigc build --profile spine-html --pack: the packed atlas is the
       artifact), gate_spine-html.txt and gate_spine.txt (the gate lines
-      verbatim), idle_frames/ (rigc render --animation idle --fps 12 --max 640),
+      verbatim), idle_frames/ (rigc render --animation idle --fps 12 --max 640
+      --geometry: the frames and geometry.json, the skinned vertices per frame),
       contact.png, motion_heat.png and check.json. PASS needs both gates
       "0 failed", the seam (setup pose vs the flat composite of parts/) at mean
       |d| <= ${SEAM_MEAN_BAR.toFixed(1)} with <= ${SEAM_PX_BAR} px over ${SEAM_PX_LEVEL}, and the loop (idle frame 0 vs the
-      frame at t = duration) at max |d| 0. Then five judgement lines, each in
+      frame at t = duration) at max |d| 0. Then six judgement lines, each in
       check.json and on the console as NAME: PASS|FAIL|SKIP with its figures and
       bars (AUTHORING §7): BREATH_VISIBLE (the topwear moves, the footwear does
       not, each rendered alone), BLINK_NO_HOLE (the setup pose with the blink
       held shut shows no background inside the eyewhite box), CHAIN_LAG (every
       rotate track lags its keyed ancestor and amplitude grows down each
       chain, read off motion.json), TIP_OVER_ROOT (each handwear/bottomwear
-      part's lower half travels further than its upper half) and
-      STILL_REGIONS_DARK (the heat map over the face outline and the feet).
+      part's lower half travels further than its upper half),
+      STILL_REGIONS_DARK (the heat map over the face outline and the feet) and
+      TEXTURE_STRETCH (every mesh triangle's edges over the idle against their
+      rest length, max(ratio, 1/ratio) <= ${TEXTURE_STRETCH_CEILING}; the worst
+      triangle is named by slot, triangle, vertices, edge and frame).
+      Needs spine-rigc ${RIGC_GEOMETRY_VERSION} or later, whose render writes
+      geometry.json; an older rigc is refused, CHECK_RIGC_VERSION, before
+      anything is built.
       Regions come from parts.json's See-through tags; a line with nothing to
       read says SKIP and why — neither a pass nor a failure — and PASS needs
       every line that measured to be PASS. Then RECOMPOSITE_HOLES: REPORTED,
