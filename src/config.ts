@@ -175,12 +175,19 @@ export interface BlinkStill {
   bone: string;
 }
 
+/**
+ * The idle's one blink. `eyes` names at least one bone; `brows` and
+ * `brow_drop` are stated together or not at all, and a stated `brows` names
+ * at least one bone — rigc refuses a group with no members, and a
+ * `brow_drop` with no brows is a value nothing reads. A figure with no eye
+ * bone has no blink: leave `blink` out (`CONFIG_BLINK_GROUP_MEMBERS`).
+ */
 export interface Blink {
   t: number;
   eyes: string[];
-  brows: string[];
+  brows?: string[];
   squash: number;
-  brow_drop: number;
+  brow_drop?: number;
   still?: Record<string, BlinkStill>;
 }
 
@@ -823,6 +830,12 @@ function checkCoverage(c: Check, parts: string[], patches: string[], meshes: Jso
   }
 }
 
+/** What an empty blink group is told: the tags whose parts make its bones, and what to write instead. */
+const BLINK_GROUP_EMPTY: Readonly<Record<'eyes' | 'brows', string>> = {
+  eyes: 'is []; the eyes group must name at least one bone (rigc refuses a group with no members). The eye bones come from eyewhite-r / eyewhite-l parts; a figure with none has nothing to blink, so leave config.motion.blink out',
+  brows: 'is []; the brows group must name at least one bone (rigc refuses a group with no members). The brow bones come from eyebrow-r / eyebrow-l parts; a figure with none has nothing to drop, so leave brows and brow_drop out',
+};
+
 function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, number>, regions: Json): void {
   const m = c.object('config.motion', v, ['duration', 'tracks'], ['blink']);
   if (m === null) return;
@@ -872,14 +885,25 @@ function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
     });
   }
   if ('blink' in m) {
-    const b = c.object(`${p}.blink`, m.blink, ['t', 'eyes', 'brows', 'squash', 'brow_drop'], ['still']);
+    const b = c.object(`${p}.blink`, m.blink, ['t', 'eyes', 'squash'], ['brows', 'brow_drop', 'still']);
     if (b === null) return;
     if ('t' in b) c.number(`${p}.blink.t`, b.t, 'non-negative');
     if ('squash' in b) c.number(`${p}.blink.squash`, b.squash, 'positive');
     if ('brow_drop' in b) c.number(`${p}.blink.brow_drop`, b.brow_drop);
+    if ('brows' in b && !('brow_drop' in b)) {
+      c.fail('CONFIG_BLINK_BROWS_PAIRED', `${p}.blink.brow_drop`, 'is absent while config.motion.blink.brows is stated; the brows group drops by brow_drop, so state both or neither');
+    }
+    if ('brow_drop' in b && !('brows' in b)) {
+      c.fail('CONFIG_BLINK_BROWS_PAIRED', `${p}.blink.brows`, `is absent while config.motion.blink.brow_drop is ${show(b.brow_drop)}; nothing would drop, so state both or neither`);
+    }
     for (const key of ['eyes', 'brows'] as const) {
       if (key in b && c.array(`${p}.blink.${key}`, b[key], false)) {
-        (b[key] as Json[]).forEach((name, k) => {
+        const list = b[key] as Json[];
+        // rigc refuses a group with no members (`group "eyes" declares no
+        // members`) one stage later, at the gate; the stage whose input is
+        // wrong is this one.
+        if (list.length === 0) c.fail('CONFIG_BLINK_GROUP_MEMBERS', `${p}.blink.${key}`, BLINK_GROUP_EMPTY[key]);
+        list.forEach((name, k) => {
           if (typeof name !== 'string' || !bones.has(name)) c.fail('CONFIG_NAME_RESOLVES', `${p}.blink.${key}[${k}]`, `is ${show(name)}; a declared bone is required`);
         });
       }

@@ -8,7 +8,8 @@
  * makes it the skirt is that it came from `bottomwear`. The rules, by tag:
  *
  * - `face` (head run first) -> `hip`/`chest`/`neck`/`head`; `eyewhite-r/-l`
- *   -> `eye_r`/`eye_l`; `mouth` -> `mouth` at the centroid of its biggest blob
+ *   -> `eye_r`/`eye_l`, the blink's `eyes` group — no eyewhite, no blink, and
+ *   no eyebrow, no `brows` in it, each said in a note (issue #35); `mouth` -> `mouth` at the centroid of its biggest blob
  *   (stray pixels inflate a box); `eyebrow-*` -> `brow_r`/`brow_l` by POSITION
  *   left or right of the eye axis, never by tag, because the head run has been
  *   observed to swap the two brow tags.
@@ -93,6 +94,21 @@ export interface ProposedChainTrack {
   lag: number;
 }
 
+/** `brows` and `brow_drop` are absent together when no eyebrow part exists: rigc refuses a group with no members. */
+export interface ProposedBlink {
+  t: number;
+  eyes: string[];
+  brows?: string[];
+  squash: number;
+  brow_drop?: number;
+  still?: Record<string, { row: number; bone: string }>;
+}
+
+/** The tags whose parts make the eye bones, the blink's `eyes` group. Nothing else does: irides and lashes ride those bones as regions. */
+export const EYE_GROUP_TAGS: readonly string[] = ['eyewhite-r', 'eyewhite-l'];
+/** The tags whose parts make the brow bones, the blink's `brows` group. */
+export const BROW_GROUP_TAGS: readonly string[] = ['eyebrow-r', 'eyebrow-l'];
+
 export interface Proposal {
   bones: BoneEntry[];
   meshes: Record<string, MeshSpec>;
@@ -100,7 +116,8 @@ export interface Proposal {
   motion: {
     duration: number;
     tracks: Array<ProposedSingleTrack | ProposedChainTrack>;
-    blink: { t: number; eyes: string[]; brows: string[]; squash: number; brow_drop: number; still?: Record<string, { row: number; bone: string }> };
+    /** Absent when no part feeds the `eyes` group ({@link EYE_GROUP_TAGS}): a blink with nothing to blink is not written. */
+    blink?: ProposedBlink;
   };
   notes: string[];
 }
@@ -671,15 +688,22 @@ export function propose(P: PartSet): Proposal {
     if (browOf.has(p.name)) role = browOf.get(p.name);
     if (role !== undefined) regions[p.name] = role;
   }
-  const blink: Proposal['motion']['blink'] = {
-    t: 2.3,
-    eyes: (['r', 'l'] as const).filter((s) => eyes.has(s)).map((s) => `eye_${s}`),
-    brows: (['r', 'l'] as const).filter((s) => bySide.has(s)).map((s) => `brow_${s}`),
-    squash: 0.12,
-    brow_drop: 1.2,
-  };
-  const still = lashStills(P, ew, notes);
-  if (Object.keys(still).length > 0) blink.still = still;
+  // A blink group rigc is handed must name a member (rigc refuses `group
+  // "eyes" declares no members`), so a group with none is not written, and a
+  // blink with no eyes is not written at all: a value with nothing to act on
+  // would be invented. Each omission is a note naming the tags looked for.
+  const eyeBonesProposed = (['r', 'l'] as const).filter((s) => eyes.has(s)).map((s) => `eye_${s}`);
+  const browBonesProposed = (['r', 'l'] as const).filter((s) => bySide.has(s)).map((s) => `brow_${s}`);
+  let blink: ProposedBlink | undefined;
+  if (eyeBonesProposed.length === 0) {
+    const brows = browBonesProposed.length === 0 ? '' : `; ${browBonesProposed.join(', ')} ${browBonesProposed.length === 1 ? 'is' : 'are'} placed and nothing drops ${browBonesProposed.length === 1 ? 'it' : 'them'}`;
+    notes.push(`no blink: no eyewhite part (looked for: ${EYE_GROUP_TAGS.join(', ')}), so the blink's eyes group would name no bone${brows}`);
+  } else {
+    blink = browBonesProposed.length === 0 ? { t: 2.3, eyes: eyeBonesProposed, squash: 0.12 } : { t: 2.3, eyes: eyeBonesProposed, brows: browBonesProposed, squash: 0.12, brow_drop: 1.2 };
+    const still = lashStills(P, ew, notes);
+    if (Object.keys(still).length > 0) blink.still = still;
+    if (browBonesProposed.length === 0) notes.push(`blink without brows: no eyebrow part (looked for: ${BROW_GROUP_TAGS.join(', ')}), so the blink has no brows group and no brow_drop`);
+  }
   tracks.push(
     { bone: 'chest', prop: 'translatey', amp: 1.3, period: 4.0, phase: 0.0, base: 1.3 },
     { bone: 'chest', prop: 'scalex', amp: 0.004, period: 4.0, phase: 0.0, base: 1.004 },
@@ -1069,7 +1093,7 @@ export function propose(P: PartSet): Proposal {
       } else notes.push(`${p.name} (${p.from}): no rule -> region on ${regions[p.name]}`);
     }
   }
-  return { bones, meshes, regions, motion: { duration: 4.0, tracks, blink }, notes };
+  return { bones, meshes, regions, motion: blink === undefined ? { duration: 4.0, tracks } : { duration: 4.0, tracks, blink }, notes };
 }
 
 // ---------------------------------------------------------------------------

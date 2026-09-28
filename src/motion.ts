@@ -24,7 +24,9 @@
  * ## Blink
  *
  * The `eyes` group's `scaley` goes 1 -> `squash` -> 1 and the `brows`
- * group's `translatey` 0 -> `-brow_drop` -> 0, with a fixed timing: eyes shut
+ * group's `translatey` 0 -> `-brow_drop` -> 0 (no brows group and no brow
+ * track when the config states no `brows`; no blink groups or tracks at all
+ * when it states no `blink`), with a fixed timing: eyes shut
  * over {@link BLINK.shut} s, hold {@link BLINK.hold} s, open over
  * {@link BLINK.open} s; brows 0.08 / 0.084 / 0.20 s. The shut and open times
  * and the two named easings are the reference's; the holds are not (issue
@@ -168,7 +170,9 @@ export function idleMotion(cfg: CharacterConfig, chains: ReadonlyMap<string, str
   if (bl !== undefined) {
     const tb = bl.t;
     groups.eyes = [...bl.eyes];
-    groups.brows = [...bl.brows];
+    // A blink without brows (no eyebrow part) writes no brows group: rigc
+    // refuses a group with no members, and the loader refuses an empty one.
+    if (bl.brows !== undefined) groups.brows = [...bl.brows];
     const at = (dt: number): number => pyRound(tb + dt, 6);
     tracks.push({
       group: 'eyes',
@@ -182,18 +186,21 @@ export function idleMotion(cfg: CharacterConfig, chains: ReadonlyMap<string, str
         { t: T, v: [1] },
       ],
     });
-    tracks.push({
-      group: 'brows',
-      property: 'translatey',
-      keys: [
-        { t: 0, v: [0] },
-        { t: tb, v: [0], ease: 'shut' },
-        { t: at(BLINK.browShut), v: [-bl.brow_drop] },
-        { t: at(BLINK.browShut + BLINK.browHold), v: [-bl.brow_drop], ease: 'open' },
-        { t: at(BLINK.browShut + BLINK.browHold + BLINK.browOpen), v: [0] },
-        { t: T, v: [0] },
-      ],
-    });
+    const drop = bl.brow_drop;
+    if (bl.brows !== undefined && drop !== undefined) {
+      tracks.push({
+        group: 'brows',
+        property: 'translatey',
+        keys: [
+          { t: 0, v: [0] },
+          { t: tb, v: [0], ease: 'shut' },
+          { t: at(BLINK.browShut), v: [-drop] },
+          { t: at(BLINK.browShut + BLINK.browHold), v: [-drop], ease: 'open' },
+          { t: at(BLINK.browShut + BLINK.browHold + BLINK.browOpen), v: [0] },
+          { t: T, v: [0] },
+        ],
+      });
+    }
   }
   const name = `${cfg.key}_painting`;
   return {
@@ -264,8 +271,13 @@ export function blinkHoldMisses(shut: number, hold: number, fps: number): Readon
 /** {@link blinkHoldMisses} is a pure function of its three numbers and costs a quarter of a million roundings; the rig stage asks it the same question on every build. */
 const HOLD_MISSES = new Map<string, Readonly<HoldMisses>>();
 
-/** The last time any blink key sits at before the closing key, in seconds after `blink.t`. */
+/** The last time any blink key sits at before the closing key, in seconds after `blink.t`, for a blink with brows. */
 export const BLINK_SPAN = Math.max(BLINK.shut + BLINK.hold + BLINK.open, BLINK.browShut + BLINK.browHold + BLINK.browOpen);
+
+/** {@link BLINK_SPAN} for this blink: without brows, only the eyes' keys have to fit inside the idle. */
+export function blinkSpan(bl: { brows?: readonly string[] }): number {
+  return bl.brows === undefined ? BLINK.shut + BLINK.hold + BLINK.open : BLINK_SPAN;
+}
 
 /**
  * The bones that get a `<bone>_ctl`: keyed by a single track or named by a
