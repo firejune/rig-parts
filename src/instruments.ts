@@ -602,3 +602,261 @@ export function stretchFigures(rest: readonly MeshRest[], frames: readonly Geome
     return out;
   });
 }
+
+// ---------------------------------------------------------------------------
+// the face in the head's own frame (issue #33)
+// ---------------------------------------------------------------------------
+
+/** A bone's world transform as rigc's `geometry.json` records it: world = [a b; c d] local + (worldX, worldY), Spine's y-up world units. */
+export interface BoneWorld {
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  worldX: number;
+  worldY: number;
+}
+
+/** One bone's world transform at the setup pose and on every frame of a render, in frame order, with each frame's time in seconds. */
+export interface BoneTrack {
+  bone: string;
+  setup: BoneWorld;
+  frames: BoneWorld[];
+  times: number[];
+}
+
+/**
+ * The world -> world map that carries the bone from its setup pose to a
+ * frame: `frame * setup^-1`, as a {@link BoneWorld} (matrix and translation).
+ * Null when the setup transform is singular.
+ */
+export function setupToFrame(setup: BoneWorld, frame: BoneWorld): BoneWorld | null {
+  const det = setup.a * setup.d - setup.b * setup.c;
+  if (!(Math.abs(det) > 1e-12)) return null;
+  const ia = setup.d / det;
+  const ib = -setup.b / det;
+  const ic = -setup.c / det;
+  const id = setup.a / det;
+  const a = frame.a * ia + frame.b * ic;
+  const b = frame.a * ib + frame.b * id;
+  const c = frame.c * ia + frame.d * ic;
+  const d = frame.c * ib + frame.d * id;
+  return { a, b, c, d, worldX: frame.worldX - (a * setup.worldX + b * setup.worldY), worldY: frame.worldY - (c * setup.worldX + d * setup.worldY) };
+}
+
+/** Spine's local transform fields for a root bone whose world transform is `m` (shearX held at 0): the inverse of spine-core's `a = cos(rotation + shearX) scaleX`, `b = cos(rotation + 90 + shearY) scaleY`, `c = sin(...) scaleX`, `d = sin(...) scaleY`. Degrees. */
+export function rootLocalOf(m: BoneWorld): { x: number; y: number; rotation: number; scaleX: number; scaleY: number; shearY: number } {
+  const deg = 180 / Math.PI;
+  const rotation = Math.atan2(m.c, m.a) * deg;
+  let shearY = Math.atan2(m.d, m.b) * deg - rotation - 90;
+  shearY = ((((shearY + 180) % 360) + 360) % 360) - 180;
+  return { x: m.worldX, y: m.worldY, rotation, scaleX: Math.hypot(m.a, m.c), scaleY: Math.hypot(m.b, m.d), shearY };
+}
+
+/** A 2x3 affine map of frame pixels, `(x, y) -> (m[0] x + m[1] y + m[2], m[3] x + m[4] y + m[5])`. */
+export type PixelAffine = readonly [number, number, number, number, number, number];
+
+/**
+ * The frame-pixel map that carries a point on the bone at the setup pose to
+ * where the same point is on a frame: frame pixel -> world (the viewport's
+ * inverse), world -> bone-local (the setup transform's inverse), bone-local ->
+ * world (the frame's transform), world -> frame pixel (the viewport). Every
+ * step is affine, so the map is one 2x3 matrix. Null when the setup transform
+ * is singular (a bone scaled to nothing has no frame to carry back into).
+ */
+export function restToFrame(setup: BoneWorld, frame: BoneWorld, vp: Viewport): PixelAffine | null {
+  const w = setupToFrame(setup, frame);
+  if (w === null) return null;
+  const s = vp.scale;
+  const { a: ra, b: rb, c: rc, d: rd, worldX: tx, worldY: ty } = w;
+  // world (wx, wy) of pixel (px, py): wx = px / s + vp.x, wy = Y - py / s with Y = vp.y + vp.height
+  const Y = vp.y + vp.height;
+  // world' = R (wx, wy) + t; px' = (wx' - vp.x) s, py' = (Y - wy') s
+  const m0 = ra;
+  const m1 = -rb;
+  const m2 = (ra * vp.x + rb * Y + tx - vp.x) * s;
+  const m3 = -rc;
+  const m4 = rd;
+  const m5 = (Y - (rc * vp.x + rd * Y + ty)) * s;
+  return [m0, m1, m2, m3, m4, m5];
+}
+
+/**
+ * Bilinear sample of a frame's RGB at a continuous frame-pixel position, with
+ * pixel centres at integer + 0.5 and every tap outside the frame reading the
+ * render's background — which is what rigc paints wherever nothing is drawn.
+ * Plain float64 bilinear interpolation, not a port of any library call: the
+ * figure it feeds is a difference of two samples through the same filter, so
+ * no library's rounding is being reproduced.
+ */
+export function sampleRgb(f: Raster, x: number, y: number, bg: readonly number[], out: Float64Array): void {
+  const gx = x - 0.5;
+  const gy = y - 0.5;
+  const x0 = Math.floor(gx);
+  const y0 = Math.floor(gy);
+  const fx = gx - x0;
+  const fy = gy - y0;
+  out[0] = 0;
+  out[1] = 0;
+  out[2] = 0;
+  for (let j = 0; j < 2; j++) {
+    const yy = y0 + j;
+    const wy = j === 0 ? 1 - fy : fy;
+    if (wy === 0) continue;
+    for (let i = 0; i < 2; i++) {
+      const xx = x0 + i;
+      const w = wy * (i === 0 ? 1 - fx : fx);
+      if (w === 0) continue;
+      const inside = xx >= 0 && xx < f.width && yy >= 0 && yy < f.height;
+      const at = (yy * f.width + xx) * 4;
+      for (let c = 0; c < 3; c++) out[c] += w * (inside ? f.data[at + c] : bg[c]);
+    }
+  }
+}
+
+/**
+ * Heat over a region measured in a bone's own frame: every pixel of `mask`
+ * inside `box` is a point on the bone at the setup pose; on each frame that
+ * point is carried to where the bone has moved it ({@link restToFrame}) and
+ * the frame is sampled there ({@link sampleRgb}); a pixel's heat is its largest
+ * per-channel change from frame 0's sample across the frames, as
+ * {@link heatField}'s is in screen space. Art rigid on the bone therefore
+ * measures only the resampler's own error, and anything that moves on the
+ * region relative to the bone measures its motion. Null when a transform
+ * is singular.
+ */
+export function boneFrameHeat(frames: readonly Raster[], track: BoneTrack, vp: Viewport, bg: readonly number[], box: PixelBox, mask: Uint8Array): RegionHeat | null {
+  const maps: PixelAffine[] = [];
+  for (const f of track.frames) {
+    const m = restToFrame(track.setup, f, vp);
+    if (m === null) return null;
+    maps.push(m);
+  }
+  const width = vp.pixelWidth;
+  const s0 = new Float64Array(3);
+  const sk = new Float64Array(3);
+  let px = 0;
+  let sum = 0;
+  let max = 0;
+  for (let y = box.y0; y < box.y1; y++) {
+    for (let x = box.x0; x < box.x1; x++) {
+      if (mask[y * width + x] === 0) continue;
+      const cx = x + 0.5;
+      const cy = y + 0.5;
+      const m0 = maps[0];
+      sampleRgb(frames[0], m0[0] * cx + m0[1] * cy + m0[2], m0[3] * cx + m0[4] * cy + m0[5], bg, s0);
+      let d = 0;
+      for (let k = 1; k < frames.length; k++) {
+        const m = maps[k];
+        sampleRgb(frames[k], m[0] * cx + m[1] * cy + m[2], m[3] * cx + m[4] * cy + m[5], bg, sk);
+        for (let c = 0; c < 3; c++) {
+          const v = Math.abs(sk[c] - s0[c]);
+          if (v > d) d = v;
+        }
+      }
+      px++;
+      sum += d;
+      if (d > max) max = d;
+    }
+  }
+  return { px, mean: px === 0 ? 0 : sum / px, max };
+}
+
+/** A box in Spine world units at the setup pose (y up): x0 <= x <= x1, y0 <= y <= y1. */
+export interface WorldBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/**
+ * Where a part's art can be, in the head's frame, over the frames: the part's
+ * setup-pose box carried by the bone its slot rides to each frame and back
+ * through the head's transform, as the bounding box of every corner on every
+ * frame (the setup box included). For a feature the head carries rigidly it is
+ * the setup box; for one its own bone moves on the face — a brow the blink
+ * drops — it is the whole of where it goes. Null when a transform is singular.
+ */
+export function sweptBox(box: WorldBox, part: BoneTrack, head: BoneTrack): WorldBox | null {
+  const corners: Array<[number, number]> = [
+    [box.x0, box.y0],
+    [box.x1, box.y0],
+    [box.x1, box.y1],
+    [box.x0, box.y1],
+  ];
+  let out: WorldBox = { ...box };
+  for (let k = 0; k < part.frames.length; k++) {
+    const f = setupToFrame(part.setup, part.frames[k]);
+    const g = setupToFrame(head.setup, head.frames[k]);
+    if (f === null || g === null) return null;
+    const det = g.a * g.d - g.b * g.c;
+    if (!(Math.abs(det) > 1e-12)) return null;
+    for (const [x, y] of corners) {
+      // world at frame k, then back through the head's setup -> frame map
+      const wx = f.a * x + f.b * y + f.worldX - g.worldX;
+      const wy = f.c * x + f.d * y + f.worldY - g.worldY;
+      const hx = (g.d * wx - g.b * wy) / det;
+      const hy = (-g.c * wx + g.a * wy) / det;
+      out = { x0: Math.min(out.x0, hx), y0: Math.min(out.y0, hy), x1: Math.max(out.x1, hx), y1: Math.max(out.y1, hy) };
+    }
+  }
+  return out;
+}
+
+/** A part's rig box (crop pixels, y down) as a world box at the setup pose, through the stage box and `cropToSpineY`. */
+export function partWorldBox(p: PartRecord, rigH: number, stage: StageBox): WorldBox {
+  return { x0: stage.x + p.x, x1: stage.x + p.x + p.w, y0: stage.y + cropToSpineY(p.y + p.h, rigH), y1: stage.y + cropToSpineY(p.y, rigH) };
+}
+
+/**
+ * How far, in rig pixels, what a region pixel reads in the head's frame can
+ * reach from its centre: the rasteriser samples each texture bilinearly (one
+ * texel each way), and {@link boneFrameHeat} samples each frame bilinearly
+ * (one frame pixel each way, 1/scale rig pixels). A pixel is the face's to
+ * answer for only when everything within that reach is the face.
+ */
+export function footprintReach(vp: Viewport): number {
+  return 1 + 1 / vp.scale;
+}
+
+/**
+ * The region the face half measures in the head's frame: frame pixels whose
+ * whole footprint ({@link footprintReach}) at the setup pose lies on rig
+ * pixels where one of `indices` is on top, and whose centre is at least that
+ * reach from every box of `exclude` (world boxes: where the features go).
+ * A pixel at the region's rim, or next to a feature, reads a neighbour's art
+ * as well, and that neighbour moving — a torso breathing under the chin —
+ * would light it without anything on the face having moved.
+ */
+export function footprintMask(
+  top: Int32Array,
+  parts: PartsFile,
+  indices: ReadonlySet<number>,
+  box: PixelBox,
+  exclude: readonly WorldBox[],
+  stage: StageBox,
+  vp: Viewport,
+): Uint8Array {
+  const [W, H] = parts.rig_size;
+  const r = footprintReach(vp);
+  const m = new Uint8Array(vp.pixelWidth * vp.pixelHeight);
+  for (let y = box.y0; y < box.y1; y++) {
+    for (let x = box.x0; x < box.x1; x++) {
+      const wx = (x + 0.5) / vp.scale + vp.x;
+      const wy = vp.y + vp.height - (y + 0.5) / vp.scale;
+      if (exclude.some((e) => wx > e.x0 - r && wx < e.x1 + r && wy > e.y0 - r && wy < e.y1 + r)) continue;
+      const u = wx - stage.x;
+      const v = cropToSpineY(wy - stage.y, H);
+      const u0 = Math.floor(u - r);
+      const u1 = Math.floor(u + r);
+      const v0 = Math.floor(v - r);
+      const v1 = Math.floor(v + r);
+      if (u0 < 0 || u1 >= W || v0 < 0 || v1 >= H) continue;
+      let all = true;
+      for (let vv = v0; vv <= v1 && all; vv++) for (let uu = u0; uu <= u1 && all; uu++) if (!indices.has(top[vv * W + uu])) all = false;
+      if (all) m[y * vp.pixelWidth + x] = 1;
+    }
+  }
+  return m;
+}

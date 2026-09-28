@@ -42,7 +42,7 @@
  * constant that only the summary reads.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { inflateSync } from 'node:zlib';
@@ -113,7 +113,7 @@ import {
   stageFields,
   visibilityCounts,
 } from './src/assemble.ts';
-import { chainLine, findRigc, type FrameSet, GEOMETRY_FILE, type JudgementLine, type RigcRunner, gateGreen, JUDGEMENT_LINES, PARTS_HOME_SENTENCE, parsePackLines, readCheckInputs, readFrameSet, readGeometry, REPORTED_LINES, requireRigcVersion, RIGC_GEOMETRY_VERSION, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
+import { chainLine, findRigc, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, type JudgementLine, JUDGEMENT_LINES, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, REPORTED_LINES, requireRigcVersion, RIGC_GEOMETRY_VERSION, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
@@ -2969,12 +2969,71 @@ function runCheckSuite(): number {
     );
     const slide = judged('tip-slide', { from: ['head:face', 'full:handwear-r'], peak: 8 });
     const tipFail = failLine(slide.out, 'CHECK_TIP_OVER_ROOT');
-    const faceFail = failLine(slide.out, 'CHECK_STILL_REGIONS_DARK');
     say(
-      'CK11_A_SLEEVE_THAT_SLIDES_WHOLE_FAILS_TIP_OVER_ROOT_AND_A_SLIDING_FACE_FAILS_STILL_REGIONS_DARK',
-      slide.status === 1 && tipFail !== null && /ratio 1\b/.test(tipFail) && faceFail !== null && faceFail.includes('face region'),
-      `exit ${slide.status}; ${tipFail?.trim() ?? 'no CHECK_TIP_OVER_ROOT line'}; ${faceFail?.trim().slice(0, 160) ?? 'no CHECK_STILL_REGIONS_DARK line'}…`,
-      'a sleeve translated whole has its tip travel exactly as far as its root — the swing a chain is for is absent — and a face that slides a sixth of its width is the unintended motion the face-outline ceiling is for',
+      'CK11_A_SLEEVE_THAT_SLIDES_WHOLE_FAILS_TIP_OVER_ROOT',
+      slide.status === 1 && tipFail !== null && /ratio 1\b/.test(tipFail),
+      `exit ${slide.status}; ${tipFail?.trim() ?? 'no CHECK_TIP_OVER_ROOT line'}`,
+      'a sleeve translated whole has its tip travel exactly as far as its root — the swing a chain is for is absent',
+    );
+
+    // STILL_REGIONS_DARK's face half in the head's own frame (issue #33).
+    type FaceHalf = { head_bone?: string; screen_heat_mean?: number; head_frame_heat_mean?: number; resampler_heat_mean?: number; mean_ceiling?: number; unmeasured?: string };
+    const faceOf = (fig: Record<string, unknown> | null): FaceHalf => ((fig?.STILL_REGIONS_DARK as { face?: FaceHalf } | undefined)?.face ?? {});
+    const n = (v: number | undefined): number => v ?? NaN;
+    const roll = judged('face-roll', { from: ['head:face', 'head:mouth'], peak: 0, head: { roll: 2 } });
+    const rf = faceOf(roll.fig);
+    say(
+      'CK40_A_RIGID_FACE_ON_A_ROLLING_HEAD_IS_STILL_IN_THE_HEAD_FRAME_WHILE_THE_SCREEN_SEES_THE_ROLL',
+      roll.status === 0 &&
+        lineStatus(roll.fig, 'STILL_REGIONS_DARK') === 'PASS' &&
+        rf.head_bone === 'head' &&
+        n(rf.head_frame_heat_mean) <= n(rf.mean_ceiling) &&
+        Math.abs(n(rf.mean_ceiling) - STILL_FACE_RESAMPLER_MARGIN * n(rf.resampler_heat_mean)) <= 0.0005 * (STILL_FACE_RESAMPLER_MARGIN + 1) &&
+        n(rf.screen_heat_mean) > n(rf.mean_ceiling) &&
+        n(rf.head_frame_heat_mean) < n(rf.screen_heat_mean),
+      `exit ${roll.status}; ${lineOf(roll.out, 'STILL_REGIONS_DARK').slice(0, 330)}`,
+      "both parts ride `head`, whose control bone the idle rolls 2 degrees each way: the roll lights the face in screen space (above the bar there), and carried back into the head's frame what is left is the resampler's error — the calibration moves the whole rig rigidly as the head moves, so here the two are the same motion",
+    );
+    const RETIRED_SCREEN_CEILING = 33.976;
+    const slid = judged('face-slide', { from: ['head:face', 'head:mouth'], peak: 0, head: { roll: 0, slide: 2 } });
+    const sf2 = faceOf(slid.fig);
+    const slidFail = failLine(slid.out, 'CHECK_STILL_REGIONS_DARK');
+    say(
+      'CK41_A_FACE_SLIDING_TWO_PIXELS_ON_ITS_HEAD_FAILS_IN_THE_HEAD_FRAME_WHERE_THE_SCREEN_BAR_PASSED_IT',
+      slid.status === 1 &&
+        lineStatus(slid.fig, 'STILL_REGIONS_DARK') === 'FAIL' &&
+        slidFail !== null &&
+        slidFail.includes('face region') &&
+        slidFail.includes('in the frame of its bone "head"') &&
+        slidFail.includes(`heat mean ${sf2.head_frame_heat_mean}/255`) &&
+        slidFail.includes(`<= ${sf2.mean_ceiling} is required`) &&
+        n(sf2.head_frame_heat_mean) > n(sf2.mean_ceiling) &&
+        n(sf2.screen_heat_mean) <= RETIRED_SCREEN_CEILING,
+      `exit ${slid.status}; screen ${sf2.screen_heat_mean} (the retired screen-space ceiling ${RETIRED_SCREEN_CEILING} passes it); ${slidFail?.trim().slice(0, 300) ?? 'no CHECK_STILL_REGIONS_DARK line'}…`,
+      "the face is a mesh weighted wholly to a bone under `head` that the idle slides 2 rig px while its slot rides `head` itself: the motion the line exists for — something on the face the head does not carry — which the screen-space bar this line held until issue #33 let through",
+    );
+    const both = judged('face-roll-slide', { from: ['head:face', 'head:mouth'], peak: 0, head: { roll: 2, slide: 2 } });
+    const bf = faceOf(both.fig);
+    say(
+      'CK42_THE_SAME_SLIDE_ON_A_ROLLING_HEAD_IS_RED_ABOVE_THE_ROLLS_OWN_RESAMPLER_ERROR',
+      both.status === 1 && lineStatus(both.fig, 'STILL_REGIONS_DARK') === 'FAIL' && n(bf.head_frame_heat_mean) > n(bf.mean_ceiling) && n(bf.resampler_heat_mean) > 0 && n(bf.resampler_heat_mean) === n(rf.resampler_heat_mean),
+      `exit ${both.status}; ${lineOf(both.out, 'STILL_REGIONS_DARK').slice(0, 330)}`,
+      "the roll puts a resampler error under the bar (CK40's, the same rig moved the same way, since the calibration drops every key but the head's motion — the slide included); the slide still stands out of it",
+    );
+    const sfo = faceOf(slide.fig);
+    say(
+      'CK43_A_FACE_THAT_MOVES_WITH_THE_BONE_ITS_SLOT_RIDES_IS_STILL_IN_THAT_FRAME',
+      lineStatus(slide.fig, 'STILL_REGIONS_DARK') === 'PASS' && sfo.head_bone === 'root' && n(sfo.head_frame_heat_mean) <= n(sfo.mean_ceiling) && n(sfo.screen_heat_mean) > RETIRED_SCREEN_CEILING && failLine(slide.out, 'CHECK_STILL_REGIONS_DARK') === null,
+      `${lineOf(slide.out, 'STILL_REGIONS_DARK').slice(0, 330)}`,
+      "CK11's rig: the face rides the root the idle slides 8 px. Its head bone is the bone its slot rides, so the whole face moving with it is the head moving, which the line does not judge — the screen-space figure (over the retired ceiling) is reported beside it, and the root's motion is the feet half's to see",
+    );
+    const twoBones = judged('face-two-bones', { from: ['head:face', 'head:face'], peak: 0, blinkSquash: 0.5 });
+    const tb = lineOf(twoBones.out, 'STILL_REGIONS_DARK');
+    say(
+      'CK44_A_FACE_WITH_NO_ONE_HEAD_BONE_LEAVES_THE_FACE_UNMEASURED_AND_THE_LINE_SAYS_SKIP',
+      lineStatus(twoBones.fig, 'STILL_REGIONS_DARK') === 'SKIP' && tb.includes('face: no head bone to measure it in: the face parts ride "back" on "root", "front" on "eye"'),
+      tb.slice(0, 300),
+      "the head frame is one bone's; face parts on two bones have none, and no bone is picked for them — the face half says so, and with no feet either the line is a SKIP, never a pass",
     );
     const shut = judged('blink-hole', { from: ['head:face', 'head:eyewhite-r'], peak: 0, blinkSquash: 0.1 });
     const holeFail = failLine(shut.out, 'CHECK_BLINK_NO_HOLE');
@@ -2984,6 +3043,39 @@ function runCheckSuite(): number {
       shut.status === 1 && holeFail !== null && holeFig !== undefined && (holeFig.hole_px ?? 0) > 0 && holeFail.includes(`${holeFig.hole_px} px show the background`) && JSON.stringify(holeFig.idle_frames_closed) === '[6,7]',
       `exit ${shut.status}; ${holeFail?.trim() ?? 'no CHECK_BLINK_NO_HOLE line'}; idle frames closed ${JSON.stringify(holeFig?.idle_frames_closed)}`,
       'the eye part reaches past the face on one side, so squashing it shows the page there; the blink holds 0.5 s to 0.6 s, which at 12 fps is frames 6 and 7 (0.5 and 0.583 s)',
+    );
+
+    // The geometry the face half reads: absent is a reason, disagreeing with its frames is a refusal, and the head bone is read off the slots.
+    const geoSet = join(dir, 'geo-planted');
+    cpSync(join(dir, 'face-roll-out', 'idle_frames'), geoSet, { recursive: true });
+    const geoPath = join(geoSet, 'idle', 'geometry.json');
+    const geoText = existsSync(geoPath) ? readFileSync(geoPath, 'utf8') : '{}';
+    const clean = readBoneTrack(readFrameSet(geoSet), 'head');
+    const geo = JSON.parse(geoText) as { viewport: { scale: number }; frames: Array<{ bones: Array<{ name: string }> }> };
+    geo.viewport.scale *= 2;
+    writeFileSync(geoPath, JSON.stringify(geo));
+    const wrongGrid = refusals(() => readBoneTrack(readFrameSet(geoSet), 'head'));
+    geo.viewport.scale /= 2;
+    geo.frames[3].bones = geo.frames[3].bones.filter((b) => b.name !== 'head');
+    writeFileSync(geoPath, JSON.stringify(geo));
+    const noBone = refusals(() => readBoneTrack(readFrameSet(geoSet), 'head'));
+    rmSync(geoPath);
+    const noGeometry = readBoneTrack(readFrameSet(geoSet), 'head');
+    const oneBone = headBoneOf({ rig: { slots: [{ name: 'a', bone: 'skull' }, { name: 'b', bone: 'skull' }] }, parts: { rig_size: [4, 4], scale_rig_per_source: 1, parts: [{ name: 'a', from: 'head:face' }, { name: 'b', from: 'full:topwear' }], ghost_px: {} } as unknown as PartsFile });
+    say(
+      'CK45_THE_HEAD_TRACK_IS_READ_OFF_GEOMETRY_JSON_AND_A_FILE_THAT_DISAGREES_WITH_ITS_FRAMES_IS_REFUSED_BY_NAME',
+      typeof clean === 'object' &&
+        clean.frames.length === readFrameSet(geoSet).frames.length &&
+        (wrongGrid?.problems.length === 1 && wrongGrid.problems[0].code === 'CHECK_GEOMETRY_FILE') &&
+        (wrongGrid?.problems[0].detail.includes('viewport scale') ?? false) &&
+        (noBone?.problems.length === 1 && noBone.problems[0].code === 'CHECK_GEOMETRY_FILE') &&
+        (noBone?.problems[0].detail.includes('frame 3 has no bone "head"') ?? false) &&
+        typeof noGeometry === 'string' &&
+        noGeometry.includes('geometry.json does not exist') &&
+        'bone' in oneBone &&
+        oneBone.bone === 'skull',
+      `clean: ${typeof clean === 'string' ? clean : `${clean.frames.length} frame(s) of "${clean.bone}"`}; viewport doubled: ${wrongGrid?.problems[0].detail.slice(0, 110) ?? 'read'}; bone dropped from frame 3: ${noBone?.problems[0].detail ?? 'read'}; file removed: ${typeof noGeometry === 'string' ? noGeometry.slice(-90) : 'read'}; head bone from the face's slot: ${JSON.stringify(oneBone)}`,
+      "the head's transform comes from rigc's geometry.json beside the frames; one on another grid would carry the face onto the wrong pixels, and a frame without the bone would leave a hole in the track — each is a refusal naming the field, while no file at all leaves the face half unmeasured with the reason; the head bone is the bone the face part's slot rides (a slot named nothing like a head), never a name",
     );
 
     // RECOMPOSITE_HOLES (issue #25): a parts.json that records a large hole must be reported, and must not fail a rig that is otherwise green.

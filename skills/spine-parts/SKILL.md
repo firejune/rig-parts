@@ -27,8 +27,8 @@ stage writes are the whole interface.
   or input that has to change.
 - **Green is not "looks right".** `check` measures the gates, the seam, the loop and
   six judgement lines (`BREATH_VISIBLE`, `BLINK_NO_HOLE`, `CHAIN_LAG`,
-  `TIP_OVER_ROOT`, `STILL_REGIONS_DARK`, `TEXTURE_STRETCH`); the face outline in
-  the head's own frame still needs an eye (AUTHORING §7). A judgement line that says
+  `TIP_OVER_ROOT`, `STILL_REGIONS_DARK` — its face half in the head's own frame —
+  and `TEXTURE_STRETCH`) (AUTHORING §7). A judgement line that says
   SKIP was not verified: report it as such, with its reason, never as passed.
 - **A hole in the layers is invisible to every bar.** Painting that no part holds is
   missing from the setup pose and from the flat stack alike, so the seam passes over
