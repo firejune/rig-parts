@@ -96,9 +96,9 @@ export const STRAND_RIG = { w: 100, h: 90 };
 
 /**
  * A face with two eyes and two brows, so the proposed blink names a member in
- * each group: a proposal with no eyewhite and no eyebrow writes a blink whose
- * groups are empty, which rigc refuses (`group "eyes" declares no members`),
- * and the strand controls need a proposal that builds.
+ * each group and the strand controls exercise a whole blink. (A face with
+ * neither is {@link NO_EYE_PARTS}: since issue #35 its proposal has no blink
+ * at all, where it used to write two empty groups rigc refused.)
  */
 const STRAND_HEAD: ProposeFixturePart[] = [
   { name: 'face', from: 'head:face', x: 30, y: 40, w: 40, h: 50, colour: [240, 210, 190] },
@@ -127,6 +127,16 @@ export const STRAND_PARTS: ProposeFixturePart[] = [
 ];
 
 export const BARE_CROWN_PARTS: ProposeFixturePart[] = [...STRAND_HEAD, { name: 'crown', from: 'head:headwear', x: 0, y: 0, w: 100, h: 16, colour: [220, 180, 60] }];
+
+/**
+ * Issue #35, on the strand canvas: the bare crown and the face with no
+ * eyewhite and no eyebrow part, so nothing feeds the blink's `eyes` group and
+ * the proposal writes no blink.
+ */
+export const NO_EYE_PARTS: ProposeFixturePart[] = [STRAND_HEAD[0], BARE_CROWN_PARTS[BARE_CROWN_PARTS.length - 1]];
+
+/** Issue #35: the same face with its two eyewhites and no eyebrow, so the blink is written with no `brows` group. */
+export const NO_BROW_PARTS: ProposeFixturePart[] = [STRAND_HEAD[0], STRAND_HEAD[1], STRAND_HEAD[2], BARE_CROWN_PARTS[BARE_CROWN_PARTS.length - 1]];
 
 /**
  * Every other branch of the strand rule at once, on the 200x300 canvas with the

@@ -55,7 +55,7 @@ import { type BoneEntry, type CharacterConfig, type Point, ROOT_BONE } from './c
 import { cropToSpineY } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { artCoverage, ART_ALPHA, latticeMesh, ONE_LOOP_PASSES } from './mesh.ts';
-import { BLINK, BLINK_SPAN, blinkHoldMisses, CONTROL_SUFFIX, controlledBones, IDLE_FPS, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
+import { BLINK, blinkHoldMisses, blinkSpan, CONTROL_SUFFIX, controlledBones, IDLE_FPS, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
 import { PAINTING_RUN, type PartsFile, readFrom } from './parts.ts';
 import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
@@ -333,11 +333,12 @@ export function buildRig(
 
   // ---- motion ------------------------------------------------------------
   const bl = cfg.motion.blink;
-  if (bl !== undefined && !(bl.t > 0 && bl.t + BLINK_SPAN < cfg.motion.duration)) {
+  const span = bl === undefined ? 0 : blinkSpan(bl);
+  if (bl !== undefined && !(bl.t > 0 && bl.t + span < cfg.motion.duration)) {
     fail(
       'RIG_BLINK_INSIDE_IDLE',
       'config.motion.blink.t',
-      `is ${bl.t} s; the blink's keys run from t to t + ${pyRound(BLINK_SPAN, 6)} s between the idle's first key at 0 and its last at ${cfg.motion.duration} s, so 0 < t < ${pyRound(cfg.motion.duration - BLINK_SPAN, 6)} is required`,
+      `is ${bl.t} s; the blink's keys run from t to t + ${pyRound(span, 6)} s between the idle's first key at 0 and its last at ${cfg.motion.duration} s, so 0 < t < ${pyRound(cfg.motion.duration - span, 6)} is required`,
     );
   }
   if (bl !== undefined) problems.push(...blinkHoldProblems(BLINK.shut, BLINK.hold, IDLE_FPS));

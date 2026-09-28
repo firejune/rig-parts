@@ -75,7 +75,9 @@ usage:
       holds parts.json and parts/). Roles come from each part's See-through tag,
       never its name. Writes <out>/proposal.json (config-shaped: bones, meshes,
       regions, motion with its blink — and a blink.still cut for a lash that
-      reaches far above its eyewhite, when a clear row allows one — and notes)
+      reaches far above its eyewhite, when a clear row allows one; no blink
+      when no part is an eyewhite, and no brows in it when no part is an
+      eyebrow, each said in a note — and notes)
       and the overlay to correct against, <out>/render/landmarks.png and
       landmarks_head.png. Prints every
       note and a LINT line for each chain link that lies off its mesh's art, for a
@@ -102,7 +104,9 @@ usage:
       its row on a second slot <part>_still, which the blink does not move),
       and one idle of sines and a blink whose closed hold is at least one
       12 fps frame, so the idle frames and the loop show the eyes shut
-      (RIG_BLINK_HOLD_SPANS_A_FRAME otherwise). --parts is the
+      (RIG_BLINK_HOLD_SPANS_A_FRAME otherwise); no blink when the config
+      states no motion.blink, and a blink group that names no bone is refused
+      by the loader, CONFIG_BLINK_GROUP_MEMBERS, before rigc starts. --parts is the
       directory holding parts.json and parts/<name>.png. The result is built
       through spine-rigc (profile spine-html, packed, then validated under
       profile spine) in a scratch directory first, and --out receives
