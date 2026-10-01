@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/firejune/spine-parts/compare/v0.5.0...v0.6.0) (2026-10-01)
+
+
+### Features
+
+* **check:** the packed page takes rigc's --page-edges, free by default — the examples' pages go from 1024x2048 to 967x1338 and 512x2048 to 479x1166, and --page-edges pot keeps the earlier bytes ([#57](https://github.com/firejune/spine-parts/issues/57)) ([7ab56b4](https://github.com/firejune/spine-parts/commit/7ab56b421fa140278f6211b726eb8ce1906c9944))
+
+
+### Instrument
+
+* **tools:** atlas_population measures the editor's example atlases and ours with one instrument — regions, page opaque share, figure size at atlas scale ([#55](https://github.com/firejune/spine-parts/issues/55)) ([610bde8](https://github.com/firejune/spine-parts/commit/610bde8715830eadbc5b105cdc3ef66f7975f17a)), closes [#54](https://github.com/firejune/spine-parts/issues/54)
+
 ## [0.5.0](https://github.com/firejune/spine-parts/compare/v0.4.0...v0.5.0) (2026-09-28)
 
 

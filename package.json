@@ -1,6 +1,6 @@
 {
   "name": "spine-parts",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "AI-authored Spine 2D character parts from one anime painting and its See-through layer decomposition: measured parts, weighted-mesh rig specs, verified through spine-rigc before anything is written. A CLI for agents that cannot see the image.",
   "type": "module",
   "bin": {
