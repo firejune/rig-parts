@@ -279,9 +279,11 @@ entry, no dithering, filter None) — and is the small file to show. `idle.gif`
 (`loop --out x.gif`) is the same median cut in a GIF. The indexed APNG and the GIF
 print their palette error, per channel over R, G and B of every frame (and alpha's
 max for the APNG); a figure is a measurement of the file, not a bar. On the demo:
-13,645,519 B lossless, 1,706,785 B indexed and 1,812,625 B GIF, both palette files at
+13,645,350 B lossless, 1,706,520 B indexed and 1,812,238 B GIF, both palette files at
 max 57, mean 1.601 — the two share one quantiser, so their error is the same by
-construction and the size is the difference. The loop shows the blink closed: the
+construction and the size is the difference. That is `--seam silhouette` (the README's
+animation); with `--page-edges pot` the same build writes 13,645,519, 1,706,785 and
+1,812,625 B at the same error. The loop shows the blink closed: the
 eyes' hold is at least one 12 fps frame (below), so whatever `motion.blink.t` is, one
 idle frame lands inside it, and `check.json`'s `BLINK_NO_HOLE.idle_frames_closed`
 names it — `[29]` on both examples.
@@ -293,6 +295,36 @@ and also every white garment. `--seam silhouette` protects near-white pixels onl
 outside the figure. On the demo it lowered recomposite error pixels from 11,050 to
 9,540 and changed no check bar; on the sample it changed nothing. The default stays
 the reference's so the examples stay comparable with it.
+
+**Page edges.** `rig`, `check` and `build` pack through `rigc build --pack
+--page-edges <v>`, and hand the value to rigc verbatim. The default is `free`,
+the least-area page the parts need. `--page-edges pot` is the opt-out: a power of
+two on both edges, which is the page every build wrote before this flag. The pack
+line says which one ran, because rigc ends it with `, page edges free` under `free`.
+Measured with rigc 1.5.1 on the two examples, by `tools/atlas_population.ts`:
+
+| build | page | covered | page opaque | page / figure |
+| --- | --- | --- | --- | --- |
+| demo, `pot` | 1024x2048 | 56.3 % | 36.8 % | 2.651 |
+| demo, `free` | 967x1338 | 91.2 % | 59.7 % | 1.636 |
+| sample, `pot` | 512x2048 | 49.7 % | 28.7 % | 3.294 |
+| sample, `free` | 479x1166 | 93.4 % | 53.9 % | 1.755 |
+
+rigc's help states the cost: *"a smaller page, at the cost of region attachments
+sampling within 1 LSB of the loose build rather than exactly"*. On these builds
+every one of the 49 idle frames differs from the `pot` build, by at most 1 level
+in any channel:
+
+| example | idle frames that differ | pixels that differ (all 49 frames) | max \|d\| |
+| --- | --- | --- | --- |
+| demo | 49 of 49 | 2,373 | 1 |
+| sample | 49 of 49 | 651 | 1 |
+
+Only one check figure moved. It has no bar: sample's reported screen-space face
+mean in `STILL_REGIONS_DARK`, 11.475 under `pot` and 11.472 under `free`. Every
+barred figure and every status is the same under both. The atlas rigc writes says
+`filter: Linear, Linear` and has no `repeat` line, so choose `pot` for a consumer
+that mipmaps or repeats the page.
 
 `--project core` (the default) is the reference's projection rule: a layer takes the
 painting's pixel only inside its top-most `alpha >= 250` area eroded by a 5x5 square,
@@ -569,6 +601,8 @@ See-through with another seed.
 | `CHECK_TEXTURE_STRETCH` | a mesh triangle's edge, in some idle frame, is more than 1.926544 times its rest length or less than 1/1.926544 of it (the mesh, triangle, its three vertices, the edge and the frame are named); or a rest edge has length 0 | the chain tracks' `amps` on the bones that mesh is weighted to (the stretch grows with them), or the mesh's `segments` — a vertex blending two bones that swing against each other |
 | `CHECK_SEAM_FRAME_SIZE`, `FRAMES_SIDECAR`, `CHECK_GEOMETRY_FILE` | rigc's render is not what its `frames.json` says, or its `geometry.json` is not a whole `rigc-geometry/1` export of the frames beside it (a frame count, a mesh whose vertex count differs from its rest entry; for the face half, another viewport than `frames.json`'s, other frame indices, the head bone or a feature's bone missing from a frame, a non-finite transform or time) | a rigc problem; report it |
 | `LOOP_ENCODE` | the loop encoder refused a frame (translucent pixel in a GIF, a size change) | the frames; for a translucent frame write the lossless or the indexed APNG, which keep alpha |
+| `CHECK_PACK_LINE_READS` | rigc printed a `pack:` line that is not `pack: <page> <W>x<H>, <N> region(s), <P>% covered, padding <D>` with `, page edges free` after it or nothing; the line is quoted | a rigc this package does not know the output of; report it, with `rigc --version` |
+| `CHECK_PACK_PAGE_EDGES` | the pack line disagrees with the `--page-edges` the build was run with — its `, page edges free` suffix is there under `pot` or missing under `free`, or a `pot` page is not a power of two on both edges | a rigc problem; report it, with `rigc --version` |
 | `BUILD_ARTIFACT_PRESENT` | the packed build lacks its `.json`, `.atlas` or page | a rigc problem; report it |
 
 ## 7. The bars `check` enforces, and what only an eye answers today
@@ -676,7 +710,8 @@ What each figure is, and is not:
 - **The face is measured in the head's frame, and its bar is the model's (issue #33).**
   Until #33 the face half read the screen-space heat map, where the head's intended
   roll lights the outline on both examples (16.988 and 11.475, the figures now
-  reported as `screen_heat_mean`), so its ceiling was twice the worse example,
+  reported as `screen_heat_mean`; sample's reads 11.472 since the page edges
+  default to `free`, *Page edges* in §5), so its ceiling was twice the worse example,
   33.976 — a ceiling a smooth fixture face sliding two rig pixels stayed under (24.8;
   eight pixels measured 85.5). The judgement means *nothing moves on the face that
   the head does not move*, so the heat is now taken after each frame's face region is

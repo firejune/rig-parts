@@ -113,7 +113,7 @@ import {
   stageFields,
   visibilityCounts,
 } from './src/assemble.ts';
-import { chainLine, findRigc, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, type JudgementLine, JUDGEMENT_LINES, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, REPORTED_LINES, requireRigcVersion, RIGC_GEOMETRY_VERSION, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
+import { chainLine, DEFAULT_PAGE_EDGES, findRigc, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, REPORTED_LINES, requireRigcVersion, RIGC_GEOMETRY_VERSION, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
@@ -1218,7 +1218,7 @@ function runBlinkConfigCases(say: (name: string, ok: boolean, detail: string, wh
     const rigCalls = calls.length;
     const lines: string[] = [];
     const built = build(
-      { config: join(dir, 'forged.json'), source: join(dir, 'painting.png'), full: join(dir, 'absent-full'), head: join(dir, 'absent-head'), out: join(dir, 'build-out'), seam: 'near-white', project: 'core', loop: false },
+      { config: join(dir, 'forged.json'), source: join(dir, 'painting.png'), full: join(dir, 'absent-full'), head: join(dir, 'absent-head'), out: join(dir, 'build-out'), seam: 'near-white', project: 'core', loop: false, pageEdges: DEFAULT_PAGE_EDGES },
       { rig: counting('build-rig'), check: counting('build-check'), checkBin: 'counting', scratch },
       (l) => lines.push(l),
     );
@@ -1251,7 +1251,7 @@ function runBlinkConfigCases(say: (name: string, ok: boolean, detail: string, wh
     const twiceRigCalls = calls.length - before;
     const twiceLines: string[] = [];
     const twiceBuilt = build(
-      { config: join(dir, 'twice.json'), source: join(dir, 'painting.png'), full: join(dir, 'absent-full'), head: join(dir, 'absent-head'), out: join(dir, 'twice-build'), seam: 'near-white', project: 'core', loop: false },
+      { config: join(dir, 'twice.json'), source: join(dir, 'painting.png'), full: join(dir, 'absent-full'), head: join(dir, 'absent-head'), out: join(dir, 'twice-build'), seam: 'near-white', project: 'core', loop: false, pageEdges: DEFAULT_PAGE_EDGES },
       { rig: counting('twice-build-rig'), check: counting('twice-build-check'), checkBin: 'counting', scratch },
       (l) => twiceLines.push(l),
     );
@@ -1666,7 +1666,7 @@ function runRigSuite(): number {
     const gateLines = run1.out.split('\n').filter((l) => /assertions: \d+ measured \(\d+ passed, 0 failed\)/.test(l));
     say(
       'RG04_THE_RIG_COMMAND_WRITES_ONLY_AFTER_SPINE_RIGC_IS_GREEN_ON_IT',
-      run1.status === 0 && run2.status === 0 && wroteAll && gateLines.length >= 2 && /rigc build --profile spine-html --pack: exit 0/.test(run1.out) && /rigc validate --profile spine: exit 0/.test(run1.out),
+      run1.status === 0 && run2.status === 0 && wroteAll && gateLines.length >= 2 && /rigc build --profile spine-html --pack --page-edges free: exit 0/.test(run1.out) && /rigc validate --profile spine: exit 0/.test(run1.out),
       `exit ${run1.status}; wrote ${files1.join(', ')}; ${gateLines.length} green rigc assertion line(s), e.g. "${gateLines[0]?.trim() ?? ''}"`,
       "CLAUDE.md: the rig stages write only after spine-rigc's round trip has passed — so the command builds the staged spec through rigc before --out sees a byte",
     );
@@ -1690,7 +1690,7 @@ function runRigSuite(): number {
     const redRun = runCli(['rig', '--config', red.config, '--parts', red.parts, '--out', join(dir, 'red', 'out')]);
     say(
       'RG05_A_SPEC_SPINE_RIGC_REFUSES_IS_REFUSED_AND_NOTHING_IS_WRITTEN',
-      redLoads === null && redRun.status === 1 && /^ {2}FAIL {2}RIG_RIGC_GREEN: rigc build --profile spine-html --pack/m.test(redRun.out) && redRun.out.includes('has two tracks on eye.scaley') && !existsSync(join(dir, 'red', 'out')),
+      redLoads === null && redRun.status === 1 && /^ {2}FAIL {2}RIG_RIGC_GREEN: rigc build --profile spine-html --pack --page-edges free/m.test(redRun.out) && redRun.out.includes('has two tracks on eye.scaley') && !existsSync(join(dir, 'red', 'out')),
       `a sine track on eye.scaley beside the blink's eyes group — the loader: ${codes(redLoads)} — -> exit ${redRun.status}, ${(redRun.out.split('\n').find((l) => l.includes('RIG_RIGC_GREEN')) ?? '').trim().slice(0, 70)}… ${(/animation "idle" has two tracks on [^;]*/.exec(redRun.out) ?? ['no rigc line naming the two tracks'])[0]}; --out exists: ${existsSync(join(dir, 'red', 'out'))}`,
       "the round trip is only a gate if a red one stops the write; rigc's own refusal is carried into the FAIL line so the reader sees what rigc said, and the mutant is one the loader lets through, or the line would be the loader's",
     );
@@ -1926,7 +1926,7 @@ function runIdleKeysCases(say: (name: string, ok: boolean, detail: string, why: 
     const bogus = run('bones', 'bogus');
     const files = filesUnder(join(dir, 'none'));
     const ctlSame = files.length > 0 && files.join() === filesUnder(join(dir, 'ctl')).join() && files.every((f) => readFileSync(join(dir, 'none', f)).equals(readFileSync(join(dir, 'ctl', f))));
-    const green = (r: { out: string }): boolean => /rigc build --profile spine-html --pack: exit 0/.test(r.out) && /rigc validate --profile spine: exit 0/.test(r.out);
+    const green = (r: { out: string }): boolean => /rigc build --profile spine-html --pack --page-edges free: exit 0/.test(r.out) && /rigc validate --profile spine: exit 0/.test(r.out);
     const skipLine = direct.out.split('\n').find((l) => l.includes('SKIP  A15_IDLE_NO_MESH_BONE_KEYS')) ?? '';
     const directRig = existsSync(join(dir, 'direct', 'rig.json')) ? (JSON.parse(readFileSync(join(dir, 'direct', 'rig.json'), 'utf8')) as { bones: Array<{ name: string }>; invariants?: unknown }) : null;
     // The planted half: the direct rig with its declaration taken out, built
@@ -1940,7 +1940,7 @@ function runIdleKeysCases(say: (name: string, ok: boolean, detail: string, why: 
       const raw = JSON.parse(readFileSync(join(dir, 'direct', 'rig.json'), 'utf8')) as Record<string, unknown>;
       delete raw.invariants;
       writeFileSync(join(plant, 'rig.json'), JSON.stringify({ ...raw, images: join(dir, 'direct', 'images') }));
-      const r = spawnSync(findRigc(ROOT, ''), ['build', '--rig', join(plant, 'rig.json'), '--motion', join(dir, 'direct', 'motion.json'), '--out', join(plant, 'build'), '--profile', 'spine-html', '--pack'], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      const r = spawnSync(findRigc(ROOT, ''), ['build', '--rig', join(plant, 'rig.json'), '--motion', join(dir, 'direct', 'motion.json'), '--out', join(plant, 'build'), '--profile', 'spine-html', '--pack', '--page-edges', DEFAULT_PAGE_EDGES], { encoding: 'utf8', maxBuffer: 1 << 26 });
       const fails = `${r.stdout}${r.stderr}`.split('\n').filter((l) => /^ {2}FAIL {2}A15_IDLE_NO_MESH_BONE_KEYS: idle keys bone "/.test(l));
       const distinct = [...new Set(fails)];
       undeclaredRed = r.status !== 0 && distinct.length === a.meshKeyed.length;
@@ -3300,6 +3300,64 @@ function runCheckSuite(): number {
       `from the package: ${relative(ROOT, found)}; from ${relative(tmpdir(), dir)} with an empty PATH: ${nowhere?.problems[0].detail.slice(0, 120) ?? 'found one'}…`,
       'a missing rigc must say which binary and where it looked, not surface as a spawn error',
     );
+
+    // --page-edges: the default run above packed under free, and pot is rigc's own default, so each value is held
+    // to a direct rigc build of the same rig with the same flag — the page bytes are rigc's, never a typed figure.
+    // At the depth check's own build/ sits (<dir>/<name>/build), so skeleton.json's relative images path is the same text.
+    const direct = (name: string, extra: readonly string[]): string => {
+      const d = join(dir, name, 'build');
+      spawnSync(findRigc(ROOT, ''), ['build', '--rig', join(rig, 'rig.json'), '--motion', join(rig, 'motion.json'), '--out', d, '--profile', 'spine-html', '--pack', ...extra], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      return d;
+    };
+    const ARTIFACT = ['skeleton.atlas', 'skeleton.json', 'skeleton.png'];
+    const sameArtifact = (a: string, b: string): boolean => ARTIFACT.every((f) => existsSync(join(a, f)) && existsSync(join(b, f)) && readFileSync(join(a, f)).equals(readFileSync(join(b, f))));
+    const freeDirect = direct('direct-free', ['--page-edges', 'free']);
+    const freeSame = sameArtifact(join(out, 'build'), freeDirect);
+    say(
+      'CK46_THE_DEFAULT_CHECK_PACKS_WITH_FREE_PAGE_EDGES_AND_ITS_PAGE_IS_RIGCS_FREE_PAGE_BYTE_FOR_BYTE',
+      DEFAULT_PAGE_EDGES === 'free' &&
+        pack.length === 1 &&
+        pack[0].pageEdges === 'free' &&
+        pack[0].line.endsWith(', page edges free') &&
+        ok.out.includes('gate spine-html (rigc build --profile spine-html --pack --page-edges free), verbatim:') &&
+        freeSame,
+      `no --page-edges: ${pack[0]?.line ?? 'no pack line'}; the console names "--page-edges free": ${ok.out.includes('--page-edges free), verbatim:')}; build/ vs a direct \`rigc build --pack --page-edges free\` of the same rig: ${freeSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
+      "the packed page is the artifact, and free is the least-area page rigc can write for it; the value reaches rigc verbatim, so check's page must be rigc's own free page and nothing this package re-derived",
+    );
+
+    const potOut = join(dir, 'out-pot');
+    const potRun = runCli(['check', '--rig', rig, '--out', potOut, '--page-edges', 'pot']);
+    const potPack = parsePackLines(existsSync(join(potOut, 'gate_spine-html.txt')) ? readFileSync(join(potOut, 'gate_spine-html.txt'), 'utf8').split('\n') : []);
+    const rigcDefault = direct('direct-default', []);
+    const potSame = sameArtifact(join(potOut, 'build'), rigcDefault);
+    const pow2 = (n: number): boolean => n > 0 && (n & (n - 1)) === 0;
+    say(
+      'CK47_PAGE_EDGES_POT_IS_RIGCS_OWN_DEFAULT_PAGE_BYTE_FOR_BYTE',
+      potRun.status === 0 &&
+        potRun.out.includes('check: PASS') &&
+        potPack.length === 1 &&
+        potPack[0].pageEdges === 'pot' &&
+        !potPack[0].line.includes('page edges') &&
+        pow2(potPack[0].width) &&
+        pow2(potPack[0].height) &&
+        potRun.out.includes('gate spine-html (rigc build --profile spine-html --pack --page-edges pot), verbatim:') &&
+        potSame,
+      `--page-edges pot: exit ${potRun.status}, ${potPack[0]?.line ?? 'no pack line'}; build/ vs a direct \`rigc build --pack\` with no --page-edges (rigc's default, the page every build wrote before the flag): ${potSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
+      'pot is the opt-out, so it must give back exactly the page an earlier build wrote: rigc with no --page-edges is that build, and pot is a power of two on both edges by rigc\'s own definition',
+    );
+
+    const bogus = [
+      ['check', '--rig', rig, '--out', join(dir, 'bogus-check'), '--page-edges', 'square'],
+      ['rig', '--config', join(dir, 'absent.json'), '--parts', dir, '--out', join(dir, 'bogus-rig'), '--page-edges', 'square'],
+      ['build', '--config', join(dir, 'absent.json'), '--source', join(dir, 'absent.png'), '--full', dir, '--head', dir, '--out', join(dir, 'bogus-build'), '--page-edges', 'square'],
+    ].map((args) => ({ command: args[0], r: runCli(args), out: join(dir, `bogus-${args[0]}`) }));
+    const usageLine = '  FAIL  USAGE: --page-edges square; one of pot, free is required';
+    say(
+      'CK48_AN_UNKNOWN_PAGE_EDGES_VALUE_IS_A_USAGE_ERROR_ON_EVERY_COMMAND_THAT_PACKS',
+      bogus.every((b) => b.r.status === 2 && b.r.out.split('\n').includes(usageLine) && !existsSync(b.out)),
+      bogus.map((b) => `${b.command} --page-edges square -> exit ${b.r.status}, ${(b.r.out.split('\n').find((l) => l.includes('FAIL')) ?? 'no FAIL line').trim()}; --out written: ${existsSync(b.out)}`).join(' | '),
+      'rig, check and build all pack, so all three take the flag, and a value rigc does not take is refused before any stage runs — naming the flag, the value and the two accepted — rather than handed to rigc to fail in the middle of a build',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -3312,6 +3370,46 @@ function runCheckSuite(): number {
       pack.length === 1 && pack[0].width === 1024 && pack[0].height === 2048 && pack[0].regions === 21 && pack[0].coveredPct === 49.2 && pack[0].padding === 2,
     `"10 failed" contains "0 failed" (${tenFailed.includes('0 failed')}) and reads ${gateGreen(0, [tenFailed]) ? 'GREEN' : 'red'}; no summary line reads ${gateGreen(0, []) ? 'GREEN' : 'red'}; a pack line parses to ${JSON.stringify(pack[0] ?? null)}`,
     "the reference judged a gate by the substring \"0 failed\", which \"10 failed\" contains, and by Python's all() over the summary lines, which is True of none; both would print green over a red build",
+  );
+
+  // The pack line, read whole: rigc 1.5.1's two forms are read, anything else is refused, and a line that
+  // disagrees with the --page-edges passed is refused. Every expectation is the line's own text.
+  const freeLine = '  ..    pack: skeleton.png 300x500, 4 region(s), 80.0% covered, padding 2, page edges free';
+  const potLine = '  ..    pack: skeleton.png 512x1024, 4 region(s), 22.9% covered, padding 2';
+  const readFree = parsePackLines([freeLine]);
+  const readPot = parsePackLines([potLine]);
+  const diagonal = refusals(() => parsePackLines(['  ..    pack: skeleton.png 300x500, 4 region(s), 80.0% covered, padding 2, page edges diagonal']));
+  const noPadding = refusals(() => parsePackLines(['  ..    pack: skeleton.png 300x500, 4 region(s), 80.0% covered']));
+  const freeUnderFree = packEdgeProblems(readFree, 'free');
+  const potUnderPot = packEdgeProblems(readPot, 'pot');
+  const potUnderFree = packEdgeProblems(readPot, 'free');
+  const freeUnderPot = packEdgeProblems(readFree, 'pot');
+  const odd = packEdgeProblems(parsePackLines(['  ..    pack: skeleton.png 300x500, 4 region(s), 80.0% covered, padding 2']), 'pot');
+  const one = (ps: Problem[]): string => ps.map((q) => `${q.code}: ${q.object} — ${q.detail}`).join(' / ') || 'none';
+  say(
+    'CK49_A_PACK_LINE_IS_READ_WHOLE_AND_ONE_THAT_DISAGREES_WITH_THE_PAGE_EDGES_PASSED_IS_REFUSED',
+    readFree.length === 1 &&
+      readFree[0].pageEdges === 'free' &&
+      readFree[0].width === 300 &&
+      readFree[0].height === 500 &&
+      readFree[0].line === freeLine.trim().replace(/^\.\.\s+/, '') &&
+      readPot.length === 1 &&
+      readPot[0].pageEdges === 'pot' &&
+      freeUnderFree.length === 0 &&
+      potUnderPot.length === 0 &&
+      codes(diagonal) === 'CHECK_PACK_LINE_READS rigc\'s pack line "pack: skeleton.png 300x500, 4 region(s), 80.0% covered, padding 2, page edges diagonal"' &&
+      codes(noPadding).startsWith('CHECK_PACK_LINE_READS ') &&
+      potUnderFree.length === 1 &&
+      potUnderFree[0].code === 'CHECK_PACK_PAGE_EDGES' &&
+      potUnderFree[0].detail.startsWith("rigc's pack line says page edges pot") &&
+      freeUnderPot.length === 1 &&
+      freeUnderPot[0].code === 'CHECK_PACK_PAGE_EDGES' &&
+      freeUnderPot[0].detail.startsWith("rigc's pack line says page edges free") &&
+      odd.length === 1 &&
+      odd[0].code === 'CHECK_PACK_PAGE_EDGES' &&
+      odd[0].detail.startsWith('is 300x500;'),
+    `both forms read (free ${readFree[0]?.pageEdges}, pot ${readPot[0]?.pageEdges}); "page edges diagonal" -> ${diagonal?.problems[0] === undefined ? 'read' : `${diagonal.problems[0].code}: ${diagonal.problems[0].object}`}; no padding -> ${noPadding?.problems[0]?.code ?? 'read'}; a pot line under --page-edges free -> ${one(potUnderFree)}; a free line under pot -> ${one(freeUnderPot)}; 300x500 with no suffix under pot -> ${one(odd)}`,
+    'a pack line half-read would drop the one field that changed, and a page whose edges are not the ones asked for is a build nobody ran; both are refused by name, and the two agreeing lines are the positive control',
   );
 
   // CHAIN_LAG reads motion.json and the bone tree only, so its controls need no render.
@@ -3969,7 +4067,7 @@ function runBuildSuite(): number {
       'BU01_A_GREEN_BUILD_WRITES_ITS_TREE_AND_ENDS_WITH_THE_PACK_LINE_AND_THE_THREE_ARTIFACT_PATHS',
       green.status === 0 &&
         tree.join(',') === expectedTree.join(',') &&
-        /^pack: skeleton\.png \d+x\d+, \d+ region\(s\), [\d.]+% covered, padding \d+; page opaque [\d.]+% \(alpha > 0\) — spineboy yardstick /.test(tail[0]?.trim() ?? '') &&
+        /^pack: skeleton\.png \d+x\d+, \d+ region\(s\), [\d.]+% covered, padding \d+, page edges free; page opaque [\d.]+% \(alpha > 0\) — spineboy yardstick /.test(tail[0]?.trim() ?? '') &&
         artifacts.map((a) => a.split('/').pop()).join(',') === 'skeleton.json,skeleton.atlas,skeleton.png' &&
         artifacts.every((a) => a.startsWith(join(out, 'check', 'build')) && existsSync(a)) &&
         stageOrder.every((at, i) => at > 0 && (i === 0 || at > stageOrder[i - 1])) &&

@@ -23,7 +23,7 @@
  *
  * | output | what |
  * | --- | --- |
- * | `build/` | `rigc build --profile spine-html --pack` — the packed atlas is the final artifact |
+ * | `build/` | `rigc build --profile spine-html --pack --page-edges free` (or `pot`, when the caller names it; {@link PAGE_EDGES}) — the packed atlas is the final artifact |
  * | `gate_spine-html.txt` | that build's gate lines, verbatim |
  * | `gate_spine.txt` | `rigc validate build/ --profile spine`'s gate lines, verbatim |
  * | `idle_frames/` | `rigc render --animation idle --fps 12 --max 640 --geometry`: `frames.json` + `idle/f*.png` + `idle/geometry.json` (each mesh's skinned vertices, which `TEXTURE_STRETCH` reads, and every bone's world transform, which the face half of `STILL_REGIONS_DARK` reads) |
@@ -183,6 +183,40 @@ export const GEOMETRY_SPEC = 'rigc-geometry/1';
 
 /** Issue #2's yardstick, measured on the Spine example export `spineboy.png` (alpha > 0). */
 export const SPINEBOY_YARDSTICK = '1024x256, 40 region(s), 45.8% opaque (alpha > 0)';
+
+/**
+ * What a packed page's edges may be: spine-rigc's `build --pack --page-edges`,
+ * handed to it verbatim (the flag is in spine-rigc's CLI since 1.4.0, the
+ * floor `check` already requires; 1.5.0 made `free` search every width).
+ * `pot` is a power of two on both edges; `free` is the least-area page the
+ * placement needs, at the cost rigc's help states: region attachments sample
+ * within 1 LSB of the loose build rather than exactly.
+ *
+ * `free` is the default here although rigc's own default is `pot`: the packed
+ * page is this package's final artifact, and on the two public examples `free`
+ * takes the page from 1024x2048 to 967x1338 (covered 56.3 % -> 91.2 %) and
+ * from 512x2048 to 479x1166 (49.7 % -> 93.4 %), rigc 1.5.1. The cost was
+ * measured on the same two builds. Each of the 49 idle frames differs from the
+ * `pot` build's, by at most 1 level in any channel (demo 2,373 px, sample 651
+ * px over all 49). On sample that moves STILL_REGIONS_DARK's reported
+ * screen-space face mean from 11.475 to 11.472; no bar or status moves. The
+ * atlas rigc writes says `filter: Linear, Linear` and has no `repeat` line, so
+ * a consumer that mipmaps or repeats the page itself is the one that wants
+ * `pot`. AUTHORING §5, *Page edges*, holds the tables.
+ */
+export const PAGE_EDGES = ['pot', 'free'] as const;
+export type PageEdges = (typeof PAGE_EDGES)[number];
+export const DEFAULT_PAGE_EDGES: PageEdges = 'free';
+
+/** The packed build's rigc arguments after `--out <dir>`, as every stage that packs passes them. */
+export function packedBuildArgs(edges: PageEdges): string[] {
+  return ['--profile', 'spine-html', '--pack', '--page-edges', edges];
+}
+
+/** The packed build as a label: the rigc command line that was run, after `rigc`. */
+export function packedBuildLabel(edges: PageEdges): string {
+  return `build ${packedBuildArgs(edges).join(' ')}`;
+}
 
 // ---------------------------------------------------------------------------
 // the rigc process, injected
@@ -423,17 +457,66 @@ export interface PackLine {
   regions: number;
   coveredPct: number;
   padding: number;
+  /** `free` when the line ends `, page edges free`, `pot` when it carries no suffix — spine-rigc prints the suffix exactly when it packed under `--page-edges free` (its `cli.ts`, the pack line). */
+  pageEdges: PageEdges;
 }
 
-const PACK = /pack: (\S+) (\d+)x(\d+), (\d+) region\(s\), ([\d.]+)% covered, padding (\d+)/;
+/** rigc's pack line, whole: the line is this and nothing else, or it is refused. */
+const PACK = /^pack: (\S+) (\d+)x(\d+), (\d+) region\(s\), (\d+(?:\.\d+)?)% covered, padding (\d+)(, page edges free)?$/;
 
+/**
+ * Every pack line among the gate lines — a line that reads `pack:` once its
+ * `..` gutter is taken off. A pack line spine-rigc 1.5.1 would not print (an
+ * unknown suffix, a missing field) is refused, `CHECK_PACK_LINE_READS`, naming
+ * the line and the form required: a line half-read would lose the one field
+ * that changed.
+ */
 export function parsePackLines(lines: readonly string[]): PackLine[] {
   const out: PackLine[] = [];
+  const problems: Problem[] = [];
   for (const l of lines) {
-    const m = PACK.exec(l);
-    if (m !== null) out.push({ line: l.trim().replace(/^\.\.\s+/, ''), page: m[1], width: Number(m[2]), height: Number(m[3]), regions: Number(m[4]), coveredPct: Number(m[5]), padding: Number(m[6]) });
+    const text = l.trim().replace(/^\.\.\s+/, '');
+    if (!text.startsWith('pack:')) continue;
+    const m = PACK.exec(text);
+    if (m === null) {
+      problems.push({
+        code: 'CHECK_PACK_LINE_READS',
+        object: `rigc's pack line ${JSON.stringify(text)}`,
+        detail: 'does not read as "pack: <page> <W>x<H>, <N> region(s), <P>% covered, padding <D>", with ", page edges free" after it or nothing; that form is required',
+      });
+      continue;
+    }
+    out.push({ line: text, page: m[1], width: Number(m[2]), height: Number(m[3]), regions: Number(m[4]), coveredPct: Number(m[5]), padding: Number(m[6]), pageEdges: m[7] === undefined ? 'pot' : 'free' });
   }
+  refuseIfAny(problems);
   return out;
+}
+
+function powerOfTwo(n: number): boolean {
+  return Number.isInteger(n) && n > 0 && (n & (n - 1)) === 0;
+}
+
+/**
+ * Where a pack line disagrees with the `--page-edges` the build was given:
+ * the line's own suffix must say the same, and a `pot` page must be a power of
+ * two on both edges, as rigc's help defines it. One problem per disagreement,
+ * `CHECK_PACK_PAGE_EDGES`; empty is agreement.
+ */
+export function packEdgeProblems(pack: readonly PackLine[], edges: PageEdges): Problem[] {
+  const problems: Problem[] = [];
+  for (const p of pack) {
+    const object = `packed page ${p.page}`;
+    if (p.pageEdges !== edges) {
+      problems.push({
+        code: 'CHECK_PACK_PAGE_EDGES',
+        object,
+        detail: `rigc's pack line says page edges ${p.pageEdges} (${p.pageEdges === 'free' ? 'it ends ", page edges free"' : 'no ", page edges free" suffix'}); the build was run with --page-edges ${edges}, so page edges ${edges} is required`,
+      });
+    } else if (edges === 'pot' && !(powerOfTwo(p.width) && powerOfTwo(p.height))) {
+      problems.push({ code: 'CHECK_PACK_PAGE_EDGES', object, detail: `is ${p.width}x${p.height}; the build was run with --page-edges pot, so a power of two on both edges is required` });
+    }
+  }
+  return problems;
 }
 
 /** Share of a page's pixels with alpha above 0 — the measure issue #2's spineboy figure is in. rigc's "covered" is region rectangles, not pixels. */
@@ -745,9 +828,11 @@ function rigcFailed(what: string, call: RigcCall, lines: readonly string[]): Pro
  * gate file is written first, so the refusal's evidence is on disk. Otherwise
  * it measures everything, writes every output including `check.json`, and
  * returns the report; `report.problems` names each bar that was not met, and
- * `figures.PASS` is true exactly when it is empty.
+ * `figures.PASS` is true exactly when it is empty. `pageEdges` reaches rigc's
+ * `--page-edges` verbatim, and a pack line that disagrees with it is refused
+ * (`CHECK_PACK_PAGE_EDGES`).
  */
-export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome: string = rigDir): CheckReport {
+export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome: string = rigDir, pageEdges: PageEdges = DEFAULT_PAGE_EDGES): CheckReport {
   const inp = readCheckInputs(rigDir, partsHome);
   requireRigcVersion(rigc);
   const out = resolve(outDir);
@@ -764,11 +849,12 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   };
 
   // 1. build, packed, under the policy profile
-  const build = rigc(['build', '--rig', inp.rigPath, '--motion', inp.motionPath, '--out', buildDir, '--profile', 'spine-html', '--pack']);
+  const build = rigc(['build', '--rig', inp.rigPath, '--motion', inp.motionPath, '--out', buildDir, ...packedBuildArgs(pageEdges)]);
   const gateHtml = buildGateLines(build.out);
   write('gate_spine-html.txt', `${gateHtml.join('\n')}\n`);
-  if (build.status !== 0) refuseIfAny(rigcFailed('build --profile spine-html --pack', build, gateHtml));
+  if (build.status !== 0) refuseIfAny(rigcFailed(packedBuildLabel(pageEdges), build, gateHtml));
   const pack = parsePackLines(gateHtml);
+  refuseIfAny(packEdgeProblems(pack, pageEdges));
   const packOpaque = pack.filter((p) => existsSync(join(buildDir, p.page))).map((p) => ({ page: p.page, share: opaqueShare(readPng(join(buildDir, p.page))) }));
 
   // 2. validate under the validity profile
@@ -907,7 +993,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     PASS: false,
   };
   const barProblems: Problem[] = [];
-  if (!htmlGreen) barProblems.push(...rigcFailed('build --profile spine-html --pack', build, gateHtml));
+  if (!htmlGreen) barProblems.push(...rigcFailed(packedBuildLabel(pageEdges), build, gateHtml));
   if (!spineGreen) barProblems.push(...rigcFailed('validate --profile spine', validate, gateSpine));
   if (figures.loop_max_diff !== LOOP_MAX_BAR) {
     barProblems.push({
