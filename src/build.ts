@@ -44,7 +44,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:
 import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
-import { type CheckReport, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
+import { causeLines, type CheckReport, type PackLine, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig, loadEarlyConfig } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
 import { encodeGif } from './gif.ts';
@@ -162,7 +162,12 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
 interface GateRun {
   label: string;
   status: number;
-  /** rigc's FAIL lines, its assertion summary and the one SKIP this stage's own declaration causes, as it printed them. */
+  /**
+   * rigc's FAIL lines, its assertion summary, the core entry's `here:` line and
+   * the one SKIP this stage's own declaration causes, as it printed them — or,
+   * for a run that exited non-zero with none of those, the lines
+   * {@link causeLines} says name why.
+   */
   lines: string[];
 }
 
@@ -175,18 +180,24 @@ interface GateRun {
  */
 const DECLARED_SKIP = /^ {2}SKIP {2}A15_IDLE_NO_MESH_BONE_KEYS: declared by the rig/;
 
+/** The core entry's line after its summary (spine-rigc 2.0.0 and later): which rules ran, and that the round trip did not. */
+const HERE_LINE = /^ {2}\.\. {4}here: /;
+
 function gateRun(label: string, rigc: RigcRunner, args: string[]): GateRun {
   const r = rigc(args);
-  const lines = r.out.split('\n').filter((l) => /^ {2}FAIL {2}/.test(l) || /assertions: \d+ measured/.test(l) || /^rigc compile error/.test(l) || DECLARED_SKIP.test(l));
-  return { label, status: r.status, lines };
+  const lines = r.out.split('\n').filter((l) => /^ {2}FAIL {2}/.test(l) || /assertions: \d+ measured/.test(l) || /^rigc compile error/.test(l) || DECLARED_SKIP.test(l) || HERE_LINE.test(l));
+  const failed = lines.some((l) => /^ {2}FAIL {2}/.test(l) || /^rigc compile error/.test(l));
+  return { label, status: r.status, lines: r.status !== 0 && !failed ? [...lines, ...causeLines(r.out)] : lines };
 }
 
 /**
- * spine-rigc's round trip over the rig in a scratch directory: `build` under
- * the spine-html profile with `--pack --page-edges <edges>`, then `validate`
- * of that build under the spine profile. The files are staged exactly as `--out` will receive
- * them, so what passed is what is written. The scratch directory is the
- * caller's, and is emptied here before and after.
+ * spine-rigc's gate over the rig in a scratch directory: `build` under the
+ * spine-html profile with `--pack --page-edges <edges>`, which runs the gate
+ * once over the compile and once over the packed pages on disk. There is no
+ * second `validate --profile spine` run: spine-html holds every rule spine
+ * measures (selftest `CH09`). The files are staged exactly as `--out` will
+ * receive them, so what passed is what is written. The scratch directory is
+ * the caller's, and is emptied here before and after.
  */
 function gateThroughRigc(out: RigOutput, texts: Array<[string, string]>, rigc: RigcRunner, scratch: string, edges: PageEdges): GateRun[] {
   rmSync(scratch, { recursive: true, force: true });
@@ -195,9 +206,7 @@ function gateThroughRigc(out: RigOutput, texts: Array<[string, string]>, rigc: R
     for (const [file, img] of out.images) writeFileSync(join(scratch, 'images', file), encodePngBytes(img));
     for (const [file, text] of texts) writeFileSync(join(scratch, file), text);
     const build = join(scratch, 'build');
-    const html = gateRun(packedBuildLabel(edges), rigc, ['build', '--rig', join(scratch, 'rig.json'), '--motion', join(scratch, 'motion.json'), '--out', build, ...packedBuildArgs(edges)]);
-    if (html.status !== 0) return [html];
-    return [html, gateRun('validate --profile spine', rigc, ['validate', build, '--profile', 'spine'])];
+    return [gateRun(packedBuildLabel(edges), rigc, ['build', '--rig', join(scratch, 'rig.json'), '--motion', join(scratch, 'motion.json'), '--out', build, ...packedBuildArgs(edges)])];
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -214,7 +223,7 @@ export interface RigStageInput {
   pageEdges?: PageEdges;
 }
 
-/** Author the rig, gate it through rigc in `scratch`, and write `out` only when both gates are green. */
+/** Author the rig, gate it through rigc in `scratch`, and write `out` only when the gate is green. */
 export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string, log: Log): RigOutput {
   const cfg = loadConfig(input.config);
   const parts = readParts(join(input.parts, 'parts.json'));
@@ -259,7 +268,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     const problems: Problem[] = red.map((g) => ({
       code: 'RIG_RIGC_GREEN',
       object: `rigc ${g.label}`,
-      detail: `exited ${g.status}${g.lines.length > 0 ? `: ${g.lines.map((l) => l.trim()).join(' | ')}` : ''}; exit 0 is required before anything is written, and nothing was`,
+      detail: `exited ${g.status}${g.lines.length > 0 ? `: ${g.lines.map((l) => l.trim()).join(' | ')}` : ', and it printed nothing'}; exit 0 is required before anything is written, and nothing was`,
     }));
     throw new PartsError(problems);
   }
@@ -316,13 +325,13 @@ export function judgementLine(name: string, line: JudgementLine | ReportedLine):
 export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string, log: Log): CheckReport {
   const v = rigc(['--version']);
   log(`spine-parts check: ${input.rig} -> ${input.out}`);
-  log(`  rigc ${v.out.trim().split('\n')[0]} at ${bin}`);
+  const versionLines = v.out.trim().split('\n');
+  const entryLine = versionLines.find((l) => l.startsWith('entry:'));
+  log(`  rigc ${versionLines[0]} at ${bin}${entryLine === undefined ? '' : `; ${entryLine}`}`);
   const edges = input.pageEdges ?? DEFAULT_PAGE_EDGES;
   const r = runCheck(input.rig, input.out, rigc, input.parts, edges);
   log(`  gate spine-html (rigc ${packedBuildLabel(edges)}), verbatim:`);
   for (const l of r.gateHtml) log(l);
-  log('  gate spine (rigc validate build --profile spine), verbatim:');
-  for (const l of r.gateSpine) log(l);
   for (const l of packLines(r)) log(`  ${l}`);
   const fig = r.figures;
   log(`  loop: idle ${r.idle.frames} frame(s) at ${r.idle.fps} fps, f0000 vs f${String(r.idle.lastIndex).padStart(4, '0')} (t = ${r.idle.duration}s): max |d| ${fig.loop_max_diff} (0 required)`);
@@ -332,7 +341,7 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   );
   for (const name of JUDGEMENT_LINES) log(`  ${judgementLine(name, fig[name])}`);
   for (const name of REPORTED_LINES) log(`  ${judgementLine(name, fig[name])}`);
-  log(`  gates: spine-html ${fig.gate_spine_html_green ? 'green' : 'RED'}, spine ${fig.gate_spine_green ? 'green' : 'RED'}`);
+  log(`  gate: spine-html ${fig.gate_spine_html_green ? 'green' : 'RED'} (${fig.rigc_entry.entry}${fig.rigc_entry.spine_core === null ? ', rigc\'s own validator' : `, the spine-core ${fig.rigc_entry.spine_core} round trip`})`);
   log(`  wrote ${r.written.map((w) => join(input.out, w)).join(', ')}, ${join(input.out, 'build')}/, ${join(input.out, 'idle_frames')}/`);
   for (const p of r.problems) log(`  FAIL  ${problemLine(p)}`);
   log(fig.PASS ? 'check: PASS' : `check: FAIL — ${r.problems.length} bar(s) not met`);
@@ -434,7 +443,12 @@ export interface BuildInput {
   pageEdges: PageEdges;
 }
 
-/** The two rigc processes, as each command runs its own: `rig` gates through one, `check` measures through the other. */
+/**
+ * The rigc process for each stage: `rig` gates through one, `check` measures
+ * through the other. `cli.ts` hands both the same runner, the `rigc` binary
+ * spine-rigc's launcher answers for; they are two fields so a caller can tell
+ * the stages' calls apart (the selftest counts them).
+ */
 export interface BuildRunners {
   rig: RigcRunner;
   check: RigcRunner;
@@ -457,20 +471,28 @@ export interface BuildResult {
   artifact: string[];
 }
 
+/**
+ * rigc's own record of the compiled rig, which `build` writes beside the
+ * skeleton JSON and atlas (spine-rigc's AUTHORING, the `--out` row; written
+ * since 1.6): what rigc's posing core reads, not a Spine file, so it is not the
+ * artifact and is not counted as a second skeleton JSON.
+ */
+export const RIGC_MODEL_DOCUMENT = 'skeleton.model.json';
+
 /** The three artifact files of a packed build, each refused by name when absent. */
-function artifactPaths(buildDir: string, report: CheckReport): string[] {
+export function artifactPaths(buildDir: string, pack: readonly PackLine[]): string[] {
   const problems: Problem[] = [];
   const names = existsSync(buildDir) ? readdirSync(buildDir).sort() : [];
-  const json = names.filter((n) => n.endsWith('.json'));
+  const json = names.filter((n) => n.endsWith('.json') && n !== RIGC_MODEL_DOCUMENT);
   const atlas = names.filter((n) => n.endsWith('.atlas'));
-  if (json.length !== 1) problems.push({ code: 'BUILD_ARTIFACT_PRESENT', object: `${buildDir} skeleton JSON`, detail: `holds ${json.length} .json file(s) [${json.join(', ')}]; the packed build writes exactly one` });
+  if (json.length !== 1) problems.push({ code: 'BUILD_ARTIFACT_PRESENT', object: `${buildDir} skeleton JSON`, detail: `holds ${json.length} .json file(s) [${json.join(', ')}]; the packed build writes exactly one besides rigc's ${RIGC_MODEL_DOCUMENT}` });
   if (atlas.length !== 1) problems.push({ code: 'BUILD_ARTIFACT_PRESENT', object: `${buildDir} atlas`, detail: `holds ${atlas.length} .atlas file(s) [${atlas.join(', ')}]; the packed build writes exactly one` });
-  if (report.pack.length === 0) problems.push({ code: 'BUILD_ARTIFACT_PRESENT', object: `${buildDir} packed page`, detail: 'rigc printed no pack line, so no packed page is named; the build runs with --pack and must print one' });
-  for (const p of report.pack) {
+  if (pack.length === 0) problems.push({ code: 'BUILD_ARTIFACT_PRESENT', object: `${buildDir} packed page`, detail: 'rigc printed no pack line, so no packed page is named; the build runs with --pack and must print one' });
+  for (const p of pack) {
     if (!names.includes(p.page)) problems.push({ code: 'BUILD_ARTIFACT_PRESENT', object: `${buildDir} packed page`, detail: `the pack line names ${p.page}, which is not on disk` });
   }
   if (problems.length > 0) throw new PartsError(problems);
-  return [join(buildDir, json[0]), join(buildDir, atlas[0]), ...report.pack.map((p) => join(buildDir, p.page))];
+  return [join(buildDir, json[0]), join(buildDir, atlas[0]), ...pack.map((p) => join(buildDir, p.page))];
 }
 
 /**
@@ -542,7 +564,7 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
 
   let artifact: string[];
   try {
-    artifact = artifactPaths(join(out, 'check', 'build'), report);
+    artifact = artifactPaths(join(out, 'check', 'build'), report.pack);
   } catch (err) {
     return refused('artifact', err, report);
   }

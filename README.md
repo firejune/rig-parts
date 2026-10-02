@@ -35,7 +35,6 @@ was shifted down into the canvas (its proposal ran 118 px above the top edge;
 is taken from the full run, because the twin tails leave the head crop sideways
 (a plan edit). <code>check</code> printed, verbatim:<br/>
 <code>49 assertions: 23 measured (23 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"</code><br/>
-<code>49 assertions: 14 measured (14 passed, 0 failed), 20 skipped, 15 not in profile "spine"</code><br/>
 <code>loop: idle 49 frame(s) at 12 fps, f0000 vs f0048 (t = 4s): max |d| 0 (0 required)</code><br/>
 <code>seam: setup pose at 714x1216, scale 0.9422: mean |d| 0.324 (&lt;= 1.0), 2 px over 40 (&lt;= 50), 0 px over 80 (reported)</code><br/>
 <code>pack: skeleton.png 967x1338, 22 region(s), 91.2% covered, padding 2, page edges free</code><br/>
@@ -87,7 +86,7 @@ page** (issue #2):
 
 | path under `--out` | what |
 | --- | --- |
-| `check/build/skeleton.json`, `skeleton.atlas`, `skeleton.png` | **the artifact** — Spine 4.3 skeleton data and one packed page, written by `rigc build --pack --page-edges free` and gated under both profiles |
+| `check/build/skeleton.json`, `skeleton.atlas`, `skeleton.png` | **the artifact** — Spine 4.3 skeleton data and one packed page, written by `rigc build --pack --page-edges free` and gated under `spine-html`, which holds every rule `spine` measures (on the demo, rigc 1.5.1 and 2.0.3: the 14 rules `validate --profile spine` measures are among the build's 23; 15 are not in `spine`) |
 | `parts/*.png`, `parts.json`, `recomposite_rig.png`, `recomposite_error_rig.png` | the loose parts, each cropped to its alpha box; the record of where every part came from, how many of its pixels were re-taken from the painting, and the recomposite's uncovered holes with their boxes; the flat stack of parts; its error map — red where no part covers a pixel the painting has, blue where a part covers it in the wrong colour |
 | `rig/` | `rig.json` and `motion.json` in spine-rigc's spec, `mesh_report.json`, the padded `images/` |
 | `check/` | both gate files verbatim, the idle's frames and their `geometry.json` (skinned vertices per frame), `contact.png`, `motion_heat.png`, `check.json` |
@@ -124,7 +123,7 @@ atlas written by anything else would have no oracle behind it.
 | stage | tool | what it owns |
 | --- | --- | --- |
 | painting + See-through layers → parts and specs | **spine-parts** | the merge of two runs, the measurements, the rig spec and motion spec |
-| specs → Spine skeleton data | **[spine-rigc](https://github.com/firejune/rigc)** | compile, the round trip through `spine-core`, the named assertions, the packer, the renderer |
+| specs → Spine skeleton data | **[spine-rigc](https://github.com/firejune/rigc)** | compile, the gate (rigc's own validator in an install; the round trip through `spine-core` where the runtime is beside it, as in this repository's CI), the named assertions, the packer, the renderer |
 | skeleton data → a page | **[spine-html](https://github.com/firejune/spine-html)**, a sibling project | a DOM renderer; rigc's `spine-html` profile is its policy, and every build here is gated under that profile as well as under `spine` |
 
 spine-parts never writes Spine data itself. Everything on disk under `check/build/`
@@ -253,8 +252,8 @@ agent skill.
 | `propose --head-box --full <run> --canvas WxH` | propose `seethrough.head_box` from the full run, held inside the painting |
 | `propose --parts --source --out [--compare <config>]` | propose bones, meshes, regions and an idle; draw the overlay |
 | `propose … --from-config <config>` | draw and LINT the config's current bones |
-| `rig --config --parts --out [--idle-keys ctl\|direct]` | author `rig.json` + `motion.json`, written only after spine-rigc's round trip is green; `--idle-keys` says whether the idle's keys on mesh-driving bones go through `<bone>_ctl` parents (default) or stay on the bones with `invariants.idleDrivesMeshes` declared |
-| `check --rig --out [--parts]` | build packed, gate under both profiles, render the idle, measure seam, loop and the six judgement lines (mesh texture stretch among them, from the idle's `render --geometry`), and report the recomposite's holes from `parts.json` |
+| `rig --config --parts --out [--idle-keys ctl\|direct]` | author `rig.json` + `motion.json`, written only after spine-rigc's gate is green; `--idle-keys` says whether the idle's keys on mesh-driving bones go through `<bone>_ctl` parents (default) or stay on the bones with `invariants.idleDrivesMeshes` declared |
+| `check --rig --out [--parts]` | build packed, gated under `spine-html`, render the idle, measure seam, loop and the six judgement lines (mesh texture stretch among them, from the idle's `render --geometry`), and report the recomposite's holes from `parts.json` |
 | `loop --frames <dir> --out <file.gif \| file.png> [--palette]` | encode a rendered idle as a looping GIF, lossless APNG, or indexed APNG (`--palette`) |
 | `build --config --source --full --head --out [--seam] [--project] [--loop]` | assemble, rig and check in one process, stopping at the first refusal |
 
@@ -319,13 +318,19 @@ the flag, puts 813 of `sample`'s 993 still-unprojected pixels and 879 of `demo`'
 
 [Bun](https://bun.sh) 1.2 or later. `npm install -g spine-parts` installs the
 `spine-parts` command; it hands off to Bun and says so in one sentence if Bun is not
-on `PATH`. spine-rigc comes with it as a dependency.
+on `PATH`. spine-rigc comes with it as a dependency. No Spine runtime does: since
+spine-rigc 2.0 the installed `rigc` gates every build with its own validator over the
+compiled model document, and `rigc --version` says `entry: cli_core.ts —
+@esotericsoftware/spine-core absent`. With `@esotericsoftware/spine-core` installed
+beside it, the same `rigc` runs the spine-core round trip instead, as this repository's
+selftest and CI do; `check.json`'s `rigc_entry` records which one gated a build.
 
 ## Licence posture
 
-spine-parts is MIT, and it depends on spine-rigc, which links Esoteric Software's
-`spine-core`: using what it produces in a product requires a Spine Editor licence, as
-any Spine data does. [NOTICE.md](NOTICE.md) records that chain and every other
+spine-parts is MIT, and it depends on spine-rigc, whose output is Spine skeleton data:
+using what it produces in a product requires a Spine Editor licence, as any Spine data
+does. Neither package installs Esoteric Software's `spine-core` any more; this
+repository uses it in development, for the round trip in its selftest and CI. [NOTICE.md](NOTICE.md) records that chain and every other
 third-party term this package touches, See-through's included.
 
 ## Development

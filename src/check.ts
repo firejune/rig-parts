@@ -6,9 +6,11 @@
  *
  * ⭐ **This is the one stage that drives a subprocess, and it does not own the
  * spawn.** Every rigc step — build, validate, render — is spine-rigc's own CLI,
- * never a re-implementation of it, because rigc's round trip through
- * `spine-core` is the only oracle behind a skeleton (CLAUDE.md, "spine-rigc's
- * validation is not optional here either"). But `src/` is held to no child
+ * never a re-implementation of it, because rigc's gate is the only oracle
+ * behind a skeleton (CLAUDE.md, "spine-rigc's gate is not optional here
+ * either"): the spine-core round trip where the runtime resolves beside rigc,
+ * rigc's own validator where it does not, and `check.json`'s `rigc_entry` says
+ * which ({@link readRigcEntry}). But `src/` is held to no child
  * processes (`TY06`, with `src/comfy/` its one named exception), so the process
  * is injected: `runCheck` takes a {@link RigcRunner}, `cli.ts` hands it one
  * that spawns the binary {@link findRigc} located, and the selftest hands it
@@ -24,8 +26,7 @@
  * | output | what |
  * | --- | --- |
  * | `build/` | `rigc build --profile spine-html --pack --page-edges free` (or `pot`, when the caller names it; {@link PAGE_EDGES}) — the packed atlas is the final artifact |
- * | `gate_spine-html.txt` | that build's gate lines, verbatim |
- * | `gate_spine.txt` | `rigc validate build/ --profile spine`'s gate lines, verbatim |
+ * | `gate_spine-html.txt` | that build's gate lines, verbatim — the one gate: rigc's `build` runs it once over the compile and once over the packed pages on disk, and `spine-html` holds every rule `spine` measures (selftest `CH09`) |
  * | `idle_frames/` | `rigc render --animation idle --fps 12 --max 640 --geometry`: `frames.json` + `idle/f*.png` + `idle/geometry.json` (each mesh's skinned vertices, which `TEXTURE_STRETCH` reads, and every bone's world transform, which the face half of `STILL_REGIONS_DARK` reads) |
  * | `contact.png` | rigc's own contact sheet of that render, copied out |
  * | `motion_heat.png` | frame 0 in grey with each pixel's largest change across the idle in red |
@@ -195,7 +196,7 @@ export const SPINEBOY_YARDSTICK = '1024x256, 40 region(s), 45.8% opaque (alpha >
  * `free` is the default here although rigc's own default is `pot`: the packed
  * page is this package's final artifact, and on the two public examples `free`
  * takes the page from 1024x2048 to 967x1338 (covered 56.3 % -> 91.2 %) and
- * from 512x2048 to 479x1166 (49.7 % -> 93.4 %), rigc 1.5.1. The cost was
+ * from 512x2048 to 479x1166 (49.7 % -> 93.4 %), rigc 1.5.1 and 2.0.3 alike. The cost was
  * measured on the same two builds. Each of the 49 idle frames differs from the
  * `pot` build's, by at most 1 level in any channel (demo 2,373 px, sample 651
  * px over all 49). On sample that moves STILL_REGIONS_DARK's reported
@@ -230,6 +231,81 @@ export interface RigcCall {
 }
 
 export type RigcRunner = (args: readonly string[]) => RigcCall;
+
+/** A line in which a rigc run that stopped says why: Bun's own `error: …`, rigc's `rigc <command>: …` refusals, a `usage: …` line. */
+const CAUSE = /^(error: |rigc[\w -]*: |usage: )/;
+
+/**
+ * What a rigc run that exited non-zero said about why, for a refusal whose own
+ * filter (FAIL lines, the assertion summary) matched nothing: every line that
+ * names a cause, or, when none does, the last three non-empty lines. Measured
+ * against spine-rigc 2.0.3: its `cli.ts` run by path without
+ * `@esotericsoftware/spine-core` beside it dies at import with one
+ * `error: Cannot find module '@esotericsoftware/spine-core' from …` line, and its
+ * core entry refuses `validate` with one `rigc validate: …` line, neither of
+ * which a gate filter reads. The last lines and not the first are the fallback
+ * because `rigc build` prints its header and inputs before it can stop. Empty
+ * only when the run printed nothing at all.
+ */
+export function causeLines(out: string): string[] {
+  const lines = out.split('\n').map((l) => l.trim()).filter((l) => l !== '');
+  const named = lines.filter((l) => CAUSE.test(l));
+  return named.length > 0 ? named : lines.slice(-3);
+}
+
+/** The two entries spine-rigc's launcher (`bin/rigc.cjs`, spine-rigc 2.0.0 and later) runs. */
+export const RIGC_ENTRIES = ['cli.ts', 'cli_core.ts'] as const;
+export type RigcEntry = (typeof RIGC_ENTRIES)[number];
+
+/** The first spine-rigc whose `--version` names the entry that ran (its launcher's stderr line; spine-rigc 2.0.0's changelog, issue #1061 there). */
+export const RIGC_ENTRY_VERSION = '2.0.0';
+
+/**
+ * Which rigc entry gated the build, as `check.json` records it: `cli.ts`, the
+ * spine-core round trip, with the runtime's version; `cli_core.ts`, rigc's own
+ * validator over its model document, with no runtime (`spine_core` null).
+ */
+export interface RigcEntryRecord {
+  entry: RigcEntry;
+  spine_core: string | null;
+}
+
+/** The launcher's two `entry:` lines, whole, as spine-rigc 2.0.3's `bin/rigc.cjs` writes them. */
+const ENTRY_FULL = /^entry: cli\.ts — @esotericsoftware\/spine-core (\S+) present$/;
+const ENTRY_CORE = /^entry: cli_core\.ts — @esotericsoftware\/spine-core absent — /;
+
+/**
+ * The entry a `rigc --version` run names. A run with no `entry:` line is a
+ * rigc older than {@link RIGC_ENTRY_VERSION}, or not rigc's launcher, and is
+ * refused `CHECK_RIGC_ENTRY`; an `entry:` line in neither form above is refused
+ * `CHECK_RIGC_ENTRY_READS`, naming the line — a third entry is not read as
+ * either of the two.
+ */
+export function readRigcEntry(versionOut: string): RigcEntryRecord {
+  const lines = versionOut.split('\n').map((l) => l.trim());
+  const line = lines.find((l) => l.startsWith('entry:'));
+  if (line === undefined) {
+    refuseIfAny([
+      {
+        code: 'CHECK_RIGC_ENTRY',
+        object: '`rigc --version`',
+        detail: `printed ${JSON.stringify(versionOut.trim())} and no \`entry:\` line; spine-rigc ${RIGC_ENTRY_VERSION} or later is required — its launcher names the entry that ran, and check.json records which one gated the build (\`bun install\` puts this package's own spine-rigc at node_modules/.bin/rigc)`,
+      },
+    ]);
+  }
+  const at = line as string;
+  const full = ENTRY_FULL.exec(at);
+  if (full !== null) return { entry: 'cli.ts', spine_core: full[1] };
+  if (ENTRY_CORE.test(at)) return { entry: 'cli_core.ts', spine_core: null };
+  refuseIfAny([
+    {
+      code: 'CHECK_RIGC_ENTRY_READS',
+      object: `rigc's entry line ${JSON.stringify(at)}`,
+      detail: 'reads as neither "entry: cli.ts — @esotericsoftware/spine-core <version> present" nor "entry: cli_core.ts — @esotericsoftware/spine-core absent — …"; one of the two is required',
+    },
+  ]);
+  throw new Error('unreachable');
+}
 
 /**
  * Where the `rigc` binary is: `node_modules/.bin/rigc` in `from` or any
@@ -427,14 +503,34 @@ export function readCheckInputs(rigDir: string, partsHome: string = rigDir): Che
 // gate lines
 // ---------------------------------------------------------------------------
 
-/** `check_rig.py`'s filter for the build: summary, stats and pack lines, and anything that failed. */
+/**
+ * The `here:` line spine-rigc's core entry (`cli_core.ts`, 2.0.0 and later)
+ * prints after its assertion summary, saying which rules ran and that the
+ * spine-core round trip did not; `cli.ts` prints none.
+ */
+const HERE_LINE = /^\.\.\s+here: /;
+
+/**
+ * `check_rig.py`'s filter for the build: summary, stats and pack lines, and
+ * anything that failed — and, under rigc's core entry, its `here:` line, so the
+ * gate file says which validator ran.
+ */
 export function buildGateLines(out: string): string[] {
-  return out.split('\n').filter((l) => (l.trim().startsWith('..') && (l.includes(' assertions: ') || l.includes('pages=') || l.includes('pack:'))) || l.includes('FAIL') || l.includes('compile error'));
+  return out
+    .split('\n')
+    .filter((l) => (l.trim().startsWith('..') && (l.includes(' assertions: ') || l.includes('pages=') || l.includes('pack:') || HERE_LINE.test(l.trim()))) || l.includes('FAIL') || l.includes('compile error'));
 }
 
-/** `check_rig.py`'s filter for validate: the summary and anything that failed. */
-export function validateGateLines(out: string): string[] {
-  return out.split('\n').filter((l) => l.includes(' assertions: ') || l.includes('FAIL'));
+/**
+ * The rules a rigc run measured — every `PASS` and `FAIL` line's rule name, in
+ * the order printed, each once. A SKIP, a PROF line and a summary are not
+ * measurements. The selftest's `CH09` compares a build's set with
+ * `rigc validate --profile spine`'s on the same build.
+ */
+export function measuredRules(out: string): string[] {
+  const seen: string[] = [];
+  for (const m of out.matchAll(/^ {2}(?:PASS|FAIL) {2}([A-Z][A-Z0-9_]*)/gm)) if (!seen.includes(m[1])) seen.push(m[1]);
+  return seen;
 }
 
 const SUMMARY = /\((\d+) passed, (\d+) failed\)/;
@@ -466,7 +562,7 @@ const PACK = /^pack: (\S+) (\d+)x(\d+), (\d+) region\(s\), (\d+(?:\.\d+)?)% cove
 
 /**
  * Every pack line among the gate lines — a line that reads `pack:` once its
- * `..` gutter is taken off. A pack line spine-rigc 1.5.1 would not print (an
+ * `..` gutter is taken off. A pack line spine-rigc 1.5.1 to 2.0.3 would not print (an
  * unknown suffix, a missing field) is refused, `CHECK_PACK_LINE_READS`, naming
  * the line and the form required: a line half-read would lose the one field
  * that changed.
@@ -787,7 +883,8 @@ export const REPORTED_LINES = ['RECOMPOSITE_HOLES'] as const;
 /** check.json — the reference's fields in its order, then the judgement lines, then PASS. */
 export interface CheckFigures {
   gate_spine_html_green: boolean;
-  gate_spine_green: boolean;
+  /** Which rigc entry gated the build ({@link readRigcEntry}): provenance, not a bar. */
+  rigc_entry: RigcEntryRecord;
   loop_max_diff: number;
   seam_mean: number;
   seam_px_over_40: number;
@@ -805,7 +902,6 @@ export interface CheckFigures {
 export interface CheckReport {
   figures: CheckFigures;
   gateHtml: string[];
-  gateSpine: string[];
   pack: PackLine[];
   /** Opaque share (alpha > 0) of each packed page, by page file name. */
   packOpaque: Array<{ page: string; share: number }>;
@@ -816,10 +912,17 @@ export interface CheckReport {
   written: string[];
 }
 
-function rigcFailed(what: string, call: RigcCall, lines: readonly string[]): Problem[] {
+/**
+ * One `CHECK_RIGC_GREEN` per line that says why `rigc <what>` was not green:
+ * its FAIL and compile-error lines, or, when there are none, {@link causeLines}.
+ * A run that printed nothing is still one problem, never none.
+ */
+export function rigcFailed(what: string, call: RigcCall, lines: readonly string[]): Problem[] {
   const named = lines.filter((l) => l.includes('FAIL') || l.includes('compile error'));
-  const quoted = named.length > 0 ? named : call.out.split('\n').filter((l) => l.trim() !== '').slice(-3);
-  return quoted.map((l) => ({ code: 'CHECK_RIGC_GREEN', object: `\`rigc ${what}\``, detail: `exit ${call.status}: ${l.trim()}` }));
+  const quoted = named.length > 0 ? named.map((l) => l.trim()) : causeLines(call.out);
+  const object = `\`rigc ${what}\``;
+  if (quoted.length === 0) return [{ code: 'CHECK_RIGC_GREEN', object, detail: `exit ${call.status}, and it printed nothing` }];
+  return quoted.map((l) => ({ code: 'CHECK_RIGC_GREEN', object, detail: `exit ${call.status}: ${l}` }));
 }
 
 /**
@@ -834,7 +937,7 @@ function rigcFailed(what: string, call: RigcCall, lines: readonly string[]): Pro
  */
 export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome: string = rigDir, pageEdges: PageEdges = DEFAULT_PAGE_EDGES): CheckReport {
   const inp = readCheckInputs(rigDir, partsHome);
-  requireRigcVersion(rigc);
+  const rigcEntry = readRigcEntry(requireRigcVersion(rigc));
   const out = resolve(outDir);
   mkdirSync(out, { recursive: true });
   const buildDir = join(out, 'build');
@@ -857,12 +960,10 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   refuseIfAny(packEdgeProblems(pack, pageEdges));
   const packOpaque = pack.filter((p) => existsSync(join(buildDir, p.page))).map((p) => ({ page: p.page, share: opaqueShare(readPng(join(buildDir, p.page))) }));
 
-  // 2. validate under the validity profile
-  const validate = rigc(['validate', buildDir, '--profile', 'spine']);
-  const gateSpine = validateGateLines(validate.out);
-  write('gate_spine.txt', `${gateSpine.join('\n')}\n`);
+  // 2. no second gate: `rigc validate --profile spine` of this build measured no rule the build's own two passes
+  // had not (14 of the build's 23 on the demo, rigc 1.5.1 and 2.0.3 alike; selftest CH09 holds it), and on rigc's
+  // core entry — an install without spine-core — `validate` is refused outright
   const htmlGreen = gateGreen(build.status, gateHtml);
-  const spineGreen = gateGreen(validate.status, gateSpine);
 
   // 3. the idle, the loop, the heat
   const render = rigc(['render', '--candidate', buildDir, '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--geometry', '--out', idleDir]);
@@ -978,7 +1079,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
 
   const figures: CheckFigures = {
     gate_spine_html_green: htmlGreen,
-    gate_spine_green: spineGreen,
+    rigc_entry: rigcEntry,
     loop_max_diff: loop.max,
     seam_mean: round3(seam.mean),
     seam_px_over_40: seam.over40,
@@ -994,7 +1095,6 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   };
   const barProblems: Problem[] = [];
   if (!htmlGreen) barProblems.push(...rigcFailed(packedBuildLabel(pageEdges), build, gateHtml));
-  if (!spineGreen) barProblems.push(...rigcFailed('validate --profile spine', validate, gateSpine));
   if (figures.loop_max_diff !== LOOP_MAX_BAR) {
     barProblems.push({
       code: 'CHECK_LOOP_CLOSES',
@@ -1017,7 +1117,6 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   return {
     figures,
     gateHtml,
-    gateSpine,
     pack,
     packOpaque,
     idle: { frames: idle.frames.length, fps: idle.fps, duration: idle.duration, lastIndex: last.index, loopAt: { x: loop.x, y: loop.y } },
@@ -1455,10 +1554,12 @@ export function parseRigcVersion(out: string): [number, number, number] | null {
 /**
  * Refuse, before anything is built, a rigc older than
  * {@link RIGC_GEOMETRY_VERSION}: its `render` has no `--geometry`, so the idle
- * render would fail on the flag after the build and validate had run, and
+ * render would fail on the flag after the build had run, and
  * the refusal would name a flag rather than the version that lacks it.
+ * Returns what `--version` printed, stdout then stderr, which is where
+ * {@link readRigcEntry} reads the entry.
  */
-export function requireRigcVersion(rigc: RigcRunner): void {
+export function requireRigcVersion(rigc: RigcRunner): string {
   const v = rigc(['--version']);
   const got = v.status === 0 ? parseRigcVersion(v.out) : null;
   const need = parseRigcVersion(RIGC_GEOMETRY_VERSION) as [number, number, number];
@@ -1472,6 +1573,7 @@ export function requireRigcVersion(rigc: RigcRunner): void {
       },
     ]);
   }
+  return v.out;
 }
 
 export interface IdleGeometry {

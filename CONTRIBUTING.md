@@ -85,5 +85,6 @@ Keep one unit of work per commit.
 ## Licence
 
 Contributions are accepted under the MIT licence in [LICENSE](LICENSE).
-spine-parts depends on spine-rigc, which links `spine-core`; [NOTICE.md](NOTICE.md)
-sets out what that means.
+spine-parts depends on spine-rigc; `spine-core` is this repository's development
+dependency, for the round trip in the selftest and CI. [NOTICE.md](NOTICE.md) sets
+out what that means.

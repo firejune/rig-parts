@@ -16,8 +16,11 @@
  * SOURCE TREE, the `ships` job in `ci.yml` reads packed PATH LISTS, and
  * `release.yml` publishes and never installs. This is the fact about a program:
  * `npm pack`, `npm install` into an empty directory, and real commands run from
- * the install — `--version`, `layers` on a wrapper directory, `layers` on a PSD,
- * and `sheet`.
+ * the install — `--version`, the installed `rigc --version` (which must name
+ * the core entry: an install carries no Spine runtime), `layers` on a wrapper
+ * directory, `layers` on a PSD, `sheet`, and `check` on a generated two-part
+ * rig, which runs every rigc command a build runs — `build --pack`, `render`,
+ * `render --geometry`, `render --slot` — through that entry.
  *
  * 🔒 **Nothing under this repository is on the fixture's path at run time.** The
  * fixture generator below is authored as text into the install directory and
@@ -27,9 +30,9 @@
  * checkout is the tarball this script packed, which is the subject.
  *
  * 🌱 **The plants are part of the tool.** A smoke nobody has seen fail proves a
- * program ran, not that a program was checked, so three of the five cases
+ * program ran, not that a program was checked, so four of the six cases
  * rebuild the tarball from a PATCHED COPY of the extracted package — a module
- * removed, a dependency removed, the other dependency removed — and INVERT the
+ * removed, each of the two dependencies removed, the Spine runtime added — and INVERT the
  * verdict: such a case is green only when the smoke went red at the step it was
  * supposed to, naming what went missing. The worktree is never patched, and a
  * plant that removed nothing is itself a fault.
@@ -106,6 +109,72 @@ console.log('RESOLVED ' + import.meta.resolve('spine-parts/src/raster/png.ts'));
 console.log('RESOLVED ' + import.meta.resolve('ag-psd'));
 `;
 
+// A rig directory as the rig stage writes one, for \`check\`: a 48x80 canvas, one bone, two region parts
+// whose alpha ramps to 0 over the outer third of the radius (a hard edge would make the seam a measure of the
+// resampler), one idle that moves the root 2 units right and back over a second. Written by the package's own
+// modules, so nothing from the checkout reaches it.
+const CHECK_RIG_GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { cropToSpineY } from 'spine-parts/src/coords.ts';
+import { serializeParts } from 'spine-parts/src/parts.ts';
+import { encodePngBytes } from 'spine-parts/src/raster/png.ts';
+
+const DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'checkrig');
+const W = 48;
+const H = 80;
+const PARTS = [
+  { name: 'back', x: 4, y: 0, w: 30, h: 80, rgb: [200, 60, 40] },
+  { name: 'front', x: 18, y: 20, w: 26, h: 40, rgb: [40, 90, 200] },
+];
+const raster = (p) => {
+  const data = new Uint8ClampedArray(p.w * p.h * 4);
+  for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) {
+    const u = (2 * x + 1 - p.w) / p.w;
+    const v = (2 * y + 1 - p.h) / p.h;
+    const a = Math.max(0, Math.min(1, (1 - Math.sqrt(u * u + v * v)) * 3));
+    if (a > 0) data.set([p.rgb[0], Math.round(p.rgb[1] + (60 * y) / p.h), p.rgb[2], Math.round(255 * a)], (y * p.w + x) * 4);
+  }
+  return { width: p.w, height: p.h, data };
+};
+mkdirSync(join(DIR, 'images'), { recursive: true });
+mkdirSync(join(DIR, 'parts'), { recursive: true });
+for (const p of PARTS) {
+  writeFileSync(join(DIR, 'images', p.name + '.png'), encodePngBytes(raster(p)));
+  writeFileSync(join(DIR, 'parts', p.name + '.png'), encodePngBytes(raster(p)));
+}
+const stage = { x: -W / 2, y: 0, width: W, height: H };
+const rig = {
+  spec: 'rigc-rig/1',
+  name: 'smoke_probe',
+  images: 'images',
+  skeleton: stage,
+  bones: [{ name: 'root', x: 0, y: 0 }],
+  slots: PARTS.map((p) => ({ name: p.name, bone: 'root', attachment: p.name })),
+  skins: { default: Object.fromEntries(PARTS.map((p) => [p.name, { [p.name]: { image: p.name + '.png', x: stage.x + p.x + p.w / 2, y: stage.y + cropToSpineY(p.y + p.h / 2, H) } }])) },
+};
+writeFileSync(join(DIR, 'rig.json'), JSON.stringify(rig, null, 2) + '\\n');
+const motion = {
+  spec: 'rigc-motion/1',
+  archetype: 'smoke_probe',
+  cut: 'smoke_probe',
+  easings: {},
+  groups: {},
+  animations: { idle: { duration: 1, loop: true, tracks: [{ bone: 'root', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [2] }, { t: 1, v: [0] }] }] } },
+};
+writeFileSync(join(DIR, 'motion.json'), JSON.stringify(motion, null, 2) + '\\n');
+writeFileSync(join(DIR, 'parts.json'), serializeParts({
+  rig_size: [W, H],
+  scale_rig_per_source: 1,
+  parts: PARTS.map((p) => ({
+    name: p.name, from: 'full:topwear', x: p.x, y: p.y, w: p.w, h: p.h,
+    opaque_px: Array.from(raster(p).data.filter((_, i) => i % 4 === 3)).filter((a) => a > 8).length,
+    projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0,
+  })),
+  ghost_px: {},
+}));
+`;
+
 /** The draw order both inputs must read back in, and the opaque count of each layer. */
 const EXPECT_ORDER = ['back hair', 'face', 'eyebrow-l'];
 const EXPECT_OPAQUE: Record<string, number> = { 'back hair': 300, face: 100, 'eyebrow-l': 5 };
@@ -175,7 +244,11 @@ function waitForRegistry(spec: string, minutes: number, cwd: string): { served: 
 // the tarball, and the plants that patch a COPY of it
 // ---------------------------------------------------------------------------
 
-type Plant = 'none' | 'drop-src-module' | 'drop-rigc' | 'drop-psd';
+type Plant = 'none' | 'drop-src-module' | 'drop-rigc' | 'drop-psd' | 'add-spine-core';
+
+/** The runtime the add-spine-core plant puts into the packed package.json's dependencies, at the pin spine-rigc develops against. */
+const SPINE_CORE = '@esotericsoftware/spine-core';
+const SPINE_CORE_PIN = '4.3.13';
 
 const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]; what: string }> = {
   'drop-src-module': {
@@ -192,6 +265,11 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
     names: ['ag-psd'],
     steps: ['fixture', 'layers'],
     what: '`ag-psd` removed from `dependencies`: the PSD reader is imported by every `layers` call, so the whole command goes, not just the PSD half',
+  },
+  'add-spine-core': {
+    names: ['@esotericsoftware/spine-core'],
+    steps: ['rigc-entry'],
+    what: "`@esotericsoftware/spine-core` ADDED to `dependencies`: the installed rigc's launcher then finds the runtime and runs cli.ts, the round trip — the shape this repository's CI has, not the shape an install has, so a smoke that cannot tell the two apart would certify the wrong one",
   },
 };
 
@@ -235,6 +313,9 @@ function tarballFor(work: string, source: { kind: 'tree' } | { kind: 'registry';
   if (plant === 'drop-rigc' || plant === 'drop-psd') {
     delete (pkg.dependencies ?? {})[plant === 'drop-rigc' ? 'spine-rigc' : 'ag-psd'];
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  } else if (plant === 'add-spine-core') {
+    pkg.dependencies = { ...(pkg.dependencies ?? {}), [SPINE_CORE]: SPINE_CORE_PIN };
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   } else {
     const victim = join(pkgDir, 'src', 'layers.ts');
     if (!existsSync(victim)) {
@@ -262,11 +343,12 @@ function tarballFor(work: string, source: { kind: 'tree' } | { kind: 'registry';
     if (gone.length === 0) faults.push(`SMOKE_PLANT_APPLIED: the plant left the packed path list unchanged at ${after.length} path(s)`);
     else evidence = `the plant took ${gone.join(', ')} out of the pack`;
   } else {
-    const dep = plant === 'drop-rigc' ? 'spine-rigc' : 'ag-psd';
+    const dep = plant === 'drop-rigc' ? 'spine-rigc' : plant === 'drop-psd' ? 'ag-psd' : SPINE_CORE;
     const shipped = run('tar', ['-xzOf', second, 'package/package.json'], work);
     const deps = shipped.status === 0 ? ((JSON.parse(shipped.out) as { dependencies?: Record<string, string> }).dependencies ?? {}) : {};
-    if (shipped.status !== 0 || dep in deps) faults.push(`SMOKE_PLANT_APPLIED: the packed package.json still declares ${dep}, so nothing was planted`);
-    else evidence = `the packed package.json declares ${Object.keys(deps).join(', ') || 'no dependency'}, without ${dep}`;
+    const applied = plant === 'add-spine-core' ? dep in deps : !(dep in deps);
+    if (shipped.status !== 0 || !applied) faults.push(`SMOKE_PLANT_APPLIED: the packed package.json ${plant === 'add-spine-core' ? 'does not declare' : 'still declares'} ${dep}, so nothing was planted`);
+    else evidence = `the packed package.json declares ${Object.keys(deps).join(', ') || 'no dependency'}${plant === 'add-spine-core' ? '' : `, without ${dep}`}`;
   }
   return { tgz: second, faults, packedPaths: after.length, evidence };
 }
@@ -342,6 +424,19 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     fault('version', `SMOKE_VERSION_FROM_THE_INSTALL: \`spine-parts --version\` exited ${version.status} saying ${JSON.stringify(version.out.trim().slice(0, 400))}; the installed package.json says ${installedVersion}`);
   }
 
+  // The installed rigc's entry: neither spine-parts nor spine-rigc 2.x installs spine-core, so rigc's launcher
+  // must find no runtime from its own package root and run cli_core.ts, rigc's own validator.
+  const rigcBin = join(home, 'node_modules', '.bin', 'rigc');
+  const rigcVersion = existsSync(rigcBin) ? run(rigcBin, ['--version'], home) : null;
+  if (rigcVersion !== null) output += rigcVersion.out;
+  const entryLine = rigcVersion?.out.split('\n').map((l) => l.trim()).find((l) => l.startsWith('entry:')) ?? null;
+  if (rigcVersion === null || rigcVersion.status !== 0 || entryLine === null || !/^entry: cli_core\.ts — @esotericsoftware\/spine-core absent — /.test(entryLine)) {
+    fault(
+      'rigc-entry',
+      `SMOKE_RIGC_RUNS_THE_CORE_ENTRY: ${rigcVersion === null ? `no rigc at ${rigcBin}` : `\`rigc --version\` exited ${rigcVersion.status}, entry line ${JSON.stringify(entryLine)}`}; "entry: cli_core.ts — ${SPINE_CORE} absent — …" was required — an install of spine-parts carries no Spine runtime, so its build is gated by rigc's own validator`,
+    );
+  } else notes.push(`the installed rigc says ${entryLine}`);
+
   // The fixture: written here, generated by the package's own modules.
   writeFileSync(join(home, 'make_fixture.ts'), GENERATOR);
   const gen = run('bun', [join(home, 'make_fixture.ts')], home);
@@ -386,6 +481,21 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     fault('sheet', `SMOKE_SHEET_WRITES_ITS_PNG: \`spine-parts sheet\` exited ${sheet.status} and wrote ${header === null ? 'nothing' : `a ${w}x${h} file`}; 120x120 (4 tiles, 2 columns of 60) was required. ${sheet.out.trim().slice(0, 2000)}`);
   } else notes.push('sheet wrote a 120x120 PNG');
 
+  // `check` on a generated two-part rig: every rigc command a build runs, through the entry above.
+  writeFileSync(join(home, 'make_checkrig.ts'), CHECK_RIG_GENERATOR);
+  const rigGen = run('bun', [join(home, 'make_checkrig.ts')], home);
+  output += rigGen.out;
+  const checkOut = join(home, 'check-out');
+  const check = rigGen.status === 0 ? run(bin, ['check', '--rig', join(home, 'checkrig'), '--out', checkOut], home) : null;
+  if (check !== null) output += check.out;
+  const checkJson = existsSync(join(checkOut, 'check.json')) ? (JSON.parse(readFileSync(join(checkOut, 'check.json'), 'utf8')) as { PASS?: unknown; rigc_entry?: { entry?: unknown } }) : null;
+  if (check === null || check.status !== 0 || !check.out.includes('check: PASS') || checkJson?.PASS !== true || checkJson.rigc_entry?.entry !== 'cli_core.ts') {
+    fault(
+      'check',
+      `SMOKE_CHECK_FROM_THE_INSTALL: ${check === null ? `\`bun make_checkrig.ts\` exited ${rigGen.status}. ${rigGen.out.trim().slice(0, 2000)}` : `\`spine-parts check\` exited ${check.status}; check.json ${checkJson === null ? 'not written' : `PASS ${String(checkJson.PASS)}, rigc_entry ${JSON.stringify(checkJson.rigc_entry)}`}; exit 0, "check: PASS" and rigc_entry cli_core.ts were required. ${check.out.trim().split('\n').filter((l) => l.includes('FAIL')).slice(0, 3).join(' | ').slice(0, 2000)}`}`,
+    );
+  } else notes.push(`check passed on the generated rig, gated by ${checkJson.rigc_entry?.entry as string}`);
+
   // The shim's own promise: with bun off PATH it says so in one sentence.
   const bunPath = onPath('bun');
   const nodePath = onPath('node');
@@ -428,6 +538,7 @@ cases:
   drop-src-module  src/layers.ts out of the packed tree — the smoke has to go RED naming it
   drop-rigc        spine-rigc out of \`dependencies\` — the smoke has to go RED naming it
   drop-psd         ag-psd out of \`dependencies\` — the smoke has to go RED naming it
+  add-spine-core   @esotericsoftware/spine-core INTO \`dependencies\` — RED at the rigc entry
 `;
 
 function main(): number {
@@ -489,6 +600,7 @@ function main(): number {
     { name: 'drop-src-module', source, installer, plant: 'drop-src-module', dirName: 'planted-src' },
     { name: 'drop-rigc', source, installer, plant: 'drop-rigc', dirName: 'planted-rigc' },
     { name: 'drop-psd', source, installer, plant: 'drop-psd', dirName: 'planted-psd' },
+    { name: 'add-spine-core', source, installer, plant: 'add-spine-core', dirName: 'planted-spine-core' },
   ];
   const chosen = only === null ? battery : battery.filter((c) => c.name === only);
   if (chosen.length === 0) {

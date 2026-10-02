@@ -60,10 +60,15 @@ from them beyond the layers See-through itself writes for the user's own image.
 ## 2. Spine Runtimes, through spine-rigc
 
 spine-parts depends on [`spine-rigc`](https://www.npmjs.com/package/spine-rigc)
-(MIT, same author), which compiles and validates Spine skeleton data and links
-`@esotericsoftware/spine-core`, part of the
+(MIT, same author), which compiles and validates Spine skeleton data. Its round
+trip runs through `@esotericsoftware/spine-core`, part of the
 [Spine Runtimes](https://github.com/EsotericSoftware/spine-runtimes), under the
 [Spine Runtimes License Agreement](https://esotericsoftware.com/spine-runtimes-license).
+Since spine-rigc 2.0 neither package installs the runtime: spine-rigc carries it
+only as a development dependency, and an install of spine-rigc gates a build with
+its own validator. spine-parts does not install it either; it is this repository's
+development dependency, at the version spine-rigc develops against, for the round
+trip in the selftest and CI and the selftest's posing oracle.
 spine-rigc's [NOTICE.md](https://github.com/firejune/rigc/blob/main/NOTICE.md)
 sets out the chain in full; briefly, as a restatement of Esoteric Software's
 terms and not a term of this project:
@@ -73,8 +78,11 @@ terms and not a term of this project:
 2. Playing Spine skeleton data in a product requires a Spine Runtime, and the
    Spine Runtimes License requires **each user of such a product to own a
    Spine Editor license**.
-3. spine-rigc links `spine-core`, and spine-parts depends on spine-rigc, so the
-   same obligation applies to running the stages of spine-parts that call it.
+3. spine-rigc no longer installs `spine-core`, and spine-parts does not either;
+   the obligation in 2 attaches to the Spine skeleton data spine-rigc writes,
+   which the stages of spine-parts that call it produce, and to `spine-core`
+   wherever it is installed beside them — this repository's development
+   dependency included.
 
 spine-parts also imports spine-rigc's own modules directly, by deep path: its PNG codec
 (`tools/plate.ts`, `src/png.ts`), its 5x7 label font (`tools/font5x7.ts`) and
@@ -114,10 +122,13 @@ function's comment says which call it stands in for and what was measured.
 | Package | Licence | Why |
 | --- | --- | --- |
 | [`spine-rigc`](https://www.npmjs.com/package/spine-rigc) | MIT | compile, gate, render and check; its PNG codec, font and coordinate conversion |
-| ↳ [`@esotericsoftware/spine-core`](https://www.npmjs.com/package/@esotericsoftware/spine-core) | Spine Runtimes License | spine-rigc's round trip (section 2) |
 | [`ag-psd`](https://www.npmjs.com/package/ag-psd) | MIT | reading an upstream See-through `.psd` |
 | ↳ [`pako`](https://www.npmjs.com/package/pako) | MIT AND Zlib | ag-psd's deflate |
 | ↳ [`base64-js`](https://www.npmjs.com/package/base64-js) | MIT | ag-psd's base64 |
 
 Development only, not installed with the package: `typescript` (Apache-2.0),
-`eslint` (MIT), `typescript-eslint` (MIT), `@types/bun` (MIT).
+`eslint` (MIT), `typescript-eslint` (MIT), `@types/bun` (MIT), and
+[`@esotericsoftware/spine-core`](https://www.npmjs.com/package/@esotericsoftware/spine-core)
+(Spine Runtimes License; section 2), pinned to the version spine-rigc develops
+against (`TY10`): the round trip in the selftest and CI, the selftest's posing
+oracle, and `tools/atlas_population.ts` and `tools/idle_cost.ts`.

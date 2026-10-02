@@ -79,7 +79,7 @@ import {
   writeRun,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
-import { build, BUILD_OWNS, rigStage } from './src/build.ts';
+import { artifactPaths, build, BUILD_OWNS, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, shiftRight, writeCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BARE_CROWN_PARTS, eyeParts, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
@@ -113,7 +113,7 @@ import {
   stageFields,
   visibilityCounts,
 } from './src/assemble.ts';
-import { chainLine, DEFAULT_PAGE_EDGES, findRigc, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, REPORTED_LINES, requireRigcVersion, RIGC_GEOMETRY_VERSION, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
+import { buildGateLines, causeLines, chainLine, measuredRules, packedBuildArgs, DEFAULT_PAGE_EDGES, findRigc, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
@@ -1666,7 +1666,7 @@ function runRigSuite(): number {
     const gateLines = run1.out.split('\n').filter((l) => /assertions: \d+ measured \(\d+ passed, 0 failed\)/.test(l));
     say(
       'RG04_THE_RIG_COMMAND_WRITES_ONLY_AFTER_SPINE_RIGC_IS_GREEN_ON_IT',
-      run1.status === 0 && run2.status === 0 && wroteAll && gateLines.length >= 2 && /rigc build --profile spine-html --pack --page-edges free: exit 0/.test(run1.out) && /rigc validate --profile spine: exit 0/.test(run1.out),
+      run1.status === 0 && run2.status === 0 && wroteAll && gateLines.length >= 2 && /rigc build --profile spine-html --pack --page-edges free: exit 0/.test(run1.out) && !run1.out.includes('rigc validate'),
       `exit ${run1.status}; wrote ${files1.join(', ')}; ${gateLines.length} green rigc assertion line(s), e.g. "${gateLines[0]?.trim() ?? ''}"`,
       "CLAUDE.md: the rig stages write only after spine-rigc's round trip has passed — so the command builds the staged spec through rigc before --out sees a byte",
     );
@@ -1693,6 +1693,32 @@ function runRigSuite(): number {
       redLoads === null && redRun.status === 1 && /^ {2}FAIL {2}RIG_RIGC_GREEN: rigc build --profile spine-html --pack --page-edges free/m.test(redRun.out) && redRun.out.includes('has two tracks on eye.scaley') && !existsSync(join(dir, 'red', 'out')),
       `a sine track on eye.scaley beside the blink's eyes group — the loader: ${codes(redLoads)} — -> exit ${redRun.status}, ${(redRun.out.split('\n').find((l) => l.includes('RIG_RIGC_GREEN')) ?? '').trim().slice(0, 70)}… ${(/animation "idle" has two tracks on [^;]*/.exec(redRun.out) ?? ['no rigc line naming the two tracks'])[0]}; --out exists: ${existsSync(join(dir, 'red', 'out'))}`,
       "the round trip is only a gate if a red one stops the write; rigc's own refusal is carried into the FAIL line so the reader sees what rigc said, and the mutant is one the loader lets through, or the line would be the loader's",
+    );
+
+    // A rigc that dies before any gate line: the line it did print is the refusal's cause. The three stub
+    // outputs are the forms measured on spine-rigc 2.0.3 (src/check.ts, causeLines): Bun's import error, a
+    // run whose header came before it stopped, and a run that printed nothing.
+    const dead = writeRigFixture(join(dir, 'dead'));
+    const deadScratch = join(dir, 'dead-scratch');
+    const deadRun = (out: string): string => {
+      const err = refusals(() => rigStage({ config: dead.config, parts: dead.parts, out: join(dir, 'dead', 'out') }, () => ({ status: 1, out }), deadScratch, () => {}));
+      return err === null ? 'no refusal' : err.problems.map((q) => `${q.code}: ${q.object} — ${q.detail}`).join(' / ');
+    };
+    const importError = "error: Cannot find module '@esotericsoftware/spine-core' from '/x/node_modules/spine-rigc/src/render.ts'";
+    const died = deadRun(`${importError}\n\nBun v1.3.11 (macOS arm64)\n`);
+    const headerOnly = deadRun('rigc build /x/rig.json\n  ..    rig    /x/rig.json\n  ..    motion /x/motion.json\n  ..    22 part page(s):\n');
+    const silent = deadRun('');
+    say(
+      'RG41_A_RIGC_THAT_DIES_BEFORE_THE_GATE_PRINTS_IS_QUOTED_BY_ITS_OWN_LINE',
+      died.startsWith('RIG_RIGC_GREEN: rigc build --profile spine-html --pack --page-edges free — exited 1: ') &&
+        died.includes(importError) &&
+        !died.includes('Bun v1.3.11') &&
+        headerOnly.includes('exited 1: ..    rig    /x/rig.json | ..    motion /x/motion.json | ..    22 part page(s):') &&
+        !headerOnly.includes('rigc build /x/rig.json') &&
+        silent.includes('exited 1, and it printed nothing') &&
+        !existsSync(join(dir, 'dead', 'out')),
+      `Bun's import error -> ${died.slice(0, 200)}…; header lines only -> …${headerOnly.slice(60, 200)}…; nothing printed -> …${silent.slice(60, 160)}`,
+      "spine-rigc 2.0's cli.ts run by path without spine-core dies at import, which no gate filter reads, and the refusal said only \"exited 1\"; the line rigc or Bun printed is what names the cause, and RG05 above is the positive control that a FAIL line is still quoted as it was",
     );
 
     const dup = writeRigFixture(join(dir, 'dup'), (() => {
@@ -1926,7 +1952,7 @@ function runIdleKeysCases(say: (name: string, ok: boolean, detail: string, why: 
     const bogus = run('bones', 'bogus');
     const files = filesUnder(join(dir, 'none'));
     const ctlSame = files.length > 0 && files.join() === filesUnder(join(dir, 'ctl')).join() && files.every((f) => readFileSync(join(dir, 'none', f)).equals(readFileSync(join(dir, 'ctl', f))));
-    const green = (r: { out: string }): boolean => /rigc build --profile spine-html --pack --page-edges free: exit 0/.test(r.out) && /rigc validate --profile spine: exit 0/.test(r.out);
+    const green = (r: { out: string }): boolean => /rigc build --profile spine-html --pack --page-edges free: exit 0/.test(r.out) && !r.out.includes('rigc validate');
     const skipLine = direct.out.split('\n').find((l) => l.includes('SKIP  A15_IDLE_NO_MESH_BONE_KEYS')) ?? '';
     const directRig = existsSync(join(dir, 'direct', 'rig.json')) ? (JSON.parse(readFileSync(join(dir, 'direct', 'rig.json'), 'utf8')) as { bones: Array<{ name: string }>; invariants?: unknown }) : null;
     // The planted half: the direct rig with its declaration taken out, built
@@ -2834,7 +2860,7 @@ function readJsonFile(path: string): Record<string, unknown> | null {
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>) : null;
 }
 
-const CHECK_KEYS = ['gate_spine_html_green', 'gate_spine_green', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', ...JUDGEMENT_LINES, ...REPORTED_LINES, 'PASS'];
+const CHECK_KEYS = ['gate_spine_html_green', 'rigc_entry', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', ...JUDGEMENT_LINES, ...REPORTED_LINES, 'PASS'];
 
 /** A judgement line's status in a check.json read back, or null. */
 function lineStatus(fig: Record<string, unknown> | null, name: string): string | null {
@@ -2858,7 +2884,7 @@ function runCheckSuite(): number {
     const ok = runCli(['check', '--rig', rig, '--out', out]);
     const fig = readJsonFile(join(out, 'check.json'));
     const pack = parsePackLines(existsSync(join(out, 'gate_spine-html.txt')) ? readFileSync(join(out, 'gate_spine-html.txt'), 'utf8').split('\n') : []);
-    const outputs = ['gate_spine-html.txt', 'gate_spine.txt', 'contact.png', 'motion_heat.png', 'check.json', 'build/skeleton.json', 'build/skeleton.atlas', 'build/skeleton.png', 'idle_frames/frames.json', 'idle_frames/idle/f0000.png'];
+    const outputs = ['gate_spine-html.txt', 'contact.png', 'motion_heat.png', 'check.json', 'build/skeleton.json', 'build/skeleton.atlas', 'build/skeleton.png', 'idle_frames/frames.json', 'idle_frames/idle/f0000.png'];
     const missing = outputs.filter((o) => !existsSync(join(out, o)));
     say(
       'CK01_THE_AUTHORED_RIG_PASSES_AND_EVERY_OUTPUT_IS_WRITTEN_OUTSIDE_THE_RIG',
@@ -2878,18 +2904,18 @@ function runCheckSuite(): number {
         lineStatus(fig, 'RECOMPOSITE_HOLES') === 'SKIP' &&
         ok.out.includes('  RECOMPOSITE_HOLES: SKIP — parts.json has no "recomposite" block'),
       `exit ${ok.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig).slice(0, 220)}…; judgement lines ${JUDGEMENT_LINES.map((n) => `${n} ${lineStatus(fig, n) ?? 'absent'}`).join(', ')}; RECOMPOSITE_HOLES ${lineStatus(fig, 'RECOMPOSITE_HOLES') ?? 'absent'}; missing outputs: ${missing.join(', ') || 'none'}; pack ${pack.map((p) => p.line).join(' | ') || 'none'} for ${CHECK_PARTS.length} part(s); --rig ${listing(rig).join('|') === before.join('|') ? 'unchanged' : 'CHANGED'}`,
-      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from both profiles, with the reference's seven check.json keys in its order and the six judgement lines and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line has nothing to read (and neither part is a mesh, so neither has TEXTURE_STRETCH) and must say SKIP, by name, with its reason — never PASS — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
+      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from the spine-html gate, with the reference's check.json keys in its order (gate_spine_green gone with the second gate, rigc_entry after the gate) and the six judgement lines and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line has nothing to read (and neither part is a mesh, so neither has TEXTURE_STRETCH) and must say SKIP, by name, with its reason — never PASS — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
     );
 
     const again = runCli(['check', '--rig', rig, '--out', join(dir, 'out2')]);
-    const same = ['check.json', 'motion_heat.png', 'gate_spine-html.txt', 'gate_spine.txt', 'build/skeleton.json', 'build/skeleton.png'].filter(
+    const same = ['check.json', 'motion_heat.png', 'gate_spine-html.txt', 'build/skeleton.json', 'build/skeleton.png'].filter(
       (f) => existsSync(join(out, f)) && existsSync(join(dir, 'out2', f)) && Buffer.compare(readFileSync(join(out, f)), readFileSync(join(dir, 'out2', f))) === 0,
     );
     say(
       'CK02_TWO_RUNS_WRITE_THE_SAME_BYTES',
-      again.status === 0 && same.length === 6,
-      `second run exit ${again.status}; ${same.length} of 6 outputs byte-identical (${same.join(', ')})`,
-      'determinism is a contract: the same rig must write the same check.json, heat map and gate files, or no diff of them means anything',
+      again.status === 0 && same.length === 5,
+      `second run exit ${again.status}; ${same.length} of 5 outputs byte-identical (${same.join(', ')})`,
+      'determinism is a contract: the same rig must write the same check.json, heat map and gate file, or no diff of them means anything',
     );
 
     const loopRig = join(dir, 'loop');
@@ -2902,7 +2928,7 @@ function runCheckSuite(): number {
       'CK03_AN_IDLE_WHOSE_LAST_KEY_IS_NOT_ITS_FIRST_FAILS_THE_LOOP_WITH_THE_MAX_QUOTED',
       loop.status === 1 && quoted !== null && Number(quoted[1]) > 0 && lf !== null && lf.loop_max_diff === Number(quoted[1]) && lf.PASS === false && failLine(loop.out, 'CHECK_SEAM') === null,
       `exit ${loop.status}; ${ll?.trim() ?? 'no CHECK_LOOP_CLOSES line'}; check.json loop_max_diff ${lf?.loop_max_diff ?? 'absent'}`,
-      'the gate cannot see a loop that jumps — both profiles pass it — so the loop check is the only thing between that idle and a README; the setup pose is unchanged, so the seam must stay quiet',
+      'the gate cannot see a loop that jumps — it passes it — so the loop check is the only thing between that idle and a README; the setup pose is unchanged, so the seam must stay quiet',
     );
 
     const seamRig = join(dir, 'seam');
@@ -2915,7 +2941,7 @@ function runCheckSuite(): number {
       'CK04_A_PART_SHIFTED_THREE_PIXELS_FAILS_THE_SEAM_WITH_THE_NUMBERS',
       seam.status === 1 && sl !== null && sf !== null && sl.includes(`mean |d| ${String(sf.seam_mean)}/255`) && sl.includes(`${String(sf.seam_px_over_40)} px over`) && sf.loop_max_diff === 0 && sf.gate_spine_html_green === true,
       `exit ${seam.status}; ${sl?.trim() ?? 'no CHECK_SEAM_WITHIN_BAR line'}`,
-      'parts/ is what the seam composites and images/ is what rigc draws; a part moved 3 px in one and not the other is the drift an assembler bug produces, and both gates pass it',
+      'parts/ is what the seam composites and images/ is what rigc draws; a part moved 3 px in one and not the other is the drift an assembler bug produces, and the gate passes it',
     );
 
     const redRig = join(dir, 'red');
@@ -2956,7 +2982,7 @@ function runCheckSuite(): number {
       'CK09_A_TORSO_THE_IDLE_DOES_NOT_MOVE_FAILS_BREATH_VISIBLE_BY_NAME',
       still.status === 1 && lineStatus(still.fig, 'BREATH_VISIBLE') === 'FAIL' && stillFail !== null && stillFail.includes('torso') && stillFail.includes('heat mean 0/255') && failLine(still.out, 'CHECK_LOOP_CLOSES') === null,
       `exit ${still.status}; ${lineOf(still.out, 'BREATH_VISIBLE')}; ${stillFail?.trim() ?? 'no CHECK_BREATH_VISIBLE line'}`,
-      'a zero-amplitude breath is a closed loop and an exact seam — both gates and both old bars pass it — so the torso rendered alone is the only thing that sees it does not breathe',
+      'a zero-amplitude breath is a closed loop and an exact seam — the gate and both old bars pass it — so the torso rendered alone is the only thing that sees it does not breathe',
     );
     const walk = judged('breath-feet', { from: ['full:topwear', 'full:footwear'] });
     const feetFail = walk.out.split('\n').filter((l) => l.startsWith('  FAIL  CHECK_BREATH_VISIBLE') && l.includes('feet'));
@@ -3185,7 +3211,7 @@ function runCheckSuite(): number {
         hardFail === `  FAIL  CHECK_TEXTURE_STRETCH: mesh "${CHECK_PARTS[0].name}" triangle 0 (vertices 0 1 2), edge 1-2, idle frame ${IDLE_FPS / 2} — the edge is 2 times its rest length (max(ratio, 1/ratio) 2); <= ${TEXTURE_STRETCH_CEILING} is required — the texture on it is stretched: the bones this mesh is weighted to move apart (amplitudes too large down a chain), or a vertex blends bones that move against each other` &&
         others.length === 0,
       `exit ${hard.status}; ${hardFail?.trim().slice(0, 200) ?? 'no CHECK_TEXTURE_STRETCH line'}…; other FAIL lines: ${others.length}`,
-      `the side lowered by its own length (${rest} units) doubles; both gates pass it, the loop closes and the seam is the setup pose, so this line is the only one that sees it`,
+      `the side lowered by its own length (${rest} units) doubles; the gate passes it, the loop closes and the seam is the setup pose, so this line is the only one that sees it`,
     );
 
     const stretchAgain = stretchRun('stretch-mild-2', stretchBy);
@@ -3410,6 +3436,84 @@ function runCheckSuite(): number {
       odd[0].detail.startsWith('is 300x500;'),
     `both forms read (free ${readFree[0]?.pageEdges}, pot ${readPot[0]?.pageEdges}); "page edges diagonal" -> ${diagonal?.problems[0] === undefined ? 'read' : `${diagonal.problems[0].code}: ${diagonal.problems[0].object}`}; no padding -> ${noPadding?.problems[0]?.code ?? 'read'}; a pot line under --page-edges free -> ${one(potUnderFree)}; a free line under pot -> ${one(freeUnderPot)}; 300x500 with no suffix under pot -> ${one(odd)}`,
     'a pack line half-read would drop the one field that changed, and a page whose edges are not the ones asked for is a build nobody ran; both are refused by name, and the two agreeing lines are the positive control',
+  );
+
+  // check's own refusal of a red rigc run with no FAIL line: the core entry's refusal of validate (spine-rigc 2.0.3,
+  // the line as it printed it, cut after its first clause), a FAIL line, and a run that printed nothing.
+  const coreValidate = 'rigc validate: `validate` runs through spine-core (the gate it re-runs is the round trip through it), and the runtime could not be used';
+  const refusedValidate = rigcFailed('validate --profile spine', { status: 1, out: `${coreValidate}\n` }, []);
+  const failLineKept = rigcFailed('validate --profile spine', { status: 1, out: '  FAIL  A06_ATLAS_PAGE_SIZE_MATCHES_PNG: x\nrigc: red\n' }, ['  FAIL  A06_ATLAS_PAGE_SIZE_MATCHES_PNG: x']);
+  const printedNothing = rigcFailed('validate --profile spine', { status: 1, out: '\n' }, []);
+  say(
+    'CK50_A_RED_RIGC_RUN_WITH_NO_FAIL_LINE_IS_REFUSED_BY_THE_LINE_THAT_NAMES_WHY',
+    refusedValidate.length === 1 &&
+      refusedValidate[0].code === 'CHECK_RIGC_GREEN' &&
+      refusedValidate[0].detail === `exit 1: ${coreValidate}` &&
+      failLineKept.length === 1 &&
+      failLineKept[0].detail === 'exit 1: FAIL  A06_ATLAS_PAGE_SIZE_MATCHES_PNG: x' &&
+      printedNothing.length === 1 &&
+      printedNothing[0].detail === 'exit 1, and it printed nothing' &&
+      causeLines('rigc build a\n  ..    b\nrigc: could not launch bun: x\n').join('|') === 'rigc: could not launch bun: x',
+    `the core entry's validate refusal -> ${refusedValidate.map((q) => q.detail).join(' / ').slice(0, 120)}…; a FAIL line -> ${failLineKept.map((q) => q.detail).join(' / ')}; nothing printed -> ${printedNothing.map((q) => q.detail).join(' / ')}`,
+    'a red run whose reason was not a FAIL line was quoted by its last lines whatever they said, and one that printed nothing produced no problem at all, which refuseIfAny does not refuse; the core entry refuses validate in one line no gate filter reads',
+  );
+
+  // The entry, read by name off `rigc --version`: the launcher's two lines as spine-rigc 2.0.3 writes them,
+  // a third form, no line at all, and the live rigc beside this package, which must be the round trip
+  // with the spine-core this repository pins.
+  const fullEntry = readRigcEntry('2.0.3\nentry: cli.ts — @esotericsoftware/spine-core 4.3.13 present\n');
+  const coreEntry = readRigcEntry('2.0.3\nentry: cli_core.ts — @esotericsoftware/spine-core absent — the round trip and the commands that need it are not available here; see --help\n');
+  const thirdEntry = refusals(() => readRigcEntry('2.1.0\nentry: cli_wasm.ts — something else\n'));
+  const noEntry = refusals(() => readRigcEntry('1.5.1\n'));
+  const live = spawnSync(findRigc(ROOT, ''), ['--version'], { encoding: 'utf8' });
+  const liveEntry = readRigcEntry(`${live.stdout ?? ''}${live.stderr ?? ''}`);
+  const pinned = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { devDependencies: Record<string, string> }).devDependencies['@esotericsoftware/spine-core'];
+  say(
+    'CK51_THE_RIGC_ENTRY_IS_READ_BY_NAME_IN_BOTH_FORMS_AND_ANY_OTHER_IS_REFUSED',
+    JSON.stringify(fullEntry) === '{"entry":"cli.ts","spine_core":"4.3.13"}' &&
+      JSON.stringify(coreEntry) === '{"entry":"cli_core.ts","spine_core":null}' &&
+      codes(thirdEntry) === 'CHECK_RIGC_ENTRY_READS rigc\'s entry line "entry: cli_wasm.ts — something else"' &&
+      codes(noEntry) === 'CHECK_RIGC_ENTRY `rigc --version`' &&
+      (noEntry?.problems[0].detail.includes(`spine-rigc ${RIGC_ENTRY_VERSION} or later is required`) ?? false) &&
+      liveEntry.entry === 'cli.ts' &&
+      liveEntry.spine_core === pinned,
+    `full ${JSON.stringify(fullEntry)}; core ${JSON.stringify(coreEntry)}; a third form -> ${codes(thirdEntry)}; no entry line -> ${codes(noEntry)}; the live rigc -> ${JSON.stringify(liveEntry)} against the pinned spine-core ${pinned}`,
+    "spine-rigc 2.0's launcher chooses which validator gates a build by whether spine-core resolves beside it, and check.json records which one did; a reader that took any entry: line would record a third entry as one of the two",
+  );
+
+  // Both entries' build reports through the gate filter and the green test. The lines are spine-rigc 2.0.3's
+  // on one build (paths cut): the core entry prints 51 assertions, an A00 SKIP and a here: line.
+  const coreOut = [
+    "  SKIP  A00_ROUNDTRIP_PARSE: spine-core's parser is the subject of this rule and this entry links none of it",
+    '  ..    51 assertions: 24 measured (24 passed, 0 failed), 27 skipped, 0 not in profile "spine-html"',
+    '  ..    physicsConstraints=0',
+    "  ..    here: 42 rule(s) on the model side over the document, 8 of the round trip's own restated over the emitted text; not run: A00_ROUNDTRIP_PARSE",
+    '  ..    pack: skeleton.png 967x1338, 22 region(s), 91.2% covered, padding 2, page edges free',
+    'rigc: wrote /x/skeleton.json',
+  ].join('\n');
+  const fullOut = [
+    '  PASS  A00_ROUNDTRIP_PARSE',
+    '  ..    49 assertions: 23 measured (23 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"',
+    '  ..    pages=22 regions=22 bones=72 slots=22 animations=1 version=4.3.13 regionAttachments=14 meshAttachments=8 physicsConstraints=0 rig=demo_painting profile=spine-html',
+    '  ..    pack: skeleton.png 967x1338, 22 region(s), 91.2% covered, padding 2, page edges free',
+    'rigc: wrote /x/skeleton.json',
+  ].join('\n');
+  const coreLines = buildGateLines(coreOut);
+  const fullLines = buildGateLines(fullOut);
+  const coreRed = buildGateLines(coreOut.replace('(24 passed, 0 failed)', '(23 passed, 1 failed)'));
+  say(
+    'CK52_BOTH_RIGC_ENTRIES_BUILD_REPORTS_ARE_READ_AND_THE_CORE_ENTRYS_SAYS_WHICH_RULES_RAN',
+    coreLines.length === 3 &&
+      coreLines[1].trim().startsWith('..    here: ') &&
+      gateGreen(0, coreLines) &&
+      !gateGreen(0, coreRed) &&
+      parsePackLines(coreLines).length === 1 &&
+      fullLines.length === 3 &&
+      !fullLines.some((l) => l.includes('here: ')) &&
+      gateGreen(0, fullLines) &&
+      parsePackLines(fullLines)[0].line === parsePackLines(coreLines)[0].line,
+    `core entry: ${coreLines.map((l) => l.trim().slice(0, 40)).join(' | ')}, green ${gateGreen(0, coreLines)}, one failed red ${!gateGreen(0, coreRed)}; full entry: ${fullLines.map((l) => l.trim().slice(0, 40)).join(' | ')}, green ${gateGreen(0, fullLines)}`,
+    "the gate file is the verdict's record, so under the core entry it must carry the here: line that says the round trip did not run; the summary is read by its counts in both forms (51 and 49 assertions), and the pack line is the same line under either entry",
   );
 
   // CHAIN_LAG reads motion.json and the bone tree only, so its controls need no render.
@@ -4174,6 +4278,26 @@ function runBuildSuite(): number {
       `check --parts <out>/parts -> exit ${wrongHome.status}: ${homeLine.trim()}; --help carries the sentence: ${help.out.includes(PARTS_HOME_SENTENCE)}`,
       'issue #28 item 3: two attempts passed parts/ itself before the tool said anything useful; the refusal and the help now say the same sentence, and the refusal points at the parent that holds parts.json',
     );
+
+    // The artifact beside rigc's model document (spine-rigc writes skeleton.model.json since 1.6): three paths, the
+    // document not counted as a second skeleton; a second skeleton JSON beside it is still refused naming both.
+    const art = join(dir, 'artifact');
+    mkdirSync(art, { recursive: true });
+    for (const f of ['skeleton.json', 'skeleton.atlas', 'skeleton.png', RIGC_MODEL_DOCUMENT]) writeFileSync(join(art, f), '');
+    const artPack = parsePackLines(['  ..    pack: skeleton.png 4x4, 1 region(s), 50.0% covered, padding 2, page edges free']);
+    const withModel = artifactPaths(art, artPack).map((a) => relative(art, a));
+    writeFileSync(join(art, 'other.json'), '');
+    const twoJson = refusals(() => artifactPaths(art, artPack));
+    say(
+      'BU06_RIGCS_MODEL_DOCUMENT_BESIDE_THE_ARTIFACT_IS_NOT_A_SECOND_SKELETON_AND_A_SECOND_SKELETON_STILL_IS',
+      withModel.join(',') === 'skeleton.json,skeleton.atlas,skeleton.png' &&
+        twoJson !== null &&
+        twoJson.problems.length === 1 &&
+        twoJson.problems[0].code === 'BUILD_ARTIFACT_PRESENT' &&
+        twoJson.problems[0].detail.startsWith('holds 2 .json file(s) [other.json, skeleton.json]'),
+      `with ${RIGC_MODEL_DOCUMENT} beside: ${withModel.join(', ')}; with other.json beside too: ${codes(twoJson)} — ${twoJson?.problems[0]?.detail ?? ''}`,
+      `spine-rigc writes ${RIGC_MODEL_DOCUMENT} after the same gate as the pair, and the artifact stage refused every green build as holding two skeleton JSON files; the document is named and set aside, and nothing else is`,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -4361,13 +4485,28 @@ function runChainSuite(): number | null {
         "issue #32: the loop is encoded from these frames, so a blink no frame lands in is a blink the idle frames, the contact sheet and the README's animation never show; with BLINK.hold at one frame or more (MO20) every example's blink.t has one",
       );
 
-      const gates = ['gate_spine-html.txt', 'gate_spine.txt'].map((f) => [f, firstLineDiff(readFileSync(join(exp, f), 'utf8'), readFileSync(join(out, 'check', f), 'utf8'))] as const);
+      const gates = ['gate_spine-html.txt'].map((f) => [f, firstLineDiff(readFileSync(join(exp, f), 'utf8'), readFileSync(join(out, 'check', f), 'utf8'))] as const);
       const pack = parsePackLines(readFileSync(join(out, 'check', 'gate_spine-html.txt'), 'utf8').split('\n'));
       say(
-        `CH05_BOTH_GATE_FILES_ARE_THE_EXPECTED_LINE_BY_LINE_AND_THE_PACK_HOLDS_EVERY_PART[${key}]`,
+        `CH05_THE_GATE_FILE_IS_THE_EXPECTED_LINE_BY_LINE_AND_THE_PACK_HOLDS_EVERY_PART[${key}]`,
         gates.every(([, d]) => d === null) && pack.length === 1 && pack[0].regions === expParts.parts.length,
         `${gates.map(([f, d]) => `${f}: ${d ?? 'identical'}`).join('; ')}; ${pack.map((p) => p.line).join(', ') || 'no pack line'} for ${expParts.parts.length} part(s)`,
         "issue #2's control: the pack line is one of the gate lines, so its page size, region count and coverage are held exactly (tolerance 0), and one region per part is asserted by itself",
+      );
+
+      // The one gate: rigc's build under spine-html measures every rule validate under spine would. Run here,
+      // where spine-core is present (the full entry), on this example's own rig; validate is not a stage any more.
+      const subsetDir = join(dir, `${key}-subset`);
+      const subBuild = spawnSync(findRigc(ROOT, ''), ['build', '--rig', join(out, 'rig', 'rig.json'), '--motion', join(out, 'rig', 'motion.json'), '--out', subsetDir, ...packedBuildArgs(DEFAULT_PAGE_EDGES)], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      const subValidate = spawnSync(findRigc(ROOT, ''), ['validate', subsetDir, '--profile', 'spine'], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      const builtRules = measuredRules(`${subBuild.stdout ?? ''}${subBuild.stderr ?? ''}`);
+      const validRules = measuredRules(`${subValidate.stdout ?? ''}${subValidate.stderr ?? ''}`);
+      const outside = validRules.filter((r) => !builtRules.includes(r));
+      say(
+        `CH09_VALIDATE_UNDER_SPINE_MEASURES_NO_RULE_THE_SPINE_HTML_BUILD_DOES_NOT[${key}]`,
+        subBuild.status === 0 && subValidate.status === 0 && builtRules.length > 0 && validRules.length > 0 && outside.length === 0,
+        `build exit ${subBuild.status}, ${builtRules.length} rule(s) measured; validate --profile spine exit ${subValidate.status}, ${validRules.length} rule(s) measured; ${outside.length === 0 ? 'every one of them is in the build\'s set' : `outside the build's set: ${outside.join(', ')}`}`,
+        "the rig and check stages dropped their second gate, `rigc validate <build> --profile spine`, because it measured nothing the build had not; this control is that measurement, run on every fetched example, so the day spine gains a rule spine-html lacks it goes red here rather than being lost",
       );
 
       let proposal: string;
@@ -4389,6 +4528,18 @@ function runChainSuite(): number | null {
         "the tracked proposal.json is what the reference proposer wrote from the reference's parts; the port's proposer on the port's parts must write the same, which is the proposer's half the examples could not reach before a build existed",
       );
     }
+
+    // CH09's comparator, planted: a validate line set carrying a rule the build's set lacks is named, and the
+    // spine-html superset (the measured shape, PROF and SKIP lines not counted) is not.
+    const plantBuild = '  PASS  A07_ATLAS_TEXT_SHAPE\n  PASS  A15_IDLE_NO_MESH_BONE_KEYS\n  SKIP  A13_MESH_BUDGET: none\n  ..    2 assertions: 2 measured (2 passed, 0 failed)\n  PASS  A07_ATLAS_TEXT_SHAPE\n';
+    const plantSubset = measuredRules('  PASS  A07_ATLAS_TEXT_SHAPE\n  PROF  A15_IDLE_NO_MESH_BONE_KEYS: renderer rule, not in profile "spine"\n').filter((r) => !measuredRules(plantBuild).includes(r));
+    const plantExtra = measuredRules('  PASS  A07_ATLAS_TEXT_SHAPE\n  FAIL  A99_A_RULE_ONLY_SPINE_HAS: x\n').filter((r) => !measuredRules(plantBuild).includes(r));
+    say(
+      'CH10_A_VALIDATE_RULE_THE_BUILD_DID_NOT_MEASURE_IS_NAMED_AND_THE_SUPERSET_IS_NOT',
+      measuredRules(plantBuild).join(',') === 'A07_ATLAS_TEXT_SHAPE,A15_IDLE_NO_MESH_BONE_KEYS' && plantSubset.length === 0 && plantExtra.join(',') === 'A99_A_RULE_ONLY_SPINE_HAS',
+      `build set ${measuredRules(plantBuild).join(', ')}; a subset with a PROF line -> outside ${plantSubset.join(', ') || 'none'}; a FAIL on a rule the build lacks -> outside ${plantExtra.join(', ') || 'none'}`,
+      "CH09 passes when nothing is outside; this is the half that shows a rule outside would be found, and that a PROF or SKIP line is not counted as measured",
+    );
 
     // The comparators themselves, planted: each difference must be named, and a difference inside its tolerance must not be.
     if (planted !== null) {
@@ -6337,6 +6488,18 @@ function summaryOnlyConstants(source: string, from: number, to: number): string[
   return [...inside].filter((k) => !outside.has(k));
 }
 
+const SPINE_CORE = '@esotericsoftware/spine-core';
+
+/** Where this repository's spine-core devDependency pin and the installed spine-rigc's devDependency pin disagree, or null when they are equal. */
+function pinDrift(ours: { devDependencies?: Record<string, string> }, theirs: { version?: string; devDependencies?: Record<string, string> } | null): string | null {
+  if (theirs === null) return 'node_modules/spine-rigc/package.json is not there; run `bun install`';
+  const a = ours.devDependencies?.[SPINE_CORE];
+  const b = theirs.devDependencies?.[SPINE_CORE];
+  if (a === undefined) return `package.json declares no ${SPINE_CORE} devDependency`;
+  if (b === undefined) return `spine-rigc ${theirs.version ?? '?'} declares no ${SPINE_CORE} devDependency, so there is no pin to hold this one to`;
+  return a === b ? null : `package.json pins ${SPINE_CORE} ${a}; spine-rigc ${theirs.version ?? '?'} develops against ${b}; the two must be equal`;
+}
+
 function runTreeSuite(): number {
   section('tree: the rules CLAUDE.md states, held to the files');
   const { say, bad } = counter();
@@ -6453,6 +6616,19 @@ function runTreeSuite(): number {
       ? 'the summary region was not found between its markers, so there is nothing to scan and no clean scan to report'
       : `the summary's literal text holds ${typed?.length ?? 0} digit(s)${typed !== null && typed.length > 0 ? `: ${typed.join(' | ')}` : ''} and ${hopped?.length ?? 0} constant(s) only it reads; a planted "+ 4" is found (${plantTyped.length}), the interpolated one is not (${plantDerived.length}), and a constant read only by a miniature summary is named (${plantHop.join(', ')})`,
     'a hand-written figure never goes red — it goes stale; the summary may state only what the run counted',
+  );
+
+  const ours = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { devDependencies?: Record<string, string> };
+  const rigcPkgPath = join(ROOT, 'node_modules', 'spine-rigc', 'package.json');
+  const theirs = existsSync(rigcPkgPath) ? (JSON.parse(readFileSync(rigcPkgPath, 'utf8')) as { version?: string; devDependencies?: Record<string, string> }) : null;
+  const drift = pinDrift(ours, theirs);
+  const plantDrift = pinDrift({ devDependencies: { [SPINE_CORE]: '4.3.12' } }, theirs);
+  const plantAbsent = pinDrift({ devDependencies: {} }, theirs);
+  say(
+    'TY10_THE_SPINE_CORE_PIN_IS_THE_ONE_SPINE_RIGC_DEVELOPS_AGAINST',
+    drift === null && plantDrift !== null && plantAbsent !== null,
+    `package.json ${SPINE_CORE} ${ours.devDependencies?.[SPINE_CORE] ?? 'absent'}, spine-rigc ${theirs?.version ?? '(not installed)'}'s devDependency ${theirs?.devDependencies?.[SPINE_CORE] ?? 'absent'}: ${drift ?? 'equal'}; a planted 4.3.12 -> ${plantDrift ?? 'not found'}; a planted absence -> ${plantAbsent ?? 'not found'}`,
+    "spine-core is this repository's development dependency — the round trip in its selftest and CI, the selftest's posing oracle, the two tools — because spine-rigc 2.0 stopped carrying it; a runtime other than the one rigc's round trip is developed against would be a second opinion nobody chose",
   );
   return bad();
 }

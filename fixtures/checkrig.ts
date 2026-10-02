@@ -1,7 +1,7 @@
 /**
  * A rig directory the `check` controls generate on every run: the smallest
  * thing `spine-parts check` accepts, authored by hand here and built with the
- * installed spine-rigc, so the whole check — build, both gates, the idle
+ * installed spine-rigc, so the whole check — build, the gate, the idle
  * render, the loop, the seam — runs in the selftest without a corpus.
  *
  * What it is: a 48x80 canvas, one bone (`root`), two region parts, one `idle`

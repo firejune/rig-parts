@@ -33,9 +33,9 @@
  * machine. The load average is printed beside them for that reason. The
  * static and renderer-view figures do not depend on the machine.
  *
- * `@esotericsoftware/spine-core` is spine-rigc's dependency, resolved from
- * where the package manager put it; `tools/` is not in `package.json`
- * `files`, so nothing installed depends on that.
+ * `@esotericsoftware/spine-core` is this repository's development dependency, pinned to
+ * the version spine-rigc develops against (`TY10`); `tools/` is not in
+ * `package.json` `files`, so nothing installed depends on this file.
  */
 import { loadavg } from 'node:os';
 import { readFileSync, writeFileSync } from 'node:fs';

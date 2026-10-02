@@ -43,11 +43,21 @@ spine-rigc under it, to convert that silence into named failures.
   it owns has passed, and the rig stages write only after spine-rigc's round
   trip has passed. A wrong file on disk outlives the console that warned about
   it.
-- 🔒 **spine-rigc's validation is not optional here either.** spine-parts does
-  not emit Spine data itself; it hands a rig spec to spine-rigc, whose build
-  validates through `spine-core` before it writes. There must never be a path
-  in this package that produces skeleton data without that round trip, nor a
-  flag or environment escape that skips it.
+- 🔒 **spine-rigc's gate is not optional here either.** spine-parts does not
+  emit Spine data itself; it hands a rig spec to spine-rigc, whose `build`
+  validates before it writes. Which validator runs is rigc's launcher's
+  choice, by whether `@esotericsoftware/spine-core` resolves beside it: the
+  spine-core round trip where it does, rigc's own validator over the compiled
+  model document where it does not, and the report's last lines say which
+  ran. In this repository and its CI the runtime is a development
+  dependency, so the round trip runs here; an install of spine-parts carries
+  no Spine runtime and runs rigc's own gate, and `check.json` records which
+  gated the build. `build`'s gate is the one gate: rigc runs it once over the
+  compile and once over the packed pages on disk, under `spine-html`, which
+  holds every rule `spine` measures (selftest `CH09`), so no stage runs a
+  second `rigc validate`. There must never be a path in this package that
+  produces skeleton data without that gate, nor a flag or environment escape
+  that skips it, and nothing here re-implements what rigc validates.
 - **Determinism is a contract.** The same inputs write the same bytes: fixed
   key order in every JSON written, stable sorts, no clock, no randomness, no
   locale-sensitive formatting. `src/` is pure except `src/comfy/` (below).
