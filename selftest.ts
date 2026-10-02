@@ -1696,7 +1696,7 @@ function runRigSuite(): number {
     );
 
     // A rigc that dies before any gate line: the line it did print is the refusal's cause. The three stub
-    // outputs are the forms measured on spine-rigc 2.0.2 (src/check.ts, causeLines): Bun's import error, a
+    // outputs are the forms measured on spine-rigc 2.0.3 (src/check.ts, causeLines): Bun's import error, a
     // run whose header came before it stopped, and a run that printed nothing.
     const dead = writeRigFixture(join(dir, 'dead'));
     const deadScratch = join(dir, 'dead-scratch');
@@ -3438,7 +3438,7 @@ function runCheckSuite(): number {
     'a pack line half-read would drop the one field that changed, and a page whose edges are not the ones asked for is a build nobody ran; both are refused by name, and the two agreeing lines are the positive control',
   );
 
-  // check's own refusal of a red rigc run with no FAIL line: the core entry's refusal of validate (spine-rigc 2.0.2,
+  // check's own refusal of a red rigc run with no FAIL line: the core entry's refusal of validate (spine-rigc 2.0.3,
   // the line as it printed it, cut after its first clause), a FAIL line, and a run that printed nothing.
   const coreValidate = 'rigc validate: `validate` runs through spine-core (the gate it re-runs is the round trip through it), and the runtime could not be used';
   const refusedValidate = rigcFailed('validate --profile spine', { status: 1, out: `${coreValidate}\n` }, []);
@@ -3458,11 +3458,11 @@ function runCheckSuite(): number {
     'a red run whose reason was not a FAIL line was quoted by its last lines whatever they said, and one that printed nothing produced no problem at all, which refuseIfAny does not refuse; the core entry refuses validate in one line no gate filter reads',
   );
 
-  // The entry, read by name off `rigc --version`: the launcher's two lines as spine-rigc 2.0.2 writes them,
+  // The entry, read by name off `rigc --version`: the launcher's two lines as spine-rigc 2.0.3 writes them,
   // a third form, no line at all, and the live rigc beside this package, which must be the round trip
   // with the spine-core this repository pins.
-  const fullEntry = readRigcEntry('2.0.2\nentry: cli.ts — @esotericsoftware/spine-core 4.3.13 present\n');
-  const coreEntry = readRigcEntry('2.0.2\nentry: cli_core.ts — @esotericsoftware/spine-core absent — the round trip and the commands that need it are not available here; see --help\n');
+  const fullEntry = readRigcEntry('2.0.3\nentry: cli.ts — @esotericsoftware/spine-core 4.3.13 present\n');
+  const coreEntry = readRigcEntry('2.0.3\nentry: cli_core.ts — @esotericsoftware/spine-core absent — the round trip and the commands that need it are not available here; see --help\n');
   const thirdEntry = refusals(() => readRigcEntry('2.1.0\nentry: cli_wasm.ts — something else\n'));
   const noEntry = refusals(() => readRigcEntry('1.5.1\n'));
   const live = spawnSync(findRigc(ROOT, ''), ['--version'], { encoding: 'utf8' });
@@ -3481,7 +3481,7 @@ function runCheckSuite(): number {
     "spine-rigc 2.0's launcher chooses which validator gates a build by whether spine-core resolves beside it, and check.json records which one did; a reader that took any entry: line would record a third entry as one of the two",
   );
 
-  // Both entries' build reports through the gate filter and the green test. The lines are spine-rigc 2.0.2's
+  // Both entries' build reports through the gate filter and the green test. The lines are spine-rigc 2.0.3's
   // on one build (paths cut): the core entry prints 51 assertions, an A00 SKIP and a here: line.
   const coreOut = [
     "  SKIP  A00_ROUNDTRIP_PARSE: spine-core's parser is the subject of this rule and this entry links none of it",

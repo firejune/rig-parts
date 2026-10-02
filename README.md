@@ -86,7 +86,7 @@ page** (issue #2):
 
 | path under `--out` | what |
 | --- | --- |
-| `check/build/skeleton.json`, `skeleton.atlas`, `skeleton.png` | **the artifact** — Spine 4.3 skeleton data and one packed page, written by `rigc build --pack --page-edges free` and gated under `spine-html`, which holds every rule `spine` measures (on the demo, rigc 1.5.1 and 2.0.2: the 14 rules `validate --profile spine` measures are among the build's 23; 15 are not in `spine`) |
+| `check/build/skeleton.json`, `skeleton.atlas`, `skeleton.png` | **the artifact** — Spine 4.3 skeleton data and one packed page, written by `rigc build --pack --page-edges free` and gated under `spine-html`, which holds every rule `spine` measures (on the demo, rigc 1.5.1 and 2.0.3: the 14 rules `validate --profile spine` measures are among the build's 23; 15 are not in `spine`) |
 | `parts/*.png`, `parts.json`, `recomposite_rig.png`, `recomposite_error_rig.png` | the loose parts, each cropped to its alpha box; the record of where every part came from, how many of its pixels were re-taken from the painting, and the recomposite's uncovered holes with their boxes; the flat stack of parts; its error map — red where no part covers a pixel the painting has, blue where a part covers it in the wrong colour |
 | `rig/` | `rig.json` and `motion.json` in spine-rigc's spec, `mesh_report.json`, the padded `images/` |
 | `check/` | both gate files verbatim, the idle's frames and their `geometry.json` (skinned vertices per frame), `contact.png`, `motion_heat.png`, `check.json` |

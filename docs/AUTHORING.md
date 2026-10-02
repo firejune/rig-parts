@@ -302,7 +302,7 @@ the least-area page the parts need. `--page-edges pot` is the opt-out: a power o
 two on both edges, which is the page every build wrote before this flag. The pack
 line says which one ran, because rigc ends it with `, page edges free` under `free`.
 Measured on the two examples by `tools/atlas_population.ts` with rigc 1.5.1, and again
-with rigc 2.0.2, which reproduced every figure in both tables and the one check figure
+with rigc 2.0.3, which reproduced every figure in both tables and the one check figure
 below:
 
 | build | page | covered | page opaque | page / figure |
@@ -590,7 +590,7 @@ See-through with another seed.
 | `CHECK_RIGC_PRESENT` | no `rigc` binary found (every place looked is listed) | `bun install` |
 | `CHECK_INPUT_PRESENT` on `…/parts.json` | `--parts` named a directory without `parts.json` — most often `parts/` itself. The detail says it: "--parts names the directory holding parts.json and parts/, not parts/ itself (after build, that is build's --out, whose rig is <out>/rig); without --parts it is --rig", and names the parent when the parent holds `parts.json` | `--parts` — the directory above `parts/` |
 | `CHECK_INPUT_PRESENT`, `CHECK_INPUT_IS_JSON`, `CHECK_PART_PNG_PRESENT`, `CHECK_PART_PNG_MATCHES_BOX`, `CHECK_PART_SLOT_PRESENT`, `CHECK_RIG_STAGE_PRESENT`, `CHECK_RIG_STAGE_IS_THE_CANVAS`, `CHECK_RIG_ROOT_BONE`, `CHECK_IDLE_PRESENT` | the rig directory is incomplete or disagrees with `parts.json` (`CHECK_PART_SLOT_PRESENT`: a part with no slot of its own name, which the judgement lines render it by) | re-run rig (`build` does both) |
-| `CHECK_RIGC_VERSION` | `rigc --version` is below 1.4.0, or prints no version: its `render` has no `--geometry`, which `TEXTURE_STRETCH` reads. Refused before anything is built | `bun install` (this package depends on spine-rigc ^2.0.2), or put a newer `rigc` first on `PATH` |
+| `CHECK_RIGC_VERSION` | `rigc --version` is below 1.4.0, or prints no version: its `render` has no `--geometry`, which `TEXTURE_STRETCH` reads. Refused before anything is built | `bun install` (this package depends on spine-rigc ^2.0.3), or put a newer `rigc` first on `PATH` |
 | `CHECK_RIGC_ENTRY`, `CHECK_RIGC_ENTRY_READS` | `rigc --version` names no entry (a rigc below 2.0.0), or names one in neither launcher form (`entry: cli.ts — @esotericsoftware/spine-core <v> present`, `entry: cli_core.ts — @esotericsoftware/spine-core absent — …`); `check.json`'s `rigc_entry` records the one that gated the build | `bun install` |
 | `CHECK_RIGC_GREEN` | a rigc step failed; its line is quoted | as `RIG_RIGC_GREEN` |
 | `CHECK_LOOP_LAST_FRAME_AT_DURATION` | the idle's last frame does not sit at `duration` | `motion.duration` — a whole number of 1/12 s |
@@ -616,7 +616,7 @@ implementation's bars):
 - `gate_spine-html.txt`: every summary line `(N passed, 0 failed)` — the packed build
   under the `spine-html` profile, gated once over the compile and once over the packed
   pages on disk. There is no `spine` gate of its own: `spine-html` holds every rule
-  `spine` measures (on the demo, rigc 1.5.1 and 2.0.2: `validate --profile spine`'s 14
+  `spine` measures (on the demo, rigc 1.5.1 and 2.0.3: `validate --profile spine`'s 14
   measured rules are all among the build's 23, the 15 others not in `spine`; `CH09`
   holds it on every fetched example);
 - **seam**: the setup-pose render against the flat composite of `parts/`: mean

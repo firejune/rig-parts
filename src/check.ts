@@ -196,7 +196,7 @@ export const SPINEBOY_YARDSTICK = '1024x256, 40 region(s), 45.8% opaque (alpha >
  * `free` is the default here although rigc's own default is `pot`: the packed
  * page is this package's final artifact, and on the two public examples `free`
  * takes the page from 1024x2048 to 967x1338 (covered 56.3 % -> 91.2 %) and
- * from 512x2048 to 479x1166 (49.7 % -> 93.4 %), rigc 1.5.1 and 2.0.2 alike. The cost was
+ * from 512x2048 to 479x1166 (49.7 % -> 93.4 %), rigc 1.5.1 and 2.0.3 alike. The cost was
  * measured on the same two builds. Each of the 49 idle frames differs from the
  * `pot` build's, by at most 1 level in any channel (demo 2,373 px, sample 651
  * px over all 49). On sample that moves STILL_REGIONS_DARK's reported
@@ -239,7 +239,7 @@ const CAUSE = /^(error: |rigc[\w -]*: |usage: )/;
  * What a rigc run that exited non-zero said about why, for a refusal whose own
  * filter (FAIL lines, the assertion summary) matched nothing: every line that
  * names a cause, or, when none does, the last three non-empty lines. Measured
- * against spine-rigc 2.0.2: its `cli.ts` run by path without
+ * against spine-rigc 2.0.3: its `cli.ts` run by path without
  * `@esotericsoftware/spine-core` beside it dies at import with one
  * `error: Cannot find module '@esotericsoftware/spine-core' from …` line, and its
  * core entry refuses `validate` with one `rigc validate: …` line, neither of
@@ -270,7 +270,7 @@ export interface RigcEntryRecord {
   spine_core: string | null;
 }
 
-/** The launcher's two `entry:` lines, whole, as spine-rigc 2.0.2's `bin/rigc.cjs` writes them. */
+/** The launcher's two `entry:` lines, whole, as spine-rigc 2.0.3's `bin/rigc.cjs` writes them. */
 const ENTRY_FULL = /^entry: cli\.ts — @esotericsoftware\/spine-core (\S+) present$/;
 const ENTRY_CORE = /^entry: cli_core\.ts — @esotericsoftware\/spine-core absent — /;
 
@@ -562,7 +562,7 @@ const PACK = /^pack: (\S+) (\d+)x(\d+), (\d+) region\(s\), (\d+(?:\.\d+)?)% cove
 
 /**
  * Every pack line among the gate lines — a line that reads `pack:` once its
- * `..` gutter is taken off. A pack line spine-rigc 1.5.1 to 2.0.2 would not print (an
+ * `..` gutter is taken off. A pack line spine-rigc 1.5.1 to 2.0.3 would not print (an
  * unknown suffix, a missing field) is refused, `CHECK_PACK_LINE_READS`, naming
  * the line and the form required: a line half-read would lose the one field
  * that changed.
@@ -961,7 +961,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   const packOpaque = pack.filter((p) => existsSync(join(buildDir, p.page))).map((p) => ({ page: p.page, share: opaqueShare(readPng(join(buildDir, p.page))) }));
 
   // 2. no second gate: `rigc validate --profile spine` of this build measured no rule the build's own two passes
-  // had not (14 of the build's 23 on the demo, rigc 1.5.1 and 2.0.2 alike; selftest CH09 holds it), and on rigc's
+  // had not (14 of the build's 23 on the demo, rigc 1.5.1 and 2.0.3 alike; selftest CH09 holds it), and on rigc's
   // core entry — an install without spine-core — `validate` is refused outright
   const htmlGreen = gateGreen(build.status, gateHtml);
 
