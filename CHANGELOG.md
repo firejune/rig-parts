@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.0](https://github.com/firejune/spine-parts/compare/v0.6.0...v0.7.0) (2026-10-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **rigc:** an install of spine-parts no longer carries spine-core, and its build is gated by rigc's own validator (cli_core.ts); the spine-core round trip runs in this repository's selftest and CI. check.json drops gate_spine_green and adds rigc_entry; check no longer writes gate_spine.txt.
+
+### Features
+
+* **rigc:** take up spine-rigc 2.0 — rig gates through rigc's launcher like check, build's spine-html gate is the one gate, a rigc that stops before its gate prints is quoted, both entries' reports are read by name and check.json records the entry ([#60](https://github.com/firejune/spine-parts/issues/60)) ([992a8fd](https://github.com/firejune/spine-parts/commit/992a8fd009c4a475387897f46e75d1a6da396ffe))
+
 ## [0.6.0](https://github.com/firejune/spine-parts/compare/v0.5.0...v0.6.0) (2026-10-01)
 
 
