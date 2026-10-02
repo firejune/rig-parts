@@ -76,9 +76,9 @@
  * randomness; rows sorted by label.
  *
  * Figures quoted from this tool carry "measured at spine-runtimes e7dc143".
- * `@esotericsoftware/spine-core` is spine-rigc's dependency, resolved from where
- * the package manager put it; `tools/` is not in `package.json` `files`, so
- * nothing installed depends on this file.
+ * `@esotericsoftware/spine-core` is this repository's development dependency, pinned to
+ * the version spine-rigc develops against (`TY10`); `tools/` is not in
+ * `package.json` `files`, so nothing installed depends on this file.
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';

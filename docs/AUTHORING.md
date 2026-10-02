@@ -18,7 +18,7 @@ into `examples/sample/inputs/`.
 | what | why | how |
 | --- | --- | --- |
 | [Bun](https://bun.sh) 1.2 or later | spine-parts and spine-rigc are Bun programs | `npm install -g spine-parts` installs the command; it says so if Bun is missing |
-| [spine-rigc](https://www.npmjs.com/package/spine-rigc) | compiles, gates, packs and renders every rig; spine-parts writes no Spine data itself | installed with spine-parts as a dependency (`node_modules/.bin/rigc`) |
+| [spine-rigc](https://www.npmjs.com/package/spine-rigc) | compiles, gates, packs and renders every rig; spine-parts writes no Spine data itself | installed with spine-parts as a dependency (`node_modules/.bin/rigc`); with no Spine runtime beside it, it gates with its own validator, and `rigc --version` says `entry: cli_core.ts` |
 | [See-through](https://github.com/shitagaki-lab/see-through), somewhere | the layer decomposition is the input | any route in README *Getting See-through layers*; it runs twice per character, outside this tool |
 | a GPU, wherever See-through runs | See-through is a diffusion model | nothing in spine-parts itself uses a GPU |
 
@@ -266,7 +266,7 @@ proposal in as the steps above say (`RL01`); every step must exit 0.
 | `sheet` of both runs | the tile list (and the sheet, if you can see) | eyes, irises, lashes and brows as left/right pairs in the head run | a head box that cut off an ornament: move `head_box`, re-run the head crop |
 | `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px`, then `uncovered holes (8-connected): N` and the largest five as `uncovered hole K: <px> px at x,y wxh (between "<part>" <px> px, …)`; and look at `render/recomposite_error_rig.png` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185, 259 holes, the largest 94 px; `demo` 2.39 / 95.8 % / 11,050 / 1,564, 453 holes, the largest 70 px (default rule) — many slivers along part edges, no hole a region could hide | one large hole: part of the figure is in no layer — a plan entry is missing, hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason), or See-through split one garment into two and left the space between them in neither (a skirt as two trouser legs); the `between` parts say where. When neither run holds it at all, an `assemble.patches` entry cuts it from the painting (below) |
 | `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck); a `hanging strand … -- no chain proposed` note — that strand hangs stiff until you add a chain down the x and rows it names (§3); a `no blink: …` or `blink without brows: …` note — the idle will not blink (or its brows will not drop), because no part came from an `eyewhite` (or `eyebrow`) layer; the note names the tags looked for; a `no eyewhite part for eye_<s> …` note — the iris and lash parts it names ride `head` and do not blink, because no `eyewhite-<s>` part made that side's eye bone: take the eyewhite from the other run, or keep them on `head` |
-| `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; the `bones` line; the `idle keys` line; then rigc's gate lines (with A15's declared SKIP under `--idle-keys direct`) | `cover 1.00000` on every mesh, both gates `0 failed` | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
+| `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; the `bones` line; the `idle keys` line; then rigc's gate lines (with A15's declared SKIP under `--idle-keys direct`) | `cover 1.00000` on every mesh, both gate summaries `0 failed` (the compile and the packed pages) | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
 | `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the six judgement lines and `RECOMPOSITE_HOLES` (§7), `check.json` | `check: PASS`, and a judgement line SKIP only where the character lacks what it reads | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
 | `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line, each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
 
@@ -301,7 +301,9 @@ the reference's so the examples stay comparable with it.
 the least-area page the parts need. `--page-edges pot` is the opt-out: a power of
 two on both edges, which is the page every build wrote before this flag. The pack
 line says which one ran, because rigc ends it with `, page edges free` under `free`.
-Measured with rigc 1.5.1 on the two examples, by `tools/atlas_population.ts`:
+Measured on the two examples by `tools/atlas_population.ts` with rigc 1.5.1, and again
+with rigc 2.0.2, which reproduced every figure in both tables and the one check figure
+below:
 
 | build | page | covered | page opaque | page / figure |
 | --- | --- | --- | --- | --- |
@@ -357,8 +359,8 @@ differ by at most one level in a channel. The default stays `ctl`: the examples'
 `expected/rig.json` and `motion.json` are the reference's output, and the
 declaration is in the rig spec only, so `rigc validate <build> --profile spine-html`
 run on a `direct` build (it has no rig spec to read) refuses A15 once per keyed
-bone. `check` validates the build under `spine` only, where A15 is not in the
-profile, and is green on both.
+bone. No stage runs `validate`: the gate is `rigc build`, which reads the rig spec
+and its declaration, and is green on both (`RG19`).
 
 **Patching a hole no layer holds.** When an `uncovered hole` stays large after the
 plan is right — both See-through runs dropped a piece of the figure, red in
@@ -588,7 +590,8 @@ See-through with another seed.
 | `CHECK_RIGC_PRESENT` | no `rigc` binary found (every place looked is listed) | `bun install` |
 | `CHECK_INPUT_PRESENT` on `…/parts.json` | `--parts` named a directory without `parts.json` — most often `parts/` itself. The detail says it: "--parts names the directory holding parts.json and parts/, not parts/ itself (after build, that is build's --out, whose rig is <out>/rig); without --parts it is --rig", and names the parent when the parent holds `parts.json` | `--parts` — the directory above `parts/` |
 | `CHECK_INPUT_PRESENT`, `CHECK_INPUT_IS_JSON`, `CHECK_PART_PNG_PRESENT`, `CHECK_PART_PNG_MATCHES_BOX`, `CHECK_PART_SLOT_PRESENT`, `CHECK_RIG_STAGE_PRESENT`, `CHECK_RIG_STAGE_IS_THE_CANVAS`, `CHECK_RIG_ROOT_BONE`, `CHECK_IDLE_PRESENT` | the rig directory is incomplete or disagrees with `parts.json` (`CHECK_PART_SLOT_PRESENT`: a part with no slot of its own name, which the judgement lines render it by) | re-run rig (`build` does both) |
-| `CHECK_RIGC_VERSION` | `rigc --version` is below 1.4.0, or prints no version: its `render` has no `--geometry`, which `TEXTURE_STRETCH` reads. Refused before anything is built | `bun install` (this package depends on spine-rigc ^1.5.1), or put a newer `rigc` first on `PATH` |
+| `CHECK_RIGC_VERSION` | `rigc --version` is below 1.4.0, or prints no version: its `render` has no `--geometry`, which `TEXTURE_STRETCH` reads. Refused before anything is built | `bun install` (this package depends on spine-rigc ^2.0.2), or put a newer `rigc` first on `PATH` |
+| `CHECK_RIGC_ENTRY`, `CHECK_RIGC_ENTRY_READS` | `rigc --version` names no entry (a rigc below 2.0.0), or names one in neither launcher form (`entry: cli.ts — @esotericsoftware/spine-core <v> present`, `entry: cli_core.ts — @esotericsoftware/spine-core absent — …`); `check.json`'s `rigc_entry` records the one that gated the build | `bun install` |
 | `CHECK_RIGC_GREEN` | a rigc step failed; its line is quoted | as `RIG_RIGC_GREEN` |
 | `CHECK_LOOP_LAST_FRAME_AT_DURATION` | the idle's last frame does not sit at `duration` | `motion.duration` — a whole number of 1/12 s |
 | `CHECK_LOOP_CLOSES` | frame 0 and the frame at `duration` differ (max and first pixel quoted) | a track whose last key is not its first |
@@ -611,14 +614,17 @@ See-through with another seed.
 implementation's bars):
 
 - `gate_spine-html.txt`: every summary line `(N passed, 0 failed)` — the packed build
-  under the `spine-html` profile;
-- `gate_spine.txt`: the same, `rigc validate` of that build under the `spine` profile;
+  under the `spine-html` profile, gated once over the compile and once over the packed
+  pages on disk. There is no `spine` gate of its own: `spine-html` holds every rule
+  `spine` measures (on the demo, rigc 1.5.1 and 2.0.2: `validate --profile spine`'s 14
+  measured rules are all among the build's 23, the 15 others not in `spine`; `CH09`
+  holds it on every fetched example);
 - **seam**: the setup-pose render against the flat composite of `parts/`: mean
   max-channel |d| ≤ 1.0 of 255, and at most 50 pixels over 40;
 - **loop**: idle frame 0 against the frame at `t = duration`: max |d| exactly 0.
 
-On the examples: `sample` 23/23 and 14/14, seam 0.207 with 0 pixels over 40, loop 0;
-`demo` (default rule) 23/23 and 14/14, seam 0.326 with 2 pixels over 40, loop 0.
+On the examples: `sample` 23/23, seam 0.207 with 0 pixels over 40, loop 0;
+`demo` (default rule) 23/23, seam 0.326 with 2 pixels over 40, loop 0.
 
 A green gate cannot see a wrong animation, so `check` also writes six **judgement
 lines** (issue #11; `TEXTURE_STRETCH`, issue #31), each a key of `check.json` and a console line

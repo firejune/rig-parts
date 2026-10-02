@@ -1,1 +1,0 @@
-  ..    49 assertions: 14 measured (14 passed, 0 failed), 20 skipped, 15 not in profile "spine"

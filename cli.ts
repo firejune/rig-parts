@@ -15,7 +15,6 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
 import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage } from './src/build.ts';
 import { DEFAULT_PAGE_EDGES, findRigc, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
@@ -112,9 +111,10 @@ usage:
       CONFIG_BLINK_GROUP_UNIQUE, before rigc starts. --parts is the
       directory holding parts.json and parts/<name>.png. The result is built
       through spine-rigc (profile spine-html, packed with --page-edges as for
-      check, then validated under profile spine) in a scratch directory first, and --out receives
-      images/*.png, rig.json, motion.json and mesh_report.json only when both
-      are green. Prints one line per mesh and the rigc gate lines.
+      check; rigc's build gates the compile and the packed pages on disk) in a
+      scratch directory first, and --out receives images/*.png, rig.json,
+      motion.json and mesh_report.json only when it is green. Prints one line
+      per mesh and the rigc gate lines.
       --idle-keys says where the idle's keys on a bone a mesh is weighted to go:
       ctl (the default) keys a same-origin <bone>_ctl parent instead, which
       passes A15_IDLE_NO_MESH_BONE_KEYS on any spine-rigc; direct keys the bone
@@ -129,11 +129,12 @@ usage:
       ${PARTS_HOME_SENTENCE}.
       Both are only read. Into --out:
       build/ (rigc build --profile spine-html --pack --page-edges <value>: the
-      packed atlas is the artifact), gate_spine-html.txt and gate_spine.txt (the gate lines
+      packed atlas is the artifact), gate_spine-html.txt (the gate lines
       verbatim), idle_frames/ (rigc render --animation idle --fps 12 --max 640
       --geometry: the frames and geometry.json, the skinned vertices and
       every bone's world transform per frame),
-      contact.png, motion_heat.png and check.json. PASS needs both gates
+      contact.png, motion_heat.png and check.json (with rigc_entry, the rigc
+      entry that gated the build). PASS needs every gate summary
       "0 failed", the seam (setup pose vs the flat composite of parts/) at mean
       |d| <= ${SEAM_MEAN_BAR.toFixed(1)} with <= ${SEAM_PX_BAR} px over ${SEAM_PX_LEVEL}, and the loop (idle frame 0 vs the
       frame at t = duration) at max |d| 0. Then six judgement lines, each in
@@ -396,20 +397,6 @@ function cmdSheet(args: string[]): number {
   }
 }
 
-/** spine-rigc's own CLI, resolved the way this package resolves every other rigc path. */
-function rigcCli(): string {
-  return fileURLToPath(import.meta.resolve('spine-rigc/cli.ts'));
-}
-
-/** The rig stage's rigc: spine-rigc's cli.ts run by this Bun, as the stage has always gated. */
-function rigGateRunner(): RigcRunner {
-  return (args) => {
-    const r = spawnSync(process.execPath, [rigcCli(), ...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
-    if (r.error !== undefined) return { status: 127, out: `could not start ${rigcCli()}: ${r.error.message}` };
-    return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
-  };
-}
-
 /** `--page-edges`, or its default; a value spine-rigc does not take is a usage error naming the two it does. */
 function pageEdgesOf(value: string | undefined): PageEdges | string {
   const edges = value ?? DEFAULT_PAGE_EDGES;
@@ -449,9 +436,15 @@ function cmdRig(args: string[]): number {
   if (!(IDLE_KEYS as readonly string[]).includes(keys)) return usage(`--idle-keys ${keys}; one of ${IDLE_KEYS.join(', ')} is required`);
   const edges = pageEdgesOf(pageEdges ?? undefined);
   if (!isPageEdges(edges)) return usage(edges);
+  let bin: string;
+  try {
+    bin = findRigc(import.meta.dir, process.env.PATH ?? '');
+  } catch (err) {
+    return printRefusal(err);
+  }
   const scratch = mkdtempSync(join(tmpdir(), 'spine-parts-rig-'));
   try {
-    rigStage({ config, parts: partsDir, out, idleKeys: keys as IdleKeys, pageEdges: edges }, rigGateRunner(), scratch, console.log);
+    rigStage({ config, parts: partsDir, out, idleKeys: keys as IdleKeys, pageEdges: edges }, rigcRunner(bin), scratch, console.log);
     return EXIT_OK;
   } catch (err) {
     return printRefusal(err);
@@ -460,7 +453,16 @@ function cmdRig(args: string[]): number {
   }
 }
 
-/** The rigc process: `src/check.ts` is pure and takes the spawn from here. */
+/**
+ * The rigc process, for every stage that runs rigc — `rig`'s gate, `check`, and
+ * both inside `build`: the `rigc` binary {@link findRigc} located, spawned as
+ * it is, so spine-rigc's own launcher (`bin/rigc.cjs`) chooses the entry —
+ * `cli.ts` and the spine-core round trip where the runtime resolves beside it,
+ * `cli_core.ts` and rigc's own validator where it does not. No stage runs a
+ * rigc source file by path: under spine-rigc 2.0, `cli.ts` by path is the
+ * spine-core entry whether or not spine-core is there. `src/` is pure and takes
+ * the spawn from here.
+ */
 function rigcRunner(bin: string): RigcRunner {
   return (args) => {
     const r = spawnSync(bin, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
@@ -830,7 +832,7 @@ function cmdBuild(args: string[]): number {
   try {
     const r = build(
       { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges },
-      { rig: rigGateRunner(), check: rigcRunner(bin), checkBin: bin, scratch: join(scratch, 'rig-gate') },
+      { rig: rigcRunner(bin), check: rigcRunner(bin), checkBin: bin, scratch: join(scratch, 'rig-gate') },
       console.log,
     );
     return r.stoppedAt === null ? EXIT_OK : EXIT_REFUSED;

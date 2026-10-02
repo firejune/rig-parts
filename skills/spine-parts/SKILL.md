@@ -15,9 +15,11 @@ stage writes are the whole interface.
 
 ## Non-negotiables
 
-- **spine-rigc's round trip is never bypassed.** spine-parts writes no Spine data
-  itself; `rig` writes only after rigc's build and validate are green, and `build`'s
+- **spine-rigc's gate is never bypassed.** spine-parts writes no Spine data
+  itself; `rig` writes only after rigc's `build` gate is green, and `build`'s
   artifact is what rigc wrote. There is no flag that skips it, and none may be added.
+  `check.json`'s `rigc_entry` names which gate ran: rigc's own validator in an
+  install, the spine-core round trip where the runtime is installed beside rigc.
 - **No value is invented.** A missing config field is a refusal naming it. Take a
   value from the command that proposes it (`propose --head-box`,
   `assemble --propose-plan`, `propose`) or decide it yourself — never guess one
