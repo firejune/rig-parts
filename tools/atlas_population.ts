@@ -34,7 +34,13 @@
  *   and sequence frames included. `check`'s pack line prints rigc's figure for
  *   the same thing.
  * - **covered %**: Σ bounds w·h over Σ page area. rigc's pack line "covered" is
- *   the same sum (`spine-rigc/src/atlas.ts`, `occupancy`), rounded the same way.
+ *   the same sum (`spine-rigc/src/atlas.ts`, `occupancy`), rounded the same way
+ *   (on the two public examples under `--pack-shape polygon`, spine-rigc 2.1.3,
+ *   both read 95.0 %). It is a sum of rectangles, not a union: under
+ *   `--pack-shape polygon` a region may sit inside a mesh region's rectangle
+ *   where the hull is not, so the rectangles overlap and the figure can exceed
+ *   100 % without any pixel being shared. **opaque %** is the measure of what
+ *   the page holds.
  * - **opaque %**: pixels with alpha > 0 over page area, through `opaqueShare`
  *   and `readPng` — the call `check` makes for the pack line
  *   (`src/check.ts`, `packOpaque`); the count is that share times the page

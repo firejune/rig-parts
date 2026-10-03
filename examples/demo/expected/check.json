@@ -4,6 +4,10 @@
   "entry": "cli.ts",
   "spine_core": "4.3.13"
  },
+ "pack_mode": {
+  "page_edges": "free",
+  "pack_shape": "polygon"
+ },
  "loop_max_diff": 0,
  "seam_mean": 0.326,
  "seam_px_over_40": 2,

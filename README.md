@@ -34,17 +34,17 @@ was shifted down into the canvas (its proposal ran 118 px above the top edge;
 <code>propose --head-box</code> now makes that shift itself), and <code>hair_back</code>
 is taken from the full run, because the twin tails leave the head crop sideways
 (a plan edit). <code>check</code> printed, verbatim:<br/>
-<code>49 assertions: 23 measured (23 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"</code><br/>
+<code>50 assertions: 24 measured (24 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"</code><br/>
 <code>loop: idle 49 frame(s) at 12 fps, f0000 vs f0048 (t = 4s): max |d| 0 (0 required)</code><br/>
 <code>seam: setup pose at 714x1216, scale 0.9422: mean |d| 0.324 (&lt;= 1.0), 2 px over 40 (&lt;= 50), 0 px over 80 (reported)</code><br/>
-<code>pack: skeleton.png 967x1338, 22 region(s), 91.2% covered, padding 2, page edges free</code><br/>
+<code>pack: skeleton.png 922x1348, 22 region(s), 95.0% covered, padding 2, page edges free, shape polygon</code><br/>
 <code>--seam silhouette</code> repaired the navy blobs the default rule leaves on the white
 blouse (recomposite error pixels 11,050 → 9,540); the default stays
 <code>near-white</code>, the reference implementation's rule, so the examples stay
 comparable with it. The loop is <code>spine-parts loop --palette</code>'s indexed APNG, 48 frames at
-12 fps, 1,706,520 bytes, one 256-entry palette at a measured error of max 57, mean 1.601
+12 fps, 1,706,719 bytes, one 256-entry palette at a measured error of max 57, mean 1.601
 per channel over every frame (the lossless APNG beside it, the exactness record, is
-13,645,350 bytes; the GIF, at the same error, 1,812,238). Frame 29 (2.417 s) is the
+13,645,503 bytes; the GIF, at the same error, 1,812,288). Frame 29 (2.417 s) is the
 closed eye: the blink holds for 0.084 s, one 12 fps frame rounded up, where the
 reference implementation held 0.04 s and no frame of its loop showed the eyes shut
 (issue #32); the painting is shown at half size, resampled and written
@@ -86,10 +86,10 @@ page** (issue #2):
 
 | path under `--out` | what |
 | --- | --- |
-| `check/build/skeleton.json`, `skeleton.atlas`, `skeleton.png` | **the artifact** — Spine 4.3 skeleton data and one packed page, written by `rigc build --pack --page-edges free` and gated under `spine-html`, which holds every rule `spine` measures (on the demo, rigc 1.5.1 and 2.0.3: the 14 rules `validate --profile spine` measures are among the build's 23; 15 are not in `spine`) |
+| `check/build/skeleton.json`, `skeleton.atlas`, `skeleton.png` | **the artifact** — Spine 4.3 skeleton data and one packed page, written by `rigc build --pack --page-edges free --pack-shape polygon` and gated under `spine-html`, which holds every rule `spine` measures (on the demo, rigc 2.1.3: the 14 rules `validate --profile spine` measures are among the build's 24; 16 are not in `spine`) |
 | `parts/*.png`, `parts.json`, `recomposite_rig.png`, `recomposite_error_rig.png` | the loose parts, each cropped to its alpha box; the record of where every part came from, how many of its pixels were re-taken from the painting, and the recomposite's uncovered holes with their boxes; the flat stack of parts; its error map — red where no part covers a pixel the painting has, blue where a part covers it in the wrong colour |
 | `rig/` | `rig.json` and `motion.json` in spine-rigc's spec, `mesh_report.json`, the padded `images/` |
-| `check/` | both gate files verbatim, the idle's frames and their `geometry.json` (skinned vertices per frame), `contact.png`, `motion_heat.png`, `check.json` |
+| `check/` | both gate files verbatim, the idle's frames and their `geometry.json` (skinned vertices per frame), `contact.png`, `motion_heat.png`, `check.json` (with `pack_mode`, the `--page-edges` and `--pack-shape` the page was packed under) |
 | `idle.png`, `idle-indexed.png`, `idle.gif` | with `--loop`: the idle as a lossless APNG (the exactness record), an indexed APNG with one shared palette (the small one) and a GIF; the last two print their palette error |
 
 The last lines of a green build are the pack line, printed beside the Spine example
@@ -98,15 +98,15 @@ artifact paths — here for `examples/sample`:
 
 ```
 build: PASS — the packed atlas is the artifact; parts/ and rig/ are the intermediates it was made from
-  pack: skeleton.png 479x1166, 20 region(s), 93.4% covered, padding 2, page edges free; page opaque 53.9% (alpha > 0) — spineboy yardstick 1024x256, 40 region(s), 45.8% opaque (alpha > 0), a reference and not a bar
+  pack: skeleton.png 477x1151, 20 region(s), 95.0% covered, padding 2, page edges free, shape polygon; page opaque 54.8% (alpha > 0) — spineboy yardstick 1024x256, 40 region(s), 45.8% opaque (alpha > 0), a reference and not a bar
   out/check/build/skeleton.json
   out/check/build/skeleton.atlas
   out/check/build/skeleton.png
 ```
 
 The page's edges are free by default: rigc picks the least-area page the parts need,
-not the next power of two. On the two examples that is 967x1338 and 479x1166, where a
-power-of-two page is 1024x2048 and 512x2048, and covered goes from 56.3 % to 91.2 % and
+not the next power of two. On the two examples, packed by rectangles, that is 967x1338
+and 479x1166, where a power-of-two page is 1024x2048 and 512x2048, and covered goes from 56.3 % to 91.2 % and
 from 49.7 % to 93.4 %. The cost is the one rigc's help states: *"region attachments
 sampling within 1 LSB of the loose build rather than exactly"*. Measured on both
 examples, every idle frame stays within 1 level of the power-of-two build's. The atlas says
@@ -114,6 +114,16 @@ examples, every idle frame stays within 1 level of the power-of-two build's. The
 consumer that mipmaps or repeats the page; it writes exactly the page builds wrote
 before the flag existed. The measurements are in
 [AUTHORING §5, *Page edges*](docs/AUTHORING.md#5-after-each-stage-what-to-read).
+
+The pack shape is `polygon` by default (spine-rigc 2.1): a region only meshes draw is
+packed by its emitted hull, so a neighbour may sit inside its rectangle where the hull
+is not; a region attachment stays its rectangle. On the two examples that takes the
+free page from 967x1338 to 922x1348 (covered 91.2 % to 95.0 %, 3.9 % less area) and
+from 479x1166 to 477x1151 (93.4 % to 95.0 %, 1.7 % less), at the cost class `free`
+already has: every idle frame within 1 level of the `rect` build's, and no figure in
+`check.json` but `pack_mode` moves. `--pack-shape rect` writes the page and atlas
+0.7.0 wrote. The measurements are in
+[AUTHORING §5, *Pack shape*](docs/AUTHORING.md#5-after-each-stage-what-to-read).
 
 The packer is spine-rigc's, and no other: a packed region is a lossless copy, and an
 atlas written by anything else would have no oracle behind it.
