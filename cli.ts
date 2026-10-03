@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
 import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage } from './src/build.ts';
-import { DEFAULT_PAGE_EDGES, findRigc, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
+import { DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, findRigc, PACK_SHAPES, type PackShape, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
 import { type CharacterConfig, loadConfig, loadEarlyConfig } from './src/config.ts';
 import { PartsError, problemLine } from './src/errors.ts';
@@ -97,7 +97,7 @@ usage:
       printed when one was needed.
 
   spine-parts rig --config <config.json> --parts <dir> --out <dir> [--idle-keys ctl|direct]
-                  [--page-edges pot|free]
+                  [--page-edges pot|free] [--pack-shape rect|polygon]
       Author the rig: unrotated bones at the config's landmarks (a chain makes
       <chain>0..n), a square lattice mesh over every part in config.meshes
       weighted by distance to its candidate bone segments, a region for every
@@ -110,8 +110,8 @@ usage:
       bone twice, is refused by the loader, CONFIG_BLINK_GROUP_MEMBERS or
       CONFIG_BLINK_GROUP_UNIQUE, before rigc starts. --parts is the
       directory holding parts.json and parts/<name>.png. The result is built
-      through spine-rigc (profile spine-html, packed with --page-edges as for
-      check; rigc's build gates the compile and the packed pages on disk) in a
+      through spine-rigc (profile spine-html, packed with --page-edges and
+      --pack-shape as for check; rigc's build gates the compile and the packed pages on disk) in a
       scratch directory first, and --out receives images/*.png, rig.json,
       motion.json and mesh_report.json only when it is green. Prints one line
       per mesh and the rigc gate lines.
@@ -123,18 +123,19 @@ usage:
       stage prints that SKIP line). The pose is the same to one level of float
       rounding, and so is the per-frame mesh work (AUTHORING §5).
   spine-parts check --rig <dir> --out <dir> [--parts <dir>] [--page-edges pot|free]
+                    [--pack-shape rect|polygon]
       Build, gate, render and measure a rig through spine-rigc's CLI (the rigc at
       node_modules/.bin/rigc, or on PATH). --rig holds rig.json and motion.json
       (with an "idle").
       ${PARTS_HOME_SENTENCE}.
       Both are only read. Into --out:
-      build/ (rigc build --profile spine-html --pack --page-edges <value>: the
-      packed atlas is the artifact), gate_spine-html.txt (the gate lines
+      build/ (rigc build --profile spine-html --pack --page-edges <value>
+      --pack-shape <value>: the packed atlas is the artifact), gate_spine-html.txt (the gate lines
       verbatim), idle_frames/ (rigc render --animation idle --fps 12 --max 640
       --geometry: the frames and geometry.json, the skinned vertices and
       every bone's world transform per frame),
       contact.png, motion_heat.png and check.json (with rigc_entry, the rigc
-      entry that gated the build). PASS needs every gate summary
+      entry that gated the build, and pack_mode, the two pack flags). PASS needs every gate summary
       "0 failed", the seam (setup pose vs the flat composite of parts/) at mean
       |d| <= ${SEAM_MEAN_BAR.toFixed(1)} with <= ${SEAM_PX_BAR} px over ${SEAM_PX_LEVEL}, and the loop (idle frame 0 vs the
       frame at t = duration) at max |d| 0. Then six judgement lines, each in
@@ -166,15 +167,25 @@ usage:
       a bar. Exit 0 on PASS, 1 on FAIL — every FAIL line names the bar, the value
       and the value required.
       --page-edges is handed to rigc verbatim and defaults to ${DEFAULT_PAGE_EDGES}: the
-      least-area page the parts need (on the two public examples 967x1338 and
-      479x1166, where pot writes 1024x2048 and 512x2048), at the cost rigc
+      least-area page the parts need (on the two public examples, rect, 967x1338
+      and 479x1166, where pot writes 1024x2048 and 512x2048), at the cost rigc
       states — region attachments sample within 1 LSB of the loose build
       rather than exactly (measured on both examples: every idle frame within
       1 level of the pot build's; AUTHORING §5, Page edges). pot is a power of two on both edges, for a consumer
       that mipmaps or repeats the page (the atlas declares filter Linear,
-      Linear and no repeat). rigc's pack line ends ", page edges free" under
+      Linear and no repeat). rigc's pack line carries ", page edges free" under
       free; a line that disagrees with the value passed, or a pot page that is
       not a power of two, is refused, CHECK_PACK_PAGE_EDGES.
+      --pack-shape is handed to rigc verbatim and defaults to ${DEFAULT_PACK_SHAPE}:
+      a region only meshes draw is packed by its emitted hull, so a neighbour
+      may sit inside its rectangle where the hull is not (on the two public
+      examples, under free, 922x1348 and 477x1151 where rect writes 967x1338
+      and 479x1166), at the cost of the same 1-level class as free (measured
+      on both examples: every idle frame within 1 level of the rect build's;
+      AUTHORING §5, Pack shape). rect keeps every region's cell apart and
+      writes the page earlier releases wrote. rigc's pack line ends
+      ", shape rect" or ", shape polygon"; a line that disagrees with the
+      value passed is refused, CHECK_PACK_SHAPE.
 
   spine-parts loop --frames <dir> --out <file.png | file.gif> [--palette]
       Encode a frame set rigc render wrote (its --out directory, or the set
@@ -259,7 +270,8 @@ usage:
 
   spine-parts build --config <config.json> --source <painting.png> --full <dir|psd>
                     --head <dir|psd> --out <dir> [--seam near-white|silhouette]
-                    [--project core|visible] [--page-edges pot|free] [--loop]
+                    [--project core|visible] [--page-edges pot|free]
+                    [--pack-shape rect|polygon] [--loop]
       assemble, then rig, then check, in one process, each stage's own lines
       printed under [assemble], [rig] and [check]; the first stage that refuses
       stops the build with its own FAIL lines. The config must already carry
@@ -275,8 +287,9 @@ usage:
       three artifact paths — skeleton .json, .atlas and the packed page: the
       packed atlas is the result, the loose parts are the intermediate it was
       made from. --seam defaults to ${DEFAULT_SEAM_RULE}, --project to
-      ${DEFAULT_PROJECT_RULE} (both as for assemble), --page-edges to ${DEFAULT_PAGE_EDGES}
-      (as for check; both packed builds, rig's gate and check's artifact, take it).
+      ${DEFAULT_PROJECT_RULE} (both as for assemble), --page-edges to ${DEFAULT_PAGE_EDGES} and
+      --pack-shape to ${DEFAULT_PACK_SHAPE} (as for check; both packed builds, rig's gate
+      and check's artifact, take them).
 
   spine-parts --version
   spine-parts --help
@@ -407,16 +420,27 @@ function isPageEdges(v: PageEdges | string): v is PageEdges {
   return (PAGE_EDGES as readonly string[]).includes(v);
 }
 
+/** `--pack-shape`, or its default; a value spine-rigc does not take is a usage error naming the two it does. */
+function packShapeOf(value: string | undefined): PackShape | string {
+  const shape = value ?? DEFAULT_PACK_SHAPE;
+  return (PACK_SHAPES as readonly string[]).includes(shape) ? (shape as PackShape) : `--pack-shape ${shape}; one of ${PACK_SHAPES.join(', ')} is required`;
+}
+
+function isPackShape(v: PackShape | string): v is PackShape {
+  return (PACK_SHAPES as readonly string[]).includes(v);
+}
+
 function cmdRig(args: string[]): number {
   let config: string | null = null;
   let partsDir: string | null = null;
   let out: string | null = null;
   let idleKeys: string | null = null;
   let pageEdges: string | null = null;
+  let packShape: string | null = null;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     const value = args[i + 1];
-    if (!['--config', '--parts', '--out', '--idle-keys', '--page-edges'].includes(flag)) return usage(`rig does not take "${flag}"`);
+    if (!['--config', '--parts', '--out', '--idle-keys', '--page-edges', '--pack-shape'].includes(flag)) return usage(`rig does not take "${flag}"`);
     if (value === undefined) return usage(`${flag} needs a value`);
     i++;
     if (flag === '--config') config = value;
@@ -427,6 +451,9 @@ function cmdRig(args: string[]): number {
     } else if (flag === '--page-edges') {
       if (pageEdges !== null) return usage('--page-edges is given twice');
       pageEdges = value;
+    } else if (flag === '--pack-shape') {
+      if (packShape !== null) return usage('--pack-shape is given twice');
+      packShape = value;
     } else out = value;
   }
   if (config === null) return usage('rig needs --config <config.json>');
@@ -436,6 +463,8 @@ function cmdRig(args: string[]): number {
   if (!(IDLE_KEYS as readonly string[]).includes(keys)) return usage(`--idle-keys ${keys}; one of ${IDLE_KEYS.join(', ')} is required`);
   const edges = pageEdgesOf(pageEdges ?? undefined);
   if (!isPageEdges(edges)) return usage(edges);
+  const shape = packShapeOf(packShape ?? undefined);
+  if (!isPackShape(shape)) return usage(shape);
   let bin: string;
   try {
     bin = findRigc(import.meta.dir, process.env.PATH ?? '');
@@ -444,7 +473,7 @@ function cmdRig(args: string[]): number {
   }
   const scratch = mkdtempSync(join(tmpdir(), 'spine-parts-rig-'));
   try {
-    rigStage({ config, parts: partsDir, out, idleKeys: keys as IdleKeys, pageEdges: edges }, rigcRunner(bin), scratch, console.log);
+    rigStage({ config, parts: partsDir, out, idleKeys: keys as IdleKeys, pageEdges: edges, packShape: shape }, rigcRunner(bin), scratch, console.log);
     return EXIT_OK;
   } catch (err) {
     return printRefusal(err);
@@ -486,15 +515,17 @@ function flags(args: string[], known: readonly string[], command: string, option
 }
 
 function cmdCheck(args: string[]): number {
-  const f = flags(args, ['--rig', '--out'], 'check', ['--parts', '--page-edges']);
+  const f = flags(args, ['--rig', '--out'], 'check', ['--parts', '--page-edges', '--pack-shape']);
   if (typeof f === 'string') return usage(f);
   const rig = f.get('--rig') as string;
   const out = f.get('--out') as string;
   const edges = pageEdgesOf(f.get('--page-edges'));
   if (!isPageEdges(edges)) return usage(edges);
+  const shape = packShapeOf(f.get('--pack-shape'));
+  if (!isPackShape(shape)) return usage(shape);
   try {
     const bin = findRigc(import.meta.dir, process.env.PATH ?? '');
-    const r = checkStage({ rig, parts: f.get('--parts') ?? rig, out, pageEdges: edges }, rigcRunner(bin), bin, console.log);
+    const r = checkStage({ rig, parts: f.get('--parts') ?? rig, out, pageEdges: edges, packShape: shape }, rigcRunner(bin), bin, console.log);
     return r.figures.PASS ? EXIT_OK : EXIT_REFUSED;
   } catch (err) {
     return printRefusal(err);
@@ -799,7 +830,7 @@ function cmdInputs(args: string[]): number {
 function cmdBuild(args: string[]): number {
   const flags = new Map<string, string>();
   let loop = false;
-  const valued = ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges'];
+  const valued = ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape'];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--loop') {
@@ -821,6 +852,8 @@ function cmdBuild(args: string[]): number {
   if (!(PROJECT_RULES as readonly string[]).includes(project)) return usage(`--project ${project}; one of ${PROJECT_RULES.join(', ')} is required`);
   const edges = pageEdgesOf(flags.get('--page-edges'));
   if (!isPageEdges(edges)) return usage(edges);
+  const shape = packShapeOf(flags.get('--pack-shape'));
+  if (!isPackShape(shape)) return usage(shape);
   const [config, source, full, head, out] = ['--config', '--source', '--full', '--head', '--out'].map((f) => flags.get(f) as string);
   let bin: string;
   try {
@@ -831,7 +864,7 @@ function cmdBuild(args: string[]): number {
   const scratch = mkdtempSync(join(tmpdir(), 'spine-parts-build-'));
   try {
     const r = build(
-      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges },
+      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape },
       { rig: rigcRunner(bin), check: rigcRunner(bin), checkBin: bin, scratch: join(scratch, 'rig-gate') },
       console.log,
     );

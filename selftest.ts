@@ -113,7 +113,7 @@ import {
   stageFields,
   visibilityCounts,
 } from './src/assemble.ts';
-import { buildGateLines, causeLines, chainLine, measuredRules, packedBuildArgs, DEFAULT_PAGE_EDGES, findRigc, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
+import { buildGateLines, causeLines, chainLine, measuredRules, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
@@ -1666,7 +1666,7 @@ function runRigSuite(): number {
     const gateLines = run1.out.split('\n').filter((l) => /assertions: \d+ measured \(\d+ passed, 0 failed\)/.test(l));
     say(
       'RG04_THE_RIG_COMMAND_WRITES_ONLY_AFTER_SPINE_RIGC_IS_GREEN_ON_IT',
-      run1.status === 0 && run2.status === 0 && wroteAll && gateLines.length >= 2 && /rigc build --profile spine-html --pack --page-edges free: exit 0/.test(run1.out) && !run1.out.includes('rigc validate'),
+      run1.status === 0 && run2.status === 0 && wroteAll && gateLines.length >= 2 && /rigc build --profile spine-html --pack --page-edges free --pack-shape polygon: exit 0/.test(run1.out) && !run1.out.includes('rigc validate'),
       `exit ${run1.status}; wrote ${files1.join(', ')}; ${gateLines.length} green rigc assertion line(s), e.g. "${gateLines[0]?.trim() ?? ''}"`,
       "CLAUDE.md: the rig stages write only after spine-rigc's round trip has passed — so the command builds the staged spec through rigc before --out sees a byte",
     );
@@ -1710,7 +1710,7 @@ function runRigSuite(): number {
     const silent = deadRun('');
     say(
       'RG41_A_RIGC_THAT_DIES_BEFORE_THE_GATE_PRINTS_IS_QUOTED_BY_ITS_OWN_LINE',
-      died.startsWith('RIG_RIGC_GREEN: rigc build --profile spine-html --pack --page-edges free — exited 1: ') &&
+      died.startsWith('RIG_RIGC_GREEN: rigc build --profile spine-html --pack --page-edges free --pack-shape polygon — exited 1: ') &&
         died.includes(importError) &&
         !died.includes('Bun v1.3.11') &&
         headerOnly.includes('exited 1: ..    rig    /x/rig.json | ..    motion /x/motion.json | ..    22 part page(s):') &&
@@ -1952,7 +1952,7 @@ function runIdleKeysCases(say: (name: string, ok: boolean, detail: string, why: 
     const bogus = run('bones', 'bogus');
     const files = filesUnder(join(dir, 'none'));
     const ctlSame = files.length > 0 && files.join() === filesUnder(join(dir, 'ctl')).join() && files.every((f) => readFileSync(join(dir, 'none', f)).equals(readFileSync(join(dir, 'ctl', f))));
-    const green = (r: { out: string }): boolean => /rigc build --profile spine-html --pack --page-edges free: exit 0/.test(r.out) && !r.out.includes('rigc validate');
+    const green = (r: { out: string }): boolean => /rigc build --profile spine-html --pack --page-edges free --pack-shape polygon: exit 0/.test(r.out) && !r.out.includes('rigc validate');
     const skipLine = direct.out.split('\n').find((l) => l.includes('SKIP  A15_IDLE_NO_MESH_BONE_KEYS')) ?? '';
     const directRig = existsSync(join(dir, 'direct', 'rig.json')) ? (JSON.parse(readFileSync(join(dir, 'direct', 'rig.json'), 'utf8')) as { bones: Array<{ name: string }>; invariants?: unknown }) : null;
     // The planted half: the direct rig with its declaration taken out, built
@@ -2860,7 +2860,7 @@ function readJsonFile(path: string): Record<string, unknown> | null {
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>) : null;
 }
 
-const CHECK_KEYS = ['gate_spine_html_green', 'rigc_entry', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', ...JUDGEMENT_LINES, ...REPORTED_LINES, 'PASS'];
+const CHECK_KEYS = ['gate_spine_html_green', 'rigc_entry', 'pack_mode', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', ...JUDGEMENT_LINES, ...REPORTED_LINES, 'PASS'];
 
 /** A judgement line's status in a check.json read back, or null. */
 function lineStatus(fig: Record<string, unknown> | null, name: string): string | null {
@@ -2904,7 +2904,7 @@ function runCheckSuite(): number {
         lineStatus(fig, 'RECOMPOSITE_HOLES') === 'SKIP' &&
         ok.out.includes('  RECOMPOSITE_HOLES: SKIP — parts.json has no "recomposite" block'),
       `exit ${ok.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig).slice(0, 220)}…; judgement lines ${JUDGEMENT_LINES.map((n) => `${n} ${lineStatus(fig, n) ?? 'absent'}`).join(', ')}; RECOMPOSITE_HOLES ${lineStatus(fig, 'RECOMPOSITE_HOLES') ?? 'absent'}; missing outputs: ${missing.join(', ') || 'none'}; pack ${pack.map((p) => p.line).join(' | ') || 'none'} for ${CHECK_PARTS.length} part(s); --rig ${listing(rig).join('|') === before.join('|') ? 'unchanged' : 'CHANGED'}`,
-      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from the spine-html gate, with the reference's check.json keys in its order (gate_spine_green gone with the second gate, rigc_entry after the gate) and the six judgement lines and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line has nothing to read (and neither part is a mesh, so neither has TEXTURE_STRETCH) and must say SKIP, by name, with its reason — never PASS — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
+      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from the spine-html gate, with the reference's check.json keys in its order (gate_spine_green gone with the second gate, rigc_entry after the gate, pack_mode after it) and the six judgement lines and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line has nothing to read (and neither part is a mesh, so neither has TEXTURE_STRETCH) and must say SKIP, by name, with its reason — never PASS — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
     );
 
     const again = runCli(['check', '--rig', rig, '--out', join(dir, 'out2')]);
@@ -3327,8 +3327,9 @@ function runCheckSuite(): number {
       'a missing rigc must say which binary and where it looked, not surface as a spawn error',
     );
 
-    // --page-edges: the default run above packed under free, and pot is rigc's own default, so each value is held
-    // to a direct rigc build of the same rig with the same flag — the page bytes are rigc's, never a typed figure.
+    // --page-edges and --pack-shape: the default run above packed under free and polygon, and pot and rect are rigc's
+    // own defaults, so each value is held to a direct rigc build of the same rig with the same flags — the page bytes
+    // are rigc's, never a typed figure.
     // At the depth check's own build/ sits (<dir>/<name>/build), so skeleton.json's relative images path is the same text.
     const direct = (name: string, extra: readonly string[]): string => {
       const d = join(dir, name, 'build');
@@ -3337,39 +3338,65 @@ function runCheckSuite(): number {
     };
     const ARTIFACT = ['skeleton.atlas', 'skeleton.json', 'skeleton.png'];
     const sameArtifact = (a: string, b: string): boolean => ARTIFACT.every((f) => existsSync(join(a, f)) && existsSync(join(b, f)) && readFileSync(join(a, f)).equals(readFileSync(join(b, f))));
-    const freeDirect = direct('direct-free', ['--page-edges', 'free']);
+    const freeDirect = direct('direct-free', ['--page-edges', 'free', '--pack-shape', 'polygon']);
     const freeSame = sameArtifact(join(out, 'build'), freeDirect);
+    const defaultMode = JSON.stringify(fig?.pack_mode ?? null);
     say(
-      'CK46_THE_DEFAULT_CHECK_PACKS_WITH_FREE_PAGE_EDGES_AND_ITS_PAGE_IS_RIGCS_FREE_PAGE_BYTE_FOR_BYTE',
+      'CK46_THE_DEFAULT_CHECK_PACKS_WITH_FREE_PAGE_EDGES_AND_POLYGON_SHAPE_AND_ITS_PAGE_IS_RIGCS_OWN_BYTE_FOR_BYTE',
       DEFAULT_PAGE_EDGES === 'free' &&
+        DEFAULT_PACK_MODE.packShape === 'polygon' &&
         pack.length === 1 &&
         pack[0].pageEdges === 'free' &&
-        pack[0].line.endsWith(', page edges free') &&
-        ok.out.includes('gate spine-html (rigc build --profile spine-html --pack --page-edges free), verbatim:') &&
+        pack[0].packShape === 'polygon' &&
+        pack[0].line.endsWith(', page edges free, shape polygon') &&
+        ok.out.includes('gate spine-html (rigc build --profile spine-html --pack --page-edges free --pack-shape polygon), verbatim:') &&
+        defaultMode === '{"page_edges":"free","pack_shape":"polygon"}' &&
         freeSame,
-      `no --page-edges: ${pack[0]?.line ?? 'no pack line'}; the console names "--page-edges free": ${ok.out.includes('--page-edges free), verbatim:')}; build/ vs a direct \`rigc build --pack --page-edges free\` of the same rig: ${freeSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
-      "the packed page is the artifact, and free is the least-area page rigc can write for it; the value reaches rigc verbatim, so check's page must be rigc's own free page and nothing this package re-derived",
+      `no --page-edges, no --pack-shape: ${pack[0]?.line ?? 'no pack line'}; the console names "--page-edges free --pack-shape polygon": ${ok.out.includes('--page-edges free --pack-shape polygon), verbatim:')}; check.json pack_mode ${defaultMode}; build/ vs a direct \`rigc build --pack --page-edges free --pack-shape polygon\` of the same rig: ${freeSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
+      "the packed page is the artifact, and free with polygon is the least-area page rigc can write for it; both values reach rigc verbatim, so check's page must be rigc's own page for those flags and nothing this package re-derived, and check.json says which flags made it",
     );
 
     const potOut = join(dir, 'out-pot');
-    const potRun = runCli(['check', '--rig', rig, '--out', potOut, '--page-edges', 'pot']);
+    const potRun = runCli(['check', '--rig', rig, '--out', potOut, '--page-edges', 'pot', '--pack-shape', 'rect']);
     const potPack = parsePackLines(existsSync(join(potOut, 'gate_spine-html.txt')) ? readFileSync(join(potOut, 'gate_spine-html.txt'), 'utf8').split('\n') : []);
     const rigcDefault = direct('direct-default', []);
     const potSame = sameArtifact(join(potOut, 'build'), rigcDefault);
     const pow2 = (n: number): boolean => n > 0 && (n & (n - 1)) === 0;
     say(
-      'CK47_PAGE_EDGES_POT_IS_RIGCS_OWN_DEFAULT_PAGE_BYTE_FOR_BYTE',
+      'CK47_PAGE_EDGES_POT_WITH_PACK_SHAPE_RECT_IS_RIGCS_OWN_DEFAULT_PAGE_BYTE_FOR_BYTE',
       potRun.status === 0 &&
         potRun.out.includes('check: PASS') &&
         potPack.length === 1 &&
         potPack[0].pageEdges === 'pot' &&
+        potPack[0].packShape === 'rect' &&
         !potPack[0].line.includes('page edges') &&
+        potPack[0].line.endsWith(', padding 2, shape rect') &&
         pow2(potPack[0].width) &&
         pow2(potPack[0].height) &&
-        potRun.out.includes('gate spine-html (rigc build --profile spine-html --pack --page-edges pot), verbatim:') &&
+        potRun.out.includes('gate spine-html (rigc build --profile spine-html --pack --page-edges pot --pack-shape rect), verbatim:') &&
         potSame,
-      `--page-edges pot: exit ${potRun.status}, ${potPack[0]?.line ?? 'no pack line'}; build/ vs a direct \`rigc build --pack\` with no --page-edges (rigc's default, the page every build wrote before the flag): ${potSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
-      'pot is the opt-out, so it must give back exactly the page an earlier build wrote: rigc with no --page-edges is that build, and pot is a power of two on both edges by rigc\'s own definition',
+      `--page-edges pot --pack-shape rect: exit ${potRun.status}, ${potPack[0]?.line ?? 'no pack line'}; build/ vs a direct \`rigc build --pack\` with neither flag (rigc's defaults, the page every build wrote before the flags): ${potSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
+      'pot and rect are the opt-outs, so together they must give back exactly the page an earlier build wrote: rigc with neither flag is that build, and pot is a power of two on both edges by rigc\'s own definition',
+    );
+
+    const rectOut = join(dir, 'out-rect');
+    const rectRun = runCli(['check', '--rig', rig, '--out', rectOut, '--pack-shape', 'rect']);
+    const rectPack = parsePackLines(existsSync(join(rectOut, 'gate_spine-html.txt')) ? readFileSync(join(rectOut, 'gate_spine-html.txt'), 'utf8').split('\n') : []);
+    const rectDirect = direct('direct-rect', ['--page-edges', 'free']);
+    const rectSame = sameArtifact(join(rectOut, 'build'), rectDirect);
+    const rectMode = JSON.stringify(readJsonFile(join(rectOut, 'check.json'))?.pack_mode ?? null);
+    say(
+      'CK53_PACK_SHAPE_RECT_IS_RIGCS_RECT_PAGE_BYTE_FOR_BYTE_THE_PAGE_EARLIER_RELEASES_WROTE',
+      rectRun.status === 0 &&
+        rectPack.length === 1 &&
+        rectPack[0].pageEdges === 'free' &&
+        rectPack[0].packShape === 'rect' &&
+        rectPack[0].line.endsWith(', page edges free, shape rect') &&
+        rectRun.out.includes('gate spine-html (rigc build --profile spine-html --pack --page-edges free --pack-shape rect), verbatim:') &&
+        rectMode === '{"page_edges":"free","pack_shape":"rect"}' &&
+        rectSame,
+      `--pack-shape rect: exit ${rectRun.status}, ${rectPack[0]?.line ?? 'no pack line'}; check.json pack_mode ${rectMode}; build/ vs a direct \`rigc build --pack --page-edges free\` with no --pack-shape (rigc's default shape, the only one before 2.1): ${rectSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
+      'rect is the opt-out from the polygon default, so it must give back the page a build wrote before the flag: rigc with no --pack-shape packs by rectangles, as every rigc before 2.1.0 did (on the two public examples this page and atlas were measured byte-identical to rigc 2.0.3\'s)',
     );
 
     const bogus = [
@@ -3383,6 +3410,19 @@ function runCheckSuite(): number {
       bogus.every((b) => b.r.status === 2 && b.r.out.split('\n').includes(usageLine) && !existsSync(b.out)),
       bogus.map((b) => `${b.command} --page-edges square -> exit ${b.r.status}, ${(b.r.out.split('\n').find((l) => l.includes('FAIL')) ?? 'no FAIL line').trim()}; --out written: ${existsSync(b.out)}`).join(' | '),
       'rig, check and build all pack, so all three take the flag, and a value rigc does not take is refused before any stage runs — naming the flag, the value and the two accepted — rather than handed to rigc to fail in the middle of a build',
+    );
+
+    const hull = [
+      ['check', '--rig', rig, '--out', join(dir, 'hull-check'), '--pack-shape', 'hull'],
+      ['rig', '--config', join(dir, 'absent.json'), '--parts', dir, '--out', join(dir, 'hull-rig'), '--pack-shape', 'hull'],
+      ['build', '--config', join(dir, 'absent.json'), '--source', join(dir, 'absent.png'), '--full', dir, '--head', dir, '--out', join(dir, 'hull-build'), '--pack-shape', 'hull'],
+    ].map((args) => ({ command: args[0], r: runCli(args), out: join(dir, `hull-${args[0]}`) }));
+    const shapeUsage = '  FAIL  USAGE: --pack-shape hull; one of rect, polygon is required';
+    say(
+      'CK54_AN_UNKNOWN_PACK_SHAPE_VALUE_IS_A_USAGE_ERROR_ON_EVERY_COMMAND_THAT_PACKS',
+      hull.every((b) => b.r.status === 2 && b.r.out.split('\n').includes(shapeUsage) && !existsSync(b.out)),
+      hull.map((b) => `${b.command} --pack-shape hull -> exit ${b.r.status}, ${(b.r.out.split('\n').find((l) => l.includes('FAIL')) ?? 'no FAIL line').trim()}; --out written: ${existsSync(b.out)}`).join(' | '),
+      'as for --page-edges: rig, check and build all pack, so all three take --pack-shape, and a value rigc does not take is refused before any stage runs, naming the flag, the value and the two accepted',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -3398,19 +3438,20 @@ function runCheckSuite(): number {
     "the reference judged a gate by the substring \"0 failed\", which \"10 failed\" contains, and by Python's all() over the summary lines, which is True of none; both would print green over a red build",
   );
 
-  // The pack line, read whole: rigc 1.5.1's two forms are read, anything else is refused, and a line that
-  // disagrees with the --page-edges passed is refused. Every expectation is the line's own text.
+  // The pack line, read whole: rigc 1.5.1-2.0.3's two forms (no shape clause, so rect) are read, anything else is
+  // refused, and a line that disagrees with the --page-edges passed is refused. Every expectation is the line's own text.
   const freeLine = '  ..    pack: skeleton.png 300x500, 4 region(s), 80.0% covered, padding 2, page edges free';
   const potLine = '  ..    pack: skeleton.png 512x1024, 4 region(s), 22.9% covered, padding 2';
   const readFree = parsePackLines([freeLine]);
   const readPot = parsePackLines([potLine]);
   const diagonal = refusals(() => parsePackLines(['  ..    pack: skeleton.png 300x500, 4 region(s), 80.0% covered, padding 2, page edges diagonal']));
   const noPadding = refusals(() => parsePackLines(['  ..    pack: skeleton.png 300x500, 4 region(s), 80.0% covered']));
-  const freeUnderFree = packEdgeProblems(readFree, 'free');
-  const potUnderPot = packEdgeProblems(readPot, 'pot');
-  const potUnderFree = packEdgeProblems(readPot, 'free');
-  const freeUnderPot = packEdgeProblems(readFree, 'pot');
-  const odd = packEdgeProblems(parsePackLines(['  ..    pack: skeleton.png 300x500, 4 region(s), 80.0% covered, padding 2']), 'pot');
+  const rectUnder = (pageEdges: PageEdges): PackMode => ({ pageEdges, packShape: 'rect' });
+  const freeUnderFree = packEdgeProblems(readFree, rectUnder('free'));
+  const potUnderPot = packEdgeProblems(readPot, rectUnder('pot'));
+  const potUnderFree = packEdgeProblems(readPot, rectUnder('free'));
+  const freeUnderPot = packEdgeProblems(readFree, rectUnder('pot'));
+  const odd = packEdgeProblems(parsePackLines(['  ..    pack: skeleton.png 300x500, 4 region(s), 80.0% covered, padding 2']), rectUnder('pot'));
   const one = (ps: Problem[]): string => ps.map((q) => `${q.code}: ${q.object} — ${q.detail}`).join(' / ') || 'none';
   say(
     'CK49_A_PACK_LINE_IS_READ_WHOLE_AND_ONE_THAT_DISAGREES_WITH_THE_PAGE_EDGES_PASSED_IS_REFUSED',
@@ -3436,6 +3477,47 @@ function runCheckSuite(): number {
       odd[0].detail.startsWith('is 300x500;'),
     `both forms read (free ${readFree[0]?.pageEdges}, pot ${readPot[0]?.pageEdges}); "page edges diagonal" -> ${diagonal?.problems[0] === undefined ? 'read' : `${diagonal.problems[0].code}: ${diagonal.problems[0].object}`}; no padding -> ${noPadding?.problems[0]?.code ?? 'read'}; a pot line under --page-edges free -> ${one(potUnderFree)}; a free line under pot -> ${one(freeUnderPot)}; 300x500 with no suffix under pot -> ${one(odd)}`,
     'a pack line half-read would drop the one field that changed, and a page whose edges are not the ones asked for is a build nobody ran; both are refused by name, and the two agreeing lines are the positive control',
+  );
+
+  // spine-rigc 2.1's pack line ends in the shape it packed under, after the page-edges clause or after the padding
+  // (the four lines below are the forms rigc 2.1.3 printed on the public examples, both edges by both shapes). The
+  // 1.5-2.0 form above, with no shape clause, reads as rect; an unknown shape, or the clauses out of order, is refused
+  // by name; and a shape that disagrees with the --pack-shape passed is refused as edges are. Every expectation is the
+  // line's own text.
+  const newForms = [
+    { line: '  ..    pack: skeleton.png 967x1338, 22 region(s), 91.2% covered, padding 2, page edges free, shape rect', edges: 'free', shape: 'rect' },
+    { line: '  ..    pack: skeleton.png 922x1348, 22 region(s), 95.0% covered, padding 2, page edges free, shape polygon', edges: 'free', shape: 'polygon' },
+    { line: '  ..    pack: skeleton.png 1024x2048, 22 region(s), 56.3% covered, padding 2, shape rect', edges: 'pot', shape: 'rect' },
+    { line: '  ..    pack: skeleton.png 1024x2048, 22 region(s), 56.3% covered, padding 2, shape polygon', edges: 'pot', shape: 'polygon' },
+  ].map((f) => ({ ...f, read: parsePackLines([f.line]) }));
+  const formsRead = newForms.every((f) => f.read.length === 1 && f.read[0].pageEdges === f.edges && f.read[0].packShape === f.shape && f.read[0].line === f.line.trim().replace(/^\.\.\s+/, ''));
+  const formsAgree = newForms.every((f) => packEdgeProblems(f.read, { pageEdges: f.read[0].pageEdges, packShape: f.read[0].packShape }).length === 0);
+  const oldIsRect = readFree[0]?.packShape === 'rect' && readPot[0]?.packShape === 'rect';
+  const hullShape = refusals(() => parsePackLines(['  ..    pack: skeleton.png 922x1348, 22 region(s), 95.0% covered, padding 2, page edges free, shape hull']));
+  const swapped = refusals(() => parsePackLines(['  ..    pack: skeleton.png 922x1348, 22 region(s), 95.0% covered, padding 2, shape polygon, page edges free']));
+  const polygonUnderRect = packEdgeProblems(newForms[1].read, { pageEdges: 'free', packShape: 'rect' });
+  const rectUnderPolygon = packEdgeProblems(newForms[0].read, { pageEdges: 'free', packShape: 'polygon' });
+  const oldUnderPolygon = packEdgeProblems(readFree, { pageEdges: 'free', packShape: 'polygon' });
+  const bothWrong = packEdgeProblems(newForms[3].read, { pageEdges: 'free', packShape: 'rect' });
+  say(
+    'CK55_THE_PACK_LINES_SHAPE_IS_READ_BY_NAME_IN_EVERY_FORM_AND_ONE_THAT_DISAGREES_WITH_THE_PACK_SHAPE_PASSED_IS_REFUSED',
+    formsRead &&
+      formsAgree &&
+      oldIsRect &&
+      codes(hullShape) === 'CHECK_PACK_LINE_READS rigc\'s pack line "pack: skeleton.png 922x1348, 22 region(s), 95.0% covered, padding 2, page edges free, shape hull"' &&
+      codes(swapped).startsWith('CHECK_PACK_LINE_READS ') &&
+      polygonUnderRect.length === 1 &&
+      polygonUnderRect[0].code === 'CHECK_PACK_SHAPE' &&
+      polygonUnderRect[0].detail.startsWith('rigc\'s pack line says shape polygon (it ends ", shape polygon"); the build was run with --pack-shape rect') &&
+      rectUnderPolygon.length === 1 &&
+      rectUnderPolygon[0].code === 'CHECK_PACK_SHAPE' &&
+      rectUnderPolygon[0].detail.startsWith('rigc\'s pack line says shape rect (it ends ", shape rect"); the build was run with --pack-shape polygon') &&
+      oldUnderPolygon.length === 1 &&
+      oldUnderPolygon[0].code === 'CHECK_PACK_SHAPE' &&
+      oldUnderPolygon[0].detail.startsWith('rigc\'s pack line says shape rect (no ", shape" clause') &&
+      bothWrong.map((q) => q.code).join(',') === 'CHECK_PACK_PAGE_EDGES,CHECK_PACK_SHAPE',
+    `2.1 forms read (${newForms.map((f) => `${f.read[0]?.pageEdges}/${f.read[0]?.packShape}`).join(', ')}) and agree with their own flags: ${formsAgree}; the 1.5-2.0 forms read as ${readFree[0]?.packShape} and ${readPot[0]?.packShape}; "shape hull" -> ${hullShape?.problems[0]?.code ?? 'read'}; shape before page edges -> ${swapped?.problems[0]?.code ?? 'read'}; a polygon line under --pack-shape rect -> ${one(polygonUnderRect)}; a rect line under polygon -> ${one(rectUnderPolygon)}; a 2.0 line under polygon -> ${one(oldUnderPolygon)}; a pot polygon line under free rect -> ${bothWrong.map((q) => q.code).join(', ')}`,
+    'spine-rigc 2.1 appended the shape to the pack line, which the 2.0 reader refused whole; the reader takes both forms by name and nothing looser, and a page packed under a shape nobody asked for is a build nobody ran, refused as a page with the wrong edges is',
   );
 
   // check's own refusal of a red rigc run with no FAIL line: the core entry's refusal of validate (spine-rigc 2.0.3,
@@ -3481,21 +3563,22 @@ function runCheckSuite(): number {
     "spine-rigc 2.0's launcher chooses which validator gates a build by whether spine-core resolves beside it, and check.json records which one did; a reader that took any entry: line would record a third entry as one of the two",
   );
 
-  // Both entries' build reports through the gate filter and the green test. The lines are spine-rigc 2.0.3's
-  // on one build (paths cut): the core entry prints 51 assertions, an A00 SKIP and a here: line.
+  // Both entries' build reports through the gate filter and the green test. The lines are spine-rigc 2.1.3's
+  // on one build of the demo, the compile pass (clauses and paths cut): the core entry prints 52 assertions, an A00
+  // SKIP and a here: line; the full entry prints 50.
   const coreOut = [
     "  SKIP  A00_ROUNDTRIP_PARSE: spine-core's parser is the subject of this rule and this entry links none of it",
-    '  ..    51 assertions: 24 measured (24 passed, 0 failed), 27 skipped, 0 not in profile "spine-html"',
+    '  ..    52 assertions: 24 measured (24 passed, 0 failed), 28 skipped, 0 not in profile "spine-html"',
     '  ..    physicsConstraints=0',
-    "  ..    here: 42 rule(s) on the model side over the document, 8 of the round trip's own restated over the emitted text; not run: A00_ROUNDTRIP_PARSE",
-    '  ..    pack: skeleton.png 967x1338, 22 region(s), 91.2% covered, padding 2, page edges free',
+    "  ..    here: 43 rule(s) on the model side over the document, 8 of the round trip's own restated over the emitted text; not run: A00_ROUNDTRIP_PARSE",
+    '  ..    pack: skeleton.png 922x1348, 22 region(s), 95.0% covered, padding 2, page edges free, shape polygon',
     'rigc: wrote /x/skeleton.json',
   ].join('\n');
   const fullOut = [
     '  PASS  A00_ROUNDTRIP_PARSE',
-    '  ..    49 assertions: 23 measured (23 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"',
+    '  ..    50 assertions: 23 measured (23 passed, 0 failed), 27 skipped, 0 not in profile "spine-html"',
     '  ..    pages=22 regions=22 bones=72 slots=22 animations=1 version=4.3.13 regionAttachments=14 meshAttachments=8 physicsConstraints=0 rig=demo_painting profile=spine-html',
-    '  ..    pack: skeleton.png 967x1338, 22 region(s), 91.2% covered, padding 2, page edges free',
+    '  ..    pack: skeleton.png 922x1348, 22 region(s), 95.0% covered, padding 2, page edges free, shape polygon',
     'rigc: wrote /x/skeleton.json',
   ].join('\n');
   const coreLines = buildGateLines(coreOut);
@@ -3513,7 +3596,7 @@ function runCheckSuite(): number {
       gateGreen(0, fullLines) &&
       parsePackLines(fullLines)[0].line === parsePackLines(coreLines)[0].line,
     `core entry: ${coreLines.map((l) => l.trim().slice(0, 40)).join(' | ')}, green ${gateGreen(0, coreLines)}, one failed red ${!gateGreen(0, coreRed)}; full entry: ${fullLines.map((l) => l.trim().slice(0, 40)).join(' | ')}, green ${gateGreen(0, fullLines)}`,
-    "the gate file is the verdict's record, so under the core entry it must carry the here: line that says the round trip did not run; the summary is read by its counts in both forms (51 and 49 assertions), and the pack line is the same line under either entry",
+    "the gate file is the verdict's record, so under the core entry it must carry the here: line that says the round trip did not run; the summary is read by its counts in both forms (52 and 50 assertions), and the pack line is the same line under either entry",
   );
 
   // CHAIN_LAG reads motion.json and the bone tree only, so its controls need no render.
@@ -4171,7 +4254,7 @@ function runBuildSuite(): number {
       'BU01_A_GREEN_BUILD_WRITES_ITS_TREE_AND_ENDS_WITH_THE_PACK_LINE_AND_THE_THREE_ARTIFACT_PATHS',
       green.status === 0 &&
         tree.join(',') === expectedTree.join(',') &&
-        /^pack: skeleton\.png \d+x\d+, \d+ region\(s\), [\d.]+% covered, padding \d+, page edges free; page opaque [\d.]+% \(alpha > 0\) — spineboy yardstick /.test(tail[0]?.trim() ?? '') &&
+        /^pack: skeleton\.png \d+x\d+, \d+ region\(s\), [\d.]+% covered, padding \d+, page edges free, shape polygon; page opaque [\d.]+% \(alpha > 0\) — spineboy yardstick /.test(tail[0]?.trim() ?? '') &&
         artifacts.map((a) => a.split('/').pop()).join(',') === 'skeleton.json,skeleton.atlas,skeleton.png' &&
         artifacts.every((a) => a.startsWith(join(out, 'check', 'build')) && existsSync(a)) &&
         stageOrder.every((at, i) => at > 0 && (i === 0 || at > stageOrder[i - 1])) &&
@@ -4497,7 +4580,7 @@ function runChainSuite(): number | null {
       // The one gate: rigc's build under spine-html measures every rule validate under spine would. Run here,
       // where spine-core is present (the full entry), on this example's own rig; validate is not a stage any more.
       const subsetDir = join(dir, `${key}-subset`);
-      const subBuild = spawnSync(findRigc(ROOT, ''), ['build', '--rig', join(out, 'rig', 'rig.json'), '--motion', join(out, 'rig', 'motion.json'), '--out', subsetDir, ...packedBuildArgs(DEFAULT_PAGE_EDGES)], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      const subBuild = spawnSync(findRigc(ROOT, ''), ['build', '--rig', join(out, 'rig', 'rig.json'), '--motion', join(out, 'rig', 'motion.json'), '--out', subsetDir, ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 28 });
       const subValidate = spawnSync(findRigc(ROOT, ''), ['validate', subsetDir, '--profile', 'spine'], { encoding: 'utf8', maxBuffer: 1 << 28 });
       const builtRules = measuredRules(`${subBuild.stdout ?? ''}${subBuild.stderr ?? ''}`);
       const validRules = measuredRules(`${subValidate.stdout ?? ''}${subValidate.stderr ?? ''}`);

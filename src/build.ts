@@ -44,7 +44,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:
 import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
-import { causeLines, type CheckReport, type PackLine, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
+import { causeLines, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig, loadEarlyConfig } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
 import { encodeGif } from './gif.ts';
@@ -192,21 +192,21 @@ function gateRun(label: string, rigc: RigcRunner, args: string[]): GateRun {
 
 /**
  * spine-rigc's gate over the rig in a scratch directory: `build` under the
- * spine-html profile with `--pack --page-edges <edges>`, which runs the gate
+ * spine-html profile with `--pack --page-edges <edges> --pack-shape <shape>`, which runs the gate
  * once over the compile and once over the packed pages on disk. There is no
  * second `validate --profile spine` run: spine-html holds every rule spine
  * measures (selftest `CH09`). The files are staged exactly as `--out` will
  * receive them, so what passed is what is written. The scratch directory is
  * the caller's, and is emptied here before and after.
  */
-function gateThroughRigc(out: RigOutput, texts: Array<[string, string]>, rigc: RigcRunner, scratch: string, edges: PageEdges): GateRun[] {
+function gateThroughRigc(out: RigOutput, texts: Array<[string, string]>, rigc: RigcRunner, scratch: string, mode: PackMode): GateRun[] {
   rmSync(scratch, { recursive: true, force: true });
   try {
     mkdirSync(join(scratch, 'images'), { recursive: true });
     for (const [file, img] of out.images) writeFileSync(join(scratch, 'images', file), encodePngBytes(img));
     for (const [file, text] of texts) writeFileSync(join(scratch, file), text);
     const build = join(scratch, 'build');
-    return [gateRun(packedBuildLabel(edges), rigc, ['build', '--rig', join(scratch, 'rig.json'), '--motion', join(scratch, 'motion.json'), '--out', build, ...packedBuildArgs(edges)])];
+    return [gateRun(packedBuildLabel(mode), rigc, ['build', '--rig', join(scratch, 'rig.json'), '--motion', join(scratch, 'motion.json'), '--out', build, ...packedBuildArgs(mode)])];
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -221,6 +221,8 @@ export interface RigStageInput {
   idleKeys?: IdleKeys;
   /** The gate build's `--page-edges`; {@link DEFAULT_PAGE_EDGES} when absent. The pack is scratch here; the gate is what it is for. */
   pageEdges?: PageEdges;
+  /** The gate build's `--pack-shape`; {@link DEFAULT_PACK_SHAPE} when absent. */
+  packShape?: PackShape;
 }
 
 /** Author the rig, gate it through rigc in `scratch`, and write `out` only when the gate is green. */
@@ -258,7 +260,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
       ? `  idle keys ctl: ${rig.meshKeyed.length} mesh-driving bone(s) keyed by the idle, each keyed through a same-origin <bone>_ctl parent`
       : `  idle keys direct: ${rig.meshKeyed.length} mesh-driving bone(s) keyed in place, ${rig.rig.invariants === undefined ? 'so no invariants.idleDrivesMeshes is declared (it would switch nothing off)' : 'invariants.idleDrivesMeshes declared'}`,
   );
-  const gate = gateThroughRigc(rig, texts, rigc, scratch, input.pageEdges ?? DEFAULT_PAGE_EDGES);
+  const gate = gateThroughRigc(rig, texts, rigc, scratch, { pageEdges: input.pageEdges ?? DEFAULT_PAGE_EDGES, packShape: input.packShape ?? DEFAULT_PACK_SHAPE });
   for (const g of gate) {
     log(`  rigc ${g.label}: exit ${g.status}`);
     for (const l of g.lines) log(`    ${l.trim()}`);
@@ -291,6 +293,8 @@ export interface CheckStageInput {
   out: string;
   /** The packed build's `--page-edges`; {@link DEFAULT_PAGE_EDGES} when absent. */
   pageEdges?: PageEdges;
+  /** The packed build's `--pack-shape`; {@link DEFAULT_PACK_SHAPE} when absent. */
+  packShape?: PackShape;
 }
 
 /** The pack line as it is printed: rigc's own, then the page's opaque share beside the spineboy yardstick. */
@@ -328,9 +332,9 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   const versionLines = v.out.trim().split('\n');
   const entryLine = versionLines.find((l) => l.startsWith('entry:'));
   log(`  rigc ${versionLines[0]} at ${bin}${entryLine === undefined ? '' : `; ${entryLine}`}`);
-  const edges = input.pageEdges ?? DEFAULT_PAGE_EDGES;
-  const r = runCheck(input.rig, input.out, rigc, input.parts, edges);
-  log(`  gate spine-html (rigc ${packedBuildLabel(edges)}), verbatim:`);
+  const mode: PackMode = { pageEdges: input.pageEdges ?? DEFAULT_PAGE_EDGES, packShape: input.packShape ?? DEFAULT_PACK_SHAPE };
+  const r = runCheck(input.rig, input.out, rigc, input.parts, mode);
+  log(`  gate spine-html (rigc ${packedBuildLabel(mode)}), verbatim:`);
   for (const l of r.gateHtml) log(l);
   for (const l of packLines(r)) log(`  ${l}`);
   const fig = r.figures;
@@ -441,6 +445,8 @@ export interface BuildInput {
   loop: boolean;
   /** `--page-edges` for both packed builds, the rig stage's gate and the check's artifact. */
   pageEdges: PageEdges;
+  /** `--pack-shape` for both packed builds, as `pageEdges`; {@link DEFAULT_PACK_SHAPE} when absent. */
+  packShape?: PackShape;
 }
 
 /**
@@ -514,7 +520,7 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   const out = input.out;
   mkdirSync(out, { recursive: true });
   for (const p of BUILD_OWNS) rmSync(join(out, p), { recursive: true, force: true });
-  log(`spine-parts build: ${input.config} -> ${out}, seam rule ${input.seam}, projection rule ${input.project}, page edges ${input.pageEdges}${input.loop ? ', with the idle loop' : ''}`);
+  log(`spine-parts build: ${input.config} -> ${out}, seam rule ${input.seam}, projection rule ${input.project}, page edges ${input.pageEdges}, pack shape ${input.packShape ?? DEFAULT_PACK_SHAPE}${input.loop ? ', with the idle loop' : ''}`);
 
   try {
     // build runs rig next, which needs the whole config, so the full loader is
@@ -532,14 +538,14 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   }
 
   try {
-    rigStage({ config: input.config, parts: out, out: join(out, 'rig'), pageEdges: input.pageEdges }, run.rig, run.scratch, prefixed('rig'));
+    rigStage({ config: input.config, parts: out, out: join(out, 'rig'), pageEdges: input.pageEdges, packShape: input.packShape }, run.rig, run.scratch, prefixed('rig'));
   } catch (err) {
     return refused('rig', err);
   }
 
   let report: CheckReport;
   try {
-    report = checkStage({ rig: join(out, 'rig'), parts: out, out: join(out, 'check'), pageEdges: input.pageEdges }, run.check, run.checkBin, prefixed('check'));
+    report = checkStage({ rig: join(out, 'rig'), parts: out, out: join(out, 'check'), pageEdges: input.pageEdges, packShape: input.packShape }, run.check, run.checkBin, prefixed('check'));
   } catch (err) {
     return refused('check', err);
   }
