@@ -840,6 +840,13 @@ function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
   const m = c.object('config.motion', v, ['duration', 'tracks'], ['blink']);
   if (m === null) return;
   const p = 'config.motion';
+  // Every bone property the idle will key, and the tracks that key it, in the
+  // order idleMotion writes them: single and chain tracks, then the eyes
+  // group, then the brows group.
+  const claims = new Map<string, string[]>();
+  const claim = (target: string, by: string): void => {
+    claims.set(target, [...(claims.get(target) ?? []), by]);
+  };
   const duration = 'duration' in m && c.number(`${p}.duration`, m.duration, 'positive') ? (m.duration as number) : null;
   const periodFits = (at: string, period: Json): void => {
     if (!c.number(at, period, 'positive') || duration === null) return;
@@ -863,6 +870,8 @@ function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
         if ('lag' in t) c.number(`${at}.lag`, t.lag);
         const links = typeof t.chain === 'string' ? chains.get(t.chain) : undefined;
         if (links === undefined) c.fail('CONFIG_NAME_RESOLVES', `${at}.chain`, `is ${show(t.chain)}; a chain declared in config.bones is required`);
+        // A chain track keys rotate on every link (idleMotion), one link per point.
+        else for (let k = 0; k < links; k++) claim(`${String(t.chain)}${k}.rotate`, `${at} (chain "${String(t.chain)}", link ${k})`);
         if ('amps' in t && c.array(`${at}.amps`, t.amps, true)) {
           const amps = t.amps as Json[];
           amps.forEach((a, k) => c.number(`${at}.amps[${k}]`, a));
@@ -877,7 +886,7 @@ function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
       if (typeof t.bone !== 'string' || !bones.has(t.bone)) c.fail('CONFIG_NAME_RESOLVES', `${at}.bone`, `is ${show(t.bone)}; a declared bone is required`);
       if ('prop' in t && !(SINGLE_PROPS as readonly string[]).includes(t.prop as string)) {
         c.fail('CONFIG_FIELD_TYPE', `${at}.prop`, `is ${show(t.prop)}; one of ${SINGLE_PROPS.join(', ')} is required`);
-      }
+      } else if ('prop' in t && typeof t.bone === 'string' && bones.has(t.bone)) claim(`${t.bone}.${String(t.prop)}`, at);
       if ('amp' in t) c.number(`${at}.amp`, t.amp);
       if ('period' in t) periodFits(`${at}.period`, t.period);
       if ('phase' in t) c.number(`${at}.phase`, t.phase);
@@ -886,7 +895,7 @@ function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
   }
   if ('blink' in m) {
     const b = c.object(`${p}.blink`, m.blink, ['t', 'eyes', 'squash'], ['brows', 'brow_drop', 'still']);
-    if (b === null) return;
+    if (b === null) return refuseSharedTargets(c, claims);
     if ('t' in b) c.number(`${p}.blink.t`, b.t, 'non-negative');
     if ('squash' in b) c.number(`${p}.blink.squash`, b.squash, 'positive');
     if ('brow_drop' in b) c.number(`${p}.blink.brow_drop`, b.brow_drop);
@@ -908,6 +917,15 @@ function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
           if (typeof name !== 'string' || !bones.has(name)) c.fail('CONFIG_NAME_RESOLVES', `${p}.blink.${key}[${k}]`, `is ${show(name)}; a declared bone is required`);
           if (typeof name === 'string') at.set(name, [...(at.get(name) ?? []), k]);
         });
+        // The group track keys one property on every member: scaley for the
+        // eyes, translatey for the brows — and the brows track is written only
+        // when brow_drop is stated beside them (idleMotion). A member named
+        // twice is CONFIG_BLINK_GROUP_UNIQUE's, so each bone claims once, at
+        // its first index.
+        const prop = key === 'eyes' ? 'scaley' : 'translatey';
+        if (key === 'eyes' || 'brow_drop' in b) {
+          for (const [name, ks] of at) if (bones.has(name)) claim(`${name}.${prop}`, `${p}.blink.${key}[${ks[0]}] (the blink's ${key} group, which keys ${prop} on every member)`);
+        }
         // rigc refuses a member named twice (`group "eyes" names member "eye"
         // twice`) at the gate, one stage late — issue #45, the sibling of the
         // empty group above. One refusal per repeated name, in first-seen order.
@@ -923,5 +941,28 @@ function checkMotion(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
       }
     }
     if ('still' in b) checkBlinkStill(c, b.still, b.eyes, bones, regions);
+  }
+  refuseSharedTargets(c, claims);
+}
+
+/**
+ * Two tracks keying one bone property — two single tracks, a single track
+ * beside a chain link's rotate or a blink group's member — are one refusal
+ * per property, naming every track that keys it (issue #49). rigc refuses the
+ * pair at the rig gate (`animation "idle" has two tracks on eye.scaley`), one
+ * stage after the input that was wrong; the loader knows every track it
+ * writes. The control bones the rig stage adds (`<bone>_ctl`) cannot make two
+ * distinct targets one: the rename is the same suffix on every key of a bone,
+ * and a declared bone already holding the control's name is the rig stage's
+ * refusal, `RIG_CONTROL_NAME_FREE`.
+ */
+function refuseSharedTargets(c: Check, claims: ReadonlyMap<string, string[]>): void {
+  for (const [target, by] of claims) {
+    if (by.length < 2) continue;
+    c.fail(
+      'CONFIG_BONE_PROPERTY_KEYED_ONCE',
+      `bone property "${target}"`,
+      `is keyed by ${by.length} tracks: ${by.join(' and ')}; one track per bone property is required — the idle would hold ${by.length} timelines on ${target}, and rigc refuses two tracks on one bone property. Merge them into one track, or key another property or bone`,
+    );
   }
 }

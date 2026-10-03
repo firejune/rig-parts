@@ -108,7 +108,8 @@ usage:
       (RIG_BLINK_HOLD_SPANS_A_FRAME otherwise); no blink when the config
       states no motion.blink, and a blink group that names no bone, or one
       bone twice, is refused by the loader, CONFIG_BLINK_GROUP_MEMBERS or
-      CONFIG_BLINK_GROUP_UNIQUE, before rigc starts. --parts is the
+      CONFIG_BLINK_GROUP_UNIQUE, before rigc starts, as are two tracks on one
+      bone property, CONFIG_BONE_PROPERTY_KEYED_ONCE. --parts is the
       directory holding parts.json and parts/<name>.png. The result is built
       through spine-rigc (profile spine-html, packed with --page-edges and
       --pack-shape as for check; rigc's build gates the compile and the packed pages on disk) in a
