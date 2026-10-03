@@ -152,7 +152,7 @@ import {
 } from './src/raster/index.ts';
 import { checkProposal, compare, compareLines, lint, lintLine, type Proposal, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
-import { islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_EXPECT, rigConfig, rigImages, rigParts, writeRigFixture } from './fixtures/rig.ts';
+import { block, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, writeRigFixture } from './fixtures/rig.ts';
 import { blinkHoldProblems, buildRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText } from './src/rig.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
@@ -1181,7 +1181,9 @@ function runBlinkConfigCases(say: (name: string, ok: boolean, detail: string, wh
   );
 
   const twiceEyes = refusals(() => parseConfig(blinkCfg((b) => (b.eyes = ['head', 'head']))));
-  const thriceBrows = refusals(() => parseConfig(blinkCfg((b) => (b.brows = ['head', 'chest', 'head', 'head']))));
+  // hip, not chest: the fixture keys chest.translatey with a single track, so
+  // a brows group naming chest is also two tracks on one property (issue #49).
+  const thriceBrows = refusals(() => parseConfig(blinkCfg((b) => (b.brows = ['head', 'hip', 'head', 'head']))));
   const bothOnce = refusals(() => parseConfig(blinkCfg((b) => (b.eyes = ['head', 'chest']))));
   const te = one(twiceEyes);
   const tb = one(thriceBrows);
@@ -1194,8 +1196,36 @@ function runBlinkConfigCases(say: (name: string, ok: boolean, detail: string, wh
       tb.object === 'config.motion.blink.brows' &&
       tb.detail.startsWith('names "head" 3 times (at [0], [2], [3])') &&
       bothOnce === null,
-    `eyes ["head", "head"] -> ${te === null ? codes(twiceEyes) : `${te.code}: ${te.object} — ${te.detail}`}; brows ["head", "chest", "head", "head"] -> ${tb === null ? codes(thriceBrows) : `${tb.code}: ${tb.detail.slice(0, 40)}…`}; eyes ["head", "chest"] -> ${codes(bothOnce)}`,
+    `eyes ["head", "head"] -> ${te === null ? codes(twiceEyes) : `${te.code}: ${te.object} — ${te.detail}`}; brows ["head", "hip", "head", "head"] -> ${tb === null ? codes(thriceBrows) : `${tb.code}: ${tb.detail.slice(0, 40)}…`}; eyes ["head", "chest"] -> ${codes(bothOnce)}`,
     'issue #45: rigc refuses a group naming a member twice, but at the rig gate; the loader names the group, the bone and every index it sits at, once per repeated bone, and two distinct members still load',
+  );
+
+  // Issue #49: two tracks keying one bone property. The three shapes, each a
+  // refusal naming the property and both tracks by their config paths.
+  const withTracks = (...extra: Array<Record<string, unknown>>): Record<string, unknown> => {
+    const c = minimalConfig();
+    ((c.motion as Record<string, unknown>).tracks as unknown[]).push(...extra);
+    return c;
+  };
+  const sine = (bone: string, prop: string): Record<string, unknown> => ({ bone, prop, amp: 1, period: 4, phase: 0 });
+  const twoSingles = one(refusals(() => parseConfig(withTracks(sine('head', 'rotate'), sine('head', 'rotate')))));
+  const besideEyes = one(refusals(() => parseConfig(withTracks(sine('head', 'scaley')))));
+  const besideLink = one(refusals(() => parseConfig(withTracks(sine('hem1', 'rotate')))));
+  // The positive half: another property on the same bones (translatex beside the brows' translatey, scaley on a chain link), and both public example configs as tracked.
+  const otherProps = refusals(() => parseConfig(withTracks(sine('head', 'translatex'), sine('hem1', 'scaley'))));
+  const examples = exampleKeys().all.map((k) => ({ k, err: refusals(() => parseConfig(JSON.parse(readFileSync(join(EXAMPLES_DIR, k, 'config.json'), 'utf8')) as unknown)) }));
+  const keyedOnce = (q: Problem | null, target: string, first: string, second: string): boolean =>
+    q?.code === 'CONFIG_BONE_PROPERTY_KEYED_ONCE' && q.object === `bone property "${target}"` && q.detail.startsWith(`is keyed by 2 tracks: ${first} and ${second}; one track per bone property is required`);
+  say(
+    'CF42_TWO_TRACKS_ON_ONE_BONE_PROPERTY_ARE_REFUSED_NAMING_THE_PROPERTY_AND_BOTH_TRACKS',
+    keyedOnce(twoSingles, 'head.rotate', 'config.motion.tracks[2]', 'config.motion.tracks[3]') &&
+      keyedOnce(besideEyes, 'head.scaley', 'config.motion.tracks[2]', "config.motion.blink.eyes[0] (the blink's eyes group, which keys scaley on every member)") &&
+      keyedOnce(besideLink, 'hem1.rotate', 'config.motion.tracks[1] (chain "hem", link 1)', 'config.motion.tracks[2]') &&
+      otherProps === null &&
+      examples.length === 2 &&
+      examples.every((e) => e.err === null),
+    `two singles on head.rotate -> ${twoSingles === null ? 'not one refusal' : `${twoSingles.code}: ${twoSingles.object} — ${twoSingles.detail}`}; a single on head.scaley beside the eyes group -> ${besideEyes === null ? 'not one refusal' : `${besideEyes.object}: ${besideEyes.detail.slice(0, 130)}…`}; a single on hem1.rotate beside the hem chain -> ${besideLink === null ? 'not one refusal' : `${besideLink.object}: ${besideLink.detail.slice(0, 90)}…`}; head.translatex and hem1.scaley -> ${codes(otherProps)}; ${examples.map((e) => `examples/${e.k}/config.json -> ${codes(e.err)}`).join(', ')}`,
+    'issue #49: rigc refuses two tracks on one bone property (animation "idle" has two tracks on <bone>.<property>), but at the rig gate; the loader knows every track idleMotion writes — a chain keys rotate on each link, the eyes group scaley and the brows group translatey on each member — so it names the property and both tracks first, and a track on another property of the same bone still loads',
   );
 
   // The same forged config at rig and at build, with runners that count: the refusal must come before any rigc process.
@@ -1270,6 +1300,39 @@ function runBlinkConfigCases(say: (name: string, ok: boolean, detail: string, wh
         cleanCalls > 0,
       `rig -> ${twiceCodes.join('; ') || 'nothing'}, ${twiceRigCalls} rigc call(s); build stopped at ${twiceBuilt.stoppedAt ?? 'nothing'} with ${twiceFail.length} FAIL line(s) (${twiceFail[0]?.trim() ?? ''}), ${twiceBuildCalls} rigc call(s); the unforged config reached the runner ${cleanCalls} time(s) above`,
       'issue #45: rigc refused a member named twice (group "eyes" names member "eye" twice) at the gate, one stage late; the loader refuses it first, so neither stage hands the group to a rigc process — CF32\'s positive control is the witness that the runner is one that gets called',
+    );
+
+    // Issue #49: a proposal config with its first track written twice — the same walk, the same counting runners.
+    const cleanMotion = clean.motion as Record<string, unknown>;
+    const cleanTracks = cleanMotion.tracks as unknown[];
+    const shared = { ...clean, motion: { ...cleanMotion, tracks: [...cleanTracks, cleanTracks[0]] } };
+    writeFileSync(join(dir, 'shared.json'), JSON.stringify(shared));
+    const sharedBefore = calls.length;
+    const sharedRig = refusals(() => rigStage({ config: join(dir, 'shared.json'), parts: dir, out: join(dir, 'shared-out') }, counting('shared-rig'), scratch, quiet));
+    const sharedRigCalls = calls.length - sharedBefore;
+    const sharedLines: string[] = [];
+    const sharedBuilt = build(
+      { config: join(dir, 'shared.json'), source: join(dir, 'painting.png'), full: join(dir, 'absent-full'), head: join(dir, 'absent-head'), out: join(dir, 'shared-build'), seam: 'near-white', project: 'core', loop: false, pageEdges: DEFAULT_PAGE_EDGES },
+      { rig: counting('shared-build-rig'), check: counting('shared-build-check'), checkBin: 'counting', scratch },
+      (l) => sharedLines.push(l),
+    );
+    const sharedBuildCalls = calls.length - sharedBefore - sharedRigCalls;
+    const sharedProblems = sharedRig?.problems ?? [];
+    const sharedFail = sharedLines.filter((l) => l.includes('FAIL'));
+    const lastAt = `config.motion.tracks[${cleanTracks.length}]`;
+    say(
+      'CF43_TWO_TRACKS_ON_ONE_BONE_PROPERTY_STOP_RIG_AND_BUILD_BEFORE_ANY_RIGC_PROCESS',
+      sharedProblems.length > 0 &&
+        sharedProblems.every((q) => q.code === 'CONFIG_BONE_PROPERTY_KEYED_ONCE' && q.detail.includes('config.motion.tracks[0]') && q.detail.includes(lastAt)) &&
+        sharedRigCalls === 0 &&
+        sharedBuilt.stoppedAt === 'assemble' &&
+        sharedBuildCalls === 0 &&
+        sharedFail.length === sharedProblems.length &&
+        sharedFail.every((l) => l.includes('CONFIG_BONE_PROPERTY_KEYED_ONCE')) &&
+        !existsSync(join(dir, 'shared-out')) &&
+        cleanCalls > 0,
+      `the proposal's tracks[0] written again as ${lastAt}: rig -> ${sharedProblems.length} refusal(s) (${sharedProblems[0] === undefined ? 'none' : `${sharedProblems[0].code}: ${sharedProblems[0].object} — ${sharedProblems[0].detail.slice(0, 120)}…`}), ${sharedRigCalls} rigc call(s); build stopped at ${sharedBuilt.stoppedAt ?? 'nothing'} with ${sharedFail.length} FAIL line(s), ${sharedBuildCalls} rigc call(s); the unforged config reached the runner ${cleanCalls} time(s) above`,
+      'issue #49: rigc refused the pair at the gate (animation "idle" has two tracks on …), one stage after the config that was wrong; the loader refuses it first, so neither stage starts a rigc process — CF32\'s positive control is the witness that the runner is one that gets called',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -1673,26 +1736,37 @@ function runRigSuite(): number {
 
     // The mutant is a spec the loader accepts and rigc refuses. It was an
     // empty brows list until issue #35 made the loader refuse that
-    // (CONFIG_BLINK_GROUP_MEMBERS), then a brows list naming "eye" twice until
+    // (CONFIG_BLINK_GROUP_MEMBERS), a brows list naming "eye" twice until
     // issue #45 made the loader refuse that too (CONFIG_BLINK_GROUP_UNIQUE,
-    // RG40). Now it is a sine track on eye.scaley beside the blink's eyes
-    // group, which keys eye.scaley as well: rigc refuses two tracks on one
-    // bone property. The loader's acceptance is asserted here, so the day it
-    // learns this refusal too, this control says so instead of passing on the
-    // loader's line.
-    const redCfg = (() => {
-      const c = rigConfig();
-      ((c.motion as Record<string, unknown>).tracks as unknown[]).push({ bone: 'eye', prop: 'scaley', amp: 0.1, period: 4, phase: 0 });
-      return c;
-    })();
+    // RG40), and a sine track on eye.scaley beside the blink's eyes group until
+    // issue #49 made the loader refuse two tracks on one bone property
+    // (CONFIG_BONE_PROPERTY_KEYED_ONCE, RG42). Now the config is the fixture's
+    // own and the fault is in parts.json, which no config loader reads: the
+    // cloth mesh's box is the whole 40x40 rig, and rigc's spine-html profile
+    // refuses a mesh spanning the whole stage (A14_NO_FULL_FRAME_MESH). The
+    // loader's acceptance and the absence of any spine-parts refusal are
+    // asserted, so the day this repository learns the rule too, this control
+    // says so instead of passing on its own line.
+    const redParts = rigParts();
+    redParts.parts[0] = { ...redParts.parts[0], x: 0, y: 0, w: RIG_CANVAS[0], h: RIG_CANVAS[1], opaque_px: RIG_CANVAS[0] * RIG_CANVAS[1] };
+    const redImages = new Map(rigImages());
+    redImages.set('cloth', block(RIG_CANVAS[0], RIG_CANVAS[1]));
+    const redCfg = rigConfig();
     const redLoads = refusals(() => parseConfig(redCfg));
-    const red = writeRigFixture(join(dir, 'red'), redCfg);
+    const red = writeRigFixture(join(dir, 'red'), redCfg, redImages, redParts);
     const redRun = runCli(['rig', '--config', red.config, '--parts', red.parts, '--out', join(dir, 'red', 'out')]);
+    const redFail = redRun.out.split('\n').filter((l) => /^ {2}FAIL {2}/.test(l));
+    const fullFrame = `A14_NO_FULL_FRAME_MESH: mesh "cloth" spans the whole ${RIG_CANVAS[0]}x${RIG_CANVAS[1]} stage`;
     say(
       'RG05_A_SPEC_SPINE_RIGC_REFUSES_IS_REFUSED_AND_NOTHING_IS_WRITTEN',
-      redLoads === null && redRun.status === 1 && /^ {2}FAIL {2}RIG_RIGC_GREEN: rigc build --profile spine-html --pack --page-edges free/m.test(redRun.out) && redRun.out.includes('has two tracks on eye.scaley') && !existsSync(join(dir, 'red', 'out')),
-      `a sine track on eye.scaley beside the blink's eyes group — the loader: ${codes(redLoads)} — -> exit ${redRun.status}, ${(redRun.out.split('\n').find((l) => l.includes('RIG_RIGC_GREEN')) ?? '').trim().slice(0, 70)}… ${(/animation "idle" has two tracks on [^;]*/.exec(redRun.out) ?? ['no rigc line naming the two tracks'])[0]}; --out exists: ${existsSync(join(dir, 'red', 'out'))}`,
-      "the round trip is only a gate if a red one stops the write; rigc's own refusal is carried into the FAIL line so the reader sees what rigc said, and the mutant is one the loader lets through, or the line would be the loader's",
+      redLoads === null &&
+        redRun.status === 1 &&
+        redFail.length === 1 &&
+        /^ {2}FAIL {2}RIG_RIGC_GREEN: rigc build --profile spine-html --pack --page-edges free/.test(redFail[0]) &&
+        redFail[0].includes(fullFrame) &&
+        !existsSync(join(dir, 'red', 'out')),
+      `the fixture config (the loader: ${codes(redLoads)}) with parts.json placing cloth at 0,0 ${RIG_CANVAS[0]}x${RIG_CANVAS[1]} -> exit ${redRun.status}, ${redFail.length} FAIL line(s): ${(redFail[0] ?? '').trim().slice(0, 70)}… ${redFail[0]?.includes(fullFrame) === true ? fullFrame : 'no rigc line naming the full-frame mesh'}; --out exists: ${existsSync(join(dir, 'red', 'out'))}`,
+      "the round trip is only a gate if a red one stops the write; rigc's own refusal is carried into the FAIL line so the reader sees what rigc said, and the mutant is one the loader and the rig stage let through, or the line would be theirs — a mesh's extent comes from parts.json, which the config loader never reads",
     );
 
     // A rigc that dies before any gate line: the line it did print is the refusal's cause. The three stub
@@ -1738,6 +1812,25 @@ function runRigSuite(): number {
         !existsSync(join(dir, 'dup', 'out')),
       `brows ["eye", "eye"] through the rig CLI -> exit ${dupRun.status}, ${dupFail.length} FAIL line(s): ${dupFail[0]?.trim().slice(0, 200) ?? 'none'}; a rigc line printed: ${dupRun.out.includes('rigc build')}`,
       'issue #45: rigc refused this at the gate (group "brows" names member "eye" twice), one stage after the input that was wrong; the loader now names the field and the indices, and no rigc line is printed because no rigc process ran',
+    );
+
+    const pair = writeRigFixture(join(dir, 'pair'), (() => {
+      const c = rigConfig();
+      ((c.motion as Record<string, unknown>).tracks as unknown[]).push({ bone: 'eye', prop: 'scaley', amp: 0.1, period: 4, phase: 0 });
+      return c;
+    })());
+    const pairRun = runCli(['rig', '--config', pair.config, '--parts', pair.parts, '--out', join(dir, 'pair', 'out')]);
+    const pairFail = pairRun.out.split('\n').filter((l) => l.includes('FAIL'));
+    say(
+      'RG42_RG05S_SECOND_MUTANT_A_TRACK_BESIDE_THE_BLINK_ON_EYE_SCALEY_IS_NOW_THE_LOADERS_REFUSAL',
+      pairRun.status === 1 &&
+        pairFail.length === 1 &&
+        pairFail[0].includes('CONFIG_BONE_PROPERTY_KEYED_ONCE: bone property "eye.scaley" — is keyed by 2 tracks: config.motion.tracks[1] and config.motion.blink.eyes[0]') &&
+        !pairRun.out.includes('RIG_RIGC_GREEN') &&
+        !pairRun.out.includes('rigc build') &&
+        !existsSync(join(dir, 'pair', 'out')),
+      `a sine track on eye.scaley beside the blink's eyes group through the rig CLI -> exit ${pairRun.status}, ${pairFail.length} FAIL line(s): ${pairFail[0]?.trim().slice(0, 200) ?? 'none'}; a rigc line printed: ${pairRun.out.includes('rigc build')}`,
+      'issue #49: rigc refused this at the gate (animation "idle" has two tracks on eye.scaley; merge them into one track), one stage after the input that was wrong; the loader now names the property and both tracks, and no rigc line is printed because no rigc process ran',
     );
 
     const bogus = writeRigFixture(join(dir, 'bogus'), (() => {
@@ -1864,6 +1957,40 @@ function runRigSuite(): number {
     late?.problems.map((p) => p.code).join() === 'RIG_BLINK_INSIDE_IDLE' && taken?.problems.map((p) => `${p.code} ${p.object}`).join() === 'RIG_CONTROL_NAME_FREE bone "hem0"',
     `blink at 3.9 s in a 4 s idle -> ${codes(late)}: ${late?.problems[0]?.detail ?? ''}; a declared "hem0_ctl" -> ${codes(taken)}`,
     'a blink running past the last key writes keys out of order; a control whose name is taken would silently replace a declared bone',
+  );
+
+  // Issue #49's note: could the control rename make two distinct targets one?
+  // Only if a moved key lands on a name a user track or group member already
+  // holds — a declared "<bone>_ctl" (chain links end in a digit, so no link
+  // can be one). Planted both ways on the mesh-keyed hem0: a single track on a
+  // declared hem0_ctl beside the hem chain's rotate on hem0, and an eyes group
+  // naming hem0 and hem0_ctl. Under ctl each is RIG_CONTROL_NAME_FREE before
+  // any key moves; under direct nothing is renamed, so the targets stay two.
+  const ctlTaken = (edit: (c: Record<string, unknown>) => void): Record<string, unknown> => {
+    const c = rigConfig();
+    (c.bones as unknown[]).push({ name: 'hem0_ctl', parent: 'body', at: [14, 14] });
+    edit(c);
+    return c;
+  };
+  const onTrack = ctlTaken((c) => ((c.motion as Record<string, unknown>).tracks as unknown[]).push({ bone: 'hem0_ctl', prop: 'rotate', amp: 1, period: 4, phase: 0 }));
+  const inGroup = ctlTaken((c) => (((c.motion as Record<string, unknown>).blink as Record<string, unknown>).eyes = ['eye', 'hem0', 'hem0_ctl']));
+  const targetsOf = (r: ReturnType<typeof buildRig>): string[] => [
+    ...r.motion.animations.idle.tracks.flatMap((t) => (t.bone !== undefined ? [`${t.bone}.${t.property}`] : (r.motion.groups[t.group ?? ''] ?? []).map((b) => `${b}.${t.property}`))),
+  ];
+  const ctlOutcomes = [onTrack, inGroup].map((raw) => {
+    const cfg = parseConfig(raw);
+    const ctl = refusals(() => buildRig(cfg, rigParts(), rigImages()));
+    const direct = buildRig(cfg, rigParts(), rigImages(), undefined, 'direct');
+    const targets = targetsOf(direct);
+    return { ctl, targets, distinct: new Set(targets).size === targets.length && targets.includes('hem0.rotate') && targets.includes(raw === onTrack ? 'hem0_ctl.rotate' : 'hem0_ctl.scaley') };
+  });
+  say(
+    'RG43_A_DECLARED_CONTROL_NAME_CANNOT_MERGE_TWO_TRACKS_IT_IS_REFUSED_UNDER_CTL_AND_STAYS_TWO_UNDER_DIRECT',
+    ctlOutcomes.every((o) => o.ctl?.problems.map((q) => `${q.code} ${q.object}`).join() === 'RIG_CONTROL_NAME_FREE bone "hem0"' && o.distinct),
+    ctlOutcomes
+      .map((o, i) => `${i === 0 ? 'a track on a declared hem0_ctl.rotate beside the hem chain' : 'eyes ["eye", "hem0", "hem0_ctl"]'}: ctl -> ${codes(o.ctl)}; direct -> ${o.targets.length} target(s), ${o.distinct ? 'all distinct' : 'NOT distinct'} (${o.targets.join(', ')})`)
+      .join('; '),
+    'issue #49 asked whether moveKeysToControls could make two tracks one: it renames every key of a controlled bone x to x_ctl, the same suffix for every bone, so two targets merge only if x_ctl is already a target, i.e. a declared bone — which the rig stage refuses by name before the rename (RIG_CONTROL_NAME_FREE), and direct, which renames nothing, keeps apart; measured on spine-rigc 2.1.3, both direct rigs build green',
   );
 
   runIdleKeysCases(say);
