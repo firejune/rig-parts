@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.0](https://github.com/firejune/spine-parts/compare/v0.7.0...v0.8.0) (2026-10-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **check:** the default packed page changes (polygon); --pack-shape rect restores 0.7.0's page. check.json gains a key, pack_mode, after rigc_entry. A rigc older than 2.1.0 on PATH is refused (CHECK_PACK_SHAPE) under the default.
+
+### Features
+
+* **check:** take up spine-rigc 2.1 — read the pack line that ends in its shape, pass --pack-shape through with polygon as the default, and record pack_mode in check.json ([#63](https://github.com/firejune/spine-parts/issues/63)) ([6ed8e4d](https://github.com/firejune/spine-parts/commit/6ed8e4d159f414e67d202368a35a78df2733b828))
+
 ## [0.7.0](https://github.com/firejune/spine-parts/compare/v0.6.0...v0.7.0) (2026-10-02)
 
 
