@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/firejune/spine-parts/compare/v0.8.0...v0.8.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **config:** two tracks on one bone property are refused by the loader, before rigc ([#65](https://github.com/firejune/spine-parts/issues/65)) ([6cf8ac9](https://github.com/firejune/spine-parts/commit/6cf8ac9786a384127867b59bbcdccc74b11656bc)), closes [#49](https://github.com/firejune/spine-parts/issues/49)
+
 ## [0.8.0](https://github.com/firejune/spine-parts/compare/v0.7.0...v0.8.0) (2026-10-03)
 
 
