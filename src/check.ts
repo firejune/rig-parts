@@ -196,7 +196,7 @@ export const SPINEBOY_YARDSTICK = '1024x256, 40 region(s), 45.8% opaque (alpha >
  * `free` is the default here although rigc's own default is `pot`: the packed
  * page is this package's final artifact, and on the two public examples `free`
  * takes the page from 1024x2048 to 967x1338 (covered 56.3 % -> 91.2 %) and
- * from 512x2048 to 479x1166 (49.7 % -> 93.4 %), rigc 1.5.1, 2.0.3 and 2.1.3 (`rect`) alike. The cost was
+ * from 512x2048 to 479x1166 (49.7 % -> 93.4 %), rigc 1.5.1, 2.0.3, 2.1.3 and 2.10.1 (`rect`) alike. The cost was
  * measured on the same two builds. Each of the 49 idle frames differs from the
  * `pot` build's, by at most 1 level in any channel (demo 2,373 px, sample 651
  * px over all 49). On sample that moves STILL_REGIONS_DARK's reported
@@ -212,7 +212,7 @@ export const DEFAULT_PAGE_EDGES: PageEdges = 'free';
 /**
  * What two packed rectangles may share: spine-rigc's `build --pack
  * --pack-shape`, handed to it verbatim (in spine-rigc's CLI since 2.1.0; this
- * package's range starts at 2.1.3). `rect` keeps every region's cell apart;
+ * package's range starts at 2.10.1). `rect` keeps every region's cell apart;
  * `polygon` packs a region that only meshes draw by its emitted hull, so a
  * neighbour may sit inside its rectangle where the hull is not, with the
  * padding kept between footprints — a region attachment stays its rectangle
@@ -222,7 +222,8 @@ export const DEFAULT_PAGE_EDGES: PageEdges = 'free';
  * reason {@link DEFAULT_PAGE_EDGES} is `free`: the packed page is this
  * package's final artifact, rigc gates the footprints on the pages on disk
  * (`A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP`), and the cost is the class already
- * accepted for `free`. Measured with spine-rigc 2.1.3 (the full entry,
+ * accepted for `free`. Measured with spine-rigc 2.1.3, and again with 2.10.1,
+ * whose pages, atlases and idle frames are byte-identical to it (the full entry,
  * spine-core 4.3.13 beside it), `spine-parts build` on the two public examples
  * under `--page-edges free`: `polygon` takes demo's page from 967x1338 (91.2 %
  * covered) to 922x1348 (95.0 %), 3.9 % less area, and sample's from 479x1166

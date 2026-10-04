@@ -12,11 +12,11 @@
  * refuses by name rather than misreading. So adding `pngjs` would have been a
  * second codec for the same bytes, and two codecs are two answers.
  *
- * 🔌 **The deep path is the interface, for now.** spine-rigc's package.json has
- * no `exports` map, so `spine-rigc/tools/plate.ts` is how a consumer reaches the
- * codec and it is what the installed package resolves. If rigc adds an
- * `exports` map that omits these paths, this import is what breaks, by name,
- * and `bun run smoke` is where that is seen first.
+ * 🔌 **The deep path is the interface.** spine-rigc's `exports` map carries
+ * `./*.ts`, so `spine-rigc/tools/plate.ts` is how a consumer reaches the codec
+ * and it is what the installed package resolves. If a rigc release narrows the
+ * map to omit these paths, this import is what breaks, by name, and
+ * `bun run smoke` is where that is seen first.
  */
 import { assertPng } from 'spine-rigc/src/png.ts';
 import { decodePng, encodePng } from 'spine-rigc/tools/plate.ts';

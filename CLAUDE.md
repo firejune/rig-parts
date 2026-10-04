@@ -136,11 +136,12 @@ paintings, their See-through runs, the parts and configs the reference produced
   origin top-left; Spine's world is y up. The conversion is spine-rigc's
   (`spine-rigc/src/transform.ts`), re-exported by `src/coords.ts`, and `TY07`
   refuses any other importer. Do not open-code `height - y` anywhere.
-- **spine-rigc's deep paths are an interface.** spine-rigc has no `exports`
-  map, so `spine-rigc/tools/plate.ts` (PNG codec), `spine-rigc/tools/font5x7.ts`
-  and `spine-rigc/src/transform.ts` are imported by path. A spine-rigc release
-  that moves them breaks this package by name, and `bun run smoke` is where that
-  shows first.
+- **spine-rigc's deep paths are an interface.** spine-rigc's `exports` map
+  carries `./*.ts`, so `spine-rigc/tools/plate.ts` (PNG codec),
+  `spine-rigc/src/png.ts`, `spine-rigc/tools/font5x7.ts` and
+  `spine-rigc/src/transform.ts` are imported by path. A spine-rigc release that
+  moves them, or narrows the map, breaks this package by name, and
+  `bun run smoke` is where that shows first.
 - **Raster ops state which call they stand in for.** Each function in
   `src/raster/` names the OpenCV / SciPy / PIL call whose semantics it
   reproduces and what was measured against it; a known deviation is written in
@@ -161,7 +162,7 @@ paintings, their See-through runs, the parts and configs the reference produced
 | `bun run typecheck` | `tsc --noEmit` over the paths `tsconfig.json`'s `include` names |
 | `bun run lint` | one rule: `@typescript-eslint/no-explicit-any` as an error |
 | `bun run selftest` | every suite's positive and negative controls on generated fixtures, and the tree rules; `-- --corpus <dir>`, or fetched `examples/*/inputs` (`bun run fetch-examples`), adds the read-only corpus suite |
-| `bun run smoke` | the **package** rather than the tree: pack, install into an empty directory, run `--version`, `layers` (wrapper and PSD) and `sheet` from the install, with three planted broken packages that must go red. Needs a network |
+| `bun run smoke` | the **package** rather than the tree: pack, install into an empty directory, run `--version`, the installed `rigc --version` (the core entry), `layers` (wrapper and PSD), `sheet` and `check` on a generated rig from the install, with four planted broken packages that must go red. Needs a network |
 
 ## The selftest and its fixtures
 

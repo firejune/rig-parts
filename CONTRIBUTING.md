@@ -44,8 +44,9 @@ bun run smoke        # pack, install into an empty directory, run from the insta
 
 Reach for it before pushing anything that touches `files` in `package.json`,
 `bin/`, a runtime import that crosses a directory, or a dependency — the changes
-a green checkout cannot see. Its three planted broken packages run beside the
-green cases, so a run that passes has watched the check fail three times.
+a green checkout cannot see. Its four planted broken packages (a module, each
+dependency, removed; the Spine runtime added) run beside the two green cases,
+so a run that passes has watched the check fail four times.
 
 ## What a change has to clear
 
