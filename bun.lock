@@ -6,7 +6,7 @@
       "name": "spine-parts",
       "dependencies": {
         "ag-psd": "^31.0.2",
-        "spine-rigc": "^2.1.3",
+        "spine-rigc": "^2.10.1",
       },
       "devDependencies": {
         "@esotericsoftware/spine-core": "4.3.13",
@@ -198,7 +198,7 @@
 
     "shebang-regex": ["shebang-regex@3.0.0", "", {}, "sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A=="],
 
-    "spine-rigc": ["spine-rigc@2.1.3", "", { "bin": { "rigc": "bin/rigc.cjs" } }, "sha512-L03LsxuFLsoNMn41Sb90aoplKRM/4rCXqPZU96WqFld9wDJ8n8pnm7uRlxMWe8KUGDFYeHGaP3/HY7mmlzA8Cw=="],
+    "spine-rigc": ["spine-rigc@2.10.1", "", { "bin": { "rigc": "bin/rigc.cjs" } }, "sha512-SDb8hVoXv4QiUypOqup9g/WkQxQoR/1kFWdggXF8v1reqT9kzZ4gTgQbv4JC6xoCGwlh30SiSEl79Hrdp7xq+A=="],
 
     "tinyglobby": ["tinyglobby@0.2.17", "", { "dependencies": { "fdir": "^6.5.0", "picomatch": "^4.0.4" } }, "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g=="],
 

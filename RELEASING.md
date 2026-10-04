@@ -125,9 +125,11 @@ the `installs` job in `ci.yml`**, on every pull request and push to `main`: it
 runs `bun run smoke` ([`scripts/install_smoke.ts`](scripts/install_smoke.ts)),
 which packs a tarball from the branch, installs it into an empty directory,
 generates a fixture with the INSTALLED package's own codec and PSD writer, and
-runs `--version`, `layers` on a wrapper directory and on a PSD, and `sheet`
-from the install. Three packages are broken on purpose — `src/layers.ts` out of
-the pack, `spine-rigc` out of `dependencies`, `ag-psd` out of `dependencies` —
+runs `--version`, the installed `rigc --version` (which must name the core
+entry), `layers` on a wrapper directory and on a PSD, `sheet`, and `check` on a
+generated two-part rig from the install. Four packages are broken on purpose —
+`src/layers.ts` out of the pack, `spine-rigc` out of `dependencies`, `ag-psd`
+out of `dependencies`, `@esotericsoftware/spine-core` added to `dependencies` —
 each patched into an extraction of the tarball, never the checkout; a plant case
 is green only when the smoke went red at the step it names, naming what went
 missing. A correct package installed at a path with spaces and non-ASCII in it

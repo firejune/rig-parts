@@ -282,9 +282,10 @@ max for the APNG); a figure is a measurement of the file, not a bar. On the demo
 13,645,503 B lossless, 1,706,719 B indexed and 1,812,288 B GIF, both palette files at
 max 57, mean 1.601 — the two share one quantiser, so their error is the same by
 construction and the size is the difference. That is `--seam silhouette` (the README's
-animation, spine-rigc 2.1.3); with `--pack-shape rect` the same build writes 13,645,350,
-1,706,520 and 1,812,238 B, and with `--page-edges pot --pack-shape rect` 13,645,519,
-1,706,785 and 1,812,625 B, all at the same error. The loop shows the blink closed: the
+animation, spine-rigc 2.1.3, and 2.10.1 to the byte); with `--pack-shape rect` the same
+build writes 13,645,350, 1,706,520 and 1,812,238 B, and with `--page-edges pot
+--pack-shape rect` 13,645,519, 1,706,785 and 1,812,625 B, all at the same error (2.10.1
+reproduces both). The loop shows the blink closed: the
 eyes' hold is at least one 12 fps frame (below), so whatever `motion.blink.t` is, one
 idle frame lands inside it, and `check.json`'s `BLINK_NO_HOLE.idle_frames_closed`
 names it — `[29]` on both examples.
@@ -303,9 +304,10 @@ the least-area page the parts need. `--page-edges pot` is the opt-out: a power o
 two on both edges, which is the page every build wrote before this flag. The pack
 line says which one ran, because rigc writes `, page edges free` after the padding under
 `free`. Measured on the two examples by `tools/atlas_population.ts` with rigc 1.5.1, and
-again with rigc 2.0.3 and with rigc 2.1.3 under `--pack-shape rect` (the frames table
+again with rigc 2.0.3, 2.1.3 and 2.10.1 under `--pack-shape rect` (the frames table
 by the same idle render), which reproduced every figure in both tables and the one
-check figure below:
+check figure below (2.10.1: pages, atlases, idle frames and `check.json` byte-identical
+to 2.1.3's):
 
 | build | page | covered | page opaque | page / figure |
 | --- | --- | --- | --- | --- |
@@ -339,9 +341,11 @@ attachment stays its rectangle. rigc gates the result on the packed pages with
 `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` (SKIP on the compile pass, where every part has
 its own page; PASS on the packed pass, both shapes, both examples). The pack line ends
 `, shape rect` or `, shape polygon` under either, and `check.json`'s `pack_mode` records
-both flags. Measured on the two examples with spine-rigc 2.1.3 (the full entry,
-spine-core 4.3.13 beside it), `spine-parts build` with `--page-edges free` and each
-shape, the table columns by `tools/atlas_population.ts`:
+both flags. Measured on the two examples with spine-rigc 2.1.3, and again with 2.10.1,
+whose pages, atlases, idle frames and `check.json` are byte-identical to 2.1.3's under
+both shapes and both edges (the full entry, spine-core 4.3.13 beside it),
+`spine-parts build` with `--page-edges free` and each shape, the table columns by
+`tools/atlas_population.ts`:
 
 | build | page | page area | covered | page opaque | page / figure |
 | --- | --- | --- | --- | --- | --- |
@@ -377,8 +381,11 @@ The hull ceiling (spine-parts #58: hull area over rectangle area, 0.812 on demo 
 rectangles are worth only what fits into them. On the polygon pages, read off the
 atlas, demo's packed rectangles overlap in 21 pairs (17 a region attachment inside a
 mesh's rectangle, 4 a mesh inside another's) and sample's in 12 (10 and 2); no two
-region attachments overlap. More would take tighter hulls, meshes in place of
-regions, or a stronger nesting search in rigc, each its own card.
+region attachments overlap. Meshes in place of regions would be rigc's stage 2 of
+polygon packing (firejune/rigc#1093), which rigc measured and folded: on the three
+production rigs most favourable to it, it adds 0.15 % of the rectangle area over
+stage 1 at tolerance 0, and nothing at the mesher's tolerance 1 or under `pot`; on
+these two examples −0.3 to −1.3 points. No build converts a region attachment.
 
 `--project core` (the default) is the reference's projection rule: a layer takes the
 painting's pixel only inside its top-most `alpha >= 250` area eroded by a 5x5 square,
@@ -643,7 +650,7 @@ See-through with another seed.
 | `CHECK_RIGC_PRESENT` | no `rigc` binary found (every place looked is listed) | `bun install` |
 | `CHECK_INPUT_PRESENT` on `…/parts.json` | `--parts` named a directory without `parts.json` — most often `parts/` itself. The detail says it: "--parts names the directory holding parts.json and parts/, not parts/ itself (after build, that is build's --out, whose rig is <out>/rig); without --parts it is --rig", and names the parent when the parent holds `parts.json` | `--parts` — the directory above `parts/` |
 | `CHECK_INPUT_PRESENT`, `CHECK_INPUT_IS_JSON`, `CHECK_PART_PNG_PRESENT`, `CHECK_PART_PNG_MATCHES_BOX`, `CHECK_PART_SLOT_PRESENT`, `CHECK_RIG_STAGE_PRESENT`, `CHECK_RIG_STAGE_IS_THE_CANVAS`, `CHECK_RIG_ROOT_BONE`, `CHECK_IDLE_PRESENT` | the rig directory is incomplete or disagrees with `parts.json` (`CHECK_PART_SLOT_PRESENT`: a part with no slot of its own name, which the judgement lines render it by) | re-run rig (`build` does both) |
-| `CHECK_RIGC_VERSION` | `rigc --version` is below 1.4.0, or prints no version: its `render` has no `--geometry`, which `TEXTURE_STRETCH` reads. Refused before anything is built | `bun install` (this package depends on spine-rigc ^2.1.3), or put a newer `rigc` first on `PATH` |
+| `CHECK_RIGC_VERSION` | `rigc --version` is below 1.4.0, or prints no version: its `render` has no `--geometry`, which `TEXTURE_STRETCH` reads. Refused before anything is built | `bun install` (this package depends on spine-rigc ^2.10.1), or put a newer `rigc` first on `PATH` |
 | `CHECK_RIGC_ENTRY`, `CHECK_RIGC_ENTRY_READS` | `rigc --version` names no entry (a rigc below 2.0.0), or names one in neither launcher form (`entry: cli.ts — @esotericsoftware/spine-core <v> present`, `entry: cli_core.ts — @esotericsoftware/spine-core absent — …`); `check.json`'s `rigc_entry` records the one that gated the build | `bun install` |
 | `CHECK_RIGC_GREEN` | a rigc step failed; its line is quoted | as `RIG_RIGC_GREEN` |
 | `CHECK_LOOP_LAST_FRAME_AT_DURATION` | the idle's last frame does not sit at `duration` | `motion.duration` — a whole number of 1/12 s |
@@ -659,7 +666,7 @@ See-through with another seed.
 | `LOOP_ENCODE` | the loop encoder refused a frame (translucent pixel in a GIF, a size change) | the frames; for a translucent frame write the lossless or the indexed APNG, which keep alpha |
 | `CHECK_PACK_LINE_READS` | rigc printed a `pack:` line that is not `pack: <page> <W>x<H>, <N> region(s), <P>% covered, padding <D>`, then `, page edges free` or nothing, then `, shape rect`, `, shape polygon` or nothing (spine-rigc 2.1 prints the shape; 1.5–2.0 printed none, read as `rect`); an unknown shape is this refusal; the line is quoted | a rigc this package does not know the output of; report it, with `rigc --version` |
 | `CHECK_PACK_PAGE_EDGES` | the pack line disagrees with the `--page-edges` the build was run with — its `, page edges free` clause is there under `pot` or missing under `free`, or a `pot` page is not a power of two on both edges | a rigc problem; report it, with `rigc --version` |
-| `CHECK_PACK_SHAPE` | the pack line disagrees with the `--pack-shape` the build was run with — it ends `, shape rect` under `polygon` or `, shape polygon` under `rect`, or it has no shape clause (the 1.5–2.0 form, read as `rect`) under `polygon` | a rigc older than 2.1.0 on `PATH`: rigc 2.0.3 takes `--pack-shape` without a word, packs by rectangles and prints the form with no shape clause, so this refusal is what catches it — `bun install` (this package depends on spine-rigc ^2.1.3); otherwise a rigc problem, report it with `rigc --version` |
+| `CHECK_PACK_SHAPE` | the pack line disagrees with the `--pack-shape` the build was run with — it ends `, shape rect` under `polygon` or `, shape polygon` under `rect`, or it has no shape clause (the 1.5–2.0 form, read as `rect`) under `polygon` | a rigc older than 2.1.0 on `PATH`: rigc 2.0.3 takes `--pack-shape` without a word, packs by rectangles and prints the form with no shape clause, so this refusal is what catches it — `bun install` (this package depends on spine-rigc ^2.10.1); otherwise a rigc problem, report it with `rigc --version` |
 | `BUILD_ARTIFACT_PRESENT` | the packed build lacks its `.json`, `.atlas` or page | a rigc problem; report it |
 
 ## 7. The bars `check` enforces, and what only an eye answers today
@@ -672,7 +679,7 @@ implementation's bars):
   pages on disk. There is no `spine` gate of its own: `spine-html` holds every rule
   `spine` measures (on the demo, rigc 1.5.1 and 2.0.3: `validate --profile spine`'s 14
   measured rules are all among the build's 23, the 15 others not in `spine`; rigc
-  2.1.3: the same 14 among the build's 24, which adds
+  2.1.3 and 2.10.1: the same 14 among the build's 24, which adds
   `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` on the packed pass, 16 not in `spine`; `CH09`
   holds it on every fetched example);
 - **seam**: the setup-pose render against the flat composite of `parts/`: mean

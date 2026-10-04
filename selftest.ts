@@ -115,6 +115,7 @@ import {
 } from './src/assemble.ts';
 import { buildGateLines, causeLines, chainLine, measuredRules, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
+import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
 import { cropToSpineY } from './src/coords.ts';
@@ -1990,7 +1991,7 @@ function runRigSuite(): number {
     ctlOutcomes
       .map((o, i) => `${i === 0 ? 'a track on a declared hem0_ctl.rotate beside the hem chain' : 'eyes ["eye", "hem0", "hem0_ctl"]'}: ctl -> ${codes(o.ctl)}; direct -> ${o.targets.length} target(s), ${o.distinct ? 'all distinct' : 'NOT distinct'} (${o.targets.join(', ')})`)
       .join('; '),
-    'issue #49 asked whether moveKeysToControls could make two tracks one: it renames every key of a controlled bone x to x_ctl, the same suffix for every bone, so two targets merge only if x_ctl is already a target, i.e. a declared bone — which the rig stage refuses by name before the rename (RIG_CONTROL_NAME_FREE), and direct, which renames nothing, keeps apart; measured on spine-rigc 2.1.3, both direct rigs build green',
+    'issue #49 asked whether moveKeysToControls could make two tracks one: it renames every key of a controlled bone x to x_ctl, the same suffix for every bone, so two targets merge only if x_ctl is already a target, i.e. a declared bone — which the rig stage refuses by name before the rename (RIG_CONTROL_NAME_FREE), and direct, which renames nothing, keeps apart; measured on spine-rigc 2.1.3 and again on 2.10.1, both direct rigs build green',
   );
 
   runIdleKeysCases(say);
@@ -3607,7 +3608,7 @@ function runCheckSuite(): number {
   );
 
   // spine-rigc 2.1's pack line ends in the shape it packed under, after the page-edges clause or after the padding
-  // (the four lines below are the forms rigc 2.1.3 printed on the public examples, both edges by both shapes). The
+  // (the four lines below are the forms rigc 2.1.3 and 2.10.1 printed on the public demo, both edges by both shapes). The
   // 1.5-2.0 form above, with no shape clause, reads as rect; an unknown shape, or the clauses out of order, is refused
   // by name; and a shape that disagrees with the --pack-shape passed is refused as edges are. Every expectation is the
   // line's own text.
@@ -3690,10 +3691,19 @@ function runCheckSuite(): number {
     "spine-rigc 2.0's launcher chooses which validator gates a build by whether spine-core resolves beside it, and check.json records which one did; a reader that took any entry: line would record a third entry as one of the two",
   );
 
-  // Both entries' build reports through the gate filter and the green test. The lines are spine-rigc 2.1.3's
+  // Both entries' build reports through the gate filter and the green test. The lines are spine-rigc 2.10.1's
   // on one build of the demo, the compile pass (clauses and paths cut): the core entry prints 52 assertions, an A00
-  // SKIP and a here: line; the full entry prints 50.
+  // SKIP, the figures line the full entry prints (since 2.2.0, firejune/rigc#1114) and a here: line; the full entry
+  // prints 50. The core entry's 2.1.3 form, whose figures line carried physicsConstraints alone, is still read.
   const coreOut = [
+    "  SKIP  A00_ROUNDTRIP_PARSE: spine-core's parser is the subject of this rule and this entry links none of it",
+    '  ..    52 assertions: 24 measured (24 passed, 0 failed), 28 skipped, 0 not in profile "spine-html"',
+    '  ..    pages=22 regions=22 bones=72 slots=22 animations=1 version=4.3.13 regionAttachments=14 meshAttachments=8 physicsConstraints=0 rig=demo_painting profile=spine-html',
+    "  ..    here: 43 rule(s) on the model side over the document, 8 of the round trip's own restated over the emitted text; not run: A00_ROUNDTRIP_PARSE",
+    '  ..    pack: skeleton.png 922x1348, 22 region(s), 95.0% covered, padding 2, page edges free, shape polygon',
+    'rigc: wrote /x/skeleton.json',
+  ].join('\n');
+  const core213Out = [
     "  SKIP  A00_ROUNDTRIP_PARSE: spine-core's parser is the subject of this rule and this entry links none of it",
     '  ..    52 assertions: 24 measured (24 passed, 0 failed), 28 skipped, 0 not in profile "spine-html"',
     '  ..    physicsConstraints=0',
@@ -3709,21 +3719,27 @@ function runCheckSuite(): number {
     'rigc: wrote /x/skeleton.json',
   ].join('\n');
   const coreLines = buildGateLines(coreOut);
+  const core213Lines = buildGateLines(core213Out);
   const fullLines = buildGateLines(fullOut);
   const coreRed = buildGateLines(coreOut.replace('(24 passed, 0 failed)', '(23 passed, 1 failed)'));
   say(
     'CK52_BOTH_RIGC_ENTRIES_BUILD_REPORTS_ARE_READ_AND_THE_CORE_ENTRYS_SAYS_WHICH_RULES_RAN',
-    coreLines.length === 3 &&
-      coreLines[1].trim().startsWith('..    here: ') &&
+    coreLines.length === 4 &&
+      coreLines[1].trim().startsWith('..    pages=22 ') &&
+      coreLines[2].trim().startsWith('..    here: ') &&
       gateGreen(0, coreLines) &&
       !gateGreen(0, coreRed) &&
       parsePackLines(coreLines).length === 1 &&
+      core213Lines.length === 3 &&
+      core213Lines[1].trim().startsWith('..    here: ') &&
+      gateGreen(0, core213Lines) &&
+      parsePackLines(core213Lines)[0].line === parsePackLines(coreLines)[0].line &&
       fullLines.length === 3 &&
       !fullLines.some((l) => l.includes('here: ')) &&
       gateGreen(0, fullLines) &&
       parsePackLines(fullLines)[0].line === parsePackLines(coreLines)[0].line,
-    `core entry: ${coreLines.map((l) => l.trim().slice(0, 40)).join(' | ')}, green ${gateGreen(0, coreLines)}, one failed red ${!gateGreen(0, coreRed)}; full entry: ${fullLines.map((l) => l.trim().slice(0, 40)).join(' | ')}, green ${gateGreen(0, fullLines)}`,
-    "the gate file is the verdict's record, so under the core entry it must carry the here: line that says the round trip did not run; the summary is read by its counts in both forms (52 and 50 assertions), and the pack line is the same line under either entry",
+    `core entry: ${coreLines.map((l) => l.trim().slice(0, 40)).join(' | ')}, green ${gateGreen(0, coreLines)}, one failed red ${!gateGreen(0, coreRed)}; its 2.1.3 form: ${core213Lines.map((l) => l.trim().slice(0, 40)).join(' | ')}, green ${gateGreen(0, core213Lines)}; full entry: ${fullLines.map((l) => l.trim().slice(0, 40)).join(' | ')}, green ${gateGreen(0, fullLines)}`,
+    "the gate file is the verdict's record, so under the core entry it must carry the here: line that says the round trip did not run; the summary is read by its counts in both forms (52 and 50 assertions), the figures line the core entry gained in 2.2.0 is kept as the full entry's is, and the pack line is the same line under either entry and either release",
   );
 
   // CHAIN_LAG reads motion.json and the bone tree only, so its controls need no render.
@@ -4388,6 +4404,40 @@ function runBuildSuite(): number {
         partsSame,
       `exit ${green.status}; --out holds [${tree.join(', ')}]; last lines: ${tail.map((l) => l.trim()).join(' | ')}; stage prefixes at ${stageOrder.join(', ')}; parts.json equals the fixture's hand-derived one: ${partsSame}`,
       "issue #2: the packed page is the artifact and the loose parts an intermediate, so the lines a reader stops at are the pack line and the three files; the parts.json equality is what shows build called the assemble stage rather than something like it",
+    );
+
+    // The Spine header of a build is the setup-pose box since spine-rigc 2.2.0 (firejune/rigc#907), and
+    // tools/atlas_population.ts reads a build's figure there, held to spine-core's getBounds through rigc's own
+    // writing of a bound (headerBoxNumber). The green build above is the positive control; the plants are its
+    // header's width moved one float32 step up, and its box removed. Every expectation is the header's own text.
+    const builtDir = join(out, 'check', 'build');
+    const headerGreen = existsSync(join(builtDir, 'skeleton.json')) ? buildHeaderProblem('green', builtDir) : 'no build';
+    const plantHeader = (name: string, edit: (box: Record<string, unknown>) => void): { box: Record<string, unknown>; problem: string | null } => {
+      const at = join(dir, name);
+      cpSync(builtDir, at, { recursive: true });
+      const doc = JSON.parse(readFileSync(join(at, 'skeleton.json'), 'utf8')) as { skeleton: Record<string, unknown> };
+      edit(doc.skeleton);
+      writeFileSync(join(at, 'skeleton.json'), JSON.stringify(doc));
+      return { box: doc.skeleton, problem: buildHeaderProblem(name, at) };
+    };
+    const ulpUp = (v: number): number => {
+      const bits = new Uint32Array(new Float32Array([v]).buffer);
+      bits[0] += v >= 0 ? 1 : -1;
+      return new Float32Array(bits.buffer)[0];
+    };
+    const wider = existsSync(builtDir) ? plantHeader('header-wider', (b) => { b.width = ulpUp(Number(b.width)); }) : null;
+    const boxless = existsSync(builtDir) ? plantHeader('header-boxless', (b) => { delete b.width; }) : null;
+    const box = wider?.box;
+    const widerHead = box === undefined ? '' : `BUILD_HEADER_IS_SETUP_BOUNDS: header-wider — the header box is x ${box.x}, y ${box.y}, width ${box.width}, height ${box.height}; spine-core's getBounds at the setup pose is `;
+    say(
+      'BU07_A_BUILDS_HEADER_IS_HELD_TO_THE_SETUP_POSE_BOUNDS_AND_ONE_FLOAT32_STEP_OFF_IS_REFUSED_WITH_BOTH_BOXES',
+      headerGreen === null &&
+        wider !== null &&
+        (wider.problem?.startsWith(widerHead) ?? false) &&
+        (wider.problem?.endsWith('(headerBoxNumber); they differ on width') ?? false) &&
+        (boxless?.problem?.startsWith('BUILD_HEADER_BOX: header-boxless — ') ?? false),
+      `the green build's header -> ${headerGreen ?? 'agrees'}; width one float32 step up -> ${wider?.problem ?? 'no build'}; no width -> ${boxless?.problem?.slice(0, 60) ?? 'no build'}`,
+      "rigc 2.2.0 moved the header from the stage to the setup-pose box, which is what the atlas instrument reads a build's figure from; it holds the four to getBounds at rigc's own rounding and nothing looser, so a header one float32 step off — the smallest change the format can carry — is a named disagreement quoting both boxes, not a figure",
     );
 
     // A stale file where build writes: it must be gone after a refusal, not left looking current.
