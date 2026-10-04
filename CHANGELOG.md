@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/firejune/spine-parts/compare/v0.8.1...v0.8.2) (2026-10-04)
+
+
+### Bug Fixes
+
+* **deps:** take up spine-rigc 2.10.1 — the header is the setup-pose box, held to getBounds by the atlas instrument; stale sentences made true ([#68](https://github.com/firejune/spine-parts/issues/68)) ([2277d86](https://github.com/firejune/spine-parts/commit/2277d86e406f833371de4447d8e5a67dcc7d5d1e)), closes [#67](https://github.com/firejune/spine-parts/issues/67)
+
 ## [0.8.1](https://github.com/firejune/spine-parts/compare/v0.8.0...v0.8.1) (2026-10-03)
 
 
