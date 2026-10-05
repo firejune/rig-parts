@@ -59,12 +59,47 @@ function paintOnlyConfig(): Record<string, unknown> {
   return { key: 'paint_only', generation: { ...g, seed: 11 } };
 }
 
+/**
+ * `paintOnlyConfig` with what nothing may read written into it (issue #70):
+ * an annotation, a `<name>_note` and an `x-` record inside
+ * `generation.sampler`, records in `generation`, in `generation.control` and
+ * in a LoRA, and records at the top level — an object, an array, a number and
+ * null. `edit` then changes the generation block, for the planted negative and
+ * for the sampler written in another key order.
+ */
+function paintRecordsConfig(edit: (g: Record<string, unknown>) => void = () => {}): Record<string, unknown> {
+  const base = paintOnlyConfig();
+  const g = base.generation as Record<string, unknown>;
+  const generation: Record<string, unknown> = {
+    ...g,
+    sampler: { ...(g.sampler as Record<string, unknown>), note: 'four steps is enough for a flat fixture', steps_note: 'a remark on one field', 'x-tried': [{ steps: 8, why: 'no visible gain' }] },
+    loras: (g.loras as Array<Record<string, unknown>>).map((l) => ({ ...l, 'x-source': { licence: 'fixture' } })),
+    control: { ...(g.control as Record<string, unknown>), 'x-why': 'hands in front' },
+    seed_note: 'seed 11 picked by eye',
+    'x-seeds_tried': [{ seed: 3, why: 'two figures' }, { seed: 7, why: 'cropped feet' }],
+    'x-attempts': 2,
+  };
+  edit(generation);
+  return { ...base, generation, 'x-status': { gate: 'green', build: '0.9.0' }, 'x-count': 3, 'x-empty': null, 'x-list': ['a', 1, null] };
+}
+
 const image = join(work, 'input.png');
 writeFileSync(image, encodePngBytes(layerRaster(WRAPPER_LAYERS[0])));
 writeFileSync(join(work, 'paint.json'), JSON.stringify(paintConfig(FAKE_CHECKPOINT)));
 writeFileSync(join(work, 'paint_missing_ckpt.json'), JSON.stringify(paintConfig('not_on_the_box.safetensors')));
 writeFileSync(join(work, 'paint_only.json'), JSON.stringify(paintOnlyConfig()));
 writeFileSync(join(work, 'paint_no_generation.json'), JSON.stringify({ key: 'paint_only' }));
+writeFileSync(join(work, 'paint_records.json'), JSON.stringify(paintRecordsConfig()));
+writeFileSync(join(work, 'paint_records_plant.json'), JSON.stringify(paintRecordsConfig((g) => { (g.sampler as Record<string, unknown>).cfg = 6.5; })));
+writeFileSync(
+  join(work, 'paint_reordered.json'),
+  JSON.stringify((() => {
+    const c = paintOnlyConfig();
+    const g = c.generation as Record<string, unknown>;
+    const s = g.sampler as Record<string, unknown>;
+    return { ...c, generation: { ...g, sampler: { scheduler: s.scheduler, sampler: s.sampler, cfg: s.cfg, steps: s.steps } } };
+  })()),
+);
 
 const env: Record<string, string> = {};
 for (const [k, v] of Object.entries(process.env)) if (k !== 'COMFY_HOST' && v !== undefined) env[k] = v;
@@ -93,6 +128,9 @@ const scenarios: Scenario[] = [
   { name: 'st-stale', mode: 'stale-manifest', args: (u, o) => st(u, o) },
   { name: 'paint-ok', mode: 'ok', args: (u, o) => ['comfy', 'paint', '--config', join(work, 'paint.json'), '--out', o, '--host', u, '--seeds', '2', '--wait', '2', ...fast] },
   { name: 'paint-only', mode: 'ok', args: (u, o) => ['comfy', 'paint', '--config', join(work, 'paint_only.json'), '--out', o, '--host', u, '--wait', '2', ...fast] },
+  { name: 'paint-records', mode: 'ok', args: (u, o) => ['comfy', 'paint', '--config', join(work, 'paint_records.json'), '--out', o, '--host', u, '--wait', '2', ...fast] },
+  { name: 'paint-records-plant', mode: 'ok', args: (u, o) => ['comfy', 'paint', '--config', join(work, 'paint_records_plant.json'), '--out', o, '--host', u, '--wait', '2', ...fast] },
+  { name: 'paint-reordered', mode: 'ok', args: (u, o) => ['comfy', 'paint', '--config', join(work, 'paint_reordered.json'), '--out', o, '--host', u, '--wait', '2', ...fast] },
   { name: 'paint-no-generation', mode: 'ok', args: (u, o) => ['comfy', 'paint', '--config', join(work, 'paint_no_generation.json'), '--out', o, '--host', u, '--wait', '2', ...fast] },
   { name: 'paint-missing-ckpt', mode: 'ok', args: (u, o) => ['comfy', 'paint', '--config', join(work, 'paint_missing_ckpt.json'), '--out', o, '--host', u, '--wait', '2', ...fast] },
 ];

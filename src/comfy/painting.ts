@@ -19,14 +19,16 @@
  *
  * The meta file holds the positive and negative prompts verbatim, what was
  * dropped as `DUP_WORDS`, where the pose words came from, the checkpoint, the
- * LoRAs and control as the graph used them (defaults resolved), the sampler,
- * the elapsed seconds and the prompt id — never the host.
+ * LoRAs, control and sampler as the graph used them (defaults resolved, each
+ * by its named fields, so an annotation or an `x-` record its author wrote in
+ * the config never reaches the meta), the elapsed seconds and the prompt id —
+ * never the host.
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PaintConfig } from '../config.ts';
 import { type Problem, refuseIfAny } from '../errors.ts';
-import { buildPrompts, checkGraph, paintingGraph, resolvedControl, resolvedLoras } from '../graphs.ts';
+import { buildPrompts, checkGraph, paintingGraph, resolvedControl, resolvedLoras, resolvedSampler } from '../graphs.ts';
 import { decodePngBytes, encodePngBytes } from '../raster/png.ts';
 import { renderSkeleton } from '../skeleton.ts';
 import { ComfyClient, historyImages, refuse } from './client.ts';
@@ -103,7 +105,7 @@ export async function runPainting(client: ComfyClient, run: PaintRun, say: (line
       key: run.config.key,
       checkpoint: g.checkpoint,
       loras: resolvedLoras(g.loras),
-      sampler: g.sampler,
+      sampler: resolvedSampler(g.sampler),
       control,
       pose_from: prompts.poseFrom,
       dropped: prompts.dropped,

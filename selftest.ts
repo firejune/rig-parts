@@ -1133,7 +1133,172 @@ function runConfigSuite(): number {
   );
 
   runBlinkConfigCases(say);
+  runRecordConfigCases(say);
   return bad();
+}
+
+/** A generation block the loader accepts; every value is a fixture's, none is read here. */
+function fixtureGeneration(): Record<string, unknown> {
+  return {
+    checkpoint: 'fixture_base.safetensors',
+    loras: [{ name: 'fixture_style.safetensors', strength: 0.6 }],
+    trigger: '',
+    identity: '1girl, solo',
+    sampler: { steps: 4, cfg: 6, sampler: 'euler', scheduler: 'normal' },
+    costume: 'grey coat',
+    negative_extra: '',
+    style: 'white background',
+    negative_pose: 'back view',
+    latent: [16, 24],
+    seed: 5,
+    pose: 'standing',
+  };
+}
+
+/**
+ * Issue #70: a key beginning `x-` holds any JSON value in every object the
+ * loader vouches for, and nothing reads it. The door, its edges, the three
+ * refusals that now name it, the part-name maps where it stays shut, and an
+ * early door. That nothing reads a record is BU08's (the build) and CF13's
+ * (the painting meta), byte for byte.
+ */
+function runRecordConfigCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const one = (err: PartsError | null): Problem | null => (err !== null && err.problems.length === 1 ? err.problems[0] : null);
+  const line = (q: Problem | null, err: PartsError | null): string => (q === null ? codes(err) : `${q.code}: ${q.object} — ${q.detail}`);
+  const kinds: Record<string, unknown> = { 'x-status': { gate: 'green', built_with: '0.8.2' }, 'x-seeds': [3, 7], 'x-builds': 2, 'x-reviewed': null };
+
+  // Three depths, four kinds of value at each, and x-seed_note holding an object.
+  const deep = { ...minimalConfig(), ...kinds };
+  const g = fixtureGeneration();
+  deep.generation = { ...g, ...kinds, 'x-seed_note': { why: 'a record, not an annotation' }, 'x-seeds_tried': [{ seed: 3, why: 'two figures' }], sampler: { ...(g.sampler as Record<string, unknown>), ...kinds } };
+  const motion = deep.motion as Record<string, unknown>;
+  motion.blink = { ...(motion.blink as Record<string, unknown>), ...kinds };
+  const deepErr = refusals(() => parseConfig(deep));
+  say(
+    'CF50_RECORDS_UNDER_X_KEYS_LOAD_AT_THREE_DEPTHS_HOLDING_AN_OBJECT_AN_ARRAY_A_NUMBER_AND_NULL',
+    deepErr === null,
+    `${Object.keys(kinds).join(', ')} (an object, an array, a number, null) at config, config.generation, config.generation.sampler and config.motion.blink, with generation.x-seed_note holding an object and generation.x-seeds_tried a list of seeds with reasons -> ${deepErr === null ? 'loads' : codes(deepErr)}`,
+    'issue #70: a project keeps its own records — gate results, rejected seeds — beside the conditions that made the rig; the record test comes before the annotation test, so x-seed_note is a record and may hold an object',
+  );
+
+  // The entry kinds that meet a test before Check.object: a bone entry (chain or
+  // single by `'chain' in entry`), a track (the same), a patch (a bespoke `bone`
+  // refusal first); and an entry of a part-name map, which Check.object checks.
+  const entriesCfg = minimalConfig();
+  const bones = entriesCfg.bones as Array<Record<string, unknown>>;
+  bones[0]['x-placed'] = [32, 40];
+  bones[3]['x-placed'] = null;
+  const tracks = (entriesCfg.motion as { tracks: Array<Record<string, unknown>> }).tracks;
+  tracks[0]['x-was'] = { amp: 0 };
+  tracks[1]['x-was'] = 1;
+  const asm = entriesCfg.assemble as Record<string, unknown>;
+  (asm.extend_below_crop as Array<Record<string, unknown>>)[0]['x-n'] = 0;
+  asm.patches = [{ name: 'hem', box: [2, 40, 30, 44], alpha: 'box', draw: 'back', 'x-bone': 'hip', 'x-from': { issue: 28 } }];
+  (entriesCfg.regions as Record<string, unknown>).hem = 'hip';
+  ((entriesCfg.meshes as Record<string, Record<string, unknown>>).robe)['x-grid_was'] = 4;
+  const entriesErr = refusals(() => parseConfig(entriesCfg));
+  const boneStill = structuredClone(entriesCfg);
+  ((boneStill.assemble as Record<string, unknown>).patches as Array<Record<string, unknown>>)[0].bone = 'hip';
+  const boneLine = one(refusals(() => parseConfig(boneStill)));
+  say(
+    'CF51_A_RECORD_ON_A_BONE_A_TRACK_A_PATCH_AN_EXTEND_AND_A_MESH_ENTRY_LOADS_AND_A_PATCH_BONE_IS_STILL_REFUSED',
+    entriesErr === null && boneLine?.code === 'CONFIG_KEY_KNOWN' && boneLine.object === 'config.assemble.patches[0].bone' && boneLine.detail.includes('config.regions.<name>'),
+    `x- records on bones[0] (single), bones[3] (chain), tracks[0] (single), tracks[1] (chain), extend_below_crop[0], patches[0] (x-bone among them) and meshes.robe -> ${entriesErr === null ? 'loads' : codes(entriesErr)}; the same patch with a plain bone besides -> ${line(boneLine, null)}`,
+    'a bone and a track are told chain from single by a test before Check.object, and a patch meets a bespoke bone refusal first; none of those tests looks at an x- key, so each entry is an object Check.object vouches for and the door is open there. That the records change no byte of the build is BU08\'s',
+  );
+
+  const status = one(refusals(() => parseConfig({ ...minimalConfig(), status: { gate: 'green' } })));
+  const nested = one(refusals(() => parseConfig({ ...minimalConfig(), motion: { ...(minimalConfig().motion as Record<string, unknown>), colour: 'warm' } })));
+  const doors = (q: Problem | null): boolean => q !== null && q.detail.includes('a project\'s own record goes under a key beginning "x-" (any JSON, read by nothing)') && q.detail.includes('a remark under note or <name>_note (a string)');
+  say(
+    'CF52_A_PLAIN_UNKNOWN_KEY_IS_STILL_REFUSED_AND_THE_REFUSAL_NAMES_BOTH_DOORS',
+    status?.code === 'CONFIG_KEY_KNOWN' && status.object === 'config.status' && status.detail.startsWith('is not a field here; known: key, ') && doors(status) && nested?.code === 'CONFIG_KEY_KNOWN' && nested.object === 'config.motion.colour' && doors(nested),
+    `status: {"gate":"green"} -> ${line(status, null)}; motion.colour -> ${nested === null ? 'not one refusal' : `${nested.code} ${nested.object}, naming the doors: ${doors(nested)}`}`,
+    'issue #70: the downstream author stripped the keys from a copy on every rebuild because the refusal listed the known fields and stopped; typo protection is the point of the loader, so the key is still refused, and the refusal now says where a record goes',
+  );
+
+  const near = ['xstatus', 'x_status', 'X-status', 'x-'].map((k) => ({ k, q: one(refusals(() => parseConfig({ ...minimalConfig(), [k]: { gate: 'green' } }))) }));
+  const shortest = refusals(() => parseConfig({ ...minimalConfig(), 'x-s': 1 }));
+  say(
+    'CF53_XSTATUS_X_UNDERSCORE_A_CAPITAL_X_AND_A_BARE_X_DASH_ARE_REFUSED_AND_X_DASH_ONE_CHARACTER_LOADS',
+    near.every(({ k, q }) => q?.code === 'CONFIG_KEY_KNOWN' && q.object === `config.${k}` && doors(q)) && shortest === null,
+    `${near.map(({ k, q }) => `"${k}" -> ${q === null ? 'not one refusal' : `${q.code} ${q.object}`}`).join('; ')}; "x-s" -> ${codes(shortest)}`,
+    'the prefix is exactly "x-" and a name after it: a near miss is a typo the loader names, not a record it swallows, and a bare "x-" names nothing',
+  );
+
+  const retiredAt = (key: string): Problem | null => one(refusals(() => parseConfig({ ...minimalConfig(), generation: { ...fixtureGeneration(), [key]: key === 'seed0' ? 3 : [3, 7] } })));
+  const tried = retiredAt('seeds_tried');
+  const seed0 = retiredAt('seed0');
+  const structured = (q: Problem | null): boolean => q?.code === 'CONFIG_KEY_RETIRED' && q.detail.includes('the search belongs in generation.seed_note') && q.detail.includes('or as a structured record in generation.x-seeds_tried');
+  say(
+    'CF54_A_RETIRED_SEED_KEY_STAYS_RETIRED_AND_ITS_REFUSAL_NAMES_THE_STRUCTURED_DOOR',
+    structured(tried) && tried?.object === 'config.generation.seeds_tried' && structured(seed0) && seed0?.object === 'config.generation.seed0',
+    `generation.seeds_tried -> ${line(tried, null)}; generation.seed0 -> ${seed0 === null ? 'not one refusal' : `${seed0.code}, naming the structured door: ${structured(seed0)}`}`,
+    'issue #70: a list of seeds with reasons is exactly the record the string rule refused; the retired key keeps its sentence, because a plain seeds_tried still is not a field, and gains the place a structured search now goes',
+  );
+
+  const objNote = one(refusals(() => parseConfig({ ...minimalConfig(), status_note: { gate: 'green' } })));
+  const samplerNote = one(refusals(() => parseConfig({ ...minimalConfig(), generation: { ...fixtureGeneration(), sampler: { ...(fixtureGeneration().sampler as Record<string, unknown>), note: 4 } } })));
+  const recordDoor = (q: Problem | null): boolean => q?.code === 'CONFIG_FIELD_TYPE' && q.detail.includes('an annotation is a string — a structured record goes under a key beginning "x-" (any JSON, read by nothing)');
+  say(
+    'CF55_A_NON_STRING_ANNOTATION_IS_STILL_REFUSED_AND_ITS_REFUSAL_NAMES_THE_RECORD_DOOR',
+    recordDoor(objNote) && objNote?.object === 'config.status_note' && objNote.detail.startsWith('is {"gate":"green"}; ') && recordDoor(samplerNote) && samplerNote?.object === 'config.generation.sampler.note',
+    `status_note: {"gate":"green"} -> ${line(objNote, null)}; generation.sampler.note: 4 -> ${samplerNote === null ? 'not one refusal' : `${samplerNote.code} ${samplerNote.object}`}`,
+    'a note is prose beside the value it explains, and the string rule is what keeps it that; an author who wrote an object there meant a record, and is told where one goes',
+  );
+
+  // The part-name maps: the refusal an x- key meets there, measured, is the one
+  // any part the plan does not make meets — the same code and the same words.
+  const mapCase = (name: string, edit: (c: Record<string, unknown>, key: string) => void): { x: string[]; plain: string[] } => {
+    const run = (key: string): string[] => {
+      const c = minimalConfig();
+      edit(c, key);
+      return refusals(() => parseConfig(c))?.problems.map((q) => `${q.code} ${q.object} — ${q.detail}`.replaceAll(key, '<part>')) ?? [];
+    };
+    return { x: run('x-foo'), plain: run(`ghost_${name}`) };
+  };
+  const maps = {
+    meshes: mapCase('meshes', (c, k) => { (c.meshes as Record<string, unknown>)[k] = { grid: 8, r: 4, segments: ['chest'] }; }),
+    regions: mapCase('regions', (c, k) => { (c.regions as Record<string, unknown>)[k] = 'head'; }),
+    still: mapCase('still', (c, k) => {
+      const m = c.motion as { blink: Record<string, unknown> };
+      m.blink.still = { [k]: { row: 3, bone: 'chest' } };
+    }),
+  };
+  const shut = Object.values(maps).every((m) => m.x.length === 1 && m.x.join() === m.plain.join());
+  const partCfg = minimalConfig();
+  ((partCfg.assemble as Record<string, unknown>).plan as unknown[]).push(['x-cape', 'full', 'bottomwear']);
+  (partCfg.regions as Record<string, unknown>)['x-cape'] = 'hip';
+  const partErr = refusals(() => parseConfig(partCfg));
+  const partMissing = structuredClone(partCfg);
+  delete (partMissing.regions as Record<string, unknown>)['x-cape'];
+  const unattached = one(refusals(() => parseConfig(partMissing)));
+  say(
+    'CF56_THE_DOOR_IS_SHUT_INSIDE_MESHES_REGIONS_AND_BLINK_STILL_WHERE_AN_X_KEY_IS_A_PART_NAME',
+    shut && maps.meshes.x[0].startsWith('CONFIG_NAME_RESOLVES config.meshes.<part> — names a part that neither assemble.plan nor assemble.patches makes') && maps.still.x[0].startsWith('CONFIG_NAME_RESOLVES config.motion.blink.still.<part> — names "<part>", which config.regions does not attach') && partErr === null && unattached?.code === 'CONFIG_PART_ATTACHED' && unattached.object === 'part "x-cape"',
+    `${Object.entries(maps).map(([k, m]) => `${k}["x-foo"] -> ${m.x.join('; ') || 'loads'} (a part named ghost_${k}: ${m.x.join() === m.plain.join() ? 'the same' : m.plain.join('; ')})`).join(' | ')}; a plan part named x-cape on a region -> ${codes(partErr)}, and with its region removed -> ${line(unattached, null)}`,
+    'issue #70: meshes, regions and blink.still are keyed by part name, so an x- key there is a part name and meets whatever a part the plan does not make meets — it is never a record nothing reads. The positive half: a part named x-cape is a part, attached and required to be like any other',
+  );
+
+  const dir = temp('records-early');
+  try {
+    const early = { key: 'fixture', ...kinds, seethrough: { resolution: 1024, steps: 30, seed: 42, offload: true, ...kinds }, assemble: { rig_scale: 0.5, ...kinds } };
+    const paintOnly = { key: 'fixture', ...kinds, generation: { ...fixtureGeneration(), ...kinds, sampler: { ...(fixtureGeneration().sampler as Record<string, unknown>), ...kinds } } };
+    writeFileSync(join(dir, 'early.json'), JSON.stringify(early));
+    writeFileSync(join(dir, 'paint.json'), JSON.stringify(paintOnly));
+    writeFileSync(join(dir, 'typo.json'), JSON.stringify({ ...early, status: { gate: 'green' } }));
+    const layersErr = refusals(() => loadEarlyConfig(join(dir, 'early.json'), 'layers'));
+    const paintErr = refusals(() => loadEarlyConfig(join(dir, 'paint.json'), 'paint'));
+    const typo = one(refusals(() => loadEarlyConfig(join(dir, 'typo.json'), 'layers')));
+    say(
+      'CF57_AN_EARLY_DOOR_ACCEPTS_A_RECORD_AND_STILL_REFUSES_A_PLAIN_UNKNOWN_NAMING_THE_DOORS',
+      layersErr === null && paintErr === null && typo?.code === 'CONFIG_KEY_KNOWN' && typo.object === 'config.status' && doors(typo),
+      `loadEarlyConfig(…, "layers") with records at config, seethrough and assemble -> ${codes(layersErr)}; loadEarlyConfig(…, "paint") with records at config, generation and generation.sampler -> ${codes(paintErr)}; the layers config plus a plain status -> ${line(typo, null)}`,
+      'the early doors read through the same Check.object, so a config that carries its records from the first step is not refused before the rig exists and accepted after',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** Issue #35: a blink group with no members, and brows stated without their drop, are the loader's refusals — before rig or build starts rigc. */
@@ -1724,6 +1889,37 @@ function runRigSuite(): number {
       a.every((t, i) => t === b[i]) && sameBytes,
       `in memory: rig.json, motion.json and mesh_report.json ${a.every((t, i) => t === b[i]) ? 'identical' : 'DIFFERENT'} across two builds; on disk: ${files1.length} file(s) from two CLI runs into two directories, ${sameBytes ? 'byte-identical' : 'DIFFERENT'}`,
       'determinism is a contract: spine-rigc compares a second compile byte for byte (A18), and the spec it compiles has to hold still first',
+    );
+
+    // Issue #70: the build fixtures carry no mesh entry and no blink, so the
+    // records there are held here, on the two rig fixtures that do — through
+    // the loader, then the rig stage, against the same configs without them.
+    const rigTexts = (cfg: CharacterConfig, parts: PartsFile, images: Map<string, Raster>): string[] => {
+      const built = buildRig(cfg, parts, images);
+      return [rigJsonText(built.rig), rigJsonText(built.motion), rigJsonText(built.meshReport)];
+    };
+    const rigRecords = withRecords(rigConfig());
+    const lashRecords = withRecords(lashConfig());
+    const rigPlant = withRecords(rigConfig()).cfg;
+    ((rigPlant.motion as { tracks: Array<Record<string, unknown>> }).tracks[0]).lag = 0.2;
+    const files3 = ['rig.json', 'motion.json', 'mesh_report.json'];
+    const sameAs = (x: string[], y: string[]): string => (x.every((t, i) => t === y[i]) ? 'byte-identical' : `${files3.filter((_, i) => x[i] !== y[i]).join(', ')} DIFFER`);
+    const plainRig = rigTexts(rigCfg(), rigParts(), rigImages());
+    const recRig = rigTexts(parseConfig(rigRecords.cfg), rigParts(), rigImages());
+    const plainLash = rigTexts(lashCfg(), lashParts(), lashImages());
+    const recLash = rigTexts(parseConfig(lashRecords.cfg), lashParts(), lashImages());
+    const plantRig = rigTexts(parseConfig(rigPlant), rigParts(), rigImages());
+    const lashAt = lashRecords.at.filter((w) => !rigRecords.at.includes(w));
+    say(
+      'RG44_X_RECORDS_ON_A_MESH_ENTRY_THE_BLINK_AND_A_STILL_CUT_LEAVE_THE_RIG_BYTE_IDENTICAL_AND_ONE_LAG_DOES_NOT',
+      rigRecords.at.some((w) => w.startsWith('meshes.')) &&
+        rigRecords.at.includes('blink') &&
+        lashAt.some((w) => w.startsWith('blink.still.')) &&
+        sameAs(plainRig, recRig) === 'byte-identical' &&
+        sameAs(plainLash, recLash) === 'byte-identical' &&
+        plantRig[1] !== plainRig[1],
+      `the rig fixture with records at ${rigRecords.at.join(', ')} -> rig.json, motion.json, mesh_report.json ${sameAs(plainRig, recRig)}; the blink-still fixture with records at ${lashAt.join(', ')} besides -> ${sameAs(plainLash, recLash)}; planted, the hem chain's lag 0.1 -> 0.2 besides -> ${sameAs(plainRig, plantRig)}`,
+      'issue #70: BU08 holds the records to every file a build writes, but its fixtures have no mesh entry and no blink; a mesh entry, the blink and a still cut are objects the loader vouches for too, and the rig stage is the one that reads them',
     );
 
     const wroteAll = ['images/cloth.png', 'images/eye.png', 'mesh_report.json', 'motion.json', 'rig.json'].join() === files1.join();
@@ -4342,6 +4538,47 @@ function buildArgs(dir: string, out: string, config = 'config.json'): string[] {
   return ['build', '--config', join(dir, config), '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--out', out];
 }
 
+/**
+ * A copy of `cfg` with `x-` records written into every object the loader
+ * vouches for that the config holds (issue #70): the top level, `assemble`,
+ * each `extend_below_crop` and `patches` entry, `seethrough`, each bone entry,
+ * each mesh entry, `motion`, each track and the blink — holding an object, an
+ * array, a number and null between them, and one named `x-…_note`, which is a
+ * record because the record test comes first. Nothing here changes a field.
+ * `at` lists every place a record was written, so a control says what its
+ * fixture actually held rather than what this function would write.
+ */
+function withRecords(cfg: Record<string, unknown>): { cfg: Record<string, unknown>; at: string[] } {
+  const c = structuredClone(cfg);
+  const at: string[] = [];
+  const add = (o: unknown, where: string, extra: Record<string, unknown>): void => {
+    if (typeof o !== 'object' || o === null || Array.isArray(o)) return;
+    Object.assign(o, extra);
+    at.push(where);
+  };
+  const each = (list: unknown, where: string, extra: (i: number) => Record<string, unknown>): void => {
+    if (Array.isArray(list)) list.forEach((o, i) => add(o, `${where}[${i}]`, extra(i)));
+  };
+  const values = (map: unknown, where: string, extra: Record<string, unknown>): void => {
+    if (typeof map === 'object' && map !== null) for (const [k, o] of Object.entries(map)) add(o, `${where}.${k}`, extra);
+  };
+  add(c, 'config', { 'x-status': { gate: 'green', built_with: '0.8.2' }, 'x-seeds_tried': [3, 7], 'x-builds': 2, 'x-reviewed': null, 'x-seed_note': { why: 'a record, not an annotation' } });
+  const a = c.assemble as Record<string, unknown> | undefined;
+  add(a, 'assemble', { 'x-why': { rig_scale: 'measured off the painting' } });
+  each(a?.extend_below_crop, 'extend_below_crop', (i) => ({ 'x-n': i }));
+  each(a?.patches, 'patches', () => ({ 'x-from': { issue: 28 } }));
+  add(c.seethrough, 'seethrough', { 'x-runs': ['full', 'head'] });
+  each(c.bones, 'bones', (i) => ({ 'x-placed': i === 0 ? null : [i] }));
+  values(c.meshes, 'meshes', { 'x-grid_was': 4 });
+  const m = c.motion as Record<string, unknown> | undefined;
+  add(m, 'motion', { 'x-tuned': ['by eye'] });
+  each(m?.tracks, 'tracks', () => ({ 'x-was': { amp: 0 } }));
+  const blink = m?.blink as Record<string, unknown> | undefined;
+  add(blink, 'blink', { 'x-t_was': null });
+  values(blink?.still, 'blink.still', { 'x-row_was': 19 });
+  return { cfg: c, at };
+}
+
 /** The last non-empty lines a run printed. */
 function lastLines(out: string, n: number): string[] {
   return out.split('\n').filter((l) => l.trim() !== '').slice(-n);
@@ -4527,6 +4764,35 @@ function runBuildSuite(): number {
         uncoveredLine.trim().endsWith(`uncovered error px: ${wantUncovered}`),
       `exit ${hemBuild.status}; parts.json first part ${hemParts?.parts[0].name} (${hemParts?.parts[0].from}, ${hemParts?.parts[0].opaque_px} px of ${HEM_UNDER_PX}); rig slots ${slotNames.join(', ')}, the first on ${firstSlot?.bone}; check.json PASS ${String(hemCheck?.PASS)}; "${uncoveredLine.trim()}", and without the patch the stage measures ${unpatched.figures.uncoveredErrorPx}, less the hand-derived ${HEM_UNDER_DROP} (want ${wantUncovered})`,
       'issue #28 fixed the hole by adding a region to rig.json and PNGs by hand after build, which the next build deleted; as config it is rebuilt every time, recorded as what it is, and held to every gate an ordinary part is',
+    );
+
+    // Issue #70, the rig side of "read by nothing": the two green builds above
+    // (BU01's, with --loop, and the patch build) again from the same configs
+    // with x- records written into every object the loader vouches for, and
+    // BU01's once more with one real value changed besides, which must differ.
+    const records = withRecords(moving);
+    const hemRecords = withRecords(hemCfg);
+    const plantCfg = withRecords(moving).cfg;
+    ((plantCfg.motion as { tracks: Array<Record<string, unknown>> }).tracks[1]).amp = 3;
+    writeFileSync(join(dir, 'records.json'), `${JSON.stringify(records.cfg, null, 2)}\n`);
+    writeFileSync(join(dir, 'records-plant.json'), `${JSON.stringify(plantCfg, null, 2)}\n`);
+    writeFileSync(join(hemDir, 'records.json'), `${JSON.stringify(hemRecords.cfg, null, 2)}\n`);
+    const recOut = join(dir, 'out-records');
+    const plantOut = join(dir, 'out-records-plant');
+    const hemRecOut = join(hemDir, 'out-records');
+    const recRun = runCli([...buildArgs(dir, recOut, 'records.json'), '--loop']);
+    const plantRun = runCli([...buildArgs(dir, plantOut, 'records-plant.json'), '--loop']);
+    const hemRecRun = runCli(buildArgs(hemDir, hemRecOut, 'records.json'));
+    const recDiff = treeDiff(out, recOut);
+    const hemRecDiff = treeDiff(hemOut, hemRecOut);
+    const plantDiff = treeDiff(out, plantOut);
+    const recFiles = existsSync(recOut) ? filesUnder(recOut).length : 0;
+    const hemRecFiles = existsSync(hemRecOut) ? filesUnder(hemRecOut).length : 0;
+    say(
+      'BU08_X_RECORDS_IN_EVERY_VOUCHED_OBJECT_LEAVE_EVERY_FILE_A_BUILD_WRITES_BYTE_IDENTICAL_AND_ONE_TRACK_VALUE_DOES_NOT',
+      recRun.status === 0 && hemRecRun.status === 0 && plantRun.status === 0 && recDiff.length === 0 && hemRecDiff.length === 0 && plantDiff.some((d) => d.startsWith(join('rig', 'motion.json'))),
+      `records (an object, an array, a number, null, and x-seed_note holding an object) at ${records.at.join(', ')}: build --loop -> exit ${recRun.status}, ${recFiles} file(s), against BU01's ${recDiff.length === 0 ? 'byte-identical' : recDiff.slice(0, 3).join(' | ')}; records at ${hemRecords.at.filter((w) => !records.at.includes(w)).join(', ')} besides, in the patch build -> exit ${hemRecRun.status}, ${hemRecFiles} file(s), against BU04's ${hemRecDiff.length === 0 ? 'byte-identical' : hemRecDiff.slice(0, 3).join(' | ')}; planted, the skirt track's amp 2 -> 3 besides -> exit ${plantRun.status}, ${plantDiff.length === 0 ? 'IDENTICAL, so the comparison sees nothing' : `${plantDiff.length} file(s) differ, e.g. ${plantDiff.find((d) => d.startsWith(join('rig', 'motion.json'))) ?? plantDiff[0]}`}`,
+      'issue #70: a record is read by nothing, which is a claim about every output, so it is held to every file the furthest stage writes — parts, the rig, the packed build, check.json and the loop — and the plant is the witness that a real value moving does reach those files',
     );
 
     const wrongHome = runCli(['check', '--rig', join(hemOut, 'rig'), '--parts', join(hemOut, 'parts'), '--out', join(hemDir, 'check2')]);
@@ -6126,6 +6392,52 @@ interface HarnessResult {
   prompts: number;
 }
 
+/**
+ * Where two output trees differ: every file under either, byte for byte, after
+ * `normalise` (identity unless a caller names a value the clock writes). Each
+ * line names the file relative to its tree. Empty means byte-identical; an
+ * empty first tree is a difference, so two trees of nothing never agree.
+ */
+function treeDiff(a: string, b: string, normalise: (bytes: Buffer, file: string) => Buffer = (bytes) => bytes): string[] {
+  const out: string[] = [];
+  const fa = existsSync(a) ? filesUnder(a) : [];
+  const fb = existsSync(b) ? filesUnder(b) : [];
+  if (fa.length === 0) out.push(`${a} holds nothing`);
+  for (const f of [...new Set([...fa, ...fb])].sort()) {
+    if (!fa.includes(f) || !fb.includes(f)) {
+      out.push(`${f}: only under ${fa.includes(f) ? a : b}`);
+      continue;
+    }
+    const x = normalise(readFileSync(join(a, f)), f);
+    const y = normalise(readFileSync(join(b, f)), f);
+    if (x.equals(y)) continue;
+    let at = 0;
+    while (at < x.length && at < y.length && x[at] === y[at]) at++;
+    out.push(`${f}: differs from byte ${at} (${JSON.stringify(x.subarray(at, at + 24).toString('latin1'))} vs ${JSON.stringify(y.subarray(at, at + 24).toString('latin1'))})`);
+  }
+  return out;
+}
+
+/** A file's text, or "" when it is absent. */
+function readOr(path: string): string {
+  return existsSync(path) ? readFileSync(path, 'utf8') : '';
+}
+
+/**
+ * Where two harness paint scenarios' outputs differ: every file under each
+ * scenario's --out, byte for byte, and the graph each sent the box. The one
+ * value set aside is a meta's `elapsed_s`, which the clock writes and no
+ * config can hold still. Empty means byte-identical.
+ */
+function paintRunDiff(dir: string, a: string, b: string): string[] {
+  const clockless = (bytes: Buffer, file: string): Buffer => (file.endsWith('_meta.json') ? Buffer.from(bytes.toString('utf8').replace(/"elapsed_s": [0-9.]+/, '"elapsed_s": <clock>')) : bytes);
+  const out = treeDiff(join(dir, a), join(dir, b), clockless);
+  const ga = readOr(join(dir, `${a}.prompts.json`));
+  const gb = readOr(join(dir, `${b}.prompts.json`));
+  if (ga === '' || ga !== gb) out.push(`the graph sent: ${ga === '' ? `${a} sent none` : 'differs'}`);
+  return out;
+}
+
 function runComfySuite(): number {
   section('comfy: the adapter against a fake ComfyUI on 127.0.0.1');
   const { say, bad } = counter();
@@ -6316,6 +6628,29 @@ function runComfySuite(): number {
         !existsSync(join(dir, 'paint-no-generation')),
       `exit ${noGen.status}; "${noGenLine ?? 'no CONFIG_FIELD_PRESENT line for config.generation'}"; ${noGenFails} FAIL line(s); requests to the box: ${noGen.paths.length}`,
       'generation is the one block this step paints from, so on this door it is required, and its absence names the fields it has to hold; seethrough and assemble are not asked for, because they do not exist yet',
+    );
+
+    // Issue #70, the paint door's half of "read by nothing": what paint-only
+    // wrote, against the same config with records and annotations written into
+    // it, with one real sampler value changed besides, and with the sampler's
+    // four keys in another order.
+    const pr = paintRunDiff(dir, 'paint-only', 'paint-records');
+    const pp = paintRunDiff(dir, 'paint-only', 'paint-records-plant');
+    const metaPlant = pp.find((d) => d.startsWith('painting_11_meta.json'));
+    const leaked = ['four steps', 'a remark on one field', 'x-tried', 'x-seeds_tried', 'x-why', 'x-source', 'x-status'].filter((w) => readOr(join(dir, 'paint-records', 'painting_11_meta.json')).includes(w));
+    say(
+      'CF13_RECORDS_AND_ANNOTATIONS_IN_THE_CONFIG_LEAVE_THE_PAINTING_META_AND_GRAPH_BYTE_IDENTICAL_AND_ONE_SAMPLER_VALUE_DOES_NOT',
+      R['paint-records']?.status === 0 && R['paint-records-plant']?.status === 0 && pr.length === 0 && leaked.length === 0 && metaPlant !== undefined && pp.some((d) => d.startsWith('the graph sent')),
+      `paint_records.json (a note, a steps_note and an x- record in generation.sampler; x- records in a LoRA, in generation.control and in generation; x- records at the top level holding an object, a number, null and an array) -> exit ${R['paint-records']?.status}, against paint-only: ${pr.length === 0 ? 'every file and the graph sent byte-identical (elapsed_s, the clock, set aside)' : pr.join(' | ')}; words of the records found in its meta: ${leaked.join(', ') || 'none'}; planted, generation.sampler.cfg 6 -> 6.5 -> ${pp.length === 0 ? 'IDENTICAL, so the comparison sees nothing' : pp.join(' | ')}`,
+      'issue #70: an x- record and an annotation are read by nothing, and the painting meta is an output; it once wrote generation.sampler whole, so whatever its author wrote beside the four fields reached the meta. The plant is the witness that the comparison reads the meta and the graph at all',
+    );
+
+    const po = paintRunDiff(dir, 'paint-only', 'paint-reordered');
+    say(
+      'CF14_A_SAMPLER_WRITTEN_IN_ANOTHER_KEY_ORDER_WRITES_THE_SAME_META',
+      R['paint-reordered']?.status === 0 && po.length === 0,
+      `generation.sampler written scheduler, sampler, cfg, steps -> exit ${R['paint-reordered']?.status}, against paint-only (steps, cfg, sampler, scheduler): ${po.length === 0 ? 'every file and the graph sent byte-identical (elapsed_s set aside)' : po.join(' | ')}`,
+      'determinism is a contract: the meta names the sampler\'s fields in one order (resolvedSampler), not in the order its author happened to type them',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

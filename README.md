@@ -77,7 +77,9 @@ built from its own proposal with no hand edit at all —
 - **A character config** (`config.json`) — the part plan, the head box, the bones,
   which bones may pull which layer, and the idle's sines. `src/config.ts` is its
   schema and documents every field; the loader refuses an unknown or a missing field
-  by name. [docs/AUTHORING.md](docs/AUTHORING.md) says where each value comes from.
+  by name, and reads nothing under `note`, a `<name>_note` (a string) or a key
+  beginning `x-` (any JSON — a project's own records, such as a past build's gate
+  results). [docs/AUTHORING.md](docs/AUTHORING.md) says where each value comes from.
 
 ## What it gives out
 

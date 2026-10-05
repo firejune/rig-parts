@@ -47,9 +47,18 @@ examples use, and the one this guide assumes:
 
 `src/config.ts` is the schema and the loader. Every key is known or refused
 (`CONFIG_KEY_KNOWN`); a required key that is missing is `CONFIG_FIELD_PRESENT`.
-The one open door is annotation: `note`, and any key ending in `_note`, may hold a
-string anywhere an object is, and nothing reads it — write a hand correction's
-reason there, beside the value it corrected (the examples do).
+There are two open doors, and nothing reads what stands behind either. An
+annotation: `note`, and any key ending in `_note`, may hold a string anywhere an
+object is — write a hand correction's reason there, beside the value it corrected
+(the examples do). A record: any key beginning `x-` with a name after it may hold
+any JSON value in the same places — a project's own provenance, such as the gate
+results of a past build (`"x-status": {…}`) or the seeds a search rejected, with
+reasons (`generation.x-seeds_tried`). The record test comes first, so
+`x-seed_note` is a record. `xstatus`, `x_status`, `X-status` and a bare `x-` are
+not record names and are refused like any unknown key. The doors are not open in
+`meshes`, `regions` or `motion.blink.still`: their keys are part names, and an
+`x-` key there is a part like any other. Every refusal of an unknown key, of a
+retired one and of an annotation that is not a string says where a record goes.
 
 **Coordinates** in `bones`, `meshes` and `motion` are **rig pixels, y down, origin
 top-left** — the parts' own space, which is the painting times `assemble.rig_scale`.
@@ -570,7 +579,7 @@ See-through with another seed.
 | rule | means | change |
 | --- | --- | --- |
 | `CONFIG_FILE_PRESENT`, `CONFIG_IS_JSON` | no such file, or not JSON | `--config` |
-| `CONFIG_KEY_KNOWN`, `CONFIG_KEY_RETIRED`, `CONFIG_FIELD_PRESENT`, `CONFIG_FIELD_TYPE` | an unknown key (a retired one says what replaces it), a missing one, a wrong type | the named field |
+| `CONFIG_KEY_KNOWN`, `CONFIG_KEY_RETIRED`, `CONFIG_FIELD_PRESENT`, `CONFIG_FIELD_TYPE` | an unknown key (a retired one says what replaces it), a missing one, a wrong type; a project's own record under a plain key, or an annotation (`note`, `<name>_note`) holding something other than a string | the named field; a record goes under a key beginning `x-` (any JSON, read by nothing), a remark under `note` or `<name>_note` (a string) — §3 |
 | `CONFIG_HEAD_BOX_SQUARE` | `seethrough.head_box` is not a non-empty square | `head_box` — take `propose --head-box`'s |
 | `CONFIG_TAG_KNOWN`, `CONFIG_PART_NAME`, `CONFIG_PART_UNIQUE` | a plan entry names no v3 tag, a part name that is not a file name, or a part or layer twice — a patch named like a plan part or another patch included | `assemble.plan`, `assemble.patches` |
 | `CONFIG_NAME_RESOLVES` | a parent, segment, region, track, blink member, blink still part or bone, extend part or patch `draw.before` names nothing declared above it | the named reference, or the declaration it needs |
