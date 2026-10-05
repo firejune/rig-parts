@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/firejune/spine-parts/compare/v0.8.2...v0.9.0) (2026-10-05)
+
+
+### Features
+
+* **config:** a project's own records ride under x- keys, read by nothing — and the painting meta names its sampler fields ([#71](https://github.com/firejune/spine-parts/issues/71)) ([a91d54f](https://github.com/firejune/spine-parts/commit/a91d54fd4b388ecdf044e83a9ce89e58a9298004)), closes [#70](https://github.com/firejune/spine-parts/issues/70)
+
 ## [0.8.2](https://github.com/firejune/spine-parts/compare/v0.8.1...v0.8.2) (2026-10-04)
 
 
