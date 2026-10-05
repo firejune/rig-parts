@@ -28,7 +28,7 @@
  * The two heads are the reference's verbatim, including the safety terms of
  * the negative head (no nudity, no minors): they are a guard, not a cast.
  */
-import type { Control, Generation, Lora } from './config.ts';
+import type { Control, Generation, Lora, Sampler } from './config.ts';
 import type { Problem } from './errors.ts';
 import { SKELETONS } from './skeleton.ts';
 
@@ -104,6 +104,16 @@ export function resolvedLoras(loras: readonly Lora[]): Array<Required<Lora>> {
 
 export function resolvedControl(c: Control): Required<Control> {
   return { skeleton: c.skeleton, strength: c.strength, end_percent: c.end_percent, model: c.model ?? CONTROL_MODEL };
+}
+
+/**
+ * The sampler as the graph uses it: its four fields by name, in this order.
+ * The config's own object also carries whatever annotations and `x-` records
+ * its author wrote, and the loader vouches for the four fields only, so a
+ * writer that copied the object whole would carry those into an output.
+ */
+export function resolvedSampler(s: Sampler): Sampler {
+  return { steps: s.steps, cfg: s.cfg, sampler: s.sampler, scheduler: s.scheduler };
 }
 
 /**

@@ -12,10 +12,20 @@
  *
  * 🔒 **Every key is known or refused.** An unknown key is refused by name and
  * so is a missing one — a config that half-loads is a rig nobody can reason
- * about. The one open door is annotation: `note`, and any key ending in
- * `_note`, may hold a string anywhere an object is expected, and nothing reads
- * it. Annotations are how a hand correction records its reason beside the value
- * it corrected, and refusing them would push that reason out of the file.
+ * about. There are two open doors, and both lead nowhere — nothing reads what
+ * stands behind them. Annotation: `note`, and any key ending in `_note`, may
+ * hold a string anywhere an object is expected. Annotations are how a hand
+ * correction records its reason beside the value it corrected, and refusing
+ * them would push that reason out of the file. Record: any key beginning with
+ * `x-` and at least one character after it may hold any JSON value in the same
+ * places (issue #70) — a project's own provenance, such as the gate results of
+ * a past build or the seeds a search rejected, kept beside the conditions that
+ * made the rig. The record test comes first, so `x-seed_note` is a record. The
+ * part-name maps (`meshes`, `regions`, `motion.blink.still`) are not objects
+ * in this sense: their keys are part names, and an `x-` key there is a part
+ * name like any other. No stage writes a vouched object whole into an output;
+ * each writer names its fields (`resolvedSampler` and its kin in
+ * `src/graphs.ts`), which is what keeps both doors read by nothing.
  *
  * ⛔ **The generation block is inline.** Configs written for the private
  * reference pointed at a character file and an art-job id elsewhere
@@ -224,10 +234,22 @@ const RETIRED: Record<string, Record<string, string>> = {
     art_job: 'named a job record outside this tree; put the costume words themselves in generation.costume and where they came from in generation.costume_note',
     identity_override: 'overrode the character file\'s identity; with the values inline, write the identity you want in generation.identity',
     lora_strength: 'overrode every LoRA\'s strength; with the values inline, set generation.loras[i].strength on each',
-    seed0: 'recorded where a seed search started; the chosen seed is generation.seed, and the search belongs in generation.seed_note',
-    seeds_tried: 'recorded the seeds a search tried; the chosen seed is generation.seed, and the search belongs in generation.seed_note',
+    seed0: 'recorded where a seed search started; the chosen seed is generation.seed, and the search belongs in generation.seed_note, or as a structured record in generation.x-seeds_tried',
+    seeds_tried: 'recorded the seeds a search tried; the chosen seed is generation.seed, and the search belongs in generation.seed_note, or as a structured record in generation.x-seeds_tried',
   },
 };
+
+/**
+ * A project's own record: a key beginning `x-` with at least one character
+ * after it, holding any JSON value, read by nothing. `X-`, `x_` and a bare
+ * `x-` are not record names, so a typo of one is still refused by name.
+ */
+function isRecordKey(key: string): boolean {
+  return key.length > 2 && key.startsWith('x-');
+}
+
+/** What every refusal of a key the schema does not know adds after its own sentence: the two doors. */
+const DOORS = 'a project\'s own record goes under a key beginning "x-" (any JSON, read by nothing), a remark under note or <name>_note (a string)';
 
 // ---------------------------------------------------------------------------
 // the checker
@@ -242,7 +264,7 @@ class Check {
     this.problems.push({ code, object, detail });
   }
 
-  /** An object with exactly these keys (plus annotations); returns it, or null after refusing. */
+  /** An object with exactly these keys (plus records and annotations); returns it, or null after refusing. */
   object(path: string, v: Json, required: readonly string[], optional: readonly string[]): Record<string, Json> | null {
     if (typeof v !== 'object' || v === null || Array.isArray(v)) {
       this.fail('CONFIG_FIELD_TYPE', path, `is ${show(v)}; an object is required`);
@@ -252,13 +274,16 @@ class Check {
     const section = path.replace(/^config\.?/, '');
     for (const key of Object.keys(o)) {
       if (required.includes(key) || optional.includes(key)) continue;
+      if (isRecordKey(key)) continue;
       if (key === 'note' || key.endsWith('_note')) {
-        if (typeof o[key] !== 'string') this.fail('CONFIG_FIELD_TYPE', `${path}.${key}`, `is ${show(o[key])}; an annotation is a string`);
+        if (typeof o[key] !== 'string') {
+          this.fail('CONFIG_FIELD_TYPE', `${path}.${key}`, `is ${show(o[key])}; an annotation is a string — a structured record goes under a key beginning "x-" (any JSON, read by nothing)`);
+        }
         continue;
       }
       const retired = RETIRED[section]?.[key];
       if (retired !== undefined) this.fail('CONFIG_KEY_RETIRED', `${path}.${key}`, retired);
-      else this.fail('CONFIG_KEY_KNOWN', `${path}.${key}`, `is not a field here; known: ${[...required, ...optional].join(', ')}`);
+      else this.fail('CONFIG_KEY_KNOWN', `${path}.${key}`, `is not a field here; known: ${[...required, ...optional].join(', ')} — ${DOORS}`);
     }
     for (const key of required) if (!(key in o)) this.fail('CONFIG_FIELD_PRESENT', `${path}.${key}`, 'is absent and required');
     return o;
@@ -421,9 +446,10 @@ const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'bones', 'meshe
  * vouched for (for `paint` that is everything but `key` and `generation`; for
  * `layers`, `assemble.plan`, `extend_below_crop`, `patches`, `bones`, `meshes`,
  * `regions` and `motion`; for `assemble`, the last four); a caller that needs
- * them uses {@link parseConfig}. Every other key is still refused by name, and
- * a retired one (`generation.character_file` and its kin) still with what
- * replaces it: a config is not allowed to be half-known at any stage.
+ * them uses {@link parseConfig}. Every other key that is not a record or an
+ * annotation is still refused by name, and a retired one
+ * (`generation.character_file` and its kin) still with what replaces it: a
+ * config is not allowed to be half-known at any stage.
  */
 export function parseEarlyConfig(raw: Json, door: 'paint'): PaintConfig;
 export function parseEarlyConfig(raw: Json, door: 'layers'): EarlyConfig;
