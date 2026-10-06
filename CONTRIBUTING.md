@@ -36,6 +36,11 @@ without the public examples' inputs fetched (`bun run fetch-examples`, which
 CI runs first), the corpus suite reports a HOLE rather than a result, and the
 summary says so.
 
+The suites run concurrently, one worker process per suite, as many at once as
+the machine's available parallelism (`SPINE_PARTS_SELFTEST_JOBS=<n>` sets the
+number). What the run prints is the same either way: each suite's lines, in
+the suites' own order, one suite after another.
+
 A fourth needs a network, because it installs packages:
 
 ```bash

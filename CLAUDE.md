@@ -180,6 +180,15 @@ private repository. The rules that hold it together:
   unknown gutter word, a returned failure count that disagrees with the printed
   FAIL lines — each is a fault, and a run with a fault exits **2**. `RT01`–`RT05`
   plant each one.
+- **Suites run in workers, and are printed and counted in order.** Each suite
+  runs in a process of its own (`selftest.ts --suite-worker <key>`), several at
+  once; the parent replays each one's lines through the same tally, in the
+  `SUITES` order, so the case lines are a sequential run's. A suite therefore
+  shares nothing with another at run time — no module state, no file outside
+  its own temp directory. A worker that cannot account for its suite is that
+  suite's `SUITE_CRASHED` FAIL (`RT06`); the suites tallied are held to
+  `SUITES`, every one once and in order (`RT08`). Only `run-tally` runs in the
+  parent, last, because it reads the live tally.
 - **An absent input is a HOLE.** The corpus suite with neither a named corpus
   nor any fetched `examples/*/inputs` opens its section, prints `SKIP` and a HOLE line, counts as not run, and the summary
   names it.

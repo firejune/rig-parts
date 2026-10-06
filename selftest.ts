@@ -40,10 +40,23 @@
  * The summary at the end states only figures asked of the tally. `TY09` reads
  * the summary's own source and refuses a digit written into its text and a
  * constant that only the summary reads.
+ *
+ * ## Suites run concurrently, and are printed and counted one by one
+ *
+ * Each suite runs in a worker process of its own — this file again, under
+ * `--suite-worker <key>` — several at a time (`SPINE_PARTS_SELFTEST_JOBS`, or
+ * the machine's available parallelism). The parent prints what each worker
+ * printed, in the suites' own order and one suite after another, through the
+ * same `RunTally.of` as before, so the case lines and the counts are what a
+ * sequential run prints. A worker that cannot account for its suite is that
+ * suite's `SUITE_CRASHED` FAIL (`RT06`), and the suites tallied are held to
+ * the list of suites, every one once and in order (`RT08`). The tally's own
+ * suite runs last in the parent: it reads the live tally of every suite
+ * before it. `SPINE_PARTS_SELFTEST_JOBS=1` runs one worker at a time.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import ts from 'typescript';
@@ -12698,6 +12711,59 @@ function runTallySuite(live: RunTally): number {
     `${live.blocks.length} suite(s) tallied before this one, ${liveFaults.length === 0 ? 'no fault' : liveFaults.join('; ')}; asking for a suite that never ran: ${asked ?? 'answered'}`,
     'the summary asks the tally for its figures, so the tally must refuse a figure no suite produced',
   );
+
+  // Issue #99: the suites run in workers and the parent replays what each printed. A worker that cannot
+  // account for its suite has to become a named FAIL rather than a suite that printed nothing and passed.
+  const worker = (over: Partial<WorkerRun>): WorkerRun => ({ key: 'alpha', status: 0, stdout: '── alpha ──\n  PASS  A01\n', stderr: '', result: JSON.stringify({ key: 'alpha', returned: 0 }), ...over });
+  const replay = (run: WorkerRun | undefined): { lines: string[]; value: number | null | string } => {
+    const lines: string[] = [];
+    try {
+      return { lines, value: replayWorker('alpha', run, (l) => lines.push(l), () => {}) };
+    } catch (err) {
+      return { lines, value: (err as Error).message };
+    }
+  };
+  const fine = replay(worker({}));
+  const hole = replay(worker({ result: JSON.stringify({ key: 'alpha', returned: null }), stdout: '── alpha ──\n  SKIP  nothing\n' }));
+  const plants: Array<[string, { lines: string[]; value: number | null | string }, string]> = [
+    ['no worker ran it', replay(undefined), 'no worker ran the suite "alpha"'],
+    ['it wrote no result', replay(worker({ status: 1, result: null, stderr: 'killed\n' })), 'exited 1 without writing its result: killed'],
+    ["another suite's result", replay(worker({ result: JSON.stringify({ key: 'beta', returned: 0 }) })), 'wrote the result of the suite "beta"'],
+    ['it exited 1 after its result', replay(worker({ status: 1 })), 'wrote its result and exited 1'],
+    ['a count that is no count', replay(worker({ result: JSON.stringify({ key: 'alpha', returned: -1 }) })), 'handed back -1'],
+    ['the suite threw', replay(worker({ result: JSON.stringify({ key: 'alpha', crash: 'Error: boom' }) })), 'threw in its worker'],
+  ];
+  const missed = plants.filter(([, r, want]) => !(typeof r.value === 'string' && r.value.includes(want)));
+  say(
+    'RT06_A_WORKER_THAT_CANNOT_ACCOUNT_FOR_ITS_SUITE_THROWS_AND_A_HEALTHY_ONE_REPLAYS_ITS_LINES_AND_ITS_COUNT',
+    fine.value === 0 && fine.lines.join('\n') === '── alpha ──\n  PASS  A01' && hole.value === null && hole.lines.length === 2 && missed.length === 0 && plants[1][1].lines.length === 2,
+    `healthy -> ${fine.lines.length} line(s), count ${String(fine.value)}; a skip -> ${String(hole.value)}; ${plants.map(([what, r]) => `${what} -> ${typeof r.value === 'string' ? r.value : `NOT refused (${String(r.value)})`}`).join('; ')}`,
+    'issue #99: a suite run in another process is only as good as its accounting, and a throw here is what RunTally.of prints as the suite\'s SUITE_CRASHED FAIL line; the lines printed before the worker failed are still replayed, as an in-process suite\'s are before it throws',
+  );
+
+  const keys = SUITES.map(([k]) => k);
+  const order = dispatchOrder(keys, STARTED_FIRST);
+  const misspelt = dispatchOrder(keys, [...STARTED_FIRST, 'readme_loop']);
+  const doubled = dispatchOrder(keys, [STARTED_FIRST[0], STARTED_FIRST[0]]);
+  const once = typeof order !== 'string' && order.length === keys.length && keys.every((k) => order.filter((o) => o === k).length === 1);
+  say(
+    'RT07_THE_DISPATCH_STARTS_EVERY_SUITE_ONCE_AND_REFUSES_A_FIRST_STARTED_NAME_THAT_IS_NO_SUITE',
+    once && typeof misspelt === 'string' && misspelt.includes('"readme_loop"') && typeof doubled === 'string' && doubled.includes('twice'),
+    `${typeof order === 'string' ? order : `${order.length} suite(s) started for ${keys.length} in the run, each ${once ? 'once' : 'NOT once'}, first ${order.slice(0, STARTED_FIRST.length).join(', ')}`}; a misspelt name -> ${typeof misspelt === 'string' ? misspelt : 'accepted'}; a name twice -> ${typeof doubled === 'string' ? doubled : 'accepted'}`,
+    'the order is scheduling only, so a wrong name never fails a control — which is why it must be refused by name: otherwise it costs exactly the time it was written to buy, and says nothing',
+  );
+
+  const liveKeys = live.blocks.map((b) => b.key);
+  const liveSet = suiteSetFaults(liveKeys, keys);
+  const dropped = suiteSetFaults(liveKeys.filter((k) => k !== 'png'), keys);
+  const swapped = suiteSetFaults([liveKeys[1], liveKeys[0], ...liveKeys.slice(2)], keys);
+  const stray = suiteSetFaults([...liveKeys, 'gamma'], keys);
+  say(
+    'RT08_THE_TALLIED_SUITES_ARE_EVERY_SUITE_OF_THE_RUN_IN_ORDER_AND_A_DROPPED_ONE_FAULTS',
+    liveSet.length === 0 && dropped.length === 1 && dropped[0].includes('"png"') && swapped.length === 1 && swapped[0].includes('not in the order') && stray.length === 1 && stray[0].includes('"gamma"'),
+    `the ${liveKeys.length} suite(s) tallied before this one against the run's ${keys.length}: ${liveSet.length === 0 ? 'no fault' : liveSet.join('; ')}; png dropped -> ${dropped.join('; ') || 'no fault'}; the first two swapped -> ${swapped.join('; ') || 'no fault'}; an extra suite -> ${stray.join('; ') || 'no fault'}`,
+    'issue #99: the union of what the workers ran must be the whole run; a suite nobody dispatched and nobody replayed leaves no line at all, so its absence is held against the list of suites rather than against what was printed',
+  );
   return bad();
 }
 
@@ -12705,56 +12771,245 @@ function runTallySuite(live: RunTally): number {
 // the run
 // ---------------------------------------------------------------------------
 
-function main(): void {
+/**
+ * Every suite but the tally's own, in the order the run prints them. The
+ * workers below run them concurrently; what the run prints, counts and judges
+ * is still this order, one suite after another (issue #99).
+ */
+const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number | null]> = [
+  ['raster-components', runComponentsSuite],
+  ['raster-morph', runMorphSuite],
+  ['raster-blur', runBlurSuite],
+  ['raster-resize', runResizeSuite],
+  ['raster-warp', runWarpSuite],
+  ['raster-poly', runPolySuite],
+  ['raster-composite', runCompositeSuite],
+  ['png', runPngSuite],
+  ['layers-wrapper', runWrapperSuite],
+  ['layers-psd', runPsdSuite],
+  ['config', runConfigSuite],
+  ['parts', runPartsSuite],
+  ['sheet', runSheetSuite],
+  ['cli', runCliSuite],
+  ['rig', runRigSuite],
+  ['contour', runContourSuite],
+  ['propose', runProposeSuite],
+  ['keypoints', runKeypointsSuite],
+  ['propose-corpus', runProposeCorpusSuite],
+  ['structure', runStructureSuite],
+  ['diagnostics', runDiagnosticsSuite],
+  ['check', runCheckSuite],
+  ['requirements', runRequirementsSuite],
+  ['loop', runLoopSuite],
+  ['assemble', runAssembleSuite],
+  ['plausibility', runPlausibilitySuite],
+  ['assemble-examples', runAssembleExamplesSuite],
+  ['skeleton', runSkeletonSuite],
+  ['inputs', runInputsSuite],
+  ['inputs-examples', runInputsExamplesSuite],
+  ['prompt', runPromptSuite],
+  ['comfy', runComfySuite],
+  ['build', runBuildSuite],
+  ['chain', runChainSuite],
+  ['readme-loop', runReadmeLoopSuite],
+  ['tree', runTreeSuite],
+  ['corpus', runCorpusSuite],
+];
+
+/**
+ * The tally's own suite. It reads the live tally of every suite before it
+ * (RT05), so it runs last, in the parent, after every worker's lines are in.
+ */
+const TALLY_SUITE = 'run-tally';
+
+/**
+ * The suites started first, longest first: the ones that build and render
+ * rigs through spine-rigc, which held 96 % of a sequential run's wall time in
+ * each of three runs on one machine (the per-suite table in the pull request
+ * that closed issue #99). The longest of them alone bounds a concurrent run,
+ * and started in print order they would begin last. Scheduling only — the run prints, counts and judges in `SUITES`
+ * order whatever this says, and a name here that is no suite's is refused
+ * (`dispatchOrder`), because a misspelt name would quietly cost the time it
+ * exists to buy.
+ */
+const STARTED_FIRST: readonly string[] = ['readme-loop', 'chain', 'build', 'check', 'assemble-examples', 'propose', 'rig'];
+
+/** The argument that makes this file run one suite as a worker, for the parent run, and nothing else. */
+const WORKER_FLAG = '--suite-worker';
+
+/** The environment variable that sets how many workers run at once; the machine's available parallelism when unset. */
+const JOBS_ENV = 'SPINE_PARTS_SELFTEST_JOBS';
+
+/** The order workers are started in: `first` in its order, then every other suite in `keys` order. A string names what is wrong. */
+function dispatchOrder(keys: readonly string[], first: readonly string[]): string[] | string {
+  const unknown = first.filter((k) => !keys.includes(k));
+  if (unknown.length > 0) return `the suite(s) ${unknown.map((k) => `"${k}"`).join(', ')} are started first and are no suite of this run`;
+  const twice = first.filter((k, i) => first.indexOf(k) !== i);
+  if (twice.length > 0) return `the suite(s) ${twice.map((k) => `"${k}"`).join(', ')} are started first twice`;
+  return [...first, ...keys.filter((k) => !first.includes(k))];
+}
+
+/** What one worker left behind: its exit, everything it printed, and the result file it wrote (null when it wrote none). */
+interface WorkerRun {
+  key: string;
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  result: string | null;
+}
+
+/**
+ * Hand one suite's worker to the tally as if the suite had run here: print
+ * every line it printed, in order, through `print` (which the tally observes),
+ * and return the failure count it handed back. A worker that cannot account
+ * for its suite — none ran it, it wrote no result, a result for another
+ * suite, a result it did not exit 0 after — throws, and `RunTally.of` prints
+ * that as the suite's `SUITE_CRASHED` FAIL line, as it does for a suite that
+ * throws in-process. A suite that threw inside its worker throws its own stack
+ * here, after the lines it printed before it threw.
+ */
+function replayWorker(key: string, run: WorkerRun | undefined, print: (line: string) => void, printErr: (text: string) => void): number | null {
+  if (run === undefined) throw new Error(`no worker ran the suite "${key}", so nothing it would have printed was read`);
+  const lines = run.stdout === '' ? [] : run.stdout.replace(/\n$/, '').split('\n');
+  for (const line of lines) print(line);
+  if (run.stderr !== '') printErr(run.stderr);
+  const tail = run.stderr.trim().split('\n').slice(-3).join(' | ');
+  if (run.result === null) throw new Error(`the worker for the suite "${key}" exited ${run.status ?? 'on a signal'} without writing its result${tail === '' ? '' : `: ${tail}`}`);
+  let record: { key?: unknown; returned?: unknown; crash?: unknown };
+  try {
+    record = JSON.parse(run.result) as typeof record;
+  } catch {
+    throw new Error(`the worker for the suite "${key}" wrote a result that is not JSON: ${run.result.slice(0, 80)}`);
+  }
+  if (record.key !== key) throw new Error(`the worker for the suite "${key}" wrote the result of the suite ${JSON.stringify(record.key)}`);
+  if (typeof record.crash === 'string') {
+    const err = new Error(`the suite "${key}" threw in its worker`);
+    err.stack = record.crash;
+    throw err;
+  }
+  if (run.status !== 0) throw new Error(`the worker for the suite "${key}" wrote its result and exited ${run.status ?? 'on a signal'}${tail === '' ? '' : `: ${tail}`}`);
+  if (record.returned !== null && !(typeof record.returned === 'number' && Number.isInteger(record.returned) && record.returned >= 0)) {
+    throw new Error(`the worker for the suite "${key}" handed back ${JSON.stringify(record.returned)}, which is neither a failure count nor null`);
+  }
+  return record.returned;
+}
+
+/**
+ * Where the suites the run tallied are not every suite of the run, once each
+ * and in order. Empty is agreement. This is what holds the union of what the
+ * workers ran to the whole run: a suite dropped from the dispatch is a block
+ * missing here, whatever the workers printed.
+ */
+function suiteSetFaults(tallied: readonly string[], expected: readonly string[]): string[] {
+  const faults: string[] = [];
+  const missing = expected.filter((k) => !tallied.includes(k));
+  const extra = tallied.filter((k) => !expected.includes(k));
+  if (missing.length > 0) faults.push(`the suite(s) ${missing.map((k) => `"${k}"`).join(', ')} are suites of this run and were never tallied`);
+  if (extra.length > 0) faults.push(`the suite(s) ${extra.map((k) => `"${k}"`).join(', ')} were tallied and are no suite of this run`);
+  if (missing.length === 0 && extra.length === 0 && tallied.join('\n') !== expected.join('\n')) faults.push(`the suites were tallied as ${tallied.join(', ')}, not in the order ${expected.join(', ')}`);
+  return faults;
+}
+
+/** The worker's whole job: run the one suite named after `WORKER_FLAG`, let it print, and write what it handed back. */
+function workerMain(argv: readonly string[]): void {
+  const key = argv[argv.indexOf(WORKER_FLAG) + 1];
+  const at = argv.indexOf('--result');
+  const result = at === -1 ? undefined : argv[at + 1];
+  const suite = SUITES.find(([k]) => k === key);
+  if (suite === undefined || result === undefined) {
+    console.error(`selftest: ${WORKER_FLAG} needs one of this run's suites and --result <file>; got ${JSON.stringify(key)} and ${JSON.stringify(result)}`);
+    process.exit(2);
+  }
+  let record: { key: string; returned: number | null } | { key: string; crash: string };
+  try {
+    record = { key, returned: suite[1](corpusDir()) };
+  } catch (err) {
+    record = { key, crash: (err as Error).stack ?? String(err) };
+  }
+  writeFileSync(result, JSON.stringify(record));
+}
+
+/** How many workers run at once: `JOBS_ENV` when set, a positive whole number or the run exits 2; else the machine's available parallelism. */
+function workerCount(): number {
+  const set = process.env[JOBS_ENV];
+  if (set === undefined || set === '') return availableParallelism();
+  if (!/^[1-9]\d*$/.test(set)) {
+    console.error(`selftest: ${JOBS_ENV} is ${JSON.stringify(set)}; a positive whole number of workers is required`);
+    process.exit(2);
+  }
+  return Number(set);
+}
+
+function launchWorker(key: string, corpus: string | null, dir: string): Promise<WorkerRun> {
+  const result = join(dir, `${key}.json`);
+  const args = [import.meta.path, WORKER_FLAG, key, '--result', result, ...(corpus === null ? [] : ['--corpus', corpus])];
+  return new Promise((done) => {
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    const child = spawn(process.execPath, args, { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] });
+    child.stdout.on('data', (b: Buffer) => out.push(b));
+    child.stderr.on('data', (b: Buffer) => err.push(b));
+    const finish = (status: number | null, extra: string): void =>
+      done({ key, status, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') + extra, result: existsSync(result) ? readFileSync(result, 'utf8') : null });
+    child.on('error', (e) => finish(null, `could not start the worker: ${e.message}\n`));
+    child.on('close', (status) => finish(status, ''));
+  });
+}
+
+/** Start every suite's worker, `jobs` at a time in `order`; each suite's promise settles when its worker has exited. */
+function startWorkers(order: readonly string[], jobs: number, launch: (key: string) => Promise<WorkerRun>): Map<string, Promise<WorkerRun>> {
+  const settle = new Map<string, (run: WorkerRun) => void>();
+  const runs = new Map<string, Promise<WorkerRun>>();
+  for (const key of order) runs.set(key, new Promise<WorkerRun>((done) => settle.set(key, done)));
+  let next = 0;
+  const lane = async (): Promise<void> => {
+    while (next < order.length) {
+      const key = order[next++];
+      const run = await launch(key);
+      settle.get(key)?.(run);
+    }
+  };
+  for (let i = 0; i < Math.min(jobs, order.length); i++) void lane();
+  return runs;
+}
+
+async function main(): Promise<void> {
+  if (process.argv.includes(WORKER_FLAG)) {
+    workerMain(process.argv);
+    return;
+  }
   const corpus = corpusDir();
+  const keys = SUITES.map(([k]) => k);
+  const order = dispatchOrder(keys, STARTED_FIRST);
+  if (typeof order === 'string') {
+    console.error(`selftest: ${order}`);
+    process.exit(2);
+  }
+  const jobs = workerCount();
+  const results = temp('workers');
+  const runs = startWorkers(order, jobs, (key) => launchWorker(key, corpus, results));
   const tally = new RunTally();
   const printLine = console.log;
   console.log = (...args: unknown[]): void => {
     tally.observe(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '));
     printLine(...args);
   };
-  tally.of('raster-components', runComponentsSuite);
-  tally.of('raster-morph', runMorphSuite);
-  tally.of('raster-blur', runBlurSuite);
-  tally.of('raster-resize', runResizeSuite);
-  tally.of('raster-warp', runWarpSuite);
-  tally.of('raster-poly', runPolySuite);
-  tally.of('raster-composite', runCompositeSuite);
-  tally.of('png', runPngSuite);
-  tally.of('layers-wrapper', runWrapperSuite);
-  tally.of('layers-psd', runPsdSuite);
-  tally.of('config', runConfigSuite);
-  tally.of('parts', runPartsSuite);
-  tally.of('sheet', runSheetSuite);
-  tally.of('cli', runCliSuite);
-  tally.of('rig', runRigSuite);
-  tally.of('contour', runContourSuite);
-  tally.of('propose', runProposeSuite);
-  tally.of('keypoints', runKeypointsSuite);
-  tally.of('propose-corpus', runProposeCorpusSuite);
-  tally.of('structure', runStructureSuite);
-  tally.of('diagnostics', runDiagnosticsSuite);
-  tally.of('check', runCheckSuite);
-  tally.of('requirements', runRequirementsSuite);
-  tally.of('loop', runLoopSuite);
-  tally.of('assemble', runAssembleSuite);
-  tally.of('plausibility', runPlausibilitySuite);
-  tally.of('assemble-examples', runAssembleExamplesSuite);
-  tally.of('skeleton', runSkeletonSuite);
-  tally.of('inputs', runInputsSuite);
-  tally.of('inputs-examples', runInputsExamplesSuite);
-  tally.of('prompt', runPromptSuite);
-  tally.of('comfy', runComfySuite);
-  tally.of('build', runBuildSuite);
-  tally.of('chain', runChainSuite);
-  tally.of('readme-loop', runReadmeLoopSuite);
-  tally.of('tree', runTreeSuite);
-  tally.of('corpus', () => runCorpusSuite(corpus));
-  tally.of('run-tally', () => runTallySuite(tally));
+  const printErr = (text: string): void => {
+    process.stderr.write(text);
+  };
+  try {
+    for (const key of keys) {
+      const run = await runs.get(key);
+      tally.of(key, () => replayWorker(key, run, (line) => console.log(line), printErr));
+    }
+  } finally {
+    rmSync(results, { recursive: true, force: true });
+  }
+  tally.of(TALLY_SUITE, () => runTallySuite(tally));
   console.log = printLine;
 
   console.log('');
-  const floor = tallyFaults(tally.blocks, tally.gutter, tally.total);
+  const floor = [...tallyFaults(tally.blocks, tally.gutter, tally.total), ...suiteSetFaults(tally.blocks.map((b) => b.key), [...keys, TALLY_SUITE])];
   if (floor.length > 0) {
     console.error('spine-parts selftest: this run cannot account for itself — that is not a pass, it is an empty gate');
     for (const f of floor) console.error(`  ${f}`);
@@ -12785,4 +13040,4 @@ function main(): void {
   // the summary ends here
 }
 
-main();
+await main();
