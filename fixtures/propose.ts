@@ -60,6 +60,22 @@ export const PROPOSE_PARTS: ProposeFixturePart[] = [
 ];
 
 /**
+ * The face-less fixture (issue #76), on {@link PROPOSE_RIG}: the skirt and
+ * the two sleeves of {@link PROPOSE_PARTS}, no face, and a head run of
+ * `mop` (head:back hair) 60,10 80x50, `fringe` (head:front hair) 70,20 60x40
+ * and `throat` (head:neck) 90,110 20x30. The fallback reads the hair's top,
+ * y 10 (the higher of the two), and the neck's top, y 110 — a span of
+ * 100 px — and the neck's centre x, 100; the fringe's bang chains read the
+ * derived box's left edge and width.
+ */
+export const FACELESS_PARTS: ProposeFixturePart[] = [
+  ...PROPOSE_PARTS.filter((p) => p.name !== 'face'),
+  { name: 'mop', from: 'head:back hair', x: 60, y: 10, w: 80, h: 50, colour: [90, 60, 40] },
+  { name: 'fringe', from: 'head:front hair', x: 70, y: 20, w: 60, h: 40, colour: [110, 70, 50] },
+  { name: 'throat', from: 'head:neck', x: 90, y: 110, w: 20, h: 30, colour: [240, 210, 190] },
+];
+
+/**
  * The long-robe fixture (issues #22 and #23), on a 200x400 rig: the same face
  * as above (axis 100, chin 90, neck y 96, face height 50) over a robe tagged
  * `bottomwear` that starts at the collar, y 95 — shoulders 60..139 (80 px) for

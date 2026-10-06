@@ -79,7 +79,9 @@ usage:
       eyebrow, each said in a note; an iris or lash on a side with no
       eyewhite rides head, said in a note — and notes)
       and the overlay to correct against, <out>/render/landmarks.png and
-      landmarks_head.png. Prints every
+      landmarks_head.png. A figure with no face part gets a face box derived
+      from the head run's hair and neck, said in the first note; with no
+      head-run hair or neck it is refused (PROPOSE_FACE_PRESENT). Prints every
       note and a LINT line for each chain link that lies off its mesh's art, for a
       hip that is not below the chest, and for a hip above ${HIP_MIN_FRACTION} of the figure's
       height (the shoulders); a headwear/earwear layer with hanging strands
