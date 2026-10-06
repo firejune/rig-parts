@@ -407,8 +407,9 @@ usage:
       its names resolve against the rig in the check, before it builds.
       --idle-keys is forwarded to the rig stage (as for rig) and defaults to
       ctl; the first line names it when it is direct. A config with a
-      two-bone ik over chain links the idle keys needs --idle-keys direct
-      (RIG_IK_PAIR_UNDER_CONTROL names the flag on the command that ran).
+      two-bone ik over chain links the idle keys needs --idle-keys direct:
+      rigc refuses the pair a control splits, and the RIG_RIGC_GREEN line
+      names the flag on the command that ran.
 
   spine-parts --version
   spine-parts --help

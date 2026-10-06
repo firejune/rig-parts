@@ -48,6 +48,7 @@ import { BARS, causeLines, REQUIREMENTS_DIR, type CheckReport, type PackLine, DE
 import { loadConfig, loadEarlyConfig } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
 import { encodeGif } from './gif.ts';
+import { CONTROL_SUFFIX } from './motion.ts';
 import type { PaletteError } from './palette.ts';
 import { type LayerSet, readLayers } from './layers.ts';
 import { readParts, writeParts } from './parts.ts';
@@ -213,6 +214,34 @@ function gateThroughRigc(out: RigOutput, texts: Array<[string, string]>, rigc: R
   }
 }
 
+/**
+ * What only this package can add to rigc's refusal of a two-bone ik a control
+ * splits (issue #103). Under `--idle-keys ctl` a chain link the idle keys is
+ * keyed through a same-origin `<link>_ctl` parent, so a config's ik over that
+ * link and the link above it names a pair whose second bone is not the
+ * first's child; spine-rigc 2.15.0's rig-spec parser refuses it by name
+ * (firejune/rigc#1205), with `("<link>_ctl" stands between)` in its sentence
+ * and a remedy a config cannot follow — a config cannot name the control.
+ *
+ * This reads rigc's verdict and checks no rule of its own: for each control
+ * the stage added, a rigc line saying that control, and only it, stands
+ * between gets one sentence naming the flag on the command that ran. The ik
+ * shape is rigc's to judge; a pair split by a control and by a bone the config
+ * declares (`"…_ctl", "…" stand between`) gets nothing, because
+ * `--idle-keys direct` would not make it a parent and its child. Should rigc
+ * reword its sentence, rigc's refusal still reaches the author and only this
+ * sentence is lost; the selftest holds it on the installed rigc (`RG56`).
+ */
+export function ctlRemedies(lines: readonly string[], controls: readonly string[], command: RigCommand): string[] {
+  const out: string[] = [];
+  for (const bone of controls) {
+    const ctl = `${bone}${CONTROL_SUFFIX}`;
+    if (!lines.some((l) => l.includes(`("${ctl}" stands between)`))) continue;
+    out.push(`"${ctl}" is the control this stage keys "${bone}" through under --idle-keys ctl, and a config cannot name it: run \`${command} --idle-keys direct\`, which keys "${bone}" in place, so no control stands between "${bone}" and its parent`);
+  }
+  return out;
+}
+
 export interface RigStageInput {
   config: string;
   /** The directory holding parts.json and parts/<name>.png. */
@@ -224,7 +253,7 @@ export interface RigStageInput {
   pageEdges?: PageEdges;
   /** The gate build's `--pack-shape`; {@link DEFAULT_PACK_SHAPE} when absent. */
   packShape?: PackShape;
-  /** The command running the stage, which `RIG_IK_PAIR_UNDER_CONTROL` names beside the flag; `rig` when absent. It moves no byte written. */
+  /** The command running the stage, which {@link ctlRemedies} names beside the flag; `rig` when absent. It moves no byte written. */
   command?: RigCommand;
 }
 
@@ -237,7 +266,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     const png = join(input.parts, 'parts', `${p.name}.png`);
     if (existsSync(png)) images.set(p.name, readPng(png));
   }
-  const rig = buildRig(cfg, parts, images, undefined, input.idleKeys ?? DEFAULT_IDLE_KEYS, input.command ?? 'rig');
+  const rig = buildRig(cfg, parts, images, undefined, input.idleKeys ?? DEFAULT_IDLE_KEYS);
   const texts: Array<[string, string]> = [
     ['rig.json', rigJsonText(rig.rig)],
     ['motion.json', rigJsonText(rig.motion)],
@@ -277,7 +306,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     const problems: Problem[] = red.map((g) => ({
       code: 'RIG_RIGC_GREEN',
       object: `rigc ${g.label}`,
-      detail: `exited ${g.status}${g.lines.length > 0 ? `: ${g.lines.map((l) => l.trim()).join(' | ')}` : ', and it printed nothing'}; exit 0 is required before anything is written, and nothing was`,
+      detail: `exited ${g.status}${g.lines.length > 0 ? `: ${g.lines.map((l) => l.trim()).join(' | ')}` : ', and it printed nothing'}; ${ctlRemedies(g.lines, rig.controls, input.command ?? 'rig').map((s) => `${s}; `).join('')}exit 0 is required before anything is written, and nothing was`,
     }));
     throw new PartsError(problems);
   }

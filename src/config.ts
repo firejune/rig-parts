@@ -46,10 +46,11 @@
  * union names and a non-empty `name`, unique within its kind (rigc's identity
  * of a constraint is its kind and its name); every bone a constraint names
  * — the fields {@link CONSTRAINT_BONE_FIELDS} lists, read off rigc's
- * `buildRigConstraint` — is a bone `bones` declares; and where what is written
- * cannot mean what it says on the bones the config declares, it is refused by
- * name ({@link checkConstraints}). Every other field, its type and its range
- * are rigc's to refuse, at the rig stage's gate, in rigc's words. A record
+ * `buildRigConstraint` — is a bone `bones` declares; and a bone a constraint
+ * follows does not move with the bones it drives ({@link checkConstraints}).
+ * Every other field, its type and its range — an ik's `bones` as a shape
+ * included (spine-rigc 2.15.0, issue #103) — are rigc's to refuse, at the rig
+ * stage's gate, in rigc's words. A record
  * (`x-…`) and an annotation (`note`, `…_note`) ride on a constraint as on any
  * object the loader vouches for, and the rig stage leaves them out of what it
  * hands rigc ({@link constraintForRig}).
@@ -1254,24 +1255,23 @@ function refuseSharedTargets(c: Check, claims: ReadonlyMap<string, string[]>): v
  * - `CONFIG_NAME_RESOLVES`: a bone a constraint names that `bones` does not
  *   declare, naming the constraint, the field and the name, with the bones
  *   that exist.
- * - `CONFIG_IK_BONES_PARENT_AND_CHILD`: an ik's `bones` are one bone, or two
- *   of which the second is the first's child. Measured through spine-rigc
- *   2.10.1 on the rig fixture (`fixtures/rig.ts`, its 4 s idle rendered at 12
- *   fps, 49 frames, with a target bone under `root`): an ik over `body` and
- *   `hem1` (whose parent is `hem0`) gates green and leaves `hem1`'s tip 15.6
- *   to 17.3 units from its target in every frame; an ik over three bones
- *   gates green and moves no bone (spine-core's solver applies one bone or
- *   two). Neither is what was written, and nothing downstream says so.
  * - `CONFIG_CONSTRAINT_TARGET_DETACHED`: the bone an ik follows (`target`)
  *   or a transform reads (`source`) is one of the bones it drives or sits
  *   under one, so driving them moves the bone they follow. A scene target is
  *   a bone parented to `root`. The rig stage declares the same fact for rigc
  *   (`invariants.detached`, rigc's `A25`), so the gate holds the built rig to
- *   it too.
+ *   it too. rigc does not refuse this parentage undeclared: measured through
+ *   spine-rigc 2.15.0 on the rig fixture, an ik over `hem0` following `hem1`
+ *   and a transform over `hem0` reading `hem1` each gate green with nothing
+ *   declared.
  *
  * Every other field — `mix`, `properties`, a path's `slot`, a slider's
  * `animation` — and every value of it is rigc's, refused at the rig stage's
- * gate in rigc's words.
+ * gate in rigc's words. So is an ik's `bones` as a shape (issue #103): from
+ * spine-rigc 2.15.0 its rig-spec parser refuses an ik over more than two
+ * bones, or over a pair whose second bone is not the first's child, by name
+ * (firejune/rigc#1205); this loader refused both itself while rigc's gate
+ * passed them (issue #92), and no longer does.
  */
 function checkConstraints(c: Check, v: Json, bones: Set<string>, parents: Map<string, string>): void {
   const p = 'config.constraints';
@@ -1341,19 +1341,6 @@ function checkConstraints(c: Check, v: Json, bones: Set<string>, parents: Map<st
       if (list.every((n) => bones.has(n))) named.set(field, list);
     }
     const driven = named.get('bones');
-    if (kind === 'ik' && driven !== undefined && driven.length > 2) {
-      c.fail(
-        'CONFIG_IK_BONES_PARENT_AND_CHILD',
-        `${at}.bones`,
-        `names ${driven.length} bones (${driven.join(', ')}); spine-core's ik solver applies one bone (an aim) or two (a parent and its child) and leaves more untouched, so ${label} would gate green and move nothing — name one bone, or two of which the second is the first's child`,
-      );
-    } else if (kind === 'ik' && driven !== undefined && driven.length === 2 && parents.get(driven[1]) !== driven[0]) {
-      c.fail(
-        'CONFIG_IK_BONES_PARENT_AND_CHILD',
-        `${at}.bones`,
-        `names "${driven[0]}" and "${driven[1]}", and ${parents.has(driven[1]) ? `"${driven[1]}"'s parent is "${parents.get(driven[1])}"` : `"${driven[1]}" has no parent`}; a two-bone ik solves a parent and its child, and on any other pair spine-core places the second bone as though it were the first's child, so its tip ends away from the target with the gate green — name a bone and its child`,
-      );
-    }
     const follows = CONSTRAINT_FOLLOWS[kind];
     const target = follows === undefined ? undefined : named.get(follows)?.[0];
     if (follows !== undefined && target !== undefined && driven !== undefined) {
