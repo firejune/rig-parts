@@ -66,7 +66,9 @@ stage writes are the whole interface.
    `"back"` and reaching under its neighbours, its bone in `regions`) and assemble
    again; never add a part to `rig/` or `parts/` by hand (AUTHORING §5).
 6. Correct against `render/landmarks.png` and `note:` lines; `propose …
-   --from-config config.json` until it prints no `LINT` line.
+   --from-config config.json` until it prints no `LINT` line. `spine-parts compare
+   --left work/proposal.json --right config.json` lists what the correction changed,
+   bone by bone — origin, parent, tip, length, direction (AUTHORING §4).
 7. `spine-parts build --config … --source … --full … --head … --out out --loop`.
    It stops at the first stage that refuses, printing that stage's lines under
    `[assemble]`, `[rig]` or `[check]`. Fix what the FAIL line names and build again.
