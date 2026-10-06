@@ -247,10 +247,14 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
   let vertices = 0;
   for (const m of rig.meshReport) {
     vertices += m.vertices;
-    log(
-      `  mesh ${m.part.padEnd(12)} v=${String(m.vertices).padStart(4)} t=${String(m.triangles).padStart(4)} hull=${String(m.hull).padStart(3)} ` +
-        `grid=${m.grid} bones=${m.bones.length} infl max ${m.max_influences} mean ${m.mean_influences.toFixed(2)} cover ${m.art_coverage.toFixed(5)} loop passes ${rig.loopPasses[m.part]}`,
-    );
+    const head = `  mesh ${m.part.padEnd(12)} v=${String(m.vertices).padStart(4)} t=${String(m.triangles).padStart(4)} hull=${String(m.hull).padStart(3)} `;
+    const infl = `bones=${m.bones.length} infl max ${m.max_influences} mean ${m.mean_influences.toFixed(2)} cover ${m.art_coverage.toFixed(5)}`;
+    if ('mode' in m) {
+      const c = m.contour;
+      const stray = c.strayIslands === 0 ? '' : ` left out ${c.strayIslands} island(s), ${c.strayPixels} px`;
+      const regions = m.regions.map((rg) => ` region ${rg.name}->${rg.bone} reaches ${rg.reached} (${rg.whole} whole)`).join('');
+      log(`${head}contour tol=${m.params.tolerance} margin=${m.params.margin} spacing=${m.params.spacing} ${infl} overshoot ${c.overshoot} min angle ${c.smallestAngle.value}${stray}${regions}`);
+    } else log(`${head}grid=${m.grid} ${infl} loop passes ${rig.loopPasses[m.part]}`);
   }
   const regions = rig.rig.slots.length - rig.meshReport.length;
   const tracks = rig.motion.animations.idle.tracks;

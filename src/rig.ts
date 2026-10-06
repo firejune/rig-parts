@@ -33,7 +33,11 @@
  * - **Meshes** over the parts named in `meshes`: a square lattice (`src/mesh.ts`)
  *   weighted by distance to the mesh's candidate segments (`src/weights.ts`),
  *   written in rigc's by-name `weights` form. The slot's bone is the first
- *   segment's bone.
+ *   segment's bone. A mesh whose entry says `contour` (issue #84) is
+ *   `src/contour.ts`'s mesh over the padded image instead, each vertex
+ *   weighted by `src/localweights.ts` (its regions' bones by their declared
+ *   falloff, the rest by the same segments), every refusal collected with the
+ *   others; a lattice mesh writes what it always wrote.
  * - **Regions** for the parts named in `regions`: the image centred where the
  *   part sits, offset from its bone. A part named in `motion.blink.still` is
  *   two regions cut at its row: the rows from `row` down on the part's own
@@ -78,15 +82,17 @@
  * touches the disk, and the same inputs give the same bytes (key order is the
  * order the objects are built in, and every number is rounded by `pyRound`).
  */
-import { type BoneEntry, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type Point, ROOT_BONE } from './config.ts';
+import { type BoneEntry, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, ROOT_BONE } from './config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
+import { type ContourReport, contourMesh, type ContourRegion } from './contour.ts';
+import { type LocalInfluence, localInfluences } from './localweights.ts';
 import { artCoverage, ART_ALPHA, latticeMesh, ONE_LOOP_PASSES } from './mesh.ts';
 import { BLINK, blinkHoldMisses, blinkSpan, CONTROL_SUFFIX, controlledBones, IDLE_FPS, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
 import { PAINTING_RUN, type PartsFile, readFrom } from './parts.ts';
 import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
-import { influences, type Segment } from './weights.ts';
+import { type Influence, influences, type Segment } from './weights.ts';
 
 /** Transparent pixels added round every part image — the reference's `PAD`. */
 export const PAD = 4;
@@ -119,6 +125,41 @@ function placed(v: number, n: number): number {
 
 function places(v: number): number {
   return placed(v, OFFSET_PLACES);
+}
+
+/**
+ * The weights a contour vertex is written with: a vertex no region reaches is
+ * rounded as the lattice rounds (each to 5 places, the last `1 − sum(others)`),
+ * one a region reaches by {@link roundShares}.
+ */
+export function writtenShares(li: LocalInfluence): Influence[] {
+  if (li.region >= 0) return roundShares(li.influences);
+  const shares = li.influences.map(({ bone, weight }) => ({ bone, weight: pyRound(weight, 5) }));
+  let others = 0;
+  for (let k = 0; k < shares.length - 1; k++) others += shares[k].weight;
+  shares[shares.length - 1].weight = pyRound(1 - others, 5);
+  return shares;
+}
+
+/**
+ * A region-weighted vertex's weights at 5 places (issue #84): each rounded
+ * with `pyRound`; an entry that rounds to 0 is dropped (a bone at weight 0
+ * pulls nothing); and the rounding remainder goes to the heaviest entry, the
+ * first of equals, written as `1 − sum(others)`, so the vertex sums to exactly
+ * 1. The lattice writes the remainder into its LAST entry, which is safe only
+ * because `influences()` floors every entry at `MIN_WEIGHT`; a region's ramp
+ * reaches the shares below that floor (`src/localweights.ts`), and a share
+ * near 0 must not absorb a remainder that could take it negative. A vertex no
+ * region reaches is rounded exactly as the lattice rounds, not by this.
+ */
+export function roundShares(list: readonly Influence[]): Influence[] {
+  const kept = list.map((e) => ({ bone: e.bone, weight: pyRound(e.weight, 5) })).filter((e) => e.weight > 0);
+  let heavy = 0;
+  for (let k = 1; k < kept.length; k++) if (kept[k].weight > kept[heavy].weight) heavy = k;
+  let others = 0;
+  for (let k = 0; k < kept.length; k++) if (k !== heavy) others += kept[k].weight;
+  kept[heavy].weight = pyRound(1 - others, 5);
+  return kept;
 }
 
 interface Bone {
@@ -278,7 +319,10 @@ export type RigCommand = 'rig' | 'build';
 /** The `why` of the `invariants.idleDrivesMeshes` that `idleKeys: 'direct'` declares. */
 export const IDLE_DRIVES_MESHES_WHY = 'painting rig: the idle is meant to deform the meshes it keys (spine-parts rig --idle-keys direct)';
 
-export interface MeshReport {
+/** One row of `mesh_report.json`: a lattice mesh's row is as it always was; a contour mesh's says so. */
+export type MeshReport = LatticeMeshReport | ContourMeshReport;
+
+export interface LatticeMeshReport {
   part: string;
   vertices: number;
   triangles: number;
@@ -288,6 +332,28 @@ export interface MeshReport {
   mean_influences: number;
   art_coverage: number;
   grid: number;
+}
+
+/**
+ * A contour mesh's row (issue #84): the lattice row's figures, then the mode,
+ * the parameters it ran at, `src/contour.ts`'s report whole, and per region
+ * the vertices its bone reaches (g > 0) and holds alone (g = 1).
+ * `art_coverage` is over ALL the part's art, stray islands left out included,
+ * so a mesh that leaves pixels undrawn does not read 1.
+ */
+export interface ContourMeshReport {
+  part: string;
+  vertices: number;
+  triangles: number;
+  hull: number;
+  bones: string[];
+  max_influences: number;
+  mean_influences: number;
+  art_coverage: number;
+  mode: 'contour';
+  params: { tolerance: number; margin: number; spacing: number; budget: number | null; stray: number | null };
+  contour: ContourReport;
+  regions: Array<{ name: string; bone: string; reached: number; whole: number }>;
 }
 
 export interface RigOutput {
@@ -422,6 +488,11 @@ export function buildRig(
   };
   const meshSegments = new Map<string, Segment[]>();
   for (const [part, m] of Object.entries(cfg.meshes)) {
+    if ('contour' in m) {
+      (m.contour.regions ?? []).forEach((rg, i) => {
+        if (!B.has(rg.bone)) fail('RIG_NAME_RESOLVES', `config.meshes.${part}.contour.regions[${i}].bone`, `names the bone "${rg.bone}", which config.bones does not declare`);
+      });
+    }
     const out: Segment[] = [];
     m.segments.forEach((sp, i) => {
       const at = `config.meshes.${part}.segments[${i}]`;
@@ -516,6 +587,9 @@ export function buildRig(
   const motion = idleMotion(cfg, chains);
   const meshBones = new Set<string>();
   for (const segs of meshSegments.values()) for (const s of segs) meshBones.add(s.bone);
+  // A contour region's control bone is weighted to like a segment's bone (issue #84), so the idle's keys on it move
+  // to its control under `ctl` as theirs do. A config with no contour region adds nothing here.
+  for (const m of Object.values(cfg.meshes)) if ('contour' in m) for (const rg of m.contour.regions ?? []) meshBones.add(rg.bone);
   const meshKeyed = controlledBones(motion, meshBones);
   const controls = idleKeys === 'ctl' ? meshKeyed : [];
   for (const k of controls) {
@@ -649,6 +723,94 @@ export function buildRig(
     const deg = turn.get(bone) as number;
     return deg === 0 ? { image, x: places(x), y: places(y) } : { image, x: places(x), y: places(y), rotation: places(normaliseDegrees(-deg)) };
   };
+  // A contour mesh (issue #84): `src/contour.ts` over the padded image, every refusal collected with the others;
+  // the weights by `src/localweights.ts`; slot, uvs, bind positions and by-name weights written as the lattice's.
+  // The config's region numbers are rig px; the part image's are rig px less (p.x − PAD, p.y − PAD) — a
+  // translation, so every length (tolerance, margin, spacing, band, r) is the same number in both.
+  const contourAttachment = (
+    p: PartsFile['parts'][number],
+    img: Raster,
+    file: string,
+    spec: ContourSpec,
+    r: number,
+    segs: Segment[],
+    out: Problem[],
+  ): { attachment: MeshAttachment; report: ContourMeshReport } | null => {
+    const ox = p.x - PAD;
+    const oy = p.y - PAD;
+    const w = img.width;
+    const h = img.height;
+    const alpha = new Uint8Array(w * h);
+    for (let i = 0; i < alpha.length; i++) alpha[i] = img.data[i * 4 + 3];
+    const regions = spec.regions ?? [];
+    const inPart: ContourRegion[] = regions.map((rg) =>
+      rg.shape === 'circle'
+        ? { name: rg.name, shape: 'circle', cx: rg.cx - ox, cy: rg.cy - oy, r: rg.r, spacing: rg.spacing, band: rg.band }
+        : { name: rg.name, shape: 'polygon', points: rg.points.map(([x, y]) => [x - ox, y - oy] as [number, number]), spacing: rg.spacing, band: rg.band },
+    );
+    const cm = contourMesh(p.name, { width: w, height: h, alpha }, { threshold: ART_ALPHA, tolerance: spec.tolerance, margin: spec.margin, spacing: spec.spacing, budget: spec.budget, stray: spec.stray, regions: inPart });
+    if (Array.isArray(cm)) {
+      out.push(...cm);
+      return null;
+    }
+    const weights: WeightEntry[][] = [];
+    const reached = regions.map(() => 0);
+    const whole = regions.map(() => 0);
+    let infl = 0;
+    let maxInfl = 0;
+    let overlapped = false;
+    cm.vertices.forEach(([vx, vy], vi) => {
+      const wx = vx + ox;
+      const wy = vy + oy;
+      const li = localInfluences([wx, wy], segs, r, regions);
+      if ('first' in li) {
+        if (!overlapped) {
+          out.push({
+            code: 'RIG_CONTOUR_REGIONS_OVERLAP',
+            object: `config.meshes.${p.name}.contour.regions`,
+            detail: `vertex ${vi} at rig (${wx}, ${wy}) takes weight ${pyRound(li.g1, 5)} from region "${regions[li.first].name}" and ${pyRound(li.g2, 5)} from region "${regions[li.second].name}"; each vertex may be reached by one region's falloff (its region and band) — move the regions apart or narrow a band`,
+          });
+        }
+        overlapped = true;
+        return;
+      }
+      if (li.region >= 0) {
+        reached[li.region]++;
+        if (li.g >= 1) whole[li.region]++;
+      }
+      const shares = writtenShares(li);
+      const ent: WeightEntry[] = shares.map(({ bone, weight }) => {
+        const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
+        return { bone, x: places(x), y: places(y), weight };
+      });
+      weights.push(ent);
+      infl += ent.length;
+      maxInfl = Math.max(maxInfl, ent.length);
+    });
+    if (overlapped) return null;
+    const uvs: number[] = [];
+    for (const [x, y] of cm.vertices) uvs.push(pyRound(x / w, 6), pyRound(y / h, 6));
+    const bones = new Set(segs.map((s) => s.bone));
+    for (const rg of regions) bones.add(rg.bone);
+    const rep = cm.report;
+    return {
+      attachment: { type: 'mesh', image: file, width: w, height: h, uvs, triangles: cm.triangles, hull: cm.hull, weights },
+      report: {
+        part: p.name,
+        vertices: cm.vertices.length,
+        triangles: cm.triangles.length / 3,
+        hull: cm.hull,
+        bones: [...bones].sort(),
+        max_influences: maxInfl,
+        mean_influences: pyRound(infl / cm.vertices.length, 2),
+        art_coverage: pyRound(rep.coveredArtPixels / (rep.artPixels + rep.strayPixels), 5),
+        mode: 'contour',
+        params: { tolerance: spec.tolerance, margin: spec.margin, spacing: spec.spacing, budget: spec.budget ?? null, stray: spec.stray ?? null },
+        contour: rep,
+        regions: regions.map((rg, k) => ({ name: rg.name, bone: rg.bone, reached: reached[k], whole: whole[k] })),
+      },
+    };
+  };
   for (const p of parts.parts) {
     const img = pad(images.get(p.name) as Raster, PAD, PAD, PAD, PAD, [0, 0, 0, 0]);
     const file = `${p.name}.png`;
@@ -684,6 +846,14 @@ export function buildRig(
       continue;
     }
     const segs = meshSegments.get(p.name) as Segment[];
+    if ('contour' in mesh) {
+      const row = contourAttachment(p, img, file, mesh.contour, mesh.r, segs, problems);
+      if (row === null) continue;
+      skin[p.name] = { [p.name]: row.attachment };
+      slots.push({ name: p.name, bone: segs[0].bone, attachment: p.name });
+      meshReport.push(row.report);
+      continue;
+    }
     const art = alphaAbove(img, ART_ALPHA);
     const lm = latticeMesh(p.name, art, mesh.grid, maxLoopPasses);
     if ('code' in lm) {

@@ -173,7 +173,9 @@ usage:
       physics constraint added later has a lever; every offset under a turned
       link is in its frame, so nothing moves; a translate key under a turned
       link or a scale/shear key on one is refused, RIG_KEY_FRAME_UNTURNED),
-      a square lattice mesh over every part in config.meshes
+      a square lattice mesh over every part in config.meshes (a contour
+      mesh where the entry says contour, with its regions' bones weighted
+      by their declared falloff, AUTHORING §3)
       weighted by distance to its candidate bone segments, a region for every
       part in config.regions (a motion.blink.still part as two: the rows above
       its row on a second slot <part>_still, which the blink does not move),

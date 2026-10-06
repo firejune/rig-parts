@@ -181,6 +181,8 @@ export function configRoles(s: SkeletonSections & { constraints?: readonly Confi
       if (typeof sp === 'string') for (const b of chains.get(sp) ?? [sp]) push(bound, b, at);
       else push(bound, sp[0], at);
     });
+    // A contour mesh's region bone is weighted to, like a segment's (issue #84).
+    if ('contour' in m) (m.contour.regions ?? []).forEach((rg, i) => push(bound, rg.bone, `meshes.${part}.contour.regions[${i}]`));
   }
   for (const [part, bone] of Object.entries(s.regions)) push(bound, bone, `regions.${part}`);
   for (const [part, st] of Object.entries(s.motion.blink?.still ?? {})) push(bound, st.bone, `motion.blink.still.${part}`);

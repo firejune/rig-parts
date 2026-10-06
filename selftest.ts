@@ -160,7 +160,7 @@ import {
 import { COMPOSED_HAND_X, COMPOSED_SHOULDER, writeComposedRig, DRIVER_AT, DRIVER_SLIDE, FAR_ABOVE, LOWER_LEN, LURE_ANGLE, OVERREACH_FROM, OVERREACH_TO, POINTER_LEN, REACH_FROM, REACH_TO, REQ_FPS, REQ_STAGE, RIDE_MIX, RIDER_AT, SHOULDER, stageOf, SWING_BROKEN, SWING_PEAK, UPPER_LEN, VANE_AT, VANE_MIX, writeReqRig, writeRequirements } from './fixtures/reqrig.ts';
 import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
-import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'spine-rigc/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { contourFit, type ContourMesh, contourMesh, type ContourParams, contourTopologyProblems, delaunayViolations, inCircle, keepPoints } from './src/contour.ts';
@@ -247,7 +247,11 @@ import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeyp
 import { LYING_PARTS, LYING_RIG, type PoseName, POSES } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, constraintConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
-import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText, type RigSpec } from './src/rig.ts';
+import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText, type RigSpec, roundShares } from './src/rig.ts';
+import { localInfluences, regionWeight } from './src/localweights.ts';
+import { influences } from './src/weights.ts';
+import { apply as applyAffine, contourAtBudget, cost, errors, fieldAt, fieldContour, fieldLattice, locator } from './tools/local_compare.ts';
+import { FIELD_LATTICE_GRID, FIELD_POSES, fieldRegion, REGION_SPACINGS } from './fixtures/localfield.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
 import { readTag, type TagReading } from './src/tags.ts';
@@ -12513,6 +12517,568 @@ function runContourSuite(): number {
     'rigc\'s offset moves each edge out along its own normal, so a neck narrower than twice the margin folds the outline over itself; that is named here, before any triangle is made',
   );
 
+  // CT32–CT36 — stray islands, by declaration only (issue #84's amendment).
+  const mainOnly = built(contourMesh('islands', blocks(40, 20, [[2, 2, 10, 10]]), BASE));
+  const strayed = built(contourOf(ISLANDS, { ...ISLANDS.params, stray: 36 }));
+  const under = contourOf(ISLANDS, { ...ISLANDS.params, stray: 35 });
+  say(
+    'CT32_A_DECLARED_STRAY_FIGURE_LEAVES_OUT_AN_ISLAND_AT_OR_UNDER_IT_AND_REFUSES_ONE_ABOVE',
+    strayed !== null &&
+      mainOnly !== null &&
+      sameVertices(strayed.vertices.slice(0, strayed.hull), [[1, 1], [13, 1], [13, 13], [1, 13]]) &&
+      JSON.stringify([strayed.vertices, strayed.triangles, strayed.hull]) === JSON.stringify([mainOnly.vertices, mainOnly.triangles, mainOnly.hull]) &&
+      strayed.report.strayIslands === 1 &&
+      strayed.report.strayPixels === 36 &&
+      strayed.report.artPixels === 100 &&
+      strayed.report.coveredArtPixels === 100 &&
+      has(under, 'CONTOUR_ONE_ISLAND', 'contour mesh "islands"', '100 px at (2, 2), 36 px at (20, 2)', 'With stray 35 px declared', 'hold more than 35 px — 36 px'),
+    `stray 36: ${strayed === null ? `refused: ${contourCodes(contourOf(ISLANDS, { ...ISLANDS.params, stray: 36 }))}` : `hull ${vertexText(strayed.vertices.slice(0, strayed.hull))}, left out ${strayed.report.strayIslands} island(s) / ${strayed.report.strayPixels} px, art ${strayed.report.artPixels}, covered ${strayed.report.coveredArtPixels}; the same mesh as the 100 px block alone: ${mainOnly !== null && JSON.stringify(strayed.vertices) === JSON.stringify(mainOnly.vertices)}`}; stray 35: ${Array.isArray(under) ? under.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}`,
+    'the figure is "at or under": a 36 px island is left out at 36 and refused at 35; what is left out is taken out of the art before the trace, so the mesh is exactly the 10x10 block\'s, pushed out 1 px, and the report says what went',
+  );
+  const absentDetail = Array.isArray(islands) ? islands[0].detail : '';
+  const step1Words = 'its art (alpha above 8) is 2 separate 4-connected islands — 100 px at (2, 2), 36 px at (20, 2); one island is required, because spine-rigc takes one closed outline per mesh. Nothing was discarded; the lattice mode stays available for this part';
+  const zeroSame = all.filter((p) => p[1] !== null).every(([c, m]) => {
+    const z = contourOf(c, { ...c.params, stray: 0 });
+    return !Array.isArray(z) && m !== null && JSON.stringify(z) === JSON.stringify(m) && m.report.strayIslands === 0 && m.report.strayPixels === 0;
+  });
+  say(
+    'CT33_ABSENT_THE_STRAY_RULE_CHANGES_NOTHING_THE_STEP_1_MODULE_DID',
+    absentDetail === step1Words && zeroSame && strayed !== null && mainOnly !== null && JSON.stringify(strayed.report) !== JSON.stringify(mainOnly.report),
+    `absent: "${absentDetail}"; every built case with stray 0 gives the bytes it gives with none, and reports 0 islands and 0 px left out: ${zeroSame}; planted: the islands case at stray 36 does not report what the plain block reports (it says 36 px went): ${strayed !== null && mainOnly !== null && JSON.stringify(strayed.report) !== JSON.stringify(mainOnly.report)}`,
+    'the amendment opens one door, and only with the figure written: the refusal step 1 printed is printed word for word, and a figure that leaves nothing out writes the mesh and report of no figure (the report gains two fields, 0 and 0)',
+  );
+  const tie = contourMesh('tie', blocks(30, 10, [[2, 2, 6, 6], [20, 2, 6, 6]]), { ...BASE, stray: 100 });
+  const unique = built(contourMesh('tie', blocks(30, 10, [[2, 2, 6, 6], [20, 2, 6, 5]]), { ...BASE, stray: 100 }));
+  say(
+    'CT34_A_TIE_FOR_THE_LARGEST_ISLAND_LEAVES_NONE_OUT_AND_REFUSES',
+    has(tie, 'CONTOUR_ONE_ISLAND', '36 px at (2, 2), 36 px at (20, 2)', '2 islands share the largest count, 36 px') && unique !== null && unique.report.strayPixels === 30 && unique.report.artPixels === 36,
+    `two 6x6 islands at stray 100: ${Array.isArray(tie) ? tie.map((p) => p.detail).join('; ') : 'BUILT'}; one of them 6x5: ${unique === null ? 'refused' : `kept ${unique.report.artPixels} px, left out ${unique.report.strayPixels} px`}`,
+    'keeping one of two equal pieces would be a choice the declaration does not make, so a tie for the largest is no largest; one pixel row less on one of them makes the other the largest, and the 30 px one goes',
+  );
+  const badStray = [contourMesh('neg', CONVEX.mask, { ...BASE, stray: -1 }), contourMesh('frac', CONVEX.mask, { ...BASE, stray: 2.5 })];
+  const zeroStray = contourMesh('zero', CONVEX.mask, { ...BASE, stray: 0 });
+  say(
+    'CT35_A_STRAY_FIGURE_THAT_IS_NOT_A_WHOLE_PIXEL_COUNT_IS_REFUSED',
+    badStray.every((r) => has(r, 'CONTOUR_PARAMETER', 'stray', 'a whole number of art pixels')) && built(zeroStray) !== null,
+    `-1: ${contourCodes(badStray[0])}; 2.5: ${contourCodes(badStray[1])}; 0 on the convex block: ${contourCodes(zeroStray)}`,
+    'never invent a value: a count of pixels is a whole number, and one that is not is refused rather than rounded',
+  );
+  const inHole = built(contourMesh('hole-stray', blocks(40, 40, [[4, 4, 32, 32], [14, 14, 12, 12, 0], [19, 19, 2, 2]]), { ...BASE, stray: 4 }));
+  say(
+    'CT36_A_STRAY_ISLAND_INSIDE_A_HOLE_IS_LEFT_OUT_AND_ITS_HOLE_FILLED_AS_EVERY_HOLE_IS',
+    inHole !== null && inHole.report.strayIslands === 1 && inHole.report.strayPixels === 4 && inHole.report.filledHolePixels === 144 && inHole.report.artPixels === 880 && inHole.hull === 4,
+    inHole === null ? 'refused' : `left out ${inHole.report.strayIslands} / ${inHole.report.strayPixels} px; filled ${inHole.report.filledHolePixels} px; art ${inHole.report.artPixels}; hull ${inHole.hull}`,
+    'the 2x2 island in the 12x12 hole is not the largest and is under the figure, so it leaves the art; the hole is then the whole 144 px and is filled as every hole is — the island\'s pixels stay inside the mesh, drawn, and are counted as filled hole',
+  );
+
+  return bad();
+}
+
+// ---------------------------------------------------------------------------
+// the contour mode wired: config, local weights, the rig stage, the comparison's definitions (issue #84, step 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * The rig fixture (fixtures/rig.ts) with `cloth` as a contour mesh and one
+ * circle region on a bone `soft` at rig (18, 14), parent `body`. By hand:
+ * `cloth` is 16x8 at rig (10, 10); padded by 4 it is 24x16 with top-left at
+ * rig (6, 6), its art at padded x 4..19, y 4..11. Tolerance 1 and margin 1
+ * give the outline (3, 3) (21, 3) (21, 13) (3, 13) padded — rig (9, 9)
+ * (27, 9) (27, 19) (9, 19). The region (rig (18, 14), r 2, band 2) is padded
+ * (12, 8): its spacing-1 grid holds the centre itself, and (12, 11), 3 px
+ * below it — g = 1 − (3 − 2)/2 = 0.5.
+ */
+function contourRigConfig(edit: (c: Record<string, unknown>) => void = () => {}): Record<string, unknown> {
+  const c = rigConfig();
+  (c.bones as unknown[]).push({ name: 'soft', parent: 'body', at: [18, 14] });
+  c.meshes = {
+    cloth: {
+      contour: { tolerance: 1, margin: 1, spacing: 4, 'x-why': { by: 'selftest' }, regions: [{ name: 'pinch', shape: 'circle', cx: 18, cy: 14, r: 2, spacing: 1, band: 2, bone: 'soft', 'x-seen': 1 }] },
+      r: 8,
+      segments: ['hem'],
+    },
+  };
+  edit(c);
+  return c;
+}
+
+/** The lattice rig fixture's config, edited, without the loader. */
+function latticeRaw(edit: (c: Record<string, unknown>) => void): Record<string, unknown> {
+  const c = rigConfig();
+  edit(c);
+  return c;
+}
+
+function contourCloth(c: Record<string, unknown>): Record<string, unknown> {
+  return (c.meshes as Record<string, Record<string, unknown>>).cloth.contour as Record<string, unknown>;
+}
+
+function contourRegion0(c: Record<string, unknown>): Record<string, unknown> {
+  return (contourCloth(c).regions as Array<Record<string, unknown>>)[0];
+}
+
+function runContourWiringSuite(): number {
+  section('contour-wiring: the config, the local weights, the rig stage and the comparison\'s definitions');
+  const { say, bad } = counter();
+  const load = (c: Record<string, unknown>): PartsError | null => refusals(() => parseConfig(c));
+  const hasCode = (e: PartsError | null, code: string, ...words: string[]): boolean => e !== null && e.problems.some((p) => p.code === code && words.every((w) => `${p.object} ${p.detail}`.includes(w)));
+  const lines = (e: PartsError | null): string => (e === null ? 'nothing' : e.problems.map((p) => `${p.code} ${p.object}: ${p.detail}`).join('; '));
+
+  // CW01 — a contour mesh loads, records and all; the lattice fixture still loads.
+  const okContour = load(contourRigConfig());
+  const okLattice = load(rigConfig());
+  say(
+    'CW01_A_CONTOUR_MESH_WITH_A_REGION_AND_RECORDS_LOADS_AND_THE_LATTICE_STILL_DOES',
+    okContour === null && okLattice === null,
+    `contour: ${lines(okContour)}; lattice: ${lines(okLattice)}`,
+    'the x- record convention (#71) holds inside contour and inside a region as in every object the loader vouches for',
+  );
+
+  // CW02 — exactly one mode.
+  const both = load(contourRigConfig((c) => ((c.meshes as Record<string, Record<string, unknown>>).cloth.grid = 8)));
+  const neither = load(contourRigConfig((c) => delete (c.meshes as Record<string, Record<string, unknown>>).cloth.contour));
+  say(
+    'CW02_A_MESH_WITH_BOTH_GRID_AND_CONTOUR_OR_NEITHER_IS_REFUSED_BY_NAME',
+    hasCode(both, 'CONFIG_MESH_MODE', 'config.meshes.cloth', 'has both grid') && hasCode(neither, 'CONFIG_MESH_MODE', 'config.meshes.cloth', 'has neither grid') && okContour === null,
+    `both: ${lines(both)}; neither: ${lines(neither)}`,
+    'grid keeps its meaning and contour is the other mode; a mesh that is both, or neither, is not a mesh this stage can build',
+  );
+
+  // CW03 — the contour block: every field named in one run.
+  const block3 = load(
+    contourRigConfig((c) => {
+      const k = contourCloth(c);
+      delete k.margin;
+      delete k.spacing;
+      k.tolerence = 1;
+      k.budget = 2;
+      k.stray = -1;
+    }),
+  );
+  const want3: Array<[string, string]> = [
+    ['CONFIG_KEY_KNOWN', 'config.meshes.cloth.contour.tolerence'],
+    ['CONFIG_FIELD_PRESENT', 'config.meshes.cloth.contour.margin'],
+    ['CONFIG_FIELD_PRESENT', 'config.meshes.cloth.contour.spacing'],
+    ['CONFIG_FIELD_TYPE', 'config.meshes.cloth.contour.budget'],
+    ['CONFIG_FIELD_TYPE', 'config.meshes.cloth.contour.stray'],
+  ];
+  say(
+    'CW03_EVERY_BAD_CONTOUR_FIELD_IS_NAMED_IN_ONE_RUN',
+    want3.every(([code, obj]) => block3?.problems.some((p) => p.code === code && p.object === obj)) && block3?.problems.length === want3.length,
+    lines(block3),
+    'tolerance, margin and spacing are required and nothing defaults them; budget is 3 or more vertices and stray a whole pixel count',
+  );
+
+  // CW04 — a region: its bone resolves, its name is unique, its shape is one of two.
+  const region4 = load(
+    contourRigConfig((c) => {
+      const regs = contourCloth(c).regions as Array<Record<string, unknown>>;
+      regs[0].bone = 'nobody';
+      regs.push({ ...regs[0], bone: 'soft' }, { name: 'sq', shape: 'square', spacing: 1, band: 0, bone: 'soft' }, { name: 'poly', shape: 'polygon', points: [[10, 10], [12, 10]], spacing: 1, band: 0, bone: 'soft' });
+    }),
+  );
+  say(
+    'CW04_A_REGIONS_BONE_NAME_SHAPE_AND_POINTS_ARE_EACH_REFUSED_BY_NAME',
+    hasCode(region4, 'CONFIG_NAME_RESOLVES', 'regions[0].bone', '"nobody"') &&
+      hasCode(region4, 'CONFIG_REGION_NAME_UNIQUE', 'regions[1].name', '"pinch" is declared twice') &&
+      hasCode(region4, 'CONFIG_FIELD_TYPE', 'regions[2].shape', '"square"') &&
+      hasCode(region4, 'CONFIG_FIELD_TYPE', 'regions[3].points', 'has 2 point(s)'),
+    lines(region4),
+    'a region\'s bone is resolved by name like every bone reference; two regions of one name would be one name for two falloffs',
+  );
+
+  // CW05 — region numbers sit on the 1/256 px grid.
+  const off = load(contourRigConfig((c) => (contourRegion0(c).cx = 18.001)));
+  const on = load(contourRigConfig((c) => (contourRegion0(c).cx = 18 + 1 / 256)));
+  say(
+    'CW05_A_REGION_NUMBER_OFF_THE_1_256_PX_GRID_IS_REFUSED_AND_ONE_ON_IT_IS_NOT',
+    hasCode(off, 'CONFIG_FIELD_TYPE', 'regions[0].cx', 'is 18.001', 'multiple of 1/256 px') && on === null,
+    `cx 18.001: ${lines(off)}; cx 18 + 1/256: ${lines(on)}`,
+    'the weight is 1 inside a region and 0 past its band, and those two decisions are made exactly on the grid the mesh is on; a number off it is named, not rounded',
+  );
+
+  // CW06 — a lattice mesh's refusals read as they did.
+  const noR = load(latticeRaw((c) => delete (c.meshes as Record<string, Record<string, unknown>>).cloth.r));
+  const typo = load(latticeRaw((c) => ((c.meshes as Record<string, Record<string, unknown>>).cloth.gird = 8)));
+  say(
+    'CW06_A_LATTICE_MESHS_REFUSALS_READ_AS_THEY_DID',
+    noR?.problems.length === 1 &&
+      noR.problems[0].code === 'CONFIG_FIELD_PRESENT' &&
+      noR.problems[0].object === 'config.meshes.cloth.r' &&
+      noR.problems[0].detail === 'is absent and required' &&
+      hasCode(typo, 'CONFIG_KEY_KNOWN', 'config.meshes.cloth.gird', 'known: grid, r, segments, contour'),
+    `no r: ${lines(noR)}; a typo: ${lines(typo)}`,
+    'the known keys keep their order with contour after them, and r and segments are required in the words the object check uses — the one change a lattice config sees is that contour is now a known key',
+  );
+
+  // CW07 — the declared falloff on a circle, by hand.
+  const circle = { name: 'c', shape: 'circle', cx: 10, cy: 10, r: 4, spacing: 1, band: 4, bone: 'b' } as const;
+  const u = 1 / 256;
+  const g7: Array<[string, number, number]> = [
+    ['centre', regionWeight([10, 10], circle), 1],
+    ['on the circle (14, 10)', regionWeight([14, 10], circle), 1],
+    ['one unit outside it', regionWeight([14 + u, 10], circle), 1 - u / 4],
+    ['mid-band (16, 10)', regionWeight([16, 10], circle), 0.5],
+    ['3-4-5: (13, 14), d 5 − 4 = 1', regionWeight([13, 14], circle), 0.75],
+    ['on the band edge (18, 10)', regionWeight([18, 10], circle), 0],
+    ['one unit inside the band edge', regionWeight([18 - u, 10], circle), u / 4],
+    ['band 0, outside', regionWeight([14 + u, 10], { ...circle, band: 0 }), 0],
+    ['band 0, on the circle', regionWeight([14, 10], { ...circle, band: 0 }), 1],
+  ];
+  say(
+    'CW07_A_CIRCLE_REGIONS_WEIGHT_IS_1_INSIDE_LINEAR_ACROSS_THE_BAND_AND_0_PAST_IT',
+    g7.every(([, got, want]) => Math.abs(got - want) < 1e-12) && g7[5][1] === 0 && g7[6][1] > 0 && g7[1][1] === 1 && g7[2][1] < 1,
+    g7.map(([what, got, want]) => `${what}: ${got} (by hand ${want})`).join('; '),
+    'g = 1 − d/band, d the distance past the circle: linear, no smoothstep; the 1 on the circle and the 0 on the band edge are decided on integers, so one 1/256 px unit either side is not',
+  );
+
+  // CW08 — on a polygon: the edge, inside, the band, a corner.
+  const square: ContourRegionSpec = { name: 's', shape: 'polygon', points: [[0, 0], [16, 0], [16, 16], [0, 16]], spacing: 1, band: 4, bone: 'b' };
+  const g8: Array<[string, number, number]> = [
+    ['on an edge (16, 8)', regionWeight([16, 8], square), 1],
+    ['inside (8, 8)', regionWeight([8, 8], square), 1],
+    ['(18, 8): d 2', regionWeight([18, 8], square), 0.5],
+    ['(20, 8): d 4, the band edge', regionWeight([20, 8], square), 0],
+    ['(17, 17): d √2 to the corner', regionWeight([17, 17], square), 1 - Math.SQRT2 / 4],
+    ['(19, 20): d 5 to the corner, past the band', regionWeight([19, 20], square), 0],
+  ];
+  say(
+    'CW08_A_POLYGON_REGIONS_WEIGHT_READS_THE_DISTANCE_TO_ITS_EDGES',
+    g8.every(([, got, want]) => Math.abs(got - want) < 1e-12) && g8[3][1] === 0,
+    g8.map(([what, got, want]) => `${what}: ${got} (by hand ${want})`).join('; '),
+    'the distance is to the polygon\'s edges, so past a convex corner it is the distance to the corner — the band rounds there; a point on an edge is inside',
+  );
+
+  // CW09 — no region reaches a vertex: the weights are influences(), exactly.
+  const segs9 = [
+    { bone: 'a', a: [0, 0] as Point, b: [10, 0] as Point },
+    { bone: 'b', a: [10, 0] as Point, b: [20, 0] as Point },
+  ];
+  const far9 = localInfluences([5, 30], segs9, 8, [circle]);
+  const near9 = localInfluences([16, 10], segs9, 8, [circle]);
+  say(
+    'CW09_WITH_NO_REGION_REACHING_IT_A_VERTEXS_WEIGHTS_ARE_INFLUENCES_EXACTLY',
+    !('first' in far9) && far9.region === -1 && JSON.stringify(far9.influences) === JSON.stringify(influences([5, 30], segs9, 8)) && !('first' in near9) && JSON.stringify(near9.influences) !== JSON.stringify(influences([16, 10], segs9, 8)),
+    `(5, 30), past the band: ${JSON.stringify('first' in far9 ? far9 : far9.influences)}; influences(): ${JSON.stringify(influences([5, 30], segs9, 8))}; planted (16, 10), mid-band: ${JSON.stringify('first' in near9 ? near9 : near9.influences)}`,
+    'the region is opt-in at each vertex: where g is 0 the vertex is weighted as the lattice weights it, entry for entry',
+  );
+
+  // CW10 — g = 1 is the region bone alone; a region bone that is a segment bone is one entry.
+  const whole10 = localInfluences([10, 10], segs9, 8, [circle]);
+  const shared10 = localInfluences([16, 10], segs9, 8, [{ ...circle, bone: 'a' }]);
+  const s10 = influences([16, 10], segs9, 8);
+  const a10 = s10.find((e) => e.bone === 'a')?.weight ?? 0;
+  say(
+    'CW10_INSIDE_THE_REGION_ITS_BONE_ALONE_AND_A_REGION_BONE_THAT_IS_A_SEGMENT_BONE_IS_ONE_ENTRY',
+    !('first' in whole10) &&
+      JSON.stringify(whole10.influences) === '[{"bone":"b","weight":1}]' &&
+      !('first' in shared10) &&
+      shared10.influences.length === s10.length &&
+      shared10.influences[0].bone === 'a' &&
+      Math.abs(shared10.influences[0].weight - (0.5 + 0.5 * a10)) < 1e-15,
+    `centre: ${JSON.stringify('first' in whole10 ? whole10 : whole10.influences)}; mid-band with the region on segment bone "a": ${JSON.stringify('first' in shared10 ? shared10 : shared10.influences)} (by definition a = 0.5 + 0.5 x ${a10})`,
+    'g + (1 − g) S(bone) when the region\'s bone is among the segment bones: one bone, one weight',
+  );
+
+  // CW11 — the cap: four segment bones and a region at g 0.5 keep four bones, the region's g untouched.
+  const segs11 = ['p', 'q', 'r', 's'].map((bone, i) => ({ bone, a: [i * 6, 0] as Point, b: [i * 6 + 6, 0] as Point }));
+  const s11 = influences([12, 10], segs11, 30);
+  const cap11 = localInfluences([12, 10], segs11, 30, [{ ...circle, cx: 12, cy: 4, r: 2, band: 8, bone: 'x' }]);
+  const kept11 = s11.slice(0, 3);
+  const sum11 = kept11.reduce((t, e) => t + e.weight, 0);
+  say(
+    'CW11_THE_MAX_INFLUENCES_CAP_DROPS_THE_LIGHTEST_SEGMENT_BONE_NEVER_THE_REGION',
+    s11.length === 4 &&
+      !('first' in cap11) &&
+      cap11.influences.length === 4 &&
+      cap11.influences[0].bone === 'x' &&
+      cap11.influences[0].weight === 0.5 &&
+      cap11.influences.slice(1).every((e, k) => e.bone === kept11[k].bone && Math.abs(e.weight - (0.5 * kept11[k].weight) / sum11) < 1e-15),
+    `influences(): ${JSON.stringify(s11)}; with the region (g ${'first' in cap11 ? '?' : cap11.g}): ${JSON.stringify('first' in cap11 ? cap11 : cap11.influences)}`,
+    'MAX_INFLUENCES is 4: with four segment bones and a region bone, the lightest segment bone goes and the other three share 1 − g renormalised; g itself is the declared falloff and is never cut',
+  );
+
+  // CW12 — rounding: the remainder goes to the heaviest; the lattice's "last" would write a zero.
+  const list12 = [
+    { bone: 'R', weight: 0.99999 },
+    { bone: 's1', weight: 0.000006 },
+    { bone: 's2', weight: 0.000006 },
+  ];
+  const round12 = roundShares(list12);
+  const last12 = list12.map((e) => ({ bone: e.bone, weight: pyRound(e.weight, 5) }));
+  last12[2].weight = pyRound(1 - last12[0].weight - last12[1].weight, 5);
+  say(
+    'CW12_A_REGION_VERTEXS_ROUNDING_REMAINDER_GOES_TO_ITS_HEAVIEST_ENTRY',
+    JSON.stringify(round12) === '[{"bone":"R","weight":0.99998},{"bone":"s1","weight":0.00001},{"bone":"s2","weight":0.00001}]' && last12[2].weight === 0 && JSON.stringify(roundShares([{ bone: 'a', weight: 0.7 }, { bone: 'b', weight: 0.000004 }, { bone: 'c', weight: 0.299996 }])) === '[{"bone":"a","weight":0.7},{"bone":"c","weight":0.3}]',
+    `${JSON.stringify(list12)} -> ${JSON.stringify(round12)}; the lattice's rule (last = 1 − others) writes ${JSON.stringify(last12)}; an entry rounding to 0 is dropped: ${JSON.stringify(roundShares([{ bone: 'a', weight: 0.7 }, { bone: 'b', weight: 0.000004 }, { bone: 'c', weight: 0.299996 }]))}`,
+    'below the MIN_WEIGHT floor a share can round to 0.00001 or 0; the lattice can write its remainder into the last entry because influences() floors every entry at 0.03, a region\'s ramp cannot',
+  );
+
+  // CW13, CW14 — the rig stage writes the contour mesh by hand; the region is carried from rig px by a translation.
+  const r13 = buildRig(parseConfig(contourRigConfig()), rigParts(), rigImages());
+  const cloth13 = r13.rig.skins.default.cloth.cloth as MeshAttachment;
+  const at13 = (x: number, y: number): number => {
+    for (let i = 0; i < cloth13.uvs.length / 2; i++) if (cloth13.uvs[2 * i] === pyRound(x / 24, 6) && cloth13.uvs[2 * i + 1] === pyRound(y / 16, 6)) return i;
+    return -1;
+  };
+  const centre13 = at13(12, 8);
+  const band13 = at13(12, 11);
+  const row13 = r13.meshReport.find((m) => m.part === 'cloth');
+  const hull13 = cloth13.uvs.slice(0, 8).join(',');
+  say(
+    'CW13_THE_RIG_STAGE_WRITES_A_CONTOUR_MESH_WITH_ITS_REGION_WEIGHTS_DERIVED_BY_HAND',
+    cloth13.hull === 4 &&
+      hull13 === [3 / 24, 3 / 16, 21 / 24, 3 / 16, 21 / 24, 13 / 16, 3 / 24, 13 / 16].map((v) => pyRound(v, 6)).join(',') &&
+      centre13 >= 0 &&
+      JSON.stringify(cloth13.weights[centre13]) === '[{"bone":"soft","x":0,"y":0,"weight":1}]' &&
+      band13 >= 0 &&
+      JSON.stringify(cloth13.weights[band13]) === '[{"bone":"soft","x":0,"y":-3,"weight":0.5},{"bone":"hem0","x":4,"y":-3,"weight":0.29138},{"bone":"hem1","x":-4,"y":-3,"weight":0.20862}]' &&
+      cloth13.weights.every((ws) => pyRound(ws.reduce((t, w) => t + w.weight, 0), 5) === 1) &&
+      row13 !== undefined &&
+      'mode' in row13 &&
+      row13.mode === 'contour' &&
+      row13.art_coverage === 1 &&
+      row13.params.spacing === 4 &&
+      row13.params.budget === null &&
+      row13.regions[0].bone === 'soft' &&
+      row13.regions[0].whole > 0 &&
+      row13.regions[0].reached > row13.regions[0].whole &&
+      row13.bones.join(',') === 'hem0,hem1,soft' &&
+      r13.rig.slots.find((s) => s.name === 'cloth')?.bone === 'hem0',
+    `hull uvs ${hull13}; padded (12, 8) = rig (18, 14): vertex ${centre13} ${JSON.stringify(cloth13.weights[centre13] ?? null)}; padded (12, 11) = rig (18, 17): vertex ${band13} ${JSON.stringify(cloth13.weights[band13] ?? null)}; report ${JSON.stringify(row13 === undefined ? null : { ...row13, contour: undefined })}`,
+    'fixture by hand (contourRigConfig): the outline is the 16x8 block pushed out 1 px; at the centre g = 1, the bone alone; 3 px below it g = 0.5, and the segments share the other half as w = 1/(d + 8)^2 at d = 3 (hem0, nearest (18, 14)) and d = 5 (hem1, nearest (22, 14)): 169/290 and 121/290, halved, 0.29138 and 0.20862; bind offsets in Spine axes from each bone\'s origin',
+  );
+  const shifted = buildRig(parseConfig(contourRigConfig((c) => Object.assign(contourRegion0(c), { cx: 12, cy: 8 }))), rigParts(), rigImages());
+  const cloth14 = shifted.rig.skins.default.cloth.cloth as MeshAttachment;
+  // Planted: the same numbers read as part px — the region written at rig (12, 8), padded (6, 2). Every vertex it
+  // holds whole lies within its radius 2 of padded (6, 2), and none is at padded (12, 8).
+  const whole14: Array<[number, number]> = [];
+  cloth14.weights.forEach((ws, i) => {
+    if (ws.length === 1 && ws[0].bone === 'soft') whole14.push([cloth14.uvs[2 * i] * 24, cloth14.uvs[2 * i + 1] * 16]);
+  });
+  const near14 = whole14.every(([x, y]) => Math.hypot(x - 6, y - 2) <= 2 + 1e-4);
+  const notAtCentre = !cloth14.weights.some((ws, i) => cloth14.uvs[2 * i] === 0.5 && cloth14.uvs[2 * i + 1] === 0.5 && ws.length === 1 && ws[0].bone === 'soft');
+  say(
+    'CW14_A_REGION_IS_WRITTEN_IN_RIG_PX_AND_MOVED_INTO_THE_PART_BY_A_TRANSLATION',
+    centre13 >= 0 && whole14.length > 0 && near14 && notAtCentre,
+    `the region at rig (18, 14) puts a whole-weight vertex at padded (12, 8) (vertex ${centre13}); planted, the region at rig (12, 8): ${whole14.length} whole-weight vertex(es), all within 2 px of padded (6, 2): ${near14}; none at padded (12, 8): ${notAtCentre}`,
+    'a config length is a rig length; the part image is the rig less (p.x − PAD, p.y − PAD), so a position moves and a length does not',
+  );
+
+  // CW15 — two regions reaching one vertex: refused, naming both.
+  const overlap = refusals(() =>
+    buildRig(
+      parseConfig(contourRigConfig((c) => (contourCloth(c).regions as unknown[]).push({ name: 'other', shape: 'circle', cx: 20, cy: 14, r: 1, spacing: 1, band: 1, bone: 'soft' }))),
+      rigParts(),
+      rigImages(),
+    ),
+  );
+  const apart = refusals(() =>
+    buildRig(
+      parseConfig(contourRigConfig((c) => (contourCloth(c).regions as unknown[]).push({ name: 'other', shape: 'circle', cx: 25, cy: 14, r: 1, spacing: 1, band: 0, bone: 'soft' }))),
+      rigParts(),
+      rigImages(),
+    ),
+  );
+  say(
+    'CW15_A_VERTEX_TWO_REGIONS_REACH_IS_REFUSED_NAMING_BOTH',
+    hasCode(overlap, 'RIG_CONTOUR_REGIONS_OVERLAP', 'config.meshes.cloth.contour.regions', 'region "pinch"', 'region "other"') && apart === null,
+    `overlapping: ${lines(overlap)}; apart (the second at rig (25, 14), r 1, band 0 — 7 px from the first's centre, past its 4): ${lines(apart)}`,
+    'each vertex holds one region\'s falloff; a sum or a maximum would rewrite the declared g = 1 inside one region wherever another\'s band reaches it',
+  );
+
+  // CW16 — every contour refusal is collected with the others.
+  const twoBad = refusals(() =>
+    buildRig(
+      parseConfig(
+        contourRigConfig((c) => {
+          c.meshes = { ...(c.meshes as object), eye: { contour: { tolerance: 1, margin: 1, spacing: 4, budget: 3 }, r: 8, segments: ['eye'] } };
+          c.regions = {};
+          (c.bones as Array<Record<string, unknown>>).find((b) => b.name === 'eye')!.tip = [17, 20];
+          delete (c.motion as Record<string, unknown>).blink;
+        }),
+      ),
+      rigParts(),
+      islandImages(),
+    ),
+  );
+  say(
+    'CW16_EVERY_CONTOUR_REFUSAL_IS_COLLECTED_WITH_THE_OTHERS_IN_ONE_RUN',
+    hasCode(twoBad, 'CONTOUR_ONE_ISLAND', 'contour mesh "cloth"') && hasCode(twoBad, 'CONTOUR_BUDGET', 'contour mesh "eye"', 'the declared budget is 3'),
+    lines(twoBad),
+    'cloth as two islands and eye over a 3-vertex budget: one run names both, and nothing falls back to the lattice',
+  );
+
+  // CW17 — a lattice part's bytes do not move when another part is a contour mesh.
+  const plain = buildRig(rigCfg(), rigParts(), rigImages());
+  const mixedCfg = (grid: number): CharacterConfig =>
+    rigCfg((c) => {
+      (c.meshes as Record<string, unknown>).cloth = { grid, r: 8, segments: ['hem'] };
+      (c.meshes as Record<string, unknown>).eye = { contour: { tolerance: 1, margin: 1, spacing: 4 }, r: 8, segments: [['eye', [17, 28], [17, 20]]] };
+      c.regions = {};
+      delete (c.motion as Record<string, unknown>).blink;
+    });
+  const mixed = buildRig(mixedCfg(8), rigParts(), rigImages());
+  const coarse = buildRig(mixedCfg(4), rigParts(), rigImages());
+  const clothText = (r: ReturnType<typeof buildRig>): string => JSON.stringify([r.rig.skins.default.cloth, r.meshReport.find((m) => m.part === 'cloth')]);
+  say(
+    'CW17_A_LATTICE_PARTS_ATTACHMENT_AND_REPORT_ROW_DO_NOT_MOVE_BESIDE_A_CONTOUR_PART',
+    clothText(plain) === clothText(mixed) && clothText(coarse) !== clothText(mixed) && !('mode' in (mixed.meshReport.find((m) => m.part === 'cloth') ?? {})),
+    `cloth beside a region eye and beside a contour eye: ${clothText(plain) === clothText(mixed) ? 'the same bytes' : 'DIFFERENT'}; planted grid 4: ${clothText(coarse) === clothText(mixed) ? 'the same' : 'different'}`,
+    'the lattice row carries no mode key and the same figures; the two examples\' builds against expected/ (chain suite) hold every other byte',
+  );
+
+  // CW18 — a region bone keyed by the idle moves its keys to a control under ctl, as a segment bone's do.
+  const keyed = buildRig(parseConfig(contourRigConfig((c) => (c.motion as { tracks: unknown[] }).tracks.push({ bone: 'soft', prop: 'rotate', amp: 1, period: 4, phase: 0 }))), rigParts(), rigImages());
+  say(
+    'CW18_A_REGION_BONE_THE_IDLE_KEYS_GETS_ITS_CONTROL_LIKE_A_SEGMENT_BONE',
+    keyed.controls.includes('soft') && keyed.rig.bones.some((b) => b.name === 'soft_ctl') && !r13.controls.includes('soft'),
+    `keyed: controls ${keyed.controls.join(', ')}; unkeyed: controls ${r13.controls.join(', ')}`,
+    'a region\'s bone is weighted to, so A15_IDLE_NO_MESH_BONE_KEYS reads it as a mesh bone; under ctl its keys move to soft_ctl',
+  );
+
+  // CW19 — configRoles reads a region's bone as bound.
+  const roles = configRoles(parseConfig(contourRigConfig()));
+  say(
+    'CW19_A_REGION_BONE_IS_A_DEFORMING_BONE_IN_THE_ROLES_PROPOSE_AND_STRUCTURE_READ',
+    roles.get('soft')?.role === 'deforms' && (roles.get('soft')?.why ?? '').includes('meshes.cloth.contour.regions[0]') && configRoles(rigCfg()).get('soft') === undefined,
+    `soft: ${JSON.stringify(roles.get('soft'))}`,
+    'without it the control bone would read as binding nothing and keyed by nothing — unclassified — though a mesh is weighted to it',
+  );
+
+  // CW20 — the same inputs, the same bytes.
+  const again20 = buildRig(parseConfig(contourRigConfig()), rigParts(), rigImages());
+  say(
+    'CW20_A_CONTOUR_RIG_IS_THE_SAME_BYTES_TWICE',
+    rigJsonText(r13.rig) === rigJsonText(again20.rig) && rigJsonText(r13.meshReport) === rigJsonText(again20.meshReport) && rigJsonText(r13.rig) !== rigJsonText(shifted.rig),
+    `rig.json ${rigJsonText(r13.rig).length} bytes, mesh_report.json ${rigJsonText(r13.meshReport).length} bytes, twice; planted region at (12, 8): ${rigJsonText(r13.rig) === rigJsonText(shifted.rig) ? 'the same' : 'different'}`,
+    'determinism is a contract: no clock, no randomness, a fixed order everywhere',
+  );
+
+  // CW21, CW22 — the real build: a contour part through assemble, rig (rigc's gate) and check; and refused before anything is written.
+  const dir = temp('contour-wiring');
+  try {
+    const cfg = assembleConfig();
+    const top = EXPECTED_PARTS.parts.find((p) => p.name === 'topwear') as { x: number; y: number; w: number; h: number };
+    const skirtTop = EXPECTED_PARTS.parts.find((p) => p.name === 'bottomwear') as { x: number; y: number; w: number };
+    cfg.bones = [
+      { name: 'anchor', parent: 'root', at: [0, 0] },
+      { name: 'chest', parent: 'root', at: [top.x + top.w / 2, top.y] },
+      { name: 'soft', parent: 'chest', at: [top.x + top.w / 2, top.y + top.h / 2] },
+      { name: 'skirt', parent: 'root', at: [skirtTop.x + skirtTop.w / 2, skirtTop.y] },
+    ];
+    const regions = { ...(cfg.regions as Record<string, string>), bottomwear: 'skirt' };
+    delete (regions as Record<string, string>).topwear;
+    cfg.regions = regions;
+    const contour = { tolerance: 1, margin: 1, spacing: 8, regions: [{ name: 'soft', shape: 'circle', cx: top.x + top.w / 2, cy: top.y + top.h / 2, r: 4, spacing: 2, band: 4, bone: 'soft' }] };
+    cfg.meshes = { topwear: { contour, r: 8, segments: [['chest', [top.x + top.w / 2, top.y], [top.x + top.w / 2, top.y + top.h]]] } };
+    cfg.motion = {
+      duration: 1,
+      tracks: [
+        { bone: 'chest', prop: 'translatey', amp: 1, period: 1, phase: 0 },
+        { bone: 'skirt', prop: 'rotate', amp: 2, period: 1, phase: 0 },
+      ],
+    };
+    writeAssembleFixture(dir, cfg);
+    writeFileSync(join(dir, 'budget.json'), `${JSON.stringify({ ...cfg, meshes: { topwear: { contour: { ...contour, budget: 4 }, r: 8, segments: (cfg.meshes as { topwear: { segments: unknown } }).topwear.segments } } }, null, 2)}\n`);
+    const out = join(dir, 'out');
+    const green = runCli(buildArgs(dir, out));
+    const reportPath = join(out, 'rig', 'mesh_report.json');
+    const rows = existsSync(reportPath) ? (JSON.parse(readFileSync(reportPath, 'utf8')) as Array<Record<string, unknown>>) : [];
+    const check = existsSync(join(out, 'check', 'check.json')) ? (JSON.parse(readFileSync(join(out, 'check', 'check.json'), 'utf8')) as Record<string, unknown>) : existsSync(join(out, 'check.json')) ? (JSON.parse(readFileSync(join(out, 'check.json'), 'utf8')) as Record<string, unknown>) : null;
+    const meshLine = green.out.split('\n').find((l) => l.includes('mesh topwear')) ?? '';
+    say(
+      'CW21_A_CONTOUR_PART_BUILDS_GREEN_THROUGH_THE_REAL_BUILD_AND_RIGCS_GATE',
+      green.status === 0 && rows.length === 1 && rows[0].mode === 'contour' && rows[0].art_coverage === 1 && check !== null && check.gate_spine_html_green === true && meshLine.includes('contour tol=1 margin=1 spacing=8') && meshLine.includes('region soft->soft'),
+      `exit ${green.status}; mesh line "${meshLine.trim()}"; mesh_report rows ${rows.length} (${rows.map((r) => `${String(r.part)} ${String(r.mode)} V ${String(r.vertices)} cover ${String(r.art_coverage)}`).join(', ')}); check.json gate_spine_html_green ${String(check?.gate_spine_html_green)}; last line ${lastLines(green.out, 1).join('').trim()}`,
+      'the gate is rigc\'s and it decides: a contour mesh with a region on its own bone, weighted by name, compiled, packed and checked by the same build every lattice goes through',
+    );
+    const outRed = join(dir, 'out-budget');
+    const red = runCli(buildArgs(dir, outRed, 'budget.json'));
+    say(
+      'CW22_A_CONTOUR_REFUSAL_STOPS_THE_BUILD_BEFORE_THE_RIG_IS_WRITTEN',
+      red.status !== 0 && red.out.includes('CONTOUR_BUDGET') && red.out.includes('the declared budget is 4') && !existsSync(join(outRed, 'rig', 'rig.json')),
+      `exit ${red.status}; ${red.out.split('\n').find((l) => l.includes('CONTOUR_BUDGET'))?.trim() ?? 'no CONTOUR_BUDGET line'}; rig/rig.json written: ${existsSync(join(outRed, 'rig', 'rig.json'))}`,
+      'emit only after green: a refusal is named and the rig is not on disk',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  // CW23 — the comparison's poses, by hand.
+  const [rot, tr, sc] = FIELD_POSES;
+  const p23 = applyAffine(rot.map, [72, 30]);
+  const t23 = applyAffine(tr.map, [10, 10]);
+  const s23 = applyAffine(sc.map, [72, 30]);
+  const th23 = (20 * Math.PI) / 180;
+  say(
+    'CW23_THE_DECLARED_POSES_MOVE_IMAGE_PX_AS_THEIR_SPINE_KEYS_DO',
+    Math.abs(p23[0] - (64 + 8 * Math.cos(th23))) < 1e-12 && Math.abs(p23[1] - (30 - 8 * Math.sin(th23))) < 1e-12 && t23[0] === 14 && t23[1] === 7 && s23[0] === 74 && s23[1] === 30 && Math.hypot(applyAffine(rot.map, [64, 30])[0] - 64, applyAffine(rot.map, [64, 30])[1] - 30) < 1e-12,
+    `rotate 20° about (64, 30): (72, 30) -> (${p23.join(', ')}); translate: (10, 10) -> (${t23.join(', ')}); scale 1.25: (72, 30) -> (${s23.join(', ')})`,
+    'a positive Spine rotation is counter-clockwise with y up, so on the y-down image a point to the right of the centre rises: y falls by 8 sin 20°; Spine\'s translate (4, 3) is (4, −3) on the image',
+  );
+
+  // CW24 — the field, by hand.
+  const reg24 = fieldRegion(1);
+  const f24 = [fieldAt([64, 30], reg24, tr.map), fieldAt([76, 30], reg24, tr.map), fieldAt([90, 30], reg24, tr.map)];
+  say(
+    'CW24_THE_FIELD_IS_THE_POINT_PLUS_G_TIMES_THE_CONTROLS_MOTION_AT_THE_POINT',
+    JSON.stringify(f24) === '[[68,27],[78,28.5],[90,30]]',
+    `translate (4, −3): the centre -> (${f24[0].join(', ')}); (76, 30), 12 px out, g 0.5 -> (${f24[1].join(', ')}); (90, 30), past the band -> (${f24[2].join(', ')})`,
+    'the field is what the declaration defines everywhere: g at the point (1, 1 − (12 − 8)/8 = 0.5, 0) times the control\'s displacement',
+  );
+
+  // CW25 — the locator: the triangle holding a pixel centre and its barycentric weights.
+  const sqV: Array<[number, number]> = [[0, 0], [8, 0], [8, 8], [0, 8]];
+  const sqT = [0, 1, 2, 0, 2, 3];
+  const find25 = locator(sqV, sqT);
+  const a25 = find25([6, 2]);
+  const b25 = find25([4, 4]);
+  const c25 = find25([9, 4]);
+  say(
+    'CW25_A_PIXEL_IS_READ_IN_THE_FIRST_TRIANGLE_HOLDING_IT_BY_ITS_BARYCENTRIC_WEIGHTS',
+    a25?.t === 0 && JSON.stringify(a25.l) === '[0.25,0.5,0.25]' && b25?.t === 0 && JSON.stringify(b25.l) === '[0.5,0,0.5]' && c25 === null,
+    `(6, 2): ${JSON.stringify(a25)}; (4, 4), on the diagonal: ${JSON.stringify(b25)}; (9, 4), outside: ${JSON.stringify(c25)}`,
+    'in (0,0) (8,0) (8,8): λ = (1 − x/8, (x − y)/8, y/8); a point on the shared diagonal belongs to the first triangle in index order, a point off the mesh to none',
+  );
+
+  // CW26 — the errors: an affine motion is exact on any mesh whose vertices all carry weight 1; zero one vertex and the error is λ times the motion.
+  const mask26 = { width: 8, height: 8, alpha: new Uint8Array(64).fill(255) };
+  const big = { name: 'all', shape: 'circle', cx: 4, cy: 4, r: 64, spacing: 1, band: 0, bone: 'c' } as const;
+  const ones = { label: 'ones', vertices: sqV, triangles: sqT, hull: 4, weights: sqV.map(() => [{ bone: 'c', weight: 1 }]) };
+  const holed = { ...ones, weights: sqV.map((_, i) => [{ bone: i === 0 ? 'other' : 'c', weight: 1 }]) };
+  const e26 = errors(ones, mask26, 8, big, tr.map);
+  const h26 = errors(holed, mask26, 8, big, tr.map);
+  say(
+    'CW26_THE_LOCAL_ERROR_IS_ZERO_FOR_AN_EXACT_MESH_AND_LAMBDA_TIMES_THE_MOTION_WITH_ONE_VERTEX_LEFT_STILL',
+    e26.localMax < 1e-12 && e26.pixels.local === 64 && e26.uncovered === 0 && Math.abs(h26.localMax - 0.9375 * 5) < 1e-12 && h26.worstLocal !== null && h26.worstLocal.pixel.join(',') === '0.5,0.5',
+    `all weights 1: local max ${e26.localMax} over ${e26.pixels.local} px; vertex 0 on another bone: local max ${h26.localMax} at (${h26.worstLocal?.pixel.join(', ')}) (by hand λ0 = 1 − 0.5/8 = 0.9375 at (0.5, 0.5), times |(4, −3)| = 5)`,
+    'the mesh reproduces the field at its vertices and linearly between them; the error at a pixel is the barycentric share of the vertex that did not move, times the motion',
+  );
+
+  // CW27 — the cost: bindings, and the surround density over the pixels g leaves still.
+  const small = { name: 'small', shape: 'circle', cx: 2, cy: 2, r: 1, spacing: 1, band: 0, bone: 'c' } as const;
+  const c27 = cost({ ...ones, weights: sqV.map((_, i) => (i === 2 ? [{ bone: 'c', weight: 0.5 }, { bone: 'd', weight: 0.5 }] : [{ bone: 'c', weight: 1 }])) }, mask26, 8, small);
+  say(
+    'CW27_THE_COST_COUNTS_BINDINGS_AND_VERTICES_PER_STILL_PIXEL',
+    c27.vertices === 4 && c27.triangles === 2 && c27.bindings === 5 && c27.surroundVertices === 4 && c27.surroundDensity === (1000 * 4) / 60,
+    `V ${c27.vertices}, T ${c27.triangles}, bindings ${c27.bindings}, surround ${c27.surroundVertices} vertices over the still pixels, density ${c27.surroundDensity} per 1000 px`,
+    'by hand: a circle of radius 1 at (2, 2) holds the 4 pixel centres (1.5..2.5, 1.5..2.5), so 60 of the 64 are still; no corner of the square is inside it; one vertex with two entries makes 5 bindings',
+  );
+
+  // CW28 — table 1's contour mesh: the finest declared region spacing whose mesh fits the lattice's vertex count.
+  const lattice28 = fieldLattice(FIELD_LATTICE_GRID, fieldRegion(1));
+  const picked28 = contourAtBudget(lattice28.vertices.length);
+  const idx28 = picked28 === null ? -1 : REGION_SPACINGS.indexOf(picked28.spacing);
+  const finer = idx28 > 0 ? fieldContour(REGION_SPACINGS[idx28 - 1]) : null;
+  const tooSmall = contourAtBudget(3);
+  say(
+    'CW28_TABLE_1S_CONTOUR_MESH_IS_THE_FINEST_DECLARED_SPACING_THAT_FITS_THE_LATTICES_VERTEX_COUNT',
+    picked28 !== null && picked28.mesh.vertices.length <= lattice28.vertices.length && (idx28 === 0 || (finer !== null && typeof finer !== 'string' && finer.vertices.length > lattice28.vertices.length)) && tooSmall === null,
+    `the lattice ${lattice28.vertices.length} V; tried ${picked28?.tried.join('; ') ?? 'none'}; picked spacing ${picked28?.spacing}; planted budget 3: ${tooSmall === null ? 'none fits' : `spacing ${tooSmall.spacing}`}`,
+    'the rule picks by vertex count and never by error, so the comparison cannot be tuned toward a pass: the next finer spacing is over the lattice\'s count',
+  );
+
   return bad();
 }
 
@@ -12793,6 +13359,7 @@ const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number 
   ['cli', runCliSuite],
   ['rig', runRigSuite],
   ['contour', runContourSuite],
+  ['contour-wiring', runContourWiringSuite],
   ['propose', runProposeSuite],
   ['keypoints', runKeypointsSuite],
   ['propose-corpus', runProposeCorpusSuite],
@@ -13034,7 +13601,7 @@ async function main(): Promise<void> {
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('contour')} contour-mesh, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('contour')} contour-mesh, + ${n('contour-wiring')} contour-wiring, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
