@@ -252,6 +252,7 @@ import { localInfluences, regionWeight } from './src/localweights.ts';
 import { influences } from './src/weights.ts';
 import { apply as applyAffine, contourAtBudget, cost, errors, fieldAt, fieldContour, fieldLattice, locator } from './tools/local_compare.ts';
 import { FIELD_LATTICE_GRID, FIELD_POSES, fieldRegion, REGION_SPACINGS } from './fixtures/localfield.ts';
+import { BASE_SPACINGS, CONTROL, displacement, frameOpenings, kindOf, neighbours, type PlacedMask, POSE_PHASE, ranked, regionPoses, regionSpacings, seamOpening, seamPairs, sineAt, testRegion, toWorldPx, variantConfig } from './tools/real_compare.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
 import { readTag, type TagReading } from './src/tags.ts';
@@ -13120,6 +13121,185 @@ function runContourWiringSuite(): number {
     picked28 !== null && picked28.mesh.vertices.length <= lattice28.vertices.length && (idx28 === 0 || (finer !== null && typeof finer !== 'string' && finer.vertices.length > lattice28.vertices.length)) && tooSmall === null,
     `the lattice ${lattice28.vertices.length} V; tried ${picked28?.tried.join('; ') ?? 'none'}; picked spacing ${picked28?.spacing}; planted budget 3: ${tooSmall === null ? 'none fits' : `spacing ${tooSmall.spacing}`}`,
     'the rule picks by vertex count and never by error, so the comparison cannot be tuned toward a pass: the next finer spacing is over the lattice\'s count',
+  );
+
+  // CV01–CV13 — tools/real_compare.ts (issue #107): the rules that pick the real part, its test region and poses, and the seam's definition.
+  const cvBlock = (x: number, y: number, w: number, h: number): PlacedMask => ({ x, y, width: w, height: h, data: new Uint8Array(w * h).fill(1) });
+
+  // CV01 — a neighbour is a part whose art coincides with or 4-touches the part's.
+  const cvP = cvBlock(10, 10, 3, 3);
+  const cvMasks: Array<readonly [string, PlacedMask]> = [
+    ['P', cvP],
+    ['A', cvBlock(13, 10, 2, 2)],
+    ['B', cvBlock(11, 11, 2, 2)],
+    ['C', cvBlock(14, 10, 2, 2)],
+    ['D', cvBlock(13, 13, 2, 2)],
+  ];
+  const nb01 = neighbours(cvMasks, 'P');
+  const moved01 = neighbours([['P', cvP], ['A', cvBlock(14, 10, 2, 2)]], 'P');
+  say(
+    'CV01_A_NEIGHBOUR_TOUCHES_OR_OVERLAPS_THE_PARTS_ART_AND_A_GAP_OR_A_CORNER_IS_NOT_ONE',
+    nb01.join() === 'A,B' && moved01.length === 0,
+    `P 3x3 at (10, 10): A beside it at x 13 -> ${nb01.includes('A')}, B over it -> ${nb01.includes('B')}, C one column away -> ${nb01.includes('C')}, D corner to corner -> ${nb01.includes('D')}; planted A moved to x 14: ${moved01.length === 0 ? 'not a neighbour' : moved01.join()}`,
+    'by hand: P covers x 10..12; A starts at x 13 (4-adjacent), B shares (11..12, 11..12), C starts at 14 (a column apart), D only meets P at the corner (12, 12)-(13, 13)',
+  );
+
+  // CV02 — the seam pairs: a part pixel beside a neighbour pixel that is not the part's.
+  const pairs02 = seamPairs(cvBlock(0, 0, 3, 3), cvBlock(3, 0, 3, 3));
+  const over02 = seamPairs(cvBlock(0, 0, 3, 3), cvBlock(2, 0, 3, 3));
+  const under02 = seamPairs(cvBlock(0, 0, 3, 3), cvBlock(0, 0, 3, 3));
+  say(
+    'CV02_A_SEAM_PAIR_IS_A_PART_PIXEL_BESIDE_A_NEIGHBOUR_PIXEL_OUTSIDE_THE_PART',
+    pairs02.length === 3 && pairs02[0].join() === '2,0,3,0' && over02.length === 3 && over02[0].join() === '2,0,3,0' && under02.length === 0,
+    `side by side: ${pairs02.length} pair(s), the first ${pairs02[0]?.join(',')}; overlapping one column: ${over02.length}, the first ${over02[0]?.join(',')}; planted neighbour wholly under the part: ${under02.length}`,
+    'by hand: column 2 of the part meets column 3 of the neighbour on 3 rows; where they overlap (column 2) the neighbour pixel is the part\'s, so only column 3 counts; a neighbour wholly under the part has no seam with it',
+  );
+
+  // CV03, CV04 — the kind of a part and the rule's order.
+  const kinds03 = ['head:front hair', 'full:back hair', 'full:handwear-r', 'full:bottomwear', 'head:neck', 'head:headwear'].map(kindOf);
+  say(
+    'CV03_A_PARTS_KIND_IS_READ_OFF_ITS_TAG',
+    kinds03.join() === 'hair,hair,clothing,clothing,other,other',
+    `front hair, back hair, handwear-r, bottomwear, neck, headwear -> ${kinds03.join(', ')}`,
+    'the rule prefers hair and clothing over any other part; the tag, not the part\'s name, says which',
+  );
+  const order04 = ranked([
+    { example: 'x', part: 'n', kind: 'other', neighbours: 9 },
+    { example: 'x', part: 'c3', kind: 'clothing', neighbours: 3 },
+    { example: 'x', part: 'h5', kind: 'hair', neighbours: 5 },
+    { example: 'y', part: 'c5', kind: 'clothing', neighbours: 5 },
+  ]).map((c) => c.part);
+  say(
+    'CV04_THE_RULE_ORDERS_HAIR_AND_CLOTHING_FIRST_THEN_MORE_NEIGHBOURS_THEN_THE_ORDER_GIVEN',
+    order04.join() === 'h5,c5,c3,n',
+    `${order04.join(' > ')}`,
+    'by hand: the other-kind part with 9 neighbours goes last; h5 and c5 tie on 5 and h5 was given first',
+  );
+
+  // CV05 — the region rule: the last link's midpoint, the nearest art pixel, a tenth of the box.
+  const cfg05 = {
+    bones: [
+      { name: 'trunk', parent: 'root', at: [0, 0] as Point },
+      { chain: 'c', parent: 'trunk', points: [[10, 10], [10, 20]] as Point[], tip: [14, 30] as Point },
+    ],
+    meshes: { p: { grid: 8, r: 2, segments: [['trunk', [0, 0], [0, 10]], 'c'] as Array<string | [string, Point, Point]> } },
+  };
+  const full05 = cvBlock(0, 0, 40, 40);
+  const t05 = testRegion(cfg05, 'p', full05, { w: 40, h: 33 });
+  const holed05 = cvBlock(0, 0, 40, 40);
+  holed05.data[25 * 40 + 12] = 0;
+  const h05 = testRegion(cfg05, 'p', holed05, { w: 40, h: 33 });
+  const noChain05 = testRegion({ ...cfg05, meshes: { p: { grid: 8, r: 2, segments: [['trunk', [0, 0], [0, 10]]] } } }, 'p', full05, { w: 40, h: 33 });
+  const chainFirst05 = testRegion({ ...cfg05, meshes: { p: { grid: 8, r: 2, segments: ['c'] } } }, 'p', full05, { w: 40, h: 33 });
+  const ok05 = typeof t05 !== 'string' && t05.cx === 12.5 && t05.cy === 25.5 && t05.r === 3 && t05.band === 3 && t05.parent === 'trunk' && t05.chain === 'c' && t05.mid.join() === '12,25';
+  say(
+    'CV05_THE_TEST_REGION_IS_PLACED_BY_THE_STATED_RULE_AND_REFUSED_WHERE_IT_NAMES_NOTHING',
+    ok05 && typeof h05 !== 'string' && h05.cx === 11.5 && h05.cy === 24.5 && typeof noChain05 === 'string' && typeof chainFirst05 === 'string',
+    `${typeof t05 === 'string' ? t05 : `centre (${t05.cx}, ${t05.cy}), r ${t05.r}, band ${t05.band}, under ${t05.parent}`}; planted midpoint pixel cleared: ${typeof h05 === 'string' ? h05 : `(${h05.cx}, ${h05.cy})`}; no chain: ${noChain05}; a chain first: ${chainFirst05}`,
+    'by hand: the last link (10, 20) -> (14, 30) has midpoint (12, 25), on pixel (12, 25), centre (12.5, 25.5); floor(min(40, 33) / 10) = 3; with (12, 25) cleared, (11, 24), (12, 24) and (11, 25) are all sqrt(0.5) from the midpoint and (11, 24) is first in row-major order',
+  );
+
+  // CV06 — the region spacings: #104's ten, scaled by grid / 8.
+  const sp06 = regionSpacings(12);
+  say(
+    'CV06_THE_REGION_SPACINGS_ARE_104S_SCALED_BY_THE_GRID_SO_THE_COARSEST_IS_THE_BACKGROUND',
+    sp06.join() === '1.5,3,4.5,6,7.5,9,12,15,18,24' && regionSpacings(8).join() === BASE_SPACINGS.join() && sp06[sp06.length - 1] === 2 * 12,
+    `grid 12 -> ${sp06.join(', ')}; grid 8 -> ${regionSpacings(8).join(', ')}`,
+    'by hand: 12 / 8 = 1.5 times 1, 2, 3, 4, 5, 6, 8, 10, 12, 16; at #104\'s grid 8 the list is #104\'s own',
+  );
+
+  // CV07 — the poses: #104's, the translation scaled by r / 8.
+  const p07 = regionPoses([64, 30], 8);
+  const q07 = regionPoses([0, 0], 11);
+  const eq07 = (a: readonly number[], b: readonly number[]): boolean => a.length === b.length && a.every((v, i) => v === b[i]);
+  say(
+    'CV07_THE_POSES_ARE_104S_WITH_THE_TRANSLATION_SCALED_BY_THE_RADIUS',
+    eq07(p07[0].map, FIELD_POSES[0].map) && eq07(p07[1].map, FIELD_POSES[1].map) && eq07(p07[2].map, FIELD_POSES[2].map) && eq07(q07[1].map, [1, 0, 0, 1, 5.5, -4.125]) && q07[1].tracks.map((t) => `${t.prop} ${t.amp}`).join() === 'translatex 5.5,translatey 4.125' && q07[2].tracks.every((t) => t.amp === 0.25 && t.base === 1),
+    `at #104's centre and r 8: ${p07.map((p) => p.map.map((v) => pyRound(v, 4)).join(' ')).join(' | ')}; r 11 translation ${q07[1].map.slice(4).join(', ')} image px, keys ${q07[1].tracks.map((t) => `${t.prop} ${t.amp}`).join(', ')}`,
+    'by hand: r 8 gives (4, -3), #104\'s translation; r 11 gives (5.5, -4.125) image px, which is (5.5, 4.125) in Spine\'s y up',
+  );
+
+  // CV08 — the pose tracks reach the pose at half the idle and the opposite one at its start.
+  const per08 = 4;
+  const peak08 = per08 * (POSE_PHASE + 0.25);
+  say(
+    'CV08_A_POSE_TRACK_PEAKS_AT_THE_DECLARED_POSE',
+    peak08 === 2 && sineAt(peak08, 20, per08, POSE_PHASE, 0) === 20 && sineAt(0, 20, per08, POSE_PHASE, 0) === -20 && sineAt(peak08, 0.25, per08, POSE_PHASE, 1) === 1.25 && sineAt(1, 20, per08, POSE_PHASE, 0) === 0,
+    `peak at t ${peak08}: rotate ${sineAt(peak08, 20, per08, POSE_PHASE, 0)}, scale ${sineAt(peak08, 0.25, per08, POSE_PHASE, 1)}; t 0: ${sineAt(0, 20, per08, POSE_PHASE, 0)}; t 1: ${sineAt(1, 20, per08, POSE_PHASE, 0)}`,
+    'by hand: 2 pi (2/4 - 1/4) = pi/2 and sin(pi/2) = 1; at t 0 the argument is -pi/2; at t 1 it is 0',
+  );
+
+  // CV09 — rig px to Spine world.
+  const w09 = [toWorldPx([50, 60], [100, 60]), toWorldPx([0, 0], [100, 60]), toWorldPx([75.5, 10.5], [100, 60])];
+  say(
+    'CV09_A_RIG_PIXEL_IS_CARRIED_TO_SPINES_WORLD_ABOUT_THE_ROOT',
+    w09.map((p) => p.join(' ')).join() === '0 0,-50 60,25.5 49.5',
+    w09.map((p) => `(${p.join(', ')})`).join(', '),
+    'by hand: the root stands at the canvas\'s bottom centre (50, 60) and y turns up',
+  );
+
+  // CV10 — a displacement is the same barycentric mix of the posed triangle.
+  const quad10 = { rest: [0, 0, 10, 0, 10, 10, 0, 10], triangles: [0, 1, 2, 0, 2, 3] };
+  const shift10 = displacement({ ...quad10, posed: [3, 4, 13, 4, 13, 14, 3, 14] });
+  const scale10 = displacement({ ...quad10, posed: [0, 0, 20, 0, 20, 20, 0, 20] });
+  const d10 = [shift10([5, 5]), scale10([2, 7]), shift10([20, 20])];
+  say(
+    'CV10_A_DISPLACEMENT_IS_READ_OFF_THE_POSED_TRIANGLE_AND_NONE_OFF_THE_MESH',
+    d10[0]?.join() === '3,4' && d10[1]?.join() === '2,7' && d10[2] === null,
+    `translated by (3, 4): ${d10[0]?.join(', ')}; scaled 2 about the origin, at (2, 7): ${d10[1]?.join(', ')}; off the mesh: ${d10[2] === null ? 'none' : d10[2].join(', ')}`,
+    'by hand: a translation moves every point by itself; a scale of 2 about the origin moves (2, 7) by (2, 7); (20, 20) lies in no rest triangle',
+  );
+
+  // CV11 — the seam opening: the two sides' displacements apart.
+  const pair11: Array<[number, number, number, number]> = [[0, 0, 1, 0]];
+  const o11 = seamOpening(pair11, () => [3, 4], () => [0, 0], [10, 10]);
+  const both11 = seamOpening(pair11, () => [3, 4], () => [3, 4], [10, 10]);
+  const u11 = seamOpening(pair11, () => [3, 4], () => null, [10, 10]);
+  say(
+    'CV11_A_SEAM_OPENS_BY_HOW_FAR_ITS_TWO_SIDES_MOVE_APART',
+    o11.max === 5 && o11.at?.join() === '0,0,1,0' && both11.max === 0 && u11.pairs === 0 && u11.unread === 1,
+    `part moved (3, 4), neighbour still: ${o11.max}; both moved (3, 4): ${both11.max}; neighbour unread: ${u11.pairs} measured, ${u11.unread} unread`,
+    'by hand: |(3, 4) - (0, 0)| = 5; a seam moved whole does not open; a side no rest triangle holds is counted as unread, not as 0',
+  );
+
+  // CV12 — a frame's openings off a rigc-geometry/1 shape: per pair, in neighbour order, NaN where a side is absent.
+  const quadAt13 = (x0: number, y0: number): number[] => [x0, y0, x0 + 10, y0, x0 + 10, y0 + 10, x0, y0 + 10];
+  // Size 20 x 20: rig (x, y) is world (x - 10, 20 - y). The part's pixels (2, 12) and (3, 12) are world (-7.5, 7.5) and (-6.5, 7.5): inside a quad at world (-10, 0).
+  const geo13 = {
+    rest: [
+      { slot: 'p', vertices: quadAt13(-10, 0), triangles: [0, 1, 2, 0, 2, 3] },
+      { slot: 'n', vertices: quadAt13(-10, 0), triangles: [0, 1, 2, 0, 2, 3] },
+    ],
+    frames: [
+      { time: 0, attachments: [{ slot: 'p', vertices: quadAt13(-7, 4) }, { slot: 'n', vertices: quadAt13(-10, 0) }] },
+      { time: 1, attachments: [{ slot: 'p', vertices: quadAt13(-7, 4) }] },
+    ],
+  };
+  const by13: Array<readonly [string, Array<[number, number, number, number]>]> = [['n', [[2, 12, 3, 12]]]];
+  const f13 = [frameOpenings(geo13, 0, 'p', by13, [20, 20]), frameOpenings(geo13, 1, 'p', by13, [20, 20])];
+  say(
+    'CV12_A_FRAMES_SEAM_OPENINGS_ARE_READ_PAIR_BY_PAIR_OFF_THE_POSED_GEOMETRY',
+    f13[0].length === 1 && f13[0][0] === 5 && f13[1].length === 1 && Number.isNaN(f13[1][0]),
+    `part moved (3, 4) over a still neighbour: ${f13[0][0]}; the neighbour absent from the frame: ${f13[1][0]}`,
+    'by hand: |(3, 4)| = 5; a neighbour slot the frame does not draw is not a seam that held, so it reads NaN, not 0',
+  );
+
+  // CV13 — the out-of-tree config: the control bone, its tracks, and the mesh switched; the loader takes it; the input is not touched.
+  const raw12 = rigConfig();
+  const before12 = JSON.stringify(raw12);
+  const t12 = { cx: 18.5, cy: 14.5, r: 3, band: 3, chain: 'hem', mid: [18, 14] as Point, parent: 'body' };
+  const pose12 = regionPoses([18.5, 14.5], 3)[0];
+  const lat12 = variantConfig(raw12 as Parameters<typeof variantConfig>[0], 'cloth', t12, pose12, null);
+  const con12 = variantConfig(raw12 as Parameters<typeof variantConfig>[0], 'cloth', t12, pose12, { spacing: 16, regionSpacing: 2 });
+  const latErr12 = load(lat12 as Record<string, unknown>);
+  const conErr12 = load(con12 as Record<string, unknown>);
+  const conMesh12 = (con12.meshes as Record<string, Record<string, unknown>>).cloth;
+  const track12 = ((lat12.motion as Record<string, unknown>).tracks as Array<Record<string, unknown>>).find((tr) => tr.bone === CONTROL);
+  say(
+    'CV13_THE_OUT_OF_TREE_CONFIG_ADDS_THE_CONTROL_AND_ITS_TRACKS_AND_LOADS',
+    latErr12 === null && conErr12 === null && JSON.stringify(raw12) === before12 && !('grid' in conMesh12) && 'contour' in conMesh12 && 'grid' in (lat12.meshes as Record<string, Record<string, unknown>>).cloth && track12?.prop === 'rotate' && track12.amp === 20 && track12.period === 4 && track12.phase === POSE_PHASE,
+    `lattice copy: ${lines(latErr12)}; contour copy: ${lines(conErr12)}; the control track ${JSON.stringify(track12)}; the input ${JSON.stringify(raw12) === before12 ? 'unchanged' : 'CHANGED'}`,
+    'the tracked config is copied, never edited; the lattice copy keeps grid and gains only the bone and its track',
   );
 
   return bad();
