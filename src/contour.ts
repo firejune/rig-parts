@@ -1,9 +1,10 @@
 /**
  * The contour mesh: a part's alpha outline, traced and simplified by
  * spine-rigc's own functions, with interior vertices placed where they are
- * declared and a triangulation that never crosses the outline (issue #84, step
- * 1). Nothing here is wired to the config, the rig stage or the CLI yet; the
- * lattice (`src/mesh.ts`) is untouched and stays the rig stage's only mesh.
+ * declared and a triangulation that never crosses the outline (issue #84). The
+ * rig stage builds it for a mesh whose config entry says `contour` (step 2,
+ * `src/rig.ts`); the lattice (`src/mesh.ts`) is untouched and stays the mode
+ * of every entry that says `grid`.
  *
  * ## What it does, in order
  *
@@ -15,8 +16,12 @@
  *    (`connectedComponents`, 4-connectivity, rigc's own island rule); a second
  *    island holding any art pixel is refused with every island's pixel count
  *    (`CONTOUR_ONE_ISLAND`). Nothing is discarded and nothing falls back to the
- *    lattice. A hole is filled, as rigc's trace and the lattice both fill it,
- *    and its area is reported (`filledHolePixels`).
+ *    lattice — unless the caller declares `stray`, the largest island that may
+ *    be left out ({@link strayIslands}): then islands other than the largest
+ *    at or under that figure are taken out of the art before the trace, and
+ *    the report says how many and how many pixels (`strayIslands`,
+ *    `strayPixels`). A hole is filled, as rigc's trace and the lattice both
+ *    fill it, and its area is reported (`filledHolePixels`).
  * 3. **The outline is rigc's**: `traceAlphaOutline` (the outer loop on the
  *    pixel-corner lattice, clockwise on screen, a diagonal pinch refused) →
  *    `simplifyClosedPolygon(tolerance)` → `offsetPolygon(margin)` → clamped to
@@ -194,6 +199,12 @@ export interface ContourParams {
   spacing: number;
   /** Refuse a mesh with more vertices than this; absent is no budget. */
   budget?: number;
+  /**
+   * The largest island, in art pixels, that may be left out of the mesh (the
+   * stray-island amendment on issue #84). Absent, a second island refuses as
+   * the settled rule says; there is no default. See {@link strayIslands}.
+   */
+  stray?: number;
   /** Refinement regions, in the order their points are placed. */
   regions: readonly ContourRegion[];
 }
@@ -236,6 +247,10 @@ export interface ContourReport {
   largestEdgeRatio: TriangleFigure;
   /** Interior edges whose opposite vertex lies strictly inside the neighbouring circumcircle after the last pass — 0 when the triangulation is constrained Delaunay. */
   nonDelaunayEdges: number;
+  /** Islands left out of the mesh under a declared `stray` figure — 0 when none is declared or none was left out. */
+  strayIslands: number;
+  /** The art pixels those islands hold; they are not meshed, so not drawn, and `artPixels` does not count them. */
+  strayPixels: number;
 }
 
 export interface ContourMesh {
@@ -280,6 +295,7 @@ function parameterProblems(part: string, mask: AlphaMask, p: ContourParams): Pro
   };
   spacingOk('spacing', p.spacing);
   if (p.budget !== undefined && (!Number.isInteger(p.budget) || p.budget < 3)) bad('budget', `is ${p.budget}; a whole number of vertices, 3 or more, is required`);
+  if (p.stray !== undefined && (!Number.isInteger(p.stray) || p.stray < 0)) bad('stray', `is ${p.stray}; a whole number of art pixels, 0 or more, is required (the largest island that may be left out)`);
   const names = new Set<string>();
   p.regions.forEach((r, i) => {
     const at = `regions[${i}]`;
@@ -940,20 +956,33 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
   if (islands === 0) {
     return [{ code: 'CONTOUR_PART_HAS_ART', object, detail: `its ${w}x${h} image has no pixel with alpha above ${threshold}; a mesh needs at least one art pixel` }];
   }
-  if (islands > 1) {
+  const split = strayIslands(comp.stats.map((s) => s.area), params.stray);
+  if (split.refused !== null) {
     const sizes = comp.stats.slice(1).map((s) => `${s.area} px at (${s.left}, ${s.top})`);
+    const declared = params.stray === undefined ? '' : ` With stray ${params.stray} px declared, ${split.refused}.`;
     return [
       {
         code: 'CONTOUR_ONE_ISLAND',
         object,
-        detail: `its art (alpha above ${threshold}) is ${islands} separate 4-connected islands — ${sizes.join(', ')}; one island is required, because spine-rigc takes one closed outline per mesh. Nothing was discarded; the lattice mode stays available for this part`,
+        detail: `its art (alpha above ${threshold}) is ${islands} separate 4-connected islands — ${sizes.join(', ')}; one island is required, because spine-rigc takes one closed outline per mesh.${declared} Nothing was discarded; the lattice mode stays available for this part`,
       },
     ];
+  }
+  // The islands left out are taken out of the art before anything is traced or measured: alpha 0 there, so the
+  // trace, the coverage and the overshoot all read the one island that remains. Nothing else of the mask moves.
+  let meshed = mask;
+  let strayPixels = 0;
+  if (split.leave.length > 0) {
+    const out = new Set(split.leave);
+    const alpha = new Uint8Array(mask.alpha);
+    for (let i = 0; i < alpha.length; i++) if (out.has(comp.labels[i])) alpha[i] = 0;
+    meshed = { width: w, height: h, alpha };
+    for (const l of split.leave) strayPixels += comp.stats[l].area;
   }
 
   let traced: ReturnType<typeof traceAlphaOutline>;
   try {
-    traced = traceAlphaOutline(mask, threshold + 1);
+    traced = traceAlphaOutline(meshed, threshold + 1);
   } catch (err) {
     if (!(err instanceof MeshError)) throw err;
     return [{ code: 'CONTOUR_TRACE', object, detail: `spine-rigc's traceAlphaOutline refused it at alpha above ${threshold}: ${err.message}` }];
@@ -994,7 +1023,7 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
   const vertices = X.map((x, i) => [x / GRID, Y[i] / GRID] as [number, number]);
   const triangles = canonicalTriangles(mesh.tri);
   const problems = contourTopologyProblems(part, vertices, triangles, H);
-  const fit = contourFit(part, mask, threshold, { margin, tolerance }, vertices, triangles);
+  const fit = contourFit(part, meshed, threshold, { margin, tolerance }, vertices, triangles);
   problems.push(...fit.problems);
   if (params.budget !== undefined && vertices.length > params.budget) {
     problems.push({
@@ -1030,6 +1059,50 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
       filledHolePixels: traced.holePixels,
       ...triangleQuality(vertices, triangles),
       nonDelaunayEdges: delaunayViolations(vertices, triangles),
+      strayIslands: split.leave.length,
+      strayPixels,
     },
   };
+}
+
+/**
+ * The stray-island rule (issue #84, the amendment to the settled comment), on
+ * the pixel counts of a part's 4-connected art islands — `areas[0]` is the
+ * background and is not read, as `connectedComponents` numbers them.
+ *
+ * - One island: kept, nothing left out, whatever is declared.
+ * - `stray` absent: a second island refuses, as the settled rule says.
+ * - `stray` declared: the largest island is kept; every OTHER island holding
+ *   `stray` art pixels or fewer is left out; any other island above the figure
+ *   refuses. **Ties:** when two or more islands share the largest count, none
+ *   of them is "the largest" — keeping one of two equal pieces would be a
+ *   choice the declaration does not make — so the part refuses, naming the
+ *   tie. A stray island that sits inside a hole of the kept island is left out
+ *   of the art like any other; the hole it sits in is then filled as every
+ *   hole is, so the mesh still spans it (its pixels count as filled hole).
+ *
+ * `leave` lists the labels left out, in label (raster-scan) order; `refused`
+ * is null or the reason, in words a refusal can carry.
+ */
+export function strayIslands(areas: readonly number[], stray: number | undefined): { keep: number; leave: number[]; refused: string | null } {
+  const n = areas.length - 1;
+  if (n <= 1) return { keep: 1, leave: [], refused: null };
+  if (stray === undefined) return { keep: -1, leave: [], refused: 'no stray figure is declared' };
+  let largest = 0;
+  for (let l = 1; l <= n; l++) largest = Math.max(largest, areas[l]);
+  const tied: number[] = [];
+  for (let l = 1; l <= n; l++) if (areas[l] === largest) tied.push(l);
+  if (tied.length > 1) return { keep: -1, leave: [], refused: `${tied.length} islands share the largest count, ${largest} px, so no one island is the largest and none of them is left out` };
+  const keep = tied[0];
+  const leave: number[] = [];
+  const above: number[] = [];
+  for (let l = 1; l <= n; l++) {
+    if (l === keep) continue;
+    if (areas[l] <= stray) leave.push(l);
+    else above.push(l);
+  }
+  if (above.length > 0) {
+    return { keep: -1, leave: [], refused: `besides the largest (${largest} px) ${above.length} island(s) hold more than ${stray} px — ${above.map((l) => `${areas[l]} px`).join(', ')} — and only an island at or under the figure may be left out` };
+  }
+  return { keep, leave, refused: null };
 }

@@ -56,6 +56,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { RIG_SKIN_CONSTRAINT_KEYS, type RigConstraint, type RigSkinConstraintKey } from 'spine-rigc/src/rig.ts';
+import { GRID, MAX_SIDE } from './contour.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { acceptedTagNames, readTag } from './tags.ts';
 
@@ -166,11 +167,63 @@ export type BoneEntry = SingleBone | ChainBones;
 /** A chain name, a bone name, or an explicit segment `[bone, from, to]`. */
 export type Segment = string | [string, Point, Point];
 
-export interface MeshSpec {
+/**
+ * One mesh: exactly one of two modes (issue #84). `r` and `segments` mean the
+ * same in both.
+ *
+ * - `grid`: the lattice (`src/mesh.ts`), as it has always been — every byte it
+ *   writes is unchanged by the second mode existing.
+ * - `contour`: the part's alpha outline through spine-rigc's tracer, with
+ *   interior vertices placed where they are declared (`src/contour.ts`), and
+ *   local deformation regions weighted to their own bones
+ *   (`src/localweights.ts`).
+ */
+export type MeshSpec = LatticeMeshSpec | ContourMeshSpec;
+
+export interface LatticeMeshSpec {
   grid: number;
   r: number;
   segments: Segment[];
 }
+
+export interface ContourMeshSpec {
+  contour: ContourSpec;
+  r: number;
+  segments: Segment[];
+}
+
+/**
+ * `meshes.<part>.contour`. Lengths and positions are RIG pixels, like every
+ * other length in the config; the rig stage carries a position into the part
+ * image by a translation only (the part's box less the pad), so a length means
+ * the same number of pixels in both. Art is `ART_ALPHA`, the lattice's and
+ * `check`'s; it is not a field.
+ */
+export interface ContourSpec {
+  /** spine-rigc's Douglas–Peucker tolerance on the traced outline, px, 0 or more. */
+  tolerance: number;
+  /** spine-rigc's outward offset of the simplified outline, px, 0 or more. */
+  margin: number;
+  /** The background interior spacing, px, above 0. */
+  spacing: number;
+  /** The most vertices the mesh may have; absent is no budget. */
+  budget?: number;
+  /** The largest island, in art pixels, that may be left out of the mesh; absent leaves none out. */
+  stray?: number;
+  /** Local deformation regions; absent is none. */
+  regions?: ContourRegionSpec[];
+}
+
+/**
+ * A local deformation region: a shape in rig px, a control bone, the spacing
+ * the mesh is refined at inside it and its band, and the band the bone's
+ * weight falls across ({@link import('./localweights.ts').regionWeight}).
+ * Every coordinate and length is a multiple of 1/256 px: the weight's 0 and 1
+ * are decided exactly on that grid.
+ */
+export type ContourRegionSpec =
+  | { name: string; shape: 'circle'; cx: number; cy: number; r: number; spacing: number; band: number; bone: string }
+  | { name: string; shape: 'polygon'; points: Point[]; spacing: number; band: number; bone: string };
 
 export interface SingleTrack {
   bone: string;
@@ -919,9 +972,18 @@ function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
   }
   for (const [part, spec] of Object.entries(v as Record<string, Json>)) {
     const at = `config.meshes.${part}`;
-    const m = c.object(at, spec, ['grid', 'r', 'segments'], []);
+    // The known keys keep their old order (grid, r, segments) with contour after them, and `r` and `segments` are
+    // required in the place and words the object check uses, so a lattice mesh's refusals read as they did.
+    const m = c.object(at, spec, [], ['grid', 'r', 'segments', 'contour']);
     if (m === null) continue;
+    for (const key of ['r', 'segments']) if (!(key in m)) c.fail('CONFIG_FIELD_PRESENT', `${at}.${key}`, 'is absent and required');
+    if ('grid' in m && 'contour' in m) {
+      c.fail('CONFIG_MESH_MODE', at, 'has both grid (the lattice) and contour; exactly one is required — a mesh is one or the other');
+    } else if (!('grid' in m) && !('contour' in m)) {
+      c.fail('CONFIG_MESH_MODE', at, 'has neither grid (the lattice cell size, px) nor contour (the outline mode); exactly one is required');
+    }
     if ('grid' in m) c.int(`${at}.grid`, m.grid, 1);
+    if ('contour' in m) checkContour(c, `${at}.contour`, m.contour, bones);
     if ('r' in m) c.number(`${at}.r`, m.r, 'non-negative');
     if ('segments' in m && c.array(`${at}.segments`, m.segments, true)) {
       (m.segments as Json[]).forEach((s, i) => {
@@ -940,6 +1002,65 @@ function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
       });
     }
   }
+}
+
+/**
+ * `meshes.<part>.contour` (issue #84). `tolerance`, `margin` and `spacing` are
+ * required — nothing is defaulted; `budget`, `stray` and `regions` are
+ * optional, and an absent one is "none", not a guessed value. What the outline
+ * itself refuses (a band that folds a polygon, a spacing whose keep radius
+ * snaps to nothing) is `src/contour.ts`'s, at the rig stage, in its words;
+ * what is read here is the shape of the block, the bone each region names, and
+ * the grid every region number must sit on.
+ */
+function checkContour(c: Check, at: string, v: Json, bones: Set<string>): void {
+  const o = c.object(at, v, ['tolerance', 'margin', 'spacing'], ['budget', 'stray', 'regions']);
+  if (o === null) return;
+  if ('tolerance' in o) c.number(`${at}.tolerance`, o.tolerance, 'non-negative');
+  if ('margin' in o) c.number(`${at}.margin`, o.margin, 'non-negative');
+  if ('spacing' in o) c.number(`${at}.spacing`, o.spacing, 'positive');
+  if ('budget' in o) c.int(`${at}.budget`, o.budget, 3);
+  if ('stray' in o) c.int(`${at}.stray`, o.stray, 0);
+  if (!('regions' in o) || !c.array(`${at}.regions`, o.regions, false)) return;
+  const names = new Set<string>();
+  (o.regions as Json[]).forEach((rv, i) => {
+    const rat = `${at}.regions[${i}]`;
+    const shape = typeof rv === 'object' && rv !== null && !Array.isArray(rv) ? (rv as Record<string, Json>).shape : undefined;
+    const own = shape === 'circle' ? ['cx', 'cy', 'r'] : shape === 'polygon' ? ['points'] : [];
+    const r = c.object(rat, rv, ['name', 'shape', 'bone', 'spacing', 'band', ...own], []);
+    if (r === null) return;
+    if ('shape' in r && own.length === 0) c.fail('CONFIG_FIELD_TYPE', `${rat}.shape`, `is ${show(r.shape)}; "circle" (with cx, cy, r) or "polygon" (with points) is required`);
+    if ('name' in r && c.string(`${rat}.name`, r.name)) {
+      if (names.has(r.name)) c.fail('CONFIG_REGION_NAME_UNIQUE', `${rat}.name`, `"${r.name}" is declared twice in this mesh; each region needs its own name`);
+      names.add(r.name);
+    }
+    if ('bone' in r && (typeof r.bone !== 'string' || !bones.has(r.bone))) {
+      c.fail('CONFIG_NAME_RESOLVES', `${rat}.bone`, `is ${show(r.bone)}; a bone config.bones declares is required — the region's control bone`);
+    }
+    const onGrid = (path: string, n: Json, rule: 'any' | 'positive' | 'non-negative'): void => {
+      if (!c.number(path, n, rule)) return;
+      const v2 = n as number;
+      if (!Number.isInteger(v2 * GRID) || Math.abs(v2) > MAX_SIDE) {
+        c.fail('CONFIG_FIELD_TYPE', path, `is ${v2}; a multiple of 1/${GRID} px within ±${MAX_SIDE} px is required — a region's weight is 1 inside it and 0 past its band, and those two are decided exactly on that grid`);
+      }
+    };
+    if ('spacing' in r) c.number(`${rat}.spacing`, r.spacing, 'positive');
+    if ('band' in r) onGrid(`${rat}.band`, r.band, 'non-negative');
+    if (shape === 'circle') {
+      if ('cx' in r) onGrid(`${rat}.cx`, r.cx, 'any');
+      if ('cy' in r) onGrid(`${rat}.cy`, r.cy, 'any');
+      if ('r' in r) onGrid(`${rat}.r`, r.r, 'positive');
+    }
+    if (shape === 'polygon' && 'points' in r && c.array(`${rat}.points`, r.points, true)) {
+      const pts = r.points as Json[];
+      if (pts.length < 3) c.fail('CONFIG_FIELD_TYPE', `${rat}.points`, `has ${pts.length} point(s); 3 or more [x, y] in rig pixels are required`);
+      pts.forEach((p, k) => {
+        if (!c.point(`${rat}.points[${k}]`, p)) return;
+        onGrid(`${rat}.points[${k}][0]`, (p as Point)[0], 'any');
+        onGrid(`${rat}.points[${k}][1]`, (p as Point)[1], 'any');
+      });
+    }
+  });
 }
 
 function checkRegions(c: Check, v: Json, bones: Set<string>): void {

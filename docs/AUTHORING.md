@@ -83,7 +83,8 @@ read by no CPU stage).
 | `assemble.extend_below_crop` | assemble | **proposed** with the plan: `{part, run, tag}` — a head-run part that reaches the bottom of the head crop is continued from a full-run layer, whole connected components |
 | `assemble.patches` | assemble; `meshes`/`regions` keys may name them too | **authored**, optional: `[{name, box, alpha, draw}]` — an extra part cut from the **painting** itself, for figure no See-through layer holds (a hem both runs dropped). `box` is `[x0, y0, x1, y1]` in **rig** pixels, `x1`/`y1` exclusive — the space of `parts.json` and `recomposite_rig.png`, where the hole is found; `alpha` is `"silhouette"` (the painting's figure silhouette inside the box, the one `--seam silhouette` uses) or `"box"` (the whole box); `draw` is `"back"`, `"front"` or `{"before": "<plan part>"}`. A patch is always a region: its bone is `regions.<name>`, in the one place every region's bone lives, and a `meshes` entry for it is refused. See §5 for how to place one |
 | `bones` | rig; `propose --from-config` | **proposed** by `propose`, then corrected. A single bone `{name, parent, at, tip?}` or a chain `{chain, parent, points, tip}` whose links are named `<chain>0 … <chain>n`. Parents come before children. In `rig.json` each link is **turned along its chain** — `rotation` is the direction from its origin to the next link's (the last link's to `tip`) and `length` that distance (issue #73), so a physics constraint added downstream finds a lever; under `--idle-keys ctl` the link's `<link>_ctl` carries the turn and the length and the link sits at local rotation 0 beneath it. A single bone is never turned; one whose parent is a link is turned back upright |
-| `meshes.<part>` | rig | **proposed**, then corrected. `grid` (lattice cell size, px), `r` (added to every distance before weighting: `w = 1/(d + r)²`), `segments` (a chain name, a bone name with a `tip`, or `[bone, [x0,y0], [x1,y1]]`). The segment list is the one authored decision about a layer: which bones may pull it. The slot's bone is the first segment's |
+| `meshes.<part>` | rig | **proposed**, then corrected. Exactly one of `grid` (the lattice: cell size, px — what `propose` writes) or `contour` (the outline mode, authored; the next row and "A contour mesh" below) — both, or neither, is `CONFIG_MESH_MODE`. In both modes: `r` (added to every distance before weighting: `w = 1/(d + r)²`), `segments` (a chain name, a bone name with a `tip`, or `[bone, [x0,y0], [x1,y1]]`). The segment list is the one authored decision about a layer: which bones may pull it. The slot's bone is the first segment's |
+| `meshes.<part>.contour` | rig | **authored**, optional (issue #84): `{tolerance, margin, spacing, budget?, stray?, regions?}`. `tolerance` — spine-rigc's Douglas–Peucker tolerance on the traced outline, px, 0 or more; `margin` — rigc's outward offset of it, px, 0 or more; `spacing` — the background interior spacing, px, above 0; `budget` — the most vertices the mesh may have (refused above it, nothing thinned); `stray` — the largest island, in art pixels, that may be left out of the mesh (absent: none is); `regions` — local deformation regions, each `{name, shape, bone, spacing, band}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`, 3 or more): `bone` is the region's control bone (any bone `bones` declares), `spacing` the interior spacing inside the region and its band, `band` the width the bone's weight falls across. Every length and position is **rig px**, like every other in the config; the part image is the rig less `(x − 4, y − 4)` (its box less the pad), a translation, so a length is the same number in both. A region's `cx`, `cy`, `r`, `band` and `points` are multiples of 1/256 px (`CONFIG_FIELD_TYPE` otherwise); region names are unique per mesh (`CONFIG_REGION_NAME_UNIQUE`). The alpha threshold is not a field: art is alpha above 8, the lattice's and `check`'s |
 | `regions.<part>` | rig | **proposed**: the bone a rigid part rides. Every plan part is exactly one of a mesh or a region (`CONFIG_PART_ATTACHED`) |
 | `motion.duration` | rig; check (the loop is measured at this time) | proposed as 4 s; a whole number of 1/12 s ticks, because `check` renders at 12 fps |
 | `motion.tracks` | rig | **proposed**, then tuned. Single `{bone, prop, amp, period, phase, base?}` or chain `{chain, amps, period, phase, lag}` — one amplitude per link, link `i` at phase `phase + lag·i`. Every `period` must divide `duration` (`CONFIG_PERIOD_DIVIDES_DURATION`). A bone property is keyed by one track (`CONFIG_BONE_PROPERTY_KEYED_ONCE`): a chain keys `rotate` on every link, the blink's `eyes` group `scaley` and its `brows` group `translatey` on every member, so a single track on any of those is a second track on it — rigc would refuse it one stage later, `animation "idle" has two tracks on eye.scaley`. A chain link is turned along its chain (the `bones` row), so a `translatex`/`translatey` key on a bone whose parent is a turned link, or a `scale`/`shear` key on a turned link, would move or stretch along the link and not along the picture's axis: the rig stage refuses it (`RIG_KEY_FRAME_UNTURNED`); `rotate` is keyed on any bone |
@@ -292,6 +293,77 @@ changed none, at rest or rolled. The eye bone is not moved: scaling about the ey
 top edge instead would close the eye upward onto the upper lid and still move whatever sits
 above it by (1 − squash) × its height above the pivot, so the cut, not the pivot, is what
 holds the crease.
+
+### A contour mesh (`meshes.<part>.contour`, issue #84)
+
+The lattice keeps every grid cell that holds an art pixel, so its boundary and its interior
+density are one number: a finer `grid` tightens the outline and densifies the whole part at
+once. A contour mesh separates them. Its outline is spine-rigc's own trace of the part's alpha
+(`traceAlphaOutline` → `simplifyClosedPolygon(tolerance)` → `offsetPolygon(margin)`), its
+interior vertices are the ones declared — each region's boundary, its band's outer edge and its
+own `spacing` grid inside region and band, then the background `spacing` grid — and the
+triangulation is a constrained Delaunay one that never crosses the outline (`src/contour.ts`).
+
+**Weights.** A region's bone takes `g` at a vertex: 1 inside the region (its edge included),
+`1 − d/band` at a distance `d` past it, 0 at `d ≥ band` (with `band` 0, a step) — linear, no
+curve. The rest, `1 − g`, is shared among the segment bones exactly as the lattice shares a
+vertex (`w = 1/(d + r)²`, at most 4 bones, the 0.03 floor inside that share). A vertex no
+region reaches is weighted and rounded exactly as a lattice vertex at the same point would be.
+With a region present: a region bone that is also a segment bone is one entry,
+`g + (1 − g)·share`; when the segment share already holds 4 bones and the region's bone is not
+one of them, the lightest segment bone is dropped (never `g`); the 0.03 floor is not applied
+again to the scaled shares; the weights are rounded to 5 places, an entry rounding to 0 is
+dropped, and the remainder goes to the heaviest entry, so each vertex sums to exactly 1
+(`src/localweights.ts`, `roundShares` in `src/rig.ts`). The 1 and the 0 are decided exactly on
+the 1/256 px grid; only a value in between is a floating-point figure. A region's bone counts
+as a mesh bone, so an idle key on it moves to `<bone>_ctl` under `--idle-keys ctl` like a
+segment bone's.
+
+**What it reports.** `mesh_report.json`'s row for a contour mesh carries `mode: "contour"`, the
+parameters it ran at, `src/contour.ts`'s whole report (outline and interior vertex counts,
+triangles, coverage, overshoot and its bound, enclosed transparent area, filled-hole pixels, the
+smallest angle and largest edge ratio with their triangles, the islands and pixels left out)
+and, per region, the vertices its bone reaches (`g > 0`) and holds alone (`g = 1`).
+`art_coverage` is over all the part's art, stray islands included. A lattice mesh's row is
+unchanged.
+
+**Refusals** — every one names the part, the value found and the value required, and every
+contour refusal in a run is listed together; nothing falls back to the lattice:
+
+| rule | means | change |
+| --- | --- | --- |
+| `CONTOUR_COVERAGE` | an art pixel lies outside the mesh after simplification and the margin | raise `margin` or lower `tolerance` (coverage is not monotonic in the margin — below) |
+| `CONTOUR_OVERSHOOT` | the mesh reaches further than `margin + tolerance + 1` px past the art | lower `margin`; on an acute corner rigc's offset moves up to 4 × margin, so a sharp shape has a narrow window |
+| `CONTOUR_BUDGET` | more vertices than `budget` | coarser `spacing` or region `spacing`, or a larger `budget` |
+| `CONTOUR_ONE_ISLAND` | the art is more than one 4-connected island (every island's pixel count named); with `stray` declared, an island other than the largest above it, or a tie for the largest | `stray`, if the extra islands are stray pixels you accept not drawing; a part that is two pieces stays a lattice part, or is split |
+| `CONTOUR_TRACE` | rigc's tracer refuses a diagonal pinch (two art pixels meeting at one corner), in its words | the lattice, or the art |
+| `CONTOUR_SELF_INTERSECTION` | the simplified, offset outline crosses itself (a neck narrower than twice the margin), or too few vertices are left | lower `margin` or `tolerance` |
+| `CONTOUR_INDEX`, `CONTOUR_GRID`, `CONTOUR_COINCIDENT_VERTICES`, `CONTOUR_ZERO_AREA_TRIANGLE`, `CONTOUR_ONE_LOOP`, `CONTOUR_TILING` | the built mesh fails a topology check (a bug, not an authoring error) | report it |
+| `CONTOUR_PART_HAS_ART` | no pixel above alpha 8 | re-run assemble |
+| `CONTOUR_PARAMETER` | a parameter `src/contour.ts` cannot run at: a spacing whose keep radius (half of it) snaps to 0, a polygon whose band folds it, a part over 32768 px | the named field |
+| `RIG_CONTOUR_REGIONS_OVERLAP` | a vertex two regions both reach (`g > 0`); the detail names the vertex and both regions | move the regions apart or narrow a band |
+
+**The window between coverage and overshoot**, measured in #100 on five generated shapes
+(`tools/contour_survey.ts`): the smallest margin that covered every art pixel was 0 at
+tolerance 0.5, at most 0.5 px at tolerance 1, at most 0.75 px at 1.5 and at most 1.5 px at 2;
+the overshoot bound closes the window from above on acute corners (a two-horned crescent refused
+overshoot from margin 1 at tolerance 1, and at tolerance 3 no margin passed); at tolerance 3 a
+2 px spike lost its width and no margin brought it back. On the public examples, tolerance 1
+and margin 1 built every part that has one island and no pinch (step 2's measurements, in its
+pull request).
+
+**When not to use it.** A part that is two pieces (the demo's earring: 411 and 358 px) — keep
+the lattice, which bridges islands, or split the part. A part with a diagonal pinch (the demo's
+hairpin; on three more of the examples' parts a pinch is what refuses once their stray pixels
+are left out) — rigc's tracer refuses it. A part with a neck narrower than twice the margin. And a part
+nothing deforms locally: at tolerance 1 the contour outline is dense, and on the examples' parts
+the contour mesh used more vertices than the lattice at the same spacing (#100), with thinner
+triangles — smallest angles 0.72°–8.28° against the lattice's 12.09°–45° — and a higher
+`TEXTURE_STRETCH` severity in the idle (demo 1.388 → 1.677, sample 1.227 → 1.84, ceiling
+1.927, with every part that builds switched). The mode is for a part with a declared soft region
+inside a stable surround; on the generated fixture of `tools/local_compare.ts` it reached a
+local shape error (0.336 px at most, 63 vertices) the lattice reached only at grid 2, with 1025
+vertices (`tools/local_compare.ts`'s tables, in step 2's pull request).
 
 ## 4. The command order
 
