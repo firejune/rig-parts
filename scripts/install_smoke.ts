@@ -20,7 +20,9 @@
  * the core entry: an install carries no Spine runtime), `layers` on a wrapper
  * directory, `layers` on a PSD, `sheet`, and `check` on a generated two-part
  * rig, which runs every rigc command a build runs — `build --pack`, `render`,
- * `render --geometry`, `render --slot` — through that entry.
+ * `render --geometry`, `render --slot` — through that entry; and the contour
+ * mesh (`src/contour.ts`) on a generated block, which reaches spine-rigc's
+ * outline functions through the deep path `spine-rigc/src/mesh.ts`.
  *
  * 🔒 **Nothing under this repository is on the fixture's path at run time.** The
  * fixture generator below is authored as text into the install directory and
@@ -175,6 +177,21 @@ writeFileSync(join(DIR, 'parts.json'), serializeParts({
 }));
 `;
 
+// The contour mesh from the install (issue #84): \`spine-parts/src/contour.ts\` imports rigc's outline functions by the
+// deep path \`spine-rigc/src/mesh.ts\`, which nothing on the CLI runs yet, so this is where a rigc that moved them shows.
+// A 24x16 block at (4, 4) in 32x24, tolerance 1, margin 1, spacing 8: by hand, a 4-vertex outline, 6 interior points
+// and 2·10 − 4 − 2 = 14 triangles (the selftest's CT01).
+const CONTOUR_PROBE = `import { contourMesh } from 'spine-parts/src/contour.ts';
+
+const alpha = new Uint8Array(32 * 24);
+for (let y = 4; y < 20; y++) for (let x = 4; x < 28; x++) alpha[y * 32 + x] = 255;
+const m = contourMesh('probe', { width: 32, height: 24, alpha }, { threshold: 8, tolerance: 1, margin: 1, spacing: 8, regions: [] });
+console.log('RESOLVED ' + import.meta.resolve('spine-parts/src/contour.ts'));
+console.log('RESOLVED ' + import.meta.resolve('spine-rigc/src/mesh.ts'));
+console.log(Array.isArray(m) ? 'REFUSED ' + JSON.stringify(m) : 'CONTOUR ' + m.hull + ' ' + (m.vertices.length - m.hull) + ' ' + m.triangles.length / 3);
+`;
+const EXPECT_CONTOUR = 'CONTOUR 4 6 14';
+
 /** The draw order both inputs must read back in, and the opaque count of each layer. */
 const EXPECT_ORDER = ['back hair', 'face', 'eyebrow-l'];
 const EXPECT_OPAQUE: Record<string, number> = { 'back hair': 300, face: 100, 'eyebrow-l': 5 };
@@ -258,8 +275,8 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
   },
   'drop-rigc': {
     names: ['spine-rigc'],
-    steps: ['fixture', 'layers'],
-    what: '`spine-rigc` removed from `dependencies`. A checkout would not notice — it is already in node_modules — and the install is where the PNG codec and the coordinate door have nothing to import',
+    steps: ['fixture', 'layers', 'contour'],
+    what: '`spine-rigc` removed from `dependencies`. A checkout would not notice — it is already in node_modules — and the install is where the PNG codec, the coordinate door and the contour mesh outline functions have nothing to import',
   },
   'drop-psd': {
     names: ['ag-psd'],
@@ -496,6 +513,19 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     );
   } else notes.push(`check passed on the generated rig, gated by ${checkJson.rigc_entry?.entry as string}`);
 
+  // The contour mesh, from the install, through rigc's deep path.
+  writeFileSync(join(home, 'contour_probe.ts'), CONTOUR_PROBE);
+  const probe = run('bun', [join(home, 'contour_probe.ts')], home);
+  output += probe.out;
+  const probed = [...probe.out.matchAll(/^RESOLVED (.+)$/gm)].map((m) => (m[1].startsWith('file://') ? fileURLToPath(m[1]) : m[1]));
+  const strayProbe = probed.filter((p) => !p.startsWith(join(home, 'node_modules')));
+  if (probe.status !== 0 || !probe.out.split('\n').includes(EXPECT_CONTOUR) || probed.length !== 2 || strayProbe.length > 0) {
+    fault(
+      'contour',
+      `SMOKE_CONTOUR_FROM_THE_INSTALL: \`bun contour_probe.ts\` exited ${probe.status}, printed ${JSON.stringify(probe.out.split('\n').find((l) => l.startsWith('CONTOUR') || l.startsWith('REFUSED')) ?? null)} and resolved ${probed.join(', ') || '(nothing)'}; "${EXPECT_CONTOUR}" with both imports under ${join(home, 'node_modules')} was required. ${probe.out.trim().slice(0, 1500)}`,
+    );
+  } else notes.push(`the contour mesh ran from the install through spine-rigc/src/mesh.ts: ${EXPECT_CONTOUR}`);
+
   // The shim's own promise: with bun off PATH it says so in one sentence.
   const bunPath = onPath('bun');
   const nodePath = onPath('node');
@@ -533,7 +563,7 @@ exit codes:
   3  the registry did not serve the version within --wait, so the confirmation was NOT taken
 
 cases:
-  clean            a correct package installs; --version, layers (wrapper and PSD) and sheet run from it
+  clean            a correct package installs; --version, layers (wrapper and PSD), sheet, check and the contour mesh run from it
   unusual-path     the same, installed at an absolute path with spaces and non-ASCII in it
   drop-src-module  src/layers.ts out of the packed tree — the smoke has to go RED naming it
   drop-rigc        spine-rigc out of \`dependencies\` — the smoke has to go RED naming it
