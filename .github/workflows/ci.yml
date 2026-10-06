@@ -50,6 +50,9 @@ jobs:
       - run: bun run lint
       # Every suite but the corpus one is self-contained: no network, no
       # private repository. The corpus suite reads the inputs fetched above.
+      # It runs its suites in worker processes, as many at once as the runner
+      # has cores, and prints them in order as one run (issue #99) — one job,
+      # one check name, every suite.
       - run: bun run selftest
 
   # Whether the PACKAGE runs, which nothing else here asks. `prepublishOnly`
