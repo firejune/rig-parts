@@ -517,6 +517,37 @@ export function parseConfig(raw: Json): CharacterConfig {
   return raw as CharacterConfig;
 }
 
+/** The four sections `propose` drafts and a config carries: what a skeleton comparison reads of either. */
+export interface SkeletonSections {
+  bones: BoneEntry[];
+  meshes: Record<string, MeshSpec>;
+  regions: Record<string, string>;
+  motion: Motion;
+}
+
+/**
+ * A `proposal.json` as `propose` writes it — `bones`, `meshes`, `regions`,
+ * `motion` and `notes` (strings) — under the full loader's own rules for the
+ * four rig sections (issue #85). There is no plan to hold the meshes and
+ * regions against, so the coverage rule (every plan part exactly one of a
+ * mesh or a region) is the one rule not run; `propose` held its proposal to
+ * it before writing (`checkProposal`). A key the loader would not take is
+ * refused by name, as in a config. Refusals name the fields `proposal.…`.
+ */
+export function parseProposalSections(raw: Json): SkeletonSections {
+  const c = new Check();
+  const top = c.object('config', raw, ['bones', 'meshes', 'regions', 'motion'], ['notes']);
+  if (top !== null) {
+    const names = 'bones' in top ? checkBones(c, top.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>() };
+    if ('meshes' in top) checkMeshes(c, top.meshes, names.bones, names.chains);
+    if ('regions' in top) checkRegions(c, top.regions, names.bones);
+    if ('motion' in top) checkMotion(c, top.motion, names.bones, names.chains, 'regions' in top ? top.regions : undefined);
+    if ('notes' in top && c.array('config.notes', top.notes, false)) (top.notes as Json[]).forEach((n, i) => c.string(`config.notes[${i}]`, n, false));
+  }
+  refuseIfAny(c.problems.map((p) => ({ ...p, object: p.object.replace(/^config\b/, 'proposal') })));
+  return raw as SkeletonSections;
+}
+
 /**
  * `motion.blink.still`: part name -> `{row, bone}`. The part must be a region
  * whose bone the blink's `eyes` names — a cut on anything else holds nothing

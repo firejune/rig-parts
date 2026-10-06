@@ -28,6 +28,7 @@ import { figuresPhrase, implausibleRules, layerFigures, type LayerSet, pct, read
 import { checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { readPng, writePng } from './src/raster/png.ts';
 import { buildSheet, defaultCaption, type Tile, tilesFrom } from './src/sheet.ts';
+import { loadComparison, requiredProblems, structureLines } from './src/structure.ts';
 
 const EXIT_OK = 0;
 const EXIT_REFUSED = 1;
@@ -88,6 +89,8 @@ usage:
       gets one pendulum chain per strand and a note with each strand's x, rows
       and width ("-- no chain proposed" is the one to act on; AUTHORING §3).
       --compare prints each shared bone's distance, proposal to config, in px.
+      It reads bone origins only — not parents, tips, lengths, directions or
+      names, so a changed parent or tip scores 0; spine-parts compare reads those.
 
   spine-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
       Draw the config's CURRENT bones instead (<out>/render/landmarks_config.png
@@ -98,6 +101,35 @@ usage:
       layers for a painting of WxH px (portrait or landscape: the full run is
       mapped back through the pad inputs added), held inside the painting; a
       shift is printed when one was needed.
+
+  spine-parts compare --left <file> --right <file> [--map <bonemap.json>]
+      Compare two skeletons bone by bone. Each file is a config, a proposal.json
+      or a rig.json (rigc-rig/1), told apart by what it states: "spec" (read by
+      spine-rigc's own reader), "key" (the config loader) or "bones". No parts and
+      no painting are read. Both sides are brought to one form — rig px, y down;
+      a rig.json through its stage (skeleton x, y, width, height), the y flip
+      through spine-rigc's — and each pair prints its origin distance, its
+      parent (the same through the pairing; the right's or the left's ancestor
+      at depth k, with the bones between that are in no pair; DIFFERENT, naming
+      both; or NOT MAPPED), its tip distance, both lengths and their
+      difference, and the turn of its direction in degrees (clockwise as
+      drawn). A bone of length 0 has no tip: those three say SKIP with the
+      reason, never 0. A rig with no stage, or two configs at different
+      rig_scale, are not in one frame: origin, tip, the length difference and
+      direction say SKIP "frames not related", and parents, required bones and
+      roles still run. Then the unmapped bones of each side by name, the
+      required bones, and each side's roles read off the spec — target (an ik
+      target, a transform source), deforms (a mesh weight or segment, a region),
+      control (binds nothing; keyed, or parents others), unclassified (said why)
+      — with the control and target counts, reported and never failed.
+      With no --map a bone pairs only with the bone of the same name; nothing
+      pairs by resemblance. --map is {"spec": "spine-parts-bonemap/1"} with
+      optional "pairs" ([[left, right], ...]: the whole pairing), "required"
+      (left names that must be present on both sides) and "frame" ({"scale",
+      "offset": [x, y]}: right = scale * left + offset, numbers the author
+      wrote — nothing is fitted). Exit 1 names each required bone missing
+      (STRUCTURE_REQUIRED_PRESENT) or each refusal of a file; every other row is
+      a figure and exits 0.
 
   spine-parts rig --config <config.json> --parts <dir> --out <dir> [--idle-keys ctl|direct]
                   [--page-edges pot|free] [--pack-shape rect|polygon]
@@ -650,6 +682,35 @@ function cmdPropose(args: string[]): number {
   }
 }
 
+function cmdCompare(args: string[]): number {
+  const flags = new Map<string, string>();
+  const valued = ['--left', '--right', '--map'];
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    if (!valued.includes(flag)) return usage(`compare does not take "${flag}"; it takes ${valued.join(', ')}`);
+    const value = args[i + 1];
+    if (value === undefined) return usage(`${flag} needs a value`);
+    if (flags.has(flag)) return usage(`${flag} is given twice`);
+    flags.set(flag, value);
+    i++;
+  }
+  const left = flags.get('--left');
+  const right = flags.get('--right');
+  if (left === undefined) return usage('compare needs --left <config.json | proposal.json | rig.json>');
+  if (right === undefined) return usage('compare needs --right <config.json | proposal.json | rig.json>');
+  const map = flags.get('--map') ?? null;
+  try {
+    const c = loadComparison(left, right, map);
+    console.log(`spine-parts compare: left ${left}, right ${right}${map === null ? ', no map' : `, map ${map}`}`);
+    for (const l of structureLines(c)) console.log(l);
+    const missing = requiredProblems(c, map ?? 'the map');
+    for (const p of missing) console.log(`  FAIL  ${problemLine(p)}`);
+    return missing.length > 0 ? EXIT_REFUSED : EXIT_OK;
+  } catch (err) {
+    return printRefusal(err);
+  }
+}
+
 function cmdLoop(args: string[]): number {
   const palettes = args.filter((a) => a === '--palette').length;
   if (palettes > 1) return usage('--palette is given twice');
@@ -914,6 +975,7 @@ function main(argv: string[]): number | Promise<number> {
   if (command === 'sheet') return cmdSheet(rest);
   if (command === 'rig') return cmdRig(rest);
   if (command === 'propose') return cmdPropose(rest);
+  if (command === 'compare') return cmdCompare(rest);
   if (command === 'check') return cmdCheck(rest);
   if (command === 'loop') return cmdLoop(rest);
   if (command === 'assemble') return cmdAssemble(rest);

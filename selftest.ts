@@ -92,6 +92,7 @@ import { BARE_CROWN_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LON
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
 import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'spine-rigc/src/render.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
+import { arm, armRig, base, baseRenamed, baseWith, roleRig } from './fixtures/structure.ts';
 import {
   assemble,
   type AssembleInput,
@@ -158,6 +159,23 @@ import {
   resize,
   warpAffine,
 } from './src/raster/index.ts';
+import {
+  BONEMAP_SPEC,
+  compareStructure,
+  type Figure,
+  FRAMES_NOT_RELATED,
+  loadComparison,
+  type PairRow,
+  type ParentVerdict,
+  parseBoneMap,
+  readSkeleton,
+  requiredProblems,
+  type RoleOf,
+  roleCounts,
+  type Skeleton,
+  type StructureComparison,
+  structureLines,
+} from './src/structure.ts';
 import { checkProposal, compare, compareLines, FACELESS_RATIOS, faceBoxOf, type FacelessRatios, lint, lintLine, type Proposal, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
@@ -1801,6 +1819,85 @@ function runCliSuite(): number {
       twice.status === 2 && twice.out.includes('--source is given twice') && !existsSync(join(dir, 'src-twice')),
       `exit ${twice.status}; ${(twice.out.split('\n').find((l) => l.includes('FAIL')) ?? 'no FAIL line').trim()}`,
       'two paintings would be two measurements and the line has one; which one was meant is not this package\'s guess',
+    );
+
+    // ---- issue #85: spine-parts compare ----
+    const sk = join(dir, 'skeletons');
+    mkdirSync(sk, { recursive: true });
+    const put = (name: string, v: unknown): string => {
+      writeFileSync(join(sk, name), typeof v === 'string' ? v : JSON.stringify(v));
+      return join(sk, name);
+    };
+    const baseFile = put('base.json', base());
+    const movedFile = put('moved.json', baseWith('eye', (e) => ({ ...e, at: [100, 80] })));
+    const wingMap = put('wing.json', { spec: BONEMAP_SPEC, required: ['hip', 'wing'] });
+    const shown = runCli(['compare', '--left', baseFile, '--right', movedFile]);
+    const missed = runCli(['compare', '--left', baseFile, '--right', movedFile, '--map', wingMap]);
+    const broken = runCli(['compare', '--left', put('empty.json', { meshes: {} }), '--right', put('cut.json', '{"bones": [')]);
+    const noRight = runCli(['compare', '--left', baseFile]);
+    const leftTwice = runCli(['compare', '--left', baseFile, '--left', baseFile, '--right', baseFile]);
+    const failLines = (out: string): string[] => out.split('\n').filter((l) => l.startsWith('  FAIL  '));
+    say(
+      'CL12_COMPARE_EXITS_0_ON_A_REPORT_1_ON_A_MISSING_REQUIRED_BONE_OR_A_REFUSED_FILE_AND_2_ON_A_MALFORMED_CALL',
+      shown.status === 0 &&
+        shown.out.includes('  eye: origin 10.000 px · parent same: head') &&
+        failLines(shown.out).length === 0 &&
+        missed.status === 1 &&
+        failLines(missed.out).length === 1 &&
+        failLines(missed.out)[0].startsWith('  FAIL  STRUCTURE_REQUIRED_PRESENT: bone "wing" — is required by ') &&
+        broken.status === 1 &&
+        failLines(broken.out).map((l) => l.split(':')[0].trim()).join(',') === 'FAIL  STRUCTURE_FORM,FAIL  STRUCTURE_FILE_IS_JSON' &&
+        broken.out.includes('refused: 2 problem(s)') &&
+        noRight.status === 2 &&
+        noRight.out.includes('compare needs --right') &&
+        leftTwice.status === 2 &&
+        leftTwice.out.includes('--left is given twice'),
+      `a moved bone -> exit ${shown.status}; a required bone missing -> exit ${missed.status}, ${failLines(missed.out)[0]?.trim().slice(0, 60) ?? 'no FAIL line'}…; two bad files -> exit ${broken.status}, ${failLines(broken.out).length} FAIL line(s) in one run; no --right -> exit ${noRight.status}; --left twice -> exit ${leftTwice.status}`,
+      'issue #85: a distance is a report and exits 0; only a required bone missing through the map fails a comparison; a file that cannot be read is refused with every reason across both files at once (1, this CLI\'s refusal code), and a malformed call is a usage error (2)',
+    );
+
+    const cfgAsRig = put('rig.json', minimalConfig());
+    const byContent = runCli(['compare', '--left', cfgAsRig, '--right', put('config.json', armRig())]);
+    const proposeHelp = help.out.slice(help.out.indexOf('spine-parts propose --parts'), help.out.indexOf('spine-parts propose --parts', help.out.indexOf('spine-parts propose --parts') + 1));
+    const compareHelp = help.out.slice(help.out.indexOf('spine-parts compare'), help.out.indexOf('spine-parts rig'));
+    say(
+      'CL13_THE_HELP_NAMES_COMPARE_AND_WHAT_PROPOSE_COMPARE_DOES_NOT_READ_AND_A_FILE_IS_READ_BY_WHAT_IT_STATES',
+      compareHelp.includes('spine-parts compare --left <file> --right <file> [--map <bonemap.json>]') &&
+        compareHelp.includes('spine-parts-bonemap/1') &&
+        proposeHelp.includes('It reads bone origins only') &&
+        proposeHelp.includes('spine-parts compare reads those') &&
+        byContent.status === 0 &&
+        byContent.out.includes('  left: config "fixture"') &&
+        byContent.out.includes('  right: rig.json "arm_rig"'),
+      `help: compare ${compareHelp.length > 0 ? 'listed' : 'MISSING'}, --compare's sentence ${proposeHelp.includes('spine-parts compare reads those') ? 'present' : 'MISSING'}; a config saved as rig.json and a rig saved as config.json -> exit ${byContent.status}, ${byContent.out.split('\n').filter((l) => /^ {2}(left|right): /.test(l)).map((l) => l.trim().split(',')[0]).join(' / ')}`,
+      'issue #85: the flag that reads origins only says so where it is documented, and names the command that reads the rest; a skeleton file is a config, a proposal or a rig.json by its content, never its name',
+    );
+
+    const px = join(dir, 'propose-fixture');
+    writeProposeFixture(px);
+    const prop = propose(readPartSet(px));
+    const head = prop.bones.find((b) => 'name' in b && b.name === 'head');
+    const headParent = head !== undefined && 'name' in head ? head.parent : '';
+    const reparent = proposalConfig(PROPOSE_PARTS, prop);
+    reparent.bones = prop.bones.map((b) => ('name' in b && b.name === 'head' ? { ...b, parent: 'chest' } : b));
+    const cleanCfg = put('px-clean.json', proposalConfig(PROPOSE_PARTS, prop));
+    const reparentCfg = put('px-reparent.json', reparent);
+    const tail = (out: string, n: number): string => out.split('\n').filter((l) => l !== '').slice(-n).join('\n');
+    const want = compareLines(compare(prop.bones, prop.bones));
+    const viaClean = runCli(['propose', '--parts', px, '--source', join(px, 'painting.png'), '--out', join(px, 'out-clean'), '--compare', cleanCfg]);
+    const viaReparent = runCli(['propose', '--parts', px, '--source', join(px, 'painting.png'), '--out', join(px, 'out-reparent'), '--compare', reparentCfg]);
+    const structural = runCli(['compare', '--left', join(px, 'out-clean', 'proposal.json'), '--right', reparentCfg]);
+    say(
+      'CL14_PROPOSE_COMPARE_PRINTS_ITS_TABLE_UNCHANGED_AND_COMPARE_NAMES_THE_PARENT_IT_CANNOT_SEE',
+      headParent !== 'chest' &&
+        viaClean.status === 0 &&
+        viaReparent.status === 0 &&
+        tail(viaClean.out, want.length) === want.join('\n') &&
+        tail(viaReparent.out, want.length) === want.join('\n') &&
+        structural.status === 0 &&
+        structural.out.includes(`  head: origin 0.000 px · parent DIFFERENT: left ${headParent}, right chest`),
+      `propose --compare's last ${want.length} lines are compareLines(compare()) for the clean and the re-parented config alike (head's parent ${headParent} -> chest); compare --left proposal.json --right the re-parented config -> exit ${structural.status}, "${structural.out.split('\n').find((l) => l.startsWith('  head:'))?.trim().slice(0, 80) ?? 'no head line'}…"`,
+      'issue #85: the --compare printout is the distance table it was, line for line — a different parent scores 0.0 px there by its definition — and the new command, reading the proposal propose wrote, is where the parent shows',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -8183,6 +8280,479 @@ function runCorpusSuite(dir: string | null): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// structure: two skeletons compared bone by bone through a map (issue #85)
+// ---------------------------------------------------------------------------
+
+function skelOf(raw: unknown): Skeleton {
+  return readSkeleton(raw, 'fixture');
+}
+
+/** Two fixtures compared, through a map file's parsed form when one is given. */
+function structureOf(a: unknown, b: unknown, map: unknown = null): StructureComparison {
+  const l = skelOf(a);
+  const r = skelOf(b);
+  return compareStructure(l, r, map === null ? null : parseBoneMap(map, 'map', l, r));
+}
+
+function rowNamed(c: StructureComparison, left: string): PairRow | undefined {
+  return c.rows.find((r) => r.left === left);
+}
+
+function valueOf(f: Figure): number | null {
+  return 'value' in f ? f.value : null;
+}
+
+/**
+ * Every row outside `owners` must read nothing: each measured figure exactly
+ * 0 and each parent the same (or both roots). Returns what does not, so a
+ * control can show that a change was found by the row that owns it and by no
+ * other.
+ */
+function loudRows(c: StructureComparison, owners: readonly string[] = []): string[] {
+  const out: string[] = [];
+  for (const r of c.rows) {
+    if (owners.includes(r.left)) continue;
+    for (const [what, f] of [['origin', r.origin], ['tip', r.tip], ['length', r.length.difference], ['direction', r.direction]] as const) {
+      const v = valueOf(f);
+      if (v !== null && v !== 0) out.push(`${r.left} ${what} ${v}`);
+    }
+    if (r.parent.kind !== 'same' && r.parent.kind !== 'roots') out.push(`${r.left} parent ${r.parent.kind}`);
+  }
+  return out;
+}
+
+function figureText(f: Figure): string {
+  return 'value' in f ? String(f.value) : `SKIP (${f.skip})`;
+}
+
+/** `base()` with `head_ctl` inserted between chest and head, at head's origin, as the rig stage inserts a control. */
+function withHeadControl(): Record<string, unknown> {
+  const b = base();
+  const bones = (b.bones as Array<Record<string, unknown>>).map((e) => (e.name === 'head' ? { ...e, parent: 'head_ctl' } : e));
+  bones.splice(2, 0, { name: 'head_ctl', parent: 'chest', at: [100, 100] });
+  b.bones = bones;
+  return b;
+}
+
+function runStructureSuite(): number {
+  section('structure: two skeletons compared bone by bone, through a map');
+  const { say, bad } = counter();
+  const why = (s: string): string => `issue #85: ${s}`;
+
+  // ST01 — the positive control every other one is read against.
+  const same = structureOf(base(), base());
+  const kinds = same.rows.map((r) => r.parent.kind).join(',');
+  const measured = (pick: (r: PairRow) => Figure): number => same.rows.filter((r) => 'value' in pick(r)).length;
+  say(
+    'ST01_AN_UNCHANGED_PAIR_READS_ZERO_IN_EVERY_ROW',
+    same.rows.length === 7 &&
+      loudRows(same).length === 0 &&
+      measured((r) => r.origin) === 6 &&
+      measured((r) => r.tip) === 4 &&
+      measured((r) => r.length.difference) === 4 &&
+      measured((r) => r.direction) === 4 &&
+      kinds === 'roots,same,same,same,same,same,same' &&
+      same.unmappedLeft.length + same.unmappedRight.length + same.missing.length === 0 &&
+      same.relation.kind === 'shared',
+    `${same.rows.length} pairs; loud rows: ${loudRows(same).join(', ') || 'none'}; measured origin ${measured((r) => r.origin)} (root SKIP), tip/length/direction ${measured((r) => r.tip)}/${measured((r) => r.length.difference)}/${measured((r) => r.direction)} (chest, head, hem0, hem1); parents ${kinds}`,
+    why('the fixture (fixtures/structure.ts) has six placed bones and four with tips, counted by hand; nothing differs, so every figure is exactly 0 and every parent the same'),
+  );
+
+  // ST02 — eye moved 10 px along x; it is a leaf with no tip, so its origin is the only figure it moves.
+  const moved = structureOf(base(), baseWith('eye', (e) => ({ ...e, at: [100, 80] })));
+  const eye = rowNamed(moved, 'eye');
+  say(
+    'ST02_AN_ORIGIN_MOVED_10_PX_IS_10_IN_ITS_ORIGIN_ROW_AND_NOWHERE_ELSE',
+    eye !== undefined && valueOf(eye.origin) === 10 && eye.parent.kind === 'same' && 'skip' in eye.tip && loudRows(moved, ['eye']).length === 0,
+    `eye [90, 80] -> [100, 80]: origin ${eye === undefined ? 'no row' : figureText(eye.origin)}, parent ${eye?.parent.kind}; other rows loud: ${loudRows(moved, ['eye']).join(', ') || 'none'}`,
+    why('the one figure propose --compare already read; its value is |100 - 90| = 10'),
+  );
+
+  // ST03 — eye re-parented from head to chest, origin unchanged.
+  const reparented = structureOf(base(), baseWith('eye', (e) => ({ ...e, parent: 'chest' })));
+  const rp = rowNamed(reparented, 'eye');
+  const rpText = structureLines(reparented).find((l) => l.startsWith('  eye:')) ?? '';
+  say(
+    'ST03_A_CHANGED_PARENT_IS_NAMED_DIFFERENT_WITH_BOTH_PARENTS_AND_MOVES_NO_FIGURE',
+    rp !== undefined &&
+      rp.parent.kind === 'different' &&
+      rp.parent.left === 'head' &&
+      rp.parent.right === 'chest' &&
+      valueOf(rp.origin) === 0 &&
+      loudRows(reparented, ['eye']).length === 0 &&
+      rpText.includes('parent DIFFERENT: left head, right chest'),
+    `eye's parent head -> chest: ${JSON.stringify(rp?.parent)}, origin ${rp === undefined ? '-' : figureText(rp.origin)}; printed "${rpText.trim()}"`,
+    why('the card\'s third row: a different parent at the same origin scored 0.0 px on every bone; here it is its own row and the distance rows stay 0'),
+  );
+
+  // ST04 — head's tip turned from straight up to straight right, same length 40.
+  const turned = structureOf(base(), baseWith('head', (e) => ({ ...e, tip: [140, 100] })));
+  const hd = rowNamed(turned, 'head');
+  say(
+    'ST04_A_TIP_TURNED_AT_THE_SAME_LENGTH_IS_FOUND_BY_TIP_AND_DIRECTION_NOT_LENGTH',
+    hd !== undefined && valueOf(hd.tip) === Math.hypot(40, 40) && valueOf(hd.length.difference) === 0 && valueOf(hd.direction) === 90 && valueOf(hd.origin) === 0 && hd.parent.kind === 'same' && loudRows(turned, ['head']).length === 0,
+    `head tip [100, 60] -> [140, 100]: tip ${hd === undefined ? '-' : figureText(hd.tip)}, length difference ${hd === undefined ? '-' : figureText(hd.length.difference)}, direction ${hd === undefined ? '-' : figureText(hd.direction)}`,
+    why('hand-derived: the tip moves hypot(40, 40); both lengths are 40; up is atan2(-40, 0) = -90 deg and right 0 deg as drawn, so the direction turns +90 (clockwise on screen)'),
+  );
+
+  // ST05 — chest's tip pushed 20 px further up: longer, same direction.
+  const longer = structureOf(base(), baseWith('chest', (e) => ({ ...e, tip: [100, 90] })));
+  const ch = rowNamed(longer, 'chest');
+  say(
+    'ST05_A_TIP_PUSHED_ALONG_ITS_BONE_IS_FOUND_BY_TIP_AND_LENGTH_NOT_DIRECTION',
+    ch !== undefined && valueOf(ch.tip) === 20 && ch.length.left === 40 && ch.length.right === 60 && valueOf(ch.length.difference) === 20 && valueOf(ch.direction) === 0 && loudRows(longer, ['chest']).length === 0,
+    `chest tip [100, 110] -> [100, 90]: tip ${ch === undefined ? '-' : figureText(ch.tip)}, length ${ch?.length.left} -> ${ch?.length.right} (${ch === undefined ? '-' : figureText(ch.length.difference)}), direction ${ch === undefined ? '-' : figureText(ch.direction)}`,
+    why('the card\'s fourth row: a changed tip scored 0.0 px; length and direction are separate figures, so a longer bone is not reported as a turned one'),
+  );
+
+  // ST06 / ST07 — the same geometry under other names.
+  const renamed = baseRenamed({ eye: 'eye_x' });
+  const noMap = structureOf(base(), renamed);
+  say(
+    'ST06_A_RENAMED_BONE_WITH_NO_MAP_IS_UNMAPPED_ON_EACH_SIDE_BY_NAME',
+    noMap.rows.length === 6 && rowNamed(noMap, 'eye') === undefined && noMap.unmappedLeft.join(',') === 'eye' && noMap.unmappedRight.join(',') === 'eye_x' && loudRows(noMap).length === 0,
+    `eye renamed eye_x: ${noMap.rows.length} pairs; unmapped left ${noMap.unmappedLeft.join(',')}, right ${noMap.unmappedRight.join(',')}`,
+    why('the card\'s fifth row: with no map only an equal name pairs, so the bone is listed once on each side, never paired by resemblance'),
+  );
+  const renamed2 = baseRenamed({ head: 'skull', eye: 'eye_x' });
+  const fullMap = { spec: BONEMAP_SPEC, pairs: [['root', 'root'], ['hip', 'hip'], ['chest', 'chest'], ['head', 'skull'], ['eye', 'eye_x'], ['hem0', 'hem0'], ['hem1', 'hem1']] };
+  const mapped = structureOf(base(), renamed2, fullMap);
+  const me = rowNamed(mapped, 'eye');
+  say(
+    'ST07_THE_SAME_GEOMETRY_RENAMED_THROUGH_A_MAP_READS_ZERO_AND_PARENTS_PAIR_THROUGH_IT',
+    mapped.rows.length === 7 &&
+      loudRows(mapped).length === 0 &&
+      mapped.unmappedLeft.length + mapped.unmappedRight.length === 0 &&
+      me?.right === 'eye_x' &&
+      me.parent.kind === 'same' &&
+      me.parent.left === 'head' &&
+      me.parent.right === 'skull' &&
+      mapped.pairing === 'map',
+    `head -> skull and eye -> eye_x through the map: ${mapped.rows.length} pairs, loud rows ${loudRows(mapped).join(', ') || 'none'}; eye's parent ${JSON.stringify(me?.parent)}`,
+    why('a renamed parent is the same parent through the map, so eye\'s parent row reads same and not different'),
+  );
+
+  // ST08 — a control bone inserted between chest and head, as the rig stage inserts <bone>_ctl.
+  const inserted = structureOf(base(), withHeadControl());
+  const ih = rowNamed(inserted, 'head');
+  const flipped = structureOf(withHeadControl(), base());
+  const fh = rowNamed(flipped, 'head');
+  const elsewhere = withHeadControl();
+  (elsewhere.bones as Array<Record<string, unknown>>)[2].parent = 'hip';
+  const notBetween = rowNamed(structureOf(base(), elsewhere), 'head');
+  const between = (p: ParentVerdict | undefined): string => (p !== undefined && (p.kind === 'inserted-right' || p.kind === 'inserted-left') ? `${p.kind} depth ${p.depth} [${p.between.join(',')}]` : String(p?.kind));
+  say(
+    'ST08_A_BONE_INSERTED_BETWEEN_IS_THE_ANCESTOR_AT_DEPTH_2_ON_EITHER_SIDE_AND_NOT_UNDER_ANOTHER_PARENT',
+    between(ih?.parent) === 'inserted-right depth 2 [head_ctl]' &&
+      between(fh?.parent) === 'inserted-left depth 2 [head_ctl]' &&
+      inserted.unmappedRight.join(',') === 'head_ctl' &&
+      loudRows(inserted, ['head']).length === 0 &&
+      ih !== undefined &&
+      valueOf(ih.origin) === 0 &&
+      notBetween?.parent.kind === 'different',
+    `right inserts head_ctl: head ${between(ih?.parent)}; sides swapped: ${between(fh?.parent)}; head_ctl hung from hip instead: ${notBetween?.parent.kind}`,
+    why('the rig stage puts a <bone>_ctl between a keyed mesh bone and its parent, so a config against its rig.json must read "the same parent, one bone up", not "different"; the planted case where the first paired ancestor is not chest is different'),
+  );
+
+  // ST09 — two keyed control bones on the right only.
+  const extra = base();
+  (extra.bones as unknown[]).push({ name: 'sway_a', parent: 'hip', at: [100, 200] }, { name: 'sway_b', parent: 'hip', at: [100, 200] });
+  (extra.motion as { tracks: unknown[] }).tracks.push({ bone: 'sway_a', prop: 'rotate', amp: 1, period: 4, phase: 0 }, { bone: 'sway_b', prop: 'rotate', amp: 1, period: 4, phase: 0 });
+  const ext = structureOf(base(), extra);
+  const countLine = structureLines(ext).find((l) => l.startsWith('  controls:')) ?? '';
+  say(
+    'ST09_EXTRA_CONTROL_BONES_ON_ONE_SIDE_ARE_A_REPORTED_COUNT_NOT_A_FAILURE',
+    roleCounts(ext.left).control === 2 && roleCounts(ext.right).control === 4 && ext.missing.length === 0 && ext.unmappedRight.join(',') === 'sway_a,sway_b' && countLine === '  controls: left 2, right 4; targets: left 0, right 0 — the counts differ; reported, not failed' && loudRows(ext).length === 0,
+    `"${countLine.trim()}"; unmapped right ${ext.unmappedRight.join(',')}; missing ${ext.missing.length}`,
+    why('root and hip parent others (2 controls); sway_a and sway_b bind nothing and are keyed (2 more); how many controls a rig carries is its design, not an error'),
+  );
+
+  // ST10 — chest's tip on its origin: length 0, no tip.
+  const zero = structureOf(base(), baseWith('chest', (e) => ({ ...e, tip: [100, 150] })));
+  const z = rowNamed(zero, 'chest');
+  const zSkip = z !== undefined && 'skip' in z.tip ? z.tip.skip : '';
+  say(
+    'ST10_A_ZERO_LENGTH_BONE_SAYS_SKIP_IN_TIP_LENGTH_AND_DIRECTION_NEVER_0',
+    z !== undefined && 'skip' in z.tip && 'skip' in z.direction && 'skip' in z.length.difference && z.length.right === null && zSkip.includes('right: its tip is its origin, [100, 150]: length 0') && valueOf(z.origin) === 0 && loudRows(zero, ['chest']).length === 0,
+    `chest tip [100, 110] -> [100, 150] on the right: tip ${z === undefined ? '-' : figureText(z.tip)}, direction ${z === undefined ? '-' : figureText(z.direction)}`,
+    why('a bone with no length has no direction; a 0 there would read as "unchanged"'),
+  );
+
+  // ST11 / ST12 / ST13 — the stage rule, and its absence.
+  const unrelated = structureOf(arm(), armRig(null));
+  const geomSkips = unrelated.rows.flatMap((r) => [r.origin, r.tip, r.length.difference, r.direction]).every((f) => 'skip' in f && f.skip.includes(FRAMES_NOT_RELATED));
+  say(
+    'ST11_FRAMES_NOT_RELATED_SKIP_THE_GEOMETRIC_ROWS_AND_THE_STRUCTURAL_ONES_STILL_RUN',
+    unrelated.relation.kind === 'none' && geomSkips && unrelated.rows.map((r) => r.parent.kind).join(',') === 'roots,same,same,same' && roleCounts(unrelated.right).deforms === 2,
+    `${unrelated.relation.why}; every origin, tip, length difference and direction SKIP: ${geomSkips}; parents ${unrelated.rows.map((r) => r.parent.kind).join(',')}; right roles ${JSON.stringify(roleCounts(unrelated.right))}`,
+    why('a rig with no stage is in its own world; no scale or offset is fitted to it, and the parents and roles need no frame'),
+  );
+  const staged = structureOf(arm(), armRig());
+  const sa = rowNamed(staged, 'arm');
+  say(
+    'ST12_A_RIG_WITH_A_STAGE_IS_IN_RIG_PX_AND_ITS_CONFIG_READS_ZERO',
+    staged.relation.kind === 'shared' && loudRows(staged).length === 0 && staged.rows.filter((r) => valueOf(r.origin) === 0).length === 3 && sa !== undefined && valueOf(sa.tip) === 0 && sa.length.right === 40,
+    `stage x -100, y 0, 200x300: origins ${staged.rows.filter((r) => r.left !== 'root').map((r) => `${r.left} ${figureText(r.origin)}`).join(', ')} (root: no position in the config); arm tip ${sa === undefined ? '-' : figureText(sa.tip)}, right length ${sa?.length.right}`,
+    why('hand-derived in fixtures/structure.ts: rig px = (wx - stage.x, stage.height - (wy - stage.y)) takes hip (0, 100) to (100, 200), arm (20, 150) to (120, 150), hand (60, 150) to (160, 150), and arm\'s length 40 along +x to (160, 150)'),
+  );
+  const offX = structureOf(arm(), armRig({ x: -95, y: 0, width: 200, height: 300 }));
+  const offY = structureOf(arm(), armRig({ x: -100, y: 7, width: 200, height: 300 }));
+  const allAre = (c: StructureComparison, v: number): boolean => c.rows.every((r) => r.left === 'root' || valueOf(r.origin) === v) && valueOf(rowNamed(c, 'arm')?.tip ?? { skip: '' }) === v;
+  say(
+    'ST13_A_STAGE_MOVED_5_PX_IN_X_OR_7_IN_Y_MOVES_EVERY_ORIGIN_BY_THAT',
+    allAre(offX, 5) && allAre(offY, 7),
+    `stage x -95: hip, arm, hand ${offX.rows.filter((r) => r.left !== 'root').map((r) => figureText(r.origin)).join(', ')}; stage y 7: ${offY.rows.filter((r) => r.left !== 'root').map((r) => figureText(r.origin)).join(', ')}`,
+    why('the planted half of ST12: the rule reads the stage box, both coordinates, so a rule that ignored stage.x (rigc\'s own crop-point placement reads none) or stage.y would show here'),
+  );
+
+  // ST14 — a frame the map declares.
+  const scaled = arm();
+  const s2 = (p: number[]): number[] => [2 * p[0] + 10, 2 * p[1] + 20];
+  scaled.bones = (scaled.bones as Array<{ at: number[]; tip?: number[] }>).map((b) => ({ ...b, at: s2(b.at), ...(b.tip === undefined ? {} : { tip: s2(b.tip) }) }));
+  const declared = structureOf(arm(), scaled, { spec: BONEMAP_SPEC, frame: { scale: 2, offset: [10, 20] } });
+  const undeclared = structureOf(arm(), scaled);
+  const da = rowNamed(declared, 'arm');
+  say(
+    'ST14_A_FRAME_THE_MAP_DECLARES_IS_THE_RELATION_AND_WITHOUT_IT_THE_DISTANCES_ARE_RAW',
+    declared.relation.kind === 'declared' && loudRows(declared).length === 0 && da?.length.right === 80 && valueOf(da.length.difference) === 0 && valueOf(rowNamed(undeclared, 'hip')?.origin ?? { skip: '' }) === Math.hypot(110, 220),
+    `right = 2 * left + [10, 20], declared: loud rows ${loudRows(declared).join(', ') || 'none'}, arm length 40 -> ${da?.length.right}, difference ${da === undefined ? '-' : figureText(da.length.difference)}; undeclared, hip ${figureText(rowNamed(undeclared, 'hip')?.origin ?? { skip: 'no row' })}`,
+    why('the author\'s numbers, not a fit: hip [100, 200] lands at [210, 420]; with no declaration both are rig px and hip reads hypot(110, 220)'),
+  );
+
+  // ST15 — required bones.
+  const req = structureOf(base(), base(), { spec: BONEMAP_SPEC, required: ['hip', 'eye', 'wing'] });
+  const reqOk = structureOf(base(), base(), { spec: BONEMAP_SPEC, required: ['hip', 'eye'] });
+  const unpaired = structureOf(base(), base(), { spec: BONEMAP_SPEC, pairs: ['root', 'hip', 'chest', 'head', 'hem0', 'hem1'].map((n) => [n, n]), required: ['eye'] });
+  const goneRight = structureOf(base(), baseRenamed({ eye: 'eye_x' }), { spec: BONEMAP_SPEC, required: ['eye'] });
+  const missText = (c: StructureComparison): string => c.missing.map((m) => `${m.bone}: ${m.why}`).join('; ');
+  const probs = requiredProblems(req, 'map.json');
+  say(
+    'ST15_A_REQUIRED_BONE_MISSING_THROUGH_THE_MAP_IS_NAMED_AND_ONE_PRESENT_IS_NOT',
+    reqOk.missing.length === 0 &&
+      req.missing.length === 1 &&
+      req.missing[0].bone === 'wing' &&
+      req.missing[0].why.includes('not a bone of the left') &&
+      unpaired.missing.length === 1 &&
+      unpaired.missing[0].why.includes('pairs it with nothing') &&
+      goneRight.missing.length === 1 &&
+      goneRight.missing[0].why.includes('not a bone of the right') &&
+      probs.length === 1 &&
+      probs[0].code === 'STRUCTURE_REQUIRED_PRESENT' &&
+      probs[0].object === 'bone "wing"',
+    `[hip, eye] -> ${reqOk.missing.length} missing; [hip, eye, wing] -> ${missText(req)}; eye in no pair -> ${missText(unpaired)}; eye renamed on the right, no pairs -> ${missText(goneRight)}`,
+    why('a required joint is named when it is missing, never averaged away — the one row that fails'),
+  );
+
+  // ST16 — the map loader names every problem in one throw.
+  const badMap = {
+    spec: 'spine-parts-bonemap/2',
+    pair: [],
+    pairs: [['eye_x', 'eye_x'], ['nothing', 'eye'], ['hip', 'hip'], ['hip', 'chest'], 'x'],
+    frame: { scale: 0 },
+  };
+  const left = skelOf(base());
+  const right = skelOf(baseRenamed({ eye: 'eye_x' }));
+  const mapErr = refusals(() => parseBoneMap(badMap, 'map', left, right));
+  const wantMap = [
+    'STRUCTURE_MAP_KEY_KNOWN map pair',
+    'STRUCTURE_MAP_FIELD map spec',
+    'STRUCTURE_MAP_RESOLVES map pairs[0][0]',
+    'STRUCTURE_MAP_RESOLVES map pairs[1][0]',
+    'STRUCTURE_MAP_RESOLVES map pairs[1][1]',
+    'STRUCTURE_MAP_ONE_TO_ONE map pairs[3][0]',
+    'STRUCTURE_MAP_FIELD map pairs[4]',
+    'STRUCTURE_MAP_FIELD map frame.scale',
+    'STRUCTURE_MAP_FIELD map frame.offset',
+  ];
+  const got = mapErr?.problems.map((p) => `${p.code} ${p.object}`) ?? [];
+  const detailOf = (o: string): string => mapErr?.problems.find((p) => p.object === o)?.detail ?? '';
+  const goodMap = refusals(() => parseBoneMap(fullMap, 'map', left, skelOf(renamed2)));
+  say(
+    'ST16_THE_MAP_LOADER_REFUSES_EVERY_PROBLEM_AT_ONCE_EACH_BY_NAME',
+    got.join('|') === wantMap.join('|') && detailOf('map pairs[0][0]').includes('it is a bone of the right side') && detailOf('map pairs[1][0]').includes('not a bone of either side') && goodMap === null,
+    `${got.length} problem(s): ${got.join('; ')}; a valid map -> ${codes(goodMap)}`,
+    why('a name on neither side is refused by name, one on the wrong side says which side it is on, and no name pairs twice; the frame has no default scale or offset'),
+  );
+
+  // ST17 — roles off a config: every rule, once.
+  const roleCfg = base();
+  (roleCfg.bones as unknown[]).push({ name: 'spare', parent: 'head', at: [110, 80] }, { name: 'sway', parent: 'hip', at: [100, 200] }, { name: 'lash', parent: 'head', at: [90, 75] });
+  roleCfg.regions = { face: 'head', iris: 'eye', lid: 'eye' };
+  roleCfg.motion = {
+    duration: 4,
+    tracks: [{ chain: 'hem', amps: [1, 2], period: 2, phase: 0, lag: 0.1 }, { bone: 'sway', prop: 'rotate', amp: 1, period: 4, phase: 0 }],
+    blink: { t: 1, eyes: ['eye'], squash: 0.1, still: { lid: { row: 70, bone: 'lash' } } },
+  };
+  const cfgRoles = skelOf(roleCfg).roles;
+  const roleList = (m: Map<string, RoleOf>): string => [...m].map(([n, r]) => `${n}=${r.role}`).join(',');
+  const wantCfgRoles = 'root=control,hip=control,chest=deforms,head=deforms,eye=deforms,hem0=deforms,hem1=deforms,spare=unclassified,sway=control,lash=deforms';
+  say(
+    'ST17_ROLES_OFF_A_CONFIG_SEGMENT_REGION_STILL_KEYED_PARENT_AND_UNCLASSIFIED',
+    roleList(cfgRoles) === wantCfgRoles && cfgRoles.get('spare')?.why === 'binds nothing, is keyed by nothing and parents nothing' && cfgRoles.get('sway')?.why === 'binds nothing; keyed by motion.tracks[1]' && cfgRoles.get('lash')?.why === 'bound by motion.blink.still.lid',
+    roleList(cfgRoles),
+    why('chest is an explicit segment, hem0/hem1 a chain segment, head and eye regions, lash a blink.still piece; sway is keyed, root and hip parent; spare does none of these and the spec does not say what it is for'),
+  );
+
+  // ST18 — roles off a rig spec, and what a rig with an unread binding cannot settle.
+  const rigRoleMap = skelOf(roleRig()).roles;
+  const linked = roleRig();
+  (linked.skins as { default: Record<string, unknown> }).default.flat = { flat: { type: 'linkedmesh', source: 'cloth', slot: 'cloth' } };
+  const linkedRoles = skelOf(linked).roles;
+  say(
+    'ST18_ROLES_OFF_A_RIG_TARGETS_WEIGHTS_REGIONS_AND_AN_UNREAD_BINDING_LEAVES_THE_REST_UNCLASSIFIED',
+    roleList(rigRoleMap) === 'root=control,grp=control,w1=deforms,w2=deforms,aim=target,src=target,rb=deforms,ub=deforms,leaf=unclassified' &&
+      (rigRoleMap.get('leaf')?.why.includes('a rig.json carries no keys') ?? false) &&
+      roleList(linkedRoles) === 'root=unclassified,grp=unclassified,w1=deforms,w2=deforms,aim=target,src=target,rb=deforms,ub=unclassified,leaf=unclassified' &&
+      (linkedRoles.get('ub')?.why.includes('linked mesh') ?? false),
+    `${roleList(rigRoleMap)} | with a linked mesh: ${roleList(linkedRoles)}`,
+    why('an ik target and a transform source (4.2\'s target) are targets; w1, which the ik bends, is bound by weights and stays deforms; a linked mesh\'s bones are not read here, so a bone that binds nothing read cannot be called a control'),
+  );
+
+  // ST19 — the name says one thing, the spec another; the spec wins.
+  const liars = skelOf(baseRenamed({ eye: 'eye_ctl', hip: 'mesh', chest: 'target' })).roles;
+  say(
+    'ST19_A_ROLE_IS_NEVER_READ_OFF_A_NAME',
+    liars.get('eye_ctl')?.role === 'deforms' && liars.get('mesh')?.role === 'control' && liars.get('target')?.role === 'deforms',
+    `eye_ctl ${liars.get('eye_ctl')?.role}, mesh ${liars.get('mesh')?.role}, target ${liars.get('target')?.role}`,
+    why('a "_ctl" suffix is how this package names a control, not how the spec says it is one'),
+  );
+
+  // ST20 — form by what the file states.
+  const forms = [skelOf(base()).form, readSkeleton(minimalConfig(), 'proposal.json').form, readSkeleton(armRig(), 'config.json').form].join(',');
+  const noForm = refusals(() => readSkeleton({ meshes: {} }, 'x.json'));
+  const otherSpec = refusals(() => readSkeleton({ spec: BONEMAP_SPEC }, 'x.json'));
+  const badCfg = minimalConfig();
+  (badCfg.bones as Array<Record<string, unknown>>)[1].parent = 'nobody';
+  const cfgErr = refusals(() => readSkeleton(badCfg, 'c.json'));
+  const badProp = base();
+  (badProp.bones as Array<Record<string, unknown>>)[1].parent = 'nobody';
+  const propErr = refusals(() => readSkeleton(badProp, 'p.json'));
+  say(
+    'ST20_THE_FORM_IS_READ_OFF_WHAT_THE_FILE_STATES_AND_ITS_LOADER_REFUSES_BY_NAME',
+    forms === 'proposal,config,rig' &&
+      codes(noForm) === 'STRUCTURE_FORM x.json' &&
+      codes(otherSpec) === 'STRUCTURE_FORM x.json spec' &&
+      codes(cfgErr) === 'CONFIG_NAME_RESOLVES c.json config.bones[1].parent' &&
+      codes(propErr) === 'CONFIG_NAME_RESOLVES p.json proposal.bones[1].parent',
+    `forms ${forms} (the fixtures handed with the other forms' file names); no form -> ${codes(noForm)}; a bone map handed as a skeleton -> ${codes(otherSpec)}; a bad parent -> ${codes(cfgErr)} / ${codes(propErr)}`,
+    why('a file is a rig.json because it says rigc-rig/1, a config because it has a key, a proposal because it has bones and neither; its name is never read'),
+  );
+
+  // ST21 — a rig spec rigc refuses, and names a rig resolves to nothing.
+  const noName = armRig();
+  delete noName.name;
+  const rigcErr = refusals(() => readSkeleton(noName, 'r.json'));
+  const ghost = roleRig();
+  (ghost.constraints as Array<Record<string, unknown>>)[0].target = 'nobody';
+  const cloth = (ghost.skins as { default: { cloth: { cloth: { weights: Array<Array<{ bone: string }>> } } } }).default.cloth.cloth;
+  cloth.weights[1][0].bone = 'ghost';
+  const ghostErr = refusals(() => readSkeleton(ghost, 'r.json'));
+  say(
+    'ST21_A_RIG_RIGC_REFUSES_IS_QUOTED_AND_EVERY_UNRESOLVED_NAME_IS_REFUSED_AT_ONCE',
+    codes(rigcErr) === 'STRUCTURE_RIG_SPEC r.json' &&
+      (rigcErr?.problems[0].detail.includes('"name"') ?? false) &&
+      codes(ghostErr) === 'STRUCTURE_NAME_RESOLVES r.json ik constraint "reach".target; STRUCTURE_NAME_RESOLVES r.json skin "default" slot "cloth" attachment "cloth".weights[1][0].bone',
+    `no name -> ${rigcErr?.problems[0].detail ?? 'nothing'}; an ik target and a weight naming no bone -> ${codes(ghostErr)}`,
+    why('rigc\'s reader is the one that knows a rig spec, so its refusal is quoted rather than rewritten; the names this module reads are resolved by it and refused by name, all in one throw'),
+  );
+
+  // ST22 — names that resemble each other are not paired.
+  const look = structureOf(baseRenamed({ eye: 'eye_l' }), baseRenamed({ eye: 'eye_L' }));
+  say(
+    'ST22_NOTHING_PAIRS_BY_RESEMBLANCE',
+    rowNamed(look, 'eye_l') === undefined && look.unmappedLeft.join(',') === 'eye_l' && look.unmappedRight.join(',') === 'eye_L',
+    `eye_l against eye_L: unmapped left ${look.unmappedLeft.join(',')}, right ${look.unmappedRight.join(',')}`,
+    why('a near name is a guess; the map is how two names are said to be one bone'),
+  );
+
+  // ST23 — a rig bone placed by a cut manifest has no position here.
+  const fromRig = armRig();
+  (fromRig.bones as unknown[])[2] = { name: 'arm', parent: 'hip', length: 40, from: { anchor: 'shoulder' } };
+  const fr = structureOf(arm(), fromRig);
+  const frArm = rowNamed(fr, 'arm');
+  const frHand = rowNamed(fr, 'hand');
+  say(
+    'ST23_A_RIG_BONE_PLACED_FROM_A_CUT_MANIFEST_AND_ITS_CHILDREN_SAY_SKIP',
+    frArm !== undefined && 'skip' in frArm.origin && frArm.origin.skip.includes('cut manifest') && frHand !== undefined && 'skip' in frHand.origin && frHand.origin.skip.includes('sits under "arm"') && valueOf(rowNamed(fr, 'hip')?.origin ?? { skip: '' }) === 0,
+    `arm ${figureText(frArm?.origin ?? { skip: 'no row' })}; hand ${figureText(frHand?.origin ?? { skip: 'no row' })}`,
+    why('bone.from reads a manifest this command does not; x, y = 0 would be a position nobody wrote'),
+  );
+
+  // ST24 — two configs at different rig scales are not one frame.
+  const half = minimalConfig();
+  const full = minimalConfig();
+  (full.assemble as Record<string, unknown>).rig_scale = 1;
+  const scales = structureOf(half, full);
+  const scalesSame = structureOf(half, minimalConfig());
+  say(
+    'ST24_TWO_CONFIGS_AT_DIFFERENT_RIG_SCALES_ARE_NOT_RELATED',
+    scales.relation.kind === 'none' && scales.relation.why.includes('rig_scale 0.5 and 1') && scalesSame.relation.kind === 'shared' && loudRows(scalesSame).length === 0,
+    `rig_scale 0.5 against 1: ${scales.relation.why}; against 0.5: ${scalesSame.relation.kind}`,
+    why('a rig pixel at 0.5 source px per pixel is not one at 1, so the distances would be in two units'),
+  );
+
+  // ST25 — the tracked public examples.
+  const exampleLines: string[] = [];
+  let exampleOk = true;
+  for (const key of ['demo', 'sample']) {
+    const dir = join(ROOT, 'examples', key);
+    const cfgRig = loadComparison(join(dir, 'config.json'), join(dir, 'expected', 'rig.json'), null);
+    const propCfg = loadComparison(join(dir, 'proposal.json'), join(dir, 'config.json'), null);
+    const origins = cfgRig.rows.filter((r) => 'value' in r.origin);
+    const ctl = cfgRig.rows.flatMap((r) => (r.parent.kind === 'inserted-right' ? r.parent.between : []));
+    const odd = cfgRig.rows.filter((r) => r.parent.kind !== 'same' && r.parent.kind !== 'roots' && r.parent.kind !== 'inserted-right');
+    const ok =
+      origins.length === cfgRig.rows.length - 1 &&
+      origins.every((r) => valueOf(r.origin) === 0) &&
+      odd.length === 0 &&
+      ctl.length > 0 &&
+      ctl.every((n) => n.endsWith(CONTROL_SUFFIX)) &&
+      cfgRig.unmappedLeft.length === 0 &&
+      cfgRig.unmappedRight.join(',') === ctl.join(',') &&
+      loudRows(propCfg).length === 0 &&
+      propCfg.unmappedLeft.length + propCfg.unmappedRight.length === 0;
+    exampleOk &&= ok;
+    exampleLines.push(`${key}: config vs expected/rig.json ${origins.length} origins at 0, ${ctl.length} ${CONTROL_SUFFIX} between, other parents ${odd.length}; proposal vs config loud rows ${loudRows(propCfg).length}`);
+  }
+  say(
+    'ST25_EACH_TRACKED_EXAMPLE_S_CONFIG_IS_ITS_RIG_JSON_THROUGH_THE_STAGE_AND_ITS_PROPOSAL_IS_ITS_CONFIG',
+    exampleOk,
+    exampleLines.join('; '),
+    why('expected/rig.json is the reference\'s flat rig, every offset a difference of integer landmarks at 3 places, so the stage rule must give every origin exactly 0; the only parents not the same are the rig stage\'s controls, one bone up; the tracked proposal and config carry equal bones (the reference used only to score)'),
+  );
+
+  // ST26 — the printout and its determinism.
+  const lines = structureLines(moved);
+  const again = structureLines(structureOf(base(), baseWith('eye', (e) => ({ ...e, at: [100, 80] }))));
+  const wantEye = '  eye: origin 10.000 px · parent same: head · tip, length, direction SKIP (left: states no tip; right: states no tip)';
+  say(
+    'ST26_THE_PRINTOUT_STATES_EACH_FIGURE_AND_THE_SAME_INPUT_PRINTS_THE_SAME_LINES',
+    lines.includes(wantEye) && lines.join('\n') === again.join('\n') && lines.includes('  origin: 6 measured, max 10.000 px (eye), 1 SKIP'),
+    `${lines.find((l) => l.startsWith('  eye:'))?.trim()} | ${lines.find((l) => l.startsWith('  origin:'))?.trim()}`,
+    why('the messages are the UI: each pair is one line naming every figure or the SKIP and its reason'),
+  );
+
+  // ST27 — the gap the card names, on propose's compare(): it reads origins only.
+  const bonesOf = (raw: Record<string, unknown>): BoneEntry[] => raw.bones as BoneEntry[];
+  const blindParent = compare(bonesOf(base()), bonesOf(baseWith('eye', (e) => ({ ...e, parent: 'chest' }))));
+  const blindTip = compare(bonesOf(base()), bonesOf(baseWith('head', (e) => ({ ...e, tip: [140, 100] }))));
+  const blindName = compare(bonesOf(base()), bonesOf(renamed));
+  say(
+    'ST27_PROPOSE_COMPARE_STAYS_A_DISTANCE_TABLE_AND_THE_STRUCTURE_ROWS_FIND_WHAT_IT_CANNOT',
+    blindParent.rows.every(([, v]) => v === 0) &&
+      blindTip.rows.every(([, v]) => v === 0) &&
+      blindName.onlyConfig.join(',') === 'eye_x' &&
+      blindName.onlyProposal.join(',') === 'eye' &&
+      rp?.parent.kind === 'different' &&
+      valueOf(hd?.direction ?? { skip: '' }) === 90 &&
+      compareLines(blindParent).join('\n') === compareLines(compare(bonesOf(base()), bonesOf(base()))).join('\n'),
+    `compare(): parent changed -> max ${Math.max(...blindParent.rows.map(([, v]) => v))} px, tip turned -> max ${Math.max(...blindTip.rows.map(([, v]) => v))} px, renamed -> only in config ${blindName.onlyConfig.join(',')}, only in proposal ${blindName.onlyProposal.join(',')}; its printout for the re-parented pair is the unchanged pair's, line for line`,
+    why('the card\'s table, kept true: compare() is untouched and still scores these 0, which is why the structure rows exist beside it'),
+  );
+  return bad();
+}
+
+// ---------------------------------------------------------------------------
 // the tree itself
 // ---------------------------------------------------------------------------
 
@@ -8626,6 +9196,7 @@ function main(): void {
   tally.of('rig', runRigSuite);
   tally.of('propose', runProposeSuite);
   tally.of('propose-corpus', runProposeCorpusSuite);
+  tally.of('structure', runStructureSuite);
   tally.of('check', runCheckSuite);
   tally.of('loop', runLoopSuite);
   tally.of('assemble', runAssembleSuite);
@@ -8670,7 +9241,7 @@ function main(): void {
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('structure')} structure, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
