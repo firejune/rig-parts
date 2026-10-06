@@ -8,8 +8,9 @@
  * layers after the ghost clean-up, cut it off 0.35 face heights below the chin
  * (a long lock must not drag the box down), add a 12 % margin, square it on
  * the union's centre, and map it from the full run's canvas to source pixels
- * through the run's own pad (the source is centred on a square, so x carries
- * the pad and y does not).
+ * through the run's own pad (`squarePad`: the source is centred on a square of
+ * its longer side, so a portrait painting's x carries the pad and a landscape
+ * one's y does; the reference took x only, its paintings being portrait).
  *
  * Two departures, both because the reference's box could not be fed back in:
  *
@@ -28,6 +29,7 @@
  *   inside at that size and is refused.
  */
 import { type Problem, refuseIfAny } from './errors.ts';
+import { squarePad } from './inputs.ts';
 import { type LayerSet, OPAQUE_ALPHA_ABOVE } from './layers.ts';
 import { pyRound } from './pyfmt.ts';
 import { connectedComponents } from './raster/components.ts';
@@ -92,21 +94,14 @@ export function proposeHeadBox(full: LayerSet, source: { w: number; h: number })
   const problems: Problem[] = [];
   if (!(Number.isInteger(source.w) && Number.isInteger(source.h) && source.w > 0 && source.h > 0)) {
     problems.push({ code: 'HEADBOX_CANVAS_SIZE', object: '--canvas', detail: `is ${source.w}x${source.h}; the painting's size in positive integer pixels is required` });
-  } else if (source.w > source.h) {
-    problems.push({
-      code: 'HEADBOX_CANVAS_PORTRAIT',
-      object: '--canvas',
-      detail: `is ${source.w}x${source.h}, landscape; the full run's input pads the painting horizontally onto a square, so a width at most its height is required`,
-    });
   }
   if (full.canvas.w !== full.canvas.h) {
     problems.push({ code: 'HEADBOX_RUN_SQUARE', object: full.source, detail: `the full run's canvas is ${full.canvas.w}x${full.canvas.h}; See-through's full run is square` });
   }
   refuseIfAny(problems);
 
-  const side = Math.max(source.w, source.h);
-  const pad = Math.floor((side - source.w) / 2);
-  const k = side / full.canvas.w;
+  const pad = squarePad(source.w, source.h);
+  const k = pad.side / full.canvas.w;
   // The union does not depend on the order the layers are read in; a name
   // that appears twice is last-wins in draw order (the reference's dict was
   // last-wins in manifest order, and no wrapper output read so far repeats one).
@@ -159,8 +154,8 @@ export function proposeHeadBox(full: LayerSet, source: { w: number; h: number })
   const ex = [pyRound((cx - size / 2) * k), pyRound((cx + size / 2) * k)];
   const ey = [pyRound((cy - size / 2) * k), pyRound((cy + size / 2) * k)];
   const edge = Math.max(ex[1] - ex[0], ey[1] - ey[0]);
-  const bx = ex[0] - pad;
-  const by = ey[0];
+  const bx = ex[0] - pad.left;
+  const by = ey[0] - pad.top;
   const unclamped: Box = [bx, by, bx + edge, by + edge];
   if (edge > source.w || edge > source.h) {
     refuseIfAny([

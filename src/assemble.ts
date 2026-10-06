@@ -32,8 +32,13 @@
  *   a part left with no opaque pixel (the reference printed `EMPTY` and wrote a
  *   `parts.json` without it), a head box outside the painting (the reference
  *   read row `-1` as the last row), a run whose canvas is not the configured
- *   resolution (the reference assumed 1024), and a landscape painting (the
- *   reference refused that too, as a bare exit).
+ *   resolution (the reference assumed 1024).
+ * - **A landscape painting is mapped back, not refused.** The reference
+ *   refused one as a bare exit; here the full run's input is the painting on a
+ *   square of its longer side (`squarePad`, `src/inputs.ts`), and the full
+ *   run's map carries the vertical pad exactly as it carries the horizontal
+ *   one. A portrait painting's vertical pad is 0, so its map is the
+ *   reference's.
  * - **`seamRule: 'silhouette'`** is available beside the faithful
  *   `'near-white'` rule. The reference's seam override skips every pixel whose
  *   painting colour is near-white (min channel above 235), which protects the
@@ -60,6 +65,7 @@
 import type { CharacterConfig, EarlyConfig, Extend, Patch, PlanEntry, Run, SeeThrough } from './config.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
+import { squarePad } from './inputs.ts';
 import { PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord } from './parts.ts';
 import {
   alphaComposite,
@@ -200,8 +206,10 @@ interface Frame {
   W: number;
   H: number;
   S: number;
-  /** Full run: the painting was centred on a white `side x side` square, padded this much on the left. */
+  /** Full run: the painting was centred on a white `side x side` square (`squarePad`), padded this much on the left… */
   fullPad: number;
+  /** …and this much on top, in source px. At most one of the two is non-zero. */
+  fullPadTop: number;
   fullK: number;
   headBox: [number, number, number, number];
   headK: number;
@@ -219,10 +227,7 @@ export function checkGeometry(g: Geometry, runs?: { full: LayerSet; head: LayerS
     problems.push({ code, object, detail });
   };
   const { sourceW: w, sourceH: h, resolution, headBox, rigScale: S } = g;
-  const side = Math.max(w, h);
-  if (h !== side) {
-    fail('ASSEMBLE_SOURCE_PORTRAIT', 'source painting', `is ${w}x${h}, wider than tall; the full run pads the painting to a square horizontally only, so height >= width is required`);
-  }
+  const pad = squarePad(w, h);
   const W = Math.trunc(w * S);
   const H = Math.trunc(h * S);
   if (W < 1 || H < 1) fail('ASSEMBLE_RIG_SIZE', 'config.assemble.rig_scale', `${S} makes a ${W}x${H} rig from a ${w}x${h} painting; at least 1x1 is required`);
@@ -251,8 +256,9 @@ export function checkGeometry(g: Geometry, runs?: { full: LayerSet; head: LayerS
     W,
     H,
     S,
-    fullPad: Math.floor((side - w) / 2),
-    fullK: side / resolution,
+    fullPad: pad.left,
+    fullPadTop: pad.top,
+    fullK: pad.side / resolution,
     headBox,
     headK: (x1 - x0) / resolution,
     headBottom,
@@ -347,7 +353,8 @@ export function runLayers(set: LayerSet, resolution: number): RunLayer[] {
 export function runMap(frame: Frame, run: Run): { k: number; sx: number; tx: number; ty: number } {
   if (run === 'full') {
     const k = frame.fullK * frame.S;
-    return { k, sx: f32(k), tx: f32(-frame.fullPad * frame.S), ty: 0 };
+    // A portrait painting's top pad is 0, and its ty is the reference's literal 0 rather than f32(-0).
+    return { k, sx: f32(k), tx: f32(-frame.fullPad * frame.S), ty: frame.fullPadTop === 0 ? 0 : f32(-frame.fullPadTop * frame.S) };
   }
   const k = frame.headK * frame.S;
   return { k, sx: f32(k), tx: f32(frame.headBox[0] * frame.S), ty: f32(frame.headBox[1] * frame.S) };
@@ -1528,7 +1535,8 @@ export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx =
         }
       }
     }
-    if (last >= 0 && (last + 1) * frame.fullK * frame.S > frame.headBottom + 8) extend.push({ part: PROPOSE_ALIAS[t], run: 'full', tag: t });
+    // The run row maps to the rig as the warp maps it: k * row, less the top pad in rig px.
+    if (last >= 0 && (last + 1) * frame.fullK * frame.S - frame.fullPadTop * frame.S > frame.headBottom + 8) extend.push({ part: PROPOSE_ALIAS[t], run: 'full', tag: t });
   }
   return { plan, extend_below_crop: extend, notes: [...notes, ...dropNotes] };
 }

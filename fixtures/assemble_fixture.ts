@@ -167,6 +167,30 @@
  *   overlapping them, so the render has no edge between them (on the build
  *   fixture the abutting box raised `check`'s seam from 0.323 to 0.86 with
  *   16 px over 40; the overlapping one measured 0.267 with none).
+ *
+ * ## The landscape twin (issue #78)
+ *
+ * The same figure on a painting wider than tall: `landscapePainting()` is the
+ * flat `C` painting at 128 x 124, so `inputs` pads it to a 128-px square
+ * vertically — `squarePad(128, 124)`: top floor(4 / 2) = 2 source px, bottom
+ * 2 — and the full run's canvas is that square at 64 px. Its layers are the
+ * portrait fixture's moved down by the pad in run pixels, 2 x (64 / 128) = 1
+ * row (`LANDSCAPE_FULL_LAYERS`); the head run is cut from the painting, not
+ * from the square, so it is the portrait's unchanged.
+ *
+ * - The full run's map is rig = run x 1 + (0, -2 x 0.5) = run - (0, 1): every
+ *   moved layer lands on exactly the rig pixels the portrait's did. Nothing
+ *   reaches the canvas edge after the move (the lowest rectangle, the
+ *   footwear speck, ends on run row 62 of 64), so the ghost counts hold too.
+ * - The rig is 64 x 62 (128 x 0.5, 124 x 0.5). Every part ends at or above
+ *   rig row 59 (`shoes`, rows 54..59), so no part reaches the new bottom edge
+ *   and every part record, box, count and ghost figure is the portrait's.
+ * - Only the recomposite moves, by the rig's area: 64 x 62 = 3,968 pixels,
+ *   1,485 covered, 2,483 uncovered white page over `C`. `mean_abs` =
+ *   2,483 x 565 / 3 / 3,968 = 117.8507… -> 117.851; `within_share` =
+ *   1,485 / 3,968 = 0.37424… -> 0.3742; `error_px` = `uncovered_error_px` =
+ *   2,483, one hole of 2,483 px whose box is the whole rig, 0,0 64x62, with
+ *   the portrait's borders (no part touches an edge, so none changes).
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -289,6 +313,33 @@ export const EXPECTED_PROPOSAL = {
   notes: ['headwear: head run 0 rig px < 0.8 x full run 192 -> full-run layer, drawn behind the face'],
 };
 
+/** The landscape twin's painting height and its derived pads, as the module doc derives them. */
+export const LANDSCAPE_H = 124;
+export const LANDSCAPE_PAD_TOP = 2;
+export const LANDSCAPE_RUN_DY = 1;
+
+/** A run's layers moved down `dy` run pixels. */
+export function shiftRun(layers: RunLayerSpec[], dy: number): RunLayerSpec[] {
+  return layers.map((l) => ({ ...l, rects: l.rects.map((q) => ({ ...q, y0: q.y0 + dy, y1: q.y1 + dy })) }));
+}
+
+/** The portrait full run moved down by the landscape twin's pad in run pixels. */
+export const LANDSCAPE_FULL_LAYERS: RunLayerSpec[] = shiftRun(FULL_LAYERS, LANDSCAPE_RUN_DY);
+
+/** The landscape twin's parts.json: the portrait's parts and ghosts, and the recomposite over a 64 x 62 rig, as derived above. */
+export const LANDSCAPE_EXPECTED_PARTS = {
+  ...EXPECTED_PARTS,
+  rig_size: [64, 62] as [number, number],
+  recomposite: {
+    ...EXPECTED_PARTS.recomposite,
+    mean_abs: 117.851,
+    within_share: 0.3742,
+    error_px: 2483,
+    uncovered_error_px: 2483,
+    holes: [{ ...EXPECTED_PARTS.recomposite.holes[0], px: 2483, h: 62 }],
+  },
+};
+
 export function paint(w: number, h: number, background: RGB | null, rects: Rect[]): Raster {
   const r = newRaster(w, h);
   if (background !== null) for (let i = 0; i < w * h; i++) r.data.set([...background, 255], i * 4);
@@ -298,6 +349,11 @@ export function paint(w: number, h: number, background: RGB | null, rects: Rect[
 
 export function flatPainting(side = SOURCE_SIDE, width = side): Raster {
   return paint(width, side, C, []);
+}
+
+/** The flat painting, 128 wide and 124 tall: the landscape twin's. */
+export function landscapePainting(): Raster {
+  return paint(SOURCE_SIDE, LANDSCAPE_H, C, []);
 }
 
 /** Rectangles are painted in order, so the white hole goes over the block. */

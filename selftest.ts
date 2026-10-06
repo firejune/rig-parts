@@ -68,6 +68,12 @@ import {
   HEM_UNDER_PX,
   HEM_PLAN,
   hemPainting,
+  HEAD_LAYERS,
+  LANDSCAPE_EXPECTED_PARTS,
+  LANDSCAPE_FULL_LAYERS,
+  LANDSCAPE_H,
+  LANDSCAPE_PAD_TOP,
+  landscapePainting,
   PLAN,
   RESOLUTION,
   RIG_SCALE,
@@ -123,7 +129,7 @@ import { PartsError, type Problem } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
 import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paintingGraph, POSITIVE_HEAD, stripWords } from './src/graphs.ts';
 import { proposeHeadBox } from './src/headbox.ts';
-import { makeInputs } from './src/inputs.ts';
+import { makeInputs, squarePad } from './src/inputs.ts';
 import { implausibleRules, type Layer, layerFigures, type LayerSet, PLAUSIBLE_AREA_RATIO_MAX, PLAUSIBLE_JUDGED_AREA_RATIO, PLAUSIBLE_TRANSLUCENT_MAX, PLAUSIBLE_BACKGROUND_MAX, PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN, readLayers, readPsdLayers, readWrapperLayers, ruleSummary } from './src/layers.ts';
 import { type PartsFile, type RecompositeRecord, readParts, serializeParts, writeParts } from './src/parts.ts';
 import {
@@ -2643,6 +2649,59 @@ function runProposeSuite(): number {
       'the reference proposed a box 118 px above the public demo painting and the crop filled that band with black; the control is the same geometry on a 100 px canvas',
     );
 
+    // Issue #78: the full run of a landscape painting is the painting padded top and bottom, and the
+    // box comes back through that pad. The same face on a 100-px run, k = 100 / 100 = 1, run box
+    // [39, 39, 60, 60] (PR06's): on a 100x60 painting the top pad is floor(40 / 2) = 20, so
+    // [39, 19, 60, 40]; on 60x100 the left pad is 20, so [19, 39, 40, 60]; on 100x61 the top pad is
+    // floor(39 / 2) = 19, so [39, 20, 60, 41]. A dropped top pad reads the run box as the painting's:
+    // [39, 39, 60, 60], which a 100x60 painting holds, so nothing would refuse it.
+    const faceRun = headRun(100, [['face', 40, 40, 20, 20]]);
+    const wideBox = proposeHeadBox(faceRun, { w: 100, h: 60 });
+    const tallBox = proposeHeadBox(faceRun, { w: 60, h: 100 });
+    const oddBox = proposeHeadBox(faceRun, { w: 100, h: 61 });
+    const unpadded = proposeHeadBox(faceRun, { w: 100, h: 100 });
+    say(
+      'PR42_A_LANDSCAPE_PAINTING_S_HEAD_BOX_COMES_BACK_THROUGH_THE_TOP_PAD',
+      wideBox.head_box.join(',') === '39,19,60,40' &&
+        wideBox.shift.join(',') === '0,0' &&
+        tallBox.head_box.join(',') === '19,39,40,60' &&
+        oddBox.head_box.join(',') === '39,20,60,41' &&
+        unpadded.head_box.join(',') !== wideBox.head_box.join(','),
+      `100x60: [${wideBox.head_box.join(', ')}] shift ${wideBox.shift.join(',')}; 60x100: [${tallBox.head_box.join(', ')}]; 100x61: [${oddBox.head_box.join(', ')}]; the run box read with no pad: [${unpadded.head_box.join(', ')}]`,
+      'the head run is fed the painting cropped at this box, so a box one pad too low cuts the chin and the shoulders instead of the head, and the crop is in the painting so nothing refuses it',
+    );
+
+    // What is still impossible: a painting whose SHORT side cannot hold the box at its size. A 20-px-tall
+    // landscape painting under the same face: edge 21 > 20. And a box that leaves the top of a landscape
+    // painting is held inside: the face at run y 18..37 -> run edges round(38.86) = 39, round(16.86) = 17,
+    // so [39, 17 - 20, 60, 38 - 20] = [39, -3, 60, 18], shifted down 3 to [39, 0, 60, 21].
+    const flat = refusals(() => proposeHeadBox(faceRun, { w: 100, h: 20 }));
+    const highFace = proposeHeadBox(headRun(100, [['face', 40, 18, 20, 20]]), { w: 100, h: 60 });
+    const flatLine = flat?.problems.find((p) => p.code === 'HEADBOX_FITS_CANVAS');
+    say(
+      'PR43_A_LANDSCAPE_PAINTING_TOO_SHORT_FOR_THE_BOX_IS_REFUSED_AND_ONE_LEAVING_ITS_TOP_IS_HELD_INSIDE',
+      flat?.problems.length === 1 &&
+        flatLine !== undefined &&
+        flatLine.detail.includes('is 21x21 source px') &&
+        flatLine.detail.includes('the 100x20 painting cannot hold it') &&
+        highFace.unclamped.join(',') === '39,-3,60,18' &&
+        highFace.head_box.join(',') === '39,0,60,21' &&
+        highFace.shift.join(',') === '0,3',
+      `100x20 -> ${codes(flat)}: ${flatLine?.detail ?? 'nothing'}; a face high on a 100x60 painting: [${highFace.unclamped.join(', ')}] -> [${highFace.head_box.join(', ')}] shift ${highFace.shift.join(',')}`,
+      'HEADBOX_CANVAS_PORTRAIT is gone because a landscape painting is mapped back now; what stays impossible is a box larger than the painting\'s shorter side, whichever side that is',
+    );
+
+    const wideRunDir = join(dir, 'wide-full');
+    writeRun(wideRunDir, [{ name: 'face', depth: 0.5, rects: [{ x0: 40, y0: 40, x1: 60, y1: 60, colour: C }] }], 100);
+    const wideCli = runCli(['propose', '--head-box', '--full', wideRunDir, '--canvas', '100x60']);
+    const wideJson = wideCli.out.split('\n').filter((ln) => ln.trim() !== '').pop() ?? '';
+    say(
+      'PR44_PROPOSE_HEAD_BOX_TAKES_A_LANDSCAPE_CANVAS',
+      wideCli.status === 0 && wideJson === '{"head_box":[39,19,60,40]}' && wideCli.out.includes('painting 100x60;') && wideCli.out.includes('inside the painting, no shift'),
+      `--canvas 100x60 -> exit ${wideCli.status}, last line ${wideJson}`,
+      'the CLI refused a landscape --canvas by HEADBOX_CANVAS_PORTRAIT before issue #78; its answer is the one PR42 derives by hand',
+    );
+
     const cliOut = join(dir, 'cli');
     const cli = runCli(['propose', '--parts', dir, '--source', join(dir, 'painting.png'), '--out', cliOut, '--compare', cfgClean]);
     const written = existsSync(join(cliOut, 'proposal.json')) ? readFileSync(join(cliOut, 'proposal.json'), 'utf8') : '';
@@ -4643,6 +4702,41 @@ function runBuildSuite(): number {
       "issue #2: the packed page is the artifact and the loose parts an intermediate, so the lines a reader stops at are the pack line and the three files; the parts.json equality is what shows build called the assemble stage rather than something like it",
     );
 
+    // Issue #78: the landscape twin through the same driver (fixtures/assemble_fixture.ts, "The landscape
+    // twin"): a 128x124 painting, the full run moved down by its top pad in run pixels (1 row), the same
+    // config. Its parts are the portrait's, so the green build's parts PNGs are the expectation, byte for byte.
+    // No --loop here, so the tree is BUILD_OWNS less the three idle files the loop writes.
+    const wideDir = join(dir, 'landscape');
+    writeAssembleFixture(wideDir, moving, landscapePainting(), { full: LANDSCAPE_FULL_LAYERS, head: HEAD_LAYERS });
+    const wideOut = join(wideDir, 'out');
+    const wide = runCli(buildArgs(wideDir, wideOut));
+    const wideParts = existsSync(join(wideOut, 'parts.json')) ? serializeParts(readParts(join(wideOut, 'parts.json'))) : 'absent';
+    const pngs = entries(join(out, 'parts'));
+    const pngSame = pngs.filter((f) => existsSync(join(wideOut, 'parts', f)) && Buffer.compare(readFileSync(join(out, 'parts', f)), readFileSync(join(wideOut, 'parts', f))) === 0);
+    say(
+      'BU11_A_LANDSCAPE_PAINTING_BUILDS_GREEN_TO_THE_PORTRAIT_S_PARTS_IN_PAINTING_PIXELS',
+      wide.status === 0 && wideParts === serializeParts(LANDSCAPE_EXPECTED_PARTS) && pngs.length === EXPECTED_PARTS.parts.length && pngSame.length === pngs.length && entries(wideOut).join(',') === expectedTree.filter((f) => !f.startsWith('idle')).join(','),
+      `exit ${wide.status}; parts.json equals the hand-derived landscape one: ${wideParts === serializeParts(LANDSCAPE_EXPECTED_PARTS)}; ${pngSame.length} of ${pngs.length} part PNGs byte-identical to the portrait build's; --out holds [${entries(wideOut).join(', ')}]`,
+      'the reporter padded the painting itself to a square, which puts the padding in the rig; here the pad is See-through\'s input only, so assemble, rig and check see the painting and the same figure gives the same parts',
+    );
+
+    // The planted input: the portrait's full run beside the landscape painting — a full run whose square
+    // the painting was not centred on, which is what a stage dropping the top pad reads. Every full-run
+    // part lands one rig row high; build writes it (nothing it measures can know the figure), and the
+    // parts.json names the move.
+    const highDir = join(dir, 'landscape-unshifted');
+    writeAssembleFixture(highDir, moving, landscapePainting());
+    const highOut = join(highDir, 'out');
+    runCli(buildArgs(highDir, highOut));
+    const highParts = existsSync(join(highOut, 'parts.json')) ? readParts(join(highOut, 'parts.json')) : null;
+    const highTop = highParts?.parts.find((p) => p.name === 'topwear');
+    say(
+      'BU12_A_FULL_RUN_READ_WITHOUT_ITS_TOP_PAD_MOVES_THE_BUILD_S_PARTS_BY_THE_PAD',
+      highParts !== null && highTop?.y === 19 && serializeParts(highParts) !== wideParts,
+      `the unmoved full run on the 128x124 painting: parts.json ${highParts === null ? 'absent' : `topwear at y ${highTop?.y}`} (20 with the pad, 19 = 20 - 2 x 0.5 without)`,
+      'a dropped vertical pad is not a refusal anywhere downstream — the parts are plausible, one pad too high — so the expectation has to be a number derived by hand',
+    );
+
     // The Spine header of a build is the setup-pose box since spine-rigc 2.2.0 (firejune/rigc#907), and
     // tools/atlas_population.ts reads a build's figure there, held to spine-core's getBounds through rigc's own
     // writing of a bound (headerBoxNumber). The green build above is the positive control; the plants are its
@@ -5555,7 +5649,6 @@ function runAssembleSuite(): number {
       ['a part whose layer is all ghost', 'ASSEMBLE_PART_OPAQUE', () => assemble({ ...base, plan: [...base.plan, ['neck', 'full', 'neck']], seamRule: 'near-white' })],
       ['a head box past the painting', 'ASSEMBLE_HEAD_BOX_INSIDE', () => assemble({ ...base, headBox: [96, 0, 160, 64], seamRule: 'near-white' })],
       ['a resolution the runs were not made at', 'ASSEMBLE_RUN_CANVAS', () => assemble({ ...base, resolution: 32, seamRule: 'near-white' })],
-      ['a landscape painting', 'ASSEMBLE_SOURCE_PORTRAIT', () => assemble({ ...base, source: flatPainting(SOURCE_SIDE, SOURCE_SIDE + 32), seamRule: 'near-white' })],
       ['a rig scale that makes no rig', 'ASSEMBLE_RIG_SIZE', () => assemble({ ...base, rigScale: 0.001, seamRule: 'near-white' })],
       ['a patch box past the rig', 'ASSEMBLE_PATCH_BOX_INSIDE', () => assemble({ ...base, patches: [{ name: 'hem', box: [0, 60, 65, 64], alpha: 'box', draw: 'back' }], seamRule: 'near-white' })],
       ['a silhouette patch where the painting has no figure', 'ASSEMBLE_PATCH_OPAQUE', () => assemble({ ...base, patches: [{ name: 'hem', box: [0, 60, 4, 64], alpha: 'silhouette', draw: 'back' }], seamRule: 'near-white' })],
@@ -5577,6 +5670,74 @@ function runAssembleSuite(): number {
         ? `${outcomes.length} planted inputs, each refused under its code; e.g. ${outcomes[0].line?.code}: ${outcomes[0].line?.object} — ${outcomes[0].line?.detail}`
         : missed.map((o) => `${o.what}: wanted ${o.code}, got ${o.got}`).join('; '),
       'the reference raised a KeyError, printed EMPTY and went on, read row -1, or assumed 1024 on each of these; here each is a refusal naming the object, the value found and the value required',
+    );
+
+    // Issue #78: the landscape twin (fixtures/assemble_fixture.ts, "The landscape twin"). The painting is
+    // 128x124, so the full run's map is k = (128 / 64) x 0.5 = 1, tx = 0, ty = -2 x 0.5 = -1: a run
+    // rectangle on rows 21..50 lands on rig rows 20..49 of a 64x62 rig. The planted frame has its top pad
+    // dropped, which is the map before #78 on a square painting: the same rectangle on rows 21..50.
+    const wideFrame = checkGeometry({ sourceW: SOURCE_SIDE, sourceH: LANDSCAPE_H, resolution: RESOLUTION, headBox: HEAD_BOX, rigScale: RIG_SCALE });
+    const block64 = newRaster(RESOLUTION, RESOLUTION);
+    for (let y = 21; y < 51; y++) for (let x = 10; x < 30; x++) block64.data.set([...C, 255], (y * RESOLUTION + x) * 4);
+    const rows = (r: Raster): string => {
+      let lo = -1;
+      let hi = -1;
+      for (let y = 0; y < r.height; y++) {
+        for (let x = 0; x < r.width; x++) {
+          if (r.data[(y * r.width + x) * 4 + 3] > 0) {
+            if (lo < 0) lo = y;
+            hi = y;
+            break;
+          }
+        }
+      }
+      return `${lo}..${hi}`;
+    };
+    const mapped = layerToRig(block64, wideFrame, 'full');
+    const dropped = layerToRig(block64, { ...wideFrame, fullPadTop: 0 }, 'full');
+    say(
+      'AS20_A_LANDSCAPE_FULL_RUN_MAPS_BACK_THROUGH_THE_TOP_PAD',
+      wideFrame.fullPad === 0 && wideFrame.fullPadTop === LANDSCAPE_PAD_TOP && mapped.width === 64 && mapped.height === 62 && rows(mapped) === '20..49' && rows(dropped) === '21..50',
+      `128x124 -> pads left ${wideFrame.fullPad}, top ${wideFrame.fullPadTop} (0 and 2 by hand); run rows 21..50 -> rig rows ${rows(mapped)} of ${mapped.width}x${mapped.height} (20..49 by hand); with the top pad dropped: ${rows(dropped)}`,
+      'the full run is See-through on the padded square; mapping it back without the vertical pad moves every full-run part down by the pad in rig pixels',
+    );
+
+    const wideDir = join(dir, 'landscape');
+    writeAssembleFixture(wideDir, assembleConfig(), landscapePainting(), { full: LANDSCAPE_FULL_LAYERS, head: HEAD_LAYERS });
+    const wideBase = fixtureInput(wideDir);
+    const wide = assemble({ ...wideBase, seamRule: 'near-white' });
+    const wideGot = serializeParts(wide.parts);
+    const sameImages = wide.images.length === result.images.length && wide.images.every((p, i) => p.record.name === result.images[i].record.name && Buffer.compare(Buffer.from(encodePngBytes(p.image)), Buffer.from(encodePngBytes(result.images[i].image))) === 0);
+    // The planted input: the portrait's full run read against the landscape painting — See-through layers
+    // cut from a square the painting was NOT centred on — lands every full-run part one rig row high.
+    const highDir = join(dir, 'landscape-unshifted');
+    writeAssembleFixture(highDir, assembleConfig(), landscapePainting());
+    const high = assemble({ ...fixtureInput(highDir), seamRule: 'near-white' });
+    const highTop = high.parts.parts.find((p) => p.name === 'topwear');
+    say(
+      'AS21_THE_LANDSCAPE_TWIN_ASSEMBLES_TO_THE_PORTRAIT_S_PARTS_IN_PAINTING_PIXELS',
+      wideGot === serializeParts(LANDSCAPE_EXPECTED_PARTS) && sameImages && highTop?.y === 19 && serializeParts(high.parts) !== wideGot,
+      `parts.json equals the hand-derived landscape one (the portrait's parts on a 64x62 rig): ${wideGot === serializeParts(LANDSCAPE_EXPECTED_PARTS)}; every part PNG byte-identical to the portrait run's: ${sameImages}; ` +
+        `the unmoved full run on the landscape painting puts topwear at y ${highTop?.y} (20 is the figure's)`,
+      'the rig stays in painting pixels: the pad is See-through\'s input only, so the same figure is the same parts whichever square it was fed on',
+    );
+
+    // --propose-plan's extend rule reads a full-run row as a rig row, so it carries the pad as the warp
+    // does: rig row = (row + 1) x 1 - 1. A back hair ending on landscape run row 36 ends on rig row 36,
+    // which is not more than 8 below the crop line 28: no extend. Read without the pad (the same run on a
+    // square painting), it ends on 37 and is extended.
+    const wideG = { sourceW: SOURCE_SIDE, sourceH: LANDSCAPE_H, resolution: RESOLUTION, headBox: HEAD_BOX, rigScale: RIG_SCALE };
+    const wideProp = proposePlan(wideBase.full, wideBase.head, wideG);
+    const edgeHair = LANDSCAPE_FULL_LAYERS.map((l) => (l.name === 'back hair' ? { ...l, rects: [{ ...l.rects[0], y0: 15, y1: 37 }] } : l));
+    writeRun(join(dir, 'edge-full'), edgeHair);
+    const edgeFull = readWrapperLayers(join(dir, 'edge-full'));
+    const atEdge = proposePlan(edgeFull, wideBase.head, wideG);
+    const atEdgeUnpadded = proposePlan(edgeFull, wideBase.head, { ...wideG, sourceH: SOURCE_SIDE });
+    say(
+      'AS22_PROPOSE_PLAN_ON_THE_LANDSCAPE_TWIN_READS_FULL_RUN_ROWS_THROUGH_THE_TOP_PAD',
+      JSON.stringify(wideProp) === JSON.stringify(EXPECTED_PROPOSAL) && atEdge.extend_below_crop.length === 0 && atEdgeUnpadded.extend_below_crop.length === 1,
+      `the twin's proposal equals the portrait's hand-derived one: ${JSON.stringify(wideProp) === JSON.stringify(EXPECTED_PROPOSAL)}; back hair ending on run row 36: extend ${JSON.stringify(atEdge.extend_below_crop)}; the same run read with no pad: extend ${atEdgeUnpadded.extend_below_crop.map((e) => e.part).join(', ') || 'none'}`,
+      'the extend rule compares a full-run row with the crop line in rig pixels, so it must map the row exactly as the warp does, or a lock that ends at the crop is pulled below it',
     );
 
     const out1 = join(dir, 'out1');
@@ -6062,7 +6223,6 @@ function runInputsSuite(): number {
     `head_box [1, 2, 5, 6] -> ${r.head?.width}x${r.head?.height}, every pixel the painting's at (1 + x, 2 + y)`,
     'the head run is See-through at a higher resolution on this crop; a resampled or shifted crop would move every head part',
   );
-  const landscape = refusals(() => makeInputs(newRaster(10, 6), cfg(), 'wide.png'));
   const glass = newRaster(6, 10);
   glass.data.fill(255);
   glass.data[4 * 13 + 3] = 128;
@@ -6070,14 +6230,71 @@ function runInputsSuite(): number {
   const outside = refusals(() => makeInputs(painting, cfg([3, 4, 9, 10]), 'painting'));
   const square = refusals(() => parseConfig({ ...minimalConfig(), seethrough: { resolution: 1024, steps: 30, seed: 42, offload: true, head_box: [0, 0, 4, 5] } }));
   say(
-    'IN04_A_LANDSCAPE_OR_TRANSLUCENT_PAINTING_AND_A_BOX_OUTSIDE_OR_NOT_SQUARE_ARE_REFUSED',
-    landscape?.problems[0]?.code === 'INPUTS_PAINTING_PORTRAIT' &&
-      translucent?.problems[0]?.code === 'INPUTS_PAINTING_OPAQUE' &&
+    'IN04_A_TRANSLUCENT_PAINTING_AND_A_BOX_OUTSIDE_OR_NOT_SQUARE_ARE_REFUSED',
+    translucent?.problems[0]?.code === 'INPUTS_PAINTING_OPAQUE' &&
       translucent.problems[0].detail.includes('1 pixel(s)') &&
       outside?.problems[0]?.code === 'INPUTS_HEAD_BOX_INSIDE' &&
       square?.problems.some((p) => p.code === 'CONFIG_HEAD_BOX_SQUARE') === true,
-    `10x6 -> ${codes(landscape)}; one alpha-128 pixel -> ${translucent?.problems[0]?.detail ?? 'nothing'}; [3, 4, 9, 10] on 6x10 -> ${codes(outside)}; 4x5 box -> ${codes(square)}`,
-    'the reference top-aligned a landscape painting, dropped alpha, and scaled a non-square box by its width, each silently',
+    `one alpha-128 pixel -> ${translucent?.problems[0]?.detail ?? 'nothing'}; [3, 4, 9, 10] on 6x10 -> ${codes(outside)}; 4x5 box -> ${codes(square)}`,
+    'the reference dropped alpha and scaled a non-square box by its width, each silently (a landscape painting, which it top-aligned, is padded vertically now: IN07)',
+  );
+
+  // Issue #78: a landscape painting is padded top and bottom, as a portrait one is left and right.
+  // 10x6, every pixel distinct: side max(10, 6) = 10, top floor((10 - 6) / 2) = 2, bottom 10 - 6 - 2 = 2, left 0.
+  const wide = newRaster(10, 6);
+  for (let i = 0; i < 60; i++) wide.data.set([i * 4, 255 - i * 4, (i * 7) % 256, 255], i * 4);
+  /** Whether `full` is white everywhere except `src`, placed whole at (left, top). */
+  const placedAt = (full: Raster, src: Raster, left: number, top: number): boolean => {
+    for (let y = 0; y < full.height; y++) {
+      for (let x = 0; x < full.width; x++) {
+        const inside = x >= left && x < left + src.width && y >= top && y < top + src.height;
+        if (px(full, x, y).join(',') !== (inside ? px(src, x - left, y - top) : [255, 255, 255, 255]).join(',')) return false;
+      }
+    }
+    return true;
+  };
+  const l = makeInputs(wide, cfg([3, 1, 7, 5]), 'wide.png');
+  // The planted input: the reference's paste at ((side - w) // 2, 0), the painting on the square's top rows.
+  const topAligned = newRaster(10, 10);
+  topAligned.data.fill(255);
+  topAligned.data.set(wide.data, 0);
+  let wideHead = l.head !== null && l.head.width === 4 && l.head.height === 4;
+  for (let y = 0; y < 4 && wideHead; y++) for (let x = 0; x < 4; x++) if (px(l.head!, x, y).join(',') !== px(wide, 3 + x, 1 + y).join(',')) wideHead = false;
+  say(
+    'IN07_A_LANDSCAPE_PAINTING_IS_CENTRED_ON_WHITE_VERTICALLY',
+    l.full.width === 10 && l.full.height === 10 && l.padTop === 2 && l.padLeft === 0 && placedAt(l.full, wide, 0, 2) && !placedAt(topAligned, wide, 0, 2) && wideHead,
+    `10x6 -> ${l.full.width}x${l.full.height}, painting at x ${l.padLeft}, y ${l.padTop} (0 and 2 by hand), rows 0-1 and 8-9 white: ${placedAt(l.full, wide, 0, 2)}; ` +
+      `the reference's top-aligned paste read the same way: ${placedAt(topAligned, wide, 0, 2)}; head_box [3, 1, 7, 5] is the painting's own pixels at (3 + x, 1 + y): ${wideHead}`,
+    'the full run is centred on the square either way, so See-through sees white on both sides of the figure; the head crop is cut from the painting, never from the square',
+  );
+  const tall7 = newRaster(10, 7);
+  for (let i = 0; i < 70; i++) tall7.data.set([i * 3, 255 - i * 3, (i * 5) % 256, 255], i * 4);
+  const oddTop = makeInputs(tall7, cfg(), 'odd-wide');
+  say(
+    'IN08_AN_ODD_VERTICAL_PAD_PUTS_THE_EXTRA_ROW_AT_THE_BOTTOM',
+    oddTop.padTop === 1 && oddTop.padLeft === 0 && oddTop.full.height === 10 && placedAt(oddTop.full, tall7, 0, 1) && !placedAt(oddTop.full, tall7, 0, 2),
+    `10x7 -> pad ${oddTop.padTop} top, ${oddTop.full.height - 7 - oddTop.padTop} bottom (floor(3 / 2) = 1 and 2 by hand); the painting read one row lower: ${placedAt(oddTop.full, tall7, 0, 2)}`,
+    "the vertical margin floors as the horizontal one does, so proposeHeadBox and assemble, which take it from the same squarePad, agree with the image to the pixel",
+  );
+  // squarePad over every size 1..12 x 1..12, against its definition: side max(w, h), one margin 0,
+  // the other floor((side - dim) / 2). The planted mutant is the derivation with w and h swapped.
+  const sizes: Array<[number, number]> = [];
+  for (let w = 1; w <= 12; w++) for (let h = 1; h <= 12; h++) sizes.push([w, h]);
+  const byDefinition = (pad: { side: number; left: number; top: number }, w: number, h: number): boolean =>
+    pad.side === Math.max(w, h) && pad.left === Math.floor((pad.side - w) / 2) && pad.top === Math.floor((pad.side - h) / 2) && (pad.left === 0 || pad.top === 0);
+  const wrongPads = sizes.filter(([w, h]) => !byDefinition(squarePad(w, h), w, h));
+  const swappedWrong = sizes.filter(([w, h]) => !byDefinition(squarePad(h, w), w, h));
+  // A portrait painting's margins are the pre-#78 derivation's: top 0, left floor((h - w) / 2) on a square of side h.
+  const portraitMoved = sizes.filter(([w, h]) => w <= h).filter(([w, h]) => {
+    const q = squarePad(w, h);
+    return q.side !== h || q.top !== 0 || q.left !== Math.floor((h - w) / 2);
+  });
+  say(
+    'IN09_SQUARE_PAD_IS_ITS_DEFINITION_AND_A_PORTRAIT_PAINTING_S_IS_UNCHANGED',
+    wrongPads.length === 0 && swappedWrong.length > 0 && portraitMoved.length === 0,
+    `${sizes.length} sizes: ${wrongPads.length} off the definition; ${sizes.filter(([w, h]) => w <= h).length} portrait or square ones whose margins differ from the pre-#78 ones: ${portraitMoved.length}; ` +
+      `the planted mutant (w and h swapped) is off on ${swappedWrong.length}`,
+    'one derivation is read by inputs, proposeHeadBox and assemble; a portrait painting must keep the margins the reference measured against (the inputs-examples suite holds the bytes)',
   );
 
   const dir = temp('inputs');
@@ -6090,6 +6307,18 @@ function runInputsSuite(): number {
     const full = existsSync(join(dir, 'out', 'st_input_full.png')) ? readPng(join(dir, 'out', 'st_input_full.png')) : null;
     const head = existsSync(join(dir, 'out', 'st_input_head.png')) ? readPng(join(dir, 'out', 'st_input_head.png')) : null;
     const same = (a: Raster | null, b: Raster | null): boolean => a !== null && b !== null && a.width === b.width && a.data.every((v, i) => v === b.data[i]);
+    const wideSrc = join(dir, 'wide.png');
+    writeFileSync(wideSrc, encodePngBytes(wide));
+    const wideRun = runCli(['inputs', '--source', wideSrc, '--config', join(dir, 'config.json'), '--out', join(dir, 'wide')]);
+    const wideFull = existsSync(join(dir, 'wide', 'st_input_full.png')) ? readPng(join(dir, 'wide', 'st_input_full.png')) : null;
+    const wideLine = 'st_input_full.png 10x10: the painting at y 2, white above and below (2 + 2 px)';
+    const portraitLine = 'st_input_full.png 10x10: the painting at x 2, white either side (2 + 2 px)';
+    say(
+      'IN10_THE_CLI_CUTS_A_LANDSCAPE_PAINTING_AND_SAYS_WHERE_IT_SITS',
+      wideRun.status === 0 && same(wideFull, makeInputs(wide, cfg([1, 2, 5, 6]), 'wide.png').full) && wideRun.out.includes(wideLine) && !wideRun.out.includes('at x ') && run.out.includes(portraitLine),
+      `10x6 -> exit ${wideRun.status}, st_input_full ${wideFull === null ? 'absent' : `${wideFull.width}x${wideFull.height}`}; says "${wideLine}": ${wideRun.out.includes(wideLine)}; the 6x10 run still says "${portraitLine}": ${run.out.includes(portraitLine)}`,
+      'the line is how an agent learns where the painting sits on the square it hands See-through; a landscape painting was refused here before issue #78',
+    );
     say(
       'IN05_THE_CLI_WRITES_BOTH_INPUTS_AND_SAYS_WHAT_IT_WROTE',
       run.status === 0 && same(full, r.full) && same(head, r.head) && run.out.includes('st_input_full.png 10x10') && run.out.includes('st_input_head.png 4x4'),
@@ -6215,6 +6444,13 @@ function runAssembleExamplesSuite(): number | null {
   return bad();
 }
 
+/** A raster with its rows and columns exchanged. */
+function transposed(r: Raster): Raster {
+  const out = newRaster(r.height, r.width);
+  for (let y = 0; y < r.height; y++) for (let x = 0; x < r.width; x++) out.data.set(r.data.subarray((y * r.width + x) * 4, (y * r.width + x) * 4 + 4), (x * out.width + y) * 4);
+  return out;
+}
+
 function runInputsExamplesSuite(): number | null {
   section('inputs-examples: inputs reproduces every fetched example\'s st_input_full.png and st_input_head.png');
   const keys = exampleKeys().fetched.filter((k) => existsSync(join(EXAMPLES_DIR, k, 'inputs', 'painting.png')));
@@ -6242,6 +6478,27 @@ function runInputsExamplesSuite(): number | null {
       ok,
       rows.join('; '),
       "the reference cut these two files from this painting; the port has to cut the same pixels, or every See-through layer downstream moves",
+    );
+
+    // Issue #78 on a real painting: the example transposed is landscape, and its full input must be the
+    // reference's st_input_full.png transposed — the vertical pad is the horizontal one, by definition.
+    // The planted input is the reference's paste on the transposed painting: the square's top rows.
+    const painting = readPng(join(d, 'inputs', 'painting.png'));
+    const refFull = readPng(join(d, 'inputs', 'st_input_full.png'));
+    const turned = transposed(painting);
+    const t = makeInputs(turned, {}, `${k} transposed`);
+    const want = transposed(refFull);
+    const diffs = (a: Raster, b: Raster): number => (a.width !== b.width || a.height !== b.height ? -1 : a.data.reduce((n, v, i) => n + (v === b.data[i] ? 0 : 1), 0));
+    const pasted = newRaster(want.width, want.height);
+    pasted.data.fill(255);
+    pasted.data.set(turned.data, 0);
+    const got = diffs(t.full, want);
+    const plant = diffs(pasted, want);
+    say(
+      `IE02_EXAMPLE_${k.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_TRANSPOSED_IS_PADDED_VERTICALLY_TO_THE_REFERENCE_S_INPUT_TRANSPOSED`,
+      got === 0 && plant > 0 && t.padLeft === 0 && t.padTop === squarePad(painting.width, painting.height).left,
+      `${turned.width}x${turned.height} -> ${t.full.width}x${t.full.height} at y ${t.padTop}: ${got < 0 ? 'size differs' : `${got} byte(s) differ`} from the reference's ${refFull.width}x${refFull.height} transposed; the planted top-aligned paste: ${plant} byte(s) differ`,
+      'a real painting wider than tall, with a known answer: the reference never cut one, so its portrait cut, turned, is the only reference there is',
     );
   }
   return bad();
