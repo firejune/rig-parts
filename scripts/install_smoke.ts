@@ -179,18 +179,18 @@ writeFileSync(join(DIR, 'parts.json'), serializeParts({
 
 // The contour mesh from the install (issue #84): \`spine-parts/src/contour.ts\` imports rigc's outline functions by the
 // deep path \`spine-rigc/src/mesh.ts\`, which nothing on the CLI runs yet, so this is where a rigc that moved them shows.
-// A 24x16 block at (4, 4) in 32x24, tolerance 1, margin 1, spacing 8: by hand, a 4-vertex outline, 6 interior points
-// and 2·10 − 4 − 2 = 14 triangles (the selftest's CT01).
+// A 24x16 block at (4, 4) in 32x24, tolerance 0, margin 1, spacing 8: by hand, the block grown by its four neighbours'
+// rows and columns, a 12-vertex outline, 6 interior points and 2·18 − 12 − 2 = 22 triangles (the selftest's CT01).
 const CONTOUR_PROBE = `import { contourMesh } from 'spine-parts/src/contour.ts';
 
 const alpha = new Uint8Array(32 * 24);
 for (let y = 4; y < 20; y++) for (let x = 4; x < 28; x++) alpha[y * 32 + x] = 255;
-const m = contourMesh('probe', { width: 32, height: 24, alpha }, { threshold: 8, tolerance: 1, margin: 1, spacing: 8, regions: [] });
+const m = contourMesh('probe', { width: 32, height: 24, alpha }, { threshold: 8, tolerance: 0, margin: 1, spacing: 8, regions: [] });
 console.log('RESOLVED ' + import.meta.resolve('spine-parts/src/contour.ts'));
 console.log('RESOLVED ' + import.meta.resolve('spine-rigc/src/mesh.ts'));
 console.log(Array.isArray(m) ? 'REFUSED ' + JSON.stringify(m) : 'CONTOUR ' + m.hull + ' ' + (m.vertices.length - m.hull) + ' ' + m.triangles.length / 3);
 `;
-const EXPECT_CONTOUR = 'CONTOUR 4 6 14';
+const EXPECT_CONTOUR = 'CONTOUR 12 6 22';
 
 /** The draw order both inputs must read back in, and the opaque count of each layer. */
 const EXPECT_ORDER = ['back hair', 'face', 'eyebrow-l'];

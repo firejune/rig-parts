@@ -163,9 +163,9 @@ import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTra
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'spine-rigc/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
-import { contourFit, type ContourMesh, contourMesh, type ContourParams, contourTopologyProblems, delaunayViolations, inCircle, keepPoints } from './src/contour.ts';
-import { BASE, blocks, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE } from './fixtures/contour.ts';
-import { checkHullOrder, traceOutline } from 'spine-rigc/src/mesh.ts';
+import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, contourTopologyProblems, delaunayViolations, growSilhouette, inCircle, keepPoints, marginDisc, withinMarginSquared } from './src/contour.ts';
+import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE } from './fixtures/contour.ts';
+import { checkHullOrder, earClip, findSelfIntersection, offsetPolygon, simplifyClosedPolygon, traceAlphaOutline, traceOutline } from 'spine-rigc/src/mesh.ts';
 import { PartsError, type Problem } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
 import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paintingGraph, POSITIVE_HEAD, stripWords } from './src/graphs.ts';
@@ -12147,32 +12147,32 @@ function runContourSuite(): number {
 
   // CT01 — the convex block, every figure by hand (fixtures/contour.ts).
   const convex = built(contourOf(CONVEX));
-  const sqrt2 = Math.round(Math.SQRT2 * 1e6) / 1e6;
-  const convexHull: Array<[number, number]> = [[3, 3], [29, 3], [29, 21], [3, 21]];
+  const convexHull = blockOutline(4, 4, 24, 16);
   const convexInside: Array<[number, number]> = [[8, 8], [16, 8], [24, 8], [8, 16], [16, 16], [24, 16]];
   say(
     'CT01_A_CONVEX_BLOCK_MESHES_TO_ITS_HAND_COUNTED_OUTLINE_POINTS_AND_TRIANGLES',
     convex !== null &&
-      convex.hull === 4 &&
+      convex.hull === 12 &&
       sameVertices(convex.vertices, [...convexHull, ...convexInside]) &&
-      convex.triangles.length / 3 === 2 * 10 - 4 - 2 &&
+      convex.triangles.length / 3 === 2 * 18 - 12 - 2 &&
       convex.report.artPixels === 24 * 16 &&
       convex.report.coveredArtPixels === 24 * 16 &&
-      convex.report.meshArea === 26 * 18 &&
-      convex.report.enclosedTransparentArea === 26 * 18 - 24 * 16 &&
-      convex.report.overshoot === sqrt2 &&
-      convex.report.overshootBound === 3 &&
+      convex.report.meshArea === 24 * 16 + 2 * 24 + 2 * 16 &&
+      convex.report.enclosedTransparentArea === 2 * 24 + 2 * 16 &&
+      convex.report.grownPixels === 2 * 24 + 2 * 16 &&
+      convex.report.overshoot === 1 &&
+      convex.report.overshootBound === 2 &&
       convex.report.filledHolePixels === 0,
     convex === null
       ? `refused: ${contourCodes(contourOf(CONVEX))}`
       : `vertices ${vertexText(convex.vertices)} (hull ${convex.hull}); ${convex.triangles.length / 3} triangles; art ${convex.report.artPixels}, covered ${convex.report.coveredArtPixels}; area ${convex.report.meshArea} px², ${convex.report.enclosedTransparentArea} transparent; overshoot ${convex.report.overshoot} against ${convex.report.overshootBound}`,
-    'the outline is rigc trace -> simplify -> offset -> prune, and a 24x16 block pushed out 1 px is the 26x18 rectangle; the six interior points are the spacing-8 grid points at least 4 px inside, and the triangle count is Euler\'s 2V - hull - 2',
+    'the outline is the filled silhouette grown by the margin (a pixel joins when its centre is within 1 px of an art centre: the four neighbours), traced by rigc and simplified (tolerance 0 keeps every corner): a 24x16 block becomes the 26x18 rectangle less its four corner pixels, 12 vertices; the six interior points are the spacing-8 grid points at least 4 px from it, and the triangle count is Euler\'s 2V - hull - 2',
   );
 
   // CT02 — the concave U: the keep tie, the notch, and the triangulation that ignores the outline.
   const concave = built(contourOf(CONCAVE));
-  const uHull: Array<[number, number]> = [[3, 3], [13, 3], [13, 19], [27, 19], [27, 3], [37, 3], [37, 29], [3, 29]];
-  const uInside: Array<[number, number]> = [[6, 6], [30, 6], [6, 12], [30, 12], [6, 18], [30, 18], [6, 24], [12, 24], [18, 24], [24, 24], [30, 24]];
+  const uHull: Array<[number, number]> = [[4, 3], [12, 3], [12, 4], [13, 4], [13, 19], [27, 19], [27, 4], [28, 4], [28, 3], [36, 3], [36, 4], [37, 4], [37, 28], [36, 28], [36, 29], [4, 29], [4, 28], [3, 28], [3, 4], [4, 4]];
+  const uInside: Array<[number, number]> = [[6, 12], [30, 12], [6, 18], [30, 18], [6, 24], [12, 24], [18, 24], [24, 24], [30, 24]];
   const inNotch = (m: ContourMesh): number => {
     let n = 0;
     for (let t = 0; t < m.triangles.length; t += 3) {
@@ -12189,21 +12189,22 @@ function runContourSuite(): number {
     'CT02_A_CONCAVE_U_KEEPS_ITS_NOTCH_EMPTY_AND_A_FAN_THAT_BRIDGES_IT_IS_REFUSED',
     concave !== null &&
       sameVertices(concave.vertices, [...uHull, ...uInside]) &&
-      concave.triangles.length / 3 === 2 * 19 - 8 - 2 &&
+      concave.triangles.length / 3 === 2 * 29 - 20 - 2 &&
       concave.report.artPixels === 512 &&
-      concave.report.meshArea === 34 * 26 - 14 * 16 &&
+      concave.report.grownPixels === 142 &&
+      concave.report.meshArea === 512 + 142 &&
       inNotch(concave) === 0 &&
       fanProblems.some((p) => p.code === 'CONTOUR_TILING'),
     concave === null
       ? `refused: ${contourCodes(contourOf(CONCAVE))}`
       : `hull ${vertexText(concave.vertices.slice(0, concave.hull))}; interior ${vertexText(concave.vertices.slice(concave.hull))}; ${concave.triangles.length / 3} triangles, ${inNotch(concave)} with a centroid in the notch; area ${concave.report.meshArea} px²; the fan from vertex 0 over the same outline -> ${fanProblems.map((p) => `${p.code}: ${p.detail}`).join('; ') || 'nothing'}`,
-    'the triangulation starts from the outline and flips only interior edges, so no triangle spans the notch; (6, y) sits exactly the keep radius 3 from x = 3 and is kept, which is the tie the rule states (>=)',
+    'the triangulation starts from the outline and flips only interior edges, so no triangle spans the notch; (6, y) sits exactly the keep radius 3 from x = 3 and is kept, which is the tie the rule states (>=) — but not (6, 6), √8 from the outline vertex (4, 4) the growth leaves at the arm\'s corner',
   );
 
   // CT03 — the narrow spike, and the tolerance at which it is lost.
   const spike = built(contourOf(SPIKE));
-  const spikeHull: Array<[number, number]> = [[15, 1], [19, 1], [19, 19], [35, 19], [35, 37], [3, 37], [3, 19], [15, 19]];
-  const spikeLost = contourOf(SPIKE, { ...SPIKE.params, tolerance: 3, margin: 4 });
+  const spikeHull: Array<[number, number]> = [[16, 1], [18, 1], [18, 2], [19, 2], [19, 19], [34, 19], [34, 20], [35, 20], [35, 36], [34, 36], [34, 37], [4, 37], [4, 36], [3, 36], [3, 20], [4, 20], [4, 19], [15, 19], [15, 2], [16, 2]];
+  const spikeLost = contourOf(SPIKE, { ...SPIKE.params, tolerance: 3, margin: 0 });
   say(
     'CT03_A_SPIKE_TWO_PIXELS_WIDE_IS_MESHED_WHOLE_AND_A_TOLERANCE_THAT_CUTS_IT_IS_REFUSED',
     spike !== null &&
@@ -12211,12 +12212,13 @@ function runContourSuite(): number {
       spike.report.interiorVertices === 6 &&
       spike.report.artPixels === 516 &&
       spike.report.coveredArtPixels === 516 &&
-      spike.report.meshArea === 32 * 18 + 4 * 18 &&
+      spike.report.meshArea === 516 + 126 &&
+      spike.report.grownPixels === 126 &&
       has(spikeLost, 'CONTOUR_COVERAGE', 'contour mesh "spike"', 'of 516 art pixel(s)'),
     spike === null
       ? `refused: ${contourCodes(contourOf(SPIKE))}`
-      : `hull ${vertexText(spike.vertices.slice(0, spike.hull))}; ${spike.report.interiorVertices} interior; covered ${spike.report.coveredArtPixels} of ${spike.report.artPixels}; at tolerance 3, margin 4: ${Array.isArray(spikeLost) ? spikeLost.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}`,
-    'a 2 px feature is held by rigc\'s tolerance 1; at tolerance 3 Douglas-Peucker drops it and no margin brings it back, which is the coverage refusal, not a clipped mesh',
+      : `hull ${vertexText(spike.vertices.slice(0, spike.hull))}; ${spike.report.interiorVertices} interior; covered ${spike.report.coveredArtPixels} of ${spike.report.artPixels}; at tolerance 3, margin 0: ${Array.isArray(spikeLost) ? spikeLost.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}`,
+    'a 2 px feature is held whole at tolerance 0; at tolerance 3 and margin 0 Douglas-Peucker keeps the spike\'s tip (16, 2) and its foot (18, 20) and drops (18, 2) — 1.99 px off that chord — so the spike\'s right column falls outside the chord, which is the coverage refusal, not a clipped mesh',
   );
 
   // CT04 — feathered alpha: art is alpha ABOVE the threshold.
@@ -12229,9 +12231,9 @@ function runContourSuite(): number {
       core !== null &&
       below !== null &&
       soft.report.artPixels === 400 &&
-      sameVertices(soft.vertices.slice(0, 4), [[5, 5], [27, 5], [27, 27], [5, 27]]) &&
+      sameVertices(soft.vertices.slice(0, soft.hull), blockOutline(6, 6, 20, 20)) &&
       core.report.artPixels === 256 &&
-      sameVertices(core.vertices.slice(0, 4), [[7, 7], [25, 7], [25, 25], [7, 25]]) &&
+      sameVertices(core.vertices.slice(0, core.hull), blockOutline(8, 8, 16, 16)) &&
       below.report.artPixels === 576,
     `above 8: ${soft === null ? 'refused' : `${soft.report.artPixels} px, outline ${vertexText(soft.vertices.slice(0, soft.hull))}`}; above 100: ${core === null ? 'refused' : `${core.report.artPixels} px, outline ${vertexText(core.vertices.slice(0, core.hull))}`}; planted threshold 5: ${below === null ? 'refused' : `${below.report.artPixels} px`}`,
     'the alpha-6 ring is not art at 8 and the alpha-100 ring is not art at 100 (above, not at); at 5 the whole 24x24 counts, so the threshold is read and not assumed',
@@ -12242,14 +12244,16 @@ function runContourSuite(): number {
   say(
     'CT05_A_HOLE_IS_FILLED_AND_ITS_AREA_REPORTED',
     hole !== null &&
-      hole.hull === 4 &&
+      hole.hull === 12 &&
       hole.report.filledHolePixels === 144 &&
+      hole.report.grownPixels === 128 &&
+      hole.report.grownHolePixels === 0 &&
       hole.report.artPixels === 880 &&
-      hole.report.meshArea === 34 * 34 &&
-      hole.report.enclosedTransparentArea === 34 * 34 - 880 &&
+      hole.report.meshArea === 1024 + 128 &&
+      hole.report.enclosedTransparentArea === 144 + 128 &&
       convex !== null &&
       convex.report.filledHolePixels === 0,
-    hole === null ? `refused: ${contourCodes(contourOf(HOLE))}` : `filled ${hole.report.filledHolePixels} px; art ${hole.report.artPixels}; area ${hole.report.meshArea} px², ${hole.report.enclosedTransparentArea} transparent; the convex block's filled area ${convex?.report.filledHolePixels}`,
+    hole === null ? `refused: ${contourCodes(contourOf(HOLE))}` : `filled ${hole.report.filledHolePixels} px, grown ${hole.report.grownPixels} px; art ${hole.report.artPixels}; area ${hole.report.meshArea} px², ${hole.report.enclosedTransparentArea} transparent; the convex block's filled area ${convex?.report.filledHolePixels}`,
     'spine-rigc takes one closed loop and no hole, so a hole is spanned and drawn as nothing (its alpha is 0); the settled policy is to fill it and say how much was filled',
   );
 
@@ -12262,26 +12266,37 @@ function runContourSuite(): number {
     'one outline cannot enclose two islands; nothing is discarded and the lattice mode stays available for the part',
   );
   const empty = contourOf(EMPTY);
-  // Tolerance 0.5: at 1, Douglas-Peucker drops two corners of a 1x1 square (each 0.71 px off its diagonal), leaving 2.
-  const onePixel = built(contourMesh('one pixel', blocks(10, 10, [[4, 4, 1, 1, 9]]), { ...BASE, tolerance: 0.5 }));
-  const collapsed = contourMesh('one pixel', blocks(10, 10, [[4, 4, 1, 1, 9]]), BASE);
+  // BASE (tolerance 0, margin 1): the pixel grows into a plus of 5, outlined by its 12 corners. Margin 0, tolerance 1:
+  // Douglas-Peucker drops two corners of the 1x1 square (each 0.71 px off its diagonal), leaving 2.
+  const onePixel = built(contourMesh('one pixel', blocks(10, 10, [[4, 4, 1, 1, 9]]), BASE));
+  const collapsed = contourMesh('one pixel', blocks(10, 10, [[4, 4, 1, 1, 9]]), { ...BASE, tolerance: 1, margin: 0 });
   say(
     'CT07_AN_EMPTY_MASK_IS_REFUSED_AND_ONE_PIXEL_ABOVE_THE_THRESHOLD_IS_NOT',
     has(empty, 'CONTOUR_PART_HAS_ART', 'contour mesh "empty"', 'no pixel with alpha above 8') &&
       onePixel !== null &&
       onePixel.report.artPixels === 1 &&
-      onePixel.hull === 4 &&
+      onePixel.report.grownPixels === 4 &&
+      sameVertices(onePixel.vertices.slice(0, onePixel.hull), blockOutline(4, 4, 1, 1)) &&
       has(collapsed, 'CONTOUR_SELF_INTERSECTION', 'its outline has 2 vertices', '3 or more enclosing a positive area are required'),
-    `alpha 8 at one pixel: ${Array.isArray(empty) ? empty.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}; alpha 9 at one pixel, tolerance 0.5: ${onePixel === null ? 'refused' : `art ${onePixel.report.artPixels}, hull ${vertexText(onePixel.vertices.slice(0, onePixel.hull))}`}; tolerance 1: ${Array.isArray(collapsed) ? collapsed.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}`,
+    `alpha 8 at one pixel: ${Array.isArray(empty) ? empty.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}; alpha 9 at one pixel, margin 1, tolerance 0: ${onePixel === null ? 'refused' : `art ${onePixel.report.artPixels}, hull ${vertexText(onePixel.vertices.slice(0, onePixel.hull))}`}; margin 0, tolerance 1: ${Array.isArray(collapsed) ? collapsed.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}`,
     'a mesh needs an art pixel; "above 8" is the lattice\'s reading, so 8 is not art and 9 is; and an outline simplified below a triangle is refused, not handed to the ear clipper',
   );
-  const pinch = contourOf(PINCH);
-  const closed = built(contourMesh('pinch closed', blocks(6, 6, [[1, 1, 4, 1], [1, 2, 1, 2], [4, 2, 1, 2], [1, 4, 3, 1], [4, 4, 1, 1]]), BASE));
+  // The island as drawn is refused by rigc's own tracer; the silhouette this module traces is the island with its holes
+  // filled, and (3, 3) is in the pocket, so that silhouette has no pinch. The guard for a pinch in the filled
+  // silhouette itself is CE10; that none can occur is CE09.
+  let rigcOnIsland = '';
+  try {
+    traceAlphaOutline(PINCH.mask, 9);
+    rigcOnIsland = 'traced';
+  } catch (err) {
+    rigcOnIsland = (err as Error).message;
+  }
+  const pinch = built(contourOf(PINCH));
   say(
-    'CT08_A_DIAGONAL_PINCH_IS_REFUSED_IN_RIGCS_WORDS_AND_THE_SAME_SHAPE_CLOSED_IS_NOT',
-    has(pinch, 'CONTOUR_TRACE', 'contour mesh "pinch"', 'pinches to a single point at pixel corner (4,4)') && closed !== null && closed.report.filledHolePixels === 4,
-    `${Array.isArray(pinch) ? pinch.map((p) => `${p.code}: ${p.detail.slice(0, 160)}`).join('; ') : 'BUILT'}; with pixel (4, 4) filled: ${closed === null ? 'refused' : `built, ${closed.report.filledHolePixels} hole px filled`}`,
-    'rigc\'s tracer refuses an outline that passes through one point twice; this module reports its refusal rather than walking a different loop',
+    'CT08_A_PINCH_ONLY_THROUGH_A_HOLE_IS_NO_PINCH_OF_THE_FILLED_SILHOUETTE_AND_THE_PART_BUILDS',
+    rigcOnIsland.includes('pinches to a single point at pixel corner (4,4)') && pinch !== null && pinch.report.filledHolePixels === 4 && pinch.report.artPixels === 11,
+    `rigc's traceAlphaOutline on the island as drawn: ${rigcOnIsland.slice(0, 120)}; this module: ${pinch === null ? `refused: ${contourCodes(contourOf(PINCH))}` : `built, art ${pinch.report.artPixels} px, ${pinch.report.filledHolePixels} hole px filled, hull ${pinch.hull}`}`,
+    'the ruling on issue #106: the silhouette is the kept island with its holes filled (what #84 settled), and that is the mask traced; the pocket (2, 2) 2x2 is enclosed, so (3, 3) is filled and corner (4, 4) has three set pixels round it, not two',
   );
 
   // CT09 — coverage: a margin below what the tolerance cuts is refused, the same art at a margin that covers is not.
@@ -12289,15 +12304,15 @@ function runContourSuite(): number {
   // pixels and the wedge 36 + 2(0 + 1 + … + 17) = 342.
   const wedge = blocks(40, 40, []);
   for (let y = 2; y < 38; y++) for (let x = 2; x < 38; x++) if (2 * (x - 2) <= y - 2) wedge.alpha[y * 40 + x] = 255;
-  const wedgeCase: ContourCase = { name: 'wedge', mask: wedge, params: { ...BASE, margin: 0 } };
+  const wedgeCase: ContourCase = { name: 'wedge', mask: wedge, params: { ...BASE, tolerance: 1, margin: 0 } };
   const cut = contourOf(wedgeCase);
-  const covered = built(contourOf(wedgeCase, { ...wedgeCase.params, margin: 0.5 }));
-  const wider1 = contourOf(wedgeCase, { ...wedgeCase.params, margin: 1 });
+  const covered = built(contourOf(wedgeCase, { ...wedgeCase.params, margin: 1 }));
+  const wider1 = contourOf(wedgeCase, { ...wedgeCase.params, margin: 2 });
   say(
     'CT09_AN_ART_PIXEL_OUTSIDE_THE_MESH_IS_REFUSED_AND_A_MARGIN_THAT_COVERS_IT_IS_NOT',
     has(cut, 'CONTOUR_COVERAGE', 'contour mesh "wedge"', 'of 342 art pixel(s)', 'every art pixel inside is required') && covered !== null && covered.report.coveredArtPixels === 342 && covered.report.artPixels === 342,
-    `margin 0: ${Array.isArray(cut) ? cut.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}; margin 0.5: ${covered === null ? 'refused' : `covered ${covered.report.coveredArtPixels} of ${covered.report.artPixels}`}; margin 1 (not a control, reported): ${Array.isArray(wider1) ? wider1.map((p) => `${p.code}: ${p.detail.slice(0, 60)}…`).join('; ') : 'built'}`,
-    'Douglas-Peucker at tolerance 1 cuts the staircase up to a pixel inward and the margin pushes back out; the bar is every art pixel (the lattice covers all of them by construction), not rigc\'s 99.5 %. A larger margin is not always better: rigc\'s miter clamp (4 x margin) cuts an acute tip, which is why no margin is raised here by the module',
+    `margin 0: ${Array.isArray(cut) ? cut.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}; margin 1: ${covered === null ? 'refused' : `covered ${covered.report.coveredArtPixels} of ${covered.report.artPixels}`}; margin 2 (not a control, reported): ${Array.isArray(wider1) ? wider1.map((p) => `${p.code}: ${p.detail.slice(0, 60)}…`).join('; ') : 'built'}`,
+    'Douglas-Peucker at tolerance 1 cuts the staircase up to a pixel inward and the grown silhouette gives it a pixel to cut into; the bar is every art pixel (the lattice covers all of them by construction), not rigc\'s 99.5 %. The module never raises a margin; a margin that leaves art out is refused',
   );
 
   // CT10 — overshoot past margin + tolerance + 1.
@@ -12316,12 +12331,12 @@ function runContourSuite(): number {
   );
 
   // CT11 — a budget refuses and thins nothing.
-  const over = contourOf(CONVEX, { ...CONVEX.params, budget: 9 });
-  const at = built(contourOf(CONVEX, { ...CONVEX.params, budget: 10 }));
+  const over = contourOf(CONVEX, { ...CONVEX.params, budget: 17 });
+  const at = built(contourOf(CONVEX, { ...CONVEX.params, budget: 18 }));
   say(
     'CT11_A_DECLARED_VERTEX_BUDGET_IS_REFUSED_AND_NOTHING_IS_THINNED_TO_MEET_IT',
-    has(over, 'CONTOUR_BUDGET', 'has 10 vertices', 'the declared budget is 9') && at !== null && convex !== null && JSON.stringify(at) === JSON.stringify(convex),
-    `budget 9: ${Array.isArray(over) ? over.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}; budget 10: ${at === null ? 'refused' : `built, ${JSON.stringify(at) === JSON.stringify(convex) ? 'the same bytes as no budget' : 'DIFFERENT bytes from no budget'}`}`,
+    has(over, 'CONTOUR_BUDGET', 'has 18 vertices', 'the declared budget is 17') && at !== null && convex !== null && JSON.stringify(at) === JSON.stringify(convex),
+    `budget 17: ${Array.isArray(over) ? over.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}; budget 18: ${at === null ? 'refused' : `built, ${JSON.stringify(at) === JSON.stringify(convex) ? 'the same bytes as no budget' : 'DIFFERENT bytes from no budget'}`}`,
     'the settled rule: a budget is a ceiling that refuses, never a target the mesh is thinned to',
   );
 
@@ -12486,7 +12501,7 @@ function runContourSuite(): number {
     'CT26_A_FULLY_OPAQUE_PART_IS_OUTLINED_BY_ITS_WINDOW_CLAMPED',
     full !== null && sameVertices(full.vertices, [[0, 0], [10, 0], [10, 8], [0, 8]]) && full.triangles.length === 6 && full.report.overshoot === 0,
     full === null ? `refused: ${contourCodes(contourOf(FULL))}` : `vertices ${vertexText(full.vertices)}, ${full.triangles.length / 3} triangles, overshoot ${full.report.overshoot}`,
-    'rigc\'s own contour sequence clamps the pushed outline to the part window (a uv outside 0..1 is a different failure, and there is no art out there)',
+    'the silhouette grows only into pixels of the part window, so an all-art part has nothing to grow into and its outline is the window itself (a uv outside 0..1 is a different failure, and there is no art out there)',
   );
 
   // CT27, CT28 — spine-rigc's real gate takes every mesh above, and refuses the same mesh listed out of order.
@@ -12546,19 +12561,27 @@ function runContourSuite(): number {
     'the predicates are exact for multiples of 1/256 px within the size bound and for nothing else, so a vertex elsewhere is named rather than measured inexactly',
   );
 
-  // CT31 — a margin that pushes the outline across a notch is refused; one that leaves the notch open is not.
-  // A U with a 2 px notch (arms 6x20 at (2, 2) and (10, 2), a base 14x6 at (2, 18), in 20x26), tolerance 0.5: at
-  // margin 0.5 the notch's sides sit at x = 8.5 and 9.5; at 1.5 each crosses the other's.
-  const notch = blocks(20, 26, [[2, 2, 6, 20], [10, 2, 6, 20], [2, 18, 14, 6]]);
-  const crossed = contourMesh('notch', notch, { ...BASE, tolerance: 0.5, margin: 1.5 });
-  const open = built(contourMesh('notch', notch, { ...BASE, tolerance: 0.5, margin: 0.5 }));
+  // CT31 — a notch narrower than twice the margin grows shut: no fold, no hole, every pixel counted (fixtures NOTCH).
+  // rigc's offset of the same outline (the v0.13.0 method, kept here as the planted negative) crosses itself.
+  const notchHull: Array<[number, number]> = [[2, 1], [8, 1], [8, 2], [10, 2], [10, 1], [16, 1], [16, 2], [17, 2], [17, 24], [16, 24], [16, 25], [2, 25], [2, 24], [1, 24], [1, 2], [2, 2]];
+  const shut = built(contourOf(NOTCH));
+  const openAt0 = built(contourOf(NOTCH, { ...NOTCH.params, margin: 0 }));
+  const noFold = [1, 1.5, 2, 3].map((mg) => [mg, contourOf(NOTCH, { ...NOTCH.params, margin: mg })] as const);
+  const notchTrace = traceAlphaOutline(NOTCH.mask, 9).outline;
+  const offsetFold = findSelfIntersection(offsetPolygon(simplifyClosedPolygon(notchTrace, 0.5), 1.5));
   say(
-    'CT31_A_MARGIN_THAT_PUSHES_THE_OUTLINE_ACROSS_A_NOTCH_IS_REFUSED',
-    has(crossed, 'CONTOUR_SELF_INTERSECTION', 'contour mesh "notch"', 'margin 1.5 px', 'meets edge') &&
-      open !== null &&
-      sameVertices(open.vertices.slice(0, open.hull), [[1.5, 1.5], [8.5, 1.5], [8.5, 17.5], [9.5, 17.5], [9.5, 1.5], [16.5, 1.5], [16.5, 24.5], [1.5, 24.5]]),
-    `margin 1.5: ${Array.isArray(crossed) ? crossed.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}; margin 0.5: ${open === null ? 'refused' : `hull ${vertexText(open.vertices.slice(0, open.hull))}`}`,
-    'rigc\'s offset moves each edge out along its own normal, so a neck narrower than twice the margin folds the outline over itself; that is named here, before any triangle is made',
+    'CT31_A_NOTCH_NARROWER_THAN_TWICE_THE_MARGIN_GROWS_SHUT_INSTEAD_OF_FOLDING',
+    shut !== null &&
+      sameVertices(shut.vertices.slice(0, shut.hull), notchHull) &&
+      shut.report.grownPixels === 102 &&
+      shut.report.grownHolePixels === 0 &&
+      shut.report.meshArea === 276 + 102 &&
+      openAt0 !== null &&
+      sameVertices(openAt0.vertices.slice(0, openAt0.hull), [[2, 2], [8, 2], [8, 18], [10, 18], [10, 2], [16, 2], [16, 24], [2, 24]]) &&
+      noFold.every(([, r]) => !has(r, 'CONTOUR_SELF_INTERSECTION')) &&
+      offsetFold !== null,
+    `margin 1: ${shut === null ? `refused: ${contourCodes(contourOf(NOTCH))}` : `hull ${vertexText(shut.vertices.slice(0, shut.hull))}, grown ${shut.report.grownPixels} px, grown hole ${shut.report.grownHolePixels} px, area ${shut.report.meshArea} px²`}; margin 0: ${openAt0 === null ? 'refused' : `hull ${vertexText(openAt0.vertices.slice(0, openAt0.hull))}`}; margins 1, 1.5, 2, 3: ${noFold.map(([mg, r]) => `${mg} ${Array.isArray(r) ? contourCodes(r) : 'built'}`).join(', ')}; planted, rigc's offsetPolygon of the same trace at 1.5: ${offsetFold === null ? 'simple' : `edge ${offsetFold[0]} meets edge ${offsetFold[1]}`}`,
+    'issue #106: pushing the outline\'s edges out folds it over a notch narrower than twice the margin; growing the silhouette by pixels cannot fold — a notch pixel within the margin of art joins it, so the notch grows shut and is counted as grown',
   );
 
   // CT32–CT36 — stray islands, by declaration only (issue #84's amendment).
@@ -12569,7 +12592,7 @@ function runContourSuite(): number {
     'CT32_A_DECLARED_STRAY_FIGURE_LEAVES_OUT_AN_ISLAND_AT_OR_UNDER_IT_AND_REFUSES_ONE_ABOVE',
     strayed !== null &&
       mainOnly !== null &&
-      sameVertices(strayed.vertices.slice(0, strayed.hull), [[1, 1], [13, 1], [13, 13], [1, 13]]) &&
+      sameVertices(strayed.vertices.slice(0, strayed.hull), blockOutline(2, 2, 10, 10)) &&
       JSON.stringify([strayed.vertices, strayed.triangles, strayed.hull]) === JSON.stringify([mainOnly.vertices, mainOnly.triangles, mainOnly.hull]) &&
       strayed.report.strayIslands === 1 &&
       strayed.report.strayPixels === 36 &&
@@ -12577,7 +12600,7 @@ function runContourSuite(): number {
       strayed.report.coveredArtPixels === 100 &&
       has(under, 'CONTOUR_ONE_ISLAND', 'contour mesh "islands"', '100 px at (2, 2), 36 px at (20, 2)', 'With stray 35 px declared', 'hold more than 35 px — 36 px'),
     `stray 36: ${strayed === null ? `refused: ${contourCodes(contourOf(ISLANDS, { ...ISLANDS.params, stray: 36 }))}` : `hull ${vertexText(strayed.vertices.slice(0, strayed.hull))}, left out ${strayed.report.strayIslands} island(s) / ${strayed.report.strayPixels} px, art ${strayed.report.artPixels}, covered ${strayed.report.coveredArtPixels}; the same mesh as the 100 px block alone: ${mainOnly !== null && JSON.stringify(strayed.vertices) === JSON.stringify(mainOnly.vertices)}`}; stray 35: ${Array.isArray(under) ? under.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}`,
-    'the figure is "at or under": a 36 px island is left out at 36 and refused at 35; what is left out is taken out of the art before the trace, so the mesh is exactly the 10x10 block\'s, pushed out 1 px, and the report says what went',
+    'the figure is "at or under": a 36 px island is left out at 36 and refused at 35; what is left out is taken out of the art before the trace, so the mesh is exactly the 10x10 block\'s, grown by 1 px, and the report says what went',
   );
   const absentDetail = Array.isArray(islands) ? islands[0].detail : '';
   const step1Words = 'its art (alpha above 8) is 2 separate 4-connected islands — 100 px at (2, 2), 36 px at (20, 2); one island is required, because spine-rigc takes one closed outline per mesh. Nothing was discarded; the lattice mode stays available for this part';
@@ -12610,12 +12633,269 @@ function runContourSuite(): number {
   const inHole = built(contourMesh('hole-stray', blocks(40, 40, [[4, 4, 32, 32], [14, 14, 12, 12, 0], [19, 19, 2, 2]]), { ...BASE, stray: 4 }));
   say(
     'CT36_A_STRAY_ISLAND_INSIDE_A_HOLE_IS_LEFT_OUT_AND_ITS_HOLE_FILLED_AS_EVERY_HOLE_IS',
-    inHole !== null && inHole.report.strayIslands === 1 && inHole.report.strayPixels === 4 && inHole.report.filledHolePixels === 144 && inHole.report.artPixels === 880 && inHole.hull === 4,
+    inHole !== null && inHole.report.strayIslands === 1 && inHole.report.strayPixels === 4 && inHole.report.filledHolePixels === 144 && inHole.report.artPixels === 880 && inHole.hull === 12,
     inHole === null ? 'refused' : `left out ${inHole.report.strayIslands} / ${inHole.report.strayPixels} px; filled ${inHole.report.filledHolePixels} px; art ${inHole.report.artPixels}; hull ${inHole.hull}`,
     'the 2x2 island in the 12x12 hole is not the largest and is under the figure, so it leaves the art; the hole is then the whole 144 px and is filled as every hole is — the island\'s pixels stay inside the mesh, drawn, and are counted as filled hole',
   );
 
+  runContourGrowthControls(say, built, has);
+
   return bad();
+}
+
+/** A 0/1 mask of `w` x `h` with the listed pixels set. */
+function pixelMask(w: number, h: number, set: ReadonlyArray<readonly [number, number]>): Mask {
+  const data = new Uint8Array(w * h);
+  for (const [x, y] of set) data[y * w + x] = 1;
+  return { width: w, height: h, data };
+}
+
+/** The pixels of a mask, row-major, as [x, y]. */
+function maskPixels(m: Mask): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let y = 0; y < m.height; y++) for (let x = 0; x < m.width; x++) if (m.data[y * m.width + x]) out.push([x, y]);
+  return out;
+}
+
+/** spine-rigc's diagonal pinch, by its definition: a pixel corner with two set pixels on one diagonal and both others clear. Counted over corners inside the mask. */
+function pinchCorners(m: Mask): number {
+  const { width: w, height: h, data } = m;
+  let n = 0;
+  for (let y = 0; y + 1 < h; y++) {
+    for (let x = 0; x + 1 < w; x++) {
+      const [tl, tr, bl, br] = [data[y * w + x], data[y * w + x + 1], data[(y + 1) * w + x], data[(y + 1) * w + x + 1]];
+      if ((tl && br && !tr && !bl) || (tr && bl && !tl && !br)) n++;
+    }
+  }
+  return n;
+}
+
+const transposeMask = (m: Mask): Mask => {
+  const data = new Uint8Array(m.width * m.height);
+  for (let y = 0; y < m.height; y++) for (let x = 0; x < m.width; x++) data[x * m.height + y] = m.data[y * m.width + x];
+  return { width: m.height, height: m.width, data };
+};
+
+/**
+ * CE01–CE11 — the silhouette growth that replaced rigc's offset (issue #106):
+ * the growth's definition and its exactness, the margin below 1 px, the pinch
+ * fill (by hand, its order-independence, its termination), the pixel counts
+ * the report carries, the guard for a pinch in the filled silhouette itself,
+ * and the overshoot the growth gives.
+ */
+function runContourGrowthControls(
+  say: (name: string, ok: boolean, detail: string, origin: string) => void,
+  built: (r: ContourMesh | Problem[]) => ContourMesh | null,
+  has: (r: ContourMesh | Problem[], code: string, ...words: string[]) => boolean,
+): void {
+  // CE01 — the disc at margins 1, √2, 1.5 and 2, and one pixel grown by each, by hand.
+  const pairs = (vs: ReadonlyArray<readonly [number, number]>): string => vs.map(([x, y]) => `(${x},${y})`).join(' ');
+  const discs: Array<[number, string]> = [
+    [1, '(0,-1) (-1,0) (0,0) (1,0) (0,1)'],
+    [Math.SQRT2, '(-1,-1) (0,-1) (1,-1) (-1,0) (0,0) (1,0) (-1,1) (0,1) (1,1)'],
+    [1.5, '(-1,-1) (0,-1) (1,-1) (-1,0) (0,0) (1,0) (-1,1) (0,1) (1,1)'],
+    [2, '(0,-2) (-1,-1) (0,-1) (1,-1) (-2,0) (-1,0) (0,0) (1,0) (2,0) (-1,1) (0,1) (1,1) (0,2)'],
+  ];
+  const dot = blocks(12, 12, [[5, 5, 1, 1]]);
+  const dotAt = (mg: number): ContourMesh | null => built(contourMesh('dot', dot, { ...BASE, margin: mg }));
+  const d1 = dotAt(1);
+  const dRoot2 = dotAt(Math.SQRT2);
+  const d2 = dotAt(2);
+  const plus2: Array<[number, number]> = [[5, 3], [6, 3], [6, 4], [7, 4], [7, 5], [8, 5], [8, 6], [7, 6], [7, 7], [6, 7], [6, 8], [5, 8], [5, 7], [4, 7], [4, 6], [3, 6], [3, 5], [4, 5], [4, 4], [5, 4]];
+  say(
+    'CE01_THE_GROWTH_IS_THE_PIXELS_WHOSE_CENTRE_IS_WITHIN_THE_MARGIN_OF_AN_ART_CENTRE',
+    discs.every(([mg, want]) => pairs(marginDisc(mg)) === want) &&
+      d1 !== null && d1.report.grownPixels === 4 && sameVertices(d1.vertices.slice(0, d1.hull), blockOutline(5, 5, 1, 1)) &&
+      dRoot2 !== null && dRoot2.report.grownPixels === 8 && sameVertices(dRoot2.vertices.slice(0, dRoot2.hull), [[4, 4], [7, 4], [7, 7], [4, 7]]) &&
+      d2 !== null && d2.report.grownPixels === 12 && sameVertices(d2.vertices.slice(0, d2.hull), plus2),
+    `discs: ${discs.map(([mg]) => `${mg}: ${pairs(marginDisc(mg))}`).join('; ')}; one pixel at (5, 5): margin 1 grew ${d1?.report.grownPixels} (hull ${d1 === null ? 'refused' : vertexText(d1.vertices.slice(0, d1.hull))}), √2 grew ${dRoot2?.report.grownPixels} (hull ${dRoot2 === null ? 'refused' : vertexText(dRoot2.vertices.slice(0, dRoot2.hull))}), 2 grew ${d2?.report.grownPixels} (hull ${d2 === null ? 'refused' : vertexText(d2.vertices.slice(0, d2.hull))})`,
+    'the ruling on issue #106: a pixel joins when its centre lies within the margin of an art centre — the distance overshoot is measured in; dx² + dy² <= m²: at 1 the four neighbours (a plus, 12 corners), from √2 the 3x3 block (4 corners), at 2 that block and the four pixels two away (20 corners)',
+  );
+
+  // CE02 — exact at a margin whose square rounds: Math.sqrt(41) is below √41, and 41 = 4² + 5².
+  const m41 = Math.sqrt(41);
+  const bits = new DataView(new ArrayBuffer(8));
+  bits.setFloat64(0, m41);
+  const raw = bits.getBigUint64(0);
+  const above41 = (() => {
+    bits.setBigUint64(0, raw + 1n);
+    return bits.getFloat64(0);
+  })();
+  // The double's exact value from its bits: (2^52 + mantissa) · 2^(exponent − 1075); squared against 41 in BigInt.
+  const mant = (raw & ((1n << 52n) - 1n)) | (1n << 52n);
+  const shift = 1075n - ((raw >> 52n) & 0x7ffn);
+  const belowByBits = mant * mant < 41n << (2n * shift);
+  const has45 = (mg: number): boolean => marginDisc(mg).some(([x, y]) => x === 4 && y === 5);
+  const g41 = growSilhouette(pixelMask(16, 16, [[8, 8]]), m41);
+  const gAbove = growSilhouette(pixelMask(16, 16, [[8, 8]]), above41);
+  say(
+    'CE02_THE_MARGIN_IS_COMPARED_EXACTLY_NOT_BY_ITS_ROUNDED_SQUARE',
+    belowByBits && m41 * m41 === 41 && !withinMarginSquared(41, m41) && withinMarginSquared(41, above41) && !has45(m41) && has45(above41) && gAbove.grownPixels - g41.grownPixels === 8,
+    `Math.sqrt(41) = ${m41}: its square in doubles ${m41 * m41}, by its bits below 41: ${belowByBits}; exact rule at 41: ${withinMarginSquared(41, m41)}, at the next double up (${above41}): ${withinMarginSquared(41, above41)}; (4, 5) in the disc: ${has45(m41)} / ${has45(above41)}; one pixel grown: ${g41.grownPixels} / ${gAbove.grownPixels}`,
+    'the squared distance is a whole number and the margin a double; comparing against margin * margin would let the rounding of that product decide a pixel — here it rounds to 41 and would take in the 8 pixels at (±4, ±5), (±5, ±4), which lie 4.4e-16 px outside the margin written',
+  );
+
+  // CE03 — a margin above 0 and below 1 is refused by name, by the module and by the config loader; 0 and 1 are not.
+  const under = [0.5, 0.999].map((mg) => contourMesh('convex', CONVEX.mask, { ...BASE, margin: mg }));
+  const edges = [0, 1].map((mg) => built(contourMesh('convex', CONVEX.mask, { ...BASE, margin: mg })));
+  const loadMargin = (mg: number): PartsError | null => refusals(() => parseConfig(contourRigConfig((c) => (contourCloth(c).margin = mg))));
+  const cfgHalf = loadMargin(0.5);
+  const cfgZero = loadMargin(0);
+  const cfgOne = loadMargin(1);
+  say(
+    'CE03_A_MARGIN_ABOVE_0_AND_BELOW_1_PX_IS_REFUSED_BY_NAME_AND_0_AND_1_ARE_NOT',
+    under.every((r) => has(r, 'CONTOUR_PARAMETER', 'contour mesh "convex", margin', 'a margin under 1 px adds nothing')) &&
+      edges.every((m) => m !== null) &&
+      cfgHalf !== null &&
+      cfgHalf.problems.length === 1 &&
+      cfgHalf.problems[0].code === 'CONFIG_FIELD_TYPE' &&
+      cfgHalf.problems[0].object === 'config.meshes.cloth.contour.margin' &&
+      cfgZero === null &&
+      cfgOne === null,
+    `module: 0.5 -> ${contourCodes(under[0])}, 0.999 -> ${contourCodes(under[1])}, 0 -> ${edges[0] === null ? 'refused' : 'built'}, 1 -> ${edges[1] === null ? 'refused' : 'built'}; loader: 0.5 -> ${cfgHalf === null ? 'loads' : cfgHalf.problems.map((p) => `${p.code} ${p.object}: ${p.detail}`).join('; ')}; 0 -> ${cfgZero === null ? 'loads' : 'refused'}; 1 -> ${cfgOne === null ? 'loads' : 'refused'}`,
+    'no pixel centre lies closer than 1 px to another, so a margin in (0, 1) grows nothing; a written value that means nothing is not run in silence (the ruling, item 5) — and 0 stays legal: the trace of the filled silhouette itself',
+  );
+
+  // CE04 — the pinch fill by hand: two pixels (2, 2) and (4, 4) grown by 1 meet at two corners.
+  const pair = growSilhouette(pixelMask(8, 8, [[2, 2], [4, 4]]), 1);
+  const pairWant: Array<[number, number]> = [[2, 1], [1, 2], [2, 2], [3, 2], [4, 2], [2, 3], [3, 3], [4, 3], [2, 4], [3, 4], [4, 4], [5, 4], [4, 5]];
+  const unfilled = pixelMask(8, 8, [[2, 1], [1, 2], [2, 2], [3, 2], [2, 3], [4, 3], [3, 4], [4, 4], [5, 4], [4, 5]]);
+  say(
+    'CE04_THE_PINCH_FILL_ADDS_BOTH_CLEAR_PIXELS_OF_EVERY_PINCH_THE_GROWTH_MADE',
+    pair.grownPixels === 8 && pair.pinchFilledPixels === 3 && pair.pinchFillPasses === 1 && sameVertices(maskPixels(pair.mask), pairWant) && pinchCorners(pair.mask) === 0 && pinchCorners(unfilled) === 2,
+    `grown ${pair.grownPixels}, pinch-filled ${pair.pinchFilledPixels} in ${pair.pinchFillPasses} pass(es): ${vertexText(maskPixels(pair.mask))}; the grown set before the fill has ${pinchCorners(unfilled)} pinch corner(s), after it ${pinchCorners(pair.mask)}`,
+    'each pixel\'s plus leaves (3, 2) and (4, 3) meeting at one corner and (2, 3) and (3, 4) at another; both clear pixels of each — (4, 2), (3, 3) and (3, 3), (2, 4) — are added, 3 pixels, and no pinch is left after one pass',
+  );
+
+  // CE05 — order-independence and termination, over every 4x4 mask grown by 1 in an 8x8 frame.
+  let pinched = 0;
+  let asymmetric = 0;
+  let maxPasses = 0;
+  let filledCases = 0;
+  for (let bitsSet = 0; bitsSet < 1 << 16; bitsSet++) {
+    const set: Array<[number, number]> = [];
+    for (let k = 0; k < 16; k++) if (bitsSet & (1 << k)) set.push([2 + (k % 4), 2 + Math.floor(k / 4)]);
+    const f = pixelMask(8, 8, set);
+    const g = growSilhouette(f, 1);
+    if (pinchCorners(g.mask) !== 0) pinched++;
+    maxPasses = Math.max(maxPasses, g.pinchFillPasses);
+    if (g.pinchFilledPixels > 0) filledCases++;
+    const gt = growSilhouette(transposeMask(f), 1);
+    if (gt.mask.data.some((v, i) => v !== transposeMask(g.mask).data[i])) asymmetric++;
+  }
+  // The planted mutant: a fill that takes the first pinch in raster order and fills it before looking again.
+  const sequentialFill = (m: Mask): Mask => {
+    const d = new Uint8Array(m.data);
+    for (let y = 0; y + 1 < m.height; y++) {
+      for (let x = 0; x + 1 < m.width; x++) {
+        const [tl, tr, bl, br] = [y * m.width + x, y * m.width + x + 1, (y + 1) * m.width + x, (y + 1) * m.width + x + 1];
+        if (d[tl] && d[br] && !d[tr] && !d[bl]) (d[tr] = 1), (d[bl] = 1);
+        else if (d[tr] && d[bl] && !d[tl] && !d[br]) (d[tl] = 1), (d[br] = 1);
+      }
+    }
+    return { width: m.width, height: m.height, data: d };
+  };
+  const seq = sequentialFill(unfilled);
+  const seqSymmetric = seq.data.every((v, i) => v === transposeMask(seq).data[i]);
+  say(
+    'CE05_THE_PINCH_FILL_IS_ORDER_FREE_AND_ENDS_WITH_NO_PINCH_ON_EVERY_4X4_MASK',
+    pinched === 0 && asymmetric === 0 && maxPasses <= 32 && filledCases > 0 && !seqSymmetric && JSON.stringify(growSilhouette(pixelMask(8, 8, [[2, 2], [4, 4]]), 1)) === JSON.stringify(pair),
+    `65536 masks: ${pinched} left with a pinch, ${asymmetric} whose transpose grows to a different set than the transposed result, ${filledCases} needed the fill, at most ${maxPasses} pass(es) (bound 8 x 8 / 2 = 32); planted, a first-found sequential fill on CE04's set: ${vertexText(maskPixels(seq))} — ${seqSymmetric ? 'symmetric' : 'not symmetric about the diagonal its input is symmetric about'}`,
+    'each pass adds every pinch\'s both clear pixels at once, so no scan order decides a pixel and a set symmetric about the diagonal stays so; a pass that finds a pinch adds 2 or more unset pixels, so passes are at most w·h/2; the loop stops only when a pass finds none',
+  );
+
+  // CE06 — the pixel counts the report carries, by hand on BOTTLE, and the pinch fill reported inside a part.
+  const bottle = built(contourOf(BOTTLE));
+  // CRACK: the CE04 pair at (8, 8) and (10, 10), joined round the outside by a 1 px path — the row y 8 (x 4..8), the
+  // column x 4 (y 9..11), the row y 12 (x 4..10) and the column x 10 (y 10..11) — so it is one island whose inside
+  // (x 5..9, y 9..11) opens to the outside through the diagonal gap at (9, 9): no hole of the art. Margin 1 grows
+  // the inside's rim and leaves the CE04 pinches at the gap; their fill adds (10, 8), (9, 9), (8, 10) and closes it,
+  // which encloses (6, 10) and (7, 10), 2 px from art on every side: pinch-filled 3, grown hole 2, overshoot 2.
+  const crackSet: Array<[number, number]> = [];
+  for (let x = 4; x <= 8; x++) crackSet.push([x, 8]);
+  for (let y = 9; y <= 11; y++) crackSet.push([4, y]);
+  for (let x = 4; x <= 10; x++) crackSet.push([x, 12]);
+  for (let y = 10; y <= 11; y++) crackSet.push([10, y]);
+  const crackMask = blocks(16, 16, crackSet.map(([x, y]) => [x, y, 1, 1] as const));
+  const crack = built(contourMesh('crack', crackMask, BASE));
+  say(
+    'CE06_THE_REPORT_COUNTS_EACH_SILHOUETTE_PIXEL_ONCE_GROWN_PINCH_FILLED_OR_ENCLOSED',
+    bottle !== null &&
+      bottle.report.artPixels === 224 &&
+      bottle.report.filledHolePixels === 0 &&
+      bottle.report.grownPixels === 84 &&
+      bottle.report.pinchFilledPixels === 0 &&
+      bottle.report.grownHolePixels === 10 &&
+      bottle.report.meshArea === 318 &&
+      bottle.report.enclosedTransparentArea === 94 &&
+      crack !== null &&
+      crack.report.pinchFilledPixels === 3 &&
+      crack.report.grownHolePixels === 2 &&
+      crack.report.overshoot === 2,
+    `bottle: ${bottle === null ? `refused: ${contourCodes(contourOf(BOTTLE))}` : `art ${bottle.report.artPixels}, filled hole ${bottle.report.filledHolePixels}, grown ${bottle.report.grownPixels}, pinch-filled ${bottle.report.pinchFilledPixels}, grown hole ${bottle.report.grownHolePixels}, area ${bottle.report.meshArea} px², enclosed ${bottle.report.enclosedTransparentArea} px²`}; crack: ${crack === null ? `refused: ${contourCodes(contourMesh('crack', crackMask, BASE))}` : `pinch-filled ${crack.report.pinchFilledPixels}, grown ${crack.report.grownPixels}, grown hole ${crack.report.grownHolePixels}, overshoot ${crack.report.overshoot}`}`,
+    'the silhouette traced holds art + filled hole + grown + pinch-filled + grown hole, each pixel in one of them: 224 + 0 + 84 + 0 + 10 = 318, the outline\'s area at tolerance 0 (fixtures BOTTLE); the crack\'s two pinches are the growth\'s, and filling them is reported, not done in silence — and what the closed gap encloses is counted and held to the overshoot bound like any other covered pixel',
+  );
+
+  // CE07 — the guard: a pinch in the filled silhouette itself is refused in rigc's words at every margin, before growth.
+  const island = artMask(PINCH.mask, 8);
+  const guarded = [0, 1, Math.SQRT2, 2].map((mg) => [mg, contourOutline('pinched', island, 8, 0, mg)] as const);
+  let grownTraces = '';
+  try {
+    traceAlphaOutline({ width: 6, height: 6, alpha: growSilhouette(island, 1).mask.data }, 1);
+    grownTraces = 'traced';
+  } catch (err) {
+    grownTraces = (err as Error).message.slice(0, 80);
+  }
+  say(
+    'CE07_A_PINCH_IN_THE_SILHOUETTE_ITSELF_IS_REFUSED_IN_RIGCS_WORDS_AT_EVERY_MARGIN',
+    guarded.every(([, r]) => Array.isArray(r) && r.length === 1 && r[0].code === 'CONTOUR_TRACE' && r[0].detail.includes('pinches to a single point at pixel corner (4,4)')) && grownTraces === 'traced',
+    `PINCH's island handed in unfilled: ${guarded.map(([mg, r]) => `margin ${mg} -> ${Array.isArray(r) ? r.map((p) => p.code).join(', ') : 'BUILT'}`).join('; ')}; planted (the guard removed — its grown silhouette traced alone at margin 1): ${grownTraces}`,
+    'the ruling, item 3: a pinch the growth made is filled, a pinch in the silhouette itself stays spine-rigc\'s refusal (firejune/rigc#1209); growth at margin 1 puts the pocket pixel (3, 3) in and would hide it, so the silhouette is traced before it grows. contourMesh hands in the island with its holes filled, which CE08 shows has no pinch',
+  );
+
+  // CE08 — no filled 4-connected island has a pinch: every island of every 4x4 mask, framed and touching the border.
+  let drawnPinched = 0;
+  let filledPinched = 0;
+  let islandsSeen = 0;
+  for (const frame of [0, 1]) {
+    const side = 4 + 2 * frame;
+    for (let bitsSet = 1; bitsSet < 1 << 16; bitsSet++) {
+      const data = new Uint8Array(side * side);
+      for (let k = 0; k < 16; k++) if (bitsSet & (1 << k)) data[(frame + Math.floor(k / 4)) * side + frame + (k % 4)] = 1;
+      const comp = connectedComponents({ width: side, height: side, data }, 4);
+      for (let l = 1; l < comp.count; l++) {
+        const one = new Uint8Array(side * side);
+        for (let i = 0; i < one.length; i++) one[i] = comp.labels[i] === l ? 1 : 0;
+        const isl = { width: side, height: side, data: one };
+        islandsSeen++;
+        if (pinchCorners(isl) > 0) drawnPinched++;
+        if (pinchCorners(fillHoles(isl)) > 0) filledPinched++;
+      }
+    }
+  }
+  const caseA = pixelMask(4, 4, [[0, 0], [1, 0], [2, 0], [3, 0], [0, 1], [2, 1], [3, 1], [0, 2], [1, 2], [3, 2], [0, 3], [1, 3], [2, 3], [3, 3]]);
+  say(
+    'CE08_NO_ISLAND_WITH_ITS_HOLES_FILLED_HAS_A_DIAGONAL_PINCH',
+    filledPinched === 0 && drawnPinched > 0 && pinchCorners(caseA) === 1 && pinchCorners(fillHoles(caseA)) === 0,
+    `${islandsSeen} islands of the 4x4 masks, bare and in a 1 px frame: ${drawnPinched} pinch as drawn, ${filledPinched} once their holes are filled; firejune/rigc#1209's mask A (####, #.##, ##.#, ####): ${pinchCorners(caseA)} pinch as drawn, ${pinchCorners(fillHoles(caseA))} filled`,
+    'two pixels of one 4-connected island meeting at a corner close a loop through that corner, which encloses one of the two clear pixels; 4-connected background cannot cross the corner, so that pixel is a hole and is filled — hence every pinch the trace meets after the fill is the growth\'s',
+  );
+
+  // CE09 — before simplification the overshoot is at most the margin: the farthest grown pixel, by hand on CONVEX.
+  const atTol0 = [1, 2, 2.5, 3].map((mg) => [mg, built(contourOf(CONVEX, { ...CONVEX.params, margin: mg }))] as const);
+  const wantOver = new Map([[1, 1], [2, 2], [2.5, Math.round(Math.sqrt(5) * 1e6) / 1e6], [3, 3]]);
+  // Planted: the v0.13.0 outline — rigc's offsetPolygon of the simplified trace — on a crescent's horns at margin 1.
+  const crescent = blocks(64, 64, []);
+  for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) if ((x + 0.5 - 32) ** 2 + (y + 0.5 - 32) ** 2 <= 26 ** 2 && (x + 0.5 - 44) ** 2 + (y + 0.5 - 28) ** 2 > 20 ** 2) crescent.alpha[y * 64 + x] = 255;
+  const offsetRing = offsetPolygon(simplifyClosedPolygon(traceAlphaOutline(crescent, 9).outline, 1), 1);
+  const offsetFit = contourFit('crescent', crescent, 8, { margin: 1, tolerance: 1 }, offsetRing, earClip(offsetRing));
+  const grownCrescent = built(contourMesh('crescent', crescent, { ...BASE, tolerance: 1, margin: 1 }));
+  say(
+    'CE09_THE_GROWN_OUTLINE_REACHES_NO_FURTHER_THAN_THE_MARGIN_WHERE_THE_OFFSET_REACHED_FOUR_TIMES_IT',
+    atTol0.every(([mg, mm]) => mm !== null && mm.report.overshoot === wantOver.get(mg)) && offsetFit.problems.some((p) => p.code === 'CONTOUR_OVERSHOOT') && grownCrescent !== null && grownCrescent.report.overshoot <= 3,
+    `convex block at tolerance 0: ${atTol0.map(([mg, mm]) => `margin ${mg} -> ${mm === null ? 'refused' : mm.report.overshoot}`).join(', ')}; crescent at tolerance 1, margin 1: rigc's offset ${offsetFit.problems.map((p) => `${p.code}: ${p.detail}`).join('; ') || `overshoot ${offsetFit.overshoot}, no problem`}; grown ${grownCrescent === null ? `refused: ${contourCodes(contourMesh('crescent', crescent, { ...BASE, tolerance: 1, margin: 1 }))}` : `overshoot ${grownCrescent.report.overshoot}`}`,
+    'a grown pixel lies within the margin of art by definition, so at tolerance 0 the overshoot is the farthest grown pixel: (1, 0) at 1, (2, 0) at 2, (2, 1) = √5 at 2.5, (3, 0) at 3; the offset pushes an acute horn\'s vertex up to 4 x the margin (rigc\'s miter clamp) and passes margin + tolerance + 1',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -12626,9 +12906,10 @@ function runContourSuite(): number {
  * The rig fixture (fixtures/rig.ts) with `cloth` as a contour mesh and one
  * circle region on a bone `soft` at rig (18, 14), parent `body`. By hand:
  * `cloth` is 16x8 at rig (10, 10); padded by 4 it is 24x16 with top-left at
- * rig (6, 6), its art at padded x 4..19, y 4..11. Tolerance 1 and margin 1
- * give the outline (3, 3) (21, 3) (21, 13) (3, 13) padded — rig (9, 9)
- * (27, 9) (27, 19) (9, 19). The region (rig (18, 14), r 2, band 2) is padded
+ * rig (6, 6), its art at padded x 4..19, y 4..11. Tolerance 0 and margin 1
+ * give the outline `blockOutline(4, 4, 16, 8)` padded (fixtures/contour.ts):
+ * the block one pixel larger on every side less its four corner pixels, 12
+ * vertices from (4, 3) — rig (10, 9) first. The region (rig (18, 14), r 2, band 2) is padded
  * (12, 8): its spacing-1 grid holds the centre itself, and (12, 11), 3 px
  * below it — g = 1 − (3 − 2)/2 = 0.5.
  */
@@ -12637,7 +12918,7 @@ function contourRigConfig(edit: (c: Record<string, unknown>) => void = () => {})
   (c.bones as unknown[]).push({ name: 'soft', parent: 'body', at: [18, 14] });
   c.meshes = {
     cloth: {
-      contour: { tolerance: 1, margin: 1, spacing: 4, 'x-why': { by: 'selftest' }, regions: [{ name: 'pinch', shape: 'circle', cx: 18, cy: 14, r: 2, spacing: 1, band: 2, bone: 'soft', 'x-seen': 1 }] },
+      contour: { tolerance: 0, margin: 1, spacing: 4, 'x-why': { by: 'selftest' }, regions: [{ name: 'pinch', shape: 'circle', cx: 18, cy: 14, r: 2, spacing: 1, band: 2, bone: 'soft', 'x-seen': 1 }] },
       r: 8,
       segments: ['hem'],
     },
@@ -12868,11 +13149,11 @@ function runContourWiringSuite(): number {
   const centre13 = at13(12, 8);
   const band13 = at13(12, 11);
   const row13 = r13.meshReport.find((m) => m.part === 'cloth');
-  const hull13 = cloth13.uvs.slice(0, 8).join(',');
+  const hull13 = cloth13.uvs.slice(0, 24).join(',');
   say(
     'CW13_THE_RIG_STAGE_WRITES_A_CONTOUR_MESH_WITH_ITS_REGION_WEIGHTS_DERIVED_BY_HAND',
-    cloth13.hull === 4 &&
-      hull13 === [3 / 24, 3 / 16, 21 / 24, 3 / 16, 21 / 24, 13 / 16, 3 / 24, 13 / 16].map((v) => pyRound(v, 6)).join(',') &&
+    cloth13.hull === 12 &&
+      hull13 === blockOutline(4, 4, 16, 8).flatMap(([x, y]) => [x / 24, y / 16]).map((v) => pyRound(v, 6)).join(',') &&
       centre13 >= 0 &&
       JSON.stringify(cloth13.weights[centre13]) === '[{"bone":"soft","x":0,"y":0,"weight":1}]' &&
       band13 >= 0 &&
@@ -12890,7 +13171,7 @@ function runContourWiringSuite(): number {
       row13.bones.join(',') === 'hem0,hem1,soft' &&
       r13.rig.slots.find((s) => s.name === 'cloth')?.bone === 'hem0',
     `hull uvs ${hull13}; padded (12, 8) = rig (18, 14): vertex ${centre13} ${JSON.stringify(cloth13.weights[centre13] ?? null)}; padded (12, 11) = rig (18, 17): vertex ${band13} ${JSON.stringify(cloth13.weights[band13] ?? null)}; report ${JSON.stringify(row13 === undefined ? null : { ...row13, contour: undefined })}`,
-    'fixture by hand (contourRigConfig): the outline is the 16x8 block pushed out 1 px; at the centre g = 1, the bone alone; 3 px below it g = 0.5, and the segments share the other half as w = 1/(d + 8)^2 at d = 3 (hem0, nearest (18, 14)) and d = 5 (hem1, nearest (22, 14)): 169/290 and 121/290, halved, 0.29138 and 0.20862; bind offsets in Spine axes from each bone\'s origin',
+    'fixture by hand (contourRigConfig): the outline is the 16x8 block grown by 1 px — its four neighbours\' rows and columns, not its corners; at the centre g = 1, the bone alone; 3 px below it g = 0.5, and the segments share the other half as w = 1/(d + 8)^2 at d = 3 (hem0, nearest (18, 14)) and d = 5 (hem1, nearest (22, 14)): 169/290 and 121/290, halved, 0.29138 and 0.20862; bind offsets in Spine axes from each bone\'s origin',
   );
   const shifted = buildRig(parseConfig(contourRigConfig((c) => Object.assign(contourRegion0(c), { cx: 12, cy: 8 }))), rigParts(), rigImages());
   const cloth14 = shifted.rig.skins.default.cloth.cloth as MeshAttachment;

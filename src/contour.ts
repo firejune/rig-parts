@@ -22,14 +22,20 @@
  *    the report says how many and how many pixels (`strayIslands`,
  *    `strayPixels`). A hole is filled, as rigc's trace and the lattice both
  *    fill it, and its area is reported (`filledHolePixels`).
- * 3. **The outline is rigc's**: `traceAlphaOutline` (the outer loop on the
- *    pixel-corner lattice, clockwise on screen, a diagonal pinch refused) →
- *    `simplifyClosedPolygon(tolerance)` → `offsetPolygon(margin)` → clamped to
- *    the part window → snapped to the {@link GRID} → `prunePolygon`. That is
- *    `buildContourMesh`'s own sequence (spine-rigc 2.10.1, `src/mesh.ts`) with
- *    its `r6` rounding replaced by the snap, imported and never copied. This
- *    module does not raise a margin by itself: a margin that clips art is
- *    refused (`CONTOUR_COVERAGE`).
+ * 3. **The outline** ({@link contourOutline}; issue #106 replaced rigc's
+ *    `offsetPolygon`, which folded the outline over any notch narrower than
+ *    twice the margin): the silhouette F — the kept island with its holes
+ *    filled — is read by rigc's `traceAlphaOutline` first (a diagonal pinch in
+ *    F itself stays rigc's refusal), then grown by the margin, centre to
+ *    centre, and the diagonal pinches the growth made are filled
+ *    ({@link growSilhouette}); that silhouette is traced by
+ *    `traceAlphaOutline` → `simplifyClosedPolygon(tolerance)` → clamped to the
+ *    part window → snapped to the {@link GRID} → `prunePolygon`, rigc's
+ *    functions imported and never copied. A grown silhouette is a set of
+ *    pixels, so its trace cannot cross itself; a notch narrower than about
+ *    twice the margin grows shut. A margin above 0 and below 1 px adds no
+ *    pixel and is refused by name. This module does not raise a margin by
+ *    itself: a margin that clips art is refused (`CONTOUR_COVERAGE`).
  * 4. **Interior vertices are declared**, never inferred: see
  *    {@link interiorCandidates} for the candidates and {@link KEEP_FRACTION}
  *    for the one rule that keeps or drops each.
@@ -51,21 +57,20 @@
  *
  * ## What margin a tolerance needs — measured, not raised
  *
- * `bun tools/contour_survey.ts` sweeps tolerance x margin over five generated
- * shapes (a disc, a ~70° triangle, a two-horned crescent, a 2 px spike, a
- * diagonal bar). The smallest margin that covers every art pixel, over the
- * five: 0 at tolerance 0.5; at most 0.5 px at 1; at most 0.75 px at 1.5; at
- * most 1.5 px at 2 (the disc 1, the triangle and the crescent 1.5) — up to
- * three quarters of the tolerance, on the sweep's margin steps. The
- * margin is bounded from above too: rigc's `offsetPolygon` moves an acute
- * corner up to 4 x margin (its miter clamp) while the settled overshoot bound
- * is margin + tolerance + 1, so the crescent's horns refuse overshoot from a
- * margin of 1 px at tolerance 1, and at tolerance 3 no margin passes it; the
- * spike and the bar lose their width to Douglas–Peucker at tolerance 3 and no
- * margin brings it back. Coverage is not monotonic in the margin either: the
- * miter clamp cuts an acute tip, so a wedge covered at 0.5 px leaves pixels
- * out at 1 px (selftest `CT09` reports it). Hence the module never adjusts a
- * margin; it refuses, and the author's figures are the ones it ran at.
+ * `bun tools/contour_survey.ts` sweeps tolerance x margin (0, 1, 1.5, 2, 2.5,
+ * 3) over five generated shapes (a disc, a ~70° triangle, a two-horned
+ * crescent, a 2 px spike, a diagonal bar). The smallest margin that covers
+ * every art pixel, over the five: 0 at tolerance 0.5; 1 at tolerance 1 and
+ * 1.5; 1.5 at 2; 3 at 3 (the crescent; the others 1.5). No cell refuses
+ * overshoot, and along each row, once a margin passes every larger one in the
+ * sweep passes: before simplification a grown pixel lies within the margin of
+ * art by definition (selftest `CE09`), where rigc's offset moved an acute
+ * corner up to 4 x margin. That is the sweep's shapes; on a real part a
+ * larger margin can close a gap whose enclosure lies further from the art than
+ * the bound, which the overshoot check refuses (the issue #106 survey: one
+ * public part passes at margin 1 and refuses at 1.5). Hence the module never
+ * adjusts a margin; it refuses, and the author's figures are the ones it ran
+ * at.
  *
  * ## Exactness, and what happens at every tie
  *
@@ -79,7 +84,10 @@
  * `prunePolygon`, `findSelfIntersection`, with their 1e-9 and 1e-12 slacks)
  * are exact too: a non-zero cross product of two grid differences is at least
  * 2^-16 px², far above either slack. So no topological decision here is made
- * by rounding noise. The ties, each decided by a stated rule:
+ * by rounding noise. The growth is exact too: a squared pixel distance, a whole
+ * number, against the margin's exact binary value ({@link withinMarginSquared}),
+ * and the pinch fill is a set operation on pixels. The ties, each decided by a
+ * stated rule:
  *
  * - **in-circle = 0** (four cocircular points — every square of a grid): the
  *   edge is NOT flipped, so a cocircular quad keeps the diagonal it had, which
@@ -97,8 +105,9 @@
  * What is NOT exact, said where it is: the circle region's boundary samples use
  * `Math.cos` / `Math.sin`, which an engine need not round correctly, so a
  * different engine could move a sampled point by one grid unit where the
- * value lies within an ulp of a rounding boundary; rigc's `offsetPolygon` and
- * `simplifyClosedPolygon` use `Math.hypot`, the same kind of function; and the
+ * value lies within an ulp of a rounding boundary; rigc's
+ * `simplifyClosedPolygon` (and `offsetPolygon`, for a polygon region's band)
+ * use `Math.hypot`, the same kind of function; and the
  * report's angles use `Math.acos` (reported to 6 decimals, decide nothing). All
  * other arithmetic is IEEE `+ − × ÷ √`, which every conforming engine rounds the
  * same way. Two runs on one engine are byte-identical (selftest `CT20`).
@@ -115,7 +124,7 @@
  * the order the flips happened in.
  */
 import { type Problem } from './errors.ts';
-import { connectedComponents, type Mask } from './raster/index.ts';
+import { connectedComponents, fillHoles, type Mask } from './raster/index.ts';
 import {
   type AlphaMask,
   checkHullOrder,
@@ -251,6 +260,18 @@ export interface ContourReport {
   strayIslands: number;
   /** The art pixels those islands hold; they are not meshed, so not drawn, and `artPixels` does not count them. */
   strayPixels: number;
+  /**
+   * Transparent pixels the margin's growth added round the filled silhouette
+   * ({@link growSilhouette}): centre within `margin` of a pixel of it. The
+   * silhouette the outline is traced from holds, each pixel counted once:
+   * `artPixels` + `filledHolePixels` + `grownPixels` + `pinchFilledPixels` +
+   * `grownHolePixels`.
+   */
+  grownPixels: number;
+  /** Transparent pixels the pinch fill added after the growth — both clear pixels of every pinch the growth made. */
+  pinchFilledPixels: number;
+  /** Transparent pixels the grown silhouette encloses without holding them (a notch the growth closed), which the trace fills — rigc's `holePixels` of that trace. Not the art's own holes, which are `filledHolePixels`. */
+  grownHolePixels: number;
 }
 
 export interface ContourMesh {
@@ -288,6 +309,7 @@ function parameterProblems(part: string, mask: AlphaMask, p: ContourParams): Pro
   if (!Number.isInteger(p.threshold) || p.threshold < 0 || p.threshold > 254) bad('threshold', `is ${p.threshold}; a whole number in 0..254 is required (art is alpha above it)`);
   if (!finite(p.tolerance) || p.tolerance < 0) bad('tolerance', `is ${p.tolerance}; a number of px, 0 or more, is required`);
   if (!finite(p.margin) || p.margin < 0) bad('margin', `is ${p.margin}; a number of px, 0 or more, is required`);
+  else if (p.margin > 0 && p.margin < 1) bad('margin', `is ${p.margin}; 0, or 1 px or more, is required — the silhouette grows by the pixels whose centre lies within the margin of an art pixel's centre, and no centre lies closer than 1 px, so a margin under 1 px adds nothing`);
   const spacingOk = (field: string, s: number): void => {
     if (!finite(s) || s <= 0) bad(field, `is ${s}; a number of px above 0 is required`);
     else if (keepRadius(s) < 1) bad(field, `is ${s}; its keep radius ${KEEP_FRACTION} x ${s} px snaps to 0 grid units of 1/${GRID} px, and at least 1 is required`);
@@ -849,6 +871,125 @@ export function contourTopologyProblems(part: string, vertices: ReadonlyArray<re
   return out;
 }
 
+/**
+ * Is the whole number `k` (0 ≤ k < 2^53) at most `margin²`, exactly? `margin`
+ * is a finite double ≥ 0, which is exactly `n / 2^s` for whole numbers n and
+ * s (doubling a double is exact, and a finite one becomes whole within 1074
+ * doublings); the comparison is `k · 4^s ≤ n²` in `BigInt`. No square is
+ * rounded, so a margin of exactly √2's double, or 1.5, decides the pixel at
+ * squared distance 2 by its exact value, not by `margin * margin`'s rounding.
+ */
+export function withinMarginSquared(k: number, margin: number): boolean {
+  let n = margin;
+  let s = 0n;
+  while (!Number.isInteger(n)) {
+    n *= 2;
+    s++;
+  }
+  const whole = BigInt(n);
+  return BigInt(k) * 4n ** s <= whole * whole;
+}
+
+/**
+ * The offsets `(dx, dy)` of the margin's disc: every pair of whole numbers
+ * with `dx² + dy² ≤ margin²` ({@link withinMarginSquared}), row-major from
+ * (−r, −r), r = ⌊margin⌋. Margin 1: the four neighbours and the centre;
+ * √2 ≤ margin < 2: the 3x3 block; margin 2: the 3x3 block and (±2, 0), (0, ±2).
+ */
+export function marginDisc(margin: number): Array<[number, number]> {
+  const r = Math.floor(margin);
+  const out: Array<[number, number]> = [];
+  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (withinMarginSquared(dx * dx + dy * dy, margin)) out.push([dx, dy]);
+  return out;
+}
+
+/** The silhouette grown by the margin, and what each step added (see {@link growSilhouette}). */
+export interface GrownSilhouette {
+  mask: Mask;
+  /** Pixels the growth added: centre within the margin of a pixel of the filled silhouette, not in it. */
+  grownPixels: number;
+  /** Pixels the pinch fill added, after the growth. */
+  pinchFilledPixels: number;
+  /** Passes of the pinch fill that added a pixel (0 when the growth made no pinch). */
+  pinchFillPasses: number;
+}
+
+/** Every pixel corner where two set pixels meet diagonally with both others clear — spine-rigc's diagonal pinch — as the clear pixels' indices. */
+function pinchPixels(data: Uint8Array, w: number, h: number): number[] {
+  const out: number[] = [];
+  for (let y = 0; y + 1 < h; y++) {
+    for (let x = 0; x + 1 < w; x++) {
+      const tl = y * w + x;
+      const tr = tl + 1;
+      const bl = tl + w;
+      const br = bl + 1;
+      if (data[tl] && data[br] && !data[tr] && !data[bl]) out.push(tr, bl);
+      else if (data[tr] && data[bl] && !data[tl] && !data[br]) out.push(tl, br);
+    }
+  }
+  return out;
+}
+
+/**
+ * The silhouette the outline is traced from (the ruling on issue #106). `filled`
+ * is the kept island with its holes filled, F.
+ *
+ * 1. **Growth.** A pixel joins when its centre lies within `margin` of the
+ *    centre of a pixel of F — Euclidean, centre to centre, decided exactly
+ *    ({@link withinMarginSquared}). That is the distance `measureAuthoredMeshFit`
+ *    measures overshoot in, so every grown pixel has an overshoot of at most
+ *    the margin. The pixel of F nearest to a pixel outside it is on F's edge
+ *    (a pixel of F whose four neighbours are all in F has one strictly nearer
+ *    to the outside pixel), so stamping the {@link marginDisc} at the edge
+ *    pixels of F is exact. Margin 0 grows nothing.
+ * 2. **Pinch fill.** Growth can leave two grown pixels meeting only at a
+ *    corner (a 1 px crack running diagonally between two strands), which
+ *    spine-rigc's tracer refuses. Every such pinch is the growth's: F has none
+ *    (a 4-connected island touching itself at a corner encloses one of the two
+ *    clear pixels, which is then a hole and filled; selftest `CE08` checks it
+ *    over every 4x4 mask), and at margin ≥ 1 a pixel of F would put its four
+ *    neighbours in G. **Rule:** one pass finds every pinch of the current set
+ *    and adds BOTH clear pixels of each — both, because choosing one of two
+ *    symmetric pixels is a choice nothing decides; all of a pass at once, so
+ *    no scan order decides anything — and passes repeat until one finds no
+ *    pinch. **Termination:** a pass that finds a pinch adds at least two
+ *    pixels not yet set, so there are at most `w·h / 2` passes. A filled pixel
+ *    is a 4-neighbour of a grown one; how far it lies from the art is what the
+ *    overshoot check measures, not assumed.
+ */
+export function growSilhouette(filled: Mask, margin: number): GrownSilhouette {
+  const { width: w, height: h, data } = filled;
+  const out = new Uint8Array(data);
+  const disc = marginDisc(margin);
+  if (disc.length > 1) {
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (!data[i]) continue;
+        if (x > 0 && data[i - 1] && x < w - 1 && data[i + 1] && y > 0 && data[i - w] && y < h - 1 && data[i + w]) continue;
+        for (const [dx, dy] of disc) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < w && ny < h) out[ny * w + nx] = 1;
+        }
+      }
+    }
+  }
+  let grownPixels = 0;
+  for (let i = 0; i < out.length; i++) if (out[i] && !data[i]) grownPixels++;
+  let pinchFilledPixels = 0;
+  let pinchFillPasses = 0;
+  for (let found = pinchPixels(out, w, h); found.length > 0; found = pinchPixels(out, w, h)) {
+    for (const i of found) {
+      if (out[i]) continue;
+      out[i] = 1;
+      pinchFilledPixels++;
+    }
+    pinchFillPasses++;
+  }
+  return { mask: { width: w, height: h, data: out }, grownPixels, pinchFilledPixels, pinchFillPasses };
+}
+
 /** The art a threshold makes: alpha above it, as a 0/1 mask. */
 export function artMask(mask: AlphaMask, threshold: number): Mask {
   const data = new Uint8Array(mask.width * mask.height);
@@ -864,7 +1005,8 @@ export function artMask(mask: AlphaMask, threshold: number): Mask {
  * (all art plus what it encloses), centre to centre. That is the convention
  * the bound's `+ 1` is for — a pixel whose centre lands inside can sit up to a
  * pixel from the true edge (rigc's `contourOvershootBound`, whose `margin`
- * term is `margin × 4`, the miter clamp; the settled bound here is `margin`).
+ * term is `margin × 4`, its offset's miter clamp; the settled bound here is
+ * `margin`, and this module's grown silhouette keeps it before simplification).
  * The refusal on coverage is any art pixel uncovered, not rigc's 99.5 %.
  */
 export function contourFit(
@@ -939,6 +1081,71 @@ export function triangleQuality(vertices: ReadonlyArray<readonly [number, number
 // the mesh
 // ---------------------------------------------------------------------------
 
+/** The outline stage's result: the outline in walk order (px, on the {@link GRID}) and what the silhouette was. */
+export interface ContourOutline {
+  outline: Array<[number, number]>;
+  /** Corner-lattice points of the traced silhouette, before simplification. */
+  tracedVertices: number;
+  grown: GrownSilhouette;
+  /** rigc's `holePixels` of the grown silhouette's trace (0 at margin 0, where the trace is F's and F has no hole). */
+  grownHolePixels: number;
+}
+
+/**
+ * The outline of a filled silhouette F (a 0/1 mask of the part's size: the
+ * kept island with its holes filled), or every problem that refuses it:
+ *
+ * 1. spine-rigc's `traceAlphaOutline` reads F itself first, so a diagonal
+ *    pinch in F is refused in rigc's words (`CONTOUR_TRACE`) at every margin,
+ *    before the growth could hide it — the pinch fill below resolves only the
+ *    pinches the growth made. (F built from one 4-connected island by
+ *    `fillHoles` has none, `CE08`; this is the guard, and `CE07` plants one.)
+ * 2. F grows by `margin` and the growth's pinches are filled
+ *    ({@link growSilhouette}); at margin 0 nothing grows and F's own trace is
+ *    the one used.
+ * 3. That silhouette is traced (`traceAlphaOutline`), simplified at
+ *    `tolerance` (`simplifyClosedPolygon`), clamped to the window, snapped to
+ *    the {@link GRID} and pruned (`prunePolygon`). There is no offset: the
+ *    trace runs on whole pixel corners, so clamp and snap move nothing.
+ * 4. Douglas–Peucker can still cross an outline over itself, and an outline
+ *    under three vertices or enclosing no area is no outline: both
+ *    `CONTOUR_SELF_INTERSECTION`, before any triangle is made.
+ */
+export function contourOutline(part: string, filled: Mask, threshold: number, tolerance: number, margin: number): ContourOutline | Problem[] {
+  const object = `contour mesh "${part}"`;
+  const { width: w, height: h } = filled;
+  const trace = (m: Mask): ReturnType<typeof traceAlphaOutline> | Problem[] => {
+    try {
+      return traceAlphaOutline({ width: w, height: h, alpha: m.data }, 1);
+    } catch (err) {
+      if (!(err instanceof MeshError)) throw err;
+      return [{ code: 'CONTOUR_TRACE', object, detail: `spine-rigc's traceAlphaOutline refused it at alpha above ${threshold}: ${err.message}` }];
+    }
+  };
+  const silhouette = trace(filled);
+  if (Array.isArray(silhouette)) return silhouette;
+  const grown = growSilhouette(filled, margin);
+  const traced = margin === 0 ? silhouette : trace(grown.mask);
+  if (Array.isArray(traced)) return traced;
+  const simplified = simplifyClosedPolygon(traced.outline, tolerance);
+  const snapped = simplified.map(([x, y]) => [snap(Math.min(w, Math.max(0, x))) / GRID, snap(Math.min(h, Math.max(0, y))) / GRID] as [number, number]);
+  const outline = prunePolygon(snapped);
+  if (outline.length < 3 || signedArea(outline) <= 0 || findSelfIntersection(outline) !== null) {
+    const crossing = outline.length < 3 ? null : findSelfIntersection(outline);
+    return [
+      {
+        code: 'CONTOUR_SELF_INTERSECTION',
+        object,
+        detail:
+          crossing !== null
+            ? `after margin ${margin} px and tolerance ${tolerance} px its simplified outline's edge ${crossing[0]} meets edge ${crossing[1]}; an outline that touches itself nowhere is required — lower the tolerance`
+            : `after margin ${margin} px and tolerance ${tolerance} px its outline has ${outline.length} vertices enclosing ${outline.length < 3 ? 0 : signedArea(outline)} px² (clockwise on screen is positive); 3 or more enclosing a positive area are required — lower the tolerance`,
+      },
+    ];
+  }
+  return { outline, tracedVertices: traced.outline.length, grown, grownHolePixels: margin === 0 ? 0 : traced.holePixels };
+}
+
 /**
  * The contour mesh of one part, or every problem that refuses it. `part` is
  * the name each refusal carries. Pure: same mask and parameters, same bytes.
@@ -980,29 +1187,15 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
     for (const l of split.leave) strayPixels += comp.stats[l].area;
   }
 
-  let traced: ReturnType<typeof traceAlphaOutline>;
-  try {
-    traced = traceAlphaOutline(meshed, threshold + 1);
-  } catch (err) {
-    if (!(err instanceof MeshError)) throw err;
-    return [{ code: 'CONTOUR_TRACE', object, detail: `spine-rigc's traceAlphaOutline refused it at alpha above ${threshold}: ${err.message}` }];
-  }
-  const pushed = offsetPolygon(simplifyClosedPolygon(traced.outline, tolerance), margin);
-  const snapped = pushed.map(([x, y]) => [snap(Math.min(w, Math.max(0, x))) / GRID, snap(Math.min(h, Math.max(0, y))) / GRID] as [number, number]);
-  const outline = prunePolygon(snapped);
-  if (outline.length < 3 || signedArea(outline) <= 0 || findSelfIntersection(outline) !== null) {
-    const crossing = outline.length < 3 ? null : findSelfIntersection(outline);
-    return [
-      {
-        code: 'CONTOUR_SELF_INTERSECTION',
-        object,
-        detail:
-          crossing !== null
-            ? `after tolerance ${tolerance} px and margin ${margin} px its outline's edge ${crossing[0]} meets edge ${crossing[1]}; an outline that touches itself nowhere is required — lower the margin, or the art has a neck narrower than twice it`
-            : `after tolerance ${tolerance} px and margin ${margin} px its outline has ${outline.length} vertices enclosing ${outline.length < 3 ? 0 : signedArea(outline)} px² (clockwise on screen is positive); 3 or more enclosing a positive area are required — lower the tolerance`,
-      },
-    ];
-  }
+  // The silhouette F: the kept island with its holes filled; contourOutline grows it, fills the growth's own
+  // pinches, traces and simplifies it.
+  const island = artMask(meshed, threshold);
+  const filled = fillHoles(island);
+  let filledHolePixels = 0;
+  for (let i = 0; i < filled.data.length; i++) if (filled.data[i] && !island.data[i]) filledHolePixels++;
+  const stage = contourOutline(part, filled, threshold, tolerance, margin);
+  if (Array.isArray(stage)) return stage;
+  const { outline, grown } = stage;
 
   const hx = outline.map((q) => snap(q[0]));
   const hy = outline.map((q) => snap(q[1]));
@@ -1048,7 +1241,7 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
       interiorVertices: kept.length,
       interiorBySource: [...bySource].map(([source, n]) => ({ source, vertices: n })),
       triangles: triangles.length / 3,
-      tracedVertices: traced.outline.length,
+      tracedVertices: stage.tracedVertices,
       artPixels: fit.artPixels,
       coveredArtPixels: fit.coveredArt,
       coverage: fit.coverage,
@@ -1056,11 +1249,14 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
       overshootBound: fit.overshootBound,
       meshArea,
       enclosedTransparentArea: meshArea - fit.coveredArt,
-      filledHolePixels: traced.holePixels,
+      filledHolePixels,
       ...triangleQuality(vertices, triangles),
       nonDelaunayEdges: delaunayViolations(vertices, triangles),
       strayIslands: split.leave.length,
       strayPixels,
+      grownPixels: grown.grownPixels,
+      pinchFilledPixels: grown.pinchFilledPixels,
+      grownHolePixels: stage.grownHolePixels,
     },
   };
 }
