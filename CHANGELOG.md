@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.0](https://github.com/firejune/spine-parts/compare/v0.10.0...v0.11.0) (2026-10-06)
+
+
+### Features
+
+* **compare:** compare two skeletons by structure through an explicit bone map ([#88](https://github.com/firejune/spine-parts/issues/88)) ([2452dc6](https://github.com/firejune/spine-parts/commit/2452dc6079c8a2e84370302b091e221717191acb)), closes [#85](https://github.com/firejune/spine-parts/issues/85)
+* **propose:** read a posed figure's joints from one explicit keypoint file, place the torso and sleeves from them, and lint by the relations they declare ([#90](https://github.com/firejune/spine-parts/issues/90)) ([4038702](https://github.com/firejune/spine-parts/commit/403870207959fde22bb6296d94a7337dfbba1607)), closes [#75](https://github.com/firejune/spine-parts/issues/75)
+* **propose:** say per bone which check read it or why none did, and write beside the proposal what each bone rests on ([#91](https://github.com/firejune/spine-parts/issues/91)) ([e86444c](https://github.com/firejune/spine-parts/commit/e86444ca7282ca0b58aa136f362322f9287db45a)), closes [#86](https://github.com/firejune/spine-parts/issues/86)
+
 ## [0.10.0](https://github.com/firejune/spine-parts/compare/v0.9.0...v0.10.0) (2026-10-06)
 
 
