@@ -309,6 +309,15 @@ set of pixels and its trace cannot cross itself — a narrow notch grows shut in
 interior vertices are the ones declared — each region's boundary, its band's outer edge and its
 own `spacing` grid inside region and band, then the background `spacing` grid — and the
 triangulation is a constrained Delaunay one that never crosses the outline (`src/contour.ts`).
+Where the outline passes through a region and its band, the outline is cut there at the
+region's `spacing` too (issue #110): points are inserted exactly on its edges, held to the same
+keep radius (half the spacing) from the edge's ends and from each other, so the outline encloses
+the same pixels and only gains vertices. Without it an outline edge crossing the band is held by
+its two ends alone — no interior point may sit within half a spacing of the outline — and one
+long edge from inside the region (`g` = 1) to past its band (`g` = 0) spreads the region's
+motion along its whole length. A region whose band reaches no outline edge changes no hull
+vertex; one that does keeps every hull vertex in the same order from index 0, and a vertex moves
+up only by the points inserted before it.
 
 **Weights.** A region's bone takes `g` at a vertex: 1 inside the region (its edge included),
 `1 − d/band` at a distance `d` past it, 0 at `d ≥ band` (with `band` 0, a step) — linear, no
@@ -378,6 +387,29 @@ its length in the idle), and with the back hair left on the lattice it passes 9 
 generated fixture of `tools/local_compare.ts` it reached a local shape error (0.336 px at most,
 63 vertices) the lattice reached only at grid 2, with 1025 vertices (re-run on the grown outline
 in #106, the same figures).
+
+**On real parts the generated result did not carry over unchanged** (issues #107 and #110,
+`bun tools/real_compare.ts --work <dir> --builds --sweep`, a declared test region on two demo
+parts — a place to measure, not a claim about the painting; the region spacing chosen by vertex
+count alone). On `bottomwear` (a region of radius 65 px inside the part) the contour mesh passes
+the same rule: 336 vertices against the lattice's 352, largest local shape error 1.535 px against
+7.613. On `hair_front` (radius 11 px, beside the part's own outline) it did not until the outline
+was cut inside the region's band: one 35 px outline edge ran from inside the region (`g` = 1) to
+past its band (`g` = 0), and every pose's worst pixel sat in a 7.1° triangle on it, 0.74 px from
+the outline — 4.481 px against the lattice's 2.453, at 119 vertices against 123, at every
+tolerance that builds (1, 1.25, 1.5; 1.75 and up leave art uncovered at margin 1, 0.5 and below
+cannot fit 123 vertices). With the outline cut there it passes: 120 vertices, 0.333 px against
+2.453, transition 1.335 against 2.543, deformation outside 0.997 against 2.168; the lattice
+needs grid 2 (2590 vertices) to match it. Moving a region still opens the seam with the part
+drawn beside it — over the idle, translated, by 5.19 px (lattice with the region's weights) and
+5.76 px (contour) on `hair_front` against the face, 6.91 and 5.84 px on `bottomwear` against the
+shoes, beyond what the same idle opens without the region — and `check`'s seam bar does not see
+it (0.326 or 0.327 in every variant: it compares the setup pose). `TEXTURE_STRETCH` does: the
+translated region fails it in both modes on `bottomwear` (2.314 lattice, 2.448 contour) and in the
+contour mode on `hair_front` (2.183; lattice 1.552), where the face half of `STILL_REGIONS_DARK`
+fails in both. The ceiling is 1.927. The outline cut moved the stretch little (`hair_front`
+contour, per pose, before → after: still 1.152 → 1.149, rotate 1.444 → 1.415, translate 2.186 →
+2.183, scale 1.771 → 1.670) and the translated seam from 5.70 to 5.76 px.
 
 ## 4. The command order
 

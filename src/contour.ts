@@ -38,7 +38,10 @@
  *    itself: a margin that clips art is refused (`CONTOUR_COVERAGE`).
  * 4. **Interior vertices are declared**, never inferred: see
  *    {@link interiorCandidates} for the candidates and {@link KEEP_FRACTION}
- *    for the one rule that keeps or drops each.
+ *    for the one rule that keeps or drops each. Where the outline passes
+ *    through a region's support, points are inserted on the outline at the
+ *    region's spacing ({@link outlineInRegions}, issue #110): exactly on its
+ *    edges, so the outline encloses the same set and only gains vertices.
  * 5. **Triangulation**: rigc's `earClip` of the outline, made constrained
  *    Delaunay by flipping; then each kept point inserted in order — the
  *    triangle that holds it is split in three, or the two that share the edge
@@ -116,9 +119,14 @@
  *
  * Vertices: the outline first, in rigc's walk order (the hull Spine needs:
  * `hull` is a count, and the first `hull` vertices are the outline, in order),
- * then the kept interior points in the order they were kept. The outline does
- * not depend on the regions, so adding a region never renumbers a hull vertex
- * (`CT21`). Triangles: each wound as the outline is (clockwise on screen, which
+ * then the kept interior points in the order they were kept. The outline's
+ * shape does not depend on the regions; its vertices do only where a region's
+ * support reaches it, which inserts points on the edges there
+ * ({@link outlineInRegions}). So adding a region whose support reaches no
+ * outline edge renumbers no hull vertex (`CT21`, `CE14`); one whose support
+ * does keeps every hull vertex, in the same cyclic order and position from
+ * index 0, and moves a vertex's index only by the points inserted before it in
+ * walk order (`CE13`). Triangles: each wound as the outline is (clockwise on screen, which
  * is counter-clockwise in Spine's y-up world — the lattice's winding), rotated
  * to start at its smallest index, and sorted, so the list does not depend on
  * the order the flips happened in.
@@ -517,6 +525,154 @@ export function interiorCandidates(width: number, height: number, params: Contou
     }
   }
   add(gridIn(0, 0, width, height, params.spacing), params.spacing, 'background');
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// the outline inside a region's support
+// ---------------------------------------------------------------------------
+
+/** The greatest common divisor of two whole numbers, by Euclid. */
+function gcd(a: number, b: number): number {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y !== 0) [x, y] = [y, x % y];
+  return x;
+}
+
+/**
+ * The parameter intervals `[t0, t1]` (0 ≤ t0 < t1 ≤ 1) over which the segment
+ * a → b (px) lies in a region's support — the region and its band, the set
+ * {@link interiorCandidates} fills: for a circle the disc of radius `r + band`;
+ * for a polygon the inside of its band ring (rigc's `offsetPolygon` by `band`),
+ * or of the polygon itself when the band is 0.
+ */
+function supportIntervals(ax: number, ay: number, bx: number, by: number, r: ContourRegion): Array<[number, number]> {
+  const dx = bx - ax;
+  const dy = by - ay;
+  if (r.shape === 'circle') {
+    const R = r.r + r.band;
+    const fx = ax - r.cx;
+    const fy = ay - r.cy;
+    const A = dx * dx + dy * dy;
+    const B = 2 * (fx * dx + fy * dy);
+    const disc = B * B - 4 * A * (fx * fx + fy * fy - R * R);
+    if (disc <= 0) return [];
+    const sq = Math.sqrt(disc);
+    const t0 = Math.max(0, (-B - sq) / (2 * A));
+    const t1 = Math.min(1, (-B + sq) / (2 * A));
+    return t0 < t1 ? [[t0, t1]] : [];
+  }
+  const poly = r.points.map(([x, y]) => [x, y] as [number, number]);
+  const ring = r.band > 0 ? bandRing(poly, r.band) : poly;
+  const ts = [0, 1];
+  for (let k = 0; k < ring.length; k++) {
+    const [cx, cy] = ring[k];
+    const [ex, ey] = ring[(k + 1) % ring.length];
+    const den = dx * (ey - cy) - dy * (ex - cx);
+    if (den === 0) continue;
+    const t = ((cx - ax) * (ey - cy) - (cy - ay) * (ex - cx)) / den;
+    const u = ((cx - ax) * dy - (cy - ay) * dx) / den;
+    if (t > 0 && t < 1 && u >= 0 && u <= 1) ts.push(t);
+  }
+  ts.sort((p, q) => p - q);
+  const out: Array<[number, number]> = [];
+  for (let k = 0; k + 1 < ts.length; k++) {
+    const [u, v] = [ts[k], ts[k + 1]];
+    if (!(u < v) || !insideFloatRing(ax + ((u + v) / 2) * dx, ay + ((u + v) / 2) * dy, ring)) continue;
+    const last = out[out.length - 1];
+    if (last !== undefined && last[1] === u) last[1] = v;
+    else out.push([u, v]);
+  }
+  return out;
+}
+
+/**
+ * The outline with points inserted where it passes through a region's support
+ * (issue #110). A region's weight ramps from 1 to 0 across its band; where an
+ * outline edge crosses that ramp, the art beside the edge is held by the
+ * edge's two ends alone (no interior point may sit within its keep radius of
+ * the outline), so one long edge with one end at g = 1 and the other at g = 0
+ * spreads the region's motion over its whole length. Measured on a public
+ * part (demo/hair_front, issue #110): a 35 px edge through a radius-11 region
+ * held the worst local pixel in every pose. The outline is therefore sampled
+ * there the way the region's own boundary is:
+ *
+ * - **On the edge, exactly.** The outline's vertices are on the {@link GRID};
+ *   the grid points ON an edge a → b are `a + j (b − a) / G`, j = 0..G, with
+ *   G the greatest common divisor of the edge's two grid-unit differences.
+ *   Every point inserted is one of them, so it is collinear with its edge
+ *   exactly and the outline encloses the same set as before: coverage,
+ *   overshoot, area and every interior point's keep test are unchanged by it.
+ * - **Rule.** For each outline edge, in walk order, and each region, in the
+ *   order declared: the intervals `[t0, t1]` of the edge inside the region's
+ *   support ({@link supportIntervals}), their ends taken to the nearest grid
+ *   points on the edge, `j0 = round(t0 G)` and `j1 = round(t1 G)`; that span
+ *   is cut into `k = max(1, ceil(length × (j1 − j0) / G / spacing))` equal
+ *   parts at the region's spacing (as {@link interiorCandidates} samples a
+ *   region's boundary, `ceil(length / spacing)` per edge), and every cut
+ *   `j0 + round(m (j1 − j0) / k)`, m = 0..k, strictly between the edge's
+ *   ends (0 < j < G) is a candidate. Reading the span on the grid first makes
+ *   the count exact where the span is: on an axis-aligned edge a 16 px span at
+ *   spacing 4 is 4 parts, not 5 because a square root rounded up (selftest
+ *   `CE10`; the mutant that counts the float span is caught there).
+ * - **Kept** by the keep rule's own radius ({@link KEEP_FRACTION} × the
+ *   region's spacing): a candidate at least that far from the edge's two ends
+ *   and from every point already inserted on the outline, in walk order and,
+ *   on one edge, in order of `j` (regions in declared order at a tie).
+ *
+ * What is not exact: the intervals use `Math.sqrt` (a circle) or rigc's
+ * `offsetPolygon` (a polygon's band), so an engine that rounds a square root
+ * differently could move a span's end by one grid step, and so a cut, or the
+ * count `k` where `length × span / spacing` lies within an ulp of a whole
+ * number on a slanted edge (`length` is a square root there); every position written is
+ * an exact grid point on the edge whatever `j` is. **The hull's order:** every
+ * vertex of the outline without regions is in the outline with them, in the
+ * same cyclic order at the same position, and the first one (index 0) is
+ * first; an inserted point sits between the two ends of its edge. A hull
+ * vertex is renumbered only by the inserted points before it in walk order —
+ * none when no region's support reaches the outline, which then is the same
+ * list (selftest `CE14`).
+ */
+export function outlineInRegions(outline: ReadonlyArray<readonly [number, number]>, regions: readonly ContourRegion[]): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  const placed: Array<{ x: number; y: number }> = [];
+  const n = outline.length;
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = outline[i];
+    const [bx, by] = outline[(i + 1) % n];
+    out.push([ax, ay]);
+    if (regions.length === 0) continue;
+    const A = { x: snap(ax), y: snap(ay) };
+    const B = { x: snap(bx), y: snap(by) };
+    const G = gcd(B.x - A.x, B.y - A.y);
+    if (G === 0) continue;
+    const length = Math.sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+    const cands: Array<{ j: number; radius: number }> = [];
+    for (const r of regions) {
+      const radius = keepRadius(r.spacing);
+      for (const [t0, t1] of supportIntervals(ax, ay, bx, by, r)) {
+        const j0 = Math.round(t0 * G);
+        const j1 = Math.round(t1 * G);
+        if (j1 <= j0) continue;
+        const k = Math.max(1, Math.ceil(((j1 - j0) * length) / G / r.spacing));
+        for (let m = 0; m <= k; m++) {
+          const j = j0 + Math.round((m * (j1 - j0)) / k);
+          if (j > 0 && j < G) cands.push({ j, radius });
+        }
+      }
+    }
+    cands.sort((p, q) => p.j - q.j);
+    for (const c of cands) {
+      const x = A.x + (c.j * (B.x - A.x)) / G;
+      const y = A.y + (c.j * (B.y - A.y)) / G;
+      const r2 = c.radius * c.radius;
+      const far = (q: { x: number; y: number }): boolean => (q.x - x) * (q.x - x) + (q.y - y) * (q.y - y) >= r2;
+      if (!far(A) || !far(B) || !placed.every(far)) continue;
+      placed.push({ x, y });
+      out.push([x / GRID, y / GRID]);
+    }
+  }
   return out;
 }
 
@@ -1195,7 +1351,8 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
   for (let i = 0; i < filled.data.length; i++) if (filled.data[i] && !island.data[i]) filledHolePixels++;
   const stage = contourOutline(part, filled, threshold, tolerance, margin);
   if (Array.isArray(stage)) return stage;
-  const { outline, grown } = stage;
+  const { grown } = stage;
+  const outline = outlineInRegions(stage.outline, params.regions);
 
   const hx = outline.map((q) => snap(q[0]));
   const hy = outline.map((q) => snap(q[1]));

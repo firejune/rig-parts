@@ -157,6 +157,15 @@ export const REGION: ContourCase = {
   params: { ...BASE, spacing: 12, regions: [{ name: 'soft', shape: 'circle', cx: 40, cy: 24, r: 8, spacing: 3, band: 4 }] },
 };
 
+/**
+ * STRIP: {@link REGION}'s block (56x40 at (4, 4) in 64x48, outline
+ * `blockOutline(4, 4, 56, 40)`, background spacing 12) with no region; the
+ * issue #110 controls (`CE10`–`CE16`) add regions whose support crosses its top
+ * edge, the line y = 3 from (4, 3) to (60, 3) — outline vertices 0 and 1 —
+ * where every point inserted on it is computed by hand.
+ */
+export const STRIP: ContourCase = { name: 'strip', mask: blocks(64, 48, [[4, 4, 56, 40]]), params: { ...BASE, spacing: 12, regions: [] } };
+
 /** The background points of {@link REGION} the region cannot reach, by hand. */
 export const REGION_FAR_BACKGROUND: ReadonlyArray<readonly [number, number]> = [
   [12, 12],
