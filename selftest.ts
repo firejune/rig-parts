@@ -176,7 +176,9 @@ import {
   type StructureComparison,
   structureLines,
 } from './src/structure.ts';
-import { checkProposal, compare, compareLines, FACELESS_RATIOS, faceBoxOf, type FacelessRatios, lint, lintLine, type Proposal, propose, readPartSet, serializeProposal } from './src/propose.ts';
+import { basisLines, checkProposal, compare, compareLines, drawLandmarks, FACELESS_RATIOS, faceBoxOf, type FacelessRatios, lint, lintLine, type PartSet, type Proposal, propose, readPartSet, serializeProposal } from './src/propose.ts';
+import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeypoints, parseKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
+import { LYING_PARTS, LYING_RIG, type PoseName, POSES } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
 import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText, type RigSpec } from './src/rig.ts';
@@ -1899,6 +1901,38 @@ function runCliSuite(): number {
       `propose --compare's last ${want.length} lines are compareLines(compare()) for the clean and the re-parented config alike (head's parent ${headParent} -> chest); compare --left proposal.json --right the re-parented config -> exit ${structural.status}, "${structural.out.split('\n').find((l) => l.startsWith('  head:'))?.trim().slice(0, 80) ?? 'no head line'}…"`,
       'issue #85: the --compare printout is the distance table it was, line for line — a different parent scores 0.0 px there by its definition — and the new command, reading the proposal propose wrote, is where the parent shows',
     );
+
+    // Issue #75: the propose help names the keypoint door; malformed calls are usage errors before anything is read.
+    const kpHelp = help.out.slice(help.out.indexOf('spine-parts propose --parts'), help.out.indexOf('spine-parts propose --head-box'));
+    const kpTokens = ['[--keypoints <keypoints.json> [--person <id>]]', `"${KEYPOINTS_SPEC}"`, 'painting-px, origin top-left, y down', 'KEYPOINTS_IMAGE_SIZE', 'x * W/width', 'nothing picks', 'Without\n      --keypoints nothing changes'];
+    const checkSlice = help.out.slice(help.out.indexOf('spine-parts check'), help.out.indexOf('spine-parts loop'));
+    say(
+      'CL09_PROPOSE_HELP_NAMES_THE_KEYPOINT_FILE_ITS_SPACE_THE_PERSON_AND_THE_MAP',
+      kpTokens.every((t) => kpHelp.includes(t)) && !kpTokens.every((t) => checkSlice.includes(t)),
+      kpTokens.map((t) => `${JSON.stringify(t)} ${kpHelp.includes(t)}`).join(', '),
+      'the help is where an agent learns that the file states its own space, size and people, that a person is chosen and never picked, and which map takes painting px to the rig; the same tokens are looked for in the check section, which must not hold them',
+    );
+
+    const parts = join(dir, 'kp-parts');
+    writeProposeFixture(parts);
+    const callP = (extra: string[]): { status: number; out: string } => runCli(['propose', '--parts', parts, '--source', join(parts, 'painting.png'), '--out', join(dir, 'kp-out'), ...extra]);
+    const personAlone = callP(['--person', 'a']);
+    say(
+      'CL10_PERSON_WITHOUT_KEYPOINTS_IS_A_USAGE_ERROR',
+      personAlone.status === 2 && personAlone.out.includes('--person names a person in the --keypoints file; give --keypoints <file>') && !existsSync(join(dir, 'kp-out')),
+      `exit ${personAlone.status}; ${(personAlone.out.split('\n').find((l) => l.includes('FAIL')) ?? 'no FAIL line').trim()}`,
+      'a person with no file to find it in is a call that cannot mean anything; it is refused before the parts are read',
+    );
+
+    const twiceKp = callP(['--keypoints', 'a.json', '--keypoints', 'b.json']);
+    const bareKp = callP(['--keypoints']);
+    const headBoxKp = runCli(['propose', '--head-box', '--full', parts, '--canvas', '10x10', '--keypoints', 'a.json']);
+    say(
+      'CL11_KEYPOINTS_TWICE_WITHOUT_A_VALUE_OR_BESIDE_HEAD_BOX_IS_A_USAGE_ERROR',
+      twiceKp.status === 2 && twiceKp.out.includes('--keypoints is given twice') && bareKp.status === 2 && bareKp.out.includes('--keypoints needs a value') && headBoxKp.status === 2 && headBoxKp.out.includes('--head-box takes --full and --canvas only; got --keypoints') && !existsSync(join(dir, 'kp-out')),
+      `twice -> exit ${twiceKp.status}; no value -> exit ${bareKp.status}; beside --head-box -> exit ${headBoxKp.status}, ${(headBoxKp.out.split('\n').find((l) => l.includes('FAIL')) ?? '').trim()}`,
+      'two files would be two poses and the proposer reads one; the head box is read off the full run before any parts exist, so a pose has nothing to place there',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -3320,6 +3354,7 @@ function runProposeSuite(): number {
     runStrandCases(dir, say);
     runBlinkCases(dir, say);
     runFacelessCases(dir, say);
+    runKeypointPoseCases(dir, say);
 
     // issue #26: the eye parts of fixtures/propose.ts, once with a clear gap between crease and lash line and once without.
     const eyed = join(dir, 'eyes');
@@ -3836,6 +3871,738 @@ function runEyelessFeatureCases(dir: string, say: (name: string, ok: boolean, de
     `regions eye_a -> ${oprop.regions.eye_a}, iris_a -> ${oprop.regions.iris_a}, lash_b -> ${oprop.regions.lash_b}; blink eyes ${JSON.stringify(oprop.motion.blink?.eyes ?? null)}; notes ${JSON.stringify(oprop.notes.filter((n) => n.includes('eyewhite')))}; loads: ${codes(oLoads)}; rig exit ${orig.status}`,
     'the rule is per side: the eye bone the right eyewhite makes still carries its iris and blinks, and only the side with no eyewhite falls back to head, named in the note with only that side\'s tag',
   );
+}
+
+// ---------------------------------------------------------------------------
+// external keypoints in propose (issue #75): the three generated poses
+// ---------------------------------------------------------------------------
+
+/** A keypoint file as JSON, editable before it is read. */
+type KeypointJson = Record<string, unknown> & { people: Array<{ id: string; joints: Record<string, unknown> }> };
+
+/** A pose's hand-written keypoint file, edited, through the loader and the overlay's map — what `propose --keypoints` hands the proposer. */
+function poseJoints(name: PoseName, edit: (k: KeypointJson) => void = () => {}): RigJoints {
+  const raw = structuredClone(POSES[name].keypoints) as KeypointJson;
+  edit(raw);
+  const f = parseKeypoints(raw, `${name}.json`);
+  return toRigJoints(f, f.people[0], POSES[name].rig.w, POSES[name].rig.h);
+}
+
+/** A pose's parts and painting on disk (soft edges, so a build can be checked), and its keypoint file beside them. */
+function poseDir(dir: string, name: PoseName): string {
+  const d = join(dir, `pose-${name}`);
+  writeProposeFixture(d, POSES[name].parts, POSES[name].rig, true);
+  writeFileSync(join(d, 'keypoints.json'), JSON.stringify(POSES[name].keypoints));
+  return d;
+}
+
+/** The notes `--keypoints` added: everything from the `keypoints:` header on. */
+function jointNoteLines(p: Proposal): string[] {
+  const i = p.notes.findIndex((n) => n.startsWith('keypoints: '));
+  return i < 0 ? [] : p.notes.slice(i);
+}
+
+function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const SP = poseDir(dir, 'standing');
+  const SE = poseDir(dir, 'seated');
+  const LY = poseDir(dir, 'lying');
+  const Ps = readPartSet(SP);
+  const Pe = readPartSet(SE);
+  const Pl = readPartSet(LY);
+  const Js = poseJoints('standing');
+  const Je = poseJoints('seated');
+  const Jl = poseJoints('lying');
+  const st = propose(Ps, Js);
+  const se = propose(Pe, Je);
+  const ly = propose(Pl, Jl);
+
+  // Standing (fixtures/poses.ts): neck (100, 98); hips (90, 160) and (110, 160) -> hip (100, 160); chest half way along
+  // neck -> hip = (100, 129); head stays the rule's, axis 100 (the eyewhites' centres 91 and 109), 40 + 0.88*50 = 84.
+  // Sleeves: r (30,104) -> (30,130), tip (30,152); l (170,104) -> (170,130), tip (170,152). The stub runs along the upper
+  // arm, d = (0, 1): from 104 - 14 = 90 to 104 + 2 = 106. Skirt chains hang from hip y + 20 = 180 to 250 - 4 = 246,
+  // three steps of 22: 180, 202, 224 (x as in PR01).
+  const wantSt: Record<string, string> = {
+    hip: '[100,160]',
+    chest: '[100,129]',
+    neck: '[100,98]',
+    head: '[100,84]',
+    eye_r: '[91,63]',
+    eye_l: '[109,63]',
+    sleeve_r: '[[30,104],[30,130]]->[30,152]',
+    sleeve_l: '[[170,104],[170,130]]->[170,152]',
+    skirt_c: '[[100,180],[100,202],[100,224]]->[100,246]',
+  };
+  const wrongSt = Object.entries(wantSt).filter(([n, v]) => boneAt(st.bones, n) !== v).map(([n, v]) => `${n} ${boneAt(st.bones, n)} (want ${v})`);
+  const stSegs = JSON.stringify(st.meshes.sleeve_a?.segments ?? null);
+  const stTracks = JSON.stringify(st.motion.tracks.filter((t) => 'chain' in t && t.chain.startsWith('sleeve_')).map((t) => ('chain' in t ? [t.chain, t.amps] : null)));
+  const stLint = lint(Ps, st, Js);
+  say(
+    'PR55_STANDING_JOINTS_PLACE_NECK_HIP_CHEST_AND_EACH_SLEEVE_AS_GIVEN',
+    wrongSt.length === 0 &&
+      stSegs === '[["chest",[30,90],[30,106]],"sleeve_r"]' &&
+      stTracks === '[["sleeve_r",[0.2,0.6]],["sleeve_l",[-0.2,-0.6]]]' &&
+      stLint.findings.length === 0 &&
+      stLint.basis?.torso.read === true &&
+      refusals(() => checkProposal(Ps, st)) === null,
+    `${wrongSt.length === 0 ? Object.keys(wantSt).map((n) => `${n} ${boneAt(st.bones, n)}`).join(', ') : `wrong: ${wrongSt.join('; ')}`}; sleeve_a ${stSegs}; sleeve tracks ${stTracks}; ${stLint.findings.length} LINT line(s) on the joints' rule set; loads: ${codes(refusals(() => checkProposal(Ps, st)))}`,
+    'issue #75: an observed joint is used as given, so every torso and arm bone sits on the hand-written joint; the hip is the point between two joints, the chest keeps its rule between the placed ends, and the eye bones and head are measurements off the parts, which no joint overrides',
+  );
+
+  // Seated: neck (100, 77), hips -> (100, 145), chest (100, 111). Arms bent: r (66,84) -> (66,124), tip at the wrist (84,124);
+  // l (134,84) -> (134,124), tip (116,124). The rule (no keypoints) puts the hip at the dress's top + 0.14*50 = 117 and the
+  // chest at 76 + 0.5*(117 - 76) = 96.5 -> 96 (to even): 28 px above the joints' hip, and no screen rule can see it.
+  const seRule = propose(Pe);
+  const wantSe: Record<string, string> = {
+    hip: '[100,145]',
+    chest: '[100,111]',
+    neck: '[100,77]',
+    head: '[100,64]',
+    sleeve_r: '[[66,84],[66,124]]->[84,124]',
+    sleeve_l: '[[134,84],[134,124]]->[116,124]',
+  };
+  const wrongSe = Object.entries(wantSe).filter(([n, v]) => boneAt(se.bones, n) !== v).map(([n, v]) => `${n} ${boneAt(se.bones, n)} (want ${v})`);
+  const seSegs = JSON.stringify(se.meshes.arm_b?.segments ?? null);
+  say(
+    'PR56_SEATED_JOINTS_PLACE_THE_HIP_AT_THE_HIPS_AND_EACH_SLEEVE_ALONG_ITS_BENT_ARM',
+    wrongSe.length === 0 &&
+      seSegs === '[["chest",[134,70],[134,86]],"sleeve_l"]' &&
+      lint(Pe, se, Je).findings.length === 0 &&
+      boneAt(seRule.bones, 'hip') === '[100,117]' &&
+      boneAt(seRule.bones, 'chest') === '[100,96]' &&
+      lint(Pe, seRule).findings.length === 0 &&
+      refusals(() => checkProposal(Pe, se)) === null,
+    `${wrongSe.length === 0 ? Object.keys(wantSe).map((n) => `${n} ${boneAt(se.bones, n)}`).join(', ') : `wrong: ${wrongSe.join('; ')}`}; arm_b ${seSegs}; the rule without joints: hip ${boneAt(seRule.bones, 'hip')}, chest ${boneAt(seRule.bones, 'chest')}, ${lint(Pe, seRule).findings.length} LINT line(s)`,
+    'a seated figure\'s hip is where its thighs leave the torso, not the top of the skirt; the rule places it 28 px high and the screen-y lines pass it, because a hip below the chest and inside the figure is all they can ask — the joints say where it is',
+  );
+
+  // Lying (landscape 300x200): neck (62, 100); hips (150, 92) and (150, 108) -> (150, 100); chest (106, 100). The arms lie
+  // along the body: r (75,67) -> (110,67), tip (145,67) on arm_a; l (75,133) -> (110,133), tip (145,133) on arm_b. The
+  // stub runs along d = (1, 0): 75 - 14 = 61 to 75 + 2 = 77. Read by screen y, this correct torso is a LINT line: hip y 100
+  // is not larger than chest y 100.
+  const wantLy: Record<string, string> = {
+    hip: '[150,100]',
+    chest: '[106,100]',
+    neck: '[62,100]',
+    head: '[40,114]',
+    sleeve_r: '[[75,67],[110,67]]->[145,67]',
+    sleeve_l: '[[75,133],[110,133]]->[145,133]',
+  };
+  const wrongLy = Object.entries(wantLy).filter(([n, v]) => boneAt(ly.bones, n) !== v).map(([n, v]) => `${n} ${boneAt(ly.bones, n)} (want ${v})`);
+  const lySegs = JSON.stringify(ly.meshes.arm_a?.segments ?? null);
+  const lyJoint = lint(Pl, ly, Jl);
+  const lyScreen = lint(Pl, ly).findings.map(lintLine);
+  say(
+    'PR57_LYING_JOINTS_PLACE_THE_TORSO_ALONG_THE_BODY_AND_LINT_READS_IT_THERE',
+    wrongLy.length === 0 &&
+      lySegs === '[["chest",[61,67],[77,67]],"sleeve_r"]' &&
+      lyJoint.findings.length === 0 &&
+      lyJoint.basis?.chains.every((c) => c.line !== null) === true &&
+      lyScreen.join('|') === 'LINT hip at [150, 100] is not below chest at [106, 100]: the hip must have the larger y, or breathing and the skirt hang from the shoulders' &&
+      refusals(() => checkProposal(Pl, ly)) === null,
+    `${wrongLy.length === 0 ? Object.keys(wantLy).map((n) => `${n} ${boneAt(ly.bones, n)}`).join(', ') : `wrong: ${wrongLy.join('; ')}`}; arm_a ${lySegs}; on the joints' rule set ${lyJoint.findings.length} LINT line(s); the same proposal read by screen y: ${lyScreen.join(' | ') || 'no line'}`,
+    'the card\'s case: a reclining figure\'s torso runs across the painting, so "the hip has the larger y" is false of a correct rig; with the joints the torso is read along neck -> hips, and the sleeves follow the arms the joints declare',
+  );
+
+  // The card's failure, without keypoints, is today's behaviour, byte for byte (the comparison with main is in the PR):
+  // the hip at the skirt's top + 7 = [160, 87], the chest at 126 + 0.5*(87 - 126) = 106.5 -> 106, both arms right of the eye
+  // axis (x 40) so one blob split at it: sleeve_r on x 40 at y 106, 117, 128, and sleeve_l [40,106], [123,117], [137,128]
+  // (fixtures/poses.ts) — six links off arm_a (dilated: x 55..164, y 45..88) and four off arm_b (y 111..154).
+  const lyOut = join(dir, 'pose-lying-out');
+  const noKp = runCli(['propose', '--parts', LY, '--source', join(LY, 'painting.png'), '--out', lyOut]);
+  const wantNoKp = [
+    ...['arm_a', 'arm_b'].flatMap((m) =>
+      [
+        ['sleeve_r0', '[40, 106]'],
+        ['sleeve_r1', '[40, 117]'],
+        ['sleeve_r2', '[40, 128]'],
+        ['sleeve_l0', '[40, 106]'],
+        ...(m === 'arm_a'
+          ? [
+              ['sleeve_l1', '[123, 117]'],
+              ['sleeve_l2', '[137, 128]'],
+            ]
+          : []),
+      ].map(([b, at]) => `LINT ${b} at ${at} is off the art of mesh '${m}'`),
+    ),
+    'LINT hip at [160, 87] is not below chest at [160, 106]: the hip must have the larger y, or breathing and the skirt hang from the shoulders',
+    '11 LINT line(s) over 3 mesh(es) and the hip',
+  ];
+  const printedNoKp = noKp.out.split('\n').filter((l) => l.startsWith('LINT ') || / LINT line\(s\) /.test(l));
+  const withKp = runCli(['propose', '--parts', LY, '--source', join(LY, 'painting.png'), '--out', join(dir, 'pose-lying-kp'), '--keypoints', join(LY, 'keypoints.json')]);
+  const printedKp = withKp.out.split('\n').filter((l) => l.startsWith('LINT ') || l.startsWith('lint ') || / LINT line\(s\) /.test(l));
+  say(
+    'PR58_WITHOUT_KEYPOINTS_THE_LYING_FIGURE_PRINTS_TODAYS_LINT_LINES_AND_WITH_THEM_NONE',
+    noKp.status === 0 &&
+      printedNoKp.join('|') === wantNoKp.join('|') &&
+      !noKp.out.includes('lint rule set') &&
+      !noKp.out.includes('keypoints:') &&
+      withKp.status === 0 &&
+      printedKp.filter((l) => l.startsWith('LINT ')).length === 0 &&
+      printedKp[0]?.startsWith('lint rule set: joints (person "a")') === true &&
+      printedKp[printedKp.length - 1] === '0 LINT line(s) over 3 mesh(es) and the hip',
+    `without --keypoints: ${printedNoKp.length - 1} LINT line(s), ${printedNoKp.join(' | ') === wantNoKp.join(' | ') ? 'every one as derived' : `NOT as derived: ${printedNoKp.join(' | ')}`}; with them: ${printedKp.join(' | ')}`,
+    'the negative control is today\'s behaviour: the card\'s own symptom — the hip not below the chest and the sleeve links off both arms\' art — must still print without the flag, line for line, so nothing about the default changed; with the joints the same figure lints clean',
+  );
+
+  // Every joint is said once and a missing one is never shown as observed. Standing: neck, the two hips, the six arm
+  // joints and the two eyes each get a line of their own; nose, the knees, the ankles (not listed) and the ears share the
+  // last. The checker is planted with a note list that says r_ear (missing) was observed.
+  const stNotes = jointNoteLines(st);
+  const sayingOf = (notes: readonly string[], n: string): number => notes.filter((l) => new RegExp(`(^|, |reads )${n} (observed|occluded|missing)`).test(l)).length;
+  const unsaid = KEYPOINT_NAMES.filter((n) => sayingOf(stNotes, n) !== 1);
+  const shownObserved = (notes: readonly string[], J: RigJoints): string[] => KEYPOINT_NAMES.filter((n) => J.joints[n].state !== 'observed' && notes.some((l) => l.includes(`${n} observed`)));
+  const plantedNotes = [...stNotes.slice(0, -1), stNotes[stNotes.length - 1].replace('r_ear missing', 'r_ear observed at [0.0, 0.0]')];
+  const wantStNotes = [
+    'keypoints: person "a" from "hand-written for the spine-parts selftest", painting 200x300 px to the 200x300 rig by the overlay\'s map (x * 200/200, y * 300/300); a joint with a position places its bone in place of the rule, a joint without one leaves the bone to its rule, and no bone is authored from a joint that no rule places',
+    'neck observed at [100.0, 98.0]: used as given for bone neck',
+    'r_hip observed at [90.0, 160.0]: used as given for bone hip, the midpoint of r_hip and l_hip — a point between two joints, not a joint',
+    'l_hip observed at [110.0, 160.0]: used as given for bone hip, the midpoint of r_hip and l_hip — a point between two joints, not a joint',
+    'chest: its rule, half way from neck to hip, taken along the line from neck [100.0, 98.0] to hip [100.0, 160.0] rather than down the screen',
+    'r_shoulder observed at [30.0, 104.0]: used as given for chain sleeve_r, link 0 (the wrist lies on sleeve_a)',
+    'r_elbow observed at [30.0, 130.0]: used as given for chain sleeve_r, link 1 (the wrist lies on sleeve_a)',
+    'r_wrist observed at [30.0, 152.0]: used as given for chain sleeve_r, the tip (the wrist lies on sleeve_a)',
+    'l_shoulder observed at [170.0, 104.0]: used as given for chain sleeve_l, link 0 (the wrist lies on sleeve_b)',
+    "l_elbow occluded at [170.0, 130.0] (score 0.4, the producer's): used as the producer's estimate for chain sleeve_l, link 1 (the wrist lies on sleeve_b)",
+    'l_wrist observed at [170.0, 152.0]: used as given for chain sleeve_l, the tip (the wrist lies on sleeve_b)',
+    'r_eye observed at [92.0, 63.0]: bone eye_r is measured off white_a (its box centre [91.0, 63.0]) and is not moved; the joint is 1.0 px from it',
+    'l_eye observed at [112.0, 67.0]: bone eye_l is measured off white_b (its box centre [109.0, 63.0]) and is not moved; the joint is 5.0 px from it',
+    'no rule reads nose observed at [100.0, 72.0], r_knee observed at [92.0, 230.0], r_ankle missing (not listed), l_knee observed at [108.0, 230.0], l_ankle missing (not listed), r_ear missing, l_ear occluded with no position — no bone is authored from them',
+  ];
+  say(
+    'PR59_EVERY_JOINT_IS_SAID_ONCE_AND_A_MISSING_ONE_IS_NEVER_SHOWN_AS_OBSERVED',
+    stNotes.join('\n') === wantStNotes.join('\n') && unsaid.length === 0 && shownObserved(stNotes, Js).length === 0 && shownObserved(plantedNotes, Js).join(',') === 'r_ear' && jointNoteLines(propose(Ps)).length === 0,
+    `${stNotes.length} keypoint note(s), ${stNotes.join('\n') === wantStNotes.join('\n') ? 'each as derived' : `NOT as derived: ${stNotes.join(' || ')}`}; joints said other than once: [${unsaid.join(', ')}]; shown as observed but not: [${shownObserved(stNotes, Js).join(', ')}]; planted (r_ear said observed): [${shownObserved(plantedNotes, Js).join(', ')}]; without joints ${jointNoteLines(propose(Ps)).length} keypoint note(s)`,
+    'every joint the proposer could use says how it was used — given, the producer\'s estimate, or the rule that stood in — and the rest are named with their state, so no joint is silent; the eye lines print the distance to the measured eye bone and apply no bar; a score is the producer\'s and is printed as given',
+  );
+
+  // A missing torso joint leaves its bone to the named rule. l_hip missing: the hip is the rule's, the skirt's top
+  // 150 + 0.14*50 = 157; the neck is still the joint's, so the chest is half way along (100,98) -> (100,157) = 127.5 -> 128
+  // (to even), and the torso joints declare no line, so LINT reads by screen y. neck missing (and the hips given): the
+  // neck is the rule's, 90 + 0.12*50 = 96, the hip the joints' 160, the chest (100, 128).
+  const noLHip = propose(Ps, poseJoints('standing', (k) => {
+    k.people[0].joints.l_hip = { state: 'missing' };
+  }));
+  const noNeck = propose(Ps, poseJoints('standing', (k) => {
+    delete k.people[0].joints.neck;
+  }));
+  const hipRule = 'the top of skirt (bottomwear) + 0.14 face heights';
+  const noLHipNotes = jointNoteLines(noLHip);
+  const noLHipBasis = lint(Ps, noLHip, poseJoints('standing', (k) => (k.people[0].joints.l_hip = { state: 'missing' })));
+  say(
+    'PR60_A_MISSING_TORSO_JOINT_LEAVES_ITS_BONE_TO_THE_RULE_THE_NOTE_NAMES',
+    boneAt(noLHip.bones, 'hip') === '[100,157]' &&
+      boneAt(noLHip.bones, 'chest') === '[100,128]' &&
+      noLHipNotes.includes(`r_hip observed at [90.0, 160.0]: not used — bone hip is the midpoint of r_hip and l_hip, and l_hip has no position; the rule "${hipRule}" placed bone hip instead`) &&
+      noLHipNotes.includes(`l_hip missing: the rule "${hipRule}" placed bone hip instead`) &&
+      noLHipBasis.basis?.torso.read === false &&
+      basisLines(noLHipBasis.basis as NonNullable<typeof noLHipBasis.basis>)[0] === 'lint rule set: screen — the torso joints do not declare a line (l_hip missing), so the hip is read by screen y as without keypoints; the off-art check is unchanged' &&
+      boneAt(noNeck.bones, 'neck') === '[100,96]' &&
+      boneAt(noNeck.bones, 'hip') === '[100,160]' &&
+      boneAt(noNeck.bones, 'chest') === '[100,128]' &&
+      jointNoteLines(noNeck).includes('neck missing (not listed): the rule "0.12 face heights below the chin, on the eye axis" placed bone neck instead'),
+    `l_hip missing: hip ${boneAt(noLHip.bones, 'hip')}, chest ${boneAt(noLHip.bones, 'chest')}, notes ${JSON.stringify(noLHipNotes.filter((n) => n.includes('_hip')))}, rule set ${basisLines(noLHipBasis.basis as NonNullable<typeof noLHipBasis.basis>)[0]}; neck unlisted: neck ${boneAt(noNeck.bones, 'neck')}, hip ${boneAt(noNeck.bones, 'hip')}, chest ${boneAt(noNeck.bones, 'chest')}`,
+    'a missing joint is not guessed from its neighbour: the rule the proposer always used places that bone, and the note names it; a hip is the point between two hip joints, so one alone is said to be unused rather than stood in for the pair',
+  );
+
+  // An arm whose joints are incomplete, or whose wrist does not say which sleeve it ends, hands every sleeve back to the
+  // rule (PR01's chains), and every arm joint's note says why. r_wrist missing on the standing figure: sleeve_a carries no
+  // complete arm. The seated r_wrist moved to (100, 124) lies within 15 px of both arms (arm_a x 60..89, arm_b x 110..139).
+  const noWrist = propose(Ps, poseJoints('standing', (k) => (k.people[0].joints.r_wrist = { state: 'missing' })));
+  const twoBlob = 'the two-blob sleeve rule (one chain per handwear blob, down its rows) stands in';
+  const why = 'sleeve_a carries the wrist of no arm whose three joints are given (r_wrist has no position)';
+  const between = propose(Pe, poseJoints('seated', (k) => (k.people[0].joints.r_wrist = { state: 'observed', at: [100, 124] })));
+  const betweenWhy = 'r_wrist at [100.0, 124.0] lies on the art of 2 handwear parts (arm_a, arm_b), so it does not say which sleeve it ends';
+  say(
+    'PR61_AN_ARM_WITHOUT_ITS_THREE_JOINTS_OR_A_WRIST_ON_TWO_SLEEVES_LEAVES_EVERY_SLEEVE_TO_THE_RULE',
+    boneAt(noWrist.bones, 'sleeve_r') === '[[30,115],[30,128],[30,140]]->[30,156]' &&
+      boneAt(noWrist.bones, 'sleeve_l') === '[[170,115],[170,128],[170,140]]->[170,156]' &&
+      jointNoteLines(noWrist).includes(`r_shoulder observed at [30.0, 104.0]: not used — ${why}; ${twoBlob}`) &&
+      jointNoteLines(noWrist).includes(`l_wrist observed at [170.0, 152.0]: not used — ${why}; ${twoBlob}`) &&
+      jointNoteLines(noWrist).includes(`r_wrist missing: ${twoBlob}`) &&
+      boneAt(between.bones, 'sleeve_r') === '[[66,95],[66,104],[70,114]]->[73,126]' &&
+      jointNoteLines(between).includes(`l_elbow observed at [134.0, 124.0]: not used — ${betweenWhy}; ${twoBlob}`),
+    `r_wrist missing: sleeve_r ${boneAt(noWrist.bones, 'sleeve_r')}, sleeve_l ${boneAt(noWrist.bones, 'sleeve_l')}; notes ${JSON.stringify(jointNoteLines(noWrist).filter((n) => n.startsWith('r_')))}; a wrist on two arms: sleeve_r ${boneAt(between.bones, 'sleeve_r')}`,
+    'a sleeve chain from joints needs the shoulder, elbow and wrist of one arm and the one part that arm ends in; with less, mixing one rule-placed sleeve beside a joint-placed one would read the parts by two rules at once, so the rule places all of them and each joint says why it was not used',
+  );
+
+  // Eye joints are compared with the eye bones, which are measured off the eyewhites and never moved: 1.0 px and 5.0 px
+  // (a 3-4-5 triangle) on the standing figure; planted 100 px off — the bone stays and no bar refuses it.
+  const far = propose(Ps, poseJoints('standing', (k) => (k.people[0].joints.l_eye = { state: 'observed', at: [109, 163] })));
+  say(
+    'PR62_AN_EYE_JOINT_PRINTS_ITS_DISTANCE_TO_THE_MEASURED_EYE_BONE_AND_MOVES_NOTHING',
+    boneAt(st.bones, 'eye_l') === boneAt(propose(Ps).bones, 'eye_l') &&
+      boneAt(far.bones, 'eye_l') === '[109,63]' &&
+      jointNoteLines(far).includes('l_eye observed at [109.0, 163.0]: bone eye_l is measured off white_b (its box centre [109.0, 63.0]) and is not moved; the joint is 100.0 px from it') &&
+      jointNoteLines(ly).includes('r_eye observed at [30.0, 85.0]: no bone takes it — an eye bone comes only from an eyewhite part'),
+    `eye_l with the joint 5 px off ${boneAt(st.bones, 'eye_l')}, with it 100 px off ${boneAt(far.bones, 'eye_l')}; ${jointNoteLines(far).find((n) => n.startsWith('l_eye')) ?? 'no l_eye note'}`,
+    'an eye bone is a measurement off its eyewhite part, not a ratio, so a joint does not override it; the distance between the two is a figure for the reader, and no bar is applied because none has been measured',
+  );
+
+  // The torso relations, each planted on the lying proposal, neck joint (62, 100), hips' midpoint (150, 100), so a point's
+  // share of the way is (x - 62) / 88. chest at [40, 100]: -22/88 = -0.25, not between. chest [130, 100] (68/88 = 0.77) with
+  // hip [120, 100] (58/88 = 0.66): the hip is not past the chest, and it is 58 px from the neck joint, 30 from the hips.
+  // hip [100, 100] (38/88) with chest [80, 100] (18/88): in order, but 38 px from the neck joint and 50 from the hips.
+  const plantTorso = (moves: Record<string, [number, number]>): string[] =>
+    lint(Pl, { bones: ly.bones.map((b) => ('name' in b && b.name in moves ? { ...b, at: moves[b.name] } : b)), meshes: ly.meshes }, Jl)
+      .findings.filter((f) => f.kind !== 'off-art')
+      .map(lintLine);
+  const notBetween = plantTorso({ chest: [40, 100] });
+  say(
+    'PR63_WITH_JOINTS_A_CHEST_NOT_BETWEEN_THE_NECK_AND_THE_HIPS_IS_A_LINT_LINE',
+    notBetween.join('|') === 'LINT chest at [40, 100] is not between the neck joint [62.0, 100.0] and the midpoint of the hip joints [150.0, 100.0]: it falls at -0.25 of the way from one to the other, and strictly between 0 and 1 is required' &&
+      plantTorso({}).length === 0,
+    `planted chest [40, 100]: ${notBetween.join(' | ') || 'no line'}; the proposal: ${plantTorso({}).length} line(s)`,
+    'the chest is read off the joints, half way between them; a chest outside the segment the joints declare breathes from outside the torso, whichever way the torso lies',
+  );
+  const notPast = plantTorso({ chest: [130, 100], hip: [120, 100] });
+  say(
+    'PR64_WITH_JOINTS_A_HIP_NOT_PAST_THE_CHEST_ALONG_NECK_TO_HIPS_IS_A_LINT_LINE',
+    notPast.join('|') === 'LINT hip at [120, 100] is not past chest at [130, 100] on the way from the neck joint to the hip joints (hip at 0.66, chest at 0.77 of the way): breathing and the skirt hang from the wrong end of the torso',
+    `planted hip [120, 100], chest [130, 100]: ${notPast.join(' | ') || 'no line'}`,
+    'the joint-frame form of "hip not below chest": below means further along the line from the neck to the hips, which is down the screen only for a figure standing upright',
+  );
+  const nearNeck = plantTorso({ chest: [80, 100], hip: [100, 100] });
+  say(
+    'PR65_WITH_JOINTS_A_HIP_NEARER_THE_NECK_JOINT_THAN_THE_HIPS_IS_A_LINT_LINE',
+    nearNeck.join('|') === 'LINT hip at [100, 100] is nearer the neck joint [62.0, 100.0] (38.0 px) than the midpoint of the hip joints [150.0, 100.0] (50.0 px): a hip at the shoulders',
+    `planted hip [100, 100], chest [80, 100]: ${nearNeck.join(' | ') || 'no line'}`,
+    'the joint-frame form of "hip above a quarter of the figure": a hip nearer the neck than the hips is a hip at the shoulders, and the bar is the midpoint the definition gives, not a measured fraction',
+  );
+
+  // A sleeve chain must advance from its shoulder toward its wrist: sleeve_r's link 1 planted at [60, 67] falls 15 px
+  // behind the shoulder (75, 67) along (1, 0) — still on arm_a's art (x 55..164), so only this line fires.
+  const backwards = lint(Pl, { bones: ly.bones.map((b) => ('chain' in b && b.chain === 'sleeve_r' ? { ...b, points: [b.points[0], [60, 67] as [number, number]] } : b)), meshes: ly.meshes }, Jl).findings.map(lintLine);
+  say(
+    'PR66_WITH_JOINTS_A_SLEEVE_LINK_THAT_DOES_NOT_ADVANCE_FROM_SHOULDER_TO_WRIST_IS_A_LINT_LINE',
+    backwards.join('|') === 'LINT sleeve_r1 at [60, 67] does not advance from r_shoulder toward r_wrist: it falls -15.0 px along that line and sleeve_r0 0.0 px, and each must fall further than the one before',
+    `planted sleeve_r1 [60, 67]: ${backwards.join(' | ') || 'no line'}`,
+    'a sleeve chain is the arm the joints declare, so its links run from the shoulder toward the wrist; a link that doubles back bends the sleeve against its own arm, which no screen-y rule can see on an arm lying across the painting',
+  );
+
+  // Without the neck joint the lying figure's torso joints declare no line: the screen rules run, and fire on the joint
+  // hip [150, 100] under the chest half way to the rule's neck (40, 126): (95, 113). A neck at the hips' midpoint declares
+  // no line either.
+  const noNeckJ = poseJoints('lying', (k) => delete k.people[0].joints.neck);
+  const lyNoNeck = propose(Pl, noNeckJ);
+  const lyNoNeckLint = lint(Pl, lyNoNeck, noNeckJ);
+  const onePoint = lint(Pl, ly, poseJoints('lying', (k) => (k.people[0].joints.neck = { state: 'observed', at: [150, 100] })));
+  say(
+    'PR67_WITHOUT_THE_TORSO_JOINTS_THE_SCREEN_RULES_RUN_AND_THE_RULE_SET_LINE_SAYS_WHY',
+    lyNoNeckLint.basis?.torso.read === false &&
+      lyNoNeckLint.findings.map(lintLine).join('|') === 'LINT hip at [150, 100] is not below chest at [95, 113]: the hip must have the larger y, or breathing and the skirt hang from the shoulders' &&
+      basisLines(lyNoNeckLint.basis as NonNullable<typeof lyNoNeckLint.basis>)[0].includes('(neck missing (not listed))') &&
+      onePoint.basis?.torso.read === false &&
+      basisLines(onePoint.basis as NonNullable<typeof onePoint.basis>)[0].includes('neck and the midpoint of r_hip and l_hip are one point, [150.0, 100.0], so they declare no line'),
+    `neck unlisted: ${basisLines(lyNoNeckLint.basis as NonNullable<typeof lyNoNeckLint.basis>)[0]}; ${lyNoNeckLint.findings.map(lintLine).join(' | ')}; neck on the hips: ${basisLines(onePoint.basis as NonNullable<typeof onePoint.basis>)[0]}`,
+    'the relation checks replace the screen rules only where the joints declare the torso; elsewhere the rules that ran before still run, and the first line says which set ran and on what basis',
+  );
+
+  // The three keypoint proposals pasted into configs, through rig and check: every one rigs green, the standing figure
+  // checks PASS, and the joint-placed sleeves of all three swing tip over root. The seated and lying skirts are measured too.
+  const builds = (['standing', 'seated', 'lying'] as const).map((name) => {
+    const d = { standing: SP, seated: SE, lying: LY }[name];
+    const p = { standing: st, seated: se, lying: ly }[name];
+    const cfgPath = join(d, 'config-kp.json');
+    writeFileSync(cfgPath, JSON.stringify(proposalConfig(POSES[name].parts, p)));
+    const rig = runCli(['rig', '--config', cfgPath, '--parts', d, '--out', join(d, 'rig-kp')]);
+    const chk = runCli(['check', '--rig', join(d, 'rig-kp'), '--parts', d, '--out', join(d, 'check-kp')]);
+    const tip = (chk.out.split('\n').find((l) => l.includes('TIP_OVER_ROOT:')) ?? '').trim();
+    const ratios = [...tip.matchAll(/part (\w+), root_px [0-9.]+, tip_px [0-9.]+, ratio ([0-9.]+|null)/g)].map((m) => [m[1], m[2]] as const);
+    const floor = Number(/ratio_floor ([0-9.]+)/.exec(tip)?.[1] ?? 'NaN');
+    const arms = ratios.filter(([n]) => POSES[name].parts.some((q) => q.name === n && q.from.includes('handwear')));
+    return { name, rig: rig.status, check: chk.status, verdict: (chk.out.split('\n').find((l) => l.startsWith('check: ')) ?? '').trim(), arms, floor, tip };
+  });
+  say(
+    'PR68_THE_THREE_KEYPOINT_PROPOSALS_RIG_GREEN_AND_THEIR_SLEEVES_SWING_TIP_OVER_ROOT',
+    builds.every((b) => b.rig === 0 && b.arms.length === 2 && b.arms.every(([, r]) => r !== 'null' && Number(r) >= b.floor)) && builds[0].check === 0,
+    builds.map((b) => `${b.name}: rig exit ${b.rig}, ${b.verdict}; sleeves ${b.arms.map(([n, r]) => `${n} ${r}`).join(', ')} against ${b.floor}`).join('; '),
+    'the joints place bones a rig must still carry: each proposal clears rigc\'s gate, and each joint-placed sleeve moves more at the hand than at the shoulder; the seated and lying skirts hang down the screen from a hip in the middle of the body and move nothing, with or without keypoints, which check names (TIP_OVER_ROOT) and this card does not change',
+  );
+
+  // Without keypoints nothing moves; with them no bone is authored that the rules did not already name (ruling 8).
+  const names = (p: Proposal): string[] => p.bones.map((b) => ('name' in b ? b.name : b.chain)).sort();
+  const cases: Array<[string, PartSet, Proposal]> = [
+    ['standing', Ps, st],
+    ['seated', Pe, se],
+    ['lying', Pl, ly],
+  ];
+  const same = cases.filter(([, P]) => serializeProposal(propose(P)) === serializeProposal(propose(P, undefined)) && lint(P, propose(P)).basis === undefined);
+  const extra = cases.flatMap(([n, P, p]) => names(p).filter((b) => !names(propose(P)).includes(b)).map((b) => `${n}:${b}`));
+  const plantedExtra = names({ ...st, bones: [...st.bones, { name: 'knee_r', parent: 'hip', at: [92, 230] }] }).filter((b) => !names(propose(Ps)).includes(b));
+  const moved = cases.filter(([, P, p]) => serializeProposal(p) !== serializeProposal(propose(P)));
+  say(
+    'PR69_WITHOUT_KEYPOINTS_NOTHING_MOVES_AND_WITH_THEM_NO_BONE_IS_AUTHORED',
+    same.length === 3 && moved.length === 3 && extra.length === 0 && plantedExtra.join(',') === 'knee_r',
+    `${same.length} of 3 poses propose the same bytes with the parameter absent and no LINT basis; with keypoints ${moved.length} of 3 differ (the comparison can see a move); bones a keypoint run adds: [${extra.join(', ')}]; planted knee_r: [${plantedExtra.join(', ')}]`,
+    'ruling 7 and 8: the default path is the old one, and the joints say where joints are — the knees and ankles are read and named, but no leg, auxiliary or control bone is made from them',
+  );
+}
+
+// ---------------------------------------------------------------------------
+// the keypoint file and the door (issue #75)
+// ---------------------------------------------------------------------------
+
+function runKeypointsSuite(): number {
+  section('keypoints: the file, the person, the map and the door');
+  const { say, bad } = counter();
+  const dir = temp('keypoints');
+  try {
+    const base = (): KeypointJson => structuredClone(POSES.standing.keypoints) as KeypointJson;
+    const parse = (k: unknown): ReturnType<typeof parseKeypoints> => parseKeypoints(k, 'kp.json');
+    const f = parse(base());
+    const j = f.people[0].joints;
+    say(
+      'KP01_A_WELL_FORMED_FILE_LOADS_AND_AN_UNLISTED_JOINT_IS_MISSING',
+      f.width === 200 &&
+        f.height === 300 &&
+        f.source === 'hand-written for the spine-parts selftest' &&
+        f.people.length === 1 &&
+        f.people[0].id === 'a' &&
+        Object.keys(j).join(',') === KEYPOINT_NAMES.join(',') &&
+        JSON.stringify(j.r_ankle) === '{"state":"missing","at":null,"score":null,"listed":false}' &&
+        JSON.stringify(j.r_ear) === '{"state":"missing","at":null,"score":null,"listed":true}' &&
+        JSON.stringify(j.l_ear) === '{"state":"occluded","at":null,"score":null,"listed":true}' &&
+        JSON.stringify(j.l_elbow) === '{"state":"occluded","at":[170,130],"score":0.4,"listed":true}' &&
+        JSON.stringify(j.neck) === '{"state":"observed","at":[100,98],"score":null,"listed":true}',
+      `${f.width}x${f.height}, source ${JSON.stringify(f.source)}, person ${f.people[0].id}; r_ankle ${JSON.stringify(j.r_ankle)}; l_elbow ${JSON.stringify(j.l_elbow)}`,
+      'every body-18 joint is present after reading, so nothing downstream meets an absent name; a joint the file does not list is missing, said as not listed; an occluded joint keeps its position as the producer\'s estimate and its score as the producer\'s',
+    );
+
+    const wrongSpec = refusals(() => parse({ ...base(), spec: 'spine-parts-keypoints/2' }));
+    const noSpec = refusals(() => {
+      const k = base();
+      delete k.spec;
+      parse(k);
+    });
+    say(
+      'KP02_THE_SPEC_TAG_IS_REQUIRED_AND_HELD',
+      codes(wrongSpec) === 'KEYPOINTS_SPEC_KNOWN kp.json.spec' && codes(noSpec) === 'KEYPOINTS_FIELD_PRESENT kp.json.spec' && wrongSpec?.problems[0].detail === `is "spine-parts-keypoints/2"; "${KEYPOINTS_SPEC}" is required`,
+      `spec /2 -> ${codes(wrongSpec)}; no spec -> ${codes(noSpec)}`,
+      'the tag says which reading of the file is meant; a file written for another version is refused rather than read as this one',
+    );
+
+    const space = refusals(() => parse({ ...base(), space: { units: 'normalised', origin: 'bottom-left', y: 'up', z: 'none' } }));
+    say(
+      'KP03_ANOTHER_COORDINATE_SPACE_IS_REFUSED_FIELD_BY_FIELD',
+      codes(space) === 'KEYPOINTS_KEY_KNOWN kp.json.space.z; KEYPOINTS_SPACE_STATED kp.json.space.units; KEYPOINTS_SPACE_STATED kp.json.space.origin; KEYPOINTS_SPACE_STATED kp.json.space.y' &&
+        space?.problems[1].detail.startsWith('is "normalised"; "painting-px" is required') === true &&
+        refusals(() => parse({ ...base(), space: { ...KEYPOINTS_SPACE } })) === null,
+      `${codes(space)}; ${space?.problems[1].detail ?? ''}`,
+      'a pose estimator may write normalised or y-up coordinates; read as painting pixels they would put every joint somewhere plausible and wrong, so the space is stated in the file and anything else is refused by field',
+    );
+
+    const types = refusals(() => parse({ ...base(), width: 0, height: 1.5, source: ' ', people: [] }));
+    say(
+      'KP04_WIDTH_HEIGHT_SOURCE_AND_PEOPLE_ARE_HELD_TO_THEIR_TYPES',
+      codes(types) === 'KEYPOINTS_FIELD_TYPE kp.json.width; KEYPOINTS_FIELD_TYPE kp.json.height; KEYPOINTS_FIELD_TYPE kp.json.source; KEYPOINTS_FIELD_TYPE kp.json.people',
+      codes(types),
+      'the size is a whole pixel count, the source a non-empty statement of what produced the file, and there is at least one person: none of them has a default',
+    );
+
+    const unknownJoint = refusals(() => {
+      const k = base();
+      k.people[0].joints.r_hand = { state: 'observed', at: [1, 1] };
+      k.people[0].joints.R_shoulder = { state: 'observed', at: [1, 1] };
+      parse(k);
+    });
+    say(
+      'KP05_AN_UNKNOWN_JOINT_NAME_IS_REFUSED_BY_NAME',
+      codes(unknownJoint) === 'KEYPOINTS_JOINT_KNOWN kp.json.people[0].joints.r_hand; KEYPOINTS_JOINT_KNOWN kp.json.people[0].joints.R_shoulder' && unknownJoint?.problems[0].detail.includes(KEYPOINT_NAMES.join(', ')) === true,
+      codes(unknownJoint),
+      'the names are body-18\'s, read from src/skeleton.ts; a name outside them is not mapped to a near one (r_hand is not r_wrist)',
+    );
+
+    const outside = refusals(() => {
+      const k = base();
+      k.people[0].joints.nose = { state: 'observed', at: [201, 10] };
+      k.people[0].joints.neck = { state: 'occluded', at: [-1, 0] };
+      parse(k);
+    });
+    const edge = refusals(() => {
+      const k = base();
+      k.people[0].joints.nose = { state: 'observed', at: [200, 300] };
+      k.people[0].joints.neck = { state: 'observed', at: [0, 0] };
+      parse(k);
+    });
+    say(
+      'KP06_A_POSITION_OUTSIDE_THE_IMAGE_IS_REFUSED_AND_THE_EDGES_ARE_INSIDE',
+      codes(outside) === 'KEYPOINTS_POSITION_INSIDE kp.json.people[0].joints.nose.at; KEYPOINTS_POSITION_INSIDE kp.json.people[0].joints.neck.at' && edge === null,
+      `[201, 10] and [-1, 0] -> ${codes(outside)}; [200, 300] and [0, 0] -> ${codes(edge)}`,
+      'a joint outside the image it was measured on is a joint on another image; the edges are continuous coordinates of this one, so they are inside',
+    );
+
+    const dup = refusals(() => {
+      const k = base();
+      k.people.push({ id: 'a', joints: {} });
+      parse(k);
+    });
+    say(
+      'KP07_A_DUPLICATE_PERSON_ID_IS_REFUSED',
+      codes(dup) === 'KEYPOINTS_PERSON_UNIQUE kp.json.people[1].id',
+      `${codes(dup)}: ${dup?.problems[0].detail ?? ''}`,
+      '--person chooses by id, so two people with one id are a choice nobody can make',
+    );
+
+    const states = refusals(() => {
+      const k = base();
+      k.people[0].joints.nose = { state: 'observed' };
+      k.people[0].joints.r_ear = { state: 'missing', at: [1, 1] };
+      k.people[0].joints.l_ear = { state: 'visible', at: [1, 1] };
+      parse(k);
+    });
+    say(
+      'KP08_EACH_STATE_SAYS_WHAT_IT_IS',
+      codes(states).split('; ').sort().join('; ') ===
+        ['KEYPOINTS_POSITION_STATED kp.json.people[0].joints.nose.at', 'KEYPOINTS_JOINT_STATE kp.json.people[0].joints.l_ear.state', 'KEYPOINTS_POSITION_STATED kp.json.people[0].joints.r_ear.at'].sort().join('; ') &&
+        f.people[0].joints.l_ear.state === 'occluded',
+      `observed with no position, missing with one, state "visible" -> ${codes(states)}; occluded with none (the standing file's l_ear) loads`,
+      'an observed joint is a position, a missing one has none, and an occluded one may carry the producer\'s estimate; a state outside the three is not mapped to one of them',
+    );
+
+    const keys = refusals(() => {
+      const k = base() as KeypointJson & { people: Array<Record<string, unknown> & { joints: Record<string, unknown> }> };
+      k.format = 'coco';
+      k.people[0].name = 'x';
+      k.people[0].joints.neck = { state: 'observed', at: [100, 98], confidence: 0.9 };
+      parse(k);
+    });
+    say(
+      'KP09_AN_UNKNOWN_KEY_IS_REFUSED_AT_EVERY_LEVEL',
+      codes(keys) === 'KEYPOINTS_KEY_KNOWN kp.json.format; KEYPOINTS_KEY_KNOWN kp.json.people[0].name; KEYPOINTS_KEY_KNOWN kp.json.people[0].joints.neck.confidence',
+      codes(keys),
+      'a key this reader does not know is a value someone meant and nobody reads; "confidence" is not "score", and is refused rather than taken for it',
+    );
+
+    const many = refusals(() => parse({ ...base(), spec: 'x', width: -1, source: '', format: 1, people: [{ id: '', joints: { knee: {} } }] }));
+    say(
+      'KP10_EVERY_PROBLEM_IS_COLLECTED_AND_THROWN_ONCE',
+      many !== null && many.problems.length === 6 && new Set(many.problems.map((p) => p.code)).size === 4,
+      `one throw, ${many?.problems.length ?? 0} problem(s): ${codes(many)}`,
+      'one run names everything wrong with the file, as the config loader does, rather than one problem per attempt',
+    );
+
+    const absent = refusals(() => loadKeypoints(join(dir, 'nowhere.json')));
+    writeFileSync(join(dir, 'bad.json'), '{"spec": ');
+    const notJson = refusals(() => loadKeypoints(join(dir, 'bad.json')));
+    say(
+      'KP11_THE_FILE_MUST_EXIST_AND_PARSE',
+      absent?.problems[0].code === 'KEYPOINTS_FILE_PRESENT' && notJson?.problems[0].code === 'KEYPOINTS_IS_JSON',
+      `absent -> ${codes(absent)}; truncated -> ${codes(notJson)}`,
+      'a path that names nothing and a file that is not JSON are refused by name before anything is read from them',
+    );
+
+    const two = parse({ ...base(), people: [base().people[0], { id: 'b', joints: { neck: { state: 'observed', at: [10, 10] } } }] });
+    const unchosen = refusals(() => choosePerson(two, undefined, 'kp.json'));
+    const wrongId = refusals(() => choosePerson(two, 'c', 'kp.json'));
+    say(
+      'KP12_MORE_THAN_ONE_PERSON_NEEDS_PERSON_AND_NOTHING_PICKS_ONE',
+      codes(unchosen) === 'KEYPOINTS_PERSON_CHOSEN kp.json' &&
+        unchosen?.problems[0].detail.includes('holds 2 people ("a", "b")') === true &&
+        codes(wrongId) === 'KEYPOINTS_PERSON_CHOSEN --person c' &&
+        choosePerson(two, 'b', 'kp.json').id === 'b' &&
+        choosePerson(f, undefined, 'kp.json').id === 'a',
+      `two people, no --person -> ${unchosen?.problems[0].detail ?? 'nothing'}; --person c -> ${codes(wrongId)}; --person b -> ${choosePerson(two, 'b', 'kp.json').id}; one person, no --person -> ${choosePerson(f, undefined, 'kp.json').id}`,
+      'the largest or the first person is a guess about which figure is the character; the file names the people and the caller names the one',
+    );
+
+    const sizeWrong = refusals(() => checkImageSize(f, 300, 200, 'kp.json', 'painting.png'));
+    say(
+      'KP13_THE_IMAGE_SIZE_IS_HELD_TO_THE_PAINTING',
+      codes(sizeWrong) === 'KEYPOINTS_IMAGE_SIZE kp.json width, height' && sizeWrong?.problems[0].detail.startsWith('are 200x300; the painting painting.png is 300x200') === true && refusals(() => checkImageSize(f, 200, 300, 'kp.json', 'painting.png')) === null,
+      `200x300 against a 300x200 painting -> ${sizeWrong?.problems[0].detail ?? 'nothing'}; against 200x300 -> nothing`,
+      'a keypoint file measured on another size of image (a resized copy, the square See-through input) has its joints elsewhere on this one; it is refused rather than rescaled by a guess',
+    );
+
+    // The map is the overlay's: drawLandmarks resizes a 600x400 painting onto the 300x200 rig. A black 2x2 block at painting
+    // (450..451, 350..351), centre (451, 351), maps to (225.5, 175.5), in rig pixel (225, 175); that pixel must be the darkest
+    // the overlay draws there, clear of every part outline and grid line (x 200 and 250, y 150 and 200).
+    const ldir = join(dir, 'lying');
+    writeProposeFixture(ldir, LYING_PARTS, LYING_RIG);
+    const LP = readPartSet(ldir);
+    const big = newRaster(600, 400);
+    for (let i = 0; i < 600 * 400; i++) big.data.set([255, 255, 255, 255], i * 4);
+    for (const [x, y] of [
+      [450, 350],
+      [451, 350],
+      [450, 351],
+      [451, 351],
+    ]) big.data.set([0, 0, 0, 255], (y * 600 + x) * 4);
+    const overlay = drawLandmarks(LP, big, [], '').full;
+    let dark: [number, number] = [-1, -1];
+    let least = 999;
+    for (let y = 160; y < 190; y++) {
+      for (let x = 210; x < 240; x++) {
+        const v = overlay.data[(y * 300 + x) * 4];
+        if (v < least) {
+          least = v;
+          dark = [x, y];
+        }
+      }
+    }
+    const wide = parse({ ...base(), width: 600, height: 400, people: [{ id: 'a', joints: { neck: { state: 'observed', at: [451, 351] }, nose: { state: 'observed', at: [600, 400] } } }] });
+    const rj = toRigJoints(wide, wide.people[0], 300, 200);
+    say(
+      'KP14_PAINTING_PX_REACH_RIG_PX_BY_THE_OVERLAYS_OWN_MAP',
+      JSON.stringify(rj.joints.neck.at) === '[225.5,175.5]' && JSON.stringify(rj.joints.nose.at) === '[300,200]' && dark.join(',') === '225,175' && rj.joints.r_ear.at === null,
+      `painting (451, 351) of 600x400 -> rig ${JSON.stringify(rj.joints.neck.at)} on 300x200; (600, 400) -> ${JSON.stringify(rj.joints.nose.at)}; the overlay's darkest pixel near the planted block: ${dark.join(',')} (value ${least})`,
+      'the bones are drawn over the painting the overlay resized onto the rig, so a joint must land where the overlay puts the painting pixel it was measured on — one map, x * W/width and y * H/height, not assemble\'s rig_scale, which truncates the canvas',
+    );
+
+    // The code, not the doc comment, whose example file names joints as a file would.
+    const src = readFileSync(join(ROOT, 'src', 'keypoints.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    const literal = new RegExp(`['"](${KEYPOINT_NAMES.join('|')})['"]`);
+    const copied = `${src}\nconst NAMES = ['nose', 'neck'];\n`;
+    say(
+      'KP15_THE_LOADER_IMPORTS_THE_BODY_18_NAMES_RATHER_THAN_COPYING_THEM',
+      /import \{[^}]*KEYPOINT_NAMES[^}]*\} from '\.\/skeleton\.ts'/.test(src) && !literal.test(src) && literal.test(copied),
+      `src/keypoints.ts imports KEYPOINT_NAMES from ./skeleton.ts: ${/from '\.\/skeleton\.ts'/.test(src)}; a quoted joint name in it: ${literal.exec(src)?.[0] ?? 'none'}; planted copy: ${literal.exec(copied)?.[0] ?? 'NOT SEEN'}`,
+      'one vocabulary: the names the generation adapter draws are the names this reader accepts, and a second list would drift from the first in silence',
+    );
+
+    // The door. The lying figure: a good file writes the proposal; a file with a joint outside the image, or measured on
+    // another size, is refused by name and writes nothing.
+    const LY = join(dir, 'door');
+    writeProposeFixture(LY, LYING_PARTS, LYING_RIG);
+    const good = join(dir, 'lying.json');
+    writeFileSync(good, JSON.stringify(POSES.lying.keypoints));
+    const off = join(dir, 'off.json');
+    const offK = structuredClone(POSES.lying.keypoints) as KeypointJson;
+    offK.people[0].joints.r_ankle = { state: 'observed', at: [310, 95] };
+    writeFileSync(off, JSON.stringify(offK));
+    const sized = join(dir, 'sized.json');
+    writeFileSync(sized, JSON.stringify({ ...POSES.lying.keypoints, width: 600, height: 400 }));
+    const run = (kp: string, out: string, extra: string[] = []): { status: number; out: string } => runCli(['propose', '--parts', LY, '--source', join(LY, 'painting.png'), '--out', join(dir, out), '--keypoints', kp, ...extra]);
+    const ok = run(good, 'ok');
+    const offRun = run(off, 'off');
+    const sizedRun = run(sized, 'sized');
+    const written = (out: string): boolean => existsSync(join(dir, out, 'proposal.json'));
+    const okNotes = written('ok') ? (JSON.parse(readFileSync(join(dir, 'ok', 'proposal.json'), 'utf8')) as Proposal).notes : [];
+    say(
+      'KP16_THE_DOOR_WRITES_ONLY_AFTER_GREEN_AND_REFUSES_BY_NAME',
+      ok.status === 0 &&
+        okNotes.some((n) => n.startsWith('keypoints: person "a"')) &&
+        offRun.status === 1 &&
+        /^ {2}FAIL {2}KEYPOINTS_POSITION_INSIDE: .*joints\.r_ankle\.at — is \[310, 95\]; a point inside the 300x200 image is required/m.test(offRun.out) &&
+        !written('off') &&
+        sizedRun.status === 1 &&
+        sizedRun.out.includes('KEYPOINTS_IMAGE_SIZE') &&
+        !written('sized'),
+      `good file: exit ${ok.status}, proposal.json ${written('ok') ? 'written' : 'NOT written'}; r_ankle at [310, 95]: exit ${offRun.status}, ${(offRun.out.split('\n').find((l) => l.includes('FAIL')) ?? '').trim()}, proposal.json ${written('off') ? 'WRITTEN' : 'not written'}; 600x400: exit ${sizedRun.status}, proposal.json ${written('sized') ? 'WRITTEN' : 'not written'}`,
+      'emit only after green: a proposal from a file that was refused is not on disk to be pasted',
+    );
+
+    const twoFile = join(dir, 'two.json');
+    writeFileSync(twoFile, JSON.stringify({ ...POSES.lying.keypoints, people: [...(POSES.lying.keypoints.people as unknown[]), { id: 'b', joints: {} }] }));
+    const noPerson = run(twoFile, 'two');
+    const personB = run(twoFile, 'two-b', ['--person', 'b']);
+    const bNotes = existsSync(join(dir, 'two-b', 'proposal.json')) ? (JSON.parse(readFileSync(join(dir, 'two-b', 'proposal.json'), 'utf8')) as Proposal).notes : [];
+    say(
+      'KP17_AT_THE_DOOR_TWO_PEOPLE_NEED_PERSON',
+      noPerson.status === 1 && noPerson.out.includes('KEYPOINTS_PERSON_CHOSEN') && noPerson.out.includes('("a", "b")') && !written('two') && personB.status === 0 && bNotes.some((n) => n.startsWith('keypoints: person "b"')) && bNotes.some((n) => n.startsWith('neck missing (not listed): the rule')),
+      `no --person: exit ${noPerson.status}, ${(noPerson.out.split('\n').find((l) => l.includes('FAIL')) ?? '').trim()}; --person b: exit ${personB.status}, every joint of b missing, so every bone is the rule's: ${bNotes.find((n) => n.startsWith('neck')) ?? 'no neck note'}`,
+      'the door holds the same rule as the reader: a choice between people is the caller\'s, and a person with no joints is a proposal from the rules, said joint by joint',
+    );
+
+    // --from-config with keypoints lints the CONFIG by the joints: today's lying proposal (no keypoints) pasted as a config
+    // gets, besides its ten off-art lines, two torso lines (its chest at 98/88 = 1.11 of the way, its hip at the same 1.11)
+    // and four chain lines: sleeve_r's links and tip all at x 40, -35 px along r_shoulder (75,67) -> r_wrist (145,67), and
+    // sleeve_l's tip at x 110, 35 px, behind its link 2 at x 137, 62 px. Without --keypoints the same config prints the
+    // eleven lines of PR58.
+    const rule = propose(readPartSet(LY));
+    const cfgPath = join(dir, 'lying-rule.json');
+    writeFileSync(cfgPath, JSON.stringify(proposalConfig(LYING_PARTS, rule)));
+    const fromCfg = runCli(['propose', '--parts', LY, '--source', join(LY, 'painting.png'), '--out', join(dir, 'fc'), '--from-config', cfgPath, '--keypoints', good]);
+    const fromCfgPlain = runCli(['propose', '--parts', LY, '--source', join(LY, 'painting.png'), '--out', join(dir, 'fc2'), '--from-config', cfgPath]);
+    const lintOut = fromCfg.out.split('\n').filter((l) => l.startsWith('LINT ') && !l.includes('off the art'));
+    const wantFc = [
+      'LINT chest at [160, 106] is not between the neck joint [62.0, 100.0] and the midpoint of the hip joints [150.0, 100.0]: it falls at 1.11 of the way from one to the other, and strictly between 0 and 1 is required',
+      'LINT hip at [160, 87] is not past chest at [160, 106] on the way from the neck joint to the hip joints (hip at 1.11, chest at 1.11 of the way): breathing and the skirt hang from the wrong end of the torso',
+      'LINT sleeve_r1 at [40, 117] does not advance from r_shoulder toward r_wrist: it falls -35.0 px along that line and sleeve_r0 -35.0 px, and each must fall further than the one before',
+      'LINT sleeve_r2 at [40, 128] does not advance from r_shoulder toward r_wrist: it falls -35.0 px along that line and sleeve_r1 -35.0 px, and each must fall further than the one before',
+      'LINT sleeve_r tip at [40, 136] does not advance from r_shoulder toward r_wrist: it falls -35.0 px along that line and sleeve_r2 -35.0 px, and each must fall further than the one before',
+      'LINT sleeve_l tip at [110, 136] does not advance from l_shoulder toward l_wrist: it falls 35.0 px along that line and sleeve_l2 62.0 px, and each must fall further than the one before',
+    ];
+    say(
+      'KP18_FROM_CONFIG_WITH_KEYPOINTS_LINTS_THE_CONFIG_BY_THE_JOINTS',
+      fromCfg.status === 1 &&
+        lintOut.join('|') === wantFc.join('|') &&
+        fromCfg.out.includes('16 LINT line(s) over 3 mesh(es) and the hip') &&
+        fromCfg.out.split('\n')[1]?.startsWith('lint rule set: joints') === true &&
+        fromCfgPlain.out.includes('11 LINT line(s) over 3 mesh(es) and the hip') &&
+        !fromCfgPlain.out.includes('lint rule set'),
+      `with --keypoints: exit ${fromCfg.status}, ${lintOut.length} joint line(s)${lintOut.join('|') === wantFc.join('|') ? ', each as derived' : `: ${lintOut.join(' | ')}`}; ${(fromCfg.out.split('\n').find((l) => / LINT line\(s\) /.test(l)) ?? '').trim()}; without: ${(fromCfgPlain.out.split('\n').find((l) => / LINT line\(s\) /.test(l)) ?? '').trim()}`,
+      'a corrected config is linted by the same joints the proposal was made from, so a correction that put the hip back at the top of the screen is caught; the screen rule sees one torso fault in the card\'s figure, the joints see the chest outside the torso and both sleeves running the wrong way',
+    );
+
+    const scored = jointNoteLines(propose(readPartSet(LY), poseJoints('lying')));
+    say(
+      'KP19_A_SCORE_IS_RECORDED_AS_THE_PRODUCERS_AND_NO_CONFIDENCE_IS_COMPUTED',
+      scored.length > 0 &&
+        scored.every((n) => !n.includes('score')) &&
+        jointNoteLines(propose(readPartSet(LY), poseJoints('lying', (k) => (k.people[0].joints.nose = { state: 'observed', at: [35, 95], score: 0.25 })))).some((n) => n.includes("nose observed at [35.0, 95.0] (score 0.25, the producer's)")) &&
+        !/confidence|Math\.(exp|log)\b/.test(readFileSync(join(ROOT, 'src', 'keypoints.ts'), 'utf8').replace(/\/\*\*[\s\S]*?\*\//g, '')),
+      `the lying file carries no score: ${scored.filter((n) => n.includes('score')).length} note(s) mention one; a nose with score 0.25 is printed as the producer's; src/keypoints.ts code computes no confidence`,
+      'a score is the producer\'s statement about its own joint; this package records it beside the joint and neither computes one nor applies a bar to it',
+    );
+
+    // Two joints at one point declare no line (review of #75): the lying proposal, linted with its neck joint moved onto the
+    // hips' midpoint (150, 100), and one pixel short of it (149, 100). On the point the torso is not read: the screen rules
+    // run (hip y 100 is not larger than chest y 100). One pixel off it is read: v = (1, 0), so the chest at x 106 falls at
+    // (106 - 149) / 1 = -43 of the way, a finite figure. Through the CLI the coincident file prints no NaN anywhere.
+    const LP2 = readPartSet(LY);
+    const lyKp = propose(LP2, poseJoints('lying'));
+    const neckAt = (x: number): RigJoints => poseJoints('lying', (k) => (k.people[0].joints.neck = { state: 'observed', at: [x, 100] }));
+    const onTorso = lint(LP2, lyKp, neckAt(150));
+    const offTorso = lint(LP2, lyKp, neckAt(149));
+    const torsoOut = (r: typeof onTorso): string[] => [...basisLines(r.basis as NonNullable<typeof r.basis>), ...r.findings.map(lintLine)];
+    const coincident = join(dir, 'coincident.json');
+    const coK = structuredClone(POSES.lying.keypoints) as KeypointJson;
+    coK.people[0].joints.neck = { state: 'observed', at: [150, 100] };
+    writeFileSync(coincident, JSON.stringify(coK));
+    const kpCfg = join(dir, 'lying-kp.json');
+    writeFileSync(kpCfg, JSON.stringify(proposalConfig(LYING_PARTS, lyKp)));
+    const coCli = runCli(['propose', '--parts', LY, '--source', join(LY, 'painting.png'), '--out', join(dir, 'co'), '--from-config', kpCfg, '--keypoints', coincident]);
+    say(
+      'KP20_A_NECK_ON_THE_HIPS_MIDPOINT_DECLARES_NO_TORSO_LINE_AND_ONE_PIXEL_OFF_IT_DOES',
+      onTorso.basis?.torso.read === false &&
+        torsoOut(onTorso)[0] === 'lint rule set: screen — the torso joints do not declare a line (neck and the midpoint of r_hip and l_hip are one point, [150.0, 100.0], so they declare no line), so the hip is read by screen y as without keypoints; the off-art check is unchanged' &&
+        onTorso.findings.map(lintLine).join('|') === 'LINT hip at [150, 100] is not below chest at [106, 100]: the hip must have the larger y, or breathing and the skirt hang from the shoulders' &&
+        offTorso.basis?.torso.read === true &&
+        offTorso.findings.map(lintLine).join('|') === 'LINT chest at [106, 100] is not between the neck joint [149.0, 100.0] and the midpoint of the hip joints [150.0, 100.0]: it falls at -43.00 of the way from one to the other, and strictly between 0 and 1 is required' &&
+        ![...torsoOut(onTorso), ...torsoOut(offTorso)].some((l) => l.includes('NaN')) &&
+        coCli.status === 1 &&
+        !coCli.out.includes('NaN') &&
+        coCli.out.includes('(neck and the midpoint of r_hip and l_hip are one point, [150.0, 100.0], so they declare no line)'),
+      `on the point: ${torsoOut(onTorso).join(' | ')}; one pixel off: ${offTorso.findings.map(lintLine).join(' | ')}; CLI on the point: exit ${coCli.status}, NaN ${coCli.out.includes('NaN') ? 'PRINTED' : 'nowhere'}`,
+      'a share of the way along a line of length zero divides by zero; the torso the joints do not declare is not read, said with both joints and the point, and the screen rules run as they do for any undeclared torso — while a line one pixel long is still a line and is read',
+    );
+
+    // The same for a chain: r_wrist on r_shoulder (75, 67) declares no line, so sleeve_r is not read and a link planted
+    // behind the shoulder at [60, 67] goes unflagged — said in the basis; r_wrist one pixel on at (76, 67) reads it, and the
+    // planted link falls -15.0 px along (1, 0), behind link 0 at 0.0.
+    const wristAt = (x: number): RigJoints => poseJoints('lying', (k) => (k.people[0].joints.r_wrist = { state: 'observed', at: [x, 67] }));
+    const backBones = lyKp.bones.map((b) => ('chain' in b && b.chain === 'sleeve_r' ? { ...b, points: [b.points[0], [60, 67] as [number, number]] } : b));
+    const onChain = lint(LP2, { bones: backBones, meshes: lyKp.meshes }, wristAt(75));
+    const offChain = lint(LP2, { bones: backBones, meshes: lyKp.meshes }, wristAt(76));
+    const offClean = lint(LP2, lyKp, wristAt(76));
+    const chainLine = (r: typeof onChain): string => basisLines(r.basis as NonNullable<typeof r.basis>).find((l) => l.startsWith('lint chain sleeve_r:')) ?? 'none';
+    say(
+      'KP21_A_WRIST_ON_ITS_SHOULDER_DECLARES_NO_CHAIN_LINE_AND_ONE_PIXEL_OFF_IT_DOES',
+      chainLine(onChain) === 'lint chain sleeve_r: not read against the joints (r_shoulder and r_wrist are one point, [75.0, 67.0], so they declare no line)' &&
+        onChain.findings.filter((f) => f.kind === 'chain-not-advancing').length === 0 &&
+        chainLine(offChain) === 'lint chain sleeve_r: each link and the tip must advance from r_shoulder [75.0, 67.0] toward r_wrist [76.0, 67.0]' &&
+        offChain.findings.filter((f) => f.kind === 'chain-not-advancing').map(lintLine).join('|') === 'LINT sleeve_r1 at [60, 67] does not advance from r_shoulder toward r_wrist: it falls -15.0 px along that line and sleeve_r0 0.0 px, and each must fall further than the one before' &&
+        offClean.findings.length === 0 &&
+        ![...torsoOut(onChain), ...torsoOut(offChain)].some((l) => l.includes('NaN')),
+      `on the point: ${chainLine(onChain)}, ${onChain.findings.filter((f) => f.kind === 'chain-not-advancing').length} chain line(s); one pixel off: ${chainLine(offChain)}; ${offChain.findings.filter((f) => f.kind === 'chain-not-advancing').map(lintLine).join(' | ')}; the clean proposal against it: ${offClean.findings.length} line(s)`,
+      'every projection onto a line of length zero is NaN, and NaN <= NaN is false, so a chain read against it would pass in silence; it is not read, the basis says why naming both joints and the point, and one pixel apart is a direction and is read',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return bad();
 }
 
 /**
@@ -9195,6 +9962,7 @@ function main(): void {
   tally.of('cli', runCliSuite);
   tally.of('rig', runRigSuite);
   tally.of('propose', runProposeSuite);
+  tally.of('keypoints', runKeypointsSuite);
   tally.of('propose-corpus', runProposeCorpusSuite);
   tally.of('structure', runStructureSuite);
   tally.of('check', runCheckSuite);
@@ -9241,7 +10009,7 @@ function main(): void {
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('structure')} structure, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
