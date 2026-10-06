@@ -263,7 +263,8 @@ agent skill.
 | `assemble --source --full --head --config --out [--seam] [--project]` | merge the two runs into rig-space parts, `parts.json`, the recomposite and its error map, and list the uncovered holes |
 | `propose --head-box --full <run> --canvas WxH` | propose `seethrough.head_box` from the full run, held inside the painting |
 | `propose --parts --source --out [--compare <config>]` | propose bones, meshes, regions and an idle; draw the overlay |
-| `propose … --from-config <config>` | draw and LINT the config's current bones |
+| `propose … --keypoints <file> [--person <id>]` | read a posed figure's joints from one explicit file (space, image size, people, each joint observed, occluded or missing, its source): a joint with a position places the neck, hip, chest or a sleeve chain as given, a note says how every joint was used or which rule stood in, and LINT reads the torso and sleeves along the joints instead of by screen y ([AUTHORING §3](docs/AUTHORING.md)) |
+| `propose … --from-config <config>` | draw and LINT the config's current bones (by the joints too, given `--keypoints`) |
 | `compare --left <file> --right <file> [--map <bonemap.json>]` | compare two skeletons — a config, a proposal or a `rig.json` — bone by bone: origin, parent, tip, length and direction per pair, the bones neither side pairs, the required ones missing, and each side's roles read off the spec; no frame is guessed, and nothing pairs by resemblance (`propose --compare` reads origins only) |
 | `rig --config --parts --out [--idle-keys ctl\|direct]` | author `rig.json` + `motion.json`, written only after spine-rigc's gate is green; every chain link is turned along its chain and carries its `length`, so a physics constraint added later has a lever, with every offset under it in the turned frame so nothing moves; `--idle-keys` says whether the idle's keys on mesh-driving bones go through `<bone>_ctl` parents (default) or stay on the bones with `invariants.idleDrivesMeshes` declared |
 | `check --rig --out [--parts] [--source]` | build packed, gated under `spine-html`, render the idle, measure seam, loop and the six judgement lines (mesh texture stretch among them, from the idle's `render --geometry`), and report the recomposite's holes from `parts.json`; on a rig spec with no `parts.json` or no `idle` (a merged rig, issue #77) the gate still runs and every line that needs the missing input says SKIP by name; `--source <painting.png>` adds `SETUP_POSE_VS_SOURCE`, the setup pose against the painting by assemble's recomposite figures |
@@ -293,6 +294,12 @@ These are limits of the approach, stated so nobody reads more into a green run:
   existence proof, not a rate.
 - **`loop` writes GIF and APNG (lossless and indexed), not WebP**: an animated WebP needs a VP8/VP8L
   encoder, which this package does not carry.
+- **The proposer assumes a standing figure unless it is told the pose.** Its ratios
+  put the hip below the chest and hang the sleeves from the shoulders. A seated or
+  reclining figure needs `propose --keypoints`, a file of its joints from any pose
+  estimator or a hand; this package does not estimate a pose itself, and its
+  keypoint support has been measured on generated figures and on files read off the
+  examples' own configs, never on an estimator's output.
 - **The proposer reads tags, not pictures.** A swinging element painted inside another
   layer (a sash tail in the skirt), hair that is none of the shapes it knows, and
   whether an accessory swings are the corrector's to add. The one accessory shape it

@@ -63,7 +63,16 @@
  * lashes on `head` (issue #45) and the face-less fallback, which fire on
  * neither published example — both proposals are byte-identical with and
  * without them; and `lint`'s two torso lines, which the reference did not
- * have.
+ * have. An eighth is opt-in and the reference had nothing like it: external
+ * keypoints (`propose --keypoints`, issue #75, `src/keypoints.ts`). Given a
+ * person's joints, a joint with a position places `neck`, `hip` (the midpoint
+ * of the two hip joints), the chest (its rule, along neck -> hip) and each
+ * sleeve chain (shoulder -> elbow, tip at the wrist) as given; a joint without
+ * one leaves the bone to the rule above, and a note per joint says which. The
+ * eye bones, `head` and the face box are measurements off the parts and are
+ * never moved by a joint. `lint` then reads the torso and the sleeves by the
+ * relations the joints declare instead of by screen y. Without joints every
+ * value, note and LINT line is the one written before the option existed.
  *
  * Coordinates are rig pixels, y down, origin top-left — the parts' own space.
  */
@@ -80,6 +89,8 @@ import { readPng } from './raster/png.ts';
 import { resize } from './raster/resize.ts';
 import { type Mask, newMask, newRaster, type Raster } from './raster/types.ts';
 import { npMean, npMedian, npPercentile, pyFixed, pyInt, pyIntList, pyRepr, pyRound, pyStrList } from './pyfmt.ts';
+import type { RigJoint, RigJoints } from './keypoints.ts';
+import { KEYPOINT_NAMES, type KeypointName } from './skeleton.ts';
 
 // ---------------------------------------------------------------------------
 // the output shape — config-shaped, key order as the reference writes it
@@ -676,7 +687,15 @@ const SIDES = [
   ['l', -1],
 ] as const;
 
-export function propose(P: PartSet): Proposal {
+/**
+ * Propose bones, meshes, regions and an idle from the parts. With `joints`
+ * (`propose --keypoints`, issue #75), a joint the file gives a position is
+ * used as given in place of the body-ratio rule for the bone it places, and
+ * every joint the proposer could use gets one note saying how it was used or
+ * which rule stood in; without it every value and note is the one this
+ * function wrote before the parameter existed.
+ */
+export function propose(P: PartSet, joints?: RigJoints): Proposal {
   const bones: BoneEntry[] = [];
   // No prototype: a part may be named anything file-safe, "__proto__" included.
   const meshes = Object.create(null) as Record<string, MeshSpec>;
@@ -700,16 +719,34 @@ export function propose(P: PartSet): Proposal {
   const chin = fy0 + fh;
   const head: [number, number] = [axis, fy0 + 0.88 * fh];
   const neckp = P.headFirst('neck');
-  const neckY = neckp.length > 0 ? (chin + neckp[0].y + neckp[0].h) / 2 : chin + 0.12 * fh;
+  let neckY = neckp.length > 0 ? (chin + neckp[0].y + neckp[0].h) / 2 : chin + 0.12 * fh;
+  // Issue #75: an observed neck joint is the neck bone, used as given; the
+  // rule's y is replaced by the joint's everywhere the rules read the neck.
+  const at = (n: KeypointName): [number, number] | null => (joints === undefined ? null : joints.joints[n].at);
+  const neckRule = neckp.length > 0 ? `half way from the chin to the bottom of ${neckp[0].name}, on the eye axis` : '0.12 face heights below the chin, on the eye axis';
+  const neckJ = at('neck');
+  let neckAt: [number, number] = [axis, neckY];
+  if (neckJ !== null) {
+    neckAt = neckJ;
+    neckY = neckJ[1];
+  }
   const bw = P.byTag('bottomwear');
   const tw = P.byTag('topwear');
   const { top: ftop, bot: fbot } = figureExtent(P);
   const torso = torsoRows(P);
   const shoulders = shoulderOf(torso, neckY, fh);
   let hip: [number, number];
-  if (bw.length > 0 && bw[0].y + 0.14 * fh >= ftop + HIP_MIN_FRACTION * (fbot - ftop)) hip = [bw[0].x + bw[0].w / 2, bw[0].y + 0.14 * fh];
-  else if (bw.length === 0) {
+  let hipRule = '';
+  const rHipJ = at('r_hip');
+  const lHipJ = at('l_hip');
+  const hipFromJoints = rHipJ !== null && lHipJ !== null;
+  if (rHipJ !== null && lHipJ !== null) hip = [(rHipJ[0] + lHipJ[0]) / 2, (rHipJ[1] + lHipJ[1]) / 2];
+  else if (bw.length > 0 && bw[0].y + 0.14 * fh >= ftop + HIP_MIN_FRACTION * (fbot - ftop)) {
+    hip = [bw[0].x + bw[0].w / 2, bw[0].y + 0.14 * fh];
+    hipRule = `the top of ${bw[0].name} (bottomwear) + 0.14 face heights`;
+  } else if (bw.length === 0) {
     hip = [axis, ftop + 0.32 * (fbot - ftop)];
+    hipRule = '0.32 of the figure height, on the eye axis (no bottomwear)';
     notes.push('no bottomwear: hip from 0.32 of figure height');
   } else {
     // A long under-robe tagged bottomwear starts at the collar: its top edge
@@ -722,9 +759,11 @@ export function propose(P: PartSet): Proposal {
     const waist = shoulders === null ? null : waistOf(torso, shoulders, ftop + 0.5 * (fbot - ftop));
     if (shoulders !== null && waist !== null) {
       hip = [waist.cx, waist.y + 0.14 * fh];
+      hipRule = 'the waist (the narrowest torso row) + 0.14 face heights';
       notes.push(`hip from the waist: silhouette narrowest at y=${waist.y} (width ${waist.width} px, shoulders ${shoulders.width} px at y=${shoulders.y}), hip 0.14 face heights below it`);
     } else {
       hip = [axis, ftop + 0.32 * (fbot - ftop)];
+      hipRule = '0.32 of the figure height, on the eye axis (no waist found)';
       const why =
         shoulders === null
           ? `no torso layer (${TORSO_TAGS.join(', ')}) in the shoulder band y ${pyFixed(neckY, 0)}..${pyFixed(neckY + fh, 0)}`
@@ -732,7 +771,11 @@ export function propose(P: PartSet): Proposal {
       notes.push(`hip from 0.32 of figure height (no waist found: ${why})`);
     }
   }
-  const chest: [number, number] = [hip[0], neckY + 0.5 * (hip[1] - neckY)];
+  // The chest keeps its rule, half way from the neck to the hip; when either
+  // end is a joint the half way is taken along the line between them, not
+  // down the screen, because the torso need not be upright.
+  const chestAlong = neckJ !== null || hipFromJoints;
+  const chest: [number, number] = chestAlong ? [(neckAt[0] + hip[0]) / 2, (neckAt[1] + hip[1]) / 2] : [hip[0], neckY + 0.5 * (hip[1] - neckY)];
   const B = (name: string, parent: string, at: readonly [number, number], tip?: readonly [number, number]): void => {
     bones.push(tip === undefined ? { name, parent, at: rnd(at) } : { name, parent, at: rnd(at), tip: rnd(tip) });
   };
@@ -741,7 +784,7 @@ export function propose(P: PartSet): Proposal {
   };
   B('hip', 'root', hip);
   B('chest', 'hip', chest);
-  B('neck', 'chest', [axis, neckY]);
+  B('neck', 'chest', neckAt);
   B('head', 'neck', head);
   for (const s of ['r', 'l'] as const) {
     const e = eyes.get(s);
@@ -1079,13 +1122,41 @@ export function propose(P: PartSet): Proposal {
     (sides.get(s) as PartRecord[]).push(p);
   }
   const clasped = hw.length > 0 && !(hw.length === 2 && sides.size === 2) ? claspedOf(P, hw, shoulders, axis) : null;
+  // Issue #75: arms from joints, when every handwear part carries the wrist of
+  // an arm whose shoulder, elbow and wrist are all given; otherwise the rule
+  // below places every sleeve chain, and the notes say why.
+  const armPlan = joints !== undefined && clasped === null && hw.length > 0 ? armsFromJoints(P, hw, joints) : null;
+  let sleeveRule = '';
   if (clasped !== null) {
+    sleeveRule = 'the clasped-hands rule (the handwear is a region on hip, with no sleeve chain)';
     // One blob at the midline, narrower than the shoulders: the hands, clasped
     // in front. The sleeves are inside another layer and move with it; two
     // sleeve chains on this blob would stand on one vertical line.
     for (const p of hw) regions[p.name] = 'hip';
     notes.push(clasped);
+  } else if (armPlan !== null && armPlan.arms !== null) {
+    // Each chain runs shoulder -> elbow with its tip at the wrist: two links,
+    // the upper arm and the forearm, each with the amplitude the two-blob rule
+    // gives its link of the same index. Its part's mesh takes the chain and a
+    // chest stub at the shoulder, the two-blob rule's 16 px stub laid along
+    // the upper arm instead of down the screen.
+    for (const a of armPlan.arms) {
+      const sgn = a.side === 'r' ? 1 : -1;
+      C(`sleeve_${a.side}`, 'chest', [a.shoulder, a.elbow], a.wrist);
+      tracks.push({ chain: `sleeve_${a.side}`, amps: [sgn * 0.2, sgn * 0.6], period: 4.0, phase: 0.22 + (a.side === 'l' ? 0.05 : 0), lag: 0.08 });
+    }
+    for (const p of hw) {
+      const [g, r] = gridR(p);
+      const segs: Segment[] = [];
+      for (const a of armPlan.arms.filter((q) => q.part === p)) {
+        const len = Math.hypot(a.elbow[0] - a.shoulder[0], a.elbow[1] - a.shoulder[1]);
+        const d: [number, number] = [(a.elbow[0] - a.shoulder[0]) / len, (a.elbow[1] - a.shoulder[1]) / len];
+        segs.push(['chest', rnd([a.shoulder[0] - 14 * d[0], a.shoulder[1] - 14 * d[1]]), rnd([a.shoulder[0] + 2 * d[0], a.shoulder[1] + 2 * d[1]])], `sleeve_${a.side}`);
+      }
+      meshes[p.name] = { grid: g, r, segments: segs };
+    }
   } else if (hw.length === 2 && sides.size === 2) {
+    sleeveRule = 'the two-blob sleeve rule (one chain per handwear blob, down its rows)';
     // Arms apart: two blobs. Each mesh gets ONLY its own sleeve chain and a
     // short chest segment at its shoulder; the one-blob recipe made hanging
     // hands breathe with the sternum.
@@ -1106,6 +1177,7 @@ export function propose(P: PartSet): Proposal {
     }
     notes.push('handwear is two blobs: one sleeve chain per mesh, chest only at the shoulder');
   } else if (hw.length > 0) {
+    sleeveRule = `the one-blob sleeve rule (both chains in one mesh, split at the eye axis x=${pyFixed(axis, 0)})`;
     const segs: Segment[] = [['chest', rnd([chest[0], chest[1] - 40]), rnd([chest[0], hip[1]])]];
     let mask = newMask(P.W, P.H);
     for (const p of hw) mask = union(mask, P.alpha(p));
@@ -1214,7 +1286,170 @@ export function propose(P: PartSet): Proposal {
       } else notes.push(`${p.name} (${p.from}): no rule -> region on ${regions[p.name]}`);
     }
   }
+  if (joints !== undefined) {
+    notes.push(
+      ...jointNotes(joints, {
+        neckRule,
+        hipRule,
+        chest: chestAlong ? { neck: neckAt, hip } : null,
+        sleeveRule,
+        armWhy: armPlan === null ? null : armPlan.why,
+        arms: armPlan === null ? null : armPlan.arms,
+        eyes: (['r', 'l'] as const).map((s) => {
+          const e = eyes.get(s);
+          return e === undefined ? null : { bone: `eye_${s}`, part: (ew[s] as PartRecord).name, at: e };
+        }),
+      }),
+    );
+  }
   return { bones, meshes, regions, motion: blink === undefined ? { duration: 4.0, tracks } : { duration: 4.0, tracks, blink }, notes };
+}
+
+// ---------------------------------------------------------------------------
+// external keypoints (issue #75)
+// ---------------------------------------------------------------------------
+
+/** One arm placed from joints: its side (the subject's), its three joints in rig px, and the handwear part whose art holds its wrist. */
+interface JointArm {
+  side: 'r' | 'l';
+  shoulder: [number, number];
+  elbow: [number, number];
+  wrist: [number, number];
+  part: PartRecord;
+}
+
+/**
+ * The arms the sleeve chains are placed from, or why the sleeve rule places
+ * them instead. An arm is complete when its shoulder, elbow and wrist all
+ * have a position (and the shoulder and elbow are two points); a handwear
+ * part carries an arm when the wrist lies on its art within the LINT's own
+ * tolerance (the mask dilated 15 px each way). The joints are used only when
+ * every complete arm's wrist is on exactly one part and every handwear part
+ * carries one: a part left to the rule beside parts placed from joints would
+ * be read by two rules at once. Sides come from the joints, not from the eye
+ * axis, so a figure seen from behind or lying across the axis is paired by
+ * where its wrists are.
+ */
+function armsFromJoints(P: PartSet, hw: readonly PartRecord[], joints: RigJoints): { arms: JointArm[] | null; why: string | null } {
+  const complete: Array<Omit<JointArm, 'part'>> = [];
+  const gaps: string[] = [];
+  for (const s of ['r', 'l'] as const) {
+    const sh = joints.joints[`${s}_shoulder`].at;
+    const el = joints.joints[`${s}_elbow`].at;
+    const wr = joints.joints[`${s}_wrist`].at;
+    if (sh === null || el === null || wr === null) {
+      const absent = [sh === null ? `${s}_shoulder` : null, el === null ? `${s}_elbow` : null, wr === null ? `${s}_wrist` : null].filter((n): n is string => n !== null);
+      gaps.push(`${absent.join(', ')} ${absent.length === 1 ? 'has' : 'have'} no position`);
+    } else if (sh[0] === el[0] && sh[1] === el[1]) gaps.push(`${s}_shoulder and ${s}_elbow are one point, so the upper arm has no direction`);
+    else complete.push({ side: s, shoulder: sh, elbow: el, wrist: wr });
+  }
+  if (complete.length === 0) return { arms: null, why: `no arm has its shoulder, elbow and wrist all given (${gaps.join('; ')})` };
+  const near = new Map(hw.map((p) => [p, dilate(P.alpha(p), 31)]));
+  const arms: JointArm[] = [];
+  for (const a of complete) {
+    const on = hw.filter((p) => isOn(near.get(p) as Mask, a.wrist[0], a.wrist[1]));
+    if (on.length !== 1) {
+      const where = on.length === 0 ? 'no handwear part' : `${on.length} handwear parts (${on.map((p) => p.name).join(', ')})`;
+      return { arms: null, why: `${a.side}_wrist at ${fmtAt(a.wrist)} lies on the art of ${where}, so it does not say which sleeve it ends` };
+    }
+    arms.push({ ...a, part: on[0] });
+  }
+  const idle = hw.filter((p) => !arms.some((a) => a.part === p));
+  if (idle.length > 0) {
+    const why = gaps.length > 0 ? ` (${gaps.join('; ')})` : '';
+    return { arms: null, why: `${idle.map((p) => p.name).join(', ')} ${idle.length === 1 ? 'carries' : 'carry'} the wrist of no arm whose three joints are given${why}` };
+  }
+  return { arms, why: null };
+}
+
+/** A rig-px point as the notes and LINT lines print it: one decimal place. */
+function fmtAt(p: readonly [number, number]): string {
+  return `[${pyFixed(p[0], 1)}, ${pyFixed(p[1], 1)}]`;
+}
+
+/** How a joint is said: its state, where (rig px) when given, and the producer's score when it carries one. */
+function said(n: KeypointName, j: RigJoint): string {
+  const score = j.score === null ? '' : ` (score ${JSON.stringify(j.score)}, the producer's)`;
+  if (j.at === null) return j.state === 'occluded' ? `${n} occluded with no position${score}` : `${n} missing${j.listed ? '' : ' (not listed)'}${score}`;
+  return `${n} ${j.state} at ${fmtAt(j.at)}${score}`;
+}
+
+/** What a used joint was used as: given, or the producer's estimate. */
+function usedAs(j: RigJoint): string {
+  return j.state === 'observed' ? 'used as given' : "used as the producer's estimate";
+}
+
+interface JointNoteFacts {
+  neckRule: string;
+  hipRule: string;
+  /** The ends the chest was placed half way between, when either is a joint. */
+  chest: { neck: [number, number]; hip: [number, number] } | null;
+  sleeveRule: string;
+  armWhy: string | null;
+  arms: JointArm[] | null;
+  eyes: ReadonlyArray<{ bone: string; part: string; at: [number, number] } | null>;
+}
+
+/**
+ * The notes `--keypoints` adds, after every note the rules wrote: a header
+ * naming the file's person, source and map; one line per joint the proposer
+ * could use — used as given for bone X, used as the producer's estimate for
+ * bone X, or a rule placing bone X in its stead, with the rule named; the
+ * distance from an eye joint to an eye bone measured off its eyewhite, with
+ * no bar; and one line naming every other joint and its state, so no joint
+ * is left unsaid and none is shown as anything it is not.
+ */
+function jointNotes(joints: RigJoints, f: JointNoteFacts): string[] {
+  const J = joints.joints;
+  const out: string[] = [];
+  const [w, h] = joints.painting;
+  const [W, H] = joints.rig;
+  out.push(
+    `keypoints: person "${joints.person}" from ${JSON.stringify(joints.source)}, painting ${w}x${h} px to the ${W}x${H} rig by the overlay's map (x * ${W}/${w}, y * ${H}/${h}); ` +
+      'a joint with a position places its bone in place of the rule, a joint without one leaves the bone to its rule, and no bone is authored from a joint that no rule places',
+  );
+  const told = new Set<KeypointName>();
+  const tell = (n: KeypointName, line: string): void => {
+    told.add(n);
+    out.push(line);
+  };
+  tell('neck', J.neck.at !== null ? `${said('neck', J.neck)}: ${usedAs(J.neck)} for bone neck` : `${said('neck', J.neck)}: the rule "${f.neckRule}" placed bone neck instead`);
+  const hipsGiven = J.r_hip.at !== null && J.l_hip.at !== null;
+  for (const [n, other] of [
+    ['r_hip', 'l_hip'],
+    ['l_hip', 'r_hip'],
+  ] as const) {
+    if (hipsGiven) tell(n, `${said(n, J[n])}: ${usedAs(J[n])} for bone hip, the midpoint of r_hip and l_hip — a point between two joints, not a joint`);
+    else if (J[n].at !== null) tell(n, `${said(n, J[n])}: not used — bone hip is the midpoint of r_hip and l_hip, and ${other} has no position; the rule "${f.hipRule}" placed bone hip instead`);
+    else tell(n, `${said(n, J[n])}: the rule "${f.hipRule}" placed bone hip instead`);
+  }
+  if (f.chest !== null) out.push(`chest: its rule, half way from neck to hip, taken along the line from neck ${fmtAt(f.chest.neck)} to hip ${fmtAt(f.chest.hip)} rather than down the screen`);
+  const standIn = f.sleeveRule === '' ? 'no handwear part is over 500 px, so no sleeve chain is placed' : `${f.sleeveRule} stands in`;
+  for (const s of ['r', 'l'] as const) {
+    const arm = f.arms?.find((a) => a.side === s) ?? null;
+    for (const [joint, role] of [
+      [`${s}_shoulder`, 'link 0'],
+      [`${s}_elbow`, 'link 1'],
+      [`${s}_wrist`, 'the tip'],
+    ] as const) {
+      const j = J[joint];
+      if (arm !== null) tell(joint, `${said(joint, j)}: ${usedAs(j)} for chain sleeve_${s}, ${role} (the wrist lies on ${arm.part.name})`);
+      else if (j.at !== null && f.armWhy !== null) tell(joint, `${said(joint, j)}: not used — ${f.armWhy}; ${standIn}`);
+      else if (j.at !== null) tell(joint, `${said(joint, j)}: not used — ${standIn}`);
+      else tell(joint, `${said(joint, j)}: ${standIn}`);
+    }
+  }
+  (['r', 'l'] as const).forEach((s, i) => {
+    const n = `${s}_eye` as const;
+    const j = J[n];
+    if (j.at === null) return;
+    const e = f.eyes[i];
+    if (e === null) tell(n, `${said(n, j)}: no bone takes it — an eye bone comes only from an eyewhite part`);
+    else tell(n, `${said(n, j)}: bone ${e.bone} is measured off ${e.part} (its box centre ${fmtAt(e.at)}) and is not moved; the joint is ${pyFixed(Math.hypot(j.at[0] - e.at[0], j.at[1] - e.at[1]), 1)} px from it`);
+  });
+  const rest = KEYPOINT_NAMES.filter((n) => !told.has(n));
+  if (rest.length > 0) out.push(`no rule reads ${rest.map((n) => said(n, J[n])).join(', ')} — no bone is authored from them`);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1346,7 +1581,57 @@ export interface HipTooHighFinding {
   figure: { top: number; bot: number };
 }
 
-export type LintFinding = OffArtFinding | HipAboveChestFinding | HipTooHighFinding;
+/** With joints: the chest bone does not fall strictly between the neck joint and the hip joints' midpoint along the line from one to the other. */
+export interface ChestNotBetweenFinding {
+  kind: 'chest-not-between';
+  chest: [number, number];
+  /** Where the chest falls along neck -> hips, 0 at the neck joint and 1 at the hips' midpoint. */
+  t: number;
+  neck: [number, number];
+  hips: [number, number];
+}
+
+/** With joints: the hip bone does not fall further along neck -> hips than the chest bone — the joint-frame form of `hip-not-below-chest`. */
+export interface HipNotPastChestFinding {
+  kind: 'hip-not-past-chest';
+  hip: [number, number];
+  chest: [number, number];
+  tHip: number;
+  tChest: number;
+}
+
+/** With joints: the hip bone is nearer the neck joint than the hips' midpoint — the joint-frame form of `hip-too-high`. */
+export interface HipNearerNeckFinding {
+  kind: 'hip-nearer-neck';
+  hip: [number, number];
+  neck: [number, number];
+  hips: [number, number];
+  dNeck: number;
+  dHips: number;
+}
+
+/** With joints: a sleeve chain's link or tip does not fall further along its shoulder -> wrist line than the one before it. */
+export interface ChainNotAdvancingFinding {
+  kind: 'chain-not-advancing';
+  /** `<chain><i>`, or `<chain> tip`. */
+  point: string;
+  at: [number, number];
+  /** Px along the joints' line from the root joint. */
+  t: number;
+  previous: string;
+  tPrevious: number;
+  fromJoint: KeypointName;
+  toJoint: KeypointName;
+}
+
+export type LintFinding = OffArtFinding | HipAboveChestFinding | HipTooHighFinding | ChestNotBetweenFinding | HipNotPastChestFinding | HipNearerNeckFinding | ChainNotAdvancingFinding;
+
+/** Which rule set read the torso and the sleeve chains, under `--keypoints`. */
+export interface LintBasis {
+  person: string;
+  torso: { read: true; neck: [number, number]; hips: [number, number] } | { read: false; why: string };
+  chains: Array<{ chain: string; joints: [KeypointName, KeypointName]; line: { from: [number, number]; to: [number, number] } | null; why: string | null }>;
+}
 
 /** What a check could not look at, said rather than skipped. */
 export interface LintResult {
@@ -1355,6 +1640,8 @@ export interface LintResult {
   unknownMeshes: string[];
   /** Single bones the torso checks read (`hip`, `chest`) that the bones do not hold: those checks did not run. */
   missingTorsoBones: string[];
+  /** Present only under `--keypoints`: the rule set that read the torso and the chains. */
+  basis?: LintBasis;
 }
 
 /**
@@ -1371,8 +1658,18 @@ export interface LintResult {
  * `HIP_MIN_FRACTION` of the figure's height (every part's union, top row to
  * bottom row). Either one is a rig whose breath and skirt hang from the
  * shoulders, and a mesh check cannot see it.
+ *
+ * With `joints` (`--keypoints`, issue #75) the torso is read by the relations
+ * the joints declare instead of by screen y, wherever the neck and both hip
+ * joints have a position: along the line from the neck joint to the hips'
+ * midpoint, the chest must fall strictly between them, the hip past the
+ * chest, and the hip nearer the hips than the neck — so a seated or lying
+ * figure is held to its own torso, not to "larger y is lower". Each sleeve
+ * chain is read along its side's shoulder -> wrist: every link and the tip
+ * must fall further along that line than the one before. No relation carries
+ * a threshold; each is a definition. The off-art check is unchanged.
  */
-export function lint(P: PartSet, spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>> }): LintResult {
+export function lint(P: PartSet, spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>> }, joints?: RigJoints): LintResult {
   const { byName } = expand(spec.bones);
   const parts = new Map(P.recs.map((p) => [p.name, p]));
   const findings: LintFinding[] = [];
@@ -1403,19 +1700,106 @@ export function lint(P: PartSet, spec: { bones: readonly BoneEntry[]; meshes: Re
   const hip = single('hip');
   const chest = single('chest');
   const missingTorsoBones = [hip === null ? 'hip' : null, chest === null ? 'chest' : null].filter((n): n is string => n !== null);
-  if (hip !== null && chest !== null && hip[1] <= chest[1]) findings.push({ kind: 'hip-not-below-chest', hip, chest });
-  if (hip !== null) {
-    const figure = figureExtent(P);
-    const limit = figure.top + HIP_MIN_FRACTION * (figure.bot - figure.top);
-    if (hip[1] < limit) findings.push({ kind: 'hip-too-high', hip, limit, figure });
+  // Issue #75: with joints, where the torso joints are given, the torso is
+  // read along the line they declare and the two screen-y rules do not run.
+  const basis = joints === undefined ? undefined : lintBasis(spec.bones, joints);
+  const T = basis !== undefined && basis.torso.read ? basis.torso : null;
+  if (T !== null) {
+    const v: [number, number] = [T.hips[0] - T.neck[0], T.hips[1] - T.neck[1]];
+    const L2 = v[0] * v[0] + v[1] * v[1];
+    const along = (p: readonly [number, number]): number => ((p[0] - T.neck[0]) * v[0] + (p[1] - T.neck[1]) * v[1]) / L2;
+    if (chest !== null && !(along(chest) > 0 && along(chest) < 1)) findings.push({ kind: 'chest-not-between', chest, t: along(chest), neck: T.neck, hips: T.hips });
+    if (hip !== null && chest !== null && along(hip) <= along(chest)) findings.push({ kind: 'hip-not-past-chest', hip, chest, tHip: along(hip), tChest: along(chest) });
+    if (hip !== null) {
+      const dNeck = Math.hypot(hip[0] - T.neck[0], hip[1] - T.neck[1]);
+      const dHips = Math.hypot(hip[0] - T.hips[0], hip[1] - T.hips[1]);
+      if (dNeck < dHips) findings.push({ kind: 'hip-nearer-neck', hip, neck: T.neck, hips: T.hips, dNeck, dHips });
+    }
+  } else {
+    if (hip !== null && chest !== null && hip[1] <= chest[1]) findings.push({ kind: 'hip-not-below-chest', hip, chest });
+    if (hip !== null) {
+      const figure = figureExtent(P);
+      const limit = figure.top + HIP_MIN_FRACTION * (figure.bot - figure.top);
+      if (hip[1] < limit) findings.push({ kind: 'hip-too-high', hip, limit, figure });
+    }
   }
-  return { findings, unknownMeshes, missingTorsoBones };
+  if (basis !== undefined) {
+    for (const c of basis.chains) {
+      if (c.line === null) continue;
+      const { from, to } = c.line;
+      const len = Math.hypot(to[0] - from[0], to[1] - from[1]);
+      const e = spec.bones.find((b) => 'chain' in b && b.chain === c.chain);
+      if (e === undefined || !('chain' in e)) continue;
+      const pts: Array<[string, Point]> = [...e.points.map((q, i): [string, Point] => [`${c.chain}${i}`, q]), [`${c.chain} tip`, e.tip]];
+      const proj = pts.map(([, q]) => ((q[0] - from[0]) * (to[0] - from[0]) + (q[1] - from[1]) * (to[1] - from[1])) / len);
+      for (let i = 1; i < pts.length; i++) {
+        if (proj[i] <= proj[i - 1]) findings.push({ kind: 'chain-not-advancing', point: pts[i][0], at: pts[i][1], t: proj[i], previous: pts[i - 1][0], tPrevious: proj[i - 1], fromJoint: c.joints[0], toJoint: c.joints[1] });
+      }
+    }
+  }
+  return basis === undefined ? { findings, unknownMeshes, missingTorsoBones } : { findings, unknownMeshes, missingTorsoBones, basis };
+}
+
+/** The sleeve chains a keypoint file can be read against, and the joints each runs between. */
+const ARM_CHAINS: ReadonlyArray<readonly [string, KeypointName, KeypointName]> = [
+  ['sleeve_r', 'r_shoulder', 'r_wrist'],
+  ['sleeve_l', 'l_shoulder', 'l_wrist'],
+];
+
+/**
+ * What the joints let LINT read: the torso along the line from the neck joint
+ * to the midpoint of the hip joints, when all three have a position and the
+ * two ends are two points; and each sleeve chain (by its name, as `propose`
+ * writes it) along its side's shoulder -> wrist, when both have a position.
+ */
+function lintBasis(bones: readonly BoneEntry[], joints: RigJoints): LintBasis {
+  const J = joints.joints;
+  const absent = (['neck', 'r_hip', 'l_hip'] as const).filter((n) => J[n].at === null);
+  let torso: LintBasis['torso'];
+  if (absent.length > 0) torso = { read: false, why: `${absent.map((n) => said(n, J[n])).join(', ')}` };
+  else {
+    const neck = J.neck.at as [number, number];
+    const r = J.r_hip.at as [number, number];
+    const l = J.l_hip.at as [number, number];
+    const hips: [number, number] = [(r[0] + l[0]) / 2, (r[1] + l[1]) / 2];
+    // Two joints at one point declare no line: every share of the way along it would divide by zero.
+    torso = neck[0] === hips[0] && neck[1] === hips[1] ? { read: false, why: `neck and the midpoint of r_hip and l_hip are one point, ${fmtAt(neck)}, so they declare no line` } : { read: true, neck, hips };
+  }
+  const chains = ARM_CHAINS.map(([chain, a, b]): LintBasis['chains'][number] => {
+    if (!bones.some((e) => 'chain' in e && e.chain === chain)) return { chain, joints: [a, b], line: null, why: `no chain named ${chain}` };
+    const from = J[a].at;
+    const to = J[b].at;
+    if (from === null || to === null) return { chain, joints: [a, b], line: null, why: [from === null ? said(a, J[a]) : null, to === null ? said(b, J[b]) : null].filter((s) => s !== null).join(', ') };
+    if (from[0] === to[0] && from[1] === to[1]) return { chain, joints: [a, b], line: null, why: `${a} and ${b} are one point, ${fmtAt(from)}, so they declare no line` };
+    return { chain, joints: [a, b], line: { from, to }, why: null };
+  });
+  return { person: joints.person, torso, chains };
+}
+
+/**
+ * The lines `propose --keypoints` prints before its LINT lines: which rule set
+ * read the torso and on what basis, and which chains were read against which
+ * joints. Without `--keypoints` nothing is printed, and the rule set is the
+ * screen's, as it always was.
+ */
+export function basisLines(b: LintBasis): string[] {
+  const out: string[] = [];
+  if (b.torso.read) {
+    out.push(
+      `lint rule set: joints (person "${b.person}") — the torso is read along the line from the neck joint ${fmtAt(b.torso.neck)} to the midpoint of r_hip and l_hip ${fmtAt(b.torso.hips)}: ` +
+        'the chest strictly between them, the hip past the chest, and the hip nearer the hips than the neck; the two screen-y torso rules do not run, and the off-art check is unchanged',
+    );
+  } else out.push(`lint rule set: screen — the torso joints do not declare a line (${b.torso.why}), so the hip is read by screen y as without keypoints; the off-art check is unchanged`);
+  for (const c of b.chains) {
+    out.push(c.line === null ? `lint chain ${c.chain}: not read against the joints (${c.why})` : `lint chain ${c.chain}: each link and the tip must advance from ${c.joints[0]} ${fmtAt(c.line.from)} toward ${c.joints[1]} ${fmtAt(c.line.to)}`);
+  }
+  return out;
 }
 
 /**
  * The LINT line. The off-art line is the reference's, verbatim:
- * `LINT sleeve_r0 at [335, 330] is off the art of mesh 'sleeves'`; the two
- * torso lines keep its shape, `LINT <bone> at [x, y] …`.
+ * `LINT sleeve_r0 at [335, 330] is off the art of mesh 'sleeves'`; the
+ * torso and chain lines keep its shape, `LINT <bone> at [x, y] …`.
  */
 export function lintLine(f: LintFinding): string {
   switch (f.kind) {
@@ -1425,6 +1809,14 @@ export function lintLine(f: LintFinding): string {
       return `LINT hip at ${pyIntList(f.hip)} is not below chest at ${pyIntList(f.chest)}: the hip must have the larger y, or breathing and the skirt hang from the shoulders`;
     case 'hip-too-high':
       return `LINT hip at ${pyIntList(f.hip)} is above ${HIP_MIN_FRACTION} of the figure height (figure y ${f.figure.top}..${f.figure.bot}, so hip y must be at least ${pyFixed(f.limit, 1)}): a hip at the shoulders`;
+    case 'chest-not-between':
+      return `LINT chest at ${pyIntList(f.chest)} is not between the neck joint ${fmtAt(f.neck)} and the midpoint of the hip joints ${fmtAt(f.hips)}: it falls at ${pyFixed(f.t, 2)} of the way from one to the other, and strictly between 0 and 1 is required`;
+    case 'hip-not-past-chest':
+      return `LINT hip at ${pyIntList(f.hip)} is not past chest at ${pyIntList(f.chest)} on the way from the neck joint to the hip joints (hip at ${pyFixed(f.tHip, 2)}, chest at ${pyFixed(f.tChest, 2)} of the way): breathing and the skirt hang from the wrong end of the torso`;
+    case 'hip-nearer-neck':
+      return `LINT hip at ${pyIntList(f.hip)} is nearer the neck joint ${fmtAt(f.neck)} (${pyFixed(f.dNeck, 1)} px) than the midpoint of the hip joints ${fmtAt(f.hips)} (${pyFixed(f.dHips, 1)} px): a hip at the shoulders`;
+    case 'chain-not-advancing':
+      return `LINT ${f.point} at ${pyIntList(f.at)} does not advance from ${f.fromJoint} toward ${f.toJoint}: it falls ${pyFixed(f.t, 1)} px along that line and ${f.previous} ${pyFixed(f.tPrevious, 1)} px, and each must fall further than the one before`;
   }
 }
 

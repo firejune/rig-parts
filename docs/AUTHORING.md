@@ -40,6 +40,7 @@ examples use, and the one this guide assumes:
   inputs/layers/full/       the full run (wrapper form: layers.json + parts/<tag>.png), or full.psd
   inputs/layers/head/       the head run, the same
   proposal.json             what `propose` wrote (§4, step 7)
+  keypoints.json            optional: where the figure's joints are, for `propose --keypoints` (§3, *A posed figure*)
   out/                      what `build` writes (§5)
 ```
 
@@ -120,6 +121,63 @@ chain — or, when the accessory has hanging strands, one pendulum chain per str
 (below). What it cannot know — something painted inside another layer that should
 swing, hair of another shape, whether an accessory swings — is yours to add, and
 `notes` in `proposal.json` says where it guessed.
+
+**A posed figure: `propose --keypoints`.** The proposer's ratios assume a
+standing figure: the hip below the chest, sleeves hanging from the shoulders. A
+seated, reclining or otherwise posed figure is told where its joints are with one
+explicit file (issue #75, `src/keypoints.ts`):
+
+```json
+{
+  "spec": "spine-parts-keypoints/1",
+  "space": { "units": "painting-px", "origin": "top-left", "y": "down" },
+  "width": 1664, "height": 2432,
+  "source": "what produced this file (recorded, never interpreted)",
+  "people": [
+    { "id": "a", "joints": {
+        "neck":    { "state": "observed", "at": [826, 464] },
+        "l_elbow": { "state": "occluded", "at": [1030, 926], "score": 0.4 },
+        "r_ear":   { "state": "missing" } } }
+  ]
+}
+```
+
+The space is stated and any other is refused (`KEYPOINTS_SPACE_STATED`); `width`
+and `height` are the painting's and are held to `--source` (`KEYPOINTS_IMAGE_SIZE`).
+Joint names are the body-18 names of `src/skeleton.ts` (`nose`, `neck`,
+`r_shoulder` … `l_ear`), and `r` / `l` are the **subject's** sides. Each joint is
+`observed` (with `at`), `occluded` (`at` optional — when given it is the producer's
+estimate and said as that) or `missing` (no `at`); a joint the file does not list is
+missing. A `score` is the producer's and is printed beside the joint; nothing here
+computes one. With more than one person, `--person <id>` names one; nothing picks.
+Painting px reach rig px by the overlay's own map, `x * W/width`, `y * H/height`
+(0.5 for both examples).
+
+What a joint with a position places, as given — no ratio is applied over it:
+
+| bone | from | when the joint has no position |
+| --- | --- | --- |
+| `neck` | `neck` | the rule: half way from the chin to the neck part's bottom (or 0.12 face heights below the chin), on the eye axis |
+| `hip` | the midpoint of `r_hip` and `l_hip` — a point between two joints, said as that | the hip rule (bottomwear top, the waist, or 0.32 of the figure); one hip alone is said to be unused |
+| `chest` | its rule, half way from neck to hip, taken along the line between the placed ends | the rule as before when neither end is a joint |
+| `sleeve_<s>` | `<s>_shoulder` → `<s>_elbow` (two links), tip at `<s>_wrist`, with the two-blob rule's first two amplitudes and its chest stub laid along the upper arm — when every handwear part over 500 px holds one such wrist within 15 px of its art | the sleeve rule places every sleeve chain, and each arm joint's note says why |
+| `eye_<s>`, `head`, the face box | not moved: they are measured off the parts | the note prints the eye joint's distance from the eye bone, with no bar |
+
+Every other joint (`nose`, knees, ankles, ears; the eyes with no eyewhite) is named
+with its state in one note: no bone is authored from it. Every joint the proposer
+could use gets its own note — `used as given for bone X`, `used as the producer's
+estimate for bone X`, or `missing: the rule "…" placed bone X instead` — after every
+note the rules wrote. LINT then reads the torso by the relations the joints declare:
+where `neck`, `r_hip` and `l_hip` all have a position, along the line from the neck
+to the hips' midpoint the chest must fall strictly between them, the hip past the
+chest, and the hip nearer the hips than the neck — these replace the two screen-y
+torso lines; and each `sleeve_<s>` chain's links and tip must advance from
+`<s>_shoulder` toward `<s>_wrist`. The first lines say which rule set ran and on what
+basis (`lint rule set: joints …` or `lint rule set: screen — …`). The off-art check is
+unchanged, and `--from-config … --keypoints` lints a corrected config the same way.
+Without `--keypoints` nothing changes, byte for byte. Two rules still read the screen
+under keypoints and are not this file's to change: the skirt chains hang down from
+the hip, and a part no rule claims rides the trunk bone its centre is nearest by y.
 
 **A figure with no `face` part** (turned away, or half hidden behind a partner,
 so See-through found hair and a neck and no face) still gets a proposal. The face
@@ -275,11 +333,15 @@ full loader before its assemble stage writes anything.
    `bones`, `meshes`, `regions` and `motion` into the config. Config for
    `assemble`: the `assemble` row — no rig section yet, because this `propose`
    drafts them from the parts `assemble` writes.
+   For a posed figure (seated, reclining), add `--keypoints keypoints.json` (and
+   `--person <id>` when the file holds more than one person): the joints it gives
+   place the neck, hip, chest and sleeves (§3, *A posed figure*).
 8. Correct, then `spine-parts propose … --from-config config.json` to redraw the
    config's own bones and LINT them — every chain link against its mesh's art, and
    the single bones `hip` and `chest` against each other and the figure (a config
    without them prints a `note:` that those lines did not run); repeat until it
-   prints no LINT line (exit 0). Config from here on: the `full` row.
+   prints no LINT line (exit 0). Add the same `--keypoints` to lint by the joints.
+   Config from here on: the `full` row.
    `spine-parts compare --left work/proposal.json --right config.json` says what the
    correction changed, bone by bone: each origin, parent, tip, length and direction
    as its own figure, and the bones renamed, added or removed by name (§5). It reads
@@ -306,7 +368,7 @@ proposal in as the steps above say (`RL01`); every step must exit 0.
 | `layers` | the table, then the `WARN` lines | every tag the plan will need has opaque pixels; one `face` in the head run; `0 WARN line(s)` | a run whose layer PNG is not its box's size (`LAYERS_PNG_MATCHES_BBOX`); a `WARN  PLAN_LAYER_…` line (§6, *Plausibility*) |
 | `sheet` of both runs | the tile list (and the sheet, if you can see) | eyes, irises, lashes and brows as left/right pairs in the head run | a head box that cut off an ornament: move `head_box`, re-run the head crop |
 | `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px`, then `uncovered holes (8-connected): N` and the largest five as `uncovered hole K: <px> px at x,y wxh (between "<part>" <px> px, …)`; and look at `render/recomposite_error_rig.png` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185, 259 holes, the largest 94 px; `demo` 2.39 / 95.8 % / 11,050 / 1,564, 453 holes, the largest 70 px (default rule) — many slivers along part edges, no hole a region could hide | one large hole: part of the figure is in no layer — a plan entry is missing, hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason), or See-through split one garment into two and left the space between them in neither (a skirt as two trouser legs); the `between` parts say where. When neither run holds it at all, an `assemble.patches` entry cuts it from the painting (below) |
-| `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck); a `hanging strand … -- no chain proposed` note — that strand hangs stiff until you add a chain down the x and rows it names (§3); a `no blink: …` or `blink without brows: …` note — the idle will not blink (or its brows will not drop), because no part came from an `eyewhite` (or `eyebrow`) layer; the note names the tags looked for; a `no eyewhite part for eye_<s> …` note — the iris and lash parts it names ride `head` and do not blink, because no `eyewhite-<s>` part made that side's eye bone: take the eyewhite from the other run, or keep them on `head`; a `no face part: face box derived from …` note (always the first) — `head`, `neck` and every face-height scale come from a box guessed off the hair and neck (§3): check `head` and `neck` on `landmarks_head.png` and move them; when it adds `the blink shuts the eyes over no face part`, read `BLINK_NO_HOLE` after `check` — an eye with no face under it can open a hole (the `sample` with only its face removed: 587 px) |
+| `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck); a `hanging strand … -- no chain proposed` note — that strand hangs stiff until you add a chain down the x and rows it names (§3); a `no blink: …` or `blink without brows: …` note — the idle will not blink (or its brows will not drop), because no part came from an `eyewhite` (or `eyebrow`) layer; the note names the tags looked for; a `no eyewhite part for eye_<s> …` note — the iris and lash parts it names ride `head` and do not blink, because no `eyewhite-<s>` part made that side's eye bone: take the eyewhite from the other run, or keep them on `head`; a `no face part: face box derived from …` note (always the first) — `head`, `neck` and every face-height scale come from a box guessed off the hair and neck (§3): check `head` and `neck` on `landmarks_head.png` and move them; when it adds `the blink shuts the eyes over no face part`, read `BLINK_NO_HOLE` after `check` — an eye with no face under it can open a hole (the `sample` with only its face removed: 587 px). Under `--keypoints`: the `lint rule set:` line first (joints, or screen and why), then the joint notes — `missing: the rule "…" placed bone X instead` is a bone still guessed; `not used — …` names why an arm's joints did not place its sleeve; `LINT chest at … is not between the neck joint …`, `LINT hip at … is not past chest …`, `LINT hip at … is nearer the neck joint …` and `LINT <chain><i> at … does not advance from <s>_shoulder toward <s>_wrist` are the joint-frame lines: move that bone between, past or along the joints they name |
 | `compare` | one line per pair (origin, parent, tip, length, direction — or SKIP and why), then the per-row summary, the unmapped bones of each side, `required:`, each side's roles and the `controls:` line | proposal against the config you corrected: the rows you changed and no others. Config against the `rig.json` `build` writes for it: measured on both examples, every origin within 6.19e-7 px (the rig's offsets are written to 6 places) and every chain link's tip and length within 4.99e-4 px (`length` is written to 3), printed to three places as `0.000` (a signed figure as `+0.000` or `-0.000`); `parent … is the right's ancestor at depth 2, <bone>_ctl between` for every keyed mesh bone, no `DIFFERENT` and no `NOT MAPPED` | `parent DIFFERENT: left a, right b` — a bone hangs from another parent than the other side's; `frames not related` — a rig with no stage (`skeleton.width`/`height`), two configs at different `rig_scale`: the distance rows SKIP, so declare the frame in a `--map` file if the author knows it; `FAIL  STRUCTURE_REQUIRED_PRESENT` — a bone the map requires is missing through its pairs |
 | `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; the `bones` line; the `idle keys` line; then rigc's gate lines (with A15's declared SKIP under `--idle-keys direct`); in `rig.json`, each chain link's (or its `_ctl`'s) `length` and `rotation` | `cover 1.00000` on every mesh, both gate summaries `0 failed` (the compile and the packed pages); every link's `length` the distance to the next link and `rotation` its direction (Spine degrees, counter-clockwise, y up, local to the parent), every offset under it — a child bone's `x, y`, a weight's bind `x, y`, a region's `x, y` — in that turned frame, and a region on a link carrying `rotation` that turns it back upright. Nothing moved: `flattenRig` (`src/rig.ts`) turns every offset back and gives the unturned numbers | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
 | `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the six judgement lines, `RECOMPOSITE_HOLES` and, under `--source`, `SETUP_POSE_VS_SOURCE` (§7), `check.json`; the last line says how many of the nine bars measured and names the ones that said SKIP | `check: PASS; 9 of 9 bar(s) measured, 0 skipped` on the examples, and a judgement line SKIP only where the character lacks what it reads; on a rig spec with no `parts.json` or no `idle` (a merged rig, §7 *Measuring a rig spine-parts did not assemble*), PASS with the skipped bars named | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
@@ -668,6 +730,11 @@ See-through with another seed.
 | `PROPOSE_SOURCE_PRESENT`, `PROPOSE_PNG_PRESENT`, `PROPOSE_PNG_MATCHES_BOX` | the painting or a part PNG is missing, or a PNG is not its box | `--source`, `--parts` (re-run assemble) |
 | `PROPOSE_FACE_PRESENT` | no part comes from a `face` layer, and the face-less fallback cannot derive a face box either: it needs the head run's `neck` and at least one head-run `front hair`/`back hair` part whose top is above the neck's, and the message names the half that is missing. With both, `propose` does not refuse — it derives the box and says so in its first note (§5) | `assemble.plan`: take the face, or the head run's hair and neck |
 | `PROPOSE_ACCESSORY_BODY` | an accessory has nothing above its pendant rows to hang its bone on | that part's plan entry, or author its bones by hand |
+| `KEYPOINTS_FILE_PRESENT`, `KEYPOINTS_IS_JSON`, `KEYPOINTS_KEY_KNOWN`, `KEYPOINTS_FIELD_PRESENT`, `KEYPOINTS_FIELD_TYPE` | the `--keypoints` file is absent, not JSON, has a key this reader does not know, lacks one of `spec`, `space`, `width`, `height`, `source`, `people`, or holds a value of the wrong type (a size that is not a whole positive px count, an empty `source`, no people) | the keypoint file (§3, *A posed figure*) |
+| `KEYPOINTS_SPEC_KNOWN`, `KEYPOINTS_SPACE_STATED` | the file is not `spine-parts-keypoints/1`, or states a space other than painting-px, origin top-left, y down | convert the file to that space; it is not read as if it were in it |
+| `KEYPOINTS_JOINT_KNOWN`, `KEYPOINTS_JOINT_STATE`, `KEYPOINTS_POSITION_STATED`, `KEYPOINTS_POSITION_INSIDE` | a joint name outside body-18, a state outside observed / occluded / missing, an observed joint with no `at` or a missing one with one, or a position outside the `width`x`height` image | that joint |
+| `KEYPOINTS_PERSON_UNIQUE`, `KEYPOINTS_PERSON_CHOSEN` | two people share an id; or the file holds more than one person and no `--person` names one, or `--person` names none of them (the message lists the ids) | `--person <id>` |
+| `KEYPOINTS_IMAGE_SIZE` | the file's `width`x`height` is not the `--source` painting's | a file measured on this painting |
 | `PARTS_*` (`PARTS_FILE_PRESENT`, `PARTS_IS_JSON`, `PARTS_KEY_KNOWN`, `PARTS_FIELD_PRESENT`, `PARTS_FIELD_TYPE`, `PARTS_NAME_UNIQUE`, `PARTS_FROM_KNOWN`, `PARTS_BOX_INSIDE_RIG`, `PARTS_COUNTS_ADD_UP`, `PARTS_HOLES_LARGEST_FIRST`, `PARTS_HOLE_PART_KNOWN`) | the `parts.json` read is not assemble's contract (`PARTS_COUNTS_ADD_UP`: `visible_px + occluded_px` is not `opaque_px`, `visible_not_projected_px` is above `visible_px`, or the `recomposite` block's figures disagree — more uncovered than error pixels, a hole larger than its box, the wrong number of holes listed, listed areas that do not sum to `uncovered_error_px`; the last two codes are the block's order and its border names, §5) | re-run assemble; do not edit `parts.json` |
 
 ### rig

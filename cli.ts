@@ -25,7 +25,8 @@ import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs } from './src/inputs.ts';
 import { DEFAULT_IDLE_KEYS, IDLE_KEYS, type IdleKeys } from './src/rig.ts';
 import { figuresPhrase, implausibleRules, layerFigures, type LayerSet, pct, readLayers, ruleSummary, times } from './src/layers.ts';
-import { checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, propose, readPartSet, serializeProposal } from './src/propose.ts';
+import { checkImageSize, choosePerson, KEYPOINTS_SPEC, loadKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
+import { basisLines, checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { readPng, writePng } from './src/raster/png.ts';
 import { buildSheet, defaultCaption, type Tile, tilesFrom } from './src/sheet.ts';
 import { loadComparison, requiredProblems, structureLines } from './src/structure.ts';
@@ -92,9 +93,28 @@ usage:
       It reads bone origins only — not parents, tips, lengths, directions or
       names, so a changed parent or tip scores 0; spine-parts compare reads those.
 
+  spine-parts propose … [--keypoints <keypoints.json> [--person <id>]]
+      Read the figure's pose from one explicit file (spec "${KEYPOINTS_SPEC}"):
+      its space (painting-px, origin top-left, y down — another is refused),
+      the image's width and height (held to --source's, KEYPOINTS_IMAGE_SIZE),
+      its source, and people, each an id and body-18 joints (r and l are the
+      subject's sides), each observed with a position, occluded with an
+      optional position (the producer's estimate) or missing; an unlisted
+      joint is missing. More than one person needs --person (nothing picks
+      one). Painting px reach rig px by the overlay's map, x * W/width,
+      y * H/height. A joint with a position places its bone as given: neck,
+      hip (the midpoint of r_hip and l_hip), the chest half way along neck ->
+      hip, and each sleeve chain shoulder -> elbow with its tip at the wrist
+      when every handwear part holds a wrist; a missing joint leaves its bone to
+      the rule. One note per joint says which. LINT then reads the torso along
+      the neck -> hips line and each sleeve chain along shoulder -> wrist
+      instead of by screen y, and prints the rule set it used first. Without
+      --keypoints nothing changes.
+
   spine-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
       Draw the config's CURRENT bones instead (<out>/render/landmarks_config.png
-      and _head) and LINT them. Exits 1 when any LINT line is printed.
+      and _head) and LINT them (by the joints too, given --keypoints). Exits 1
+      when any LINT line is printed.
 
   spine-parts propose --head-box --full <dir | layers.json | file.psd> --canvas <W>x<H>
       Propose seethrough.head_box (source px, square) from the full run's
@@ -591,11 +611,19 @@ function parseCanvas(v: string): { w: number; h: number } | null {
   return m === null ? null : { w: Number(m[1]), h: Number(m[2]) };
 }
 
-function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: CharacterConfig['meshes'] }): number {
-  const res = lint(P, spec);
+function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: CharacterConfig['meshes'] }, joints?: RigJoints): number {
+  const res = lint(P, spec, joints);
+  // Under --keypoints only: which rule set read the torso and the chains, and on what basis.
+  if (res.basis !== undefined) for (const l of basisLines(res.basis)) console.log(l);
   for (const f of res.findings) console.log(lintLine(f));
   for (const m of res.unknownMeshes) console.log(`note: mesh ${JSON.stringify(m)} names no part in parts.json, so it was not linted`);
-  for (const b of res.missingTorsoBones) console.log(`note: no single bone named ${JSON.stringify(b)}, so the hip was not linted against the chest${b === 'hip' ? ' or the figure height' : ''}`);
+  for (const b of res.missingTorsoBones) {
+    console.log(
+      res.basis?.torso.read === true
+        ? `note: no single bone named ${JSON.stringify(b)}, so it was not linted against the torso joints`
+        : `note: no single bone named ${JSON.stringify(b)}, so the hip was not linted against the chest${b === 'hip' ? ' or the figure height' : ''}`,
+    );
+  }
   console.log(`${res.findings.length} LINT line(s) over ${Object.keys(spec.meshes).length - res.unknownMeshes.length} mesh(es) and the hip`);
   return res.findings.length;
 }
@@ -603,7 +631,7 @@ function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: 
 function cmdPropose(args: string[]): number {
   const flags = new Map<string, string>();
   let headBox = false;
-  const valued = ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--canvas'];
+  const valued = ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--canvas', '--keypoints', '--person'];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--head-box') {
@@ -645,12 +673,21 @@ function cmdPropose(args: string[]): number {
     if (source === undefined) return usage('propose needs --source <painting.png>, drawn under the overlay');
     if (out === undefined) return usage('propose needs --out <dir>');
     if (flags.has('--from-config') && flags.has('--compare')) return usage('--from-config and --compare are two modes; give one');
+    if (flags.has('--person') && !flags.has('--keypoints')) return usage('--person names a person in the --keypoints file; give --keypoints <file>');
     const partsDir = existsSync(partsArg) && statSync(partsArg).isFile() ? dirname(partsArg) : partsArg;
     if (!existsSync(source)) {
       throw new PartsError([{ code: 'PROPOSE_SOURCE_PRESENT', object: source, detail: 'no such file; the painting is drawn under the overlay' }]);
     }
     const P = readPartSet(partsDir);
     const painting = readPng(source);
+    // Issue #75: the keypoint file, held to this painting's size and taken to rig px by the overlay's map.
+    const kpPath = flags.get('--keypoints');
+    let joints: RigJoints | undefined;
+    if (kpPath !== undefined) {
+      const kp = loadKeypoints(kpPath);
+      checkImageSize(kp, painting.width, painting.height, kpPath, source);
+      joints = toRigJoints(kp, choosePerson(kp, flags.get('--person'), kpPath), P.W, P.H);
+    }
     const render = join(out, 'render');
     const fromConfig = flags.get('--from-config');
     if (fromConfig !== undefined) {
@@ -660,11 +697,11 @@ function cmdPropose(args: string[]): number {
       writePng(join(render, 'landmarks_config.png'), img.full);
       if (img.head !== null) writePng(join(render, 'landmarks_config_head.png'), img.head);
       console.log(`wrote ${join(render, 'landmarks_config.png')}${img.head !== null ? ' (+_head)' : ' (no bone named "head", so no head crop)'}`);
-      return printLint(P, cfg) > 0 ? EXIT_REFUSED : EXIT_OK;
+      return printLint(P, cfg, joints) > 0 ? EXIT_REFUSED : EXIT_OK;
     }
     const cmpPath = flags.get('--compare');
     const cfg = cmpPath === undefined ? null : loadConfig(cmpPath);
-    const prop = propose(P);
+    const prop = propose(P, joints);
     // Emit only after green: a proposal the config loader would refuse is not written.
     checkProposal(P, prop);
     const img = drawLandmarks(P, painting, prop.bones, 'PROPOSAL - CORRECT ME');
@@ -674,7 +711,7 @@ function cmdPropose(args: string[]): number {
     if (img.head !== null) writePng(join(render, 'landmarks_head.png'), img.head);
     console.log(`wrote proposal.json (${prop.bones.length} bone entries, ${Object.keys(prop.meshes).length} meshes) and render/landmarks.png (+_head) under ${out}`);
     for (const n of prop.notes) console.log(`note: ${n}`);
-    printLint(P, prop);
+    printLint(P, prop, joints);
     if (cfg !== null) for (const l of compareLines(compare(prop.bones, cfg.bones))) console.log(l);
     return EXIT_OK;
   } catch (err) {

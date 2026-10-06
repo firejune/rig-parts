@@ -65,8 +65,14 @@ stage writes are the whole interface.
    `assemble.patches` entry (a rig-pixel box, `alpha: "silhouette"`, drawn
    `"back"` and reaching under its neighbours, its bone in `regions`) and assemble
    again; never add a part to `rig/` or `parts/` by hand (AUTHORING §5).
+   A seated or reclining figure: add `--keypoints <file>` (body-18 joints in
+   painting px, each observed, occluded or missing; AUTHORING §3, *A posed
+   figure*) so the neck, hip, chest and sleeves follow the pose and LINT reads
+   the joints, not screen y. Never write a joint you did not get from an
+   estimator or the painting: say `missing` and let the rule stand in.
 6. Correct against `render/landmarks.png` and `note:` lines; `propose …
-   --from-config config.json` until it prints no `LINT` line. `spine-parts compare
+   --from-config config.json` (with the same `--keypoints`) until it prints no
+   `LINT` line. `spine-parts compare
    --left work/proposal.json --right config.json` lists what the correction changed,
    bone by bone — origin, parent, tip, length, direction (AUTHORING §4).
 7. `spine-parts build --config … --source … --full … --head … --out out --loop`.
