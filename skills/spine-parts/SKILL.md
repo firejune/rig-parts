@@ -90,7 +90,8 @@ stage writes are the whole interface.
    loader resolves the bones it names and nothing else, and rigc's gate refuses
    the rest in its words. A scene target is a single bone under `root`. A two-bone
    ik over links the idle keys needs `--idle-keys direct` on `rig` or `build`
-   (the refusal names the command that ran; AUTHORING §3).
+   (rigc refuses the pair the link's control splits, and the line names the flag
+   on the command that ran; AUTHORING §3).
 7. `spine-parts build --config … --source … --full … --head … --out out --loop`
    (add `--idle-keys direct` when step 6 said so).
    It stops at the first stage that refuses, printing that stage's lines under

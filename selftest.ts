@@ -98,7 +98,7 @@ import {
   writeRun,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
-import { artifactPaths, build, BUILD_OWNS, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
+import { artifactPaths, build, BUILD_OWNS, ctlRemedies, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, shiftRight, writeCheckRig, writeMergedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BARE_CROWN_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
@@ -1538,21 +1538,43 @@ function runConstraintConfigCases(say: (name: string, ok: boolean, detail: strin
     'what the loader owns it refuses by shape: the list, the entry, an annotation (a string, as everywhere) and the fields that name bones; a bone field holding no name has nothing to resolve',
   );
 
-  const ikCase = (bones: string[]): Problem | null => one(load([{ name: 'reach', type: 'ik', bones, target: 'tgt' }]));
-  const notChild = ikCase(['hip', 'hem1']);
-  const reversed = ikCase(['hem1', 'hem0']);
-  const three = ikCase(['hip', 'hem0', 'hem1']);
-  const pairOk = load([{ name: 'reach', type: 'ik', bones: ['hem0', 'hem1'], target: 'tgt' }]);
-  const singleOk = load([{ name: 'aim', type: 'ik', bones: ['hip'], target: 'tgt' }]);
-  say(
-    'CF64_AN_IK_OVER_TWO_BONES_THAT_ARE_NOT_PARENT_AND_CHILD_OR_OVER_THREE_IS_REFUSED_AND_ONE_BONE_OR_A_PAIR_LOADS',
-    notChild?.code === 'CONFIG_IK_BONES_PARENT_AND_CHILD' && notChild.object === 'config.constraints[0].bones' && notChild.detail.startsWith('names "hip" and "hem1", and "hem1"\'s parent is "hem0"; a two-bone ik solves a parent and its child') &&
-      reversed?.code === 'CONFIG_IK_BONES_PARENT_AND_CHILD' && reversed.detail.startsWith('names "hem1" and "hem0", and "hem0"\'s parent is "hip"') &&
-      three?.code === 'CONFIG_IK_BONES_PARENT_AND_CHILD' && three.detail.startsWith('names 3 bones (hip, hem0, hem1)') &&
-      pairOk === null && singleOk === null,
-    `[hip, hem1] -> ${line(notChild, null)}; [hem1, hem0] -> ${reversed === null ? 'not one refusal' : reversed.code}; [hip, hem0, hem1] -> ${three === null ? 'not one refusal' : `${three.code}: ${three.detail.slice(0, 90)}…`}; [hem0, hem1] -> ${codes(pairOk)}; [hip] -> ${codes(singleOk)}`,
-    'measured through spine-rigc 2.10.1 on the rig fixture (fixtures/rig.ts, 49 idle frames): an ik over two bones that are not parent and child gates green and leaves the tip 15.6 to 17.3 units off its target in every frame, and an ik over three bones gates green and moves nothing — what was written cannot happen, and nothing downstream says so',
-  );
+  // CF64 — an ik's bones as a shape are rigc's (issue #103): the loader passes every shape, and rigc's
+  // refusal reaches the author through the rig command in rigc's words. The rig fixture (fixtures/rig.ts)
+  // under --idle-keys direct, so no control stands anywhere: hem1's parents are hem0, body, root, and
+  // hem0's is body. The sentences are spine-rigc 2.15.0's (ikShapeFault, src/assertions/bodies/a47.ts),
+  // filled in by hand from those parents.
+  const ikShapes: Array<[string, string[], string]> = [
+    ['[body, hem1]', ['body', 'hem1'], 'ik constraint "reach": "hem1" is not a child of "body" ("hem0" stands between), so the two-bone solve is not of the chain drawn'],
+    ['[hem1, hem0]', ['hem1', 'hem0'], 'ik constraint "reach": "hem0" is not a child of "hem1" ("hem1" is not above it; its parent is "body"), so the two-bone solve is not of the chain drawn'],
+    ['[body, hem0, hem1]', ['body', 'hem0', 'hem1'], 'ik constraint "reach" names 3 bones ("body", "hem0", "hem1"); the solver applies one or two, so a constraint over 3 moves nothing'],
+  ];
+  const shapeDir = temp('constraints-ik-shape');
+  try {
+    const shapeRuns = ikShapes.map(([what, bones, sentence], i) => {
+      const cfg = constraintConfig([{ name: 'reach', type: 'ik', bones, target: 'tgt' }]);
+      const loaded = refusals(() => parseConfig(cfg));
+      const f = writeRigFixture(join(shapeDir, String(i)), cfg);
+      const out = join(shapeDir, String(i), 'out');
+      const r = runCli(['rig', '--config', f.config, '--parts', f.parts, '--out', out, '--idle-keys', 'direct']);
+      const fails = r.out.split('\n').filter((l) => l.includes('FAIL'));
+      const ok = loaded === null && r.status === 1 && fails.length === 1 && fails[0].trim().startsWith('FAIL  RIG_RIGC_GREEN: ') && fails[0].includes(sentence) && !fails[0].includes('--idle-keys direct`') && !existsSync(out);
+      return { what, ok, got: `loader ${codes(loaded)}, rig exit ${r.status}, ${fails.length} FAIL line(s)${fails[0] === undefined ? '' : `: …${fails[0].slice(Math.max(0, fails[0].indexOf('ik constraint')), fails[0].indexOf('ik constraint') + 110)}…`}, --out ${existsSync(out) ? 'WRITTEN' : 'not written'}` };
+    });
+    const pairCfg = constraintConfig([{ name: 'reach', type: 'ik', bones: ['hem0', 'hem1'], target: 'tgt' }]);
+    const pairFix = writeRigFixture(join(shapeDir, 'pair'), pairCfg);
+    const pairRun = runCli(['rig', '--config', pairFix.config, '--parts', pairFix.parts, '--out', join(shapeDir, 'pair', 'out'), '--idle-keys', 'direct']);
+    const oneCfg = constraintConfig([{ name: 'aim', type: 'ik', bones: ['hem1'], target: 'tgt' }]);
+    const oneFix = writeRigFixture(join(shapeDir, 'one'), oneCfg);
+    const oneRun = runCli(['rig', '--config', oneFix.config, '--parts', oneFix.parts, '--out', join(shapeDir, 'one', 'out'), '--idle-keys', 'direct']);
+    say(
+      'CF64_AN_IK_OVER_A_PAIR_THAT_IS_NOT_PARENT_AND_CHILD_OR_OVER_THREE_LOADS_AND_RIGC_REFUSES_IT_AT_RIG_IN_ITS_OWN_WORDS',
+      shapeRuns.every((s) => s.ok) && pairRun.status === 0 && oneRun.status === 0 && existsSync(join(shapeDir, 'pair', 'out', 'rig.json')) && existsSync(join(shapeDir, 'one', 'out', 'rig.json')),
+      `${shapeRuns.map((s) => `${s.what} -> ${s.ok ? '' : 'WRONG: '}${s.got}`).join('; ')}; positive: [hem0, hem1] -> rig exit ${pairRun.status}, [hem1] -> rig exit ${oneRun.status}`,
+      'issue #103: from spine-rigc 2.15.0 the rig-spec parser refuses an ik over more than two bones, or over a pair whose second bone is not the first\'s child, by name (firejune/rigc#1205), so the loader\'s own refusal of #92 is gone and nothing here re-implements it; what holds is that rigc\'s sentence reaches the author on the one FAIL line, with nothing of this package\'s added where no control stands between',
+    );
+  } finally {
+    rmSync(shapeDir, { recursive: true, force: true });
+  }
 
   const under = one(load([{ name: 'reach', type: 'ik', bones: ['hem0'], target: 'hem1' }]));
   const itself = one(load([{ name: 'aim', type: 'ik', bones: ['hem1'], target: 'hem1' }]));
@@ -2320,14 +2342,15 @@ function runCliSuite(): number {
       'CL19_A_TWO_BONE_IK_ON_KEYED_LINKS_IS_REFUSED_UNDER_THE_DEFAULT_IDLE_KEYS_NAMING_DIRECT_AND_BUILDS_UNDER_DIRECT',
       ctlRun.status === 1 &&
         ctlFail.length === 1 &&
-        ctlFail[0].includes('RIG_IK_PAIR_UNDER_CONTROL: config.constraints[0] (ik constraint "reach")') &&
-        ctlFail[0].includes('Run `rig --idle-keys direct`') &&
+        ctlFail[0].trim().startsWith('FAIL  RIG_RIGC_GREEN: ') &&
+        ctlFail[0].includes('ik constraint "reach": "hem1" is not a child of "hem0" ("hem1_ctl" stands between)') &&
+        ctlFail[0].includes('run `rig --idle-keys direct`') &&
         !existsSync(join(conDir, 'ctl', 'out')) &&
         directRun.status === 0 &&
         Object.keys(inv).join(',') === 'idleDrivesMeshes,detached' &&
         JSON.stringify(directRig?.constraints) === JSON.stringify(pair.constraints),
-      `no --idle-keys -> exit ${ctlRun.status}, ${ctlFail.length} FAIL line(s): ${ctlFail[0]?.trim().slice(0, 140) ?? ''}…; --idle-keys direct -> exit ${directRun.status}, rig.json invariants ${Object.keys(inv).join(', ')}, constraints ${JSON.stringify(directRig?.constraints ?? null)}`,
-      'issue #92, ruling 4: the default ctl puts a control between the links, which a two-bone ik cannot read; the refusal comes before rigc and names the value of the flag under which the same config builds',
+      `no --idle-keys -> exit ${ctlRun.status}, ${ctlFail.length} FAIL line(s): …${ctlFail[0]?.slice(ctlFail[0].indexOf('ik constraint'), ctlFail[0].indexOf('ik constraint') + 100) ?? ''}…${ctlFail[0]?.includes('run `rig --idle-keys direct`') === true ? ' naming `rig --idle-keys direct`' : ''}; --idle-keys direct -> exit ${directRun.status}, rig.json invariants ${Object.keys(inv).join(', ')}, constraints ${JSON.stringify(directRig?.constraints ?? null)}`,
+      'issue #92, ruling 4: the default ctl puts a control between the links, which a two-bone ik cannot read; from spine-rigc 2.15.0 rigc refuses that pair by name and the line names the value of the flag under which the same config builds (issue #103)',
     );
 
     // Issue #93: --requirements on check and build.
@@ -2368,7 +2391,7 @@ function runCliSuite(): number {
     const rigUsage = helpText.slice(helpText.indexOf('  spine-parts rig '), helpText.indexOf('  spine-parts check '));
     say(
       'CL24_THE_HELP_NAMES_IDLE_KEYS_UNDER_BUILD_AS_UNDER_RIG_AND_SAYS_WHERE_IT_GOES',
-      buildUsage.includes('[--idle-keys ctl|direct]') && rigUsage.includes('[--idle-keys ctl|direct]') && buildUsage.includes('--idle-keys is forwarded to the rig stage') && buildUsage.includes('RIG_IK_PAIR_UNDER_CONTROL') && !helpText.includes('takes no --idle-keys'),
+      buildUsage.includes('[--idle-keys ctl|direct]') && rigUsage.includes('[--idle-keys ctl|direct]') && buildUsage.includes('--idle-keys is forwarded to the rig stage') && buildUsage.includes('rigc refuses the pair a control splits, and the RIG_RIGC_GREEN line') && !helpText.includes('takes no --idle-keys'),
       `build usage: ${buildUsage.split('\n').filter((l) => l.includes('--idle-keys')).map((l) => l.trim()).join(' | ')}; rig usage carries the same option: ${rigUsage.includes('[--idle-keys ctl|direct]')}`,
       'an agent learns a flag from --help: build shows it in the same spelling as rig, and says it goes to the rig stage and which refusal asks for it',
     );
@@ -3398,56 +3421,73 @@ function runConstraintRigCases(say: (name: string, ok: boolean, detail: string, 
     'rule 5 of issue #92: what rigc can already check about a scene target — that it is not under the chain it drives — is declared for it, as rigc\'s A25 reads it (bone, notUnder); a physics constraint follows nothing, so it declares nothing',
   );
 
-  // RG56 — the control between a two-bone ik's pair, refused by name.
-  const underCtl = refusals(() => buildRig(conCfg([reach]), rigParts(), rigImages()));
-  const direct = refusals(() => buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'direct'));
-  const noControl = refusals(() => buildRig(conCfg([{ name: 'reach', type: 'ik', bones: ['body', 'eye'], target: 'tgt' }]), rigParts(), rigImages()));
-  const q = underCtl !== null && underCtl.problems.length === 1 ? underCtl.problems[0] : null;
-  say(
-    'RG56_A_TWO_BONE_IK_WHOSE_CHILD_THE_IDLE_KEYS_THROUGH_A_CONTROL_IS_REFUSED_NAMING_IDLE_KEYS_DIRECT',
-    q?.code === 'RIG_IK_PAIR_UNDER_CONTROL' &&
-      q.object === 'config.constraints[0] (ik constraint "reach")' &&
-      q.detail.includes('it is keyed through the control "hem1_ctl", which stands between the two in the rig') &&
-      q.detail.endsWith('Run `rig --idle-keys direct`, which keys "hem1" in place and keeps the pair parent and child') &&
-      direct === null &&
-      noControl === null,
-    `ctl, ik over hem0 and hem1 -> ${q === null ? codes(underCtl) : `${q.code}: ${q.object} — ${q.detail}`}; direct -> ${codes(direct)}; ctl, ik over body and eye (eye is a region, no control) -> ${codes(noControl)}`,
-    'measured (RG57): under ctl the pair gates green and the tip misses the target in every frame, because hem1_ctl stands between the links; nothing is re-parented or re-targeted here, the refusal names the flag under which the ik means what it says',
-  );
-
-  // RG61 — issue #95: the refusal names the flag on the command that ran, and only that one.
-  const byBuild = refusals(() => buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'ctl', 'build'));
-  const byRig = refusals(() => buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'ctl', 'rig'));
-  const qb = byBuild !== null && byBuild.problems.length === 1 ? byBuild.problems[0] : null;
-  const qr = byRig !== null && byRig.problems.length === 1 ? byRig.problems[0] : null;
-  const names = (d: string | undefined, cmd: string): boolean => d !== undefined && d.includes(`Run \`${cmd} --idle-keys direct\``);
+  // RG61 — issue #95: the line names the flag on the command that ran, and only that one (issue #103: now
+  // beside rigc's refusal). The lines are rigc's sentence as spine-rigc 2.15.0 writes it for the rig fixture's
+  // pair under ctl (ikShapeFault, src/assertions/bodies/a47.ts), filled in by hand; RG56 holds it on the real rigc.
+  const splitLine = 'rigc compile error: …/rig.json: ik constraint "reach": "hem1" is not a child of "hem0" ("hem1_ctl" stands between), so the two-bone solve is not of the chain drawn — name "hem1"\'s own parent as the first bone, or make "hem1" a child of "hem0"';
+  const byBuild = ctlRemedies([splitLine], ['hem0', 'hem1'], 'build');
+  const byRig = ctlRemedies([splitLine], ['hem0', 'hem1'], 'rig');
+  const names = (d: string | undefined, cmd: string): boolean => d !== undefined && d.includes(`run \`${cmd} --idle-keys direct\``);
   say(
     'RG61_THE_IK_PAIR_REFUSAL_NAMES_THE_FLAG_ON_THE_COMMAND_THAT_RAN_AND_NOT_THE_OTHER',
-    qb?.code === 'RIG_IK_PAIR_UNDER_CONTROL' && qr?.code === 'RIG_IK_PAIR_UNDER_CONTROL' &&
-      names(qb.detail, 'build') && !names(qb.detail, 'rig') &&
-      names(qr.detail, 'rig') && !names(qr.detail, 'build') &&
-      !qb.detail.includes('takes no --idle-keys') && !qr.detail.includes('takes no --idle-keys'),
-    `run by build -> ${qb === null ? codes(byBuild) : `…${qb.detail.slice(qb.detail.indexOf('Run '))}`}; run by rig -> ${qr === null ? codes(byRig) : `…${qr.detail.slice(qr.detail.indexOf('Run '))}`}`,
-    'issue #95, ruling 3: build takes --idle-keys now, so the refusal sends the author to the flag on the command they ran — the planted half is the other command, whose name must not appear — and the sentence saying build takes no flag is gone',
-  );
-
-  // RG62 — the command moves no byte the stage writes, and only the command's name in the refusal.
-  const greenRig = rigJsonText(buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'direct', 'rig').rig);
-  const greenBuild = rigJsonText(buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'direct', 'build').rig);
-  const greenMotionRig = rigJsonText(buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'direct', 'rig').motion);
-  const greenMotionBuild = rigJsonText(buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'direct', 'build').motion);
-  const ctlNoIk = rigJsonText(buildRig(conCfg(), rigParts(), rigImages(), undefined, 'ctl', 'build').rig);
-  const directNoIk = rigJsonText(buildRig(conCfg(), rigParts(), rigImages(), undefined, 'direct', 'build').rig);
-  const sameButWord = qb !== null && qr !== null && qb.object === qr.object && qb.detail.replace('Run `build --idle-keys direct`', 'Run `rig --idle-keys direct`') === qr.detail;
-  say(
-    'RG62_THE_COMMAND_CHANGES_ONLY_ITS_OWN_NAME_IN_THE_REFUSAL_AND_NO_BYTE_OF_RIG_OR_MOTION',
-    greenRig === greenBuild && greenMotionRig === greenMotionBuild && sameButWord && ctlNoIk !== directNoIk,
-    `direct, ik over hem0 and hem1: rig.json under rig and under build ${greenRig === greenBuild ? 'byte-identical' : 'DIFFER'} (${greenRig.length} chars), motion.json ${greenMotionRig === greenMotionBuild ? 'byte-identical' : 'DIFFER'}; ctl refusal under build with the command word swapped back ${sameButWord ? 'equals' : 'does NOT equal'} the one under rig; planted, idle keys ctl against direct on the same config: rig.json ${ctlNoIk === directNoIk ? 'IDENTICAL, so the comparison sees nothing' : 'differs'}`,
-    'issue #95, ruling 3\'s "smallest parameter": the stage cannot know which command ran without being told, so it is told, and the comparison holds that the telling reaches the one sentence and nothing build or rig writes',
+    byBuild.length === 1 && byRig.length === 1 &&
+      names(byBuild[0], 'build') && !names(byBuild[0], 'rig') &&
+      names(byRig[0], 'rig') && !names(byRig[0], 'build') &&
+      byBuild[0].replace('`build --idle-keys', '`rig --idle-keys') === byRig[0],
+    `run by build -> ${byBuild.join(' / ') || 'nothing'}; run by rig -> …${byRig[0]?.slice(byRig[0].indexOf('run ')) ?? 'nothing'}`,
+    'issue #95, ruling 3: build takes --idle-keys, so the line sends the author to the flag on the command they ran — the planted half is the other command, whose name must not appear — and the two lines differ in that word only',
   );
 
   const dir = temp('constraints-rig');
   try {
+    // RG56 — rigc refuses the pair a control splits; the rig stage adds the flag only where the control alone stands between.
+    const runRig = (name: string, constraints: unknown[], keys: 'ctl' | 'direct'): { status: number; fails: string[]; written: boolean } => {
+      const f = writeRigFixture(join(dir, name), constraintConfig(constraints));
+      const out = join(dir, name, 'out');
+      const r = runCli(['rig', '--config', f.config, '--parts', f.parts, '--out', out, '--idle-keys', keys]);
+      return { status: r.status, fails: r.out.split('\n').filter((l) => l.includes('FAIL')), written: existsSync(out) };
+    };
+    const split = runRig('split-ctl', [reach], 'ctl');
+    const wide = runRig('wide-ctl', [{ name: 'reach', type: 'ik', bones: ['body', 'hem1'], target: 'tgt' }], 'ctl');
+    const kept = runRig('kept-direct', [reach], 'direct');
+    const remedy = '"hem1_ctl" is the control this stage keys "hem1" through under --idle-keys ctl, and a config cannot name it: run `rig --idle-keys direct`, which keys "hem1" in place, so no control stands between "hem1" and its parent';
+    const pure = {
+      multi: ctlRemedies(['ik constraint "reach": "hem1" is not a child of "body" ("hem1_ctl", "hem0", "hem0_ctl" stand between)'], ['hem0', 'hem1'], 'rig').length,
+      none: ctlRemedies([splitLine], [], 'rig').length,
+    };
+    say(
+      'RG56_RIGC_REFUSES_A_TWO_BONE_IK_A_CONTROL_SPLITS_AND_THE_RIG_STAGE_ADDS_IDLE_KEYS_DIRECT_ONLY_WHERE_THE_CONTROL_ALONE_STANDS_BETWEEN',
+      split.status === 1 && split.fails.length === 1 &&
+        split.fails[0].trim().startsWith('FAIL  RIG_RIGC_GREEN: ') &&
+        split.fails[0].includes('ik constraint "reach": "hem1" is not a child of "hem0" ("hem1_ctl" stands between), so the two-bone solve is not of the chain drawn') &&
+        split.fails[0].includes(`; ${remedy}; exit 0 is required before anything is written`) && !split.written &&
+        wide.status === 1 && wide.fails.length === 1 && wide.fails[0].includes('("hem1_ctl", "hem0", "hem0_ctl" stand between)') && !wide.fails[0].includes('--idle-keys direct`') &&
+        kept.status === 0 && kept.written && pure.multi === 0 && pure.none === 0,
+      `ctl, ik over hem0 and hem1 -> exit ${split.status}, ${split.fails.length} FAIL line(s): …${split.fails[0]?.slice(split.fails[0].indexOf('ik constraint'), split.fails[0].indexOf('ik constraint') + 120) ?? ''}…${split.fails[0]?.includes(remedy) === true ? ' + the --idle-keys direct sentence' : ' WITHOUT the --idle-keys direct sentence'}; planted, ctl, ik over body and hem1 (a control and declared bones between) -> exit ${wide.status}, ${wide.fails[0]?.includes('--idle-keys direct`') === true ? 'the flag ADDED' : 'rigc\'s line alone'}; direct, ik over hem0 and hem1 -> exit ${kept.status}; ctlRemedies on a several-bone between: ${pure.multi}, with no control: ${pure.none}`,
+      'issue #103: spine-rigc 2.15.0 refuses the pair a control splits by name (firejune/rigc#1205), so this package\'s own refusal of #92 is gone; rigc\'s remedy names the control, which a config cannot name, so the stage reads rigc\'s verdict — the control it added, alone between — and adds the flag; with a declared bone between too, --idle-keys direct would not make a parent and its child, so nothing is added',
+    );
+
+    // RG62 — the command moves no byte the stage writes, and only the command's name in rigc's refused line.
+    const fix62 = writeRigFixture(join(dir, 'cmd'), constraintConfig([reach]));
+    const green: RigcRunner = () => ({ status: 0, out: '' });
+    const red: RigcRunner = () => ({ status: 1, out: `${splitLine}\n` });
+    const quiet62 = (): void => {};
+    const scratch62 = join(dir, 'cmd-scratch');
+    rigStage({ config: fix62.config, parts: fix62.parts, out: join(dir, 'cmd-rig'), idleKeys: 'direct', command: 'rig' }, green, scratch62, quiet62);
+    rigStage({ config: fix62.config, parts: fix62.parts, out: join(dir, 'cmd-build'), idleKeys: 'direct', command: 'build' }, green, scratch62, quiet62);
+    rigStage({ config: fix62.config, parts: fix62.parts, out: join(dir, 'cmd-ctl'), idleKeys: 'ctl', command: 'build' }, green, scratch62, quiet62);
+    const same62 = ['rig.json', 'motion.json', 'mesh_report.json'].every((f) => readFileSync(join(dir, 'cmd-rig', f), 'utf8') === readFileSync(join(dir, 'cmd-build', f), 'utf8'));
+    const planted62 = readFileSync(join(dir, 'cmd-rig', 'rig.json'), 'utf8') === readFileSync(join(dir, 'cmd-ctl', 'rig.json'), 'utf8');
+    const qb = refusals(() => rigStage({ config: fix62.config, parts: fix62.parts, out: join(dir, 'cmd-red-b'), command: 'build' }, red, scratch62, quiet62))?.problems[0] ?? null;
+    const qr = refusals(() => rigStage({ config: fix62.config, parts: fix62.parts, out: join(dir, 'cmd-red-r'), command: 'rig' }, red, scratch62, quiet62))?.problems[0] ?? null;
+    const sameButWord = qb !== null && qr !== null && qb.code === 'RIG_RIGC_GREEN' && qb.object === qr.object && qb.detail !== qr.detail && qb.detail.replace('run `build --idle-keys direct`', 'run `rig --idle-keys direct`') === qr.detail;
+    say(
+      'RG62_THE_COMMAND_CHANGES_ONLY_ITS_OWN_NAME_IN_THE_REFUSAL_AND_NO_BYTE_OF_RIG_OR_MOTION',
+      same62 && !planted62 && sameButWord,
+      `direct, ik over hem0 and hem1, gate answered green: rig.json, motion.json and mesh_report.json under rig and under build ${same62 ? 'byte-identical' : 'DIFFER'}; gate answered with rigc's split-pair line: the refusal under build with the command word swapped back ${sameButWord ? 'equals' : 'does NOT equal'} the one under rig; planted, idle keys ctl against direct on the same config: rig.json ${planted62 ? 'IDENTICAL, so the comparison sees nothing' : 'differs'}`,
+      'issue #95, ruling 3\'s "smallest parameter": the stage cannot know which command ran without being told, so it is told, and the comparison holds that the telling reaches the one sentence and nothing build or rig writes',
+    );
+
     // RG57 — the direct ik reaches its target; the ctl shape, planted by hand, does not.
     const reached = constraintRender(join(dir, 'reach-direct'), constraintConfig([reach]), 'direct');
     const linkLength = (reached.rig?.bones.find((b) => b.name === 'hem1')?.length ?? 0) as number;
@@ -3459,13 +3499,15 @@ function runConstraintRigCases(say: (name: string, ok: boolean, detail: string, 
     };
     const planted = constraintRender(join(dir, 'reach-interleaved'), constraintConfig([reach]), 'direct', interleave);
     const got = typeof reached.frames === 'string' ? null : tipGap(reached.frames, 'hem1', linkLength, 'tgt');
-    const miss = typeof planted.frames === 'string' ? null : tipGap(planted.frames, 'hem1', linkLength, 'tgt');
+    // Planted on the same frames: hem1's origin read as its tip. With the tip on tgt the origin is the link's length, 8, from it.
+    const originOff = typeof reached.frames === 'string' ? null : tipGap(reached.frames, 'hem1', 0, 'tgt');
     const frames = typeof reached.frames === 'string' ? 0 : reached.frames.length;
+    const interleaveRefused = planted.frames === 'rigc build exit 1' && planted.build.includes('ik constraint "reach": "hem1" is not a child of "hem0" ("hem1_ctl" stands between)');
     say(
       'RG57_A_DIRECT_TWO_BONE_IK_PUTS_THE_TIP_ON_A_ROOT_PARENTED_TARGET_IN_EVERY_FRAME_AND_THE_CONTROL_BETWEEN_THE_PAIR_DOES_NOT',
-      reached.status === 0 && linkLength === 8 && frames === 4 * IDLE_FPS + 1 && got !== null && got <= POSE_BAR && miss !== null && miss > POSE_BAR,
-      `rig --idle-keys direct exit ${reached.status}, hem1 length ${linkLength} (by hand 8); ${typeof reached.frames === 'string' ? reached.frames : `${frames} idle frame(s) (by hand 4 s x ${IDLE_FPS} + 1)`}; largest |tip(hem1) - tgt| ${got === null ? 'not measured' : got.toExponential(3)} (bar ${POSE_BAR}); the same rig with hem1_ctl put between the links by hand, as ctl writes it: ${typeof planted.frames === 'string' ? planted.frames : `gate green, largest gap ${miss?.toFixed(3)}`}`,
-      'ruling 8 of issue #92, read from geometry.json: the target sits inside the chain\'s reach (fixtures/rig.ts, by hand), so a two-bone ik with no softness puts the tip on it exactly; the planted interleave is the shape RIG_IK_PAIR_UNDER_CONTROL refuses, and it passes rigc\'s gate while missing',
+      reached.status === 0 && linkLength === 8 && frames === 4 * IDLE_FPS + 1 && got !== null && got <= POSE_BAR && originOff !== null && Math.abs(originOff - 8) <= POSE_BAR && interleaveRefused,
+      `rig --idle-keys direct exit ${reached.status}, hem1 length ${linkLength} (by hand 8); ${typeof reached.frames === 'string' ? reached.frames : `${frames} idle frame(s) (by hand 4 s x ${IDLE_FPS} + 1)`}; largest |tip(hem1) - tgt| ${got === null ? 'not measured' : got.toExponential(3)} (bar ${POSE_BAR}); planted, hem1's origin read as the tip: ${originOff?.toFixed(6) ?? 'not measured'} (by hand 8); the same rig with hem1_ctl put between the links by hand, as ctl writes it: ${typeof planted.frames === 'string' ? planted.frames : 'gate GREEN'}${interleaveRefused ? ', rigc naming hem1_ctl between the pair' : ''}`,
+      'ruling 8 of issue #92, read from geometry.json: the target sits inside the chain\'s reach (fixtures/rig.ts, by hand), so a two-bone ik with no softness puts the tip on it exactly, and the origin read at the same frames is seen to sit a link away, so the bar discriminates; the interleave ctl writes passed rigc 2.10.1\'s gate while missing by 2.58 (#92), and spine-rigc 2.15.0 refuses it by name (issue #103)',
     );
 
     // RG58 — physics and transform on a link, under ctl and direct.
@@ -8393,13 +8435,14 @@ function runBuildSuite(): number {
       'BU21_BUILD_REFUSES_A_TWO_BONE_IK_OVER_KEYED_LINKS_UNDER_THE_DEFAULT_NAMING_BUILD_IDLE_KEYS_DIRECT',
       ikCtl.status === 1 &&
         ikFail.length === 1 &&
-        ikFail[0].startsWith('[rig]   FAIL  RIG_IK_PAIR_UNDER_CONTROL: config.constraints[0] (ik constraint "reach")') &&
-        ikFail[0].endsWith('Run `build --idle-keys direct`, which keys "skirt1" in place and keeps the pair parent and child') &&
+        ikFail[0].startsWith('[rig]   FAIL  RIG_RIGC_GREEN: ') &&
+        ikFail[0].includes('ik constraint "reach": "skirt1" is not a child of "skirt0" ("skirt1_ctl" stands between)') &&
+        ikFail[0].includes('run `build --idle-keys direct`, which keys "skirt1" in place') &&
         !ikFail[0].includes('`rig --idle-keys') &&
         ikCtl.out.includes('build: stopped at rig; no later stage ran') &&
         !existsSync(join(ikCtlOut, 'rig', 'rig.json')),
-      `no --idle-keys -> exit ${ikCtl.status}, ${ikFail.length} FAIL line(s): …${ikFail[0]?.slice(ikFail[0].indexOf('Run ')) ?? ''}; rig.json written: ${existsSync(join(ikCtlOut, 'rig', 'rig.json'))}`,
-      'issue #95: the refusal that sent the author to the three-stage path now names the flag on the command they ran; the default still refuses, because choosing direct for a config that carries an ik would be a silent switch of what the idle keys ride on',
+      `no --idle-keys -> exit ${ikCtl.status}, ${ikFail.length} FAIL line(s): …${ikFail[0]?.slice(ikFail[0].indexOf('ik constraint'), ikFail[0].indexOf('ik constraint') + 100) ?? ''}… …${ikFail[0]?.slice(ikFail[0].indexOf('run `'), ikFail[0].indexOf('run `') + 60) ?? ''}…; rig.json written: ${existsSync(join(ikCtlOut, 'rig', 'rig.json'))}`,
+      'issue #95: the refusal that sent the author to the three-stage path names the flag on the command they ran; the default still refuses, because choosing direct for a config that carries an ik would be a silent switch of what the idle keys ride on — from spine-rigc 2.15.0 the refusal is rigc\'s, and the line adds the flag (issue #103)',
     );
 
     const ikOut = join(dir, 'ik-direct');

@@ -62,12 +62,11 @@
  *   handed to rigc as `rig.json`'s `constraints`, in the order written, each
  *   as written but its records and annotations. Nothing here solves or
  *   validates them; rigc's gate does, and a field it refuses is its refusal,
- *   in its words (`RIG_RIGC_GREEN`). Two things are this stage's: a two-bone
- *   ik whose child the idle keys through a control is refused
- *   (`RIG_IK_PAIR_UNDER_CONTROL`), and every bone a constraint follows is
- *   declared detached from the bones it drives ({@link detachedRules},
- *   `invariants.detached`, rigc's `A25`). Without the field, no byte of any
- *   output moves.
+ *   in its words (`RIG_RIGC_GREEN`) — a two-bone ik whose child the idle
+ *   keys through a control included (spine-rigc 2.15.0, issue #103). Every
+ *   bone a constraint follows is declared detached from the bones it drives
+ *   ({@link detachedRules}, `invariants.detached`, rigc's `A25`). Without the
+ *   field, no byte of any output moves.
  *
  * Every part image is padded by {@link PAD} transparent pixels on each side
  * before it is meshed or placed, and the padded image is what `images/`
@@ -309,10 +308,11 @@ export function isIdleKeys(v: IdleKeys | string): v is IdleKeys {
 }
 
 /**
- * The command that ran the rig stage, which a refusal names when it tells the
- * author which flag to pass (`RIG_IK_PAIR_UNDER_CONTROL`): `rig` and `build`
- * both take `--idle-keys`, and the line has to name the one that was run.
- * It changes no byte the stage writes — only that refusal's text.
+ * The command that ran the rig stage, which the rig stage names when it tells
+ * the author which flag to pass beside rigc's refusal of a pair a control
+ * splits (`ctlRemedies`, src/build.ts): `rig` and `build` both take
+ * `--idle-keys`, and the line has to name the one that was run. It changes no
+ * byte the stage writes — only that line's text.
  */
 export type RigCommand = 'rig' | 'build';
 
@@ -422,7 +422,6 @@ export function buildRig(
   images: ReadonlyMap<string, Raster>,
   maxLoopPasses: number = ONE_LOOP_PASSES,
   idleKeys: IdleKeys = DEFAULT_IDLE_KEYS,
-  command: RigCommand = 'rig',
 ): RigOutput {
   const problems: Problem[] = [];
   const fail = (code: string, object: string, detail: string): void => {
@@ -598,25 +597,10 @@ export function buildRig(
       fail('RIG_CONTROL_NAME_FREE', `bone "${k}"`, `is keyed by the idle and weighted to by a mesh, so it needs the control bone "${ctl}", and config.bones already declares a bone of that name`);
     }
   }
-  // A two-bone ik over a parent and its child (the loader's rule) stops being
-  // one when the child gets a control: `<child>_ctl` stands between them.
-  // Measured through spine-rigc 2.10.1 on the rig fixture's chain `hem` with a
-  // target under root: under `ctl` the ik over hem0 and hem1 gates green and
-  // leaves hem1's tip 2.58 to 2.59 units from the target in every one of the
-  // idle's 49 frames; under `direct` the tip is on the target in every frame.
-  // A one-bone ik, a physics and a transform constraint on a link pose the
-  // same under both. Nothing is re-targeted here: the refusal says which
-  // `--idle-keys` makes the ik mean what it says.
-  (cfg.constraints ?? []).forEach((c, i) => {
-    const pair = c.bones;
-    if (c.type !== 'ik' || !Array.isArray(pair) || pair.length !== 2 || !controls.includes(pair[1] as string)) return;
-    const [first, second] = pair as [string, string];
-    fail(
-      'RIG_IK_PAIR_UNDER_CONTROL',
-      `config.constraints[${i}] (ik constraint "${c.name}")`,
-      `drives "${first}" and its child "${second}", and under --idle-keys ${idleKeys} "${second}" is keyed by the idle and weighted to by a mesh, so it is keyed through the control "${second}${CONTROL_SUFFIX}", which stands between the two in the rig: the two-bone solve would place "${second}" as though its parent were "${first}" and end its tip away from the target, with the gate green. Run \`${command} --idle-keys direct\`, which keys "${second}" in place and keeps the pair parent and child`,
-    );
-  });
+  // A two-bone ik over a link and its child link stops being one when the
+  // child gets a control: `<child>_ctl` stands between them. spine-rigc 2.15.0
+  // refuses that pair by name (issue #103); the rig stage adds the flag to
+  // rigc's line (`ctlRemedies`, src/build.ts).
   refuseIfAny(problems);
   for (const k of controls) {
     const b = B.get(k) as Bone;

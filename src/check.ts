@@ -240,7 +240,7 @@ export const DEFAULT_PAGE_EDGES: PageEdges = 'free';
 /**
  * What two packed rectangles may share: spine-rigc's `build --pack
  * --pack-shape`, handed to it verbatim (in spine-rigc's CLI since 2.1.0; this
- * package's range starts at 2.10.1). `rect` keeps every region's cell apart;
+ * package's range starts at 2.15.0). `rect` keeps every region's cell apart;
  * `polygon` packs a region that only meshes draw by its emitted hull, so a
  * neighbour may sit inside its rectangle where the hull is not, with the
  * padding kept between footprints — a region attachment stays its rectangle
