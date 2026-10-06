@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
 import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage } from './src/build.ts';
-import { DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, findRigc, PACK_SHAPES, type PackShape, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
+import { DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, findRigc, PACK_SHAPES, type PackShape, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, NO_PARTS_SENTENCE, SEAM_MEAN_BAR, SOURCE_SENTENCE, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
 import { type CharacterConfig, loadConfig, loadEarlyConfig } from './src/config.ts';
 import { PartsError, problemLine } from './src/errors.ts';
@@ -128,12 +128,14 @@ usage:
       spine-rigc 1.3.0 or later and makes A15 a SKIP that prints its cost (the
       stage prints that SKIP line). The pose is the same to one level of float
       rounding, and so is the per-frame mesh work (AUTHORING §5).
-  spine-parts check --rig <dir> --out <dir> [--parts <dir>] [--page-edges pot|free]
-                    [--pack-shape rect|polygon]
+  spine-parts check --rig <dir> --out <dir> [--parts <dir>] [--source <painting.png>]
+                    [--page-edges pot|free] [--pack-shape rect|polygon]
       Build, gate, render and measure a rig through spine-rigc's CLI (the rigc at
-      node_modules/.bin/rigc, or on PATH). --rig holds rig.json and motion.json
-      (with an "idle").
-      ${PARTS_HOME_SENTENCE}.
+      node_modules/.bin/rigc, or on PATH). --rig holds rig.json and motion.json:
+      a rig spec, which rigc build compiles, not a compiled skeleton.json.
+      motion.json is required (rigc build takes --motion; "animations": {}
+      builds); an "idle" in it is not.
+      ${PARTS_HOME_SENTENCE}; ${NO_PARTS_SENTENCE}.
       Both are only read. Into --out:
       build/ (rigc build --profile spine-html --pack --page-edges <value>
       --pack-shape <value>: the packed atlas is the artifact), gate_spine-html.txt (the gate lines
@@ -168,7 +170,18 @@ usage:
       read from parts.json's recomposite block (uncovered error px, hole count,
       the largest hole's box and the parts bordering it) — a line with no bar,
       never a FAIL, because a pixel no part holds is missing from both sides of
-      the seam; SKIP when parts.json has no such block. Prints the pack line
+      the seam; SKIP when parts.json has no such block. What a bar cannot
+      read it says SKIP for, by name, with the reason (AUTHORING §7, Measuring a
+      rig spine-parts did not assemble): without parts.json the seam,
+      BREATH_VISIBLE, BLINK_NO_HOLE, TIP_OVER_ROOT, STILL_REGIONS_DARK and
+      RECOMPOSITE_HOLES; without an idle the loop and every line that reads idle
+      frames, and no idle is rendered. The gate always runs. The last line says
+      how many of the nine bars measured and names the skipped ones.
+      --source adds SETUP_POSE_VS_SOURCE: REPORTED, never a FAIL — the setup
+      pose against the painting by assemble's own recomposite figures (mean |d|,
+      % within 8, error px over 40, uncovered error px where the pose has alpha
+      128 or less, holes). ${SOURCE_SENTENCE}; a painting that is not this
+      rig's is refused, CHECK_SOURCE_SIZE, before anything is built. Prints the pack line
       beside the spineboy yardstick (${SPINEBOY_YARDSTICK}), a reference and not
       a bar. Exit 0 on PASS, 1 on FAIL — every FAIL line names the bar, the value
       and the value required.
@@ -522,7 +535,7 @@ function flags(args: string[], known: readonly string[], command: string, option
 }
 
 function cmdCheck(args: string[]): number {
-  const f = flags(args, ['--rig', '--out'], 'check', ['--parts', '--page-edges', '--pack-shape']);
+  const f = flags(args, ['--rig', '--out'], 'check', ['--parts', '--source', '--page-edges', '--pack-shape']);
   if (typeof f === 'string') return usage(f);
   const rig = f.get('--rig') as string;
   const out = f.get('--out') as string;
@@ -532,7 +545,7 @@ function cmdCheck(args: string[]): number {
   if (!isPackShape(shape)) return usage(shape);
   try {
     const bin = findRigc(import.meta.dir, process.env.PATH ?? '');
-    const r = checkStage({ rig, parts: f.get('--parts') ?? rig, out, pageEdges: edges, packShape: shape }, rigcRunner(bin), bin, console.log);
+    const r = checkStage({ rig, parts: f.get('--parts'), source: f.get('--source'), out, pageEdges: edges, packShape: shape }, rigcRunner(bin), bin, console.log);
     return r.figures.PASS ? EXIT_OK : EXIT_REFUSED;
   } catch (err) {
     return printRefusal(err);

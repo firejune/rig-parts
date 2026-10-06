@@ -247,3 +247,111 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
   };
   writeFileSync(join(dir, 'parts.json'), serializeParts(parts));
 }
+
+// ---------------------------------------------------------------------------
+// issue #77: a merged rig — two copies under one root, a plate at slot 0, no parts.json
+// ---------------------------------------------------------------------------
+
+/**
+ * The shape issue #77 measures: two spine-parts characters merged into one
+ * rig spec outside the package — bone and slot names prefixed, both
+ * hierarchies under one root, a region slot at index 0 for a background plate
+ * — and no `parts.json`, because no assemble made the merged canvas.
+ *
+ * Each copy is {@link CHECK_PARTS}'s two boxes and colours as FLAT blocks: the
+ * colour opaque everywhere but a transparent margin {@link MERGED_INSET} wide
+ * (so neither is an opaque overlay, which rigc's A19 refuses), the second copy
+ * {@link MERGED_COPY_DX} rig pixels right of the first. The plate is one opaque
+ * colour over the whole stage — rigc's A19 lets an attachment the stage's size
+ * be opaque. Flat colours make the painting, and every figure the controls
+ * expect of it, a matter of rectangles: {@link mergedStack} is the flat stack
+ * by hand, and {@link mergedCores} its rectangles.
+ */
+export const MERGED_STAGE = { w: 2 * CHECK_RIG.w, h: CHECK_RIG.h };
+export const MERGED_COPY_DX = CHECK_RIG.w;
+export const MERGED_INSET = 2;
+export const MERGED_PREFIXES = ['a_', 'b_'] as const;
+export const MERGED_PLATE_RGB: readonly [number, number, number] = [240, 240, 240];
+
+export interface MergedRigOptions {
+  /** Write an `idle` (the fixture's root sway, closed); false writes `animations: {}`. */
+  idle: boolean;
+  /** Put the opaque plate at slot 0. */
+  plate: boolean;
+  /** Move one slot's attachment this many rig pixels right (negative: left) in rig.json only — the painting is not moved. */
+  move?: { slot: string; dx: number };
+}
+
+/** One flat rectangle of the stack, in stage pixels (y down): where the colour is opaque. */
+export interface FlatCore {
+  slot: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rgb: readonly [number, number, number];
+}
+
+/** A part as a flat block: its colour at alpha 255 inside, alpha 0 in the margin. */
+export function flatPartRaster(p: CheckPart): Raster {
+  const r = newRaster(p.w, p.h);
+  for (let y = MERGED_INSET; y < p.h - MERGED_INSET; y++) for (let x = MERGED_INSET; x < p.w - MERGED_INSET; x++) r.data.set([...p.rgb, 255], (y * p.w + x) * 4);
+  return r;
+}
+
+/** The opaque rectangles in draw order (the plate first when there is one), the moved slot moved. */
+export function mergedCores(opts: Pick<MergedRigOptions, 'plate' | 'move'>): FlatCore[] {
+  const cores: FlatCore[] = opts.plate ? [{ slot: 'plate', x: 0, y: 0, w: MERGED_STAGE.w, h: MERGED_STAGE.h, rgb: MERGED_PLATE_RGB }] : [];
+  MERGED_PREFIXES.forEach((prefix, k) => {
+    for (const p of CHECK_PARTS) {
+      const slot = `${prefix}${p.name}`;
+      const dx = opts.move?.slot === slot ? opts.move.dx : 0;
+      cores.push({ slot, x: k * MERGED_COPY_DX + p.x + MERGED_INSET + dx, y: p.y + MERGED_INSET, w: p.w - 2 * MERGED_INSET, h: p.h - 2 * MERGED_INSET, rgb: p.rgb });
+    }
+  });
+  return cores;
+}
+
+/** The flat stack over white at the stage's size, by rectangles: each core paints its colour, later over earlier. */
+export function mergedStack(opts: Pick<MergedRigOptions, 'plate' | 'move'>): Raster {
+  const r = newRaster(MERGED_STAGE.w, MERGED_STAGE.h);
+  r.data.fill(255);
+  for (const c of mergedCores(opts)) {
+    for (let y = Math.max(0, c.y); y < Math.min(MERGED_STAGE.h, c.y + c.h); y++) for (let x = Math.max(0, c.x); x < Math.min(MERGED_STAGE.w, c.x + c.w); x++) r.data.set([...c.rgb, 255], (y * MERGED_STAGE.w + x) * 4);
+  }
+  return r;
+}
+
+/** Write the merged rig directory: rig.json, motion.json and images/ — and no parts.json. */
+export function writeMergedCheckRig(dir: string, opts: MergedRigOptions): void {
+  const { w: W, h: H } = MERGED_STAGE;
+  mkdirSync(join(dir, 'images'), { recursive: true });
+  for (const p of CHECK_PARTS) writeFileSync(join(dir, 'images', `${p.name}.png`), encodePngBytes(flatPartRaster(p)));
+  const stage = { x: -W / 2, y: 0, width: W, height: H };
+  const bones: Array<Record<string, unknown>> = [{ name: 'root', x: 0, y: 0 }];
+  const slots: Array<Record<string, unknown>> = [];
+  const skin: Record<string, Record<string, unknown>> = {};
+  if (opts.plate) {
+    const plate = newRaster(W, H);
+    for (let i = 0; i < W * H; i++) plate.data.set([...MERGED_PLATE_RGB, 255], i * 4);
+    writeFileSync(join(dir, 'images', 'plate.png'), encodePngBytes(plate));
+    slots.push({ name: 'plate', bone: 'root', attachment: 'plate' });
+    skin.plate = { plate: { image: 'plate.png', x: stage.x + W / 2, y: stage.y + cropToSpineY(H / 2, H) } };
+  }
+  MERGED_PREFIXES.forEach((prefix, k) => {
+    const bone = `${prefix}root`;
+    const bx = k * MERGED_COPY_DX;
+    bones.push({ name: bone, parent: 'root', x: bx, y: 0 });
+    for (const p of CHECK_PARTS) {
+      const slot = `${prefix}${p.name}`;
+      const dx = opts.move?.slot === slot ? opts.move.dx : 0;
+      slots.push({ name: slot, bone, attachment: slot });
+      skin[slot] = { [slot]: { image: `${p.name}.png`, x: stage.x + p.x + p.w / 2 + dx, y: stage.y + cropToSpineY(p.y + p.h / 2, H) } };
+    }
+  });
+  const rig = { spec: 'rigc-rig/1', name: 'merged_probe', images: 'images', skeleton: stage, bones, slots, skins: { default: skin } };
+  writeFileSync(join(dir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+  const idle = { duration: 1, loop: true, tracks: [{ bone: 'root', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [IDLE_PEAK] }, { t: 1, v: [0] }] }] };
+  const motion = { spec: 'rigc-motion/1', archetype: 'merged_probe', cut: 'merged_probe', easings: {}, groups: {}, animations: opts.idle ? { idle } : {} };
+  writeFileSync(join(dir, 'motion.json'), `${JSON.stringify(motion, null, 2)}\n`);
+}
