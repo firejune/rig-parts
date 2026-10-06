@@ -150,6 +150,9 @@ import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTra
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'spine-rigc/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
+import { contourFit, type ContourMesh, contourMesh, type ContourParams, contourTopologyProblems, delaunayViolations, inCircle, keepPoints } from './src/contour.ts';
+import { BASE, blocks, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE } from './fixtures/contour.ts';
+import { checkHullOrder, traceOutline } from 'spine-rigc/src/mesh.ts';
 import { PartsError, type Problem } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
 import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paintingGraph, POSITIVE_HEAD, stripWords } from './src/graphs.ts';
@@ -12000,6 +12003,506 @@ function runDiagnosticsSuite(): number {
   return bad();
 }
 
+// ---------------------------------------------------------------------------
+// the contour mesh (issue #84, step 1)
+// ---------------------------------------------------------------------------
+
+/** A contour mesh, or the codes and details that refused it, for a case line. */
+function contourOf(c: ContourCase, params: ContourParams = c.params): ContourMesh | Problem[] {
+  return contourMesh(c.name, c.mask, params);
+}
+
+function contourCodes(r: ContourMesh | Problem[]): string {
+  return Array.isArray(r) ? r.map((p) => p.code).join(', ') || 'no problem' : 'built';
+}
+
+function sameVertices(got: ReadonlyArray<readonly [number, number]>, want: ReadonlyArray<readonly [number, number]>): boolean {
+  return got.length === want.length && got.every((v, i) => v[0] === want[i][0] && v[1] === want[i][1]);
+}
+
+function vertexText(vs: ReadonlyArray<readonly [number, number]>): string {
+  return vs.map(([x, y]) => `(${x},${y})`).join(' ');
+}
+
+/**
+ * A rig spec carrying every mesh of `cases` as an authored mesh on one bone at
+ * the origin, every vertex weighted 1 to it — the smallest spec spine-rigc's
+ * gate takes a mesh in — with each mask written as its PNG, and a motion with
+ * no animation.
+ */
+function writeContourRig(dir: string, meshes: ReadonlyArray<readonly [ContourCase, ContourMesh]>): void {
+  mkdirSync(join(dir, 'images'), { recursive: true });
+  let W = 0;
+  let H = 0;
+  const skin: Record<string, Record<string, unknown>> = {};
+  for (const [c, m] of meshes) {
+    const { width: w, height: h, alpha } = c.mask;
+    W = Math.max(W, w);
+    H = Math.max(H, h);
+    const img = newRaster(w, h);
+    for (let i = 0; i < w * h; i++) img.data.set([200, 120, 60, alpha[i]], i * 4);
+    writeFileSync(join(dir, 'images', `${c.name}.png`), encodePngBytes(img));
+    skin[c.name] = {
+      [c.name]: {
+        type: 'mesh',
+        image: `${c.name}.png`,
+        width: w,
+        height: h,
+        uvs: m.vertices.flatMap(([x, y]) => [x / w, y / h]),
+        triangles: m.triangles,
+        hull: m.hull,
+        weights: m.vertices.map(([x, y]) => [{ bone: 'root', x, y: cropToSpineY(y, h), weight: 1 }]),
+      },
+    };
+  }
+  const rig = {
+    spec: 'rigc-rig/1',
+    name: 'contour_probe',
+    images: 'images',
+    // Twice the largest image, so no mesh spans the stage (spine-html's A14 is about the stage, not the mesh).
+    skeleton: { x: 0, y: 0, width: 2 * W, height: 2 * H },
+    bones: [{ name: 'root', x: 0, y: 0 }],
+    slots: meshes.map(([c]) => ({ name: c.name, bone: 'root', attachment: c.name })),
+    skins: { default: skin },
+  };
+  writeFileSync(join(dir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+  const motion = { spec: 'rigc-motion/1', archetype: 'contour_probe', cut: 'contour_probe', easings: {}, groups: {}, animations: {} };
+  writeFileSync(join(dir, 'motion.json'), `${JSON.stringify(motion, null, 2)}\n`);
+}
+
+/** Swap vertices 1 and 2 of a mesh — the same triangles over the same points, listed with the outline out of order. */
+function swapHullPair(m: ContourMesh): ContourMesh {
+  const relabel = (i: number): number => (i === 1 ? 2 : i === 2 ? 1 : i);
+  const vertices = m.vertices.map((_, i) => m.vertices[relabel(i)]);
+  return { ...m, vertices, triangles: m.triangles.map(relabel) };
+}
+
+function runContourSuite(): number {
+  section('contour: the alpha outline through rigc, declared interior points, a triangulation that never crosses the outline');
+  const { say, bad } = counter();
+  const built = (r: ContourMesh | Problem[]): ContourMesh | null => (Array.isArray(r) ? null : r);
+  const has = (r: ContourMesh | Problem[], code: string, ...words: string[]): boolean =>
+    Array.isArray(r) && r.some((p) => p.code === code && words.every((w) => `${p.object} ${p.detail}`.includes(w)));
+
+  // CT01 — the convex block, every figure by hand (fixtures/contour.ts).
+  const convex = built(contourOf(CONVEX));
+  const sqrt2 = Math.round(Math.SQRT2 * 1e6) / 1e6;
+  const convexHull: Array<[number, number]> = [[3, 3], [29, 3], [29, 21], [3, 21]];
+  const convexInside: Array<[number, number]> = [[8, 8], [16, 8], [24, 8], [8, 16], [16, 16], [24, 16]];
+  say(
+    'CT01_A_CONVEX_BLOCK_MESHES_TO_ITS_HAND_COUNTED_OUTLINE_POINTS_AND_TRIANGLES',
+    convex !== null &&
+      convex.hull === 4 &&
+      sameVertices(convex.vertices, [...convexHull, ...convexInside]) &&
+      convex.triangles.length / 3 === 2 * 10 - 4 - 2 &&
+      convex.report.artPixels === 24 * 16 &&
+      convex.report.coveredArtPixels === 24 * 16 &&
+      convex.report.meshArea === 26 * 18 &&
+      convex.report.enclosedTransparentArea === 26 * 18 - 24 * 16 &&
+      convex.report.overshoot === sqrt2 &&
+      convex.report.overshootBound === 3 &&
+      convex.report.filledHolePixels === 0,
+    convex === null
+      ? `refused: ${contourCodes(contourOf(CONVEX))}`
+      : `vertices ${vertexText(convex.vertices)} (hull ${convex.hull}); ${convex.triangles.length / 3} triangles; art ${convex.report.artPixels}, covered ${convex.report.coveredArtPixels}; area ${convex.report.meshArea} px², ${convex.report.enclosedTransparentArea} transparent; overshoot ${convex.report.overshoot} against ${convex.report.overshootBound}`,
+    'the outline is rigc trace -> simplify -> offset -> prune, and a 24x16 block pushed out 1 px is the 26x18 rectangle; the six interior points are the spacing-8 grid points at least 4 px inside, and the triangle count is Euler\'s 2V - hull - 2',
+  );
+
+  // CT02 — the concave U: the keep tie, the notch, and the triangulation that ignores the outline.
+  const concave = built(contourOf(CONCAVE));
+  const uHull: Array<[number, number]> = [[3, 3], [13, 3], [13, 19], [27, 19], [27, 3], [37, 3], [37, 29], [3, 29]];
+  const uInside: Array<[number, number]> = [[6, 6], [30, 6], [6, 12], [30, 12], [6, 18], [30, 18], [6, 24], [12, 24], [18, 24], [24, 24], [30, 24]];
+  const inNotch = (m: ContourMesh): number => {
+    let n = 0;
+    for (let t = 0; t < m.triangles.length; t += 3) {
+      const cx = (m.vertices[m.triangles[t]][0] + m.vertices[m.triangles[t + 1]][0] + m.vertices[m.triangles[t + 2]][0]) / 3;
+      const cy = (m.vertices[m.triangles[t]][1] + m.vertices[m.triangles[t + 1]][1] + m.vertices[m.triangles[t + 2]][1]) / 3;
+      if (cx > 13 && cx < 27 && cy < 19) n++;
+    }
+    return n;
+  };
+  const fan: number[] = [];
+  for (let i = 1; i < uHull.length - 1; i++) fan.push(0, i, i + 1);
+  const fanProblems = contourTopologyProblems('concave fan', uHull, fan, uHull.length);
+  say(
+    'CT02_A_CONCAVE_U_KEEPS_ITS_NOTCH_EMPTY_AND_A_FAN_THAT_BRIDGES_IT_IS_REFUSED',
+    concave !== null &&
+      sameVertices(concave.vertices, [...uHull, ...uInside]) &&
+      concave.triangles.length / 3 === 2 * 19 - 8 - 2 &&
+      concave.report.artPixels === 512 &&
+      concave.report.meshArea === 34 * 26 - 14 * 16 &&
+      inNotch(concave) === 0 &&
+      fanProblems.some((p) => p.code === 'CONTOUR_TILING'),
+    concave === null
+      ? `refused: ${contourCodes(contourOf(CONCAVE))}`
+      : `hull ${vertexText(concave.vertices.slice(0, concave.hull))}; interior ${vertexText(concave.vertices.slice(concave.hull))}; ${concave.triangles.length / 3} triangles, ${inNotch(concave)} with a centroid in the notch; area ${concave.report.meshArea} px²; the fan from vertex 0 over the same outline -> ${fanProblems.map((p) => `${p.code}: ${p.detail}`).join('; ') || 'nothing'}`,
+    'the triangulation starts from the outline and flips only interior edges, so no triangle spans the notch; (6, y) sits exactly the keep radius 3 from x = 3 and is kept, which is the tie the rule states (>=)',
+  );
+
+  // CT03 — the narrow spike, and the tolerance at which it is lost.
+  const spike = built(contourOf(SPIKE));
+  const spikeHull: Array<[number, number]> = [[15, 1], [19, 1], [19, 19], [35, 19], [35, 37], [3, 37], [3, 19], [15, 19]];
+  const spikeLost = contourOf(SPIKE, { ...SPIKE.params, tolerance: 3, margin: 4 });
+  say(
+    'CT03_A_SPIKE_TWO_PIXELS_WIDE_IS_MESHED_WHOLE_AND_A_TOLERANCE_THAT_CUTS_IT_IS_REFUSED',
+    spike !== null &&
+      sameVertices(spike.vertices.slice(0, spike.hull), spikeHull) &&
+      spike.report.interiorVertices === 6 &&
+      spike.report.artPixels === 516 &&
+      spike.report.coveredArtPixels === 516 &&
+      spike.report.meshArea === 32 * 18 + 4 * 18 &&
+      has(spikeLost, 'CONTOUR_COVERAGE', 'contour mesh "spike"', 'of 516 art pixel(s)'),
+    spike === null
+      ? `refused: ${contourCodes(contourOf(SPIKE))}`
+      : `hull ${vertexText(spike.vertices.slice(0, spike.hull))}; ${spike.report.interiorVertices} interior; covered ${spike.report.coveredArtPixels} of ${spike.report.artPixels}; at tolerance 3, margin 4: ${Array.isArray(spikeLost) ? spikeLost.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}`,
+    'a 2 px feature is held by rigc\'s tolerance 1; at tolerance 3 Douglas-Peucker drops it and no margin brings it back, which is the coverage refusal, not a clipped mesh',
+  );
+
+  // CT04 — feathered alpha: art is alpha ABOVE the threshold.
+  const soft = built(contourOf(FEATHERED));
+  const core = built(contourOf(FEATHERED_CORE));
+  const below = built(contourOf(FEATHERED, { ...FEATHERED.params, threshold: 5 }));
+  say(
+    'CT04_FEATHERED_ALPHA_IS_ART_ONLY_ABOVE_THE_THRESHOLD',
+    soft !== null &&
+      core !== null &&
+      below !== null &&
+      soft.report.artPixels === 400 &&
+      sameVertices(soft.vertices.slice(0, 4), [[5, 5], [27, 5], [27, 27], [5, 27]]) &&
+      core.report.artPixels === 256 &&
+      sameVertices(core.vertices.slice(0, 4), [[7, 7], [25, 7], [25, 25], [7, 25]]) &&
+      below.report.artPixels === 576,
+    `above 8: ${soft === null ? 'refused' : `${soft.report.artPixels} px, outline ${vertexText(soft.vertices.slice(0, soft.hull))}`}; above 100: ${core === null ? 'refused' : `${core.report.artPixels} px, outline ${vertexText(core.vertices.slice(0, core.hull))}`}; planted threshold 5: ${below === null ? 'refused' : `${below.report.artPixels} px`}`,
+    'the alpha-6 ring is not art at 8 and the alpha-100 ring is not art at 100 (above, not at); at 5 the whole 24x24 counts, so the threshold is read and not assumed',
+  );
+
+  // CT05 — a hole is filled and its area reported.
+  const hole = built(contourOf(HOLE));
+  say(
+    'CT05_A_HOLE_IS_FILLED_AND_ITS_AREA_REPORTED',
+    hole !== null &&
+      hole.hull === 4 &&
+      hole.report.filledHolePixels === 144 &&
+      hole.report.artPixels === 880 &&
+      hole.report.meshArea === 34 * 34 &&
+      hole.report.enclosedTransparentArea === 34 * 34 - 880 &&
+      convex !== null &&
+      convex.report.filledHolePixels === 0,
+    hole === null ? `refused: ${contourCodes(contourOf(HOLE))}` : `filled ${hole.report.filledHolePixels} px; art ${hole.report.artPixels}; area ${hole.report.meshArea} px², ${hole.report.enclosedTransparentArea} transparent; the convex block's filled area ${convex?.report.filledHolePixels}`,
+    'spine-rigc takes one closed loop and no hole, so a hole is spanned and drawn as nothing (its alpha is 0); the settled policy is to fill it and say how much was filled',
+  );
+
+  // CT06, CT07, CT08 — islands, empty, pinch: each refused by name, beside a positive.
+  const islands = contourOf(ISLANDS);
+  say(
+    'CT06_TWO_ISLANDS_ARE_REFUSED_WITH_EACH_ISLANDS_PIXEL_COUNT',
+    has(islands, 'CONTOUR_ONE_ISLAND', 'contour mesh "islands"', '2 separate 4-connected islands', '100 px at (2, 2)', '36 px at (20, 2)') && Array.isArray(islands) && islands.length === 1 && convex !== null,
+    `${Array.isArray(islands) ? islands.map((p) => `${p.code}: ${p.object} — ${p.detail}`).join('; ') : 'BUILT'}; one island (the convex block): ${convex === null ? 'refused' : 'built'}`,
+    'one outline cannot enclose two islands; nothing is discarded and the lattice mode stays available for the part',
+  );
+  const empty = contourOf(EMPTY);
+  // Tolerance 0.5: at 1, Douglas-Peucker drops two corners of a 1x1 square (each 0.71 px off its diagonal), leaving 2.
+  const onePixel = built(contourMesh('one pixel', blocks(10, 10, [[4, 4, 1, 1, 9]]), { ...BASE, tolerance: 0.5 }));
+  const collapsed = contourMesh('one pixel', blocks(10, 10, [[4, 4, 1, 1, 9]]), BASE);
+  say(
+    'CT07_AN_EMPTY_MASK_IS_REFUSED_AND_ONE_PIXEL_ABOVE_THE_THRESHOLD_IS_NOT',
+    has(empty, 'CONTOUR_PART_HAS_ART', 'contour mesh "empty"', 'no pixel with alpha above 8') &&
+      onePixel !== null &&
+      onePixel.report.artPixels === 1 &&
+      onePixel.hull === 4 &&
+      has(collapsed, 'CONTOUR_SELF_INTERSECTION', 'its outline has 2 vertices', '3 or more enclosing a positive area are required'),
+    `alpha 8 at one pixel: ${Array.isArray(empty) ? empty.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}; alpha 9 at one pixel, tolerance 0.5: ${onePixel === null ? 'refused' : `art ${onePixel.report.artPixels}, hull ${vertexText(onePixel.vertices.slice(0, onePixel.hull))}`}; tolerance 1: ${Array.isArray(collapsed) ? collapsed.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}`,
+    'a mesh needs an art pixel; "above 8" is the lattice\'s reading, so 8 is not art and 9 is; and an outline simplified below a triangle is refused, not handed to the ear clipper',
+  );
+  const pinch = contourOf(PINCH);
+  const closed = built(contourMesh('pinch closed', blocks(6, 6, [[1, 1, 4, 1], [1, 2, 1, 2], [4, 2, 1, 2], [1, 4, 3, 1], [4, 4, 1, 1]]), BASE));
+  say(
+    'CT08_A_DIAGONAL_PINCH_IS_REFUSED_IN_RIGCS_WORDS_AND_THE_SAME_SHAPE_CLOSED_IS_NOT',
+    has(pinch, 'CONTOUR_TRACE', 'contour mesh "pinch"', 'pinches to a single point at pixel corner (4,4)') && closed !== null && closed.report.filledHolePixels === 4,
+    `${Array.isArray(pinch) ? pinch.map((p) => `${p.code}: ${p.detail.slice(0, 160)}`).join('; ') : 'BUILT'}; with pixel (4, 4) filled: ${closed === null ? 'refused' : `built, ${closed.report.filledHolePixels} hole px filled`}`,
+    'rigc\'s tracer refuses an outline that passes through one point twice; this module reports its refusal rather than walking a different loop',
+  );
+
+  // CT09 — coverage: a margin below what the tolerance cuts is refused, the same art at a margin that covers is not.
+  // A wedge of slope 1/2: pixel (x, y) of [2, 38)² is art when 2(x − 2) <= y − 2, so row y − 2 = k holds floor(k / 2) + 1
+  // pixels and the wedge 36 + 2(0 + 1 + … + 17) = 342.
+  const wedge = blocks(40, 40, []);
+  for (let y = 2; y < 38; y++) for (let x = 2; x < 38; x++) if (2 * (x - 2) <= y - 2) wedge.alpha[y * 40 + x] = 255;
+  const wedgeCase: ContourCase = { name: 'wedge', mask: wedge, params: { ...BASE, margin: 0 } };
+  const cut = contourOf(wedgeCase);
+  const covered = built(contourOf(wedgeCase, { ...wedgeCase.params, margin: 0.5 }));
+  const wider1 = contourOf(wedgeCase, { ...wedgeCase.params, margin: 1 });
+  say(
+    'CT09_AN_ART_PIXEL_OUTSIDE_THE_MESH_IS_REFUSED_AND_A_MARGIN_THAT_COVERS_IT_IS_NOT',
+    has(cut, 'CONTOUR_COVERAGE', 'contour mesh "wedge"', 'of 342 art pixel(s)', 'every art pixel inside is required') && covered !== null && covered.report.coveredArtPixels === 342 && covered.report.artPixels === 342,
+    `margin 0: ${Array.isArray(cut) ? cut.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}; margin 0.5: ${covered === null ? 'refused' : `covered ${covered.report.coveredArtPixels} of ${covered.report.artPixels}`}; margin 1 (not a control, reported): ${Array.isArray(wider1) ? wider1.map((p) => `${p.code}: ${p.detail.slice(0, 60)}…`).join('; ') : 'built'}`,
+    'Douglas-Peucker at tolerance 1 cuts the staircase up to a pixel inward and the margin pushes back out; the bar is every art pixel (the lattice covers all of them by construction), not rigc\'s 99.5 %. A larger margin is not always better: rigc\'s miter clamp (4 x margin) cuts an acute tip, which is why no margin is raised here by the module',
+  );
+
+  // CT10 — overshoot past margin + tolerance + 1.
+  const window: Array<[number, number]> = [[0, 0], [32, 0], [32, 24], [0, 24]];
+  const far = contourFit('convex', CONVEX.mask, 8, { margin: 1, tolerance: 1 }, window, [0, 1, 2, 0, 2, 3]);
+  const near = convex === null ? null : contourFit('convex', CONVEX.mask, 8, { margin: 1, tolerance: 1 }, convex.vertices, convex.triangles);
+  const fourRoot2 = Math.round(4 * Math.SQRT2 * 1e6) / 1e6;
+  say(
+    'CT10_A_MESH_REACHING_PAST_MARGIN_PLUS_TOLERANCE_PLUS_ONE_IS_REFUSED',
+    far.overshoot === fourRoot2 &&
+      far.problems.some((p) => p.code === 'CONTOUR_OVERSHOOT' && p.detail.includes(`reaches ${fourRoot2} px`) && p.detail.includes('= 3 px')) &&
+      near !== null &&
+      near.problems.length === 0,
+    `the whole 32x24 window over the convex block: ${far.problems.map((p) => `${p.code}: ${p.detail}`).join('; ') || 'nothing'}; the module's own mesh: overshoot ${near?.overshoot}, ${near === null ? 'not built' : `${near.problems.length} problem(s)`}`,
+    'the bound is the settled one, margin + tolerance + 1 (rigc\'s own contour bound multiplies the margin by its miter clamp, 4); pixel (0, 0)\'s centre is 4√2 from art pixel (4, 4)\'s',
+  );
+
+  // CT11 — a budget refuses and thins nothing.
+  const over = contourOf(CONVEX, { ...CONVEX.params, budget: 9 });
+  const at = built(contourOf(CONVEX, { ...CONVEX.params, budget: 10 }));
+  say(
+    'CT11_A_DECLARED_VERTEX_BUDGET_IS_REFUSED_AND_NOTHING_IS_THINNED_TO_MEET_IT',
+    has(over, 'CONTOUR_BUDGET', 'has 10 vertices', 'the declared budget is 9') && at !== null && convex !== null && JSON.stringify(at) === JSON.stringify(convex),
+    `budget 9: ${Array.isArray(over) ? over.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}; budget 10: ${at === null ? 'refused' : `built, ${JSON.stringify(at) === JSON.stringify(convex) ? 'the same bytes as no budget' : 'DIFFERENT bytes from no budget'}`}`,
+    'the settled rule: a budget is a ceiling that refuses, never a target the mesh is thinned to',
+  );
+
+  // CT12–CT18 — topology, planted on a 4x4 square with its centre (V 5, hull 4, T 2·5 − 4 − 2 = 4).
+  const sq: Array<[number, number]> = [[0, 0], [4, 0], [4, 4], [0, 4], [2, 2]];
+  const sqTri = [0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 4];
+  const topo = (label: string, vs: Array<[number, number]>, tri: number[], hull = 4): Problem[] => contourTopologyProblems(label, vs, tri, hull);
+  const clean = topo('square', sq, sqTri);
+  const plantLine = (ps: Problem[]): string => ps.map((p) => `${p.code}: ${p.detail}`).join('; ') || 'nothing';
+  const plants: Array<[string, string, Problem[], string]> = [
+    ['CT12_AN_INDEX_OUT_OF_RANGE_IS_REFUSED', 'CONTOUR_INDEX', topo('index', sq, [...sqTri.slice(0, 11), 7]), 'triangle 3 names vertex 7'],
+    ['CT13_TWO_COINCIDENT_VERTICES_ARE_REFUSED', 'CONTOUR_COINCIDENT_VERTICES', topo('coincident', [...sq.slice(0, 4), [0, 0]], sqTri), 'vertices 0 and 4 are both at (0, 0)'],
+    ['CT14_A_ZERO_AREA_TRIANGLE_IS_REFUSED', 'CONTOUR_ZERO_AREA_TRIANGLE', topo('flat', [...sq.slice(0, 4), [2, 0]], sqTri), 'triangle 0 (0, 1, 4) has zero area'],
+    ['CT15_AN_OUTLINE_THAT_CROSSES_ITSELF_IS_REFUSED', 'CONTOUR_SELF_INTERSECTION', topo('bowtie', [[0, 0], [4, 0], [0, 4], [4, 4], [2, 2]], sqTri), 'outline edge 1 meets outline edge 3'],
+    ['CT16_TRIANGLES_THAT_DO_NOT_TILE_ONE_LOOP_BY_EULER_ARE_REFUSED_IN_RIGCS_WORDS', 'CONTOUR_ONE_LOOP', topo('euler', [...sq, [1, 3]], sqTri), 'the triangles do not tile the outline'],
+    ['CT17_AN_OUTLINE_NOT_LISTED_FIRST_AND_IN_ORDER_IS_REFUSED_IN_RIGCS_WORDS', 'CONTOUR_ONE_LOOP', topo('order', [[2, 2], [0, 0], [4, 0], [4, 4], [0, 4]], [1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1, 0]), 'hull vertices must come first'],
+    ['CT18_A_TRIANGLE_WOUND_AGAINST_THE_OUTLINE_OR_AN_OVERLAP_RIGC_ACCEPTS_IS_REFUSED', 'CONTOUR_TILING', topo('reversed', sq, [...sqTri.slice(0, 9), 3, 4, 0]), 'triangle 3 is wound against the outline'],
+  ];
+  // An overlap spine-rigc's own outline check accepts: two triangles over the square and the same third triangle four
+  // times over vertices 1, 4 = (2, 2) and 5 = (1, 1). Every edge of the repeated triangle is used four times, so rigc
+  // counts it interior; V 6, hull 4, T 6 = 2·6 − 4 − 2. Its areas sum to 8 + 8 + 4 x 2 = 24 px² over a 16 px² square.
+  const overlapVs: Array<[number, number]> = [...sq.slice(0, 4), [2, 2], [1, 1]];
+  const overlapTri = [0, 1, 2, 0, 2, 3, 1, 4, 5, 1, 4, 5, 1, 4, 5, 1, 4, 5];
+  let rigcTakesOverlap = true;
+  try {
+    checkHullOrder(traceOutline(6, overlapTri), 6);
+  } catch {
+    rigcTakesOverlap = false;
+  }
+  const overlap = topo('overlap', overlapVs, overlapTri);
+  for (const [name, code, ps, words] of plants) {
+    const last = name.startsWith('CT18');
+    say(
+      name,
+      clean.length === 0 && ps.some((p) => p.code === code && p.detail.includes(words)) && (!last || (rigcTakesOverlap && overlap.some((p) => p.code === 'CONTOUR_TILING' && p.detail.includes('sum to 24 px²') && p.detail.includes('encloses 16 px²')))),
+      `the square and its centre: ${plantLine(clean)}; planted: ${plantLine(ps)}${last ? `; the repeated triangle (rigc's traceOutline/checkHullOrder ${rigcTakesOverlap ? 'accept it' : 'REFUSE it'}): ${plantLine(overlap)}` : ''}`,
+      last
+        ? 'with every triangle wound one way and the boundary the outline, equal areas are what rule out an overlap — and rigc\'s outline check, which counts edge uses, does not'
+        : 'the settled topology refusals, each held to a mesh in this module\'s form whatever built it',
+    );
+  }
+
+  // CT19 — every mesh this module returns passes its own checks and is constrained Delaunay.
+  const kite: Array<[number, number]> = [[0, 0], [8, 0], [9, 4], [0, 2]];
+  const goodDiagonal = delaunayViolations(kite, [0, 1, 3, 1, 2, 3]);
+  const badDiagonal = delaunayViolations(kite, [0, 1, 2, 0, 2, 3]);
+  const all = BUILDING.map((c) => [c, built(contourOf(c))] as const);
+  const unclean = all.filter(([, m]) => m === null || contourTopologyProblems('x', m.vertices, m.triangles, m.hull).length > 0 || m.report.nonDelaunayEdges !== 0 || m.triangles.length / 3 !== 2 * m.vertices.length - m.hull - 2);
+  say(
+    'CT19_EVERY_BUILT_MESH_PASSES_ITS_OWN_TOPOLOGY_CHECKS_AND_IS_CONSTRAINED_DELAUNAY',
+    unclean.length === 0 && goodDiagonal === 0 && badDiagonal === 1,
+    `${all.length} case(s): ${all.map(([c, m]) => `${c.name} ${m === null ? 'REFUSED' : `V ${m.vertices.length}, hull ${m.hull}, T ${m.triangles.length / 3}, non-Delaunay ${m.report.nonDelaunayEdges}`}`).join('; ')}; planted kite (0,0) (8,0) (9,4) (0,2): diagonal 1-3 -> ${goodDiagonal}, diagonal 0-2 -> ${badDiagonal}`,
+    'the circle through (0,0) (8,0) (0,2) has centre (4, 1) and radius² 17, and (9, 4) is 34 from it — outside; the circle through (0,0) (8,0) (9,4) has centre (4, 3.125), radius² 25.77, and (0, 2) is 17.27 from it — inside, so only the second diagonal is a violation',
+  );
+
+  // CT20 — determinism: two runs, the same bytes.
+  const twice = [REGION, CONCAVE].map((c) => [JSON.stringify(contourOf(c)), JSON.stringify(contourOf(c))] as const);
+  const nudged = JSON.stringify(contourOf(REGION, { ...REGION.params, spacing: 12.5 }));
+  say(
+    'CT20_TWO_RUNS_ON_THE_SAME_INPUT_WRITE_THE_SAME_BYTES',
+    twice.every(([a, b]) => a === b) && nudged !== twice[0][0],
+    `region: ${twice[0][0].length} bytes, ${twice[0][0] === twice[0][1] ? 'identical' : 'DIFFERENT'}; concave: ${twice[1][0].length} bytes, ${twice[1][0] === twice[1][1] ? 'identical' : 'DIFFERENT'}; planted spacing 12.5: ${nudged === twice[0][0] ? 'the SAME bytes' : 'different bytes'}`,
+    'a weight is written against a vertex index, so the indices must not move between runs: every topological decision is an exact predicate on grid integers, and every tie has a stated rule',
+  );
+
+  // CT21, CT22 — a region renumbers no hull vertex and leaves the far background as it was.
+  const plain = built(contourOf(REGION, { ...REGION.params, regions: [] }));
+  const refined = built(contourOf(REGION));
+  const wider = built(contourOf(REGION, { ...REGION.params, margin: 2 }));
+  say(
+    'CT21_ADDING_A_REGION_RENUMBERS_NO_HULL_VERTEX',
+    plain !== null && refined !== null && wider !== null && plain.hull === refined.hull && sameVertices(refined.vertices.slice(0, refined.hull), plain.vertices.slice(0, plain.hull)) && !sameVertices(wider.vertices.slice(0, wider.hull), plain.vertices.slice(0, plain.hull)),
+    plain === null || refined === null || wider === null
+      ? 'a case was refused'
+      : `without the region: hull ${vertexText(plain.vertices.slice(0, plain.hull))}; with it: ${vertexText(refined.vertices.slice(0, refined.hull))}; planted margin 2: ${vertexText(wider.vertices.slice(0, wider.hull))}`,
+    'the outline is computed from the mask and the outline parameters alone, and the hull is listed first, so the first hull indices — what a weight written against the outline names — cannot move when a region is added',
+  );
+  const bg = (m: ContourMesh): Array<readonly [number, number]> => {
+    const out: Array<readonly [number, number]> = [];
+    let at = m.hull;
+    for (const s of m.report.interiorBySource) {
+      if (s.source === 'background') out.push(...m.vertices.slice(at, at + s.vertices));
+      at += s.vertices;
+    }
+    return out;
+  };
+  const regionPts = refined === null ? [] : refined.vertices.slice(refined.hull, refined.hull + (refined.report.interiorBySource[0]?.vertices ?? 0));
+  const reach = regionPts.reduce((m, [x, y]) => Math.max(m, Math.hypot(x - 40, y - 24)), 0);
+  const plainBg = plain === null ? [] : bg(plain);
+  say(
+    'CT22_A_REGION_ADDS_POINTS_WITHIN_ITS_BAND_AND_LEAVES_THE_FAR_BACKGROUND_AS_IT_WAS',
+    plain !== null &&
+      refined !== null &&
+      plainBg.length === 12 &&
+      sameVertices(bg(refined), REGION_FAR_BACKGROUND) &&
+      regionPts.length > 0 &&
+      reach <= 12 + 1 / 256 &&
+      refined.report.interiorBySource.map((s) => s.source).join(',') === 'region "soft",background',
+    refined === null || plain === null
+      ? 'a case was refused'
+      : `without: ${plainBg.length} background point(s); with: ${regionPts.length} region point(s), furthest ${Math.round(reach * 1e4) / 1e4} px from (40, 24), and background ${vertexText(bg(refined))}`,
+    'refinement is local by construction: a region\'s points lie within r + band of it, a background point is dropped only within its own keep radius of a kept point, so every background point further than 18 px from the centre is the one the plain mesh had',
+  );
+
+  // CT23 — the keep rule's tie, by hand, in grid units.
+  const G = 256;
+  const boxX = [0, 20 * G, 20 * G, 0];
+  const boxY = [0, 0, 10 * G, 10 * G];
+  const keptTie = keepPoints(boxX, boxY, [
+    { x: 3 * G, y: 5 * G, radius: 3 * G, source: 'a' },
+    { x: 17 * G + 1, y: 5 * G, radius: 3 * G, source: 'b' },
+    { x: 6 * G, y: 5 * G, radius: 3 * G, source: 'c' },
+    { x: 9 * G - 1, y: 5 * G, radius: 3 * G, source: 'd' },
+  ]);
+  say(
+    'CT23_THE_KEEP_RULE_KEEPS_A_POINT_EXACTLY_ONE_RADIUS_AWAY_AND_DROPS_ONE_UNIT_CLOSER',
+    keptTie.map((c) => c.source).join(',') === 'a,c',
+    `in a 20x10 px outline, radius 3 px: kept ${keptTie.map((c) => c.source).join(', ') || 'none'} of a (3, 5) — exactly 3 px from the edge x = 0; b (17 + 1/256, 5) — one grid unit under 3 px from x = 20; c (6, 5) — exactly 3 px from a; d (9 − 1/256, 5) — one grid unit under 3 px from c`,
+    'KEEP_FRACTION is a de-duplication radius, applied with >= on exact integers: a tie keeps the point, one grid unit under it drops it',
+  );
+
+  // CT24 — the in-circle predicate is exact where doubles are not.
+  const m = 30001;
+  const c1 = 4194303;
+  const c2 = 4194301;
+  const ring: [number, number, number, number, number, number, number, number] = [c1 + 16 * m, c2 + 63 * m, c1 - 33 * m, c2 + 56 * m, c1 - 63 * m, c2 - 16 * m, c1 + 52 * m, c2 - 39 * m];
+  const exact = inCircle(...ring);
+  const [ax, ay, bx, by, cx, cy, dx, dy] = ring;
+  const [adx, ady, bdx, bdy, cdx, cdy] = [ax - dx, ay - dy, bx - dx, by - dy, cx - dx, cy - dy];
+  const float = (adx * adx + ady * ady) * (bdx * cdy - cdx * bdy) + (bdx * bdx + bdy * bdy) * (cdx * ady - adx * cdy) + (cdx * cdx + cdy * cdy) * (adx * bdy - bdx * ady);
+  say(
+    'CT24_THE_IN_CIRCLE_TEST_IS_EXACT_ON_FOUR_COCIRCULAR_POINTS_WHERE_DOUBLES_ARE_NOT',
+    exact === 0n && float !== 0 && Math.max(...ring) < 32768 * 256 && Math.min(...ring) > 0,
+    `four points at (16, 63), (-33, 56), (-63, -16), (52, -39) x ${m} about (${c1}, ${c2}) grid units: BigInt ${exact}, the same formula in doubles ${float}`,
+    '16² + 63² = 33² + 56² = 63² + 16² = 52² + 39² = 65², so the four are cocircular and the determinant is 0 by hand; a tie decided by rounding noise would flip an edge one run would not, and with it a vertex index',
+  );
+
+  // CT25 — parameters, every one refused together.
+  const badParams = contourMesh('params', CONVEX.mask, {
+    threshold: 255,
+    tolerance: -1,
+    margin: Number.NaN,
+    spacing: 0.001,
+    budget: 2,
+    regions: [
+      { name: 'r', shape: 'circle', cx: 4, cy: 4, r: 0, spacing: 2 ** 20, band: -1 },
+      { name: 'r', shape: 'polygon', points: [[0, 0], [4, 4], [4, 0], [0, 4]], spacing: 2, band: 0 },
+    ],
+  });
+  const wantParams = ['threshold', 'tolerance', 'margin', 'spacing', 'budget', 'regions[0].spacing', 'regions[0].band', 'regions[0].r', 'regions[1].name', 'regions[1].points'];
+  const named = Array.isArray(badParams) ? badParams.filter((p) => p.code === 'CONTOUR_PARAMETER').map((p) => p.object.replace('contour mesh "params", ', '')) : [];
+  say(
+    'CT25_EVERY_BAD_PARAMETER_IS_REFUSED_IN_ONE_RUN_BY_NAME',
+    wantParams.every((f) => named.includes(f)) && named.length === wantParams.length && convex !== null,
+    `${named.length} refused: ${Array.isArray(badParams) ? badParams.map((p) => `${p.object.replace('contour mesh "params", ', '')} — ${p.detail}`).join('; ') : 'BUILT'}`,
+    'never invent a value: a threshold of 255 leaves nothing above it, a spacing whose keep radius snaps to 0 grid units keeps nothing apart, one of 2^20 px has a keep radius whose square is not exact in a double, a bow-tie is no region — each is named, all at once',
+  );
+
+  // CT26 — a part with no transparent pixel is outlined by its window.
+  const full = built(contourOf(FULL));
+  say(
+    'CT26_A_FULLY_OPAQUE_PART_IS_OUTLINED_BY_ITS_WINDOW_CLAMPED',
+    full !== null && sameVertices(full.vertices, [[0, 0], [10, 0], [10, 8], [0, 8]]) && full.triangles.length === 6 && full.report.overshoot === 0,
+    full === null ? `refused: ${contourCodes(contourOf(FULL))}` : `vertices ${vertexText(full.vertices)}, ${full.triangles.length / 3} triangles, overshoot ${full.report.overshoot}`,
+    'rigc\'s own contour sequence clamps the pushed outline to the part window (a uv outside 0..1 is a different failure, and there is no art out there)',
+  );
+
+  // CT27, CT28 — spine-rigc's real gate takes every mesh above, and refuses the same mesh listed out of order.
+  const dir = temp('contour');
+  try {
+    // FULL is left out: its PNG has no transparent texel, which spine-html's A19 refuses for the image whatever draws it.
+    const meshes = all.filter((p): p is readonly [ContourCase, ContourMesh] => p[1] !== null && p[0] !== FULL);
+    const rigc = findRigc(ROOT, '');
+    const gate = (sub: string, list: ReadonlyArray<readonly [ContourCase, ContourMesh]>): { status: number; lines: string[]; out: string } => {
+      const d = join(dir, sub);
+      writeContourRig(d, list);
+      const r = spawnSync(rigc, ['build', '--rig', join(d, 'rig.json'), '--motion', join(d, 'motion.json'), '--out', join(d, 'build'), ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+      return { status: r.status ?? 1, lines: out.split('\n'), out };
+    };
+    const green = gate('green', meshes);
+    const summary = green.lines.filter((l) => l.includes(' assertions: ')).map((l) => l.trim());
+    say(
+      'CT27_SPINE_RIGCS_GATE_BUILDS_EVERY_CONTOUR_MESH_GREEN',
+      meshes.length === BUILDING.length - 1 && gateGreen(green.status, green.lines) && existsSync(join(dir, 'green', 'build', 'skeleton.json')),
+      `${meshes.length} mesh(es) (${meshes.map(([c, mm]) => `${c.name} V ${mm.vertices.length} hull ${mm.hull}`).join(', ')}) as authored meshes on one bone, weight 1: rigc build ${packedBuildArgs(DEFAULT_PACK_MODE).join(' ')} exit ${green.status}; ${summary.join(' | ') || green.out.split('\n').filter((l) => /FAIL|error/.test(l)).slice(0, 3).join(' | ')}`,
+      'the hull-first walk order and the 2V - hull - 2 count are spine-rigc\'s rules; they are passed on the gate itself, not on a copy of them',
+    );
+    const planted = meshes.map(([c, mm]) => (c.name === 'concave' ? ([c, swapHullPair(mm)] as const) : ([c, mm] as const)));
+    const red = gate('red', planted);
+    const refusal = red.lines.find((l) => l.includes('hull vertices must trace the outline in order')) ?? null;
+    say(
+      'CT28_THE_SAME_GATE_REFUSES_THE_CONCAVE_MESH_WITH_TWO_HULL_VERTICES_SWAPPED',
+      red.status !== 0 && refusal !== null && refusal.includes('concave') && !existsSync(join(dir, 'red', 'build', 'skeleton.json')),
+      `exit ${red.status}: ${refusal?.trim().slice(0, 300) ?? red.out.split('\n').filter((l) => /FAIL|error/.test(l)).slice(0, 2).join(' | ')}`,
+      'the positive control above is only evidence if the gate reads the order: the same triangles over the same points, listed 0, 2, 1, 3, …, must be refused',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  // CT29 — a polygon region: its edges, its interior, by hand.
+  const square = built(contourOf(REGION, { ...REGION.params, regions: [{ name: 'box', shape: 'polygon', points: [[32, 16], [48, 16], [48, 32], [32, 32]], spacing: 4, band: 0 }] }));
+  const boxPts = square === null ? [] : square.vertices.slice(square.hull, square.hull + (square.report.interiorBySource[0]?.vertices ?? 0));
+  const lattice5: Array<[number, number]> = [];
+  for (let y = 16; y <= 32; y += 4) for (let x = 32; x <= 48; x += 4) lattice5.push([x, y]);
+  const asSet = (vs: ReadonlyArray<readonly [number, number]>): string => vs.map(([x, y]) => `${x},${y}`).sort().join(' ');
+  say(
+    'CT29_A_POLYGON_REGION_PLACES_ITS_EDGE_AND_INTERIOR_POINTS_AT_ITS_OWN_SPACING',
+    square !== null && boxPts.length === 25 && asSet(boxPts) === asSet(lattice5),
+    square === null ? `refused: ${contourCodes(contourOf(REGION))}` : `${boxPts.length} region point(s): ${vertexText(boxPts)}`,
+    'a 16 px square at spacing 4: four points per edge from each corner (16 on the edges) and the 3x3 grid inside — the 5x5 lattice (32..48, 16..32), every point 2 px (its keep radius) or more from every other',
+  );
+
+  // CT30 — a vertex off the grid is refused before any predicate runs on it.
+  const offGrid = contourTopologyProblems('off grid', [...sq.slice(0, 4), [2, 2.001]], sqTri, 4);
+  const onGrid = contourTopologyProblems('on grid', [...sq.slice(0, 4), [2, 2 + 1 / 256]], sqTri, 4);
+  say(
+    'CT30_A_VERTEX_OFF_THE_1_256_PX_GRID_IS_REFUSED_AND_ONE_ON_IT_IS_NOT',
+    offGrid.length === 1 && offGrid[0].code === 'CONTOUR_GRID' && offGrid[0].detail.includes('vertex 4 is at (2, 2.001)') && onGrid.length === 0,
+    `(2, 2.001): ${plantLine(offGrid)}; (2, 2 + 1/256): ${plantLine(onGrid)}`,
+    'the predicates are exact for multiples of 1/256 px within the size bound and for nothing else, so a vertex elsewhere is named rather than measured inexactly',
+  );
+
+  // CT31 — a margin that pushes the outline across a notch is refused; one that leaves the notch open is not.
+  // A U with a 2 px notch (arms 6x20 at (2, 2) and (10, 2), a base 14x6 at (2, 18), in 20x26), tolerance 0.5: at
+  // margin 0.5 the notch's sides sit at x = 8.5 and 9.5; at 1.5 each crosses the other's.
+  const notch = blocks(20, 26, [[2, 2, 6, 20], [10, 2, 6, 20], [2, 18, 14, 6]]);
+  const crossed = contourMesh('notch', notch, { ...BASE, tolerance: 0.5, margin: 1.5 });
+  const open = built(contourMesh('notch', notch, { ...BASE, tolerance: 0.5, margin: 0.5 }));
+  say(
+    'CT31_A_MARGIN_THAT_PUSHES_THE_OUTLINE_ACROSS_A_NOTCH_IS_REFUSED',
+    has(crossed, 'CONTOUR_SELF_INTERSECTION', 'contour mesh "notch"', 'margin 1.5 px', 'meets edge') &&
+      open !== null &&
+      sameVertices(open.vertices.slice(0, open.hull), [[1.5, 1.5], [8.5, 1.5], [8.5, 17.5], [9.5, 17.5], [9.5, 1.5], [16.5, 1.5], [16.5, 24.5], [1.5, 24.5]]),
+    `margin 1.5: ${Array.isArray(crossed) ? crossed.map((p) => `${p.code}: ${p.detail}`).join('; ') : 'BUILT'}; margin 0.5: ${open === null ? 'refused' : `hull ${vertexText(open.vertices.slice(0, open.hull))}`}`,
+    'rigc\'s offset moves each edge out along its own normal, so a neck narrower than twice the margin folds the outline over itself; that is named here, before any triangle is made',
+  );
+
+  return bad();
+}
+
 function runTreeSuite(): number {
   section('tree: the rules CLAUDE.md states, held to the files');
   const { say, bad } = counter();
@@ -12225,6 +12728,7 @@ function main(): void {
   tally.of('sheet', runSheetSuite);
   tally.of('cli', runCliSuite);
   tally.of('rig', runRigSuite);
+  tally.of('contour', runContourSuite);
   tally.of('propose', runProposeSuite);
   tally.of('keypoints', runKeypointsSuite);
   tally.of('propose-corpus', runProposeCorpusSuite);
@@ -12275,7 +12779,7 @@ function main(): void {
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('contour')} contour-mesh, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
