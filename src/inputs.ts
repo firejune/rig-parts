@@ -1,14 +1,16 @@
 /**
  * The two images See-through is fed, cut from the painting.
  *
- * - **full** — the painting centred horizontally on a WHITE square whose side
- *   is the painting's height (See-through's own pad is black, and a black
- *   margin reads to it as part of the figure). The reference pasted at
- *   `((side - w) // 2, 0)`, which is centred only because its paintings are
- *   portrait; a landscape painting would have gone to the top of the square
- *   with nothing saying so. `proposeHeadBox` (`src/headbox.ts`) maps the full
- *   run back through exactly this pad — x carries it and y does not — so a
- *   landscape painting is refused here, by name, as it is there.
+ * - **full** — the painting centred on a WHITE square whose side is the
+ *   painting's longer side (See-through's own pad is black, and a black margin
+ *   reads to it as part of the figure): a portrait painting is padded left and
+ *   right, a landscape one top and bottom, each by `squarePad`. The reference
+ *   pasted at `((side - w) // 2, 0)` on a square of side `h`, which is centred
+ *   only because its paintings are portrait; for those the vertical pad is 0
+ *   and the bytes are the reference's. The pad is on See-through's input only:
+ *   `proposeHeadBox` (`src/headbox.ts`) and `assemble` (`src/assemble.ts`) map
+ *   the full run back through the same `squarePad`, x and y alike, so the rig
+ *   stays in painting pixels with no padding in it.
  * - **head** — `seethrough.head_box` cut from the painting at its exact size.
  *   Written only when the config sets a head box; the config loader has
  *   already refused a box that is not a non-empty square.
@@ -30,24 +32,40 @@ import type { Raster } from './raster/types.ts';
 
 export interface SeeThroughInputs {
   full: Raster;
-  /** The pad added on the left, in source px (the right gets the remainder). */
+  /** The pad added on the left, in source px (the right gets the remainder); 0 for a landscape painting. */
   padLeft: number;
+  /** The pad added on top, in source px (the bottom gets the remainder); 0 for a portrait painting. */
+  padTop: number;
   head: Raster | null;
   headBox: readonly [number, number, number, number] | null;
 }
 
 const WHITE: readonly [number, number, number, number] = [255, 255, 255, 255];
 
+/** Where a painting sits on the square the full run is fed, in source px. */
+export interface SquarePad {
+  /** The square's side: the painting's longer side. */
+  side: number;
+  /** The margin on the left; the right gets `side - w - left`. */
+  left: number;
+  /** The margin on top; the bottom gets `side - h - top`. */
+  top: number;
+}
+
+/**
+ * The one derivation of the full run's pad, read by every stage that maps the
+ * full run back to the painting. Each margin floors, as the reference's
+ * `(side - w) // 2` does, so an odd remainder goes to the right or the bottom.
+ * At most one of the two margins is non-zero.
+ */
+export function squarePad(w: number, h: number): SquarePad {
+  const side = Math.max(w, h);
+  return { side, left: Math.floor((side - w) / 2), top: Math.floor((side - h) / 2) };
+}
+
 export function makeInputs(painting: Raster, cfg: Pick<CharacterConfig, 'seethrough'>, label: string): SeeThroughInputs {
   const problems: Problem[] = [];
   const { width: w, height: h } = painting;
-  if (w > h) {
-    problems.push({
-      code: 'INPUTS_PAINTING_PORTRAIT',
-      object: label,
-      detail: `is ${w}x${h}, landscape; the full run's input pads the painting horizontally onto a square, so a width at most its height is required`,
-    });
-  }
   let translucent = 0;
   let firstAt = -1;
   for (let i = 0; i < w * h; i++) {
@@ -75,9 +93,8 @@ export function makeInputs(painting: Raster, cfg: Pick<CharacterConfig, 'seethro
     }
   }
   refuseIfAny(problems);
-  const side = h;
-  const padLeft = Math.floor((side - w) / 2);
-  const full = pad(painting, padLeft, 0, side - w - padLeft, 0, WHITE);
+  const { side, left, top } = squarePad(w, h);
+  const full = pad(painting, left, top, side - w - left, side - h - top, WHITE);
   const head = box === null ? null : crop(painting, box[0], box[1], box[2] - box[0], box[3] - box[1]);
-  return { full, padLeft, head, headBox: box };
+  return { full, padLeft: left, padTop: top, head, headBox: box };
 }

@@ -225,9 +225,13 @@ full loader before its assemble stage writes anything.
    generates `painting_<seed>.png` on a ComfyUI box; any other route to a painting
    skips this step and leaves `generation` out. Config: the `paint` row.
 1. **The full image.** `spine-parts inputs --source inputs/painting.png --config config.json --out inputs`
-   writes `st_input_full.png`, the painting centred on a white square as tall as it is.
-   Config: the `layers` row, `head_box` not yet. A landscape or translucent
-   painting is refused (`INPUTS_PAINTING_PORTRAIT`, `INPUTS_PAINTING_OPAQUE`).
+   writes `st_input_full.png`, the painting centred on a white square of its longer
+   side: white left and right of a portrait painting, above and below a landscape
+   one. The pad is See-through's input only; `propose --head-box` and `assemble` map
+   the full run back through it, so the rig stays in the painting's pixels — unlike
+   a painting padded to a square by hand, whose padding becomes part of the rig.
+   Config: the `layers` row, `head_box` not yet. A translucent painting is refused
+   (`INPUTS_PAINTING_OPAQUE`).
 2. **See-through, full run** (external).
 3. `spine-parts layers inputs/layers/full` — read it. A refusal here is about the
    files, not the art (§6, *Reading the inputs*). A `WARN` line is about the art: a
@@ -599,7 +603,7 @@ See-through with another seed.
 | rule | means | change |
 | --- | --- | --- |
 | `INPUTS_SOURCE_PRESENT` | no such painting | `--source` |
-| `INPUTS_PAINTING_PORTRAIT`, `INPUTS_PAINTING_OPAQUE` | the painting is wider than tall, or has a pixel below alpha 255 | the painting |
+| `INPUTS_PAINTING_OPAQUE` | the painting has a pixel below alpha 255 | the painting |
 | `INPUTS_HEAD_BOX_INSIDE` | `seethrough.head_box` leaves the painting (the crop is not padded) | `head_box` — take `propose --head-box`'s |
 
 ### The optional ComfyUI adapter (`comfy paint`, `comfy seethrough`)
@@ -618,7 +622,6 @@ See-through with another seed.
 | rule | means | change |
 | --- | --- | --- |
 | `ASSEMBLE_FIELD_PRESENT` | `seethrough.head_box` is missing | `propose --head-box` proposes it (§3) |
-| `ASSEMBLE_SOURCE_PORTRAIT` | the painting is wider than tall | the painting |
 | `ASSEMBLE_RIG_SIZE` | `rig_scale` makes an empty rig | `assemble.rig_scale` |
 | `ASSEMBLE_HEAD_BOX_INSIDE` | the head box is outside the painting | `head_box` — `propose --head-box` holds it inside |
 | `ASSEMBLE_RUN_CANVAS` | a run's canvas is not `resolution` square | `seethrough.resolution`, or the run |
@@ -632,7 +635,7 @@ See-through with another seed.
 
 | rule | means | change |
 | --- | --- | --- |
-| `HEADBOX_FACE_PRESENT`, `HEADBOX_RUN_SQUARE`, `HEADBOX_CANVAS_SIZE`, `HEADBOX_CANVAS_PORTRAIT`, `HEADBOX_FITS_CANVAS` | the full run has no face or is not square; `--canvas` is not a positive size or is landscape; or the painting cannot hold the proposed box at its size (shrinking it would cut the head) | `--full`, `--canvas`, or the painting |
+| `HEADBOX_FACE_PRESENT`, `HEADBOX_RUN_SQUARE`, `HEADBOX_CANVAS_SIZE`, `HEADBOX_FITS_CANVAS` | the full run has no face or is not square; `--canvas` is not a positive size; or the painting cannot hold the proposed box at its size — its shorter side is the bound (shrinking it would cut the head) | `--full`, `--canvas`, or the painting |
 | `PROPOSE_SOURCE_PRESENT`, `PROPOSE_PNG_PRESENT`, `PROPOSE_PNG_MATCHES_BOX` | the painting or a part PNG is missing, or a PNG is not its box | `--source`, `--parts` (re-run assemble) |
 | `PROPOSE_FACE_PRESENT` | no part comes from a `face` layer; every other rule scales by it | `assemble.plan` |
 | `PROPOSE_ACCESSORY_BODY` | an accessory has nothing above its pendant rows to hang its bone on | that part's plan entry, or author its bones by hand |

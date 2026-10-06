@@ -93,8 +93,9 @@ usage:
 
   spine-parts propose --head-box --full <dir | layers.json | file.psd> --canvas <W>x<H>
       Propose seethrough.head_box (source px, square) from the full run's
-      layers for a painting of WxH px, held inside the painting; a shift is
-      printed when one was needed.
+      layers for a painting of WxH px (portrait or landscape: the full run is
+      mapped back through the pad inputs added), held inside the painting; a
+      shift is printed when one was needed.
 
   spine-parts rig --config <config.json> --parts <dir> --out <dir> [--idle-keys ctl|direct]
                   [--page-edges pot|free] [--pack-shape rect|polygon]
@@ -242,10 +243,11 @@ usage:
 
   spine-parts inputs --source <painting.png> --config <config.json> --out <dir>
       Cut the two images See-through is fed: <out>/st_input_full.png (the
-      painting centred on a white square as tall as it is) and, when the config
-      sets seethrough.head_box, <out>/st_input_head.png (that box, cropped at
-      its exact size). Refuses a landscape or translucent painting and a head
-      box outside the painting, by name.
+      painting centred on a white square of its longer side: white left and
+      right of a portrait painting, above and below a landscape one) and, when
+      the config sets seethrough.head_box, <out>/st_input_head.png (that box,
+      cropped at its exact size). Refuses a translucent painting and a head box
+      outside the painting, by name.
 
   spine-parts comfy seethrough --image <png> --out <dir> [--host <url>]
                     [--resolution 1024] [--steps 30] [--seed 42] [--offload] [--lama] [--nf4]
@@ -815,7 +817,11 @@ function cmdInputs(args: string[]): number {
     mkdirSync(out, { recursive: true });
     writePng(join(out, 'st_input_full.png'), r.full);
     console.log(`spine-parts inputs: ${source} (${painting.width}x${painting.height}) -> ${out}`);
-    console.log(`  st_input_full.png ${r.full.width}x${r.full.height}: the painting at x ${r.padLeft}, white either side (${r.padLeft} + ${r.full.width - painting.width - r.padLeft} px)`);
+    console.log(
+      r.padTop > 0
+        ? `  st_input_full.png ${r.full.width}x${r.full.height}: the painting at y ${r.padTop}, white above and below (${r.padTop} + ${r.full.height - painting.height - r.padTop} px)`
+        : `  st_input_full.png ${r.full.width}x${r.full.height}: the painting at x ${r.padLeft}, white either side (${r.padLeft} + ${r.full.width - painting.width - r.padLeft} px)`,
+    );
     if (r.head !== null && r.headBox !== null) {
       writePng(join(out, 'st_input_head.png'), r.head);
       console.log(`  st_input_head.png ${r.head.width}x${r.head.height}: seethrough.head_box [${r.headBox.join(', ')}]`);
