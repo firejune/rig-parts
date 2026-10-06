@@ -119,12 +119,12 @@ import {
   stageFields,
   visibilityCounts,
 } from './src/assemble.ts';
-import { buildGateLines, causeLines, chainLine, measuredRules, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
+import { buildGateLines, causeLines, chainLine, measuredRules, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
-import { cropToSpineY } from './src/coords.ts';
+import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { PartsError, type Problem } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
 import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paintingGraph, POSITIVE_HEAD, stripWords } from './src/graphs.ts';
@@ -159,8 +159,8 @@ import {
 } from './src/raster/index.ts';
 import { checkProposal, compare, compareLines, lint, lintLine, type Proposal, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
-import { block, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, writeRigFixture } from './fixtures/rig.ts';
-import { blinkHoldProblems, buildRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText } from './src/rig.ts';
+import { block, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
+import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText, type RigSpec } from './src/rig.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
 import { readTag, type TagReading } from './src/tags.ts';
@@ -1821,6 +1821,183 @@ function filesUnder(dir: string): string[] {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// turned chains (issue #73): the setup pose's world, and the render against the flat form
+// ---------------------------------------------------------------------------
+
+/**
+ * The largest per-frame max |d| (levels, over RGBA) allowed between a build
+ * and its flat form (`flattenRig`) rendered by the installed rigc, setup pose
+ * and every idle frame. Measured, not chosen: on the two public examples the
+ * oriented build against its flat form is at most 1 level on the setup pose
+ * and every idle frame but one — sample's idle frame 30, one opaque pixel 2
+ * levels apart in blue — under rigc's core poser and spine-core alike, with
+ * every bone origin and attachment vertex within 8.21e-5 world units (demo;
+ * 4.62e-5 sample) and every bone origin as far from its landmark in both
+ * forms. Inferred, not traced: two 8-bit roundings flipping together on a
+ * float32 posing path that differs in the last bits. A ceiling of 1 fails the
+ * 2 measured; 2 is that figure, so a 3-level pixel is over it.
+ */
+const FLAT_FORM_RENDER_CEILING = 2;
+
+interface SetupWorld {
+  bones: Map<string, [number, number]>;
+  /** Each mesh's skinned vertices, by slot. */
+  vertices: Map<string, Array<[number, number]>>;
+  /** Each region's centre and the angle it is drawn at (its bone's turn plus its own rotation, in (-180, 180]). */
+  regions: Map<string, { at: [number, number]; turn: number }>;
+}
+
+/** (-180, 180], test-side: the angle a region is drawn at. */
+function wrapDegrees(d: number): number {
+  const v = ((d % 360) + 360) % 360;
+  return v > 180 ? v - 360 : v;
+}
+
+/**
+ * Where a rig spec puts everything at the setup pose, through rigc's own
+ * frames (`src/coords.ts`): every bone origin, every weighted vertex (the
+ * weighted sum of its influences carried out of their frames) and every
+ * region's centre with the angle it is drawn at.
+ */
+function setupWorld(rig: RigSpec): SetupWorld {
+  const world = computeExactFrameTransforms(rig.bones);
+  const turn = new Map<string, number>();
+  for (const b of rig.bones) turn.set(b.name, (b.parent === undefined ? 0 : (turn.get(b.parent) ?? 0)) + (b.rotation ?? 0));
+  const at = (n: string): BoneTransform => world.get(n) as BoneTransform;
+  const bones = new Map(rig.bones.map((b) => [b.name, [at(b.name).worldX, at(b.name).worldY] as [number, number]]));
+  const slotBone = new Map(rig.slots.map((x) => [x.name, x.bone]));
+  const vertices = new Map<string, Array<[number, number]>>();
+  const regions = new Map<string, { at: [number, number]; turn: number }>();
+  for (const [slot, atts] of Object.entries(rig.skins.default)) {
+    for (const att of Object.values(atts)) {
+      if ('type' in att) {
+        vertices.set(
+          slot,
+          att.weights.map((v) =>
+            v.reduce<[number, number]>(
+              (acc, w) => {
+                const [x, y] = toWorld(at(w.bone), w.x, w.y);
+                return [acc[0] + w.weight * x, acc[1] + w.weight * y];
+              },
+              [0, 0],
+            ),
+          ),
+        );
+      } else {
+        const bone = slotBone.get(slot) as string;
+        regions.set(slot, { at: toWorld(at(bone), att.x, att.y), turn: wrapDegrees((turn.get(bone) ?? 0) + (att.rotation ?? 0)) });
+      }
+    }
+  }
+  return { bones, vertices, regions };
+}
+
+/** Everything one setup world puts more than `tol` from where the other does, by name, and the largest distance. */
+function worldGaps(a: SetupWorld, b: SetupWorld, tol: number): { max: number; off: string[] } {
+  const off: string[] = [];
+  let max = 0;
+  const gap = (name: string, p: readonly [number, number] | undefined, q: readonly [number, number] | undefined): void => {
+    if (p === undefined || q === undefined) {
+      off.push(`${name} absent on one side`);
+      return;
+    }
+    const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+    max = Math.max(max, d);
+    if (d > tol) off.push(`${name} ${d.toFixed(4)} off`);
+  };
+  for (const [n, p] of a.bones) gap(`bone ${n}`, p, b.bones.get(n));
+  for (const [slot, vs] of a.vertices) vs.forEach((p, i) => gap(`${slot} vertex ${i}`, p, b.vertices.get(slot)?.[i]));
+  for (const [slot, r] of a.regions) {
+    const o = b.regions.get(slot);
+    gap(`region ${slot}`, r.at, o?.at);
+    if (o !== undefined && Math.abs(wrapDegrees(r.turn - o.turn)) > 1e-6) off.push(`region ${slot} drawn at ${r.turn} degrees, the other at ${o.turn}`);
+  }
+  return { max, off };
+}
+
+interface FlatFormRender {
+  frames: number;
+  /** The largest per-frame max |d|, in levels. */
+  max: number;
+  /** Pixels at exactly 1 level, and above 1, over every frame. */
+  at1: number;
+  over1: number;
+  /** Each frame above 1 level, as `<set>/<file> <max>/<px above 1>`. */
+  overFrames: string[];
+}
+
+/**
+ * Two rig specs that share a motion spec and an images directory, each built
+ * as `check` builds it (the packed spine-html build) and rendered by the
+ * installed rigc — the setup pose (a throwaway `still` animation keying the
+ * root by 0) and every idle frame at `IDLE_FPS`, `IDLE_MAX_PX` — and compared
+ * frame for frame. A string is the reason nothing was compared.
+ */
+function flatFormRender(dir: string, a: RigSpec, b: RigSpec, motion: unknown, images: string): FlatFormRender | string {
+  const m = JSON.parse(JSON.stringify(motion)) as { animations: Record<string, unknown> };
+  m.animations.still = { duration: 0.1, loop: true, note: 'the setup pose', tracks: [{ bone: a.bones[0].name, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.1, v: [0] }] }] };
+  const rigc = findRigc(ROOT, '');
+  const sets: Record<string, string[]> = {};
+  for (const [name, rig] of [['a', a], ['b', b]] as const) {
+    const d = join(dir, name);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'rig.json'), rigJsonText({ ...rig, images }));
+    writeFileSync(join(d, 'motion.json'), rigJsonText(m));
+    const built = spawnSync(rigc, ['build', '--rig', join(d, 'rig.json'), '--motion', join(d, 'motion.json'), '--out', join(d, 'build'), ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 28 });
+    if (built.status !== 0) {
+      const why = `${built.stdout ?? ''}${built.stderr ?? ''}`.split('\n').filter((l) => /FAIL|rror/.test(l)).slice(0, 2);
+      return `${name}: rigc build exit ${built.status}: ${why.join(' | ')}`;
+    }
+    for (const anim of ['still', 'idle']) {
+      const r = spawnSync(rigc, ['render', '--candidate', join(d, 'build'), '--animation', anim, '--fps', String(anim === 'still' ? 10 : IDLE_FPS), '--max', String(IDLE_MAX_PX), '--out', join(d, anim)], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      if (r.status !== 0) return `${name}: rigc render ${anim} exit ${r.status}`;
+      const sub = readdirSync(join(d, anim)).find((n) => n === anim || n.startsWith(`${anim}@`));
+      if (sub === undefined) return `${name}: rigc render ${anim} wrote no frame directory`;
+      sets[`${name}/${anim}`] = readdirSync(join(d, anim, sub))
+        .filter((f) => /^f\d+\.png$/.test(f))
+        .sort()
+        .map((f) => join(d, anim, sub, f));
+    }
+  }
+  const out: FlatFormRender = { frames: 0, max: 0, at1: 0, over1: 0, overFrames: [] };
+  for (const anim of ['still', 'idle']) {
+    const fa = sets[`a/${anim}`];
+    const fb = sets[`b/${anim}`];
+    if (fa.length === 0 || fa.length !== fb.length) return `${anim}: ${fa.length} frame(s) against ${fb.length}`;
+    for (let i = 0; i < fa.length; i++) {
+      const pa = readPng(fa[i]);
+      const pb = readPng(fb[i]);
+      // The render fits its grid to what is drawn, so a moved part can change the frame's size: no pixel is then comparable, and the frame counts as 255 levels apart.
+      if (pa.width !== pb.width || pa.height !== pb.height) {
+        out.frames++;
+        out.max = 255;
+        out.overFrames.push(`${anim}/${fa[i].split('/').pop()} ${pa.width}x${pa.height} against ${pb.width}x${pb.height}`);
+        continue;
+      }
+      let fmax = 0;
+      let fover = 0;
+      for (let p = 0; p < pa.width * pa.height; p++) {
+        let d = 0;
+        for (let c = 0; c < 4; c++) d = Math.max(d, Math.abs(pa.data[p * 4 + c] - pb.data[p * 4 + c]));
+        if (d === 1) out.at1++;
+        if (d > 1) fover++;
+        fmax = Math.max(fmax, d);
+      }
+      out.frames++;
+      out.over1 += fover;
+      out.max = Math.max(out.max, fmax);
+      if (fmax > 1) out.overFrames.push(`${anim}/${fa[i].split('/').pop()} ${fmax}/${fover}`);
+    }
+  }
+  return out;
+}
+
+function flatFormLine(r: FlatFormRender | string): string {
+  if (typeof r === 'string') return `not compared: ${r}`;
+  return `${r.frames} frame(s) (setup pose + idle), max |d| ${r.max} level(s), ${r.at1} px at 1, ${r.over1} px above 1${r.overFrames.length > 0 ? ` (${r.overFrames.join(', ')})` : ''}`;
+}
+
 function runRigSuite(): number {
   section('rig: bones, lattice meshes, weights, regions and the idle');
   const { say, bad } = counter();
@@ -2227,6 +2404,7 @@ function runRigSuite(): number {
   );
 
   runBlinkStillCases(say);
+  runTurnedChainCases(say);
   return bad();
 }
 
@@ -2485,6 +2663,199 @@ function runBlinkStillCases(say: (name: string, ok: boolean, detail: string, why
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Issue #73: a chain link is emitted pointing along its chain, with its
+ * length, and nothing it carries moves. Every expected value is derived by
+ * hand in `fixtures/rig.ts` (`TURNED_EXPECT`, a 3-4-5 triangle and a link
+ * straight down); the sign convention is the rig spec's, measured through
+ * rigc: `rotation` is Spine degrees, counter-clockwise in a y-up world, local
+ * to the parent (a bone turned 30 with a child at local (10, 0) puts the
+ * child at (10 cos 30, 10 sin 30) from it).
+ */
+function runTurnedChainCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const turnedCfg = (edit: (c: Record<string, unknown>) => void = () => {}): CharacterConfig => {
+    const c = turnedConfig();
+    edit(c);
+    return parseConfig(c);
+  };
+  const r = buildRig(turnedCfg(), rigParts(), rigImages());
+  const flatOf = (rig: RigSpec): RigSpec | null => {
+    try {
+      return flattenRig(rig);
+    } catch (err) {
+      if (err instanceof PartsError) return null;
+      throw err;
+    }
+  };
+  const flat = flatOf(r.rig);
+  const byName = new Map(r.rig.bones.map((b) => [b.name, b]));
+  const pick = (n: string): string => {
+    const b = byName.get(n);
+    return b === undefined ? 'absent' : JSON.stringify({ ...(b.length === undefined ? {} : { length: b.length }), ...(b.rotation === undefined ? {} : { rotation: b.rotation }), x: b.x, y: b.y });
+  };
+  const turnedOk = Object.entries(TURNED_EXPECT.oriented).every(([n, v]) => pick(n) === JSON.stringify(v));
+  const byDefinition = pyRound((-Math.atan(3 / 4) * 180) / Math.PI, 6);
+  const keyOrder = Object.keys(byName.get('hem0_ctl') ?? {}).join(',');
+  const plainBones = ['root', 'body'].every((n) => byName.get(n)?.rotation === undefined && byName.get(n)?.length === undefined);
+  const level = buildRig(rigCfg(), rigParts(), rigImages()).rig.bones.filter((b) => b.name.startsWith('hem'));
+  say(
+    'RG45_A_TURNED_CHAIN_PUTS_ITS_DIRECTION_AND_LENGTH_ON_EACH_CONTROL_AND_LINK_AND_PLACES_ITS_CHILDREN_IN_THE_TURNED_FRAME',
+    r.rig.bones.map((b) => b.name).join(',') === TURNED_EXPECT.bones.join(',') &&
+      turnedOk &&
+      TURNED_EXPECT.oriented.hem0_ctl.rotation === byDefinition &&
+      TURNED_EXPECT.oriented.hem1_ctl.rotation === pyRound(-90 - byDefinition, 6) &&
+      keyOrder === 'name,parent,length,rotation,x,y' &&
+      plainBones &&
+      level.length === 4 &&
+      level.every((b) => b.rotation === 0 && b.length === 8),
+    `${Object.keys(TURNED_EXPECT.oriented)
+      .map((n) => `${n} ${pick(n)}`)
+      .join('; ')}; -atan(3/4) in degrees to 6 places ${byDefinition}; hem0_ctl keys ${keyOrder}; root and body carry no turn: ${plainBones}; the level fixture's hem links: ${level.map((b) => `${b.name} ${b.rotation}/${b.length}`).join(', ')}`,
+    'issue #73: a physics constraint on a chain link reads bone.data.length as its lever, so every link and the control above it carry the link\'s direction and length; the control (same origin) holds the turn and the link sits at local rotation 0 under it; a child is placed in the turned frame — hem1_ctl lands at (10, 0), the link\'s own length along its axis, and bead, a named bone, is turned back upright (90) at (4, 0); a level chain turns by 0 and still carries its length',
+  );
+
+  const cloth = r.rig.skins.default.cloth.cloth as MeshAttachment;
+  let vi = -1;
+  for (let i = 0; i < cloth.uvs.length / 2; i++) if (cloth.uvs[2 * i] === TURNED_EXPECT.weighed.uv[0] && cloth.uvs[2 * i + 1] === TURNED_EXPECT.weighed.uv[1]) vi = i;
+  const got = vi < 0 ? [] : cloth.weights[vi];
+  say(
+    'RG46_A_WEIGHT_IS_BOUND_IN_EACH_INFLUENCES_TURNED_FRAME',
+    JSON.stringify(got) === JSON.stringify(TURNED_EXPECT.weighed.oriented),
+    `the vertex at uv ${TURNED_EXPECT.weighed.uv.join(',')} -> ${JSON.stringify(got)}`,
+    'by hand (fixtures/rig.ts): the vertex is hem0\'s origin, so (0, 0) under it; under hem1 (world turn -90) the world vector (-8, 6) reads R(90)(-8, 6) = (-6, -8); the weights are 324/388 and 64/388 at 5 places, the last one closing the sum',
+  );
+
+  const eye = r.rig.skins.default.eye.eye as RegionAttachment;
+  say(
+    'RG47_A_REGION_ON_A_TURNED_LINK_IS_PLACED_IN_ITS_FRAME_AND_TURNED_BACK_UPRIGHT',
+    JSON.stringify(eye) === JSON.stringify(TURNED_EXPECT.region.oriented),
+    `eye on hem1 -> ${JSON.stringify(eye)}`,
+    'by hand: the centre is (-4, -7) from hem1 in the world, R(90)(-4, -7) = (7, -4) in its frame, and the image turned by 90 cancels the link\'s -90 so it is drawn as painted; key order image, x, y, rotation, rigc\'s own',
+  );
+
+  const flatBones = flat === null ? [] : flat.bones;
+  const flatCloth = flat?.skins.default.cloth.cloth as MeshAttachment | undefined;
+  const flatOk =
+    flat !== null &&
+    Object.entries(TURNED_EXPECT.flat).every(([n, [x, y]]) => {
+      const b = flatBones.find((q) => q.name === n);
+      return b !== undefined && b.x === x && b.y === y && !('rotation' in b) && !('length' in b);
+    }) &&
+    JSON.stringify(vi < 0 ? [] : flatCloth?.weights[vi]) === JSON.stringify(TURNED_EXPECT.weighed.flat) &&
+    JSON.stringify(flat.skins.default.eye.eye) === JSON.stringify(TURNED_EXPECT.region.flat);
+  const wrong = flattenRig(r.rig, -1);
+  const wrongCtl = wrong.bones.find((b) => b.name === 'hem1_ctl');
+  const wrongEye = wrong.skins.default.eye.eye as RegionAttachment;
+  const levelRig = buildRig(rigCfg(), rigParts(), rigImages()).rig;
+  const levelFlat = flattenRig(levelRig);
+  const levelSame = JSON.stringify(levelFlat.bones) === JSON.stringify(levelRig.bones.map(({ length: _l, rotation: _r, ...rest }) => rest)) && JSON.stringify(levelFlat.skins) === JSON.stringify(levelRig.skins);
+  say(
+    'RG48_FLATTEN_OF_THE_TURNED_BUILD_IS_THE_HAND_FLAT_FORM_AND_ONE_TURNING_THE_WRONG_WAY_IS_NOT',
+    flatOk && wrongCtl !== undefined && (wrongCtl.x !== 8 || wrongCtl.y !== -6) && (wrongEye.x !== -4 || wrongEye.y !== -7) && levelSame,
+    `flattenRig: ${flatBones.map((b) => `${b.name} ${b.x},${b.y}`).join('; ')}; weights ${JSON.stringify(vi < 0 ? [] : flatCloth?.weights[vi])}; eye ${JSON.stringify(flat?.skins.default.eye.eye)}; planted, read with the opposite sense: hem1_ctl ${wrongCtl?.x},${wrongCtl?.y} (flat is 8,-6), eye ${wrongEye.x},${wrongEye.y} (flat is -4,-7); the level fixture flattened: ${levelSame ? 'its own numbers, length and rotation dropped' : 'DIFFERENT numbers'}`,
+    'the chain suite and scripts/rig_oracle.ts hold the reference to flattenRig(built); every flat value is a plain world difference worked out in fixtures/rig.ts, and a flatten that turned the wrong way puts the turned offsets somewhere else',
+  );
+
+  const oriented = setupWorld(r.rig);
+  const reference = flat === null ? null : setupWorld(flat);
+  const landmarks = Object.entries(TURNED_EXPECT.world).every(([n, [x, y]]) => {
+    const at = [oriented.bones.get(n), oriented.bones.get(`${n}${CONTROL_SUFFIX}`)].filter((p) => p !== undefined);
+    return at.length > 0 && at.every((p) => Math.hypot(p[0] - x, p[1] - y) <= 1e-6);
+  });
+  const same = reference === null ? null : worldGaps(oriented, reference, 1e-6);
+  const plant = (edit: (bones: RigSpec['bones']) => void): { max: number; off: string[] } | null => {
+    if (reference === null) return null;
+    const bones = r.rig.bones.map((b) => ({ ...b }));
+    edit(bones);
+    return worldGaps(setupWorld({ ...r.rig, bones }), reference, 1e-6);
+  };
+  const ctlFlat = plant((bones) => {
+    const c = bones.find((b) => b.name === 'hem1_ctl');
+    if (c !== undefined) c.rotation = 0;
+  });
+  const linkToo = plant((bones) => {
+    const l = bones.find((b) => b.name === 'hem1');
+    if (l !== undefined) l.rotation = TURNED_EXPECT.oriented.hem1_ctl.rotation;
+  });
+  const named = (g: { off: string[] } | null): boolean => g !== null && g.off.some((o) => o.startsWith('bone bead ')) && g.off.some((o) => o.startsWith('region eye')) && g.off.some((o) => o.startsWith('cloth vertex '));
+  say(
+    'RG49_EVERY_SETUP_WORLD_POSITION_IS_THE_FLAT_FORMS_AND_A_CONTROL_OR_LINK_TURNED_WRONG_IS_NAMED',
+    landmarks && same !== null && same.off.length === 0 && named(ctlFlat) && named(linkToo),
+    `bone origins at their landmarks (controls at their bones'): ${landmarks}; against the flat form: ${same === null ? 'no flat form' : `${same.off.length} object(s) off, largest ${same.max.toExponential(2)}`}; planted, hem1_ctl left at rotation 0: ${ctlFlat?.off.length ?? 0} off (${ctlFlat?.off.slice(0, 3).join(', ') ?? ''}); planted, hem1 turned as well as its control: ${linkToo?.off.length ?? 0} off (${linkToo?.off.slice(0, 3).join(', ') ?? ''})`,
+    'the ruling of #73: no bone, weighted vertex or region attachment moves; measured through rigc\'s own setup frames, every object of the turned build is where the flat form puts it to 1e-6, and the two ways of turning a link wrong — the turn left off the control, or put on the link as well — each move the bone under it, the weighted cloth and the region, by name',
+  );
+
+  const dir = temp('turned');
+  try {
+    const images = join(dir, 'images');
+    mkdirSync(images, { recursive: true });
+    for (const [f, img] of r.images) writeFileSync(join(images, f), encodePngBytes(img));
+    const good = flat === null ? 'no flat form' : flatFormRender(join(dir, 'good'), r.rig, flat, r.motion, images);
+    const upright = JSON.parse(JSON.stringify(r.rig)) as RigSpec;
+    delete (upright.skins.default.eye.eye as RegionAttachment).rotation;
+    const bad = flat === null ? 'no flat form' : flatFormRender(join(dir, 'unturned'), upright, flat, r.motion, images);
+    say(
+      'RG50_THE_TURNED_BUILD_RENDERS_AS_ITS_FLAT_FORM_AND_ONE_WITH_A_REGION_NOT_TURNED_BACK_DOES_NOT',
+      typeof good !== 'string' && good.max <= FLAT_FORM_RENDER_CEILING && typeof bad !== 'string' && bad.max > FLAT_FORM_RENDER_CEILING,
+      `turned vs flat: ${flatFormLine(good)}; planted, eye without its rotation vs flat: ${flatFormLine(bad)}`,
+      `rendering is the instrument: rigc builds both forms as check does (a _ctl carrying a turn trips no rigc rule) and draws the setup pose and every idle frame, so the idle's rotate keys are shown to mean the same on the turned frames; the ceiling is ${FLAT_FORM_RENDER_CEILING} level(s), the one measured on the public examples (FLAT_FORM_RENDER_CEILING)`,
+    );
+
+    const refused = refusals(() => flattenRig(upright));
+    const first = refused?.problems[0];
+    say(
+      'RG51_FLATTEN_REFUSES_A_REGION_ITS_ROTATION_DOES_NOT_TURN_UPRIGHT',
+      refused !== null && refused.problems.length === 1 && first?.code === 'FLATTEN_REGION_UPRIGHT' && first.object === 'skins.default.eye.eye' && first.detail.includes('turned -90 degrees, with rotation absent'),
+      refused === null ? 'flattened, no refusal' : refused.problems.map((p) => `${p.code}: ${p.object} — ${p.detail}`).join(' | '),
+      'the flat form draws every region upright, so flattening a region the oriented rig draws turned would hand the oracle a picture the rig does not show; it is refused by name instead',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  const track = (bone: string, prop: string): Record<string, unknown> => ({ bone, prop, amp: 0.01, period: 4, phase: 0, ...(prop.startsWith('scale') ? { base: 1 } : {}) });
+  const withTrack = (cfg: () => Record<string, unknown>, bone: string, prop: string): CharacterConfig => {
+    const c = cfg();
+    (c.motion as { tracks: unknown[] }).tracks.push(track(bone, prop));
+    return parseConfig(c);
+  };
+  const beadX = refusals(() => buildRig(withTrack(turnedConfig, 'bead', 'translatex'), rigParts(), rigImages()));
+  const hemScale = refusals(() => buildRig(withTrack(turnedConfig, 'hem1', 'scaley'), rigParts(), rigImages()));
+  const hemSlide = refusals(() => buildRig(withTrack(turnedConfig, 'hem0', 'translatey'), rigParts(), rigImages()));
+  const levelScale = refusals(() => buildRig(withTrack(rigConfig, 'hem1', 'scaley'), rigParts(), rigImages()));
+  const line = (e: PartsError | null): string => (e === null ? 'accepted' : e.problems.map((p) => `${p.code}: ${p.object} — ${p.detail.slice(0, 90)}…`).join(' | '));
+  say(
+    'RG52_A_KEY_A_TURNED_FRAME_WOULD_CHANGE_IS_REFUSED_BY_NAME_AND_ONE_ON_AN_UNTURNED_FRAME_IS_NOT',
+    beadX?.problems.length === 1 &&
+      beadX.problems[0].code === 'RIG_KEY_FRAME_UNTURNED' &&
+      beadX.problems[0].object === 'config.motion.tracks[1] (bone "bead", translatex)' &&
+      beadX.problems[0].detail.includes('its parent "hem1", which is turned -90 degrees') &&
+      hemScale?.problems.length === 1 &&
+      hemScale.problems[0].object === 'config.motion.tracks[1] (bone "hem1", scaley)' &&
+      hemScale.problems[0].detail.includes('"hem1" is turned -90 degrees') &&
+      hemSlide === null &&
+      levelScale === null,
+    `turned: translatex on bead -> ${line(beadX)}; scaley on hem1 -> ${line(hemScale)}; translatey on hem0 (its parent body is not turned) -> ${line(hemSlide)}; the level fixture, scaley on hem1 (turned by 0) -> ${line(levelScale)}`,
+    'a rotate key turns a bone about its origin in any frame, but a translate key moves a bone along its parent\'s axes and a scale key stretches it along its own; on a turned frame those are directions the config did not write, so the key is refused rather than silently re-aimed — and the rule reads the turn, not the bone\'s kind: a level chain keeps every key',
+  );
+
+  const d = buildRig(turnedCfg(), rigParts(), rigImages(), undefined, 'direct');
+  const dBy = new Map(d.rig.bones.map((b) => [b.name, b]));
+  const dGap = worldGaps(setupWorld(d.rig), oriented, 1e-6);
+  say(
+    'RG53_IDLE_KEYS_DIRECT_PUTS_THE_TURN_ON_THE_LINK_AND_MOVES_NOTHING_THE_CTL_BUILD_PLACES',
+    !d.rig.bones.some((b) => b.name.endsWith(CONTROL_SUFFIX)) &&
+      dBy.get('hem0')?.rotation === TURNED_EXPECT.oriented.hem0_ctl.rotation &&
+      dBy.get('hem0')?.length === 10 &&
+      dBy.get('hem1')?.rotation === TURNED_EXPECT.oriented.hem1_ctl.rotation &&
+      dBy.get('hem1')?.length === 6 &&
+      dGap.off.length === 0 &&
+      JSON.stringify(d.rig.skins) === JSON.stringify(r.rig.skins),
+    `direct: hem0 ${dBy.get('hem0')?.rotation}/${dBy.get('hem0')?.length}, hem1 ${dBy.get('hem1')?.rotation}/${dBy.get('hem1')?.length}, ${d.rig.bones.length} bones; against ctl: ${dGap.off.length} object(s) off, largest ${dGap.max.toExponential(2)}; skins ${JSON.stringify(d.rig.skins) === JSON.stringify(r.rig.skins) ? 'identical' : 'DIFFERENT'}`,
+    'under --idle-keys direct there is no control, so the link itself carries the turn and the lever; it stands where the control stood, so every weight and region is bound in the same frames and the skins are the same bytes',
+  );
 }
 
 function boxLabelOf(b: { x0: number; y0: number; x1: number; y1: number }): string {
@@ -4918,6 +5289,57 @@ function runBuildSuite(): number {
       `with ${RIGC_MODEL_DOCUMENT} beside: ${withModel.join(', ')}; with other.json beside too: ${codes(twoJson)} — ${twoJson?.problems[0]?.detail ?? ''}`,
       `spine-rigc writes ${RIGC_MODEL_DOCUMENT} after the same gate as the pair, and the artifact stage refused every green build as holding two skeleton JSON files; the document is named and set aside, and nothing else is`,
     );
+
+    // Issue #73 through the whole build: the green build's swinging skirt bone as a one-link chain. The link
+    // hangs straight down from the top of the skirt's box, so by hand it is turned -90 with the box's height
+    // as its length, and the skirt's region is turned back by 90.
+    const hang = assembleConfig();
+    const skirtBox = EXPECTED_PARTS.parts.find((p) => p.name === 'bottomwear') as { x: number; y: number; w: number; h: number };
+    hang.bones = [
+      { name: 'anchor', parent: 'root', at: [0, 0] },
+      { name: 'chest', parent: 'root', at: [torsoTop.x + torsoTop.w / 2, torsoTop.y] },
+      { chain: 'skirt', parent: 'root', points: [[skirtBox.x + skirtBox.w / 2, skirtBox.y]], tip: [skirtBox.x + skirtBox.w / 2, skirtBox.y + skirtBox.h] },
+    ];
+    hang.regions = { ...(moving.regions as Record<string, string>), bottomwear: 'skirt0' };
+    hang.motion = {
+      duration: 1,
+      tracks: [
+        { bone: 'chest', prop: 'translatey', amp: 1, period: 1, phase: 0 },
+        { chain: 'skirt', amps: [2], period: 1, phase: 0, lag: 0 },
+      ],
+    };
+    writeFileSync(join(dir, 'hang.json'), `${JSON.stringify(hang, null, 2)}\n`);
+    const hangOut = join(dir, 'hang');
+    const hung = runCli(buildArgs(dir, hangOut, 'hang.json'));
+    const hangRig = existsSync(join(hangOut, 'rig', 'rig.json')) ? (JSON.parse(readFileSync(join(hangOut, 'rig', 'rig.json'), 'utf8')) as RigSpec) : null;
+    const link = hangRig?.bones.find((b) => b.name === 'skirt0');
+    const skirtRegion = hangRig?.skins.default.bottomwear?.bottomwear as RegionAttachment | undefined;
+    const hangCheck = existsSync(join(hangOut, 'check', 'check.json')) ? (JSON.parse(readFileSync(join(hangOut, 'check', 'check.json'), 'utf8')) as Record<string, unknown>) : null;
+    say(
+      'BU09_A_BUILD_TURNS_A_CHAIN_LINK_ALONG_ITS_CHAIN_TURNS_ITS_REGION_BACK_AND_CHECKS_GREEN',
+      hung.status === 0 && link?.rotation === -90 && link.length === skirtBox.h && skirtRegion?.rotation === 90 && hangCheck?.PASS === true && hangCheck.loop_max_diff === 0 && hangCheck.gate_spine_html_green === true,
+      `exit ${hung.status}; skirt0 ${JSON.stringify(link ?? null)} (by hand: rotation -90, length ${skirtBox.h}); bottomwear ${JSON.stringify(skirtRegion ?? null)}; check.json PASS ${String(hangCheck?.PASS)}, loop_max_diff ${String(hangCheck?.loop_max_diff)}, gate ${String(hangCheck?.gate_spine_html_green)}`,
+      'the turned emitter end to end: assemble, rig, rigc\'s gate on a turned link and a turned-back region, the render, and every line check reads — a chain\'s link straight down is turned -90 and carries the distance to its tip, and its region is drawn upright',
+    );
+
+    const keyed = JSON.parse(JSON.stringify(hang)) as typeof hang & { motion: { tracks: unknown[] } };
+    keyed.motion.tracks.push({ bone: 'skirt0', prop: 'scalex', amp: 0.01, period: 1, phase: 0, base: 1 });
+    writeFileSync(join(dir, 'keyed.json'), `${JSON.stringify(keyed, null, 2)}\n`);
+    const keyedOut = join(dir, 'keyed');
+    const stretched = runCli(buildArgs(dir, keyedOut, 'keyed.json'));
+    const keyFail = stretched.out.split('\n').find((l) => l.startsWith('[rig]   FAIL  RIG_KEY_FRAME_UNTURNED: ')) ?? null;
+    say(
+      'BU10_A_SCALE_KEY_ON_A_TURNED_LINK_STOPS_THE_BUILD_AT_RIG_BY_NAME_AND_NOTHING_AFTER_IT',
+      stretched.status === 1 &&
+        keyFail !== null &&
+        keyFail.includes('config.motion.tracks[2] (bone "skirt0", scalex)') &&
+        keyFail.includes('"skirt0" is turned -90 degrees') &&
+        stretched.out.includes('build: stopped at rig; no later stage ran') &&
+        !stretched.out.includes('[check]') &&
+        !existsSync(join(keyedOut, 'rig', 'rig.json')),
+      `exit ${stretched.status}; ${keyFail ?? 'no [rig] FAIL line'}; rig.json written: ${existsSync(join(keyedOut, 'rig', 'rig.json'))}`,
+      'a scalex key on a link turned -90 would stretch the skirt along its length, not across it; the rig stage refuses it before rigc runs, and emit-only-after-green holds across stages',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -5070,12 +5492,57 @@ function runChainSuite(): number | null {
         'every count exact but seam_override_px, ±1 — the float32/float64 warp accumulation the assemble oracle traced every miss to (see chainTolerance)',
       );
 
-      const rigFiles = ['rig.json', 'motion.json', 'mesh_report.json'].map((f) => [f, jsonDiffs(readJsonAt(join(exp, f)), readJsonAt(join(out, 'rig', f)), chainTolerance(f))] as const);
+      // Since issue #73 a chain link is turned along its chain; the reference wrote every bone unturned, so its
+      // rig.json is compared with the built one's flat form — every offset carried out of its turned frame.
+      const builtRig = readJsonAt(join(out, 'rig', 'rig.json')) as RigSpec;
+      const rigFiles = ['rig.json', 'motion.json', 'mesh_report.json'].map((f) => [f, jsonDiffs(readJsonAt(join(exp, f)), f === 'rig.json' ? flattenRig(builtRig) : readJsonAt(join(out, 'rig', f)), chainTolerance(f))] as const);
       say(
         `CH03_RIG_MOTION_AND_MESH_REPORT_ARE_THE_EXPECTED_AS_PARSED_VALUES[${key}]`,
         rigFiles.every(([, d]) => d.over.length === 0),
-        rigFiles.map(([f, d]) => `${f}: ${summarise(d)}`).join(' | '),
-        "the rig stage is exact against the reference given the same parts, but for the blink's two hold-end and two open-end key times per example, which issue #32 moved on purpose (expected/motion.json is regenerated by build since); motion key times are compared to 6 decimals, the precision the rig stage writes",
+        rigFiles.map(([f, d]) => `${f}${f === 'rig.json' ? ' (flattenRig of the built one)' : ''}: ${summarise(d)}`).join(' | '),
+        "the rig stage is exact against the reference given the same parts, but for the blink's two hold-end and two open-end key times per example, which issue #32 moved on purpose (expected/motion.json is regenerated by build since); motion key times are compared to 6 decimals, the precision the rig stage writes; rig.json is read through flattenRig, which turns every chain link back (issue #73) and must give the reference's numbers exactly",
+      );
+
+      const exCfg = readJsonAt(join(ex, 'config.json')) as { bones: Array<{ chain?: string; points?: Array<[number, number]>; tip?: [number, number] }> };
+      const rigH = expParts.rig_size[1];
+      const rigW = expParts.rig_size[0];
+      const turnOf = new Map<string, number>();
+      for (const b of builtRig.bones) turnOf.set(b.name, (b.parent === undefined ? 0 : (turnOf.get(b.parent) ?? 0)) + (b.rotation ?? 0));
+      const byBuilt = new Map(builtRig.bones.map((b) => [b.name, b]));
+      const links = new Set<string>();
+      const offAim: string[] = [];
+      for (const e of exCfg.bones) {
+        if (e.chain === undefined || e.points === undefined || e.tip === undefined) continue;
+        const poly = [...e.points, e.tip];
+        for (let k = 0; k < e.points.length; k++) {
+          const n = `${e.chain}${k}`;
+          const dx = poly[k + 1][0] - rigW / 2 - (poly[k][0] - rigW / 2);
+          const dy = cropToSpineY(poly[k + 1][1], rigH) - cropToSpineY(poly[k][1], rigH);
+          const deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+          const len = pyRound(Math.sqrt(dx * dx + dy * dy), 3);
+          for (const m of [n, `${n}${CONTROL_SUFFIX}`]) {
+            const b = byBuilt.get(m);
+            if (b === undefined) continue;
+            links.add(m);
+            const miss = Math.abs(wrapDegrees((turnOf.get(m) ?? 0) - deg));
+            if (miss > 1e-5 || b.length !== len) offAim.push(`${m} turned ${pyRound(turnOf.get(m) ?? 0, 6)} length ${b.length} (the config: ${pyRound(deg, 6)}, ${len})`);
+          }
+        }
+      }
+      const turnedOthers = builtRig.bones.filter((b) => !links.has(b.name) && turnOf.get(b.name) !== 0).map((b) => `${b.name} ${turnOf.get(b.name)}`);
+      say(
+        `CH11_EVERY_CHAIN_LINK_POINTS_ALONG_ITS_CHAIN_AND_EVERY_OTHER_BONE_STAYS_UNTURNED[${key}]`,
+        links.size > 0 && offAim.length === 0 && turnedOthers.length === 0,
+        `${links.size} chain link(s) and control(s): ${offAim.length === 0 ? 'every world turn within 1e-5 degrees of the config\'s direction and every length the config\'s to 3 places' : offAim.slice(0, 3).join('; ')}; other bones turned: ${turnedOthers.length === 0 ? 'none' : turnedOthers.slice(0, 3).join(', ')}`,
+        "issue #73's ask, read off the config rather than the emitter: each link points from its origin to the next link's (the last to the tip) with that distance as its length, so a physics constraint added downstream finds a lever; named bones keep world rotation 0, so nothing else a consumer reads changes meaning",
+      );
+
+      const flatRender = flatFormRender(join(dir, `${key}-flat-form`), builtRig, flattenRig(builtRig), readJsonAt(join(out, 'rig', 'motion.json')), join(out, 'rig', 'images'));
+      say(
+        `CH12_THE_BUILD_RENDERS_AS_ITS_FLAT_FORM_WITHIN_THE_MEASURED_CEILING[${key}]`,
+        typeof flatRender !== 'string' && flatRender.max <= FLAT_FORM_RENDER_CEILING,
+        flatFormLine(flatRender),
+        `issue #73: no world position moves, so the turned rig draws what the reference's flat one draws; measured on both examples at 1 level everywhere but sample's idle frame 30 (one opaque pixel, 2 levels in blue), with every vertex within 8.21e-5 units — the ceiling is that measurement (FLAT_FORM_RENDER_CEILING = ${FLAT_FORM_RENDER_CEILING}), and the pixels above 1 are counted so a new one shows`,
       );
 
       const check = jsonDiffs(readJsonAt(join(exp, 'check.json')), readJsonAt(join(out, 'check', 'check.json')), chainTolerance('check.json'));
@@ -5174,7 +5641,14 @@ function runChainSuite(): number | null {
           }
         }
       }
-      const rigPlant = jsonDiffs(readJsonAt(join(exp, 'rig.json')), rig, chainTolerance('rig.json'));
+      const rigPlant = jsonDiffs(readJsonAt(join(exp, 'rig.json')), flattenRig(rig as unknown as RigSpec), chainTolerance('rig.json'));
+      const wrongWay = jsonDiffs(readJsonAt(join(exp, 'rig.json')), flattenRig(readJsonAt(join(out, 'rig', 'rig.json')) as RigSpec, -1), chainTolerance('rig.json'));
+      say(
+        'CH13_A_FLATTEN_TURNING_THE_WRONG_WAY_IS_NAMED_BY_THE_RIG_COMPARATOR',
+        wrongWay.over.some((l) => /^bones\[\d+\]\.[xy]:/.test(l)) && wrongWay.over.some((l) => /weights\[\d+\]\[\d+\]\.[xy]:/.test(l)),
+        `on ${planted.key}: flattenRig read with the opposite sense -> ${wrongWay.over.length} difference(s) over tolerance, e.g. ${wrongWay.over.slice(0, 2).join('; ')}`,
+        "CH03's rig.json half passes through flattenRig; a flatten with its sign wrong would turn every chain offset the other way, and the comparator has to name those bones and weights rather than forgive them",
+      );
       const partsBuilt = readJsonAt(join(out, 'parts.json')) as { parts: Array<{ seam_override_px: number }> };
       partsBuilt.parts[0].seam_override_px += 2;
       const partsPlant = jsonDiffs(readJsonAt(join(exp, 'parts.json')), partsBuilt, chainTolerance('parts.json'));

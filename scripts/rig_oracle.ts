@@ -9,8 +9,12 @@
  * For every `<characters-dir>/<name>/` holding `config.json`,
  * `rig/parts.json`, `rig/parts/` and the reference's `rig/rig.json`,
  * `rig/motion.json` and `rig/mesh_report.json`, it builds the rig with
- * `src/rig.ts`, compares it field by field with the reference's, and runs
- * spine-rigc's gate on the port's output: `build --profile spine-html --pack`,
+ * `src/rig.ts`, compares its flat form (`flattenRig`: the reference wrote
+ * every bone unturned, and since issue #73 the rig stage turns each chain link
+ * along its chain, so the built rig's offsets are carried back out of the
+ * turned frames first) field by field with the reference's, and runs
+ * spine-rigc's gate on the port's output as built, turned:
+ * `build --profile spine-html --pack`,
  * `build --profile spine`, and `validate` of each build under its profile.
  *
  * ⛔ A character is printed by name only when `--public` names it; every other
@@ -32,7 +36,7 @@ import { PartsError } from '../src/errors.ts';
 import { readParts } from '../src/parts.ts';
 import { encodePngBytes, readPng } from '../src/raster/png.ts';
 import type { Raster } from '../src/raster/types.ts';
-import { buildRig, rigJsonText } from '../src/rig.ts';
+import { buildRig, flattenRig, rigJsonText } from '../src/rig.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 
@@ -221,7 +225,7 @@ function main(): number {
         const pyImg = readPng(ref);
         if (pyImg.width === img.width && pyImg.height === img.height && pyImg.data.every((v, k) => v === img.data[k])) imgSame++;
       }
-      compareRig(JSON.parse(readFileSync(join(c, 'rig/rig.json'), 'utf8')) as Obj, r.rig as unknown as Obj, d);
+      compareRig(JSON.parse(readFileSync(join(c, 'rig/rig.json'), 'utf8')) as Obj, flattenRig(r.rig) as unknown as Obj, d);
       compareMotion(JSON.parse(readFileSync(join(c, 'rig/motion.json'), 'utf8')) as Obj, r.motion as unknown as Obj, d);
       compareReport(JSON.parse(readFileSync(join(c, 'rig/mesh_report.json'), 'utf8')) as Obj[], r.meshReport as unknown as Obj[], d);
       const meshes = r.meshReport.length;
