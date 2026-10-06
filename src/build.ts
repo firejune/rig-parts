@@ -44,7 +44,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:
 import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
-import { BARS, causeLines, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
+import { BARS, causeLines, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig, loadEarlyConfig } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
 import { encodeGif } from './gif.ts';
@@ -53,6 +53,7 @@ import { type LayerSet, readLayers } from './layers.ts';
 import { readParts, writeParts } from './parts.ts';
 import { encodePngBytes, readPng, writePng } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
+import { readRequirements, type RequirementLine, summaryText } from './requirements.ts';
 import { buildRig, DEFAULT_IDLE_KEYS, type IdleKeys, rigJsonText, type RigOutput } from './rig.ts';
 
 /** Where a stage's lines go. The commands hand it `console.log`; `build` hands it a prefixing wrapper. */
@@ -301,6 +302,8 @@ export interface CheckStageInput {
   pageEdges?: PageEdges;
   /** The packed build's `--pack-shape`; {@link DEFAULT_PACK_SHAPE} when absent. */
   packShape?: PackShape;
+  /** The scene's declared requirements (`--requirements`, issue #93); absent, nothing is read, written or printed for them. */
+  requirements?: string;
 }
 
 /** The pack line as it is printed: rigc's own, then the page's opaque share beside the spineboy yardstick. */
@@ -337,6 +340,12 @@ export function judgementLine(name: string, line: JudgementLine | ReportedLine):
     .join('; ')}`;
 }
 
+/** A requirement's line as the console prints it: its name and status, the reason first when NOT MEASURABLE, then its figures as check.json holds them. */
+export function requirementText(name: string, line: RequirementLine): string {
+  const rest = Object.entries(line).filter(([k]) => k !== 'status' && k !== 'reason');
+  return `${name}: ${line.status} — ${[...(line.status === 'NOT MEASURABLE' ? [String(line.reason)] : []), ...rest.map(([k, v]) => `${k} ${showFigure(v)}`)].join('; ')}`;
+}
+
 /**
  * Run the check and print its report. Returns the report; `figures.PASS` says
  * whether every bar was met, and each one that was not is printed as a FAIL
@@ -349,7 +358,7 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   const entryLine = versionLines.find((l) => l.startsWith('entry:'));
   log(`  rigc ${versionLines[0]} at ${bin}${entryLine === undefined ? '' : `; ${entryLine}`}`);
   const mode: PackMode = { pageEdges: input.pageEdges ?? DEFAULT_PAGE_EDGES, packShape: input.packShape ?? DEFAULT_PACK_SHAPE };
-  const r = runCheck(input.rig, input.out, rigc, input.parts, mode, input.source);
+  const r = runCheck(input.rig, input.out, rigc, input.parts, mode, input.source, input.requirements);
   log(`  gate spine-html (rigc ${packedBuildLabel(mode)}), verbatim:`);
   for (const l of r.gateHtml) log(l);
   for (const l of packLines(r)) log(`  ${l}`);
@@ -367,10 +376,16 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   for (const name of REPORTED_LINES) log(`  ${judgementLine(name, fig[name])}`);
   const vsSource = fig[SOURCE_LINE];
   if (vsSource !== undefined) log(`  ${judgementLine(SOURCE_LINE, vsSource)}`);
+  if (r.requirements !== null) {
+    for (const [name, line] of Object.entries(r.requirements.lines)) log(`  ${requirementText(name, line)}`);
+    log(`  ${summaryText(r.requirements.summary)}`);
+  }
   log(`  gate: spine-html ${fig.gate_spine_html_green ? 'green' : 'RED'} (${fig.rigc_entry.entry}${fig.rigc_entry.spine_core === null ? ', rigc\'s own validator' : `, the spine-core ${fig.rigc_entry.spine_core} round trip`})`);
-  log(`  wrote ${r.written.map((w) => join(input.out, w)).join(', ')}, ${join(input.out, 'build')}/${r.idle === null ? '' : `, ${join(input.out, 'idle_frames')}/`}`);
+  log(`  wrote ${r.written.map((w) => join(input.out, w)).join(', ')}, ${join(input.out, 'build')}/${r.idle === null ? '' : `, ${join(input.out, 'idle_frames')}/`}${r.requirements === null ? '' : `, ${join(input.out, REQUIREMENTS_DIR)}/`}`);
   for (const p of r.problems) log(`  FAIL  ${problemLine(p)}`);
-  log(`${fig.PASS ? 'check: PASS' : `check: FAIL — ${r.problems.length} bar(s) not met`}; ${barsSummary(r)}`);
+  const reqNotPass = r.requirements === null ? 0 : r.requirements.summary.declared - r.requirements.summary.pass;
+  const notMet = r.requirements === null ? `${r.problems.length} bar(s) not met` : `${r.problems.length - reqNotPass} bar(s) not met, ${reqNotPass} declared requirement(s) not PASS`;
+  log(`${fig.PASS ? 'check: PASS' : `check: FAIL — ${notMet}`}; ${barsSummary(r)}`);
   return r;
 }
 
@@ -469,6 +484,8 @@ export interface BuildInput {
   pageEdges: PageEdges;
   /** `--pack-shape` for both packed builds, as `pageEdges`; {@link DEFAULT_PACK_SHAPE} when absent. */
   packShape?: PackShape;
+  /** `--requirements`, forwarded to the check (issue #93): read before assemble runs, so a file check would refuse is refused first; absent, nothing moves. */
+  requirements?: string;
 }
 
 /**
@@ -550,6 +567,8 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
     // anything, and under [assemble], as it was before the stage had its own
     // narrower door.
     loadConfig(input.config);
+    // The same for the requirements file's own shape; its names resolve against the rig, in the check, before it builds.
+    if (input.requirements !== undefined) readRequirements(input.requirements);
     assembleStage(
       { source: input.source, full: input.full, head: input.head, config: input.config, seam: input.seam, project: input.project },
       { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, ERROR_MAP_FILE) },
@@ -567,7 +586,7 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
 
   let report: CheckReport;
   try {
-    report = checkStage({ rig: join(out, 'rig'), parts: out, out: join(out, 'check'), pageEdges: input.pageEdges, packShape: input.packShape }, run.check, run.checkBin, prefixed('check'));
+    report = checkStage({ rig: join(out, 'rig'), parts: out, out: join(out, 'check'), pageEdges: input.pageEdges, packShape: input.packShape, ...(input.requirements === undefined ? {} : { requirements: input.requirements }) }, run.check, run.checkBin, prefixed('check'));
   } catch (err) {
     return refused('check', err);
   }

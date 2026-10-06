@@ -32,6 +32,13 @@ stage writes are the whole interface.
   `TIP_OVER_ROOT`, `STILL_REGIONS_DARK` — its face half in the head's own frame —
   and `TEXTURE_STRETCH`) (AUTHORING §7). A judgement line that says
   SKIP was not verified: report it as such, with its reason, never as passed.
+- **What a scene asks is declared, not assumed.** When the request says what the
+  motion must do — a hand on a cup, a sleeve taking half an arm's turn, a joint
+  inside a range — write it into a `spine-parts-requirements/1` file and pass
+  `check --requirements <file>` (or `build --requirements`); every bar in it is the
+  requester's, never yours to invent (AUTHORING §7, *Declared requirements*). Each
+  line is PASS, FAIL or NOT MEASURABLE; a NOT MEASURABLE is not green, and a kind the
+  file does not declare was not measured — say so, never "passed".
 - **A hole in the layers is invisible to every bar.** Painting that no part holds is
   missing from the setup pose and from the flat stack alike, so the seam passes over
   it. `assemble` lists it (`uncovered hole N: <px> px at x,y wxh (between …)`) and

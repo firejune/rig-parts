@@ -122,7 +122,29 @@ import {
   visibilityCounts,
 } from './src/assemble.ts';
 import { BARS, blackRig, buildGateLines, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
-import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
+import { blinkFigures, type BoneWorld, frameBox, lagStep, readSine } from './src/instruments.ts';
+import {
+  aimLine,
+  contactLine,
+  declareConsumerDriven,
+  followLine,
+  forceMix,
+  mutedOnly,
+  placeTargets,
+  type Poses,
+  rangeLine,
+  readRequirements,
+  REQUIREMENT_KINDS,
+  requirementProblem,
+  requirementsSummary,
+  type RequirementLine,
+  type RequirementsFile,
+  resolveRequirements,
+  rigFacts,
+  stretchRequirementLine,
+  summaryText,
+} from './src/requirements.ts';
+import { COMPOSED_HAND_X, COMPOSED_SHOULDER, writeComposedRig, DRIVER_AT, DRIVER_SLIDE, FAR_ABOVE, LOWER_LEN, LURE_ANGLE, OVERREACH_FROM, OVERREACH_TO, POINTER_LEN, REACH_FROM, REACH_TO, REQ_FPS, REQ_STAGE, RIDE_MIX, RIDER_AT, SHOULDER, stageOf, SWING_BROKEN, SWING_PEAK, UPPER_LEN, VANE_AT, VANE_MIX, writeReqRig, writeRequirements } from './fixtures/reqrig.ts';
 import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
@@ -2286,6 +2308,39 @@ function runCliSuite(): number {
         JSON.stringify(directRig?.constraints) === JSON.stringify(pair.constraints),
       `no --idle-keys -> exit ${ctlRun.status}, ${ctlFail.length} FAIL line(s): ${ctlFail[0]?.trim().slice(0, 140) ?? ''}…; --idle-keys direct -> exit ${directRun.status}, rig.json invariants ${Object.keys(inv).join(', ')}, constraints ${JSON.stringify(directRig?.constraints ?? null)}`,
       'issue #92, ruling 4: the default ctl puts a control between the links, which a two-bone ik cannot read; the refusal comes before rigc and names the value of the flag under which the same config builds',
+    );
+
+    // Issue #93: --requirements on check and build.
+    const helpText = runCli(['--help']).out;
+    say(
+      'CL20_THE_HELP_NAMES_REQUIREMENTS_UNDER_CHECK_AND_UNDER_BUILD',
+      helpText.split('\n').filter((l) => l.includes('[--requirements <file.json>]')).length === 2 && helpText.includes('--requirements is forwarded to check') && helpText.includes('CHECK_REQUIREMENT_MEASURABLE'),
+      `${helpText.split('\n').filter((l) => l.includes('[--requirements <file.json>]')).map((l) => l.trim()).join(' | ')}`,
+      'an agent learns a flag from --help: check and build each show it, and the check text names the two codes a requirement line can be refused with',
+    );
+    const bareReq = runCli(['check', '--rig', join(dir, 'nowhere'), '--out', join(dir, 'req-usage'), '--requirements']);
+    const twiceReq = runCli(['build', '--config', 'c', '--source', 's', '--full', 'f', '--head', 'h', '--out', join(dir, 'req-usage-build'), '--requirements', 'a.json', '--requirements', 'b.json']);
+    say(
+      'CL21_REQUIREMENTS_WITHOUT_A_VALUE_OR_GIVEN_TWICE_IS_A_USAGE_ERROR',
+      bareReq.status === 2 && bareReq.out.includes('  FAIL  USAGE: --requirements needs a value') && twiceReq.status === 2 && twiceReq.out.includes('  FAIL  USAGE: --requirements is given twice') && !existsSync(join(dir, 'req-usage')) && !existsSync(join(dir, 'req-usage-build')),
+      `check with no value: exit ${bareReq.status}, ${bareReq.out.split('\n')[0].trim()}; build twice: exit ${twiceReq.status}, ${twiceReq.out.split('\n')[0].trim()}`,
+      'a flag without its value, or two values, is a usage error before anything runs, like every other valued flag',
+    );
+    const reqRig = join(dir, 'req-rig');
+    writeReqRig(reqRig);
+    rmSync(join(reqRig, 'motion.json'));
+    const both = runCli(['check', '--rig', reqRig, '--out', join(dir, 'req-both'), '--requirements', join(dir, 'absent-requirements.json')]);
+    const bothFails = both.out.split('\n').filter((l) => l.startsWith('  FAIL  '));
+    say(
+      'CL22_A_RIG_AND_A_REQUIREMENTS_FILE_THAT_CANNOT_BE_READ_ARE_NAMED_TOGETHER_BEFORE_ANYTHING_IS_BUILT',
+      both.status === 1 &&
+        bothFails.length === 2 &&
+        bothFails[0].startsWith(`  FAIL  CHECK_INPUT_PRESENT: ${join(reqRig, 'motion.json')}`) &&
+        bothFails[1].startsWith(`  FAIL  REQUIREMENTS_FILE: ${join(dir, 'absent-requirements.json')}`) &&
+        both.out.includes('refused: 2 problem(s)') &&
+        !existsSync(join(dir, 'req-both', 'build')),
+      `exit ${both.status}; ${bothFails.map((l) => l.trim().slice(0, 100)).join(' | ')}`,
+      'readers collect every problem and throw once: the rig directory and the requirements file are both read before rigc builds anything, and one run names what is wrong with each',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -5631,6 +5686,287 @@ function runSourceCases(dir: string, say: (name: string, ok: boolean, detail: st
   );
 }
 
+/**
+ * `check --requirements` end to end (issue #93), through the installed spine-rigc, on the probe rig
+ * fixtures/reqrig.ts writes and on the check fixture's mesh. Every expectation is the hand value its
+ * fixture's header derives; the run is the instrument, not the source.
+ */
+function runRequirementCases(dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  type Run = { status: number; text: string; rig: string; outDir: string; fig: Record<string, unknown> | null };
+  const run = (label: string, body: Record<string, unknown> | null, rigWriter: (d: string) => void = writeReqRig): Run => {
+    const root = join(dir, `req-${label}`);
+    const rig = join(root, 'rig');
+    rigWriter(rig);
+    const args = ['check', '--rig', rig, '--out', join(root, 'out')];
+    if (body !== null) {
+      writeRequirements(join(root, 'req.json'), body);
+      args.push('--requirements', join(root, 'req.json'));
+    }
+    const r = runCli(args);
+    return { status: r.status, text: r.out, rig, outDir: join(root, 'out'), fig: readJsonFile(join(root, 'out', 'check.json')) };
+  };
+  const block = (r: Run): { fps?: number; summary?: Record<string, unknown>; lines?: Record<string, Record<string, unknown>> } => (r.fig?.requirements ?? {}) as { fps?: number; summary?: Record<string, unknown>; lines?: Record<string, Record<string, unknown>> };
+  const line = (r: Run, name: string): Record<string, unknown> => block(r).lines?.[name] ?? {};
+  const printed = (r: Run, name: string): string => r.text.split('\n').find((l) => l.startsWith(`  ${name}: `))?.trim() ?? `no ${name} line`;
+  const close = (v: unknown, want: number, tol: number): boolean => typeof v === 'number' && Math.abs(v - want) <= tol;
+  const finalLine = (r: Run): string => r.text.split('\n').find((l) => l.startsWith('check: '))?.trim() ?? 'no check: line';
+  const grip = { bone: 'grip', point: 'origin' };
+  const vane = { kind: 'follow', constraint: 'vane_ik', constraint_type: 'ik', bone: 'vane', property: 'rotate', fraction: VANE_MIX, tolerance: 0.001, least_drive: 1 };
+
+  const pos = {
+    targets: [{ bone: 'grip', animation: 'reach', keys: [{ t: 0, at: stageOf(REACH_FROM, SHOULDER.y) }, { t: 1, at: stageOf(REACH_TO, SHOULDER.y) }] }],
+    requirements: [
+      { name: 'HAND_ON_GRIP', kind: 'contact', animation: 'reach', bone: 'lower', point: 'tip', target: grip, within_px: 0.01 },
+      { name: 'POINTER_AIMS', kind: 'aim', animation: 'reach', bone: 'pointer', target: { bone: 'far', point: 'origin' }, within_degrees: 0.01 },
+      { name: 'VANE_HALF', animation: 'reach', ...vane },
+      { name: 'SWING_RANGE', kind: 'range', animation: 'reach', bone: 'swing', lo_degrees: -30, hi_degrees: 30 },
+      { name: 'RIDER_HALF', kind: 'follow', animation: 'reach', constraint: 'ride_tf', constraint_type: 'transform', bone: 'rider', property: 'translate', fraction: RIDE_MIX, tolerance: 0.001, least_drive: 1 },
+    ],
+  };
+  const green = run('pos', pos);
+  const keys = green.fig === null ? [] : Object.keys(green.fig);
+  const outputs = ['as-declared/reach/frames.json', 'released/VANE_HALF/frames.json', 'full/VANE_HALF/frames.json', 'released/RIDER_HALF/frames.json', 'full/RIDER_HALF/frames.json'];
+  const missing = outputs.filter((o) => !existsSync(join(green.outDir, 'requirements', o)));
+  const geoAt = join(green.outDir, 'requirements', 'as-declared', 'reach');
+  const geoSet = existsSync(join(geoAt, 'frames.json')) ? readFrameSet(geoAt) : null;
+  const summary = block(green).summary ?? {};
+  say(
+    'CK68_DECLARED_REQUIREMENTS_ON_A_COMPOSED_RIG_PASS_AND_EVERY_OUTPUT_SITS_WHERE_IT_IS_SAID_TO',
+    green.status === 0 &&
+      finalLine(green).startsWith('check: PASS') &&
+      keys.slice(-2).join(',') === 'requirements,PASS' &&
+      block(green).fps === REQ_FPS &&
+      Object.keys(block(green).lines ?? {}).join(',') === pos.requirements.map((r) => r.name).join(',') &&
+      Object.values(block(green).lines ?? {}).every((l) => l.status === 'PASS') &&
+      missing.length === 0 &&
+      geoSet !== null &&
+      geoSet.fps === REQ_FPS &&
+      geoSet.written === 5 &&
+      existsSync(join(geoSet.dir, GEOMETRY_FILE)) &&
+      !existsSync(join(green.outDir, '_requirements')) &&
+      summary.declared === 5 &&
+      JSON.stringify(summary.not_declared) === '["stretch"]' &&
+      green.text.includes('  requirements: 5 declared — 5 measured (5 PASS, 0 FAIL), 0 NOT MEASURABLE; not declared: stretch'),
+    `exit ${green.status}; "${finalLine(green)}"; check.json ends ${keys.slice(-2).join(', ')}; lines ${Object.entries(block(green).lines ?? {}).map(([n, l]) => `${n} ${String(l.status)}`).join(', ')}; missing outputs: ${missing.join(', ') || 'none'}; as-declared reach: ${geoSet === null ? 'absent' : `${geoSet.written} frame(s) at ${geoSet.fps} fps`}; scratch ${existsSync(join(green.outDir, '_requirements')) ? 'LEFT' : 'removed'}`,
+    'the positive control: a rig a consumer composed (no parts.json, no idle) with three ik constraints and a transform, five requirements of four kinds; one render of the named animation at the file\'s fps (1 s at 4 fps is 5 frames), two more per follow, and the summary names the kind not declared — never as a pass',
+  );
+
+  const hand = line(green, 'HAND_ON_GRIP');
+  const aim = line(green, 'POINTER_AIMS');
+  say(
+    'CK69_A_TWO_BONE_IK_THAT_REACHES_ITS_SCENE_TARGET_HOLDS_ITS_CONTACT_AND_AN_AIM_ONLY_BONE_IS_NOT_JUDGED_ON_DISTANCE',
+    hand.status === 'PASS' && close(hand.largest_px, 0, 1e-4) && hand.frames === 5 && aim.status === 'PASS' && close(aim.largest_degrees, 0, 1e-4) && !('largest_px' in aim) && !printed(green, 'POINTER_AIMS').includes(' px'),
+    `${printed(green, 'HAND_ON_GRIP')} | ${printed(green, 'POINTER_AIMS')}`,
+    `the grip placed from world x ${REACH_FROM} to ${REACH_TO} on the shoulder's row is always within the ${UPPER_LEN} + ${LOWER_LEN} chain, so the solved tip is on it (0 by hand); the pointer turns to its target ${FAR_ABOVE} above and is ${FAR_ABOVE - POINTER_LEN} short of it by construction — an aim is an angle, and no distance is a figure of its line`,
+  );
+
+  const vh = line(green, 'VANE_HALF');
+  const rh = line(green, 'RIDER_HALF');
+  say(
+    'CK70_A_FOLLOW_AT_MIX_HALF_MEASURES_HALF_ON_AN_IK_AND_ON_A_TRANSFORM',
+    vh.status === 'PASS' &&
+      close(vh.fraction_measured, VANE_MIX, 1e-6) &&
+      vh.frames_counted === 5 &&
+      close(vh.largest_drive_degrees, LURE_ANGLE, 1e-4) &&
+      rh.status === 'PASS' &&
+      close(rh.fraction_measured, RIDE_MIX, 1e-6) &&
+      close(rh.largest_drive_px, DRIVER_AT.x + DRIVER_SLIDE - RIDER_AT.x, 1e-4) &&
+      rh.largest_drive_at === 'frame 2 (t = 0.5s)',
+    `${printed(green, 'VANE_HALF')} | ${printed(green, 'RIDER_HALF')}`,
+    `the vane's lure is ${LURE_ANGLE} degrees off its rest axis, so released it rests at 0, full it turns ${LURE_ANGLE}, and at mix ${VANE_MIX} it turns half: F = ${VANE_MIX}; the rider is pulled toward the driver's x, ${DRIVER_AT.x - RIDER_AT.x} away at rest and ${DRIVER_AT.x + DRIVER_SLIDE - RIDER_AT.x} at t = 0.5 s where the driver has slid ${DRIVER_SLIDE}, and a transform mix blends linearly, so F = ${RIDE_MIX}`,
+  );
+
+  const neg = {
+    targets: [{ bone: 'grip', animation: 'overreach', keys: [{ t: 0, at: stageOf(OVERREACH_FROM, SHOULDER.y) }, { t: 1, at: stageOf(OVERREACH_TO, SHOULDER.y) }] }],
+    requirements: [
+      { name: 'HAND_ON_GRIP', kind: 'contact', animation: 'overreach', bone: 'lower', point: 'tip', target: grip, within_px: 0.01 },
+      { name: 'VANE_KEYED', animation: 'sweep', ...vane, tolerance: 0.05 },
+      { name: 'SWING_RANGE', kind: 'range', animation: 'sweep', bone: 'swing', lo_degrees: -30, hi_degrees: 30 },
+    ],
+  };
+  const red = run('neg', neg);
+  const short = line(red, 'HAND_ON_GRIP');
+  const shortFail = failLine(red.text, 'CHECK_REQUIREMENT_MET: requirement "HAND_ON_GRIP"');
+  const gap = OVERREACH_TO - (UPPER_LEN + LOWER_LEN);
+  say(
+    'CK71_A_CHAIN_TOO_SHORT_FAILS_ITS_CONTACT_NAMING_THE_DISTANCE_AND_THE_FRAME',
+    red.status === 1 && short.status === 'FAIL' && close(short.largest_px, gap, 1e-4) && short.at === 'frame 4 (t = 1s)' && shortFail !== null && shortFail.includes(`largest distance ${String(short.largest_px)} px at frame 4 (t = 1s)`) && shortFail.includes('<= 0.01 px is required'),
+    `${printed(red, 'HAND_ON_GRIP')} | ${shortFail?.trim() ?? 'no FAIL line'}`,
+    `the grip slides from world x ${OVERREACH_FROM} to ${OVERREACH_TO}; the straightened chain reaches ${UPPER_LEN + LOWER_LEN}, so the last frame is ${gap} px short by hand, and the line names that frame — an IK at mix 1 that cannot reach is the defect #87's contact exists for, which the gate does not score`,
+  );
+
+  const vk = line(red, 'VANE_KEYED');
+  const keyedF = (0 + 0.5 + 1 + 1 + 1) / 5;
+  say(
+    'CK72_THE_SAME_FOLLOW_WITH_ITS_MIX_KEYED_0_TO_1_MEASURES_WHAT_THE_KEYS_MAKE_IT_AND_FAILS_A_DECLARED_HALF',
+    vk.status === 'FAIL' &&
+      close(vk.fraction_measured, keyedF, 1e-6) &&
+      close(vk.largest_residual_degrees, keyedF * LURE_ANGLE, 1e-4) &&
+      vk.largest_residual_at === 'frame 0 (t = 0s)' &&
+      (failLine(red.text, 'CHECK_REQUIREMENT_MET: requirement "VANE_KEYED"')?.includes(`measured fraction ${String(vk.fraction_measured)} over 5 frame(s)`) ?? false),
+    printed(red, 'VANE_KEYED'),
+    `sweep keys vane_ik's mix 0, 1, 1 at t = 0, 0.5, 1: at ${REQ_FPS} fps the frames take 0, 0.5, 1, 1, 1 of the same ${LURE_ANGLE}-degree drive, so F = 3.5 / 5 = ${keyedF} by hand and the frame furthest from that share is frame 0, ${keyedF * LURE_ANGLE} degrees off it — the realised follow, not the number written in mix (#87)`,
+  );
+
+  const rigAfter = listing(red.rig);
+  const fresh = join(dir, 'req-fresh');
+  writeReqRig(fresh);
+  const door = String(vk.released_copy ?? '');
+  const rideDoor = String(rh.released_copy ?? '');
+  say(
+    'CK73_THE_RELEASED_COPY_TAKES_RIGC_S_CONSUMER_DRIVEN_DOOR_ON_THE_COPY_ONLY_AND_THE_RIG_UNDER_TEST_IS_NOT_ALTERED',
+    door.startsWith('A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT refused the released copy') &&
+      door.includes('invariants.consumerDrivenMix') &&
+      rideDoor.startsWith('A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT refused the released copy') &&
+      String(vh.released_copy).startsWith('built as forced') &&
+      rigAfter.join('|') === listing(fresh).join('|') &&
+      !readFileSync(join(red.rig, 'rig.json'), 'utf8').includes('consumerDrivenMix'),
+    `VANE_KEYED: ${door}; RIDER_HALF: ${rideDoor}; VANE_HALF (sweep keys the mix above 0 elsewhere): ${String(vh.released_copy)}; --rig after the run ${rigAfter.join('|') === listing(fresh).join('|') ? 'is byte for byte a fresh fixture' : 'DIFFERS from a fresh fixture'}`,
+    "the released pose is muted throughout when no other animation keys that mix, and spine-rigc's A47 (ik) or A48 (transform) refuses it; its own door, invariants.consumerDrivenMix, is written into the throwaway copy and nowhere else, and where another animation keeps the constraint live rigc refuses nothing and no declaration is written",
+  );
+
+  const sr = line(red, 'SWING_RANGE');
+  const gr = line(green, 'SWING_RANGE');
+  say(
+    'CK74_A_RANGE_HOLDS_AND_ONE_KEY_BREAKS_IT',
+    gr.status === 'PASS' && close(gr.greatest_degrees, SWING_PEAK, 1e-4) && gr.greatest_at === 'frame 2 (t = 0.5s)' && close(gr.least_degrees, 0, 1e-4) && sr.status === 'FAIL' && close(sr.greatest_degrees, SWING_BROKEN, 1e-4) && sr.greatest_at === 'frame 2 (t = 0.5s)',
+    `${printed(green, 'SWING_RANGE')} | ${printed(red, 'SWING_RANGE')}`,
+    `swing is keyed 0, ${SWING_PEAK}, 0 on reach and 0, ${SWING_BROKEN}, 0 on sweep — one key apart — against [-30, 30]: the peak frame is t = 0.5 s, frame 2 at ${REQ_FPS} fps`,
+  );
+
+  const nm = run('nm', {
+    targets: [{ bone: 'lure', animation: 'still', at: stageOf(VANE_AT.x + 10, VANE_AT.y) }],
+    requirements: [
+      { name: 'VANE_STILL', animation: 'still', ...vane },
+      { name: 'STUB_TIP', kind: 'contact', animation: 'still', bone: 'stub', point: 'tip', target: { stage: [32, 9] }, within_px: 1 },
+    ],
+  });
+  const vs = line(nm, 'VANE_STILL');
+  say(
+    'CK75_A_FOLLOW_WHOSE_TARGET_ASKS_NOTHING_AND_A_TIP_ON_A_ZERO_LENGTH_BONE_ARE_NOT_MEASURABLE_AND_THE_RUN_IS_NOT_PASS',
+    nm.status === 1 &&
+      vs.status === 'NOT MEASURABLE' &&
+      close(vs.largest_drive_degrees, 0, 1e-6) &&
+      line(nm, 'STUB_TIP').status === 'NOT MEASURABLE' &&
+      finalLine(nm).startsWith('check: FAIL — 0 bar(s) not met, 2 declared requirement(s) not PASS') &&
+      nm.text.includes('  requirements: 2 declared — 0 measured (0 PASS, 0 FAIL), 2 NOT MEASURABLE; not declared: aim, range, stretch') &&
+      failLine(nm.text, 'CHECK_REQUIREMENT_MEASURABLE: requirement "VANE_STILL"') !== null &&
+      nm.fig?.PASS === false,
+    `exit ${nm.status}; ${printed(nm, 'VANE_STILL').slice(0, 200)}… | ${printed(nm, 'STUB_TIP')} | "${finalLine(nm)}"`,
+    "the lure is placed on the vane's own axis, so the ik asks a rotation of 0 on every frame (by hand) and no frame reaches the declared least drive; the stub has length 0, so it has no tip — neither is a pass, and with every bar this rig has green the two alone keep the run from PASS (#87: a declared requirement that was not measured is not green)",
+  );
+
+  const unknown = run('unknown', { requirements: [{ name: 'HAND', kind: 'contact', animation: 'reach', bone: 'hand', point: 'tip', target: grip, within_px: 1 }] });
+  say(
+    'CK76_AN_UNRESOLVED_NAME_IS_REFUSED_BEFORE_ANYTHING_IS_BUILT',
+    unknown.status === 1 && failLine(unknown.text, 'REQUIREMENTS_RESOLVES: requirement "HAND" (contact)') !== null && !existsSync(join(unknown.outDir, 'build')) && unknown.fig === null && !unknown.text.includes('gate spine-html'),
+    `exit ${unknown.status}; ${failLine(unknown.text, 'REQUIREMENTS_RESOLVES')?.trim() ?? 'no REQUIREMENTS_RESOLVES line'}; build/ ${existsSync(join(unknown.outDir, 'build')) ? 'WRITTEN' : 'not written'}`,
+    'a bone the rig does not declare is refused by name with the ones it does, before rigc builds anything — a requirement on a name that misses would otherwise be measured on nothing',
+  );
+
+  const mesh = (d: string): void => writeCheckRig(d, { stretchMesh: 8 });
+  const stretchRun = run('stretch', { fps: 12, requirements: [{ name: 'BACK_TIGHT', kind: 'stretch', animation: 'idle', slot: 'back', attachment: 'back', within_ratio: 1.05 }, { name: 'BACK_LOOSE', kind: 'stretch', animation: 'idle', slot: 'back', attachment: 'back', within_ratio: 1.2 }] }, mesh);
+  const tight = line(stretchRun, 'BACK_TIGHT');
+  const loose = line(stretchRun, 'BACK_LOOSE');
+  const idleStretch = (stretchRun.fig?.TEXTURE_STRETCH ?? {}) as Record<string, unknown>;
+  say(
+    'CK77_A_STRETCH_BAR_TIGHTER_THAN_THE_IDLE_S_FIGURE_FAILS_AND_A_LOOSER_ONE_PASSES',
+    stretchRun.status === 1 &&
+      tight.status === 'FAIL' &&
+      loose.status === 'PASS' &&
+      close(tight.severity, (80 + 8) / 80, 1e-4) &&
+      tight.at === 'frame 6 (t = 0.5s)' &&
+      close(idleStretch.severity, Number(tight.severity), 0.0005) &&
+      finalLine(stretchRun).startsWith('check: FAIL — 0 bar(s) not met, 1 declared requirement(s) not PASS'),
+    `${printed(stretchRun, 'BACK_TIGHT')} | ${printed(stretchRun, 'BACK_LOOSE')} | TEXTURE_STRETCH severity ${String(idleStretch.severity)}; "${finalLine(stretchRun)}"`,
+    "the check fixture's mesh hem moves down 8 at t = 0.5 s, so its vertical edges are (80 + 8) / 80 = 1.1 their rest length (fixtures/checkrig.ts); the requirement reads TEXTURE_STRETCH's own measure for that one mesh, so its figure is the idle's line's — held to 1.05 it fails, to 1.2 it passes, and the fixed ceiling the idle line holds is untouched",
+  );
+
+  const plain = run('plain', null);
+  const empty = run('empty', { requirements: [] });
+  // Each run has its own directory, which the SKIP reasons name; both sides are read with it written <rig> and <out>.
+  const paths = (r: Run, t: string): string => t.split(r.outDir).join('<out>').split(r.rig).join('<rig>');
+  const stripBlock = (r: Run): string => paths(r, `${JSON.stringify(Object.fromEntries(Object.entries(r.fig ?? {}).filter(([k]) => k !== 'requirements')), null, 1)}\n`);
+  const plainCheck = existsSync(join(plain.outDir, 'check.json')) ? paths(plain, readFileSync(join(plain.outDir, 'check.json'), 'utf8')) : '';
+  const norm = (r: Run): string[] => paths(r, r.text).split('\n');
+  const extra = norm(empty).filter((l) => !norm(plain).includes(l));
+  say(
+    'CK78_WITHOUT_THE_FLAG_NOTHING_MOVES_AND_AN_EMPTY_FILE_MOVES_ONLY_ITS_BLOCK_ITS_SUMMARY_AND_ITS_DIRECTORY',
+    plain.status === 0 &&
+      !('requirements' in (plain.fig ?? {})) &&
+      !existsSync(join(plain.outDir, 'requirements')) &&
+      !plain.text.includes('requirements') &&
+      empty.status === 0 &&
+      'requirements' in (empty.fig ?? {}) &&
+      stripBlock(empty) === plainCheck &&
+      extra.length === 2 &&
+      extra[0] === `  requirements: 0 declared — 0 measured (0 PASS, 0 FAIL), 0 NOT MEASURABLE; not declared: ${REQUIREMENT_KINDS.join(', ')}` &&
+      extra[1].includes(', <out>/requirements/'),
+    `no flag: exit ${plain.status}, check.json keys end ${Object.keys(plain.fig ?? {}).slice(-2).join(', ')}, requirements/ ${existsSync(join(plain.outDir, 'requirements')) ? 'WRITTEN' : 'absent'}; an empty file: check.json less its block ${stripBlock(empty) === plainCheck ? 'is' : 'is NOT'} the plain one byte for byte (each run's own directory read as <rig>, <out>), ${extra.length} line(s) not printed by the plain run: ${extra.map((l) => l.trim().slice(0, 90)).join(' | ')}`,
+    'without --requirements nothing is read, written or printed for it (the chain suite holds both examples\' expected/check.json, CH04); the planted negative is the smallest run that moves anything — an empty file, which declares nothing, adds its block, its summary (every kind not declared, never a pass) and its directory, and nothing else moves',
+  );
+
+  const again = run('pos-again', pos);
+  const sameFiles = ['check.json', 'requirements/as-declared/reach/frames.json'].filter((f) => existsSync(join(green.outDir, f)) && existsSync(join(again.outDir, f)) && paths(green, readFileSync(join(green.outDir, f), 'utf8')) === paths(again, readFileSync(join(again.outDir, f), 'utf8')));
+  const geoA = geoSet === null ? null : join(geoSet.dir, GEOMETRY_FILE);
+  const geoB = geoSet === null ? null : join(again.outDir, 'requirements', 'as-declared', 'reach', relative(geoAt, geoSet.dir), GEOMETRY_FILE);
+  const geoSame = geoA !== null && geoB !== null && existsSync(geoB) && Buffer.compare(readFileSync(geoA), readFileSync(geoB)) === 0;
+  say(
+    'CK79_TWO_RUNS_WITH_REQUIREMENTS_WRITE_THE_SAME_BYTES',
+    again.status === 0 && sameFiles.length === 2 && geoSame,
+    `${sameFiles.length} of 2 files (each run's own directory read as <rig>, <out>) and the as-declared geometry.json ${geoSame ? 'byte-identical' : 'DIFFER'}`,
+    'determinism is a contract: the copies, their renders and the lines are a function of the rig and the file',
+  );
+
+  // A composed rig: character a_'s two-bone ik reaches for character b_'s bone (fixtures/reqrig.ts, writeComposedRig).
+  const across = { requirements: [{ name: 'A_HOLDS_B', kind: 'contact', animation: 'greet', bone: 'a_lower', point: 'tip', target: { bone: 'b_hand', point: 'origin' }, within_px: 0.01 }] };
+  const reachable = run('composed-3', across, (d) => writeComposedRig(d, 3));
+  const beyond = run('composed-10', across, (d) => writeComposedRig(d, 10));
+  const holds = line(reachable, 'A_HOLDS_B');
+  const misses = line(beyond, 'A_HOLDS_B');
+  const reach = UPPER_LEN + LOWER_LEN;
+  const missBy = COMPOSED_HAND_X - COMPOSED_SHOULDER.x + 10 - reach;
+  say(
+    'CK80_ONE_CHARACTER_S_IK_ON_ANOTHER_CHARACTER_S_BONE_HOLDS_ITS_CONTACT_IN_A_COMPOSED_RIG',
+    reachable.status === 0 && holds.status === 'PASS' && close(holds.largest_px, 0, 1e-4) && holds.frames === 5 && reachable.fig?.PASS === true,
+    printed(reachable, 'A_HOLDS_B'),
+    `b_hand starts ${COMPOSED_HAND_X - COMPOSED_SHOULDER.x} from a_'s shoulder and B slides 3 right: at most 18, inside the ${reach} the chain reaches, so the tip is on it on every frame (0 by hand) — nothing new was needed: the target is B's bone by the composed name, and no scene target is placed`,
+  );
+  say(
+    'CK81_THE_SAME_CONTACT_FAILS_WHEN_THE_OTHER_CHARACTER_MOVES_OUT_OF_REACH_NAMING_THE_DISTANCE_AND_THE_FRAME',
+    beyond.status === 1 && misses.status === 'FAIL' && close(misses.largest_px, missBy, 1e-4) && misses.at === 'frame 4 (t = 1s)' && (failLine(beyond.text, 'CHECK_REQUIREMENT_MET: requirement "A_HOLDS_B"')?.includes('at frame 4 (t = 1s)') ?? false),
+    printed(beyond, 'A_HOLDS_B'),
+    `the planted negative: B slides 10 instead of 3, so at t = 1 s b_hand is ${COMPOSED_HAND_X - COMPOSED_SHOULDER.x} + 10 = 25 from the shoulder and the straightened ${reach} chain is ${missBy} short by hand, on the last frame`,
+  );
+
+  // Issue #92 is on main: a config's own constraints, through rig, measured by a scene file.
+  const e2e = join(dir, 'req-e2e');
+  const fix = writeRigFixture(e2e, constraintConfig([{ name: 'reach', type: 'ik', bones: ['hem0', 'hem1'], target: SCENE_TARGET.name }]));
+  const rigged = runCli(['rig', '--config', fix.config, '--parts', fix.parts, '--out', join(e2e, 'rig'), '--idle-keys', 'direct']);
+  const e2eFile = join(e2e, 'req.json');
+  // Short by hand: hem0 is Spine (-6, 26) and the pair reaches 8 + 8 = 16; the stage point (34, 14) is Spine (14, 26), 20 away on hem0's row.
+  writeRequirements(e2eFile, {
+    targets: [{ bone: SCENE_TARGET.name, animation: 'idle', at: [34, 14] }],
+    requirements: [{ name: 'TIP_ON_TARGET', kind: 'contact', animation: 'idle', bone: 'hem1', point: 'tip', target: { bone: SCENE_TARGET.name, point: 'origin' }, within_px: 0.01 }],
+  });
+  const asWritten = join(e2e, 'req-as-written.json');
+  writeRequirements(asWritten, { requirements: [{ name: 'TIP_ON_TARGET', kind: 'contact', animation: 'idle', bone: 'hem1', point: 'tip', target: { bone: SCENE_TARGET.name, point: 'origin' }, within_px: 0.01 }] });
+  const e2eRun = (label: string, f: string): Run => {
+    const r = runCli(['check', '--rig', join(e2e, 'rig'), '--parts', fix.parts, '--out', join(e2e, label), '--requirements', f]);
+    return { status: r.status, text: r.out, rig: join(e2e, 'rig'), outDir: join(e2e, label), fig: readJsonFile(join(e2e, label, 'check.json')) };
+  };
+  const onTarget = e2eRun('on', asWritten);
+  const offTarget = e2eRun('off', e2eFile);
+  const on = line(onTarget, 'TIP_ON_TARGET');
+  const off = line(offTarget, 'TIP_ON_TARGET');
+  say(
+    'CK82_A_CONFIG_S_OWN_IK_THROUGH_RIG_HOLDS_ITS_TARGET_AND_A_SCENE_TARGET_OUT_OF_REACH_FAILS_IT_BY_THE_HAND_DISTANCE',
+    rigged.status === 0 && on.status === 'PASS' && close(on.largest_px, 0, 1e-4) && off.status === 'FAIL' && close(off.largest_px, 4, 1e-4) && off.at === 'frame 0 (t = 0s)',
+    `rig --idle-keys direct exit ${rigged.status}; as written: ${printed(onTarget, 'TIP_ON_TARGET').slice(0, 160)}; tgt placed at stage (34, 14): ${printed(offTarget, 'TIP_ON_TARGET').slice(0, 160)}`,
+    "fixtures/rig.ts's constraint fixture: tgt is 13.416 from hem0, inside the 16 the pair reaches, so the solved tip is on it (0 by hand, the fixture's own derivation); placed by the scene 20 along hem0's row it is 4 beyond the straightened pair on every frame, the first named — the config's constraint, rig's gate and check's measure in one chain",
+  );
+}
+
 function runCheckSuite(): number {
   section('check: build, gates, seam and loop through the installed spine-rigc');
   const { say, bad } = counter();
@@ -6185,6 +6521,7 @@ function runCheckSuite(): number {
     );
 
     runSourceCases(dir, say, ok);
+    runRequirementCases(dir, say);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -6409,6 +6746,499 @@ function runCheckSuite(): number {
     `in order: ${String((good.line.chains as string[] | undefined)?.[0])}; reversed: ${String(back.line.first_violation)}; shrinking: ${String(shrink.line.first_violation)}; mirrored (negative amps) ${String(mirrored.line.status)}; a 2 s sine at phase 0.37, amp 0.25 reads ${JSON.stringify(read)}; a lag across the cycle's end (0.9 -> 0.05) reads ${lagStep(0.9, 0.05).toFixed(3)}`,
     'the model writes phase + lag*i and one amplitude per link (src/motion.ts); the reading recovers them from the keys alone, a mirrored chain (negative amps, half a cycle) is the same lag, and a chain that leads or shrinks toward its tip is named at its first link that does',
   );
+  return bad();
+}
+
+// ---------------------------------------------------------------------------
+// requirements: the scene's declared requirements — read, resolved, copied and measured (issue #93)
+// ---------------------------------------------------------------------------
+
+/** A bone's world transform at (x, y), turned `deg` degrees, unscaled: spine-core's a, b, c, d for that rotation. */
+function worldAt(x: number, y: number, deg: number): BoneWorld {
+  const r = (deg * Math.PI) / 180;
+  return { a: Math.cos(r), b: -Math.sin(r), c: Math.sin(r), d: Math.cos(r), worldX: x, worldY: y };
+}
+
+/** Hand-built poses: each bone's setup and per-frame transforms; frame i at i/4 s. A bone not given is a crash, not a figure. */
+function handPoses(label: string, bones: Record<string, { setup: BoneWorld; frames: BoneWorld[] }>): Poses {
+  const n = Object.values(bones)[0]?.frames.length ?? 0;
+  const idx = [...Array(n).keys()];
+  return {
+    label,
+    indices: idx,
+    times: idx.map((i) => i / 4),
+    bone: (name) => {
+      const b = bones[name];
+      if (b === undefined) throw new Error(`handPoses: no bone "${name}"`);
+      return b;
+    },
+  };
+}
+
+/** One bone at the same transform on every frame. */
+function still(w: BoneWorld, frames: number): { setup: BoneWorld; frames: BoneWorld[] } {
+  return { setup: w, frames: Array.from({ length: frames }, () => w) };
+}
+
+function runRequirementsSuite(): number {
+  section('requirements: the scene file read, resolved against the rig, its copies written and its five kinds measured by hand');
+  const { say, bad } = counter();
+  const dir = temp('requirements');
+  try {
+    const file = (name: string, body: Record<string, unknown>): string => {
+      const p = join(dir, `${name}.json`);
+      writeFileSync(p, `${JSON.stringify(body, null, 2)}\n`);
+      return p;
+    };
+    const spec = 'spine-parts-requirements/1';
+    const grip = { bone: 'grip', point: 'origin' };
+    const every = {
+      spec,
+      fps: REQ_FPS,
+      note: 'every kind once',
+      'x-provenance': { by: 'selftest' },
+      targets: [{ bone: 'grip', animation: 'reach', keys: [{ t: 0, at: stageOf(REACH_FROM, SHOULDER.y) }, { t: 1, at: stageOf(REACH_TO, SHOULDER.y) }] }],
+      requirements: [
+        { name: 'HAND', kind: 'contact', animation: 'reach', bone: 'lower', point: 'tip', target: grip, within_px: 0.01, why_note: 'the hand holds the grip' },
+        { name: 'VANE', kind: 'follow', animation: 'reach', constraint: 'vane_ik', constraint_type: 'ik', bone: 'vane', property: 'rotate', fraction: 0.5, tolerance: 0.001, least_drive: 1 },
+        { name: 'POINT', kind: 'aim', animation: 'reach', bone: 'pointer', target: { stage: [12, 20] }, within_degrees: 1 },
+        { name: 'SWING', kind: 'range', animation: 'reach', bone: 'swing', lo_degrees: -30, hi_degrees: 30 },
+        { name: 'BACK', kind: 'stretch', animation: 'idle', slot: 'back', attachment: 'back', within_ratio: 1.5 },
+      ],
+    };
+    const read = readRequirements(file('every', every));
+    const tgt = read.targets[0];
+    say(
+      'RQ01_A_FILE_DECLARING_EVERY_KIND_AND_A_TIMED_TARGET_READS_AS_WRITTEN',
+      read.fps === REQ_FPS &&
+        read.requirements.map((r) => `${r.name}:${r.kind}`).join(',') === 'HAND:contact,VANE:follow,POINT:aim,SWING:range,BACK:stretch' &&
+        tgt?.bone === 'grip' &&
+        tgt.points.length === 2 &&
+        tgt.points[1].t === 1 &&
+        tgt.points[1].x === stageOf(REACH_TO, SHOULDER.y)[0] &&
+        JSON.stringify(read.requirements[2]) === JSON.stringify({ name: 'POINT', animation: 'reach', kind: 'aim', bone: 'pointer', target: { stage: [12, 20] }, within_degrees: 1 }),
+      `fps ${read.fps}; ${read.requirements.map((r) => `${r.name} ${r.kind}`).join(', ')}; target ${tgt?.bone} with ${tgt?.points.length} point(s); the aim read back as ${JSON.stringify(read.requirements[2])}`,
+      'the positive control every refusal below is measured against: five kinds, one timed scene target, a note, a *_note and an x- record (read by nothing, as in the config) — each field comes back as written',
+    );
+
+    const noFps = refusals(() => readRequirements(file('no-fps', { ...every, fps: undefined })));
+    const zeroFps = refusals(() => readRequirements(file('zero-fps', { ...every, fps: 0 })));
+    say(
+      'RQ02_NO_FPS_IS_REFUSED_BY_NAME_AND_NOTHING_IS_DEFAULTED',
+      codes(noFps) === `REQUIREMENTS_FIELD ${join(dir, 'no-fps.json')} field "fps"` && codes(zeroFps) === `REQUIREMENTS_FIELD ${join(dir, 'zero-fps.json')} field "fps"` && (noFps?.problems[0].detail.includes('there is no default') ?? false),
+      `absent: ${codes(noFps)} — ${noFps?.problems[0].detail ?? ''}; 0: ${codes(zeroFps)}`,
+      'every named animation is sampled at the file\'s fps; a run that picked one would measure frames nobody asked for',
+    );
+
+    const strip = (r: Record<string, unknown>, ...keys: string[]): Record<string, unknown> => Object.fromEntries(Object.entries(r).filter(([k]) => !keys.includes(k)));
+    const bare = refusals(() =>
+      readRequirements(
+        file('no-bars', {
+          ...every,
+          requirements: [
+            strip(every.requirements[0], 'within_px'),
+            strip(every.requirements[1], 'fraction', 'tolerance', 'least_drive'),
+            strip(every.requirements[2], 'within_degrees'),
+            strip(every.requirements[3], 'lo_degrees', 'hi_degrees'),
+            strip(every.requirements[4], 'within_ratio'),
+          ],
+        }),
+      ),
+    );
+    const wantBars = ['"HAND" field "within_px"', '"VANE" field "fraction"', '"VANE" field "tolerance"', '"VANE" field "least_drive"', '"POINT" field "within_degrees"', '"SWING" field "lo_degrees"', '"SWING" field "hi_degrees"', '"BACK" field "within_ratio"'];
+    say(
+      'RQ03_EVERY_MISSING_BAR_IS_REFUSED_BY_NAME_IN_ONE_THROW',
+      bare !== null && bare.problems.length === wantBars.length && wantBars.every((w, i) => bare.problems[i].code === 'REQUIREMENTS_FIELD' && bare.problems[i].object.endsWith(w) && bare.problems[i].detail.includes('there is no default')),
+      `${bare?.problems.length ?? 0} problem(s): ${bare?.problems.map((q) => q.object).join('; ') ?? 'nothing refused'}`,
+      'no bar is supplied by this package (#87): each of the eight bars the five kinds declare, taken out, is named on its own line, and one run names them all',
+    );
+
+    const typo = refusals(() => readRequirements(file('typo', { ...every, requirements: [{ ...strip(every.requirements[0], 'within_px'), within: 0.01 }] })));
+    say(
+      'RQ04_A_KEY_THE_FORMAT_DOES_NOT_READ_IS_REFUSED_AND_AN_ANNOTATION_IS_NOT',
+      codes(typo) === 'REQUIREMENTS_FIELD requirements[0] "HAND" field "within"; REQUIREMENTS_FIELD requirements[0] "HAND" field "within_px"',
+      `"within" for "within_px": ${codes(typo)}; RQ01's note, why_note and x-provenance read clean`,
+      'a misspelt bar read as absent would be refused as missing and the author would not see why; the typo itself is named, beside the bar it failed to be',
+    );
+
+    const twice = refusals(() =>
+      readRequirements(file('twice', { ...every, requirements: [every.requirements[0], { ...every.requirements[3], name: 'HAND' }, { ...every.requirements[3], name: 'KIND', kind: 'reach' }, { ...every.requirements[0], name: 'POINTED', point: 'middle' }] })),
+    );
+    say(
+      'RQ05_A_NAME_USED_TWICE_AN_UNKNOWN_KIND_AND_A_POINT_THAT_IS_NEITHER_END_ARE_EACH_REFUSED',
+      codes(twice) === 'REQUIREMENTS_FIELD requirements[1] field "name"; REQUIREMENTS_FIELD requirements[2] "KIND" field "kind"; REQUIREMENTS_FIELD requirements[3] "POINTED" field "point"',
+      codes(twice),
+      'a line is addressed by its name in check.json and on the console, so two of one name would be one line; a kind or a bone point not in the format would be measured as something else',
+    );
+
+    const cannot = refusals(() =>
+      readRequirements(
+        file('cannot', {
+          ...every,
+          requirements: [{ ...every.requirements[1], least_drive: 0 }, { ...every.requirements[4], within_ratio: 0.9 }, { ...every.requirements[3], lo_degrees: 10, hi_degrees: -10 }, { ...every.requirements[2], within_degrees: 181 }],
+        }),
+      ),
+    );
+    say(
+      'RQ06_A_BAR_THAT_CANNOT_HOLD_IS_REFUSED_LEAST_DRIVE_0_RATIO_BELOW_1_LO_ABOVE_HI_AN_ANGLE_PAST_180',
+      codes(cannot) === 'REQUIREMENTS_FIELD requirements[0] "VANE" field "least_drive"; REQUIREMENTS_FIELD requirements[1] "BACK" field "within_ratio"; REQUIREMENTS_FIELD requirements[2] "SWING" fields "lo_degrees", "hi_degrees"; REQUIREMENTS_FIELD requirements[3] "POINT" field "within_degrees"',
+      codes(cannot),
+      'at a least drive of 0 a frame where the constraint asks nothing counts and the share is 0/0 there; max(ratio, 1/ratio) is never below 1; an empty interval or an angle past 180 is a bar no frame can meet or every frame meets',
+    );
+
+    const missing = refusals(() => readRequirements(join(dir, 'absent.json')));
+    const notJson = file('not-json', {});
+    writeFileSync(notJson, '{ spec: ');
+    const garbled = refusals(() => readRequirements(notJson));
+    const wrongSpec = refusals(() => readRequirements(file('wrong-spec', { ...every, spec: 'spine-parts-requirements/0' })));
+    say(
+      'RQ07_A_MISSING_FILE_A_FILE_THAT_IS_NOT_JSON_AND_A_WRONG_SPEC_ARE_REFUSED',
+      codes(missing) === `REQUIREMENTS_FILE ${join(dir, 'absent.json')}` && codes(garbled) === `REQUIREMENTS_FILE ${notJson}` && codes(wrongSpec) === `REQUIREMENTS_FIELD ${join(dir, 'wrong-spec.json')} field "spec"`,
+      `${codes(missing)}; ${codes(garbled)}; ${codes(wrongSpec)}`,
+      'the file is read before anything is built, so each way it cannot be read is a refusal naming the file',
+    );
+
+    const both = refusals(() => readRequirements(file('both', { ...every, targets: [{ bone: 'grip', animation: 'reach', at: [1, 2], keys: [{ t: 0, at: [1, 2] }] }] })));
+    const backwards = refusals(() => readRequirements(file('backwards', { ...every, targets: [{ bone: 'grip', animation: 'reach', keys: [{ t: 0.5, at: [1, 2] }, { t: 0.5, at: [3, 4] }] }] })));
+    say(
+      'RQ08_A_TARGET_WITH_BOTH_AT_AND_KEYS_OR_WITH_KEYS_NOT_IN_TIME_ORDER_IS_REFUSED',
+      codes(both) === 'REQUIREMENTS_FIELD targets[0]' && codes(backwards) === 'REQUIREMENTS_FIELD targets[0] field "keys[1].t"',
+      `${codes(both)} — ${both?.problems[0].detail ?? ''}; ${codes(backwards)}`,
+      'a fixed point and timed points are two statements of one placement; keys that do not advance would make "linear between them" undefined',
+    );
+
+    // Resolving against the probe rig.
+    const probe = join(dir, 'probe');
+    writeReqRig(probe);
+    const rig = JSON.parse(readFileSync(join(probe, 'rig.json'), 'utf8')) as Record<string, unknown>;
+    const motion = JSON.parse(readFileSync(join(probe, 'motion.json'), 'utf8')) as Record<string, unknown>;
+    const noStretch = { ...every, requirements: every.requirements.slice(0, 4) };
+    const okRead = readRequirements(file('no-stretch', noStretch));
+    const resolved = refusals(() => resolveRequirements(okRead, rig, motion, 'root'));
+    const meshRig = join(dir, 'mesh-rig');
+    writeCheckRig(meshRig, { stretchMesh: 8 });
+    const meshRead = readRequirements(file('mesh', { spec, fps: 12, requirements: [every.requirements[4]] }));
+    const meshResolved = refusals(() => resolveRequirements(meshRead, JSON.parse(readFileSync(join(meshRig, 'rig.json'), 'utf8')) as Record<string, unknown>, JSON.parse(readFileSync(join(meshRig, 'motion.json'), 'utf8')) as Record<string, unknown>, 'root'));
+    say(
+      'RQ09_EVERY_NAME_RESOLVES_AGAINST_THE_RIG_IT_NAMES',
+      resolved === null && meshResolved === null,
+      `the probe rig: ${codes(resolved)}; the stretch on the check fixture's mesh "back": ${codes(meshResolved)}`,
+      'the positive control for RQ10-RQ12: four kinds and a scene target against the probe rig (fixtures/reqrig.ts), the stretch against the mesh fixtures/checkrig.ts writes',
+    );
+
+    const unresolvedFile = readRequirements(
+      file('unresolved', {
+        spec,
+        fps: REQ_FPS,
+        requirements: [
+          { ...every.requirements[0], bone: 'hand' },
+          { ...every.requirements[1], constraint: 'vane_ik', constraint_type: 'transform' },
+          { ...every.requirements[3], animation: 'wave' },
+          { ...every.requirements[4], animation: 'reach', slot: 'cape' },
+          { ...every.requirements[4], name: 'PLATE', animation: 'reach', slot: 'plate', attachment: 'plate' },
+        ],
+      }),
+    );
+    const unresolved = refusals(() => resolveRequirements(unresolvedFile, rig, motion, 'root'));
+    say(
+      'RQ10_AN_UNRESOLVED_BONE_CONSTRAINT_ANIMATION_SLOT_AND_MESH_ARE_REFUSED_TOGETHER_BY_NAME',
+      unresolved !== null &&
+        unresolved.problems.length === 5 &&
+        unresolved.problems.every((q) => q.code === 'REQUIREMENTS_RESOLVES') &&
+        unresolved.problems[0].detail.startsWith('names bone "hand", which rig.json does not declare') &&
+        unresolved.problems[1].detail.startsWith('names transform constraint "vane_ik", which rig.json does not declare; it declares ik "arm_ik", ik "aim_ik", ik "vane_ik", transform "ride_tf"') &&
+        unresolved.problems[2].detail.startsWith('names animation "wave", which motion.json does not declare; it declares "reach", "overreach", "sweep", "still"') &&
+        unresolved.problems[3].detail === 'names slot "cape", which rig.json does not declare' &&
+        unresolved.problems[4].detail === 'names mesh attachment "plate" on slot "plate", which no skin in rig.json declares; its mesh attachments are none',
+      unresolved?.problems.map((q) => `${q.object}: ${q.detail.slice(0, 90)}`).join(' | ') ?? 'nothing refused',
+      'everything resolves by name, and a miss is refused by name before anything is built; a constraint resolves by name AND type, as in spine-rigc, so an ik named as a transform is a miss; a region slot has no mesh to stretch',
+    );
+
+    const undriven = refusals(() =>
+      resolveRequirements(
+        readRequirements(
+          file('undriven', {
+            spec,
+            fps: REQ_FPS,
+            requirements: [
+              { ...every.requirements[1], name: 'IK_MOVE', property: 'translate' },
+              { ...every.requirements[1], name: 'NOT_ITS', bone: 'pointer' },
+              { ...every.requirements[1], name: 'TF_TURN', constraint: 'ride_tf', constraint_type: 'transform', bone: 'rider', property: 'rotate' },
+            ],
+          }),
+        ),
+        rig,
+        motion,
+        'root',
+      ),
+    );
+    say(
+      'RQ11_A_FOLLOW_ON_A_PROPERTY_OR_A_BONE_ITS_CONSTRAINT_DOES_NOT_DRIVE_IS_REFUSED',
+      undriven !== null &&
+        undriven.problems.length === 3 &&
+        undriven.problems.every((q) => q.code === 'REQUIREMENTS_CONSTRAINT_DRIVES') &&
+        undriven.problems[0].detail.endsWith('an ik drives rotate only') &&
+        undriven.problems[1].detail.includes('which ik constraint "vane_ik" does not constrain (its bones: "vane")') &&
+        undriven.problems[2].detail.includes('whose properties drive "x"; a "to" naming rotate is required'),
+      undriven?.problems.map((q) => `${q.object}: ${q.detail}`).join(' | ') ?? 'nothing refused',
+      "#87: a follow naming a property the constraint does not drive is refused — an ik drives rotate; a transform drives a property only when a `to` names it (spine-rigc's A48 reads a mix only for a property the constraint drives); and a bone the constraint does not hold is asked nothing by it",
+    );
+
+    const offRoot = (targets: Array<Record<string, unknown>>, m: Record<string, unknown> = motion): PartsError | null =>
+      refusals(() => resolveRequirements(readRequirements(file(`targets-${targets.length}-${String(targets[0].bone)}`, { ...noStretch, targets })), rig, m, 'root'));
+    const underArm = offRoot([{ bone: 'lower', animation: 'reach', at: [1, 2] }]);
+    const onRoot = offRoot([{ bone: 'root', animation: 'reach', at: [1, 2] }]);
+    const unread = offRoot([{ bone: 'grip', animation: 'still', at: [1, 2] }]);
+    const late = offRoot([{ bone: 'grip', animation: 'reach', keys: [{ t: 0, at: [1, 2] }, { t: 2, at: [3, 4] }] }]);
+    const rootKeyed = JSON.parse(JSON.stringify(motion)) as { animations: Record<string, { tracks: unknown[] }> };
+    rootKeyed.animations.reach.tracks.push({ bone: 'root', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 1, v: [1] }] });
+    const movedRoot = offRoot([{ bone: 'grip', animation: 'reach', at: [1, 2] }], rootKeyed as unknown as Record<string, unknown>);
+    say(
+      'RQ12_A_SCENE_TARGET_OFF_THE_ROOT_ON_THE_ROOT_READ_BY_NOTHING_OUT_OF_TIME_OR_UNDER_A_MOVING_ROOT_IS_REFUSED_SAYING_WHY',
+      codes(underArm) === 'REQUIREMENTS_TARGET_PARENT targets[0] (bone "lower", animation "reach")' &&
+        (underArm?.problems[0].detail.includes('a stage point is not a local offset under a moving parent') ?? false) &&
+        codes(onRoot) === 'REQUIREMENTS_TARGET_PARENT targets[0] (bone "root", animation "reach")' &&
+        codes(unread) === 'REQUIREMENTS_TARGET targets[0] (bone "grip", animation "still")' &&
+        codes(late) === 'REQUIREMENTS_TARGET targets[0] (bone "grip", animation "reach")' &&
+        (late?.problems[0].detail.includes('t = 2s') ?? false) &&
+        codes(movedRoot) === 'REQUIREMENTS_TARGET_PARENT targets[0] (bone "grip", animation "reach")' &&
+        (movedRoot?.problems[0].detail.includes('keys the root "root"') ?? false),
+      [underArm, onRoot, unread, late, movedRoot].map((e) => e?.problems.map((q) => q.detail).join(' / ') ?? 'nothing refused').join(' | '),
+      "#87 rule 4: a scene target is a bone parented to the root, given a stage point; under any other parent, or under a root that is not at rest or that the animation moves, the point is not the bone's position, and a placement no requirement reads moves nothing that is measured",
+    );
+
+    // The copies, as values.
+    const H = REQ_STAGE.height;
+    const plantedMotion = JSON.parse(JSON.stringify(motion)) as { animations: Record<string, { tracks: Array<Record<string, unknown>> }> };
+    plantedMotion.animations.reach.tracks.push({ bone: 'grip', property: 'translatey', keys: [{ t: 0, v: [0] }, { t: 1, v: [5] }] });
+    const rigBefore = JSON.stringify(rig);
+    const motionBefore = JSON.stringify(plantedMotion);
+    const from = stageOf(REACH_FROM, SHOULDER.y);
+    const to = stageOf(REACH_TO, SHOULDER.y);
+    const placed = placeTargets(rig, plantedMotion as unknown as Record<string, unknown>, [{ bone: 'grip', animation: 'reach', points: [{ t: 0, x: from[0], y: from[1] }, { t: 1, x: to[0], y: to[1] }] }, { bone: 'lure', animation: 'still', points: [{ t: null, x: 1, y: 2 }] }], 'reach', REQ_STAGE);
+    const pGrip = (placed.rig.bones as Array<Record<string, unknown>>).find((b) => b.name === 'grip');
+    const pTracks = (placed.motion.animations as Record<string, { tracks: Array<Record<string, unknown>> }>).reach.tracks.filter((t) => t.bone === 'grip');
+    const pLure = (placed.rig.bones as Array<Record<string, unknown>>).find((b) => b.name === 'lure');
+    const fixedOnly = placeTargets(rig, motion, [{ bone: 'lure', animation: 'still', points: [{ t: null, x: 1, y: 2 }] }], 'still', REQ_STAGE);
+    const fLure = (fixedOnly.rig.bones as Array<Record<string, unknown>>).find((b) => b.name === 'lure');
+    say(
+      'RQ13_A_PLACED_TARGET_IS_ITS_FIRST_POINT_AT_SETUP_AND_TRANSLATE_KEYS_FROM_IT_THROUGH_THE_Y_DOOR_ON_A_COPY',
+      pGrip?.x === REACH_FROM &&
+        pGrip.y === SHOULDER.y &&
+        pTracks.length === 1 &&
+        JSON.stringify(pTracks[0]) === JSON.stringify({ bone: 'grip', property: 'translate', keys: [{ t: 0, v: [0, 0] }, { t: 1, v: [REACH_TO - REACH_FROM, 0] }] }) &&
+        pLure?.x === (rig.bones as Array<Record<string, unknown>>).find((b) => b.name === 'lure')?.x &&
+        fLure?.x === 1 + REQ_STAGE.x &&
+        fLure.y === REQ_STAGE.y + cropToSpineY(2, H) &&
+        (fixedOnly.motion.animations as Record<string, { tracks: Array<Record<string, unknown>> }>).still.tracks.every((t) => t.bone !== 'lure') &&
+        JSON.stringify(rig) === rigBefore &&
+        JSON.stringify(plantedMotion) === motionBefore,
+      `grip at setup ${pGrip?.x},${pGrip?.y} (world ${REACH_FROM},${SHOULDER.y} by hand); its tracks on reach ${JSON.stringify(pTracks)}; lure untouched for reach; a fixed point puts lure at ${fLure?.x},${fLure?.y} with no track; inputs ${JSON.stringify(rig) === rigBefore && JSON.stringify(plantedMotion) === motionBefore ? 'unchanged' : 'CHANGED'}`,
+      "stage (x, y) is world (stage.x + x, stage.y + cropToSpineY(y, H)) under a root at rest; the first point is the setup so 'the first held before' is the setup pose, the rest are translate keys relative to it, and the planted translatey track the scene overrides is dropped — the rig under test is a value never written to",
+    );
+
+    const keyed = JSON.parse(JSON.stringify(motion)) as { animations: Record<string, { ik?: Array<{ constraint: string; keys: Array<Record<string, unknown>> }> }> };
+    for (const k of keyed.animations.sweep.ik?.[0].keys ?? []) {
+      k.softness = 2;
+      k.curve = [0.1, 0.2, 0.3, 0.8, 0.1, 5, 0.3, 7];
+    }
+    keyed.animations.reach.ik = [{ constraint: 'vane_ik', keys: [{ t: 0, mix: 0.25 }, { t: 1, mix: 0.25 }] }];
+    const keyedBefore = JSON.stringify(keyed);
+    const vaneFollow = okRead.requirements[1] as Extract<(typeof okRead.requirements)[number], { kind: 'follow' }>;
+    const sweepFollow = { ...vaneFollow, animation: 'sweep' };
+    const rel = forceMix(rig, keyed as unknown as Record<string, unknown>, sweepFollow, 0);
+    const relVane = (rel.rig.constraints as Array<Record<string, unknown>>).find((c) => c.name === 'vane_ik');
+    const relKeys = (rel.motion.animations as typeof keyed.animations).sweep.ik?.[0].keys ?? [];
+    const relReach = (rel.motion.animations as typeof keyed.animations).reach.ik?.[0].keys ?? [];
+    const rideFollow = { ...vaneFollow, name: 'RIDE', constraint: 'ride_tf', constraint_type: 'transform' as const, bone: 'rider', property: 'translate' as const };
+    const declaredRig = { ...rig, invariants: { consumerDrivenMix: [{ constraint: 'ride_tf', type: 'transform', why: 'a dial' }, { constraint: 'vane_ik', type: 'ik', why: 'a dial' }] } };
+    const fullRide = forceMix(declaredRig, motion, rideFollow, 1);
+    const ride = (fullRide.rig.constraints as Array<Record<string, unknown>>).find((c) => c.name === 'ride_tf');
+    say(
+      'RQ14_FORCING_A_MIX_SETS_IT_IN_THE_RIG_AND_IN_EVERY_KEY_OF_THAT_ANIMATION_AND_FLATTENS_ITS_CURVE_CHANNEL_ONLY',
+      relVane?.mix === 0 &&
+        relKeys.length === 3 &&
+        relKeys.every((k) => k.mix === 0 && k.softness === 2 && JSON.stringify(k.curve) === JSON.stringify([0.1, 0, 0.3, 0, 0.1, 5, 0.3, 7])) &&
+        JSON.stringify(relReach) === JSON.stringify([{ t: 0, mix: 0.25 }, { t: 1, mix: 0.25 }]) &&
+        JSON.stringify(keyed) === keyedBefore &&
+        ride?.mixX === 1 &&
+        ride.mixY === 1 &&
+        JSON.stringify((fullRide.rig.invariants as Record<string, unknown>).consumerDrivenMix) === JSON.stringify([{ constraint: 'vane_ik', type: 'ik', why: 'a dial' }]),
+      `released vane_ik: rig mix ${String(relVane?.mix)}, sweep keys ${JSON.stringify(relKeys)}; reach keys ${JSON.stringify(relReach)}; full ride_tf mixX ${String(ride?.mixX)} mixY ${String(ride?.mixY)}, consumerDrivenMix left ${JSON.stringify((fullRide.rig.invariants as Record<string, unknown>).consumerDrivenMix)}`,
+      "#87's released and full poses differ from the rig in one mix: an ik's mix (curve channel 0), a transform's mixX and mixY for translate (channels 1, 2) — every key of that animation holds the forced value, its curve's two value numbers with it, while softness, the softness channel (5, 7) and the other animation's keys stay; at 1 the constraint rests live, so its consumer-driven declaration (and only its own) is dropped, as spine-rigc refuses one that exempts nothing",
+    );
+
+    const a47 = (name: string): string => `FAIL  A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT: ik constraint "${name}" has mix 0 at setup and none of the 4 animation keys its mix above 0`;
+    const a48 = 'FAIL  A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT: transform constraint "ride_tf" drives x and has mixX 0 at setup';
+    const doorRig = declareConsumerDriven(rig, sweepFollow);
+    say(
+      'RQ15_THE_RELEASED_COPY_TAKES_RIGC_S_DOOR_ONLY_ON_RIGC_S_OWN_MUTED_REFUSAL_OF_THAT_CONSTRAINT',
+      mutedOnly([a47('vane_ik')], sweepFollow) &&
+        mutedOnly([a48], rideFollow) &&
+        !mutedOnly([a47('vane_ik'), 'FAIL  A19_OVERLAY_PNGS_HAVE_ALPHA: slot "plate"'], sweepFollow) &&
+        !mutedOnly([a47('arm_ik')], sweepFollow) &&
+        !mutedOnly([a47('vane_ik')], rideFollow) &&
+        !mutedOnly([], sweepFollow) &&
+        JSON.stringify((doorRig.invariants as Record<string, unknown>).consumerDrivenMix) === JSON.stringify([{ constraint: 'vane_ik', type: 'ik', why: `spine-parts check --requirements: the released pose of follow requirement "VANE" forces this mix to 0 on a throwaway copy; the rig under test is not altered` }]) &&
+        JSON.stringify(rig) === rigBefore,
+      `A47 alone on vane_ik: ${mutedOnly([a47('vane_ik')], sweepFollow)}; A48 alone on ride_tf: ${mutedOnly([a48], rideFollow)}; with an A19 beside it: ${mutedOnly([a47('vane_ik'), 'FAIL  A19_OVERLAY_PNGS_HAVE_ALPHA: slot "plate"'], sweepFollow)}; on another constraint: ${mutedOnly([a47('arm_ik')], sweepFollow)}; the copy declares ${JSON.stringify((doorRig.invariants as Record<string, unknown>).consumerDrivenMix)}`,
+      "the released pose fails spine-rigc's A47/A48 by construction; its door is invariants.consumerDrivenMix, taken on the throwaway copy only and only when rigc's gate refused that copy for that constraint and for nothing else — any other red line is rigc's verdict on the copy and is reported as such",
+    );
+
+    // Measures, on hand-built poses.
+    const facts = { lengths: new Map([['b', 3], ['t', 0], ['z', 0]]), parents: new Map<string, string | null>([['b', null], ['t', null], ['z', null]]), stage: REQ_STAGE };
+    const contactPoses = handPoses('hand', { b: { setup: worldAt(3, 4, 0), frames: [worldAt(3, 4, 0), worldAt(0, 0, 0), worldAt(3, 0, 0)] }, t: still(worldAt(0, 0, 0), 3), z: still(worldAt(0, 0, 0), 3) });
+    const at34 = stageOf(3, 4);
+    const contact = (within: number, extra: Record<string, unknown> = {}): RequirementLine =>
+      contactLine({ name: 'C', kind: 'contact', animation: 'a', bone: 'b', point: 'origin', target: { stage: at34 }, within_px: within, ...extra } as Parameters<typeof contactLine>[0], contactPoses, facts);
+    const cPass = contact(5);
+    const cFail = contact(4.999);
+    const cTip = contact(1, { bone: 'z', point: 'tip' });
+    const cTargetTip = contact(1, { target: { bone: 't', point: 'tip' } });
+    say(
+      'RQ16_CONTACT_IS_THE_LARGEST_DISTANCE_AND_ITS_FRAME_A_3_4_5_TRIANGLE_BY_HAND_AND_A_TIP_ON_A_ZERO_LENGTH_BONE_IS_NOT_MEASURABLE',
+      cPass.status === 'PASS' && cPass.largest_px === 5 && cPass.at === 'frame 1 (t = 0.25s)' && cFail.status === 'FAIL' && cTip.status === 'NOT MEASURABLE' && cTargetTip.status === 'NOT MEASURABLE' && String(cTargetTip.reason).includes('bone "t", whose length is 0'),
+      `within 5: ${cPass.status} ${String(cPass.largest_px)} at ${String(cPass.at)}; within 4.999: ${cFail.status}; a tip on "z" (length 0): ${cTip.status} — ${String(cTip.reason)}; against the tip of "t": ${cTargetTip.status}`,
+      'the origin at (3,4), (0,0), (3,0) against the stage point that is world (3,4): distances 0, 5, 4, so 5 at frame 1; a bone of length 0 has no tip on either side of the contact (#87: not measurable, never a pass)',
+    );
+
+    const aimPoses = handPoses('hand', { b: still(worldAt(0, 0, 0), 3), t: { setup: worldAt(1, 1, 0), frames: [worldAt(1, 1, 0), worldAt(0, 0, 0), worldAt(2, 0, 0)] }, z: still(worldAt(0, 0, 0), 3) });
+    const aim = (within: number, extra: Record<string, unknown> = {}, p: Poses = aimPoses): RequirementLine =>
+      aimLine({ name: 'A', kind: 'aim', animation: 'a', bone: 'b', target: { bone: 't', point: 'origin' }, within_degrees: within, ...extra } as Parameters<typeof aimLine>[0], p, facts);
+    const aPass = aim(45.000001);
+    const aFail = aim(44.9);
+    const onOrigin = aim(1, {}, handPoses('hand', { b: still(worldAt(0, 0, 0), 2), t: still(worldAt(0, 0, 0), 2) }));
+    const zeroAxis = aim(1, { bone: 'z' });
+    say(
+      'RQ17_AIM_IS_THE_ANGLE_TO_THE_LINE_A_FRAME_WITH_NO_LINE_IS_NOT_MEASURED_AND_NO_LINE_AT_ALL_IS_NOT_MEASURABLE',
+      aPass.status === 'PASS' &&
+        Math.abs(Number(aPass.largest_degrees) - 45) < 1e-6 &&
+        aPass.at === 'frame 0 (t = 0s)' &&
+        aPass.frames === 2 &&
+        JSON.stringify(aPass.frames_not_measurable) === '[1]' &&
+        aFail.status === 'FAIL' &&
+        !('largest_px' in aPass) &&
+        onOrigin.status === 'NOT MEASURABLE' &&
+        zeroAxis.status === 'NOT MEASURABLE',
+      `${aPass.status} ${String(aPass.largest_degrees)} at ${String(aPass.at)} over ${String(aPass.frames)} frame(s), not measurable ${JSON.stringify(aPass.frames_not_measurable)}; at 44.9: ${aFail.status}; target on the origin throughout: ${onOrigin.status} — ${String(onOrigin.reason)}; on a bone of length 0: ${zeroAxis.status}`,
+      'the axis (1,0) against targets (1,1), (0,0), (2,0): 45, no line, 0 degrees; no distance is a figure of an aim (#87: the tip distance is not judged)',
+    );
+
+    const rangePoses = handPoses('hand', {
+      p: { setup: worldAt(0, 0, 30), frames: [worldAt(0, 0, 30), worldAt(0, 0, 30), worldAt(0, 0, 170)] },
+      c: { setup: worldAt(0, 0, 40), frames: [worldAt(0, 0, 50), worldAt(0, 0, 30), worldAt(0, 0, -170)] },
+    });
+    const rFacts = { lengths: new Map<string, number>(), parents: new Map<string, string | null>([['p', null], ['c', 'p']]), stage: REQ_STAGE };
+    const range = (bone: string, lo: number, hi: number): RequirementLine => rangeLine({ name: 'R', kind: 'range', animation: 'a', bone, lo_degrees: lo, hi_degrees: hi }, rangePoses, rFacts);
+    // The bars sit 1e-6 outside the hand values: the transforms are cos/sin of the angles, so a figure is its hand value to the last bits only.
+    const rIn = range('c', -10.000001, 10.000001);
+    const rOut = range('c', -9, 10.000001);
+    const rRoot = range('p', -0.000001, 140.000001);
+    const near = (v: unknown, w: number): boolean => Math.abs(Number(v) - w) < 1e-9;
+    say(
+      'RQ18_RANGE_IS_THE_ROTATION_FROM_THE_PARENT_LESS_SETUP_SIGNED_SHORTEST_THE_ROOT_S_PARENT_THE_WORLD',
+      rIn.status === 'PASS' && near(rIn.least_degrees, -10) && rIn.least_at === 'frame 1 (t = 0.25s)' && near(rIn.greatest_degrees, 10) && rIn.greatest_at === 'frame 0 (t = 0s)' && rOut.status === 'FAIL' && rRoot.status === 'PASS' && near(rRoot.greatest_degrees, 140),
+      `child: ${rIn.status}, least ${String(rIn.least_degrees)} at ${String(rIn.least_at)}, greatest ${String(rIn.greatest_degrees)} at ${String(rIn.greatest_at)}; at [-9, 10] ${rOut.status}; the parent against the world: greatest ${String(rRoot.greatest_degrees)}`,
+      'setup 40 - 30 = 10; frames 50 - 30 = 20, 30 - 30 = 0, and -170 - 170 = 20 by the shortest angle (not -340): less 10, that is 10, -10, 10; the root reads its world rotation, 30, 30, 170 less 30',
+    );
+
+    const tr = (x: number): BoneWorld => worldAt(x, 0, 0);
+    const declaredT = handPoses('as declared', { k: { setup: tr(0), frames: [tr(1), tr(2), tr(0.5)] } });
+    const releasedT = handPoses('released', { k: still(tr(0), 3) });
+    const fullT = handPoses('full', { k: { setup: tr(0), frames: [tr(2), tr(4), tr(0.5)] } });
+    const follow = (property: 'rotate' | 'translate', m: number, f = 0.5): Parameters<typeof followLine>[0] => ({ name: 'F', kind: 'follow', animation: 'a', constraint: 'c', constraint_type: 'transform', bone: 'k', property, fraction: f, tolerance: 0.001, least_drive: m });
+    const fT = followLine(follow('translate', 1), declaredT, releasedT, fullT);
+    const fNone = followLine(follow('translate', 5), declaredT, releasedT, fullT);
+    say(
+      'RQ19_FOLLOW_IS_THE_LEAST_SQUARES_SHARE_OVER_THE_FRAMES_THAT_REACH_THE_LEAST_DRIVE_AND_NONE_IS_NOT_MEASURABLE',
+      fT.status === 'PASS' &&
+        fT.fraction_measured === 0.5 &&
+        fT.frames_counted === 2 &&
+        fT.largest_drive_px === 4 &&
+        fT.largest_drive_at === 'frame 1 (t = 0.25s)' &&
+        fT.largest_residual_px === 0 &&
+        fNone.status === 'NOT MEASURABLE' &&
+        fNone.largest_drive_px === 4 &&
+        String(fNone.reason).includes('least drive 5 px'),
+      `m 1: ${fT.status} F ${String(fT.fraction_measured)} over ${String(fT.frames_counted)} frame(s), largest drive ${String(fT.largest_drive_px)} at ${String(fT.largest_drive_at)}, residual ${String(fT.largest_residual_px)}; m 5: ${fNone.status} — ${String(fNone.reason)}`,
+      '#87 to the letter: drives 2, 4, 0.5 (released at 0, full at 2, 4, 0.5); taken 1, 2, 0.5; with m = 1 the third frame does not count, F = (1x2 + 2x4) / (4 + 16) = 0.5 — had it counted, its full follow would pull F to 10.25/20.25; with m = 5 no frame counts and the line prints the largest drive asked, 4',
+    );
+
+    const rot = (deg: number): BoneWorld => worldAt(0, 0, deg);
+    const wrapF = followLine(follow('rotate', 1), handPoses('d', { k: { setup: rot(0), frames: [rot(180)] } }), handPoses('r', { k: { setup: rot(0), frames: [rot(170)] } }), handPoses('f', { k: { setup: rot(0), frames: [rot(-170)] } }));
+    const wideF = followLine(follow('rotate', 1), handPoses('d', { k: { setup: rot(0), frames: [rot(50)] } }), handPoses('r', { k: { setup: rot(0), frames: [rot(0)] } }), handPoses('f', { k: { setup: rot(0), frames: [rot(100)] } }));
+    say(
+      'RQ20_A_ROTATE_FOLLOW_TAKES_SIGNED_SHORTEST_DIFFERENCES_AND_NOTES_A_DRIVE_OVER_90',
+      wrapF.status === 'PASS' && near(wrapF.fraction_measured, 0.5) && near(wrapF.largest_drive_degrees, 20) && !('note' in wrapF) && wideF.status === 'PASS' && near(wideF.fraction_measured, 0.5) && String(wideF.note).includes('exceeds 90 degrees'),
+      `170 -> -170 with the bone at 180: F ${String(wrapF.fraction_measured)}, drive ${String(wrapF.largest_drive_degrees)}, note ${String(wrapF.note ?? 'none')}; 0 -> 100 at 50: F ${String(wideF.fraction_measured)}, note ${String(wideF.note ?? 'none')}`,
+      'a drive across the ±180 seam is 20 degrees, not -340, and the bone halfway along it at 180 takes 10 of them; over 90 the line says a drive beyond 180 would not be told from its complement (#87)',
+    );
+
+    const square = { slot: 's', attachment: 'm', vertices: [0, 0, 2, 0, 2, 2, 0, 2], triangles: [0, 1, 2, 2, 3, 0] };
+    const geomFrames = [
+      { index: 0, attachments: [{ slot: 's', attachment: 'm', vertices: [0, 0, 2, 0, 2, 2, 0, 2] }] },
+      { index: 1, attachments: [{ slot: 's', attachment: 'm', vertices: [0, 0, 3, 0, 3, 2, 0, 2] }] },
+    ];
+    const sPoses = handPoses('hand', { b: still(worldAt(0, 0, 0), 2) });
+    const stretch = (within: number, rest = [square], frames = geomFrames): RequirementLine => stretchRequirementLine({ name: 'S', kind: 'stretch', animation: 'a', slot: 's', attachment: 'm', within_ratio: within }, rest, frames, sPoses);
+    const sPass = stretch(1.5);
+    const sFail = stretch(1.49);
+    const sDegenerate = stretch(2, [{ ...square, vertices: [0, 0, 0, 0, 2, 2, 0, 2] }]);
+    const sHidden = stretch(2, [square], [{ index: 0, attachments: [] }]);
+    const sAbsent = stretch(2, []);
+    const sSqueeze = stretch(1.9, [square], [geomFrames[0], { index: 1, attachments: [{ slot: 's', attachment: 'm', vertices: [0, 0, 1, 0, 1, 2, 0, 2] }] }]);
+    say(
+      'RQ21_STRETCH_IS_TEXTURE_STRETCH_S_OWN_PER_MESH_FIGURE_AND_AN_EDGE_OR_A_MESH_NOT_THERE_IS_NOT_MEASURABLE',
+      sPass.status === 'PASS' &&
+        sPass.severity === 1.5 &&
+        sPass.at === 'frame 1 (t = 0.25s)' &&
+        sFail.status === 'FAIL' &&
+        sSqueeze.status === 'FAIL' &&
+        sSqueeze.severity === 2 &&
+        sSqueeze.min_ratio === 0.5 &&
+        [sDegenerate, sHidden, sAbsent].every((l) => l.status === 'NOT MEASURABLE'),
+      `${sPass.status} severity ${String(sPass.severity)} at ${String(sPass.at)}, ${String(sPass.worst)}; at 1.49 ${sFail.status}; squeezed to 1x2: severity ${String(sSqueeze.severity)} (min ratio ${String(sSqueeze.min_ratio)}) against 1.9, ${sSqueeze.status}; a rest edge of length 0: ${sDegenerate.status}; no frame shows it: ${sHidden.status}; no such mesh in the rest pose: ${sAbsent.status}`,
+      "a 2x2 square stretched to 3x2: edge 0-1 is 1.5 times its rest length; squeezed to 1x2 it is 0.5, which is a severity of 2 (compression distorts as stretch does) — the figure TEXTURE_STRETCH's stretchFigures and stretchSeverity give (imported, not rewritten — #87); a ratio with no rest length, or a mesh no frame shows, is undefined",
+    );
+
+    const asFile = (rs: RequirementsFile['requirements']): RequirementsFile => ({ path: 'x', fps: REQ_FPS, targets: [], requirements: rs });
+    const two = asFile([okRead.requirements[0], okRead.requirements[3]]);
+    const lines = new Map<string, RequirementLine>([['HAND', cFail], ['SWING', cTip]]);
+    const pFail = requirementProblem(okRead.requirements[0], cFail);
+    const pNm = requirementProblem(okRead.requirements[3], cTip);
+    const pPass = requirementProblem(okRead.requirements[0], cPass);
+    const sum = requirementsSummary(two, lines);
+    say(
+      'RQ22_A_FAIL_AND_A_NOT_MEASURABLE_ARE_PROBLEMS_BY_NAME_A_PASS_IS_NONE_AND_THE_SUMMARY_KEEPS_THE_FOUR_OUTCOMES_APART',
+      pFail?.code === 'CHECK_REQUIREMENT_MET' &&
+        pFail.object === 'requirement "HAND" (contact, animation "reach")' &&
+        pFail.detail.endsWith('<= 0.01 px is required') &&
+        pNm?.code === 'CHECK_REQUIREMENT_MEASURABLE' &&
+        pNm.detail.endsWith('a declared requirement that was not measured is not green') &&
+        pPass === null &&
+        summaryText(sum) === `requirements: 2 declared — 1 measured (0 PASS, 1 FAIL), 1 NOT MEASURABLE; not declared: ${REQUIREMENT_KINDS.filter((k) => k !== 'contact' && k !== 'range').join(', ')}`,
+      `${pFail?.code}: ${pFail?.detail}; ${pNm?.code}; PASS -> ${String(pPass)}; "${summaryText(sum)}"`,
+      'not declared is a fact the summary states, not a pass and not a skip; refused never reaches a line; not measurable and measured are counted apart, and only a PASS is not a problem',
+    );
+
+    // A composed rig (issue #93, #87): one character's bone as another's target needs nothing new — it resolves by the name the composed rig gives it.
+    const composed = join(dir, 'composed');
+    writeComposedRig(composed, 3);
+    const cRig = JSON.parse(readFileSync(join(composed, 'rig.json'), 'utf8')) as Record<string, unknown>;
+    const cMotion = JSON.parse(readFileSync(join(composed, 'motion.json'), 'utf8')) as Record<string, unknown>;
+    const across = (bone: string): PartsError | null =>
+      refusals(() => resolveRequirements(readRequirements(file(`across-${bone}`, { spec, fps: REQ_FPS, requirements: [{ name: 'A_HOLDS_B', kind: 'contact', animation: 'greet', bone: 'a_lower', point: 'tip', target: { bone, point: 'origin' }, within_px: 0.01 }] })), cRig, cMotion, 'root'));
+    const acrossOk = across('b_hand');
+    const acrossBare = across('hand');
+    say(
+      'RQ23_A_REQUIREMENT_ON_ANOTHER_CHARACTER_S_BONE_RESOLVES_BY_ITS_COMPOSED_NAME_AND_ITS_BARE_NAME_IS_REFUSED',
+      acrossOk === null && codes(acrossBare) === 'REQUIREMENTS_RESOLVES requirement "A_HOLDS_B" (contact) target' && (acrossBare?.problems[0].detail.includes('"b_hand"') ?? false),
+      `"b_hand": ${codes(acrossOk)}; "hand": ${codes(acrossBare)} — ${acrossBare?.problems[0].detail.slice(0, 160) ?? ''}`,
+      "#87: in a rig composed of several characters a target can simply be another character's bone, named as the composed rig names it — so it resolves as any bone does, and the unprefixed name a single character would use is a miss named with the composed names",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
   return bad();
 }
 
@@ -7397,6 +8227,48 @@ function runBuildSuite(): number {
       typo.status === 1 && typoLine !== null && typoLine.includes('constraint "level" (transform) has a key this compiler does not read: "mixRotatee"') && typo.out.includes('build: stopped at rig; no later stage ran') && !existsSync(join(typoOut, 'rig', 'rig.json')),
       `exit ${typo.status}; ${typoLine?.slice(0, 260) ?? 'no [rig] RIG_RIGC_GREEN line'}…; rig.json written: ${existsSync(join(typoOut, 'rig', 'rig.json'))}`,
       'the loader keeps no second schema: a field rigc does not read is rigc\'s refusal, printed as rigc wrote it, and nothing after the rig stage runs',
+    );
+
+    // Issue #93: --requirements through build.
+    const reqFile = (name: string, body: Record<string, unknown>): string => {
+      const pth = join(dir, `${name}.json`);
+      writeFileSync(pth, `${JSON.stringify({ spec: 'spine-parts-requirements/1', fps: 4, ...body }, null, 2)}\n`);
+      return pth;
+    };
+    const badOut = join(dir, 'req-bad');
+    const badReq = runCli([...buildArgs(dir, badOut), '--requirements', reqFile('req-bad', { spec: 'spine-parts-requirements/0', requirements: [] })]);
+    say(
+      'BU17_A_REQUIREMENTS_FILE_CHECK_WOULD_REFUSE_STOPS_BUILD_BEFORE_ASSEMBLE_WRITES_ANYTHING',
+      badReq.status === 1 && badReq.out.includes('[assemble]   FAIL  REQUIREMENTS_FIELD: ') && badReq.out.includes('build: stopped at assemble; no later stage ran') && entries(badOut).length === 0,
+      `exit ${badReq.status}; ${(badReq.out.split('\n').find((l) => l.includes('REQUIREMENTS_FIELD')) ?? 'no REQUIREMENTS_FIELD line').trim().slice(0, 140)}; --out holds [${entries(badOut).join(', ')}]`,
+      "the file's own shape needs no rig, so build reads it with the config, before assemble: a malformed file costs no build, as a config rig would refuse costs none",
+    );
+    const reqOut = join(dir, 'req-out');
+    const swingReq = runCli([...buildArgs(dir, reqOut), '--requirements', reqFile('req-skirt', { requirements: [{ name: 'SKIRT_RANGE', kind: 'range', animation: 'idle', bone: 'skirt', lo_degrees: -3, hi_degrees: 3 }] })]);
+    const skirtFig = readJsonFile(join(reqOut, 'check', 'check.json'));
+    const skirtLine = ((skirtFig?.requirements as { lines?: Record<string, Record<string, unknown>> } | undefined)?.lines?.SKIRT_RANGE ?? {}) as Record<string, unknown>;
+    const lo = Number(skirtLine.least_degrees);
+    const hi = Number(skirtLine.greatest_degrees);
+    say(
+      'BU18_BUILD_FORWARDS_REQUIREMENTS_TO_CHECK_WHICH_MEASURES_AND_PRINTS_THEM_UNDER_ITS_PREFIX',
+      swingReq.status === 0 &&
+        swingReq.out.includes('[check]   SKIRT_RANGE: PASS — ') &&
+        swingReq.out.includes('[check]   requirements: 1 declared — 1 measured (1 PASS, 0 FAIL), 0 NOT MEASURABLE; not declared: contact, follow, aim, stretch') &&
+        existsSync(join(reqOut, 'check', 'requirements', 'as-declared', 'idle', 'frames.json')) &&
+        skirtLine.status === 'PASS' &&
+        hi > 0 &&
+        lo < 0 &&
+        Math.max(Math.abs(lo), Math.abs(hi)) <= 2 + 1e-4,
+      `exit ${swingReq.status}; ${(swingReq.out.split('\n').find((l) => l.includes('SKIRT_RANGE:')) ?? 'no SKIRT_RANGE line').trim().slice(0, 200)}`,
+      "build runs the same check stage with the same flag: the fixture's idle swings the skirt as a sine of amplitude 2 degrees, so its rotation from setup stays within ±2 by hand and goes both ways",
+    );
+    const unknownOut = join(dir, 'req-unknown');
+    const unknownReq = runCli([...buildArgs(dir, unknownOut), '--requirements', reqFile('req-unknown', { requirements: [{ name: 'TAIL_RANGE', kind: 'range', animation: 'idle', bone: 'tail', lo_degrees: -3, hi_degrees: 3 }] })]);
+    say(
+      'BU19_A_NAME_THE_BUILT_RIG_DOES_NOT_HAVE_STOPS_BUILD_AT_CHECK_BEFORE_THE_CHECK_BUILDS',
+      unknownReq.status === 1 && unknownReq.out.includes('[check]   FAIL  REQUIREMENTS_RESOLVES: requirement "TAIL_RANGE" (range)') && unknownReq.out.includes('build: stopped at check; no later stage ran') && !existsSync(join(unknownOut, 'check', 'build')) && existsSync(join(unknownOut, 'rig', 'rig.json')),
+      `exit ${unknownReq.status}; ${(unknownReq.out.split('\n').find((l) => l.includes('REQUIREMENTS_RESOLVES')) ?? 'no REQUIREMENTS_RESOLVES line').trim().slice(0, 160)}; check/build ${existsSync(join(unknownOut, 'check', 'build')) ? 'WRITTEN' : 'not written'}`,
+      'names resolve against the rig the rig stage wrote, so a bone it does not hold is refused in the check, by name, before rigc builds there',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -11178,6 +12050,7 @@ function main(): void {
   tally.of('structure', runStructureSuite);
   tally.of('diagnostics', runDiagnosticsSuite);
   tally.of('check', runCheckSuite);
+  tally.of('requirements', runRequirementsSuite);
   tally.of('loop', runLoopSuite);
   tally.of('assemble', runAssembleSuite);
   tally.of('plausibility', runPlausibilitySuite);
@@ -11221,7 +12094,7 @@ function main(): void {
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
