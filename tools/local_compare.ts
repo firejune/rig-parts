@@ -137,6 +137,15 @@ export function locator(vertices: ReadonlyArray<readonly [number, number]>, tria
   };
 }
 
+/** Where a class's error is largest: the pixel, its triangle, that triangle's three vertex indices, and its smallest angle (degrees). */
+export interface WorstPixel {
+  pixel: Point;
+  triangle: number;
+  corners: [number, number, number];
+  minAngle: number;
+  error: number;
+}
+
 export interface Errors {
   localMax: number;
   localRms: number;
@@ -145,56 +154,86 @@ export interface Errors {
   outsideMax: number;
   /** Art pixels in each class: inside the region, in the band, outside both. */
   pixels: { local: number; transition: number; outside: number };
-  /** Where the local error is largest: the pixel, its triangle, and that triangle's smallest angle (degrees). */
-  worstLocal: { pixel: Point; triangle: number; minAngle: number } | null;
+  /** Where the local error is largest (the first such pixel in row-major order). */
+  worstLocal: WorstPixel | null;
+  /** Where the transition error is largest (the first such pixel in row-major order). */
+  worstTransition: WorstPixel | null;
   /** Pixels no triangle holds (must be 0: the mesh covers the art). */
   uncovered: number;
 }
 
-/** §3's three errors, for one mesh under one pose, over every art pixel centre of `mask`. */
-export function errors(mesh: ComparedMesh, mask: { width: number; height: number; alpha: Uint8Array }, threshold: number, region: ContourRegionSpec, pose: Affine): Errors {
+/** One art pixel centre as the comparison reads it: its class by g, the triangle holding it, and its error (|mesh − field|, or |mesh − p| outside). */
+export interface PixelError {
+  pixel: Point;
+  g: number;
+  triangle: number;
+  error: number;
+}
+
+/**
+ * Every art pixel centre of `mask`, row-major, read against one mesh under one
+ * pose (§3's definitions, module header); `null` for a pixel no triangle
+ * holds. {@link errors} and {@link pixelsOver} are folds over it.
+ */
+export function pixelErrors(mesh: ComparedMesh, mask: { width: number; height: number; alpha: Uint8Array }, threshold: number, region: ContourRegionSpec, pose: Affine): Array<PixelError | null> {
   const find = locator(mesh.vertices, mesh.triangles);
   const moved = mesh.vertices.map((v, i) => skinned(v, controlWeight(mesh.weights[i], region.bone), pose));
-  let lm = 0;
-  let ls = 0;
-  let tm = 0;
-  let tsum = 0;
-  let om = 0;
-  const pixels = { local: 0, transition: 0, outside: 0 };
-  let worst: Errors['worstLocal'] = null;
-  let uncovered = 0;
+  const out: Array<PixelError | null> = [];
   for (let y = 0; y < mask.height; y++) {
     for (let x = 0; x < mask.width; x++) {
       if (mask.alpha[y * mask.width + x] <= threshold) continue;
       const p: Point = [x + 0.5, y + 0.5];
       const hit = find(p);
       if (hit === null) {
-        uncovered++;
+        out.push(null);
         continue;
       }
       const [a, b, c] = [moved[mesh.triangles[3 * hit.t]], moved[mesh.triangles[3 * hit.t + 1]], moved[mesh.triangles[3 * hit.t + 2]]];
       const got: Point = [hit.l[0] * a[0] + hit.l[1] * b[0] + hit.l[2] * c[0], hit.l[0] * a[1] + hit.l[1] * b[1] + hit.l[2] * c[1]];
       const g = regionWeight(p, region);
-      if (g === 0) {
-        pixels.outside++;
-        om = Math.max(om, Math.hypot(got[0] - p[0], got[1] - p[1]));
-        continue;
+      const want = g === 0 ? p : fieldAt(p, region, pose);
+      out.push({ pixel: p, g, triangle: hit.t, error: Math.hypot(got[0] - want[0], got[1] - want[1]) });
+    }
+  }
+  return out;
+}
+
+function worstOf(mesh: ComparedMesh, e: PixelError): WorstPixel {
+  const corners: [number, number, number] = [mesh.triangles[3 * e.triangle], mesh.triangles[3 * e.triangle + 1], mesh.triangles[3 * e.triangle + 2]];
+  return { pixel: e.pixel, triangle: e.triangle, corners, minAngle: triangleQuality(mesh.vertices, corners).smallestAngle.value, error: e.error };
+}
+
+/** §3's three errors, for one mesh under one pose, over every art pixel centre of `mask`. */
+export function errors(mesh: ComparedMesh, mask: { width: number; height: number; alpha: Uint8Array }, threshold: number, region: ContourRegionSpec, pose: Affine): Errors {
+  let lm = 0;
+  let ls = 0;
+  let tm = 0;
+  let tsum = 0;
+  let om = 0;
+  const pixels = { local: 0, transition: 0, outside: 0 };
+  let worst: PixelError | null = null;
+  let worstT: PixelError | null = null;
+  let uncovered = 0;
+  for (const e of pixelErrors(mesh, mask, threshold, region, pose)) {
+    if (e === null) {
+      uncovered++;
+      continue;
+    }
+    if (e.g === 0) {
+      pixels.outside++;
+      om = Math.max(om, e.error);
+    } else if (e.g === 1) {
+      pixels.local++;
+      ls += e.error * e.error;
+      if (worst === null || e.error > lm) {
+        lm = e.error;
+        worst = e;
       }
-      const want = fieldAt(p, region, pose);
-      const e = Math.hypot(got[0] - want[0], got[1] - want[1]);
-      if (g === 1) {
-        pixels.local++;
-        ls += e * e;
-        if (worst === null || e > lm) {
-          lm = e;
-          const tri = [mesh.triangles[3 * hit.t], mesh.triangles[3 * hit.t + 1], mesh.triangles[3 * hit.t + 2]];
-          worst = { pixel: p, triangle: hit.t, minAngle: triangleQuality(mesh.vertices, tri).smallestAngle.value };
-        }
-      } else {
-        pixels.transition++;
-        tsum += e * e;
-        tm = Math.max(tm, e);
-      }
+    } else {
+      pixels.transition++;
+      tsum += e.error * e.error;
+      if (worstT === null || e.error > tm) worstT = e;
+      tm = Math.max(tm, e.error);
     }
   }
   return {
@@ -204,9 +243,29 @@ export function errors(mesh: ComparedMesh, mask: { width: number; height: number
     transitionRms: pixels.transition === 0 ? 0 : Math.sqrt(tsum / pixels.transition),
     outsideMax: om,
     pixels,
-    worstLocal: worst,
+    worstLocal: worst === null ? null : worstOf(mesh, worst),
+    worstTransition: worstT === null ? null : worstOf(mesh, worstT),
     uncovered,
   };
+}
+
+/**
+ * The distribution behind a maximum: how many pixels of one class (`local`,
+ * g = 1; `transition`, 0 < g < 1) have an error strictly above `bar`, and in
+ * which triangles, most pixels first (a tie by triangle index).
+ */
+export function pixelsOver(read: ReadonlyArray<PixelError | null>, cls: 'local' | 'transition', bar: number): { pixels: number; of: number; triangles: Array<{ triangle: number; pixels: number }> } {
+  let of = 0;
+  let pixels = 0;
+  const by = new Map<number, number>();
+  for (const e of read) {
+    if (e === null || e.g === 0 || (cls === 'local') !== (e.g === 1)) continue;
+    of++;
+    if (!(e.error > bar)) continue;
+    pixels++;
+    by.set(e.triangle, (by.get(e.triangle) ?? 0) + 1);
+  }
+  return { pixels, of, triangles: [...by].map(([triangle, n]) => ({ triangle, pixels: n })).sort((p, q) => q.pixels - p.pixels || p.triangle - q.triangle) };
 }
 
 export interface Cost {

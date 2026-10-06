@@ -163,8 +163,8 @@ import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTra
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'spine-rigc/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
-import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, contourTopologyProblems, delaunayViolations, growSilhouette, inCircle, keepPoints, marginDisc, withinMarginSquared } from './src/contour.ts';
-import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE } from './fixtures/contour.ts';
+import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
+import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
 import { checkHullOrder, earClip, findSelfIntersection, offsetPolygon, simplifyClosedPolygon, traceAlphaOutline, traceOutline } from 'spine-rigc/src/mesh.ts';
 import { PartsError, type Problem } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
@@ -250,9 +250,9 @@ import { block, constraintConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW,
 import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText, type RigSpec, roundShares } from './src/rig.ts';
 import { localInfluences, regionWeight } from './src/localweights.ts';
 import { influences } from './src/weights.ts';
-import { apply as applyAffine, contourAtBudget, cost, errors, fieldAt, fieldContour, fieldLattice, locator } from './tools/local_compare.ts';
+import { apply as applyAffine, type ComparedMesh, contourAtBudget, cost, errors, fieldAt, fieldContour, fieldLattice, locator, pixelErrors, pixelsOver } from './tools/local_compare.ts';
 import { FIELD_LATTICE_GRID, FIELD_POSES, fieldRegion, REGION_SPACINGS } from './fixtures/localfield.ts';
-import { BASE_SPACINGS, CONTROL, displacement, frameOpenings, kindOf, neighbours, type PlacedMask, POSE_PHASE, ranked, regionPoses, regionSpacings, seamOpening, seamPairs, sineAt, testRegion, toWorldPx, variantConfig } from './tools/real_compare.ts';
+import { BASE_SPACINGS, CONTROL, describeWorst, displacement, frameOpenings, kindOf, neighbours, pickAtBudget, type PlacedMask, POSE_PHASE, ranked, regionPoses, regionSpacings, seamOpening, seamPairs, sineAt, SWEEP_TOLERANCES, testRegion, toWorldPx, variantConfig } from './tools/real_compare.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
 import { readTag, type TagReading } from './src/tags.ts';
@@ -12402,17 +12402,17 @@ function runContourSuite(): number {
     'a weight is written against a vertex index, so the indices must not move between runs: every topological decision is an exact predicate on grid integers, and every tie has a stated rule',
   );
 
-  // CT21, CT22 — a region renumbers no hull vertex and leaves the far background as it was.
+  // CT21, CT22 — a region whose support reaches no outline edge renumbers no hull vertex, and leaves the far background as it was.
   const plain = built(contourOf(REGION, { ...REGION.params, regions: [] }));
   const refined = built(contourOf(REGION));
   const wider = built(contourOf(REGION, { ...REGION.params, margin: 2 }));
   say(
-    'CT21_ADDING_A_REGION_RENUMBERS_NO_HULL_VERTEX',
+    'CT21_ADDING_A_REGION_WHOSE_SUPPORT_REACHES_NO_OUTLINE_EDGE_RENUMBERS_NO_HULL_VERTEX',
     plain !== null && refined !== null && wider !== null && plain.hull === refined.hull && sameVertices(refined.vertices.slice(0, refined.hull), plain.vertices.slice(0, plain.hull)) && !sameVertices(wider.vertices.slice(0, wider.hull), plain.vertices.slice(0, plain.hull)),
     plain === null || refined === null || wider === null
       ? 'a case was refused'
       : `without the region: hull ${vertexText(plain.vertices.slice(0, plain.hull))}; with it: ${vertexText(refined.vertices.slice(0, refined.hull))}; planted margin 2: ${vertexText(wider.vertices.slice(0, wider.hull))}`,
-    'the outline is computed from the mask and the outline parameters alone, and the hull is listed first, so the first hull indices — what a weight written against the outline names — cannot move when a region is added',
+    'the outline\'s shape is computed from the mask and the outline parameters alone and the hull is listed first; since issue #110 a region adds outline points only where its support (r + band) reaches an outline edge — REGION\'s reaches 12 px from (40, 24), the outline lies 21 px away — so here the hull indices cannot move (where a support does reach the outline, CE13 states what holds instead)',
   );
   const bg = (m: ContourMesh): Array<readonly [number, number]> => {
     const out: Array<readonly [number, number]> = [];
@@ -12639,8 +12639,147 @@ function runContourSuite(): number {
   );
 
   runContourGrowthControls(say, built, has);
+  runOutlineInRegionControls(say, built);
 
   return bad();
+}
+
+/**
+ * CE10–CE16 — the outline inside a region's support (issue #110): where an
+ * outline edge passes through a region and its band, points are inserted on it
+ * at the region's spacing, exactly on the edge, held to the keep rule's radius;
+ * nothing moves where no support reaches the outline. Every expected point is
+ * computed by hand on {@link STRIP}'s top edge, y = 3 from (4, 3) to (60, 3).
+ */
+function runOutlineInRegionControls(say: (name: string, ok: boolean, detail: string, origin: string) => void, built: (r: ContourMesh | Problem[]) => ContourMesh | null): void {
+  const plainHull = blockOutline(4, 4, 56, 40);
+  const circle = (cx: number, cy: number, r: number, band: number, spacing: number): ContourRegion => ({ name: 'soft', shape: 'circle', cx, cy, r, band, spacing });
+  const strip = (...regions: ContourRegion[]): ContourMesh | null => built(contourMesh('strip', STRIP.mask, { ...STRIP.params, regions }));
+  const hullOf = (m: ContourMesh | null): Array<readonly [number, number]> => (m === null ? [] : m.vertices.slice(0, m.hull));
+  const onTop = (xs: readonly number[]): Array<[number, number]> => [plainHull[0], ...xs.map((x) => [x, 3] as [number, number]), ...plainHull.slice(1)];
+  const plain = strip();
+
+  // CE10 — a circle across the top edge: the support (r + band = 8 about (32, 3)) holds x 24..40, 16 px at spacing 4 → 4 parts.
+  const at4 = strip(circle(32, 3, 4, 4, 4));
+  const at8 = strip(circle(32, 3, 4, 4, 8));
+  say(
+    'CE10_WHERE_A_CIRCLES_SUPPORT_CROSSES_AN_OUTLINE_EDGE_THE_EDGE_IS_CUT_AT_THE_REGIONS_SPACING',
+    plain !== null && at4 !== null && at8 !== null && sameVertices(hullOf(plain), plainHull) && sameVertices(hullOf(at4), onTop([24, 28, 32, 36, 40])) && sameVertices(hullOf(at8), onTop([24, 32, 40])),
+    `no region: hull ${vertexText(hullOf(plain))}; circle (32, 3) r 4 band 4, spacing 4: ${vertexText(hullOf(at4))}; planted spacing 8: ${vertexText(hullOf(at8))}`,
+    'issue #110: on a real part one 35 px outline edge, one end at g = 1 and the other at g = 0, held the worst local pixel in every pose — so the outline inside a region\'s support is sampled as the region\'s own boundary is: the interval inside the support cut into ceil(length / spacing) equal parts, every cut strictly between the edge\'s ends inserted (16 / 4 = 4 parts: 24, 28, 32, 36, 40; at spacing 8, 2 parts: 24, 32, 40)',
+  );
+
+  // CE11 — the keep radius (half the spacing, 2 px) from an edge's end: met exactly is kept, under it is dropped.
+  const tie = strip(circle(14, 3, 4, 4, 4));
+  const under = strip(circle(13, 3, 4, 4, 4));
+  say(
+    'CE11_AN_INSERTED_POINT_KEEPS_THE_KEEP_RADIUS_FROM_THE_EDGES_ENDS_AND_A_TIE_IS_KEPT',
+    tie !== null && under !== null && sameVertices(hullOf(tie), onTop([6, 10, 14, 18, 22])) && sameVertices(hullOf(under), onTop([9, 13, 17, 21])),
+    `circle (14, 3): ${vertexText(hullOf(tie))}; planted circle (13, 3): ${vertexText(hullOf(under))}`,
+    'the keep rule\'s own radius, 0.5 x spacing, and its own tie (>= is kept): about (14, 3) the cuts are 6, 10, 14, 18, 22 and (6, 3) is exactly 2 px from the end (4, 3); about (13, 3) they are 5 … 21 and (5, 3) is 1 px from it, so it is dropped and nothing else moves',
+  );
+
+  // CE12 — a polygon's support: the polygon itself at band 0, its offset ring at band 2.
+  const square: Array<[number, number]> = [[20, 0], [30, 0], [30, 8], [20, 8]];
+  const poly = (band: number, pts = square): ContourRegion => ({ name: 'soft', shape: 'polygon', points: pts, band, spacing: 5 });
+  const p0 = strip(poly(0));
+  const p2 = strip(poly(2));
+  const below = strip(poly(0, [[20, 10], [30, 10], [30, 18], [20, 18]]));
+  // Band 2: rigc's mitred offset of the square is x 18..32 on y = 3; 14 px at spacing 5 → 3 parts, each cut at the grid point on the edge nearest it.
+  const third = (x: number): number => 4 + Math.round((x - 4) * 256) / 256;
+  say(
+    'CE12_A_POLYGONS_SUPPORT_IS_THE_POLYGON_OR_ITS_BAND_RING_AND_ONE_THAT_MISSES_THE_OUTLINE_INSERTS_NOTHING',
+    p0 !== null && p2 !== null && below !== null &&
+      sameVertices(hullOf(p0), onTop([20, 25, 30])) &&
+      sameVertices(hullOf(p2), onTop([18, third(18 + 14 / 3), third(18 + 28 / 3), 32])) &&
+      third(18 + 14 / 3) === 4 + 4779 / 256 &&
+      sameVertices(hullOf(below), plainHull),
+    `square x 20..30, y 0..8, band 0: ${vertexText(hullOf(p0))}; band 2: ${vertexText(hullOf(p2))}; planted, the square at y 10..18: ${vertexText(hullOf(below))}`,
+    'the support is the set interiorCandidates fills: the polygon (band 0) or the inside of rigc\'s offsetPolygon ring (band 2: x 18..32 on the edge); 18 + 14/3 = 22.666… lies 4779.67 grid units from (4, 3), so the point is the grid point 4779 units along, 22.66796875',
+  );
+
+  // CE13 — the outline only gains vertices: the plain hull is in it, in order from index 0, and it encloses the same set.
+  const subsequence = (big: ReadonlyArray<readonly [number, number]>, small: ReadonlyArray<readonly [number, number]>): boolean => {
+    let k = 0;
+    for (const v of big) if (k < small.length && v[0] === small[k][0] && v[1] === small[k][1]) k++;
+    return k === small.length && big.length > 0 && big[0][0] === small[0][0] && big[0][1] === small[0][1];
+  };
+  const wider = built(contourMesh('strip', STRIP.mask, { ...STRIP.params, margin: 2, regions: [circle(32, 3, 4, 4, 4)] }));
+  say(
+    'CE13_A_CROSSING_REGION_KEEPS_EVERY_HULL_VERTEX_IN_ORDER_FROM_INDEX_0_AND_THE_SAME_ENCLOSED_SET',
+    plain !== null && at4 !== null && wider !== null &&
+      subsequence(hullOf(at4), hullOf(plain)) &&
+      at4.report.meshArea === plain.report.meshArea && at4.report.coveredArtPixels === plain.report.coveredArtPixels && at4.report.overshoot === plain.report.overshoot &&
+      !subsequence(hullOf(wider), hullOf(plain)),
+    plain === null || at4 === null || wider === null
+      ? 'a case was refused'
+      : `plain hull ${plain.hull} in the region's ${at4.hull} in order: ${subsequence(hullOf(at4), hullOf(plain))}; area ${plain.report.meshArea} / ${at4.report.meshArea} px², covered ${plain.report.coveredArtPixels} / ${at4.report.coveredArtPixels}, overshoot ${plain.report.overshoot} / ${at4.report.overshoot}; planted margin 2: in order ${subsequence(hullOf(wider), hullOf(plain))}`,
+    'CT21 said adding a region renumbers no hull vertex; with the outline sampled inside a support that is true only where no support reaches it (CE14). What holds instead: every vertex of the plain outline is in the region\'s, in the same cyclic order and position, index 0 first, and a vertex moves only by the points inserted before it; the points lie on the edges, so the set the outline encloses — area, coverage, overshoot — is the plain one',
+  );
+
+  // CE14 — no region, or a support that reaches no outline edge: the same list.
+  const ring = plainHull.map(([x, y]) => [x, y] as [number, number]);
+  const none = outlineInRegions(ring, []);
+  const inside = outlineInRegions(ring, [circle(40, 24, 8, 4, 3)]);
+  const crossing = outlineInRegions(ring, [circle(32, 3, 4, 4, 4)]);
+  say(
+    'CE14_WITH_NO_REGION_OR_A_SUPPORT_THAT_REACHES_NO_OUTLINE_EDGE_THE_OUTLINE_IS_THE_SAME_LIST',
+    sameVertices(none, ring) && sameVertices(inside, ring) && !sameVertices(crossing, ring),
+    `no region: ${none.length} vertices, same ${sameVertices(none, ring)}; REGION's circle (40, 24) r 8 band 4 (support 12 px, the outline 21 px away): same ${sameVertices(inside, ring)}; planted circle (32, 3): ${crossing.length} vertices, same ${sameVertices(crossing, ring)}`,
+    'a mesh with no region is the mesh it was before issue #110, byte for byte; and the index-stability CT21 holds is kept wherever no region\'s support reaches the outline',
+  );
+
+  // CE15 — on a diagonal edge, every inserted point is ON the edge exactly; the same cuts snapped coordinate by coordinate are not.
+  const tri: Array<[number, number]> = [[0, 0], [30, 10], [0, 20]];
+  const reg = circle(15, 5, 2, 2, 2);
+  const cut = outlineInRegions(tri, [reg]);
+  const ins = cut.filter((v) => !tri.some((w) => w[0] === v[0] && w[1] === v[1]));
+  const on = (v: readonly [number, number]): boolean => {
+    const [ax, ay, bx, by, px, py] = [0, 0, 30 * GRID, 10 * GRID, v[0] * GRID, v[1] * GRID];
+    return (bx - ax) * (py - ay) - (by - ay) * (px - ax) === 0 && px > ax && px < bx;
+  };
+  // The definition on edge 0: G = gcd(7680, 2560) = 2560 grid steps of (3, 1) units; the support (radius 4 about (15, 5),
+  // which is on the edge) is t in 0.5 ± 4 / √1000; its ends go to the nearest steps, the span is cut at spacing 2.
+  const L = Math.sqrt(1000);
+  const G = 2560;
+  const j0 = Math.round((0.5 - 4 / L) * G);
+  const j1 = Math.round((0.5 + 4 / L) * G);
+  const k = Math.ceil(((j1 - j0) * L) / G / 2);
+  const want = Array.from({ length: k + 1 }, (_, m) => j0 + Math.round((m * (j1 - j0)) / k)).map((j) => [(3 * j) / GRID, j / GRID] as [number, number]);
+  const naive = Array.from({ length: k + 1 }, (_, m) => (0.5 - 4 / L + (m * (8 / L)) / k)).map((t) => [Math.round(30 * t * GRID) / GRID, Math.round(10 * t * GRID) / GRID] as [number, number]);
+  const offEdge = naive.filter((v) => !on(v)).length;
+  say(
+    'CE15_AN_INSERTED_POINT_LIES_ON_ITS_EDGE_EXACTLY_SO_THE_OUTLINE_IS_UNCHANGED',
+    sameVertices(ins, want) && ins.every(on) && cut[0][0] === 0 && cut[0][1] === 0 && sameVertices(cut.filter((v) => tri.some((w) => w[0] === v[0] && w[1] === v[1])), tri) && offEdge > 0,
+    `edge (0, 0) -> (30, 10): steps ${j0}..${j1} of ${G}, ${k} part(s); inserted ${vertexText(ins)} (the definition: ${vertexText(want)}), all on the edge: ${ins.every(on)}; planted, the same cuts snapped x and y apart: ${offEdge} of ${naive.length} off the edge`,
+    'the grid points on an edge between grid points a and b are a + j (b - a) / G, G the gcd of the two grid differences (here 2560: steps of (3, 1) units), so a cut is placed at the nearest of them and the outline\'s shape, area and coverage cannot change; snapping x and y separately moves a point off the line',
+  );
+
+  // CE16 — spine-rigc's gate takes the strip with its inserted (straight) hull vertices, and refuses it with two hull vertices swapped.
+  const dir = temp('contour-outline-regions');
+  try {
+    const rigc = findRigc(ROOT, '');
+    // The convex block rides along: spine-html's A27 refuses a lone region on a page not named for it.
+    const convex = built(contourOf(CONVEX));
+    const gate = (sub: string, m: ContourMesh): { status: number; lines: string[] } => {
+      const d = join(dir, sub);
+      writeContourRig(d, convex === null ? [[STRIP, m]] : [[STRIP, m], [CONVEX, convex]]);
+      const r = spawnSync(rigc, ['build', '--rig', join(d, 'rig.json'), '--motion', join(d, 'motion.json'), '--out', join(d, 'build'), ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      return { status: r.status ?? 1, lines: `${r.stdout ?? ''}${r.stderr ?? ''}`.split('\n') };
+    };
+    const green = at4 === null ? null : gate('green', at4);
+    const red = at4 === null ? null : gate('red', swapHullPair(at4));
+    say(
+      'CE16_SPINE_RIGCS_GATE_BUILDS_AN_OUTLINE_WITH_INSERTED_STRAIGHT_VERTICES_AND_REFUSES_IT_REORDERED',
+      green !== null && red !== null && gateGreen(green.status, green.lines) && red.status !== 0 && red.lines.some((l) => l.includes('hull vertices must trace the outline in order')),
+      green === null || red === null
+        ? 'the strip was refused'
+        : `hull ${at4?.hull}, ${(at4?.triangles.length ?? 0) / 3} triangles: exit ${green.status}${green.status === 0 ? '' : ` (${green.lines.filter((l) => /FAIL|error/.test(l)).slice(0, 3).join(' | ')})`}; planted, hull vertices 1 and 2 swapped: exit ${red.status} (${red.lines.find((l) => l.includes('hull vertices must trace the outline in order'))?.trim().slice(0, 160) ?? 'no order refusal'})`,
+      'an inserted vertex makes a straight angle on the hull; the hull-first order and 2V - hull - 2 are spine-rigc\'s rules, passed on its gate, and the planted swap shows the gate reads this mesh\'s order',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** A 0/1 mask of `w` x `h` with the listed pixels set. */
@@ -13581,6 +13720,72 @@ function runContourWiringSuite(): number {
     latErr12 === null && conErr12 === null && JSON.stringify(raw12) === before12 && !('grid' in conMesh12) && 'contour' in conMesh12 && 'grid' in (lat12.meshes as Record<string, Record<string, unknown>>).cloth && track12?.prop === 'rotate' && track12.amp === 20 && track12.period === 4 && track12.phase === POSE_PHASE,
     `lattice copy: ${lines(latErr12)}; contour copy: ${lines(conErr12)}; the control track ${JSON.stringify(track12)}; the input ${JSON.stringify(raw12) === before12 ? 'unchanged' : 'CHANGED'}`,
     'the tracked config is copied, never edited; the lattice copy keeps grid and gains only the bone and its track',
+  );
+
+  // CV14–CV17 — the diagnosis issue #110 asked for (tools/local_compare.ts, tools/real_compare.ts): every pixel's error,
+  // the distribution behind a maximum, the count-only pick, and where a worst pixel sits. One hand-computed case: a 4x4
+  // all-art mask, the square (0,0) (4,0) (4,4) (0,4) as triangles 0 = (0,1,2) (y <= x) and 1 = (0,2,3), only vertex 0
+  // weighted to the control "c" (weight 1), the region a circle about (0, 0), r 2, band 1, the pose a translation by
+  // (1, 0). Then a pixel moves by λ0 = 1 - max(x, y) / 4 on the mesh and by g on the field, and its error is |λ0 - g|.
+  const sq14: ComparedMesh = { label: 'square', vertices: [[0, 0], [4, 0], [4, 4], [0, 4]], triangles: [0, 1, 2, 0, 2, 3], hull: 4, weights: [[{ bone: 'c', weight: 1 }], [], [], []] };
+  const mask14 = { width: 4, height: 4, alpha: new Uint8Array(16).fill(255) };
+  const reg14: ContourRegionSpec = { name: 'c', shape: 'circle', cx: 0, cy: 0, r: 2, band: 1, spacing: 1, bone: 'c' };
+  const move14: [number, number, number, number, number, number] = [1, 0, 0, 1, 1, 0];
+  const e14 = errors(sq14, mask14, 8, reg14, move14);
+  const read14 = pixelErrors(sq14, mask14, 8, reg14, move14);
+  const holed14 = errors({ ...sq14, triangles: [0, 1, 2] }, mask14, 8, reg14, move14);
+  const near = (a: number, b: number): boolean => Math.abs(a - b) < 1e-12;
+  // By hand: local (d <= 2) (0.5,0.5) (1.5,0.5) (0.5,1.5): errors 1/8, 3/8, 3/8. Band: (1.5,1.5) |5/8 - (3 - √4.5)|,
+  // (2.5,0.5) and (0.5,2.5) |3/8 - (3 - √6.5)|, (2.5,1.5) and (1.5,2.5) |3/8 - (3 - √8.5)|. Outside (d >= 3): λ0, largest 3/8 at (2.5,2.5).
+  const tMax = Math.abs(3 / 8 - (3 - Math.sqrt(8.5)));
+  say(
+    'CV14_EVERY_PIXELS_ERROR_IS_READ_ONCE_AND_THE_WORST_LOCAL_AND_TRANSITION_PIXELS_NAME_THEIR_TRIANGLE',
+    read14.length === 16 && read14.every((x) => x !== null) &&
+      e14.pixels.local === 3 && e14.pixels.transition === 5 && e14.pixels.outside === 8 &&
+      near(e14.localMax, 3 / 8) && near(e14.localRms, Math.sqrt((1 / 64 + 9 / 64 + 9 / 64) / 3)) && near(e14.outsideMax, 3 / 8) && near(e14.transitionMax, tMax) &&
+      e14.worstLocal?.pixel.join() === '1.5,0.5' && e14.worstLocal.corners.join() === '0,1,2' &&
+      e14.worstTransition?.pixel.join() === '2.5,1.5' && e14.worstTransition.triangle === 0 &&
+      holed14.uncovered === 6,
+    `pixels ${e14.pixels.local} / ${e14.pixels.transition} / ${e14.pixels.outside}; local max ${e14.localMax} at (${e14.worstLocal?.pixel.join(', ')}) corners ${e14.worstLocal?.corners.join(', ')}; transition max ${e14.transitionMax} (by hand ${tMax}) at (${e14.worstTransition?.pixel.join(', ')}) in triangle ${e14.worstTransition?.triangle}; outside max ${e14.outsideMax}; planted, triangle 1 removed: ${holed14.uncovered} uncovered`,
+    'issue #110 asks where the worst pixel sits and what triangle holds it; the error of every pixel is the one §3 defines, and the maxima are folds over the same per-pixel reading, first in row-major order at a tie; the six pixels above the diagonal lie in triangle 1 alone',
+  );
+
+  // CV15 — the distribution: strictly above a bar, per class, by triangle, most pixels first.
+  const over14 = pixelsOver(read14, 'local', 0.2);
+  const overT14 = pixelsOver(read14, 'transition', 0.2);
+  const atMax14 = pixelsOver(read14, 'local', 3 / 8);
+  say(
+    'CV15_THE_PIXELS_ABOVE_A_BAR_ARE_COUNTED_PER_CLASS_AND_TRIANGLE_AND_THE_BAR_ITSELF_IS_NOT_ABOVE',
+    over14.pixels === 2 && over14.of === 3 && over14.triangles.map((x) => `${x.triangle}:${x.pixels}`).join() === '0:1,1:1' &&
+      overT14.pixels === 3 && overT14.of === 5 && overT14.triangles.map((x) => `${x.triangle}:${x.pixels}`).join() === '0:2,1:1' &&
+      atMax14.pixels === 0,
+    `local above 0.2: ${over14.pixels} of ${over14.of} (${over14.triangles.map((x) => `${x.triangle}: ${x.pixels}`).join(', ')}); transition above 0.2: ${overT14.pixels} of ${overT14.of} (${overT14.triangles.map((x) => `${x.triangle}: ${x.pixels}`).join(', ')}); planted bar 3/8, the local maximum: ${atMax14.pixels}`,
+    'by hand: local errors 1/8, 3/8, 3/8 (one in each triangle above 0.2); transition 0.0755 twice, 0.2537 (triangle 0), 0.2905 in triangle 0 and in 1 — a maximum is one pixel, the distribution says whether a few triangles or the whole region hold it',
+  );
+
+  // CV16 — the count-only pick: the first spacing whose mesh fits, a refusal passed over, none when nothing fits.
+  const sizes16 = new Map<number, number>([[2, 10], [3, 6], [4, 4]]);
+  const make16 = (s: number): { vertices: number[] } | string => (sizes16.has(s) ? { vertices: new Array<number>(sizes16.get(s) as number).fill(0) } : 'CONTOUR_COVERAGE');
+  const fits16 = pickAtBudget([1, 2, 3, 4], 6, make16);
+  const none16 = pickAtBudget([1, 2, 3, 4], 3, make16);
+  say(
+    'CV16_THE_COUNT_ONLY_RULE_PICKS_THE_FINEST_SPACING_THAT_FITS_AND_NONE_WHEN_NONE_DOES',
+    fits16.spacing === 3 && fits16.tried.join('; ') === '1: CONTOUR_COVERAGE; 2: 10 V; 3: 6 V' && none16.mesh === null && none16.tried.length === 4 &&
+      SWEEP_TOLERANCES.includes(1) && SWEEP_TOLERANCES.every((v, i) => i === 0 || v > SWEEP_TOLERANCES[i - 1]),
+    `budget 6: spacing ${fits16.spacing}, tried ${fits16.tried.join('; ')}; planted budget 3: ${none16.mesh === null ? 'none' : `spacing ${none16.spacing}`} after ${none16.tried.length}; sweep tolerances ${SWEEP_TOLERANCES.join(', ')}`,
+    'the region spacing is chosen by vertex count and never by error, at every tolerance the sweep reads; a spacing the settled refusals refuse is passed over and named; the sweep includes the shipped tolerance 1',
+  );
+
+  // CV17 — where a worst pixel sits, in words: corners by kind, g, the distances, the triangle's shape.
+  const wl14 = e14.worstLocal;
+  const said = wl14 === null ? '' : describeWorst(sq14, wl14, reg14, [10, 20], true);
+  const saidLattice = wl14 === null ? '' : describeWorst(sq14, wl14, reg14, [10, 20], false);
+  say(
+    'CV17_A_WORST_PIXEL_IS_DESCRIBED_BY_ITS_TRIANGLES_CORNERS_THEIR_G_AND_ITS_DISTANCE_TO_THE_OUTLINE',
+    said.startsWith('0.375 at (11.5, 20.5) rig px, g 1.000, 0.500 px from the outline, -0.419 px from the region\'s edge; triangle 0 [outline v0 (10, 20) g 1.000; outline v1 (14, 20) g 0.000; outline v2 (14, 24) g 0.000], smallest angle 45°, longest edge 5.657 px') &&
+      !saidLattice.includes('from the outline'),
+    `${said} | planted, as a lattice: ${saidLattice}`,
+    'by hand: (1.5, 0.5) is 0.5 px from the edge y = 0, √2.5 - 2 = -0.419 px from the circle, in triangle 0 whose corners are hull vertices 0, 1, 2 at g 1, 0, 0 and whose longest edge is the diagonal 4√2; a lattice\'s hull is not the art\'s outline, so no distance to it is printed',
   );
 
   return bad();

@@ -6,7 +6,7 @@
  * what that fixture could not show: the seam with the parts drawn beside the
  * one that deforms.
  *
- *     bun tools/real_compare.ts --work <dir> [--builds] [--only <example>/<part>]
+ *     bun tools/real_compare.ts --work <dir> [--builds] [--sweep] [--only <example>/<part>]
  *
  * Reads the fetched `examples/<key>/inputs` (`bun run fetch-examples`); builds
  * each example's tracked config once into `<dir>/base-<key>` (the lattice, as
@@ -94,9 +94,9 @@ import { readParts, type PartsFile } from '../src/parts.ts';
 import { alphaAbove, pad, type Raster, readPng } from '../src/raster/index.ts';
 import { PAD } from '../src/rig.ts';
 import { pyRound } from '../src/round.ts';
-import type { Segment } from '../src/weights.ts';
+import { type Segment, segmentDistance } from '../src/weights.ts';
 import { type Affine } from '../fixtures/localfield.ts';
-import { type ComparedMesh, cost, type Errors, errors, fieldAt, locator, weighMesh } from './local_compare.ts';
+import { type ComparedMesh, cost, type Errors, errors, fieldAt, locator, pixelErrors, pixelsOver, weighMesh, type WorstPixel } from './local_compare.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 
@@ -474,11 +474,62 @@ function latticeOf(pi: PartInput, grid: number, region: ContourRegionSpec): Comp
   return { label: `lattice grid ${grid}`, vertices, triangles: lm.triangles, hull: lm.hull, weights: weighAt(pi, vertices, region) };
 }
 
-function contourOf(pi: PartInput, region: ContourRegionSpec | null, spacing: number): ComparedMesh | string {
+interface ContourOf extends ComparedMesh {
+  enclosedTransparentArea: number;
+  overshoot: number;
+}
+
+function contourOf(pi: PartInput, region: ContourRegionSpec | null, spacing: number, tolerance = TOLERANCE): ContourOf | string {
   const regions = region === null || region.shape !== 'circle' ? [] : [{ name: region.name, shape: 'circle' as const, cx: region.cx - pi.ox, cy: region.cy - pi.oy, r: region.r, spacing: region.spacing, band: region.band }];
-  const cm = contourMesh(pi.part, pi.mask, { threshold: ART_ALPHA, tolerance: TOLERANCE, margin: MARGIN, spacing, regions });
+  const cm = contourMesh(pi.part, pi.mask, { threshold: ART_ALPHA, tolerance, margin: MARGIN, spacing, regions });
   if (Array.isArray(cm)) return cm.map((p) => `${p.code}: ${p.detail}`).join('; ');
-  return { label: region === null ? 'contour, no region' : `contour, region spacing ${region.spacing}`, vertices: cm.vertices, triangles: cm.triangles, hull: cm.hull, weights: weighAt(pi, cm.vertices, region) };
+  return {
+    label: region === null ? 'contour, no region' : `contour, region spacing ${region.spacing}`,
+    vertices: cm.vertices,
+    triangles: cm.triangles,
+    hull: cm.hull,
+    weights: weighAt(pi, cm.vertices, region),
+    enclosedTransparentArea: cm.report.enclosedTransparentArea,
+    overshoot: cm.report.overshoot,
+  };
+}
+
+/**
+ * The count-only rule (module header): the finest region spacing whose contour
+ * mesh has no more vertices than `budget`, and what each spacing tried gave.
+ * A refused spacing is passed over.
+ */
+export function pickAtBudget<M extends { vertices: unknown[] }>(spacings: readonly number[], budget: number, make: (s: number) => M | string): { mesh: M | null; spacing: number | null; tried: string[] } {
+  const tried: string[] = [];
+  for (const s of spacings) {
+    const m = make(s);
+    tried.push(typeof m === 'string' ? `${s}: ${m.slice(0, 120)}` : `${s}: ${m.vertices.length} V`);
+    if (typeof m !== 'string' && m.vertices.length <= budget) return { mesh: m, spacing: s, tried };
+  }
+  return { mesh: null, spacing: null, tried };
+}
+
+/** The outline tolerances `--sweep` runs the count-only rule at (issue #110); margin stays {@link MARGIN}, and a tolerance the settled refusals refuse at every spacing is printed as such. */
+export const SWEEP_TOLERANCES: readonly number[] = [0, 0.5, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+
+/**
+ * A worst pixel's triangle, for a reader who cannot see the mesh: each corner
+ * as outline (an index below `hull`) or interior, its rig px and the region's
+ * weight g there; the triangle's smallest angle and longest edge; and the
+ * pixel's distance to the outline (contour meshes only: a lattice's hull is
+ * not the art's outline) and to the region's edge (negative inside).
+ * `at` is the frame's origin in rig px.
+ */
+export function describeWorst(mesh: ComparedMesh, w: WorstPixel, region: ContourRegionSpec, at: Point, contour: boolean): string {
+  if (region.shape !== 'circle') throw new Error('real_compare: circle regions only');
+  const v = (i: number): Point => [mesh.vertices[i][0], mesh.vertices[i][1]];
+  const corner = (i: number): string => `${i < mesh.hull ? 'outline' : 'interior'} v${i} (${v(i)[0] + at[0]}, ${v(i)[1] + at[1]}) g ${f(regionWeight(v(i), region))}`;
+  const ps = w.corners.map(v);
+  const longest = Math.max(...[0, 1, 2].map((k) => Math.hypot(ps[k][0] - ps[(k + 1) % 3][0], ps[k][1] - ps[(k + 1) % 3][1])));
+  let toOutline = Infinity;
+  if (contour) for (let i = 0; i < mesh.hull; i++) toOutline = Math.min(toOutline, segmentDistance(w.pixel, v(i), v((i + 1) % mesh.hull)));
+  const toEdge = Math.hypot(w.pixel[0] - region.cx, w.pixel[1] - region.cy) - region.r;
+  return `${f(w.error)} at (${w.pixel[0] + at[0]}, ${w.pixel[1] + at[1]}) rig px, g ${f(regionWeight(w.pixel, region))}, ${contour ? `${f(toOutline)} px from the outline, ` : ''}${f(toEdge)} px from the region's edge; triangle ${w.triangle} [${w.corners.map(corner).join('; ')}], smallest angle ${pyRound(w.minAngle, 2)}°, longest edge ${f(longest)} px`;
 }
 
 function regionSpec(t: TestRegion, spacing: number): ContourRegionSpec {
@@ -620,22 +671,15 @@ function partStretch(path: string, part: string): string {
 
 const f = (v: number, d = 3): string => v.toFixed(d);
 
-function compare(pi: PartInput, t: TestRegion, raw: { [k: string]: Json }, work: string, builds: boolean, masks: ReadonlyArray<readonly [string, PlacedMask]>): void {
+function compare(pi: PartInput, t: TestRegion, raw: { [k: string]: Json }, work: string, builds: boolean, sweep: boolean, masks: ReadonlyArray<readonly [string, PlacedMask]>): void {
   const centre: Point = [t.cx - pi.ox, t.cy - pi.oy];
   const poses = regionPoses(centre, t.r);
   const any = regionSpec(t, 1);
   const lattice = latticeOf(pi, pi.grid, any);
   const background = 2 * pi.grid;
-  const tried: string[] = [];
-  let picked: { mesh: ComparedMesh; spacing: number } | null = null;
-  for (const s of regionSpacings(pi.grid)) {
-    const m = contourOf(pi, regionSpec(t, s), background);
-    tried.push(typeof m === 'string' ? `${s}: ${m.slice(0, 120)}` : `${s}: ${m.vertices.length} V`);
-    if (typeof m !== 'string' && m.vertices.length <= lattice.vertices.length) {
-      picked = { mesh: m, spacing: s };
-      break;
-    }
-  }
+  const pick = pickAtBudget(regionSpacings(pi.grid), lattice.vertices.length, (s) => contourOf(pi, regionSpec(t, s), background));
+  const tried = pick.tried;
+  const picked = pick.mesh === null || pick.spacing === null ? null : { mesh: pick.mesh, spacing: pick.spacing };
   console.log(`\n## ${pi.example}/${pi.part} — ${pi.box.w}x${pi.box.h} at (${pi.box.x}, ${pi.box.y}); lattice grid ${pi.grid}, r ${pi.r}; segments ${pi.segs.map((s) => s.bone).join(', ')}`);
   console.log(`test region (a test region: a place to measure): circle (${t.cx}, ${t.cy}) rig px, r ${t.r}, band ${t.band}; centre on the art pixel nearest (${t.mid.join(", ")}), the midpoint of chain "${t.chain}"'s last link; control "${CONTROL}" under "${t.parent}"`);
   console.log(`poses: ${poses.map((p) => p.name).join('; ')}`);
@@ -690,11 +734,44 @@ function compare(pi: PartInput, t: TestRegion, raw: { [k: string]: Json }, work:
     }
   }
   console.log(`\nmatched: ${matched ?? `no lattice grid from ${pi.grid} down to 1 reaches it`}`);
-  console.log('\n### Thin triangles (no bar)\n');
+  console.log('\n### Where the worst pixels sit (no bar)\n');
+  const at: Point = [pi.ox, pi.oy];
   meshes.forEach((m, i) => {
-    const w = errs[i].map((e, k) => (e.worstLocal === null ? `${poses[k].name}: no local pixel` : `${poses[k].name}: worst local pixel (${e.worstLocal.pixel.map((v, j) => v + (j === 0 ? pi.ox : pi.oy)).join(', ')}) rig px in triangle ${e.worstLocal.triangle}, smallest angle ${pyRound(e.worstLocal.minAngle, 2)}°`));
-    console.log(`- ${m.label}: smallest angle ${costs[i].minAngle}°; ${w.join('; ')}`);
+    console.log(`- ${m.label}: smallest angle ${costs[i].minAngle}°`);
+    errs[i].forEach((e, k) => {
+      console.log(`  - ${poses[k].name}: worst local ${e.worstLocal === null ? 'none' : describeWorst(m, e.worstLocal, region, at, i === 1)}`);
+      console.log(`  - ${poses[k].name}: worst transition ${e.worstTransition === null ? 'none' : describeWorst(m, e.worstTransition, region, at, i === 1)}`);
+    });
   });
+  console.log('\n### The distribution behind the maximum: contour pixels above the lattice\'s largest error of the same class and pose\n');
+  poses.forEach((p, k) => {
+    const read = pixelErrors(contour, pi.mask, ART_ALPHA, region, p.map);
+    for (const cls of ['local', 'transition'] as const) {
+      const bar = cls === 'local' ? errs[0][k].localMax : errs[0][k].transitionMax;
+      const o = pixelsOver(read, cls, bar);
+      console.log(`- ${p.name}, ${cls}: ${o.pixels} of ${o.of} above ${f(bar)} px${o.triangles.length === 0 ? '' : `, in triangle(s) ${o.triangles.map((x) => `${x.triangle} (${x.pixels} px)`).join(', ')}`}`);
+    }
+  });
+  if (sweep) {
+    console.log(`\n### The tolerance sweep (issue #110): the count-only rule at each outline tolerance, margin ${MARGIN}, background ${background}; largest errors over the three poses; §4 read as above\n`);
+    console.log('| tolerance | region spacing | vertices (hull) | local max | transition max | outside max | enclosed transparent px² | overshoot px | §4 | worst local pixel |');
+    console.log('|---|---|---|---|---|---|---|---|---|---|');
+    for (const tol of SWEEP_TOLERANCES) {
+      const sp = pickAtBudget(regionSpacings(pi.grid), lattice.vertices.length, (s) => contourOf(pi, regionSpec(t, s), background, tol));
+      if (sp.mesh === null || sp.spacing === null) {
+        const codes = [...new Set(sp.tried.map((x) => x.slice(x.indexOf(': ') + 2).split(':')[0]))].join(', ');
+        console.log(`| ${tol} | none fits (${codes}) | | | | | | | not accepted | |`);
+        continue;
+      }
+      const reg = inFrame(pi, regionSpec(t, sp.spacing));
+      const es = poses.map((p) => errors(sp.mesh as ContourOf, pi.mask, ART_ALPHA, reg, p.map));
+      const c = cost(sp.mesh, pi.mask, ART_ALPHA, reg);
+      const [lm, tm, om] = [worst(es, 'localMax'), worst(es, 'transitionMax'), worst(es, 'outsideMax')];
+      const ok = lm < lLocal && om <= lOut && c.surroundDensity <= costs[0].surroundDensity;
+      const wp = es.reduce((a, b) => (b.localMax > a.localMax ? b : a)).worstLocal;
+      console.log(`| ${tol} | ${sp.spacing} | ${sp.mesh.vertices.length} (${sp.mesh.hull}) | ${f(lm)} | ${f(tm)} | ${f(om)} | ${sp.mesh.enclosedTransparentArea} | ${sp.mesh.overshoot} | ${ok ? 'accepted' : 'not accepted'} | ${wp === null ? 'none' : describeWorst(sp.mesh, wp, reg, at, true)} |`);
+    }
+  }
   if (!builds) return;
 
   // ---- the real builds ---------------------------------------------------
@@ -801,11 +878,12 @@ function compare(pi: PartInput, t: TestRegion, raw: { [k: string]: Json }, work:
 function main(argv: string[]): void {
   const w = argv.indexOf('--work');
   if (w < 0 || argv[w + 1] === undefined) {
-    console.log('usage: bun tools/real_compare.ts --work <dir> [--builds] [--only <example>/<part>]');
+    console.log('usage: bun tools/real_compare.ts --work <dir> [--builds] [--sweep] [--only <example>/<part>]');
     process.exit(2);
   }
   const work = resolve(argv[w + 1]);
   const builds = argv.includes('--builds');
+  const sweep = argv.includes('--sweep');
   mkdirSync(work, { recursive: true });
   const examples = ['demo', 'sample'].filter((k) => existsSync(join(ROOT, 'examples', k, 'inputs', 'painting.png')));
   if (examples.length === 0) {
@@ -861,7 +939,7 @@ function main(argv: string[]): void {
   for (const { c, t } of picks) {
     if (only >= 0 && argv[only + 1] !== `${c.example}/${c.part}`) continue;
     const e = ctx.get(c.example) as { cfg: CharacterConfig; raw: { [k: string]: Json }; build: string; masks: Array<readonly [string, PlacedMask]> };
-    compare(partInput(c.example, e.cfg, e.build, c.part), t, e.raw, work, builds, e.masks);
+    compare(partInput(c.example, e.cfg, e.build, c.part), t, e.raw, work, builds, sweep, e.masks);
   }
 }
 
