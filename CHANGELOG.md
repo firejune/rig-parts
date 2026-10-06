@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.1](https://github.com/firejune/spine-parts/compare/v0.13.0...v0.13.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* **contour:** cut the outline at a region's spacing where it passes through the region's band, so one long edge no longer carries the whole falloff ([#114](https://github.com/firejune/spine-parts/issues/114)) ([5567970](https://github.com/firejune/spine-parts/commit/5567970e83c20e38422d9ddd44adbe9fa900e958)), closes [#110](https://github.com/firejune/spine-parts/issues/110) [#108](https://github.com/firejune/spine-parts/issues/108)
+* **contour:** grow the filled silhouette by the margin and trace it, instead of offsetting the outline, so a narrow notch grows shut rather than folding ([#112](https://github.com/firejune/spine-parts/issues/112)) ([d2d961c](https://github.com/firejune/spine-parts/commit/d2d961c6a3a4c905ba8431992853f0187a77be87)), closes [#106](https://github.com/firejune/spine-parts/issues/106)
+
 ## [0.13.0](https://github.com/firejune/spine-parts/compare/v0.12.0...v0.13.0) (2026-10-06)
 
 
