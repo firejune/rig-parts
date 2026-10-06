@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.0](https://github.com/firejune/spine-parts/compare/v0.9.0...v0.10.0) (2026-10-06)
+
+
+### Features
+
+* **check:** measure a rig spec with no parts.json or no idle, SKIP by name, and add SETUP_POSE_VS_SOURCE under --source ([#82](https://github.com/firejune/spine-parts/issues/82)) ([989aa00](https://github.com/firejune/spine-parts/commit/989aa00542edce052e6f90d6a0cf9ee1c253ee57)), closes [#77](https://github.com/firejune/spine-parts/issues/77)
+* **inputs:** a landscape painting is padded onto its square vertically, and every stage maps the full run back through both pads ([#79](https://github.com/firejune/spine-parts/issues/79)) ([c7a6bdd](https://github.com/firejune/spine-parts/commit/c7a6bdd02c5a7695300d4014b79278eae95a984c)), closes [#78](https://github.com/firejune/spine-parts/issues/78)
+* **propose:** a face-less figure gets a proposal, its face box derived from the head run's hair and neck by measured ratios ([#83](https://github.com/firejune/spine-parts/issues/83)) ([88b88f4](https://github.com/firejune/spine-parts/commit/88b88f4868cf40079a9feed2c031cf3d16ef87e7)), closes [#76](https://github.com/firejune/spine-parts/issues/76)
+* **rig:** turn each chain bone along its chain and give it a length, without moving anything ([#81](https://github.com/firejune/spine-parts/issues/81)) ([76a3189](https://github.com/firejune/spine-parts/commit/76a31894d7e3bead213460051a73dbf4e3e4bb2f)), closes [#73](https://github.com/firejune/spine-parts/issues/73)
+
 ## [0.9.0](https://github.com/firejune/spine-parts/compare/v0.8.2...v0.9.0) (2026-10-05)
 
 
