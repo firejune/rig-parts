@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.0](https://github.com/firejune/spine-parts/compare/v0.11.0...v0.12.0) (2026-10-06)
+
+
+### Features
+
+* **build:** take --idle-keys ctl|direct and forward it to the rig stage, so a two-bone ik over keyed chain links builds in one process ([#98](https://github.com/firejune/spine-parts/issues/98)) ([ad774c1](https://github.com/firejune/spine-parts/commit/ad774c10e8b7146fd1a4e8f0fe80f52d884f02c3)), closes [#95](https://github.com/firejune/spine-parts/issues/95)
+* **check:** measure a scene's declared motion requirements from spine-rigc's posed frames under --requirements ([#97](https://github.com/firejune/spine-parts/issues/97)) ([4ac2e8a](https://github.com/firejune/spine-parts/commit/4ac2e8a72ad043c95d7c0f37bc93a267d2383464)), closes [#93](https://github.com/firejune/spine-parts/issues/93)
+* **config:** pass spine-rigc's own constraints through the config, resolve their bones by name, and declare scene targets detached ([#94](https://github.com/firejune/spine-parts/issues/94)) ([818c627](https://github.com/firejune/spine-parts/commit/818c6278cf1ca42096ae3cd31b19ff7c33aa2375)), closes [#92](https://github.com/firejune/spine-parts/issues/92)
+
 ## [0.11.0](https://github.com/firejune/spine-parts/compare/v0.10.0...v0.11.0) (2026-10-06)
 
 
