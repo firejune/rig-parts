@@ -7,7 +7,9 @@
  * never from the part's name. A plan may call the skirt layer anything; what
  * makes it the skirt is that it came from `bottomwear`. The rules, by tag:
  *
- * - `face` (head run first) -> `hip`/`chest`/`neck`/`head`; `eyewhite-r/-l`
+ * - `face` (head run first) -> `hip`/`chest`/`neck`/`head` — with no face
+ *   part, a box derived from the head run's `front hair`/`back hair` and
+ *   `neck`, said in a note (issue #76); `eyewhite-r/-l`
  *   -> `eye_r`/`eye_l`, the blink's `eyes` group — no eyewhite, no blink, and
  *   no eyebrow, no `brows` in it, each said in a note (issue #35); `irides-*`
  *   and `eyelash-*` ride their side's eye bone, or `head` with a note when
@@ -52,13 +54,16 @@
  * `compare`, `draw`). Every rule, constant and evaluation order is the
  * reference's, including three Python behaviours `src/pyfmt.ts` reproduces
  * (`round` to even, `or` treating 0.0 as missing, negative slice starts).
- * Six departures, each stated where it happens: a missing face is refused
- * rather than crashing; the eye regions are keyed by the eyewhite part's own
- * name rather than by the literal `eyewhite_r`; the long-robe hip, the
- * clasped-hands region (issues #22, #23) and an eyeless side's irides and
- * lashes on `head` (issue #45), which fire on neither published example —
- * both proposals are byte-identical with and without them; and `lint`'s two
- * torso lines, which the reference did not have.
+ * Seven departures, each stated where it happens: a missing face is refused
+ * rather than crashing — unless the head run's hair and neck are there, when
+ * the face box is derived from them by measured ratios and a note says so
+ * (issue #76, {@link faceBoxOf}); the eye regions are keyed by the eyewhite
+ * part's own name rather than by the literal `eyewhite_r`; the long-robe hip,
+ * the clasped-hands region (issues #22, #23), an eyeless side's irides and
+ * lashes on `head` (issue #45) and the face-less fallback, which fire on
+ * neither published example — both proposals are byte-identical with and
+ * without them; and `lint`'s two torso lines, which the reference did not
+ * have.
  *
  * Coordinates are rig pixels, y down, origin top-left — the parts' own space.
  */
@@ -66,7 +71,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { drawText, GLYPH_H } from 'spine-rigc/tools/font5x7.ts';
 import { type BoneEntry, type MeshSpec, parseConfig, type Point, type Segment } from './config.ts';
-import { type Problem, refuseIfAny } from './errors.ts';
+import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 import { OPAQUE_ALPHA_ABOVE } from './layers.ts';
 import { PAINTING_RUN, type PartRecord, type PartsFile, readParts } from './parts.ts';
 import { connectedComponents } from './raster/components.ts';
@@ -567,6 +572,105 @@ function strandNote(p: PartRecord, strands: readonly Strand[], chained: readonly
   return `${head} -> ${made}; no chain proposed at x=${dropped.map((s) => pyFixed(s.x, 0)).join(',')} (${why})`;
 }
 
+// ---------------------------------------------------------------------------
+// the face box, or one derived from the head run when no face part exists (issue #76)
+// ---------------------------------------------------------------------------
+
+/**
+ * The ratios the face-less fallback derives a face box with. `L`, the span,
+ * runs from the top of the head run's hair ({@link FACELESS_HAIR_TAGS}, the
+ * highest of them) to the top of its `neck`. Measured on the two public
+ * examples' assembled parts (`examples/<key>/expected/parts.json`; demo: hair
+ * top y 67, neck top y 191, face 361,80 109x133; sample: hair top y 80, neck
+ * top y 194, face 368,98 94x121) — a sample of two; the mean of the two, to
+ * three places, is used:
+ *
+ * - `heightOfSpan` — face height / L: demo 133/124 = 1.073, sample
+ *   121/114 = 1.061.
+ * - `topOfSpan` — (face top − hair top) / L: demo 13/124 = 0.105, sample
+ *   18/114 = 0.158.
+ * - `widthOfHeight` — face width / face height: demo 109/133 = 0.820,
+ *   sample 94/121 = 0.777.
+ *
+ * The box is centred on the neck part's centre x (demo 417 against the face's
+ * 415.5, sample 411 against 415). Rejected for the top: the union of every
+ * head-run part, which the demo's headwear lifts to y 20 — its face height /
+ * span is 0.778 there against the sample's 1.061.
+ */
+export interface FacelessRatios {
+  heightOfSpan: number;
+  topOfSpan: number;
+  widthOfHeight: number;
+}
+
+/** The measured means; see {@link FacelessRatios}. */
+export const FACELESS_RATIOS: Readonly<FacelessRatios> = { heightOfSpan: 1.067, topOfSpan: 0.131, widthOfHeight: 0.798 };
+
+/** The head-run tags the face-less fallback reads the top of the head from. */
+export const FACELESS_HAIR_TAGS: readonly string[] = ['front hair', 'back hair'];
+
+/** The rules a face's features feed, by the tags each reads: the fallback note names each whose tags are all absent. */
+const FACE_FEATURE_RULES: ReadonlyArray<readonly [readonly string[], string]> = [
+  [EYE_GROUP_TAGS, 'the eye bones, the eye axis, the blink and its still pieces'],
+  [BROW_GROUP_TAGS, 'the brow bones'],
+  [['mouth'], 'the mouth bone'],
+];
+
+/** A face box `[x0, y0, w, h]` in rig px, and the note saying how it was derived (`null` when it is the face part's own box). */
+export interface FaceBox {
+  box: [number, number, number, number];
+  note: string | null;
+}
+
+/**
+ * The face box every rule scales by: the head run's `face` part (the full
+ * run's when the head run has none), as the reference read it; or, with no
+ * face part at all, one derived from the head run's hair and neck by
+ * `ratios` ({@link FACELESS_RATIOS}), with a note naming what it read, what
+ * it derived and which face-reading rules have nothing to read. Refuses
+ * `PROPOSE_FACE_PRESENT` when there is neither a face part nor what the
+ * fallback reads — never a box from nothing.
+ */
+export function faceBoxOf(P: PartSet, ratios: Readonly<FacelessRatios> = FACELESS_RATIOS): FaceBox {
+  const faces = P.headFirst('face');
+  if (faces.length > 0) return { box: [faces[0].x, faces[0].y, faces[0].w, faces[0].h], note: null };
+  const hair = P.layered().filter((p) => splitFrom(p.from)[0] === 'head' && FACELESS_HAIR_TAGS.includes(splitFrom(p.from)[1]));
+  const neck = P.byTag('neck', 'head');
+  const refuse = (why: string): never => {
+    const tags = [...new Set(P.recs.map((p) => p.from))].join(', ');
+    throw new PartsError([
+      {
+        code: 'PROPOSE_FACE_PRESENT',
+        object: 'parts.json',
+        detail:
+          `holds no part from a "face" layer (found: ${tags}); head, neck, the eye axis and the face height every other rule scales by all come from it, ` +
+          `and the face-less fallback, which derives a face box from the head run's hair (${FACELESS_HAIR_TAGS.map((t) => `"${t}"`).join(' or ')}) and its "neck", cannot: ${why}`,
+      },
+    ]);
+  };
+  if (hair.length === 0 && neck.length === 0) refuse('the head run has neither');
+  if (hair.length === 0) refuse(`the head run has a neck (${neck[0].name}) but no hair part`);
+  if (neck.length === 0) refuse(`the head run has hair (${hair.map((p) => p.name).join(', ')}) but no "neck" part`);
+  const n = neck[0];
+  const top = Math.min(...hair.map((p) => p.y));
+  const span = n.y - top;
+  if (span <= 0) refuse(`the hair's top, y=${top}, is not above the top of ${n.name}, y=${n.y}, so there is no span to scale`);
+  const fh = ratios.heightOfSpan * span;
+  const fw = ratios.widthOfHeight * fh;
+  const cx = n.x + n.w / 2;
+  const box: [number, number, number, number] = [cx - fw / 2, top + ratios.topOfSpan * span, fw, fh];
+  const nothing = FACE_FEATURE_RULES.filter(([ts]) => ts.every((t) => P.byTag(t).length === 0)).map(([ts, rule]) => `${rule} (no ${ts.join(' or ')} part)`);
+  const note =
+    `no face part: face box derived from the head run's hair (${hair.map((p) => p.name).join(', ')}; top y=${top}) and neck (${n.name}; top y=${n.y}, centre x=${pyFixed(cx, 1)}), a span of ${span} px — ` +
+    `height ${ratios.heightOfSpan} of the span, top ${ratios.topOfSpan} of it below the hair's top, width ${ratios.widthOfHeight} of the height, centred on the neck: ` +
+    `x ${pyFixed(box[0], 1)}, y ${pyFixed(box[1], 1)}, ${pyFixed(fw, 1)}x${pyFixed(fh, 1)} (ratios measured on the two public examples); ` +
+    'head, neck, the eye line when there is no eyewhite and every face-height scale are read off this guess, so correct those bones against the overlay' +
+    (nothing.length === 0 ? '' : `; nothing to read for ${nothing.join(', ')}`) +
+    // Measured: the sample with only its face removed opens 587 px behind its shut eyes, the demo 0 (its hair is under them).
+    (EYE_GROUP_TAGS.some((t) => P.byTag(t).length > 0) ? "; the blink shuts the eyes over no face part, so check's BLINK_NO_HOLE says whether anything shows through" : '');
+  return { box, note };
+}
+
 const SIDES = [
   ['r', 1],
   ['l', -1],
@@ -580,19 +684,11 @@ export function propose(P: PartSet): Proposal {
   const tracks: Array<ProposedSingleTrack | ProposedChainTrack> = [];
   const notes: string[] = [];
 
-  const faces = P.headFirst('face');
-  if (faces.length === 0) {
-    const tags = [...new Set(P.recs.map((p) => p.from))].join(', ');
-    refuseIfAny([
-      {
-        code: 'PROPOSE_FACE_PRESENT',
-        object: 'parts.json',
-        detail: `holds no part from a "face" layer (found: ${tags}); head, neck, the eye axis and the face height every other rule scales by all come from it`,
-      },
-    ]);
-  }
-  const face = faces[0];
-  const [fx0, fy0, fw, fh] = [face.x, face.y, face.w, face.h];
+  // The face part's box, or with none one derived from the head run's hair
+  // and neck (issue #76), said in the first note.
+  const faceBox = faceBoxOf(P);
+  const [fx0, fy0, fw, fh] = faceBox.box;
+  if (faceBox.note !== null) notes.push(faceBox.note);
   const ew: Record<'r' | 'l', PartRecord | null> = { r: P.byTag('eyewhite-r')[0] ?? null, l: P.byTag('eyewhite-l')[0] ?? null };
   const eyes = new Map<'r' | 'l', [number, number]>();
   for (const s of ['r', 'l'] as const) {

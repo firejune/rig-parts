@@ -88,7 +88,7 @@ import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src
 import { artifactPaths, build, BUILD_OWNS, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, shiftRight, writeCheckRig, writeMergedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
-import { BARE_CROWN_PARTS, eyeParts, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
+import { BARE_CROWN_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
 import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'spine-rigc/src/render.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
@@ -158,7 +158,7 @@ import {
   resize,
   warpAffine,
 } from './src/raster/index.ts';
-import { checkProposal, compare, compareLines, lint, lintLine, type Proposal, propose, readPartSet, serializeProposal } from './src/propose.ts';
+import { checkProposal, compare, compareLines, FACELESS_RATIOS, faceBoxOf, type FacelessRatios, lint, lintLine, type Proposal, propose, readPartSet, serializeProposal } from './src/propose.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
 import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText, type RigSpec } from './src/rig.ts';
@@ -3222,6 +3222,7 @@ function runProposeSuite(): number {
 
     runStrandCases(dir, say);
     runBlinkCases(dir, say);
+    runFacelessCases(dir, say);
 
     // issue #26: the eye parts of fixtures/propose.ts, once with a clear gap between crease and lash line and once without.
     const eyed = join(dir, 'eyes');
@@ -3504,6 +3505,185 @@ function runBlinkCases(dir: string, say: (name: string, ok: boolean, detail: str
   );
 
   runEyelessFeatureCases(dir, say);
+}
+
+/**
+ * Issue #76: a figure with no face part gets a proposal, its face box derived
+ * from the head run's hair and neck by the measured ratios and said in a note;
+ * with nothing to derive from it is still refused by name; with a face the
+ * fallback does not run.
+ */
+function runFacelessCases(dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const fdir = join(dir, 'faceless');
+  writeProposeFixture(fdir, FACELESS_PARTS, PROPOSE_RIG, true);
+  const F = readPartSet(fdir);
+  const fprop = propose(F);
+  // Hand-derived from fixtures/propose.ts (hair `mop` top y 10 and `fringe` top y 20, neck `throat` 90,110 20x30) and the ratios
+  // written in src/propose.ts (1.067, 0.131, 0.798): span L = 110 - 10 = 100; face height 1.067 L = 106.7;
+  // top 10 + 0.131 L = 23.1; width 0.798 x 106.7 = 85.1466; centred on the neck's x 100 -> x0 = 57.4267.
+  //   no eyewhite -> axis 100; chin 23.1 + 106.7 = 129.8; neck y = (129.8 + 140) / 2 = 134.9 -> 135;
+  //   head y 23.1 + 0.88 x 106.7 = 116.996 -> 117; hip (100, 150 + 0.14 x 106.7 = 164.938) -> 165;
+  //   chest y 134.9 + 0.5 x (164.938 - 134.9) = 149.919 -> 150; the hair ends at y 60, above
+  //   neck y + 0.5 face heights (188.25), so a bun at (100, 10 + 0.36 x 50 = 28), tip (100, 60 - 5 = 55);
+  //   skirt chains from y 184.938 in steps of (246 - 184.938) / 3 -> 185, 205, 226, tip 246 (x as PR01);
+  //   the sleeves read no face value, so they are PR01's. The fringe (70,20 60x40): eye line 23.1 + 0.5 x 106.7 = 76.45,
+  //   brow line 76.45 - 0.18 x 106.7 = 57.244; bang x at 57.4267 + f x 85.1466 for f 0.25 / 0.5 / 0.75 = 78.713, 100, 121.287;
+  //   links at y 20 + 13 = 33 and (33 + 57.244) / 2 + 6 = 51.122, tips at 57.244 + 19 = 76.244, x + dx and x + 1.8 dx (dx -10, 0, 10).
+  const fbox = faceBoxOf(F).box;
+  const wantBox = [57.4267, 23.1, 85.1466, 106.7];
+  const boxOk = fbox.every((v, i) => Math.abs(v - wantBox[i]) < 1e-9);
+  const want: Record<string, string> = {
+    hip: '[100,165]',
+    chest: '[100,150]',
+    neck: '[100,135]',
+    head: '[100,117]',
+    bun: '[[100,28]]->[100,55]',
+    bang_r: '[[79,33],[69,51]]->[61,76]',
+    bang_c: '[[100,33],[100,51]]->[100,76]',
+    bang_l: '[[121,33],[131,51]]->[139,76]',
+    sleeve_r: '[[30,115],[30,128],[30,140]]->[30,156]',
+    sleeve_l: '[[170,115],[170,128],[170,140]]->[170,156]',
+    skirt_r: '[[84,185],[84,205],[84,226]]->[84,246]',
+    skirt_c: '[[100,185],[100,205],[100,226]]->[100,246]',
+    skirt_l: '[[115,185],[115,205],[115,226]]->[115,246]',
+  };
+  const bunAt = fprop.bones.find((b) => 'name' in b && b.name === 'bun');
+  const shown = (n: string): string => (n === 'bun' ? (bunAt !== undefined && 'name' in bunAt ? `[${JSON.stringify(bunAt.at)}]->${JSON.stringify(bunAt.tip ?? null)}` : 'absent') : boneAt(fprop.bones, n));
+  const wrong = Object.entries(want).filter(([n, v]) => shown(n) !== v).map(([n, v]) => `${n} ${shown(n)} (want ${v})`);
+  const names = fprop.bones.map((b) => ('name' in b ? b.name : b.chain));
+  const fLoads = refusals(() => checkProposal(F, fprop));
+  const fText = serializeProposal(fprop);
+  say(
+    'PR46_A_FACELESS_FIGURE_TAKES_ITS_FACE_BOX_FROM_THE_HEAD_RUN_HAIR_AND_NECK_BY_THE_MEASURED_RATIOS',
+    boxOk && wrong.length === 0 && names.join(',') === 'hip,chest,neck,head,bun,bang_r,bang_c,bang_l,sleeve_r,sleeve_l,skirt_r,skirt_c,skirt_l' && fLoads === null && fText === serializeProposal(propose(readPartSet(fdir))),
+    `box [${fbox.map((v) => v.toFixed(4)).join(', ')}] (want [${wantBox.join(', ')}]); ${names.length} bone entries (${names.join(', ')}); ${wrong.length === 0 ? 'every coordinate as derived' : `wrong: ${wrong.join('; ')}`}; loads: ${codes(fLoads)}; two runs ${fText === serializeProposal(propose(readPartSet(fdir))) ? 'identical' : 'DIFFERENT'}`,
+    'issue #76: the decomposer can find back hair and a neck and no face (a figure turned away, a partner half hidden); the proposer used to refuse outright, and now derives the face box every rule scales by from the hair\'s top and the neck\'s top by ratios measured on the two public examples — so every value here follows from the fixture\'s rectangles and those three written ratios',
+  );
+
+  const wantNote =
+    "no face part: face box derived from the head run's hair (mop, fringe; top y=10) and neck (throat; top y=110, centre x=100.0), a span of 100 px — " +
+    "height 1.067 of the span, top 0.131 of it below the hair's top, width 0.798 of the height, centred on the neck: x 57.4, y 23.1, 85.1x106.7 (ratios measured on the two public examples); " +
+    'head, neck, the eye line when there is no eyewhite and every face-height scale are read off this guess, so correct those bones against the overlay; ' +
+    'nothing to read for the eye bones, the eye axis, the blink and its still pieces (no eyewhite-r or eyewhite-l part), the brow bones (no eyebrow-r or eyebrow-l part), the mouth bone (no mouth part)';
+  const blinkNote = "no blink: no eyewhite part (looked for: eyewhite-r, eyewhite-l), so the blink's eyes group would name no bone";
+  // The same figure with two eyewhites, a brow and a mouth (variant A of the card's measurement): the note keeps its box and drops the rules that now have a part to read.
+  const featured: ProposeFixturePart[] = [
+    ...FACELESS_PARTS,
+    { name: 'white_a', from: 'head:eyewhite-r', x: 80, y: 60, w: 10, h: 6, colour: [250, 250, 250] },
+    { name: 'white_b', from: 'head:eyewhite-l', x: 110, y: 60, w: 10, h: 6, colour: [250, 250, 250] },
+    { name: 'lip', from: 'head:mouth', x: 95, y: 100, w: 10, h: 4, colour: [200, 80, 80] },
+  ];
+  const adir = join(dir, 'faceless-featured');
+  writeProposeFixture(adir, featured, PROPOSE_RIG, true);
+  const aprop = propose(readPartSet(adir));
+  const wantA = `${wantNote.slice(0, wantNote.indexOf('; nothing to read for'))}; nothing to read for the brow bones (no eyebrow-r or eyebrow-l part); the blink shuts the eyes over no face part, so check's BLINK_NO_HOLE says whether anything shows through`;
+  say(
+    'PR47_THE_FALLBACK_NOTE_NAMES_THE_PARTS_THE_BOX_AND_THE_RATIOS_AND_EACH_FACE_RULE_LEFT_WITH_NOTHING_TO_READ',
+    fprop.notes[0] === wantNote && fprop.notes.includes(blinkNote) && fprop.notes.filter((n) => n.startsWith('no face part')).length === 1 && aprop.notes[0] === wantA && !aprop.notes.includes(blinkNote) && 'blink' in aprop.motion,
+    `faceless: notes[0] ${fprop.notes[0] === wantNote ? 'as written' : `"${fprop.notes[0]}"`}, the no-blink note ${fprop.notes.includes(blinkNote) ? 'present' : 'ABSENT'}; with eyewhites and a mouth: notes[0] ${aprop.notes[0] === wantA ? 'names only the brow bones' : `"${aprop.notes[0]}"`}, blink ${'blink' in aprop.motion ? 'proposed' : 'absent'}`,
+    'a proposal that guessed says so where an agent reads it: which parts were read, the box derived and the ratios, and by name every rule a face feature feeds that has no part to read — the eye, brow and mouth rules read their own parts, not the face box, so with eyewhites present the blink is proposed and the note no longer lists it',
+  );
+
+  const refusalOf = (sub: string, parts: ProposeFixturePart[]): Problem | null => {
+    const d = join(dir, sub);
+    writeProposeFixture(d, parts);
+    const e = refusals(() => propose(readPartSet(d)));
+    return e === null ? null : e.problems[0];
+  };
+  const head = 'holds no part from a "face" layer';
+  const fallback = 'and the face-less fallback, which derives a face box from the head run\'s hair ("front hair" or "back hair") and its "neck", cannot: ';
+  const none = refusalOf('faceless-none', PROPOSE_PARTS.filter((p) => p.name !== 'face'));
+  const wantNone = `${head} (found: full:bottomwear, full:handwear-r, full:handwear-l); head, neck, the eye axis and the face height every other rule scales by all come from it, ${fallback}the head run has neither`;
+  const noHair = refusalOf('faceless-no-hair', FACELESS_PARTS.filter((p) => p.name !== 'mop' && p.name !== 'fringe'));
+  const noNeck = refusalOf('faceless-no-neck', FACELESS_PARTS.filter((p) => p.name !== 'throat'));
+  const low = refusalOf('faceless-low-hair', FACELESS_PARTS.map((p) => (p.name === 'mop' || p.name === 'fringe' ? { ...p, y: 120 } : p)));
+  const cliOut = join(dir, 'faceless-none-out');
+  const cli = runCli(['propose', '--parts', join(dir, 'faceless-none'), '--source', join(dir, 'faceless-none', 'painting.png'), '--out', cliOut]);
+  const endsAs = (p: Problem | null, tail: string): boolean => p !== null && p.code === 'PROPOSE_FACE_PRESENT' && p.object === 'parts.json' && p.detail.endsWith(`${fallback}${tail}`);
+  say(
+    'PR48_NOTHING_TO_DERIVE_FROM_IS_STILL_PROPOSE_FACE_PRESENT_AND_THE_MESSAGE_NAMES_THE_FALLBACK_AND_WHAT_IT_NEEDS',
+    none !== null &&
+      none.code === 'PROPOSE_FACE_PRESENT' &&
+      none.detail === wantNone &&
+      endsAs(noHair, 'the head run has a neck (throat) but no hair part') &&
+      endsAs(noNeck, 'the head run has hair (mop, fringe) but no "neck" part') &&
+      endsAs(low, "the hair's top, y=120, is not above the top of throat, y=110, so there is no span to scale") &&
+      cli.status === 1 &&
+      !existsSync(join(cliOut, 'proposal.json')),
+    [none, noHair, noNeck, low].map((p) => (p === null ? 'NOT REFUSED' : `${p.code}: …${p.detail.slice(p.detail.indexOf('cannot: '))}`)).join(' | ') + `; CLI exit ${cli.status}, proposal.json ${existsSync(join(cliOut, 'proposal.json')) ? 'WRITTEN' : 'not written'}`,
+    'never a proposal from nothing: with no head-run part, with a neck and no hair, with hair and no neck, or with the hair starting below the neck, there is no span to derive a face box from, and the refusal says what the fallback reads and which half is missing',
+  );
+
+  const moved = (r: Partial<FacelessRatios>): [number, number, number, number] => faceBoxOf(F, { ...FACELESS_RATIOS, ...r }).box;
+  const h = moved({ heightOfSpan: 1.2 });
+  const t = moved({ topOfSpan: 0.2 });
+  const w = moved({ widthOfHeight: 0.9 });
+  // By hand: height 1.2 x 100 = 120; top 10 + 0.2 x 100 = 30; width 0.9 x 106.7 = 96.03, x0 100 - 48.015 = 51.985.
+  say(
+    'PR49_EACH_RATIO_CHANGED_MOVES_THE_DERIVED_BOX_BY_THE_HAND_COMPUTED_AMOUNT',
+    Math.abs(h[3] - 120) < 1e-9 && Math.abs(t[1] - 30) < 1e-9 && Math.abs(w[2] - 96.03) < 1e-9 && Math.abs(w[0] - 51.985) < 1e-9 && boxOk,
+    `height of span 1.2 -> face height ${h[3].toFixed(4)}; top of span 0.2 -> top ${t[1].toFixed(4)}; width of height 0.9 -> width ${w[2].toFixed(4)}, x0 ${w[0].toFixed(4)}; the written ratios -> [${fbox.map((v) => v.toFixed(4)).join(', ')}]`,
+    'the planted negative: a box that did not move when a ratio moved would mean the ratio is not what derives it, and PR46\'s hand values would pass for the wrong reason',
+  );
+
+  const wdir = join(dir, 'faceless-with-face');
+  const withFace: ProposeFixturePart[] = [...FACELESS_PARTS, PROPOSE_PARTS.find((p) => p.name === 'face') as ProposeFixturePart];
+  writeProposeFixture(wdir, withFace, PROPOSE_RIG, true);
+  const W = readPartSet(wdir);
+  const wprop = propose(W);
+  const wb = faceBoxOf(W);
+  // By hand, from the face 80,40 40x50: axis 100, chin 90, neck y (90 + 140) / 2 = 115, head y 40 + 44 = 84,
+  // hip 150 + 7 = 157, chest 115 + 0.5 x 42 = 136. The fallback on the same parts would put the head at y 117 (PR46).
+  const wWant = { hip: '[100,157]', chest: '[100,136]', neck: '[100,115]', head: '[100,84]' };
+  const wWrong = Object.entries(wWant).filter(([n, v]) => boneAt(wprop.bones, n) !== v);
+  say(
+    'PR50_WITH_A_FACE_PRESENT_THE_FALLBACK_DOES_NOT_RUN',
+    wb.note === null && wb.box.join(',') === '80,40,40,50' && wWrong.length === 0 && !wprop.notes.some((n) => n.startsWith('no face part')) && boneAt(fprop.bones, 'head') !== boneAt(wprop.bones, 'head'),
+    `the same hair and neck with a face: box [${wb.box.join(', ')}], note ${wb.note === null ? 'none' : 'WRITTEN'}; ${Object.keys(wWant).map((n) => `${n} ${boneAt(wprop.bones, n)}`).join(', ')}; planted (the fallback's box on these parts): head ${boneAt(fprop.bones, 'head')}, which this control would refuse`,
+    'the fallback is for a figure with no face; one with a face reads the face, as the reference did, so both public proposals are unchanged — a fallback that ran anyway would move the head from y 84 to y 117 here',
+  );
+
+  // The ratios are a definition: the mean, to three places, of each ratio on the public examples' expected parts (tracked, so never a HOLE).
+  const measured: Array<{ key: string; r: FacelessRatios; unionTop: number }> = [];
+  for (const key of readdirSync(join(ROOT, 'examples')).sort()) {
+    const pj = join(ROOT, 'examples', key, 'expected', 'parts.json');
+    if (!existsSync(pj)) continue;
+    const parts = readParts(pj).parts;
+    const face = parts.find((p) => p.from === 'head:face');
+    const neck = parts.find((p) => p.from === 'head:neck');
+    const hairTops = parts.filter((p) => p.from === 'head:front hair' || p.from === 'head:back hair').map((p) => p.y);
+    if (face === undefined || neck === undefined || hairTops.length === 0) continue;
+    const top = Math.min(...hairTops);
+    const L = neck.y - top;
+    const unionTop = Math.min(...parts.filter((p) => p.from.startsWith('head:') && p.from !== 'head:neck' && !FACE_FEATURE_PLAN_TAGS.includes(p.from.slice(5))).map((p) => p.y));
+    measured.push({ key, r: { heightOfSpan: face.h / L, topOfSpan: (face.y - top) / L, widthOfHeight: face.w / face.h }, unionTop: face.h / (neck.y - unionTop) });
+  }
+  const meanOf = (k: keyof FacelessRatios): number => Math.round((measured.reduce((s, m) => s + m.r[k], 0) / measured.length) * 1000) / 1000;
+  const keys = ['heightOfSpan', 'topOfSpan', 'widthOfHeight'] as const;
+  const means = keys.map((k) => meanOf(k));
+  // Planted: a written ratio one step off the mean (0.001) is not the mean.
+  const offByOne = { ...FACELESS_RATIOS, heightOfSpan: FACELESS_RATIOS.heightOfSpan + 0.001 };
+  say(
+    'PR54_THE_WRITTEN_RATIOS_ARE_THE_MEANS_MEASURED_ON_THE_PUBLIC_EXAMPLES_EXPECTED_PARTS',
+    measured.length === 2 && keys.every((k, i) => means[i] === FACELESS_RATIOS[k]) && meanOf('heightOfSpan') !== offByOne.heightOfSpan,
+    `${measured.map((m) => `${m.key}: ${keys.map((k) => `${k} ${m.r[k].toFixed(3)}`).join(', ')} (head-run union top instead of the hair: ${m.unionTop.toFixed(3)})`).join('; ')}; means ${keys.map((k, i) => `${k} ${means[i]}`).join(', ')} against the written ${keys.map((k) => FACELESS_RATIOS[k]).join(', ')}; planted ${offByOne.heightOfSpan.toFixed(3)} -> ${meanOf('heightOfSpan') !== offByOne.heightOfSpan ? 'not the mean' : 'TAKEN AS THE MEAN'}`,
+    'a figure carries its source: the three ratios in src/propose.ts are defined as the mean of two measured examples, so a re-measured example, a third one, or a hand-edited constant shows here; the union-of-head-run figure is the rejected candidate, printed beside it',
+  );
+
+  // The face-less proposal, pasted into a config, through the rig stage and check: the face-reading lines SKIP by name.
+  const cfg = join(fdir, 'config.json');
+  writeFileSync(cfg, JSON.stringify(proposalConfig(FACELESS_PARTS, fprop)));
+  const rig = runCli(['rig', '--config', cfg, '--parts', fdir, '--out', join(fdir, 'rig')]);
+  const chk = runCli(['check', '--rig', join(fdir, 'rig'), '--parts', fdir, '--out', join(fdir, 'check')]);
+  const line = (n: string): string => (chk.out.split('\n').find((l) => l.includes(`${n}:`)) ?? '').trim();
+  const stillWant = 'STILL_REGIONS_DARK: SKIP — no part comes from a See-through "face" or "footwear" layer, so the heat map has no still region to read';
+  const blinkWant = 'BLINK_NO_HOLE: SKIP — no part comes from a See-through "eyewhite" layer, so there is no eye to look behind';
+  say(
+    'PR51_THE_FACELESS_PROPOSAL_RIGS_GREEN_AND_CHECK_SKIPS_THE_FACE_READING_LINES_BY_NAME',
+    rig.status === 0 && chk.status === 0 && chk.out.includes('check: PASS') && line('STILL_REGIONS_DARK') === stillWant && line('BLINK_NO_HOLE') === blinkWant,
+    `rig exit ${rig.status}; check exit ${chk.status} (${chk.out.includes('check: PASS') ? 'PASS' : 'not PASS'}); "${line('STILL_REGIONS_DARK')}"; "${line('BLINK_NO_HOLE')}"`,
+    'a derived face box is a proposal an agent pastes and builds, so it must clear rigc\'s gate; and check reads the face only where a face part is, so its face half and the blink say SKIP with the reason — never a pass on a face nobody measured',
+  );
 }
 
 /** Issue #45: irides and lashes on a side with no eyewhite ride head as regions, with the cause in a note — not a region on an eye bone nobody made. */
@@ -5765,6 +5945,84 @@ function summarise(d: { over: string[]; within: string[] }, limit = 3): string {
   return `${over}${d.within.length > 0 ? `; ${d.within.length} within: ${d.within.slice(0, limit).join('; ')}${d.within.length > limit ? '; …' : ''}` : ''}`;
 }
 
+/** The face-feature tags issue #76's measurement removes from an example's plan (its variant B): the face and everything on it. */
+const FACE_FEATURE_PLAN_TAGS: readonly string[] = ['face', 'eyewhite-r', 'eyewhite-l', 'irides-r', 'irides-l', 'eyelash-r', 'eyelash-l', 'eyebrow-r', 'eyebrow-l', 'mouth'];
+
+/**
+ * Issue #76 on a fetched example, beside its chain build (`out`): the proposal
+ * on the built parts is the tracked one in key order as well as value, with no
+ * fallback note; and the example re-assembled with its face-feature plan
+ * entries removed gets a proposal — the fallback's note, a config the loader
+ * takes — whose head and neck are reported against the with-face proposal's
+ * in px and in true face heights. No bar is set on that distance: it is the
+ * figure the ratios' two-example sample gives, printed so a change shows.
+ */
+function runFacelessExample(key: string, ex: string, out: string, dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  let withFace: Proposal | null = null;
+  let exact = 'not proposed';
+  try {
+    withFace = propose(readPartSet(out));
+    const tracked = `${JSON.stringify(JSON.parse(readFileSync(join(ex, 'proposal.json'), 'utf8')), null, 2)}\n`;
+    const built = serializeProposal(withFace);
+    exact = built === tracked ? `identical, ${built.length} bytes` : `DIFFERENT from byte ${[...built].findIndex((c, i) => c !== tracked[i])}`;
+  } catch (err) {
+    exact = `refused or crashed: ${(err as Error).message.split('\n')[0]}`;
+  }
+  const fallbackNoted = withFace !== null && withFace.notes.some((n) => n.startsWith('no face part'));
+  say(
+    `PR52_THE_TRACKED_PROPOSAL_IS_WRITTEN_IN_KEY_ORDER_AND_VALUE_AND_THE_FALLBACK_STAYS_OFF[${key}]`,
+    exact.startsWith('identical') && withFace !== null && !fallbackNoted,
+    `proposal.json re-serialized (two-space indent, its own key order) against serializeProposal on the built parts: ${exact}; fallback note ${fallbackNoted ? 'WRITTEN' : 'absent'}`,
+    "CH06 compares parsed values, which a reordered key passes; the tracked file is the reference's Python output (one-space indent), so the exact comparison is the bytes once both are written the one way this package writes JSON — and the face-less fallback (issue #76) must not fire on an example that has a face",
+  );
+
+  const cfg = JSON.parse(readFileSync(join(ex, 'config.json'), 'utf8')) as Record<string, unknown> & {
+    assemble: { plan: Array<[string, string, string]>; extend_below_crop?: Array<{ part: string }> };
+    meshes: Record<string, unknown>;
+    regions: Record<string, unknown>;
+  };
+  const gone = cfg.assemble.plan.filter((e) => FACE_FEATURE_PLAN_TAGS.includes(e[2])).map((e) => e[0]);
+  cfg.assemble.plan = cfg.assemble.plan.filter((e) => !FACE_FEATURE_PLAN_TAGS.includes(e[2]));
+  if (cfg.assemble.extend_below_crop !== undefined) cfg.assemble.extend_below_crop = cfg.assemble.extend_below_crop.filter((e) => !gone.includes(e.part));
+  for (const g of gone) {
+    delete cfg.meshes[g];
+    delete cfg.regions[g];
+  }
+  const vdir = join(dir, `${key}-faceless`);
+  mkdirSync(vdir, { recursive: true });
+  writeFileSync(join(vdir, 'config.json'), JSON.stringify(cfg));
+  const inputs = join(ex, 'inputs');
+  const asm = runCli(['assemble', '--source', join(inputs, 'painting.png'), '--full', join(inputs, 'layers', 'full'), '--head', join(inputs, 'layers', 'head'), '--config', join(vdir, 'config.json'), '--out', vdir]);
+  let detail = `assemble without ${gone.join(', ')}: exit ${asm.status}`;
+  let ok = false;
+  if (asm.status === 0 && withFace !== null) {
+    try {
+      const V = readPartSet(join(vdir, 'rig'));
+      const v = propose(V);
+      checkProposal(V, v);
+      const real = readParts(join(ex, 'expected', 'parts.json')).parts.find((p) => p.from === 'head:face');
+      const fh = real?.h ?? Number.NaN;
+      const off = ['head', 'neck', 'chest', 'hip'].map((n) => {
+        const a = JSON.parse(boneAt(withFace?.bones ?? [], n)) as [number, number];
+        const b = JSON.parse(boneAt(v.bones, n)) as [number, number];
+        const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        return `${n} ${JSON.stringify(b)} vs ${JSON.stringify(a)}: ${d.toFixed(1)} px = ${(d / fh).toFixed(3)} face heights`;
+      });
+      const note = v.notes.find((n) => n.startsWith('no face part')) ?? null;
+      ok = note !== null && v.notes[0] === note && !v.bones.some((b) => 'name' in b && (b.name.startsWith('eye_') || b.name.startsWith('brow_') || b.name === 'mouth'));
+      detail += `; propose: ${note === null ? 'NO FALLBACK NOTE' : `"${note.slice(0, note.indexOf(' (ratios'))}…"`}; loads; ${off.join('; ')} (the true face is ${fh} px tall)`;
+    } catch (err) {
+      detail += `; propose refused or crashed: ${(err as Error).message.split('\n')[0]}`;
+    }
+  }
+  say(
+    `PR53_THE_EXAMPLE_WITH_ITS_FACE_PLAN_ENTRIES_REMOVED_GETS_A_PROPOSAL_FROM_THE_FALLBACK[${key}]`,
+    ok,
+    detail,
+    "issue #76's figure on real art: the decomposer found hair and a neck and no face; the proposal is made, says first that its face box is a guess and from what, makes no eye, brow or mouth bone, and loads as a config — the distances are printed, not barred: two examples are the ratios' whole sample",
+  );
+}
+
 function runChainSuite(): number | null {
   section('chain: build on every fetched example, against its expected/');
   const found = exampleDirs().filter((d) => existsSync(join(d, 'inputs', 'layers', 'head')));
@@ -5927,6 +6185,8 @@ function runChainSuite(): number | null {
         proposal,
         "the tracked proposal.json is what the reference proposer wrote from the reference's parts; the port's proposer on the port's parts must write the same, which is the proposer's half the examples could not reach before a build existed",
       );
+
+      runFacelessExample(key, ex, out, dir, say);
     }
 
     // CH09's comparator, planted: a validate line set carrying a rule the build's set lacks is named, and the
