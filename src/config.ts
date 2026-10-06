@@ -37,8 +37,25 @@
  * Coordinates in `bones`, `meshes` and `motion` are RIG pixels, y down, origin
  * top-left — the parts' own space. The y flip to Spine happens once, in
  * `spine-rigc/src/transform.ts` (see `src/coords.ts`), when the rig is built.
+ *
+ * 🔗 **`constraints` is spine-rigc's, verbatim (issue #92).** An optional list
+ * of constraint objects in spine-rigc's own rig-spec shape (`RigConstraint`:
+ * `ik`, `transform`, `path`, `physics`, `slider`), handed to rigc as
+ * `rig.json`'s `constraints` in the order written. The loader owns four things
+ * and nothing else: the list is a list of objects; each has a `type` rigc's
+ * union names and a non-empty `name`, unique within its kind (rigc's identity
+ * of a constraint is its kind and its name); every bone a constraint names
+ * — the fields {@link CONSTRAINT_BONE_FIELDS} lists, read off rigc's
+ * `buildRigConstraint` — is a bone `bones` declares; and where what is written
+ * cannot mean what it says on the bones the config declares, it is refused by
+ * name ({@link checkConstraints}). Every other field, its type and its range
+ * are rigc's to refuse, at the rig stage's gate, in rigc's words. A record
+ * (`x-…`) and an annotation (`note`, `…_note`) ride on a constraint as on any
+ * object the loader vouches for, and the rig stage leaves them out of what it
+ * hands rigc ({@link constraintForRig}).
  */
 import { existsSync, readFileSync } from 'node:fs';
+import { RIG_SKIN_CONSTRAINT_KEYS, type RigConstraint, type RigSkinConstraintKey } from 'spine-rigc/src/rig.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { acceptedTagNames, readTag } from './tags.ts';
 
@@ -207,6 +224,18 @@ export interface Motion {
   blink?: Blink;
 }
 
+/**
+ * One entry of `config.constraints`: a constraint in spine-rigc's rig-spec
+ * shape. The loader vouches for `type`, `name` and the bone names in the
+ * fields {@link CONSTRAINT_BONE_FIELDS} lists; every other field is carried
+ * unread and is rigc's to accept or refuse.
+ */
+export interface ConfigConstraint {
+  type: RigSkinConstraintKey;
+  name: string;
+  [field: string]: unknown;
+}
+
 export interface CharacterConfig {
   key: string;
   note?: string;
@@ -217,6 +246,59 @@ export interface CharacterConfig {
   meshes: Record<string, MeshSpec>;
   regions: Record<string, string>;
   motion: Motion;
+  constraints?: ConfigConstraint[];
+}
+
+/** The fields of one constraint kind, as spine-rigc's interface for that kind declares them. */
+type ConstraintField<K extends RigSkinConstraintKey> = Exclude<keyof Extract<RigConstraint, { type: K }>, number | symbol>;
+
+/**
+ * 🔒 The bone-bearing fields of each of spine-rigc's five constraint kinds,
+ * and whether each holds one bone name or a list of them — the one table this
+ * package keeps of rigc's constraint shapes, and only of the fields that name
+ * a bone. Read off `buildRigConstraint` in spine-rigc 2.10.1
+ * (`src/compile.ts`), where each is resolved with its `needBone` (the ik's
+ * `bones` and `target`, the transform's `bones` and `source`, the path's
+ * `bones`, the physics constraint's `bone`, the slider's optional `bone`); a
+ * path's `slot` names a slot and a slider's `animation` an animation, which
+ * rigc resolves. rigc exports no such table. Each field name is typed
+ * against rigc's own interface for its kind, so a rigc release that renames
+ * one breaks the typecheck by name, and the selftest holds every name to
+ * rigc's `RIG_KEYS` at run time (`CF66`).
+ */
+export const CONSTRAINT_BONE_FIELDS: { readonly [K in RigSkinConstraintKey]: ReadonlyArray<readonly [ConstraintField<K>, 'one' | 'list']> } = {
+  ik: [['bones', 'list'], ['target', 'one']],
+  transform: [['bones', 'list'], ['source', 'one']],
+  path: [['bones', 'list']],
+  physics: [['bone', 'one']],
+  slider: [['bone', 'one']],
+};
+
+/**
+ * The bone a constraint follows, by kind — an ik's `target`, a transform's
+ * `source` (rigc: "4.2 called this target") — or none. It is what makes a
+ * bone a `target` in `src/structure.ts`'s roles, and the bone the rig stage
+ * declares `invariants.detached` for.
+ */
+export const CONSTRAINT_FOLLOWS: Readonly<Partial<Record<RigSkinConstraintKey, 'target' | 'source'>>> = { ik: 'target', transform: 'source' };
+
+/** Whether a key on a vouched object is the loader's own door — a record or an annotation — that nothing reads. */
+export function isDoorKey(key: string): boolean {
+  return isRecordKey(key) || key === 'note' || key.endsWith('_note');
+}
+
+/**
+ * A constraint as the rig stage hands it to rigc: every field the config
+ * wrote, in the order written, but the records (`x-…`) and annotations
+ * (`note`, `…_note`) the loader let ride on it — they are read by nothing,
+ * and rigc refuses a key it does not read. No rigc constraint field is a
+ * record or an annotation name (`CF66` holds that to rigc's `RIG_KEYS`), so
+ * nothing rigc would read is left out.
+ */
+export function constraintForRig(c: ConfigConstraint): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(c)) if (!isDoorKey(key)) out[key] = value;
+  return out;
 }
 
 /** The single-value bone properties a sine track may drive — rigc's one-channel bone timelines. */
@@ -437,7 +519,7 @@ export interface AssembleConfig {
   assemble: Assemble;
 }
 
-const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'bones', 'meshes', 'regions', 'motion'] as const;
+const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'bones', 'meshes', 'regions', 'motion', 'constraints'] as const;
 
 /**
  * The one partial entry point. It validates exactly what its door requires —
@@ -508,11 +590,12 @@ export function parseConfig(raw: Json): CharacterConfig {
   if ('generation' in t) checkGeneration(c, t.generation);
   if ('seethrough' in t) checkSeeThrough(c, t.seethrough);
   const { parts, patches } = 'assemble' in t ? checkAssemble(c, t.assemble, 'full') : { parts: [], patches: [] };
-  const names = 'bones' in t ? checkBones(c, t.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>() };
+  const names = 'bones' in t ? checkBones(c, t.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>(), parents: new Map<string, string>() };
   if ('meshes' in t) checkMeshes(c, t.meshes, names.bones, names.chains);
   if ('regions' in t) checkRegions(c, t.regions, names.bones);
   if ('meshes' in t && 'regions' in t && 'assemble' in t) checkCoverage(c, parts, patches, t.meshes, t.regions);
   if ('motion' in t) checkMotion(c, t.motion, names.bones, names.chains, 'regions' in t ? t.regions : undefined);
+  if ('constraints' in t) checkConstraints(c, t.constraints, names.bones, names.parents);
   refuseIfAny(c.problems);
   return raw as CharacterConfig;
 }
@@ -538,7 +621,7 @@ export function parseProposalSections(raw: Json): SkeletonSections {
   const c = new Check();
   const top = c.object('config', raw, ['bones', 'meshes', 'regions', 'motion'], ['notes']);
   if (top !== null) {
-    const names = 'bones' in top ? checkBones(c, top.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>() };
+    const names = 'bones' in top ? checkBones(c, top.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>(), parents: new Map<string, string>() };
     if ('meshes' in top) checkMeshes(c, top.meshes, names.bones, names.chains);
     if ('regions' in top) checkRegions(c, top.regions, names.bones);
     if ('motion' in top) checkMotion(c, top.motion, names.bones, names.chains, 'regions' in top ? top.regions : undefined);
@@ -775,11 +858,12 @@ function checkPatches(c: Check, v: Json, plan: string[]): string[] {
   return names;
 }
 
-/** Returns every bone name (root and chain links included) and each chain's link count. */
-function checkBones(c: Check, v: Json): { bones: Set<string>; chains: Map<string, number> } {
+/** Returns every bone name (root and chain links included), each chain's link count, and each declared bone's parent as written. */
+function checkBones(c: Check, v: Json): { bones: Set<string>; chains: Map<string, number>; parents: Map<string, string> } {
   const bones = new Set<string>([ROOT_BONE]);
   const chains = new Map<string, number>();
-  if (!c.array('config.bones', v, true)) return { bones, chains };
+  const parents = new Map<string, string>();
+  if (!c.array('config.bones', v, true)) return { bones, chains, parents };
   // Not `declare`: Bun strips `declare(...)` as a TypeScript ambient declaration
   // while tsc accepts it as a call, so the call vanished at run time with both
   // gates green. Measured, not assumed — the selftest has a control for it.
@@ -805,6 +889,10 @@ function checkBones(c: Check, v: Json): { bones: Set<string>; chains: Map<string
         const points = b.points as Json[];
         points.forEach((pt, k) => c.point(`${at}.points[${k}]`, pt));
         points.forEach((_, k) => addBone(`${name}${k}`, `${at} link ${k}`));
+        points.forEach((_, k) => {
+          if (k > 0) parents.set(`${name}${k}`, `${name}${k - 1}`);
+          else if (typeof b.parent === 'string' && !parents.has(`${name}0`)) parents.set(`${name}0`, b.parent);
+        });
         chains.set(name, points.length);
       }
       return;
@@ -816,9 +904,12 @@ function checkBones(c: Check, v: Json): { bones: Set<string>; chains: Map<string
     }
     if ('at' in b) c.point(`${at}.at`, b.at);
     if ('tip' in b) c.point(`${at}.tip`, b.tip);
-    if ('name' in b && c.string(`${at}.name`, b.name)) addBone(b.name, `${at}.name`);
+    if ('name' in b && c.string(`${at}.name`, b.name)) {
+      addBone(b.name, `${at}.name`);
+      if (typeof b.parent === 'string' && !parents.has(b.name)) parents.set(b.name, b.parent);
+    }
   });
-  return { bones, chains };
+  return { bones, chains, parents };
 }
 
 function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, number>): void {
@@ -1022,4 +1113,139 @@ function refuseSharedTargets(c: Check, claims: ReadonlyMap<string, string[]>): v
       `is keyed by ${by.length} tracks: ${by.join(' and ')}; one track per bone property is required — the idle would hold ${by.length} timelines on ${target}, and rigc refuses two tracks on one bone property. Merge them into one track, or key another property or bone`,
     );
   }
+}
+
+/**
+ * `config.constraints` (issue #92): spine-rigc's own constraint shapes, read
+ * for the four things this package owns and nothing else (see the module
+ * comment). What each refusal is for:
+ *
+ * - `CONFIG_FIELD_TYPE` / `CONFIG_FIELD_PRESENT`: not a list, an entry not an
+ *   object, a `type` or `name` absent, a `name` not a non-empty string, an
+ *   annotation not a string, a bone field holding something that is not a
+ *   name (or a list of names).
+ * - `CONFIG_CONSTRAINT_TYPE_KNOWN`: a `type` rigc's union does not name.
+ *   rigc refuses it too; the stage whose input is wrong is this one.
+ * - `CONFIG_CONSTRAINT_NAME_UNIQUE`: two constraints of one kind under one
+ *   name. rigc resolves a constraint by its kind and its name
+ *   (`SkeletonData.findConstraint(name, type)`), so an ik and a transform may
+ *   share a name and two iks may not — the identity rigc keeps.
+ * - `CONFIG_NAME_RESOLVES`: a bone a constraint names that `bones` does not
+ *   declare, naming the constraint, the field and the name, with the bones
+ *   that exist.
+ * - `CONFIG_IK_BONES_PARENT_AND_CHILD`: an ik's `bones` are one bone, or two
+ *   of which the second is the first's child. Measured through spine-rigc
+ *   2.10.1 on the rig fixture (`fixtures/rig.ts`, its 4 s idle rendered at 12
+ *   fps, 49 frames, with a target bone under `root`): an ik over `body` and
+ *   `hem1` (whose parent is `hem0`) gates green and leaves `hem1`'s tip 15.6
+ *   to 17.3 units from its target in every frame; an ik over three bones
+ *   gates green and moves no bone (spine-core's solver applies one bone or
+ *   two). Neither is what was written, and nothing downstream says so.
+ * - `CONFIG_CONSTRAINT_TARGET_DETACHED`: the bone an ik follows (`target`)
+ *   or a transform reads (`source`) is one of the bones it drives or sits
+ *   under one, so driving them moves the bone they follow. A scene target is
+ *   a bone parented to `root`. The rig stage declares the same fact for rigc
+ *   (`invariants.detached`, rigc's `A25`), so the gate holds the built rig to
+ *   it too.
+ *
+ * Every other field — `mix`, `properties`, a path's `slot`, a slider's
+ * `animation` — and every value of it is rigc's, refused at the rig stage's
+ * gate in rigc's words.
+ */
+function checkConstraints(c: Check, v: Json, bones: Set<string>, parents: Map<string, string>): void {
+  const p = 'config.constraints';
+  if (!c.array(p, v, false)) return;
+  const kinds = RIG_SKIN_CONSTRAINT_KEYS as readonly string[];
+  const declared = [...bones].join(', ');
+  const seen = new Map<string, number>();
+  // A bone's parents as the config writes them, nearest first.
+  const above = (bone: string): string[] => {
+    const out: string[] = [];
+    for (let up = parents.get(bone); up !== undefined && !out.includes(up); up = parents.get(up)) out.push(up);
+    return out;
+  };
+  (v as Json[]).forEach((entry, i) => {
+    const at = `${p}[${i}]`;
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      c.fail('CONFIG_FIELD_TYPE', at, `is ${show(entry)}; a constraint object in spine-rigc's rig-spec shape is required ({"type": …, "name": …, and that kind's fields})`);
+      return;
+    }
+    const o = entry as Record<string, Json>;
+    for (const key of Object.keys(o)) {
+      if (!isRecordKey(key) && (key === 'note' || key.endsWith('_note')) && typeof o[key] !== 'string') {
+        c.fail('CONFIG_FIELD_TYPE', `${at}.${key}`, `is ${show(o[key])}; an annotation is a string — a structured record goes under a key beginning "x-" (any JSON, read by nothing)`);
+      }
+    }
+    let kind: RigSkinConstraintKey | null = null;
+    if (!('type' in o)) c.fail('CONFIG_FIELD_PRESENT', `${at}.type`, `is absent and required; one of ${kinds.join(', ')}`);
+    else if (typeof o.type !== 'string' || !kinds.includes(o.type)) {
+      c.fail('CONFIG_CONSTRAINT_TYPE_KNOWN', `${at}.type`, `is ${show(o.type)}; one of ${kinds.join(', ')} is required — spine-rigc's rig-spec constraint kinds, spelled as rigc spells them`);
+    } else kind = o.type as RigSkinConstraintKey;
+    if (!('name' in o)) c.fail('CONFIG_FIELD_PRESENT', `${at}.name`, 'is absent and required; a constraint is found by its kind and its name');
+    else if (c.string(`${at}.name`, o.name) && kind !== null) {
+      const id = `${kind} ${o.name}`;
+      const first = seen.get(id);
+      if (first !== undefined) {
+        c.fail(
+          'CONFIG_CONSTRAINT_NAME_UNIQUE',
+          `${at}.name`,
+          `names the ${kind} constraint "${o.name}" again (first at constraints[${first}]); a constraint is found by its kind and its name, so two of one kind may not share one (an ik and a transform may: spine-rigc's identity of a constraint)`,
+        );
+      } else seen.set(id, i);
+    }
+    if (kind === null) return;
+    const label = typeof o.name === 'string' && o.name !== '' ? `${kind} constraint "${o.name}"` : `the ${kind} constraint`;
+    // The bone names, field by field, resolved against the declared bones.
+    const named = new Map<string, string[]>();
+    for (const [field, arity] of CONSTRAINT_BONE_FIELDS[kind]) {
+      if (!(field in o)) continue;
+      const value = o[field];
+      const fat = `${at}.${field}`;
+      if (arity === 'one') {
+        if (typeof value !== 'string') {
+          c.fail('CONFIG_FIELD_TYPE', fat, `is ${show(value)}; ${label} names a bone here, and a bone name is required`);
+        } else if (!bones.has(value)) {
+          c.fail('CONFIG_NAME_RESOLVES', fat, `names "${value}", which config.bones does not declare (${label}); the bones that exist: ${declared}`);
+        } else named.set(field, [value]);
+        continue;
+      }
+      if (!Array.isArray(value) || !value.every((n) => typeof n === 'string')) {
+        c.fail('CONFIG_FIELD_TYPE', fat, `is ${show(value)}; ${label} names bones here, and a list of bone names is required`);
+        continue;
+      }
+      const list = value as string[];
+      list.forEach((n, k) => {
+        if (!bones.has(n)) c.fail('CONFIG_NAME_RESOLVES', `${fat}[${k}]`, `names "${n}", which config.bones does not declare (${label}); the bones that exist: ${declared}`);
+      });
+      if (list.every((n) => bones.has(n))) named.set(field, list);
+    }
+    const driven = named.get('bones');
+    if (kind === 'ik' && driven !== undefined && driven.length > 2) {
+      c.fail(
+        'CONFIG_IK_BONES_PARENT_AND_CHILD',
+        `${at}.bones`,
+        `names ${driven.length} bones (${driven.join(', ')}); spine-core's ik solver applies one bone (an aim) or two (a parent and its child) and leaves more untouched, so ${label} would gate green and move nothing — name one bone, or two of which the second is the first's child`,
+      );
+    } else if (kind === 'ik' && driven !== undefined && driven.length === 2 && parents.get(driven[1]) !== driven[0]) {
+      c.fail(
+        'CONFIG_IK_BONES_PARENT_AND_CHILD',
+        `${at}.bones`,
+        `names "${driven[0]}" and "${driven[1]}", and ${parents.has(driven[1]) ? `"${driven[1]}"'s parent is "${parents.get(driven[1])}"` : `"${driven[1]}" has no parent`}; a two-bone ik solves a parent and its child, and on any other pair spine-core places the second bone as though it were the first's child, so its tip ends away from the target with the gate green — name a bone and its child`,
+      );
+    }
+    const follows = CONSTRAINT_FOLLOWS[kind];
+    const target = follows === undefined ? undefined : named.get(follows)?.[0];
+    if (follows !== undefined && target !== undefined && driven !== undefined) {
+      const line = [target, ...above(target)];
+      const hit = driven.find((b) => line.includes(b));
+      if (hit !== undefined) {
+        const where = hit === target ? `is "${target}", which ${label} also drives` : `is "${target}", which sits under "${hit}" (${line.slice(0, line.indexOf(hit) + 1).join(' < ')}), a bone ${label} drives`;
+        c.fail(
+          'CONFIG_CONSTRAINT_TARGET_DETACHED',
+          `${at}.${follows}`,
+          `${where}; the bone a constraint follows must not move with the bones it drives, or driving them moves what they follow — a scene target is a bone parented to "${ROOT_BONE}"`,
+        );
+      }
+    }
+  });
 }

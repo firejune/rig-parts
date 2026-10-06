@@ -75,7 +75,10 @@ built from its own proposal with no hand edit at all —
   - an **upstream `.psd`** — one pixel layer per tag, the layer name being the tag,
     the stacking order being the draw order.
 - **A character config** (`config.json`) — the part plan, the head box, the bones,
-  which bones may pull which layer, and the idle's sines. `src/config.ts` is its
+  which bones may pull which layer, the idle's sines, and optionally `constraints`
+  in spine-rigc's own rig-spec shape (ik, transform, path, physics, slider), handed
+  to rigc as written once every bone they name resolves; a scene target is a bone
+  under `root` a constraint names. `src/config.ts` is its
   schema and documents every field; the loader refuses an unknown or a missing field
   by name, and reads nothing under `note`, a `<name>_note` (a string) or a key
   beginning `x-` (any JSON — a project's own records, such as a past build's gate
@@ -267,7 +270,7 @@ agent skill.
 | `propose … --keypoints <file> [--person <id>]` | read a posed figure's joints from one explicit file (space, image size, people, each joint observed, occluded or missing, its source): a joint with a position places the neck, hip, chest or a sleeve chain as given, a note says how every joint was used or which rule stood in, and LINT reads the torso and sleeves along the joints instead of by screen y ([AUTHORING §3](docs/AUTHORING.md)) |
 | `propose … --from-config <config>` | draw and LINT the config's current bones (by the joints too, given `--keypoints`) |
 | `compare --left <file> --right <file> [--map <bonemap.json>]` | compare two skeletons — a config, a proposal or a `rig.json` — bone by bone: origin, parent, tip, length and direction per pair, the bones neither side pairs, the required ones missing, and each side's roles read off the spec; no frame is guessed, and nothing pairs by resemblance (`propose --compare` reads origins only) |
-| `rig --config --parts --out [--idle-keys ctl\|direct]` | author `rig.json` + `motion.json`, written only after spine-rigc's gate is green; every chain link is turned along its chain and carries its `length`, so a physics constraint added later has a lever, with every offset under it in the turned frame so nothing moves; `--idle-keys` says whether the idle's keys on mesh-driving bones go through `<bone>_ctl` parents (default) or stay on the bones with `invariants.idleDrivesMeshes` declared |
+| `rig --config --parts --out [--idle-keys ctl\|direct]` | author `rig.json` + `motion.json`, written only after spine-rigc's gate is green; every chain link is turned along its chain and carries its `length`, so a physics constraint added later has a lever, with every offset under it in the turned frame so nothing moves; `--idle-keys` says whether the idle's keys on mesh-driving bones go through `<bone>_ctl` parents (default) or stay on the bones with `invariants.idleDrivesMeshes` declared; the config's `constraints` go to rigc as written, and a two-bone ik over keyed links needs `--idle-keys direct` (`build` keys through controls and refuses it) |
 | `check --rig --out [--parts] [--source]` | build packed, gated under `spine-html`, render the idle, measure seam, loop and the six judgement lines (mesh texture stretch among them, from the idle's `render --geometry`), and report the recomposite's holes from `parts.json`; on a rig spec with no `parts.json` or no `idle` (a merged rig, issue #77) the gate still runs and every line that needs the missing input says SKIP by name; `--source <painting.png>` adds `SETUP_POSE_VS_SOURCE`, the setup pose against the painting by assemble's recomposite figures |
 | `loop --frames <dir> --out <file.gif \| file.png> [--palette]` | encode a rendered idle as a looping GIF, lossless APNG, or indexed APNG (`--palette`) |
 | `build --config --source --full --head --out [--seam] [--project] [--loop]` | assemble, rig and check in one process, stopping at the first refusal |

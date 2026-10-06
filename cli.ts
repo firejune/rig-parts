@@ -625,7 +625,7 @@ function parseCanvas(v: string): { w: number; h: number } | null {
   return m === null ? null : { w: Number(m[1]), h: Number(m[2]) };
 }
 
-function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: CharacterConfig['meshes']; regions: CharacterConfig['regions']; motion: CharacterConfig['motion'] }, joints?: RigJoints): number {
+function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: CharacterConfig['meshes']; regions: CharacterConfig['regions']; motion: CharacterConfig['motion']; constraints?: CharacterConfig['constraints'] }, joints?: RigJoints): number {
   const res = lint(P, spec, joints);
   // Under --keypoints only: which rule set read the torso and the chains, and on what basis.
   if (res.basis !== undefined) for (const l of basisLines(res.basis)) console.log(l);
