@@ -26,7 +26,8 @@ import { makeInputs } from './src/inputs.ts';
 import { DEFAULT_IDLE_KEYS, IDLE_KEYS, type IdleKeys } from './src/rig.ts';
 import { figuresPhrase, implausibleRules, layerFigures, type LayerSet, pct, readLayers, ruleSummary, times } from './src/layers.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPEC, loadKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
-import { basisLines, checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, propose, readPartSet, serializeProposal } from './src/propose.ts';
+import { basisLines, checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal } from './src/propose.ts';
+import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { readPng, writePng } from './src/raster/png.ts';
 import { buildSheet, defaultCaption, type Tile, tilesFrom } from './src/sheet.ts';
 import { loadComparison, requiredProblems, structureLines } from './src/structure.ts';
@@ -92,6 +93,18 @@ usage:
       --compare prints each shared bone's distance, proposal to config, in px.
       It reads bone origins only — not parents, tips, lengths, directions or
       names, so a changed parent or tip scores 0; spine-parts compare reads those.
+      After the LINT lines, one "coverage" line per bone says which check read
+      it ("checked, clean" or "checked, LINT") or that none did and why ("not
+      checked": its role — a control binds nothing and may sit off the art —
+      a single bone or an explicit [bone, from, to] segment, which the off-art
+      check does not read, a region, a mesh naming no part), and a summary
+      counts the three apart with the roles. Writes <out>/${BASIS_FILE} beside
+      the proposal (spec "${BASIS_SPEC}"): per proposed bone, what its origin
+      and its stated tip rest on — a joint (with its state and score as the
+      file declared them), a measurement off a part, a ratio with its
+      constants, or other bones — and under --compare whether the config's
+      bone differs (origin, tip, parent; how far, in px). No confidence is
+      computed. It prints "wrote ${BASIS_FILE} (…)" after the coverage lines.
 
   spine-parts propose … [--keypoints <keypoints.json> [--person <id>]]
       Read the figure's pose from one explicit file (spec "${KEYPOINTS_SPEC}"):
@@ -113,8 +126,9 @@ usage:
 
   spine-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
       Draw the config's CURRENT bones instead (<out>/render/landmarks_config.png
-      and _head) and LINT them (by the joints too, given --keypoints). Exits 1
-      when any LINT line is printed.
+      and _head) and LINT them (by the joints too, given --keypoints), with the
+      coverage lines after them; no ${BASIS_FILE}, as nothing is proposed.
+      Exits 1 when any LINT line is printed.
 
   spine-parts propose --head-box --full <dir | layers.json | file.psd> --canvas <W>x<H>
       Propose seethrough.head_box (source px, square) from the full run's
@@ -611,7 +625,7 @@ function parseCanvas(v: string): { w: number; h: number } | null {
   return m === null ? null : { w: Number(m[1]), h: Number(m[2]) };
 }
 
-function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: CharacterConfig['meshes'] }, joints?: RigJoints): number {
+function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: CharacterConfig['meshes']; regions: CharacterConfig['regions']; motion: CharacterConfig['motion'] }, joints?: RigJoints): number {
   const res = lint(P, spec, joints);
   // Under --keypoints only: which rule set read the torso and the chains, and on what basis.
   if (res.basis !== undefined) for (const l of basisLines(res.basis)) console.log(l);
@@ -625,6 +639,8 @@ function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: 
     );
   }
   console.log(`${res.findings.length} LINT line(s) over ${Object.keys(spec.meshes).length - res.unknownMeshes.length} mesh(es) and the hip`);
+  // Issue #86: after every line above, which check read each bone, or why none did.
+  for (const l of coverageLines(res.coverage)) console.log(l);
   return res.findings.length;
 }
 
@@ -701,17 +717,20 @@ function cmdPropose(args: string[]): number {
     }
     const cmpPath = flags.get('--compare');
     const cfg = cmpPath === undefined ? null : loadConfig(cmpPath);
-    const prop = propose(P, joints);
-    // Emit only after green: a proposal the config loader would refuse is not written.
+    const { proposal: prop, basis } = proposeWithBasis(P, joints);
+    // Emit only after green: a proposal the config loader would refuse is not written, nor a basis record that does not hold to it.
     checkProposal(P, prop);
+    const bfile = basisFile(P, prop, basis, cfg === null || cmpPath === undefined ? null : { where: cmpPath, config: cfg });
     const img = drawLandmarks(P, painting, prop.bones, 'PROPOSAL - CORRECT ME');
     mkdirSync(render, { recursive: true });
     writeFileSync(join(out, 'proposal.json'), serializeProposal(prop));
+    writeFileSync(join(out, BASIS_FILE), serializeBasis(bfile));
     writePng(join(render, 'landmarks.png'), img.full);
     if (img.head !== null) writePng(join(render, 'landmarks_head.png'), img.head);
     console.log(`wrote proposal.json (${prop.bones.length} bone entries, ${Object.keys(prop.meshes).length} meshes) and render/landmarks.png (+_head) under ${out}`);
     for (const n of prop.notes) console.log(`note: ${n}`);
     printLint(P, prop, joints);
+    console.log(basisLine(bfile, out));
     if (cfg !== null) for (const l of compareLines(compare(prop.bones, cfg.bones))) console.log(l);
     return EXIT_OK;
   } catch (err) {

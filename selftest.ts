@@ -125,7 +125,7 @@ import { BARS, blackRig, buildGateLines, causeLines, chainLine, measuredRules, S
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
-import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { PartsError, type Problem } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
@@ -162,6 +162,7 @@ import {
 import {
   BONEMAP_SPEC,
   compareStructure,
+  configRoles,
   type Figure,
   FRAMES_NOT_RELATED,
   loadComparison,
@@ -176,7 +177,33 @@ import {
   type StructureComparison,
   structureLines,
 } from './src/structure.ts';
-import { basisLines, checkProposal, compare, compareLines, drawLandmarks, FACELESS_RATIOS, faceBoxOf, type FacelessRatios, lint, lintLine, type PartSet, type Proposal, propose, readPartSet, serializeProposal } from './src/propose.ts';
+import {
+  BASIS_KINDS,
+  type BoneBasis,
+  type BoneCoverage,
+  basisLines,
+  checkProposal,
+  compare,
+  compareLines,
+  coverageOutcome,
+  drawLandmarks,
+  expand,
+  FACELESS_RATIOS,
+  faceBoxOf,
+  type FacelessRatios,
+  lint,
+  lintLine,
+  type PartSet,
+  type Placement,
+  type Proposal,
+  type ProposalBasis,
+  propose,
+  STRAND_LINK_AT,
+  proposeWithBasis,
+  readPartSet,
+  serializeProposal,
+} from './src/propose.ts';
+import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeypoints, parseKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
 import { LYING_PARTS, LYING_RIG, type PoseName, POSES } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
@@ -1933,6 +1960,79 @@ function runCliSuite(): number {
       `twice -> exit ${twiceKp.status}; no value -> exit ${bareKp.status}; beside --head-box -> exit ${headBoxKp.status}, ${(headBoxKp.out.split('\n').find((l) => l.includes('FAIL')) ?? '').trim()}`,
       'two files would be two poses and the proposer reads one; the head box is read off the full run before any parts exist, so a pose has nothing to place there',
     );
+
+    // Issue #86: the help names the coverage lines and the basis file; a refused run writes no basis file and
+    // --from-config writes none (nothing is proposed); the new lines sit between the LINT summary and the compare table,
+    // and every other line is the one printed before them.
+    const help86 = help.out.slice(help.out.indexOf('spine-parts propose --parts'), help.out.indexOf('spine-parts propose --head-box'));
+    const tokens86 = ['one "coverage" line per bone', '("checked, clean" or "checked, LINT")', `Writes <out>/${BASIS_FILE} beside`, `(spec "${BASIS_SPEC}")`, 'No confidence is', `no ${BASIS_FILE}, as nothing is proposed`];
+    say(
+      'CL15_PROPOSE_HELP_NAMES_THE_COVERAGE_LINES_AND_THE_BASIS_FILE',
+      tokens86.every((t) => help86.includes(t)) && !tokens86.some((t) => checkSlice.includes(t)),
+      tokens86.map((t) => `${JSON.stringify(t)} ${help86.includes(t)}`).join(', '),
+      'the help is where an agent learns that "checked, clean" and "not checked" are different lines and that a file beside the proposal says what each bone rests on; the same tokens are looked for in the check section, which must not hold them',
+    );
+
+    const PX = readPartSet(px);
+    const refusedOut = join(px, 'out-refused');
+    const refused86 = runCli(['propose', '--parts', px, '--source', join(px, 'painting.png'), '--out', refusedOut, '--compare', join(px, 'no-such-config.json')]);
+    const fcOut = join(px, 'out-fc');
+    const fromCfg = runCli(['propose', '--parts', px, '--source', join(px, 'painting.png'), '--out', fcOut, '--from-config', cleanCfg]);
+    const writtenBasis = existsSync(join(px, 'out-clean', BASIS_FILE)) ? readFileSync(join(px, 'out-clean', BASIS_FILE), 'utf8') : '';
+    const wantBasis = serializeBasis(basisFile(PX, prop, proposeWithBasis(PX).basis, { where: cleanCfg, config: loadConfig(cleanCfg) }));
+    say(
+      'CL16_A_REFUSED_PROPOSE_WRITES_NO_BASIS_FILE_FROM_CONFIG_WRITES_NONE_AND_A_GREEN_ONE_WRITES_THE_SERIALISED_RECORD',
+      refused86.status === 1 &&
+        !existsSync(join(refusedOut, BASIS_FILE)) &&
+        !existsSync(join(refusedOut, 'proposal.json')) &&
+        fromCfg.status === 0 &&
+        existsSync(join(fcOut, 'render', 'landmarks_config.png')) &&
+        !existsSync(join(fcOut, BASIS_FILE)) &&
+        writtenBasis === wantBasis,
+      `--compare naming no file: exit ${refused86.status}, basis.json ${existsSync(join(refusedOut, BASIS_FILE)) ? 'WRITTEN' : 'absent'}; --from-config: exit ${fromCfg.status}, basis.json ${existsSync(join(fcOut, BASIS_FILE)) ? 'WRITTEN' : 'absent'}; green --compare: basis.json ${writtenBasis === wantBasis ? `is the serialised record (${writtenBasis.length} bytes)` : 'is NOT the serialised record'}`,
+      'emit only after green: the record is written beside the proposal or not at all, and only where something was proposed',
+    );
+
+    // The printout. `block` holds the lines issue #86 adds; they must be one run right after the LINT summary, the compare
+    // table right after them, and the rest, line for line, what the functions that printed before them print.
+    const lines86 = viaReparent.out.replace(/\n$/, '').split('\n');
+    const isNew = (l: string): boolean => l.startsWith('coverage') || l.startsWith(`wrote ${BASIS_FILE} `);
+    const placed = (ls: readonly string[]): string | null => {
+      const first = ls.findIndex(isNew);
+      const last = ls.length - 1 - [...ls].reverse().findIndex(isNew);
+      if (first < 0) return 'no line added';
+      if (!/^\d+ LINT line\(s\) over /.test(ls[first - 1] ?? '')) return `the first added line follows "${ls[first - 1]}", not the LINT summary`;
+      if (ls.slice(first, last + 1).some((l) => !isNew(l))) return 'the added lines are not one run';
+      if (!ls[last].startsWith(`wrote ${BASIS_FILE} `)) return 'the basis line is not the last added line';
+      return null;
+    };
+    const reparentOut = join(px, 'out-reparent');
+    const RP86 = loadConfig(reparentCfg);
+    const lint86 = lint(PX, prop);
+    const old86 = [
+      `wrote proposal.json (${prop.bones.length} bone entries, ${Object.keys(prop.meshes).length} meshes) and render/landmarks.png (+_head) under ${reparentOut}`,
+      ...prop.notes.map((n) => `note: ${n}`),
+      ...lint86.findings.map(lintLine),
+      `${lint86.findings.length} LINT line(s) over ${Object.keys(prop.meshes).length} mesh(es) and the hip`,
+      ...compareLines(compare(prop.bones, RP86.bones)),
+    ];
+    const added86 = [...coverageLines(lint86.coverage), basisLine(basisFile(PX, prop, proposeWithBasis(PX).basis, { where: reparentCfg, config: RP86 }), reparentOut)];
+    const stray = [...lines86.filter((l) => !isNew(l))];
+    stray.splice(2, 0, 'note: a line nobody printed before');
+    const movedUp = [...lines86];
+    const firstNew = movedUp.findIndex(isNew);
+    movedUp.splice(1, 0, ...movedUp.splice(firstNew, 1));
+    say(
+      'CL17_THE_ADDED_LINES_RUN_FROM_THE_LINT_SUMMARY_TO_THE_COMPARE_TABLE_AND_EVERY_OTHER_LINE_IS_AS_IT_WAS',
+      viaReparent.status === 0 &&
+        placed(lines86) === null &&
+        lines86.filter((l) => !isNew(l)).join('\n') === old86.join('\n') &&
+        lines86.filter(isNew).join('\n') === added86.join('\n') &&
+        stray.join('\n') !== old86.join('\n') &&
+        placed(movedUp) !== null,
+      `${lines86.length} line(s): ${lines86.filter(isNew).length} added, placed ${placed(lines86) ?? 'after the LINT summary, before the compare table'}; the other ${lines86.filter((l) => !isNew(l)).length} ${lines86.filter((l) => !isNew(l)).join('\n') === old86.join('\n') ? 'are' : 'are NOT'} the printout before issue #86; planted: a stray line ${stray.join('\n') === old86.join('\n') ? 'NOT caught' : 'caught'}, a coverage line moved up: ${placed(movedUp) ?? 'NOT caught'}`,
+      'additions only: an agent that read propose\'s printout before issue #86 reads it the same, and CL14 still finds the compare table last',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -3355,6 +3455,7 @@ function runProposeSuite(): number {
     runBlinkCases(dir, say);
     runFacelessCases(dir, say);
     runKeypointPoseCases(dir, say);
+    runBasisFixtureCases(dir, say);
 
     // issue #26: the eye parts of fixtures/propose.ts, once with a clear gap between crease and lash line and once without.
     const eyed = join(dir, 'eyes');
@@ -3471,6 +3572,77 @@ function rectPixels(p: ProposeFixturePart, k: number, row?: number): Array<[numb
   const out: Array<[number, number]> = [];
   for (let y = y0; y < y0 + h; y++) if (row === undefined || y === row) for (let x = x0; x < x0 + w; x++) out.push([x + 0.5, y + 0.5]);
   return out;
+}
+
+/**
+ * Issue #86 on the rule fixtures: the basis each placement records names the rule that placed the bone. Each want row is
+ * read off the rule in src/propose.ts, not off a run: the kind, the parts and bones it reads, its constants, its fallback.
+ */
+function runBasisFixtureCases(dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  // The long robe (fixtures/propose.ts, PR08): the hip is the waist rule — the narrowest torso row below the shoulder line
+  // found from the neck, + 0.14 face heights — with WAIST_MAX_OF_SHOULDERS 0.8; no neck part, so the neck takes 0.12 face
+  // heights below the chin and says so; clasped hands are a region, so no sleeve bone and no sleeve record.
+  // Planted: the same robe as one straight column (PR09) has no waist, and the hip records the 0.32 proportion as a stand-in.
+  const robeDir = join(dir, 'basis-robe');
+  writeProposeFixture(robeDir, LONG_ROBE_PARTS, LONG_ROBE_RIG);
+  const robe = proposeWithBasis(readPartSet(robeDir)).basis;
+  const straightDir = join(dir, 'basis-straight');
+  writeProposeFixture(
+    straightDir,
+    LONG_ROBE_PARTS.map((p) => (p.name === 'robe' ? { ...p, x: 60, w: 80, rects: undefined } : p)),
+    LONG_ROBE_RIG,
+  );
+  const straight = proposeWithBasis(readPartSet(straightDir)).basis;
+  const robeWrong = basisMismatch(robe.bones, {
+    hip: ['ratio parts= joints= bones=neck frame=torso|figure|face_box k=face_heights_below_waist=0.14|waist_max_of_shoulders=0.8 fb=-', 'none'],
+    neck: ['ratio parts= joints= bones= frame=face_box|eye_axis k=face_heights_below_chin=0.12 fb=no neck part', 'none'],
+  });
+  const straightWrong = basisMismatch(straight.bones, { hip: ['ratio parts= joints= bones= frame=figure|eye_axis k=of_figure_height=0.32 fb=no waist found', 'none'] });
+  say(
+    'PR70_THE_ROBE_HIP_RECORDS_THE_WAIST_RULE_AND_ITS_CONSTANTS_AND_WITH_NO_WAIST_THE_PROPORTION_IT_STOOD_IN_WITH',
+    robeWrong.length === 0 && straightWrong.length === 0 && !robe.bones.some((b) => b.bone.startsWith('sleeve_')) && robe.frame.torso.parts.join(',') === 'robe,shoes',
+    `robe: ${robeWrong.length === 0 ? `hip ${placementRow(robe.bones[0].origin)}` : robeWrong.join(' || ')}; torso layers [${robe.frame.torso.parts.join(', ')}]; sleeve records ${robe.bones.filter((b) => b.bone.startsWith('sleeve_')).length}; no waist: ${straightWrong.length === 0 ? placementRow(straight.bones[0].origin) : straightWrong.join(' || ')}`,
+    'a hip read off the silhouette and a hip placed at a share of the figure because no waist was found are different facts about the same bone; the record keeps them apart',
+  );
+
+  // The face-less figure (PR46): the face box is derived from the head run's hair (mop, fringe) and neck (throat), and
+  // the frame says so; the neck reads throat (half way from the derived chin to its bottom), the bangs the derived box.
+  const facelessDir = join(dir, 'basis-faceless');
+  writeProposeFixture(facelessDir, FACELESS_PARTS);
+  const fl = proposeWithBasis(readPartSet(facelessDir)).basis;
+  const flWrong = basisMismatch(fl.bones, {
+    neck: ['ratio parts=throat joints= bones= frame=face_box|eye_axis k=share_chin_to_neck_bottom=0.5 fb=-', 'none'],
+    bang_c0: ['ratio parts=fringe joints= bones= frame=face_box k=of_face_width=0.5|px_below_part_top=13 fb=-', 'none'],
+  });
+  // Planted: the hand-built figure, which has a face part, names it as its face box and nothing derived.
+  const withFace = proposeWithBasis(readPartSet(join(dir))).basis.frame.face_box;
+  say(
+    'PR71_A_FACELESS_FIGURE_RECORDS_ITS_FACE_BOX_AS_DERIVED_FROM_HAIR_AND_NECK_AND_EVERY_RULE_THAT_READS_IT_SAYS_SO',
+    fl.frame.face_box.parts.join(',') === 'mop,fringe,throat' &&
+      fl.frame.face_box.rule.startsWith('derived from the head run') &&
+      flWrong.length === 0 &&
+      withFace.parts.join(',') === 'face' &&
+      withFace.rule === 'the box of face, the face part',
+    `face box: ${fl.frame.face_box.rule} [${fl.frame.face_box.parts.join(', ')}]; ${flWrong.length === 0 ? `neck ${placementRow(fl.bones.find((b) => b.bone === 'neck')?.origin ?? null)}` : flWrong.join(' || ')}; with a face part: ${withFace.rule} [${withFace.parts.join(', ')}]`,
+    'issue #76 says in a note that the face box is a guess; the record carries the same fact to every bone that reads the box, so a reader of one bone does not need the note',
+  );
+
+  // The strand crown (PR12): the hairpin body is 0.6 of the way from the body's near edge to the pendant column, 47 px in;
+  // each strand chain's link 1 sits STRAND_LINK_AT of the strand's height down, all measured on the crown's own pixels.
+  const strandDir = join(dir, 'basis-strands');
+  writeProposeFixture(strandDir, STRAND_PARTS, STRAND_RIG, true);
+  const sb = proposeWithBasis(readPartSet(strandDir)).basis;
+  const sbWrong = basisMismatch(sb.bones, {
+    hairpin: ['mask parts=crown joints= bones= frame= k=share_near_edge_to_pendant=0.6|px_further_in=47 fb=-', 'mask parts=crown joints= bones= frame= k= fb=-'],
+    hairpin_strand0_0: ['mask parts=crown joints= bones= frame= k= fb=-', 'none'],
+    hairpin_strand0_1: [`mask parts=crown joints= bones= frame= k=of_strand_height=${STRAND_LINK_AT} fb=-`, 'mask parts=crown joints= bones= frame= k= fb=-'],
+  });
+  say(
+    'PR72_A_STRAND_CHAIN_AND_THE_BODY_IT_HANGS_FROM_RECORD_THEIR_MEASURES_ON_THE_ACCESSORY',
+    sbWrong.length === 0 && sb.bones.filter((b) => b.bone.startsWith('hairpin_strand')).length === 4,
+    `${sbWrong.length === 0 ? `hairpin ${placementRow(sb.bones.find((b) => b.bone === 'hairpin')?.origin ?? null)}` : sbWrong.join(' || ')}; strand links recorded ${sb.bones.filter((b) => b.bone.startsWith('hairpin_strand')).length} (two chains of two)`,
+    "the reference's tassel constants are the hairpin's own; the record names them where they are used, so a strand chain is told from the body it hangs from",
+  );
 }
 
 /** Issue #24: hanging strands on an accessory are found, noted, and given pendulum chains; the body they hang from stays on its bone. */
@@ -6813,6 +6985,50 @@ function summarise(d: { over: string[]; within: string[] }, limit = 3): string {
 const FACE_FEATURE_PLAN_TAGS: readonly string[] = ['face', 'eyewhite-r', 'eyewhite-l', 'irides-r', 'irides-l', 'eyelash-r', 'eyelash-l', 'eyebrow-r', 'eyebrow-l', 'mouth'];
 
 /**
+ * Issue #86 on a fetched example, on the parts its chain build assembled (`out`): one basis record per proposed bone and
+ * checkBasis green; and lint's coverage reads exactly the bones its definition says it reads — every link of a chain a
+ * string segment of a mesh with a part names, and hip and chest (both single bones, so the two screen rules run) — and
+ * each record's role is structure.ts's. The figures (outcomes, roles, kinds, and against the tracked config) are printed,
+ * not barred.
+ */
+function runExampleDiagnostics(key: string, ex: string, out: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  let ok = false;
+  let detail = '';
+  try {
+    const P = readPartSet(out);
+    const { proposal, basis } = proposeWithBasis(P);
+    const held = refusals(() => checkBasis(P, proposal, basis));
+    const sections = proposal as unknown as SkeletonSections;
+    const cov = lint(P, sections).coverage;
+    const parts = new Set(P.recs.map((p) => p.name));
+    const chains = new Map(proposal.bones.flatMap((b) => ('chain' in b ? [[b.chain, b.points.length] as const] : [])));
+    const want = new Set<string>(['hip', 'chest']);
+    for (const [m, spec] of Object.entries(proposal.meshes)) {
+      if (!parts.has(m)) continue;
+      for (const sp of spec.segments) if (typeof sp === 'string' && chains.has(sp)) for (let k = 0; k < (chains.get(sp) as number); k++) want.add(`${sp}${k}`);
+    }
+    const got = new Set(cov.filter((c) => c.read.length > 0).map((c) => c.bone));
+    const diff = [...new Set([...want, ...got])].filter((n) => want.has(n) !== got.has(n));
+    const roles = configRoles(sections);
+    const roleOff = cov.filter((c) => JSON.stringify(c.role) !== JSON.stringify(roles.get(c.bone))).map((c) => c.bone);
+    const cfg = parseConfig(JSON.parse(readFileSync(join(ex, 'config.json'), 'utf8')));
+    const file = basisFile(P, proposal, basis, { where: 'config.json', config: cfg });
+    ok = held === null && basis.bones.length === expand(proposal.bones).byName.size && diff.length === 0 && roleOff.length === 0 && file.bones.length === basis.bones.length;
+    detail =
+      `${basis.bones.length} record(s) for ${expand(proposal.bones).byName.size} bone(s), checkBasis ${codes(held)}; read by definition and by lint ${diff.length === 0 ? 'the same' : `DIFFERENT on ${diff.join(', ')}`}; roles not configRoles': [${roleOff.join(', ')}]; ` +
+      `${coverageLines(cov).at(-1)}; ${basisLine(file, '…').replace(/ under …$/, '')}`;
+  } catch (err) {
+    detail = `refused or crashed: ${(err as Error).message.split('\n')[0]}`;
+  }
+  say(
+    `PR73_EVERY_PROPOSED_BONE_ON_THE_EXAMPLE_HAS_ONE_BASIS_RECORD_AND_LINT_READS_EXACTLY_THE_BONES_ITS_DEFINITION_NAMES[${key}]`,
+    ok,
+    detail,
+    'issue #86 on real art: the record is held to the proposal like the proposal to the loader, and the coverage reports what lint read, not what it might have — every other bone is said not checked, with why',
+  );
+}
+
+/**
  * Issue #76 on a fetched example, beside its chain build (`out`): the proposal
  * on the built parts is the tracked one in key order as well as value, with no
  * fallback note; and the example re-assembled with its face-feature plan
@@ -7051,6 +7267,7 @@ function runChainSuite(): number | null {
       );
 
       runFacelessExample(key, ex, out, dir, say);
+      runExampleDiagnostics(key, ex, out, say);
     }
 
     // CH09's comparator, planted: a validate line set carrying a rule the build's set lacks is named, and the
@@ -9736,6 +9953,405 @@ function pinDrift(ours: { devDependencies?: Record<string, string> }, theirs: { 
   return a === b ? null : `package.json pins ${SPINE_CORE} ${a}; spine-rigc ${theirs.version ?? '?'} develops against ${b}; the two must be equal`;
 }
 
+// ---------------------------------------------------------------------------
+// diagnostics: what propose looked at, said (issue #86)
+// ---------------------------------------------------------------------------
+
+/** A coverage record as one comparable string: outcome, role, the checks that read it, the LINT count, the reasons. */
+function coverageRow(c: BoneCoverage): string {
+  return `${c.bone} ${coverageOutcome(c)} [${c.role?.role ?? 'not read'}] read=${c.read.join('|')} lint=${c.lint} why=${c.why.join(' | ')}`;
+}
+
+/** A placement as one comparable string: kind, the names it reads, its constants and its fallback. */
+function placementRow(p: Placement | null): string {
+  if (p === null) return 'none';
+  return `${p.kind} parts=${p.parts.join('|')} joints=${p.joints.map((j) => `${j.name}:${j.state}:${j.listed}:${j.score}`).join('|')} bones=${p.bones.join('|')} frame=${p.frame.join('|')} k=${p.constants.map((c) => `${c.name}=${c.value}`).join('|')} fb=${p.fallback ?? '-'}`;
+}
+
+/** The rows of a want table that a record set does not match, each saying what it found. */
+function basisMismatch(records: readonly BoneBasis[], want: Record<string, [string, string]>): string[] {
+  const wrong: string[] = [];
+  for (const [bone, [o, t]] of Object.entries(want)) {
+    const r = records.find((b) => b.bone === bone);
+    if (r === undefined) wrong.push(`${bone}: no record`);
+    else {
+      if (!placementRow(r.origin).startsWith(o)) wrong.push(`${bone} origin ${placementRow(r.origin)} (want ${o}…)`);
+      if (!placementRow(r.tip).startsWith(t)) wrong.push(`${bone} tip ${placementRow(r.tip)} (want ${t}…)`);
+    }
+  }
+  return wrong;
+}
+
+/** The lines of src/ (but structure.ts) that assign a bone role as a literal: a second role derivation. */
+function roleAssignments(files: ReadonlyArray<readonly [string, string]>): string[] {
+  const out: string[] = [];
+  for (const [f, t] of files) {
+    if (f === 'src/structure.ts') continue;
+    t.split('\n').forEach((l, i) => {
+      if (/role:\s*'(target|deforms|control|unclassified)'/.test(l)) out.push(`${f}:${i + 1}`);
+    });
+  }
+  return out;
+}
+
+/** Every key path of a JSON value, in its key order, with array indices dropped: the shape a reader walks. */
+function keyOrder(v: unknown, at = ''): string[] {
+  if (Array.isArray(v)) return v.length === 0 ? [] : keyOrder(v[0], `${at}[]`);
+  if (typeof v !== 'object' || v === null) return [];
+  return Object.entries(v).flatMap(([k, x]) => [`${at}.${k}`, ...keyOrder(x, `${at}.${k}`)]);
+}
+
+/** The keys named "confidence" or "score" anywhere in a JSON value, with their path. */
+function scoreKeys(v: unknown, at = ''): string[] {
+  if (Array.isArray(v)) return v.flatMap((x, i) => scoreKeys(x, `${at}[${i}]`));
+  if (typeof v !== 'object' || v === null) return [];
+  return Object.entries(v).flatMap(([k, x]) => [...(k === 'confidence' || k === 'score' ? [`${at}.${k}`] : []), ...scoreKeys(x, `${at}.${k}`)]);
+}
+
+function runDiagnosticsSuite(): number {
+  section('diagnostics: what propose read, per bone, and what each bone rests on (issue #86)');
+  const { say, bad } = counter();
+  const dir = temp('diagnostics');
+  try {
+    writeProposeFixture(dir);
+    const P = readPartSet(dir);
+    const { proposal: prop, basis } = proposeWithBasis(P);
+    const spec = proposalConfig(PROPOSE_PARTS, prop) as unknown as SkeletonSections & { key: string };
+
+    // ---- coverage on the hand-built figure (fixtures/propose.ts: face, skirt, two sleeves; PR01 derives every bone).
+    // By definition: hip and chest are single bones, so the two screen torso rules read them (chest-not-between and the
+    // rest run only with joints); every link of the five chains is named by its mesh's string segment, whose part exists,
+    // so off-art reads it; neck binds nothing and motion.tracks[3] keys it -> control; head binds the face region only.
+    const cov = lint(P, spec).coverage;
+    const off = (m: string): string => `off-art on mesh '${m}'`;
+    const links = (c: string, m: string): string[] => [0, 1, 2].map((k) => `${c}${k} checked, clean [deforms] read=${off(m)} lint=0 why=`);
+    const wantCov = [
+      'hip checked, clean [deforms] read=hip-not-below-chest|hip-too-high lint=0 why=',
+      'chest checked, clean [deforms] read=hip-not-below-chest lint=0 why=',
+      'neck not checked [control] read= lint=0 why=its role is control (binds nothing; keyed by motion.tracks[3]): it binds nothing, so there is no art to hold it to, and a control may sit off the art by design',
+      "head not checked [deforms] read= lint=0 why=bound rigidly by regions.face: no check reads a region's bone",
+      ...links('sleeve_r', 'sleeve_a'),
+      ...links('sleeve_l', 'sleeve_b'),
+      ...links('skirt_r', 'skirt'),
+      ...links('skirt_c', 'skirt'),
+      ...links('skirt_l', 'skirt'),
+    ];
+    const gotCov = cov.map(coverageRow);
+    const wrongCov = wantCov.filter((w, i) => gotCov[i] !== w).map((w) => `${w.split(' ')[0]}: ${gotCov.find((g) => g.startsWith(`${w.split(' ')[0]} `)) ?? 'absent'}`);
+    // The planted spec: PR03's, skirt_c moved to x 190, off the skirt (60..139 dilated to 45..154).
+    const moved = { ...spec, bones: prop.bones.map((b) => ('chain' in b && b.chain === 'skirt_c' ? { ...b, points: b.points.map((q): [number, number] => [190, q[1]]) } : b)) };
+    const movedLines = coverageLines(lint(P, moved).coverage);
+    const summary = coverageLines(cov).at(-1);
+    say(
+      'DG01_COVERAGE_ON_THE_HAND_BUILT_FIGURE_IS_THE_HAND_DERIVED_TABLE_AND_A_LINK_OFF_THE_ART_IS_CHECKED_WITH_A_LINT_LINE',
+      gotCov.length === wantCov.length &&
+        wrongCov.length === 0 &&
+        summary === 'coverage: 19 bone(s) — 17 checked and clean, 0 checked with a LINT line, 2 not checked; roles 0 target, 18 deforms, 1 control, 0 unclassified' &&
+        movedLines.includes("coverage skirt_c1 [deforms]: checked, LINT — read by off-art on mesh 'skirt'; named by 1 LINT line(s)") &&
+        movedLines.at(-1) === 'coverage: 19 bone(s) — 14 checked and clean, 3 checked with a LINT line, 2 not checked; roles 0 target, 18 deforms, 1 control, 0 unclassified',
+      `${gotCov.length} record(s) (want ${wantCov.length}); ${wrongCov.length === 0 ? 'every one as derived' : `NOT as derived: ${wrongCov.join(' || ')}`}; ${summary}; planted skirt_c at x 190: ${movedLines.at(-1)}`,
+      'the card: "checked, clean" and "not checked" are different lines and the summary counts both — 4 single bones and 5 three-link chains are 19 bones, 15 links and hip and chest read, neck and head not; the planted control moves three links off the art, and they turn from clean to LINT without leaving the checked count',
+    );
+
+    // ---- a single bone named as a segment, and an explicit segment: not read, and said. `tail` (on hip, at 100,200,
+    // inside the skirt) is named by the skirt mesh both ways. Planted: `tail` as a one-link chain is read by off-art.
+    const tailSpec = (asChain: boolean): SkeletonSections => ({
+      ...spec,
+      bones: [...prop.bones, asChain ? { chain: 'tail', parent: 'hip', points: [[100, 200]], tip: [100, 240] } : { name: 'tail', parent: 'hip', at: [100, 200] }],
+      meshes: { ...spec.meshes, skirt: { ...spec.meshes.skirt, segments: [...spec.meshes.skirt.segments, 'tail', ['tail', [100, 190], [100, 230]]] } },
+    });
+    const single = lint(P, tailSpec(false)).coverage.find((c) => c.bone === 'tail');
+    const asChain = lint(P, tailSpec(true)).coverage.find((c) => c.bone === 'tail0');
+    const wantSingle = [
+      'named as a single bone by meshes.skirt.segments[5]: a single bone has no links, and the off-art check reads only the links <segment><digits> of a chain',
+      'bound by the explicit [bone, from, to] segment meshes.skirt.segments[6]: a segment is a line, not an origin, and the off-art check reads origins',
+    ];
+    say(
+      'DG02_A_SINGLE_BONE_NAMED_AS_A_SEGMENT_AND_AN_EXPLICIT_SEGMENT_ARE_NOT_CHECKED_AND_SAY_WHICH_SEGMENT',
+      single !== undefined && coverageOutcome(single) === 'not checked' && single.role?.role === 'deforms' && single.why.join('\n') === wantSingle.join('\n') && asChain !== undefined && coverageRow(asChain) === "tail0 checked, clean [deforms] read=off-art on mesh 'skirt' lint=0 why=",
+      `tail: ${single === undefined ? 'absent' : coverageRow(single)}; planted as a chain: ${asChain === undefined ? 'absent' : coverageRow(asChain)}`,
+      'the off-art check reads the links <segment><digits> of a string segment, so a single bone has none and an explicit segment is a line; neither is read, and before issue #86 neither was said',
+    );
+
+    // ---- roles: neck is a control; `spare` (on head, binding, keyed and parenting nothing) is unclassified by structure.ts'
+    // own reason. Planted: the face region bound to `spare` makes it a deforming bone, and the role reason goes.
+    const spareSpec = (bound: boolean): SkeletonSections => ({ ...spec, bones: [...prop.bones, { name: 'spare', parent: 'head', at: [100, 20] }], regions: bound ? { face: 'spare' } : spec.regions });
+    const spare = lint(P, spareSpec(false)).coverage.find((c) => c.bone === 'spare');
+    const spareBound = lint(P, spareSpec(true)).coverage.find((c) => c.bone === 'spare');
+    // Handed bones and meshes alone (as PR03 hands it), lint has nothing to read a role off, and says so rather than guess one.
+    const bare = lint(P, { bones: prop.bones, meshes: prop.meshes }).coverage.find((c) => c.bone === 'neck');
+    say(
+      'DG03_A_CONTROL_AND_AN_UNCLASSIFIED_BONE_ARE_NOT_CHECKED_BY_THEIR_ROLE_AND_A_BOUND_ONE_BY_WHAT_BINDS_IT',
+      spare !== undefined &&
+        spare.why.join('\n') === 'its role is unclassified (binds nothing, is keyed by nothing and parents nothing): it binds nothing, so there is no art to hold it to' &&
+        spareBound !== undefined &&
+        spareBound.role?.role === 'deforms' &&
+        spareBound.why.join('\n') === "bound rigidly by regions.face: no check reads a region's bone" &&
+        gotCov[2] === wantCov[2] &&
+        bare !== undefined &&
+        bare.role === null &&
+        bare.why[0] === 'its role is not read: the spec handed to lint carries no regions and motion',
+      `spare: ${spare === undefined ? 'absent' : coverageRow(spare)}; planted (regions.face -> spare): ${spareBound === undefined ? 'absent' : coverageRow(spareBound)}; neck with no regions or motion handed: ${bare === undefined ? 'absent' : coverageRow(bare)}`,
+      'a control or a target binds nothing, so it may sit off the art by design and is never a finding; the reason is its role, as structure.ts derives it from what the spec states',
+    );
+
+    // ---- the roles are structure.ts's, imported. Every record's role is configRoles' for its bone, on the hand-built
+    // figure and on the seated proposal with joints; and no file under src/ but structure.ts assigns a role literal.
+    const SE = join(dir, 'seated');
+    writeProposeFixture(SE, POSES.seated.parts, POSES.seated.rig);
+    const Pse = readPartSet(SE);
+    const se = proposeWithBasis(Pse, poseJoints('seated')).proposal;
+    const seSpec = proposalConfig(POSES.seated.parts, se) as unknown as SkeletonSections;
+    const roleDiff = (s: SkeletonSections, PP: PartSet): string[] => {
+      const roles = configRoles(s);
+      return lint(PP, s).coverage.filter((c) => JSON.stringify(c.role) !== JSON.stringify(roles.get(c.bone))).map((c) => c.bone);
+    };
+    const srcFiles = readdirSync(join(ROOT, 'src'))
+      .filter((f) => f.endsWith('.ts'))
+      .map((f) => [`src/${f}`, readFileSync(join(ROOT, 'src', f), 'utf8')] as const);
+    const planted = roleAssignments([...srcFiles, ['src/planted.ts', "  out.set(n, { role: 'control', why: 'parents something' });"]]);
+    say(
+      'DG04_THE_ROLES_ARE_STRUCTURE_TS_CONFIGROLES_AND_NOT_DERIVED_A_SECOND_TIME',
+      roleDiff(spec, P).length === 0 && roleDiff(seSpec, Pse).length === 0 && roleAssignments(srcFiles).length === 0 && planted.join(',') === 'src/planted.ts:1',
+      `bones whose role is not configRoles': hand-built [${roleDiff(spec, P).join(', ')}], seated with joints [${roleDiff(seSpec, Pse).join(', ')}]; role literals assigned outside structure.ts: [${roleAssignments(srcFiles).join(', ')}]; planted file: [${planted.join(', ')}]`,
+      'the card asks for roles as the structural comparison derives them: one derivation, imported, so a rule changed in one place cannot leave lint reading another',
+    );
+
+    // ---- a mesh that names no part: its chain's links are not checked, and say which segment and mesh. Planted: the
+    // skirt mesh renamed `kilt`.
+    const kiltSpec: SkeletonSections = { ...spec, meshes: Object.fromEntries(Object.entries(spec.meshes).map(([k, v]) => [k === 'skirt' ? 'kilt' : k, v])) };
+    const kilt = lint(P, kiltSpec);
+    const kiltC1 = kilt.coverage.find((c) => c.bone === 'skirt_c1');
+    say(
+      'DG05_A_MESH_NAMING_NO_PART_LEAVES_ITS_CHAIN_NOT_CHECKED_AND_NAMES_THE_SEGMENT',
+      kilt.unknownMeshes.join(',') === 'kilt' &&
+        kiltC1 !== undefined &&
+        kiltC1.why.join('\n') === 'its chain is named by meshes.kilt.segments[3] (mesh "kilt"), which names no part in parts.json' &&
+        gotCov.find((g) => g.startsWith('skirt_c1 ')) === "skirt_c1 checked, clean [deforms] read=off-art on mesh 'skirt' lint=0 why=",
+      `skirt mesh renamed kilt: unknown meshes [${kilt.unknownMeshes.join(', ')}]; ${kiltC1 === undefined ? 'skirt_c1 absent' : coverageRow(kiltC1)}`,
+      'lint already printed that the mesh was not linted; the coverage says which bones that left unread',
+    );
+
+    // ---- the torso. No hip: chest is not read by the screen rules, and says so (with its explicit skirt segment). With
+    // the standing joints the torso is read along neck -> hips: chest by chest-not-between and hip-not-past-chest, hip by
+    // hip-not-past-chest and hip-nearer-neck; the neck bone is read by none (lint reads the neck JOINT).
+    const noHip = lint(P, { ...spec, bones: prop.bones.filter((b) => !('name' in b && b.name === 'hip')) }).coverage.find((c) => c.bone === 'chest');
+    const ST = join(dir, 'standing');
+    writeProposeFixture(ST, POSES.standing.parts, POSES.standing.rig);
+    const Pst = readPartSet(ST);
+    const Jst = poseJoints('standing');
+    const st = proposeWithBasis(Pst, Jst);
+    const stSpec = proposalConfig(POSES.standing.parts, st.proposal) as unknown as SkeletonSections;
+    const stCov = lint(Pst, stSpec, Jst).coverage;
+    const at = (n: string): string => coverageRow(stCov.find((c) => c.bone === n) as BoneCoverage);
+    say(
+      'DG06_WITHOUT_HIP_THE_CHEST_SAYS_WHY_IT_IS_NOT_CHECKED_AND_WITH_JOINTS_THE_TORSO_RULES_READ_HIP_AND_CHEST',
+      noHip !== undefined &&
+        noHip.why.join('\n') ===
+          'bound by the explicit [bone, from, to] segments meshes.sleeve_a.segments[0], meshes.sleeve_b.segments[0], meshes.skirt.segments[0]: a segment is a line, not an origin, and the off-art check reads origins\nthe torso checks read chest beside a single bone "hip", which the bones do not hold' &&
+        at('chest') === 'chest checked, clean [deforms] read=chest-not-between|hip-not-past-chest lint=0 why=' &&
+        at('hip') === 'hip checked, clean [deforms] read=hip-not-past-chest|hip-nearer-neck lint=0 why=' &&
+        at('neck').startsWith('neck not checked [control]'),
+      `no hip: ${noHip === undefined ? 'chest absent' : coverageRow(noHip)}; standing with joints: ${at('hip')}; ${at('chest')}; ${at('neck').slice(0, 40)}…`,
+      'the two torso rules are relations, so a chest with no hip has nothing to be read against; with joints the rules that run are the joint-frame ones, and the record names those',
+    );
+
+    // ---- under --keypoints, a sleeve chain the joints declare no line for. The sleeve_a mesh renamed (so off-art does
+    // not read sleeve_r) and r_wrist missing: the links say both. Planted: the wrist given -> the joint rule reads them.
+    const rename = (s: SkeletonSections): SkeletonSections => ({ ...s, meshes: Object.fromEntries(Object.entries(s.meshes).map(([k, v]) => [k === 'sleeve_a' ? 'cuff' : k, v])) });
+    const noWrist = lint(Pst, rename(stSpec), poseJoints('standing', (k) => (k.people[0].joints.r_wrist = { state: 'missing' }))).coverage.find((c) => c.bone === 'sleeve_r1');
+    const withWrist = lint(Pst, rename(stSpec), Jst).coverage.find((c) => c.bone === 'sleeve_r1');
+    say(
+      'DG07_UNDER_KEYPOINTS_A_CHAIN_THE_JOINTS_DECLARE_NO_LINE_FOR_SAYS_SO_ON_EVERY_UNREAD_LINK',
+      noWrist !== undefined &&
+        noWrist.why.join('\n') === 'its chain is named by meshes.cuff.segments[1] (mesh "cuff"), which names no part in parts.json\nlint chain sleeve_r: not read against the joints (r_wrist missing)' &&
+        withWrist !== undefined &&
+        coverageRow(withWrist) === 'sleeve_r1 checked, clean [deforms] read=chain-not-advancing along r_shoulder -> r_wrist lint=0 why=',
+      `r_wrist missing: ${noWrist === undefined ? 'absent' : coverageRow(noWrist)}; planted (wrist given): ${withWrist === undefined ? 'absent' : coverageRow(withWrist)}`,
+      'the rule-set lines say which chains the joints read; the coverage carries the same fact to each link it leaves unread',
+    );
+
+    // ---- the basis on the hand-built figure, by hand (PR01's derivation): hip is bottomwear's top + 0.14 face heights;
+    // chest is half way neck -> hip; neck has no neck part, so 0.12 face heights below the chin; head 0.88 face heights
+    // below the face's top; each link a band measure on its own part, the skirt's from hip's y. Planted: hip recorded as a
+    // mask measurement is caught by the same table.
+    const wantBasis: Record<string, [string, string]> = {
+      hip: ['ratio parts=skirt joints= bones= frame=face_box k=face_heights_below_top=0.14 fb=-', 'none'],
+      chest: ['derived parts= joints= bones=neck|hip frame= k=share_neck_to_hip=0.5 fb=-', 'none'],
+      neck: ['ratio parts= joints= bones= frame=face_box|eye_axis k=face_heights_below_chin=0.12 fb=no neck part', 'none'],
+      head: ['ratio parts= joints= bones= frame=face_box|eye_axis k=face_heights_below_top=0.88 fb=-', 'none'],
+      sleeve_r0: ['mask parts=sleeve_a joints= bones= frame= k=share_of_span=0 fb=-', 'none'],
+      sleeve_r2: ['mask parts=sleeve_a joints= bones= frame= k=share_of_span=0.6666666666666666 fb=-', 'mask parts=sleeve_a joints= bones= frame= k= fb=-'],
+      skirt_c1: ['mask parts=skirt joints= bones=hip frame= k=share_across=0.5|share_of_span=0.3333333333333333 fb=-', 'none'],
+      skirt_c2: ['mask parts=skirt joints= bones=hip', 'mask parts=skirt joints= bones= frame= k=share_across=0.5 fb=-'],
+    };
+    const wrongBasis = basisMismatch(basis.bones, wantBasis);
+    const plantedBasis = basisMismatch(
+      basis.bones.map((b) => (b.bone === 'hip' ? { ...b, origin: { ...b.origin, kind: 'mask' as const } } : b)),
+      wantBasis,
+    );
+    const kinds = BASIS_KINDS.map((k) => `${basis.bones.filter((b) => b.origin.kind === k).length} ${k}`).join(', ');
+    say(
+      'DG08_EACH_BONE_OF_THE_HAND_BUILT_FIGURE_RESTS_ON_THE_HAND_DERIVED_BASIS',
+      wrongBasis.length === 0 && plantedBasis.length === 1 && plantedBasis[0].startsWith('hip origin mask') && kinds === '0 joint, 15 mask, 3 ratio, 1 derived' && basis.bones.length === 19,
+      `${basis.bones.length} record(s), by origin ${kinds}; ${wrongBasis.length === 0 ? 'every row as derived' : `NOT as derived: ${wrongBasis.join(' || ')}`}; planted (hip as a mask): ${plantedBasis.join(' || ')}`,
+      'a ratio is a rule of proportion with its constant, a mask is read off a part, a derived bone off other bones — each named where the placement happens; 15 links of 5 chains are measured on their parts',
+    );
+
+    // ---- joints, as the file declared them: the standing file's l_elbow is occluded with a position and score 0.4; a
+    // score planted on r_shoulder (0.42) is recorded as given; nothing else in the file is a score or a confidence.
+    const stRec = (n: string): string => placementRow(st.basis.bones.find((b) => b.bone === n)?.origin ?? null);
+    const scored = proposeWithBasis(Pst, poseJoints('standing', (k) => (k.people[0].joints.r_shoulder = { state: 'observed', at: [30, 104], score: 0.42 }))).basis;
+    const stFile = basisFile(Pst, st.proposal, st.basis, null);
+    const keys = scoreKeys(JSON.parse(serializeBasis(stFile)));
+    const plantedKeys = scoreKeys({ ...JSON.parse(serializeBasis(stFile)), confidence: 0.9 });
+    const jointEntries = stFile.bones.reduce((n, b) => n + b.origin.joints.length + (b.tip?.joints.length ?? 0), 0);
+    say(
+      'DG09_A_JOINT_IS_RECORDED_WITH_ITS_STATE_LISTED_FLAG_AND_SCORE_AS_DECLARED_AND_NOTHING_ELSE_IS_A_SCORE',
+      stRec('hip') === 'joint parts= joints=r_hip:observed:true:null|l_hip:observed:true:null bones= frame= k= fb=-' &&
+        stRec('neck') === 'joint parts= joints=neck:observed:true:null bones= frame= k= fb=-' &&
+        stRec('sleeve_l1') === 'joint parts= joints=l_elbow:occluded:true:0.4 bones= frame= k= fb=-' &&
+        placementRow(scored.bones.find((b) => b.bone === 'sleeve_r0')?.origin ?? null) === 'joint parts= joints=r_shoulder:observed:true:0.42 bones= frame= k= fb=-' &&
+        keys.length === jointEntries &&
+        keys.every((k) => /\.joints\[\d+\]\.score$/.test(k)) &&
+        plantedKeys.includes('.confidence'),
+      `hip ${stRec('hip')}; sleeve_l1 ${stRec('sleeve_l1')}; r_shoulder planted with 0.42: ${placementRow(scored.bones.find((b) => b.bone === 'sleeve_r0')?.origin ?? null)}; ${keys.length} score key(s) over ${jointEntries} joint entr(ies), all inside joints; planted "confidence" key found: ${plantedKeys.includes('.confidence')}`,
+      'a score is the producer\'s statement about its joint and is copied, not computed; a key named confidence, or a score outside a joint, would be a figure this package made up',
+    );
+
+    // ---- checkBasis: one plant per rule, thrown at once. Positive: the real record holds.
+    const B0 = basis.bones;
+    const plant = (bones: BoneBasis[]): PartsError | null => refusals(() => checkBasis(P, prop, { frame: basis.frame, bones }));
+    const withOrigin = (n: string, o: Partial<Placement>): BoneBasis[] => B0.map((b) => (b.bone === n ? { ...b, origin: { ...b.origin, ...o } } : b));
+    const dropped = plant(B0.filter((b) => b.bone !== 'skirt_c1'));
+    const swapped = plant([B0[1], B0[0], ...B0.slice(2)]);
+    const many = plant(
+      B0.map((b) => {
+        if (b.bone === 'hip') return { ...b, origin: { ...b.origin, parts: ['nope'], bones: ['ghost'] } };
+        if (b.bone === 'head') return { ...b, origin: { ...b.origin, kind: 'joint' as const } };
+        if (b.bone === 'chest') return { ...b, origin: { ...b.origin, bones: [] } };
+        if (b.bone === 'neck') return { ...b, origin: { ...b.origin, constants: [{ name: 'x', value: Number.NaN }] } };
+        return b;
+      }),
+    );
+    const masked = plant(withOrigin('sleeve_r0', { joints: [{ name: 'r_shoulder', state: 'observed', listed: true, score: null, at: [0, 0] }] }));
+    const clean = plant(B0);
+    say(
+      'DG10_CHECKBASIS_REFUSES_A_MISSING_RECORD_AN_ORDER_AN_UNKNOWN_NAME_AND_A_KIND_THAT_DOES_NOT_HOLD_EVERY_PROBLEM_AT_ONCE',
+      clean === null &&
+        codes(dropped) === 'BASIS_RECORDS_EVERY_BONE basis.json' &&
+        dropped?.problems[0].detail.includes('; none for skirt_c1') === true &&
+        swapped?.problems[0].detail.endsWith('(the same bones in another order)') === true &&
+        codes(many) === 'BASIS_NAMES_RESOLVE basis.json bone "hip" origin; BASIS_NAMES_RESOLVE basis.json bone "hip" origin; BASIS_KIND_HOLDS basis.json bone "chest" origin; BASIS_KIND_HOLDS basis.json bone "neck" origin; BASIS_KIND_HOLDS basis.json bone "head" origin' &&
+        codes(masked) === 'BASIS_KIND_HOLDS basis.json bone "sleeve_r0" origin',
+      `the record as proposed: ${codes(clean)}; skirt_c1 dropped: ${dropped?.problems[0].detail ?? 'nothing'}; two swapped: ${codes(swapped)}; four planted at once: ${codes(many)}; a mask naming a joint: ${codes(masked)}`,
+      'emit only after green: the record is held to the proposal it describes before either is written, and a reader collects every problem before it throws',
+    );
+
+    // ---- every generated figure: one record per bone, checkBasis green, and a fallback recorded where it is taken and
+    // only there. Lying, without joints (fixtures/poses.ts; PR58 derives its LINT lines): both arms are right of the
+    // eye axis x 40, so every band on the r side is empty -> sleeve_r's three links and its tip take the axis / the last
+    // link; the l side's first band, rows 94..117 around chest y 106, holds no arm row (arms 60..73 and 126..139) ->
+    // sleeve_l0 takes the axis; its other bands and tip hold art. With the joints no sleeve placement takes a fallback.
+    const LYD = join(dir, 'lying');
+    writeProposeFixture(LYD, POSES.lying.parts, POSES.lying.rig);
+    const Ply = readPartSet(LYD);
+    const lyRule = proposeWithBasis(Ply).basis;
+    const lyJoint = proposeWithBasis(Ply, poseJoints('lying')).basis;
+    const fellBack = (b: ProposalBasis): string[] =>
+      b.bones.flatMap((r) => [...(r.origin.fallback === null ? [] : [r.bone]), ...(r.tip?.fallback === undefined || r.tip.fallback === null ? [] : [`${r.bone} tip`])]).filter((n) => n.startsWith('sleeve_'));
+    const figures: Array<[string, PartSet, RigJoints | undefined]> = [
+      ['hand-built', P, undefined],
+      ['standing', Pst, Jst],
+      ['seated', Pse, poseJoints('seated')],
+      ['lying', Ply, undefined],
+      ['lying+joints', Ply, poseJoints('lying')],
+    ];
+    // A band read through the reference's `or`: the hand-built figure plus `tress` (head:back hair) 60,20 30x200, all left of
+    // the eye axis x 100 (no eyewhite: the face's centre). It ends at y 220, below neck y 96 + half a face height (121), so it
+    // hangs as two chains; the eye line is y 65 (half way down the face), so the bands sit at 65, 103.75 and 142.5, and every
+    // one holds the tress on the r side and nothing on the l side -> hairback_l's three links take the eye axis, hairback_r's none.
+    const TR = join(dir, 'tress');
+    writeProposeFixture(TR, [...PROPOSE_PARTS, { name: 'tress', from: 'head:back hair', x: 60, y: 20, w: 30, h: 200, colour: [90, 60, 40] }]);
+    const Ptr = readPartSet(TR);
+    const tress = proposeWithBasis(Ptr).basis;
+    const hairFell = tress.bones.filter((b) => b.bone.startsWith('hairback_') && b.origin.fallback !== null).map((b) => `${b.bone}: ${b.origin.fallback}`);
+    figures.push(['tress', Ptr, undefined]);
+    const held = figures.map(([n, PP, J]) => {
+      const r = proposeWithBasis(PP, J);
+      const e = refusals(() => checkBasis(PP, r.proposal, r.basis));
+      return `${n} ${r.basis.bones.length}/${expand(r.proposal.bones).byName.size}${e === null ? '' : ` ${codes(e)}`}`;
+    });
+    say(
+      'DG11_A_FALLBACK_IS_RECORDED_WHERE_IT_IS_TAKEN_AND_ONLY_THERE_AND_EVERY_FIGURE_HOLDS_ONE_RECORD_PER_BONE',
+      fellBack(lyRule).join(',') === 'sleeve_r0,sleeve_r1,sleeve_r2,sleeve_r2 tip,sleeve_l0' &&
+        lyRule.bones.find((b) => b.bone === 'sleeve_r0')?.origin.fallback === 'no handwear on that side in the band: the eye axis x' &&
+        fellBack(lyJoint).length === 0 &&
+        hairFell.join(' | ') === [0, 1, 2].map((k) => `hairback_l${k}: no art on that side in the band: the eye axis x`).join(' | ') &&
+        held.every((h) => /^\S+ (\d+)\/\1$/.test(h)),
+      `lying by the rule: fallbacks on [${fellBack(lyRule).join(', ')}]; with joints: [${fellBack(lyJoint).join(', ')}]; a tress on one side: [${hairFell.join(' | ')}]; records/bones: ${held.join(', ')}`,
+      "the reference's `or` stands a value in when a band is empty; the record says which placements took it, so a bone at the eye axis because nothing was there is told from one measured there",
+    );
+
+    // ---- --compare: the config's bone against the proposal's, by structure.ts. The config is the proposal with hip moved
+    // [3, 4] (5 px, by hand), head re-parented to chest, skirt_c cut to two links (its second link's tip is then the chain
+    // tip [100, 246] instead of the third link [100, 223]: 23 px) and a bone `extra` added. Planted: the unchanged config.
+    const cfg = proposalConfig(PROPOSE_PARTS, prop) as Record<string, unknown> & { bones: BoneEntry[] };
+    cfg.bones = [
+      ...prop.bones.map((b): BoneEntry => {
+        if ('name' in b && b.name === 'hip') return { ...b, at: [b.at[0] + 3, b.at[1] + 4] };
+        if ('name' in b && b.name === 'head') return { ...b, parent: 'chest' };
+        if ('chain' in b && b.chain === 'skirt_c') return { ...b, points: b.points.slice(0, 2) };
+        return b;
+      }),
+      { name: 'extra', parent: 'head', at: [100, 30] },
+    ];
+    // A two-link chain takes two amplitudes (CONFIG_AMPS_MATCH_CHAIN): the config is one the loader accepts.
+    cfg.motion = { ...prop.motion, tracks: prop.motion.tracks.map((t) => ('chain' in t && t.chain === 'skirt_c' ? { ...t, amps: t.amps.slice(0, 2) } : t)) };
+    const cmp =basisFile(P, prop, basis, { where: 'config.json', config: cfg });
+    const same = basisFile(P, prop, basis, { where: 'config.json', config: proposalConfig(PROPOSE_PARTS, prop) });
+    const rec = (n: string): string => JSON.stringify(cmp.bones.find((b) => b.bone === n)?.config ?? null);
+    say(
+      'DG12_UNDER_COMPARE_EACH_BONE_SAYS_WHETHER_THE_CONFIG_DIFFERS_AND_HOW_FAR_AND_A_BONE_ONE_SIDE_HAS_IS_SAID_TO_BE_THAT',
+      rec('hip') === '{"status":"differs","origin_px":5,"tip_px":null,"tip_why":"proposal: states no tip; config: states no tip","parent":{"proposal":"root","config":"root"}}' &&
+        rec('head') === '{"status":"differs","origin_px":0,"tip_px":null,"tip_why":"proposal: states no tip; config: states no tip","parent":{"proposal":"neck","config":"chest"}}' &&
+        rec('skirt_c1') === '{"status":"differs","origin_px":0,"tip_px":23,"tip_why":null,"parent":{"proposal":"skirt_c0","config":"skirt_c0"}}' &&
+        rec('skirt_c2') === '{"status":"proposal only","origin_px":null,"tip_px":null,"tip_why":"the config has no bone of this name","parent":{"proposal":"skirt_c1","config":null}}' &&
+        rec('chest') === '{"status":"same","origin_px":0,"tip_px":null,"tip_why":"proposal: states no tip; config: states no tip","parent":{"proposal":"hip","config":"hip"}}' &&
+        JSON.stringify(cmp.config_only) === '["extra"]' &&
+        cmp.compared_with === 'config "fixture"' &&
+        same.bones.every((b) => b.config?.status === 'same') &&
+        JSON.stringify(same.config_only) === '[]',
+      `hip ${rec('hip')}; head ${rec('head')}; skirt_c1 ${rec('skirt_c1')}; skirt_c2 ${rec('skirt_c2')}; config only ${JSON.stringify(cmp.config_only)}; the unchanged config: ${same.bones.filter((b) => b.config?.status !== 'same').length} differ`,
+      '"a person corrected it" is that fact and nothing more: where the bone is, where its tip is, which bone it hangs from — figures from the structural comparison, with no bar and no verdict on either side',
+    );
+
+    // ---- the file: its spec tag, its key order, the same bytes twice. Planted: a record with two keys swapped.
+    const text = serializeBasis(cmp);
+    const order = keyOrder(JSON.parse(text)).join(' ');
+    const wantOrder = [
+      '.spec .frame .frame.face_box .frame.face_box.rule .frame.face_box.parts .frame.eye_axis .frame.eye_axis.rule .frame.eye_axis.parts .frame.eye_line .frame.eye_line.rule .frame.eye_line.parts',
+      '.frame.figure .frame.figure.rule .frame.figure.parts .frame.torso .frame.torso.rule .frame.torso.parts .compared_with .bones .bones[].bone .bones[].entry .bones[].origin',
+      '.bones[].origin.kind .bones[].origin.rule .bones[].origin.parts .bones[].origin.joints .bones[].origin.bones .bones[].origin.frame .bones[].origin.constants .bones[].origin.constants[].name',
+      '.bones[].origin.constants[].value .bones[].origin.fallback .bones[].tip .bones[].config .bones[].config.status .bones[].config.origin_px .bones[].config.tip_px .bones[].config.tip_why',
+      '.bones[].config.parent .bones[].config.parent.proposal .bones[].config.parent.config .config_only',
+    ].join(' ');
+    const reordered = JSON.parse(text) as { bones: Array<{ origin: Record<string, unknown> }> };
+    const { kind, ...rest } = reordered.bones[0].origin;
+    reordered.bones[0].origin = { ...rest, kind };
+    const swappedKeys = keyOrder(reordered).join(' ');
+    say(
+      'DG13_THE_FILE_STATES_ITS_SPEC_KEEPS_ONE_KEY_ORDER_AND_WRITES_THE_SAME_BYTES_TWICE',
+      JSON.parse(text).spec === BASIS_SPEC && BASIS_SPEC === 'spine-parts-basis/1' && order === wantOrder && text === serializeBasis(basisFile(P, prop, proposeWithBasis(readPartSet(dir)).basis, { where: 'config.json', config: cfg })) && swappedKeys !== wantOrder,
+      `spec ${JSON.stringify(JSON.parse(text).spec)}; key order ${order === wantOrder ? 'as written' : `NOT as written: ${order}`}; two runs ${text === serializeBasis(cmp) ? 'identical' : 'DIFFERENT'} (${text.length} bytes); planted (kind after rule): ${swappedKeys === wantOrder ? 'NOT caught' : 'caught'}`,
+      'determinism is a contract: the same inputs write the same bytes, in a key order a reader can rely on, under a spec tag that names what the file is',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return bad();
+}
+
 function runTreeSuite(): number {
   section('tree: the rules CLAUDE.md states, held to the files');
   const { say, bad } = counter();
@@ -9965,6 +10581,7 @@ function main(): void {
   tally.of('keypoints', runKeypointsSuite);
   tally.of('propose-corpus', runProposeCorpusSuite);
   tally.of('structure', runStructureSuite);
+  tally.of('diagnostics', runDiagnosticsSuite);
   tally.of('check', runCheckSuite);
   tally.of('loop', runLoopSuite);
   tally.of('assemble', runAssembleSuite);
@@ -10009,7 +10626,7 @@ function main(): void {
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('check')} check, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
