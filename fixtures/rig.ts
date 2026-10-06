@@ -134,6 +134,92 @@ export function rigConfig(): Record<string, unknown> {
   };
 }
 
+/**
+ * The turned-chain fixture (issue #73): the same two parts and canvas, with
+ * the chain bent so its links point along known directions. `body` at
+ * (20, 30); the chain `hem` through (14, 14) and (22, 20) with its tip at
+ * (22, 26); a named bone `bead` under `hem1` at (22, 24); the region `eye`
+ * rides `hem1`. No blink, so nothing keys a frame the chain turns.
+ *
+ * ## The turns, by hand
+ *
+ * In Spine's axes (x from the canvas centre 20, y up from 40):
+ * `body` (0, 10), `hem0` (-6, 26), `hem1` (2, 20), the tip (2, 14),
+ * `bead` (2, 16). `hem0` -> `hem1` is (8, -6): a 3-4-5 triangle,
+ * **length 10**, direction atan2(-6, 8) = -atan(3/4) =
+ * **-36.869898 degrees** (6 places). `hem1` -> tip is (0, -6):
+ * **length 6, -90 degrees**. Both links are keyed and weighted to, so
+ * each has a control carrying the turn: `hem0_ctl` local -36.869898 under the
+ * unturned `body`, `hem1_ctl` local -90 - (-36.869898) = **-53.130102**,
+ * each link local 0. `bead` is turned back upright: local **90**.
+ *
+ * Offsets in the turned frames (a vector v in a frame turned by t reads
+ * R(-t) v): `hem1_ctl` in `hem0`'s frame: R(36.869898)(8, -6) =
+ * (8 * 0.8 + 6 * 0.6, 8 * 0.6 - 6 * 0.8) = **(10, 0)**, the link's length
+ * along its own axis. `bead` in `hem1`'s (-90): R(90)(0, -4) = **(4, 0)**.
+ *
+ * ## The weight and the region, by hand
+ *
+ * The cloth vertex at padded (8, 8) sits at rig (14, 14), `hem0`'s origin
+ * (d = 0); its distance to `hem1`'s segment (22,20)->(22,26) is to the
+ * segment's origin, sqrt(8^2 + 6^2) = 10. With r = 8: w0 = 1/64, w1 =
+ * 1/324, normalised 324/388 = 0.835052 and 64/388, written **0.83505** and
+ * **1 - 0.83505 = 0.16495**. Bind offsets: under `hem0`, **(0, 0)**; under
+ * `hem1`, the world vector (-6, 26) - (2, 20) = (-8, 6) read in a frame
+ * turned -90: R(90)(-8, 6) = **(-6, -8)**.
+ *
+ * `eye`'s centre (18, 27) is (-2, 13); from `hem1` that is (-4, -7), in its
+ * frame R(90)(-4, -7) = **(7, -4)**, and the image is turned back by
+ * **90** so it is drawn upright.
+ *
+ * The flat form, every bone unturned, is the plain world differences:
+ * `hem0_ctl` (-6, 16), `hem1_ctl` (8, -6), `bead` (0, -4), the weights
+ * (0, 0) and (-8, 6), `eye` (-4, -7).
+ */
+export const TURNED_EXPECT = {
+  bones: ['root', 'body', 'hem0_ctl', 'hem0', 'hem1_ctl', 'hem1', 'bead'],
+  oriented: {
+    hem0_ctl: { length: 10, rotation: -36.869898, x: -6, y: 16 },
+    hem0: { length: 10, rotation: 0, x: 0, y: 0 },
+    hem1_ctl: { length: 6, rotation: -53.130102, x: 10, y: 0 },
+    hem1: { length: 6, rotation: 0, x: 0, y: 0 },
+    bead: { rotation: 90, x: 4, y: 0 },
+  },
+  flat: { body: [0, 10], hem0_ctl: [-6, 16], hem0: [0, 0], hem1_ctl: [8, -6], hem1: [0, 0], bead: [0, -4] },
+  weighed: {
+    uv: [0.333333, 0.5],
+    oriented: [{ bone: 'hem0', x: 0, y: 0, weight: 0.83505 }, { bone: 'hem1', x: -6, y: -8, weight: 0.16495 }],
+    flat: [{ bone: 'hem0', x: 0, y: 0, weight: 0.83505 }, { bone: 'hem1', x: -8, y: 6, weight: 0.16495 }],
+  },
+  region: { oriented: { image: 'eye.png', x: 7, y: -4, rotation: 90 }, flat: { image: 'eye.png', x: -4, y: -7 } },
+  /** The landmarks in Spine's axes, by bone (a control stands at its bone's). */
+  world: { root: [0, 0], body: [0, 10], hem0: [-6, 26], hem1: [2, 20], bead: [2, 16] },
+} as const;
+
+export function turnedConfig(): Record<string, unknown> {
+  return {
+    key: 'turned',
+    assemble: {
+      rig_scale: 0.5,
+      plan: [
+        ['cloth', 'full', 'topwear'],
+        ['eye', 'head', 'face'],
+      ],
+    },
+    bones: [
+      { name: 'body', parent: 'root', at: [20, 30] },
+      { chain: 'hem', parent: 'body', points: [[14, 14], [22, 20]], tip: [22, 26] },
+      { name: 'bead', parent: 'hem1', at: [22, 24] },
+    ],
+    meshes: { cloth: { grid: 8, r: 8, segments: ['hem'] } },
+    regions: { eye: 'hem1' },
+    motion: {
+      duration: 4,
+      tracks: [{ chain: 'hem', amps: [1, 2], period: 4, phase: 0, lag: 0.1 }],
+    },
+  };
+}
+
 /** The fixture on disk as the `rig` command reads it: `config.json`, and `parts.json` + `parts/` under `parts`. */
 export function writeRigFixture(dir: string, config: Record<string, unknown> = rigConfig(), images: Map<string, Raster> = rigImages(), parts: PartsFile = rigParts()): { config: string; parts: string } {
   const partsDir = join(dir, 'parts-in');

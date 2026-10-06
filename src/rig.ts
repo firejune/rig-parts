@@ -8,11 +8,28 @@
  * Everything written is something spine-rigc takes verbatim; no rigc
  * generator is used. What is authored:
  *
- * - **Bones**, unrotated and unscaled, at the config's landmarks. A chain
+ * - **Bones**, unscaled, at the config's landmarks. A chain
  *   `{chain: "c", points: [p0 .. pn]}` becomes the bones `c0 .. cn`, each the
  *   parent of the next. `root` sits at the bottom centre of the rig canvas.
- *   Because no bone is rotated or scaled, a vertex's bind position under a
- *   bone is simply `vertex - bone origin` in Spine's axes.
+ *   Each chain link is **turned along its chain** (issue #73): `rotation` is
+ *   the direction from its origin to the next link's — the last link's to
+ *   the chain's `tip` — in Spine degrees (counter-clockwise, y up, local to
+ *   the parent; measured through rigc with a one-bone spec), and `length` is
+ *   that distance, so a physics constraint a consumer adds finds a lever
+ *   (spine-core's solver reads `bone.data.length`). Under `idleKeys: 'ctl'`
+ *   the link's control carries the turn and the length and the link sits at
+ *   local rotation 0 under it; under `direct` the link carries them. Every
+ *   other bone keeps world rotation 0 — one whose parent is a link is turned
+ *   back. Nothing moves: a child's `x, y`, a weight's bind `x, y` and a
+ *   region's `x, y` are the landmark carried into the turned frame as written
+ *   (rigc's inverse, `src/coords.ts`), a region on a turned bone is turned
+ *   back upright by `rotation`, and {@link flattenRig} gives the unturned
+ *   numbers the reference wrote. A key the turn would re-aim — a translate
+ *   key under a turned parent, a scale or shear key on a turned bone — is
+ *   refused (`RIG_KEY_FRAME_UNTURNED`); rotate keys mean what they meant.
+ *   A single bone with a `tip` is not turned (its tip is still a segment
+ *   end for the weights); giving it a lever would be the same change on
+ *   that bone and its children, and is not made here.
  * - **Meshes** over the parts named in `meshes`: a square lattice (`src/mesh.ts`)
  *   weighted by distance to the mesh's candidate segments (`src/weights.ts`),
  *   written in rigc's by-name `weights` form. The slot's bone is the first
@@ -52,7 +69,7 @@
  * order the objects are built in, and every number is rounded by `pyRound`).
  */
 import { type BoneEntry, type CharacterConfig, type Point, ROOT_BONE } from './config.ts';
-import { cropToSpineY } from './coords.ts';
+import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { artCoverage, ART_ALPHA, latticeMesh, ONE_LOOP_PASSES } from './mesh.ts';
 import { BLINK, blinkHoldMisses, blinkSpan, CONTROL_SUFFIX, controlledBones, IDLE_FPS, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
@@ -64,6 +81,36 @@ import { influences, type Segment } from './weights.ts';
 /** Transparent pixels added round every part image — the reference's `PAD`. */
 export const PAD = 4;
 
+/**
+ * The places a bone's rotation and every local offset (a bone's `x, y`, a
+ * weight's bind `x, y`, a region's `x, y` and `rotation`) are written to.
+ * The reference wrote offsets to 3, and could: its frames were never turned,
+ * so an offset was a difference of two landmarks. Under a turned frame an
+ * offset is that difference carried through a rotation, and 3 places would
+ * move a world position by up to 0.0007 px — enough that turning it back
+ * ({@link flattenRig}, to the reference's 3) would land a value on the other
+ * side of a rounding step. Each offset is placed through its parent's frame
+ * as written, so the errors do not add down a chain: every world position is
+ * within 7.1e-7 of its landmark, and the round trip is exact unless a
+ * landmark difference lies within that of a 3-place rounding step, which a
+ * difference of whole and half pixels never does. An unturned frame writes
+ * the same numbers it always wrote.
+ */
+export const OFFSET_PLACES = 6;
+
+/** The places the reference wrote an offset to, which {@link flattenRig} gives back. */
+export const FLAT_PLACES = 3;
+
+/** {@link pyRound} to `n` places, with a negative zero written as 0. */
+function placed(v: number, n: number): number {
+  const r = pyRound(v, n);
+  return r === 0 ? 0 : r;
+}
+
+function places(v: number): number {
+  return placed(v, OFFSET_PLACES);
+}
+
 interface Bone {
   name: string;
   parent: string | null;
@@ -74,6 +121,10 @@ interface Bone {
 export interface RigBone {
   name: string;
   parent?: string;
+  /** A chain link and its control: the distance to the next link, or to the chain's tip. */
+  length?: number;
+  /** Spine degrees, CCW in a y-up world, local to the parent — written on a chain link and its control, and on a bone whose parent is turned. */
+  rotation?: number;
   x: number;
   y: number;
 }
@@ -100,6 +151,8 @@ export interface RegionAttachment {
   image: string;
   x: number;
   y: number;
+  /** Written only on a turned bone: the bone's world rotation, cancelled, so the image stays upright. */
+  rotation?: number;
 }
 
 export interface RigSpec {
@@ -412,11 +465,75 @@ export function buildRig(
 
   const spineX = (x: number): number => x - CX;
   const spineY = (y: number): number => cropToSpineY(y, H);
-  const bones: RigBone[] = ordered.map((b) => {
-    if (b.parent === null) return { name: b.name, x: 0, y: 0 };
-    const p = B.get(b.parent) as Bone;
-    return { name: b.name, parent: b.parent, x: pyRound(b.x - p.x, 3), y: pyRound(spineY(b.y) - spineY(p.y), 3) };
+
+  // ---- direction: every chain link points along its chain (issue #73) ----
+  // From the link's origin to the next link's, the last link to the chain's
+  // tip, in Spine's axes; a link's control (same origin) points the same way.
+  const aim = new Map<string, { rotation: number; length: number }>();
+  for (const links of chains.values()) {
+    for (const l of links) {
+      const b = B.get(l) as Bone;
+      const end = (child.get(l) ?? tips.get(l)) as Point;
+      const dx = spineX(end[0]) - spineX(b.x);
+      const dy = spineY(end[1]) - spineY(b.y);
+      const a = { rotation: (Math.atan2(dy, dx) * 180) / Math.PI, length: pyRound(Math.sqrt(dx * dx + dy * dy), 3) };
+      aim.set(l, a);
+      if (controls.includes(l)) aim.set(`${l}${CONTROL_SUFFIX}`, a);
+    }
+  }
+  // Each bone's local rotation turns it from its parent's world rotation to
+  // the one it should have: its chain's direction, or 0 for every other bone,
+  // so a named bone under a chain link is turned back upright. `turn` is the
+  // world rotation as written, the sum of the written local rotations down the
+  // tree. Each local offset is the bone's origin carried into its parent's
+  // setup frame as written, through rigc's inverse (`src/coords.ts`).
+  const turn = new Map<string, number>();
+  const bones: RigBone[] = [];
+  for (const b of ordered) {
+    if (b.parent === null) {
+      bones.push({ name: b.name, x: 0, y: 0 });
+      turn.set(b.name, 0);
+      continue;
+    }
+    const up = turn.get(b.parent) as number;
+    const a = aim.get(b.name);
+    const rotation = places(normaliseDegrees((a?.rotation ?? 0) - up));
+    turn.set(b.name, places(up + rotation));
+    const frame = computeExactFrameTransforms(bones).get(b.parent) as BoneTransform;
+    const [x, y] = toBoneLocal(frame, spineX(b.x), spineY(b.y));
+    bones.push({ name: b.name, parent: b.parent, ...(a === undefined ? {} : { length: a.length }), ...(a !== undefined || rotation !== 0 ? { rotation } : {}), x: places(x), y: places(y) });
+  }
+  const world = computeExactFrameTransforms(bones);
+
+  // ---- keys a turned frame would change ----------------------------------
+  // A rotate key turns a bone about its origin whatever its frame, so the
+  // idle's chain sways mean what they meant. A translate key moves a bone
+  // along its parent's axes and a scale or shear key stretches it along its
+  // own: on a turned frame those are other directions than the config wrote.
+  const keyFrame: Array<{ bone: string; prop: string; at: string }> = [];
+  cfg.motion.tracks.forEach((tr, i) => {
+    if (!('chain' in tr)) keyFrame.push({ bone: tr.bone, prop: tr.prop, at: `config.motion.tracks[${i}]` });
   });
+  bl?.eyes.forEach((m, i) => keyFrame.push({ bone: m, prop: 'scaley', at: `config.motion.blink.eyes[${i}]` }));
+  if (bl?.brow_drop !== undefined) bl.brows?.forEach((m, i) => keyFrame.push({ bone: m, prop: 'translatey', at: `config.motion.blink.brows[${i}]` }));
+  for (const k of keyFrame) {
+    if (k.prop === 'rotate') continue;
+    const own = B.get(k.bone) as Bone;
+    const parent = (controls.includes(k.bone) ? (B.get(`${k.bone}${CONTROL_SUFFIX}`) as Bone).parent : own.parent) as string;
+    const translate = k.prop.startsWith('translate');
+    const frameBone = translate ? parent : k.bone;
+    const deg = turn.get(frameBone) as number;
+    if (deg === 0) continue;
+    const axis = k.prop.slice(-1);
+    fail(
+      'RIG_KEY_FRAME_UNTURNED',
+      `${k.at} (bone "${k.bone}", ${k.prop})`,
+      translate
+        ? `moves "${k.bone}" along the axes of its parent "${parent}", which is turned ${deg} degrees to point along its chain (issue #73), so the key would move it along that turned axis and not along the picture's ${axis}; a translate key is allowed only on a bone whose parent is not turned — key the chain's own parent, or key rotate`
+        : `stretches "${k.bone}" along its own axes, and "${k.bone}" is turned ${deg} degrees to point along its chain (issue #73), so the key would stretch it along that turned axis and not along the picture's ${axis}; a scale or shear key is allowed only on a bone that is not turned — key the chain's own parent, or key rotate`,
+    );
+  }
+  refuseIfAny(problems);
 
   // ---- attachments -------------------------------------------------------
   const slots: RigSpec['slots'] = [];
@@ -424,6 +541,13 @@ export function buildRig(
   const meshReport: MeshReport[] = [];
   const outImages: Array<[string, Raster]> = [];
   const loopPasses: Record<string, number> = {};
+  // A region's centre in its bone's setup frame; on a turned bone the image
+  // is turned back by the bone's world rotation, so it is drawn upright.
+  const region = (image: string, bone: string, cx: number, cy: number): RegionAttachment => {
+    const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(cx), spineY(cy));
+    const deg = turn.get(bone) as number;
+    return deg === 0 ? { image, x: places(x), y: places(y) } : { image, x: places(x), y: places(y), rotation: places(normaliseDegrees(-deg)) };
+  };
   for (const p of parts.parts) {
     const img = pad(images.get(p.name) as Raster, PAD, PAD, PAD, PAD, [0, 0, 0, 0]);
     const file = `${p.name}.png`;
@@ -448,13 +572,13 @@ export function buildRig(
         outImages.push([stillFile, upper]);
         const cyLow = st.row + (p.h - r) / 2;
         const cyUp = p.y + r / 2;
-        skin[p.name] = { [p.name]: { image: file, x: pyRound(spineX(cx) - spineX(bone.x), 3), y: pyRound(spineY(cyLow) - spineY(bone.y), 3) } };
-        skin[still] = { [still]: { image: stillFile, x: pyRound(spineX(cx) - spineX(sb.x), 3), y: pyRound(spineY(cyUp) - spineY(sb.y), 3) } };
+        skin[p.name] = { [p.name]: region(file, bone.name, cx, cyLow) };
+        skin[still] = { [still]: region(stillFile, sb.name, cx, cyUp) };
         slots.push({ name: p.name, bone: bone.name, attachment: p.name }, { name: still, bone: sb.name, attachment: still });
         continue;
       }
       const cy = p.y + p.h / 2;
-      skin[p.name] = { [p.name]: { image: file, x: pyRound(spineX(cx) - spineX(bone.x), 3), y: pyRound(spineY(cy) - spineY(bone.y), 3) } };
+      skin[p.name] = { [p.name]: region(file, bone.name, cx, cy) };
       slots.push({ name: p.name, bone: bone.name, attachment: p.name });
       continue;
     }
@@ -477,8 +601,8 @@ export function buildRig(
       const wx = vx0 + ox;
       const wy = vy0 + oy;
       const ent: WeightEntry[] = influences([wx, wy], segs, mesh.r).map(({ bone, weight }) => {
-        const b = B.get(bone) as Bone;
-        return { bone, x: pyRound(spineX(wx) - spineX(b.x), 3), y: pyRound(spineY(wy) - spineY(b.y), 3), weight: pyRound(weight, 5) };
+        const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
+        return { bone, x: places(x), y: places(y), weight: pyRound(weight, 5) };
       });
       let others = 0;
       for (let k = 0; k < ent.length - 1; k++) others += ent[k].weight;
@@ -526,4 +650,72 @@ export function buildRig(
  */
 export function rigJsonText(value: unknown): string {
   return `${JSON.stringify(value, null, 1)}\n`;
+}
+
+/**
+ * The rig as the reference wrote it: every bone unturned, so each local
+ * offset is a plain difference of world positions. Each bone's `x, y`, each
+ * weight's bind `x, y` and each region's `x, y` is carried out of its frame as
+ * written (rigc's `toWorld`, `src/coords.ts`) and back in as a difference from
+ * the frame's origin, at the reference's 3 places; `length` and `rotation` are
+ * dropped. Everything else is copied.
+ *
+ * It exists so the reference's outputs stay an oracle: the chain suite and
+ * `scripts/rig_oracle.ts` compare `flattenRig(built)` with the reference's
+ * `rig.json`. It is the oriented emitter's inverse, and it lives beside it so
+ * a change to one is read against the other.
+ *
+ * ⛔ The flat form cannot draw a turned image. A region whose `rotation` does
+ * not cancel its bone's world rotation is refused by name
+ * (`FLATTEN_REGION_UPRIGHT`) rather than flattened into an upright one the
+ * oriented rig does not draw.
+ *
+ * `sense` is the direction rotations are read in: 1, always, but for the
+ * planted control that shows a flatten turning the wrong way is caught.
+ */
+export function flattenRig(rig: RigSpec, sense: 1 | -1 = 1): RigSpec {
+  const problems: Problem[] = [];
+  const read = rig.bones.map((b) => ({ ...b, rotation: (b.rotation ?? 0) * sense }));
+  const world = computeExactFrameTransforms(read);
+  const turn = new Map<string, number>();
+  for (const b of rig.bones) turn.set(b.name, placed((b.parent === undefined ? 0 : (turn.get(b.parent) as number)) + (b.rotation ?? 0), OFFSET_PLACES));
+  const origin = (bone: string): BoneTransform => world.get(bone) as BoneTransform;
+  const out = (m: BoneTransform, x: number, y: number): [number, number] => {
+    const [wx, wy] = toWorld(m, x, y);
+    return [placed(wx - m.worldX, FLAT_PLACES), placed(wy - m.worldY, FLAT_PLACES)];
+  };
+  const bones: RigBone[] = rig.bones.map((b) => {
+    if (b.parent === undefined) return { name: b.name, x: b.x, y: b.y };
+    const [x, y] = out(origin(b.parent), b.x, b.y);
+    return { name: b.name, parent: b.parent, x, y };
+  });
+  const slotBone = new Map(rig.slots.map((s) => [s.name, s.bone]));
+  const skin: RigSpec['skins']['default'] = {};
+  for (const [slot, atts] of Object.entries(rig.skins.default)) {
+    const bone = slotBone.get(slot) as string;
+    const flat: Record<string, MeshAttachment | RegionAttachment> = {};
+    for (const [name, att] of Object.entries(atts)) {
+      if ('type' in att) {
+        flat[name] = { ...att, weights: att.weights.map((v) => v.map((w) => {
+          const [x, y] = out(origin(w.bone), w.x, w.y);
+          return { bone: w.bone, x, y, weight: w.weight };
+        })) };
+        continue;
+      }
+      const left = normaliseDegrees((turn.get(bone) as number) + (att.rotation ?? 0));
+      if (Math.abs(left) > 1e-6) {
+        problems.push({
+          code: 'FLATTEN_REGION_UPRIGHT',
+          object: `skins.default.${slot}.${name}`,
+          detail: `rides "${bone}", turned ${turn.get(bone)} degrees, with rotation ${att.rotation ?? 'absent'}, so it is drawn turned ${placed(left, OFFSET_PLACES)} degrees; the flat form draws every region upright, so the region's rotation must cancel its bone's turn`,
+        });
+        continue;
+      }
+      const [x, y] = out(origin(bone), att.x, att.y);
+      flat[name] = { image: att.image, x, y };
+    }
+    skin[slot] = flat;
+  }
+  refuseIfAny(problems);
+  return { ...rig, bones, skins: { default: skin } };
 }

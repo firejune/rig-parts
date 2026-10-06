@@ -17,7 +17,7 @@
   "torso_parts": [
    "topwear"
   ],
-  "torso_heat_mean": 7.618,
+  "torso_heat_mean": 7.617,
   "torso_floor": 3.809,
   "feet_parts": [
    "shoes"
@@ -108,7 +108,7 @@
    ],
    "head_bone": "head",
    "screen_px": 453,
-   "screen_heat_mean": 11.472,
+   "screen_heat_mean": 11.475,
    "screen_heat_max": 175,
    "head_frame_px": 271,
    "head_frame_heat_mean": 0.884,

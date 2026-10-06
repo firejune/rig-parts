@@ -99,8 +99,12 @@ usage:
 
   spine-parts rig --config <config.json> --parts <dir> --out <dir> [--idle-keys ctl|direct]
                   [--page-edges pot|free] [--pack-shape rect|polygon]
-      Author the rig: unrotated bones at the config's landmarks (a chain makes
-      <chain>0..n), a square lattice mesh over every part in config.meshes
+      Author the rig: bones at the config's landmarks (a chain makes
+      <chain>0..n, each link turned along its chain with its length, so a
+      physics constraint added later has a lever; every offset under a turned
+      link is in its frame, so nothing moves; a translate key under a turned
+      link or a scale/shear key on one is refused, RIG_KEY_FRAME_UNTURNED),
+      a square lattice mesh over every part in config.meshes
       weighted by distance to its candidate bone segments, a region for every
       part in config.regions (a motion.blink.still part as two: the rows above
       its row on a second slot <part>_still, which the blink does not move),

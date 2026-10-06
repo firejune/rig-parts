@@ -12,6 +12,15 @@
  *
  * A y flip written anywhere else in `src/` is the defect this file exists to
  * prevent; the selftest holds the tree to it.
+ *
+ * The same goes for a bone's frame. Since issue #73 a chain link is turned to
+ * point along its chain, so a point under it is placed by inverting the
+ * link's setup matrix: `src/rig.ts` evaluates the setup pose with rigc's
+ * `computeExactFrameTransforms` (the textbook arithmetic, in which an
+ * unturned bone's frame is the identity exactly, so a bone that is not turned
+ * writes the very numbers it wrote before) and binds through `toBoneLocal`;
+ * `flattenRig` goes back through `toWorld`. No rotation matrix is written out
+ * by hand in this package.
  */
-export { computeWorldTransforms, cropToSpineY, toBoneLocal } from 'spine-rigc/src/transform.ts';
+export { computeExactFrameTransforms, computeWorldTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from 'spine-rigc/src/transform.ts';
 export type { BoneTransform } from 'spine-rigc/src/transform.ts';
