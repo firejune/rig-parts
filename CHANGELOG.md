@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.0](https://github.com/firejune/spine-parts/compare/v0.12.0...v0.13.0) (2026-10-06)
+
+
+### Features
+
+* **constraints:** take spine-rigc ^2.15.0, whose parser refuses an ik's bones as a shape, retire this package's two ik refusals and add --idle-keys direct to rigc's line where a control splits the pair ([#105](https://github.com/firejune/spine-parts/issues/105)) ([b1e4df1](https://github.com/firejune/spine-parts/commit/b1e4df1a9adee233ee83398b923d4b998b81f999)), closes [#103](https://github.com/firejune/spine-parts/issues/103)
+* **contour:** build a contour mesh from rigc's outline with declared interior points and an exact constrained Delaunay triangulation ([#100](https://github.com/firejune/spine-parts/issues/100)) ([c6f38c3](https://github.com/firejune/spine-parts/commit/c6f38c3878077ed1644dde7557d2c424a9382b7d)), closes [#84](https://github.com/firejune/spine-parts/issues/84)
+* **rig:** wire the contour mesh mode — config, stray islands, local region weights, and the lattice comparison ([#104](https://github.com/firejune/spine-parts/issues/104)) ([14eeb2c](https://github.com/firejune/spine-parts/commit/14eeb2c8ce9a11a6f02740f82b9780f208843652)), closes [#84](https://github.com/firejune/spine-parts/issues/84)
+
 ## [0.12.0](https://github.com/firejune/spine-parts/compare/v0.11.0...v0.12.0) (2026-10-06)
 
 
