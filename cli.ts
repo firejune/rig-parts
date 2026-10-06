@@ -29,6 +29,7 @@ import { checkImageSize, choosePerson, KEYPOINTS_SPEC, loadKeypoints, type RigJo
 import { basisLines, checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal } from './src/propose.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { readPng, writePng } from './src/raster/png.ts';
+import { REQUIREMENTS_SENTENCE } from './src/requirements.ts';
 import { buildSheet, defaultCaption, type Tile, tilesFrom } from './src/sheet.ts';
 import { loadComparison, requiredProblems, structureLines } from './src/structure.ts';
 
@@ -198,6 +199,7 @@ usage:
       rounding, and so is the per-frame mesh work (AUTHORING §5).
   spine-parts check --rig <dir> --out <dir> [--parts <dir>] [--source <painting.png>]
                     [--page-edges pot|free] [--pack-shape rect|polygon]
+                    [--requirements <file.json>]
       Build, gate, render and measure a rig through spine-rigc's CLI (the rigc at
       node_modules/.bin/rigc, or on PATH). --rig holds rig.json and motion.json:
       a rig spec, which rigc build compiles, not a compiled skeleton.json.
@@ -273,6 +275,26 @@ usage:
       writes the page earlier releases wrote. rigc's pack line ends
       ", shape rect" or ", shape polygon"; a line that disagrees with the
       value passed is refused, CHECK_PACK_SHAPE.
+      ${REQUIREMENTS_SENTENCE} (AUTHORING §7, Declared requirements). It is
+      read and every name in it resolved against rig.json and motion.json
+      before anything is built: a bone, constraint, slot, mesh attachment or
+      animation that does not resolve, a missing field or bar, or a follow
+      naming a property its constraint does not drive is refused by name
+      (REQUIREMENTS_*). Each named animation is rendered once with --geometry
+      into requirements/as-declared/<animation>/; scene targets (a bone whose
+      parent is the root, placed at a stage point or at stage points at stated
+      times) are written onto a throwaway copy, never the rig. Each follow is
+      measured from three poses of the same frames — as declared, released
+      (that mix forced to 0, its keys removed) and full (forced to 1) — into
+      requirements/released/<name>/ and requirements/full/<name>/. One line per
+      requirement, NAME: PASS|FAIL|NOT MEASURABLE with its figures, the bar as
+      declared and the worst frame, a requirements block in check.json, and a
+      summary line naming the kinds not declared. A FAIL is
+      CHECK_REQUIREMENT_MET; a NOT MEASURABLE (a tip or an axis on a bone of
+      length 0, an aim whose target sits on the origin on every frame, a
+      follow no frame of which reaches its least drive) is
+      CHECK_REQUIREMENT_MEASURABLE, and the run is not PASS. Without the flag
+      nothing is read, written or printed for it.
 
   spine-parts loop --frames <dir> --out <file.png | file.gif> [--palette]
       Encode a frame set rigc render wrote (its --out directory, or the set
@@ -359,7 +381,7 @@ usage:
   spine-parts build --config <config.json> --source <painting.png> --full <dir|psd>
                     --head <dir|psd> --out <dir> [--seam near-white|silhouette]
                     [--project core|visible] [--page-edges pot|free]
-                    [--pack-shape rect|polygon] [--loop]
+                    [--pack-shape rect|polygon] [--loop] [--requirements <file.json>]
       assemble, then rig, then check, in one process, each stage's own lines
       printed under [assemble], [rig] and [check]; the first stage that refuses
       stops the build with its own FAIL lines. The config must already carry
@@ -377,7 +399,9 @@ usage:
       made from. --seam defaults to ${DEFAULT_SEAM_RULE}, --project to
       ${DEFAULT_PROJECT_RULE} (both as for assemble), --page-edges to ${DEFAULT_PAGE_EDGES} and
       --pack-shape to ${DEFAULT_PACK_SHAPE} (as for check; both packed builds, rig's gate
-      and check's artifact, take them).
+      and check's artifact, take them). --requirements is forwarded to check
+      (as for check); the file's own shape is read before assemble runs, and
+      its names resolve against the rig in the check, before it builds.
 
   spine-parts --version
   spine-parts --help
@@ -603,7 +627,7 @@ function flags(args: string[], known: readonly string[], command: string, option
 }
 
 function cmdCheck(args: string[]): number {
-  const f = flags(args, ['--rig', '--out'], 'check', ['--parts', '--source', '--page-edges', '--pack-shape']);
+  const f = flags(args, ['--rig', '--out'], 'check', ['--parts', '--source', '--page-edges', '--pack-shape', '--requirements']);
   if (typeof f === 'string') return usage(f);
   const rig = f.get('--rig') as string;
   const out = f.get('--out') as string;
@@ -613,7 +637,7 @@ function cmdCheck(args: string[]): number {
   if (!isPackShape(shape)) return usage(shape);
   try {
     const bin = findRigc(import.meta.dir, process.env.PATH ?? '');
-    const r = checkStage({ rig, parts: f.get('--parts'), source: f.get('--source'), out, pageEdges: edges, packShape: shape }, rigcRunner(bin), bin, console.log);
+    const r = checkStage({ rig, parts: f.get('--parts'), source: f.get('--source'), out, pageEdges: edges, packShape: shape, requirements: f.get('--requirements') }, rigcRunner(bin), bin, console.log);
     return r.figures.PASS ? EXIT_OK : EXIT_REFUSED;
   } catch (err) {
     return printRefusal(err);
@@ -973,7 +997,7 @@ function cmdInputs(args: string[]): number {
 function cmdBuild(args: string[]): number {
   const flags = new Map<string, string>();
   let loop = false;
-  const valued = ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape'];
+  const valued = ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements'];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--loop') {
@@ -1007,7 +1031,7 @@ function cmdBuild(args: string[]): number {
   const scratch = mkdtempSync(join(tmpdir(), 'spine-parts-build-'));
   try {
     const r = build(
-      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape },
+      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape, ...(flags.has('--requirements') ? { requirements: flags.get('--requirements') as string } : {}) },
       { rig: rigcRunner(bin), check: rigcRunner(bin), checkBin: bin, scratch: join(scratch, 'rig-gate') },
       console.log,
     );

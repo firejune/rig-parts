@@ -36,6 +36,7 @@
  * | `contact.png` | rigc's own contact sheet of that render, copied out |
  * | `motion_heat.png` | frame 0 in grey with each pixel's largest change across the idle in red |
  * | `check.json` | the figures below and `PASS` |
+ * | `requirements/` | under `--requirements` only (issue #93): `as-declared/<animation>/`, and per follow `released/<name>/` and `full/<name>/` — rigc renders with `--geometry` ({@link measureRequirements}) |
  *
  * The acceptance bars are the reference implementation's (`check_rig.py`):
  * both gate summaries `0 failed`; seam mean |d| <= 1.0 of 255 and at most 50
@@ -113,6 +114,27 @@ import {
   type WorldBox,
 } from './instruments.ts';
 import { type PartRecord, type PartsFile, readParts } from './parts.ts';
+import {
+  aimLine,
+  contactLine,
+  declareConsumerDriven,
+  followLine,
+  forceMix,
+  mutedLine,
+  mutedOnly,
+  placeTargets,
+  type Poses,
+  rangeLine,
+  readRequirements,
+  type RequirementLine,
+  type RequirementsFile,
+  requirementProblem,
+  type RequirementsSummary,
+  requirementsSummary,
+  resolveRequirements,
+  rigFacts,
+  stretchRequirementLine,
+} from './requirements.ts';
 import { alphaComposite } from './raster/composite.ts';
 import { readPng, writePng } from './raster/png.ts';
 import { newFloatImage, newRaster, type Raster } from './raster/types.ts';
@@ -1194,7 +1216,16 @@ export interface CheckFigures {
    * the keys it always wrote.
    */
   skipped?: { loop?: string; seam?: string };
+  /** Written only under `--requirements` (issue #93): the file's fps, the summary, and one line per declared requirement, by name. */
+  requirements?: RequirementsBlock;
   PASS: boolean;
+}
+
+/** `check.json`'s `requirements` block: the fps every named animation was sampled at, the summary, and each line by its name, in the file's order. */
+export interface RequirementsBlock {
+  fps: number;
+  summary: RequirementsSummary;
+  lines: Record<string, RequirementLine>;
 }
 
 /** The bars `PASS` reads, in the order the summary counts them: the gate, the reference's two, then the judgement lines. */
@@ -1215,6 +1246,8 @@ export interface CheckReport {
   /** Every bar that was not met, one problem each; empty on PASS. */
   problems: Problem[];
   written: string[];
+  /** Under `--requirements` only (issue #93): what `check.json`'s `requirements` block holds; null without the flag. */
+  requirements: RequirementsBlock | null;
 }
 
 /**
@@ -1247,9 +1280,37 @@ export function rigcFailed(what: string, call: RigcCall, lines: readonly string[
  * with the reason; without an `idle` the loop and every line that reads idle
  * frames say SKIP, and no idle is rendered (no `idle_frames/`, `contact.png`
  * or `motion_heat.png`). `source` (`--source`) adds {@link SOURCE_LINE}.
+ *
+ * `requirements` (`--requirements`, issue #93) is read with the rig directory
+ * and resolved against it before anything is built ({@link readRequirements},
+ * {@link resolveRequirements}); after every line above, each declared
+ * requirement is measured ({@link measureRequirements}) into `requirements/`,
+ * `check.json` gains its `requirements` block, and every FAIL and NOT
+ * MEASURABLE is a problem. Without it nothing here reads, writes or prints
+ * anything it did not before.
  */
-export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome?: string, mode: PackMode = DEFAULT_PACK_MODE, source?: string): CheckReport {
-  const inp = readCheckInputs(rigDir, partsHome, source);
+export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome?: string, mode: PackMode = DEFAULT_PACK_MODE, source?: string, requirements?: string): CheckReport {
+  let inp: CheckInputs;
+  let reqFile: RequirementsFile | null = null;
+  if (requirements === undefined) inp = readCheckInputs(rigDir, partsHome, source);
+  else {
+    // Both readers collect every problem; one refusal names both sets.
+    const refused: Problem[] = [];
+    const take = <T>(read: () => T): T | null => {
+      try {
+        return read();
+      } catch (err) {
+        if (!(err instanceof PartsError)) throw err;
+        refused.push(...err.problems);
+        return null;
+      }
+    };
+    const got = take(() => readCheckInputs(rigDir, partsHome, source));
+    reqFile = take(() => readRequirements(requirements));
+    refuseIfAny(refused);
+    inp = got as CheckInputs;
+    resolveRequirements(reqFile as RequirementsFile, inp.rig, inp.motion, inp.rootBone);
+  }
   const rigcEntry = readRigcEntry(requireRigcVersion(rigc));
   const out = resolve(outDir);
   mkdirSync(out, { recursive: true });
@@ -1439,6 +1500,10 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     }
   }
 
+  // 5. the scene's declared requirements (issue #93), only under --requirements
+  const reqProblems: Problem[] = [];
+  const reqBlock = reqFile === null ? null : measureRequirements(inp, reqFile, buildDir, out, rigc, reqProblems);
+
   const skipped: { loop?: string; seam?: string } = {};
   if (inp.noIdle !== null) skipped.loop = inp.noIdle;
   if (inp.noParts !== null) skipped.seam = inp.noParts;
@@ -1459,6 +1524,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     RECOMPOSITE_HOLES: inp.parts === null ? { status: 'SKIP', reason: inp.noParts ?? '' } : holesLine(inp.parts),
     ...(sourceRead === null ? {} : { [SOURCE_LINE]: sourceRead }),
     ...(Object.keys(skipped).length === 0 ? {} : { skipped }),
+    ...(reqBlock === null ? {} : { requirements: reqBlock }),
     PASS: false,
   };
   const barProblems: Problem[] = [];
@@ -1481,6 +1547,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   const rank = (q: Problem): number => JUDGEMENT_LINES.findIndex((n) => q.code === `CHECK_${n}`);
   problems.sort((a, b) => rank(a) - rank(b));
   problems.unshift(...barProblems);
+  problems.push(...reqProblems);
   figures.PASS = problems.length === 0;
   write('check.json', `${JSON.stringify(figures, null, 1)}\n`);
   const bars: CheckReport['bars'] = { measured: ['gate'], skipped: [] };
@@ -1504,7 +1571,136 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     bars,
     problems,
     written,
+    requirements: reqBlock,
   };
+}
+
+// ---------------------------------------------------------------------------
+// the scene's declared requirements (issue #93)
+// ---------------------------------------------------------------------------
+
+/** Where `check` writes the requirement renders, under `--out`: `as-declared/<animation>/`, `released/<name>/`, `full/<name>/`. */
+export const REQUIREMENTS_DIR = 'requirements';
+
+/** The throwaway copies' specs and builds, under `--out`; removed before the stage returns. */
+const REQUIREMENTS_SCRATCH = '_requirements';
+
+/**
+ * Measure every requirement of a file {@link resolveRequirements} has passed.
+ * Every pose is spine-rigc's: each animation a requirement names is rendered
+ * once with `--geometry` at the file's fps, from the rig under test's own
+ * build — or, when the file places scene targets for it, from a copy with
+ * them written in ({@link placeTargets}, built `--profile spine`, as the setup
+ * still is) — into `requirements/as-declared/<animation>/`. Each `follow` adds
+ * two copies, released and full ({@link forceMix}), the scene targets placed
+ * on both, rendered into `requirements/released/<name>/` and
+ * `requirements/full/<name>/`. The released copy's constraint is muted
+ * throughout, which spine-rigc's A47 (ik) or A48 (transform) refuses unless
+ * the rig declares the mix consumer-driven: when the gate refuses that copy
+ * for that constraint and nothing else ({@link mutedOnly}), the copy — never
+ * the rig under test — declares it in `invariants.consumerDrivenMix`, rigc's
+ * own door, and the line says so. A copy rigc refuses otherwise is refused,
+ * `CHECK_RIGC_GREEN`, quoting rigc. Lines go into the returned block; each
+ * FAIL and NOT MEASURABLE into `problems`.
+ */
+export function measureRequirements(inp: CheckInputs, file: RequirementsFile, buildDir: string, out: string, rigc: RigcRunner, problems: Problem[]): RequirementsBlock {
+  const reqDir = join(out, REQUIREMENTS_DIR);
+  const scratch = join(out, REQUIREMENTS_SCRATCH);
+  for (const d of [reqDir, scratch]) rmSync(d, { recursive: true, force: true });
+  mkdirSync(reqDir, { recursive: true });
+  mkdirSync(scratch, { recursive: true });
+  const images = typeof inp.rig.images === 'string' ? resolve(inp.rigDir, inp.rig.images) : inp.rig.images;
+  const base = { ...inp.rig, images };
+  let copies = 0;
+  const buildCopy = (rig: Record<string, unknown>, motion: Record<string, unknown>): { dir: string; call: RigcCall } => {
+    const dir = join(scratch, `copy${copies++}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'rig.json'), JSON.stringify(rig));
+    writeFileSync(join(dir, 'motion.json'), JSON.stringify(motion));
+    return { dir: join(dir, 'build'), call: rigc(['build', '--rig', join(dir, 'rig.json'), '--motion', join(dir, 'motion.json'), '--out', join(dir, 'build'), '--profile', 'spine']) };
+  };
+  const green = (b: { dir: string; call: RigcCall }, what: string): string => {
+    if (b.call.status !== 0) refuseIfAny(rigcFailed(`build (${what})`, b.call, buildGateLines(b.call.out)));
+    return b.dir;
+  };
+  const posesOf = (candidate: string, animation: string, dir: string, label: string): { poses: Poses; geo: IdleGeometry } => {
+    const r = rigc(['render', '--candidate', candidate, '--animation', animation, '--fps', String(file.fps), '--max', String(IDLE_MAX_PX), '--geometry', '--out', dir]);
+    if (r.status !== 0) refuseIfAny(rigcFailed(`render --animation ${animation} --geometry (${label})`, r, r.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+    const set = readFrameSet(dir);
+    if (set.written !== set.sampled || set.stride !== 1) {
+      refuseIfAny([{ code: 'CHECK_REQUIREMENTS_FRAMES', object: `${dir} (${label})`, detail: `rigc sampled ${set.sampled} frame(s) and wrote ${set.written} at stride ${set.stride}; every sampled frame is required, since a requirement holds over all of them` }]);
+    }
+    const path = join(set.dir, GEOMETRY_FILE);
+    const geo = readGeometry(path, set.written);
+    if (geo === null) return geometryProblem(path, 'does not exist; `rigc render --geometry` writes it, and every requirement is measured from it');
+    const cache = new Map<string, { setup: BoneWorld; frames: BoneWorld[] }>();
+    const bone = (name: string): { setup: BoneWorld; frames: BoneWorld[] } => {
+      const hit = cache.get(name);
+      if (hit !== undefined) return hit;
+      const t = boneTrackOf(geo, path, set, name);
+      if (typeof t === 'string') return geometryProblem(path, t);
+      const v = { setup: t.setup, frames: t.frames };
+      cache.set(name, v);
+      return v;
+    };
+    const root = boneTrackOf(geo, path, set, inp.rootBone);
+    if (typeof root === 'string') return geometryProblem(path, root);
+    return { poses: { label, indices: geo.frames.map((f) => f.index), times: root.times, bone }, geo };
+  };
+
+  const lines: Record<string, RequirementLine> = {};
+  try {
+    const placed = new Map<string, { rig: Record<string, unknown>; motion: Record<string, unknown> }>();
+    const placedFor = (animation: string): { rig: Record<string, unknown>; motion: Record<string, unknown> } => {
+      let p = placed.get(animation);
+      if (p === undefined) {
+        p = placeTargets(base, inp.motion, file.targets, animation, inp.stage);
+        placed.set(animation, p);
+      }
+      return p;
+    };
+    const declared = new Map<string, { poses: Poses; geo: IdleGeometry }>();
+    for (const r of file.requirements) {
+      if (declared.has(r.animation)) continue;
+      const scene = file.targets.some((t) => t.animation === r.animation);
+      const label = scene ? `as declared, the scene targets of "${r.animation}" placed` : 'as declared';
+      const candidate = scene ? green(buildCopy(placedFor(r.animation).rig, placedFor(r.animation).motion), `the rig ${label}`) : buildDir;
+      declared.set(r.animation, posesOf(candidate, r.animation, join(reqDir, 'as-declared', r.animation), label));
+    }
+    for (const r of file.requirements) {
+      const d = declared.get(r.animation) as { poses: Poses; geo: IdleGeometry };
+      const scene = placedFor(r.animation);
+      const facts = rigFacts(scene.rig, inp.stage);
+      let line: RequirementLine;
+      if (r.kind === 'contact') line = contactLine(r, d.poses, facts);
+      else if (r.kind === 'aim') line = aimLine(r, d.poses, facts);
+      else if (r.kind === 'range') line = rangeLine(r, d.poses, facts);
+      else if (r.kind === 'stretch') line = stretchRequirementLine(r, d.geo.meshes, d.geo.frames, d.poses);
+      else {
+        const rel = forceMix(scene.rig, scene.motion, r, 0);
+        let relBuild = buildCopy(rel.rig, rel.motion);
+        let door: string | null = null;
+        if (relBuild.call.status !== 0 && mutedOnly(buildGateLines(relBuild.call.out).filter((l) => l.includes('FAIL')).map((l) => l.trim()), r)) {
+          relBuild = buildCopy(declareConsumerDriven(rel.rig, r), rel.motion);
+          door = `${mutedLine(r).rule} refused the released copy (its mix is 0 throughout), so that copy alone declares ${r.constraint_type} constraint "${r.constraint}" in invariants.consumerDrivenMix`;
+        }
+        const released = posesOf(green(relBuild, `the released copy of "${r.name}": ${r.constraint_type} constraint "${r.constraint}" ${r.property} mix forced to 0`), r.animation, join(reqDir, 'released', r.name), 'released');
+        const fullCopy = forceMix(scene.rig, scene.motion, r, 1);
+        const full = posesOf(green(buildCopy(fullCopy.rig, fullCopy.motion), `the full copy of "${r.name}": ${r.constraint_type} constraint "${r.constraint}" ${r.property} mix forced to 1`), r.animation, join(reqDir, 'full', r.name), 'full');
+        const same = (a: Poses, b: Poses): boolean => a.times.length === b.times.length && a.times.every((t, i) => t === b.times[i] && a.indices[i] === b.indices[i]);
+        if (!same(d.poses, released.poses) || !same(d.poses, full.poses)) {
+          refuseIfAny([{ code: 'CHECK_REQUIREMENTS_FRAMES', object: `requirement "${r.name}"`, detail: `the as-declared, released and full renders of "${r.animation}" sample frames at [${d.poses.times.join(', ')}], [${released.poses.times.join(', ')}] and [${full.poses.times.join(', ')}] s; the follow is read frame by frame across the three, so the same frames are required` }]);
+        }
+        line = { ...followLine(r, d.poses, released.poses, full.poses), released_copy: door ?? 'built as forced: spine-rigc\'s gate passed it with no further declaration' };
+      }
+      lines[r.name] = line;
+      const p = requirementProblem(r, line);
+      if (p !== null) problems.push(p);
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  return { fps: file.fps, summary: requirementsSummary(file, new Map(Object.entries(lines))), lines };
 }
 
 // ---------------------------------------------------------------------------

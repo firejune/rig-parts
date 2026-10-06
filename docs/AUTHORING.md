@@ -397,6 +397,14 @@ full loader before its assemble stage writes anything.
    rig px, so every origin reads 0, each chain link's tip, length and direction its
    config's, and every `<bone>_ctl` the rig stage inserted is the bone between a
    keyed mesh bone and its parent (§5).
+10. **What a scene requires (optional).** When the motion a scene asks of the rig
+    is known — a hand that stays on a cup, a sleeve that takes half an arm's turn, a
+    joint that must stay inside a range — write it into a
+    `spine-parts-requirements/1` file and hand it to `check` (or `build`):
+    `spine-parts check --rig out/rig --parts out --out out/scene --requirements scene.json`.
+    Every bar in it is yours; `check` supplies none, solves nothing and poses every
+    frame through spine-rigc (§7, *Declared requirements*). A rig composed of
+    several characters is measured the same way, `--rig` naming the composed spec.
 
 The selftest runs this order, with the README's flags, on each fetched example from
 a config holding only `key`, `seethrough` and `assemble.rig_scale`, pasting each
@@ -413,6 +421,7 @@ proposal in as the steps above say (`RL01`); every step must exit 0.
 | `compare` | one line per pair (origin, parent, tip, length, direction — or SKIP and why), then the per-row summary, the unmapped bones of each side, `required:`, each side's roles and the `controls:` line | proposal against the config you corrected: the rows you changed and no others. Config against the `rig.json` `build` writes for it: measured on both examples, every origin within 6.19e-7 px (the rig's offsets are written to 6 places) and every chain link's tip and length within 4.99e-4 px (`length` is written to 3), printed to three places as `0.000` (a signed figure as `+0.000` or `-0.000`); `parent … is the right's ancestor at depth 2, <bone>_ctl between` for every keyed mesh bone, no `DIFFERENT` and no `NOT MAPPED` | `parent DIFFERENT: left a, right b` — a bone hangs from another parent than the other side's; `frames not related` — a rig with no stage (`skeleton.width`/`height`), two configs at different `rig_scale`: the distance rows SKIP, so declare the frame in a `--map` file if the author knows it; `FAIL  STRUCTURE_REQUIRED_PRESENT` — a bone the map requires is missing through its pairs |
 | `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; the `bones` line; the `idle keys` line; then rigc's gate lines (with A15's declared SKIP under `--idle-keys direct`); in `rig.json`, each chain link's (or its `_ctl`'s) `length` and `rotation` | `cover 1.00000` on every mesh, both gate summaries `0 failed` (the compile and the packed pages); every link's `length` the distance to the next link and `rotation` its direction (Spine degrees, counter-clockwise, y up, local to the parent), every offset under it — a child bone's `x, y`, a weight's bind `x, y`, a region's `x, y` — in that turned frame, and a region on a link carrying `rotation` that turns it back upright. Nothing moved: `flattenRig` (`src/rig.ts`) turns every offset back and gives the unturned numbers | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
 | `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the six judgement lines, `RECOMPOSITE_HOLES` and, under `--source`, `SETUP_POSE_VS_SOURCE` (§7), `check.json`; the last line says how many of the nine bars measured and names the ones that said SKIP | `check: PASS; 9 of 9 bar(s) measured, 0 skipped` on the examples, and a judgement line SKIP only where the character lacks what it reads; on a rig spec with no `parts.json` or no `idle` (a merged rig, §7 *Measuring a rig spine-parts did not assemble*), PASS with the skipped bars named | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
+| `check --requirements` (and `build --requirements`) | after the lines above, one line per declared requirement, `NAME: PASS`, `FAIL` or `NOT MEASURABLE — …` with its figures, the bar as declared and the worst frame; then `requirements: N declared — M measured (P PASS, F FAIL), K NOT MEASURABLE; not declared: <kinds>`; `check.json`'s `requirements` block; the renders under `requirements/` (§7, *Declared requirements*) | every line PASS and `0 NOT MEASURABLE`; a follow's `released_copy` says whether rigc's consumer-driven door was taken on the throwaway copy | `CHECK_REQUIREMENT_MET` (a figure past its bar; the line names the frame) or `CHECK_REQUIREMENT_MEASURABLE` (the quantity is undefined in the frames: a tip or an axis on a bone of length 0, an aim with no line, a follow no frame of which reaches its least drive); the last line then reads `check: FAIL — B bar(s) not met, R declared requirement(s) not PASS` |
 | `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line, each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
 
 `loop` writes three files from one frame set, and they are not interchangeable.
@@ -826,6 +835,15 @@ See-through with another seed.
 | `CHECK_PACK_PAGE_EDGES` | the pack line disagrees with the `--page-edges` the build was run with — its `, page edges free` clause is there under `pot` or missing under `free`, or a `pot` page is not a power of two on both edges | a rigc problem; report it, with `rigc --version` |
 | `CHECK_PACK_SHAPE` | the pack line disagrees with the `--pack-shape` the build was run with — it ends `, shape rect` under `polygon` or `, shape polygon` under `rect`, or it has no shape clause (the 1.5–2.0 form, read as `rect`) under `polygon` | a rigc older than 2.1.0 on `PATH`: rigc 2.0.3 takes `--pack-shape` without a word, packs by rectangles and prints the form with no shape clause, so this refusal is what catches it — `bun install` (this package depends on spine-rigc ^2.10.1); otherwise a rigc problem, report it with `rigc --version` |
 | `BUILD_ARTIFACT_PRESENT` | the packed build lacks its `.json`, `.atlas` or page | a rigc problem; report it |
+| `REQUIREMENTS_FILE` | `--requirements` names no file, or one that does not parse as a JSON object. Refused before anything is built (by `build`, before assemble) | the path of a `spine-parts-requirements/1` file |
+| `REQUIREMENTS_FIELD` | a field of the file is missing, of the wrong type, or not one the format reads: `spec`, `fps` (no default), `requirements`, each requirement's `name` (letters, digits, underscores; once each), `kind`, `animation` and its kind's fields — every bar among them (`within_px`, `fraction`, `tolerance`, `least_drive` above 0, `within_degrees` from 0 to 180, `lo_degrees` ≤ `hi_degrees`, `within_ratio` ≥ 1) — and each target's `bone`, `animation` and exactly one of `at` and `keys` (times strictly increasing). `note`, `*_note` (strings) and `x-…` (any value) are read by nothing, as in the config | write the field; the bar is yours |
+| `REQUIREMENTS_RESOLVES` | a bone, an `ik` or `transform` constraint (by name and `constraint_type`, as spine-rigc resolves it), a slot, a mesh attachment or an animation the file names is not in `rig.json` or `motion.json` — the detail lists the ones that are; or an animation whose name cannot be a directory. Refused before anything is built | the name as the rig spells it |
+| `REQUIREMENTS_CONSTRAINT_DRIVES` | a `follow` names a bone its constraint does not constrain, or a property it does not drive: an `ik` drives `rotate` only; a `transform` drives `rotate` when a `to` names `rotate`, `translate` when one names `x` or `y` | the constraint's own bone and property |
+| `REQUIREMENTS_TARGET_PARENT` | a scene target's bone is the root or is not parented to it, or the root is not at rest at the origin, or the animation keys the root — a stage point is a bone's position only under a root that stands still at the origin | a bone under the root for the scene to place |
+| `REQUIREMENTS_TARGET` | a scene target places one bone twice for one animation, places it for an animation no requirement measures, has a key outside the animation's `[0, duration]`, or sits in a group the animation translates | one placement per bone and animation, inside it, for an animation a requirement reads |
+| `CHECK_REQUIREMENTS_FRAMES` | a requirement render did not write every frame rigc sampled, or the as-declared, released and full renders of a follow sampled different frames | a rigc problem; report it |
+| `CHECK_REQUIREMENT_MET` | a declared requirement measured outside its bar; the figure, its frame and the bar are quoted | the rig or its motion (§7, *Declared requirements*) — or the bar, if the scene asks less |
+| `CHECK_REQUIREMENT_MEASURABLE` | a declared requirement is NOT MEASURABLE: what it asks is undefined in the frames, and the reason is quoted. Not a pass | the declaration (a bone with a length, a target off the bone's origin, a least drive the constraint reaches) or the rig |
 
 ## 7. The bars `check` enforces, and what only an eye answers today
 
@@ -1035,6 +1053,111 @@ green and nothing else was looked at. Without an idle no idle is rendered
 (`idle_frames/`, `contact.png` and `motion_heat.png` are not written). The demo's own
 rig directory, copied away from its `parts.json`, reads `4 of 9`: the gate, the loop,
 `CHAIN_LAG` and `TEXTURE_STRETCH`.
+
+### Declared requirements (`--requirements`)
+
+The bars above are this package's. What a *scene* asks of the rig's motion — that
+a hand stays on a cup, that a sleeve takes half of what an arm's constraint asks of
+it, that a joint stays inside a range — is the scene's knowledge (issue #87), so it
+travels in a file `check` is given, `--requirements <file>` (`build` forwards it).
+Every bar in it is the author's; a missing one is refused by name. Nothing here
+solves, guesses a value or chooses a bar: every pose is spine-rigc's, read from the
+world transforms `rigc render --geometry` writes (`rigc-geometry/1`). Coordinates in
+the file are stage px, y down, as in the config; a stage pixel is one Spine world
+unit (the stage box maps to the world by a translation and the y flip,
+`src/coords.ts`); angles are degrees.
+
+```json
+{
+  "spec": "spine-parts-requirements/1",
+  "fps": 12,
+  "targets": [{ "bone": "cup", "animation": "reach", "keys": [{ "t": 0, "at": [44, 32] }, { "t": 1, "at": [50, 32] }] }],
+  "requirements": [
+    { "name": "HAND_ON_CUP", "kind": "contact", "animation": "reach", "bone": "forearm", "point": "tip", "target": { "bone": "cup", "point": "origin" }, "within_px": 0.5 },
+    { "name": "SLEEVE_HALF", "kind": "follow", "animation": "reach", "constraint": "sleeve_tf", "constraint_type": "transform", "bone": "sleeve", "property": "rotate", "fraction": 0.5, "tolerance": 0.05, "least_drive": 2 },
+    { "name": "EYES_ON_CUP", "kind": "aim", "animation": "reach", "bone": "gaze", "target": { "bone": "cup", "point": "origin" }, "within_degrees": 3 },
+    { "name": "ELBOW", "kind": "range", "animation": "reach", "bone": "forearm", "lo_degrees": -10, "hi_degrees": 150 },
+    { "name": "SLEEVE_SKIN", "kind": "stretch", "animation": "reach", "slot": "sleeve", "attachment": "sleeve", "within_ratio": 1.3 }
+  ]
+}
+```
+
+**Four outcomes, never merged** (#87):
+
+| outcome | when | what it does to the run |
+| --- | --- | --- |
+| not declared | the file states no requirement of that kind | the summary line names the kind; not a pass, not a skip of something asked. Without `--requirements` nothing is read, written or printed for it |
+| refused | the file cannot be read against the rig (§6, `REQUIREMENTS_*`) | refused by name before anything is built (exit 1) |
+| not measurable | it reads and the rig builds, and the quantity is undefined in the frames | `NAME: NOT MEASURABLE — <why>` with the figures that show it, `CHECK_REQUIREMENT_MEASURABLE`; the run does not PASS |
+| measured | otherwise | `PASS` or `FAIL` against the author's bar, with the figures and the worst frame; a FAIL is `CHECK_REQUIREMENT_MET` |
+
+**The five kinds**, each over every frame of its animation sampled at the file's `fps`:
+
+| kind | declares | measures | not measurable when |
+| --- | --- | --- | --- |
+| `contact` | `bone`, `point` (`origin` or `tip`), `target` (`{ "bone", "point" }` or `{ "stage": [x, y] }`), `within_px` | the largest distance between the two points, and its frame; a tip is the origin plus `length` along the bone's x axis | a tip on a bone of length 0, on either side |
+| `aim` | `bone`, `target`, `within_degrees` | the largest angle between the bone's axis and the line from its origin to the target; the distance is not judged | the bone has length 0; a frame whose target sits on the origin has no line and is not counted, and with no line on any frame the requirement is not measurable |
+| `range` | `bone`, `lo_degrees`, `hi_degrees` | the bone's world rotation less its parent's (the world's, for the root), less the same at the setup pose, as a signed shortest angle: the least and the greatest, and their frames | — |
+| `stretch` | `slot`, `attachment` (a mesh), `within_ratio` | `TEXTURE_STRETCH`'s own per-mesh measure (imported, not rewritten): the mesh's worst max(ratio, 1/ratio) over the frames | a rest edge of length 0; no frame shows the mesh |
+| `follow` | `constraint`, `constraint_type` (`ik` or `transform`), `bone`, `property` (`rotate` or `translate`), `fraction`, `tolerance`, `least_drive` | below | no frame's drive reaches `least_drive` (the line prints the largest drive there was) |
+
+**`follow`**, #87's definition to the letter: "bone A takes a fraction `f` of what
+constraint C asks of it" is measured from three poses of the same rig over the same
+frames, each posed by spine-rigc and differing in one thing only — *as declared*, the
+rig as written, `A(t)`; *released*, C's mix for that property forced to 0 and every
+key of that mix in the animation removed, `A0(t)`; *full*, forced to 1, keys removed,
+`A1(t)`. For `translate` A is the bone's world origin; for `rotate`, `atan2(c, a)` in
+degrees, every difference a signed shortest angle (the line notes a largest drive
+over 90°: a drive beyond 180° is not told from its complement). The drive is
+`d(t) = A1(t) − A0(t)`; a frame counts when `|d(t)| ≥ least_drive`; the measured
+fraction is `F = Σ⟨A(t) − A0(t), d(t)⟩ / Σ|d(t)|²` over the frames that count; PASS
+when `|F − fraction| ≤ tolerance`. The line also carries the frames that counted, the
+largest drive and its frame, and the largest residual `|A − A0 − F·d|` and its frame
+— figures with no bar. It measures the realised follow, not the number in `mix`: a
+keyed mix, a later constraint on the bone or physics on it show up in `A(t)` alone.
+"Keys removed" is written as every key of that mix holding the forced value (its
+curve channel's two value numbers with it), which poses what removing them under a
+setup mix of that value poses, while every other field those keys state stays as
+written. An ik's mix is `mix`; a transform's is `mixRotate` for `rotate`, and `mixX`
+and `mixY` for `translate`.
+
+The released copy rests muted throughout whenever no other animation keys that mix,
+and spine-rigc's gate refuses that — `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT`,
+`A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT`. When rigc refuses the released copy
+for that constraint and for nothing else, the copy — never the rig under test —
+declares it in `invariants.consumerDrivenMix`, rigc's own door for a mix the consumer
+drives, and the line's `released_copy` says so; the full copy drops the constraint's
+own declaration if the rig has one, since at 1 it rests live. Any other red line from
+a copy is refused, `CHECK_RIGC_GREEN`, quoting rigc.
+
+**Scene targets.** A `targets` entry names a bone whose parent is the root and gives
+it a stage point (`"at": [x, y]`) or stage points at stated times (`"keys"`), linear
+between them, the first held before and the last after, for one named animation.
+`check` writes it onto a throwaway copy — the bone's setup position is the first
+point, the rest are translate keys from it, through the one y door, and the
+animation's own translation tracks on that bone are dropped — and poses the copy
+through spine-rigc; a follow's released and full copies carry the same placement. A
+root that is not at rest at the origin, or that the animation moves, is refused,
+because the stage point would not be the bone's position. In a rig composed of
+several characters, a target can simply be another character's bone, named as the
+composed rig names it.
+
+**Where it is written**, under `--out`: `requirements/as-declared/<animation>/` (the
+render each requirement on that animation reads: the rig under test's own build, or a
+copy with its scene targets placed), and, per follow, `requirements/released/<name>/`
+and `requirements/full/<name>/` — each a `rigc render` frame set with its
+`geometry.json`. The copies' specs and builds are scratch, removed before the stage
+returns. `check.json` gains `requirements` — `fps`, the summary and each line by name
+— before `PASS`, and `PASS` needs every declared requirement to PASS.
+
+The selftest holds each kind and outcome to a hand value on a generated rig
+(`fixtures/reqrig.ts`): a two-bone ik that reaches its scene target holds its contact
+and one 5 px short fails it at the frame it is short; an aim-only one-bone ik with a
+far target passes and is not judged on distance; a follow at mix 0.5 measures 0.5 on
+an ik and on a transform, and the same ik with its mix keyed 0, 1, 1 measures
+3.5 / 5 = 0.7 and fails a declared 0.5; a follow whose target asks nothing and a tip
+on a bone of length 0 are NOT MEASURABLE and the run is not PASS (`CK68`–`CK79`,
+`RQ01`–`RQ22`).
 
 ## 8. What one character costs
 
