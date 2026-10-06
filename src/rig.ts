@@ -54,6 +54,16 @@
  *   reports as a SKIP with its cost instead of refusing each bone. The
  *   declaration is written only when the idle keys at least one mesh-driving
  *   bone: rigc refuses a declaration that switches nothing off.
+ * - **Constraints**, only when the config has `constraints` (issue #92):
+ *   handed to rigc as `rig.json`'s `constraints`, in the order written, each
+ *   as written but its records and annotations. Nothing here solves or
+ *   validates them; rigc's gate does, and a field it refuses is its refusal,
+ *   in its words (`RIG_RIGC_GREEN`). Two things are this stage's: a two-bone
+ *   ik whose child the idle keys through a control is refused
+ *   (`RIG_IK_PAIR_UNDER_CONTROL`), and every bone a constraint follows is
+ *   declared detached from the bones it drives ({@link detachedRules},
+ *   `invariants.detached`, rigc's `A25`). Without the field, no byte of any
+ *   output moves.
  *
  * Every part image is padded by {@link PAD} transparent pixels on each side
  * before it is meshed or placed, and the padded image is what `images/`
@@ -68,7 +78,7 @@
  * touches the disk, and the same inputs give the same bytes (key order is the
  * order the objects are built in, and every number is rounded by `pyRound`).
  */
-import { type BoneEntry, type CharacterConfig, type Point, ROOT_BONE } from './config.ts';
+import { type BoneEntry, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type Point, ROOT_BONE } from './config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { artCoverage, ART_ALPHA, latticeMesh, ONE_LOOP_PASSES } from './mesh.ts';
@@ -163,8 +173,57 @@ export interface RigSpec {
   bones: RigBone[];
   slots: Array<{ name: string; bone: string; attachment: string }>;
   skins: { default: Record<string, Record<string, MeshAttachment | RegionAttachment>> };
-  /** Written only under `idleKeys: 'direct'`, and only when the idle keys a mesh-driving bone. */
-  invariants?: { idleDrivesMeshes: { why: string } };
+  /**
+   * `config.constraints`, in the order written, each as the config wrote it
+   * but its records and annotations ({@link constraintForRig}). Written only
+   * when the config has the field.
+   */
+  constraints?: Array<Record<string, unknown>>;
+  /**
+   * `idleDrivesMeshes`: written only under `idleKeys: 'direct'`, and only when
+   * the idle keys a mesh-driving bone. `detached`: written only when a
+   * constraint follows a bone ({@link detachedRules}).
+   */
+  invariants?: { idleDrivesMeshes?: { why: string }; detached?: DetachedRule[] };
+}
+
+/** One `invariants.detached` entry: spine-rigc's `RigDetachedRule`, checked by its gate rule `A25`. */
+export interface DetachedRule {
+  bone: string;
+  notUnder: string;
+  why: string;
+}
+
+/**
+ * `invariants.detached` for a config's constraints (issue #92): for each
+ * constraint that follows a bone — an ik's `target`, a transform's `source`
+ * — one rule per bone it drives, `{bone: <followed>, notUnder: <driven>}`,
+ * in constraint order and then `bones` order, each pair once. spine-rigc's
+ * `A25_DETACHED_BONE_PARENTAGE` fails a rule whose `bone` is a descendant of
+ * its `notUnder` (spine-rigc 2.10.1, `src/assertions/bodies/a25.ts`):
+ * measured on the rig fixture, a target declared detached and parented under
+ * the link it drives fails the gate under both `--idle-keys` values, and the
+ * same rig with nothing declared gates green with `A25` a SKIP. The loader
+ * refuses that parentage first (`CONFIG_CONSTRAINT_TARGET_DETACHED`); the
+ * declaration is what keeps it measured on the built rig, which a consumer
+ * composes into a scene. Empty when no constraint follows a bone.
+ */
+export function detachedRules(constraints: readonly ConfigConstraint[]): DetachedRule[] {
+  const out: DetachedRule[] = [];
+  const seen = new Set<string>();
+  constraints.forEach((c, i) => {
+    const field = CONSTRAINT_FOLLOWS[c.type];
+    if (field === undefined) return;
+    const followed = c[field];
+    const driven = c.bones;
+    if (typeof followed !== 'string' || !Array.isArray(driven)) return;
+    for (const b of driven) {
+      if (typeof b !== 'string' || seen.has(`${followed}\u0000${b}`)) continue;
+      seen.add(`${followed}\u0000${b}`);
+      out.push({ bone: followed, notUnder: b, why: `spine-parts: "${followed}" is the ${field} of ${c.type} constraint "${c.name}" (config.constraints[${i}]), and "${b}" is a bone it drives; under it, driving it would move what it follows` });
+    }
+  });
+  return out;
 }
 
 /**
@@ -442,6 +501,25 @@ export function buildRig(
       fail('RIG_CONTROL_NAME_FREE', `bone "${k}"`, `is keyed by the idle and weighted to by a mesh, so it needs the control bone "${ctl}", and config.bones already declares a bone of that name`);
     }
   }
+  // A two-bone ik over a parent and its child (the loader's rule) stops being
+  // one when the child gets a control: `<child>_ctl` stands between them.
+  // Measured through spine-rigc 2.10.1 on the rig fixture's chain `hem` with a
+  // target under root: under `ctl` the ik over hem0 and hem1 gates green and
+  // leaves hem1's tip 2.58 to 2.59 units from the target in every one of the
+  // idle's 49 frames; under `direct` the tip is on the target in every frame.
+  // A one-bone ik, a physics and a transform constraint on a link pose the
+  // same under both. Nothing is re-targeted here: the refusal says which
+  // `--idle-keys` makes the ik mean what it says.
+  (cfg.constraints ?? []).forEach((c, i) => {
+    const pair = c.bones;
+    if (c.type !== 'ik' || !Array.isArray(pair) || pair.length !== 2 || !controls.includes(pair[1] as string)) return;
+    const [first, second] = pair as [string, string];
+    fail(
+      'RIG_IK_PAIR_UNDER_CONTROL',
+      `config.constraints[${i}] (ik constraint "${c.name}")`,
+      `drives "${first}" and its child "${second}", and under --idle-keys ${idleKeys} "${second}" is keyed by the idle and weighted to by a mesh, so it is keyed through the control "${second}${CONTROL_SUFFIX}", which stands between the two in the rig: the two-bone solve would place "${second}" as though its parent were "${first}" and end its tip away from the target, with the gate green. Run \`rig --idle-keys direct\`, which keys "${second}" in place and keeps the pair parent and child (\`build\` takes no --idle-keys: it keys through controls)`,
+    );
+  });
   refuseIfAny(problems);
   for (const k of controls) {
     const b = B.get(k) as Bone;
@@ -639,7 +717,10 @@ export function buildRig(
     slots,
     skins: { default: skin },
   };
+  if (cfg.constraints !== undefined) rig.constraints = cfg.constraints.map(constraintForRig);
+  const detached = detachedRules(cfg.constraints ?? []);
   if (idleKeys === 'direct' && meshKeyed.length > 0) rig.invariants = { idleDrivesMeshes: { why: IDLE_DRIVES_MESHES_WHY } };
+  if (detached.length > 0) rig.invariants = { ...rig.invariants, detached };
   return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses };
 }
 

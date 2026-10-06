@@ -125,7 +125,8 @@ import { BARS, blackRig, buildGateLines, causeLines, chainLine, measuredRules, S
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
-import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, type Generation, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
+import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'spine-rigc/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { PartsError, type Problem } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
@@ -207,7 +208,7 @@ import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines
 import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeypoints, parseKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
 import { LYING_PARTS, LYING_RIG, type PoseName, POSES } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
-import { block, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
+import { block, constraintConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
 import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText, type RigSpec } from './src/rig.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
@@ -1188,6 +1189,7 @@ function runConfigSuite(): number {
 
   runBlinkConfigCases(say);
   runRecordConfigCases(say);
+  runConstraintConfigCases(say);
   return bad();
 }
 
@@ -1349,6 +1351,221 @@ function runRecordConfigCases(say: (name: string, ok: boolean, detail: string, w
       layersErr === null && paintErr === null && typo?.code === 'CONFIG_KEY_KNOWN' && typo.object === 'config.status' && doors(typo),
       `loadEarlyConfig(…, "layers") with records at config, seethrough and assemble -> ${codes(layersErr)}; loadEarlyConfig(…, "paint") with records at config, generation and generation.sampler -> ${codes(paintErr)}; the layers config plus a plain status -> ${line(typo, null)}`,
       'the early doors read through the same Check.object, so a config that carries its records from the first step is not refused before the rig exists and accepted after',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Issue #92: `config.constraints`, spine-rigc's own constraint shapes. The
+ * loader owns the list, each entry's `type` and `name`, the bone names, and
+ * what cannot mean what it says on the declared bones; every other field is
+ * rigc's (RG59, BU15). The fixture is {@link minimalConfig} plus a scene
+ * target `tgt` under root: bones root, hip, chest, head, hem0, hem1, tgt —
+ * hem0's parent hip, hem1's hem0.
+ */
+function constraintCfg(constraints: unknown): Record<string, unknown> {
+  const c = minimalConfig();
+  (c.bones as unknown[]).push({ name: 'tgt', parent: 'root', at: [40, 20] });
+  c.constraints = constraints;
+  return c;
+}
+
+/** Each kind once, with a record, a note, a field rigc does not read, and an ik and a transform sharing a name. */
+function everyKind(): Array<Record<string, unknown>> {
+  return [
+    { name: 'reach', type: 'ik', bones: ['hem0', 'hem1'], target: 'tgt', mixx: 1, 'x-why': { issue: 92 } },
+    { name: 'aim', type: 'ik', bones: ['head'], target: 'tgt', note: 'the head turns toward the scene' },
+    { name: 'reach', type: 'transform', bones: ['chest'], source: 'tgt', properties: { rotate: { to: { rotate: {} } } } },
+    { name: 'ride', type: 'path', bones: ['hem0'], slot: 'robe' },
+    { name: 'sway', type: 'physics', bone: 'hem1', rotate: 1 },
+    { name: 'dial', type: 'slider', animation: 'idle', bone: 'tgt', property: 'x' },
+  ];
+}
+
+/**
+ * The bone-field table held to rigc's `RIG_KEYS`: every field it names is a
+ * key of rigc's shape for that kind, and no key of rigc's five shapes is a
+ * record or annotation name (which `constraintForRig` leaves out). Returns
+ * what disagrees; parameters so a planted table and a planted shape can be
+ * shown to disagree.
+ */
+function boneFieldsAgainstRigc(table: Readonly<Record<string, ReadonlyArray<readonly [string, string]>>>, keys: Readonly<Record<string, readonly string[]>>): string[] {
+  const shape: Record<string, string> = { ik: 'RigIkConstraint', transform: 'RigTransformConstraint', path: 'RigPathConstraint', physics: 'RigPhysicsConstraint', slider: 'RigSliderConstraint' };
+  const out: string[] = [];
+  const kinds = RIG_SKIN_CONSTRAINT_KEYS as readonly string[];
+  if (Object.keys(table).join(',') !== kinds.join(',')) out.push(`the table's kinds are ${Object.keys(table).join(', ')}; rigc's are ${kinds.join(', ')}`);
+  for (const kind of kinds) {
+    const own = keys[shape[kind]] ?? [];
+    for (const [field] of table[kind] ?? []) if (!own.includes(field)) out.push(`${kind}.${field} is not a key of rigc's ${shape[kind]}`);
+    for (const key of own) if (isDoorKey(key)) out.push(`rigc's ${shape[kind]} reads "${key}", a key the loader treats as a record or an annotation`);
+  }
+  return out;
+}
+
+function runConstraintConfigCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const one = (err: PartsError | null): Problem | null => (err !== null && err.problems.length === 1 ? err.problems[0] : null);
+  const line = (q: Problem | null, err: PartsError | null): string => (q === null ? codes(err) : `${q.code}: ${q.object} — ${q.detail}`);
+  const load = (constraints: unknown): PartsError | null => refusals(() => parseConfig(constraintCfg(constraints)));
+  const edited = (i: number, edit: (c: Record<string, unknown>) => void): Array<Record<string, unknown>> => {
+    const list = everyKind();
+    edit(list[i]);
+    return list;
+  };
+
+  const green = load(everyKind());
+  const none = refusals(() => parseConfig(minimalConfig()));
+  const empty = load([]);
+  say(
+    'CF58_EACH_OF_RIGCS_FIVE_CONSTRAINT_KINDS_LOADS_WITH_ITS_BONES_RESOLVED_AND_ITS_OTHER_FIELDS_UNREAD',
+    green === null && none === null && empty === null,
+    `an ik over hem0 and hem1 with a field rigc does not read (mixx) and an x- record, a one-bone ik with a note, a transform sharing the ik's name, a path naming a slot, a physics on a link, a slider on the target -> ${codes(green)}; no constraints -> ${codes(none)}; [] -> ${codes(empty)}`,
+    'issue #92: the list is rigc\'s shape, verbatim — the loader resolves the bones and leaves mixx, slot and animation to rigc, which refuses them in its own words (RG59); an ik and a transform may share a name because rigc finds a constraint by its kind and its name',
+  );
+
+  const misses: Array<[string, number, (c: Record<string, unknown>) => void, string, string]> = [
+    ['an ik link', 0, (c) => { c.bones = ['hem0', 'ghost']; }, 'config.constraints[0].bones[1]', 'ik constraint "reach"'],
+    ['an ik target', 1, (c) => { c.target = 'ghost'; }, 'config.constraints[1].target', 'ik constraint "aim"'],
+    ['a transform source', 2, (c) => { c.source = 'ghost'; }, 'config.constraints[2].source', 'transform constraint "reach"'],
+    ['a path bone', 3, (c) => { c.bones = ['ghost']; }, 'config.constraints[3].bones[0]', 'path constraint "ride"'],
+    ['a physics bone', 4, (c) => { c.bone = 'ghost'; }, 'config.constraints[4].bone', 'physics constraint "sway"'],
+    ['a slider bone', 5, (c) => { c.bone = 'ghost'; }, 'config.constraints[5].bone', 'slider constraint "dial"'],
+  ];
+  const missOut = misses.map(([what, i, edit, object, label]) => {
+    const err = load(edited(i, edit));
+    const q = one(err);
+    const ok = q?.code === 'CONFIG_NAME_RESOLVES' && q.object === object && q.detail === `names "ghost", which config.bones does not declare (${label}); the bones that exist: root, hip, chest, head, hem0, hem1, tgt`;
+    return { what, ok, got: line(q, err) };
+  });
+  say(
+    'CF59_A_BONE_NO_CONFIG_DECLARES_IS_REFUSED_IN_EVERY_BONE_FIELD_OF_THE_FIVE_KINDS_NAMING_THE_CONSTRAINT_FIELD_AND_NAME',
+    missOut.every((m) => m.ok),
+    missOut.every((m) => m.ok) ? `${missOut.length} fields, each one refusal; e.g. ${missOut[0].got}` : missOut.filter((m) => !m.ok).map((m) => `${m.what}: ${m.got}`).join(' | '),
+    'everything resolves by name, and a miss is refused by name: the constraint, the field, the name and the bones that exist, before rigc\'s parser says only that the rig does not declare it',
+  );
+
+  const twice = one(load([...everyKind(), { name: 'reach', type: 'ik', bones: ['head'], target: 'tgt' }]));
+  say(
+    'CF60_TWO_CONSTRAINTS_OF_ONE_KIND_UNDER_ONE_NAME_ARE_REFUSED_AND_TWO_KINDS_MAY_SHARE_ONE',
+    twice?.code === 'CONFIG_CONSTRAINT_NAME_UNIQUE' && twice.object === 'config.constraints[6].name' && twice.detail.startsWith('names the ik constraint "reach" again (first at constraints[0])') && green === null,
+    `a second ik "reach" -> ${line(twice, null)}; the ik "reach" and the transform "reach" of CF58 -> ${codes(green)}`,
+    'spine-rigc 2.10.1 resolves a constraint by its kind and its name (SkeletonData.findConstraint(name, type)) and refuses two of a kind under one name, so the loader keeps that identity — not a stricter one rigc measured production rigs breaking',
+  );
+
+  const typeCase = (edit: (c: Record<string, unknown>) => void): Problem | null => one(load(edited(1, edit)));
+  const aimType = typeCase((c) => { c.type = 'aim'; });
+  const capital = typeCase((c) => { c.type = 'IK'; });
+  const untyped = typeCase((c) => { delete c.type; });
+  const fiveNamed = `one of ${(RIG_SKIN_CONSTRAINT_KEYS as readonly string[]).join(', ')} is required`;
+  say(
+    'CF61_A_TYPE_RIGCS_UNION_DOES_NOT_NAME_IS_REFUSED_NAMING_THE_FIVE_AND_AN_ABSENT_ONE_IS_REQUIRED',
+    aimType?.code === 'CONFIG_CONSTRAINT_TYPE_KNOWN' && aimType.object === 'config.constraints[1].type' && aimType.detail.startsWith(`is "aim"; ${fiveNamed}`) &&
+      capital?.code === 'CONFIG_CONSTRAINT_TYPE_KNOWN' && capital.detail.startsWith(`is "IK"; ${fiveNamed}`) &&
+      untyped?.code === 'CONFIG_FIELD_PRESENT' && untyped.object === 'config.constraints[1].type',
+    `"aim" -> ${line(aimType, null)}; "IK" -> ${capital === null ? 'not one refusal' : `${capital.code} ${capital.object}`}; no type -> ${untyped === null ? 'not one refusal' : `${untyped.code} ${untyped.object}`}`,
+    'the five kinds are read off rigc (RIG_SKIN_CONSTRAINT_KEYS), not typed here; rigc refuses an unknown type too, but the config is the input that is wrong, and "IK" is not a near miss to map to "ik" — no silent mapping of an unknown name to a nearby one',
+  );
+
+  const nameless = one(load(edited(1, (c) => { delete c.name; })));
+  const blank = one(load(edited(1, (c) => { c.name = ''; })));
+  const numbered = one(load(edited(1, (c) => { c.name = 3; })));
+  say(
+    'CF62_A_CONSTRAINT_WITHOUT_A_NON_EMPTY_STRING_NAME_IS_REFUSED',
+    nameless?.code === 'CONFIG_FIELD_PRESENT' && nameless.object === 'config.constraints[1].name' && blank?.code === 'CONFIG_FIELD_TYPE' && blank.object === 'config.constraints[1].name' && numbered?.code === 'CONFIG_FIELD_TYPE' && numbered.detail.startsWith('is 3;'),
+    `no name -> ${line(nameless, null)}; "" -> ${blank === null ? 'not one refusal' : `${blank.code} ${blank.object}`}; 3 -> ${numbered === null ? 'not one refusal' : `${numbered.code}: ${numbered.detail}`}`,
+    'a constraint is found by its kind and its name, so a constraint with no name is one nothing can key, mix or exempt',
+  );
+
+  const shapes: Array<[string, unknown, string, string]> = [
+    ['an object for the list', { reach: everyKind()[0] }, 'CONFIG_FIELD_TYPE', 'config.constraints'],
+    ['a string for an entry', ['reach'], 'CONFIG_FIELD_TYPE', 'config.constraints[0]'],
+    ['a number for a note', edited(1, (c) => { c.note = 4; }), 'CONFIG_FIELD_TYPE', 'config.constraints[1].note'],
+    ['a name for a list of bones', edited(0, (c) => { c.bones = 'hem0'; }), 'CONFIG_FIELD_TYPE', 'config.constraints[0].bones'],
+    ['a list for one bone', edited(4, (c) => { c.bone = ['hem1']; }), 'CONFIG_FIELD_TYPE', 'config.constraints[4].bone'],
+  ];
+  const shapeOut = shapes.map(([what, value, code, object]) => {
+    const err = load(value);
+    const q = one(err);
+    return { what, ok: q?.code === code && q.object === object, got: line(q, err) };
+  });
+  say(
+    'CF63_A_LIST_THAT_IS_NOT_ONE_AN_ENTRY_THAT_IS_NOT_AN_OBJECT_AND_A_BONE_FIELD_THAT_HOLDS_NO_NAME_ARE_REFUSED',
+    shapeOut.every((s) => s.ok),
+    shapeOut.map((s) => `${s.what} -> ${s.ok ? s.got.split(' — ')[0] : `WRONG: ${s.got}`}`).join('; '),
+    'what the loader owns it refuses by shape: the list, the entry, an annotation (a string, as everywhere) and the fields that name bones; a bone field holding no name has nothing to resolve',
+  );
+
+  const ikCase = (bones: string[]): Problem | null => one(load([{ name: 'reach', type: 'ik', bones, target: 'tgt' }]));
+  const notChild = ikCase(['hip', 'hem1']);
+  const reversed = ikCase(['hem1', 'hem0']);
+  const three = ikCase(['hip', 'hem0', 'hem1']);
+  const pairOk = load([{ name: 'reach', type: 'ik', bones: ['hem0', 'hem1'], target: 'tgt' }]);
+  const singleOk = load([{ name: 'aim', type: 'ik', bones: ['hip'], target: 'tgt' }]);
+  say(
+    'CF64_AN_IK_OVER_TWO_BONES_THAT_ARE_NOT_PARENT_AND_CHILD_OR_OVER_THREE_IS_REFUSED_AND_ONE_BONE_OR_A_PAIR_LOADS',
+    notChild?.code === 'CONFIG_IK_BONES_PARENT_AND_CHILD' && notChild.object === 'config.constraints[0].bones' && notChild.detail.startsWith('names "hip" and "hem1", and "hem1"\'s parent is "hem0"; a two-bone ik solves a parent and its child') &&
+      reversed?.code === 'CONFIG_IK_BONES_PARENT_AND_CHILD' && reversed.detail.startsWith('names "hem1" and "hem0", and "hem0"\'s parent is "hip"') &&
+      three?.code === 'CONFIG_IK_BONES_PARENT_AND_CHILD' && three.detail.startsWith('names 3 bones (hip, hem0, hem1)') &&
+      pairOk === null && singleOk === null,
+    `[hip, hem1] -> ${line(notChild, null)}; [hem1, hem0] -> ${reversed === null ? 'not one refusal' : reversed.code}; [hip, hem0, hem1] -> ${three === null ? 'not one refusal' : `${three.code}: ${three.detail.slice(0, 90)}…`}; [hem0, hem1] -> ${codes(pairOk)}; [hip] -> ${codes(singleOk)}`,
+    'measured through spine-rigc 2.10.1 on the rig fixture (fixtures/rig.ts, 49 idle frames): an ik over two bones that are not parent and child gates green and leaves the tip 15.6 to 17.3 units off its target in every frame, and an ik over three bones gates green and moves nothing — what was written cannot happen, and nothing downstream says so',
+  );
+
+  const under = one(load([{ name: 'reach', type: 'ik', bones: ['hem0'], target: 'hem1' }]));
+  const itself = one(load([{ name: 'aim', type: 'ik', bones: ['hem1'], target: 'hem1' }]));
+  const sourced = one(load([{ name: 'follow', type: 'transform', bones: ['hip'], source: 'head', properties: { rotate: { to: { rotate: {} } } } }]));
+  const outside = load([{ name: 'aim', type: 'ik', bones: ['hem1'], target: 'chest' }, { name: 'follow', type: 'transform', bones: ['chest'], source: 'hem1', properties: { x: { to: { x: {} } } } }]);
+  say(
+    'CF65_A_TARGET_OR_SOURCE_THAT_MOVES_WITH_THE_BONES_ITS_CONSTRAINT_DRIVES_IS_REFUSED_AND_ONE_BESIDE_THEM_LOADS',
+    under?.code === 'CONFIG_CONSTRAINT_TARGET_DETACHED' && under.object === 'config.constraints[0].target' && under.detail.startsWith('is "hem1", which sits under "hem0" (hem1 < hem0), a bone ik constraint "reach" drives;') &&
+      itself?.code === 'CONFIG_CONSTRAINT_TARGET_DETACHED' && itself.detail.startsWith('is "hem1", which ik constraint "aim" also drives;') &&
+      sourced?.code === 'CONFIG_CONSTRAINT_TARGET_DETACHED' && sourced.object === 'config.constraints[0].source' && sourced.detail.startsWith('is "head", which sits under "hip" (head < chest < hip)') &&
+      outside === null,
+    `ik over hem0 following hem1 -> ${line(under, null)}; ik over hem1 following hem1 -> ${itself === null ? 'not one refusal' : itself.code}; transform over hip reading head -> ${sourced === null ? 'not one refusal' : `${sourced.object}: ${sourced.detail.slice(0, 60)}…`}; an ik over hem1 following chest and a transform over chest reading hem1 -> ${codes(outside)}`,
+    'a bone a constraint follows that moves with the bones it drives is a loop the solver chases; rigc measures that parentage only where a rig declares it (A25, which the rig stage declares — RG60), and the stage whose input is wrong is this one',
+  );
+
+  const agree = boneFieldsAgainstRigc(CONSTRAINT_BONE_FIELDS, RIG_KEYS as unknown as Record<string, readonly string[]>);
+  const typo = boneFieldsAgainstRigc({ ...CONSTRAINT_BONE_FIELDS, ik: [['bones', 'list'], ['targett', 'one']] }, RIG_KEYS as unknown as Record<string, readonly string[]>);
+  const noted = boneFieldsAgainstRigc(CONSTRAINT_BONE_FIELDS, { ...(RIG_KEYS as unknown as Record<string, readonly string[]>), RigPhysicsConstraint: [...RIG_KEYS.RigPhysicsConstraint, 'note'] });
+  say(
+    'CF66_THE_BONE_FIELD_TABLE_NAMES_ONLY_RIGCS_OWN_KEYS_AND_NO_RIGC_CONSTRAINT_KEY_IS_A_RECORD_OR_AN_ANNOTATION',
+    agree.length === 0 && typo.length === 1 && typo[0] === 'ik.targett is not a key of rigc\'s RigIkConstraint' && noted.length === 1 && noted[0].includes('reads "note"'),
+    `against the installed spine-rigc's RIG_KEYS: ${agree.length === 0 ? 'every field a key of its kind, no key a door' : agree.join('; ')}; planted "targett" -> ${typo.join('; ') || 'not named'}; planted a physics key "note" -> ${noted.join('; ') || 'not named'}`,
+    'the one table kept of rigc\'s shapes is the bone-bearing field names, typed against rigc\'s interfaces and held at run time to rigc\'s RIG_KEYS; and since the rig stage leaves records and annotations out of what it hands rigc, no key rigc reads may look like one',
+  );
+
+  const dir = temp('constraints-early');
+  try {
+    writeFileSync(join(dir, 'early.json'), JSON.stringify({ key: 'fixture', seethrough: { resolution: 1024, steps: 30, seed: 42, offload: true }, assemble: { rig_scale: 0.5 }, constraints: 'not read yet' }));
+    const early = refusals(() => loadEarlyConfig(join(dir, 'early.json'), 'layers'));
+    const full = one(load('not read yet'));
+    say(
+      'CF67_AN_EARLY_DOOR_CARRIES_CONSTRAINTS_UNREAD_AND_THE_FULL_LOADER_READS_THEM',
+      early === null && full?.code === 'CONFIG_FIELD_TYPE' && full.object === 'config.constraints',
+      `loadEarlyConfig(…, "layers") with constraints "not read yet" -> ${codes(early)}; parseConfig with the same -> ${line(full, null)}`,
+      'constraints are written after the bones exist, like meshes and motion; a step before that carries the section without vouching for it, and the full loader, in front of rig and build, reads it',
+    );
+
+    // The refusal comes before any rigc process, at rig and at build.
+    const fixture = writeRigFixture(join(dir, 'rig'), constraintConfig([{ name: 'reach', type: 'ik', bones: ['hem0', 'ghost'], target: 'tgt' }]));
+    const calls: string[] = [];
+    const counting: RigcRunner = (args) => {
+      calls.push(args[0] ?? '');
+      return { status: 1, out: 'counting runner: no rigc here' };
+    };
+    const scratch = join(dir, 'scratch');
+    mkdirSync(scratch, { recursive: true });
+    const atRig = refusals(() => rigStage({ config: fixture.config, parts: fixture.parts, out: join(dir, 'rig-out') }, counting, scratch, () => {}));
+    const cleanFixture = writeRigFixture(join(dir, 'clean'), constraintConfig([{ name: 'aim', type: 'ik', bones: ['eye'], target: 'tgt' }]));
+    const reached = refusals(() => rigStage({ config: cleanFixture.config, parts: cleanFixture.parts, out: join(dir, 'clean-out') }, counting, scratch, () => {}));
+    const q = one(atRig);
+    say(
+      'CF68_AN_UNRESOLVED_CONSTRAINT_BONE_STOPS_THE_RIG_STAGE_BEFORE_ANY_RIGC_PROCESS',
+      q?.code === 'CONFIG_NAME_RESOLVES' && q.object === 'config.constraints[0].bones[1]' && calls.length === 1 && reached?.problems[0]?.code === 'RIG_RIGC_GREEN' && !existsSync(join(dir, 'rig-out')),
+      `rig -> ${line(q, atRig)}; rigc calls: ${calls.length} (the unforged config's one: ${calls.join(', ')}, answered red by the counting runner -> ${reached?.problems[0]?.code ?? 'no refusal'}); rig-out written: ${existsSync(join(dir, 'rig-out'))}`,
+      'the loader runs in front of the rig stage, so a name that does not resolve never reaches a rigc process; the unforged config reaching the runner is the witness that the count of one is not a runner nobody calls',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -2033,6 +2250,43 @@ function runCliSuite(): number {
       `${lines86.length} line(s): ${lines86.filter(isNew).length} added, placed ${placed(lines86) ?? 'after the LINT summary, before the compare table'}; the other ${lines86.filter((l) => !isNew(l)).length} ${lines86.filter((l) => !isNew(l)).join('\n') === old86.join('\n') ? 'are' : 'are NOT'} the printout before issue #86; planted: a stray line ${stray.join('\n') === old86.join('\n') ? 'NOT caught' : 'caught'}, a coverage line moved up: ${placed(movedUp) ?? 'NOT caught'}`,
       'additions only: an agent that read propose\'s printout before issue #86 reads it the same, and CL14 still finds the compare table last',
     );
+
+    // Issue #92 on the command surface: a constraint's refusals are printed as every other refusal is.
+    const conDir = join(dir, 'constraints');
+    const ghost = writeRigFixture(join(conDir, 'ghost'), constraintConfig([{ name: 'aim', type: 'ik', bones: ['hem1'], target: 'ghost' }]));
+    const ghostRun = runCli(['rig', '--config', ghost.config, '--parts', ghost.parts, '--out', join(conDir, 'ghost', 'out')]);
+    const ghostFail = ghostRun.out.split('\n').filter((l) => l.includes('FAIL'));
+    say(
+      'CL18_A_CONSTRAINT_NAMING_A_BONE_NO_CONFIG_DECLARES_EXITS_1_WITH_ONE_FAIL_LINE_AND_WRITES_NOTHING',
+      ghostRun.status === 1 &&
+        ghostFail.length === 1 &&
+        ghostFail[0].trim().startsWith('FAIL  CONFIG_NAME_RESOLVES: config.constraints[0].target — names "ghost", which config.bones does not declare (ik constraint "aim"); the bones that exist: root, body, hem0, hem1, eye, tgt') &&
+        !existsSync(join(conDir, 'ghost', 'out')),
+      `rig with an ik following "ghost" -> exit ${ghostRun.status}, ${ghostFail.length} FAIL line(s): ${ghostFail[0]?.trim() ?? ''}; --out written: ${existsSync(join(conDir, 'ghost', 'out'))}`,
+      'the messages are the UI: the agent that wrote the constraint reads the rule, the field, the name and the names it could have written, in one line, from the exit it got',
+    );
+
+    const pair = constraintConfig([{ name: 'reach', type: 'ik', bones: ['hem0', 'hem1'], target: 'tgt' }]);
+    const ctlFix = writeRigFixture(join(conDir, 'ctl'), pair);
+    const directFix = writeRigFixture(join(conDir, 'direct'), pair);
+    const ctlRun = runCli(['rig', '--config', ctlFix.config, '--parts', ctlFix.parts, '--out', join(conDir, 'ctl', 'out')]);
+    const directRun = runCli(['rig', '--config', directFix.config, '--parts', directFix.parts, '--out', join(conDir, 'direct', 'out'), '--idle-keys', 'direct']);
+    const ctlFail = ctlRun.out.split('\n').filter((l) => l.includes('FAIL'));
+    const directRig = readJsonFile(join(conDir, 'direct', 'out', 'rig.json'));
+    const inv = (directRig?.invariants ?? {}) as Record<string, unknown>;
+    say(
+      'CL19_A_TWO_BONE_IK_ON_KEYED_LINKS_IS_REFUSED_UNDER_THE_DEFAULT_IDLE_KEYS_NAMING_DIRECT_AND_BUILDS_UNDER_DIRECT',
+      ctlRun.status === 1 &&
+        ctlFail.length === 1 &&
+        ctlFail[0].includes('RIG_IK_PAIR_UNDER_CONTROL: config.constraints[0] (ik constraint "reach")') &&
+        ctlFail[0].includes('Run `rig --idle-keys direct`') &&
+        !existsSync(join(conDir, 'ctl', 'out')) &&
+        directRun.status === 0 &&
+        Object.keys(inv).join(',') === 'idleDrivesMeshes,detached' &&
+        JSON.stringify(directRig?.constraints) === JSON.stringify(pair.constraints),
+      `no --idle-keys -> exit ${ctlRun.status}, ${ctlFail.length} FAIL line(s): ${ctlFail[0]?.trim().slice(0, 140) ?? ''}…; --idle-keys direct -> exit ${directRun.status}, rig.json invariants ${Object.keys(inv).join(', ')}, constraints ${JSON.stringify(directRig?.constraints ?? null)}`,
+      'issue #92, ruling 4: the default ctl puts a control between the links, which a two-bone ik cannot read; the refusal comes before rigc and names the value of the flag under which the same config builds',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -2654,6 +2908,7 @@ function runRigSuite(): number {
 
   runBlinkStillCases(say);
   runTurnedChainCases(say);
+  runConstraintRigCases(say);
   return bad();
 }
 
@@ -2690,7 +2945,7 @@ function runIdleKeysCases(say: (name: string, ok: boolean, detail: string, why: 
       sameKeys &&
       aKeys === bKeys &&
       a.rig.invariants === undefined &&
-      b.rig.invariants?.idleDrivesMeshes.why === IDLE_DRIVES_MESHES_WHY &&
+      b.rig.invariants?.idleDrivesMeshes?.why === IDLE_DRIVES_MESHES_WHY &&
       lashDirect.meshKeyed.length === 0 &&
       lashDirect.rig.invariants === undefined &&
       rigJsonText(lashDirect.rig) === rigJsonText(lashCtl.rig),
@@ -2908,6 +3163,229 @@ function runBlinkStillCases(say: (name: string, ok: boolean, detail: string, why
       ok,
       detail,
       "issue #26's proof, rendered by the installed rigc: the cut changes no pixel of the setup pose, the crease rows are the same pixels with the blink held shut, the same crease in the uncut rig moves, and the shut eye opens no hole — the face is under it",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** One bone's world transform in a `rigc-geometry/1` frame. */
+interface GeometryBone {
+  name: string;
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  worldX: number;
+  worldY: number;
+}
+
+/**
+ * The bar a posed position or angle is held to when the definition says it is
+ * exact: 1e-4 (rig units, or degrees). rigc writes every number as a float32
+ * (`f32` in its compile), and the fixture's world coordinates stay inside
+ * |30|, where a float32 step is 2^-19, about 1.9e-6 — so the bar is about 50
+ * steps, and the misses the controls plant (2.58 units, a turned bone's whole
+ * angle) are four orders above it.
+ */
+const POSE_BAR = 1e-4;
+
+/**
+ * A config through the `rig` command, then, if it is green, its `rig.json`
+ * built and its idle rendered by the installed rigc with `--geometry`: every
+ * bone's world transform in every idle frame. `edit` changes the written
+ * rig.json before the build (a planted shape the rig stage would not write).
+ */
+function constraintRender(dir: string, config: Record<string, unknown>, idleKeys: 'ctl' | 'direct', edit?: (rig: RigSpec) => RigSpec): { status: number; out: string; rig: RigSpec | null; build: string; frames: Array<Map<string, GeometryBone>> | string } {
+  const f = writeRigFixture(dir, config);
+  const outDir = join(dir, 'out');
+  const cli = runCli(['rig', '--config', f.config, '--parts', f.parts, '--out', outDir, '--idle-keys', idleKeys]);
+  if (cli.status !== 0) return { status: cli.status, out: cli.out, rig: null, build: '', frames: 'the rig stage refused' };
+  let rig = JSON.parse(readFileSync(join(outDir, 'rig.json'), 'utf8')) as RigSpec;
+  if (edit !== undefined) {
+    rig = edit(rig);
+    writeFileSync(join(outDir, 'rig.json'), rigJsonText(rig));
+  }
+  const rigc = findRigc(ROOT, '');
+  const built = spawnSync(rigc, ['build', '--rig', join(outDir, 'rig.json'), '--motion', join(outDir, 'motion.json'), '--out', join(dir, 'build'), ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 26 });
+  const buildOut = `${built.stdout ?? ''}${built.stderr ?? ''}`;
+  if (built.status !== 0) return { status: cli.status, out: cli.out, rig, build: buildOut, frames: `rigc build exit ${built.status}` };
+  const r = spawnSync(rigc, ['render', '--candidate', join(dir, 'build'), '--animation', 'idle', '--fps', String(IDLE_FPS), '--geometry', '--out', join(dir, 'render')], { encoding: 'utf8', maxBuffer: 1 << 26 });
+  if (r.status !== 0) return { status: cli.status, out: cli.out, rig, build: buildOut, frames: `rigc render exit ${r.status}` };
+  const g = JSON.parse(readFileSync(join(dir, 'render', 'idle', GEOMETRY_FILE), 'utf8')) as { frames: Array<{ bones: GeometryBone[] }> };
+  return { status: cli.status, out: cli.out, rig, build: buildOut, frames: g.frames.map((fr) => new Map(fr.bones.map((b) => [b.name, b]))) };
+}
+
+/** The largest per-frame distance between a bone's tip (origin + length along its x axis) and another bone's origin. */
+function tipGap(frames: Array<Map<string, GeometryBone>>, bone: string, length: number, target: string): number {
+  let worst = 0;
+  for (const fr of frames) {
+    const b = fr.get(bone) as GeometryBone;
+    const t = fr.get(target) as GeometryBone;
+    worst = Math.max(worst, Math.hypot(b.worldX + length * b.a - t.worldX, b.worldY + length * b.c - t.worldY));
+  }
+  return worst;
+}
+
+/** A bone's world rotation in degrees, `atan2(c, a)`. */
+function worldDeg(b: GeometryBone): number {
+  return (Math.atan2(b.c, b.a) * 180) / Math.PI;
+}
+
+/** The largest per-frame |difference| between two bones' world rotations, in degrees, the shortest way round. */
+function turnGap(a: Array<Map<string, GeometryBone>>, boneA: string, b: Array<Map<string, GeometryBone>>, boneB: string): number {
+  let worst = 0;
+  a.forEach((fr, i) => {
+    const d = worldDeg(fr.get(boneA) as GeometryBone) - worldDeg(b[i].get(boneB) as GeometryBone);
+    worst = Math.max(worst, Math.abs(((((d + 180) % 360) + 360) % 360) - 180));
+  });
+  return worst;
+}
+
+/**
+ * Issue #92 at the rig stage: constraints handed to rigc as written, the
+ * control bones measured, the detached declaration, and rigc's own words for
+ * a field it refuses. The fixture is {@link constraintConfig}: the rig
+ * fixture's chain `hem` (two 8-unit links, both keyed and weighted to by
+ * `cloth`, so both get a control under `ctl`) and a scene target `tgt` under
+ * root that the chain can reach (worked by hand there).
+ */
+function runConstraintRigCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const conCfg = (constraints?: unknown[]): CharacterConfig => parseConfig(constraintConfig(constraints));
+  const reach = { name: 'reach', type: 'ik', bones: ['hem0', 'hem1'], target: 'tgt' };
+  const aim = { name: 'aim', type: 'ik', bones: ['hem1'], target: 'tgt' };
+  const sway = { name: 'sway', type: 'physics', bone: 'hem1', rotate: 1 };
+  const follow = { name: 'follow', type: 'transform', bones: ['hem1'], source: 'tgt', properties: { rotate: { to: { rotate: {} } } } };
+
+  // RG54 — handed over as written, in order, without the doors.
+  const written = [
+    { name: 'aim', type: 'ik', 'x-why': { issue: 92 }, bones: ['hem1'], note: 'the hem points at the scene', target: 'tgt', mix: 0.5, mix_note: 'half' },
+    { name: 'sway', type: 'physics', bone: 'hem0', rotate: 1, 'x-tuned': [1, 2] },
+  ];
+  const handed = buildRig(conCfg(written), rigParts(), rigImages()).rig;
+  const wantHanded = '[{"name":"aim","type":"ik","bones":["hem1"],"target":"tgt","mix":0.5},{"name":"sway","type":"physics","bone":"hem0","rotate":1}]';
+  const emptyText = rigJsonText(buildRig(conCfg([]), rigParts(), rigImages()).rig);
+  const absentText = rigJsonText(buildRig(conCfg(), rigParts(), rigImages()).rig);
+  const absentDirect = rigJsonText(buildRig(conCfg(), rigParts(), rigImages(), undefined, 'direct').rig);
+  say(
+    'RG54_CONSTRAINTS_REACH_RIG_JSON_IN_THE_ORDER_AND_KEY_ORDER_WRITTEN_WITHOUT_RECORDS_OR_NOTES_AND_ONLY_WHEN_THE_FIELD_IS_THERE',
+    JSON.stringify(handed.constraints) === wantHanded &&
+      Object.keys(handed).join(',') === 'spec,name,images,skeleton,bones,slots,skins,constraints,invariants' &&
+      emptyText.includes('\n "constraints": []\n') &&
+      !absentText.includes('"constraints"') && !absentText.includes('"detached"') && !absentDirect.includes('"constraints"') && !absentDirect.includes('"detached"') &&
+      emptyText.replace(',\n "constraints": []', '') === absentText,
+    `rig.json constraints ${JSON.stringify(handed.constraints)}; top-level keys ${Object.keys(handed).join(', ')}; [] -> ${emptyText.includes('"constraints": []') ? '"constraints": [] and nothing else changed' : 'NOT written'}${emptyText.replace(',\n "constraints": []', '') === absentText ? '' : ' (OTHER BYTES MOVED)'}; no field -> ${absentText.includes('"constraints"') ? 'WRITTEN' : 'no constraints key and no detached'} under ctl and direct`,
+    'issue #92: rigc takes the constraints as rigc\'s own shape, so they go over field for field in the order written — but for the records and annotations, which nothing reads and rigc refuses as keys it does not read; key order is the order written, so the same config writes the same bytes',
+  );
+
+  // RG55 — invariants.detached, one rule per (followed, driven) pair.
+  const both = buildRig(conCfg([reach, { ...follow, bones: ['eye'] }, sway]), rigParts(), rigImages(), undefined, 'direct').rig;
+  const ctlOnly = buildRig(conCfg([aim, sway]), rigParts(), rigImages()).rig;
+  const swayOnly = buildRig(conCfg([sway]), rigParts(), rigImages()).rig;
+  const pairs = (inv: RigSpec['invariants']): string => (inv?.detached ?? []).map((d) => `${d.bone}/${d.notUnder}`).join(',');
+  const why0 = 'spine-parts: "tgt" is the target of ik constraint "reach" (config.constraints[0]), and "hem0" is a bone it drives; under it, driving it would move what it follows';
+  say(
+    'RG55_EVERY_BONE_A_CONSTRAINT_FOLLOWS_IS_DECLARED_DETACHED_FROM_EACH_BONE_IT_DRIVES_BESIDE_THE_IDLE_DECLARATION',
+    Object.keys(both.invariants ?? {}).join(',') === 'idleDrivesMeshes,detached' &&
+      pairs(both.invariants) === 'tgt/hem0,tgt/hem1,tgt/eye' &&
+      both.invariants?.detached?.[0].why === why0 &&
+      both.invariants?.detached?.[2].why.includes('"tgt" is the source of transform constraint "follow" (config.constraints[1])') === true &&
+      JSON.stringify(ctlOnly.invariants) !== undefined && Object.keys(ctlOnly.invariants ?? {}).join(',') === 'detached' && pairs(ctlOnly.invariants) === 'tgt/hem1' &&
+      swayOnly.invariants === undefined,
+    `direct, ik reach + transform follow (over eye) + physics: invariants ${Object.keys(both.invariants ?? {}).join(', ')}, detached ${pairs(both.invariants)}; first why "${both.invariants?.detached?.[0].why ?? ''}"; ctl, ik aim + physics: ${pairs(ctlOnly.invariants)}; physics alone: ${swayOnly.invariants === undefined ? 'no invariants' : JSON.stringify(swayOnly.invariants)}`,
+    'rule 5 of issue #92: what rigc can already check about a scene target — that it is not under the chain it drives — is declared for it, as rigc\'s A25 reads it (bone, notUnder); a physics constraint follows nothing, so it declares nothing',
+  );
+
+  // RG56 — the control between a two-bone ik's pair, refused by name.
+  const underCtl = refusals(() => buildRig(conCfg([reach]), rigParts(), rigImages()));
+  const direct = refusals(() => buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'direct'));
+  const noControl = refusals(() => buildRig(conCfg([{ name: 'reach', type: 'ik', bones: ['body', 'eye'], target: 'tgt' }]), rigParts(), rigImages()));
+  const q = underCtl !== null && underCtl.problems.length === 1 ? underCtl.problems[0] : null;
+  say(
+    'RG56_A_TWO_BONE_IK_WHOSE_CHILD_THE_IDLE_KEYS_THROUGH_A_CONTROL_IS_REFUSED_NAMING_IDLE_KEYS_DIRECT',
+    q?.code === 'RIG_IK_PAIR_UNDER_CONTROL' &&
+      q.object === 'config.constraints[0] (ik constraint "reach")' &&
+      q.detail.includes('it is keyed through the control "hem1_ctl", which stands between the two in the rig') &&
+      q.detail.endsWith('Run `rig --idle-keys direct`, which keys "hem1" in place and keeps the pair parent and child (`build` takes no --idle-keys: it keys through controls)') &&
+      direct === null &&
+      noControl === null,
+    `ctl, ik over hem0 and hem1 -> ${q === null ? codes(underCtl) : `${q.code}: ${q.object} — ${q.detail}`}; direct -> ${codes(direct)}; ctl, ik over body and eye (eye is a region, no control) -> ${codes(noControl)}`,
+    'measured (RG57): under ctl the pair gates green and the tip misses the target in every frame, because hem1_ctl stands between the links; nothing is re-parented or re-targeted here, the refusal names the flag under which the ik means what it says',
+  );
+
+  const dir = temp('constraints-rig');
+  try {
+    // RG57 — the direct ik reaches its target; the ctl shape, planted by hand, does not.
+    const reached = constraintRender(join(dir, 'reach-direct'), constraintConfig([reach]), 'direct');
+    const linkLength = (reached.rig?.bones.find((b) => b.name === 'hem1')?.length ?? 0) as number;
+    const interleave = (rig: RigSpec): RigSpec => {
+      const at = rig.bones.findIndex((b) => b.name === 'hem1');
+      const link = rig.bones[at];
+      const bones = [...rig.bones.slice(0, at), { ...link, name: 'hem1_ctl' }, { name: 'hem1', parent: 'hem1_ctl', length: link.length, rotation: 0, x: 0, y: 0 }, ...rig.bones.slice(at + 1)];
+      return { ...rig, bones };
+    };
+    const planted = constraintRender(join(dir, 'reach-interleaved'), constraintConfig([reach]), 'direct', interleave);
+    const got = typeof reached.frames === 'string' ? null : tipGap(reached.frames, 'hem1', linkLength, 'tgt');
+    const miss = typeof planted.frames === 'string' ? null : tipGap(planted.frames, 'hem1', linkLength, 'tgt');
+    const frames = typeof reached.frames === 'string' ? 0 : reached.frames.length;
+    say(
+      'RG57_A_DIRECT_TWO_BONE_IK_PUTS_THE_TIP_ON_A_ROOT_PARENTED_TARGET_IN_EVERY_FRAME_AND_THE_CONTROL_BETWEEN_THE_PAIR_DOES_NOT',
+      reached.status === 0 && linkLength === 8 && frames === 4 * IDLE_FPS + 1 && got !== null && got <= POSE_BAR && miss !== null && miss > POSE_BAR,
+      `rig --idle-keys direct exit ${reached.status}, hem1 length ${linkLength} (by hand 8); ${typeof reached.frames === 'string' ? reached.frames : `${frames} idle frame(s) (by hand 4 s x ${IDLE_FPS} + 1)`}; largest |tip(hem1) - tgt| ${got === null ? 'not measured' : got.toExponential(3)} (bar ${POSE_BAR}); the same rig with hem1_ctl put between the links by hand, as ctl writes it: ${typeof planted.frames === 'string' ? planted.frames : `gate green, largest gap ${miss?.toFixed(3)}`}`,
+      'ruling 8 of issue #92, read from geometry.json: the target sits inside the chain\'s reach (fixtures/rig.ts, by hand), so a two-bone ik with no softness puts the tip on it exactly; the planted interleave is the shape RIG_IK_PAIR_UNDER_CONTROL refuses, and it passes rigc\'s gate while missing',
+    );
+
+    // RG58 — physics and transform on a link, under ctl and direct.
+    const none = constraintRender(join(dir, 'none-ctl'), constraintConfig(), 'ctl');
+    const runs = (['ctl', 'direct'] as const).flatMap((k) => [
+      { k, what: 'physics', r: constraintRender(join(dir, `sway-${k}`), constraintConfig([sway]), k) },
+      { k, what: 'transform', r: constraintRender(join(dir, `follow-${k}`), constraintConfig([follow]), k) },
+    ]);
+    const framesOf = (r: ReturnType<typeof constraintRender>): Array<Map<string, GeometryBone>> | null => (typeof r.frames === 'string' ? null : r.frames);
+    const baseFrames = framesOf(none);
+    const swayCtl = framesOf(runs[0].r);
+    const swayDirect = framesOf(runs[2].r);
+    const followGaps = runs.filter((x) => x.what === 'transform').map((x) => (framesOf(x.r) === null ? null : turnGap(framesOf(x.r) as Array<Map<string, GeometryBone>>, 'hem1', framesOf(x.r) as Array<Map<string, GeometryBone>>, 'tgt')));
+    const swayMoves = baseFrames !== null && swayCtl !== null ? turnGap(swayCtl, 'hem1', baseFrames, 'hem1') : null;
+    const swaySame = swayCtl !== null && swayDirect !== null ? turnGap(swayCtl, 'hem1', swayDirect, 'hem1') : null;
+    say(
+      'RG58_A_PHYSICS_AND_A_TRANSFORM_CONSTRAINT_ON_A_CHAIN_LINK_GATE_GREEN_AND_POSE_THE_SAME_UNDER_CTL_AND_DIRECT',
+      none.status === 0 && runs.every((x) => x.r.status === 0 && framesOf(x.r) !== null) &&
+        followGaps.every((g) => g !== null && g <= POSE_BAR) &&
+        swayMoves !== null && swayMoves > POSE_BAR && swaySame !== null && swaySame <= POSE_BAR,
+      `${runs.map((x) => `${x.what} ${x.k}: rig exit ${x.r.status}${typeof x.r.frames === 'string' ? ` (${x.r.frames})` : ''}`).join(', ')}; transform: largest |rot(hem1) - rot(tgt)| ${followGaps.map((g) => (g === null ? 'not measured' : g.toExponential(3))).join(' (ctl), ')} (direct) deg; physics against no constraint: largest |rot(hem1)| change ${swayMoves?.toFixed(6) ?? 'not measured'} deg; physics ctl against direct: ${swaySame?.toExponential(3) ?? 'not measured'} deg (bar ${POSE_BAR})`,
+      'ruling 4 of issue #92, measured rather than assumed: a control is a same-origin parent the idle keys instead of the link, so a constraint on the link itself — physics reacting to its motion, a transform copying the target\'s world rotation at mix 1 — poses the link the same under both; only the two-bone ik, which reads the pair as parent and child, cannot (RG56)',
+    );
+
+    // RG59 — a field rigc refuses is refused in rigc's words.
+    const typo = constraintRender(join(dir, 'typo'), constraintConfig([{ ...aim, mixx: 1 }]), 'ctl');
+    const rigcLine = typo.out.split('\n').find((l) => l.includes('RIG_RIGC_GREEN')) ?? null;
+    say(
+      'RG59_A_FIELD_RIGC_DOES_NOT_READ_PASSES_THE_LOADER_AND_IS_REFUSED_AT_THE_GATE_IN_RIGCS_WORDS_WITH_NOTHING_WRITTEN',
+      typo.status === 1 && rigcLine !== null && rigcLine.includes('constraint "aim" (ik) has a key this compiler does not read: "mixx" (did you mean "mix"?)') && !existsSync(join(dir, 'typo', 'out', 'rig.json')),
+      `ik "aim" with mixx: exit ${typo.status}; ${rigcLine?.trim().slice(0, 260) ?? 'no RIG_RIGC_GREEN line'}…; rig.json written: ${existsSync(join(dir, 'typo', 'out', 'rig.json'))}`,
+      'ruling 1 of issue #92: an unknown field or a bad value is rigc\'s to refuse, and its refusal is printed as it is — the loader keeps no second schema, and emit only after green holds',
+    );
+
+    // RG60 — A25 reads the declaration: PASS on the written rig, FAIL with the target re-parented under its chain.
+    const a25 = (name: string, edit: (rig: RigSpec) => RigSpec): { status: number; line: string } => {
+      const r = constraintRender(join(dir, name), constraintConfig([aim]), 'ctl', edit);
+      return { status: typeof r.frames === 'string' ? 1 : 0, line: r.build.split('\n').find((l) => l.includes('A25_DETACHED_BONE_PARENTAGE'))?.trim() ?? 'no A25 line' };
+    };
+    const asWritten = a25('a25-written', (rig) => rig);
+    const reparent = (rig: RigSpec): RigSpec => ({ ...rig, bones: [...rig.bones.filter((b) => b.name !== 'tgt'), { ...(rig.bones.find((b) => b.name === 'tgt') as RigSpec['bones'][number]), parent: 'hem1' }] });
+    const under = a25('a25-under', reparent);
+    const undeclared = a25('a25-undeclared', (rig) => {
+      const { invariants: _gone, ...rest } = reparent(rig);
+      return rest;
+    });
+    say(
+      'RG60_RIGCS_A25_PASSES_THE_DECLARED_SCENE_TARGET_AND_FAILS_IT_PARENTED_UNDER_ITS_CHAIN_WHICH_UNDECLARED_IT_ONLY_SKIPS',
+      asWritten.status === 0 && asWritten.line === 'PASS  A25_DETACHED_BONE_PARENTAGE' &&
+        under.status === 1 && under.line === 'FAIL  A25_DETACHED_BONE_PARENTAGE: "tgt" is a descendant of "hem1"; it must not be dragged by that bone\'s motion' &&
+        undeclared.status === 0 && undeclared.line.startsWith('SKIP  A25_DETACHED_BONE_PARENTAGE'),
+      `as written: ${asWritten.line}; tgt moved under hem1 in rig.json by hand: ${under.line}; the same with invariants removed: ${undeclared.line}`,
+      'A25 read before it is declared (spine-rigc 2.10.1, src/assertions/bodies/a25.ts): it fails a declared bone that descends from its notUnder, and a rig that declares nothing is a SKIP — so the declaration is what keeps a scene target measured once the rig leaves this package',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -6869,6 +7347,57 @@ function runBuildSuite(): number {
       `exit ${stretched.status}; ${keyFail ?? 'no [rig] FAIL line'}; rig.json written: ${existsSync(join(keyedOut, 'rig', 'rig.json'))}`,
       'a scalex key on a link turned -90 would stretch the skirt along its length, not across it; the rig stage refuses it before rigc runs, and emit-only-after-green holds across stages',
     );
+
+    // Issue #92 through the whole build: BU09's hanging skirt with a scene target under root and a
+    // transform constraint holding the chest at the target's world rotation (0, which is the chest's
+    // own: the pose does not move), carrying a record and a note; the same without them; and a field
+    // rigc does not read. A physics constraint on the swinging link builds green too, and check then
+    // fails CHECK_LOOP_CLOSES (75/255 at t = 1 s, measured): physics carries state from one frame to
+    // the next, so the idle's last frame is not its first — check's bar, not this card's.
+    const sceneCfg = (constraint: Record<string, unknown>): Record<string, unknown> => {
+      const c = JSON.parse(JSON.stringify(hang)) as Record<string, unknown>;
+      c.bones = [...(c.bones as unknown[]), { name: 'tgt', parent: 'root', at: [skirtBox.x + skirtBox.w, skirtBox.y + skirtBox.h] }];
+      c.constraints = [constraint];
+      return c;
+    };
+    const level = { name: 'level', type: 'transform', bones: ['chest'], source: 'tgt', properties: { rotate: { to: { rotate: {} } } } };
+    writeFileSync(join(dir, 'scene-noted.json'), `${JSON.stringify(sceneCfg({ ...level, note: 'the chest stays level with the scene', 'x-tuned': { mixRotate: [0.5, 1] } }), null, 2)}\n`);
+    writeFileSync(join(dir, 'scene.json'), `${JSON.stringify(sceneCfg(level), null, 2)}\n`);
+    writeFileSync(join(dir, 'scene-half.json'), `${JSON.stringify(sceneCfg({ ...level, mixRotate: 0.5 }), null, 2)}\n`);
+    const notedOut = join(dir, 'scene-noted');
+    const plainOut = join(dir, 'scene');
+    const halfOut = join(dir, 'scene-half');
+    const noted = runCli(buildArgs(dir, notedOut, 'scene-noted.json'));
+    const plain = runCli(buildArgs(dir, plainOut, 'scene.json'));
+    const half = runCli(buildArgs(dir, halfOut, 'scene-half.json'));
+    const sceneRig = readJsonFile(join(notedOut, 'rig', 'rig.json'));
+    const sceneCheck = readJsonFile(join(notedOut, 'check', 'check.json'));
+    say(
+      'BU13_A_CONFIG_WITH_A_SCENE_TARGET_AND_A_TRANSFORM_CONSTRAINT_BUILDS_AND_CHECKS_GREEN_WITH_THE_CONSTRAINT_AND_ITS_DETACHED_RULE_IN_RIG_JSON',
+      noted.status === 0 && JSON.stringify(sceneRig?.constraints) === JSON.stringify([level]) && JSON.stringify(sceneRig?.invariants) === JSON.stringify({ detached: [{ bone: 'tgt', notUnder: 'chest', why: 'spine-parts: "tgt" is the source of transform constraint "level" (config.constraints[0]), and "chest" is a bone it drives; under it, driving it would move what it follows' }] }) && sceneCheck?.PASS === true && sceneCheck.gate_spine_html_green === true,
+      `exit ${noted.status}; rig.json constraints ${JSON.stringify(sceneRig?.constraints ?? null)}, invariants ${JSON.stringify(sceneRig?.invariants ?? null)}; check.json PASS ${String(sceneCheck?.PASS)}, gate ${String(sceneCheck?.gate_spine_html_green)}${noted.status === 0 ? '' : `; ${noted.out.split('\n').filter((l) => l.includes('FAIL')).slice(0, 3).join(' | ')}`}`,
+      'issue #92 end to end: the constraint goes to rigc as written but its note and record, the scene target is declared detached from the bone it drives, rigc\'s gate passes both (RG60 shows A25 reading the declaration), and every line check reads stays green',
+    );
+
+    const sameTree = treeDiff(notedOut, plainOut);
+    const halfTree = treeDiff(plainOut, halfOut);
+    say(
+      'BU14_A_RECORD_AND_A_NOTE_ON_A_CONSTRAINT_LEAVE_EVERY_FILE_THE_BUILD_WRITES_BYTE_IDENTICAL_AND_ONE_VALUE_DOES_NOT',
+      plain.status === 0 && half.status === 0 && sameTree.length === 0 && halfTree.some((d) => d.startsWith('rig/rig.json')),
+      `with the note and record against without: ${sameTree.length === 0 ? `${filesUnder(plainOut).length} file(s), byte-identical` : sameTree.slice(0, 3).join('; ')}; mixRotate 0.5 against none written (1): ${halfTree.length} file(s) differ (${halfTree.slice(0, 2).join('; ')})`,
+      'issue #70\'s door holds on a constraint too: a record and a note are read by nothing, so they move no byte; the planted value is the witness that the comparison sees a change in the constraint',
+    );
+
+    writeFileSync(join(dir, 'scene-typo.json'), `${JSON.stringify(sceneCfg({ ...level, mixRotatee: 1 }), null, 2)}\n`);
+    const typoOut = join(dir, 'scene-typo');
+    const typo = runCli(buildArgs(dir, typoOut, 'scene-typo.json'));
+    const typoLine = typo.out.split('\n').find((l) => l.startsWith('[rig]   FAIL  RIG_RIGC_GREEN: ')) ?? null;
+    say(
+      'BU15_A_CONSTRAINT_FIELD_RIGC_DOES_NOT_READ_STOPS_THE_BUILD_AT_RIG_IN_RIGCS_WORDS',
+      typo.status === 1 && typoLine !== null && typoLine.includes('constraint "level" (transform) has a key this compiler does not read: "mixRotatee"') && typo.out.includes('build: stopped at rig; no later stage ran') && !existsSync(join(typoOut, 'rig', 'rig.json')),
+      `exit ${typo.status}; ${typoLine?.slice(0, 260) ?? 'no [rig] RIG_RIGC_GREEN line'}…; rig.json written: ${existsSync(join(typoOut, 'rig', 'rig.json'))}`,
+      'the loader keeps no second schema: a field rigc does not read is rigc\'s refusal, printed as rigc wrote it, and nothing after the rig stage runs',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -9317,6 +9846,71 @@ function withHeadControl(): Record<string, unknown> {
   b.bones = bones;
   return b;
 }
+/**
+ * Issue #92, rule 6: a config's `constraints` give roles as a rig spec's do —
+ * the bone an ik follows or a transform reads is a `target` — in `compare`,
+ * in the coverage lines and so in what `basis.json` is read beside.
+ */
+function runConstraintRoleCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const why = (s: string): string => `issue #92: ${s}`;
+  const aim = { name: 'aim', type: 'ik', bones: ['hem1'], target: 'tgt' };
+  const follow = { name: 'follow', type: 'transform', bones: ['eye'], source: 'tgt', properties: { rotate: { to: { rotate: {} } } } };
+  const sway = { name: 'sway', type: 'physics', bone: 'hem0', rotate: 1 };
+  const withC = parseConfig(constraintConfig([aim, follow, sway]));
+  const without = parseConfig(constraintConfig());
+  const roles = configRoles(withC);
+  const bare = configRoles(without);
+  const rigTargets = [...readSkeleton(JSON.parse(rigJsonText(buildRig(withC, rigParts(), rigImages()).rig)) as unknown, 'rig.json').roles].filter(([, r]) => r.role === 'target').map(([n]) => n);
+  const cfgTargets = [...roles].filter(([, r]) => r.role === 'target').map(([n]) => n);
+  const changed = [...roles].filter(([n, r]) => n !== 'tgt' && JSON.stringify(r) !== JSON.stringify(bare.get(n))).map(([n]) => n);
+  say(
+    'ST28_A_CONFIGS_CONSTRAINTS_MAKE_THE_BONE_THEY_FOLLOW_A_TARGET_AS_A_RIG_SPECS_DO_AND_MOVE_NO_OTHER_ROLE',
+    JSON.stringify(roles.get('tgt')) === '{"role":"target","why":"the target of ik constraint \\"aim\\" (+1 more)"}' &&
+      bare.get('tgt')?.role === 'unclassified' &&
+      roles.get('hem0')?.role === 'deforms' &&
+      cfgTargets.join(',') === 'tgt' &&
+      rigTargets.join(',') === cfgTargets.join(',') &&
+      changed.length === 0,
+    `tgt with the constraints: ${JSON.stringify(roles.get('tgt'))}; without: ${bare.get('tgt')?.role}; hem0 under a physics constraint: ${roles.get('hem0')?.role}; targets from the config [${cfgTargets.join(', ')}], from the rig it builds, read as a rig.json [${rigTargets.join(', ')}]; other roles changed: [${changed.join(', ')}]`,
+    why('configRoles reads config.constraints the way rigRoles reads a rig spec\'s — an ik\'s target and a transform\'s source, first in precedence — so the config and the rig it builds name the same targets; a physics constraint follows nothing, and no other bone\'s role moves'),
+  );
+
+  const dir = temp('constraints-roles');
+  try {
+    const built = constraintRender(join(dir, 'rig'), constraintConfig([aim]), 'ctl');
+    writeFileSync(join(dir, 'with.json'), JSON.stringify(constraintConfig([aim])));
+    writeFileSync(join(dir, 'without.json'), JSON.stringify(constraintConfig()));
+    const rigPath = join(dir, 'rig', 'out', 'rig.json');
+    const countLine = (left: string): string => structureLines(loadComparison(join(dir, left), rigPath, null)).find((l) => l.startsWith('  controls:'))?.trim() ?? 'no controls line';
+    const agree = countLine('with.json');
+    const differ = countLine('without.json');
+    say(
+      'ST29_COMPARE_COUNTS_THE_CONFIGS_TARGET_BESIDE_THE_RIG_IT_BUILT_AND_A_CONFIG_WITHOUT_THE_CONSTRAINT_DOES_NOT',
+      built.status === 0 && agree.includes('; targets: left 1, right 1 — ') && differ.includes('; targets: left 0, right 1 — '),
+      `config with the ik against its rig.json: ${agree}; the config without it against the same rig.json: ${differ}`,
+      why('spine-parts compare reads roles off each side\'s spec; before, a config could state no constraint, so its targets were 0 against any rig that had one — now the config that made the rig agrees with it'),
+    );
+
+    // Coverage (issue #86) reads configRoles: a scene target on a proposal is said to be one, and why it is not checked.
+    writeProposeFixture(join(dir, 'p'), NO_EYE_PARTS, STRAND_RIG, true);
+    const P = readPartSet(join(dir, 'p'));
+    const prop = propose(P);
+    const single = prop.bones.find((b) => !('chain' in b)) as { name: string };
+    const spec = { ...prop, bones: [...prop.bones, { name: 'tgt', parent: 'root', at: [0, 0] as [number, number] }] };
+    const withCov = lint(P, { ...spec, constraints: [{ name: 'aim', type: 'ik', bones: [single.name], target: 'tgt' }] }).coverage.find((c) => c.bone === 'tgt');
+    const withoutCov = lint(P, spec).coverage.find((c) => c.bone === 'tgt');
+    const covLine = withCov === undefined ? 'no record' : (coverageLines([withCov])[0] ?? 'no line');
+    say(
+      'ST30_THE_COVERAGE_LINE_OF_A_SCENE_TARGET_SAYS_TARGET_AND_WHY_AND_WITHOUT_THE_CONSTRAINT_IT_SAYS_UNCLASSIFIED',
+      withCov?.role?.role === 'target' && covLine.startsWith(`coverage tgt [target]: not checked — its role is target (the target of ik constraint "aim")`) && covLine.includes('a target may sit off the art by design') && withoutCov?.role?.role === 'unclassified',
+      `with an ik on ${single.name} following tgt: ${covLine}; without: [${withoutCov?.role?.role ?? 'no record'}]`,
+      why('the coverage lines read roles through configRoles, so a scene target placed off the art is said to be a target, by design, rather than an unclassified bone nothing checked'),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 
 function runStructureSuite(): number {
   section('structure: two skeletons compared bone by bone, through a map');
@@ -9733,6 +10327,7 @@ function runStructureSuite(): number {
     `compare(): parent changed -> max ${Math.max(...blindParent.rows.map(([, v]) => v))} px, tip turned -> max ${Math.max(...blindTip.rows.map(([, v]) => v))} px, renamed -> only in config ${blindName.onlyConfig.join(',')}, only in proposal ${blindName.onlyProposal.join(',')}; its printout for the re-parented pair is the unchanged pair's, line for line`,
     why('the card\'s table, kept true: compare() is untouched and still scores these 0, which is why the structure rows exist beside it'),
   );
+  runConstraintRoleCases(say);
   return bad();
 }
 

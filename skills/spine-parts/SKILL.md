@@ -78,6 +78,12 @@ stage writes are the whole interface.
    `LINT` line. `spine-parts compare
    --left work/proposal.json --right config.json` lists what the correction changed,
    bone by bone — origin, parent, tip, length, direction (AUTHORING §4).
+   A constraint the motion needs (an ik reaching a scene target, physics on a
+   link) goes in `config.constraints`, in spine-rigc's own rig-spec shape: the
+   loader resolves the bones it names and nothing else, and rigc's gate refuses
+   the rest in its words. A scene target is a single bone under `root`. A two-bone
+   ik over links the idle keys needs `rig --idle-keys direct`; `build` keys through
+   controls and refuses it (AUTHORING §3).
 7. `spine-parts build --config … --source … --full … --head … --out out --loop`.
    It stops at the first stage that refuses, printing that stage's lines under
    `[assemble]`, `[rig]` or `[check]`. Fix what the FAIL line names and build again.

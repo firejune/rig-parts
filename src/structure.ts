@@ -71,7 +71,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { CompileError } from 'spine-rigc/src/errors.ts';
 import { parseRigSpec, RIG_SPEC_VERSION, type RigBone as RigcBone, type RigSpec as RigcSpec, splitRigSkin } from 'spine-rigc/src/rig.ts';
-import { parseConfig, parseProposalSections, type Point, ROOT_BONE, type SkeletonSections } from './config.ts';
+import { type ConfigConstraint, CONSTRAINT_FOLLOWS, parseConfig, parseProposalSections, type Point, ROOT_BONE, type SkeletonSections } from './config.ts';
 import { computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toWorld } from './coords.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 
@@ -115,7 +115,7 @@ export interface Skeleton {
  *
  * - `target`: a constraint names it as the bone it follows — an ik
  *   constraint's `target`, a transform constraint's `source` (rigc: "4.2
- *   called this target").
+ *   called this target") — in a rig spec's `constraints` or a config's.
  * - `deforms`: something drawn is bound to it — a mesh weight, a mesh segment
  *   (a config's `meshes.<part>.segments`, a chain naming each link), a region
  *   (a config's `regions`, a `motion.blink.still` piece; a rig's region
@@ -150,8 +150,14 @@ function firstAnd(list: readonly string[]): string {
   return list.length === 1 ? list[0] : `${list[0]} (+${list.length - 1} more)`;
 }
 
-/** The roles of a config's or a proposal's bones, `root` included. */
-export function configRoles(s: SkeletonSections): Map<string, RoleOf> {
+/**
+ * The roles of a config's or a proposal's bones, `root` included. A config's
+ * `constraints` (issue #92) are read as {@link rigRoles} reads a rig spec's:
+ * the bone an ik follows (`target`) or a transform reads (`source`) is a
+ * `target`, first in precedence. The loader has resolved every name; a
+ * proposal carries no constraints.
+ */
+export function configRoles(s: SkeletonSections & { constraints?: readonly ConfigConstraint[] }): Map<string, RoleOf> {
   const names: string[] = [ROOT_BONE];
   const chains = new Map<string, string[]>();
   const children = new Map<string, string[]>();
@@ -185,12 +191,21 @@ export function configRoles(s: SkeletonSections): Map<string, RoleOf> {
   });
   s.motion.blink?.eyes.forEach((b, i) => push(keyed, b, `motion.blink.eyes[${i}]`));
   s.motion.blink?.brows?.forEach((b, i) => push(keyed, b, `motion.blink.brows[${i}]`));
+  const targets = new Map<string, string[]>();
+  for (const c of s.constraints ?? []) {
+    const field = CONSTRAINT_FOLLOWS[c.type];
+    const followed = field === undefined ? undefined : c[field];
+    if (typeof followed !== 'string') continue;
+    push(targets, followed, field === 'target' ? `the target of ik constraint "${c.name}"` : `the source of transform constraint "${c.name}" (4.2's target)`);
+  }
   const out = new Map<string, RoleOf>();
   for (const n of names) {
+    const t = targets.get(n);
     const b = bound.get(n);
     const k = keyed.get(n);
     const c = children.get(n);
-    if (b !== undefined) out.set(n, { role: 'deforms', why: `bound by ${firstAnd(b)}` });
+    if (t !== undefined) out.set(n, { role: 'target', why: firstAnd(t) });
+    else if (b !== undefined) out.set(n, { role: 'deforms', why: `bound by ${firstAnd(b)}` });
     else if (k !== undefined) out.set(n, { role: 'control', why: `binds nothing; keyed by ${firstAnd(k)}` });
     else if (c !== undefined) out.set(n, { role: 'control', why: `binds nothing; parents ${firstAnd(c)}` });
     else out.set(n, { role: 'unclassified', why: 'binds nothing, is keyed by nothing and parents nothing' });
@@ -268,7 +283,7 @@ function same(a: Point, b: Point): boolean {
   return a[0] === b[0] && a[1] === b[1];
 }
 
-function configSkeleton(s: SkeletonSections, form: 'config' | 'proposal', label: string, rigScale: number | null): Skeleton {
+function configSkeleton(s: SkeletonSections & { constraints?: readonly ConfigConstraint[] }, form: 'config' | 'proposal', label: string, rigScale: number | null): Skeleton {
   const bones: NormalBone[] = [
     {
       name: ROOT_BONE,

@@ -220,6 +220,30 @@ export function turnedConfig(): Record<string, unknown> {
   };
 }
 
+/**
+ * The constraint fixture (issue #92): {@link rigConfig} with a scene target —
+ * `tgt`, a single bone under `root` at rig (26, 20) — and the constraints a
+ * control names, which `constraints` adds as `config.constraints`.
+ *
+ * ## The target, by hand
+ *
+ * In Spine's axes (x from the canvas centre 20, y up from 40): `tgt` is
+ * (6, 20), `hem0` (-6, 26), `hem1` (2, 26). The chain's links are 8 and 8
+ * long, so its reach from `hem0` is 16; `tgt` is (12, -6) from `hem0`,
+ * sqrt(144 + 36) = sqrt(180) = 13.416…, inside that reach and outside the
+ * 0 a fully folded pair reaches — so a two-bone ik over `hem0` and `hem1`
+ * with no softness puts `hem1`'s tip, its origin carried its length along its
+ * own x axis, exactly on `tgt`. `tgt` binds nothing and nothing keys it.
+ */
+export const SCENE_TARGET = { name: 'tgt', rig: [26, 20], spine: [6, 20] } as const;
+
+export function constraintConfig(constraints?: unknown[]): Record<string, unknown> {
+  const c = rigConfig();
+  (c.bones as unknown[]).push({ name: SCENE_TARGET.name, parent: 'root', at: [...SCENE_TARGET.rig] });
+  if (constraints !== undefined) c.constraints = constraints;
+  return c;
+}
+
 /** The fixture on disk as the `rig` command reads it: `config.json`, and `parts.json` + `parts/` under `parts`. */
 export function writeRigFixture(dir: string, config: Record<string, unknown> = rigConfig(), images: Map<string, Raster> = rigImages(), parts: PartsFile = rigParts()): { config: string; parts: string } {
   const partsDir = join(dir, 'parts-in');

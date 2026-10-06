@@ -85,7 +85,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { drawText, GLYPH_H } from 'spine-rigc/tools/font5x7.ts';
-import { type BoneEntry, type MeshSpec, parseConfig, type Point, type Segment, type SkeletonSections } from './config.ts';
+import { type BoneEntry, type ConfigConstraint, type MeshSpec, parseConfig, type Point, type Segment, type SkeletonSections } from './config.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 import { OPAQUE_ALPHA_ABOVE } from './layers.ts';
 import { PAINTING_RUN, type PartRecord, type PartsFile, readParts } from './parts.ts';
@@ -2008,7 +2008,7 @@ export function coverageOutcome(c: BoneCoverage): CoverageOutcome {
  */
 export function lint(
   P: PartSet,
-  spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>>; regions?: Readonly<Record<string, string>>; motion?: SkeletonSections['motion'] },
+  spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>>; regions?: Readonly<Record<string, string>>; motion?: SkeletonSections['motion']; constraints?: readonly ConfigConstraint[] },
   joints?: RigJoints,
 ): LintResult {
   const { byName } = expand(spec.bones);
@@ -2128,7 +2128,7 @@ function findingBones(f: LintFinding, bones: readonly BoneEntry[]): string[] {
  * art by design: its role is the reason, never a finding.
  */
 function lintCoverage(
-  spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>>; regions?: Readonly<Record<string, string>>; motion?: SkeletonSections['motion'] },
+  spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>>; regions?: Readonly<Record<string, string>>; motion?: SkeletonSections['motion']; constraints?: readonly ConfigConstraint[] },
   byName: ReadonlyMap<string, ExpandedBone>,
   read: ReadonlyMap<string, string[]>,
   findings: readonly LintFinding[],
@@ -2136,7 +2136,7 @@ function lintCoverage(
   basis: LintBasis | undefined,
 ): BoneCoverage[] {
   const roles =
-    spec.regions !== undefined && spec.motion !== undefined ? configRoles({ bones: [...spec.bones], meshes: { ...spec.meshes }, regions: { ...spec.regions }, motion: spec.motion }) : null;
+    spec.regions !== undefined && spec.motion !== undefined ? configRoles({ bones: [...spec.bones], meshes: { ...spec.meshes }, regions: { ...spec.regions }, motion: spec.motion, constraints: spec.constraints }) : null;
   const chains = new Map<string, number>();
   for (const e of spec.bones) if ('chain' in e) chains.set(e.chain, e.points.length);
   const linked = (n: string): string | null => {
