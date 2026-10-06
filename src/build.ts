@@ -54,7 +54,7 @@ import { readParts, writeParts } from './parts.ts';
 import { encodePngBytes, readPng, writePng } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
 import { readRequirements, type RequirementLine, summaryText } from './requirements.ts';
-import { buildRig, DEFAULT_IDLE_KEYS, type IdleKeys, rigJsonText, type RigOutput } from './rig.ts';
+import { buildRig, DEFAULT_IDLE_KEYS, type IdleKeys, type RigCommand, rigJsonText, type RigOutput } from './rig.ts';
 
 /** Where a stage's lines go. The commands hand it `console.log`; `build` hands it a prefixing wrapper. */
 export type Log = (line: string) => void;
@@ -224,6 +224,8 @@ export interface RigStageInput {
   pageEdges?: PageEdges;
   /** The gate build's `--pack-shape`; {@link DEFAULT_PACK_SHAPE} when absent. */
   packShape?: PackShape;
+  /** The command running the stage, which `RIG_IK_PAIR_UNDER_CONTROL` names beside the flag; `rig` when absent. It moves no byte written. */
+  command?: RigCommand;
 }
 
 /** Author the rig, gate it through rigc in `scratch`, and write `out` only when the gate is green. */
@@ -235,7 +237,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     const png = join(input.parts, 'parts', `${p.name}.png`);
     if (existsSync(png)) images.set(p.name, readPng(png));
   }
-  const rig = buildRig(cfg, parts, images, undefined, input.idleKeys ?? DEFAULT_IDLE_KEYS);
+  const rig = buildRig(cfg, parts, images, undefined, input.idleKeys ?? DEFAULT_IDLE_KEYS, input.command ?? 'rig');
   const texts: Array<[string, string]> = [
     ['rig.json', rigJsonText(rig.rig)],
     ['motion.json', rigJsonText(rig.motion)],
@@ -486,6 +488,8 @@ export interface BuildInput {
   packShape?: PackShape;
   /** `--requirements`, forwarded to the check (issue #93): read before assemble runs, so a file check would refuse is refused first; absent, nothing moves. */
   requirements?: string;
+  /** `--idle-keys`, forwarded to the rig stage as `rig` takes it (issue #95); {@link DEFAULT_IDLE_KEYS} when absent. */
+  idleKeys?: IdleKeys;
 }
 
 /**
@@ -559,7 +563,9 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   const out = input.out;
   mkdirSync(out, { recursive: true });
   for (const p of BUILD_OWNS) rmSync(join(out, p), { recursive: true, force: true });
-  log(`spine-parts build: ${input.config} -> ${out}, seam rule ${input.seam}, projection rule ${input.project}, page edges ${input.pageEdges}, pack shape ${input.packShape ?? DEFAULT_PACK_SHAPE}${input.loop ? ', with the idle loop' : ''}`);
+  // The idle-keys value is named only when it is not the default, so a build without the flag, or with the default, prints the line it printed before issue #95.
+  const idleKeys = input.idleKeys ?? DEFAULT_IDLE_KEYS;
+  log(`spine-parts build: ${input.config} -> ${out}, seam rule ${input.seam}, projection rule ${input.project}, page edges ${input.pageEdges}, pack shape ${input.packShape ?? DEFAULT_PACK_SHAPE}${idleKeys === DEFAULT_IDLE_KEYS ? '' : `, idle keys ${idleKeys}`}${input.loop ? ', with the idle loop' : ''}`);
 
   try {
     // build runs rig next, which needs the whole config, so the full loader is
@@ -579,7 +585,7 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   }
 
   try {
-    rigStage({ config: input.config, parts: out, out: join(out, 'rig'), pageEdges: input.pageEdges, packShape: input.packShape }, run.rig, run.scratch, prefixed('rig'));
+    rigStage({ config: input.config, parts: out, out: join(out, 'rig'), idleKeys, pageEdges: input.pageEdges, packShape: input.packShape, command: 'build' }, run.rig, run.scratch, prefixed('rig'));
   } catch (err) {
     return refused('rig', err);
   }

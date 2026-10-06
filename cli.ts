@@ -23,7 +23,7 @@ import { type CharacterConfig, loadConfig, loadEarlyConfig } from './src/config.
 import { PartsError, problemLine } from './src/errors.ts';
 import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs } from './src/inputs.ts';
-import { DEFAULT_IDLE_KEYS, IDLE_KEYS, type IdleKeys } from './src/rig.ts';
+import { idleKeysOf, isIdleKeys } from './src/rig.ts';
 import { figuresPhrase, implausibleRules, layerFigures, type LayerSet, pct, readLayers, ruleSummary, times } from './src/layers.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPEC, loadKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
 import { basisLines, checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal } from './src/propose.ts';
@@ -382,6 +382,7 @@ usage:
                     --head <dir|psd> --out <dir> [--seam near-white|silhouette]
                     [--project core|visible] [--page-edges pot|free]
                     [--pack-shape rect|polygon] [--loop] [--requirements <file.json>]
+                    [--idle-keys ctl|direct]
       assemble, then rig, then check, in one process, each stage's own lines
       printed under [assemble], [rig] and [check]; the first stage that refuses
       stops the build with its own FAIL lines. The config must already carry
@@ -402,6 +403,10 @@ usage:
       and check's artifact, take them). --requirements is forwarded to check
       (as for check); the file's own shape is read before assemble runs, and
       its names resolve against the rig in the check, before it builds.
+      --idle-keys is forwarded to the rig stage (as for rig) and defaults to
+      ctl; the first line names it when it is direct. A config with a
+      two-bone ik over chain links the idle keys needs --idle-keys direct
+      (RIG_IK_PAIR_UNDER_CONTROL names the flag on the command that ran).
 
   spine-parts --version
   spine-parts --help
@@ -571,8 +576,8 @@ function cmdRig(args: string[]): number {
   if (config === null) return usage('rig needs --config <config.json>');
   if (partsDir === null) return usage('rig needs --parts <dir> (the directory holding parts.json and parts/)');
   if (out === null) return usage('rig needs --out <dir>');
-  const keys = idleKeys ?? DEFAULT_IDLE_KEYS;
-  if (!(IDLE_KEYS as readonly string[]).includes(keys)) return usage(`--idle-keys ${keys}; one of ${IDLE_KEYS.join(', ')} is required`);
+  const keys = idleKeysOf(idleKeys ?? undefined);
+  if (!isIdleKeys(keys)) return usage(keys);
   const edges = pageEdgesOf(pageEdges ?? undefined);
   if (!isPageEdges(edges)) return usage(edges);
   const shape = packShapeOf(packShape ?? undefined);
@@ -585,7 +590,7 @@ function cmdRig(args: string[]): number {
   }
   const scratch = mkdtempSync(join(tmpdir(), 'spine-parts-rig-'));
   try {
-    rigStage({ config, parts: partsDir, out, idleKeys: keys as IdleKeys, pageEdges: edges, packShape: shape }, rigcRunner(bin), scratch, console.log);
+    rigStage({ config, parts: partsDir, out, idleKeys: keys, pageEdges: edges, packShape: shape }, rigcRunner(bin), scratch, console.log);
     return EXIT_OK;
   } catch (err) {
     return printRefusal(err);
@@ -997,7 +1002,7 @@ function cmdInputs(args: string[]): number {
 function cmdBuild(args: string[]): number {
   const flags = new Map<string, string>();
   let loop = false;
-  const valued = ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements'];
+  const valued = ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys'];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--loop') {
@@ -1021,6 +1026,8 @@ function cmdBuild(args: string[]): number {
   if (!isPageEdges(edges)) return usage(edges);
   const shape = packShapeOf(flags.get('--pack-shape'));
   if (!isPackShape(shape)) return usage(shape);
+  const keys = idleKeysOf(flags.get('--idle-keys'));
+  if (!isIdleKeys(keys)) return usage(keys);
   const [config, source, full, head, out] = ['--config', '--source', '--full', '--head', '--out'].map((f) => flags.get(f) as string);
   let bin: string;
   try {
@@ -1031,7 +1038,7 @@ function cmdBuild(args: string[]): number {
   const scratch = mkdtempSync(join(tmpdir(), 'spine-parts-build-'));
   try {
     const r = build(
-      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape, ...(flags.has('--requirements') ? { requirements: flags.get('--requirements') as string } : {}) },
+      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape, ...(flags.has('--requirements') ? { requirements: flags.get('--requirements') as string } : {}), idleKeys: keys },
       { rig: rigcRunner(bin), check: rigcRunner(bin), checkBin: bin, scratch: join(scratch, 'rig-gate') },
       console.log,
     );

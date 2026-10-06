@@ -253,6 +253,28 @@ export const IDLE_KEYS = ['ctl', 'direct'] as const;
 export type IdleKeys = (typeof IDLE_KEYS)[number];
 export const DEFAULT_IDLE_KEYS: IdleKeys = 'ctl';
 
+/**
+ * `--idle-keys <value>` as `rig` and `build` both take it, or its default: one
+ * reading for the two commands, so neither spells the flag its own way. A value
+ * not in {@link IDLE_KEYS} is returned as the usage message naming the two.
+ */
+export function idleKeysOf(value: string | undefined): IdleKeys | string {
+  const keys = value ?? DEFAULT_IDLE_KEYS;
+  return (IDLE_KEYS as readonly string[]).includes(keys) ? (keys as IdleKeys) : `--idle-keys ${keys}; one of ${IDLE_KEYS.join(', ')} is required`;
+}
+
+export function isIdleKeys(v: IdleKeys | string): v is IdleKeys {
+  return (IDLE_KEYS as readonly string[]).includes(v);
+}
+
+/**
+ * The command that ran the rig stage, which a refusal names when it tells the
+ * author which flag to pass (`RIG_IK_PAIR_UNDER_CONTROL`): `rig` and `build`
+ * both take `--idle-keys`, and the line has to name the one that was run.
+ * It changes no byte the stage writes — only that refusal's text.
+ */
+export type RigCommand = 'rig' | 'build';
+
 /** The `why` of the `invariants.idleDrivesMeshes` that `idleKeys: 'direct'` declares. */
 export const IDLE_DRIVES_MESHES_WHY = 'painting rig: the idle is meant to deform the meshes it keys (spine-parts rig --idle-keys direct)';
 
@@ -334,6 +356,7 @@ export function buildRig(
   images: ReadonlyMap<string, Raster>,
   maxLoopPasses: number = ONE_LOOP_PASSES,
   idleKeys: IdleKeys = DEFAULT_IDLE_KEYS,
+  command: RigCommand = 'rig',
 ): RigOutput {
   const problems: Problem[] = [];
   const fail = (code: string, object: string, detail: string): void => {
@@ -517,7 +540,7 @@ export function buildRig(
     fail(
       'RIG_IK_PAIR_UNDER_CONTROL',
       `config.constraints[${i}] (ik constraint "${c.name}")`,
-      `drives "${first}" and its child "${second}", and under --idle-keys ${idleKeys} "${second}" is keyed by the idle and weighted to by a mesh, so it is keyed through the control "${second}${CONTROL_SUFFIX}", which stands between the two in the rig: the two-bone solve would place "${second}" as though its parent were "${first}" and end its tip away from the target, with the gate green. Run \`rig --idle-keys direct\`, which keys "${second}" in place and keeps the pair parent and child (\`build\` takes no --idle-keys: it keys through controls)`,
+      `drives "${first}" and its child "${second}", and under --idle-keys ${idleKeys} "${second}" is keyed by the idle and weighted to by a mesh, so it is keyed through the control "${second}${CONTROL_SUFFIX}", which stands between the two in the rig: the two-bone solve would place "${second}" as though its parent were "${first}" and end its tip away from the target, with the gate green. Run \`${command} --idle-keys direct\`, which keys "${second}" in place and keeps the pair parent and child`,
     );
   });
   refuseIfAny(problems);

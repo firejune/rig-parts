@@ -2342,6 +2342,33 @@ function runCliSuite(): number {
       `exit ${both.status}; ${bothFails.map((l) => l.trim().slice(0, 100)).join(' | ')}`,
       'readers collect every problem and throw once: the rig directory and the requirements file are both read before rigc builds anything, and one run names what is wrong with each',
     );
+
+    // Issue #95: build takes --idle-keys as rig does.
+    const buildUsage = helpText.slice(helpText.indexOf('  spine-parts build '), helpText.indexOf('  spine-parts --version'));
+    const rigUsage = helpText.slice(helpText.indexOf('  spine-parts rig '), helpText.indexOf('  spine-parts check '));
+    say(
+      'CL24_THE_HELP_NAMES_IDLE_KEYS_UNDER_BUILD_AS_UNDER_RIG_AND_SAYS_WHERE_IT_GOES',
+      buildUsage.includes('[--idle-keys ctl|direct]') && rigUsage.includes('[--idle-keys ctl|direct]') && buildUsage.includes('--idle-keys is forwarded to the rig stage') && buildUsage.includes('RIG_IK_PAIR_UNDER_CONTROL') && !helpText.includes('takes no --idle-keys'),
+      `build usage: ${buildUsage.split('\n').filter((l) => l.includes('--idle-keys')).map((l) => l.trim()).join(' | ')}; rig usage carries the same option: ${rigUsage.includes('[--idle-keys ctl|direct]')}`,
+      'an agent learns a flag from --help: build shows it in the same spelling as rig, and says it goes to the rig stage and which refusal asks for it',
+    );
+    const both2 = (extra: string[]): Array<{ status: number; line: string }> =>
+      [
+        runCli(['rig', '--config', 'c', '--parts', 'p', '--out', join(dir, 'ik-usage-rig'), ...extra]),
+        runCli(['build', '--config', 'c', '--source', 's', '--full', 'f', '--head', 'h', '--out', join(dir, 'ik-usage-build'), ...extra]),
+      ].map((r) => ({ status: r.status, line: r.out.split('\n')[0] }));
+    const cases: Array<[string, string[], string]> = [
+      ['a value neither command knows', ['--idle-keys', 'controls'], '  FAIL  USAGE: --idle-keys controls; one of ctl, direct is required'],
+      ['the flag twice', ['--idle-keys', 'ctl', '--idle-keys', 'direct'], '  FAIL  USAGE: --idle-keys is given twice'],
+      ['no value', ['--idle-keys'], '  FAIL  USAGE: --idle-keys needs a value'],
+    ];
+    const got = cases.map(([what, extra, want]) => ({ what, want, runs: both2(extra) }));
+    say(
+      'CL25_BUILD_REFUSES_A_BAD_IDLE_KEYS_IN_RIGS_OWN_WORDS_EXIT_2_BEFORE_ANYTHING_IS_WRITTEN',
+      got.every((g) => g.runs.every((r) => r.status === 2 && r.line === g.want)) && !existsSync(join(dir, 'ik-usage-rig')) && !existsSync(join(dir, 'ik-usage-build')),
+      got.map((g) => `${g.what}: rig exit ${g.runs[0].status} "${g.runs[0].line.trim()}", build exit ${g.runs[1].status} "${g.runs[1].line.trim()}"`).join('; '),
+      'ruling 1 of issue #95: one parser for the value (idleKeysOf in src/rig.ts), so the two commands refuse the same input with the same line; the three plants are the three ways a valued flag is malformed',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -3361,11 +3388,42 @@ function runConstraintRigCases(say: (name: string, ok: boolean, detail: string, 
     q?.code === 'RIG_IK_PAIR_UNDER_CONTROL' &&
       q.object === 'config.constraints[0] (ik constraint "reach")' &&
       q.detail.includes('it is keyed through the control "hem1_ctl", which stands between the two in the rig') &&
-      q.detail.endsWith('Run `rig --idle-keys direct`, which keys "hem1" in place and keeps the pair parent and child (`build` takes no --idle-keys: it keys through controls)') &&
+      q.detail.endsWith('Run `rig --idle-keys direct`, which keys "hem1" in place and keeps the pair parent and child') &&
       direct === null &&
       noControl === null,
     `ctl, ik over hem0 and hem1 -> ${q === null ? codes(underCtl) : `${q.code}: ${q.object} — ${q.detail}`}; direct -> ${codes(direct)}; ctl, ik over body and eye (eye is a region, no control) -> ${codes(noControl)}`,
     'measured (RG57): under ctl the pair gates green and the tip misses the target in every frame, because hem1_ctl stands between the links; nothing is re-parented or re-targeted here, the refusal names the flag under which the ik means what it says',
+  );
+
+  // RG61 — issue #95: the refusal names the flag on the command that ran, and only that one.
+  const byBuild = refusals(() => buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'ctl', 'build'));
+  const byRig = refusals(() => buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'ctl', 'rig'));
+  const qb = byBuild !== null && byBuild.problems.length === 1 ? byBuild.problems[0] : null;
+  const qr = byRig !== null && byRig.problems.length === 1 ? byRig.problems[0] : null;
+  const names = (d: string | undefined, cmd: string): boolean => d !== undefined && d.includes(`Run \`${cmd} --idle-keys direct\``);
+  say(
+    'RG61_THE_IK_PAIR_REFUSAL_NAMES_THE_FLAG_ON_THE_COMMAND_THAT_RAN_AND_NOT_THE_OTHER',
+    qb?.code === 'RIG_IK_PAIR_UNDER_CONTROL' && qr?.code === 'RIG_IK_PAIR_UNDER_CONTROL' &&
+      names(qb.detail, 'build') && !names(qb.detail, 'rig') &&
+      names(qr.detail, 'rig') && !names(qr.detail, 'build') &&
+      !qb.detail.includes('takes no --idle-keys') && !qr.detail.includes('takes no --idle-keys'),
+    `run by build -> ${qb === null ? codes(byBuild) : `…${qb.detail.slice(qb.detail.indexOf('Run '))}`}; run by rig -> ${qr === null ? codes(byRig) : `…${qr.detail.slice(qr.detail.indexOf('Run '))}`}`,
+    'issue #95, ruling 3: build takes --idle-keys now, so the refusal sends the author to the flag on the command they ran — the planted half is the other command, whose name must not appear — and the sentence saying build takes no flag is gone',
+  );
+
+  // RG62 — the command moves no byte the stage writes, and only the command's name in the refusal.
+  const greenRig = rigJsonText(buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'direct', 'rig').rig);
+  const greenBuild = rigJsonText(buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'direct', 'build').rig);
+  const greenMotionRig = rigJsonText(buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'direct', 'rig').motion);
+  const greenMotionBuild = rigJsonText(buildRig(conCfg([reach]), rigParts(), rigImages(), undefined, 'direct', 'build').motion);
+  const ctlNoIk = rigJsonText(buildRig(conCfg(), rigParts(), rigImages(), undefined, 'ctl', 'build').rig);
+  const directNoIk = rigJsonText(buildRig(conCfg(), rigParts(), rigImages(), undefined, 'direct', 'build').rig);
+  const sameButWord = qb !== null && qr !== null && qb.object === qr.object && qb.detail.replace('Run `build --idle-keys direct`', 'Run `rig --idle-keys direct`') === qr.detail;
+  say(
+    'RG62_THE_COMMAND_CHANGES_ONLY_ITS_OWN_NAME_IN_THE_REFUSAL_AND_NO_BYTE_OF_RIG_OR_MOTION',
+    greenRig === greenBuild && greenMotionRig === greenMotionBuild && sameButWord && ctlNoIk !== directNoIk,
+    `direct, ik over hem0 and hem1: rig.json under rig and under build ${greenRig === greenBuild ? 'byte-identical' : 'DIFFER'} (${greenRig.length} chars), motion.json ${greenMotionRig === greenMotionBuild ? 'byte-identical' : 'DIFFER'}; ctl refusal under build with the command word swapped back ${sameButWord ? 'equals' : 'does NOT equal'} the one under rig; planted, idle keys ctl against direct on the same config: rig.json ${ctlNoIk === directNoIk ? 'IDENTICAL, so the comparison sees nothing' : 'differs'}`,
+    'issue #95, ruling 3\'s "smallest parameter": the stage cannot know which command ran without being told, so it is told, and the comparison holds that the telling reaches the one sentence and nothing build or rig writes',
   );
 
   const dir = temp('constraints-rig');
@@ -8269,6 +8327,129 @@ function runBuildSuite(): number {
       unknownReq.status === 1 && unknownReq.out.includes('[check]   FAIL  REQUIREMENTS_RESOLVES: requirement "TAIL_RANGE" (range)') && unknownReq.out.includes('build: stopped at check; no later stage ran') && !existsSync(join(unknownOut, 'check', 'build')) && existsSync(join(unknownOut, 'rig', 'rig.json')),
       `exit ${unknownReq.status}; ${(unknownReq.out.split('\n').find((l) => l.includes('REQUIREMENTS_RESOLVES')) ?? 'no REQUIREMENTS_RESOLVES line').trim().slice(0, 160)}; check/build ${existsSync(join(unknownOut, 'check', 'build')) ? 'WRITTEN' : 'not written'}`,
       'names resolve against the rig the rig stage wrote, so a bone it does not hold is refused in the check, by name, before rigc builds there',
+    );
+
+    // Issue #95: build --idle-keys, on a two-bone ik over two keyed chain links. By hand, in rig px (y down):
+    // the skirt chain starts at the top centre of the bottomwear box, (55, 30), bends to (49, 38) and ends at
+    // (55, 46) — two links of 10 (6-8-10 triangles), so its reach is 20. A mesh over the box is weighted to
+    // both links and the idle keys both, so under ctl each gets a control between the links. The scene target
+    // `tgt` (under root) rests on the drawn tip, 16 from the chain's origin, inside the reach: the ik solves
+    // the triangle as drawn (measured: the mirrored drawing, bent to (61, 38), fails the seam, because the solver
+    // bends the other way), so the setup pose is the painting. The idle sways `tgt` along x as a sine of
+    // amplitude 2 and period 1 s, so the tip it carries travels and TIP_OVER_ROOT has motion to read; at
+    // 12 fps frame 3 is t = 0.25 s, sin = 1, so tgt's world x spans exactly 4 over the frames, and it stays
+    // within sqrt(2^2 + 16^2) = 16.12 < 20 of the origin.
+    const ikX = skirtBox.x + skirtBox.w / 2;
+    const ikCfg = (constraints: boolean): Record<string, unknown> => {
+      const c = assembleConfig();
+      c.bones = [
+        { name: 'anchor', parent: 'root', at: [0, 0] },
+        { name: 'chest', parent: 'root', at: [torsoTop.x + torsoTop.w / 2, torsoTop.y] },
+        { chain: 'skirt', parent: 'root', points: [[ikX, skirtBox.y], [ikX - 6, skirtBox.y + 8]], tip: [ikX, skirtBox.y + 16] },
+        { name: 'tgt', parent: 'root', at: [ikX, skirtBox.y + 16] },
+      ];
+      const regions = { ...(moving.regions as Record<string, string>) };
+      delete regions.bottomwear;
+      c.regions = regions;
+      c.meshes = { bottomwear: { grid: 4, r: 8, segments: ['skirt'] } };
+      c.motion = {
+        duration: 1,
+        tracks: [
+          { bone: 'chest', prop: 'translatey', amp: 1, period: 1, phase: 0 },
+          { chain: 'skirt', amps: [2, 2], period: 1, phase: 0, lag: 0.1 },
+          { bone: 'tgt', prop: 'translatex', amp: 2, period: 1, phase: 0 },
+        ],
+      };
+      if (constraints) c.constraints = [{ name: 'reach', type: 'ik', bones: ['skirt0', 'skirt1'], target: 'tgt' }];
+      return c;
+    };
+    writeFileSync(join(dir, 'ik.json'), `${JSON.stringify(ikCfg(true), null, 2)}\n`);
+    writeFileSync(join(dir, 'ik-free.json'), `${JSON.stringify(ikCfg(false), null, 2)}\n`);
+
+    const ikCtlOut = join(dir, 'ik-ctl');
+    const ikCtl = runCli(buildArgs(dir, ikCtlOut, 'ik.json'));
+    const ikFail = ikCtl.out.split('\n').filter((l) => l.includes('FAIL'));
+    say(
+      'BU21_BUILD_REFUSES_A_TWO_BONE_IK_OVER_KEYED_LINKS_UNDER_THE_DEFAULT_NAMING_BUILD_IDLE_KEYS_DIRECT',
+      ikCtl.status === 1 &&
+        ikFail.length === 1 &&
+        ikFail[0].startsWith('[rig]   FAIL  RIG_IK_PAIR_UNDER_CONTROL: config.constraints[0] (ik constraint "reach")') &&
+        ikFail[0].endsWith('Run `build --idle-keys direct`, which keys "skirt1" in place and keeps the pair parent and child') &&
+        !ikFail[0].includes('`rig --idle-keys') &&
+        ikCtl.out.includes('build: stopped at rig; no later stage ran') &&
+        !existsSync(join(ikCtlOut, 'rig', 'rig.json')),
+      `no --idle-keys -> exit ${ikCtl.status}, ${ikFail.length} FAIL line(s): …${ikFail[0]?.slice(ikFail[0].indexOf('Run ')) ?? ''}; rig.json written: ${existsSync(join(ikCtlOut, 'rig', 'rig.json'))}`,
+      'issue #95: the refusal that sent the author to the three-stage path now names the flag on the command they ran; the default still refuses, because choosing direct for a config that carries an ik would be a silent switch of what the idle keys ride on',
+    );
+
+    const ikOut = join(dir, 'ik-direct');
+    const ik = runCli([...buildArgs(dir, ikOut, 'ik.json'), '--idle-keys', 'direct']);
+    const ikRig = existsSync(join(ikOut, 'rig', 'rig.json')) ? (JSON.parse(readFileSync(join(ikOut, 'rig', 'rig.json'), 'utf8')) as RigSpec) : null;
+    const ikCheck = readJsonFile(join(ikOut, 'check', 'check.json'));
+    const ikGeo = join(ikOut, 'check', 'idle_frames', 'idle', GEOMETRY_FILE);
+    const ikFrames = existsSync(ikGeo) ? (JSON.parse(readFileSync(ikGeo, 'utf8')) as { frames: Array<{ bones: GeometryBone[] }> }).frames.map((fr) => new Map(fr.bones.map((b) => [b.name, b]))) : null;
+    const len1 = ikRig?.bones.find((b) => b.name === 'skirt1')?.length ?? 0;
+    const tipOn = ikFrames === null ? null : tipGap(ikFrames, 'skirt1', len1, 'tgt');
+    const originOff = ikFrames === null ? null : tipGap(ikFrames, 'skirt1', 0, 'tgt');
+    const tgtXs = ikFrames === null ? [] : ikFrames.map((fr) => (fr.get('tgt') as GeometryBone).worldX);
+    const tgtSpan = tgtXs.length === 0 ? null : Math.max(...tgtXs) - Math.min(...tgtXs);
+    const header = ik.out.split('\n')[0] ?? '';
+    say(
+      'BU22_BUILD_IDLE_KEYS_DIRECT_BUILDS_THE_IK_GREEN_AND_THE_RENDERED_TIP_STAYS_ON_THE_SWAYING_TARGET',
+      ik.status === 0 &&
+        ikCheck?.PASS === true &&
+        header.endsWith(', page edges free, pack shape polygon, idle keys direct') &&
+        ik.out.includes('[rig]   idle keys direct: 2 mesh-driving bone(s) keyed in place, invariants.idleDrivesMeshes declared') &&
+        JSON.stringify(ikRig?.constraints) === JSON.stringify([{ name: 'reach', type: 'ik', bones: ['skirt0', 'skirt1'], target: 'tgt' }]) &&
+        len1 === 10 &&
+        ikFrames !== null && ikFrames.length === IDLE_FPS + 1 &&
+        tipOn !== null && tipOn <= POSE_BAR &&
+        originOff !== null && Math.abs(originOff - 10) <= POSE_BAR &&
+        tgtSpan !== null && Math.abs(tgtSpan - 4) <= POSE_BAR,
+      `--idle-keys direct -> exit ${ik.status}, check.json PASS ${String(ikCheck?.PASS)}; first line ends "${header.slice(header.indexOf(', page edges'))}"; skirt1 length ${len1} (by hand 10); ${ikFrames === null ? 'no geometry.json' : `${ikFrames.length} idle frame(s) (by hand 1 s x ${IDLE_FPS} + 1)`}; largest |tip(skirt1) - tgt| ${tipOn === null ? 'not measured' : tipOn.toExponential(3)} (bar ${POSE_BAR}); planted, skirt1's origin read as the tip: ${originOff?.toFixed(6) ?? 'not measured'} (by hand 10, the link's length); tgt world x spans ${tgtSpan?.toFixed(6) ?? 'not measured'} (by hand 4)${ik.status === 0 ? '' : `; ${ik.out.split('\n').filter((l) => l.includes('FAIL')).slice(0, 3).join(' | ')}`}`,
+      'issue #95, the row the card exists for: one process builds what took rig --idle-keys direct and check before; the tip is read from the geometry check wrote, as RG57 reads it, and the plant reads the same frames at a point the ik does not hold to the target, so the bar is seen to discriminate',
+    );
+
+    const contact = { name: 'TIP_ON_TARGET', kind: 'contact', animation: 'idle', bone: 'skirt1', point: 'tip', target: { bone: 'tgt', point: 'origin' }, within_px: 0.001 };
+    const inOut = join(dir, 'ik-req-in');
+    const farOut = join(dir, 'ik-req-far');
+    const inReq = runCli([...buildArgs(dir, inOut, 'ik.json'), '--idle-keys', 'direct', '--requirements', reqFile('ik-in', { requirements: [contact] })]);
+    const farReq = runCli([...buildArgs(dir, farOut, 'ik.json'), '--idle-keys', 'direct', '--requirements', reqFile('ik-far', { targets: [{ bone: 'tgt', animation: 'idle', at: [ikX, skirtBox.y + 24] }], requirements: [contact] })]);
+    const lineOf = (o: string): Record<string, unknown> => (((readJsonFile(join(o, 'check', 'check.json'))?.requirements as { lines?: Record<string, Record<string, unknown>> } | undefined)?.lines?.TIP_ON_TARGET ?? {}) as Record<string, unknown>);
+    const inLine = lineOf(inOut);
+    const farLine = lineOf(farOut);
+    say(
+      'BU23_BUILD_IDLE_KEYS_DIRECT_HOLDS_A_DECLARED_CONTACT_ON_THE_TARGET_AND_FAILS_IT_BY_THE_HAND_DISTANCE_OUT_OF_REACH',
+      inReq.status === 0 &&
+        inLine.status === 'PASS' && Number(inLine.largest_px) <= 0.001 &&
+        farReq.status === 1 &&
+        farLine.status === 'FAIL' && Math.abs(Number(farLine.largest_px) - 4) <= 1e-4 &&
+        farReq.out.includes('[check]   FAIL  CHECK_REQUIREMENT_MET: requirement "TIP_ON_TARGET" (contact, animation "idle")') &&
+        farReq.out.includes('build: stopped at check;'),
+      `contact tip(skirt1) on tgt within 0.001 px: exit ${inReq.status}, ${String(inLine.status)}, largest ${String(inLine.largest_px)} px; tgt placed at (${ikX}, ${skirtBox.y + 24}) by the requirements file: exit ${farReq.status}, ${String(farLine.status)}, largest ${String(farLine.largest_px)} px (by hand 24 from the origin less the reach 20 = 4)`,
+      'issue #95 with #93 on main: the scene\'s own bar holds the ik in one build, and the target moved past the reach — the ik straightens toward it, so the tip falls short by exactly the distance less the two links — fails it by that hand-computed figure',
+    );
+
+    // Without the flag, with the default and with direct, on the ik-free twin (both links keyed and weighted,
+    // so ctl gives each a control): the first two must be the same build, byte for byte and line for line.
+    const twin = (flag: string[], name: string): { out: string; lines: string[]; status: number } => {
+      const o = join(dir, name);
+      const r = runCli([...buildArgs(dir, o, 'ik-free.json'), ...flag]);
+      return { out: o, status: r.status, lines: r.out.split(o).join('<out>').split('\n') };
+    };
+    const bare = twin([], 'twin-bare');
+    const ctl = twin(['--idle-keys', 'ctl'], 'twin-ctl');
+    const dir2 = twin(['--idle-keys', 'direct'], 'twin-direct');
+    const files = treeDiff(bare.out, ctl.out);
+    const plantFiles = treeDiff(bare.out, dir2.out);
+    const sameLines = bare.lines.join('\n') === ctl.lines.join('\n');
+    const plantLines = bare.lines.filter((l, i) => l !== dir2.lines[i]).length;
+    say(
+      'BU24_NO_IDLE_KEYS_AND_IDLE_KEYS_CTL_WRITE_AND_PRINT_THE_SAME_BUILD_AND_DIRECT_DOES_NOT',
+      files.length === 0 && sameLines && !bare.lines[0].includes('idle keys') &&
+        plantFiles.some((d) => d.startsWith(join('rig', 'rig.json'))) && plantLines > 0 && dir2.lines[0].endsWith(', idle keys direct'),
+      `no flag (exit ${bare.status}) against --idle-keys ctl (exit ${ctl.status}): ${files.length === 0 ? `${filesUnder(bare.out).length} file(s) byte-identical` : files.slice(0, 3).join('; ')}, ${bare.lines.length} printed line(s) ${sameLines ? 'identical' : 'DIFFER'} (--out written as <out>); planted, --idle-keys direct (exit ${dir2.status}): ${plantFiles.length} file(s) differ (${plantFiles.slice(0, 2).join('; ')}), ${plantLines} line(s) differ`,
+      'issue #95, ruling 2: the flag is new, so where it is not used, or names the default, the build is the one main writes — the first line names the value only when it is not the default — and the plant shows the comparison sees the value when it moves',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

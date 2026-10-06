@@ -89,9 +89,10 @@ stage writes are the whole interface.
    link) goes in `config.constraints`, in spine-rigc's own rig-spec shape: the
    loader resolves the bones it names and nothing else, and rigc's gate refuses
    the rest in its words. A scene target is a single bone under `root`. A two-bone
-   ik over links the idle keys needs `rig --idle-keys direct`; `build` keys through
-   controls and refuses it (AUTHORING §3).
-7. `spine-parts build --config … --source … --full … --head … --out out --loop`.
+   ik over links the idle keys needs `--idle-keys direct` on `rig` or `build`
+   (the refusal names the command that ran; AUTHORING §3).
+7. `spine-parts build --config … --source … --full … --head … --out out --loop`
+   (add `--idle-keys direct` when step 6 said so).
    It stops at the first stage that refuses, printing that stage's lines under
    `[assemble]`, `[rig]` or `[check]`. Fix what the FAIL line names and build again.
 8. Read `out/check/check.json` — the six judgement lines the same way as the seam
