@@ -86,7 +86,7 @@ import {
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
 import { artifactPaths, build, BUILD_OWNS, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
-import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, shiftRight, writeCheckRig } from './fixtures/checkrig.ts';
+import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, shiftRight, writeCheckRig, writeMergedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BARE_CROWN_PARTS, eyeParts, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
@@ -100,6 +100,7 @@ import {
   cleanGhosts,
   DEFAULT_PROJECT_RULE,
   DEFAULT_SEAM_RULE,
+  ERROR_LIMIT as ASSEMBLE_ERROR_LIMIT,
   figureSilhouette,
   figuresLine,
   growRim,
@@ -119,7 +120,7 @@ import {
   stageFields,
   visibilityCounts,
 } from './src/assemble.ts';
-import { buildGateLines, causeLines, chainLine, measuredRules, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
+import { BARS, blackRig, buildGateLines, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { blinkFigures, frameBox, lagStep, readSine } from './src/instruments.ts';
 import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
@@ -1783,6 +1784,23 @@ function runCliSuite(): number {
       shim.status === 0 && (shim.stdout ?? '').trim() === pkg.version,
       `node bin/spine-parts.cjs --version -> exit ${shim.status}, "${(shim.stdout ?? '').trim()}"`,
       'npm installs the bin as a Node script; the shim is what makes a Bun program runnable from it, and the smoke checks its no-Bun half on an install',
+    );
+
+    const checkHelp = help.out.slice(help.out.indexOf('spine-parts check'), help.out.indexOf('spine-parts loop'));
+    const bare = runCli(['check', '--rig', dir, '--out', join(dir, 'src-bare'), '--source']);
+    say(
+      'CL07_CHECK_HELP_NAMES_SOURCE_AND_THE_SKIPS_AND_A_SOURCE_WITH_NO_VALUE_IS_A_USAGE_ERROR',
+      ['[--source <painting.png>]', 'SETUP_POSE_VS_SOURCE', 'CHECK_SOURCE_SIZE', 'not a compiled skeleton.json', 'say SKIP, by name'].every((t) => checkHelp.includes(t)) && bare.status === 2 && bare.out.includes('--source needs a value') && !existsSync(join(dir, 'src-bare')),
+      `help names --source, the line, its refusal, the spec and the skips: ${['[--source <painting.png>]', 'SETUP_POSE_VS_SOURCE', 'CHECK_SOURCE_SIZE', 'not a compiled skeleton.json', 'say SKIP, by name'].map((t) => `${t} ${checkHelp.includes(t)}`).join(', ')}; --source with no value -> exit ${bare.status}, ${(bare.out.split('\n').find((l) => l.includes('FAIL')) ?? 'no FAIL line').trim()}`,
+      'issue #77: the help is where an agent learns that check takes a rig spec, that a missing parts.json or idle is measured around by name, and what --source adds; a malformed call is exit 2 before anything runs',
+    );
+
+    const twice = runCli(['check', '--rig', dir, '--out', join(dir, 'src-twice'), '--source', 'a.png', '--source', 'b.png']);
+    say(
+      'CL08_A_SOURCE_GIVEN_TWICE_IS_A_USAGE_ERROR',
+      twice.status === 2 && twice.out.includes('--source is given twice') && !existsSync(join(dir, 'src-twice')),
+      `exit ${twice.status}; ${(twice.out.split('\n').find((l) => l.includes('FAIL')) ?? 'no FAIL line').trim()}`,
+      'two paintings would be two measurements and the line has one; which one was meant is not this package\'s guess',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -3626,6 +3644,299 @@ function failLine(out: string, code: string): string | null {
   return out.split('\n').find((l) => l.startsWith(`  FAIL  ${code}`)) ?? null;
 }
 
+/**
+ * The reach of the two resamplings between the painting and the setup pose the
+ * source line reads, in stage pixels: rigc's rasteriser samples the atlas with
+ * two bilinear taps per axis at the render's scale, and the warp back onto the
+ * stage samples the frame with two more. At the scales the merged fixture
+ * renders at (0.926 with its plate, 1.111 without) each reaches under 1.1 stage
+ * pixels past the pixel's centre, and the polygon edge's own antialiasing half
+ * a pixel more: 3 bounds the sum. A pixel whose 7x7 neighbourhood in the flat
+ * stack is one colour is drawn exactly; any other may not be.
+ */
+const SOURCE_REACH = 3;
+
+/** Whether every pixel of `img` within `r` of (x, y) is (x, y)'s colour; a window that leaves the image is not uniform. */
+function uniformAround(img: Raster, x: number, y: number, r: number): boolean {
+  const at = (y * img.width + x) * 4;
+  for (let v = y - r; v <= y + r; v++) {
+    for (let u = x - r; u <= x + r; u++) {
+      if (u < 0 || v < 0 || u >= img.width || v >= img.height) return false;
+      const q = (v * img.width + u) * 4;
+      if (img.data[q] !== img.data[at] || img.data[q + 1] !== img.data[at + 1] || img.data[q + 2] !== img.data[at + 2]) return false;
+    }
+  }
+  return true;
+}
+
+/** Max-channel |a - b| at pixel p. */
+function maxChannel(a: Raster, b: Raster, p: number): number {
+  return Math.max(...[0, 1, 2].map((c) => Math.abs(a.data[p * 4 + c] - b.data[p * 4 + c])));
+}
+
+/**
+ * The source line's two hand bounds on the merged fixture, from rectangles
+ * alone: `upper`, the pixels of the drawn stack not drawn exactly (within
+ * {@link SOURCE_REACH} of a colour edge) — the most error pixels an aligned
+ * pose can show; `lower`, the pixels drawn exactly whose drawn colour is more
+ * than 40 off the painting's — the fewest a moved pose must show; and
+ * `lowerUncovered`, those of `lower` where the drawn stack has nothing (white).
+ */
+function sourceBounds(drawn: Raster, painting: Raster): { upper: number; lower: number; lowerUncovered: number } {
+  let upper = 0;
+  let lower = 0;
+  let lowerUncovered = 0;
+  for (let y = 0; y < drawn.height; y++) {
+    for (let x = 0; x < drawn.width; x++) {
+      const p = y * drawn.width + x;
+      if (!uniformAround(drawn, x, y, SOURCE_REACH)) {
+        upper++;
+        continue;
+      }
+      if (maxChannel(drawn, painting, p) > ASSEMBLE_ERROR_LIMIT) {
+        lower++;
+        if (drawn.data[p * 4] === 255 && drawn.data[p * 4 + 1] === 255 && drawn.data[p * 4 + 2] === 255) lowerUncovered++;
+      }
+    }
+  }
+  return { upper, lower, lowerUncovered };
+}
+
+/** Issue #77: check on a merged rig with no parts.json, with and without an idle, against a painting by --source. */
+function runSourceCases(dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void, defaultRun: { status: number; out: string }): void {
+  const lineOf = (o: string, name: string): string => o.split('\n').find((l) => l.startsWith(`  ${name}: `))?.trim() ?? `no ${name} line`;
+  const summaryOf = (o: string): string => o.split('\n').find((l) => l.startsWith('check: '))?.trim() ?? 'no check: line';
+  const merged = (label: string, opts: MergedRigOptions, painting: Raster = mergedStack({ plate: opts.plate })) => {
+    const root = join(dir, label);
+    writeMergedCheckRig(join(root, 'rig'), opts);
+    writeFileSync(join(root, 'painting.png'), encodePngBytes(painting));
+    const before = listing(join(root, 'rig'));
+    const r = runCli(['check', '--rig', join(root, 'rig'), '--source', join(root, 'painting.png'), '--out', join(root, 'out')]);
+    const fig = readJsonFile(join(root, 'out', 'check.json'));
+    const src = (fig?.[SOURCE_LINE] ?? null) as Record<string, unknown> | null;
+    return { ...r, root, fig, src, unchanged: listing(join(root, 'rig')).join('|') === before.join('|') };
+  };
+  const NO_PARTS = 'no parts.json: ';
+  const NO_IDLE = 'no idle: ';
+  const PARTS_LINES = ['BREATH_VISIBLE', 'BLINK_NO_HOLE', 'TIP_OVER_ROOT', 'STILL_REGIONS_DARK'] as const;
+  const reasonOf = (fig: Record<string, unknown> | null, name: string): string => {
+    const l = fig?.[name] as { status?: string; reason?: string } | undefined;
+    return l?.status === 'SKIP' ? String(l.reason) : `not SKIP (${l?.status ?? 'absent'})`;
+  };
+  const sourceKeys = [...CHECK_KEYS.slice(0, -1), SOURCE_LINE, 'skipped', 'PASS'].join(',');
+
+  // The card's shape: two prefixed copies under one root, a plate region at slot 0, no parts.json, an idle.
+  const withIdle = merged('merged-idle', { idle: true, plate: true });
+  const skippedIdle = withIdle.fig?.skipped as { loop?: string; seam?: string } | undefined;
+  const wantSummary1 = `check: PASS; 2 of ${BARS.length} bar(s) measured, 7 skipped (seam, ${JUDGEMENT_LINES.join(', ')})`;
+  say(
+    'CK56_A_MERGED_RIG_WITH_NO_PARTS_JSON_GATES_LOOPS_AND_SAYS_SKIP_BY_NAME_FOR_EVERY_LINE_THAT_READS_PARTS',
+    withIdle.status === 0 &&
+      withIdle.fig !== null &&
+      Object.keys(withIdle.fig).join(',') === sourceKeys &&
+      withIdle.fig.PASS === true &&
+      withIdle.fig.gate_spine_html_green === true &&
+      withIdle.fig.loop_max_diff === 0 &&
+      withIdle.fig.seam_mean === null &&
+      withIdle.fig.seam_px_over_40 === null &&
+      withIdle.fig.seam_px_over_80 === null &&
+      skippedIdle?.loop === undefined &&
+      (skippedIdle?.seam ?? '').startsWith(NO_PARTS) &&
+      withIdle.out.includes(`  seam: SKIP — ${NO_PARTS}`) &&
+      PARTS_LINES.every((n) => reasonOf(withIdle.fig, n).startsWith(NO_PARTS) && lineOf(withIdle.out, n).startsWith(`${n}: SKIP — ${NO_PARTS}`)) &&
+      reasonOf(withIdle.fig, 'RECOMPOSITE_HOLES').startsWith(NO_PARTS) &&
+      (withIdle.src?.status ?? null) === 'REPORTED' &&
+      summaryOf(withIdle.out) === wantSummary1 &&
+      withIdle.unchanged &&
+      !existsSync(join(withIdle.root, 'rig', 'parts.json')),
+    `exit ${withIdle.status}; keys ${withIdle.fig === null ? 'no check.json' : Object.keys(withIdle.fig).join(',')}; loop ${String(withIdle.fig?.loop_max_diff)}, seam ${String(withIdle.fig?.seam_mean)}; ${PARTS_LINES.map((n) => `${n} ${reasonOf(withIdle.fig, n).slice(0, 16)}…`).join(', ')}; RECOMPOSITE_HOLES ${reasonOf(withIdle.fig, 'RECOMPOSITE_HOLES').slice(0, 16)}…; ${SOURCE_LINE} ${String(withIdle.src?.status ?? 'absent')}; "${summaryOf(withIdle.out)}"; --rig ${withIdle.unchanged ? 'unchanged' : 'CHANGED'}`,
+    "issue #77's own shape is the positive control: a merged rig built outside the package carries no parts.json, and check used to refuse it outright; the gate and the loop read only the spec, so they measure, and every line that composites parts or chooses regions by See-through tag says SKIP with the reason, never a pass — the seam's figures null rather than a number nothing measured",
+  );
+
+  const noIdle = merged('merged-no-idle', { idle: false, plate: true });
+  const skippedNo = noIdle.fig?.skipped as { loop?: string; seam?: string } | undefined;
+  const wantSummary0 = `check: PASS; 1 of ${BARS.length} bar(s) measured, 8 skipped (loop, seam, ${JUDGEMENT_LINES.join(', ')})`;
+  const noIdleFiles = ['idle_frames', 'contact.png', 'motion_heat.png'].filter((f) => existsSync(join(noIdle.root, 'out', f)));
+  say(
+    'CK57_WITHOUT_AN_IDLE_ONLY_THE_GATE_MEASURES_AND_THE_PASS_LINE_CARRIES_THE_SKIP_COUNT',
+    noIdle.status === 0 &&
+      noIdle.fig?.PASS === true &&
+      noIdle.fig.loop_max_diff === null &&
+      (skippedNo?.loop ?? '').startsWith(NO_IDLE) &&
+      (skippedNo?.seam ?? '').startsWith(NO_PARTS) &&
+      noIdle.out.includes(`  loop: SKIP — ${NO_IDLE}`) &&
+      ['CHAIN_LAG', 'TEXTURE_STRETCH'].every((n) => reasonOf(noIdle.fig, n).startsWith(NO_IDLE)) &&
+      PARTS_LINES.every((n) => reasonOf(noIdle.fig, n).startsWith(NO_PARTS) && reasonOf(noIdle.fig, n).includes(`; ${NO_IDLE}`)) &&
+      summaryOf(noIdle.out) === wantSummary0 &&
+      noIdleFiles.length === 0 &&
+      JSON.stringify(noIdle.src) === JSON.stringify(withIdle.src),
+    `exit ${noIdle.status}; "${summaryOf(noIdle.out)}"; skipped ${JSON.stringify(Object.keys(skippedNo ?? {}))}; CHAIN_LAG ${reasonOf(noIdle.fig, 'CHAIN_LAG').slice(0, 9)}…, TEXTURE_STRETCH ${reasonOf(noIdle.fig, 'TEXTURE_STRETCH').slice(0, 9)}…; idle outputs written: ${noIdleFiles.join(', ') || 'none'}; ${SOURCE_LINE} ${JSON.stringify(noIdle.src) === JSON.stringify(withIdle.src) ? 'identical to the run with an idle' : 'DIFFERENT from the run with an idle'}`,
+    "rigc builds a motion spec with no animations green, so the gate needs no idle; a run where only the gate measured is a PASS that says on the same line how much it did not look at — and the setup pose does not depend on the idle, so the source line must not move with it",
+  );
+
+  // The source line on the aligned pose: error pixels only where a colour edge is within the resamplers' reach.
+  const painting = mergedStack({ plate: true });
+  const aligned = sourceBounds(painting, painting);
+  say(
+    'CK58_THE_ALIGNED_POSE_AGAINST_ITS_OWN_PAINTING_ERRS_ONLY_WITHIN_THE_RESAMPLERS_REACH_OF_AN_EDGE',
+    typeof withIdle.src?.error_px === 'number' && withIdle.src.error_px <= aligned.upper && withIdle.src.uncovered_error_px === 0 && withIdle.src.hole_count === 0 && withIdle.src.largest === null && withIdle.src.painting_px === `${MERGED_STAGE.w}x${MERGED_STAGE.h}`,
+    `${lineOf(withIdle.out, SOURCE_LINE)}; ${aligned.upper} stage px lie within ${SOURCE_REACH} px of a colour edge (the most that can err), and the plate covers every pixel`,
+    "the painting is the merged stack drawn by rectangles, so the only error the line may report is the render's own resampling, which reaches a few pixels from an edge; the plate at slot 0 covers the stage, so nothing is uncovered",
+  );
+
+  // One attachment moved in rig.json only, the painting not: the figure moves by at least the hand-counted strips.
+  const MOVE = { slot: 'b_front', dx: -10 };
+  const moved = merged('merged-moved', { idle: true, plate: true, move: MOVE }, painting);
+  const movedBounds = sourceBounds(mergedStack({ plate: true, move: MOVE }), painting);
+  const front = mergedCores({ plate: true }).find((c) => c.slot === MOVE.slot);
+  const strips = 2 * Math.abs(MOVE.dx) * (front?.h ?? 0);
+  say(
+    'CK59_ONE_ATTACHMENT_MOVED_MOVES_THE_SOURCE_LINE_BY_AT_LEAST_THE_HAND_COUNTED_PIXELS_AND_DOES_NOT_FAIL',
+    moved.status === 0 &&
+      moved.fig?.PASS === true &&
+      typeof moved.src?.error_px === 'number' &&
+      typeof withIdle.src?.error_px === 'number' &&
+      movedBounds.lower > 0 &&
+      moved.src.error_px >= movedBounds.lower &&
+      moved.src.error_px > withIdle.src.error_px &&
+      Number(moved.src.mean_abs) > Number(withIdle.src.mean_abs) &&
+      moved.src.uncovered_error_px === 0,
+    `"${MOVE.slot}" ${MOVE.dx} px: error_px ${String(moved.src?.error_px)} (>= ${movedBounds.lower} drawn exactly and over ${ASSEMBLE_ERROR_LIMIT} off the painting, of the ${strips} px the two ${Math.abs(MOVE.dx)}-px strips change; aligned ${String(withIdle.src?.error_px)}), mean_abs ${String(moved.src?.mean_abs)} (aligned ${String(withIdle.src?.mean_abs)}); exit ${moved.status}, PASS ${String(moved.fig?.PASS)}`,
+    "the line exists to see a pose that is not the painting; a part drawn 10 px off its place changes two strips of its core by more than 40, and every pixel of them out of the resamplers' reach must count — while a REPORTED line, which has no bar, must not turn the check red",
+  );
+
+  // Over no plate the strip the part left shows nothing: uncovered error pixels, one hole where the strip is.
+  const bare = merged('merged-bare-moved', { idle: true, plate: false, move: MOVE });
+  const barePainting = mergedStack({ plate: false });
+  const bareBounds = sourceBounds(mergedStack({ plate: false, move: MOVE }), barePainting);
+  const vacated = front === undefined ? null : { x: front.x + front.w + MOVE.dx, y: front.y, w: Math.abs(MOVE.dx), h: front.h };
+  const box = /^(\d+),(\d+) (\d+)x(\d+)$/.exec(String((bare.src?.largest as { box?: string } | null)?.box ?? ''));
+  const [bx, by, bw, bh] = box === null ? [0, 0, 0, 0] : box.slice(1).map(Number);
+  const r = SOURCE_REACH;
+  const holeAtStrip = vacated !== null && box !== null && bx >= vacated.x - r && by >= vacated.y - r && bx + bw <= vacated.x + vacated.w + r && by + bh <= vacated.y + vacated.h + r && bx <= vacated.x + r && by <= vacated.y + r && bx + bw >= vacated.x + vacated.w - r && by + bh >= vacated.y + vacated.h - r;
+  say(
+    'CK60_OVER_NO_PLATE_THE_STRIP_A_MOVED_PART_LEFT_IS_UNCOVERED_AND_ITS_HOLE_IS_THE_STRIP',
+    bare.status === 0 && typeof bare.src?.uncovered_error_px === 'number' && bareBounds.lowerUncovered > 0 && bare.src.uncovered_error_px >= bareBounds.lowerUncovered && holeAtStrip,
+    `uncovered_error_px ${String(bare.src?.uncovered_error_px)} (>= ${bareBounds.lowerUncovered} drawn exactly over nothing); largest hole ${JSON.stringify(bare.src?.largest ?? null)}, the vacated strip ${vacated === null ? 'none' : `${vacated.x},${vacated.y} ${vacated.w}x${vacated.h}`} (within ${r} px each edge: ${holeAtStrip})`,
+    "the render carries no alpha, so coverage is read off a second still with every slot tinted black; where the moved part left nothing behind, that still shows the background and the pixel is uncovered — the class of defect RECOMPOSITE_HOLES names from parts.json, here found with no parts.json at all",
+  );
+
+  // A painting no rig_scale takes to the stage is refused, by name, before anything is built.
+  const wrong = newRaster(MERGED_STAGE.w + 1, MERGED_STAGE.h);
+  const sized = merged('merged-wrong-size', { idle: true, plate: true }, wrong);
+  const sizeLine = failLine(sized.out, 'CHECK_SOURCE_SIZE');
+  const stage = { x: 0, y: 0, width: 832, height: 1216 };
+  const sizeCases: Array<[string, string | null]> = [
+    ['the stage size', sourceSizeProblem(832, 1216, stage, null)],
+    ['twice it, no scale known', sourceSizeProblem(1664, 2432, stage, null)],
+    ['twice it at scale 0.5', sourceSizeProblem(1664, 2432, stage, 0.5)],
+    ['twice it at scale 0.25', sourceSizeProblem(1664, 2432, stage, 0.25)],
+    ['one column wider', sourceSizeProblem(833, 1216, stage, null)],
+    ['a stage of 832.5 columns', sourceSizeProblem(832, 1216, { ...stage, width: 832.5 }, null)],
+  ];
+  const sizeWant = [null, null, null, 'x', 'x', 'x'];
+  say(
+    'CK61_A_PAINTING_NO_RIG_SCALE_TAKES_TO_THE_STAGE_IS_REFUSED_BY_NAME_BEFORE_ANYTHING_IS_BUILT',
+    sized.status === 1 && sizeLine !== null && sizeLine.includes(`is ${MERGED_STAGE.w + 1}x${MERGED_STAGE.h}`) && !existsSync(join(sized.root, 'out', 'build')) && !existsSync(join(sized.root, 'out', 'check.json')) && sizeCases.every(([, got], i) => (got === null) === (sizeWant[i] === null)),
+    `refused: ${sizeLine?.trim().replace(/^FAIL\s+/, '').slice(0, 160) ?? 'no CHECK_SOURCE_SIZE line'}…; build/ ${existsSync(join(sized.root, 'out', 'build')) ? 'WRITTEN' : 'not written'}; ${sizeCases.map(([l, got]) => `${l}: ${got === null ? 'accepted' : 'refused'}`).join(', ')}`,
+    "assemble makes the rig canvas trunc(w * rig_scale) x trunc(h * rig_scale) and resamples the painting onto it, so a painting is this rig's exactly when one scale takes it there (the scale parts.json records, when it is read); the examples' paintings are twice their stage, so the same size alone would refuse every rig built at rig_scale 0.5",
+  );
+
+  // --source that is not a PNG, or not there.
+  const junk = join(dir, 'merged-idle', 'junk.png');
+  writeFileSync(junk, 'not a png');
+  const notPng = refusals(() => readCheckInputs(join(dir, 'merged-idle', 'rig'), undefined, junk));
+  const absent = refusals(() => readCheckInputs(join(dir, 'merged-idle', 'rig'), undefined, join(dir, 'merged-idle', 'absent.png')));
+  say(
+    'CK62_A_SOURCE_THAT_IS_NOT_A_PNG_OR_IS_NOT_THERE_IS_REFUSED_BY_NAME',
+    codes(notPng) === `CHECK_SOURCE_PNG ${junk}` && codes(absent) === `CHECK_INPUT_PRESENT ${join(dir, 'merged-idle', 'absent.png')}`,
+    `not a PNG: ${codes(notPng)}; absent: ${codes(absent)}`,
+    'the painting is read before anything is built, and a file that is not one is named rather than crashing the run',
+  );
+
+  // parts.json is optional only where nothing says where it is.
+  const mergedRig = join(dir, 'merged-idle', 'rig');
+  const quiet = readCheckInputs(mergedRig);
+  const namedMiss = refusals(() => readCheckInputs(mergedRig, mergedRig));
+  const layout = join(dir, 'build-layout');
+  writeCheckRig(layout);
+  writeMergedCheckRig(join(layout, 'rig'), { idle: true, plate: true });
+  const buildMiss = refusals(() => readCheckInputs(join(layout, 'rig')));
+  say(
+    'CK63_PARTS_JSON_IS_OPTIONAL_ONLY_WHERE_NO_FLAG_AND_NO_PARENT_SAYS_WHERE_IT_IS',
+    quiet.parts === null &&
+      (quiet.noParts ?? '').startsWith(NO_PARTS) &&
+      codes(namedMiss) === `CHECK_INPUT_PRESENT ${join(mergedRig, 'parts.json')}` &&
+      codes(buildMiss) === `CHECK_INPUT_PRESENT ${join(layout, 'rig', 'parts.json')}` &&
+      (buildMiss?.problems[0].detail.includes(`so --parts ${layout} is the directory meant`) ?? false),
+    `no --parts, none beside rig.json: parts ${quiet.parts === null ? 'null' : 'read'} ("${(quiet.noParts ?? '').slice(0, 40)}…"); --parts naming the same directory: ${codes(namedMiss)}; build's layout without --parts: ${codes(buildMiss)} — ${buildMiss?.problems[0].detail.slice(-90) ?? ''}`,
+    "measuring without parts is for a rig that has none; a --parts that names a directory without parts.json, and build's layout (parts.json one directory above the rig) without --parts, are the two ways to leave real parts behind, and both are refused as they were, so the seam is never skipped over a parts.json sitting next door",
+  );
+
+  // An idle that is there must still be an idle.
+  const badIdle = join(dir, 'bad-idle');
+  writeMergedCheckRig(badIdle, { idle: true, plate: true });
+  const mo = JSON.parse(readFileSync(join(badIdle, 'motion.json'), 'utf8')) as { animations: { idle: { duration: number } } };
+  mo.animations.idle.duration = 0;
+  writeFileSync(join(badIdle, 'motion.json'), JSON.stringify(mo));
+  const zero = refusals(() => readCheckInputs(badIdle));
+  say(
+    'CK64_AN_IDLE_WITH_NO_POSITIVE_DURATION_IS_STILL_REFUSED_WHILE_AN_ABSENT_ONE_IS_SKIPPED',
+    codes(zero) === `CHECK_IDLE_PRESENT ${join(badIdle, 'motion.json')} animation "idle" field "duration"` && quiet.idleDuration !== null && readCheckInputs(join(dir, 'merged-no-idle', 'rig')).idleDuration === null,
+    `duration 0: ${codes(zero)}; with an idle: ${String(quiet.idleDuration)} s; with none: ${String(readCheckInputs(join(dir, 'merged-no-idle', 'rig')).idleDuration)}`,
+    'an absent idle is a rig with nothing to loop, which the card asks check to measure around; an idle of no length is a malformed one, refused as before (this refusal had no planted input until now)',
+  );
+
+  // The measure itself on a hand-built frame pair: scale 1, the stage one pixel inside the frame, so the warp is a copy.
+  const vp = { x: -1, y: -1, width: 6, height: 4, scale: 1, pixelWidth: 6, pixelHeight: 4 };
+  const bg: [number, number, number, number] = [232, 232, 232, 255];
+  const open = newRaster(6, 4);
+  const black = newRaster(6, 4);
+  for (let p = 0; p < 24; p++) {
+    open.data.set(bg, p * 4);
+    black.data.set(bg, p * 4);
+  }
+  // Stage (u, v) is frame (u + 1, v + 1): (0,0) (1,0) (1,1) opaque (10,20,30); (2,1) opaque (250,250,250); (2,0) (100,100,100) at alpha 1/2; the rest nothing.
+  const put = (u: number, v: number, o: readonly number[], k: number): void => {
+    const p = ((v + 1) * 6 + u + 1) * 4;
+    open.data.set([o[0], o[1], o[2], 255], p);
+    black.data.set([k, k, k, 255], p);
+  };
+  for (const [u, v] of [[0, 0], [1, 0], [1, 1]]) put(u, v, [10, 20, 30], 0);
+  put(2, 1, [250, 250, 250], 0);
+  put(2, 0, [166, 166, 166], 116);
+  const src = rgba(4, 2, [[10, 20, 30, 255], [60, 20, 30, 255], [100, 100, 100, 255], [255, 255, 255, 255], [200, 200, 200, 255], [10, 20, 30, 255], [250, 250, 250, 255], [250, 250, 250, 255]]);
+  const hand = sourceFigures(open, black, vp, bg, { x: 0, y: 0, width: 4, height: 2 }, src);
+  // By hand: (1,0) |d| (50,0,0), mean 50/3, error, covered; (2,0) drawn 166 + 23 * 116/232 = 177.5 -> 178, |d| 78, error,
+  // alpha 255 * (1 - 116/232) = 127.5 -> 128, not above 128: uncovered; (0,1) nothing -> 255 against 200, |d| 55, error,
+  // uncovered; (3,1) 255 against 250, |d| 5, within; the rest 0. Holes: (2,0) and (0,1), not 8-adjacent.
+  const wantMean = (50 / 3 + 78 + 55 + 5) / 8;
+  const offGrid = refusals(() => sourceFigures(newRaster(5, 4), black, vp, bg, { x: 0, y: 0, width: 4, height: 2 }, src));
+  const noGround = refusals(() => sourceFigures(open, black, vp, [232, 0, 232, 255], { x: 0, y: 0, width: 4, height: 2 }, src));
+  say(
+    'CK65_THE_SOURCE_FIGURES_ARE_ASSEMBLES_ON_A_HAND_BUILT_FRAME_PAIR_ALPHA_128_UNCOVERED',
+    Math.abs(hand.meanAbs - wantMean) < 1e-12 && hand.within === 5 / 8 && hand.errorPx === 3 && hand.uncoveredErrorPx === 2 && hand.holeCount === 2 && hand.holes[0].x === 2 && hand.holes[0].y === 0 && codes(offGrid).startsWith('CHECK_SOURCE_GRID the setup-pose frame') && codes(noGround) === 'CHECK_SOURCE_GRID the render background',
+    `mean ${hand.meanAbs} (hand ${wantMean}), within ${hand.within}, error ${hand.errorPx}, uncovered ${hand.uncoveredErrorPx}, holes ${hand.holeCount} (first at ${hand.holes[0]?.x},${hand.holes[0]?.y}); a 5x4 frame on a 6x4 grid: ${codes(offGrid)}; a background with a zero channel: ${codes(noGround)}`,
+    "assemble's figures come from its own measureRecomposite here, so what is held is what stands in for its inputs: the pose over white is open + (255 - bg) black / bg, and the alpha 255 (1 - black / bg) — at exactly 128 a pixel is uncovered, as assemble's \"alpha above 128\" reads it",
+  );
+
+  const tinted = blackRig({ name: 'r', slots: [{ name: 'a', bone: 'root', attachment: 'a' }, { name: 'b', bone: 'root', attachment: 'b', color: 'ff804080', dark: '102030' }], skins: { default: {} } });
+  say(
+    'CK66_THE_BLACK_STILL_TINTS_EVERY_SLOT_BLACK_AND_KEEPS_ITS_ALPHA_AND_NOTHING_ELSE',
+    JSON.stringify(tinted) === JSON.stringify({ name: 'r', slots: [{ name: 'a', bone: 'root', attachment: 'a', color: '000000ff' }, { name: 'b', bone: 'root', attachment: 'b', color: '00000080', dark: '000000' }], skins: { default: {} } }),
+    JSON.stringify(tinted.slots),
+    'a slot left untinted would draw its colour into the coverage still and read as more transparent than it is; a slot made opaque would read as more covered',
+  );
+
+  const defaultSummary = summaryOf(defaultRun.out);
+  say(
+    'CK67_THE_DEFAULT_RUN_COUNTS_ITS_BARS_AND_WRITES_NO_KEY_IT_DID_NOT_WRITE_BEFORE',
+    defaultRun.status === 0 && defaultSummary === `check: PASS; 3 of ${BARS.length} bar(s) measured, 6 skipped (${JUDGEMENT_LINES.join(', ')})` && !defaultRun.out.includes(`${SOURCE_LINE}:`),
+    `"${defaultSummary}"; ${SOURCE_LINE} printed: ${defaultRun.out.includes(`${SOURCE_LINE}:`)}`,
+    "with parts.json and an idle and no --source, check.json keeps exactly its keys (CK01) and the examples' check.json and gate file their bytes (CH04, CH05); the summary now says how many of the bars measured — on this fixture the gate, the loop and the seam, its two topwear parts giving the judgement lines nothing to read",
+  );
+}
+
 function runCheckSuite(): number {
   section('check: build, gates, seam and loop through the installed spine-rigc');
   const { say, bad } = counter();
@@ -4178,6 +4489,8 @@ function runCheckSuite(): number {
       hull.map((b) => `${b.command} --pack-shape hull -> exit ${b.r.status}, ${(b.r.out.split('\n').find((l) => l.includes('FAIL')) ?? 'no FAIL line').trim()}; --out written: ${existsSync(b.out)}`).join(' | '),
       'as for --page-edges: rig, check and build all pack, so all three take --pack-shape, and a value rigc does not take is refused before any stage runs, naming the flag, the value and the two accepted',
     );
+
+    runSourceCases(dir, say, ok);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

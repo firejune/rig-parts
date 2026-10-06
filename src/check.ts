@@ -20,8 +20,13 @@
  * Input — a rig directory holding what the rig stage writes:
  * `rig.json`, `motion.json` (with an `idle` animation), `parts.json`, and
  * `parts/<name>.png` for every part (the last two may sit in a directory of
- * their own, `partsHome`). The inputs are read only; everything is written
- * under the output directory:
+ * their own, `partsHome`). It is a rig SPEC, which `rigc build` compiles, not
+ * a compiled skeleton. Since issue #77 the `idle` and `parts.json` may be
+ * missing — a rig merged from several spine-parts outputs has neither — and
+ * every line that reads the missing one says SKIP with the reason; the
+ * painting (`--source`) adds {@link SOURCE_LINE}. The inputs are read only;
+ * everything is written under the output directory (the idle's outputs only
+ * when there is an idle):
  *
  * | output | what |
  * | --- | --- |
@@ -67,6 +72,7 @@
  */
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
+import { measureRecomposite, type RecompositeFigures, recompositeRecord, sourceInRig } from './assemble.ts';
 import { cropToSpineY } from './coords.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 import { framesInside, IDLE_FPS } from './motion.ts';
@@ -392,6 +398,24 @@ export interface StageBox {
 /** What `--parts` is, said once for the refusals and the help. */
 export const PARTS_HOME_SENTENCE = '--parts names the directory holding parts.json and parts/, not parts/ itself (after build, that is build\'s --out, whose rig is <out>/rig); without --parts it is --rig';
 
+/**
+ * What `check` does without `--parts` when the rig directory holds no
+ * `parts.json` (issue #77), said once for the help and the SKIP lines.
+ */
+export const NO_PARTS_SENTENCE = 'without --parts, a rig directory holding no parts.json is measured without one: the seam and every line that reads parts.json say SKIP, by name — unless the directory above --rig holds parts.json (build\'s layout), which is refused naming it';
+
+/**
+ * What the painting `--source` names is compared with (issue #77), for the
+ * refusals and the help: assemble's own resample of it onto the rig canvas.
+ */
+export const SOURCE_SENTENCE = '--source names the painting the rig was made from: the stage size itself, or any size assemble takes to the stage (width and height each the painting\'s times one rig_scale, truncated — parts.json\'s scale_rig_per_source when parts.json is read), resampled onto the stage as assemble resamples it (lanczos3, alpha dropped)';
+
+/** The painting `--source` names, read and checked against the stage before anything is built. */
+export interface SourceInput {
+  path: string;
+  painting: Raster;
+}
+
 export interface CheckInputs {
   rigDir: string;
   rigPath: string;
@@ -400,10 +424,41 @@ export interface CheckInputs {
   partsDir: string;
   rig: Record<string, unknown>;
   motion: Record<string, unknown>;
-  parts: PartsFile;
+  /** Null when the rig directory holds no `parts.json` and no `--parts` was named (issue #77); {@link noParts} says why. */
+  parts: PartsFile | null;
+  /** Why `parts` is null, as the SKIP lines say it; null when `parts.json` was read. */
+  noParts: string | null;
   stage: StageBox;
   rootBone: string;
-  idleDuration: number;
+  /** Null when `motion.json` declares no `idle` animation (issue #77); {@link noIdle} says why. */
+  idleDuration: number | null;
+  /** Why `idleDuration` is null, as the SKIP lines say it; null when there is an idle. */
+  noIdle: string | null;
+  /** The painting `--source` named, or null without `--source`. */
+  source: SourceInput | null;
+}
+
+/** The inputs every line that reads both the parts and the idle takes: both present. */
+export type FullInputs = CheckInputs & { parts: PartsFile; idleDuration: number };
+
+/**
+ * Whether a painting `w`x`h` can be the one assemble made a `W`x`H` rig canvas
+ * from: assemble's `checkGeometry` makes the canvas `trunc(w * S)` x
+ * `trunc(h * S)` for `rig_scale` S, so with S known (parts.json's
+ * `scale_rig_per_source`) both must come out; with S unknown some S must
+ * satisfy both, which is `W h < (H + 1) w` and `H w < (W + 1) h` in integers.
+ * The same size is S = 1. Null when it can; otherwise the refusal's detail.
+ */
+export function sourceSizeProblem(w: number, h: number, stage: StageBox, scale: number | null): string | null {
+  const { width: W, height: H } = stage;
+  const whole = (v: number): boolean => Number.isInteger(v) && v > 0;
+  if (!whole(W) || !whole(H)) return `the stage (rig.json's "skeleton") is ${W}x${H}; whole positive pixel counts are required to compare it with a painting pixel for pixel`;
+  if (scale !== null) {
+    if (Math.trunc(w * scale) === W && Math.trunc(h * scale) === H) return null;
+    return `is ${w}x${h}, which parts.json's scale_rig_per_source ${scale} takes to ${Math.trunc(w * scale)}x${Math.trunc(h * scale)}; the stage is ${W}x${H}, so the painting assemble was given is required`;
+  }
+  if (W * h < (H + 1) * w && H * w < (W + 1) * h) return null;
+  return `is ${w}x${h}; no single rig_scale takes it to the ${W}x${H} stage (assemble truncates width and height times the same scale), so the painting is not this rig's — ${SOURCE_SENTENCE}`;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -429,14 +484,22 @@ function readJson(path: string, problems: Problem[]): Record<string, unknown> | 
  * Read and cross-check the rig directory. Every problem is collected before
  * one refusal. `partsHome` is the directory holding `parts.json` and `parts/`
  * when they do not sit beside `rig.json` — `build` keeps the parts at the top
- * of its output and the rig under `rig/`; the default is the rig directory.
+ * of its output and the rig under `rig/`; absent, it is the rig directory, and
+ * there (issue #77) a `parts.json` may be missing: the rig is then measured
+ * without parts ({@link NO_PARTS_SENTENCE}). A named `partsHome` with no
+ * `parts.json` is refused, as is a missing one whose directory's parent holds
+ * `parts.json` — build's layout, where the miss is `--parts` left off. An
+ * `idle` may be missing too; an `idle` that is there must have a positive
+ * duration. `sourcePath` is `--source`, read and held to the stage here, so a
+ * painting that is not this rig's is refused before anything is built.
  */
-export function readCheckInputs(rigDir: string, partsHome: string = rigDir): CheckInputs {
+export function readCheckInputs(rigDir: string, partsHome?: string, sourcePath?: string): CheckInputs {
   const dir = resolve(rigDir);
-  const home = resolve(partsHome);
+  const named = partsHome !== undefined;
+  const home = resolve(partsHome ?? rigDir);
   const problems: Problem[] = [];
   if (!existsSync(dir) || !statSync(dir).isDirectory()) {
-    refuseIfAny([{ code: 'CHECK_INPUT_PRESENT', object: dir, detail: 'is not a directory; --rig names the directory holding rig.json, motion.json, parts.json and parts/' }]);
+    refuseIfAny([{ code: 'CHECK_INPUT_PRESENT', object: dir, detail: 'is not a directory; --rig names the directory holding rig.json and motion.json (and parts.json and parts/, or --parts names where they are)' }]);
   }
   const rigPath = join(dir, 'rig.json');
   const motionPath = join(dir, 'motion.json');
@@ -448,15 +511,19 @@ export function readCheckInputs(rigDir: string, partsHome: string = rigDir): Che
   const rig = readJson(rigPath, problems);
   const motion = readJson(motionPath, problems);
   let parts: PartsFile | null = null;
+  let noParts: string | null = null;
   if (!existsSync(partsPath)) {
-    // The usual miss is passing parts/ itself; the parent is then named.
+    // The usual miss is passing parts/ itself, or leaving --parts off after build; the parent is then named.
     const parent = dirname(home);
-    const hint = existsSync(join(parent, 'parts.json')) ? ` — ${parent} holds parts.json, so --parts ${parent} is the directory meant` : '';
-    problems.push({
-      code: 'CHECK_INPUT_PRESENT',
-      object: partsPath,
-      detail: `no such file; ${PARTS_HOME_SENTENCE} (the seam check composites the parts parts.json lists)${hint}`,
-    });
+    const parentHolds = existsSync(join(parent, 'parts.json'));
+    if (named || parentHolds) {
+      const hint = parentHolds ? ` — ${parent} holds parts.json, so --parts ${parent} is the directory meant` : '';
+      problems.push({
+        code: 'CHECK_INPUT_PRESENT',
+        object: partsPath,
+        detail: `no such file; ${PARTS_HOME_SENTENCE} (the seam check composites the parts parts.json lists)${hint}`,
+      });
+    } else noParts = `no parts.json: ${partsPath} does not exist and no --parts was named, so there are no parts to composite and no See-through tags to choose regions by`;
   }
   else {
     try {
@@ -514,14 +581,34 @@ export function readCheckInputs(rigDir: string, partsHome: string = rigDir): Che
     else problems.push({ code: 'CHECK_RIG_ROOT_BONE', object: `${rigPath} field "bones"`, detail: 'has no first bone with a name; the setup-pose render keys the root bone' });
   }
   let idleDuration: number | null = null;
+  let noIdle: string | null = null;
   if (motion !== null) {
     const anims = motion.animations;
     const idle = isRecord(anims) ? anims.idle : undefined;
-    if (!isRecord(idle)) {
-      problems.push({ code: 'CHECK_IDLE_PRESENT', object: `${motionPath} field "animations"`, detail: `holds ${isRecord(anims) ? `[${Object.keys(anims).join(', ')}]` : JSON.stringify(anims)}; an "idle" animation is required — the loop is measured on it` });
+    if (idle === undefined) {
+      noIdle = `no idle: ${motionPath} field "animations" holds ${isRecord(anims) ? `[${Object.keys(anims).join(', ')}]` : JSON.stringify(anims) ?? 'nothing'} and no "idle", so there is no loop to close and no idle frame to read`;
+    } else if (!isRecord(idle)) {
+      problems.push({ code: 'CHECK_IDLE_PRESENT', object: `${motionPath} animation "idle"`, detail: `is ${JSON.stringify(idle)}; an animation object is required — the loop is measured on it` });
     } else if (!(typeof idle.duration === 'number' && idle.duration > 0)) {
       problems.push({ code: 'CHECK_IDLE_PRESENT', object: `${motionPath} animation "idle" field "duration"`, detail: `is ${JSON.stringify(idle.duration)}; a positive number of seconds is required` });
     } else idleDuration = idle.duration;
+  }
+  let source: SourceInput | null = null;
+  if (sourcePath !== undefined) {
+    const path = resolve(sourcePath);
+    if (!existsSync(path) || !statSync(path).isFile()) {
+      problems.push({ code: 'CHECK_INPUT_PRESENT', object: path, detail: `no such file; ${SOURCE_SENTENCE}` });
+    } else {
+      try {
+        source = { path, painting: readPng(path) };
+      } catch (err) {
+        problems.push({ code: 'CHECK_SOURCE_PNG', object: path, detail: `does not read as a PNG: ${(err as Error).message.split('\n')[0]}; ${SOURCE_SENTENCE}` });
+      }
+    }
+    if (source !== null && stage !== null) {
+      const why = sourceSizeProblem(source.painting.width, source.painting.height, stage, parts === null ? null : parts.scale_rig_per_source);
+      if (why !== null) problems.push({ code: 'CHECK_SOURCE_SIZE', object: `--source ${path}`, detail: why });
+    }
   }
   refuseIfAny(problems);
   return {
@@ -532,10 +619,13 @@ export function readCheckInputs(rigDir: string, partsHome: string = rigDir): Che
     partsDir,
     rig: rig as Record<string, unknown>,
     motion: motion as Record<string, unknown>,
-    parts: parts as PartsFile,
+    parts,
+    noParts,
     stage: stage as StageBox,
     rootBone: rootBone as string,
-    idleDuration: idleDuration as number,
+    idleDuration,
+    noIdle,
+    source,
   };
 }
 
@@ -938,6 +1028,122 @@ function round3(x: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// the setup pose against the painting (issue #77)
+// ---------------------------------------------------------------------------
+
+/** The line `--source` adds: the setup pose against the painting, with assemble's recomposite figures. */
+export const SOURCE_LINE = 'SETUP_POSE_VS_SOURCE';
+
+/** The name the setup pose's coverage goes by where assemble's measure names a part. */
+export const SETUP_POSE_COVER = '(setup pose)';
+
+/** The throwaway rig whose every slot is tinted black, rendered beside the setup-pose still: the coverage the opaque render does not carry. */
+const BLACK_RIG = 'rig_black.json';
+
+/**
+ * The rig with every slot tinted black (`color` `000000` with the slot's own
+ * alpha kept, and `dark` `000000` where the slot has one), so the setup pose
+ * drawn from it is the render's background times what the art lets through.
+ */
+export function blackRig(rig: Record<string, unknown>): Record<string, unknown> {
+  const slots = (Array.isArray(rig.slots) ? rig.slots : []).map((s) => {
+    if (!isRecord(s)) return s;
+    const alpha = typeof s.color === 'string' && s.color.length === 8 ? s.color.slice(6) : 'ff';
+    return { ...s, color: `000000${alpha}`, ...(s.dark === undefined ? {} : { dark: '000000' }) };
+  });
+  return { ...rig, slots };
+}
+
+/**
+ * The setup pose against the painting with `assemble`'s recomposite figures,
+ * by `assemble`'s own function (`measureRecomposite`): mean |d| and the share
+ * within 8 over the mean channel, error pixels over 40 by the max channel, the
+ * uncovered ones where nothing has alpha above 128, and their 8-connected
+ * holes — over the stage's W x H pixels, which is assemble's population.
+ *
+ * What stands in for assemble's two inputs, because the setup pose is what is
+ * measured and the parts are not read:
+ * - **The recomposite.** assemble composites onto opaque white; rigc renders
+ *   onto its opaque `background` (232 grey, spine-rigc's `BACKGROUND`), so the
+ *   frame carries no alpha. A second still of the same pose, every slot tinted
+ *   black ({@link blackRig}), is the background times what the art lets
+ *   through, channel by channel: `black = bg (1 - a)`. The pose over white is
+ *   then `open + (255 - bg) black / bg` — exact for every slot drawn with the
+ *   normal blend, which is every slot spine-parts writes.
+ * - **The coverage.** assemble's "a part has alpha above 128" becomes "the
+ *   setup pose has alpha above 128", the alpha read as `255 (1 - black / bg)`
+ *   on the channel that lets most through. Where two translucent parts overlap
+ *   the stack's alpha exceeds either part's, so a pixel uncovered here is
+ *   uncovered in assemble's reading too, never the reverse.
+ *
+ * Both are carried from the frame's grid onto the stage's with the seam's map
+ * turned round (the stage pixel (u, v) is world (stage.x + u, stage.y +
+ * cropToSpineY(v, H)), the frame pixel ((wx - vp.x) s, (vp.y + vp.height -
+ * wy) s)), through the same bilinear `warpAffine` in float32, the border
+ * reading as no art; then rounded to 8 bits, as assemble's composite is.
+ */
+export function sourceFigures(open: Raster, black: Raster, vp: Viewport, background: readonly [number, number, number, number], stage: StageBox, srcr: Raster): RecompositeFigures {
+  const problems: Problem[] = [];
+  for (const [label, f] of [['the setup-pose frame', open], ['the black-tinted setup-pose frame', black]] as const) {
+    if (f.width !== vp.pixelWidth || f.height !== vp.pixelHeight) problems.push({ code: 'CHECK_SOURCE_GRID', object: label, detail: `is ${f.width}x${f.height}; frames.json's viewport is ${vp.pixelWidth}x${vp.pixelHeight}` });
+  }
+  if (background[3] !== 255 || background.slice(0, 3).some((c) => c === 0)) {
+    problems.push({ code: 'CHECK_SOURCE_GRID', object: 'the render background', detail: `is ${JSON.stringify(background)}; an opaque background with no channel at 0 is required — the coverage is read as how much of it the black-tinted pose lets through` });
+  }
+  if (srcr.width !== stage.width || srcr.height !== stage.height) problems.push({ code: 'CHECK_SOURCE_GRID', object: 'the painting on the rig canvas', detail: `is ${srcr.width}x${srcr.height}; the stage is ${stage.width}x${stage.height}` });
+  refuseIfAny(problems);
+  const [W, H] = [stage.width, stage.height];
+  const n = vp.pixelWidth * vp.pixelHeight;
+  // Ink = 255 - the pose over white, so the warp's border 0 reads as white paper; channel 3 is the coverage alpha.
+  const ink = newFloatImage(vp.pixelWidth, vp.pixelHeight, 4);
+  for (let p = 0; p < n; p++) {
+    let through = 0;
+    for (let c = 0; c < 3; c++) {
+      const t = black.data[p * 4 + c] / background[c];
+      if (t > through) through = t;
+      ink.data[p * 4 + c] = 255 - (open.data[p * 4 + c] + (255 - background[c]) * t);
+    }
+    ink.data[p * 4 + 3] = 255 * (1 - Math.min(1, through));
+  }
+  const s = vp.scale;
+  const f = Math.fround;
+  // The seam's map is crop -> frame: x' = s x + (stage.x - vp.x) s, y' = s y + (vp.y + vp.height - (stage.y + cropToSpineY(0, H))) s. This is its inverse.
+  const map = { sx: f(1 / s), sy: f(1 / s), tx: f(vp.x - stage.x), ty: f(stage.y + cropToSpineY(0, H) - (vp.y + vp.height)) };
+  const warped = warpAffine(ink, map, W, H, 'bilinear');
+  const to8 = (v: number): number => Math.min(255, Math.max(0, Math.round(v)));
+  const can = newRaster(W, H);
+  const cover = newRaster(W, H);
+  for (let p = 0; p < W * H; p++) {
+    for (let c = 0; c < 3; c++) can.data[p * 4 + c] = to8(255 - warped.data[p * 4 + c]);
+    can.data[p * 4 + 3] = 255;
+    cover.data[p * 4 + 3] = to8(warped.data[p * 4 + 3]);
+  }
+  const record: PartRecord = { name: SETUP_POSE_COVER, from: SETUP_POSE_COVER, x: 0, y: 0, w: W, h: H, opaque_px: 0, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 };
+  return measureRecomposite(can, srcr, [{ record, image: cover }]);
+}
+
+/** {@link sourceFigures} as the line `check.json` carries: assemble's `recomposite` block's figures and limits, the largest hole's box, and what was compared. */
+export function sourceLine(fig: RecompositeFigures, painting: Raster, stage: StageBox, vp: Viewport): ReportedLine {
+  const r = recompositeRecord(fig);
+  return {
+    status: 'REPORTED',
+    painting_px: `${painting.width}x${painting.height}`,
+    stage_px: `${stage.width}x${stage.height}`,
+    render_px: `${vp.pixelWidth}x${vp.pixelHeight}`,
+    render_scale: Number(vp.scale.toFixed(4)),
+    mean_abs: r.mean_abs,
+    within_limit: r.within_limit,
+    within_share: r.within_share,
+    error_limit: r.error_limit,
+    error_px: r.error_px,
+    covered_alpha: r.covered_alpha,
+    uncovered_error_px: r.uncovered_error_px,
+    hole_count: r.hole_count,
+    largest: r.holes.length === 0 ? null : { px: r.holes[0].px, box: boxText(r.holes[0]) },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // the stage
 // ---------------------------------------------------------------------------
 
@@ -965,10 +1171,12 @@ export interface CheckFigures {
   rigc_entry: RigcEntryRecord;
   /** How the artifact's page was packed: the `--page-edges` and `--pack-shape` rigc was handed, which its pack line was read to agree with ({@link packEdgeProblems}). Provenance, not a bar. */
   pack_mode: { page_edges: PageEdges; pack_shape: PackShape };
-  loop_max_diff: number;
-  seam_mean: number;
-  seam_px_over_40: number;
-  seam_px_over_80: number;
+  /** Null when the rig has no idle (issue #77); `skipped.loop` then says why. */
+  loop_max_diff: number | null;
+  /** The three seam figures: null when there is no parts.json (issue #77); `skipped.seam` then says why. */
+  seam_mean: number | null;
+  seam_px_over_40: number | null;
+  seam_px_over_80: number | null;
   BREATH_VISIBLE: JudgementLine;
   BLINK_NO_HOLE: JudgementLine;
   CHAIN_LAG: JudgementLine;
@@ -976,8 +1184,21 @@ export interface CheckFigures {
   STILL_REGIONS_DARK: JudgementLine;
   TEXTURE_STRETCH: JudgementLine;
   RECOMPOSITE_HOLES: ReportedLine;
+  /** Written only under `--source` (issue #77): the setup pose against the painting, REPORTED. */
+  SETUP_POSE_VS_SOURCE?: ReportedLine;
+  /**
+   * Written only when the loop or the seam measured nothing (issue #77): the
+   * reason for each, by the name its console line goes by. The judgement and
+   * reported lines carry their own SKIP; these two bars have figures, not a
+   * status, so their reasons sit here, and a run that measured both writes
+   * the keys it always wrote.
+   */
+  skipped?: { loop?: string; seam?: string };
   PASS: boolean;
 }
+
+/** The bars `PASS` reads, in the order the summary counts them: the gate, the reference's two, then the judgement lines. */
+export const BARS = ['gate', 'loop', 'seam', ...JUDGEMENT_LINES] as const;
 
 export interface CheckReport {
   figures: CheckFigures;
@@ -985,8 +1206,12 @@ export interface CheckReport {
   pack: PackLine[];
   /** Opaque share (alpha > 0) of each packed page, by page file name. */
   packOpaque: Array<{ page: string; share: number }>;
-  idle: { frames: number; fps: number; duration: number; lastIndex: number; loopAt: { x: number; y: number } };
-  seamViewport: Viewport;
+  /** Null when the rig has no idle. */
+  idle: { frames: number; fps: number; duration: number; lastIndex: number; loopAt: { x: number; y: number } } | null;
+  /** The setup-pose still's grid; null when nothing read the still (no parts.json and no `--source`). */
+  seamViewport: Viewport | null;
+  /** Every bar in {@link BARS} that measured, and every one that did not with its reason. */
+  bars: { measured: string[]; skipped: Array<{ bar: string; reason: string }> };
   /** Every bar that was not met, one problem each; empty on PASS. */
   problems: Problem[];
   written: string[];
@@ -1009,15 +1234,22 @@ export function rigcFailed(what: string, call: RigcCall, lines: readonly string[
  * Run the whole check. Refuses (throws a PartsError) when the inputs are
  * unreadable or a rigc step that everything after it depends on is red — the
  * gate file is written first, so the refusal's evidence is on disk. Otherwise
- * it measures everything, writes every output including `check.json`, and
- * returns the report; `report.problems` names each bar that was not met, and
- * `figures.PASS` is true exactly when it is empty. `mode` reaches rigc's
- * `--page-edges` and `--pack-shape` verbatim, a pack line that disagrees with
- * either is refused (`CHECK_PACK_PAGE_EDGES`, `CHECK_PACK_SHAPE`), and
- * `check.json` records it as `pack_mode`.
+ * it measures everything it can read, writes every output including
+ * `check.json`, and returns the report; `report.problems` names each bar that
+ * was not met, and `figures.PASS` is true exactly when it is empty. `mode`
+ * reaches rigc's `--page-edges` and `--pack-shape` verbatim, a pack line that
+ * disagrees with either is refused (`CHECK_PACK_PAGE_EDGES`,
+ * `CHECK_PACK_SHAPE`), and `check.json` records it as `pack_mode`.
+ *
+ * What it can read (issue #77): the gate always runs, on whatever the spec
+ * declares. Without `parts.json` ({@link readCheckInputs}) the seam, the four
+ * judgement lines that choose regions by tag and `RECOMPOSITE_HOLES` say SKIP
+ * with the reason; without an `idle` the loop and every line that reads idle
+ * frames say SKIP, and no idle is rendered (no `idle_frames/`, `contact.png`
+ * or `motion_heat.png`). `source` (`--source`) adds {@link SOURCE_LINE}.
  */
-export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome: string = rigDir, mode: PackMode = DEFAULT_PACK_MODE): CheckReport {
-  const inp = readCheckInputs(rigDir, partsHome);
+export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome?: string, mode: PackMode = DEFAULT_PACK_MODE, source?: string): CheckReport {
+  const inp = readCheckInputs(rigDir, partsHome, source);
   const rigcEntry = readRigcEntry(requireRigcVersion(rigc));
   const out = resolve(outDir);
   mkdirSync(out, { recursive: true });
@@ -1046,32 +1278,40 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   // core entry — an install without spine-core — `validate` is refused outright
   const htmlGreen = gateGreen(build.status, gateHtml);
 
-  // 3. the idle, the loop, the heat
-  const render = rigc(['render', '--candidate', buildDir, '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--geometry', '--out', idleDir]);
-  if (render.status !== 0) refuseIfAny(rigcFailed('render --animation idle --geometry', render, render.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
-  const idle = readFrameSet(idleDir);
-  const last = idle.frames[idle.frames.length - 1];
-  if (idle.stride !== 1 || idle.written !== idle.sampled || idle.duration !== inp.idleDuration || last.index !== idle.sampled - 1) {
-    refuseIfAny([
-      {
-        code: 'CHECK_LOOP_LAST_FRAME_AT_DURATION',
-        object: `idle frame ${last.name}`,
-        detail: `rigc sampled ${idle.sampled} frame(s), wrote ${idle.written} at stride ${idle.stride}, the last at t = ${idle.duration}s; the loop compares frame 0 with the frame at the idle's duration, ${inp.idleDuration}s, so a duration that is a whole number of 1/${IDLE_FPS} s ticks and every frame written are required`,
-      },
-    ]);
-  }
-  const contact = join(idle.dir, 'contact.png');
-  if (existsSync(contact)) {
-    copyFileSync(contact, join(out, 'contact.png'));
-    written.push('contact.png');
-  }
-  const loop = maxRgbDiff(idle.frames[0].image, last.image);
-  const idleImages = idle.frames.map((f) => f.image);
-  writePng(join(out, 'motion_heat.png'), motionHeat(idleImages));
-  written.push('motion_heat.png');
-  const idleHeat = heatField(idleImages);
-  const H = inp.parts.rig_size[1];
+  // What each line reads, and why it cannot when it cannot (issue #77).
+  const full: FullInputs | null = inp.parts !== null && inp.idleDuration !== null ? { ...inp, parts: inp.parts, idleDuration: inp.idleDuration } : null;
+  const lacking = [inp.noParts, inp.noIdle].filter((r): r is string => r !== null).join('; ');
   const problems: Problem[] = [];
+
+  // 3. the idle, the loop, the heat — only when there is an idle
+  let idle: FrameSet | null = null;
+  let loop: { max: number; x: number; y: number } | null = null;
+  let idleHeat: Uint8Array | null = null;
+  if (inp.idleDuration !== null) {
+    const render = rigc(['render', '--candidate', buildDir, '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--geometry', '--out', idleDir]);
+    if (render.status !== 0) refuseIfAny(rigcFailed('render --animation idle --geometry', render, render.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+    idle = readFrameSet(idleDir);
+    const last = idle.frames[idle.frames.length - 1];
+    if (idle.stride !== 1 || idle.written !== idle.sampled || idle.duration !== inp.idleDuration || last.index !== idle.sampled - 1) {
+      refuseIfAny([
+        {
+          code: 'CHECK_LOOP_LAST_FRAME_AT_DURATION',
+          object: `idle frame ${last.name}`,
+          detail: `rigc sampled ${idle.sampled} frame(s), wrote ${idle.written} at stride ${idle.stride}, the last at t = ${idle.duration}s; the loop compares frame 0 with the frame at the idle's duration, ${inp.idleDuration}s, so a duration that is a whole number of 1/${IDLE_FPS} s ticks and every frame written are required`,
+        },
+      ]);
+    }
+    const contact = join(idle.dir, 'contact.png');
+    if (existsSync(contact)) {
+      copyFileSync(contact, join(out, 'contact.png'));
+      written.push('contact.png');
+    }
+    loop = maxRgbDiff(idle.frames[0].image, last.image);
+    const idleImages = idle.frames.map((f) => f.image);
+    writePng(join(out, 'motion_heat.png'), motionHeat(idleImages));
+    written.push('motion_heat.png');
+    idleHeat = heatField(idleImages);
+  }
 
   // 3b. the parts a judgement reads alone: each rendered by its own slots, on the whole rig's grid
   const isolated = (label: string, ps: readonly PartRecord[]): FrameSet => {
@@ -1080,111 +1320,158 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     if (r.status !== 0) refuseIfAny(rigcFailed(`render --animation idle --slot ${ps.map((p) => p.name).join(',')}`, r, r.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
     return readFrameSet(dir);
   };
-  let breath: JudgementLine;
-  let tip: JudgementLine;
-  try {
-    breath = breathLine(inp, isolated, problems);
-    tip = tipLine(inp, isolated, problems);
-  } finally {
-    rmSync(isoDir, { recursive: true, force: true });
+  let breath: JudgementLine = skip(lacking);
+  let tip: JudgementLine = skip(lacking);
+  if (full !== null) {
+    try {
+      breath = breathLine(full, isolated, problems);
+      tip = tipLine(full, isolated, problems);
+    } finally {
+      rmSync(isoDir, { recursive: true, force: true });
+    }
   }
-  const chain = chainLine(inp, problems);
-  // One reader for the one geometry file: the stretch reads its meshes, the face half its head bone.
-  const geometryPath = join(idle.dir, GEOMETRY_FILE);
-  const geometry = readGeometry(geometryPath, idle.written);
-  const stretch = stretchLine(geometry, geometryPath, problems);
-  const head = headBoneOf(inp);
-  const headTrack: BoneTrack | string = 'bone' in head ? boneTrackOf(geometry, geometryPath, idle, head.bone) : `no head bone to measure it in: ${head.none}`;
-  const rigid = typeof headTrack === 'string' ? headTrack : rigidIdle(inp, headTrack);
+  let chain: JudgementLine = skip(inp.noIdle ?? '');
+  let stretch: JudgementLine = skip(inp.noIdle ?? '');
+  let headTrack: BoneTrack | string = lacking;
+  let rigid: Record<string, unknown> | string = lacking;
+  if (idle !== null) {
+    chain = chainLine(inp, problems);
+    // One reader for the one geometry file: the stretch reads its meshes, the face half its head bone.
+    const geometryPath = join(idle.dir, GEOMETRY_FILE);
+    const geometry = readGeometry(geometryPath, idle.written);
+    stretch = stretchLine(geometry, geometryPath, problems);
+    if (full !== null) {
+      const head = headBoneOf(full);
+      headTrack = 'bone' in head ? boneTrackOf(geometry, geometryPath, idle, head.bone) : `no head bone to measure it in: ${head.none}`;
+      rigid = typeof headTrack === 'string' ? headTrack : rigidIdle(full, headTrack);
+    }
+  }
 
-  // 4. the seam: the setup pose as a one-key throwaway animation — and, beside it, the same pose with the eyes shut
-  let seam: SeamFigures;
-  let seamViewport: Viewport;
-  let blink: JudgementLine;
-  let still: JudgementLine;
-  try {
-    mkdirSync(stillDir, { recursive: true });
-    const images = typeof inp.rig.images === 'string' ? resolve(inp.rigDir, inp.rig.images) : inp.rig.images;
-    writeFileSync(join(stillDir, 'rig.json'), JSON.stringify({ ...inp.rig, images }));
-    const eyes = partsTagged(inp.parts, EYE_TAGS);
-    const slotBone = new Map((Array.isArray(inp.rig.slots) ? inp.rig.slots : []).filter(isRecord).map((sl) => [String(sl.name), String(sl.bone)]));
-    const shut = blinkTracks(inp.motion, eyeBones(inp.rig, eyes.map((p) => slotBone.get(p.name) ?? '')));
-    const animations: Record<string, unknown> = {
-      still: { duration: STILL_DURATION, loop: false, tracks: [{ bone: inp.rootBone, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: STILL_DURATION, v: [0] }] }] },
-    };
-    if (eyes.length > 0 && shut.length > 0) {
-      animations[BLINK_ANIMATION] = {
-        duration: STILL_DURATION,
-        loop: false,
-        tracks: shut.map((b) => ({ ...b.target, property: 'scaley', keys: [{ t: 0, v: [b.closed] }, { t: STILL_DURATION, v: [b.closed] }] })),
+  // 4. the setup pose as a one-key throwaway animation — the seam reads it against the parts, the source line against
+  // the painting — and, beside it, the same pose with the eyes shut
+  let seam: SeamFigures | null = null;
+  let seamViewport: Viewport | null = null;
+  let blink: JudgementLine = skip(lacking);
+  let still: JudgementLine = skip(lacking);
+  let sourceRead: ReportedLine | null = null;
+  if (inp.parts !== null || inp.source !== null) {
+    try {
+      mkdirSync(stillDir, { recursive: true });
+      const images = typeof inp.rig.images === 'string' ? resolve(inp.rigDir, inp.rig.images) : inp.rig.images;
+      writeFileSync(join(stillDir, 'rig.json'), JSON.stringify({ ...inp.rig, images }));
+      const eyes = full === null ? [] : partsTagged(full.parts, EYE_TAGS);
+      const slotBone = new Map((Array.isArray(inp.rig.slots) ? inp.rig.slots : []).filter(isRecord).map((sl) => [String(sl.name), String(sl.bone)]));
+      const shut = full === null ? [] : blinkTracks(inp.motion, eyeBones(inp.rig, eyes.map((p) => slotBone.get(p.name) ?? '')));
+      const animations: Record<string, unknown> = {
+        still: { duration: STILL_DURATION, loop: false, tracks: [{ bone: inp.rootBone, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: STILL_DURATION, v: [0] }] }] },
       };
+      if (eyes.length > 0 && shut.length > 0) {
+        animations[BLINK_ANIMATION] = {
+          duration: STILL_DURATION,
+          loop: false,
+          tracks: shut.map((b) => ({ ...b.target, property: 'scaley', keys: [{ t: 0, v: [b.closed] }, { t: STILL_DURATION, v: [b.closed] }] })),
+        };
+      }
+      writeFileSync(join(stillDir, 'motion.json'), JSON.stringify({ ...inp.motion, animations }));
+      const sb = rigc(['build', '--rig', join(stillDir, 'rig.json'), '--motion', join(stillDir, 'motion.json'), '--out', join(stillDir, 'build'), '--profile', 'spine']);
+      if (sb.status !== 0) refuseIfAny(rigcFailed('build (the setup-pose still)', sb, buildGateLines(sb.out)));
+      // The stage is the parts' canvas wherever parts.json is read (CHECK_RIG_STAGE_IS_THE_CANVAS), so this is its longest side.
+      const maxSide = Math.ceil(Math.max(inp.stage.width, inp.stage.height));
+      const sr = rigc(['render', '--candidate', join(stillDir, 'build'), '--animation', 'still', '--fps', String(STILL_FPS), '--max', String(maxSide), '--out', join(stillDir, 'render')]);
+      if (sr.status !== 0) refuseIfAny(rigcFailed('render (the setup-pose still)', sr, sr.out.split('\n').filter((l) => l.includes('FAIL'))));
+      const stillSet = readFrameSet(join(stillDir, 'render'));
+      seamViewport = stillSet.viewport;
+      if (inp.parts !== null) {
+        const composite = flatComposite(inp.parts, inp.partsDir, stillSet.background);
+        seam = seamFigures(composite, stillSet.frames[0].image, inp.stage, stillSet.viewport, stillSet.background);
+      }
+      if (inp.source !== null) {
+        // The same pose with every slot tinted black, built with the same animations so rigc fits the same grid.
+        writeFileSync(join(stillDir, BLACK_RIG), JSON.stringify(blackRig({ ...inp.rig, images })));
+        const kb = rigc(['build', '--rig', join(stillDir, BLACK_RIG), '--motion', join(stillDir, 'motion.json'), '--out', join(stillDir, 'black_build'), '--profile', 'spine']);
+        if (kb.status !== 0) refuseIfAny(rigcFailed('build (the setup-pose still, every slot tinted black)', kb, buildGateLines(kb.out)));
+        const kr = rigc(['render', '--candidate', join(stillDir, 'black_build'), '--animation', 'still', '--fps', String(STILL_FPS), '--max', String(maxSide), '--out', join(stillDir, 'black')]);
+        if (kr.status !== 0) refuseIfAny(rigcFailed('render (the setup-pose still, every slot tinted black)', kr, kr.out.split('\n').filter((l) => l.includes('FAIL'))));
+        const blackSet = readFrameSet(join(stillDir, 'black'));
+        if (!sameViewport(stillSet.viewport, blackSet.viewport) || stillSet.background.join(',') !== blackSet.background.join(',')) {
+          refuseIfAny([
+            {
+              code: 'CHECK_SOURCE_GRID',
+              object: 'the black-tinted setup-pose still',
+              detail: `is on ${JSON.stringify(blackSet.viewport)} over ${JSON.stringify(blackSet.background)}; the setup-pose still is on ${JSON.stringify(stillSet.viewport)} over ${JSON.stringify(stillSet.background)}, and the coverage is read pixel for pixel between the two`,
+            },
+          ]);
+        }
+        const srcr = sourceInRig(inp.source.painting, inp.stage.width, inp.stage.height);
+        const fig = sourceFigures(stillSet.frames[0].image, blackSet.frames[0].image, stillSet.viewport, stillSet.background, inp.stage, srcr);
+        sourceRead = sourceLine(fig, inp.source.painting, inp.stage, stillSet.viewport);
+      }
+      if (full !== null) {
+        const H = full.parts.rig_size[1];
+        if (eyes.length === 0) blink = skip(`no part comes from a See-through ${tagWords(EYE_TAGS)} layer, so there is no eye to look behind`);
+        else if (shut.length === 0) blink = skip(`no idle "scaley" track on the bones of ${quoteParts(eyes)} goes below its first key, so the idle has no blink`);
+        else {
+          const br = rigc(['render', '--candidate', join(stillDir, 'build'), '--animation', BLINK_ANIMATION, '--fps', String(STILL_FPS), '--max', String(maxSide), '--out', join(stillDir, 'blink')]);
+          if (br.status !== 0) refuseIfAny(rigcFailed(`render (the setup pose with the eyes shut, "${BLINK_ANIMATION}")`, br, br.out.split('\n').filter((l) => l.includes('FAIL'))));
+          blink = blinkLine(full, eyes, shut, stillSet, readFrameSet(join(stillDir, 'blink')), idle as FrameSet, H, problems);
+        }
+        let headFrame: HeadFrame | string;
+        if (typeof headTrack === 'string') headFrame = headTrack;
+        else if (typeof rigid === 'string') headFrame = rigid;
+        else {
+          // A build of its own, not a third animation in the still's: rigc fits a
+          // render's viewport to every animation the skeleton holds, and the rig
+          // swung rigidly about the head widens it — shared, it moved the seam's
+          // grid and the demo's seam mean with it (0.326 -> 0.317).
+          writeFileSync(join(stillDir, 'motion_rigid.json'), JSON.stringify({ ...inp.motion, animations: { [HEAD_RIGID_ANIMATION]: rigid } }));
+          const rb = rigc(['build', '--rig', join(stillDir, 'rig.json'), '--motion', join(stillDir, 'motion_rigid.json'), '--out', join(stillDir, 'rigid_build'), '--profile', 'spine']);
+          if (rb.status !== 0) refuseIfAny(rigcFailed(`build (the whole rig moved rigidly as the idle moves "${headTrack.bone}")`, rb, buildGateLines(rb.out)));
+          const hr = rigc(['render', '--candidate', join(stillDir, 'rigid_build'), '--animation', HEAD_RIGID_ANIMATION, '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--geometry', '--out', join(stillDir, 'head_rigid')]);
+          if (hr.status !== 0) refuseIfAny(rigcFailed(`render (the whole rig moved rigidly as the idle moves "${headTrack.bone}", "${HEAD_RIGID_ANIMATION}")`, hr, hr.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+          const calibration = readFrameSet(join(stillDir, 'head_rigid'));
+          const ct = readBoneTrack(calibration, headTrack.bone);
+          headFrame = typeof ct === 'string' ? `no head frame on the calibration render: ${ct}` : { track: headTrack, calibration, calibrationTrack: ct };
+        }
+        still = stillLine(full, idleHeat as Uint8Array, idle as FrameSet, headFrame, H, problems);
+      }
+    } finally {
+      rmSync(stillDir, { recursive: true, force: true });
     }
-    writeFileSync(join(stillDir, 'motion.json'), JSON.stringify({ ...inp.motion, animations }));
-    const sb = rigc(['build', '--rig', join(stillDir, 'rig.json'), '--motion', join(stillDir, 'motion.json'), '--out', join(stillDir, 'build'), '--profile', 'spine']);
-    if (sb.status !== 0) refuseIfAny(rigcFailed('build (the setup-pose still)', sb, buildGateLines(sb.out)));
-    const maxSide = Math.max(inp.parts.rig_size[0], inp.parts.rig_size[1]);
-    const sr = rigc(['render', '--candidate', join(stillDir, 'build'), '--animation', 'still', '--fps', String(STILL_FPS), '--max', String(maxSide), '--out', join(stillDir, 'render')]);
-    if (sr.status !== 0) refuseIfAny(rigcFailed('render (the setup-pose still)', sr, sr.out.split('\n').filter((l) => l.includes('FAIL'))));
-    const stillSet = readFrameSet(join(stillDir, 'render'));
-    seamViewport = stillSet.viewport;
-    const composite = flatComposite(inp.parts, inp.partsDir, stillSet.background);
-    seam = seamFigures(composite, stillSet.frames[0].image, inp.stage, stillSet.viewport, stillSet.background);
-    if (eyes.length === 0) blink = skip(`no part comes from a See-through ${tagWords(EYE_TAGS)} layer, so there is no eye to look behind`);
-    else if (shut.length === 0) blink = skip(`no idle "scaley" track on the bones of ${quoteParts(eyes)} goes below its first key, so the idle has no blink`);
-    else {
-      const br = rigc(['render', '--candidate', join(stillDir, 'build'), '--animation', BLINK_ANIMATION, '--fps', String(STILL_FPS), '--max', String(maxSide), '--out', join(stillDir, 'blink')]);
-      if (br.status !== 0) refuseIfAny(rigcFailed(`render (the setup pose with the eyes shut, "${BLINK_ANIMATION}")`, br, br.out.split('\n').filter((l) => l.includes('FAIL'))));
-      blink = blinkLine(inp, eyes, shut, stillSet, readFrameSet(join(stillDir, 'blink')), idle, H, problems);
-    }
-    let headFrame: HeadFrame | string;
-    if (typeof headTrack === 'string') headFrame = headTrack;
-    else if (typeof rigid === 'string') headFrame = rigid;
-    else {
-      // A build of its own, not a third animation in the still's: rigc fits a
-      // render's viewport to every animation the skeleton holds, and the rig
-      // swung rigidly about the head widens it — shared, it moved the seam's
-      // grid and the demo's seam mean with it (0.326 -> 0.317).
-      writeFileSync(join(stillDir, 'motion_rigid.json'), JSON.stringify({ ...inp.motion, animations: { [HEAD_RIGID_ANIMATION]: rigid } }));
-      const rb = rigc(['build', '--rig', join(stillDir, 'rig.json'), '--motion', join(stillDir, 'motion_rigid.json'), '--out', join(stillDir, 'rigid_build'), '--profile', 'spine']);
-      if (rb.status !== 0) refuseIfAny(rigcFailed(`build (the whole rig moved rigidly as the idle moves "${headTrack.bone}")`, rb, buildGateLines(rb.out)));
-      const hr = rigc(['render', '--candidate', join(stillDir, 'rigid_build'), '--animation', HEAD_RIGID_ANIMATION, '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--geometry', '--out', join(stillDir, 'head_rigid')]);
-      if (hr.status !== 0) refuseIfAny(rigcFailed(`render (the whole rig moved rigidly as the idle moves "${headTrack.bone}", "${HEAD_RIGID_ANIMATION}")`, hr, hr.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
-      const calibration = readFrameSet(join(stillDir, 'head_rigid'));
-      const ct = readBoneTrack(calibration, headTrack.bone);
-      headFrame = typeof ct === 'string' ? `no head frame on the calibration render: ${ct}` : { track: headTrack, calibration, calibrationTrack: ct };
-    }
-    still = stillLine(inp, idleHeat, idle, headFrame, H, problems);
-  } finally {
-    rmSync(stillDir, { recursive: true, force: true });
   }
 
+  const skipped: { loop?: string; seam?: string } = {};
+  if (inp.noIdle !== null) skipped.loop = inp.noIdle;
+  if (inp.noParts !== null) skipped.seam = inp.noParts;
   const figures: CheckFigures = {
     gate_spine_html_green: htmlGreen,
     rigc_entry: rigcEntry,
     pack_mode: { page_edges: mode.pageEdges, pack_shape: mode.packShape },
-    loop_max_diff: loop.max,
-    seam_mean: round3(seam.mean),
-    seam_px_over_40: seam.over40,
-    seam_px_over_80: seam.over80,
+    loop_max_diff: loop === null ? null : loop.max,
+    seam_mean: seam === null ? null : round3(seam.mean),
+    seam_px_over_40: seam === null ? null : seam.over40,
+    seam_px_over_80: seam === null ? null : seam.over80,
     BREATH_VISIBLE: breath,
     BLINK_NO_HOLE: blink,
     CHAIN_LAG: chain,
     TIP_OVER_ROOT: tip,
     STILL_REGIONS_DARK: still,
     TEXTURE_STRETCH: stretch,
-    RECOMPOSITE_HOLES: holesLine(inp.parts),
+    RECOMPOSITE_HOLES: inp.parts === null ? { status: 'SKIP', reason: inp.noParts ?? '' } : holesLine(inp.parts),
+    ...(sourceRead === null ? {} : { [SOURCE_LINE]: sourceRead }),
+    ...(Object.keys(skipped).length === 0 ? {} : { skipped }),
     PASS: false,
   };
   const barProblems: Problem[] = [];
   if (!htmlGreen) barProblems.push(...rigcFailed(packedBuildLabel(mode), build, gateHtml));
-  if (figures.loop_max_diff !== LOOP_MAX_BAR) {
+  if (loop !== null && idle !== null && loop.max !== LOOP_MAX_BAR) {
+    const last = idle.frames[idle.frames.length - 1];
     barProblems.push({
       code: 'CHECK_LOOP_CLOSES',
       object: `idle frame f0000.png vs ${last.name} (t = ${idle.duration}s)`,
-      detail: `max |d| ${figures.loop_max_diff}/255, first at pixel ${loop.x},${loop.y} of ${idle.viewport.pixelWidth}x${idle.viewport.pixelHeight}; ${LOOP_MAX_BAR} is required — the idle's last key must equal its first`,
+      detail: `max |d| ${loop.max}/255, first at pixel ${loop.x},${loop.y} of ${idle.viewport.pixelWidth}x${idle.viewport.pixelHeight}; ${LOOP_MAX_BAR} is required — the idle's last key must equal its first`,
     });
   }
-  if (figures.seam_mean > SEAM_MEAN_BAR || figures.seam_px_over_40 > SEAM_PX_BAR) {
+  if (figures.seam_mean !== null && figures.seam_px_over_40 !== null && (figures.seam_mean > SEAM_MEAN_BAR || figures.seam_px_over_40 > SEAM_PX_BAR)) {
     barProblems.push({
       code: 'CHECK_SEAM_WITHIN_BAR',
       object: 'the setup-pose render vs the flat composite of parts/',
@@ -1196,13 +1483,25 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   problems.unshift(...barProblems);
   figures.PASS = problems.length === 0;
   write('check.json', `${JSON.stringify(figures, null, 1)}\n`);
+  const bars: CheckReport['bars'] = { measured: ['gate'], skipped: [] };
+  const tally = (bar: string, reason: string | null): void => {
+    if (reason === null) bars.measured.push(bar);
+    else bars.skipped.push({ bar, reason });
+  };
+  tally('loop', skipped.loop ?? null);
+  tally('seam', skipped.seam ?? null);
+  for (const n of JUDGEMENT_LINES) {
+    const l = figures[n];
+    tally(n, l.status === 'SKIP' ? l.reason : null);
+  }
   return {
     figures,
     gateHtml,
     pack,
     packOpaque,
-    idle: { frames: idle.frames.length, fps: idle.fps, duration: idle.duration, lastIndex: last.index, loopAt: { x: loop.x, y: loop.y } },
+    idle: idle === null || loop === null ? null : { frames: idle.frames.length, fps: idle.fps, duration: idle.duration, lastIndex: idle.frames[idle.frames.length - 1].index, loopAt: { x: loop.x, y: loop.y } },
     seamViewport,
+    bars,
     problems,
     written,
   };
@@ -1257,7 +1556,7 @@ function quoteParts(ps: readonly PartRecord[]): string {
 type Isolate = (label: string, ps: readonly PartRecord[]) => FrameSet;
 
 /** (1) The torso moves while the feet do not: each rendered alone, heat over its own box. */
-function breathLine(inp: CheckInputs, isolated: Isolate, problems: Problem[]): JudgementLine {
+function breathLine(inp: FullInputs, isolated: Isolate, problems: Problem[]): JudgementLine {
   const torso = partsTagged(inp.parts, TORSO_TAGS);
   const feet = partsTagged(inp.parts, FEET_TAGS);
   if (torso.length === 0) return skip(`no part comes from a See-through ${tagWords(TORSO_TAGS)} layer, so there is no torso to see breathe`);
@@ -1298,7 +1597,7 @@ function breathLine(inp: CheckInputs, isolated: Isolate, problems: Problem[]): J
 }
 
 /** (4) Each swinging part's tip travels further than its root: the part rendered alone, its box's lower half against its upper half. */
-function tipLine(inp: CheckInputs, isolated: Isolate, problems: Problem[]): JudgementLine {
+function tipLine(inp: FullInputs, isolated: Isolate, problems: Problem[]): JudgementLine {
   const swing = partsTagged(inp.parts, SWING_TAGS);
   if (swing.length === 0) return skip(`no part comes from a See-through ${tagWords(SWING_TAGS)} layer, so there is no hem or sleeve to swing`);
   const H = inp.parts.rig_size[1];
@@ -1341,7 +1640,7 @@ function tipLine(inp: CheckInputs, isolated: Isolate, problems: Problem[]): Judg
  */
 export type HeadBone = { bone: string } | { none: string };
 
-export function headBoneOf(inp: Pick<CheckInputs, 'rig' | 'parts'>): HeadBone {
+export function headBoneOf(inp: Pick<FullInputs, 'rig' | 'parts'>): HeadBone {
   const face = partsTagged(inp.parts, FACE_TAGS);
   if (face.length === 0) return { none: `no part comes from a See-through ${tagWords(FACE_TAGS)} layer` };
   const slotBone = new Map((Array.isArray(inp.rig.slots) ? inp.rig.slots : []).filter(isRecord).map((sl) => [String(sl.name), typeof sl.bone === 'string' ? sl.bone : null]));
@@ -1368,7 +1667,7 @@ export interface HeadFrame {
  * pixel of it. Needs a root at the origin with no rotation, scale or shear,
  * which the rig stage writes; a reason string otherwise.
  */
-export function rigidIdle(inp: Pick<CheckInputs, 'rig' | 'motion' | 'rootBone' | 'idleDuration'>, track: BoneTrack): Record<string, unknown> | string {
+export function rigidIdle(inp: Pick<FullInputs, 'rig' | 'motion' | 'rootBone' | 'idleDuration'>, track: BoneTrack): Record<string, unknown> | string {
   const root = (Array.isArray(inp.rig.bones) ? inp.rig.bones : []).filter(isRecord).find((b) => b.name === inp.rootBone);
   const rest: Record<string, number> = { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, shearX: 0, shearY: 0 };
   const off = root === undefined ? ['(absent)'] : Object.keys(rest).filter((k) => k in root && root[k] !== rest[k]);
@@ -1444,7 +1743,7 @@ export function readBoneTrack(set: FrameSet, bone: string): BoneTrack | string {
  * figure, over the old region, is reported beside it, so the reader sees what
  * the roll contributed.
  */
-function stillLine(inp: CheckInputs, heat: Uint8Array, idle: FrameSet, headFrame: HeadFrame | string, H: number, problems: Problem[]): JudgementLine {
+function stillLine(inp: FullInputs, heat: Uint8Array, idle: FrameSet, headFrame: HeadFrame | string, H: number, problems: Problem[]): JudgementLine {
   const face = partsTagged(inp.parts, FACE_TAGS);
   const feet = partsTagged(inp.parts, FEET_TAGS);
   if (face.length === 0 && feet.length === 0) return skip(`no part comes from a See-through ${tagWords([...FACE_TAGS, ...FEET_TAGS])} layer, so the heat map has no still region to read`);

@@ -44,7 +44,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:
 import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
-import { causeLines, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
+import { BARS, causeLines, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig, loadEarlyConfig } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
 import { encodeGif } from './gif.ts';
@@ -288,9 +288,15 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
 export interface CheckStageInput {
   /** The directory holding rig.json and motion.json. */
   rig: string;
-  /** The directory holding parts.json and parts/; the rig directory when they sit there. */
-  parts: string;
+  /**
+   * The directory holding parts.json and parts/ (`--parts`). Absent, it is the
+   * rig directory, where a missing parts.json is measured without (issue #77);
+   * named, a missing one is refused.
+   */
+  parts?: string;
   out: string;
+  /** The painting `--source` names (issue #77): adds the setup pose against it. */
+  source?: string;
   /** The packed build's `--page-edges`; {@link DEFAULT_PAGE_EDGES} when absent. */
   pageEdges?: PageEdges;
   /** The packed build's `--pack-shape`; {@link DEFAULT_PACK_SHAPE} when absent. */
@@ -310,6 +316,16 @@ function showFigure(v: unknown): string {
   if (Array.isArray(v)) return v.length === 0 ? 'none' : v.map(showFigure).join(' | ');
   if (typeof v === 'object' && v !== null) return Object.entries(v).map(([k, x]) => `${k} ${showFigure(x)}`).join(', ');
   return String(v);
+}
+
+/**
+ * How many of the {@link BARS} measured and how many said SKIP, by name — the
+ * summary's second half (issue #77): `PASS` reads only the bars that measured,
+ * so a run that measured one bar says so on the line that says PASS.
+ */
+export function barsSummary(r: CheckReport): string {
+  const { measured, skipped } = r.bars;
+  return `${measured.length} of ${BARS.length} bar(s) measured, ${skipped.length} skipped${skipped.length === 0 ? '' : ` (${skipped.map((s) => s.bar).join(', ')})`}`;
 }
 
 /** A judgement line as the console prints it: its name, its status, then its figures and bars as check.json holds them (a SKIP prints its reason). */
@@ -333,22 +349,28 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   const entryLine = versionLines.find((l) => l.startsWith('entry:'));
   log(`  rigc ${versionLines[0]} at ${bin}${entryLine === undefined ? '' : `; ${entryLine}`}`);
   const mode: PackMode = { pageEdges: input.pageEdges ?? DEFAULT_PAGE_EDGES, packShape: input.packShape ?? DEFAULT_PACK_SHAPE };
-  const r = runCheck(input.rig, input.out, rigc, input.parts, mode);
+  const r = runCheck(input.rig, input.out, rigc, input.parts, mode, input.source);
   log(`  gate spine-html (rigc ${packedBuildLabel(mode)}), verbatim:`);
   for (const l of r.gateHtml) log(l);
   for (const l of packLines(r)) log(`  ${l}`);
   const fig = r.figures;
-  log(`  loop: idle ${r.idle.frames} frame(s) at ${r.idle.fps} fps, f0000 vs f${String(r.idle.lastIndex).padStart(4, '0')} (t = ${r.idle.duration}s): max |d| ${fig.loop_max_diff} (0 required)`);
-  log(
-    `  seam: setup pose at ${r.seamViewport.pixelWidth}x${r.seamViewport.pixelHeight}, scale ${r.seamViewport.scale.toFixed(4)}: mean |d| ${fig.seam_mean} (<= ${SEAM_MEAN_BAR.toFixed(1)}), ` +
-      `${fig.seam_px_over_40} px over ${SEAM_PX_LEVEL} (<= ${SEAM_PX_BAR}), ${fig.seam_px_over_80} px over ${SEAM_PX_LEVEL_HIGH} (reported)`,
-  );
+  if (r.idle === null) log(`  loop: SKIP — ${fig.skipped?.loop ?? ''}`);
+  else log(`  loop: idle ${r.idle.frames} frame(s) at ${r.idle.fps} fps, f0000 vs f${String(r.idle.lastIndex).padStart(4, '0')} (t = ${r.idle.duration}s): max |d| ${fig.loop_max_diff} (0 required)`);
+  if (r.seamViewport === null || fig.seam_mean === null) log(`  seam: SKIP — ${fig.skipped?.seam ?? ''}`);
+  else {
+    log(
+      `  seam: setup pose at ${r.seamViewport.pixelWidth}x${r.seamViewport.pixelHeight}, scale ${r.seamViewport.scale.toFixed(4)}: mean |d| ${fig.seam_mean} (<= ${SEAM_MEAN_BAR.toFixed(1)}), ` +
+        `${fig.seam_px_over_40} px over ${SEAM_PX_LEVEL} (<= ${SEAM_PX_BAR}), ${fig.seam_px_over_80} px over ${SEAM_PX_LEVEL_HIGH} (reported)`,
+    );
+  }
   for (const name of JUDGEMENT_LINES) log(`  ${judgementLine(name, fig[name])}`);
   for (const name of REPORTED_LINES) log(`  ${judgementLine(name, fig[name])}`);
+  const vsSource = fig[SOURCE_LINE];
+  if (vsSource !== undefined) log(`  ${judgementLine(SOURCE_LINE, vsSource)}`);
   log(`  gate: spine-html ${fig.gate_spine_html_green ? 'green' : 'RED'} (${fig.rigc_entry.entry}${fig.rigc_entry.spine_core === null ? ', rigc\'s own validator' : `, the spine-core ${fig.rigc_entry.spine_core} round trip`})`);
-  log(`  wrote ${r.written.map((w) => join(input.out, w)).join(', ')}, ${join(input.out, 'build')}/, ${join(input.out, 'idle_frames')}/`);
+  log(`  wrote ${r.written.map((w) => join(input.out, w)).join(', ')}, ${join(input.out, 'build')}/${r.idle === null ? '' : `, ${join(input.out, 'idle_frames')}/`}`);
   for (const p of r.problems) log(`  FAIL  ${problemLine(p)}`);
-  log(fig.PASS ? 'check: PASS' : `check: FAIL — ${r.problems.length} bar(s) not met`);
+  log(`${fig.PASS ? 'check: PASS' : `check: FAIL — ${r.problems.length} bar(s) not met`}; ${barsSummary(r)}`);
   return r;
 }
 

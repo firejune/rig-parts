@@ -280,7 +280,7 @@ proposal in as the steps above say (`RL01`); every step must exit 0.
 | `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px`, then `uncovered holes (8-connected): N` and the largest five as `uncovered hole K: <px> px at x,y wxh (between "<part>" <px> px, …)`; and look at `render/recomposite_error_rig.png` | on the examples: `sample` 0.84 / 98.0 % / 4,512 / 1,185, 259 holes, the largest 94 px; `demo` 2.39 / 95.8 % / 11,050 / 1,564, 453 holes, the largest 70 px (default rule) — many slivers along part edges, no hole a region could hide | one large hole: part of the figure is in no layer — a plan entry is missing, hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason), or See-through split one garment into two and left the space between them in neither (a skirt as two trouser legs); the `between` parts say where. When neither run holds it at all, an `assemble.patches` entry cuts it from the painting (below) |
 | `propose` | `note:` lines, `LINT` lines, `landmarks.png` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck); a `hanging strand … -- no chain proposed` note — that strand hangs stiff until you add a chain down the x and rows it names (§3); a `no blink: …` or `blink without brows: …` note — the idle will not blink (or its brows will not drop), because no part came from an `eyewhite` (or `eyebrow`) layer; the note names the tags looked for; a `no eyewhite part for eye_<s> …` note — the iris and lash parts it names ride `head` and do not blink, because no `eyewhite-<s>` part made that side's eye bone: take the eyewhite from the other run, or keep them on `head` |
 | `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; the `bones` line; the `idle keys` line; then rigc's gate lines (with A15's declared SKIP under `--idle-keys direct`); in `rig.json`, each chain link's (or its `_ctl`'s) `length` and `rotation` | `cover 1.00000` on every mesh, both gate summaries `0 failed` (the compile and the packed pages); every link's `length` the distance to the next link and `rotation` its direction (Spine degrees, counter-clockwise, y up, local to the parent), every offset under it — a child bone's `x, y`, a weight's bind `x, y`, a region's `x, y` — in that turned frame, and a region on a link carrying `rotation` that turns it back upright. Nothing moved: `flattenRig` (`src/rig.ts`) turns every offset back and gives the unturned numbers | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
-| `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the six judgement lines and `RECOMPOSITE_HOLES` (§7), `check.json` | `check: PASS`, and a judgement line SKIP only where the character lacks what it reads | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
+| `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the six judgement lines, `RECOMPOSITE_HOLES` and, under `--source`, `SETUP_POSE_VS_SOURCE` (§7), `check.json`; the last line says how many of the nine bars measured and names the ones that said SKIP | `check: PASS; 9 of 9 bar(s) measured, 0 skipped` on the examples, and a judgement line SKIP only where the character lacks what it reads; on a rig spec with no `parts.json` or no `idle` (a merged rig, §7 *Measuring a rig spine-parts did not assemble*), PASS with the skipped bars named | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
 | `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line, each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
 
 `loop` writes three files from one frame set, and they are not interchangeable.
@@ -661,8 +661,11 @@ See-through with another seed.
 | rule | means | change |
 | --- | --- | --- |
 | `CHECK_RIGC_PRESENT` | no `rigc` binary found (every place looked is listed) | `bun install` |
-| `CHECK_INPUT_PRESENT` on `…/parts.json` | `--parts` named a directory without `parts.json` — most often `parts/` itself. The detail says it: "--parts names the directory holding parts.json and parts/, not parts/ itself (after build, that is build's --out, whose rig is <out>/rig); without --parts it is --rig", and names the parent when the parent holds `parts.json` | `--parts` — the directory above `parts/` |
-| `CHECK_INPUT_PRESENT`, `CHECK_INPUT_IS_JSON`, `CHECK_PART_PNG_PRESENT`, `CHECK_PART_PNG_MATCHES_BOX`, `CHECK_PART_SLOT_PRESENT`, `CHECK_RIG_STAGE_PRESENT`, `CHECK_RIG_STAGE_IS_THE_CANVAS`, `CHECK_RIG_ROOT_BONE`, `CHECK_IDLE_PRESENT` | the rig directory is incomplete or disagrees with `parts.json` (`CHECK_PART_SLOT_PRESENT`: a part with no slot of its own name, which the judgement lines render it by) | re-run rig (`build` does both) |
+| `CHECK_INPUT_PRESENT` on `…/parts.json` | `--parts` named a directory without `parts.json` — most often `parts/` itself — or, without `--parts`, the rig directory has none while the directory above it does (build's layout, `<out>/rig` under `<out>/parts.json`). The detail says it: "--parts names the directory holding parts.json and parts/, not parts/ itself (after build, that is build's --out, whose rig is <out>/rig); without --parts it is --rig", and names the parent when the parent holds `parts.json`. With neither (no `--parts`, and no `parts.json` beside `rig.json` or above it), the rig is measured without parts and nothing is refused (§7) | `--parts` — the directory above `parts/` |
+| `CHECK_INPUT_PRESENT`, `CHECK_INPUT_IS_JSON`, `CHECK_PART_PNG_PRESENT`, `CHECK_PART_PNG_MATCHES_BOX`, `CHECK_PART_SLOT_PRESENT`, `CHECK_RIG_STAGE_PRESENT`, `CHECK_RIG_STAGE_IS_THE_CANVAS`, `CHECK_RIG_ROOT_BONE`, `CHECK_IDLE_PRESENT` | the rig directory is incomplete or disagrees with `parts.json` (`CHECK_PART_SLOT_PRESENT`: a part with no slot of its own name, which the judgement lines render it by). `motion.json` is required even with no animation in it, because `rigc build` takes `--motion` (a spec with `"animations": {}` builds green); `CHECK_IDLE_PRESENT` is an `idle` that is there with no positive `duration` — an absent `idle` is measured around (§7) | re-run rig (`build` does both) |
+| `CHECK_SOURCE_SIZE` | the painting `--source` names is not this rig's: no single `rig_scale` takes its width and height to the stage's (assemble makes the canvas `trunc(w × rig_scale)` x `trunc(h × rig_scale)`), or, with `parts.json` read, its `scale_rig_per_source` does not; or the stage is not whole pixels. Refused before anything is built | the painting the rig was made from — the stage's own size, or the painting `assemble` was given |
+| `CHECK_SOURCE_PNG` | `--source` names a file that does not read as a PNG | a PNG |
+| `CHECK_SOURCE_GRID` | the setup-pose still and its black-tinted twin (the coverage `SETUP_POSE_VS_SOURCE` reads) did not come back on one grid over one opaque background | a rigc problem; report it |
 | `CHECK_RIGC_VERSION` | `rigc --version` is below 1.4.0, or prints no version: its `render` has no `--geometry`, which `TEXTURE_STRETCH` reads. Refused before anything is built | `bun install` (this package depends on spine-rigc ^2.10.1), or put a newer `rigc` first on `PATH` |
 | `CHECK_RIGC_ENTRY`, `CHECK_RIGC_ENTRY_READS` | `rigc --version` names no entry (a rigc below 2.0.0), or names one in neither launcher form (`entry: cli.ts — @esotericsoftware/spine-core <v> present`, `entry: cli_core.ts — @esotericsoftware/spine-core absent — …`); `check.json`'s `rigc_entry` records the one that gated the build | `bun install` |
 | `CHECK_RIGC_GREEN` | a rigc step failed; its line is quoted | as `RIG_RIGC_GREEN` |
@@ -685,7 +688,9 @@ See-through with another seed.
 ## 7. The bars `check` enforces, and what only an eye answers today
 
 `check.json`'s `PASS` is true exactly when all of these hold (the reference
-implementation's bars):
+implementation's bars) — each one that measured; a rig with no `parts.json` or no
+`idle` skips the ones that read it, by name (*Measuring a rig spine-parts did not
+assemble*, at the end of this section):
 
 - `gate_spine-html.txt`: every summary line `(N passed, 0 failed)` — the packed build
   under the `spine-html` profile, gated once over the compile and once over the packed
@@ -745,6 +750,24 @@ derivable from the examples — both hold hundreds of holes of a few dozen pixel
 part edges, and whether a hole matters depends on where it is, which the box and the
 bordering parts say and a count cannot. Read it as a figure, quote it in a report, and
 look at `recomposite_error_rig.png` when the largest hole is more than a sliver.
+
+Under `--source <painting.png>`, a second reported line, also never a FAIL
+(issue #77):
+
+| line | reports | bar | `demo` | `sample` | SKIP when |
+| --- | --- | --- | --- | --- | --- |
+| `SETUP_POSE_VS_SOURCE` | the setup pose against the painting, by `assemble`'s own `measureRecomposite` over the stage's pixels — `mean_abs` and `within_share` (mean channel, within 8), `error_px` (max channel over 40), `uncovered_error_px` (of those, where the pose has alpha 128 or less), `hole_count` and the largest hole's box — with `painting_px`, `stage_px`, `render_px` and `render_scale` beside them. The painting is resampled onto the stage as assemble resamples it (lanczos3, alpha dropped). rigc renders onto an opaque grey, so the pose over white and its alpha are read off a second still of the same pose with every slot tinted black; both are carried onto the stage with the seam's map turned round (bilinear) | none — status `REPORTED`; assemble applies no bar to the figures it measures, so none is derived here | 3.146 / 93.43 % / 12,399 / 1,732, 518 holes, the largest 61 px at 351,157 6x20 (assemble's recomposite: 2.391 / 95.81 % / 11,050 / 1,564, 453) | 1.095 / 97.30 % / 5,348 / 1,239, 313 holes, the largest 88 px at 479,416 6x29 (assemble's: 0.835 / 97.95 % / 4,512 / 1,185, 259) | not written without `--source` |
+
+The figures are assemble's by construction, not a second definition beside them;
+what differs is what they are taken of — the pose rigc draws, not the flat stack —
+and the gap between the two columns above is that drawing: the render's resampling at
+its scale (0.942 on the demo, 1.012 on the sample) and the warp back onto the stage,
+which soften every part edge by a pixel or two. It moves with the render's grid
+[observed, the demo's still rendered at four sizes: mean 2.663 at scale 1.0003, 3.091
+at 1.0073, 3.146 at 0.942, 3.186 at 1.884], so compare the line with itself across
+rigs or edits, and with `RECOMPOSITE_HOLES` for where a hole is, not digit for digit
+with the recomposite. On the examples the line reads the same with and without
+`parts.json` (the still's grid does not move).
 
 What each figure is, and is not:
 
@@ -844,6 +867,32 @@ What each figure is, and is not:
 Nothing is left that only an eye answers. "No visible texture stretch" left this list
 with issue #31 (`TEXTURE_STRETCH`), and "the face outline held still in the head's own
 frame" with issue #33 (the face half of `STILL_REGIONS_DARK`, above).
+
+### Measuring a rig spine-parts did not assemble
+
+`check` takes a rig spec — `rig.json` and `motion.json`, the `rigc-rig/1` and
+`rigc-motion/1` pair `rigc build` compiles — not a compiled `skeleton.json`, because
+the gate is `rigc build`. A rig merged from several spine-parts outputs outside the
+package (prefixed names, one root, a plate region at slot 0) is such a spec, with no
+`parts.json` beside it and possibly no `idle`. Each bar then measures exactly when what
+it reads is there, and says SKIP with the reason when it is not:
+
+| bar or line | reads | SKIP when |
+| --- | --- | --- |
+| the gate | the rig spec | never — it always runs, on whatever the spec declares |
+| loop | the `idle` | no `idle` in `motion.json` (`check.json`: `loop_max_diff` null, `skipped.loop` the reason) |
+| seam | `parts.json` and `parts/` | no `parts.json` (`seam_*` null, `skipped.seam` the reason) |
+| `BREATH_VISIBLE`, `BLINK_NO_HOLE`, `TIP_OVER_ROOT`, `STILL_REGIONS_DARK` | `parts.json`'s tags and the idle | either missing, or as in the table above |
+| `CHAIN_LAG`, `TEXTURE_STRETCH` | the idle (and `rig.json`) | no `idle`, or as in the table above |
+| `RECOMPOSITE_HOLES` | `parts.json`'s `recomposite` block | no `parts.json`, or no block |
+| `SETUP_POSE_VS_SOURCE` | the rig spec and the painting | no `--source` |
+
+`PASS` reads every bar that measured, and the last console line says how many did:
+`check: PASS; 1 of 9 bar(s) measured, 8 skipped (loop, seam, …)` is a rig whose gate is
+green and nothing else was looked at. Without an idle no idle is rendered
+(`idle_frames/`, `contact.png` and `motion_heat.png` are not written). The demo's own
+rig directory, copied away from its `parts.json`, reads `4 of 9`: the gate, the loop,
+`CHAIN_LAG` and `TEXTURE_STRETCH`.
 
 ## 8. What one character costs
 
