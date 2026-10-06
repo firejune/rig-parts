@@ -1018,7 +1018,9 @@ function checkContour(c: Check, at: string, v: Json, bones: Set<string>): void {
   const o = c.object(at, v, ['tolerance', 'margin', 'spacing'], ['budget', 'stray', 'regions']);
   if (o === null) return;
   if ('tolerance' in o) c.number(`${at}.tolerance`, o.tolerance, 'non-negative');
-  if ('margin' in o) c.number(`${at}.margin`, o.margin, 'non-negative');
+  if ('margin' in o && c.number(`${at}.margin`, o.margin, 'non-negative') && (o.margin as number) > 0 && (o.margin as number) < 1) {
+    c.fail('CONFIG_FIELD_TYPE', `${at}.margin`, `is ${o.margin as number}; 0, or 1 px or more, is required — the outline's silhouette grows by the pixels whose centre lies within the margin of an art pixel's centre, and none lies closer than 1 px, so a margin under 1 px would add nothing`);
+  }
   if ('spacing' in o) c.number(`${at}.spacing`, o.spacing, 'positive');
   if ('budget' in o) c.int(`${at}.budget`, o.budget, 3);
   if ('stray' in o) c.int(`${at}.stray`, o.stray, 0);

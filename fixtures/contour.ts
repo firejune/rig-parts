@@ -6,9 +6,21 @@
  *
  * Every mask is part-image px, y down; art is alpha above 8 (`ART_ALPHA`)
  * unless a case says otherwise. The shared parameters are {@link BASE}:
- * tolerance 1 px, margin 1 px, background spacing 8 px — so the keep radius is
- * 4 px, and a block's outline is its own rectangle pushed out 1 px (a right
- * angle's mitre moves the corner by (±1, ±1)).
+ * tolerance 0 px, margin 1 px, background spacing 8 px — so the keep radius is
+ * 4 px. Margin 1 grows the filled silhouette by the pixels whose centre lies
+ * 1 px from an art pixel's centre: its four neighbours, not its diagonals
+ * (issue #106). Tolerance 0 keeps every traced corner, so a block's outline is
+ * exactly the trace of that grown silhouette: its rectangle one pixel larger on
+ * every side, less the four corner pixels — 12 vertices, the walk starting at
+ * the top-left corner of the first grown pixel in row order and running
+ * clockwise on screen. A W x H block at (x0, y0) (x1 = x0 + W, y1 = y0 + H)
+ * outlines as
+ *
+ *     (x0, y0−1) (x1, y0−1) (x1, y0) (x1+1, y0) (x1+1, y1) (x1, y1)
+ *     (x1, y1+1) (x0, y1+1) (x0, y1) (x0−1, y1) (x0−1, y0) (x0, y0)
+ *
+ * enclosing W·H + 2W + 2H px²; every grown pixel's centre is 1 px from an art
+ * centre, so the overshoot is 1.
  */
 import type { AlphaMask } from 'spine-rigc/src/mesh.ts';
 import type { ContourParams } from '../src/contour.ts';
@@ -21,7 +33,14 @@ export function blocks(w: number, h: number, rects: ReadonlyArray<readonly [numb
 }
 
 /** The parameters every case below starts from. */
-export const BASE: ContourParams = { threshold: 8, tolerance: 1, margin: 1, spacing: 8, regions: [] };
+export const BASE: ContourParams = { threshold: 8, tolerance: 0, margin: 1, spacing: 8, regions: [] };
+
+/** The 12-vertex outline of a W x H block at (x0, y0) under {@link BASE}, by the formula above. */
+export function blockOutline(x0: number, y0: number, w: number, h: number): Array<[number, number]> {
+  const x1 = x0 + w;
+  const y1 = y0 + h;
+  return [[x0, y0 - 1], [x1, y0 - 1], [x1, y0], [x1 + 1, y0], [x1 + 1, y1], [x1, y1], [x1, y1 + 1], [x0, y1 + 1], [x0, y1], [x0 - 1, y1], [x0 - 1, y0], [x0, y0]];
+}
 
 export interface ContourCase {
   name: string;
@@ -30,45 +49,55 @@ export interface ContourCase {
 }
 
 /**
- * CONVEX: a 24x16 block at (4, 4) in 32x24. Art 384 px. Outline (3,3) (29,3)
- * (29,21) (3,21), area 26 x 18 = 468 px², so 84 px² of it is transparent.
- * Interior: the spacing-8 grid points at least 4 px inside — x 8, 16, 24 (5,
- * 13, 21 px from x = 3; 21, 13, 5 from x = 29) and y 8, 16 (5 and 13 from
- * y = 3; 13 and 5 from y = 21): 6 points, so V = 10 and T = 2·10 − 4 − 2 =
- * 14. Overshoot: pixel (3, 3)'s centre is in the mesh and √2 from art pixel
- * (4, 4)'s, the furthest any covered pixel sits.
+ * CONVEX: a 24x16 block at (4, 4) in 32x24. Art 384 px. Outline
+ * `blockOutline(4, 4, 24, 16)`, 12 vertices from (4, 3), area 384 + 48 + 32 =
+ * 464 px², so 80 px² of it is transparent (the 80 grown pixels). Interior: the
+ * spacing-8 grid points at least 4 px from every outline edge — x 8, 16, 24 (5
+ * px from x = 3 or x = 29 at the nearest) and y 8, 16 (5 px from y = 3 or
+ * y = 21); the nearest outline vertex to (8, 8) is (4, 4), √32 px away: 6
+ * points, so V = 18 and T = 2·18 − 12 − 2 = 22. Overshoot 1.
  */
 export const CONVEX: ContourCase = { name: 'convex', mask: blocks(32, 24, [[4, 4, 24, 16]]), params: { ...BASE } };
 
 /**
  * CONCAVE: a U — arms 8x24 at (4, 4) and (28, 4), a base 32x8 at (4, 20), in
  * 40x32; background spacing 6 (keep radius 3). Art 192 + 192 + 256 − 64 − 64
- * = 512 px. Outline (3,3) (13,3) (13,19) (27,19) (27,3) (37,3) (37,29) (3,29):
- * 8 vertices, area 34·26 − 14·16 = 660 px². Interior: x = 6 sits exactly 3 px
- * from x = 3, the keep radius, and is kept (the rule is ≥); x = 12 is 1 px from
- * x = 13 and is not. So (6, y) and (30, y) for y 6, 12, 18, 24, and (12, 24),
- * (18, 24), (24, 24) on the base: 11 points, V = 19, T = 2·19 − 8 − 2 = 28.
- * The notch is 14 px wide, wider than any triangle the points alone would
- * make, so a triangulation that ignored the outline would bridge it.
+ * = 512 px; the notch is x 12..27, y 4..19. Margin 1 grows a row over each arm
+ * (y 3, 8 + 8 px), the columns x 3 and x 36 (y 4..27, 24 + 24), the row y 28
+ * (32), and into the notch its columns x 12 and x 27 (y 4..19, 16 + 16) and its
+ * floor y 19 (x 13..26, 14): 142 px, none at a corner. Outline, 20 vertices:
+ * (4,3) (12,3) (12,4) (13,4) (13,19) (27,19) (27,4) (28,4) (28,3) (36,3)
+ * (36,4) (37,4) (37,28) (36,28) (36,29) (4,29) (4,28) (3,28) (3,4) (4,4); area
+ * 512 + 142 = 654 px². Interior: x = 6 sits exactly 3 px from x = 3, the keep
+ * radius, and is kept (the rule is ≥) — except at y = 6, where (6, 6) is √8 <
+ * 3 px from the outline vertex (4, 4), and likewise (30, 6) from (28, 4); x = 12
+ * is 1 px from x = 13. So (6, 12) (30, 12) (6, 18) (30, 18) and (6, 24) (12, 24)
+ * (18, 24) (24, 24) (30, 24): 9 points, V = 29, T = 2·29 − 20 − 2 = 36. The
+ * notch is 14 px wide, wider than any triangle the points alone would make, so
+ * a triangulation that ignored the outline would bridge it.
  */
 export const CONCAVE: ContourCase = { name: 'concave', mask: blocks(40, 32, [[4, 4, 8, 24], [28, 4, 8, 24], [4, 20, 32, 8]]), params: { ...BASE, spacing: 6 } };
 
 /**
  * SPIKE: a 30x16 base at (4, 20) and a spike 2 px wide, 18 tall, at (16, 2),
- * in 48x40. Art 480 + 36 = 516 px. Outline (15,1) (19,1) (19,19) (35,19)
- * (35,37) (3,37) (3,19) (15,19): area 32·18 + 4·18 = 648 px². The spike is
- * 4 px wide after the margin, under twice the keep radius, so it holds no
- * interior point; the base holds x 8, 16, 24 at y 24 and 32: 6 points, V = 14,
- * T = 18.
+ * in 48x40. Art 480 + 36 = 516 px. Margin 1 grows the spike's sides (x 15 and
+ * x 18, y 2..19, 18 + 18 px) and its tip (y 1, 2 px), the base's top row (y 19,
+ * x 4..33 less the four spike columns: 26), its bottom row (y 36, 30) and its
+ * sides (x 3 and x 34, y 20..35, 16 + 16): 126 px. Outline, 20 vertices:
+ * (16,1) (18,1) (18,2) (19,2) (19,19) (34,19) (34,20) (35,20) (35,36) (34,36)
+ * (34,37) (4,37) (4,36) (3,36) (3,20) (4,20) (4,19) (15,19) (15,2) (16,2);
+ * area 516 + 126 = 642 px². The spike is 4 px wide after the growth, under
+ * twice the keep radius, so it holds no interior point; the base holds x 8,
+ * 16, 24 at y 24 and 32 (x 32 is 3 px from x = 35): 6 points, V = 26, T = 30.
  */
 export const SPIKE: ContourCase = { name: 'spike', mask: blocks(48, 40, [[4, 20, 30, 16], [16, 2, 2, 18]]), params: { ...BASE } };
 
 /**
  * FEATHERED: a 16x16 core at alpha 255 inside a 2 px ring at alpha 100
  * (20x20 at (6, 6)) inside a 2 px ring at alpha 6 (24x24 at (4, 4)), in 32x32.
- * Above 8, the art is the 20x20 square, 400 px, outlined (5,5) (27,5) (27,27)
- * (5,27); above 100 it is the core, 256 px, outlined (7,7) (25,7) (25,25)
- * (7,25). The alpha-6 ring is never art.
+ * Above 8, the art is the 20x20 square, 400 px, outlined
+ * `blockOutline(6, 6, 20, 20)`; above 100 it is the core, 256 px, outlined
+ * `blockOutline(8, 8, 16, 16)`. The alpha-6 ring is never art.
  */
 export const FEATHERED: ContourCase = { name: 'feathered', mask: blocks(32, 32, [[4, 4, 24, 24, 6], [6, 6, 20, 20, 100], [8, 8, 16, 16, 255]]), params: { ...BASE } };
 
@@ -77,9 +106,10 @@ export const FEATHERED_CORE: ContourCase = { name: 'feathered-core', mask: FEATH
 
 /**
  * HOLE: a 32x32 block at (4, 4) with a 12x12 hole at (14, 14), in 40x40. Art
- * 1024 − 144 = 880 px; the hole's 144 px are filled. Outline (3,3) (37,3)
- * (37,37) (3,37), area 34² = 1156 px², 276 px² of it transparent (the hole's
- * 144 and the margin's 132).
+ * 1024 − 144 = 880 px; the hole's 144 px are filled. Outline
+ * `blockOutline(4, 4, 32, 32)`, area 1024 + 128 = 1152 px², 272 px² of it
+ * transparent: the hole's 144 (`filledHolePixels`) and the growth's 128
+ * (`grownPixels`), each counted once.
  */
 export const HOLE: ContourCase = { name: 'hole', mask: blocks(40, 40, [[4, 4, 32, 32], [14, 14, 12, 12, 0]]), params: { ...BASE } };
 
@@ -90,9 +120,12 @@ export const ISLANDS: ContourCase = { name: 'islands', mask: blocks(40, 20, [[2,
 export const EMPTY: ContourCase = { name: 'empty', mask: blocks(10, 10, [[4, 4, 1, 1, 8]]), params: { ...BASE } };
 
 /**
- * PINCH: one 4-connected island whose outline touches itself at pixel corner
- * (4, 4): pixels (4, 3) and (3, 4) are art, (3, 3) and (4, 4) are not, and the
- * two arms join through the top row. rigc's tracer refuses it.
+ * PINCH: one 4-connected island that touches itself at pixel corner (4, 4):
+ * pixels (4, 3) and (3, 4) are art, (3, 3) and (4, 4) are not, and the two
+ * arms join through the top row. rigc's tracer refuses the island as it is;
+ * but (3, 3) is in the enclosed pocket, so the filled silhouette — the island
+ * with its holes filled, the mask the outline is traced from — has (3, 3) set
+ * and no pinch (issue #106).
  *
  *     ......
  *     .####.
@@ -110,7 +143,7 @@ export const PINCH: ContourCase = {
 /**
  * REGION: a 56x40 block at (4, 4) in 64x48, background spacing 12 (keep
  * radius 6), and one circle region at (40, 24), radius 8, spacing 3, band 4.
- * Outline (3,3) (61,3) (61,45) (3,45), the same with or without the region.
+ * Outline `blockOutline(4, 4, 56, 40)`, the same with or without the region.
  * Background grid points inside the outline and 6 px from it: x 12, 24, 36, 48
  * and y 12, 24, 36 — 12 of them. The region's points reach 12 px from its
  * centre, so a background point further than 12 + 6 = 18 px from (40, 24)
@@ -133,8 +166,39 @@ export const REGION_FAR_BACKGROUND: ReadonlyArray<readonly [number, number]> = [
   [24, 36],
 ];
 
-/** FULL: a 10x8 image all art — its outline is the window, clamped, with no interior point at spacing 8. */
+/** FULL: a 10x8 image all art — no pixel to grow into, so its outline is the window, with no interior point at spacing 8. */
 export const FULL: ContourCase = { name: 'full', mask: blocks(10, 8, [[0, 0, 10, 8]]), params: { ...BASE } };
+
+/**
+ * NOTCH: a U with a 2 px notch — arms 6x20 at (2, 2) and (10, 2), a base 14x6
+ * at (2, 18), in 20x26; the notch is x 8..9, y 2..17. Art 240 + 84 − 48 = 276
+ * px. At margin 1 every notch pixel is a 4-neighbour of an arm, so the notch
+ * grows shut (32 px) — it is neither folded over nor left as a hole; only its
+ * mouth's corner row (8, 1) and (9, 1), √2 from the nearest arm pixel, stays
+ * out. With the rows y 1 (6 + 6), y 24 (14) and the columns x 1 and x 16
+ * (y 2..23, 22 + 22), the growth adds 102 px. Outline at tolerance 0, 16
+ * vertices: (2,1) (8,1) (8,2) (10,2) (10,1) (16,1) (16,2) (17,2) (17,24)
+ * (16,24) (16,25) (2,25) (2,24) (1,24) (1,2) (2,2); area 276 + 102 = 378 px².
+ */
+export const NOTCH: ContourCase = { name: 'notch', mask: blocks(20, 26, [[2, 2, 6, 20], [10, 2, 6, 20], [2, 18, 14, 6]]), params: { ...BASE } };
+
+/**
+ * BOTTLE: a 16x16 block at (2, 2) in 20x20 with a chamber 4x6 at (8, 6) and a
+ * mouth 2x4 at (9, 2) cleared, so the chamber opens to the outside through the
+ * mouth and is no hole of the art. Art 256 − 24 − 8 = 224 px. At margin 1 the
+ * mouth grows shut (its 8 px are 4-neighbours of (8, y) and (11, y)), the
+ * chamber's walls grow in by one pixel (x 8 and x 11 for y 6..11: 12 px; its
+ * floor (9, 11) and (10, 11): 2 px), and the chamber's middle — x 9..10, y
+ * 6..10, 10 px, none within 1 px of an art centre — is enclosed by the grown
+ * silhouette without being in it: `grownHolePixels` 10. Round the outside the
+ * growth adds the row y 1 (x 2..8 and 11..17, 14 px — not x 9..10, whose
+ * pixels below are the mouth), the row y 18 (16) and the columns x 1 and x 18
+ * (16 + 16): `grownPixels` 14 + 16 + 32 + 8 + 12 + 2 = 84. No pinch: the
+ * pinch fill adds 0. The traced silhouette holds 224 + 0 + 84 + 0 + 10 = 318
+ * px, which is the outline's area at tolerance 0: the 18x18 square less its
+ * four corner pixels and the two mouth pixels of row y 1.
+ */
+export const BOTTLE: ContourCase = { name: 'bottle', mask: blocks(20, 20, [[2, 2, 16, 16], [8, 6, 4, 6, 0], [9, 2, 2, 4, 0]]), params: { ...BASE } };
 
 /**
  * The cases that build, in order. The gate proof (selftest `CT27`) carries all

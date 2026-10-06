@@ -16,8 +16,11 @@
  *   band, radius 16) spans x 48..80, y 14..46 — inside the art on every side,
  *   so the surround is the art outside radius 16.
  * - **The lattice**: grid 8 — the reference mesh table 1 is held at.
- * - **The contour mode**: tolerance 1, margin 1 (a block's outline is its own
- *   rectangle pushed out 1 px), background spacing 16 — twice the lattice's
+ * - **The contour mode**: tolerance 1, margin 1 (issue #106: the block grows
+ *   by the rows and columns beside it, not its corners, and Douglas–Peucker at
+ *   tolerance 1 keeps four of the trace's twelve corners, (8, 7) (88, 7)
+ *   (89, 56) (8, 57) — the cut corners lie 0.98 and 0.99 px and the left
+ *   column's step exactly 1 px off the chords kept), background spacing 16 — twice the lattice's
  *   cell, so the surround is NOT denser than the lattice's — and the region
  *   refined at the smallest whole spacing from {@link REGION_SPACINGS} whose
  *   mesh has no more vertices than the lattice (the "at the lattice's vertex

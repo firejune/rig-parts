@@ -11,16 +11,19 @@
  *   closest to the contour mesh's (a tie takes the larger grid), and beside
  *   the lattice at grid 1 px — the finest. Then the tolerance x margin sweep
  *   over five generated shapes: which margins pass coverage and overshoot at
- *   each tolerance.
+ *   each tolerance, and the overshoot each passing cell measured (a margin
+ *   above 0 and below 1 px is refused by name, so the sweep's margins are 0
+ *   and 1 or more).
  * - **examples**: `<key>=<build dir>` is a `spine-parts build --out` directory
  *   of the public example `examples/<key>/` — its `rig/images/<part>.png` are
  *   the padded images the rig stage gave `latticeMesh`, and
  *   `examples/<key>/config.json` names the mesh parts and their grids. Each
  *   mesh part is one row: the lattice the tracked config builds, and the
- *   contour mesh at threshold 8, tolerance 1, margin 1 and a background
- *   spacing equal to that part's lattice grid, with no region — the one stated
- *   set of parameters. Nothing is accepted or refused on these rows; they are
- *   a table.
+ *   contour mesh at threshold 8, tolerance 1, margin 1, `stray` 4 and a
+ *   background spacing equal to that part's lattice grid, with no region — the
+ *   one stated set of parameters (issue #106's), with the pixels the margin's
+ *   growth and its pinch fill added. Nothing is accepted or refused on these
+ *   rows; they are a table.
  *
  * Both meshes are measured by the same calls: spine-rigc's
  * `measureAuthoredMeshFit` (coverage, overshoot), the shoelace area of the
@@ -47,6 +50,8 @@ interface Row {
   overshoot: number;
   minAngle: number;
   maxRatio: number;
+  /** For a contour row: the pixels the growth, the pinch fill and the grown silhouette's enclosure added. */
+  added?: string;
 }
 
 function measure(mask: AlphaMask, vertices: Array<[number, number]>, triangles: number[], hull: number): Row {
@@ -89,16 +94,16 @@ function refusal(mask: AlphaMask, codes: string[], detail: string): string {
 function contour(name: string, mask: AlphaMask, params: ContourParams): Row | string {
   const m = contourMesh(name, mask, params);
   if (Array.isArray(m)) return refusal(mask, m.map((p) => p.code), m[0].detail);
-  return measure(mask, m.vertices, m.triangles, m.hull);
+  return { ...measure(mask, m.vertices, m.triangles, m.hull), added: `${m.report.grownPixels} / ${m.report.pinchFilledPixels} / ${m.report.grownHolePixels}` };
 }
 
 const cells = (r: Row | string): string =>
-  typeof r === 'string' ? `${r} | | | | | | |` : `${r.vertices} (${r.hull}) | ${r.triangles} | ${r.area} | ${r.enclosed} | ${r.coverage} | ${r.overshoot} | ${r.minAngle} / ${r.maxRatio}`;
-const HEAD = 'V (hull) | T | area px² | enclosed px² | covered/art | overshoot px | min angle° / max edge ratio';
+  typeof r === 'string' ? `${r} | | | | | | | |` : `${r.vertices} (${r.hull}) | ${r.triangles} | ${r.area} | ${r.enclosed} | ${r.coverage} | ${r.overshoot} | ${r.minAngle} / ${r.maxRatio} | ${r.added ?? ''}`;
+const HEAD = 'V (hull) | T | area px² | enclosed px² | covered/art | overshoot px | min angle° / max edge ratio | grown / pinch-filled / grown-hole px';
 
 console.log('## generated masks\n');
 console.log(`| mask | mode | ${HEAD} |`);
-console.log(`|---|---|${'---|'.repeat(7)}`);
+console.log(`|---|---|${'---|'.repeat(8)}`);
 for (const c of BUILDING) {
   const cm = contourMesh(c.name, c.mask, c.params);
   if (Array.isArray(cm)) {
@@ -135,15 +140,15 @@ const sweep: Record<string, AlphaMask> = {
   'diagonal bar 12 px': shape(64, 64, (x, y) => Math.abs((x - y) / Math.SQRT2) < 6 && x > 6 && x < 58),
 };
 const TOLS = [0.5, 1, 1.5, 2, 3];
-const MARGINS = [0, 0.25, 0.5, 0.75, 1, 1.5, 2, 3];
-console.log(`\n## tolerance x margin (spacing 8, no region): margins that build; C = coverage refused, O = overshoot refused\n`);
+const MARGINS = [0, 1, 1.5, 2, 2.5, 3];
+console.log(`\n## tolerance x margin (spacing 8, no region): margins that build, with the overshoot measured; C = coverage refused, O = overshoot refused\n`);
 console.log(`| shape | tolerance | ${MARGINS.map((m) => `m ${m}`).join(' | ')} |`);
 console.log(`|---|---|${'---|'.repeat(MARGINS.length)}`);
 for (const [name, m] of Object.entries(sweep)) {
   for (const t of TOLS) {
     const row = MARGINS.map((g) => {
       const r = contourMesh(name, m, { threshold: ART_ALPHA, tolerance: t, margin: g, spacing: 8, regions: [] });
-      if (!Array.isArray(r)) return 'ok';
+      if (!Array.isArray(r)) return `ok ${r.report.overshoot}`;
       return r.map((p) => (p.code === 'CONTOUR_COVERAGE' ? 'C' : p.code === 'CONTOUR_OVERSHOOT' ? 'O' : p.code)).join('+');
     });
     console.log(`| ${name} | ${t} | ${row.join(' | ')} |`);
@@ -159,9 +164,9 @@ for (const arg of process.argv.slice(2)) {
   const key = arg.slice(0, at);
   const dir = arg.slice(at + 1);
   const cfg = JSON.parse(readFileSync(join(ROOT, 'examples', key, 'config.json'), 'utf8')) as { meshes: Record<string, { grid: number }> };
-  console.log(`\n## ${key}: every mesh part, the tracked config's lattice and the contour mesh at threshold ${ART_ALPHA}, tolerance 1, margin 1, spacing = grid\n`);
+  console.log(`\n## ${key}: every mesh part, the tracked config's lattice and the contour mesh at threshold ${ART_ALPHA}, tolerance 1, margin 1, stray 4, spacing = grid\n`);
   console.log(`| part | grid | mode | ${HEAD} |`);
-  console.log(`|---|---|---|${'---|'.repeat(7)}`);
+  console.log(`|---|---|---|${'---|'.repeat(8)}`);
   const total = { lattice: 0, contour: 0, latticeEnclosed: 0, contourEnclosed: 0, refused: 0 };
   for (const [part, { grid }] of Object.entries(cfg.meshes)) {
     const img = readPng(join(dir, 'rig', 'images', `${part}.png`));
@@ -169,7 +174,7 @@ for (const arg of process.argv.slice(2)) {
     for (let i = 0; i < alpha.length; i++) alpha[i] = img.data[i * 4 + 3];
     const mask: AlphaMask = { width: img.width, height: img.height, alpha };
     const l = lattice(part, mask, grid);
-    const c = contour(part, mask, { threshold: ART_ALPHA, tolerance: 1, margin: 1, spacing: grid, regions: [] });
+    const c = contour(part, mask, { threshold: ART_ALPHA, tolerance: 1, margin: 1, spacing: grid, stray: 4, regions: [] });
     console.log(`| ${part} | ${grid} | lattice | ${cells(l)} |`);
     console.log(`| ${part} | ${grid} | contour | ${cells(c)} |`);
     if (typeof l !== 'string' && typeof c !== 'string') {
