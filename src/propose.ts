@@ -74,12 +74,18 @@
  * relations the joints declare instead of by screen y. Without joints every
  * value, note and LINT line is the one written before the option existed.
  *
+ * Issue #86 adds what the proposer and lint looked at, and changes nothing
+ * they wrote: {@link proposeWithBasis} records, at each placement, what the
+ * bone rests on ({@link BoneBasis}; `basis.json`, `src/diagnostics.ts`), and
+ * {@link lint} returns per bone which checks read it or why none did
+ * ({@link BoneCoverage}), with the roles `src/structure.ts` derives.
+ *
  * Coordinates are rig pixels, y down, origin top-left — the parts' own space.
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { drawText, GLYPH_H } from 'spine-rigc/tools/font5x7.ts';
-import { type BoneEntry, type MeshSpec, parseConfig, type Point, type Segment } from './config.ts';
+import { type BoneEntry, type MeshSpec, parseConfig, type Point, type Segment, type SkeletonSections } from './config.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 import { OPAQUE_ALPHA_ABOVE } from './layers.ts';
 import { PAINTING_RUN, type PartRecord, type PartsFile, readParts } from './parts.ts';
@@ -89,8 +95,9 @@ import { readPng } from './raster/png.ts';
 import { resize } from './raster/resize.ts';
 import { type Mask, newMask, newRaster, type Raster } from './raster/types.ts';
 import { npMean, npMedian, npPercentile, pyFixed, pyInt, pyIntList, pyRepr, pyRound, pyStrList } from './pyfmt.ts';
-import type { RigJoint, RigJoints } from './keypoints.ts';
+import type { JointState, RigJoint, RigJoints } from './keypoints.ts';
 import { KEYPOINT_NAMES, type KeypointName } from './skeleton.ts';
+import { configRoles, type RoleOf } from './structure.ts';
 
 // ---------------------------------------------------------------------------
 // the output shape — config-shaped, key order as the reference writes it
@@ -139,6 +146,94 @@ export interface Proposal {
     blink?: ProposedBlink;
   };
   notes: string[];
+}
+
+// ---------------------------------------------------------------------------
+// what each proposed bone rests on (issue #86)
+// ---------------------------------------------------------------------------
+
+/**
+ * What a placement rests on, in four kinds:
+ *
+ * - `joint`: a coordinate supplied from outside — a keypoint file's joint
+ *   (`--keypoints`), recorded with its state, its `listed` flag and its score
+ *   exactly as the file declared them, and its position in rig px through the
+ *   overlay's map;
+ * - `mask`: a measurement off a part's opaque pixels or its box (which part,
+ *   which measure);
+ * - `ratio`: a rule of proportion — a share of the face box, of the figure's
+ *   height or of a part's — with each constant that sets the value;
+ * - `derived`: computed from other bones' positions alone (which bones).
+ *
+ * A placement that also reads a constant or another bone names those too; the
+ * kind is what the value is read off. No confidence is computed for any of
+ * them, and no kind is a judgement of quality.
+ */
+export type BasisKind = 'joint' | 'mask' | 'ratio' | 'derived';
+
+export const BASIS_KINDS: readonly BasisKind[] = ['joint', 'mask', 'ratio', 'derived'];
+
+/** The frame quantities several rules read, described once in the basis file's `frame`. */
+export type FrameKey = 'face_box' | 'eye_axis' | 'eye_line' | 'figure' | 'torso';
+
+export const FRAME_KEYS: readonly FrameKey[] = ['face_box', 'eye_axis', 'eye_line', 'figure', 'torso'];
+
+/** A joint a placement used, as the keypoint file declared it; `at` is rig px (the overlay's map applied). */
+export interface BasisJoint {
+  name: KeypointName;
+  state: JointState;
+  listed: boolean;
+  /** The producer's score, when the file carried one; `null` when it did not. Never computed here. */
+  score: number | null;
+  at: [number, number];
+}
+
+export interface BasisConstant {
+  name: string;
+  value: number;
+}
+
+/** One coordinate pair's basis: an origin's, or a tip's. Key order is the file's. */
+export interface Placement {
+  kind: BasisKind;
+  rule: string;
+  parts: string[];
+  joints: BasisJoint[];
+  bones: string[];
+  frame: FrameKey[];
+  constants: BasisConstant[];
+  /** The stand-in a rule took because what it reads was empty, or `null` when none was taken. */
+  fallback: string | null;
+}
+
+/** One proposed bone (a chain link is a bone): what its origin rests on and, where the proposal states its tip, what that rests on. */
+export interface BoneBasis {
+  bone: string;
+  /** The bone entry it came from: its own name, or the chain it is a link of. */
+  entry: string;
+  origin: Placement;
+  /** `null` when the proposal states no tip of its own for this bone: a single bone without `tip`, or a chain link that is not the last (its tip is the next link's origin). */
+  tip: Placement | null;
+}
+
+/** How a frame quantity was reached, and off which parts. */
+export interface FrameBasis {
+  rule: string;
+  parts: string[];
+}
+
+/** What `propose` records beside the proposal: the frame quantities and one record per proposed bone, in the proposal's bone order. */
+export interface ProposalBasis {
+  frame: Record<FrameKey, FrameBasis>;
+  bones: BoneBasis[];
+}
+
+function placement(kind: BasisKind, rule: string, o: Partial<Omit<Placement, 'kind' | 'rule'>> = {}): Placement {
+  return { kind, rule, parts: o.parts ?? [], joints: o.joints ?? [], bones: o.bones ?? [], frame: o.frame ?? [], constants: o.constants ?? [], fallback: o.fallback ?? null };
+}
+
+function konst(name: string, value: number): BasisConstant {
+  return { name, value };
 }
 
 /**
@@ -631,6 +726,8 @@ const FACE_FEATURE_RULES: ReadonlyArray<readonly [readonly string[], string]> = 
 export interface FaceBox {
   box: [number, number, number, number];
   note: string | null;
+  /** The parts the box was read off: the face part, or the hair and neck it was derived from. */
+  parts: string[];
 }
 
 /**
@@ -644,7 +741,7 @@ export interface FaceBox {
  */
 export function faceBoxOf(P: PartSet, ratios: Readonly<FacelessRatios> = FACELESS_RATIOS): FaceBox {
   const faces = P.headFirst('face');
-  if (faces.length > 0) return { box: [faces[0].x, faces[0].y, faces[0].w, faces[0].h], note: null };
+  if (faces.length > 0) return { box: [faces[0].x, faces[0].y, faces[0].w, faces[0].h], note: null, parts: [faces[0].name] };
   const hair = P.layered().filter((p) => splitFrom(p.from)[0] === 'head' && FACELESS_HAIR_TAGS.includes(splitFrom(p.from)[1]));
   const neck = P.byTag('neck', 'head');
   const refuse = (why: string): never => {
@@ -679,7 +776,7 @@ export function faceBoxOf(P: PartSet, ratios: Readonly<FacelessRatios> = FACELES
     (nothing.length === 0 ? '' : `; nothing to read for ${nothing.join(', ')}`) +
     // Measured: the sample with only its face removed opens 587 px behind its shut eyes, the demo 0 (its hair is under them).
     (EYE_GROUP_TAGS.some((t) => P.byTag(t).length > 0) ? "; the blink shuts the eyes over no face part, so check's BLINK_NO_HOLE says whether anything shows through" : '');
-  return { box, note };
+  return { box, note, parts: [...hair.map((p) => p.name), n.name] };
 }
 
 const SIDES = [
@@ -696,7 +793,18 @@ const SIDES = [
  * function wrote before the parameter existed.
  */
 export function propose(P: PartSet, joints?: RigJoints): Proposal {
+  return proposeWithBasis(P, joints).proposal;
+}
+
+/**
+ * {@link propose}, and beside the proposal what each bone it places rests on
+ * (issue #86): recorded at each placement below, from the values that placed
+ * it — no bone's value is touched by the recording, and `propose` returns the
+ * same proposal, byte for byte, as before the record existed.
+ */
+export function proposeWithBasis(P: PartSet, joints?: RigJoints): { proposal: Proposal; basis: ProposalBasis } {
   const bones: BoneEntry[] = [];
+  const records: BoneBasis[] = [];
   // No prototype: a part may be named anything file-safe, "__proto__" included.
   const meshes = Object.create(null) as Record<string, MeshSpec>;
   const regions = Object.create(null) as Record<string, string>;
@@ -716,6 +824,25 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
   }
   const axis = eyes.size === 2 ? ((eyes.get('r') as [number, number])[0] + (eyes.get('l') as [number, number])[0]) / 2 : fx0 + fw / 2;
   const eyeY = eyes.size > 0 ? npMean([...eyes.values()].map((e) => e[1])) : fy0 + 0.5 * fh;
+  const eyeParts = (['r', 'l'] as const).flatMap((s) => (ew[s] === null ? [] : [(ew[s] as PartRecord).name]));
+  const torsoParts = P.layered().filter((p) => (TORSO_TAGS as readonly string[]).includes(splitFrom(p.from)[1]));
+  const frame: Record<FrameKey, FrameBasis> = {
+    face_box: { rule: faceBox.note === null ? `the box of ${faceBox.parts[0]}, the face part` : "derived from the head run's hair and neck by the measured ratios (the first note)", parts: faceBox.parts },
+    eye_axis: eyes.size === 2 ? { rule: "half way between the centres of the two eyewhites' boxes", parts: eyeParts } : { rule: 'the centre x of the face box (there are not two eyewhites)', parts: faceBox.parts },
+    eye_line: eyes.size > 0 ? { rule: "the mean y of the eyewhites' box centres", parts: eyeParts } : { rule: 'half way down the face box (no eyewhite)', parts: faceBox.parts },
+    figure: { rule: "the first and last rows holding any layered part's pixel", parts: P.layered().map((p) => p.name) },
+    torso: { rule: `per row, the leftmost and rightmost pixel of the layers tagged ${TORSO_TAGS.join(', ')}`, parts: torsoParts.map((p) => p.name) },
+  };
+  // A joint as the file declared it, for the record.
+  const jointRef = (n: KeypointName): BasisJoint => {
+    const j = (joints as RigJoints).joints[n];
+    return { name: n, state: j.state, listed: j.listed, score: j.score, at: j.at as [number, number] };
+  };
+  // Python's `v or fallback`, with the stand-in said when it is taken.
+  const orSaid = (v: number | null, fallback: number, why: string, sink: { fallback: string | null }): number => {
+    if (v === null || v === 0) sink.fallback = why;
+    return or(v, fallback);
+  };
   const chin = fy0 + fh;
   const head: [number, number] = [axis, fy0 + 0.88 * fh];
   const neckp = P.headFirst('neck');
@@ -726,9 +853,14 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
   const neckRule = neckp.length > 0 ? `half way from the chin to the bottom of ${neckp[0].name}, on the eye axis` : '0.12 face heights below the chin, on the eye axis';
   const neckJ = at('neck');
   let neckAt: [number, number] = [axis, neckY];
+  let neckWhy =
+    neckp.length > 0
+      ? placement('ratio', `half way from the chin (the face box's bottom) to the bottom of ${neckp[0].name}, on the eye axis`, { parts: [neckp[0].name], frame: ['face_box', 'eye_axis'], constants: [konst('share_chin_to_neck_bottom', 0.5)] })
+      : placement('ratio', "0.12 face heights below the chin (the face box's bottom), on the eye axis", { frame: ['face_box', 'eye_axis'], constants: [konst('face_heights_below_chin', 0.12)], fallback: 'no neck part' });
   if (neckJ !== null) {
     neckAt = neckJ;
     neckY = neckJ[1];
+    neckWhy = placement('joint', `the neck joint, ${usedAs((joints as RigJoints).joints.neck)}`, { joints: [jointRef('neck')] });
   }
   const bw = P.byTag('bottomwear');
   const tw = P.byTag('topwear');
@@ -737,16 +869,21 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
   const shoulders = shoulderOf(torso, neckY, fh);
   let hip: [number, number];
   let hipRule = '';
+  let hipWhy: Placement;
   const rHipJ = at('r_hip');
   const lHipJ = at('l_hip');
   const hipFromJoints = rHipJ !== null && lHipJ !== null;
-  if (rHipJ !== null && lHipJ !== null) hip = [(rHipJ[0] + lHipJ[0]) / 2, (rHipJ[1] + lHipJ[1]) / 2];
-  else if (bw.length > 0 && bw[0].y + 0.14 * fh >= ftop + HIP_MIN_FRACTION * (fbot - ftop)) {
+  if (rHipJ !== null && lHipJ !== null) {
+    hip = [(rHipJ[0] + lHipJ[0]) / 2, (rHipJ[1] + lHipJ[1]) / 2];
+    hipWhy = placement('joint', 'the midpoint of the r_hip and l_hip joints — a point between two joints, not a joint', { joints: [jointRef('r_hip'), jointRef('l_hip')] });
+  } else if (bw.length > 0 && bw[0].y + 0.14 * fh >= ftop + HIP_MIN_FRACTION * (fbot - ftop)) {
     hip = [bw[0].x + bw[0].w / 2, bw[0].y + 0.14 * fh];
     hipRule = `the top of ${bw[0].name} (bottomwear) + 0.14 face heights`;
+    hipWhy = placement('ratio', `the top of ${bw[0].name} (bottomwear) + 0.14 face heights, at the centre x of its box`, { parts: [bw[0].name], frame: ['face_box'], constants: [konst('face_heights_below_top', 0.14)] });
   } else if (bw.length === 0) {
     hip = [axis, ftop + 0.32 * (fbot - ftop)];
     hipRule = '0.32 of the figure height, on the eye axis (no bottomwear)';
+    hipWhy = placement('ratio', '0.32 of the figure height below its top row, on the eye axis', { frame: ['figure', 'eye_axis'], constants: [konst('of_figure_height', 0.32)], fallback: 'no bottomwear part' });
     notes.push('no bottomwear: hip from 0.32 of figure height');
   } else {
     // A long under-robe tagged bottomwear starts at the collar: its top edge
@@ -760,10 +897,16 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
     if (shoulders !== null && waist !== null) {
       hip = [waist.cx, waist.y + 0.14 * fh];
       hipRule = 'the waist (the narrowest torso row) + 0.14 face heights';
+      hipWhy = placement('ratio', "the waist — the narrowest torso row from the shoulder line (the widest torso row within one face height below the neck) down to the figure's middle — + 0.14 face heights, at that row's centre x", {
+        bones: ['neck'],
+        frame: ['torso', 'figure', 'face_box'],
+        constants: [konst('face_heights_below_waist', 0.14), konst('waist_max_of_shoulders', WAIST_MAX_OF_SHOULDERS)],
+      });
       notes.push(`hip from the waist: silhouette narrowest at y=${waist.y} (width ${waist.width} px, shoulders ${shoulders.width} px at y=${shoulders.y}), hip 0.14 face heights below it`);
     } else {
       hip = [axis, ftop + 0.32 * (fbot - ftop)];
       hipRule = '0.32 of the figure height, on the eye axis (no waist found)';
+      hipWhy = placement('ratio', '0.32 of the figure height below its top row, on the eye axis', { frame: ['figure', 'eye_axis'], constants: [konst('of_figure_height', 0.32)], fallback: 'no waist found' });
       const why =
         shoulders === null
           ? `no torso layer (${TORSO_TAGS.join(', ')}) in the shoulder band y ${pyFixed(neckY, 0)}..${pyFixed(neckY + fh, 0)}`
@@ -776,20 +919,28 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
   // down the screen, because the torso need not be upright.
   const chestAlong = neckJ !== null || hipFromJoints;
   const chest: [number, number] = chestAlong ? [(neckAt[0] + hip[0]) / 2, (neckAt[1] + hip[1]) / 2] : [hip[0], neckY + 0.5 * (hip[1] - neckY)];
-  const B = (name: string, parent: string, at: readonly [number, number], tip?: readonly [number, number]): void => {
+  // Each placement hands its basis with its value: one record per bone, in the order the bones are written.
+  const B = (name: string, parent: string, at: readonly [number, number], why: Placement, tip?: readonly [number, number], tipWhy?: Placement): void => {
     bones.push(tip === undefined ? { name, parent, at: rnd(at) } : { name, parent, at: rnd(at), tip: rnd(tip) });
+    records.push({ bone: name, entry: name, origin: why, tip: tipWhy ?? null });
   };
-  const C = (chain: string, parent: string, pts: ReadonlyArray<readonly [number, number]>, tip: readonly [number, number]): void => {
+  const C = (chain: string, parent: string, pts: ReadonlyArray<readonly [number, number]>, tip: readonly [number, number], why: readonly Placement[], tipWhy: Placement): void => {
     bones.push({ chain, parent, points: pts.map(rnd), tip: rnd(tip) });
+    pts.forEach((_, k) => records.push({ bone: `${chain}${k}`, entry: chain, origin: why[k], tip: k === pts.length - 1 ? tipWhy : null }));
   };
-  B('hip', 'root', hip);
-  B('chest', 'hip', chest);
-  B('neck', 'chest', neckAt);
-  B('head', 'neck', head);
+  B('hip', 'root', hip, hipWhy);
+  B(
+    'chest',
+    'hip',
+    chest,
+    placement('derived', chestAlong ? 'half way from neck to hip, along the line between them' : "at hip's x, half way from neck's y down to hip's y", { bones: ['neck', 'hip'], constants: [konst('share_neck_to_hip', 0.5)] }),
+  );
+  B('neck', 'chest', neckAt, neckWhy);
+  B('head', 'neck', head, placement('ratio', '0.88 face heights below the top of the face box, on the eye axis', { frame: ['face_box', 'eye_axis'], constants: [konst('face_heights_below_top', 0.88)] }));
   for (const s of ['r', 'l'] as const) {
     const e = eyes.get(s);
     if (e !== undefined) {
-      B(`eye_${s}`, 'head', e);
+      B(`eye_${s}`, 'head', e, placement('mask', `the centre of ${(ew[s] as PartRecord).name}'s box`, { parts: [(ew[s] as PartRecord).name] }));
       // The reference keyed this by the literal "eyewhite_<s>"; keyed by the
       // part's own name it is the same entry whenever that is the name, and
       // not a region for a part that does not exist when it is not.
@@ -811,7 +962,12 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
     const group = bySide.get(s);
     if (group !== undefined) {
       const cs = group.map(center);
-      B(`brow_${s}`, 'head', [npMean(cs.map((c) => c[0])), npMean(cs.map((c) => c[1]))]);
+      B(
+        `brow_${s}`,
+        'head',
+        [npMean(cs.map((c) => c[0])), npMean(cs.map((c) => c[1]))],
+        placement('mask', `the mean of the box centres of the eyebrow parts on the ${s} side of the eye axis`, { parts: group.map((p) => p.name), frame: ['eye_axis'] }),
+      );
     }
   }
   const mouth = P.headFirst('mouth');
@@ -821,8 +977,8 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
     if (cc.count > 1) {
       let best = 1;
       for (let i = 2; i < cc.count; i++) if (cc.stats[i].area > cc.stats[best].area) best = i;
-      B('mouth', 'head', [cc.stats[best].cx, cc.stats[best].cy]);
-    } else B('mouth', 'head', center(mouth[0]));
+      B('mouth', 'head', [cc.stats[best].cx, cc.stats[best].cy], placement('mask', `the centroid of the biggest 8-connected blob of ${mouth[0].name}`, { parts: [mouth[0].name] }));
+    } else B('mouth', 'head', center(mouth[0]), placement('mask', `the centre of ${mouth[0].name}'s box`, { parts: [mouth[0].name], fallback: 'its mask has no opaque pixel, so no blob' }));
   }
   // An eye bone comes only from an eyewhite (EYE_GROUP_TAGS). An iris or a
   // lash on a side with none has no eye bone to ride, and writing its region
@@ -886,7 +1042,14 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
     const top = p.y;
     const bot = p.y + p.h;
     if (bot < neckY + 0.5 * fh) {
-      B('bun', 'head', [axis, top + 0.36 * p.h], [axis, bot - 0.1 * p.h]);
+      B(
+        'bun',
+        'head',
+        [axis, top + 0.36 * p.h],
+        placement('ratio', `0.36 of ${p.name}'s height below its top, on the eye axis`, { parts: [p.name], frame: ['eye_axis'], constants: [konst('of_part_height_below_top', 0.36)] }),
+        [axis, bot - 0.1 * p.h],
+        placement('ratio', `0.1 of ${p.name}'s height above its bottom, on the eye axis`, { parts: [p.name], frame: ['eye_axis'], constants: [konst('of_part_height_above_bottom', 0.1)] }),
+      );
       meshes[p.name] = { grid: g, r, segments: [['head', rnd(head), rnd([axis, top + 13])], 'bun'] };
       tracks.push({ bone: 'bun', prop: 'rotate', amp: 0.8, period: 4.0, phase: 0.2 });
     } else {
@@ -894,8 +1057,17 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
       const segs: Segment[] = [['head', rnd(head), rnd([axis, top + 13])]];
       for (const [s, sgn] of SIDES) {
         const y0 = eyeY;
-        const pts: Array<[number, number]> = [0, 1, 2].map((k) => [or(bandX(mask, y0 + (k * (bot - y0)) / 4, { side: s, axis }), axis), y0 + (k * (bot - y0)) / 4]);
-        C(`hairback_${s}`, 'head', pts, [pts[pts.length - 1][0], bot - 4]);
+        const why: Placement[] = [];
+        const pts: Array<[number, number]> = [0, 1, 2].map((k) => {
+          const w = placement('mask', `link ${k}: the centroid x of ${p.name}'s art on the ${s} side of the eye axis, in the 24-row band at ${k}/4 of the way from the eye line to its bottom`, {
+            parts: [p.name],
+            frame: ['eye_axis', 'eye_line'],
+            constants: [konst('share_eye_line_to_bottom', k / 4)],
+          });
+          why.push(w);
+          return [orSaid(bandX(mask, y0 + (k * (bot - y0)) / 4, { side: s, axis }), axis, 'no art on that side in the band: the eye axis x', w), y0 + (k * (bot - y0)) / 4];
+        });
+        C(`hairback_${s}`, 'head', pts, [pts[pts.length - 1][0], bot - 4], why, placement('mask', `4 px above the bottom of ${p.name}, at the last link's x`, { parts: [p.name], bones: [`hairback_${s}2`] }));
         segs.push(`hairback_${s}`);
         tracks.push({ chain: `hairback_${s}`, amps: [sgn * 0.6, sgn * 1.4, sgn * 2.4], period: 4.0, phase: 0.2, lag: 0.08 });
       }
@@ -916,7 +1088,27 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
       ['bang_l', 0.75, 10],
     ] as const) {
       const x0 = fx0 + f * fw;
-      C(tag, 'head', [[x0, top + 13], [x0 + dx, (top + 13 + browY) / 2 + 6]], [x0 + dx * 1.8, browY + 19]);
+      C(
+        tag,
+        'head',
+        [
+          [x0, top + 13],
+          [x0 + dx, (top + 13 + browY) / 2 + 6],
+        ],
+        [x0 + dx * 1.8, browY + 19],
+        [
+          placement('ratio', `link 0: ${f} of the face box's width from its left, 13 px below the top of ${p.name}`, { parts: [p.name], frame: ['face_box'], constants: [konst('of_face_width', f), konst('px_below_part_top', 13)] }),
+          placement('ratio', `link 1: ${dx} px across from link 0, 6 px below half way from link 0's row to the brow line (0.18 face heights above the eye line)`, {
+            parts: [p.name],
+            frame: ['face_box', 'eye_line'],
+            constants: [konst('px_across', dx), konst('px_below_half_way', 6), konst('brow_line_face_heights_above_eye_line', 0.18)],
+          }),
+        ],
+        placement('ratio', `${dx * 1.8} px across from link 0 (1.8 times link 1's offset), 19 px below the brow line (0.18 face heights above the eye line)`, {
+          frame: ['face_box', 'eye_line'],
+          constants: [konst('times_link_1_offset', 1.8), konst('px_below_brow_line', 19), konst('brow_line_face_heights_above_eye_line', 0.18)],
+        }),
+      );
       segs.push(tag);
       const a = tag === 'bang_c' ? 0.8 : 1.0;
       tracks.push({ chain: tag, amps: [a, Number((a * 2.2).toFixed(4))], period: 4.0, phase: 0.18, lag: 0.1 });
@@ -942,9 +1134,19 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
           cm.data[j] = comp.data[j] | (mask.data[j] & (Math.abs(x - st.cx) < 25 ? 1 : 0));
         }
       }
-      const pts: Array<[number, number]> = [0, 1, 2, 3].map((j) => [or(bandX(cm, y0 + (j * span) / 4), st.cx), y0 + (j * span) / 4]);
       const name = k === 0 ? 'lock' : `lock${k}_`;
-      C(name, 'head', pts, [or(bandX(comp, bot - 6), pts[pts.length - 1][0]), bot + 5]);
+      const why: Placement[] = [];
+      const pts: Array<[number, number]> = [0, 1, 2, 3].map((j) => {
+        const w = placement(
+          'mask',
+          `link ${j}: the centroid x of the strand of ${p.name} that hangs below the chin (with ${p.name}'s art within 25 px of the strand's centre x), in the 24-row band at ${j}/4 of the way from 0.22 face heights above the eye line to 5 px below the strand's bottom`,
+          { parts: [p.name], frame: ['face_box', 'eye_line'], constants: [konst('share_of_span', j / 4), konst('face_heights_above_eye_line', 0.22)] },
+        );
+        why.push(w);
+        return [orSaid(bandX(cm, y0 + (j * span) / 4), st.cx, "no art in the band: the strand's centre x", w), y0 + (j * span) / 4];
+      });
+      const lockTip = placement('mask', `5 px below the strand's bottom, at the strand's centroid x in the band 6 px above its bottom`, { parts: [p.name] });
+      C(name, 'head', pts, [orSaid(bandX(comp, bot - 6), pts[pts.length - 1][0], "no art in the band: the last link's x", lockTip), bot + 5], why, lockTip);
       segs.push(name);
       tracks.push({ chain: name, amps: [0.8, 1.6, 2.6, 3.6], period: 4.0, phase: 0.16, lag: 0.07 });
       k++;
@@ -1001,14 +1203,23 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
         const dropped: Strand[] = [];
         strands.forEach((st, k) => {
           const h = st.bottom - st.top + 1;
-          const pts: Array<[number, number]> = [st.top, st.top + h * STRAND_LINK_AT].map((y) => [or(bandX(st.mask, y), st.x), y]);
-          const tip: [number, number] = [or(bandX(st.mask, st.bottom), pts[pts.length - 1][0]), st.bottom];
+          const why: Placement[] = [];
+          const pts: Array<[number, number]> = [st.top, st.top + h * STRAND_LINK_AT].map((y, i) => {
+            const w = placement('mask', i === 0 ? `link 0: the strand's centroid x in the band at its top row` : `link 1: the strand's centroid x in the band ${STRAND_LINK_AT} of its height below its top row`, {
+              parts: [p.name],
+              constants: i === 0 ? [] : [konst('of_strand_height', STRAND_LINK_AT)],
+            });
+            why.push(w);
+            return [orSaid(bandX(st.mask, y), st.x, "no art in the band: the strand's centre x", w), y];
+          });
+          const tipWhy = placement('mask', "the strand's bottom row, at its centroid x in the band there", { parts: [p.name] });
+          const tip: [number, number] = [orSaid(bandX(st.mask, st.bottom), pts[pts.length - 1][0], "no art in the band: the last link's x", tipWhy), st.bottom];
           if (!onArt([...pts, tip])) {
             dropped.push(st);
             return;
           }
           const name = `${bname}_strand${k}_`;
-          C(name, parent, pts, tip);
+          C(name, parent, pts, tip, why, tipWhy);
           // The head stub at the strand's top is what an all-pendant part hangs from, as the single pendant chain's mesh does.
           if (parent === par) segs.push(['head', rnd([pts[0][0], st.top - 7]), rnd([pts[0][0], st.top + 1])]);
           segs.push(name);
@@ -1028,16 +1239,22 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
       }
       if (allPendant) {
         // All pendant: a chain from the part's own top.
-        const cols = colsIn(0, Math.min(p.h, Math.max(4, Math.floor(rows.length / 5))));
+        const topRows = Math.min(p.h, Math.max(4, Math.floor(rows.length / 5)));
+        const cols = colsIn(0, topRows);
         const x = p.x + (cols.length > 0 ? npMean(cols) : p.w / 2);
+        const topWhy = placement('mask', `the mean opaque column of ${p.name}'s top ${topRows} rows, 3 px below its top`, {
+          parts: [p.name],
+          constants: [konst('px_below_top', 3)],
+          fallback: cols.length > 0 ? null : 'no opaque column in those rows: the centre x of its box',
+        });
         if (!onArt([[x, p.y + 3]])) {
-          B(bname, par, [x, p.y + 3]);
+          B(bname, par, [x, p.y + 3], topWhy);
           delete regions[p.name];
           meshes[p.name] = { grid: g, r, segments: [[bname, rnd([x, p.y]), rnd([x, p.y + p.h])]] };
           notes.push(`${p.name}: pendant top is off the art -> rigid bone, no chain`);
           continue;
         }
-        C(bname, par, [[x, p.y + 3]], [x, p.y + p.h - 1]);
+        C(bname, par, [[x, p.y + 3]], [x, p.y + p.h - 1], [topWhy], placement('mask', `the bottom row of ${p.name}, at link 0's x`, { parts: [p.name] }));
         meshes[p.name] = { grid: g, r, segments: [['head', rnd([x, p.y - 7]), rnd([x, p.y + 1])], bname] };
         tracks.push({ chain: bname, amps: [5.0], period: 2.0, phase: 0.25, lag: 0.0 });
         continue;
@@ -1065,7 +1282,18 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
       const near = Math.abs(px - xl) < Math.abs(px - xr) ? xl : xr;
       const far = near === xl ? xr : xl;
       const start: [number, number] = [near + (px - near) * 0.6 + (near === xl ? 47 : -47), cy];
-      B(bname, par, start, [far, cy]);
+      B(
+        bname,
+        par,
+        start,
+        placement('mask', `0.6 of the way from the near edge of ${p.name}'s body to its pendant's mean opaque column, 47 px further in, at the body's mean opaque row`, {
+          parts: [p.name],
+          constants: [konst('share_near_edge_to_pendant', 0.6), konst('px_further_in', 47)],
+          fallback: lowCols.length > 0 ? null : "no opaque pixel in the pendant's lower half: the centre x of its box as the pendant's column",
+        }),
+        [far, cy],
+        placement('mask', `the far edge of ${p.name}'s body, at its mean opaque row`, { parts: [p.name] }),
+      );
       // The body's two fixed segments come first and stay: they are what holds the body still while a strand swings.
       const segs: Segment[] = [
         [bname, rnd(start), rnd([far, cy])],
@@ -1092,7 +1320,21 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
         notes.push(`${p.name}: pendant chain would run off the art -> no tassel chain (add one by hand if it swings)`);
       } else if (pendH >= PENDANT_MIN_ROWS) {
         const y0 = p.y + j;
-        C(`${bname}_tassel`, bname, [[px, y0], [px, y0 + pendH * 0.45]], [px, p.y + p.h - 1]);
+        const lowFallback = lowCols.length > 0 ? null : "no opaque pixel in the pendant's lower half: the centre x of its box";
+        C(
+          `${bname}_tassel`,
+          bname,
+          [
+            [px, y0],
+            [px, y0 + pendH * 0.45],
+          ],
+          [px, p.y + p.h - 1],
+          [
+            placement('mask', `link 0: the mean opaque column of the lower half of ${p.name}'s pendant, at the pendant's top row`, { parts: [p.name], fallback: lowFallback }),
+            placement('mask', `link 1: the same column, 0.45 of the pendant's height below its top row`, { parts: [p.name], constants: [konst('of_pendant_height', 0.45)], fallback: lowFallback }),
+          ],
+          placement('mask', `the bottom row of ${p.name}, at the same column`, { parts: [p.name], fallback: lowFallback }),
+        );
         segs.push(`${bname}_tassel`);
         tracks.push({ chain: `${bname}_tassel`, amps: [...STRAND_AMPS], period: 2.0, phase: 0.2, lag: 0.12 });
       }
@@ -1142,7 +1384,8 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
     // the upper arm instead of down the screen.
     for (const a of armPlan.arms) {
       const sgn = a.side === 'r' ? 1 : -1;
-      C(`sleeve_${a.side}`, 'chest', [a.shoulder, a.elbow], a.wrist);
+      const used = (n: KeypointName): Placement => placement('joint', `the ${n} joint, ${usedAs((joints as RigJoints).joints[n])}`, { joints: [jointRef(n)] });
+      C(`sleeve_${a.side}`, 'chest', [a.shoulder, a.elbow], a.wrist, [used(`${a.side}_shoulder`), used(`${a.side}_elbow`)], used(`${a.side}_wrist`));
       tracks.push({ chain: `sleeve_${a.side}`, amps: [sgn * 0.2, sgn * 0.6], period: 4.0, phase: 0.22 + (a.side === 'l' ? 0.05 : 0), lag: 0.08 });
     }
     for (const p of hw) {
@@ -1168,8 +1411,17 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
       const bot = ys[ys.length - 1];
       const y0 = top + 15;
       const span = bot - 6 - y0;
-      const pts: Array<[number, number]> = [0, 1, 2].map((k) => [or(bandX(mask, y0 + (k * span) / 3), center(p)[0]), y0 + (k * span) / 3]);
-      C(`sleeve_${s}`, 'chest', pts, [or(bandX(mask, bot - 6), pts[pts.length - 1][0]), bot - 3]);
+      const why: Placement[] = [];
+      const pts: Array<[number, number]> = [0, 1, 2].map((k) => {
+        const w = placement('mask', `link ${k}: the centroid x of ${p.name}'s art in the 24-row band at ${k}/3 of the way from 15 px below its top row to 6 px above its bottom row`, {
+          parts: [p.name],
+          constants: [konst('share_of_span', k / 3)],
+        });
+        why.push(w);
+        return [orSaid(bandX(mask, y0 + (k * span) / 3), center(p)[0], 'no art in the band: the centre x of its box', w), y0 + (k * span) / 3];
+      });
+      const tipWhy = placement('mask', `3 px above ${p.name}'s bottom row, at its centroid x in the band 6 px above that row`, { parts: [p.name] });
+      C(`sleeve_${s}`, 'chest', pts, [orSaid(bandX(mask, bot - 6), pts[pts.length - 1][0], "no art in the band: the last link's x", tipWhy), bot - 3], why, tipWhy);
       tracks.push({ chain: `sleeve_${s}`, amps: [sgn * 0.2, sgn * 0.6, sgn * 1.2], period: 4.0, phase: 0.22 + (s === 'l' ? 0.05 : 0), lag: 0.08 });
       const [g, r] = gridR(p);
       const sx = pts[0][0];
@@ -1187,9 +1439,21 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
       const span = bot - chest[1];
       // The outer half of the sleeve on that side, away from the axis.
       const pts: Array<[number, number]> = [];
+      const why: Placement[] = [];
+      const hwNames = hw.map((q) => q.name);
       for (let k = 0; k < 3; k++) {
         const y = chest[1] + (k * span) / 3;
         const xs = sideOf(colsAny(mask, pyInt(y) - 12, pyInt(y) + 12), s, axis);
+        const share = k === 0 ? 0.22 : 0.5 * (1 - 0.35 * k);
+        why.push(
+          placement('mask', `link ${k}: ${share} of the way from the outer to the inner edge of the handwear on the ${s} side of the eye axis, in the 24-row band at ${k}/3 of the way from chest's y down to the handwear's bottom row`, {
+            parts: hwNames,
+            bones: ['chest'],
+            frame: ['eye_axis'],
+            constants: [konst('share_outer_to_inner', share), konst('share_of_span', k / 3)],
+            fallback: xs.length === 0 ? 'no handwear on that side in the band: the eye axis x' : null,
+          }),
+        );
         if (xs.length === 0) {
           pts.push([axis, y]);
           continue;
@@ -1201,7 +1465,18 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
       }
       const xs = sideOf(colsAny(mask, bot - 12, bot), s, axis);
       const tipx = xs.length > 0 ? (xs[0] + xs[xs.length - 1]) / 2 : pts[pts.length - 1][0];
-      C(`sleeve_${s}`, 'chest', pts, [tipx, bot - 3]);
+      C(
+        `sleeve_${s}`,
+        'chest',
+        pts,
+        [tipx, bot - 3],
+        why,
+        placement('mask', `3 px above the handwear's bottom row, half way across its art on the ${s} side of the eye axis in the bottom 12 rows`, {
+          parts: hwNames,
+          frame: ['eye_axis'],
+          fallback: xs.length > 0 ? null : "no handwear on that side in those rows: the last link's x",
+        }),
+      );
       segs.push(`sleeve_${s}`);
       tracks.push({ chain: `sleeve_${s}`, amps: [sgn * 0.25, sgn * 0.9, sgn * 1.8], period: 4.0, phase: 0.22 + (s === 'l' ? 0.05 : 0), lag: 0.08 });
     }
@@ -1232,21 +1507,37 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
     const near = dilate(mask, 31);
     for (const [s, sgn] of SIDES) {
       const pts: Array<[number, number]> = [];
+      const why: Placement[] = [];
       for (let k = 0; k < 4; k++) {
         const y = top + (k * (bot - 0.1 * (bot - top) - top)) / 3.3;
         const xs = sideOf(colsAny(mask, pyInt(y) - 12, pyInt(y) + 12), s, axis);
         const outer = xs.length > 0 ? (s === 'r' ? xs[0] : xs[xs.length - 1]) : axis;
         pts.push([outer + 0.2 * (axis - outer), y]);
+        why.push(
+          placement('mask', `link ${k}: 0.2 of the way from ${p.name}'s outer edge on the ${s} side to the eye axis, in the 24-row band ${k}/3.3 of the way from 0.3 face heights above chest's y to 0.1 of that span above its bottom`, {
+            parts: [p.name],
+            bones: ['chest'],
+            frame: ['face_box', 'eye_axis'],
+            constants: [konst('share_edge_to_axis', 0.2), konst('face_heights_above_chest', 0.3), konst('step_divisor', 3.3), konst('share_of_span_above_bottom', 0.1)],
+            fallback: xs.length > 0 ? null : 'no art on that side in the band: the eye axis x',
+          }),
+        );
       }
       // The flare just above the hem.
       const xs2 = sideOf(colsAny(mask, bot - 60, bot - 20), s, axis);
       const o2 = xs2.length > 0 ? (s === 'r' ? xs2[0] : xs2[xs2.length - 1]) : pts[pts.length - 1][0];
       const tip: [number, number] = [o2 + 0.15 * (axis - o2), bot - 5];
+      const tipWhy = placement('mask', `5 px above ${p.name}'s bottom, 0.15 of the way from its outer edge on the ${s} side (rows 60 to 20 px above its bottom) to the eye axis`, {
+        parts: [p.name],
+        frame: ['eye_axis'],
+        constants: [konst('share_edge_to_axis', 0.15)],
+        fallback: xs2.length > 0 ? null : "no art on that side in those rows: the last link's x as the edge",
+      });
       if (!pts.every((q) => isOn(near, q[0], q[1]))) {
         notes.push(`robe_${s}: a link falls off ${p.name} (the layer narrows above its hem) -> dropped`);
         continue;
       }
-      C(`robe_${s}`, 'chest', pts, tip);
+      C(`robe_${s}`, 'chest', pts, tip, why, tipWhy);
       segs.push(`robe_${s}`);
       tracks.push({ chain: `robe_${s}`, amps: [sgn * 0.12, sgn * 0.3, sgn * 0.6, sgn * 1.1], period: 4.0, phase: 0.25 + (s === 'l' ? 0.04 : 0), lag: 0.07 });
     }
@@ -1268,8 +1559,18 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
       ['skirt_c', 0.5, 0.34],
       ['skirt_l', 0.7, 0.38],
     ] as const) {
-      const pts: Array<[number, number]> = [0, 1, 2].map((k) => [or(bandX(mask, y0 + (k * (bot - 4 - y0)) / 3, { frac: f }), p.x + f * p.w), y0 + (k * (bot - 4 - y0)) / 3]);
-      C(tag, 'hip', pts, [or(bandX(mask, bot - 10, { frac: f }), pts[pts.length - 1][0]), bot - 4]);
+      const why: Placement[] = [];
+      const pts: Array<[number, number]> = [0, 1, 2].map((k) => {
+        const w = placement('mask', `link ${k}: ${f} of the way across ${p.name}'s art in the 24-row band at ${k}/3 of the way from 20 px below hip's y to 4 px above its bottom`, {
+          parts: [p.name],
+          bones: ['hip'],
+          constants: [konst('share_across', f), konst('share_of_span', k / 3)],
+        });
+        why.push(w);
+        return [orSaid(bandX(mask, y0 + (k * (bot - 4 - y0)) / 3, { frac: f }), p.x + f * p.w, `no art in the band: ${f} of its box's width`, w), y0 + (k * (bot - 4 - y0)) / 3];
+      });
+      const tipWhy = placement('mask', `4 px above ${p.name}'s bottom, ${f} of the way across its art in the band 10 px above its bottom`, { parts: [p.name], constants: [konst('share_across', f)] });
+      C(tag, 'hip', pts, [orSaid(bandX(mask, bot - 10, { frac: f }), pts[pts.length - 1][0], "no art in the band: the last link's x", tipWhy), bot - 4], why, tipWhy);
       segs.push(tag);
       tracks.push({ chain: tag, amps: [0.15, 0.35, 0.7], period: 4.0, phase: ph, lag: 0.07 });
     }
@@ -1302,7 +1603,7 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
       }),
     );
   }
-  return { bones, meshes, regions, motion: blink === undefined ? { duration: 4.0, tracks } : { duration: 4.0, tracks, blink }, notes };
+  return { proposal: { bones, meshes, regions, motion: blink === undefined ? { duration: 4.0, tracks } : { duration: 4.0, tracks, blink }, notes }, basis: { frame, bones: records } };
 }
 
 // ---------------------------------------------------------------------------
@@ -1642,6 +1943,35 @@ export interface LintResult {
   missingTorsoBones: string[];
   /** Present only under `--keypoints`: the rule set that read the torso and the chains. */
   basis?: LintBasis;
+  /** One record per bone of the spec, in its bone order (chain links as `<chain><i>`): which checks read it, or why none did (issue #86). */
+  coverage: BoneCoverage[];
+}
+
+/** What lint's coverage says of a bone: read and named by no LINT line, read and named by one, or read by no check. */
+export type CoverageOutcome = 'checked, clean' | 'checked, LINT' | 'not checked';
+
+export const COVERAGE_OUTCOMES: readonly CoverageOutcome[] = ['checked, clean', 'checked, LINT', 'not checked'];
+
+/**
+ * One bone's coverage (issue #86). `read` names each check that read it — a
+ * finding kind, and for the off-art check the mesh — and `lint` counts the
+ * LINT lines that name it. With `read` empty, `why` says why no check did:
+ * its role, the kind of segment that names it, a mesh that names no part, a
+ * torso bone absent, a chain the joints declare no line for. A role is
+ * {@link configRoles}' — read off the spec, never off a name — and `null`
+ * only when the spec handed to `lint` carries no `regions` and `motion`.
+ */
+export interface BoneCoverage {
+  bone: string;
+  role: RoleOf | null;
+  read: string[];
+  lint: number;
+  why: string[];
+}
+
+/** A coverage record's outcome. */
+export function coverageOutcome(c: BoneCoverage): CoverageOutcome {
+  return c.read.length === 0 ? 'not checked' : c.lint > 0 ? 'checked, LINT' : 'checked, clean';
 }
 
 /**
@@ -1668,12 +1998,29 @@ export interface LintResult {
  * chain is read along its side's shoulder -> wrist: every link and the tip
  * must fall further along that line than the one before. No relation carries
  * a threshold; each is a definition. The off-art check is unchanged.
+ *
+ * Issue #86: beside the findings, `coverage` holds one record per bone of the
+ * spec — the checks that read it, recorded as each check runs, or why none
+ * did (its role, the segment that names it, a region, a mesh naming no part,
+ * a torso bone absent, a chain the joints declare no line for). No check is
+ * widened: an off-art check on single bones and explicit segments' ends is
+ * not run, and the coverage says those bones are not checked.
  */
-export function lint(P: PartSet, spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>> }, joints?: RigJoints): LintResult {
+export function lint(
+  P: PartSet,
+  spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>>; regions?: Readonly<Record<string, string>>; motion?: SkeletonSections['motion'] },
+  joints?: RigJoints,
+): LintResult {
   const { byName } = expand(spec.bones);
   const parts = new Map(P.recs.map((p) => [p.name, p]));
   const findings: LintFinding[] = [];
   const unknownMeshes: string[] = [];
+  // Issue #86: which check read which bone, recorded where each check reads it.
+  const read = new Map<string, string[]>([...byName.keys()].map((n) => [n, []]));
+  const readBy = (n: string, check: string): void => {
+    const list = read.get(n);
+    if (list !== undefined && !list.includes(check)) list.push(check);
+  };
   for (const [mname, m] of Object.entries(spec.meshes)) {
     const part = parts.get(mname);
     if (part === undefined) {
@@ -1690,6 +2037,7 @@ export function lint(P: PartSet, spec: { bones: readonly BoneEntry[]; meshes: Re
       const b = byName.get(n) as ExpandedBone;
       const x = pyInt(b.x);
       const y = pyInt(b.y);
+      readBy(n, `off-art on mesh ${pyRepr(mname)}`);
       if (!isOn(mask, x, y)) findings.push({ kind: 'off-art', bone: n, mesh: mname, at: [x, y] });
     }
   }
@@ -1708,6 +2056,9 @@ export function lint(P: PartSet, spec: { bones: readonly BoneEntry[]; meshes: Re
     const v: [number, number] = [T.hips[0] - T.neck[0], T.hips[1] - T.neck[1]];
     const L2 = v[0] * v[0] + v[1] * v[1];
     const along = (p: readonly [number, number]): number => ((p[0] - T.neck[0]) * v[0] + (p[1] - T.neck[1]) * v[1]) / L2;
+    if (chest !== null) readBy('chest', 'chest-not-between');
+    if (hip !== null && chest !== null) for (const n of ['hip', 'chest']) readBy(n, 'hip-not-past-chest');
+    if (hip !== null) readBy('hip', 'hip-nearer-neck');
     if (chest !== null && !(along(chest) > 0 && along(chest) < 1)) findings.push({ kind: 'chest-not-between', chest, t: along(chest), neck: T.neck, hips: T.hips });
     if (hip !== null && chest !== null && along(hip) <= along(chest)) findings.push({ kind: 'hip-not-past-chest', hip, chest, tHip: along(hip), tChest: along(chest) });
     if (hip !== null) {
@@ -1716,6 +2067,8 @@ export function lint(P: PartSet, spec: { bones: readonly BoneEntry[]; meshes: Re
       if (dNeck < dHips) findings.push({ kind: 'hip-nearer-neck', hip, neck: T.neck, hips: T.hips, dNeck, dHips });
     }
   } else {
+    if (hip !== null && chest !== null) for (const n of ['hip', 'chest']) readBy(n, 'hip-not-below-chest');
+    if (hip !== null) readBy('hip', 'hip-too-high');
     if (hip !== null && chest !== null && hip[1] <= chest[1]) findings.push({ kind: 'hip-not-below-chest', hip, chest });
     if (hip !== null) {
       const figure = figureExtent(P);
@@ -1731,13 +2084,110 @@ export function lint(P: PartSet, spec: { bones: readonly BoneEntry[]; meshes: Re
       const e = spec.bones.find((b) => 'chain' in b && b.chain === c.chain);
       if (e === undefined || !('chain' in e)) continue;
       const pts: Array<[string, Point]> = [...e.points.map((q, i): [string, Point] => [`${c.chain}${i}`, q]), [`${c.chain} tip`, e.tip]];
+      e.points.forEach((_, i) => readBy(`${c.chain}${i}`, `chain-not-advancing along ${c.joints[0]} -> ${c.joints[1]}`));
       const proj = pts.map(([, q]) => ((q[0] - from[0]) * (to[0] - from[0]) + (q[1] - from[1]) * (to[1] - from[1])) / len);
       for (let i = 1; i < pts.length; i++) {
         if (proj[i] <= proj[i - 1]) findings.push({ kind: 'chain-not-advancing', point: pts[i][0], at: pts[i][1], t: proj[i], previous: pts[i - 1][0], tPrevious: proj[i - 1], fromJoint: c.joints[0], toJoint: c.joints[1] });
       }
     }
   }
-  return basis === undefined ? { findings, unknownMeshes, missingTorsoBones } : { findings, unknownMeshes, missingTorsoBones, basis };
+  const coverage = lintCoverage(spec, byName, read, findings, unknownMeshes, basis);
+  return basis === undefined ? { findings, unknownMeshes, missingTorsoBones, coverage } : { findings, unknownMeshes, missingTorsoBones, basis, coverage };
+}
+
+/** The bones a finding names: the off-art link; hip and chest for a relation between them; a chain's last link for its tip. */
+function findingBones(f: LintFinding, bones: readonly BoneEntry[]): string[] {
+  switch (f.kind) {
+    case 'off-art':
+      return [f.bone];
+    case 'hip-not-below-chest':
+    case 'hip-not-past-chest':
+      return ['hip', 'chest'];
+    case 'hip-too-high':
+    case 'hip-nearer-neck':
+      return ['hip'];
+    case 'chest-not-between':
+      return ['chest'];
+    case 'chain-not-advancing': {
+      if (!f.point.endsWith(' tip')) return [f.point];
+      const chain = f.point.slice(0, -' tip'.length);
+      const e = bones.find((b) => 'chain' in b && b.chain === chain);
+      return e !== undefined && 'chain' in e ? [`${chain}${e.points.length - 1}`] : [];
+    }
+  }
+}
+
+/**
+ * Per bone: the checks that read it (recorded in `lint` as each check ran),
+ * the LINT lines naming it, and — for a bone no check read — why, from what
+ * names it in the spec. The off-art check reads only the links of a chain a
+ * string segment names, so a single bone named as a segment (it has no
+ * links) and an explicit `[bone, from, to]` segment (a line, not an origin)
+ * are not read, and a region or a still piece binds its bone rigidly with
+ * nothing to read. A control or a target binds nothing, so may sit off the
+ * art by design: its role is the reason, never a finding.
+ */
+function lintCoverage(
+  spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>>; regions?: Readonly<Record<string, string>>; motion?: SkeletonSections['motion'] },
+  byName: ReadonlyMap<string, ExpandedBone>,
+  read: ReadonlyMap<string, string[]>,
+  findings: readonly LintFinding[],
+  unknownMeshes: readonly string[],
+  basis: LintBasis | undefined,
+): BoneCoverage[] {
+  const roles =
+    spec.regions !== undefined && spec.motion !== undefined ? configRoles({ bones: [...spec.bones], meshes: { ...spec.meshes }, regions: { ...spec.regions }, motion: spec.motion }) : null;
+  const chains = new Map<string, number>();
+  for (const e of spec.bones) if ('chain' in e) chains.set(e.chain, e.points.length);
+  const linked = (n: string): string | null => {
+    for (const [c, k] of chains) if (n.startsWith(c) && /^[0-9]+$/.test(n.slice(c.length)) && Number(n.slice(c.length)) < k) return c;
+    return null;
+  };
+  const named = new Map<string, number>();
+  for (const f of findings) for (const b of findingBones(f, spec.bones)) named.set(b, (named.get(b) ?? 0) + 1);
+  const out: BoneCoverage[] = [];
+  for (const bone of byName.keys()) {
+    const r = read.get(bone) ?? [];
+    const role = roles === null ? null : (roles.get(bone) ?? null);
+    const why: string[] = [];
+    if (r.length === 0) {
+      const chain = linked(bone);
+      if (role === null) why.push('its role is not read: the spec handed to lint carries no regions and motion');
+      else if (role.role !== 'deforms') {
+        const byDesign = role.role === 'control' || role.role === 'target' ? `, and a ${role.role} may sit off the art by design` : '';
+        why.push(`its role is ${role.role} (${role.why}): it binds nothing, so there is no art to hold it to${byDesign}`);
+      }
+      // What names it, grouped by kind: one reason per kind, every place named.
+      const explicit: string[] = [];
+      const single: string[] = [];
+      const partless: string[] = [];
+      for (const [mname, m] of Object.entries(spec.meshes)) {
+        m.segments.forEach((sp, i) => {
+          const at = `meshes.${mname}.segments[${i}]`;
+          if (typeof sp !== 'string') {
+            if (sp[0] === bone) explicit.push(at);
+          } else if (sp === bone && chain === null) single.push(at);
+          else if (chain !== null && sp === chain && unknownMeshes.includes(mname)) partless.push(`${at} (mesh ${JSON.stringify(mname)})`);
+        });
+      }
+      const regions = Object.entries(spec.regions ?? {}).filter(([, b]) => b === bone).map(([part]) => `regions.${part}`);
+      const stills = Object.entries(spec.motion?.blink?.still ?? {}).filter(([, st]) => st.bone === bone).map(([part]) => `motion.blink.still.${part}`);
+      const s = (list: readonly string[], one: string, many: string): string => (list.length === 1 ? one : many);
+      if (single.length > 0) why.push(`named as a single bone by ${single.join(', ')}: a single bone has no links, and the off-art check reads only the links <segment><digits> of a chain`);
+      if (explicit.length > 0) {
+        why.push(`bound by the explicit [bone, from, to] ${s(explicit, 'segment', 'segments')} ${explicit.join(', ')}: a segment is a line, not an origin, and the off-art check reads origins`);
+      }
+      if (partless.length > 0) why.push(`its chain is named by ${partless.join(', ')}, which ${s(partless, 'names', 'name')} no part in parts.json`);
+      if (regions.length > 0) why.push(`bound rigidly by ${regions.join(', ')}: no check reads a region's bone`);
+      if (stills.length > 0) why.push(`bound rigidly by ${stills.join(', ')}: no check reads a still piece's bone`);
+      if (bone === 'chest' && !byName.has('hip')) why.push('the torso checks read chest beside a single bone "hip", which the bones do not hold');
+      const c = basis?.chains.find((x) => x.chain === chain && x.line === null);
+      if (c !== undefined) why.push(`lint chain ${c.chain}: not read against the joints (${c.why})`);
+      if (why.length === 0) why.push('no mesh segment names it as a chain link of a mesh with a part, and no torso check reads it');
+    }
+    out.push({ bone, role, read: [...r], lint: named.get(bone) ?? 0, why });
+  }
+  return out;
 }
 
 /** The sleeve chains a keypoint file can be read against, and the joints each runs between. */

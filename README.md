@@ -230,7 +230,8 @@ spine-parts assemble --source painting.png --full layers/full --head layers/head
 #       red is painting that no part holds, and no later gate can see it
 #    -> a large red hole neither run holds? add an assemble.patches entry (cut from the painting) and assemble again
 spine-parts propose --parts work/rig --source painting.png --out work
-#    -> proposal.json and render/landmarks.png; correct it, copy bones/meshes/regions/motion into config.json
+#    -> proposal.json, basis.json (what each bone rests on) and render/landmarks.png; per-bone coverage lines;
+#       correct it, copy bones/meshes/regions/motion into config.json
 spine-parts propose --parts work/rig --source painting.png --out work --from-config config.json
 #    -> LINT lines; exit 1 while any remain
 spine-parts build --config config.json --source painting.png --full layers/full --head layers/head --out out --loop
@@ -262,7 +263,7 @@ agent skill.
 | `assemble --propose-plan …` | propose `assemble.plan` and `extend_below_crop` from the two runs, leaving out an implausible layer with a note naming the rule |
 | `assemble --source --full --head --config --out [--seam] [--project]` | merge the two runs into rig-space parts, `parts.json`, the recomposite and its error map, and list the uncovered holes |
 | `propose --head-box --full <run> --canvas WxH` | propose `seethrough.head_box` from the full run, held inside the painting |
-| `propose --parts --source --out [--compare <config>]` | propose bones, meshes, regions and an idle; draw the overlay |
+| `propose --parts --source --out [--compare <config>]` | propose bones, meshes, regions and an idle; draw the overlay; print, per bone, which check read it or that none did and why (its role, its kind of segment), and write `basis.json` beside the proposal — what each bone rests on (a joint, a part's mask, a ratio, other bones) and, with `--compare`, whether the config's bone differs |
 | `propose … --keypoints <file> [--person <id>]` | read a posed figure's joints from one explicit file (space, image size, people, each joint observed, occluded or missing, its source): a joint with a position places the neck, hip, chest or a sleeve chain as given, a note says how every joint was used or which rule stood in, and LINT reads the torso and sleeves along the joints instead of by screen y ([AUTHORING §3](docs/AUTHORING.md)) |
 | `propose … --from-config <config>` | draw and LINT the config's current bones (by the joints too, given `--keypoints`) |
 | `compare --left <file> --right <file> [--map <bonemap.json>]` | compare two skeletons — a config, a proposal or a `rig.json` — bone by bone: origin, parent, tip, length and direction per pair, the bones neither side pairs, the required ones missing, and each side's roles read off the spec; no frame is guessed, and nothing pairs by resemblance (`propose --compare` reads origins only) |

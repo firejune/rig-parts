@@ -70,7 +70,10 @@ stage writes are the whole interface.
    figure*) so the neck, hip, chest and sleeves follow the pose and LINT reads
    the joints, not screen y. Never write a joint you did not get from an
    estimator or the painting: say `missing` and let the rule stand in.
-6. Correct against `render/landmarks.png` and `note:` lines; `propose …
+6. Correct against `render/landmarks.png` and `note:` lines; a
+   `coverage … not checked` line is a bone no check read (the line says why),
+   and `basis.json` beside the proposal says what each bone rests on — check
+   the `ratio` bones and any with a `fallback` first. `propose …
    --from-config config.json` (with the same `--keypoints`) until it prints no
    `LINT` line. `spine-parts compare
    --left work/proposal.json --right config.json` lists what the correction changed,
