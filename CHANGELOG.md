@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.0](https://github.com/firejune/spine-parts/compare/v0.14.0...v0.15.0) (2026-10-07)
+
+
+### Features
+
+* **examples:** add `scarf`, a third public example with a hanging scarf, its proposal unedited and four painting patches, held to its own build ([#122](https://github.com/firejune/spine-parts/issues/122)) ([98f76ca](https://github.com/firejune/spine-parts/commit/98f76ca94589e22e8cae8c7b0ea4478168cdf256)), closes [#108](https://github.com/firejune/spine-parts/issues/108) [#118](https://github.com/firejune/spine-parts/issues/118)
+
+
+### Bug Fixes
+
+* **assemble:** push back a fringe below alpha 250 where the painting shows the part beneath it, so another garment's colour no longer draws as a line down it ([#120](https://github.com/firejune/spine-parts/issues/120)) ([d1df125](https://github.com/firejune/spine-parts/commit/d1df12525f5796a338c2fee15545f465105f1521)), closes [#119](https://github.com/firejune/spine-parts/issues/119) [#108](https://github.com/firejune/spine-parts/issues/108)
+
 ## [0.14.0](https://github.com/firejune/spine-parts/compare/v0.13.1...v0.14.0) (2026-10-07)
 
 
