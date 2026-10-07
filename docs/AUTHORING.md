@@ -383,7 +383,26 @@ more vertices than the lattice at the same spacing (demo 1785 against 1431, samp
 `TEXTURE_STRETCH` 1.227 → 1.384, ceiling 1.927); the demo's gate is green but `check` refuses
 `TEXTURE_STRETCH` on its back hair (2.535: an edge of a contour triangle squeezed to 0.394 of
 its length in the idle), and with the back hair left on the lattice it passes 9 of 9 (1.388 →
-1.68). The mode is for a part with a declared soft region inside a stable surround; on the
+1.68).
+
+**Why the demo's back hair fails, and what passes** (issue #115). The squeezed edge is an
+outline edge 2 px long, near the hair's tip, whose two ends sit either side of a step in the
+weight field: one end keeps `hairback_l1` at 0.031, the other drops it, because a weight under
+0.03 is dropped (`src/weights.ts`, the reference's `>= 0.03`). `hairback_l1` and `hairback_r2`
+swing half a period apart, so that 0.03 step moves the two ends 1.2 px against each other — on
+a 2 px edge, a ratio of 0.394 to 1.639. Re-deriving every vertex's weights by the same formula
+with the drop and the four-bone cut both left out (an off-tree measurement, not a proposal)
+gives 1.316 on the contour mesh and 1.336 on the lattice: the lattice's 36 px edges hide the
+step, the outline's 2 px edges show it. Interior vertices cannot change it — an outline edge is
+in every triangulation — so the background spacing does not move the figure (36, 24, 18 and
+12 px all give 2.535). Raising `tolerance` to 1.5 removes every short edge across a step (the
+shortest is then 8.2 px) and the part passes (1.345; with every buildable demo part switched,
+`check` passes 9 of 9 at 1.68), at 313 vertices against the lattice's 268 and 18155.5 px²
+enclosed against 58346. The window is one value wide on this part: 1.25 keeps the same 2 px
+edge (2.535) and 1.75 leaves art uncovered at margin 1. No other switched part of either
+example comes near it: the largest length change on any edge under 5 px is 1.349 px on the
+back hair and 0.784 px at most elsewhere, where a 2 px edge fails once it shortens by
+0.962 px (2 − 2 / 1.926544). The mode is for a part with a declared soft region inside a stable surround; on the
 generated fixture of `tools/local_compare.ts` it reached a local shape error (0.336 px at most,
 63 vertices) the lattice reached only at grid 2, with 1025 vertices (re-run on the grown outline
 in #106, the same figures).
