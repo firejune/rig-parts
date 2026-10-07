@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/firejune/spine-parts/compare/v0.13.1...v0.14.0) (2026-10-07)
+
+
+### Features
+
+* **check:** a declared `seam` requirement measures how far two parts' art parts over an animation, naming the pair and the frame ([#116](https://github.com/firejune/spine-parts/issues/116)) ([6cae59a](https://github.com/firejune/spine-parts/commit/6cae59a306ba9eba9d1224b54635823838b61fe8))
+
 ## [0.13.1](https://github.com/firejune/spine-parts/compare/v0.13.0...v0.13.1) (2026-10-06)
 
 
