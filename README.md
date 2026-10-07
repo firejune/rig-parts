@@ -336,7 +336,11 @@ head parts — brows, lashes, irises, eye whites, ears, mouth — it takes 296 o
 where `core` takes 343. What neither rule takes is the fringe: a per-pixel
 classification of those parts under `visible`, recorded with the change that added
 the flag, puts 813 of `sample`'s 993 still-unprojected pixels and 879 of `demo`'s
-1,338 below alpha 250.
+1,338 below alpha 250. Where such a fringe keeps the stack off the painting and a part
+beneath holds the pixel in the painting's colour, `assemble` clears it instead, and
+the assemble line and `parts.json` say how many pixels, of which part, over which
+(AUTHORING §5, *The fringe push-back*; the figures in this section were measured
+before it, at v0.14.0).
 
 ## Requirements
 

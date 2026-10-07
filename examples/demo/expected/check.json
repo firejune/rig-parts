@@ -17,7 +17,7 @@
   "torso_parts": [
    "topwear"
   ],
-  "torso_heat_mean": 15.251,
+  "torso_heat_mean": 15.325,
   "torso_floor": 3.809,
   "feet_parts": [
    "shoes"
@@ -98,15 +98,15 @@
   "parts": [
    {
     "part": "bottomwear",
-    "root_px": 0.531,
-    "tip_px": 1.563,
-    "ratio": 2.945
+    "root_px": 0.522,
+    "tip_px": 1.562,
+    "ratio": 2.99
    },
    {
     "part": "sleeves",
-    "root_px": 0.531,
-    "tip_px": 1.974,
-    "ratio": 3.716
+    "root_px": 0.598,
+    "tip_px": 1.965,
+    "ratio": 3.287
    }
   ],
   "ratio_floor": 1.4725
@@ -118,22 +118,22 @@
     "face"
    ],
    "head_bone": "head",
-   "screen_px": 515,
-   "screen_heat_mean": 16.988,
-   "screen_heat_max": 170,
-   "head_frame_px": 228,
-   "head_frame_heat_mean": 1.321,
-   "head_frame_heat_max": 12.489,
-   "resampler_heat_mean": 1.146,
-   "mean_ceiling": 2.292
+   "screen_px": 522,
+   "screen_heat_mean": 17.761,
+   "screen_heat_max": 167,
+   "head_frame_px": 227,
+   "head_frame_heat_mean": 1.328,
+   "head_frame_heat_max": 14.013,
+   "resampler_heat_mean": 1.145,
+   "mean_ceiling": 2.291
   },
   "feet": {
    "parts": [
     "shoes"
    ],
-   "px": 3961,
-   "heat_mean": 1.622,
-   "heat_max": 64,
+   "px": 3958,
+   "heat_mean": 1.619,
+   "heat_max": 65,
    "mean_ceiling": 3.244
   }
  },
@@ -219,11 +219,11 @@
    {
     "slot": "hairpin",
     "triangles": 218,
-    "max_ratio": 1.141,
-    "max_at": "triangle 128 (vertices 114 115 127), edge 115-127, idle frame 12",
+    "max_ratio": 1.14,
+    "max_at": "triangle 127 (vertices 114 126 125), edge 114-126, idle frame 36",
     "min_ratio": 0.866,
-    "min_at": "triangle 128 (vertices 114 115 127), edge 115-127, idle frame 0",
-    "severity": 1.155
+    "min_at": "triangle 127 (vertices 114 126 125), edge 114-126, idle frame 0",
+    "severity": 1.154
    },
    {
     "slot": "hair_front",
@@ -238,7 +238,7 @@
  },
  "RECOMPOSITE_HOLES": {
   "status": "REPORTED",
-  "error_px": 11050,
+  "error_px": 10340,
   "uncovered_error_px": 1564,
   "hole_count": 453,
   "largest": {

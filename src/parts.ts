@@ -27,7 +27,13 @@
  * - `refused_drift_px` — of those, the ones refused because See-through's
  *   pixel and the painting's disagreed by more than the drift limit;
  * - `merged_px` — pixels brought in from the other run below the head crop;
- * - `seam_override_px` — pixels whose colour the seam pass replaced.
+ * - `seam_override_px` — pixels whose colour the seam pass replaced;
+ * - `fringe_pushed_back` — written only when not empty: the pixels of this
+ *   part's fringe (alpha below 250) made transparent because the painting
+ *   shows another part there, as `{part, px}` — the part beneath that holds
+ *   them at alpha >= 250 and how many (`src/assemble.ts` `pushBackFringe`,
+ *   issue #119). They are not in `opaque_px`: the counts above are taken
+ *   after it.
  *
  * ⭐ **A patch is 100 % source.** Every pixel of a `painting:` part is the
  * painting's own, so it is all visible (the painting shows it; nothing of it
@@ -81,6 +87,8 @@ export interface PartRecord {
   refused_drift_px: number;
   merged_px: number;
   seam_override_px: number;
+  /** Absent when the part had no fringe pushed back (and in a `parts.json` the reference wrote). */
+  fringe_pushed_back?: Array<{ part: string; px: number }>;
 }
 
 /** One listed hole: its area, its box in rig pixels, and the parts beside it (`src/assemble.ts` `uncoveredHoles`). */
@@ -137,11 +145,14 @@ export const PART_KEYS = [
   'refused_drift_px',
   'merged_px',
   'seam_override_px',
+  'fringe_pushed_back',
 ] as const;
-const COUNT_KEYS = PART_KEYS.slice(2) as ReadonlyArray<(typeof PART_KEYS)[number]>;
+/** The one part field that is not a count: a list of `{part, px}`, written only when it is not empty. */
+const FRINGE_KEY = 'fringe_pushed_back';
+const COUNT_KEYS = PART_KEYS.slice(2).filter((k) => k !== FRINGE_KEY) as ReadonlyArray<(typeof PART_KEYS)[number]>;
 /** The port's own counts: all three or none (none = a record the reference wrote). */
 export const VISIBILITY_KEYS = ['visible_px', 'occluded_px', 'visible_not_projected_px'] as const;
-const REQUIRED_KEYS = PART_KEYS.filter((k) => !(VISIBILITY_KEYS as readonly string[]).includes(k));
+const REQUIRED_KEYS = PART_KEYS.filter((k) => !(VISIBILITY_KEYS as readonly string[]).includes(k) && k !== FRINGE_KEY);
 
 /** Where a part came from: a See-through run and a v3 tag, or the painting itself for a patch. */
 export type From = { run: 'full' | 'head'; tag: string } | { run: 'painting'; patch: string };
@@ -168,7 +179,9 @@ export function serializeParts(file: PartsFile): string {
   const ordered = {
     rig_size: file.rig_size,
     scale_rig_per_source: file.scale_rig_per_source,
-    parts: file.parts.map((p) => Object.fromEntries(PART_KEYS.filter((k) => p[k] !== undefined).map((k) => [k, p[k]]))),
+    parts: file.parts.map((p) =>
+      Object.fromEntries(PART_KEYS.filter((k) => p[k] !== undefined).map((k) => [k, k === FRINGE_KEY ? (p.fringe_pushed_back ?? []).map((q) => ({ part: q.part, px: q.px })) : p[k]])),
+    ),
     ghost_px: Object.fromEntries(Object.keys(file.ghost_px).sort().map((k) => [k, file.ghost_px[k]])),
     ...(file.recomposite === undefined
       ? {}
@@ -277,12 +290,31 @@ function checkParts(raw: unknown, path: string): PartsFile {
           fail('PARTS_COUNTS_ADD_UP', `${label}`, `is a painting patch (${String(r.from)}), which is 100 % source; ${said}`);
         }
       }
+      if (FRINGE_KEY in r) {
+        const list = r[FRINGE_KEY];
+        const ok =
+          Array.isArray(list) &&
+          list.length > 0 &&
+          list.every((q) => typeof q === 'object' && q !== null && !Array.isArray(q) && Object.keys(q).join(',') === 'part,px' && typeof q.part === 'string' && q.part !== r.name && Number.isInteger(q.px) && q.px > 0);
+        if (!ok) fail('PARTS_FIELD_TYPE', `${label} field "${FRINGE_KEY}"`, `is ${show(list)}; a non-empty list of {"part": <another part's name>, "px": <a count above 0>} is required (the field is absent when no fringe was pushed back)`);
+      }
       if (sizeOk && [r.x, r.y, r.w, r.h].every((n) => Number.isInteger(n))) {
         const [W, H] = size as [number, number];
         const [x, y, w, h] = [r.x, r.y, r.w, r.h] as number[];
         if (w < 1 || h < 1 || x + w > W || y + h > H) {
           fail('PARTS_BOX_INSIDE_RIG', label, `box ${x},${y} ${w}x${h}; a non-empty box inside the ${W}x${H} rig is required`);
         }
+      }
+    });
+  }
+  if (Array.isArray(o.parts)) {
+    const named = new Set(o.parts.map((p) => (typeof p === 'object' && p !== null ? (p as Record<string, unknown>).name : undefined)));
+    o.parts.forEach((p) => {
+      if (typeof p !== 'object' || p === null || !Array.isArray((p as Record<string, unknown>)[FRINGE_KEY])) return;
+      const r = p as Record<string, unknown>;
+      for (const q of r[FRINGE_KEY] as unknown[]) {
+        const held = typeof q === 'object' && q !== null ? (q as Record<string, unknown>).part : undefined;
+        if (typeof held === 'string' && !named.has(held)) fail('PARTS_FROM_KNOWN', `part "${String(r.name)}" field "${FRINGE_KEY}"`, `names "${held}", which is no part of this file; the part that holds a pushed-back pixel is one of its parts`);
       }
     });
   }

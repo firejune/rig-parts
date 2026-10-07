@@ -86,8 +86,8 @@
  {
   "part": "hair_front",
   "vertices": 129,
-  "triangles": 202,
-  "hull": 54,
+  "triangles": 200,
+  "hull": 56,
   "bones": [
    "bang_c0",
    "bang_c1",

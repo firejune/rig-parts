@@ -51,7 +51,7 @@ import { encodeGif } from './gif.ts';
 import { CONTROL_SUFFIX } from './motion.ts';
 import type { PaletteError } from './palette.ts';
 import { type LayerSet, readLayers } from './layers.ts';
-import { readParts, writeParts } from './parts.ts';
+import { type PartRecord, readParts, writeParts } from './parts.ts';
 import { encodePngBytes, readPng, writePng } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
 import { readRequirements, type RequirementLine, summaryText } from './requirements.ts';
@@ -116,6 +116,22 @@ export interface AssembleOutputs {
 /** The error map's file name beside a recomposite: `recomposite_rig.png` -> `recomposite_error_rig.png`. */
 export const ERROR_MAP_FILE = 'recomposite_error_rig.png';
 
+/**
+ * One line per part whose fringe `pushBackFringe` cleared (issue #119), in
+ * draw order: `  fringe pushed back: "topwear" 723 px, where the painting
+ * shows "handwear_l" 460 px, "bottomwear" 257 px`. No line when no part had
+ * one, so a stack the rule did not touch prints what it printed before.
+ */
+export function fringeLines(parts: readonly PartRecord[]): string[] {
+  return parts
+    .filter((p) => p.fringe_pushed_back !== undefined && p.fringe_pushed_back.length > 0)
+    .map((p) => {
+      const list = p.fringe_pushed_back ?? [];
+      const n = list.reduce((a, q) => a + q.px, 0);
+      return `  fringe pushed back: "${p.name}" ${n} px, where the painting shows ${list.map((q) => `"${q.part}" ${q.px} px`).join(', ')}`;
+    });
+}
+
 /** Read, assemble, and write only after every refusal has had its chance. Throws a PartsError on a refusal, having written nothing. */
 export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, log: Log): AssembleResult {
   const src = readSource(input.source);
@@ -142,6 +158,7 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
         `unproj=${String(p.visible_not_projected_px).padStart(5)} drift=${String(p.refused_drift_px).padStart(5)} merged=${p.merged_px} seam=${p.seam_override_px}`,
     );
   }
+  for (const l of fringeLines(result.parts.parts)) log(l);
   const total = (k: 'opaque_px' | 'visible_px' | 'occluded_px' | 'source_px_taken' | 'visible_not_projected_px'): number => result.parts.parts.reduce((a, p) => a + (p[k] ?? 0), 0);
   const [op, vis, occ, taken, unproj] = (['opaque_px', 'visible_px', 'occluded_px', 'source_px_taken', 'visible_not_projected_px'] as const).map(total);
   const pct = (n: number): string => `${((100 * n) / op).toFixed(1)}%`;
