@@ -133,6 +133,12 @@ import {
   requirementsSummary,
   resolveRequirements,
   rigFacts,
+  placedArt,
+  type PosedAttachment,
+  resolveSeams,
+  type SeamFrame,
+  seamLine,
+  type SeamPair,
   stretchRequirementLine,
 } from './requirements.ts';
 import { alphaComposite } from './raster/composite.ts';
@@ -1292,6 +1298,7 @@ export function rigcFailed(what: string, call: RigcCall, lines: readonly string[
 export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome?: string, mode: PackMode = DEFAULT_PACK_MODE, source?: string, requirements?: string): CheckReport {
   let inp: CheckInputs;
   let reqFile: RequirementsFile | null = null;
+  let seams: Map<string, SeamPair[]> | null = null;
   if (requirements === undefined) inp = readCheckInputs(rigDir, partsHome, source);
   else {
     // Both readers collect every problem; one refusal names both sets.
@@ -1309,7 +1316,18 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     reqFile = take(() => readRequirements(requirements));
     refuseIfAny(refused);
     inp = got as CheckInputs;
-    resolveRequirements(reqFile as RequirementsFile, inp.rig, inp.motion, inp.rootBone);
+    const file = reqFile as RequirementsFile;
+    const ready = inp;
+    take(() => resolveRequirements(file, ready.rig, ready.motion, ready.rootBone));
+    // A seam's pairs are read off parts.json's art (issue #111); both resolvers' problems are named in one refusal.
+    if (file.requirements.some((r) => r.kind === 'seam')) {
+      const parts = ready.parts;
+      seams = take(() => resolveSeams(file, parts === null ? null : parts.parts.map((p) => p.name), ready.noParts, (n) => {
+        const rec = (parts as PartsFile).parts.find((p) => p.name === n) as PartRecord;
+        return placedArt(rec.x, rec.y, readPng(join(ready.partsDir, `${n}.png`)));
+      }));
+    }
+    refuseIfAny(refused);
   }
   const rigcEntry = readRigcEntry(requireRigcVersion(rigc));
   const out = resolve(outDir);
@@ -1502,7 +1520,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
 
   // 5. the scene's declared requirements (issue #93), only under --requirements
   const reqProblems: Problem[] = [];
-  const reqBlock = reqFile === null ? null : measureRequirements(inp, reqFile, buildDir, out, rigc, reqProblems);
+  const reqBlock = reqFile === null ? null : measureRequirements(inp, reqFile, buildDir, out, rigc, reqProblems, seams ?? new Map());
 
   const skipped: { loop?: string; seam?: string } = {};
   if (inp.noIdle !== null) skipped.loop = inp.noIdle;
@@ -1603,7 +1621,7 @@ const REQUIREMENTS_SCRATCH = '_requirements';
  * `CHECK_RIGC_GREEN`, quoting rigc. Lines go into the returned block; each
  * FAIL and NOT MEASURABLE into `problems`.
  */
-export function measureRequirements(inp: CheckInputs, file: RequirementsFile, buildDir: string, out: string, rigc: RigcRunner, problems: Problem[]): RequirementsBlock {
+export function measureRequirements(inp: CheckInputs, file: RequirementsFile, buildDir: string, out: string, rigc: RigcRunner, problems: Problem[], seams: ReadonlyMap<string, readonly SeamPair[]> = new Map()): RequirementsBlock {
   const reqDir = join(out, REQUIREMENTS_DIR);
   const scratch = join(out, REQUIREMENTS_SCRATCH);
   for (const d of [reqDir, scratch]) rmSync(d, { recursive: true, force: true });
@@ -1623,7 +1641,7 @@ export function measureRequirements(inp: CheckInputs, file: RequirementsFile, bu
     if (b.call.status !== 0) refuseIfAny(rigcFailed(`build (${what})`, b.call, buildGateLines(b.call.out)));
     return b.dir;
   };
-  const posesOf = (candidate: string, animation: string, dir: string, label: string): { poses: Poses; geo: IdleGeometry } => {
+  const posesOf = (candidate: string, animation: string, dir: string, label: string): { poses: Poses; geo: IdleGeometry; path: string } => {
     const r = rigc(['render', '--candidate', candidate, '--animation', animation, '--fps', String(file.fps), '--max', String(IDLE_MAX_PX), '--geometry', '--out', dir]);
     if (r.status !== 0) refuseIfAny(rigcFailed(`render --animation ${animation} --geometry (${label})`, r, r.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
     const set = readFrameSet(dir);
@@ -1645,7 +1663,7 @@ export function measureRequirements(inp: CheckInputs, file: RequirementsFile, bu
     };
     const root = boneTrackOf(geo, path, set, inp.rootBone);
     if (typeof root === 'string') return geometryProblem(path, root);
-    return { poses: { label, indices: geo.frames.map((f) => f.index), times: root.times, bone }, geo };
+    return { poses: { label, indices: geo.frames.map((f) => f.index), times: root.times, bone }, geo, path };
   };
 
   const lines: Record<string, RequirementLine> = {};
@@ -1659,7 +1677,7 @@ export function measureRequirements(inp: CheckInputs, file: RequirementsFile, bu
       }
       return p;
     };
-    const declared = new Map<string, { poses: Poses; geo: IdleGeometry }>();
+    const declared = new Map<string, { poses: Poses; geo: IdleGeometry; path: string }>();
     for (const r of file.requirements) {
       if (declared.has(r.animation)) continue;
       const scene = file.targets.some((t) => t.animation === r.animation);
@@ -1668,7 +1686,7 @@ export function measureRequirements(inp: CheckInputs, file: RequirementsFile, bu
       declared.set(r.animation, posesOf(candidate, r.animation, join(reqDir, 'as-declared', r.animation), label));
     }
     for (const r of file.requirements) {
-      const d = declared.get(r.animation) as { poses: Poses; geo: IdleGeometry };
+      const d = declared.get(r.animation) as { poses: Poses; geo: IdleGeometry; path: string };
       const scene = placedFor(r.animation);
       const facts = rigFacts(scene.rig, inp.stage);
       let line: RequirementLine;
@@ -1676,7 +1694,11 @@ export function measureRequirements(inp: CheckInputs, file: RequirementsFile, bu
       else if (r.kind === 'aim') line = aimLine(r, d.poses, facts);
       else if (r.kind === 'range') line = rangeLine(r, d.poses, facts);
       else if (r.kind === 'stretch') line = stretchRequirementLine(r, d.geo.meshes, d.geo.frames, d.poses);
-      else {
+      else if (r.kind === 'seam') {
+        const shown = attachmentPoses(d.path, d.poses.indices.length);
+        const frames: SeamFrame[] = shown.map((f) => ({ part: f.get(r.part) ?? null, neighbour: f.get(r.neighbour) ?? null }));
+        line = seamLine(r, seams.get(r.name) ?? [], frames, d.poses, inp.stage);
+      } else {
         const rel = forceMix(scene.rig, scene.motion, r, 0);
         let relBuild = buildCopy(rel.rig, rel.motion);
         let door: string | null = null;
@@ -2226,6 +2248,49 @@ export function readGeometry(path: string, frames: number): IdleGeometry | null 
     frameBones: raw.frames.map((f) => (isRecord(f) ? f.bones : undefined)),
     times: raw.frames.map((f) => (isRecord(f) ? f.time : undefined)),
   };
+}
+
+/**
+ * Every attachment a `rigc-geometry/1` file shows, frame by frame, keyed by
+ * its slot: the posed vertices with the rest vertices and triangles of the
+ * same slot and attachment — regions and meshes alike, which a seam
+ * requirement reads (issue #111). Read only for a `seam` requirement, so a
+ * run without one reads the file exactly as before ({@link readGeometry}).
+ * A file that is not a whole export of `frames` frames — a rest entry without
+ * well-formed vertices and triangles, a frame showing an attachment with no
+ * rest entry or another vertex count — is refused naming what is wrong.
+ */
+export function attachmentPoses(path: string, frames: number): Array<Map<string, PosedAttachment>> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    return geometryProblem(path, `does not read as JSON: ${(err as Error).message}`);
+  }
+  if (!isRecord(raw) || !Array.isArray(raw.rest) || !Array.isArray(raw.frames)) return geometryProblem(path, 'lacks "rest" or "frames"; a rigc-geometry/1 file carries both');
+  if (raw.frames.length !== frames) return geometryProblem(path, `holds ${raw.frames.length} frame(s); the frame set beside it wrote ${frames}`);
+  const rest = new Map<string, { vertices: number[]; triangles: number[] }>();
+  for (const [i, r] of raw.rest.entries()) {
+    if (!isRecord(r) || typeof r.slot !== 'string' || typeof r.attachment !== 'string') return geometryProblem(path, `rest[${i}] has no string "slot" and "attachment"`);
+    const at = `rest[${i}] (slot ${JSON.stringify(r.slot)}, attachment ${JSON.stringify(r.attachment)})`;
+    if (!numberArray(r.vertices) || r.vertices.length % 2 !== 0) return geometryProblem(path, `${at} "vertices" is not an even-length array of finite numbers`);
+    const n = r.vertices.length / 2;
+    const tri = r.triangles;
+    if (!numberArray(tri) || tri.length % 3 !== 0 || !tri.every((x) => Number.isInteger(x) && x >= 0 && x < n)) return geometryProblem(path, `${at} "triangles" is not index triplets into its ${n} vertices`);
+    rest.set(`${r.slot}\u0000${r.attachment}`, { vertices: r.vertices, triangles: tri });
+  }
+  return raw.frames.map((f, i) => {
+    if (!isRecord(f) || !Array.isArray(f.attachments)) return geometryProblem(path, `frames[${i}] has no "attachments"`);
+    const shown = new Map<string, PosedAttachment>();
+    for (const a of f.attachments) {
+      if (!isRecord(a) || typeof a.slot !== 'string' || typeof a.attachment !== 'string') return geometryProblem(path, `frames[${i}] holds an attachment with no string "slot" and "attachment"`);
+      const r = rest.get(`${a.slot}\u0000${a.attachment}`);
+      if (r === undefined) return geometryProblem(path, `frames[${i}] shows slot "${a.slot}" attachment "${a.attachment}", which "rest" has no entry for`);
+      if (!numberArray(a.vertices) || a.vertices.length !== r.vertices.length) return geometryProblem(path, `frames[${i}] slot "${a.slot}" attachment "${a.attachment}" has ${Array.isArray(a.vertices) ? a.vertices.length : 'no'} vertex number(s); its rest entry has ${r.vertices.length}`);
+      shown.set(a.slot, { rest: r.vertices, posed: a.vertices, triangles: r.triangles });
+    }
+    return shown;
+  });
 }
 
 function stretchAtText(s: { triangle: number; vertices: readonly number[]; edge: readonly number[]; frame: number }): string {

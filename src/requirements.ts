@@ -32,6 +32,13 @@
  * - `stretch` — `TEXTURE_STRETCH`'s own per-mesh measure ({@link stretchFigures},
  *   imported, not rewritten): the mesh's worst max(ratio, 1/ratio) over the
  *   frames, against `within_ratio`.
+ * - `seam` (issue #111) — the seam between two parts' art: the pairs of
+ *   4-adjacent stage pixels where an art pixel of `part` meets an art pixel of
+ *   `neighbour` that is not `part`'s ({@link seamPairs}, read off `parts.json`'s
+ *   art at the setup pose), and per frame each pair's opening, the distance
+ *   between the two sides' displacements from rest, each read off its
+ *   attachment's rest and posed geometry ({@link seamLine}); the largest, its
+ *   pair and its frame, against `within_px`.
  *
  * This module is pure: it reads the file, resolves it against the rig spec and
  * motion it is handed, writes the throwaway copies' specs as values, and
@@ -46,12 +53,14 @@ import { cropToSpineY } from './coords.ts';
 import type { Problem } from './errors.ts';
 import { refuseIfAny } from './errors.ts';
 import { type BoneWorld, type GeometryPose, type MeshRest, stretchFigures, stretchSeverity } from './instruments.ts';
+import { ART_ALPHA } from './mesh.ts';
+import { alphaAbove, type Raster } from './raster/types.ts';
 
 /** The file's `spec`. */
 export const REQUIREMENTS_SPEC = 'spine-parts-requirements/1';
 
 /** The five kinds, in the order the summary names them. */
-export const REQUIREMENT_KINDS = ['contact', 'follow', 'aim', 'range', 'stretch'] as const;
+export const REQUIREMENT_KINDS = ['contact', 'follow', 'aim', 'range', 'stretch', 'seam'] as const;
 export type RequirementKind = (typeof REQUIREMENT_KINDS)[number];
 
 /** A line's status: the three outcomes a declared requirement can have once it is read. */
@@ -109,7 +118,15 @@ export interface StretchRequirement extends RequirementCommon {
   within_ratio: number;
 }
 
-export type Requirement = ContactRequirement | FollowRequirement | AimRequirement | RangeRequirement | StretchRequirement;
+/** Issue #111: the seam between two parts' art stays within `within_px` over the animation ({@link seamLine}). `part` and `neighbour` are part names, which are their slots' names. */
+export interface SeamRequirement extends RequirementCommon {
+  kind: 'seam';
+  part: string;
+  neighbour: string;
+  within_px: number;
+}
+
+export type Requirement = ContactRequirement | FollowRequirement | AimRequirement | RangeRequirement | StretchRequirement | SeamRequirement;
 
 /** One stage point of a scene target, at a time in seconds (null for a fixed point). */
 export interface TargetPoint {
@@ -133,7 +150,7 @@ export interface RequirementsFile {
 }
 
 /** What `check --requirements` and `build --requirements` name, said once for the help and the refusals. */
-export const REQUIREMENTS_SENTENCE = `--requirements names a ${REQUIREMENTS_SPEC} file: the scene's declared requirements of the rig's motion (contact, follow, aim, range, stretch), each with its animation and the author's own bar, measured from spine-rigc's render --geometry at the file's fps`;
+export const REQUIREMENTS_SENTENCE = `--requirements names a ${REQUIREMENTS_SPEC} file: the scene's declared requirements of the rig's motion (contact, follow, aim, range, stretch, seam), each with its animation and the author's own bar, measured from spine-rigc's render --geometry at the file's fps`;
 
 // ---------------------------------------------------------------------------
 // reading the file
@@ -160,6 +177,7 @@ const KIND_FIELDS: Record<RequirementKind, readonly string[]> = {
   aim: ['bone', 'target', 'within_degrees'],
   range: ['bone', 'lo_degrees', 'hi_degrees'],
   stretch: ['slot', 'attachment', 'within_ratio'],
+  seam: ['part', 'neighbour', 'within_px'],
 };
 
 const NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
@@ -270,8 +288,13 @@ export function readRequirements(path: string): RequirementsFile {
         const hi = bar('hi_degrees', () => true, 'an angle in degrees');
         if (finite(lo) && finite(hi) && lo > hi) field(`${label} fields "lo_degrees", "hi_degrees"`, `are ${lo} and ${hi}; lo_degrees <= hi_degrees is required`);
         req = { ...common, kind, bone: str('bone'), lo_degrees: lo, hi_degrees: hi };
-      } else {
+      } else if (kind === 'stretch') {
         req = { ...common, kind, slot: str('slot'), attachment: str('attachment'), within_ratio: bar('within_ratio', (v) => v >= 1, 'a ratio 1 or more (the figure is max(ratio, 1/ratio), never below 1)') };
+      } else {
+        const part = str('part');
+        const neighbour = str('neighbour');
+        if (part.length > 0 && part === neighbour) field(`${label} fields "part", "neighbour"`, `both name "${part}"; two different parts are required — a seam is where one part's art meets another's`);
+        req = { ...common, kind, part, neighbour, within_px: bar('within_px', (v) => v >= 0, 'a distance in stage px, 0 or more,') };
       }
       if (problems.length === before && name !== null) requirements.push(req);
     });
@@ -402,7 +425,12 @@ export function resolveRequirements(file: RequirementsFile, rig: Record<string, 
       bone(object, r.bone);
       target(object, r.target);
     } else if (r.kind === 'range') bone(object, r.bone);
-    else if (r.kind === 'follow') {
+    else if (r.kind === 'seam') {
+      const slots = (Array.isArray(rig.slots) ? rig.slots : []).filter(isRecord).map((s) => s.name);
+      for (const [field, name] of [['part', r.part], ['neighbour', r.neighbour]] as const) {
+        if (!slots.includes(name)) unresolved(object, `names ${field} "${name}", which rig.json declares no slot for; a part is drawn by the slot of its name`);
+      }
+    } else if (r.kind === 'follow') {
       bone(object, r.bone);
       const c = constraintsOf(rig).find((x) => x.name === r.constraint && x.type === r.constraint_type);
       if (c === undefined) {
@@ -940,9 +968,230 @@ export function stretchRequirementLine(r: StretchRequirement, meshes: readonly M
   };
 }
 
+// ---------------------------------------------------------------------------
+// the seam between two parts (issue #111)
+// ---------------------------------------------------------------------------
+
+/** A part's art on the stage: its box's top-left in stage px and, per pixel of the box, 1 where its alpha is above {@link ART_ALPHA}. */
+export interface PlacedArt {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  data: Uint8Array;
+}
+
+/** The art of a part image placed at `x, y`: alpha above {@link ART_ALPHA}, the threshold every mesh is built from (`src/mesh.ts`). */
+export function placedArt(x: number, y: number, img: Raster): PlacedArt {
+  const m = alphaAbove(img, ART_ALPHA);
+  return { x, y, width: m.width, height: m.height, data: m.data };
+}
+
+function artAt(m: PlacedArt, sx: number, sy: number): boolean {
+  const x = sx - m.x;
+  const y = sy - m.y;
+  return x >= 0 && y >= 0 && x < m.width && y < m.height && m.data[y * m.width + x] === 1;
+}
+
+/** One seam pair: `[ax, ay, bx, by]`, stage px — a an art pixel of the part, b of the neighbour. */
+export type SeamPair = readonly [number, number, number, number];
+
+/**
+ * The seam between `part` and `neighbour` at the setup pose: every pair
+ * (a, b) of 4-adjacent stage pixels with a an art pixel of `part` and b an art
+ * pixel of `neighbour` that is not an art pixel of `part`. Where the two
+ * overlap, the pixels both hold are not a seam: the part covers them. Order:
+ * a row-major over the part's box, then right, down, left, up. This is the
+ * definition `tools/real_compare.ts` measured #109's seam with (`seamPairs`).
+ */
+export function seamPairs(part: PlacedArt, neighbour: PlacedArt): SeamPair[] {
+  const out: SeamPair[] = [];
+  const steps: ReadonlyArray<readonly [number, number]> = [
+    [1, 0],
+    [0, 1],
+    [-1, 0],
+    [0, -1],
+  ];
+  for (let y = 0; y < part.height; y++) {
+    for (let x = 0; x < part.width; x++) {
+      if (part.data[y * part.width + x] !== 1) continue;
+      const ax = part.x + x;
+      const ay = part.y + y;
+      for (const [dx, dy] of steps) {
+        if (artAt(neighbour, ax + dx, ay + dy) && !artAt(part, ax + dx, ay + dy)) out.push([ax, ay, ax + dx, ay + dy]);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The seam pairs of every `seam` requirement, keyed by its name, or one
+ * refusal naming every problem, before anything is built. The pairs are read
+ * off `parts.json`'s art, so with no `parts.json` there is no seam to read
+ * (`REQUIREMENTS_SEAM`, quoting why there is none); a part `parts.json` does not
+ * list is unresolved (`REQUIREMENTS_RESOLVES`); and two parts whose art does
+ * not meet at the setup pose share no seam (`REQUIREMENTS_SEAM`). `art` is
+ * asked only for parts `parts.json` lists.
+ */
+export function resolveSeams(file: RequirementsFile, partNames: readonly string[] | null, noParts: string | null, art: (part: string) => PlacedArt): Map<string, SeamPair[]> {
+  const problems: Problem[] = [];
+  const out = new Map<string, SeamPair[]>();
+  const cache = new Map<string, PlacedArt>();
+  const artOf = (n: string): PlacedArt => {
+    const hit = cache.get(n);
+    if (hit !== undefined) return hit;
+    const a = art(n);
+    cache.set(n, a);
+    return a;
+  };
+  for (const r of file.requirements) {
+    if (r.kind !== 'seam') continue;
+    const object = `requirement "${r.name}" (seam)`;
+    if (partNames === null) {
+      problems.push({ code: 'REQUIREMENTS_SEAM', object, detail: `a seam's pixels are read off parts.json's art at the setup pose, and none was read: ${noParts ?? 'no parts.json'}` });
+      continue;
+    }
+    const missing = [r.part, r.neighbour].filter((n) => !partNames.includes(n));
+    for (const n of missing) problems.push({ code: 'REQUIREMENTS_RESOLVES', object, detail: `names part "${n}", which parts.json does not list; it lists ${partNames.map((x) => `"${x}"`).join(', ') || 'none'}` });
+    if (missing.length > 0) continue;
+    const pairs = seamPairs(artOf(r.part), artOf(r.neighbour));
+    if (pairs.length === 0) {
+      problems.push({
+        code: 'REQUIREMENTS_SEAM',
+        object,
+        detail: `no art pixel of "${r.part}" is 4-adjacent to an art pixel of "${r.neighbour}" that is not "${r.part}"'s (alpha above ${ART_ALPHA}, at the setup pose): the two parts share no seam to hold`,
+      });
+      continue;
+    }
+    out.set(r.name, pairs);
+  }
+  refuseIfAny(problems);
+  return out;
+}
+
+/** One attachment on one frame: its rest vertices (the setup pose's bones, no deform), its posed vertices (world, y up) and its triangles — what `rigc-geometry/1` writes for a region (two triangles) and a mesh alike. */
+export interface PosedAttachment {
+  rest: readonly number[];
+  posed: readonly number[];
+  triangles: readonly number[];
+}
+
+/**
+ * A displacement reader for one attachment: a world point's displacement from
+ * rest — the rest triangle holding it (the first in triangle order where two
+ * share an edge) and the same barycentric mix of that triangle's posed
+ * vertices, less the point — or null when no rest triangle holds it.
+ */
+export function displacementOf(a: PosedAttachment): (w: readonly [number, number]) => [number, number] | null {
+  const cell = 8;
+  const buckets = new Map<string, number[]>();
+  const X = (i: number): number => a.rest[2 * i];
+  const Y = (i: number): number => a.rest[2 * i + 1];
+  for (let t = 0; t < a.triangles.length / 3; t++) {
+    const ix = [a.triangles[3 * t], a.triangles[3 * t + 1], a.triangles[3 * t + 2]];
+    const [i0, i1] = [Math.floor(Math.min(...ix.map(X)) / cell), Math.floor(Math.max(...ix.map(X)) / cell)];
+    const [j0, j1] = [Math.floor(Math.min(...ix.map(Y)) / cell), Math.floor(Math.max(...ix.map(Y)) / cell)];
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const list = buckets.get(`${i},${j}`);
+        if (list === undefined) buckets.set(`${i},${j}`, [t]);
+        else list.push(t);
+      }
+    }
+  }
+  // (v - u) x (w - u): twice the signed area of u, v, w.
+  const cross = (ux: number, uy: number, vx: number, vy: number, wx: number, wy: number): number => (vx - ux) * (wy - uy) - (vy - uy) * (wx - ux);
+  return (w) => {
+    for (const t of buckets.get(`${Math.floor(w[0] / cell)},${Math.floor(w[1] / cell)}`) ?? []) {
+      const [p, q, r] = [a.triangles[3 * t], a.triangles[3 * t + 1], a.triangles[3 * t + 2]];
+      const area = cross(X(p), Y(p), X(q), Y(q), X(r), Y(r));
+      const lp = cross(X(q), Y(q), X(r), Y(r), w[0], w[1]) / area;
+      const lq = cross(X(r), Y(r), X(p), Y(p), w[0], w[1]) / area;
+      const lr = cross(X(p), Y(p), X(q), Y(q), w[0], w[1]) / area;
+      if (lp >= 0 && lq >= 0 && lr >= 0) {
+        const x = lp * a.posed[2 * p] + lq * a.posed[2 * q] + lr * a.posed[2 * r];
+        const y = lp * a.posed[2 * p + 1] + lq * a.posed[2 * q + 1] + lr * a.posed[2 * r + 1];
+        return [x - w[0], y - w[1]];
+      }
+    }
+    return null;
+  };
+}
+
+/** One frame of a seam: the attachment the part's slot and the neighbour's slot show on it, or null where the slot shows none. */
+export interface SeamFrame {
+  part: PosedAttachment | null;
+  neighbour: PosedAttachment | null;
+}
+
+/**
+ * `seam` (issue #111): per frame, each seam pair's opening — the distance
+ * between the part's displacement at a's centre and the neighbour's at b's
+ * centre ({@link displacementOf}), stage px: how far the two sides of the seam
+ * moved apart or across — and the largest over every pair and frame, with its
+ * pair and its frame. A pair is not read on a frame where either side's pixel
+ * lies outside its attachment's rest geometry or its slot shows nothing
+ * (counted, never read as 0); a frame on which no pair reads is not
+ * measurable, and with none left the requirement is. The opening is an upper
+ * bound on any gap: what shows there depends on what is drawn under the seam.
+ * Stage pixel centres go to the world through the stage box and the one y door
+ * ({@link stageToWorld}).
+ */
+export function seamLine(r: SeamRequirement, pairs: readonly SeamPair[], frames: readonly SeamFrame[], p: Poses, stage: { x: number; y: number; height: number }): RequirementLine {
+  const wa = pairs.map(([ax, ay]) => stageToWorld([ax + 0.5, ay + 0.5], stage));
+  const wb = pairs.map(([, , bx, by]) => stageToWorld([bx + 0.5, by + 0.5], stage));
+  let worst = -1;
+  let wi = 0;
+  let wp = 0;
+  let unread = 0;
+  const unmeasured: number[] = [];
+  for (let i = 0; i < p.times.length; i++) {
+    const f = frames[i];
+    const dP = f.part === null ? null : displacementOf(f.part);
+    const dN = f.neighbour === null ? null : displacementOf(f.neighbour);
+    let read = 0;
+    for (let k = 0; k < pairs.length; k++) {
+      const da = dP === null ? null : dP(wa[k]);
+      const db = da === null || dN === null ? null : dN(wb[k]);
+      if (da === null || db === null) {
+        unread++;
+        continue;
+      }
+      read++;
+      const o = Math.hypot(da[0] - db[0], da[1] - db[1]);
+      if (o > worst) {
+        worst = o;
+        wi = i;
+        wp = k;
+      }
+    }
+    if (read === 0) unmeasured.push(p.indices[i]);
+  }
+  const of = `the seam between part "${r.part}" and part "${r.neighbour}"`;
+  if (worst < 0) {
+    return notMeasurable('seam', r.animation, `on every one of the ${p.times.length} frame(s) no seam pair reads: each pair's pixel lies outside its attachment's rest geometry, or its slot shows nothing`, { of, pairs: pairs.length, frames: p.times.length });
+  }
+  const [ax, ay, bx, by] = pairs[wp];
+  return {
+    kind: 'seam',
+    animation: r.animation,
+    status: worst <= r.within_px ? 'PASS' : 'FAIL',
+    of,
+    pairs: pairs.length,
+    frames: p.times.length - unmeasured.length,
+    frames_not_measurable: unmeasured,
+    pair_frames_unread: unread,
+    largest_px: round6(worst),
+    at: frameText(p, wi),
+    pair: `"${r.part}" pixel ${ax},${ay} against "${r.neighbour}" pixel ${bx},${by}`,
+    within_px: r.within_px,
+  };
+}
+
 /** The bar a line was held to, as its FAIL detail states it. */
 function barText(r: Requirement): string {
-  if (r.kind === 'contact') return `<= ${r.within_px} px is required`;
+  if (r.kind === 'contact' || r.kind === 'seam') return `<= ${r.within_px} px is required`;
   if (r.kind === 'aim') return `<= ${r.within_degrees} degrees is required`;
   if (r.kind === 'range') return `[${r.lo_degrees}, ${r.hi_degrees}] degrees is required`;
   if (r.kind === 'stretch') return `<= ${r.within_ratio} is required`;
@@ -955,6 +1204,7 @@ function failText(r: Requirement, l: RequirementLine): string {
   if (r.kind === 'aim') return `largest angle ${String(l.largest_degrees)} degrees at ${String(l.at)}, between ${String(l.of)} and the line to ${String(l.against)}`;
   if (r.kind === 'range') return `least ${String(l.least_degrees)} degrees at ${String(l.least_at)}, greatest ${String(l.greatest_degrees)} at ${String(l.greatest_at)}`;
   if (r.kind === 'stretch') return `max(ratio, 1/ratio) ${String(l.severity)} at ${String(l.at)}, ${String(l.worst)}`;
+  if (r.kind === 'seam') return `largest opening ${String(l.largest_px)} px at ${String(l.at)}, ${String(l.pair)}`;
   return `measured fraction ${String(l.fraction_measured)} over ${String(l.frames_counted)} frame(s) that reach the least drive`;
 }
 
