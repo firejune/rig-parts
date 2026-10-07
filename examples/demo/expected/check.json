@@ -95,18 +95,19 @@
  },
  "TIP_OVER_ROOT": {
   "status": "PASS",
+  "instrument": "geometry",
   "parts": [
    {
     "part": "bottomwear",
-    "root_px": 0.522,
-    "tip_px": 1.562,
-    "ratio": 2.99
+    "root_rig_px": 0.981,
+    "tip_rig_px": 3.161,
+    "ratio": 3.222
    },
    {
     "part": "sleeves",
-    "root_px": 0.598,
-    "tip_px": 1.965,
-    "ratio": 3.287
+    "root_rig_px": 0.831,
+    "tip_rig_px": 3.921,
+    "ratio": 4.721
    }
   ],
   "ratio_floor": 1.4725

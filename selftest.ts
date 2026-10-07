@@ -141,8 +141,8 @@ import {
   stageFields,
   visibilityCounts,
 } from './src/assemble.ts';
-import { BARS, blackRig, buildGateLines, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING } from './src/check.ts';
-import { blinkFigures, type BoneWorld, frameBox, lagStep, readSine } from './src/instruments.ts';
+import { BARS, blackRig, buildGateLines, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, attachmentPoses } from './src/check.ts';
+import { blinkFigures, type BoneWorld, frameBox, halfTravels, lagStep, readSine } from './src/instruments.ts';
 import {
   aimLine,
   contactLine,
@@ -5051,7 +5051,7 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
     const rig = runCli(['rig', '--config', cfgPath, '--parts', d, '--out', join(d, 'rig-kp')]);
     const chk = runCli(['check', '--rig', join(d, 'rig-kp'), '--parts', d, '--out', join(d, 'check-kp')]);
     const tip = (chk.out.split('\n').find((l) => l.includes('TIP_OVER_ROOT:')) ?? '').trim();
-    const ratios = [...tip.matchAll(/part (\w+), root_px [0-9.]+, tip_px [0-9.]+, ratio ([0-9.]+|null)/g)].map((m) => [m[1], m[2]] as const);
+    const ratios = [...tip.matchAll(/part (\w+), root_rig_px [0-9.]+, tip_rig_px [0-9.]+, ratio ([0-9.]+|null)/g)].map((m) => [m[1], m[2]] as const);
     const floor = Number(/ratio_floor ([0-9.]+)/.exec(tip)?.[1] ?? 'NaN');
     const arms = ratios.filter(([n]) => POSES[name].parts.some((q) => q.name === n && q.from.includes('handwear')));
     return { name, rig: rig.status, check: chk.status, verdict: (chk.out.split('\n').find((l) => l.startsWith('check: ')) ?? '').trim(), arms, floor, tip };
@@ -6276,6 +6276,67 @@ function runCheckSuite(): number {
       slide.status === 1 && tipFail !== null && /ratio 1\b/.test(tipFail),
       `exit ${slide.status}; ${tipFail?.trim() ?? 'no CHECK_TIP_OVER_ROOT line'}`,
       'a sleeve translated whole has its tip travel exactly as far as its root — the swing a chain is for is absent',
+    );
+
+    // Issue #118: the half travels read off posed geometry, exact, with no render grid. A 12x20 block of art in a
+    // 20x20 box (stage px 10,10; the stage 40x40 at world x -20), sheared by hand: a horizontal shear of the hem by
+    // d moves world row y by d (30 - y) / 20, so the art's area in the lower half (y 10..20) moves 0.75 d and in the
+    // upper half (y 20..30) 0.25 d — ratio 3 at any d, a hundredth of a pixel included.
+    const tStage = { x: -20, y: 0, width: 40, height: 40 };
+    const tBox = { x: 10, y: 10, w: 20, h: 20 };
+    const tArt = { x: 10, y: 10, width: 20, height: 20, data: new Uint8Array(400).map((_, i) => (i % 20 >= 4 && i % 20 < 16 ? 1 : 0)) };
+    // Mesh A: one quad over the art, two triangles that cross the halves' boundary (the clipping path). Mesh B: the
+    // same quad cut at the boundary into two rows, each triangle wholly inside one half (the whole-triangle path).
+    const meshA = { rest: [-6, 30, 6, 30, 6, 10, -6, 10], triangles: [0, 1, 2, 2, 3, 0] };
+    const meshB = { rest: [-6, 30, 6, 30, -6, 20, 6, 20, -6, 10, 6, 10], triangles: [0, 1, 3, 3, 2, 0, 2, 3, 5, 5, 4, 2] };
+    const posedBy = (m: { rest: number[]; triangles: number[] }, f: (x: number, y: number) => [number, number]): { rest: number[]; posed: number[]; triangles: number[] } => ({
+      ...m,
+      posed: m.rest.flatMap((v, i) => (i % 2 === 0 ? f(v, m.rest[i + 1]) : [])),
+    });
+    const travelsOf = (m: { rest: number[]; triangles: number[] }, f: (x: number, y: number) => [number, number]) => halfTravels(tArt, tBox, tStage, [posedBy(m, (x, y) => [x, y]), posedBy(m, f)]);
+    const near = (got: number | null, want: number): boolean => got !== null && Math.abs(got - want) <= 1e-12 * Math.max(1, want);
+    const hemShear = (d: number) => (x: number, y: number): [number, number] => [x + (d * (30 - y)) / 20, y];
+    const rootShear = (d: number) => (x: number, y: number): [number, number] => [x + (d * (y - 10)) / 20, y];
+    const shears = [0.01, 2].flatMap((d) => [meshA, meshB].map((m, k) => ({ d, mesh: k === 0 ? 'A' : 'B', t: travelsOf(m, hemShear(d)) })));
+    say(
+      'CK86_A_HEM_SHEARED_BY_A_HUNDREDTH_OF_A_PIXEL_OR_BY_TWO_READS_ITS_HALF_TRAVELS_EXACTLY_RATIO_3',
+      shears.every((s) => near(s.t.tip, 0.75 * s.d) && near(s.t.root, 0.25 * s.d) && Math.round(((s.t.tip as number) / (s.t.root as number)) * 1000) / 1000 === 3) && 3 >= TIP_RATIO_FLOOR,
+      shears.map((s) => `d ${s.d} mesh ${s.mesh}: tip ${s.t.tip?.toPrecision(15)} (by hand ${0.75 * s.d}), root ${s.t.root?.toPrecision(15)} (by hand ${0.25 * s.d})`).join('; '),
+      "issue #118: a binary-coverage centroid of rendered pixels read 0.512 to 13.53 for one rig as --max moved, because the motion was under a frame pixel; the geometric reading has no grid, so the same shape of motion reads the same ratio at d = 0.01 and d = 2, through the clipping path (A) and the whole-triangle path (B) alike, and 3 clears the floor by definition",
+    );
+    const planted = [
+      { what: 'the root sheared instead of the hem', t: travelsOf(meshA, rootShear(2)), tip: 0.5, root: 1.5 },
+      { what: 'the whole block slid 2 right', t: travelsOf(meshB, (x, y) => [x + 2, y]), tip: 2, root: 2 },
+      { what: 'the root sheared by a hundredth', t: travelsOf(meshB, rootShear(0.01)), tip: 0.0025, root: 0.0075 },
+    ];
+    say(
+      'CK87_A_ROOT_THAT_TRAVELS_AS_FAR_AS_OR_FURTHER_THAN_ITS_TIP_READS_BELOW_THE_FLOOR',
+      planted.every((p) => near(p.t.tip, p.tip) && near(p.t.root, p.root) && (p.t.tip as number) / (p.t.root as number) < TIP_RATIO_FLOOR),
+      planted.map((p) => `${p.what}: tip ${p.t.tip?.toPrecision(15)} root ${p.t.root?.toPrecision(15)} (by hand ${p.tip}, ${p.root}), ratio ${((p.t.tip as number) / (p.t.root as number)).toFixed(3)} against ${TIP_RATIO_FLOOR}`).join('; '),
+      'the planted negatives of CK86: a shear at the root reads 1/3 and a whole slide 1, each by hand, under the floor at any size of motion — the line can fail on geometry for the reason it exists, not only pass',
+    );
+    // One vertex pulled: mesh B's bottom-right corner (6, 10) moved 2 right, every other vertex still. Its two lower
+    // triangles stay wholly inside the lower half (the whole-triangle path); the one (-6,20) (6,20) (8,10) keeps area
+    // 60 with its centroid at x 8/3, the one (8,10) (-6,10) (-6,20) grows to 70 with its centroid at (-4/3, 40/3), so
+    // the lower half's art centroid moves from (0, 15) to (200/3, 1950 - 50/3) / 130 — a travel of (5/39) sqrt(17) —
+    // and the upper half's not at all.
+    const pulled = travelsOf(meshB, (x, y) => (x === 6 && y === 10 ? [8, 10] : [x, y]));
+    const pulledTip = (5 / 39) * Math.sqrt(17);
+    say(
+      'CK89_ONE_VERTEX_PULLED_WEIGHS_EACH_TRIANGLE_BY_ITS_POSED_AREA_AND_LEAVES_THE_ROOT_AT_EXACTLY_0',
+      near(pulled.tip, pulledTip) && pulled.root === 0,
+      `tip ${pulled.tip?.toPrecision(15)} (by hand (5/39) sqrt(17) = ${pulledTip.toPrecision(15)}), root ${pulled.root}`,
+      'the shears of CK86 keep every triangle\'s area, so a whole-triangle path that ignored the posed area or the art centroid would pass them; a single pulled corner grows one triangle and not its neighbour, and only the area-weighted centroid gives the hand figure',
+    );
+    const emptyArt = { ...tArt, data: new Uint8Array(400).map((_, i) => (i < 200 && i % 20 >= 4 && i % 20 < 16 ? 1 : 0)) };
+    const noLower = halfTravels(emptyArt, tBox, tStage, [posedBy(meshA, (x, y) => [x, y]), posedBy(meshA, hemShear(2))]);
+    const noShown = halfTravels(tArt, tBox, tStage, [null, posedBy(meshA, hemShear(2))]);
+    const offMesh = halfTravels({ ...tArt, data: new Uint8Array(400).map((_, i) => (i % 20 < 4 ? 1 : 0)) }, tBox, tStage, [posedBy(meshA, (x, y) => [x, y]), posedBy(meshA, hemShear(2))]);
+    say(
+      'CK88_A_HALF_WITH_NO_ART_THE_MESH_DRAWS_OR_A_SLOT_SHOWING_NOTHING_ON_FRAME_0_IS_UNMEASURED_NOT_ZERO',
+      noLower.tip === null && near(noLower.root, 0.5) && noShown.root === null && noShown.tip === null && offMesh.root === null && offMesh.tip === null,
+      `art in the upper half only: root ${noLower.root} (by hand 0.5), tip ${noLower.tip}; frame 0 shows no attachment: ${JSON.stringify(noShown)}; art only left of the mesh: ${JSON.stringify(offMesh)}`,
+      'a band with nothing to read is not a band that did not move: null, which the line reports as unmeasured; art outside every rest triangle is not drawn by the runtime, so it is not counted',
     );
 
     // STILL_REGIONS_DARK's face half in the head's own frame (issue #33).
@@ -9045,6 +9106,63 @@ function runChainSuite(): number | null {
         'gates, loop, both seam pixel counts and every judgement figure exact; seam_mean ±0.005, the measured size of the parts difference against the reference (see chainTolerance)',
       );
 
+      // Issue #118 on real art: TIP_OVER_ROOT reads the posed geometry, which no render size enters. One variant per
+      // example that has the case: sample with its skirt amplitudes x0.1 (the card's reproduction, the hem under a
+      // fifth of a frame pixel, which the pixel reading took from 0.512 to 13.53 over --max 620-660), and scarf with
+      // its bottomwear back on the proposal's lattice (the build the README says fails the line). Each is rigged
+      // from this build's parts, checked once, and its geometry rendered at --max 620 and 660: the line's figure,
+      // recomputed from either geometry, is the check's to the digit, and the status is the bar's.
+      const variant = key === 'sample' ? 'skirt-x0.1' : key === 'scarf' ? 'bottomwear-lattice' : null;
+      if (variant !== null) {
+        const cfg = readJsonAt(join(ex, 'config.json')) as { motion: { tracks: Array<{ chain?: string; amps?: number[] }> }; meshes: Record<string, Record<string, unknown>> };
+        if (key === 'sample') {
+          for (const t of cfg.motion.tracks) if (t.chain?.startsWith('skirt_') === true && t.amps !== undefined) t.amps = t.amps.map((a) => a * 0.1);
+        } else {
+          const { contour, note, ...rest } = cfg.meshes.bottomwear as { contour: { spacing: number }; note?: string };
+          void note;
+          cfg.meshes.bottomwear = { grid: contour.spacing, ...rest };
+        }
+        const vDir = join(dir, `${key}-${variant}`);
+        mkdirSync(vDir, { recursive: true });
+        writeFileSync(join(vDir, 'config.json'), JSON.stringify(cfg));
+        const vRig = runCli(['rig', '--config', join(vDir, 'config.json'), '--parts', out, '--out', join(vDir, 'rig')]);
+        const vChk = runCli(['check', '--rig', join(vDir, 'rig'), '--parts', out, '--out', join(vDir, 'check')]);
+        const vFig = readJsonFile(join(vDir, 'check', 'check.json'));
+        const vTip = vFig?.TIP_OVER_ROOT as { status?: string; instrument?: string; parts?: Array<{ part: string; ratio: number | null; root_rig_px: number; tip_rig_px: number }> } | undefined;
+        const row = vTip?.parts?.find((p) => p.part === 'bottomwear');
+        const vParts = readParts(join(out, 'parts.json'));
+        const rec = vParts.parts.find((p) => p.name === 'bottomwear') as PartRecord;
+        const vStage = (readJsonAt(join(vDir, 'rig', 'rig.json')) as { skeleton: { x: number; y: number; width: number; height: number } }).skeleton;
+        const art = placedArt(rec.x, rec.y, readPng(join(out, 'parts', 'bottomwear.png')));
+        const atMax = [620, 660].map((m) => {
+          const g = join(vDir, `geometry-${m}`);
+          const r = spawnSync(findRigc(ROOT, ''), ['render', '--candidate', join(vDir, 'check', 'build'), '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(m), '--geometry', '--out', g], { encoding: 'utf8', maxBuffer: 1 << 28 });
+          if (r.status !== 0) return null;
+          const set = readFrameSet(g);
+          return halfTravels(art, rec, vStage, attachmentPoses(join(set.dir, GEOMETRY_FILE), set.written).map((f) => f.get('bottomwear') ?? null));
+        });
+        const ratios = atMax.map((t) => (t === null || t.root === null || t.tip === null ? null : Math.round((t.tip / t.root) * 1000) / 1000));
+        const wantFail = key === 'scarf';
+        const byBar = row?.ratio !== null && row?.ratio !== undefined && (wantFail ? row.ratio < TIP_RATIO_FLOOR : row.ratio >= TIP_RATIO_FLOOR);
+        say(
+          `${wantFail ? 'CK91_A_TIP_THAT_TRULY_DOES_NOT_OUT_TRAVEL_ITS_ROOT_FAILS_TIP_OVER_ROOT_AT_EVERY_RENDER_SIZE' : 'CK90_A_HEM_UNDER_A_FIFTH_OF_A_FRAME_PIXEL_READS_ONE_TIP_OVER_ROOT_AT_EVERY_RENDER_SIZE_AND_PASSES_BY_THE_BAR'}[${key}]`,
+          vRig.status === 0 &&
+            vChk.status === (wantFail ? 1 : 0) &&
+            vTip?.instrument === 'geometry' &&
+            vTip?.status === (wantFail ? 'FAIL' : 'PASS') &&
+            byBar &&
+            atMax.every((t) => t !== null) &&
+            atMax[0]?.root === atMax[1]?.root &&
+            atMax[0]?.tip === atMax[1]?.tip &&
+            ratios.every((r) => r === row?.ratio) &&
+            (!wantFail || (failLine(vChk.out, 'CHECK_TIP_OVER_ROOT')?.includes('part "bottomwear"') ?? false)),
+          `${variant}: rig exit ${vRig.status}, check exit ${vChk.status}, TIP_OVER_ROOT ${vTip?.status} (instrument ${vTip?.instrument}), bottomwear root ${row?.root_rig_px} tip ${row?.tip_rig_px} rig px, ratio ${row?.ratio} against ${TIP_RATIO_FLOOR}; from the geometry at --max 620 and 660: ${atMax.map((t, i) => `${[620, 660][i]}: root ${t?.root} tip ${t?.tip}`).join('; ')} (${atMax[0]?.root === atMax[1]?.root && atMax[0]?.tip === atMax[1]?.tip ? 'bit-identical' : 'DIFFERENT'})`,
+          wantFail
+            ? "the planted negative of CK90, on real art: scarf's short skirt on the proposal's lattice. Its art in the lower half truly travels less than 1.4725 times the upper half's — the part rendered alone at --max 8000 converges on about 1.27 from above (issue #118) — and the pixel reading had passed it at 640 (4.537) by the grid; the geometric one fails it at every size, naming the part"
+            : "issue #118's reproduction: the same rig the pixel reading failed at --max 620, 640 and 650 and passed elsewhere; from the geometry the figure is one number at every render size and the bar decides it, not the grid",
+        );
+      }
+
       const builtCheck = readJsonAt(join(out, 'check', 'check.json')) as Record<string, unknown>;
       const statuses = JUDGEMENT_LINES.map((n) => `${n} ${lineStatus(builtCheck, n) ?? 'absent'}`);
       say(
@@ -9197,8 +9315,8 @@ function readmeLoopLines(readme: string): string[] | string {
 interface LoopRun {
   /** Each step as `command status`, in the order run. */
   ran: string[];
-  /** The first step that did not exit 0, its status and its first FAIL line (or its last line, when it printed none). */
-  refused: { line: string; status: number; first: string } | null;
+  /** The first step that did not exit 0, its status and its first FAIL line (or its last line, when it printed none), and every `FAIL  ` line it printed. */
+  refused: { line: string; status: number; first: string; fails: string[] } | null;
 }
 
 /**
@@ -9241,14 +9359,14 @@ function runReadmeLoop(lines: readonly string[], ex: string, work: string): Loop
   for (const line of lines) {
     const [command, ...rest] = line.split(/\s+/).slice(1);
     const args = [command, ...rest.map(place)];
-    if (!known.includes(command)) return { ran, refused: { line, status: -1, first: `"${command}" is not a command this control knows how to run; teach runReadmeLoop what the README says to do with it` } };
+    if (!known.includes(command)) return { ran, refused: { line, status: -1, first: `"${command}" is not a command this control knows how to run; teach runReadmeLoop what the README says to do with it`, fails: [] } };
     const r = runCli(args);
     ran.push(`${command}${args.includes('--head-box') ? ' --head-box' : args.includes('--propose-plan') ? ' --propose-plan' : args.includes('--from-config') ? ' --from-config' : ''} ${r.status}`);
     if (r.status !== 0) {
       const printed = r.out.split('\n').filter((l) => l.trim() !== '');
       // A refusal's first FAIL line; for a crash, its first error line rather than the runtime's banner.
       const first = printed.find((l) => /FAIL {2}/.test(l)) ?? printed.find((l) => /\b(?:[A-Z]+[a-z]*Error|E[A-Z]{3,}):/.test(l)) ?? printed[printed.length - 1] ?? '(nothing printed)';
-      return { ran, refused: { line, status: r.status, first: first.trim() } };
+      return { ran, refused: { line, status: r.status, first: first.trim(), fails: printed.filter((l) => /FAIL {2}[A-Z_]+:/.test(l)).map((l) => l.trim()) } };
     }
     const out = (): string => args[args.indexOf('--out') + 1];
     if (command === 'propose' && args.includes('--head-box')) {
@@ -9288,13 +9406,26 @@ function runReadmeLoopSuite(): number | null {
     for (const ex of found) {
       const key = relative(join(ROOT, 'examples'), ex);
       const r = runReadmeLoop(lines, ex, join(dir, key));
+      // The meshes the example's tracked config moved off the proposal's lattice into contour mode — the one
+      // correction a tracked example records against its proposal's meshes (scarf's bottomwear, issue #118, whose
+      // lattice fails TIP_OVER_ROOT measured from the geometry). Pasted uncorrected, as this control pastes, the
+      // build must stop at check and name exactly those parts on that line, and nothing else.
+      const tracked = readJsonAt(join(ex, 'config.json')) as { meshes?: Record<string, Record<string, unknown>> };
+      const proposed = readJsonAt(join(ex, 'proposal.json')) as { meshes?: Record<string, Record<string, unknown>> };
+      const corrected = Object.keys(tracked.meshes ?? {}).filter((m) => 'contour' in (tracked.meshes?.[m] ?? {}) && 'grid' in (proposed.meshes?.[m] ?? {})).sort();
+      const buildAt = lines.findIndex((l) => /^spine-parts build /.test(l));
+      const named = (r.refused?.fails ?? []).map((l) => /FAIL {2}CHECK_TIP_OVER_ROOT: part "([^"]+)"/.exec(l)?.[1] ?? '');
+      const ok =
+        corrected.length === 0
+          ? r.refused === null && r.ran.length === lines.length
+          : r.refused !== null && r.refused.line === lines[buildAt] && r.refused.status === 1 && r.ran.length === lines.length && [...named].sort().join(',') === corrected.join(',');
       say(
         `RL01_THE_README_LOOP_RUNS_IN_ORDER_ON_A_FRESH_CONFIG[${key}]`,
-        r.refused === null && r.ran.length === lines.length,
+        ok,
         r.refused === null
           ? `${r.ran.length} README step(s) in order, each exit 0: ${r.ran.join(', ')}; the config started with key, seethrough (no head_box) and assemble.rig_scale, and got the head box, the plan and the proposal's four rig sections pasted, uncorrected`
-          : `step ${r.ran.length + (r.refused.status === -1 ? 1 : 0)} of ${lines.length} refused (exit ${r.refused.status}): \`${r.refused.line}\` — ${r.refused.first}`,
-        'issue #20: the README loop is what an agent follows, so it is run as written; plain assemble once refused the config for the four sections the next step drafts, and the only way past was a stub of invented rig fields',
+          : `step ${r.ran.length + (r.refused.status === -1 ? 1 : 0)} of ${lines.length} refused (exit ${r.refused.status}): \`${r.refused.line}\` — ${r.refused.fails.length > 0 ? r.refused.fails.join(' | ') : r.refused.first}${corrected.length > 0 ? `; the tracked config moves [${corrected.join(', ')}] to contour mode, so the uncorrected build is required to stop there naming exactly those on CHECK_TIP_OVER_ROOT` : ''}`,
+        "issue #20: the README loop is what an agent follows, so it is run as written; plain assemble once refused the config for the four sections the next step drafts, and the only way past was a stub of invented rig fields. Issue #118: where an example's tracked config records a mesh-mode correction against its proposal, the uncorrected loop must end where the README says to read check.json, on the FAIL line that names that part and no other",
       );
     }
     // The planted order: assemble before the plan exists. It must stop at

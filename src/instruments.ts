@@ -186,51 +186,269 @@ export function regionHeat(heat: Uint8Array, width: number, box: PixelBox, mask?
 // swing: how far a band of a part's art travels
 // ---------------------------------------------------------------------------
 
-/**
- * How far the art inside `box` travels across the frames, in frame pixels: the
- * largest distance of its centroid from frame 0's. The art is every pixel
- * that is not the render's background, so the frames must be a `--slot`
- * render of the part alone. Null when frame 0 has no art in the box.
- *
- * ⚠️ This is a proxy for displacement, not a displacement: art entering or
- * leaving the band moves its centroid too. It was chosen over the band's heat
- * because heat is texture times motion — on the demo's sleeves the tip half's
- * mean heat is 1.1 times the root half's while its centroid travels 3.7 times
- * as far — and the question is how far the cloth moves, not how busy it is.
- */
-export function bandExcursion(frames: readonly Raster[], bg: readonly number[], box: PixelBox): number | null {
-  const w = frames[0].width;
-  const centroid = (f: Raster): [number, number] | null => {
-    let n = 0;
-    let sx = 0;
-    let sy = 0;
-    for (let y = box.y0; y < box.y1; y++) {
-      for (let x = box.x0; x < box.x1; x++) {
-        const i = (y * w + x) * 4;
-        if (f.data[i] !== bg[0] || f.data[i + 1] !== bg[1] || f.data[i + 2] !== bg[2]) {
-          n++;
-          sx += x;
-          sy += y;
-        }
-      }
-    }
-    return n === 0 ? null : [sx / n, sy / n];
-  };
-  const c0 = centroid(frames[0]);
-  if (c0 === null) return null;
-  let max = 0;
-  for (const f of frames) {
-    const c = centroid(f);
-    if (c === null) continue;
-    max = Math.max(max, Math.hypot(c[0] - c0[0], c[1] - c0[1]));
-  }
-  return max;
+/** One attachment on one frame as `rigc-geometry/1` writes it: rest vertices (the setup pose's bones, no deform), posed vertices (world, y up) and triangles. */
+export interface PosedTriangles {
+  rest: readonly number[];
+  posed: readonly number[];
+  triangles: readonly number[];
 }
 
-/** The two halves of a box across its rows: the upper one holds the root of a hanging part, the lower one its tip. */
-export function rowHalves(b: PixelBox): { root: PixelBox; tip: PixelBox } {
-  const mid = Math.floor((b.y0 + b.y1) / 2);
-  return { root: { ...b, y1: mid }, tip: { ...b, y0: mid } };
+/** A part's art on the stage: its box's top-left in stage px and, per pixel, 1 where it is art. */
+export interface ArtMask {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  data: Uint8Array;
+}
+
+/** How far each half of a part's box sees its art travel, in rig px (world units); null where frame 0 shows no art in that half. */
+export interface HalfTravels {
+  root: number | null;
+  tip: number | null;
+}
+
+/** A polygon as x, y pairs. */
+type Polygon = number[];
+
+/** Sutherland-Hodgman against one half-plane: keeps a x + b y + c >= 0. */
+function clipHalfPlane(poly: Polygon, a: number, b: number, c: number): Polygon {
+  const out: Polygon = [];
+  const n = poly.length / 2;
+  for (let i = 0; i < n; i++) {
+    const j = i + 1 === n ? 0 : i + 1;
+    const x1 = poly[2 * i];
+    const y1 = poly[2 * i + 1];
+    const x2 = poly[2 * j];
+    const y2 = poly[2 * j + 1];
+    const d1 = a * x1 + b * y1 + c;
+    const d2 = a * x2 + b * y2 + c;
+    if (d1 >= 0) out.push(x1, y1);
+    if (d1 >= 0 !== d2 >= 0) {
+      const t = d1 / (d1 - d2);
+      out.push(x1 + t * (x2 - x1), y1 + t * (y2 - y1));
+    }
+  }
+  return out;
+}
+
+/** A polygon clipped to the rectangle x0 <= x <= x1, y0 <= y <= y1. */
+function clipRect(poly: Polygon, x0: number, y0: number, x1: number, y1: number): Polygon {
+  let p = clipHalfPlane(poly, 1, 0, -x0);
+  if (p.length >= 6) p = clipHalfPlane(p, -1, 0, x1);
+  if (p.length >= 6) p = clipHalfPlane(p, 0, 1, -y0);
+  if (p.length >= 6) p = clipHalfPlane(p, 0, -1, y1);
+  return p;
+}
+
+/** A polygon's area and first moments (shoelace), signed by its winding: [A, A cx, A cy]. */
+function polygonMoments(poly: Polygon): [number, number, number] {
+  let a = 0;
+  let mx = 0;
+  let my = 0;
+  const n = poly.length / 2;
+  for (let i = 0; i < n; i++) {
+    const j = i + 1 === n ? 0 : i + 1;
+    const cr = poly[2 * i] * poly[2 * j + 1] - poly[2 * j] * poly[2 * i + 1];
+    a += cr;
+    mx += (poly[2 * i] + poly[2 * j]) * cr;
+    my += (poly[2 * i + 1] + poly[2 * j + 1]) * cr;
+  }
+  return [a / 2, mx / 6, my / 6];
+}
+
+/**
+ * The art of one attachment cut by its rest triangles, frame-independent:
+ * for each triangle, every piece of an art pixel's square inside it, as the
+ * barycentric coordinates (l1, l2 per corner) of the piece's corners, and the
+ * triangle's art area and the barycentric coordinates of its art centroid.
+ */
+interface ArtPieces {
+  /** Per triangle: the art area inside it at rest (rig px²), and its centroid as (l1, l2). */
+  area: Float64Array;
+  centroid: Float64Array;
+  /** Per triangle: its pieces, each a flat list of (l1, l2) corner pairs. */
+  pieces: Polygon[][];
+}
+
+function artPieces(art: ArtMask, a: PosedTriangles, stage: StageBox): ArtPieces {
+  const H = stage.height;
+  const R = a.rest;
+  const T = a.triangles;
+  const nt = T.length / 3;
+  const area = new Float64Array(nt);
+  const centroid = new Float64Array(2 * nt);
+  const pieces: Polygon[][] = [];
+  // World y of each row edge of the art's box: row v's square spans [wy[v + 1 - y0], wy[v - y0]].
+  const wy: number[] = [];
+  for (let v = art.y; v <= art.y + art.height; v++) wy.push(stage.y + cropToSpineY(v, H));
+  for (let t = 0; t < nt; t++) {
+    const i = T[3 * t];
+    const j = T[3 * t + 1];
+    const k = T[3 * t + 2];
+    const x0 = R[2 * i];
+    const y0 = R[2 * i + 1];
+    const ex1 = R[2 * j] - x0;
+    const ey1 = R[2 * j + 1] - y0;
+    const ex2 = R[2 * k] - x0;
+    const ey2 = R[2 * k + 1] - y0;
+    const det = ex1 * ey2 - ex2 * ey1;
+    const list: Polygon[] = [];
+    pieces.push(list);
+    if (det === 0) continue;
+    const s = det > 0 ? 1 : -1;
+    const xs = [x0, R[2 * j], R[2 * k]];
+    const ys = [y0, R[2 * j + 1], R[2 * k + 1]];
+    const u0 = Math.max(art.x, Math.floor(Math.min(...xs) - stage.x));
+    const u1 = Math.min(art.x + art.width, Math.ceil(Math.max(...xs) - stage.x));
+    const yLo = Math.min(...ys);
+    const yHi = Math.max(...ys);
+    let A = 0;
+    let L1 = 0;
+    let L2 = 0;
+    for (let r = 0; r < art.height; r++) {
+      const top = wy[r];
+      const bottom = wy[r + 1];
+      if (bottom >= yHi || top <= yLo) continue;
+      for (let u = u0; u < u1; u++) {
+        if (art.data[r * art.width + (u - art.x)] !== 1) continue;
+        const left = stage.x + u;
+        let poly: Polygon = [left, bottom, left + 1, bottom, left + 1, top, left, top];
+        for (let e = 0; e < 3 && poly.length >= 6; e++) {
+          const ax = xs[e];
+          const ay = ys[e];
+          const bx = xs[(e + 1) % 3];
+          const by = ys[(e + 1) % 3];
+          // inside: (b - a) x (q - a) has the triangle's winding
+          poly = clipHalfPlane(poly, -(by - ay) * s, (bx - ax) * s, ((by - ay) * ax - (bx - ax) * ay) * s);
+        }
+        if (poly.length < 6) continue;
+        const [pa, pmx, pmy] = polygonMoments(poly);
+        if (pa === 0) continue;
+        const bary: Polygon = [];
+        for (let q = 0; q < poly.length; q += 2) {
+          const dx = poly[q] - x0;
+          const dy = poly[q + 1] - y0;
+          bary.push((dx * ey2 - ex2 * dy) / det, (ex1 * dy - dx * ey1) / det);
+        }
+        list.push(bary);
+        // The rest pieces are counter-clockwise (y up), so their area is positive.
+        A += pa;
+        const cx = pmx / pa - x0;
+        const cy = pmy / pa - y0;
+        L1 += pa * ((cx * ey2 - ex2 * cy) / det);
+        L2 += pa * ((ex1 * cy - cx * ey1) / det);
+      }
+    }
+    area[t] = A;
+    centroid[2 * t] = A === 0 ? 0 : L1 / A;
+    centroid[2 * t + 1] = A === 0 ? 0 : L2 / A;
+  }
+  return { area, centroid, pieces };
+}
+
+/**
+ * How far the art in each half of a part's box travels over the frames
+ * (issue #118): the centroid of the art's AREA inside the half — a fixed
+ * band of the stage, the box's upper or lower half, cut at h / 2 — on each
+ * frame, and the largest distance of that centroid from frame 0's, in rig px.
+ *
+ * It is the figure `check` read off a render of the part alone until #118 (a
+ * binary-coverage centroid per half of the frame box, frame px), taken in its
+ * continuous limit from the posed geometry instead. A centroid rather than
+ * the band's heat, as before: heat is texture times motion, and the question
+ * is how far the cloth moves. It is a proxy for displacement, not a
+ * displacement — art crossing a half's fixed edge moves the centroid too, by
+ * design: a band fixed on the stage is the definition. Every art pixel's square (art = the
+ * part's alpha above the threshold its mesh is built from) is cut by the
+ * attachment's rest triangles, carried by each triangle's own affine map to
+ * its posed vertices — the map the runtime draws the texture with — and
+ * clipped to the band, exactly (polygon clipping, no sampling). No render
+ * grid enters it, so the figure does not change with `--max`, and a travel
+ * well under one frame pixel is measured as exactly as a large one.
+ *
+ * Art outside every rest triangle is not drawn by the runtime and is not
+ * counted. A frame on which the slot shows nothing (null) is skipped; a half
+ * with no art on frame 0 is null. Each distinct rest attachment is cut once.
+ */
+export function halfTravels(art: ArtMask, box: { x: number; y: number; w: number; h: number }, stage: StageBox, frames: ReadonlyArray<PosedTriangles | null>): HalfTravels {
+  const H = stage.height;
+  const bx0 = stage.x + box.x;
+  const bx1 = stage.x + box.x + box.w;
+  const top = stage.y + cropToSpineY(box.y, H);
+  const mid = stage.y + cropToSpineY(box.y + box.h / 2, H);
+  const bottom = stage.y + cropToSpineY(box.y + box.h, H);
+  const bands = { root: [mid, top], tip: [bottom, mid] } as const;
+  const cut = new Map<readonly number[], ArtPieces>();
+  const centroidIn = (a: PosedTriangles, y0: number, y1: number): [number, number] | null => {
+    let pc = cut.get(a.rest);
+    if (pc === undefined) {
+      pc = artPieces(art, a, stage);
+      cut.set(a.rest, pc);
+    }
+    const P = a.posed;
+    const T = a.triangles;
+    let A = 0;
+    let MX = 0;
+    let MY = 0;
+    for (let t = 0; t < pc.area.length; t++) {
+      if (pc.area[t] === 0) continue;
+      const i = T[3 * t];
+      const j = T[3 * t + 1];
+      const k = T[3 * t + 2];
+      const px = P[2 * i];
+      const py = P[2 * i + 1];
+      const e1x = P[2 * j] - px;
+      const e1y = P[2 * j + 1] - py;
+      const e2x = P[2 * k] - px;
+      const e2y = P[2 * k + 1] - py;
+      const xmin = Math.min(px, px + e1x, px + e2x);
+      const xmax = Math.max(px, px + e1x, px + e2x);
+      const ymin = Math.min(py, py + e1y, py + e2y);
+      const ymax = Math.max(py, py + e1y, py + e2y);
+      if (xmax <= bx0 || xmin >= bx1 || ymax <= y0 || ymin >= y1) continue;
+      const R = a.rest;
+      const restDet = (R[2 * j] - R[2 * i]) * (R[2 * k + 1] - R[2 * i + 1]) - (R[2 * k] - R[2 * i]) * (R[2 * j + 1] - R[2 * i + 1]);
+      const posedDet = e1x * e2y - e2x * e1y;
+      // The posed area of a rest area: |posed det / rest det| times it.
+      const scale = Math.abs(posedDet / restDet);
+      if (xmin >= bx0 && xmax <= bx1 && ymin >= y0 && ymax <= y1) {
+        const w = pc.area[t] * scale;
+        const l1 = pc.centroid[2 * t];
+        const l2 = pc.centroid[2 * t + 1];
+        A += w;
+        MX += w * (px + l1 * e1x + l2 * e2x);
+        MY += w * (py + l1 * e1y + l2 * e2y);
+        continue;
+      }
+      for (const bary of pc.pieces[t]) {
+        const poly: Polygon = [];
+        for (let q = 0; q < bary.length; q += 2) poly.push(px + bary[q] * e1x + bary[q + 1] * e2x, py + bary[q] * e1y + bary[q + 1] * e2y);
+        const c = clipRect(poly, bx0, y0, bx1, y1);
+        if (c.length < 6) continue;
+        const [pa, pmx, pmy] = polygonMoments(c);
+        // A triangle the pose turns over winds its pieces the other way; what is drawn is the area either way.
+        const sg = pa < 0 ? -1 : 1;
+        A += sg * pa;
+        MX += sg * pmx;
+        MY += sg * pmy;
+      }
+    }
+    return A > 0 ? [MX / A, MY / A] : null;
+  };
+  const travel = (y0: number, y1: number): number | null => {
+    const first = frames[0];
+    const c0 = first === null ? null : centroidIn(first, y0, y1);
+    if (c0 === null) return null;
+    let max = 0;
+    for (const f of frames) {
+      const c = f === null ? null : centroidIn(f, y0, y1);
+      if (c === null) continue;
+      max = Math.max(max, Math.hypot(c[0] - c0[0], c[1] - c0[1]));
+    }
+    return max;
+  };
+  return { root: travel(bands.root[0], bands.root[1]), tip: travel(bands.tip[0], bands.tip[1]) };
 }
 
 // ---------------------------------------------------------------------------

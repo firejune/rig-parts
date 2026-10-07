@@ -993,7 +993,7 @@ See-through with another seed.
 | `CHECK_BREATH_VISIBLE` | the torso (`topwear`), rendered alone, barely moves over the idle — or the feet (`footwear`), rendered alone, move at all | the chest's breath tracks (`motion.tracks` on `chest`), or the torso mesh's `segments`; for the feet, the bone their region rides (`regions.<part>`, `root` in both examples) |
 | `CHECK_BLINK_NO_HOLE` | with the blink held shut, the eyewhite box shows the page where the open eye had art | the layer under the eye: the `face` part has no art there. Take the face from the other run, or add a part under the eye; `motion.blink.squash` only hides the hole less |
 | `CHECK_CHAIN_LAG` | a rotate track leads (or does not lag) the keyed bone above it, or a chain link swings less than the link above | that chain track's `phase`/`lag` (a positive `lag`, a child `phase` above its parent's) or its `amps` (non-decreasing toward the tip) |
-| `CHECK_TIP_OVER_ROOT` | a `handwear`/`bottomwear` part's lower half travels less than 1.4725 times as far as its upper half | the chain track's `amps` (grow toward the tip), or the mesh's `segments` (the chain must be among them) |
+| `CHECK_TIP_OVER_ROOT` | a `handwear`/`bottomwear` part's art in the lower half of its box travels less than 1.4725 times as far as in the upper half, measured from the idle's posed geometry (rig px quoted) | the chain track's `amps` (grow toward the tip), or the mesh's `segments` (the chain must be among them), or its mode: on `scarf`'s short skirt the proposal's lattice reads 1.207 and the same part in `contour` mode 1.738 with the same segments and idle (issue #118) |
 | `CHECK_STILL_REGIONS_DARK` | over the face outline, carried into the frame of the bone the face's slot rides: something moves there that the head does not carry, above twice the resampler's own error on this rig (both figures quoted, with the screen-space one beside them); over the feet, the heat map is brighter than the ceiling | on the face: a mesh over it weighted to a bone the head does not carry (`segments`), or a swinging part (a bang, a chain) whose art crosses the face outline; on the feet: a mesh weighted to a swinging bone, or a region on the wrong bone |
 | `CHECK_TEXTURE_STRETCH` | a mesh triangle's edge, in some idle frame, is more than 1.926544 times its rest length or less than 1/1.926544 of it (the mesh, triangle, its three vertices, the edge and the frame are named); or a rest edge has length 0 | the chain tracks' `amps` on the bones that mesh is weighted to (the stretch grows with them), or the mesh's `segments` — a vertex blending two bones that swing against each other |
 | `CHECK_SEAM_FRAME_SIZE`, `FRAMES_SIDECAR`, `CHECK_GEOMETRY_FILE` | rigc's render is not what its `frames.json` says, or its `geometry.json` is not a whole `rigc-geometry/1` export of the frames beside it (a frame count, a mesh whose vertex count differs from its rest entry; for the face half, another viewport than `frames.json`'s, other frame indices, the head bone or a feature's bone missing from a frame, a non-finite transform or time) | a rigc problem; report it |
@@ -1058,9 +1058,39 @@ the two examples [observed]:
 | `BLINK_NO_HOLE` | the setup pose with every `scaley` track on the eyewhite slots' bones held at its closed value, against the setup pose, at full size: pixels in the eyewhite box that show the page where the open eye had art | 0 px | 0 | 0 | no `eyewhite` part, or no `scaley` track on its bones goes below its first key |
 | ″ (reported) | the same box: each closed-eye pixel's max-channel distance to the nearest colour the open eye's box holds — max, and pixels over 40 | none | 15; 0 | 11; 0 | as above |
 | `CHAIN_LAG` | `motion.json`'s rotate tracks read as sines (DFT of the keys: period, amplitude, phase) and arranged by the bone tree — a keyed bone's parent is its nearest keyed ancestor | every lag ≥ 0.001 cycle; amplitude non-decreasing down each unbranched chain | lags 0.040 (neck to head) to 0.120; 12 chains | lags 0.040 to 0.100; 9 chains | no rotate track under another of the same period |
-| `TIP_OVER_ROOT` | each `handwear`/`bottomwear` part alone: how far the centroid of its art travels in the lower half of its box against the upper half | ratio ≥ 1.4725 | `bottomwear` 2.945, `sleeves` 3.716 | `bottomwear` 4.396, `sleeves` 12.475 | no such part |
+| `TIP_OVER_ROOT` | each `handwear`/`bottomwear` part: how far the centroid of its art travels in the lower half of its box against the upper half — the art's AREA centroid inside each fixed half (cut at h/2), every art pixel (alpha above 8) carried through its attachment's posed triangles from the idle's `geometry.json` and clipped to the half exactly, rig px; `instrument: "geometry"` in the line (issue #118) | ratio ≥ 1.4725 | `bottomwear` 3.222, `sleeves` 4.721 | `bottomwear` 4.956, `sleeves` 11.830 | no such part |
 | `STILL_REGIONS_DARK` | the face outline **in the head's own frame**: each idle frame sampled (bilinear) where the head bone has carried each setup-pose pixel of the region, the heat taken over those samples. The head bone is the bone the `face` parts' slot rides in `rig.json`, and its per-frame world transform is `rigc render --geometry`'s. The region is the frame pixels whose whole footprint — 1 + 1/scale rig px each way, what the rasteriser's and this sampler's bilinear taps can reach — is `face` on top of the flat stack, clear by that reach of where `eyewhite`, `irides`, `eyelash`, `eyebrow` and `mouth` go in the head's frame over the idle. `resampler_heat_mean` is the same figure off the whole rig moved rigidly as the idle moves the head (the root keyed to the head's motion, every other key dropped), where every pixel is still in the head's frame by construction. `screen_heat_mean`/`max` over `screen_px` are the screen-space figures this line held until issue #33 (where `face` is on top, less the features' setup boxes), reported. The feet (where `footwear` is on top): the idle's heat in screen space — they ride the root, which the idle does not move, so the screen is their own frame | face `head_frame_heat_mean` ≤ 2 × `resampler_heat_mean` (`mean_ceiling`); feet mean ≤ 3.244 | face 1.321 ≤ 2.292 (resampler 1.146; screen 16.988); feet 1.622 | face 0.884 ≤ 1.765 (resampler 0.883; screen 11.475); feet 0 | no `face` and no `footwear` part (one of the two absent leaves that half unmeasured; so do face parts on two slot bones, or idle frames with no `geometry.json`) |
 | `TEXTURE_STRETCH` | every mesh triangle's three edges in every idle frame, read from the `geometry.json` the idle render writes (`rigc render --geometry`, spine-rigc 1.4.0 or later): skinned length over rest length, the rest being the setup pose's bones with no deform. The figure is the rig's worst max(ratio, 1/ratio); each mesh's largest and smallest ratio, with triangle, vertices, edge and frame, is the detail | max(ratio, 1/ratio) ≤ 1.926544 | 1.388: `hair_back` triangle 449, edge 42-43 at 0.720 in frame 26 (largest stretch 1.291, frame 2) | 1.227: `sleeves` triangle 169, edge 126-51 at 0.815 in frame 28 (largest stretch 1.196, frame 5) | the rig draws no mesh, or the render wrote no `geometry.json` |
+
+**`TIP_OVER_ROOT` is measured from geometry, not pixels (issue #118).** Until #118 the
+line rendered each part alone at `--max 640` and took, per half of its frame box, the
+centroid of every pixel that was not the background; its fields were `root_px` and
+`tip_px`, frame px. A half that travels under a frame pixel puts that centroid at the
+mercy of which edge pixels the grid flips: over `--max` 620–660 the pixel figure
+scattered around the exact one by up to 0.3 frame px whatever the travel [observed,
+13 half-bands on the three examples and a variant], and every **root** half on every
+example travels 0.04–0.6 frame px, so the ratio's denominator was noise — sample's
+`bottomwear` read 4.187–6.849 over the sweep, demo's `sleeves` 2.960–6.503, and sample
+with its skirt amplitudes ×0.1 read 0.512–13.53, FAIL or PASS by the grid. The exact
+reading of the same definition is the same at every size (4.007 on that skirt, a PASS).
+The fields are now `root_rig_px` and `tip_rig_px`, rig px, beside `instrument:
+"geometry"`, so an old and a new `check.json` are not read as one instrument. The bar
+is the one set from the pixel instrument (half of demo's `bottomwear` 2.945, by the
+rule above, not chased); demo's exact 3.222 clears it 2.19 times. The figures the two
+instruments give the examples, and `scarf` (whose `bottomwear` is tracked in contour
+mode because its lattice fails the line — its README):
+
+| part | pixel, `--max 640` (until #118) | geometry |
+| --- | --- | --- |
+| `demo` `bottomwear`, `sleeves` | 2.990, 3.287 | 3.222, 4.721 |
+| `sample` `bottomwear`, `sleeves` | 4.396, 12.475 | 4.956, 11.830 |
+| `scarf` `handwear_r`, `handwear_l` | 6.242, 5.558 | 6.683, 5.345 |
+| `scarf` `bottomwear`, lattice / contour | 4.537 / 2.661 | 1.207 / 1.738 |
+
+The part rendered alone at up to `--max 8000` — the motion spanning pixels — converges
+on the geometric figure (`scarf`'s lattice `bottomwear` 1.337, 1.316, 1.285, 1.270 at
+1200, 2400, 4800, 8000), with one gap not explained: `sample`'s `bottomwear` tip reads
+2.342 rig px there against 2.596 from geometry, its root agreeing to 0.4 %.
 
 After them, one **reported line** with no bar:
 
