@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/firejune/spine-parts/compare/v0.15.2...v0.16.0) (2026-10-07)
+
+
+### Features
+
+* **compose:** bind finished single-character builds into one rig with prefixed names, a background plate and a declared slot order ([#129](https://github.com/firejune/spine-parts/issues/129)) ([55a7adc](https://github.com/firejune/spine-parts/commit/55a7adc20154031295899bbbf62db63b6da88b4d)), closes [#74](https://github.com/firejune/spine-parts/issues/74)
+
 ## [0.15.2](https://github.com/firejune/spine-parts/compare/v0.15.1...v0.15.2) (2026-10-07)
 
 
