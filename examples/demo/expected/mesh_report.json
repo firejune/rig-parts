@@ -97,7 +97,7 @@
    "sleeve_r2"
   ],
   "max_influences": 4,
-  "mean_influences": 3.65,
+  "mean_influences": 3.64,
   "art_coverage": 1.0,
   "grid": 24
  },
@@ -112,7 +112,7 @@
    "hairpin_tassel1"
   ],
   "max_influences": 3,
-  "mean_influences": 2.48,
+  "mean_influences": 2.5,
   "art_coverage": 1.0,
   "grid": 13
  },

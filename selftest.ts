@@ -98,7 +98,7 @@ import {
   writeRun,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
-import { artifactPaths, build, BUILD_OWNS, ctlRemedies, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
+import { artifactPaths, assembleStage, build, BUILD_OWNS, ctlRemedies, fringeLines, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, shiftRight, writeCheckRig, writeMergedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BARE_CROWN_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
@@ -128,8 +128,14 @@ import {
   PROJECT_RULES,
   proposeFields,
   proposePlan,
+  pushBackFringe,
   recomposite,
   recompositeErrorMap,
+  SEAM_LIMIT,
+  SEAM_RULES,
+  seamCandidates,
+  seamOverride,
+  type SeamRule,
   sourceInRig,
   stageFields,
   visibilityCounts,
@@ -183,7 +189,7 @@ import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paint
 import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs, squarePad } from './src/inputs.ts';
 import { implausibleRules, type Layer, layerFigures, type LayerSet, PLAUSIBLE_AREA_RATIO_MAX, PLAUSIBLE_JUDGED_AREA_RATIO, PLAUSIBLE_TRANSLUCENT_MAX, PLAUSIBLE_BACKGROUND_MAX, PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN, readLayers, readPsdLayers, readWrapperLayers, ruleSummary } from './src/layers.ts';
-import { type PartsFile, type RecompositeRecord, readParts, serializeParts, writeParts } from './src/parts.ts';
+import { type PartRecord, type PartsFile, type RecompositeRecord, readParts, serializeParts, writeParts } from './src/parts.ts';
 import {
   alphaComposite,
   connectedComponents,
@@ -9574,6 +9580,278 @@ function runAssembleSuite(): number {
           map.data.every((v, i) => i % 4 !== 3 || v === 255),
         `gap: ${lines.join(' / ')}; flush: ${flush.holeCount} hole(s), ${flush.uncoveredErrorPx} uncovered px; six pinholes: ${pinned.holeCount} holes, ${pinned.holes.length} listed, then ${listedPins.join(', ')}; a wrong-colour patch: error ${withPatch.errorPx}, uncovered ${withPatch.uncoveredErrorPx}; map red ${count(MAP_UNCOVERED)}, blue ${count(MAP_MISMATCHED)}, figure grey 209 ${count([209, 209, 209])}, page 255 ${count([255, 255, 255])}`,
         "issue #25: See-through split a skirt into two legs, and the space between them was in no layer; the count said 7671 and nothing said where. The box, the two parts and the red in the map are the where — and a fixture with no gap must list nothing, or the list is noise",
+      );
+    }
+
+    // Issue #119: a part's fringe below CORE_ALPHA, in a colour the painting does not hold, over a part beneath that holds
+    // the pixel in the painting's colour. The issue's reproduction: two 8x4 parts on an 8x4 rig, the painting beige
+    // everywhere; "sleeve" drawn first, beige at alpha 255; "body" drawn second, beige at 255 in columns 0..4 and a red
+    // fringe (109, 12, 24) at alpha 235 in column 5. By hand (float composite on white, a = 235/255 = 0.92157): column 5
+    // composites to 224 x 0.07843 + 109 x 0.92157 = 118.0, 197 x 0.07843 + 12 x 0.92157 = 26.5, 183 x 0.07843 + 24 x 0.92157
+    // = 36.5, so it differs from the painting by 170.5 in green, over SEAM_LIMIT (60); the top cover's alpha 235 is under
+    // CORE_ALPHA (250), so the seam override cannot act; the sleeve holds the pixel at 255 in exactly the painting's colour.
+    // The rule clears the four column-5 pixels of "body" (one per row), held by "sleeve", and column 5 then composites to
+    // the sleeve's beige exactly.
+    {
+      type RGBA = readonly [number, number, number, number];
+      const FW = 8;
+      const FH = 4;
+      const BEIGE = [224, 197, 183] as const;
+      const RED = [109, 12, 24] as const;
+      const fill = (f: (x: number) => RGBA): Raster => {
+        const r = newRaster(FW, FH);
+        for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) r.data.set(f(x), (y * FW + x) * 4);
+        return r;
+      };
+      const rec = (name: string): PartRecord => ({ name, from: 'full:topwear', x: 0, y: 0, w: FW, h: FH, opaque_px: 0, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 });
+      const beigePainting = fill(() => [...BEIGE, 255]);
+      const everywhere = newMask(FW, FH);
+      everywhere.data.fill(1);
+      /** The issue's stack: an optional part beneath (`sleeve`), then `body` with `fringe` in column 5. */
+      const stack = (sleeve: RGBA | null, fringe: RGBA): PlacedPart[] => {
+        const body: PlacedPart = { record: rec('body'), image: fill((x) => (x < 5 ? [...BEIGE, 255] : x === 5 ? fringe : [0, 0, 0, 0])) };
+        return sleeve === null ? [body] : [{ record: rec('sleeve'), image: fill(() => sleeve) }, body];
+      };
+      const col = (r: Raster, x: number): string => Array.from({ length: FH }, (_, y) => Array.from(r.data.subarray((y * r.width + x) * 4, (y * r.width + x) * 4 + 4)).join(',')).join(' ');
+      const maxOff = (r: Raster, x: number, want: readonly number[]): number => Math.max(...Array.from({ length: FH }, (_, y) => Math.max(...[0, 1, 2].map((c) => Math.abs(r.data[(y * r.width + x) * 4 + c] - want[c])))));
+      const body = (ps: PlacedPart[]): PlacedPart => ps[ps.length - 1];
+      const shown = (ps: ReturnType<typeof pushBackFringe>): string => ps.map((l) => JSON.stringify(l)).join(' ');
+      const runRule = (rule: SeamRule, ps: PlacedPart[], painting: Raster = beigePainting): { pushed: ReturnType<typeof pushBackFringe>; can: Raster } => {
+        const sil = rule === 'silhouette' ? everywhere : null;
+        const pushed = pushBackFringe(ps, painting, rule, sil);
+        seamOverride(ps, painting, rule, sil);
+        return { pushed, can: recomposite(ps, FW, FH) };
+      };
+
+      const as40: string[] = [];
+      let ok40 = true;
+      for (const rule of SEAM_RULES) {
+        // The planted defect first: the seam override alone leaves the red line, as the issue measured.
+        const before = stack([...BEIGE, 255], [...RED, 235]);
+        seamOverride(before, beigePainting, rule, rule === 'silhouette' ? everywhere : null);
+        const lineBefore = maxOff(recomposite(before, FW, FH), 5, BEIGE);
+        const ps = stack([...BEIGE, 255], [...RED, 235]);
+        const { pushed, can } = runRule(rule, ps);
+        const off = maxOff(can, 5, BEIGE);
+        ok40 &&= lineBefore > SEAM_LIMIT && JSON.stringify(pushed) === '[[],[{"part":"sleeve","px":4}]]' && col(body(ps).image, 5) === '0,0,0,0 0,0,0,0 0,0,0,0 0,0,0,0' && off === 0 && body(ps).record.seam_override_px === 0;
+        as40.push(`${rule}: seam override alone leaves column 5 ${lineBefore} off; with the rule pushed ${shown(pushed)}, body column 5 ${col(body(ps).image, 5)}, recomposite column 5 ${off} off the painting`);
+      }
+      say(
+        'AS40_A_FRINGE_IN_ANOTHER_COLOUR_OVER_A_PART_THAT_HOLDS_THE_PAINTING_IS_PUSHED_BACK',
+        ok40,
+        as40.join('; '),
+        'issue #119: a top part\'s fringe below alpha 250 in another garment\'s colour (a scarf\'s red on the edge of a sweater layer, over the sleeve) survives the seam override, which recolours only at alpha >= 250, and draws as a red line down the sleeve; the painting shows the sleeve there, so the pixel is the sleeve\'s',
+      );
+
+      const as41: string[] = [];
+      let ok41 = true;
+      for (const rule of SEAM_RULES) {
+        for (const [what, sleeve] of [
+          ['no part beneath', null],
+          ['a part beneath at alpha 249', [...BEIGE, 249]],
+        ] as const) {
+          const ps = stack(sleeve, [...RED, 235]);
+          const sil = rule === 'silhouette' ? everywhere : null;
+          const isCandidate = seamCandidates(ps, beigePainting, rule, sil).cand[5] === 1;
+          const { pushed } = runRule(rule, ps);
+          ok41 &&= isCandidate && pushed.every((l) => l.length === 0) && col(body(ps).image, 5) === '109,12,24,235 109,12,24,235 109,12,24,235 109,12,24,235';
+          as41.push(`${rule}, ${what}: a seam candidate ${isCandidate}, pushed ${shown(pushed)}, body column 5 ${col(body(ps).image, 5).split(' ')[0]} x4`);
+        }
+      }
+      say(
+        'AS41_THE_SAME_FRINGE_WITH_NO_PART_HOLDING_THE_PIXEL_BENEATH_IS_KEPT',
+        ok41,
+        as41.join('; '),
+        'with nothing at alpha >= 250 beneath (the figure\'s outline over the page, or a part beneath that is itself fringe) clearing the pixel would leave nothing to draw it; the fringe stays, and the pixel is still a seam candidate, so it is the holder test that keeps it',
+      );
+
+      const as42: string[] = [];
+      let ok42 = true;
+      for (const rule of SEAM_RULES) {
+        const ps = stack([...BEIGE, 255], [...RED, 250]);
+        const { pushed, can } = runRule(rule, ps);
+        ok42 &&= pushed.every((l) => l.length === 0) && body(ps).record.seam_override_px === 4 && col(body(ps).image, 5) === '224,197,183,250 224,197,183,250 224,197,183,250 224,197,183,250' && maxOff(can, 5, BEIGE) <= 1;
+        as42.push(`${rule}: pushed ${shown(pushed)}, body seam_override_px ${body(ps).record.seam_override_px}, body column 5 ${col(body(ps).image, 5).split(' ')[0]} x4`);
+      }
+      say(
+        'AS42_A_RED_PIXEL_AT_ALPHA_250_IS_THE_SEAM_OVERRIDE_S_AS_BEFORE',
+        ok42,
+        as42.join('; '),
+        'the rule acts only where the seam override cannot (alpha below CORE_ALPHA); at alpha 250 the pixel is recoloured to the painting in the top part with its alpha kept, which is the reference\'s rule, unchanged',
+      );
+
+      const as43: string[] = [];
+      let ok43 = true;
+      for (const rule of SEAM_RULES) {
+        // A navy part beneath, 194 off the beige painting: the painting does not show it there, so nothing is pushed back.
+        const ps = stack([30, 40, 90, 255], [...RED, 235]);
+        const sil = rule === 'silhouette' ? everywhere : null;
+        const isCandidate = seamCandidates(ps, beigePainting, rule, sil).cand[5] === 1;
+        const { pushed } = runRule(rule, ps);
+        ok43 &&= isCandidate && pushed.every((l) => l.length === 0) && col(body(ps).image, 5).startsWith('109,12,24,235 ');
+        as43.push(`${rule}: a navy holder 194 off the painting, a seam candidate ${isCandidate}, pushed ${shown(pushed)}`);
+      }
+      say(
+        'AS43_A_FRINGE_OVER_A_HOLDER_THE_PAINTING_DOES_NOT_SHOW_IS_KEPT',
+        ok43,
+        as43.join('; '),
+        'a fringe that is too faint rather than the wrong colour (an earring\'s edge over hair, where the painting shows the earring) would, if cleared, hand the pixel to a holder in the wrong colour, which the seam override then paints with the front part\'s colour; the holder\'s own colour must be within SEAM_LIMIT of the painting',
+      );
+
+      const as44: string[] = [];
+      let ok44 = true;
+      for (const rule of SEAM_RULES) {
+        // Column 5 of the painting is (190, 160, 150); a fringe (180, 150, 140) at 235 over the beige sleeve composites to
+        // 183.5, 153.7, 143.4 by hand — within SEAM_LIMIT, so no candidate; the holder is 37 off, within it too.
+        const edge = fill((x) => (x === 5 ? [190, 160, 150, 255] : [...BEIGE, 255]));
+        const ps = stack([...BEIGE, 255], [180, 150, 140, 235]);
+        const { pushed } = runRule(rule, ps, edge);
+        ok44 &&= pushed.every((l) => l.length === 0) && col(body(ps).image, 5).startsWith('180,150,140,235 ');
+        as44.push(`${rule}: an anti-aliased edge that composites to the painting, pushed ${shown(pushed)}, body column 5 ${col(body(ps).image, 5).split(' ')[0]} x4`);
+      }
+      say(
+        'AS44_A_FRINGE_THAT_COMPOSITES_TO_THE_PAINTING_IS_KEPT',
+        ok44,
+        as44.join('; '),
+        'an anti-aliased edge whose stack is within SEAM_LIMIT of the painting is the painting\'s own edge: clearing it would harden every outline between two parts',
+      );
+
+      // The stage, on generated runs (k = 1, every resample the identity; derivation in the comment): a full-run sleeve
+      // "handwear-l" [10, 20) x [10, 40) and a "topwear" [20, 40) x [10, 40), both C on the flat C painting, and topwear
+      // carries a fringe column at x = 19 over the sleeve, teal (20, 200, 200) at alpha 235. Column 19 composites to
+      // 100 x 0.07843 + 20 x 0.92157 = 26.3 in red, 73.7 off C (40 is the painting's least channel, so near-white admits
+      // it); the sleeve holds it at 255 in C. So topwear's 30 fringe pixels are pushed back, held by handwear_l; topwear is
+      // left [20, 40) x [10, 40) = 600 px, box 20,10 20x30; the recomposite's error pixels are the uncovered page alone,
+      // 64 x 64 - 300 - 600 = 3,196. The twin without the sleeve keeps the fringe: 630 px, box 19,10 21x30, no field.
+      const stage = temp('assemble-fringe');
+      try {
+        const TEAL = [20, 200, 200] as const;
+        const full: Parameters<typeof writeRun>[1] = [
+          { name: 'handwear-l', depth: 0.6, rects: [{ x0: 10, y0: 10, x1: 20, y1: 40, colour: C }] },
+          { name: 'topwear', depth: 0.5, rects: [{ x0: 20, y0: 10, x1: 40, y1: 40, colour: C }, { x0: 19, y0: 10, x1: 20, y1: 40, colour: [...TEAL] }] },
+        ];
+        const runOf = (plan: Array<[string, 'full' | 'head', string]>, label: string): { r: ReturnType<typeof assemble>; lines: string[] } => {
+          const dir = join(stage, label);
+          writeRun(join(dir, 'full'), full);
+          // writeRun paints opaque rectangles; the fringe column is column 0 of topwear's PNG (its box starts at x 19).
+          const png = join(dir, 'full', 'parts', 'topwear.png');
+          const t = readPng(png);
+          for (let y = 0; y < t.height; y++) t.data[(y * t.width) * 4 + 3] = 235;
+          writeFileSync(png, encodePngBytes(t));
+          writeRun(join(dir, 'head'), FRAMED_HEAD);
+          writeFileSync(join(dir, 'painting.png'), encodePngBytes(flatPainting()));
+          writeFileSync(join(dir, 'config.json'), JSON.stringify(assembleConfig({ plan, extend: [] })));
+          // The stage as the CLI runs it, so the printed lines are the ones an author reads.
+          const lines: string[] = [];
+          const out = join(dir, 'out');
+          const r = assembleStage(
+            { source: join(dir, 'painting.png'), full: join(dir, 'full'), head: join(dir, 'head'), config: join(dir, 'config.json'), seam: 'near-white', project: DEFAULT_PROJECT_RULE },
+            { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, 'recomposite_error_rig.png') },
+            (l) => lines.push(l),
+          );
+          return { r, lines };
+        };
+        // A refusal or a throw inside the stage is reported on both lines rather than crashing the suite.
+        try {
+          const sleeveRun = runOf([['handwear_l', 'full', 'handwear-l'], ['topwear', 'full', 'topwear']], 'sleeve');
+          const aloneRun = runOf([['topwear', 'full', 'topwear']], 'alone');
+          const withSleeve = sleeveRun.r;
+          const alone = aloneRun.r;
+          // The fringe line sits between the part lines and the pixel totals.
+          const printed = sleeveRun.lines.findIndex((l) => l.startsWith('  fringe pushed back: '));
+          const printedAt = printed > 0 && sleeveRun.lines[printed - 1].startsWith('  topwear ') && sleeveRun.lines[printed + 1].startsWith('  pixels: ');
+          const tw = (r: ReturnType<typeof assemble>): PartRecord => r.parts.parts.find((p) => p.name === 'topwear') as PartRecord;
+          const a = tw(withSleeve);
+          const b = tw(alone);
+          const lines = fringeLines(withSleeve.parts.parts);
+          const text = serializeParts(withSleeve.parts);
+          say(
+            'AS45_THE_STAGE_PUSHES_A_PLANTED_FRINGE_BACK_RECORDS_IT_AND_PRINTS_IT',
+            JSON.stringify(a.fringe_pushed_back) === '[{"part":"handwear_l","px":30}]' &&
+              a.opaque_px === 600 &&
+              a.visible_px === 600 &&
+              [a.x, a.y, a.w, a.h].join(',') === '20,10,20,30' &&
+              withSleeve.figures.errorPx === 3196 &&
+              withSleeve.figures.uncoveredErrorPx === 3196 &&
+              lines.join('|') === '  fringe pushed back: "topwear" 30 px, where the painting shows "handwear_l" 30 px' &&
+              text.includes('"fringe_pushed_back": [\n        {\n          "part": "handwear_l",\n          "px": 30\n        }\n      ]') &&
+              b.fringe_pushed_back === undefined &&
+              b.opaque_px === 630 &&
+              [b.x, b.y, b.w, b.h].join(',') === '19,10,21,30' &&
+              fringeLines(alone.parts.parts).length === 0 &&
+              printedAt &&
+              sleeveRun.lines[printed] === lines[0] &&
+              !aloneRun.lines.some((l) => l.includes('fringe pushed back')) &&
+              !serializeParts(alone.parts).includes('fringe_pushed_back'),
+            `with the sleeve: topwear ${JSON.stringify(a.fringe_pushed_back)}, opaque ${a.opaque_px}, visible ${a.visible_px}, box ${a.x},${a.y} ${a.w}x${a.h}, error px ${withSleeve.figures.errorPx}, uncovered ${withSleeve.figures.uncoveredErrorPx}; line ${lines.join(' | ') || 'none'}, printed by the stage ${printed < 0 ? 'NOWHERE' : printedAt ? 'between the part lines and the totals' : `at line ${printed}`}; alone: field ${b.fringe_pushed_back === undefined ? 'absent' : 'WRITTEN'}, opaque ${b.opaque_px}, box ${b.x},${b.y} ${b.w}x${b.h}, ${fringeLines(alone.parts.parts).length} line(s)`,
+            'the counts in parts.json are taken after the rule, so opaque_px is the written PNG\'s; the author reads what was cleared, from which part and by which holder, on the assemble line and in the record, and a stack the rule did not touch prints and writes what it did before',
+          );
+
+          // The record reads back, and a malformed field is refused by name.
+          const pj = join(stage, 'parts.json');
+          writeParts(pj, withSleeve.parts);
+          const back = serializeParts(readParts(pj)) === text;
+          const plant = (edit: (p: Record<string, unknown>) => void): string => {
+            const raw = JSON.parse(text) as { parts: Array<Record<string, unknown>> };
+            edit(raw.parts.find((p) => p.name === 'topwear') as Record<string, unknown>);
+            const f = join(stage, 'planted.json');
+            writeFileSync(f, JSON.stringify(raw));
+            const err = refusals(() => readParts(f));
+            return err === null ? 'read' : err.problems.map((q) => q.code).join(',');
+          };
+          const zero = plant((p) => (p.fringe_pushed_back = [{ part: 'handwear_l', px: 0 }]));
+          const empty = plant((p) => (p.fringe_pushed_back = []));
+          const self = plant((p) => (p.fringe_pushed_back = [{ part: 'topwear', px: 3 }]));
+          const ghost = plant((p) => (p.fringe_pushed_back = [{ part: 'wings', px: 3 }]));
+          say(
+            'AS46_THE_FRINGE_RECORD_READS_BACK_AND_A_MALFORMED_ONE_IS_REFUSED_BY_NAME',
+            back && zero === 'PARTS_FIELD_TYPE' && empty === 'PARTS_FIELD_TYPE' && self === 'PARTS_FIELD_TYPE' && ghost === 'PARTS_FROM_KNOWN',
+            `round trip identical: ${back}; px 0 -> ${zero}; an empty list -> ${empty}; the part itself as holder -> ${self}; a holder no part is -> ${ghost}`,
+            'a field absent when empty must still be refused when present and wrong, or a hand-edited record could claim a holder that is not in the file',
+          );
+        } catch (err) {
+          const why = `the stage threw: ${(err as Error).message.split('\n')[0]}`;
+          say('AS45_THE_STAGE_PUSHES_A_PLANTED_FRINGE_BACK_RECORDS_IT_AND_PRINTS_IT', false, why, 'the stage must assemble the planted fringe green');
+          say('AS46_THE_FRINGE_RECORD_READS_BACK_AND_A_MALFORMED_ONE_IS_REFUSED_BY_NAME', false, `not measured: ${why}`, 'the record AS45 writes is the one read back here');
+        }
+      } finally {
+        rmSync(stage, { recursive: true, force: true });
+      }
+
+      // keepArtWhole, by hand, on a 10x4 rig, the painting beige, "sleeve" beige at 255 everywhere (the holder). "body":
+      // columns 0..3 beige at 255; column 4 the red fringe at 235 (pushed, as in AS40); (5, 0) beige at 100, joined to the
+      // body only through (4, 0); (5, 2) and (6, 2) beige at 255, joined only through (4, 2). The clearing of column 4
+      // leaves three islands: the body, a crumb (5, 0) — below 250 and held — and an opaque piece (5..6, 2). The crumb is
+      // cleared and counted against the sleeve; (4, 2), the cleared pixel beside the opaque piece, is put back red. So
+      // body pushes (4, 0), (4, 1), (4, 3) and (5, 0) = 4 px held by "sleeve", keeps (4, 2) at 235, and is one island.
+      const KW = 10;
+      const kfill = (f: (x: number, y: number) => RGBA): Raster => {
+        const r = newRaster(KW, FH);
+        for (let y = 0; y < FH; y++) for (let x = 0; x < KW; x++) r.data.set(f(x, y), (y * KW + x) * 4);
+        return r;
+      };
+      const krec = (name: string): PartRecord => ({ ...rec(name), w: KW });
+      const islands = (r: Raster): number => {
+        const m = newMask(r.width, r.height);
+        for (let q = 0; q < r.width * r.height; q++) if (r.data[q * 4 + 3] > 8) m.data[q] = 1;
+        return connectedComponents(m, 4).count - 1;
+      };
+      const kbody = (): Raster =>
+        kfill((x, y) => (x < 4 ? [...BEIGE, 255] : x === 4 ? [...RED, 235] : x === 5 && y === 0 ? [...BEIGE, 100] : (x === 5 || x === 6) && y === 2 ? [...BEIGE, 255] : [0, 0, 0, 0]));
+      const kstack: PlacedPart[] = [
+        { record: krec('sleeve'), image: kfill(() => [...BEIGE, 255]) },
+        { record: krec('body'), image: kbody() },
+      ];
+      const kpaint = kfill(() => [...BEIGE, 255]);
+      const islandsBefore = islands(kbody());
+      const kpushed = pushBackFringe(kstack, kpaint, 'near-white', null);
+      const ki = kstack[1].image;
+      const ka = (x: number, y: number): number => ki.data[(y * KW + x) * 4 + 3];
+      say(
+        'AS47_A_PUSH_BACK_CLEARS_THE_CRUMB_IT_CUTS_OFF_AND_PUTS_BACK_THE_BRIDGE_TO_OPAQUE_ART',
+        JSON.stringify(kpushed) === '[[],[{"part":"sleeve","px":4}]]' && islandsBefore === 1 && islands(ki) === 1 && [ka(4, 0), ka(4, 1), ka(4, 2), ka(4, 3), ka(5, 0), ka(5, 2), ka(6, 2)].join(',') === '0,0,235,0,0,255,255',
+        `pushed ${shown(kpushed)}; body islands ${islandsBefore} -> ${islands(ki)}; alpha at (4,0) (4,1) (4,2) (4,3) (5,0) (5,2) (6,2): ${[ka(4, 0), ka(4, 1), ka(4, 2), ka(4, 3), ka(5, 0), ka(5, 2), ka(6, 2)].join(', ')}`,
+        'a fringe cleared along a long edge strands a crumb wherever the edge was two pixels wide, and the contour mesher refuses a part with a second island (CONTOUR_ONE_ISLAND); on demo the clearing cut a 7 px piece of opaque art off sleeves. A crumb is the same fringe and goes; opaque art is never cut off its part',
       );
     }
 

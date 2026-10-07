@@ -19,6 +19,9 @@
  *   4. `mergeBelowCrop`   — a head-run part below the head crop is continued from a
  *                           full-run layer (whole components, `belowCrop`), and its
  *                           seam closed by `growRim`;
+ *   4b. `pushBackFringe`  — a fringe below alpha 250 that keeps the stack off the
+ *                           painting where a part beneath holds the pixel in the
+ *                           painting's colour is cleared (not in the reference);
  *   5. `seamOverride`     — where the flat composite of the parts still differs from
  *                           the painting, the top-most part takes the painting's colour.
  *
@@ -56,6 +59,12 @@
  * - **The recomposite's holes and error map** (`uncoveredHoles`,
  *   `recompositeErrorMap`) are this port's: the reference printed the
  *   uncovered count alone, which says a hole exists but not where.
+ * - **The fringe push-back** (`pushBackFringe`, issue #119) is this port's,
+ *   and it is on by default: the reference left a fringe below alpha 250 in
+ *   another part's colour on the rig, where neither projection nor the seam
+ *   override (both at alpha >= 250) could reach it. Its effect on the public
+ *   examples is counted in the pull request that added it; a stack it does
+ *   not touch assembles to the reference's bytes.
  * - **Patches** (`assemble.patches`, `cutPatch`) are this port's: an extra
  *   part cut from the painting itself, for a piece of the figure no layer
  *   holds, recorded as `painting:<name>` and 100 % source.
@@ -775,6 +784,263 @@ export interface PlacedPart {
   image: Raster;
 }
 
+/** The seam pass's view of a stack of parts, before anything is recoloured (`seamCandidates`). */
+export interface SeamCandidates {
+  /** Per rig pixel: the index of the top-most part with alpha above 0 there, or -1. */
+  top: Int32Array;
+  /** Per rig pixel: the index of the top-most part with alpha >= `CORE_ALPHA` there, or -1. */
+  holder: Int32Array;
+  /** Per rig pixel: 1 where the seam rule admits the pixel as a candidate (`seamOverride`'s invariant). */
+  cand: Uint8Array;
+}
+
+/**
+ * The candidates of the seam pass over `parts` in draw order, exactly as
+ * `seamOverride` defines them (its invariant): the flat composite on white,
+ * in float as the reference composites; a candidate differs from the
+ * painting by more than `SEAM_LIMIT` (max channel), is covered by some part
+ * (alpha > 0) and is admitted by the rule. Also returned: which part is the
+ * top-most cover of each pixel, and which is the top-most at alpha >=
+ * `CORE_ALPHA` — the part that holds the pixel.
+ */
+export function seamCandidates(parts: PlacedPart[], srcr: Raster, rule: SeamRule, silhouette: Mask | null): SeamCandidates {
+  const { width: W, height: H } = srcr;
+  const top = new Int32Array(W * H).fill(-1);
+  const holder = new Int32Array(W * H).fill(-1);
+  const can = new Float64Array(W * H * 3).fill(255);
+  parts.forEach(({ record: p, image }, i) => {
+    for (let y = 0; y < p.h; y++) {
+      for (let x = 0; x < p.w; x++) {
+        const s = (y * p.w + x) * 4;
+        const d = (p.y + y) * W + p.x + x;
+        const alpha = image.data[s + 3];
+        if (alpha > 0) top[d] = i;
+        if (alpha >= CORE_ALPHA) holder[d] = i;
+        const a = f32(alpha / 255);
+        const one = f32(1 - a);
+        for (let c = 0; c < 3; c++) can[d * 3 + c] = can[d * 3 + c] * one + f32(image.data[s + c] * a);
+      }
+    }
+  });
+  const cand = new Uint8Array(W * H);
+  for (let p = 0; p < W * H; p++) {
+    if (top[p] < 0) continue;
+    const s = p * 4;
+    let d = 0;
+    for (let c = 0; c < 3; c++) d = Math.max(d, Math.abs(can[p * 3 + c] - srcr.data[s + c]));
+    if (!(d > SEAM_LIMIT)) continue;
+    const painted = Math.min(srcr.data[s], srcr.data[s + 1], srcr.data[s + 2]) <= NEAR_WHITE_MIN;
+    const admitted = rule === 'near-white' ? painted : painted || (silhouette !== null && silhouette.data[p] === 1);
+    if (admitted) cand[p] = 1;
+  }
+  return { top, holder, cand };
+}
+
+/** Pixels of one part's fringe that `pushBackFringe` cleared, counted by the part that holds them. */
+export interface FringePushed {
+  /** The part drawn beneath, at alpha >= `CORE_ALPHA`, that the painting shows there. */
+  part: string;
+  px: number;
+}
+
+/** The art mask the contour mesher reads (alpha above 8), and its 4-connected islands. */
+function artIslands(image: Raster): { labels: Int32Array; count: number; core: Uint8Array; area: Int32Array } {
+  const n = image.width * image.height;
+  const art = newMask(image.width, image.height);
+  for (let q = 0; q < n; q++) if (image.data[q * 4 + 3] > OPAQUE_ALPHA_ABOVE) art.data[q] = 1;
+  const cc = connectedComponents(art, 4);
+  const core = new Uint8Array(cc.count);
+  const area = new Int32Array(cc.count);
+  for (let q = 0; q < n; q++) {
+    const l = cc.labels[q];
+    if (l === 0) continue;
+    area[l]++;
+    if (image.data[q * 4 + 3] >= CORE_ALPHA) core[l] = 1;
+  }
+  return { labels: cc.labels, count: cc.count, core, area };
+}
+
+/** One pixel `pushBackFringe` cleared: its index in the part's box, its RGBA before, its holder's index in the stack, and whether it is still clear. */
+interface Cleared {
+  q: number;
+  rgba: number[];
+  h: number;
+  on: boolean;
+}
+
+/**
+ * `pushBackFringe`'s after-step on one part: clearing a fringe never splits
+ * an island of the part's art. The art is the contour mesher's reading —
+ * alpha above 8, 4-connected (`src/contour.ts`, `CONTOUR_ONE_ISLAND`) — and
+ * the islands before the clearing are the part's islands with every cleared
+ * pixel put back.
+ *
+ * ⚖️ Invariant: afterwards every island the part had before is at most one
+ * island. Where the clearing left one in several pieces, the largest piece
+ * (by area; the first in scan order on a tie) stays, and each other piece is
+ * either
+ * - a CRUMB — every pixel below `CORE_ALPHA`, and every pixel either held
+ *   by some part at alpha >= `CORE_ALPHA` (`holderAt` >= 0) or not covering
+ *   (alpha <= `COVERED_ALPHA`), so clearing it uncovers nothing — which is
+ *   cleared too: a piece of the same fringe, cut off from its part. Its
+ *   pixels are counted against the holder of the first cleared pixel beside
+ *   it, the clearing that cut it off; or
+ * - anything else (it holds a pixel at alpha >= `CORE_ALPHA`, or a covering
+ *   pixel nothing holds), in which case every cleared pixel 4-adjacent to it
+ *   is put back as it was.
+ * Repeated until no island is split: the pieces were joined only through
+ * cleared pixels, and each round clears a crumb or puts a pixel back, so the
+ * loop ends.
+ * So the part's island count never rises, and `CONTOUR_ONE_ISLAND` reads
+ * the islands it read before. Without the bridge put back, the clearing cut a
+ * 7 px piece of opaque art off demo's `sleeves` (the pull request that added
+ * this step); a fringe cleared along a long edge leaves a crumb wherever the
+ * edge was two pixels wide, and selftest `AS47` plants both.
+ */
+function keepArtWhole(part: PlacedPart, cleared: Cleared[], holderAt: (q: number) => number): void {
+  if (cleared.length === 0) return;
+  const { image } = part;
+  const { width: w, height: h } = image;
+  const n = w * h;
+  const whole: Raster = { width: w, height: h, data: new Uint8ClampedArray(image.data) };
+  for (const c of cleared) whole.data.set(c.rgba, c.q * 4);
+  const before = artIslands(whole);
+  for (;;) {
+    const after = artIslands(image);
+    // Per piece: its island before, and whether it is a crumb; per island before: its pieces and the largest.
+    const islandOf = new Int32Array(after.count).fill(-1);
+    const crumb = new Uint8Array(after.count).fill(1);
+    const pieces = new Int32Array(before.count);
+    const largest = new Int32Array(before.count).fill(-1);
+    for (let q = 0; q < n; q++) {
+      const l = after.labels[q];
+      if (l === 0) continue;
+      if (islandOf[l] < 0) {
+        const b = before.labels[q];
+        islandOf[l] = b;
+        pieces[b]++;
+        if (largest[b] < 0 || after.area[l] > after.area[largest[b]]) largest[b] = l;
+      }
+      const a = image.data[q * 4 + 3];
+      if (a >= CORE_ALPHA || (a > COVERED_ALPHA && holderAt(q) < 0)) crumb[l] = 0;
+    }
+    const split = (l: number): boolean => l > 0 && pieces[islandOf[l]] > 1 && largest[islandOf[l]] !== l;
+    const beside = (c: Cleared): number[] => {
+      const x = c.q % w;
+      const y = (c.q - x) / w;
+      return [x > 0 ? c.q - 1 : -1, x < w - 1 ? c.q + 1 : -1, y > 0 ? c.q - w : -1, y < h - 1 ? c.q + w : -1].filter((m) => m >= 0 && split(after.labels[m])).map((m) => after.labels[m]);
+    };
+    // A crumb is counted against the holder of the first cleared pixel beside it: the clearing that cut it off.
+    const cutBy = new Int32Array(after.count).fill(-1);
+    for (const c of cleared) if (c.on) for (const l of beside(c)) if (crumb[l] === 1 && cutBy[l] < 0) cutBy[l] = c.h;
+    for (let l = 1; l < after.count; l++) if (cutBy[l] < 0) crumb[l] = 0;
+    const restore = cleared.filter((c) => c.on && beside(c).some((l) => crumb[l] === 0));
+    let changed = 0;
+    for (let q = 0; q < n; q++) {
+      const l = after.labels[q];
+      if (!split(l) || crumb[l] === 0) continue;
+      cleared.push({ q, rgba: Array.from(image.data.subarray(q * 4, q * 4 + 4)), h: cutBy[l], on: true });
+      image.data.fill(0, q * 4, q * 4 + 4);
+      changed++;
+    }
+    for (const c of restore) {
+      image.data.set(c.rgba, c.q * 4);
+      c.on = false;
+      changed++;
+    }
+    if (changed === 0) break;
+  }
+}
+
+/**
+ * Step 4b (issue #119), over every part in draw order, before the seam
+ * override. Modifies the part images in place and returns, per part, the
+ * pixels it cleared, by holder.
+ *
+ * ⚖️ Invariant: a pixel is PUSHED BACK in a part when, over the stack as it
+ * stands (`seamCandidates`): (1) the pixel is a seam candidate — the flat
+ * composite differs from the painting by more than `SEAM_LIMIT` (max
+ * channel) and the seam rule admits it; (2) this part is drawn after the
+ * pixel's HOLDER — the top-most part at alpha >= `CORE_ALPHA` there — with
+ * alpha above 0, which makes it a fringe (below `CORE_ALPHA`, or it would be
+ * the holder) that the seam override, recolouring only at alpha >=
+ * `CORE_ALPHA`, cannot reach; and (3) the holder is in the painting's colour
+ * — its own RGB within `SEAM_LIMIT` of the painting's (max channel): the
+ * painting shows the holder there. Every such pixel becomes transparent (all
+ * four channels 0). Then `keepArtWhole` holds each part's art to the islands
+ * it had: a crumb the clearing cut off is cleared too, and a cleared bridge
+ * to opaque art is put back. No constant is new: (1) and (2) are the seam
+ * override's own candidate set and alpha, (3) is the seam override's own
+ * limit, applied to the part the pixel falls back to, and the islands are the
+ * contour mesher's reading of the art. Where the holder is itself the top
+ * cover, nothing is drawn after it and nothing is cleared: a pixel at alpha
+ * >= `CORE_ALPHA` is the seam override's, as before.
+ *
+ * Why (3) asks for the holder's colour: without it a fringe that is too
+ * faint rather than the wrong colour — an earring's edge over hair, where the
+ * painting shows the earring — is cleared too, and the seam override then
+ * paints the earring's colour onto the hair beneath, which moves with the
+ * hair: the sliver this rule exists to remove, moved to the other part.
+ * Measured on the public examples (the pull request that closed issue #119):
+ * without (3) the holders' `seam_override_px` rose from 47 to 617 on demo's
+ * `hair_back` and from 20 to 222 on sample's `bottomwear`; with it, and with
+ * the crumbs `keepArtWhole` clears, no part's `seam_override_px` moved by
+ * more than 1 on either example under either seam rule.
+ *
+ * Why it is right to clear rather than to recolour: the holder is opaque
+ * there, so no pixel loses cover (`COVERED_ALPHA` is below `CORE_ALPHA`) and
+ * no uncovered error pixel appears; and the colour the painting shows there
+ * belongs to the holder, which moves with the holder's bones. A fringe
+ * recoloured to the painting would carry the holder's colour on the part in
+ * front, as a translucent rim that leaves the holder when the two move apart.
+ *
+ * Left alone: a pixel whose stack composites to within `SEAM_LIMIT` of the
+ * painting (an anti-aliased edge that is the painting's edge); a fringe no
+ * part holds beneath (the figure's outline over the page — nothing would
+ * hold the pixel after it); and every pixel at alpha >= `CORE_ALPHA`, which
+ * is the seam override's.
+ */
+export function pushBackFringe(parts: PlacedPart[], srcr: Raster, rule: SeamRule, silhouette: Mask | null): FringePushed[][] {
+  const { width: W } = srcr;
+  const { holder, cand } = seamCandidates(parts, srcr, rule, silhouette);
+  const at = (i: number, d: number): number => {
+    const p = parts[i].record;
+    const x = (d % W) - p.x;
+    const y = Math.floor(d / W) - p.y;
+    return x >= 0 && x < p.w && y >= 0 && y < p.h ? (y * p.w + x) * 4 : -1;
+  };
+  /** The holder shows the painting at rig pixel `d`: it exists and its own colour is within `SEAM_LIMIT` of the painting's. */
+  const shows = (d: number): boolean => holder[d] >= 0 && maxDiff(parts[holder[d]].image.data, at(holder[d], d), srcr.data, d * 4) <= SEAM_LIMIT;
+  /** Per part, every pixel cleared: its index in the part's box, its colour before, its holder, and whether it is still clear. */
+  const cleared: Cleared[][] = parts.map(() => []);
+  for (let d = 0; d < cand.length; d++) {
+    // Every part drawn after the holder is below CORE_ALPHA there, by the holder's definition; when the holder is the top
+    // cover itself the loop below has nothing to clear, and the seam override acts on the pixel as before.
+    if (cand[d] === 0 || !shows(d)) continue;
+    for (let i = holder[d] + 1; i < parts.length; i++) {
+      const s = at(i, d);
+      if (s < 0) continue;
+      const img = parts[i].image.data;
+      if (img[s + 3] === 0) continue;
+      cleared[i].push({ q: s / 4, rgba: Array.from(img.subarray(s, s + 4)), h: holder[d], on: true });
+      img.fill(0, s, s + 4);
+    }
+  }
+  parts.forEach((part, i) => keepArtWhole(part, cleared[i], (q) => {
+    const d = (part.record.y + Math.floor(q / part.record.w)) * W + part.record.x + (q % part.record.w);
+    return holder[d];
+  }));
+  const counts: Array<Map<number, number>> = parts.map(() => new Map());
+  cleared.forEach((list, i) => {
+    for (const c of list) if (c.on) counts[i].set(c.h, (counts[i].get(c.h) ?? 0) + 1);
+  });
+  return counts.map((m) =>
+    [...m.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0] - b[0])
+      .map(([h, px]) => ({ part: parts[h].record.name, px })),
+  );
+}
+
 /**
  * Step 5, over every part in plan order. Modifies the part images in place and
  * sets each record's `seam_override_px`.
@@ -796,33 +1062,8 @@ export interface PlacedPart {
  * (`assemble_parts.py` `main`, "5. seam override".)
  */
 export function seamOverride(parts: PlacedPart[], srcr: Raster, rule: SeamRule, silhouette: Mask | null): void {
-  const { width: W, height: H } = srcr;
-  const top = new Int32Array(W * H).fill(-1);
-  const can = new Float64Array(W * H * 3).fill(255);
-  parts.forEach(({ record: p, image }, i) => {
-    for (let y = 0; y < p.h; y++) {
-      for (let x = 0; x < p.w; x++) {
-        const s = (y * p.w + x) * 4;
-        const d = (p.y + y) * W + p.x + x;
-        const alpha = image.data[s + 3];
-        if (alpha > 0) top[d] = i;
-        const a = f32(alpha / 255);
-        const one = f32(1 - a);
-        for (let c = 0; c < 3; c++) can[d * 3 + c] = can[d * 3 + c] * one + f32(image.data[s + c] * a);
-      }
-    }
-  });
-  const cand = new Uint8Array(W * H);
-  for (let p = 0; p < W * H; p++) {
-    if (top[p] < 0) continue;
-    const s = p * 4;
-    let d = 0;
-    for (let c = 0; c < 3; c++) d = Math.max(d, Math.abs(can[p * 3 + c] - srcr.data[s + c]));
-    if (!(d > SEAM_LIMIT)) continue;
-    const painted = Math.min(srcr.data[s], srcr.data[s + 1], srcr.data[s + 2]) <= NEAR_WHITE_MIN;
-    const admitted = rule === 'near-white' ? painted : painted || (silhouette !== null && silhouette.data[p] === 1);
-    if (admitted) cand[p] = 1;
-  }
+  const { width: W } = srcr;
+  const { top, cand } = seamCandidates(parts, srcr, rule, silhouette);
   parts.forEach(({ record: p, image }, i) => {
     let n = 0;
     for (let y = 0; y < p.h; y++) {
@@ -1260,38 +1501,18 @@ export function assemble(input: AssembleInput): AssembleResult {
   });
   refuseIfAny(patchProblems);
 
-  const planned: Array<PlacedPart | null> = plan.map(() => null);
+  interface Built {
+    key: string;
+    r: Raster;
+    st: ProjectionStats;
+    extendKeys: string[];
+    trace: MergeTrace;
+    merged: number;
+  }
+  const built: Array<Built | null> = plan.map(() => null);
   const empty: Problem[] = [];
-  plan.forEach(([name, run, tag], pi) => {
-    const key = `${run}:${tag}`;
-    const src = rig.get(key) as Raster;
-    const r: Raster = { width: W, height: H, data: new Uint8ClampedArray(src.data) };
-    const st = stats.get(key) as ProjectionStats;
-    const extendKeys = extend.filter((e) => e.part === name).map((e) => `${e.run}:${e.tag}`);
-    const extras = extendKeys.map((k) => rig.get(k) as Raster);
-    let merged = 0;
-    const trace: MergeTrace = { from: new Int32Array(W * H).fill(-1), ring: newMask(W, H) };
-    if (extras.length > 0) {
-      const front = newMask(W, H);
-      for (const [, run2, tag2] of plan.slice(pi + 1)) {
-        const f = rig.get(`${run2}:${tag2}`) as Raster;
-        for (let p = 0; p < W * H; p++) if (f.data[p * 4 + 3] >= FRONT_ALPHA) front.data[p] = 1;
-      }
-      merged = mergeBelowCrop(r, extras, front, srcr, frame.headBottom, trace);
-    }
-    // A pixel the merge wrote is judged in the extend layer's run, every other
-    // in the part's own. Projected = the colour came from projectSource's
-    // accepted set: the part layer's, or for a copied pixel the extend
-    // layer's (its rig layer was projected before it was copied). A ring pixel
-    // is growRim's, counted in merged_px, and is not projection.
-    const visible = newMask(W, H);
-    const projected = newMask(W, H);
-    for (let p = 0; p < W * H; p++) {
-      const e = trace.from[p];
-      const own = e < 0 ? st : (stats.get(extendKeys[e]) as ProjectionStats);
-      if (r.data[p * 4 + 3] > OPAQUE_ALPHA_ABOVE && own.clear.data[p] === 1) visible.data[p] = 1;
-      if (trace.ring.data[p] === 0 && own.takenMask.data[p] === 1) projected.data[p] = 1;
-    }
+  /** The part's alpha box and its `alpha > 8` count, over the whole rig. */
+  const measureBox = (r: Raster): { x0: number; y0: number; x1: number; y1: number; opaque: number } => {
     let x0 = W;
     let y0 = H;
     let x1 = -1;
@@ -1309,11 +1530,91 @@ export function assemble(input: AssembleInput): AssembleResult {
         }
       }
     }
+    return { x0, y0, x1, y1, opaque };
+  };
+  plan.forEach(([name, run, tag], pi) => {
+    const key = `${run}:${tag}`;
+    const src = rig.get(key) as Raster;
+    const r: Raster = { width: W, height: H, data: new Uint8ClampedArray(src.data) };
+    const st = stats.get(key) as ProjectionStats;
+    const extendKeys = extend.filter((e) => e.part === name).map((e) => `${e.run}:${e.tag}`);
+    const extras = extendKeys.map((k) => rig.get(k) as Raster);
+    let merged = 0;
+    const trace: MergeTrace = { from: new Int32Array(W * H).fill(-1), ring: newMask(W, H) };
+    if (extras.length > 0) {
+      const front = newMask(W, H);
+      for (const [, run2, tag2] of plan.slice(pi + 1)) {
+        const f = rig.get(`${run2}:${tag2}`) as Raster;
+        for (let p = 0; p < W * H; p++) if (f.data[p * 4 + 3] >= FRONT_ALPHA) front.data[p] = 1;
+      }
+      merged = mergeBelowCrop(r, extras, front, srcr, frame.headBottom, trace);
+    }
+    const { x1, opaque } = measureBox(r);
     if (opaque === 0) {
       empty.push({
         code: 'ASSEMBLE_PART_OPAQUE',
         object: `part "${name}" (${key}, config.assemble.plan[${pi}])`,
         detail: `has 0 pixels with alpha above ${OPAQUE_ALPHA_ABOVE} in the rig (${x1 < 0 ? 'no pixel at all' : 'only fringe below it'}; ${ghost[key]} ghost px removed in the run); a part with at least one opaque pixel is required — drop it from the plan or take the tag from the other run`,
+      });
+      return;
+    }
+    built[pi] = { key, r, st, extendKeys, trace, merged };
+  });
+  const silhouette = seamRule === 'silhouette' || patches.some((q) => q.alpha === 'silhouette') ? figureSilhouette(srcr) : null;
+  const cut = patches.map((q, i) => {
+    const c = cutPatch(q, srcr, silhouette);
+    if (c === null) {
+      empty.push({
+        code: 'ASSEMBLE_PATCH_OPAQUE',
+        object: `patch "${q.name}" (config.assemble.patches[${i}])`,
+        detail: `takes 0 pixels: ${q.alpha === 'silhouette' ? `the painting's figure silhouette does not reach its box [${q.box.join(', ')}]` : 'its box is empty'}; a patch with at least one pixel is required — move the box onto the figure, or take "alpha": "box"`,
+      });
+    }
+    return c;
+  });
+  refuseIfAny(empty);
+  const order = drawOrder(
+    plan.map((e) => e[0]),
+    patches,
+  );
+
+  // Step 4b: push back a fringe the painting shows another part through, over
+  // the plan parts still uncropped and the patches, in draw order.
+  const stack: PlacedPart[] = order.map((d) => {
+    if ('patch' in d) return cut[d.patch] as PlacedPart;
+    const b = built[d.plan] as Built;
+    const whole: PartRecord = { name: plan[d.plan][0], from: b.key, x: 0, y: 0, w: W, h: H, opaque_px: 0, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 };
+    return { record: whole, image: b.r };
+  });
+  const pushedBy = pushBackFringe(stack, srcr, seamRule, seamRule === 'silhouette' ? silhouette : null);
+  const pushedOf: FringePushed[][] = plan.map(() => []);
+  order.forEach((d, i) => {
+    if ('plan' in d) pushedOf[d.plan] = pushedBy[i];
+  });
+
+  const planned: Array<PlacedPart | null> = plan.map(() => null);
+  plan.forEach(([name], pi) => {
+    const { key, r, st, extendKeys, trace, merged } = built[pi] as Built;
+    // A pixel the merge wrote is judged in the extend layer's run, every other
+    // in the part's own. Projected = the colour came from projectSource's
+    // accepted set: the part layer's, or for a copied pixel the extend
+    // layer's (its rig layer was projected before it was copied). A ring pixel
+    // is growRim's, counted in merged_px, and is not projection.
+    const visible = newMask(W, H);
+    const projected = newMask(W, H);
+    for (let p = 0; p < W * H; p++) {
+      const e = trace.from[p];
+      const own = e < 0 ? st : (stats.get(extendKeys[e]) as ProjectionStats);
+      if (r.data[p * 4 + 3] > OPAQUE_ALPHA_ABOVE && own.clear.data[p] === 1) visible.data[p] = 1;
+      if (trace.ring.data[p] === 0 && own.takenMask.data[p] === 1) projected.data[p] = 1;
+    }
+    const { x0, y0, x1, y1, opaque } = measureBox(r);
+    if (opaque === 0) {
+      const pushed = pushedOf[pi].reduce((a, q) => a + q.px, 0);
+      empty.push({
+        code: 'ASSEMBLE_PART_OPAQUE',
+        object: `part "${name}" (${key}, config.assemble.plan[${pi}])`,
+        detail: `has 0 pixels with alpha above ${OPAQUE_ALPHA_ABOVE} in the rig once its fringe is pushed back: every one of its pixels was below alpha ${CORE_ALPHA} where the painting shows another part (${pushed} px pushed back, held by ${pushedOf[pi].map((q) => `"${q.part}" ${q.px} px`).join(', ')}); a part with at least one opaque pixel is required — drop it from the plan or take the tag from the other run`,
       });
       return;
     }
@@ -1335,25 +1636,11 @@ export function assemble(input: AssembleInput): AssembleResult {
       merged_px: merged,
       seam_override_px: 0,
     };
+    if (pushedOf[pi].length > 0) record.fringe_pushed_back = pushedOf[pi];
     planned[pi] = { record, image: crop(r, x0, y0, record.w, record.h) };
   });
-  const silhouette = seamRule === 'silhouette' || patches.some((q) => q.alpha === 'silhouette') ? figureSilhouette(srcr) : null;
-  const cut = patches.map((q, i) => {
-    const c = cutPatch(q, srcr, silhouette);
-    if (c === null) {
-      empty.push({
-        code: 'ASSEMBLE_PATCH_OPAQUE',
-        object: `patch "${q.name}" (config.assemble.patches[${i}])`,
-        detail: `takes 0 pixels: ${q.alpha === 'silhouette' ? `the painting's figure silhouette does not reach its box [${q.box.join(', ')}]` : 'its box is empty'}; a patch with at least one pixel is required — move the box onto the figure, or take "alpha": "box"`,
-      });
-    }
-    return c;
-  });
   refuseIfAny(empty);
-  const placed: PlacedPart[] = drawOrder(
-    plan.map((e) => e[0]),
-    patches,
-  ).map((d) => ('plan' in d ? planned[d.plan] : cut[d.patch]) as PlacedPart);
+  const placed: PlacedPart[] = order.map((d) => ('plan' in d ? planned[d.plan] : cut[d.patch]) as PlacedPart);
 
   seamOverride(placed, srcr, seamRule, seamRule === 'silhouette' ? silhouette : null);
   const can = recomposite(placed, W, H);

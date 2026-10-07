@@ -17,7 +17,7 @@
   "torso_parts": [
    "topwear"
   ],
-  "torso_heat_mean": 7.617,
+  "torso_heat_mean": 7.717,
   "torso_floor": 3.809,
   "feet_parts": [
    "shoes"
@@ -40,7 +40,7 @@
   "box_px": 1520,
   "hole_px": 0,
   "hole_bar": 0,
-  "patch_max": 11,
+  "patch_max": 9,
   "patch_px_over_40": 0
  },
  "CHAIN_LAG": {
@@ -107,20 +107,20 @@
     "face"
    ],
    "head_bone": "head",
-   "screen_px": 453,
-   "screen_heat_mean": 11.475,
-   "screen_heat_max": 175,
-   "head_frame_px": 271,
-   "head_frame_heat_mean": 0.884,
+   "screen_px": 462,
+   "screen_heat_mean": 12.468,
+   "screen_heat_max": 220,
+   "head_frame_px": 274,
+   "head_frame_heat_mean": 0.898,
    "head_frame_heat_max": 10.102,
-   "resampler_heat_mean": 0.883,
-   "mean_ceiling": 1.765
+   "resampler_heat_mean": 0.897,
+   "mean_ceiling": 1.793
   },
   "feet": {
    "parts": [
     "shoes"
    ],
-   "px": 2855,
+   "px": 2854,
    "heat_mean": 0,
    "heat_max": 0,
    "mean_ceiling": 3.244
@@ -129,7 +129,7 @@
  "TEXTURE_STRETCH": {
   "status": "PASS",
   "meshes": 6,
-  "triangles": 1338,
+  "triangles": 1336,
   "frames": 49,
   "severity": 1.227,
   "severity_ceiling": 1.926544,
@@ -198,18 +198,18 @@
    },
    {
     "slot": "hair_front",
-    "triangles": 202,
+    "triangles": 200,
     "max_ratio": 1.084,
-    "max_at": "triangle 169 (vertices 28 29 30), edge 29-30, idle frame 23",
+    "max_at": "triangle 167 (vertices 28 29 30), edge 29-30, idle frame 23",
     "min_ratio": 0.924,
-    "min_at": "triangle 169 (vertices 28 29 30), edge 29-30, idle frame 47",
+    "min_at": "triangle 167 (vertices 28 29 30), edge 29-30, idle frame 47",
     "severity": 1.084
    }
   ]
  },
  "RECOMPOSITE_HOLES": {
   "status": "REPORTED",
-  "error_px": 4512,
+  "error_px": 4359,
   "uncovered_error_px": 1185,
   "hole_count": 259,
   "largest": {
