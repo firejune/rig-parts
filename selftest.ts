@@ -114,6 +114,7 @@ import {
   cleanGhosts,
   DEFAULT_PROJECT_RULE,
   DEFAULT_SEAM_RULE,
+  drawOrder,
   ERROR_LIMIT as ASSEMBLE_ERROR_LIMIT,
   figureSilhouette,
   figuresLine,
@@ -176,7 +177,7 @@ import {
 import { COMPOSED_HAND_X, COMPOSED_SHOULDER, writeComposedRig, DRIVER_AT, DRIVER_SLIDE, FAR_ABOVE, LOWER_LEN, LURE_ANGLE, OVERREACH_FROM, OVERREACH_TO, POINTER_LEN, REACH_FROM, REACH_TO, REQ_FPS, REQ_STAGE, RIDE_MIX, RIDER_AT, SHOULDER, stageOf, SWING_BROKEN, SWING_PEAK, UPPER_LEN, VANE_AT, VANE_MIX, writeReqRig, writeRequirements } from './fixtures/reqrig.ts';
 import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
-import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'spine-rigc/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
@@ -189,7 +190,7 @@ import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paint
 import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs, squarePad } from './src/inputs.ts';
 import { implausibleRules, type Layer, layerFigures, type LayerSet, PLAUSIBLE_AREA_RATIO_MAX, PLAUSIBLE_JUDGED_AREA_RATIO, PLAUSIBLE_TRANSLUCENT_MAX, PLAUSIBLE_BACKGROUND_MAX, PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN, readLayers, readPsdLayers, readWrapperLayers, ruleSummary } from './src/layers.ts';
-import { type PartRecord, type PartsFile, type RecompositeRecord, readParts, serializeParts, writeParts } from './src/parts.ts';
+import { PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, readParts, serializeParts, writeParts } from './src/parts.ts';
 import {
   alphaComposite,
   connectedComponents,
@@ -1730,7 +1731,7 @@ function runBlinkConfigCases(say: (name: string, ok: boolean, detail: string, wh
   const twoSingles = one(refusals(() => parseConfig(withTracks(sine('head', 'rotate'), sine('head', 'rotate')))));
   const besideEyes = one(refusals(() => parseConfig(withTracks(sine('head', 'scaley')))));
   const besideLink = one(refusals(() => parseConfig(withTracks(sine('hem1', 'rotate')))));
-  // The positive half: another property on the same bones (translatex beside the brows' translatey, scaley on a chain link), and both public example configs as tracked.
+  // The positive half: another property on the same bones (translatex beside the brows' translatey, scaley on a chain link), and every public example config as tracked.
   const otherProps = refusals(() => parseConfig(withTracks(sine('head', 'translatex'), sine('hem1', 'scaley'))));
   const examples = exampleKeys().all.map((k) => ({ k, err: refusals(() => parseConfig(JSON.parse(readFileSync(join(EXAMPLES_DIR, k, 'config.json'), 'utf8')) as unknown)) }));
   const keyedOnce = (q: Problem | null, target: string, first: string, second: string): boolean =>
@@ -1741,7 +1742,7 @@ function runBlinkConfigCases(say: (name: string, ok: boolean, detail: string, wh
       keyedOnce(besideEyes, 'head.scaley', 'config.motion.tracks[2]', "config.motion.blink.eyes[0] (the blink's eyes group, which keys scaley on every member)") &&
       keyedOnce(besideLink, 'hem1.rotate', 'config.motion.tracks[1] (chain "hem", link 1)', 'config.motion.tracks[2]') &&
       otherProps === null &&
-      examples.length === 2 &&
+      examples.length > 0 &&
       examples.every((e) => e.err === null),
     `two singles on head.rotate -> ${twoSingles === null ? 'not one refusal' : `${twoSingles.code}: ${twoSingles.object} — ${twoSingles.detail}`}; a single on head.scaley beside the eyes group -> ${besideEyes === null ? 'not one refusal' : `${besideEyes.object}: ${besideEyes.detail.slice(0, 130)}…`}; a single on hem1.rotate beside the hem chain -> ${besideLink === null ? 'not one refusal' : `${besideLink.object}: ${besideLink.detail.slice(0, 90)}…`}; head.translatex and hem1.scaley -> ${codes(otherProps)}; ${examples.map((e) => `examples/${e.k}/config.json -> ${codes(e.err)}`).join(', ')}`,
     'issue #49: rigc refuses two tracks on one bone property (animation "idle" has two tracks on <bone>.<property>), but at the rig gate; the loader knows every track idleMotion writes — a chain keys rotate on each link, the eyes group scaley and the brows group translatey on each member — so it names the property and both tracks first, and a track on another property of the same bone still loads',
@@ -8901,6 +8902,19 @@ function runFacelessExample(key: string, ex: string, out: string, dir: string, s
   const inputs = join(ex, 'inputs');
   const asm = runCli(['assemble', '--source', join(inputs, 'painting.png'), '--full', join(inputs, 'layers', 'full'), '--head', join(inputs, 'layers', 'head'), '--config', join(vdir, 'config.json'), '--out', vdir]);
   let detail = `assemble without ${gone.join(', ')}: exit ${asm.status}`;
+  // The fallback derives the face from the head run's hair AND its neck. An example whose plan takes no head-run
+  // neck (scarf: the scarf covers it) cannot reach it, and the proposer must refuse by name rather than guess.
+  if (!cfg.assemble.plan.some((e) => e[1] === 'head' && e[2] === 'neck')) {
+    const refused = asm.status === 0 ? refusals(() => propose(readPartSet(join(vdir, 'rig')))) : null;
+    const named = refused?.problems.find((q) => q.code === 'PROPOSE_FACE_PRESENT') ?? null;
+    say(
+      `EX02_AN_EXAMPLE_WITH_NO_NECK_PART_AND_ITS_FACE_PLAN_ENTRIES_REMOVED_IS_REFUSED_BY_NAME_NOT_GUESSED[${key}]`,
+      asm.status === 0 && refused !== null && refused.problems.length === 1 && named !== null && named.detail.includes('but no "neck" part'),
+      `${detail}; its plan takes no head-run "neck"; propose -> ${codes(refused)}${named === null ? '' : `: …${named.detail.slice(named.detail.indexOf('the face-less fallback'))}`}`,
+      "issue #76's fallback reads a face box off the head run's hair and neck; on an example with no neck part (PR53 is the same removal on the examples that have one) there is nothing to read it from, so the proposal must stop with the rule and the part it lacks, never place a head from the hair alone",
+    );
+    return;
+  }
   let ok = false;
   if (asm.status === 0 && withFace !== null) {
     try {
@@ -9090,7 +9104,7 @@ function runChainSuite(): number | null {
         `CH06_PROPOSE_ON_THE_BUILT_PARTS_IS_THE_TRACKED_PROPOSAL[${key}]`,
         proposalOk,
         proposal,
-        "the tracked proposal.json is what the reference proposer wrote from the reference's parts; the port's proposer on the port's parts must write the same, which is the proposer's half the examples could not reach before a build existed",
+        "the tracked proposal.json is what the reference proposer wrote from the reference's parts (for scarf, which the reference never saw, this port's proposer on this port's build); the port's proposer on the port's parts must write the same, which is the proposer's half the examples could not reach before a build existed",
       );
 
       runFacelessExample(key, ex, out, dir, say);
@@ -11207,7 +11221,10 @@ function exampleKeys(): ExampleKeys {
  * records. `seen` is every `<run>:<layer name>` the wrapper reader returned for
  * the example's two runs. The reference assembler writes a `ghost_px` entry for
  * every layer it read, so its keys are the layer set it saw, and every part's
- * `from` must be one of them. Empty means the two agree.
+ * `from` must be one of them — but a part cut from the painting
+ * (`painting:<name>`, an `assemble.patches` entry), which no layer holds;
+ * `planMismatch` places those against the config's patches. Empty means the
+ * two agree.
  */
 function layerSetMismatch(seen: ReadonlySet<string>, expected: PartsFile): string[] {
   const out: string[] = [];
@@ -11216,19 +11233,28 @@ function layerSetMismatch(seen: ReadonlySet<string>, expected: PartsFile): strin
   const onlyRecorded = [...recorded].filter((k) => !seen.has(k)).sort();
   if (onlySeen.length > 0) out.push(`read here but absent from ghost_px: ${onlySeen.join(', ')}`);
   if (onlyRecorded.length > 0) out.push(`in ghost_px but not read here: ${onlyRecorded.join(', ')}`);
-  const unsourced = expected.parts.filter((p) => !seen.has(p.from)).map((p) => `${p.name} <- ${p.from}`);
+  const unsourced = expected.parts.filter((p) => !seen.has(p.from) && !p.from.startsWith(`${PAINTING_RUN}:`)).map((p) => `${p.name} <- ${p.from}`);
   if (unsourced.length > 0) out.push(`parts whose from is no layer read here: ${unsourced.join(', ')}`);
   return out;
 }
 
-/** Where a config's plan disagrees with the expected parts list: same names, same `<run>:<tag>`, same order. */
-function planMismatch(plan: ReadonlyArray<readonly [string, string, string]>, expected: PartsFile): string[] {
-  const want = plan.map(([name, run, tag]) => `${name}=${run}:${tag}`);
+/**
+ * Where a config's plan and patches disagree with the expected parts list: same
+ * names, same `<run>:<tag>` (a patch's is `painting:<name>`), in the order the
+ * stage draws them (`drawOrder`: "back" patches, each plan part after the
+ * patches drawn before it, "front" patches). With no patches that is the plan.
+ */
+function planMismatch(plan: ReadonlyArray<readonly [string, string, string]>, expected: PartsFile, patches: readonly Patch[] = []): string[] {
+  const want = drawOrder(plan.map(([name]) => name), patches).map((d) => {
+    if ('plan' in d) return `${plan[d.plan][0]}=${plan[d.plan][1]}:${plan[d.plan][2]}`;
+    return `${patches[d.patch].name}=${PAINTING_RUN}:${patches[d.patch].name}`;
+  });
   const got = expected.parts.map((p) => `${p.name}=${p.from}`);
   if (want.join('|') === got.join('|')) return [];
   const at = want.findIndex((w, i) => w !== got[i]);
   const i = at === -1 ? Math.min(want.length, got.length) : at;
-  return [`plan has ${want.length} part(s), parts.json ${got.length}; first difference at [${i}]: plan ${want[i] ?? 'ends'}, parts.json ${got[i] ?? 'ends'}`];
+  const what = patches.length === 0 ? `plan has ${want.length} part(s)` : `plan and patches have ${want.length} part(s) (${patches.length} patch(es))`;
+  return [`${what}, parts.json ${got.length}; first difference at [${i}]: plan ${want[i] ?? 'ends'}, parts.json ${got[i] ?? 'ends'}`];
 }
 
 function runExamplesHalf(keys: ExampleKeys, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
@@ -11240,6 +11266,8 @@ function runExamplesHalf(keys: ExampleKeys, say: (name: string, ok: boolean, det
   const disagree: string[] = [];
   const configs: string[] = [];
   const configFailed: string[] = [];
+  /** Every `<key>/<patch>` a fetched example's config cuts from the painting. */
+  const patched: string[] = [];
   for (const key of keys.fetched) {
     const inputs = join(EXAMPLES_DIR, key, 'inputs');
     const absentFiles = EXAMPLE_INPUT_FILES.filter((f) => !existsSync(join(inputs, f)));
@@ -11271,9 +11299,11 @@ function runExamplesHalf(keys: ExampleKeys, say: (name: string, ok: boolean, det
     if (expected !== null) {
       try {
         const config = loadConfig(join(EXAMPLES_DIR, key, 'config.json'));
-        const miss = planMismatch(config.assemble.plan, expected);
+        const patches = config.assemble.patches ?? [];
+        patched.push(...patches.map((q) => `${key}/${q.name}`));
+        const miss = planMismatch(config.assemble.plan, expected, patches);
         const extendTags = (config.assemble.extend_below_crop ?? []).map((e) => `${e.run}:${e.tag}`).filter((t) => readAll && !seen.has(t));
-        if (miss.length === 0 && extendTags.length === 0) configs.push(`${key} ${config.assemble.plan.length} part(s)`);
+        if (miss.length === 0 && extendTags.length === 0) configs.push(`${key} ${config.assemble.plan.length} part(s)${patches.length > 0 ? ` and ${patches.length} patch(es)` : ''}`);
         else configFailed.push(`${key}: ${[...miss, ...(extendTags.length > 0 ? [`extend_below_crop takes ${extendTags.join(', ')}, which no layer read here is`] : [])].join('; ')}`);
       } catch (err) {
         configFailed.push(`${key}: ${err instanceof PartsError ? err.problems.map((q) => `${q.code} ${q.object}`).join(', ') : (err as Error).message.split('\n')[0]}`);
@@ -11310,7 +11340,29 @@ function runExamplesHalf(keys: ExampleKeys, say: (name: string, ok: boolean, det
     'CO05_EVERY_FETCHED_EXAMPLE_CONFIG_LOADS_AND_ITS_PLAN_IS_THE_EXPECTED_PART_LIST',
     keys.fetched.length > 0 && configFailed.length === 0 && configs.length === keys.fetched.length && plantPlan > 0 && planMismatch([['face', 'head', 'face']], plantParts).length === 0,
     `${configs.length} of ${keys.fetched.length} config(s) load and match${configs.length > 0 ? ` (${configs.join('; ')})` : ''}${configFailed.length > 0 ? `; refused: ${configFailed.join(' | ')}` : ''}; a planted plan taking the wrong tag is named (${plantPlan} problem(s))`,
-    "each example's config is the reference's, converted to this schema; its plan is what made expected/parts.json, so a conversion that lost or reordered a part shows here",
+    "each example's config is what made expected/parts.json (for demo and sample the reference's, converted to this schema; for scarf this port's own build): its plan and patches, in the stage's draw order, are the parts list, so a conversion or an edit that lost or reordered a part shows here",
+  );
+
+  // EX01 — a part cut from the painting (assemble.patches) is no layer: the layer-set comparison leaves it out, and the
+  // plan comparison places it where the stage draws it. Planted, by hand on one face part: a patch "gap" drawn before
+  // face is [gap, face]; the same parts against the patch drawn in front, against no patch, and against a patch of
+  // another name are each named; and a painting part is not reported as a layer nobody read, while a head:nose part still is.
+  const patchParts: PartsFile = {
+    ...plantParts,
+    parts: [{ ...plantParts.parts[0], name: 'gap', from: `${PAINTING_RUN}:gap` }, plantParts.parts[0]],
+  };
+  const gapBefore: Patch = { name: 'gap', box: [0, 0, 1, 1], alpha: 'box', draw: { before: 'face' } };
+  const placedOk = planMismatch([['face', 'head', 'face']], patchParts, [gapBefore]);
+  const inFront = planMismatch([['face', 'head', 'face']], patchParts, [{ ...gapBefore, draw: 'front' }]);
+  const noPatch = planMismatch([['face', 'head', 'face']], patchParts);
+  const otherName = planMismatch([['face', 'head', 'face']], patchParts, [{ ...gapBefore, name: 'hem' }]);
+  const paintingIsNoLayer = layerSetMismatch(plantSeen, patchParts);
+  const noseStill = layerSetMismatch(plantSeen, { ...patchParts, parts: [...patchParts.parts, { ...plantParts.parts[0], name: 'nose', from: 'head:nose' }] });
+  say(
+    'EX01_A_PAINTING_PATCH_IS_PLACED_BY_THE_STAGE_S_DRAW_ORDER_AND_IS_NO_LAYER_READ',
+    placedOk.length === 0 && inFront.length > 0 && noPatch.length > 0 && otherName.length > 0 && paintingIsNoLayer.length === 0 && noseStill.some((l) => l.includes('nose <- head:nose')),
+    `${patched.length} patch(es) on the fetched examples (${patched.join(', ') || 'none'}); planted: "gap" before face -> ${placedOk.length === 0 ? 'agrees' : placedOk.join('; ')}; drawn in front -> ${inFront.join('; ') || 'NOT NAMED'}; no patch declared -> ${noPatch.join('; ') || 'NOT NAMED'}; a patch of another name -> ${otherName.join('; ') || 'NOT NAMED'}; the painting part against the layers read -> ${paintingIsNoLayer.length === 0 ? 'not reported' : paintingIsNoLayer.join('; ')}, a head:nose part beside it -> ${noseStill.join('; ') || 'NOT NAMED'}`,
+    "an example may cut a part from the painting where no layer holds the figure (assemble.patches, recorded as painting:<name>); CO04 and CO05 must neither call it a layer nobody read nor lose its place in the stack, and a patch the parts list does not hold where the config draws it is named like any other misplaced part",
   );
 }
 
@@ -11842,8 +11894,8 @@ function runStructureSuite(): number {
   // ST25 — the tracked public examples.
   const exampleLines: string[] = [];
   let exampleOk = true;
-  for (const key of ['demo', 'sample']) {
-    const dir = join(ROOT, 'examples', key);
+  for (const key of exampleKeys().all) {
+    const dir = join(EXAMPLES_DIR, key);
     const cfgRig = loadComparison(join(dir, 'config.json'), join(dir, 'expected', 'rig.json'), null);
     const propCfg = loadComparison(join(dir, 'proposal.json'), join(dir, 'config.json'), null);
     const origins = cfgRig.rows.filter((r) => 'value' in r.origin);
@@ -11864,9 +11916,9 @@ function runStructureSuite(): number {
   }
   say(
     'ST25_EACH_TRACKED_EXAMPLE_S_CONFIG_IS_ITS_RIG_JSON_THROUGH_THE_STAGE_AND_ITS_PROPOSAL_IS_ITS_CONFIG',
-    exampleOk,
+    exampleOk && exampleLines.length > 0,
     exampleLines.join('; '),
-    why('expected/rig.json is the reference\'s flat rig, every offset a difference of integer landmarks at 3 places, so the stage rule must give every origin exactly 0; the only parents not the same are the rig stage\'s controls, one bone up; the tracked proposal and config carry equal bones (the reference used only to score)'),
+    why('expected/rig.json is a flat rig — the reference\'s, or for an example the reference never built (scarf) this port\'s build carried to the flat form by flattenRig — every offset a difference of integer landmarks at 3 places, so the stage rule must give every origin exactly 0; the only parents not the same are the rig stage\'s controls, one bone up; the tracked proposal and config carry equal bones (the reference used only to score)'),
   );
 
   // ST26 — the printout and its determinism.

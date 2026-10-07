@@ -5,7 +5,8 @@
 # examples/<key>/inputs/ of this checkout.
 #
 # What lives HERE, tracked, is the light half of each example: its config, the
-# proposal, the reference implementation's outputs under expected/, and small
+# proposal, the outputs under expected/ (the reference implementation's, or for
+# an example the reference never saw, this port's own build), and small
 # contact sheets. The heavy half is ~40 MB of PNG per character, which is why it
 # is a sibling repository rather than part of this one, and why it is fetched.
 #
@@ -35,7 +36,7 @@ set -euo pipefail
 REPO_URL="https://github.com/firejune/spine-parts-examples"
 # ⚠️ PLACEHOLDER. Set this to the full 40-character commit of spine-parts-examples
 # these fixtures were compared against. The script refuses to run until it is.
-PINNED_COMMIT=aaf679914ceb08576ef707296223c0d428d5dec3
+PINNED_COMMIT=d55a28258505ef1fcdfac7d5c35126a2c8efdbb6
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/examples"
@@ -49,7 +50,7 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     -h | --help)
-      sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
