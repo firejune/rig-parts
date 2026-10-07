@@ -383,7 +383,26 @@ more vertices than the lattice at the same spacing (demo 1785 against 1431, samp
 `TEXTURE_STRETCH` 1.227 → 1.384, ceiling 1.927); the demo's gate is green but `check` refuses
 `TEXTURE_STRETCH` on its back hair (2.535: an edge of a contour triangle squeezed to 0.394 of
 its length in the idle), and with the back hair left on the lattice it passes 9 of 9 (1.388 →
-1.68). The mode is for a part with a declared soft region inside a stable surround; on the
+1.68).
+
+**Why the demo's back hair fails, and what passes** (issue #115). The squeezed edge is an
+outline edge 2 px long, near the hair's tip, whose two ends sit either side of a step in the
+weight field: one end keeps `hairback_l1` at 0.031, the other drops it, because a weight under
+0.03 is dropped (`src/weights.ts`, the reference's `>= 0.03`). `hairback_l1` and `hairback_r2`
+swing half a period apart, so that 0.03 step moves the two ends 1.2 px against each other — on
+a 2 px edge, a ratio of 0.394 to 1.639. Re-deriving every vertex's weights by the same formula
+with the drop and the four-bone cut both left out (an off-tree measurement, not a proposal)
+gives 1.316 on the contour mesh and 1.336 on the lattice: the lattice's 36 px edges hide the
+step, the outline's 2 px edges show it. Interior vertices cannot change it — an outline edge is
+in every triangulation — so the background spacing does not move the figure (36, 24, 18 and
+12 px all give 2.535). Raising `tolerance` to 1.5 removes every short edge across a step (the
+shortest is then 8.2 px) and the part passes (1.345; with every buildable demo part switched,
+`check` passes 9 of 9 at 1.68), at 313 vertices against the lattice's 268 and 18155.5 px²
+enclosed against 58346. The window is one value wide on this part: 1.25 keeps the same 2 px
+edge (2.535) and 1.75 leaves art uncovered at margin 1. No other switched part of either
+example comes near it: the largest length change on any edge under 5 px is 1.349 px on the
+back hair and 0.784 px at most elsewhere, where a 2 px edge fails once it shortens by
+0.962 px (2 − 2 / 1.926544). The mode is for a part with a declared soft region inside a stable surround; on the
 generated fixture of `tools/local_compare.ts` it reached a local shape error (0.336 px at most,
 63 vertices) the lattice reached only at grid 2, with 1025 vertices (re-run on the grown outline
 in #106, the same figures).
@@ -404,7 +423,12 @@ needs grid 2 (2590 vertices) to match it. Moving a region still opens the seam w
 drawn beside it — over the idle, translated, by 5.19 px (lattice with the region's weights) and
 5.76 px (contour) on `hair_front` against the face, 6.91 and 5.84 px on `bottomwear` against the
 shoes, beyond what the same idle opens without the region — and `check`'s seam bar does not see
-it (0.326 or 0.327 in every variant: it compares the setup pose). `TEXTURE_STRETCH` does: the
+it (0.326 or 0.327 in every variant: it compares the setup pose). A declared `seam` requirement
+does (§7, *Declared requirements*; the region translated, the idle at 12 fps): `hair_front`
+against `face` reads 3.022 px on the tracked build and on the lattice variant — the idle's own
+sway, at frame 23 — and 6.809 (lattice + region) or 6.888 (contour) at frame 0, at pixel
+372,135 or 373,130 inside the region; `bottomwear` against `shoes` reads 6.478 (frame 8) and
+11.410 or 10.489 at frame 27, pixel 375,1192. `TEXTURE_STRETCH` does: the
 translated region fails it in both modes on `bottomwear` (2.314 lattice, 2.448 contour) and in the
 contour mode on `hair_front` (2.183; lattice 1.552), where the face half of `STILL_REGIONS_DARK`
 fails in both. The ceiling is 1.927. The outline cut moved the stretch little (`hair_front`
@@ -957,13 +981,14 @@ See-through with another seed.
 | `BUILD_ARTIFACT_PRESENT` | the packed build lacks its `.json`, `.atlas` or page | a rigc problem; report it |
 | `REQUIREMENTS_FILE` | `--requirements` names no file, or one that does not parse as a JSON object. Refused before anything is built (by `build`, before assemble) | the path of a `spine-parts-requirements/1` file |
 | `REQUIREMENTS_FIELD` | a field of the file is missing, of the wrong type, or not one the format reads: `spec`, `fps` (no default), `requirements`, each requirement's `name` (letters, digits, underscores; once each), `kind`, `animation` and its kind's fields — every bar among them (`within_px`, `fraction`, `tolerance`, `least_drive` above 0, `within_degrees` from 0 to 180, `lo_degrees` ≤ `hi_degrees`, `within_ratio` ≥ 1) — and each target's `bone`, `animation` and exactly one of `at` and `keys` (times strictly increasing). `note`, `*_note` (strings) and `x-…` (any value) are read by nothing, as in the config | write the field; the bar is yours |
-| `REQUIREMENTS_RESOLVES` | a bone, an `ik` or `transform` constraint (by name and `constraint_type`, as spine-rigc resolves it), a slot, a mesh attachment or an animation the file names is not in `rig.json` or `motion.json` — the detail lists the ones that are; or an animation whose name cannot be a directory. Refused before anything is built | the name as the rig spells it |
+| `REQUIREMENTS_RESOLVES` | a bone, an `ik` or `transform` constraint (by name and `constraint_type`, as spine-rigc resolves it), a slot, a mesh attachment or an animation the file names is not in `rig.json` or `motion.json`, or a seam's part is not in `parts.json` — the detail lists the ones that are; or an animation whose name cannot be a directory. Refused before anything is built | the name as the rig spells it |
 | `REQUIREMENTS_CONSTRAINT_DRIVES` | a `follow` names a bone its constraint does not constrain, or a property it does not drive: an `ik` drives `rotate` only; a `transform` drives `rotate` when a `to` names `rotate`, `translate` when one names `x` or `y` | the constraint's own bone and property |
 | `REQUIREMENTS_TARGET_PARENT` | a scene target's bone is the root or is not parented to it, or the root is not at rest at the origin, or the animation keys the root — a stage point is a bone's position only under a root that stands still at the origin | a bone under the root for the scene to place |
 | `REQUIREMENTS_TARGET` | a scene target places one bone twice for one animation, places it for an animation no requirement measures, has a key outside the animation's `[0, duration]`, or sits in a group the animation translates | one placement per bone and animation, inside it, for an animation a requirement reads |
 | `CHECK_REQUIREMENTS_FRAMES` | a requirement render did not write every frame rigc sampled, or the as-declared, released and full renders of a follow sampled different frames | a rigc problem; report it |
 | `CHECK_REQUIREMENT_MET` | a declared requirement measured outside its bar; the figure, its frame and the bar are quoted | the rig or its motion (§7, *Declared requirements*) — or the bar, if the scene asks less |
 | `CHECK_REQUIREMENT_MEASURABLE` | a declared requirement is NOT MEASURABLE: what it asks is undefined in the frames, and the reason is quoted. Not a pass | the declaration (a bone with a length, a target off the bone's origin, a least drive the constraint reaches) or the rig |
+| `REQUIREMENTS_SEAM` | a `seam` cannot be read against the rig: there is no `parts.json` (a merged rig, §7 *Measuring a rig spine-parts did not assemble*), or the two parts' art does not meet at the setup pose (no 4-adjacent pair). Refused before anything is built | two parts whose art touches, on a rig with its `parts.json` |
 
 ## 7. The bars `check` enforces, and what only an eye answers today
 
@@ -1197,7 +1222,8 @@ unit (the stage box maps to the world by a translation and the y flip,
     { "name": "SLEEVE_HALF", "kind": "follow", "animation": "reach", "constraint": "sleeve_tf", "constraint_type": "transform", "bone": "sleeve", "property": "rotate", "fraction": 0.5, "tolerance": 0.05, "least_drive": 2 },
     { "name": "EYES_ON_CUP", "kind": "aim", "animation": "reach", "bone": "gaze", "target": { "bone": "cup", "point": "origin" }, "within_degrees": 3 },
     { "name": "ELBOW", "kind": "range", "animation": "reach", "bone": "forearm", "lo_degrees": -10, "hi_degrees": 150 },
-    { "name": "SLEEVE_SKIN", "kind": "stretch", "animation": "reach", "slot": "sleeve", "attachment": "sleeve", "within_ratio": 1.3 }
+    { "name": "SLEEVE_SKIN", "kind": "stretch", "animation": "reach", "slot": "sleeve", "attachment": "sleeve", "within_ratio": 1.3 },
+    { "name": "CUFF_ON_HAND", "kind": "seam", "animation": "reach", "part": "sleeve", "neighbour": "hand", "within_px": 1 }
   ]
 }
 ```
@@ -1211,7 +1237,7 @@ unit (the stage box maps to the world by a translation and the y flip,
 | not measurable | it reads and the rig builds, and the quantity is undefined in the frames | `NAME: NOT MEASURABLE — <why>` with the figures that show it, `CHECK_REQUIREMENT_MEASURABLE`; the run does not PASS |
 | measured | otherwise | `PASS` or `FAIL` against the author's bar, with the figures and the worst frame; a FAIL is `CHECK_REQUIREMENT_MET` |
 
-**The five kinds**, each over every frame of its animation sampled at the file's `fps`:
+**The six kinds**, each over every frame of its animation sampled at the file's `fps`:
 
 | kind | declares | measures | not measurable when |
 | --- | --- | --- | --- |
@@ -1220,6 +1246,7 @@ unit (the stage box maps to the world by a translation and the y flip,
 | `range` | `bone`, `lo_degrees`, `hi_degrees` | the bone's world rotation less its parent's (the world's, for the root), less the same at the setup pose, as a signed shortest angle: the least and the greatest, and their frames | — |
 | `stretch` | `slot`, `attachment` (a mesh), `within_ratio` | `TEXTURE_STRETCH`'s own per-mesh measure (imported, not rewritten): the mesh's worst max(ratio, 1/ratio) over the frames | a rest edge of length 0; no frame shows the mesh |
 | `follow` | `constraint`, `constraint_type` (`ik` or `transform`), `bone`, `property` (`rotate` or `translate`), `fraction`, `tolerance`, `least_drive` | below | no frame's drive reaches `least_drive` (the line prints the largest drive there was) |
+| `seam` | `part`, `neighbour` (two part names: each is drawn by the slot of its name), `within_px` | below | no seam pair reads on any frame (each pixel off its attachment's rest geometry, or the slot shows nothing) |
 
 **`follow`**, #87's definition to the letter: "bone A takes a fraction `f` of what
 constraint C asks of it" is measured from three poses of the same rig over the same
@@ -1250,6 +1277,24 @@ drives, and the line's `released_copy` says so; the full copy drops the constrai
 own declaration if the rig has one, since at 1 it rests live. Any other red line from
 a copy is refused, `CHECK_RIGC_GREEN`, quoting rigc.
 
+**`seam`** (issue #111): the seam bar (§7) compares the setup pose with the flat stack
+of parts, so it cannot see two parts part in motion. A `seam` requirement can. Its
+pairs are read off `parts.json`'s art at the setup pose: every pair (a, b) of
+4-adjacent stage pixels with a an art pixel of `part` (alpha above 8, the threshold
+meshes are built from) and b an art pixel of `neighbour` that is not `part`'s. On
+each frame, each pixel centre's displacement from rest is read off its attachment in
+`geometry.json` — the rest triangle holding it and the same barycentric mix of that
+triangle's posed vertices (a region is the runtime's two triangles) — and a pair's
+opening is the distance between the two displacements: how far the two sides moved
+apart or across, in stage px. The line carries the largest opening, its frame and
+its pair (`"part" pixel x,y against "neighbour" pixel x,y`), the pair count, and the
+pair-frames not read: a pixel no rest triangle holds, or a slot showing nothing, is
+counted, never read as 0. It is an upper bound on any gap: what shows through
+depends on what is drawn under the seam. Two parts turning together by θ read
+2 sin(θ/2) px across a pair one pixel apart (0.105 px at 6°), not 0. A part on a
+bone's sway opens its seams by that sway, so the bar is the scene's: what it
+declares is how far that pair may part.
+
 **Scene targets.** A `targets` entry names a bone whose parent is the root and gives
 it a stage point (`"at": [x, y]`) or stage points at stated times (`"keys"`), linear
 between them, the first held before and the last after, for one named animation.
@@ -1277,7 +1322,10 @@ far target passes and is not judged on distance; a follow at mix 0.5 measures 0.
 an ik and on a transform, and the same ik with its mix keyed 0, 1, 1 measures
 3.5 / 5 = 0.7 and fails a declared 0.5; a follow whose target asks nothing and a tip
 on a bone of length 0 are NOT MEASURABLE and the run is not PASS (`CK68`–`CK79`,
-`RQ01`–`RQ22`).
+`RQ01`–`RQ22`). A seam between two parts on one rolling bone holds and reads only
+2 sin(θ/2) px; the same back part sliding 3 px under its bone opens it by 3 at the
+frame the slide peaks; a seam on a rig with no `parts.json` is refused before anything
+is built (`CK83`–`CK85`, `RQ30`–`RQ35`).
 
 ## 8. What one character costs
 

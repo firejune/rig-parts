@@ -154,6 +154,16 @@ import {
   type RequirementsFile,
   resolveRequirements,
   rigFacts,
+  displacementOf,
+  type PlacedArt,
+  placedArt,
+  type PosedAttachment,
+  resolveSeams,
+  type SeamFrame,
+  seamLine,
+  type SeamPair,
+  seamPairs as sceneSeamPairs,
+  type SeamRequirement,
   stretchRequirementLine,
   summaryText,
 } from './src/requirements.ts';
@@ -165,6 +175,7 @@ import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'spine-rigc/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
+import { ART_ALPHA } from './src/mesh.ts';
 import { checkHullOrder, earClip, findSelfIntersection, offsetPolygon, simplifyClosedPolygon, traceAlphaOutline, traceOutline } from 'spine-rigc/src/mesh.ts';
 import { PartsError, type Problem } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
@@ -5866,8 +5877,8 @@ function runRequirementCases(dir: string, say: (name: string, ok: boolean, detai
       existsSync(join(geoSet.dir, GEOMETRY_FILE)) &&
       !existsSync(join(green.outDir, '_requirements')) &&
       summary.declared === 5 &&
-      JSON.stringify(summary.not_declared) === '["stretch"]' &&
-      green.text.includes('  requirements: 5 declared — 5 measured (5 PASS, 0 FAIL), 0 NOT MEASURABLE; not declared: stretch'),
+      JSON.stringify(summary.not_declared) === '["stretch","seam"]' &&
+      green.text.includes('  requirements: 5 declared — 5 measured (5 PASS, 0 FAIL), 0 NOT MEASURABLE; not declared: stretch, seam'),
     `exit ${green.status}; "${finalLine(green)}"; check.json ends ${keys.slice(-2).join(', ')}; lines ${Object.entries(block(green).lines ?? {}).map(([n, l]) => `${n} ${String(l.status)}`).join(', ')}; missing outputs: ${missing.join(', ') || 'none'}; as-declared reach: ${geoSet === null ? 'absent' : `${geoSet.written} frame(s) at ${geoSet.fps} fps`}; scratch ${existsSync(join(green.outDir, '_requirements')) ? 'LEFT' : 'removed'}`,
     'the positive control: a rig a consumer composed (no parts.json, no idle) with three ik constraints and a transform, five requirements of four kinds; one render of the named animation at the file\'s fps (1 s at 4 fps is 5 frames), two more per follow, and the summary names the kind not declared — never as a pass',
   );
@@ -5970,7 +5981,7 @@ function runRequirementCases(dir: string, say: (name: string, ok: boolean, detai
       close(vs.largest_drive_degrees, 0, 1e-6) &&
       line(nm, 'STUB_TIP').status === 'NOT MEASURABLE' &&
       finalLine(nm).startsWith('check: FAIL — 0 bar(s) not met, 2 declared requirement(s) not PASS') &&
-      nm.text.includes('  requirements: 2 declared — 0 measured (0 PASS, 0 FAIL), 2 NOT MEASURABLE; not declared: aim, range, stretch') &&
+      nm.text.includes('  requirements: 2 declared — 0 measured (0 PASS, 0 FAIL), 2 NOT MEASURABLE; not declared: aim, range, stretch, seam') &&
       failLine(nm.text, 'CHECK_REQUIREMENT_MEASURABLE: requirement "VANE_STILL"') !== null &&
       nm.fig?.PASS === false,
     `exit ${nm.status}; ${printed(nm, 'VANE_STILL').slice(0, 200)}… | ${printed(nm, 'STUB_TIP')} | "${finalLine(nm)}"`,
@@ -6085,6 +6096,48 @@ function runRequirementCases(dir: string, say: (name: string, ok: boolean, detai
     rigged.status === 0 && on.status === 'PASS' && close(on.largest_px, 0, 1e-4) && off.status === 'FAIL' && close(off.largest_px, 4, 1e-4) && off.at === 'frame 0 (t = 0s)',
     `rig --idle-keys direct exit ${rigged.status}; as written: ${printed(onTarget, 'TIP_ON_TARGET').slice(0, 160)}; tgt placed at stage (34, 14): ${printed(offTarget, 'TIP_ON_TARGET').slice(0, 160)}`,
     "fixtures/rig.ts's constraint fixture: tgt is 13.416 from hem0, inside the 16 the pair reaches, so the solved tip is on it (0 by hand, the fixture's own derivation); placed by the scene 20 along hem0's row it is 4 beyond the straightened pair on every frame, the first named — the config's constraint, rig's gate and check's measure in one chain",
+  );
+
+  // Issue #111: the seam between two parts, through rigc's posed geometry. fixtures/checkrig.ts's head option: both
+  // parts ride `head`, which the idle rolls 0, ROLL, 0, -ROLL, 0 at quarter steps; with `slide` the back part is a
+  // mesh weighted wholly to `slide`, keyed translatex 0, SLIDE, 0 in the head's frame.
+  const ROLL = 6;
+  const SLIDE = 3;
+  const seamFile = (within: number): Record<string, unknown> => ({ requirements: [{ name: 'BACK_ON_FRONT', kind: 'seam', animation: 'idle', part: 'back', neighbour: 'front', within_px: within }] });
+  // A rigid turn R of both sides moves a pair one pixel apart by (R - I)(a - b), of length 2 sin(θ/2) for |a - b| = 1.
+  const rollOpening = 2 * Math.sin((ROLL * Math.PI) / 360);
+  const rigid = run('seam-rigid', seamFile(0.2), (d) => writeCheckRig(d, { head: { roll: ROLL } }));
+  const held = line(rigid, 'BACK_ON_FRONT');
+  say(
+    'CK83_A_SEAM_BETWEEN_TWO_PARTS_ON_ONE_ROLLING_BONE_HOLDS_AND_READS_ONLY_THE_ROLL_ACROSS_ONE_PIXEL',
+    held.status === 'PASS' && close(held.largest_px, rollOpening, 1e-4) && (held.at === 'frame 1 (t = 0.25s)' || held.at === 'frame 3 (t = 0.75s)') && held.frames === 5 && Number(held.pairs) > 0 && held.pair_frames_unread === 0 && block(rigid).summary?.not_measurable === 0,
+    printed(rigid, 'BACK_ON_FRONT'),
+    `the positive control: back and front both ride head, which rolls ±${ROLL} degrees at the quarter frames, so both sides of every pair turn together and the seam does not open; what the definition reads is the turn applied across the pair's own 1 px step, 2 sin(${ROLL}/2 degrees) = ${rollOpening.toFixed(6)} px by hand, at the frames where the roll peaks — far under a bar of 0.2, and the term a reader of a real figure is to discount`,
+  );
+
+  const sliding = run('seam-slide', seamFile(1), (d) => writeCheckRig(d, { head: { roll: ROLL, slide: SLIDE } }));
+  const opened = line(sliding, 'BACK_ON_FRONT');
+  const openFail = failLine(sliding.text, 'CHECK_REQUIREMENT_MET: requirement "BACK_ON_FRONT"');
+  say(
+    'CK84_A_PART_THAT_SLIDES_UNDER_ITS_BONE_OPENS_THE_SEAM_BY_THE_SLIDE_AT_THE_FRAME_IT_PEAKS_AND_THE_LINE_NAMES_THE_PAIR',
+    sliding.status === 1 &&
+      opened.status === 'FAIL' &&
+      close(opened.largest_px, SLIDE, 1e-3) &&
+      opened.at === 'frame 2 (t = 0.5s)' &&
+      String(opened.pair).startsWith('"back" pixel ') &&
+      String(opened.pair).includes(' against "front" pixel ') &&
+      openFail !== null &&
+      openFail.includes(`at frame 2 (t = 0.5s), ${String(opened.pair)}; <= 1 px is required`),
+    `${printed(sliding, 'BACK_ON_FRONT')} | ${openFail?.trim() ?? 'no FAIL line'}`,
+    `the planted negative: the back mesh slides ${SLIDE} rig px along the head's x at t = 0.5 s, where the roll is 0, so every pair opens by ${SLIDE} there (by hand) and by ${SLIDE}/2 at the quarter frames whatever the roll — a part moving under its own bone's frame opens its seam with a neighbour on the head, which the setup-pose seam bar cannot see (issue #111)`,
+  );
+
+  const merged = run('seam-merged', { requirements: [{ name: 'A_ON_B', kind: 'seam', animation: 'greet', part: 'a_back', neighbour: 'b_front', within_px: 1 }] }, (d) => writeComposedRig(d, 3));
+  say(
+    'CK85_A_SEAM_ON_A_RIG_WITH_NO_PARTS_JSON_IS_REFUSED_BEFORE_ANYTHING_IS_BUILT',
+    merged.status === 1 && failLine(merged.text, 'REQUIREMENTS_SEAM: requirement "A_ON_B" (seam)') !== null && !existsSync(join(merged.outDir, 'build')) && merged.fig === null,
+    `exit ${merged.status}; ${failLine(merged.text, 'REQUIREMENTS_')?.trim() ?? 'no REQUIREMENTS_ line'}; build/ ${existsSync(join(merged.outDir, 'build')) ? 'WRITTEN' : 'not written'}`,
+    "a seam's pixels are read off parts.json's art; a rig a consumer composed has none (#77), so the declaration cannot be read against it and is refused by name before rigc builds anything — not measured on nothing",
   );
 }
 
@@ -6902,7 +6955,7 @@ function still(w: BoneWorld, frames: number): { setup: BoneWorld; frames: BoneWo
 }
 
 function runRequirementsSuite(): number {
-  section('requirements: the scene file read, resolved against the rig, its copies written and its five kinds measured by hand');
+  section('requirements: the scene file read, resolved against the rig, its copies written and its six kinds measured by hand');
   const { say, bad } = counter();
   const dir = temp('requirements');
   try {
@@ -7356,6 +7409,128 @@ function runRequirementsSuite(): number {
       acrossOk === null && codes(acrossBare) === 'REQUIREMENTS_RESOLVES requirement "A_HOLDS_B" (contact) target' && (acrossBare?.problems[0].detail.includes('"b_hand"') ?? false),
       `"b_hand": ${codes(acrossOk)}; "hand": ${codes(acrossBare)} — ${acrossBare?.problems[0].detail.slice(0, 160) ?? ''}`,
       "#87: in a rig composed of several characters a target can simply be another character's bone, named as the composed rig names it — so it resolves as any bone does, and the unprefixed name a single character would use is a miss named with the composed names",
+    );
+
+    // Issue #111: the seam between two parts' art, held by the scene.
+    const seamReq = { name: 'BANGS_ON_FACE', kind: 'seam', animation: 'idle', part: 'p', neighbour: 'n', within_px: 2 };
+    const seamRead = readRequirements(file('seam', { spec, fps: REQ_FPS, requirements: [seamReq] }));
+    const seamBad = refusals(() =>
+      readRequirements(file('seam-bad', { spec, fps: REQ_FPS, requirements: [{ ...seamReq, name: 'SAME', neighbour: 'p' }, strip({ ...seamReq, name: 'NOBAR' }, 'within_px'), strip({ ...seamReq, name: 'ALONE' }, 'neighbour')] })),
+    );
+    const miniRig = { bones: [{ name: 'root' }], slots: [{ name: 'p', bone: 'root' }, { name: 'n', bone: 'root' }] };
+    const miniMotion = { animations: { idle: { duration: 1, tracks: [] } } };
+    const seamUnresolved = refusals(() => resolveRequirements(readRequirements(file('seam-slot', { spec, fps: REQ_FPS, requirements: [{ ...seamReq, neighbour: 'face' }] })), miniRig, miniMotion, 'root'));
+    say(
+      'RQ30_A_SEAM_READS_AS_WRITTEN_AND_ONE_PART_TWICE_A_MISSING_BAR_A_MISSING_NEIGHBOUR_AND_AN_UNKNOWN_SLOT_ARE_REFUSED_BY_NAME',
+      JSON.stringify(seamRead.requirements[0]) === JSON.stringify({ name: 'BANGS_ON_FACE', animation: 'idle', kind: 'seam', part: 'p', neighbour: 'n', within_px: 2 }) &&
+        codes(seamBad) === 'REQUIREMENTS_FIELD requirements[0] "SAME" fields "part", "neighbour"; REQUIREMENTS_FIELD requirements[1] "NOBAR" field "within_px"; REQUIREMENTS_FIELD requirements[2] "ALONE" field "neighbour"' &&
+        (seamBad?.problems[1].detail.includes('there is no default') ?? false) &&
+        codes(seamUnresolved) === 'REQUIREMENTS_RESOLVES requirement "BANGS_ON_FACE" (seam)' &&
+        (seamUnresolved?.problems[0].detail.includes('neighbour "face"') ?? false) &&
+        refusals(() => resolveRequirements(seamRead, miniRig, miniMotion, 'root')) === null,
+      `read back ${JSON.stringify(seamRead.requirements[0])}; ${codes(seamBad)}; a neighbour the rig has no slot for: ${codes(seamUnresolved)} — ${seamUnresolved?.problems[0].detail ?? ''}`,
+      'the sixth kind is read like the five: every field and the bar by name, no default, one throw; a seam is between two parts, so naming one part twice is refused rather than measured as 0, and a part is drawn by the slot of its name, so a name with no slot is a miss',
+    );
+
+    const block = (x: number, y: number, w: number, h: number, alpha = 255): PlacedArt => {
+      const r = newRaster(w, h);
+      for (let i = 0; i < w * h; i++) r.data[i * 4 + 3] = alpha;
+      return placedArt(x, y, r);
+    };
+    const side = sceneSeamPairs(block(0, 0, 2, 2), block(2, 0, 2, 2));
+    const over = sceneSeamPairs(block(0, 0, 2, 2), block(1, 0, 3, 2));
+    const gap = sceneSeamPairs(block(0, 0, 2, 2), block(3, 0, 2, 2));
+    const corner = sceneSeamPairs(block(0, 0, 2, 2), block(2, 2, 2, 2));
+    const faint = sceneSeamPairs(block(0, 0, 2, 2), block(2, 0, 2, 2, ART_ALPHA));
+    const firm = sceneSeamPairs(block(0, 0, 2, 2), block(2, 0, 2, 2, ART_ALPHA + 1));
+    say(
+      'RQ31_SEAM_PAIRS_ARE_4_ADJACENT_ART_PIXELS_THE_NEIGHBOUR_S_NOT_THE_PART_S_AND_A_GAP_A_CORNER_OR_FAINT_ALPHA_MAKE_NONE',
+      JSON.stringify(side) === '[[1,0,2,0],[1,1,2,1]]' && JSON.stringify(over) === '[[1,0,2,0],[1,1,2,1]]' && gap.length === 0 && corner.length === 0 && faint.length === 0 && firm.length === 2,
+      `side by side ${JSON.stringify(side)}; overlapping a column ${JSON.stringify(over)}; a column apart ${gap.length}; corner to corner ${corner.length}; neighbour at alpha ${ART_ALPHA} ${faint.length}, at ${ART_ALPHA + 1} ${firm.length}`,
+      `by hand: two 2x2 blocks side by side meet along x = 1 | 2, two pairs; a neighbour overlapping the part's right column meets it at the same two pairs (the pixels both hold are covered, not a seam); a column apart or touching only at a corner there is no 4-adjacent pair; art is alpha above ${ART_ALPHA}, the threshold every mesh is built from (tools/real_compare.ts's seamPairs, the measure #109 used)`,
+    );
+
+    const arts: Record<string, PlacedArt> = { p: block(0, 0, 2, 2), n: block(2, 0, 2, 2), far: block(10, 10, 2, 2) };
+    const seamFileOf = (rs: Array<Record<string, unknown>>): RequirementsFile => readRequirements(file(`seams-${rs.length}`, { spec, fps: REQ_FPS, requirements: rs }));
+    const seamFile = seamFileOf([seamReq, { ...seamReq, name: 'GHOST', neighbour: 'ghost' }, { ...seamReq, name: 'APART', neighbour: 'far' }]);
+    const asked: string[] = [];
+    const sAll = refusals(() => resolveSeams(seamFile, ['p', 'n', 'far'], null, (n) => (asked.push(n), arts[n])));
+    const sNoParts = refusals(() => resolveSeams(seamFileOf([seamReq]), null, 'no parts.json beside the rig', (n) => arts[n]));
+    const sOk = resolveSeams(seamFileOf([seamReq]), ['p', 'n'], null, (n) => arts[n]);
+    say(
+      'RQ32_A_SEAM_IS_RESOLVED_OFF_PARTS_JSON_S_ART_AND_NO_PARTS_JSON_AN_UNLISTED_PART_AND_PARTS_THAT_DO_NOT_MEET_ARE_REFUSED_TOGETHER',
+      codes(sAll) === 'REQUIREMENTS_RESOLVES requirement "GHOST" (seam); REQUIREMENTS_SEAM requirement "APART" (seam)' &&
+        (sAll?.problems[0].detail.includes('part "ghost"') ?? false) &&
+        (sAll?.problems[1].detail.includes('share no seam') ?? false) &&
+        !asked.includes('ghost') &&
+        codes(sNoParts) === 'REQUIREMENTS_SEAM requirement "BANGS_ON_FACE" (seam)' &&
+        (sNoParts?.problems[0].detail.endsWith('no parts.json beside the rig') ?? false) &&
+        JSON.stringify(sOk.get('BANGS_ON_FACE')) === '[[1,0,2,0],[1,1,2,1]]',
+      `${codes(sAll)}; parts asked for: ${asked.join(', ')}; without parts.json: ${codes(sNoParts)} — ${sNoParts?.problems[0].detail ?? ''}; resolved: ${JSON.stringify(sOk.get('BANGS_ON_FACE'))}`,
+      "the pairs are known before anything is built, so a seam that cannot be read is refused then, every problem in one throw: a part parts.json does not list is unresolved (and its art is never read), two parts 8 px apart share no seam, and a rig without parts.json has no art to read one off (#77's merged rig)",
+    );
+
+    const sq = (x0: number, y0: number): number[] => [x0, y0, x0 + 2, y0, x0 + 2, y0 + 2, x0, y0 + 2];
+    const quad = (rest: number[], posed: number[]): PosedAttachment => ({ rest, posed, triangles: [0, 1, 2, 2, 3, 0] });
+    const moved = (v: number[], dx: number, dy: number): number[] => v.map((c, i) => c + (i % 2 === 0 ? dx : dy));
+    const dT = displacementOf(quad(sq(0, 0), moved(sq(0, 0), 3, 4)))([1, 0.5]);
+    const dS = displacementOf(quad(sq(0, 0), sq(0, 0).map((c) => 2 * c)))([1.5, 0.5]);
+    const dOff = displacementOf(quad(sq(0, 0), sq(0, 0)))([5, 5]);
+    const dNeg = displacementOf(quad(sq(-20, -20), moved(sq(-20, -20), -1, 0)))([-19, -19]);
+    say(
+      'RQ33_A_DISPLACEMENT_IS_THE_BARYCENTRIC_MIX_OF_THE_POSED_TRIANGLE_LESS_THE_POINT_AND_NONE_OFF_THE_REST_GEOMETRY',
+      JSON.stringify(dT) === '[3,4]' && JSON.stringify(dS) === '[1.5,0.5]' && dOff === null && JSON.stringify(dNeg) === '[-1,0]',
+      `translated (3, 4): ${JSON.stringify(dT)}; scaled 2 about the origin at (1.5, 0.5): ${JSON.stringify(dS)}; (5, 5) off a 2x2 square: ${JSON.stringify(dOff)}; a square left of and below the origin moved (-1, 0): ${JSON.stringify(dNeg)}`,
+      'by hand: a translation moves every point by itself; a scale by 2 about the origin moves (1.5, 0.5) to (3, 1), by (1.5, 0.5); a point no rest triangle holds has no displacement (counted unread, never 0); world x and y below 0 (left of the root, below the ground) are found too',
+    );
+
+    // Stage height 10: stage pixel (1, 0)'s centre is world (1.5, 9.5), (2, 0)'s (2.5, 9.5); the part's square covers world [0, 2] x [8, 10], the neighbour's [2, 4] x [8, 10].
+    const stage10 = { x: 0, y: 0, height: 10 };
+    const pRest = sq(0, 8);
+    const nRest = sq(2, 8);
+    const seamPoses = handPoses('hand', { root: still(worldAt(0, 0, 0), 3) });
+    const pairs10: SeamPair[] = [[1, 0, 2, 0], [1, 1, 2, 1]];
+    const sFrames: SeamFrame[] = [
+      { part: quad(pRest, pRest), neighbour: quad(nRest, nRest) },
+      { part: quad(pRest, moved(pRest, 3, 4)), neighbour: quad(nRest, nRest) },
+      { part: quad(pRest, moved(pRest, 3, 4)), neighbour: quad(nRest, moved(nRest, 3, 4)) },
+    ];
+    const seamAt = (within: number, frames = sFrames, pairs = pairs10): RequirementLine => seamLine({ ...seamReq, part: 'p', neighbour: 'n', within_px: within } as SeamRequirement, pairs, frames, seamPoses, stage10);
+    const sHeld = seamAt(5);
+    const sOpen = seamAt(4.99);
+    const sOpenProblem = requirementProblem({ ...seamReq, within_px: 4.99 } as SeamRequirement, sOpen);
+    say(
+      'RQ34_A_SEAM_OPENS_BY_THE_DISTANCE_BETWEEN_ITS_TWO_SIDES_DISPLACEMENTS_NAMING_THE_PAIR_AND_THE_FRAME',
+      sHeld.status === 'PASS' &&
+        sHeld.largest_px === 5 &&
+        sHeld.at === 'frame 1 (t = 0.25s)' &&
+        sHeld.pair === '"p" pixel 1,0 against "n" pixel 2,0' &&
+        sHeld.pairs === 2 &&
+        sHeld.frames === 3 &&
+        sHeld.pair_frames_unread === 0 &&
+        sOpen.status === 'FAIL' &&
+        sOpenProblem?.code === 'CHECK_REQUIREMENT_MET' &&
+        sOpenProblem.detail === 'largest opening 5 px at frame 1 (t = 0.25s), "p" pixel 1,0 against "n" pixel 2,0; <= 4.99 px is required',
+      `within 5: ${sHeld.status}, ${String(sHeld.largest_px)} px at ${String(sHeld.at)}, ${String(sHeld.pair)}; within 4.99: ${sOpen.status} — ${sOpenProblem?.detail ?? ''}`,
+      'by hand: frame 0 nothing moves (0); frame 1 the part moves (3, 4) and the neighbour does not, so every pair opens by 5; frame 2 both move (3, 4) and the seam is closed again (0) — the figure is the distance between the two sides\' displacements, not either one\'s, and the first pair of the worst frame is named',
+    );
+
+    const hidden = seamAt(5, sFrames.map((f) => ({ ...f, neighbour: null })));
+    const someHidden = seamAt(5, [sFrames[0], { ...sFrames[1], neighbour: null }, sFrames[2]]);
+    const offRest = seamAt(5, sFrames, [[1, 0, 2, 0], [8, 0, 9, 0]]);
+    say(
+      'RQ35_A_SEAM_NO_PAIR_OF_WHICH_READS_IS_NOT_MEASURABLE_AND_AN_UNREAD_PAIR_OR_FRAME_IS_COUNTED_NOT_READ_AS_0',
+      hidden.status === 'NOT MEASURABLE' &&
+        String(hidden.reason).includes('no seam pair reads') &&
+        requirementProblem(seamReq as SeamRequirement, hidden)?.code === 'CHECK_REQUIREMENT_MEASURABLE' &&
+        someHidden.status === 'PASS' &&
+        someHidden.largest_px === 0 &&
+        JSON.stringify(someHidden.frames_not_measurable) === '[1]' &&
+        someHidden.frames === 2 &&
+        offRest.largest_px === 5 &&
+        offRest.pair_frames_unread === 3,
+      `neighbour shown on no frame: ${hidden.status} — ${String(hidden.reason)}; hidden on frame 1 only: ${someHidden.status}, ${String(someHidden.largest_px)} px, frames not measurable ${JSON.stringify(someHidden.frames_not_measurable)}; a pair off both rest squares: ${String(offRest.largest_px)} px, ${String(offRest.pair_frames_unread)} pair-frame(s) unread`,
+      'a slot showing nothing has no displacement, so its frame is named as not measurable — hiding the frame where the seam opened leaves 0 measured, and the line says which frame it could not read; a pair whose pixel no rest triangle holds is unread on each of the 3 frames, never a 0 that would pass',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -8374,7 +8549,7 @@ function runBuildSuite(): number {
       'BU18_BUILD_FORWARDS_REQUIREMENTS_TO_CHECK_WHICH_MEASURES_AND_PRINTS_THEM_UNDER_ITS_PREFIX',
       swingReq.status === 0 &&
         swingReq.out.includes('[check]   SKIRT_RANGE: PASS — ') &&
-        swingReq.out.includes('[check]   requirements: 1 declared — 1 measured (1 PASS, 0 FAIL), 0 NOT MEASURABLE; not declared: contact, follow, aim, stretch') &&
+        swingReq.out.includes('[check]   requirements: 1 declared — 1 measured (1 PASS, 0 FAIL), 0 NOT MEASURABLE; not declared: contact, follow, aim, stretch, seam') &&
         existsSync(join(reqOut, 'check', 'requirements', 'as-declared', 'idle', 'frames.json')) &&
         skirtLine.status === 'PASS' &&
         hi > 0 &&

@@ -34,7 +34,7 @@ stage writes are the whole interface.
   SKIP was not verified: report it as such, with its reason, never as passed.
 - **What a scene asks is declared, not assumed.** When the request says what the
   motion must do — a hand on a cup, a sleeve taking half an arm's turn, a joint
-  inside a range — write it into a `spine-parts-requirements/1` file and pass
+  inside a range, a fringe that must not part from the face — write it into a `spine-parts-requirements/1` file and pass
   `check --requirements <file>` (or `build --requirements`); every bar in it is the
   requester's, never yours to invent (AUTHORING §7, *Declared requirements*). Each
   line is PASS, FAIL or NOT MEASURABLE; a NOT MEASURABLE is not green, and a kind the
