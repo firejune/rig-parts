@@ -32,7 +32,7 @@
  * | --- | --- |
  * | `build/` | `rigc build --profile spine-html --pack --page-edges free --pack-shape polygon` (or `pot`, `rect`, when the caller names them; {@link PAGE_EDGES}, {@link PACK_SHAPES}) — the packed atlas is the final artifact |
  * | `gate_spine-html.txt` | that build's gate lines, verbatim — the one gate: rigc's `build` runs it once over the compile and once over the packed pages on disk, and `spine-html` holds every rule `spine` measures (selftest `CH09`) |
- * | `idle_frames/` | `rigc render --animation idle --fps 12 --max 640 --geometry`: `frames.json` + `idle/f*.png` + `idle/geometry.json` (each mesh's skinned vertices, which `TEXTURE_STRETCH` reads, every attachment's posed triangles, which `TIP_OVER_ROOT` reads since issue #118, and every bone's world transform, which the face half of `STILL_REGIONS_DARK` reads) |
+ * | `idle_frames/` | `rigc render --animation idle --fps 12 --max 640 --geometry`: `frames.json` + `idle/f*.png` + `idle/geometry.json` (each mesh's skinned vertices, which `TEXTURE_STRETCH` reads, every attachment's posed triangles, which `TIP_OVER_ROOT` and both halves of `STILL_REGIONS_DARK` read since issues #118 and #123, and every bone's world transform, which the face half reads its head bone from) |
  * | `contact.png` | rigc's own contact sheet of that render, copied out |
  * | `motion_heat.png` | frame 0 in grey with each pixel's largest change across the idle in red |
  * | `check.json` | the figures below and `PASS` |
@@ -57,9 +57,8 @@
  * copied into `check.json` because the seam cannot see them — it compares the
  * setup pose with the flat stack of parts, and a pixel no part holds is
  * missing from both. The
- * part-alone renders, the shut-eye still and the face calibration (the whole
- * rig moved rigidly as the idle moves the head, issue #33) are scratch
- * (`_isolated/`, `_still/`), removed before the stage returns.
+ * part-alone renders and the shut-eye still are scratch (`_isolated/`,
+ * `_still/`), removed before the stage returns.
  *
  * Where this port deliberately differs from the reference, each written where
  * it applies below: a gate summary is read with a pattern rather than the
@@ -82,10 +81,12 @@ import {
   type GeometryPose,
   type MeshRest,
   blinkTracks,
+  type ArtMask,
   type BoneTrack,
   type BoneWorld,
-  boneFrameHeat,
   boxLabel,
+  crossingOf,
+  type FrameMap,
   chainFigures,
   EYE_TAGS,
   eyeBones,
@@ -96,20 +97,20 @@ import {
   heatField,
   partsTagged,
   type PixelBox,
+  type PosedTriangles,
   regionHeat,
   partWorldBox,
-  rootLocalOf,
+  type RigRegion,
   setupToFrame,
+  stillReading,
+  stillTolerance,
   stretchFigures,
   stretchSeverity,
   sweptBox,
   SWING_TAGS,
   topmostIndex,
   TORSO_TAGS,
-  footprintMask,
-  footprintReach,
   halfTravels,
-  visibleMask,
   type WorldBox,
 } from './instruments.ts';
 import { type PartRecord, type PartsFile, readParts } from './parts.ts';
@@ -166,8 +167,6 @@ export const IDLE_MAX_PX = 640;
 /** The throwaway setup-pose animation: one key at 0 and one at this time, rendered at this rate. */
 const STILL_DURATION = 0.1;
 const STILL_FPS = 10;
-/** The throwaway animation that moves the whole rig rigidly as the idle moves the head bone, built beside the setup still: the face ceiling's calibration. */
-export const HEAD_RIGID_ANIMATION = 'head_rigid';
 
 /**
  * The judgement lines' bars (issue #11). Each is derived from the two public
@@ -175,8 +174,9 @@ export const HEAD_RIGID_ANIMATION = 'head_rigid';
  * measures beside it: a floor is half the weaker example's figure, a ceiling
  * twice the worse one's, so the weaker example clears every bar by a factor of
  * two; a bar the model itself fixes (a still part does not move, a lag is
- * above 0, a hole is 0 pixels) is that value, not a margin. The face ceiling
- * is neither: it is measured on each rig ({@link STILL_FACE_RESAMPLER_MARGIN}).
+ * above 0, a hole is 0 pixels) is that value, not a margin. The still regions'
+ * bar is the model's too — nothing moves — read up to the arithmetic's own
+ * rounding (`stillTolerance` in `src/instruments.ts`, issue #123).
  */
 export const BREATH_TORSO_MEAN_FLOOR = 3.809;
 export const BREATH_FEET_MAX_CEILING = 0;
@@ -186,18 +186,6 @@ export const BLINK_PATCH_LEVEL = SEAM_PX_LEVEL;
 /** The smallest lag the reading resolves, in cycles: phases are written to three places. */
 export const CHAIN_LAG_MIN_STEP = 0.001;
 export const TIP_RATIO_FLOOR = 1.4725;
-/**
- * The face half of `STILL_REGIONS_DARK` (issue #33) is measured in the head
- * bone's own frame, where a region the head carries is still to the
- * resampler's error and nothing more. Its ceiling is not a figure off the
- * examples: it is this factor times that error, measured on the same rig on a
- * throwaway animation that moves the WHOLE rig rigidly as the idle moves the
- * head ({@link rigidIdle}) — every pixel is then still in the head's frame by
- * construction, so what that render reads there IS the error. Two is the
- * tree's one margin (the weaker example clears every derived bar by two).
- */
-export const STILL_FACE_RESAMPLER_MARGIN = 2;
-export const STILL_FEET_MEAN_CEILING = 3.244;
 /**
  * `TEXTURE_STRETCH`'s ceiling on max(ratio, 1/ratio) (issue #31): the worse
  * example's figure (demo, 1.388) squared. The ceiling rule is "twice the worse
@@ -1364,7 +1352,6 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   // 3. the idle, the loop, the heat — only when there is an idle
   let idle: FrameSet | null = null;
   let loop: { max: number; x: number; y: number } | null = null;
-  let idleHeat: Uint8Array | null = null;
   if (inp.idleDuration !== null) {
     const render = rigc(['render', '--candidate', buildDir, '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--geometry', '--out', idleDir]);
     if (render.status !== 0) refuseIfAny(rigcFailed('render --animation idle --geometry', render, render.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
@@ -1388,7 +1375,6 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     const idleImages = idle.frames.map((f) => f.image);
     writePng(join(out, 'motion_heat.png'), motionHeat(idleImages));
     written.push('motion_heat.png');
-    idleHeat = heatField(idleImages);
   }
 
   // 3b. the parts a judgement reads alone: each rendered by its own slots, on the whole rig's grid
@@ -1410,19 +1396,14 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   }
   let chain: JudgementLine = skip(inp.noIdle ?? '');
   let stretch: JudgementLine = skip(inp.noIdle ?? '');
-  let headTrack: BoneTrack | string = lacking;
-  let rigid: Record<string, unknown> | string = lacking;
+  let still: JudgementLine = skip(lacking);
   if (idle !== null) {
     chain = chainLine(inp, problems);
-    // One reader for the one geometry file: the stretch reads its meshes, the face half its head bone.
+    // One reader for the one geometry file: the stretch reads its meshes, the still regions every slot and the head bone.
     const geometryPath = join(idle.dir, GEOMETRY_FILE);
     const geometry = readGeometry(geometryPath, idle.written);
     stretch = stretchLine(geometry, geometryPath, problems);
-    if (full !== null) {
-      const head = headBoneOf(full);
-      headTrack = 'bone' in head ? boneTrackOf(geometry, geometryPath, idle, head.bone) : `no head bone to measure it in: ${head.none}`;
-      rigid = typeof headTrack === 'string' ? headTrack : rigidIdle(full, headTrack);
-    }
+    if (full !== null) still = stillLine(full, idle, geometry, geometryPath, problems);
   }
 
   // 4. the setup pose as a one-key throwaway animation — the seam reads it against the parts, the source line against
@@ -1430,7 +1411,6 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   let seam: SeamFigures | null = null;
   let seamViewport: Viewport | null = null;
   let blink: JudgementLine = skip(lacking);
-  let still: JudgementLine = skip(lacking);
   let sourceRead: ReportedLine | null = null;
   if (inp.parts !== null || inp.source !== null) {
     try {
@@ -1493,24 +1473,6 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
           if (br.status !== 0) refuseIfAny(rigcFailed(`render (the setup pose with the eyes shut, "${BLINK_ANIMATION}")`, br, br.out.split('\n').filter((l) => l.includes('FAIL'))));
           blink = blinkLine(full, eyes, shut, stillSet, readFrameSet(join(stillDir, 'blink')), idle as FrameSet, H, problems);
         }
-        let headFrame: HeadFrame | string;
-        if (typeof headTrack === 'string') headFrame = headTrack;
-        else if (typeof rigid === 'string') headFrame = rigid;
-        else {
-          // A build of its own, not a third animation in the still's: rigc fits a
-          // render's viewport to every animation the skeleton holds, and the rig
-          // swung rigidly about the head widens it — shared, it moved the seam's
-          // grid and the demo's seam mean with it (0.326 -> 0.317).
-          writeFileSync(join(stillDir, 'motion_rigid.json'), JSON.stringify({ ...inp.motion, animations: { [HEAD_RIGID_ANIMATION]: rigid } }));
-          const rb = rigc(['build', '--rig', join(stillDir, 'rig.json'), '--motion', join(stillDir, 'motion_rigid.json'), '--out', join(stillDir, 'rigid_build'), '--profile', 'spine']);
-          if (rb.status !== 0) refuseIfAny(rigcFailed(`build (the whole rig moved rigidly as the idle moves "${headTrack.bone}")`, rb, buildGateLines(rb.out)));
-          const hr = rigc(['render', '--candidate', join(stillDir, 'rigid_build'), '--animation', HEAD_RIGID_ANIMATION, '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--geometry', '--out', join(stillDir, 'head_rigid')]);
-          if (hr.status !== 0) refuseIfAny(rigcFailed(`render (the whole rig moved rigidly as the idle moves "${headTrack.bone}", "${HEAD_RIGID_ANIMATION}")`, hr, hr.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
-          const calibration = readFrameSet(join(stillDir, 'head_rigid'));
-          const ct = readBoneTrack(calibration, headTrack.bone);
-          headFrame = typeof ct === 'string' ? `no head frame on the calibration render: ${ct}` : { track: headTrack, calibration, calibrationTrack: ct };
-        }
-        still = stillLine(full, idleHeat as Uint8Array, idle as FrameSet, headFrame, H, problems);
       }
     } finally {
       rmSync(stillDir, { recursive: true, force: true });
@@ -1881,50 +1843,6 @@ export function headBoneOf(inp: Pick<FullInputs, 'rig' | 'parts'>): HeadBone {
   return { none: `the face parts ride ${face.map((p) => `"${p.name}" on ${JSON.stringify(slotBone.get(p.name) ?? null)}`).join(', ')}; the head frame is one bone's, so they must share a slot bone` };
 }
 
-/** What the face half reads in the head's frame: the idle's head track, and the calibration render with its own. */
-export interface HeadFrame {
-  track: BoneTrack;
-  calibration: FrameSet;
-  calibrationTrack: BoneTrack;
-}
-
-/**
- * The calibration animation: the ROOT keyed, at every idle frame's time, to
- * the map that carries the head bone from its setup pose to that frame
- * ({@link setupToFrame}), with every other key dropped. The whole rig then
- * moves rigidly exactly as the head does on the idle, so every part is still
- * in the head's frame by construction and what the face region reads there is
- * the resampler's (and the rasteriser's) error on this art under this motion,
- * and nothing else — whatever is wrong with the face's own weights moves no
- * pixel of it. Needs a root at the origin with no rotation, scale or shear,
- * which the rig stage writes; a reason string otherwise.
- */
-export function rigidIdle(inp: Pick<FullInputs, 'rig' | 'motion' | 'rootBone' | 'idleDuration'>, track: BoneTrack): Record<string, unknown> | string {
-  const root = (Array.isArray(inp.rig.bones) ? inp.rig.bones : []).filter(isRecord).find((b) => b.name === inp.rootBone);
-  const rest: Record<string, number> = { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, shearX: 0, shearY: 0 };
-  const off = root === undefined ? ['(absent)'] : Object.keys(rest).filter((k) => k in root && root[k] !== rest[k]);
-  if (off.length > 0) return `the root bone "${inp.rootBone}" is not at rest at the origin (${off.map((k) => `${k} ${JSON.stringify(root?.[k])}`).join(', ')}), so the rig cannot be moved rigidly by keying it`;
-  const locals: Array<ReturnType<typeof rootLocalOf>> = [];
-  for (const f of track.frames) {
-    const m = setupToFrame(track.setup, f);
-    if (m === null) return `the head bone "${track.bone}" has a singular setup transform, so there is no head frame to carry the face into`;
-    locals.push(rootLocalOf(m));
-  }
-  // Unwrap the rotation so consecutive keys do not jump a turn.
-  for (let i = 1; i < locals.length; i++) {
-    while (locals[i].rotation - locals[i - 1].rotation > 180) locals[i].rotation -= 360;
-    while (locals[i].rotation - locals[i - 1].rotation < -180) locals[i].rotation += 360;
-  }
-  const keyed = (prop: string, pick: (l: ReturnType<typeof rootLocalOf>) => number): Record<string, unknown> => ({ bone: inp.rootBone, property: prop, keys: locals.map((l, i) => ({ t: track.times[i], v: [pick(l)] })) });
-  const anims = isRecord(inp.motion.animations) ? inp.motion.animations : {};
-  const idle = isRecord(anims.idle) ? anims.idle : {};
-  return {
-    duration: inp.idleDuration,
-    loop: idle.loop ?? true,
-    tracks: [keyed('translatex', (l) => l.x), keyed('translatey', (l) => l.y), keyed('rotate', (l) => l.rotation), keyed('scalex', (l) => l.scaleX), keyed('scaley', (l) => l.scaleY), keyed('sheary', (l) => l.shearY)],
-  };
-}
-
 /**
  * One bone's world transform at the setup pose and on every frame of a set,
  * off the geometry {@link readGeometry} read beside those frames. A string
@@ -1964,110 +1882,252 @@ export function readBoneTrack(set: FrameSet, bone: string): BoneTrack | string {
 }
 
 /**
- * (7) The idle over the face outline and over the feet as they show in the
- * flat stack. The feet are read off the screen-space heat map: they ride the
- * root, which the idle does not move, so the screen is their own frame. The
- * face is read in the head bone's frame (issue #33): the head's intended roll
- * is taken out before the heat is, over the pixels that read the face and
- * nothing else ({@link footprintMask}, clear of where each feature goes,
- * {@link sweptBox}), and what is left is held to twice the resampler's own
- * error on this rig ({@link STILL_FACE_RESAMPLER_MARGIN}). The screen-space
- * figure, over the old region, is reported beside it, so the reader sees what
- * the roll contributed.
+ * What `STILL_REGIONS_DARK` is measured with, written into each half (issue
+ * #123): the idle's posed geometry, not its frames. Until #123 the face half
+ * compared a heat mean in the head's frame with twice the resampler's own and
+ * the feet half a screen-space heat mean with a ceiling, both read off the
+ * idle's pixels, so an old and a new check.json are told apart by this key.
  */
-function stillLine(inp: FullInputs, heat: Uint8Array, idle: FrameSet, headFrame: HeadFrame | string, H: number, problems: Problem[]): JudgementLine {
+export const STILL_INSTRUMENT = 'geometry';
+
+/** Four significant figures: a figure that may be a rounding residue near 1e-12 keeps its size rather than reading 0. */
+function sig4(x: number): number {
+  return x === 0 ? 0 : Number(x.toPrecision(4));
+}
+
+/**
+ * The slots the idle moves on purpose, by slot rather than by bone: every slot
+ * a `deform` or `sequence` entry or a slot-targeted track of the idle names.
+ * A still-set candidate rides the head bone alone, so a bone track cannot move
+ * it relative to that bone; what can is a key on the slot itself.
+ */
+function idleDrivenSlots(motion: Record<string, unknown>): Set<string> {
+  const anims = isRecord(motion.animations) ? motion.animations : {};
+  const idle = isRecord(anims.idle) ? anims.idle : {};
+  const named = new Set<string>();
+  for (const key of ['deform', 'sequence', 'tracks']) {
+    const list = idle[key];
+    if (!Array.isArray(list)) continue;
+    for (const t of list) if (isRecord(t) && typeof t.slot === 'string') named.add(t.slot);
+  }
+  return named;
+}
+
+/**
+ * Whether every attachment the default skin gives a slot is carried by one
+ * bone alone: a region or an unweighted mesh on a slot of that bone, or a mesh
+ * whose every weight names it.
+ */
+function ridesOnly(rig: Record<string, unknown>, slot: string, slotBone: string | undefined, bone: string): boolean {
+  const skins = isRecord(rig.skins) ? rig.skins : {};
+  const skin = isRecord(skins.default) ? skins.default : {};
+  const atts = isRecord(skin[slot]) ? Object.values(skin[slot]) : [];
+  if (atts.length === 0) return false;
+  return atts.every((a) => {
+    if (!isRecord(a)) return false;
+    const type = a.type ?? 'region';
+    if (type === 'region') return slotBone === bone;
+    if (type !== 'mesh') return false;
+    if (!Array.isArray(a.weights)) return slotBone === bone;
+    return a.weights.every((v) => Array.isArray(v) && v.length > 0 && v.every((w) => isRecord(w) && w.bone === bone));
+  });
+}
+
+/** One half's figures (issue #123): the still set's displacement in the reference frame, its tolerance, and the reported crossings. */
+interface StillHalf {
+  figures: Record<string, unknown>;
+  over: Array<{ slot: string; max: number; frame: number }>;
+  rms: number;
+  tolerance: number;
+}
+
+/**
+ * (7) Nothing moves that should hold still (issue #123), read off the idle's
+ * posed geometry. The face half asks whether the face and the parts drawn
+ * over it that the head carries keep their place relative to the head bone —
+ * the bone the face's slot rides — over the idle; the feet half whether the
+ * feet keep theirs on the screen (they ride the root, which the idle does not
+ * key, so the screen is their own frame).
+ *
+ * The face's still set, derived from the rig and the motion, never from a
+ * list: the `face` slots, and every slot drawn after the first of them whose
+ * art overlaps a face part's art at the setup pose, whose every attachment the
+ * head bone alone carries ({@link ridesOnly}), and which the idle does not key
+ * by slot ({@link idleDrivenSlots}, reported as `driven_slots`). The features
+ * the blink and the brows move ride bones of their own, so they are not in it.
+ * The feet's still set is the `footwear` slots.
+ *
+ * Each still slot's art is carried through its posed attachment back into the
+ * reference frame on every idle frame and compared with its setup position
+ * ({@link stillReading}); the figure is the largest displacement, with the RMS
+ * beside it, and the bar is the arithmetic's own tolerance
+ * ({@link stillTolerance}) — nothing may move. How far another slot's art
+ * swings into the region (`face` on top at the setup pose, clear of where the
+ * features go; `footwear` on top) is reported per slot, `crossing`, with no
+ * bar ({@link crossingOf}). No render grid enters either half.
+ */
+export function stillLine(inp: FullInputs, idle: FrameSet, geo: IdleGeometry | null, geometryPath: string, problems: Problem[]): JudgementLine {
   const face = partsTagged(inp.parts, FACE_TAGS);
   const feet = partsTagged(inp.parts, FEET_TAGS);
-  if (face.length === 0 && feet.length === 0) return skip(`no part comes from a See-through ${tagWords([...FACE_TAGS, ...FEET_TAGS])} layer, so the heat map has no still region to read`);
+  if (face.length === 0 && feet.length === 0) return skip(`no part comes from a See-through ${tagWords([...FACE_TAGS, ...FEET_TAGS])} layer, so there is no still region to read`);
+  if (geo === null) return skip(`${geometryPath} does not exist; \`rigc render --geometry\` (spine-rigc ${RIGC_GEOMETRY_VERSION} or later) writes it, and the still regions are read off it`);
+  const H = inp.parts.rig_size[1];
+  const W = inp.parts.rig_size[0];
+  const poses = attachmentPoses(geometryPath, idle.written);
   const top = topmostIndex(inp.parts, (i) => readPng(join(inp.partsDir, `${inp.parts.parts[i].name}.png`)));
   const index = new Map(inp.parts.parts.map((p, i) => [p.name, i]));
-  const features = partsTagged(inp.parts, FACE_FEATURE_TAGS);
-  const regionOn = (ps: readonly PartRecord[], exclude: readonly PartRecord[], vp: Viewport): { box: PixelBox; mask: Uint8Array } | null => {
-    const box = frameBox(ps, H, inp.stage, vp);
-    if (box === null) return null;
-    const ex = exclude.map((e) => frameBox([e], H, inp.stage, vp)).filter((b): b is PixelBox => b !== null);
-    return { box, mask: visibleMask(top, inp.parts, new Set(ps.map((p) => index.get(p.name) as number)), box, ex, inp.stage, vp) };
+  const record = new Map(inp.parts.parts.map((p) => [p.name, p]));
+  const slots = (Array.isArray(inp.rig.slots) ? inp.rig.slots : []).filter(isRecord).map((sl) => ({ name: String(sl.name), bone: typeof sl.bone === 'string' ? sl.bone : undefined }));
+  const slotBone = new Map(slots.map((sl) => [sl.name, sl.bone]));
+  const arts = new Map<string, ArtMask>();
+  const artOf = (name: string): ArtMask => {
+    let a = arts.get(name);
+    if (a === undefined) {
+      const p = record.get(name) as PartRecord;
+      a = placedArt(p.x, p.y, readPng(join(inp.partsDir, `${name}.png`)));
+      arts.set(name, a);
+    }
+    return a;
   };
-  const slotBone = new Map((Array.isArray(inp.rig.slots) ? inp.rig.slots : []).filter(isRecord).map((sl) => [String(sl.name), String(sl.bone)]));
-  const regionObject = (ps: readonly PartRecord[], exclude: readonly PartRecord[], px: number, box: PixelBox): string =>
-    `(${quoteParts(ps)} where on top${exclude.length > 0 ? `, less the boxes of ${quoteParts(exclude)}` : ''}; ${px} px in ${boxLabel(box)})`;
+  const shownOf = (slot: string): Array<PosedTriangles | null> => poses.map((f) => f.get(slot) ?? null);
+  const frameIndex = (k: number | null): number | null => (k === null ? null : idle.frames[k].index);
+
+  /** The still set measured in one frame, and every later slot's crossing into `region`. */
+  const half = (still: readonly string[], firstSlot: number, maps: readonly FrameMap[], entryMax: number, coordFloor: number, region: RigRegion): StillHalf => {
+    const rows: Array<Record<string, unknown>> = [];
+    const over: StillHalf['over'] = [];
+    let worst: { slot: string; max: number; frame: number | null } | null = null;
+    let sumSq = 0;
+    let weight = 0;
+    let coordMax = coordFloor;
+    const readings = still.map((slot) => ({ slot, r: stillReading(artOf(slot), inp.stage, shownOf(slot), maps) }));
+    for (const { r } of readings) coordMax = Math.max(coordMax, r.coordMax);
+    const tolerance = stillTolerance(coordMax, entryMax);
+    for (const { slot, r } of readings) {
+      if (r.max === null) {
+        rows.push({ slot, unmeasured: 'no idle frame shows it' });
+        continue;
+      }
+      sumSq += r.sumSq;
+      weight += r.weight;
+      rows.push({ slot, max_rig_px: sig4(r.max), rms_rig_px: sig4(r.weight > 0 ? Math.sqrt(r.sumSq / r.weight) : 0) });
+      if (worst === null || r.max > worst.max) worst = { slot, max: r.max, frame: frameIndex(r.frame) };
+      if (r.max > tolerance) over.push({ slot, max: r.max, frame: frameIndex(r.frame) as number });
+    }
+    const crossing: Array<Record<string, unknown>> = [];
+    for (const sl of slots.slice(firstSlot + 1)) {
+      if (still.includes(sl.name) || !record.has(sl.name)) continue;
+      const c = crossingOf(artOf(sl.name), inp.stage, shownOf(sl.name), maps, region);
+      // Art that only touches the region within the arithmetic's tolerance has not entered it.
+      if (c !== null && c.depth > tolerance) crossing.push({ slot: sl.name, depth_rig_px: round3(c.depth), area_rig_px2: round3(c.area), frame: frameIndex(c.frame) });
+    }
+    const rms = weight > 0 ? Math.sqrt(sumSq / weight) : 0;
+    return {
+      figures: {
+        instrument: STILL_INSTRUMENT,
+        still_slots: rows,
+        max_rig_px: worst === null ? null : sig4(worst.max),
+        // Where the largest displacement is, only when it is a motion: below the tolerance it is rounding, and its place is noise.
+        at: worst === null || worst.max <= tolerance ? null : { slot: worst.slot, frame: worst.frame },
+        rms_rig_px: sig4(rms),
+        tolerance_rig_px: sig4(tolerance),
+        crossing,
+      },
+      over,
+      rms,
+      tolerance,
+    };
+  };
+  const regionOf = (idx: ReadonlySet<number>, exclude: readonly WorldBox[]): RigRegion => {
+    const data = new Uint8Array(W * H);
+    for (let v = 0; v < H; v++) {
+      for (let u = 0; u < W; u++) {
+        if (!idx.has(top[v * W + u])) continue;
+        const x0 = inp.stage.x + u;
+        const y1 = inp.stage.y + cropToSpineY(v, H);
+        if (exclude.some((e) => x0 + 1 > e.x0 && x0 < e.x1 && y1 > e.y0 && y1 - 1 < e.y1)) continue;
+        data[v * W + u] = 1;
+      }
+    }
+    return { width: W, height: H, data };
+  };
+  const firstOf = (names: readonly string[]): number => Math.min(...names.map((n) => slots.findIndex((sl) => sl.name === n)).filter((i) => i >= 0));
 
   const faceHalf = (): Record<string, unknown> | string => {
     if (face.length === 0) return `no part comes from a See-through ${tagWords(FACE_TAGS)} layer`;
-    const r = regionOn(face, features, idle.viewport);
-    if (r === null) return 'its box falls outside the idle frame';
-    const screen = regionHeat(heat, idle.viewport.pixelWidth, r.box, r.mask);
-    if (screen.px === 0) return 'none of its pixels is on top of the flat stack';
-    if (typeof headFrame === 'string') return headFrame;
-    const { track, calibration, calibrationTrack } = headFrame;
-    const head = { bone: track.bone };
-    // The features are left out where they go in the head's frame, not only where they sit at rest: a brow the blink drops crosses its own setup box.
+    const head = headBoneOf(inp);
+    if (!('bone' in head)) return `no head bone to measure it in: ${head.none}`;
+    const track = boneTrackOf(geo, geometryPath, idle, head.bone);
+    if (typeof track === 'string') return track;
+    const maps: FrameMap[] = [];
+    for (const f of track.frames) {
+      const m = setupToFrame(track.setup, f);
+      if (m === null) return `the head bone "${head.bone}" has a singular setup transform, so there is no head frame to carry the face into`;
+      maps.push(m);
+    }
+    const entries = [track.setup, ...track.frames];
+    const entryMax = Math.max(...entries.map((b) => Math.max(Math.abs(b.a), Math.abs(b.b), Math.abs(b.c), Math.abs(b.d))));
+    const coordFloor = Math.max(...entries.map((b) => Math.max(Math.abs(b.worldX), Math.abs(b.worldY))));
+    // The features are left out of the region where they go in the head's frame, not only where they sit at rest.
+    const features = partsTagged(inp.parts, FACE_FEATURE_TAGS);
     const swept: WorldBox[] = [];
     for (const p of features) {
-      const ft = readBoneTrack(idle, slotBone.get(p.name) ?? '');
+      const ft = boneTrackOf(geo, geometryPath, idle, slotBone.get(p.name) ?? '');
       if (typeof ft === 'string') return `no track for feature "${p.name}"'s bone: ${ft}`;
       const sb = sweptBox(partWorldBox(p, H, inp.stage), ft, track);
       if (sb === null) return `feature "${p.name}"'s bone or the head bone "${head.bone}" has a singular transform on a frame, so where the feature goes in the head's frame is not known`;
       swept.push(sb);
     }
-    const faceIdx = new Set(face.map((p) => index.get(p.name) as number));
-    const inHeadFrame = (vp: Viewport): { box: PixelBox; mask: Uint8Array } | null => {
-      const box = frameBox(face, H, inp.stage, vp);
-      return box === null ? null : { box, mask: footprintMask(top, inp.parts, faceIdx, box, swept, inp.stage, vp) };
+    const faceNames = face.map((p) => p.name);
+    const first = firstOf(faceNames);
+    const faceArt = faceNames.map(artOf);
+    const overFace = (name: string): boolean => {
+      const a = artOf(name);
+      return faceArt.some((f) => {
+        for (let y = Math.max(a.y, f.y); y < Math.min(a.y + a.height, f.y + f.height); y++) {
+          for (let x = Math.max(a.x, f.x); x < Math.min(a.x + a.width, f.x + f.width); x++) if (a.data[(y - a.y) * a.width + x - a.x] === 1 && f.data[(y - f.y) * f.width + x - f.x] === 1) return true;
+        }
+        return false;
+      });
     };
-    const hr = inHeadFrame(idle.viewport);
-    if (hr === null) return 'its box falls outside the idle frame';
-    const hf = boneFrameHeat(idle.frames.map((f) => f.image), track, idle.viewport, idle.background, hr.box, hr.mask);
-    if (hf !== null && hf.px === 0) return `no pixel of it is the face alone within the footprint what it reads can reach (${round3(footprintReach(idle.viewport))} rig px at scale ${round3(idle.viewport.scale)})`;
-    const cr = inHeadFrame(calibration.viewport);
-    const cal = cr === null ? null : boneFrameHeat(calibration.frames.map((f) => f.image), calibrationTrack, calibration.viewport, calibration.background, cr.box, cr.mask);
-    if (hf === null || cal === null || cal.px === 0) return `the head bone "${head.bone}" has a singular transform on a frame, or the face region falls outside the calibration render, so there is no head frame to carry the face into`;
-    const mean = round3(hf.mean);
-    const resampler = round3(cal.mean);
-    const ceiling = round3(STILL_FACE_RESAMPLER_MARGIN * cal.mean);
-    if (mean > ceiling) {
+    const drivenNames = idleDrivenSlots(inp.motion);
+    const driven: string[] = [];
+    const still = [...faceNames];
+    for (const sl of slots.slice(first + 1)) {
+      if (still.includes(sl.name) || !record.has(sl.name) || !ridesOnly(inp.rig, sl.name, sl.bone, head.bone) || !overFace(sl.name)) continue;
+      if (drivenNames.has(sl.name)) driven.push(sl.name);
+      else still.push(sl.name);
+    }
+    const h = half(still, first, maps, entryMax, coordFloor, regionOf(new Set(face.map((p) => index.get(p.name) as number)), swept));
+    for (const o of h.over) {
       problems.push({
         code: 'CHECK_STILL_REGIONS_DARK',
-        object: `the face region (${quoteParts(face)} alone within ${round3(footprintReach(idle.viewport))} rig px, ${features.length > 0 ? `clear of where ${quoteParts(features)} go; ` : ''}${hf.px} px in ${boxLabel(r.box)}), in the frame of its bone "${head.bone}"`,
-        detail: `heat mean ${mean}/255 (max ${round3(hf.max)}) after the head's own motion is taken out (${round3(screen.mean)} in screen space); <= ${ceiling} is required — ${STILL_FACE_RESAMPLER_MARGIN} times the resampler's error on this rig, ${resampler}, read the same way off the whole rig moved rigidly as the idle moves "${head.bone}" — something on the face moves that the head does not carry: a mesh over it weighted to another bone, or a part swinging over the face outline`,
+        object: `slot "${o.slot}" of the face's still set (${still.map((n) => `"${n}"`).join(', ')}), in the frame of its head bone "${head.bone}"`,
+        detail: `its art moves ${sig4(o.max)} rig px relative to that bone at idle frame ${o.frame} (RMS over the still set ${sig4(h.rms)}); at most ${sig4(h.tolerance)} rig px is required — the arithmetic's own rounding, so nothing may move — a mesh over the face weighted to a bone the head does not carry, or the face mesh deformed by another bone`,
       });
     }
-    return {
-      parts: face.map((p) => p.name),
-      head_bone: head.bone,
-      screen_px: screen.px,
-      screen_heat_mean: round3(screen.mean),
-      screen_heat_max: screen.max,
-      head_frame_px: hf.px,
-      head_frame_heat_mean: mean,
-      head_frame_heat_max: round3(hf.max),
-      resampler_heat_mean: resampler,
-      mean_ceiling: ceiling,
-    };
+    return { parts: faceNames, head_bone: head.bone, ...h.figures, driven_slots: driven };
   };
 
   const feetHalf = (): Record<string, unknown> | string => {
     if (feet.length === 0) return `no part comes from a See-through ${tagWords(FEET_TAGS)} layer`;
-    const r = regionOn(feet, [], idle.viewport);
-    if (r === null) return 'its box falls outside the idle frame';
-    const rh = regionHeat(heat, idle.viewport.pixelWidth, r.box, r.mask);
-    if (rh.px === 0) return 'none of its pixels is on top of the flat stack';
-    const mean = round3(rh.mean);
-    if (mean > STILL_FEET_MEAN_CEILING) {
+    const names = feet.map((p) => p.name);
+    const h = half(names, firstOf(names), poses.map(() => null), 1, 0, regionOf(new Set(feet.map((p) => index.get(p.name) as number)), []));
+    for (const o of h.over) {
       problems.push({
         code: 'CHECK_STILL_REGIONS_DARK',
-        object: `the feet region of motion_heat.png ${regionObject(feet, [], rh.px, r.box)}`,
-        detail: `heat mean ${mean}/255 (max ${rh.max}); <= ${STILL_FEET_MEAN_CEILING} is required — something that should hold still moves: a mesh weighted to a swinging bone, or a part that rides the wrong bone`,
+        object: `slot "${o.slot}" of the feet (${names.map((n) => `"${n}"`).join(', ')}), in screen space`,
+        detail: `its art moves ${sig4(o.max)} rig px at idle frame ${o.frame} (RMS over the feet ${sig4(h.rms)}); at most ${sig4(h.tolerance)} rig px is required — the arithmetic's own rounding — something that should hold still moves: a mesh weighted to a swinging bone, or a part that rides the wrong bone`,
       });
     }
-    return { parts: feet.map((p) => p.name), px: rh.px, heat_mean: mean, heat_max: rh.max, mean_ceiling: STILL_FEET_MEAN_CEILING };
+    return { parts: names, ...h.figures };
   };
 
   const f = faceHalf();
   const t = feetHalf();
-  const ok = (r: Record<string, unknown> | string, measure: string): boolean => typeof r === 'string' || (r[measure] as number) <= (r.mean_ceiling as number);
   if (typeof f === 'string' && typeof t === 'string') return skip(`face: ${f}; feet: ${t}`);
-  return { status: ok(f, 'head_frame_heat_mean') && ok(t, 'heat_mean') ? 'PASS' : 'FAIL', face: typeof f === 'string' ? { unmeasured: f } : f, feet: typeof t === 'string' ? { unmeasured: t } : t };
+  const failed = problems.some((q) => q.code === 'CHECK_STILL_REGIONS_DARK');
+  return { status: failed ? 'FAIL' : 'PASS', face: typeof f === 'string' ? { unmeasured: f } : f, feet: typeof t === 'string' ? { unmeasured: t } : t };
 }
 
 function fmt3(x: number): string {

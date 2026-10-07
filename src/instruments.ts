@@ -110,34 +110,6 @@ export function topmostIndex(parts: PartsFile, alphaOf: (i: number) => Raster): 
   return top;
 }
 
-/**
- * Frame pixels whose centre falls on a rig pixel where one of `indices` is on
- * top, inside `box` and outside every box of `exclude`. The frame -> rig map
- * is the inverse of {@link frameBox}'s, sampled at the pixel centre.
- */
-export function visibleMask(
-  top: Int32Array,
-  parts: PartsFile,
-  indices: ReadonlySet<number>,
-  box: PixelBox,
-  exclude: readonly PixelBox[],
-  stage: StageBox,
-  vp: Viewport,
-): Uint8Array {
-  const [W, H] = parts.rig_size;
-  const m = new Uint8Array(vp.pixelWidth * vp.pixelHeight);
-  for (let y = box.y0; y < box.y1; y++) {
-    for (let x = box.x0; x < box.x1; x++) {
-      if (exclude.some((e) => x >= e.x0 && x < e.x1 && y >= e.y0 && y < e.y1)) continue;
-      const u = Math.floor((x + 0.5) / vp.scale + vp.x - stage.x);
-      const v = Math.floor(cropToSpineY(vp.y + vp.height - (y + 0.5) / vp.scale - stage.y, H));
-      if (u < 0 || u >= W || v < 0 || v >= H) continue;
-      if (indices.has(top[v * W + u])) m[y * vp.pixelWidth + x] = 1;
-    }
-  }
-  return m;
-}
-
 // ---------------------------------------------------------------------------
 // heat
 // ---------------------------------------------------------------------------
@@ -862,124 +834,6 @@ export function setupToFrame(setup: BoneWorld, frame: BoneWorld): BoneWorld | nu
   return { a, b, c, d, worldX: frame.worldX - (a * setup.worldX + b * setup.worldY), worldY: frame.worldY - (c * setup.worldX + d * setup.worldY) };
 }
 
-/** Spine's local transform fields for a root bone whose world transform is `m` (shearX held at 0): the inverse of spine-core's `a = cos(rotation + shearX) scaleX`, `b = cos(rotation + 90 + shearY) scaleY`, `c = sin(...) scaleX`, `d = sin(...) scaleY`. Degrees. */
-export function rootLocalOf(m: BoneWorld): { x: number; y: number; rotation: number; scaleX: number; scaleY: number; shearY: number } {
-  const deg = 180 / Math.PI;
-  const rotation = Math.atan2(m.c, m.a) * deg;
-  let shearY = Math.atan2(m.d, m.b) * deg - rotation - 90;
-  shearY = ((((shearY + 180) % 360) + 360) % 360) - 180;
-  return { x: m.worldX, y: m.worldY, rotation, scaleX: Math.hypot(m.a, m.c), scaleY: Math.hypot(m.b, m.d), shearY };
-}
-
-/** A 2x3 affine map of frame pixels, `(x, y) -> (m[0] x + m[1] y + m[2], m[3] x + m[4] y + m[5])`. */
-export type PixelAffine = readonly [number, number, number, number, number, number];
-
-/**
- * The frame-pixel map that carries a point on the bone at the setup pose to
- * where the same point is on a frame: frame pixel -> world (the viewport's
- * inverse), world -> bone-local (the setup transform's inverse), bone-local ->
- * world (the frame's transform), world -> frame pixel (the viewport). Every
- * step is affine, so the map is one 2x3 matrix. Null when the setup transform
- * is singular (a bone scaled to nothing has no frame to carry back into).
- */
-export function restToFrame(setup: BoneWorld, frame: BoneWorld, vp: Viewport): PixelAffine | null {
-  const w = setupToFrame(setup, frame);
-  if (w === null) return null;
-  const s = vp.scale;
-  const { a: ra, b: rb, c: rc, d: rd, worldX: tx, worldY: ty } = w;
-  // world (wx, wy) of pixel (px, py): wx = px / s + vp.x, wy = Y - py / s with Y = vp.y + vp.height
-  const Y = vp.y + vp.height;
-  // world' = R (wx, wy) + t; px' = (wx' - vp.x) s, py' = (Y - wy') s
-  const m0 = ra;
-  const m1 = -rb;
-  const m2 = (ra * vp.x + rb * Y + tx - vp.x) * s;
-  const m3 = -rc;
-  const m4 = rd;
-  const m5 = (Y - (rc * vp.x + rd * Y + ty)) * s;
-  return [m0, m1, m2, m3, m4, m5];
-}
-
-/**
- * Bilinear sample of a frame's RGB at a continuous frame-pixel position, with
- * pixel centres at integer + 0.5 and every tap outside the frame reading the
- * render's background — which is what rigc paints wherever nothing is drawn.
- * Plain float64 bilinear interpolation, not a port of any library call: the
- * figure it feeds is a difference of two samples through the same filter, so
- * no library's rounding is being reproduced.
- */
-export function sampleRgb(f: Raster, x: number, y: number, bg: readonly number[], out: Float64Array): void {
-  const gx = x - 0.5;
-  const gy = y - 0.5;
-  const x0 = Math.floor(gx);
-  const y0 = Math.floor(gy);
-  const fx = gx - x0;
-  const fy = gy - y0;
-  out[0] = 0;
-  out[1] = 0;
-  out[2] = 0;
-  for (let j = 0; j < 2; j++) {
-    const yy = y0 + j;
-    const wy = j === 0 ? 1 - fy : fy;
-    if (wy === 0) continue;
-    for (let i = 0; i < 2; i++) {
-      const xx = x0 + i;
-      const w = wy * (i === 0 ? 1 - fx : fx);
-      if (w === 0) continue;
-      const inside = xx >= 0 && xx < f.width && yy >= 0 && yy < f.height;
-      const at = (yy * f.width + xx) * 4;
-      for (let c = 0; c < 3; c++) out[c] += w * (inside ? f.data[at + c] : bg[c]);
-    }
-  }
-}
-
-/**
- * Heat over a region measured in a bone's own frame: every pixel of `mask`
- * inside `box` is a point on the bone at the setup pose; on each frame that
- * point is carried to where the bone has moved it ({@link restToFrame}) and
- * the frame is sampled there ({@link sampleRgb}); a pixel's heat is its largest
- * per-channel change from frame 0's sample across the frames, as
- * {@link heatField}'s is in screen space. Art rigid on the bone therefore
- * measures only the resampler's own error, and anything that moves on the
- * region relative to the bone measures its motion. Null when a transform
- * is singular.
- */
-export function boneFrameHeat(frames: readonly Raster[], track: BoneTrack, vp: Viewport, bg: readonly number[], box: PixelBox, mask: Uint8Array): RegionHeat | null {
-  const maps: PixelAffine[] = [];
-  for (const f of track.frames) {
-    const m = restToFrame(track.setup, f, vp);
-    if (m === null) return null;
-    maps.push(m);
-  }
-  const width = vp.pixelWidth;
-  const s0 = new Float64Array(3);
-  const sk = new Float64Array(3);
-  let px = 0;
-  let sum = 0;
-  let max = 0;
-  for (let y = box.y0; y < box.y1; y++) {
-    for (let x = box.x0; x < box.x1; x++) {
-      if (mask[y * width + x] === 0) continue;
-      const cx = x + 0.5;
-      const cy = y + 0.5;
-      const m0 = maps[0];
-      sampleRgb(frames[0], m0[0] * cx + m0[1] * cy + m0[2], m0[3] * cx + m0[4] * cy + m0[5], bg, s0);
-      let d = 0;
-      for (let k = 1; k < frames.length; k++) {
-        const m = maps[k];
-        sampleRgb(frames[k], m[0] * cx + m[1] * cy + m[2], m[3] * cx + m[4] * cy + m[5], bg, sk);
-        for (let c = 0; c < 3; c++) {
-          const v = Math.abs(sk[c] - s0[c]);
-          if (v > d) d = v;
-        }
-      }
-      px++;
-      sum += d;
-      if (d > max) max = d;
-    }
-  }
-  return { px, mean: px === 0 ? 0 : sum / px, max };
-}
-
 /** A box in Spine world units at the setup pose (y up): x0 <= x <= x1, y0 <= y <= y1. */
 export interface WorldBox {
   x0: number;
@@ -1027,54 +881,259 @@ export function partWorldBox(p: PartRecord, rigH: number, stage: StageBox): Worl
   return { x0: stage.x + p.x, x1: stage.x + p.x + p.w, y0: stage.y + cropToSpineY(p.y + p.h, rigH), y1: stage.y + cropToSpineY(p.y, rigH) };
 }
 
+// ---------------------------------------------------------------------------
+// still: art that keeps its place in a bone's frame (issue #123)
+// ---------------------------------------------------------------------------
+
 /**
- * How far, in rig pixels, what a region pixel reads in the head's frame can
- * reach from its centre: the rasteriser samples each texture bilinearly (one
- * texel each way), and {@link boneFrameHeat} samples each frame bilinearly
- * (one frame pixel each way, 1/scale rig pixels). A pixel is the face's to
- * answer for only when everything within that reach is the face.
+ * How many floating-point roundings stand between the rig and one coordinate
+ * of a displacement {@link stillReading} returns, on its longest path. Every
+ * number on it is a double: rigc's core poser (`spine-rigc/src/core/vertices.ts`,
+ * spine-rigc 2.15.0) reads a vertex's local coordinates and weights through
+ * `Math.fround` and does the arithmetic in doubles, and `geometry.json` carries
+ * those doubles. The float32 inputs are the same numbers in the rest vertex and
+ * in the posed one, so they cancel. Per coordinate:
+ *
+ * - rigc's rest vertex, `a x + b y + worldX` (a mesh wholly on one bone
+ *   multiplies by its weight 1 and adds the product to 0, both exact): 2
+ *   products and 2 sums, **4**;
+ * - the posed vertex, the same way, **4**;
+ * - {@link setupToFrame}: each entry of the map takes the setup determinant
+ *   (3), one division by it (1) and a two-term product sum (3), 7 roundings
+ *   relative to the entry; the map's translation `worldX - (a sx + b sy)` adds
+ *   4 to those, **11**;
+ * - carrying the posed vertex back through the map ({@link stillReading}):
+ *   the translation taken off (1), the map's determinant (3), `d wx - b wy`
+ *   (3) and the division (1), with the entries' 7, **15**;
+ * - the difference with the rest vertex, **1**.
+ *
+ * That is 35. Each rounding is at most the unit roundoff u = 2^-53 of a
+ * quantity no larger than a two-term sum of entries times coordinates,
+ * 2 M^2 C (M the largest matrix entry, at least 1; C the largest coordinate),
+ * and 2 u C <= 2 ulp(C). So one coordinate is off by at most 70 M^2 ulp(C),
+ * and a displacement, the length of two of them, by sqrt(2) times that
+ * ({@link stillTolerance}). It is a numerical tolerance and nothing else: no
+ * visual allowance is in it.
  */
-export function footprintReach(vp: Viewport): number {
-  return 1 + 1 / vp.scale;
+export const STILL_ROUNDINGS = 35;
+
+/** The spacing of doubles at `x` (> 0): 2^(e - 52) for 2^e <= x < 2^(e + 1). */
+export function ulpOf(x: number): number {
+  let e = Math.floor(Math.log2(x));
+  if (2 ** e > x) e--;
+  if (2 ** (e + 1) <= x) e++;
+  return 2 ** (e - 52);
+}
+
+/** The largest displacement the arithmetic alone can produce ({@link STILL_ROUNDINGS}): sqrt(2) x 2 x 35 x M^2 x ulp(C), with M and C at least 1. */
+export function stillTolerance(coordMax: number, entryMax: number): number {
+  const m = Math.max(1, entryMax);
+  return Math.SQRT2 * 2 * STILL_ROUNDINGS * m * m * ulpOf(Math.max(1, coordMax));
+}
+
+/** A frame's map from the setup pose into it, carried back into the reference frame: a bone's {@link setupToFrame}, or null for the screen (the identity). */
+export type FrameMap = BoneWorld | null;
+
+/** What {@link stillReading} measures of one slot. */
+export interface StillReading {
+  /** The largest displacement of any point of its art, rig px, and the frame (index into the set) it is on; null when no frame shows the slot. */
+  max: number | null;
+  frame: number | null;
+  /** Over the frames that show it and each rest triangle with art: that art's area times its centroid's squared displacement, summed, and the areas summed — the RMS's two halves. */
+  sumSq: number;
+  weight: number;
+  /** The largest |coordinate| of its rest and posed vertices, for {@link stillTolerance}. */
+  coordMax: number;
+}
+
+function backInto(m: FrameMap, x: number, y: number): [number, number] {
+  if (m === null) return [x, y];
+  const det = m.a * m.d - m.b * m.c;
+  const wx = x - m.worldX;
+  const wy = y - m.worldY;
+  return [(m.d * wx - m.b * wy) / det, (-m.c * wx + m.a * wy) / det];
 }
 
 /**
- * The region the face half measures in the head's frame: frame pixels whose
- * whole footprint ({@link footprintReach}) at the setup pose lies on rig
- * pixels where one of `indices` is on top, and whose centre is at least that
- * reach from every box of `exclude` (world boxes: where the features go).
- * A pixel at the region's rim, or next to a feature, reads a neighbour's art
- * as well, and that neighbour moving — a torso breathing under the chin —
- * would light it without anything on the face having moved.
+ * How far one slot's art moves relative to a reference frame over the frames
+ * (issue #123): on each frame every vertex of the attachment the slot shows is
+ * carried back through that frame's map — the reference bone's
+ * {@link setupToFrame}, or the screen for null — and compared with its rest
+ * position, the setup pose's. Inside a rest triangle the displacement is
+ * affine, so its largest length over the art is reached at a corner of an art
+ * piece ({@link artPieces}: each art pixel's square cut by the triangle); the
+ * RMS weights each triangle's art centroid by its art area. A slot its
+ * reference bone carries rigidly reads its arithmetic's rounding and nothing
+ * else ({@link stillTolerance}). No render grid enters it.
  */
-export function footprintMask(
-  top: Int32Array,
-  parts: PartsFile,
-  indices: ReadonlySet<number>,
-  box: PixelBox,
-  exclude: readonly WorldBox[],
-  stage: StageBox,
-  vp: Viewport,
-): Uint8Array {
-  const [W, H] = parts.rig_size;
-  const r = footprintReach(vp);
-  const m = new Uint8Array(vp.pixelWidth * vp.pixelHeight);
-  for (let y = box.y0; y < box.y1; y++) {
-    for (let x = box.x0; x < box.x1; x++) {
-      const wx = (x + 0.5) / vp.scale + vp.x;
-      const wy = vp.y + vp.height - (y + 0.5) / vp.scale;
-      if (exclude.some((e) => wx > e.x0 - r && wx < e.x1 + r && wy > e.y0 - r && wy < e.y1 + r)) continue;
-      const u = wx - stage.x;
-      const v = cropToSpineY(wy - stage.y, H);
-      const u0 = Math.floor(u - r);
-      const u1 = Math.floor(u + r);
-      const v0 = Math.floor(v - r);
-      const v1 = Math.floor(v + r);
-      if (u0 < 0 || u1 >= W || v0 < 0 || v1 >= H) continue;
-      let all = true;
-      for (let vv = v0; vv <= v1 && all; vv++) for (let uu = u0; uu <= u1 && all; uu++) if (!indices.has(top[vv * W + uu])) all = false;
-      if (all) m[y * vp.pixelWidth + x] = 1;
+export function stillReading(art: ArtMask, stage: StageBox, frames: ReadonlyArray<PosedTriangles | null>, maps: readonly FrameMap[]): StillReading {
+  const cut = new Map<readonly number[], ArtPieces>();
+  let max: number | null = null;
+  let frame: number | null = null;
+  let sumSq = 0;
+  let weight = 0;
+  let coordMax = 0;
+  frames.forEach((a, k) => {
+    if (a === null) return;
+    let pc = cut.get(a.rest);
+    if (pc === undefined) {
+      pc = artPieces(art, a, stage);
+      cut.set(a.rest, pc);
+    }
+    const n = a.rest.length / 2;
+    const d = new Float64Array(2 * n);
+    for (let v = 0; v < n; v++) {
+      const [qx, qy] = backInto(maps[k], a.posed[2 * v], a.posed[2 * v + 1]);
+      d[2 * v] = qx - a.rest[2 * v];
+      d[2 * v + 1] = qy - a.rest[2 * v + 1];
+      coordMax = Math.max(coordMax, Math.abs(a.rest[2 * v]), Math.abs(a.rest[2 * v + 1]), Math.abs(a.posed[2 * v]), Math.abs(a.posed[2 * v + 1]));
+    }
+    const T = a.triangles;
+    let fmax = 0;
+    for (let t = 0; t < pc.area.length; t++) {
+      if (pc.area[t] === 0) continue;
+      const i = T[3 * t];
+      const j = T[3 * t + 1];
+      const l = T[3 * t + 2];
+      const x0 = d[2 * i];
+      const y0 = d[2 * i + 1];
+      const e1x = d[2 * j] - x0;
+      const e1y = d[2 * j + 1] - y0;
+      const e2x = d[2 * l] - x0;
+      const e2y = d[2 * l + 1] - y0;
+      for (const bary of pc.pieces[t]) {
+        for (let q = 0; q < bary.length; q += 2) fmax = Math.max(fmax, Math.hypot(x0 + bary[q] * e1x + bary[q + 1] * e2x, y0 + bary[q] * e1y + bary[q + 1] * e2y));
+      }
+      const cx = x0 + pc.centroid[2 * t] * e1x + pc.centroid[2 * t + 1] * e2x;
+      const cy = y0 + pc.centroid[2 * t] * e1y + pc.centroid[2 * t + 1] * e2y;
+      sumSq += pc.area[t] * (cx * cx + cy * cy);
+      weight += pc.area[t];
+    }
+    if (max === null || fmax > max) {
+      max = fmax;
+      frame = k;
+    }
+  });
+  return { max, frame, sumSq, weight, coordMax };
+}
+
+/** A set of the stage's pixels (crop coordinates, y down): 1 where the pixel is in. */
+export interface RigRegion {
+  width: number;
+  height: number;
+  data: Uint8Array;
+}
+
+/** How far another slot's art reaches into a region — reported, never a bar (issue #123). */
+export interface Crossing {
+  /** The largest distance from a point of its art inside the region to the region's edge, rig px. */
+  depth: number;
+  /** The most of the region its art covers on one frame, rig px², and that frame (index into the set). */
+  area: number;
+  frame: number;
+}
+
+/**
+ * How far a slot's art swings into `region` (the stage's pixels at the setup
+ * pose) in the reference frame: each art piece carried through its posed
+ * triangle and back through the frame's map, clipped exactly to the region's
+ * pixel squares. Null when it never enters. The depth is read at the corners
+ * of the clipped pieces, each inside one rig pixel, so it can fall short of the
+ * true depth by at most a pixel's diagonal; a point that starts outside the
+ * region and travels s is never deeper than s.
+ */
+export function crossingOf(art: ArtMask, stage: StageBox, frames: ReadonlyArray<PosedTriangles | null>, maps: readonly FrameMap[], region: RigRegion): Crossing | null {
+  const { width: W, height: H } = region;
+  const inR = (u: number, v: number): boolean => u >= 0 && u < W && v >= 0 && v < H && region.data[v * W + u] === 1;
+  // The region's box in world units, to pass over the triangles nowhere near it.
+  let rx0 = Infinity;
+  let rx1 = -Infinity;
+  let ry0 = Infinity;
+  let ry1 = -Infinity;
+  for (let v = 0; v < H; v++) {
+    for (let u = 0; u < W; u++) {
+      if (region.data[v * W + u] !== 1) continue;
+      rx0 = Math.min(rx0, stage.x + u);
+      rx1 = Math.max(rx1, stage.x + u + 1);
+      ry0 = Math.min(ry0, stage.y + cropToSpineY(v + 1, H));
+      ry1 = Math.max(ry1, stage.y + cropToSpineY(v, H));
     }
   }
-  return m;
+  if (rx0 === Infinity) return null;
+  // Distance from a world point to the nearest pixel outside the region: rings of pixels around the one holding it.
+  const depthAt = (x: number, y: number): number => {
+    const u0 = Math.floor(x - stage.x);
+    const v0 = Math.floor(H - (y - stage.y));
+    let best = Infinity;
+    for (let r = 0; r - 1 < best; r++) {
+      for (let v = v0 - r; v <= v0 + r; v++) {
+        for (let u = u0 - r; u <= u0 + r; u++) {
+          if (Math.max(Math.abs(u - u0), Math.abs(v - v0)) !== r || inR(u, v)) continue;
+          const sx0 = stage.x + u;
+          const sy1 = stage.y + cropToSpineY(v, H);
+          best = Math.min(best, Math.hypot(Math.max(sx0 - x, 0, x - sx0 - 1), Math.max(sy1 - 1 - y, 0, y - sy1)));
+        }
+      }
+    }
+    return best;
+  };
+  const cut = new Map<readonly number[], ArtPieces>();
+  let out: Crossing | null = null;
+  frames.forEach((a, k) => {
+    if (a === null) return;
+    let pc = cut.get(a.rest);
+    if (pc === undefined) {
+      pc = artPieces(art, a, stage);
+      cut.set(a.rest, pc);
+    }
+    const P = a.posed;
+    const T = a.triangles;
+    let area = 0;
+    let depth = 0;
+    for (let t = 0; t < pc.area.length; t++) {
+      if (pc.area[t] === 0) continue;
+      const [px, py] = backInto(maps[k], P[2 * T[3 * t]], P[2 * T[3 * t] + 1]);
+      const [qx, qy] = backInto(maps[k], P[2 * T[3 * t + 1]], P[2 * T[3 * t + 1] + 1]);
+      const [sx, sy] = backInto(maps[k], P[2 * T[3 * t + 2]], P[2 * T[3 * t + 2] + 1]);
+      if (Math.max(px, qx, sx) <= rx0 || Math.min(px, qx, sx) >= rx1 || Math.max(py, qy, sy) <= ry0 || Math.min(py, qy, sy) >= ry1) continue;
+      for (const bary of pc.pieces[t]) {
+        const poly: Polygon = [];
+        for (let q = 0; q < bary.length; q += 2) poly.push(px + bary[q] * (qx - px) + bary[q + 1] * (sx - px), py + bary[q] * (qy - py) + bary[q + 1] * (sy - py));
+        let bx0 = Infinity;
+        let bx1 = -Infinity;
+        let by0 = Infinity;
+        let by1 = -Infinity;
+        for (let q = 0; q < poly.length; q += 2) {
+          bx0 = Math.min(bx0, poly[q]);
+          bx1 = Math.max(bx1, poly[q]);
+          by0 = Math.min(by0, poly[q + 1]);
+          by1 = Math.max(by1, poly[q + 1]);
+        }
+        for (let u = Math.floor(bx0 - stage.x); u <= Math.floor(bx1 - stage.x); u++) {
+          for (let v = Math.floor(H - (by1 - stage.y)); v <= Math.floor(H - (by0 - stage.y)); v++) {
+            if (!inR(u, v)) continue;
+            const sx0 = stage.x + u;
+            const sy1 = stage.y + cropToSpineY(v, H);
+            const c = clipRect(poly, sx0, sy1 - 1, sx0 + 1, sy1);
+            if (c.length < 6) continue;
+            const pa = Math.abs(polygonMoments(c)[0]);
+            if (pa === 0) continue;
+            area += pa;
+            for (let q = 0; q < c.length; q += 2) depth = Math.max(depth, depthAt(c[q], c[q + 1]));
+          }
+        }
+      }
+    }
+    if (area === 0) return;
+    if (out === null) out = { depth, area, frame: k };
+    else {
+      out.depth = Math.max(out.depth, depth);
+      if (area > out.area) {
+        out.area = area;
+        out.frame = k;
+      }
+    }
+  });
+  return out;
 }
+

@@ -119,23 +119,45 @@
     "face"
    ],
    "head_bone": "head",
-   "screen_px": 522,
-   "screen_heat_mean": 17.761,
-   "screen_heat_max": 167,
-   "head_frame_px": 227,
-   "head_frame_heat_mean": 1.328,
-   "head_frame_heat_max": 14.013,
-   "resampler_heat_mean": 1.145,
-   "mean_ceiling": 2.291
+   "instrument": "geometry",
+   "still_slots": [
+    {
+     "slot": "face",
+     "max_rig_px": 4.202e-13,
+     "rms_rig_px": 1.438e-13
+    }
+   ],
+   "max_rig_px": 4.202e-13,
+   "at": null,
+   "rms_rig_px": 1.438e-13,
+   "tolerance_rig_px": 2.286e-11,
+   "crossing": [
+    {
+     "slot": "hair_front",
+     "depth_rig_px": 2.816,
+     "area_rig_px2": 89.395,
+     "frame": 47
+    }
+   ],
+   "driven_slots": []
   },
   "feet": {
    "parts": [
     "shoes"
    ],
-   "px": 3958,
-   "heat_mean": 1.619,
-   "heat_max": 65,
-   "mean_ceiling": 3.244
+   "instrument": "geometry",
+   "still_slots": [
+    {
+     "slot": "shoes",
+     "max_rig_px": 0,
+     "rms_rig_px": 0
+    }
+   ],
+   "max_rig_px": 0,
+   "at": null,
+   "rms_rig_px": 0,
+   "tolerance_rig_px": 2.814e-12,
+   "crossing": []
   }
  },
  "TEXTURE_STRETCH": {

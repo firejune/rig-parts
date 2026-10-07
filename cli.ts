@@ -227,10 +227,11 @@ usage:
       chain, read off motion.json), TIP_OVER_ROOT (each handwear/bottomwear
       part's lower half travels further than its upper half, measured from
       the idle's posed geometry, so the render size does not move it),
-      STILL_REGIONS_DARK (the face outline in the frame of the bone the face's
-      slot rides, at most twice the resampler's own error on this rig — read
-      off the whole rig moved rigidly as the idle moves that bone — with the
-      screen-space figure reported beside it; the feet in screen space) and
+      STILL_REGIONS_DARK (the face and the parts over it the head bone alone
+      carries keep their place relative to that bone, and the feet theirs on
+      the screen, from the idle's posed geometry up to the arithmetic's own
+      rounding; how deep any other slot's art swings into the face is
+      reported, with no bar) and
       TEXTURE_STRETCH (every mesh triangle's edges over the idle against their
       rest length, max(ratio, 1/ratio) <= ${TEXTURE_STRETCH_CEILING}; the worst
       triangle is named by slot, triangle, vertices, edge and frame).

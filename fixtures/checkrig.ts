@@ -116,9 +116,13 @@ export interface CheckRigOptions {
    * weighted wholly to a bone `slide` under `head` (through `slide_ctl`, which
    * the idle keys `translatex` 0, `slide`, 0) while its slot still rides
    * `head` — a face that slides `slide` rig pixels relative to the head the
-   * slot says carries it. Not with `blinkSquash`.
+   * slot says carries it. With `bang` (issue #123), the front part is a
+   * four-vertex mesh weighted wholly to a bone `bang` under `head` (through
+   * `bang_ctl`, which the idle keys `translatex` 0, `-bang`, 0) while its slot
+   * rides `head` — a fringe that swings `bang` rig pixels left, over the back
+   * part. Not with `blinkSquash`.
    */
-  head?: { roll: number; slide?: number };
+  head?: { roll: number; slide?: number; bang?: number };
 }
 
 /** Where the fixture's `head` bone stands, in rig pixels (y down): the bottom centre of the back part, a neck. */
@@ -162,19 +166,29 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
   const head = opts.head;
   const headAt = { x: stage.x + HEAD_AT.x, y: stage.y + cropToSpineY(HEAD_AT.y, H) };
   const slide = head?.slide !== undefined;
-  const headBones = head === undefined ? [] : [{ name: 'head_ctl', parent: 'root', x: headAt.x, y: headAt.y }, { name: 'head', parent: 'head_ctl', x: 0, y: 0 }, ...(slide ? [{ name: 'slide_ctl', parent: 'head', x: 0, y: 0 }, { name: 'slide', parent: 'slide_ctl', x: 0, y: 0 }] : [])];
+  const bang = head?.bang !== undefined;
+  const headBones =
+    head === undefined
+      ? []
+      : [
+          { name: 'head_ctl', parent: 'root', x: headAt.x, y: headAt.y },
+          { name: 'head', parent: 'head_ctl', x: 0, y: 0 },
+          ...(slide ? [{ name: 'slide_ctl', parent: 'head', x: 0, y: 0 }, { name: 'slide', parent: 'slide_ctl', x: 0, y: 0 }] : []),
+          ...(bang ? [{ name: 'bang_ctl', parent: 'head', x: 0, y: 0 }, { name: 'bang', parent: 'bang_ctl', x: 0, y: 0 }] : []),
+        ];
   const headTracks =
     head === undefined
       ? []
       : [
           { bone: 'head_ctl', property: 'rotate', keys: [0, head.roll, 0, -head.roll, 0].map((v, i) => ({ t: i / 4, v: [v] })) },
           ...(slide ? [{ bone: 'slide_ctl', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [head.slide] }, { t: 1, v: [0] }] }] : []),
+          ...(bang ? [{ bone: 'bang_ctl', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [-(head.bang as number)] }, { t: 1, v: [0] }] }] : []),
         ];
   const attachment = (p: CheckPart, i: number): Record<string, unknown> => {
     const at = { x: stage.x + p.x + p.w / 2, y: stage.y + cropToSpineY(p.y + p.h / 2, H) };
     if (mesh && i === 0) return backMesh;
     if (head !== undefined) {
-      if (i === 0 && slide) {
+      if ((i === 0 && slide) || (i === 1 && bang)) {
         const corners = [[p.x, p.y], [p.x + p.w, p.y], [p.x + p.w, p.y + p.h], [p.x, p.y + p.h]];
         return {
           type: 'mesh',
@@ -184,7 +198,7 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
           uvs: [0, 0, 1, 0, 1, 1, 0, 1],
           triangles: [0, 1, 2, 0, 2, 3],
           hull: 4,
-          weights: corners.map(([x, y]) => [{ bone: 'slide', x: stage.x + x - headAt.x, y: stage.y + cropToSpineY(y, H) - headAt.y, weight: 1 }]),
+          weights: corners.map(([x, y]) => [{ bone: i === 0 ? 'slide' : 'bang', x: stage.x + x - headAt.x, y: stage.y + cropToSpineY(y, H) - headAt.y, weight: 1 }]),
         };
       }
       return { image: `${p.name}.png`, x: at.x - headAt.x, y: at.y - headAt.y };

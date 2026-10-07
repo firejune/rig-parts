@@ -32,6 +32,9 @@ stage writes are the whole interface.
   `TIP_OVER_ROOT`, `STILL_REGIONS_DARK` — its face half in the head's own frame —
   and `TEXTURE_STRETCH`) (AUTHORING §7). A judgement line that says
   SKIP was not verified: report it as such, with its reason, never as passed.
+  No line judges a bang over the face or the eyes: `STILL_REGIONS_DARK`'s
+  `crossing` reports how deep each one swings, and only an eye can say whether
+  that reads right.
 - **What a scene asks is declared, not assumed.** When the request says what the
   motion must do — a hand on a cup, a sleeve taking half an arm's turn, a joint
   inside a range, a fringe that must not part from the face — write it into a `spine-parts-requirements/1` file and pass

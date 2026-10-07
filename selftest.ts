@@ -141,8 +141,8 @@ import {
   stageFields,
   visibilityCounts,
 } from './src/assemble.ts';
-import { BARS, blackRig, buildGateLines, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, STILL_FACE_RESAMPLER_MARGIN, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, attachmentPoses } from './src/check.ts';
-import { blinkFigures, type BoneWorld, frameBox, halfTravels, lagStep, readSine } from './src/instruments.ts';
+import { BARS, blackRig, buildGateLines, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
+import { blinkFigures, type BoneWorld, frameBox, halfTravels, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
   contactLine,
@@ -4652,7 +4652,7 @@ function runFacelessCases(dir: string, say: (name: string, ok: boolean, detail: 
   const rig = runCli(['rig', '--config', cfg, '--parts', fdir, '--out', join(fdir, 'rig')]);
   const chk = runCli(['check', '--rig', join(fdir, 'rig'), '--parts', fdir, '--out', join(fdir, 'check')]);
   const line = (n: string): string => (chk.out.split('\n').find((l) => l.includes(`${n}:`)) ?? '').trim();
-  const stillWant = 'STILL_REGIONS_DARK: SKIP — no part comes from a See-through "face" or "footwear" layer, so the heat map has no still region to read';
+  const stillWant = 'STILL_REGIONS_DARK: SKIP — no part comes from a See-through "face" or "footwear" layer, so there is no still region to read';
   const blinkWant = 'BLINK_NO_HOLE: SKIP — no part comes from a See-through "eyewhite" layer, so there is no eye to look behind';
   say(
     'PR51_THE_FACELESS_PROPOSAL_RIGS_GREEN_AND_CHECK_SKIPS_THE_FACE_READING_LINES_BY_NAME',
@@ -6265,9 +6265,9 @@ function runCheckSuite(): number {
     const darkFail = failLine(walk.out, 'CHECK_STILL_REGIONS_DARK');
     say(
       'CK10_FEET_ON_A_KEYED_BONE_FAIL_BREATH_VISIBLE_AND_STILL_REGIONS_DARK',
-      walk.status === 1 && feetFail.length === 1 && lineStatus(walk.fig, 'BREATH_VISIBLE') === 'FAIL' && lineStatus(walk.fig, 'STILL_REGIONS_DARK') === 'FAIL' && darkFail !== null && darkFail.includes('feet region'),
+      walk.status === 1 && feetFail.length === 1 && lineStatus(walk.fig, 'BREATH_VISIBLE') === 'FAIL' && lineStatus(walk.fig, 'STILL_REGIONS_DARK') === 'FAIL' && darkFail !== null && darkFail.includes('of the feet') && darkFail.includes(`moves ${IDLE_PEAK} rig px`),
       `exit ${walk.status}; ${feetFail[0]?.trim() ?? 'no feet CHECK_BREATH_VISIBLE line'}; ${darkFail?.trim().slice(0, 160) ?? 'no CHECK_STILL_REGIONS_DARK line'}…`,
-      'the fixture\'s footwear part rides the root the idle slides: rendered alone it moves (the feet half of the breath line, bar 0) and in the heat map it is lit (the still-region line), and neither gate can tell',
+      'the fixture\'s footwear part rides the root the idle slides: rendered alone it moves (the feet half of the breath line, bar 0) and in screen space its art moves the slide, by hand (the still-region line), and neither gate can tell',
     );
     const slide = judged('tip-slide', { from: ['head:face', 'full:handwear-r'], peak: 8 });
     const tipFail = failLine(slide.out, 'CHECK_TIP_OVER_ROOT');
@@ -6339,56 +6339,142 @@ function runCheckSuite(): number {
       'a band with nothing to read is not a band that did not move: null, which the line reports as unmeasured; art outside every rest triangle is not drawn by the runtime, so it is not counted',
     );
 
-    // STILL_REGIONS_DARK's face half in the head's own frame (issue #33).
-    type FaceHalf = { head_bone?: string; screen_heat_mean?: number; head_frame_heat_mean?: number; resampler_heat_mean?: number; mean_ceiling?: number; unmeasured?: string };
-    const faceOf = (fig: Record<string, unknown> | null): FaceHalf => ((fig?.STILL_REGIONS_DARK as { face?: FaceHalf } | undefined)?.face ?? {});
-    const n = (v: number | undefined): number => v ?? NaN;
-    const roll = judged('face-roll', { from: ['head:face', 'head:mouth'], peak: 0, head: { roll: 2 } });
-    const rf = faceOf(roll.fig);
+    // STILL_REGIONS_DARK from the idle's posed geometry (issue #123; the head's own frame since issue #33).
+    type StillRow = { slot: string; max_rig_px?: number; rms_rig_px?: number };
+    type StillHalf = { instrument?: string; head_bone?: string; still_slots?: StillRow[]; max_rig_px?: number | null; rms_rig_px?: number; at?: { slot: string; frame: number | null } | null; tolerance_rig_px?: number; crossing?: Array<{ slot: string; depth_rig_px: number; area_rig_px2: number; frame: number }>; driven_slots?: string[]; unmeasured?: string };
+    const halfOf = (fig: Record<string, unknown> | null, h: 'face' | 'feet'): StillHalf => ((fig?.STILL_REGIONS_DARK as Record<string, StillHalf> | undefined)?.[h] ?? {});
+    const n = (v: number | null | undefined): number => v ?? NaN;
+    const sig4 = (x: number): number => (x === 0 ? 0 : Number(x.toPrecision(4)));
+    const slotsOf = (h: StillHalf): string => (h.still_slots ?? []).map((r) => r.slot).join(',');
+    const stillOf = (o: string): string => lineOf(o, 'STILL_REGIONS_DARK').slice(0, 420);
+    // The line recomputed from the same build's geometry rendered at another --max: no render grid may enter it.
+    const atGrid = (label: string, m: number): string | null => {
+      const g = join(dir, `${label}-geometry-${m}`);
+      const r = spawnSync(findRigc(ROOT, ''), ['render', '--candidate', join(dir, `${label}-out`, 'build'), '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(m), '--geometry', '--out', g], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      if (r.status !== 0) return null;
+      const ci = readCheckInputs(join(dir, label));
+      const set = readFrameSet(g);
+      const path = join(set.dir, GEOMETRY_FILE);
+      return JSON.stringify(stillLine({ ...ci, parts: ci.parts as PartsFile, idleDuration: ci.idleDuration as number }, set, readGeometry(path, set.written), path, []));
+    };
+    const tracked = (fig: Record<string, unknown> | null): string => JSON.stringify(fig?.STILL_REGIONS_DARK ?? null);
+
+    const roll = judged('face-roll', { from: ['head:face', 'head:mouth'], head: { roll: 2 } });
+    const rf = halfOf(roll.fig, 'face');
     say(
-      'CK40_A_RIGID_FACE_ON_A_ROLLING_HEAD_IS_STILL_IN_THE_HEAD_FRAME_WHILE_THE_SCREEN_SEES_THE_ROLL',
+      'CK40_A_FACE_AND_A_PART_ON_A_HEAD_THAT_ROLLS_AND_TRANSLATES_KEEP_THEIR_PLACE_IN_ITS_FRAME_TO_THE_ARITHMETIC_S_TOLERANCE',
       roll.status === 0 &&
         lineStatus(roll.fig, 'STILL_REGIONS_DARK') === 'PASS' &&
+        rf.instrument === STILL_INSTRUMENT &&
         rf.head_bone === 'head' &&
-        n(rf.head_frame_heat_mean) <= n(rf.mean_ceiling) &&
-        Math.abs(n(rf.mean_ceiling) - STILL_FACE_RESAMPLER_MARGIN * n(rf.resampler_heat_mean)) <= 0.0005 * (STILL_FACE_RESAMPLER_MARGIN + 1) &&
-        n(rf.screen_heat_mean) > n(rf.mean_ceiling) &&
-        n(rf.head_frame_heat_mean) < n(rf.screen_heat_mean),
-      `exit ${roll.status}; ${lineOf(roll.out, 'STILL_REGIONS_DARK').slice(0, 330)}`,
-      "both parts ride `head`, whose control bone the idle rolls 2 degrees each way: the roll lights the face in screen space (above the bar there), and carried back into the head's frame what is left is the resampler's error — the calibration moves the whole rig rigidly as the head moves, so here the two are the same motion",
+        slotsOf(rf) === 'back,front' &&
+        n(rf.max_rig_px) <= n(rf.tolerance_rig_px) &&
+        n(rf.tolerance_rig_px) > 0,
+      `exit ${roll.status}; ${stillOf(roll.out)}`,
+      "both parts ride `head`, which the idle rolls 2 degrees each way while the root it hangs from translates 2 rig px: every point the head carries is still in the head's frame, by hand 0, and the reading is the arithmetic's rounding only — under the tolerance derived from it; the mouth rides `head` too and is drawn over the face, so it is in the still set",
     );
-    const RETIRED_SCREEN_CEILING = 33.976;
     const slid = judged('face-slide', { from: ['head:face', 'head:mouth'], peak: 0, head: { roll: 0, slide: 2 } });
-    const sf2 = faceOf(slid.fig);
+    const sf2 = halfOf(slid.fig, 'face');
     const slidFail = failLine(slid.out, 'CHECK_STILL_REGIONS_DARK');
     say(
-      'CK41_A_FACE_SLIDING_TWO_PIXELS_ON_ITS_HEAD_FAILS_IN_THE_HEAD_FRAME_WHERE_THE_SCREEN_BAR_PASSED_IT',
+      'CK41_A_FACE_MESH_WEIGHTED_TO_A_BONE_OTHER_THAN_THE_HEAD_FAILS_BY_THE_SLIDE_IT_MAKES',
       slid.status === 1 &&
         lineStatus(slid.fig, 'STILL_REGIONS_DARK') === 'FAIL' &&
+        sf2.max_rig_px === 2 &&
+        sf2.at?.slot === 'back' &&
+        sf2.at?.frame === 6 &&
         slidFail !== null &&
-        slidFail.includes('face region') &&
-        slidFail.includes('in the frame of its bone "head"') &&
-        slidFail.includes(`heat mean ${sf2.head_frame_heat_mean}/255`) &&
-        slidFail.includes(`<= ${sf2.mean_ceiling} is required`) &&
-        n(sf2.head_frame_heat_mean) > n(sf2.mean_ceiling) &&
-        n(sf2.screen_heat_mean) <= RETIRED_SCREEN_CEILING,
-      `exit ${slid.status}; screen ${sf2.screen_heat_mean} (the retired screen-space ceiling ${RETIRED_SCREEN_CEILING} passes it); ${slidFail?.trim().slice(0, 300) ?? 'no CHECK_STILL_REGIONS_DARK line'}…`,
-      "the face is a mesh weighted wholly to a bone under `head` that the idle slides 2 rig px while its slot rides `head` itself: the motion the line exists for — something on the face the head does not carry — which the screen-space bar this line held until issue #33 let through",
+        slidFail.includes('slot "back" of the face\'s still set') &&
+        slidFail.includes('in the frame of its head bone "head"') &&
+        slidFail.includes('moves 2 rig px relative to that bone at idle frame 6'),
+      `exit ${slid.status}; ${slidFail?.trim().slice(0, 360) ?? 'no CHECK_STILL_REGIONS_DARK line'}`,
+      'the face is a mesh weighted wholly to a bone under `head` that the idle slides 2 rig px at t = 0.5 s (idle frame 6 at 12 fps) while its slot rides `head` itself: every point of it moves 2 relative to the head, by hand, and the line names the slot, the bone and the frame',
     );
-    const both = judged('face-roll-slide', { from: ['head:face', 'head:mouth'], peak: 0, head: { roll: 2, slide: 2 } });
-    const bf = faceOf(both.fig);
+    const small = judged('face-small', { from: ['head:face', 'head:mouth'], peak: 0, head: { roll: 2, slide: 0.05 } });
+    const sm = halfOf(small.fig, 'face');
+    // rigc reads key values through Math.fround; the slide is linear 0 -> d at frame 6 -> 0 at frame 12, so frame k moves d k/6 or d (12 - k)/6.
+    const d05 = Math.fround(0.05);
+    const rms05 = d05 * Math.sqrt(146 / (36 * 13));
+    const smallGrids = [620, 660].map((m) => atGrid('face-small', m));
     say(
-      'CK42_THE_SAME_SLIDE_ON_A_ROLLING_HEAD_IS_RED_ABOVE_THE_ROLLS_OWN_RESAMPLER_ERROR',
-      both.status === 1 && lineStatus(both.fig, 'STILL_REGIONS_DARK') === 'FAIL' && n(bf.head_frame_heat_mean) > n(bf.mean_ceiling) && n(bf.resampler_heat_mean) > 0 && n(bf.resampler_heat_mean) === n(rf.resampler_heat_mean),
-      `exit ${both.status}; ${lineOf(both.out, 'STILL_REGIONS_DARK').slice(0, 330)}`,
-      "the roll puts a resampler error under the bar (CK40's, the same rig moved the same way, since the calibration drops every key but the head's motion — the slide included); the slide still stands out of it",
+      'CK42_A_FACE_SLIDING_A_TWENTIETH_OF_A_RIG_PIXEL_ON_A_ROLLING_HEAD_FAILS_BY_THAT_TWENTIETH_AT_EVERY_RENDER_SIZE',
+      small.status === 1 &&
+        lineStatus(small.fig, 'STILL_REGIONS_DARK') === 'FAIL' &&
+        sm.max_rig_px === sig4(d05) &&
+        sm.at?.frame === 6 &&
+        (sm.still_slots ?? []).find((r) => r.slot === 'back')?.rms_rig_px === sig4(rms05) &&
+        n(sm.max_rig_px) > 1e6 * n(sm.tolerance_rig_px) &&
+        smallGrids.every((g) => g !== null && g === tracked(small.fig)),
+      `exit ${small.status}; max ${sm.max_rig_px} (by hand fround(0.05) = ${d05}), back's RMS ${(sm.still_slots ?? []).find((r) => r.slot === 'back')?.rms_rig_px} (by hand ${sig4(rms05)}), tolerance ${sm.tolerance_rig_px}; the line from the geometry at --max 620 and 660: ${smallGrids.map((g) => (g === null ? 'not rendered' : g === tracked(small.fig) ? "check.json's, byte for byte" : 'DIFFERENT')).join(', ')}`,
+      "the slide CK41 plants, a hundredth of a frame pixel at the idle's scale, on a head that also rolls: the pixel reading this line held until issue #123 could not resolve it; from the geometry it is the slide itself, by hand — max fround(0.05), RMS fround(0.05) sqrt(146 / 468) over the 13 frames — far above the arithmetic's tolerance, and the same line at every render size",
     );
-    const sfo = faceOf(slide.fig);
+    const sfo = halfOf(slide.fig, 'face');
     say(
       'CK43_A_FACE_THAT_MOVES_WITH_THE_BONE_ITS_SLOT_RIDES_IS_STILL_IN_THAT_FRAME',
-      lineStatus(slide.fig, 'STILL_REGIONS_DARK') === 'PASS' && sfo.head_bone === 'root' && n(sfo.head_frame_heat_mean) <= n(sfo.mean_ceiling) && n(sfo.screen_heat_mean) > RETIRED_SCREEN_CEILING && failLine(slide.out, 'CHECK_STILL_REGIONS_DARK') === null,
-      `${lineOf(slide.out, 'STILL_REGIONS_DARK').slice(0, 330)}`,
-      "CK11's rig: the face rides the root the idle slides 8 px. Its head bone is the bone its slot rides, so the whole face moving with it is the head moving, which the line does not judge — the screen-space figure (over the retired ceiling) is reported beside it, and the root's motion is the feet half's to see",
+      lineStatus(slide.fig, 'STILL_REGIONS_DARK') === 'PASS' && sfo.head_bone === 'root' && n(sfo.max_rig_px) <= n(sfo.tolerance_rig_px) && failLine(slide.out, 'CHECK_STILL_REGIONS_DARK') === null,
+      stillOf(slide.out),
+      "CK11's rig: the face rides the root the idle slides 8 px. Its head bone is the bone its slot rides, so the whole face moving with it is the head moving, which the line does not judge; the root's motion is the feet half's to see",
+    );
+    const bangs = judged('face-bangs', { from: ['head:face', 'full:front hair'], peak: 0, head: { roll: 2, bang: 3 } });
+    const bf = halfOf(bangs.fig, 'face');
+    const bangRow = (bf.crossing ?? []).find((c) => c.slot === 'front');
+    say(
+      'CK93_A_FRINGE_SWINGING_OVER_THE_FACE_IS_REPORTED_BY_ITS_DEPTH_AND_DOES_NOT_FAIL_THE_STILL_SET',
+      bangs.status === 0 &&
+        lineStatus(bangs.fig, 'STILL_REGIONS_DARK') === 'PASS' &&
+        slotsOf(bf) === 'back' &&
+        n(bf.max_rig_px) <= n(bf.tolerance_rig_px) &&
+        bangRow !== undefined &&
+        bangRow.depth_rig_px > 0 &&
+        bangRow.depth_rig_px <= 3 &&
+        bangRow.area_rig_px2 > 0 &&
+        bangRow.frame === 6,
+      `exit ${bangs.status}; ${stillOf(bangs.out)}`,
+      "the front part is a mesh weighted wholly to a bone the idle swings 3 rig px left of the head, over the face: not carried by the head alone, so not in the still set, and its swing is reported — how deep it reaches into the face region (a point that starts outside the region and travels 3 is never deeper than 3, by hand) and how much it covers at the peak, idle frame 6 — with no bar",
+    );
+    const backArt = checkPartRaster(CHECK_PARTS[0]);
+    let lowest = -1;
+    for (let y = 0; y < backArt.height; y++) for (let x = 0; x < backArt.width; x++) if (backArt.data[(y * backArt.width + x) * 4 + 3] > ART_ALPHA) lowest = y;
+    const deformWant = 0.5 * ((lowest + 1) / CHECK_PARTS[0].h);
+    const deformed = judged('face-deformed', { from: ['head:face', 'full:topwear'], peak: 0, stretchMesh: 0.5 });
+    const df = halfOf(deformed.fig, 'face');
+    say(
+      'CK94_A_FACE_MESH_DEFORMED_BY_A_BONE_OTHER_THAN_THE_HEAD_FAILS_BY_THE_DEFORMATION_AT_ITS_LOWEST_ART',
+      deformed.status === 1 && lineStatus(deformed.fig, 'STILL_REGIONS_DARK') === 'FAIL' && df.head_bone === 'yoke' && df.max_rig_px === sig4(deformWant) && df.at?.frame === 6,
+      `exit ${deformed.status}; max ${df.max_rig_px} rig px at frame ${df.at?.frame} (by hand 0.5 x ${lowest + 1}/${CHECK_PARTS[0].h} = ${sig4(deformWant)})`,
+      "the face mesh's top corners ride its slot's bone `yoke` and its bottom corners `hem`, which the idle lowers 0.5 at t = 0.5 s: inside each triangle the displacement grows linearly from 0 at the top edge to 0.5 at the bottom, so it is largest at the lower edge of the lowest art row (alpha above 8), 0.5 (y + 1)/80 by hand",
+    );
+
+    const foot = judged('foot-small', { from: ['full:topwear', 'full:footwear'], peak: 0.05 });
+    const ff = halfOf(foot.fig, 'feet');
+    const footFail = failLine(foot.out, 'CHECK_STILL_REGIONS_DARK');
+    const footGrids = [620, 660].map((m) => atGrid('foot-small', m));
+    say(
+      'CK95_A_FOOT_MOVING_A_TWENTIETH_OF_A_RIG_PIXEL_FAILS_THE_FEET_HALF_BY_THAT_TWENTIETH_AT_EVERY_RENDER_SIZE',
+      lineStatus(foot.fig, 'STILL_REGIONS_DARK') === 'FAIL' &&
+        ff.instrument === STILL_INSTRUMENT &&
+        ff.max_rig_px === sig4(d05) &&
+        ff.at?.frame === 6 &&
+        footFail !== null &&
+        footFail.includes('slot "front" of the feet') &&
+        footGrids.every((g) => g !== null && g === tracked(foot.fig)),
+      `exit ${foot.status}; ${footFail?.trim().slice(0, 300) ?? 'no CHECK_STILL_REGIONS_DARK line'}; the line from the geometry at --max 620 and 660: ${footGrids.map((g) => (g === null ? 'not rendered' : g === tracked(foot.fig) ? "check.json's, byte for byte" : 'DIFFERENT')).join(', ')}`,
+      "the footwear part rides the root, which the idle moves fround(0.05) rig px at idle frame 6 — about a fortieth of a frame pixel at the idle's scale, under what a heat reading resolves on some grids (issue #123); in screen space, from the geometry, it is that motion exactly, and the same line at every render size",
+    );
+    const C = 1216;
+    say(
+      'CK96_THE_TOLERANCE_IS_THE_ARITHMETIC_S_ROUNDING_COUNT_TIMES_THE_SPACING_OF_DOUBLES_AT_THE_LARGEST_COORDINATE',
+      STILL_ROUNDINGS === 4 + 4 + 11 + 15 + 1 &&
+        ulpOf(1) === 2 ** -52 &&
+        ulpOf(1024) === 2 ** -42 &&
+        ulpOf(1023.75) === 2 ** -43 &&
+        ulpOf(C) === 2 ** -42 &&
+        stillTolerance(C, 1) === Math.SQRT2 * 2 * 35 * 2 ** -42 &&
+        stillTolerance(C, 0.5) === stillTolerance(C, 1) &&
+        stillTolerance(C, 2) === 4 * stillTolerance(C, 1) &&
+        stillTolerance(0.25, 1) === stillTolerance(1, 1),
+      `roundings ${STILL_ROUNDINGS}; ulp(1) ${ulpOf(1)}, ulp(1024) ${ulpOf(1024)}, ulp(1023.75) ${ulpOf(1023.75)}; tolerance at C = ${C}, M = 1: ${stillTolerance(C, 1)} rig px`,
+      "the bar is a numerical tolerance and nothing else: 35 roundings on the longest path (rigc's rest and posed vertex 4 each, the head map 11, the way back 15, the difference 1), each at most 2 M^2 ulp(C), and sqrt(2) for the length — by hand; M and C below 1 are taken as 1",
     );
     const twoBones = judged('face-two-bones', { from: ['head:face', 'head:face'], peak: 0, blinkSquash: 0.5 });
     const tb = lineOf(twoBones.out, 'STILL_REGIONS_DARK');
@@ -6406,6 +6492,31 @@ function runCheckSuite(): number {
       shut.status === 1 && holeFail !== null && holeFig !== undefined && (holeFig.hole_px ?? 0) > 0 && holeFail.includes(`${holeFig.hole_px} px show the background`) && JSON.stringify(holeFig.idle_frames_closed) === '[6,7]',
       `exit ${shut.status}; ${holeFail?.trim() ?? 'no CHECK_BLINK_NO_HOLE line'}; idle frames closed ${JSON.stringify(holeFig?.idle_frames_closed)}`,
       'the eye part reaches past the face on one side, so squashing it shows the page there; the blink holds 0.5 s to 0.6 s, which at 12 fps is frames 6 and 7 (0.5 and 0.583 s)',
+    );
+    // The same blink, read by STILL_REGIONS_DARK: the eye the blink squashes moves, the face does not.
+    const eyePart = CHECK_PARTS[1];
+    const eyeArt = checkPartRaster(eyePart);
+    let eyeReach = 0;
+    for (let y = 0; y < eyeArt.height; y++) {
+      for (let x = 0; x < eyeArt.width; x++) if (eyeArt.data[(y * eyeArt.width + x) * 4 + 3] > ART_ALPHA) eyeReach = Math.max(eyeReach, Math.abs(y - eyePart.h / 2), Math.abs(y + 1 - eyePart.h / 2));
+    }
+    const eyeWant = (1 - Math.fround(0.1)) * eyeReach;
+    const shutGeo = join(dir, 'blink-hole-out', 'idle_frames', 'idle', GEOMETRY_FILE);
+    const shutStage = (JSON.parse(readFileSync(join(dir, 'blink-hole', 'rig.json'), 'utf8')) as { skeleton: { x: number; y: number; width: number; height: number } }).skeleton;
+    const shutPoses = existsSync(shutGeo) ? attachmentPoses(shutGeo, readFrameSet(join(dir, 'blink-hole-out', 'idle_frames')).written) : [];
+    const eyeMoved = shutPoses.length === 0 ? null : stillReading(placedArt(eyePart.x, eyePart.y, eyeArt), shutStage, shutPoses.map((f) => f.get('front') ?? null), shutPoses.map(() => null));
+    const blinkFace = halfOf(shut.fig, 'face');
+    say(
+      'CK92_A_BLINK_MOVES_THE_EYE_IT_SQUASHES_AND_LEAVES_THE_FACE_S_STILL_SET_STILL',
+      lineStatus(shut.fig, 'STILL_REGIONS_DARK') === 'PASS' &&
+        slotsOf(blinkFace) === 'back' &&
+        n(blinkFace.max_rig_px) <= n(blinkFace.tolerance_rig_px) &&
+        eyeMoved !== null &&
+        (blinkFace.crossing ?? []).length === 0 &&
+        Math.abs(n(eyeMoved.max) - eyeWant) <= 1e-9 &&
+        (eyeMoved.frame === 6 || eyeMoved.frame === 7),
+      `${stillOf(shut.out)}; the eye's own art moves ${eyeMoved?.max} rig px at frame ${eyeMoved?.frame}, the blink held over frames 6 and 7 (by hand (1 - fround(0.1)) x ${eyeReach} = ${eyeWant})`,
+      "CK12's rig: the eye rides a bone of its own that the blink squashes to 0.1 about the eye's centre, so its farthest art edge moves 0.9 of its distance from that centre, by hand; it is not carried by the face's bone, so it is not in the still set, and the face is still to the arithmetic's tolerance — the blink's motion is intended and the line does not judge it",
     );
 
     // The geometry the face half reads: absent is a reason, disagreeing with its frames is a refusal, and the head bone is read off the slots.
@@ -8837,12 +8948,25 @@ function jsonDiffs(expected: unknown, built: unknown, tolerance: (path: string) 
  *   reference has no judgement lines, so the file is now regenerated by this
  *   port's `build` and carries its own seam mean; the band stays, because it is
  *   the size of that measured parts difference. The check oracle itself is
- *   exact (0 difference) when handed the reference's own parts.
+ *   exact (0 difference) when handed the reference's own parts. A still slot's
+ *   displacement in `STILL_REGIONS_DARK` (issue #123) is the arithmetic's own
+ *   rounding wherever it is under its half's `tolerance_rig_px`, so it may differ
+ *   by up to that tolerance — read off the expected file — and no further.
  */
-function chainTolerance(file: string): (path: string) => Tolerance | null {
+function chainTolerance(file: string, expected?: unknown): (path: string) => Tolerance | null {
   if (file === 'parts.json') return (p) => (/^parts\[\d+\]\.seam_override_px$/.test(p) ? { abs: 1 } : null);
   if (file === 'motion.json') return (p) => (/\.t$/.test(p) ? { decimals: 6 } : null);
-  if (file === 'check.json') return (p) => (p === 'seam_mean' ? { abs: 0.005 } : null);
+  if (file === 'check.json') {
+    // A still slot's displacement under its half's tolerance is the arithmetic's rounding (issue #123); another
+    // platform's libm may round the bones' trigonometry differently, so it may differ by up to that tolerance.
+    const still = (expected as { STILL_REGIONS_DARK?: Record<string, { tolerance_rig_px?: number }> } | undefined)?.STILL_REGIONS_DARK;
+    return (p) => {
+      if (p === 'seam_mean') return { abs: 0.005 };
+      const m = /^STILL_REGIONS_DARK\.(face|feet)\.(?:still_slots\[\d+\]\.)?(?:max|rms)_rig_px$/.exec(p);
+      const tol = m === null ? undefined : still?.[m[1]]?.tolerance_rig_px;
+      return tol === undefined ? null : { abs: tol };
+    };
+  }
   return () => null;
 }
 
@@ -9098,7 +9222,8 @@ function runChainSuite(): number | null {
         `issue #73: no world position moves, so the turned rig draws what the reference's flat one draws; measured on both examples at 1 level everywhere but sample's idle frame 30 (one opaque pixel, 2 levels in blue), with every vertex within 8.21e-5 units — the ceiling is that measurement (FLAT_FORM_RENDER_CEILING = ${FLAT_FORM_RENDER_CEILING}), and the pixels above 1 are counted so a new one shows`,
       );
 
-      const check = jsonDiffs(readJsonAt(join(exp, 'check.json')), readJsonAt(join(out, 'check', 'check.json')), chainTolerance('check.json'));
+      const expectedCheck = readJsonAt(join(exp, 'check.json'));
+      const check = jsonDiffs(expectedCheck, readJsonAt(join(out, 'check', 'check.json')), chainTolerance('check.json', expectedCheck));
       say(
         `CH04_CHECK_JSON_IS_THE_EXPECTED_FIELD_BY_FIELD[${key}]`,
         check.over.length === 0,
@@ -9265,10 +9390,13 @@ function runChainSuite(): number | null {
       const partsBuilt = readJsonAt(join(out, 'parts.json')) as { parts: Array<{ seam_override_px: number }> };
       partsBuilt.parts[0].seam_override_px += 2;
       const partsPlant = jsonDiffs(readJsonAt(join(exp, 'parts.json')), partsBuilt, chainTolerance('parts.json'));
-      const checkBuilt = readJsonAt(join(out, 'check', 'check.json')) as { seam_mean: number; BREATH_VISIBLE: { torso_heat_mean: number } };
+      const checkBuilt = readJsonAt(join(out, 'check', 'check.json')) as { seam_mean: number; BREATH_VISIBLE: { torso_heat_mean: number }; STILL_REGIONS_DARK: { face: { max_rig_px: number; tolerance_rig_px: number } } };
       checkBuilt.seam_mean += 0.01;
       checkBuilt.BREATH_VISIBLE.torso_heat_mean += 0.001;
-      const checkPlant = jsonDiffs(readJsonAt(join(exp, 'check.json')), checkBuilt, chainTolerance('check.json'));
+      const stillTol = checkBuilt.STILL_REGIONS_DARK.face.tolerance_rig_px;
+      checkBuilt.STILL_REGIONS_DARK.face.max_rig_px += 2 * stillTol;
+      const stillInside = jsonDiffs({ STILL_REGIONS_DARK: { face: { max_rig_px: 0, tolerance_rig_px: stillTol } } }, { STILL_REGIONS_DARK: { face: { max_rig_px: stillTol / 2, tolerance_rig_px: stillTol } } }, chainTolerance('check.json', { STILL_REGIONS_DARK: { face: { tolerance_rig_px: stillTol } } }));
+      const checkPlant = jsonDiffs(readJsonAt(join(exp, 'check.json')), checkBuilt, chainTolerance('check.json', readJsonAt(join(exp, 'check.json'))));
       const gateText = readFileSync(join(out, 'check', 'gate_spine-html.txt'), 'utf8');
       const gatePlant = firstLineDiff(readFileSync(join(exp, 'gate_spine-html.txt'), 'utf8'), gateText.replace(/padding (\d+)/, (_, n: string) => `padding ${Number(n) + 1}`));
       const insideTol = jsonDiffs({ parts: [{ seam_override_px: 10 }] }, { parts: [{ seam_override_px: 11 }] }, chainTolerance('parts.json'));
@@ -9279,11 +9407,14 @@ function runChainSuite(): number | null {
           partsPlant.over.some((l) => l.startsWith('parts[0].seam_override_px:')) &&
           checkPlant.over.some((l) => l.startsWith('seam_mean:')) &&
           checkPlant.over.some((l) => l.startsWith('BREATH_VISIBLE.torso_heat_mean:')) &&
+          checkPlant.over.some((l) => l.startsWith('STILL_REGIONS_DARK.face.max_rig_px:')) &&
+          stillInside.over.length === 0 &&
+          stillInside.within.length === 1 &&
           gatePlant !== null &&
           gatePlant.includes('padding') &&
           insideTol.over.length === 0 &&
           insideTol.within.length === 1,
-        `on ${planted.key}: a weight +0.01 -> ${rigPlant.over[0] ?? 'not named'}; seam_override_px +2 -> ${partsPlant.over.find((l) => l.startsWith('parts[0]')) ?? 'not named'}; seam_mean +0.01 -> ${checkPlant.over.find((l) => l.startsWith('seam_mean')) ?? 'not named'}; a judgement figure +0.001 -> ${checkPlant.over.find((l) => l.startsWith('BREATH_VISIBLE.')) ?? 'not named'}; padding +1 in the pack line -> ${gatePlant ?? 'not named'}; a ±1 seam override -> forgiven (${insideTol.within.join('') || 'not reported'})`,
+        `on ${planted.key}: a weight +0.01 -> ${rigPlant.over[0] ?? 'not named'}; seam_override_px +2 -> ${partsPlant.over.find((l) => l.startsWith('parts[0]')) ?? 'not named'}; seam_mean +0.01 -> ${checkPlant.over.find((l) => l.startsWith('seam_mean')) ?? 'not named'}; a judgement figure +0.001 -> ${checkPlant.over.find((l) => l.startsWith('BREATH_VISIBLE.')) ?? 'not named'}; the face's still displacement + twice its tolerance -> ${checkPlant.over.find((l) => l.startsWith('STILL_REGIONS_DARK.')) ?? 'not named'}, half its tolerance -> forgiven (${stillInside.within.join('') || 'not reported'}); padding +1 in the pack line -> ${gatePlant ?? 'not named'}; a ±1 seam override -> forgiven (${insideTol.within.join('') || 'not reported'})`,
         'a comparator that forgave everything would print the same green; each tolerance is shown to stop exactly where it says it stops',
       );
     }
