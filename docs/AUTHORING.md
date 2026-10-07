@@ -83,7 +83,7 @@ read by no CPU stage).
 | `assemble.extend_below_crop` | assemble | **proposed** with the plan: `{part, run, tag}` — a head-run part that reaches the bottom of the head crop is continued from a full-run layer, whole connected components |
 | `assemble.patches` | assemble; `meshes`/`regions` keys may name them too | **authored**, optional: `[{name, box, alpha, draw}]` — an extra part cut from the **painting** itself, for figure no See-through layer holds (a hem both runs dropped). `box` is `[x0, y0, x1, y1]` in **rig** pixels, `x1`/`y1` exclusive — the space of `parts.json` and `recomposite_rig.png`, where the hole is found; `alpha` is `"silhouette"` (the painting's figure silhouette inside the box, the one `--seam silhouette` uses) or `"box"` (the whole box); `draw` is `"back"`, `"front"` or `{"before": "<plan part>"}`. A patch is always a region: its bone is `regions.<name>`, in the one place every region's bone lives, and a `meshes` entry for it is refused. See §5 for how to place one |
 | `bones` | rig; `propose --from-config` | **proposed** by `propose`, then corrected. A single bone `{name, parent, at, tip?}` or a chain `{chain, parent, points, tip}` whose links are named `<chain>0 … <chain>n`. Parents come before children. In `rig.json` each link is **turned along its chain** — `rotation` is the direction from its origin to the next link's (the last link's to `tip`) and `length` that distance (issue #73), so a physics constraint added downstream finds a lever; under `--idle-keys ctl` the link's `<link>_ctl` carries the turn and the length and the link sits at local rotation 0 beneath it. A single bone is never turned; one whose parent is a link is turned back upright |
-| `meshes.<part>` | rig | **proposed**, then corrected. Exactly one of `grid` (the lattice: cell size, px — what `propose` writes) or `contour` (the outline mode, authored; the next row and "A contour mesh" below) — both, or neither, is `CONFIG_MESH_MODE`. In both modes: `r` (added to every distance before weighting: `w = 1/(d + r)²`), `segments` (a chain name, a bone name with a `tip`, or `[bone, [x0,y0], [x1,y1]]`). The segment list is the one authored decision about a layer: which bones may pull it. The slot's bone is the first segment's |
+| `meshes.<part>` | rig | **proposed**, then corrected. Exactly one of `grid` (the lattice: cell size, px — what `propose` writes), `contour` (the outline mode, authored; the next row and "A contour mesh" below) or `auto` (the automatic mode, authored; "An automatic mesh" below) — two, or none, is `CONFIG_MESH_MODE`. In every mode: `r` (added to every distance before weighting: `w = 1/(d + r)²`), `segments` (a chain name, a bone name with a `tip`, or `[bone, [x0,y0], [x1,y1]]`). The segment list is the one authored decision about a layer: which bones may pull it. The slot's bone is the first segment's |
 | `meshes.<part>.contour` | rig | **authored**, optional (issue #84): `{tolerance, margin, spacing, budget?, stray?, regions?}`. `tolerance` — spine-rigc's Douglas–Peucker tolerance on the traced outline, px, 0 or more; `margin` — how far the silhouette grows before it is traced, px: 0, or 1 or more (a pixel joins when its centre lies within `margin` of an art pixel's centre; a value above 0 and below 1 adds nothing and is refused, `CONFIG_FIELD_TYPE`); `spacing` — the background interior spacing, px, above 0; `budget` — the most vertices the mesh may have (refused above it, nothing thinned); `stray` — the largest island, in art pixels, that may be left out of the mesh (absent: none is); `regions` — local deformation regions, each `{name, shape, bone, spacing, band}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`, 3 or more): `bone` is the region's control bone (any bone `bones` declares), `spacing` the interior spacing inside the region and its band, `band` the width the bone's weight falls across. Every length and position is **rig px**, like every other in the config; the part image is the rig less `(x − 4, y − 4)` (its box less the pad), a translation, so a length is the same number in both. A region's `cx`, `cy`, `r`, `band` and `points` are multiples of 1/256 px (`CONFIG_FIELD_TYPE` otherwise); region names are unique per mesh (`CONFIG_REGION_NAME_UNIQUE`). The alpha threshold is not a field: art is alpha above 8, the lattice's and `check`'s |
 | `regions.<part>` | rig | **proposed**: the bone a rigid part rides. Every plan part is exactly one of a mesh or a region (`CONFIG_PART_ATTACHED`) |
 | `motion.duration` | rig; check (the loop is measured at this time) | proposed as 4 s; a whole number of 1/12 s ticks, because `check` renders at 12 fps |
@@ -434,6 +434,89 @@ contour mode on `hair_front` (2.183; lattice 1.552), where the face half of `STI
 failed in both (its pixel reading, until issue #123; not re-measured since). The ceiling is 1.927. The outline cut moved the stretch little (`hair_front`
 contour, per pose, before → after: still 1.152 → 1.149, rotate 1.444 → 1.415, translate 2.186 →
 2.183, scale 1.771 → 1.670) and the translated seam from 5.70 to 5.76 px.
+
+### An automatic mesh (`meshes.<part>.auto`, issue #126)
+
+The third mode asks for an economical mesh under declared quality bounds instead of a spacing.
+It is opt-in per mesh: `propose` still writes `grid`, a config that names no `auto` builds byte
+for byte as before, and the top-level default does not change. It is **geometry only**: nothing
+is posed, so whether the result deforms well is **unmeasured**, and the report says so
+(`deformation`: "unmeasured: …"); `check` remains the measurement of motion. The steps
+(`src/automesh.ts`):
+
+1. **The source** — this package's contour mesh over the padded part image at **alpha 1 and
+   above** (the threshold spine-rigc's authored-fit gate uses; the lattice and contour modes stay
+   at alpha above 8), at `source.tolerance`, `source.margin` and the background `source.spacing`,
+   with no region. It is gated by the contour mode's own checks, and their refusals
+   (`CONTOUR_*`, the detail ending "the automatic mode's source, at alpha 1 and above") refuse the
+   part. Its weights are the contour mode's — segments and region falloff — under the author's
+   `influences`, with no 0.03 floor unless the author writes one.
+2. **The call** — spine-rigc's `reduceMesh` (`spine-rigc/mesh`, 2.19.0) refines inside the declared
+   regions, then removes vertices while every declared bound still holds. Every number it is
+   handed is one of the fields below; `preset` is null (no preset exists yet: a preset will be a
+   named, versioned set of these numbers, expanded into the report), and no deform key or linked
+   mesh is passed (this package writes none).
+3. **Acceptance** — the result is written only when spine-rigc's report ends
+   `no-further-valid-reduction`, or `budget-exhausted` with `best-meeting-every-bound`, and its
+   candidate is `accepted` with every row that has a declared bound at `pass`. Anything else
+   refuses the part (below); nothing falls back to the lattice or to the source.
+
+| field | means |
+| --- | --- |
+| `source.tolerance`, `source.margin`, `source.spacing` | the contour mode's parameters for the source, px (margin 0, or 1 or more) |
+| `source.stray` | optional: as in the contour mode |
+| `sourceBounds.{minCoverage, maxOvershoot, maxUndercut}` | what the source must already meet at alpha 1 and above: the share of art pixel centres covered (0..1), the furthest a covered pixel may sit outside the filled silhouette (px), the furthest an uncovered art pixel may sit from the covered set (px) |
+| `targets.artFit.{minCoverage, maxOvershoot, maxUndercut}` | the same three for the result |
+| `targets.maxBoundaryDeviation` | the largest Hausdorff distance between the result's outline and the source's, px |
+| `targets.minAngle` | optional: the smallest triangle angle, degrees; absent, it is reported and not gated |
+| `influences.{maxInfluences, minWeight}` | the cap on bindings per vertex (1 or more) and the floor below which a share is dropped (0 up to 1; 0 drops only shares that are 0 on the weight grid) — for the source's weights and every inserted vertex |
+| `budget.maxCandidates` | the most steps spine-rigc may try (each insertion and each removal attempt counts one); 0 returns the source |
+| `minArtSamples` | the fewest art pixels a raster row is taken over, 1 or more |
+| `protect` | optional; each field optional: `hull` (true keeps every source outline vertex; absent is **false**, the default agreed for this mode), `vertices` and `edges` (source vertex indices and pairs that must survive), `regionBoundaries` (region names whose outline vertices must survive), `weightJump` (an L1 weight difference above which a source edge is kept; absent is none), `influences` (bones never pruned from a vertex; every region's bone is added) |
+| `regions` | optional, each `{name, shape, bone, band, maxEdgeLength, transition, grade, minArtSamples}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`): `bone` and `band` are the control bone and its weight falloff exactly as a contour region's (rig px, multiples of 1/256 px); `maxEdgeLength` is L0, the longest an edge meeting the region may be, px; outside it, across `transition` px, the bound relaxes as `L0 + grade·d`; `transition` 0 is a hard edge; `minArtSamples` is the region's own sample floor |
+
+A circle is handed to spine-rigc as the regular polygon with the fewest sides, 3 or more,
+circumscribed about the circle, whose outline lies within 1/256 px of it (the grid the region's
+numbers are on); the rule and its error are echoed in the region's `approximation`. The weights
+still read the circle. Density regions and weight regions are the same declaration here; two
+regions reaching one source vertex is `RIG_CONTOUR_REGIONS_OVERLAP`, as in the contour mode.
+
+**What it reports.** `mesh_report.json`'s row carries `mode: "auto"`, `settings` (every number
+the call saw, the threshold and the circle approximations included), `source` (the contour
+mesh's report and spine-rigc's counts of it), `result` (boundary and interior vertices,
+triangles, bindings, vertices removed and inserted), every `residuals` row with its state, value
+and bound, `worst_residual` (the declared row nearest its bound, as the share of the bound used)
+and `worst_region`, the `termination` with its reason and `candidatesTried`, what the weights
+lost to the grid (`sharesDroppedOnGrid`, `sharesPruned`, `droppedAtFivePlaces`), per region the
+source vertices its bone reaches and the result vertices bound to it, `deformation`, and
+`quality_report` — the whole `mesh-quality-report/1` document spine-rigc wrote, inside the row so
+one file holds every part's evidence. `art_coverage` is over alpha above 8, comparable with the
+other modes; the alpha-1 coverage is a residual. `build` prints one line per auto mesh: source →
+result counts (hull + interior), bindings, the termination and the worst residual, and
+"deformation unmeasured". Weights are written by `roundShares` on every vertex (5 places, zeros
+dropped, the heaviest entry closes): the 0.03 floor that makes the lattice's last-entry close
+safe is the author's to choose here.
+
+**Refusals** — every one names the part and the rule; nothing falls back:
+
+| rule | means |
+| --- | --- |
+| `CONFIG_MESH_MODE` | `auto` beside `grid` or `contour`, or no mode at all |
+| `CONFIG_FIELD_PRESENT`, `CONFIG_FIELD_TYPE`, `CONFIG_NAME_RESOLVES`, `CONFIG_REGION_NAME_UNIQUE` | a missing or out-of-range number, an unknown bone or region name, a region named twice — every one named in one run |
+| `CONTOUR_*` | the source is refused by the contour mode's own checks at alpha 1 and above — most often `CONTOUR_ONE_ISLAND`: faint pixels the alpha-above-8 modes never saw are islands here |
+| `AUTO_MESH_INPUT` | spine-rigc refused the call's input by throwing (a protected vertex the source does not have), in its words and code |
+| `AUTO_MESH_TERMINATION` | spine-rigc returned no mesh: `invalid-input` (the source fails its own `sourceBounds`, a region it refuses, protected influences over the cap), `unsupported-topology`, or `budget-exhausted` with `none-met-the-targets` |
+| `AUTO_MESH_ACCEPTED` | spine-rigc returned a mesh that is not accepted; the detail names every declared row not passing and the constraint that stopped it |
+
+**What spine-rigc 2.19.0 cannot refine.** Refinement inserts only inside a region and its band
+(the contract's P16), and 2.19.0 stops by name when an edge's far end lies further beyond the
+band than the edge's bound — so in spine-rigc 2.19.0 a region refines only when `source.spacing`
+is about the region's `maxEdgeLength` (on the generated strip: spacing 2 at L0 2 refines; spacing
+12 does not), and a coarser source is refused by name (`AUTO_MESH_ACCEPTED`, the detail naming
+P16). With
+`transition` 0, an edge that crosses a region with no point of it inside to split at is stopped
+the same way. The decision on issue #126 that lifts the first case (an edge leaving the band at
+a point is not held to it) is not in 2.19.0.
 
 ## 4. The command order
 

@@ -22,7 +22,7 @@
  * enclosing W·H + 2W + 2H px²; every grown pixel's centre is 1 px from an art
  * centre, so the overshoot is 1.
  */
-import type { AlphaMask } from 'spine-rigc/src/mesh.ts';
+import type { AlphaMask } from 'spine-rigc/mesh';
 import type { ContourParams } from '../src/contour.ts';
 
 /** Rectangles `[x, y, w, h]` of one alpha over a `w`x`h` transparent image; a later block overwrites an earlier one. */

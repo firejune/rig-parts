@@ -24,7 +24,9 @@
  * copies of a generated character the installed `check` passed, with a plate
  * and an interleaved order (issue #74); and the contour
  * mesh (`src/contour.ts`) on a generated block, which reaches spine-rigc's
- * outline functions through the deep path `spine-rigc/src/mesh.ts`.
+ * outline functions through the named entry `spine-rigc/mesh`; and the
+ * automatic mesh mode (`src/automesh.ts`, issue #126) through the installed
+ * `rig` command and rigc's gate.
  *
  * 🔒 **Nothing under this repository is on the fixture's path at run time.** The
  * fixture generator below is authored as text into the install directory and
@@ -259,20 +261,57 @@ writeFileSync(join(HOME, 'scene.json'), JSON.stringify({
 /** The slot order the composed scene above must compile to: the plate, then `a:back`, `b:back`, `a`'s rest, `b`'s rest. */
 const EXPECT_SCENE_SLOTS = ['plate', 'a:back', 'b:back', 'a:front', 'b:front'];
 
-// The contour mesh from the install (issue #84): \`spine-parts/src/contour.ts\` imports rigc's outline functions by the
-// deep path \`spine-rigc/src/mesh.ts\`, which nothing on the CLI runs yet, so this is where a rigc that moved them shows.
-// A 24x16 block at (4, 4) in 32x24, tolerance 0, margin 1, spacing 8: by hand, the block grown by its four neighbours'
-// rows and columns, a 12-vertex outline, 6 interior points and 2·18 − 12 − 2 = 22 triangles (the selftest's CT01).
+// The contour mesh from the install (issue #84): \`spine-parts/src/contour.ts\` imports rigc's outline functions through
+// the named entry \`spine-rigc/mesh\`, which nothing on the CLI's contour-free paths runs, so this is where a rigc that
+// moved or narrowed them shows. A 24x16 block at (4, 4) in 32x24, tolerance 0, margin 1, spacing 8: by hand, the block
+// grown by its four neighbours' rows and columns, a 12-vertex outline, 6 interior points and 2·18 − 12 − 2 = 22
+// triangles (the selftest's CT01).
 const CONTOUR_PROBE = `import { contourMesh } from 'spine-parts/src/contour.ts';
 
 const alpha = new Uint8Array(32 * 24);
 for (let y = 4; y < 20; y++) for (let x = 4; x < 28; x++) alpha[y * 32 + x] = 255;
 const m = contourMesh('probe', { width: 32, height: 24, alpha }, { threshold: 8, tolerance: 0, margin: 1, spacing: 8, regions: [] });
 console.log('RESOLVED ' + import.meta.resolve('spine-parts/src/contour.ts'));
-console.log('RESOLVED ' + import.meta.resolve('spine-rigc/src/mesh.ts'));
+console.log('RESOLVED ' + import.meta.resolve('spine-rigc/mesh'));
 console.log(Array.isArray(m) ? 'REFUSED ' + JSON.stringify(m) : 'CONTOUR ' + m.hull + ' ' + (m.vertices.length - m.hull) + ' ' + m.triangles.length / 3);
 `;
 const EXPECT_CONTOUR = 'CONTOUR 12 6 22';
+
+// The automatic mesh mode from the install (issue #126): the rig fixture's two parts — an opaque 16x8 cloth and a 4x2 eye region (one region alone on a page is rigc's A27) — on a 40x40 rig, its
+// mesh in \`auto\`, through the installed \`spine-parts rig\` — the contour source, spine-rigc's \`reduceMesh\` through
+// \`spine-rigc/mesh\`, and the installed rigc's gate, whose launcher runs its core entry in an install with no Spine
+// runtime (the rigc-entry step above holds that). Green means the gate passed and \`mesh_report.json\` says \`auto\`.
+const AUTO_GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { serializeParts } from 'spine-parts/src/parts.ts';
+import { encodePngBytes } from 'spine-parts/src/raster/png.ts';
+
+const DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'auto-character');
+mkdirSync(join(DIR, 'parts'), { recursive: true });
+const data = new Uint8ClampedArray(16 * 8 * 4);
+for (let i = 0; i < 16 * 8; i++) data.set([200, 120, 80, 255], i * 4);
+writeFileSync(join(DIR, 'parts', 'cloth.png'), encodePngBytes({ width: 16, height: 8, data }));
+writeFileSync(join(DIR, 'parts', 'eye.png'), encodePngBytes({ width: 4, height: 2, data: data.slice(0, 4 * 2 * 4) }));
+writeFileSync(join(DIR, 'parts.json'), serializeParts({
+  rig_size: [40, 40],
+  scale_rig_per_source: 0.5,
+  parts: [
+    { name: 'cloth', from: 'full:topwear', x: 10, y: 10, w: 16, h: 8, opaque_px: 128, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 },
+    { name: 'eye', from: 'head:face', x: 16, y: 26, w: 4, h: 2, opaque_px: 8, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 },
+  ],
+  ghost_px: {},
+}));
+const fit = { minCoverage: 1, maxOvershoot: 2, maxUndercut: 0 };
+writeFileSync(join(DIR, 'config.json'), JSON.stringify({
+  key: 'smoke_auto',
+  assemble: { rig_scale: 0.5, plan: [['cloth', 'full', 'topwear'], ['eye', 'head', 'face']] },
+  bones: [{ name: 'body', parent: 'root', at: [20, 30] }, { chain: 'hem', parent: 'body', points: [[14, 14], [22, 14]], tip: [30, 14] }, { name: 'eye', parent: 'body', at: [17, 28] }],
+  meshes: { cloth: { auto: { source: { tolerance: 0, margin: 1, spacing: 4 }, sourceBounds: fit, targets: { artFit: fit, maxBoundaryDeviation: 1 }, influences: { maxInfluences: 4, minWeight: 0 }, budget: { maxCandidates: 200 }, minArtSamples: 1 }, r: 8, segments: ['hem'] } },
+  regions: { eye: 'eye' },
+  motion: { duration: 4, tracks: [{ chain: 'hem', amps: [1, 2], period: 4, phase: 0, lag: 0.1 }] },
+}, null, 1));
+`;
 
 /** The draw order both inputs must read back in, and the opaque count of each layer. */
 const EXPECT_ORDER = ['back hair', 'face', 'eyebrow-l'];
@@ -357,7 +396,7 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
   },
   'drop-rigc': {
     names: ['spine-rigc'],
-    steps: ['fixture', 'layers', 'contour'],
+    steps: ['fixture', 'layers', 'contour', 'auto'],
     what: '`spine-rigc` removed from `dependencies`. A checkout would not notice — it is already in node_modules — and the install is where the PNG codec, the coordinate door and the contour mesh outline functions have nothing to import',
   },
   'drop-psd': {
@@ -631,7 +670,27 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
       'contour',
       `SMOKE_CONTOUR_FROM_THE_INSTALL: \`bun contour_probe.ts\` exited ${probe.status}, printed ${JSON.stringify(probe.out.split('\n').find((l) => l.startsWith('CONTOUR') || l.startsWith('REFUSED')) ?? null)} and resolved ${probed.join(', ') || '(nothing)'}; "${EXPECT_CONTOUR}" with both imports under ${join(home, 'node_modules')} was required. ${probe.out.trim().slice(0, 1500)}`,
     );
-  } else notes.push(`the contour mesh ran from the install through spine-rigc/src/mesh.ts: ${EXPECT_CONTOUR}`);
+  } else notes.push(`the contour mesh ran from the install through spine-rigc/mesh: ${EXPECT_CONTOUR}`);
+
+  // The automatic mesh mode, from the install, through the installed rig command and rigc's gate.
+  writeFileSync(join(home, 'make_auto.ts'), AUTO_GENERATOR);
+  const autoGen = run('bun', [join(home, 'make_auto.ts')], home);
+  output += autoGen.out;
+  const autoDir = join(home, 'auto-character');
+  const autoRig = autoGen.status === 0 ? run(bin, ['rig', '--config', join(autoDir, 'config.json'), '--parts', autoDir, '--out', join(autoDir, 'rig')], home) : null;
+  if (autoRig !== null) output += autoRig.out;
+  const autoReport = existsSync(join(autoDir, 'rig', 'mesh_report.json')) ? (JSON.parse(readFileSync(join(autoDir, 'rig', 'mesh_report.json'), 'utf8')) as Array<{ mode?: unknown; vertices?: unknown }>) : null;
+  const autoLine = autoRig?.out.split('\n').find((l) => l.includes('mesh cloth')) ?? '';
+  if (autoRig === null || autoRig.status !== 0 || autoReport?.[0]?.mode !== 'auto' || !autoLine.includes('deformation unmeasured')) {
+    fault(
+      'auto',
+      `SMOKE_AUTO_MESH_FROM_THE_INSTALL: ${
+        autoRig === null
+          ? `\`bun make_auto.ts\` exited ${autoGen.status}. ${autoGen.out.trim().slice(0, 1500)}`
+          : `\`spine-parts rig\` exited ${autoRig.status}; mesh_report.json ${autoReport === null ? 'not written' : `mode ${JSON.stringify(autoReport[0]?.mode)}`}; exit 0, mode "auto" and a mesh line saying deformation is unmeasured were required. ${autoRig.out.trim().split('\n').filter((l) => /FAIL|rror|rigc/.test(l)).slice(0, 4).join(' | ').slice(0, 1500)}`
+      }`,
+    );
+  } else notes.push(`an auto mesh built from the install and passed the installed rigc's gate: ${autoLine.trim()}`);
 
   // The shim's own promise: with bun off PATH it says so in one sentence.
   const bunPath = onPath('bun');
@@ -670,7 +729,7 @@ exit codes:
   3  the registry did not serve the version within --wait, so the confirmation was NOT taken
 
 cases:
-  clean            a correct package installs; --version, layers (wrapper and PSD), sheet, check, compose and the contour mesh run from it
+  clean            a correct package installs; --version, layers (wrapper and PSD), sheet, check, compose, the contour mesh and an auto-mode rig run from it
   unusual-path     the same, installed at an absolute path with spaces and non-ASCII in it
   drop-src-module  src/layers.ts out of the packed tree — the smoke has to go RED naming it
   drop-rigc        spine-rigc out of \`dependencies\` — the smoke has to go RED naming it

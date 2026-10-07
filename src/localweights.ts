@@ -27,7 +27,10 @@
  *
  * ## The vertex's weights (see {@link localInfluences})
  *
- * With `S = influences(p, segments, r)` — today's, unchanged:
+ * With `S = influences(p, segments, r, limits)` — today's, unchanged. The
+ * cap and the floor are `limits`: `MAX_INFLUENCES` (4) and `MIN_WEIGHT`
+ * (0.03) for the contour mode, the author's `influences` for the automatic
+ * mode (issue #126, P19):
  *
  * - **no region reaches the vertex** (every g = 0): the weights are `S`, and
  *   the rig stage rounds them exactly as the lattice does — a contour mesh
@@ -36,9 +39,9 @@
  * - **0 < g < 1**: the region's bone takes g and the segment bones share
  *   1 − g in `S`'s proportions. A region bone that is also a segment bone
  *   takes g + (1 − g)·S(bone), one entry. **The cap:** when the region's bone
- *   is not in `S` and `S` already holds {@link MAX_INFLUENCES} bones, `S`'s
+ *   is not in `S` and `S` already holds the cap's count of bones, `S`'s
  *   lightest bone (its last) is dropped and the rest renormalised before the
- *   scaling, so g itself is never cut. **The floor:** `MIN_WEIGHT` is
+ *   scaling, so g itself is never cut. **The floor:** the minimum weight is
  *   applied inside `S` (as today) and not again to the scaled shares — a
  *   share (1 − g)·S(b) under 0.03 is the declared falloff near the region, not
  *   noise to drop, and dropping it would put a step into the linear ramp.
@@ -59,12 +62,18 @@
  * between vertices are not refused, and there the mesh interpolates between
  * vertices that each hold one region.
  */
-import type { ContourRegionSpec, Point } from './config.ts';
+import type { Point } from './config.ts';
 import { GRID } from './contour.ts';
-import { type Influence, influences, MAX_INFLUENCES, type Segment, segmentDistance } from './weights.ts';
+import { DEFAULT_LIMITS, type Influence, influences, type InfluenceLimits, type Segment, segmentDistance } from './weights.ts';
 
-/** A region as the weights read it: rig px (or any frame, as long as the point is in the same one), y down. */
-export type WeightRegion = ContourRegionSpec;
+/**
+ * A region as the weights read it: rig px (or any frame, as long as the point
+ * is in the same one), y down — the fields a contour region and an automatic
+ * mode's region (`src/automesh.ts`) both carry.
+ */
+export type WeightRegion =
+  | { name: string; shape: 'circle'; cx: number; cy: number; r: number; band: number; bone: string }
+  | { name: string; shape: 'polygon'; points: Point[]; band: number; bone: string };
 
 const units = (v: number, what: string): number => {
   const u = v * GRID;
@@ -165,7 +174,7 @@ export interface LocalInfluence {
  * region, `S`'s own order; with a region, the region's bone first, then `S`'s
  * bones in `S`'s order.
  */
-export function localInfluences(p: Point, segments: readonly Segment[], r: number, regions: readonly WeightRegion[]): LocalInfluence | RegionOverlap {
+export function localInfluences(p: Point, segments: readonly Segment[], r: number, regions: readonly WeightRegion[], limits: InfluenceLimits = DEFAULT_LIMITS): LocalInfluence | RegionOverlap {
   let region = -1;
   let g = 0;
   for (let k = 0; k < regions.length; k++) {
@@ -175,13 +184,13 @@ export function localInfluences(p: Point, segments: readonly Segment[], r: numbe
     region = k;
     g = gk;
   }
-  const S = influences(p, segments, r);
+  const S = influences(p, segments, r, limits);
   if (region < 0) return { influences: S, region, g: 0 };
   const bone = regions[region].bone;
   if (g >= 1) return { influences: [{ bone, weight: 1 }], region, g };
   let base = S;
-  if (!S.some((e) => e.bone === bone) && S.length >= MAX_INFLUENCES) {
-    const kept = S.slice(0, MAX_INFLUENCES - 1);
+  if (!S.some((e) => e.bone === bone) && S.length >= limits.maxInfluences) {
+    const kept = S.slice(0, limits.maxInfluences - 1);
     let s = 0;
     for (const e of kept) s += e.weight;
     base = kept.map((e) => ({ bone: e.bone, weight: e.weight / s }));

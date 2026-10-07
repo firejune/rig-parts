@@ -81,9 +81,25 @@
  * touches the disk, and the same inputs give the same bytes (key order is the
  * order the objects are built in, and every number is rounded by `pyRound`).
  */
-import { type BoneEntry, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, ROOT_BONE } from './config.ts';
+import { type AutoSpec, type BoneEntry, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, ROOT_BONE } from './config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
+import type { MeshCounts, Termination } from 'spine-rigc/mesh';
+import {
+  autoReductionInput,
+  autoSource,
+  autoVerdict,
+  AUTO_THRESHOLD,
+  DEFORMATION_UNMEASURED,
+  legacyArtCoverage,
+  qualityDocument,
+  type Residual,
+  residuals,
+  runReduction,
+  sourceWeights,
+  worstRegion,
+  worstResidual,
+} from './automesh.ts';
 import { type ContourReport, contourMesh, type ContourRegion } from './contour.ts';
 import { type LocalInfluence, localInfluences } from './localweights.ts';
 import { artCoverage, ART_ALPHA, latticeMesh, ONE_LOOP_PASSES } from './mesh.ts';
@@ -320,7 +336,7 @@ export type RigCommand = 'rig' | 'build';
 export const IDLE_DRIVES_MESHES_WHY = 'painting rig: the idle is meant to deform the meshes it keys (spine-parts rig --idle-keys direct)';
 
 /** One row of `mesh_report.json`: a lattice mesh's row is as it always was; a contour mesh's says so. */
-export type MeshReport = LatticeMeshReport | ContourMeshReport;
+export type MeshReport = LatticeMeshReport | ContourMeshReport | AutoMeshReport;
 
 export interface LatticeMeshReport {
   part: string;
@@ -354,6 +370,54 @@ export interface ContourMeshReport {
   params: { tolerance: number; margin: number; spacing: number; budget: number | null; stray: number | null };
   contour: ContourReport;
   regions: Array<{ name: string; bone: string; reached: number; whole: number }>;
+}
+
+/**
+ * An automatic mesh's row (issue #126, item 2): the lattice row's figures,
+ * then the mode; `settings`, every number the call saw (the effective
+ * settings, as spine-rigc echoes them, are also in the document); the source
+ * — the contour mesh's own report and spine-rigc's counts of it — and the
+ * result's counts; every residual, the worst one and the worst region; the
+ * termination; what the weights lost to the 5-place rounding; per region the
+ * source vertices its bone reaches and holds alone and the result vertices
+ * bound to it; `deformation`, which says it is unmeasured; and the whole
+ * `mesh-quality-report/1` document spine-rigc wrote — inside the row rather
+ * than beside it, so the rig stage stays pure and one file holds every part's
+ * evidence, as it does for the other modes. `art_coverage` is over alpha above
+ * 8, the other modes' reading; the threshold-1 coverage is a residual.
+ */
+export interface AutoMeshReport {
+  part: string;
+  vertices: number;
+  triangles: number;
+  hull: number;
+  bones: string[];
+  max_influences: number;
+  mean_influences: number;
+  art_coverage: number;
+  mode: 'auto';
+  settings: {
+    threshold: number;
+    source: { tolerance: number; margin: number; spacing: number; stray: number | null };
+    sourceBounds: { minCoverage: number; maxOvershoot: number; maxUndercut: number };
+    targets: { artFit: { minCoverage: number; maxOvershoot: number; maxUndercut: number }; maxBoundaryDeviation: number; minAngle: number | null };
+    protect: { hull: boolean; vertices: number[]; edges: Array<[number, number]>; regionBoundaries: string[]; weightJump: number | null; influences: string[] };
+    influences: { maxInfluences: number; minWeight: number };
+    budget: { maxCandidates: number };
+    minArtSamples: number;
+    regions: Array<{ name: string; bone: string; band: number; maxEdgeLength: number; transition: number; grade: number; minArtSamples: number; approximation: { from: string; policy: string; maxError: number } | null }>;
+    preset: null;
+  };
+  source: { contour: ContourReport; counts: MeshCounts | null };
+  result: { counts: MeshCounts; removedVertices: number; insertedVertices: number };
+  residuals: Residual[];
+  worst_residual: (Residual & { used: number }) | null;
+  worst_region: string | null;
+  termination: Termination;
+  weights: { sharesDroppedOnGrid: number; sharesPruned: number; droppedAtFivePlaces: number };
+  regions: Array<{ name: string; bone: string; reached: number; whole: number; bound_in_result: number }>;
+  deformation: string;
+  quality_report: unknown;
 }
 
 export interface RigOutput {
@@ -492,6 +556,11 @@ export function buildRig(
         if (!B.has(rg.bone)) fail('RIG_NAME_RESOLVES', `config.meshes.${part}.contour.regions[${i}].bone`, `names the bone "${rg.bone}", which config.bones does not declare`);
       });
     }
+    if ('auto' in m) {
+      (m.auto.regions ?? []).forEach((rg, i) => {
+        if (!B.has(rg.bone)) fail('RIG_NAME_RESOLVES', `config.meshes.${part}.auto.regions[${i}].bone`, `names the bone "${rg.bone}", which config.bones does not declare`);
+      });
+    }
     const out: Segment[] = [];
     m.segments.forEach((sp, i) => {
       const at = `config.meshes.${part}.segments[${i}]`;
@@ -589,6 +658,7 @@ export function buildRig(
   // A contour region's control bone is weighted to like a segment's bone (issue #84), so the idle's keys on it move
   // to its control under `ctl` as theirs do. A config with no contour region adds nothing here.
   for (const m of Object.values(cfg.meshes)) if ('contour' in m) for (const rg of m.contour.regions ?? []) meshBones.add(rg.bone);
+  for (const m of Object.values(cfg.meshes)) if ('auto' in m) for (const rg of m.auto.regions ?? []) meshBones.add(rg.bone);
   const meshKeyed = controlledBones(motion, meshBones);
   const controls = idleKeys === 'ctl' ? meshKeyed : [];
   for (const k of controls) {
@@ -795,6 +865,139 @@ export function buildRig(
       },
     };
   };
+  // An automatic mesh (issue #126, item 2): the contour source at alpha 1 and above, spine-rigc's reduceMesh, and
+  // the result used only when accepted (`src/automesh.ts`). Its weights are spine-rigc's by name — a survivor's are
+  // the source's bit for bit, an inserted vertex's interpolated — rounded by roundShares (the author's minWeight
+  // replaces the 0.03 floor that makes the lattice's rounding safe, so every vertex closes on its heaviest entry)
+  // and bound exactly as a contour vertex is.
+  const boneOrder = bones.map((b) => b.name);
+  const autoAttachment = (
+    p: PartsFile['parts'][number],
+    img: Raster,
+    file: string,
+    spec: AutoSpec,
+    r: number,
+    segs: Segment[],
+    out: Problem[],
+  ): { attachment: MeshAttachment; report: AutoMeshReport } | null => {
+    const ox = p.x - PAD;
+    const oy = p.y - PAD;
+    const w = img.width;
+    const h = img.height;
+    const alpha = new Uint8Array(w * h);
+    for (let i = 0; i < alpha.length; i++) alpha[i] = img.data[i * 4 + 3];
+    const mask = { width: w, height: h, alpha };
+    const object = `config.meshes.${p.name}.auto`;
+    const regions = spec.regions ?? [];
+    const source = autoSource(p.name, mask, spec);
+    if (Array.isArray(source)) {
+      out.push(...source.map((q) => ({ ...q, detail: `${q.detail} (the automatic mode's source, at alpha ${AUTO_THRESHOLD} and above)` })));
+      return null;
+    }
+    const sw = sourceWeights(source.vertices, ox, oy, segs, r, spec);
+    if ('overlap' in sw) {
+      out.push({
+        code: 'RIG_CONTOUR_REGIONS_OVERLAP',
+        object: `${object}.regions`,
+        detail: `source vertex ${sw.vertex} at rig (${sw.at[0]}, ${sw.at[1]}) takes weight ${pyRound(sw.overlap.g1, 5)} from region "${regions[sw.overlap.first].name}" and ${pyRound(sw.overlap.g2, 5)} from region "${regions[sw.overlap.second].name}"; each vertex may be reached by one region's falloff (its region and band) — move the regions apart or narrow a band`,
+      });
+      return null;
+    }
+    const input = autoReductionInput({ part: p.name, mask, ox, oy, spec, source, weights: sw.weights, boneOrder });
+    const ran = runReduction(object, input);
+    if ('code' in ran) {
+      out.push(ran);
+      return null;
+    }
+    const verdict = autoVerdict(object, ran);
+    if (!verdict.accepted) {
+      out.push(verdict.problem);
+      return null;
+    }
+    const mesh = verdict.mesh;
+    const weights: WeightEntry[][] = [];
+    let infl = 0;
+    let maxInfl = 0;
+    let droppedAtFivePlaces = 0;
+    const boundTo = regions.map(() => 0);
+    mesh.points.forEach(([vx, vy], vi) => {
+      const wx = vx + ox;
+      const wy = vy + oy;
+      const list = (mesh.weights as Array<Array<{ bone: string; weight: number }>>)[vi];
+      const shares = roundShares(list);
+      droppedAtFivePlaces += list.length - shares.length;
+      regions.forEach((rg, k) => {
+        if (shares.some((s) => s.bone === rg.bone)) boundTo[k]++;
+      });
+      const ent: WeightEntry[] = shares.map(({ bone, weight }) => {
+        const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
+        return { bone, x: places(x), y: places(y), weight };
+      });
+      weights.push(ent);
+      infl += ent.length;
+      maxInfl = Math.max(maxInfl, ent.length);
+    });
+    const reached = regions.map(() => 0);
+    const whole = regions.map(() => 0);
+    if ('local' in sw) {
+      for (const li of sw.local) {
+        if (li.region < 0) continue;
+        reached[li.region]++;
+        if (li.g >= 1) whole[li.region]++;
+      }
+    }
+    const report = ran.report;
+    const candidate = report.candidates[0];
+    const rows = residuals(report);
+    const bones = new Set(segs.map((s) => s.bone));
+    for (const rg of regions) bones.add(rg.bone);
+    const pro = input.protect;
+    return {
+      attachment: { type: 'mesh', image: file, width: w, height: h, uvs: [...mesh.uvs], triangles: [...mesh.triangles], hull: mesh.hull, weights },
+      report: {
+        part: p.name,
+        vertices: mesh.points.length,
+        triangles: mesh.triangles.length / 3,
+        hull: mesh.hull,
+        bones: [...bones].sort(),
+        max_influences: maxInfl,
+        mean_influences: pyRound(infl / mesh.points.length, 2),
+        art_coverage: pyRound(legacyArtCoverage(mask, mesh.points, mesh.triangles), 5),
+        mode: 'auto',
+        settings: {
+          threshold: input.art.threshold,
+          source: { tolerance: spec.source.tolerance, margin: spec.source.margin, spacing: spec.source.spacing, stray: spec.source.stray ?? null },
+          sourceBounds: input.sourceBounds,
+          targets: { artFit: input.targets.artFit, maxBoundaryDeviation: input.targets.maxBoundaryDeviation, minAngle: input.targets.minAngle ?? null },
+          protect: { hull: pro.hull, vertices: pro.vertices, edges: pro.edges, regionBoundaries: pro.regionBoundaries, weightJump: pro.weightJump, influences: pro.influences },
+          influences: input.influences as { maxInfluences: number; minWeight: number },
+          budget: input.budget,
+          minArtSamples: input.minArtSamples,
+          regions: regions.map((rg, k) => ({
+            name: rg.name,
+            bone: rg.bone,
+            band: rg.band,
+            maxEdgeLength: rg.maxEdgeLength,
+            transition: rg.transition,
+            grade: rg.grade,
+            minArtSamples: rg.minArtSamples,
+            approximation: input.targets.regions[k].approximation,
+          })),
+          preset: null,
+        },
+        source: { contour: source.report, counts: report.sourceCounts },
+        result: { counts: mesh.counts, removedVertices: candidate.changes?.removedVertices ?? 0, insertedVertices: candidate.changes?.insertedVertices ?? 0 },
+        residuals: rows,
+        worst_residual: worstResidual(rows),
+        worst_region: worstRegion(rows),
+        termination: report.termination as Termination,
+        weights: { sharesDroppedOnGrid: candidate.changes?.sharesDroppedOnGrid ?? 0, sharesPruned: candidate.changes?.sharesPruned ?? 0, droppedAtFivePlaces },
+        regions: regions.map((rg, k) => ({ name: rg.name, bone: rg.bone, reached: reached[k], whole: whole[k], bound_in_result: boundTo[k] })),
+        deformation: DEFORMATION_UNMEASURED,
+        quality_report: qualityDocument(report),
+      },
+    };
+  };
   for (const p of parts.parts) {
     const img = pad(images.get(p.name) as Raster, PAD, PAD, PAD, PAD, [0, 0, 0, 0]);
     const file = `${p.name}.png`;
@@ -830,6 +1033,14 @@ export function buildRig(
       continue;
     }
     const segs = meshSegments.get(p.name) as Segment[];
+    if ('auto' in mesh) {
+      const row = autoAttachment(p, img, file, mesh.auto, mesh.r, segs, problems);
+      if (row === null) continue;
+      skin[p.name] = { [p.name]: row.attachment };
+      slots.push({ name: p.name, bone: segs[0].bone, attachment: p.name });
+      meshReport.push(row.report);
+      continue;
+    }
     if ('contour' in mesh) {
       const row = contourAttachment(p, img, file, mesh.contour, mesh.r, segs, problems);
       if (row === null) continue;

@@ -62,8 +62,24 @@ export interface Influence {
   weight: number;
 }
 
+/**
+ * The cap and the floor `influences()` applies. The lattice and the contour
+ * mode always run at {@link DEFAULT_LIMITS} (the reference's `[:4]` and
+ * `>= 0.03`); the automatic mode (`src/automesh.ts`, issue #126) passes the
+ * author's numbers instead, because spine-rigc's reduction is handed explicit
+ * influence limits on every weighted call and the 0.03 floor is not one the
+ * author wrote (P19). The arithmetic is the same either way, so with the
+ * defaults every byte the two older modes write is unchanged.
+ */
+export interface InfluenceLimits {
+  maxInfluences: number;
+  minWeight: number;
+}
+
+export const DEFAULT_LIMITS: InfluenceLimits = { maxInfluences: MAX_INFLUENCES, minWeight: MIN_WEIGHT };
+
 /** The influences on one vertex at `p` (rig pixels), before rounding. */
-export function influences(p: Point, segments: readonly Segment[], r: number): Influence[] {
+export function influences(p: Point, segments: readonly Segment[], r: number, limits: InfluenceLimits = DEFAULT_LIMITS): Influence[] {
   const agg = new Map<string, number>();
   for (const s of segments) {
     const d = segmentDistance(p, s.a, s.b);
@@ -71,10 +87,10 @@ export function influences(p: Point, segments: readonly Segment[], r: number): I
     const was = agg.get(s.bone);
     agg.set(s.bone, was === undefined ? w : Math.max(was, w));
   }
-  const top = [...agg.entries()].sort((x, y) => y[1] - x[1]).slice(0, MAX_INFLUENCES);
+  const top = [...agg.entries()].sort((x, y) => y[1] - x[1]).slice(0, limits.maxInfluences);
   let s = 0;
   for (const [, v] of top) s += v;
-  const kept = top.map(([bone, v]) => ({ bone, weight: v / s })).filter((e) => e.weight >= MIN_WEIGHT);
+  const kept = top.map(([bone, v]) => ({ bone, weight: v / s })).filter((e) => e.weight >= limits.minWeight);
   let s2 = 0;
   for (const e of kept) s2 += e.weight;
   return kept.map((e) => ({ bone: e.bone, weight: e.weight / s2 }));

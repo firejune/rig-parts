@@ -169,8 +169,9 @@ export type BoneEntry = SingleBone | ChainBones;
 export type Segment = string | [string, Point, Point];
 
 /**
- * One mesh: exactly one of two modes (issue #84). `r` and `segments` mean the
- * same in both.
+ * One mesh: exactly one of three modes (issue #84, issue #126). `r` and
+ * `segments` mean the same in all three. Which mode is the author's choice on
+ * every entry; nothing picks one, and `propose` still writes `grid`.
  *
  * - `grid`: the lattice (`src/mesh.ts`), as it has always been — every byte it
  *   writes is unchanged by the second mode existing.
@@ -178,8 +179,11 @@ export type Segment = string | [string, Point, Point];
  *   interior vertices placed where they are declared (`src/contour.ts`), and
  *   local deformation regions weighted to their own bones
  *   (`src/localweights.ts`).
+ * - `auto`: the contour mesh at alpha 1 and above as the source, reduced and
+ *   locally refined by spine-rigc's `reduceMesh` under the author's declared
+ *   bounds (`src/automesh.ts`).
  */
-export type MeshSpec = LatticeMeshSpec | ContourMeshSpec;
+export type MeshSpec = LatticeMeshSpec | ContourMeshSpec | AutoMeshSpec;
 
 export interface LatticeMeshSpec {
   grid: number;
@@ -225,6 +229,63 @@ export interface ContourSpec {
 export type ContourRegionSpec =
   | { name: string; shape: 'circle'; cx: number; cy: number; r: number; spacing: number; band: number; bone: string }
   | { name: string; shape: 'polygon'; points: Point[]; spacing: number; band: number; bone: string };
+
+/**
+ * One mesh in the automatic mode (issue #126, item 2): the contour mesh over
+ * the part at alpha 1 and above is the source, and spine-rigc's `reduceMesh`
+ * (`spine-rigc/mesh`, 2.19.0) refines it inside the declared regions and
+ * removes what the declared bounds allow (`src/automesh.ts`). Every quality
+ * input is a number the author wrote, named as spine-rigc's contract
+ * (docs/MESH_REDUCTION.md) names it; none has a default inside this package
+ * but the two the agreement fixed for parts's policy — `protect.hull` is false
+ * when absent (P20) — and the lists of `protect`, which are empty when absent,
+ * as an absent `regions` is "none" everywhere in this config.
+ */
+export interface AutoMeshSpec {
+  auto: AutoSpec;
+  r: number;
+  segments: Segment[];
+}
+
+export interface AutoSpec {
+  /** The source mesh: the contour mode's own parameters, px. */
+  source: { tolerance: number; margin: number; spacing: number; stray?: number };
+  /** What the source must already satisfy (correction 3). */
+  sourceBounds: ArtFitBoundsSpec;
+  /** What the result must satisfy. */
+  targets: { artFit: ArtFitBoundsSpec; maxBoundaryDeviation: number; minAngle?: number };
+  protect?: {
+    hull?: boolean;
+    vertices?: number[];
+    edges?: Array<[number, number]>;
+    regionBoundaries?: string[];
+    weightJump?: number | null;
+    influences?: string[];
+  };
+  influences: { maxInfluences: number; minWeight: number };
+  budget: { maxCandidates: number };
+  minArtSamples: number;
+  regions?: AutoRegionSpec[];
+}
+
+export interface ArtFitBoundsSpec {
+  minCoverage: number;
+  maxOvershoot: number;
+  maxUndercut: number;
+}
+
+/**
+ * A density region of the automatic mode: a shape and a control bone as a
+ * contour region has them, the bone's weight `band` (the same falloff,
+ * `src/localweights.ts`), and the density spine-rigc holds the mesh to (§5 of
+ * its contract): every edge meeting the region at most `maxEdgeLength` px
+ * (L0), relaxing as `L0 + grade·d` across `transition` px outside it, and the
+ * region's art sample floor (P9). Coordinates and `band` are multiples of
+ * 1/256 px, as a contour region's.
+ */
+export type AutoRegionSpec =
+  | { name: string; shape: 'circle'; cx: number; cy: number; r: number; band: number; bone: string; maxEdgeLength: number; transition: number; grade: number; minArtSamples: number }
+  | { name: string; shape: 'polygon'; points: Point[]; band: number; bone: string; maxEdgeLength: number; transition: number; grade: number; minArtSamples: number };
 
 export interface SingleTrack {
   bone: string;
@@ -975,16 +1036,20 @@ function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
     const at = `config.meshes.${part}`;
     // The known keys keep their old order (grid, r, segments) with contour after them, and `r` and `segments` are
     // required in the place and words the object check uses, so a lattice mesh's refusals read as they did.
-    const m = c.object(at, spec, [], ['grid', 'r', 'segments', 'contour']);
+    const m = c.object(at, spec, [], ['grid', 'r', 'segments', 'contour', 'auto']);
     if (m === null) continue;
     for (const key of ['r', 'segments']) if (!(key in m)) c.fail('CONFIG_FIELD_PRESENT', `${at}.${key}`, 'is absent and required');
-    if ('grid' in m && 'contour' in m) {
+    const modes = ['grid', 'contour', 'auto'].filter((k) => k in m);
+    if (modes.length === 2 && !modes.includes('auto')) {
       c.fail('CONFIG_MESH_MODE', at, 'has both grid (the lattice) and contour; exactly one is required — a mesh is one or the other');
-    } else if (!('grid' in m) && !('contour' in m)) {
-      c.fail('CONFIG_MESH_MODE', at, 'has neither grid (the lattice cell size, px) nor contour (the outline mode); exactly one is required');
+    } else if (modes.length > 1) {
+      c.fail('CONFIG_MESH_MODE', at, `has ${modes.join(' and ')}; exactly one of grid (the lattice), contour (the outline mode) and auto (the automatic mode) is required — a mesh is one of them`);
+    } else if (modes.length === 0) {
+      c.fail('CONFIG_MESH_MODE', at, 'has neither grid (the lattice cell size, px) nor contour (the outline mode) nor auto (the automatic mode); exactly one is required');
     }
     if ('grid' in m) c.int(`${at}.grid`, m.grid, 1);
     if ('contour' in m) checkContour(c, `${at}.contour`, m.contour, bones);
+    if ('auto' in m) checkAuto(c, `${at}.auto`, m.auto, bones);
     if ('r' in m) c.number(`${at}.r`, m.r, 'non-negative');
     if ('segments' in m && c.array(`${at}.segments`, m.segments, true)) {
       (m.segments as Json[]).forEach((s, i) => {
@@ -1064,6 +1129,132 @@ function checkContour(c: Check, at: string, v: Json, bones: Set<string>): void {
       });
     }
   });
+}
+
+/**
+ * `meshes.<part>.auto` (issue #126, item 2). Every number is required and
+ * read as spine-rigc's contract types it (docs/MESH_REDUCTION.md §1, §5, §6):
+ * nothing is defaulted, nothing is read off the image. The two absences that
+ * mean something are stated: `protect` and each of its fields may be left out
+ * — `hull` is then false (P20, the default the agreement fixed for parts's
+ * policy), each list empty and `weightJump` null (no such protection, which
+ * the report echoes) — and `regions` and `source.stray` may be left out, as in
+ * the contour mode. What only spine-rigc can judge (a region bound under one
+ * texel, a region outside the art, a protected vertex index the source does
+ * not have) is its refusal at the rig stage, in its words.
+ */
+function checkAuto(c: Check, at: string, v: Json, bones: Set<string>): void {
+  const o = c.object(at, v, ['source', 'sourceBounds', 'targets', 'influences', 'budget', 'minArtSamples'], ['protect', 'regions']);
+  if (o === null) return;
+  if ('source' in o) {
+    const s = c.object(`${at}.source`, o.source, ['tolerance', 'margin', 'spacing'], ['stray']);
+    if (s !== null) {
+      if ('tolerance' in s) c.number(`${at}.source.tolerance`, s.tolerance, 'non-negative');
+      if ('margin' in s && c.number(`${at}.source.margin`, s.margin, 'non-negative') && (s.margin as number) > 0 && (s.margin as number) < 1) {
+        c.fail('CONFIG_FIELD_TYPE', `${at}.source.margin`, `is ${s.margin as number}; 0, or 1 px or more, is required — the source's silhouette grows by the pixels whose centre lies within the margin of an art pixel's centre, and none lies closer than 1 px`);
+      }
+      if ('spacing' in s) c.number(`${at}.source.spacing`, s.spacing, 'positive');
+      if ('stray' in s) c.int(`${at}.source.stray`, s.stray, 0);
+    }
+  }
+  const fit = (path: string, f: Json): void => {
+    const b = c.object(path, f, ['minCoverage', 'maxOvershoot', 'maxUndercut'], []);
+    if (b === null) return;
+    if ('minCoverage' in b) c.number(`${path}.minCoverage`, b.minCoverage, 'unit');
+    if ('maxOvershoot' in b) c.number(`${path}.maxOvershoot`, b.maxOvershoot, 'non-negative');
+    if ('maxUndercut' in b) c.number(`${path}.maxUndercut`, b.maxUndercut, 'non-negative');
+  };
+  if ('sourceBounds' in o) fit(`${at}.sourceBounds`, o.sourceBounds);
+  if ('targets' in o) {
+    const t = c.object(`${at}.targets`, o.targets, ['artFit', 'maxBoundaryDeviation'], ['minAngle']);
+    if (t !== null) {
+      if ('artFit' in t) fit(`${at}.targets.artFit`, t.artFit);
+      if ('maxBoundaryDeviation' in t) c.number(`${at}.targets.maxBoundaryDeviation`, t.maxBoundaryDeviation, 'non-negative');
+      if ('minAngle' in t) c.number(`${at}.targets.minAngle`, t.minAngle, 'non-negative');
+    }
+  }
+  if ('influences' in o) {
+    const l = c.object(`${at}.influences`, o.influences, ['maxInfluences', 'minWeight'], []);
+    if (l !== null) {
+      if ('maxInfluences' in l) c.int(`${at}.influences.maxInfluences`, l.maxInfluences, 1);
+      if ('minWeight' in l && c.number(`${at}.influences.minWeight`, l.minWeight, 'non-negative') && (l.minWeight as number) >= 1) {
+        c.fail('CONFIG_FIELD_TYPE', `${at}.influences.minWeight`, `is ${l.minWeight as number}; a share at or above 0 and below 1 is required (0 drops only shares that are 0 on the weight grid)`);
+      }
+    }
+  }
+  if ('budget' in o) {
+    const b = c.object(`${at}.budget`, o.budget, ['maxCandidates'], []);
+    if (b !== null && 'maxCandidates' in b) c.int(`${at}.budget.maxCandidates`, b.maxCandidates, 0);
+  }
+  if ('minArtSamples' in o) c.int(`${at}.minArtSamples`, o.minArtSamples, 1);
+  const names = new Set<string>();
+  if ('regions' in o && c.array(`${at}.regions`, o.regions, false)) {
+    (o.regions as Json[]).forEach((rv, i) => {
+      const rat = `${at}.regions[${i}]`;
+      const shape = typeof rv === 'object' && rv !== null && !Array.isArray(rv) ? (rv as Record<string, Json>).shape : undefined;
+      const own = shape === 'circle' ? ['cx', 'cy', 'r'] : shape === 'polygon' ? ['points'] : [];
+      const r = c.object(rat, rv, ['name', 'shape', 'bone', 'band', 'maxEdgeLength', 'transition', 'grade', 'minArtSamples', ...own], []);
+      if (r === null) return;
+      if ('shape' in r && own.length === 0) c.fail('CONFIG_FIELD_TYPE', `${rat}.shape`, `is ${show(r.shape)}; "circle" (with cx, cy, r) or "polygon" (with points) is required`);
+      if ('name' in r && c.string(`${rat}.name`, r.name)) {
+        if (names.has(r.name)) c.fail('CONFIG_REGION_NAME_UNIQUE', `${rat}.name`, `"${r.name}" is declared twice in this mesh; each region needs its own name`);
+        names.add(r.name);
+      }
+      if ('bone' in r && (typeof r.bone !== 'string' || !bones.has(r.bone))) {
+        c.fail('CONFIG_NAME_RESOLVES', `${rat}.bone`, `is ${show(r.bone)}; a bone config.bones declares is required — the region's control bone`);
+      }
+      const onGrid = (path: string, n: Json, rule: 'any' | 'positive' | 'non-negative'): void => {
+        if (!c.number(path, n, rule)) return;
+        const v2 = n as number;
+        if (!Number.isInteger(v2 * GRID) || Math.abs(v2) > MAX_SIDE) {
+          c.fail('CONFIG_FIELD_TYPE', path, `is ${v2}; a multiple of 1/${GRID} px within ±${MAX_SIDE} px is required — a region's weight is 1 inside it and 0 past its band, and those two are decided exactly on that grid`);
+        }
+      };
+      if ('band' in r) onGrid(`${rat}.band`, r.band, 'non-negative');
+      if ('maxEdgeLength' in r) c.number(`${rat}.maxEdgeLength`, r.maxEdgeLength, 'positive');
+      if ('transition' in r) c.number(`${rat}.transition`, r.transition, 'non-negative');
+      if ('grade' in r) c.number(`${rat}.grade`, r.grade, 'non-negative');
+      if ('minArtSamples' in r) c.int(`${rat}.minArtSamples`, r.minArtSamples, 1);
+      if (shape === 'circle') {
+        if ('cx' in r) onGrid(`${rat}.cx`, r.cx, 'any');
+        if ('cy' in r) onGrid(`${rat}.cy`, r.cy, 'any');
+        if ('r' in r) onGrid(`${rat}.r`, r.r, 'positive');
+      }
+      if (shape === 'polygon' && 'points' in r && c.array(`${rat}.points`, r.points, true)) {
+        const pts = r.points as Json[];
+        if (pts.length < 3) c.fail('CONFIG_FIELD_TYPE', `${rat}.points`, `has ${pts.length} point(s); 3 or more [x, y] in rig pixels are required`);
+        pts.forEach((p, k) => {
+          if (!c.point(`${rat}.points[${k}]`, p)) return;
+          onGrid(`${rat}.points[${k}][0]`, (p as Point)[0], 'any');
+          onGrid(`${rat}.points[${k}][1]`, (p as Point)[1], 'any');
+        });
+      }
+    });
+  }
+  if ('protect' in o) {
+    const p = c.object(`${at}.protect`, o.protect, [], ['hull', 'vertices', 'edges', 'regionBoundaries', 'weightJump', 'influences']);
+    if (p === null) return;
+    if ('hull' in p && typeof p.hull !== 'boolean') c.fail('CONFIG_FIELD_TYPE', `${at}.protect.hull`, `is ${show(p.hull)}; true or false is required`);
+    if ('vertices' in p && c.array(`${at}.protect.vertices`, p.vertices, false)) (p.vertices as Json[]).forEach((n, k) => c.int(`${at}.protect.vertices[${k}]`, n, 0));
+    if ('edges' in p && c.array(`${at}.protect.edges`, p.edges, false)) {
+      (p.edges as Json[]).forEach((e, k) => {
+        if (!(Array.isArray(e) && e.length === 2 && e.every((n) => typeof n === 'number' && Number.isInteger(n) && n >= 0))) {
+          c.fail('CONFIG_FIELD_TYPE', `${at}.protect.edges[${k}]`, `is ${show(e)}; a pair of source vertex indices [a, b] is required`);
+        }
+      });
+    }
+    if ('regionBoundaries' in p && c.array(`${at}.protect.regionBoundaries`, p.regionBoundaries, false)) {
+      (p.regionBoundaries as Json[]).forEach((n, k) => {
+        if (typeof n !== 'string' || !names.has(n)) c.fail('CONFIG_NAME_RESOLVES', `${at}.protect.regionBoundaries[${k}]`, `is ${show(n)}; the name of a region this mesh declares is required`);
+      });
+    }
+    if ('weightJump' in p && p.weightJump !== null) c.number(`${at}.protect.weightJump`, p.weightJump, 'non-negative');
+    if ('influences' in p && c.array(`${at}.protect.influences`, p.influences, false)) {
+      (p.influences as Json[]).forEach((n, k) => {
+        if (typeof n !== 'string' || !bones.has(n)) c.fail('CONFIG_NAME_RESOLVES', `${at}.protect.influences[${k}]`, `is ${show(n)}; a bone config.bones declares is required`);
+      });
+    }
+  }
 }
 
 function checkRegions(c: Check, v: Json, bones: Set<string>): void {
