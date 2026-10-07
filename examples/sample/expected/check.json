@@ -108,23 +108,55 @@
     "face"
    ],
    "head_bone": "head",
-   "screen_px": 462,
-   "screen_heat_mean": 12.468,
-   "screen_heat_max": 220,
-   "head_frame_px": 274,
-   "head_frame_heat_mean": 0.898,
-   "head_frame_heat_max": 10.102,
-   "resampler_heat_mean": 0.897,
-   "mean_ceiling": 1.793
+   "instrument": "geometry",
+   "still_slots": [
+    {
+     "slot": "face",
+     "max_rig_px": 4.418e-13,
+     "rms_rig_px": 1.478e-13
+    },
+    {
+     "slot": "ear_l",
+     "max_rig_px": 4.136e-13,
+     "rms_rig_px": 1.355e-13
+    },
+    {
+     "slot": "ear_r",
+     "max_rig_px": 3.853e-13,
+     "rms_rig_px": 1.378e-13
+    }
+   ],
+   "max_rig_px": 4.418e-13,
+   "at": null,
+   "rms_rig_px": 1.474e-13,
+   "tolerance_rig_px": 2.286e-11,
+   "crossing": [
+    {
+     "slot": "hair_front",
+     "depth_rig_px": 2.194,
+     "area_rig_px2": 50.605,
+     "frame": 23
+    }
+   ],
+   "driven_slots": []
   },
   "feet": {
    "parts": [
     "shoes"
    ],
-   "px": 2854,
-   "heat_mean": 0,
-   "heat_max": 0,
-   "mean_ceiling": 3.244
+   "instrument": "geometry",
+   "still_slots": [
+    {
+     "slot": "shoes",
+     "max_rig_px": 0,
+     "rms_rig_px": 0
+    }
+   ],
+   "max_rig_px": 0,
+   "at": null,
+   "rms_rig_px": 0,
+   "tolerance_rig_px": 2.814e-12,
+   "crossing": []
   }
  },
  "TEXTURE_STRETCH": {
