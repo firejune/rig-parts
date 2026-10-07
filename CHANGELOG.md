@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/firejune/spine-parts/compare/v0.15.0...v0.15.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **check:** measure TIP_OVER_ROOT from the posed geometry, exactly, so the render grid no longer decides it ([#124](https://github.com/firejune/spine-parts/issues/124)) ([165c0bd](https://github.com/firejune/spine-parts/commit/165c0bdb842280a7bcf976c46dd059bc880ab50e)), closes [#118](https://github.com/firejune/spine-parts/issues/118) [#108](https://github.com/firejune/spine-parts/issues/108)
+
 ## [0.15.0](https://github.com/firejune/spine-parts/compare/v0.14.0...v0.15.0) (2026-10-07)
 
 
