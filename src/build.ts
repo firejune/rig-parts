@@ -178,7 +178,7 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
 // rig
 // ---------------------------------------------------------------------------
 
-interface GateRun {
+export interface GateRun {
   label: string;
   status: number;
   /**
@@ -216,13 +216,15 @@ function gateRun(label: string, rigc: RigcRunner, args: string[]): GateRun {
  * second `validate --profile spine` run: spine-html holds every rule spine
  * measures (selftest `CH09`). The files are staged exactly as `--out` will
  * receive them, so what passed is what is written. The scratch directory is
- * the caller's, and is emptied here before and after.
+ * the caller's, and is emptied here before and after. `images` are the PNG
+ * files' bytes as `--out` will receive them: the rig stage's are its rasters
+ * encoded as `writePng` encodes them, `compose`'s the builds' own files.
  */
-function gateThroughRigc(out: RigOutput, texts: Array<[string, string]>, rigc: RigcRunner, scratch: string, mode: PackMode): GateRun[] {
+export function gateThroughRigc(images: ReadonlyArray<readonly [string, Uint8Array]>, texts: ReadonlyArray<readonly [string, string]>, rigc: RigcRunner, scratch: string, mode: PackMode): GateRun[] {
   rmSync(scratch, { recursive: true, force: true });
   try {
     mkdirSync(join(scratch, 'images'), { recursive: true });
-    for (const [file, img] of out.images) writeFileSync(join(scratch, 'images', file), encodePngBytes(img));
+    for (const [file, bytes] of images) writeFileSync(join(scratch, 'images', file), bytes);
     for (const [file, text] of texts) writeFileSync(join(scratch, file), text);
     const build = join(scratch, 'build');
     return [gateRun(packedBuildLabel(mode), rigc, ['build', '--rig', join(scratch, 'rig.json'), '--motion', join(scratch, 'motion.json'), '--out', build, ...packedBuildArgs(mode)])];
@@ -313,7 +315,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
       ? `  idle keys ctl: ${rig.meshKeyed.length} mesh-driving bone(s) keyed by the idle, each keyed through a same-origin <bone>_ctl parent`
       : `  idle keys direct: ${rig.meshKeyed.length} mesh-driving bone(s) keyed in place, ${rig.rig.invariants === undefined ? 'so no invariants.idleDrivesMeshes is declared (it would switch nothing off)' : 'invariants.idleDrivesMeshes declared'}`,
   );
-  const gate = gateThroughRigc(rig, texts, rigc, scratch, { pageEdges: input.pageEdges ?? DEFAULT_PAGE_EDGES, packShape: input.packShape ?? DEFAULT_PACK_SHAPE });
+  const gate = gateThroughRigc(rig.images.map(([file, img]) => [file, encodePngBytes(img)] as const), texts, rigc, scratch, { pageEdges: input.pageEdges ?? DEFAULT_PAGE_EDGES, packShape: input.packShape ?? DEFAULT_PACK_SHAPE });
   for (const g of gate) {
     log(`  rigc ${g.label}: exit ${g.status}`);
     for (const l of g.lines) log(`    ${l.trim()}`);

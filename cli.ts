@@ -30,6 +30,7 @@ import { basisLines, checkProposal, compare, compareLines, drawLandmarks, HIP_MI
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { readPng, writePng } from './src/raster/png.ts';
 import { REQUIREMENTS_SENTENCE } from './src/requirements.ts';
+import { composeStage, IMAGE_SEP, PLATE, PROVENANCES, SCENE_REPORT_FILE, SCENE_REPORT_SPEC, SCENE_SPEC } from './src/scene.ts';
 import { buildSheet, defaultCaption, type Tile, tilesFrom } from './src/sheet.ts';
 import { loadComparison, requiredProblems, structureLines } from './src/structure.ts';
 
@@ -412,6 +413,47 @@ usage:
       two-bone ik over chain links the idle keys needs --idle-keys direct:
       rigc refuses the pair a control splits, and the RIG_RIGC_GREEN line
       names the flag on the command that ran.
+
+  spine-parts compose --scene <scene.json> --out <dir> [--requirements <file.json>]
+      Bind several finished characters into one rig. The scene file (spec
+      "${SCENE_SPEC}") states the canvas {width, height}, an optional plate
+      {image, provenance: ${PROVENANCES.join(' | ')}, note?}, the characters
+      [{id, build, offset: [x, y]}] — each build the --out of a green
+      \`spine-parts build\` (its check/check.json PASS), each offset a
+      translation from its rig px to canvas px — and order: the draw order,
+      back to front, of character ids (that character's remaining slots, in
+      its own order) and "<id>:<slot>" entries, every slot exactly once.
+      Paths are relative to the scene file. Every bone, slot, attachment,
+      constraint, track, group and easing of a character is renamed
+      "<id>:<name>" under one shared root; its images "<id>${IMAGE_SEP}<file>" (an
+      atlas region cannot hold ":"). The offset is added once, to what the
+      character places in root's own frame: its first-level bones, and a
+      region on a slot root carries or a weight bound to root. The root is
+      shared, so a character whose idle keys it, or whose constraint names it,
+      is refused. The plate is a region on bone "${PLATE}" under
+      root, drawn first, its image at canvas (0, 0). One idle holds every
+      character's tracks. Refused by name, every problem at once: an id
+      repeated, empty or holding ":" (or "/", "\\", a leading "."); a build
+      missing a file or whose own check is not green; characters built at
+      different rig_scale; a character whose parts' boxes, placed, leave the
+      canvas; an order entry naming no character or slot; a slot named twice
+      or never; a constraint, or a --requirements name, that names a bone of
+      another character without its prefix (SCENE_NAME_PREFIXED); a plate not
+      of the canvas size; idles of different durations; a key in a build's
+      rig or motion compose does not know. The result is gated through
+      spine-rigc as rig gates its own (build --profile spine-html --pack, the
+      compile and the packed pages on disk); --out receives rig/ (rig.json,
+      motion.json, images/) and ${SCENE_REPORT_FILE} (spec "${SCENE_REPORT_SPEC}":
+      every setting, each character's offset, bounds and shift (and what it
+      moved),
+      the plate's provenance, the declared and the composed order) only when
+      it is green; then check runs over rig/ into check/, as on a rig it did
+      not build (no parts.json: the seam, BREATH_VISIBLE, BLINK_NO_HOLE,
+      TIP_OVER_ROOT, STILL_REGIONS_DARK and RECOMPOSITE_HOLES say SKIP and
+      why), --requirements forwarded. Nothing is inferred: not the order, not
+      an overlap, not a scale, not a person; the plate's provenance and the
+      order are the author's and judged by nothing. Exit 0 when the check is
+      PASS, 1 otherwise.
 
   spine-parts --version
   spine-parts --help
@@ -1053,6 +1095,29 @@ function cmdBuild(args: string[]): number {
   }
 }
 
+function cmdCompose(args: string[]): number {
+  const f = flags(args, ['--scene', '--out'], 'compose', ['--requirements']);
+  if (typeof f === 'string') return usage(f);
+  let bin: string;
+  try {
+    bin = findRigc(import.meta.dir, process.env.PATH ?? '');
+  } catch (err) {
+    return printRefusal(err);
+  }
+  const scratch = mkdtempSync(join(tmpdir(), 'spine-parts-compose-'));
+  try {
+    const req = f.get('--requirements');
+    const r = composeStage(
+      { scene: f.get('--scene') as string, out: f.get('--out') as string, ...(req === undefined ? {} : { requirements: req }) },
+      { rig: rigcRunner(bin), check: rigcRunner(bin), checkBin: bin, scratch: join(scratch, 'gate') },
+      console.log,
+    );
+    return r.stoppedAt === null ? EXIT_OK : EXIT_REFUSED;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 function main(argv: string[]): number | Promise<number> {
   const [command, ...rest] = argv;
   if (command === undefined || command === '--help' || command === '-h' || command === 'help') {
@@ -1074,6 +1139,7 @@ function main(argv: string[]): number | Promise<number> {
   if (command === 'inputs') return cmdInputs(rest);
   if (command === 'comfy') return cmdComfy(rest);
   if (command === 'build') return cmdBuild(rest);
+  if (command === 'compose') return cmdCompose(rest);
   const later = LATER.find(([name]) => name === command);
   if (later !== undefined) {
     console.log(`  FAIL  NOT_IMPLEMENTED: \`spine-parts ${command}\` (${later[1]}) is not implemented in this version, ${version()}`);

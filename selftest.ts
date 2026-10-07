@@ -55,6 +55,7 @@
  * before it. `SPINE_PARTS_SELFTEST_JOBS=1` runs one worker at a time.
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
@@ -176,7 +177,7 @@ import {
 } from './src/requirements.ts';
 import { COMPOSED_HAND_X, COMPOSED_SHOULDER, writeComposedRig, DRIVER_AT, DRIVER_SLIDE, FAR_ABOVE, LOWER_LEN, LURE_ANGLE, OVERREACH_FROM, OVERREACH_TO, POINTER_LEN, REACH_FROM, REACH_TO, REQ_FPS, REQ_STAGE, RIDE_MIX, RIDER_AT, SHOULDER, stageOf, SWING_BROKEN, SWING_PEAK, UPPER_LEN, VANE_AT, VANE_MIX, writeReqRig, writeRequirements } from './fixtures/reqrig.ts';
 import { buildHeaderProblem } from './tools/atlas_population.ts';
-import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, sineTrack } from './src/motion.ts';
+import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionSpec, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'spine-rigc/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
@@ -184,7 +185,7 @@ import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, typ
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA } from './src/mesh.ts';
 import { checkHullOrder, earClip, findSelfIntersection, offsetPolygon, simplifyClosedPolygon, traceAlphaOutline, traceOutline } from 'spine-rigc/src/mesh.ts';
-import { PartsError, type Problem } from './src/errors.ts';
+import { PartsError, type Problem, problemLine } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
 import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paintingGraph, POSITIVE_HEAD, stripWords } from './src/graphs.ts';
 import { proposeHeadBox } from './src/headbox.ts';
@@ -266,6 +267,8 @@ import { LYING_PARTS, LYING_RIG, type PoseName, POSES } from './fixtures/poses.t
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, constraintConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
 import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText, type RigSpec, roundShares } from './src/rig.ts';
+import { type ComposedScene, composeFromFiles, IMAGE_SEP, PLATE, PLATE_IMAGE, PREFIX_SEP, SCENE_REPORT_FILE, SCENE_SPEC, unprefixedNames } from './src/scene.ts';
+import { sceneCharacterRig, sceneText, writeFlatPlate, writeSceneBuild } from './fixtures/scene.ts';
 import { localInfluences, regionWeight } from './src/localweights.ts';
 import { influences } from './src/weights.ts';
 import { apply as applyAffine, type ComparedMesh, contourAtBudget, cost, errors, fieldAt, fieldContour, fieldLattice, locator, pixelErrors, pixelsOver } from './tools/local_compare.ts';
@@ -2376,9 +2379,9 @@ function runCliSuite(): number {
     const helpText = runCli(['--help']).out;
     say(
       'CL20_THE_HELP_NAMES_REQUIREMENTS_UNDER_CHECK_AND_UNDER_BUILD',
-      helpText.split('\n').filter((l) => l.includes('[--requirements <file.json>]')).length === 2 && helpText.includes('--requirements is forwarded to check') && helpText.includes('CHECK_REQUIREMENT_MEASURABLE'),
+      helpText.split('\n').filter((l) => l.includes('[--requirements <file.json>]')).length === 3 && helpText.split('\n').some((l) => l.trim().startsWith('spine-parts compose') && l.includes('[--requirements <file.json>]')) && helpText.includes('--requirements is forwarded to check') && helpText.includes('CHECK_REQUIREMENT_MEASURABLE'),
       `${helpText.split('\n').filter((l) => l.includes('[--requirements <file.json>]')).map((l) => l.trim()).join(' | ')}`,
-      'an agent learns a flag from --help: check and build each show it, and the check text names the two codes a requirement line can be refused with',
+      'an agent learns a flag from --help: check, build and compose (issue #74) each show it, and the check text names the two codes a requirement line can be refused with',
     );
     const bareReq = runCli(['check', '--rig', join(dir, 'nowhere'), '--out', join(dir, 'req-usage'), '--requirements']);
     const twiceReq = runCli(['build', '--config', 'c', '--source', 's', '--full', 'f', '--head', 'h', '--out', join(dir, 'req-usage-build'), '--requirements', 'a.json', '--requirements', 'b.json']);
@@ -9140,6 +9143,8 @@ function runChainSuite(): number | null {
   const { say, bad } = counter();
   const dir = temp('chain');
   let planted: { key: string; out: string; exp: string } | null = null;
+  // The green builds by example key: the public scenes of issue #74 compose these, rather than building twice.
+  const greenBuilds = new Map<string, string>();
   try {
     for (const ex of found) {
       const key = relative(join(ROOT, 'examples'), ex);
@@ -9157,6 +9162,7 @@ function runChainSuite(): number | null {
         'a fetched example is a published claim that the pipeline takes this painting to a green rig; this run keeps the claim true end to end',
       );
       if (r.status !== 0) continue;
+      greenBuilds.set(key, out);
       if (planted === null) planted = { key, out, exp };
 
       const expParts = readParts(join(exp, 'parts.json'));
@@ -9353,6 +9359,9 @@ function runChainSuite(): number | null {
       runFacelessExample(key, ex, out, dir, say);
       runExampleDiagnostics(key, ex, out, say);
     }
+
+    // Issue #74's public scenes, composed from the builds above (each built once, here).
+    runPublicScenes(greenBuilds, dir, say);
 
     // CH09's comparator, planted: a validate line set carrying a rule the build's set lacks is named, and the
     // spine-html superset (the measured shape, PROF and SKIP lines not counted) is not.
@@ -14813,6 +14822,584 @@ function runTallySuite(live: RunTally): number {
 // the run
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// scene: several finished builds composed into one rig (issue #74)
+// ---------------------------------------------------------------------------
+
+/**
+ * A value with one character's composed names taken back to its build's:
+ * `<id>:x` and `<id>.x` to `x`, and the rig's name (the id, alone in a
+ * one-character scene) to the build's. With `dropPath`, for a compiled
+ * skeleton: the `path` Spine writes because an attachment's name (`<id>:x`)
+ * and its region's (`<id>.x`) differ is dropped where it names the
+ * attachment's own region — the one byte class a one-character composition
+ * adds, because a region name cannot hold `:` (see `src/scene.ts`).
+ */
+function sceneUnrenamed(v: unknown, id: string, rigName: string, dropPath: boolean, key = ''): unknown {
+  if (typeof v === 'string') {
+    if (v === id) return rigName;
+    if (v.startsWith(`${id}${PREFIX_SEP}`) || v.startsWith(`${id}${IMAGE_SEP}`)) return v.slice(id.length + 1);
+    // An image named inside a path (the model document's loose page, `../../rig/images/<id>.<file>`).
+    return v.split(`/${id}${IMAGE_SEP}`).join('/');
+  }
+  if (Array.isArray(v)) return v.map((x) => sceneUnrenamed(x, id, rigName, dropPath));
+  if (typeof v === 'object' && v !== null) {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v)) {
+      const kk = sceneUnrenamed(k, id, rigName, false) as string;
+      out[kk] = sceneUnrenamed(x, id, rigName, dropPath, kk);
+    }
+    if (dropPath && typeof out.path === 'string' && out.path === key) delete out.path;
+    return out;
+  }
+  return v;
+}
+
+/**
+ * Every way a one-character composition at its own stage differs from that
+ * character's build once the names are taken back: rig.json and motion.json
+ * as text, every image's bytes, the atlas as text, every packed page's bytes,
+ * skeleton.json and skeleton.model.json as values (Spine's `path` aside, see
+ * {@link sceneUnrenamed}), and every idle frame's bytes. Empty when identical.
+ */
+function sceneIdentityDiffs(build: string, composed: string, id: string): string[] {
+  const diffs: string[] = [];
+  const rigName = (readJsonAt(join(build, 'rig', 'rig.json')) as { name: string }).name;
+  for (const f of ['rig.json', 'motion.json']) {
+    const want = readFileSync(join(build, 'rig', f), 'utf8');
+    const got = rigJsonText(sceneUnrenamed(readJsonAt(join(composed, 'rig', f)), id, rigName, false));
+    if (want !== got) diffs.push(`rig/${f} ${firstLineDiff(want, got) ?? 'differs'}`);
+  }
+  const imgs = readdirSync(join(build, 'rig', 'images')).sort();
+  const cimgs = readdirSync(join(composed, 'rig', 'images')).sort();
+  if (cimgs.join(',') !== imgs.map((f) => `${id}${IMAGE_SEP}${f}`).join(',')) diffs.push(`rig/images lists ${cimgs.length} file(s) against ${imgs.length}`);
+  for (const f of imgs) {
+    const c = join(composed, 'rig', 'images', `${id}${IMAGE_SEP}${f}`);
+    if (!existsSync(c) || !readFileSync(c).equals(readFileSync(join(build, 'rig', 'images', f)))) diffs.push(`rig/images/${f} bytes`);
+  }
+  const bb = join(build, 'check', 'build');
+  const cb = join(composed, 'check', 'build');
+  const atlas = (d: string): string => readdirSync(d).find((f) => f.endsWith('.atlas')) ?? '';
+  const atlasText = readFileSync(join(cb, atlas(cb)), 'utf8').split('\n').map((l) => (l.startsWith(`${id}${IMAGE_SEP}`) ? l.slice(id.length + 1) : l)).join('\n');
+  if (atlas(bb) !== atlas(cb) || readFileSync(join(bb, atlas(bb)), 'utf8') !== atlasText) diffs.push(`atlas ${firstLineDiff(readFileSync(join(bb, atlas(bb)), 'utf8'), atlasText) ?? 'file name'}`);
+  const pages = readdirSync(bb).filter((f) => f.endsWith('.png')).sort();
+  if (readdirSync(cb).filter((f) => f.endsWith('.png')).sort().join(',') !== pages.join(',')) diffs.push('packed pages listed differently');
+  for (const p of pages) if (!existsSync(join(cb, p)) || !readFileSync(join(cb, p)).equals(readFileSync(join(bb, p)))) diffs.push(`page ${p} bytes`);
+  // The model document's spine.sha256 is the sha256 of the skeleton.json beside it, which a rename changes: each side's
+  // is held to its own file's bytes, and then set aside so the rest of the document is compared as values.
+  const ownHash = (dirPath: string, doc: unknown): unknown => {
+    const d = doc as { spine?: { sha256?: string } };
+    const hash = createHash('sha256').update(readFileSync(join(dirPath, 'skeleton.json'))).digest('hex');
+    if (d.spine?.sha256 !== hash) diffs.push(`${RIGC_MODEL_DOCUMENT} in ${dirPath} carries spine.sha256 ${String(d.spine?.sha256)}, not its skeleton.json's ${hash}`);
+    else d.spine.sha256 = '<sha256 of the skeleton.json beside it>';
+    return d;
+  };
+  for (const f of ['skeleton.json', RIGC_MODEL_DOCUMENT]) {
+    const model = f === RIGC_MODEL_DOCUMENT;
+    const want = JSON.stringify(model ? ownHash(bb, readJsonAt(join(bb, f))) : readJsonAt(join(bb, f)));
+    const got = JSON.stringify(sceneUnrenamed(model ? ownHash(cb, readJsonAt(join(cb, f))) : readJsonAt(join(cb, f)), id, rigName, true));
+    if (want !== got) {
+      let i = 0;
+      while (i < want.length && want[i] === got[i]) i++;
+      diffs.push(`${f} at char ${i}: ${want.slice(Math.max(0, i - 40), i + 40)} | ${got.slice(Math.max(0, i - 40), i + 40)}`);
+    }
+  }
+  const frames = (d: string): string[] => (existsSync(d) ? readdirSync(d).filter((f) => f.endsWith('.png')).sort() : []);
+  const bf = frames(join(build, 'check', 'idle_frames', 'idle'));
+  const cf = frames(join(composed, 'check', 'idle_frames', 'idle'));
+  if (bf.length === 0 || bf.join(',') !== cf.join(',')) diffs.push(`idle frames ${cf.length} against ${bf.length}`);
+  else for (const f of bf) if (!readFileSync(join(composed, 'check', 'idle_frames', 'idle', f)).equals(readFileSync(join(build, 'check', 'idle_frames', 'idle', f)))) diffs.push(`idle frame ${f} bytes`);
+  return diffs;
+}
+
+/** Every bar of a composed rig's check, as its console line and check.json say: measured with its status, or SKIP with the reason. */
+function sceneBarLines(out: string, checkDir: string): string {
+  const fig = readJsonFile(join(checkDir, 'check.json'));
+  if (fig === null) return 'no check.json';
+  const reason = (name: string): string => {
+    const l = fig[name] as { status?: string; reason?: string } | undefined;
+    if (l?.status === 'SKIP') return `SKIP (${String(l.reason).split(',')[0].split(':')[0]})`;
+    return String(l?.status ?? 'absent');
+  };
+  const summary = out.split('\n').find((l) => l.startsWith('[check] check: ')) ?? 'no summary line';
+  return `gate ${fig.gate_spine_html_green === true ? 'green' : 'RED'}; loop max |d| ${fig.loop_max_diff ?? 'SKIP'}; seam ${fig.seam_mean === null ? 'SKIP (no parts.json)' : fig.seam_mean}; ${[...JUDGEMENT_LINES, ...REPORTED_LINES].map((n) => `${n} ${reason(n)}`).join(', ')}; "${summary.replace('[check] ', '')}"`;
+}
+
+/** A compose FAIL line for `code`, as compose prints it under its `[compose]` prefix, or null. */
+function composeFail(out: string, code: string): string | null {
+  return out.split('\n').find((l) => l.startsWith(`[compose]   FAIL  ${code}`)) ?? null;
+}
+
+/** The slot names a compiled skeleton.json draws, in its order. */
+function compiledSlots(buildDir: string): string[] {
+  const sk = readJsonFile(join(buildDir, 'skeleton.json'));
+  return ((sk?.slots as Array<{ name: string }> | undefined) ?? []).map((s) => s.name);
+}
+
+function runSceneSuite(): number {
+  section('scene: finished builds composed into one rig, a plate and a declared order (issue #74)');
+  const { say, bad } = counter();
+  const dir = temp('scene');
+  try {
+    const plain = writeSceneBuild(join(dir, 'plain'), 'plain');
+    writeSceneBuild(join(dir, 'reach'), 'reach');
+    writeFlatPlate(join(dir, 'plate.png'), 100, 60, [96, 112, 128]);
+    writeFlatPlate(join(dir, 'plate-short.png'), 100, 59, [96, 112, 128]);
+    let n = 0;
+    const scene = (body: Record<string, unknown>): string => {
+      const p = join(dir, `scene-${n++}.json`);
+      writeFileSync(p, sceneText(body));
+      return p;
+    };
+    const two = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+      canvas: { width: 100, height: 60 },
+      plate: { image: 'plate.png', provenance: 'generated' },
+      characters: [
+        { id: 'plain', build: 'plain', offset: [0, 20] },
+        { id: 'reach', build: 'reach', offset: [50, 10] },
+      ],
+      order: ['plain', 'reach'],
+      ...over,
+    });
+    const compose = (body: Record<string, unknown>, req?: string): { ok: ComposedScene | null; err: PartsError | null } => {
+      let ok: ComposedScene | null = null;
+      const err = refusals(() => {
+        ok = composeFromFiles(scene(body), req);
+      });
+      return { ok, err };
+    };
+    const has = (err: PartsError | null, code: string, text = ''): boolean => err !== null && err.problems.some((p) => p.code === code && problemLine(p).includes(text));
+
+    // ---- the file ---------------------------------------------------------
+    const good = compose(two());
+    const shape = compose({ ...two(), spec: 'spine-parts-scene/0', canvas: { width: 0, height: 60 }, plate: { image: 'plate.png', provenance: 'painted' }, characters: [{ id: 'plain', build: 'plain', offset: [0, 20] }, { id: 'reach', build: 'reach' }], order: 'plain', z: 1 });
+    const shapeCodes = ['SCENE_SPEC', 'SCENE_FIELD_TYPE', 'SCENE_PLATE_PROVENANCE', 'SCENE_FIELD_PRESENT', 'SCENE_KEY_KNOWN'];
+    say(
+      'SC01_A_WELL_FORMED_SCENE_COMPOSES_AND_EVERY_SHAPE_FAULT_IS_NAMED_IN_ONE_REFUSAL',
+      good.err === null && good.ok !== null && shape.err !== null && shapeCodes.every((c) => has(shape.err, c)) && has(shape.err, 'SCENE_FIELD_TYPE', 'scene.canvas.width') && has(shape.err, 'SCENE_FIELD_TYPE', 'scene.order') && has(shape.err, 'SCENE_FIELD_PRESENT', 'scene.characters[1].offset'),
+      `the two-character scene: ${good.err === null ? 'composes' : codes(good.err)}; planted spec, canvas.width 0, provenance "painted", an offset left out, order a string and a key "z" -> ${shape.err?.problems.length ?? 0} problem(s) in one refusal: ${codes(shape.err)}`,
+      "readers collect every problem and throw once: an agent that wrote six faults reads six lines from one run; an offset is never assumed (0, 0) when it is left out",
+    );
+    const ids = compose(two({ characters: [{ id: 'plain', build: 'plain', offset: [0, 20] }, { id: 'plain', build: 'reach', offset: [50, 10] }, { id: '', build: 'reach', offset: [0, 0] }, { id: 'a:b', build: 'reach', offset: [0, 0] }, { id: 'a/b', build: 'reach', offset: [0, 0] }] }));
+    say(
+      'SC02_AN_ID_REPEATED_EMPTY_OR_HOLDING_A_COLON_IS_REFUSED_BY_NAME',
+      has(ids.err, 'SCENE_ID_UNIQUE', 'characters[1].id') && has(ids.err, 'SCENE_ID_FORM', 'characters[2].id') && has(ids.err, 'SCENE_ID_FORM', '"a:b" holds ":"') && has(ids.err, 'SCENE_ID_FORM', '"a/b" begins every image file'),
+      codes(ids.err),
+      "issue #74 §2: the id is the prefix that keeps a name to one character; repeated it names two, empty it names none, and with a colon \"a:b:x\" splits two ways; a \"/\" would put its images in a folder, where rigc keeps only the basename",
+    );
+
+    // ---- the builds ---------------------------------------------------------
+    writeSceneBuild(join(dir, 'red'), 'reach', { pass: false });
+    writeSceneBuild(join(dir, 'unchecked'), 'reach', { noCheck: true });
+    const notGreen = compose(two({ characters: [{ id: 'plain', build: 'plain', offset: [0, 20] }, { id: 'red', build: 'red', offset: [50, 10] }, { id: 'unchecked', build: 'unchecked', offset: [50, 10] }, { id: 'gone', build: 'no-such-build', offset: [50, 10] }], order: ['plain', 'red', 'unchecked', 'gone'] }));
+    say(
+      'SC03_A_BUILD_WITHOUT_ITS_OWN_GREEN_CHECK_OR_ITS_FILES_IS_REFUSED',
+      has(notGreen.err, 'SCENE_BUILD_GREEN', 'character "red"') && has(notGreen.err, 'SCENE_BUILD_PRESENT', 'unchecked/check/check.json') && has(notGreen.err, 'SCENE_BUILD_PRESENT', 'character "gone"') && !has(notGreen.err, 'SCENE_BUILD_GREEN', 'character "plain"'),
+      codes(notGreen.err),
+      "issue #74 §1: compose binds characters that already ran the single-character path to green; a list of PNGs, or a build whose own check failed, is not evidence that one did",
+    );
+    writeSceneBuild(join(dir, 'quarter'), 'reach', { rigScale: 0.25 });
+    const scales = compose(two({ characters: [{ id: 'plain', build: 'plain', offset: [0, 20] }, { id: 'reach', build: 'quarter', offset: [50, 10] }] }));
+    say(
+      'SC04_CHARACTERS_BUILT_AT_DIFFERENT_RIG_SCALES_ARE_REFUSED_NAMING_EACH',
+      has(scales.err, 'SCENE_RIG_SCALE_AGREES', '"plain" 0.5, "reach" 0.25') && scales.err?.problems.length === 1,
+      codes(scales.err) + ` — ${scales.err?.problems[0]?.detail.slice(0, 120) ?? ''}`,
+      "an offset is canvas px and a character's rig px are canvas px at scale 1, so a second scale would be a scaling nobody declared; scaling a character in composition is not offered",
+    );
+    // The fixture's parts span rig [10, 10] to [26, 28] (fixtures/rig.ts). At offset [74, 32] that is [84, 42, 100, 60] on the 100x60 canvas: on its edge.
+    const edge = compose(two({ characters: [{ id: 'plain', build: 'plain', offset: [74, 32] }, { id: 'reach', build: 'reach', offset: [-10, 10] }] }));
+    const off = compose(two({ characters: [{ id: 'plain', build: 'plain', offset: [75, 32] }, { id: 'reach', build: 'reach', offset: [-11, 10] }] }));
+    say(
+      'SC05_A_CHARACTER_WHOSE_PLACED_PARTS_LEAVE_THE_CANVAS_IS_REFUSED_AND_ONE_ON_ITS_EDGE_IS_NOT',
+      edge.err === null && has(off.err, 'SCENE_CHARACTER_INSIDE_CANVAS', '[85, 42, 101, 60]') && has(off.err, 'SCENE_CHARACTER_INSIDE_CANVAS', '[-1, 20, 15, 38]'),
+      `parts at [84, 42, 100, 60] and [0, 20, 16, 38]: ${edge.err === null ? 'composes' : codes(edge.err)}; one px further each way -> ${codes(off.err)}`,
+      "issue #74 §2: the bounds are the union of the character's part boxes, placed — computed by hand from fixtures/rig.ts — and x1, y1 exclusive, so a box ending on the canvas edge is inside",
+    );
+
+    // ---- the order -----------------------------------------------------------
+    const unresolved = compose(two({ order: ['plain', 'reach', 'ghost', 'plain:nose', 'ghost:cloth'] }));
+    say(
+      'SC06_AN_ORDER_ENTRY_NAMING_NO_CHARACTER_OR_NO_SLOT_IS_REFUSED',
+      has(unresolved.err, 'SCENE_ORDER_RESOLVES', 'scene.order[2]') && has(unresolved.err, 'SCENE_ORDER_RESOLVES', 'has no slot "nose"') && has(unresolved.err, 'SCENE_ORDER_RESOLVES', 'id "ghost" names no character') && unresolved.err?.problems.length === 3,
+      codes(unresolved.err),
+      'everything resolves by name, and a miss is refused by name: an order entry is a character id or "<id>:<slot>", and either must exist',
+    );
+    const twiceId = compose(two({ order: ['plain', 'plain', 'reach'] }));
+    const twiceSlot = compose(two({ order: ['plain:eye', 'plain:eye', 'plain', 'reach'] }));
+    const missing = compose(two({ order: ['plain'] }));
+    const allNamed = compose(two({ order: ['plain:cloth', 'plain:eye', 'reach'] }));
+    const front = compose(two({ order: ['plain:eye', 'reach', 'plain'] }));
+    const frontSlots = front.ok === null ? [] : (front.ok as ComposedScene).rig.slots.map((s) => s.name);
+    say(
+      'SC07_A_SLOT_NAMED_TWICE_OR_NEVER_IS_REFUSED_AND_AN_ID_DRAWS_ONLY_ITS_SLOTS_NOT_NAMED_ELSEWHERE',
+      has(twiceId.err, 'SCENE_ORDER_ONCE', 'character "plain" again') &&
+        has(twiceSlot.err, 'SCENE_ORDER_ONCE', 'slot "plain:eye" again') &&
+        has(missing.err, 'SCENE_ORDER_COMPLETE', '"reach:cloth", "reach:eye"') &&
+        allNamed.err === null &&
+        frontSlots.join(',') === 'plate,plain:eye,reach:cloth,reach:eye,plain:cloth',
+      `id twice -> ${codes(twiceId.err)}; slot twice -> ${codes(twiceSlot.err)}; reach never -> ${codes(missing.err)}; plain's two slots named and no "plain" -> ${allNamed.err === null ? 'composes' : codes(allNamed.err)}; ["plain:eye", "reach", "plain"] -> ${frontSlots.join(', ')}`,
+      'issue #74 §1: every slot of every character is drawn exactly once, named explicitly or through its id; an id draws its remaining slots in its own order, which is what makes ["a", "b:arm_l", "b"] mean what it says',
+    );
+
+    // ---- names across characters -----------------------------------------------
+    writeSceneBuild(join(dir, 'grabber'), 'plain', { rig: (r) => (r.constraints = [{ type: 'ik', name: 'grab', bones: ['hem0', 'hem1'], target: 'tgt' }, { type: 'transform', name: 'lost', bones: ['body'], source: 'nobody' }]) });
+    const cross = compose(two({ characters: [{ id: 'plain', build: 'grabber', offset: [0, 20] }, { id: 'reach', build: 'reach', offset: [50, 10] }] }));
+    say(
+      'SC08_A_CONSTRAINT_NAMING_ANOTHER_CHARACTERS_BONE_WITHOUT_ITS_PREFIX_IS_REFUSED',
+      has(cross.err, 'SCENE_NAME_PREFIXED', '"reach:tgt"') && has(cross.err, 'SCENE_NAME_RESOLVES', 'names the bone "nobody"') && good.err === null,
+      `a build of "plain" whose ik follows "tgt" (only "reach" declares one) and whose transform reads "nobody" -> ${codes(cross.err)}; ${cross.err?.problems.find((p) => p.code === 'SCENE_NAME_PREFIXED')?.detail.slice(0, 140) ?? ''}`,
+      "issue #74 §2: nothing resolves across characters without its prefix — prefixing a bare cross reference with its own character's id would turn it into a reference to a bone that character does not have, or worse, one it has under the same name",
+    );
+    const reqBare = join(dir, 'req-bare.json');
+    const reqPrefixed = join(dir, 'req-prefixed.json');
+    writeRequirements(reqBare, { requirements: [{ name: 'SWAY', kind: 'range', animation: 'idle', bone: 'body', lo_degrees: -1, hi_degrees: 1 }] });
+    writeRequirements(reqPrefixed, { requirements: [{ name: 'SWAY', kind: 'range', animation: 'idle', bone: 'plain:body', lo_degrees: -1, hi_degrees: 1 }, { name: 'REACH', kind: 'follow', animation: 'idle', constraint: 'reach:reach', constraint_type: 'ik', bone: 'reach:hem0', property: 'rotate', fraction: 1, tolerance: 1, least_drive: 1 }] });
+    const reqB = compose(two(), reqBare);
+    const reqP = compose(two(), reqPrefixed);
+    say(
+      'SC09_A_REQUIREMENT_NAMING_A_BONE_WITHOUT_ITS_PREFIX_IS_REFUSED_AND_THE_PREFIXED_ONE_IS_NOT',
+      has(reqB.err, 'SCENE_NAME_PREFIXED', '"plain:body" or "reach:body"') && reqP.err === null,
+      `range on "body" -> ${codes(reqB.err)}; on "plain:body", and a follow of "reach:reach" on "reach:hem0" -> ${reqP.err === null ? 'composes' : codes(reqP.err)}`,
+      'issue #74 §3: --requirements can name a:bone and b:bone (#93); a bare name both characters hold could mean either, so it is refused naming both rather than resolved to one',
+    );
+    const shortPlate = compose(two({ plate: { image: 'plate-short.png', provenance: 'generated' } }));
+    const noPlate = compose(two({ plate: { image: 'nowhere.png', provenance: 'unknown' } }));
+    say(
+      'SC10_A_PLATE_NOT_THE_CANVAS_SIZE_OR_NOT_ON_DISK_IS_REFUSED',
+      has(shortPlate.err, 'SCENE_PLATE_SIZE', 'is 100x59; the canvas\'s size, 100x60') && has(noPlate.err, 'SCENE_PLATE_PRESENT', 'nowhere.png'),
+      `${codes(shortPlate.err)}; ${codes(noPlate.err)}`,
+      'issue #74 §2: the plate is drawn at canvas (0, 0) and never scaled, so its size is the canvas or it is not the plate',
+    );
+    writeSceneBuild(join(dir, 'short'), 'reach', { motion: (m) => ((m.animations as { idle: { duration: number } }).idle.duration = 2) });
+    const durations = compose(two({ characters: [{ id: 'plain', build: 'plain', offset: [0, 20] }, { id: 'reach', build: 'short', offset: [50, 10] }] }));
+    say(
+      'SC11_IDLES_OF_DIFFERENT_DURATIONS_ARE_REFUSED_NAMING_EACH',
+      has(durations.err, 'SCENE_DURATION_AGREES', '"plain" 4 s, "reach" 2 s'),
+      codes(durations.err),
+      'issue #74 §3: one idle holds every character\'s tracks; a shorter idle would hold or wrap at a time its author did not write',
+    );
+    writeSceneBuild(join(dir, 'odd'), 'reach', { rig: (r) => ((r.bones as Array<Record<string, unknown>>)[1].scaleX = 2), motion: (m) => (m.physics = {}) });
+    const odd = compose(two({ characters: [{ id: 'plain', build: 'plain', offset: [0, 20] }, { id: 'reach', build: 'odd', offset: [50, 10] }] }));
+    say(
+      'SC12_A_KEY_IN_A_BUILDS_RIG_OR_MOTION_COMPOSE_DOES_NOT_KNOW_IS_REFUSED',
+      has(odd.err, 'SCENE_BUILD_FIELD_KNOWN', 'bones[1].scaleX') && has(odd.err, 'SCENE_BUILD_FIELD_KNOWN', 'motion.json.physics'),
+      codes(odd.err),
+      'a key nobody prefixes could name a bone of the wrong character after composition; compose reads what build writes, and a rig written by something else is check\'s to measure (#77), not compose\'s to merge',
+    );
+    // "x" with an image "y.cloth.png" and "x.y" with "cloth.png" both compose to "x.y.cloth.png".
+    writeSceneBuild(join(dir, 'dotted'), 'plain', { rig: (r) => (((r.skins as { default: Record<string, Record<string, { image: string }>> }).default.cloth.cloth.image = 'y.cloth.png')) });
+    cpSync(join(dir, 'dotted', 'rig', 'images', 'cloth.png'), join(dir, 'dotted', 'rig', 'images', 'y.cloth.png'));
+    const clash = compose(two({ characters: [{ id: 'x', build: 'dotted', offset: [0, 20] }, { id: 'x.y', build: 'plain', offset: [50, 10] }], order: ['x', 'x.y'] }));
+    say(
+      'SC13_TWO_IMAGES_THAT_COMPOSE_TO_ONE_FILE_NAME_ARE_REFUSED',
+      has(clash.err, 'SCENE_IMAGE_NAME_FREE', '"x.y.cloth.png"'),
+      codes(clash.err),
+      "spine-rigc names an atlas region by its PNG's basename and refuses a repeat; an image is <id>.<file> because a region name cannot hold \":\", and the one collision that rule allows is named rather than aliased",
+    );
+    const many = compose(two({ plate: { image: 'plate-short.png', provenance: 'generated' }, characters: [{ id: 'plain', build: 'plain', offset: [75, 20] }, { id: 'reach', build: 'quarter', offset: [50, 10] }, { id: 'reach2', build: 'short', offset: [50, 10] }], order: ['plain', 'reach', 'nobody'] }));
+    const manyCodes = ['SCENE_PLATE_SIZE', 'SCENE_RIG_SCALE_AGREES', 'SCENE_DURATION_AGREES', 'SCENE_CHARACTER_INSIDE_CANVAS', 'SCENE_ORDER_RESOLVES', 'SCENE_ORDER_COMPLETE'];
+    say(
+      'SC14_EVERY_PROBLEM_OF_ONE_SCENE_IS_NAMED_IN_ONE_REFUSAL',
+      manyCodes.every((c) => has(many.err, c)),
+      `${many.err?.problems.length ?? 0} problem(s): ${many.err?.problems.map((p) => p.code).join(', ') ?? 'none'}`,
+      'issue #74 §2, last sentence: every problem is collected and refused at once',
+    );
+
+    // ---- what is composed ------------------------------------------------------
+    const order = ['plain:cloth', 'reach:cloth', 'plain', 'reach'];
+    const inter = compose(two({ order }));
+    const C = inter.ok as ComposedScene | null;
+    const left = C === null ? ['not composed'] : unprefixedNames(C.rig, C.motion, ['plain', 'reach'], true);
+    const planted = C === null ? [] : unprefixedNames({ ...C.rig, skins: { default: { ...C.rig.skins.default, 'reach:cloth': { 'reach:cloth': { ...(C.rig.skins.default['reach:cloth']['reach:cloth'] as MeshAttachment), weights: [[{ bone: 'hem0', x: 0, y: 0, weight: 1 }]] } } } } }, { ...C.motion, groups: { ...C.motion.groups, 'reach:eyes': ['eye'] } }, ['plain', 'reach'], true);
+    const kinds = C === null ? '' : `${C.rig.bones.length} bones, ${C.rig.slots.length} slots, ${(C.rig.constraints ?? []).length} constraint(s), ${(C.rig.invariants?.detached ?? []).length} detached rule(s), ${Object.keys(C.motion.groups).length} group(s), ${Object.keys(C.motion.easings).length} easing(s), ${C.motion.animations.idle.tracks.length} track(s)`;
+    say(
+      'SC15_EVERY_NAME_THE_COMPOSED_RIG_HOLDS_IS_PREFIXED_BUT_ROOT_AND_THE_PLATE',
+      C !== null && left.length === 0 && planted.some((l) => l.includes('weight bone "hem0"')) && planted.some((l) => l.includes('group reach:eyes member "eye"')) && C.rig.invariants?.idleDrivesMeshes !== undefined,
+      `${kinds}: unprefixed ${left.length === 0 ? 'none' : left.join('; ')}; planted, a weight on bare "hem0" and a group member bare "eye" -> ${planted.join('; ') || 'not named'}`,
+      'prefixing is total: bones, slots, attachments, weights, constraints and their bones, invariants.detached, groups, easings and every track — the grep is unprefixedNames over the composed values, the same one the public scenes run over the written rig.json',
+    );
+    const slotsInter = C === null ? [] : C.rig.slots.map((s) => s.name);
+    say(
+      'SC16_THE_DECLARED_SLOT_IS_DRAWN_BETWEEN_THE_OTHER_CHARACTERS_SLOTS_BY_INDEX',
+      slotsInter.indexOf('plain:cloth') === 1 && slotsInter.indexOf('reach:cloth') === 2 && slotsInter.indexOf('plain:eye') === 3 && slotsInter.indexOf('reach:eye') === 4 && slotsInter[0] === PLATE,
+      `order ${JSON.stringify(order)} -> ${slotsInter.map((s, i) => `${i} ${s}`).join(', ')}`,
+      'issue #74: interleaving is expressed by naming slots — reach\'s first mesh slot, cloth, sits between plain\'s first and second slots; a single z per character could not say this',
+    );
+    // By hand (fixtures/rig.ts: a 40x40 rig, root at its bottom centre, body at rig (20, 30) = Spine (0, 10); the scene target tgt at rig (26, 20) = (6, 20)).
+    // Canvas 100x60, Spine origin at canvas (50, 60). plain at [0, 20]: its root, rig (20, 40), lands on canvas (20, 60) = Spine (-30, 0).
+    // reach at [50, 10]: its root lands on canvas (70, 50) = Spine (20, 10). So plain:body (-30, 10), reach:body (20, 20), reach:tgt (26, 30).
+    const want: Record<string, [number, number]> = { 'plain:body': [-30, 10], 'reach:body': [20, 20], 'reach:tgt': [26, 30] };
+    const original = new Map<string, { x: number; y: number }>();
+    for (const [id, kind] of [['plain', 'plain'], ['reach', 'reach']] as const) for (const b of sceneCharacterRig(kind).rig.bones) original.set(`${id}:${b.name}`, b);
+    const offWant = (rig: RigSpec): string[] =>
+      rig.bones.flatMap((b) => {
+        if (b.name === 'root' || b.name === PLATE) return [];
+        const w = want[b.name];
+        if (w !== undefined) return b.x === w[0] && b.y === w[1] ? [] : [`${b.name} (${b.x}, ${b.y}) not (${w[0]}, ${w[1]})`];
+        const o = original.get(b.name);
+        return o !== undefined && o.x === b.x && o.y === b.y ? [] : [`${b.name} (${b.x}, ${b.y}) moved from (${o?.x}, ${o?.y})`];
+      });
+    const offsetMiss = C === null ? ['not composed'] : offWant(C.rig);
+    const twice = C === null ? [] : offWant({ ...C.rig, bones: C.rig.bones.map((b) => (b.name === 'reach:hem0_ctl' ? b : b.parent === 'reach:body' ? { ...b, x: b.x + 20, y: b.y + 10 } : b)) });
+    const firstLevel = C === null ? [] : C.rig.bones.filter((b) => b.parent === 'root').map((b) => b.name);
+    say(
+      'SC17_THE_OFFSET_MOVES_ONLY_THE_FIRST_LEVEL_BONES_BY_THE_HAND_COMPUTED_SHIFT',
+      C !== null && offsetMiss.length === 0 && twice.length > 0 && C.report.characters.map((c) => c.shift.join(',')).join(' ') === '-30,0 20,10',
+      `first-level ${firstLevel.join(', ')}: ${offsetMiss.length === 0 ? 'plain:body (-30, 10), reach:body (20, 20), reach:tgt (26, 30) as computed, every other bone as its build wrote it' : offsetMiss.join('; ')}; scene.json shifts ${C?.report.characters.map((c) => `${c.id} [${c.shift.join(', ')}]`).join(', ')}; planted, the shift applied again under reach:body -> ${twice.join('; ') || 'not named'}`,
+      'issue #74 §1 and §3: the offset is a translation applied at each character\'s first-level bones (and, SC23, at whatever else sits in root\'s own frame) and nowhere else — every other offset, weight bind and region is local to a bone it already moved, so adding it there too would move the character twice',
+    );
+    const plateSkin = C === null ? undefined : (C.rig.skins.default[PLATE]?.[PLATE] as RegionAttachment | undefined);
+    const plateBone = C?.rig.bones.find((b) => b.name === PLATE);
+    const plateBytes = C?.images.find(([f]) => f === PLATE_IMAGE)?.[1];
+    say(
+      'SC18_THE_PLATE_IS_THE_FIRST_SLOT_ON_ITS_BONE_UNDER_ROOT_ITS_IMAGE_AT_THE_CANVAS_ORIGIN',
+      C !== null &&
+        C.rig.slots[0]?.name === PLATE &&
+        C.rig.slots[0]?.bone === PLATE &&
+        plateBone?.parent === 'root' &&
+        plateBone.x === 0 &&
+        plateBone.y === 0 &&
+        plateSkin?.image === PLATE_IMAGE &&
+        plateSkin.x === 0 &&
+        plateSkin.y === 30 &&
+        plateBytes !== undefined &&
+        Buffer.from(plateBytes).equals(readFileSync(join(dir, 'plate.png'))) &&
+        C.report.plate?.provenance === 'generated' &&
+        C.report.plate.judged_by === 'nothing',
+      `slot 0 ${C?.rig.slots[0]?.name} on bone ${plateBone?.name} (parent ${plateBone?.parent}, ${plateBone?.x}, ${plateBone?.y}); region ${JSON.stringify(plateSkin)}; image bytes the file's: ${plateBytes !== undefined && Buffer.from(plateBytes).equals(readFileSync(join(dir, 'plate.png')))}; scene.json plate ${JSON.stringify(C?.report.plate)}`,
+      'issue #74 §1: a 100x60 image centred at canvas (50, 30) is at canvas (0, 0); in Spine axes that centre is (0, 30), by hand — and the provenance is copied, never judged',
+    );
+    // Root's own frame (issue #74 as built: both public examples' shoes ride root). The plain build with its eye region
+    // moved onto root at its own place — the eye's centre, rig (18, 27), is Spine (-2, 13) on the 40x40 stage — and the
+    // cloth's first vertex bound to root alone at (1, 2). plain's shift on the 100x60 canvas is (-30, 0) (SC17), so by
+    // hand the eye region composes to (-32, 13) and that bind to (-29, 2); the fixture's other weights are all on the
+    // hem links, which the shift moves as bones.
+    writeSceneBuild(join(dir, 'rooted'), 'plain', {
+      rig: (r) => {
+        const slots = r.slots as Array<{ name: string; bone: string }>;
+        (slots.find((x) => x.name === 'eye') as { bone: string }).bone = 'root';
+        const skins = (r.skins as { default: Record<string, Record<string, Record<string, unknown>>> }).default;
+        skins.eye.eye = { image: 'eye.png', x: -2, y: 13 };
+        (skins.cloth.cloth.weights as unknown[])[0] = [{ bone: 'root', x: 1, y: 2, weight: 1 }];
+      },
+    });
+    const rooted = compose(two({ characters: [{ id: 'plain', build: 'rooted', offset: [0, 20] }, { id: 'reach', build: 'reach', offset: [50, 10] }] }));
+    const R = rooted.ok as ComposedScene | null;
+    const eyeAt = R === null ? null : (R.rig.skins.default['plain:eye']?.['plain:eye'] as RegionAttachment | undefined);
+    const bind = R === null ? null : (R.rig.skins.default['plain:cloth']?.['plain:cloth'] as MeshAttachment | undefined)?.weights[0];
+    const otherBinds = R === null ? [] : ((R.rig.skins.default['plain:cloth']?.['plain:cloth'] as MeshAttachment | undefined)?.weights.slice(1).flat() ?? []);
+    const plainRow = R?.report.characters.find((c) => c.id === 'plain');
+    say(
+      'SC23_A_REGION_ON_ROOT_AND_A_WEIGHT_BOUND_TO_ROOT_MOVE_WITH_THEIR_CHARACTER',
+      eyeAt?.x === -32 && eyeAt.y === 13 && bind?.length === 1 && bind[0].bone === 'root' && bind[0].x === -29 && bind[0].y === 2 && otherBinds.every((w) => w.bone !== 'root') && JSON.stringify(plainRow?.shifted) === JSON.stringify({ bones: ['plain:body'], root_regions: ['plain:eye'], root_weights: 1 }),
+      `the eye region on root at (-2, 13) -> ${JSON.stringify(eyeAt)}; the bind on root at (1, 2) -> ${JSON.stringify(bind)}; scene.json shifted ${JSON.stringify(plainRow?.shifted)}`,
+      "the root is shared, so whatever a character places in root's own frame — not only its first-level bones — sits at the character's place only if the shift is added to it too; found on the public examples, whose shoes ride root and were left at the canvas centre by a shift applied to bones alone, with rigc's gate green",
+    );
+    writeSceneBuild(join(dir, 'rootkeyed'), 'plain', { motion: (m) => (m.animations as { idle: { tracks: Array<Record<string, unknown>> } }).idle.tracks.push({ bone: 'root', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 4, v: [0] }] }) });
+    writeSceneBuild(join(dir, 'rootik'), 'reach', { rig: (r) => (((r.constraints as Array<Record<string, unknown>>)[0].target = 'root')) });
+    const shared = compose(two({ characters: [{ id: 'plain', build: 'rootkeyed', offset: [0, 20] }, { id: 'reach', build: 'rootik', offset: [50, 10] }] }));
+    say(
+      'SC24_A_CHARACTER_THAT_KEYS_OR_CONSTRAINS_THE_SHARED_ROOT_IS_REFUSED',
+      has(shared.err, 'SCENE_ROOT_SHARED', 'character "plain" motion.json') && has(shared.err, 'SCENE_ROOT_SHARED', 'character "reach" rig.json constraints[0]') && good.err === null,
+      codes(shared.err),
+      "one root holds every character, so a key on it, or an ik following it, would move or reach them all; the scene refuses rather than give one character the root",
+    );
+    // A one-character scene at its own stage: canvas 40x40, offset (0, 0), no plate.
+    const solo: string[] = [];
+    for (const kind of ['plain', 'reach'] as const) {
+      const S = compose({ canvas: { width: 40, height: 40 }, characters: [{ id: kind, build: kind, offset: [0, 0] }], order: [kind] }).ok as ComposedScene | null;
+      const name = sceneCharacterRig(kind).rig.name;
+      for (const f of ['rig.json', 'motion.json'] as const) {
+        const want = readFileSync(join(dir, kind, 'rig', f), 'utf8');
+        const got = S === null ? '' : rigJsonText(sceneUnrenamed(f === 'rig.json' ? S.rig : S.motion, kind, name, false));
+        if (want !== got) solo.push(`${kind} ${f}: ${firstLineDiff(want, got) ?? 'differs'}`);
+      }
+    }
+    const nudged = compose({ canvas: { width: 40, height: 40 }, characters: [{ id: 'plain', build: 'plain', offset: [1, 0] }], order: ['plain'] }).ok as ComposedScene | null;
+    const nudgedDiff = nudged === null ? 'not composed' : firstLineDiff(readFileSync(join(plain, 'rig', 'rig.json'), 'utf8'), rigJsonText(sceneUnrenamed(nudged.rig, 'plain', 'fixture_painting', false)));
+    say(
+      'SC19_ONE_CHARACTER_AT_ITS_OWN_STAGE_COMPOSES_TO_ITS_OWN_RIG_AND_MOTION_RENAMED_ONLY',
+      solo.length === 0 && nudgedDiff !== null && nudgedDiff.includes('built "   \\"x\\": 1,"'),
+      `plain and reach (constraints, invariants, direct idle keys) alone: rig.json and motion.json ${solo.length === 0 ? 'byte-identical to the build\'s once <id>: and <id>. are taken off' : solo.join('; ')}; planted, offset (1, 0): ${nudgedDiff ?? 'IDENTICAL, so the comparison sees nothing'}`,
+      'issue #74 §4: a scene of one character at (0, 0) and no plate composes to that character\'s own build outputs renamed only; the public examples hold the same through the gate and the render (the chain suite)',
+    );
+
+    // ---- through the gate --------------------------------------------------------
+    const out = join(dir, 'composed');
+    const sceneFile = scene(two({ order }));
+    const run = runCli(['compose', '--scene', sceneFile, '--out', out]);
+    const written = ['rig/rig.json', 'rig/motion.json', `rig/images/${PLATE_IMAGE}`, 'rig/images/plain.cloth.png', SCENE_REPORT_FILE, 'check/check.json', 'check/build/skeleton.json'].filter((f) => !existsSync(join(out, f)));
+    const compiled = compiledSlots(join(out, 'check', 'build'));
+    const report = readJsonFile(join(out, SCENE_REPORT_FILE));
+    const writtenRig = existsSync(join(out, 'rig', 'rig.json')) ? (readJsonAt(join(out, 'rig', 'rig.json')) as RigSpec) : null;
+    const writtenLeft = writtenRig === null ? ['no rig.json'] : unprefixedNames(writtenRig, readJsonAt(join(out, 'rig', 'motion.json')) as MotionSpec, ['plain', 'reach'], true);
+    say(
+      'SC20_THE_COMPOSED_SCENE_GATES_GREEN_THROUGH_RIGC_AND_ITS_CHECK_REPORTS_EVERY_BAR',
+      run.status === 0 && written.length === 0 && compiled.join(',') === 'plate,plain:cloth,reach:cloth,plain:eye,reach:eye' && (report?.order as { slots?: string[] } | undefined)?.slots?.join(',') === compiled.join(',') && (report?.plate as { provenance?: string } | undefined)?.provenance === 'generated' && writtenLeft.length === 0 && run.out.includes('[compose]   rigc build --profile spine-html --pack'),
+      `exit ${run.status}; missing ${written.length === 0 ? 'none' : written.join(', ')}; the compiled skeleton draws ${compiled.join(', ')}; written rig.json unprefixed: ${writtenLeft.length === 0 ? 'none' : writtenLeft.join('; ')}; ${sceneBarLines(run.out, join(out, 'check'))}`,
+      'issue #74 §3: the same path build uses — rigc\'s gate on the compile and on the packed pages, emit only after green — then check over a rig it did not build (#77); the order is read off the compiled skeleton, where rigc put it, not off what compose meant',
+    );
+    writeSceneBuild(join(dir, 'ungated'), 'reach', { rig: (r) => ((r.slots as Array<Record<string, unknown>>)[0].attachment = 'ghost') });
+    const redOut = join(dir, 'composed-red');
+    const red = runCli(['compose', '--scene', scene(two({ characters: [{ id: 'plain', build: 'plain', offset: [0, 20] }, { id: 'reach', build: 'ungated', offset: [50, 10] }] })), '--out', redOut]);
+    say(
+      'SC21_A_SCENE_RIGC_REFUSES_EXITS_1_AND_WRITES_NOTHING',
+      red.status === 1 && composeFail(red.out, 'COMPOSE_RIGC_GREEN') !== null && !existsSync(join(redOut, 'rig')) && !existsSync(join(redOut, SCENE_REPORT_FILE)) && !existsSync(join(redOut, 'check')),
+      `the reach build's first slot set up with an attachment "ghost" its skin does not hold (compose prefixes it and does not judge it) -> exit ${red.status}; ${(composeFail(red.out, 'COMPOSE_RIGC_GREEN') ?? lastLines(red.out, 2).join(' | ')).slice(0, 220)}; rig/ ${existsSync(join(redOut, 'rig'))}, scene.json ${existsSync(join(redOut, SCENE_REPORT_FILE))}, check/ ${existsSync(join(redOut, 'check'))}`,
+      'emit only after green: a field compose does not judge is rigc\'s, refused in rigc\'s words, and nothing is written beside the refusal',
+    );
+    const noScene = runCli(['compose', '--out', join(dir, 'x')]);
+    const twiceFlag = runCli(['compose', '--scene', sceneFile, '--scene', sceneFile, '--out', join(dir, 'x')]);
+    const refusedOut = join(dir, 'composed-refused');
+    const refused = runCli(['compose', '--scene', scene(two({ order: ['plain'] })), '--out', refusedOut]);
+    const help = runCli(['--help']).out;
+    const helpWords = ['spine-parts compose --scene <scene.json> --out <dir> [--requirements <file.json>]', SCENE_SPEC, 'judged by nothing', 'not a person', '"<id>:<name>"', "root's own frame", 'whose idle keys it'];
+    say(
+      'SC22_COMPOSE_EXITS_2_ON_USAGE_1_ON_A_REFUSAL_AND_THE_HELP_NAMES_IT',
+      noScene.status === 2 && twiceFlag.status === 2 && refused.status === 1 && composeFail(refused.out, 'SCENE_ORDER_COMPLETE') !== null && !existsSync(join(refusedOut, 'rig')) && helpWords.every((w) => help.includes(w)),
+      `no --scene: exit ${noScene.status} ${failLine(noScene.out, 'USAGE') ?? ''}; --scene twice: exit ${twiceFlag.status}; a scene missing reach's slots: exit ${refused.status}, ${composeFail(refused.out, 'SCENE_ORDER_COMPLETE')?.slice(0, 100) ?? 'no line'}, rig/ written ${existsSync(join(refusedOut, 'rig'))}; help: ${helpWords.map((w) => `${JSON.stringify(w.slice(0, 30))} ${help.includes(w)}`).join(', ')}`,
+      'the messages are the UI and exit codes are part of it: 2 usage, 1 refused (every FAIL line printed), as every other command',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return bad();
+}
+
+/**
+ * Issue #74 §4 on the public examples, from the chain suite's own green
+ * builds (none is built twice): demo and sample side by side on one canvas
+ * with a generated flat plate and a requirements file naming both characters'
+ * bones; sample's first mesh slot drawn between demo's first two slots; and
+ * each example alone at its own stage, which must compose to its build
+ * renamed only. Every compose runs the real gate and the real check.
+ */
+function runPublicScenes(green: ReadonlyMap<string, string>, dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const demo = green.get('demo');
+  const sample = green.get('sample');
+  if (demo === undefined || sample === undefined) {
+    say('SC30_DEMO_AND_SAMPLE_SIDE_BY_SIDE_WITH_A_GENERATED_PLATE_GATE_GREEN_AND_CHECK', false, `green builds: ${[...green.keys()].join(', ') || 'none'}; demo and sample are both required`, 'the chain ran, so both public examples were fetched and must have built green');
+    return;
+  }
+  const sd = join(dir, 'scenes');
+  mkdirSync(sd, { recursive: true });
+  const [W, H] = readParts(join(demo, 'parts.json')).rig_size;
+  const [W2, H2] = readParts(join(sample, 'parts.json')).rig_size;
+  writeFlatPlate(join(sd, 'plate.png'), W + W2, Math.max(H, H2), [96, 112, 128]);
+  const sceneAt = (name: string, body: Record<string, unknown>): string => {
+    writeFileSync(join(sd, `${name}.json`), sceneText(body));
+    return join(sd, `${name}.json`);
+  };
+  // The requirement bars are each example config's own first chain amplitude (degrees), widened by 0.5 degrees for
+  // the bezier between keys: read from config.json, the input, never from a run.
+  const firstChain = (key: string): { chain: string; amp: number } => {
+    const cfg = readJsonAt(join(ROOT, 'examples', key, 'config.json')) as { motion: { tracks: Array<{ chain?: string; amps?: number[] }> } };
+    const t = cfg.motion.tracks.find((x) => x.chain !== undefined && x.amps !== undefined) as { chain: string; amps: number[] };
+    return { chain: t.chain, amp: Math.abs(t.amps[0]) };
+  };
+  const keyed = (build: string, chain: string): string => ((readJsonAt(join(build, 'rig', 'rig.json')) as RigSpec).bones.some((b) => b.name === `${chain}0${CONTROL_SUFFIX}`) ? `${chain}0${CONTROL_SUFFIX}` : `${chain}0`);
+  const reqs = [['demo', demo], ['sample', sample]].map(([key, build]) => {
+    const { chain, amp } = firstChain(key);
+    return { name: `${key.toUpperCase()}_SWAY`, kind: 'range', animation: 'idle', bone: `${key}:${keyed(build, chain)}`, lo_degrees: -(amp + 0.5), hi_degrees: amp + 0.5 };
+  });
+  const reqFile = join(sd, 'requirements.json');
+  writeFileSync(reqFile, `${JSON.stringify({ spec: 'spine-parts-requirements/1', fps: IDLE_FPS, requirements: reqs }, null, 1)}\n`);
+
+  const sideOut = join(sd, 'side');
+  const side = runCli(['compose', '--scene', sceneAt('side', { canvas: { width: W + W2, height: Math.max(H, H2) }, plate: { image: 'plate.png', provenance: 'generated', note: 'a flat colour generated by the selftest' }, characters: [{ id: 'demo', build: demo, offset: [0, 0] }, { id: 'sample', build: sample, offset: [W, 0] }], order: ['demo', 'sample'] }), '--out', sideOut, '--requirements', reqFile]);
+  const sideRig = existsSync(join(sideOut, 'rig', 'rig.json')) ? (readJsonAt(join(sideOut, 'rig', 'rig.json')) as RigSpec) : null;
+  const sideLeft = sideRig === null ? ['no rig.json'] : unprefixedNames(sideRig, readJsonAt(join(sideOut, 'rig', 'motion.json')) as MotionSpec, ['demo', 'sample'], true);
+  const sideSlots = compiledSlots(join(sideOut, 'check', 'build'));
+  // By hand: the canvas is W + W2 wide, so its Spine origin is at canvas x (W + W2) / 2. demo's root (its stage's bottom
+  // centre, canvas x W / 2) lands W2 / 2 left of it, sample's (canvas x W + W2 / 2) W / 2 right of it; both stages are
+  // the canvas's height, so y does not move. A region on root moves by that much and nothing else does.
+  const handShift: Record<string, [number, number]> = { demo: [-W2 / 2, 0], sample: [W / 2, 0] };
+  const rootRegions: string[] = [];
+  const rootMiss: string[] = [];
+  for (const [key, build] of [['demo', demo], ['sample', sample]] as const) {
+    const own = readJsonAt(join(build, 'rig', 'rig.json')) as RigSpec;
+    for (const sl of own.slots.filter((x) => x.bone === 'root')) {
+      const a = own.skins.default[sl.name]?.[sl.attachment] as RegionAttachment | undefined;
+      const c = sideRig?.skins.default[`${key}:${sl.name}`]?.[`${key}:${sl.attachment}`] as RegionAttachment | undefined;
+      if (a === undefined || 'weights' in a) continue;
+      rootRegions.push(`${key}:${sl.name}`);
+      if (c?.x !== a.x + handShift[key][0] || c.y !== a.y + handShift[key][1]) rootMiss.push(`${key}:${sl.name} (${c?.x}, ${c?.y}) for (${a.x + handShift[key][0]}, ${a.y + handShift[key][1]})`);
+    }
+  }
+  const demoSlots = (readJsonAt(join(demo, 'rig', 'rig.json')) as RigSpec).slots.map((s) => `demo:${s.name}`);
+  const sampleSlots = (readJsonAt(join(sample, 'rig', 'rig.json')) as RigSpec).slots.map((s) => `sample:${s.name}`);
+  say(
+    'SC30_DEMO_AND_SAMPLE_SIDE_BY_SIDE_WITH_A_GENERATED_PLATE_GATE_GREEN_AND_CHECK',
+    side.status === 0 && sideLeft.length === 0 && sideSlots.join(',') === [PLATE, ...demoSlots, ...sampleSlots].join(',') && rootMiss.length === 0 && rootRegions.length > 0,
+    `canvas ${W + W2}x${Math.max(H, H2)}, sample at [${W}, 0]: exit ${side.status}; regions on root ${rootRegions.join(', ') || 'none'} moved by the hand shift ${rootMiss.length === 0 ? '(demo -W2/2 = ' + String(-W2 / 2) + ', sample W/2 = ' + String(W / 2) + ')' : rootMiss.join('; ')}; ${side.out.split('\n').filter((l) => /rigc build --profile|assertions: /.test(l) && l.startsWith('[compose]')).map((l) => l.replace('[compose]', '').trim()).join(' | ')}; ${sideSlots.length} slot(s), the plate first; unprefixed ${sideLeft.length === 0 ? 'none' : sideLeft.slice(0, 3).join('; ')}; ${sceneBarLines(side.out, join(sideOut, 'check'))}`,
+    "issue #74 §4: two published characters bound into one rig on one canvas with a generated plate (provenance generated) — rigc's gate on both its runs, and check's every bar measured or named SKIP with its reason (without a parts.json the bars that read See-through tags have nothing to read)",
+  );
+  const reqLines = side.out.split('\n').filter((l) => /^\[check\] {3}(DEMO|SAMPLE)_SWAY: /.test(l)).map((l) => l.replace('[check]', '').trim().slice(0, 200));
+  say(
+    'SC31_A_REQUIREMENTS_FILE_NAMING_BOTH_CHARACTERS_BONES_IS_MEASURED_THROUGH_THE_COMPOSED_RIG',
+    reqLines.length === 2 && reqLines.every((l) => / PASS — /.test(l)),
+    `${reqs.map((r) => `${r.name} on ${r.bone} within [${r.lo_degrees}, ${r.hi_degrees}]`).join('; ')} -> ${reqLines.join(' | ') || 'no requirement lines'}`,
+    "issue #74 §3 and §4: --requirements names a:bone and b:bone (#93); each bar is its config's first chain amplitude plus half a degree, read from the input, so the measurement and not a copied figure decides",
+  );
+
+  const meshSlot = (build: string): string => {
+    const r = readJsonAt(join(build, 'rig', 'rig.json')) as RigSpec;
+    return r.slots.find((s) => 'type' in (r.skins.default[s.name]?.[s.attachment] ?? {}))?.name ?? '';
+  };
+  const firstMesh = meshSlot(sample);
+  const demoFirst = demoSlots[0].slice('demo:'.length);
+  const interOut = join(sd, 'interleaved');
+  const inter = runCli(['compose', '--scene', sceneAt('interleaved', { canvas: { width: W + W2 / 2, height: Math.max(H, H2) }, characters: [{ id: 'demo', build: demo, offset: [0, 0] }, { id: 'sample', build: sample, offset: [W2 / 2, 0] }], order: [`demo:${demoFirst}`, `sample:${firstMesh}`, 'demo', 'sample'] }), '--out', interOut]);
+  const interSlots = compiledSlots(join(interOut, 'check', 'build'));
+  const at = interSlots.indexOf(`sample:${firstMesh}`);
+  say(
+    'SC32_SAMPLES_FIRST_MESH_SLOT_DRAWN_BETWEEN_DEMOS_FIRST_TWO_SLOTS_GATES_GREEN',
+    inter.status === 0 && at === 1 && interSlots[0] === demoSlots[0] && interSlots[2] === demoSlots[1] && interSlots.length === demoSlots.length + sampleSlots.length,
+    `the rule: sample's first mesh slot ("${firstMesh}") between demo's first two ("${demoSlots[0]}", "${demoSlots[1]}"), overlapping by ${W2 / 2} px; exit ${inter.status}; compiled slots 0..3: ${interSlots.slice(0, 4).join(', ')} (of ${interSlots.length}); ${sceneBarLines(inter.out, join(interOut, 'check'))}`,
+    'issue #74 §4: one declared slot of one character drawn between the other\'s, read off the compiled skeleton by index; the slot is chosen by a stated rule, not by looking at the art',
+  );
+
+  const identities: Array<[string, string[]]> = [];
+  for (const [key, build] of [['demo', demo], ['sample', sample]] as const) {
+    const [w, h] = readParts(join(build, 'parts.json')).rig_size;
+    const o = join(sd, `${key}-alone`);
+    const r = runCli(['compose', '--scene', sceneAt(`${key}-alone`, { canvas: { width: w, height: h }, characters: [{ id: key, build, offset: [0, 0] }], order: [key] }), '--out', o]);
+    const diffs = r.status === 0 ? sceneIdentityDiffs(build, o, key) : [`exit ${r.status}: ${lastLines(r.out, 2).join(' | ')}`];
+    identities.push([key, diffs]);
+    say(
+      `SC33_ONE_EXAMPLE_AT_ITS_OWN_STAGE_COMPOSES_TO_ITS_BUILD_RENAMED_ONLY[${key}]`,
+      r.status === 0 && diffs.length === 0,
+      diffs.length === 0
+        ? `exit 0; rig.json, motion.json, ${readdirSync(join(build, 'rig', 'images')).length} image(s), the atlas, the packed page and every idle frame byte-identical once ${key}: and ${key}. are taken off; skeleton.json and ${RIGC_MODEL_DOCUMENT} equal as values but for the "path" Spine writes where an attachment's name ("${key}:x") is not its region's ("${key}.x"), and the model's spine.sha256, each side's the sha256 of its own skeleton.json`
+        : diffs.slice(0, 4).join(' | '),
+      'issue #74 §4: a scene of one character at (0, 0) and no plate composes to that character\'s own build outputs renamed only — no number moves, and the render is the build\'s to the byte',
+    );
+  }
+  // The comparator, planted: a composed copy with one weight nudged and one page byte flipped is named twice; another example's build is named.
+  const demoAlone = join(sd, 'demo-alone');
+  const nudged = join(sd, 'demo-alone-nudged');
+  let plantedDiffs: string[] = [];
+  let crossDiffs: string[] = [];
+  if (existsSync(join(demoAlone, 'rig', 'rig.json'))) {
+    cpSync(demoAlone, nudged, { recursive: true });
+    const rigText = readFileSync(join(nudged, 'rig', 'rig.json'), 'utf8');
+    writeFileSync(join(nudged, 'rig', 'rig.json'), rigText.replace(/"weight": 0\.(\d)/, (_, d: string) => `"weight": 0.${(Number(d) + 1) % 10}`));
+    const page = readdirSync(join(nudged, 'check', 'build')).find((f) => f.endsWith('.png')) as string;
+    const bytes = readFileSync(join(nudged, 'check', 'build', page));
+    bytes[bytes.length - 20] ^= 1;
+    writeFileSync(join(nudged, 'check', 'build', page), bytes);
+    plantedDiffs = sceneIdentityDiffs(demo, nudged, 'demo');
+    crossDiffs = sceneIdentityDiffs(sample, demoAlone, 'demo');
+  }
+  say(
+    'SC34_THE_IDENTITY_COMPARATOR_NAMES_A_NUDGED_WEIGHT_A_FLIPPED_PAGE_BYTE_AND_ANOTHER_BUILD',
+    plantedDiffs.some((d) => d.startsWith('rig/rig.json')) && plantedDiffs.some((d) => d.startsWith('page ')) && crossDiffs.length > 0,
+    `nudged copy -> ${plantedDiffs.map((d) => d.slice(0, 60)).join(' | ') || 'nothing named'}; demo alone against sample's build -> ${crossDiffs.length} difference(s)`,
+    'SC33 passes when nothing differs; this is the half that shows a difference would be found',
+  );
+  rmSync(sd, { recursive: true, force: true });
+}
+
 /**
  * Every suite but the tally's own, in the order the run prints them. The
  * workers below run them concurrently; what the run prints, counts and judges
@@ -14853,6 +15440,7 @@ const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number 
   ['prompt', runPromptSuite],
   ['comfy', runComfySuite],
   ['build', runBuildSuite],
+  ['scene', runSceneSuite],
   ['chain', runChainSuite],
   ['readme-loop', runReadmeLoopSuite],
   ['tree', runTreeSuite],
@@ -14875,7 +15463,7 @@ const TALLY_SUITE = 'run-tally';
  * (`dispatchOrder`), because a misspelt name would quietly cost the time it
  * exists to buy.
  */
-const STARTED_FIRST: readonly string[] = ['readme-loop', 'chain', 'build', 'check', 'assemble-examples', 'propose', 'rig'];
+const STARTED_FIRST: readonly string[] = ['readme-loop', 'chain', 'build', 'check', 'scene', 'assemble-examples', 'propose', 'rig'];
 
 /** The argument that makes this file run one suite as a worker, for the parent run, and nothing else. */
 const WORKER_FLAG = '--suite-worker';
@@ -15077,7 +15665,7 @@ async function main(): Promise<void> {
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('contour')} contour-mesh, + ${n('contour-wiring')} contour-wiring, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('contour')} contour-mesh, + ${n('contour-wiring')} contour-wiring, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('scene')} scene, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
