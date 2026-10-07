@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.2](https://github.com/firejune/spine-parts/compare/v0.15.1...v0.15.2) (2026-10-07)
+
+
+### Bug Fixes
+
+* **check:** read STILL_REGIONS_DARK from the posed geometry — the still set keeps its place relative to the head bone to the arithmetic's rounding, and the bangs' swing over the face is reported ([#127](https://github.com/firejune/spine-parts/issues/127)) ([7850291](https://github.com/firejune/spine-parts/commit/7850291c86e088dcbeca6432deb68b4dd8d63bc3)), closes [#123](https://github.com/firejune/spine-parts/issues/123) [#118](https://github.com/firejune/spine-parts/issues/118)
+
 ## [0.15.1](https://github.com/firejune/spine-parts/compare/v0.15.0...v0.15.1) (2026-10-07)
 
 
