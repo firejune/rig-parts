@@ -108,6 +108,15 @@ stage writes are the whole interface.
    last: `check/build/skeleton.json`, `skeleton.atlas` and the packed page. Report
    them with the pack line and the check figures verbatim.
 
+Several characters in one rig: build each one green on its own, then
+`spine-parts compose --scene scene.json --out scene` (spec `spine-parts-scene/1`:
+the canvas, each character's `build` and `offset`, an optional plate with its
+`provenance`, and the `order` of the characters' slots, back to front). You write
+the order and the offsets; nothing infers them, nothing scales a character, and
+nothing detects or separates people. Report the plate's provenance as you declared
+it and the order as `scene.json` records it (AUTHORING §7, *Composing several
+characters*).
+
 `--seam silhouette` repairs more of the seam on white garments than the default
 `near-white` (the demo: 11,050 → 9,540 recomposite error pixels); the default is
 the reference implementation's rule. `--project visible` lets thin visible parts

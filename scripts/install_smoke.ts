@@ -20,7 +20,9 @@
  * the core entry: an install carries no Spine runtime), `layers` on a wrapper
  * directory, `layers` on a PSD, `sheet`, and `check` on a generated two-part
  * rig, which runs every rigc command a build runs — `build --pack`, `render`,
- * `render --geometry`, `render --slot` — through that entry; and the contour
+ * `render --geometry`, `render --slot` — through that entry; `compose` of two
+ * copies of a generated character the installed `check` passed, with a plate
+ * and an interleaved order (issue #74); and the contour
  * mesh (`src/contour.ts`) on a generated block, which reaches spine-rigc's
  * outline functions through the deep path `spine-rigc/src/mesh.ts`.
  *
@@ -176,6 +178,86 @@ writeFileSync(join(DIR, 'parts.json'), serializeParts({
   ghost_px: {},
 }));
 `;
+
+// `compose` from the install (issue #74): the check rig's two soft parts as a character laid out where `build --out`
+// lays one out (`parts.json`, `parts/`, `rig/`), carried by a `body` bone under root — the scene's root is shared, so a
+// character keying root is refused — plus a flat 96x80 plate and a scene placing two copies side by side, ids `a`
+// and `b`, with `b`'s back drawn between `a`'s two slots. The character's own check.json is the installed `check`'s.
+const SCENE_GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { cropToSpineY } from 'spine-parts/src/coords.ts';
+import { serializeParts } from 'spine-parts/src/parts.ts';
+import { encodePngBytes } from 'spine-parts/src/raster/png.ts';
+
+const HOME = fileURLToPath(new URL('.', import.meta.url));
+const DIR = join(HOME, 'scene-character');
+const W = 48;
+const H = 80;
+const PARTS = [
+  { name: 'back', x: 4, y: 0, w: 30, h: 80, rgb: [200, 60, 40] },
+  { name: 'front', x: 18, y: 20, w: 26, h: 40, rgb: [40, 90, 200] },
+];
+const raster = (p) => {
+  const data = new Uint8ClampedArray(p.w * p.h * 4);
+  for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) {
+    const u = (2 * x + 1 - p.w) / p.w;
+    const v = (2 * y + 1 - p.h) / p.h;
+    const a = Math.max(0, Math.min(1, (1 - Math.sqrt(u * u + v * v)) * 3));
+    if (a > 0) data.set([p.rgb[0], Math.round(p.rgb[1] + (60 * y) / p.h), p.rgb[2], Math.round(255 * a)], (y * p.w + x) * 4);
+  }
+  return { width: p.w, height: p.h, data };
+};
+mkdirSync(join(DIR, 'rig', 'images'), { recursive: true });
+mkdirSync(join(DIR, 'parts'), { recursive: true });
+for (const p of PARTS) {
+  writeFileSync(join(DIR, 'rig', 'images', p.name + '.png'), encodePngBytes(raster(p)));
+  writeFileSync(join(DIR, 'parts', p.name + '.png'), encodePngBytes(raster(p)));
+}
+const stage = { x: -W / 2, y: 0, width: W, height: H };
+const rig = {
+  spec: 'rigc-rig/1',
+  name: 'smoke_scene',
+  images: 'images',
+  skeleton: stage,
+  bones: [{ name: 'root', x: 0, y: 0 }, { name: 'body', parent: 'root', x: 0, y: 0 }],
+  slots: PARTS.map((p) => ({ name: p.name, bone: 'body', attachment: p.name })),
+  skins: { default: Object.fromEntries(PARTS.map((p) => [p.name, { [p.name]: { image: p.name + '.png', x: stage.x + p.x + p.w / 2, y: stage.y + cropToSpineY(p.y + p.h / 2, H) } }])) },
+};
+writeFileSync(join(DIR, 'rig', 'rig.json'), JSON.stringify(rig, null, 1) + '\\n');
+const motion = {
+  spec: 'rigc-motion/1',
+  archetype: 'smoke_scene',
+  cut: 'smoke_scene',
+  easings: {},
+  groups: {},
+  animations: { idle: { duration: 1, loop: true, note: 'smoke', tracks: [{ bone: 'body', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [2] }, { t: 1, v: [0] }] }] } },
+};
+writeFileSync(join(DIR, 'rig', 'motion.json'), JSON.stringify(motion, null, 1) + '\\n');
+writeFileSync(join(DIR, 'parts.json'), serializeParts({
+  rig_size: [W, H],
+  scale_rig_per_source: 1,
+  parts: PARTS.map((p) => ({
+    name: p.name, from: 'full:topwear', x: p.x, y: p.y, w: p.w, h: p.h,
+    opaque_px: Array.from(raster(p).data.filter((_, i) => i % 4 === 3)).filter((a) => a > 8).length,
+    projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0,
+  })),
+  ghost_px: {},
+}));
+const plate = new Uint8ClampedArray(2 * W * H * 4);
+for (let i = 0; i < 2 * W * H; i++) plate.set([96, 112, 128, 255], i * 4);
+writeFileSync(join(HOME, 'plate.png'), encodePngBytes({ width: 2 * W, height: H, data: plate }));
+writeFileSync(join(HOME, 'scene.json'), JSON.stringify({
+  spec: 'spine-parts-scene/1',
+  canvas: { width: 2 * W, height: H },
+  plate: { image: 'plate.png', provenance: 'generated' },
+  characters: [{ id: 'a', build: 'scene-character', offset: [0, 0] }, { id: 'b', build: 'scene-character', offset: [W, 0] }],
+  order: ['a:back', 'b:back', 'a', 'b'],
+}, null, 1) + '\\n');
+`;
+
+/** The slot order the composed scene above must compile to: the plate, then `a:back`, `b:back`, `a`'s rest, `b`'s rest. */
+const EXPECT_SCENE_SLOTS = ['plate', 'a:back', 'b:back', 'a:front', 'b:front'];
 
 // The contour mesh from the install (issue #84): \`spine-parts/src/contour.ts\` imports rigc's outline functions by the
 // deep path \`spine-rigc/src/mesh.ts\`, which nothing on the CLI runs yet, so this is where a rigc that moved them shows.
@@ -513,6 +595,31 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     );
   } else notes.push(`check passed on the generated rig, gated by ${checkJson.rigc_entry?.entry as string}`);
 
+  // `compose` from the install: a generated character checked green by the installed `check`, composed twice.
+  writeFileSync(join(home, 'make_scene.ts'), SCENE_GENERATOR);
+  const sceneGen = run('bun', [join(home, 'make_scene.ts')], home);
+  output += sceneGen.out;
+  const character = join(home, 'scene-character');
+  const ownCheck = sceneGen.status === 0 ? run(bin, ['check', '--rig', join(character, 'rig'), '--parts', character, '--out', join(character, 'check')], home) : null;
+  if (ownCheck !== null) output += ownCheck.out;
+  const sceneOut = join(home, 'scene-out');
+  const compose = ownCheck !== null && ownCheck.status === 0 ? run(bin, ['compose', '--scene', join(home, 'scene.json'), '--out', sceneOut], home) : null;
+  if (compose !== null) output += compose.out;
+  const sceneCheck = existsSync(join(sceneOut, 'check', 'check.json')) ? (JSON.parse(readFileSync(join(sceneOut, 'check', 'check.json'), 'utf8')) as { PASS?: unknown; rigc_entry?: { entry?: unknown } }) : null;
+  const compiled = existsSync(join(sceneOut, 'check', 'build', 'skeleton.json')) ? ((JSON.parse(readFileSync(join(sceneOut, 'check', 'build', 'skeleton.json'), 'utf8')) as { slots?: Array<{ name: string }> }).slots ?? []).map((s) => s.name) : [];
+  if (compose === null || compose.status !== 0 || !existsSync(join(sceneOut, 'scene.json')) || sceneCheck?.PASS !== true || sceneCheck.rigc_entry?.entry !== 'cli_core.ts' || compiled.join(',') !== EXPECT_SCENE_SLOTS.join(',')) {
+    fault(
+      'compose',
+      `SMOKE_COMPOSE_FROM_THE_INSTALL: ${
+        compose === null
+          ? sceneGen.status !== 0
+            ? `\`bun make_scene.ts\` exited ${sceneGen.status}. ${sceneGen.out.trim().slice(0, 2000)}`
+            : `the character's own \`spine-parts check\` exited ${ownCheck?.status}. ${(ownCheck?.out ?? '').trim().split('\n').filter((l) => l.includes('FAIL')).slice(0, 3).join(' | ').slice(0, 2000)}`
+          : `\`spine-parts compose\` exited ${compose.status}; scene.json ${existsSync(join(sceneOut, 'scene.json')) ? 'written' : 'not written'}; check.json ${sceneCheck === null ? 'not written' : `PASS ${String(sceneCheck.PASS)}, rigc_entry ${JSON.stringify(sceneCheck.rigc_entry)}`}; compiled slots ${compiled.join(', ') || '(none)'}; exit 0, scene.json, PASS, rigc_entry cli_core.ts and slots ${EXPECT_SCENE_SLOTS.join(', ')} were required. ${compose.out.trim().split('\n').filter((l) => l.includes('FAIL')).slice(0, 3).join(' | ').slice(0, 2000)}`
+      }`,
+    );
+  } else notes.push(`compose bound two copies of a checked character with a plate, drawing ${compiled.join(', ')}, gated by ${sceneCheck.rigc_entry?.entry as string}`);
+
   // The contour mesh, from the install, through rigc's deep path.
   writeFileSync(join(home, 'contour_probe.ts'), CONTOUR_PROBE);
   const probe = run('bun', [join(home, 'contour_probe.ts')], home);
@@ -563,7 +670,7 @@ exit codes:
   3  the registry did not serve the version within --wait, so the confirmation was NOT taken
 
 cases:
-  clean            a correct package installs; --version, layers (wrapper and PSD), sheet, check and the contour mesh run from it
+  clean            a correct package installs; --version, layers (wrapper and PSD), sheet, check, compose and the contour mesh run from it
   unusual-path     the same, installed at an absolute path with spaces and non-ASCII in it
   drop-src-module  src/layers.ts out of the packed tree — the smoke has to go RED naming it
   drop-rigc        spine-rigc out of \`dependencies\` — the smoke has to go RED naming it
