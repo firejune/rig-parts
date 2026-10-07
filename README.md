@@ -62,6 +62,16 @@ built from its own proposal with no hand edit at all —
 <code>seam: … mean |d| 0.207 (&lt;= 1.0), 0 px over 40 (&lt;= 50)</code>, loop max |d| 0.
 </em></p>
 
+<p align="center"><em>
+The hanging element, <code>examples/scarf</code>: same checkpoint, no LoRA, a very long
+red scarf whose ends hang free, and the first character run through this pipeline
+with its proposal used unedited — the only hand corrections are four
+<code>assemble.patches</code>, each answering an <code>uncovered hole</code> line.
+<code>check</code> passes 9 of 9 with every mesh on the lattice and with every mesh
+switched to the contour mode. It has no reference output: its <code>expected/</code>
+is this port's own build (<a href="examples/scarf/README.md">examples/scarf</a>).
+</em></p>
+
 ## What it takes in
 
 - **One painting** — a PNG of one character, front-facing, full body, taller than
@@ -294,7 +304,8 @@ These are limits of the approach, stated so nobody reads more into a green run:
   against the reference implementation this package ports — the two public examples
   here and eight private ones, one See-through seed each — and all ten check green
   on the gates, the seam and the loop. The judgement lines `check` added since
-  (issue #11) have been measured on the two public examples only. That is an
+  (issue #11) have been measured on the three public examples only (the third,
+  `scarf`, was made after the port and has no reference output). That is an
   existence proof, not a rate.
 - **`loop` writes GIF and APNG (lossless and indexed), not WebP**: an animated WebP needs a VP8/VP8L
   encoder, which this package does not carry.
@@ -315,13 +326,15 @@ These are limits of the approach, stated so nobody reads more into a green run:
 `parts.json` splits each part's opaque pixels (`opaque_px`) into `visible_px` — no
 later layer of its See-through run is opaque in front of them — and `occluded_px`,
 and counts the visible ones whose colour was not taken from the painting
-(`visible_not_projected_px`). On the two public examples, from the totals of their
-`expected/parts.json` (the default `--project core`):
+(`visible_not_projected_px`). On the three public examples, from the totals of their
+`expected/parts.json` (the default `--project core`; `scarf`'s painting patches are
+whole painting pixels, so they count as taken):
 
 | | opaque px | occluded | visible, not projected | taken from the painting |
 | --- | --- | --- | --- | --- |
-| `sample` | 298,632 | 79,143 (26.5 %) | 36,227 (12.1 %) | 183,262 (61.4 %) |
-| `demo` | 767,102 | 202,346 (26.4 %) | 76,801 (10.0 %) | 487,955 (63.6 %) |
+| `sample` | 298,363 | 79,122 (26.5 %) | 35,979 (12.1 %) | 183,262 (61.4 %) |
+| `demo` | 765,924 | 202,343 (26.4 %) | 75,626 (9.9 %) | 487,955 (63.7 %) |
+| `scarf` | 283,813 | 78,503 (27.7 %) | 56,699 (20.0 %) | 148,611 (52.4 %) |
 
 The occluded share is art the painting does not show — a back-hair layer, a neck, the
 parts of an ear under the hair — and is See-through's synthesis by necessity; it is

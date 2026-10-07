@@ -6,9 +6,14 @@
  * what that fixture could not show: the seam with the parts drawn beside the
  * one that deforms.
  *
- *     bun tools/real_compare.ts --work <dir> [--builds] [--sweep] [--only <example>/<part>]
+ *     bun tools/real_compare.ts --work <dir> [--examples <key>,...] [--builds] [--sweep] [--only <example>/<part>]
  *
- * Reads the fetched `examples/<key>/inputs` (`bun run fetch-examples`); builds
+ * Reads every tracked example (`examples/<key>/config.json`, in key order)
+ * whose inputs are fetched (`examples/<key>/inputs`, `bun run fetch-examples`),
+ * or with `--examples` only the keys it lists — a key that is not a fetched
+ * example is refused by name. The rules below rank candidates across every
+ * example read, so the set read decides the picks: the tables issues #107 and
+ * #110 published are `--examples demo,sample`'s. Builds
  * each example's tracked config once into `<dir>/base-<key>` (the lattice, as
  * shipped) unless that build is already there; then applies the rules below,
  * prints both tables of §4 and the verdict for each picked part, and with
@@ -84,7 +89,7 @@
  * any gap at the seam: what shows there depends on what is drawn under it.
  */
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { type CharacterConfig, type ContourRegionSpec, loadConfig, type Point } from '../src/config.ts';
 import { contourMesh } from '../src/contour.ts';
@@ -878,14 +883,26 @@ function compare(pi: PartInput, t: TestRegion, raw: { [k: string]: Json }, work:
 function main(argv: string[]): void {
   const w = argv.indexOf('--work');
   if (w < 0 || argv[w + 1] === undefined) {
-    console.log('usage: bun tools/real_compare.ts --work <dir> [--builds] [--sweep] [--only <example>/<part>]');
+    console.log('usage: bun tools/real_compare.ts --work <dir> [--examples <key>,...] [--builds] [--sweep] [--only <example>/<part>]');
     process.exit(2);
   }
   const work = resolve(argv[w + 1]);
   const builds = argv.includes('--builds');
   const sweep = argv.includes('--sweep');
   mkdirSync(work, { recursive: true });
-  const examples = ['demo', 'sample'].filter((k) => existsSync(join(ROOT, 'examples', k, 'inputs', 'painting.png')));
+  const fetched = readdirSync(join(ROOT, 'examples'))
+    .sort()
+    .filter((k) => existsSync(join(ROOT, 'examples', k, 'config.json')) && existsSync(join(ROOT, 'examples', k, 'inputs', 'painting.png')));
+  const e = argv.indexOf('--examples');
+  const asked = e < 0 ? null : (argv[e + 1] ?? '').split(',').filter((k) => k !== '');
+  if (asked !== null) {
+    const unknown = asked.filter((k) => !fetched.includes(k));
+    if (asked.length === 0 || unknown.length > 0) {
+      console.log(`real_compare: --examples ${asked.length === 0 ? 'names no key' : `names ${unknown.map((k) => `"${k}"`).join(', ')}, which ${unknown.length === 1 ? 'is' : 'are'} not a fetched example`}; the fetched examples are ${fetched.join(', ') || 'none'}`);
+      process.exit(2);
+    }
+  }
+  const examples = asked === null ? fetched : fetched.filter((k) => asked.includes(k));
   if (examples.length === 0) {
     console.log('real_compare: no fetched examples/<key>/inputs (bun run fetch-examples); nothing measured');
     process.exit(2);

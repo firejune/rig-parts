@@ -408,7 +408,7 @@ generated fixture of `tools/local_compare.ts` it reached a local shape error (0.
 in #106, the same figures).
 
 **On real parts the generated result did not carry over unchanged** (issues #107 and #110,
-`bun tools/real_compare.ts --work <dir> --builds --sweep`, a declared test region on two demo
+`bun tools/real_compare.ts --work <dir> --examples demo,sample --builds --sweep`, a declared test region on two demo
 parts — a place to measure, not a claim about the painting; the region spacing chosen by vertex
 count alone). On `bottomwear` (a region of radius 65 px inside the part) the contour mesh passes
 the same rule: 336 vertices against the lattice's 352, largest local shape error 1.535 px against
