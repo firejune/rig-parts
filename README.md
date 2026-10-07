@@ -254,7 +254,10 @@ spine-parts build --config config.json --source painting.png --full layers/full 
 At each step the config holds only what that step reads; the one table of what
 that is, step by step, is [docs/AUTHORING.md §4](docs/AUTHORING.md#4-the-command-order).
 The selftest runs this block in order, command by command, on each fetched example,
-from a config holding only what the first step reads (`RL01`).
+from a config holding only what the first step reads (`RL01`). On `scarf` the
+proposal pasted uncorrected stops at the last step, naming its `bottomwear` on
+`CHECK_TIP_OVER_ROOT` — the one correction its tracked config records, a mesh mode
+(issue #118, [its README](examples/scarf/README.md)).
 
 `propose` is deliberately not a step of `build`: the proposal is a draft to correct
 against its overlay, and a config with bones is `build`'s input. `rig`, `check` and

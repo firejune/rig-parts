@@ -19,10 +19,21 @@ here (gitignored).
   each) run down that part's two sides, where the scarf ends hang to the thighs, and
   the idle swings them.
 - **The first character run through the pipeline with the proposal unedited.** The
-  config's `bones`, `meshes` and `motion` are `proposal.json`'s, value for value, and
-  its `regions` are the proposal's for every part but the two shoe patches. Every hand
-  correction is an `assemble.patches` entry (below), with its reason in
-  `assemble.patches_note`; nothing else in the config was written by hand.
+  config's `bones`, `meshes` and `motion` are `proposal.json`'s, value for value, but
+  for one mesh mode (below), and its `regions` are the proposal's for every part but
+  the two shoe patches. Every other hand correction is an `assemble.patches` entry
+  (below), with its reason in `assemble.patches_note`.
+- **The one mixed-mode example.** `meshes.bottomwear` is tracked in contour mode —
+  `contour {tolerance 1, margin 1, spacing 12, stray 4}`, spacing the proposal's grid —
+  while every other mesh keeps the proposal's lattice; its `note` says why. Issue #118
+  measures `TIP_OVER_ROOT` exactly from the posed geometry, and on this short skirt
+  (195x116 rig px) the proposal's lattice fails it: the art in the lower half of the
+  box travels 0.137 rig px against the upper half's 0.113 (ratio 1.207, bar 1.4725).
+  The same part in contour mode, with the same segments, weighting radius and idle,
+  passes: 0.145 against 0.083 (ratio 1.738). The amplitudes the proposal declared are
+  not raised; what fails is the lattice's weighting of this part, not the motion. A
+  pixel reading of the lattice build at `--max` up to 8000 (the part alone, so the
+  motion spans pixels) converges on about 1.27 from above, below the bar.
 - **Two rules came from it.** Issue #119's fringe push-back: the `topwear` layer ends
   inside the left sleeve in a fringe below alpha 250 coloured scarf red, which drew as
   a red line down the sleeve; `assemble` now prints, on this config,
@@ -43,7 +54,9 @@ here (gitignored).
   and sample's are the reference implementation's JPEGs): the painting with the full
   run's layers, the painting with the head run's layers, and the painting with the
   24 assembled parts of the `expected/` build.
-- `expected/` — **this port's own build, at the commit that added this example**:
+- `expected/` — **this port's own build**, rebuilt by issue #118 (which moved
+  `bottomwear` to contour mode and `TIP_OVER_ROOT` to the geometry; `parts.json` did
+  not move):
   `spine-parts build --config examples/scarf/config.json --source
   inputs/painting.png --full inputs/layers/full --head inputs/layers/head --out
   <dir>`, the call the selftest's chain suite makes. The reference implementation
@@ -82,13 +95,13 @@ largest 63 px at 347,803 3x60 beside `topwear` (`check.json`, `RECOMPOSITE_HOLES
 - **The centre scarf end is stiff.** It hangs inside `topwear`, whose mesh is weighted
   to `chest`, `hip` and the `robe_r` and `robe_l` chains on the two side ends; no
   chain runs down the centre, so it moves only with the torso.
-- **The short skirt's `TIP_OVER_ROOT` sits where issue #118 shows the figure is set by
-  the render grid.** At `check`'s default `--max 640` the `bottomwear` hem travels
-  0.169 px against the root's 0.037 px on the lattice build (ratio 4.537) and 0.187 px
-  against 0.070 px on the contour build (ratio 2.661), against a bar of 1.4725 — both
-  PASS, but under one frame pixel, the regime in which #118 measured a build of this
-  character swing from 0.901 to 6.401 over `--max` 620–660. That sweep is #118's, on a
-  build before #119; it was not re-run here.
+- **The short skirt moves little.** Its hem travels 0.145 rig px over the idle — 0.077
+  frame px at `--max 640`. Until issue #118 `check` read `TIP_OVER_ROOT` off rendered
+  pixels, and in that regime the figure was set by the render grid: the lattice build
+  read 0.901 to 6.401 over `--max` 620–660 (4.537, a PASS, at 640), the contour build
+  1.344 to 5.689. `check` now measures it from `geometry.json`, which no render size
+  enters, so `--max` no longer moves the figure: 1.207 on the lattice and 1.738 on the
+  contour build, at every size.
 - **No neck part.** The scarf covers the neck and `assemble --propose-plan` proposes
   none, so the face-less fallback of issue #76 has nothing to derive a face from: with
   the face plan entries removed, `propose` refuses with `PROPOSE_FACE_PRESENT` naming
@@ -97,18 +110,21 @@ largest 63 px at 347,803 3x60 beside `topwear` (`check.json`, `RECOMPOSITE_HOLES
 
 ## Both mesh modes
 
-The lattice build is `expected/`. The contour build is the same command on a scratch
-copy of `config.json` whose every mesh's `grid` is replaced by
+`expected/` is the mixed build: every mesh on the proposal's lattice but `bottomwear`
+in contour mode. The lattice build is the same command on a scratch copy of
+`config.json` with `bottomwear` back on `grid: 12` (the proposal's), and the contour
+build one whose every mesh's `grid` is replaced by
 `contour: {tolerance: 1, margin: 1, spacing: <that grid>, stray: 4}` — #108's
-parameter set. Both builds' `check`:
+parameter set. The three builds' `check`, `TIP_OVER_ROOT` measured from the geometry
+(issue #118):
 
-| | lattice (`expected/`) | contour |
-| --- | --- | --- |
-| `check` | PASS, 9 of 9 bars measured | PASS, 9 of 9 bars measured |
-| seam | mean 0.211, 2 px over 40 | mean 0.214, 2 px over 40 |
-| `TEXTURE_STRETCH` severity (ceiling 1.926544) | 1.106, `bottomwear` | 1.144, `hair_front` |
-| `TIP_OVER_ROOT` `bottomwear` ratio | 4.537 | 2.661 |
-| pack (`build`'s last pack line) | 393x1273, 24 regions, 95.5% covered | 377x1264, 24 regions, 100.2% covered |
+| | lattice | mixed (`expected/`) | contour |
+| --- | --- | --- | --- |
+| `check` | FAIL, `TIP_OVER_ROOT`; 9 of 9 bars measured | PASS, 9 of 9 bars measured | PASS, 9 of 9 bars measured |
+| seam | mean 0.211, 2 px over 40 | mean 0.211, 2 px over 40 | mean 0.214, 2 px over 40 |
+| `TEXTURE_STRETCH` severity (ceiling 1.926544) | 1.106, `bottomwear` | 1.098, `hair_front` | 1.144, `hair_front` |
+| `TIP_OVER_ROOT` `bottomwear`: upper / lower half, rig px; ratio | 0.113 / 0.137; 1.207 | 0.083 / 0.145; 1.738 | 0.083 / 0.145; 1.738 |
+| pack (`build`'s last pack line) | 393x1273, 24 regions, 95.5% covered | 392x1270, 24 regions, 96.0% covered | 377x1264, 24 regions, 100.2% covered |
 
 Per mesh part: V (hull) · enclosed px² · overshoot px · smallest angle° from
 `bun tools/contour_survey.ts scarf=<lattice build>`, and the stretch severity from each

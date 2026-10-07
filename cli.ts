@@ -225,7 +225,8 @@ usage:
       held shut shows no background inside the eyewhite box), CHAIN_LAG (every
       rotate track lags its keyed ancestor and amplitude grows down each
       chain, read off motion.json), TIP_OVER_ROOT (each handwear/bottomwear
-      part's lower half travels further than its upper half),
+      part's lower half travels further than its upper half, measured from
+      the idle's posed geometry, so the render size does not move it),
       STILL_REGIONS_DARK (the face outline in the frame of the bone the face's
       slot rides, at most twice the resampler's own error on this rig — read
       off the whole rig moved rigidly as the idle moves that bone — with the

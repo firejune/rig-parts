@@ -32,7 +32,7 @@
  * | --- | --- |
  * | `build/` | `rigc build --profile spine-html --pack --page-edges free --pack-shape polygon` (or `pot`, `rect`, when the caller names them; {@link PAGE_EDGES}, {@link PACK_SHAPES}) — the packed atlas is the final artifact |
  * | `gate_spine-html.txt` | that build's gate lines, verbatim — the one gate: rigc's `build` runs it once over the compile and once over the packed pages on disk, and `spine-html` holds every rule `spine` measures (selftest `CH09`) |
- * | `idle_frames/` | `rigc render --animation idle --fps 12 --max 640 --geometry`: `frames.json` + `idle/f*.png` + `idle/geometry.json` (each mesh's skinned vertices, which `TEXTURE_STRETCH` reads, and every bone's world transform, which the face half of `STILL_REGIONS_DARK` reads) |
+ * | `idle_frames/` | `rigc render --animation idle --fps 12 --max 640 --geometry`: `frames.json` + `idle/f*.png` + `idle/geometry.json` (each mesh's skinned vertices, which `TEXTURE_STRETCH` reads, every attachment's posed triangles, which `TIP_OVER_ROOT` reads since issue #118, and every bone's world transform, which the face half of `STILL_REGIONS_DARK` reads) |
  * | `contact.png` | rigc's own contact sheet of that render, copied out |
  * | `motion_heat.png` | frame 0 in grey with each pixel's largest change across the idle in red |
  * | `check.json` | the figures below and `PASS` |
@@ -78,7 +78,6 @@ import { cropToSpineY } from './coords.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 import { framesInside, IDLE_FPS } from './motion.ts';
 import {
-  bandExcursion,
   blinkFigures,
   type GeometryPose,
   type MeshRest,
@@ -100,7 +99,6 @@ import {
   regionHeat,
   partWorldBox,
   rootLocalOf,
-  rowHalves,
   setupToFrame,
   stretchFigures,
   stretchSeverity,
@@ -110,6 +108,7 @@ import {
   TORSO_TAGS,
   footprintMask,
   footprintReach,
+  halfTravels,
   visibleMask,
   type WorldBox,
 } from './instruments.ts';
@@ -1404,7 +1403,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   if (full !== null) {
     try {
       breath = breathLine(full, isolated, problems);
-      tip = tipLine(full, isolated, problems);
+      if (idle !== null) tip = tipLine(full, join(idle.dir, GEOMETRY_FILE), idle.written, problems);
     } finally {
       rmSync(isoDir, { recursive: true, force: true });
     }
@@ -1814,40 +1813,55 @@ function breathLine(inp: FullInputs, isolated: Isolate, problems: Problem[]): Ju
   };
 }
 
-/** (4) Each swinging part's tip travels further than its root: the part rendered alone, its box's lower half against its upper half. */
-function tipLine(inp: FullInputs, isolated: Isolate, problems: Problem[]): JudgementLine {
+/**
+ * What `TIP_OVER_ROOT` is measured with, written into its line (issue #118):
+ * the idle's posed geometry, not a render of the part. Until #118 the line
+ * read rendered pixels — figures in frame px under `root_px`/`tip_px` — so an
+ * old and a new check.json are told apart by this key and by the units in
+ * the field names.
+ */
+export const TIP_INSTRUMENT = 'geometry';
+
+/**
+ * (4) Each swinging part's tip travels further than its root: how far the art
+ * in the lower half of the part's box travels against the upper half — the
+ * centroid of the art's area inside each fixed half, through the posed mesh
+ * ({@link halfTravels}) — read off the idle's `geometry.json`. Until issue
+ * #118 the halves were read off the part rendered alone at `--max 640`, a
+ * binary-coverage centroid per half; every root half on the three examples
+ * travels under a frame pixel, where that centroid scatters by up to 0.3 px
+ * with the grid, so the ratio was set by the grid.
+ */
+function tipLine(inp: FullInputs, geometryPath: string, frames: number, problems: Problem[]): JudgementLine {
   const swing = partsTagged(inp.parts, SWING_TAGS);
   if (swing.length === 0) return skip(`no part comes from a See-through ${tagWords(SWING_TAGS)} layer, so there is no hem or sleeve to swing`);
-  const H = inp.parts.rig_size[1];
+  const poses = attachmentPoses(geometryPath, frames);
   const rows: Array<Record<string, unknown>> = [];
   let measured = 0;
   let failed = false;
   for (const p of swing) {
-    const set = isolated(`swing-${p.name}`, [p]);
-    const box = frameBox([p], H, inp.stage, set.viewport);
-    const halves = box === null ? null : rowHalves(box);
-    const images = set.frames.map((f) => f.image);
-    const root = halves === null ? null : bandExcursion(images, set.background, halves.root);
-    const tipPx = halves === null ? null : bandExcursion(images, set.background, halves.tip);
-    if (root === null || tipPx === null) {
-      rows.push({ part: p.name, unmeasured: `${box === null ? 'its box falls outside the idle frame' : `the ${root === null ? 'upper' : 'lower'} half of its box holds no art in frame 0`}` });
+    const art = placedArt(p.x, p.y, readPng(join(inp.partsDir, `${p.name}.png`)));
+    const shown = poses.map((f) => f.get(p.name) ?? null);
+    const t = halfTravels(art, p, inp.stage, shown);
+    if (t.root === null || t.tip === null) {
+      rows.push({ part: p.name, unmeasured: shown[0] === null ? 'its slot shows no attachment on idle frame 0' : `on idle frame 0 the ${t.root === null ? 'upper' : 'lower'} half of its box holds no art its attachment draws` });
       continue;
     }
     measured++;
-    const ratio = root > 0 ? round3(tipPx / root) : null;
-    const ok = ratio === null ? tipPx > 0 : ratio >= TIP_RATIO_FLOOR;
-    rows.push({ part: p.name, root_px: round3(root), tip_px: round3(tipPx), ratio });
+    const ratio = t.root > 0 ? round3(t.tip / t.root) : null;
+    const ok = ratio === null ? t.tip > 0 : ratio >= TIP_RATIO_FLOOR;
+    rows.push({ part: p.name, root_rig_px: round3(t.root), tip_rig_px: round3(t.tip), ratio });
     if (!ok) {
       failed = true;
       problems.push({
         code: 'CHECK_TIP_OVER_ROOT',
-        object: `part "${p.name}" rendered alone, frame box ${boxLabel(box as PixelBox)}`,
-        detail: `its lower half travels ${round3(tipPx)} px and its upper half ${round3(root)} px (ratio ${ratio ?? 'undefined: nothing moves'}); a ratio >= ${TIP_RATIO_FLOOR} is required — the chain's amplitudes do not grow toward the tip, or the mesh is not weighted to the chain`,
+        object: `part "${p.name}", box ${p.x},${p.y} ${p.w}x${p.h} rig px, posed by the idle's geometry`,
+        detail: `the art in its lower half travels ${round3(t.tip)} rig px and in its upper half ${round3(t.root)} rig px (ratio ${ratio ?? 'undefined: nothing moves'}); a ratio >= ${TIP_RATIO_FLOOR} is required — the chain's amplitudes do not grow toward the tip, or the mesh is not weighted to the chain`,
       });
     }
   }
   if (measured === 0) return { status: 'SKIP', reason: `none of ${quoteParts(swing)} could be measured: ${rows.map((r) => `${String(r.part)}: ${String(r.unmeasured)}`).join('; ')}` };
-  return { status: failed ? 'FAIL' : 'PASS', parts: rows, ratio_floor: TIP_RATIO_FLOOR };
+  return { status: failed ? 'FAIL' : 'PASS', instrument: TIP_INSTRUMENT, parts: rows, ratio_floor: TIP_RATIO_FLOOR };
 }
 
 /**

@@ -92,24 +92,25 @@
  },
  "TIP_OVER_ROOT": {
   "status": "PASS",
+  "instrument": "geometry",
   "parts": [
    {
     "part": "handwear_r",
-    "root_px": 0.515,
-    "tip_px": 3.213,
-    "ratio": 6.242
+    "root_rig_px": 0.912,
+    "tip_rig_px": 6.094,
+    "ratio": 6.683
    },
    {
     "part": "handwear_l",
-    "root_px": 0.529,
-    "tip_px": 2.938,
-    "ratio": 5.558
+    "root_rig_px": 1.059,
+    "tip_rig_px": 5.66,
+    "ratio": 5.345
    },
    {
     "part": "bottomwear",
-    "root_px": 0.037,
-    "tip_px": 0.169,
-    "ratio": 4.537
+    "root_rig_px": 0.083,
+    "tip_rig_px": 0.145,
+    "ratio": 1.738
    }
   ],
   "ratio_floor": 1.4725
@@ -143,26 +144,26 @@
  "TEXTURE_STRETCH": {
   "status": "PASS",
   "meshes": 6,
-  "triangles": 2654,
+  "triangles": 2633,
   "frames": 49,
-  "severity": 1.106,
+  "severity": 1.098,
   "severity_ceiling": 1.926544,
   "worst": {
-   "slot": "bottomwear",
-   "triangle": 13,
+   "slot": "hair_front",
+   "triangle": 215,
    "vertices": [
-    7,
-    60,
-    59
+    142,
+    31,
+    32
    ],
    "edge": [
-    7,
-    60
+    31,
+    32
    ],
-   "frame": 12,
-   "ratio": 1.106
+   "frame": 47,
+   "ratio": 0.911
   },
-  "max_ratio": 1.106,
+  "max_ratio": 1.097,
   "min_ratio": 0.911,
   "per_mesh": [
    {
@@ -194,12 +195,12 @@
    },
    {
     "slot": "bottomwear",
-    "triangles": 308,
-    "max_ratio": 1.106,
-    "max_at": "triangle 13 (vertices 7 60 59), edge 7-60, idle frame 12",
-    "min_ratio": 0.983,
-    "min_at": "triangle 282 (vertices 170 171 27), edge 171-27, idle frame 33",
-    "severity": 1.106
+    "triangles": 287,
+    "max_ratio": 1.035,
+    "max_at": "triangle 65 (vertices 44 46 47), edge 46-47, idle frame 33",
+    "min_ratio": 0.965,
+    "min_at": "triangle 65 (vertices 44 46 47), edge 46-47, idle frame 9",
+    "severity": 1.036
    },
    {
     "slot": "topwear",

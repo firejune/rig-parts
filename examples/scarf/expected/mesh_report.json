@@ -47,9 +47,9 @@
  },
  {
   "part": "bottomwear",
-  "vertices": 182,
-  "triangles": 308,
-  "hull": 54,
+  "vertices": 179,
+  "triangles": 287,
+  "hull": 69,
   "bones": [
    "chest",
    "hip",
@@ -64,9 +64,51 @@
    "skirt_r2"
   ],
   "max_influences": 4,
-  "mean_influences": 3.72,
+  "mean_influences": 3.69,
   "art_coverage": 1,
-  "grid": 12
+  "mode": "contour",
+  "params": {
+   "tolerance": 1,
+   "margin": 1,
+   "spacing": 12,
+   "budget": null,
+   "stray": 4
+  },
+  "contour": {
+   "boundaryVertices": 69,
+   "interiorVertices": 110,
+   "interiorBySource": [
+    {
+     "source": "background",
+     "vertices": 110
+    }
+   ],
+   "triangles": 287,
+   "tracedVertices": 690,
+   "artPixels": 18565,
+   "coveredArtPixels": 18565,
+   "coverage": 1,
+   "overshoot": 2,
+   "overshootBound": 3,
+   "meshArea": 19093.5,
+   "enclosedTransparentArea": 528.5,
+   "filledHolePixels": 0,
+   "smallestAngle": {
+    "triangle": 30,
+    "value": 7.696052
+   },
+   "largestEdgeRatio": {
+    "triangle": 30,
+    "value": 6.403124
+   },
+   "nonDelaunayEdges": 0,
+   "strayIslands": 0,
+   "strayPixels": 0,
+   "grownPixels": 562,
+   "pinchFilledPixels": 0,
+   "grownHolePixels": 0
+  },
+  "regions": []
  },
  {
   "part": "topwear",

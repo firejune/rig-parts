@@ -610,7 +610,13 @@
       ]
     },
     "bottomwear": {
-      "grid": 12,
+      "contour": {
+        "tolerance": 1,
+        "margin": 1,
+        "spacing": 12,
+        "stray": 4
+      },
+      "note": "hand correction (issue #118): the proposal's lattice (grid 12) on this short skirt fails TIP_OVER_ROOT measured exactly from the posed geometry (ratio 1.207 against 1.4725); the same part in contour mode at spacing = that grid passes (1.738). The proposal's segments and the idle are unchanged; only the mesh mode is.",
       "r": 5,
       "segments": [
         [
