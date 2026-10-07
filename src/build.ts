@@ -297,7 +297,15 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     vertices += m.vertices;
     const head = `  mesh ${m.part.padEnd(12)} v=${String(m.vertices).padStart(4)} t=${String(m.triangles).padStart(4)} hull=${String(m.hull).padStart(3)} `;
     const infl = `bones=${m.bones.length} infl max ${m.max_influences} mean ${m.mean_influences.toFixed(2)} cover ${m.art_coverage.toFixed(5)}`;
-    if ('mode' in m) {
+    if ('mode' in m && m.mode === 'auto') {
+      const s = m.source.counts;
+      const r = m.result.counts;
+      const t = m.termination;
+      const tried = t.reason === 'no-further-valid-reduction' || t.reason === 'budget-exhausted' ? ` after ${t.candidatesTried} candidate(s)` : '';
+      const worst = m.worst_residual === null ? 'none declared' : `${m.worst_residual.code}${m.worst_residual.region === null ? '' : `[${m.worst_residual.region}]`} ${m.worst_residual.value} ${m.worst_residual.bound?.op} ${m.worst_residual.bound?.value}`;
+      const from = s === null ? 'unread' : `${s.boundaryVertices}+${s.interiorVertices}`;
+      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}; deformation unmeasured`);
+    } else if ('mode' in m) {
       const c = m.contour;
       const stray = c.strayIslands === 0 ? '' : ` left out ${c.strayIslands} island(s), ${c.strayPixels} px`;
       const regions = m.regions.map((rg) => ` region ${rg.name}->${rg.bone} reaches ${rg.reached} (${rg.whole} whole)`).join('');

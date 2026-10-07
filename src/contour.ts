@@ -126,10 +126,15 @@
  * outline edge renumbers no hull vertex (`CT21`, `CE14`); one whose support
  * does keeps every hull vertex, in the same cyclic order and position from
  * index 0, and moves a vertex's index only by the points inserted before it in
- * walk order (`CE13`). Triangles: each wound as the outline is (clockwise on screen, which
- * is counter-clockwise in Spine's y-up world — the lattice's winding), rotated
- * to start at its smallest index, and sorted, so the list does not depend on
- * the order the flips happened in.
+ * walk order (`CE13`). Triangles: each wound as the outline is (clockwise on screen — the
+ * lattice's winding), rotated to start at its smallest index, and sorted, so the
+ * list does not depend on the order the flips happened in. Read through
+ * `cropToSpineY`, as spine-rigc's `MQ_ORIENTATION` reads a mesh, that winding is
+ * clockwise in Spine's y-up world, not counter-clockwise: measured, spine-rigc
+ * 2.19.0 reads 162 of 162 triangles of the demo example's `neck` source as
+ * flipped. The automatic mode (`src/automesh.ts`, `spineWinding`) hands the
+ * triangles to spine-rigc with each one's last two corners swapped; the lattice
+ * and contour emitters write what they always wrote.
  */
 import { type Problem } from './errors.ts';
 import { connectedComponents, fillHoles, type Mask } from './raster/index.ts';
@@ -146,7 +151,7 @@ import {
   simplifyClosedPolygon,
   traceAlphaOutline,
   traceOutline,
-} from 'spine-rigc/src/mesh.ts';
+} from 'spine-rigc/mesh';
 
 /** Grid units per pixel: every coordinate this module writes is an integer multiple of 1/GRID px. */
 export const GRID = 256;

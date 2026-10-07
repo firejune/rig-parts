@@ -140,11 +140,14 @@ paintings, their See-through runs, the parts and configs the reference produced
   refuses any other importer. Do not open-code `height - y` anywhere.
 - **spine-rigc's deep paths are an interface.** spine-rigc's `exports` map
   carries `./*.ts`, so `spine-rigc/tools/plate.ts` (PNG codec),
-  `spine-rigc/src/png.ts`, `spine-rigc/tools/font5x7.ts`,
-  `spine-rigc/src/transform.ts` and `spine-rigc/src/mesh.ts` (the outline
-  functions `src/contour.ts` reuses) are imported by path. A spine-rigc release that
-  moves them, or narrows the map, breaks this package by name, and
-  `bun run smoke` is where that shows first.
+  `spine-rigc/src/png.ts`, `spine-rigc/tools/font5x7.ts` and
+  `spine-rigc/src/transform.ts` are imported by path. The mesh functions come
+  through the named entry `spine-rigc/mesh` (from 2.16.0): the outline
+  functions `src/contour.ts` reuses, every one on the entry's promised list,
+  and `reduceMesh` with its `mesh-quality-report/1` types (2.19.0), which
+  `src/automesh.ts` calls. A spine-rigc release that moves them, or narrows
+  the map, breaks this package by name, and `bun run smoke` is where that
+  shows first.
 - **Raster ops state which call they stand in for.** Each function in
   `src/raster/` names the OpenCV / SciPy / PIL call whose semantics it
   reproduces and what was measured against it; a known deviation is written in

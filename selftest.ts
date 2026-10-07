@@ -184,7 +184,12 @@ import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld 
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA } from './src/mesh.ts';
-import { checkHullOrder, earClip, findSelfIntersection, offsetPolygon, simplifyClosedPolygon, traceAlphaOutline, traceOutline } from 'spine-rigc/src/mesh.ts';
+import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline } from 'spine-rigc/mesh';
+import { autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Residual, runReduction, sourceWeights, spineWinding, terminationText, worstRegion, worstResidual } from './src/automesh.ts';
+import { examplePolicy, squareRegion, STRIP_MASK, syntheticPolicy } from './fixtures/automesh.ts';
+import type { AutoSpec } from './src/config.ts';
+import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
+import type { AutoMeshReport, MeshReport } from './src/rig.ts';
 import { PartsError, type Problem, problemLine } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
 import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paintingGraph, POSITIVE_HEAD, stripWords } from './src/graphs.ts';
@@ -15400,6 +15405,649 @@ function runPublicScenes(green: ReadonlyMap<string, string>, dir: string, say: (
   rmSync(sd, { recursive: true, force: true });
 }
 
+// ---------------------------------------------------------------------------
+// the automatic mesh mode (issue #126, item 2)
+// ---------------------------------------------------------------------------
+
+/** The rig fixture with `cloth` in the automatic mode under the synthetic policy (fixtures/automesh.ts), edited. */
+function autoRigConfig(edit: (c: Record<string, unknown>, auto: Record<string, unknown>) => void = () => {}): Record<string, unknown> {
+  const c = rigConfig();
+  (c.bones as unknown[]).push({ name: 'soft', parent: 'body', at: [18, 14] });
+  const auto = JSON.parse(JSON.stringify(syntheticPolicy(4))) as Record<string, unknown>;
+  auto['x-why'] = { by: 'selftest' };
+  c.meshes = { cloth: { auto, r: 8, segments: ['hem'] } };
+  edit(c, auto);
+  return c;
+}
+
+/** The fixture's cloth, padded as the rig stage pads it: a 16x8 opaque block at (4, 4) in 24x16 (fixtures/rig.ts). */
+function clothMask(edit?: (alpha: Uint8Array) => void): AlphaMask {
+  const m = blocks(24, 16, [[4, 4, 16, 8]]);
+  edit?.(m.alpha);
+  return m;
+}
+
+/** One geometry-only call on a mask under a spec, every step this mode takes: the source, the call, the verdict. */
+function autoGeometry(name: string, mask: AlphaMask, spec: AutoSpec): { source: ContourMesh; input: MeshReductionInput; ran: { mesh: ReducedMesh | null; report: MeshQualityReport }; verdict: AutoVerdict } | string {
+  const source = autoSource(name, mask, spec);
+  if (Array.isArray(source)) return source.map(problemLine).join('; ');
+  const input = autoReductionInput({ part: name, mask, ox: 0, oy: 0, spec, source, weights: null, boneOrder: [] });
+  const ran = runReduction(name, input);
+  if ('code' in ran) return problemLine(ran);
+  return { source, input, ran, verdict: autoVerdict(name, ran) };
+}
+
+function runAutoMeshSuite(): number {
+  section('auto-mesh: the automatic mode — config, source, the call, acceptance, weights, report');
+  const { say, bad } = counter();
+  const load = (c: Record<string, unknown>): PartsError | null => refusals(() => parseConfig(c));
+  const has = (e: PartsError | null, code: string, ...words: string[]): boolean => e !== null && e.problems.some((p) => p.code === code && words.every((w) => `${p.object} ${p.detail}`.includes(w)));
+  const lines = (e: PartsError | null): string => (e === null ? 'nothing' : e.problems.map((p) => `${p.code} ${p.object}: ${p.detail}`).join('; ').slice(0, 1500));
+  const AT = 'config.meshes.cloth.auto';
+
+  // AM01 — an auto mesh loads, records and all; the two older modes still do.
+  const ok = load(autoRigConfig());
+  say(
+    'AM01_AN_AUTO_MESH_LOADS_AND_THE_LATTICE_AND_CONTOUR_FIXTURES_STILL_DO',
+    ok === null && load(rigConfig()) === null,
+    `auto: ${lines(ok)}; lattice: ${lines(load(rigConfig()))}`,
+    'issue #126 item 2: a third mode beside grid and contour; the x- record door holds inside it as everywhere',
+  );
+
+  // AM02 — exactly one mode.
+  const pair = (mode: 'grid' | 'contour'): PartsError | null =>
+    load(autoRigConfig((c) => ((c.meshes as Record<string, Record<string, unknown>>).cloth[mode] = mode === 'grid' ? 8 : { tolerance: 0, margin: 1, spacing: 4 })));
+  const three = load(autoRigConfig((c) => Object.assign((c.meshes as Record<string, Record<string, unknown>>).cloth, { grid: 8, contour: { tolerance: 0, margin: 1, spacing: 4 } })));
+  const none = load(autoRigConfig((c) => delete (c.meshes as Record<string, Record<string, unknown>>).cloth.auto));
+  say(
+    'AM02_A_MESH_WITH_AUTO_AND_ANOTHER_MODE_OR_NO_MODE_IS_REFUSED_BY_NAME',
+    has(pair('grid'), 'CONFIG_MESH_MODE', 'has grid and auto') &&
+      has(pair('contour'), 'CONFIG_MESH_MODE', 'has contour and auto') &&
+      has(three, 'CONFIG_MESH_MODE', 'has grid and contour and auto') &&
+      has(none, 'CONFIG_MESH_MODE', 'nor auto') &&
+      ok === null,
+    `grid+auto: ${lines(pair('grid'))}; contour+auto: ${lines(pair('contour'))}; all three: ${lines(three)}; none: ${lines(none)}`,
+    'a mesh is one mode; the rule CONFIG_MESH_MODE already held for grid and contour is extended, not replaced',
+  );
+
+  // AM03 — every required number, missing, named in one run.
+  const missing = load(
+    autoRigConfig((_c, a) => {
+      delete a.budget;
+      delete a.minArtSamples;
+      delete (a.source as Record<string, unknown>).spacing;
+      delete (a.sourceBounds as Record<string, unknown>).maxUndercut;
+      delete ((a.targets as Record<string, unknown>).artFit as Record<string, unknown>).minCoverage;
+      delete (a.targets as Record<string, unknown>).maxBoundaryDeviation;
+      delete (a.influences as Record<string, unknown>).minWeight;
+    }),
+  );
+  const want3 = [`${AT}.budget`, `${AT}.minArtSamples`, `${AT}.source.spacing`, `${AT}.sourceBounds.maxUndercut`, `${AT}.targets.artFit.minCoverage`, `${AT}.targets.maxBoundaryDeviation`, `${AT}.influences.minWeight`];
+  say(
+    'AM03_EVERY_MISSING_NUMBER_OF_THE_AUTO_BLOCK_IS_NAMED_IN_ONE_RUN_AND_NONE_IS_DEFAULTED',
+    want3.every((o) => missing?.problems.some((p) => p.code === 'CONFIG_FIELD_PRESENT' && p.object === o)) && missing?.problems.length === want3.length,
+    lines(missing),
+    'never invent a value: a quality input the author did not write is a refusal naming the field, not a number this package picks (issue #126, P5)',
+  );
+
+  // AM04 — out-of-range numbers, one by one, each named.
+  const bad4: Array<[string, (a: Record<string, unknown>) => void, string]> = [
+    ['minCoverage 1.5', (a) => ((a.sourceBounds as Record<string, unknown>).minCoverage = 1.5), `${AT}.sourceBounds.minCoverage`],
+    ['maxOvershoot -1', (a) => (((a.targets as Record<string, unknown>).artFit as Record<string, unknown>).maxOvershoot = -1), `${AT}.targets.artFit.maxOvershoot`],
+    ['margin 0.5', (a) => ((a.source as Record<string, unknown>).margin = 0.5), `${AT}.source.margin`],
+    ['spacing 0', (a) => ((a.source as Record<string, unknown>).spacing = 0), `${AT}.source.spacing`],
+    ['maxInfluences 0', (a) => ((a.influences as Record<string, unknown>).maxInfluences = 0), `${AT}.influences.maxInfluences`],
+    ['minWeight 1', (a) => ((a.influences as Record<string, unknown>).minWeight = 1), `${AT}.influences.minWeight`],
+    ['maxCandidates -1', (a) => ((a.budget as Record<string, unknown>).maxCandidates = -1), `${AT}.budget.maxCandidates`],
+    ['minArtSamples 0', (a) => (a.minArtSamples = 0), `${AT}.minArtSamples`],
+    ['minAngle -1', (a) => ((a.targets as Record<string, unknown>).minAngle = -1), `${AT}.targets.minAngle`],
+    ['stray 1.5', (a) => ((a.source as Record<string, unknown>).stray = 1.5), `${AT}.source.stray`],
+    ['an unknown key', (a) => (a.maxSpacing = 4), `${AT}.maxSpacing`],
+  ];
+  const got4 = bad4.map(([what, edit, obj]) => {
+    const e = load(autoRigConfig((_c, a) => edit(a)));
+    return { what, ok: e !== null && e.problems.length === 1 && e.problems[0].object === obj && (e.problems[0].code === 'CONFIG_FIELD_TYPE' || e.problems[0].code === 'CONFIG_KEY_KNOWN'), line: lines(e) };
+  });
+  say(
+    'AM04_EACH_OUT_OF_RANGE_AUTO_NUMBER_IS_REFUSED_ALONE_BY_NAME',
+    got4.every((g) => g.ok),
+    got4.map((g) => `${g.what}: ${g.line}`).join(' || ').slice(0, 2000),
+    'each number is read as spine-rigc\'s contract types it (a coverage is a fraction, a distance 0 or more, a cap a whole number from 1, minWeight below 1); an unknown key such as maxSpacing — a name the issue says is not an API — is refused like any other',
+  );
+
+  // AM05 — regions and protect: every field and every name.
+  const region = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ name: 'pinch', shape: 'circle', cx: 18, cy: 14, r: 2, band: 2, bone: 'soft', maxEdgeLength: 2, transition: 1, grade: 1, minArtSamples: 1, ...over });
+  const r5 = load(
+    autoRigConfig((_c, a) => {
+      const noL0 = region({ name: 'a' });
+      delete noL0.maxEdgeLength;
+      a.regions = [noL0, region({ name: 'b', grade: -1 }), region({ name: 'c', bone: 'nobody' }), region({ name: 'c', cx: 18.001 }), region({ name: 'd', maxEdgeLength: 0 })];
+      a.protect = { hull: 'yes', edges: [[1]], regionBoundaries: ['zz'], influences: ['nobody'], weightJump: -1 };
+    }),
+  );
+  const want5: Array<[string, string]> = [
+    ['CONFIG_FIELD_PRESENT', `${AT}.regions[0].maxEdgeLength`],
+    ['CONFIG_FIELD_TYPE', `${AT}.regions[1].grade`],
+    ['CONFIG_NAME_RESOLVES', `${AT}.regions[2].bone`],
+    ['CONFIG_REGION_NAME_UNIQUE', `${AT}.regions[3].name`],
+    ['CONFIG_FIELD_TYPE', `${AT}.regions[3].cx`],
+    ['CONFIG_FIELD_TYPE', `${AT}.regions[4].maxEdgeLength`],
+    ['CONFIG_FIELD_TYPE', `${AT}.protect.hull`],
+    ['CONFIG_FIELD_TYPE', `${AT}.protect.edges[0]`],
+    ['CONFIG_NAME_RESOLVES', `${AT}.protect.regionBoundaries[0]`],
+    ['CONFIG_NAME_RESOLVES', `${AT}.protect.influences[0]`],
+    ['CONFIG_FIELD_TYPE', `${AT}.protect.weightJump`],
+  ];
+  say(
+    'AM05_A_REGIONS_DENSITY_FIELDS_ITS_BONE_ITS_GRID_AND_EVERY_PROTECT_FIELD_ARE_EACH_REFUSED_BY_NAME',
+    want5.every(([code, obj]) => r5?.problems.some((p) => p.code === code && p.object === obj)) && r5?.problems.length === want5.length,
+    lines(r5),
+    'a region declares shape, bone and weight band as the contour mode does, plus its density (L0 = maxEdgeLength, transition, grade, the art sample floor — §5 and P9 of the contract), each required; protect names regions and bones that exist',
+  );
+
+  // AM06 — transition 0 is admitted (the owner's rule); a negative one is not.
+  const t0 = load(autoRigConfig((_c, a) => (a.regions = [region({ transition: 0 })])));
+  const tn = load(autoRigConfig((_c, a) => (a.regions = [region({ transition: -1 })])));
+  say(
+    'AM06_A_REGION_WITH_TRANSITION_0_LOADS_AND_A_NEGATIVE_ONE_IS_REFUSED',
+    t0 === null && has(tn, 'CONFIG_FIELD_TYPE', `${AT}.regions[0].transition`),
+    `transition 0: ${lines(t0)}; -1: ${lines(tn)}`,
+    'issue #126, the decision of 2026-10-07: transition 0 is a hard edge and is allowed; finite and nonnegative is the contract\'s §5',
+  );
+
+  // AM07 — the weights' limits: the defaults are the old call bit for bit; the author's no-floor keeps a share the 0.03 floor drops.
+  const segs7 = [
+    { bone: 'a', a: [0, 0] as Point, b: [10, 0] as Point },
+    { bone: 'b', a: [0, 9] as Point, b: [10, 9] as Point },
+  ];
+  const old7 = influences([0, 0], segs7, 1);
+  const dflt7 = influences([0, 0], segs7, 1, DEFAULT_LIMITS);
+  const free7 = influences([0, 0], segs7, 1, { maxInfluences: 4, minWeight: 0 });
+  // By hand: d_a = 0, d_b = 9, r = 1: w_a = 1, w_b = 1/100; shares 1/1.01 and 0.01/1.01 = 0.0099…, under 0.03.
+  say(
+    'AM07_DEFAULT_LIMITS_ARE_THE_OLD_CALL_BIT_FOR_BIT_AND_MINWEIGHT_0_KEEPS_THE_SHARE_THE_FLOOR_DROPS',
+    JSON.stringify(old7) === JSON.stringify(dflt7) &&
+      old7.length === 1 &&
+      old7[0].bone === 'a' &&
+      old7[0].weight === 1 &&
+      free7.length === 2 &&
+      Math.abs(free7[0].weight - 1 / 1.01) < 1e-15 &&
+      Math.abs(free7[1].weight - 0.01 / 1.01) < 1e-15 &&
+      free7[1].weight < MIN_WEIGHT,
+    `no limits: ${JSON.stringify(old7)}; DEFAULT_LIMITS: ${JSON.stringify(dflt7)}; minWeight 0: ${JSON.stringify(free7)} (by hand 1/1.01, 0.01/1.01)`,
+    'P19: the automatic mode passes the author\'s influence limits and applies no 0.03 floor of its own; the lattice and the contour mode keep theirs, byte for byte',
+  );
+
+  // AM08 — the cap is the author's too.
+  const segs8 = [...segs7, { bone: 'c', a: [0, 3] as Point, b: [10, 3] as Point }];
+  const cap8 = influences([0, 0], segs8, 1, { maxInfluences: 2, minWeight: 0 });
+  // By hand: w_a = 1, w_c = 1/16, w_b = 1/100: the two strongest are a and c, normalised over 1 + 1/16.
+  say(
+    'AM08_MAXINFLUENCES_KEEPS_THE_STRONGEST_BONES_UP_TO_THE_AUTHORS_CAP',
+    cap8.length === 2 && cap8[0].bone === 'a' && cap8[1].bone === 'c' && Math.abs(cap8[0].weight - 16 / 17) < 1e-15 && Math.abs(cap8[1].weight - 1 / 17) < 1e-15,
+    JSON.stringify(cap8),
+    'P19: explicit limits on every weighted call, never inherited; 1, 1/16 and 1/100 keep a and c at 16/17 and 1/17',
+  );
+
+  // AM09 — the source reads alpha 1 and above; the contour mode at alpha above 8 does not.
+  const faint = clothMask((a) => {
+    for (let y = 4; y < 12; y++) a[y * 24 + 20] = 1;
+  });
+  const src9 = autoSource('cloth', faint, syntheticPolicy(4));
+  const con9 = contourMesh('cloth', faint, { threshold: ART_ALPHA, tolerance: 0, margin: 1, spacing: 4, regions: [] });
+  // By hand: the block holds 16 x 8 = 128 px; the alpha-1 column beside it 8 more.
+  say(
+    'AM09_THE_SOURCE_COUNTS_AN_ALPHA_1_PIXEL_AS_ART_AND_THE_CONTOUR_MODE_DOES_NOT',
+    !Array.isArray(src9) && src9.report.artPixels === 136 && !Array.isArray(con9) && con9.report.artPixels === 128,
+    `auto source art ${Array.isArray(src9) ? src9.map(problemLine).join('; ') : src9.report.artPixels} (by hand 136); contour at alpha above ${ART_ALPHA}: ${Array.isArray(con9) ? 'refused' : con9.report.artPixels} (by hand 128)`,
+    'P4: the new policy\'s final acceptance is at alpha 1 and above; the existing alpha-above-8 paths are untouched, so a faint pixel is art here and not there',
+  );
+
+  // AM10 — the source is gated by this package's checks: a faint speck is a second island and refuses the part by name.
+  const speckImages = rigImages();
+  const cloth10 = block(16, 8);
+  cloth10.data.set([200, 120, 80, 1], 0);
+  cloth10.data.set([0, 0, 0, 0], 4);
+  cloth10.data.set([0, 0, 0, 0], 16 * 4);
+  speckImages.set('cloth', cloth10);
+  const e10 = refusals(() => buildRig(parseConfig(autoRigConfig()), rigParts(), speckImages));
+  const c10 = refusals(() => buildRig(parseConfig(autoRigConfig((c) => ((c.meshes as Record<string, unknown>).cloth = { contour: { tolerance: 0, margin: 1, spacing: 4 }, r: 8, segments: ['hem'] }))), rigParts(), speckImages));
+  say(
+    'AM10_AN_ALPHA_1_SPECK_IS_A_SECOND_ISLAND_THE_SOURCE_GATE_REFUSES_BY_NAME_AND_THE_CONTOUR_MODE_BUILDS',
+    has(e10, 'CONTOUR_ONE_ISLAND', 'contour mesh "cloth"', '1 px at (4, 4)', "automatic mode's source, at alpha 1 and above") && e10?.problems.length === 1 && c10 === null,
+    `auto: ${lines(e10)}; contour (alpha above 8): ${lines(c10)}`,
+    'P8: the source is gated by contourMesh\'s own checks before it is handed on; one pixel at alpha 1 cut off by two cleared neighbours is an island at the new threshold and not at the old one — on the public examples this is what refuses most parts',
+  );
+
+  // AM11 — the winding the call is handed.
+  const conv = autoSource('convex', CONVEX.mask, syntheticPolicy(8));
+  const measureWinding = (triangles: number[]): number | null => {
+    if (Array.isArray(conv)) return null;
+    const input = autoReductionInput({ part: 'convex', mask: CONVEX.mask, ox: 0, oy: 0, spec: syntheticPolicy(8), source: conv, weights: null, boneOrder: [] });
+    const rep = measureMeshQuality({ ...input, id: 'w', source: { ...input.source, triangles }, targets: { artFit: null, maxBoundaryDeviation: null, regions: [] }, referenceHull: null, protect: null, influences: null, boneOrder: null });
+    return rep.candidates[0]?.geometry?.rows.find((r) => r.code === 'MQ_ORIENTATION')?.value ?? null;
+  };
+  const swapped = Array.isArray(conv) ? null : measureWinding(spineWinding(conv.triangles));
+  const asIs = Array.isArray(conv) ? null : measureWinding(conv.triangles);
+  const nTri = Array.isArray(conv) ? -1 : conv.triangles.length / 3;
+  say(
+    'AM11_THE_SOURCE_IS_HANDED_OVER_COUNTER_CLOCKWISE_IN_SPINE_WORLD_AND_THE_CONTOUR_WINDING_READS_ALL_FLIPPED',
+    swapped === 0 && asIs === nTri && nTri === 22,
+    `spine-rigc's MQ_ORIENTATION: swapped ${swapped}; as the contour mesh writes them ${asIs} of ${nTri} (fixtures/contour.ts: 22 triangles)`,
+    'spine-rigc\'s SourceMesh is counter-clockwise in Spine world; the contour mesh\'s triangles read the other way through cropToSpineY, so each triangle\'s last two corners are swapped — the same triangles, relabelled',
+  );
+
+  // AM12 — every number in the call comes from the config.
+  const primes: AutoSpec = {
+    source: { tolerance: 0, margin: 1, spacing: 4 },
+    sourceBounds: { minCoverage: 0.97, maxOvershoot: 2.3, maxUndercut: 0.7 },
+    targets: { artFit: { minCoverage: 0.91, maxOvershoot: 2.9, maxUndercut: 1.1 }, maxBoundaryDeviation: 1.3, minAngle: 1.7 },
+    protect: { hull: true, vertices: [5], edges: [[0, 1]], regionBoundaries: ['pinch'], weightJump: 0.37, influences: ['hem1'] },
+    influences: { maxInfluences: 3, minWeight: 0.019 },
+    budget: { maxCandidates: 41 },
+    minArtSamples: 43,
+    regions: [{ name: 'pinch', shape: 'polygon', points: [[16, 12], [20, 12], [20, 16], [16, 16]], band: 2, bone: 'soft', maxEdgeLength: 2.1, transition: 3.1, grade: 0.53, minArtSamples: 47 }],
+  };
+  const csrc = autoSource('cloth', clothMask(), primes);
+  const in12 = Array.isArray(csrc) ? null : autoReductionInput({ part: 'cloth', mask: clothMask(), ox: 6, oy: 6, spec: primes, source: csrc, weights: null, boneOrder: ['root', 'hem0', 'hem1', 'soft'] });
+  const pairs12: Array<[string, unknown, unknown]> =
+    in12 === null
+      ? []
+      : [
+          ['sourceBounds', in12.sourceBounds, primes.sourceBounds],
+          ['targets.artFit', in12.targets.artFit, primes.targets.artFit],
+          ['targets.maxBoundaryDeviation', in12.targets.maxBoundaryDeviation, 1.3],
+          ['targets.minAngle', in12.targets.minAngle, 1.7],
+          ['protect', in12.protect, { hull: true, vertices: [5], edges: [[0, 1]], regionBoundaries: ['pinch'], weightJump: 0.37, influences: ['hem1', 'soft'] }],
+          ['influences', in12.influences, primes.influences],
+          ['budget', in12.budget, primes.budget],
+          ['minArtSamples', in12.minArtSamples, 43],
+          ['regionArtSamples', in12.regionArtSamples, [{ region: 'pinch', minArtSamples: 47 }]],
+          ['region (rig px less the offset 6, 6)', in12.targets.regions[0], { name: 'pinch', polygon: [[10, 6], [14, 6], [14, 10], [10, 10]], maxEdgeLength: 2.1, transition: 3.1, grade: 0.53, approximation: null }],
+          ['art', [in12.art.threshold, in12.art.frame.pageScale, in12.art.frame.width, in12.art.frame.height], [1, 1, 24, 16]],
+          ['preset, deform, linkedMeshes, boneOrder', [in12.preset, in12.deform, in12.linkedMeshes, in12.boneOrder], [null, [], [], ['root', 'hem0', 'hem1', 'soft']]],
+        ];
+  const wrong12 = pairs12.filter(([, a, b]) => JSON.stringify(a) !== JSON.stringify(b));
+  // Every number anywhere in the call but the mask and the source mesh is one of the config's, the mask's size, or the threshold and page scale 1.
+  const allowed = new Set<number>([0, 1, 24, 16, 5, 6, 2, 0.97, 2.3, 0.7, 0.91, 2.9, 1.1, 1.3, 1.7, 0.37, 3, 0.019, 41, 43, 47, 2.1, 3.1, 0.53, 10, 14]);
+  const strays = (v: unknown, path: string, out: string[]): string[] => {
+    if (typeof v === 'number') {
+      if (!allowed.has(v)) out.push(`${path}=${v}`);
+    } else if (Array.isArray(v)) v.forEach((x, i) => strays(x, `${path}[${i}]`, out));
+    else if (v !== null && typeof v === 'object' && !(v instanceof Uint8Array)) for (const [k, x] of Object.entries(v)) if (path !== '' || (k !== 'source' && k !== 'art')) strays(x, path === '' ? k : `${path}.${k}`, out);
+    return out;
+  };
+  const found12 = in12 === null ? ['no input'] : strays(in12, '', []);
+  const planted12 = in12 === null ? [] : strays({ ...in12, budget: { maxCandidates: 1000 } }, '', []);
+  say(
+    'AM12_EVERY_NUMBER_THE_CALL_IS_HANDED_IS_THE_CONFIGS_AND_A_PLANTED_PACKAGE_NUMBER_IS_CAUGHT',
+    in12 !== null && wrong12.length === 0 && found12.length === 0 && planted12.join() === 'budget.maxCandidates=1000',
+    `${pairs12.length} field(s) compared, ${wrong12.length} differ${wrong12.length > 0 ? `: ${wrong12.map(([k, a, b]) => `${k} ${JSON.stringify(a)} != ${JSON.stringify(b)}`).join('; ')}` : ''}; numbers not from the config: ${found12.join(', ') || 'none'}; planted 1000: ${planted12.join(', ') || 'not caught'}`,
+    'issue #126: quality inputs are numeric and the author\'s; the call\'s only other numbers are the threshold and page scale 1 (P4, P3), the mask\'s size, and the region carried by the part\'s offset; the region bone joins protect.influences; preset null, no deform key, no linked mesh',
+  );
+
+  // AM13 — an accepted result through the rig stage: the attachment is the report's mesh.
+  const okRig = refusals(() => buildRig(parseConfig(autoRigConfig()), rigParts(), rigImages()));
+  const built13 = okRig === null ? buildRig(parseConfig(autoRigConfig()), rigParts(), rigImages()) : null;
+  const row13 = built13?.meshReport.find((m) => m.part === 'cloth') as AutoMeshReport | undefined;
+  const att13 = built13?.rig.skins.default.cloth?.cloth as MeshAttachment | undefined;
+  const geo13 = autoGeometry('cloth', clothMask(), syntheticPolicy(4));
+  const srcPts = typeof geo13 === 'string' ? [] : geo13.source.vertices.map(([x, y]) => `${x},${y}`);
+  const resPts = typeof geo13 === 'string' || geo13.ran.mesh === null ? [] : geo13.ran.mesh.points;
+  const fit13 = resPts.length === 0 ? null : measureAuthoredMeshFit(clothMask(), 1, resPts, typeof geo13 === 'string' || geo13.ran.mesh === null ? [] : geo13.ran.mesh.triangles);
+  say(
+    'AM13_AN_ACCEPTED_RESULT_IS_WRITTEN_AS_SPINE_RIGC_RETURNED_IT_AND_HOLDS_EVERY_ART_PIXEL_ON_AN_INDEPENDENT_READING',
+    okRig === null &&
+      row13?.mode === 'auto' &&
+      att13 !== undefined &&
+      att13.hull === row13.hull &&
+      att13.uvs.length === 2 * row13.vertices &&
+      row13.vertices < (row13.source.counts?.boundaryVertices ?? 0) + (row13.source.counts?.interiorVertices ?? 0) &&
+      resPts.length > 0 &&
+      resPts.every(([x, y]) => srcPts.includes(`${x},${y}`)) &&
+      fit13 !== null &&
+      fit13.coveredArt === fit13.artPixels &&
+      fit13.artPixels === 128,
+    `rig stage: ${lines(okRig)}; ${row13 === undefined ? 'no row' : `${row13.source.counts?.boundaryVertices}+${row13.source.counts?.interiorVertices} -> ${row13.result.counts.boundaryVertices}+${row13.result.counts.interiorVertices} vertices, attachment hull ${att13?.hull}, ${row13.termination.reason}`}; every result vertex a source vertex: ${resPts.every(([x, y]) => srcPts.includes(`${x},${y}`))}; measureAuthoredMeshFit at alpha >= 1: ${fit13?.coveredArt}/${fit13?.artPixels} (by hand 128)`,
+    'with no region the reduction only removes, so every vertex is a source vertex; the result is held to coverage 1 and the fit counter that is not spine-rigc\'s measurement agrees',
+  );
+
+  // AM14 — none-met-the-targets: a budget spent before the region's density is met returns no mesh, and the part is refused.
+  const regionSpec = (over: Partial<AutoSpec> = {}): AutoSpec => ({ ...syntheticPolicy(2), regions: [squareRegion(32, 24, 4, 2)], ...over });
+  const g14 = autoGeometry('strip', STRIP_MASK, regionSpec({ budget: { maxCandidates: 1 } }));
+  const t14 = typeof g14 === 'string' ? null : g14.ran.report.termination;
+  say(
+    'AM14_A_BUDGET_SPENT_BEFORE_ANY_CANDIDATE_MEETS_THE_TARGETS_RETURNS_NO_MESH_AND_REFUSES_THE_PART',
+    typeof g14 !== 'string' &&
+      t14?.reason === 'budget-exhausted' &&
+      t14.result === 'none-met-the-targets' &&
+      g14.ran.mesh === null &&
+      !g14.verdict.accepted &&
+      g14.verdict.problem.code === 'AUTO_MESH_TERMINATION' &&
+      g14.verdict.problem.detail.includes('none-met-the-targets'),
+    typeof g14 === 'string' ? g14 : `termination ${JSON.stringify(t14)}; mesh ${g14.ran.mesh === null ? 'null' : 'returned'}; ${g14.verdict.accepted ? 'accepted' : problemLine(g14.verdict.problem)}`,
+    'issue #126: a planted bound that cannot be met is refused by name, never a silent fallback; one insertion cannot bring a 4 px region to L0 2 px',
+  );
+
+  // AM15 — a budget of 1 with nothing to refine: one removal attempted, the best that meets every bound accepted.
+  const g15 = autoGeometry('convex', CONVEX.mask, { ...syntheticPolicy(8), budget: { maxCandidates: 1 } });
+  const g15z = autoGeometry('convex', CONVEX.mask, { ...syntheticPolicy(8), budget: { maxCandidates: 0 } });
+  const t15 = typeof g15 === 'string' ? null : g15.ran.report.termination;
+  const v15 = typeof g15 === 'string' || g15.ran.mesh === null ? -1 : g15.ran.mesh.points.length;
+  const v15z = typeof g15z === 'string' || g15z.ran.mesh === null ? -1 : g15z.ran.mesh.points.length;
+  // By hand (fixtures/contour.ts, CONVEX): the source has 18 vertices; one attempt removes at most one.
+  say(
+    'AM15_A_BUDGET_OF_1_TRIES_ONE_REMOVAL_AND_A_BUDGET_OF_0_RETURNS_THE_SOURCE_BOTH_ACCEPTED',
+    typeof g15 !== 'string' &&
+      t15?.reason === 'budget-exhausted' &&
+      t15.candidatesTried === 1 &&
+      t15.result === 'best-meeting-every-bound' &&
+      g15.verdict.accepted &&
+      (v15 === 17 || v15 === 18) &&
+      v15z === 18 &&
+      typeof g15z !== 'string' &&
+      g15z.verdict.accepted,
+    `budget 1: ${JSON.stringify(t15)}, ${v15} vertices; budget 0: ${v15z} vertices (by hand: 18, one attempt removes at most one)`,
+    'P6: budget exhaustion may return an accepted best-so-far only when it meets every required bound; it never means optimal',
+  );
+
+  // AM16 — invalid-input: a source that fails its own bounds is no reference.
+  const g16 = autoGeometry('convex', CONVEX.mask, { ...syntheticPolicy(8), sourceBounds: { minCoverage: 1, maxOvershoot: 0, maxUndercut: 0 } });
+  say(
+    'AM16_A_SOURCE_THAT_FAILS_ITS_OWN_BOUNDS_IS_REFUSED_WITH_SPINE_RIGCS_CODE',
+    typeof g16 !== 'string' && !g16.verdict.accepted && g16.verdict.problem.code === 'AUTO_MESH_TERMINATION' && g16.verdict.problem.detail.includes('invalid-input REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS') && g16.ran.mesh === null,
+    typeof g16 === 'string' ? g16 : g16.verdict.accepted ? 'accepted' : problemLine(g16.verdict.problem),
+    'correction 3 and P8: the margin-1 source overshoots by 1 px (fixtures/contour.ts), so a sourceBounds.maxOvershoot of 0 refuses it as a reference; the report\'s own code and detail are carried',
+  );
+
+  // AM17 — a malformed input spine-rigc throws on is the part's refusal too.
+  const e17 = refusals(() => buildRig(parseConfig(autoRigConfig((_c, a) => (a.protect = { vertices: [9999] }))), rigParts(), rigImages()));
+  say(
+    'AM17_A_PROTECTED_VERTEX_THE_SOURCE_DOES_NOT_HAVE_IS_SPINE_RIGCS_THROWN_REFUSAL_BY_NAME',
+    has(e17, 'AUTO_MESH_INPUT', AT, 'REDUCE_INPUT_MISSING', 'protect.vertices[0] is 9999') && e17?.problems.length === 1,
+    lines(e17),
+    'only spine-rigc knows how many vertices the source has; its MeshReductionError is caught and named, never let through as a crash',
+  );
+
+  // AM18 — a result that is returned and not accepted: the 2.19.0 refinement stop (P16), refused with no fallback.
+  const e18 = refusals(() => buildRig(parseConfig(autoRigConfig((_c, a) => (a.regions = [region()]))), rigParts(), rigImages()));
+  say(
+    'AM18_A_RETURNED_RESULT_THAT_IS_NOT_ACCEPTED_REFUSES_THE_PART_WITH_THE_BLOCKING_ROW_AND_NOTHING_IS_BUILT',
+    has(e18, 'AUTO_MESH_ACCEPTED', AT, 'MQ_MAX_EDGE', 'pinch', 'P16', 'nothing is built in its place') && e18?.problems.length === 1,
+    lines(e18),
+    'spine-rigc 2.19.0 stops refining when an edge\'s far end lies further beyond the band than its bound (rigc#1221, the stop recorded before the owner chose option 1), and returns the mesh not accepted; the part is refused, not built from its source or as a lattice',
+  );
+
+  // AM19 — weights: a survivor keeps the source's bindings bit for bit; an inserted vertex is bound by name.
+  const strip19 = autoSource('strip', STRIP_MASK, regionSpec());
+  let detail19 = 'no source';
+  let ok19 = false;
+  if (!Array.isArray(strip19)) {
+    const segs19 = [{ bone: 'a', a: [0, 0] as Point, b: [64, 0] as Point }, { bone: 'b', a: [0, 48] as Point, b: [64, 48] as Point }];
+    const spec19 = { ...regionSpec(), regions: [{ ...squareRegion(32, 24, 4, 2), band: 2, bone: 'soft' }] };
+    const sw = sourceWeights(strip19.vertices, 0, 0, segs19, 8, spec19);
+    if ('weights' in sw) {
+      const ran = runReduction('strip', autoReductionInput({ part: 'strip', mask: STRIP_MASK, ox: 0, oy: 0, spec: spec19, source: strip19, weights: sw.weights, boneOrder: ['a', 'b', 'soft'] }));
+      if (!('code' in ran) && ran.mesh !== null) {
+        const mesh = ran.mesh;
+        const key = (l: ReadonlyArray<{ bone: string; weight: number }>): string => [...l].sort((p, q) => (p.bone < q.bone ? -1 : 1)).map((e) => `${e.bone}:${e.weight}`).join(',');
+        let same = 0;
+        let differ = 0;
+        mesh.indexMap.forEach((r, v) => {
+          if (r === null) return;
+          if (key(sw.weights[v]) === key((mesh.weights as Array<Array<{ bone: string; weight: number }>>)[r])) same++;
+          else differ++;
+        });
+        const planted = [...sw.weights[0]].map((e, i) => (i === 0 ? { bone: e.bone, weight: e.weight + Number.EPSILON } : e));
+        const caught = key(planted) !== key(sw.weights[0]);
+        const insertedSoft = mesh.inserted.filter((r) => (mesh.weights as Array<Array<{ bone: string }>>)[r].some((e) => e.bone === 'soft')).length;
+        ok19 = same > 0 && differ === 0 && caught && mesh.inserted.length > 0 && insertedSoft > 0;
+        detail19 = `${same} surviving source vertices keep their bindings bit for bit, ${differ} differ; a 1-ulp plant is ${caught ? 'caught' : 'missed'}; ${mesh.inserted.length} inserted, ${insertedSoft} of them carry the region bone "soft"`;
+      } else detail19 = 'code' in ran ? problemLine(ran) : terminationText(ran.report.termination);
+    } else detail19 = 'overlap';
+  }
+  say(
+    'AM19_A_SURVIVING_VERTEX_KEEPS_THE_SOURCES_BINDINGS_BIT_FOR_BIT_AND_INSERTED_ONES_CARRY_THE_REGION_BONE',
+    ok19,
+    detail19,
+    'P19: surviving vertices keep their attributes unchanged; an inserted vertex is interpolated by bone name, and the region bone is a protected influence so its share is never pruned silently',
+  );
+
+  // AM20 — the written weights: roundShares on every vertex, never the lattice's last-entry close.
+  const vtx20 = [{ bone: 'a', weight: 0.999996 }, { bone: 'b', weight: 0.000004 }];
+  const lattice20 = vtx20.map((e) => ({ bone: e.bone, weight: pyRound(e.weight, 5) }));
+  lattice20[1].weight = pyRound(1 - lattice20[0].weight, 5);
+  const round20 = roundShares(vtx20);
+  const sums = (att13?.weights ?? []).map((v) => pyRound(v.reduce((s, e) => s + e.weight, 0), 5));
+  const zeros = (att13?.weights ?? []).flat().filter((e) => e.weight <= 0).length;
+  say(
+    'AM20_EVERY_WRITTEN_VERTEX_SUMS_TO_1_WITH_NO_ZERO_ENTRY_AND_THE_LATTICES_ROUNDING_WOULD_WRITE_ONE',
+    att13 !== undefined && sums.every((s) => s === 1) && zeros === 0 && lattice20[1].weight === 0 && round20.length === 1 && round20[0].weight === 1,
+    `${sums.length} vertices, every sum 1: ${sums.every((s) => s === 1)}, zero entries ${zeros}; [0.999996, 0.000004] closed the lattice's way: ${JSON.stringify(lattice20)}, by roundShares: ${JSON.stringify(round20)}`,
+    'with the author\'s minWeight the 0.03 floor that makes the lattice\'s last-entry close safe is gone, so every vertex is rounded by roundShares (5 places, zeros dropped, the heaviest closes)',
+  );
+
+  // AM21 — protected influences over the cap are refused, never dropped.
+  // The strip of AM19, weighted to a (top edge) and b (bottom edge) with the region's bone: every source vertex
+  // carries a and b (no floor), so a vertex inserted beside the region carries a, b and soft, all three protected.
+  let detail21 = 'no source';
+  let ok21 = false;
+  if (!Array.isArray(strip19)) {
+    const segs21 = [{ bone: 'a', a: [0, 0] as Point, b: [64, 0] as Point }, { bone: 'b', a: [0, 48] as Point, b: [64, 48] as Point }];
+    const spec21 = { ...regionSpec(), regions: [{ ...squareRegion(32, 24, 4, 2), band: 2, bone: 'soft' }] };
+    const sw21 = sourceWeights(strip19.vertices, 0, 0, segs21, 8, spec21);
+    if ('weights' in sw21) {
+      const capped = (cap: number, guarded: string[]): string => {
+        const spec = { ...spec21, influences: { maxInfluences: cap, minWeight: 0 }, protect: { influences: guarded } };
+        const ran = runReduction('strip', autoReductionInput({ part: 'strip', mask: STRIP_MASK, ox: 0, oy: 0, spec, source: strip19, weights: sw21.weights, boneOrder: ['a', 'b', 'soft'] }));
+        if ('code' in ran) return problemLine(ran);
+        const v = autoVerdict('strip', ran);
+        return v.accepted ? 'accepted' : problemLine(v.problem);
+      };
+      const over = capped(2, ['a', 'b']);
+      const fits = capped(3, ['a', 'b']);
+      ok21 = over.includes('REDUCE_PROTECTED_INFLUENCES_OVER_CAP') && over.startsWith('AUTO_MESH_TERMINATION') && fits === 'accepted';
+      detail21 = `cap 2 with a, b and soft protected: ${over.slice(0, 600)}; cap 3: ${fits}`;
+    }
+  }
+  say(
+    'AM21_PROTECTED_INFLUENCES_OVER_THE_AUTHORS_CAP_ARE_REFUSED_BY_NAME_AND_UNDER_IT_ACCEPTED',
+    ok21,
+    detail21,
+    'P19: if the protected influences of an inserted vertex do not fit the cap the call is refused, never pruned silently; the region bone is always among them',
+  );
+
+  // AM22 — the circle's polygon: the rule, its error and its containment.
+  const radii = [2, 11, 65];
+  const circ = radii.map((r) => {
+    const c = circlePolygon(0, 0, r);
+    const fewer = (r + CIRCLE_CLEARANCE) / Math.cos(Math.PI / (c.sides - 1)) - r + 7.1e-7;
+    const vd = c.polygon.map(([x, y]) => Math.sqrt(x * x + y * y));
+    let edgeMin = Infinity;
+    for (let k = 0; k < c.polygon.length; k++) {
+      const [ax, ay] = c.polygon[k];
+      const [bx, by] = c.polygon[(k + 1) % c.polygon.length];
+      edgeMin = Math.min(edgeMin, Math.abs(ax * by - ay * bx) / Math.sqrt((bx - ax) ** 2 + (by - ay) ** 2));
+    }
+    const inscribed = c.polygon.map((_, k) => [r * Math.cos((2 * Math.PI * k) / c.sides), r * Math.sin((2 * Math.PI * k) / c.sides)]);
+    const [ix0, iy0] = inscribed[0];
+    const [ix1, iy1] = inscribed[1];
+    const inscribedEdge = Math.abs(ix0 * iy1 - iy0 * ix1) / Math.sqrt((ix1 - ix0) ** 2 + (iy1 - iy0) ** 2);
+    return { r, sides: c.sides, maxError: c.maxError, ok: c.sides >= 3 && (c.sides === 3 || fewer > 1 / GRID) && c.maxError <= 1 / GRID && Math.max(...vd) - r <= 1 / GRID && edgeMin >= r && inscribedEdge < r };
+  });
+  say(
+    'AM22_A_CIRCLE_BECOMES_THE_FEWEST_SIDED_CIRCUMSCRIBED_POLYGON_WITHIN_1_256_PX_AND_AN_INSCRIBED_ONE_WOULD_NOT_HOLD_IT',
+    circ.every((c) => c.ok),
+    circ.map((c) => `r ${c.r}: ${c.sides} sides, error ${c.maxError}`).join('; '),
+    'P17: the conversion has a stated policy and error, echoed in the region\'s approximation; a polygon that holds the circle holds every edge that meets the circle to its bound; one side fewer is over the 1/256 px grid the region\'s numbers are on, and the inscribed polygon would leave the circle\'s rim out',
+  );
+
+  // AM23 — transition 0: no band, no transition row, and the hard edge as the owner ruled.
+  const t23 = autoGeometry('strip', STRIP_MASK, { ...syntheticPolicy(2), regions: [{ ...squareRegion(32, 24, 8, 0), maxEdgeLength: 3 }] });
+  const t23x = autoGeometry('strip', STRIP_MASK, { ...syntheticPolicy(2), regions: [squareRegion(32, 24, 4, 0)] });
+  const rows23 = typeof t23 === 'string' ? [] : (t23.ran.report.candidates[0]?.geometry?.rows ?? []);
+  say(
+    'AM23_A_REGION_WITH_TRANSITION_0_HAS_NO_TRANSITION_ROW_AND_A_ZERO_BAND_CASE_SPINE_RIGC_CANNOT_REFINE_IS_REFUSED_BY_NAME',
+    typeof t23 !== 'string' &&
+      t23.verdict.accepted &&
+      t23.input.targets.regions[0].transition === 0 &&
+      !rows23.some((r) => r.code === 'MQ_TRANSITION') &&
+      rows23.some((r) => r.code === 'MQ_MAX_EDGE' && r.state === 'pass') &&
+      typeof t23x !== 'string' &&
+      !t23x.verdict.accepted &&
+      t23x.verdict.problem.code === 'AUTO_MESH_ACCEPTED' &&
+      t23x.verdict.problem.detail.includes('MQ_MAX_EDGE'),
+    `L0 3 on an 8 px square: ${typeof t23 === 'string' ? t23 : `${t23.verdict.accepted ? 'accepted' : problemLine(t23.verdict.problem)}, rows ${rows23.filter((r) => r.object.region !== null).map((r) => `${r.code} ${r.state}`).join(', ')}`}; L0 2 on a 4 px square: ${typeof t23x === 'string' ? t23x : t23x.verdict.accepted ? 'accepted' : problemLine(t23x.verdict.problem)}`,
+    'the owner\'s rule on issue #126: transition 0 keeps the region boundary constrained under the closed-region rule; where that leaves a refinement infeasible the limitation is reported by name (the source grid\'s 2.83 px diagonals cross the 4 px square with no point inside to split at)',
+  );
+
+  // AM24 — determinism.
+  const once = buildRig(parseConfig(autoRigConfig()), rigParts(), rigImages());
+  const twice = buildRig(parseConfig(autoRigConfig()), rigParts(), rigImages());
+  say(
+    'AM24_TWO_RUNS_OF_ONE_AUTO_CONFIG_WRITE_THE_SAME_BYTES',
+    once !== null && rigJsonText(once.rig) === rigJsonText(twice.rig) && rigJsonText(once.meshReport) === rigJsonText(twice.meshReport),
+    `rig.json ${rigJsonText(twice.rig).length} bytes, mesh_report.json ${rigJsonText(twice.meshReport).length} bytes, identical: ${once !== null && rigJsonText(once.meshReport) === rigJsonText(twice.meshReport)}`,
+    'determinism is a contract: the same config writes the same bytes, spine-rigc\'s document inside the row included',
+  );
+
+  // AM25 — the report row: every field the brief names, and deformation said to be unmeasured.
+  const doc = row13?.quality_report as { spec?: string; operation?: string; poser?: unknown; motionRequired?: unknown; sourceCounts?: unknown; candidates?: Array<{ counts?: unknown; motion?: unknown; geometry?: { rows?: unknown[] } }>; effective?: { preset?: unknown } } | undefined;
+  say(
+    'AM25_THE_MESH_REPORT_ROW_CARRIES_SETTINGS_COUNTS_RESIDUALS_TERMINATION_AND_THE_WHOLE_DOCUMENT_AND_SAYS_DEFORMATION_IS_UNMEASURED',
+    row13 !== undefined &&
+      doc !== undefined &&
+      doc.spec === 'mesh-quality-report/1' &&
+      doc.operation === 'reduce' &&
+      doc.poser === null &&
+      doc.motionRequired === false &&
+      doc.candidates?.[0]?.motion === null &&
+      doc.effective?.preset === null &&
+      row13.settings.preset === null &&
+      JSON.stringify(row13.source.counts) === JSON.stringify(doc.sourceCounts) &&
+      JSON.stringify(row13.result.counts) === JSON.stringify(doc.candidates?.[0]?.counts) &&
+      row13.residuals.length === (doc.candidates?.[0]?.geometry?.rows?.length ?? -1) &&
+      JSON.stringify(row13.settings.sourceBounds) === JSON.stringify(syntheticPolicy(4).sourceBounds) &&
+      row13.settings.threshold === 1 &&
+      row13.settings.protect.hull === false &&
+      row13.deformation.startsWith('unmeasured') &&
+      row13.worst_residual !== null,
+    row13 === undefined ? 'no row' : `mode ${row13.mode}; deformation "${row13.deformation}"; ${row13.residuals.length} residual(s), worst ${row13.worst_residual?.code}; termination ${row13.termination.reason}; document ${doc?.spec}, operation ${doc?.operation}, poser ${String(doc?.poser)}, motion ${String(doc?.candidates?.[0]?.motion)}`,
+    'issue #126 "Evidence and reports": effective settings, counts, residuals, worst region, termination and the measured/unmeasured split; geometry-only acceptance stays visibly geometry-only (P6)',
+  );
+
+  // AM26 — the worst residual, by hand.
+  const res26: Residual[] = [
+    { code: 'MQ_A', region: null, state: 'pass', value: 1, bound: { op: '<=', value: 4 }, unit: 'px' },
+    { code: 'MQ_B', region: null, state: 'pass', value: 0.95, bound: { op: '>=', value: 0.9 }, unit: 'fraction' },
+    { code: 'MQ_C', region: 'r', state: 'pass', value: 3, bound: { op: '<=', value: 6 }, unit: 'px' },
+    { code: 'MQ_D', region: null, state: 'undeclared', value: 99, bound: null, unit: 'px' },
+  ];
+  const w26 = worstResidual(res26);
+  // By hand: A uses 1/4, B 0.9/0.95 = 0.947…, C 3/6; D has no bound.
+  say(
+    'AM26_THE_WORST_RESIDUAL_IS_THE_DECLARED_ROW_NEAREST_ITS_BOUND_AND_AN_UNDECLARED_ONE_IS_NEVER_IT',
+    w26?.code === 'MQ_B' && Math.abs(w26.used - 0.9 / 0.95) < 1e-15 && worstRegion(res26) === 'r' && worstResidual([res26[3]]) === null,
+    `worst ${w26?.code} at ${w26?.used} (by hand 0.9/0.95); worst region ${worstRegion(res26)}`,
+    'the build line prints one residual; it is defined as the share of its bound used, so a coverage and a distance compare, and an undeclared row satisfies nothing (P6)',
+  );
+
+  // AM27 — the build line.
+  const dir27 = temp('auto-line');
+  try {
+    const fx = writeRigFixture(dir27, autoRigConfig());
+    const log27: string[] = [];
+    rigStage({ config: fx.config, parts: fx.parts, out: join(dir27, 'out') }, () => ({ status: 0, out: '' }), join(dir27, 'scratch'), (l) => log27.push(l));
+    const line27 = log27.find((l) => l.includes('mesh cloth')) ?? '';
+    say(
+      'AM27_THE_MESH_LINE_PRINTS_THE_COUNTS_THE_TERMINATION_THE_WORST_RESIDUAL_AND_THAT_DEFORMATION_IS_UNMEASURED',
+      /auto \d+\+\d+ -> \d+\+\d+ \(hull\+interior\) bindings \d+/.test(line27) && line27.includes('no-further-valid-reduction after') && line27.includes('; worst MQ_') && line27.endsWith('; deformation unmeasured'),
+      line27.trim(),
+      'issue #126 item 2: build\'s mesh line names the counts, the termination reason and the worst residual, and says what was not measured',
+    );
+  } finally {
+    rmSync(dir27, { recursive: true, force: true });
+  }
+
+  // AM28 — the fixture's auto rig through the installed spine-rigc's gate.
+  const dir28 = temp('auto-gate');
+  try {
+    const fx = writeRigFixture(dir28, autoRigConfig());
+    const rigc = findRigc(ROOT, '');
+    const runner: RigcRunner = (args) => {
+      const r = spawnSync(rigc, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+    };
+    const log28: string[] = [];
+    const e28 = refusals(() => rigStage({ config: fx.config, parts: fx.parts, out: join(dir28, 'out') }, runner, join(dir28, 'scratch'), (l) => log28.push(l)));
+    const gate = log28.filter((l) => l.includes('rigc ') && l.includes('exit'));
+    say(
+      'AM28_THE_FIXTURES_AUTO_RIG_PASSES_SPINE_RIGCS_GATE_AND_IS_WRITTEN',
+      e28 === null && gate.length > 0 && gate.every((l) => l.includes('exit 0')) && existsSync(join(dir28, 'out', 'rig.json')),
+      `${lines(e28)}; ${gate.map((l) => l.trim()).join(' | ')}`,
+      'the reduced mesh goes through the ordinary build and its full gate (contract, Non-goals): nothing here writes skeleton data without it',
+    );
+  } finally {
+    rmSync(dir28, { recursive: true, force: true });
+  }
+
+  return bad();
+}
+
+/**
+ * The automatic mode on a public example (issue #126 item 2, Part 3): the demo's `neck` — the smallest mesh
+ * part that is one island at alpha 1 and above — switched to auto under tools/auto_survey.ts's POLICY, through
+ * assemble, the rig stage and the installed spine-rigc's gate. No fetched inputs: a SKIP and a HOLE.
+ */
+function runAutoMeshExamplesSuite(): number | null {
+  section('auto-mesh: a public example part (examples/demo/inputs)');
+  const demo = exampleDirs().find((d) => d.endsWith(`${'/'}demo`) && existsSync(join(d, 'inputs', 'layers', 'head')));
+  if (demo === undefined) {
+    console.log('  SKIP  no fetched examples/demo/inputs (painting.png + layers/{full,head}); run bun run fetch-examples');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — the automatic mode measured no real part.');
+    return null;
+  }
+  const { say, bad } = counter();
+  const dir = temp('auto-demo');
+  try {
+    const out = join(dir, 'asm');
+    assembleStage(
+      { source: join(demo, 'inputs', 'painting.png'), full: join(demo, 'inputs', 'layers', 'full'), head: join(demo, 'inputs', 'layers', 'head'), config: join(demo, 'config.json'), seam: DEFAULT_SEAM_RULE, project: DEFAULT_PROJECT_RULE },
+      { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, 'recomposite_error_rig.png') },
+      () => {},
+    );
+    const raw = JSON.parse(readFileSync(join(demo, 'config.json'), 'utf8')) as { meshes: Record<string, { grid: number; r: number; segments: unknown }> };
+    const neck = raw.meshes.neck;
+    raw.meshes.neck = { auto: examplePolicy(neck.grid), r: neck.r, segments: neck.segments } as unknown as typeof neck;
+    writeFileSync(join(dir, 'config.json'), JSON.stringify(raw));
+    const rigc = findRigc(ROOT, '');
+    const runner: RigcRunner = (args) => {
+      const r = spawnSync(rigc, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+    };
+    const log: string[] = [];
+    const e = refusals(() => rigStage({ config: join(dir, 'config.json'), parts: out, out: join(dir, 'rig') }, runner, join(dir, 'scratch'), (l) => log.push(l)));
+    const rows = e === null ? (JSON.parse(readFileSync(join(dir, 'rig', 'mesh_report.json'), 'utf8')) as MeshReport[]) : [];
+    const row = rows.find((r) => r.part === 'neck') as AutoMeshReport | undefined;
+    const gate = log.filter((l) => l.includes('rigc ') && l.includes('exit'));
+    say(
+      'AM29_THE_DEMOS_NECK_IN_AUTO_UNDER_THE_STATED_POLICY_IS_ACCEPTED_AND_GATED_GREEN_WITH_FEWER_VERTICES_THAN_ITS_SOURCE',
+      e === null &&
+        row?.mode === 'auto' &&
+        gate.length > 0 &&
+        gate.every((l) => l.includes('exit 0')) &&
+        row.source.counts !== null &&
+        row.vertices < row.source.counts.boundaryVertices + row.source.counts.interiorVertices &&
+        row.residuals.filter((q) => q.bound !== null).every((q) => q.state === 'pass'),
+      e !== null ? e.problems.map(problemLine).join('; ').slice(0, 1500) : `${log.find((l) => l.includes('mesh neck'))?.trim() ?? 'no mesh line'}; ${gate.map((l) => l.trim()).join(' | ')}`,
+      'Part 3 of the brief: a real part through the real gate; the figures are tools/auto_survey.ts\'s table, recomputed here only as the facts a gate needs — accepted, green, reduced, every declared bound passing',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return bad();
+}
+
 /**
  * Every suite but the tally's own, in the order the run prints them. The
  * workers below run them concurrently; what the run prints, counts and judges
@@ -15423,6 +16071,8 @@ const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number 
   ['rig', runRigSuite],
   ['contour', runContourSuite],
   ['contour-wiring', runContourWiringSuite],
+  ['auto-mesh', runAutoMeshSuite],
+  ['auto-mesh-examples', runAutoMeshExamplesSuite],
   ['propose', runProposeSuite],
   ['keypoints', runKeypointsSuite],
   ['propose-corpus', runProposeCorpusSuite],
@@ -15463,7 +16113,7 @@ const TALLY_SUITE = 'run-tally';
  * (`dispatchOrder`), because a misspelt name would quietly cost the time it
  * exists to buy.
  */
-const STARTED_FIRST: readonly string[] = ['readme-loop', 'chain', 'build', 'check', 'scene', 'assemble-examples', 'propose', 'rig'];
+const STARTED_FIRST: readonly string[] = ['readme-loop', 'chain', 'build', 'check', 'scene', 'assemble-examples', 'propose', 'rig', 'auto-mesh-examples', 'auto-mesh'];
 
 /** The argument that makes this file run one suite as a worker, for the parent run, and nothing else. */
 const WORKER_FLAG = '--suite-worker';
@@ -15662,10 +16312,11 @@ async function main(): Promise<void> {
   const proposeClause = holes.includes('propose-corpus') ? '' : `, + ${n('propose-corpus')} example-propose`;
   const assembleExamplesClause = holes.includes('assemble-examples') ? '' : `, + ${n('assemble-examples')} assemble-example`;
   const inputsClause = holes.includes('inputs-examples') ? '' : `, + ${n('inputs-examples')} example-inputs`;
+  const autoExamplesClause = holes.includes('auto-mesh-examples') ? '' : `, + ${n('auto-mesh-examples')} example-auto-mesh`;
   console.log(
     `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('contour')} contour-mesh, + ${n('contour-wiring')} contour-wiring, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('scene')} scene, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${chainClause}${readmeLoopClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('contour')} contour-mesh, + ${n('contour-wiring')} contour-wiring, + ${n('auto-mesh')} auto-mesh, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('scene')} scene, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${autoExamplesClause}${chainClause}${readmeLoopClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
