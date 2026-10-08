@@ -175,12 +175,12 @@
    "triangle": 215,
    "vertices": [
     142,
-    31,
-    32
+    32,
+    31
    ],
    "edge": [
-    31,
-    32
+    32,
+    31
    ],
    "frame": 47,
    "ratio": 0.911
@@ -192,54 +192,54 @@
     "slot": "hair_back",
     "triangles": 264,
     "max_ratio": 1.027,
-    "max_at": "triangle 167 (vertices 116 125 124), edge 125-124, idle frame 20",
+    "max_at": "triangle 167 (vertices 116 124 125), edge 124-125, idle frame 20",
     "min_ratio": 0.981,
-    "min_at": "triangle 167 (vertices 116 125 124), edge 125-124, idle frame 44",
+    "min_at": "triangle 167 (vertices 116 124 125), edge 124-125, idle frame 44",
     "severity": 1.027
    },
    {
     "slot": "handwear_r",
     "triangles": 642,
     "max_ratio": 1.021,
-    "max_at": "triangle 259 (vertices 223 25 26), edge 25-26, idle frame 7",
+    "max_at": "triangle 259 (vertices 223 26 25), edge 26-25, idle frame 7",
     "min_ratio": 0.987,
-    "min_at": "triangle 259 (vertices 223 25 26), edge 25-26, idle frame 31",
+    "min_at": "triangle 259 (vertices 223 26 25), edge 26-25, idle frame 31",
     "severity": 1.021
    },
    {
     "slot": "handwear_l",
     "triangles": 822,
     "max_ratio": 1.022,
-    "max_at": "triangle 371 (vertices 284 292 291), edge 292-291, idle frame 9",
+    "max_at": "triangle 371 (vertices 284 291 292), edge 291-292, idle frame 9",
     "min_ratio": 0.986,
-    "min_at": "triangle 371 (vertices 284 292 291), edge 292-291, idle frame 33",
+    "min_at": "triangle 371 (vertices 284 291 292), edge 291-292, idle frame 33",
     "severity": 1.022
    },
    {
     "slot": "bottomwear",
     "triangles": 287,
     "max_ratio": 1.035,
-    "max_at": "triangle 65 (vertices 44 46 47), edge 46-47, idle frame 33",
+    "max_at": "triangle 65 (vertices 44 47 46), edge 47-46, idle frame 33",
     "min_ratio": 0.965,
-    "min_at": "triangle 65 (vertices 44 46 47), edge 46-47, idle frame 9",
+    "min_at": "triangle 65 (vertices 44 47 46), edge 47-46, idle frame 9",
     "severity": 1.036
    },
    {
     "slot": "topwear",
     "triangles": 392,
     "max_ratio": 1.051,
-    "max_at": "triangle 371 (vertices 232 236 38), edge 236-38, idle frame 7",
+    "max_at": "triangle 371 (vertices 232 38 236), edge 38-236, idle frame 7",
     "min_ratio": 0.959,
-    "min_at": "triangle 369 (vertices 231 54 235), edge 54-235, idle frame 31",
+    "min_at": "triangle 369 (vertices 231 235 54), edge 235-54, idle frame 31",
     "severity": 1.051
    },
    {
     "slot": "hair_front",
     "triangles": 226,
     "max_ratio": 1.097,
-    "max_at": "triangle 215 (vertices 142 31 32), edge 31-32, idle frame 23",
+    "max_at": "triangle 215 (vertices 142 32 31), edge 32-31, idle frame 23",
     "min_ratio": 0.911,
-    "min_at": "triangle 215 (vertices 142 31 32), edge 31-32, idle frame 47",
+    "min_at": "triangle 215 (vertices 142 32 31), edge 32-31, idle frame 47",
     "severity": 1.098
    }
   ]

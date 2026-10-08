@@ -42,7 +42,8 @@
  *    through a region's support, points are inserted on the outline at the
  *    region's spacing ({@link outlineInRegions}, issue #110): exactly on its
  *    edges, so the outline encloses the same set and only gains vertices.
- * 5. **Triangulation**: rigc's `earClip` of the outline, made constrained
+ * 5. **Triangulation**: rigc's `earClip` of the outline (clockwise on screen,
+ *    as the outline is), made constrained
  *    Delaunay by flipping; then each kept point inserted in order — the
  *    triangle that holds it is split in three, or the two that share the edge
  *    it lies on in four — and the Delaunay condition restored by flipping
@@ -126,17 +127,21 @@
  * outline edge renumbers no hull vertex (`CT21`, `CE14`); one whose support
  * does keeps every hull vertex, in the same cyclic order and position from
  * index 0, and moves a vertex's index only by the points inserted before it in
- * walk order (`CE13`). Triangles: each wound as the outline is (clockwise on screen — the
- * lattice's winding), rotated to start at its smallest index, and sorted, so the
- * list does not depend on the order the flips happened in. Read through
- * `cropToSpineY`, as spine-rigc's `MQ_ORIENTATION` reads a mesh, that winding is
- * clockwise in Spine's y-up world, not counter-clockwise: measured, spine-rigc
- * 2.19.0 reads 162 of 162 triangles of the demo example's `neck` source as
- * flipped. The automatic mode (`src/automesh.ts`, `spineWinding`) hands the
- * triangles to spine-rigc with each one's last two corners swapped; the lattice
- * and contour emitters write what they always wrote.
+ * walk order (`CE13`). Triangles: built wound as the outline is (clockwise on
+ * screen) — the triangulation's predicates are written for that winding —,
+ * rotated to start at its smallest index, and sorted, so the list does not
+ * depend on the order the flips happened in; then written with each triple's
+ * last two corners swapped (`counterClockwiseInSpineWorld`, `src/mesh.ts`), so
+ * every triangle is counter-clockwise in Spine world, the winding spine-rigc's
+ * `MQ_ORIENTATION` and its `SourceMesh` read (issue #126). The y flip does not
+ * turn a loop over: before the swap, spine-rigc 2.20.3 read every triangle of
+ * every contour mesh on the three public examples as clockwise in Spine world
+ * (2,553 of 2,553 on demo). The swap keeps the order of the list and the first
+ * index of every triple, so it is exactly `[a, b, c]` → `[a, c, b]`. The
+ * automatic mode hands these triangles to spine-rigc as they are.
  */
 import { type Problem } from './errors.ts';
+import { counterClockwiseInSpineWorld } from './mesh.ts';
 import { connectedComponents, fillHoles, type Mask } from './raster/index.ts';
 import {
   type AlphaMask,
@@ -896,14 +901,21 @@ class Triangulation {
  * Delaunay: the vertex across the edge strictly inside the circumcircle of the
  * triangle on this side. Exact on {@link GRID} coordinates; 0 for a
  * constrained Delaunay triangulation (the outline's edges, which have no
- * neighbour, are not asked).
+ * neighbour, are not asked). Being Delaunay does not depend on winding, so
+ * each triangle is read in the order that is clockwise on screen — the order
+ * the triangulation's predicates are written for — whichever way it is listed:
+ * the module's output (counter-clockwise in Spine world) and a list wound as
+ * the outline read the same.
  */
 export function delaunayViolations(vertices: ReadonlyArray<readonly [number, number]>, triangles: readonly number[]): number {
-  const mesh = new Triangulation(
-    vertices.map((v) => snap(v[0])),
-    vertices.map((v) => snap(v[1])),
-  );
-  for (let t = 0; t < triangles.length; t += 3) mesh.set(t / 3, triangles[t], triangles[t + 1], triangles[t + 2]);
+  const X = vertices.map((v) => snap(v[0]));
+  const Y = vertices.map((v) => snap(v[1]));
+  const mesh = new Triangulation(X, Y);
+  for (let t = 0; t < triangles.length; t += 3) {
+    const [a, b, c] = [triangles[t], triangles[t + 1], triangles[t + 2]];
+    if (orient(X[a], Y[a], X[b], Y[b], X[c], Y[c]) < 0) mesh.set(t / 3, a, c, b);
+    else mesh.set(t / 3, a, b, c);
+  }
   return mesh.violations();
 }
 
@@ -950,9 +962,11 @@ const unitsToPx2 = (twice: bigint): number => Number(twice) / 2 / (GRID * GRID);
  * - `CONTOUR_ONE_LOOP` — rigc's own `traceOutline` and `checkHullOrder`, the
  *   functions its gate runs on an authored mesh: one closed loop, `2V − hull −
  *   2` triangles, the outline first and in order, and a `hull` that agrees;
- * - `CONTOUR_TILING` — a triangle wound against the outline, or triangle areas
- *   that do not sum to the outline's: with every triangle wound one way and
- *   the boundary the outline, the sum is what rules out an overlap. rigc's
+ * - `CONTOUR_TILING` — a triangle that is not counter-clockwise in Spine world
+ *   (y up: a negative area in this module's y-down units), or triangle areas
+ *   that do not sum to the area the outline encloses: with every triangle
+ *   wound one way and the boundary the outline, the sum is what rules out an
+ *   overlap. rigc's
  *   `traceOutline` counts edge USES, so a triangle listed four times over (its
  *   edges then used four times, "interior") passes it; the sum does not
  *   (selftest `CT18`).
@@ -1002,8 +1016,9 @@ export function contourTopologyProblems(part: string, vertices: ReadonlyArray<re
       out.push({ code: 'CONTOUR_ZERO_AREA_TRIANGLE', object, detail: `triangle ${t / 3} (${a}, ${b}, ${c}) has zero area; every triangle needs a non-zero area` });
       break;
     }
-    if (s < 0 && against < 0) against = t / 3;
-    sum += BigInt(s);
+    // Counter-clockwise in Spine world is a NEGATIVE orientation in y-down units (the y flip changes the sign).
+    if (s > 0 && against < 0) against = t / 3;
+    sum -= BigInt(s);
   }
   const ring = vertices.slice(0, hull).map(([x, y]) => [x, y] as [number, number]);
   const crossing = hull >= 3 ? findSelfIntersection(ring) : null;
@@ -1018,14 +1033,15 @@ export function contourTopologyProblems(part: string, vertices: ReadonlyArray<re
     if (!(err instanceof MeshError)) throw err;
     out.push({ code: 'CONTOUR_ONE_LOOP', object, detail: `spine-rigc's traceOutline/checkHullOrder: ${err.message}; one closed loop of the first ${hull} vertices in order, with 2 x ${V} - ${hull} - 2 = ${2 * V - hull - 2} triangles, is required` });
   }
-  const outlineTwice = twiceAreaUnits(X.slice(0, hull), Y.slice(0, hull));
+  const listed = twiceAreaUnits(X.slice(0, hull), Y.slice(0, hull));
+  const outlineTwice = listed < 0n ? -listed : listed;
   if (against >= 0 || (out.length === 0 && sum !== outlineTwice)) {
     out.push({
       code: 'CONTOUR_TILING',
       object,
       detail:
         against >= 0
-          ? `triangle ${against} is wound against the outline; every triangle must be wound as the outline is (clockwise on screen)`
+          ? `triangle ${against} (${triangles[3 * against]}, ${triangles[3 * against + 1]}, ${triangles[3 * against + 2]}) is clockwise in Spine world; every triangle must be counter-clockwise in Spine world (y up), the winding spine-rigc reads a mesh in`
           : `its triangles' areas sum to ${unitsToPx2(sum)} px² and its outline encloses ${unitsToPx2(outlineTwice)} px²; equal is required, or triangles overlap`,
     });
   }
@@ -1376,7 +1392,7 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
   mesh.legalizeAll();
 
   const vertices = X.map((x, i) => [x / GRID, Y[i] / GRID] as [number, number]);
-  const triangles = canonicalTriangles(mesh.tri);
+  const triangles = counterClockwiseInSpineWorld(canonicalTriangles(mesh.tri));
   const problems = contourTopologyProblems(part, vertices, triangles, H);
   const fit = contourFit(part, meshed, threshold, { margin, tolerance }, vertices, triangles);
   problems.push(...fit.problems);

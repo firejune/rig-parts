@@ -46,12 +46,12 @@
  * ## The winding the call is handed
  *
  * spine-rigc's `SourceMesh.triangles` are counter-clockwise in Spine world,
- * which its `MQ_ORIENTATION` reads through `cropToSpineY`. The contour mesh's
- * triangles (and the lattice's) are wound the other way in that reading —
- * measured: the contour source of the demo example's `neck` read 162 of 162
- * triangles flipped (`src/contour.ts`'s header records it). So the source is handed over with each
- * triangle's last two corners swapped ({@link spineWinding}): the same
- * triangles, relabelled. The result is written as spine-rigc returns it.
+ * which its `MQ_ORIENTATION` reads through `cropToSpineY`. The contour mesh
+ * writes its triangles that way (`src/contour.ts`, issue #126), so the source
+ * is handed over exactly as `contourMesh` returns it — no turn here, so none
+ * twice (before issue #126 the contour mesh was clockwise in Spine world and
+ * this module swapped each triple; the bytes handed to spine-rigc are the same
+ * either way). The result is written as spine-rigc returns it.
  *
  * ## A circle region (P17)
  *
@@ -148,13 +148,6 @@ export function refinementRegion(rg: AutoRegionSpec, ox: number, oy: number): Re
   };
 }
 
-/** Each triangle's last two corners swapped: the same triangles, wound the other way round ({@link autoSource}'s header). */
-export function spineWinding(triangles: readonly number[]): number[] {
-  const out: number[] = [];
-  for (let t = 0; t < triangles.length; t += 3) out.push(triangles[t], triangles[t + 2], triangles[t + 1]);
-  return out;
-}
-
 /** The source of one automatic mesh: the contour mesh at alpha 1 and above, gated by `contourMesh`, or every problem that refuses it. */
 export function autoSource(part: string, mask: AlphaMask, spec: AutoSpec): ContourMesh | Problem[] {
   return contourMesh(part, mask, {
@@ -211,7 +204,7 @@ export function autoReductionInput(args: {
   const src: SourceMesh = {
     points: source.vertices.map(([x, y]) => [x, y] as [number, number]),
     uvs: source.vertices.flatMap(([x, y]) => [pyRound(x / w, 6), pyRound(y / h, 6)]),
-    triangles: spineWinding(source.triangles),
+    triangles: [...source.triangles],
     hull: source.hull,
     weights: args.weights === null ? null : args.weights.map((list) => list.map((e) => ({ bone: e.bone, weight: e.weight }))),
   };
