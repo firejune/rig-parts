@@ -23,7 +23,14 @@
  * 3. **Triangles.** Vertices are numbered in the order the kept cells first
  *    touch them (row-major cells, corners top-left, top-right, bottom-right,
  *    bottom-left); each cell is two triangles with the diagonal alternating by
- *    `(i + j) % 2` so the lattice has no preferred shear.
+ *    `(i + j) % 2` so the lattice has no preferred shear. Each triangle is
+ *    built clockwise on screen (top-left, top-right, bottom-right), the
+ *    reference's order, and written with its last two corners swapped
+ *    ({@link counterClockwiseInSpineWorld}): the y flip to Spine's world does
+ *    not turn a loop over, so a triangle clockwise on screen is clockwise in
+ *    Spine world, and the winding spine-rigc reads a mesh in is
+ *    counter-clockwise there (issue #126; rigc#1236). The swap is made after
+ *    the boundary walk below, so no vertex index and no hull moves with it.
  * 4. **Boundary first.** Spine's `hull` is a count: the first `hull` vertices
  *    are the outline, in order. The outline is walked from the edges used by
  *    exactly one triangle, then every interior vertex follows in index order.
@@ -175,10 +182,28 @@ export function oneLoop(start: Mask, maxPasses: number = ONE_LOOP_PASSES): OneLo
   return { cells, passes: maxPasses, settled: false };
 }
 
+/**
+ * Each triple `[a, b, c]` written `[a, c, b]`: the same triangles over the same
+ * vertices, wound the other way round. A triangle list built clockwise on
+ * screen (positive area in crop pixels, y down) is clockwise in Spine world as
+ * well — flipping y changes the sign of a signed area, but Spine's world is
+ * drawn with y up, so the loop turns the same way on screen as there — and
+ * spine-rigc reads every mesh as counter-clockwise in Spine world (its
+ * `MQ_ORIENTATION`; rigc#1236 turned its own `contour` and `ring` generators
+ * for the same reason). The lattice ({@link triangulate}) and the contour mesh
+ * (`src/contour.ts`) both build clockwise on screen and write through this,
+ * once, at their output; nothing downstream turns them again (issue #126).
+ */
+export function counterClockwiseInSpineWorld(triangles: readonly number[]): number[] {
+  const out: number[] = [];
+  for (let t = 0; t < triangles.length; t += 3) out.push(triangles[t], triangles[t + 2], triangles[t + 1]);
+  return out;
+}
+
 export interface LatticeMesh {
   /** Vertex positions in image pixels, boundary first. */
   vertices: Array<[number, number]>;
-  /** Three vertex indices per triangle, into `vertices`. */
+  /** Three vertex indices per triangle, into `vertices`, each counter-clockwise in Spine world. */
   triangles: number[];
   /** The first `hull` vertices are the outline. */
   hull: number;
@@ -276,7 +301,7 @@ export function triangulate(lattice: Lattice, cells: Mask, passes: number): Latt
   order.forEach((v, i) => (remap[v] = i));
   return {
     vertices: order.map((v) => pts[v]),
-    triangles: tri.map((v) => remap[v]),
+    triangles: counterClockwiseInSpineWorld(tri.map((v) => remap[v])),
     hull,
     loops,
     pinchedVertices,

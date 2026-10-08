@@ -183,9 +183,9 @@ import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'spine-rigc/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
-import { ART_ALPHA } from './src/mesh.ts';
+import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
 import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline } from 'spine-rigc/mesh';
-import { autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Residual, runReduction, sourceWeights, spineWinding, terminationText, worstRegion, worstResidual } from './src/automesh.ts';
+import { autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Residual, runReduction, sourceWeights, terminationText, worstRegion, worstResidual } from './src/automesh.ts';
 import { examplePolicy, squareRegion, STRIP_MASK, syntheticPolicy } from './fixtures/automesh.ts';
 import type { AutoSpec } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
@@ -12964,7 +12964,7 @@ function runContourSuite(): number {
     return n;
   };
   const fan: number[] = [];
-  for (let i = 1; i < uHull.length - 1; i++) fan.push(0, i, i + 1);
+  for (let i = 1; i < uHull.length - 1; i++) fan.push(0, i + 1, i); // counter-clockwise in Spine world, the module's form
   const fanProblems = contourTopologyProblems('concave fan', uHull, fan, uHull.length);
   say(
     'CT02_A_CONCAVE_U_KEEPS_ITS_NOTCH_EMPTY_AND_A_FAN_THAT_BRIDGES_IT_IS_REFUSED',
@@ -13123,24 +13123,24 @@ function runContourSuite(): number {
 
   // CT12–CT18 — topology, planted on a 4x4 square with its centre (V 5, hull 4, T 2·5 − 4 − 2 = 4).
   const sq: Array<[number, number]> = [[0, 0], [4, 0], [4, 4], [0, 4], [2, 2]];
-  const sqTri = [0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 4];
+  const sqTri = [0, 4, 1, 1, 4, 2, 2, 4, 3, 3, 4, 0]; // counter-clockwise in Spine world (y up), the module's form
   const topo = (label: string, vs: Array<[number, number]>, tri: number[], hull = 4): Problem[] => contourTopologyProblems(label, vs, tri, hull);
   const clean = topo('square', sq, sqTri);
   const plantLine = (ps: Problem[]): string => ps.map((p) => `${p.code}: ${p.detail}`).join('; ') || 'nothing';
   const plants: Array<[string, string, Problem[], string]> = [
     ['CT12_AN_INDEX_OUT_OF_RANGE_IS_REFUSED', 'CONTOUR_INDEX', topo('index', sq, [...sqTri.slice(0, 11), 7]), 'triangle 3 names vertex 7'],
     ['CT13_TWO_COINCIDENT_VERTICES_ARE_REFUSED', 'CONTOUR_COINCIDENT_VERTICES', topo('coincident', [...sq.slice(0, 4), [0, 0]], sqTri), 'vertices 0 and 4 are both at (0, 0)'],
-    ['CT14_A_ZERO_AREA_TRIANGLE_IS_REFUSED', 'CONTOUR_ZERO_AREA_TRIANGLE', topo('flat', [...sq.slice(0, 4), [2, 0]], sqTri), 'triangle 0 (0, 1, 4) has zero area'],
+    ['CT14_A_ZERO_AREA_TRIANGLE_IS_REFUSED', 'CONTOUR_ZERO_AREA_TRIANGLE', topo('flat', [...sq.slice(0, 4), [2, 0]], sqTri), 'triangle 0 (0, 4, 1) has zero area'],
     ['CT15_AN_OUTLINE_THAT_CROSSES_ITSELF_IS_REFUSED', 'CONTOUR_SELF_INTERSECTION', topo('bowtie', [[0, 0], [4, 0], [0, 4], [4, 4], [2, 2]], sqTri), 'outline edge 1 meets outline edge 3'],
     ['CT16_TRIANGLES_THAT_DO_NOT_TILE_ONE_LOOP_BY_EULER_ARE_REFUSED_IN_RIGCS_WORDS', 'CONTOUR_ONE_LOOP', topo('euler', [...sq, [1, 3]], sqTri), 'the triangles do not tile the outline'],
-    ['CT17_AN_OUTLINE_NOT_LISTED_FIRST_AND_IN_ORDER_IS_REFUSED_IN_RIGCS_WORDS', 'CONTOUR_ONE_LOOP', topo('order', [[2, 2], [0, 0], [4, 0], [4, 4], [0, 4]], [1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1, 0]), 'hull vertices must come first'],
-    ['CT18_A_TRIANGLE_WOUND_AGAINST_THE_OUTLINE_OR_AN_OVERLAP_RIGC_ACCEPTS_IS_REFUSED', 'CONTOUR_TILING', topo('reversed', sq, [...sqTri.slice(0, 9), 3, 4, 0]), 'triangle 3 is wound against the outline'],
+    ['CT17_AN_OUTLINE_NOT_LISTED_FIRST_AND_IN_ORDER_IS_REFUSED_IN_RIGCS_WORDS', 'CONTOUR_ONE_LOOP', topo('order', [[2, 2], [0, 0], [4, 0], [4, 4], [0, 4]], [1, 0, 2, 2, 0, 3, 3, 0, 4, 4, 0, 1]), 'hull vertices must come first'],
+    ['CT18_A_TRIANGLE_CLOCKWISE_IN_SPINE_WORLD_OR_AN_OVERLAP_RIGC_ACCEPTS_IS_REFUSED', 'CONTOUR_TILING', topo('reversed', sq, [...sqTri.slice(0, 9), 3, 0, 4]), 'triangle 3 (3, 0, 4) is clockwise in Spine world'],
   ];
   // An overlap spine-rigc's own outline check accepts: two triangles over the square and the same third triangle four
   // times over vertices 1, 4 = (2, 2) and 5 = (1, 1). Every edge of the repeated triangle is used four times, so rigc
   // counts it interior; V 6, hull 4, T 6 = 2·6 − 4 − 2. Its areas sum to 8 + 8 + 4 x 2 = 24 px² over a 16 px² square.
   const overlapVs: Array<[number, number]> = [...sq.slice(0, 4), [2, 2], [1, 1]];
-  const overlapTri = [0, 1, 2, 0, 2, 3, 1, 4, 5, 1, 4, 5, 1, 4, 5, 1, 4, 5];
+  const overlapTri = [0, 2, 1, 0, 3, 2, 1, 5, 4, 1, 5, 4, 1, 5, 4, 1, 5, 4];
   let rigcTakesOverlap = true;
   try {
     checkHullOrder(traceOutline(6, overlapTri), 6);
@@ -15627,14 +15627,16 @@ function runAutoMeshSuite(): number {
     const rep = measureMeshQuality({ ...input, id: 'w', source: { ...input.source, triangles }, targets: { artFit: null, maxBoundaryDeviation: null, regions: [] }, referenceHull: null, protect: null, influences: null, boneOrder: null });
     return rep.candidates[0]?.geometry?.rows.find((r) => r.code === 'MQ_ORIENTATION')?.value ?? null;
   };
-  const swapped = Array.isArray(conv) ? null : measureWinding(spineWinding(conv.triangles));
-  const asIs = Array.isArray(conv) ? null : measureWinding(conv.triangles);
+  const handed = Array.isArray(conv) ? null : autoReductionInput({ part: 'convex', mask: CONVEX.mask, ox: 0, oy: 0, spec: syntheticPolicy(8), source: conv, weights: null, boneOrder: [] }).source.triangles;
+  const asHanded = handed === null ? null : measureWinding(handed);
+  // The plant: the turn this module made before issue #126, applied once more — a double inversion.
+  const turnedTwice = handed === null ? null : measureWinding(counterClockwiseInSpineWorld(handed));
   const nTri = Array.isArray(conv) ? -1 : conv.triangles.length / 3;
   say(
-    'AM11_THE_SOURCE_IS_HANDED_OVER_COUNTER_CLOCKWISE_IN_SPINE_WORLD_AND_THE_CONTOUR_WINDING_READS_ALL_FLIPPED',
-    swapped === 0 && asIs === nTri && nTri === 22,
-    `spine-rigc's MQ_ORIENTATION: swapped ${swapped}; as the contour mesh writes them ${asIs} of ${nTri} (fixtures/contour.ts: 22 triangles)`,
-    'spine-rigc\'s SourceMesh is counter-clockwise in Spine world; the contour mesh\'s triangles read the other way through cropToSpineY, so each triangle\'s last two corners are swapped — the same triangles, relabelled',
+    'AM11_THE_SOURCE_IS_HANDED_OVER_AS_THE_CONTOUR_MESH_WRITES_IT_COUNTER_CLOCKWISE_AND_A_SECOND_TURN_READS_ALL_FLIPPED',
+    !Array.isArray(conv) && JSON.stringify(handed) === JSON.stringify(conv.triangles) && asHanded === 0 && turnedTwice === nTri && nTri === 22,
+    `handed over ${handed === null || Array.isArray(conv) ? 'nothing' : JSON.stringify(handed) === JSON.stringify(conv.triangles) ? 'as contourMesh returns it' : 'CHANGED from what contourMesh returns'}; spine-rigc's MQ_ORIENTATION: as handed ${asHanded}, turned once more (planted) ${turnedTwice} of ${nTri} (fixtures/contour.ts: 22 triangles)`,
+    'issue #126: spine-rigc\'s SourceMesh is counter-clockwise in Spine world and the contour mesh now writes that winding, so the source is passed through untouched; one more [a, b, c] -> [a, c, b] turn — the swap this module made before — reads every triangle flipped',
   );
 
   // AM12 — every number in the call comes from the config.
@@ -15769,13 +15771,48 @@ function runAutoMeshSuite(): number {
     'only spine-rigc knows how many vertices the source has; its MeshReductionError is caught and named, never let through as a crash',
   );
 
-  // AM18 — a result that is returned and not accepted: the 2.19.0 refinement stop (P16), refused with no fallback.
-  const e18 = refusals(() => buildRig(parseConfig(autoRigConfig((_c, a) => (a.regions = [region()]))), rigParts(), rigImages()));
+  // AM18 — the coarse source with a region converges since spine-rigc 2.19.1 (option 1); a result returned and not accepted
+  // (here: a minimum angle no triangle can meet) still refuses the part by its blocking row, with no fallback.
+  let r18: AutoMeshReport | null = null;
+  const ok18 = refusals(() => {
+    const out = buildRig(parseConfig(autoRigConfig((_c, a) => (a.regions = [region()]))), rigParts(), rigImages());
+    r18 = (out.meshReport.find((m) => m.part === 'cloth' && 'mode' in m && m.mode === 'auto') as AutoMeshReport | undefined) ?? null;
+  });
+  const got18 = r18 as AutoMeshReport | null;
+  const edge18 = got18?.residuals.find((q) => q.code === 'MQ_MAX_EDGE' && q.region === 'pinch') ?? null;
+  const rc18 = got18?.result.counts ?? null;
+  const sc18 = got18?.source.counts ?? null;
+  const e18 = refusals(() =>
+    buildRig(
+      parseConfig(
+        autoRigConfig((_c, a) => {
+          a.regions = [region()];
+          (a.targets as Record<string, unknown>).minAngle = 61;
+        }),
+      ),
+      rigParts(),
+      rigImages(),
+    ),
+  );
   say(
-    'AM18_A_RETURNED_RESULT_THAT_IS_NOT_ACCEPTED_REFUSES_THE_PART_WITH_THE_BLOCKING_ROW_AND_NOTHING_IS_BUILT',
-    has(e18, 'AUTO_MESH_ACCEPTED', AT, 'MQ_MAX_EDGE', 'pinch', 'P16', 'nothing is built in its place') && e18?.problems.length === 1,
-    lines(e18),
-    'spine-rigc 2.19.0 stops refining when an edge\'s far end lies further beyond the band than its bound (rigc#1221, the stop recorded before the owner chose option 1), and returns the mesh not accepted; the part is refused, not built from its source or as a lattice',
+    'AM18_A_COARSE_SOURCE_WITH_A_REGION_IS_REFINED_AND_ACCEPTED_AND_A_RESULT_NOT_ACCEPTED_REFUSES_THE_PART_WITH_THE_BLOCKING_ROW',
+    ok18 === null &&
+      got18 !== null &&
+      rc18 !== null &&
+      sc18 !== null &&
+      got18.termination.reason === 'no-further-valid-reduction' &&
+      got18.result.insertedVertices > 0 &&
+      rc18.interiorVertices > sc18.interiorVertices &&
+      rc18.triangles === 2 * (rc18.boundaryVertices + rc18.interiorVertices) - rc18.boundaryVertices - 2 &&
+      edge18 !== null &&
+      edge18.state === 'pass' &&
+      edge18.value !== null &&
+      edge18.value <= 2 &&
+      (got18.regions.find((g) => g.name === 'pinch')?.bound_in_result ?? 0) > 0 &&
+      has(e18, 'AUTO_MESH_ACCEPTED', AT, 'MQ_MIN_ANGLE', '>= 61', 'nothing is built in its place') &&
+      e18?.problems.length === 1,
+    `region "pinch" (L0 2): ${ok18 === null && got18 !== null && rc18 !== null && sc18 !== null ? `accepted, ${got18.termination.reason}; source ${sc18.boundaryVertices}+${sc18.interiorVertices} v ${sc18.triangles} t -> result ${rc18.boundaryVertices}+${rc18.interiorVertices} v ${rc18.triangles} t, ${got18.result.insertedVertices} inserted; MQ_MAX_EDGE[pinch] ${edge18?.state} ${edge18?.value}; ${got18.regions.find((g) => g.name === 'pinch')?.bound_in_result ?? 0} result vertices bound to "soft"` : `refused: ${lines(ok18)}`}; planted minAngle 61: ${lines(e18)}`,
+    'spine-rigc 2.19.1 (option 1, rigc#1231) exempts only an edge touching the band\'s outer boundary at a single point, so the coarse source with a region now converges where 2.19.0 stopped by name: by definition the result holds more interior vertices than the source, T = 2V - hull - 2, and every edge the region holds is within its L0 of 2. A refinement limited by a minimum angle still ends not accepted (2.19.1\'s angle-limited failure): no triangle has three angles of 61 degrees or more, since they sum to 180, so the part is refused by that row and nothing is built in its place',
   );
 
   // AM19 — weights: a survivor keeps the source's bindings bit for bit; an inserted vertex is bound by name.
@@ -16053,6 +16090,175 @@ function runAutoMeshExamplesSuite(): number | null {
  * workers below run them concurrently; what the run prints, counts and judges
  * is still this order, one suite after another (issue #99).
  */
+// ---------------------------------------------------------------------------
+// winding (issue #126): every emitter writes its triangles counter-clockwise in Spine world
+// ---------------------------------------------------------------------------
+
+/**
+ * spine-rigc's own reading of a mesh's winding: the `MQ_ORIENTATION` row of
+ * `measureMeshQuality` (triangles with a negative area in Spine world, y up
+ * through `cropToSpineY`, outside its degeneracy band) and the triangle it names
+ * first, or the text of what refused the reading. Geometry only, unweighted.
+ */
+function rigcWinding(mask: AlphaMask, points: ReadonlyArray<readonly [number, number]>, triangles: readonly number[], hull: number): { flipped: number; at: number | null } | string {
+  const w = mask.width;
+  const h = mask.height;
+  try {
+    const rep = measureMeshQuality({
+      id: 'winding',
+      attachment: { skin: null, slot: 'w', attachment: 'w' },
+      art: { mask, threshold: 1, frame: { space: 'part-local-drawing-px-y-down', width: w, height: h, pageScale: 1, conversion: 'texels = px * pageScale' } },
+      source: { points: points.map(([x, y]) => [x, y] as [number, number]), uvs: points.flatMap(([x, y]) => [x / w, y / h]), triangles: [...triangles], hull, weights: null },
+      targets: { artFit: null, maxBoundaryDeviation: null, regions: [] },
+      referenceHull: null,
+      minArtSamples: 1,
+      regionArtSamples: [],
+      protect: null,
+      influences: null,
+      boneOrder: null,
+      preset: null,
+    });
+    const row = rep.candidates[0]?.geometry?.rows.find((r) => r.code === 'MQ_ORIENTATION');
+    if (row === undefined || row.value === null) return `no MQ_ORIENTATION value (${row?.state ?? 'no row'})`;
+    const at = row.worst !== null && 'triangle' in row.worst.at ? (row.worst.at.triangle as number) : null;
+    return { flipped: row.value, at };
+  } catch (err) {
+    return `measureMeshQuality threw: ${(err as Error).message.slice(0, 200)}`;
+  }
+}
+
+/** The triangles a written mesh attachment holds that are not counter-clockwise in Spine world: its UVs on its image, y up through `cropToSpineY`. */
+function clockwiseInWrittenMesh(att: MeshAttachment): number[] {
+  const p: Array<[number, number]> = [];
+  for (let k = 0; k < att.uvs.length; k += 2) p.push([att.uvs[k] * att.width, cropToSpineY(att.uvs[k + 1] * att.height, att.height)]);
+  const out: number[] = [];
+  for (let t = 0; t < att.triangles.length; t += 3) {
+    const [a, b, c] = [p[att.triangles[t]], p[att.triangles[t + 1]], p[att.triangles[t + 2]]];
+    if ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) <= 0) out.push(t / 3);
+  }
+  return out;
+}
+
+/** Triangle `t` of a list turned the other way round — the plant every control below uses. */
+function turnOne(triangles: readonly number[], t: number): number[] {
+  const out = [...triangles];
+  [out[3 * t + 1], out[3 * t + 2]] = [out[3 * t + 2], out[3 * t + 1]];
+  return out;
+}
+
+/** Every path in a JSON value whose key is `deform` (a Spine deform timeline or the reduction input's list). */
+function deformKeys(v: unknown, path = '$'): string[] {
+  if (Array.isArray(v)) return v.flatMap((e, i) => deformKeys(e, `${path}[${i}]`));
+  if (v !== null && typeof v === 'object') return Object.entries(v as Record<string, unknown>).flatMap(([k, e]) => [...(k === 'deform' ? [`${path}.${k}`] : []), ...deformKeys(e, `${path}.${k}`)]);
+  return [];
+}
+
+function runWindingSuite(): number {
+  section('winding: every emitter writes its triangles counter-clockwise in Spine world (issue #126)');
+  const { say, bad } = counter();
+  const cloth = blocks(24, 16, [[4, 4, 16, 8]]);
+  const artOf = (m: AlphaMask): Mask => ({ width: m.width, height: m.height, data: Uint8Array.from(m.alpha, (a) => (a > ART_ALPHA ? 1 : 0)) });
+  const read = (r: { flipped: number; at: number | null } | string): string => (typeof r === 'string' ? r : `${r.flipped} flipped${r.at === null ? '' : ` (first: triangle ${r.at})`}`);
+
+  // WD01 — the lattice.
+  const latticeCases: Array<[string, AlphaMask]> = [['cloth (fixtures/rig.ts)', cloth], ...BUILDING.map((c) => [c.name, c.mask] as [string, AlphaMask])];
+  const lat = latticeCases.map(([name, m]) => {
+    const lm = latticeMesh(name, artOf(m), 8);
+    return { name, m, lm: 'code' in lm ? null : lm };
+  });
+  const latReads = lat.map((x) => ({ name: x.name, T: x.lm === null ? -1 : x.lm.triangles.length / 3, r: x.lm === null ? 'refused' : rigcWinding(x.m, x.lm.vertices, x.lm.triangles, x.lm.hull) }));
+  const lat0 = lat[0].lm;
+  const latPlant = lat0 === null ? 'refused' : rigcWinding(cloth, lat0.vertices, turnOne(lat0.triangles, 5), lat0.hull);
+  say(
+    'WD01_EVERY_LATTICE_TRIANGLE_IS_COUNTER_CLOCKWISE_IN_SPINE_WORLD_AND_ONE_TURNED_BACK_IS_NAMED',
+    latReads.every((x) => typeof x.r !== 'string' && x.r.flipped === 0) && latReads[0].T === 12 && typeof latPlant !== 'string' && latPlant.flipped === 1 && latPlant.at === 5,
+    `spine-rigc's MQ_ORIENTATION, lattice at grid 8: ${latReads.map((x) => `${x.name} T ${x.T}: ${read(x.r)}`).join('; ')}; cloth with triangle 5 turned back (planted): ${read(latPlant)}`,
+    'the cloth block, 16x8 padded to 24x16, is 3x2 cells of grid 8 and two triangles each: 12, every one counter-clockwise (0 flipped) by the winding\'s definition; turning one back is exactly one flipped triangle, named by its index',
+  );
+
+  // WD02 — the contour mesh.
+  const con = BUILDING.map((c) => ({ c, m: contourMesh(c.name, c.mask, c.params) }));
+  const conReads = con.map(({ c, m }) => ({ name: c.name, T: Array.isArray(m) ? -1 : m.triangles.length / 3, r: Array.isArray(m) ? 'refused' : rigcWinding(c.mask, m.vertices, m.triangles, m.hull) }));
+  const convex = con[0].m;
+  const conPlant = Array.isArray(convex) ? null : turnOne(convex.triangles, 0);
+  const conPlantRead = Array.isArray(convex) || conPlant === null ? 'refused' : rigcWinding(CONVEX.mask, convex.vertices, conPlant, convex.hull);
+  const conPlantTopo = Array.isArray(convex) || conPlant === null ? [] : contourTopologyProblems('convex', convex.vertices, conPlant, convex.hull);
+  const t0 = conPlant === null ? '' : `triangle 0 (${conPlant[0]}, ${conPlant[1]}, ${conPlant[2]}) is clockwise in Spine world`;
+  say(
+    'WD02_EVERY_CONTOUR_TRIANGLE_IS_COUNTER_CLOCKWISE_AND_ONE_TURNED_BACK_IS_REFUSED_BY_THE_MESHS_OWN_TILING_CHECK',
+    conReads.every((x) => typeof x.r !== 'string' && x.r.flipped === 0) &&
+      conReads[0].T === 22 &&
+      typeof conPlantRead !== 'string' &&
+      conPlantRead.flipped === 1 &&
+      conPlantRead.at === 0 &&
+      conPlantTopo.length === 1 &&
+      conPlantTopo[0].code === 'CONTOUR_TILING' &&
+      conPlantTopo[0].detail.startsWith(t0),
+    `spine-rigc's MQ_ORIENTATION: ${conReads.map((x) => `${x.name} T ${x.T}: ${read(x.r)}`).join('; ')}; convex with triangle 0 turned back (planted): ${read(conPlantRead)}; contourTopologyProblems -> ${conPlantTopo.map(problemLine).join('; ') || 'nothing'}`,
+    'the contour mesh is triangulated wound as its outline (clockwise on screen, so clockwise in Spine world too) and written with each triple\'s last two corners swapped; the convex block is 22 triangles (CT01); a triangle turned back is one flipped by rigc and CONTOUR_TILING by the module, which gates every mesh it returns',
+  );
+
+  // WD03 — Delaunay does not depend on winding: the module's output and a list wound as the outline read alike.
+  const kite: Array<[number, number]> = [[0, 0], [8, 0], [9, 4], [0, 2]];
+  const kiteRows: Array<[string, number[], number]> = [
+    ['diagonal 1-3, clockwise on screen', [0, 1, 3, 1, 2, 3], 0],
+    ['diagonal 1-3, counter-clockwise in Spine world', counterClockwiseInSpineWorld([0, 1, 3, 1, 2, 3]), 0],
+    ['diagonal 0-2, clockwise on screen', [0, 1, 2, 0, 2, 3], 1],
+    ['diagonal 0-2, counter-clockwise in Spine world', counterClockwiseInSpineWorld([0, 1, 2, 0, 2, 3]), 1],
+  ];
+  const kiteGot = kiteRows.map(([label, tri, want]) => ({ label, got: delaunayViolations(kite, tri), want }));
+  say(
+    'WD03_THE_DELAUNAY_COUNT_READS_EITHER_WINDING_ALIKE_AND_STILL_NAMES_THE_BAD_DIAGONAL',
+    kiteGot.every((k) => k.got === k.want),
+    kiteGot.map((k) => `${k.label}: ${k.got} (by hand ${k.want})`).join('; '),
+    'CT19\'s kite: only the 0-2 diagonal puts the far vertex inside a circumcircle; the count is a property of the triangle set, so turning every triangle must not move it — CT19 reads the built meshes, which are now counter-clockwise in Spine world',
+  );
+
+  // WD04 — the rig stage writes what each emitter built: lattice, contour and auto, read off the written attachment.
+  const contourRig = rigConfig();
+  contourRig.meshes = { cloth: { contour: { tolerance: 0, margin: 1, spacing: 4 }, r: 8, segments: ['hem'] } };
+  const modes: Array<[string, Record<string, unknown>]> = [
+    ['lattice', rigConfig()],
+    ['contour', contourRig],
+    ['auto', autoRigConfig()],
+  ];
+  const builtModes = modes.map(([mode, c]) => {
+    try {
+      return { mode, out: buildRig(parseConfig(c), rigParts(), rigImages()), why: '' };
+    } catch (err) {
+      if (!(err instanceof PartsError)) throw err;
+      return { mode, out: null, why: err.problems.map(problemLine).join('; ').slice(0, 300) };
+    }
+  });
+  const written = builtModes.map((b) => {
+    const att = b.out === null ? null : (b.out.rig.skins.default.cloth.cloth as MeshAttachment);
+    return { mode: b.mode, att, why: b.why, cw: att === null ? null : clockwiseInWrittenMesh(att) };
+  });
+  const latticeAtt = written[0].att;
+  const plantedAtt = latticeAtt === null ? null : clockwiseInWrittenMesh({ ...latticeAtt, triangles: turnOne(latticeAtt.triangles, 3) });
+  say(
+    'WD04_THE_RIG_STAGE_WRITES_EVERY_MESH_COUNTER_CLOCKWISE_IN_SPINE_WORLD_IN_ALL_THREE_MODES',
+    written.every((w) => w.cw !== null && w.cw.length === 0 && (w.att?.triangles.length ?? 0) > 0) && plantedAtt !== null && plantedAtt.length === 1 && plantedAtt[0] === 3,
+    `${written.map((w) => `${w.mode}: ${w.att === null ? `refused ${w.why}` : `${w.att.triangles.length / 3} triangles, clockwise ${JSON.stringify(w.cw)}`}`).join('; ')}; the lattice attachment with triangle 3 turned back (planted): clockwise ${JSON.stringify(plantedAtt)}`,
+    'read off rig.json as written — each attachment\'s UVs on its image, y up through cropToSpineY — so a turn anywhere between an emitter and the file, or a second one, shows here by mode and triangle',
+  );
+
+  // WD05 — deform: no emitter writes a deform key, and the automatic mode hands spine-rigc deform [] and no linked mesh.
+  const scanned = builtModes.flatMap((b) => (b.out === null ? [`${b.mode}: not built`] : [...deformKeys(b.out.rig, `${b.mode} rig`), ...deformKeys(b.out.motion, `${b.mode} motion`)]));
+  const conv = autoSource('convex', CONVEX.mask, syntheticPolicy(8));
+  const input = Array.isArray(conv) ? null : autoReductionInput({ part: 'convex', mask: CONVEX.mask, ox: 0, oy: 0, spec: syntheticPolicy(8), source: conv, weights: null, boneOrder: [] });
+  const motion0 = builtModes[0].out?.motion ?? null;
+  const motionPlant = motion0 === null ? [] : deformKeys({ ...motion0, animations: { idle: { deform: { default: { cloth: { cloth: [{ time: 0, vertices: [0, 0] }] } } } } } }, 'planted motion');
+  say(
+    'WD05_NO_EMITTER_WRITES_A_DEFORM_KEY_AND_THE_AUTOMATIC_MODE_HANDS_OVER_DEFORM_EMPTY',
+    scanned.length === 0 && input !== null && JSON.stringify(input.deform) === '[]' && JSON.stringify(input.linkedMeshes) === '[]' && motionPlant.length === 1 && motionPlant[0] === 'planted motion.animations.idle.deform',
+    `deform keys in the three rigs and motions: ${scanned.join(', ') || 'none'}; reduction input deform ${JSON.stringify(input?.deform)}, linkedMeshes ${JSON.stringify(input?.linkedMeshes)}; a motion with a deform timeline (planted): ${motionPlant.join(', ') || 'nothing found'}`,
+    'a vertices deform key is indexed by vertex and would not move with a winding change; there is none to move, and the scan that says so finds one when it is there',
+  );
+
+  return bad();
+}
+
 const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number | null]> = [
   ['raster-components', runComponentsSuite],
   ['raster-morph', runMorphSuite],
@@ -16073,6 +16279,7 @@ const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number 
   ['contour-wiring', runContourWiringSuite],
   ['auto-mesh', runAutoMeshSuite],
   ['auto-mesh-examples', runAutoMeshExamplesSuite],
+  ['winding', runWindingSuite],
   ['propose', runProposeSuite],
   ['keypoints', runKeypointsSuite],
   ['propose-corpus', runProposeCorpusSuite],
