@@ -439,10 +439,10 @@ contour, per pose, before → after: still 1.152 → 1.149, rotate 1.444 → 1.4
 
 The third mode asks for an economical mesh under declared quality bounds instead of a spacing.
 It is opt-in per mesh: `propose` still writes `grid`, a config that names no `auto` builds byte
-for byte as before, and the top-level default does not change. It is **geometry only**: nothing
-is posed, so whether the result deforms well is **unmeasured**, and the report says so
-(`deformation`: "unmeasured: …"); `check` remains the measurement of motion. The steps
-(`src/automesh.ts`):
+for byte as before, and the top-level default does not change. The reduction itself is chosen
+on geometry alone; the result is then written only when its **motion** is measured against its
+unreduced source on the rig's idle and passes the author's bounds (step 4). The steps
+(`src/automesh.ts`, `src/automotion.ts`):
 
 1. **The source** — this package's contour mesh over the padded part image at **alpha 1 and
    above** (the threshold spine-rigc's authored-fit gate uses; the lattice and contour modes stay
@@ -451,7 +451,7 @@ is posed, so whether the result deforms well is **unmeasured**, and the report s
    (`CONTOUR_*`, the detail ending "the automatic mode's source, at alpha 1 and above") refuse the
    part. Its weights are the contour mode's — segments and region falloff — under the author's
    `influences`, with no 0.03 floor unless the author writes one.
-2. **The call** — spine-rigc's `reduceMesh` (`spine-rigc/mesh`, 2.19.0) refines inside the declared
+2. **The call** — spine-rigc's `reduceMesh` (`spine-rigc/mesh`, 2.20.x) refines inside the declared
    regions, then removes vertices while every declared bound still holds. Every number it is
    handed is one of the fields below; `preset` is null (no preset exists yet: a preset will be a
    named, versioned set of these numbers, expanded into the report), and no deform key or linked
@@ -460,6 +460,23 @@ is posed, so whether the result deforms well is **unmeasured**, and the report s
    `no-further-valid-reduction`, or `budget-exhausted` with `best-meeting-every-bound`, and its
    candidate is `accepted` with every row that has a declared bound at `pass`. Anything else
    refuses the part (below); nothing falls back to the lattice or to the source.
+4. **Motion** — the rig stage builds the rig twice through rigc's gate: as written (the
+   **candidate**, the reduced mesh) and with that one attachment swapped for the unreduced source
+   — its UVs, triangles and hull as `reduceMesh` was handed them, its own weights bound the same
+   way (the **reference**). spine-rigc's `compareMeshesInMotion` (`spine-rigc/meshcompare`) poses
+   both model documents on the idle exactly as `check` renders it — `idle` at 12 fps over its
+   duration, physics reset at 0 and stepped by 1/12 s, no warm-up — at the render's frames
+   (`grid`, i/12 s) and a frame interval's 0.381966 past each (`irr`, frames the render never
+   draws), and measures how far the reduced mesh carries each art pixel from where the source
+   carries it (`MQ_LOCAL_DEFORMATION`, world units = rig px), its triangles' stretch and squash
+   from the setup pose, and the triangles it turns over (`MQ_INVERSION`). The part is written
+   only when spine-rigc's verdict is `accepted` (geometry and motion both pass). Nothing chooses a
+   reduction by motion, so every frame is held out from selection. A part the idle cannot deform
+   is refused before anything is compiled: the idle has to key, with changing values, a bone that
+   moves some of the bones the part is weighted to and not all of them (a key on their shared
+   ancestor, or on the one bone a single-bone part binds, moves every vertex by one affine map and
+   would read 0 over nothing). Constraints are not read for this: a part only a constraint moves
+   is refused, never passed.
 
 | field | means |
 | --- | --- |
@@ -472,6 +489,7 @@ is posed, so whether the result deforms well is **unmeasured**, and the report s
 | `influences.{maxInfluences, minWeight}` | the cap on bindings per vertex (1 or more) and the floor below which a share is dropped (0 up to 1; 0 drops only shares that are 0 on the weight grid) — for the source's weights and every inserted vertex |
 | `budget.maxCandidates` | the most steps spine-rigc may try (each insertion and each removal attempt counts one); 0 returns the source |
 | `minArtSamples` | the fewest art pixels a raster row is taken over, 1 or more |
+| `motion` | **required**: `maxLocalDeformation` (rig px, 0 or more — how far the reduced mesh may carry any art pixel from where its source carries it, at any frame); optional `maxStretch` / `minStretch` (ratios; absent, the rows are reported and not gated); optional `deformMayFold` (absent is **false**: a triangle that turns over refuses the part; true declares the slot in `invariants.deformMayFold` and lists every fold instead) |
 | `protect` | optional; each field optional: `hull` (true keeps every source outline vertex; absent is **false**, the default agreed for this mode), `vertices` and `edges` (source vertex indices and pairs that must survive), `regionBoundaries` (region names whose outline vertices must survive), `weightJump` (an L1 weight difference above which a source edge is kept; absent is none), `influences` (bones never pruned from a vertex; every region's bone is added) |
 | `regions` | optional, each `{name, shape, bone, band, maxEdgeLength, transition, grade, minArtSamples}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`): `bone` and `band` are the control bone and its weight falloff exactly as a contour region's (rig px, multiples of 1/256 px); `maxEdgeLength` is L0, the longest an edge meeting the region may be, px; outside it, across `transition` px, the bound relaxes as `L0 + grade·d`; `transition` 0 is a hard edge; `minArtSamples` is the region's own sample floor |
 
@@ -488,12 +506,17 @@ triangles, bindings, vertices removed and inserted), every `residuals` row with 
 and bound, `worst_residual` (the declared row nearest its bound, as the share of the bound used)
 and `worst_region`, the `termination` with its reason and `candidatesTried`, what the weights
 lost to the grid (`sharesDroppedOnGrid`, `sharesPruned`, `droppedAtFivePlaces`), per region the
-source vertices its bone reaches and the result vertices bound to it, `deformation`, and
-`quality_report` — the whole `mesh-quality-report/1` document spine-rigc wrote, inside the row so
-one file holds every part's evidence. `art_coverage` is over alpha above 8, comparable with the
+source vertices its bone reaches and the result vertices bound to it, `deformation` — the motion
+gate's verdict, the bounds echoed (`deformMayFold` included), each motion row (`MQ_INVERSION`,
+`MQ_LOCAL_DEFORMATION` and one per region, `MQ_SQUASH`, `MQ_STRETCH`) with its state, value, bound,
+worst frame and sample counts, and the schedule walked (frames per phase, held out, selection) —
+`quality_report`, the whole `mesh-quality-report/1` document of the reduction, and
+`motion_report`, the whole `compare` document of the motion gate, inside the row so one file holds
+every part's evidence. `art_coverage` is over alpha above 8, comparable with the
 other modes; the alpha-1 coverage is a residual. `build` prints one line per auto mesh: source →
-result counts (hull + interior), bindings, the termination and the worst residual, and
-"deformation unmeasured". Weights are written by `roundShares` on every vertex (5 places, zeros
+result counts (hull + interior), bindings, the termination, the worst residual and
+`motion <value> <= <bound> at <frame>` (the frame id is `idle@<phase>@<time>`), and the reference
+build's gate lines after the candidate's. Weights are written by `roundShares` on every vertex (5 places, zeros
 dropped, the heaviest entry closes): the 0.03 floor that makes the lattice's last-entry close
 safe is the author's to choose here.
 
@@ -507,16 +530,17 @@ safe is the author's to choose here.
 | `AUTO_MESH_INPUT` | spine-rigc refused the call's input by throwing (a protected vertex the source does not have), in its words and code |
 | `AUTO_MESH_TERMINATION` | spine-rigc returned no mesh: `invalid-input` (the source fails its own `sourceBounds`, a region it refuses, protected influences over the cap), `unsupported-topology`, or `budget-exhausted` with `none-met-the-targets` |
 | `AUTO_MESH_ACCEPTED` | spine-rigc returned a mesh that is not accepted; the detail names every declared row not passing and the constraint that stopped it |
+| `AUTO_MESH_NO_STIMULUS` | the idle keys no bone that moves some of the part's bound bones against the others, so no frame deforms it — missing stimulus is not a pass; put the part in `contour` or `grid` mode, or key a bone it binds |
+| `AUTO_MESH_MOTION` | the reduced mesh against its source on the idle is not accepted; the detail names every gated row not passing with its value, bound and worst frame |
+| `AUTO_MESH_MOTION_INPUT` | the comparison could not be made: spine-rigc refused its input (its code carried — `COMPARE_REFERENCE_FAILS` when the source fails its own `sourceBounds`, `COMPARE_INPUTS_DIFFER`, …), the reference build is red at rigc's gate, or a gate build wrote no `skeleton.model.json` |
 
-**What spine-rigc 2.19.0 cannot refine.** Refinement inserts only inside a region and its band
-(the contract's P16), and 2.19.0 stops by name when an edge's far end lies further beyond the
-band than the edge's bound — so in spine-rigc 2.19.0 a region refines only when `source.spacing`
-is about the region's `maxEdgeLength` (on the generated strip: spacing 2 at L0 2 refines; spacing
-12 does not), and a coarser source is refused by name (`AUTO_MESH_ACCEPTED`, the detail naming
-P16). With
-`transition` 0, an edge that crosses a region with no point of it inside to split at is stopped
-the same way. The decision on issue #126 that lifts the first case (an edge leaving the band at
-a point is not held to it) is not in 2.19.0.
+**What spine-rigc cannot refine.** Refinement inserts only inside a region and its band (the
+contract's P16). spine-rigc 2.19.0 stopped by name when an edge's far end lay further beyond the
+band than the edge's bound; 2.19.1 and later implement the decision on issue #126 that an edge leaving the
+band at a point is not held to it, so a coarse source refines. With `transition` 0 the authored
+boundary stays held, and an edge from the region to a vertex further out than its bound — or one
+that crosses the region with no point of it inside to split at — is still stopped by name
+(`AUTO_MESH_ACCEPTED`, the detail naming P16).
 
 ## 4. The command order
 

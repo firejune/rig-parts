@@ -233,8 +233,9 @@ export type ContourRegionSpec =
 /**
  * One mesh in the automatic mode (issue #126, item 2): the contour mesh over
  * the part at alpha 1 and above is the source, and spine-rigc's `reduceMesh`
- * (`spine-rigc/mesh`, 2.19.0) refines it inside the declared regions and
- * removes what the declared bounds allow (`src/automesh.ts`). Every quality
+ * (`spine-rigc/mesh`, 2.20.x) refines it inside the declared regions and
+ * removes what the declared bounds allow (`src/automesh.ts`); the result is
+ * kept only when its motion passes `motion` (`src/automotion.ts`). Every quality
  * input is a number the author wrote, named as spine-rigc's contract
  * (docs/MESH_REDUCTION.md) names it; none has a default inside this package
  * but the two the agreement fixed for parts's policy — `protect.hull` is false
@@ -266,6 +267,31 @@ export interface AutoSpec {
   budget: { maxCandidates: number };
   minArtSamples: number;
   regions?: AutoRegionSpec[];
+  /**
+   * The motion gate's bounds (issue #126, item 3; `src/automotion.ts`). The
+   * loader requires it on every auto mesh (`CONFIG_FIELD_PRESENT`): the mode is
+   * accepted into a build only when its motion is measured and passes. It is
+   * optional in the type only because `buildRig`, which measures geometry
+   * alone, does not read it; the rig stage refuses a spec without it by the
+   * same code.
+   */
+  motion?: AutoMotionSpec;
+}
+
+/**
+ * `meshes.<part>.auto.motion` — what spine-rigc's `compareMeshesInMotion`
+ * holds the reduced mesh to against its unreduced source on the idle:
+ * `maxLocalDeformation` in rig px (the rig's world units: its bones carry no
+ * scale), required; `maxStretch` / `minStretch` (ratios) gate only when
+ * written — absent, the rows are reported and not gated, the contract's own
+ * rule; `deformMayFold` lets the part's folds be listed instead of refused,
+ * false when absent — the one non-numeric default, echoed in the row.
+ */
+export interface AutoMotionSpec {
+  maxLocalDeformation: number;
+  maxStretch?: number;
+  minStretch?: number;
+  deformMayFold?: boolean;
 }
 
 export interface ArtFitBoundsSpec {
@@ -1139,13 +1165,24 @@ function checkContour(c: Check, at: string, v: Json, bones: Set<string>): void {
  * — `hull` is then false (P20, the default the agreement fixed for parts's
  * policy), each list empty and `weightJump` null (no such protection, which
  * the report echoes) — and `regions` and `source.stray` may be left out, as in
- * the contour mode. What only spine-rigc can judge (a region bound under one
+ * the contour mode. `motion` is required (issue #126 item 3), and inside it
+ * `maxLocalDeformation`; `maxStretch`, `minStretch` and `deformMayFold` may be
+ * left out (`AutoMotionSpec`). What only spine-rigc can judge (a region bound under one
  * texel, a region outside the art, a protected vertex index the source does
  * not have) is its refusal at the rig stage, in its words.
  */
 function checkAuto(c: Check, at: string, v: Json, bones: Set<string>): void {
-  const o = c.object(at, v, ['source', 'sourceBounds', 'targets', 'influences', 'budget', 'minArtSamples'], ['protect', 'regions']);
+  const o = c.object(at, v, ['source', 'sourceBounds', 'targets', 'influences', 'budget', 'minArtSamples', 'motion'], ['protect', 'regions']);
   if (o === null) return;
+  if ('motion' in o) {
+    const m = c.object(`${at}.motion`, o.motion, ['maxLocalDeformation'], ['maxStretch', 'minStretch', 'deformMayFold']);
+    if (m !== null) {
+      if ('maxLocalDeformation' in m) c.number(`${at}.motion.maxLocalDeformation`, m.maxLocalDeformation, 'non-negative');
+      if ('maxStretch' in m) c.number(`${at}.motion.maxStretch`, m.maxStretch, 'non-negative');
+      if ('minStretch' in m) c.number(`${at}.motion.minStretch`, m.minStretch, 'non-negative');
+      if ('deformMayFold' in m && typeof m.deformMayFold !== 'boolean') c.fail('CONFIG_FIELD_TYPE', `${at}.motion.deformMayFold`, `is ${show(m.deformMayFold)}; true or false is required`);
+    }
+  }
   if ('source' in o) {
     const s = c.object(`${at}.source`, o.source, ['tolerance', 'margin', 'spacing'], ['stray']);
     if (s !== null) {

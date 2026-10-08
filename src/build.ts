@@ -40,13 +40,15 @@
  * no child process. spine-rigc runs as a process, but the process is injected
  * as a {@link RigcRunner}, exactly as `src/check.ts` takes it.
  */
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
+import { type AutoMotionCase, motionClause, motionDeformation, motionDocument, motionInput, motionStimulus, motionVerdict, noStimulusProblem, runComparison } from './automotion.ts';
 import { BARS, causeLines, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig, loadEarlyConfig } from './config.ts';
-import { PartsError, type Problem, problemLine } from './errors.ts';
+import { PartsError, type Problem, problemLine, refuseIfAny } from './errors.ts';
+import type { MeshQualityReport } from 'spine-rigc/mesh';
 import { encodeGif } from './gif.ts';
 import { CONTROL_SUFFIX } from './motion.ts';
 import type { PaletteError } from './palette.ts';
@@ -55,7 +57,7 @@ import { type PartRecord, readParts, writeParts } from './parts.ts';
 import { encodePngBytes, readPng, writePng } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
 import { readRequirements, type RequirementLine, summaryText } from './requirements.ts';
-import { buildRig, DEFAULT_IDLE_KEYS, type IdleKeys, type RigCommand, rigJsonText, type RigOutput } from './rig.ts';
+import { type AutoMeshReport, buildRig, DEFAULT_IDLE_KEYS, type IdleKeys, type MeshReport, type RigCommand, rigJsonText, type RigOutput, type RigSpec } from './rig.ts';
 
 /** Where a stage's lines go. The commands hand it `console.log`; `build` hands it a prefixing wrapper. */
 export type Log = (line: string) => void;
@@ -220,14 +222,24 @@ function gateRun(label: string, rigc: RigcRunner, args: string[]): GateRun {
  * files' bytes as `--out` will receive them: the rig stage's are its rasters
  * encoded as `writePng` encodes them, `compose`'s the builds' own files.
  */
-export function gateThroughRigc(images: ReadonlyArray<readonly [string, Uint8Array]>, texts: ReadonlyArray<readonly [string, string]>, rigc: RigcRunner, scratch: string, mode: PackMode): GateRun[] {
+export function gateThroughRigc(
+  images: ReadonlyArray<readonly [string, Uint8Array]>,
+  texts: ReadonlyArray<readonly [string, string]>,
+  rigc: RigcRunner,
+  scratch: string,
+  mode: PackMode,
+  onGreen?: (buildDir: string) => void,
+): GateRun[] {
   rmSync(scratch, { recursive: true, force: true });
   try {
     mkdirSync(join(scratch, 'images'), { recursive: true });
     for (const [file, bytes] of images) writeFileSync(join(scratch, 'images', file), bytes);
     for (const [file, text] of texts) writeFileSync(join(scratch, file), text);
     const build = join(scratch, 'build');
-    return [gateRun(packedBuildLabel(mode), rigc, ['build', '--rig', join(scratch, 'rig.json'), '--motion', join(scratch, 'motion.json'), '--out', build, ...packedBuildArgs(mode)])];
+    const runs = [gateRun(packedBuildLabel(mode), rigc, ['build', '--rig', join(scratch, 'rig.json'), '--motion', join(scratch, 'motion.json'), '--out', build, ...packedBuildArgs(mode)])];
+    // What the caller reads off a green build before the scratch is emptied (the motion gate's model document); nothing for a red one.
+    if (onGreen !== undefined && runs.every((g) => g.status === 0)) onGreen(build);
+    return runs;
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -276,7 +288,102 @@ export interface RigStageInput {
   command?: RigCommand;
 }
 
-/** Author the rig, gate it through rigc in `scratch`, and write `out` only when the gate is green. */
+/** One automatic part's motion gate, as the rig stage ran it (`src/automotion.ts`). */
+export interface MotionGateRun {
+  part: string;
+  /** The reference build through rigc's gate — null when the part was refused before anything was compiled. */
+  reference: GateRun | null;
+  /** spine-rigc's `compare` report — null when the comparison did not run or refused its input. */
+  report: MeshQualityReport | null;
+  /** What refuses the part; empty when it is accepted. */
+  problems: Problem[];
+  /** Why no comparison ran, for the mesh line; null when one ran. */
+  notCompared: string | null;
+}
+
+/** The model document a green gate build wrote, or null. */
+function modelAt(buildDir: string): string | null {
+  const path = join(buildDir, RIGC_MODEL_DOCUMENT);
+  return existsSync(path) ? readFileSync(path, 'utf8') : null;
+}
+
+/**
+ * The motion gate of every automatic part (issue #126, item 3): for each, the
+ * reference rig — `rig` with that part's attachment swapped for its unreduced
+ * source and nothing else — through the same rigc `build` the stage gates
+ * with, then spine-rigc's comparison of its `skeleton.model.json` with the
+ * candidate's (`candidateModel`, the stage's own gate build). A part refused
+ * before compiling (no `motion`, no stimulus) costs no build.
+ */
+export function motionGates(
+  rig: RigOutput,
+  images: ReadonlyArray<readonly [string, Uint8Array]>,
+  texts: ReadonlyArray<readonly [string, string]>,
+  candidateModel: string | null,
+  rigc: RigcRunner,
+  scratch: string,
+  mode: PackMode,
+): MotionGateRun[] {
+  return rig.autoMotion.map((c: AutoMotionCase): MotionGateRun => {
+    const out = (over: Partial<MotionGateRun>): MotionGateRun => ({ part: c.part, reference: null, report: null, problems: [], notCompared: null, ...over });
+    if (c.motion === undefined) {
+      return out({
+        problems: [{ code: 'CONFIG_FIELD_PRESENT', object: `${c.object}.motion`, detail: 'is absent and required; an automatic mesh is accepted only when its motion is measured and passes (issue #126 item 3)' }],
+        notCompared: 'no motion bounds',
+      });
+    }
+    const stim = motionStimulus(rig.rig.bones, rig.motion, c.boundBones);
+    if (stim.by.length === 0) return out({ problems: [noStimulusProblem(c, stim.keyed)], notCompared: 'no stimulus' });
+    if (candidateModel === null) {
+      return out({
+        problems: [{ code: 'AUTO_MESH_MOTION_INPUT', object: c.object, detail: `the rig stage's gate build wrote no ${RIGC_MODEL_DOCUMENT}, so there is no candidate document to compare; rigc's build writes one beside every green build` }],
+        notCompared: `no candidate ${RIGC_MODEL_DOCUMENT}`,
+      });
+    }
+    const refRig = JSON.parse(rigJsonText(rig.rig)) as RigSpec;
+    refRig.skins.default[c.part] = { [c.part]: c.reference };
+    const refTexts = texts.map(([file, text]) => [file, file === 'rig.json' ? rigJsonText(refRig) : text] as const);
+    let refModel: string | null = null;
+    const [gate] = gateThroughRigc(images, refTexts, rigc, scratch, mode, (dir) => {
+      refModel = modelAt(dir);
+    });
+    if (gate.status !== 0 || refModel === null) {
+      return out({
+        reference: gate,
+        problems: [
+          {
+            code: 'AUTO_MESH_MOTION_INPUT',
+            object: c.object,
+            detail: `the reference (the rig with "${c.part}" as its unreduced source mesh) ${gate.status !== 0 ? `is refused by rigc's gate, exit ${gate.status}${gate.lines.length > 0 ? `: ${gate.lines.map((l) => l.trim()).join(' | ')}` : ''}` : `built green and wrote no ${RIGC_MODEL_DOCUMENT}`}; a reference that is not gated is not evidence, and nothing is built in the part's place`,
+          },
+        ],
+        notCompared: 'the reference build is red',
+      });
+    }
+    const ran = runComparison(c.object, motionInput(c, c.motion, refModel, candidateModel));
+    if ('code' in ran) return out({ reference: gate, problems: [ran], notCompared: 'spine-rigc refused the input' });
+    const verdict = motionVerdict(c.object, ran);
+    return out({ reference: gate, report: ran, problems: verdict === null ? [] : [verdict] });
+  });
+}
+
+/** The mesh report as written: each automatic row with the motion gate's rows in place of "unmeasured", and its `compare` document after `quality_report`. */
+export function withMotion(rows: readonly MeshReport[], runs: readonly MotionGateRun[], cases: readonly AutoMotionCase[]): MeshReport[] {
+  return rows.map((m) => {
+    if (!('mode' in m) || m.mode !== 'auto') return m;
+    const run = runs.find((r) => r.part === m.part);
+    const c = cases.find((x) => x.part === m.part);
+    if (run === undefined || run.report === null || c === undefined || c.motion === undefined) return m;
+    const row: AutoMeshReport = { ...m, deformation: motionDeformation(c.motion, run.report), motion_report: motionDocument(run.report) };
+    return row;
+  });
+}
+
+/**
+ * Author the rig, gate it through rigc in `scratch`, and write `out` only when
+ * the gate is green — and, for every automatic mesh, only when its motion gate
+ * accepted it (issue #126 item 3; {@link motionGates}).
+ */
 export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string, log: Log): RigOutput {
   const cfg = loadConfig(input.config);
   const parts = readParts(join(input.parts, 'parts.json'));
@@ -291,6 +398,15 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     ['motion.json', rigJsonText(rig.motion)],
     ['mesh_report.json', rigJsonText(rig.meshReport)],
   ];
+  // The gate runs before the lines are printed, and its lines print where they always did: an automatic part's motion
+  // gate compares the model document of this very build, the one written (issue #126 item 3). mesh_report.json is staged
+  // as buildRig wrote it; rigc reads only rig.json, motion.json and images/.
+  const pngs = rig.images.map(([file, img]) => [file, encodePngBytes(img)] as const);
+  const mode: PackMode = { pageEdges: input.pageEdges ?? DEFAULT_PAGE_EDGES, packShape: input.packShape ?? DEFAULT_PACK_SHAPE };
+  let candidateModel: string | null = null;
+  const gate = gateThroughRigc(pngs, texts, rigc, scratch, mode, rig.autoMotion.length === 0 ? undefined : (dir) => (candidateModel = modelAt(dir)));
+  const red = gate.filter((g) => g.status !== 0);
+  const motion = red.length > 0 ? [] : motionGates(rig, pngs, texts, candidateModel, rigc, scratch, mode);
   log(`spine-parts rig: ${cfg.key}, rig ${parts.rig_size[0]}x${parts.rig_size[1]}, ${parts.parts.length} part(s)`);
   let vertices = 0;
   for (const m of rig.meshReport) {
@@ -304,7 +420,9 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
       const tried = t.reason === 'no-further-valid-reduction' || t.reason === 'budget-exhausted' ? ` after ${t.candidatesTried} candidate(s)` : '';
       const worst = m.worst_residual === null ? 'none declared' : `${m.worst_residual.code}${m.worst_residual.region === null ? '' : `[${m.worst_residual.region}]`} ${m.worst_residual.value} ${m.worst_residual.bound?.op} ${m.worst_residual.bound?.value}`;
       const from = s === null ? 'unread' : `${s.boundaryVertices}+${s.interiorVertices}`;
-      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}; deformation unmeasured`);
+      const run = motion.find((x) => x.part === m.part);
+      const moved = run === undefined ? 'motion not compared (the gate is red)' : run.report !== null ? motionClause(run.report) : `motion not compared (${run.notCompared ?? 'refused'})`;
+      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}; ${moved}`);
     } else if ('mode' in m) {
       const c = m.contour;
       const stray = c.strayIslands === 0 ? '' : ` left out ${c.strayIslands} island(s), ${c.strayPixels} px`;
@@ -323,12 +441,15 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
       ? `  idle keys ctl: ${rig.meshKeyed.length} mesh-driving bone(s) keyed by the idle, each keyed through a same-origin <bone>_ctl parent`
       : `  idle keys direct: ${rig.meshKeyed.length} mesh-driving bone(s) keyed in place, ${rig.rig.invariants === undefined ? 'so no invariants.idleDrivesMeshes is declared (it would switch nothing off)' : 'invariants.idleDrivesMeshes declared'}`,
   );
-  const gate = gateThroughRigc(rig.images.map(([file, img]) => [file, encodePngBytes(img)] as const), texts, rigc, scratch, { pageEdges: input.pageEdges ?? DEFAULT_PAGE_EDGES, packShape: input.packShape ?? DEFAULT_PACK_SHAPE });
   for (const g of gate) {
     log(`  rigc ${g.label}: exit ${g.status}`);
     for (const l of g.lines) log(`    ${l.trim()}`);
   }
-  const red = gate.filter((g) => g.status !== 0);
+  for (const r of motion) {
+    if (r.reference === null) continue;
+    log(`  rigc ${r.reference.label}, reference "${r.part}" (its unreduced source mesh): exit ${r.reference.status}`);
+    for (const l of r.reference.lines) log(`    ${l.trim()}`);
+  }
   if (red.length > 0) {
     const problems: Problem[] = red.map((g) => ({
       code: 'RIG_RIGC_GREEN',
@@ -336,6 +457,13 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
       detail: `exited ${g.status}${g.lines.length > 0 ? `: ${g.lines.map((l) => l.trim()).join(' | ')}` : ', and it printed nothing'}; ${ctlRemedies(g.lines, rig.controls, input.command ?? 'rig').map((s) => `${s}; `).join('')}exit 0 is required before anything is written, and nothing was`,
     }));
     throw new PartsError(problems);
+  }
+  // Emit only after green: a part the motion gate did not accept refuses the stage, every part's problem named at once.
+  refuseIfAny(motion.flatMap((r) => r.problems));
+  if (motion.length > 0) {
+    const rows = withMotion(rig.meshReport, motion, rig.autoMotion);
+    rig.meshReport.splice(0, rig.meshReport.length, ...rows);
+    texts[2] = ['mesh_report.json', rigJsonText(rig.meshReport)];
   }
   mkdirSync(join(input.out, 'images'), { recursive: true });
   for (const [file, img] of rig.images) writePng(join(input.out, 'images', file), img);

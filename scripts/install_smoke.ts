@@ -280,7 +280,7 @@ const EXPECT_CONTOUR = 'CONTOUR 12 6 22';
 // The automatic mesh mode from the install (issue #126): the rig fixture's two parts — an opaque 16x8 cloth and a 4x2 eye region (one region alone on a page is rigc's A27) — on a 40x40 rig, its
 // mesh in \`auto\`, through the installed \`spine-parts rig\` — the contour source, spine-rigc's \`reduceMesh\` through
 // \`spine-rigc/mesh\`, and the installed rigc's gate, whose launcher runs its core entry in an install with no Spine
-// runtime (the rigc-entry step above holds that). Green means the gate passed and \`mesh_report.json\` says \`auto\`.
+// runtime (the rigc-entry step above holds that). Green means the gate passed, the motion gate (spine-rigc/meshcompare, no runtime) passed, and \`mesh_report.json\` says \`auto\`.
 const AUTO_GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -307,7 +307,7 @@ writeFileSync(join(DIR, 'config.json'), JSON.stringify({
   key: 'smoke_auto',
   assemble: { rig_scale: 0.5, plan: [['cloth', 'full', 'topwear'], ['eye', 'head', 'face']] },
   bones: [{ name: 'body', parent: 'root', at: [20, 30] }, { chain: 'hem', parent: 'body', points: [[14, 14], [22, 14]], tip: [30, 14] }, { name: 'eye', parent: 'body', at: [17, 28] }],
-  meshes: { cloth: { auto: { source: { tolerance: 0, margin: 1, spacing: 4 }, sourceBounds: fit, targets: { artFit: fit, maxBoundaryDeviation: 1 }, influences: { maxInfluences: 4, minWeight: 0 }, budget: { maxCandidates: 200 }, minArtSamples: 1 }, r: 8, segments: ['hem'] } },
+  meshes: { cloth: { auto: { source: { tolerance: 0, margin: 1, spacing: 4 }, sourceBounds: fit, targets: { artFit: fit, maxBoundaryDeviation: 1 }, influences: { maxInfluences: 4, minWeight: 0 }, budget: { maxCandidates: 200 }, minArtSamples: 1, motion: { maxLocalDeformation: 1 } }, r: 8, segments: ['hem'] } },
   regions: { eye: 'eye' },
   motion: { duration: 4, tracks: [{ chain: 'hem', amps: [1, 2], period: 4, phase: 0, lag: 0.1 }] },
 }, null, 1));
@@ -679,18 +679,19 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   const autoDir = join(home, 'auto-character');
   const autoRig = autoGen.status === 0 ? run(bin, ['rig', '--config', join(autoDir, 'config.json'), '--parts', autoDir, '--out', join(autoDir, 'rig')], home) : null;
   if (autoRig !== null) output += autoRig.out;
-  const autoReport = existsSync(join(autoDir, 'rig', 'mesh_report.json')) ? (JSON.parse(readFileSync(join(autoDir, 'rig', 'mesh_report.json'), 'utf8')) as Array<{ mode?: unknown; vertices?: unknown }>) : null;
+  const autoReport = existsSync(join(autoDir, 'rig', 'mesh_report.json')) ? (JSON.parse(readFileSync(join(autoDir, 'rig', 'mesh_report.json'), 'utf8')) as Array<{ mode?: unknown; vertices?: unknown; deformation?: { verdict?: unknown } }>) : null;
   const autoLine = autoRig?.out.split('\n').find((l) => l.includes('mesh cloth')) ?? '';
-  if (autoRig === null || autoRig.status !== 0 || autoReport?.[0]?.mode !== 'auto' || !autoLine.includes('deformation unmeasured')) {
+  // Issue #126 item 3: the motion gate ran from the install too — spine-rigc/meshcompare with no Spine runtime — and passed.
+  if (autoRig === null || autoRig.status !== 0 || autoReport?.[0]?.mode !== 'auto' || autoReport[0].deformation?.verdict !== 'pass' || !/; motion \S+ <= 1 at idle@/.test(autoLine)) {
     fault(
       'auto',
       `SMOKE_AUTO_MESH_FROM_THE_INSTALL: ${
         autoRig === null
           ? `\`bun make_auto.ts\` exited ${autoGen.status}. ${autoGen.out.trim().slice(0, 1500)}`
-          : `\`spine-parts rig\` exited ${autoRig.status}; mesh_report.json ${autoReport === null ? 'not written' : `mode ${JSON.stringify(autoReport[0]?.mode)}`}; exit 0, mode "auto" and a mesh line saying deformation is unmeasured were required. ${autoRig.out.trim().split('\n').filter((l) => /FAIL|rror|rigc/.test(l)).slice(0, 4).join(' | ').slice(0, 1500)}`
+          : `\`spine-parts rig\` exited ${autoRig.status}; mesh_report.json ${autoReport === null ? 'not written' : `mode ${JSON.stringify(autoReport[0]?.mode)}`}; exit 0, mode "auto", a motion verdict "pass" and a mesh line reading "motion <value> <= 1 at idle@…" were required. ${autoRig.out.trim().split('\n').filter((l) => /FAIL|rror|rigc/.test(l)).slice(0, 4).join(' | ').slice(0, 1500)}`
       }`,
     );
-  } else notes.push(`an auto mesh built from the install and passed the installed rigc's gate: ${autoLine.trim()}`);
+  } else notes.push(`an auto mesh built from the install, passed the installed rigc's gate and its motion gate: ${autoLine.trim()}`);
 
   // The shim's own promise: with bun off PATH it says so in one sentence.
   const bunPath = onPath('bun');

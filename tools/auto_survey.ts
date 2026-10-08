@@ -44,11 +44,13 @@ import { readParts } from '../src/parts.ts';
 import { readPng, type Raster } from '../src/raster/index.ts';
 import { type AutoMeshReport, buildRig, type MeshReport } from '../src/rig.ts';
 import { AUTO_CASES, examplePolicy } from '../fixtures/automesh.ts';
+import { withPolicyMotion } from '../fixtures/automotion.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 
 /** The one policy every public example part is switched to: `examplePolicy` in fixtures/automesh.ts, where each number's source is stated. */
-const POLICY = examplePolicy;
+// The motion block (fixtures/automotion.ts) rides along so a --write config loads (issue #126 item 3 requires it); buildRig does not read it.
+const POLICY = (spacing: number): ReturnType<typeof examplePolicy> => withPolicyMotion(examplePolicy(spacing));
 
 const ms = (t0: number): number => Math.round(performance.now() - t0);
 
