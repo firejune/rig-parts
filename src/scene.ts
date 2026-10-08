@@ -23,9 +23,9 @@
  *   prefix: a constraint naming a bone its own build does not declare is
  *   refused (`SCENE_NAME_PREFIXED` when another character has it,
  *   `SCENE_NAME_RESOLVES` when none does).
- * - **Images are the one name that cannot carry `:`.** spine-rigc names an
+ * - **Images are the one name that cannot carry `:`.** rig-c names an
  *   atlas region by its PNG's basename, and an atlas region line holding a
- *   colon is read as a `key: value` line — measured through spine-rigc 2.15.0
+ *   colon is read as a `key: value` line — measured through rig-c 2.15.0
  *   on the demo example renamed `demo:<name>` with images `demo:<file>`:
  *   `A07_ATLAS_TEXT_SHAPE` fails once per region, while the same rig with
  *   images under a `demo/` folder gates green (and draws the page byte for
@@ -704,7 +704,7 @@ export function composeScene(
     for (const [file] of b.images) {
       const n = imageName(b.id, file);
       const who = taken.get(n);
-      if (who !== undefined) fail('SCENE_IMAGE_NAME_FREE', `character "${b.id}" image "${file}"`, `composes to the image "${n}", which ${who} already takes; spine-rigc names an atlas region by its PNG's basename, so two files may not share one — rename an id`);
+      if (who !== undefined) fail('SCENE_IMAGE_NAME_FREE', `character "${b.id}" image "${file}"`, `composes to the image "${n}", which ${who} already takes; rig-c names an atlas region by its PNG's basename, so two files may not share one — rename an id`);
       else taken.set(n, `character "${b.id}" image "${file}"`);
     }
   }
@@ -1001,7 +1001,7 @@ export interface ComposeResult {
 }
 
 /**
- * Load the scene and every build, compose, gate the result through spine-rigc
+ * Load the scene and every build, compose, gate the result through rig-c
  * exactly as `rig` and `build` gate theirs ({@link gateThroughRigc}: `build
  * --profile spine-html --pack`, the compile and the packed pages on disk),
  * write `rig/` and `scene.json` only when that is green, then run `check` over

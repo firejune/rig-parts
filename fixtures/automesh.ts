@@ -18,7 +18,7 @@
  * (`minWeight` 0, P19); a budget of 2000 candidates; one art sample (P9: a
  * value admissible for an explicitly chosen geometry investigation).
  */
-import { type AlphaMask, CONTOUR_MIN_COVERAGE } from 'spine-rigc/mesh';
+import { type AlphaMask, CONTOUR_MIN_COVERAGE } from 'rig-c/mesh';
 import type { AutoRegionSpec, AutoSpec } from '../src/config.ts';
 import { MAX_SIDE } from '../src/contour.ts';
 import { blocks, CONCAVE, CONVEX, HOLE, ISLANDS, SPIKE } from './contour.ts';
@@ -136,8 +136,8 @@ export const AUTO_CASES: readonly AutoCase[] = [
 export const SPECK_RULE_PX = 4;
 
 /**
- * The permissive policy's coverage floor: spine-rigc's own
- * `CONTOUR_MIN_COVERAGE` (`spine-rigc/mesh`, 0.995) — the share of the art
+ * The permissive policy's coverage floor: rig-c's own
+ * `CONTOUR_MIN_COVERAGE` (`rig-c/mesh`, 0.995) — the share of the art
  * rigc's contour generator requires of a mesh it builds, and the share its
  * largest island must hold before strays beside it are accepted. Imported,
  * not copied, so a change in rigc shows here.
@@ -155,6 +155,11 @@ export const PERMISSIVE_MIN_COVERAGE = CONTOUR_MIN_COVERAGE;
  * (`CONTOUR_MIN_COVERAGE` over islands) has no distance term either. What the
  * loss costs is carried by the coverage floor and by the loss figure every
  * matrix row reports against the original image at alpha 1 and above.
+ * The number stands in for "not bounded" only because rig-c cannot be told
+ * that: 2.20.4 still refuses a null or absent `maxUndercut` (and
+ * `maxOvershoot`) in `sourceBounds` and `targets.artFit` by name
+ * (`REDUCE_INPUT_MISSING`), which `AM40` holds; it is replaced by an
+ * undeclared bound the day rigc accepts one (rigc#1254).
  */
 export const PERMISSIVE_MAX_UNDERCUT = Math.ceil(MAX_SIDE * Math.SQRT2);
 
@@ -167,7 +172,7 @@ export const PERMISSIVE_MAX_UNDERCUT = Math.ceil(MAX_SIDE * Math.SQRT2);
  * margin 1, the part's own spacing, overshoot 3, boundary deviation 1,
  * influences {4, 0}, budget 5000, one art sample, no region, no protection.
  * The final measurement is against the original image at alpha 1 and above:
- * the mask spine-rigc reads keeps every speck the source left out, so a speck
+ * the mask rig-c reads keeps every speck the source left out, so a speck
  * is uncovered art in every row, never erased from the evaluation.
  */
 export function permissivePolicy(spacing: number): AutoSpec {
@@ -234,7 +239,7 @@ export const TWO_PIECES_MASK: AlphaMask = blocks(64, 48, [
 /**
  * A small block with a 4 px square region at its centre, source spacing 2 =
  * L0, so every source vertex near the region lies within `L0 + (1 + grade)
- * transition` of it and the refinement converges on any spine-rigc from 2.19.0
+ * transition` of it and the refinement converges on any rig-c from 2.19.0
  * on — AM34's declared region producing interior vertices. 16x12 block at (4, 4) in 24x20.
  */
 export const SMALL_STRIP_MASK: AlphaMask = blocks(24, 20, [[4, 4, 16, 12]]);

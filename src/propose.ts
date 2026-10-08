@@ -84,7 +84,7 @@
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { drawText, GLYPH_H } from 'spine-rigc/tools/font5x7.ts';
+import { drawText, GLYPH_H } from 'rig-c/tools/font5x7.ts';
 import { type BoneEntry, type ConfigConstraint, type MeshSpec, parseConfig, type Point, type Segment, type SkeletonSections } from './config.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 import { OPAQUE_ALPHA_ABOVE } from './layers.ts';
@@ -2386,7 +2386,7 @@ function cropPadded(src: Raster, x0: number, y0: number, x1: number, y1: number)
  * bone (300x320 rig px to 600x640), or null when no bone is named `head`.
  *
  * Layout, palette, blend, grid and crop are the reference's; two deviations,
- * both stated: labels are drawn in spine-rigc's 5x7 bitmap font (upper case)
+ * both stated: labels are drawn in rig-c's 5x7 bitmap font (upper case)
  * rather than PIL's default font, and thick lines and dots are this module's
  * own raster rather than PIL's `ImageDraw` — the overlay is for reading, and
  * no claim is made that it matches the reference pixel for pixel.

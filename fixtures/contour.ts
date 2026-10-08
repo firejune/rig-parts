@@ -22,7 +22,7 @@
  * enclosing W·H + 2W + 2H px²; every grown pixel's centre is 1 px from an art
  * centre, so the overshoot is 1.
  */
-import type { AlphaMask } from 'spine-rigc/mesh';
+import type { AlphaMask } from 'rig-c/mesh';
 import type { ContourParams } from '../src/contour.ts';
 
 /** Rectangles `[x, y, w, h]` of one alpha over a `w`x`h` transparent image; a later block overwrites an earlier one. */
@@ -211,7 +211,7 @@ export const BOTTLE: ContourCase = { name: 'bottle', mask: blocks(20, 20, [[2, 2
 
 /**
  * The cases that build, in order. The gate proof (selftest `CT27`) carries all
- * but FULL, whose PNG has no transparent texel — which spine-rigc's spine-html
+ * but FULL, whose PNG has no transparent texel — which rig-c's spine-html
  * profile refuses for the image (A19), whatever attachment draws it.
  */
 export const BUILDING: readonly ContourCase[] = [CONVEX, CONCAVE, SPIKE, FEATHERED, HOLE, REGION, FULL];

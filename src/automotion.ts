@@ -1,8 +1,8 @@
 /**
  * The motion gate of the automatic mesh mode (issue #126, item 3): a reduced
  * mesh is written only when it moves like the mesh it was reduced from, on the
- * rig's own idle, measured by spine-rigc's `compareMeshesInMotion`
- * (`spine-rigc/meshcompare`, 2.20.x) and held to the bounds the author wrote in
+ * rig's own idle, measured by rig-c's `compareMeshesInMotion`
+ * (`rig-c/meshcompare`, 2.20.x) and held to the bounds the author wrote in
  * `meshes.<part>.auto.motion` (`AutoMotionSpec`, `src/config.ts`).
  *
  * ## What is compared
@@ -12,10 +12,10 @@
  *   UVs `reduceMesh` was handed and its source weights, bound exactly as the
  *   reduced mesh is ({@link AutoMotionCase.reference}). **The candidate** is the
  *   rig the stage writes, with the reduced mesh. The two are one `RigSpec` with
- *   that one attachment swapped and nothing else; spine-rigc's allowlist
+ *   that one attachment swapped and nothing else; rig-c's allowlist
  *   (`COMPARE_INPUTS_DIFFER`) refuses anything else, and its refusal is carried
  *   here by code.
- * - Both go through spine-rigc's `build` under the same gate — the candidate
+ * - Both go through rig-c's `build` under the same gate — the candidate
  *   packed, as the stage writes it, the reference compiled without packing
  *   (issue #135: the comparison allowlists atlas layout, and nothing reads a
  *   reference's pages) — and the comparison reads each build's
@@ -28,8 +28,8 @@
  * The idle exactly as `check` renders it (`rigc render --animation idle --fps
  * IDLE_FPS`): the animation `idle` at {@link IDLE_FPS} fps over its whole
  * duration, physics reset at time 0 and stepped by `1 / IDLE_FPS` — the
- * render's step (spine-rigc's `render_core`) — with `warmupSteps: 0`, the only
- * value spine-rigc accepts (P10). Two phases: `grid`, the frames the render
+ * render's step (rig-c's `render_core`) — with `warmupSteps: 0`, the only
+ * value rig-c accepts (P10). Two phases: `grid`, the frames the render
  * draws, and `irr`, each frame interval's `IRR_OFFSET` past them, which the
  * render never selects. **Nothing here chooses a candidate by motion** — the
  * candidate is the one `reduceMesh` returned on geometry alone (item 2) — so
@@ -53,14 +53,14 @@
  * `motionRequired: true`. The part is kept only when the candidate's
  * `accepted` is true (its geometry section and its motion section both
  * `pass`). Otherwise `AUTO_MESH_MOTION` names every gated row that did not
- * pass with its value, bound and worst frame; a refusal by spine-rigc of the
+ * pass with its value, bound and worst frame; a refusal by rig-c of the
  * comparison's input — `COMPARE_REFERENCE_FAILS` included — is
  * `AUTO_MESH_MOTION_INPUT` carrying its code.
  *
  * Pure: no clock, no randomness, nothing read or written.
  */
-import { MeshReductionError, type AlphaMask, type ArtFitBounds, type MeasureRow, type MeshQualityReport, type MotionBounds, type MotionSchedule, writeMeshQualityReport } from 'spine-rigc/mesh';
-import { compareMeshesInMotion, type MotionComparisonInput } from 'spine-rigc/meshcompare';
+import { MeshReductionError, type AlphaMask, type ArtFitBounds, type MeasureRow, type MeshQualityReport, type MotionBounds, type MotionSchedule, writeMeshQualityReport } from 'rig-c/mesh';
+import { compareMeshesInMotion, type MotionComparisonInput } from 'rig-c/meshcompare';
 import type { AutoMotionSpec } from './config.ts';
 import type { Problem } from './errors.ts';
 import { IDLE_FPS, type MotionSpec } from './motion.ts';
@@ -104,7 +104,7 @@ export interface AutoMotionCase {
   sourceBounds: ArtFitBounds;
   artFit: ArtFitBounds;
   minArtSamples: number;
-  /** Each declared region as spine-rigc held density on it, part-local px, with its art sample floor. */
+  /** Each declared region as rig-c held density on it, part-local px, with its art sample floor. */
   regions: Array<{ name: string; polygon: Array<[number, number]>; minArtSamples: number }>;
   /** The bones the reference's weights bind, sorted. */
   boundBones: string[];
@@ -184,13 +184,13 @@ export function motionInput(c: AutoMotionCase, motion: AutoMotionSpec, reference
   };
 }
 
-/** One comparison: spine-rigc's report, or its refusal of the input carried by code. */
+/** One comparison: rig-c's report, or its refusal of the input carried by code. */
 export function runComparison(object: string, input: MotionComparisonInput): MeshQualityReport | Problem {
   try {
     return compareMeshesInMotion(input);
   } catch (err) {
     if (!(err instanceof MeshReductionError)) throw err;
-    return { code: 'AUTO_MESH_MOTION_INPUT', object, detail: `spine-rigc's compareMeshesInMotion refused the comparison's input (${err.code}): ${err.message}; nothing is built in the part's place` };
+    return { code: 'AUTO_MESH_MOTION_INPUT', object, detail: `rig-c's compareMeshesInMotion refused the comparison's input (${err.code}): ${err.message}; nothing is built in the part's place` };
   }
 }
 
@@ -301,7 +301,7 @@ export function motionClause(report: MeshQualityReport): string {
   return `motion ${r.value} ${r.state === 'pass' ? r.bound.op : r.bound.op === '<=' ? '>' : '<'} ${r.bound.value} at ${at}`;
 }
 
-/** The comparison's whole document, as spine-rigc writes it, parsed so it can sit inside `mesh_report.json`. */
+/** The comparison's whole document, as rig-c writes it, parsed so it can sit inside `mesh_report.json`. */
 export function motionDocument(report: MeshQualityReport): unknown {
   return JSON.parse(writeMeshQualityReport(report));
 }

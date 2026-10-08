@@ -2,7 +2,7 @@
 /**
  * The evaluation matrix of the automatic mesh mode (issue #126, items 4-5),
  * written to `docs/evidence/auto-mesh-matrix.md` by one command so it can be
- * regenerated when spine-rigc moves:
+ * regenerated when rig-c moves:
  *
  *     bun tools/auto_matrix.ts --work <dir> [--out <file.md>] [--examples <key>,...]
  *                              [--no-builds] [--no-timing] [--quiet-wait <s>]
@@ -14,11 +14,11 @@
  *    machine: the inputs of the #131 timing rows — demo `bottomwear`, sample
  *    `sleeves` and `bottomwear`, scarf `handwear_l` under the strict policy,
  *    weighted exactly as the rig stage weights them, and the synthetic strip
- *    with its region — each timed by a wrapper around spine-rigc's exported
+ *    with its region — each timed by a wrapper around rig-c's exported
  *    `measureMeshQuality` (the source measured once, three times) and around
  *    `reduceMesh` (twice), with `uptime` read before and after each. A figure
  *    is labelled quiet only when both one-minute load averages are under 2
- *    ({@link quietLabel}). Nothing inside spine-rigc is instrumented, so the
+ *    ({@link quietLabel}). Nothing inside rig-c is instrumented, so the
  *    granularity is those two calls.
  * 2. **Synthetic rows**: the cases of `fixtures/automesh.ts` under the
  *    synthetic policy and its permissive twin, geometry only (unweighted).
@@ -26,7 +26,7 @@
  *    the strict policy (`examplePolicy`, #131's, unchanged) and the permissive
  *    one (`permissivePolicy`), each part switched alone. Per row the three
  *    counts — (a) the tracked mesh, (b) the automatic mode's unreduced source,
- *    (c) the result — the residuals spine-rigc reports at alpha 1 and above,
+ *    (c) the result — the residuals rig-c reports at alpha 1 and above,
  *    the loss figure ({@link lossAgainstOriginal}: art pixels at alpha 1 and
  *    above the mesh leaves uncovered, read against the ORIGINAL padded image,
  *    specks included), the termination, the verdict ({@link classify}), and for
@@ -76,9 +76,9 @@ import {
   type MeshReductionInput,
   type ReducedMesh,
   reduceMesh,
-} from 'spine-rigc/mesh';
+} from 'rig-c/mesh';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE } from '../src/assemble.ts';
-import { AUTO_THRESHOLD, autoReductionInput, autoSource, autoVerdict, reductionKey, type ReductionResult, reuseReductions, runReduction, sourceWeights, terminationText } from '../src/automesh.ts';
+import { AUTO_THRESHOLD, autoReductionInput, autoSource, autoVerdict, type Reducer, reductionKey, type ReductionResult, reuseReductions, runReduction, sourceWeights, terminationText } from '../src/automesh.ts';
 import { build, checkStage, rigStage } from '../src/build.ts';
 import { DEFAULT_PAGE_EDGES, findRigc, type RigcRunner } from '../src/check.ts';
 import { type AutoSpec, type CharacterConfig, parseConfig } from '../src/config.ts';
@@ -118,16 +118,23 @@ const DOC_CLOSE = 'AUTO_MATRIX_DOC>>>';
 // the definitions (held by the auto-mesh suite, AM30-AM39)
 // ---------------------------------------------------------------------------
 
-/** The row label of a refinement the installed spine-rigc stops by name (P16): a limit of that version, not a refusal on the part's merits. */
-export const BLOCKED_LABEL = "stopped by spine-rigc's refinement (P16)";
+/** The row label of a refinement the installed rig-c stops by name (P16): a limit of that version, not a refusal on the part's merits. */
+export const BLOCKED_LABEL = "stopped by rig-c's refinement (P16)";
 
-export type Verdict = { kind: 'accepted' } | { kind: 'refused'; code: string; detail: string } | { kind: 'blocked'; detail: string };
+export type Verdict = { kind: 'accepted' } | { kind: 'refused'; code: string; detail: string } | { kind: 'blocked'; detail: string } | { kind: 'stopped'; detail: string };
+
+/**
+ * The code of a cell this tool stopped at its cap (`--cell-cap`): no result,
+ * and not a refusal on the part's merits. Every single reduction or build of a
+ * run is held to the cap; a cell past it is recorded and the run moves on.
+ */
+export const STOPPED_CODE = 'AUTO_MATRIX_CELL_STOPPED';
 
 /**
  * The verdict of one row from the part's problem (null when accepted):
  * `blocked` exactly when the problem is `AUTO_MESH_ACCEPTED` and its detail
- * carries spine-rigc's named refinement stop — an edge's end "beyond region …
- * band" and "P16". spine-rigc 2.19.1 implemented option 1 (an edge leaving the
+ * carries rig-c's named refinement stop — an edge's end "beyond region …
+ * band" and "P16". rig-c 2.19.1 implemented option 1 (an edge leaving the
  * band at a single point is exempt), which lifted the stop on the cases 2.19.0
  * refused; the stop that remains in 2.20.1 carries the same words and is
  * classed the same. Every other problem is `refused` by its code. The
@@ -136,6 +143,7 @@ export type Verdict = { kind: 'accepted' } | { kind: 'refused'; code: string; de
  */
 export function classify(problem: Problem | null): Verdict {
   if (problem === null) return { kind: 'accepted' };
+  if (problem.code === STOPPED_CODE) return { kind: 'stopped', detail: problem.detail };
   if (problem.code === 'AUTO_MESH_ACCEPTED' && problem.detail.includes('P16') && problem.detail.includes('beyond region')) return { kind: 'blocked', detail: problem.detail };
   return { kind: 'refused', code: problem.code, detail: problem.detail };
 }
@@ -143,6 +151,7 @@ export function classify(problem: Problem | null): Verdict {
 export function verdictText(v: Verdict): string {
   if (v.kind === 'accepted') return 'accepted';
   if (v.kind === 'blocked') return BLOCKED_LABEL;
+  if (v.kind === 'stopped') return v.detail;
   return `refused ${v.code}`;
 }
 
@@ -208,7 +217,7 @@ export function costLine(cost: RunCost, wallMs: number): string {
   );
 }
 
-/** spine-rigc's CLI as `cli.ts` spawns it (its `rigcRunner`): the binary `findRigc` locates, stdout then stderr. */
+/** rig-c's CLI as `cli.ts` spawns it (its `rigcRunner`): the binary `findRigc` locates, stdout then stderr. */
 function cliRunner(bin: string): RigcRunner {
   return (args) => {
     const r = spawnSync(bin, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
@@ -217,10 +226,41 @@ function cliRunner(bin: string): RigcRunner {
   };
 }
 
+/** `--cell-cap <s>`: the cap on any single reduction (in a child) and on any single build's rigc calls together; null = no cap. */
+let CELL_CAP: number | null = null;
+
+/**
+ * {@link cliRunner} held to one deadline, `capSeconds` from its creation: every
+ * rigc call gets what remains, and a call killed there (or never started
+ * because nothing remains) returns exit 124 and is named by `stopped()`.
+ */
+export function deadlineRunner(bin: string, capSeconds: number): { run: RigcRunner; stopped: () => string | null } {
+  const deadline = clock() + capSeconds * 1000;
+  let stopped: string | null = null;
+  return {
+    run: (args) => {
+      const left = deadline - clock();
+      const what = `rigc ${args[0]}`;
+      if (left <= 0) {
+        stopped ??= what;
+        return { status: 124, out: `auto_matrix: stopped at ${capSeconds} s (the per-cell cap) before ${what}` };
+      }
+      const r = spawnSync(bin, [...args], { encoding: 'utf8', maxBuffer: 1 << 28, timeout: Math.ceil(left), killSignal: 'SIGKILL' });
+      if (r.signal !== null || (r.error as { code?: string } | undefined)?.code === 'ETIMEDOUT') {
+        stopped ??= what;
+        return { status: 124, out: `auto_matrix: stopped at ${capSeconds} s (the per-cell cap) during ${what}` };
+      }
+      if (r.error !== undefined) return { status: 127, out: `could not start ${bin}: ${r.error.message}` };
+      return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+    },
+    stopped: () => stopped,
+  };
+}
+
 /**
  * The loss figure (the owner's condition 1): of the art pixels at alpha 1 and
  * above of `original` — the padded part image as drawn, every speck included —
- * how many have no triangle over their centre (spine-rigc's
+ * how many have no triangle over their centre (rig-c's
  * `measureAuthoredMeshFit`, the reading `contourFit` and the compiler use), and
  * that count's share. The mask is never the one the source traced with its
  * specks erased: erasing them would hide exactly this loss.
@@ -236,16 +276,97 @@ export function lossAgainstOriginal(original: AlphaMask, points: ReadonlyArray<r
   return { artPixels: fit.artPixels, uncovered, share: fit.artPixels === 0 ? 0 : uncovered / fit.artPixels };
 }
 
+// ---------------------------------------------------------------------------
+// the per-cell cap (--cell-cap): a reduction in a child process, killed at the cap
+// ---------------------------------------------------------------------------
+
+type Typed = Uint8Array | Uint8ClampedArray | Float32Array | Float64Array;
+const TYPED: Record<string, (data: number[]) => Typed> = {
+  Uint8Array: (d) => Uint8Array.from(d),
+  Uint8ClampedArray: (d) => Uint8ClampedArray.from(d),
+  Float32Array: (d) => Float32Array.from(d),
+  Float64Array: (d) => Float64Array.from(d),
+};
+
+/**
+ * A value as JSON that {@link fromWire} reads back as the same value: a typed
+ * array (the art mask's alpha) tagged with its type, and a number JSON cannot
+ * hold exactly (non-finite, or -0) refused by name rather than written as
+ * something else.
+ */
+export function toWire(value: unknown): string {
+  return JSON.stringify(value, (_k, x: unknown) => {
+    if (x instanceof Uint8Array || x instanceof Uint8ClampedArray || x instanceof Float32Array || x instanceof Float64Array) return { $typed: x.constructor.name, data: Array.from(x) };
+    if (typeof x === 'number' && (!Number.isFinite(x) || Object.is(x, -0))) throw new Error(`auto_matrix: the number ${Object.is(x, -0) ? '-0' : String(x)} cannot cross a process boundary as JSON`);
+    return x;
+  });
+}
+
+export function fromWire(text: string): unknown {
+  return JSON.parse(text, (_k, x: unknown) => {
+    if (x !== null && typeof x === 'object' && !Array.isArray(x) && '$typed' in x && 'data' in x) {
+      const make = TYPED[String((x as { $typed: unknown }).$typed)];
+      if (make === undefined) throw new Error(`auto_matrix: unknown typed array ${String((x as { $typed: unknown }).$typed)}`);
+      return make((x as { data: number[] }).data);
+    }
+    return x;
+  });
+}
+
+/** The reduceMesh wall time the last capped child measured for itself, read once by {@link geometryRow}. */
+let childMs: number | null = null;
+
+function takeChildMs(): number | null {
+  const v = childMs;
+  childMs = null;
+  return v;
+}
+
+/**
+ * A {@link Reducer} that runs `runReduction` in a child process (this file,
+ * `--reduce-child`) and kills it at `capSeconds`: a cell past the cap comes
+ * back as {@link STOPPED_CODE}, never as a wait. The child times its own
+ * `reduceMesh` call, so a row's ms is the call's and not the process's.
+ */
+export function cappedReducer(capSeconds: number, dir: string, run: string[] = ['bun', join(ROOT, 'tools', 'auto_matrix.ts')]): Reducer {
+  return (object, input) => {
+    mkdirSync(dir, { recursive: true });
+    const inFile = join(dir, 'reduce-in.json');
+    const outFile = join(dir, 'reduce-out.json');
+    rmSync(outFile, { force: true });
+    writeFileSync(inFile, toWire({ object, input }));
+    const r = spawnSync(run[0], [...run.slice(1), '--reduce-child', inFile, outFile], { encoding: 'utf8', timeout: capSeconds * 1000, killSignal: 'SIGKILL', maxBuffer: 1 << 26 });
+    rmSync(inFile, { force: true });
+    if (r.signal !== null || (r.error as { code?: string } | undefined)?.code === 'ETIMEDOUT') {
+      rmSync(outFile, { force: true });
+      return { code: STOPPED_CODE, object, detail: `stopped at ${capSeconds} s (the per-cell cap); reduceMesh returned nothing` };
+    }
+    if (r.status !== 0 || !existsSync(outFile)) throw new Error(`auto_matrix: the reduction child for ${object} exited ${r.status}: ${`${r.stdout ?? ''}${r.stderr ?? ''}`.trim().slice(-600)}`);
+    const back = fromWire(readFileSync(outFile, 'utf8')) as { ms: number; ran: ReductionResult };
+    rmSync(outFile, { force: true });
+    childMs = back.ms;
+    return back.ran;
+  };
+}
+
+/** `--reduce-child <in> <out>`: one `runReduction` on the input the parent wrote, its result and its own wall time written back. */
+function reduceChild(inFile: string, outFile: string): void {
+  const { object, input } = fromWire(readFileSync(inFile, 'utf8')) as { object: string; input: MeshReductionInput };
+  const t0 = clock();
+  const ran = runReduction(object, input);
+  writeFileSync(outFile, toWire({ ms: clock() - t0, ran }));
+}
+
 /** One geometry row: the three counts, the residuals, the loss, the termination and the verdict of one call. */
 export interface GeometryRow {
   name: string;
   /** (a) the tracked mesh, when there is one. */
   tracked: Counts | null;
-  /** (b) the unreduced source after its own gate — spine-rigc's count of it. */
+  /** (b) the unreduced source after its own gate — rig-c's count of it. */
   source: Counts | null;
-  /** (c) the result, when spine-rigc returned a mesh (accepted or not). */
+  /** (c) the result, when rig-c returned a mesh (accepted or not). */
   result: Counts | null;
-  /** The reduction's whole result as spine-rigc returned it (null when no call ran), which a rig stage on the same input reuses. */
+  /** The reduction's whole result as rig-c returned it (null when no call ran), which a rig stage on the same input reuses. */
   ran?: ReductionResult | null;
   /** Vertices the reduction removed and the refinement inserted: (c) = (b) - removed + inserted. */
   removed: number | null;
@@ -286,7 +407,7 @@ export type Clock = () => number;
  * the verdict; then the loss of the source and of the result against the
  * original image. `tracked` is set beside it as count (a).
  */
-export function geometryRow(name: string, mask: AlphaMask, spec: AutoSpec, w: Weighting | null, tracked: Counts | null, clock: Clock): GeometryRow {
+export function geometryRow(name: string, mask: AlphaMask, spec: AutoSpec, w: Weighting | null, tracked: Counts | null, clock: Clock, reduce: Reducer = runReduction): GeometryRow {
   const empty: GeometryRow = {
     name,
     tracked,
@@ -320,11 +441,11 @@ export function geometryRow(name: string, mask: AlphaMask, spec: AutoSpec, w: We
   const input = autoReductionInput({ part: name, mask, ox: w?.ox ?? 0, oy: w?.oy ?? 0, spec, source, weights, boneOrder: w?.boneOrder ?? [] });
   const t0 = clock();
   COST.reduceGeometry++;
-  const ran = runReduction(name, input);
-  const ms = clock() - t0;
+  const ran = reduce(name, input);
+  const ms = takeChildMs() ?? clock() - t0;
   const lossSource = lossAgainstOriginal(mask, input.source.points, input.source.triangles);
   const base = { ...empty, input, ran, ms, lossSource, strayIslands: source.report.strayIslands, strayPixels: source.report.strayPixels };
-  if ('code' in ran) return { ...base, termination: 'spine-rigc threw', verdict: classify(ran) };
+  if ('code' in ran) return { ...base, ms: ran.code === STOPPED_CODE ? null : ms, termination: ran.code === STOPPED_CODE ? 'stopped at the cap, no result' : 'rig-c threw', verdict: classify(ran) };
   const v = autoVerdict(name, ran);
   const t = ran.report.termination;
   const cand = ran.report.candidates[0];
@@ -469,8 +590,8 @@ const PACK_MODE = { pageEdges: 'free', packShape: 'polygon' } as const;
 
 /**
  * The tracked example: its full build (assemble, rig, check) in `<work>/base-<key>`, or, with `partsOnly` (the
- * timing on a machine with no Node for spine-rigc's CLI), its assemble alone and the bone order the rig stage
- * computes in-process (`buildRig`, no spine-rigc gate), which is all the timed inputs read.
+ * timing on a machine with no Node for rig-c's CLI), its assemble alone and the bone order the rig stage
+ * computes in-process (`buildRig`, no rig-c gate), which is all the timed inputs read.
  */
 function loadExample(key: string, work: string, partsOnly = false): Example {
   const config = join(ROOT, 'examples', key, 'config.json');
@@ -596,7 +717,7 @@ const REDUCED = new Map<string, ReductionResult>();
 
 /** Keep a geometry row's reduction for the rig stages that follow (nothing when no call ran). */
 function remember(g: GeometryRow): void {
-  if (g.input !== null && g.ran !== undefined && g.ran !== null) REDUCED.set(reductionKey(g.input), g.ran);
+  if (g.input !== null && g.ran !== undefined && g.ran !== null && !('code' in g.ran && g.ran.code === STOPPED_CODE)) REDUCED.set(reductionKey(g.input), g.ran);
 }
 
 /** A stage's refusal as `cli.ts` prints it (`printRefusal`): each problem's FAIL line, then the count. */
@@ -618,10 +739,12 @@ function rigAndCheck(ex: Example, raw: { [k: string]: Json }, dir: string, slot:
   writeFileSync(config, `${JSON.stringify(raw, null, 2)}\n`);
   const rig = join(dir, 'rig');
   const bin = findRigc(ROOT, process.env.PATH ?? '');
-  const runner = countingRunner(cliRunner(bin), COST);
+  const capped = CELL_CAP === null ? null : deadlineRunner(bin, CELL_CAP);
+  const runner = countingRunner(capped === null ? cliRunner(bin) : capped.run, COST);
+  const stoppedDetail = (): string | null => (capped === null || capped.stopped() === null ? null : `stopped at ${CELL_CAP} s (the per-cell cap) during ${capped.stopped()}`);
   const reuse = reuseReductions(REDUCED, (object, input) => {
     COST.reduceStage++;
-    return runReduction(object, input);
+    return CELL_CAP === null ? runReduction(object, input) : cappedReducer(CELL_CAP, join(dir, 'reduce'))(object, input);
   });
   const rigLog: string[] = [];
   const scratch = mkdtempSync(join(dir, 'rig-scratch-'));
@@ -636,9 +759,13 @@ function rigAndCheck(ex: Example, raw: { [k: string]: Json }, dir: string, slot:
     COST.reusedByStage += reuse.reused();
   }
   writeFileSync(join(dir, 'rig.log'), `${rigLog.join('\n')}\n`);
+  const stoppedInRig = stoppedDetail();
+  if (stoppedInRig !== null) return { motion: null, bars: null, stretch: null, overall: null, detail: stoppedInRig, check: null, rig };
   if (r !== 0) {
     const log = readFileSync(join(dir, 'rig.log'), 'utf8');
-    const fail = log.split('\n').find((l) => l.includes('FAIL') || l.includes('_')) ?? `exit ${r}`;
+    // The refusal's own FAIL line (refusalLines writes one per problem); a progress line that merely holds an underscore
+    // (a part name such as hair_back) is not the reason.
+    const fail = log.split('\n').find((l) => l.trimStart().startsWith('FAIL')) ?? `exit ${r}`;
     return { motion: motionOutcome(log, null, slot), bars: null, stretch: null, overall: null, detail: `rig exit ${r}: ${fail.trim().slice(0, 200)}`, check: null, rig };
   }
   const motion = motionOutcome('', JSON.parse(readFileSync(join(rig, 'mesh_report.json'), 'utf8')) as MeshReport[], slot);
@@ -650,6 +777,8 @@ function rigAndCheck(ex: Example, raw: { [k: string]: Json }, dir: string, slot:
     checkLog.push(...refusalLines(err));
   }
   writeFileSync(join(dir, 'check.log'), `${checkLog.join('\n')}\n`);
+  const stoppedInCheck = stoppedDetail();
+  if (stoppedInCheck !== null) return { motion, bars: null, stretch: null, overall: null, detail: stoppedInCheck, check: null, rig };
   if (!existsSync(join(out, 'check.json'))) return { motion, bars: null, stretch: null, overall: null, detail: 'check wrote no check.json', check: null, rig };
   const check = JSON.parse(readFileSync(join(out, 'check.json'), 'utf8')) as Record<string, unknown>;
   const bars = barsOf(check);
@@ -686,17 +815,22 @@ interface Section {
   lines: string[];
 }
 
-function parseArgs(argv: string[]): { work: string; out: string; examples: string[] | null; builds: boolean; timing: boolean; quietWait: number; timingOnly: boolean; timingFrom: string | null; machine: string; fetch: boolean; printDoc: boolean; cell: { part: string; policy: 'strict' | 'permissive' } | null } {
+function parseArgs(argv: string[]): { work: string; out: string; examples: string[] | null; builds: boolean; timing: boolean; quietWait: number; timingOnly: boolean; timingFrom: string | null; machine: string; fetch: boolean; printDoc: boolean; cell: { part: string; policy: 'strict' | 'permissive' } | null; cellCap: number | null; commit: string | null } {
   const get = (flag: string): string | null => {
     const i = argv.indexOf(flag);
     return i < 0 ? null : (argv[i + 1] ?? null);
   };
   const work = get('--work');
   if (work === null) {
-    console.log('usage: bun tools/auto_matrix.ts --work <dir> [--out <file.md>] [--examples <key>,...] [--cell <part>:<strict|permissive>] [--no-builds] [--no-timing] [--quiet-wait <s>] [--machine <label>] [--timing-only | --timing-from <file>] [--fetch] [--print-doc]');
+    console.log('usage: bun tools/auto_matrix.ts --work <dir> [--out <file.md>] [--examples <key>,...] [--cell <part>:<strict|permissive>] [--cell-cap <s>] [--no-builds] [--no-timing] [--quiet-wait <s>] [--machine <label>] [--commit <id>] [--timing-only | --timing-from <file>] [--fetch] [--print-doc]');
     process.exit(2);
   }
   const ex = get('--examples');
+  const capArg = get('--cell-cap');
+  if (capArg !== null && !(Number.isInteger(Number(capArg)) && Number(capArg) > 0)) {
+    console.log(`auto_matrix: --cell-cap ${capArg}; a whole number of seconds above 0 is required`);
+    process.exit(2);
+  }
   const cellArg = get('--cell');
   const cellMatch = cellArg === null ? null : /^([^:]+):(strict|permissive)$/.exec(cellArg);
   if (cellArg !== null && cellMatch === null) {
@@ -716,6 +850,8 @@ function parseArgs(argv: string[]): { work: string; out: string; examples: strin
     fetch: argv.includes('--fetch'),
     printDoc: argv.includes('--print-doc'),
     cell: cellMatch === null ? null : { part: cellMatch[1], policy: cellMatch[2] as 'strict' | 'permissive' },
+    cellCap: capArg === null ? null : Number(capArg),
+    commit: get('--commit'),
   };
 }
 
@@ -729,7 +865,7 @@ function weighting(ex: Example, part: string, ox: number, oy: number, boneOrder:
   return { ox, oy, segs: resolveSegments(ex.cfg, m.segments), r: m.r, boneOrder };
 }
 
-/** The bone order the rig stage hands spine-rigc for a config: its own rig's bones, read off a lattice build of that config (no reduction run). */
+/** The bone order the rig stage hands rig-c for a config: its own rig's bones, read off a lattice build of that config (no reduction run). */
 function boneOrderOf(raw: { [k: string]: Json }, ex: Example): string[] {
   const images = new Map<string, Raster>();
   for (const p of ex.parts.parts) images.set(p.name, readPng(join(ex.base, 'parts', `${p.name}.png`)));
@@ -752,8 +888,15 @@ function switched(raw: { [k: string]: Json }, part: string, spec: AutoSpec): { [
 }
 
 function main(argv: string[]): void {
+  const child = argv.indexOf('--reduce-child');
+  if (child >= 0) {
+    reduceChild(argv[child + 1], argv[child + 2]);
+    return;
+  }
   const started = clock();
   const args = parseArgs(argv);
+  CELL_CAP = args.cellCap;
+  const reducerFor = (dir: string): Reducer => (CELL_CAP === null ? runReduction : cappedReducer(CELL_CAP, dir));
   mkdirSync(args.work, { recursive: true });
   if (args.fetch) {
     // `--fetch`: the pinned example inputs, by the repository's own script (a machine with a fresh copy of the tree has none).
@@ -770,9 +913,11 @@ function main(argv: string[]): void {
     console.log(`auto_matrix: ${keys.length === 0 ? 'no fetched example' : `${missing.join(', ')} not fetched`}; run bun run fetch-examples`);
     process.exit(2);
   }
-  const rigcVersion = (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'spine-rigc', 'package.json'), 'utf8')) as { version: string }).version;
-  const head = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
-  const dirty = spawnSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim() !== '';
+  const rigcVersion = (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'rig-c', 'package.json'), 'utf8')) as { version: string }).version;
+  // The commit: `--commit` when given (a copy of the tree with no .git, as the remote runner uploads), else git's own reading.
+  const head = args.commit ?? (spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).stdout ?? '').trim();
+  const dirty = args.commit === null && (spawnSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: ROOT, encoding: 'utf8' }).stdout ?? '').trim() !== '';
+  const pinned = pinnedExamplesCommit(readFileSync(join(ROOT, 'scripts', 'fetch-examples.sh'), 'utf8'));
   const examples = new Map<string, Example>();
   for (const k of keys) {
     console.log(`auto_matrix: tracked build of ${k}`);
@@ -786,7 +931,7 @@ function main(argv: string[]): void {
     // read at the end, when the document is rendered: the section may still be being taken on another machine
   } else if (args.timing) {
     const lines: string[] = [];
-    lines.push(`Machine: ${args.machine}; spine-rigc ${rigcVersion}.`, '');
+    lines.push(`Machine: ${args.machine}; rig-c ${rigcVersion}.`, '');
     let waited = 0;
     while (args.quietWait > 0 && waited < args.quietWait && (oneMinuteLoad(uptime()) ?? 99) >= 2) {
       spawnSync('sleep', ['30']);
@@ -809,7 +954,26 @@ function main(argv: string[]): void {
       if ('overlap' in sw) return 'overlap';
       return { input: autoReductionInput({ part, mask, ox, oy, spec, source, weights: sw.weights, boneOrder: w.boneOrder }) };
     };
+    // The region condition's input (section 4) under the strict policy: the same part, its control bone added, the region declared.
+    const regionInput = (key: string): { input: MeshReductionInput } | string => {
+      const ex = examples.get(key);
+      if (ex === undefined) return `${key} not fetched`;
+      const part = 'bottomwear';
+      const m = ex.raw.meshes as { [k: string]: { [k: string]: Json } };
+      const { mask, ox, oy, box, img } = partMask(ex, part);
+      const t = testRegion(ex.cfg, part, placedMask(box.x, box.y, img), box);
+      if (typeof t === 'string') return `the region rule passes over it: ${t}`;
+      const grid = spacingOf(m[part]);
+      const spec = { ...examplePolicy(grid), regions: [matrixRegion(t, grid)] };
+      const source = autoSource(part, mask, spec);
+      if (Array.isArray(source)) return source.map((p) => p.code).join('+');
+      const w = weighting(ex, part, ox, oy, boneOrderOf(withRegionBone(ex.raw, t), ex));
+      const sw = sourceWeights(source.vertices, ox, oy, w.segs, w.r, spec);
+      if ('overlap' in sw) return 'overlap';
+      return { input: autoReductionInput({ part, mask, ox, oy, spec, source, weights: sw.weights, boneOrder: w.boneOrder }) };
+    };
     timed.push({ label: 'demo / bottomwear', build: () => exampleInput('demo', 'bottomwear') });
+    timed.push({ label: 'demo / bottomwear + the declared region', build: () => regionInput('demo') });
     timed.push({ label: 'sample / sleeves', build: () => exampleInput('sample', 'sleeves') });
     timed.push({ label: 'sample / bottomwear', build: () => exampleInput('sample', 'bottomwear') });
     timed.push({ label: 'scarf / handwear_l', build: () => exampleInput('scarf', 'handwear_l') });
@@ -907,7 +1071,7 @@ function main(argv: string[]): void {
         const spec = make(spacingOf(meshes[part]));
         const load = uptime();
         loadsSeen.push(load);
-        const g = geometryRow(part, mask, spec, weighting(ex, part, ox, oy, ex.boneOrder), trackedCounts(ex, part), clock);
+        const g = geometryRow(part, mask, spec, weighting(ex, part, ox, oy, ex.boneOrder), trackedCounts(ex, part), clock, reducerFor(join(args.work, 'reduce')));
         remember(g);
         console.log(`${key}/${part} ${policy}: ${verdictText(g.verdict)} ${g.termination.slice(0, 100)} (${Math.round(g.ms ?? 0)} ms)`);
         let alone: Built | null = null;
@@ -934,7 +1098,7 @@ function main(argv: string[]): void {
           const spec = { ...make(grid), regions: [region] };
           const load = uptime();
           loadsSeen.push(load);
-          const g = geometryRow(part, mask, spec, weighting(ex, part, ox, oy, order), trackedCounts(ex, part), clock);
+          const g = geometryRow(part, mask, spec, weighting(ex, part, ox, oy, order), trackedCounts(ex, part), clock, reducerFor(join(args.work, 'reduce')));
           remember(g);
           console.log(`${key}/${part} ${policy} + region: ${verdictText(g.verdict)} ${g.termination.slice(0, 100)} (${Math.round(g.ms ?? 0)} ms)`);
           let alone: Built | null = null;
@@ -1038,7 +1202,7 @@ function main(argv: string[]): void {
   }
   const cost = costLine(COST, clock() - started);
   console.log(cost);
-  const doc = renderDocument({ rigcVersion, head, dirty, keys, sections, results, together, sep, loadsSeen, builds: args.builds, timing: args.timing, cost, cell: cell === null ? null : `${cell.part}:${cell.policy}` });
+  const doc = renderDocument({ rigcVersion, head, dirty, keys, pinned, machine: args.machine, cellCap: args.cellCap, sections, results, together, sep, loadsSeen, builds: args.builds, timing: args.timing, cost, cell: cell === null ? null : `${cell.part}:${cell.policy}` });
   mkdirSync(dirname(args.out), { recursive: true });
   writeFileSync(args.out, doc);
   if (args.printDoc) console.log(`${DOC_OPEN}\n${doc}\n${DOC_CLOSE}`);
@@ -1088,6 +1252,12 @@ interface DocInput {
   head: string;
   dirty: boolean;
   keys: string[];
+  /** The spine-parts-examples commit `scripts/fetch-examples.sh` pins. */
+  pinned: string;
+  /** `--machine`'s label (never an address). */
+  machine: string;
+  /** `--cell-cap`'s seconds, or null. */
+  cellCap: number | null;
   sections: Section[];
   results: PartResult[];
   together: string[];
@@ -1108,7 +1278,7 @@ export function renderDocument(d: DocInput): string {
   const strictOf = examplePolicy(0);
   L.push('# The automatic mesh mode — evaluation matrix (issue #126, items 4-5)');
   L.push('');
-  L.push(`Generated by \`bun tools/auto_matrix.ts\`; every figure below is the tool's, none typed. spine-rigc ${d.rigcVersion}; spine-parts commit ${d.head}${d.dirty ? ' with uncommitted changes to tracked files' : ''}; examples ${d.keys.join(', ')} (\`bun run fetch-examples\`). The geometry columns come from this tool's own call to \`reduceMesh\` (no pose); the motion column is the rig stage's motion gate (\`src/automotion.ts\`, spine-rigc's \`compareMeshesInMotion\` on the idle) in the full build of a part accepted on geometry, and \`check\` is the whole rig's.`);
+  L.push(`Generated by \`bun tools/auto_matrix.ts\`; every figure below is the tool's, none typed. rig-c ${d.rigcVersion}; spine-parts commit ${d.head === '' ? 'unread (no git checkout and no --commit)' : d.head}${d.dirty ? ' with uncommitted changes to tracked files' : ''}; examples ${d.keys.join(', ')} from spine-parts-examples at ${d.pinned} (\`bun run fetch-examples\`); machine ${d.machine}; per-cell cap ${d.cellCap === null ? 'none' : `${d.cellCap} s (any single reduction, and any single build's rigc calls together; a cell past it is recorded as stopped)`}. The geometry columns come from this tool's own call to \`reduceMesh\` (no pose); the motion column is the rig stage's motion gate (\`src/automotion.ts\`, rig-c's \`compareMeshesInMotion\` on the idle) in the full build of a part accepted on geometry, and \`check\` is the whole rig's.`);
   L.push('');
   L.push(`Machine load (one-minute average, \`uptime\`) over the ${loads.length} readings this run took: ${loads.length === 0 ? 'none read' : `${pyRound(Math.min(...loads), 2)} to ${pyRound(Math.max(...loads), 2)}`}. Wall times are this machine's and are not a claim about another.`);
   L.push('');
@@ -1123,9 +1293,9 @@ export function renderDocument(d: DocInput): string {
   L.push('| | strict (`examplePolicy`, #131, unchanged) | permissive (`permissivePolicy`) |');
   L.push('|---|---|---|');
   L.push(`| source | tolerance ${strictOf.source.tolerance}, margin ${strictOf.source.margin}, spacing = the part's tracked spacing, no \`stray\` | the same, \`stray\` ${SPECK_RULE_PX} (the speck rule: an island other than the largest with ${SPECK_RULE_PX} px or fewer at alpha >= 1; a larger one is a piece and refuses the part) |`);
-  L.push(`| minCoverage (source and result) | ${strictOf.targets.artFit.minCoverage} | ${PERMISSIVE_MIN_COVERAGE} (spine-rigc's \`CONTOUR_MIN_COVERAGE\`) |`);
+  L.push(`| minCoverage (source and result) | ${strictOf.targets.artFit.minCoverage} | ${PERMISSIVE_MIN_COVERAGE} (rig-c's \`CONTOUR_MIN_COVERAGE\`) |`);
   L.push(`| maxOvershoot | ${strictOf.targets.artFit.maxOvershoot} | ${strictOf.targets.artFit.maxOvershoot} |`);
-  L.push(`| maxUndercut | ${strictOf.targets.artFit.maxUndercut} | ${PERMISSIVE_MAX_UNDERCUT} (= ceil(32768 x sqrt 2): reported, not gated) |`);
+  L.push(`| maxUndercut | ${strictOf.targets.artFit.maxUndercut} | ${PERMISSIVE_MAX_UNDERCUT} (= ceil(32768 x sqrt 2): reported, not gated; a number because rig-c ${d.rigcVersion} refuses a null or absent maxUndercut by name, AM40) |`);
   L.push(`| maxBoundaryDeviation | ${strictOf.targets.maxBoundaryDeviation} | ${strictOf.targets.maxBoundaryDeviation} |`);
   L.push(`| influences | cap ${strictOf.influences.maxInfluences}, minWeight ${strictOf.influences.minWeight} | the same |`);
   const motionOf = policyMotion(strictOf);
@@ -1133,16 +1303,16 @@ export function renderDocument(d: DocInput): string {
   L.push(`| budget.maxCandidates | ${strictOf.budget.maxCandidates} | ${strictOf.budget.maxCandidates} |`);
   L.push(`| minArtSamples | ${strictOf.minArtSamples} | ${strictOf.minArtSamples} |`);
   L.push('');
-  L.push('Both are measured against the original padded image at alpha >= 1: spine-rigc reads the mask with every speck in it, and the loss columns count art pixels at alpha >= 1 with no triangle over their centre (`lossAgainstOriginal`). The region condition adds the declared region of `matrixRegion` (fixtures/automesh.ts) on the circle `tools/real_compare.ts`\'s `testRegion` rule places: L0 = grid / 2, transition = band = radius, grade = (grid - L0) / transition, one art sample; its control bone `test_region` is added to the config, parented to the part\'s first segment bone, and nothing keys it.');
+  L.push('Both are measured against the original padded image at alpha >= 1: rig-c reads the mask with every speck in it, and the loss columns count art pixels at alpha >= 1 with no triangle over their centre (`lossAgainstOriginal`). The region condition adds the declared region of `matrixRegion` (fixtures/automesh.ts) on the circle `tools/real_compare.ts`\'s `testRegion` rule places: L0 = grid / 2, transition = band = radius, grade = (grid - L0) / transition, one art sample; its control bone `test_region` is added to the config, parented to the part\'s first segment bone, and nothing keys it.');
   L.push('');
-  L.push('Counts are `boundary+interior / triangles / bindings`: (a) the tracked mesh (`rig.json` of the tracked build), (b) the automatic mode\'s unreduced source after its own gate (spine-rigc\'s `sourceCounts`), (c) the result. (a) -> (b) is the source\'s choice; (b) -> (c) is the reducer\'s.');
+  L.push('Counts are `boundary+interior / triangles / bindings`: (a) the tracked mesh (`rig.json` of the tracked build), (b) the automatic mode\'s unreduced source after its own gate (rig-c\'s `sourceCounts`), (c) the result. (a) -> (b) is the source\'s choice; (b) -> (c) is the reducer\'s.');
   L.push('');
   const timing = d.sections.find((s) => s.title === 'timing');
   L.push('## Timing (condition 4)');
   L.push('');
   if (!d.timing || timing === undefined) L.push('Not run (`--no-timing`).');
   else {
-    L.push('Each table below opens with the machine and the spine-rigc version it was taken on. ' + 'The inputs of the #131 timing rows: strict policy, weighted as the rig stage weights them (the synthetic strip unweighted, under its own synthetic policy). Granularity: a wrapper timer around spine-rigc\'s exported `measureMeshQuality` (the source, one measurement as every reduction step makes one) and around `reduceMesh`; nothing inside spine-rigc is instrumented. A row is `quiet` only when the one-minute load is under 2 before and after it. The #131 figures (demo `bottomwear` 81-141 s over 1101 candidates) were read with load averages 10-90 and are loaded figures.');
+    L.push('Each table below opens with the machine and the rig-c version it was taken on. ' + 'The inputs of the #131 timing rows: strict policy, weighted as the rig stage weights them (the synthetic strip unweighted, under its own synthetic policy). Granularity: a wrapper timer around rig-c\'s exported `measureMeshQuality` (the source, one measurement as every reduction step makes one) and around `reduceMesh`; nothing inside rig-c is instrumented. A row is `quiet` only when the one-minute load is under 2 before and after it. The #131 figures (demo `bottomwear` 81-141 s over 1101 candidates) were read with load averages 10-90 and are loaded figures.');
     L.push('');
     L.push(...timing.lines);
   }
@@ -1173,10 +1343,11 @@ export function renderDocument(d: DocInput): string {
     const kept = acc.filter((x) => x.alone?.motion?.verdict === 'pass');
     const motionOut = acc.filter((x) => x.alone?.motion?.verdict === 'refused');
     const blocked = d.results.filter((x) => x.policy === policy && x.g.verdict.kind === 'blocked');
+    const stopped = d.results.filter((x) => x.policy === policy && (x.g.verdict.kind === 'stopped' || (x.alone?.detail ?? '').startsWith('stopped at')));
     const sumV = (f: (x: PartResult) => Counts | null): number => acc.reduce((n, x) => n + ((f(x)?.boundary ?? 0) + (f(x)?.interior ?? 0)), 0);
     L.push('');
     L.push(
-      `${policy}: ${acc.length} of ${mine.length} parts accepted with no region, ${mine.length - acc.length} refused; over the accepted parts (a) ${sumV((x) => x.g.tracked)} -> (b) ${sumV((x) => x.g.source)} -> (c) ${sumV((x) => x.g.result)} vertices; interior vertices in the results: ${acc.reduce((n, x) => n + (x.g.result?.interior ?? 0), 0)}; rows ${BLOCKED_LABEL}: ${blocked.length}. Of the ${acc.length} accepted on geometry, the motion gate kept ${kept.length} in a full build and refused ${motionOut.length}${motionOut.length > 0 ? ` (${motionOut.map((x) => `${x.example}/${x.part}`).join(', ')})` : ''}.`,
+      `${policy}: ${acc.length} of ${mine.length} parts accepted with no region, ${mine.length - acc.length} ${stopped.length > 0 ? `refused or stopped (${stopped.length} row(s) stopped at the cap: ${stopped.map((x) => `${x.example}/${x.part}${x.region === 'none' ? '' : ' + region'}`).join(', ')})` : 'refused'}; over the accepted parts (a) ${sumV((x) => x.g.tracked)} -> (b) ${sumV((x) => x.g.source)} -> (c) ${sumV((x) => x.g.result)} vertices; interior vertices in the results: ${acc.reduce((n, x) => n + (x.g.result?.interior ?? 0), 0)}; rows ${BLOCKED_LABEL}: ${blocked.length}. Of the ${acc.length} accepted on geometry, the motion gate kept ${kept.length} in a full build and refused ${motionOut.length}${motionOut.length > 0 ? ` (${motionOut.map((x) => `${x.example}/${x.part}`).join(', ')})` : ''}.`,
     );
     L.push('');
   }
@@ -1195,7 +1366,47 @@ export function renderDocument(d: DocInput): string {
     L.push(...d.sep);
   }
   L.push('');
+  L.push(...rerunSection(d));
   return `${L.join('\n')}`;
+}
+
+/** The commit `scripts/fetch-examples.sh` pins (its `PINNED_COMMIT=` line), or a named absence. */
+export function pinnedExamplesCommit(script: string): string {
+  const m = /^PINNED_COMMIT=([0-9a-f]{40})\s*$/m.exec(script);
+  return m === null ? 'unread (no 40-character PINNED_COMMIT in scripts/fetch-examples.sh)' : m[1];
+}
+
+/**
+ * "Re-running this evidence": the inputs, the policies by name and number, the
+ * commands with their caps, and where every report lands, written from the same
+ * values the run used, so a later session reruns it unchanged.
+ */
+export function rerunSection(d: Pick<DocInput, 'rigcVersion' | 'pinned' | 'keys'>): string[] {
+  const strictOf = examplePolicy(0);
+  const motionOf = policyMotion(strictOf);
+  return [
+    '## Re-running this evidence',
+    '',
+    `Inputs: the public examples ${d.keys.join(', ')} of https://github.com/firejune/spine-parts-examples at commit ${d.pinned} (the pin in \`scripts/fetch-examples.sh\`; \`bun run fetch-examples\` copies them into the gitignored \`examples/<key>/inputs\`), each with its tracked \`examples/<key>/config.json\`; rig-c ${d.rigcVersion} as \`bun install --frozen-lockfile\` installs it from \`bun.lock\`. No other input is read.`,
+    '',
+    'Policies (`fixtures/automesh.ts`, `fixtures/automotion.ts`), stated before any part was measured and not tuned per part:',
+    '',
+    `- **strict** = \`withPolicyMotion(examplePolicy(spacing))\`: tolerance ${strictOf.source.tolerance}, margin ${strictOf.source.margin}, spacing = the part's tracked spacing, no stray; minCoverage ${strictOf.targets.artFit.minCoverage}, maxOvershoot ${strictOf.targets.artFit.maxOvershoot}, maxUndercut ${strictOf.targets.artFit.maxUndercut} (source and result); maxBoundaryDeviation ${strictOf.targets.maxBoundaryDeviation}; influences cap ${strictOf.influences.maxInfluences}, minWeight ${strictOf.influences.minWeight}; budget ${strictOf.budget.maxCandidates}; minArtSamples ${strictOf.minArtSamples}; motion maxLocalDeformation ${motionOf.maxLocalDeformation}.`,
+    `- **permissive** = \`withPolicyMotion(permissivePolicy(spacing))\`: the strict policy with exactly three numbers changed — stray ${SPECK_RULE_PX}, minCoverage ${PERMISSIVE_MIN_COVERAGE}, maxUndercut ${PERMISSIVE_MAX_UNDERCUT} (a number standing in for "not bounded", because rig-c ${d.rigcVersion} refuses a null or absent bound by name; selftest \`AM40\`).`,
+    '- **region condition** = either policy plus `matrixRegion` on the circle `tools/real_compare.ts`\'s `testRegion` places on `bottomwear`, its control bone `test_region` added to the config.',
+    '',
+    'Commands, from the repository root (the caps are the ones this document was generated under: 600 s for any single reduction or build, 2700 s for the whole matrix):',
+    '',
+    '```sh',
+    'bun install --frozen-lockfile',
+    'bun run fetch-examples',
+    'timeout 2700 bun tools/auto_matrix.ts --work <scratch dir> --cell-cap 600 --machine <label> [--commit <id>]',
+    'timeout 600 bun tools/auto_motion_survey.ts > docs/evidence/auto-motion-survey.md',
+    '```',
+    '',
+    'Where the reports land: this document (`--out`, default `docs/evidence/auto-mesh-matrix.md`; `--print-doc` also prints it between markers for a machine whose files do not come back); every cell\'s config, `rig/` (with `mesh_report.json` and the motion report) and `check/check.json` under `<scratch dir>/<example>-<policy>-<part>` (`-region-` for the region condition, `-all` for every accepted part at once, `sample-115-<n>` for the #115 variants), the tracked builds under `<scratch dir>/base-<example>`, and one row per cell in `<scratch dir>/matrix-rows.json`. The motion survey prints Markdown to stdout and writes nothing; `docs/evidence/auto-motion-survey.md` is that output, byte for byte. A machine without GNU `timeout` (macOS) runs the same commands without it and keeps to the caps by `--cell-cap` alone.',
+    '',
+  ];
 }
 
 function stretchOfTracked(r: PartResult): number | null {

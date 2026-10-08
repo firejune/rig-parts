@@ -11,7 +11,7 @@
  * ## The inputs, told apart by what they state
  *
  * - a **rig.json**: an object whose `spec` is `rigc-rig/1`, read by
- *   spine-rigc's own `parseRigSpec` (its refusal is quoted, not rewritten);
+ *   rig-c's own `parseRigSpec` (its refusal is quoted, not rewritten);
  * - a **config**: an object with a `key`, read by the full config loader;
  * - a **proposal**: an object with `bones` and no `key` or `spec`, as
  *   `propose` writes it, read by `parseProposalSections` (the loader's rules
@@ -69,8 +69,8 @@
  * Pure but for reading the three files it is handed.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { CompileError } from 'spine-rigc/src/errors.ts';
-import { parseRigSpec, RIG_SPEC_VERSION, type RigBone as RigcBone, type RigSpec as RigcSpec, splitRigSkin } from 'spine-rigc/src/rig.ts';
+import { CompileError } from 'rig-c/src/errors.ts';
+import { parseRigSpec, RIG_SPEC_VERSION, type RigBone as RigcBone, type RigSpec as RigcSpec, splitRigSkin } from 'rig-c/src/rig.ts';
 import { type ConfigConstraint, CONSTRAINT_FOLLOWS, parseConfig, parseProposalSections, type Point, ROOT_BONE, type SkeletonSections } from './config.ts';
 import { computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toWorld } from './coords.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
@@ -383,7 +383,7 @@ export function readSkeleton(raw: unknown, where: string): Skeleton {
     try {
       rig = parseRigSpec(raw, where);
     } catch (err) {
-      if (err instanceof CompileError) throw new PartsError([{ code: 'STRUCTURE_RIG_SPEC', object: where, detail: `spine-rigc's rig spec reader refuses it: ${err.message}` }]);
+      if (err instanceof CompileError) throw new PartsError([{ code: 'STRUCTURE_RIG_SPEC', object: where, detail: `rig-c's rig spec reader refuses it: ${err.message}` }]);
       throw err;
     }
     return rigSkeleton(rig, where);

@@ -18,7 +18,7 @@
  * over a box contributes exactly 0 to its variance — computed as a branch, not
  * as `sum(v^2) - sum(v)^2 / n`, which in float64 is not exactly 0 once `n`
  * passes a few million pixels, and would perturb which box splits next. On
- * frames that are opaque everywhere (every frame spine-rigc renders over its
+ * frames that are opaque everywhere (every frame rig-c renders over its
  * background) alpha is constant, and the cut is the three-channel median cut
  * `src/gif.ts` has always made, byte for byte.
  */

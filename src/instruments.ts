@@ -888,8 +888,8 @@ export function partWorldBox(p: PartRecord, rigH: number, stage: StageBox): Worl
 /**
  * How many floating-point roundings stand between the rig and one coordinate
  * of a displacement {@link stillReading} returns, on its longest path. Every
- * number on it is a double: rigc's core poser (`spine-rigc/src/core/vertices.ts`,
- * spine-rigc 2.15.0) reads a vertex's local coordinates and weights through
+ * number on it is a double: rigc's core poser (`rig-c/src/core/vertices.ts`,
+ * rig-c 2.15.0) reads a vertex's local coordinates and weights through
  * `Math.fround` and does the arithmetic in doubles, and `geometry.json` carries
  * those doubles. The float32 inputs are the same numbers in the rest vertex and
  * in the posed one, so they cancel. Per coordinate:

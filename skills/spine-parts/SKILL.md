@@ -1,21 +1,21 @@
 ---
 name: spine-parts
-description: Turn one anime character painting and its See-through layer decomposition into a verified Spine 4.3 rig — measured parts, weighted meshes, bone chains and a looping idle — with spine-parts, which gates everything through spine-rigc before it is written. Use for a request to rig or animate a single character painting in Spine, to run or read spine-parts layers, sheet, assemble, propose, rig, check, loop or build, or to write or fix a spine-parts config.json. Not for cutting art into parts by hand, for authoring a rig from loose PNGs (that is the rigc skill), for expressions or lip-sync, or for running See-through itself.
+description: Turn one anime character painting and its See-through layer decomposition into a verified Spine 4.3 rig — measured parts, weighted meshes, bone chains and a looping idle — with spine-parts, which gates everything through rig-c before it is written. Use for a request to rig or animate a single character painting in Spine, to run or read spine-parts layers, sheet, assemble, propose, rig, check, loop or build, or to write or fix a spine-parts config.json. Not for cutting art into parts by hand, for authoring a rig from loose PNGs (that is the rigc skill), for expressions or lip-sync, or for running See-through itself.
 license: MIT
-compatibility: Requires Bun 1.2 or later. The tool is the npm package spine-parts (bunx spine-parts, or bun add -d spine-parts); spine-rigc is installed with it. See-through is run separately.
+compatibility: Requires Bun 1.2 or later. The tool is the npm package spine-parts (bunx spine-parts, or bun add -d spine-parts); rig-c is installed with it. See-through is run separately.
 ---
 
 # spine-parts — a painting to a Spine rig, for agents
 
 spine-parts merges See-through's two layer runs over one painting into rig-space
 parts, authors a rig spec and a motion spec over them, and hands those to
-spine-rigc, which compiles, gates, packs and renders. You cannot see the painting,
+rig-c, which compiles, gates, packs and renders. You cannot see the painting,
 the layers or the rig. The printed lines, `docs/AUTHORING.md` and the files each
 stage writes are the whole interface.
 
 ## Non-negotiables
 
-- **spine-rigc's gate is never bypassed.** spine-parts writes no Spine data
+- **rig-c's gate is never bypassed.** spine-parts writes no Spine data
   itself; `rig` writes only after rigc's `build` gate is green, and `build`'s
   artifact is what rigc wrote. There is no flag that skips it, and none may be added.
   `check.json`'s `rigc_entry` names which gate ran: rigc's own validator in an
@@ -89,7 +89,7 @@ stage writes are the whole interface.
    --left work/proposal.json --right config.json` lists what the correction changed,
    bone by bone — origin, parent, tip, length, direction (AUTHORING §4).
    A constraint the motion needs (an ik reaching a scene target, physics on a
-   link) goes in `config.constraints`, in spine-rigc's own rig-spec shape: the
+   link) goes in `config.constraints`, in rig-c's own rig-spec shape: the
    loader resolves the bones it names and nothing else, and rigc's gate refuses
    the rest in its words. A scene target is a single bone under `root`. A two-bone
    ik over links the idle keys needs `--idle-keys direct` on `rig` or `build`
@@ -145,5 +145,5 @@ share is synthesis where the painting was there to be taken.
 first — every config field, the command order, what to read after each stage, every
 refusal. It is in the installed package at `node_modules/spine-parts/docs/AUTHORING.md`,
 the copy that matches the version you run. A `RIG_RIGC_GREEN` or `CHECK_RIGC_GREEN`
-line quotes spine-rigc's own assertion; spine-rigc's guide for those is
-`node_modules/spine-rigc/docs/AUTHORING.md`, and its `rigc` skill covers the compiler.
+line quotes rig-c's own assertion; rig-c's guide for those is
+`node_modules/rig-c/docs/AUTHORING.md`, and its `rigc` skill covers the compiler.

@@ -23,8 +23,8 @@
  * `render --geometry`, `render --slot` — through that entry; `compose` of two
  * copies of a generated character the installed `check` passed, with a plate
  * and an interleaved order (issue #74); and the contour
- * mesh (`src/contour.ts`) on a generated block, which reaches spine-rigc's
- * outline functions through the named entry `spine-rigc/mesh`; and the
+ * mesh (`src/contour.ts`) on a generated block, which reaches rig-c's
+ * outline functions through the named entry `rig-c/mesh`; and the
  * automatic mesh mode (`src/automesh.ts`, issue #126) through the installed
  * `rig` command and rigc's gate.
  *
@@ -262,7 +262,7 @@ writeFileSync(join(HOME, 'scene.json'), JSON.stringify({
 const EXPECT_SCENE_SLOTS = ['plate', 'a:back', 'b:back', 'a:front', 'b:front'];
 
 // The contour mesh from the install (issue #84): \`spine-parts/src/contour.ts\` imports rigc's outline functions through
-// the named entry \`spine-rigc/mesh\`, which nothing on the CLI's contour-free paths runs, so this is where a rigc that
+// the named entry \`rig-c/mesh\`, which nothing on the CLI's contour-free paths runs, so this is where a rigc that
 // moved or narrowed them shows. A 24x16 block at (4, 4) in 32x24, tolerance 0, margin 1, spacing 8: by hand, the block
 // grown by its four neighbours' rows and columns, a 12-vertex outline, 6 interior points and 2·18 − 12 − 2 = 22
 // triangles (the selftest's CT01).
@@ -272,15 +272,15 @@ const alpha = new Uint8Array(32 * 24);
 for (let y = 4; y < 20; y++) for (let x = 4; x < 28; x++) alpha[y * 32 + x] = 255;
 const m = contourMesh('probe', { width: 32, height: 24, alpha }, { threshold: 8, tolerance: 0, margin: 1, spacing: 8, regions: [] });
 console.log('RESOLVED ' + import.meta.resolve('spine-parts/src/contour.ts'));
-console.log('RESOLVED ' + import.meta.resolve('spine-rigc/mesh'));
+console.log('RESOLVED ' + import.meta.resolve('rig-c/mesh'));
 console.log(Array.isArray(m) ? 'REFUSED ' + JSON.stringify(m) : 'CONTOUR ' + m.hull + ' ' + (m.vertices.length - m.hull) + ' ' + m.triangles.length / 3);
 `;
 const EXPECT_CONTOUR = 'CONTOUR 12 6 22';
 
 // The automatic mesh mode from the install (issue #126): the rig fixture's two parts — an opaque 16x8 cloth and a 4x2 eye region (one region alone on a page is rigc's A27) — on a 40x40 rig, its
-// mesh in \`auto\`, through the installed \`spine-parts rig\` — the contour source, spine-rigc's \`reduceMesh\` through
-// \`spine-rigc/mesh\`, and the installed rigc's gate, whose launcher runs its core entry in an install with no Spine
-// runtime (the rigc-entry step above holds that). Green means the gate passed, the motion gate (spine-rigc/meshcompare, no runtime) passed, and \`mesh_report.json\` says \`auto\`.
+// mesh in \`auto\`, through the installed \`spine-parts rig\` — the contour source, rig-c's \`reduceMesh\` through
+// \`rig-c/mesh\`, and the installed rigc's gate, whose launcher runs its core entry in an install with no Spine
+// runtime (the rigc-entry step above holds that). Green means the gate passed, the motion gate (rig-c/meshcompare, no runtime) passed, and \`mesh_report.json\` says \`auto\`.
 const AUTO_GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -384,7 +384,7 @@ function waitForRegistry(spec: string, minutes: number, cwd: string): { served: 
 
 type Plant = 'none' | 'drop-src-module' | 'drop-rigc' | 'drop-psd' | 'add-spine-core';
 
-/** The runtime the add-spine-core plant puts into the packed package.json's dependencies, at the pin spine-rigc develops against. */
+/** The runtime the add-spine-core plant puts into the packed package.json's dependencies, at the pin rig-c develops against. */
 const SPINE_CORE = '@esotericsoftware/spine-core';
 const SPINE_CORE_PIN = '4.3.13';
 
@@ -395,9 +395,9 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
     what: '`src/layers.ts` removed from the packed tree. `files` names the `src` DIRECTORY, so a module leaves the package by leaving the tree, and the install is where `layers` cannot find its reader',
   },
   'drop-rigc': {
-    names: ['spine-rigc'],
+    names: ['rig-c'],
     steps: ['fixture', 'layers', 'contour', 'auto'],
-    what: '`spine-rigc` removed from `dependencies`. A checkout would not notice — it is already in node_modules — and the install is where the PNG codec, the coordinate door and the contour mesh outline functions have nothing to import',
+    what: '`rig-c` removed from `dependencies`. A checkout would not notice — it is already in node_modules — and the install is where the PNG codec, the coordinate door and the contour mesh outline functions have nothing to import',
   },
   'drop-psd': {
     names: ['ag-psd'],
@@ -449,7 +449,7 @@ function tarballFor(work: string, source: { kind: 'tree' } | { kind: 'registry';
   }
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { dependencies?: Record<string, string> };
   if (plant === 'drop-rigc' || plant === 'drop-psd') {
-    delete (pkg.dependencies ?? {})[plant === 'drop-rigc' ? 'spine-rigc' : 'ag-psd'];
+    delete (pkg.dependencies ?? {})[plant === 'drop-rigc' ? 'rig-c' : 'ag-psd'];
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   } else if (plant === 'add-spine-core') {
     pkg.dependencies = { ...(pkg.dependencies ?? {}), [SPINE_CORE]: SPINE_CORE_PIN };
@@ -481,7 +481,7 @@ function tarballFor(work: string, source: { kind: 'tree' } | { kind: 'registry';
     if (gone.length === 0) faults.push(`SMOKE_PLANT_APPLIED: the plant left the packed path list unchanged at ${after.length} path(s)`);
     else evidence = `the plant took ${gone.join(', ')} out of the pack`;
   } else {
-    const dep = plant === 'drop-rigc' ? 'spine-rigc' : plant === 'drop-psd' ? 'ag-psd' : SPINE_CORE;
+    const dep = plant === 'drop-rigc' ? 'rig-c' : plant === 'drop-psd' ? 'ag-psd' : SPINE_CORE;
     const shipped = run('tar', ['-xzOf', second, 'package/package.json'], work);
     const deps = shipped.status === 0 ? ((JSON.parse(shipped.out) as { dependencies?: Record<string, string> }).dependencies ?? {}) : {};
     const applied = plant === 'add-spine-core' ? dep in deps : !(dep in deps);
@@ -562,7 +562,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     fault('version', `SMOKE_VERSION_FROM_THE_INSTALL: \`spine-parts --version\` exited ${version.status} saying ${JSON.stringify(version.out.trim().slice(0, 400))}; the installed package.json says ${installedVersion}`);
   }
 
-  // The installed rigc's entry: neither spine-parts nor spine-rigc 2.x installs spine-core, so rigc's launcher
+  // The installed rigc's entry: neither spine-parts nor rig-c 2.x installs spine-core, so rigc's launcher
   // must find no runtime from its own package root and run cli_core.ts, rigc's own validator.
   const rigcBin = join(home, 'node_modules', '.bin', 'rigc');
   const rigcVersion = existsSync(rigcBin) ? run(rigcBin, ['--version'], home) : null;
@@ -670,7 +670,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
       'contour',
       `SMOKE_CONTOUR_FROM_THE_INSTALL: \`bun contour_probe.ts\` exited ${probe.status}, printed ${JSON.stringify(probe.out.split('\n').find((l) => l.startsWith('CONTOUR') || l.startsWith('REFUSED')) ?? null)} and resolved ${probed.join(', ') || '(nothing)'}; "${EXPECT_CONTOUR}" with both imports under ${join(home, 'node_modules')} was required. ${probe.out.trim().slice(0, 1500)}`,
     );
-  } else notes.push(`the contour mesh ran from the install through spine-rigc/mesh: ${EXPECT_CONTOUR}`);
+  } else notes.push(`the contour mesh ran from the install through rig-c/mesh: ${EXPECT_CONTOUR}`);
 
   // The automatic mesh mode, from the install, through the installed rig command and rigc's gate.
   writeFileSync(join(home, 'make_auto.ts'), AUTO_GENERATOR);
@@ -681,7 +681,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   if (autoRig !== null) output += autoRig.out;
   const autoReport = existsSync(join(autoDir, 'rig', 'mesh_report.json')) ? (JSON.parse(readFileSync(join(autoDir, 'rig', 'mesh_report.json'), 'utf8')) as Array<{ mode?: unknown; vertices?: unknown; deformation?: { verdict?: unknown } }>) : null;
   const autoLine = autoRig?.out.split('\n').find((l) => l.includes('mesh cloth')) ?? '';
-  // Issue #126 item 3: the motion gate ran from the install too — spine-rigc/meshcompare with no Spine runtime — and passed.
+  // Issue #126 item 3: the motion gate ran from the install too — rig-c/meshcompare with no Spine runtime — and passed.
   if (autoRig === null || autoRig.status !== 0 || autoReport?.[0]?.mode !== 'auto' || autoReport[0].deformation?.verdict !== 'pass' || !/; motion \S+ <= 1 at idle@/.test(autoLine)) {
     fault(
       'auto',
@@ -733,7 +733,7 @@ cases:
   clean            a correct package installs; --version, layers (wrapper and PSD), sheet, check, compose, the contour mesh and an auto-mode rig run from it
   unusual-path     the same, installed at an absolute path with spaces and non-ASCII in it
   drop-src-module  src/layers.ts out of the packed tree — the smoke has to go RED naming it
-  drop-rigc        spine-rigc out of \`dependencies\` — the smoke has to go RED naming it
+  drop-rigc        rig-c out of \`dependencies\` — the smoke has to go RED naming it
   drop-psd         ag-psd out of \`dependencies\` — the smoke has to go RED naming it
   add-spine-core   @esotericsoftware/spine-core INTO \`dependencies\` — RED at the rigc entry
 `;

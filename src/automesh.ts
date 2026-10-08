@@ -8,15 +8,15 @@
  *    padded part image at **alpha 1 and above** (`contourMesh(…, { threshold:
  *    0 })` reads `alpha > 0`, P4's final threshold), at the author's
  *    `source.tolerance`, `source.margin` and background `source.spacing`, with
- *    no region (the density a region asks for is spine-rigc's refinement, step
+ *    no region (the density a region asks for is rig-c's refinement, step
  *    2). `contourMesh` gates it with this package's own checks before it is
  *    returned — `contourTopologyProblems` and `contourFit` at that threshold —
  *    and a refusal there is the part's refusal, in the contour mode's codes.
  *    Its weights are `localInfluences` (`src/localweights.ts`) under the
  *    author's `influences` — no 0.03 floor unless the author wrote it (P19) —
  *    unrounded, so a vertex that survives can be compared bit for bit.
- * 2. **The call** ({@link autoReductionInput}) — spine-rigc's `reduceMesh`
- *    (`spine-rigc/mesh`, 2.20.x), refinement inside the declared regions then
+ * 2. **The call** ({@link autoReductionInput}) — rig-c's `reduceMesh`
+ *    (`rig-c/mesh`, 2.20.x), refinement inside the declared regions then
  *    reduction, every input from the config or from the source, as the
  *    contract types it (docs/MESH_REDUCTION.md §1): `art` the padded image's
  *    alpha at threshold 1 in the part-local frame with `pageScale` 1 (the
@@ -36,7 +36,7 @@
  *
  * ## What is measured, and what is not
  *
- * Geometry only: the report's rows are spine-rigc's `measureMeshQuality`
+ * Geometry only: the report's rows are rig-c's `measureMeshQuality`
  * rows (coverage, overshoot, undercut, boundary deviation from the source
  * hull, orientation, degeneracy, the smallest angle, each region's maximum
  * edge and transition). No pose is taken here, and `buildRig`'s row says so
@@ -47,17 +47,17 @@
  *
  * ## The winding the call is handed
  *
- * spine-rigc's `SourceMesh.triangles` are counter-clockwise in Spine world,
+ * rig-c's `SourceMesh.triangles` are counter-clockwise in Spine world,
  * which its `MQ_ORIENTATION` reads through `cropToSpineY`. The contour mesh
  * writes its triangles that way (`src/contour.ts`, issue #126), so the source
  * is handed over exactly as `contourMesh` returns it — no turn here, so none
  * twice (before issue #126 the contour mesh was clockwise in Spine world and
- * this module swapped each triple; the bytes handed to spine-rigc are the same
- * either way). The result is written as spine-rigc returns it.
+ * this module swapped each triple; the bytes handed to rig-c are the same
+ * either way). The result is written as rig-c returns it.
  *
  * ## A circle region (P17)
  *
- * spine-rigc holds density on a polygon. A circle region is handed over as
+ * rig-c holds density on a polygon. A circle region is handed over as
  * the regular polygon {@link circlePolygon} names, whose rule and error are
  * echoed in the region's `approximation`. The weights still read the circle.
  *
@@ -77,7 +77,7 @@ import {
   type SourceMesh,
   type Termination,
   writeMeshQualityReport,
-} from 'spine-rigc/mesh';
+} from 'rig-c/mesh';
 import type { AutoRegionSpec, AutoSpec, Point } from './config.ts';
 import { type ContourMesh, contourMesh, type ContourReport, GRID } from './contour.ts';
 import type { Problem } from './errors.ts';
@@ -90,12 +90,12 @@ import type { Influence, Segment } from './weights.ts';
 export const AUTO_THRESHOLD = 1;
 
 /** What the report says about deformation, in so many words. */
-export const DEFORMATION_UNMEASURED = 'unmeasured: geometry only — no pose was taken and no motion compared (issue #126 item 3, spine-rigc#1221 stage C)';
+export const DEFORMATION_UNMEASURED = 'unmeasured: geometry only — no pose was taken and no motion compared (issue #126 item 3, rigc#1221 stage C)';
 
 /**
  * How far inside the circle no vertex of its polygon may round: the polygon's
  * inscribed radius is `r + CIRCLE_CLEARANCE` before each vertex is put on
- * spine-rigc's 6-decimal grid, which moves a vertex by at most √2·5e-7 px, so
+ * rig-c's 6-decimal grid, which moves a vertex by at most √2·5e-7 px, so
  * every edge stays outside the circle. Derived from that grid, not chosen.
  */
 export const CIRCLE_CLEARANCE = 1e-6;
@@ -104,7 +104,7 @@ export const CIRCLE_CLEARANCE = 1e-6;
 const R6_MOVE = 7.1e-7;
 
 /**
- * A circle region as the polygon spine-rigc holds density on (P17). **Rule:**
+ * A circle region as the polygon rig-c holds density on (P17). **Rule:**
  * the regular polygon with `n` sides circumscribed about the circle of radius
  * `r + CIRCLE_CLEARANCE`, its first vertex at angle 0 (+x) and the rest
  * increasing (clockwise on screen), each on the 6-decimal grid, with `n` the
@@ -131,7 +131,7 @@ export function circlePolygon(cx: number, cy: number, r: number): { polygon: Arr
   return { polygon, sides: n, maxError: pyRound(errorOf(n), 9) };
 }
 
-/** A region as spine-rigc is handed it, in part-local px: a polygon, its density, and how a circle was approximated. */
+/** A region as rig-c is handed it, in part-local px: a polygon, its density, and how a circle was approximated. */
 export function refinementRegion(rg: AutoRegionSpec, ox: number, oy: number): RefinementRegion {
   const density = { maxEdgeLength: rg.maxEdgeLength, transition: rg.transition, grade: rg.grade };
   if (rg.shape === 'polygon') {
@@ -263,7 +263,7 @@ export function terminationText(t: Termination | null): string {
 
 /**
  * Acceptance (module header, step 3). `object` names the config entry. A mesh
- * returned with a gated row that does not pass — spine-rigc returns one, not
+ * returned with a gated row that does not pass — rig-c returns one, not
  * accepted, when the refined source cannot meet its targets — is refused here
  * as any other result that is not accepted.
  */
@@ -272,12 +272,12 @@ export function autoVerdict(object: string, result: { mesh: ReducedMesh | null; 
   const t = report.termination;
   const candidate = report.candidates[0];
   if (t === null || t.reason === 'invalid-input' || t.reason === 'unsupported-topology') {
-    return { accepted: false, problem: { code: 'AUTO_MESH_TERMINATION', object, detail: `spine-rigc's reduceMesh ended ${terminationText(t)}; no mesh was returned, and nothing is built in its place` } };
+    return { accepted: false, problem: { code: 'AUTO_MESH_TERMINATION', object, detail: `rig-c's reduceMesh ended ${terminationText(t)}; no mesh was returned, and nothing is built in its place` } };
   }
   if (t.reason === 'budget-exhausted' && t.result === 'none-met-the-targets') {
     return {
       accepted: false,
-      problem: { code: 'AUTO_MESH_TERMINATION', object, detail: `spine-rigc's reduceMesh spent its budget of ${t.budget} candidate(s) before any met every target (none-met-the-targets); no mesh was returned — raise budget.maxCandidates or relax a declared bound` },
+      problem: { code: 'AUTO_MESH_TERMINATION', object, detail: `rig-c's reduceMesh spent its budget of ${t.budget} candidate(s) before any met every target (none-met-the-targets); no mesh was returned — raise budget.maxCandidates or relax a declared bound` },
     };
   }
   const failing = gatedFailures(report);
@@ -287,14 +287,14 @@ export function autoVerdict(object: string, result: { mesh: ReducedMesh | null; 
       problem: {
         code: 'AUTO_MESH_ACCEPTED',
         object,
-        detail: `spine-rigc's reduceMesh ended ${terminationText(t)} and its result is not accepted (${failing.length > 0 ? failing.map(rowText).join('; ') : 'a required measurement is unavailable'}); every declared bound passing is required, and nothing is built in its place`,
+        detail: `rig-c's reduceMesh ended ${terminationText(t)} and its result is not accepted (${failing.length > 0 ? failing.map(rowText).join('; ') : 'a required measurement is unavailable'}); every declared bound passing is required, and nothing is built in its place`,
       },
     };
   }
   return { accepted: true, mesh };
 }
 
-/** What one reduction returns: spine-rigc's mesh and report, or its refusal of the input as the part's problem. */
+/** What one reduction returns: rig-c's mesh and report, or its refusal of the input as the part's problem. */
 export type ReductionResult = { mesh: ReducedMesh | null; report: MeshQualityReport } | Problem;
 
 /**
@@ -312,7 +312,7 @@ export function runReduction(object: string, input: MeshReductionInput): Reducti
     return reduceMesh(input);
   } catch (err) {
     if (!(err instanceof MeshReductionError)) throw err;
-    return { code: 'AUTO_MESH_INPUT', object, detail: `spine-rigc's reduceMesh refused its input: ${err.message}` };
+    return { code: 'AUTO_MESH_INPUT', object, detail: `rig-c's reduceMesh refused its input: ${err.message}` };
   }
 }
 
@@ -363,7 +363,7 @@ export function reuseReductions(done: ReadonlyMap<string, ReductionResult>, run:
   };
 }
 
-/** The report's whole document, as spine-rigc writes it (its key order), parsed so it can sit inside `mesh_report.json`. */
+/** The report's whole document, as rig-c writes it (its key order), parsed so it can sit inside `mesh_report.json`. */
 export function qualityDocument(report: MeshQualityReport): unknown {
   return JSON.parse(writeMeshQualityReport(report));
 }

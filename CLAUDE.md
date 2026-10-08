@@ -9,7 +9,7 @@ spine-parts takes one anime character painting and its
 [See-through](https://github.com/shitagaki-lab/see-through) layer decomposition
 and produces Spine-ready parts — `parts/*.png`, `parts.json` (per-part
 provenance and measurements), and `rig.json` / `motion.json` in
-[spine-rigc](https://github.com/firejune/rigc)'s spec — then calls spine-rigc to
+[rig-c](https://github.com/firejune/rigc)'s spec — then calls rig-c to
 compile, gate, render and check. It is a port of a working reference
 implementation that lives in a private repository (see *Where the private
 oracle lives*). Version 0.1.0 carries every stage — layers, sheet, assemble,
@@ -22,7 +22,7 @@ still registered as not implemented.
 An agent building a character rig from a painting cannot see the painting, the
 layers or the result. A pipeline that only reports "done" lets it report
 success on a broken rig and be sincere about it. spine-parts exists, like
-spine-rigc under it, to convert that silence into named failures.
+rig-c under it, to convert that silence into named failures.
 
 - **The messages are the UI.** A refusal names the rule, the object, the value
   found and the value required: `LAYERS_PNG_MATCHES_BBOX: layer "face" —
@@ -40,11 +40,11 @@ spine-rigc under it, to convert that silence into named failures.
   against chain links, a sine period that does not divide the idle, a
   non-square head box scaled by its width), the loader refuses.
 - **Emit only after green.** A stage writes its outputs only when every check
-  it owns has passed, and the rig stages write only after spine-rigc's round
+  it owns has passed, and the rig stages write only after rig-c's round
   trip has passed. A wrong file on disk outlives the console that warned about
   it.
-- 🔒 **spine-rigc's gate is not optional here either.** spine-parts does not
-  emit Spine data itself; it hands a rig spec to spine-rigc, whose `build`
+- 🔒 **rig-c's gate is not optional here either.** spine-parts does not
+  emit Spine data itself; it hands a rig spec to rig-c, whose `build`
   validates before it writes. Which validator runs is rigc's launcher's
   choice, by whether `@esotericsoftware/spine-core` resolves beside it: the
   spine-core round trip where it does, rigc's own validator over the compiled
@@ -135,17 +135,17 @@ paintings, their See-through runs, the parts and configs the reference produced
   **One** directory is the exception, `src/comfy/`, reserved for the optional
   ComfyUI adapter; `TY06` scans every other file under `src/`.
 - **The y flip has one door.** Parts and configs are in crop pixels, y down,
-  origin top-left; Spine's world is y up. The conversion is spine-rigc's
-  (`spine-rigc/src/transform.ts`), re-exported by `src/coords.ts`, and `TY07`
+  origin top-left; Spine's world is y up. The conversion is rig-c's
+  (`rig-c/src/transform.ts`), re-exported by `src/coords.ts`, and `TY07`
   refuses any other importer. Do not open-code `height - y` anywhere.
-- **spine-rigc's deep paths are an interface.** spine-rigc's `exports` map
-  carries `./*.ts`, so `spine-rigc/tools/plate.ts` (PNG codec),
-  `spine-rigc/src/png.ts`, `spine-rigc/tools/font5x7.ts` and
-  `spine-rigc/src/transform.ts` are imported by path. The mesh functions come
-  through the named entry `spine-rigc/mesh` (from 2.16.0): the outline
+- **rig-c's deep paths are an interface.** rig-c's `exports` map
+  carries `./*.ts`, so `rig-c/tools/plate.ts` (PNG codec),
+  `rig-c/src/png.ts`, `rig-c/tools/font5x7.ts` and
+  `rig-c/src/transform.ts` are imported by path. The mesh functions come
+  through the named entry `rig-c/mesh` (from 2.16.0): the outline
   functions `src/contour.ts` reuses, every one on the entry's promised list,
   and `reduceMesh` with its `mesh-quality-report/1` types (2.19.0), which
-  `src/automesh.ts` calls. A spine-rigc release that moves them, or narrows
+  `src/automesh.ts` calls. A rig-c release that moves them, or narrows
   the map, breaks this package by name, and `bun run smoke` is where that
   shows first.
 - **Raster ops state which call they stand in for.** Each function in

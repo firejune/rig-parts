@@ -1,25 +1,25 @@
 /**
- * PNG in and out, through spine-rigc's own codec.
+ * PNG in and out, through rig-c's own codec.
  *
- * ⚖️ **Why no PNG dependency.** `spine-rigc` ships a complete PNG codec inside
+ * ⚖️ **Why no PNG dependency.** `rig-c` ships a complete PNG codec inside
  * its published allowlist: `tools/plate.ts` exports `decodePng` (every colour
  * type the PNG spec defines — greyscale, RGB, indexed with `PLTE`/`tRNS`,
  * grey+alpha, RGBA — at every legal bit depth, all five scanline filters,
  * expanded to straight RGBA) and `encodePng` (8-bit RGBA, filter 0, zlib level
  * 9, deterministic), and `src/png.ts` exports `assertPng`, which names what a
- * file is when it is not a PNG. `npm pack --dry-run` of spine-rigc 1.2.3 lists
+ * file is when it is not a PNG. `npm pack --dry-run` of rig-c 1.2.3 lists
  * both files. The one gap is interlaced (Adam7) files, which `decodePng`
  * refuses by name rather than misreading. So adding `pngjs` would have been a
  * second codec for the same bytes, and two codecs are two answers.
  *
- * 🔌 **The deep path is the interface.** spine-rigc's `exports` map carries
- * `./*.ts`, so `spine-rigc/tools/plate.ts` is how a consumer reaches the codec
+ * 🔌 **The deep path is the interface.** rig-c's `exports` map carries
+ * `./*.ts`, so `rig-c/tools/plate.ts` is how a consumer reaches the codec
  * and it is what the installed package resolves. If a rigc release narrows the
  * map to omit these paths, this import is what breaks, by name, and
  * `bun run smoke` is where that is seen first.
  */
-import { assertPng } from 'spine-rigc/src/png.ts';
-import { decodePng, encodePng } from 'spine-rigc/tools/plate.ts';
+import { assertPng } from 'rig-c/src/png.ts';
+import { decodePng, encodePng } from 'rig-c/tools/plate.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { type FloatImage, newFloatImage, newRaster, type Raster, RasterError } from './types.ts';
 

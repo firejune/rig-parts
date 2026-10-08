@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * spine-parts — one painting and its See-through layers in, Spine-ready parts
- * and rig specs out, verified through spine-rigc.
+ * and rig specs out, verified through rig-c.
  *
  * Every command prints named, numeric findings and nothing else an agent has
  * to interpret: a refusal is a `FAIL` line naming the rule, the object, the
@@ -141,10 +141,10 @@ usage:
   spine-parts compare --left <file> --right <file> [--map <bonemap.json>]
       Compare two skeletons bone by bone. Each file is a config, a proposal.json
       or a rig.json (rigc-rig/1), told apart by what it states: "spec" (read by
-      spine-rigc's own reader), "key" (the config loader) or "bones". No parts and
+      rig-c's own reader), "key" (the config loader) or "bones". No parts and
       no painting are read. Both sides are brought to one form — rig px, y down;
       a rig.json through its stage (skeleton x, y, width, height), the y flip
-      through spine-rigc's — and each pair prints its origin distance, its
+      through rig-c's — and each pair prints its origin distance, its
       parent (the same through the pairing; the right's or the left's ancestor
       at depth k, with the bones between that are in no pair; DIFFERENT, naming
       both; or NOT MAPPED), its tip distance, both lengths and their
@@ -188,22 +188,22 @@ usage:
       CONFIG_BLINK_GROUP_UNIQUE, before rigc starts, as are two tracks on one
       bone property, CONFIG_BONE_PROPERTY_KEYED_ONCE. --parts is the
       directory holding parts.json and parts/<name>.png. The result is built
-      through spine-rigc (profile spine-html, packed with --page-edges and
+      through rig-c (profile spine-html, packed with --page-edges and
       --pack-shape as for check; rigc's build gates the compile and the packed pages on disk) in a
       scratch directory first, and --out receives images/*.png, rig.json,
       motion.json and mesh_report.json only when it is green. Prints one line
       per mesh and the rigc gate lines.
       --idle-keys says where the idle's keys on a bone a mesh is weighted to go:
       ctl (the default) keys a same-origin <bone>_ctl parent instead, which
-      passes A15_IDLE_NO_MESH_BONE_KEYS on any spine-rigc; direct keys the bone
+      passes A15_IDLE_NO_MESH_BONE_KEYS on any rig-c; direct keys the bone
       itself and declares invariants.idleDrivesMeshes in rig.json, which needs
-      spine-rigc 1.3.0 or later and makes A15 a SKIP that prints its cost (the
+      rig-c 1.3.0 or later and makes A15 a SKIP that prints its cost (the
       stage prints that SKIP line). The pose is the same to one level of float
       rounding, and so is the per-frame mesh work (AUTHORING §5).
   spine-parts check --rig <dir> --out <dir> [--parts <dir>] [--source <painting.png>]
                     [--page-edges pot|free] [--pack-shape rect|polygon]
                     [--requirements <file.json>]
-      Build, gate, render and measure a rig through spine-rigc's CLI (the rigc at
+      Build, gate, render and measure a rig through rig-c's CLI (the rigc at
       node_modules/.bin/rigc, or on PATH). --rig holds rig.json and motion.json:
       a rig spec, which rigc build compiles, not a compiled skeleton.json.
       motion.json is required (rigc build takes --motion; "animations": {}
@@ -236,7 +236,7 @@ usage:
       TEXTURE_STRETCH (every mesh triangle's edges over the idle against their
       rest length, max(ratio, 1/ratio) <= ${TEXTURE_STRETCH_CEILING}; the worst
       triangle is named by slot, triangle, vertices, edge and frame).
-      Needs spine-rigc ${RIGC_GEOMETRY_VERSION} or later, whose render writes
+      Needs rig-c ${RIGC_GEOMETRY_VERSION} or later, whose render writes
       geometry.json; an older rigc is refused, CHECK_RIGC_VERSION, before
       anything is built.
       Regions come from parts.json's See-through tags; a line with nothing to
@@ -441,7 +441,7 @@ usage:
       another character without its prefix (SCENE_NAME_PREFIXED); a plate not
       of the canvas size; idles of different durations; a key in a build's
       rig or motion compose does not know. The result is gated through
-      spine-rigc as rig gates its own (build --profile spine-html --pack, the
+      rig-c as rig gates its own (build --profile spine-html --pack, the
       compile and the packed pages on disk); --out receives rig/ (rig.json,
       motion.json, images/) and ${SCENE_REPORT_FILE} (spec "${SCENE_REPORT_SPEC}":
       every setting, each character's offset, bounds and shift (and what it
@@ -574,7 +574,7 @@ function cmdSheet(args: string[]): number {
   }
 }
 
-/** `--page-edges`, or its default; a value spine-rigc does not take is a usage error naming the two it does. */
+/** `--page-edges`, or its default; a value rig-c does not take is a usage error naming the two it does. */
 function pageEdgesOf(value: string | undefined): PageEdges | string {
   const edges = value ?? DEFAULT_PAGE_EDGES;
   return (PAGE_EDGES as readonly string[]).includes(edges) ? (edges as PageEdges) : `--page-edges ${edges}; one of ${PAGE_EDGES.join(', ')} is required`;
@@ -584,7 +584,7 @@ function isPageEdges(v: PageEdges | string): v is PageEdges {
   return (PAGE_EDGES as readonly string[]).includes(v);
 }
 
-/** `--pack-shape`, or its default; a value spine-rigc does not take is a usage error naming the two it does. */
+/** `--pack-shape`, or its default; a value rig-c does not take is a usage error naming the two it does. */
 function packShapeOf(value: string | undefined): PackShape | string {
   const shape = value ?? DEFAULT_PACK_SHAPE;
   return (PACK_SHAPES as readonly string[]).includes(shape) ? (shape as PackShape) : `--pack-shape ${shape}; one of ${PACK_SHAPES.join(', ')} is required`;
@@ -649,10 +649,10 @@ function cmdRig(args: string[]): number {
 /**
  * The rigc process, for every stage that runs rigc — `rig`'s gate, `check`, and
  * both inside `build`: the `rigc` binary {@link findRigc} located, spawned as
- * it is, so spine-rigc's own launcher (`bin/rigc.cjs`) chooses the entry —
+ * it is, so rig-c's own launcher (`bin/rigc.cjs`) chooses the entry —
  * `cli.ts` and the spine-core round trip where the runtime resolves beside it,
  * `cli_core.ts` and rigc's own validator where it does not. No stage runs a
- * rigc source file by path: under spine-rigc 2.0, `cli.ts` by path is the
+ * rigc source file by path: under rig-c 2.0, `cli.ts` by path is the
  * spine-core entry whether or not spine-core is there. `src/` is pure and takes
  * the spawn from here.
  */

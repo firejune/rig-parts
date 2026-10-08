@@ -17,8 +17,8 @@ into `examples/sample/inputs/`.
 
 | what | why | how |
 | --- | --- | --- |
-| [Bun](https://bun.sh) 1.2 or later | spine-parts and spine-rigc are Bun programs | `npm install -g spine-parts` installs the command; it says so if Bun is missing |
-| [spine-rigc](https://www.npmjs.com/package/spine-rigc) | compiles, gates, packs and renders every rig; spine-parts writes no Spine data itself | installed with spine-parts as a dependency (`node_modules/.bin/rigc`); with no Spine runtime beside it, it gates with its own validator, and `rigc --version` says `entry: cli_core.ts` |
+| [Bun](https://bun.sh) 1.2 or later | spine-parts and rig-c are Bun programs | `npm install -g spine-parts` installs the command; it says so if Bun is missing |
+| [rig-c](https://www.npmjs.com/package/rig-c) | compiles, gates, packs and renders every rig; spine-parts writes no Spine data itself | installed with spine-parts as a dependency (`node_modules/.bin/rigc`); with no Spine runtime beside it, it gates with its own validator, and `rigc --version` says `entry: cli_core.ts` |
 | [See-through](https://github.com/shitagaki-lab/see-through), somewhere | the layer decomposition is the input | any route in README *Getting See-through layers*; it runs twice per character, outside this tool |
 | a GPU, wherever See-through runs | See-through is a diffusion model | nothing in spine-parts itself uses a GPU |
 
@@ -84,13 +84,13 @@ read by no CPU stage).
 | `assemble.patches` | assemble; `meshes`/`regions` keys may name them too | **authored**, optional: `[{name, box, alpha, draw}]` — an extra part cut from the **painting** itself, for figure no See-through layer holds (a hem both runs dropped). `box` is `[x0, y0, x1, y1]` in **rig** pixels, `x1`/`y1` exclusive — the space of `parts.json` and `recomposite_rig.png`, where the hole is found; `alpha` is `"silhouette"` (the painting's figure silhouette inside the box, the one `--seam silhouette` uses) or `"box"` (the whole box); `draw` is `"back"`, `"front"` or `{"before": "<plan part>"}`. A patch is always a region: its bone is `regions.<name>`, in the one place every region's bone lives, and a `meshes` entry for it is refused. See §5 for how to place one |
 | `bones` | rig; `propose --from-config` | **proposed** by `propose`, then corrected. A single bone `{name, parent, at, tip?}` or a chain `{chain, parent, points, tip}` whose links are named `<chain>0 … <chain>n`. Parents come before children. In `rig.json` each link is **turned along its chain** — `rotation` is the direction from its origin to the next link's (the last link's to `tip`) and `length` that distance (issue #73), so a physics constraint added downstream finds a lever; under `--idle-keys ctl` the link's `<link>_ctl` carries the turn and the length and the link sits at local rotation 0 beneath it. A single bone is never turned; one whose parent is a link is turned back upright |
 | `meshes.<part>` | rig | **proposed**, then corrected. Exactly one of `grid` (the lattice: cell size, px — what `propose` writes), `contour` (the outline mode, authored; the next row and "A contour mesh" below) or `auto` (the automatic mode, authored; "An automatic mesh" below) — two, or none, is `CONFIG_MESH_MODE`. In every mode: `r` (added to every distance before weighting: `w = 1/(d + r)²`), `segments` (a chain name, a bone name with a `tip`, or `[bone, [x0,y0], [x1,y1]]`). The segment list is the one authored decision about a layer: which bones may pull it. The slot's bone is the first segment's |
-| `meshes.<part>.contour` | rig | **authored**, optional (issue #84): `{tolerance, margin, spacing, budget?, stray?, regions?}`. `tolerance` — spine-rigc's Douglas–Peucker tolerance on the traced outline, px, 0 or more; `margin` — how far the silhouette grows before it is traced, px: 0, or 1 or more (a pixel joins when its centre lies within `margin` of an art pixel's centre; a value above 0 and below 1 adds nothing and is refused, `CONFIG_FIELD_TYPE`); `spacing` — the background interior spacing, px, above 0; `budget` — the most vertices the mesh may have (refused above it, nothing thinned); `stray` — the largest island, in art pixels, that may be left out of the mesh (absent: none is); `regions` — local deformation regions, each `{name, shape, bone, spacing, band}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`, 3 or more): `bone` is the region's control bone (any bone `bones` declares), `spacing` the interior spacing inside the region and its band, `band` the width the bone's weight falls across. Every length and position is **rig px**, like every other in the config; the part image is the rig less `(x − 4, y − 4)` (its box less the pad), a translation, so a length is the same number in both. A region's `cx`, `cy`, `r`, `band` and `points` are multiples of 1/256 px (`CONFIG_FIELD_TYPE` otherwise); region names are unique per mesh (`CONFIG_REGION_NAME_UNIQUE`). The alpha threshold is not a field: art is alpha above 8, the lattice's and `check`'s |
+| `meshes.<part>.contour` | rig | **authored**, optional (issue #84): `{tolerance, margin, spacing, budget?, stray?, regions?}`. `tolerance` — rig-c's Douglas–Peucker tolerance on the traced outline, px, 0 or more; `margin` — how far the silhouette grows before it is traced, px: 0, or 1 or more (a pixel joins when its centre lies within `margin` of an art pixel's centre; a value above 0 and below 1 adds nothing and is refused, `CONFIG_FIELD_TYPE`); `spacing` — the background interior spacing, px, above 0; `budget` — the most vertices the mesh may have (refused above it, nothing thinned); `stray` — the largest island, in art pixels, that may be left out of the mesh (absent: none is); `regions` — local deformation regions, each `{name, shape, bone, spacing, band}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`, 3 or more): `bone` is the region's control bone (any bone `bones` declares), `spacing` the interior spacing inside the region and its band, `band` the width the bone's weight falls across. Every length and position is **rig px**, like every other in the config; the part image is the rig less `(x − 4, y − 4)` (its box less the pad), a translation, so a length is the same number in both. A region's `cx`, `cy`, `r`, `band` and `points` are multiples of 1/256 px (`CONFIG_FIELD_TYPE` otherwise); region names are unique per mesh (`CONFIG_REGION_NAME_UNIQUE`). The alpha threshold is not a field: art is alpha above 8, the lattice's and `check`'s |
 | `regions.<part>` | rig | **proposed**: the bone a rigid part rides. Every plan part is exactly one of a mesh or a region (`CONFIG_PART_ATTACHED`) |
 | `motion.duration` | rig; check (the loop is measured at this time) | proposed as 4 s; a whole number of 1/12 s ticks, because `check` renders at 12 fps |
 | `motion.tracks` | rig | **proposed**, then tuned. Single `{bone, prop, amp, period, phase, base?}` or chain `{chain, amps, period, phase, lag}` — one amplitude per link, link `i` at phase `phase + lag·i`. Every `period` must divide `duration` (`CONFIG_PERIOD_DIVIDES_DURATION`). A bone property is keyed by one track (`CONFIG_BONE_PROPERTY_KEYED_ONCE`): a chain keys `rotate` on every link, the blink's `eyes` group `scaley` and its `brows` group `translatey` on every member, so a single track on any of those is a second track on it — rigc would refuse it one stage later, `animation "idle" has two tracks on eye.scaley`. A chain link is turned along its chain (the `bones` row), so a `translatex`/`translatey` key on a bone whose parent is a turned link, or a `scale`/`shear` key on a turned link, would move or stretch along the link and not along the picture's axis: the rig stage refuses it (`RIG_KEY_FRAME_UNTURNED`); `rotate` is keyed on any bone |
 | `motion.blink` | rig | **proposed**: `{t, eyes, brows, squash, brow_drop}`; the whole blink, `t` to `t + 0.364` s (`t + 0.314` s without brows: the brows' keys are the ones that end last), must fit inside the idle (`RIG_BLINK_INSIDE_IDLE`). The `eyes` group's `scaley` squashes every part on the eye bones about the bone's origin, the eyewhite's centre. Optional: a figure with no `eyewhite-r`/`-l` part has no eye bone, so `propose` writes no `blink` and notes `no blink: no eyewhite part (looked for: eyewhite-r, eyewhite-l), …`; with eyes and no `eyebrow-r`/`-l` part it writes the blink without `brows` and `brow_drop` and notes `blink without brows: …`. `brows` and `brow_drop` are stated together or not at all (`CONFIG_BLINK_BROWS_PAIRED`), and a group that names no bone is refused (`CONFIG_BLINK_GROUP_MEMBERS`) — rigc would refuse it one stage later, `group "eyes" declares no members` — as is a group that names one bone twice (`CONFIG_BLINK_GROUP_UNIQUE`; rigc: `group "eyes" names member "eye" twice`). An `irides-*` or `eyelash-*` part on a side with no eyewhite has no eye bone to ride: `propose` places it on `head` as a region, which the blink does not move, and notes `no eyewhite part for eye_r (looked for: eyewhite-r): iris (head:irides-r) is placed on head as a region, …`. The timing is fixed, not a field (table below) |
 | `motion.blink.still` | rig | **proposed** only for a lash `propose` notes (below), then checked: `{<part>: {row, bone}}` — the rows of that region part above `row` (rig px, y down) are drawn by a second slot `<part>_still` on `bone` and do not blink; rows from `row` down keep the part's slot and blink. The part must be a region on a bone `eyes` names, `bone` one it does not (`CONFIG_STILL_OFF_THE_BLINK`), and `row` a row of the part with no art across its whole width (`RIG_STILL_ROW_CLEAR`) |
-| `constraints` | rig (handed to spine-rigc as `rig.json`'s `constraints`); `compare` and the coverage lines (roles) | **authored**, optional; `propose` writes none. A list of constraints in **spine-rigc's own rig-spec shape** (`RigConstraint`: `ik`, `transform`, `path`, `physics`, `slider` — spine-rigc's `src/rig.ts` documents every field), in the order rigc applies them. The loader checks only what this package owns: each entry is an object with a `type` rigc names (`CONFIG_CONSTRAINT_TYPE_KNOWN`) and a non-empty `name`, unique within its kind as rigc finds constraints (`CONFIG_CONSTRAINT_NAME_UNIQUE`; an ik and a transform may share one); every bone it names — `bones`, an ik's `target`, a transform's `source`, a physics or slider constraint's `bone` — is a bone `bones` declares, a chain link as `<chain><i>` (`CONFIG_NAME_RESOLVES`); the bone a constraint follows does not sit under a bone it drives (`CONFIG_CONSTRAINT_TARGET_DETACHED`). Every other field (`mix`, `softness`, `properties`, a path's `slot`, a slider's `animation`) and every value is rigc's to accept or refuse at the rig stage's gate, in rigc's words (`RIG_RIGC_GREEN`) — an ik's `bones` as a shape too: from spine-rigc 2.15.0 rigc refuses an ik over more than two bones, or over a pair whose second bone is not the first's child (issue #103; this loader refused both itself until then). A note and an `x-` record may ride on an entry; the rig stage leaves them out of what it hands rigc. Under the default `--idle-keys ctl` a two-bone ik whose child link the idle keys is split by that link's control, and rigc refuses the pair: run `rig --idle-keys direct` or `build --idle-keys direct` (the rig stage adds that sentence, naming the flag on the command that ran, to rigc's line; `build` forwards it to its rig stage, issue #95). Each bone a constraint follows is declared to rigc as `invariants.detached` from every bone it drives, which rigc's gate rule `A25` checks |
+| `constraints` | rig (handed to rig-c as `rig.json`'s `constraints`); `compare` and the coverage lines (roles) | **authored**, optional; `propose` writes none. A list of constraints in **rig-c's own rig-spec shape** (`RigConstraint`: `ik`, `transform`, `path`, `physics`, `slider` — rig-c's `src/rig.ts` documents every field), in the order rigc applies them. The loader checks only what this package owns: each entry is an object with a `type` rigc names (`CONFIG_CONSTRAINT_TYPE_KNOWN`) and a non-empty `name`, unique within its kind as rigc finds constraints (`CONFIG_CONSTRAINT_NAME_UNIQUE`; an ik and a transform may share one); every bone it names — `bones`, an ik's `target`, a transform's `source`, a physics or slider constraint's `bone` — is a bone `bones` declares, a chain link as `<chain><i>` (`CONFIG_NAME_RESOLVES`); the bone a constraint follows does not sit under a bone it drives (`CONFIG_CONSTRAINT_TARGET_DETACHED`). Every other field (`mix`, `softness`, `properties`, a path's `slot`, a slider's `animation`) and every value is rigc's to accept or refuse at the rig stage's gate, in rigc's words (`RIG_RIGC_GREEN`) — an ik's `bones` as a shape too: from rig-c 2.15.0 rigc refuses an ik over more than two bones, or over a pair whose second bone is not the first's child (issue #103; this loader refused both itself until then). A note and an `x-` record may ride on an entry; the rig stage leaves them out of what it hands rigc. Under the default `--idle-keys ctl` a two-bone ik whose child link the idle keys is split by that link's control, and rigc refuses the pair: run `rig --idle-keys direct` or `build --idle-keys direct` (the rig stage adds that sentence, naming the flag on the command that ran, to rigc's line; `build` forwards it to its rig stage, issue #95). Each bone a constraint follows is declared to rigc as `invariants.detached` from every bone it drives, which rigc's gate rule `A25` checks |
 
 **A scene target is an ordinary bone.** A target the scene places — a point a hand
 reaches for, a face something turns toward — is a single bone parented to `root`,
@@ -100,7 +100,7 @@ art, nothing in the idle keys it, and `compare` and the coverage lines call it a
 `target`. Its `at` is where it rests; the scene moves it later. The rig stage declares
 it detached from the bones its constraint drives (`invariants.detached`), so rigc's
 gate refuses the built rig if it is ever re-parented under them. What `--idle-keys`
-does to a constraint, measured through spine-rigc 2.10.1 on the selftest's rig
+does to a constraint, measured through rig-c 2.10.1 on the selftest's rig
 fixture (a two-link chain whose links the idle keys and a mesh is weighted to, its
 4 s idle rendered at 12 fps), the first row again through 2.15.0 (issue #103); the
 selftest's `RG56`–`RG58` hold every row on the installed rigc:
@@ -299,7 +299,7 @@ holds the crease.
 
 The lattice keeps every grid cell that holds an art pixel, so its boundary and its interior
 density are one number: a finer `grid` tightens the outline and densifies the whole part at
-once. A contour mesh separates them. Its outline is spine-rigc's own trace of the part's
+once. A contour mesh separates them. Its outline is rig-c's own trace of the part's
 silhouette — the art with its holes filled, grown by `margin` (a pixel joins when its centre lies
 within `margin` of an art pixel's centre: at 1 its four neighbours, from √2 its 3x3 block), with
 any diagonal pinch the growth made filled (both clear pixels of it, repeated until none is left)
@@ -445,18 +445,18 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
 (`src/automesh.ts`, `src/automotion.ts`):
 
 1. **The source** — this package's contour mesh over the padded part image at **alpha 1 and
-   above** (the threshold spine-rigc's authored-fit gate uses; the lattice and contour modes stay
+   above** (the threshold rig-c's authored-fit gate uses; the lattice and contour modes stay
    at alpha above 8), at `source.tolerance`, `source.margin` and the background `source.spacing`,
    with no region. It is gated by the contour mode's own checks, and their refusals
    (`CONTOUR_*`, the detail ending "the automatic mode's source, at alpha 1 and above") refuse the
    part. Its weights are the contour mode's — segments and region falloff — under the author's
    `influences`, with no 0.03 floor unless the author writes one.
-2. **The call** — spine-rigc's `reduceMesh` (`spine-rigc/mesh`, 2.20.x) refines inside the declared
+2. **The call** — rig-c's `reduceMesh` (`rig-c/mesh`, 2.20.x) refines inside the declared
    regions, then removes vertices while every declared bound still holds. Every number it is
    handed is one of the fields below; `preset` is null (no preset exists yet: a preset will be a
    named, versioned set of these numbers, expanded into the report), and no deform key or linked
    mesh is passed (this package writes none).
-3. **Acceptance** — the result is written only when spine-rigc's report ends
+3. **Acceptance** — the result is written only when rig-c's report ends
    `no-further-valid-reduction`, or `budget-exhausted` with `best-meeting-every-bound`, and its
    candidate is `accepted` with every row that has a declared bound at `pass`. Anything else
    refuses the part (below); nothing falls back to the lattice or to the source.
@@ -464,14 +464,14 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    **candidate**, the reduced mesh, packed as `--out` receives it) and with that one attachment
    swapped for the unreduced source — its UVs, triangles and hull as `reduceMesh` was handed them,
    its own weights bound the same way (the **reference**, `build --profile spine-html` without
-   `--pack`: the same gate over the compile, and nothing reads a reference's pages). spine-rigc's
-   `compareMeshesInMotion` (`spine-rigc/meshcompare`) poses both model documents on the idle
+   `--pack`: the same gate over the compile, and nothing reads a reference's pages). rig-c's
+   `compareMeshesInMotion` (`rig-c/meshcompare`) poses both model documents on the idle
    exactly as `check` renders it — `idle` at 12 fps over its duration, physics reset at 0 and
    stepped by 1/12 s, no warm-up — at the render's frames (`grid`, i/12 s) and a frame interval's 0.381966 past each (`irr`, frames the render never
    draws), and measures how far the reduced mesh carries each art pixel from where the source
    carries it (`MQ_LOCAL_DEFORMATION`, world units = rig px), its triangles' stretch and squash
    from the setup pose, and the triangles it turns over (`MQ_INVERSION`). The part is written
-   only when spine-rigc's verdict is `accepted` (geometry and motion both pass). Nothing chooses a
+   only when rig-c's verdict is `accepted` (geometry and motion both pass). Nothing chooses a
    reduction by motion, so every frame is held out from selection. A part the idle cannot deform
    is refused before anything is compiled: the idle has to key, with changing values, a bone that
    moves some of the bones the part is weighted to and not all of them (a key on their shared
@@ -482,7 +482,7 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
 The public examples' evidence is re-run from the tree: `bun run fetch-examples`, then
 `bun tools/auto_motion_survey.ts` switches each part item 2 accepted on geometry to `auto`, alone,
 under `examplePolicy` (`fixtures/automesh.ts`) plus `policyMotion` (`fixtures/automotion.ts`), runs
-the real rig stage with the motion gate, and prints the table — every row from spine-rigc's report,
+the real rig stage with the motion gate, and prints the table — every row from rig-c's report,
 the schedule walked and each refusal's text, the same bytes on every run of one tree.
 
 | field | means |
@@ -494,13 +494,13 @@ the schedule walked and each refusal's text, the same bytes on every run of one 
 | `targets.maxBoundaryDeviation` | the largest Hausdorff distance between the result's outline and the source's, px |
 | `targets.minAngle` | optional: the smallest triangle angle, degrees; absent, it is reported and not gated |
 | `influences.{maxInfluences, minWeight}` | the cap on bindings per vertex (1 or more) and the floor below which a share is dropped (0 up to 1; 0 drops only shares that are 0 on the weight grid) — for the source's weights and every inserted vertex |
-| `budget.maxCandidates` | the most steps spine-rigc may try (each insertion and each removal attempt counts one); 0 returns the source |
+| `budget.maxCandidates` | the most steps rig-c may try (each insertion and each removal attempt counts one); 0 returns the source |
 | `minArtSamples` | the fewest art pixels a raster row is taken over, 1 or more |
 | `motion` | **required**: `maxLocalDeformation` (rig px, 0 or more — how far the reduced mesh may carry any art pixel from where its source carries it, at any frame); optional `maxStretch` / `minStretch` (ratios; absent, the rows are reported and not gated); optional `deformMayFold` (absent is **false**: a triangle that turns over refuses the part; true declares the slot in `invariants.deformMayFold` and lists every fold instead) |
 | `protect` | optional; each field optional: `hull` (true keeps every source outline vertex; absent is **false**, the default agreed for this mode), `vertices` and `edges` (source vertex indices and pairs that must survive), `regionBoundaries` (region names whose outline vertices must survive), `weightJump` (an L1 weight difference above which a source edge is kept; absent is none), `influences` (bones never pruned from a vertex; every region's bone is added) |
 | `regions` | optional, each `{name, shape, bone, band, maxEdgeLength, transition, grade, minArtSamples}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`): `bone` and `band` are the control bone and its weight falloff exactly as a contour region's (rig px, multiples of 1/256 px); `maxEdgeLength` is L0, the longest an edge meeting the region may be, px; outside it, across `transition` px, the bound relaxes as `L0 + grade·d`; `transition` 0 is a hard edge; `minArtSamples` is the region's own sample floor |
 
-A circle is handed to spine-rigc as the regular polygon with the fewest sides, 3 or more,
+A circle is handed to rig-c as the regular polygon with the fewest sides, 3 or more,
 circumscribed about the circle, whose outline lies within 1/256 px of it (the grid the region's
 numbers are on); the rule and its error are echoed in the region's `approximation`. The weights
 still read the circle. Density regions and weight regions are the same declaration here; two
@@ -508,7 +508,7 @@ regions reaching one source vertex is `RIG_CONTOUR_REGIONS_OVERLAP`, as in the c
 
 **What it reports.** `mesh_report.json`'s row carries `mode: "auto"`, `settings` (every number
 the call saw, the threshold and the circle approximations included), `source` (the contour
-mesh's report and spine-rigc's counts of it), `result` (boundary and interior vertices,
+mesh's report and rig-c's counts of it), `result` (boundary and interior vertices,
 triangles, bindings, vertices removed and inserted), every `residuals` row with its state, value
 and bound, `worst_residual` (the declared row nearest its bound, as the share of the bound used)
 and `worst_region`, the `termination` with its reason and `candidatesTried`, what the weights
@@ -534,15 +534,15 @@ safe is the author's to choose here.
 | `CONFIG_MESH_MODE` | `auto` beside `grid` or `contour`, or no mode at all |
 | `CONFIG_FIELD_PRESENT`, `CONFIG_FIELD_TYPE`, `CONFIG_NAME_RESOLVES`, `CONFIG_REGION_NAME_UNIQUE` | a missing or out-of-range number, an unknown bone or region name, a region named twice — every one named in one run |
 | `CONTOUR_*` | the source is refused by the contour mode's own checks at alpha 1 and above — most often `CONTOUR_ONE_ISLAND`: faint pixels the alpha-above-8 modes never saw are islands here |
-| `AUTO_MESH_INPUT` | spine-rigc refused the call's input by throwing (a protected vertex the source does not have), in its words and code |
-| `AUTO_MESH_TERMINATION` | spine-rigc returned no mesh: `invalid-input` (the source fails its own `sourceBounds`, a region it refuses, protected influences over the cap), `unsupported-topology`, or `budget-exhausted` with `none-met-the-targets` |
-| `AUTO_MESH_ACCEPTED` | spine-rigc returned a mesh that is not accepted; the detail names every declared row not passing and the constraint that stopped it |
+| `AUTO_MESH_INPUT` | rig-c refused the call's input by throwing (a protected vertex the source does not have), in its words and code |
+| `AUTO_MESH_TERMINATION` | rig-c returned no mesh: `invalid-input` (the source fails its own `sourceBounds`, a region it refuses, protected influences over the cap), `unsupported-topology`, or `budget-exhausted` with `none-met-the-targets` |
+| `AUTO_MESH_ACCEPTED` | rig-c returned a mesh that is not accepted; the detail names every declared row not passing and the constraint that stopped it |
 | `AUTO_MESH_NO_STIMULUS` | the idle keys no bone that moves some of the part's bound bones against the others, so no frame deforms it — missing stimulus is not a pass; put the part in `contour` or `grid` mode, or key a bone it binds |
 | `AUTO_MESH_MOTION` | the reduced mesh against its source on the idle is not accepted; the detail names every gated row not passing with its value, bound and worst frame |
-| `AUTO_MESH_MOTION_INPUT` | the comparison could not be made: spine-rigc refused its input (its code carried — `COMPARE_REFERENCE_FAILS` when the source fails its own `sourceBounds`, `COMPARE_INPUTS_DIFFER`, …), the reference build is red at rigc's gate, or a gate build wrote no `skeleton.model.json` |
+| `AUTO_MESH_MOTION_INPUT` | the comparison could not be made: rig-c refused its input (its code carried — `COMPARE_REFERENCE_FAILS` when the source fails its own `sourceBounds`, `COMPARE_INPUTS_DIFFER`, …), the reference build is red at rigc's gate, or a gate build wrote no `skeleton.model.json` |
 
-**What spine-rigc cannot refine.** Refinement inserts only inside a region and its band (the
-contract's P16). spine-rigc 2.19.0 stopped by name when an edge's far end lay further beyond the
+**What rig-c cannot refine.** Refinement inserts only inside a region and its band (the
+contract's P16). rig-c 2.19.0 stopped by name when an edge's far end lay further beyond the
 band than the edge's bound; 2.19.1 and later implement the decision on issue #126 that an edge leaving the
 band at a point is not held to it, so a coarse source refines. With `transition` 0 the authored
 boundary stays held, and an edge from the region to a vertex further out than its bound — or one
@@ -661,7 +661,7 @@ full loader before its assemble stage writes anything.
     `spine-parts-requirements/1` file and hand it to `check` (or `build`):
     `spine-parts check --rig out/rig --parts out --out out/scene --requirements scene.json`.
     Every bar in it is yours; `check` supplies none, solves nothing and poses every
-    frame through spine-rigc (§7, *Declared requirements*). A rig composed of
+    frame through rig-c (§7, *Declared requirements*). A rig composed of
     several characters is measured the same way, `--rig` naming the composed spec.
 11. **Several characters in one rig (optional).** Run steps 0–9 for each
     character on its own, isolated input, to a green `build`. Then write a
@@ -704,7 +704,7 @@ max for the APNG); a figure is a measurement of the file, not a bar. On the demo
 13,645,503 B lossless, 1,706,719 B indexed and 1,812,288 B GIF, both palette files at
 max 57, mean 1.601 — the two share one quantiser, so their error is the same by
 construction and the size is the difference. That is `--seam silhouette` (the README's
-animation, spine-rigc 2.1.3, and 2.10.1 to the byte); with `--pack-shape rect` the same
+animation, rig-c 2.1.3, and 2.10.1 to the byte); with `--pack-shape rect` the same
 build writes 13,645,350, 1,706,520 and 1,812,238 B, and with `--page-edges pot
 --pack-shape rect` 13,645,519, 1,706,785 and 1,812,625 B, all at the same error (2.10.1
 reproduces both). The loop shows the blink closed: the
@@ -780,7 +780,7 @@ barred figure and every status is the same under both. The atlas rigc writes say
 that mipmaps or repeats the page.
 
 **Pack shape.** `rig`, `check` and `build` also hand rigc `--pack-shape <v>`
-verbatim (spine-rigc 2.1.0 and later). `rect` keeps every region's cell apart, the
+verbatim (rig-c 2.1.0 and later). `rect` keeps every region's cell apart, the
 only packing before 2.1. `polygon`, the default here (rigc's own is `rect`), packs a
 region that only meshes draw by its emitted hull, so a neighbour may sit inside its
 rectangle where the hull is not, with the padding kept between footprints; a region
@@ -788,7 +788,7 @@ attachment stays its rectangle. rigc gates the result on the packed pages with
 `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` (SKIP on the compile pass, where every part has
 its own page; PASS on the packed pass, both shapes, both examples). The pack line ends
 `, shape rect` or `, shape polygon` under either, and `check.json`'s `pack_mode` records
-both flags. Measured on the two examples with spine-rigc 2.1.3, and again with 2.10.1,
+both flags. Measured on the two examples with rig-c 2.1.3, and again with 2.10.1,
 whose pages, atlases, idle frames and `check.json` are byte-identical to 2.1.3's under
 both shapes and both edges (the full entry, spine-core 4.3.13 beside it),
 `spine-parts build` with `--page-edges free` and each shape, the table columns by
@@ -847,13 +847,13 @@ reference's so the examples stay comparable with it. `build` takes both flags.
 
 **`rig --idle-keys ctl|direct`** (and `build --idle-keys`, which forwards the
 value to its rig stage; without the flag, or with `ctl`, a build writes and prints
-what it did before `build` took the flag). spine-rigc's `A15_IDLE_NO_MESH_BONE_KEYS`
+what it did before `build` took the flag). rig-c's `A15_IDLE_NO_MESH_BONE_KEYS`
 (profile `spine-html`) refuses an idle that keys a bone a mesh is weighted to. `ctl`
 (the default, the reference's answer) gives every such bone a same-origin
-`<bone>_ctl` parent and moves its keys there, which passes A15 on any spine-rigc;
+`<bone>_ctl` parent and moves its keys there, which passes A15 on any rig-c;
 the stage prints `idle keys ctl: N mesh-driving bone(s) keyed …`. `direct` keys the
 bones themselves and writes `invariants.idleDrivesMeshes: { "why": … }` into
-`rig.json` (spine-rigc 1.3.0 or later), so A15 reports
+`rig.json` (rig-c 1.3.0 or later), so A15 reports
 `SKIP  A15_IDLE_NO_MESH_BONE_KEYS: declared by the rig (…): idle keys N bone(s) that
 drive M mesh attachment(s) totalling V vertices …`, which the stage prints; with no
 mesh-driving bone keyed it declares nothing, because rigc refuses a declaration
@@ -1033,9 +1033,9 @@ See-through with another seed.
 | `CONFIG_BONE_PROPERTY_KEYED_ONCE` | two tracks key one bone property: two single tracks, a single track on a chain link's `rotate`, or a single track on a blink member's `scaley` (`eyes`) or `translatey` (`brows`); the detail names the property and every track by its config path. rigc refuses it at the gate (`animation "idle" has two tracks on eye.scaley; merge them into one track`) | merge them into one track, or key another property or bone |
 | `CONFIG_BLINK_BROWS_PAIRED` | `motion.blink.brows` without `brow_drop`, or `brow_drop` without `brows` | state both or neither |
 | `CONFIG_STILL_OFF_THE_BLINK` | a `motion.blink.still` entry names a region on a bone the blink's `eyes` does not name (nothing to hold still), or its `bone` is one the blink's `eyes` names (the still piece would blink) | that entry's part, or its `bone` — the eye bone's parent, `head` as proposed |
-| `CONFIG_CONSTRAINT_TYPE_KNOWN` | a `constraints` entry's `type` is not one of spine-rigc's five: `ik`, `transform`, `path`, `physics`, `slider` (spelled as rigc spells them; `IK` is not `ik`) | that entry's `type` |
+| `CONFIG_CONSTRAINT_TYPE_KNOWN` | a `constraints` entry's `type` is not one of rig-c's five: `ik`, `transform`, `path`, `physics`, `slider` (spelled as rigc spells them; `IK` is not `ik`) | that entry's `type` |
 | `CONFIG_CONSTRAINT_NAME_UNIQUE` | two `constraints` entries of one kind share a `name`; rigc finds a constraint by its kind and its name, so an ik and a transform may share one | rename one |
-| `CONFIG_CONSTRAINT_TARGET_DETACHED` | the bone an ik follows (`target`) or a transform reads (`source`) is one of the bones that constraint drives, or sits under one (the detail gives the line of parents) — driving them would move what they follow. This package's refusal: spine-rigc 2.15.0 gates such a rig green when nothing declares the parentage (measured on the selftest's rig fixture, issue #103) | a bone beside the chain; a scene target is a single bone parented to `root` (§3) |
+| `CONFIG_CONSTRAINT_TARGET_DETACHED` | the bone an ik follows (`target`) or a transform reads (`source`) is one of the bones that constraint drives, or sits under one (the detail gives the line of parents) — driving them would move what they follow. This package's refusal: rig-c 2.15.0 gates such a rig green when nothing declares the parentage (measured on the selftest's rig fixture, issue #103) | a bone beside the chain; a scene target is a single bone parented to `root` (§3) |
 
 ### inputs
 
@@ -1098,7 +1098,7 @@ See-through with another seed.
 | `RIG_BLINK_INSIDE_IDLE` | the blink runs outside the idle | `motion.blink.t` |
 | `RIG_BLINK_HOLD_SPANS_A_FRAME` | the tree's `BLINK.hold` is shorter than one frame at `IDLE_FPS`, so for some `motion.blink.t` no idle frame — and no frame of the loop — shows the closed eye; the detail counts the phases that miss and names the first | nothing in the config: `BLINK.hold` in `src/motion.ts`, at least `1/IDLE_FPS` s (§3) |
 | `RIG_STILL_ROW_INSIDE_PART`, `RIG_STILL_ROW_CLEAR`, `RIG_STILL_PIECES_HAVE_ART`, `RIG_STILL_NAME_FREE` | a `motion.blink.still` row that is not strictly inside the part, that crosses art (a cut through art changes the render even at rest), that leaves one piece with no art, or whose `<part>_still` slot name another part already has | that entry's `row` — a row with no art between the crease and the lash line — or rename the other part |
-| `RIG_RIGC_GREEN` | spine-rigc refused the rig; its own FAIL or compile-error line is quoted, and nothing was written. A `constraints` field rigc does not read, or a value it refuses, is this line in rigc's words (`constraint "aim" (ik) has a key this compiler does not read: "mixx" (did you mean "mix"?)`), as is `A25_DETACHED_BONE_PARENTAGE` on a declared scene target. So is an ik whose `bones` are more than two, or two of which the second is not the first's child: from spine-rigc 2.15.0 its rig-spec parser refuses both by name (`ik constraint "reach" names 3 bones …`, `ik constraint "reach": "hem1" is not a child of "body" ("hem0" stands between) …`; firejune/rigc#1205), and this package no longer refuses them itself (issue #103; it did from #92 while rigc's gate passed them). Under `--idle-keys ctl` a two-bone ik over a chain link and its child link is that second refusal too, because the child's `<link>_ctl` stands between them; rigc's remedy names the control, which a config cannot, so when rigc's line says that control alone stands between, the rig stage adds a sentence naming `--idle-keys direct` on the command that ran | the field rigc's line names; for the split pair, `rig --idle-keys direct` or `build --idle-keys direct`, as the line says, which keys the link in place — spine-rigc's own AUTHORING §5 maps each of its assertions (`node_modules/spine-rigc/docs/AUTHORING.md`) |
+| `RIG_RIGC_GREEN` | rig-c refused the rig; its own FAIL or compile-error line is quoted, and nothing was written. A `constraints` field rigc does not read, or a value it refuses, is this line in rigc's words (`constraint "aim" (ik) has a key this compiler does not read: "mixx" (did you mean "mix"?)`), as is `A25_DETACHED_BONE_PARENTAGE` on a declared scene target. So is an ik whose `bones` are more than two, or two of which the second is not the first's child: from rig-c 2.15.0 its rig-spec parser refuses both by name (`ik constraint "reach" names 3 bones …`, `ik constraint "reach": "hem1" is not a child of "body" ("hem0" stands between) …`; firejune/rigc#1205), and this package no longer refuses them itself (issue #103; it did from #92 while rigc's gate passed them). Under `--idle-keys ctl` a two-bone ik over a chain link and its child link is that second refusal too, because the child's `<link>_ctl` stands between them; rigc's remedy names the control, which a config cannot, so when rigc's line says that control alone stands between, the rig stage adds a sentence naming `--idle-keys direct` on the command that ran | the field rigc's line names; for the split pair, `rig --idle-keys direct` or `build --idle-keys direct`, as the line says, which keys the link in place — rig-c's own AUTHORING §5 maps each of its assertions (`node_modules/rig-c/docs/AUTHORING.md`) |
 
 ### check and build
 
@@ -1110,7 +1110,7 @@ See-through with another seed.
 | `CHECK_SOURCE_SIZE` | the painting `--source` names is not this rig's: no single `rig_scale` takes its width and height to the stage's (assemble makes the canvas `trunc(w × rig_scale)` x `trunc(h × rig_scale)`), or, with `parts.json` read, its `scale_rig_per_source` does not; or the stage is not whole pixels. Refused before anything is built | the painting the rig was made from — the stage's own size, or the painting `assemble` was given |
 | `CHECK_SOURCE_PNG` | `--source` names a file that does not read as a PNG | a PNG |
 | `CHECK_SOURCE_GRID` | the setup-pose still and its black-tinted twin (the coverage `SETUP_POSE_VS_SOURCE` reads) did not come back on one grid over one opaque background | a rigc problem; report it |
-| `CHECK_RIGC_VERSION` | `rigc --version` is below 1.4.0, or prints no version: its `render` has no `--geometry`, which `TEXTURE_STRETCH` reads. Refused before anything is built | `bun install` (this package depends on spine-rigc ^2.15.0), or put a newer `rigc` first on `PATH` |
+| `CHECK_RIGC_VERSION` | `rigc --version` is below 1.4.0, or prints no version: its `render` has no `--geometry`, which `TEXTURE_STRETCH` reads. Refused before anything is built | `bun install` (this package depends on rig-c ^2.20.4), or put a newer `rigc` first on `PATH` |
 | `CHECK_RIGC_ENTRY`, `CHECK_RIGC_ENTRY_READS` | `rigc --version` names no entry (a rigc below 2.0.0), or names one in neither launcher form (`entry: cli.ts — @esotericsoftware/spine-core <v> present`, `entry: cli_core.ts — @esotericsoftware/spine-core absent — …`); `check.json`'s `rigc_entry` records the one that gated the build | `bun install` |
 | `CHECK_RIGC_GREEN` | a rigc step failed; its line is quoted | as `RIG_RIGC_GREEN` |
 | `CHECK_LOOP_LAST_FRAME_AT_DURATION` | the idle's last frame does not sit at `duration` | `motion.duration` — a whole number of 1/12 s |
@@ -1124,13 +1124,13 @@ See-through with another seed.
 | `CHECK_TEXTURE_STRETCH` | a mesh triangle's edge, in some idle frame, is more than 1.926544 times its rest length or less than 1/1.926544 of it (the mesh, triangle, its three vertices, the edge and the frame are named); or a rest edge has length 0 | the chain tracks' `amps` on the bones that mesh is weighted to (the stretch grows with them), or the mesh's `segments` — a vertex blending two bones that swing against each other |
 | `CHECK_SEAM_FRAME_SIZE`, `FRAMES_SIDECAR`, `CHECK_GEOMETRY_FILE` | rigc's render is not what its `frames.json` says, or its `geometry.json` is not a whole `rigc-geometry/1` export of the frames beside it (a frame count, a mesh whose vertex count differs from its rest entry; for the face half, another viewport than `frames.json`'s, other frame indices, the head bone or a feature's bone missing from a frame, a non-finite transform or time) | a rigc problem; report it |
 | `LOOP_ENCODE` | the loop encoder refused a frame (translucent pixel in a GIF, a size change) | the frames; for a translucent frame write the lossless or the indexed APNG, which keep alpha |
-| `CHECK_PACK_LINE_READS` | rigc printed a `pack:` line that is not `pack: <page> <W>x<H>, <N> region(s), <P>% covered, padding <D>`, then `, page edges free` or nothing, then `, shape rect`, `, shape polygon` or nothing (spine-rigc 2.1 prints the shape; 1.5–2.0 printed none, read as `rect`); an unknown shape is this refusal; the line is quoted | a rigc this package does not know the output of; report it, with `rigc --version` |
+| `CHECK_PACK_LINE_READS` | rigc printed a `pack:` line that is not `pack: <page> <W>x<H>, <N> region(s), <P>% covered, padding <D>`, then `, page edges free` or nothing, then `, shape rect`, `, shape polygon` or nothing (rig-c 2.1 prints the shape; 1.5–2.0 printed none, read as `rect`); an unknown shape is this refusal; the line is quoted | a rigc this package does not know the output of; report it, with `rigc --version` |
 | `CHECK_PACK_PAGE_EDGES` | the pack line disagrees with the `--page-edges` the build was run with — its `, page edges free` clause is there under `pot` or missing under `free`, or a `pot` page is not a power of two on both edges | a rigc problem; report it, with `rigc --version` |
-| `CHECK_PACK_SHAPE` | the pack line disagrees with the `--pack-shape` the build was run with — it ends `, shape rect` under `polygon` or `, shape polygon` under `rect`, or it has no shape clause (the 1.5–2.0 form, read as `rect`) under `polygon` | a rigc older than 2.1.0 on `PATH`: rigc 2.0.3 takes `--pack-shape` without a word, packs by rectangles and prints the form with no shape clause, so this refusal is what catches it — `bun install` (this package depends on spine-rigc ^2.15.0); otherwise a rigc problem, report it with `rigc --version` |
+| `CHECK_PACK_SHAPE` | the pack line disagrees with the `--pack-shape` the build was run with — it ends `, shape rect` under `polygon` or `, shape polygon` under `rect`, or it has no shape clause (the 1.5–2.0 form, read as `rect`) under `polygon` | a rigc older than 2.1.0 on `PATH`: rigc 2.0.3 takes `--pack-shape` without a word, packs by rectangles and prints the form with no shape clause, so this refusal is what catches it — `bun install` (this package depends on rig-c ^2.20.4); otherwise a rigc problem, report it with `rigc --version` |
 | `BUILD_ARTIFACT_PRESENT` | the packed build lacks its `.json`, `.atlas` or page | a rigc problem; report it |
 | `REQUIREMENTS_FILE` | `--requirements` names no file, or one that does not parse as a JSON object. Refused before anything is built (by `build`, before assemble) | the path of a `spine-parts-requirements/1` file |
 | `REQUIREMENTS_FIELD` | a field of the file is missing, of the wrong type, or not one the format reads: `spec`, `fps` (no default), `requirements`, each requirement's `name` (letters, digits, underscores; once each), `kind`, `animation` and its kind's fields — every bar among them (`within_px`, `fraction`, `tolerance`, `least_drive` above 0, `within_degrees` from 0 to 180, `lo_degrees` ≤ `hi_degrees`, `within_ratio` ≥ 1) — and each target's `bone`, `animation` and exactly one of `at` and `keys` (times strictly increasing). `note`, `*_note` (strings) and `x-…` (any value) are read by nothing, as in the config | write the field; the bar is yours |
-| `REQUIREMENTS_RESOLVES` | a bone, an `ik` or `transform` constraint (by name and `constraint_type`, as spine-rigc resolves it), a slot, a mesh attachment or an animation the file names is not in `rig.json` or `motion.json`, or a seam's part is not in `parts.json` — the detail lists the ones that are; or an animation whose name cannot be a directory. Refused before anything is built | the name as the rig spells it |
+| `REQUIREMENTS_RESOLVES` | a bone, an `ik` or `transform` constraint (by name and `constraint_type`, as rig-c resolves it), a slot, a mesh attachment or an animation the file names is not in `rig.json` or `motion.json`, or a seam's part is not in `parts.json` — the detail lists the ones that are; or an animation whose name cannot be a directory. Refused before anything is built | the name as the rig spells it |
 | `REQUIREMENTS_CONSTRAINT_DRIVES` | a `follow` names a bone its constraint does not constrain, or a property it does not drive: an `ik` drives `rotate` only; a `transform` drives `rotate` when a `to` names `rotate`, `translate` when one names `x` or `y` | the constraint's own bone and property |
 | `REQUIREMENTS_TARGET_PARENT` | a scene target's bone is the root or is not parented to it, or the root is not at rest at the origin, or the animation keys the root — a stage point is a bone's position only under a root that stands still at the origin | a bone under the root for the scene to place |
 | `REQUIREMENTS_TARGET` | a scene target places one bone twice for one animation, places it for an animation no requirement measures, has a key outside the animation's `[0, duration]`, or sits in a group the animation translates | one placement per bone and animation, inside it, for an animation a requirement reads |
@@ -1162,7 +1162,7 @@ and stay absent).
 | `SCENE_ROOT_SHARED` | a character's idle keys `root` (a track, or a group holding it), or one of its constraints names `root`: the root is every character's, so either would move or reach them all | key or constrain a bone of the character's own |
 | `SCENE_INVARIANT_AGREES` | two characters declare `invariants.idleDrivesMeshes` with different `why`s | rebuild with this package's `--idle-keys direct`, whose `why` is one sentence |
 | `SCENE_IMAGE_NAME_FREE` | two images compose to one file name (`<id>.<file>`: an id `x` with an image `y.cloth.png`, and an id `x.y` with `cloth.png`) | another id |
-| `COMPOSE_RIGC_GREEN` | spine-rigc refused the composed rig; its line is quoted. A field compose carries as written (a constraint's `mix`, a slot's setup attachment) is rigc's to judge | the build whose field it names |
+| `COMPOSE_RIGC_GREEN` | rig-c refused the composed rig; its line is quoted. A field compose carries as written (a constraint's `mix`, a slot's setup attachment) is rigc's to judge | the build whose field it names |
 | `REQUIREMENTS_*` | the `--requirements` file, as for `check` | as for `check` |
 
 ## 7. The bars `check` enforces, and what only an eye answers today
@@ -1213,7 +1213,7 @@ the two examples [observed]:
 | `CHAIN_LAG` | `motion.json`'s rotate tracks read as sines (DFT of the keys: period, amplitude, phase) and arranged by the bone tree — a keyed bone's parent is its nearest keyed ancestor | every lag ≥ 0.001 cycle; amplitude non-decreasing down each unbranched chain | lags 0.040 (neck to head) to 0.120; 12 chains | lags 0.040 to 0.100; 9 chains | no rotate track under another of the same period |
 | `TIP_OVER_ROOT` | each `handwear`/`bottomwear` part: how far the centroid of its art travels in the lower half of its box against the upper half — the art's AREA centroid inside each fixed half (cut at h/2), every art pixel (alpha above 8) carried through its attachment's posed triangles from the idle's `geometry.json` and clipped to the half exactly, rig px; `instrument: "geometry"` in the line (issue #118) | ratio ≥ 1.4725 | `bottomwear` 3.222, `sleeves` 4.721 | `bottomwear` 4.956, `sleeves` 11.830 | no such part |
 | `STILL_REGIONS_DARK` | from the idle's posed geometry (`geometry.json`), `instrument: "geometry"` in each half (issue #123). **Face:** the still set — the `face` slots, and every slot drawn after the first of them whose art overlaps a face part's at the setup pose, that the head bone alone carries (a region on it, or a mesh whose every weight is it) and that the idle does not key by slot (`deform`, `sequence`, a slot track: `driven_slots`). The head bone is the bone the `face` parts' slot rides in `rig.json`. Each still slot's art (alpha above 8), carried through its posed attachment and back through the head bone's setup-to-frame map on every idle frame, against its setup position: `max_rig_px` (and where, `at`, when it is a motion), `rms_rig_px`, per slot in `still_slots`. **Feet:** the `footwear` slots the same way in screen space — they ride the root, which the idle does not key, so the screen is their own frame. **Reported, no bar:** `crossing` — per slot drawn after the still set's first slot and not in it, how deep its art reaches into the region (`face` on top at the setup pose, clear of where `eyewhite`, `irides`, `eyelash`, `eyebrow` and `mouth` go in the head's frame; for the feet, `footwear` on top), `depth_rig_px`, and the most of it covered on one frame, `area_rig_px2` | each half's `max_rig_px` ≤ its `tolerance_rig_px`: nothing moves, up to the arithmetic's rounding, √2 × 2 × 35 × M² × ulp(C) (below) | face 4.202e-13 ≤ 2.286e-11; `hair_front` crossing 2.816 rig px deep, 89.395 rig px² (frame 47); feet 0 ≤ 2.814e-12 | face 4.418e-13 ≤ 2.286e-11 (`face`, `ear_l`, `ear_r`); `hair_front` 2.194 deep, 50.605 rig px² (frame 23); feet 0 ≤ 2.814e-12 | no `face` and no `footwear` part (one of the two absent leaves that half unmeasured; so do face parts on two slot bones, or idle frames with no `geometry.json`) |
-| `TEXTURE_STRETCH` | every mesh triangle's three edges in every idle frame, read from the `geometry.json` the idle render writes (`rigc render --geometry`, spine-rigc 1.4.0 or later): skinned length over rest length, the rest being the setup pose's bones with no deform. The figure is the rig's worst max(ratio, 1/ratio); each mesh's largest and smallest ratio, with triangle, vertices, edge and frame, is the detail | max(ratio, 1/ratio) ≤ 1.926544 | 1.388: `hair_back` triangle 449, edge 42-43 at 0.720 in frame 26 (largest stretch 1.291, frame 2) | 1.227: `sleeves` triangle 169, edge 126-51 at 0.815 in frame 28 (largest stretch 1.196, frame 5) | the rig draws no mesh, or the render wrote no `geometry.json` |
+| `TEXTURE_STRETCH` | every mesh triangle's three edges in every idle frame, read from the `geometry.json` the idle render writes (`rigc render --geometry`, rig-c 1.4.0 or later): skinned length over rest length, the rest being the setup pose's bones with no deform. The figure is the rig's worst max(ratio, 1/ratio); each mesh's largest and smallest ratio, with triangle, vertices, edge and frame, is the detail | max(ratio, 1/ratio) ≤ 1.926544 | 1.388: `hair_back` triangle 449, edge 42-43 at 0.720 in frame 26 (largest stretch 1.291, frame 2) | 1.227: `sleeves` triangle 169, edge 126-51 at 0.815 in frame 28 (largest stretch 1.196, frame 5) | the rig draws no mesh, or the render wrote no `geometry.json` |
 
 **`TIP_OVER_ROOT` is measured from geometry, not pixels (issue #118).** Until #118 the
 line rendered each part alone at `--max 640` and took, per half of its frame box, the
@@ -1514,9 +1514,9 @@ single-character path (§4, steps 0–9) on its own, already isolated input to a
 
 What is composed:
 
-- **Images are `<id>.<file>`, not `<id>:<file>`.** spine-rigc names an atlas region
+- **Images are `<id>.<file>`, not `<id>:<file>`.** rig-c names an atlas region
   by its PNG's basename, and an atlas region line that holds `:` is read as a
-  `key: value` line: measured through spine-rigc 2.15.0 on the demo renamed
+  `key: value` line: measured through rig-c 2.15.0 on the demo renamed
   `demo:<name>` with images `demo:<file>`, `A07_ATLAS_TEXT_SHAPE` fails once per
   region; with the images under a `demo/` folder the rig gates green but the region
   keeps the bare basename, so two characters' `face` would collide. So the
@@ -1577,7 +1577,7 @@ a hand stays on a cup, that a sleeve takes half of what an arm's constraint asks
 it, that a joint stays inside a range — is the scene's knowledge (issue #87), so it
 travels in a file `check` is given, `--requirements <file>` (`build` forwards it).
 Every bar in it is the author's; a missing one is refused by name. Nothing here
-solves, guesses a value or chooses a bar: every pose is spine-rigc's, read from the
+solves, guesses a value or chooses a bar: every pose is rig-c's, read from the
 world transforms `rigc render --geometry` writes (`rigc-geometry/1`). Coordinates in
 the file are stage px, y down, as in the config; a stage pixel is one Spine world
 unit (the stage box maps to the world by a translation and the y flip,
@@ -1621,7 +1621,7 @@ unit (the stage box maps to the world by a translation and the y flip,
 
 **`follow`**, #87's definition to the letter: "bone A takes a fraction `f` of what
 constraint C asks of it" is measured from three poses of the same rig over the same
-frames, each posed by spine-rigc and differing in one thing only — *as declared*, the
+frames, each posed by rig-c and differing in one thing only — *as declared*, the
 rig as written, `A(t)`; *released*, C's mix for that property forced to 0 and every
 key of that mix in the animation removed, `A0(t)`; *full*, forced to 1, keys removed,
 `A1(t)`. For `translate` A is the bone's world origin; for `rotate`, `atan2(c, a)` in
@@ -1640,7 +1640,7 @@ written. An ik's mix is `mix`; a transform's is `mixRotate` for `rotate`, and `m
 and `mixY` for `translate`.
 
 The released copy rests muted throughout whenever no other animation keys that mix,
-and spine-rigc's gate refuses that — `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT`,
+and rig-c's gate refuses that — `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT`,
 `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT`. When rigc refuses the released copy
 for that constraint and for nothing else, the copy — never the rig under test —
 declares it in `invariants.consumerDrivenMix`, rigc's own door for a mix the consumer
@@ -1672,7 +1672,7 @@ between them, the first held before and the last after, for one named animation.
 `check` writes it onto a throwaway copy — the bone's setup position is the first
 point, the rest are translate keys from it, through the one y door, and the
 animation's own translation tracks on that bone are dropped — and poses the copy
-through spine-rigc; a follow's released and full copies carry the same placement. A
+through rig-c; a follow's released and full copies carry the same placement. A
 root that is not at rest at the origin, or that the animation moves, is refused,
 because the stage point would not be the bone's position. In a rig composed of
 several characters, a target can simply be another character's bone, named as the

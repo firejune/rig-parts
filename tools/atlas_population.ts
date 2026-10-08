@@ -34,8 +34,8 @@
  *   and sequence frames included. `check`'s pack line prints rigc's figure for
  *   the same thing.
  * - **covered %**: Σ bounds w·h over Σ page area. rigc's pack line "covered" is
- *   the same sum (`spine-rigc/src/atlas.ts`, `occupancy`), rounded the same way
- *   (on the two public examples under `--pack-shape polygon`, spine-rigc 2.1.3 and 2.10.1,
+ *   the same sum (`rig-c/src/atlas.ts`, `occupancy`), rounded the same way
+ *   (on the two public examples under `--pack-shape polygon`, rig-c 2.1.3 and 2.10.1,
  *   both read 95.0 %). It is a sum of rectangles, not a union: under
  *   `--pack-shape polygon` a region may sit inside a mesh region's rectangle
  *   where the hull is not, so the rectangles overlap and the figure can exceed
@@ -56,19 +56,19 @@
  * - **figure**: the setup-pose AABB in skeleton units and in atlas px (w·s ×
  *   h·s), and its area, read off the JSON `skeleton` block (`x y width
  *   height`) on every row. The editor computes that block from the setup pose;
- *   spine-rigc 2.2.0 and later write it as the setup-pose bounding box too
+ *   rig-c 2.2.0 and later write it as the setup-pose bounding box too
  *   (firejune/rigc#907; before that rigc wrote the stage it was given, the
  *   crop, and this column read spine-core instead). So a build row's block is
  *   held to spine-core's `Skeleton.getBounds` at the setup pose (default skin,
  *   `Physics.reset`): each of the four must equal rigc's own writing of that
- *   bound, `headerBoxNumber` (`spine-rigc/src/compile.ts`: the 1e-6 grid at
+ *   bound, `headerBoxNumber` (`rig-c/src/compile.ts`: the 1e-6 grid at
  *   float32), with nothing tolerated past it, and a block that does not is
  *   refused as `BUILD_HEADER_IS_SETUP_BOUNDS`, quoting both boxes — which is
  *   also what a build from rigc before 2.2.0 gets, its header being the stage
  *   (the demo's 2.1.3 build: 832x1216 at -416, 0 against 662.00006x1195 at
  *   -344, 5). A header with no box (rigc writes none where nothing is drawn at
  *   the setup pose, or no stage is declared) is `BUILD_HEADER_BOX`.
- *   Measured on the two public examples' builds with spine-rigc 2.10.1: all
+ *   Measured on the two public examples' builds with rig-c 2.10.1: all
  *   eight numbers equal, the raw doubles within 3.0e-5 of the header (demo's
  *   width, 662.00006 written for 662.0000898). selftest `BU07` plants a header
  *   one float32 step off. The same spine-core bounds are printed for an editor
@@ -96,13 +96,13 @@
  *
  * Figures quoted from this tool carry "measured at spine-runtimes e7dc143".
  * `@esotericsoftware/spine-core` is this repository's development dependency, pinned to
- * the version spine-rigc develops against (`TY10`); `tools/` is not in
+ * the version rig-c develops against (`TY10`); `tools/` is not in
  * `package.json` `files`, so nothing installed depends on this file.
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { AtlasAttachmentLoader, Physics, Skeleton, SkeletonJson, TextureAtlas, Vector2 } from '@esotericsoftware/spine-core';
-import { headerBoxNumber } from 'spine-rigc/src/compile.ts';
+import { headerBoxNumber } from 'rig-c/src/compile.ts';
 import { opaqueShare, SPINEBOY_YARDSTICK } from '../src/check.ts';
 import { readPng } from '../src/raster/png.ts';
 
@@ -385,7 +385,7 @@ const boxText = (b: Aabb): string => `x ${b.x}, y ${b.y}, width ${b.width}, heig
  */
 export function headerProblem(label: string, header: Aabb | null, bounds: Aabb | string): string | null {
   if (header === null) {
-    return `BUILD_HEADER_BOX: ${label} — skeleton.json's "skeleton" block has no numeric x, y, width and height; spine-rigc 2.2.0 and later write the setup-pose bounding box there (firejune/rigc#907) and none where the setup pose draws nothing or the rig declares no stage, so there is no figure to read`;
+    return `BUILD_HEADER_BOX: ${label} — skeleton.json's "skeleton" block has no numeric x, y, width and height; rig-c 2.2.0 and later write the setup-pose bounding box there (firejune/rigc#907) and none where the setup pose draws nothing or the rig declares no stage, so there is no figure to read`;
   }
   if (typeof bounds === 'string') return `BUILD_HEADER_IS_SETUP_BOUNDS: ${label} — the header cannot be held to the setup pose: ${bounds}`;
   const keys = ['x', 'y', 'width', 'height'] as const;

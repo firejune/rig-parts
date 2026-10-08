@@ -1,12 +1,12 @@
 /**
  * What a scene requires of a rig's motion, declared in a file `check` is given
  * (`--requirements`, issue #93, increment 2 of #87) and measured from the
- * world transforms spine-rigc's `render --geometry` writes.
+ * world transforms rig-c's `render --geometry` writes.
  *
  * ⭐ **The definitions are #87's, settled before this was written** (its
  * comment "Settled before implementation"); nothing here chooses a bar, a
  * default or a solver. Every bar is the author's, a missing one is refused by
- * name, and every pose is spine-rigc's.
+ * name, and every pose is rig-c's.
  *
  * Four outcomes, never merged:
  *
@@ -43,12 +43,12 @@
  * This module is pure: it reads the file, resolves it against the rig spec and
  * motion it is handed, writes the throwaway copies' specs as values, and
  * measures tracks it is handed. `src/check.ts` builds and renders the copies
- * through spine-rigc and reads their `geometry.json`.
+ * through rig-c and reads their `geometry.json`.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { CompileError } from 'spine-rigc/src/errors.ts';
-import { splitRigSkin, type RigSkin } from 'spine-rigc/src/rig.ts';
+import { CompileError } from 'rig-c/src/errors.ts';
+import { splitRigSkin, type RigSkin } from 'rig-c/src/rig.ts';
 import { cropToSpineY } from './coords.ts';
 import type { Problem } from './errors.ts';
 import { refuseIfAny } from './errors.ts';
@@ -150,7 +150,7 @@ export interface RequirementsFile {
 }
 
 /** What `check --requirements` and `build --requirements` name, said once for the help and the refusals. */
-export const REQUIREMENTS_SENTENCE = `--requirements names a ${REQUIREMENTS_SPEC} file: the scene's declared requirements of the rig's motion (contact, follow, aim, range, stretch, seam), each with its animation and the author's own bar, measured from spine-rigc's render --geometry at the file's fps`;
+export const REQUIREMENTS_SENTENCE = `--requirements names a ${REQUIREMENTS_SPEC} file: the scene's declared requirements of the rig's motion (contact, follow, aim, range, stretch, seam), each with its animation and the author's own bar, measured from rig-c's render --geometry at the file's fps`;
 
 // ---------------------------------------------------------------------------
 // reading the file
@@ -267,7 +267,7 @@ export function readRequirements(path: string): RequirementsFile {
         req = { ...common, kind, bone: str('bone'), point: point('point', r.point), target: target(), within_px: bar('within_px', (v) => v >= 0, 'a distance in stage px, 0 or more,') };
       } else if (kind === 'follow') {
         const type = r.constraint_type;
-        if (type !== 'ik' && type !== 'transform') field(`${label} field "constraint_type"`, `is ${JSON.stringify(type)}; "ik" or "transform" is required — a constraint resolves by name AND type, as in spine-rigc`);
+        if (type !== 'ik' && type !== 'transform') field(`${label} field "constraint_type"`, `is ${JSON.stringify(type)}; "ik" or "transform" is required — a constraint resolves by name AND type, as in rig-c`);
         const prop = r.property;
         if (prop !== 'rotate' && prop !== 'translate') field(`${label} field "property"`, `is ${JSON.stringify(prop)}; "rotate" or "translate" is required`);
         req = {
@@ -512,7 +512,7 @@ export function resolveRequirements(file: RequirementsFile, rig: Record<string, 
   refuseIfAny(problems);
 }
 
-/** The mesh attachment names a slot holds in any skin, through spine-rigc's own skin reader; a string (the refusal's detail) when a skin does not read. */
+/** The mesh attachment names a slot holds in any skin, through rig-c's own skin reader; a string (the refusal's detail) when a skin does not read. */
 function meshAttachmentsOf(rig: Record<string, unknown>, slot: string): string[] | string {
   const out = new Set<string>();
   const skins = isRecord(rig.skins) ? rig.skins : {};
@@ -521,7 +521,7 @@ function meshAttachmentsOf(rig: Record<string, unknown>, slot: string): string[]
     try {
       atts = splitRigSkin(skin as RigSkin, `rig.json skin "${name}"`).attachments as Record<string, Record<string, unknown>>;
     } catch (err) {
-      if (err instanceof CompileError) return `spine-rigc's skin reader refuses rig.json skin "${name}": ${err.message}`;
+      if (err instanceof CompileError) return `rig-c's skin reader refuses rig.json skin "${name}": ${err.message}`;
       throw err;
     }
     const held = atts[slot];
@@ -603,7 +603,7 @@ export function mixFields(f: Pick<FollowRequirement, 'constraint_type' | 'proper
  * mixes) stays as written, so the copy differs from the rig in that one mix
  * only. Other animations are not touched. The full copy also drops the
  * constraint from `invariants.consumerDrivenMix` if the rig declares it there:
- * at 1 it rests live, and spine-rigc refuses a declaration that exempts nothing.
+ * at 1 it rests live, and rig-c refuses a declaration that exempts nothing.
  */
 export function forceMix(rig: Record<string, unknown>, motion: Record<string, unknown>, f: FollowRequirement, value: 0 | 1): { rig: Record<string, unknown>; motion: Record<string, unknown> } {
   const r = clone(rig);
@@ -643,7 +643,7 @@ export function releasedWhy(f: FollowRequirement): string {
 }
 
 /**
- * The released copy with its constraint declared consumer-driven — spine-rigc's
+ * The released copy with its constraint declared consumer-driven — rig-c's
  * door for a constraint muted throughout (`A47`/`A48`), which the released pose
  * is by construction. Used only when rigc's gate refused the released copy for
  * that constraint alone ({@link mutedOnly}).
@@ -656,7 +656,7 @@ export function declareConsumerDriven(rig: Record<string, unknown>, f: FollowReq
   return r;
 }
 
-/** spine-rigc's rule a muted-throughout constraint of each type fails, and the words its line names the constraint with. */
+/** rig-c's rule a muted-throughout constraint of each type fails, and the words its line names the constraint with. */
 export function mutedLine(f: Pick<FollowRequirement, 'constraint' | 'constraint_type'>): { rule: string; names: string } {
   return f.constraint_type === 'ik'
     ? { rule: 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT', names: `ik constraint "${f.constraint}" has mix` }

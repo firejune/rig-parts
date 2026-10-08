@@ -9,7 +9,7 @@
  * 1. **Cells.** A grid of `grid`-pixel squares over the (padded) part image;
  *    the last column and row are clipped to the image. A cell is kept when any
  *    pixel inside it has alpha above {@link ART_ALPHA}.
- * 2. **One loop.** spine-rigc refuses a mesh whose triangles' outline is not
+ * 2. **One loop.** rig-c refuses a mesh whose triangles' outline is not
  *    one closed loop, and a See-through layer is often two islands (a hairpin
  *    head and its tassel) or has a hole. So the kept cells are made one
  *    simply-connected region: holes filled (`scipy.ndimage.binary_fill_holes`,
@@ -28,7 +28,7 @@
  *    reference's order, and written with its last two corners swapped
  *    ({@link counterClockwiseInSpineWorld}): the y flip to Spine's world does
  *    not turn a loop over, so a triangle clockwise on screen is clockwise in
- *    Spine world, and the winding spine-rigc reads a mesh in is
+ *    Spine world, and the winding rig-c reads a mesh in is
  *    counter-clockwise there (issue #126; rigc#1236). The swap is made after
  *    the boundary walk below, so no vertex index and no hull moves with it.
  * 4. **Boundary first.** Spine's `hull` is a count: the first `hull` vertices
@@ -188,7 +188,7 @@ export function oneLoop(start: Mask, maxPasses: number = ONE_LOOP_PASSES): OneLo
  * screen (positive area in crop pixels, y down) is clockwise in Spine world as
  * well — flipping y changes the sign of a signed area, but Spine's world is
  * drawn with y up, so the loop turns the same way on screen as there — and
- * spine-rigc reads every mesh as counter-clockwise in Spine world (its
+ * rig-c reads every mesh as counter-clockwise in Spine world (its
  * `MQ_ORIENTATION`; rigc#1236 turned its own `contour` and `ring` generators
  * for the same reason). The lattice ({@link triangulate}) and the contour mesh
  * (`src/contour.ts`) both build clockwise on screen and write through this,
@@ -355,7 +355,7 @@ export function latticeMesh(part: string, art: Mask, grid: number, maxPasses: nu
       detail:
         `after ${loop.passes} pass(es) of hole-fill, island-join and pinch-fill (${loop.settled ? 'settled' : `the limit of ${maxPasses} ran out`}) ` +
         `its ${lattice.nx}x${lattice.ny} lattice at grid ${grid} has ${mesh.loops} outline loop(s) and ${mesh.pinchedVertices} pinched boundary vertex(es); ` +
-        'exactly one closed loop and none pinched are required (spine-rigc refuses any other outline)',
+        'exactly one closed loop and none pinched are required (rig-c refuses any other outline)',
     };
   }
   return mesh;

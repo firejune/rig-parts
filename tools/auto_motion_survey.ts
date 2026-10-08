@@ -17,7 +17,7 @@
  * policy's `maxBoundaryDeviation`, no stretch bounds, no `deformMayFold`).
  *
  * What runs: `assembleStage` on the example's fetched inputs, then the real
- * `rigStage` — the gate build, the reference build and spine-rigc's
+ * `rigStage` — the gate build, the reference build and rig-c's
  * `compareMeshesInMotion` — through the installed rigc, in a temporary
  * directory that is removed afterwards. The stage's verdict decides the
  * verdict column; the rows of a refused part, which the stage does not write,
@@ -29,7 +29,7 @@
  * `reduceMesh` runs once (issue #135).
  *
  * Output: Markdown — one table, one schedule line per part, and the refusal
- * text of every refused part. Every number is read from spine-rigc's report;
+ * text of every refused part. Every number is read from rig-c's report;
  * no path, no time and no machine is printed, so two runs of one tree print
  * the same bytes. Exit 1 when an example's inputs are missing (it names
  * them) or a re-run disagrees with the stage; 0 otherwise, refused parts
@@ -39,7 +39,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { MeasureRow, MeshQualityReport } from 'spine-rigc/mesh';
+import type { MeasureRow, MeshQualityReport } from 'rig-c/mesh';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE } from '../src/assemble.ts';
 import { type Reducer, type ReductionResult, reductionKey, reuseReductions, runReduction } from '../src/automesh.ts';
 import { motionInput, motionVerdict, runComparison } from '../src/automotion.ts';
@@ -152,7 +152,8 @@ const rowOf = (r: MeshQualityReport | null, code: string): MeasureRow | undefine
 const cell = (x: MeasureRow | undefined): string => (x === undefined || x.value === null ? 'not measured' : `${x.value}${x.bound === null ? '' : ` / ${x.bound.op} ${x.bound.value}`}${x.worst?.frame === undefined ? '' : ` @ ${x.worst.frame.id}`}`);
 
 console.log('## The motion gate on the public examples (tools/auto_motion_survey.ts)\n');
-console.log('Policy: examplePolicy(spacing) (fixtures/automesh.ts) + policyMotion (fixtures/automotion.ts); each part switched alone; the real rig stage through the installed spine-rigc.\n');
+const rigcVersion = (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'rig-c', 'package.json'), 'utf8')) as { version: string }).version;
+console.log(`Policy: examplePolicy(spacing) (fixtures/automesh.ts) + policyMotion (fixtures/automotion.ts); each part switched alone; the real rig stage through the installed rig-c ${rigcVersion}.\n`);
 console.log('| part | source → result (hull+interior) | MQ_LOCAL_DEFORMATION value / bound @ worst frame | samples (art) | MQ_STRETCH | MQ_SQUASH | MQ_INVERSION | verdict |');
 console.log('| --- | --- | --- | --- | --- | --- | --- | --- |');
 for (const r of results) {

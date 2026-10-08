@@ -37,7 +37,7 @@
  * beside a later run's refusal looking current.
  *
  * Pure in the sense `src/` is held to: no clock, no randomness, no network and
- * no child process. spine-rigc runs as a process, but the process is injected
+ * no child process. rig-c runs as a process, but the process is injected
  * as a {@link RigcRunner}, exactly as `src/check.ts` takes it.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -49,7 +49,7 @@ import { type AutoMotionCase, motionClause, motionDeformation, motionDocument, m
 import { BARS, causeLines, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig, loadEarlyConfig } from './config.ts';
 import { PartsError, type Problem, problemLine, refuseIfAny } from './errors.ts';
-import type { MeshQualityReport } from 'spine-rigc/mesh';
+import type { MeshQualityReport } from 'rig-c/mesh';
 import { encodeGif } from './gif.ts';
 import { CONTROL_SUFFIX } from './motion.ts';
 import type { PaletteError } from './palette.ts';
@@ -202,7 +202,7 @@ export interface GateRun {
  */
 const DECLARED_SKIP = /^ {2}SKIP {2}A15_IDLE_NO_MESH_BONE_KEYS: declared by the rig/;
 
-/** The core entry's line after its summary (spine-rigc 2.0.0 and later): which rules ran, and that the round trip did not. */
+/** The core entry's line after its summary (rig-c 2.0.0 and later): which rules ran, and that the round trip did not. */
 const HERE_LINE = /^ {2}\.\. {4}here: /;
 
 function gateRun(label: string, rigc: RigcRunner, args: string[]): GateRun {
@@ -217,7 +217,7 @@ function gateRun(label: string, rigc: RigcRunner, args: string[]): GateRun {
  * spine-html profile and nothing else — the same gate over the compile that
  * the candidate's build runs, without `--pack`. Its model document is all the
  * comparison reads, and it differs from a packed build's only in where the
- * atlas puts each region (its `pages`), which spine-rigc's comparison
+ * atlas puts each region (its `pages`), which rig-c's comparison
  * allowlists as atlas layout; the pages a reference would pack are never
  * written anywhere, so packing them was work nobody read. No render is asked
  * of rigc by either build.
@@ -228,7 +228,7 @@ export const REFERENCE_BUILD_ARGS: readonly string[] = ['--profile', 'spine-html
 export const REFERENCE_BUILD_LABEL = `build ${REFERENCE_BUILD_ARGS.join(' ')}`;
 
 /**
- * spine-rigc's gate over the rig in a scratch directory: `build` under the
+ * rig-c's gate over the rig in a scratch directory: `build` under the
  * spine-html profile with `--pack --page-edges <edges> --pack-shape <shape>`, which runs the gate
  * once over the compile and once over the packed pages on disk. There is no
  * second `validate --profile spine` run: spine-html holds every rule spine
@@ -272,7 +272,7 @@ export function gateThroughRigc(
  * splits (issue #103). Under `--idle-keys ctl` a chain link the idle keys is
  * keyed through a same-origin `<link>_ctl` parent, so a config's ik over that
  * link and the link above it names a pair whose second bone is not the
- * first's child; spine-rigc 2.15.0's rig-spec parser refuses it by name
+ * first's child; rig-c 2.15.0's rig-spec parser refuses it by name
  * (firejune/rigc#1205), with `("<link>_ctl" stands between)` in its sentence
  * and a remedy a config cannot follow — a config cannot name the control.
  *
@@ -323,7 +323,7 @@ export interface MotionGateRun {
   part: string;
   /** The reference build through rigc's gate — null when the part was refused before anything was compiled. */
   reference: GateRun | null;
-  /** spine-rigc's `compare` report — null when the comparison did not run or refused its input. */
+  /** rig-c's `compare` report — null when the comparison did not run or refused its input. */
   report: MeshQualityReport | null;
   /** What refuses the part; empty when it is accepted. */
   problems: Problem[];
@@ -342,7 +342,7 @@ function modelAt(buildDir: string): string | null {
  * reference rig — `rig` with that part's attachment swapped for its unreduced
  * source and nothing else — through rigc's gate ({@link REFERENCE_BUILD_ARGS}:
  * the stage's `build` under spine-html, without packing, issue #135), then
- * spine-rigc's comparison of its `skeleton.model.json` with the candidate's
+ * rig-c's comparison of its `skeleton.model.json` with the candidate's
  * (`candidateModel`, the stage's own gate build). A part refused before
  * compiling (no `motion`, no stimulus) costs no build.
  */
@@ -391,7 +391,7 @@ export function motionGates(
       });
     }
     const ran = runComparison(c.object, motionInput(c, c.motion, refModel, candidateModel));
-    if ('code' in ran) return out({ reference: gate, problems: [ran], notCompared: 'spine-rigc refused the input' });
+    if ('code' in ran) return out({ reference: gate, problems: [ran], notCompared: 'rig-c refused the input' });
     const verdict = motionVerdict(c.object, ran);
     return out({ reference: gate, report: ran, problems: verdict === null ? [] : [verdict] });
   });
@@ -713,7 +713,7 @@ export interface BuildInput {
 /**
  * The rigc process for each stage: `rig` gates through one, `check` measures
  * through the other. `cli.ts` hands both the same runner, the `rigc` binary
- * spine-rigc's launcher answers for; they are two fields so a caller can tell
+ * rig-c's launcher answers for; they are two fields so a caller can tell
  * the stages' calls apart (the selftest counts them).
  */
 export interface BuildRunners {
@@ -740,7 +740,7 @@ export interface BuildResult {
 
 /**
  * rigc's own record of the compiled rig, which `build` writes beside the
- * skeleton JSON and atlas (spine-rigc's AUTHORING, the `--out` row; written
+ * skeleton JSON and atlas (rig-c's AUTHORING, the `--out` row; written
  * since 1.6): what rigc's posing core reads, not a Spine file, so it is not the
  * artifact and is not counted as a second skeleton JSON.
  */
