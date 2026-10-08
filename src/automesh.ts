@@ -16,7 +16,7 @@
  *    author's `influences` — no 0.03 floor unless the author wrote it (P19) —
  *    unrounded, so a vertex that survives can be compared bit for bit.
  * 2. **The call** ({@link autoReductionInput}) — spine-rigc's `reduceMesh`
- *    (`spine-rigc/mesh`, 2.19.0), refinement inside the declared regions then
+ *    (`spine-rigc/mesh`, 2.20.x), refinement inside the declared regions then
  *    reduction, every input from the config or from the source, as the
  *    contract types it (docs/MESH_REDUCTION.md §1): `art` the padded image's
  *    alpha at threshold 1 in the part-local frame with `pageScale` 1 (the
@@ -39,9 +39,11 @@
  * Geometry only: the report's rows are spine-rigc's `measureMeshQuality`
  * rows (coverage, overshoot, undercut, boundary deviation from the source
  * hull, orientation, degeneracy, the smallest angle, each region's maximum
- * edge and transition). **Deformation is unmeasured**: no pose is taken and no
- * motion is compared (stage C of spine-rigc#1221, item 3 of issue #126), and
- * the report says so in those words ({@link DEFORMATION_UNMEASURED}).
+ * edge and transition). No pose is taken here, and `buildRig`'s row says so
+ * in those words ({@link DEFORMATION_UNMEASURED}); the rig stage then measures
+ * the result's motion against this source on the idle (issue #126 item 3,
+ * `src/automotion.ts`) and writes the part only when it passes, so a written
+ * row never says unmeasured.
  *
  * ## The winding the call is handed
  *

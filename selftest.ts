@@ -187,6 +187,10 @@ import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh
 import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline } from 'spine-rigc/mesh';
 import { autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Residual, runReduction, sourceWeights, terminationText, worstRegion, worstResidual } from './src/automesh.ts';
 import { examplePolicy, squareRegion, STRIP_MASK, syntheticPolicy } from './fixtures/automesh.ts';
+import { withPolicyMotion } from './fixtures/automotion.ts';
+import { type AutoMotionCase, idleSchedule, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
+import { motionGates } from './src/build.ts';
+import { IRR_OFFSET } from 'spine-rigc/src/core/animation.ts';
 import type { AutoSpec } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
 import type { AutoMeshReport, MeshReport } from './src/rig.ts';
@@ -15413,7 +15417,7 @@ function runPublicScenes(green: ReadonlyMap<string, string>, dir: string, say: (
 function autoRigConfig(edit: (c: Record<string, unknown>, auto: Record<string, unknown>) => void = () => {}): Record<string, unknown> {
   const c = rigConfig();
   (c.bones as unknown[]).push({ name: 'soft', parent: 'body', at: [18, 14] });
-  const auto = JSON.parse(JSON.stringify(syntheticPolicy(4))) as Record<string, unknown>;
+  const auto = JSON.parse(JSON.stringify(withPolicyMotion(syntheticPolicy(4)))) as Record<string, unknown>;
   auto['x-why'] = { by: 'selftest' };
   c.meshes = { cloth: { auto, r: 8, segments: ['hem'] } };
   edit(c, auto);
@@ -15967,9 +15971,10 @@ function runAutoMeshSuite(): number {
       JSON.stringify(row13.settings.sourceBounds) === JSON.stringify(syntheticPolicy(4).sourceBounds) &&
       row13.settings.threshold === 1 &&
       row13.settings.protect.hull === false &&
+      typeof row13.deformation === 'string' &&
       row13.deformation.startsWith('unmeasured') &&
       row13.worst_residual !== null,
-    row13 === undefined ? 'no row' : `mode ${row13.mode}; deformation "${row13.deformation}"; ${row13.residuals.length} residual(s), worst ${row13.worst_residual?.code}; termination ${row13.termination.reason}; document ${doc?.spec}, operation ${doc?.operation}, poser ${String(doc?.poser)}, motion ${String(doc?.candidates?.[0]?.motion)}`,
+    row13 === undefined ? 'no row' : `mode ${row13.mode}; deformation "${String(row13.deformation)}"; ${row13.residuals.length} residual(s), worst ${row13.worst_residual?.code}; termination ${row13.termination.reason}; document ${doc?.spec}, operation ${doc?.operation}, poser ${String(doc?.poser)}, motion ${String(doc?.candidates?.[0]?.motion)}`,
     'issue #126 "Evidence and reports": effective settings, counts, residuals, worst region, termination and the measured/unmeasured split; geometry-only acceptance stays visibly geometry-only (P6)',
   );
 
@@ -15994,13 +15999,20 @@ function runAutoMeshSuite(): number {
   try {
     const fx = writeRigFixture(dir27, autoRigConfig());
     const log27: string[] = [];
-    rigStage({ config: fx.config, parts: fx.parts, out: join(dir27, 'out') }, () => ({ status: 0, out: '' }), join(dir27, 'scratch'), (l) => log27.push(l));
+    // A runner that exits 0 and writes nothing: the gate is "green" and leaves no model document, so the motion gate has
+    // no candidate to compare (issue #126 item 3) — the line says so and the stage refuses, never writing.
+    const e27 = refusals(() => rigStage({ config: fx.config, parts: fx.parts, out: join(dir27, 'out') }, () => ({ status: 0, out: '' }), join(dir27, 'scratch'), (l) => log27.push(l)));
     const line27 = log27.find((l) => l.includes('mesh cloth')) ?? '';
     say(
-      'AM27_THE_MESH_LINE_PRINTS_THE_COUNTS_THE_TERMINATION_THE_WORST_RESIDUAL_AND_THAT_DEFORMATION_IS_UNMEASURED',
-      /auto \d+\+\d+ -> \d+\+\d+ \(hull\+interior\) bindings \d+/.test(line27) && line27.includes('no-further-valid-reduction after') && line27.includes('; worst MQ_') && line27.endsWith('; deformation unmeasured'),
-      line27.trim(),
-      'issue #126 item 2: build\'s mesh line names the counts, the termination reason and the worst residual, and says what was not measured',
+      'AM27_THE_MESH_LINE_PRINTS_THE_COUNTS_THE_TERMINATION_THE_WORST_RESIDUAL_AND_WHY_MOTION_WAS_NOT_COMPARED',
+      /auto \d+\+\d+ -> \d+\+\d+ \(hull\+interior\) bindings \d+/.test(line27) &&
+        line27.includes('no-further-valid-reduction after') &&
+        line27.includes('; worst MQ_') &&
+        line27.endsWith(`; motion not compared (no candidate ${RIGC_MODEL_DOCUMENT})`) &&
+        has(e27, 'AUTO_MESH_MOTION_INPUT', AT, RIGC_MODEL_DOCUMENT) &&
+        !existsSync(join(dir27, 'out')),
+      `${line27.trim()} || ${lines(e27)}`,
+      'issue #126 items 2–3: build\'s mesh line names the counts, the termination reason and the worst residual, and what the motion gate found; a gate that leaves no model document is a refusal, not an unmeasured pass',
     );
   } finally {
     rmSync(dir27, { recursive: true, force: true });
@@ -16055,7 +16067,7 @@ function runAutoMeshExamplesSuite(): number | null {
     );
     const raw = JSON.parse(readFileSync(join(demo, 'config.json'), 'utf8')) as { meshes: Record<string, { grid: number; r: number; segments: unknown }> };
     const neck = raw.meshes.neck;
-    raw.meshes.neck = { auto: examplePolicy(neck.grid), r: neck.r, segments: neck.segments } as unknown as typeof neck;
+    raw.meshes.neck = { auto: withPolicyMotion(examplePolicy(neck.grid)), r: neck.r, segments: neck.segments } as unknown as typeof neck;
     writeFileSync(join(dir, 'config.json'), JSON.stringify(raw));
     const rigc = findRigc(ROOT, '');
     const runner: RigcRunner = (args) => {
@@ -16075,7 +16087,9 @@ function runAutoMeshExamplesSuite(): number | null {
         gate.every((l) => l.includes('exit 0')) &&
         row.source.counts !== null &&
         row.vertices < row.source.counts.boundaryVertices + row.source.counts.interiorVertices &&
-        row.residuals.filter((q) => q.bound !== null).every((q) => q.state === 'pass'),
+        row.residuals.filter((q) => q.bound !== null).every((q) => q.state === 'pass') &&
+        typeof row.deformation !== 'string' &&
+        row.deformation.verdict === 'pass',
       e !== null ? e.problems.map(problemLine).join('; ').slice(0, 1500) : `${log.find((l) => l.includes('mesh neck'))?.trim() ?? 'no mesh line'}; ${gate.map((l) => l.trim()).join(' | ')}`,
       'Part 3 of the brief: a real part through the real gate; the figures are tools/auto_survey.ts\'s table, recomputed here only as the facts a gate needs — accepted, green, reduced, every declared bound passing',
     );
@@ -16083,6 +16097,380 @@ function runAutoMeshExamplesSuite(): number | null {
     rmSync(dir, { recursive: true, force: true });
   }
   return bad();
+}
+
+// ---------------------------------------------------------------------------
+// the automatic mesh mode's motion gate (issue #126, item 3)
+// ---------------------------------------------------------------------------
+
+/** One rig stage run of the motion suite: the refusal (null on green), the printed lines, what the runner saw, and the out directory. */
+interface MotionStageRun {
+  e: PartsError | null;
+  log: string[];
+  /** Every rigc `build` call in order: its rig.json text and, when green, the model document it wrote (after any plant). */
+  builds: Array<{ rig: string; model: string | null }>;
+  /** Every rigc call's first argument, in order. */
+  calls: string[];
+  out: string;
+  rows: MeshReport[];
+}
+
+/**
+ * The rig stage over the auto fixture through the installed rigc, with an optional plant: `plant(call, doc)` edits the
+ * parsed `skeleton.model.json` of the `call`-th green build (0 = the stage's own gate, the candidate; 1 = the
+ * reference) before the stage reads it, and `fake(call)` stands in for rigc's answer to a call when it returns one.
+ */
+function motionStage(
+  dir: string,
+  config: Record<string, unknown>,
+  plant?: (call: number, doc: Record<string, unknown>) => void,
+  fake?: (call: number) => { status: number; out: string } | null,
+): MotionStageRun {
+  const fx = writeRigFixture(dir, config);
+  const rigc = findRigc(ROOT, '');
+  const builds: MotionStageRun['builds'] = [];
+  const calls: string[] = [];
+  const runner: RigcRunner = (args) => {
+    calls.push(args[0]);
+    const n = builds.length;
+    const rigPath = args[args.indexOf('--rig') + 1];
+    const faked = args[0] === 'build' ? (fake?.(n) ?? null) : null;
+    if (faked !== null) {
+      builds.push({ rig: readFileSync(rigPath, 'utf8'), model: null });
+      return faked;
+    }
+    const r = spawnSync(rigc, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
+    if (args[0] === 'build') {
+      const model = join(args[args.indexOf('--out') + 1], RIGC_MODEL_DOCUMENT);
+      let text: string | null = null;
+      if (r.status === 0 && existsSync(model)) {
+        text = readFileSync(model, 'utf8');
+        if (plant !== undefined) {
+          const doc = JSON.parse(text) as Record<string, unknown>;
+          plant(n, doc);
+          text = `${JSON.stringify(doc, null, 2)}\n`;
+          writeFileSync(model, text);
+        }
+      }
+      builds.push({ rig: readFileSync(rigPath, 'utf8'), model: text });
+    }
+    return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  };
+  const log: string[] = [];
+  const out = join(dir, 'out');
+  const e = refusals(() => rigStage({ config: fx.config, parts: fx.parts, out }, runner, join(dir, 'scratch'), (l) => log.push(l)));
+  const rows = e === null && existsSync(join(out, 'mesh_report.json')) ? (JSON.parse(readFileSync(join(out, 'mesh_report.json'), 'utf8')) as MeshReport[]) : [];
+  return { e, log, builds, calls, out, rows };
+}
+
+/** The cloth attachment of a parsed model document, as rigc writes it. */
+function clothOf(doc: Record<string, unknown>): { uvs: number[]; vertices: { bindings: Array<Array<{ bone: string; x: number; y: number; weight: number }>> } } {
+  const skins = doc.skins as Array<{ attachments: Record<string, Record<string, unknown>> }>;
+  return skins[0].attachments.cloth.cloth as ReturnType<typeof clothOf>;
+}
+
+function runAutoMotionSuite(): number {
+  section('auto-motion: the automatic mesh against its unreduced source on the idle (spine-rigc compareMeshesInMotion)');
+  const { say, bad } = counter();
+  const has = (e: PartsError | null, code: string, ...words: string[]): boolean => e !== null && e.problems.some((p) => p.code === code && words.every((w) => `${p.object} ${p.detail}`.includes(w)));
+  const lines = (e: PartsError | null): string => (e === null ? 'nothing refused' : e.problems.map(problemLine).join('; ').slice(0, 1500));
+  const AT = 'config.meshes.cloth.auto';
+  const withBounds = (motion: Record<string, unknown>): Record<string, unknown> => autoRigConfig((_c, a) => (a.motion = motion));
+  const auto = (r: MeshReport | undefined): AutoMeshReport | undefined => (r !== undefined && 'mode' in r && r.mode === 'auto' ? r : undefined);
+  const root = temp('auto-motion');
+  try {
+    // MO01 — the positive control: the fixture's cloth (two hem links the idle keys) under the policy bound, 1 rig px.
+    const pos = motionStage(join(root, 'pos'), autoRigConfig());
+    const row = auto(pos.rows[0]);
+    const def = row !== undefined && typeof row.deformation !== 'string' ? row.deformation : null;
+    const local = def?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.region === null);
+    say(
+      'MO01_AN_AUTO_PART_WHOSE_REDUCED_MESH_MOVES_WITHIN_THE_BOUND_IS_ACCEPTED_AND_WRITTEN_WITH_ITS_MOTION_ROWS',
+      pos.e === null && existsSync(join(pos.out, 'rig.json')) && def !== null && def.verdict === 'pass' && local?.state === 'pass' && (local.value ?? Infinity) <= 1 && pos.builds.length === 2 && pos.builds.every((b) => b.model !== null),
+      `${lines(pos.e)}; ${pos.log.find((l) => l.includes('mesh cloth'))?.trim() ?? 'no mesh line'}; builds ${pos.builds.length}`,
+      'issue #126 item 3: the reduced mesh is accepted only when its motion is measured and passes — two gated builds (the candidate the stage writes and the reference with the unreduced source) and spine-rigc\'s comparison of their model documents',
+    );
+
+    // MO02 — a candidate hull vertex moved 5 world units (every binding's bone-local x + 5) is caught at that vertex.
+    const moved = motionStage(join(root, 'moved'), autoRigConfig(), (call, doc) => {
+      if (call !== 0) return;
+      for (const b of clothOf(doc).vertices.bindings[0]) b.x += 5;
+    });
+    const movedUv = moved.builds[0]?.model === null || moved.builds[0] === undefined ? null : clothOf(JSON.parse(moved.builds[0].model) as Record<string, unknown>).uvs.slice(0, 2);
+    // By hand: each binding's (5, 0) turns with its bone, at most 1 + 2 = 3 degrees from the setup (the hem track's amps),
+    // so the moved vertex's sample moves at least 5 cos 3° = 4.993 from where the unplanted candidate carries it.
+    say(
+      'MO02_A_CANDIDATE_HULL_VERTEX_MOVED_PAST_THE_BOUND_IS_REFUSED_AS_MQ_LOCAL_DEFORMATION_AND_NOTHING_IS_WRITTEN',
+      has(moved.e, 'AUTO_MESH_MOTION', AT, 'MQ_LOCAL_DEFORMATION fail', 'against <= 1 at idle@') && !existsSync(moved.out) && movedUv !== null && moved.log.some((l) => l.includes('mesh cloth') && / motion \S+ > 1 at idle@/.test(l)),
+      `${lines(moved.e)}; moved vertex uv ${JSON.stringify(movedUv)}`,
+      'the moved-vertex plant spine-rigc\'s own install smoke uses (an edit inside the allowlist), here through the rig stage: refused by name and nothing written',
+    );
+    const movedValue = Number(/MQ_LOCAL_DEFORMATION fail (\S+) against/.exec(lines(moved.e))?.[1] ?? NaN);
+    say(
+      'MO03_THE_MOVED_VERTEX_READS_AT_LEAST_5_COS_3_DEGREES_LESS_THE_UNPLANTED_READING',
+      Number.isFinite(movedValue) && local?.value !== null && local !== undefined && movedValue >= 5 * Math.cos((3 * Math.PI) / 180) - (local.value ?? 0),
+      `planted ${movedValue}; unplanted ${local?.value}; floor by hand ${5 * Math.cos((3 * Math.PI) / 180)} - unplanted`,
+      'the value is the plant\'s, derived: a planted 5-unit move cannot hide under the bound or read as noise',
+    );
+
+    // MO04 — a bound of 0 on a part that moves fails, naming the frame.
+    const zero = motionStage(join(root, 'zero'), withBounds({ maxLocalDeformation: 0 }));
+    say(
+      'MO04_A_BOUND_OF_0_ON_A_PART_THE_IDLE_DEFORMS_FAILS_NAMING_THE_WORST_FRAME_AND_NOTHING_IS_WRITTEN',
+      has(zero.e, 'AUTO_MESH_MOTION', 'MQ_LOCAL_DEFORMATION fail', 'against <= 0 at idle@') && !existsSync(zero.out),
+      lines(zero.e),
+      'a reduced mesh does not carry the art exactly where its source does once the bones move (the weights are interpolated over larger triangles), so 0 cannot pass — and the refusal names where it was worst',
+    );
+
+    // MO05 — no stimulus: the idle keys only `body`, the ancestor of both hem links — one map for every bound bone.
+    const still = motionStage(
+      join(root, 'still'),
+      autoRigConfig((c) => {
+        (c.motion as Record<string, unknown>).tracks = [{ bone: 'body', prop: 'rotate', amp: 2, period: 4, phase: 0 }];
+      }),
+    );
+    say(
+      'MO05_A_PART_ONLY_A_SHARED_ANCESTORS_KEY_MOVES_IS_REFUSED_AUTO_MESH_NO_STIMULUS_BEFORE_ANY_REFERENCE_IS_COMPILED',
+      has(still.e, 'AUTO_MESH_NO_STIMULUS', AT, 'binds [hem0, hem1]', 'missing stimulus is not a PASS', 'contour or grid mode') && still.builds.length === 1 && !existsSync(still.out) && still.log.some((l) => l.endsWith('; motion not compared (no stimulus)')),
+      `${lines(still.e)}; builds ${still.builds.length}`,
+      'a rigid or affine move of every bound bone carries both meshes\' samples to the same point, so the comparison would read 0 over nothing; missing stimulus is not PASS (issue #126 item 3)',
+    );
+
+    // MO06 — the stimulus rule by hand on bone lists: a link key is a stimulus, a shared ancestor's and a lone bone's are not.
+    const bones6 = [{ name: 'root', x: 0, y: 0 }, { name: 'body', parent: 'root', x: 0, y: 0 }, { name: 'a', parent: 'body', x: 0, y: 0 }, { name: 'b', parent: 'a', x: 0, y: 0 }];
+    const motion6 = (bone: string, values: number[]): MotionSpec => ({ spec: 'rigc-motion/1', archetype: 'x', cut: 'x', easings: {}, groups: {}, animations: { idle: { duration: 1, loop: true, note: '', tracks: [{ bone, property: 'rotate', keys: values.map((v, i) => ({ t: i, v: [v] })) }] } } });
+    const s6 = {
+      link: motionStimulus(bones6, motion6('b', [0, 1]), ['a', 'b']).by,
+      parentOfAll: motionStimulus(bones6, motion6('a', [0, 1]), ['a', 'b']).by,
+      ancestor: motionStimulus(bones6, motion6('body', [0, 1]), ['a', 'b']).by,
+      lone: motionStimulus(bones6, motion6('b', [0, 1]), ['b']).by,
+      flat: motionStimulus(bones6, motion6('b', [1, 1]), ['a', 'b']).by,
+    };
+    say(
+      'MO06_THE_STIMULUS_RULE_A_KEY_MOVING_SOME_BOUND_BONES_AND_NOT_ALL_WITH_CHANGING_VALUES',
+      s6.link.join() === 'b' && s6.parentOfAll.length === 0 && s6.ancestor.length === 0 && s6.lone.length === 0 && s6.flat.length === 0,
+      JSON.stringify(s6),
+      'by the affine argument (module header of src/automotion.ts): b keyed under a moves b against a; a keyed carries b with it; a key that never changes moves nothing',
+    );
+
+    // MO07 — a config without motion, and each motion field, refused by name at the loader.
+    const load = (c: Record<string, unknown>): PartsError | null => refusals(() => parseConfig(c));
+    const noMotion = load(autoRigConfig((_c, a) => delete a.motion));
+    const bad7: Array<[string, Record<string, unknown>, string, string]> = [
+      ['no maxLocalDeformation', {}, 'CONFIG_FIELD_PRESENT', `${AT}.motion.maxLocalDeformation`],
+      ['maxLocalDeformation -1', { maxLocalDeformation: -1 }, 'CONFIG_FIELD_TYPE', `${AT}.motion.maxLocalDeformation`],
+      ['maxStretch -1', { maxLocalDeformation: 1, maxStretch: -1 }, 'CONFIG_FIELD_TYPE', `${AT}.motion.maxStretch`],
+      ['deformMayFold "yes"', { maxLocalDeformation: 1, deformMayFold: 'yes' }, 'CONFIG_FIELD_TYPE', `${AT}.motion.deformMayFold`],
+      ['an unknown key', { maxLocalDeformation: 1, warmupSteps: 3 }, 'CONFIG_KEY_KNOWN', `${AT}.motion.warmupSteps`],
+    ];
+    const got7 = bad7.map(([what, m, code, obj]) => {
+      const e = load(withBounds(m));
+      return { what, ok: e !== null && e.problems.length === 1 && e.problems[0].code === code && e.problems[0].object === obj, line: lines(e) };
+    });
+    const opt7 = load(withBounds({ maxLocalDeformation: 1, maxStretch: 2, minStretch: 0.5, deformMayFold: true }));
+    say(
+      'MO07_A_CONFIG_WITHOUT_MOTION_AND_EACH_BAD_MOTION_FIELD_ARE_REFUSED_BY_NAME_AT_THE_LOADER',
+      noMotion !== null && noMotion.problems.length === 1 && noMotion.problems[0].code === 'CONFIG_FIELD_PRESENT' && noMotion.problems[0].object === `${AT}.motion` && got7.every((g) => g.ok) && opt7 === null,
+      `no motion: ${lines(noMotion)} || ${got7.map((g) => `${g.what}: ${g.line}`).join(' || ').slice(0, 1500)}; every optional field: ${lines(opt7)}`,
+      '"geometry only" is not a production acceptance: motion is required on an auto mesh, maxLocalDeformation inside it, and a warm-up is not a field an author can set (P10)',
+    );
+
+    // MO08 — a spec past the loader without motion reaches the stage's gate and is refused by the same code, with no build.
+    const cfg8 = parseConfig(autoRigConfig());
+    const spec8 = (cfg8.meshes.cloth as { auto: AutoSpec }).auto;
+    delete spec8.motion;
+    const rig8 = buildRig(cfg8, rigParts(), rigImages());
+    let calls8 = 0;
+    const runs8 = motionGates(rig8, [], [], null, () => ((calls8 += 1), { status: 0, out: '' }), join(root, 'mo08'), DEFAULT_PACK_MODE);
+    say(
+      'MO08_A_SPEC_WITHOUT_MOTION_BUILT_IN_CODE_IS_REFUSED_CONFIG_FIELD_PRESENT_AT_THE_RIG_STAGE_WITH_NO_BUILD',
+      runs8.length === 1 && runs8[0].problems.length === 1 && runs8[0].problems[0].code === 'CONFIG_FIELD_PRESENT' && runs8[0].problems[0].object === `${AT}.motion` && calls8 === 0,
+      runs8.map((r) => r.problems.map(problemLine).join('; ')).join(' | '),
+      'the type keeps motion optional only so buildRig (geometry) can run on a policy without it; nothing written ever skips the motion gate',
+    );
+
+    // MO09 — warmupSteps: the schedule sent is 0 and nothing else; a 1, planted in the call, is spine-rigc's refusal carried by code.
+    const cand = pos.builds[0]?.model ?? '';
+    const ref = pos.builds[1]?.model ?? '';
+    const case9 = pos.e === null ? motionCaseOf(autoRigConfig()) : null;
+    const sent = pos.rows.length > 0 ? ((auto(pos.rows[0])?.motion_report as { effective?: { schedule?: { physics?: { warmupSteps?: unknown } } } } | undefined)?.effective?.schedule?.physics?.warmupSteps ?? 'absent') : 'absent';
+    const planted9 =
+      case9 === null
+        ? null
+        : runComparison(AT, motionInput(case9, { maxLocalDeformation: 1 }, ref, cand, { ...idleSchedule(), physics: { mode: 'step', dt: 1 / IDLE_FPS, warmupSteps: 1 as unknown as 0 } }));
+    say(
+      'MO09_WARMUP_STEPS_OTHER_THAN_0_IS_NEVER_SENT_AND_A_PLANTED_ONE_IS_REFUSED_COMPARE_WARMUP_UNSUPPORTED',
+      sent === 0 && idleSchedule().physics.mode === 'step' && (idleSchedule().physics as { warmupSteps: number }).warmupSteps === 0 && planted9 !== null && 'code' in planted9 && planted9.code === 'AUTO_MESH_MOTION_INPUT' && planted9.detail.includes('COMPARE_WARMUP_UNSUPPORTED'),
+      `sent warmupSteps ${String(sent)}; planted 1 -> ${planted9 === null ? 'not run' : 'code' in planted9 ? problemLine(planted9).slice(0, 400) : 'a report'}`,
+      'P10: no warm-up exists; the one schedule this package builds says 0, and rigc refuses any other value by name, which the stage carries',
+    );
+
+    // MO10 — the schedule is check's: the idle at IDLE_FPS, grid ids i/12 for i = 0..round(4 x 12), irr ids (i + IRR_OFFSET)/12, by definition.
+    const walked = ((auto(pos.rows[0])?.motion_report as { candidates?: Array<{ motion?: { schedule?: { walked?: Array<{ id: string; role: string }> } } }> } | undefined)?.candidates?.[0]?.motion?.schedule?.walked ?? []);
+    const count = Math.round(4 * IDLE_FPS);
+    const want10 = [
+      ...Array.from({ length: count + 1 }, (_v, i) => ({ phase: 'grid', t: i / IDLE_FPS })),
+      ...Array.from({ length: count }, (_v, i) => ({ phase: 'irr', t: (i + IRR_OFFSET) / IDLE_FPS })),
+    ];
+    const ok10 =
+      walked.length === want10.length &&
+      walked.every((f, i) => {
+        const [anim, phase, t] = f.id.split('@');
+        return anim === 'idle' && phase === want10[i].phase && Math.abs(Number(t) - want10[i].t) <= 5e-7 && f.role === 'held-out';
+      });
+    say(
+      'MO10_THE_SCHEDULE_IS_THE_IDLE_AS_CHECK_RENDERS_IT_49_GRID_FRAMES_AT_I_OVER_12_AND_48_OFF_GRID_ALL_HELD_OUT',
+      ok10 && def?.schedule.frames.grid === count + 1 && def.schedule.frames.irr === count && def.schedule.fps === IDLE_FPS && def.schedule.held_out && def.schedule.selection.length === 0,
+      `walked ${walked.length} (by hand ${count + 1} grid + ${count} irr); first ${walked[0]?.id}, last grid ${walked[count]?.id}, first irr ${walked[count + 1]?.id}`,
+      'check renders `rigc render --animation idle --fps IDLE_FPS`, which poses i / fps for i = 0..round(duration x fps); the off-grid phase is frames the render never selected, and nothing chose a candidate by motion, so every frame is held out',
+    );
+
+    // MO11 — determinism: a second run writes the same bytes.
+    const again = motionStage(join(root, 'again'), autoRigConfig());
+    const same = (f: string): boolean => existsSync(join(pos.out, f)) && existsSync(join(again.out, f)) && readFileSync(join(pos.out, f), 'utf8') === readFileSync(join(again.out, f), 'utf8');
+    say(
+      'MO11_TWO_RUNS_WRITE_THE_SAME_RIG_JSON_AND_MESH_REPORT_JSON_TO_THE_BYTE',
+      same('rig.json') && same('mesh_report.json') && pos.builds[1]?.model === again.builds[1]?.model,
+      `rig.json ${same('rig.json')}, mesh_report.json ${same('mesh_report.json')}, reference model ${pos.builds[1]?.model === again.builds[1]?.model}`,
+      'determinism is a contract: the comparison\'s document inside the row included',
+    );
+
+    // MO12 — the reference and the candidate differ only in the cloth attachment; a second difference is rigc's refusal, carried.
+    const rigOf = (k: number): Record<string, unknown> => JSON.parse(pos.builds[k]?.rig ?? '{}') as Record<string, unknown>;
+    const strip = (r: Record<string, unknown>): string => {
+      const c = JSON.parse(JSON.stringify(r)) as { skins?: { default?: Record<string, unknown> } };
+      if (c.skins?.default !== undefined) delete c.skins.default.cloth;
+      return JSON.stringify(c);
+    };
+    const differs = JSON.stringify((rigOf(0).skins as { default: Record<string, unknown> } | undefined)?.default.cloth) !== JSON.stringify((rigOf(1).skins as { default: Record<string, unknown> } | undefined)?.default.cloth);
+    const doc12 = JSON.parse(cand === '' ? '{}' : cand) as { bones?: Array<{ x: number }> };
+    if (doc12.bones !== undefined) doc12.bones[1].x += 1;
+    const second = case9 === null ? null : runComparison(AT, motionInput(case9, { maxLocalDeformation: 1 }, ref, `${JSON.stringify(doc12, null, 2)}\n`));
+    say(
+      'MO12_REFERENCE_AND_CANDIDATE_RIGS_DIFFER_ONLY_IN_THE_COMPARED_ATTACHMENT_AND_A_PLANTED_SECOND_DIFFERENCE_IS_COMPARE_INPUTS_DIFFER',
+      pos.builds.length === 2 && strip(rigOf(0)) === strip(rigOf(1)) && differs && second !== null && 'code' in second && second.code === 'AUTO_MESH_MOTION_INPUT' && second.detail.includes('COMPARE_INPUTS_DIFFER') && second.detail.includes('bones["body"].x'),
+      `rig.json outside skins.default.cloth identical: ${strip(rigOf(0)) === strip(rigOf(1))}; cloth differs: ${differs}; a moved body bone -> ${second === null ? 'not run' : 'code' in second ? problemLine(second).slice(0, 400) : 'a report'}`,
+      'correction 5: one RigSpec with one attachment swapped; anything else confounds the comparison and rigc refuses it by name',
+    );
+
+    // MO13 — a reference that fails its own art bounds is rigc's COMPARE_REFERENCE_FAILS, carried.
+    const doc13 = JSON.parse(ref === '' ? '{}' : ref) as Record<string, unknown>;
+    if (ref !== '') {
+      const uv = clothOf(doc13).uvs;
+      for (let k = 0; k < uv.length; k++) uv[k] = 0.5 + (uv[k] - 0.5) / 2;
+    }
+    const refFails = case9 === null || ref === '' ? null : runComparison(AT, motionInput(case9, { maxLocalDeformation: 1 }, `${JSON.stringify(doc13, null, 2)}\n`, cand));
+    say(
+      'MO13_A_REFERENCE_THAT_FAILS_ITS_OWN_ART_FIT_IS_COMPARE_REFERENCE_FAILS_CARRIED_AS_AUTO_MESH_MOTION_INPUT',
+      refFails !== null && 'code' in refFails && refFails.code === 'AUTO_MESH_MOTION_INPUT' && refFails.detail.includes('COMPARE_REFERENCE_FAILS') && refFails.detail.includes('MQ_COVERAGE'),
+      refFails === null ? 'not run' : 'code' in refFails ? problemLine(refFails).slice(0, 500) : 'a report',
+      'P8: a deviation from a reference that does not carry its own art is not evidence (its UVs halved about the centre: half the art uncovered)',
+    );
+
+    // MO14 — a reference rigc's gate refuses is the part's refusal; nothing written.
+    const refRed = motionStage(join(root, 'refred'), autoRigConfig(), undefined, (call) => (call === 1 ? { status: 1, out: '  FAIL  A13_PLANTED: the reference refused by a planted gate\n' } : null));
+    say(
+      'MO14_A_REFERENCE_THE_GATE_REFUSES_IS_AUTO_MESH_MOTION_INPUT_NAMING_ITS_FAIL_LINE_AND_NOTHING_IS_WRITTEN',
+      has(refRed.e, 'AUTO_MESH_MOTION_INPUT', AT, 'unreduced source mesh', 'A13_PLANTED') && !existsSync(refRed.out) && refRed.log.some((l) => l.includes('reference "cloth"') && l.endsWith('exit 1')),
+      lines(refRed.e),
+      'the reference is independently gated (P8): rigc\'s build runs on it as on the candidate, and a red one is not compared against',
+    );
+
+    // MO15 — deformMayFold: a planted fold (vertex 0 hung from both links with offsets +-4000 along x that cancel at setup).
+    const fold = (call: number, doc: Record<string, unknown>): void => {
+      if (call !== 0) return;
+      const v = clothOf(doc).vertices.bindings[0];
+      const a = v.find((b) => b.bone === 'hem0');
+      const b = v.find((b2) => b2.bone === 'hem1');
+      if (a === undefined || b === undefined) return;
+      v.splice(0, v.length, { bone: 'hem0', x: a.x + 4000, y: a.y, weight: 0.5 }, { bone: 'hem1', x: b.x - 4000, y: b.y, weight: 0.5 });
+    };
+    const loose = { maxLocalDeformation: 1e6 };
+    const foldNo = motionStage(join(root, 'fold-no'), withBounds(loose), fold);
+    const foldYes = motionStage(join(root, 'fold-yes'), withBounds({ ...loose, deformMayFold: true }), fold);
+    const yesRow = auto(foldYes.rows[0]);
+    const inv = yesRow !== undefined && typeof yesRow.deformation !== 'string' ? yesRow.deformation.rows.find((r) => r.code === 'MQ_INVERSION') : undefined;
+    const folds = ((yesRow?.motion_report as { candidates?: Array<{ motion?: { rows?: Array<{ code: string; motion?: { folds?: unknown[] } }> } }> } | undefined)?.candidates?.[0]?.motion?.rows ?? []).find((r) => r.code === 'MQ_INVERSION')?.motion?.folds ?? [];
+    const mayFoldRig = existsSync(join(foldYes.out, 'rig.json')) ? (JSON.parse(readFileSync(join(foldYes.out, 'rig.json'), 'utf8')) as { invariants?: { deformMayFold?: Array<{ slot: string }> } }) : null;
+    say(
+      'MO15_DEFORM_MAY_FOLD_TRUE_LETS_A_PLANTED_FOLD_THROUGH_MQ_INVERSION_LISTED_AND_FALSE_REFUSES_IT',
+      has(foldNo.e, 'AUTO_MESH_MOTION', 'MQ_INVERSION fail') &&
+        !existsSync(foldNo.out) &&
+        foldYes.e === null &&
+        inv?.state === 'undeclared' &&
+        (inv.value ?? 0) >= 1 &&
+        folds.length >= 1 &&
+        mayFoldRig?.invariants?.deformMayFold?.[0]?.slot === 'cloth',
+      `false: ${lines(foldNo.e)}; true: ${lines(foldYes.e)}, MQ_INVERSION ${inv?.state} ${inv?.value}, ${folds.length} fold(s) listed`,
+      'a permitted fold stays visible (contract §3): the slot is declared in invariants.deformMayFold, the row holds no bound and keeps its count; without the declaration the same fold refuses the part',
+    );
+    const plainRig = existsSync(join(pos.out, 'rig.json')) ? readFileSync(join(pos.out, 'rig.json'), 'utf8') : '';
+    say(
+      'MO16_INVARIANTS_DEFORM_MAY_FOLD_IS_WRITTEN_ONLY_WHEN_THE_AUTHOR_SET_IT',
+      plainRig !== '' && !plainRig.includes('deformMayFold') && mayFoldRig !== null,
+      `default rig.json mentions deformMayFold: ${plainRig.includes('deformMayFold')}; with the flag: ${JSON.stringify(mayFoldRig?.invariants?.deformMayFold)}`,
+      'no rig moves a byte for a field it did not set',
+    );
+
+    // MO17 — the row: the motion rows, the schedule, and the whole compare document after quality_report, keys in order.
+    const keys17 = row === undefined ? [] : Object.keys(row);
+    const doc17 = row?.motion_report as { operation?: string; motionRequired?: boolean; poser?: { kind?: string; rigcVersion?: string } } | undefined;
+    const rigcVersion = (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'spine-rigc', 'package.json'), 'utf8')) as { version: string }).version;
+    say(
+      'MO17_THE_ROW_CARRIES_THE_MOTION_ROWS_THE_SCHEDULE_AND_THE_COMPARE_DOCUMENT_AFTER_QUALITY_REPORT',
+      keys17.slice(-3).join() === 'deformation,quality_report,motion_report' &&
+        def !== null &&
+        def.rows.map((r) => r.code).join() === 'MQ_INVERSION,MQ_LOCAL_DEFORMATION,MQ_SQUASH,MQ_STRETCH' &&
+        local !== undefined &&
+        local.worst_frame !== null &&
+        (local.samples ?? 0) > (local.art_samples ?? 0) &&
+        doc17?.operation === 'compare' &&
+        doc17.motionRequired === true &&
+        doc17.poser?.kind === 'core' &&
+        doc17.poser.rigcVersion === rigcVersion,
+      `keys ...${keys17.slice(-3).join(',')}; rows ${def?.rows.map((r) => `${r.code} ${r.state} ${r.value}`).join(', ')}; local samples ${local?.samples} (art ${local?.art_samples}); document ${doc17?.operation}, poser ${doc17?.poser?.kind} ${doc17?.poser?.rigcVersion}`,
+      'issue #126 "Evidence and reports": worst value, worst frame, sample counts, the schedule walked and the whole document; the reference hull UVs are samples beside the art pixels',
+    );
+
+    // MO18 — the build line.
+    const line18 = pos.log.find((l) => l.includes('mesh cloth')) ?? '';
+    const m18 = / motion (\S+) <= 1 at (idle@\S+)$/.exec(line18);
+    say(
+      'MO18_THE_MESH_LINE_ENDS_MOTION_VALUE_LE_BOUND_AT_FRAME_AS_THE_ROW_HOLDS_THEM',
+      m18 !== null && Number(m18[1]) === local?.value && m18[2] === local.worst_frame && pos.log.some((l) => l.includes('reference "cloth"') && l.endsWith('exit 0')),
+      line18.trim(),
+      'the build line adds `motion <value> <= <bound> at <frame>`, and the reference build\'s gate is printed beside the candidate\'s',
+    );
+
+    // MO19 — stretch bounds: absent, reported and not gated; declared at 1 both ways, a skinned bend that is not rigid fails one by name.
+    const stretched = case9 === null ? null : runComparison(AT, motionInput(case9, { maxLocalDeformation: 1, maxStretch: 1, minStretch: 1 }, ref, cand));
+    const v19 = stretched === null || 'code' in stretched ? null : motionVerdict(AT, stretched);
+    const undeclared = def?.rows.filter((r) => r.code === 'MQ_STRETCH' || r.code === 'MQ_SQUASH').every((r) => r.state === 'undeclared' && r.bound === null) ?? false;
+    say(
+      'MO19_STRETCH_BOUNDS_ABSENT_ARE_REPORTED_NOT_GATED_AND_DECLARED_THEY_GATE_BY_NAME',
+      undeclared && v19 !== null && v19.code === 'AUTO_MESH_MOTION' && (v19.detail.includes('MQ_STRETCH fail') || v19.detail.includes('MQ_SQUASH fail')),
+      `absent: ${def?.rows.filter((r) => r.code === 'MQ_STRETCH' || r.code === 'MQ_SQUASH').map((r) => `${r.code} ${r.state} ${r.value}`).join(', ')}; declared 1/1: ${v19 === null ? 'accepted or not run' : problemLine(v19).slice(0, 400)}`,
+      'the contract\'s own rule: a row with no declared bound is undeclared and never counts as a pass; a triangle blended between two turning bones is not a rotation, so a 1/1 bound cannot hold',
+    );
+
+    // MO20 — legacy: a lattice part costs one build and writes the row it always wrote.
+    const lat = motionStage(join(root, 'lattice'), rigConfig());
+    const latRow = lat.rows[0] as unknown as Record<string, unknown> | undefined;
+    say(
+      'MO20_A_LATTICE_RIG_RUNS_ONE_BUILD_PRINTS_NO_REFERENCE_AND_ITS_ROW_HAS_NO_MOTION_FIELD',
+      lat.e === null && lat.builds.length === 1 && !lat.log.some((l) => l.includes('reference')) && latRow !== undefined && !('deformation' in latRow) && !('motion_report' in latRow),
+      `${lines(lat.e)}; builds ${lat.builds.length}; row keys ${latRow === undefined ? 'none' : Object.keys(latRow).join(',')}`,
+      'existing inputs behave as before: no motion gate where no part is auto (the example builds\' byte identity is the pull request\'s table)',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return bad();
+}
+
+/** The motion case `buildRig` makes for the fixture's cloth under `config`, for calls made straight to the comparison. */
+function motionCaseOf(config: Record<string, unknown>): AutoMotionCase | null {
+  return buildRig(parseConfig(config), rigParts(), rigImages()).autoMotion[0] ?? null;
 }
 
 /**
@@ -16279,6 +16667,7 @@ const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number 
   ['contour-wiring', runContourWiringSuite],
   ['auto-mesh', runAutoMeshSuite],
   ['auto-mesh-examples', runAutoMeshExamplesSuite],
+  ['auto-motion', runAutoMotionSuite],
   ['winding', runWindingSuite],
   ['propose', runProposeSuite],
   ['keypoints', runKeypointsSuite],
@@ -16320,7 +16709,7 @@ const TALLY_SUITE = 'run-tally';
  * (`dispatchOrder`), because a misspelt name would quietly cost the time it
  * exists to buy.
  */
-const STARTED_FIRST: readonly string[] = ['readme-loop', 'chain', 'build', 'check', 'scene', 'assemble-examples', 'propose', 'rig', 'auto-mesh-examples', 'auto-mesh'];
+const STARTED_FIRST: readonly string[] = ['readme-loop', 'chain', 'build', 'check', 'scene', 'assemble-examples', 'propose', 'rig', 'auto-mesh-examples', 'auto-motion', 'auto-mesh'];
 
 /** The argument that makes this file run one suite as a worker, for the parent run, and nothing else. */
 const WORKER_FLAG = '--suite-worker';

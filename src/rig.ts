@@ -85,6 +85,7 @@ import { type AutoSpec, type BoneEntry, type CharacterConfig, type ConfigConstra
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import type { MeshCounts, Termination } from 'spine-rigc/mesh';
+import { type AutoMotionCase, DEFORM_MAY_FOLD_WHY, type MotionDeformation } from './automotion.ts';
 import {
   autoReductionInput,
   autoSource,
@@ -240,7 +241,7 @@ export interface RigSpec {
    * the idle keys a mesh-driving bone. `detached`: written only when a
    * constraint follows a bone ({@link detachedRules}).
    */
-  invariants?: { idleDrivesMeshes?: { why: string }; detached?: DetachedRule[] };
+  invariants?: { idleDrivesMeshes?: { why: string }; detached?: DetachedRule[]; deformMayFold?: Array<{ slot: string; why: string }> };
 }
 
 /** One `invariants.detached` entry: spine-rigc's `RigDetachedRule`, checked by its gate rule `A25`. */
@@ -380,7 +381,7 @@ export interface ContourMeshReport {
  * result's counts; every residual, the worst one and the worst region; the
  * termination; what the weights lost to the 5-place rounding; per region the
  * source vertices its bone reaches and holds alone and the result vertices
- * bound to it; `deformation`, which says it is unmeasured; and the whole
+ * bound to it; `deformation` (below); and the whole
  * `mesh-quality-report/1` document spine-rigc wrote — inside the row rather
  * than beside it, so the rig stage stays pure and one file holds every part's
  * evidence, as it does for the other modes. `art_coverage` is over alpha above
@@ -416,8 +417,17 @@ export interface AutoMeshReport {
   termination: Termination;
   weights: { sharesDroppedOnGrid: number; sharesPruned: number; droppedAtFivePlaces: number };
   regions: Array<{ name: string; bone: string; reached: number; whole: number; bound_in_result: number }>;
-  deformation: string;
+  /**
+   * {@link DEFORMATION_UNMEASURED} as `buildRig` writes the row — it measures
+   * geometry alone; the rig stage replaces it with the motion gate's rows
+   * (`src/automotion.ts`) before anything is written, and adds
+   * `motion_report`, spine-rigc's whole `compare` document, after
+   * `quality_report`. A written row never says unmeasured: a part whose motion
+   * was not measured and passed is refused.
+   */
+  deformation: string | MotionDeformation;
   quality_report: unknown;
+  motion_report?: unknown;
 }
 
 export interface RigOutput {
@@ -433,6 +443,8 @@ export interface RigOutput {
   idleKeys: IdleKeys;
   /** The one-loop passes each mesh took, for the printed report. */
   loopPasses: Record<string, number>;
+  /** Per automatic mesh, in parts.json order: what the rig stage's motion gate compares (`src/automotion.ts`). Nothing written. */
+  autoMotion: AutoMotionCase[];
 }
 
 /**
@@ -770,6 +782,7 @@ export function buildRig(
   const meshReport: MeshReport[] = [];
   const outImages: Array<[string, Raster]> = [];
   const loopPasses: Record<string, number> = {};
+  const autoMotion: AutoMotionCase[] = [];
   // A region's centre in its bone's setup frame; on a turned bone the image
   // is turned back by the bone's world rotation, so it is drawn upright.
   const region = (image: string, bone: string, cx: number, cy: number): RegionAttachment => {
@@ -879,7 +892,7 @@ export function buildRig(
     r: number,
     segs: Segment[],
     out: Problem[],
-  ): { attachment: MeshAttachment; report: AutoMeshReport } | null => {
+  ): { attachment: MeshAttachment; report: AutoMeshReport; motion: AutoMotionCase } | null => {
     const ox = p.x - PAD;
     const oy = p.y - PAD;
     const w = img.width;
@@ -915,28 +928,37 @@ export function buildRig(
       return null;
     }
     const mesh = verdict.mesh;
-    const weights: WeightEntry[][] = [];
-    let infl = 0;
-    let maxInfl = 0;
-    let droppedAtFivePlaces = 0;
-    const boundTo = regions.map(() => 0);
-    mesh.points.forEach(([vx, vy], vi) => {
-      const wx = vx + ox;
-      const wy = vy + oy;
-      const list = (mesh.weights as Array<Array<{ bone: string; weight: number }>>)[vi];
-      const shares = roundShares(list);
-      droppedAtFivePlaces += list.length - shares.length;
-      regions.forEach((rg, k) => {
-        if (shares.some((s) => s.bone === rg.bone)) boundTo[k]++;
+    // One binding for the result and for the source the motion gate compares it with: rounded by roundShares, bound in each bone's frame.
+    const bind = (points: ReadonlyArray<readonly [number, number]>, lists: ReadonlyArray<ReadonlyArray<{ bone: string; weight: number }>>) => {
+      const weights: WeightEntry[][] = [];
+      let infl = 0;
+      let maxInfl = 0;
+      let droppedAtFivePlaces = 0;
+      const boundTo = regions.map(() => 0);
+      points.forEach(([vx, vy], vi) => {
+        const wx = vx + ox;
+        const wy = vy + oy;
+        const list = lists[vi];
+        const shares = roundShares(list);
+        droppedAtFivePlaces += list.length - shares.length;
+        regions.forEach((rg, k) => {
+          if (shares.some((s) => s.bone === rg.bone)) boundTo[k]++;
+        });
+        const ent: WeightEntry[] = shares.map(({ bone, weight }) => {
+          const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
+          return { bone, x: places(x), y: places(y), weight };
+        });
+        weights.push(ent);
+        infl += ent.length;
+        maxInfl = Math.max(maxInfl, ent.length);
       });
-      const ent: WeightEntry[] = shares.map(({ bone, weight }) => {
-        const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
-        return { bone, x: places(x), y: places(y), weight };
-      });
-      weights.push(ent);
-      infl += ent.length;
-      maxInfl = Math.max(maxInfl, ent.length);
-    });
+      return { weights, infl, maxInfl, droppedAtFivePlaces, boundTo };
+    };
+    const { weights, infl, maxInfl, droppedAtFivePlaces, boundTo } = bind(mesh.points, mesh.weights as Array<Array<{ bone: string; weight: number }>>);
+    // The reference of the motion gate (src/automotion.ts): the source exactly as reduceMesh was handed it — its UVs, its
+    // triangles in that winding, its hull — and its own weights, bound as the result's are.
+    const srcBound = bind(source.vertices, sw.weights);
+    const reference: MeshAttachment = { type: 'mesh', image: file, width: w, height: h, uvs: [...input.source.uvs], triangles: [...input.source.triangles], hull: input.source.hull, weights: srcBound.weights };
     const reached = regions.map(() => 0);
     const whole = regions.map(() => 0);
     if ('local' in sw) {
@@ -952,7 +974,20 @@ export function buildRig(
     const bones = new Set(segs.map((s) => s.bone));
     for (const rg of regions) bones.add(rg.bone);
     const pro = input.protect;
+    const motion: AutoMotionCase = {
+      part: p.name,
+      object,
+      motion: spec.motion,
+      reference,
+      mask,
+      sourceBounds: input.sourceBounds,
+      artFit: input.targets.artFit,
+      minArtSamples: input.minArtSamples,
+      regions: input.targets.regions.map((rg, k) => ({ name: rg.name, polygon: rg.polygon.map(([x, y]) => [x, y] as [number, number]), minArtSamples: regions[k].minArtSamples })),
+      boundBones: [...new Set(srcBound.weights.flatMap((v) => v.map((e) => e.bone)))].sort(),
+    };
     return {
+      motion,
       attachment: { type: 'mesh', image: file, width: w, height: h, uvs: [...mesh.uvs], triangles: [...mesh.triangles], hull: mesh.hull, weights },
       report: {
         part: p.name,
@@ -1039,6 +1074,7 @@ export function buildRig(
       skin[p.name] = { [p.name]: row.attachment };
       slots.push({ name: p.name, bone: segs[0].bone, attachment: p.name });
       meshReport.push(row.report);
+      autoMotion.push(row.motion);
       continue;
     }
     if ('contour' in mesh) {
@@ -1109,7 +1145,10 @@ export function buildRig(
   const detached = detachedRules(cfg.constraints ?? []);
   if (idleKeys === 'direct' && meshKeyed.length > 0) rig.invariants = { idleDrivesMeshes: { why: IDLE_DRIVES_MESHES_WHY } };
   if (detached.length > 0) rig.invariants = { ...rig.invariants, detached };
-  return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses };
+  // issue #126 item 3: an automatic part whose author set motion.deformMayFold — written only then, so no other rig moves.
+  const mayFold = autoMotion.filter((c) => c.motion?.deformMayFold === true).map((c) => ({ slot: c.part, why: DEFORM_MAY_FOLD_WHY }));
+  if (mayFold.length > 0) rig.invariants = { ...rig.invariants, deformMayFold: mayFold };
+  return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses, autoMotion };
 }
 
 /**
