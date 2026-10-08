@@ -36,10 +36,10 @@
  *
  * Coordinates in `bones`, `meshes` and `motion` are RIG pixels, y down, origin
  * top-left — the parts' own space. The y flip to Spine happens once, in
- * `spine-rigc/src/transform.ts` (see `src/coords.ts`), when the rig is built.
+ * `rig-c/src/transform.ts` (see `src/coords.ts`), when the rig is built.
  *
- * 🔗 **`constraints` is spine-rigc's, verbatim (issue #92).** An optional list
- * of constraint objects in spine-rigc's own rig-spec shape (`RigConstraint`:
+ * 🔗 **`constraints` is rig-c's, verbatim (issue #92).** An optional list
+ * of constraint objects in rig-c's own rig-spec shape (`RigConstraint`:
  * `ik`, `transform`, `path`, `physics`, `slider`), handed to rigc as
  * `rig.json`'s `constraints` in the order written. The loader owns four things
  * and nothing else: the list is a list of objects; each has a `type` rigc's
@@ -49,14 +49,14 @@
  * `buildRigConstraint` — is a bone `bones` declares; and a bone a constraint
  * follows does not move with the bones it drives ({@link checkConstraints}).
  * Every other field, its type and its range — an ik's `bones` as a shape
- * included (spine-rigc 2.15.0, issue #103) — are rigc's to refuse, at the rig
+ * included (rig-c 2.15.0, issue #103) — are rigc's to refuse, at the rig
  * stage's gate, in rigc's words. A record
  * (`x-…`) and an annotation (`note`, `…_note`) ride on a constraint as on any
  * object the loader vouches for, and the rig stage leaves them out of what it
  * hands rigc ({@link constraintForRig}).
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { RIG_SKIN_CONSTRAINT_KEYS, type RigConstraint, type RigSkinConstraintKey } from 'spine-rigc/src/rig.ts';
+import { RIG_SKIN_CONSTRAINT_KEYS, type RigConstraint, type RigSkinConstraintKey } from 'rig-c/src/rig.ts';
 import { GRID, MAX_SIDE } from './contour.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { acceptedTagNames, readTag } from './tags.ts';
@@ -175,12 +175,12 @@ export type Segment = string | [string, Point, Point];
  *
  * - `grid`: the lattice (`src/mesh.ts`), as it has always been — every byte it
  *   writes is unchanged by the second mode existing.
- * - `contour`: the part's alpha outline through spine-rigc's tracer, with
+ * - `contour`: the part's alpha outline through rig-c's tracer, with
  *   interior vertices placed where they are declared (`src/contour.ts`), and
  *   local deformation regions weighted to their own bones
  *   (`src/localweights.ts`).
  * - `auto`: the contour mesh at alpha 1 and above as the source, reduced and
- *   locally refined by spine-rigc's `reduceMesh` under the author's declared
+ *   locally refined by rig-c's `reduceMesh` under the author's declared
  *   bounds (`src/automesh.ts`).
  */
 export type MeshSpec = LatticeMeshSpec | ContourMeshSpec | AutoMeshSpec;
@@ -205,9 +205,9 @@ export interface ContourMeshSpec {
  * `check`'s; it is not a field.
  */
 export interface ContourSpec {
-  /** spine-rigc's Douglas–Peucker tolerance on the traced outline, px, 0 or more. */
+  /** rig-c's Douglas–Peucker tolerance on the traced outline, px, 0 or more. */
   tolerance: number;
-  /** spine-rigc's outward offset of the simplified outline, px, 0 or more. */
+  /** rig-c's outward offset of the simplified outline, px, 0 or more. */
   margin: number;
   /** The background interior spacing, px, above 0. */
   spacing: number;
@@ -232,11 +232,11 @@ export type ContourRegionSpec =
 
 /**
  * One mesh in the automatic mode (issue #126, item 2): the contour mesh over
- * the part at alpha 1 and above is the source, and spine-rigc's `reduceMesh`
- * (`spine-rigc/mesh`, 2.20.x) refines it inside the declared regions and
+ * the part at alpha 1 and above is the source, and rig-c's `reduceMesh`
+ * (`rig-c/mesh`, 2.20.x) refines it inside the declared regions and
  * removes what the declared bounds allow (`src/automesh.ts`); the result is
  * kept only when its motion passes `motion` (`src/automotion.ts`). Every quality
- * input is a number the author wrote, named as spine-rigc's contract
+ * input is a number the author wrote, named as rig-c's contract
  * (docs/MESH_REDUCTION.md) names it; none has a default inside this package
  * but the two the agreement fixed for parts's policy — `protect.hull` is false
  * when absent (P20) — and the lists of `protect`, which are empty when absent,
@@ -279,7 +279,7 @@ export interface AutoSpec {
 }
 
 /**
- * `meshes.<part>.auto.motion` — what spine-rigc's `compareMeshesInMotion`
+ * `meshes.<part>.auto.motion` — what rig-c's `compareMeshesInMotion`
  * holds the reduced mesh to against its unreduced source on the idle:
  * `maxLocalDeformation` in rig px (the rig's world units: its bones carry no
  * scale), required; `maxStretch` / `minStretch` (ratios) gate only when
@@ -303,7 +303,7 @@ export interface ArtFitBoundsSpec {
 /**
  * A density region of the automatic mode: a shape and a control bone as a
  * contour region has them, the bone's weight `band` (the same falloff,
- * `src/localweights.ts`), and the density spine-rigc holds the mesh to (§5 of
+ * `src/localweights.ts`), and the density rig-c holds the mesh to (§5 of
  * its contract): every edge meeting the region at most `maxEdgeLength` px
  * (L0), relaxing as `L0 + grade·d` across `transition` px outside it, and the
  * region's art sample floor (P9). Coordinates and `band` are multiples of
@@ -366,7 +366,7 @@ export interface Motion {
 }
 
 /**
- * One entry of `config.constraints`: a constraint in spine-rigc's rig-spec
+ * One entry of `config.constraints`: a constraint in rig-c's rig-spec
  * shape. The loader vouches for `type`, `name` and the bone names in the
  * fields {@link CONSTRAINT_BONE_FIELDS} lists; every other field is carried
  * unread and is rigc's to accept or refuse.
@@ -390,14 +390,14 @@ export interface CharacterConfig {
   constraints?: ConfigConstraint[];
 }
 
-/** The fields of one constraint kind, as spine-rigc's interface for that kind declares them. */
+/** The fields of one constraint kind, as rig-c's interface for that kind declares them. */
 type ConstraintField<K extends RigSkinConstraintKey> = Exclude<keyof Extract<RigConstraint, { type: K }>, number | symbol>;
 
 /**
- * 🔒 The bone-bearing fields of each of spine-rigc's five constraint kinds,
+ * 🔒 The bone-bearing fields of each of rig-c's five constraint kinds,
  * and whether each holds one bone name or a list of them — the one table this
  * package keeps of rigc's constraint shapes, and only of the fields that name
- * a bone. Read off `buildRigConstraint` in spine-rigc 2.10.1
+ * a bone. Read off `buildRigConstraint` in rig-c 2.10.1
  * (`src/compile.ts`), where each is resolved with its `needBone` (the ik's
  * `bones` and `target`, the transform's `bones` and `source`, the path's
  * `bones`, the physics constraint's `bone`, the slider's optional `bone`); a
@@ -1159,7 +1159,7 @@ function checkContour(c: Check, at: string, v: Json, bones: Set<string>): void {
 
 /**
  * `meshes.<part>.auto` (issue #126, item 2). Every number is required and
- * read as spine-rigc's contract types it (docs/MESH_REDUCTION.md §1, §5, §6):
+ * read as rig-c's contract types it (docs/MESH_REDUCTION.md §1, §5, §6):
  * nothing is defaulted, nothing is read off the image. The two absences that
  * mean something are stated: `protect` and each of its fields may be left out
  * — `hull` is then false (P20, the default the agreement fixed for parts's
@@ -1167,7 +1167,7 @@ function checkContour(c: Check, at: string, v: Json, bones: Set<string>): void {
  * the report echoes) — and `regions` and `source.stray` may be left out, as in
  * the contour mode. `motion` is required (issue #126 item 3), and inside it
  * `maxLocalDeformation`; `maxStretch`, `minStretch` and `deformMayFold` may be
- * left out (`AutoMotionSpec`). What only spine-rigc can judge (a region bound under one
+ * left out (`AutoMotionSpec`). What only rig-c can judge (a region bound under one
  * texel, a region outside the art, a protected vertex index the source does
  * not have) is its refusal at the rig stage, in its words.
  */
@@ -1468,7 +1468,7 @@ function refuseSharedTargets(c: Check, claims: ReadonlyMap<string, string[]>): v
 }
 
 /**
- * `config.constraints` (issue #92): spine-rigc's own constraint shapes, read
+ * `config.constraints` (issue #92): rig-c's own constraint shapes, read
  * for the four things this package owns and nothing else (see the module
  * comment). What each refusal is for:
  *
@@ -1491,14 +1491,14 @@ function refuseSharedTargets(c: Check, claims: ReadonlyMap<string, string[]>): v
  *   a bone parented to `root`. The rig stage declares the same fact for rigc
  *   (`invariants.detached`, rigc's `A25`), so the gate holds the built rig to
  *   it too. rigc does not refuse this parentage undeclared: measured through
- *   spine-rigc 2.15.0 on the rig fixture, an ik over `hem0` following `hem1`
+ *   rig-c 2.15.0 on the rig fixture, an ik over `hem0` following `hem1`
  *   and a transform over `hem0` reading `hem1` each gate green with nothing
  *   declared.
  *
  * Every other field — `mix`, `properties`, a path's `slot`, a slider's
  * `animation` — and every value of it is rigc's, refused at the rig stage's
  * gate in rigc's words. So is an ik's `bones` as a shape (issue #103): from
- * spine-rigc 2.15.0 its rig-spec parser refuses an ik over more than two
+ * rig-c 2.15.0 its rig-spec parser refuses an ik over more than two
  * bones, or over a pair whose second bone is not the first's child, by name
  * (firejune/rigc#1205); this loader refused both itself while rigc's gate
  * passed them (issue #92), and no longer does.
@@ -1518,7 +1518,7 @@ function checkConstraints(c: Check, v: Json, bones: Set<string>, parents: Map<st
   (v as Json[]).forEach((entry, i) => {
     const at = `${p}[${i}]`;
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
-      c.fail('CONFIG_FIELD_TYPE', at, `is ${show(entry)}; a constraint object in spine-rigc's rig-spec shape is required ({"type": …, "name": …, and that kind's fields})`);
+      c.fail('CONFIG_FIELD_TYPE', at, `is ${show(entry)}; a constraint object in rig-c's rig-spec shape is required ({"type": …, "name": …, and that kind's fields})`);
       return;
     }
     const o = entry as Record<string, Json>;
@@ -1530,7 +1530,7 @@ function checkConstraints(c: Check, v: Json, bones: Set<string>, parents: Map<st
     let kind: RigSkinConstraintKey | null = null;
     if (!('type' in o)) c.fail('CONFIG_FIELD_PRESENT', `${at}.type`, `is absent and required; one of ${kinds.join(', ')}`);
     else if (typeof o.type !== 'string' || !kinds.includes(o.type)) {
-      c.fail('CONFIG_CONSTRAINT_TYPE_KNOWN', `${at}.type`, `is ${show(o.type)}; one of ${kinds.join(', ')} is required — spine-rigc's rig-spec constraint kinds, spelled as rigc spells them`);
+      c.fail('CONFIG_CONSTRAINT_TYPE_KNOWN', `${at}.type`, `is ${show(o.type)}; one of ${kinds.join(', ')} is required — rig-c's rig-spec constraint kinds, spelled as rigc spells them`);
     } else kind = o.type as RigSkinConstraintKey;
     if (!('name' in o)) c.fail('CONFIG_FIELD_PRESENT', `${at}.name`, 'is absent and required; a constraint is found by its kind and its name');
     else if (c.string(`${at}.name`, o.name) && kind !== null) {
@@ -1540,7 +1540,7 @@ function checkConstraints(c: Check, v: Json, bones: Set<string>, parents: Map<st
         c.fail(
           'CONFIG_CONSTRAINT_NAME_UNIQUE',
           `${at}.name`,
-          `names the ${kind} constraint "${o.name}" again (first at constraints[${first}]); a constraint is found by its kind and its name, so two of one kind may not share one (an ik and a transform may: spine-rigc's identity of a constraint)`,
+          `names the ${kind} constraint "${o.name}" again (first at constraints[${first}]); a constraint is found by its kind and its name, so two of one kind may not share one (an ik and a transform may: rig-c's identity of a constraint)`,
         );
       } else seen.set(id, i);
     }

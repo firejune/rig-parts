@@ -6,7 +6,7 @@
  *
  * npm's `bin` field has to be something any installed Node can run, but
  * spine-parts is a Bun program (it runs its TypeScript sources directly, and so
- * does spine-rigc underneath it). Without this file, a machine with no Bun
+ * does rig-c underneath it). Without this file, a machine with no Bun
  * would fail as a bare `env: bun: No such file or directory`, with no hint
  * why. So: if `bun` is on PATH, run the real CLI (cli.ts, next to this file)
  * under it and disappear — argv, stdio, the exit code and signals all pass

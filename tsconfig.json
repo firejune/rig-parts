@@ -10,7 +10,7 @@
     "types": ["bun"],
 
     // `.ts` in relative imports is this project's convention and Bun's default;
-    // TypeScript allows it only when nothing is emitted. spine-rigc ships its
+    // TypeScript allows it only when nothing is emitted. rig-c ships its
     // sources the same way, and this package imports them by deep path.
     "allowImportingTsExtensions": true,
     "noEmit": true,
@@ -20,7 +20,7 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
 
-    // Full `strict` from the first commit. spine-rigc runs `strict: false` with
+    // Full `strict` from the first commit. rig-c runs `strict: false` with
     // `strictNullChecks` because raising it there would be a refactor; this tree
     // has nothing to refactor yet, so it starts where that one would like to end.
     // Lowering it is a decision to write down here, not a flag to flip.

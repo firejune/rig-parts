@@ -14,7 +14,7 @@
  *   `computeWorldVertices` writes), and the idle's timelines.
  * - **dynamic**: wall time per frame over `--runs` runs of `--seconds` at
  *   `--fps`, after one warm-up run of every build that is not counted. A frame
- *   is the calls `spine-rigc/src/render.ts` makes to pose one, minus
+ *   is the calls `rig-c/src/render.ts` makes to pose one, minus
  *   rasterising: `state.update`, `state.apply`, `skeleton.update`,
  *   `updateWorldTransform(Physics.update)`, then `computeWorldVertices` for
  *   every mesh the draw order shows. The runs are interleaved — run 1 of every
@@ -34,7 +34,7 @@
  * static and renderer-view figures do not depend on the machine.
  *
  * `@esotericsoftware/spine-core` is this repository's development dependency, pinned to
- * the version spine-rigc develops against (`TY10`); `tools/` is not in
+ * the version rig-c develops against (`TY10`); `tools/` is not in
  * `package.json` `files`, so nothing installed depends on this file.
  */
 import { loadavg } from 'node:os';

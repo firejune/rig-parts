@@ -3,8 +3,8 @@
  * frames, the form GitHub renders in a README.
  *
  * Pure: bytes in, bytes out, no clock, no file system. The only thing it leans
- * on is `node:zlib` for DEFLATE, which is also all spine-rigc's own PNG codec
- * (`spine-rigc/tools/plate.ts`) leans on; the chunk framing and CRC are that
+ * on is `node:zlib` for DEFLATE, which is also all rig-c's own PNG codec
+ * (`rig-c/tools/plate.ts`) leans on; the chunk framing and CRC are that
  * codec's `pngChunk`, so there is one PNG chunk writer in the dependency tree,
  * not two.
  *
@@ -12,7 +12,7 @@
  *
  * - **Frame 0 is the default image.** Its `fcTL` precedes the `IDAT`, so a
  *   decoder that knows nothing of APNG shows frame 0 — which is what the
- *   selftest reads back through spine-rigc's `decodePng`.
+ *   selftest reads back through rig-c's `decodePng`.
  * - **Consecutive identical frames are merged** into one frame whose delay is
  *   their sum; the timing is kept exactly, because an APNG delay is a fraction
  *   (`delay_num / delay_den`) and the fps is its denominator.
@@ -34,7 +34,7 @@
  * bitstream encoder, and none ships here.
  */
 import { deflateSync } from 'node:zlib';
-import { PNG_SIGNATURE, pngChunk } from 'spine-rigc/tools/plate.ts';
+import { PNG_SIGNATURE, pngChunk } from 'rig-c/tools/plate.ts';
 import { histogram, mapToPalette, medianCut, type PaletteError, paletteError, type Rgba } from './palette.ts';
 import type { Raster } from './raster/types.ts';
 

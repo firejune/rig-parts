@@ -13,7 +13,7 @@
  * every bone unturned, and since issue #73 the rig stage turns each chain link
  * along its chain, so the built rig's offsets are carried back out of the
  * turned frames first) field by field with the reference's, and runs
- * spine-rigc's gate on the port's output as built, turned:
+ * rig-c's gate on the port's output as built, turned:
  * `build --profile spine-html --pack`,
  * `build --profile spine`, and `validate` of each build under its profile.
  *

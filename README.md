@@ -4,8 +4,8 @@
 are written.** spine-parts takes a single character painting and the layers
 [See-through](https://github.com/shitagaki-lab/see-through) decomposed it into,
 merges them into measured rig-space parts, authors weighted meshes, bone chains
-and a looping idle over them in [spine-rigc](https://github.com/firejune/rigc)'s
-spec, and hands that spec to spine-rigc to compile, gate, pack, render and check.
+and a looping idle over them in [rig-c](https://github.com/firejune/rigc)'s
+spec, and hands that spec to rig-c to compile, gate, pack, render and check.
 It is built for agents that cannot see the image: every stage prints named,
 numeric findings, a refusal names the object, the value found and the value
 required, nothing is written after a red, and no value is invented where the
@@ -86,7 +86,7 @@ is this port's own build (<a href="examples/scarf/README.md">examples/scarf</a>)
     the stacking order being the draw order.
 - **A character config** (`config.json`) — the part plan, the head box, the bones,
   which bones may pull which layer, the idle's sines, and optionally `constraints`
-  in spine-rigc's own rig-spec shape (ik, transform, path, physics, slider), handed
+  in rig-c's own rig-spec shape (ik, transform, path, physics, slider), handed
   to rigc as written once every bone they name resolves; a scene target is a bone
   under `root` a constraint names. `src/config.ts` is its
   schema and documents every field; the loader refuses an unknown or a missing field
@@ -103,7 +103,7 @@ page** (issue #2):
 | --- | --- |
 | `check/build/skeleton.json`, `skeleton.atlas`, `skeleton.png` | **the artifact** — Spine 4.3 skeleton data and one packed page, written by `rigc build --pack --page-edges free --pack-shape polygon` and gated under `spine-html`, which holds every rule `spine` measures (on the demo, rigc 2.1.3 and 2.10.1: the 14 rules `validate --profile spine` measures are among the build's 24; 16 are not in `spine`) |
 | `parts/*.png`, `parts.json`, `recomposite_rig.png`, `recomposite_error_rig.png` | the loose parts, each cropped to its alpha box; the record of where every part came from, how many of its pixels were re-taken from the painting, and the recomposite's uncovered holes with their boxes; the flat stack of parts; its error map — red where no part covers a pixel the painting has, blue where a part covers it in the wrong colour |
-| `rig/` | `rig.json` and `motion.json` in spine-rigc's spec, `mesh_report.json`, the padded `images/` |
+| `rig/` | `rig.json` and `motion.json` in rig-c's spec, `mesh_report.json`, the padded `images/` |
 | `check/` | both gate files verbatim, the idle's frames and their `geometry.json` (skinned vertices per frame), `contact.png`, `motion_heat.png`, `check.json` (with `pack_mode`, the `--page-edges` and `--pack-shape` the page was packed under) |
 | `idle.png`, `idle-indexed.png`, `idle.gif` | with `--loop`: the idle as a lossless APNG (the exactness record), an indexed APNG with one shared palette (the small one) and a GIF; the last two print their palette error |
 
@@ -130,7 +130,7 @@ consumer that mipmaps or repeats the page; it writes exactly the page builds wro
 before the flag existed. The measurements are in
 [AUTHORING §5, *Page edges*](docs/AUTHORING.md#5-after-each-stage-what-to-read).
 
-The pack shape is `polygon` by default (spine-rigc 2.1): a region only meshes draw is
+The pack shape is `polygon` by default (rig-c 2.1): a region only meshes draw is
 packed by its emitted hull, so a neighbour may sit inside its rectangle where the hull
 is not; a region attachment stays its rectangle. On the two examples that takes the
 free page from 967x1338 to 922x1348 (covered 91.2 % to 95.0 %, 3.9 % less area) and
@@ -140,7 +140,7 @@ already has: every idle frame within 1 level of the `rect` build's, and no figur
 0.7.0 wrote. The measurements are in
 [AUTHORING §5, *Pack shape*](docs/AUTHORING.md#5-after-each-stage-what-to-read).
 
-The packer is spine-rigc's, and no other: a packed region is a lossless copy, and an
+The packer is rig-c's, and no other: a packed region is a lossless copy, and an
 atlas written by anything else would have no oracle behind it.
 
 ## Painting → parts → rig → browser
@@ -148,11 +148,11 @@ atlas written by anything else would have no oracle behind it.
 | stage | tool | what it owns |
 | --- | --- | --- |
 | painting + See-through layers → parts and specs | **spine-parts** | the merge of two runs, the measurements, the rig spec and motion spec |
-| specs → Spine skeleton data | **[spine-rigc](https://github.com/firejune/rigc)** | compile, the gate (rigc's own validator in an install; the round trip through `spine-core` where the runtime is beside it, as in this repository's CI), the named assertions, the packer, the renderer |
+| specs → Spine skeleton data | **[rig-c](https://github.com/firejune/rigc)** | compile, the gate (rigc's own validator in an install; the round trip through `spine-core` where the runtime is beside it, as in this repository's CI), the named assertions, the packer, the renderer |
 | skeleton data → a page | **[spine-html](https://github.com/firejune/spine-html)**, a sibling project | a DOM renderer; rigc's `spine-html` profile is its policy, and every build here is gated under that profile as well as under `spine` |
 
 spine-parts never writes Spine data itself. Everything on disk under `check/build/`
-was written by spine-rigc after its own gate passed.
+was written by rig-c after its own gate passed.
 
 ## Getting See-through layers
 
@@ -283,11 +283,11 @@ agent skill.
 | `propose … --keypoints <file> [--person <id>]` | read a posed figure's joints from one explicit file (space, image size, people, each joint observed, occluded or missing, its source): a joint with a position places the neck, hip, chest or a sleeve chain as given, a note says how every joint was used or which rule stood in, and LINT reads the torso and sleeves along the joints instead of by screen y ([AUTHORING §3](docs/AUTHORING.md)) |
 | `propose … --from-config <config>` | draw and LINT the config's current bones (by the joints too, given `--keypoints`) |
 | `compare --left <file> --right <file> [--map <bonemap.json>]` | compare two skeletons — a config, a proposal or a `rig.json` — bone by bone: origin, parent, tip, length and direction per pair, the bones neither side pairs, the required ones missing, and each side's roles read off the spec; no frame is guessed, and nothing pairs by resemblance (`propose --compare` reads origins only) |
-| `rig --config --parts --out [--idle-keys ctl\|direct]` | author `rig.json` + `motion.json`, written only after spine-rigc's gate is green; each mesh is in the mode its config entry names — `grid` (the lattice, what `propose` writes), `contour` (the traced outline with declared interior points) or `auto` (the contour mesh at alpha 1 and above, reduced and locally refined by spine-rigc's `reduceMesh` under the author's declared bounds, written only when its motion against the unreduced source on the idle passes the author's `motion` bounds through spine-rigc's `compareMeshesInMotion`; [AUTHORING §3](docs/AUTHORING.md)); every chain link is turned along its chain and carries its `length`, so a physics constraint added later has a lever, with every offset under it in the turned frame so nothing moves; `--idle-keys` says whether the idle's keys on mesh-driving bones go through `<bone>_ctl` parents (default) or stay on the bones with `invariants.idleDrivesMeshes` declared; the config's `constraints` go to rigc as written, and a two-bone ik over keyed links needs `--idle-keys direct` (on `rig` or `build`) |
-| `check --rig --out [--parts] [--source] [--requirements]` | build packed, gated under `spine-html`, render the idle, measure seam, loop and the six judgement lines (mesh texture stretch among them, from the idle's `render --geometry`), and report the recomposite's holes from `parts.json`; on a rig spec with no `parts.json` or no `idle` (a merged rig, issue #77) the gate still runs and every line that needs the missing input says SKIP by name; `--source <painting.png>` adds `SETUP_POSE_VS_SOURCE`, the setup pose against the painting by assemble's recomposite figures; `--requirements <scene.json>` measures what a scene declares of the motion — a contact, a follow fraction, an aim, a joint range, a mesh's stretch, the seam between two parts over the motion — each against the author's own bar, from spine-rigc's posed frames, one line each, PASS, FAIL or NOT MEASURABLE (AUTHORING §7, *Declared requirements*) |
+| `rig --config --parts --out [--idle-keys ctl\|direct]` | author `rig.json` + `motion.json`, written only after rig-c's gate is green; each mesh is in the mode its config entry names — `grid` (the lattice, what `propose` writes), `contour` (the traced outline with declared interior points) or `auto` (the contour mesh at alpha 1 and above, reduced and locally refined by rig-c's `reduceMesh` under the author's declared bounds, written only when its motion against the unreduced source on the idle passes the author's `motion` bounds through rig-c's `compareMeshesInMotion`; [AUTHORING §3](docs/AUTHORING.md)); every chain link is turned along its chain and carries its `length`, so a physics constraint added later has a lever, with every offset under it in the turned frame so nothing moves; `--idle-keys` says whether the idle's keys on mesh-driving bones go through `<bone>_ctl` parents (default) or stay on the bones with `invariants.idleDrivesMeshes` declared; the config's `constraints` go to rigc as written, and a two-bone ik over keyed links needs `--idle-keys direct` (on `rig` or `build`) |
+| `check --rig --out [--parts] [--source] [--requirements]` | build packed, gated under `spine-html`, render the idle, measure seam, loop and the six judgement lines (mesh texture stretch among them, from the idle's `render --geometry`), and report the recomposite's holes from `parts.json`; on a rig spec with no `parts.json` or no `idle` (a merged rig, issue #77) the gate still runs and every line that needs the missing input says SKIP by name; `--source <painting.png>` adds `SETUP_POSE_VS_SOURCE`, the setup pose against the painting by assemble's recomposite figures; `--requirements <scene.json>` measures what a scene declares of the motion — a contact, a follow fraction, an aim, a joint range, a mesh's stretch, the seam between two parts over the motion — each against the author's own bar, from rig-c's posed frames, one line each, PASS, FAIL or NOT MEASURABLE (AUTHORING §7, *Declared requirements*) |
 | `loop --frames <dir> --out <file.gif \| file.png> [--palette]` | encode a rendered idle as a looping GIF, lossless APNG, or indexed APNG (`--palette`) |
 | `build --config --source --full --head --out [--seam] [--project] [--loop] [--requirements] [--idle-keys ctl\|direct]` | assemble, rig and check in one process, stopping at the first refusal; `--requirements` is forwarded to check, `--idle-keys` to rig |
-| `compose --scene <scene.json> --out [--requirements]` | bind several characters' green builds into one rig: every name prefixed `<id>:` under one shared root, each character's offset added at its first-level bones, an optional background plate (its provenance recorded, judged by nothing) drawn first, and the draw order between the characters' slots as the scene file declares it — nothing inferred, nothing scaled; gated through spine-rigc as `rig` is, then checked ([AUTHORING §7](docs/AUTHORING.md), *Composing several characters*) |
+| `compose --scene <scene.json> --out [--requirements]` | bind several characters' green builds into one rig: every name prefixed `<id>:` under one shared root, each character's offset added at its first-level bones, an optional background plate (its provenance recorded, judged by nothing) drawn first, and the draw order between the characters' slots as the scene file declares it — nothing inferred, nothing scaled; gated through rig-c as `rig` is, then checked ([AUTHORING §7](docs/AUTHORING.md), *Composing several characters*) |
 
 `spine-parts --help` has every flag. Exit codes: 0 done, 1 input refused (every
 reason is a FAIL line), 2 a usage error or a command this version does not implement.
@@ -363,8 +363,8 @@ before it, at v0.14.0).
 
 [Bun](https://bun.sh) 1.2 or later. `npm install -g spine-parts` installs the
 `spine-parts` command; it hands off to Bun and says so in one sentence if Bun is not
-on `PATH`. spine-rigc comes with it as a dependency. No Spine runtime does: since
-spine-rigc 2.0 the installed `rigc` gates every build with its own validator over the
+on `PATH`. rig-c comes with it as a dependency. No Spine runtime does: since
+rig-c 2.0 the installed `rigc` gates every build with its own validator over the
 compiled model document, and `rigc --version` says `entry: cli_core.ts —
 @esotericsoftware/spine-core absent`. With `@esotericsoftware/spine-core` installed
 beside it, the same `rigc` runs the spine-core round trip instead, as this repository's
@@ -372,7 +372,7 @@ selftest and CI do; `check.json`'s `rigc_entry` records which one gated a build.
 
 ## Licence posture
 
-spine-parts is MIT, and it depends on spine-rigc, whose output is Spine skeleton data:
+spine-parts is MIT, and it depends on rig-c, whose output is Spine skeleton data:
 using what it produces in a product requires a Spine Editor licence, as any Spine data
 does. Neither package installs Esoteric Software's `spine-core` any more; this
 repository uses it in development, for the round trip in its selftest and CI. [NOTICE.md](NOTICE.md) records that chain and every other

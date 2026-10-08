@@ -104,7 +104,7 @@ import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, typ
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BARE_CROWN_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
-import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'spine-rigc/src/render.ts';
+import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'rig-c/src/render.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
 import { arm, armRig, base, baseRenamed, baseWith, roleRig } from './fixtures/structure.ts';
 import {
@@ -179,19 +179,19 @@ import { COMPOSED_HAND_X, COMPOSED_SHOULDER, writeComposedRig, DRIVER_AT, DRIVER
 import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionSpec, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
-import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'spine-rigc/src/rig.ts';
+import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
-import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline, writeMeshQualityReport } from 'spine-rigc/mesh';
+import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline, writeMeshQualityReport } from 'rig-c/mesh';
 import { autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, reuseReductions, runReduction, sourceWeights, terminationText, worstRegion, worstResidual } from './src/automesh.ts';
 import { AUTO_CASES, examplePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
-import { BLOCKED_LABEL, barsOf, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, emptyCost, geometryRow, lossAgainstOriginal, quietLabel, stretchOf, verdictText } from './tools/auto_matrix.ts';
+import { BLOCKED_LABEL, barsOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
 import { type AutoMotionCase, idleSchedule, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
 import { motionGates } from './src/build.ts';
-import { IRR_OFFSET } from 'spine-rigc/src/core/animation.ts';
+import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
 import type { AutoMeshReport, MeshReport } from './src/rig.ts';
@@ -962,7 +962,7 @@ function runCompositeSuite(): number {
 }
 
 function runPngSuite(): number {
-  section('png: the spine-rigc codec');
+  section('png: the rig-c codec');
   const { say, bad } = counter();
   const r = rgba(3, 2, [
     [255, 0, 0, 255],
@@ -987,7 +987,7 @@ function runPngSuite(): number {
     'PN02_A_FILE_THAT_IS_NOT_A_PNG_IS_REFUSED_NAMING_IT',
     notPng !== null && notPng.includes('fake.png'),
     `GIF bytes labelled fake.png: ${notPng ?? 'accepted'}`,
-    "spine-rigc's assertPng names what a file is when it is not a PNG; without it the refusal is an inflate error about a file that was never one",
+    "rig-c's assertPng names what a file is when it is not a PNG; without it the refusal is an inflate error about a file that was never one",
   );
   return bad();
 }
@@ -1432,7 +1432,7 @@ function runRecordConfigCases(say: (name: string, ok: boolean, detail: string, w
 }
 
 /**
- * Issue #92: `config.constraints`, spine-rigc's own constraint shapes. The
+ * Issue #92: `config.constraints`, rig-c's own constraint shapes. The
  * loader owns the list, each entry's `type` and `name`, the bone names, and
  * what cannot mean what it says on the declared bones; every other field is
  * rigc's (RG59, BU15). The fixture is {@link minimalConfig} plus a scene
@@ -1524,7 +1524,7 @@ function runConstraintConfigCases(say: (name: string, ok: boolean, detail: strin
     'CF60_TWO_CONSTRAINTS_OF_ONE_KIND_UNDER_ONE_NAME_ARE_REFUSED_AND_TWO_KINDS_MAY_SHARE_ONE',
     twice?.code === 'CONFIG_CONSTRAINT_NAME_UNIQUE' && twice.object === 'config.constraints[6].name' && twice.detail.startsWith('names the ik constraint "reach" again (first at constraints[0])') && green === null,
     `a second ik "reach" -> ${line(twice, null)}; the ik "reach" and the transform "reach" of CF58 -> ${codes(green)}`,
-    'spine-rigc 2.10.1 resolves a constraint by its kind and its name (SkeletonData.findConstraint(name, type)) and refuses two of a kind under one name, so the loader keeps that identity — not a stricter one rigc measured production rigs breaking',
+    'rig-c 2.10.1 resolves a constraint by its kind and its name (SkeletonData.findConstraint(name, type)) and refuses two of a kind under one name, so the loader keeps that identity — not a stricter one rigc measured production rigs breaking',
   );
 
   const typeCase = (edit: (c: Record<string, unknown>) => void): Problem | null => one(load(edited(1, edit)));
@@ -1573,7 +1573,7 @@ function runConstraintConfigCases(say: (name: string, ok: boolean, detail: strin
   // CF64 — an ik's bones as a shape are rigc's (issue #103): the loader passes every shape, and rigc's
   // refusal reaches the author through the rig command in rigc's words. The rig fixture (fixtures/rig.ts)
   // under --idle-keys direct, so no control stands anywhere: hem1's parents are hem0, body, root, and
-  // hem0's is body. The sentences are spine-rigc 2.15.0's (ikShapeFault, src/assertions/bodies/a47.ts),
+  // hem0's is body. The sentences are rig-c 2.15.0's (ikShapeFault, src/assertions/bodies/a47.ts),
   // filled in by hand from those parents.
   const ikShapes: Array<[string, string[], string]> = [
     ['[body, hem1]', ['body', 'hem1'], 'ik constraint "reach": "hem1" is not a child of "body" ("hem0" stands between), so the two-bone solve is not of the chain drawn'],
@@ -1602,7 +1602,7 @@ function runConstraintConfigCases(say: (name: string, ok: boolean, detail: strin
       'CF64_AN_IK_OVER_A_PAIR_THAT_IS_NOT_PARENT_AND_CHILD_OR_OVER_THREE_LOADS_AND_RIGC_REFUSES_IT_AT_RIG_IN_ITS_OWN_WORDS',
       shapeRuns.every((s) => s.ok) && pairRun.status === 0 && oneRun.status === 0 && existsSync(join(shapeDir, 'pair', 'out', 'rig.json')) && existsSync(join(shapeDir, 'one', 'out', 'rig.json')),
       `${shapeRuns.map((s) => `${s.what} -> ${s.ok ? '' : 'WRONG: '}${s.got}`).join('; ')}; positive: [hem0, hem1] -> rig exit ${pairRun.status}, [hem1] -> rig exit ${oneRun.status}`,
-      'issue #103: from spine-rigc 2.15.0 the rig-spec parser refuses an ik over more than two bones, or over a pair whose second bone is not the first\'s child, by name (firejune/rigc#1205), so the loader\'s own refusal of #92 is gone and nothing here re-implements it; what holds is that rigc\'s sentence reaches the author on the one FAIL line, with nothing of this package\'s added where no control stands between',
+      'issue #103: from rig-c 2.15.0 the rig-spec parser refuses an ik over more than two bones, or over a pair whose second bone is not the first\'s child, by name (firejune/rigc#1205), so the loader\'s own refusal of #92 is gone and nothing here re-implements it; what holds is that rigc\'s sentence reaches the author on the one FAIL line, with nothing of this package\'s added where no control stands between',
     );
   } finally {
     rmSync(shapeDir, { recursive: true, force: true });
@@ -1628,7 +1628,7 @@ function runConstraintConfigCases(say: (name: string, ok: boolean, detail: strin
   say(
     'CF66_THE_BONE_FIELD_TABLE_NAMES_ONLY_RIGCS_OWN_KEYS_AND_NO_RIGC_CONSTRAINT_KEY_IS_A_RECORD_OR_AN_ANNOTATION',
     agree.length === 0 && typo.length === 1 && typo[0] === 'ik.targett is not a key of rigc\'s RigIkConstraint' && noted.length === 1 && noted[0].includes('reads "note"'),
-    `against the installed spine-rigc's RIG_KEYS: ${agree.length === 0 ? 'every field a key of its kind, no key a door' : agree.join('; ')}; planted "targett" -> ${typo.join('; ') || 'not named'}; planted a physics key "note" -> ${noted.join('; ') || 'not named'}`,
+    `against the installed rig-c's RIG_KEYS: ${agree.length === 0 ? 'every field a key of its kind, no key a door' : agree.join('; ')}; planted "targett" -> ${typo.join('; ') || 'not named'}; planted a physics key "note" -> ${noted.join('; ') || 'not named'}`,
     'the one table kept of rigc\'s shapes is the bone-bearing field names, typed against rigc\'s interfaces and held at run time to rigc\'s RIG_KEYS; and since the rig stage leaves records and annotations out of what it hands rigc, no key rigc reads may look like one',
   );
 
@@ -2382,7 +2382,7 @@ function runCliSuite(): number {
         Object.keys(inv).join(',') === 'idleDrivesMeshes,detached' &&
         JSON.stringify(directRig?.constraints) === JSON.stringify(pair.constraints),
       `no --idle-keys -> exit ${ctlRun.status}, ${ctlFail.length} FAIL line(s): …${ctlFail[0]?.slice(ctlFail[0].indexOf('ik constraint'), ctlFail[0].indexOf('ik constraint') + 100) ?? ''}…${ctlFail[0]?.includes('run `rig --idle-keys direct`') === true ? ' naming `rig --idle-keys direct`' : ''}; --idle-keys direct -> exit ${directRun.status}, rig.json invariants ${Object.keys(inv).join(', ')}, constraints ${JSON.stringify(directRig?.constraints ?? null)}`,
-      'issue #92, ruling 4: the default ctl puts a control between the links, which a two-bone ik cannot read; from spine-rigc 2.15.0 rigc refuses that pair by name and the line names the value of the flag under which the same config builds (issue #103)',
+      'issue #92, ruling 4: the default ctl puts a control between the links, which a two-bone ik cannot read; from rig-c 2.15.0 rigc refuses that pair by name and the line names the value of the flag under which the same config builds (issue #103)',
     );
 
     // Issue #93: --requirements on check and build.
@@ -2731,7 +2731,7 @@ function runRigSuite(): number {
       'RG03_TWO_BUILDS_WRITE_THE_SAME_BYTES',
       a.every((t, i) => t === b[i]) && sameBytes,
       `in memory: rig.json, motion.json and mesh_report.json ${a.every((t, i) => t === b[i]) ? 'identical' : 'DIFFERENT'} across two builds; on disk: ${files1.length} file(s) from two CLI runs into two directories, ${sameBytes ? 'byte-identical' : 'DIFFERENT'}`,
-      'determinism is a contract: spine-rigc compares a second compile byte for byte (A18), and the spec it compiles has to hold still first',
+      'determinism is a contract: rig-c compares a second compile byte for byte (A18), and the spec it compiles has to hold still first',
     );
 
     // Issue #70: the build fixtures carry no mesh entry and no blink, so the
@@ -2768,10 +2768,10 @@ function runRigSuite(): number {
     const wroteAll = ['images/cloth.png', 'images/eye.png', 'mesh_report.json', 'motion.json', 'rig.json'].join() === files1.join();
     const gateLines = run1.out.split('\n').filter((l) => /assertions: \d+ measured \(\d+ passed, 0 failed\)/.test(l));
     say(
-      'RG04_THE_RIG_COMMAND_WRITES_ONLY_AFTER_SPINE_RIGC_IS_GREEN_ON_IT',
+      'RG04_THE_RIG_COMMAND_WRITES_ONLY_AFTER_RIG_C_IS_GREEN_ON_IT',
       run1.status === 0 && run2.status === 0 && wroteAll && gateLines.length >= 2 && /rigc build --profile spine-html --pack --page-edges free --pack-shape polygon: exit 0/.test(run1.out) && !run1.out.includes('rigc validate'),
       `exit ${run1.status}; wrote ${files1.join(', ')}; ${gateLines.length} green rigc assertion line(s), e.g. "${gateLines[0]?.trim() ?? ''}"`,
-      "CLAUDE.md: the rig stages write only after spine-rigc's round trip has passed — so the command builds the staged spec through rigc before --out sees a byte",
+      "CLAUDE.md: the rig stages write only after rig-c's round trip has passed — so the command builds the staged spec through rigc before --out sees a byte",
     );
 
     // The mutant is a spec the loader accepts and rigc refuses. It was an
@@ -2798,7 +2798,7 @@ function runRigSuite(): number {
     const redFail = redRun.out.split('\n').filter((l) => /^ {2}FAIL {2}/.test(l));
     const fullFrame = `A14_NO_FULL_FRAME_MESH: mesh "cloth" spans the whole ${RIG_CANVAS[0]}x${RIG_CANVAS[1]} stage`;
     say(
-      'RG05_A_SPEC_SPINE_RIGC_REFUSES_IS_REFUSED_AND_NOTHING_IS_WRITTEN',
+      'RG05_A_SPEC_RIG_C_REFUSES_IS_REFUSED_AND_NOTHING_IS_WRITTEN',
       redLoads === null &&
         redRun.status === 1 &&
         redFail.length === 1 &&
@@ -2810,7 +2810,7 @@ function runRigSuite(): number {
     );
 
     // A rigc that dies before any gate line: the line it did print is the refusal's cause. The three stub
-    // outputs are the forms measured on spine-rigc 2.0.3 (src/check.ts, causeLines): Bun's import error, a
+    // outputs are the forms measured on rig-c 2.0.3 (src/check.ts, causeLines): Bun's import error, a
     // run whose header came before it stopped, and a run that printed nothing.
     const dead = writeRigFixture(join(dir, 'dead'));
     const deadScratch = join(dir, 'dead-scratch');
@@ -2818,7 +2818,7 @@ function runRigSuite(): number {
       const err = refusals(() => rigStage({ config: dead.config, parts: dead.parts, out: join(dir, 'dead', 'out') }, () => ({ status: 1, out }), deadScratch, () => {}));
       return err === null ? 'no refusal' : err.problems.map((q) => `${q.code}: ${q.object} — ${q.detail}`).join(' / ');
     };
-    const importError = "error: Cannot find module '@esotericsoftware/spine-core' from '/x/node_modules/spine-rigc/src/render.ts'";
+    const importError = "error: Cannot find module '@esotericsoftware/spine-core' from '/x/node_modules/rig-c/src/render.ts'";
     const died = deadRun(`${importError}\n\nBun v1.3.11 (macOS arm64)\n`);
     const headerOnly = deadRun('rigc build /x/rig.json\n  ..    rig    /x/rig.json\n  ..    motion /x/motion.json\n  ..    22 part page(s):\n');
     const silent = deadRun('');
@@ -2832,7 +2832,7 @@ function runRigSuite(): number {
         silent.includes('exited 1, and it printed nothing') &&
         !existsSync(join(dir, 'dead', 'out')),
       `Bun's import error -> ${died.slice(0, 200)}…; header lines only -> …${headerOnly.slice(60, 200)}…; nothing printed -> …${silent.slice(60, 160)}`,
-      "spine-rigc 2.0's cli.ts run by path without spine-core dies at import, which no gate filter reads, and the refusal said only \"exited 1\"; the line rigc or Bun printed is what names the cause, and RG05 above is the positive control that a FAIL line is still quoted as it was",
+      "rig-c 2.0's cli.ts run by path without spine-core dies at import, which no gate filter reads, and the refusal said only \"exited 1\"; the line rigc or Bun printed is what names the cause, and RG05 above is the positive control that a FAIL line is still quoted as it was",
     );
 
     const dup = writeRigFixture(join(dir, 'dup'), (() => {
@@ -2971,7 +2971,7 @@ function runRigSuite(): number {
       joinedRig.meshReport[0].vertices === RIG_EXPECT.vertices &&
       joinedRig.meshReport[0].art_coverage === 1,
     `cloth as two islands with the pass limit at 0 -> ${codes(oneLoopTwoIslands)}: ${oneLoopTwoIslands?.problems[0]?.detail ?? ''}; with the default limit -> ${joined === null ? `green, ${joinedRig?.meshReport[0].vertices} vertices (the bridge refills the middle column), coverage ${joinedRig?.meshReport[0].art_coverage}` : codes(joined)}`,
-    'spine-rigc refuses an outline that is not one closed loop; the reference returned whatever it had when its passes ran out, and this port checks the outline instead of trusting the loop',
+    'rig-c refuses an outline that is not one closed loop; the reference returned whatever it had when its passes ran out, and this port checks the outline instead of trusting the loop',
   );
 
   const wrongSize = new Map(rigImages());
@@ -3030,7 +3030,7 @@ function runRigSuite(): number {
     ctlOutcomes
       .map((o, i) => `${i === 0 ? 'a track on a declared hem0_ctl.rotate beside the hem chain' : 'eyes ["eye", "hem0", "hem0_ctl"]'}: ctl -> ${codes(o.ctl)}; direct -> ${o.targets.length} target(s), ${o.distinct ? 'all distinct' : 'NOT distinct'} (${o.targets.join(', ')})`)
       .join('; '),
-    'issue #49 asked whether moveKeysToControls could make two tracks one: it renames every key of a controlled bone x to x_ctl, the same suffix for every bone, so two targets merge only if x_ctl is already a target, i.e. a declared bone — which the rig stage refuses by name before the rename (RIG_CONTROL_NAME_FREE), and direct, which renames nothing, keeps apart; measured on spine-rigc 2.1.3 and again on 2.10.1, both direct rigs build green',
+    'issue #49 asked whether moveKeysToControls could make two tracks one: it renames every key of a controlled bone x to x_ctl, the same suffix for every bone, so two targets merge only if x_ctl is already a target, i.e. a declared bone — which the rig stage refuses by name before the rename (RIG_CONTROL_NAME_FREE), and direct, which renames nothing, keeps apart; measured on rig-c 2.1.3 and again on 2.10.1, both direct rigs build green',
   );
 
   runIdleKeysCases(say);
@@ -3158,7 +3158,7 @@ function runIdleKeysCases(say: (name: string, ok: boolean, detail: string, why: 
         !existsSync(join(dir, 'bogus')) &&
         undeclaredRed,
       `no flag exit ${none.status}; --idle-keys ctl exit ${ctl.status}, ${ctlSame ? `${files.length} file(s) byte-identical to no flag` : 'DIFFERENT from no flag'}; --idle-keys direct exit ${direct.status}, gates ${green(direct) ? 'green' : 'NOT green'}, rigc says "${skipLine.trim().slice(0, 120)}…"; --idle-keys bones -> exit ${bogus.status}, ${(bogus.out.split('\n').find((l) => l.includes('FAIL')) ?? '').trim()}; --out written: ${existsSync(join(dir, 'bogus'))}; the direct rig with invariants.idleDrivesMeshes removed -> ${undeclared}`,
-      "the switch's two values both pass spine-rigc's round trip on the synthetic fixture, the default is the old output byte for byte (so the examples' expected files do not move), and a value the stage does not know is a usage error naming the two it does",
+      "the switch's two values both pass rig-c's round trip on the synthetic fixture, the default is the old output byte for byte (so the examples' expected files do not move), and a value the stage does not know is a usage error naming the two it does",
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -3454,7 +3454,7 @@ function runConstraintRigCases(say: (name: string, ok: boolean, detail: string, 
   );
 
   // RG61 — issue #95: the line names the flag on the command that ran, and only that one (issue #103: now
-  // beside rigc's refusal). The lines are rigc's sentence as spine-rigc 2.15.0 writes it for the rig fixture's
+  // beside rigc's refusal). The lines are rigc's sentence as rig-c 2.15.0 writes it for the rig fixture's
   // pair under ctl (ikShapeFault, src/assertions/bodies/a47.ts), filled in by hand; RG56 holds it on the real rigc.
   const splitLine = 'rigc compile error: …/rig.json: ik constraint "reach": "hem1" is not a child of "hem0" ("hem1_ctl" stands between), so the two-bone solve is not of the chain drawn — name "hem1"\'s own parent as the first bone, or make "hem1" a child of "hem0"';
   const byBuild = ctlRemedies([splitLine], ['hem0', 'hem1'], 'build');
@@ -3496,7 +3496,7 @@ function runConstraintRigCases(say: (name: string, ok: boolean, detail: string, 
         wide.status === 1 && wide.fails.length === 1 && wide.fails[0].includes('("hem1_ctl", "hem0", "hem0_ctl" stand between)') && !wide.fails[0].includes('--idle-keys direct`') &&
         kept.status === 0 && kept.written && pure.multi === 0 && pure.none === 0,
       `ctl, ik over hem0 and hem1 -> exit ${split.status}, ${split.fails.length} FAIL line(s): …${split.fails[0]?.slice(split.fails[0].indexOf('ik constraint'), split.fails[0].indexOf('ik constraint') + 120) ?? ''}…${split.fails[0]?.includes(remedy) === true ? ' + the --idle-keys direct sentence' : ' WITHOUT the --idle-keys direct sentence'}; planted, ctl, ik over body and hem1 (a control and declared bones between) -> exit ${wide.status}, ${wide.fails[0]?.includes('--idle-keys direct`') === true ? 'the flag ADDED' : 'rigc\'s line alone'}; direct, ik over hem0 and hem1 -> exit ${kept.status}; ctlRemedies on a several-bone between: ${pure.multi}, with no control: ${pure.none}`,
-      'issue #103: spine-rigc 2.15.0 refuses the pair a control splits by name (firejune/rigc#1205), so this package\'s own refusal of #92 is gone; rigc\'s remedy names the control, which a config cannot name, so the stage reads rigc\'s verdict — the control it added, alone between — and adds the flag; with a declared bone between too, --idle-keys direct would not make a parent and its child, so nothing is added',
+      'issue #103: rig-c 2.15.0 refuses the pair a control splits by name (firejune/rigc#1205), so this package\'s own refusal of #92 is gone; rigc\'s remedy names the control, which a config cannot name, so the stage reads rigc\'s verdict — the control it added, alone between — and adds the flag; with a declared bone between too, --idle-keys direct would not make a parent and its child, so nothing is added',
     );
 
     // RG62 — the command moves no byte the stage writes, and only the command's name in rigc's refused line.
@@ -3539,7 +3539,7 @@ function runConstraintRigCases(say: (name: string, ok: boolean, detail: string, 
       'RG57_A_DIRECT_TWO_BONE_IK_PUTS_THE_TIP_ON_A_ROOT_PARENTED_TARGET_IN_EVERY_FRAME_AND_THE_CONTROL_BETWEEN_THE_PAIR_DOES_NOT',
       reached.status === 0 && linkLength === 8 && frames === 4 * IDLE_FPS + 1 && got !== null && got <= POSE_BAR && originOff !== null && Math.abs(originOff - 8) <= POSE_BAR && interleaveRefused,
       `rig --idle-keys direct exit ${reached.status}, hem1 length ${linkLength} (by hand 8); ${typeof reached.frames === 'string' ? reached.frames : `${frames} idle frame(s) (by hand 4 s x ${IDLE_FPS} + 1)`}; largest |tip(hem1) - tgt| ${got === null ? 'not measured' : got.toExponential(3)} (bar ${POSE_BAR}); planted, hem1's origin read as the tip: ${originOff?.toFixed(6) ?? 'not measured'} (by hand 8); the same rig with hem1_ctl put between the links by hand, as ctl writes it: ${typeof planted.frames === 'string' ? planted.frames : 'gate GREEN'}${interleaveRefused ? ', rigc naming hem1_ctl between the pair' : ''}`,
-      'ruling 8 of issue #92, read from geometry.json: the target sits inside the chain\'s reach (fixtures/rig.ts, by hand), so a two-bone ik with no softness puts the tip on it exactly, and the origin read at the same frames is seen to sit a link away, so the bar discriminates; the interleave ctl writes passed rigc 2.10.1\'s gate while missing by 2.58 (#92), and spine-rigc 2.15.0 refuses it by name (issue #103)',
+      'ruling 8 of issue #92, read from geometry.json: the target sits inside the chain\'s reach (fixtures/rig.ts, by hand), so a two-bone ik with no softness puts the tip on it exactly, and the origin read at the same frames is seen to sit a link away, so the bar discriminates; the interleave ctl writes passed rigc 2.10.1\'s gate while missing by 2.58 (#92), and rig-c 2.15.0 refuses it by name (issue #103)',
     );
 
     // RG58 — physics and transform on a link, under ctl and direct.
@@ -3592,7 +3592,7 @@ function runConstraintRigCases(say: (name: string, ok: boolean, detail: string, 
         under.status === 1 && under.line === 'FAIL  A25_DETACHED_BONE_PARENTAGE: "tgt" is a descendant of "hem1"; it must not be dragged by that bone\'s motion' &&
         undeclared.status === 0 && undeclared.line.startsWith('SKIP  A25_DETACHED_BONE_PARENTAGE'),
       `as written: ${asWritten.line}; tgt moved under hem1 in rig.json by hand: ${under.line}; the same with invariants removed: ${undeclared.line}`,
-      'A25 read before it is declared (spine-rigc 2.10.1, src/assertions/bodies/a25.ts): it fails a declared bone that descends from its notUnder, and a rig that declares nothing is a SKIP — so the declaration is what keeps a scene target measured once the rig leaves this package',
+      'A25 read before it is declared (rig-c 2.10.1, src/assertions/bodies/a25.ts): it fails a declared bone that descends from its notUnder, and a rig that declares nothing is a SKIP — so the declaration is what keeps a scene target measured once the rig leaves this package',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -4196,7 +4196,7 @@ function runProposeSuite(): number {
 
 /**
  * How far a mesh part's pixels leave the rigid motion of one bone over the
- * idle, posed by spine-core through spine-rigc's sampler: per pixel centre in
+ * idle, posed by spine-core through rig-c's sampler: per pixel centre in
  * `groups`, its setup-pose triangle's barycentric weights carried to every
  * frame (60 fps), against the same point carried by `bone`'s world transform.
  * Returns the largest offset per group, in world units (= rig px at scale 1).
@@ -5515,7 +5515,7 @@ function runProposeCorpusSuite(): number | null {
 }
 
 // ---------------------------------------------------------------------------
-// check: the whole stage, through the installed spine-rigc, on a rig authored here
+// check: the whole stage, through the installed rig-c, on a rig authored here
 // ---------------------------------------------------------------------------
 
 /** Every file under a directory, relative, sorted — to prove a read-only input stayed read-only. */
@@ -5839,7 +5839,7 @@ function runSourceCases(dir: string, say: (name: string, ok: boolean, detail: st
 }
 
 /**
- * `check --requirements` end to end (issue #93), through the installed spine-rigc, on the probe rig
+ * `check --requirements` end to end (issue #93), through the installed rig-c, on the probe rig
  * fixtures/reqrig.ts writes and on the check fixture's mesh. Every expectation is the hand value its
  * fixture's header derives; the run is the instrument, not the source.
  */
@@ -5974,7 +5974,7 @@ function runRequirementCases(dir: string, say: (name: string, ok: boolean, detai
       rigAfter.join('|') === listing(fresh).join('|') &&
       !readFileSync(join(red.rig, 'rig.json'), 'utf8').includes('consumerDrivenMix'),
     `VANE_KEYED: ${door}; RIDER_HALF: ${rideDoor}; VANE_HALF (sweep keys the mix above 0 elsewhere): ${String(vh.released_copy)}; --rig after the run ${rigAfter.join('|') === listing(fresh).join('|') ? 'is byte for byte a fresh fixture' : 'DIFFERS from a fresh fixture'}`,
-    "the released pose is muted throughout when no other animation keys that mix, and spine-rigc's A47 (ik) or A48 (transform) refuses it; its own door, invariants.consumerDrivenMix, is written into the throwaway copy and nowhere else, and where another animation keeps the constraint live rigc refuses nothing and no declaration is written",
+    "the released pose is muted throughout when no other animation keys that mix, and rig-c's A47 (ik) or A48 (transform) refuses it; its own door, invariants.consumerDrivenMix, is written into the throwaway copy and nowhere else, and where another animation keeps the constraint live rigc refuses nothing and no declaration is written",
   );
 
   const sr = line(red, 'SWING_RANGE');
@@ -6162,7 +6162,7 @@ function runRequirementCases(dir: string, say: (name: string, ok: boolean, detai
 }
 
 function runCheckSuite(): number {
-  section('check: build, gates, seam and loop through the installed spine-rigc');
+  section('check: build, gates, seam and loop through the installed rig-c');
   const { say, bad } = counter();
   const dir = temp('check');
   try {
@@ -6694,7 +6694,7 @@ function runCheckSuite(): number {
         noMesh.reason === 'the rig draws no mesh attachment (every slot is a region), so there is no triangle to stretch' &&
         ok.out.includes('  TEXTURE_STRETCH: SKIP — the rig draws no mesh attachment') &&
         absent.status === 'SKIP' &&
-        absent.reason.startsWith(`${absentPath} does not exist; \`rigc render --geometry\` (spine-rigc ${RIGC_GEOMETRY_VERSION} or later) writes it`),
+        absent.reason.startsWith(`${absentPath} does not exist; \`rigc render --geometry\` (rig-c ${RIGC_GEOMETRY_VERSION} or later) writes it`),
       `CK01's two-region fixture: ${noMesh?.status} — ${noMesh?.reason}; no file: ${absent.status} — ${'reason' in absent ? String(absent.reason).slice(0, 120) : ''}`,
       'a rig with nothing to stretch is unmeasured, not certified, and says which of the two reasons it is',
     );
@@ -6711,7 +6711,7 @@ function runCheckSuite(): number {
       old !== null &&
         old.problems.length === 1 &&
         old.problems[0].code === 'CHECK_RIGC_VERSION' &&
-        old.problems[0].detail.startsWith(`is 1.3.0; spine-rigc ${RIGC_GEOMETRY_VERSION} or later is required`) &&
+        old.problems[0].detail.startsWith(`is 1.3.0; rig-c ${RIGC_GEOMETRY_VERSION} or later is required`) &&
         calls.join('|') === '--version' &&
         !existsSync(join(dir, 'old-rigc-out', 'build')) &&
         accepts(`${RIGC_GEOMETRY_VERSION}\n`) &&
@@ -6943,7 +6943,7 @@ function runCheckSuite(): number {
     'a pack line half-read would drop the one field that changed, and a page whose edges are not the ones asked for is a build nobody ran; both are refused by name, and the two agreeing lines are the positive control',
   );
 
-  // spine-rigc 2.1's pack line ends in the shape it packed under, after the page-edges clause or after the padding
+  // rig-c 2.1's pack line ends in the shape it packed under, after the page-edges clause or after the padding
   // (the four lines below are the forms rigc 2.1.3 and 2.10.1 printed on the public demo, both edges by both shapes). The
   // 1.5-2.0 form above, with no shape clause, reads as rect; an unknown shape, or the clauses out of order, is refused
   // by name; and a shape that disagrees with the --pack-shape passed is refused as edges are. Every expectation is the
@@ -6981,10 +6981,10 @@ function runCheckSuite(): number {
       oldUnderPolygon[0].detail.startsWith('rigc\'s pack line says shape rect (no ", shape" clause') &&
       bothWrong.map((q) => q.code).join(',') === 'CHECK_PACK_PAGE_EDGES,CHECK_PACK_SHAPE',
     `2.1 forms read (${newForms.map((f) => `${f.read[0]?.pageEdges}/${f.read[0]?.packShape}`).join(', ')}) and agree with their own flags: ${formsAgree}; the 1.5-2.0 forms read as ${readFree[0]?.packShape} and ${readPot[0]?.packShape}; "shape hull" -> ${hullShape?.problems[0]?.code ?? 'read'}; shape before page edges -> ${swapped?.problems[0]?.code ?? 'read'}; a polygon line under --pack-shape rect -> ${one(polygonUnderRect)}; a rect line under polygon -> ${one(rectUnderPolygon)}; a 2.0 line under polygon -> ${one(oldUnderPolygon)}; a pot polygon line under free rect -> ${bothWrong.map((q) => q.code).join(', ')}`,
-    'spine-rigc 2.1 appended the shape to the pack line, which the 2.0 reader refused whole; the reader takes both forms by name and nothing looser, and a page packed under a shape nobody asked for is a build nobody ran, refused as a page with the wrong edges is',
+    'rig-c 2.1 appended the shape to the pack line, which the 2.0 reader refused whole; the reader takes both forms by name and nothing looser, and a page packed under a shape nobody asked for is a build nobody ran, refused as a page with the wrong edges is',
   );
 
-  // check's own refusal of a red rigc run with no FAIL line: the core entry's refusal of validate (spine-rigc 2.0.3,
+  // check's own refusal of a red rigc run with no FAIL line: the core entry's refusal of validate (rig-c 2.0.3,
   // the line as it printed it, cut after its first clause), a FAIL line, and a run that printed nothing.
   const coreValidate = 'rigc validate: `validate` runs through spine-core (the gate it re-runs is the round trip through it), and the runtime could not be used';
   const refusedValidate = rigcFailed('validate --profile spine', { status: 1, out: `${coreValidate}\n` }, []);
@@ -7004,7 +7004,7 @@ function runCheckSuite(): number {
     'a red run whose reason was not a FAIL line was quoted by its last lines whatever they said, and one that printed nothing produced no problem at all, which refuseIfAny does not refuse; the core entry refuses validate in one line no gate filter reads',
   );
 
-  // The entry, read by name off `rigc --version`: the launcher's two lines as spine-rigc 2.0.3 writes them,
+  // The entry, read by name off `rigc --version`: the launcher's two lines as rig-c 2.0.3 writes them,
   // a third form, no line at all, and the live rigc beside this package, which must be the round trip
   // with the spine-core this repository pins.
   const fullEntry = readRigcEntry('2.0.3\nentry: cli.ts — @esotericsoftware/spine-core 4.3.13 present\n');
@@ -7020,14 +7020,14 @@ function runCheckSuite(): number {
       JSON.stringify(coreEntry) === '{"entry":"cli_core.ts","spine_core":null}' &&
       codes(thirdEntry) === 'CHECK_RIGC_ENTRY_READS rigc\'s entry line "entry: cli_wasm.ts — something else"' &&
       codes(noEntry) === 'CHECK_RIGC_ENTRY `rigc --version`' &&
-      (noEntry?.problems[0].detail.includes(`spine-rigc ${RIGC_ENTRY_VERSION} or later is required`) ?? false) &&
+      (noEntry?.problems[0].detail.includes(`rig-c ${RIGC_ENTRY_VERSION} or later is required`) ?? false) &&
       liveEntry.entry === 'cli.ts' &&
       liveEntry.spine_core === pinned,
     `full ${JSON.stringify(fullEntry)}; core ${JSON.stringify(coreEntry)}; a third form -> ${codes(thirdEntry)}; no entry line -> ${codes(noEntry)}; the live rigc -> ${JSON.stringify(liveEntry)} against the pinned spine-core ${pinned}`,
-    "spine-rigc 2.0's launcher chooses which validator gates a build by whether spine-core resolves beside it, and check.json records which one did; a reader that took any entry: line would record a third entry as one of the two",
+    "rig-c 2.0's launcher chooses which validator gates a build by whether spine-core resolves beside it, and check.json records which one did; a reader that took any entry: line would record a third entry as one of the two",
   );
 
-  // Both entries' build reports through the gate filter and the green test. The lines are spine-rigc 2.10.1's
+  // Both entries' build reports through the gate filter and the green test. The lines are rig-c 2.10.1's
   // on one build of the demo, the compile pass (clauses and paths cut): the core entry prints 52 assertions, an A00
   // SKIP, the figures line the full entry prints (since 2.2.0, firejune/rigc#1114) and a here: line; the full entry
   // prints 50. The core entry's 2.1.3 form, whose figures line carried physicsConstraints alone, is still read.
@@ -7317,7 +7317,7 @@ function runRequirementsSuite(): number {
         unresolved.problems[3].detail === 'names slot "cape", which rig.json does not declare' &&
         unresolved.problems[4].detail === 'names mesh attachment "plate" on slot "plate", which no skin in rig.json declares; its mesh attachments are none',
       unresolved?.problems.map((q) => `${q.object}: ${q.detail.slice(0, 90)}`).join(' | ') ?? 'nothing refused',
-      'everything resolves by name, and a miss is refused by name before anything is built; a constraint resolves by name AND type, as in spine-rigc, so an ik named as a transform is a miss; a region slot has no mesh to stretch',
+      'everything resolves by name, and a miss is refused by name before anything is built; a constraint resolves by name AND type, as in rig-c, so an ik named as a transform is a miss; a region slot has no mesh to stretch',
     );
 
     const undriven = refusals(() =>
@@ -7347,7 +7347,7 @@ function runRequirementsSuite(): number {
         undriven.problems[1].detail.includes('which ik constraint "vane_ik" does not constrain (its bones: "vane")') &&
         undriven.problems[2].detail.includes('whose properties drive "x"; a "to" naming rotate is required'),
       undriven?.problems.map((q) => `${q.object}: ${q.detail}`).join(' | ') ?? 'nothing refused',
-      "#87: a follow naming a property the constraint does not drive is refused — an ik drives rotate; a transform drives a property only when a `to` names it (spine-rigc's A48 reads a mix only for a property the constraint drives); and a bone the constraint does not hold is asked nothing by it",
+      "#87: a follow naming a property the constraint does not drive is refused — an ik drives rotate; a transform drives a property only when a `to` names it (rig-c's A48 reads a mix only for a property the constraint drives); and a bone the constraint does not hold is asked nothing by it",
     );
 
     const offRoot = (targets: Array<Record<string, unknown>>, m: Record<string, unknown> = motion): PartsError | null =>
@@ -7431,7 +7431,7 @@ function runRequirementsSuite(): number {
         ride.mixY === 1 &&
         JSON.stringify((fullRide.rig.invariants as Record<string, unknown>).consumerDrivenMix) === JSON.stringify([{ constraint: 'vane_ik', type: 'ik', why: 'a dial' }]),
       `released vane_ik: rig mix ${String(relVane?.mix)}, sweep keys ${JSON.stringify(relKeys)}; reach keys ${JSON.stringify(relReach)}; full ride_tf mixX ${String(ride?.mixX)} mixY ${String(ride?.mixY)}, consumerDrivenMix left ${JSON.stringify((fullRide.rig.invariants as Record<string, unknown>).consumerDrivenMix)}`,
-      "#87's released and full poses differ from the rig in one mix: an ik's mix (curve channel 0), a transform's mixX and mixY for translate (channels 1, 2) — every key of that animation holds the forced value, its curve's two value numbers with it, while softness, the softness channel (5, 7) and the other animation's keys stay; at 1 the constraint rests live, so its consumer-driven declaration (and only its own) is dropped, as spine-rigc refuses one that exempts nothing",
+      "#87's released and full poses differ from the rig in one mix: an ik's mix (curve channel 0), a transform's mixX and mixY for translate (channels 1, 2) — every key of that animation holds the forced value, its curve's two value numbers with it, while softness, the softness channel (5, 7) and the other animation's keys stay; at 1 the constraint rests live, so its consumer-driven declaration (and only its own) is dropped, as rig-c refuses one that exempts nothing",
     );
 
     const a47 = (name: string): string => `FAIL  A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT: ik constraint "${name}" has mix 0 at setup and none of the 4 animation keys its mix above 0`;
@@ -7448,7 +7448,7 @@ function runRequirementsSuite(): number {
         JSON.stringify((doorRig.invariants as Record<string, unknown>).consumerDrivenMix) === JSON.stringify([{ constraint: 'vane_ik', type: 'ik', why: `spine-parts check --requirements: the released pose of follow requirement "VANE" forces this mix to 0 on a throwaway copy; the rig under test is not altered` }]) &&
         JSON.stringify(rig) === rigBefore,
       `A47 alone on vane_ik: ${mutedOnly([a47('vane_ik')], sweepFollow)}; A48 alone on ride_tf: ${mutedOnly([a48], rideFollow)}; with an A19 beside it: ${mutedOnly([a47('vane_ik'), 'FAIL  A19_OVERLAY_PNGS_HAVE_ALPHA: slot "plate"'], sweepFollow)}; on another constraint: ${mutedOnly([a47('arm_ik')], sweepFollow)}; the copy declares ${JSON.stringify((doorRig.invariants as Record<string, unknown>).consumerDrivenMix)}`,
-      "the released pose fails spine-rigc's A47/A48 by construction; its door is invariants.consumerDrivenMix, taken on the throwaway copy only and only when rigc's gate refused that copy for that constraint and for nothing else — any other red line is rigc's verdict on the copy and is reported as such",
+      "the released pose fails rig-c's A47/A48 by construction; its door is invariants.consumerDrivenMix, taken on the throwaway copy only and only when rigc's gate refused that copy for that constraint and for nothing else — any other red line is rigc's verdict on the copy and is reported as such",
     );
 
     // Measures, on hand-built poses.
@@ -8084,7 +8084,7 @@ function runLoopSuite(): number {
     say(
       'LP01_THE_APNG_IS_ACTL_FCTL_IDAT_THEN_FCTL_FDAT_AND_RIGCS_PNG_READER_SEES_FRAME_ZERO',
       checked.status === 0 && apng.status === 0 && shape === 'IHDR,acTL,fcTL,IDAT,(fcTL,fdAT)*,IEND' && f0,
-      `check exit ${checked.status}, loop exit ${apng.status}; chunks ${shape}; spine-rigc's decodePng on the APNG ${plain === null ? 'read nothing' : `reads ${plain.width}x${plain.height}, ${f0 ? 'equal to' : 'NOT equal to'} f0000.png`}`,
+      `check exit ${checked.status}, loop exit ${apng.status}; chunks ${shape}; rig-c's decodePng on the APNG ${plain === null ? 'read nothing' : `reads ${plain.width}x${plain.height}, ${f0 ? 'equal to' : 'NOT equal to'} f0000.png`}`,
       'a decoder that knows nothing of APNG shows the default image, so frame 0 has to be the IDAT — and the one PNG reader in this package has to read the file at all',
     );
 
@@ -8138,7 +8138,7 @@ function runLoopSuite(): number {
         iF0 &&
         Math.abs(iTime - expected.length / set.fps) < 1e-9 &&
         idx.out.includes('is dropped'),
-      `exit ${idx.status}; stated ${iStated === null ? 'nothing' : iStated[0]}; read ${ir === null ? 'nothing' : `colour type ${ir.colourType}, ${ir.bitDepth}-bit, ${ir.entries} entries, ${ir.frames.length} frame(s), plays ${ir.plays}, faults [${ir.faults.slice(0, 3).join('; ')}]`}; measured over every frame max ${iErr?.max}, mean ${iErr?.mean.toFixed(3)}, alpha max ${iErr?.alphaMax}; spine-rigc's decodePng frame 0 ${iF0 ? 'equals' : 'does NOT equal'} the reader's; ${iTime.toFixed(4)}s per loop`,
+      `exit ${idx.status}; stated ${iStated === null ? 'nothing' : iStated[0]}; read ${ir === null ? 'nothing' : `colour type ${ir.colourType}, ${ir.bitDepth}-bit, ${ir.entries} entries, ${ir.frames.length} frame(s), plays ${ir.plays}, faults [${ir.faults.slice(0, 3).join('; ')}]`}; measured over every frame max ${iErr?.max}, mean ${iErr?.mean.toFixed(3)}, alpha max ${iErr?.alphaMax}; rig-c's decodePng frame 0 ${iF0 ? 'equals' : 'does NOT equal'} the reader's; ${iTime.toFixed(4)}s per loop`,
       'the indexed file is the README artifact and is lossy by construction, so the one checkable claim is that the error it prints is the error in the file — over all frames, not frame 0 — read back by a reader that shares nothing with the writer',
     );
 
@@ -8219,7 +8219,7 @@ function runLoopSuite(): number {
         oF0.max === 0 &&
         first.length > 0 &&
         Buffer.compare(Buffer.from(first), Buffer.from(second)) === 0,
-      `exits ${once.status}, ${twice.status}; ${or === null ? 'nothing read' : `colour type ${or.colourType}, ${or.bitDepth}-bit, ${or.entries} PLTE entries, tRNS ${or.trns === null ? 'absent' : `[${or.trns.join(',')}]`}, acTL ${or.numFrames}, faults [${or.faults.join('; ')}]`}; stated ${oStated === null ? 'nothing' : oStated[0]}; spine-rigc's decodePng frame 0 max ${oF0?.max}; every frame max ${oErr?.max}; two runs ${Buffer.compare(Buffer.from(first), Buffer.from(second)) === 0 ? 'byte-identical' : 'DIFFERENT'} (${first.length} bytes)`,
+      `exits ${once.status}, ${twice.status}; ${or === null ? 'nothing read' : `colour type ${or.colourType}, ${or.bitDepth}-bit, ${or.entries} PLTE entries, tRNS ${or.trns === null ? 'absent' : `[${or.trns.join(',')}]`}, acTL ${or.numFrames}, faults [${or.faults.join('; ')}]`}; stated ${oStated === null ? 'nothing' : oStated[0]}; rig-c's decodePng frame 0 max ${oF0?.max}; every frame max ${oErr?.max}; two runs ${Buffer.compare(Buffer.from(first), Buffer.from(second)) === 0 ? 'byte-identical' : 'DIFFERENT'} (${first.length} bytes)`,
       'four colours and the transparent entry are five, so the fewest bits that hold them are 4 and the palette has no excuse for error; the default image must be readable by the one PNG decoder in this package, which knows nothing of APNG',
     );
 
@@ -8433,7 +8433,7 @@ function runBuildSuite(): number {
       'a dropped vertical pad is not a refusal anywhere downstream — the parts are plausible, one pad too high — so the expectation has to be a number derived by hand',
     );
 
-    // The Spine header of a build is the setup-pose box since spine-rigc 2.2.0 (firejune/rigc#907), and
+    // The Spine header of a build is the setup-pose box since rig-c 2.2.0 (firejune/rigc#907), and
     // tools/atlas_population.ts reads a build's figure there, held to spine-core's getBounds through rigc's own
     // writing of a bound (headerBoxNumber). The green build above is the positive control; the plants are its
     // header's width moved one float32 step up, and its box removed. Every expectation is the header's own text.
@@ -8595,7 +8595,7 @@ function runBuildSuite(): number {
       'issue #28 item 3: two attempts passed parts/ itself before the tool said anything useful; the refusal and the help now say the same sentence, and the refusal points at the parent that holds parts.json',
     );
 
-    // The artifact beside rigc's model document (spine-rigc writes skeleton.model.json since 1.6): three paths, the
+    // The artifact beside rigc's model document (rig-c writes skeleton.model.json since 1.6): three paths, the
     // document not counted as a second skeleton; a second skeleton JSON beside it is still refused naming both.
     const art = join(dir, 'artifact');
     mkdirSync(art, { recursive: true });
@@ -8612,7 +8612,7 @@ function runBuildSuite(): number {
         twoJson.problems[0].code === 'BUILD_ARTIFACT_PRESENT' &&
         twoJson.problems[0].detail.startsWith('holds 2 .json file(s) [other.json, skeleton.json]'),
       `with ${RIGC_MODEL_DOCUMENT} beside: ${withModel.join(', ')}; with other.json beside too: ${codes(twoJson)} — ${twoJson?.problems[0]?.detail ?? ''}`,
-      `spine-rigc writes ${RIGC_MODEL_DOCUMENT} after the same gate as the pair, and the artifact stage refused every green build as holding two skeleton JSON files; the document is named and set aside, and nothing else is`,
+      `rig-c writes ${RIGC_MODEL_DOCUMENT} after the same gate as the pair, and the artifact stage refused every green build as holding two skeleton JSON files; the document is named and set aside, and nothing else is`,
     );
 
     // Issue #73 through the whole build: the green build's swinging skirt bone as a one-link chain. The link
@@ -8810,7 +8810,7 @@ function runBuildSuite(): number {
         ikCtl.out.includes('build: stopped at rig; no later stage ran') &&
         !existsSync(join(ikCtlOut, 'rig', 'rig.json')),
       `no --idle-keys -> exit ${ikCtl.status}, ${ikFail.length} FAIL line(s): …${ikFail[0]?.slice(ikFail[0].indexOf('ik constraint'), ikFail[0].indexOf('ik constraint') + 100) ?? ''}… …${ikFail[0]?.slice(ikFail[0].indexOf('run `'), ikFail[0].indexOf('run `') + 60) ?? ''}…; rig.json written: ${existsSync(join(ikCtlOut, 'rig', 'rig.json'))}`,
-      'issue #95: the refusal that sent the author to the three-stage path names the flag on the command they ran; the default still refuses, because choosing direct for a config that carries an ik would be a silent switch of what the idle keys ride on — from spine-rigc 2.15.0 the refusal is rigc\'s, and the line adds the flag (issue #103)',
+      'issue #95: the refusal that sent the author to the three-stage path names the flag on the command they ran; the default still refuses, because choosing direct for a config that carries an ik would be a silent switch of what the idle keys ride on — from rig-c 2.15.0 the refusal is rigc\'s, and the line adds the flag (issue #103)',
     );
 
     const ikOut = join(dir, 'ik-direct');
@@ -12440,15 +12440,17 @@ function summaryOnlyConstants(source: string, from: number, to: number): string[
 }
 
 const SPINE_CORE = '@esotericsoftware/spine-core';
+/** The upstream compiler's npm name (renamed at 2.20.4; the bin stays `rigc`). */
+const RIGC_PACKAGE = 'rig-c';
 
-/** Where this repository's spine-core devDependency pin and the installed spine-rigc's devDependency pin disagree, or null when they are equal. */
+/** Where this repository's spine-core devDependency pin and the installed rig-c's devDependency pin disagree, or null when they are equal. */
 function pinDrift(ours: { devDependencies?: Record<string, string> }, theirs: { version?: string; devDependencies?: Record<string, string> } | null): string | null {
-  if (theirs === null) return 'node_modules/spine-rigc/package.json is not there; run `bun install`';
+  if (theirs === null) return 'node_modules/rig-c/package.json is not there; run `bun install`';
   const a = ours.devDependencies?.[SPINE_CORE];
   const b = theirs.devDependencies?.[SPINE_CORE];
   if (a === undefined) return `package.json declares no ${SPINE_CORE} devDependency`;
-  if (b === undefined) return `spine-rigc ${theirs.version ?? '?'} declares no ${SPINE_CORE} devDependency, so there is no pin to hold this one to`;
-  return a === b ? null : `package.json pins ${SPINE_CORE} ${a}; spine-rigc ${theirs.version ?? '?'} develops against ${b}; the two must be equal`;
+  if (b === undefined) return `rig-c ${theirs.version ?? '?'} declares no ${SPINE_CORE} devDependency, so there is no pin to hold this one to`;
+  return a === b ? null : `package.json pins ${SPINE_CORE} ${a}; rig-c ${theirs.version ?? '?'} develops against ${b}; the two must be equal`;
 }
 
 // ---------------------------------------------------------------------------
@@ -12873,7 +12875,7 @@ function vertexText(vs: ReadonlyArray<readonly [number, number]>): string {
 
 /**
  * A rig spec carrying every mesh of `cases` as an authored mesh on one bone at
- * the origin, every vertex weighted 1 to it — the smallest spec spine-rigc's
+ * the origin, every vertex weighted 1 to it — the smallest spec rig-c's
  * gate takes a mesh in — with each mask written as its PNG, and a motion with
  * no animation.
  */
@@ -13040,7 +13042,7 @@ function runContourSuite(): number {
       convex !== null &&
       convex.report.filledHolePixels === 0,
     hole === null ? `refused: ${contourCodes(contourOf(HOLE))}` : `filled ${hole.report.filledHolePixels} px, grown ${hole.report.grownPixels} px; art ${hole.report.artPixels}; area ${hole.report.meshArea} px², ${hole.report.enclosedTransparentArea} transparent; the convex block's filled area ${convex?.report.filledHolePixels}`,
-    'spine-rigc takes one closed loop and no hole, so a hole is spanned and drawn as nothing (its alpha is 0); the settled policy is to fill it and say how much was filled',
+    'rig-c takes one closed loop and no hole, so a hole is spanned and drawn as nothing (its alpha is 0); the settled policy is to fill it and say how much was filled',
   );
 
   // CT06, CT07, CT08 — islands, empty, pinch: each refused by name, beside a positive.
@@ -13141,7 +13143,7 @@ function runContourSuite(): number {
     ['CT17_AN_OUTLINE_NOT_LISTED_FIRST_AND_IN_ORDER_IS_REFUSED_IN_RIGCS_WORDS', 'CONTOUR_ONE_LOOP', topo('order', [[2, 2], [0, 0], [4, 0], [4, 4], [0, 4]], [1, 0, 2, 2, 0, 3, 3, 0, 4, 4, 0, 1]), 'hull vertices must come first'],
     ['CT18_A_TRIANGLE_CLOCKWISE_IN_SPINE_WORLD_OR_AN_OVERLAP_RIGC_ACCEPTS_IS_REFUSED', 'CONTOUR_TILING', topo('reversed', sq, [...sqTri.slice(0, 9), 3, 0, 4]), 'triangle 3 (3, 0, 4) is clockwise in Spine world'],
   ];
-  // An overlap spine-rigc's own outline check accepts: two triangles over the square and the same third triangle four
+  // An overlap rig-c's own outline check accepts: two triangles over the square and the same third triangle four
   // times over vertices 1, 4 = (2, 2) and 5 = (1, 1). Every edge of the repeated triangle is used four times, so rigc
   // counts it interior; V 6, hull 4, T 6 = 2·6 − 4 − 2. Its areas sum to 8 + 8 + 4 x 2 = 24 px² over a 16 px² square.
   const overlapVs: Array<[number, number]> = [...sq.slice(0, 4), [2, 2], [1, 1]];
@@ -13290,7 +13292,7 @@ function runContourSuite(): number {
     'the silhouette grows only into pixels of the part window, so an all-art part has nothing to grow into and its outline is the window itself (a uv outside 0..1 is a different failure, and there is no art out there)',
   );
 
-  // CT27, CT28 — spine-rigc's real gate takes every mesh above, and refuses the same mesh listed out of order.
+  // CT27, CT28 — rig-c's real gate takes every mesh above, and refuses the same mesh listed out of order.
   const dir = temp('contour');
   try {
     // FULL is left out: its PNG has no transparent texel, which spine-html's A19 refuses for the image whatever draws it.
@@ -13306,10 +13308,10 @@ function runContourSuite(): number {
     const green = gate('green', meshes);
     const summary = green.lines.filter((l) => l.includes(' assertions: ')).map((l) => l.trim());
     say(
-      'CT27_SPINE_RIGCS_GATE_BUILDS_EVERY_CONTOUR_MESH_GREEN',
+      'CT27_RIG_CS_GATE_BUILDS_EVERY_CONTOUR_MESH_GREEN',
       meshes.length === BUILDING.length - 1 && gateGreen(green.status, green.lines) && existsSync(join(dir, 'green', 'build', 'skeleton.json')),
       `${meshes.length} mesh(es) (${meshes.map(([c, mm]) => `${c.name} V ${mm.vertices.length} hull ${mm.hull}`).join(', ')}) as authored meshes on one bone, weight 1: rigc build ${packedBuildArgs(DEFAULT_PACK_MODE).join(' ')} exit ${green.status}; ${summary.join(' | ') || green.out.split('\n').filter((l) => /FAIL|error/.test(l)).slice(0, 3).join(' | ')}`,
-      'the hull-first walk order and the 2V - hull - 2 count are spine-rigc\'s rules; they are passed on the gate itself, not on a copy of them',
+      'the hull-first walk order and the 2V - hull - 2 count are rig-c\'s rules; they are passed on the gate itself, not on a copy of them',
     );
     const planted = meshes.map(([c, mm]) => (c.name === 'concave' ? ([c, swapHullPair(mm)] as const) : ([c, mm] as const)));
     const red = gate('red', planted);
@@ -13389,7 +13391,7 @@ function runContourSuite(): number {
     'the figure is "at or under": a 36 px island is left out at 36 and refused at 35; what is left out is taken out of the art before the trace, so the mesh is exactly the 10x10 block\'s, grown by 1 px, and the report says what went',
   );
   const absentDetail = Array.isArray(islands) ? islands[0].detail : '';
-  const step1Words = 'its art (alpha above 8) is 2 separate 4-connected islands — 100 px at (2, 2), 36 px at (20, 2); one island is required, because spine-rigc takes one closed outline per mesh. Nothing was discarded; the lattice mode stays available for this part';
+  const step1Words = 'its art (alpha above 8) is 2 separate 4-connected islands — 100 px at (2, 2), 36 px at (20, 2); one island is required, because rig-c takes one closed outline per mesh. Nothing was discarded; the lattice mode stays available for this part';
   const zeroSame = all.filter((p) => p[1] !== null).every(([c, m]) => {
     const z = contourOf(c, { ...c.params, stray: 0 });
     return !Array.isArray(z) && m !== null && JSON.stringify(z) === JSON.stringify(m) && m.report.strayIslands === 0 && m.report.strayPixels === 0;
@@ -13541,7 +13543,7 @@ function runOutlineInRegionControls(say: (name: string, ok: boolean, detail: str
     'the grid points on an edge between grid points a and b are a + j (b - a) / G, G the gcd of the two grid differences (here 2560: steps of (3, 1) units), so a cut is placed at the nearest of them and the outline\'s shape, area and coverage cannot change; snapping x and y separately moves a point off the line',
   );
 
-  // CE16 — spine-rigc's gate takes the strip with its inserted (straight) hull vertices, and refuses it with two hull vertices swapped.
+  // CE16 — rig-c's gate takes the strip with its inserted (straight) hull vertices, and refuses it with two hull vertices swapped.
   const dir = temp('contour-outline-regions');
   try {
     const rigc = findRigc(ROOT, '');
@@ -13556,12 +13558,12 @@ function runOutlineInRegionControls(say: (name: string, ok: boolean, detail: str
     const green = at4 === null ? null : gate('green', at4);
     const red = at4 === null ? null : gate('red', swapHullPair(at4));
     say(
-      'CE16_SPINE_RIGCS_GATE_BUILDS_AN_OUTLINE_WITH_INSERTED_STRAIGHT_VERTICES_AND_REFUSES_IT_REORDERED',
+      'CE16_RIG_CS_GATE_BUILDS_AN_OUTLINE_WITH_INSERTED_STRAIGHT_VERTICES_AND_REFUSES_IT_REORDERED',
       green !== null && red !== null && gateGreen(green.status, green.lines) && red.status !== 0 && red.lines.some((l) => l.includes('hull vertices must trace the outline in order')),
       green === null || red === null
         ? 'the strip was refused'
         : `hull ${at4?.hull}, ${(at4?.triangles.length ?? 0) / 3} triangles: exit ${green.status}${green.status === 0 ? '' : ` (${green.lines.filter((l) => /FAIL|error/.test(l)).slice(0, 3).join(' | ')})`}; planted, hull vertices 1 and 2 swapped: exit ${red.status} (${red.lines.find((l) => l.includes('hull vertices must trace the outline in order'))?.trim().slice(0, 160) ?? 'no order refusal'})`,
-      'an inserted vertex makes a straight angle on the hull; the hull-first order and 2V - hull - 2 are spine-rigc\'s rules, passed on its gate, and the planted swap shows the gate reads this mesh\'s order',
+      'an inserted vertex makes a straight angle on the hull; the hull-first order and 2V - hull - 2 are rig-c\'s rules, passed on its gate, and the planted swap shows the gate reads this mesh\'s order',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -13582,7 +13584,7 @@ function maskPixels(m: Mask): Array<[number, number]> {
   return out;
 }
 
-/** spine-rigc's diagonal pinch, by its definition: a pixel corner with two set pixels on one diagonal and both others clear. Counted over corners inside the mask. */
+/** rig-c's diagonal pinch, by its definition: a pixel corner with two set pixels on one diagonal and both others clear. Counted over corners inside the mask. */
 function pinchCorners(m: Mask): number {
   const { width: w, height: h, data } = m;
   let n = 0;
@@ -13775,7 +13777,7 @@ function runContourGrowthControls(
     'CE07_A_PINCH_IN_THE_SILHOUETTE_ITSELF_IS_REFUSED_IN_RIGCS_WORDS_AT_EVERY_MARGIN',
     guarded.every(([, r]) => Array.isArray(r) && r.length === 1 && r[0].code === 'CONTOUR_TRACE' && r[0].detail.includes('pinches to a single point at pixel corner (4,4)')) && grownTraces === 'traced',
     `PINCH's island handed in unfilled: ${guarded.map(([mg, r]) => `margin ${mg} -> ${Array.isArray(r) ? r.map((p) => p.code).join(', ') : 'BUILT'}`).join('; ')}; planted (the guard removed — its grown silhouette traced alone at margin 1): ${grownTraces}`,
-    'the ruling, item 3: a pinch the growth made is filled, a pinch in the silhouette itself stays spine-rigc\'s refusal (firejune/rigc#1209); growth at margin 1 puts the pocket pixel (3, 3) in and would hide it, so the silhouette is traced before it grows. contourMesh hands in the island with its holes filled, which CE08 shows has no pinch',
+    'the ruling, item 3: a pinch the growth made is filled, a pinch in the silhouette itself stays rig-c\'s refusal (firejune/rigc#1209); growth at margin 1 puts the pocket pixel (3, 3) in and would hide it, so the silhouette is traced before it grows. contourMesh hands in the island with its holes filled, which CE08 shows has no pinch',
   );
 
   // CE08 — no filled 4-connected island has a pinch: every island of every 4x4 mask, framed and touching the border.
@@ -14658,12 +14660,12 @@ function runTreeSuite(): number {
     'determinism is a contract: a stage that read the clock or the network could not promise the same bytes twice',
   );
 
-  const importers = sources.filter(([, t]) => t.includes("'spine-rigc/src/transform.ts'")).map(([f]) => f);
+  const importers = sources.filter(([, t]) => t.includes("'rig-c/src/transform.ts'")).map(([f]) => f);
   say(
     'TY07_ONLY_SRC_COORDS_IMPORTS_THE_Y_FLIP',
     importers.join(',') === 'src/coords.ts' && cropToSpineY(10, 100) === 90,
-    `importers of spine-rigc/src/transform.ts: ${importers.join(', ') || 'none'}; cropToSpineY(10, 100) through the door = ${cropToSpineY(10, 100)}`,
-    "spine-rigc forbids a second copy of its coordinate conversion; one door keeps every later stage on rigc's",
+    `importers of rig-c/src/transform.ts: ${importers.join(', ') || 'none'}; cropToSpineY(10, 100) through the door = ${cropToSpineY(10, 100)}`,
+    "rig-c forbids a second copy of its coordinate conversion; one door keeps every later stage on rigc's",
   );
 
   const declareCall = /(^|[^.\w$])declare\s*\(/;
@@ -14696,16 +14698,30 @@ function runTreeSuite(): number {
   );
 
   const ours = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { devDependencies?: Record<string, string> };
-  const rigcPkgPath = join(ROOT, 'node_modules', 'spine-rigc', 'package.json');
+  const rigcPkgPath = join(ROOT, 'node_modules', RIGC_PACKAGE, 'package.json');
   const theirs = existsSync(rigcPkgPath) ? (JSON.parse(readFileSync(rigcPkgPath, 'utf8')) as { version?: string; devDependencies?: Record<string, string> }) : null;
   const drift = pinDrift(ours, theirs);
   const plantDrift = pinDrift({ devDependencies: { [SPINE_CORE]: '4.3.12' } }, theirs);
   const plantAbsent = pinDrift({ devDependencies: {} }, theirs);
   say(
-    'TY10_THE_SPINE_CORE_PIN_IS_THE_ONE_SPINE_RIGC_DEVELOPS_AGAINST',
+    'TY10_THE_SPINE_CORE_PIN_IS_THE_ONE_RIG_C_DEVELOPS_AGAINST',
     drift === null && plantDrift !== null && plantAbsent !== null,
-    `package.json ${SPINE_CORE} ${ours.devDependencies?.[SPINE_CORE] ?? 'absent'}, spine-rigc ${theirs?.version ?? '(not installed)'}'s devDependency ${theirs?.devDependencies?.[SPINE_CORE] ?? 'absent'}: ${drift ?? 'equal'}; a planted 4.3.12 -> ${plantDrift ?? 'not found'}; a planted absence -> ${plantAbsent ?? 'not found'}`,
-    "spine-core is this repository's development dependency — the round trip in its selftest and CI, the selftest's posing oracle, the two tools — because spine-rigc 2.0 stopped carrying it; a runtime other than the one rigc's round trip is developed against would be a second opinion nobody chose",
+    `package.json ${SPINE_CORE} ${ours.devDependencies?.[SPINE_CORE] ?? 'absent'}, rig-c ${theirs?.version ?? '(not installed)'}'s devDependency ${theirs?.devDependencies?.[SPINE_CORE] ?? 'absent'}: ${drift ?? 'equal'}; a planted 4.3.12 -> ${plantDrift ?? 'not found'}; a planted absence -> ${plantAbsent ?? 'not found'}`,
+    "spine-core is this repository's development dependency — the round trip in its selftest and CI, the selftest's posing oracle, the two tools — because rig-c 2.0 stopped carrying it; a runtime other than the one rigc's round trip is developed against would be a second opinion nobody chose",
+  );
+
+  // TY11 — the upstream package was renamed on npm (2.20.4): every import, probe and sentence names the new one. The old
+  // name is spelled here only in pieces, so this file is scanned like every other; CHANGELOG.md is history and keeps it.
+  const oldPackage = ['spine', 'rigc'].join('-');
+  const oldNameIn = (f: string, t: string): string | null => (f !== 'CHANGELOG.md' && t.includes(oldPackage) ? `names ${oldPackage}` : null);
+  const stale = text.map(([f, t]) => [f, oldNameIn(f, t)] as const).filter(([, w]) => w !== null).map(([f]) => f);
+  const deps = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> }).dependencies ?? {};
+  const plantStale = [['plant.ts', `import { x } from '${oldPackage}/mesh';`], ['CHANGELOG.md', `* bump ${oldPackage}`]].map(([f, t]) => oldNameIn(f, t));
+  say(
+    'TY11_NO_FILE_BUT_THE_CHANGELOG_NAMES_THE_OLD_PACKAGE',
+    stale.length === 0 && !(oldPackage in deps) && RIGC_PACKAGE in deps && theirs !== null && plantStale[0] !== null && plantStale[1] === null,
+    `${text.length} text file(s): ${stale.length === 0 ? `none names ${oldPackage} outside CHANGELOG.md` : stale.join(', ')}; dependencies ${Object.keys(deps).join(', ')}; ${RIGC_PACKAGE} ${theirs?.version ?? '(not installed)'} installed; a planted import is found (${plantStale[0] ?? 'not found'}), the changelog's line is not (${plantStale[1] ?? 'exempt'})`,
+    'npm renamed the upstream package to rig-c at 2.20.4 with the same exports map; an import of the old name resolves only while a stale node_modules still holds it, and a sentence naming it sends an agent to a package that is no longer published',
   );
   return bad();
 }
@@ -15104,7 +15120,7 @@ function runSceneSuite(): number {
       'SC13_TWO_IMAGES_THAT_COMPOSE_TO_ONE_FILE_NAME_ARE_REFUSED',
       has(clash.err, 'SCENE_IMAGE_NAME_FREE', '"x.y.cloth.png"'),
       codes(clash.err),
-      "spine-rigc names an atlas region by its PNG's basename and refuses a repeat; an image is <id>.<file> because a region name cannot hold \":\", and the one collision that rule allows is named rather than aliased",
+      "rig-c names an atlas region by its PNG's basename and refuses a repeat; an image is <id>.<file> because a region name cannot hold \":\", and the one collision that rule allows is named rather than aliased",
     );
     const many = compose(two({ plate: { image: 'plate-short.png', provenance: 'generated' }, characters: [{ id: 'plain', build: 'plain', offset: [75, 20] }, { id: 'reach', build: 'quarter', offset: [50, 10] }, { id: 'reach2', build: 'short', offset: [50, 10] }], order: ['plain', 'reach', 'nobody'] }));
     const manyCodes = ['SCENE_PLATE_SIZE', 'SCENE_RIG_SCALE_AGREES', 'SCENE_DURATION_AGREES', 'SCENE_CHARACTER_INSIDE_CANVAS', 'SCENE_ORDER_RESOLVES', 'SCENE_ORDER_COMPLETE'];
@@ -15517,7 +15533,7 @@ function runAutoMeshSuite(): number {
     'AM04_EACH_OUT_OF_RANGE_AUTO_NUMBER_IS_REFUSED_ALONE_BY_NAME',
     got4.every((g) => g.ok),
     got4.map((g) => `${g.what}: ${g.line}`).join(' || ').slice(0, 2000),
-    'each number is read as spine-rigc\'s contract types it (a coverage is a fraction, a distance 0 or more, a cap a whole number from 1, minWeight below 1); an unknown key such as maxSpacing — a name the issue says is not an API — is refused like any other',
+    'each number is read as rig-c\'s contract types it (a coverage is a fraction, a distance 0 or more, a cap a whole number from 1, minWeight below 1); an unknown key such as maxSpacing — a name the issue says is not an API — is refused like any other',
   );
 
   // AM05 — regions and protect: every field and every name.
@@ -15640,8 +15656,8 @@ function runAutoMeshSuite(): number {
   say(
     'AM11_THE_SOURCE_IS_HANDED_OVER_AS_THE_CONTOUR_MESH_WRITES_IT_COUNTER_CLOCKWISE_AND_A_SECOND_TURN_READS_ALL_FLIPPED',
     !Array.isArray(conv) && JSON.stringify(handed) === JSON.stringify(conv.triangles) && asHanded === 0 && turnedTwice === nTri && nTri === 22,
-    `handed over ${handed === null || Array.isArray(conv) ? 'nothing' : JSON.stringify(handed) === JSON.stringify(conv.triangles) ? 'as contourMesh returns it' : 'CHANGED from what contourMesh returns'}; spine-rigc's MQ_ORIENTATION: as handed ${asHanded}, turned once more (planted) ${turnedTwice} of ${nTri} (fixtures/contour.ts: 22 triangles)`,
-    'issue #126: spine-rigc\'s SourceMesh is counter-clockwise in Spine world and the contour mesh now writes that winding, so the source is passed through untouched; one more [a, b, c] -> [a, c, b] turn — the swap this module made before — reads every triangle flipped',
+    `handed over ${handed === null || Array.isArray(conv) ? 'nothing' : JSON.stringify(handed) === JSON.stringify(conv.triangles) ? 'as contourMesh returns it' : 'CHANGED from what contourMesh returns'}; rig-c's MQ_ORIENTATION: as handed ${asHanded}, turned once more (planted) ${turnedTwice} of ${nTri} (fixtures/contour.ts: 22 triangles)`,
+    'issue #126: rig-c\'s SourceMesh is counter-clockwise in Spine world and the contour mesh now writes that winding, so the source is passed through untouched; one more [a, b, c] -> [a, c, b] turn — the swap this module made before — reads every triangle flipped',
   );
 
   // AM12 — every number in the call comes from the config.
@@ -15703,7 +15719,7 @@ function runAutoMeshSuite(): number {
   const resPts = typeof geo13 === 'string' || geo13.ran.mesh === null ? [] : geo13.ran.mesh.points;
   const fit13 = resPts.length === 0 ? null : measureAuthoredMeshFit(clothMask(), 1, resPts, typeof geo13 === 'string' || geo13.ran.mesh === null ? [] : geo13.ran.mesh.triangles);
   say(
-    'AM13_AN_ACCEPTED_RESULT_IS_WRITTEN_AS_SPINE_RIGC_RETURNED_IT_AND_HOLDS_EVERY_ART_PIXEL_ON_AN_INDEPENDENT_READING',
+    'AM13_AN_ACCEPTED_RESULT_IS_WRITTEN_AS_RIG_C_RETURNED_IT_AND_HOLDS_EVERY_ART_PIXEL_ON_AN_INDEPENDENT_READING',
     okRig === null &&
       row13?.mode === 'auto' &&
       att13 !== undefined &&
@@ -15716,7 +15732,7 @@ function runAutoMeshSuite(): number {
       fit13.coveredArt === fit13.artPixels &&
       fit13.artPixels === 128,
     `rig stage: ${lines(okRig)}; ${row13 === undefined ? 'no row' : `${row13.source.counts?.boundaryVertices}+${row13.source.counts?.interiorVertices} -> ${row13.result.counts.boundaryVertices}+${row13.result.counts.interiorVertices} vertices, attachment hull ${att13?.hull}, ${row13.termination.reason}`}; every result vertex a source vertex: ${resPts.every(([x, y]) => srcPts.includes(`${x},${y}`))}; measureAuthoredMeshFit at alpha >= 1: ${fit13?.coveredArt}/${fit13?.artPixels} (by hand 128)`,
-    'with no region the reduction only removes, so every vertex is a source vertex; the result is held to coverage 1 and the fit counter that is not spine-rigc\'s measurement agrees',
+    'with no region the reduction only removes, so every vertex is a source vertex; the result is held to coverage 1 and the fit counter that is not rig-c\'s measurement agrees',
   );
 
   // AM14 — none-met-the-targets: a budget spent before the region's density is met returns no mesh, and the part is refused.
@@ -15761,22 +15777,22 @@ function runAutoMeshSuite(): number {
   // AM16 — invalid-input: a source that fails its own bounds is no reference.
   const g16 = autoGeometry('convex', CONVEX.mask, { ...syntheticPolicy(8), sourceBounds: { minCoverage: 1, maxOvershoot: 0, maxUndercut: 0 } });
   say(
-    'AM16_A_SOURCE_THAT_FAILS_ITS_OWN_BOUNDS_IS_REFUSED_WITH_SPINE_RIGCS_CODE',
+    'AM16_A_SOURCE_THAT_FAILS_ITS_OWN_BOUNDS_IS_REFUSED_WITH_RIG_CS_CODE',
     typeof g16 !== 'string' && !g16.verdict.accepted && g16.verdict.problem.code === 'AUTO_MESH_TERMINATION' && g16.verdict.problem.detail.includes('invalid-input REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS') && g16.ran.mesh === null,
     typeof g16 === 'string' ? g16 : g16.verdict.accepted ? 'accepted' : problemLine(g16.verdict.problem),
     'correction 3 and P8: the margin-1 source overshoots by 1 px (fixtures/contour.ts), so a sourceBounds.maxOvershoot of 0 refuses it as a reference; the report\'s own code and detail are carried',
   );
 
-  // AM17 — a malformed input spine-rigc throws on is the part's refusal too.
+  // AM17 — a malformed input rig-c throws on is the part's refusal too.
   const e17 = refusals(() => buildRig(parseConfig(autoRigConfig((_c, a) => (a.protect = { vertices: [9999] }))), rigParts(), rigImages()));
   say(
-    'AM17_A_PROTECTED_VERTEX_THE_SOURCE_DOES_NOT_HAVE_IS_SPINE_RIGCS_THROWN_REFUSAL_BY_NAME',
+    'AM17_A_PROTECTED_VERTEX_THE_SOURCE_DOES_NOT_HAVE_IS_RIG_CS_THROWN_REFUSAL_BY_NAME',
     has(e17, 'AUTO_MESH_INPUT', AT, 'REDUCE_INPUT_MISSING', 'protect.vertices[0] is 9999') && e17?.problems.length === 1,
     lines(e17),
-    'only spine-rigc knows how many vertices the source has; its MeshReductionError is caught and named, never let through as a crash',
+    'only rig-c knows how many vertices the source has; its MeshReductionError is caught and named, never let through as a crash',
   );
 
-  // AM18 — the coarse source with a region converges since spine-rigc 2.19.1 (option 1); a result returned and not accepted
+  // AM18 — the coarse source with a region converges since rig-c 2.19.1 (option 1); a result returned and not accepted
   // (here: a minimum angle no triangle can meet) still refuses the part by its blocking row, with no fallback.
   let r18: AutoMeshReport | null = null;
   const ok18 = refusals(() => {
@@ -15817,7 +15833,7 @@ function runAutoMeshSuite(): number {
       has(e18, 'AUTO_MESH_ACCEPTED', AT, 'MQ_MIN_ANGLE', '>= 61', 'nothing is built in its place') &&
       e18?.problems.length === 1,
     `region "pinch" (L0 2): ${ok18 === null && got18 !== null && rc18 !== null && sc18 !== null ? `accepted, ${got18.termination.reason}; source ${sc18.boundaryVertices}+${sc18.interiorVertices} v ${sc18.triangles} t -> result ${rc18.boundaryVertices}+${rc18.interiorVertices} v ${rc18.triangles} t, ${got18.result.insertedVertices} inserted; MQ_MAX_EDGE[pinch] ${edge18?.state} ${edge18?.value}; ${got18.regions.find((g) => g.name === 'pinch')?.bound_in_result ?? 0} result vertices bound to "soft"` : `refused: ${lines(ok18)}`}; planted minAngle 61: ${lines(e18)}`,
-    'spine-rigc 2.19.1 (option 1, rigc#1231) exempts only an edge touching the band\'s outer boundary at a single point, so the coarse source with a region now converges where 2.19.0 stopped by name: by definition the result holds more interior vertices than the source, T = 2V - hull - 2, and every edge the region holds is within its L0 of 2. A refinement limited by a minimum angle still ends not accepted (2.19.1\'s angle-limited failure): no triangle has three angles of 61 degrees or more, since they sum to 180, so the part is refused by that row and nothing is built in its place',
+    'rig-c 2.19.1 (option 1, rigc#1231) exempts only an edge touching the band\'s outer boundary at a single point, so the coarse source with a region now converges where 2.19.0 stopped by name: by definition the result holds more interior vertices than the source, T = 2V - hull - 2, and every edge the region holds is within its L0 of 2. A refinement limited by a minimum angle still ends not accepted (2.19.1\'s angle-limited failure): no triangle has three angles of 61 degrees or more, since they sum to 180, so the part is refused by that row and nothing is built in its place',
   );
 
   // AM19 — weights: a survivor keeps the source's bindings bit for bit; an inserted vertex is bound by name.
@@ -15929,7 +15945,7 @@ function runAutoMeshSuite(): number {
   const t23x = autoGeometry('strip', STRIP_MASK, { ...syntheticPolicy(2), regions: [squareRegion(32, 24, 4, 0)] });
   const rows23 = typeof t23 === 'string' ? [] : (t23.ran.report.candidates[0]?.geometry?.rows ?? []);
   say(
-    'AM23_A_REGION_WITH_TRANSITION_0_HAS_NO_TRANSITION_ROW_AND_A_ZERO_BAND_CASE_SPINE_RIGC_CANNOT_REFINE_IS_REFUSED_BY_NAME',
+    'AM23_A_REGION_WITH_TRANSITION_0_HAS_NO_TRANSITION_ROW_AND_A_ZERO_BAND_CASE_RIG_C_CANNOT_REFINE_IS_REFUSED_BY_NAME',
     typeof t23 !== 'string' &&
       t23.verdict.accepted &&
       t23.input.targets.regions[0].transition === 0 &&
@@ -15950,7 +15966,7 @@ function runAutoMeshSuite(): number {
     'AM24_TWO_RUNS_OF_ONE_AUTO_CONFIG_WRITE_THE_SAME_BYTES',
     once !== null && rigJsonText(once.rig) === rigJsonText(twice.rig) && rigJsonText(once.meshReport) === rigJsonText(twice.meshReport),
     `rig.json ${rigJsonText(twice.rig).length} bytes, mesh_report.json ${rigJsonText(twice.meshReport).length} bytes, identical: ${once !== null && rigJsonText(once.meshReport) === rigJsonText(twice.meshReport)}`,
-    'determinism is a contract: the same config writes the same bytes, spine-rigc\'s document inside the row included',
+    'determinism is a contract: the same config writes the same bytes, rig-c\'s document inside the row included',
   );
 
   // AM25 — the report row: every field the brief names, and deformation said to be unmeasured.
@@ -16019,7 +16035,7 @@ function runAutoMeshSuite(): number {
     rmSync(dir27, { recursive: true, force: true });
   }
 
-  // AM28 — the fixture's auto rig through the installed spine-rigc's gate.
+  // AM28 — the fixture's auto rig through the installed rig-c's gate.
   const dir28 = temp('auto-gate');
   try {
     const fx = writeRigFixture(dir28, autoRigConfig());
@@ -16032,7 +16048,7 @@ function runAutoMeshSuite(): number {
     const e28 = refusals(() => rigStage({ config: fx.config, parts: fx.parts, out: join(dir28, 'out') }, runner, join(dir28, 'scratch'), (l) => log28.push(l)));
     const gate = log28.filter((l) => l.includes('rigc ') && l.includes('exit'));
     say(
-      'AM28_THE_FIXTURES_AUTO_RIG_PASSES_SPINE_RIGCS_GATE_AND_IS_WRITTEN',
+      'AM28_THE_FIXTURES_AUTO_RIG_PASSES_RIG_CS_GATE_AND_IS_WRITTEN',
       e28 === null && gate.length > 0 && gate.every((l) => l.includes('exit 0')) && existsSync(join(dir28, 'out', 'rig.json')),
       `${lines(e28)}; ${gate.map((l) => l.trim()).join(' | ')}`,
       'the reduced mesh goes through the ordinary build and its full gate (contract, Non-goals): nothing here writes skeleton data without it',
@@ -16093,7 +16109,7 @@ function runAutoMeshSuite(): number {
     'the owner\'s condition 1: the demo\'s earring is two real pieces; it stays refused under the stated rule, and the plant shows what a rule sized to the piece would silently cost',
   );
 
-  // AM33 — the three counts: (a) as handed in, (b) spine-rigc's count of the gated source, (c) = (b) - removed + inserted.
+  // AM33 — the three counts: (a) as handed in, (b) rig-c's count of the gated source, (c) = (b) - removed + inserted.
   const tracked33: MatrixCounts = { boundary: 7, interior: 5, triangles: 9, bindings: 0, meanInfluences: 0 };
   const g33 = geometryRow('small', SMALL_STRIP_MASK, { ...syntheticPolicy(2), regions: [squareRegion(12, 10, 4, 2)] }, null, tracked33, still);
   const src33 = autoSource('small', SMALL_STRIP_MASK, { ...syntheticPolicy(2), regions: [squareRegion(12, 10, 4, 2)] });
@@ -16151,16 +16167,16 @@ function runAutoMeshSuite(): number {
     'the owner\'s condition 2: every accepted #131 result had 0 interior vertices, so local refinement was unverified; here the source spacing is L0 (2.19.0 refines only then), and the bound is read off the triangles, not off the report',
   );
 
-  // AM35 — the verdict classes: only spine-rigc's named P16 refinement stop is "stopped"; every other refusal keeps its code.
+  // AM35 — the verdict classes: only rig-c's named P16 refinement stop is "stopped"; every other refusal keeps its code.
   const coarse = AUTO_CASES.find((c) => c.name === 'tiny region, coarse source');
   const g35 = coarse === undefined ? null : geometryRow(coarse.name, coarse.mask, coarse.spec, null, null, still);
   const zero = classify({ code: 'AUTO_MESH_ACCEPTED', object: 'x', detail: 'MQ_MAX_EDGE[soft] (the refinement found no point of edge 256-284 strictly between its ends inside region "soft" or its band)' });
   const other = classify({ code: 'AUTO_MESH_TERMINATION', object: 'x', detail: 'vertex 1 lies 9 px beyond region "soft"\'s 2 px band — P16' });
   say(
-    'AM35_ONLY_SPINE_RIGCS_NAMED_REFINEMENT_STOP_IS_MARKED_STOPPED_AND_EVERY_OTHER_REFUSAL_KEEPS_ITS_CODE',
-    g35 !== null && g35.verdict.kind === 'blocked' && verdictText(g35.verdict) === "stopped by spine-rigc's refinement (P16)" && BLOCKED_LABEL === verdictText(g35.verdict) && zero.kind === 'refused' && other.kind === 'refused' && classify(null).kind === 'accepted',
+    'AM35_ONLY_RIG_CS_NAMED_REFINEMENT_STOP_IS_MARKED_STOPPED_AND_EVERY_OTHER_REFUSAL_KEEPS_ITS_CODE',
+    g35 !== null && g35.verdict.kind === 'blocked' && verdictText(g35.verdict) === "stopped by rig-c's refinement (P16)" && BLOCKED_LABEL === verdictText(g35.verdict) && zero.kind === 'refused' && other.kind === 'refused' && classify(null).kind === 'accepted',
     `coarse source: ${g35 === null ? 'no case' : verdictText(g35.verdict)}; planted transition-0 stop -> ${verdictText(zero)}; planted P16 words under another code -> ${verdictText(other)}`,
-    'the brief: a row spine-rigc stops by name in its refinement (AUTO_MESH_ACCEPTED naming P16, an edge end beyond the band) is a limit of the installed spine-rigc, not a refusal on the part\'s merits, and is not pre-densified; option 1 shipped in 2.19.1 and this coarse strip still stops on 2.20.1, so its inputs stay in fixtures/automesh.ts and the row reruns unchanged',
+    'the brief: a row rig-c stops by name in its refinement (AUTO_MESH_ACCEPTED naming P16, an edge end beyond the band) is a limit of the installed rig-c, not a refusal on the part\'s merits, and is not pre-densified; option 1 shipped in 2.19.1 and this coarse strip still stops on 2.20.1, so its inputs stay in fixtures/automesh.ts and the row reruns unchanged',
   );
 
   // AM36 — the strict policy is #131's, unchanged; the permissive one differs in exactly the stated numbers.
@@ -16195,7 +16211,7 @@ function runAutoMeshSuite(): number {
       planted36.length === 6 &&
       load(autoRigConfig((c) => ((c.meshes as Record<string, Record<string, unknown>>).cloth.auto = JSON.parse(JSON.stringify(withPolicyMotion(permissivePolicy(4)))) as unknown))) === null,
     `strict against #131's numbers by hand: ${diff(strict36, hand36).join(', ') || 'no difference'}; permissive differs at ${d36.join(', ')}; planted boundary deviation 2 -> ${planted36.length} difference(s)`,
-    'the owner\'s condition 1: the strict policy stays the control group; the permissive one is named and its three changes (stray 4 from #106; minCoverage = spine-rigc CONTOUR_MIN_COVERAGE 0.995; maxUndercut ceil(32768 x sqrt 2) = 46341, reported not gated) were written before any part was measured, and with its motion block (withPolicyMotion, which the loader requires since #134) it loads as a config',
+    'the owner\'s condition 1: the strict policy stays the control group; the permissive one is named and its three changes (stray 4 from #106; minCoverage = rig-c CONTOUR_MIN_COVERAGE 0.995; maxUndercut ceil(32768 x sqrt 2) = 46341, reported not gated) were written before any part was measured, and with its motion block (withPolicyMotion, which the loader requires since #134) it loads as a config',
   );
 
   // AM37 — the matrix region: L0 = grid / 2, transition = radius = band, and the bound reaches the grid at the band's outer edge.
@@ -16251,8 +16267,10 @@ function runAutoMeshSuite(): number {
     'the brief: the full-build check outcome per switched part (9 bars) and TEXTURE_STRETCH severity per part; a bar that did not measure is not counted as passed',
   );
 
-  // AM40 — issue #135 item D, held as a STOP: spine-rigc's reduceMesh takes no undeclared maxUndercut, so "no upper bound"
-  // cannot be said to it, and the loader keeps refusing null; the permissive policy's number stays until rigc accepts one.
+  // AM40 — issue #135 item D and the #126 close-out, held as a STOP: rig-c's reduceMesh takes no undeclared art bound, so
+  // "no upper bound" cannot be said to it, and the loader keeps refusing null; the permissive policy's number stays until
+  // rigc accepts one. Measured on rig-c 2.20.4, the release said to accept `maxUndercut: null` (rigc#1254 still open):
+  // its checkFit and its artFit validation require a finite number for maxUndercut AND maxOvershoot, in both blocks.
   const g40 = autoGeometry('convex', CONVEX.mask, syntheticPolicy(8));
   const asked40 = (edit: (i: MeshReductionInput) => void): string => {
     if (typeof g40 === 'string') return g40;
@@ -16261,27 +16279,39 @@ function runAutoMeshSuite(): number {
     const r = runReduction('convex', i);
     return 'code' in r ? `${r.code} ${r.detail}` : 'accepted the input';
   };
-  const nullTarget = asked40((i) => ((i.targets.artFit as unknown as Record<string, unknown>).maxUndercut = null));
-  const absentTarget = asked40((i) => delete (i.targets.artFit as unknown as Record<string, unknown>).maxUndercut);
-  const nullSource = asked40((i) => ((i.sourceBounds as unknown as Record<string, unknown>).maxUndercut = null));
+  const unbound40 = (block: 'targets.artFit' | 'sourceBounds', field: 'maxUndercut' | 'maxOvershoot', value: null | undefined): string =>
+    asked40((i) => {
+      const o = (block === 'sourceBounds' ? i.sourceBounds : i.targets.artFit) as unknown as Record<string, unknown>;
+      if (value === undefined) delete o[field];
+      else o[field] = value;
+    });
+  const asks40 = [
+    ['targets.artFit', 'maxUndercut', null],
+    ['targets.artFit', 'maxUndercut', undefined],
+    ['sourceBounds', 'maxUndercut', null],
+    ['targets.artFit', 'maxOvershoot', null],
+    ['sourceBounds', 'maxOvershoot', null],
+  ] as const;
+  const told40 = asks40.map(([b, f, v]) => [`${b}.${f} ${String(v)}`, unbound40(b, f, v), `${b}.${f} is ${String(v)}; required a finite number`] as const);
+  const asIs40 = asked40(() => undefined);
   const loader40 = load(
     autoRigConfig((_c, a) => {
       ((a.targets as Record<string, unknown>).artFit as Record<string, unknown>).maxUndercut = null;
     }),
   );
+  const rigcAt40 = join(ROOT, 'node_modules', 'rig-c', 'package.json');
+  const version40 = existsSync(rigcAt40) ? ((JSON.parse(readFileSync(rigcAt40, 'utf8')) as { version?: string }).version ?? '?') : '(not installed)';
   say(
-    'AM40_SPINE_RIGC_REQUIRES_A_NUMERIC_MAX_UNDERCUT_SO_NO_BOUND_CANNOT_BE_DECLARED_AND_THE_LOADER_REFUSES_NULL',
+    'AM40_RIG_C_REQUIRES_A_NUMERIC_ART_BOUND_SO_NO_BOUND_CANNOT_BE_DECLARED_AND_THE_LOADER_REFUSES_NULL',
     typeof g40 !== 'string' &&
-      nullTarget.includes('REDUCE_INPUT_MISSING') &&
-      nullTarget.includes('targets.artFit.maxUndercut is null; required a finite number') &&
-      absentTarget.includes('targets.artFit.maxUndercut is undefined; required a finite number') &&
-      nullSource.includes('sourceBounds.maxUndercut is null; required a finite number') &&
+      asIs40 === 'accepted the input' &&
+      told40.every(([, said, want]) => said.includes('REDUCE_INPUT_MISSING') && said.includes(want)) &&
       loader40 !== null &&
       loader40.problems.length === 1 &&
       loader40.problems[0].code === 'CONFIG_FIELD_TYPE' &&
       loader40.problems[0].object === 'config.meshes.cloth.auto.targets.artFit.maxUndercut',
-    `rigc, targets null: ${nullTarget.slice(0, 200)} || absent: ${absentTarget.slice(0, 160)} || sourceBounds null: ${nullSource.slice(0, 160)} || loader: ${loader40 === null ? 'loaded' : loader40.problems.map(problemLine).join('; ').slice(0, 300)}`,
-    'issue #135 ruling 4: an explicit "no upper bound" is used only if spine-rigc\'s ArtFitBounds takes an absent or null maxUndercut and reports the row undeclared; spine-rigc 2.20.3 types it `number` and reduceMesh refuses anything else by name (only measureMeshQuality\'s MeasureTargets takes a null artFit, whole), so the STOP stands and this goes red the day rigc accepts one',
+    `rig-c ${version40}; the same input unedited: ${asIs40}; ${told40.map(([what, said]) => `${what}: ${said.slice(said.indexOf('REDUCE_'), said.indexOf('REDUCE_') + 150)}`).join(' || ')} || loader: ${loader40 === null ? 'loaded' : loader40.problems.map(problemLine).join('; ').slice(0, 300)}`,
+    'issue #135 ruling 4 and the #126 close-out: an explicit "no upper bound" is used only if rig-c\'s ArtFitBounds takes an absent or null bound and reports the row undeclared; rig-c 2.20.4 still types it `number` and reduceMesh refuses null and absent by name, for maxUndercut and maxOvershoot, in targets.artFit and sourceBounds (only measureMeshQuality\'s MeasureTargets takes a null artFit, whole), so the STOP stands and this goes red the day rigc accepts one; the unedited input is accepted, so a refusal here is the bound\'s and nothing else\'s',
   );
 
   return bad();
@@ -16290,7 +16320,7 @@ function runAutoMeshSuite(): number {
 /**
  * The automatic mode on a public example (issue #126 item 2, Part 3): the demo's `neck` — the smallest mesh
  * part that is one island at alpha 1 and above — switched to auto under tools/auto_survey.ts's POLICY, through
- * assemble, the rig stage and the installed spine-rigc's gate. No fetched inputs: a SKIP and a HOLE.
+ * assemble, the rig stage and the installed rig-c's gate. No fetched inputs: a SKIP and a HOLE.
  */
 function runAutoMeshExamplesSuite(): number | null {
   section('auto-mesh: a public example part (examples/demo/inputs)');
@@ -16414,7 +16444,7 @@ function clothOf(doc: Record<string, unknown>): { uvs: number[]; vertices: { bin
 }
 
 function runAutoMotionSuite(): number {
-  section('auto-motion: the automatic mesh against its unreduced source on the idle (spine-rigc compareMeshesInMotion)');
+  section('auto-motion: the automatic mesh against its unreduced source on the idle (rig-c compareMeshesInMotion)');
   const { say, bad } = counter();
   const has = (e: PartsError | null, code: string, ...words: string[]): boolean => e !== null && e.problems.some((p) => p.code === code && words.every((w) => `${p.object} ${p.detail}`.includes(w)));
   const lines = (e: PartsError | null): string => (e === null ? 'nothing refused' : e.problems.map(problemLine).join('; ').slice(0, 1500));
@@ -16432,7 +16462,7 @@ function runAutoMotionSuite(): number {
       'MO01_AN_AUTO_PART_WHOSE_REDUCED_MESH_MOVES_WITHIN_THE_BOUND_IS_ACCEPTED_AND_WRITTEN_WITH_ITS_MOTION_ROWS',
       pos.e === null && existsSync(join(pos.out, 'rig.json')) && def !== null && def.verdict === 'pass' && local?.state === 'pass' && (local.value ?? Infinity) <= 1 && pos.builds.length === 2 && pos.builds.every((b) => b.model !== null),
       `${lines(pos.e)}; ${pos.log.find((l) => l.includes('mesh cloth'))?.trim() ?? 'no mesh line'}; builds ${pos.builds.length}`,
-      'issue #126 item 3: the reduced mesh is accepted only when its motion is measured and passes — two gated builds (the candidate the stage writes and the reference with the unreduced source) and spine-rigc\'s comparison of their model documents',
+      'issue #126 item 3: the reduced mesh is accepted only when its motion is measured and passes — two gated builds (the candidate the stage writes and the reference with the unreduced source) and rig-c\'s comparison of their model documents',
     );
 
     // MO02 — a candidate hull vertex moved 5 world units (every binding's bone-local x + 5) is caught at that vertex.
@@ -16447,7 +16477,7 @@ function runAutoMotionSuite(): number {
       'MO02_A_CANDIDATE_HULL_VERTEX_MOVED_PAST_THE_BOUND_IS_REFUSED_AS_MQ_LOCAL_DEFORMATION_AND_NOTHING_IS_WRITTEN',
       has(moved.e, 'AUTO_MESH_MOTION', AT, 'MQ_LOCAL_DEFORMATION fail', 'against <= 1 at idle@') && !existsSync(moved.out) && movedUv !== null && moved.log.some((l) => l.includes('mesh cloth') && / motion \S+ > 1 at idle@/.test(l)),
       `${lines(moved.e)}; moved vertex uv ${JSON.stringify(movedUv)}`,
-      'the moved-vertex plant spine-rigc\'s own install smoke uses (an edit inside the allowlist), here through the rig stage: refused by name and nothing written',
+      'the moved-vertex plant rig-c\'s own install smoke uses (an edit inside the allowlist), here through the rig stage: refused by name and nothing written',
     );
     const movedValue = Number(/MQ_LOCAL_DEFORMATION fail (\S+) against/.exec(lines(moved.e))?.[1] ?? NaN);
     say(
@@ -16533,7 +16563,7 @@ function runAutoMotionSuite(): number {
       'the type keeps motion optional only so buildRig (geometry) can run on a policy without it; nothing written ever skips the motion gate',
     );
 
-    // MO09 — warmupSteps: the schedule sent is 0 and nothing else; a 1, planted in the call, is spine-rigc's refusal carried by code.
+    // MO09 — warmupSteps: the schedule sent is 0 and nothing else; a 1, planted in the call, is rig-c's refusal carried by code.
     const cand = pos.builds[0]?.model ?? '';
     const ref = pos.builds[1]?.model ?? '';
     const case9 = pos.e === null ? motionCaseOf(autoRigConfig()) : null;
@@ -16659,7 +16689,7 @@ function runAutoMotionSuite(): number {
     // MO17 — the row: the motion rows, the schedule, and the whole compare document after quality_report, keys in order.
     const keys17 = row === undefined ? [] : Object.keys(row);
     const doc17 = row?.motion_report as { operation?: string; motionRequired?: boolean; poser?: { kind?: string; rigcVersion?: string } } | undefined;
-    const rigcVersion = (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'spine-rigc', 'package.json'), 'utf8')) as { version: string }).version;
+    const rigcVersion = (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'rig-c', 'package.json'), 'utf8')) as { version: string }).version;
     say(
       'MO17_THE_ROW_CARRIES_THE_MOTION_ROWS_THE_SCHEDULE_AND_THE_COMPARE_DOCUMENT_AFTER_QUALITY_REPORT',
       keys17.slice(-3).join() === 'deformation,quality_report,motion_report' &&
@@ -16727,7 +16757,7 @@ function motionCaseOf(config: Record<string, unknown>): AutoMotionCase | null {
 // ---------------------------------------------------------------------------
 
 /**
- * spine-rigc's own reading of a mesh's winding: the `MQ_ORIENTATION` row of
+ * rig-c's own reading of a mesh's winding: the `MQ_ORIENTATION` row of
  * `measureMeshQuality` (triangles with a negative area in Spine world, y up
  * through `cropToSpineY`, outside its degeneracy band) and the triangle it names
  * first, or the text of what refused the reading. Geometry only, unweighted.
@@ -16804,7 +16834,7 @@ function runWindingSuite(): number {
   say(
     'WD01_EVERY_LATTICE_TRIANGLE_IS_COUNTER_CLOCKWISE_IN_SPINE_WORLD_AND_ONE_TURNED_BACK_IS_NAMED',
     latReads.every((x) => typeof x.r !== 'string' && x.r.flipped === 0) && latReads[0].T === 12 && typeof latPlant !== 'string' && latPlant.flipped === 1 && latPlant.at === 5,
-    `spine-rigc's MQ_ORIENTATION, lattice at grid 8: ${latReads.map((x) => `${x.name} T ${x.T}: ${read(x.r)}`).join('; ')}; cloth with triangle 5 turned back (planted): ${read(latPlant)}`,
+    `rig-c's MQ_ORIENTATION, lattice at grid 8: ${latReads.map((x) => `${x.name} T ${x.T}: ${read(x.r)}`).join('; ')}; cloth with triangle 5 turned back (planted): ${read(latPlant)}`,
     'the cloth block, 16x8 padded to 24x16, is 3x2 cells of grid 8 and two triangles each: 12, every one counter-clockwise (0 flipped) by the winding\'s definition; turning one back is exactly one flipped triangle, named by its index',
   );
 
@@ -16826,7 +16856,7 @@ function runWindingSuite(): number {
       conPlantTopo.length === 1 &&
       conPlantTopo[0].code === 'CONTOUR_TILING' &&
       conPlantTopo[0].detail.startsWith(t0),
-    `spine-rigc's MQ_ORIENTATION: ${conReads.map((x) => `${x.name} T ${x.T}: ${read(x.r)}`).join('; ')}; convex with triangle 0 turned back (planted): ${read(conPlantRead)}; contourTopologyProblems -> ${conPlantTopo.map(problemLine).join('; ') || 'nothing'}`,
+    `rig-c's MQ_ORIENTATION: ${conReads.map((x) => `${x.name} T ${x.T}: ${read(x.r)}`).join('; ')}; convex with triangle 0 turned back (planted): ${read(conPlantRead)}; contourTopologyProblems -> ${conPlantTopo.map(problemLine).join('; ') || 'nothing'}`,
     'the contour mesh is triangulated wound as its outline (clockwise on screen, so clockwise in Spine world too) and written with each triple\'s last two corners swapped; the convex block is 22 triangles (CT01); a triangle turned back is one flipped by rigc and CONTOUR_TILING by the module, which gates every mesh it returns',
   );
 
@@ -16875,7 +16905,7 @@ function runWindingSuite(): number {
     'read off rig.json as written — each attachment\'s UVs on its image, y up through cropToSpineY — so a turn anywhere between an emitter and the file, or a second one, shows here by mode and triangle',
   );
 
-  // WD05 — deform: no emitter writes a deform key, and the automatic mode hands spine-rigc deform [] and no linked mesh.
+  // WD05 — deform: no emitter writes a deform key, and the automatic mode hands rig-c deform [] and no linked mesh.
   const scanned = builtModes.flatMap((b) => (b.out === null ? [`${b.mode}: not built`] : [...deformKeys(b.out.rig, `${b.mode} rig`), ...deformKeys(b.out.motion, `${b.mode} motion`)]));
   const conv = autoSource('convex', CONVEX.mask, syntheticPolicy(8));
   const input = Array.isArray(conv) ? null : autoReductionInput({ part: 'convex', mask: CONVEX.mask, ox: 0, oy: 0, spec: syntheticPolicy(8), source: conv, weights: null, boneOrder: [] });
@@ -17054,7 +17084,7 @@ function runBuildCostSuite(): number {
       'BC05_THE_UNPACKED_AND_PACKED_REFERENCE_DOCUMENTS_DIFFER_IN_PAGES_ALONE',
       d5.join() === 'pages' && pagesOf(ref?.model ?? null).every((n) => n.startsWith('../images/')) && pagesOf(packedRef).every((n) => !n.startsWith('../images/')),
       `top-level keys that differ: [${d5.join(', ')}]; unpacked pages [${pagesOf(ref?.model ?? null).join(', ')}]; packed pages [${pagesOf(packedRef).join(', ')}]`,
-      'the atlas layout is the one thing --pack decides, and spine-rigc\'s comparison allowlists it (correction 5); the packed pages of a reference were never written anywhere',
+      'the atlas layout is the one thing --pack decides, and rig-c\'s comparison allowlists it (correction 5); the packed pages of a reference were never written anywhere',
     );
 
     // BC06 — the plant: a reference compiled one directory deeper differs outside the allowlist and is refused by name.
@@ -17084,7 +17114,7 @@ function runBuildCostSuite(): number {
       'BC07_A_REDUCTION_ALREADY_RUN_ON_THE_SAME_INPUT_IS_REUSED_WITH_NO_CALL_AND_THE_SAME_BYTES',
       fresh === 1 && recorded.size === 1 && ran7 === 0 && reuse7.reused() === 1 && reuse7.ran() === 0 && reusedBytes === freshBytes,
       `first build: ${fresh} call(s); second: reused ${reuse7.reused()}, ran ${reuse7.ran()} (counted ${ran7}); rig, motion and mesh report bytes equal: ${reusedBytes === freshBytes}`,
-      'issue #135, ruling 1: the same reduction is not run twice; reduceMesh is deterministic (spine-rigc\'s contract, MO11 here), so the same input is the same result',
+      'issue #135, ruling 1: the same reduction is not run twice; reduceMesh is deterministic (rig-c\'s contract, MO11 here), so the same input is the same result',
     );
 
     // BC08 — the plant: a different input (budget 1) is not answered from the map; it is run, and its bytes are its own.
@@ -17194,6 +17224,90 @@ function runBuildCostSuite(): number {
       `geometry row ${g12?.verdict.kind ?? 'not run'}; stage reused ${reused12}, ran ${ran12}; rig.json ${same12('rig.json')}, mesh_report.json ${same12('mesh_report.json')}, motion.json ${same12('motion.json')} against the stage that reduced itself (BC01)`,
       'issue #135 item B(i): main ran the cell\'s reduction twice, once in the geometry row and once inside `cli.ts rig`; the tool now hands the row\'s result to the stage, which checks the whole input before reusing it',
     );
+
+    // BC13 — the per-cell cap (--cell-cap): a reduction run in a child process comes back as the very result the
+    // in-process call returns, and the stage that reuses it writes the same bytes; a child past its cap is a stopped
+    // row, never a wait; a number JSON cannot carry exactly is refused by name rather than altered on the way.
+    let child13: ReturnType<typeof geometryRow> | null = null;
+    let stage13: CostRun | null = null;
+    let planted13: ReturnType<typeof geometryRow> | null = null;
+    let wire13 = false;
+    let crash13 = '';
+    if (g12 !== null && g12.input !== null && p12 !== undefined) {
+      const input13 = g12.input;
+      const viaChild = cappedReducer(600, join(root, 'child13'));
+      const ran13 = viaChild('cloth', input13);
+      wire13 = g12.ran !== undefined && g12.ran !== null && toWire(ran13) === toWire(g12.ran);
+      const done13 = new Map<string, ReductionResult>([[reductionKey(input13), ran13]]);
+      stage13 = costStage(join(root, 'cell13'), cfg, { reduce: reuseReductions(done13, () => ({ code: 'BC13_RAN', object: 'cloth', detail: 'the stage ran a reduction it should have reused' })).reduce });
+      const parsed13 = parseConfig(cfg);
+      const m13 = parsed13.meshes.cloth as { segments: Array<string | [string, [number, number], [number, number]]>; r: number; auto: AutoSpec };
+      const order13 = buildRig(parsed13, pf, rigImages()).rig.bones.map((b) => b.name);
+      const mask13 = input13.art.mask;
+      const w13 = { ox: p12.x - PAD, oy: p12.y - PAD, segs: resolveSegments(parsed13, m13.segments), r: m13.r, boneOrder: order13 };
+      child13 = geometryRow('cloth', mask13, m13.auto, w13, null, () => 0, cappedReducer(600, join(root, 'child13b')));
+      try {
+        planted13 = geometryRow('cloth', mask13, m13.auto, w13, null, () => 0, cappedReducer(1, join(root, 'child13c'), ['bash', '-c', 'sleep 30', '--']));
+      } catch (err) {
+        crash13 = (err as Error).message.slice(0, 300);
+      }
+    }
+    const same13 = (f: string): boolean => stage13 !== null && existsSync(join(stage13.out, f)) && readFileSync(join(stage13.out, f), 'utf8') === readFileSync(join(pos.out, f), 'utf8');
+    const refuses13 = (v: unknown): string => {
+      try {
+        return `carried ${toWire(v)}`;
+      } catch (err) {
+        return (err as Error).message;
+      }
+    };
+    const typed13 = fromWire(toWire({ a: Uint8Array.from([0, 7, 255]) })) as { a: unknown };
+    say(
+      'BC13_A_CAPPED_CELL_REDUCES_IN_A_CHILD_TO_THE_SAME_RESULT_AND_A_CELL_PAST_ITS_CAP_IS_STOPPED_NOT_AWAITED',
+      wire13 &&
+        stage13 !== null && stage13.e === null && same13('rig.json') && same13('mesh_report.json') && same13('motion.json') &&
+        child13 !== null && g12 !== null && child13.verdict.kind === g12.verdict.kind && JSON.stringify(child13.result) === JSON.stringify(g12.result) && child13.candidatesTried === g12.candidatesTried &&
+        planted13 !== null && planted13.verdict.kind === 'stopped' && verdictText(planted13.verdict) === `stopped at 1 s (the per-cell cap); reduceMesh returned nothing` && planted13.result === null && planted13.ms === null &&
+        classify({ code: STOPPED_CODE, object: 'x', detail: 'd' }).kind === 'stopped' &&
+        refuses13({ v: -0 }).includes('the number -0 cannot cross') && refuses13({ v: Number.POSITIVE_INFINITY }).includes('the number Infinity cannot cross') &&
+        typed13.a instanceof Uint8Array && Array.from(typed13.a).join() === '0,7,255',
+      `child result ${wire13 ? 'equal to' : 'NOT equal to'} the in-process one; stage reusing it: ${stage13 === null ? 'not run' : lines(stage13.e)}, rig.json ${same13('rig.json')}, mesh_report.json ${same13('mesh_report.json')}, motion.json ${same13('motion.json')} against BC01; row through the child ${child13 === null ? 'not run' : `${verdictText(child13.verdict)}, ${countsCell(child13.result)}, ${child13.candidatesTried} tried`}; planted child sleeping 30 s under a 1 s cap: ${planted13 === null ? `not run${crash13 === '' ? '' : ` (threw: ${crash13})`}` : verdictText(planted13.verdict)}; -0 -> ${refuses13({ v: -0 })}; Infinity -> ${refuses13({ v: Number.POSITIVE_INFINITY })}`,
+      'the #126 close-out brief: any single reduction is capped and a cell past its cap is recorded as stopped; reduceMesh is synchronous, so the cap is a child process the parent can kill, and what crosses back must be the same result (JSON writes -0 as 0 and Infinity as null, so both are refused by name)',
+    );
+
+    // BC14 — the cap on a build: every rigc call of one build gets what remains of one deadline; a call killed there is exit 124 and named.
+    const fast14 = deadlineRunner('true', 600);
+    const okRun14 = fast14.run(['build']);
+    const slow14 = deadlineRunner('sleep', 1);
+    const t14 = performance.now();
+    const killed14 = slow14.run(['5']);
+    const after14 = slow14.run(['0']);
+    const took14 = performance.now() - t14;
+    say(
+      'BC14_A_CAPPED_BUILDS_RIGC_CALLS_SHARE_ONE_DEADLINE_AND_A_CALL_PAST_IT_IS_STOPPED_AND_NAMED',
+      okRun14.status === 0 && fast14.stopped() === null && killed14.status === 124 && killed14.out.includes('stopped at 1 s (the per-cell cap) during rigc 5') && after14.status === 124 && after14.out.includes('before rigc 0') && slow14.stopped() === 'rigc 5' && took14 < 4000,
+      `under 600 s: exit ${okRun14.status}, stopped ${fast14.stopped()}; planted 5 s call under 1 s: exit ${killed14.status} "${killed14.out}"; the next call: exit ${after14.status} "${after14.out}"; first stop named ${slow14.stopped()}; both took ${Math.round(took14)} ms`,
+      'the brief\'s cap on any single build: the rig and check stages make several rigc calls, so the cap is one deadline over all of them, and the first call it stops is the one the row names',
+    );
+
+    // BC15 — the re-running section: the pinned examples commit read off the fetch script, and every input, policy number and capped command written from the values the run used.
+    const script15 = readFileSync(join(ROOT, 'scripts', 'fetch-examples.sh'), 'utf8');
+    const byHand15 = script15.split('\n').filter((l) => l.startsWith('PINNED_COMMIT=')).map((l) => l.slice('PINNED_COMMIT='.length).trim());
+    const pinned15 = pinnedExamplesCommit(script15);
+    const placeholder15 = pinnedExamplesCommit('PINNED_COMMIT=__PLACEHOLDER__\n');
+    const section15 = rerunSection({ rigcVersion: '9.8.7', pinned: pinned15, keys: ['demo', 'sample'] }).join('\n');
+    say(
+      'BC15_THE_RERUN_SECTION_NAMES_THE_PINNED_INPUTS_THE_POLICIES_BY_NUMBER_AND_THE_CAPPED_COMMANDS',
+      byHand15.length === 1 && /^[0-9a-f]{40}$/.test(byHand15[0]) && pinned15 === byHand15[0] && placeholder15.startsWith('unread') &&
+        section15.startsWith('## Re-running this evidence') &&
+        section15.includes(`spine-parts-examples at commit ${byHand15[0]}`) &&
+        section15.includes('public examples demo, sample') && section15.includes('rig-c 9.8.7 as') &&
+        section15.includes(`maxUndercut ${Math.ceil(32768 * Math.SQRT2)}`) && section15.includes('minCoverage 0.995') && section15.includes('stray 4') &&
+        section15.includes('timeout 2700 bun tools/auto_matrix.ts --work <scratch dir> --cell-cap 600') &&
+        section15.includes('timeout 600 bun tools/auto_motion_survey.ts > docs/evidence/auto-motion-survey.md') &&
+        section15.includes('bun run fetch-examples'),
+      `pinned ${pinned15} (by hand ${byHand15.join(', ')}); planted placeholder -> ${placeholder15}; section ${section15.length} chars`,
+      'the owner\'s hand-over: next\'s rigging session reruns the evidence unchanged, so the document says which inputs at which commit, which policies with which numbers, and which commands under which caps — read off the tree, not typed (by hand: ceil(32768 x sqrt 2) = 46341; rig-c CONTOUR_MIN_COVERAGE 0.995; the speck rule 4)',
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -17255,7 +17369,7 @@ const TALLY_SUITE = 'run-tally';
 
 /**
  * The suites started first, longest first: the ones that build and render
- * rigs through spine-rigc, which held 96 % of a sequential run's wall time in
+ * rigs through rig-c, which held 96 % of a sequential run's wall time in
  * each of three runs on one machine (the per-suite table in the pull request
  * that closed issue #99). The longest of them alone bounds a concurrent run,
  * and started in print order they would begin last. Scheduling only — the run prints, counts and judges in `SUITES`

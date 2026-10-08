@@ -66,7 +66,7 @@ export interface Influence {
  * The cap and the floor `influences()` applies. The lattice and the contour
  * mode always run at {@link DEFAULT_LIMITS} (the reference's `[:4]` and
  * `>= 0.03`); the automatic mode (`src/automesh.ts`, issue #126) passes the
- * author's numbers instead, because spine-rigc's reduction is handed explicit
+ * author's numbers instead, because rig-c's reduction is handed explicit
  * influence limits on every weighted call and the 0.03 floor is not one the
  * author wrote (P19). The arithmetic is the same either way, so with the
  * defaults every byte the two older modes write is unchanged.

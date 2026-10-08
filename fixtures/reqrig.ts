@@ -3,7 +3,7 @@
  * `rigc-rig/1` spec with ik constraints written directly, as
  * {@link writeMergedCheckRig} writes its merged rig — the config cannot carry
  * constraints on this tree (that is #92's) — and a motion with four
- * animations, built and posed by the installed spine-rigc.
+ * animations, built and posed by the installed rig-c.
  *
  * Every expected figure is computed by hand from the numbers below, never read
  * off a run:

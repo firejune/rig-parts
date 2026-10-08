@@ -67,7 +67,7 @@ here (gitignored).
   as written; `rig.json` is the build's `rig/rig.json` carried to its flat form by
   `flattenRig` (`src/rig.ts`), the form the reference wrote and demo's and sample's
   `expected/rig.json` are in, so the chain suite (`CH03`) and the structure suite
-  (`ST25`) read all three examples the same way. Issue #126 turned every mesh triangle counter-clockwise in Spine world, the winding spine-rigc reads a mesh in (the reference, and this port before it, wrote them clockwise there). The declared exception, and nothing else: every mesh `triangles` triple `[a, b, c]` is `[a, c, b]` in `rig.json`; the `check.json` `TEXTURE_STRETCH` entries that print a triangle's vertices and edge print them in that order (16 here, 52 over the three examples; the triangle, frame and figures are unchanged); and the untracked `skeleton.model.json`'s `spine.sha256`, which follows the skeleton bytes. Every rendered frame of the build is pixel-equal before and after.
+  (`ST25`) read all three examples the same way. Issue #126 turned every mesh triangle counter-clockwise in Spine world, the winding rig-c reads a mesh in (the reference, and this port before it, wrote them clockwise there). The declared exception, and nothing else: every mesh `triangles` triple `[a, b, c]` is `[a, c, b]` in `rig.json`; the `check.json` `TEXTURE_STRETCH` entries that print a triangle's vertices and edge print them in that order (16 here, 52 over the three examples; the triangle, frame and figures are unchanged); and the untracked `skeleton.model.json`'s `spine.sha256`, which follows the skeleton bytes. Every rendered frame of the build is pixel-equal before and after.
 
 ## The four patches
 

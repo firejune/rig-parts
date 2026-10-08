@@ -8,7 +8,7 @@
  *
  * ⭐ That check.json is written by hand: it stands for "this build's check
  * passed", which `compose` requires and does not re-run. The composed rig is
- * what the controls gate through spine-rigc and check; the characters' own
+ * what the controls gate through rig-c and check; the characters' own
  * builds are not. No claim about appearance comes from these fixtures.
  *
  * Two characters:

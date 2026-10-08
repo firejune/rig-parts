@@ -25,14 +25,14 @@
  *   growth and its pinch fill added. Nothing is accepted or refused on these
  *   rows; they are a table.
  *
- * Both meshes are measured by the same calls: spine-rigc's
+ * Both meshes are measured by the same calls: rig-c's
  * `measureAuthoredMeshFit` (coverage, overshoot), the shoelace area of the
  * triangles, and `triangleQuality`. "enclosed" is mesh area minus covered art
  * pixels, px². Timing is not measured here.
  */
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { measureAuthoredMeshFit, type AlphaMask } from 'spine-rigc/mesh';
+import { measureAuthoredMeshFit, type AlphaMask } from 'rig-c/mesh';
 import { contourMesh, type ContourParams, triangleQuality } from '../src/contour.ts';
 import { ART_ALPHA, latticeMesh } from '../src/mesh.ts';
 import { connectedComponents, readPng } from '../src/raster/index.ts';

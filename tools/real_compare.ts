@@ -19,7 +19,7 @@
  * prints both tables of §4 and the verdict for each picked part, and with
  * `--builds` runs the real `build` on out-of-tree config copies (under
  * `<dir>`) that add the test region's control bone and an idle moving it
- * through each declared pose, and measures the seam off spine-rigc's posed
+ * through each declared pose, and measures the seam off rig-c's posed
  * geometry. Not shipped (`tools/` is not in `files`); the definitions are
  * exported and the selftest holds them (suite `contour-wiring`, `CV01`–`CV13`).
  * The contour mode measured is the one this tree's `src/contour.ts` builds,
@@ -81,7 +81,7 @@
  * **The seam** ({@link seamPairs}, {@link seamOpening}): the pairs (a, b) of
  * 4-adjacent rig pixels with a an art pixel of the part and b an art pixel of a
  * neighbour that is not an art pixel of the part. In a frame, each pixel
- * centre's displacement from rest is read off spine-rigc's `render --geometry`
+ * centre's displacement from rest is read off rig-c's `render --geometry`
  * — the triangle of the attachment's rest geometry holding the centre, and the
  * same barycentric mix of that triangle's posed vertices ({@link displacement})
  * — and a pair's opening is |d_part(a) − d_neighbour(b)|: how far the two

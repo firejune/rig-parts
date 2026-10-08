@@ -51,7 +51,7 @@
  *
  * ## Control bones — `A15_IDLE_NO_MESH_BONE_KEYS`
  *
- * spine-rigc's `spine-html` profile refuses an `idle` that keys a bone a mesh
+ * rig-c's `spine-html` profile refuses an `idle` that keys a bone a mesh
  * is weighted to (the player skips idle work on meshes). The reference's
  * answer, ported as is and still the default (`rig --idle-keys ctl`): for
  * every keyed bone that some mesh names among its candidates, add a parent
@@ -66,7 +66,7 @@
  * all the same. Measured (spine-parts #13): on both public examples every
  * shown mesh has a driving bone whose world transform changes on every idle
  * frame, with the controls and without them, so a dirty-skip renderer can
- * skip none either way. spine-rigc 1.3.0 answered the rule's side
+ * skip none either way. rig-c 1.3.0 answered the rule's side
  * (`invariants.idleDrivesMeshes`); `rig --idle-keys direct` keys the bones in
  * place and declares it (`src/rig.ts`, `IDLE_KEYS`).
  *

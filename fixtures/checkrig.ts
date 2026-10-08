@@ -1,7 +1,7 @@
 /**
  * A rig directory the `check` controls generate on every run: the smallest
  * thing `spine-parts check` accepts, authored by hand here and built with the
- * installed spine-rigc, so the whole check — build, the gate, the idle
+ * installed rig-c, so the whole check — build, the gate, the idle
  * render, the loop, the seam — runs in the selftest without a corpus.
  *
  * What it is: a 48x80 canvas, one bone (`root`), two region parts, one `idle`
@@ -76,7 +76,7 @@ export function shiftRight(src: Raster, dx: number): Raster {
 export interface CheckRigOptions {
   /** The idle's last `translatex` key; 0 closes the loop. */
   lastKey?: number;
-  /** Write `images/front.png` fully opaque, which spine-rigc's A19 refuses under spine-html. */
+  /** Write `images/front.png` fully opaque, which rig-c's A19 refuses under spine-html. */
   opaqueFront?: boolean;
   /** The two parts' `from`, back then front — the See-through tags the judgement lines choose regions by. Default both `full:topwear`. */
   from?: readonly [string, string];
@@ -112,7 +112,7 @@ export interface CheckRigOptions {
    * Hang both parts on a bone `head` (at {@link HEAD_AT}, under `root`
    * through `head_ctl`) and roll it: the idle keys `head_ctl` `rotate` 0,
    * `roll`, 0, `-roll`, 0 at quarter steps (degrees) — the control-bone shape
-   * the rig stage writes, which spine-rigc's A15 asks for over a mesh. With `slide`, the back part is instead a four-vertex mesh
+   * the rig stage writes, which rig-c's A15 asks for over a mesh. With `slide`, the back part is instead a four-vertex mesh
    * weighted wholly to a bone `slide` under `head` (through `slide_ctl`, which
    * the idle keys `translatex` 0, `slide`, 0) while its slot still rides
    * `head` — a face that slides `slide` rig pixels relative to the head the

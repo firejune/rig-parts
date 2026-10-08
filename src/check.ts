@@ -1,13 +1,13 @@
 /**
- * The check stage: build a rig through spine-rigc, gate it under both
+ * The check stage: build a rig through rig-c, gate it under both
  * profiles, render its idle, and measure the two things the gate cannot see —
  * whether the setup pose IS the flat stack of parts (the seam), and whether the
  * idle ends where it began (the loop).
  *
  * ⭐ **This is the one stage that drives a subprocess, and it does not own the
- * spawn.** Every rigc step — build, validate, render — is spine-rigc's own CLI,
+ * spawn.** Every rigc step — build, validate, render — is rig-c's own CLI,
  * never a re-implementation of it, because rigc's gate is the only oracle
- * behind a skeleton (CLAUDE.md, "spine-rigc's gate is not optional here
+ * behind a skeleton (CLAUDE.md, "rig-c's gate is not optional here
  * either"): the spine-core round trip where the runtime resolves beside rigc,
  * rigc's own validator where it does not, and `check.json`'s `rigc_entry` says
  * which ({@link readRigcEntry}). But `src/` is held to no child
@@ -48,7 +48,7 @@
  * rigc renders of the idle (the whole rig, or a part alone through `--slot`),
  * from the setup still with the blink held shut, from `motion.json` read as
  * sines, or from the skinned mesh vertices the idle render's `--geometry`
- * writes beside its frames (spine-rigc {@link RIGC_GEOMETRY_VERSION} or later,
+ * writes beside its frames (rig-c {@link RIGC_GEOMETRY_VERSION} or later,
  * which `check` asks `rigc --version` for before it builds anything). Each reports SKIP,
  * with the reason, when the rig has nothing for it to read. The instruments
  * are `src/instruments.ts`; the bars are below and in AUTHORING §7. After
@@ -197,7 +197,7 @@ export const TIP_RATIO_FLOOR = 1.4725;
  */
 export const TEXTURE_STRETCH_CEILING = 1.926544;
 
-/** The first spine-rigc whose `render` writes `geometry.json` (`--geometry`, spine-rigc 1.4.0's changelog). */
+/** The first rig-c whose `render` writes `geometry.json` (`--geometry`, rig-c 1.4.0's changelog). */
 export const RIGC_GEOMETRY_VERSION = '1.4.0';
 /** The geometry export's file name inside a frame set directory, and the format tag it carries. */
 export const GEOMETRY_FILE = 'geometry.json';
@@ -207,8 +207,8 @@ export const GEOMETRY_SPEC = 'rigc-geometry/1';
 export const SPINEBOY_YARDSTICK = '1024x256, 40 region(s), 45.8% opaque (alpha > 0)';
 
 /**
- * What a packed page's edges may be: spine-rigc's `build --pack --page-edges`,
- * handed to it verbatim (the flag is in spine-rigc's CLI since 1.4.0, the
+ * What a packed page's edges may be: rig-c's `build --pack --page-edges`,
+ * handed to it verbatim (the flag is in rig-c's CLI since 1.4.0, the
  * floor `check` already requires; 1.5.0 made `free` search every width).
  * `pot` is a power of two on both edges; `free` is the least-area page the
  * placement needs, at the cost rigc's help states: region attachments sample
@@ -231,8 +231,8 @@ export type PageEdges = (typeof PAGE_EDGES)[number];
 export const DEFAULT_PAGE_EDGES: PageEdges = 'free';
 
 /**
- * What two packed rectangles may share: spine-rigc's `build --pack
- * --pack-shape`, handed to it verbatim (in spine-rigc's CLI since 2.1.0; this
+ * What two packed rectangles may share: rig-c's `build --pack
+ * --pack-shape`, handed to it verbatim (in rig-c's CLI since 2.1.0; this
  * package's range starts at 2.15.0). `rect` keeps every region's cell apart;
  * `polygon` packs a region that only meshes draw by its emitted hull, so a
  * neighbour may sit inside its rectangle where the hull is not, with the
@@ -243,7 +243,7 @@ export const DEFAULT_PAGE_EDGES: PageEdges = 'free';
  * reason {@link DEFAULT_PAGE_EDGES} is `free`: the packed page is this
  * package's final artifact, rigc gates the footprints on the pages on disk
  * (`A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP`), and the cost is the class already
- * accepted for `free`. Measured with spine-rigc 2.1.3, and again with 2.10.1,
+ * accepted for `free`. Measured with rig-c 2.1.3, and again with 2.10.1,
  * whose pages, atlases and idle frames are byte-identical to it (the full entry,
  * spine-core 4.3.13 beside it), `spine-parts build` on the two public examples
  * under `--page-edges free`: `polygon` takes demo's page from 967x1338 (91.2 %
@@ -300,7 +300,7 @@ const CAUSE = /^(error: |rigc[\w -]*: |usage: )/;
  * What a rigc run that exited non-zero said about why, for a refusal whose own
  * filter (FAIL lines, the assertion summary) matched nothing: every line that
  * names a cause, or, when none does, the last three non-empty lines. Measured
- * against spine-rigc 2.0.3: its `cli.ts` run by path without
+ * against rig-c 2.0.3: its `cli.ts` run by path without
  * `@esotericsoftware/spine-core` beside it dies at import with one
  * `error: Cannot find module '@esotericsoftware/spine-core' from …` line, and its
  * core entry refuses `validate` with one `rigc validate: …` line, neither of
@@ -314,11 +314,11 @@ export function causeLines(out: string): string[] {
   return named.length > 0 ? named : lines.slice(-3);
 }
 
-/** The two entries spine-rigc's launcher (`bin/rigc.cjs`, spine-rigc 2.0.0 and later) runs. */
+/** The two entries rig-c's launcher (`bin/rigc.cjs`, rig-c 2.0.0 and later) runs. */
 export const RIGC_ENTRIES = ['cli.ts', 'cli_core.ts'] as const;
 export type RigcEntry = (typeof RIGC_ENTRIES)[number];
 
-/** The first spine-rigc whose `--version` names the entry that ran (its launcher's stderr line; spine-rigc 2.0.0's changelog, issue #1061 there). */
+/** The first rig-c whose `--version` names the entry that ran (its launcher's stderr line; rig-c 2.0.0's changelog, issue #1061 there). */
 export const RIGC_ENTRY_VERSION = '2.0.0';
 
 /**
@@ -331,7 +331,7 @@ export interface RigcEntryRecord {
   spine_core: string | null;
 }
 
-/** The launcher's two `entry:` lines, whole, as spine-rigc 2.0.3's `bin/rigc.cjs` writes them. */
+/** The launcher's two `entry:` lines, whole, as rig-c 2.0.3's `bin/rigc.cjs` writes them. */
 const ENTRY_FULL = /^entry: cli\.ts — @esotericsoftware\/spine-core (\S+) present$/;
 const ENTRY_CORE = /^entry: cli_core\.ts — @esotericsoftware\/spine-core absent — /;
 
@@ -350,7 +350,7 @@ export function readRigcEntry(versionOut: string): RigcEntryRecord {
       {
         code: 'CHECK_RIGC_ENTRY',
         object: '`rigc --version`',
-        detail: `printed ${JSON.stringify(versionOut.trim())} and no \`entry:\` line; spine-rigc ${RIGC_ENTRY_VERSION} or later is required — its launcher names the entry that ran, and check.json records which one gated the build (\`bun install\` puts this package's own spine-rigc at node_modules/.bin/rigc)`,
+        detail: `printed ${JSON.stringify(versionOut.trim())} and no \`entry:\` line; rig-c ${RIGC_ENTRY_VERSION} or later is required — its launcher names the entry that ran, and check.json records which one gated the build (\`bun install\` puts this package's own rig-c at node_modules/.bin/rigc)`,
       },
     ]);
   }
@@ -392,8 +392,8 @@ export function findRigc(from: string, pathVar: string): string {
   refuseIfAny([
     {
       code: 'CHECK_RIGC_PRESENT',
-      object: 'the spine-rigc CLI `rigc`',
-      detail: `found at none of ${looked.length} node_modules/.bin/rigc path(s) from ${resolve(from)} up (nearest ${looked[0]}) nor on PATH; spine-rigc is this package's dependency — \`bun install\` puts it at node_modules/.bin/rigc`,
+      object: 'the rig-c CLI `rigc`',
+      detail: `found at none of ${looked.length} node_modules/.bin/rigc path(s) from ${resolve(from)} up (nearest ${looked[0]}) nor on PATH; rig-c is this package's dependency — \`bun install\` puts it at node_modules/.bin/rigc`,
     },
   ]);
   return '';
@@ -649,7 +649,7 @@ export function readCheckInputs(rigDir: string, partsHome?: string, sourcePath?:
 // ---------------------------------------------------------------------------
 
 /**
- * The `here:` line spine-rigc's core entry (`cli_core.ts`, 2.0.0 and later)
+ * The `here:` line rig-c's core entry (`cli_core.ts`, 2.0.0 and later)
  * prints after its assertion summary, saying which rules ran and that the
  * spine-core round trip did not; `cli.ts` prints none.
  */
@@ -698,10 +698,10 @@ export interface PackLine {
   regions: number;
   coveredPct: number;
   padding: number;
-  /** `free` when the line carries `, page edges free` after the padding, `pot` when it does not — spine-rigc prints the clause exactly when it packed under `--page-edges free` (its `src/cli/shared.ts`, the pack line). */
+  /** `free` when the line carries `, page edges free` after the padding, `pot` when it does not — rig-c prints the clause exactly when it packed under `--page-edges free` (its `src/cli/shared.ts`, the pack line). */
   pageEdges: PageEdges;
   /**
-   * The line's last clause, `, shape rect` or `, shape polygon`: spine-rigc
+   * The line's last clause, `, shape rect` or `, shape polygon`: rig-c
    * 2.1 names the `--pack-shape` it packed under on every pack line, its
    * default included. A line with no shape clause is the 1.5.1–2.0.3 form,
    * from a rigc that had no other shape, and reads as `rect`.
@@ -712,12 +712,12 @@ export interface PackLine {
 /** rigc's pack line, whole: the line is this and nothing else, or it is refused. */
 const PACK = /^pack: (\S+) (\d+)x(\d+), (\d+) region\(s\), (\d+(?:\.\d+)?)% covered, padding (\d+)(, page edges free)?(?:, shape (rect|polygon))?$/;
 
-/** A pack line that names its shape: the spine-rigc 2.1 form. */
+/** A pack line that names its shape: the rig-c 2.1 form. */
 const PACK_SHAPE_CLAUSE = /, shape (?:rect|polygon)$/;
 
 /**
  * Every pack line among the gate lines — a line that reads `pack:` once its
- * `..` gutter is taken off. Two forms are read, each by name: spine-rigc
+ * `..` gutter is taken off. Two forms are read, each by name: rig-c
  * 2.1's, which ends `, shape rect` or `, shape polygon`, and the 1.5.1–2.0.3
  * form, which has no shape clause and reads as `rect`; in both,
  * `, page edges free` sits between the padding and the shape or is absent. Any
@@ -1079,7 +1079,7 @@ export function blackRig(rig: Record<string, unknown>): Record<string, unknown> 
  * What stands in for assemble's two inputs, because the setup pose is what is
  * measured and the parts are not read:
  * - **The recomposite.** assemble composites onto opaque white; rigc renders
- *   onto its opaque `background` (232 grey, spine-rigc's `BACKGROUND`), so the
+ *   onto its opaque `background` (232 grey, rig-c's `BACKGROUND`), so the
  *   frame carries no alpha. A second still of the same pose, every slot tinted
  *   black ({@link blackRig}), is the background times what the art lets
  *   through, channel by channel: `black = bg (1 - a)`. The pose over white is
@@ -1566,7 +1566,7 @@ const REQUIREMENTS_SCRATCH = '_requirements';
 
 /**
  * Measure every requirement of a file {@link resolveRequirements} has passed.
- * Every pose is spine-rigc's: each animation a requirement names is rendered
+ * Every pose is rig-c's: each animation a requirement names is rendered
  * once with `--geometry` at the file's fps, from the rig under test's own
  * build — or, when the file places scene targets for it, from a copy with
  * them written in ({@link placeTargets}, built `--profile spine`, as the setup
@@ -1574,7 +1574,7 @@ const REQUIREMENTS_SCRATCH = '_requirements';
  * two copies, released and full ({@link forceMix}), the scene targets placed
  * on both, rendered into `requirements/released/<name>/` and
  * `requirements/full/<name>/`. The released copy's constraint is muted
- * throughout, which spine-rigc's A47 (ik) or A48 (transform) refuses unless
+ * throughout, which rig-c's A47 (ik) or A48 (transform) refuses unless
  * the rig declares the mix consumer-driven: when the gate refuses that copy
  * for that constraint and nothing else ({@link mutedOnly}), the copy — never
  * the rig under test — declares it in `invariants.consumerDrivenMix`, rigc's
@@ -1674,7 +1674,7 @@ export function measureRequirements(inp: CheckInputs, file: RequirementsFile, bu
         if (!same(d.poses, released.poses) || !same(d.poses, full.poses)) {
           refuseIfAny([{ code: 'CHECK_REQUIREMENTS_FRAMES', object: `requirement "${r.name}"`, detail: `the as-declared, released and full renders of "${r.animation}" sample frames at [${d.poses.times.join(', ')}], [${released.poses.times.join(', ')}] and [${full.poses.times.join(', ')}] s; the follow is read frame by frame across the three, so the same frames are required` }]);
         }
-        line = { ...followLine(r, d.poses, released.poses, full.poses), released_copy: door ?? 'built as forced: spine-rigc\'s gate passed it with no further declaration' };
+        line = { ...followLine(r, d.poses, released.poses, full.poses), released_copy: door ?? 'built as forced: rig-c\'s gate passed it with no further declaration' };
       }
       lines[r.name] = line;
       const p = requirementProblem(r, line);
@@ -1970,7 +1970,7 @@ export function stillLine(inp: FullInputs, idle: FrameSet, geo: IdleGeometry | n
   const face = partsTagged(inp.parts, FACE_TAGS);
   const feet = partsTagged(inp.parts, FEET_TAGS);
   if (face.length === 0 && feet.length === 0) return skip(`no part comes from a See-through ${tagWords([...FACE_TAGS, ...FEET_TAGS])} layer, so there is no still region to read`);
-  if (geo === null) return skip(`${geometryPath} does not exist; \`rigc render --geometry\` (spine-rigc ${RIGC_GEOMETRY_VERSION} or later) writes it, and the still regions are read off it`);
+  if (geo === null) return skip(`${geometryPath} does not exist; \`rigc render --geometry\` (rig-c ${RIGC_GEOMETRY_VERSION} or later) writes it, and the still regions are read off it`);
   const H = inp.parts.rig_size[1];
   const W = inp.parts.rig_size[0];
   const poses = attachmentPoses(geometryPath, idle.written);
@@ -2242,7 +2242,7 @@ export function requireRigcVersion(rigc: RigcRunner): string {
       {
         code: 'CHECK_RIGC_VERSION',
         object: '`rigc --version`',
-        detail: `${got === null ? `exit ${v.status}, printed ${JSON.stringify(v.out.trim().split('\n')[0] ?? '')} — no version` : `is ${got.join('.')}`}; spine-rigc ${RIGC_GEOMETRY_VERSION} or later is required — its \`render --geometry\` writes the skinned mesh vertices TEXTURE_STRETCH is measured from (\`bun install\` puts this package's own spine-rigc at node_modules/.bin/rigc)`,
+        detail: `${got === null ? `exit ${v.status}, printed ${JSON.stringify(v.out.trim().split('\n')[0] ?? '')} — no version` : `is ${got.join('.')}`}; rig-c ${RIGC_GEOMETRY_VERSION} or later is required — its \`render --geometry\` writes the skinned mesh vertices TEXTURE_STRETCH is measured from (\`bun install\` puts this package's own rig-c at node_modules/.bin/rigc)`,
       },
     ]);
   }
@@ -2380,7 +2380,7 @@ function stretchAtText(s: { triangle: number; vertices: readonly number[]; edge:
  * SKIP when the render wrote no geometry file or the rig draws no mesh.
  */
 export function stretchLine(geo: IdleGeometry | null, path: string, problems: Problem[]): JudgementLine {
-  if (geo === null) return skip(`${path} does not exist; \`rigc render --geometry\` (spine-rigc ${RIGC_GEOMETRY_VERSION} or later) writes it, and the skinned mesh vertices are read from it`);
+  if (geo === null) return skip(`${path} does not exist; \`rigc render --geometry\` (rig-c ${RIGC_GEOMETRY_VERSION} or later) writes it, and the skinned mesh vertices are read from it`);
   if (geo.meshes.length === 0) return skip('the rig draws no mesh attachment (every slot is a region), so there is no triangle to stretch');
   const figures = stretchFigures(geo.meshes, geo.frames);
   const rows: Array<Record<string, unknown>> = [];

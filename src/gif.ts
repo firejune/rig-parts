@@ -27,7 +27,7 @@
  *   by 4 % as a flat 8 cs would.
  *
  * GIF holds no partial alpha. Frames with a translucent pixel are refused by
- * name rather than thresholded: spine-rigc renders over an opaque background,
+ * name rather than thresholded: rig-c renders over an opaque background,
  * so a translucent frame is not one this encoder was built for.
  *
  * ⚠️ Animated WebP is out of scope: it needs a VP8 or VP8L bitstream encoder,

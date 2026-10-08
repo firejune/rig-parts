@@ -1,6 +1,6 @@
 /**
  * The contour mesh: a part's alpha outline, traced and simplified by
- * spine-rigc's own functions, with interior vertices placed where they are
+ * rig-c's own functions, with interior vertices placed where they are
  * declared and a triangulation that never crosses the outline (issue #84). The
  * rig stage builds it for a mesh whose config entry says `contour` (step 2,
  * `src/rig.ts`); the lattice (`src/mesh.ts`) is untouched and stays the mode
@@ -10,7 +10,7 @@
  *
  * 1. **Art.** A pixel is art when its alpha is ABOVE `threshold` — the
  *    lattice's reading (`ART_ALPHA` in `src/mesh.ts`, the reference's
- *    `alpha > 8`). spine-rigc's tracer and fit counter read "at or above", so
+ *    `alpha > 8`). rig-c's tracer and fit counter read "at or above", so
  *    they are handed `threshold + 1`, which is the same set of pixels.
  * 2. **Islands and holes.** The art's 4-connected islands are counted
  *    (`connectedComponents`, 4-connectivity, rigc's own island rule); a second
@@ -84,7 +84,7 @@
  * {@link MAX_SIDE} px a side, so a coordinate difference is under 2^24 units,
  * a product under 2^48 and a difference of two products under 2^49 < 2^53;
  * in-circle and point-to-segment distance in `BigInt`, which is exact at any
- * size. On those coordinates spine-rigc's own float predicates (`earClip`,
+ * size. On those coordinates rig-c's own float predicates (`earClip`,
  * `prunePolygon`, `findSelfIntersection`, with their 1e-9 and 1e-12 slacks)
  * are exact too: a non-zero cross product of two grid differences is at least
  * 2^-16 px², far above either slack. So no topological decision here is made
@@ -132,13 +132,13 @@
  * rotated to start at its smallest index, and sorted, so the list does not
  * depend on the order the flips happened in; then written with each triple's
  * last two corners swapped (`counterClockwiseInSpineWorld`, `src/mesh.ts`), so
- * every triangle is counter-clockwise in Spine world, the winding spine-rigc's
+ * every triangle is counter-clockwise in Spine world, the winding rig-c's
  * `MQ_ORIENTATION` and its `SourceMesh` read (issue #126). The y flip does not
- * turn a loop over: before the swap, spine-rigc 2.20.3 read every triangle of
+ * turn a loop over: before the swap, rig-c 2.20.3 read every triangle of
  * every contour mesh on the three public examples as clockwise in Spine world
  * (2,553 of 2,553 on demo). The swap keeps the order of the list and the first
  * index of every triple, so it is exactly `[a, b, c]` → `[a, c, b]`. The
- * automatic mode hands these triangles to spine-rigc as they are.
+ * automatic mode hands these triangles to rig-c as they are.
  */
 import { type Problem } from './errors.ts';
 import { counterClockwiseInSpineWorld } from './mesh.ts';
@@ -156,7 +156,7 @@ import {
   simplifyClosedPolygon,
   traceAlphaOutline,
   traceOutline,
-} from 'spine-rigc/mesh';
+} from 'rig-c/mesh';
 
 /** Grid units per pixel: every coordinate this module writes is an integer multiple of 1/GRID px. */
 export const GRID = 256;
@@ -1031,7 +1031,7 @@ export function contourTopologyProblems(part: string, vertices: ReadonlyArray<re
     checkHullOrder(outline, V);
   } catch (err) {
     if (!(err instanceof MeshError)) throw err;
-    out.push({ code: 'CONTOUR_ONE_LOOP', object, detail: `spine-rigc's traceOutline/checkHullOrder: ${err.message}; one closed loop of the first ${hull} vertices in order, with 2 x ${V} - ${hull} - 2 = ${2 * V - hull - 2} triangles, is required` });
+    out.push({ code: 'CONTOUR_ONE_LOOP', object, detail: `rig-c's traceOutline/checkHullOrder: ${err.message}; one closed loop of the first ${hull} vertices in order, with 2 x ${V} - ${hull} - 2 = ${2 * V - hull - 2} triangles, is required` });
   }
   const listed = twiceAreaUnits(X.slice(0, hull), Y.slice(0, hull));
   const outlineTwice = listed < 0n ? -listed : listed;
@@ -1041,7 +1041,7 @@ export function contourTopologyProblems(part: string, vertices: ReadonlyArray<re
       object,
       detail:
         against >= 0
-          ? `triangle ${against} (${triangles[3 * against]}, ${triangles[3 * against + 1]}, ${triangles[3 * against + 2]}) is clockwise in Spine world; every triangle must be counter-clockwise in Spine world (y up), the winding spine-rigc reads a mesh in`
+          ? `triangle ${against} (${triangles[3 * against]}, ${triangles[3 * against + 1]}, ${triangles[3 * against + 2]}) is clockwise in Spine world; every triangle must be counter-clockwise in Spine world (y up), the winding rig-c reads a mesh in`
           : `its triangles' areas sum to ${unitsToPx2(sum)} px² and its outline encloses ${unitsToPx2(outlineTwice)} px²; equal is required, or triangles overlap`,
     });
   }
@@ -1091,7 +1091,7 @@ export interface GrownSilhouette {
   pinchFillPasses: number;
 }
 
-/** Every pixel corner where two set pixels meet diagonally with both others clear — spine-rigc's diagonal pinch — as the clear pixels' indices. */
+/** Every pixel corner where two set pixels meet diagonally with both others clear — rig-c's diagonal pinch — as the clear pixels' indices. */
 function pinchPixels(data: Uint8Array, w: number, h: number): number[] {
   const out: number[] = [];
   for (let y = 0; y + 1 < h; y++) {
@@ -1121,7 +1121,7 @@ function pinchPixels(data: Uint8Array, w: number, h: number): number[] {
  *    pixels of F is exact. Margin 0 grows nothing.
  * 2. **Pinch fill.** Growth can leave two grown pixels meeting only at a
  *    corner (a 1 px crack running diagonally between two strands), which
- *    spine-rigc's tracer refuses. Every such pinch is the growth's: F has none
+ *    rig-c's tracer refuses. Every such pinch is the growth's: F has none
  *    (a 4-connected island touching itself at a corner encloses one of the two
  *    clear pixels, which is then a hole and filled; selftest `CE08` checks it
  *    over every 4x4 mask), and at margin ≥ 1 a pixel of F would put its four
@@ -1175,7 +1175,7 @@ export function artMask(mask: AlphaMask, threshold: number): Mask {
 }
 
 /**
- * Coverage and overshoot, the two fit refusals, measured by spine-rigc's
+ * Coverage and overshoot, the two fit refusals, measured by rig-c's
  * `measureAuthoredMeshFit` (the settled comment names it): a pixel is covered
  * when its centre is in or on a triangle, and overshoot is the furthest a
  * covered pixel's centre sits from the nearest pixel of the filled silhouette
@@ -1272,7 +1272,7 @@ export interface ContourOutline {
  * The outline of a filled silhouette F (a 0/1 mask of the part's size: the
  * kept island with its holes filled), or every problem that refuses it:
  *
- * 1. spine-rigc's `traceAlphaOutline` reads F itself first, so a diagonal
+ * 1. rig-c's `traceAlphaOutline` reads F itself first, so a diagonal
  *    pinch in F is refused in rigc's words (`CONTOUR_TRACE`) at every margin,
  *    before the growth could hide it — the pinch fill below resolves only the
  *    pinches the growth made. (F built from one 4-connected island by
@@ -1296,7 +1296,7 @@ export function contourOutline(part: string, filled: Mask, threshold: number, to
       return traceAlphaOutline({ width: w, height: h, alpha: m.data }, 1);
     } catch (err) {
       if (!(err instanceof MeshError)) throw err;
-      return [{ code: 'CONTOUR_TRACE', object, detail: `spine-rigc's traceAlphaOutline refused it at alpha above ${threshold}: ${err.message}` }];
+      return [{ code: 'CONTOUR_TRACE', object, detail: `rig-c's traceAlphaOutline refused it at alpha above ${threshold}: ${err.message}` }];
     }
   };
   const silhouette = trace(filled);
@@ -1348,7 +1348,7 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
       {
         code: 'CONTOUR_ONE_ISLAND',
         object,
-        detail: `its art (alpha above ${threshold}) is ${islands} separate 4-connected islands — ${sizes.join(', ')}; one island is required, because spine-rigc takes one closed outline per mesh.${declared} Nothing was discarded; the lattice mode stays available for this part`,
+        detail: `its art (alpha above ${threshold}) is ${islands} separate 4-connected islands — ${sizes.join(', ')}; one island is required, because rig-c takes one closed outline per mesh.${declared} Nothing was discarded; the lattice mode stays available for this part`,
       },
     ];
   }

@@ -1,11 +1,11 @@
 /**
  * The rig stage: a character config and its assembled parts in, a rig spec
- * and a motion spec in spine-rigc's format out.
+ * and a motion spec in rig-c's format out.
  *
  *     config (bones, meshes, regions, motion) + parts.json + parts/*.png
  *       -> images/*.png, rig.json, motion.json, mesh_report.json
  *
- * Everything written is something spine-rigc takes verbatim; no rigc
+ * Everything written is something rig-c takes verbatim; no rigc
  * generator is used. What is authored:
  *
  * - **Bones**, unscaled, at the config's landmarks. A chain
@@ -53,7 +53,7 @@
  *   bones (`src/motion.ts`). Under `idleKeys: 'direct'` the keys stay on the
  *   bones the meshes are weighted to, no `<bone>_ctl` is added, and the rig
  *   spec declares `invariants.idleDrivesMeshes` with
- *   {@link IDLE_DRIVES_MESHES_WHY} — spine-rigc 1.3.0's statement that this
+ *   {@link IDLE_DRIVES_MESHES_WHY} — rig-c 1.3.0's statement that this
  *   idle deforms meshes on purpose, which `A15_IDLE_NO_MESH_BONE_KEYS` then
  *   reports as a SKIP with its cost instead of refusing each bone. The
  *   declaration is written only when the idle keys at least one mesh-driving
@@ -63,7 +63,7 @@
  *   as written but its records and annotations. Nothing here solves or
  *   validates them; rigc's gate does, and a field it refuses is its refusal,
  *   in its words (`RIG_RIGC_GREEN`) — a two-bone ik whose child the idle
- *   keys through a control included (spine-rigc 2.15.0, issue #103). Every
+ *   keys through a control included (rig-c 2.15.0, issue #103). Every
  *   bone a constraint follows is declared detached from the bones it drives
  *   ({@link detachedRules}, `invariants.detached`, rigc's `A25`). Without the
  *   field, no byte of any output moves.
@@ -74,7 +74,7 @@
  * texture's edge, where filtering samples outside the art.
  *
  * Coordinates in the config and in parts.json are rig pixels, y down. The one
- * y flip goes through `src/coords.ts` (spine-rigc's `cropToSpineY`); x is
+ * y flip goes through `src/coords.ts` (rig-c's `cropToSpineY`); x is
  * measured from the canvas centre, which is where `root` stands.
  *
  * Pure: the caller reads the files and writes the outputs; nothing here
@@ -84,7 +84,7 @@
 import { type AutoSpec, type BoneEntry, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, ROOT_BONE } from './config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
-import type { MeshCounts, Termination } from 'spine-rigc/mesh';
+import type { MeshCounts, Termination } from 'rig-c/mesh';
 import { type AutoMotionCase, DEFORM_MAY_FOLD_WHY, type MotionDeformation } from './automotion.ts';
 import {
   autoReductionInput,
@@ -245,7 +245,7 @@ export interface RigSpec {
   invariants?: { idleDrivesMeshes?: { why: string }; detached?: DetachedRule[]; deformMayFold?: Array<{ slot: string; why: string }> };
 }
 
-/** One `invariants.detached` entry: spine-rigc's `RigDetachedRule`, checked by its gate rule `A25`. */
+/** One `invariants.detached` entry: rig-c's `RigDetachedRule`, checked by its gate rule `A25`. */
 export interface DetachedRule {
   bone: string;
   notUnder: string;
@@ -256,9 +256,9 @@ export interface DetachedRule {
  * `invariants.detached` for a config's constraints (issue #92): for each
  * constraint that follows a bone — an ik's `target`, a transform's `source`
  * — one rule per bone it drives, `{bone: <followed>, notUnder: <driven>}`,
- * in constraint order and then `bones` order, each pair once. spine-rigc's
+ * in constraint order and then `bones` order, each pair once. rig-c's
  * `A25_DETACHED_BONE_PARENTAGE` fails a rule whose `bone` is a descendant of
- * its `notUnder` (spine-rigc 2.10.1, `src/assertions/bodies/a25.ts`):
+ * its `notUnder` (rig-c 2.10.1, `src/assertions/bodies/a25.ts`):
  * measured on the rig fixture, a target declared detached and parented under
  * the link it drives fails the gate under both `--idle-keys` values, and the
  * same rig with nothing declared gates green with `A25` a SKIP. The loader
@@ -288,10 +288,10 @@ export function detachedRules(constraints: readonly ConfigConstraint[]): Detache
  * Where the idle's keys on a mesh-driving bone go (`rig --idle-keys`).
  *
  * - `ctl`: onto a same-origin `<bone>_ctl` parent, which passes
- *   `A15_IDLE_NO_MESH_BONE_KEYS` under every spine-rigc this package has run
+ *   `A15_IDLE_NO_MESH_BONE_KEYS` under every rig-c this package has run
  *   on. It satisfies the rule's wording only — see `src/motion.ts`.
  * - `direct`: onto the bone itself, with `invariants.idleDrivesMeshes`
- *   declared, which needs spine-rigc 1.3.0 or later (an older rigc refuses
+ *   declared, which needs rig-c 1.3.0 or later (an older rigc refuses
  *   the unknown invariant by name).
  *
  * Measured on the two public examples (spine-parts #13, `tools/idle_cost.ts`):
@@ -377,13 +377,13 @@ export interface ContourMeshReport {
 /**
  * An automatic mesh's row (issue #126, item 2): the lattice row's figures,
  * then the mode; `settings`, every number the call saw (the effective
- * settings, as spine-rigc echoes them, are also in the document); the source
- * — the contour mesh's own report and spine-rigc's counts of it — and the
+ * settings, as rig-c echoes them, are also in the document); the source
+ * — the contour mesh's own report and rig-c's counts of it — and the
  * result's counts; every residual, the worst one and the worst region; the
  * termination; what the weights lost to the 5-place rounding; per region the
  * source vertices its bone reaches and holds alone and the result vertices
  * bound to it; `deformation` (below); and the whole
- * `mesh-quality-report/1` document spine-rigc wrote — inside the row rather
+ * `mesh-quality-report/1` document rig-c wrote — inside the row rather
  * than beside it, so the rig stage stays pure and one file holds every part's
  * evidence, as it does for the other modes. `art_coverage` is over alpha above
  * 8, the other modes' reading; the threshold-1 coverage is a residual.
@@ -422,7 +422,7 @@ export interface AutoMeshReport {
    * {@link DEFORMATION_UNMEASURED} as `buildRig` writes the row — it measures
    * geometry alone; the rig stage replaces it with the motion gate's rows
    * (`src/automotion.ts`) before anything is written, and adds
-   * `motion_report`, spine-rigc's whole `compare` document, after
+   * `motion_report`, rig-c's whole `compare` document, after
    * `quality_report`. A written row never says unmeasured: a part whose motion
    * was not measured and passed is refused.
    */
@@ -684,7 +684,7 @@ export function buildRig(
     }
   }
   // A two-bone ik over a link and its child link stops being one when the
-  // child gets a control: `<child>_ctl` stands between them. spine-rigc 2.15.0
+  // child gets a control: `<child>_ctl` stands between them. rig-c 2.15.0
   // refuses that pair by name (issue #103); the rig stage adds the flag to
   // rigc's line (`ctlRemedies`, src/build.ts).
   refuseIfAny(problems);
@@ -882,8 +882,8 @@ export function buildRig(
       },
     };
   };
-  // An automatic mesh (issue #126, item 2): the contour source at alpha 1 and above, spine-rigc's reduceMesh, and
-  // the result used only when accepted (`src/automesh.ts`). Its weights are spine-rigc's by name — a survivor's are
+  // An automatic mesh (issue #126, item 2): the contour source at alpha 1 and above, rig-c's reduceMesh, and
+  // the result used only when accepted (`src/automesh.ts`). Its weights are rig-c's by name — a survivor's are
   // the source's bit for bit, an inserted vertex's interpolated — rounded by roundShares (the author's minWeight
   // replaces the 0.03 floor that makes the lattice's rounding safe, so every vertex closes on its heaviest entry)
   // and bound exactly as a contour vertex is.

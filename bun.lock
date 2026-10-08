@@ -6,7 +6,7 @@
       "name": "spine-parts",
       "dependencies": {
         "ag-psd": "^31.0.2",
-        "spine-rigc": "^2.20.3",
+        "rig-c": "^2.20.4",
       },
       "devDependencies": {
         "@esotericsoftware/spine-core": "4.3.13",
@@ -192,13 +192,13 @@
 
     "qified": ["qified@0.10.1", "", { "dependencies": { "hookified": "^2.1.1" } }, "sha512-+Owyggi9IxT1ePKGafcI87ubSmxol6smwJ+RAHDQlx9+9cPwFWDiKFFCPuWhr9ignlGpZ9vDQLw67N4dcTVFEA=="],
 
+    "rig-c": ["rig-c@2.20.4", "", { "bin": { "rigc": "bin/rigc.cjs" } }, "sha512-bFICyh12D550fxUN4rne8lqJub4/6371QLcp9kqQAIm8zvXLjwvxNZ02OrQ7VJYU34GHlb/kibQQ35sWd3x45A=="],
+
     "semver": ["semver@7.8.5", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA=="],
 
     "shebang-command": ["shebang-command@2.0.0", "", { "dependencies": { "shebang-regex": "^3.0.0" } }, "sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA=="],
 
     "shebang-regex": ["shebang-regex@3.0.0", "", {}, "sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A=="],
-
-    "spine-rigc": ["spine-rigc@2.20.3", "", { "bin": { "rigc": "bin/rigc.cjs" } }, "sha512-x2q6zrMUUXkHxLeNAmvzTySln8+u06vVTB2NKkENT5YTg71hWprF0MzVM7w6wVMfM05RNaQYDIGc/ugYOeBbog=="],
 
     "tinyglobby": ["tinyglobby@0.2.17", "", { "dependencies": { "fdir": "^6.5.0", "picomatch": "^4.0.4" } }, "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g=="],
 

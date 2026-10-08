@@ -13,12 +13,12 @@
  * with Lanczos to fit `cell - 4` wide and `cell - 30` tall — enlarging a small
  * layer as well as shrinking a large one — centred in the top of the cell, two
  * label lines at the bottom. Two deviations, both stated: the sheet is a PNG
- * (no JPEG encoder ships here), and the label is drawn in spine-rigc's 5x7
+ * (no JPEG encoder ships here), and the label is drawn in rig-c's 5x7
  * bitmap font rather than PIL's default font, so labels are upper case.
  */
 import { existsSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { drawText, GLYPH_H } from 'spine-rigc/tools/font5x7.ts';
+import { drawText, GLYPH_H } from 'rig-c/tools/font5x7.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { type LayerSet, OPAQUE_ALPHA_ABOVE, readLayers } from './layers.ts';
 import { readParts } from './parts.ts';
