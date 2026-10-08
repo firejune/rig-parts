@@ -44,7 +44,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
-import type { Reducer } from './automesh.ts';
+import { type Reducer, unboundedClause } from './automesh.ts';
 import { type AutoMotionCase, motionClause, motionDeformation, motionDocument, motionInput, motionStimulus, motionVerdict, noStimulusProblem, runComparison } from './automotion.ts';
 import { BARS, causeLines, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig, loadEarlyConfig } from './config.ts';
@@ -452,7 +452,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
       const from = s === null ? 'unread' : `${s.boundaryVertices}+${s.interiorVertices}`;
       const run = motion.find((x) => x.part === m.part);
       const moved = run === undefined ? 'motion not compared (the gate is red)' : run.report !== null ? motionClause(run.report) : `motion not compared (${run.notCompared ?? 'refused'})`;
-      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}; ${moved}`);
+      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}${unboundedClause(m.residuals, m.settings.targets.artFit)}; ${moved}`);
     } else if ('mode' in m) {
       const c = m.contour;
       const stray = c.strayIslands === 0 ? '' : ` left out ${c.strayIslands} island(s), ${c.strayPixels} px`;

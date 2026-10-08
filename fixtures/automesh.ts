@@ -20,7 +20,6 @@
  */
 import { type AlphaMask, CONTOUR_MIN_COVERAGE } from 'rig-c/mesh';
 import type { AutoRegionSpec, AutoSpec } from '../src/config.ts';
-import { MAX_SIDE } from '../src/contour.ts';
 import { blocks, CONCAVE, CONVEX, HOLE, ISLANDS, SPIKE } from './contour.ts';
 
 /** The numbers every synthetic case starts from; see the module header for where each comes from. */
@@ -144,31 +143,26 @@ export const SPECK_RULE_PX = 4;
  */
 export const PERMISSIVE_MIN_COVERAGE = CONTOUR_MIN_COVERAGE;
 
-/**
- * The permissive policy's undercut bound: `ceil(MAX_SIDE x sqrt 2)` = 46341 px,
- * the diagonal of the largest part `src/contour.ts` accepts, so no part can
- * reach it — undercut is reported and not gated. Why: an uncovered pixel's
- * undercut is its distance to the covered set, at least 1 px, so "incomplete
- * coverage allowed" (the owner's words) and `maxUndercut` 0 cannot hold
- * together; and a speck left out sits wherever the painting put it, so no
- * distance follows from the speck rule. rigc's own stray rule
- * (`CONTOUR_MIN_COVERAGE` over islands) has no distance term either. What the
- * loss costs is carried by the coverage floor and by the loss figure every
- * matrix row reports against the original image at alpha 1 and above.
- * The number stands in for "not bounded" only because rig-c cannot be told
- * that: 2.20.4 still refuses a null or absent `maxUndercut` (and
- * `maxOvershoot`) in `sourceBounds` and `targets.artFit` by name
- * (`REDUCE_INPUT_MISSING`), which `AM40` holds; it is replaced by an
- * undeclared bound the day rigc accepts one (rigc#1254).
- */
-export const PERMISSIVE_MAX_UNDERCUT = Math.ceil(MAX_SIDE * Math.SQRT2);
 
 /**
- * The permissive policy: {@link examplePolicy} with exactly three numbers
- * changed, each stated above before any part was measured — `source.stray`
- * {@link SPECK_RULE_PX}, `minCoverage` {@link PERMISSIVE_MIN_COVERAGE} and
- * `maxUndercut` {@link PERMISSIVE_MAX_UNDERCUT}, in `sourceBounds` and
- * `targets.artFit` alike. Everything else is the strict policy's: tolerance 1,
+ * The permissive policy: {@link examplePolicy} with exactly three changes,
+ * each stated before any part was measured — `source.stray`
+ * {@link SPECK_RULE_PX}, `minCoverage` {@link PERMISSIVE_MIN_COVERAGE}, and
+ * `maxUndercut` `null`, in `sourceBounds` and `targets.artFit` alike.
+ *
+ * `maxUndercut: null` is the bound declared absent: rig-c (from 2.21.0,
+ * rigc#1254) measures the undercut, reports its row `undeclared` with its
+ * value, and gates nothing on it. Why no bound: an uncovered pixel's undercut
+ * is its distance to the covered set, at least 1 px, so "incomplete coverage
+ * allowed" (the owner's words) and `maxUndercut` 0 cannot hold together; and a
+ * speck left out sits wherever the painting put it, so no distance follows
+ * from the speck rule. rigc's own stray rule (`CONTOUR_MIN_COVERAGE` over
+ * islands) has no distance term either. What the loss costs is carried by the
+ * coverage floor and by the loss figure every matrix row reports against the
+ * original image at alpha 1 and above. No number stands in for the absence: a
+ * large bound would read as a measured limit (`AM44` plants one).
+ *
+ * Everything else is the strict policy's: tolerance 1,
  * margin 1, the part's own spacing, overshoot 3, boundary deviation 1,
  * influences {4, 0}, budget 5000, one art sample, no region, no protection.
  * The final measurement is against the original image at alpha 1 and above:
@@ -177,7 +171,7 @@ export const PERMISSIVE_MAX_UNDERCUT = Math.ceil(MAX_SIDE * Math.SQRT2);
  */
 export function permissivePolicy(spacing: number): AutoSpec {
   const strict = examplePolicy(spacing);
-  const fit = { minCoverage: PERMISSIVE_MIN_COVERAGE, maxOvershoot: strict.targets.artFit.maxOvershoot, maxUndercut: PERMISSIVE_MAX_UNDERCUT };
+  const fit = { minCoverage: PERMISSIVE_MIN_COVERAGE, maxOvershoot: strict.targets.artFit.maxOvershoot, maxUndercut: null };
   return {
     ...strict,
     source: { ...strict.source, stray: SPECK_RULE_PX },
@@ -189,7 +183,7 @@ export function permissivePolicy(spacing: number): AutoSpec {
 /** The synthetic policy with the permissive policy's three changes, for the synthetic rows of the matrix. */
 export function permissiveSyntheticPolicy(spacing: number): AutoSpec {
   const s = syntheticPolicy(spacing);
-  const fit = { minCoverage: PERMISSIVE_MIN_COVERAGE, maxOvershoot: s.targets.artFit.maxOvershoot, maxUndercut: PERMISSIVE_MAX_UNDERCUT };
+  const fit = { minCoverage: PERMISSIVE_MIN_COVERAGE, maxOvershoot: s.targets.artFit.maxOvershoot, maxUndercut: null };
   return { ...s, source: { ...s.source, stray: SPECK_RULE_PX }, sourceBounds: { ...fit }, targets: { ...s.targets, artFit: { ...fit } } };
 }
 

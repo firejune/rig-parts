@@ -233,7 +233,7 @@ export type ContourRegionSpec =
 /**
  * One mesh in the automatic mode (issue #126, item 2): the contour mesh over
  * the part at alpha 1 and above is the source, and rig-c's `reduceMesh`
- * (`rig-c/mesh`, 2.20.x) refines it inside the declared regions and
+ * (`rig-c/mesh`, 2.22.x) refines it inside the declared regions and
  * removes what the declared bounds allow (`src/automesh.ts`); the result is
  * kept only when its motion passes `motion` (`src/automotion.ts`). Every quality
  * input is a number the author wrote, named as rig-c's contract
@@ -294,10 +294,16 @@ export interface AutoMotionSpec {
   deformMayFold?: boolean;
 }
 
+/**
+ * An art-fit bound set. `maxOvershoot` and `maxUndercut` are a number (px) or
+ * `null`, "declared absent": rig-c measures the residual, reports its row
+ * `undeclared` and gates nothing on it. Left out, either is refused by name —
+ * absence is never read as "not bounded". `minCoverage` is always a number.
+ */
 export interface ArtFitBoundsSpec {
   minCoverage: number;
-  maxOvershoot: number;
-  maxUndercut: number;
+  maxOvershoot: number | null;
+  maxUndercut: number | null;
 }
 
 /**
@@ -1198,8 +1204,16 @@ function checkAuto(c: Check, at: string, v: Json, bones: Set<string>): void {
     const b = c.object(path, f, ['minCoverage', 'maxOvershoot', 'maxUndercut'], []);
     if (b === null) return;
     if ('minCoverage' in b) c.number(`${path}.minCoverage`, b.minCoverage, 'unit');
-    if ('maxOvershoot' in b) c.number(`${path}.maxOvershoot`, b.maxOvershoot, 'non-negative');
-    if ('maxUndercut' in b) c.number(`${path}.maxUndercut`, b.maxUndercut, 'non-negative');
+    // A bound may be declared absent with null: rig-c (from 2.21.0) measures
+    // and reports it as `undeclared` and gates nothing on it. Left out, it is
+    // refused above (CONFIG_FIELD_PRESENT), as rig-c refuses it too.
+    for (const k of ['maxOvershoot', 'maxUndercut'] as const) {
+      if (!(k in b) || b[k] === null) continue;
+      const v = b[k];
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+        c.fail('CONFIG_FIELD_TYPE', `${path}.${k}`, `is ${show(v)}; a number at or above 0, or null (declared absent: measured and reported, not bounded), is required`);
+      }
+    }
   };
   if ('sourceBounds' in o) fit(`${at}.sourceBounds`, o.sourceBounds);
   if ('targets' in o) {

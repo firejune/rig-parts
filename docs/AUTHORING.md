@@ -451,7 +451,7 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    (`CONTOUR_*`, the detail ending "the automatic mode's source, at alpha 1 and above") refuse the
    part. Its weights are the contour mode's — segments and region falloff — under the author's
    `influences`, with no 0.03 floor unless the author writes one.
-2. **The call** — rig-c's `reduceMesh` (`rig-c/mesh`, 2.20.x) refines inside the declared
+2. **The call** — rig-c's `reduceMesh` (`rig-c/mesh`, 2.22.x) refines inside the declared
    regions, then removes vertices while every declared bound still holds. Every number it is
    handed is one of the fields below; `preset` is null (no preset exists yet: a preset will be a
    named, versioned set of these numbers, expanded into the report), and no deform key or linked
@@ -489,7 +489,7 @@ the schedule walked and each refusal's text, the same bytes on every run of one 
 | --- | --- |
 | `source.tolerance`, `source.margin`, `source.spacing` | the contour mode's parameters for the source, px (margin 0, or 1 or more) |
 | `source.stray` | optional: as in the contour mode |
-| `sourceBounds.{minCoverage, maxOvershoot, maxUndercut}` | what the source must already meet at alpha 1 and above: the share of art pixel centres covered (0..1), the furthest a covered pixel may sit outside the filled silhouette (px), the furthest an uncovered art pixel may sit from the covered set (px) |
+| `sourceBounds.{minCoverage, maxOvershoot, maxUndercut}` | what the source must already meet at alpha 1 and above: the share of art pixel centres covered (0..1), the furthest a covered pixel may sit outside the filled silhouette (px, or `null`), the furthest an uncovered art pixel may sit from the covered set (px, or `null`) |
 | `targets.artFit.{minCoverage, maxOvershoot, maxUndercut}` | the same three for the result |
 | `targets.maxBoundaryDeviation` | the largest Hausdorff distance between the result's outline and the source's, px |
 | `targets.minAngle` | optional: the smallest triangle angle, degrees; absent, it is reported and not gated |
@@ -499,6 +499,21 @@ the schedule walked and each refusal's text, the same bytes on every run of one 
 | `motion` | **required**: `maxLocalDeformation` (rig px, 0 or more — how far the reduced mesh may carry any art pixel from where its source carries it, at any frame); optional `maxStretch` / `minStretch` (ratios; absent, the rows are reported and not gated); optional `deformMayFold` (absent is **false**: a triangle that turns over refuses the part; true declares the slot in `invariants.deformMayFold` and lists every fold instead) |
 | `protect` | optional; each field optional: `hull` (true keeps every source outline vertex; absent is **false**, the default agreed for this mode), `vertices` and `edges` (source vertex indices and pairs that must survive), `regionBoundaries` (region names whose outline vertices must survive), `weightJump` (an L1 weight difference above which a source edge is kept; absent is none), `influences` (bones never pruned from a vertex; every region's bone is added) |
 | `regions` | optional, each `{name, shape, bone, band, maxEdgeLength, transition, grade, minArtSamples}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`): `bone` and `band` are the control bone and its weight falloff exactly as a contour region's (rig px, multiples of 1/256 px); `maxEdgeLength` is L0, the longest an edge meeting the region may be, px; outside it, across `transition` px, the bound relaxes as `L0 + grade·d`; `transition` 0 is a hard edge; `minArtSamples` is the region's own sample floor |
+
+**A bound declared absent.** `maxOvershoot` and `maxUndercut`, in `sourceBounds` and in
+`targets.artFit`, each take a number of px 0 or more or `null`. `null` means *measured and
+reported, not bounded*: rig-c (2.21.0 and later) still measures the row, reports it `undeclared`
+with its value and no bound, and never refuses the part or stops a reduction step on it. Leaving
+the field out is not the same thing and is still refused by name (`CONFIG_FIELD_PRESENT`), as
+rig-c refuses it: an omission cannot be told from a forgotten field. `minCoverage` has no such
+form. Write `null` where the policy deliberately accepts loss the distance cannot express — for
+instance a coverage floor below 1, where every uncovered pixel is at least 1 px from the covered
+set, so an undercut of 0 cannot hold beside it — rather than a large number, which would read as a
+measured limit. The row in `mesh_report.json` echoes the `null` in `settings`, carries the
+residual as rig-c reports it (`state: "undeclared"`, the value, `bound: null`), and
+`worst_residual` never picks it; the `build` line prints it after the worst residual as
+`overshoot <value> (not bounded)` / `undercut <value> (not bounded)`. The motion gate holds the
+reference and the candidate to the same bounds, `null` included.
 
 A circle is handed to rig-c as the regular polygon with the fewest sides, 3 or more,
 circumscribed about the circle, whose outline lies within 1/256 px of it (the grid the region's
@@ -521,7 +536,8 @@ worst frame and sample counts, and the schedule walked (frames per phase, held o
 `motion_report`, the whole `compare` document of the motion gate, inside the row so one file holds
 every part's evidence. `art_coverage` is over alpha above 8, comparable with the
 other modes; the alpha-1 coverage is a residual. `build` prints one line per auto mesh: source →
-result counts (hull + interior), bindings, the termination, the worst residual and
+result counts (hull + interior), bindings, the termination, the worst residual, each art bound
+declared `null` with its value and `(not bounded)`, and
 `motion <value> <= <bound> at <frame>` (the frame id is `idle@<phase>@<time>`), and the reference
 build's gate lines after the candidate's. Weights are written by `roundShares` on every vertex (5 places, zeros
 dropped, the heaviest entry closes): the 0.03 floor that makes the lattice's last-entry close

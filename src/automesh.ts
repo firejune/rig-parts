@@ -16,7 +16,7 @@
  *    author's `influences` — no 0.03 floor unless the author wrote it (P19) —
  *    unrounded, so a vertex that survives can be compared bit for bit.
  * 2. **The call** ({@link autoReductionInput}) — rig-c's `reduceMesh`
- *    (`rig-c/mesh`, 2.20.x), refinement inside the declared regions then
+ *    (`rig-c/mesh`, 2.22.x), refinement inside the declared regions then
  *    reduction, every input from the config or from the source, as the
  *    contract types it (docs/MESH_REDUCTION.md §1): `art` the padded image's
  *    alpha at threshold 1 in the part-local frame with `pageScale` 1 (the
@@ -397,6 +397,43 @@ export function worstResidual(rows: readonly Residual[]): (Residual & { used: nu
     if (best === null || used > best.used) best = { ...r, used };
   }
   return best;
+}
+
+/**
+ * The art-fit rows whose bound the author declared absent: `MQ_OVERSHOOT`
+ * under `targets.artFit.maxOvershoot: null`, `MQ_UNDERCUT` under
+ * `maxUndercut: null` — the part-wide row of each (region null), and of the
+ * overshoot rows the first, the 8-connected one rig-c gates (a second,
+ * 4-connected reading is reported beside it only where a diagonal pinch makes
+ * the fills differ, and is never bounded). rig-c measures such a row and
+ * reports it `undeclared`, with its value and no bound; it gates nothing, so
+ * {@link worstResidual} never picks it. A bound written as a number selects
+ * nothing here.
+ */
+export function unboundedArtRows(rows: readonly Residual[], artFit: { maxOvershoot: number | null; maxUndercut: number | null }): Array<{ label: 'overshoot' | 'undercut'; row: Residual }> {
+  const out: Array<{ label: 'overshoot' | 'undercut'; row: Residual }> = [];
+  const pick = (code: string): Residual | undefined => rows.find((r) => r.code === code && r.region === null);
+  if (artFit.maxOvershoot === null) {
+    const r = pick('MQ_OVERSHOOT');
+    if (r !== undefined) out.push({ label: 'overshoot', row: r });
+  }
+  if (artFit.maxUndercut === null) {
+    const r = pick('MQ_UNDERCUT');
+    if (r !== undefined) out.push({ label: 'undercut', row: r });
+  }
+  return out;
+}
+
+/**
+ * The build line's clause for {@link unboundedArtRows}: `; undercut 3.2 (not
+ * bounded)` per row, the value as rig-c reported it (or the state, when it
+ * could not be measured); empty when every art-fit bound is a number, so a
+ * config that declares both bounds prints the line it always printed.
+ */
+export function unboundedClause(rows: readonly Residual[], artFit: { maxOvershoot: number | null; maxUndercut: number | null }): string {
+  return unboundedArtRows(rows, artFit)
+    .map(({ label, row }) => `; ${label} ${row.value === null ? row.state : row.value} (not bounded)`)
+    .join('');
 }
 
 /** The region whose density rows are nearest their bounds (the worst residual among `MQ_MAX_EDGE`/`MQ_TRANSITION` rows), or null without a region. */
