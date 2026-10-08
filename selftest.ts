@@ -186,7 +186,8 @@ import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
 import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline } from 'spine-rigc/mesh';
 import { autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Residual, runReduction, sourceWeights, terminationText, worstRegion, worstResidual } from './src/automesh.ts';
-import { examplePolicy, squareRegion, STRIP_MASK, syntheticPolicy } from './fixtures/automesh.ts';
+import { AUTO_CASES, examplePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
+import { BLOCKED_LABEL, barsOf, classify, type Counts as MatrixCounts, countsCell, geometryRow, lossAgainstOriginal, quietLabel, stretchOf, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
 import { type AutoMotionCase, idleSchedule, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
 import { motionGates } from './src/build.ts';
@@ -16039,6 +16040,216 @@ function runAutoMeshSuite(): number {
   } finally {
     rmSync(dir28, { recursive: true, force: true });
   }
+  // ---- the evaluation matrix (issue #126 items 4-5; tools/auto_matrix.ts, fixtures/automesh.ts) ----
+  const still = (): number => 0;
+
+  // AM30 — the permissive policy's loss figure: a speck left out is counted against the ORIGINAL mask, by hand.
+  const g30 = geometryRow('speck3', speckMask(3), permissiveSyntheticPolicy(8), null, null, still);
+  const erased30 = g30.mesh === null ? null : lossAgainstOriginal(STRIP_MASK, g30.mesh.points, g30.mesh.triangles);
+  const cov30 = g30.rows.find((r) => r.code === 'MQ_COVERAGE');
+  const strict30 = geometryRow('speck3', speckMask(3), syntheticPolicy(8), null, null, still);
+  say(
+    'AM30_THE_PERMISSIVE_LOSS_FIGURE_COUNTS_A_LEFT_OUT_SPECK_AGAINST_THE_ORIGINAL_IMAGE',
+    g30.verdict.kind === 'accepted' &&
+      g30.strayIslands === 1 &&
+      g30.strayPixels === 3 &&
+      g30.lossResult?.artPixels === 2243 &&
+      g30.lossResult.uncovered === 3 &&
+      g30.lossResult.share === 3 / 2243 &&
+      cov30?.value === 2240 / 2243 &&
+      erased30?.uncovered === 0 &&
+      strict30.verdict.kind === 'refused' &&
+      strict30.verdict.code === 'CONTOUR_ONE_ISLAND' &&
+      strict30.verdict.detail.includes('3 px at (62, 45)'),
+    `permissive: ${verdictText(g30.verdict)}, specks ${g30.strayIslands} (${g30.strayPixels} px), loss ${g30.lossResult?.uncovered} of ${g30.lossResult?.artPixels} (by hand 3 of 2240 + 3), rigc MQ_COVERAGE ${cov30?.value} (by hand 2240/2243); planted: the same mesh read against the speck-erased mask -> ${erased30?.uncovered} uncovered; strict: ${verdictText(strict30.verdict)}`,
+    'the owner\'s condition 1: the final measurement is the original image at alpha >= 1; a mask with the speck erased reads 0 and would hide the loss. The speck sits 3 px right of the block, past the margin-1 outline (x <= 61), and with no region the result\'s vertices are source vertices, so no triangle can reach its centres',
+  );
+
+  // AM31 — the speck rule: an island at the rule is left out, one pixel over it is a piece and refuses by name.
+  const g31a = geometryRow('speck4', speckMask(SPECK_RULE_PX), permissiveSyntheticPolicy(8), null, null, still);
+  const g31b = geometryRow('speck5', speckMask(SPECK_RULE_PX + 1), permissiveSyntheticPolicy(8), null, null, still);
+  say(
+    'AM31_THE_SPECK_RULE_LEAVES_OUT_AN_ISLAND_AT_4_PX_AND_REFUSES_ONE_AT_5_PX_BY_NAME',
+    SPECK_RULE_PX === 4 &&
+      g31a.verdict.kind === 'accepted' &&
+      g31a.strayPixels === 4 &&
+      g31a.lossResult?.uncovered === 4 &&
+      g31b.verdict.kind === 'refused' &&
+      g31b.verdict.code === 'CONTOUR_ONE_ISLAND' &&
+      g31b.verdict.detail.includes('5 px at (62, 43)') &&
+      g31b.verdict.detail.includes('With stray 4 px declared'),
+    `4 px: ${verdictText(g31a.verdict)}, loss ${g31a.lossResult?.uncovered}; 5 px: ${verdictText(g31b.verdict)}: ${g31b.verdict.kind === 'refused' ? g31b.verdict.detail.slice(0, 300) : ''}`,
+    'the speck rule is a number of pixels stated before any part was measured (issue #106\'s stray 4): at or under it an island is a speck and counts as loss; over it, a piece, never dropped',
+  );
+
+  // AM32 — two real pieces are refused with both counts named; a rule large enough to swallow one is what would drop it.
+  const g32 = geometryRow('pieces', TWO_PIECES_MASK, permissiveSyntheticPolicy(8), null, null, still);
+  const swallow = permissiveSyntheticPolicy(8);
+  const g32p = geometryRow('pieces', TWO_PIECES_MASK, { ...swallow, source: { ...swallow.source, stray: 256 }, sourceBounds: { ...swallow.sourceBounds, minCoverage: 0 }, targets: { ...swallow.targets, artFit: { ...swallow.targets.artFit, minCoverage: 0 } } }, null, null, still);
+  say(
+    'AM32_TWO_REAL_PIECES_ARE_REFUSED_WITH_BOTH_COUNTS_NAMED_AND_NEVER_DROPPED_AS_SPECKS',
+    g32.verdict.kind === 'refused' && g32.verdict.code === 'CONTOUR_ONE_ISLAND' && g32.verdict.detail.includes('400 px') && g32.verdict.detail.includes('256 px') && g32p.verdict.kind === 'accepted' && g32p.lossResult?.uncovered === 256,
+    `rule 4: ${verdictText(g32.verdict)}: ${g32.verdict.kind === 'refused' ? g32.verdict.detail.slice(0, 200) : ''}; planted rule 256 with no coverage floor: ${verdictText(g32p.verdict)}, loss ${g32p.lossResult?.uncovered} px (by hand 256: the whole second piece)`,
+    'the owner\'s condition 1: the demo\'s earring is two real pieces; it stays refused under the stated rule, and the plant shows what a rule sized to the piece would silently cost',
+  );
+
+  // AM33 — the three counts: (a) as handed in, (b) spine-rigc's count of the gated source, (c) = (b) - removed + inserted.
+  const tracked33: MatrixCounts = { boundary: 7, interior: 5, triangles: 9, bindings: 0, meanInfluences: 0 };
+  const g33 = geometryRow('small', SMALL_STRIP_MASK, { ...syntheticPolicy(2), regions: [squareRegion(12, 10, 4, 2)] }, null, tracked33, still);
+  const src33 = autoSource('small', SMALL_STRIP_MASK, { ...syntheticPolicy(2), regions: [squareRegion(12, 10, 4, 2)] });
+  const vOf = (c: MatrixCounts | null): number => (c === null ? -1 : c.boundary + c.interior);
+  const identity = (row: { source: MatrixCounts | null; result: MatrixCounts | null; removed: number | null; inserted: number | null }): boolean => vOf(row.result) === vOf(row.source) - (row.removed ?? 0) + (row.inserted ?? 0);
+  say(
+    'AM33_A_ROW_CARRIES_THREE_COUNTS_AND_THE_RESULT_IS_THE_SOURCE_LESS_REMOVED_PLUS_INSERTED',
+    g33.tracked === tracked33 &&
+      !Array.isArray(src33) &&
+      g33.source?.boundary === src33.report.boundaryVertices &&
+      g33.source.interior === src33.report.interiorVertices &&
+      g33.source.triangles === src33.report.triangles &&
+      (g33.inserted ?? 0) > 0 &&
+      (g33.removed ?? 0) > 0 &&
+      identity(g33) &&
+      !identity({ ...g33, source: tracked33 }),
+    `(a) ${countsCell(g33.tracked)}; (b) ${countsCell(g33.source)} (the contour source's own report: ${Array.isArray(src33) ? 'refused' : `${src33.report.boundaryVertices}+${src33.report.interiorVertices} / ${src33.report.triangles}`}); (c) ${countsCell(g33.result)}; removed ${g33.removed}, inserted ${g33.inserted}; planted (a) in (b)'s place breaks the identity`,
+    'the owner\'s condition 2: 1704 -> 796 was the whole pipeline; a row keeps the source\'s choice (a -> b) apart from the reducer\'s (b -> c), and (c) must follow from (b) by the report\'s own changes',
+  );
+
+  // AM34 — a declared region on the fixture: interior vertices inserted, and every edge meeting the region within L0 on an independent reading.
+  let over34 = -1;
+  let meeting34 = 0;
+  if (g33.mesh !== null) {
+    over34 = 0;
+    const [x0, y0, x1, y1] = [10, 8, 14, 12];
+    const inside = (x: number, y: number): boolean => x >= x0 && x <= x1 && y >= y0 && y <= y1;
+    const meets = (a: [number, number], b: [number, number]): boolean => {
+      if (inside(a[0], a[1]) || inside(b[0], b[1])) return true;
+      for (let k = 1; k < 256; k++) {
+        const t = k / 256;
+        if (inside(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)) return true;
+      }
+      return false;
+    };
+    const tri = g33.mesh.triangles;
+    const pts = g33.mesh.points;
+    const seen = new Set<string>();
+    for (let t = 0; t < tri.length; t += 3) {
+      for (const [i, j] of [[tri[t], tri[t + 1]], [tri[t + 1], tri[t + 2]], [tri[t + 2], tri[t]]]) {
+        const key = i < j ? `${i},${j}` : `${j},${i}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (!meets(pts[i], pts[j])) continue;
+        meeting34++;
+        if (Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]) > 2 + 1e-9) over34++;
+      }
+    }
+  }
+  const edge34 = g33.rows.find((r) => r.code === 'MQ_MAX_EDGE' && r.object.region === 'soft');
+  say(
+    'AM34_A_DECLARED_REGION_ON_THE_FIXTURE_INSERTS_INTERIOR_VERTICES_AND_HOLDS_EVERY_EDGE_IT_MEETS_TO_L0',
+    g33.verdict.kind === 'accepted' && (g33.inserted ?? 0) > 0 && (g33.result?.interior ?? 0) > 0 && edge34?.state === 'pass' && (edge34.value ?? 99) <= 2 && meeting34 > 0 && over34 === 0,
+    `${verdictText(g33.verdict)}; inserted ${g33.inserted}, interior ${g33.result?.interior}; MQ_MAX_EDGE ${edge34?.state} ${edge34?.value}; independent: ${meeting34} edge(s) meet the 4 px square (sampled at 1/256 of each edge), ${over34} longer than L0 2`,
+    'the owner\'s condition 2: every accepted #131 result had 0 interior vertices, so local refinement was unverified; here the source spacing is L0 (2.19.0 refines only then), and the bound is read off the triangles, not off the report',
+  );
+
+  // AM35 — the verdict classes: only spine-rigc's named P16 refinement stop is "stopped"; every other refusal keeps its code.
+  const coarse = AUTO_CASES.find((c) => c.name === 'tiny region, coarse source');
+  const g35 = coarse === undefined ? null : geometryRow(coarse.name, coarse.mask, coarse.spec, null, null, still);
+  const zero = classify({ code: 'AUTO_MESH_ACCEPTED', object: 'x', detail: 'MQ_MAX_EDGE[soft] (the refinement found no point of edge 256-284 strictly between its ends inside region "soft" or its band)' });
+  const other = classify({ code: 'AUTO_MESH_TERMINATION', object: 'x', detail: 'vertex 1 lies 9 px beyond region "soft"\'s 2 px band — P16' });
+  say(
+    'AM35_ONLY_SPINE_RIGCS_NAMED_REFINEMENT_STOP_IS_MARKED_STOPPED_AND_EVERY_OTHER_REFUSAL_KEEPS_ITS_CODE',
+    g35 !== null && g35.verdict.kind === 'blocked' && verdictText(g35.verdict) === "stopped by spine-rigc's refinement (P16)" && BLOCKED_LABEL === verdictText(g35.verdict) && zero.kind === 'refused' && other.kind === 'refused' && classify(null).kind === 'accepted',
+    `coarse source: ${g35 === null ? 'no case' : verdictText(g35.verdict)}; planted transition-0 stop -> ${verdictText(zero)}; planted P16 words under another code -> ${verdictText(other)}`,
+    'the brief: a row spine-rigc stops by name in its refinement (AUTO_MESH_ACCEPTED naming P16, an edge end beyond the band) is a limit of the installed spine-rigc, not a refusal on the part\'s merits, and is not pre-densified; option 1 shipped in 2.19.1 and this coarse strip still stops on 2.20.1, so its inputs stay in fixtures/automesh.ts and the row reruns unchanged',
+  );
+
+  // AM36 — the strict policy is #131's, unchanged; the permissive one differs in exactly the stated numbers.
+  const strict36 = examplePolicy(28);
+  const hand36 = {
+    source: { tolerance: 1, margin: 1, spacing: 28 },
+    sourceBounds: { minCoverage: 1, maxOvershoot: 3, maxUndercut: 0 },
+    targets: { artFit: { minCoverage: 1, maxOvershoot: 3, maxUndercut: 0 }, maxBoundaryDeviation: 1 },
+    influences: { maxInfluences: 4, minWeight: 0 },
+    budget: { maxCandidates: 5000 },
+    minArtSamples: 1,
+  };
+  const leaves = (v: unknown, at = ''): Array<[string, unknown]> =>
+    v !== null && typeof v === 'object' ? Object.entries(v as Record<string, unknown>).flatMap(([k, x]) => leaves(x, at === '' ? k : `${at}.${k}`)) : [[at, v]];
+  const diff = (a: unknown, b: unknown): string[] => {
+    const la = new Map(leaves(a));
+    const lb = new Map(leaves(b));
+    return [...new Set([...la.keys(), ...lb.keys()])].filter((k) => la.get(k) !== lb.get(k)).sort();
+  };
+  const perm36 = permissivePolicy(28);
+  const d36 = diff(strict36, perm36);
+  const planted36 = diff(strict36, { ...perm36, targets: { ...perm36.targets, maxBoundaryDeviation: 2 } });
+  say(
+    'AM36_THE_STRICT_POLICY_IS_UNCHANGED_AND_THE_PERMISSIVE_ONE_DIFFERS_IN_EXACTLY_THE_STATED_NUMBERS',
+    diff(strict36, hand36).length === 0 &&
+      d36.join(',') === 'source.stray,sourceBounds.maxUndercut,sourceBounds.minCoverage,targets.artFit.maxUndercut,targets.artFit.minCoverage' &&
+      perm36.source.stray === 4 &&
+      perm36.targets.artFit.minCoverage === 0.995 &&
+      perm36.sourceBounds.minCoverage === 0.995 &&
+      perm36.targets.artFit.maxUndercut === 46341 &&
+      perm36.sourceBounds.maxUndercut === 46341 &&
+      planted36.length === 6 &&
+      load(autoRigConfig((c) => ((c.meshes as Record<string, Record<string, unknown>>).cloth.auto = JSON.parse(JSON.stringify(withPolicyMotion(permissivePolicy(4)))) as unknown))) === null,
+    `strict against #131's numbers by hand: ${diff(strict36, hand36).join(', ') || 'no difference'}; permissive differs at ${d36.join(', ')}; planted boundary deviation 2 -> ${planted36.length} difference(s)`,
+    'the owner\'s condition 1: the strict policy stays the control group; the permissive one is named and its three changes (stray 4 from #106; minCoverage = spine-rigc CONTOUR_MIN_COVERAGE 0.995; maxUndercut ceil(32768 x sqrt 2) = 46341, reported not gated) were written before any part was measured, and with its motion block (withPolicyMotion, which the loader requires since #134) it loads as a config',
+  );
+
+  // AM37 — the matrix region: L0 = grid / 2, transition = radius = band, and the bound reaches the grid at the band's outer edge.
+  const r37 = matrixRegion({ cx: 10.5, cy: 20.5, r: 27, band: 27 }, 28);
+  const r37b = matrixRegion({ cx: 10.5, cy: 20.5, r: 65, band: 65 }, 36);
+  say(
+    'AM37_THE_MATRIX_REGION_ASKS_HALF_THE_GRID_AND_RELAXES_TO_THE_GRID_AT_THE_BANDS_OUTER_EDGE',
+    r37.shape === 'circle' &&
+      r37.bone === 'test_region' &&
+      r37.maxEdgeLength === 14 &&
+      r37.transition === 27 &&
+      r37.band === 27 &&
+      Math.abs(r37.maxEdgeLength + r37.grade * r37.transition - 28) < 1e-12 &&
+      r37b.maxEdgeLength === 18 &&
+      Math.abs(r37b.maxEdgeLength + r37b.grade * r37b.transition - 36) < 1e-12 &&
+      r37b.minArtSamples === 1,
+    `grid 28, r 27: L0 ${r37.maxEdgeLength}, transition ${r37.transition}, grade ${r37.grade}, L(transition) ${r37.maxEdgeLength + r37.grade * r37.transition} (by hand 28); grid 36, r 65: L0 ${r37b.maxEdgeLength}, L(transition) ${r37b.maxEdgeLength + r37b.grade * r37b.transition} (by hand 36)`,
+    'the owner\'s condition 2: a declared region on real parts with its numbers written down and derived from the part\'s own grid and the #107 rule\'s radius, not tuned',
+  );
+
+  // AM38 — quiet: the one-minute load under 2 before AND after; 2.00 is not under 2, and an unread line is loaded.
+  const up = (one: string): string => `13:00  up 1 day, 10 users, load averages: ${one} 3.10 3.20`;
+  say(
+    'AM38_A_TIMING_IS_QUIET_ONLY_WHEN_THE_ONE_MINUTE_LOAD_IS_UNDER_2_BEFORE_AND_AFTER',
+    quietLabel(up('1.99'), up('0.40')) === 'quiet' &&
+      quietLabel(up('2.00'), up('0.40')) === 'loaded' &&
+      quietLabel(up('1.00'), up('2.50')) === 'loaded' &&
+      quietLabel('no load here', up('1.00')) === 'loaded' &&
+      quietLabel(' 10:00:00 up 3 days,  load average: 0.50, 0.40, 0.30', up('1.50')) === 'quiet',
+    `1.99/0.40 ${quietLabel(up('1.99'), up('0.40'))}; 2.00/0.40 ${quietLabel(up('2.00'), up('0.40'))}; 1.00/2.50 ${quietLabel(up('1.00'), up('2.50'))}; unread ${quietLabel('no load here', up('1.00'))}; the other uptime format 0.50 ${quietLabel(' 10:00:00 up 3 days,  load average: 0.50, 0.40, 0.30', up('1.50'))}`,
+    'the owner\'s condition 4: the #131 timing was read at load 10-90; a figure is called quiet only under 2 on both sides of it, and otherwise is printed as loaded',
+  );
+
+  // AM39 — the nine bars and the part's stretch, read off a check.json.
+  const passing: Record<string, unknown> = { gate_spine_html_green: true, loop_max_diff: 0, seam_mean: 0.3, seam_px_over_40: 2 };
+  for (const b of ['BREATH_VISIBLE', 'BLINK_NO_HOLE', 'CHAIN_LAG', 'TIP_OVER_ROOT', 'STILL_REGIONS_DARK']) passing[b] = { status: 'PASS' };
+  passing.TEXTURE_STRETCH = { status: 'PASS', severity: 1.2, per_mesh: [{ slot: 'cloth', severity: 1.1, min_ratio: 0.95, min_at: 'edge 1-2', max_ratio: 1.1, max_at: 'edge 3-4' }] };
+  const failing39 = { ...passing, seam_mean: 1.01, BLINK_NO_HOLE: { status: 'SKIP' }, TEXTURE_STRETCH: { status: 'FAIL', per_mesh: [{ slot: 'cloth', severity: 2.6, min_ratio: 0.38, min_at: 'edge 7-8', max_ratio: 1.0, max_at: 'edge 9-10' }] } };
+  const b39 = barsOf(passing);
+  const f39 = barsOf(failing39);
+  say(
+    'AM39_THE_NINE_BARS_ARE_READ_OFF_CHECK_JSON_AND_A_FAILING_STRETCH_IS_NAMED_WITH_THE_PARTS_SEVERITY',
+    b39.passed === 9 &&
+      b39.failing.length === 0 &&
+      f39.passed === 6 &&
+      f39.failing.join(',') === 'seam,TEXTURE_STRETCH' &&
+      f39.skipped.join(',') === 'BLINK_NO_HOLE' &&
+      stretchOf(passing, 'cloth')?.severity === 1.1 &&
+      stretchOf(passing, 'cloth')?.at === 'max 1.1 at edge 3-4' &&
+      stretchOf(failing39, 'cloth')?.at === 'min 0.38 at edge 7-8' &&
+      stretchOf(passing, 'other') === null,
+    `all pass: ${b39.passed}; planted seam 1.01, a SKIP and a FAIL: ${f39.passed} passed, failing ${f39.failing.join(', ')}, skipped ${f39.skipped.join(', ')}; stretch ${JSON.stringify(stretchOf(failing39, 'cloth'))}`,
+    'the brief: the full-build check outcome per switched part (9 bars) and TEXTURE_STRETCH severity per part; a bar that did not measure is not counted as passed',
+  );
 
   return bad();
 }
