@@ -181,11 +181,11 @@ import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type Mo
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
-import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
+import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
 import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline, writeMeshQualityReport } from 'rig-c/mesh';
-import { autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, reuseReductions, runReduction, sourceWeights, terminationText, worstRegion, worstResidual } from './src/automesh.ts';
+import { autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
 import { AUTO_CASES, examplePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
 import { BLOCKED_LABEL, barsOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
@@ -16206,12 +16206,12 @@ function runAutoMeshSuite(): number {
       perm36.source.stray === 4 &&
       perm36.targets.artFit.minCoverage === 0.995 &&
       perm36.sourceBounds.minCoverage === 0.995 &&
-      perm36.targets.artFit.maxUndercut === 46341 &&
-      perm36.sourceBounds.maxUndercut === 46341 &&
+      perm36.targets.artFit.maxUndercut === null &&
+      perm36.sourceBounds.maxUndercut === null &&
       planted36.length === 6 &&
       load(autoRigConfig((c) => ((c.meshes as Record<string, Record<string, unknown>>).cloth.auto = JSON.parse(JSON.stringify(withPolicyMotion(permissivePolicy(4)))) as unknown))) === null,
     `strict against #131's numbers by hand: ${diff(strict36, hand36).join(', ') || 'no difference'}; permissive differs at ${d36.join(', ')}; planted boundary deviation 2 -> ${planted36.length} difference(s)`,
-    'the owner\'s condition 1: the strict policy stays the control group; the permissive one is named and its three changes (stray 4 from #106; minCoverage = rig-c CONTOUR_MIN_COVERAGE 0.995; maxUndercut ceil(32768 x sqrt 2) = 46341, reported not gated) were written before any part was measured, and with its motion block (withPolicyMotion, which the loader requires since #134) it loads as a config',
+    'the owner\'s condition 1: the strict policy stays the control group; the permissive one is named and its three changes (stray 4 from #106; minCoverage = rig-c CONTOUR_MIN_COVERAGE 0.995; maxUndercut null, declared absent: measured and reported undeclared, not gated — AM40) were written before any part was measured, and with its motion block (withPolicyMotion, which the loader requires since #134) it loads as a config',
   );
 
   // AM37 — the matrix region: L0 = grid / 2, transition = radius = band, and the bound reaches the grid at the band's outer edge.
@@ -16267,51 +16267,176 @@ function runAutoMeshSuite(): number {
     'the brief: the full-build check outcome per switched part (9 bars) and TEXTURE_STRETCH severity per part; a bar that did not measure is not counted as passed',
   );
 
-  // AM40 — issue #135 item D and the #126 close-out, held as a STOP: rig-c's reduceMesh takes no undeclared art bound, so
-  // "no upper bound" cannot be said to it, and the loader keeps refusing null; the permissive policy's number stays until
-  // rigc accepts one. Measured on rig-c 2.20.4, the release said to accept `maxUndercut: null` (rigc#1254 still open):
-  // its checkFit and its artFit validation require a finite number for maxUndercut AND maxOvershoot, in both blocks.
-  const g40 = autoGeometry('convex', CONVEX.mask, syntheticPolicy(8));
-  const asked40 = (edit: (i: MeshReductionInput) => void): string => {
-    if (typeof g40 === 'string') return g40;
-    const i = { ...g40.input, sourceBounds: { ...g40.input.sourceBounds }, targets: { ...g40.input.targets, artFit: { ...g40.input.targets.artFit } } };
-    edit(i);
-    const r = runReduction('convex', i);
-    return 'code' in r ? `${r.code} ${r.detail}` : 'accepted the input';
-  };
-  const unbound40 = (block: 'targets.artFit' | 'sourceBounds', field: 'maxUndercut' | 'maxOvershoot', value: null | undefined): string =>
-    asked40((i) => {
-      const o = (block === 'sourceBounds' ? i.sourceBounds : i.targets.artFit) as unknown as Record<string, unknown>;
-      if (value === undefined) delete o[field];
-      else o[field] = value;
-    });
-  const asks40 = [
-    ['targets.artFit', 'maxUndercut', null],
-    ['targets.artFit', 'maxUndercut', undefined],
-    ['sourceBounds', 'maxUndercut', null],
-    ['targets.artFit', 'maxOvershoot', null],
-    ['sourceBounds', 'maxOvershoot', null],
-  ] as const;
-  const told40 = asks40.map(([b, f, v]) => [`${b}.${f} ${String(v)}`, unbound40(b, f, v), `${b}.${f} is ${String(v)}; required a finite number`] as const);
-  const asIs40 = asked40(() => undefined);
-  const loader40 = load(
+  // AM40 — issue #126 and rigc#1254, from rig-c 2.21.0: a bound declared absent (`null`) loads, reaches rig-c as null,
+  // comes back `undeclared` with its value, and the part is accepted on its other rows. The fixture is AM30's: the
+  // 56x40 block with a 3 px speck the permissive policy leaves out, so its undercut is above 0 and a bound of 0 refuses
+  // it. By hand: an uncovered art pixel's centre lies at least 1 px from any covered one (centres are a whole pixel
+  // apart), and every block pixel is covered (MQ_COVERAGE 2240/2243, AM30), so the farthest speck pixel (62, 47) is at
+  // most 5 px from the block's corner pixel (59, 43): 1 <= undercut <= 5.
+  const art40 = permissiveSyntheticPolicy(8);
+  const loads40 = load(
     autoRigConfig((_c, a) => {
+      (a.sourceBounds as Record<string, unknown>).maxUndercut = null;
       ((a.targets as Record<string, unknown>).artFit as Record<string, unknown>).maxUndercut = null;
     }),
   );
-  const rigcAt40 = join(ROOT, 'node_modules', 'rig-c', 'package.json');
-  const version40 = existsSync(rigcAt40) ? ((JSON.parse(readFileSync(rigcAt40, 'utf8')) as { version?: string }).version ?? '?') : '(not installed)';
+  const g40 = autoGeometry('speck3', speckMask(3), art40);
+  const z40 = autoGeometry('speck3', speckMask(3), { ...art40, sourceBounds: { ...art40.sourceBounds, maxUndercut: 0 }, targets: { ...art40.targets, artFit: { ...art40.targets.artFit, maxUndercut: 0 } } });
+  const rows40 = typeof g40 === 'string' ? [] : residuals(g40.ran.report);
+  const under40 = rows40.find((r) => r.code === 'MQ_UNDERCUT' && r.region === null);
+  const others40 = rows40.filter((r) => r.bound !== null);
+  const zText40 = typeof z40 === 'string' ? z40 : z40.verdict.accepted ? 'accepted' : `${z40.verdict.problem.code} ${z40.verdict.problem.detail}`;
   say(
-    'AM40_RIG_C_REQUIRES_A_NUMERIC_ART_BOUND_SO_NO_BOUND_CANNOT_BE_DECLARED_AND_THE_LOADER_REFUSES_NULL',
-    typeof g40 !== 'string' &&
-      asIs40 === 'accepted the input' &&
-      told40.every(([, said, want]) => said.includes('REDUCE_INPUT_MISSING') && said.includes(want)) &&
-      loader40 !== null &&
-      loader40.problems.length === 1 &&
-      loader40.problems[0].code === 'CONFIG_FIELD_TYPE' &&
-      loader40.problems[0].object === 'config.meshes.cloth.auto.targets.artFit.maxUndercut',
-    `rig-c ${version40}; the same input unedited: ${asIs40}; ${told40.map(([what, said]) => `${what}: ${said.slice(said.indexOf('REDUCE_'), said.indexOf('REDUCE_') + 150)}`).join(' || ')} || loader: ${loader40 === null ? 'loaded' : loader40.problems.map(problemLine).join('; ').slice(0, 300)}`,
-    'issue #135 ruling 4 and the #126 close-out: an explicit "no upper bound" is used only if rig-c\'s ArtFitBounds takes an absent or null bound and reports the row undeclared; rig-c 2.20.4 still types it `number` and reduceMesh refuses null and absent by name, for maxUndercut and maxOvershoot, in targets.artFit and sourceBounds (only measureMeshQuality\'s MeasureTargets takes a null artFit, whole), so the STOP stands and this goes red the day rigc accepts one; the unedited input is accepted, so a refusal here is the bound\'s and nothing else\'s',
+    'AM40_A_NULL_ART_BOUND_LOADS_REACHES_RIG_C_AS_NULL_COMES_BACK_UNDECLARED_AND_THE_PART_IS_ACCEPTED_ON_ITS_OTHER_ROWS',
+    loads40 === null &&
+      typeof g40 !== 'string' &&
+      art40.targets.artFit.maxUndercut === null &&
+      art40.sourceBounds.maxUndercut === null &&
+      g40.input.targets.artFit.maxUndercut === null &&
+      g40.input.sourceBounds.maxUndercut === null &&
+      g40.verdict.accepted &&
+      under40 !== undefined &&
+      under40.state === 'undeclared' &&
+      under40.bound === null &&
+      under40.value !== null &&
+      under40.value >= 1 &&
+      under40.value <= 5 &&
+      others40.length > 0 &&
+      others40.every((r) => r.state === 'pass') &&
+      zText40.includes('MQ_UNDERCUT') &&
+      zText40.includes(`${under40.value} against <= 0`) &&
+      !zText40.startsWith('accepted'),
+    `loader: ${lines(loads40)}; handed to rig-c: targets.artFit.maxUndercut ${typeof g40 === 'string' ? g40 : String(g40.input.targets.artFit.maxUndercut)}, sourceBounds.maxUndercut ${typeof g40 === 'string' ? '-' : String(g40.input.sourceBounds.maxUndercut)}; verdict ${typeof g40 === 'string' ? g40 : g40.verdict.accepted ? 'accepted' : 'refused'}; MQ_UNDERCUT ${JSON.stringify(under40)} (by hand 1 to 5); bounded rows ${others40.map((r) => `${r.code} ${r.state}`).join(', ')}; planted maxUndercut 0: ${zText40.slice(0, 260)}`,
+    'issue #126 (the owner\'s ruling on the stand-in number) and rigc#1254: an explicit "not bounded" agreed with rigc replaces the number that stood in for it; the value is still measured and reported, the row is undeclared and gates nothing, and the same part under a numeric bound of 0 is refused naming the same value, so the acceptance is the null\'s and nothing else\'s',
+  );
+
+  // AM41 — the loader: null accepted on each of the four bound fields alone; each left out refused by name; minCoverage
+  // takes no null; a bound that is neither a number at or above 0 nor null is refused, naming null as the other form.
+  const fields41 = ['sourceBounds.maxOvershoot', 'sourceBounds.maxUndercut', 'targets.artFit.maxOvershoot', 'targets.artFit.maxUndercut'] as const;
+  const block41 = (a: Record<string, unknown>, f: string): Record<string, unknown> =>
+    f.startsWith('sourceBounds') ? (a.sourceBounds as Record<string, unknown>) : ((a.targets as Record<string, unknown>).artFit as Record<string, unknown>);
+  const leaf41 = (f: string): string => f.slice(f.lastIndexOf('.') + 1);
+  const nulls41 = fields41.map((f) => [f, load(autoRigConfig((_c, a) => (block41(a, f)[leaf41(f)] = null)))] as const);
+  const absent41 = fields41.map((f) => [f, load(autoRigConfig((_c, a) => delete block41(a, f)[leaf41(f)]))] as const);
+  const wrong41 = fields41.map((f) => [f, load(autoRigConfig((_c, a) => (block41(a, f)[leaf41(f)] = 'none')))] as const);
+  const cov41 = load(autoRigConfig((_c, a) => ((a.sourceBounds as Record<string, unknown>).minCoverage = null)));
+  const one41 = (e: PartsError | null, code: string, f: string): boolean => e !== null && e.problems.length === 1 && e.problems[0].code === code && e.problems[0].object === `${AT}.${f}`;
+  say(
+    'AM41_THE_LOADER_TAKES_NULL_ON_EACH_OF_THE_FOUR_ART_BOUNDS_AND_STILL_REFUSES_EACH_LEFT_OUT_BY_NAME',
+    nulls41.every(([, e]) => e === null) &&
+      absent41.every(([f, e]) => one41(e, 'CONFIG_FIELD_PRESENT', f)) &&
+      wrong41.every(([f, e]) => one41(e, 'CONFIG_FIELD_TYPE', f) && (e?.problems[0].detail ?? '').includes('or null (declared absent')) &&
+      one41(cov41, 'CONFIG_FIELD_TYPE', 'sourceBounds.minCoverage'),
+    `null: ${nulls41.map(([f, e]) => `${f} ${lines(e)}`).join('; ')} || left out: ${absent41.map(([f, e]) => `${f} ${lines(e)}`).join('; ').slice(0, 700)} || "none": ${wrong41.map(([, e]) => lines(e)).join('; ').slice(0, 500)} || minCoverage null: ${lines(cov41)}`,
+    'rig-c 2.21.0\'s contract, read in this loader too: null is "declared absent: measured and reported, not bounded"; a field left out cannot be told from a forgotten one, so it stays a refusal (never invent a value), and minCoverage has no absent form',
+  );
+
+  // AM42 — the row: settings echo the null, the residual carries rig-c's `undeclared` with its value and no bound, and
+  // worst_residual never picks it — planted: the same row given a bound of 1 px is picked at once (its value is above 1).
+  const raw42 = autoRigConfig((_c, a) => {
+    (a.sourceBounds as Record<string, unknown>).maxUndercut = null;
+    ((a.targets as Record<string, unknown>).artFit as Record<string, unknown>).maxUndercut = null;
+  });
+  const refused42 = load(raw42);
+  const row42 = refused42 !== null ? undefined : buildRig(parseConfig(raw42), rigParts(), rigImages()).meshReport.find((m): m is AutoMeshReport => 'mode' in m && m.mode === 'auto');
+  const u42 = row42?.residuals.find((r) => r.code === 'MQ_UNDERCUT' && r.region === null);
+  const planted42 = under40 === undefined ? null : worstResidual([...rows40.filter((r) => r !== under40), { ...under40, state: 'fail', bound: { op: '<=', value: 1 } }]);
+  say(
+    'AM42_THE_ROW_ECHOES_THE_NULL_CARRIES_THE_UNDECLARED_RESIDUAL_WITH_ITS_VALUE_AND_WORST_RESIDUAL_NEVER_PICKS_IT',
+    row42 !== undefined &&
+      row42.settings.sourceBounds.maxUndercut === null &&
+      row42.settings.targets.artFit.maxUndercut === null &&
+      typeof row42.settings.targets.artFit.maxOvershoot === 'number' &&
+      u42 !== undefined &&
+      u42.state === 'undeclared' &&
+      u42.bound === null &&
+      typeof u42.value === 'number' &&
+      row42.worst_residual !== null &&
+      row42.worst_residual.code !== 'MQ_UNDERCUT' &&
+      under40 !== undefined &&
+      worstResidual(rows40)?.code !== 'MQ_UNDERCUT' &&
+      planted42?.code === 'MQ_UNDERCUT',
+    `${refused42 === null ? '' : `loader: ${lines(refused42)}; `}settings ${JSON.stringify(row42?.settings.sourceBounds)} / ${JSON.stringify(row42?.settings.targets.artFit)}; residual ${JSON.stringify(u42)}; worst ${row42?.worst_residual?.code ?? 'none'}; on AM40's rows worst ${worstResidual(rows40)?.code ?? 'none'}; planted bound 1 on the undercut row -> worst ${planted42?.code ?? 'none'} (used ${planted42?.used})`,
+    'the owner\'s ruling: keep reporting the value and mark the row not bounded; mesh_report.json carries rig-c\'s row as rig-c reports it, and the worst residual is "nearest its bound", which a row with none cannot be',
+  );
+
+  // AM43 — the build line: each null art bound prints its value and "(not bounded)" after the worst residual; a config
+  // with numbers prints none (the line it always printed). The pure clause reads the first MQ_OVERSHOOT row (rig-c's
+  // gated 8-connected reading), never the 4-connected twin it reports after it — planted with two.
+  const root43 = temp('am43');
+  try {
+    const num43 = motionStage(join(root43, 'num'), autoRigConfig());
+    const both43 = motionStage(
+      join(root43, 'null'),
+      autoRigConfig((_c, a) => {
+        for (const b of [a.sourceBounds as Record<string, unknown>, (a.targets as Record<string, unknown>).artFit as Record<string, unknown>]) {
+          b.maxUndercut = null;
+          b.maxOvershoot = null;
+        }
+      }),
+    );
+    const line43 = (r: MotionStageRun): string => r.log.find((l) => l.includes('mesh cloth')) ?? '';
+    const row43 = both43.rows.find((m): m is AutoMeshReport => 'mode' in m && m.mode === 'auto');
+    const val43 = (code: string): number | null | undefined => row43?.residuals.find((x) => x.code === code && x.region === null)?.value;
+    const twin43: Residual[] = [
+      { code: 'MQ_OVERSHOOT', region: null, state: 'undeclared', value: 1, bound: null, unit: 'px' },
+      { code: 'MQ_OVERSHOOT', region: null, state: 'undeclared', value: 2, bound: null, unit: 'px' },
+      { code: 'MQ_UNDERCUT', region: null, state: 'undeclared', value: 0.5, bound: null, unit: 'px' },
+    ];
+    say(
+      'AM43_THE_BUILD_LINE_PRINTS_EACH_NULL_BOUNDS_VALUE_AS_NOT_BOUNDED_AND_A_NUMERIC_CONFIG_PRINTS_NONE',
+      num43.e === null &&
+        both43.e === null &&
+        line43(num43).includes('; worst ') &&
+        !line43(num43).includes('not bounded') &&
+        typeof val43('MQ_OVERSHOOT') === 'number' &&
+        typeof val43('MQ_UNDERCUT') === 'number' &&
+        line43(both43).includes(`; overshoot ${val43('MQ_OVERSHOOT')} (not bounded); undercut ${val43('MQ_UNDERCUT')} (not bounded); motion `) &&
+        unboundedClause(twin43, { maxOvershoot: null, maxUndercut: null }) === '; overshoot 1 (not bounded); undercut 0.5 (not bounded)' &&
+        unboundedClause(twin43, { maxOvershoot: 3, maxUndercut: 0 }) === '' &&
+        unboundedClause(twin43, { maxOvershoot: 3, maxUndercut: null }) === '; undercut 0.5 (not bounded)',
+      `numbers: ${line43(num43).trim()} || both null: ${line43(both43).trim()} ${lines(both43.e)} || planted twin rows: "${unboundedClause(twin43, { maxOvershoot: null, maxUndercut: null })}"`,
+      'an agent reading the build cannot open mesh_report.json to learn that a bound was absent: the line says so beside the bounded ones, and an input that declares numbers prints what it printed before',
+    );
+  } finally {
+    rmSync(root43, { recursive: true, force: true });
+  }
+
+  // AM44 — no number stands in for "not bounded": both permissive policies carry null, and no text file of the tree
+  // holds the retired stand-in, ceil(MAX_SIDE x sqrt 2), as a whole number, nor its retired constant's name. Planted: a
+  // file holding either is named; a decimal that merely contains the digits (a tracked rig.json carries 0.1 followed
+  // by them) is not.
+  const sentinel44 = Math.ceil(MAX_SIDE * Math.SQRT2);
+  const name44 = ['PERMISSIVE', 'MAX', 'UNDERCUT'].join('_');
+  const token44 = new RegExp(`(?<![0-9.])${sentinel44}(?![0-9.])`);
+  const test44 = (text: string): string | null => {
+    const at = text.search(token44);
+    if (at >= 0) return `the number ${sentinel44} at offset ${at}`;
+    const n = text.indexOf(name44);
+    return n >= 0 ? `${name44} at offset ${n}` : null;
+  };
+  const tree44 = treeFiles()
+    .filter((f) => TEXT_FILE.test(f))
+    .map((f) => [f, readFileSync(join(ROOT, f), 'utf8')] as const);
+  const hits44 = scanText(tree44, test44);
+  const plantHits44 = scanText(
+    [
+      ['planted.ts', `const fit = { maxUndercut: ${sentinel44} };`],
+      ['planted.md', `uses ${name44} here`],
+      ['near.json', `[0.1${sentinel44}, 1${sentinel44}0]`],
+    ],
+    test44,
+  );
+  say(
+    'AM44_NO_NUMBER_STANDS_IN_FOR_NOT_BOUNDED_ANYWHERE_IN_THE_TREE',
+    [permissivePolicy(8), permissiveSyntheticPolicy(8)].every((p) => p.sourceBounds.maxUndercut === null && p.targets.artFit.maxUndercut === null) &&
+      tree44.length > 0 &&
+      hits44.length === 0 &&
+      plantHits44.length === 2 &&
+      plantHits44[0].startsWith('planted.ts') &&
+      plantHits44[1].startsWith('planted.md'),
+    `${tree44.length} text files scanned for ${sentinel44} (= ceil(${MAX_SIDE} x sqrt 2)) and ${name44}; hits ${hits44.join('; ') || 'none'}; planted -> ${plantHits44.join('; ')}`,
+    'issue #126: the stand-in is retired, not renamed; a large number in a bound reads as a measured limit, and the next session would copy it',
   );
 
   return bad();
@@ -17301,12 +17426,12 @@ function runBuildCostSuite(): number {
         section15.startsWith('## Re-running this evidence') &&
         section15.includes(`spine-parts-examples at commit ${byHand15[0]}`) &&
         section15.includes('public examples demo, sample') && section15.includes('rig-c 9.8.7 as') &&
-        section15.includes(`maxUndercut ${Math.ceil(32768 * Math.SQRT2)}`) && section15.includes('minCoverage 0.995') && section15.includes('stray 4') &&
+        section15.includes('maxUndercut null (declared absent') && section15.includes('minCoverage 0.995') && section15.includes('stray 4') &&
         section15.includes('timeout 2700 bun tools/auto_matrix.ts --work <scratch dir> --cell-cap 600') &&
         section15.includes('timeout 600 bun tools/auto_motion_survey.ts > docs/evidence/auto-motion-survey.md') &&
         section15.includes('bun run fetch-examples'),
       `pinned ${pinned15} (by hand ${byHand15.join(', ')}); planted placeholder -> ${placeholder15}; section ${section15.length} chars`,
-      'the owner\'s hand-over: next\'s rigging session reruns the evidence unchanged, so the document says which inputs at which commit, which policies with which numbers, and which commands under which caps — read off the tree, not typed (by hand: ceil(32768 x sqrt 2) = 46341; rig-c CONTOUR_MIN_COVERAGE 0.995; the speck rule 4)',
+      'the owner\'s hand-over: next\'s rigging session reruns the evidence unchanged, so the document says which inputs at which commit, which policies with which numbers, and which commands under which caps — read off the tree, not typed (by hand: maxUndercut null, declared absent; rig-c CONTOUR_MIN_COVERAGE 0.995; the speck rule 4)',
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

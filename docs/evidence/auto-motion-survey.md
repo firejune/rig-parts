@@ -1,6 +1,6 @@
 ## The motion gate on the public examples (tools/auto_motion_survey.ts)
 
-Policy: examplePolicy(spacing) (fixtures/automesh.ts) + policyMotion (fixtures/automotion.ts); each part switched alone; the real rig stage through the installed rig-c 2.20.4.
+Policy: examplePolicy(spacing) (fixtures/automesh.ts) + policyMotion (fixtures/automotion.ts); each part switched alone; the real rig stage through the installed rig-c 2.22.0.
 
 | part | source → result (hull+interior) | MQ_LOCAL_DEFORMATION value / bound @ worst frame | samples (art) | MQ_STRETCH | MQ_SQUASH | MQ_INVERSION | verdict |
 | --- | --- | --- | --- | --- | --- | --- | --- |

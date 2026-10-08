@@ -401,8 +401,8 @@ export interface AutoMeshReport {
   settings: {
     threshold: number;
     source: { tolerance: number; margin: number; spacing: number; stray: number | null };
-    sourceBounds: { minCoverage: number; maxOvershoot: number; maxUndercut: number };
-    targets: { artFit: { minCoverage: number; maxOvershoot: number; maxUndercut: number }; maxBoundaryDeviation: number; minAngle: number | null };
+    sourceBounds: { minCoverage: number; maxOvershoot: number | null; maxUndercut: number | null };
+    targets: { artFit: { minCoverage: number; maxOvershoot: number | null; maxUndercut: number | null }; maxBoundaryDeviation: number; minAngle: number | null };
     protect: { hull: boolean; vertices: number[]; edges: Array<[number, number]>; regionBoundaries: string[]; weightJump: number | null; influences: string[] };
     influences: { maxInfluences: number; minWeight: number };
     budget: { maxCandidates: number };
