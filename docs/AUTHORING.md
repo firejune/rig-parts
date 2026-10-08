@@ -478,6 +478,12 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    would read 0 over nothing). Constraints are not read for this: a part only a constraint moves
    is refused, never passed.
 
+The public examples' evidence is re-run from the tree: `bun run fetch-examples`, then
+`bun tools/auto_motion_survey.ts` switches each part item 2 accepted on geometry to `auto`, alone,
+under `examplePolicy` (`fixtures/automesh.ts`) plus `policyMotion` (`fixtures/automotion.ts`), runs
+the real rig stage with the motion gate, and prints the table — every row from spine-rigc's report,
+the schedule walked and each refusal's text, the same bytes on every run of one tree.
+
 | field | means |
 | --- | --- |
 | `source.tolerance`, `source.margin`, `source.spacing` | the contour mode's parameters for the source, px (margin 0, or 1 or more) |
