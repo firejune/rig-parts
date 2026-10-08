@@ -24,7 +24,9 @@
  * are read from the same comparison re-run on the two model documents the
  * stage's builds wrote (the stage's own function, `runComparison`), and the
  * tool refuses to print a row whose re-run verdict disagrees with the
- * stage's.
+ * stage's. The case is rebuilt by `buildRig` with the stage's own reduction
+ * handed back (`reuseReductions`, keyed by the whole input), so each part's
+ * `reduceMesh` runs once (issue #135).
  *
  * Output: Markdown — one table, one schedule line per part, and the refusal
  * text of every refused part. Every number is read from spine-rigc's report;
@@ -39,6 +41,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { MeasureRow, MeshQualityReport } from 'spine-rigc/mesh';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE } from '../src/assemble.ts';
+import { type Reducer, type ReductionResult, reductionKey, reuseReductions, runReduction } from '../src/automesh.ts';
 import { motionInput, motionVerdict, runComparison } from '../src/automotion.ts';
 import { assembleStage, RIGC_MODEL_DOCUMENT, rigStage } from '../src/build.ts';
 import { findRigc, type RigcRunner } from '../src/check.ts';
@@ -106,8 +109,15 @@ try {
         return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
       };
       let refusal: string | null = null;
+      // The stage's reductions, kept by input so the rebuild below reuses them instead of running them again.
+      const reduced = new Map<string, ReductionResult>();
+      const recording: Reducer = (object, input) => {
+        const r = runReduction(object, input);
+        reduced.set(reductionKey(input), r);
+        return r;
+      };
       try {
-        rigStage({ config: join(dir, 'config.json'), parts: asm, out: join(dir, 'rig') }, runner, join(dir, 'scratch'), () => {});
+        rigStage({ config: join(dir, 'config.json'), parts: asm, out: join(dir, 'rig'), reduce: recording }, runner, join(dir, 'scratch'), () => {});
       } catch (err) {
         if (!(err instanceof PartsError)) throw err;
         refusal = err.problems.map(problemLine).join('\n');
@@ -116,7 +126,7 @@ try {
       const images = new Map<string, Raster>();
       const partsFile = readParts(join(asm, 'parts.json'));
       for (const p of partsFile.parts) images.set(p.name, readPng(join(asm, 'parts', `${p.name}.png`)));
-      const rig = buildRig(loadConfig(join(dir, 'config.json')), partsFile, images);
+      const rig = buildRig(loadConfig(join(dir, 'config.json')), partsFile, images, undefined, undefined, reuseReductions(reduced).reduce);
       const c = rig.autoMotion[0];
       const row = rig.meshReport.find((x) => x.part === part);
       const counts = row !== undefined && 'mode' in row && row.mode === 'auto' && row.source.counts !== null ? `${row.source.counts.boundaryVertices}+${row.source.counts.interiorVertices} → ${row.result.counts.boundaryVertices}+${row.result.counts.interiorVertices}` : 'not built';

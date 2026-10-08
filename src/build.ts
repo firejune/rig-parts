@@ -44,6 +44,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
+import type { Reducer } from './automesh.ts';
 import { type AutoMotionCase, motionClause, motionDeformation, motionDocument, motionInput, motionStimulus, motionVerdict, noStimulusProblem, runComparison } from './automotion.ts';
 import { BARS, causeLines, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig, loadEarlyConfig } from './config.ts';
@@ -212,6 +213,21 @@ function gateRun(label: string, rigc: RigcRunner, args: string[]): GateRun {
 }
 
 /**
+ * The motion gate's reference build (issue #135): rigc's `build` under the
+ * spine-html profile and nothing else — the same gate over the compile that
+ * the candidate's build runs, without `--pack`. Its model document is all the
+ * comparison reads, and it differs from a packed build's only in where the
+ * atlas puts each region (its `pages`), which spine-rigc's comparison
+ * allowlists as atlas layout; the pages a reference would pack are never
+ * written anywhere, so packing them was work nobody read. No render is asked
+ * of rigc by either build.
+ */
+export const REFERENCE_BUILD_ARGS: readonly string[] = ['--profile', 'spine-html'];
+
+/** The reference build's label, as the rig stage prints it. */
+export const REFERENCE_BUILD_LABEL = `build ${REFERENCE_BUILD_ARGS.join(' ')}`;
+
+/**
  * spine-rigc's gate over the rig in a scratch directory: `build` under the
  * spine-html profile with `--pack --page-edges <edges> --pack-shape <shape>`, which runs the gate
  * once over the compile and once over the packed pages on disk. There is no
@@ -221,13 +237,17 @@ function gateRun(label: string, rigc: RigcRunner, args: string[]): GateRun {
  * the caller's, and is emptied here before and after. `images` are the PNG
  * files' bytes as `--out` will receive them: the rig stage's are its rasters
  * encoded as `writePng` encodes them, `compose`'s the builds' own files.
+ * `mode` null is the motion gate's reference ({@link REFERENCE_BUILD_ARGS}):
+ * the same gate over the compile, nothing packed; its build directory sits
+ * where a packed one would, so every relative path in its model document is
+ * the candidate's.
  */
 export function gateThroughRigc(
   images: ReadonlyArray<readonly [string, Uint8Array]>,
   texts: ReadonlyArray<readonly [string, string]>,
   rigc: RigcRunner,
   scratch: string,
-  mode: PackMode,
+  mode: PackMode | null,
   onGreen?: (buildDir: string) => void,
 ): GateRun[] {
   rmSync(scratch, { recursive: true, force: true });
@@ -236,7 +256,9 @@ export function gateThroughRigc(
     for (const [file, bytes] of images) writeFileSync(join(scratch, 'images', file), bytes);
     for (const [file, text] of texts) writeFileSync(join(scratch, file), text);
     const build = join(scratch, 'build');
-    const runs = [gateRun(packedBuildLabel(mode), rigc, ['build', '--rig', join(scratch, 'rig.json'), '--motion', join(scratch, 'motion.json'), '--out', build, ...packedBuildArgs(mode)])];
+    const label = mode === null ? REFERENCE_BUILD_LABEL : packedBuildLabel(mode);
+    const args = mode === null ? [...REFERENCE_BUILD_ARGS] : packedBuildArgs(mode);
+    const runs = [gateRun(label, rigc, ['build', '--rig', join(scratch, 'rig.json'), '--motion', join(scratch, 'motion.json'), '--out', build, ...args])];
     // What the caller reads off a green build before the scratch is emptied (the motion gate's model document); nothing for a red one.
     if (onGreen !== undefined && runs.every((g) => g.status === 0)) onGreen(build);
     return runs;
@@ -286,6 +308,14 @@ export interface RigStageInput {
   packShape?: PackShape;
   /** The command running the stage, which {@link ctlRemedies} names beside the flag; `rig` when absent. It moves no byte written. */
   command?: RigCommand;
+  /**
+   * How `buildRig` runs each automatic part's reduction (`src/automesh.ts`);
+   * `runReduction` when absent. A caller that already ran the reduction on the
+   * same input hands `reuseReductions` over it (`tools/auto_matrix.ts`), so the
+   * same `reduceMesh` call is not run twice (issue #135). It moves no byte
+   * written: the same input is the same result.
+   */
+  reduce?: Reducer;
 }
 
 /** One automatic part's motion gate, as the rig stage ran it (`src/automotion.ts`). */
@@ -310,10 +340,11 @@ function modelAt(buildDir: string): string | null {
 /**
  * The motion gate of every automatic part (issue #126, item 3): for each, the
  * reference rig — `rig` with that part's attachment swapped for its unreduced
- * source and nothing else — through the same rigc `build` the stage gates
- * with, then spine-rigc's comparison of its `skeleton.model.json` with the
- * candidate's (`candidateModel`, the stage's own gate build). A part refused
- * before compiling (no `motion`, no stimulus) costs no build.
+ * source and nothing else — through rigc's gate ({@link REFERENCE_BUILD_ARGS}:
+ * the stage's `build` under spine-html, without packing, issue #135), then
+ * spine-rigc's comparison of its `skeleton.model.json` with the candidate's
+ * (`candidateModel`, the stage's own gate build). A part refused before
+ * compiling (no `motion`, no stimulus) costs no build.
  */
 export function motionGates(
   rig: RigOutput,
@@ -322,7 +353,6 @@ export function motionGates(
   candidateModel: string | null,
   rigc: RigcRunner,
   scratch: string,
-  mode: PackMode,
 ): MotionGateRun[] {
   return rig.autoMotion.map((c: AutoMotionCase): MotionGateRun => {
     const out = (over: Partial<MotionGateRun>): MotionGateRun => ({ part: c.part, reference: null, report: null, problems: [], notCompared: null, ...over });
@@ -344,7 +374,7 @@ export function motionGates(
     refRig.skins.default[c.part] = { [c.part]: c.reference };
     const refTexts = texts.map(([file, text]) => [file, file === 'rig.json' ? rigJsonText(refRig) : text] as const);
     let refModel: string | null = null;
-    const [gate] = gateThroughRigc(images, refTexts, rigc, scratch, mode, (dir) => {
+    const [gate] = gateThroughRigc(images, refTexts, rigc, scratch, null, (dir) => {
       refModel = modelAt(dir);
     });
     if (gate.status !== 0 || refModel === null) {
@@ -392,7 +422,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     const png = join(input.parts, 'parts', `${p.name}.png`);
     if (existsSync(png)) images.set(p.name, readPng(png));
   }
-  const rig = buildRig(cfg, parts, images, undefined, input.idleKeys ?? DEFAULT_IDLE_KEYS);
+  const rig = buildRig(cfg, parts, images, undefined, input.idleKeys ?? DEFAULT_IDLE_KEYS, input.reduce);
   const texts: Array<[string, string]> = [
     ['rig.json', rigJsonText(rig.rig)],
     ['motion.json', rigJsonText(rig.motion)],
@@ -406,7 +436,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
   let candidateModel: string | null = null;
   const gate = gateThroughRigc(pngs, texts, rigc, scratch, mode, rig.autoMotion.length === 0 ? undefined : (dir) => (candidateModel = modelAt(dir)));
   const red = gate.filter((g) => g.status !== 0);
-  const motion = red.length > 0 ? [] : motionGates(rig, pngs, texts, candidateModel, rigc, scratch, mode);
+  const motion = red.length > 0 ? [] : motionGates(rig, pngs, texts, candidateModel, rigc, scratch);
   log(`spine-parts rig: ${cfg.key}, rig ${parts.rig_size[0]}x${parts.rig_size[1]}, ${parts.parts.length} part(s)`);
   let vertices = 0;
   for (const m of rig.meshReport) {

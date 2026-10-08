@@ -461,12 +461,13 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    candidate is `accepted` with every row that has a declared bound at `pass`. Anything else
    refuses the part (below); nothing falls back to the lattice or to the source.
 4. **Motion** — the rig stage builds the rig twice through rigc's gate: as written (the
-   **candidate**, the reduced mesh) and with that one attachment swapped for the unreduced source
-   — its UVs, triangles and hull as `reduceMesh` was handed them, its own weights bound the same
-   way (the **reference**). spine-rigc's `compareMeshesInMotion` (`spine-rigc/meshcompare`) poses
-   both model documents on the idle exactly as `check` renders it — `idle` at 12 fps over its
-   duration, physics reset at 0 and stepped by 1/12 s, no warm-up — at the render's frames
-   (`grid`, i/12 s) and a frame interval's 0.381966 past each (`irr`, frames the render never
+   **candidate**, the reduced mesh, packed as `--out` receives it) and with that one attachment
+   swapped for the unreduced source — its UVs, triangles and hull as `reduceMesh` was handed them,
+   its own weights bound the same way (the **reference**, `build --profile spine-html` without
+   `--pack`: the same gate over the compile, and nothing reads a reference's pages). spine-rigc's
+   `compareMeshesInMotion` (`spine-rigc/meshcompare`) poses both model documents on the idle
+   exactly as `check` renders it — `idle` at 12 fps over its duration, physics reset at 0 and
+   stepped by 1/12 s, no warm-up — at the render's frames (`grid`, i/12 s) and a frame interval's 0.381966 past each (`irr`, frames the render never
    draws), and measures how far the reduced mesh carries each art pixel from where the source
    carries it (`MQ_LOCAL_DEFORMATION`, world units = rig px), its triangles' stretch and squash
    from the setup pose, and the triangles it turns over (`MQ_INVERSION`). The part is written
