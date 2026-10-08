@@ -46,11 +46,24 @@
  * `--work` holds the builds (`base-<key>`, the tracked build each variant
  * reads its parts from) and every variant's config, so a row can be re-run by
  * hand. `--no-builds` and `--no-timing` leave those sections out and say so in
- * the document. Timing is the one clock this repository's tools read, and is
- * not a claim about another machine.
+ * the document. `--cell <part>:<strict|permissive>` runs that one row of each
+ * named example and nothing else (no synthetic rows, no region condition, no
+ * switched-at-once build, no #115 variants), and the document says so.
+ * Timing is the one clock this repository's tools read, and is not a claim
+ * about another machine.
+ *
+ * **What the run costs** (issue #135): the stages run in this process —
+ * `build` for a tracked example, then `rigStage` and `checkStage` for every
+ * variant — through one counting rigc runner, so the document's header states
+ * the run's wall time, every rigc call by kind, and every `reduceMesh` call by
+ * who made it. A variant's rig stage is handed `reuseReductions` over the
+ * reductions this tool's geometry rows already ran, keyed by the whole input
+ * (`reductionKey`): an accepted part's reduction runs once, in its geometry
+ * row, and the stage reuses it; an input no row ran (a #115 variant with
+ * budget 0) is run by the stage and counted as the stage's.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import {
   type AlphaMask,
@@ -64,9 +77,12 @@ import {
   type ReducedMesh,
   reduceMesh,
 } from 'spine-rigc/mesh';
-import { AUTO_THRESHOLD, autoReductionInput, autoSource, autoVerdict, runReduction, sourceWeights, terminationText } from '../src/automesh.ts';
+import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE } from '../src/assemble.ts';
+import { AUTO_THRESHOLD, autoReductionInput, autoSource, autoVerdict, reductionKey, type ReductionResult, reuseReductions, runReduction, sourceWeights, terminationText } from '../src/automesh.ts';
+import { build, checkStage, rigStage } from '../src/build.ts';
+import { DEFAULT_PAGE_EDGES, findRigc, type RigcRunner } from '../src/check.ts';
 import { type AutoSpec, type CharacterConfig, parseConfig } from '../src/config.ts';
-import type { Problem } from '../src/errors.ts';
+import { PartsError, type Problem, problemLine } from '../src/errors.ts';
 import { readParts } from '../src/parts.ts';
 import { pad, readPng, type Raster } from '../src/raster/index.ts';
 import { type AutoMeshReport, buildRig, type MeshReport, PAD } from '../src/rig.ts';
@@ -149,6 +165,59 @@ export function countsCell(c: Counts | null): string {
 }
 
 /**
+ * What one run of the tool cost (issue #135 item 3), counted as it happens:
+ * every rigc call by kind (`build`, `render`, anything else) through
+ * {@link countingRunner}, and every `reduceMesh` call by who made it — a
+ * geometry row ({@link geometryRow}), the timing section, or a rig stage on
+ * an input no geometry row ran — beside the reductions a rig stage reused.
+ */
+export interface RunCost {
+  rigcBuilds: number;
+  rigcRenders: number;
+  rigcOther: number;
+  reduceGeometry: number;
+  reduceTiming: number;
+  reduceStage: number;
+  reusedByStage: number;
+}
+
+export function emptyCost(): RunCost {
+  return { rigcBuilds: 0, rigcRenders: 0, rigcOther: 0, reduceGeometry: 0, reduceTiming: 0, reduceStage: 0, reusedByStage: 0 };
+}
+
+/** The run's own tally; the selftest hands {@link countingRunner} and {@link costLine} one of its own. */
+const COST: RunCost = emptyCost();
+
+/** `run`, counting each call into `cost` by its first argument. */
+export function countingRunner(run: RigcRunner, cost: RunCost): RigcRunner {
+  return (args) => {
+    if (args[0] === 'build') cost.rigcBuilds++;
+    else if (args[0] === 'render') cost.rigcRenders++;
+    else cost.rigcOther++;
+    return run(args);
+  };
+}
+
+/** The document's cost line: the wall time, rounded to the second, then the counts, every figure from `cost`. */
+export function costLine(cost: RunCost, wallMs: number): string {
+  const reduce = cost.reduceGeometry + cost.reduceTiming + cost.reduceStage;
+  return (
+    `Cost of this run: wall time ${Math.round(wallMs / 1000)} s; rigc builds ${cost.rigcBuilds}, renders ${cost.rigcRenders}, other rigc calls ${cost.rigcOther}; ` +
+    `reduceMesh calls ${reduce} (${cost.reduceGeometry} by the geometry rows, ${cost.reduceTiming} by the timing section, ${cost.reduceStage} by a rig stage on an input no geometry row ran); ` +
+    `reductions a rig stage reused from a geometry row on the same input: ${cost.reusedByStage}.`
+  );
+}
+
+/** spine-rigc's CLI as `cli.ts` spawns it (its `rigcRunner`): the binary `findRigc` locates, stdout then stderr. */
+function cliRunner(bin: string): RigcRunner {
+  return (args) => {
+    const r = spawnSync(bin, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
+    if (r.error !== undefined) return { status: 127, out: `could not start ${bin}: ${r.error.message}` };
+    return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  };
+}
+
+/**
  * The loss figure (the owner's condition 1): of the art pixels at alpha 1 and
  * above of `original` — the padded part image as drawn, every speck included —
  * how many have no triangle over their centre (spine-rigc's
@@ -176,6 +245,8 @@ export interface GeometryRow {
   source: Counts | null;
   /** (c) the result, when spine-rigc returned a mesh (accepted or not). */
   result: Counts | null;
+  /** The reduction's whole result as spine-rigc returned it (null when no call ran), which a rig stage on the same input reuses. */
+  ran?: ReductionResult | null;
   /** Vertices the reduction removed and the refinement inserted: (c) = (b) - removed + inserted. */
   removed: number | null;
   inserted: number | null;
@@ -248,10 +319,11 @@ export function geometryRow(name: string, mask: AlphaMask, spec: AutoSpec, w: We
   }
   const input = autoReductionInput({ part: name, mask, ox: w?.ox ?? 0, oy: w?.oy ?? 0, spec, source, weights, boneOrder: w?.boneOrder ?? [] });
   const t0 = clock();
+  COST.reduceGeometry++;
   const ran = runReduction(name, input);
   const ms = clock() - t0;
   const lossSource = lossAgainstOriginal(mask, input.source.points, input.source.triangles);
-  const base = { ...empty, input, ms, lossSource, strayIslands: source.report.strayIslands, strayPixels: source.report.strayPixels };
+  const base = { ...empty, input, ran, ms, lossSource, strayIslands: source.report.strayIslands, strayPixels: source.report.strayPixels };
   if ('code' in ran) return { ...base, termination: 'spine-rigc threw', verdict: classify(ran) };
   const v = autoVerdict(name, ran);
   const t = ran.report.termination;
@@ -392,7 +464,8 @@ function uptime(): string {
   return (r.stdout ?? '').trim();
 }
 
-const PACK = ['--page-edges', 'free', '--pack-shape', 'polygon'];
+/** The packing every variant's `rig` and `check` run with: the flags the CLI calls took, `--page-edges free --pack-shape polygon`. */
+const PACK_MODE = { pageEdges: 'free', packShape: 'polygon' } as const;
 
 /**
  * The tracked example: its full build (assemble, rig, check) in `<work>/base-<key>`, or, with `partsOnly` (the
@@ -422,8 +495,22 @@ function loadExample(key: string, work: string, partsOnly = false): Example {
     return { key, raw, cfg: parseConfig(raw), base: asm, parts, boneOrder: out.rig.bones.map((b) => b.name), trackedReport: out.meshReport, trackedRig: { skins: { default: {} } }, check: {} };
   }
   if (!existsSync(join(base, 'check', 'check.json'))) {
-    const s = sh(['bun', join(ROOT, 'cli.ts'), 'build', '--config', config, ...runs, '--out', base], `${base}.log`);
-    if (s !== 0) fail('build', s);
+    // `cli.ts build` with its defaults, run in this process so its rigc calls are counted (issue #135).
+    const runner = countingRunner(cliRunner(findRigc(ROOT, process.env.PATH ?? '')), COST);
+    const scratch = mkdtempSync(join(work, 'build-scratch-'));
+    const lines: string[] = [];
+    let stopped: string | null = 'crash';
+    try {
+      stopped = build(
+        { config, source: join(inputs, 'painting.png'), full: join(inputs, 'layers', 'full'), head: join(inputs, 'layers', 'head'), out: base, seam: DEFAULT_SEAM_RULE, project: DEFAULT_PROJECT_RULE, loop: false, pageEdges: DEFAULT_PAGE_EDGES },
+        { rig: runner, check: runner, checkBin: findRigc(ROOT, process.env.PATH ?? ''), scratch: join(scratch, 'rig-gate') },
+        (l) => lines.push(l),
+      ).stoppedAt;
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+      writeFileSync(`${base}.log`, `${lines.join('\n')}\n`);
+    }
+    if (stopped !== null) fail('build', 1);
   }
   const tracked = JSON.parse(readFileSync(join(base, 'check', 'check.json'), 'utf8')) as Record<string, unknown>;
   rememberTracked(key, tracked);
@@ -504,13 +591,51 @@ interface Built {
   rig: string;
 }
 
-/** `rig` then `check` through the CLI on a config written to `dir`, the parts read from the tracked build. */
+/** Every reduction a geometry row ran, by its input's `reductionKey`: what a rig stage on the same input reuses. */
+const REDUCED = new Map<string, ReductionResult>();
+
+/** Keep a geometry row's reduction for the rig stages that follow (nothing when no call ran). */
+function remember(g: GeometryRow): void {
+  if (g.input !== null && g.ran !== undefined && g.ran !== null) REDUCED.set(reductionKey(g.input), g.ran);
+}
+
+/** A stage's refusal as `cli.ts` prints it (`printRefusal`): each problem's FAIL line, then the count. */
+function refusalLines(err: unknown): string[] {
+  if (!(err instanceof PartsError)) throw err;
+  return [...err.problems.map((p) => `  FAIL  ${problemLine(p)}`), `refused: ${err.problems.length} problem(s)`];
+}
+
+/**
+ * `rig` then `check` on a config written to `dir`, the parts read from the
+ * tracked build — the stages `cli.ts rig` and `cli.ts check` run, called in
+ * this process with the CLI's flags (`PACK`) so their rigc calls are counted,
+ * and the rig stage handed `reuseReductions` over {@link REDUCED} (issue #135).
+ * `rig.log` and `check.log` hold the lines the commands print.
+ */
 function rigAndCheck(ex: Example, raw: { [k: string]: Json }, dir: string, slot: string): Built {
   mkdirSync(dir, { recursive: true });
   const config = join(dir, 'config.json');
   writeFileSync(config, `${JSON.stringify(raw, null, 2)}\n`);
   const rig = join(dir, 'rig');
-  const r = sh(['bun', join(ROOT, 'cli.ts'), 'rig', '--config', config, '--parts', ex.base, '--out', rig, ...PACK], join(dir, 'rig.log'));
+  const bin = findRigc(ROOT, process.env.PATH ?? '');
+  const runner = countingRunner(cliRunner(bin), COST);
+  const reuse = reuseReductions(REDUCED, (object, input) => {
+    COST.reduceStage++;
+    return runReduction(object, input);
+  });
+  const rigLog: string[] = [];
+  const scratch = mkdtempSync(join(dir, 'rig-scratch-'));
+  let r = 0;
+  try {
+    rigStage({ config, parts: ex.base, out: rig, pageEdges: PACK_MODE.pageEdges, packShape: PACK_MODE.packShape, reduce: reuse.reduce }, runner, scratch, (l) => rigLog.push(l));
+  } catch (err) {
+    rigLog.push(...refusalLines(err));
+    r = 1;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+    COST.reusedByStage += reuse.reused();
+  }
+  writeFileSync(join(dir, 'rig.log'), `${rigLog.join('\n')}\n`);
   if (r !== 0) {
     const log = readFileSync(join(dir, 'rig.log'), 'utf8');
     const fail = log.split('\n').find((l) => l.includes('FAIL') || l.includes('_')) ?? `exit ${r}`;
@@ -518,7 +643,13 @@ function rigAndCheck(ex: Example, raw: { [k: string]: Json }, dir: string, slot:
   }
   const motion = motionOutcome('', JSON.parse(readFileSync(join(rig, 'mesh_report.json'), 'utf8')) as MeshReport[], slot);
   const out = join(dir, 'check');
-  sh(['bun', join(ROOT, 'cli.ts'), 'check', '--rig', rig, '--parts', ex.base, '--source', join(ROOT, 'examples', ex.key, 'inputs', 'painting.png'), '--out', out, ...PACK], join(dir, 'check.log'));
+  const checkLog: string[] = [];
+  try {
+    checkStage({ rig, parts: ex.base, source: join(ROOT, 'examples', ex.key, 'inputs', 'painting.png'), out, pageEdges: PACK_MODE.pageEdges, packShape: PACK_MODE.packShape }, runner, bin, (l) => checkLog.push(l));
+  } catch (err) {
+    checkLog.push(...refusalLines(err));
+  }
+  writeFileSync(join(dir, 'check.log'), `${checkLog.join('\n')}\n`);
   if (!existsSync(join(out, 'check.json'))) return { motion, bars: null, stretch: null, overall: null, detail: 'check wrote no check.json', check: null, rig };
   const check = JSON.parse(readFileSync(join(out, 'check.json'), 'utf8')) as Record<string, unknown>;
   const bars = barsOf(check);
@@ -555,17 +686,23 @@ interface Section {
   lines: string[];
 }
 
-function parseArgs(argv: string[]): { work: string; out: string; examples: string[] | null; builds: boolean; timing: boolean; quietWait: number; timingOnly: boolean; timingFrom: string | null; machine: string; fetch: boolean; printDoc: boolean } {
+function parseArgs(argv: string[]): { work: string; out: string; examples: string[] | null; builds: boolean; timing: boolean; quietWait: number; timingOnly: boolean; timingFrom: string | null; machine: string; fetch: boolean; printDoc: boolean; cell: { part: string; policy: 'strict' | 'permissive' } | null } {
   const get = (flag: string): string | null => {
     const i = argv.indexOf(flag);
     return i < 0 ? null : (argv[i + 1] ?? null);
   };
   const work = get('--work');
   if (work === null) {
-    console.log('usage: bun tools/auto_matrix.ts --work <dir> [--out <file.md>] [--examples <key>,...] [--no-builds] [--no-timing] [--quiet-wait <s>] [--machine <label>] [--timing-only | --timing-from <file>] [--fetch] [--print-doc]');
+    console.log('usage: bun tools/auto_matrix.ts --work <dir> [--out <file.md>] [--examples <key>,...] [--cell <part>:<strict|permissive>] [--no-builds] [--no-timing] [--quiet-wait <s>] [--machine <label>] [--timing-only | --timing-from <file>] [--fetch] [--print-doc]');
     process.exit(2);
   }
   const ex = get('--examples');
+  const cellArg = get('--cell');
+  const cellMatch = cellArg === null ? null : /^([^:]+):(strict|permissive)$/.exec(cellArg);
+  if (cellArg !== null && cellMatch === null) {
+    console.log(`auto_matrix: --cell ${cellArg}; <part>:strict or <part>:permissive is required`);
+    process.exit(2);
+  }
   return {
     work: resolve(work),
     out: resolve(get('--out') ?? join(ROOT, 'docs', 'evidence', 'auto-mesh-matrix.md')),
@@ -578,6 +715,7 @@ function parseArgs(argv: string[]): { work: string; out: string; examples: strin
     machine: get('--machine') ?? 'local',
     fetch: argv.includes('--fetch'),
     printDoc: argv.includes('--print-doc'),
+    cell: cellMatch === null ? null : { part: cellMatch[1], policy: cellMatch[2] as 'strict' | 'permissive' },
   };
 }
 
@@ -614,6 +752,7 @@ function switched(raw: { [k: string]: Json }, part: string, spec: AutoSpec): { [
 }
 
 function main(argv: string[]): void {
+  const started = clock();
   const args = parseArgs(argv);
   mkdirSync(args.work, { recursive: true });
   if (args.fetch) {
@@ -703,6 +842,7 @@ function main(argv: string[]): void {
       let tried: number | null = null;
       for (let k = 0; k < 2; k++) {
         const t0 = clock();
+        COST.reduceTiming++;
         const ran = reduceMesh(b.input);
         rd.push(Math.round(clock() - t0));
         const term = ran.report.termination;
@@ -725,7 +865,7 @@ function main(argv: string[]): void {
   }
 
   // ---- 2. synthetic -----------------------------------------------------
-  {
+  if (args.cell === null) {
     const lines: string[] = [];
     lines.push('| case | policy | (b) source B+I / T | (c) result B+I / T | inserted | coverage / overshoot / undercut / boundary dev | loss (c) px (share) | region MQ_MAX_EDGE | termination | verdict |');
     lines.push('|---|---|---|---|---|---|---|---|---|---|');
@@ -756,15 +896,19 @@ function main(argv: string[]): void {
     ['strict', (sp) => withPolicyMotion(examplePolicy(sp))],
     ['permissive', (sp) => withPolicyMotion(permissivePolicy(sp))],
   ];
+  const cell = args.cell;
   for (const [key, ex] of examples) {
     const meshes = ex.raw.meshes as { [k: string]: { [k: string]: Json } };
     for (const [policy, make] of policies) {
+      if (cell !== null && cell.policy !== policy) continue;
       for (const part of Object.keys(meshes)) {
+        if (cell !== null && cell.part !== part) continue;
         const { mask, ox, oy } = partMask(ex, part);
         const spec = make(spacingOf(meshes[part]));
         const load = uptime();
         loadsSeen.push(load);
         const g = geometryRow(part, mask, spec, weighting(ex, part, ox, oy, ex.boneOrder), trackedCounts(ex, part), clock);
+        remember(g);
         console.log(`${key}/${part} ${policy}: ${verdictText(g.verdict)} ${g.termination.slice(0, 100)} (${Math.round(g.ms ?? 0)} ms)`);
         let alone: Built | null = null;
         if (args.builds && g.verdict.kind === 'accepted') {
@@ -775,7 +919,7 @@ function main(argv: string[]): void {
       }
     }
     // the region condition: the skirt (bottomwear), the circle testRegion places
-    if ('bottomwear' in meshes) {
+    if ('bottomwear' in meshes && cell === null) {
       const part = 'bottomwear';
       const { mask, ox, oy, box, img } = partMask(ex, part);
       const t = testRegion(ex.cfg, part, placedMask(box.x, box.y, img), box);
@@ -791,6 +935,7 @@ function main(argv: string[]): void {
           const load = uptime();
           loadsSeen.push(load);
           const g = geometryRow(part, mask, spec, weighting(ex, part, ox, oy, order), trackedCounts(ex, part), clock);
+          remember(g);
           console.log(`${key}/${part} ${policy} + region: ${verdictText(g.verdict)} ${g.termination.slice(0, 100)} (${Math.round(g.ms ?? 0)} ms)`);
           let alone: Built | null = null;
           if (args.builds && g.verdict.kind === 'accepted') {
@@ -805,7 +950,7 @@ function main(argv: string[]): void {
 
   // every accepted part of a policy switched at once, per example
   const together: string[] = [];
-  if (args.builds) {
+  if (args.builds && cell === null) {
     together.push('| example | policy | parts switched | bars passed (of 9) | failing | `TEXTURE_STRETCH` severity, tracked -> switched | worst slot |');
     together.push('|---|---|---|---|---|---|---|');
     for (const [key, ex] of examples) {
@@ -830,7 +975,7 @@ function main(argv: string[]): void {
   // ---- 5. #115 on sample/sleeves -----------------------------------------
   const sep: string[] = [];
   const sample = examples.get('sample');
-  if (args.builds && sample !== undefined) {
+  if (args.builds && sample !== undefined && cell === null) {
     const meshes = sample.raw.meshes as { [k: string]: { [k: string]: Json } };
     const grid = spacingOf(meshes.sleeves);
     const strict = examplePolicy(grid);
@@ -891,7 +1036,9 @@ function main(argv: string[]): void {
     }
     sections.push({ title: 'timing', lines });
   }
-  const doc = renderDocument({ rigcVersion, head, dirty, keys, sections, results, together, sep, loadsSeen, builds: args.builds, timing: args.timing });
+  const cost = costLine(COST, clock() - started);
+  console.log(cost);
+  const doc = renderDocument({ rigcVersion, head, dirty, keys, sections, results, together, sep, loadsSeen, builds: args.builds, timing: args.timing, cost, cell: cell === null ? null : `${cell.part}:${cell.policy}` });
   mkdirSync(dirname(args.out), { recursive: true });
   writeFileSync(args.out, doc);
   if (args.printDoc) console.log(`${DOC_OPEN}\n${doc}\n${DOC_CLOSE}`);
@@ -948,6 +1095,10 @@ interface DocInput {
   loadsSeen: string[];
   builds: boolean;
   timing: boolean;
+  /** {@link costLine} of this run, taken just before the document is rendered. */
+  cost: string;
+  /** `--cell`'s value, or null for the whole matrix. */
+  cell: string | null;
 }
 
 /** The document, every figure from the run; nothing typed. */
@@ -961,6 +1112,12 @@ export function renderDocument(d: DocInput): string {
   L.push('');
   L.push(`Machine load (one-minute average, \`uptime\`) over the ${loads.length} readings this run took: ${loads.length === 0 ? 'none read' : `${pyRound(Math.min(...loads), 2)} to ${pyRound(Math.max(...loads), 2)}`}. Wall times are this machine's and are not a claim about another.`);
   L.push('');
+  L.push(d.cost);
+  L.push('');
+  if (d.cell !== null) {
+    L.push(`Single cell (\`--cell ${d.cell}\`): only that row of each named example ran; the synthetic rows, the region condition, the every-part build and the #115 variants were not run.`);
+    L.push('');
+  }
   L.push('## The two policies, stated before any part was measured (`fixtures/automesh.ts`)');
   L.push('');
   L.push('| | strict (`examplePolicy`, #131, unchanged) | permissive (`permissivePolicy`) |');
@@ -1026,6 +1183,7 @@ export function renderDocument(d: DocInput): string {
   L.push('## Every accepted part of a policy switched at once (full `rig` + `check`)');
   L.push('');
   if (!d.builds) L.push('Not run (`--no-builds`).');
+  else if (d.cell !== null) L.push('Not run (`--cell`).');
   else L.push(...d.together);
   L.push('');
   L.push('## #115 on `sample/sleeves`: the alpha threshold against the weighting rule');

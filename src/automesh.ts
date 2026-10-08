@@ -294,14 +294,73 @@ export function autoVerdict(object: string, result: { mesh: ReducedMesh | null; 
   return { accepted: true, mesh };
 }
 
+/** What one reduction returns: spine-rigc's mesh and report, or its refusal of the input as the part's problem. */
+export type ReductionResult = { mesh: ReducedMesh | null; report: MeshQualityReport } | Problem;
+
+/**
+ * How `buildRig` runs a part's reduction: {@link runReduction} unless a caller
+ * hands it another (issue #135). The only other one this package makes is
+ * {@link reuseReductions}, which hands back a reduction already run on the
+ * very same input — `reduceMesh` is deterministic, so the same input is the
+ * same result — and runs the call itself on any other input.
+ */
+export type Reducer = (object: string, input: MeshReductionInput) => ReductionResult;
+
 /** One call: `reduceMesh`, with a thrown refusal read as the part's problem. */
-export function runReduction(object: string, input: MeshReductionInput): { mesh: ReducedMesh | null; report: MeshQualityReport } | Problem {
+export function runReduction(object: string, input: MeshReductionInput): ReductionResult {
   try {
     return reduceMesh(input);
   } catch (err) {
     if (!(err instanceof MeshReductionError)) throw err;
     return { code: 'AUTO_MESH_INPUT', object, detail: `spine-rigc's reduceMesh refused its input: ${err.message}` };
   }
+}
+
+/**
+ * A reduction input as one string: every field in the order it was built, a
+ * typed array (the art mask's alpha) as its plain list of numbers. Two inputs
+ * are the same input exactly when their keys are equal; a key order that
+ * differs reads as a different input, which costs a call and never a wrong
+ * result.
+ */
+export function reductionKey(input: MeshReductionInput): string {
+  return JSON.stringify(input, (_k, v: unknown) => (v instanceof Uint8Array || v instanceof Uint8ClampedArray || v instanceof Float32Array || v instanceof Float64Array ? Array.from(v) : v));
+}
+
+/** A {@link Reducer} that reuses reductions already run, and counts what it reused and what it ran. */
+export interface ReusingReducer {
+  reduce: Reducer;
+  /** Calls answered from a reduction already run on the same input. */
+  reused: () => number;
+  /** Calls whose input matched none, run through `run`. */
+  ran: () => number;
+}
+
+/**
+ * Hand back a reduction already run when the input is the same input — `done`
+ * holds each result under its input's {@link reductionKey} — and run `run` (by
+ * default {@link runReduction}) on any other. A reused refusal is
+ * re-addressed to the asking call's object, so a problem always names the
+ * config field that asked. Nothing is guessed: a miss is a call, never a near
+ * match.
+ */
+export function reuseReductions(done: ReadonlyMap<string, ReductionResult>, run: Reducer = runReduction): ReusingReducer {
+  const byKey = done;
+  let reused = 0;
+  let ran = 0;
+  return {
+    reduce: (object, input) => {
+      const hit = byKey.get(reductionKey(input));
+      if (hit === undefined) {
+        ran++;
+        return run(object, input);
+      }
+      reused++;
+      return 'code' in hit ? { ...hit, object } : hit;
+    },
+    reused: () => reused,
+    ran: () => ran,
+  };
 }
 
 /** The report's whole document, as spine-rigc writes it (its key order), parsed so it can sit inside `mesh_report.json`. */

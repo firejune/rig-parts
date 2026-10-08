@@ -94,6 +94,7 @@ import {
   DEFORMATION_UNMEASURED,
   legacyArtCoverage,
   qualityDocument,
+  type Reducer,
   type Residual,
   residuals,
   runReduction,
@@ -490,7 +491,9 @@ function pt(p: Point): string {
 
 /**
  * Build the rig. `images` holds every parts.json part's PNG by part name.
- * Every problem found is thrown at once, as one `PartsError`.
+ * Every problem found is thrown at once, as one `PartsError`. `reduce` runs each
+ * automatic part's reduction, `runReduction` unless a caller hands one that
+ * reuses a reduction it already ran on the same input (issue #135).
  */
 export function buildRig(
   cfg: CharacterConfig,
@@ -498,6 +501,7 @@ export function buildRig(
   images: ReadonlyMap<string, Raster>,
   maxLoopPasses: number = ONE_LOOP_PASSES,
   idleKeys: IdleKeys = DEFAULT_IDLE_KEYS,
+  reduce: Reducer = runReduction,
 ): RigOutput {
   const problems: Problem[] = [];
   const fail = (code: string, object: string, detail: string): void => {
@@ -917,7 +921,7 @@ export function buildRig(
       return null;
     }
     const input = autoReductionInput({ part: p.name, mask, ox, oy, spec, source, weights: sw.weights, boneOrder });
-    const ran = runReduction(object, input);
+    const ran = reduce(object, input);
     if ('code' in ran) {
       out.push(ran);
       return null;

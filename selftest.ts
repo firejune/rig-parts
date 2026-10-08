@@ -58,7 +58,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import ts from 'typescript';
 import {
@@ -99,7 +99,7 @@ import {
   writeRun,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
-import { artifactPaths, assembleStage, build, BUILD_OWNS, ctlRemedies, fringeLines, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
+import { artifactPaths, assembleStage, build, BUILD_OWNS, checkStage, ctlRemedies, fringeLines, REFERENCE_BUILD_ARGS, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, shiftRight, writeCheckRig, writeMergedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BARE_CROWN_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
@@ -184,10 +184,10 @@ import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld 
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
-import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline } from 'spine-rigc/mesh';
-import { autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Residual, runReduction, sourceWeights, terminationText, worstRegion, worstResidual } from './src/automesh.ts';
+import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline, writeMeshQualityReport } from 'spine-rigc/mesh';
+import { autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, reuseReductions, runReduction, sourceWeights, terminationText, worstRegion, worstResidual } from './src/automesh.ts';
 import { AUTO_CASES, examplePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
-import { BLOCKED_LABEL, barsOf, classify, type Counts as MatrixCounts, countsCell, geometryRow, lossAgainstOriginal, quietLabel, stretchOf, verdictText } from './tools/auto_matrix.ts';
+import { BLOCKED_LABEL, barsOf, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, emptyCost, geometryRow, lossAgainstOriginal, quietLabel, stretchOf, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
 import { type AutoMotionCase, idleSchedule, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
 import { motionGates } from './src/build.ts';
@@ -276,14 +276,14 @@ import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeyp
 import { LYING_PARTS, LYING_RIG, type PoseName, POSES } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, constraintConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
-import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, type RegionAttachment, rigJsonText, type RigSpec, roundShares } from './src/rig.ts';
+import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigSpec, roundShares } from './src/rig.ts';
 import { type ComposedScene, composeFromFiles, IMAGE_SEP, PLATE, PLATE_IMAGE, PREFIX_SEP, SCENE_REPORT_FILE, SCENE_SPEC, unprefixedNames } from './src/scene.ts';
 import { sceneCharacterRig, sceneText, writeFlatPlate, writeSceneBuild } from './fixtures/scene.ts';
 import { localInfluences, regionWeight } from './src/localweights.ts';
 import { influences } from './src/weights.ts';
 import { apply as applyAffine, type ComparedMesh, contourAtBudget, cost, errors, fieldAt, fieldContour, fieldLattice, locator, pixelErrors, pixelsOver } from './tools/local_compare.ts';
 import { FIELD_LATTICE_GRID, FIELD_POSES, fieldRegion, REGION_SPACINGS } from './fixtures/localfield.ts';
-import { BASE_SPACINGS, CONTROL, describeWorst, displacement, frameOpenings, kindOf, neighbours, pickAtBudget, type PlacedMask, POSE_PHASE, ranked, regionPoses, regionSpacings, seamOpening, seamPairs, sineAt, SWEEP_TOLERANCES, testRegion, toWorldPx, variantConfig } from './tools/real_compare.ts';
+import { BASE_SPACINGS, CONTROL, describeWorst, displacement, frameOpenings, kindOf, neighbours, pickAtBudget, type PlacedMask, POSE_PHASE, ranked, regionPoses, regionSpacings, resolveSegments, seamOpening, seamPairs, sineAt, SWEEP_TOLERANCES, testRegion, toWorldPx, variantConfig } from './tools/real_compare.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
 import { readTag, type TagReading } from './src/tags.ts';
@@ -16251,6 +16251,39 @@ function runAutoMeshSuite(): number {
     'the brief: the full-build check outcome per switched part (9 bars) and TEXTURE_STRETCH severity per part; a bar that did not measure is not counted as passed',
   );
 
+  // AM40 — issue #135 item D, held as a STOP: spine-rigc's reduceMesh takes no undeclared maxUndercut, so "no upper bound"
+  // cannot be said to it, and the loader keeps refusing null; the permissive policy's number stays until rigc accepts one.
+  const g40 = autoGeometry('convex', CONVEX.mask, syntheticPolicy(8));
+  const asked40 = (edit: (i: MeshReductionInput) => void): string => {
+    if (typeof g40 === 'string') return g40;
+    const i = { ...g40.input, sourceBounds: { ...g40.input.sourceBounds }, targets: { ...g40.input.targets, artFit: { ...g40.input.targets.artFit } } };
+    edit(i);
+    const r = runReduction('convex', i);
+    return 'code' in r ? `${r.code} ${r.detail}` : 'accepted the input';
+  };
+  const nullTarget = asked40((i) => ((i.targets.artFit as unknown as Record<string, unknown>).maxUndercut = null));
+  const absentTarget = asked40((i) => delete (i.targets.artFit as unknown as Record<string, unknown>).maxUndercut);
+  const nullSource = asked40((i) => ((i.sourceBounds as unknown as Record<string, unknown>).maxUndercut = null));
+  const loader40 = load(
+    autoRigConfig((_c, a) => {
+      ((a.targets as Record<string, unknown>).artFit as Record<string, unknown>).maxUndercut = null;
+    }),
+  );
+  say(
+    'AM40_SPINE_RIGC_REQUIRES_A_NUMERIC_MAX_UNDERCUT_SO_NO_BOUND_CANNOT_BE_DECLARED_AND_THE_LOADER_REFUSES_NULL',
+    typeof g40 !== 'string' &&
+      nullTarget.includes('REDUCE_INPUT_MISSING') &&
+      nullTarget.includes('targets.artFit.maxUndercut is null; required a finite number') &&
+      absentTarget.includes('targets.artFit.maxUndercut is undefined; required a finite number') &&
+      nullSource.includes('sourceBounds.maxUndercut is null; required a finite number') &&
+      loader40 !== null &&
+      loader40.problems.length === 1 &&
+      loader40.problems[0].code === 'CONFIG_FIELD_TYPE' &&
+      loader40.problems[0].object === 'config.meshes.cloth.auto.targets.artFit.maxUndercut',
+    `rigc, targets null: ${nullTarget.slice(0, 200)} || absent: ${absentTarget.slice(0, 160)} || sourceBounds null: ${nullSource.slice(0, 160)} || loader: ${loader40 === null ? 'loaded' : loader40.problems.map(problemLine).join('; ').slice(0, 300)}`,
+    'issue #135 ruling 4: an explicit "no upper bound" is used only if spine-rigc\'s ArtFitBounds takes an absent or null maxUndercut and reports the row undeclared; spine-rigc 2.20.3 types it `number` and reduceMesh refuses anything else by name (only measureMeshQuality\'s MeasureTargets takes a null artFit, whole), so the STOP stands and this goes red the day rigc accepts one',
+  );
+
   return bad();
 }
 
@@ -16492,7 +16525,7 @@ function runAutoMotionSuite(): number {
     delete spec8.motion;
     const rig8 = buildRig(cfg8, rigParts(), rigImages());
     let calls8 = 0;
-    const runs8 = motionGates(rig8, [], [], null, () => ((calls8 += 1), { status: 0, out: '' }), join(root, 'mo08'), DEFAULT_PACK_MODE);
+    const runs8 = motionGates(rig8, [], [], null, () => ((calls8 += 1), { status: 0, out: '' }), join(root, 'mo08'));
     say(
       'MO08_A_SPEC_WITHOUT_MOTION_BUILT_IN_CODE_IS_REFUSED_CONFIG_FIELD_PRESENT_AT_THE_RIG_STAGE_WITH_NO_BUILD',
       runs8.length === 1 && runs8[0].problems.length === 1 && runs8[0].problems[0].code === 'CONFIG_FIELD_PRESENT' && runs8[0].problems[0].object === `${AT}.motion` && calls8 === 0,
@@ -16858,6 +16891,315 @@ function runWindingSuite(): number {
   return bad();
 }
 
+// ---------------------------------------------------------------------------
+// build-cost (issue #135): what an automatic part costs the rig stage, and what was cut
+// ---------------------------------------------------------------------------
+
+interface CostCall {
+  args: string[];
+  /** The model document a green build wrote, read before the scratch was emptied; null otherwise. */
+  model: string | null;
+}
+
+interface CostRun {
+  e: PartsError | null;
+  log: string[];
+  calls: CostCall[];
+  out: string;
+  /** The fixture's parts directory, which `check` reads. */
+  parts: string;
+  /** Model documents of the extra builds `also` asked for, by label. */
+  extra: Map<string, string | null>;
+}
+
+/**
+ * The rig stage on the rig fixture through the installed rigc, every call
+ * recorded with its arguments. `fake` answers a call in rigc's place (a
+ * planted red gate); `also` names extra builds to run beside a call, of the
+ * same staged rig, each into its own directory under the stage's scratch, so
+ * their model documents can be set beside the stage's own.
+ */
+function costStage(
+  dir: string,
+  config: Record<string, unknown>,
+  opts: { fake?: (n: number) => { status: number; out: string } | null; also?: (n: number, args: string[]) => Array<{ label: string; out: string[]; flags: string[] }>; reduce?: Reducer } = {},
+): CostRun {
+  const fx = writeRigFixture(dir, config);
+  const rigc = findRigc(ROOT, '');
+  const calls: CostCall[] = [];
+  const extra = new Map<string, string | null>();
+  let builds = 0;
+  const runner: RigcRunner = (args) => {
+    const n = args[0] === 'build' ? builds++ : -1;
+    const faked = n >= 0 ? (opts.fake?.(n) ?? null) : null;
+    if (faked !== null) {
+      calls.push({ args: [...args], model: null });
+      return faked;
+    }
+    const r = spawnSync(rigc, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
+    let model: string | null = null;
+    if (args[0] === 'build') {
+      const out = args[args.indexOf('--out') + 1];
+      const path = join(out, RIGC_MODEL_DOCUMENT);
+      if (r.status === 0 && existsSync(path)) model = readFileSync(path, 'utf8');
+      const scratch = dirname(out);
+      for (const x of opts.also?.(n, [...args]) ?? []) {
+        const xo = join(scratch, ...x.out);
+        const xr = spawnSync(rigc, ['build', '--rig', args[args.indexOf('--rig') + 1], '--motion', args[args.indexOf('--motion') + 1], '--out', xo, ...x.flags], { encoding: 'utf8', maxBuffer: 1 << 28 });
+        extra.set(x.label, xr.status === 0 && existsSync(join(xo, RIGC_MODEL_DOCUMENT)) ? readFileSync(join(xo, RIGC_MODEL_DOCUMENT), 'utf8') : null);
+      }
+    }
+    calls.push({ args: [...args], model });
+    return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  };
+  const log: string[] = [];
+  const out = join(dir, 'out');
+  const e = refusals(() => rigStage({ config: fx.config, parts: fx.parts, out, ...(opts.reduce === undefined ? {} : { reduce: opts.reduce }) }, runner, join(dir, 'scratch'), (l) => log.push(l)));
+  return { e, log, calls, out, parts: fx.parts, extra };
+}
+
+/** A render call's identity for sharing: every argument but `--out` and its value. Two renders may share only when these are equal. */
+function renderKey(args: readonly string[]): string {
+  return args.filter((a, i) => a !== '--out' && args[i - 1] !== '--out').join(' ');
+}
+
+/** buildRig on the fixture with `reduce`, as the bytes it would write: rig.json, motion.json and mesh_report.json. */
+function rigBytes(config: Record<string, unknown>, reduce?: Reducer): string {
+  const r = buildRig(parseConfig(config), rigParts(), rigImages(), undefined, undefined, reduce);
+  return `${rigJsonText(r.rig)}${rigJsonText(r.motion)}${rigJsonText(r.meshReport)}`;
+}
+
+function runBuildCostSuite(): number {
+  section('build-cost: an automatic part through the rig stage — one reduction, a gated reference compiled without packing, no render (issue #135)');
+  const { say, bad } = counter();
+  const AT = 'config.meshes.cloth.auto';
+  const lines = (e: PartsError | null): string => (e === null ? 'nothing refused' : e.problems.map(problemLine).join('; ').slice(0, 1200));
+  const has = (args: readonly string[], ...want: string[]): boolean => want.every((w) => args.includes(w));
+  const root = temp('build-cost');
+  try {
+    // BC01 — the positive control: two builds and nothing else; the candidate packed, the reference exactly REFERENCE_BUILD_ARGS.
+    const packedFlags = packedBuildArgs(DEFAULT_PACK_MODE);
+    const pos = costStage(join(root, 'pos'), autoRigConfig(), {
+      also: (n) => (n === 1 ? [{ label: 'packed reference', out: ['build-packed'], flags: packedFlags }, { label: 'deeper reference', out: ['deeper', 'build'], flags: [...REFERENCE_BUILD_ARGS] }] : []),
+    });
+    const cand = pos.calls[0];
+    const ref = pos.calls[1];
+    const tail = (c: CostCall | undefined): string[] => (c === undefined ? [] : c.args.slice(c.args.indexOf('--out') + 2));
+    say(
+      'BC01_AN_AUTO_PART_COSTS_THE_RIG_STAGE_TWO_BUILDS_THE_CANDIDATE_PACKED_AND_THE_REFERENCE_GATED_WITHOUT_PACK_AND_NO_RENDER',
+      pos.e === null &&
+        existsSync(join(pos.out, 'rig.json')) &&
+        pos.calls.length === 2 &&
+        pos.calls.every((c) => c.args[0] === 'build' && c.model !== null) &&
+        JSON.stringify(tail(cand)) === JSON.stringify(packedFlags) &&
+        JSON.stringify(tail(ref)) === JSON.stringify(REFERENCE_BUILD_ARGS) &&
+        !tail(ref).includes('--pack') &&
+        has(tail(ref), '--profile', 'spine-html') &&
+        pos.log.some((l) => l.includes(`rigc ${REFERENCE_BUILD_LABEL}, reference "cloth"`) && l.endsWith('exit 0')),
+      `${lines(pos.e)}; calls ${pos.calls.map((c) => `[${c.args[0]} ${tail(c).join(' ')}]`).join(' ')}`,
+      'issue #135, the owner\'s ruling 1: the candidate keeps its packed gate build exactly as before; the reference is compiled under the same spine-html gate without --pack, and the stage asks rigc for no render',
+    );
+
+    // BC02 — the reference is still gated: a red reference compile refuses the part by name, and nothing is written.
+    const refRed = costStage(join(root, 'refred'), autoRigConfig(), { fake: (n) => (n === 1 ? { status: 1, out: '  FAIL  A13_PLANTED: the reference compile refused by a planted gate\n' } : null) });
+    say(
+      'BC02_A_RED_REFERENCE_COMPILE_REFUSES_THE_PART_BY_NAME_AND_NOTHING_IS_WRITTEN',
+      refRed.e !== null &&
+        refRed.e.problems.some((p) => p.code === 'AUTO_MESH_MOTION_INPUT' && p.object === AT && p.detail.includes('A13_PLANTED') && p.detail.includes('unreduced source mesh')) &&
+        !existsSync(refRed.out) &&
+        refRed.calls.length === 2 &&
+        JSON.stringify(tail(refRed.calls[1])) === JSON.stringify(REFERENCE_BUILD_ARGS),
+      lines(refRed.e),
+      'P8: the reference is independently gated; compiling it without packing keeps rigc\'s gate over the compile, and a red one is still not compared against',
+    );
+
+    // BC03 — the candidate is written only after both gates: a red candidate refuses before any reference is compiled.
+    const candRed = costStage(join(root, 'candred'), autoRigConfig(), { fake: (n) => (n === 0 ? { status: 1, out: '  FAIL  A13_PLANTED: the candidate refused by a planted gate\n' } : null) });
+    say(
+      'BC03_A_RED_CANDIDATE_GATE_REFUSES_BEFORE_ANY_REFERENCE_IS_COMPILED_AND_NOTHING_IS_WRITTEN',
+      candRed.e !== null && candRed.e.problems.some((p) => p.code === 'RIG_RIGC_GREEN' && p.detail.includes('A13_PLANTED')) && !existsSync(candRed.out) && candRed.calls.length === 1,
+      `${lines(candRed.e)}; calls ${candRed.calls.length}`,
+      'emit only after green: nothing is written unless the candidate\'s gate and the motion gate over the gated reference both pass',
+    );
+
+    // BC04 — identity: the comparison over the unpacked reference is the comparison over a packed one, byte for byte.
+    const mc = motionCaseOf(autoRigConfig());
+    const packedRef = pos.extra.get('packed reference') ?? null;
+    const report = (refModel: string | null): string => {
+      if (mc === null || mc.motion === undefined || refModel === null || cand?.model === null || cand === undefined) return 'not run';
+      const r = runComparison(AT, motionInput(mc, mc.motion, refModel, cand.model));
+      return 'code' in r ? `refused ${problemLine(r)}` : writeMeshQualityReport(r);
+    };
+    const viaUnpacked = report(ref?.model ?? null);
+    const viaPacked = report(packedRef);
+    const row = existsSync(join(pos.out, 'mesh_report.json')) ? (JSON.parse(readFileSync(join(pos.out, 'mesh_report.json'), 'utf8')) as MeshReport[])[0] : undefined;
+    const written = row !== undefined && 'mode' in row && row.mode === 'auto' ? JSON.stringify((row as AutoMeshReport).motion_report) : 'no row';
+    say(
+      'BC04_THE_COMPARISON_OVER_THE_UNPACKED_REFERENCE_IS_THE_COMPARISON_OVER_A_PACKED_ONE_BYTE_FOR_BYTE',
+      viaUnpacked.startsWith('{') && viaUnpacked === viaPacked && written === JSON.stringify(JSON.parse(viaPacked)),
+      `unpacked ${viaUnpacked.length} bytes, packed ${viaPacked.length} bytes, equal ${viaUnpacked === viaPacked}; the written motion_report is the packed one's: ${viaPacked.startsWith('{') && written === JSON.stringify(JSON.parse(viaPacked))}`,
+      'issue #135, ruling 3: on the same input the verdict and every byte of the report are unchanged; the packed reference is built here beside the stage\'s, from the same staged rig, as main built it',
+    );
+
+    // BC05 — what packing changes in the reference's document is its pages and nothing else.
+    const keysDiffer = (a: string | null, b: string | null): string[] => {
+      if (a === null || b === null) return ['unread'];
+      const x = JSON.parse(a) as Record<string, unknown>;
+      const y = JSON.parse(b) as Record<string, unknown>;
+      return [...new Set([...Object.keys(x), ...Object.keys(y)])].filter((k) => JSON.stringify(x[k]) !== JSON.stringify(y[k])).sort();
+    };
+    const pagesOf = (t: string | null): string[] => (t === null ? [] : ((JSON.parse(t) as { pages?: Array<{ name: string }> }).pages ?? []).map((p) => p.name));
+    const d5 = keysDiffer(ref?.model ?? null, packedRef);
+    say(
+      'BC05_THE_UNPACKED_AND_PACKED_REFERENCE_DOCUMENTS_DIFFER_IN_PAGES_ALONE',
+      d5.join() === 'pages' && pagesOf(ref?.model ?? null).every((n) => n.startsWith('../images/')) && pagesOf(packedRef).every((n) => !n.startsWith('../images/')),
+      `top-level keys that differ: [${d5.join(', ')}]; unpacked pages [${pagesOf(ref?.model ?? null).join(', ')}]; packed pages [${pagesOf(packedRef).join(', ')}]`,
+      'the atlas layout is the one thing --pack decides, and spine-rigc\'s comparison allowlists it (correction 5); the packed pages of a reference were never written anywhere',
+    );
+
+    // BC06 — the plant: a reference compiled one directory deeper differs outside the allowlist and is refused by name.
+    const deeper = report(pos.extra.get('deeper reference') ?? null);
+    say(
+      'BC06_A_REFERENCE_COMPILED_WHERE_THE_CANDIDATE_WAS_NOT_IS_COMPARE_INPUTS_DIFFER_SO_THE_REFERENCE_MUST_SIT_WHERE_A_PACKED_ONE_WOULD',
+      deeper.startsWith('refused') && deeper.includes('COMPARE_INPUTS_DIFFER') && deeper.includes('images[0].page'),
+      deeper.slice(0, 500),
+      'the reference\'s build directory is the candidate\'s (gateThroughRigc stages both at <scratch>/build), so every relative image path agrees; one level off, the documents differ in more than layout and rigc refuses the comparison',
+    );
+
+    // BC07 — reuse: the same input's reduction handed back costs no reduceMesh call and writes the same bytes.
+    const cfg = autoRigConfig();
+    const recorded = new Map<string, ReductionResult>();
+    let fresh = 0;
+    const recording: Reducer = (object, input) => {
+      fresh++;
+      const r = runReduction(object, input);
+      recorded.set(reductionKey(input), r);
+      return r;
+    };
+    const freshBytes = rigBytes(cfg, recording);
+    let ran7 = 0;
+    const reuse7 = reuseReductions(recorded, (o, i) => (ran7++, runReduction(o, i)));
+    const reusedBytes = rigBytes(cfg, reuse7.reduce);
+    say(
+      'BC07_A_REDUCTION_ALREADY_RUN_ON_THE_SAME_INPUT_IS_REUSED_WITH_NO_CALL_AND_THE_SAME_BYTES',
+      fresh === 1 && recorded.size === 1 && ran7 === 0 && reuse7.reused() === 1 && reuse7.ran() === 0 && reusedBytes === freshBytes,
+      `first build: ${fresh} call(s); second: reused ${reuse7.reused()}, ran ${reuse7.ran()} (counted ${ran7}); rig, motion and mesh report bytes equal: ${reusedBytes === freshBytes}`,
+      'issue #135, ruling 1: the same reduction is not run twice; reduceMesh is deterministic (spine-rigc\'s contract, MO11 here), so the same input is the same result',
+    );
+
+    // BC08 — the plant: a different input (budget 1) is not answered from the map; it is run, and its bytes are its own.
+    const cfg8 = autoRigConfig((_c, a) => (a.budget = { maxCandidates: 1 }));
+    let ran8 = 0;
+    const reuse8 = reuseReductions(recorded, (o, i) => (ran8++, runReduction(o, i)));
+    const bytes8 = rigBytes(cfg8, reuse8.reduce);
+    const own8 = rigBytes(cfg8);
+    say(
+      'BC08_A_DIFFERENT_INPUT_IS_NEVER_ANSWERED_FROM_ANOTHER_INPUTS_REDUCTION_IT_IS_RUN',
+      ran8 === 1 && reuse8.reused() === 0 && bytes8 === own8 && bytes8 !== freshBytes,
+      `budget 1: reused ${reuse8.reused()}, ran ${reuse8.ran()}; bytes equal its own fresh build: ${bytes8 === own8}; differ from the budget-2000 build: ${bytes8 !== freshBytes}`,
+      'nothing is guessed: the key is the whole input, so a near match is a miss and a call, never a reused result',
+    );
+
+    // BC09 — the key by hand: the same input rebuilt is the same key; one alpha byte or one number changes it; a reused refusal names the asker.
+    const spec9 = syntheticPolicy(8);
+    const src9 = autoSource('convex', CONVEX.mask, spec9);
+    const in9 = (mask: AlphaMask, spec: AutoSpec): MeshReductionInput | null => (Array.isArray(src9) ? null : autoReductionInput({ part: 'convex', mask, ox: 0, oy: 0, spec, source: src9, weights: null, boneOrder: [] }));
+    const a9 = in9(CONVEX.mask, spec9);
+    const b9 = in9({ width: CONVEX.mask.width, height: CONVEX.mask.height, alpha: new Uint8Array(CONVEX.mask.alpha) }, syntheticPolicy(8));
+    const flipped = new Uint8Array(CONVEX.mask.alpha);
+    flipped[0] = flipped[0] === 0 ? 1 : 0;
+    const c9 = in9({ width: CONVEX.mask.width, height: CONVEX.mask.height, alpha: flipped }, spec9);
+    const d9 = in9(CONVEX.mask, { ...spec9, targets: { ...spec9.targets, maxBoundaryDeviation: 2 } });
+    const k = (x: MeshReductionInput | null): string => (x === null ? 'none' : reductionKey(x));
+    const planted: Problem = { code: 'AUTO_MESH_INPUT', object: 'config.meshes.elsewhere.auto', detail: 'planted' };
+    const reuse9 = a9 === null ? null : reuseReductions(new Map([[reductionKey(a9), planted]]), () => planted);
+    const asked = reuse9 === null || a9 === null ? null : reuse9.reduce(AT, a9);
+    say(
+      'BC09_THE_KEY_IS_THE_WHOLE_INPUT_AND_A_REUSED_REFUSAL_NAMES_THE_FIELD_THAT_ASKED',
+      a9 !== null && k(a9) === k(b9) && k(a9) !== k(c9) && k(a9) !== k(d9) && asked !== null && 'code' in asked && asked.object === AT && asked.detail === 'planted',
+      `rebuilt equal ${k(a9) === k(b9)}; one alpha byte differs ${k(a9) !== k(c9)}; maxBoundaryDeviation 1 -> 2 differs ${k(a9) !== k(d9)}; reused refusal object ${asked !== null && 'code' in asked ? asked.object : 'none'}`,
+      'by hand: an independent rebuild of one input (a fresh mask buffer, a fresh policy object) is the same key; flipping CONVEX\'s first alpha byte or one bound is not',
+    );
+
+    // BC10 — render sharing: the rig stage renders nothing, so check's renders have no twin; a size change is never shared.
+    const checkCalls: string[][] = [];
+    const bin = findRigc(ROOT, '');
+    const runner10: RigcRunner = (args) => {
+      checkCalls.push([...args]);
+      const r = spawnSync(bin, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+    };
+    const ce = existsSync(join(pos.out, 'rig.json')) ? refusals(() => checkStage({ rig: pos.out, parts: pos.parts, out: join(root, 'pos-check') }, runner10, bin, () => {})) : null;
+    const renders = checkCalls.filter((c) => c[0] === 'render');
+    const keys10 = renders.map(renderKey);
+    const sizeChanged = renders.length === 0 ? [] : renders[0].map((a, i) => (renders[0][i - 1] === '--max' ? String(Number(a) + 1) : a));
+    say(
+      'BC10_THE_RIG_STAGE_RENDERS_NOTHING_CHECKS_RENDERS_ARE_PAIRWISE_DISTINCT_AND_A_SIZE_CHANGE_IS_NOT_THE_SAME_RENDER',
+      ce === null &&
+        pos.calls.every((c) => c.args[0] !== 'render') &&
+        renders.length > 0 &&
+        new Set(keys10).size === keys10.length &&
+        renderKey(sizeChanged) !== keys10[0] &&
+        renderKey([...renders[0]]) === keys10[0],
+      `rig stage renders ${pos.calls.filter((c) => c.args[0] === 'render').length}; check renders ${renders.length}, distinct keys ${new Set(keys10).size}; --max +1 shares: ${renderKey(sizeChanged) === keys10[0]}; an identical copy shares: ${renderKey([...renders[0] ?? []]) === keys10[0]}`,
+      'issue #135, ruling 2: render once only when input, schedule and settings are identical; the gate asks for no render, and check\'s renders already differ pairwise, so nothing is shared',
+    );
+
+    // BC11 — the matrix tool's cost line: each rigc call counted by kind, every figure printed as counted (by hand).
+    const cost = emptyCost();
+    const counted = countingRunner(() => ({ status: 0, out: '' }), cost);
+    counted(['build', '--rig', 'r']);
+    counted(['build', '--rig', 'r']);
+    counted(['render', '--candidate', 'c']);
+    counted(['--version']);
+    cost.reduceGeometry = 3;
+    cost.reduceTiming = 2;
+    cost.reduceStage = 1;
+    cost.reusedByStage = 3;
+    const line11 = costLine(cost, 61499);
+    say(
+      'BC11_THE_MATRIX_COST_LINE_COUNTS_RIGC_CALLS_BY_KIND_AND_REDUCTIONS_BY_WHO_MADE_THEM',
+      line11 ===
+        'Cost of this run: wall time 61 s; rigc builds 2, renders 1, other rigc calls 1; reduceMesh calls 6 (3 by the geometry rows, 2 by the timing section, 1 by a rig stage on an input no geometry row ran); reductions a rig stage reused from a geometry row on the same input: 3.',
+      line11,
+      'issue #135 item 3: the document header states the run\'s wall time and its rigc build count; by hand, 2 builds + 1 render + 1 other, 3 + 2 + 1 = 6 reductions, 61499 ms rounds to 61 s',
+    );
+
+    // BC12 — the tool's cell path on the fixture: geometryRow's reduction handed to the rig stage is reused, and the stage writes the bytes it writes alone.
+    const pf = rigParts();
+    const p12 = pf.parts.find((q) => q.name === 'cloth');
+    const img12 = rigImages().get('cloth');
+    let g12: ReturnType<typeof geometryRow> | null = null;
+    let stage12: CostRun | null = null;
+    let ran12 = 0;
+    let reused12 = 0;
+    if (p12 !== undefined && img12 !== undefined) {
+      const padded = pad(img12, PAD, PAD, PAD, PAD, [0, 0, 0, 0]);
+      const alpha = new Uint8Array(padded.width * padded.height);
+      for (let i = 0; i < alpha.length; i++) alpha[i] = padded.data[i * 4 + 3];
+      const parsed = parseConfig(cfg);
+      const m12 = parsed.meshes.cloth as { segments: Array<string | [string, [number, number], [number, number]]>; r: number; auto: AutoSpec };
+      const order = buildRig(parsed, pf, rigImages()).rig.bones.map((b) => b.name);
+      g12 = geometryRow('cloth', { width: padded.width, height: padded.height, alpha }, m12.auto, { ox: p12.x - PAD, oy: p12.y - PAD, segs: resolveSegments(parsed, m12.segments), r: m12.r, boneOrder: order }, null, () => 0);
+      const done = new Map<string, ReductionResult>();
+      if (g12.input !== null && g12.ran !== undefined && g12.ran !== null) done.set(reductionKey(g12.input), g12.ran);
+      const reuse12 = reuseReductions(done, (o, i) => (ran12++, runReduction(o, i)));
+      stage12 = costStage(join(root, 'cell'), cfg, { reduce: reuse12.reduce });
+      reused12 = reuse12.reused();
+    }
+    const same12 = (f: string): boolean => stage12 !== null && existsSync(join(stage12.out, f)) && readFileSync(join(stage12.out, f), 'utf8') === readFileSync(join(pos.out, f), 'utf8');
+    say(
+      'BC12_THE_MATRIX_CELL_PATH_REDUCES_ONCE_THE_RIG_STAGE_REUSES_THE_GEOMETRY_ROWS_RESULT_AND_WRITES_THE_SAME_BYTES',
+      g12 !== null && g12.verdict.kind === 'accepted' && stage12 !== null && stage12.e === null && ran12 === 0 && reused12 === 1 && same12('rig.json') && same12('mesh_report.json') && same12('motion.json'),
+      `geometry row ${g12?.verdict.kind ?? 'not run'}; stage reused ${reused12}, ran ${ran12}; rig.json ${same12('rig.json')}, mesh_report.json ${same12('mesh_report.json')}, motion.json ${same12('motion.json')} against the stage that reduced itself (BC01)`,
+      'issue #135 item B(i): main ran the cell\'s reduction twice, once in the geometry row and once inside `cli.ts rig`; the tool now hands the row\'s result to the stage, which checks the whole input before reusing it',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return bad();
+}
+
 const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number | null]> = [
   ['raster-components', runComponentsSuite],
   ['raster-morph', runMorphSuite],
@@ -16879,6 +17221,7 @@ const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number 
   ['auto-mesh', runAutoMeshSuite],
   ['auto-mesh-examples', runAutoMeshExamplesSuite],
   ['auto-motion', runAutoMotionSuite],
+  ['build-cost', runBuildCostSuite],
   ['winding', runWindingSuite],
   ['propose', runProposeSuite],
   ['keypoints', runKeypointsSuite],
@@ -16920,7 +17263,7 @@ const TALLY_SUITE = 'run-tally';
  * (`dispatchOrder`), because a misspelt name would quietly cost the time it
  * exists to buy.
  */
-const STARTED_FIRST: readonly string[] = ['readme-loop', 'chain', 'build', 'check', 'scene', 'assemble-examples', 'propose', 'rig', 'auto-mesh-examples', 'auto-motion', 'auto-mesh'];
+const STARTED_FIRST: readonly string[] = ['readme-loop', 'chain', 'build', 'check', 'scene', 'assemble-examples', 'propose', 'rig', 'auto-mesh-examples', 'auto-motion', 'build-cost', 'auto-mesh'];
 
 /** The argument that makes this file run one suite as a worker, for the parent run, and nothing else. */
 const WORKER_FLAG = '--suite-worker';

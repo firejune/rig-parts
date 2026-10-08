@@ -15,10 +15,13 @@
  *   that one attachment swapped and nothing else; spine-rigc's allowlist
  *   (`COMPARE_INPUTS_DIFFER`) refuses anything else, and its refusal is carried
  *   here by code.
- * - Both go through spine-rigc's `build` — the same gate, the same packing —
- *   and the comparison reads each build's `skeleton.model.json` as text. The
- *   builds run in the rig stage (`src/build.ts`), the one place this package
- *   runs rigc; this module is handed the two texts and stays pure.
+ * - Both go through spine-rigc's `build` under the same gate — the candidate
+ *   packed, as the stage writes it, the reference compiled without packing
+ *   (issue #135: the comparison allowlists atlas layout, and nothing reads a
+ *   reference's pages) — and the comparison reads each build's
+ *   `skeleton.model.json` as text. The builds run in the rig stage
+ *   (`src/build.ts`), the one place this package runs rigc; this module is
+ *   handed the two texts and stays pure.
  *
  * ## The schedule ({@link idleSchedule})
  *
