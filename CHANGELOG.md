@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.17.0](https://github.com/firejune/spine-parts/compare/v0.16.0...v0.17.0) (2026-10-09)
+
+
+### Features
+
+* **mesh:** a motion gate on the automatic mesh — the reduced mesh against its unreduced source on the idle through spine-rigc 2.20.3's compareMeshesInMotion, written only when it passes ([#134](https://github.com/firejune/spine-parts/issues/134)) ([8eb2989](https://github.com/firejune/spine-parts/commit/8eb298991ba470cdfdbc2f1fb0f7282f3e62c034))
+* **mesh:** an automatic mesh mode — the contour mesh at alpha 1 and above reduced and locally refined by spine-rigc 2.19.0's reduceMesh, geometry only ([#131](https://github.com/firejune/spine-parts/issues/131)) ([c03dd8a](https://github.com/firejune/spine-parts/commit/c03dd8a7b547e88c3995134750711ccf61fa9a38)), closes [#126](https://github.com/firejune/spine-parts/issues/126)
+* **mesh:** move to rig-c 2.20.4 under its new npm name, and regenerate the automatic-mesh evidence on it under per-cell caps with a re-running section ([#138](https://github.com/firejune/spine-parts/issues/138)) ([f405678](https://github.com/firejune/spine-parts/commit/f405678a7849800b12eead0a5463747e221a5fce))
+* **mesh:** move to rig-c 2.22.0 and declare the permissive policy's undercut bound absent (null) instead of a stand-in number ([#139](https://github.com/firejune/spine-parts/issues/139)) ([95e0f61](https://github.com/firejune/spine-parts/commit/95e0f61b00b751588505473f493c4daa319d77d7))
+* **mesh:** move to rig-c 2.23.0 and read the automatic source's overshoot 8-connected, and measure rigc[#1266](https://github.com/firejune/spine-parts/issues/1266) Q7 on the three motion-refused parts ([#140](https://github.com/firejune/spine-parts/issues/140)) ([926f433](https://github.com/firejune/spine-parts/commit/926f4336df800003262cdbdf3a9b7266e594162d))
+* **mesh:** move to rig-c 2.24.0 and replay a less-reduced step when the motion gate refuses an automatic mesh's full reduction ([#141](https://github.com/firejune/spine-parts/issues/141)) ([952155c](https://github.com/firejune/spine-parts/commit/952155c19c0b4f59aefc46bdade40e59a6971f76)), closes [#126](https://github.com/firejune/spine-parts/issues/126)
+
+
+### Bug Fixes
+
+* **mesh:** write every lattice and contour triangle counter-clockwise in Spine world, and hand the automatic mode's source to spine-rigc untouched ([#133](https://github.com/firejune/spine-parts/issues/133)) ([4a126fe](https://github.com/firejune/spine-parts/commit/4a126fefd1a7a960b10c2ebc3da0d866a42589ca)), closes [#126](https://github.com/firejune/spine-parts/issues/126)
+
+
+### Performance Improvements
+
+* **build:** compile the motion gate's reference without packing, and run each matrix cell's reduction once ([#137](https://github.com/firejune/spine-parts/issues/137)) ([494c919](https://github.com/firejune/spine-parts/commit/494c9195ec0e25113a30015432cd8e05b2db4353))
+
 ## [0.16.0](https://github.com/firejune/spine-parts/compare/v0.15.2...v0.16.0) (2026-10-07)
 
 
