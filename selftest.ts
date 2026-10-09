@@ -189,7 +189,7 @@ import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld 
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
-import { type AcceptedOperation, type AlphaMask, checkHullOrder, type TrackAmplitude, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline, windCounterClockwiseInSpineWorld, writeMeshQualityReport } from 'rig-c/mesh';
+import { type AcceptedOperation, type AlphaMask, checkHullOrder, type TrackAmplitude, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, type ReductionSkinning, simplifyClosedPolygon, traceAlphaOutline, traceOutline, windCounterClockwiseInSpineWorld, writeMeshQualityReport } from 'rig-c/mesh';
 import { allocationClause, AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, stageBClause, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
 import { AUTO_CASES, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, finerSourcePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
 import { BLOCKED_LABEL, barsOf, basisOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
@@ -218,8 +218,10 @@ import {
   splitSchedule,
 } from './src/autoreplay.ts';
 import { type AmplitudeDerivation, deriveMotionAmplitude, trackTheta } from './src/autoamplitude.ts';
+import { deriveEnvelope, type EnvelopeBasis, type EnvelopeDerivation, RESIDUAL_RULE, residualClause, type ResidualRow, residualRow, withSkinning } from './src/autoenvelope.ts';
+import { type VetoTally, vetoTally } from './tools/veto_tally.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
-import type { AutoSpec } from './src/config.ts';
+import type { AutoSpec, ConfigConstraint } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
 import type { AutoMeshReport, MeshReport } from './src/rig.ts';
 import { PartsError, type Problem, problemLine } from './src/errors.ts';
@@ -17491,6 +17493,7 @@ function runAutoMotionSuite(): number {
     runAutoReplayCases(say, root, pos);
     runAutoStageBCases(say, root, pos);
     runAutoSelectionCases(say, root, pos);
+    runAutoResidualCases(say, root, pos);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -18927,6 +18930,345 @@ function runAutoSelectionCases(say: (name: string, ok: boolean, detail: string, 
       readFileSync(join(bis.out, 'mesh_report.json'), 'utf8') !== readFileSync(join(mul.out, 'mesh_report.json'), 'utf8'),
     `bisection row keys ${bRow === undefined ? 'none' : Object.keys(bRow).join(',')}; probe keys ${[...new Set(bProbeKeys)].join(' | ')}; the policy's report differs: ${bis !== null && mul !== null && existsSync(join(bis.out, 'mesh_report.json')) && existsSync(join(mul.out, 'mesh_report.json')) && readFileSync(join(bis.out, 'mesh_report.json'), 'utf8') !== readFileSync(join(mul.out, 'mesh_report.json'), 'utf8')}`,
     'issue #148 work item 5: keep existing behaviour and bytes when the policy is not selected — the byte comparison against main is the PR\'s; here the shape of the bisection\'s row is held',
+  );
+}
+
+/**
+ * The skinning residual as an opt-in per-step veto (issue #126, rig-c 2.31.0, rigc#1295; `src/autoenvelope.ts`):
+ * MO65–MO76 of the auto-motion suite. `pos` is MO01's run, the fixture's cloth with no residual. Every expected value is
+ * derived by hand from the fixture (the hem chain's joints, the part's box, the idle's own track) or from a definition
+ * (rig-c's `linear` = 2 sin(θ / 2) on a one-bone chain); the one bound a plant needs is chosen by a stated rule from a
+ * reading this run takes — half the residual of the reduction the veto does not touch — never typed.
+ */
+function runAutoResidualCases(say: (name: string, ok: boolean, detail: string, why: string) => void, root: string, pos: MotionStageRun): void {
+  const AT = 'config.meshes.cloth.auto';
+  const has = (e: PartsError | null, code: string, ...words: string[]): boolean => e !== null && e.problems.some((p) => p.code === code && words.every((w) => `${p.object} ${p.detail}`.includes(w)));
+  const lines = (e: PartsError | null): string => (e === null ? 'nothing refused' : e.problems.map(problemLine).join('; ').slice(0, 1500));
+  const auto = (r: MeshReport | undefined): AutoMeshReport | undefined => (r !== undefined && 'mode' in r && r.mode === 'auto' ? r : undefined);
+  const withResidual = (residual: unknown, edit: (c: Record<string, unknown>, a: Record<string, unknown>) => void = () => {}): Record<string, unknown> =>
+    autoRigConfig((c, a) => {
+      (a.motion as Record<string, unknown>).residual = residual;
+      edit(c, a);
+    });
+  /** buildRig over `config` with its first reduction input recorded: the stage's own call, geometry only. */
+  const reductionOf = (config: Record<string, unknown>): { row: AutoMeshReport | undefined; input: MeshReductionInput | null; c: AutoMotionCase | null } => {
+    let input: MeshReductionInput | null = null;
+    const rec: Reducer = (o, i) => ((input ??= i), runReduction(o, i));
+    const rig = buildRig(parseConfig(config), rigParts(), rigImages(), undefined, undefined, rec);
+    return { row: auto(rig.meshReport[0]), input, c: rig.autoMotion[0] ?? null };
+  };
+  const skinningOf = (i: MeshReductionInput | null): ReductionSkinning | null => (i === null ? null : (i.targets.skinning ?? null));
+  const rowCode = (rep: MeshQualityReport | undefined, code: string) => rep?.candidates[0]?.geometry?.rows.find((r) => r.code === code && r.object.region === null);
+  const clothLine = (r: MotionStageRun): string => r.log.find((l) => l.includes('mesh cloth')) ?? '';
+  const text = (r: MotionStageRun, f: string): string => (existsSync(join(r.out, f)) ? readFileSync(join(r.out, f), 'utf8') : `(no ${f})`);
+
+  // The fixture by hand (fixtures/rig.ts): `cloth` is the 16x8 box at (10, 10), padded by PAD 4, so its drawing frame's
+  // origin is crop (6, 6); the chain `hem` puts hem0 at (14, 14) and hem1 at (22, 14), each with a same-origin control
+  // (both links are keyed and weighted to); `body` at (20, 30) under `root` at the canvas's (20, 40). The slot's bone is
+  // segments[0]'s, hem0; the source binds hem0 and hem1, so the envelope is one entry, hem1, on the chain hem1_ctl > hem1.
+  const origin: [number, number] = [10 - PAD, 10 - PAD];
+  const joints = new Map<string, readonly [number, number]>([
+    ['root', [RIG_CANVAS[0] / 2, RIG_CANVAS[1]]],
+    ['body', [20, 30]],
+    ['hem0_ctl', [14, 14]],
+    ['hem0', [14, 14]],
+    ['hem1_ctl', [22, 14]],
+    ['hem1', [22, 14]],
+    ['eye', [17, 28]],
+    ['soft', [18, 14]],
+  ]);
+  const fixtureRig = buildRig(parseConfig(autoRigConfig()), rigParts(), rigImages());
+  const basis = (motion: MotionSpec = fixtureRig.motion, constraints: ConfigConstraint[] = []): EnvelopeBasis => ({ bones: fixtureRig.rig.bones, joints, motion, constraints });
+  // θ: the largest |value| over hem1_ctl's rotate keys and their Bézier control values — the hull bound (module header).
+  const hullTheta = (m: MotionSpec, bone: string): number => {
+    const t = m.animations.idle.tracks.find((x) => x.bone === bone && x.property === 'rotate');
+    return t === undefined ? 0 : Math.max(...t.keys.flatMap((k) => [...k.v, ...(k.curve === undefined ? [] : [k.curve[1], k.curve[3]])]).map(Math.abs));
+  };
+  const theta = hullTheta(fixtureRig.motion, 'hem1_ctl');
+  const eHand = 2 * Math.sin((theta * Math.PI) / 360);
+
+  // MO65 — the loader.
+  const load = (residual: unknown): PartsError | null => refusals(() => parseConfig(withResidual(residual)));
+  const ok65 = [load({ maxResidual: 1 }), load({ maxResidual: 0 })];
+  const absent65 = ((s) => (s !== undefined && 'auto' in s ? s.auto.motion : undefined))(parseConfig(autoRigConfig()).meshes.cloth);
+  const e65 = {
+    negative: load({ maxResidual: -1 }),
+    text: load({ maxResidual: 'one' }),
+    missing: load({}),
+    extra: load({ maxResidual: 1, envelope: {} }),
+    notObject: load(1),
+  };
+  say(
+    'MO65_THE_RESIDUAL_FIELD_LOADS_AND_EACH_BAD_FIELD_IS_REFUSED_BY_NAME_AND_ABSENT_IT_REACHES_NOTHING',
+    ok65.every((e) => e === null) &&
+      absent65 !== undefined &&
+      !('residual' in absent65) &&
+      has(e65.negative, 'CONFIG_FIELD_TYPE', `${AT}.motion.residual.maxResidual`) &&
+      has(e65.text, 'CONFIG_FIELD_TYPE', `${AT}.motion.residual.maxResidual`) &&
+      has(e65.missing, 'CONFIG_FIELD_PRESENT', `${AT}.motion.residual.maxResidual`) &&
+      has(e65.extra, 'CONFIG_KEY_KNOWN', `${AT}.motion.residual.envelope`) &&
+      has(e65.notObject, 'CONFIG_FIELD_TYPE', `${AT}.motion.residual`, 'an object is required'),
+    `ok: ${ok65.map(lines).join(' | ')}; absent -> motion keys ${absent65 === undefined ? 'none' : Object.keys(absent65).join(',')}; ${Object.entries(e65).map(([k, e]) => `${k}: ${lines(e).slice(0, 160)}`).join(' | ')}`,
+    'the bound is the author\'s number, drawing px, 0 or more — never defaulted; the envelope is derived, so an author cannot write one',
+  );
+
+  // MO66 — the envelope by hand: one rotating bone below the reference, e = 2 sin(θ/2), pivot the joint less the
+  // part's origin, translation 0 (the control and its link share an origin; the link is not keyed). The stage's row
+  // carries exactly that; the same derivation with the origin not subtracted is seen, and a scale key on `body` (above
+  // the reference) multiplies `linear` by S = its largest scale, by hand.
+  const unit66 = deriveEnvelope(basis(), 'hem0', ['hem0', 'hem1'], origin);
+  const env66 = 'envelope' in unit66 ? unit66.envelope : null;
+  const geo66 = reductionOf(withResidual({ maxResidual: 1 }));
+  const sent66 = geo66.row?.skinning_residual?.envelope ?? null;
+  const shifted = deriveEnvelope(basis(), 'hem0', ['hem0', 'hem1'], [0, 0]);
+  const scaled = reductionOf(withResidual({ maxResidual: 1 }, (c) => (c.motion as { tracks: unknown[] }).tracks.push({ bone: 'body', prop: 'scalex', amp: 0.1, period: 4, phase: 0, base: 1 })));
+  const scaledMotion = buildRig(parseConfig(withResidual({ maxResidual: 1 }, (c) => (c.motion as { tracks: unknown[] }).tracks.push({ bone: 'body', prop: 'scalex', amp: 0.1, period: 4, phase: 0, base: 1 }))), rigParts(), rigImages()).motion;
+  const bodyScale = ((t) => (t === undefined ? 1 : Math.max(...t.keys.flatMap((k) => [...k.v, ...(k.curve === undefined ? [] : [k.curve[1], k.curve[3]])]))))(scaledMotion.animations.idle.tracks.find((x) => x.bone === 'body' && x.property === 'scalex'));
+  const scaledLinear = scaled.row?.skinning_residual?.envelope?.[0]?.linear ?? NaN;
+  const handEntry = { bone: 'hem1', linear: eHand, pivot: [22 - origin[0], 14 - origin[1]], translation: 0 };
+  const near = (a: number, b: number): boolean => Math.abs(a - b) <= 1e-12;
+  say(
+    'MO66_THE_ENVELOPE_BY_HAND_ONE_ROTATING_BONE_E_IS_2_SIN_THETA_OVER_2_AT_ITS_JOINT_AND_THE_STAGE_SENDS_EXACTLY_THAT',
+    theta >= 2 &&
+      env66 !== null &&
+      env66.reference === 'hem0' &&
+      env66.bones.length === 1 &&
+      env66.bones[0].bone === 'hem1' &&
+      near(env66.bones[0].linear, eHand) &&
+      env66.bones[0].pivot.join() === handEntry.pivot.join() &&
+      env66.bones[0].translation === 0 &&
+      JSON.stringify(sent66) === JSON.stringify(env66.bones) &&
+      JSON.stringify(skinningOf(geo66.input)?.envelope) === JSON.stringify(env66) &&
+      'envelope' in shifted &&
+      shifted.envelope.bones[0].pivot.join() !== handEntry.pivot.join() &&
+      bodyScale > 1 &&
+      near(scaledLinear, bodyScale * eHand),
+    `θ ${theta}° (hem1_ctl's keys and handles); by hand ${JSON.stringify(handEntry)}; derived ${JSON.stringify(env66)}; the stage sent ${JSON.stringify(skinningOf(geo66.input)?.envelope)}; origin not subtracted -> ${'envelope' in shifted ? JSON.stringify(shifted.envelope.bones[0].pivot) : 'stopped'}; body scalex up to ${bodyScale}: linear ${scaledLinear} against ${bodyScale} x ${eHand}`,
+    'Q3/Q4: rig-c\'s one definition of linear, over ranges read off the idle this package writes, with the slot\'s bone as reference; exact on a one-bone chain (rig-c MQ133), so the hand value is the value',
+  );
+
+  // MO67 — every stop by name, one derivation each: a physics-driven bone handed to rig-c with its source and refused by
+  // rig-c (SKINNING_RANGE_UNSUPPORTED, its words), a shear key, a bone not below the reference, a slider.
+  const physics = deriveEnvelope(basis(fixtureRig.motion, [{ name: 'sway', type: 'physics', bone: 'hem1', rotate: 1 }]), 'hem0', ['hem0', 'hem1'], origin);
+  const shearMotion: MotionSpec = { ...fixtureRig.motion, animations: { idle: { ...fixtureRig.motion.animations.idle, tracks: [...fixtureRig.motion.animations.idle.tracks, { bone: 'hem1', property: 'shearx', keys: [{ t: 0, v: [0] }, { t: 1, v: [3] }] }] } } };
+  const shear = deriveEnvelope(basis(shearMotion), 'hem0', ['hem0', 'hem1'], origin);
+  const above = deriveEnvelope(basis(), 'hem1', ['hem0', 'hem1'], origin);
+  const slider = deriveEnvelope(basis(fixtureRig.motion, [{ name: 'slide', type: 'slider', animation: 'idle', bone: 'body' }]), 'hem0', ['hem0', 'hem1'], origin);
+  const stopOf = (d: EnvelopeDerivation, code: string, ...words: string[]): boolean => 'stops' in d && d.stops.some((s) => s.code === code && words.every((w) => `${s.bone} ${s.detail}`.includes(w)));
+  say(
+    'MO67_EACH_BONE_WITHOUT_A_DECLARED_RANGE_STOPS_THE_ENVELOPE_BY_NAME_RIG_C_REFUSING_THE_PHYSICS_ONE_IN_ITS_OWN_WORDS',
+    'envelope' in unit66 &&
+      stopOf(physics, 'SKINNING_RANGE_UNSUPPORTED', 'hem1', '"physics"') &&
+      stopOf(shear, 'ENVELOPE_SHEAR_KEYED', 'hem1', 'shearx') &&
+      stopOf(above, 'ENVELOPE_BONE_NOT_BELOW_REFERENCE', 'hem0', 'hem1') &&
+      stopOf(slider, 'ENVELOPE_SLIDER_UNREAD', 'slide'),
+    [physics, shear, above, slider].map((d) => ('stops' in d ? d.stops.map((s) => `${s.bone} ${s.code}: ${s.detail.slice(0, 140)}`).join('; ') : 'an envelope')).join(' || '),
+    'Q3: a range not declared by keys is not certified, and rig-c exposes no physics range off a posed walk, so none is invented; the refusal is rig-c\'s where rig-c owns it',
+  );
+
+  // MO68 — a refused bone at the stage: the residual is not measurable naming it, the veto is not applied (no
+  // targets.skinning reaches rig-c, its echo absent), and the comparison decides alone — the rig the same rig, and the
+  // verdict the same verdict, as the config without the field.
+  const sway = (c: Record<string, unknown>): void => void (c.constraints = [{ name: 'sway', type: 'physics', bone: 'hem1', rotate: 1 }]);
+  const phyOff = motionStage(join(root, 'res-phy-off'), autoRigConfig((c) => sway(c)));
+  const phyOn = motionStage(join(root, 'res-phy-on'), withResidual({ maxResidual: 1 }, (c) => sway(c)));
+  const phyRow = auto(phyOn.rows[0]);
+  const phyEcho = (phyRow?.quality_report as { effective?: { targets?: Record<string, unknown> } } | undefined)?.effective?.targets;
+  say(
+    'MO68_A_REFUSED_BONE_LEAVES_THE_RESIDUAL_NOT_MEASURABLE_NAMING_IT_THE_VETO_UNAPPLIED_AND_THE_COMPARISON_DECIDING',
+    phyOff.e === null &&
+      phyOn.e === null &&
+      phyRow?.skinning_residual?.sent === false &&
+      phyRow.skinning_residual.measured === null &&
+      phyRow.skinning_residual.stops.some((s) => s.code === 'SKINNING_RANGE_UNSUPPORTED' && s.detail.includes('hem1')) &&
+      phyEcho !== undefined &&
+      !('skinning' in phyEcho) &&
+      typeof phyRow.deformation !== 'string' &&
+      phyRow.deformation.verdict === 'pass' &&
+      text(phyOn, 'rig.json') === text(phyOff, 'rig.json') &&
+      clothLine(phyOn).includes('; residual not measurable: hem1 SKINNING_RANGE_UNSUPPORTED (veto not applied; the motion comparison decides)'),
+    `without the field: ${lines(phyOff.e)}; with it: ${lines(phyOn.e)}; row ${JSON.stringify(phyRow?.skinning_residual?.stops.map((s) => `${s.bone} ${s.code}`))}; echo keys ${phyEcho === undefined ? 'none' : Object.keys(phyEcho).join(',')}; rig.json same: ${text(phyOn, 'rig.json') === text(phyOff, 'rig.json')}; ${clothLine(phyOn).trim().slice(-260)}`,
+    'the brief: a bone rig-c refuses makes the residual not measurable for that part — no number invented, the veto not applied, and the part accepted or refused by the comparison alone',
+  );
+
+  // MO69 — the row present with the bound: the written mesh's own MQ_SKINNING_RESIDUAL, declared, passing, with its worst
+  // sample, rig-c's echo of what was sent, and the line saying it is not the motion verdict; a report without the row is
+  // read as absent, never as a pass.
+  const r1 = motionStage(join(root, 'res-one'), withResidual({ maxResidual: 1 }));
+  const row1 = auto(r1.rows[0]);
+  const m1 = row1?.skinning_residual?.measured ?? null;
+  const q1 = row1?.quality_report as { effective?: { targets?: { skinning?: { maxResidual?: number } } }; candidates?: Array<{ geometry?: { rows?: Array<{ code: string; bound: { op: string; value: number } | null; state: string }> } }> } | undefined;
+  const qRow = q1?.candidates?.[0]?.geometry?.rows?.find((r) => r.code === 'MQ_SKINNING_RESIDUAL');
+  const geoRep = geo66.input === null ? null : runReduction(AT, geo66.input);
+  const stripped = geoRep === null || 'code' in geoRep ? null : { ...geoRep.report, candidates: geoRep.report.candidates.map((c) => ({ ...c, geometry: c.geometry === null ? null : { ...c.geometry, rows: c.geometry.rows.filter((r) => r.code !== 'MQ_SKINNING_RESIDUAL') } })) };
+  const absentRow = stripped === null || !('envelope' in unit66) ? null : residualRow(1, 'hem0', unit66, stripped as MeshQualityReport);
+  say(
+    'MO69_THE_WRITTEN_MESH_CARRIES_MQ_SKINNING_RESIDUAL_DECLARED_WITH_THE_BOUND_AND_THE_LINE_SAYS_IT_IS_NOT_THE_MOTION_VERDICT',
+    r1.e === null &&
+      row1?.skinning_residual?.sent === true &&
+      row1.skinning_residual.rule === RESIDUAL_RULE &&
+      RESIDUAL_RULE.includes('not the motion verdict') &&
+      m1 !== null &&
+      m1.state === 'pass' &&
+      m1.bound?.op === '<=' &&
+      m1.bound.value === 1 &&
+      m1.value !== null &&
+      m1.value <= 1 &&
+      m1.worst !== null &&
+      (m1.samples ?? 0) > 0 &&
+      qRow?.state === 'pass' &&
+      qRow.bound?.value === 1 &&
+      q1?.effective?.targets?.skinning?.maxResidual === 1 &&
+      typeof row1.deformation !== 'string' &&
+      row1.deformation.verdict === 'pass' &&
+      clothLine(r1).includes(`; residual ${m1.value} <= 1 (a pose-free bound, not the motion verdict)`) &&
+      absentRow?.measured?.state === 'absent',
+    `${lines(r1.e)}; row ${JSON.stringify(m1)}; the report's row ${qRow?.state} ${JSON.stringify(qRow?.bound)}; echo ${JSON.stringify(q1?.effective?.targets?.skinning?.maxResidual)}; ${clothLine(r1).trim().slice(-200)}; a report without the row -> ${absentRow?.measured?.state}`,
+    'the brief (3b): the final mesh\'s measurement carries MQ_SKINNING_RESIDUAL as a declared row with the bound — rig-c\'s own row, read, never computed here',
+  );
+
+  // MO70 — a planted bound vetoes: half the residual of the reduction the veto does not touch (measured, declared
+  // absent: maxResidual null) is a bound that reduction's own result breaks, so the veto refuses at least one step
+  // (tools/veto_tally.ts); the same input without the field, and with the bound declared absent, refuses none.
+  const geoInput = geo66.input;
+  const sk1 = skinningOf(geoInput);
+  const free = geoInput === null || sk1 === null ? null : runReduction(AT, { ...geoInput, targets: { ...geoInput.targets, skinning: { ...sk1, maxResidual: null } } });
+  const v0 = free === null || 'code' in free ? null : (rowCode(free.report, 'MQ_SKINNING_RESIDUAL')?.value ?? null);
+  const half = v0 === null ? null : v0 / 2;
+  const tight = half === null ? null : reductionOf(withResidual({ maxResidual: half }));
+  const tally = tight?.input === null || tight === null ? null : vetoTally(tight.input);
+  const without = (i: MeshReductionInput | null): MeshReductionInput | null => {
+    if (i === null) return null;
+    const targets = { ...i.targets };
+    delete targets.skinning;
+    return { ...i, targets };
+  };
+  const plain = without(tight?.input ?? null);
+  const tallyOff = plain === null ? null : vetoTally(plain);
+  const tallyNull = free === null || geoInput === null || sk1 === null ? null : vetoTally({ ...geoInput, targets: { ...geoInput.targets, skinning: { ...sk1, maxResidual: null } } });
+  const vetoes = (t: VetoTally | { refused: string } | null): number => (t === null || 'refused' in t ? -1 : t.removals + t.runs);
+  say(
+    'MO70_A_PLANTED_BOUND_UNDER_THE_UNVETOED_RESULTS_RESIDUAL_VETOES_AT_LEAST_ONE_STEP_AND_NONE_WITHOUT_THE_FIELD',
+    v0 !== null && v0 > 0 && vetoes(tally) >= 1 && vetoes(tallyOff) === 0 && vetoes(tallyNull) === 0 && tally !== null && !('refused' in tally) && tally.first !== null && tally.first.refusal.startsWith(`MQ_SKINNING_RESIDUAL: `) && tally.first.refusal.endsWith(`against <= ${half}`),
+    `the unvetoed result reads ${v0}; bound ${half}; vetoed ${JSON.stringify(tally)}; without the field ${JSON.stringify(tallyOff)}; declared absent ${JSON.stringify(tallyNull)}`,
+    'the brief: a planted residual over the bound vetoes a removal (count >= 1) — rig-c 2.31.0 refuses it by name; its report does not count vetoes, so the observer counts them over the very call',
+  );
+
+  // MO71 — the replay under the veto is byte-exact: every replayed step k keeps rig-c's promise (replayVerdict: its
+  // acceptedAt the full run's first k, the termination and the step) and its mesh is, byte for byte, the mesh a budget cut
+  // at the k-th operation's attempt ends on — an independent path to the same state; replaying N is the full result. A
+  // replay with the veto dropped is a different trajectory, and replayVerdict refuses it by name.
+  const tin = tight?.input ?? null;
+  const full71 = tin === null ? null : runReduction(AT, tin);
+  const acc71 = full71 === null || 'code' in full71 ? [] : (full71.report.candidates[0]?.changes?.acceptedAt ?? []);
+  const N71 = acc71.length;
+  const meshText = (r: ReductionResult | null): string => (r === null || 'code' in r ? 'refused' : JSON.stringify(r.mesh));
+  const checks71 = Array.from({ length: N71 }, (_, i) => i + 1).map((k) => {
+    const rep = tin === null ? null : runReduction(AT, { ...tin, stopAfterAccepted: k });
+    const cut = tin === null ? null : runReduction(AT, { ...tin, budget: { maxCandidates: acc71[k - 1].step } });
+    const v = rep === null || 'code' in rep ? null : replayVerdict(AT, k, acc71, rep);
+    return { k, promise: v !== null && v.accepted, same: meshText(rep) === meshText(cut) && meshText(rep) !== 'refused', last: k === N71 ? meshText(rep) === meshText(full71) : true };
+  });
+  const dropped71 = plain === null ? [] : Array.from({ length: N71 }, (_, i) => i + 1).map((k) => {
+    const rep = runReduction(AT, { ...plain, stopAfterAccepted: k });
+    return 'code' in rep ? null : replayVerdict(AT, k, acc71, rep);
+  });
+  say(
+    'MO71_UNDER_THE_VETO_EVERY_REPLAYED_STEP_KEEPS_THE_PROMISE_AND_IS_BYTE_EXACT_AGAINST_A_BUDGET_CUT_AT_ITS_ATTEMPT',
+    N71 > 1 && checks71.every((c) => c.promise && c.same && c.last) && dropped71.some((v) => v !== null && !v.accepted && v.problem.code === 'AUTO_MESH_TERMINATION'),
+    `N ${N71}; ${checks71.map((c) => `${c.k}:${c.promise ? 'P' : 'x'}${c.same ? '=' : '!'}${c.last ? '' : 'L'}`).join(' ')}; veto dropped -> ${dropped71.map((v) => (v === null ? 'refused' : v.accepted ? 'kept' : v.problem.code)).join(',')}`,
+    'the brief\'s STOP: the replay must stay byte-exact under the veto (rig-c 2.31.0: acceptedAt records accepted operations only); a refused trial leaves the working mesh and the carried state as they were',
+  );
+
+  // MO72 — never replaces: a candidate whose residual passes is refused when the comparison refuses it (a candidate hull
+  // vertex moved 5 world units in every candidate build, MO02's plant), and nothing is written.
+  const moved72 = motionStage(join(root, 'res-moved'), withResidual({ maxResidual: 1 }), (_call, doc, reference) => {
+    if (reference) return;
+    for (const b of clothOf(doc).vertices.bindings[0]) b.x += 5;
+  });
+  say(
+    'MO72_A_CANDIDATE_WHOSE_RESIDUAL_PASSES_AND_WHOSE_MOTION_FAILS_IS_REFUSED_AND_NOTHING_IS_WRITTEN',
+    geo66.row?.skinning_residual?.measured?.state === 'pass' && has(moved72.e, 'AUTO_MESH_MOTION', AT, 'MQ_LOCAL_DEFORMATION fail') && !existsSync(moved72.out) && r1.e === null,
+    `the residual of the candidate: ${geo66.row?.skinning_residual?.measured?.state} ${geo66.row?.skinning_residual?.measured?.value}; planted motion -> ${lines(moved72.e).slice(0, 400)}; unplanted -> ${lines(r1.e)}`,
+    'the brief (3c): the residual is a pose-free bound, not the motion verdict — a residual pass never writes a part the comparison refuses (rig-c MQ119: a candidate within the residual can still fold)',
+  );
+
+  // MO73 — absent = bytes identical: without the field no targets.skinning is built, the input's key is the one
+  // withSkinning leaves untouched, and the row and line carry nothing new; the field at a bound no step meets writes the
+  // same rig and a different report (the plant that shows the comparison would see a difference).
+  const posRow = auto(pos.rows[0]) as unknown as Record<string, unknown> | undefined;
+  const offInput = reductionOf(autoRigConfig()).input;
+  say(
+    'MO73_WITHOUT_THE_FIELD_NOTHING_IS_SENT_AND_THE_ROW_AND_LINE_ARE_AS_BEFORE_WITH_IT_THE_REPORT_DIFFERS',
+    offInput !== null &&
+      !('skinning' in offInput.targets) &&
+      reductionKey(withSkinning(offInput, null, undefined)) === reductionKey(offInput) &&
+      reductionKey(withSkinning(offInput, unit66, undefined)) === reductionKey(offInput) &&
+      posRow !== undefined &&
+      !('skinning_residual' in posRow) &&
+      !clothLine(pos).includes('; residual') &&
+      text(r1, 'rig.json') === text(pos, 'rig.json') &&
+      text(r1, 'mesh_report.json') !== text(pos, 'mesh_report.json'),
+    `targets keys without the field: ${offInput === null ? 'none' : Object.keys(offInput.targets).join(',')}; row keys ${posRow === undefined ? 'none' : Object.keys(posRow).join(',')}; with the field at 1 (nothing vetoed): rig.json same ${text(r1, 'rig.json') === text(pos, 'rig.json')}, mesh_report.json differs ${text(r1, 'mesh_report.json') !== text(pos, 'mesh_report.json')}`,
+    'existing inputs behave as before; the byte comparison against main over the three example builds is the pull request\'s table',
+  );
+
+  // MO74 — two runs with the field write the same bytes and print the same lines.
+  const r1b = motionStage(join(root, 'res-one-again'), withResidual({ maxResidual: 1 }));
+  const logOf = (r: MotionStageRun): string => r.log.join('\n').split(r.out).join('');
+  say(
+    'MO74_TWO_RUNS_WITH_THE_RESIDUAL_WRITE_THE_SAME_BYTES_AND_PRINT_THE_SAME_LINES',
+    r1.e === null && text(r1, 'rig.json') === text(r1b, 'rig.json') && text(r1, 'mesh_report.json') === text(r1b, 'mesh_report.json') && logOf(r1) === logOf(r1b) && logOf(r1) !== '',
+    `rig.json ${text(r1, 'rig.json') === text(r1b, 'rig.json')}, mesh_report.json ${text(r1, 'mesh_report.json') === text(r1b, 'mesh_report.json')}, log ${logOf(r1) === logOf(r1b)}`,
+    'determinism is a contract',
+  );
+
+  // MO75 — the veto holds what the row says: the written mesh under the planted bound, measured again by rig-c's
+  // measurement against the original source (an independent call), reads the row's value, within the bound; the
+  // reduction the veto does not touch, measured the same way, reads over it.
+  const measureAgainst = (mesh: ReducedMesh | null, i: MeshReductionInput | null, maxResidual: number): number | null => {
+    const sk = skinningOf(i);
+    if (mesh === null || i === null || sk === null) return null;
+    const rep = measureMeshQuality({
+      id: 'again',
+      attachment: i.attachment,
+      art: i.art,
+      source: { points: mesh.points.map(([x, y]) => [x, y] as [number, number]), uvs: [...mesh.uvs], triangles: [...mesh.triangles], hull: mesh.hull, weights: mesh.weights === null ? null : mesh.weights.map((l) => l.map((e) => ({ bone: e.bone, weight: e.weight }))) },
+      targets: { artFit: null, maxBoundaryDeviation: null, regions: [] },
+      referenceHull: null,
+      minArtSamples: i.minArtSamples,
+      regionArtSamples: [],
+      protect: null,
+      influences: i.influences,
+      boneOrder: i.boneOrder,
+      preset: null,
+      skinning: { source: { id: 'source', mesh: i.source }, envelope: sk.envelope, maxResidual, deform: [] },
+    });
+    return rowCode(rep, 'MQ_SKINNING_RESIDUAL')?.value ?? null;
+  };
+  const written75 = tight?.row?.skinning_residual?.measured?.value ?? null;
+  const again75 = half === null || full71 === null || 'code' in full71 ? null : measureAgainst(full71.mesh, tin, half);
+  const free75 = half === null || free === null || 'code' in free ? null : measureAgainst(free.mesh, tin, half);
+  say(
+    'MO75_THE_WRITTEN_MESH_MEASURED_AGAIN_READS_THE_ROWS_VALUE_WITHIN_THE_BOUND_AND_THE_UNVETOED_RESULT_READS_OVER_IT',
+    half !== null && written75 !== null && again75 !== null && Math.abs(again75 - written75) <= 1e-6 && written75 <= half && free75 !== null && free75 > half,
+    `bound ${half}; the row ${written75}; measured again ${again75}; the unvetoed result ${free75}`,
+    'rig-c 2.31.0 holds every step to the residual against the call\'s own source (accumulated error, MQ136); this reads the same quantity by the measurement half, not by the reducer',
+  );
+
+  // MO76 — the row and the clause by hand: empty without the field, the not-measurable clause names each stop, a
+  // passing reading prints its bound's operator and a failing one prints `>`.
+  const passRow: ResidualRow = { rule: RESIDUAL_RULE, max_residual: 1, sent: true, reference: 'hem0', envelope: [], stops: [], measured: { state: 'pass', value: 0.5, bound: { op: '<=', value: 1 }, worst: null, samples: 1, reason: null } };
+  const failRow: ResidualRow = { ...passRow, measured: { state: 'fail', value: 1.5, bound: { op: '<=', value: 1 }, worst: null, samples: 1, reason: null } };
+  const stopRow: ResidualRow = { ...passRow, sent: false, envelope: null, measured: null, stops: [{ bone: 'a', code: 'X', detail: '' }, { bone: 'b', code: 'Y', detail: '' }] };
+  say(
+    'MO76_THE_CLAUSE_IS_EMPTY_WITHOUT_THE_FIELD_NAMES_EACH_STOP_AND_TURNS_ITS_OPERATOR_ON_A_FAIL',
+    residualClause(undefined) === '' &&
+      residualClause(passRow) === '; residual 0.5 <= 1 (a pose-free bound, not the motion verdict)' &&
+      residualClause(failRow) === '; residual 1.5 > 1 (a pose-free bound, not the motion verdict)' &&
+      residualClause(stopRow) === '; residual not measurable: a X, b Y (veto not applied; the motion comparison decides)',
+    [undefined, passRow, failRow, stopRow].map((r) => JSON.stringify(residualClause(r))).join(' | '),
+    'the line is the UI: an agent reading it learns the reading, its bound, and that it is not the motion verdict, or which bone left it unmeasured',
   );
 }
 

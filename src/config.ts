@@ -327,6 +327,23 @@ export interface AutoMotionSpec {
    * or a complete walk.
    */
   selection?: AutoSelectionSpec;
+  /**
+   * The skinning residual as a per-step veto (issue #126, rig-c 2.31.0's
+   * `targets.skinning`, rigc#1295; `src/autoenvelope.ts`). Absent: nothing is
+   * sent and the stage is byte for byte the one it was before the field
+   * existed. `{ maxResidual }` (drawing px, 0 or more; the author's, never
+   * derived) asks rig-c to refuse every removal, boundary run and post-pass
+   * whose `MQ_SKINNING_RESIDUAL` against the original source exceeds it, under
+   * the envelope derived from the declared idle. The residual is a pose-free
+   * bound, not the motion verdict: the motion comparison still runs and still
+   * decides.
+   */
+  residual?: AutoResidualSpec;
+}
+
+/** `meshes.<part>.auto.motion.residual` (issue #126, rigc#1295): the author's bound on the skinning residual, drawing px. */
+export interface AutoResidualSpec {
+  maxResidual: number;
 }
 
 /** `meshes.<part>.auto.motion.selection` (issue #148): the one policy besides the bisection, and its probe budget. */
@@ -1233,8 +1250,13 @@ function checkAuto(c: Check, at: string, v: Json, bones: Set<string>): void {
     c.fail('CONFIG_FIELD_TYPE', `${at}.removalOrder`, `is ${show(o.removalOrder)}; "deformation-load" is required (the one order rig-c offers besides its default), or leave the field out for ascending source index`);
   }
   if ('motion' in o) {
-    const m = c.object(`${at}.motion`, o.motion, ['maxLocalDeformation'], ['maxStretch', 'minStretch', 'deformMayFold', 'gradation', 'selection']);
+    const m = c.object(`${at}.motion`, o.motion, ['maxLocalDeformation'], ['maxStretch', 'minStretch', 'deformMayFold', 'gradation', 'selection', 'residual']);
     if (m !== null) {
+      // issue #126 (rigc#1295): the skinning residual veto, opt-in; its bound is the author's number, never defaulted.
+      if ('residual' in m) {
+        const res = c.object(`${at}.motion.residual`, m.residual, ['maxResidual'], []);
+        if (res !== null && 'maxResidual' in res) c.number(`${at}.motion.residual.maxResidual`, res.maxResidual, 'non-negative');
+      }
       // issue #148: the multi-interval selection, opt-in; its budget is the author's whole number, never defaulted.
       if ('selection' in m) {
         const sel = c.object(`${at}.motion.selection`, m.selection, ['policy', 'maxProbes'], []);

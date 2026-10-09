@@ -45,6 +45,7 @@ import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
 import { allocationClause, type Reducer, stageBClause, unboundedClause } from './automesh.ts';
+import { residualClause } from './autoenvelope.ts';
 import { type AutoMotionCase, failingRows, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison } from './automotion.ts';
 import {
   bisectAccepted,
@@ -720,7 +721,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
         rp === undefined || run?.report === null || run === undefined
           ? ''
           : `; replayed to accepted step ${rp.chosen_step} of ${rp.accepted_steps} after ${rp.replays} replay(s); selection ${readingText(rp.selection, roleReadings(run.report).bound)}; held out ${readingText(rp.held_out, roleReadings(run.report).bound)}`;
-      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}${unboundedClause(m.residuals, m.settings.targets.artFit)}${allocationClause(m.residuals)}${stageBClause(m.settings, m.result)}; ${moved}${replayed}`);
+      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}${unboundedClause(m.residuals, m.settings.targets.artFit)}${allocationClause(m.residuals)}${stageBClause(m.settings, m.result)}${residualClause(m.skinning_residual)}; ${moved}${replayed}`);
     } else if ('mode' in m) {
       const c = m.contour;
       const stray = c.strayIslands === 0 ? '' : ` left out ${c.strayIslands} island(s), ${c.strayPixels} px`;
