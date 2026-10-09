@@ -449,9 +449,15 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    at alpha above 8), at `source.tolerance`, `source.margin` and the background `source.spacing`,
    with no region. It is gated by the contour mode's own checks, and their refusals
    (`CONTOUR_*`, the detail ending "the automatic mode's source, at alpha 1 and above") refuse the
-   part. Its weights are the contour mode's — segments and region falloff — under the author's
+   part. One reading differs from the contour mode's: the source's overshoot is measured with the
+   background flooded **8-connected** (rig-c 2.23.0's `measureAuthoredMeshFit` at connectivity 8,
+   the fill rig-c's `MQ_OVERSHOOT` and `reduceMesh`'s admission read), so a pocket of background
+   joined to the outside only at a corner counts as outside and a source spanning it is refused
+   here (`CONTOUR_OVERSHOOT`, "the background flooded 8-connected"), with the number rig-c would
+   read, rather than by rig-c's admission after the call. The row's `source.contour` says so
+   (`fitConnectivity: 8`); the contour mode keeps its 4-connected reading and writes no such key. Its weights are the contour mode's — segments and region falloff — under the author's
    `influences`, with no 0.03 floor unless the author writes one.
-2. **The call** — rig-c's `reduceMesh` (`rig-c/mesh`, 2.22.x) refines inside the declared
+2. **The call** — rig-c's `reduceMesh` (`rig-c/mesh`, 2.23.x) refines inside the declared
    regions, then removes vertices while every declared bound still holds. Every number it is
    handed is one of the fields below; `preset` is null (no preset exists yet: a preset will be a
    named, versioned set of these numbers, expanded into the report), and no deform key or linked

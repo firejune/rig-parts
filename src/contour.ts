@@ -234,6 +234,17 @@ export interface ContourParams {
   stray?: number;
   /** Refinement regions, in the order their points are placed. */
   regions: readonly ContourRegion[];
+  /**
+   * How {@link contourFit} floods the background to find the filled
+   * silhouette overshoot is measured from — rig-c's `measureAuthoredMeshFit`
+   * `connectivity` (2.23.0, rigc#1262). Absent is 4, the fill the contour
+   * mode has always read, and the report then carries no
+   * `fitConnectivity`; `8` is the fill rig-c's `MQ_OVERSHOOT` row reads (P12),
+   * so a background pocket joined to the outside only at a corner counts as
+   * outside. The automatic mode's source declares 8 ({@link
+   * AUTO_SOURCE_FIT_CONNECTIVITY} in `src/automesh.ts`).
+   */
+  fitConnectivity?: 4 | 8;
 }
 
 /** A triangle and a figure measured on it, by its index in `triangles`. */
@@ -262,6 +273,8 @@ export interface ContourReport {
   overshoot: number;
   /** `margin + tolerance + 1`, px — the settled bound overshoot is refused past. */
   overshootBound: number;
+  /** The fill overshoot was read against, as declared in {@link ContourParams.fitConnectivity}; absent when none was declared (4, the contour mode's). */
+  fitConnectivity?: 4 | 8;
   /** The area the outline encloses, px² (exact: the grid's shoelace sum). */
   meshArea: number;
   /** `meshArea − coveredArtPixels`, px²: the transparent area the mesh draws over. */
@@ -335,6 +348,7 @@ function parameterProblems(part: string, mask: AlphaMask, p: ContourParams): Pro
   };
   spacingOk('spacing', p.spacing);
   if (p.budget !== undefined && (!Number.isInteger(p.budget) || p.budget < 3)) bad('budget', `is ${p.budget}; a whole number of vertices, 3 or more, is required`);
+  if (p.fitConnectivity !== undefined && p.fitConnectivity !== 4 && p.fitConnectivity !== 8) bad('fitConnectivity', `is ${JSON.stringify(p.fitConnectivity)}; 4 or 8 is required (how the background is flooded when overshoot is measured)`);
   if (p.stray !== undefined && (!Number.isInteger(p.stray) || p.stray < 0)) bad('stray', `is ${p.stray}; a whole number of art pixels, 0 or more, is required (the largest island that may be left out)`);
   const names = new Set<string>();
   p.regions.forEach((r, i) => {
@@ -1185,6 +1199,14 @@ export function artMask(mask: AlphaMask, threshold: number): Mask {
  * term is `margin × 4`, its offset's miter clamp; the settled bound here is
  * `margin`, and this module's grown silhouette keeps it before simplification).
  * The refusal on coverage is any art pixel uncovered, not rigc's 99.5 %.
+ *
+ * `connectivity` is how the background is flooded to find that silhouette
+ * (rig-c 2.23.0's argument): 4 — the default, every reading this function
+ * made before — or 8, the fill rig-c's `MQ_OVERSHOOT` reads, where a pocket
+ * of background joined to the outside only at a corner is outside, so a mesh
+ * spanning it overshoots. The two agree on every mask without such a pocket.
+ * Only the overshoot depends on it; coverage counts art pixels, which no fill
+ * moves.
  */
 export function contourFit(
   part: string,
@@ -1193,12 +1215,14 @@ export function contourFit(
   bound: { margin: number; tolerance: number },
   vertices: ReadonlyArray<readonly [number, number]>,
   triangles: readonly number[],
+  connectivity: 4 | 8 = 4,
 ): { problems: Problem[]; artPixels: number; coveredArt: number; coverage: number; overshoot: number; overshootBound: number } {
   const fit = measureAuthoredMeshFit(
     mask,
     threshold + 1,
     vertices.map(([x, y]) => [x, y] as [number, number]),
     [...triangles],
+    connectivity,
   );
   const overshootBound = bound.margin + bound.tolerance + 1;
   const problems: Problem[] = [];
@@ -1214,7 +1238,7 @@ export function contourFit(
     problems.push({
       code: 'CONTOUR_OVERSHOOT',
       object,
-      detail: `the mesh reaches ${fit.overshoot} px past the art; at most margin ${bound.margin} + tolerance ${bound.tolerance} + 1 = ${overshootBound} px is required`,
+      detail: `the mesh reaches ${fit.overshoot} px past the art${connectivity === 8 ? " (the background flooded 8-connected, as rig-c's MQ_OVERSHOOT reads it)" : ''}; at most margin ${bound.margin} + tolerance ${bound.tolerance} + 1 = ${overshootBound} px is required`,
     });
   }
   return { problems, artPixels: fit.artPixels, coveredArt: fit.coveredArt, coverage: fit.artPixels === 0 ? 0 : fit.coveredArt / fit.artPixels, overshoot: fit.overshoot, overshootBound };
@@ -1394,7 +1418,7 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
   const vertices = X.map((x, i) => [x / GRID, Y[i] / GRID] as [number, number]);
   const triangles = counterClockwiseInSpineWorld(canonicalTriangles(mesh.tri));
   const problems = contourTopologyProblems(part, vertices, triangles, H);
-  const fit = contourFit(part, meshed, threshold, { margin, tolerance }, vertices, triangles);
+  const fit = contourFit(part, meshed, threshold, { margin, tolerance }, vertices, triangles, params.fitConnectivity ?? 4);
   problems.push(...fit.problems);
   if (params.budget !== undefined && vertices.length > params.budget) {
     problems.push({
@@ -1425,6 +1449,7 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
       coverage: fit.coverage,
       overshoot: fit.overshoot,
       overshootBound: fit.overshootBound,
+      ...(params.fitConnectivity === undefined ? {} : { fitConnectivity: params.fitConnectivity }),
       meshArea,
       enclosedTransparentArea: meshArea - fit.coveredArt,
       filledHolePixels,

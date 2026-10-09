@@ -2,7 +2,7 @@
  * The motion gate of the automatic mesh mode (issue #126, item 3): a reduced
  * mesh is written only when it moves like the mesh it was reduced from, on the
  * rig's own idle, measured by rig-c's `compareMeshesInMotion`
- * (`rig-c/meshcompare`, 2.22.x) and held to the bounds the author wrote in
+ * (`rig-c/meshcompare`, 2.23.x) and held to the bounds the author wrote in
  * `meshes.<part>.auto.motion` (`AutoMotionSpec`, `src/config.ts`).
  *
  * ## What is compared

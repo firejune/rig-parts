@@ -237,3 +237,32 @@ export const TWO_PIECES_MASK: AlphaMask = blocks(64, 48, [
  * on — AM34's declared region producing interior vertices. 16x12 block at (4, 4) in 24x20.
  */
 export const SMALL_STRIP_MASK: AlphaMask = blocks(24, 20, [[4, 4, 16, 12]]);
+
+/** The side of {@link diagonalPocketMask}'s pocket, px. */
+export const DIAGONAL_POCKET_SIDE = 7;
+
+/**
+ * A pocket of background joined to the outside only at a corner (AM45, AM46;
+ * rig-c 2.23.0's `connectivity`, rigc#1262): a 16x16 opaque block at (4, 4)
+ * in 24x24 with its corner pixel (4, 4) cleared and a 7x7 pocket at (5, 5)
+ * cleared. The pocket's 4-neighbours are art or pocket — its corner pixel
+ * (5, 5) has art at (4, 5) and (5, 4) — so a 4-connected flood of the
+ * background never enters it, while an 8-connected one does, through (4, 4).
+ * One 4-connected art island (the ring round the pocket closes along the
+ * block's other three sides). By hand, under {@link syntheticPolicy}'s source
+ * (tolerance 0, margin 1, bound 0 + 1 + 1 = 2): the contour mesh spans the
+ * pocket (its silhouette is the island with its 4-enclosed hole filled), and
+ * a margin of 1 adds only pixels 1 px from that silhouette, so
+ * - read 4-connected, the pocket is enclosed and filled; the covered pixels
+ *   outside the fill are the grown ring and the cleared corner, each 1 px from
+ *   art: overshoot **1**, under the bound;
+ * - read 8-connected, the pocket is outside; its centre pixel (8, 8) is
+ *   4 px from the nearest art centre ((4, 8), (12, 8), (8, 4), (8, 12)) and no
+ *   pocket pixel is further: overshoot **4** = (7 + 1) / 2, over the bound.
+ */
+export function diagonalPocketMask(): AlphaMask {
+  const m = blocks(24, 24, [[4, 4, 16, 16]]);
+  m.alpha[4 * 24 + 4] = 0;
+  for (let y = 5; y < 5 + DIAGONAL_POCKET_SIDE; y++) for (let x = 5; x < 5 + DIAGONAL_POCKET_SIDE; x++) m.alpha[y * 24 + x] = 0;
+  return m;
+}

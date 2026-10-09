@@ -185,8 +185,8 @@ import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, typ
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
 import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline, writeMeshQualityReport } from 'rig-c/mesh';
-import { autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
-import { AUTO_CASES, examplePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
+import { AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
+import { AUTO_CASES, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
 import { BLOCKED_LABEL, barsOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
 import { type AutoMotionCase, idleSchedule, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
@@ -16437,6 +16437,103 @@ function runAutoMeshSuite(): number {
       plantHits44[1].startsWith('planted.md'),
     `${tree44.length} text files scanned for ${sentinel44} (= ceil(${MAX_SIDE} x sqrt 2)) and ${name44}; hits ${hits44.join('; ') || 'none'}; planted -> ${plantHits44.join('; ')}`,
     'issue #126: the stand-in is retired, not renamed; a large number in a bound reads as a measured limit, and the next session would copy it',
+  );
+
+  // AM45 — the automatic mode's source gate reads overshoot 8-connected, the fill rig-c's admission reads: on a pocket
+  // of background joined to the outside only at a corner (fixtures/automesh.ts, by hand 4 at 8 and 1 at 4) autoSource
+  // refuses with this package's CONTOUR_OVERSHOOT naming 4, and the source the 4-connected reading would have passed is
+  // refused by rig-c's reduceMesh naming the same 4 — so the two gates now read one number. Positive: a block with no
+  // such pocket builds at 8, its report says 8, and its overshoot is the 4-connected reading's.
+  const pocket45 = diagonalPocketMask();
+  const policy45 = syntheticPolicy(8);
+  const src45 = autoSource('pocket', pocket45, policy45);
+  const srcParams45: ContourParams = { threshold: AUTO_THRESHOLD - 1, tolerance: policy45.source.tolerance, margin: policy45.source.margin, spacing: policy45.source.spacing, regions: [] };
+  const at4_45 = contourMesh('pocket', pocket45, srcParams45);
+  const admit45 = Array.isArray(at4_45) ? null : runReduction('pocket', autoReductionInput({ part: 'pocket', mask: pocket45, ox: 0, oy: 0, spec: policy45, source: at4_45, weights: null, boneOrder: [] }));
+  const admitText45 = admit45 === null ? 'no 4-connected source' : 'code' in admit45 ? problemLine(admit45) : terminationText(admit45.report.termination);
+  const hand45 = (DIAGONAL_POCKET_SIDE + 1) / 2;
+  const strip45 = autoSource('strip', STRIP_MASK, policy45);
+  const strip4_45 = contourMesh('strip', STRIP_MASK, { ...srcParams45, spacing: policy45.source.spacing });
+  const srcText45 = Array.isArray(src45) ? src45.map(problemLine).join('; ') : `built, overshoot ${src45.report.overshoot}`;
+  say(
+    'AM45_THE_AUTO_SOURCE_GATE_READS_OVERSHOOT_8_CONNECTED_AND_REFUSES_WHAT_RIG_C_ADMISSION_REFUSES_WITH_THE_SAME_NUMBER',
+    AUTO_SOURCE_FIT_CONNECTIVITY === 8 &&
+      Array.isArray(src45) &&
+      src45.length === 1 &&
+      src45[0].code === 'CONTOUR_OVERSHOOT' &&
+      src45[0].detail.startsWith(`the mesh reaches ${hand45} px past the art (the background flooded 8-connected`) &&
+      admitText45.includes('REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS') &&
+      admitText45.includes(`MQ_OVERSHOOT is ${hand45} against <= ${policy45.sourceBounds.maxOvershoot}`) &&
+      !Array.isArray(strip45) &&
+      !Array.isArray(strip4_45) &&
+      strip45.report.fitConnectivity === 8 &&
+      strip45.report.overshoot === strip4_45.report.overshoot,
+    `AUTO_SOURCE_FIT_CONNECTIVITY ${AUTO_SOURCE_FIT_CONNECTIVITY}; pocket: autoSource ${srcText45} (by hand ${hand45}); the 4-connected source handed to reduceMesh: ${admitText45.slice(0, 400)}; strip: ${Array.isArray(strip45) ? strip45.map(problemLine).join('; ') : `built at ${strip45.report.fitConnectivity}, overshoot ${strip45.report.overshoot}`} against ${Array.isArray(strip4_45) ? 'refused' : strip4_45.report.overshoot} at 4`,
+    'rig-c 2.23.0 (rigc#1262): measureAuthoredMeshFit at connectivity 8 is the fill MQ_OVERSHOOT and reduceMesh\'s admission read; a source this package gates at 4 could pass here and be refused by rig-c naming a number this package never printed (sample/hair_back, 2 px at 4 and 5.09902 at 8)',
+  );
+
+  // AM46 — the contour gate itself: the pocket passes at 4 (overshoot 1, by hand) and fails at 8 (4, by hand), whether
+  // read through contourMesh or contourFit; 4 is the default and the contour mode declares nothing (its report carries
+  // no fitConnectivity, src/rig.ts's call names none); a connectivity other than 4 or 8 is refused by name.
+  const c4_46 = contourMesh('pocket', pocket45, { ...srcParams45, tolerance: 0 });
+  const c8_46 = contourMesh('pocket', pocket45, { ...srcParams45, tolerance: 0, fitConnectivity: 8 });
+  const cx4_46 = contourMesh('pocket', pocket45, { ...srcParams45, tolerance: 0, fitConnectivity: 4 });
+  const c6_46 = contourMesh('pocket', pocket45, { ...srcParams45, fitConnectivity: 6 as unknown as 4 });
+  const fitDefault46 = Array.isArray(c4_46) ? null : contourFit('pocket', pocket45, 0, { margin: 1, tolerance: 0 }, c4_46.vertices, c4_46.triangles);
+  const fit8_46 = Array.isArray(c4_46) ? null : contourFit('pocket', pocket45, 0, { margin: 1, tolerance: 0 }, c4_46.vertices, c4_46.triangles, 8);
+  const rigSrc46 = readFileSync(join(ROOT, 'src', 'rig.ts'), 'utf8')
+    .split('\n')
+    .filter((l) => l.includes('contourMesh(p.name'));
+  const withoutKey46 = (r: Record<string, unknown>): string => JSON.stringify({ ...r, fitConnectivity: undefined });
+  say(
+    'AM46_A_DIAGONAL_ONLY_BACKGROUND_POCKET_PASSES_THE_CONTOUR_GATE_AT_4_AND_FAILS_IT_AT_8_AND_THE_CONTOUR_MODE_KEEPS_4',
+    !Array.isArray(c4_46) &&
+      c4_46.report.overshoot === 1 &&
+      !('fitConnectivity' in c4_46.report) &&
+      !Array.isArray(cx4_46) &&
+      cx4_46.report.fitConnectivity === 4 &&
+      withoutKey46({ ...cx4_46.report }) === withoutKey46({ ...c4_46.report }) &&
+      Array.isArray(c8_46) &&
+      c8_46.length === 1 &&
+      c8_46[0].code === 'CONTOUR_OVERSHOOT' &&
+      c8_46[0].detail.startsWith(`the mesh reaches ${hand45} px past the art`) &&
+      fitDefault46 !== null &&
+      fitDefault46.problems.length === 0 &&
+      fitDefault46.overshoot === 1 &&
+      fit8_46 !== null &&
+      fit8_46.overshoot === hand45 &&
+      fit8_46.problems.some((p) => p.code === 'CONTOUR_OVERSHOOT') &&
+      Array.isArray(c6_46) &&
+      c6_46.some((p) => p.code === 'CONTOUR_PARAMETER' && p.object.endsWith('fitConnectivity')) &&
+      rigSrc46.length === 1 &&
+      !rigSrc46[0].includes('fitConnectivity'),
+    `contourMesh at the default: ${Array.isArray(c4_46) ? c4_46.map(problemLine).join('; ') : `overshoot ${c4_46.report.overshoot}, fitConnectivity ${'fitConnectivity' in c4_46.report ? c4_46.report.fitConnectivity : 'absent'}`} (by hand 1); at 8: ${Array.isArray(c8_46) ? c8_46.map(problemLine).join('; ') : 'built'} (by hand ${hand45}); contourFit default ${fitDefault46?.overshoot} / at 8 ${fit8_46?.overshoot}; at 6: ${Array.isArray(c6_46) ? c6_46.map(problemLine).join('; ') : 'built'}; src/rig.ts contour call(s): ${rigSrc46.length}, naming a connectivity: ${rigSrc46.some((l) => l.includes('fitConnectivity'))}`,
+    'measured on the three public examples before choosing: no contour part changes verdict at 8, but the contour mode\'s mesh is admitted by nothing that reads 8, and moving it would change mesh_report.json and the meaning of every user\'s contour config with such a pocket; it keeps the reading it has always had',
+  );
+
+  // AM47 — the row records the connectivity: the auto row's source.contour says 8; a contour-mode row says nothing (its
+  // bytes are the ones it always wrote). Planted: the auto row's report with the key removed, and with 4, are both read
+  // as not 8 by the same reader.
+  const read47 = (r: object): string => ('fitConnectivity' in r ? String((r as { fitConnectivity: unknown }).fitConnectivity) : 'missing');
+  const dropped47 = (r: object): object => {
+    const c: Record<string, unknown> = { ...r };
+    delete c.fitConnectivity;
+    return c;
+  };
+  const auto47 = buildRig(parseConfig(autoRigConfig()), rigParts(), rigImages()).meshReport.find((m): m is AutoMeshReport => 'mode' in m && m.mode === 'auto');
+  const contour47 = buildRig(parseConfig(contourRigConfig()), rigParts(), rigImages()).meshReport.find((m) => 'mode' in m && m.mode === 'contour');
+  const contourRep47: object | undefined = contour47 !== undefined && 'contour' in contour47 ? contour47.contour : undefined;
+  const planted47 = auto47 === undefined ? [] : [read47({ ...auto47.source.contour, fitConnectivity: undefined }), read47(dropped47(auto47.source.contour)), read47({ ...auto47.source.contour, fitConnectivity: 4 })];
+  say(
+    'AM47_THE_AUTO_ROW_RECORDS_THE_CONNECTIVITY_ITS_SOURCE_WAS_GATED_AT_AND_A_CONTOUR_ROW_RECORDS_NONE',
+    auto47 !== undefined &&
+      read47(auto47.source.contour) === '8' &&
+      contourRep47 !== undefined &&
+      read47(contourRep47) === 'missing' &&
+      planted47.length === 3 &&
+      planted47.every((v) => v !== '8'),
+    `auto row source.contour.fitConnectivity: ${auto47 === undefined ? 'no auto row' : read47(auto47.source.contour)}; contour row: ${contourRep47 === undefined ? 'no contour row' : read47(contourRep47)}; planted (undefined, removed, 4): ${planted47.join(', ')}`,
+    'mesh_report.json is what an agent reads when it cannot see the mesh: which fill the overshoot figure was taken against is part of the figure, and the contour mode, which did not change, writes what it wrote',
   );
 
   return bad();
