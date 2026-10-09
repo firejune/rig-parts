@@ -69,7 +69,8 @@ import { DEFAULT_LIMITS, type Influence, influences, type InfluenceLimits, type 
 /**
  * A region as the weights read it: rig px (or any frame, as long as the point
  * is in the same one), y down — the fields a contour region and an automatic
- * mode's region (`src/automesh.ts`) both carry.
+ * mode's weight-and-density region (`src/automesh.ts`) both carry; a
+ * density-only automatic region (issue #155) has no bone and is never read here.
  */
 export type WeightRegion =
   | { name: string; shape: 'circle'; cx: number; cy: number; r: number; band: number; bone: string }

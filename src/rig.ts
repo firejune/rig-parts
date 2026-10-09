@@ -81,7 +81,7 @@
  * touches the disk, and the same inputs give the same bytes (key order is the
  * order the objects are built in, and every number is rounded by `pyRound`).
  */
-import { type AutoSpec, type BoneEntry, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, ROOT_BONE } from './config.ts';
+import { type AutoSpec, type BoneEntry, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, ROOT_BONE, weightsABone } from './config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import type { MeshCounts, MeshQualityReport, MeshReductionInput, MotionAmplitude, ReducedMesh, Termination } from 'rig-c/mesh';
@@ -413,7 +413,8 @@ export interface AutoMeshReport {
     influences: { maxInfluences: number; minWeight: number };
     budget: { maxCandidates: number };
     minArtSamples: number;
-    regions: Array<{ name: string; bone: string; band: number; maxEdgeLength: number; transition: number; grade: number; minArtSamples: number; approximation: { from: string; policy: string; maxError: number } | null }>;
+    /** A density-only region (issue #155) echoes `bone` and `band` as null: it declares neither. */
+    regions: Array<{ name: string; bone: string | null; band: number | null; maxEdgeLength: number; transition: number; grade: number; minArtSamples: number; approximation: { from: string; policy: string; maxError: number } | null }>;
     preset: null;
     /** The amplitude rig-c read and echoed (`effective.motionAmplitude`), after the opt-ins; absent when none was sent. */
     motionAmplitude?: MotionAmplitude;
@@ -442,7 +443,8 @@ export interface AutoMeshReport {
   skinning_residual?: ResidualRow;
   termination: Termination;
   weights: { sharesDroppedOnGrid: number; sharesPruned: number; droppedAtFivePlaces: number };
-  regions: Array<{ name: string; bone: string; reached: number; whole: number; bound_in_result: number }>;
+  /** A density-only region (issue #155): `bone` null, and 0 vertices reached, whole and bound — it weights nothing. */
+  regions: Array<{ name: string; bone: string | null; reached: number; whole: number; bound_in_result: number }>;
   /**
    * Only on a part whose full reduction the motion gate refused and whose
    * acceptance loop wrote a replayed step instead (`src/autoreplay.ts`): the
@@ -612,7 +614,7 @@ export function buildRig(
     }
     if ('auto' in m) {
       (m.auto.regions ?? []).forEach((rg, i) => {
-        if (!B.has(rg.bone)) fail('RIG_NAME_RESOLVES', `config.meshes.${part}.auto.regions[${i}].bone`, `names the bone "${rg.bone}", which config.bones does not declare`);
+        if (weightsABone(rg) && !B.has(rg.bone)) fail('RIG_NAME_RESOLVES', `config.meshes.${part}.auto.regions[${i}].bone`, `names the bone "${rg.bone}", which config.bones does not declare`);
       });
     }
     const out: Segment[] = [];
@@ -712,7 +714,7 @@ export function buildRig(
   // A contour region's control bone is weighted to like a segment's bone (issue #84), so the idle's keys on it move
   // to its control under `ctl` as theirs do. A config with no contour region adds nothing here.
   for (const m of Object.values(cfg.meshes)) if ('contour' in m) for (const rg of m.contour.regions ?? []) meshBones.add(rg.bone);
-  for (const m of Object.values(cfg.meshes)) if ('auto' in m) for (const rg of m.auto.regions ?? []) meshBones.add(rg.bone);
+  for (const m of Object.values(cfg.meshes)) if ('auto' in m) for (const rg of m.auto.regions ?? []) if (weightsABone(rg)) meshBones.add(rg.bone);
   const meshKeyed = controlledBones(motion, meshBones);
   const controls = idleKeys === 'ctl' ? meshKeyed : [];
   for (const k of controls) {
@@ -1001,7 +1003,7 @@ export function buildRig(
         const shares = roundShares(list);
         droppedAtFivePlaces += list.length - shares.length;
         regions.forEach((rg, k) => {
-          if (shares.some((s) => s.bone === rg.bone)) boundTo[k]++;
+          if (weightsABone(rg) && shares.some((s) => s.bone === rg.bone)) boundTo[k]++;
         });
         const ent: WeightEntry[] = shares.map(({ bone, weight }) => {
           const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
@@ -1027,7 +1029,7 @@ export function buildRig(
       }
     }
     const bones = new Set(segs.map((s) => s.bone));
-    for (const rg of regions) bones.add(rg.bone);
+    for (const rg of regions) if (weightsABone(rg)) bones.add(rg.bone);
     const pro = input.protect;
     // The attachment and the row of one accepted mesh and the report it came with: the full result's, or a replay's (src/autoreplay.ts).
     // The Stage B opt-ins the author set, echoed after `preset` only when set (rigc#1271): a part that sets none writes the row it always wrote.
@@ -1063,8 +1065,8 @@ export function buildRig(
             minArtSamples: input.minArtSamples,
             regions: regions.map((rg, k) => ({
               name: rg.name,
-              bone: rg.bone,
-              band: rg.band,
+              bone: weightsABone(rg) ? rg.bone : null,
+              band: weightsABone(rg) ? rg.band : null,
               maxEdgeLength: rg.maxEdgeLength,
               transition: rg.transition,
               grade: rg.grade,
@@ -1085,7 +1087,7 @@ export function buildRig(
           ...(residualSpec === undefined || envelope === null ? {} : { skinning_residual: residualRow(residualSpec.maxResidual, segs[0].bone, envelope, report) }),
           termination: report.termination as Termination,
           weights: { sharesDroppedOnGrid: candidate.changes?.sharesDroppedOnGrid ?? 0, sharesPruned: candidate.changes?.sharesPruned ?? 0, droppedAtFivePlaces },
-          regions: regions.map((rg, k) => ({ name: rg.name, bone: rg.bone, reached: reached[k], whole: whole[k], bound_in_result: boundTo[k] })),
+          regions: regions.map((rg, k) => ({ name: rg.name, bone: weightsABone(rg) ? rg.bone : null, reached: reached[k], whole: whole[k], bound_in_result: boundTo[k] })),
           deformation: DEFORMATION_UNMEASURED,
           quality_report: qualityDocument(report),
         },

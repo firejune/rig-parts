@@ -73,6 +73,9 @@ What an author who adopts the new mode meets (AUTHORING §3, *An automatic mesh*
 - **`motion.gradation`** (#150, opt-in): the author's G for rig-c's allocation
   contrast row.
 - **`motion.residual`** (#152, opt-in): the skinning residual as a per-step veto.
+- **Density-only regions** (#155, opt-in): an `auto.regions` entry may leave out both
+  `bone` and `band` to ask rig-c for density without touching any weight; one without
+  the other is refused by name, and a region with both reads as before.
 
 Without any of these the mode's output is what it was before each was added: every
 pull request that added one compared the opt-out run against the tree before it,

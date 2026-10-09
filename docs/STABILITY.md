@@ -123,7 +123,7 @@ part name, `[i]` an entry of a list):
 - **meshes.&lt;part&gt;.auto.motion.selection** — required: `policy`, `maxProbes`
 - **meshes.&lt;part&gt;.auto.motion.residual** — required: `maxResidual`
 - **meshes.&lt;part&gt;.auto.protect** — optional: `hull`, `vertices`, `edges`, `regionBoundaries`, `weightJump`, `influences`
-- **meshes.&lt;part&gt;.auto.regions[i]** — required: `name`, `shape`, `bone`, `band`, `maxEdgeLength`, `transition`, `grade`, `minArtSamples`, and `cx`, `cy`, `r` for a circle or `points` for a polygon
+- **meshes.&lt;part&gt;.auto.regions[i]** — required: `name`, `shape`, `maxEdgeLength`, `transition`, `grade`, `minArtSamples`, and `cx`, `cy`, `r` for a circle or `points` for a polygon; optional: `bone`, `band` (both or neither; with neither the region is density only)
 - **meshes.&lt;part&gt;.auto.boundaryRuns** — required: `maxVertices`
 - **regions.&lt;part&gt;** — a bone name
 - **motion** — required: `duration`, `tracks`; optional: `blink`

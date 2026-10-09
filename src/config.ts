@@ -365,17 +365,42 @@ export interface ArtFitBoundsSpec {
 }
 
 /**
- * A density region of the automatic mode: a shape and a control bone as a
- * contour region has them, the bone's weight `band` (the same falloff,
- * `src/localweights.ts`), and the density rig-c holds the mesh to (§5 of
- * its contract): every edge meeting the region at most `maxEdgeLength` px
- * (L0), relaxing as `L0 + grade·d` across `transition` px outside it, and the
- * region's art sample floor (P9). Coordinates and `band` are multiples of
- * 1/256 px, as a contour region's.
+ * A region of the automatic mode, in one of two forms (issue #155).
+ *
+ * - **Weight and density** ({@link AutoWeightRegionSpec}): a shape and a
+ *   control bone as a contour region has them, the bone's weight `band` (the
+ *   same falloff, `src/localweights.ts`), and the density rig-c holds the
+ *   mesh to (§5 of its contract): every edge meeting the region at most
+ *   `maxEdgeLength` px (L0), relaxing as `L0 + grade·d` across `transition` px
+ *   outside it, and the region's art sample floor (P9).
+ * - **Density only** ({@link AutoDensityRegionSpec}): the same shape and
+ *   density with no `bone` and no `band`. It is handed to rig-c exactly as the
+ *   first form's density is, and it takes no part in the weights: no vertex's
+ *   `g` comes from it, it adds no bone to `protect.influences`, and a source
+ *   vertex inside it is weighted as one no region reaches. A vertex rig-c
+ *   inserts there carries rig-c's interpolation of its source triangle (§6),
+ *   as every inserted vertex does in either form.
+ *
+ * The two are told apart by `bone`: the loader takes `bone` and `band`
+ * together or neither, and refuses either alone by name. Coordinates and
+ * `band` are multiples of 1/256 px, as a contour region's.
  */
-export type AutoRegionSpec =
+export type AutoRegionSpec = AutoWeightRegionSpec | AutoDensityRegionSpec;
+
+/** An automatic-mode region that weights its bone and asks for density (the one form before issue #155). */
+export type AutoWeightRegionSpec =
   | { name: string; shape: 'circle'; cx: number; cy: number; r: number; band: number; bone: string; maxEdgeLength: number; transition: number; grade: number; minArtSamples: number }
   | { name: string; shape: 'polygon'; points: Point[]; band: number; bone: string; maxEdgeLength: number; transition: number; grade: number; minArtSamples: number };
+
+/** An automatic-mode region that asks for density and weights nothing (issue #155): no `bone`, no `band`. */
+export type AutoDensityRegionSpec =
+  | { name: string; shape: 'circle'; cx: number; cy: number; r: number; maxEdgeLength: number; transition: number; grade: number; minArtSamples: number }
+  | { name: string; shape: 'polygon'; points: Point[]; maxEdgeLength: number; transition: number; grade: number; minArtSamples: number };
+
+/** Whether an automatic-mode region weights a bone: the loader admits `bone` and `band` together or neither (issue #155). */
+export function weightsABone(rg: AutoRegionSpec): rg is AutoWeightRegionSpec {
+  return 'bone' in rg;
+}
 
 export interface SingleTrack {
   bone: string;
@@ -1330,8 +1355,15 @@ function checkAuto(c: Check, at: string, v: Json, bones: Set<string>): void {
       const rat = `${at}.regions[${i}]`;
       const shape = typeof rv === 'object' && rv !== null && !Array.isArray(rv) ? (rv as Record<string, Json>).shape : undefined;
       const own = shape === 'circle' ? ['cx', 'cy', 'r'] : shape === 'polygon' ? ['points'] : [];
-      const r = c.object(rat, rv, ['name', 'shape', 'bone', 'band', 'maxEdgeLength', 'transition', 'grade', 'minArtSamples', ...own], []);
+      const r = c.object(rat, rv, ['name', 'shape', 'maxEdgeLength', 'transition', 'grade', 'minArtSamples', ...own], ['bone', 'band']);
       if (r === null) return;
+      // issue #155: `bone` and `band` together are the weight-and-density form, neither is the density-only form; one alone is refused.
+      if ('band' in r && !('bone' in r)) {
+        c.fail('CONFIG_REGION_BAND_NEEDS_BONE', `${rat}.band`, `is ${show(r.band)} and the region names no bone; a band is the falloff of a bone's weight — add "bone", or leave "band" out for a density-only region`);
+      }
+      if ('bone' in r && !('band' in r)) {
+        c.fail('CONFIG_REGION_BONE_NEEDS_BAND', `${rat}.bone`, `is ${show(r.bone)} and the region declares no band; a region that weights a bone needs the band its weight falls off across (0 for a hard edge) — add "band", or leave "bone" out for a density-only region`);
+      }
       if ('shape' in r && own.length === 0) c.fail('CONFIG_FIELD_TYPE', `${rat}.shape`, `is ${show(r.shape)}; "circle" (with cx, cy, r) or "polygon" (with points) is required`);
       if ('name' in r && c.string(`${rat}.name`, r.name)) {
         if (names.has(r.name)) c.fail('CONFIG_REGION_NAME_UNIQUE', `${rat}.name`, `"${r.name}" is declared twice in this mesh; each region needs its own name`);

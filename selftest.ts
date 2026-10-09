@@ -191,7 +191,7 @@ import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
 import { type AcceptedOperation, type AlphaMask, checkHullOrder, type TrackAmplitude, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, type ReductionSkinning, simplifyClosedPolygon, traceAlphaOutline, traceOutline, windCounterClockwiseInSpineWorld, writeMeshQualityReport } from 'rig-c/mesh';
 import { allocationClause, AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, stageBClause, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
-import { AUTO_CASES, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, finerSourcePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
+import { AUTO_CASES, densityOnly, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, finerSourcePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
 import { BLOCKED_LABEL, barsOf, basisOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
 import { type BStar, bStar, type CellRow as ToolCellRow, nearestRank, parseArgs as parseBoundaryArgs, pendingRow, policyAt, render as renderBoundary, sagittas, sagittaSummary } from './tools/auto_boundary_survey.ts';
@@ -220,6 +220,7 @@ import {
 import { type AmplitudeDerivation, deriveMotionAmplitude, trackTheta } from './src/autoamplitude.ts';
 import { deriveEnvelope, type EnvelopeBasis, type EnvelopeDerivation, RESIDUAL_RULE, residualClause, type ResidualRow, residualRow, withSkinning } from './src/autoenvelope.ts';
 import { type VetoTally, vetoTally } from './tools/veto_tally.ts';
+import { commonSurvivors, densitySquare, pruneShares, weightDiff } from './tools/auto_density_survey.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec, ConfigConstraint } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
@@ -17189,6 +17190,313 @@ function runAutoMeshSuite(): number {
       planted47.every((v) => v !== '8'),
     `auto row source.contour.fitConnectivity: ${auto47 === undefined ? 'no auto row' : read47(auto47.source.contour)}; contour row: ${contourRep47 === undefined ? 'no contour row' : read47(contourRep47)}; planted (undefined, removed, 4): ${planted47.join(', ')}`,
     'mesh_report.json is what an agent reads when it cannot see the mesh: which fill the overshoot figure was taken against is part of the figure, and the contour mode, which did not change, writes what it wrote',
+  );
+
+  // ---------------------------------------------------------------------------
+  // issue #155: the density-only region (AM48-AM55). A region with no bone and no band asks rig-c for density and
+  // weights nothing; the weight-and-density form is unchanged (AM05, AM06, AM18, AM19, AM21 hold it as before).
+  // ---------------------------------------------------------------------------
+  const denseRaw = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ name: 'pinch', shape: 'circle', cx: 18, cy: 14, r: 2, maxEdgeLength: 2, transition: 1, grade: 1, minArtSamples: 1, ...over });
+  const densePoly = { name: 'patch', shape: 'polygon', points: [[6, 6], [10, 6], [10, 10], [6, 10]], maxEdgeLength: 2, transition: 1, grade: 1, minArtSamples: 1 };
+
+  // AM48 — both forms load: a circle and a polygon with neither bone nor band, beside a region with both.
+  const e48 = load(autoRigConfig((_c, a) => (a.regions = [denseRaw(), densePoly, region({ name: 'weighted', cx: 14 })])));
+  const read48 = e48 === null ? parseConfig(autoRigConfig((_c, a) => (a.regions = [denseRaw(), densePoly, region({ name: 'weighted', cx: 14 })]))) : null;
+  const regs48 = read48 === null ? [] : (read48.meshes.cloth as { auto: AutoSpec }).auto.regions ?? [];
+  say(
+    'AM48_A_DENSITY_ONLY_REGION_LOADS_IN_EITHER_SHAPE_BESIDE_A_REGION_THAT_WEIGHTS_A_BONE',
+    e48 === null && regs48.length === 3 && !('bone' in regs48[0]) && !('band' in regs48[0]) && !('bone' in regs48[1]) && 'bone' in regs48[2] && 'band' in regs48[2],
+    `loader: ${lines(e48)}; regions read: ${regs48.map((rg) => `${rg.name} (${rg.shape}${'bone' in rg ? `, bone ${rg.bone}, band ${rg.band}` : ', density only'})`).join(', ')}`,
+    'issue #155: the density rig-c holds a mesh to (contract §5) is separable from the weight band this package adds; a region that leaves both bone and band out declares density alone, and the form with both is read as before',
+  );
+
+  // AM49 — a band with no bone is refused by its own name, alone.
+  const e49 = load(autoRigConfig((_c, a) => (a.regions = [denseRaw({ band: 2 })])));
+  say(
+    'AM49_A_REGION_WITH_A_BAND_AND_NO_BONE_IS_REFUSED_BY_NAME',
+    e49 !== null && e49.problems.length === 1 && has(e49, 'CONFIG_REGION_BAND_NEEDS_BONE', `${AT}.regions[0].band`, 'names no bone') && e48 === null,
+    `planted band 2 without bone: ${lines(e49)}; positive (AM48's regions): ${lines(e48)}`,
+    'a band is the falloff of a bone\'s weight, so a band with no bone is neither form: refused by name rather than read as density only (the band silently ignored) or as a bone guessed',
+  );
+
+  // AM50 — a bone with no band is refused by its own name, alone.
+  const e50 = load(autoRigConfig((_c, a) => (a.regions = [denseRaw({ bone: 'soft' })])));
+  say(
+    'AM50_A_REGION_WITH_A_BONE_AND_NO_BAND_IS_REFUSED_BY_NAME',
+    e50 !== null && e50.problems.length === 1 && has(e50, 'CONFIG_REGION_BONE_NEEDS_BAND', `${AT}.regions[0].bone`, 'declares no band') && e48 === null,
+    `planted bone "soft" without band: ${lines(e50)}; positive (AM48's regions): ${lines(e48)}`,
+    'never invent a value: a region that weights a bone needs its band, and no band is defaulted (0 is a hard edge the author writes)',
+  );
+
+  // The strip of AM19, weighted to a (top edge) and b (bottom edge), r 8, the author's limits 4 / 0 (no floor):
+  // the same source with no region, with AM19's square as density only, and with it weighting "soft".
+  const segs51 = [{ bone: 'a', a: [0, 0] as Point, b: [64, 0] as Point }, { bone: 'b', a: [0, 48] as Point, b: [64, 48] as Point }];
+  const square51 = { ...squareRegion(32, 24, 4, 2), band: 2 };
+  const none51 = { ...regionSpec(), regions: [] };
+  const dense51 = { ...regionSpec(), regions: [densityOnly(square51)] };
+  const bone51 = { ...regionSpec(), regions: [square51] };
+  const listKey = (l: ReadonlyArray<{ bone: string; weight: number }>): string => l.map((e) => `${e.bone}:${e.weight}`).join(',');
+  const sortedKey = (l: ReadonlyArray<{ bone: string; weight: number }>): string => listKey([...l].sort((p, q) => (p.bone < q.bone ? -1 : 1)));
+  const sw51 = (spec: AutoSpec): ReturnType<typeof sourceWeights> | null => (Array.isArray(strip19) ? null : sourceWeights(strip19.vertices, 0, 0, segs51, 8, spec));
+  const swNone = sw51(none51);
+  const swDense = sw51(dense51);
+  const swBone = sw51(bone51);
+  const ran51 =
+    swDense !== null && 'weights' in swDense && !Array.isArray(strip19)
+      ? runReduction('strip', autoReductionInput({ part: 'strip', mask: STRIP_MASK, ox: 0, oy: 0, spec: dense51, source: strip19, weights: swDense.weights, boneOrder: ['a', 'b'] }))
+      : null;
+  const mesh51 = ran51 !== null && !('code' in ran51) ? ran51.mesh : null;
+
+  // AM51 — a density-only region leaves every source vertex's weights byte-identical to the part with no region, and
+  // every survivor of the reduction keeps them; the bone-band form, planted, is seen to differ.
+  let detail51 = 'no source or no weights';
+  let ok51 = false;
+  if (swNone !== null && swDense !== null && swBone !== null && 'weights' in swNone && 'weights' in swDense && 'weights' in swBone) {
+    const n = swNone.weights.length;
+    const sameSource = swDense.weights.filter((l, v) => listKey(l) === listKey(swNone.weights[v])).length;
+    const reachedDense = swDense.local.filter((li) => li.region >= 0 || li.g !== 0).length;
+    const differBone = swBone.weights.filter((l, v) => listKey(l) !== listKey(swNone.weights[v])).length;
+    let survivors = 0;
+    let survivorsDiffer = 0;
+    if (mesh51 !== null && mesh51.weights !== null) {
+      const out = mesh51.weights as Array<Array<{ bone: string; weight: number }>>;
+      mesh51.indexMap.forEach((r, v) => {
+        if (r === null) return;
+        survivors++;
+        if (sortedKey(out[r]) !== sortedKey(swNone.weights[v])) survivorsDiffer++;
+      });
+    }
+    ok51 = n > 0 && sameSource === n && reachedDense === 0 && differBone > 0 && mesh51 !== null && survivors > 0 && survivorsDiffer === 0 && mesh51.inserted.length > 0;
+    detail51 =
+      `${sameSource} of ${n} source vertices carry the same weights with the density-only region as with none (no vertex given a region or a g: ${reachedDense} reached); ` +
+      `${mesh51 === null ? `reduction: ${ran51 === null ? 'not run' : 'code' in ran51 ? problemLine(ran51) : terminationText(ran51.report.termination)}` : `${survivors} survivors of the reduction, ${survivorsDiffer} differ from the no-region weights; ${mesh51.inserted.length} vertices inserted`}; ` +
+      `planted (the same square weighting "soft", band 2): ${differBone} source vertices differ`;
+  }
+  say(
+    'AM51_A_DENSITY_ONLY_REGION_LEAVES_EVERY_SOURCE_AND_SURVIVING_VERTEXS_WEIGHTS_IDENTICAL_TO_THE_PART_WITH_NO_REGION',
+    ok51,
+    detail51,
+    'issue #155: a density-only region contributes nothing to any vertex\'s g, so the source the reduction is handed is weighted as with no region, and a survivor keeps the source\'s bindings bit for bit (P19, AM19); the same square as the bone-band form changes the weights, so the comparison can fail',
+  );
+
+  // AM52 — every inserted vertex carries rig-c's §6 interpolation: the barycentric mix of the source triangle that
+  // holds it (the first by index whose smallest coordinate is the largest), on the 6-decimal weight grid with the last
+  // share closing at 1 − others, so within 1e-6 of the unrounded mix (one grid half-unit on each of two shares). The
+  // lattice rule at the same point, planted, is seen to miss: it is not linear in position.
+  let detail52 = 'no reduction';
+  let ok52 = false;
+  if (mesh51 !== null && mesh51.weights !== null && !Array.isArray(strip19) && swDense !== null && 'weights' in swDense) {
+    const src = strip19;
+    const out = mesh51.weights as Array<Array<{ bone: string; weight: number }>>;
+    const mix = (p: Point): Map<string, number> => {
+      let best = -1;
+      let bestMin = -Infinity;
+      let bestL: number[] = [];
+      for (let t = 0; t * 3 + 2 < src.triangles.length; t++) {
+        const [A, B, C] = [src.vertices[src.triangles[t * 3]], src.vertices[src.triangles[t * 3 + 1]], src.vertices[src.triangles[t * 3 + 2]]];
+        const det = (B[1] - C[1]) * (A[0] - C[0]) + (C[0] - B[0]) * (A[1] - C[1]);
+        if (Math.abs(det) < 1e-12) continue;
+        const l0 = ((B[1] - C[1]) * (p[0] - C[0]) + (C[0] - B[0]) * (p[1] - C[1])) / det;
+        const l1 = ((C[1] - A[1]) * (p[0] - C[0]) + (A[0] - C[0]) * (p[1] - C[1])) / det;
+        const l = [l0, l1, 1 - l0 - l1];
+        if (Math.min(...l) > bestMin + 1e-12) {
+          best = t;
+          bestMin = Math.min(...l);
+          bestL = l;
+        }
+      }
+      const clamped = bestL.map((v) => Math.max(0, v));
+      const sum = clamped.reduce((s, v) => s + v, 0);
+      const shares = new Map<string, number>();
+      [0, 1, 2].forEach((i) => {
+        for (const e of swDense.weights[src.triangles[best * 3 + i]]) shares.set(e.bone, (shares.get(e.bone) ?? 0) + (clamped[i] / sum) * e.weight);
+      });
+      return shares;
+    };
+    const within = (got: ReadonlyArray<{ bone: string; weight: number }>, want: Map<string, number>, tol: number): boolean => {
+      const bones = new Set([...got.map((e) => e.bone), ...[...want.entries()].filter(([, w]) => w > 0).map(([b]) => b)]);
+      return [...bones].every((b) => Math.abs((got.find((e) => e.bone === b)?.weight ?? 0) - (want.get(b) ?? 0)) <= tol);
+    };
+    const TOL = 1e-6 + 1e-12;
+    let held = 0;
+    let missed = 0;
+    let latticeMissed = 0;
+    let shiftedCaught = 0;
+    for (const r of mesh51.inserted) {
+      const p = mesh51.points[r] as Point;
+      const want = mix(p);
+      if (within(out[r], want, TOL)) held++;
+      else missed++;
+      const lattice = new Map(influences(p, segs51, 8, { maxInfluences: 4, minWeight: 0 }).map((e) => [e.bone, e.weight]));
+      if (!within(out[r], lattice, TOL)) latticeMissed++;
+      const shifted = new Map([...want.entries()].map(([b, w], i) => [b, i === 0 ? w + 3e-6 : w]));
+      if (!within(out[r], shifted, TOL)) shiftedCaught++;
+    }
+    const n = mesh51.inserted.length;
+    ok52 = n > 0 && held === n && missed === 0 && latticeMissed > 0 && shiftedCaught === n;
+    detail52 = `${held} of ${n} inserted vertices within 1e-6 of the §6 mix of their source triangle, ${missed} not; planted: the lattice rule at the same point misses ${latticeMissed} of ${n}; the mix moved by 3e-6 on one share is caught on ${shiftedCaught} of ${n}`;
+  }
+  say(
+    'AM52_EVERY_INSERTED_VERTEX_OF_A_DENSITY_ONLY_REGION_CARRIES_RIG_CS_SECTION_6_INTERPOLATION_NOT_THE_LATTICE_RULE',
+    ok52,
+    detail52,
+    'issue #155 as restated: parts weights only the source; rig-c inserts the refined vertices and gives each the interpolation of its source triangle, then prunes (contract §6) — the rule the bone-band form\'s inserted vertices carry too. The lattice rule (normalised 1/(d+r)^2 per bone) is not linear in position, so the two disagree inside a triangle, and the withdrawn wording would have asked parts to rewrite a mesh rig-c gated',
+  );
+
+  // AM53 — the hand-off: the density-only region reaches rig-c as the bone-band form's region does, the same polygon,
+  // density and art-sample floor, and adds nothing to protect.influences; the bone-band form, planted, adds its bone.
+  let detail53 = 'no source';
+  let ok53 = false;
+  if (!Array.isArray(strip19)) {
+    const input = (spec: AutoSpec): MeshReductionInput => autoReductionInput({ part: 'strip', mask: STRIP_MASK, ox: 0, oy: 0, spec, source: strip19, weights: null, boneOrder: ['a', 'b', 'soft'] });
+    const iNone = input(none51);
+    const iDense = input(dense51);
+    const iBone = input(bone51);
+    const sameTargets = JSON.stringify(iDense.targets.regions) === JSON.stringify(iBone.targets.regions) && iDense.targets.regions.length === 1;
+    const sameFloors = JSON.stringify(iDense.regionArtSamples) === JSON.stringify(iBone.regionArtSamples);
+    const guardedDense = JSON.stringify(iDense.protect.influences);
+    const rest = (i: MeshReductionInput): string => reductionKey({ ...i, targets: { ...i.targets, regions: [] }, regionArtSamples: [], protect: { ...i.protect, influences: [] } });
+    ok53 = sameTargets && sameFloors && guardedDense === JSON.stringify(iNone.protect.influences) && iBone.protect.influences.includes('soft') && rest(iDense) === rest(iNone) && rest(iBone) === rest(iNone);
+    detail53 = `targets.regions the same as the bone-band form's: ${sameTargets}; regionArtSamples the same: ${sameFloors}; protect.influences ${guardedDense} (no region: ${JSON.stringify(iNone.protect.influences)}); every other field of the input the no-region input's: ${rest(iDense) === rest(iNone)}; planted bone-band form: protect.influences ${JSON.stringify(iBone.protect.influences)}`;
+  }
+  say(
+    'AM53_A_DENSITY_ONLY_REGION_REACHES_RIG_C_AS_THE_SAME_REFINEMENT_TARGET_AND_GUARDS_NO_INFLUENCE',
+    ok53,
+    detail53,
+    'rig-c\'s RefinementRegion is geometry only, so the two forms hand it the same region; the region bone is guarded so an inserted vertex never loses its share (AM19), and a region with no bone has no share to guard',
+  );
+
+  // AM54 — overlap: two density-only regions reaching the same source vertices are accepted (they decide no weight,
+  // and rig-c holds each region's rows on its own, §5); a density-only region over a bone-band one leaves that one's
+  // weights; two bone-band regions over the same vertices, planted, are still refused, named by their index in the
+  // mesh's list with a density-only region before them.
+  let detail54 = 'no source';
+  let ok54 = false;
+  if (!Array.isArray(strip19) && swNone !== null && swBone !== null && 'weights' in swNone && 'weights' in swBone) {
+    const shifted = { ...squareRegion(34, 24, 8, 2), name: 'soft2', band: 2 };
+    const wide = { ...squareRegion(32, 24, 8, 2), band: 2 };
+    const twoDense = { ...regionSpec(), regions: [densityOnly(wide), densityOnly(shifted)] };
+    const sw2 = sourceWeights(strip19.vertices, 0, 0, segs51, 8, twoDense);
+    const same2 = 'weights' in sw2 && sw2.weights.every((l, v) => listKey(l) === listKey(swNone.weights[v]));
+    const in2 = autoReductionInput({ part: 'strip', mask: STRIP_MASK, ox: 0, oy: 0, spec: twoDense, source: strip19, weights: 'weights' in sw2 ? sw2.weights : null, boneOrder: ['a', 'b'] });
+    const ran2 = runReduction('strip', in2);
+    const verdict2 = 'code' in ran2 ? null : autoVerdict('strip', ran2);
+    const mixed = { ...regionSpec(), regions: [densityOnly(wide), square51] };
+    const swMixed = sourceWeights(strip19.vertices, 0, 0, segs51, 8, mixed);
+    const sameMixed = 'weights' in swMixed && swMixed.weights.every((l, v) => listKey(l) === listKey(swBone.weights[v]));
+    const reachedMixed = 'local' in swMixed ? swMixed.local.filter((li) => li.region === 1).length : -1;
+    const reachedBone = swBone.local.filter((li) => li.region === 0).length;
+    const planted = { ...regionSpec(), regions: [densityOnly(wide), wide, { ...shifted, bone: 'soft' }] };
+    const swPlanted = sourceWeights(strip19.vertices, 0, 0, segs51, 8, planted);
+    const fired = 'overlap' in swPlanted && swPlanted.overlap.first === 1 && swPlanted.overlap.second === 2;
+    ok54 = same2 && in2.targets.regions.length === 2 && verdict2 !== null && verdict2.accepted && sameMixed && reachedMixed === reachedBone && reachedBone > 0 && fired;
+    detail54 =
+      `two overlapping density-only regions: weights as with none ${same2}, rig-c handed ${in2.targets.regions.length} regions, ${verdict2 === null ? `refused: ${'code' in ran2 ? problemLine(ran2) : ''}` : verdict2.accepted ? `accepted (${verdict2.mesh.points.length} vertices)` : problemLine(verdict2.problem)}; ` +
+      `density-only over the bone-band square: weights as the bone-band square alone ${sameMixed}, its vertices reached ${reachedMixed} (alone: ${reachedBone}); ` +
+      `planted two bone-band squares after a density-only one: ${'overlap' in swPlanted ? `overlap of regions ${swPlanted.overlap.first} and ${swPlanted.overlap.second} at source vertex ${swPlanted.vertex}` : 'no overlap'}`;
+  }
+  say(
+    'AM54_DENSITY_ONLY_REGIONS_MAY_OVERLAP_ANY_REGION_AND_TWO_WEIGHT_REGIONS_OVER_ONE_VERTEX_ARE_STILL_REFUSED',
+    ok54,
+    detail54,
+    'RIG_CONTOUR_REGIONS_OVERLAP exists because two falloffs would both decide a vertex\'s weight; a density-only region decides none, so overlapping it changes no weight (by program, above), and rig-c measures and refines each region on its own rows (§5), the smallest bound holding an edge — the rule is kept, unchanged, between two regions that weight a bone',
+  );
+
+  // AM55 — the rig stage: the row says what a density-only region is — bone and band null, nothing reached or bound —
+  // and its bone list and guarded influences name no region bone; AM18's bone-band row, planted, names "soft".
+  let r55: AutoMeshReport | null = null;
+  const e55 = refusals(() => {
+    const out = buildRig(parseConfig(autoRigConfig((_c, a) => (a.regions = [denseRaw()]))), rigParts(), rigImages());
+    r55 = (out.meshReport.find((m) => m.part === 'cloth' && 'mode' in m && m.mode === 'auto') as AutoMeshReport | undefined) ?? null;
+  });
+  const got55 = r55 as AutoMeshReport | null;
+  const row55 = got55?.regions[0];
+  const set55 = got55?.settings.regions[0];
+  say(
+    'AM55_THE_ROW_OF_A_DENSITY_ONLY_REGION_ECHOES_BONE_AND_BAND_AS_NULL_AND_BINDS_NO_REGION_BONE',
+    e55 === null &&
+      got55 !== null &&
+      row55 !== undefined &&
+      set55 !== undefined &&
+      row55.name === 'pinch' &&
+      row55.bone === null &&
+      row55.reached === 0 &&
+      row55.whole === 0 &&
+      row55.bound_in_result === 0 &&
+      set55.bone === null &&
+      set55.band === null &&
+      set55.maxEdgeLength === 2 &&
+      !got55.bones.includes('soft') &&
+      !got55.settings.protect.influences.includes('soft') &&
+      got55.result.insertedVertices > 0 &&
+      got18 !== null &&
+      got18.regions[0]?.bone === 'soft' &&
+      got18.settings.regions[0]?.band === 2,
+    `${e55 !== null ? `refused: ${lines(e55)}` : got55 === null ? 'no auto row' : `row regions ${JSON.stringify(got55.regions)}; settings bone ${set55?.bone} band ${set55?.band} L0 ${set55?.maxEdgeLength}; bones ${got55.bones.join(', ')}; guarded ${JSON.stringify(got55.settings.protect.influences)}; ${got55.result.insertedVertices} inserted`}; planted (AM18's bone-band row): ${got18 === null ? 'no row' : `${JSON.stringify(got18.regions[0])}, band ${got18.settings.regions[0]?.band}`}`,
+    'mesh_report.json is what an agent reads: a region that declares no bone is written as null, never as a bone or band this package picked, and its counts of vertices reached and bound are 0 because it weights nothing',
+  );
+
+  // AM56 — tools/auto_density_survey.ts's instruments on AM51's strip: weightDiff and commonSurvivors count every vertex
+  // as AM51/AM52 do, the prune reproduction matches a hand case, the square is the stated rule; each planted change is
+  // counted against it.
+  let detail56 = 'no reduction';
+  let ok56 = false;
+  if (mesh51 !== null && mesh51.weights !== null && !Array.isArray(strip19) && swNone !== null && swDense !== null && 'weights' in swNone && 'weights' in swDense) {
+    const rules = { maxInfluences: 4, minWeight: 0, guarded: [] as string[], boneOrder: ['a', 'b'] };
+    const src = { points: strip19.vertices, triangles: strip19.triangles };
+    const d = weightDiff(swNone.weights, swDense.weights, src, mesh51, rules);
+    const outW = mesh51.weights as Array<Array<{ bone: string; weight: number }>>;
+    const firstSurvivor = mesh51.indexMap.findIndex((r) => r !== null);
+    const nudged = swDense.weights.map((l, v) => (v === firstSurvivor ? l.map((e, i) => (i === 0 ? { bone: e.bone, weight: e.weight + Number.EPSILON } : e)) : l));
+    const dSurv = weightDiff(swNone.weights, nudged, src, mesh51, rules);
+    const firstInserted = mesh51.inserted[0];
+    const shiftedMesh = { ...mesh51, weights: outW.map((l, r) => (r === firstInserted ? l.map((e, i) => (i === 0 ? { bone: e.bone, weight: pyRound(e.weight + 1e-6, 6) } : e)) : l)) };
+    const dIns = weightDiff(swNone.weights, swDense.weights, src, shiftedMesh, rules);
+    const both = commonSurvivors(mesh51, mesh51);
+    const bothPlanted = commonSurvivors(mesh51, shiftedMesh.weights === null ? mesh51 : { ...mesh51, weights: outW.map((l, r) => (r === mesh51.indexMap[firstSurvivor] ? l.map((e, i) => (i === 0 ? { bone: e.bone, weight: e.weight + Number.EPSILON } : e)) : l)) });
+    // The hand case: shares 0.5, 0.3, 0.15, 0.04, 0.01 under a cap of 4 drop 0.01 and renormalise by 0.99:
+    // 0.505051, 0.30303, 0.151515 on the grid, and the last closes at 1 - 0.959596 = 0.040404.
+    const pruned = pruneShares(new Map([['a', 0.5], ['b', 0.3], ['c', 0.15], ['d', 0.04], ['e', 0.01]]), { maxInfluences: 4, minWeight: 0, guarded: [], boneOrder: ['a', 'b', 'c', 'd', 'e'] });
+    const prunedOk = JSON.stringify(pruned) === JSON.stringify([{ bone: 'a', weight: 0.505051 }, { bone: 'b', weight: 0.30303 }, { bone: 'c', weight: 0.151515 }, { bone: 'd', weight: 0.040404 }]);
+    const overCap = pruneShares(new Map([['a', 0.5], ['b', 0.5]]), { maxInfluences: 1, minWeight: 0, guarded: ['a', 'b'], boneOrder: ['a', 'b'] });
+    // The square on a hand circle: centre (10.5, 20.5), radius 27, grid 28 — half side floor(27 / sqrt 2 * 256) / 256 =
+    // 4887 / 256 = 19.08984375 (27 / sqrt 2 * 256 = 4887.52...); L0 14, transition 27, grade 14 / 27.
+    const sq = densitySquare({ cx: 10.5, cy: 20.5, r: 27 }, 28);
+    const sqOk =
+      sq.shape === 'polygon' &&
+      JSON.stringify(sq.points) === JSON.stringify([[10.5 - 19.08984375, 20.5 - 19.08984375], [10.5 + 19.08984375, 20.5 - 19.08984375], [10.5 + 19.08984375, 20.5 + 19.08984375], [10.5 - 19.08984375, 20.5 + 19.08984375]]) &&
+      sq.maxEdgeLength === 14 &&
+      sq.transition === 27 &&
+      sq.grade === 14 / 27 &&
+      !('bone' in sq) &&
+      !('band' in sq);
+    ok56 =
+      d.sourceVertices > 0 &&
+      d.sourceIdentical === d.sourceVertices &&
+      d.survivors > 0 &&
+      d.survivorsIdentical === d.survivors &&
+      d.inserted === mesh51.inserted.length &&
+      d.inserted > 0 &&
+      d.insertedInterpolated === d.inserted &&
+      dSurv.survivorsIdentical === d.survivors - 1 &&
+      dSurv.sourceIdentical === d.sourceVertices - 1 &&
+      dIns.insertedInterpolated === d.inserted - 1 &&
+      both.both === d.survivors &&
+      both.identical === both.both &&
+      bothPlanted.identical === both.both - 1 &&
+      prunedOk &&
+      overCap === null &&
+      sqOk;
+    detail56 =
+      `strip: source ${d.sourceIdentical}/${d.sourceVertices}, survivors ${d.survivorsIdentical}/${d.survivors}, inserted reproduced exactly ${d.insertedInterpolated}/${d.inserted}, common survivors ${both.identical}/${both.both}; ` +
+      `planted: one ulp on a survivor's source -> source ${dSurv.sourceIdentical}, survivors ${dSurv.survivorsIdentical}; 1e-6 on an inserted vertex -> ${dIns.insertedInterpolated}; one ulp on a common survivor -> ${bothPlanted.identical}; ` +
+      `prune hand case ${JSON.stringify(pruned)}; two guarded over a cap of 1 -> ${JSON.stringify(overCap)}; square ${JSON.stringify(sq)}`;
+  }
+  say(
+    'AM56_THE_DENSITY_SURVEYS_WEIGHT_DIFF_COUNTS_EVERY_VERTEX_REPRODUCES_SECTION_6_EXACTLY_AND_CATCHES_EACH_PLANT',
+    ok56,
+    detail56,
+    'the evidence page\'s weight table is a program\'s count, so the program is held here: on a fixture whose counts AM51 and AM52 establish independently it must agree, and one ulp on a survivor, one grid step on an inserted share and one ulp on a common survivor must each cost exactly one vertex; the prune reproduction is held to a hand-computed case',
   );
 
   // ---------------------------------------------------------------------------
