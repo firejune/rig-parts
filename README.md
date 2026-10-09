@@ -293,7 +293,8 @@ agent skill.
 `rig-parts --help` has every flag. Exit codes: 0 done, 1 input refused (every
 reason is a FAIL line), 2 a usage error or a command this version does not implement.
 
-What is held stable from 1.0.0-rc.1 — these commands and their flags, the config
+What 1.0.0 will hold stable, frozen for review as of 1.0.0-rc.1 so that it can be read
+and objected to before 1.0.0 — these commands and their flags, the config
 fields, the files a build writes and their spec ids, the environment, and what this
 package relies on in rig-c — and what is not, is [docs/STABILITY.md](docs/STABILITY.md).
 Coming from 0.16.0: [docs/MIGRATION.md](docs/MIGRATION.md).
