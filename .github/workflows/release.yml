@@ -11,7 +11,7 @@
 #
 # Two constraints are load-bearing, do not "simplify" them away:
 #   - The publish must stay in THIS file. npm's trusted publisher for
-#     spine-parts is pinned to the workflow filename `release.yml`.
+#     rig-parts is pinned to the workflow filename `release.yml`.
 #   - It must stay on a GitHub-hosted runner. npm does not support OIDC from
 #     self-hosted runners.
 name: release

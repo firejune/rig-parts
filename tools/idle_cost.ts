@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * What a built rig's idle costs per frame, measured through spine-core
- * (spine-parts #13).
+ * (rig-parts #13).
  *
  *     bun tools/idle_cost.ts [--seconds 10] [--fps 60] [--runs 5] [--json <file>] <label>=<build dir> ...
  *

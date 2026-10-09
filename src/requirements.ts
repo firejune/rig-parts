@@ -639,7 +639,7 @@ export function forceMix(rig: Record<string, unknown>, motion: Record<string, un
 
 /** Why the released copy declares its constraint consumer-driven, written into the copy's `invariants.consumerDrivenMix`. */
 export function releasedWhy(f: FollowRequirement): string {
-  return `spine-parts check --requirements: the released pose of follow requirement "${f.name}" forces this mix to 0 on a throwaway copy; the rig under test is not altered`;
+  return `rig-parts check --requirements: the released pose of follow requirement "${f.name}" forces this mix to 0 on a throwaway copy; the rig under test is not altered`;
 }
 
 /**

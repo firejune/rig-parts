@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * The Spine editor's example atlases measured as a population, and a rigc
- * build's atlas measured by the same instrument (spine-parts #54).
+ * build's atlas measured by the same instrument (rig-parts #54).
  *
  *     bun tools/atlas_population.ts [--json <file>] [--spine-runtimes <dir>] [<label>=<build dir>] ...
  *
@@ -19,7 +19,7 @@
  *   These files are Esoteric Software's, licensed for evaluating the runtimes:
  *   the directory is read at run time and nothing from it is kept.
  * - `<label>=<build dir>` is a directory holding `skeleton.atlas`, its page(s)
- *   and `skeleton.json` as `rigc build --pack` writes them (`spine-parts build`
+ *   and `skeleton.json` as `rigc build --pack` writes them (`rig-parts build`
  *   puts them in `<out>/check/build/`).
  *
  * The atlas is read by spine-core's own `TextureAtlas` (pages, regions, bounds)

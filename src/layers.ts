@@ -302,7 +302,7 @@ function stubCanvas(): void {
   if (canvasStubbed) return;
   initializeCanvas(
     () => {
-      throw new Error('spine-parts reads PSD pixel data only; this PSD asked for a canvas');
+      throw new Error('rig-parts reads PSD pixel data only; this PSD asked for a canvas');
     },
     (width: number, height: number) =>
       ({ width, height, data: new Uint8ClampedArray(width * height * 4), colorSpace: 'srgb' }) as PsdImageData,

@@ -2,16 +2,20 @@
 'use strict';
 
 /**
- * spine-parts' `bin` entry has one job: hand off to Bun.
+ * rig-parts' `bin` entry has one job: hand off to Bun.
  *
  * npm's `bin` field has to be something any installed Node can run, but
- * spine-parts is a Bun program (it runs its TypeScript sources directly, and so
+ * rig-parts is a Bun program (it runs its TypeScript sources directly, and so
  * does rig-c underneath it). Without this file, a machine with no Bun
  * would fail as a bare `env: bun: No such file or directory`, with no hint
  * why. So: if `bun` is on PATH, run the real CLI (cli.ts, next to this file)
  * under it and disappear — argv, stdio, the exit code and signals all pass
  * straight through. If it isn't, say so once and stop. No downloads, no
  * network, no writes — just the hand-off or the message.
+ *
+ * package.json installs this one file under two command names: `rig-parts`,
+ * and the package's former name, kept as a second `bin` entry for the
+ * transition so a script written against it still runs.
  */
 
 const path = require('node:path');
@@ -22,9 +26,9 @@ const result = spawnSync('bun', [cli, ...process.argv.slice(2)], { stdio: 'inher
 
 if (result.error) {
   if (result.error.code === 'ENOENT') {
-    process.stderr.write('spine-parts runs on Bun, which was not found on PATH — install it from https://bun.sh\n');
+    process.stderr.write('rig-parts runs on Bun, which was not found on PATH — install it from https://bun.sh\n');
   } else {
-    process.stderr.write(`spine-parts: could not launch bun: ${result.error.message}\n`);
+    process.stderr.write(`rig-parts: could not launch bun: ${result.error.message}\n`);
   }
   process.exit(1);
 }

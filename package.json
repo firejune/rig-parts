@@ -1,10 +1,11 @@
 {
-  "name": "spine-parts",
+  "name": "rig-parts",
   "version": "0.16.0",
   "description": "AI-authored Spine 2D character parts from one anime painting and its See-through layer decomposition: measured parts, weighted-mesh rig specs, verified through rig-c before anything is written. A CLI for agents that cannot see the image.",
   "type": "module",
   "bin": {
-    "spine-parts": "./bin/spine-parts.cjs"
+    "rig-parts": "./bin/rig-parts.cjs",
+    "spine-parts": "./bin/rig-parts.cjs"
   },
   "engines": {
     "bun": ">=1.2.0"
@@ -13,10 +14,10 @@
   "author": "firejune",
   "repository": {
     "type": "git",
-    "url": "https://github.com/firejune/spine-parts.git"
+    "url": "https://github.com/firejune/rig-parts.git"
   },
-  "homepage": "https://github.com/firejune/spine-parts#readme",
-  "bugs": "https://github.com/firejune/spine-parts/issues",
+  "homepage": "https://github.com/firejune/rig-parts#readme",
+  "bugs": "https://github.com/firejune/rig-parts/issues",
   "keywords": [
     "spine",
     "spine2d",
@@ -36,7 +37,7 @@
     "cli"
   ],
   "files": [
-    "bin/spine-parts.cjs",
+    "bin/rig-parts.cjs",
     "cli.ts",
     "src",
     "workflows",

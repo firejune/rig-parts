@@ -19,7 +19,9 @@
 # on every run.
 node_modules
 .DS_Store
-# `npm pack` output, from checking what a publish would ship.
+# `npm pack` output, from checking what a publish would ship; a checkout of a
+# tag before the rename packs under the former name.
+/rig-parts-*.tgz
 /spine-parts-*.tgz
 # Local-only areas: session notes, a private corpus link, scratch output. Never
 # committed; the corpus is read with `bun run selftest -- --corpus <dir>` and

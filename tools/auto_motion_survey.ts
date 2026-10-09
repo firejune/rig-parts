@@ -298,7 +298,7 @@ function main(): void {
     process.exit(1);
   }
   const rigcBin = findRigc(ROOT, '');
-  const work = mkdtempSync(join(tmpdir(), 'spine-parts-auto-motion-survey-'));
+  const work = mkdtempSync(join(tmpdir(), 'rig-parts-auto-motion-survey-'));
   const results: MotionCell[] = [];
   let disagreements = 0;
   try {

@@ -69,7 +69,7 @@
   ],
   "packages": {
     ".": {
-      "package-name": "spine-parts",
+      "package-name": "rig-parts",
       "changelog-path": "CHANGELOG.md",
       "include-component-in-tag": false
     }

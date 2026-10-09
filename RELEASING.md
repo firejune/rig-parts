@@ -57,8 +57,10 @@ owner adds it in the commit after.
 ## The first publish, by hand
 
 npm trusted publishing is configured on a package's settings page, and the page
-does not exist until the package does. So `spine-parts@0.1.0` goes up by hand,
-from the tagged tree, and every version after it is the workflow's:
+does not exist until the package does. So the first version under a name goes up
+by hand, from the tagged tree, and every version after it is the workflow's. That
+was 0.1.0 under the package's former name; under `rig-parts` it is the first
+version cut after the rename, with that version's tag in place of `v0.1.0` below:
 
 ```sh
 npm login                        # once per machine; `npm whoami` to check
@@ -75,11 +77,11 @@ published by the workflow or by hand. `publishConfig.access` already says
 
 ### The registry side (owner, npmjs.com), after the first publish
 
-npmjs.com → **spine-parts** → **Settings** → **Trusted Publisher** → *GitHub
+npmjs.com → **rig-parts** → **Settings** → **Trusted Publisher** → *GitHub
 Actions*:
 
 - Organization or user: `firejune`
-- Repository: `spine-parts`
+- Repository: `rig-parts`
 - Workflow filename: `release.yml`
 - Environment name: *blank* (the workflow declares none)
 - Allowed actions: `npm publish`
@@ -110,7 +112,7 @@ publish. The workflow passes `--provenance` on the command line instead.
 3. **Approve its `ci` run.** A `pull_request` run started by `GITHUB_TOKEN`
    lands in `action_required`, so the required check reads as blocked until a
    human approves it (**Approve and run** in the Actions tab, or `gh api -X POST
-   repos/firejune/spine-parts/actions/runs/<id>/approve`). A `workflow_dispatch`
+   repos/firejune/rig-parts/actions/runs/<id>/approve`). A `workflow_dispatch`
    run on the same commit does not satisfy a required check: it is matched by
    the run that reported it, not by the SHA.
 4. **Merge it.** That is the cut.

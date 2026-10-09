@@ -45,19 +45,19 @@ here (gitignored).
 ## What is tracked
 
 - `config.json` — the config the build reads.
-- `proposal.json` — what `spine-parts propose --parts <build> --source painting.png`
+- `proposal.json` — what `rig-parts propose --parts <build> --source painting.png`
   writes on the parts of the build in `expected/` (selftest `CH06`, `PR52`). #119
   moved the first two points of the `robe_l` chain by 1 and 2 px from what the
   proposer wrote on the parts assembled before it (`[503, 410]`, `[513, 541]` →
   `[502, 410]`, `[511, 541]`); the config followed the proposal in those two values.
-- `sheets/` — `spine-parts sheet` contact sheets, written by this port as PNG (demo's
+- `sheets/` — `rig-parts sheet` contact sheets, written by this port as PNG (demo's
   and sample's are the reference implementation's JPEGs): the painting with the full
   run's layers, the painting with the head run's layers, and the painting with the
   24 assembled parts of the `expected/` build.
 - `expected/` — **this port's own build**, rebuilt by issue #118 (which moved
   `bottomwear` to contour mode and `TIP_OVER_ROOT` to the geometry; `parts.json` did
   not move):
-  `spine-parts build --config examples/scarf/config.json --source
+  `rig-parts build --config examples/scarf/config.json --source
   inputs/painting.png --full inputs/layers/full --head inputs/layers/head --out
   <dir>`, the call the selftest's chain suite makes. The reference implementation
   never saw this character, so there is no reference output to compare with: the

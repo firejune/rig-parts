@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "spine-parts",
+      "name": "rig-parts",
       "dependencies": {
         "ag-psd": "^31.0.2",
         "rig-c": "^2.24.0",

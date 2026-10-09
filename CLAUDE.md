@@ -5,7 +5,7 @@ link to this file.
 
 ## What this is
 
-spine-parts takes one anime character painting and its
+rig-parts takes one anime character painting and its
 [See-through](https://github.com/shitagaki-lab/see-through) layer decomposition
 and produces Spine-ready parts — `parts/*.png`, `parts.json` (per-part
 provenance and measurements), and `rig.json` / `motion.json` in
@@ -21,7 +21,7 @@ still registered as not implemented.
 
 An agent building a character rig from a painting cannot see the painting, the
 layers or the result. A pipeline that only reports "done" lets it report
-success on a broken rig and be sincere about it. spine-parts exists, like
+success on a broken rig and be sincere about it. rig-parts exists, like
 rig-c under it, to convert that silence into named failures.
 
 - **The messages are the UI.** A refusal names the rule, the object, the value
@@ -43,14 +43,14 @@ rig-c under it, to convert that silence into named failures.
   it owns has passed, and the rig stages write only after rig-c's round
   trip has passed. A wrong file on disk outlives the console that warned about
   it.
-- 🔒 **rig-c's gate is not optional here either.** spine-parts does not
+- 🔒 **rig-c's gate is not optional here either.** rig-parts does not
   emit Spine data itself; it hands a rig spec to rig-c, whose `build`
   validates before it writes. Which validator runs is rigc's launcher's
   choice, by whether `@esotericsoftware/spine-core` resolves beside it: the
   spine-core round trip where it does, rigc's own validator over the compiled
   model document where it does not, and the report's last lines say which
   ran. In this repository and its CI the runtime is a development
-  dependency, so the round trip runs here; an install of spine-parts carries
+  dependency, so the round trip runs here; an install of rig-parts carries
   no Spine runtime and runs rigc's own gate, and `check.json` records which
   gated the build. `build`'s gate is the one gate: rigc runs it once over the
   compile and once over the packed pages on disk, under `spine-html`, which
@@ -105,8 +105,9 @@ paintings, their See-through runs, the parts and configs the reference produced
 - ⛔ No LAN address (`TY03`), no Korean text (`TY02`): the repository is English
   only, and a host is the user's, supplied at run time.
 - ✅ The corpus is **read** with `bun run selftest -- --corpus <dir>` (or
-  `SPINE_PARTS_CORPUS=<dir>`), which reads every `layers.json` and `parts.json`
-  under it and writes nothing. A named corpus that does not exist exits 2; no
+  `RIG_PARTS_CORPUS=<dir>`; the former `SPINE_PARTS_CORPUS` is read when it is
+  not set), which reads every `layers.json` and `parts.json` under it and writes
+  nothing. A named corpus that does not exist exits 2; no
   corpus is a SKIP and a HOLE, never a pass.
 - ✅ Measurements taken against it may be quoted as figures ("18 of 18 layer
   sets read green"), never as content.

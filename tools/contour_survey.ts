@@ -14,7 +14,7 @@
  *   each tolerance, and the overshoot each passing cell measured (a margin
  *   above 0 and below 1 px is refused by name, so the sweep's margins are 0
  *   and 1 or more).
- * - **examples**: `<key>=<build dir>` is a `spine-parts build --out` directory
+ * - **examples**: `<key>=<build dir>` is a `rig-parts build --out` directory
  *   of the public example `examples/<key>/` — its `rig/images/<part>.png` are
  *   the padded images the rig stage gave `latticeMesh`, and
  *   `examples/<key>/config.json` names the mesh parts and their grids. Each

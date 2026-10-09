@@ -77,7 +77,7 @@ export const REFERENCE_ID = 'source';
 export const CANDIDATE_ID = 'reduced';
 
 /** The `why` written into `invariants.deformMayFold` for a part whose `motion.deformMayFold` is true. */
-export const DEFORM_MAY_FOLD_WHY = 'spine-parts: the author set meshes.<part>.auto.motion.deformMayFold, so the motion gate lists this slot\'s folds rather than refusing them';
+export const DEFORM_MAY_FOLD_WHY = 'rig-parts: the author set meshes.<part>.auto.motion.deformMayFold, so the motion gate lists this slot\'s folds rather than refusing them';
 
 /**
  * The schedule of the motion gate: the idle as `check` renders it (module

@@ -1,6 +1,6 @@
 /**
  * A rig directory the `check` controls generate on every run: the smallest
- * thing `spine-parts check` accepts, authored by hand here and built with the
+ * thing `rig-parts check` accepts, authored by hand here and built with the
  * installed rig-c, so the whole check — build, the gate, the idle
  * render, the loop, the seam — runs in the selftest without a corpus.
  *
@@ -267,7 +267,7 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
 // ---------------------------------------------------------------------------
 
 /**
- * The shape issue #77 measures: two spine-parts characters merged into one
+ * The shape issue #77 measures: two rig-parts characters merged into one
  * rig spec outside the package — bone and slot names prefixed, both
  * hierarchies under one root, a region slot at index 0 for a background plate
  * — and no `parts.json`, because no assemble made the merged canvas.

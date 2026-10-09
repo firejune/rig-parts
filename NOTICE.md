@@ -1,9 +1,9 @@
 # Third-party notices
 
-spine-parts' own code is MIT (see `LICENSE`). It depends on, reads the output
+rig-parts' own code is MIT (see `LICENSE`). It depends on, reads the output
 of, or reimplements the behaviour of the third-party work below, each under its
 own terms. Naming a project here identifies where something comes from; it does
-not imply that its authors endorse spine-parts.
+not imply that its authors endorse rig-parts.
 
 Every statement below is either quoted from the named source or marked
 **[observed]** with the date and the place it was read. Upstream terms can
@@ -11,10 +11,10 @@ change; check the source when it matters.
 
 ## 1. See-through
 
-spine-parts takes See-through's output as its input. **spine-parts does not
+rig-parts takes See-through's output as its input. **rig-parts does not
 vendor, embed or redistribute See-through code or weights**: the user runs
 See-through by one of the routes in the README (*See-through routes*) and points
-spine-parts at what it wrote.
+rig-parts at what it wrote.
 
 - Project: [shitagaki-lab/see-through](https://github.com/shitagaki-lab/see-through)
 - Paper: Jian Lin, Chengze Li, Haoyun Qin, Kwun Wang Chan, Yanghua Jin, Hanyuan
@@ -31,7 +31,7 @@ spine-parts at what it wrote.
   repository (`LICENSE` on the default branch `master` returns 404, and GitHub
   reports no licence); `pyproject.toml` declares `license = "MIT"`.
 
-spine-parts reads the wrapper's `layers.json` manifest format; it contains no
+rig-parts reads the wrapper's `layers.json` manifest format; it contains no
 wrapper code.
 
 ### Weights
@@ -46,52 +46,52 @@ wrapper code.
 Maintainer statement, on the Hugging Face discussion
 [`layerdifforg/seethroughv0.0.2_layerdiff3d/discussions/1`](https://huggingface.co/layerdifforg/seethroughv0.0.2_layerdiff3d/discussions/1)
 (user `24yearsold`, 2026-04-07): *"Yes all our models are aligned with our main
-repo to use Apache 2.0."* The 2026-09-28 card revision above narrows that: Apache-2.0 for the maintainers' contributions, with the base models' Open RAIL terms inherited. spine-parts does not distribute these weights; a user who fetches them accepts the terms the card states on the day they fetch.
+repo to use Apache 2.0."* The 2026-09-28 card revision above narrows that: Apache-2.0 for the maintainers' contributions, with the base models' Open RAIL terms inherited. rig-parts does not distribute these weights; a user who fetches them accepts the terms the card states on the day they fetch.
 
 ### Training data
 
 The paper describes its own supervision this way: *"we introduce a scalable
 engine that bootstraps high-quality supervision from commercial Live2D models,
 capturing pixel-perfect semantics and hidden geometry."* That is the paper's
-description of how See-through was trained. spine-parts does not use,
+description of how See-through was trained. rig-parts does not use,
 include or redistribute any of that data, any Live2D model, or anything derived
 from them beyond the layers See-through itself writes for the user's own image.
 
 ## 2. Spine Runtimes, through rig-c
 
-spine-parts depends on [`rig-c`](https://www.npmjs.com/package/rig-c)
+rig-parts depends on [`rig-c`](https://www.npmjs.com/package/rig-c)
 (MIT, same author), which compiles and validates Spine skeleton data. Its round
 trip runs through `@esotericsoftware/spine-core`, part of the
 [Spine Runtimes](https://github.com/EsotericSoftware/spine-runtimes), under the
 [Spine Runtimes License Agreement](https://esotericsoftware.com/spine-runtimes-license).
 Since rig-c 2.0 neither package installs the runtime: rig-c carries it
 only as a development dependency, and an install of rig-c gates a build with
-its own validator. spine-parts does not install it either; it is this repository's
+its own validator. rig-parts does not install it either; it is this repository's
 development dependency, at the version rig-c develops against, for the round
 trip in the selftest and CI and the selftest's posing oracle.
 rig-c's [NOTICE.md](https://github.com/firejune/rigc/blob/main/NOTICE.md)
 sets out the chain in full; briefly, as a restatement of Esoteric Software's
 terms and not a term of this project:
 
-1. What spine-parts produces is input to rig-c, whose output **is Spine
+1. What rig-parts produces is input to rig-c, whose output **is Spine
    skeleton data**.
 2. Playing Spine skeleton data in a product requires a Spine Runtime, and the
    Spine Runtimes License requires **each user of such a product to own a
    Spine Editor license**.
-3. rig-c no longer installs `spine-core`, and spine-parts does not either;
+3. rig-c no longer installs `spine-core`, and rig-parts does not either;
    the obligation in 2 attaches to the Spine skeleton data rig-c writes,
-   which the stages of spine-parts that call it produce, and to `spine-core`
+   which the stages of rig-parts that call it produce, and to `spine-core`
    wherever it is installed beside them — this repository's development
    dependency included.
 
-spine-parts also imports rig-c's own modules directly, by deep path: its PNG codec
+rig-parts also imports rig-c's own modules directly, by deep path: its PNG codec
 (`tools/plate.ts`, `src/png.ts`), its 5x7 label font (`tools/font5x7.ts`) and
 its coordinate conversion (`src/transform.ts`). Those are rig-c's MIT code.
 
 ## 3. Checkpoints
 
-Generating the painting is an **optional** adapter (`spine-parts comfy paint`).
-The checkpoint, any LoRA and any ControlNet it runs are the user's: spine-parts
+Generating the painting is an **optional** adapter (`rig-parts comfy paint`).
+The checkpoint, any LoRA and any ControlNet it runs are the user's: rig-parts
 ships none and downloads none, and the terms that govern an image they produce
 are the terms of those models. A painting from any other source works the same
 way.
