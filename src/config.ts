@@ -233,7 +233,7 @@ export type ContourRegionSpec =
 /**
  * One mesh in the automatic mode (issue #126, item 2): the contour mesh over
  * the part at alpha 1 and above is the source, and rig-c's `reduceMesh`
- * (`rig-c/mesh`, 2.23.x) refines it inside the declared regions and
+ * (`rig-c/mesh`, 2.24.x) refines it inside the declared regions and
  * removes what the declared bounds allow (`src/automesh.ts`); the result is
  * kept only when its motion passes `motion` (`src/automotion.ts`). Every quality
  * input is a number the author wrote, named as rig-c's contract

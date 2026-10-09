@@ -457,7 +457,7 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    read, rather than by rig-c's admission after the call. The row's `source.contour` says so
    (`fitConnectivity: 8`); the contour mode keeps its 4-connected reading and writes no such key. Its weights are the contour mode's — segments and region falloff — under the author's
    `influences`, with no 0.03 floor unless the author writes one.
-2. **The call** — rig-c's `reduceMesh` (`rig-c/mesh`, 2.23.x) refines inside the declared
+2. **The call** — rig-c's `reduceMesh` (`rig-c/mesh`, 2.24.x) refines inside the declared
    regions, then removes vertices while every declared bound still holds. Every number it is
    handed is one of the fields below; `preset` is null (no preset exists yet: a preset will be a
    named, versioned set of these numbers, expanded into the report), and no deform key or linked
@@ -477,19 +477,44 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    draws), and measures how far the reduced mesh carries each art pixel from where the source
    carries it (`MQ_LOCAL_DEFORMATION`, world units = rig px), its triangles' stretch and squash
    from the setup pose, and the triangles it turns over (`MQ_INVERSION`). The part is written
-   only when rig-c's verdict is `accepted` (geometry and motion both pass). Nothing chooses a
-   reduction by motion, so every frame is held out from selection. A part the idle cannot deform
+   only when rig-c's verdict is `accepted` (geometry and motion both pass). Nothing chooses the
+   full reduction by motion, so every frame of this comparison is held out from selection. A part the idle cannot deform
    is refused before anything is compiled: the idle has to key, with changing values, a bone that
    moves some of the bones the part is weighted to and not all of them (a key on their shared
    ancestor, or on the one bone a single-bone part binds, moves every vertex by one affine map and
    would read 0 over nothing). Constraints are not read for this: a part only a constraint moves
    is refused, never passed.
+5. **The acceptance loop** (rig-c 2.24.0, rigc#1266 mechanism 2; `src/autoreplay.ts`) — only
+   when step 4 refuses the full reduction on motion (`AUTO_MESH_MOTION`). rig-c reports every
+   accepted step of the call (`acceptedAt`: N steps, the first I of them the refinement's
+   insertions, the rest removals) and replays the call to any step n by `stopAfterAccepted: n`,
+   byte for byte the mesh the call held after that step. The stage first compares the source with
+   itself on the idle's `grid` frames (a source the gate would refuse leaves the part refused as
+   in step 4, and nothing is searched), then **bisects** over the removal steps strictly between
+   I and N: each probe replays step n, holds it to step 3's acceptance (the termination rig-c
+   promised, `replayed-to-accepted-step` with that step, and every declared geometry row
+   passing), builds the rig with that step through rigc's gate without packing, and compares it
+   with the source on the `grid` frames only — the irr frames are not walked at all, so they
+   cannot inform the choice. It keeps the largest step it saw pass. Validity along the order is
+   not monotone (the contract measured it), so the search finds *a* passing prefix, not
+   necessarily the last, and at most ⌈log₂(N − I)⌉ replays are taken — derived from the steps,
+   not an author number; there is no config field for the search. The chosen step is then
+   written into the rig, which goes through rigc's gate again exactly as written, and is
+   compared with the source on the **whole** idle with the grid frames declared `selection` and
+   the irr frames held out; it is written only when that comparison is `accepted` on every
+   frame, the held-out ones included. A step at or below I (the source, refined or not) is never
+   written as an automatic result: when no removal step passes, the part is refused with "no
+   reduction passes the motion bound". A part the gate accepts in step 4 runs no replay and writes
+   the row it wrote before; rig-c 2.24.0's report adds only `acceptedAt`, last in `changes`.
 
 The public examples' evidence is re-run from the tree: `bun run fetch-examples`, then
 `bun tools/auto_motion_survey.ts` switches each part item 2 accepted on geometry to `auto`, alone,
 under `examplePolicy` (`fixtures/automesh.ts`) plus `policyMotion` (`fixtures/automotion.ts`), runs
-the real rig stage with the motion gate, and prints the table — every row from rig-c's report,
-the schedule walked and each refusal's text, the same bytes on every run of one tree.
+the real rig stage with the motion gate and the acceptance loop, and prints two tables — the full
+reduction's comparison and the loop's outcome per part (N, the chosen step, the replays, the
+candidates they tried, the selection and held-out values) — every row from rig-c's report, the
+schedule walked and each refusal's text, the same bytes on every run of one tree (each part's
+wall time goes to standard error, not into the table).
 
 | field | means |
 | --- | --- |
@@ -534,7 +559,13 @@ triangles, bindings, vertices removed and inserted), every `residuals` row with 
 and bound, `worst_residual` (the declared row nearest its bound, as the share of the bound used)
 and `worst_region`, the `termination` with its reason and `candidatesTried`, what the weights
 lost to the grid (`sharesDroppedOnGrid`, `sharesPruned`, `droppedAtFivePlaces`), per region the
-source vertices its bone reaches and the result vertices bound to it, `deformation` — the motion
+source vertices its bone reaches and the result vertices bound to it, `replay` — only on a part
+the acceptance loop wrote at a replayed step (step 5): `rule` (the search in words, "a passing
+prefix, not necessarily the last"), `accepted_steps` (N), `refinement_steps` (I), `chosen_step`,
+`replays` and `max_replays`, `candidates_tried` across the replays, `full` (the full result's
+reading that the gate refused), every probe (step, pass/fail, value and frame on the grid frames),
+and `selection` and `held_out` (the chosen step's value and worst frame per role); the row's other
+fields are then that step's, its `termination` `replayed-to-accepted-step` — `deformation` — the motion
 gate's verdict, the bounds echoed (`deformMayFold` included), each motion row (`MQ_INVERSION`,
 `MQ_LOCAL_DEFORMATION` and one per region, `MQ_SQUASH`, `MQ_STRETCH`) with its state, value, bound,
 worst frame and sample counts, and the schedule walked (frames per phase, held out, selection) —
@@ -545,7 +576,10 @@ other modes; the alpha-1 coverage is a residual. `build` prints one line per aut
 result counts (hull + interior), bindings, the termination, the worst residual, each art bound
 declared `null` with its value and `(not bounded)`, and
 `motion <value> <= <bound> at <frame>` (the frame id is `idle@<phase>@<time>`), and the reference
-build's gate lines after the candidate's. Weights are written by `roundShares` on every vertex (5 places, zeros
+build's gate lines after the candidate's. A part written at a replayed step adds
+`; replayed to accepted step <n> of <N> after <k> replay(s); selection <value> <= <bound> at
+<frame>; held out <value> <= <bound> at <frame>`, and the stage prints one `replay "<part>"` line
+with every probe, then the gate of the rig as written and its references. Weights are written by `roundShares` on every vertex (5 places, zeros
 dropped, the heaviest entry closes): the 0.03 floor that makes the lattice's last-entry close
 safe is the author's to choose here.
 
@@ -557,11 +591,11 @@ safe is the author's to choose here.
 | `CONFIG_FIELD_PRESENT`, `CONFIG_FIELD_TYPE`, `CONFIG_NAME_RESOLVES`, `CONFIG_REGION_NAME_UNIQUE` | a missing or out-of-range number, an unknown bone or region name, a region named twice — every one named in one run |
 | `CONTOUR_*` | the source is refused by the contour mode's own checks at alpha 1 and above — most often `CONTOUR_ONE_ISLAND`: faint pixels the alpha-above-8 modes never saw are islands here |
 | `AUTO_MESH_INPUT` | rig-c refused the call's input by throwing (a protected vertex the source does not have), in its words and code |
-| `AUTO_MESH_TERMINATION` | rig-c returned no mesh: `invalid-input` (the source fails its own `sourceBounds`, a region it refuses, protected influences over the cap), `unsupported-topology`, or `budget-exhausted` with `none-met-the-targets` |
+| `AUTO_MESH_TERMINATION` | rig-c returned no mesh: `invalid-input` (the source fails its own `sourceBounds`, a region it refuses, protected influences over the cap), `unsupported-topology`, or `budget-exhausted` with `none-met-the-targets`; or, in the acceptance loop, a replay that does not end as rig-c's contract promises (`replayed-to-accepted-step` at the step asked, `candidatesTried` the full run's `acceptedAt[n − 1]`, its `acceptedAt` the full run's first n) |
 | `AUTO_MESH_ACCEPTED` | rig-c returned a mesh that is not accepted; the detail names every declared row not passing and the constraint that stopped it |
 | `AUTO_MESH_NO_STIMULUS` | the idle keys no bone that moves some of the part's bound bones against the others, so no frame deforms it — missing stimulus is not a pass; put the part in `contour` or `grid` mode, or key a bone it binds |
-| `AUTO_MESH_MOTION` | the reduced mesh against its source on the idle is not accepted; the detail names every gated row not passing with its value, bound and worst frame |
-| `AUTO_MESH_MOTION_INPUT` | the comparison could not be made: rig-c refused its input (its code carried — `COMPARE_REFERENCE_FAILS` when the source fails its own `sourceBounds`, `COMPARE_INPUTS_DIFFER`, …), the reference build is red at rigc's gate, or a gate build wrote no `skeleton.model.json` |
+| `AUTO_MESH_MOTION` | the reduced mesh against its source on the idle is not accepted and the acceptance loop wrote no step in its place: "no reduction passes the motion bound" (the full result's failing rows and every probe named), or the chosen step passes on the grid frames and not on the whole idle (its selection and held-out values and worst frames named); when the source itself is not accepted against itself, the full result's rows as before |
+| `AUTO_MESH_MOTION_INPUT` | the comparison could not be made: rig-c refused its input (its code carried — `COMPARE_REFERENCE_FAILS` when the source fails its own `sourceBounds`, `COMPARE_INPUTS_DIFFER`, …), the reference build is red at rigc's gate, or a gate build wrote no `skeleton.model.json`; in the acceptance loop, a replayed step's build that rigc's gate refuses |
 
 **What rig-c cannot refine.** Refinement inserts only inside a region and its band (the
 contract's P16). rig-c 2.19.0 stopped by name when an edge's far end lay further beyond the

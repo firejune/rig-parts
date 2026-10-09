@@ -18,7 +18,7 @@
  *    author's `influences` — no 0.03 floor unless the author wrote it (P19) —
  *    unrounded, so a vertex that survives can be compared bit for bit.
  * 2. **The call** ({@link autoReductionInput}) — rig-c's `reduceMesh`
- *    (`rig-c/mesh`, 2.23.x), refinement inside the declared regions then
+ *    (`rig-c/mesh`, 2.24.x), refinement inside the declared regions then
  *    reduction, every input from the config or from the source, as the
  *    contract types it (docs/MESH_REDUCTION.md §1): `art` the padded image's
  *    alpha at threshold 1 in the part-local frame with `pageScale` 1 (the
@@ -273,6 +273,7 @@ export function terminationText(t: Termination | null): string {
   if (t === null) return 'no termination';
   if (t.reason === 'no-further-valid-reduction') return `no-further-valid-reduction after ${t.candidatesTried} candidate(s), blocked by ${t.blockingConstraint}`;
   if (t.reason === 'budget-exhausted') return `budget-exhausted after ${t.candidatesTried} of ${t.budget} candidate(s), ${t.result}`;
+  if (t.reason === 'replayed-to-accepted-step') return `replayed-to-accepted-step ${t.acceptedSteps} after ${t.candidatesTried} candidate(s)`;
   return `${t.reason} ${t.code}: ${t.detail}`;
 }
 

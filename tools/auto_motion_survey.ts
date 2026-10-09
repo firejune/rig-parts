@@ -29,10 +29,16 @@
  * `reduceMesh` runs once (issue #135). One part's run is {@link motionCell},
  * which `tools/auto_weightjump_survey.ts` runs too.
  *
- * Output: Markdown — one table, one schedule line per part, and the refusal
+ * Since rig-c 2.24.0 the stage runs the acceptance loop (`src/autoreplay.ts`)
+ * on a part whose full result the gate refuses: the first table stays the full
+ * result's comparison (the stage's first two builds), and a second table reads
+ * the loop off the row the stage wrote (`replay`) or off its refusal.
+ *
+ * Output: Markdown — two tables, one schedule line per part, and the refusal
  * text of every refused part. Every number is read from rig-c's report;
  * no path, no time and no machine is printed, so two runs of one tree print
- * the same bytes. Exit 1 when an example's inputs are missing (it names
+ * the same bytes. Each part's wall time and rigc build count go to standard
+ * error instead. Exit 1 when an example's inputs are missing (it names
  * them) or a re-run disagrees with the stage; 0 otherwise, refused parts
  * included — a refusal is a result.
  */
@@ -79,6 +85,12 @@ export interface MotionCell {
   input: MeshReductionInput | null;
   /** A re-run whose verdict disagrees with the stage's, in words; null when they agree or no comparison ran. */
   disagreement: string | null;
+  /** The part's row as the stage wrote it (`mesh_report.json`) — a replayed step's when the acceptance loop chose one — or undefined when nothing was written. */
+  written: AutoMeshReport | undefined;
+  /** rigc builds the stage ran for this part's rig (the gate, the reference, one per replay, and the gate and reference of a replayed rig). */
+  builds: number;
+  /** Wall time of the stage, ms. Never printed into the Markdown (it is not reproducible); the tool prints it to standard error. */
+  wallMs: number;
 }
 
 /** The examples of `keys` with no fetched painting, so a caller can refuse by name before anything runs. */
@@ -140,12 +152,17 @@ export function motionCell(key: string, part: string, auto: unknown, asm: string
     input ??= given;
     return r;
   };
+  const t0 = performance.now();
   try {
     rigStage({ config: join(dir, 'config.json'), parts: asm, out: join(dir, 'rig'), reduce: recording }, runner, join(dir, 'scratch'), () => {});
   } catch (err) {
     if (!(err instanceof PartsError)) throw err;
     refusal = err.problems.map(problemLine).join('\n');
   }
+  const wallMs = performance.now() - t0;
+  const writtenPath = join(dir, 'rig', 'mesh_report.json');
+  const writtenRow = refusal === null && existsSync(writtenPath) ? (JSON.parse(readFileSync(writtenPath, 'utf8')) as AutoMeshReport[]).find((x) => x.part === part) : undefined;
+  const written = writtenRow !== undefined && 'mode' in writtenRow && writtenRow.mode === 'auto' ? writtenRow : undefined;
   // The case the stage compared, rebuilt from the same config and parts (buildRig is pure: the same bytes).
   const images = new Map<string, Raster>();
   const partsFile = readParts(join(asm, 'parts.json'));
@@ -157,16 +174,19 @@ export function motionCell(key: string, part: string, auto: unknown, asm: string
   const counts = row !== undefined && row.source.counts !== null ? `${row.source.counts.boundaryVertices}+${row.source.counts.interiorVertices} → ${row.result.counts.boundaryVertices}+${row.result.counts.interiorVertices}` : 'not built';
   let report: MeshQualityReport | null = null;
   let disagreement: string | null = null;
-  if (c !== undefined && c.motion !== undefined && models.length === 2 && models[0] !== null && models[1] !== null) {
+  // models[0] and models[1] are the full result's gate and its reference; any later build is the acceptance loop's.
+  if (c !== undefined && c.motion !== undefined && models.length >= 2 && models[0] !== null && models[1] !== null) {
     const ran = runComparison(c.object, motionInput(c, c.motion, models[1], models[0]));
     if (!('code' in ran)) {
       report = ran;
-      if ((motionVerdict(c.object, ran) === null) !== (refusal === null)) {
-        disagreement = `${key}/${part}: the re-run comparison ${refusal === null ? 'refuses' : 'accepts'} what the stage ${refusal === null ? 'accepted' : 'refused'}`;
+      // The full result is accepted outright exactly when the stage wrote the part with no replay.
+      const outright = refusal === null && written?.replay === undefined;
+      if ((motionVerdict(c.object, ran) === null) !== outright) {
+        disagreement = `${key}/${part}: the re-run comparison of the full result ${outright ? 'refuses' : 'accepts'} what the stage ${outright ? 'accepted outright' : 'refused or replayed'}`;
       }
     }
   }
-  return { example: key, part, counts, refusal, report, row, input, disagreement };
+  return { example: key, part, counts, refusal, report, row, input, disagreement, written, builds: models.length, wallMs };
 }
 
 /** The part-wide motion row `code` of a comparison, or undefined. */
@@ -179,16 +199,71 @@ export function installedRigc(): string {
   return (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'rig-c', 'package.json'), 'utf8')) as { version: string }).version;
 }
 
+/** The stage's verdict on one part in a few words: accepted outright, accepted at a replayed step, or the refusal's code. */
+export function verdictOf(r: MotionCell): string {
+  if (r.refusal !== null) return `refused ${r.refusal.split(':')[0]}`;
+  const rp = r.written?.replay;
+  return rp === undefined ? 'accepted' : `accepted at replayed step ${rp.chosen_step} of ${rp.accepted_steps}`;
+}
+
+/** The commit `scripts/fetch-examples.sh` pins, read off the script (`PINNED_COMMIT=`), or a named absence. */
+export function pinnedInputs(): string {
+  const m = /^PINNED_COMMIT=([0-9a-f]{40})\s*$/m.exec(readFileSync(join(ROOT, 'scripts', 'fetch-examples.sh'), 'utf8'));
+  return m === null ? 'unread (no 40-character PINNED_COMMIT in scripts/fetch-examples.sh)' : m[1];
+}
+
+/** "Re-running this evidence": the inputs at their pinned commit, rig-c as the lock installs it, the command and its cap. */
+export function rerunFooter(rigcVersion: string, pinned: string): string[] {
+  return [
+    '',
+    '## Re-running this evidence',
+    '',
+    `Inputs: the public examples ${PARTS.map(([k]) => k).join(', ')} of https://github.com/firejune/spine-parts-examples at commit ${pinned} (the pin in \`scripts/fetch-examples.sh\`; \`bun run fetch-examples\` copies them into the gitignored \`examples/<key>/inputs\`), each with its tracked \`examples/<key>/config.json\`; rig-c ${rigcVersion} as \`bun install --frozen-lockfile\` installs it from \`bun.lock\`. No other input is read, and nothing is written but standard output (the stages run in a temporary directory, removed afterwards). Each part's wall time and rigc build count go to standard error and are not part of this document.`,
+    '',
+    '```sh',
+    'bun install --frozen-lockfile',
+    'bun run fetch-examples',
+    'timeout 2700 bun tools/auto_motion_survey.ts > docs/evidence/auto-motion-survey.md',
+    '```',
+  ];
+}
+
 function print(results: readonly MotionCell[]): void {
   console.log('## The motion gate on the public examples (tools/auto_motion_survey.ts)\n');
-  console.log(`Policy: examplePolicy(spacing) (fixtures/automesh.ts) + policyMotion (fixtures/automotion.ts); each part switched alone; the real rig stage through the installed rig-c ${installedRigc()}.\n`);
-  console.log('| part | source → result (hull+interior) | MQ_LOCAL_DEFORMATION value / bound @ worst frame | samples (art) | MQ_STRETCH | MQ_SQUASH | MQ_INVERSION | verdict |');
+  console.log(
+    `Policy: examplePolicy(spacing) (fixtures/automesh.ts) + policyMotion (fixtures/automotion.ts); each part switched alone; the real rig stage, the acceptance loop with a replay included (src/autoreplay.ts), through the installed rig-c ${installedRigc()}. The first table is the full reduction's comparison on the whole idle, every frame held out; the second is the acceptance loop's.\n`,
+  );
+  console.log('| part | source → full result (hull+interior) | MQ_LOCAL_DEFORMATION value / bound @ worst frame | samples (art) | MQ_STRETCH | MQ_SQUASH | MQ_INVERSION | verdict |');
   console.log('| --- | --- | --- | --- | --- | --- | --- | --- |');
   for (const r of results) {
     const local = rowOf(r.report, 'MQ_LOCAL_DEFORMATION');
     const samples = local?.sampling === undefined ? 'not measured' : `${local.sampling.count} (${local.art?.samples ?? 'n/a'})`;
-    const verdict = r.refusal === null ? 'accepted' : `refused ${r.refusal.split(':')[0]}`;
-    console.log(`| ${r.example}/${r.part} | ${r.counts} | ${cell(local)} | ${samples} | ${cell(rowOf(r.report, 'MQ_STRETCH'))} | ${cell(rowOf(r.report, 'MQ_SQUASH'))} | ${cell(rowOf(r.report, 'MQ_INVERSION'))} | ${verdict} |`);
+    console.log(`| ${r.example}/${r.part} | ${r.counts} | ${cell(local)} | ${samples} | ${cell(rowOf(r.report, 'MQ_STRETCH'))} | ${cell(rowOf(r.report, 'MQ_SQUASH'))} | ${cell(rowOf(r.report, 'MQ_INVERSION'))} | ${verdictOf(r)} |`);
+  }
+  console.log('\n### The acceptance loop (rigc#1266 mechanism 2: a bisection over acceptedAt by stopAfterAccepted)\n');
+  console.log(
+    'N is the full run\'s accepted steps (acceptedAt\'s length), I the refinement\'s insertions among them; the bisection probes removal steps strictly between I and N, chooses on the idle\'s grid frames, and the chosen step is accepted only on the whole idle with the irr frames held out. A part the gate accepts outright runs no replay. Probes are `step verdict value` on the grid frames.\n',
+  );
+  console.log('| part | source → full → written (hull+interior) | N (I) | chosen step | replays (at most) | candidates tried in replays | selection @ worst frame | held out @ worst frame | probes | outcome |');
+  console.log('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+  for (const r of results) {
+    const rp = r.written?.replay;
+    const full = r.row?.result.counts;
+    const w = r.written?.result.counts;
+    const counts = `${r.row?.source.counts === null || r.row === undefined ? 'unread' : `${r.row.source.counts.boundaryVertices}+${r.row.source.counts.interiorVertices}`} → ${full === undefined ? 'not built' : `${full.boundaryVertices}+${full.interiorVertices}`} → ${w === undefined ? 'nothing' : `${w.boundaryVertices}+${w.interiorVertices}`}`;
+    const n = r.row?.quality_report as { candidates?: Array<{ changes?: { acceptedAt?: number[]; insertedVertices?: number } }> } | undefined;
+    const ch = n?.candidates?.[0]?.changes;
+    const nI = ch?.acceptedAt === undefined ? 'n/a' : `${ch.acceptedAt.length} (${ch.insertedVertices ?? 0})`;
+    const role = (x: { value: number | null; frame: string | null } | null | undefined): string => (x === null || x === undefined ? 'n/a' : `${x.value} @ ${x.frame ?? 'every frame'}`);
+    if (rp !== undefined) {
+      const probes = rp.probes.map((p) => `${p.step} ${p.verdict}${p.value === null ? '' : ` ${p.value}`}`).join(', ');
+      console.log(`| ${r.example}/${r.part} | ${counts} | ${nI} | ${rp.chosen_step} | ${rp.replays} (${rp.max_replays}) | ${rp.candidates_tried} | ${role(rp.selection)} | ${role(rp.held_out)} | ${probes} | ${verdictOf(r)} |`);
+    } else if (r.refusal === null) {
+      console.log(`| ${r.example}/${r.part} | ${counts} | ${nI} | ${ch?.acceptedAt?.length ?? 'n/a'} (the full result) | 0 | 0 | n/a | n/a | none | ${verdictOf(r)} |`);
+    } else {
+      const probes = /kept none \(([^)]*)\)/.exec(r.refusal)?.[1] ?? 'no search (see the refusal)';
+      console.log(`| ${r.example}/${r.part} | ${counts} | ${nI} | none | ${probes.startsWith('step ') ? probes.split(', ').length : 0} | n/a | n/a | n/a | ${probes} | ${verdictOf(r)} |`);
+    }
   }
   console.log('\n### The schedule walked\n');
   for (const r of results) {
@@ -201,13 +276,19 @@ function print(results: readonly MotionCell[]): void {
     const perPhase = s.phases.map((p) => `${p} ${s.walked.filter((w) => w.phase === p).length}`).join(', ');
     const physics = s.physics.mode === 'step' ? `step dt ${s.physics.dt}, warmupSteps ${s.physics.warmupSteps}` : 'none';
     console.log(`- ${r.example}/${r.part}: ${rates}; frames ${perPhase}; physics ${physics}; held out ${s.heldOutClaim}, selection [${s.selection.join(', ')}]`);
+    const d = r.written?.replay === undefined ? undefined : r.written.deformation;
+    if (d !== undefined && typeof d !== 'string') {
+      console.log(`  - the replayed step's acceptance: frames grid ${d.schedule.frames.grid}, irr ${d.schedule.frames.irr}; held out ${d.schedule.held_out}, selection ${d.schedule.selection.length} frame(s), every one a grid frame: ${d.schedule.selection.every((id) => id.startsWith('idle@grid@'))}`);
+    }
   }
   const refused = results.filter((r) => r.refusal !== null);
   if (refused.length > 0) {
     console.log('\n### Refusals\n');
     for (const r of refused) console.log(`- ${r.example}/${r.part}: ${r.refusal}`);
   }
-  console.log(`\n${results.length - refused.length} of ${results.length} accepted, ${refused.length} refused.`);
+  const replayed = results.filter((r) => r.refusal === null && r.written?.replay !== undefined).length;
+  console.log(`\n${results.length - refused.length} of ${results.length} accepted (${results.length - refused.length - replayed} outright, ${replayed} at a replayed step), ${refused.length} refused.`);
+  for (const l of rerunFooter(installedRigc(), pinnedInputs())) console.log(l);
 }
 
 function main(): void {
@@ -229,6 +310,8 @@ function main(): void {
           disagreements++;
           console.error(`auto_motion_survey: ${r.disagreement}`);
         }
+        // Wall time and rigc builds go to standard error: the Markdown holds no clock, so two runs print the same bytes.
+        console.error(`auto_motion_survey: ${key}/${part}: ${(r.wallMs / 1000).toFixed(1)} s wall, ${r.builds} rigc build(s), ${verdictOf(r)}`);
         results.push(r);
       }
     }
