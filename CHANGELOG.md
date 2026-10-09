@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.0.0-rc.1](https://github.com/firejune/rig-parts/compare/v0.16.0...v1.0.0-rc.1) (2026-10-09)
+
+
+### Features
+
+* **mesh:** a motion gate on the automatic mesh — the reduced mesh against its unreduced source on the idle through spine-rigc 2.20.3's compareMeshesInMotion, written only when it passes ([#134](https://github.com/firejune/rig-parts/issues/134)) ([8eb2989](https://github.com/firejune/rig-parts/commit/8eb298991ba470cdfdbc2f1fb0f7282f3e62c034))
+* **mesh:** add an opt-in multi-interval replay selection that keeps the fewest-vertex passing step among a budgeted, deduplicated set of probes ([#151](https://github.com/firejune/rig-parts/issues/151)) ([8be4cd1](https://github.com/firejune/rig-parts/commit/8be4cd1778363f56661b2024aaeea3d6a248b60e))
+* **mesh:** an automatic mesh mode — the contour mesh at alpha 1 and above reduced and locally refined by spine-rigc 2.19.0's reduceMesh, geometry only ([#131](https://github.com/firejune/rig-parts/issues/131)) ([c03dd8a](https://github.com/firejune/rig-parts/commit/c03dd8a7b547e88c3995134750711ccf61fa9a38)), closes [#126](https://github.com/firejune/rig-parts/issues/126)
+* **mesh:** move to rig-c 2.20.4 under its new npm name, and regenerate the automatic-mesh evidence on it under per-cell caps with a re-running section ([#138](https://github.com/firejune/rig-parts/issues/138)) ([f405678](https://github.com/firejune/rig-parts/commit/f405678a7849800b12eead0a5463747e221a5fce))
+* **mesh:** move to rig-c 2.22.0 and declare the permissive policy's undercut bound absent (null) instead of a stand-in number ([#139](https://github.com/firejune/rig-parts/issues/139)) ([95e0f61](https://github.com/firejune/rig-parts/commit/95e0f61b00b751588505473f493c4daa319d77d7))
+* **mesh:** move to rig-c 2.23.0 and read the automatic source's overshoot 8-connected, and measure rigc[#1266](https://github.com/firejune/rig-parts/issues/1266) Q7 on the three motion-refused parts ([#140](https://github.com/firejune/rig-parts/issues/140)) ([926f433](https://github.com/firejune/rig-parts/commit/926f4336df800003262cdbdf3a9b7266e594162d))
+* **mesh:** move to rig-c 2.24.0 and replay a less-reduced step when the motion gate refuses an automatic mesh's full reduction ([#141](https://github.com/firejune/rig-parts/issues/141)) ([952155c](https://github.com/firejune/rig-parts/commit/952155c19c0b4f59aefc46bdade40e59a6971f76)), closes [#126](https://github.com/firejune/rig-parts/issues/126)
+* **mesh:** move to rig-c 2.28.0, read acceptedAt per operation, and take the Stage B opt-ins as author fields with the public inputs rerun under each ([#147](https://github.com/firejune/rig-parts/issues/147)) ([9420934](https://github.com/firejune/rig-parts/commit/942093437904530f86c27210a2fbdb88b1c6600e)), closes [#126](https://github.com/firejune/rig-parts/issues/126)
+* **mesh:** move to rig-c 2.29.0, send the motion amplitude with the author's gradation or null on the reduction and the comparison, and carry MQ_DEFORM_LOAD measured ([#150](https://github.com/firejune/rig-parts/issues/150)) ([8e3553a](https://github.com/firejune/rig-parts/commit/8e3553af207b5c8c022282fe204a6fd20ce861f2))
+* **mesh:** move to rig-c 2.31.0 and take the skinning residual as an opt-in per-step veto, with the envelope derived from the idle and the motion comparison still deciding ([#152](https://github.com/firejune/rig-parts/issues/152)) ([22b2c5a](https://github.com/firejune/rig-parts/commit/22b2c5ab78bc2f7a5a519234c9fb30274f1c447f)), closes [#126](https://github.com/firejune/rig-parts/issues/126)
+* **package:** rename the package to rig-parts, keeping spine-parts as a transition command and the SPINE_PARTS_* variables as fallbacks ([#142](https://github.com/firejune/rig-parts/issues/142)) ([96f28b1](https://github.com/firejune/rig-parts/commit/96f28b1f77d022828096ff198972cc1ccc3fb830)), closes [#126](https://github.com/firejune/rig-parts/issues/126)
+* **release:** publish spine-parts as an alias of rig-parts from the one gated tree, and confirm both names on the registry ([#144](https://github.com/firejune/rig-parts/issues/144)) ([84a951e](https://github.com/firejune/rig-parts/commit/84a951ed1fed22afafe0cb10c672eeadd06ac3dc)), closes [#126](https://github.com/firejune/rig-parts/issues/126)
+* **release:** state the 1.0.0-rc.1 interface and the migration from 0.16.0, and hold the stability page to the CLI and the config loader ([#154](https://github.com/firejune/rig-parts/issues/154)) ([c911e48](https://github.com/firejune/rig-parts/commit/c911e48a6cb186997caffa5f9eb9a2df9540a00b)), closes [#126](https://github.com/firejune/rig-parts/issues/126)
+
+
+### Bug Fixes
+
+* **deps:** move to rig-c 2.24.1, and measure rigc[#1271](https://github.com/firejune/rig-parts/issues/1271) Q8 on the public examples with Q1 option (ii) tried ([#146](https://github.com/firejune/rig-parts/issues/146)) ([542da46](https://github.com/firejune/rig-parts/commit/542da4695f6f56df0433f572da85990a83d5ef19)), closes [#126](https://github.com/firejune/rig-parts/issues/126)
+* **mesh:** write every lattice and contour triangle counter-clockwise in Spine world, and hand the automatic mode's source to spine-rigc untouched ([#133](https://github.com/firejune/rig-parts/issues/133)) ([4a126fe](https://github.com/firejune/rig-parts/commit/4a126fefd1a7a960b10c2ebc3da0d866a42589ca)), closes [#126](https://github.com/firejune/rig-parts/issues/126)
+
+
+### Performance Improvements
+
+* **build:** compile the motion gate's reference without packing, and run each matrix cell's reduction once ([#137](https://github.com/firejune/rig-parts/issues/137)) ([494c919](https://github.com/firejune/rig-parts/commit/494c9195ec0e25113a30015432cd8e05b2db4353))
+
 ## [0.16.0](https://github.com/firejune/spine-parts/compare/v0.15.2...v0.16.0) (2026-10-07)
 
 
