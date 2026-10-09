@@ -26,7 +26,8 @@
  * tool refuses to print a row whose re-run verdict disagrees with the
  * stage's. The case is rebuilt by `buildRig` with the stage's own reduction
  * handed back (`reuseReductions`, keyed by the whole input), so each part's
- * `reduceMesh` runs once (issue #135).
+ * `reduceMesh` runs once (issue #135). One part's run is {@link motionCell},
+ * which `tools/auto_weightjump_survey.ts` runs too.
  *
  * Output: Markdown — one table, one schedule line per part, and the refusal
  * text of every refused part. Every number is read from rig-c's report;
@@ -39,7 +40,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { MeasureRow, MeshQualityReport } from 'rig-c/mesh';
+import type { MeasureRow, MeshQualityReport, MeshReductionInput } from 'rig-c/mesh';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE } from '../src/assemble.ts';
 import { type Reducer, type ReductionResult, reductionKey, reuseReductions, runReduction } from '../src/automesh.ts';
 import { motionInput, motionVerdict, runComparison } from '../src/automotion.ts';
@@ -49,7 +50,7 @@ import { loadConfig } from '../src/config.ts';
 import { PartsError, problemLine } from '../src/errors.ts';
 import { readParts } from '../src/parts.ts';
 import { readPng, type Raster } from '../src/raster/index.ts';
-import { buildRig } from '../src/rig.ts';
+import { type AutoMeshReport, buildRig } from '../src/rig.ts';
 import { examplePolicy } from '../fixtures/automesh.ts';
 import { withPolicyMotion } from '../fixtures/automotion.ts';
 
@@ -62,122 +63,180 @@ const PARTS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ['scarf', ['hair_front', 'handwear_l']],
 ];
 
-interface Measured {
+/** One part switched alone to `auto` and run through the real rig stage: what the stage said and what its comparison read. */
+export interface MotionCell {
   example: string;
   part: string;
+  /** `source hull+interior → result hull+interior`, or `not built`. */
   counts: string;
+  /** The stage's refusal, every problem line, or null when it accepted. */
   refusal: string | null;
+  /** rig-c's comparison report (re-run on the two documents the stage's builds wrote), or null when none ran. */
   report: MeshQualityReport | null;
+  /** The part's `mesh_report.json` row as the stage built it, or undefined when it built none. */
+  row: AutoMeshReport | undefined;
+  /** The reduction input the stage handed rig-c first (the part's own), or null when it made no call. */
+  input: MeshReductionInput | null;
+  /** A re-run whose verdict disagrees with the stage's, in words; null when they agree or no comparison ran. */
+  disagreement: string | null;
 }
 
-const missing = PARTS.map(([k]) => k).filter((k) => !existsSync(join(ROOT, 'examples', k, 'inputs', 'painting.png')));
-if (missing.length > 0) {
-  console.error(`auto_motion_survey: no fetched inputs for ${missing.map((k) => `examples/${k}/inputs`).join(', ')}; run \`bun run fetch-examples\` first`);
-  process.exit(1);
+/** The examples of `keys` with no fetched painting, so a caller can refuse by name before anything runs. */
+export function missingInputs(keys: readonly string[]): string[] {
+  return keys.filter((k) => !existsSync(join(ROOT, 'examples', k, 'inputs', 'painting.png')));
 }
 
-const rigcBin = findRigc(ROOT, '');
-const work = mkdtempSync(join(tmpdir(), 'spine-parts-auto-motion-survey-'));
-const results: Measured[] = [];
-let disagreements = 0;
-try {
-  for (const [key, parts] of PARTS) {
-    const ex = join(ROOT, 'examples', key);
-    const asm = join(work, key, 'asm');
-    assembleStage(
-      { source: join(ex, 'inputs', 'painting.png'), full: join(ex, 'inputs', 'layers', 'full'), head: join(ex, 'inputs', 'layers', 'head'), config: join(ex, 'config.json'), seam: DEFAULT_SEAM_RULE, project: DEFAULT_PROJECT_RULE },
-      { partsJson: join(asm, 'parts.json'), partsDir: join(asm, 'parts'), recomposite: join(asm, 'recomposite_rig.png'), errorMap: join(asm, 'recomposite_error_rig.png') },
-      () => {},
-    );
-    for (const part of parts) {
-      const raw = JSON.parse(readFileSync(join(ex, 'config.json'), 'utf8')) as { meshes: Record<string, { grid?: number; contour?: { spacing: number }; r: number; segments: unknown }> };
-      const m = raw.meshes[part];
-      const spacing = m.grid ?? m.contour?.spacing;
-      if (spacing === undefined) throw new Error(`examples/${key}/config.json meshes.${part} has neither grid nor contour.spacing`);
-      (raw.meshes as Record<string, unknown>)[part] = { auto: withPolicyMotion(examplePolicy(spacing)), r: m.r, segments: m.segments };
-      const dir = join(work, key, part);
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, 'config.json'), JSON.stringify(raw, null, 1));
-      // The documents the stage's builds wrote: 0 is the gate build (the candidate), 1 the reference.
-      const models: Array<string | null> = [];
-      const runner: RigcRunner = (args) => {
-        const r = spawnSync(rigcBin, args, { encoding: 'utf8', maxBuffer: 1 << 28 });
-        if (args[0] === 'build') {
-          const path = join(args[args.indexOf('--out') + 1], RIGC_MODEL_DOCUMENT);
-          models.push(r.status === 0 && existsSync(path) ? readFileSync(path, 'utf8') : null);
-        }
-        return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
-      };
-      let refusal: string | null = null;
-      // The stage's reductions, kept by input so the rebuild below reuses them instead of running them again.
-      const reduced = new Map<string, ReductionResult>();
-      const recording: Reducer = (object, input) => {
-        const r = runReduction(object, input);
-        reduced.set(reductionKey(input), r);
-        return r;
-      };
-      try {
-        rigStage({ config: join(dir, 'config.json'), parts: asm, out: join(dir, 'rig'), reduce: recording }, runner, join(dir, 'scratch'), () => {});
-      } catch (err) {
-        if (!(err instanceof PartsError)) throw err;
-        refusal = err.problems.map(problemLine).join('\n');
+/** `assemble` on an example's fetched inputs, into `<work>/<key>/asm`; returns that directory. */
+export function assembleExample(work: string, key: string): string {
+  const ex = join(ROOT, 'examples', key);
+  const asm = join(work, key, 'asm');
+  assembleStage(
+    { source: join(ex, 'inputs', 'painting.png'), full: join(ex, 'inputs', 'layers', 'full'), head: join(ex, 'inputs', 'layers', 'head'), config: join(ex, 'config.json'), seam: DEFAULT_SEAM_RULE, project: DEFAULT_PROJECT_RULE },
+    { partsJson: join(asm, 'parts.json'), partsDir: join(asm, 'parts'), recomposite: join(asm, 'recomposite_rig.png'), errorMap: join(asm, 'recomposite_error_rig.png') },
+    () => {},
+  );
+  return asm;
+}
+
+/** The part's tracked spacing: its lattice `grid`, or the contour spacing of a part already in that mode. */
+export function trackedSpacing(key: string, part: string): number {
+  const raw = JSON.parse(readFileSync(join(ROOT, 'examples', key, 'config.json'), 'utf8')) as { meshes: Record<string, { grid?: number; contour?: { spacing: number } }> };
+  const m = raw.meshes[part];
+  const spacing = m.grid ?? m.contour?.spacing;
+  if (spacing === undefined) throw new Error(`examples/${key}/config.json meshes.${part} has neither grid nor contour.spacing`);
+  return spacing;
+}
+
+/**
+ * One part of one example switched alone to `auto` — `auto` is the block written into the example's own config — and run
+ * through the real rig stage in `dir`, `asm` holding the example's assembled parts. Returns the stage's verdict, the
+ * comparison's rows (re-run on the two model documents the stage's builds wrote, with the stage's own function), the
+ * part's row and its reduction input. The stage's reductions are handed back to the rebuild (`reuseReductions`), so
+ * `reduceMesh` runs once per input.
+ */
+export function motionCell(key: string, part: string, auto: unknown, asm: string, dir: string, rigcBin: string): MotionCell {
+  const raw = JSON.parse(readFileSync(join(ROOT, 'examples', key, 'config.json'), 'utf8')) as { meshes: Record<string, { r: number; segments: unknown }> };
+  const m = raw.meshes[part];
+  (raw.meshes as Record<string, unknown>)[part] = { auto, r: m.r, segments: m.segments };
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'config.json'), JSON.stringify(raw, null, 1));
+  // The documents the stage's builds wrote: 0 is the gate build (the candidate), 1 the reference.
+  const models: Array<string | null> = [];
+  const runner: RigcRunner = (args) => {
+    const r = spawnSync(rigcBin, args, { encoding: 'utf8', maxBuffer: 1 << 28 });
+    if (args[0] === 'build') {
+      const path = join(args[args.indexOf('--out') + 1], RIGC_MODEL_DOCUMENT);
+      models.push(r.status === 0 && existsSync(path) ? readFileSync(path, 'utf8') : null);
+    }
+    return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  };
+  let refusal: string | null = null;
+  // The stage's reductions, kept by input so the rebuild below reuses them instead of running them again.
+  const reduced = new Map<string, ReductionResult>();
+  let input: MeshReductionInput | null = null;
+  const recording: Reducer = (object, given) => {
+    const r = runReduction(object, given);
+    reduced.set(reductionKey(given), r);
+    input ??= given;
+    return r;
+  };
+  try {
+    rigStage({ config: join(dir, 'config.json'), parts: asm, out: join(dir, 'rig'), reduce: recording }, runner, join(dir, 'scratch'), () => {});
+  } catch (err) {
+    if (!(err instanceof PartsError)) throw err;
+    refusal = err.problems.map(problemLine).join('\n');
+  }
+  // The case the stage compared, rebuilt from the same config and parts (buildRig is pure: the same bytes).
+  const images = new Map<string, Raster>();
+  const partsFile = readParts(join(asm, 'parts.json'));
+  for (const p of partsFile.parts) images.set(p.name, readPng(join(asm, 'parts', `${p.name}.png`)));
+  const rig = buildRig(loadConfig(join(dir, 'config.json')), partsFile, images, undefined, undefined, reuseReductions(reduced).reduce);
+  const c = rig.autoMotion[0];
+  const found = rig.meshReport.find((x) => x.part === part);
+  const row = found !== undefined && 'mode' in found && found.mode === 'auto' ? found : undefined;
+  const counts = row !== undefined && row.source.counts !== null ? `${row.source.counts.boundaryVertices}+${row.source.counts.interiorVertices} → ${row.result.counts.boundaryVertices}+${row.result.counts.interiorVertices}` : 'not built';
+  let report: MeshQualityReport | null = null;
+  let disagreement: string | null = null;
+  if (c !== undefined && c.motion !== undefined && models.length === 2 && models[0] !== null && models[1] !== null) {
+    const ran = runComparison(c.object, motionInput(c, c.motion, models[1], models[0]));
+    if (!('code' in ran)) {
+      report = ran;
+      if ((motionVerdict(c.object, ran) === null) !== (refusal === null)) {
+        disagreement = `${key}/${part}: the re-run comparison ${refusal === null ? 'refuses' : 'accepts'} what the stage ${refusal === null ? 'accepted' : 'refused'}`;
       }
-      // The case the stage compared, rebuilt from the same config and parts (buildRig is pure: the same bytes).
-      const images = new Map<string, Raster>();
-      const partsFile = readParts(join(asm, 'parts.json'));
-      for (const p of partsFile.parts) images.set(p.name, readPng(join(asm, 'parts', `${p.name}.png`)));
-      const rig = buildRig(loadConfig(join(dir, 'config.json')), partsFile, images, undefined, undefined, reuseReductions(reduced).reduce);
-      const c = rig.autoMotion[0];
-      const row = rig.meshReport.find((x) => x.part === part);
-      const counts = row !== undefined && 'mode' in row && row.mode === 'auto' && row.source.counts !== null ? `${row.source.counts.boundaryVertices}+${row.source.counts.interiorVertices} → ${row.result.counts.boundaryVertices}+${row.result.counts.interiorVertices}` : 'not built';
-      let report: MeshQualityReport | null = null;
-      if (c !== undefined && c.motion !== undefined && models.length === 2 && models[0] !== null && models[1] !== null) {
-        const ran = runComparison(c.object, motionInput(c, c.motion, models[1], models[0]));
-        if (!('code' in ran)) {
-          report = ran;
-          if ((motionVerdict(c.object, ran) === null) !== (refusal === null)) {
-            disagreements++;
-            console.error(`auto_motion_survey: ${key}/${part}: the re-run comparison ${refusal === null ? 'refuses' : 'accepts'} what the stage ${refusal === null ? 'accepted' : 'refused'}`);
-          }
-        }
-      }
-      results.push({ example: key, part, counts, refusal, report });
     }
   }
-} finally {
-  rmSync(work, { recursive: true, force: true });
+  return { example: key, part, counts, refusal, report, row, input, disagreement };
 }
 
-const rowOf = (r: MeshQualityReport | null, code: string): MeasureRow | undefined => r?.candidates[0]?.motion?.rows.find((x) => x.code === code && x.object.region === null);
-const cell = (x: MeasureRow | undefined): string => (x === undefined || x.value === null ? 'not measured' : `${x.value}${x.bound === null ? '' : ` / ${x.bound.op} ${x.bound.value}`}${x.worst?.frame === undefined ? '' : ` @ ${x.worst.frame.id}`}`);
+/** The part-wide motion row `code` of a comparison, or undefined. */
+export const rowOf = (r: MeshQualityReport | null, code: string): MeasureRow | undefined => r?.candidates[0]?.motion?.rows.find((x) => x.code === code && x.object.region === null);
+/** A motion row as `value / op bound @ worst frame`, or `not measured`. */
+export const cell = (x: MeasureRow | undefined): string => (x === undefined || x.value === null ? 'not measured' : `${x.value}${x.bound === null ? '' : ` / ${x.bound.op} ${x.bound.value}`}${x.worst?.frame === undefined ? '' : ` @ ${x.worst.frame.id}`}`);
 
-console.log('## The motion gate on the public examples (tools/auto_motion_survey.ts)\n');
-const rigcVersion = (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'rig-c', 'package.json'), 'utf8')) as { version: string }).version;
-console.log(`Policy: examplePolicy(spacing) (fixtures/automesh.ts) + policyMotion (fixtures/automotion.ts); each part switched alone; the real rig stage through the installed rig-c ${rigcVersion}.\n`);
-console.log('| part | source → result (hull+interior) | MQ_LOCAL_DEFORMATION value / bound @ worst frame | samples (art) | MQ_STRETCH | MQ_SQUASH | MQ_INVERSION | verdict |');
-console.log('| --- | --- | --- | --- | --- | --- | --- | --- |');
-for (const r of results) {
-  const local = rowOf(r.report, 'MQ_LOCAL_DEFORMATION');
-  const samples = local?.sampling === undefined ? 'not measured' : `${local.sampling.count} (${local.art?.samples ?? 'n/a'})`;
-  const verdict = r.refusal === null ? 'accepted' : `refused ${r.refusal.split(':')[0]}`;
-  console.log(`| ${r.example}/${r.part} | ${r.counts} | ${cell(local)} | ${samples} | ${cell(rowOf(r.report, 'MQ_STRETCH'))} | ${cell(rowOf(r.report, 'MQ_SQUASH'))} | ${cell(rowOf(r.report, 'MQ_INVERSION'))} | ${verdict} |`);
+/** The installed rig-c's version, as its package says. */
+export function installedRigc(): string {
+  return (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'rig-c', 'package.json'), 'utf8')) as { version: string }).version;
 }
-console.log('\n### The schedule walked\n');
-for (const r of results) {
-  const s = r.report?.candidates[0]?.motion?.schedule;
-  if (s === undefined) {
-    console.log(`- ${r.example}/${r.part}: no comparison ran`);
-    continue;
+
+function print(results: readonly MotionCell[]): void {
+  console.log('## The motion gate on the public examples (tools/auto_motion_survey.ts)\n');
+  console.log(`Policy: examplePolicy(spacing) (fixtures/automesh.ts) + policyMotion (fixtures/automotion.ts); each part switched alone; the real rig stage through the installed rig-c ${installedRigc()}.\n`);
+  console.log('| part | source → result (hull+interior) | MQ_LOCAL_DEFORMATION value / bound @ worst frame | samples (art) | MQ_STRETCH | MQ_SQUASH | MQ_INVERSION | verdict |');
+  console.log('| --- | --- | --- | --- | --- | --- | --- | --- |');
+  for (const r of results) {
+    const local = rowOf(r.report, 'MQ_LOCAL_DEFORMATION');
+    const samples = local?.sampling === undefined ? 'not measured' : `${local.sampling.count} (${local.art?.samples ?? 'n/a'})`;
+    const verdict = r.refusal === null ? 'accepted' : `refused ${r.refusal.split(':')[0]}`;
+    console.log(`| ${r.example}/${r.part} | ${r.counts} | ${cell(local)} | ${samples} | ${cell(rowOf(r.report, 'MQ_STRETCH'))} | ${cell(rowOf(r.report, 'MQ_SQUASH'))} | ${cell(rowOf(r.report, 'MQ_INVERSION'))} | ${verdict} |`);
   }
-  const rates = s.frames.map((f) => (f === 'setup' ? 'setup' : 'fps' in f ? `${f.animation} at ${f.fps} fps` : `${f.animation} at ${f.times.length} explicit time(s)`)).join(', ');
-  const perPhase = s.phases.map((p) => `${p} ${s.walked.filter((w) => w.phase === p).length}`).join(', ');
-  const physics = s.physics.mode === 'step' ? `step dt ${s.physics.dt}, warmupSteps ${s.physics.warmupSteps}` : 'none';
-  console.log(`- ${r.example}/${r.part}: ${rates}; frames ${perPhase}; physics ${physics}; held out ${s.heldOutClaim}, selection [${s.selection.join(', ')}]`);
+  console.log('\n### The schedule walked\n');
+  for (const r of results) {
+    const s = r.report?.candidates[0]?.motion?.schedule;
+    if (s === undefined) {
+      console.log(`- ${r.example}/${r.part}: no comparison ran`);
+      continue;
+    }
+    const rates = s.frames.map((f) => (f === 'setup' ? 'setup' : 'fps' in f ? `${f.animation} at ${f.fps} fps` : `${f.animation} at ${f.times.length} explicit time(s)`)).join(', ');
+    const perPhase = s.phases.map((p) => `${p} ${s.walked.filter((w) => w.phase === p).length}`).join(', ');
+    const physics = s.physics.mode === 'step' ? `step dt ${s.physics.dt}, warmupSteps ${s.physics.warmupSteps}` : 'none';
+    console.log(`- ${r.example}/${r.part}: ${rates}; frames ${perPhase}; physics ${physics}; held out ${s.heldOutClaim}, selection [${s.selection.join(', ')}]`);
+  }
+  const refused = results.filter((r) => r.refusal !== null);
+  if (refused.length > 0) {
+    console.log('\n### Refusals\n');
+    for (const r of refused) console.log(`- ${r.example}/${r.part}: ${r.refusal}`);
+  }
+  console.log(`\n${results.length - refused.length} of ${results.length} accepted, ${refused.length} refused.`);
 }
-const refused = results.filter((r) => r.refusal !== null);
-if (refused.length > 0) {
-  console.log('\n### Refusals\n');
-  for (const r of refused) console.log(`- ${r.example}/${r.part}: ${r.refusal}`);
+
+function main(): void {
+  const missing = missingInputs(PARTS.map(([k]) => k));
+  if (missing.length > 0) {
+    console.error(`auto_motion_survey: no fetched inputs for ${missing.map((k) => `examples/${k}/inputs`).join(', ')}; run \`bun run fetch-examples\` first`);
+    process.exit(1);
+  }
+  const rigcBin = findRigc(ROOT, '');
+  const work = mkdtempSync(join(tmpdir(), 'spine-parts-auto-motion-survey-'));
+  const results: MotionCell[] = [];
+  let disagreements = 0;
+  try {
+    for (const [key, parts] of PARTS) {
+      const asm = assembleExample(work, key);
+      for (const part of parts) {
+        const r = motionCell(key, part, withPolicyMotion(examplePolicy(trackedSpacing(key, part))), asm, join(work, key, part), rigcBin);
+        if (r.disagreement !== null) {
+          disagreements++;
+          console.error(`auto_motion_survey: ${r.disagreement}`);
+        }
+        results.push(r);
+      }
+    }
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+  print(results);
+  if (disagreements > 0) process.exit(1);
 }
-console.log(`\n${results.length - refused.length} of ${results.length} accepted, ${refused.length} refused.`);
-if (disagreements > 0) process.exit(1);
+
+if (import.meta.main) main();

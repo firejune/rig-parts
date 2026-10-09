@@ -10,13 +10,15 @@
  *    `source.tolerance`, `source.margin` and background `source.spacing`, with
  *    no region (the density a region asks for is rig-c's refinement, step
  *    2). `contourMesh` gates it with this package's own checks before it is
- *    returned — `contourTopologyProblems` and `contourFit` at that threshold —
- *    and a refusal there is the part's refusal, in the contour mode's codes.
+ *    returned — `contourTopologyProblems` and `contourFit` at that threshold,
+ *    its overshoot read with the background flooded 8-connected
+ *    ({@link AUTO_SOURCE_FIT_CONNECTIVITY}), the fill rig-c's admission reads
+ *    — and a refusal there is the part's refusal, in the contour mode's codes.
  *    Its weights are `localInfluences` (`src/localweights.ts`) under the
  *    author's `influences` — no 0.03 floor unless the author wrote it (P19) —
  *    unrounded, so a vertex that survives can be compared bit for bit.
  * 2. **The call** ({@link autoReductionInput}) — rig-c's `reduceMesh`
- *    (`rig-c/mesh`, 2.22.x), refinement inside the declared regions then
+ *    (`rig-c/mesh`, 2.23.x), refinement inside the declared regions then
  *    reduction, every input from the config or from the source, as the
  *    contract types it (docs/MESH_REDUCTION.md §1): `art` the padded image's
  *    alpha at threshold 1 in the part-local frame with `pageScale` 1 (the
@@ -150,7 +152,19 @@ export function refinementRegion(rg: AutoRegionSpec, ox: number, oy: number): Re
   };
 }
 
-/** The source of one automatic mesh: the contour mesh at alpha 1 and above, gated by `contourMesh`, or every problem that refuses it. */
+/**
+ * How the source's own fit gate floods the background (rig-c 2.23.0's
+ * `measureAuthoredMeshFit` `connectivity`, rigc#1262): 8, the fill rig-c's
+ * `MQ_OVERSHOOT` reads and `reduceMesh` admits a source by
+ * (`REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS`), so a source this package passes is
+ * read with the same number rig-c reads it with, and a source that overshoots
+ * through a pocket joined to the outside only at a corner is refused here, by
+ * this package's code, before the call. The contour mode keeps 4 (its
+ * report carries no `fitConnectivity`, its bytes are unchanged).
+ */
+export const AUTO_SOURCE_FIT_CONNECTIVITY = 8;
+
+/** The source of one automatic mesh: the contour mesh at alpha 1 and above, gated by `contourMesh` with its overshoot read at {@link AUTO_SOURCE_FIT_CONNECTIVITY}, or every problem that refuses it. */
 export function autoSource(part: string, mask: AlphaMask, spec: AutoSpec): ContourMesh | Problem[] {
   return contourMesh(part, mask, {
     threshold: AUTO_THRESHOLD - 1,
@@ -159,6 +173,7 @@ export function autoSource(part: string, mask: AlphaMask, spec: AutoSpec): Conto
     spacing: spec.source.spacing,
     ...(spec.source.stray === undefined ? {} : { stray: spec.source.stray }),
     regions: [],
+    fitConnectivity: AUTO_SOURCE_FIT_CONNECTIVITY,
   });
 }
 
