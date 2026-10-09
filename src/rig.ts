@@ -84,9 +84,10 @@
 import { type AutoSpec, type BoneEntry, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, ROOT_BONE } from './config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
-import type { MeshCounts, MeshQualityReport, ReducedMesh, Termination } from 'rig-c/mesh';
+import type { MeshCounts, MeshQualityReport, MeshReductionInput, ReducedMesh, Termination } from 'rig-c/mesh';
+import { type AmplitudeRow, amplitudeRow, deriveMotionAmplitude } from './autoamplitude.ts';
 import { type AutoMotionCase, type AutoSearch, DEFORM_MAY_FOLD_WHY, type MotionDeformation } from './automotion.ts';
-import { replayVerdict, type ReplayRow } from './autoreplay.ts';
+import { refinementSteps, replayVerdict, type ReplayRow } from './autoreplay.ts';
 import {
   autoReductionInput,
   autoSource,
@@ -100,6 +101,9 @@ import {
   residuals,
   runReduction,
   sourceWeights,
+  type StageBOptIns,
+  type StageBResult,
+  stageBResult,
   worstRegion,
   worstResidual,
 } from './automesh.ts';
@@ -410,12 +414,21 @@ export interface AutoMeshReport {
     minArtSamples: number;
     regions: Array<{ name: string; bone: string; band: number; maxEdgeLength: number; transition: number; grade: number; minArtSamples: number; approximation: { from: string; policy: string; maxError: number } | null }>;
     preset: null;
-  };
+  } & StageBOptIns;
   source: { contour: ContourReport; counts: MeshCounts | null };
-  result: { counts: MeshCounts; removedVertices: number; insertedVertices: number };
+  /** The counts; with a Stage B opt-in set, `boundary_runs` and `retriangulation` after them (`stageBResult`), each only when its opt-in is. */
+  result: { counts: MeshCounts; removedVertices: number; insertedVertices: number } & StageBResult;
   residuals: Residual[];
   worst_residual: (Residual & { used: number }) | null;
   worst_region: string | null;
+  /**
+   * The motion amplitude rig-c's `MQ_ALLOCATION_CONTRAST` and `MQ_DEFORM_LOAD`
+   * read (issue #126 Q2; `src/autoamplitude.ts`): `sent` when every term was
+   * derived from the idle and handed to `reduceMesh`, and otherwise each term
+   * that stopped it, by path — so a reader of the two rows' `not-measurable`
+   * learns which number the rig does not declare.
+   */
+  motion_amplitude: AmplitudeRow;
   termination: Termination;
   weights: { sharesDroppedOnGrid: number; sharesPruned: number; droppedAtFivePlaces: number };
   regions: Array<{ name: string; bone: string; reached: number; whole: number; bound_in_result: number }>;
@@ -899,6 +912,9 @@ export function buildRig(
   // replaces the 0.03 floor that makes the lattice's rounding safe, so every vertex closes on its heaviest entry)
   // and bound exactly as a contour vertex is.
   const boneOrder = bones.map((b) => b.name);
+  // What the amplitude derivation reads (src/autoamplitude.ts), named here because autoAttachment's own `bones` and `motion` shadow them.
+  const rigBones = bones;
+  const idle = motion;
   const autoAttachment = (
     p: PartsFile['parts'][number],
     img: Raster,
@@ -931,7 +947,21 @@ export function buildRig(
       });
       return null;
     }
-    const input = autoReductionInput({ part: p.name, mask, ox, oy, spec, source, weights: sw.weights, boneOrder });
+    // rig-c's allocation rows read an amplitude this package derives from its own idle (issue #126 Q2); sent only when
+    // every term is derived — today never, for want of a gradation (src/autoamplitude.ts) — so the input is otherwise
+    // the one it was before rig-c 2.28.0.
+    const amplitude = deriveMotionAmplitude({
+      bones: rigBones,
+      motion: idle,
+      constraints: cfg.constraints?.length ?? 0,
+      bound: sw.weights.flatMap((v) => v.map((e) => e.bone)),
+      epsilon: spec.motion?.maxLocalDeformation ?? Number.NaN,
+      gradation: null,
+    });
+    const input: MeshReductionInput = {
+      ...autoReductionInput({ part: p.name, mask, ox, oy, spec, source, weights: sw.weights, boneOrder }),
+      ...('amplitude' in amplitude ? { motionAmplitude: amplitude.amplitude } : {}),
+    };
     const ran = reduce(object, input);
     if ('code' in ran) {
       out.push(ran);
@@ -985,6 +1015,12 @@ export function buildRig(
     for (const rg of regions) bones.add(rg.bone);
     const pro = input.protect;
     // The attachment and the row of one accepted mesh and the report it came with: the full result's, or a replay's (src/autoreplay.ts).
+    // The Stage B opt-ins the author set, echoed after `preset` only when set (rigc#1271): a part that sets none writes the row it always wrote.
+    const stageB: StageBOptIns = {
+      ...(spec.boundaryRuns === undefined ? {} : { boundaryRuns: { maxVertices: spec.boundaryRuns.maxVertices } }),
+      ...(spec.retriangulate === undefined ? {} : { retriangulate: spec.retriangulate }),
+      ...(spec.removalOrder === undefined ? {} : { removalOrder: spec.removalOrder }),
+    };
     const rowOf = (mesh: ReducedMesh, report: MeshQualityReport): { attachment: MeshAttachment; row: AutoMeshReport } => {
       const { weights, infl, maxInfl, droppedAtFivePlaces, boundTo } = bind(mesh.points, mesh.weights as Array<Array<{ bone: string; weight: number }>>);
       const candidate = report.candidates[0];
@@ -1021,12 +1057,14 @@ export function buildRig(
               approximation: input.targets.regions[k].approximation,
             })),
             preset: null,
+            ...stageB,
           },
           source: { contour: source.report, counts: report.sourceCounts },
-          result: { counts: mesh.counts, removedVertices: candidate.changes?.removedVertices ?? 0, insertedVertices: candidate.changes?.insertedVertices ?? 0 },
+          result: { counts: mesh.counts, removedVertices: candidate.changes?.removedVertices ?? 0, insertedVertices: candidate.changes?.insertedVertices ?? 0, ...stageBResult(report, stageB) },
           residuals: rows,
           worst_residual: worstResidual(rows),
           worst_region: worstRegion(rows),
+          motion_amplitude: amplitudeRow(amplitude),
           termination: report.termination as Termination,
           weights: { sharesDroppedOnGrid: candidate.changes?.sharesDroppedOnGrid ?? 0, sharesPruned: candidate.changes?.sharesPruned ?? 0, droppedAtFivePlaces },
           regions: regions.map((rg, k) => ({ name: rg.name, bone: rg.bone, reached: reached[k], whole: whole[k], bound_in_result: boundTo[k] })),
@@ -1039,7 +1077,7 @@ export function buildRig(
     const acceptedAt = [...(changes?.acceptedAt ?? [])];
     const search: AutoSearch = {
       acceptedAt,
-      inserted: changes?.insertedVertices ?? 0,
+      inserted: refinementSteps(acceptedAt),
       replay: (step) => {
         const replayed = reduce(object, { ...input, stopAfterAccepted: step });
         if ('code' in replayed) return replayed;

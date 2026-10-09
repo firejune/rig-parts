@@ -18,7 +18,7 @@
  *    author's `influences` — no 0.03 floor unless the author wrote it (P19) —
  *    unrounded, so a vertex that survives can be compared bit for bit.
  * 2. **The call** ({@link autoReductionInput}) — rig-c's `reduceMesh`
- *    (`rig-c/mesh`, 2.24.x), refinement inside the declared regions then
+ *    (`rig-c/mesh`, 2.28.x), refinement inside the declared regions then
  *    reduction, every input from the config or from the source, as the
  *    contract types it (docs/MESH_REDUCTION.md §1): `art` the padded image's
  *    alpha at threshold 1 in the part-local frame with `pageScale` 1 (the
@@ -252,7 +252,67 @@ export function autoReductionInput(args: {
     regionArtSamples: regions.map((rg) => ({ region: rg.name, minArtSamples: rg.minArtSamples })),
     deform: [],
     linkedMeshes: [],
+    // Stage B (rigc#1271), each sent only when the author wrote it: absent, the input is the one it was before rig-c 2.25.0.
+    ...(spec.boundaryRuns === undefined ? {} : { boundaryRuns: { maxVertices: spec.boundaryRuns.maxVertices } }),
+    ...(spec.retriangulate === undefined ? {} : { retriangulate: spec.retriangulate }),
+    ...(spec.removalOrder === undefined ? {} : { removalOrder: spec.removalOrder }),
   };
+}
+
+/** The Stage B opt-ins a part set (rigc#1271), as `AutoSpec` and the row's `settings` both carry them: each absent when not set. */
+export interface StageBOptIns {
+  boundaryRuns?: { maxVertices: number };
+  retriangulate?: 'delaunay';
+  removalOrder?: 'deformation-load';
+}
+
+/**
+ * What the row's `result` carries about the Stage B opt-ins, each key only
+ * when its opt-in is set, so a part that sets none writes the `result` it
+ * always wrote: `boundary_runs` — the accepted operations of kind
+ * `boundary-run` and the vertices they removed, read off `acceptedAt` —
+ * and `retriangulation` — rig-c's `changes.retriangulation` without its fixed
+ * sentence (which the `quality_report` keeps): whether the pass was taken, its
+ * flips and sweeps, and the row that refused it; null when rig-c returned none.
+ */
+export interface StageBResult {
+  boundary_runs?: { runs: number; vertices: number };
+  retriangulation?: { method: 'delaunay'; taken: boolean; flips: number; sweeps: number; refusedBy: string | null } | null;
+}
+
+export function stageBResult(report: MeshQualityReport, set: StageBOptIns): StageBResult {
+  const ch = report.candidates[0]?.changes;
+  const out: StageBResult = {};
+  if (set.boundaryRuns !== undefined) {
+    const runs = (ch?.acceptedAt ?? []).filter((o) => o.kind === 'boundary-run');
+    out.boundary_runs = { runs: runs.length, vertices: runs.reduce((n, o) => n + o.count, 0) };
+  }
+  if (set.retriangulate !== undefined) {
+    const rt = ch?.retriangulation;
+    out.retriangulation = rt === undefined ? null : { method: rt.method, taken: rt.taken, flips: rt.flips, sweeps: rt.sweeps, refusedBy: rt.refusedBy };
+  }
+  return out;
+}
+
+/**
+ * The build line's clause for the Stage B opt-ins (rigc#1271): empty when the
+ * part sets none, so a config that names none prints the line it always
+ * printed. Otherwise `; boundary runs <= k: r run(s), v vertex(es)`,
+ * `; retriangulate delaunay taken, n flip(s)` or `… refused by <row>`, and
+ * `; removal order deformation-load`.
+ */
+export function stageBClause(set: StageBOptIns, result: StageBResult): string {
+  const out: string[] = [];
+  if (set.boundaryRuns !== undefined) {
+    const b = result.boundary_runs;
+    out.push(`boundary runs <= ${set.boundaryRuns.maxVertices}: ${b === undefined ? 'unread' : `${b.runs} run(s), ${b.vertices} vertex(es)`}`);
+  }
+  if (set.retriangulate !== undefined) {
+    const rt = result.retriangulation;
+    out.push(rt === undefined || rt === null ? `retriangulate ${set.retriangulate}: not reported` : rt.taken ? `retriangulate ${rt.method} taken, ${rt.flips} flip(s)` : `retriangulate ${rt.method} refused by ${rt.refusedBy ?? 'an unnamed row'}`);
+  }
+  if (set.removalOrder !== undefined) out.push(`removal order ${set.removalOrder}`);
+  return out.map((x) => `; ${x}`).join('');
 }
 
 /** The verdict on one call: the mesh to write, or the problem that refuses the part. */

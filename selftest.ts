@@ -189,15 +189,16 @@ import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld 
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
-import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline, windCounterClockwiseInSpineWorld, writeMeshQualityReport } from 'rig-c/mesh';
-import { AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
+import { type AcceptedOperation, type AlphaMask, checkHullOrder, type TrackAmplitude, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline, windCounterClockwiseInSpineWorld, writeMeshQualityReport } from 'rig-c/mesh';
+import { AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, stageBClause, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
 import { AUTO_CASES, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, finerSourcePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
 import { BLOCKED_LABEL, barsOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
 import { type BStar, bStar, type CellRow as ToolCellRow, nearestRank, parseArgs as parseBoundaryArgs, pendingRow, policyAt, render as renderBoundary, sagittas, sagittaSummary } from './tools/auto_boundary_survey.ts';
 import { type AutoMotionCase, idleSchedule, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
 import { motionGates, type MotionGateRun, replaySearch } from './src/build.ts';
-import { bisectAccepted, finalVerdict, gridFrameIds, maxReplays, type ReplayProbe, replayVerdict, roleReadings, selectionSchedule, splitSchedule } from './src/autoreplay.ts';
+import { bisectAccepted, finalVerdict, gridFrameIds, maxReplays, refinementSteps, type ReplayProbe, replayVerdict, roleReadings, sameOperation, selectionSchedule, splitSchedule } from './src/autoreplay.ts';
+import { type AmplitudeDerivation, deriveMotionAmplitude, trackTheta } from './src/autoamplitude.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
@@ -17468,6 +17469,7 @@ function runAutoMotionSuite(): number {
     );
 
     runAutoReplayCases(say, root, pos);
+    runAutoStageBCases(say, root, pos);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -17616,7 +17618,7 @@ function runAutoReplayCases(say: (name: string, ok: boolean, detail: string, why
       steps25.startsWith('AUTO_MESH_TERMINATION') &&
       steps25.includes(`reports acceptedSteps ${k + 1}`) &&
       tried25.startsWith('AUTO_MESH_TERMINATION') &&
-      tried25.includes(`where the full run's acceptedAt[${k - 1}] is ${acc[k - 1]}`) &&
+      tried25.includes(`where the full run's acceptedAt[${k - 1}].step is ${acc[k - 1]?.step}`) &&
       own25.startsWith('AUTO_MESH_TERMINATION') &&
       own25.includes(`not the full run's first ${k}`) &&
       asFull25.startsWith('AUTO_MESH_TERMINATION') &&
@@ -17659,10 +17661,10 @@ function runAutoReplayCases(say: (name: string, ok: boolean, detail: string, why
   const prow = auto(pos.rows[0]);
   const changes28 = ((prow?.quality_report as { candidates?: Array<{ changes?: Record<string, unknown> }> } | undefined)?.candidates?.[0]?.changes) ?? {};
   const keys28 = Object.keys(changes28);
-  const acc28 = changes28.acceptedAt as number[] | undefined;
-  const want28 = 'part,vertices,triangles,hull,bones,max_influences,mean_influences,art_coverage,mode,settings,source,result,residuals,worst_residual,worst_region,termination,weights,regions,deformation,quality_report,motion_report';
+  const acc28 = changes28.acceptedAt as AcceptedOperation[] | undefined;
+  const want28 = 'part,vertices,triangles,hull,bones,max_influences,mean_influences,art_coverage,mode,settings,source,result,residuals,worst_residual,worst_region,motion_amplitude,termination,weights,regions,deformation,quality_report,motion_report';
   say(
-    'MO28_A_PART_THE_GATE_ACCEPTS_OUTRIGHT_WRITES_ITS_ROW_AS_BEFORE_WITH_ONLY_RIG_CS_ACCEPTEDAT_ADDED_AND_NO_REPLAY',
+    'MO28_A_PART_THE_GATE_ACCEPTS_OUTRIGHT_WRITES_ITS_ROW_WITH_NO_REPLAY_AND_ONLY_THE_AMPLITUDE_KEY_ADDED_BY_THIS_PACKAGE',
     prow !== undefined &&
       Object.keys(prow).join() === want28 &&
       keys28[keys28.length - 1] === 'acceptedAt' &&
@@ -17671,7 +17673,7 @@ function runAutoReplayCases(say: (name: string, ok: boolean, detail: string, why
       pos.builds.length === 2 &&
       !pos.log.some((l) => l.includes('replay')),
     `row keys ${prow === undefined ? 'none' : Object.keys(prow).join(',')}; changes keys ${keys28.join(',')}; acceptedAt ${acc28?.length} = inserted ${prow?.result.insertedVertices} + removed ${prow?.result.removedVertices}; builds ${pos.builds.length}`,
-    'existing behaviour holds where the gate passes: no search runs, no key is added by this package, and the report differs from 2.23.0\'s only by acceptedAt, written last in changes (rigc#1268)',
+    'existing behaviour holds where the gate passes: no search runs; the one key this package added is motion_amplitude (issue #126 Q2, after worst_region), and rig-c\'s acceptedAt is written last in changes (rigc#1268), one entry per operation since 2.25.0',
   );
 
   // MO29 — the loaded rig-c is 2.24.0 or later and reads stopAfterAccepted; a planted bad value is its refusal, carried.
@@ -17719,7 +17721,7 @@ function runAutoReplayCases(say: (name: string, ok: boolean, detail: string, why
 
   // MO31 — the row: the search's fields, before deformation; the step's own termination and counts.
   const keys31 = rrow === undefined ? [] : Object.keys(rrow);
-  const tried31 = (rp?.probes ?? []).filter((p) => p.verdict !== 'refused').reduce((n, p) => n + acc[p.step - 1], 0);
+  const tried31 = (rp?.probes ?? []).filter((p) => p.verdict !== 'refused').reduce((n, p) => n + acc[p.step - 1].step, 0);
   say(
     'MO31_THE_ROW_CARRIES_THE_SEARCH_BEFORE_DEFORMATION_AND_THE_CHOSEN_STEPS_TERMINATION_AND_COUNTS',
     rp !== undefined &&
@@ -17738,7 +17740,7 @@ function runAutoReplayCases(say: (name: string, ok: boolean, detail: string, why
       (rp.held_out?.frame ?? '').startsWith('idle@irr@') &&
       rrow.termination.reason === 'replayed-to-accepted-step' &&
       rrow.termination.acceptedSteps === rp.chosen_step &&
-      rrow.termination.candidatesTried === acc[rp.chosen_step - 1] &&
+      rrow.termination.candidatesTried === acc[rp.chosen_step - 1].step &&
       rrow.vertices === srcVertices + I - (rp.chosen_step - I),
     `keys ...${keys31.slice(-4).join(',')}; replay ${JSON.stringify(rp === undefined ? null : { ...rp, rule: undefined, probes: rp.probes.length })}; candidates tried by hand ${tried31}; termination ${rrow === undefined ? 'none' : terminationText(rrow.termination)}`,
     'the row records N, the chosen n, the replays and the candidates they tried (each replay\'s own candidatesTried is acceptedAt[n - 1] by the contract), the selection and held-out readings with their worst frames, and no clock',
@@ -17831,6 +17833,426 @@ function runAutoReplayCases(say: (name: string, ok: boolean, detail: string, why
       s34.lines.some((l) => l.endsWith('no search runs')),
     `the source against itself at the policy: ${self34 === null || 'code' in self34 ? 'not run' : motionVerdict(AT, self34) === null ? 'accepted' : 'refused'} (overshoot ${over34}); held to an overshoot of half that: ${s34 === null ? 'not run' : `${s34.problems.map(problemLine).join('; ')}; ${s34.lines.join('; ')}`}; builds ${builds34}, replays ${replays34}`,
     'the brief: if step 0 itself fails the gate, the part is refused as today and no search runs — a bisection that assumes its lower end passes would otherwise search under a false premise',
+  );
+}
+
+/**
+ * Stage B of rigc#1271 on the automatic mode (issue #126, rig-c 2.25.0–2.28.0): MO35–MO44 of the auto-motion suite.
+ * `pos` is MO01's run, the fixture's cloth with no opt-in. Every expected value is derived by hand from the fixture
+ * or from rig-c's contract (docs/MESH_REDUCTION.md §2, §8); figures a run prints are compared with each other, never
+ * typed in.
+ */
+function runAutoStageBCases(say: (name: string, ok: boolean, detail: string, why: string) => void, root: string, pos: MotionStageRun): void {
+  const AT = 'config.meshes.cloth.auto';
+  const FIVE = ['MQ_GRADE', 'MQ_MIN_ANGLE_P10', 'MQ_ALLOCATION_CONTRAST', 'MQ_DEFORM_LOAD', 'MQ_BOUNDARY_NECESSARY'];
+  const has = (e: PartsError | null, code: string, ...words: string[]): boolean => e !== null && e.problems.some((p) => p.code === code && words.every((w) => `${p.object} ${p.detail}`.includes(w)));
+  const lines = (e: PartsError | null): string => (e === null ? 'nothing refused' : e.problems.map(problemLine).join('; ').slice(0, 1200));
+  const load = (c: Record<string, unknown>): PartsError | null => refusals(() => parseConfig(c));
+  const auto = (r: MeshReport | undefined): AutoMeshReport | undefined => (r !== undefined && 'mode' in r && r.mode === 'auto' ? r : undefined);
+  const withAuto = (fields: Record<string, unknown>): Record<string, unknown> => autoRigConfig((_c, a) => Object.assign(a, fields));
+  /** The reduction input `buildRig` hands rig-c for the cloth under `config` (its first call). */
+  const inputOf = (config: Record<string, unknown>): MeshReductionInput | null => {
+    let got: MeshReductionInput | null = null;
+    buildRig(parseConfig(config), rigParts(), rigImages(), undefined, undefined, (o, i) => {
+      got ??= i;
+      return runReduction(o, i);
+    });
+    return got;
+  };
+  /** One unweighted call on a mask under a spec, as the auto-mesh suite makes it, with `extra` spread over the input. */
+  const geo = (name: string, mask: AlphaMask, spec: AutoSpec): { input: MeshReductionInput; ran: { mesh: ReducedMesh | null; report: MeshQualityReport } } | null => {
+    const source = autoSource(name, mask, spec);
+    if (Array.isArray(source)) return null;
+    const input = autoReductionInput({ part: name, mask, ox: 0, oy: 0, spec, source, weights: null, boneOrder: [] });
+    const ran = runReduction(name, input);
+    return 'code' in ran ? null : { input, ran };
+  };
+  const ops = (r: { report: MeshQualityReport } | null): AcceptedOperation[] => r?.report.candidates[0]?.changes?.acceptedAt ?? [];
+  const eff = (r: { report: MeshQualityReport } | null): Record<string, unknown> => (r?.report.effective ?? {}) as unknown as Record<string, unknown>;
+  const meshText = (r: { mesh: ReducedMesh | null } | ReductionResult | null): string => (r === null || 'code' in r ? 'none' : JSON.stringify(r.mesh));
+
+  // The stage with all three opt-ins, the motion gate and (if it refuses the full result) the acceptance loop.
+  const ALL = { boundaryRuns: { maxVertices: 8 }, retriangulate: 'delaunay', removalOrder: 'deformation-load' };
+  const sb = motionStage(join(root, 'stage-b'), withAuto(ALL));
+  const sbRow = auto(sb.rows[0]);
+  const sbLine = sb.log.find((l) => l.includes('mesh cloth')) ?? '';
+  const posRow = auto(pos.rows[0]);
+  const posLine = pos.log.find((l) => l.includes('mesh cloth')) ?? '';
+  const sbOps = ((sbRow?.quality_report as { candidates?: Array<{ changes?: { acceptedAt?: AcceptedOperation[]; retriangulation?: Record<string, unknown> } }> } | undefined)?.candidates?.[0]?.changes) ?? {};
+
+  // MO35 — the migration reader: entries read by .step, I found by kind, a replay's own list compared operation by operation.
+  const ins = (step: number): AcceptedOperation => ({ step, kind: 'insertion', count: 1, sourceVertices: [] });
+  const rem = (step: number, v: number): AcceptedOperation => ({ step, kind: 'removal', count: 1, sourceVertices: [v] });
+  const run = (step: number, vs: number[]): AcceptedOperation => ({ step, kind: 'boundary-run', count: vs.length, sourceVertices: vs });
+  const hand = [ins(1), ins(2), ins(4), run(9, [3, 4, 5]), rem(12, 7)];
+  const regionConfig = autoRigConfig((_c, a) => (a.regions = [{ name: 'pinch', shape: 'circle', cx: 18, cy: 14, r: 2, band: 2, bone: 'soft', maxEdgeLength: 2, transition: 1, grade: 1, minArtSamples: 1 }]));
+  const c35 = motionCaseOf(regionConfig);
+  const in35 = inputOf(regionConfig);
+  const full35 = in35 === null ? null : runReduction(AT, in35);
+  const ch35 = full35 === null || 'code' in full35 ? null : full35.report.candidates[0]?.changes;
+  const acc35 = ch35?.acceptedAt ?? [];
+  const I35 = c35?.search.inserted ?? -1;
+  const k35 = I35 + 1;
+  const rep35 = in35 === null ? null : runReduction(AT, { ...in35, stopAfterAccepted: k35 });
+  const forged35 = rep35 === null || 'code' in rep35 ? null : { mesh: rep35.mesh, report: structuredClone(rep35.report) };
+  const last35 = forged35?.report.candidates[0]?.changes?.acceptedAt[k35 - 1];
+  if (last35 !== undefined) last35.kind = 'boundary-run';
+  const v35 = forged35 === null ? null : replayVerdict(AT, k35, acc35, forged35);
+  const clean35 = rep35 === null || 'code' in rep35 ? null : replayVerdict(AT, k35, acc35, rep35);
+  const ver35 = (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'rig-c', 'package.json'), 'utf8')) as { version: string }).version;
+  const [maj35, min35] = ver35.split('.').map(Number);
+  say(
+    'MO35_ACCEPTEDAT_IS_READ_PER_OPERATION_BY_STEP_AND_KIND_AND_A_REPLAY_WHOSE_OPERATION_DIFFERS_IS_REFUSED_BY_NAME',
+    (maj35 > 2 || (maj35 === 2 && min35 >= 28)) &&
+      refinementSteps(hand) === 3 &&
+      refinementSteps([rem(3, 1), run(5, [1, 2])]) === 0 &&
+      refinementSteps([]) === 0 &&
+      sameOperation(run(9, [3, 4, 5]), run(9, [3, 4, 5])) &&
+      !sameOperation(run(9, [3, 4, 5]), run(9, [3, 5, 4])) &&
+      !sameOperation(rem(12, 7), { ...rem(12, 7), kind: 'boundary-run' }) &&
+      ch35 !== null &&
+      ch35 !== undefined &&
+      ch35.insertedVertices > 0 &&
+      I35 === ch35.insertedVertices &&
+      acc35.every((o, i) => o.count === 1 && (i < I35 ? o.kind === 'insertion' && o.sourceVertices.length === 0 : o.kind === 'removal' && o.sourceVertices.length === 1)) &&
+      acc35.length === ch35.insertedVertices + ch35.removedVertices &&
+      acc35.every((o, i) => i === 0 || o.step > acc35[i - 1].step) &&
+      clean35 !== null &&
+      (clean35.accepted || clean35.problem.code === 'AUTO_MESH_ACCEPTED') &&
+      v35 !== null &&
+      !v35.accepted &&
+      v35.problem.code === 'AUTO_MESH_TERMINATION' &&
+      v35.problem.detail.includes(`first differing: ${acc35[k35 - 1]?.step} boundary-run`),
+    `rig-c ${ver35}; hand list I ${refinementSteps(hand)}; region fixture: I by kind ${I35}, insertedVertices ${ch35?.insertedVertices}, N ${acc35.length} = ${ch35?.insertedVertices} + ${ch35?.removedVertices}; replay to ${k35}: ${clean35 === null ? 'not run' : clean35.accepted ? 'accepted' : clean35.problem.code}; its last operation's kind forged -> ${v35 === null ? 'not run' : v35.accepted ? 'accepted' : problemLine(v35.problem).slice(0, 400)}`,
+    'rig-c 2.25.0 Migration: acceptedAt is AcceptedOperation[], read by .step; I is the operations up to the last insertion, found by kind (a boundary run removes several vertices in one step); without boundaryRuns every count is 1 and N = inserted + removed (rigc#1279)',
+  );
+
+  // MO36 — boundaryRuns: loads, malformed values refused by name, sent only when written, echoed, and counted off acceptedAt.
+  const br = (v: unknown): PartsError | null => load(withAuto({ boundaryRuns: v }));
+  const convexRuns = geo('convex', CONVEX.mask, { ...syntheticPolicy(8), boundaryRuns: { maxVertices: 8 } });
+  const convexPlain = geo('convex', CONVEX.mask, syntheticPolicy(8));
+  const runOps = ops(convexRuns?.ran ?? null).filter((o) => o.kind === 'boundary-run');
+  const ch36 = convexRuns?.ran.report.candidates[0]?.changes;
+  const removedByOps = ops(convexRuns?.ran ?? null).filter((o) => o.kind !== 'insertion').reduce((n, o) => n + o.count, 0);
+  const rowRuns = sbRow?.result.boundary_runs;
+  const sbRuns = (sbOps.acceptedAt ?? []).filter((o) => o.kind === 'boundary-run');
+  say(
+    'MO36_BOUNDARY_RUNS_LOADS_IS_REFUSED_BY_NAME_WHEN_MALFORMED_REACHES_RIG_C_ONLY_WHEN_WRITTEN_AND_IS_ECHOED_AND_COUNTED',
+    br({ maxVertices: 8 }) === null &&
+      has(br({ maxVertices: 1 }), 'CONFIG_FIELD_TYPE', `${AT}.boundaryRuns.maxVertices`, 'an integer at or above 2') &&
+      has(br({ maxVertices: 2.5 }), 'CONFIG_FIELD_TYPE', `${AT}.boundaryRuns.maxVertices`) &&
+      has(br(null), 'CONFIG_FIELD_TYPE', `${AT}.boundaryRuns`, 'an object is required') &&
+      has(br({}), 'CONFIG_FIELD_PRESENT', `${AT}.boundaryRuns.maxVertices`) &&
+      has(br({ maxVertices: 3, steps: 1 }), 'CONFIG_KEY_KNOWN', `${AT}.boundaryRuns.steps`) &&
+      convexRuns !== null &&
+      convexPlain !== null &&
+      JSON.stringify(convexRuns.input.boundaryRuns) === '{"maxVertices":8}' &&
+      !('boundaryRuns' in convexPlain.input) &&
+      JSON.stringify(eff(convexRuns.ran).boundaryRuns) === '{"maxVertices":8}' &&
+      !('boundaryRuns' in eff(convexPlain.ran)) &&
+      runOps.length > 0 &&
+      runOps.every((o) => o.count >= 2 && o.count <= 8 && o.sourceVertices.length === o.count) &&
+      ch36 !== undefined &&
+      removedByOps === ch36.removedVertices &&
+      ops(convexPlain.ran).every((o) => o.count === 1) &&
+      sbRow !== undefined &&
+      JSON.stringify(sbRow.settings.boundaryRuns) === '{"maxVertices":8}' &&
+      rowRuns !== undefined &&
+      rowRuns.runs === sbRuns.length &&
+      rowRuns.vertices === sbRuns.reduce((n, o) => n + o.count, 0) &&
+      sbLine.includes(`; boundary runs <= 8: ${rowRuns.runs} run(s), ${rowRuns.vertices} vertex(es)`) &&
+      posRow !== undefined &&
+      !('boundaryRuns' in posRow.settings) &&
+      !('boundary_runs' in posRow.result) &&
+      !posLine.includes('boundary runs'),
+    `refusals: 1 -> ${lines(br({ maxVertices: 1 })).slice(0, 160)}; null -> ${lines(br(null)).slice(0, 120)}; convex: runs ${runOps.map((o) => o.count).join(',')} of ${ops(convexRuns?.ran ?? null).length} operation(s), removed ${ch36?.removedVertices} = ${removedByOps}; stage: ${lines(sb.e).slice(0, 300)}; ${sbLine.trim()}`,
+    'rigc#1279: an opt-in with no default; a whole number 2 or more; left out, the input and the report are the ones before it existed; a run is one operation removing 2..maxVertices source-hull vertices',
+  );
+
+  // MO37 — retriangulate: loads, refused by name, reaches rig-c, keeps the vertex set, and the row carries the pass.
+  const rt = (v: unknown): PartsError | null => load(withAuto({ retriangulate: v }));
+  const concaveRt = geo('concave', CONCAVE.mask, { ...syntheticPolicy(6), retriangulate: 'delaunay' });
+  const concavePlain = geo('concave', CONCAVE.mask, syntheticPolicy(6));
+  const kept = (r: { mesh: ReducedMesh | null } | null): string => (r === null || r.mesh === null ? 'none' : JSON.stringify([r.mesh.points, r.mesh.uvs, r.mesh.hull, r.mesh.weights, r.mesh.triangles.length]));
+  const rt37 = concaveRt?.ran.report.candidates[0]?.changes?.retriangulation;
+  const rowRt = sbRow?.result.retriangulation;
+  const refusedCase = AUTO_CASES.find((c) => c.name === 'tiny region, coarse source');
+  const refused37 = refusedCase === undefined ? null : geo('refused', refusedCase.mask, { ...refusedCase.spec, retriangulate: 'delaunay' });
+  const refRt = refused37?.ran.report.candidates[0]?.changes?.retriangulation;
+  const refClause = refRt === undefined ? '' : stageBClause({ retriangulate: 'delaunay' }, { retriangulation: { method: refRt.method, taken: refRt.taken, flips: refRt.flips, sweeps: refRt.sweeps, refusedBy: refRt.refusedBy } });
+  say(
+    'MO37_RETRIANGULATE_LOADS_IS_REFUSED_BY_NAME_REACHES_RIG_C_KEEPS_THE_VERTEX_SET_AND_THE_ROW_CARRIES_THE_PASS_TAKEN_OR_REFUSED',
+    rt('delaunay') === null &&
+      has(rt('Delaunay'), 'CONFIG_FIELD_TYPE', `${AT}.retriangulate`, '"delaunay" is required') &&
+      has(rt(null), 'CONFIG_FIELD_TYPE', `${AT}.retriangulate`) &&
+      has(rt(true), 'CONFIG_FIELD_TYPE', `${AT}.retriangulate`) &&
+      concaveRt !== null &&
+      concavePlain !== null &&
+      concaveRt.input.retriangulate === 'delaunay' &&
+      !('retriangulate' in concavePlain.input) &&
+      kept(concaveRt.ran) === kept(concavePlain.ran) &&
+      rt37 !== undefined &&
+      rt37.method === 'delaunay' &&
+      rt37.taken &&
+      rt37.refusedBy === null &&
+      rt37.monotonicity.length > 0 &&
+      concavePlain.ran.report.candidates[0]?.changes?.retriangulation === undefined &&
+      JSON.stringify(ops(concaveRt.ran)) === JSON.stringify(ops(concavePlain.ran)) &&
+      refRt !== undefined &&
+      !refRt.taken &&
+      refRt.refusedBy !== null &&
+      refClause === `; retriangulate delaunay refused by ${refRt.refusedBy}` &&
+      sbRow !== undefined &&
+      sbRow.settings.retriangulate === 'delaunay' &&
+      rowRt !== undefined &&
+      rowRt !== null &&
+      JSON.stringify(rowRt) === JSON.stringify({ method: sbOps.retriangulation?.method, taken: sbOps.retriangulation?.taken, flips: sbOps.retriangulation?.flips, sweeps: sbOps.retriangulation?.sweeps, refusedBy: sbOps.retriangulation?.refusedBy }) &&
+      sbLine.includes(rowRt.taken ? `; retriangulate delaunay taken, ${rowRt.flips} flip(s)` : `; retriangulate delaunay refused by ${rowRt.refusedBy}`) &&
+      posRow !== undefined &&
+      !('retriangulate' in posRow.settings) &&
+      !('retriangulation' in posRow.result),
+    `concave: pass ${JSON.stringify(rt37 === undefined ? null : { ...rt37, monotonicity: undefined })}, vertex set kept ${kept(concaveRt?.ran ?? null) === kept(concavePlain?.ran ?? null)}; refused case -> ${refClause}; stage row ${JSON.stringify(rowRt)}`,
+    'rigc#1283 (§8 Q3/Q9): the post-pass keeps every vertex, its UVs and weights, takes its triangles whole only when every declared row passes, and is reported in changes.retriangulation — taken, or refused naming the row; the removals and acceptedAt are the call\'s without it',
+  );
+
+  // MO38 — removalOrder: loads, refused by name, echoed by rig-c and the row; on an unweighted source the default's order.
+  const ro = (v: unknown): PartsError | null => load(withAuto({ removalOrder: v }));
+  const convexLoad = geo('convex', CONVEX.mask, { ...syntheticPolicy(8), removalOrder: 'deformation-load' });
+  say(
+    'MO38_REMOVAL_ORDER_LOADS_IS_REFUSED_BY_NAME_IS_ECHOED_BY_RIG_C_AND_THE_ROW_AND_ON_AN_UNWEIGHTED_SOURCE_IS_THE_DEFAULT_ORDER',
+    ro('deformation-load') === null &&
+      has(ro('load'), 'CONFIG_FIELD_TYPE', `${AT}.removalOrder`, '"deformation-load" is required') &&
+      has(ro(null), 'CONFIG_FIELD_TYPE', `${AT}.removalOrder`) &&
+      convexLoad !== null &&
+      convexPlain !== null &&
+      convexLoad.input.removalOrder === 'deformation-load' &&
+      eff(convexLoad.ran).removalOrder === 'deformation-load' &&
+      !('removalOrder' in eff(convexPlain.ran)) &&
+      meshText(convexLoad.ran) === meshText(convexPlain.ran) &&
+      JSON.stringify(ops(convexLoad.ran)) === JSON.stringify(ops(convexPlain.ran)) &&
+      sbRow !== undefined &&
+      sbRow.settings.removalOrder === 'deformation-load' &&
+      sbLine.includes('; removal order deformation-load') &&
+      posRow !== undefined &&
+      !('removalOrder' in posRow.settings) &&
+      !posLine.includes('removal order'),
+    `load -> ${lines(ro('load')).slice(0, 160)}; convex unweighted: same mesh ${meshText(convexLoad?.ran ?? null) === meshText(convexPlain?.ran ?? null)}, effective ${String(eff(convexLoad?.ran ?? null).removalOrder)}`,
+    'rigc#1283 (§8 Q11): the order reads weights only, so on an unweighted source every load is 0 and the order is the default\'s; left out, rig-c echoes nothing and the order is ascending source index',
+  );
+
+  // MO39 — the amplitude derived from the fixture's own idle, by hand; every term it cannot derive stopped by name.
+  // By hand (fixtures/rig.ts): cloth binds hem0 and hem1; the idle keys hem0_ctl (above hem0 and hem1: both turn, θ 0) and
+  // hem1_ctl (above hem1 only: θ = 2 sin(A / 2)), A the largest |value| over the hem1 track's keys and Bézier handles —
+  // the sine 2 sin(2π(t/4 − 0.1)) at t = 0, 0.5, …, 4, handles v ± v'·(0.5/3), 4 places. The blink's eye is above neither.
+  const rigOut = buildRig(parseConfig(autoRigConfig()), rigParts(), rigImages());
+  let A = 0;
+  for (let k = 0; k <= 8; k++) {
+    const t = 0.5 * k;
+    const arg = (2 * Math.PI * t) / 4 - 2 * Math.PI * 0.1;
+    const v = 2 * Math.sin(arg);
+    const m = 2 * ((2 * Math.PI) / 4) * Math.cos(arg);
+    A = Math.max(A, Math.abs(pyRound(v, 4)));
+    if (k < 8) A = Math.max(A, Math.abs(pyRound(v + (m * 0.5) / 3, 4)));
+    if (k > 0) A = Math.max(A, Math.abs(pyRound(v - (m * 0.5) / 3, 4)));
+  }
+  const theta1 = 2 * Math.sin((A * Math.PI) / 360);
+  const fixtureArgs = { bones: rigOut.rig.bones, motion: rigOut.motion, constraints: 0, bound: ['hem1', 'hem0', 'hem0'], epsilon: 1 };
+  const d39 = deriveMotionAmplitude({ ...fixtureArgs, gradation: null });
+  const g39 = deriveMotionAmplitude({ ...fixtureArgs, gradation: 1 });
+  const want39 = [
+    { track: 'hem0_ctl.rotate#0', pairs: [{ bones: ['hem0', 'hem1'], theta: 0 }], epsilon: 1 },
+    { track: 'hem1_ctl.rotate#1', pairs: [{ bones: ['hem0', 'hem1'], theta: theta1 }], epsilon: 1 },
+  ];
+  const near = (a: number, b: number): boolean => Math.abs(a - b) <= 1e-12;
+  const tracksMatch = (got: TrackAmplitude[]): boolean =>
+    got.length === want39.length && got.every((t, i) => t.track === want39[i].track && t.epsilon === 1 && t.pairs.length === 1 && t.pairs[0].bones.join() === 'hem0,hem1' && near(t.pairs[0].theta, want39[i].pairs[0].theta));
+  // A hand rig for the rules: r -> a -> b, r -> c; a group `g` of a and c.
+  const handBones = [{ name: 'r' }, { name: 'a', parent: 'r' }, { name: 'b', parent: 'a' }, { name: 'c', parent: 'r' }];
+  const key = (v: number, curve?: [number, number, number, number]): { t: number; v: number[]; curve?: [number, number, number, number] } => (curve === undefined ? { t: 0, v: [v] } : { t: 0, v: [v], curve });
+  const handMotion = (tracks: MotionSpec['animations']['idle']['tracks'], groups: Record<string, string[]> = {}): MotionSpec => ({ spec: 'rigc-motion/1', archetype: 'h', cut: 'h', easings: {}, groups, animations: { idle: { duration: 1, loop: true, note: '', tracks } } });
+  const derive = (tracks: MotionSpec['animations']['idle']['tracks'], over: Partial<{ constraints: number; epsilon: number; groups: Record<string, string[]>; bound: string[] }> = {}) =>
+    deriveMotionAmplitude({ bones: handBones, motion: handMotion(tracks, over.groups), constraints: over.constraints ?? 0, bound: over.bound ?? ['a', 'b', 'c'], epsilon: over.epsilon ?? 2, gradation: 0.5 });
+  const rules = derive([
+    { bone: 'b', property: 'rotate', keys: [key(0), key(60), key(-30)] },
+    { bone: 'a', property: 'scalex', keys: [key(1), key(1.5), key(0.75)] },
+    { bone: 'c', property: 'translatey', keys: [key(0), key(3)] },
+  ]);
+  const thetas = (d: AmplitudeDerivation): string => ('amplitude' in d ? d.amplitude.tracks.map((t) => `${t.track}:${t.pairs.map((p) => `${p.bones.join('-')}=${pyRound(p.theta, 12)}`).join(',')}`).join(' | ') : `stops ${d.stops.map((s) => s.term).join(', ')}`);
+  const wantRules = 'b.rotate#0:a-b=1,a-c=0,b-c=1 | a.scalex#1:a-b=0,a-c=0.5,b-c=0.5 | c.translatey#2:a-b=0,a-c=0,b-c=0';
+  const bez = trackTheta('rotate', [key(0, [0, 40, 0, 10]), key(10)]);
+  const shear = derive([{ bone: 'a', property: 'shearx', keys: [key(0), key(5)] }]);
+  const group = derive([{ group: 'g', property: 'scaley', keys: [key(1), key(0.5)] }], { groups: { g: ['a', 'c'] }, bound: ['a', 'c'] });
+  const withConstraint = derive([{ bone: 'b', property: 'rotate', keys: [key(10)] }], { constraints: 1 });
+  const flat = derive([{ bone: 'b', property: 'rotate', keys: [key(10)] }], { epsilon: 0 });
+  const stopTerms = (d: AmplitudeDerivation): string => ('stops' in d ? d.stops.map((s) => s.term).join(', ') : 'none');
+  say(
+    'MO39_THE_AMPLITUDE_IS_DERIVED_FROM_THE_DECLARED_IDLE_BY_HAND_AND_EVERY_TERM_IT_CANNOT_DERIVE_IS_STOPPED_BY_NAME',
+    'stops' in d39 &&
+      stopTerms(d39) === 'gradation' &&
+      tracksMatch(d39.tracks) &&
+      'amplitude' in g39 &&
+      g39.amplitude.gradation === 1 &&
+      tracksMatch(g39.amplitude.tracks) &&
+      posRow !== undefined &&
+      posRow.motion_amplitude.sent === false &&
+      posRow.motion_amplitude.stops.map((s) => s.term).join() === 'gradation' &&
+      !('motionAmplitude' in ((posRow.quality_report as { effective?: Record<string, unknown> }).effective ?? {})) &&
+      thetas(rules) === wantRules &&
+      'theta' in bez &&
+      near(bez.theta, 2 * Math.sin((40 * Math.PI) / 360)) &&
+      stopTerms(shear) === 'tracks[a.shearx#0].pairs[].theta' &&
+      stopTerms(group) === 'tracks[g.scaley#0].pairs[a, c].theta' &&
+      stopTerms(withConstraint) === 'tracks' &&
+      stopTerms(flat) === 'tracks[].epsilon',
+    `fixture: A ${A} deg, θ ${theta1}; derived ${'stops' in d39 ? `stops [${stopTerms(d39)}], tracks ${JSON.stringify(d39.tracks)}` : 'an amplitude'}; with G 1 -> ${thetas(g39)}; row ${JSON.stringify(posRow?.motion_amplitude).slice(0, 300)}; hand rig -> ${thetas(rules)}; Bézier ${JSON.stringify(bez)}; shear -> ${stopTerms(shear)}; group -> ${stopTerms(group)}; constraint -> ${stopTerms(withConstraint)}; ε 0 -> ${stopTerms(flat)}`,
+    'issue #126 Q2: parts declares θ and ε from the motion it already declares; θ = ‖M − I‖ of the pair\'s relative linear part (rig-c §8: 2 sin(α/2), |s − 1|; a translation leaves it unchanged), ε the part\'s motion bound; the gradation G is a number nothing here declares, so the field is not sent and the row names the term — the brief\'s STOP, not a default',
+  );
+
+  // MO40 — the five rows: in the row's residuals as rig-c reports them, none bounded, none the worst residual.
+  const res40 = posRow?.residuals ?? [];
+  const five = FIVE.map((code) => res40.filter((r) => r.code === code && r.region === null));
+  const qrows = ((posRow?.quality_report as { candidates?: Array<{ geometry?: { rows?: Array<{ code: string; reason: string | null }> } }> } | undefined)?.candidates?.[0]?.geometry?.rows) ?? [];
+  const reasonOf = (code: string): string => qrows.find((r) => r.code === code)?.reason ?? '';
+  const forgedBound = res40.map((r) => (r.code === 'MQ_GRADE' ? { ...r, state: 'fail' as const, bound: { op: '<=' as const, value: (r.value ?? 1) / 1000 } } : r));
+  say(
+    'MO40_THE_FIVE_ALLOCATION_ROWS_ARE_IN_THE_RESIDUALS_UNDECLARED_OR_NOT_MEASURABLE_AND_NEVER_THE_WORST_RESIDUAL',
+    five.every((x) => x.length === 1) &&
+      ['MQ_GRADE', 'MQ_MIN_ANGLE_P10', 'MQ_BOUNDARY_NECESSARY'].every((code) => {
+        const r = res40.find((x) => x.code === code);
+        return r !== undefined && r.state === 'undeclared' && r.bound === null && typeof r.value === 'number';
+      }) &&
+      ['MQ_ALLOCATION_CONTRAST', 'MQ_DEFORM_LOAD'].every((code) => {
+        const r = res40.find((x) => x.code === code);
+        return r !== undefined && r.state === 'not-measurable' && r.bound === null && r.value === null && reasonOf(code).includes('motionAmplitude');
+      }) &&
+      posRow !== undefined &&
+      posRow.worst_residual !== null &&
+      !FIVE.includes(posRow.worst_residual.code) &&
+      posRow.worst_residual.bound !== null &&
+      worstResidual(res40.filter((r) => FIVE.includes(r.code))) === null &&
+      worstResidual(res40)?.code === posRow.worst_residual.code &&
+      worstResidual(forgedBound)?.code === 'MQ_GRADE',
+    `rows ${FIVE.map((c) => { const r = res40.find((x) => x.code === c); return `${c} ${r?.state} ${r?.value}`; }).join('; ')}; worst ${posRow?.worst_residual?.code}; of the five alone -> ${worstResidual(res40.filter((r) => FIVE.includes(r.code)))?.code ?? 'none'}; with MQ_GRADE given a bound of a thousandth of its value -> ${worstResidual(forgedBound)?.code}`,
+    'Q7 (rigc#1280): all five reported, undeclared, no bound on any — so worst_residual, which reads declared bounds only, can never pick one; Δ and D need the amplitude, which is not sent (MO39), and rig-c names the field',
+  );
+
+  // MO41 — an amplitude, when derived, reaches rig-c: D measured as its definition says, nothing else moved.
+  const in41 = inputOf(autoRigConfig());
+  const without41 = in41 === null ? null : runReduction(AT, in41);
+  const with41 = in41 === null || !('amplitude' in g39) ? null : runReduction(AT, { ...in41, motionAmplitude: g39.amplitude });
+  const rowOf41 = (r: ReductionResult | null, code: string): { state: string; value: number | null } | undefined => (r === null || 'code' in r ? undefined : r.report.candidates[0]?.geometry?.rows.find((x) => x.code === code));
+  // By the definition (rig-c §8): max over the result's unique edges of L · Δshare · θ / 4, Δshare = ½ Σ|w_u − w_v|, θ the
+  // largest the amplitude declares for the pair hem0–hem1 (the only pair a share moves between here): θ1.
+  let D = 0;
+  let D0 = 0;
+  if (with41 !== null && !('code' in with41) && with41.mesh !== null) {
+    const m = with41.mesh;
+    const seen = new Set<string>();
+    for (let t = 0; t < m.triangles.length; t += 3) {
+      for (let e = 0; e < 3; e++) {
+        const u = Math.min(m.triangles[t + e], m.triangles[t + ((e + 1) % 3)]);
+        const v = Math.max(m.triangles[t + e], m.triangles[t + ((e + 1) % 3)]);
+        if (seen.has(`${u},${v}`)) continue;
+        seen.add(`${u},${v}`);
+        const L = Math.hypot(m.points[u][0] - m.points[v][0], m.points[u][1] - m.points[v][1]);
+        const wOf = (i: number, b: string): number => ((m.weights ?? [])[i] ?? []).find((x) => x.bone === b)?.weight ?? 0;
+        const dShare = (Math.abs(wOf(u, 'hem0') - wOf(v, 'hem0')) + Math.abs(wOf(u, 'hem1') - wOf(v, 'hem1'))) / 2;
+        D = Math.max(D, (L * dShare * theta1) / 4);
+        D0 = Math.max(D0, (L * dShare) / 4);
+      }
+    }
+  }
+  const load41 = rowOf41(with41, 'MQ_DEFORM_LOAD');
+  const delta41 = rowOf41(with41, 'MQ_ALLOCATION_CONTRAST');
+  const same41 = (f: (r: { mesh: ReducedMesh | null; report: MeshQualityReport }) => unknown): boolean =>
+    without41 !== null && with41 !== null && !('code' in without41) && !('code' in with41) && JSON.stringify(f(without41)) === JSON.stringify(f(with41));
+  say(
+    'MO41_A_DERIVED_AMPLITUDE_REACHES_RIG_C_WHICH_MEASURES_THE_LOAD_AS_DEFINED_AND_MOVES_NO_MESH_STEP_OR_TERMINATION',
+    load41 !== undefined &&
+      load41.state === 'undeclared' &&
+      load41.value !== null &&
+      D > 0 &&
+      Math.abs(load41.value - D) <= 1e-6 &&
+      Math.abs(load41.value - D0) > 1e-6 &&
+      delta41 !== undefined &&
+      (delta41.state === 'undeclared' || delta41.state === 'not-measurable') &&
+      rowOf41(without41, 'MQ_DEFORM_LOAD')?.state === 'not-measurable' &&
+      same41((r) => r.mesh) &&
+      same41((r) => r.report.candidates[0]?.changes?.acceptedAt) &&
+      same41((r) => r.report.termination) &&
+      same41((r) => r.report.candidates[0]?.accepted),
+    `G 1 (the control's own number; no build passes one): MQ_DEFORM_LOAD ${load41?.state} ${load41?.value} against ${D} by hand (θ dropped: ${D0}); MQ_ALLOCATION_CONTRAST ${delta41?.state} ${delta41?.value}; mesh, acceptedAt, termination, accepted unchanged: ${same41((r) => r.mesh)}, ${same41((r) => r.report.candidates[0]?.changes?.acceptedAt)}, ${same41((r) => r.report.termination)}, ${same41((r) => r.report.candidates[0]?.accepted)}`,
+    'rigc#1287: motionAmplitude on reduceMesh is read by the result\'s measurement only — D = max L·Δshare·θ/4 — and no step, so the mesh and every step are the call\'s without it; this is the path the derivation takes once a gradation is declared',
+  );
+
+  // MO42 — a bound on one of the five rows is not a field: the loader refuses it by name, as it refuses an author amplitude.
+  const bound42 = load(autoRigConfig((_c, a) => ((a.targets as Record<string, unknown>).maxGrade = 2)));
+  const p10 = load(autoRigConfig((_c, a) => ((a.targets as Record<string, unknown>).minAngleP10 = 5)));
+  const amp42 = load(withAuto({ motionAmplitude: { tracks: [], gradation: 1 } }));
+  say(
+    'MO42_A_BOUND_PLANTED_ON_AN_ALLOCATION_ROW_OR_AN_AUTHORED_AMPLITUDE_IS_REFUSED_BY_THE_LOADER_BY_NAME',
+    load(autoRigConfig()) === null &&
+      has(bound42, 'CONFIG_KEY_KNOWN', `${AT}.targets.maxGrade`, 'is not a field here') &&
+      has(p10, 'CONFIG_KEY_KNOWN', `${AT}.targets.minAngleP10`) &&
+      has(amp42, 'CONFIG_KEY_KNOWN', `${AT}.motionAmplitude`),
+    `maxGrade -> ${lines(bound42).slice(0, 240)}; minAngleP10 -> ${lines(p10).slice(0, 120)}; motionAmplitude -> ${lines(amp42).slice(0, 120)}`,
+    'Q7: no bound on any of the five rows today, so there is no field to declare one in; and motionAmplitude is derived from the idle, never written by the author (the brief)',
+  );
+
+  // MO43 — the replay stays byte-exact under retriangulate on a parts input: stopAfterAccepted k and the budget cut at
+  // acceptedAt[k − 1].step end on the same mesh, the post-pass after both (rig-c's promise, §8 *Not a step*).
+  const cases43: Array<[string, MeshReductionInput | null]> = [
+    ['cloth, retriangulate', inputOf(withAuto({ retriangulate: 'delaunay' }))],
+    ['cloth, all three', inputOf(withAuto(ALL))],
+    ['convex, runs and retriangulate', geo('convex', CONVEX.mask, { ...syntheticPolicy(8), boundaryRuns: { maxVertices: 8 }, retriangulate: 'delaunay' })?.input ?? null],
+  ];
+  const report43: string[] = [];
+  let ok43 = cases43.every(([, i]) => i !== null);
+  let planted43 = 0;
+  let probes43 = 0;
+  for (const [name, input] of cases43) {
+    if (input === null) continue;
+    const full = runReduction(AT, input);
+    const acc = 'code' in full ? [] : ops(full);
+    const I = refinementSteps(acc);
+    const N = acc.length;
+    const ks = [...new Set([I + 1, Math.floor((I + N) / 2), N - 1, N])].filter((k) => k > I && k <= N);
+    for (const k of ks) {
+      probes43++;
+      const rep = runReduction(AT, { ...input, stopAfterAccepted: k });
+      const cut = runReduction(AT, { ...input, budget: { maxCandidates: acc[k - 1].step } });
+      const again = runReduction(AT, { ...input, stopAfterAccepted: k });
+      const short = runReduction(AT, { ...input, budget: { maxCandidates: acc[k - 1].step - 1 } });
+      const rtOf = (r: ReductionResult): string => ('code' in r ? 'none' : JSON.stringify(r.report.candidates[0]?.changes?.retriangulation ?? null));
+      const verdict = 'code' in rep ? null : replayVerdict(AT, k, acc, rep);
+      const same = meshText(rep) !== 'none' && meshText(rep) === meshText(cut) && rtOf(rep) === rtOf(cut) && meshText(rep) === meshText(again);
+      const notTerm = verdict !== null && (verdict.accepted || verdict.problem.code !== 'AUTO_MESH_TERMINATION');
+      if (meshText(short) !== meshText(rep)) planted43++;
+      ok43 &&= same && notTerm;
+      report43.push(`${name} k ${k} of ${N}: ${same ? 'same' : 'DIFFERS'}${notTerm ? '' : ' (termination broken)'}`);
+    }
+  }
+  say(
+    'MO43_UNDER_RETRIANGULATE_A_REPLAY_TO_K_IS_THE_BUDGET_CUT_AT_ITS_STEP_BYTE_FOR_BYTE_ON_A_PARTS_INPUT',
+    ok43 && probes43 >= 2 * cases43.length && planted43 === probes43,
+    `${report43.join('; ')}; the cut one attempt earlier differs on ${planted43} of ${probes43}`,
+    'the brief\'s STOP: "2.28.0\'s replay is not byte-exact under an opt-in on a parts input"; the post-pass is not a step, so stopAfterAccepted k and the budget cut at acceptedAt[k − 1].step end on one state and the same deterministic pass follows both; one attempt fewer is a different state (the plant)',
+  );
+
+  // MO44 — determinism with every opt-in, and the opt-out input carries none of the four new fields.
+  const sb2 = motionStage(join(root, 'stage-b-again'), withAuto(ALL));
+  const same44 = (f: string): boolean => existsSync(join(sb.out, f)) && existsSync(join(sb2.out, f)) && readFileSync(join(sb.out, f), 'utf8') === readFileSync(join(sb2.out, f), 'utf8');
+  const plain44 = inputOf(autoRigConfig());
+  say(
+    'MO44_TWO_RUNS_WITH_EVERY_STAGE_B_OPT_IN_WRITE_THE_SAME_BYTES_AND_A_CONFIG_WITH_NONE_SENDS_NONE',
+    sb.e === null &&
+      same44('rig.json') &&
+      same44('mesh_report.json') &&
+      sb.log.join('\n').split(sb.out).join('') === sb2.log.join('\n').split(sb2.out).join('') &&
+      plain44 !== null &&
+      ['boundaryRuns', 'retriangulate', 'removalOrder', 'motionAmplitude', 'stopAfterAccepted'].every((k) => !(k in plain44)),
+    `${lines(sb.e).slice(0, 300)}; rig.json ${same44('rig.json')}, mesh_report.json ${same44('mesh_report.json')}; opt-out input keys ${plain44 === null ? 'none' : Object.keys(plain44).join(',')}`,
+    'determinism is a contract: the same config writes the same bytes with the opt-ins on; and a config that names none hands rig-c the input it handed 2.24.1',
   );
 }
 

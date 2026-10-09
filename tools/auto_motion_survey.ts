@@ -34,6 +34,18 @@
  * result's comparison (the stage's first two builds), and a second table reads
  * the loop off the row the stage wrote (`replay`) or off its refusal.
  *
+ * ## `--config <name>[,<name>…]`: the Stage B matrix (rigc#1271, rig-c 2.25.0–2.28.0)
+ *
+ * With `--config`, each named configuration ({@link STAGE_B_CONFIGS}) is run
+ * over the same eight parts — the policy above plus that configuration's
+ * opt-ins and nothing else — and one document is printed: per part and
+ * configuration, the source, full and chosen counts, the operations N (I),
+ * the chosen step, the replays and the candidates of the full run and of the
+ * replays, the full run's termination, the chosen row's
+ * `MQ_BOUNDARY_DEVIATION`, the motion readings with their worst frames, the
+ * verdict, what each opt-in did, and the five allocation rows rig-c 2.26.0
+ * added. `baseline` is no opt-in: the same calls as the default document.
+ *
  * Output: Markdown — two tables, one schedule line per part, and the refusal
  * text of every refused part. Every number is read from rig-c's report;
  * no path, no time and no machine is printed, so two runs of one tree print
@@ -61,6 +73,28 @@ import { examplePolicy } from '../fixtures/automesh.ts';
 import { withPolicyMotion } from '../fixtures/automotion.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
+
+/**
+ * The Stage B configurations (rigc#1271), each the opt-ins it adds to the policy and nothing else. `boundaryRuns`
+ * takes `maxVertices` 8: the one figure every recorded Stage B measurement used (rig-c docs/MESH_REDUCTION.md §8 —
+ * the stage-A prototype's runs of "up to 8", and #1279's and #1283's tables at `maxVertices: 8`), stated before any
+ * part was run here and not tuned per part.
+ */
+export const STAGE_B_CONFIGS: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+  ['baseline', {}],
+  ['boundaryRuns', { boundaryRuns: { maxVertices: 8 } }],
+  ['retriangulate', { retriangulate: 'delaunay' }],
+  ['removalOrder', { removalOrder: 'deformation-load' }],
+  ['all', { boundaryRuns: { maxVertices: 8 }, retriangulate: 'delaunay', removalOrder: 'deformation-load' }],
+];
+
+/** A configuration's opt-ins by name; an unknown name is `configsFromArgs`'s to refuse, so none reaches here. */
+export function extraOf(name: string): Record<string, unknown> {
+  return STAGE_B_CONFIGS.find(([n]) => n === name)?.[1] ?? {};
+}
+
+/** The five allocation rows rig-c 2.26.0 reports, every one `undeclared` or `not-measurable` (rigc#1280). */
+export const ALLOCATION_ROWS = ['MQ_GRADE', 'MQ_MIN_ANGLE_P10', 'MQ_ALLOCATION_CONTRAST', 'MQ_DEFORM_LOAD', 'MQ_BOUNDARY_NECESSARY'] as const;
 
 /** The parts item 2 accepted on geometry, by example (issue #126, the item-2 comment). */
 const PARTS: ReadonlyArray<readonly [string, readonly string[]]> = [
@@ -291,6 +325,94 @@ function print(results: readonly MotionCell[]): void {
   for (const l of rerunFooter(installedRigc(), pinnedInputs())) console.log(l);
 }
 
+/** A residual of a row in a few words: the value, or the state when there is none. */
+function residualText(row: AutoMeshReport | undefined, code: string): string {
+  const r = row?.residuals.find((x) => x.code === code && x.region === null);
+  return r === undefined ? 'absent' : r.value === null ? r.state : `${r.value}${r.state === 'undeclared' ? '' : ` (${r.state})`}`;
+}
+
+/** What the Stage B opt-ins did on the full run, from its row: runs taken, the post-pass, the order. */
+function stageBText(row: AutoMeshReport | undefined): string {
+  if (row === undefined) return 'not built';
+  const out: string[] = [];
+  const b = row.result.boundary_runs;
+  if (b !== undefined) out.push(`${b.runs} run(s), ${b.vertices} vertex(es)`);
+  const rt = row.result.retriangulation;
+  if (rt !== undefined) out.push(rt === null ? 'post-pass not reported' : rt.taken ? `post-pass taken, ${rt.flips} flip(s)` : `post-pass refused by ${rt.refusedBy}`);
+  if (row.settings.removalOrder !== undefined) out.push(`order ${row.settings.removalOrder}`);
+  return out.length === 0 ? 'none' : out.join('; ');
+}
+
+/** The Stage B matrix document (module header, `--config`). */
+function printMatrix(results: ReadonlyArray<{ config: string; cell: MotionCell }>): void {
+  const configs = [...new Set(results.map((r) => r.config))];
+  console.log('## Stage B on the public examples (tools/auto_motion_survey.ts --config)\n');
+  console.log(
+    `Policy: examplePolicy(spacing) (fixtures/automesh.ts) + policyMotion (fixtures/automotion.ts) — maxBoundaryDeviation 1, source tolerance 1, motion bound 1 rig px — plus each configuration's opt-ins and nothing else (STAGE_B_CONFIGS in the tool: ${configs.map((c) => `${c} ${JSON.stringify(extraOf(c))}`).join(', ')}); each part switched alone; the real rig stage with the motion gate and the acceptance loop (src/autoreplay.ts), through the installed rig-c ${installedRigc()}. N is the full run's accepted operations (acceptedAt's length; a boundary run is one), I the refinement's insertions among them. "chosen" is the row the stage wrote — a replayed step's when the acceptance loop chose one.\n`,
+  );
+  console.log('### Counts, search and motion\n');
+  console.log('| part | config | source → full → chosen (hull+interior) | N (I) | chosen step | replays (at most) | candidates: full run / replays | full run\'s termination | MQ_BOUNDARY_DEVIATION (chosen) | full result\'s motion (every frame held out) | chosen: selection / held out | verdict |');
+  console.log('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+  for (const { config, cell: r } of results) {
+    const full = r.row?.result.counts;
+    const w = r.written?.result.counts;
+    const counts = `${r.row === undefined || r.row.source.counts === null ? 'unread' : `${r.row.source.counts.boundaryVertices}+${r.row.source.counts.interiorVertices}`} → ${full === undefined ? 'not built' : `${full.boundaryVertices}+${full.interiorVertices}`} → ${w === undefined ? 'nothing' : `${w.boundaryVertices}+${w.interiorVertices}`}`;
+    const n = r.row?.quality_report as { candidates?: Array<{ changes?: { acceptedAt?: Array<{ kind: string }> } }> } | undefined;
+    const acc = n?.candidates?.[0]?.changes?.acceptedAt;
+    const nI = acc === undefined ? 'n/a' : `${acc.length} (${acc.filter((o) => o.kind === 'insertion').length})`;
+    const rp = r.written?.replay;
+    const t = r.row?.termination;
+    const tried = t !== undefined && (t.reason === 'no-further-valid-reduction' || t.reason === 'budget-exhausted') ? t.candidatesTried : 'n/a';
+    const term = t === undefined ? 'n/a' : t.reason === 'no-further-valid-reduction' ? `no-further-valid-reduction, blocked by ${t.blockingConstraint}` : t.reason;
+    const role = (x: { value: number | null; frame: string | null } | null | undefined): string => (x === null || x === undefined ? 'n/a' : `${x.value} @ ${x.frame ?? 'every frame'}`);
+    const chosenStep = rp !== undefined ? `${rp.chosen_step}` : r.refusal === null ? `${acc?.length ?? 'n/a'} (the full result)` : 'none';
+    const replays = rp !== undefined ? `${rp.replays} (${rp.max_replays})` : r.refusal === null ? '0' : `${/kept none \(([^)]*)\)/.exec(r.refusal)?.[1]?.split(', ').length ?? 0}`;
+    const motion = rp !== undefined ? `${role(rp.selection)} / ${role(rp.held_out)}` : 'n/a (no replay)';
+    console.log(`| ${r.example}/${r.part} | ${config} | ${counts} | ${nI} | ${chosenStep} | ${replays} | ${tried} / ${rp?.candidates_tried ?? 0} | ${term} | ${residualText(r.written ?? r.row, 'MQ_BOUNDARY_DEVIATION')} | ${cell(rowOf(r.report, 'MQ_LOCAL_DEFORMATION'))} | ${motion} | ${verdictOf(r)} |`);
+  }
+  console.log('\n### What each opt-in did, and the five allocation rows\n');
+  console.log(
+    'Read off the full run\'s row (what the opt-ins did) and the chosen row (the five rows; the full run\'s when nothing was written). The five rows are rig-c\'s, every one undeclared — no bound, never required, never the worst residual. MQ_ALLOCATION_CONTRAST and MQ_DEFORM_LOAD need a motion amplitude; the stage sends none, because its gradation is a number no field declares (src/autoamplitude.ts; the row\'s motion_amplitude names the term), so both read not-measurable.\n',
+  );
+  console.log(`| part | config | opt-ins on the full run | ${ALLOCATION_ROWS.join(' | ')} | amplitude |`);
+  console.log(`| --- | --- | --- | ${ALLOCATION_ROWS.map(() => '---').join(' | ')} | --- |`);
+  for (const { config, cell: r } of results) {
+    const chosen = r.written ?? r.row;
+    const amp = chosen?.motion_amplitude;
+    const ampText = amp === undefined ? 'n/a' : amp.sent ? 'sent' : `not sent: ${amp.stops.map((x) => x.term).join(', ')}`;
+    console.log(`| ${r.example}/${r.part} | ${config} | ${stageBText(r.row)} | ${ALLOCATION_ROWS.map((code) => residualText(chosen, code)).join(' | ')} | ${ampText} |`);
+  }
+  const refused = results.filter((r) => r.cell.refusal !== null);
+  if (refused.length > 0) {
+    console.log('\n### Refusals\n');
+    for (const { config, cell: r } of refused) console.log(`- ${r.example}/${r.part} (${config}): ${r.refusal}`);
+  }
+  console.log('');
+  for (const c of configs) {
+    const of = results.filter((r) => r.config === c).map((r) => r.cell);
+    const nRef = of.filter((r) => r.refusal !== null).length;
+    const nRep = of.filter((r) => r.refusal === null && r.written?.replay !== undefined).length;
+    console.log(`- ${c}: ${of.length - nRef} of ${of.length} accepted (${of.length - nRef - nRep} outright, ${nRep} at a replayed step), ${nRef} refused.`);
+  }
+  const footer = rerunFooter(installedRigc(), pinnedInputs());
+  footer[footer.length - 2] = `timeout 2700 bun tools/auto_motion_survey.ts --config ${configs.join(',')} > docs/evidence/auto-stageb-survey.md`;
+  for (const l of footer) console.log(l);
+}
+
+/** The configurations `--config` names, in the order written; an unknown name exits 2 naming the known ones. */
+function configsFromArgs(argv: readonly string[]): string[] | null {
+  const i = argv.indexOf('--config');
+  if (i < 0) return null;
+  const names = (argv[i + 1] ?? '').split(',').filter((x) => x !== '');
+  const known = STAGE_B_CONFIGS.map(([n]) => n);
+  const bad = names.filter((n) => !known.includes(n));
+  if (names.length === 0 || bad.length > 0) {
+    console.error(`auto_motion_survey: --config takes one or more of ${known.join(', ')}, comma-separated; got "${argv[i + 1] ?? ''}"`);
+    process.exit(2);
+  }
+  return names;
+}
+
 function main(): void {
   const missing = missingInputs(PARTS.map(([k]) => k));
   if (missing.length > 0) {
@@ -298,13 +420,28 @@ function main(): void {
     process.exit(1);
   }
   const rigcBin = findRigc(ROOT, '');
+  const configs = configsFromArgs(process.argv.slice(2));
   const work = mkdtempSync(join(tmpdir(), 'rig-parts-auto-motion-survey-'));
   const results: MotionCell[] = [];
+  const matrix: Array<{ config: string; cell: MotionCell }> = [];
   let disagreements = 0;
   try {
     for (const [key, parts] of PARTS) {
       const asm = assembleExample(work, key);
       for (const part of parts) {
+        if (configs !== null) {
+          for (const name of configs) {
+            const extra = extraOf(name);
+            const r = motionCell(key, part, { ...withPolicyMotion(examplePolicy(trackedSpacing(key, part))), ...extra }, asm, join(work, key, part, name), rigcBin);
+            if (r.disagreement !== null) {
+              disagreements++;
+              console.error(`auto_motion_survey: ${r.disagreement} (${name})`);
+            }
+            console.error(`auto_motion_survey: ${key}/${part} ${name}: ${(r.wallMs / 1000).toFixed(1)} s wall, ${r.builds} rigc build(s), ${verdictOf(r)}`);
+            matrix.push({ config: name, cell: r });
+          }
+          continue;
+        }
         const r = motionCell(key, part, withPolicyMotion(examplePolicy(trackedSpacing(key, part))), asm, join(work, key, part), rigcBin);
         if (r.disagreement !== null) {
           disagreements++;
@@ -318,7 +455,8 @@ function main(): void {
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
-  print(results);
+  if (configs !== null) printMatrix(matrix);
+  else print(results);
   if (disagreements > 0) process.exit(1);
 }
 

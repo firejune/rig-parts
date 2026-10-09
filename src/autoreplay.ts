@@ -3,17 +3,22 @@
  * mechanism 2, rig-c 2.24.0): what the rig stage does with an `auto` part
  * whose full reduction is refused by the motion gate (`src/automotion.ts`).
  *
- * rig-c's `reduceMesh` reports `changes.acceptedAt`, the attempt number of
- * every accepted step — each refinement insertion and each removal — and takes
- * `stopAfterAccepted: n`, which returns byte for byte the mesh the same call
- * held after its n-th accepted step, terminated `replayed-to-accepted-step`
- * (the contract: rig-c's docs/MESH_REDUCTION.md §7, *Mechanism 2 —
- * implemented*). The choosing is this package's (mechanism 3, agreed on
- * issue #126 as Q8), and it is done this way:
+ * rig-c's `reduceMesh` reports `changes.acceptedAt`, one entry per accepted
+ * operation — `{ step, kind, count, sourceVertices }`, `step` the attempt
+ * number it was taken at and `kind` a refinement `insertion`, a single
+ * `removal` or a `boundary-run` (from rig-c 2.25.0, rigc#1279; before it the
+ * entries were the bare attempt numbers) — and takes `stopAfterAccepted: n`,
+ * which returns byte for byte the mesh the same call held after its n-th
+ * accepted operation, terminated `replayed-to-accepted-step` (the contract:
+ * rig-c's docs/MESH_REDUCTION.md §2 and §7, *Mechanism 2 — implemented*).
+ * Every step below is an operation, not a vertex: a boundary run removes two
+ * or more vertices in one step. The choosing is this package's (mechanism 3,
+ * agreed on issue #126 as Q8), and it is done this way:
  *
- * 1. **The domain.** N = `acceptedAt.length` steps; the first I of them are
- *    the refinement's insertions (`changes.insertedVertices`: rig-c refines
- *    inside the declared regions, then removes). A step at or below I is the
+ * 1. **The domain.** N = `acceptedAt.length` operations; the first I of them
+ *    are the refinement's insertions ({@link refinementSteps}: the entries up
+ *    to the last of kind `insertion` — rig-c refines inside the declared
+ *    regions, then removes). A step at or below I is the
  *    source, refined or not, and is never written as an automatic result —
  *    writing the source would silently defeat the mode, so a search that finds
  *    no removal step passing is refused, "no reduction passes the motion
@@ -47,7 +52,7 @@
  * (`src/build.ts`), the one place this package runs rigc. Pure: no clock, no
  * randomness, nothing read or written.
  */
-import type { MeasureRow, MeshQualityReport, MotionSchedule, ReducedMesh } from 'rig-c/mesh';
+import type { AcceptedOperation, MeasureRow, MeshQualityReport, MotionSchedule, ReducedMesh } from 'rig-c/mesh';
 import { autoVerdict, terminationText } from './automesh.ts';
 import { idleSchedule, localRow, motionRowText } from './automotion.ts';
 import type { Problem } from './errors.ts';
@@ -70,6 +75,29 @@ export function selectionSchedule(grid: readonly string[]): MotionSchedule {
 /** The final acceptance's schedule: {@link idleSchedule} whole — grid and irr — with the grid frames `selection`, so every irr frame is held out. */
 export function splitSchedule(grid: readonly string[]): MotionSchedule {
   return { ...idleSchedule(), selection: [...grid] };
+}
+
+/**
+ * I: the operations of `acceptedAt` that are the refinement's insertions — the
+ * entries up to and including the last of kind `insertion`, found by `kind`
+ * and not by a count of vertices (rigc#1279: an operation may remove several).
+ * rig-c refines first and then removes, so they are a prefix; 0 when there is
+ * none.
+ */
+export function refinementSteps(acceptedAt: readonly AcceptedOperation[]): number {
+  for (let i = acceptedAt.length - 1; i >= 0; i--) if (acceptedAt[i].kind === 'insertion') return i + 1;
+  return 0;
+}
+
+/** Two accepted operations are the same operation: the same attempt number, kind, count and source vertices in order. */
+export function sameOperation(a: AcceptedOperation, b: AcceptedOperation): boolean {
+  return a.step === b.step && a.kind === b.kind && a.count === b.count && a.sourceVertices.length === b.sourceVertices.length && a.sourceVertices.every((v, i) => v === b.sourceVertices[i]);
+}
+
+/** An operation in a phrase: `12 removal [7]`, `40 boundary-run x3 [3, 4, 5]`. */
+export function operationText(o: AcceptedOperation | undefined): string {
+  if (o === undefined) return 'none';
+  return `${o.step} ${o.kind}${o.count === 1 ? '' : ` x${o.count}`}${o.sourceVertices.length === 0 ? '' : ` [${o.sourceVertices.join(', ')}]`}`;
 }
 
 /** The most replays a bisection over the removal steps (I, N) takes: ⌈log₂(N − I)⌉, 0 when there is no step strictly between. */
@@ -116,7 +144,8 @@ export function bisectAccepted(lo: number, hi: number, probe: (step: number) => 
  * The acceptance of one replay (module header, steps 1–2): the termination the
  * contract promises for `stopAfterAccepted: step` — `replayed-to-accepted-step`
  * with `acceptedSteps` the step and `candidatesTried` the full run's
- * `acceptedAt[step − 1]`, its own `acceptedAt` the full run's first `step` —
+ * `acceptedAt[step − 1].step`, its own `acceptedAt` the full run's first `step`
+ * operations, each the same operation ({@link sameOperation}) —
  * and then {@link autoVerdict}'s rule, the full result's: the candidate
  * `accepted` with every declared geometry row passing. A replay that breaks the
  * promise is `AUTO_MESH_TERMINATION` naming the step and the difference; one
@@ -126,29 +155,31 @@ export function bisectAccepted(lo: number, hi: number, probe: (step: number) => 
 export function replayVerdict(
   object: string,
   step: number,
-  acceptedAt: readonly number[],
+  acceptedAt: readonly AcceptedOperation[],
   result: { mesh: ReducedMesh | null; report: MeshQualityReport },
 ): { accepted: true; mesh: ReducedMesh; candidatesTried: number } | { accepted: false; problem: Problem } {
   const t = result.report.termination;
   const own = result.report.candidates[0]?.changes?.acceptedAt ?? null;
-  const want = acceptedAt[step - 1];
+  const want = acceptedAt[step - 1]?.step;
   const broken =
-    t === null || t.reason !== 'replayed-to-accepted-step'
+    want === undefined
+      ? `was asked for a step the full run never took (it accepted ${acceptedAt.length} operation(s))`
+      : t === null || t.reason !== 'replayed-to-accepted-step'
       ? `ended ${terminationText(t)}`
       : t.acceptedSteps !== step
         ? `reports acceptedSteps ${t.acceptedSteps}`
         : t.candidatesTried !== want
-          ? `reports candidatesTried ${t.candidatesTried} where the full run's acceptedAt[${step - 1}] is ${want}`
-          : own === null || own.length !== step || own.some((v, i) => v !== acceptedAt[i])
-            ? `reports acceptedAt [${(own ?? []).join(', ')}], not the full run's first ${step}`
+          ? `reports candidatesTried ${t.candidatesTried} where the full run's acceptedAt[${step - 1}].step is ${want}`
+          : own === null || own.length !== step || own.some((o, i) => !sameOperation(o, acceptedAt[i]))
+            ? `reports acceptedAt of ${(own ?? []).length} operation(s) (first differing: ${operationText((own ?? []).find((o, i) => acceptedAt[i] === undefined || !sameOperation(o, acceptedAt[i])))}), not the full run's first ${step}`
             : null;
-  if (broken !== null) {
+  if (broken !== null || want === undefined) {
     return {
       accepted: false,
       problem: {
         code: 'AUTO_MESH_TERMINATION',
         object,
-        detail: `rig-c's reduceMesh with stopAfterAccepted ${step} ${broken}; the contract (rigc#1268) promises replayed-to-accepted-step with acceptedSteps ${step} and candidatesTried ${want ?? 'the full run\'s acceptedAt[n - 1]'}, and a replay that breaks it is not a candidate`,
+        detail: `rig-c's reduceMesh with stopAfterAccepted ${step} ${broken}; the contract (rigc#1268) promises replayed-to-accepted-step with acceptedSteps ${step} and candidatesTried ${want ?? 'the full run\'s acceptedAt[n - 1].step'}, and a replay that breaks it is not a candidate`,
       },
     };
   }
@@ -228,17 +259,17 @@ export function finalVerdict(object: string, step: number, accepted: number, rep
 /** What `mesh_report.json`'s row carries about a search that chose a replay (`replay`, before `deformation`). */
 export interface ReplayRow {
   rule: string;
-  /** The full run's `acceptedAt` length: N. */
+  /** The full run's `acceptedAt` length: N operations. */
   accepted_steps: number;
-  /** The refinement's insertions among them: I (steps 1..I). */
+  /** The refinement's insertions among them: I (operations 1..I, {@link refinementSteps}). */
   refinement_steps: number;
-  /** The step written: I < n < N. */
+  /** The operation written: I < n < N. */
   chosen_step: number;
   /** `reduceMesh` calls with `stopAfterAccepted`: one per probe. */
   replays: number;
   /** ⌈log₂(N − I)⌉ ({@link maxReplays}). */
   max_replays: number;
-  /** The candidates tried across the replays (each replay's `candidatesTried`, summed); the full run's own is the `quality_report`'s. */
+  /** The candidates tried across the replays (each replay's `candidatesTried` — `acceptedAt[n − 1].step` — summed); the full run's own is the `quality_report`'s. */
   candidates_tried: number;
   /** The full result's reading on the whole idle, as the gate refused it. */
   full: RoleReading | null;

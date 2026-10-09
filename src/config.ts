@@ -233,7 +233,7 @@ export type ContourRegionSpec =
 /**
  * One mesh in the automatic mode (issue #126, item 2): the contour mesh over
  * the part at alpha 1 and above is the source, and rig-c's `reduceMesh`
- * (`rig-c/mesh`, 2.24.x) refines it inside the declared regions and
+ * (`rig-c/mesh`, 2.28.x) refines it inside the declared regions and
  * removes what the declared bounds allow (`src/automesh.ts`); the result is
  * kept only when its motion passes `motion` (`src/automotion.ts`). Every quality
  * input is a number the author wrote, named as rig-c's contract
@@ -276,6 +276,22 @@ export interface AutoSpec {
    * same code.
    */
   motion?: AutoMotionSpec;
+  /**
+   * Stage B of rigc#1271 (rig-c 2.25.0–2.27.0), each opt-in and each the
+   * author's: absent, the field is not sent to `reduceMesh` and the call is the
+   * one it was before the field existed. `boundaryRuns.maxVertices` (a whole
+   * number, 2 or more; no default) lets each removal pass replace a run of 2 to
+   * that many consecutive source-hull vertices with one chord, as one step held
+   * to every declared row; `retriangulate: 'delaunay'` re-triangulates the kept
+   * vertices by Delaunay flips once the reduction ends, taken whole only when
+   * every declared row still passes; `removalOrder: 'deformation-load'` tries the
+   * single removals in ascending predicted load instead of ascending source
+   * index. What each promises and does not is rig-c's (docs/MESH_REDUCTION.md
+   * §8, the three *Stage B* subsections).
+   */
+  boundaryRuns?: { maxVertices: number };
+  retriangulate?: 'delaunay';
+  removalOrder?: 'deformation-load';
 }
 
 /**
@@ -1178,8 +1194,19 @@ function checkContour(c: Check, at: string, v: Json, bones: Set<string>): void {
  * not have) is its refusal at the rig stage, in its words.
  */
 function checkAuto(c: Check, at: string, v: Json, bones: Set<string>): void {
-  const o = c.object(at, v, ['source', 'sourceBounds', 'targets', 'influences', 'budget', 'minArtSamples', 'motion'], ['protect', 'regions']);
+  const o = c.object(at, v, ['source', 'sourceBounds', 'targets', 'influences', 'budget', 'minArtSamples', 'motion'], ['protect', 'regions', 'boundaryRuns', 'retriangulate', 'removalOrder']);
   if (o === null) return;
+  // Stage B (rigc#1271): three opt-ins, each absent = not sent; a value is exactly one rig-c accepts, or it is refused by name.
+  if ('boundaryRuns' in o) {
+    const b = c.object(`${at}.boundaryRuns`, o.boundaryRuns, ['maxVertices'], []);
+    if (b !== null && 'maxVertices' in b) c.int(`${at}.boundaryRuns.maxVertices`, b.maxVertices, 2);
+  }
+  if ('retriangulate' in o && o.retriangulate !== 'delaunay') {
+    c.fail('CONFIG_FIELD_TYPE', `${at}.retriangulate`, `is ${show(o.retriangulate)}; "delaunay" is required (the one post-pass rig-c offers), or leave the field out for the triangles the removals leave`);
+  }
+  if ('removalOrder' in o && o.removalOrder !== 'deformation-load') {
+    c.fail('CONFIG_FIELD_TYPE', `${at}.removalOrder`, `is ${show(o.removalOrder)}; "deformation-load" is required (the one order rig-c offers besides its default), or leave the field out for ascending source index`);
+  }
   if ('motion' in o) {
     const m = c.object(`${at}.motion`, o.motion, ['maxLocalDeformation'], ['maxStretch', 'minStretch', 'deformMayFold']);
     if (m !== null) {

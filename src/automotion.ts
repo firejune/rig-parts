@@ -2,7 +2,7 @@
  * The motion gate of the automatic mesh mode (issue #126, item 3): a reduced
  * mesh is written only when it moves like the mesh it was reduced from, on the
  * rig's own idle, measured by rig-c's `compareMeshesInMotion`
- * (`rig-c/meshcompare`, 2.24.x) and held to the bounds the author wrote in
+ * (`rig-c/meshcompare`, 2.28.x) and held to the bounds the author wrote in
  * `meshes.<part>.auto.motion` (`AutoMotionSpec`, `src/config.ts`).
  *
  * ## What is compared
@@ -62,7 +62,7 @@
  *
  * Pure: no clock, no randomness, nothing read or written.
  */
-import { MeshReductionError, type AlphaMask, type ArtFitBounds, type MeasureRow, type MeshQualityReport, type MotionBounds, type MotionSchedule, writeMeshQualityReport } from 'rig-c/mesh';
+import { type AcceptedOperation, MeshReductionError, type AlphaMask, type ArtFitBounds, type MeasureRow, type MeshQualityReport, type MotionBounds, type MotionSchedule, writeMeshQualityReport } from 'rig-c/mesh';
 import { compareMeshesInMotion, type MotionComparisonInput } from 'rig-c/meshcompare';
 import type { AutoMotionSpec } from './config.ts';
 import type { Problem } from './errors.ts';
@@ -122,11 +122,11 @@ export interface ReplayCandidate {
   candidatesTried: number;
 }
 
-/** The full run's accepted steps and a replay of any of them (`stopAfterAccepted`, rig-c 2.24.0), each held to the full result's acceptance. */
+/** The full run's accepted operations and a replay to any of them (`stopAfterAccepted`, rig-c 2.24.0; counted in operations from 2.25.0), each held to the full result's acceptance. */
 export interface AutoSearch {
-  /** The full run's `changes.acceptedAt`: N = its length. */
-  acceptedAt: number[];
-  /** The refinement's insertions, the first I accepted steps. */
+  /** The full run's `changes.acceptedAt`, one entry per accepted operation: N = its length. */
+  acceptedAt: AcceptedOperation[];
+  /** The refinement's insertions, the first I accepted operations (`refinementSteps`, found by `kind`). */
   inserted: number;
   /** The step replayed and accepted on geometry, or the problem that refuses it. Pure. */
   replay: (step: number) => ReplayCandidate | Problem;
