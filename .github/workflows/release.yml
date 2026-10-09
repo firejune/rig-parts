@@ -101,9 +101,20 @@ jobs:
       # Nothing to build — the package ships TypeScript sources and bun runs
       # them. prepublishOnly runs `typecheck && lint && selftest` against the
       # tagged tree, so a broken gate fails the publish rather than shipping.
+      #
+      # 🏷️ A prerelease never lands on `latest`: a version with a hyphen
+      # (1.0.0-rc.1) goes out under the `rc` dist-tag, so a plain install keeps
+      # receiving the last stable version; any other version passes no tag and
+      # publishes exactly as before. Promotion to `latest` is the owner's, by
+      # `npm dist-tag add`, never this workflow's. The alias step reads the
+      # same clause.
       - name: Publish to npm
         if: ${{ steps.release.outputs.release_created == 'true' }}
-        run: npm publish --provenance --access public
+        run: |
+          set -euo pipefail
+          tag=""
+          case "$(node -p "require('./package.json').version")" in *-*) tag="--tag rc";; esac
+          npm publish --provenance --access public $tag
 
       # 🪞 The alias: the same files under the name the package first shipped
       # as, so an install or a dependant that still names it keeps receiving
@@ -127,8 +138,10 @@ jobs:
         if: ${{ steps.release.outputs.release_created == 'true' }}
         run: |
           set -euo pipefail
+          tag=""
+          case "$(node -p "require('./package.json').version")" in *-*) tag="--tag rc";; esac
           alias_tgz="$(bun scripts/alias_tarball.ts pack --name spine-parts --out "$RUNNER_TEMP/alias")"
-          npm publish "$alias_tgz" --provenance --access public
+          npm publish "$alias_tgz" --provenance --access public $tag
 
       # ⚖️ A confirmation beside the gate, not the gate: the `installs` job in
       # ci.yml runs the same script over a tarball packed from the branch, with
