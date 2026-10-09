@@ -87,7 +87,7 @@ import { type Problem, refuseIfAny } from './errors.ts';
 import type { MeshCounts, MeshQualityReport, MeshReductionInput, MotionAmplitude, ReducedMesh, Termination } from 'rig-c/mesh';
 import { type AmplitudeRow, amplitudeRow, partAmplitude, withAmplitude } from './autoamplitude.ts';
 import { type AutoMotionCase, type AutoSearch, DEFORM_MAY_FOLD_WHY, type MotionDeformation } from './automotion.ts';
-import { refinementSteps, replayVerdict, type ReplayRow } from './autoreplay.ts';
+import { type MultiIntervalRow, refinementSteps, replayVerdict, type ReplayRow } from './autoreplay.ts';
 import {
   autoReductionInput,
   autoSource,
@@ -442,9 +442,12 @@ export interface AutoMeshReport {
    * every probe, and the chosen step's selection and held-out readings. The
    * row's other fields are then that step's (its `termination` is
    * `replayed-to-accepted-step`). Absent on every other row, so a part the
-   * gate accepted outright writes the row it always wrote.
+   * gate accepted outright writes the row it always wrote. With the author's
+   * `motion.selection` (issue #148) it is the multi-interval search's row,
+   * which says `policy` and carries the tested set, the passing and untested
+   * intervals, the chosen counts, the termination and the roles.
    */
-  replay?: ReplayRow;
+  replay?: ReplayRow | MultiIntervalRow;
   /**
    * {@link DEFORMATION_UNMEASURED} as `buildRig` writes the row — it measures
    * geometry alone; the rig stage replaces it with the motion gate's rows

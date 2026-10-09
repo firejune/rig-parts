@@ -95,6 +95,11 @@ export const STAGE_B_CONFIGS: ReadonlyArray<readonly [string, Record<string, unk
   // ("it is a value those fixtures chose, not a default rigc holds"). An author's number written here for the
   // evidence so Δ and E appear once; it is no default of this package and no claim that 0.75 suits these parts.
   ['gradation', { motion: { gradation: 0.75 } }],
+  // The multi-interval selection (issue #148): the baseline, and `all`, with `motion.selection`. maxProbes 18 is twice
+  // ⌈log₂ 275⌉ = 9, the longest bisection the tracked Stage B survey can take (its largest N is 275 operations) —
+  // stated before any part was run under it and not tuned per part; it is an author's number written for the evidence.
+  ['multiInterval', { motion: { selection: { policy: 'multi-interval', maxProbes: 18 } } }],
+  ['allMultiInterval', { boundaryRuns: { maxVertices: 8 }, retriangulate: 'delaunay', removalOrder: 'deformation-load', motion: { selection: { policy: 'multi-interval', maxProbes: 18 } } }],
 ];
 
 /** A configuration's opt-ins by name; an unknown name is `configsFromArgs`'s to refuse, so none reaches here. */
@@ -306,7 +311,7 @@ function print(results: readonly MotionCell[]): void {
     const role = (x: { value: number | null; frame: string | null } | null | undefined): string => (x === null || x === undefined ? 'n/a' : `${x.value} @ ${x.frame ?? 'every frame'}`);
     if (rp !== undefined) {
       const probes = rp.probes.map((p) => `${p.step} ${p.verdict}${p.value === null ? '' : ` ${p.value}`}`).join(', ');
-      console.log(`| ${r.example}/${r.part} | ${counts} | ${nI} | ${rp.chosen_step} | ${rp.replays} (${rp.max_replays}) | ${rp.candidates_tried} | ${role(rp.selection)} | ${role(rp.held_out)} | ${probes} | ${verdictOf(r)} |`);
+      console.log(`| ${r.example}/${r.part} | ${counts} | ${nI} | ${rp.chosen_step} | ${rp.replays} (${'max_replays' in rp ? rp.max_replays : rp.max_probes}) | ${rp.candidates_tried} | ${role(rp.selection)} | ${role(rp.held_out)} | ${probes} | ${verdictOf(r)} |`);
     } else if (r.refusal === null) {
       console.log(`| ${r.example}/${r.part} | ${counts} | ${nI} | ${ch?.acceptedAt?.length ?? 'n/a'} (the full result) | 0 | 0 | n/a | n/a | none | ${verdictOf(r)} |`);
     } else {
@@ -396,7 +401,7 @@ function printMatrix(results: ReadonlyArray<{ config: string; cell: MotionCell }
     const term = t === undefined ? 'n/a' : t.reason === 'no-further-valid-reduction' ? `no-further-valid-reduction, blocked by ${t.blockingConstraint}` : t.reason;
     const role = (x: { value: number | null; frame: string | null } | null | undefined): string => (x === null || x === undefined ? 'n/a' : `${x.value} @ ${x.frame ?? 'every frame'}`);
     const chosenStep = rp !== undefined ? `${rp.chosen_step}` : r.refusal === null ? `${acc?.length ?? 'n/a'} (the full result)` : 'none';
-    const replays = rp !== undefined ? `${rp.replays} (${rp.max_replays})` : r.refusal === null ? '0' : `${/kept none \(([^)]*)\)/.exec(r.refusal)?.[1]?.split(', ').length ?? 0}`;
+    const replays = rp !== undefined ? `${rp.replays} (${'max_replays' in rp ? rp.max_replays : rp.max_probes})` : r.refusal === null ? '0' : `${/kept none \(([^)]*)\)/.exec(r.refusal)?.[1]?.split(', ').length ?? 0}`;
     const motion = rp !== undefined ? `${role(rp.selection)} / ${role(rp.held_out)}` : 'n/a (no replay)';
     console.log(`| ${r.example}/${r.part} | ${config} | ${counts} | ${nI} | ${chosenStep} | ${replays} | ${tried} / ${rp?.candidates_tried ?? 0} | ${term} | ${residualText(r.written ?? r.row, 'MQ_BOUNDARY_DEVIATION')} | ${cell(rowOf(r.report, 'MQ_LOCAL_DEFORMATION'))} | ${motion} | ${verdictOf(r)} |`);
   }

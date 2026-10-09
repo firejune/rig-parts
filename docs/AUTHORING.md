@@ -503,7 +503,9 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    cannot inform the choice. It keeps the largest step it saw pass. Validity along the order is
    not monotone (the contract measured it), so the search finds *a* passing prefix, not
    necessarily the last, and at most ⌈log₂(N − I)⌉ replays are taken — derived from the steps,
-   not an author number; there is no config field for the search. The chosen step is then
+   not an author number. The one field that changes the search is the opt-in
+   `motion.selection` (*The multi-interval selection*, below); without it the search is this
+   bisection and the stage writes the bytes it wrote before the field existed. The chosen step is then
    written into the rig, which goes through rigc's gate again exactly as written, and is
    compared with the source on the **whole** idle with the grid frames declared `selection` and
    the irr frames held out; it is written only when that comparison is `accepted` on every
@@ -512,6 +514,40 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    reduction passes the motion bound". A part the gate accepts in step 4 runs no replay. Since
    rig-c 2.24.0 the report carries `acceptedAt`, last in `changes`; since 2.25.0 one entry per
    operation; since 2.26.0 five more geometry rows (below).
+
+**The multi-interval selection** (issue #148; opt-in, `motion.selection: { "policy":
+"multi-interval", "maxProbes": <n> }`). The bisection keeps the step it lands on; where validity
+is not monotone, a later step with fewer vertices may pass in an interval it never visits (the
+synthetic fixture shows one: control `MO52`). With the field, step 5's search becomes:
+
+- **The order.** The bisection first, whole — its own result is always among the tested — then,
+  while fewer than `maxProbes` distinct steps have been replayed, the midpoint (rounded down) of
+  the longest run of removal steps not yet replayed, the lower run when two are equally long.
+  It depends only on the answers, so two runs make the same probes. Each step is replayed at
+  most once: the budget counts distinct replays, never a repeat.
+- **The budget** is the author's whole number (1 or more; never defaulted, never derived). It
+  must hold the bisection: below ⌈log₂(N − I)⌉ the part is refused
+  `AUTO_MESH_SELECTION_BUDGET`, naming N, I and the number required, before any replay. There
+  is no unbounded walk: at most `maxProbes` replays, each one unpacked gated build and one
+  comparison.
+- **The choice.** Among the tested steps that passed on the `grid` frames, the fewest vertices —
+  each replay's own count, read off its mesh, never inferred from the step number (a boundary run
+  removes several vertices in one operation) — and the lower step on a tie. The source (step I,
+  refined or not) and the full result (step N) bound the domain and are never candidates. It is
+  the **best among tested candidates**: never the last, the minimal or a complete walk, unless
+  the row's `termination` says `every-removal-step-tested`.
+- **The roles.** Every frame a probe reads is a `grid` frame, declared `selection` in the final
+  comparison; the irr frames are read once, by that final comparison on the whole idle, and are
+  held out. A chosen step that fails held out is refused as under the bisection, and **no second
+  candidate is taken** — nothing reads a held-out result to choose. A probe that read a frame the
+  final comparison holds out (or does not declare) is refused `AUTO_MESH_SELECTION_ROLES` and the
+  held-out claim withdrawn; the shipped search never does this.
+- **Nothing tested passed**: refused `AUTO_MESH_MOTION`, "no reduction passes the motion bound
+  among the tested candidates", every probe named; a step never replayed is not claimed to fail.
+
+It cannot skip an operation inside a prefix — every candidate is the call's own mesh after its
+n-th accepted operation — and it does not change what the economy of the automatic mode is
+measured against; it only looks at more prefixes of the same call.
 
 The public examples' evidence is re-run from the tree: `bun run fetch-examples`, then
 `bun tools/auto_motion_survey.ts` switches each part item 2 accepted on geometry to `auto`, alone,
@@ -533,7 +569,7 @@ wall time goes to standard error, not into the table).
 | `influences.{maxInfluences, minWeight}` | the cap on bindings per vertex (1 or more) and the floor below which a share is dropped (0 up to 1; 0 drops only shares that are 0 on the weight grid) — for the source's weights and every inserted vertex |
 | `budget.maxCandidates` | the most steps rig-c may try (each insertion and each removal attempt counts one); 0 returns the source |
 | `minArtSamples` | the fewest art pixels a raster row is taken over, 1 or more |
-| `motion` | **required**: `maxLocalDeformation` (rig px, 0 or more — how far the reduced mesh may carry any art pixel from where its source carries it, at any frame); optional `maxStretch` / `minStretch` (ratios; absent, the rows are reported and not gated); optional `deformMayFold` (absent is **false**: a triangle that turns over refuses the part; true declares the slot in `invariants.deformMayFold` and lists every fold instead); optional `gradation` (px per px, 0 or more, or `null`; the author's G for `MQ_ALLOCATION_CONTRAST`, never derived — absent or `null`, the contrast reads `not-measurable` naming it; see *The allocation rows* below) |
+| `motion` | **required**: `maxLocalDeformation` (rig px, 0 or more — how far the reduced mesh may carry any art pixel from where its source carries it, at any frame); optional `maxStretch` / `minStretch` (ratios; absent, the rows are reported and not gated); optional `deformMayFold` (absent is **false**: a triangle that turns over refuses the part; true declares the slot in `invariants.deformMayFold` and lists every fold instead); optional `gradation` (px per px, 0 or more, or `null`; the author's G for `MQ_ALLOCATION_CONTRAST`, never derived — absent or `null`, the contrast reads `not-measurable` naming it; see *The allocation rows* below); optional `selection` (`{ "policy": "multi-interval", "maxProbes": <whole number, 1 or more> }`; absent, the acceptance loop is the bisection — see *The multi-interval selection* above) |
 | `protect` | optional; each field optional: `hull` (true keeps every source outline vertex; absent is **false**, the default agreed for this mode), `vertices` and `edges` (source vertex indices and pairs that must survive), `regionBoundaries` (region names whose outline vertices must survive), `weightJump` (an L1 weight difference above which a source edge is kept; absent is none), `influences` (bones never pruned from a vertex; every region's bone is added) |
 | `regions` | optional, each `{name, shape, bone, band, maxEdgeLength, transition, grade, minArtSamples}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`): `bone` and `band` are the control bone and its weight falloff exactly as a contour region's (rig px, multiples of 1/256 px); `maxEdgeLength` is L0, the longest an edge meeting the region may be, px; outside it, across `transition` px, the bound relaxes as `L0 + grade·d`; `transition` 0 is a hard edge; `minArtSamples` is the region's own sample floor |
 | `boundaryRuns` | optional, `{ maxVertices }`, a whole number 2 or more, no default: each removal pass first tries to replace a run of 2 to `maxVertices` consecutive source-hull vertices with one chord, as one step held to every declared row (below) |
@@ -656,7 +692,16 @@ the acceptance loop wrote at a replayed step (step 5): `rule` (the search in wor
 prefix, not necessarily the last"), `accepted_steps` (N, in operations), `refinement_steps` (I), `chosen_step`,
 `replays` and `max_replays`, `candidates_tried` across the replays, `full` (the full result's
 reading that the gate refused), every probe (step, pass/fail, value and frame on the grid frames),
-and `selection` and `held_out` (the chosen step's value and worst frame per role); the row's other
+and `selection` and `held_out` (the chosen step's value and worst frame per role). Under
+`motion.selection` the `replay` object is the multi-interval search's instead: `rule` ("the best
+among tested candidates"), `policy`, `max_probes`, `accepted_steps`, `refinement_steps`,
+`chosen_step`, `bisection_step` (the bisection's own result inside the search), `replays`,
+`candidates_tried`, `termination` (`every-removal-step-tested` or `budget-exhausted`), `tested`
+(the replayed steps, ascending), `passing_intervals` (runs of tested passing steps with no tested
+failure between), `untested_intervals` (runs of removal steps never replayed), `chosen`
+(`vertices`, `boundary`, `interior`, `triangles`, `bindings` of the written mesh), `full`, every
+probe with its `vertices`, `roles` (`selection: "grid"`, `held_out: "irr"`, and the distinct
+frames the probes read), then `selection` and `held_out`. The row's other
 fields are then that step's, its `termination` `replayed-to-accepted-step` — `deformation` — the motion
 gate's verdict, the bounds echoed (`deformMayFold` included), each motion row (`MQ_INVERSION`,
 `MQ_LOCAL_DEFORMATION` and one per region, `MQ_SQUASH`, `MQ_STRETCH`) with its state, value, bound,
@@ -671,7 +716,11 @@ declared `null` with its value and `(not bounded)`, and
 build's gate lines after the candidate's. A part written at a replayed step adds
 `; replayed to accepted step <n> of <N> after <k> replay(s); selection <value> <= <bound> at
 <frame>; held out <value> <= <bound> at <frame>`, and the stage prints one `replay "<part>"` line
-with every probe, then the gate of the rig as written and its references. Weights are written by `roundShares` on every vertex (5 places, zeros
+with every probe, then the gate of the rig as written and its references. Under
+`motion.selection` that line reads `replay "<part>": multi-interval selection over the removal
+steps …, <k> replay(s) of at most <maxProbes> (maxProbes), ended <termination>: <step> <verdict>
+<value> v=<vertices>, …; the bisection kept step <b>; the fewest vertices among the tested
+passing steps: step <n>, <v> vertices (best among tested candidates)`. Weights are written by `roundShares` on every vertex (5 places, zeros
 dropped, the heaviest entry closes): the 0.03 floor that makes the lattice's last-entry close
 safe is the author's to choose here.
 
@@ -687,7 +736,9 @@ safe is the author's to choose here.
 | `AUTO_MESH_TERMINATION` | rig-c returned no mesh: `invalid-input` (the source fails its own `sourceBounds`, a region it refuses, protected influences over the cap), `unsupported-topology`, or `budget-exhausted` with `none-met-the-targets`; or, in the acceptance loop, a replay that does not end as rig-c's contract promises (`replayed-to-accepted-step` at the step asked, `candidatesTried` the full run's `acceptedAt[n − 1].step`, its `acceptedAt` the full run's first n operations, each the same `step`, `kind`, `count` and `sourceVertices`) |
 | `AUTO_MESH_ACCEPTED` | rig-c returned a mesh that is not accepted; the detail names every declared row not passing and the constraint that stopped it |
 | `AUTO_MESH_NO_STIMULUS` | the idle keys no bone that moves some of the part's bound bones against the others, so no frame deforms it — missing stimulus is not a pass; put the part in `contour` or `grid` mode, or key a bone it binds |
-| `AUTO_MESH_MOTION` | the reduced mesh against its source on the idle is not accepted and the acceptance loop wrote no step in its place: "no reduction passes the motion bound" (the full result's failing rows and every probe named), or the chosen step passes on the grid frames and not on the whole idle (its selection and held-out values and worst frames named); when the source itself is not accepted against itself, the full result's rows as before |
+| `AUTO_MESH_MOTION` | the reduced mesh against its source on the idle is not accepted and the acceptance loop wrote no step in its place: "no reduction passes the motion bound" (the full result's failing rows and every probe named; under `motion.selection`, "… among the tested candidates", with `maxProbes` and the termination), or the chosen step passes on the grid frames and not on the whole idle (its selection and held-out values and worst frames named); when the source itself is not accepted against itself, the full result's rows as before |
+| `AUTO_MESH_SELECTION_BUDGET` | `motion.selection.maxProbes` is below ⌈log₂(N − I)⌉, the bisection the multi-interval search runs whole first; N, I and the number required named; nothing replayed |
+| `AUTO_MESH_SELECTION_ROLES` | a multi-interval choice whose probes read a frame the final comparison holds out, or one it does not declare `selection`; the frames named, the held-out claim withdrawn |
 | `AUTO_MESH_MOTION_INPUT` | the comparison could not be made: rig-c refused its input (its code carried — `COMPARE_REFERENCE_FAILS` when the source fails its own `sourceBounds`, `COMPARE_INPUTS_DIFFER`, …), the reference build is red at rigc's gate, or a gate build wrote no `skeleton.model.json`; in the acceptance loop, a replayed step's build that rigc's gate refuses |
 
 **What rig-c cannot refine.** Refinement inserts only inside a region and its band (the

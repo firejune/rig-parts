@@ -195,9 +195,28 @@ import { AUTO_CASES, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, fi
 import { BLOCKED_LABEL, barsOf, basisOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
 import { type BStar, bStar, type CellRow as ToolCellRow, nearestRank, parseArgs as parseBoundaryArgs, pendingRow, policyAt, render as renderBoundary, sagittas, sagittaSummary } from './tools/auto_boundary_survey.ts';
-import { type AutoMotionCase, idleSchedule, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
+import { type AutoMotionCase, idleSchedule, localRow, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
 import { motionGates, type MotionGateRun, replaySearch } from './src/build.ts';
-import { bisectAccepted, finalVerdict, gridFrameIds, maxReplays, refinementSteps, type ReplayProbe, replayVerdict, roleReadings, sameOperation, selectionSchedule, splitSchedule } from './src/autoreplay.ts';
+import {
+  bisectAccepted,
+  type CountedProbe,
+  fewestVertices,
+  finalVerdict,
+  gridFrameIds,
+  maxReplays,
+  type MultiIntervalRow,
+  multiIntervalSearch,
+  nextIntervalProbe,
+  refinementSteps,
+  type ReplayProbe,
+  type ReplayRow,
+  replayVerdict,
+  roleReadings,
+  rolesProblem,
+  sameOperation,
+  selectionSchedule,
+  splitSchedule,
+} from './src/autoreplay.ts';
 import { type AmplitudeDerivation, deriveMotionAmplitude, trackTheta } from './src/autoamplitude.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec } from './src/config.ts';
@@ -17471,6 +17490,7 @@ function runAutoMotionSuite(): number {
 
     runAutoReplayCases(say, root, pos);
     runAutoStageBCases(say, root, pos);
+    runAutoSelectionCases(say, root, pos);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -17505,7 +17525,7 @@ function runAutoReplayCases(say: (name: string, ok: boolean, detail: string, why
   // MO21 — the positive control: the full result planted to fail, the replays unplanted; a step is chosen, gated, written.
   const rep = motionStage(join(root, 'replay'), autoRigConfig(), plantFull);
   const rrow = auto(rep.rows[0]);
-  const rp = rrow?.replay;
+  const rp = ((x) => (x !== undefined && 'max_replays' in x ? x : undefined))(rrow?.replay);
   const passed = (rp?.probes ?? []).filter((p) => p.verdict === 'pass').map((p) => p.step);
   say(
     'MO21_A_FULL_RESULT_THE_GATE_REFUSES_IS_REPLACED_BY_A_REPLAYED_STEP_THAT_PASSES_AND_THE_PART_IS_WRITTEN',
@@ -18469,6 +18489,444 @@ function runAutoAmplitudeCases(
       text(g50a, 'rig.json') === text(pos, 'rig.json'),
     `${lines(g50a.e).slice(0, 200)}; rig.json ${same50('rig.json')}, mesh_report.json ${same50('mesh_report.json')}; echo ${JSON.stringify(row50?.settings.motionAmplitude?.gradation)}; Δ in the row ${row50?.residuals.find((r) => r.code === 'MQ_ALLOCATION_CONTRAST')?.state}; the report against the run without a gradation differs: ${text(g50a, 'mesh_report.json') !== text(pos, 'mesh_report.json')}, the rig the same: ${text(g50a, 'rig.json') === text(pos, 'rig.json')}`,
     'determinism is a contract; and the gradation changes the report (the echo, Δ) and nothing the rig writes — no step reads it',
+  );
+}
+
+/**
+ * The multi-interval selection (issue #148; `src/autoreplay.ts`, `multiIntervalSearch`): MO51–MO64 of the auto-motion
+ * suite. `pos` is MO01's run. The reproducer's bound is not typed: it is chosen by a stated rule from every removal
+ * step's own reading, measured here by an oracle that replays each step, builds it through rigc and compares it on the
+ * grid frames — independently of the stage's search — and the stage is then run twice under that one bound, once with
+ * the bisection and once with the policy. Every other expected value is derived by hand from the fixture or from a
+ * definition; figures a run prints are compared with each other, never typed in.
+ */
+function runAutoSelectionCases(say: (name: string, ok: boolean, detail: string, why: string) => void, root: string, pos: MotionStageRun): void {
+  const AT = 'config.meshes.cloth.auto';
+  const has = (e: PartsError | null, code: string, ...words: string[]): boolean => e !== null && e.problems.some((p) => p.code === code && words.every((w) => `${p.object} ${p.detail}`.includes(w)));
+  const lines = (e: PartsError | null): string => (e === null ? 'nothing refused' : e.problems.map(problemLine).join('; ').slice(0, 1500));
+  const auto = (r: MeshReport | undefined): AutoMeshReport | undefined => (r !== undefined && 'mode' in r && r.mode === 'auto' ? r : undefined);
+  const multiOf = (r: MeshReport | undefined): MultiIntervalRow | undefined => ((x) => (x !== undefined && 'policy' in x ? x : undefined))(auto(r)?.replay);
+  const bisOf = (r: MeshReport | undefined): ReplayRow | undefined => ((x) => (x !== undefined && 'max_replays' in x ? x : undefined))(auto(r)?.replay);
+  const withMotion = (edit: (m: Record<string, unknown>, a: Record<string, unknown>) => void): Record<string, unknown> => autoRigConfig((_c, a) => edit(a.motion as Record<string, unknown>, a));
+  const plantAll = (_call: number, doc: Record<string, unknown>, reference: boolean): void => {
+    if (reference) return;
+    for (const b of clothOf(doc).vertices.bindings[0]) b.x += 5;
+  };
+  const plantFull = (call: number, doc: Record<string, unknown>, reference: boolean): void => {
+    if (call !== 0 || reference) return;
+    for (const b of clothOf(doc).vertices.bindings[0]) b.x += 5;
+  };
+  const answers =
+    (pass: (s: number) => boolean, vertices: (s: number) => number = (s) => 100 - s) =>
+    (s: number): CountedProbe => ({ step: s, verdict: pass(s) ? 'pass' : 'fail', value: null, frame: null, reason: null, vertices: vertices(s) });
+  const c0 = motionCaseOf(autoRigConfig());
+  const N = c0?.search.acceptedAt.length ?? 0;
+  const I = c0?.search.inserted ?? 0;
+  const ref = pos.builds[1]?.model ?? '';
+  const clothText = (rigText: string): string => JSON.stringify((JSON.parse(rigText) as { skins: { default: Record<string, Record<string, unknown>> } }).skins.default.cloth.cloth);
+  const verticesOfRig = (rigText: string): number => ((JSON.parse(rigText) as { skins: { default: Record<string, Record<string, { uvs: number[] }>> } }).skins.default.cloth.cloth.uvs.length / 2);
+
+  // The oracle (MO52, MO53): every removal step (I, N) replayed, found among an exhaustive search's builds by its
+  // attachment, and compared with the reference on the grid frames alone — its value, and its vertex count off the rig.
+  const allSteps = Array.from({ length: Math.max(0, N - I - 1) }, (_, i) => I + 1 + i);
+  const exhaust = motionStage(join(root, 'sel-oracle'), withMotion((m) => ((m.maxLocalDeformation = 0), (m.selection = { policy: 'multi-interval', maxProbes: allSteps.length }))));
+  const fullCmp = c0 === null || pos.builds[0]?.model == null ? null : runComparison(AT, motionInput(c0, { maxLocalDeformation: 0 }, ref, pos.builds[0].model));
+  const grid = fullCmp === null || 'code' in fullCmp ? [] : gridFrameIds(fullCmp);
+  const fullValue = fullCmp === null || 'code' in fullCmp ? null : (localRow(fullCmp)?.value ?? null);
+  const oracle = allSteps.map((k) => {
+    const rep = c0 === null ? null : c0.search.replay(k);
+    const want = rep === null || 'code' in rep ? null : JSON.stringify(rep.attachment);
+    const b = want === null ? undefined : exhaust.builds.find((x) => x.model !== null && clothText(x.rig) === want);
+    const cmp = c0 === null || b === undefined || b.model === null ? null : runComparison(AT, motionInput(c0, { maxLocalDeformation: 0 }, ref, b.model, selectionSchedule(grid)));
+    return { step: k, vertices: b === undefined ? null : verticesOfRig(b.rig), value: cmp === null || 'code' in cmp ? null : (localRow(cmp)?.value ?? null) };
+  });
+  const oracleOk = oracle.length > 0 && oracle.every((o) => o.vertices !== null && o.value !== null) && fullValue !== null;
+  // The declared budget: the bisection's worst length plus two (a rule, not a figure off a run).
+  const budget = maxReplays(N, I) + 2;
+  // The bound: the lowest midpoint between two consecutive distinct readings (the steps' and the full result's) at which
+  // the full result fails, the bisection keeps a removal step, and the policy within the budget keeps one with fewer
+  // vertices — found by running the two searches by hand over the oracle's answers.
+  const values = [...new Set([...oracle.map((o) => o.value as number), fullValue ?? 0])].sort((a, b) => a - b);
+  const mids = values.slice(1).map((v, i) => (values[i] + v) / 2);
+  const vOf = (s: number): number => oracle.find((o) => o.step === s)?.vertices ?? Infinity;
+  const passAt = (b: number) => (s: number): boolean => (oracle.find((o) => o.step === s)?.value ?? Infinity) <= b;
+  const bound =
+    !oracleOk || fullValue === null
+      ? null
+      : (mids.find((b) => {
+          if (fullValue <= b) return false;
+          const bis = bisectAccepted(I, N, answers(passAt(b), vOf));
+          const multi = multiIntervalSearch(I, N, budget, answers(passAt(b), vOf));
+          return bis.chosen > I && multi.chosen !== null && (multi.chosen.vertices ?? Infinity) < vOf(bis.chosen);
+        }) ?? null);
+  const atBound = (selection: boolean) => withMotion((m) => ((m.maxLocalDeformation = bound ?? 0), selection ? (m.selection = { policy: 'multi-interval', maxProbes: budget }) : undefined));
+  const bis = bound === null ? null : motionStage(join(root, 'sel-bisect'), atBound(false));
+  const mul = bound === null ? null : motionStage(join(root, 'sel-multi'), atBound(true));
+  const bRow = bisOf(bis?.rows[0]);
+  const mRow = multiOf(mul?.rows[0]);
+  const bWritten = auto(bis?.rows[0]);
+  const mWritten = auto(mul?.rows[0]);
+
+  // MO51 — the loader: the policy loads; a wrong policy, a budget that is not a whole number at or above 1, a missing field
+  // and an unknown key are refused by name; absent, nothing new reaches the spec.
+  const load = (sel: unknown): PartsError | null => refusals(() => parseConfig(withMotion((m) => (m.selection = sel))));
+  const okSel = load({ policy: 'multi-interval', maxProbes: 1 });
+  const spec51 = parseConfig(autoRigConfig()).meshes.cloth;
+  const absent51 = spec51 !== undefined && 'auto' in spec51 ? spec51.auto.motion : undefined;
+  const e51 = {
+    policy: load({ policy: 'exhaustive', maxProbes: 4 }),
+    zero: load({ policy: 'multi-interval', maxProbes: 0 }),
+    frac: load({ policy: 'multi-interval', maxProbes: 2.5 }),
+    missing: load({ policy: 'multi-interval' }),
+    extra: load({ policy: 'multi-interval', maxProbes: 4, order: 'random' }),
+    notObject: load('multi-interval'),
+  };
+  say(
+    'MO51_THE_SELECTION_POLICY_LOADS_AND_EACH_BAD_FIELD_IS_REFUSED_BY_NAME_AND_ABSENT_IT_REACHES_NOTHING',
+    okSel === null &&
+      absent51 !== undefined &&
+      !('selection' in absent51) &&
+      has(e51.policy, 'CONFIG_FIELD_TYPE', `${AT}.motion.selection.policy`, '"multi-interval" is required') &&
+      has(e51.zero, 'CONFIG_FIELD_TYPE', `${AT}.motion.selection.maxProbes`, 'an integer at or above 1') &&
+      has(e51.frac, 'CONFIG_FIELD_TYPE', `${AT}.motion.selection.maxProbes`, 'is 2.5') &&
+      has(e51.missing, 'CONFIG_FIELD_PRESENT', `${AT}.motion.selection.maxProbes`) &&
+      has(e51.extra, 'CONFIG_KEY_KNOWN', `${AT}.motion.selection.order`) &&
+      has(e51.notObject, 'CONFIG_FIELD_TYPE', `${AT}.motion.selection`, 'an object is required'),
+    `ok: ${lines(okSel)}; absent -> motion keys ${absent51 === undefined ? 'none' : Object.keys(absent51).join(',')}; ${Object.entries(e51).map(([k, e]) => `${k}: ${lines(e).slice(0, 160)}`).join(' | ')}`,
+    'issue #148: the policy is opt-in and its budget is the author\'s number — never defaulted, never derived; a value rig-parts does not implement is refused, not mapped to the nearest',
+  );
+
+  // MO52 — the reproducer: a nonmonotone pass/fail sequence through the real replay and comparison; under one bound
+  // the bisection writes a step and the policy, within its declared budget, writes one with fewer vertices.
+  const bVerts = bWritten?.vertices ?? null;
+  const mVerts = mWritten?.vertices ?? null;
+  const pattern = bound === null ? '' : allSteps.map((s) => (passAt(bound)(s) ? 'P' : 'f')).join('');
+  say(
+    'MO52_A_NONMONOTONE_SEQUENCE_THE_POLICY_WRITES_A_PASSING_STEP_WITH_FEWER_VERTICES_THAN_THE_BISECTION_UNDER_THE_SAME_LIMITS',
+    bound !== null &&
+      /P+f+P/.test(pattern) &&
+      bis !== null &&
+      mul !== null &&
+      bis.e === null &&
+      mul.e === null &&
+      bRow !== undefined &&
+      mRow !== undefined &&
+      bVerts !== null &&
+      mVerts !== null &&
+      mVerts < bVerts &&
+      mRow.bisection_step === bRow.chosen_step &&
+      mRow.tested.includes(bRow.chosen_step) &&
+      mRow.passing_intervals.length >= 2 &&
+      mRow.replays <= budget &&
+      JSON.stringify(atBound(true), (k, v: unknown) => (k === 'selection' ? undefined : v)) === JSON.stringify(atBound(false)) &&
+      typeof mWritten?.deformation !== 'string' &&
+      mWritten?.deformation.verdict === 'pass',
+    `oracle steps ${I + 1}..${N - 1}: ${oracle.map((o) => `${o.step}:${o.value}/v${o.vertices}`).join(' ')}; full ${fullValue}; bound ${bound} (pass pattern ${pattern}); budget ${budget}; bisection ${lines(bis?.e ?? null)} -> step ${bRow?.chosen_step} v=${bVerts}; policy ${lines(mul?.e ?? null)} -> step ${mRow?.chosen_step} v=${mVerts}, tested [${mRow?.tested.join(',')}], passing ${JSON.stringify(mRow?.passing_intervals)}, replays ${mRow?.replays}`,
+    'issue #148 acceptance 1: validity along the order is not monotone (rig-c M3), so a bisection keeps a passing prefix while a later one with fewer vertices also passes; the policy finds it end to end, inside the author\'s budget, under identical geometry and motion limits',
+  );
+
+  // MO53 — the exhaustive oracle on this small fixture only: a budget that visits every removal step chooses what the
+  // oracle chooses, and every probe's verdict and count are the oracle's; a planted disagreement is seen.
+  const every = bound === null ? null : motionStage(join(root, 'sel-every'), withMotion((m) => ((m.maxLocalDeformation = bound), (m.selection = { policy: 'multi-interval', maxProbes: allSteps.length }))));
+  const eRow = multiOf(every?.rows[0]);
+  const oracleProbes = bound === null ? [] : oracle.map((o) => answers(passAt(bound), vOf)(o.step));
+  const oracleChoice = fewestVertices(oracleProbes);
+  const flipped = oracleProbes.map((p) => (p.step === oracleChoice?.step ? { ...p, verdict: 'fail' as const } : p));
+  const flippedChoice = fewestVertices(flipped);
+  say(
+    'MO53_A_BUDGET_THAT_VISITS_EVERY_REMOVAL_STEP_CHOOSES_WHAT_THE_EXHAUSTIVE_ORACLE_CHOOSES_ON_THIS_FIXTURE',
+    every !== null &&
+      every.e === null &&
+      eRow !== undefined &&
+      oracleChoice !== null &&
+      eRow.termination === 'every-removal-step-tested' &&
+      eRow.untested_intervals.length === 0 &&
+      eRow.tested.join() === allSteps.join() &&
+      eRow.chosen_step === oracleChoice.step &&
+      eRow.chosen.vertices === oracleChoice.vertices &&
+      eRow.probes.every((p) => p.verdict === (passAt(bound ?? 0)(p.step) ? 'pass' : 'fail') && p.vertices === vOf(p.step) && p.value === oracle.find((o) => o.step === p.step)?.value) &&
+      flippedChoice !== null &&
+      flippedChoice.step !== eRow.chosen_step,
+    `oracle chooses step ${oracleChoice?.step} v=${oracleChoice?.vertices}; the stage with maxProbes ${allSteps.length}: ${lines(every?.e ?? null)}, chose ${eRow?.chosen_step} v=${eRow?.chosen.vertices}, ${eRow?.termination}, tested [${eRow?.tested.join(',')}]; the oracle's choice planted to fail -> ${flippedChoice?.step}`,
+    'issue #148 acceptance 3: where the budget visits every eligible prefix, compare with an exhaustive oracle — on this fixture only (11 operations); a partial budget claims no completeness (MO59)',
+  );
+
+  // MO54 — refinement and multi-vertex operations: the count is each replay's own. Under boundaryRuns a step removes
+  // two or more vertices, so the count is not the step's number; under a region no probe lies in the refinement; a
+  // planted later step with more vertices is not preferred for being later.
+  const runsCfg = withMotion((m, a) => ((a.boundaryRuns = { maxVertices: 3 }), (m.selection = { policy: 'multi-interval', maxProbes: 64 })));
+  const cRuns = motionCaseOf(runsCfg);
+  const runs = motionStage(join(root, 'sel-runs'), runsCfg, plantFull);
+  const rRow = multiOf(runs.rows[0]);
+  const srcV = cRuns === null ? 0 : cRuns.reference.uvs.length / 2;
+  const own = (k: number): number | null => ((r) => (r === null || 'code' in r ? null : r.row.vertices))(cRuns === null ? null : cRuns.search.replay(k));
+  const multiOp = (cRuns?.search.acceptedAt ?? []).some((o) => o.kind === 'boundary-run' && o.count >= 2);
+  const regionCfg = withMotion((m, a) => ((a.regions = [{ name: 'pinch', shape: 'circle', cx: 18, cy: 14, r: 2, band: 2, bone: 'soft', maxEdgeLength: 2, transition: 1, grade: 1, minArtSamples: 1 }]), (m.selection = { policy: 'multi-interval', maxProbes: 64 })));
+  const cReg = motionCaseOf(regionCfg);
+  const reg = motionStage(join(root, 'sel-region'), regionCfg, plantFull);
+  const gRow = multiOf(reg.rows[0]);
+  const inserted = fewestVertices([answers(() => true, (s) => (s === 6 ? 9 : 7))(6), answers(() => true, (s) => (s === 6 ? 9 : 7))(4)]);
+  say(
+    'MO54_THE_COUNT_IS_EACH_REPLAYS_OWN_UNDER_BOUNDARY_RUNS_NO_PROBE_LIES_IN_THE_REFINEMENT_AND_A_LATER_STEP_IS_NOT_PREFERRED_FOR_BEING_LATER',
+    runs.e === null &&
+      rRow !== undefined &&
+      multiOp &&
+      rRow.probes.every((p) => p.vertices === own(p.step)) &&
+      rRow.probes.some((p) => p.vertices !== srcV - p.step) &&
+      rRow.chosen.vertices === Math.min(...rRow.probes.filter((p) => p.verdict === 'pass').map((p) => p.vertices ?? Infinity)) &&
+      reg.e === null &&
+      gRow !== undefined &&
+      (cReg?.search.inserted ?? 0) > 0 &&
+      gRow.refinement_steps === cReg?.search.inserted &&
+      gRow.probes.every((p) => p.step > gRow.refinement_steps && p.step < gRow.accepted_steps) &&
+      inserted?.step === 4,
+    `boundary runs: acceptedAt ${(cRuns?.search.acceptedAt ?? []).map((o) => `${o.kind}x${o.count}`).join(',')}; probes ${rRow?.probes.map((p) => `${p.step}:v${p.vertices}(own ${own(p.step)}, one-per-step ${srcV - p.step})`).join(' ')}; chose ${rRow?.chosen_step}; region: I ${cReg?.search.inserted}, probed [${gRow?.probes.map((p) => p.step).join(',')}]; ${lines(reg.e)}; step 6 with 9 vertices against step 4 with 7 -> ${inserted?.step}`,
+    'issue #148 work item 2: actual vertex counts rather than assuming a later prefix means a smaller mesh — a boundary run removes several vertices in one step (rigc#1279), and a step at or below I is the source refined, never probed',
+  );
+
+  // MO55 — deduplication: one replay per distinct step, the budget counting distinct steps; the shipped order never
+  // proposes a tested step; a planted order that does is not replayed, not counted, and ends the search by name.
+  const calls55 = new Map<number, number>();
+  const counting = (s: number): CountedProbe => {
+    calls55.set(s, (calls55.get(s) ?? 0) + 1);
+    return answers((x) => x % 3 === 0)(s);
+  };
+  const all55 = multiIntervalSearch(0, 12, 100, counting);
+  const calls55b = new Map<number, number>();
+  const repeat = multiIntervalSearch(0, 12, 100, (s) => (calls55b.set(s, (calls55b.get(s) ?? 0) + 1), answers(() => false)(s)), () => false, (_lo, _hi, tested) => [...tested][0] ?? 1);
+  let orderHole = '';
+  for (let hi = 2; hi <= 10 && orderHole === ''; hi++) {
+    for (let mask = 0; mask < 1 << (hi - 1); mask++) {
+      const tested = new Set(Array.from({ length: hi - 1 }, (_, i) => i + 1).filter((s) => (mask >> (s - 1)) & 1));
+      const next = nextIntervalProbe(0, hi, tested);
+      const full = tested.size === hi - 1;
+      if (full ? next !== null : next === null || tested.has(next) || next <= 0 || next >= hi) {
+        orderHole = `(0, ${hi}) tested [${[...tested].join(',')}] -> ${next}`;
+        break;
+      }
+    }
+  }
+  say(
+    'MO55_EACH_STEP_IS_REPLAYED_ONCE_THE_ORDER_NEVER_PROPOSES_A_TESTED_STEP_AND_A_PLANTED_REPEAT_IS_NOT_REPLAYED_OR_COUNTED',
+    [...calls55.values()].every((n) => n === 1) &&
+      calls55.size === 11 &&
+      all55.probes.length === 11 &&
+      all55.termination === 'every-removal-step-tested' &&
+      orderHole === '' &&
+      repeat.termination === 'order-proposed-a-tested-step' &&
+      [...calls55b.values()].every((n) => n === 1) &&
+      repeat.probes.length === calls55b.size,
+    `(0,12) every step: ${all55.probes.map((p) => p.step).join(',')} (calls per step ${[...new Set(calls55.values())].join(',')}), ${all55.termination}; every subset of (0, 2..10): ${orderHole || 'never a tested step, null exactly when all are tested'}; an order proposing a tested step: ${repeat.probes.map((p) => p.step).join(',')} then ${repeat.termination}, calls ${[...calls55b.values()].join(',')}`,
+    'issue #148 work item 3: repeated prefix probes are deduplicated, so the budget buys distinct candidates; the order is a function of the tested set alone',
+  );
+
+  // MO56 — ties: the fewest vertices, then the lower step, whatever order the probes were taken in; the order's own tie
+  // (two untested runs of one length) takes the lower run; a failing probe with fewer vertices is never chosen.
+  const tie = [answers(() => true, () => 5)(7), answers(() => true, () => 5)(3), answers(() => true, () => 6)(9), answers(() => false, () => 4)(2)];
+  const perms = [tie, [...tie].reverse(), [tie[2], tie[0], tie[3], tie[1]]];
+  const t1 = multiIntervalSearch(0, 9, 6, answers((s) => s % 2 === 1));
+  const t2 = multiIntervalSearch(0, 9, 6, answers((s) => s % 2 === 1));
+  say(
+    'MO56_A_TIE_IN_VERTICES_TAKES_THE_LOWER_STEP_IN_ANY_PROBE_ORDER_AND_THE_ORDERS_OWN_TIE_TAKES_THE_LOWER_RUN',
+    perms.every((p) => fewestVertices(p)?.step === 3) &&
+      nextIntervalProbe(0, 8, new Set([4])) === 2 &&
+      nextIntervalProbe(0, 9, new Set([4])) === 6 &&
+      JSON.stringify(t1) === JSON.stringify(t2),
+    `three orders -> ${perms.map((p) => fewestVertices(p)?.step).join(',')}; (0,8) tested {4} -> ${nextIntervalProbe(0, 8, new Set([4]))}; (0,9) tested {4} -> ${nextIntervalProbe(0, 9, new Set([4]))}; two runs of one search: ${t1.probes.map((p) => p.step).join(',')} / ${t2.probes.map((p) => p.step).join(',')}`,
+    'issue #148 work item 2: a documented deterministic tie rule on measured counts and prefix index — vertices, then the lower step; the order\'s midpoint rounds down and its longest-run tie takes the lower run',
+  );
+
+  // MO57 — no reduced passing candidate: every replay planted to fail; refused among the tested candidates, nothing written.
+  const none = motionStage(join(root, 'sel-none'), withMotion((m) => (m.selection = { policy: 'multi-interval', maxProbes: budget })), plantAll);
+  const noneLine = none.log.find((l) => l.includes('multi-interval selection over')) ?? '';
+  say(
+    'MO57_WHEN_NO_TESTED_REMOVAL_STEP_PASSES_THE_PART_IS_REFUSED_AMONG_THE_TESTED_CANDIDATES_AND_NOTHING_IS_WRITTEN',
+    has(none.e, 'AUTO_MESH_MOTION', AT, 'no reduction passes the motion bound among the tested candidates', `maxProbes ${budget}`, 'a step never replayed is not claimed to fail', 'the source (step 0) is not an automatic result') &&
+      !existsSync(none.out) &&
+      noneLine.includes('no tested step passed') &&
+      none.builds.length === 2 + budget,
+    `${lines(none.e).slice(0, 700)}; builds ${none.builds.length}; ${noneLine.trim().slice(0, 300)}`,
+    'the source is never written as an automatic result (as under the bisection, MO23); the words say which candidates were tested and claim nothing about the rest',
+  );
+
+  // MO58 — source rejection: a source that fails against itself starts no search under the policy either; and the
+  // domain excludes the source and the full result even when every step passes.
+  const self58 = c0 === null ? null : runComparison(AT, motionInput(c0, { maxLocalDeformation: 1 }, ref, ref, selectionSchedule(grid)));
+  const over58 = self58 === null || 'code' in self58 ? null : (self58.candidates[0]?.geometry?.rows.find((r) => r.code === 'MQ_OVERSHOOT' && r.object.region === null)?.value ?? null);
+  let builds58 = 0;
+  let replays58 = 0;
+  const strict58: AutoMotionCase | null =
+    c0 === null || over58 === null || c0.motion === undefined
+      ? null
+      : {
+          ...c0,
+          motion: { ...c0.motion, selection: { policy: 'multi-interval', maxProbes: budget } },
+          artFit: { ...c0.artFit, maxOvershoot: over58 / 2 },
+          search: { ...c0.search, replay: (s) => (replays58++, c0.search.replay(s)) },
+        };
+  const fullProblem: Problem = { code: 'AUTO_MESH_MOTION', object: AT, detail: 'the full result as the gate refused it (planted)' };
+  const full58 = fullCmp === null || 'code' in fullCmp ? null : fullCmp;
+  const fullRig = c0 === null ? null : buildRig(parseConfig(autoRigConfig()), rigParts(), rigImages());
+  const s58 =
+    strict58 === null || full58 === null || fullRig === null
+      ? null
+      : replaySearch(fullRig, strict58, { part: 'cloth', reference: null, report: full58, problems: [fullProblem], notCompared: null, referenceModel: ref }, [], [], () => ((builds58 += 1), { status: 0, out: '' }), join(root, 'mo58'));
+  const everyPass = multiIntervalSearch(3, 9, 100, answers(() => true, (s) => s));
+  say(
+    'MO58_A_SOURCE_THAT_FAILS_AGAINST_ITSELF_STARTS_NO_SEARCH_UNDER_THE_POLICY_AND_THE_SOURCE_IS_NEVER_A_CANDIDATE',
+    over58 !== null &&
+      over58 > 0 &&
+      s58 !== null &&
+      s58.chosen === null &&
+      s58.problems.length === 1 &&
+      s58.problems[0] === fullProblem &&
+      builds58 === 0 &&
+      replays58 === 0 &&
+      s58.lines.some((l) => l.endsWith('no search runs')) &&
+      everyPass.probes.every((p) => p.step > 3 && p.step < 9) &&
+      everyPass.chosen?.step === 4,
+    `held to half the source's own overshoot (${over58}): ${s58 === null ? 'not run' : `${s58.problems.map(problemLine).join('; ')}; ${s58.lines.join('; ')}`}; builds ${builds58}, replays ${replays58}; every step passing over (3, 9) with fewer vertices lower: probed [${everyPass.probes.map((p) => p.step).join(',')}], chose ${everyPass.chosen?.step}`,
+    'issue #148 work item 3: the source/no-op is a control — taken as passing, never written; a source the gate would refuse leaves the part refused as before, with no replay',
+  );
+
+  // MO59 — exhaustion: a partial budget stops at maxProbes, lists what it never replayed, and claims no completeness; a
+  // budget below the bisection it must contain is refused by name before any replay.
+  const complement = mRow === undefined ? [] : allSteps.filter((s) => !mRow.tested.includes(s));
+  const small = motionStage(join(root, 'sel-small'), withMotion((m) => ((m.maxLocalDeformation = bound ?? 0), (m.selection = { policy: 'multi-interval', maxProbes: maxReplays(N, I) - 1 }))));
+  say(
+    'MO59_A_PARTIAL_BUDGET_ENDS_BUDGET_EXHAUSTED_NAMING_THE_UNTESTED_STEPS_AND_A_BUDGET_BELOW_THE_BISECTION_IS_REFUSED_BY_NAME',
+    mRow !== undefined &&
+      mRow.termination === 'budget-exhausted' &&
+      mRow.replays === mRow.max_probes &&
+      mRow.untested_intervals.flatMap(([a, b]) => Array.from({ length: b - a + 1 }, (_, i) => a + i)).join() === complement.join() &&
+      complement.length > 0 &&
+      mRow.rule.includes('the best among tested candidates, not the last, the minimal or a complete walk') &&
+      has(small.e, 'AUTO_MESH_SELECTION_BUDGET', `${AT}.motion.selection.maxProbes`, `is ${maxReplays(N, I) - 1}`, `so ${maxReplays(N, I)} or more is required`) &&
+      !existsSync(small.out) &&
+      small.builds.length === 2,
+    `budget ${mRow?.max_probes}: ${mRow?.termination}, ${mRow?.replays} replay(s), untested ${JSON.stringify(mRow?.untested_intervals)} (by hand [${complement.join(',')}]); budget ${maxReplays(N, I) - 1}: ${lines(small.e).slice(0, 400)}; builds ${small.builds.length}`,
+    'issue #148 work item 3: stop at the declared budget and report the untested intervals; for a partial budget, report the observed set and make no completeness claim; the bisection inside it always completes',
+  );
+
+  // MO60 — held-out refusal: the chosen step's final build planted to fail; refused naming the step and both roles, and
+  // no other candidate is taken — no build past the final pair.
+  const finalCall = mRow === undefined ? -1 : 2 + mRow.replays;
+  const held = bound === null ? null : motionStage(join(root, 'sel-held'), atBound(true), (call, doc, reference) => (call === finalCall && !reference ? plantAll(call, doc, reference) : undefined));
+  say(
+    'MO60_A_CHOSEN_STEP_THE_WHOLE_IDLE_REFUSES_IS_REFUSED_BY_NAME_AND_NO_SECOND_CANDIDATE_IS_TAKEN',
+    held !== null &&
+      mRow !== undefined &&
+      has(held.e, 'AUTO_MESH_MOTION', AT, `the replay to accepted step ${mRow.chosen_step} of ${N}, chosen on the idle grid frames, is not accepted on the whole idle`, 'held out', 'nothing is built in its place') &&
+      !existsSync(held.out) &&
+      held.builds.length === 2 + mRow.replays + 2,
+    `${lines(held?.e ?? null).slice(0, 600)}; builds ${held?.builds.length} (2 + ${mRow?.replays} replays + the final pair)`,
+    'issue #148 work item 4: held-out phases stay disjoint from choice and a failed held-out evaluation refuses the candidate; no retry reads it to choose another, so no held-out claim needs withdrawing',
+  );
+
+  // MO61 — schedule roles: every probe read the grid frames alone, and none of the final's held-out frames; a planted
+  // probe frame that is held out, or one the final does not declare, is refused by name.
+  const doc61 = (mWritten?.motion_report ?? null) as MeshQualityReport | null;
+  const walked61 = doc61?.candidates[0]?.motion?.schedule.walked ?? [];
+  const gridIds = walked61.filter((f) => f.phase === 'grid').map((f) => f.id);
+  const irrId = walked61.find((f) => f.phase === 'irr')?.id ?? 'none';
+  const clean61 = doc61 === null ? 'no document' : rolesProblem(AT, 9, gridIds, doc61);
+  const leak61 = doc61 === null ? null : rolesProblem(AT, 9, [...gridIds, irrId], doc61);
+  const stray61 = doc61 === null ? null : rolesProblem(AT, 9, [...gridIds, 'idle@grid@99'], doc61);
+  say(
+    'MO61_NO_PROBE_READ_A_HELD_OUT_FRAME_AND_A_PLANTED_HELD_OUT_OR_UNDECLARED_PROBE_FRAME_IS_REFUSED_BY_NAME',
+    mRow !== undefined &&
+      clean61 === null &&
+      mRow.roles.selection === 'grid' &&
+      mRow.roles.held_out === 'irr' &&
+      mRow.roles.probe_frames === gridIds.length &&
+      gridIds.length === Math.round(4 * IDLE_FPS) + 1 &&
+      walked61.every((f) => (f.phase === 'grid') === (f.role === 'selection')) &&
+      leak61 !== null &&
+      leak61.code === 'AUTO_MESH_SELECTION_ROLES' &&
+      leak61.detail.includes(`the held-out frame(s) [${irrId}]`) &&
+      leak61.detail.includes('the held-out claim is withdrawn') &&
+      stray61 !== null &&
+      stray61.detail.includes('frame(s) the final comparison does not declare selection [idle@grid@99]'),
+    `roles ${JSON.stringify(mRow?.roles)}; grid frames ${gridIds.length}; clean ${clean61 === null ? 'null' : typeof clean61 === 'string' ? clean61 : problemLine(clean61)}; an irr frame read by a probe -> ${leak61 === null ? 'null' : problemLine(leak61).slice(0, 300)}; an undeclared frame -> ${stray61 === null ? 'null' : stray61.detail.slice(0, 200)}`,
+    'issue #148 work item 4: every frame read for probes or ranking is selection; were a held-out frame read to choose, the claim is withdrawn by name and the candidate refused',
+  );
+
+  // MO62 — the row and the line: the search's fields before deformation, each derived by hand from the probes, the chosen
+  // counts the written mesh's own, and the build lines saying "best among tested candidates".
+  const acc = c0?.search.acceptedAt ?? [];
+  const tested62 = mRow === undefined ? [] : [...new Set(mRow.probes.map((p) => p.step))].sort((a, b) => a - b);
+  const tried62 = (mRow?.probes ?? []).filter((p) => p.verdict !== 'refused').reduce((n, p) => n + (acc[p.step - 1]?.step ?? 0), 0);
+  const pass62 = (mRow?.probes ?? []).filter((p) => p.verdict === 'pass').map((p) => p.step).sort((a, b) => a - b);
+  const runsByHand: Array<[number, number]> = [];
+  for (const s of tested62) {
+    const passS = pass62.includes(s);
+    const last = runsByHand[runsByHand.length - 1];
+    const prevTested = tested62[tested62.indexOf(s) - 1];
+    if (passS && last !== undefined && last[1] === prevTested) last[1] = s;
+    else if (passS) runsByHand.push([s, s]);
+  }
+  const line62 = mul?.log.find((l) => l.includes('mesh cloth')) ?? '';
+  const sline62 = mul?.log.find((l) => l.includes('multi-interval selection over')) ?? '';
+  const keys62 = mWritten === undefined ? [] : Object.keys(mWritten);
+  say(
+    'MO62_THE_ROW_CARRIES_THE_TESTED_SET_INTERVALS_COUNTS_TERMINATION_AND_ROLES_AND_THE_LINES_SAY_BEST_AMONG_TESTED_CANDIDATES',
+    mRow !== undefined &&
+      mWritten !== undefined &&
+      keys62.slice(-4).join() === 'replay,deformation,quality_report,motion_report' &&
+      Object.keys(mRow).join() === 'rule,policy,max_probes,accepted_steps,refinement_steps,chosen_step,bisection_step,replays,candidates_tried,termination,tested,passing_intervals,untested_intervals,chosen,full,probes,roles,selection,held_out' &&
+      mRow.policy === 'multi-interval' &&
+      mRow.max_probes === budget &&
+      mRow.accepted_steps === N &&
+      mRow.refinement_steps === I &&
+      mRow.tested.join() === tested62.join() &&
+      mRow.replays === mRow.probes.length &&
+      mRow.candidates_tried === tried62 &&
+      JSON.stringify(mRow.passing_intervals) === JSON.stringify(runsByHand) &&
+      mRow.chosen.vertices === mWritten.vertices &&
+      mRow.chosen.triangles === mWritten.triangles &&
+      mRow.chosen.boundary === mWritten.result.counts.boundaryVertices &&
+      mRow.chosen.interior === mWritten.result.counts.interiorVertices &&
+      mRow.chosen.bindings === mWritten.result.counts.bindings &&
+      mRow.chosen.vertices === mRow.chosen.boundary + mRow.chosen.interior &&
+      mWritten.termination.reason === 'replayed-to-accepted-step' &&
+      mWritten.termination.acceptedSteps === mRow.chosen_step &&
+      (mRow.selection?.frame ?? '').startsWith('idle@grid@') &&
+      (mRow.held_out?.frame ?? '').startsWith('idle@irr@') &&
+      line62.includes(`replayed to accepted step ${mRow.chosen_step} of ${N} after ${mRow.replays} replay(s); selection `) &&
+      sline62.includes(`${mRow.replays} replay(s) of at most ${budget} (maxProbes), ended ${mRow.termination}`) &&
+      sline62.includes(`the bisection kept step ${mRow.bisection_step}`) &&
+      sline62.endsWith(`step ${mRow.chosen_step}, ${mRow.chosen.vertices} vertices (best among tested candidates)`),
+    `replay ${JSON.stringify(mRow === undefined ? null : { ...mRow, rule: undefined, probes: mRow.probes.length })}; by hand tested [${tested62.join(',')}], passing ${JSON.stringify(runsByHand)}, tried ${tried62}; ${sline62.trim().slice(0, 400)} || ${line62.trim().slice(-260)}`,
+    'issue #148 acceptance 4: tested prefixes, passing intervals observed, untested intervals, chosen counts (boundary, interior, triangles, bindings), replay attempts, termination and roles — and never last, minimal or complete',
+  );
+
+  // MO63 — determinism on the policy path.
+  const again = bound === null ? null : motionStage(join(root, 'sel-again'), atBound(true));
+  const same = (f: string): boolean => mul !== null && again !== null && existsSync(join(mul.out, f)) && existsSync(join(again.out, f)) && readFileSync(join(mul.out, f), 'utf8') === readFileSync(join(again.out, f), 'utf8');
+  const logOf = (r: MotionStageRun | null): string => (r === null ? '' : r.log.join('\n').split(r.out).join(''));
+  say(
+    'MO63_TWO_RUNS_OF_THE_POLICY_PATH_WRITE_THE_SAME_BYTES_AND_PRINT_THE_SAME_LINES',
+    same('rig.json') && same('mesh_report.json') && logOf(mul) === logOf(again) && logOf(mul) !== '',
+    `rig.json ${same('rig.json')}, mesh_report.json ${same('mesh_report.json')}, log ${logOf(mul) === logOf(again)}`,
+    'determinism is a contract: the order depends only on the answers and the tie rule on counts and step; no clock is written',
+  );
+
+  // MO64 — the opt-out path: without selection the row is the bisection's, its probes carry no count and its line is the
+  // bisection's; the same input with the policy writes a different report (the plant that shows the check can see one).
+  const bProbeKeys = (bRow?.probes ?? []).map((p) => Object.keys(p).join());
+  say(
+    'MO64_WITHOUT_SELECTION_THE_ROW_AND_LINES_ARE_THE_BISECTIONS_AND_THE_POLICY_IS_WHAT_CHANGES_THEM',
+    bRow !== undefined &&
+      Object.keys(bRow).join() === 'rule,accepted_steps,refinement_steps,chosen_step,replays,max_replays,candidates_tried,full,probes,selection,held_out' &&
+      bProbeKeys.length > 0 &&
+      bProbeKeys.every((k) => k === 'step,verdict,value,frame,reason') &&
+      (bis?.log ?? []).some((l) => /^ {2}replay "cloth": bisection over the removal steps /.test(l)) &&
+      !(bis?.log ?? []).some((l) => l.includes('multi-interval')) &&
+      bis !== null &&
+      mul !== null &&
+      readFileSync(join(bis.out, 'mesh_report.json'), 'utf8') !== readFileSync(join(mul.out, 'mesh_report.json'), 'utf8'),
+    `bisection row keys ${bRow === undefined ? 'none' : Object.keys(bRow).join(',')}; probe keys ${[...new Set(bProbeKeys)].join(' | ')}; the policy's report differs: ${bis !== null && mul !== null && existsSync(join(bis.out, 'mesh_report.json')) && existsSync(join(mul.out, 'mesh_report.json')) && readFileSync(join(bis.out, 'mesh_report.json'), 'utf8') !== readFileSync(join(mul.out, 'mesh_report.json'), 'utf8')}`,
+    'issue #148 work item 5: keep existing behaviour and bytes when the policy is not selected — the byte comparison against main is the PR\'s; here the shape of the bisection\'s row is held',
   );
 }
 
