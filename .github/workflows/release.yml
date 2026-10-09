@@ -9,9 +9,14 @@
 # no OTP. The very first version is published by hand, because npm's trusted
 # publisher is configured on a package that already exists (RELEASING.md).
 #
+# Every version goes out under two names from the one gated checkout:
+# rig-parts, the name in package.json, and the alias spine-parts, the name
+# the package first shipped as, carrying the same files (RELEASING.md).
+#
 # Two constraints are load-bearing, do not "simplify" them away:
-#   - The publish must stay in THIS file. npm's trusted publisher for
-#     rig-parts is pinned to the workflow filename `release.yml`.
+#   - The publish must stay in THIS file. npm's trusted publisher for each
+#     name — one form per package on npmjs.com — is pinned to the workflow
+#     filename `release.yml`.
 #   - It must stay on a GitHub-hosted runner. npm does not support OIDC from
 #     self-hosted runners.
 name: release
@@ -100,6 +105,31 @@ jobs:
         if: ${{ steps.release.outputs.release_created == 'true' }}
         run: npm publish --provenance --access public
 
+      # 🪞 The alias: the same files under the name the package first shipped
+      # as, so an install or a dependant that still names it keeps receiving
+      # every version. `scripts/alias_tarball.ts` packs this checkout — the
+      # tagged commit the step above published from — into the runner's temp
+      # directory, rewrites the one `"name"` line of the extracted
+      # package.json, packs that again, and prints the path only after holding
+      # the result to the package tarball file by file. The checkout is never
+      # modified, so the confirmation below reads the tree the gate read.
+      #
+      # 🔒 No lifecycle script runs here, and that is the design rather than a
+      # gap: `npm publish <tarball>` runs none, so `prepublishOnly` gates the
+      # step above and only that one. A second gated publish would need the
+      # package renamed in this checkout first, and the gate would then pass a
+      # modified tree rather than the commit it passed a step ago; the alias
+      # is this commit's files, which is what that gate's verdict is about.
+      #
+      # 🔑 The alias's own trusted publisher on npmjs.com is pinned to this
+      # workflow filename, like the package's; the step stays in this file.
+      - name: Publish the alias spine-parts
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        run: |
+          set -euo pipefail
+          alias_tgz="$(bun scripts/alias_tarball.ts pack --name spine-parts --out "$RUNNER_TEMP/alias")"
+          npm publish "$alias_tgz" --provenance --access public
+
       # ⚖️ A confirmation beside the gate, not the gate: the `installs` job in
       # ci.yml runs the same script over a tarball packed from the branch, with
       # planted packages that have to make it red. This step cannot be the gate,
@@ -109,6 +139,14 @@ jobs:
       # ⏳ The wait belongs to the script: a publish returns before the registry
       # serves it, and a version not served yet is exit 3 ("confirmation NOT
       # taken"), never the same red as a package that does not run (exit 1).
+      #
+      # 🪞 `--alias spine-parts` adds the second name: after the case, the same
+      # version under the alias is fetched within what is left of the same
+      # wait, and its unpacked files are held to the package's — every path,
+      # every byte, the manifest's name line excepted. Compared rather than
+      # installed a second time: identical files are the stronger claim. A
+      # difference is exit 1; an alias still arriving is exit 3, re-run by the
+      # dispatch below.
       - name: Confirm the published package installs and runs
         if: ${{ steps.release.outputs.release_created == 'true' }}
         # Through the environment rather than interpolated into the script.
@@ -117,7 +155,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${TAG_NAME#v}"
-          bun run smoke -- --source registry --version "$version" --wait 15 --case clean
+          bun run smoke -- --source registry --version "$version" --wait 15 --case clean --alias spine-parts
 
   # The same confirmation, on demand, for a cut whose wait ran out. It
   # publishes nothing and can publish nothing: `npm publish` exists only in the
@@ -143,4 +181,4 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          bun run smoke -- --source registry --version "$VERSION" --wait 15 --case clean
+          bun run smoke -- --source registry --version "$VERSION" --wait 15 --case clean --alias spine-parts

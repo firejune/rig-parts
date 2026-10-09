@@ -5,6 +5,7 @@
  *     bun run smoke                      the whole battery, on this tree's tarball
  *     bun run smoke -- --case clean      just the green one
  *     bun run smoke -- --source registry --version 0.1.0 --wait 15
+ *     bun run smoke -- --source registry --version 0.1.0 --case clean --alias <name>
  *
  * Four exit codes, because a caller has to be able to tell the outcomes apart
  * without reading prose: **0** every case passed, **1** a case went red —
@@ -53,6 +54,15 @@
  * artifact the registry did serve is exit 1. ⚠️ The wait's probe is `npm view
  * <spec> version`, the packument, not the tarball.
  *
+ * 🪞 **The alias.** `--alias <name>` (registry only) adds the package's second
+ * name: after the cases, the same version under that name is asked for within
+ * what is left of `--wait` (at least once), both tarballs are fetched from the
+ * registry, and `scripts/alias_tarball.ts`'s `compare` holds the alias to the
+ * package — every path, every byte, the `name` line of `package.json`
+ * excepted. Compared rather than installed a second time: identical files are
+ * the stronger claim, and they take seconds. A difference is exit 1; an alias
+ * the registry has not served yet is exit 3, and only when no case went red.
+ *
  * What it cannot see: the tarball a branch packs is not the tarball npm serves
  * until a publish makes it one (that is `--source registry`), and a green run is
  * one platform's answer, the runner's.
@@ -62,6 +72,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AliasTarballError, compareTarballs } from './alias_tarball.ts';
 
 /** The repository this script packs — it is the subject, and nothing else reaches the fixture. */
 const ROOT = resolve(import.meta.dir, '..');
@@ -740,14 +751,23 @@ usage:
   bun run smoke                          every case below, on a tarball packed from this tree
   bun run smoke -- --case clean          one case by name
   bun run smoke -- --source registry --version 0.1.0 [--wait 15]
+  bun run smoke -- --source registry --version 0.1.0 --case clean --alias <name>
   bun run smoke -- --installer bun       install with \`bun add\` instead of \`npm install\`
   bun run smoke -- --keep                leave the install directories where they are
 
+--alias <name> is for \`--source registry\` too: after the cases, the same version
+under the second name the package is published as is asked for within what is
+left of --wait (at least once), and its unpacked files are held to the package's,
+both fetched from the registry, byte for byte but for the name line of
+package.json (scripts/alias_tarball.ts compare).
+
 exit codes:
   0  every case passed
-  1  a case went red — against \`--source registry\`, the published artifact does not run
+  1  a case went red — against \`--source registry\`, the published artifact does not run —
+     or the --alias tarball carries other files or other bytes than the package's
   2  no case ran, so this run measured nothing
-  3  the registry did not serve the version within --wait, so the confirmation was NOT taken
+  3  the registry did not serve the version — under the name or under --alias — within
+     --wait, so the confirmation was NOT taken
 
 cases:
   clean            a correct package installs; --version, layers (wrapper and PSD), sheet, check, compose, the contour mesh and an auto-mode rig run from it
@@ -786,6 +806,22 @@ function main(): number {
     console.log(`  FAIL  SMOKE_WAIT_IS_FOR_THE_REGISTRY: --wait ${JSON.stringify(waitFlag)} is not a number of minutes`);
     return EXIT_RED;
   }
+  // The same rule for the alias: a tarball this tree packs carries one name, so a
+  // run that was given a second one and read none would print a confirmation nobody took.
+  const alias = flag('alias');
+  if (argv.includes('--alias') && (alias === null || alias.startsWith('--'))) {
+    console.log('  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias needs the second name the package is published as');
+    return EXIT_RED;
+  }
+  if (alias !== null && sourceKind !== 'registry') {
+    console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias is for \`--source registry\`. A tarball this tree packs carries one name, ${PACKAGE}, so there is no second tarball here to hold to it`);
+    return EXIT_RED;
+  }
+  if (alias === PACKAGE) {
+    console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias ${alias} is the name this tree publishes, not a second one`);
+    return EXIT_RED;
+  }
+  const byHand = `bun run smoke -- --source registry --version ${wanted} --case clean${alias === null ? '' : ` --alias ${alias}`}`;
 
   console.log(`rig-parts install smoke — ${source.kind === 'tree' ? `a tarball packed from ${ROOT}` : `${source.spec} from the registry`}, installed with ${installer}`);
   for (const tool of ['npm', 'bun', 'tar', 'node']) {
@@ -796,12 +832,13 @@ function main(): number {
   }
 
   let served: { served: boolean; attempts: number; ms: number; last: string } | null = null;
+  const waitStarted = Date.now();
   if (source.kind === 'registry') {
     served = waitForRegistry(source.spec, waitMinutes, ROOT);
     if (!served.served) {
       console.log(
         `  FAIL  SMOKE_REGISTRY_SERVED_THE_VERSION: the registry did not serve ${source.spec} within ${waitMinutes} min (${served.attempts} attempt(s), ${elapsedText(served.ms)}) — the confirmation was NOT taken, and nothing here says the package is broken. ` +
-          `Re-run it (Actions -> release -> Run workflow, version ${wanted}) or by hand: bun run smoke -- --source registry --version ${wanted} --case clean` +
+          `Re-run it (Actions -> release -> Run workflow, version ${wanted}) or by hand: ${byHand}` +
           (served.last === '' ? '' : `. The last thing npm said was: ${served.last}`),
       );
       return EXIT_NOT_SERVED;
@@ -867,12 +904,68 @@ function main(): number {
     console.log('  FAIL  SMOKE_CASE_NAMED: no case ran, so this run measured nothing');
     return EXIT_NOTHING_RAN;
   }
-  console.log(bad === 0 ? `rig-parts install smoke: green — ${ran} case(s)` : `rig-parts install smoke: ${bad} of ${ran} case(s) failed`);
-  if (bad === 0) return EXIT_GREEN;
+  const aliasReading = alias !== null && served !== null && source.kind === 'registry' ? confirmAlias(source.spec, `${alias}@${wanted}`, Math.max(0, waitMinutes - (Date.now() - waitStarted) / 60_000), waitMinutes, byHand) : null;
+  const aliasRed = aliasReading === 'differs';
+  const aliasLate = aliasReading === 'late';
+  const aliasNote = aliasReading === null ? '' : aliasRed ? `; the alias ${alias} differs` : aliasLate ? `; the alias ${alias} was NOT confirmed` : `; the alias ${alias} carries the same files`;
+  console.log(bad === 0 && !aliasRed && !aliasLate ? `rig-parts install smoke: green — ${ran} case(s)${aliasNote}` : `rig-parts install smoke: ${bad} of ${ran} case(s) failed${aliasNote}`);
+  if (bad === 0 && !aliasRed && !aliasLate) return EXIT_GREEN;
+  if (bad === 0 && !aliasRed) return EXIT_NOT_SERVED;
+  if (bad === 0) return EXIT_RED;
   if (served !== null) {
     console.log(`the published artifact does not run: the registry served ${source.kind === 'registry' ? source.spec : ''} and ${bad} of ${ran} case(s) above went red on it. This is a fault in what was published, not a wait that was too short`);
   }
   return EXIT_RED;
+}
+
+/**
+ * The alias's confirmation: ask for `aliasSpec` within `leftMinutes` (at least
+ * once), fetch it and `packageSpec` from the registry, and hold the one to the
+ * other with `compareTarballs`. Prints its own PASS or FAIL line. `late` is a
+ * confirmation not taken — the registry did not hand over the alias's bytes —
+ * and says nothing about them; `differs` is a fact about what was published.
+ */
+function confirmAlias(packageSpec: string, aliasSpec: string, leftMinutes: number, waitMinutes: number, byHand: string): 'same' | 'differs' | 'late' {
+  const fetchDir = mkdtempSync(join(tmpdir(), 'rig-parts-smoke-alias-'));
+  try {
+    const got = waitForRegistry(aliasSpec, leftMinutes, fetchDir);
+    const fetched = got.served ? [packageSpec, aliasSpec].map((spec, i) => fetchTarball(spec, join(fetchDir, i === 0 ? 'package' : 'alias'))) : [];
+    const missing = fetched.map((f) => (typeof f === 'string' ? (existsSync(f) ? null : `${f} is not on disk`) : f.failed)).find((m) => m !== null);
+    if (!got.served || missing !== undefined) {
+      console.log(
+        `  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: the registry did not hand over ${aliasSpec} within what was left of the ${waitMinutes} min wait ` +
+          `(${got.attempts} attempt(s), ${elapsedText(got.ms)}${got.served ? `; its packument answered and \`npm pack\` did not: ${(missing ?? '').slice(0, 400)}` : ''}) — ` +
+          `the alias's confirmation was NOT taken, and nothing here says it differs. Take it by hand once the registry answers: ${byHand}` +
+          (got.last === '' || got.served ? '' : `. The last thing npm said was: ${got.last}`),
+      );
+      return 'late';
+    }
+    const [packageTgz, aliasTgz] = fetched as string[];
+    try {
+      const reading = compareTarballs(packageTgz, aliasTgz);
+      if (reading.faults.length === 0) {
+        console.log(`  PASS  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: the registry served ${aliasSpec} and its ${reading.files} file(s) are ${packageSpec}'s, byte for byte but for the name line of package.json`);
+        return 'same';
+      }
+      console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: the registry served ${aliasSpec} and it is not ${packageSpec} under another name:`);
+      for (const fault of reading.faults) console.log(`          ${fault}`);
+      return 'differs';
+    } catch (error) {
+      if (!(error instanceof AliasTarballError)) throw error;
+      console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: the registry served ${aliasSpec} and it could not be read as a package: ${error.message}`);
+      return 'differs';
+    }
+  } finally {
+    rmSync(fetchDir, { recursive: true, force: true });
+  }
+}
+
+/** `npm pack <spec>` into an empty directory: the one tarball's path, or what npm said when it left none. */
+function fetchTarball(spec: string, into: string): string | { failed: string } {
+  mkdirSync(into, { recursive: true });
+  const packed = run('npm', ['pack', spec, '--pack-destination', into, '--silent', '--prefer-online'], into);
+  const made = readdirSync(into).filter((f) => f.endsWith('.tgz'));
+  return packed.status === 0 && made.length === 1 ? join(into, made[0]) : { failed: `npm pack ${spec} exited ${packed.status}: ${packed.out.trim()}` };
 }
 
 process.exit(main());

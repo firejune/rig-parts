@@ -366,7 +366,11 @@ before it, at v0.14.0).
 `rig-parts` command; it hands off to Bun and says so in one sentence if Bun is not
 on `PATH`. **`rig-parts` is the package's name; versions up to 0.16.0 were published
 as `spine-parts`, its former name**, and the install keeps a `spine-parts` command
-beside `rig-parts` for the transition, the same launcher under both names. rig-c
+beside `rig-parts` for the transition, the same launcher under both names. On npm
+the alias `spine-parts` stays published beside `rig-parts` at every version,
+carrying the same files with only the `name` in `package.json` changed, so a
+project that depends on the former name keeps receiving every release; a new
+install names `rig-parts` ([RELEASING.md](RELEASING.md), *The registry side*). rig-c
 comes with it as a dependency. No Spine runtime does: since
 rig-c 2.0 the installed `rigc` gates every build with its own validator over the
 compiled model document, and `rigc --version` says `entry: cli_core.ts —
