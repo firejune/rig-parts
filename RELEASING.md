@@ -108,6 +108,30 @@ line of `package.json`.
   step and both confirmation calls to it, and the alias publish to run after the
   gated one in the same job, from the tarball the pack step printed.
 
+#### The alias stays until its retirement questions have written answers
+
+The alias is kept for as long as links from outside this repository point at
+it — the npm page, forum threads, articles, badges other READMEs copied. It
+**never gets its own version**: every version goes out under both names from
+the one gated tree, and no version goes out under the alias alone. Retiring it — deprecating it,
+un-publishing it, or letting the name fall behind the package's version line —
+is not a release step and not a convention; it is a separate card, which opens
+only after three things are written down:
+
+1. **npm history** — what is lost when the alias stops: download history, the
+   package page, the provenance links of every version published under it.
+2. **External links** — an inventory of what points at the alias name, and
+   where each one resolves after the rename and after a retirement (GitHub
+   redirects the repository URL; nothing but the alias covers the npm page).
+3. **What the alias says** — one sentence in the README naming the package's
+   current name (*Requirements*; the alias carries the same README). No
+   `npm deprecate`: a banner on every install is a retirement wearing an
+   alias's name.
+
+The same policy holds for every package of the toolchain: `rig-c` (renamed on
+npm at 2.20.4; its former name is spelled only in `CHANGELOG.md`, `TY11`),
+`rig-parts` and the alias `spine-parts` beside it, and `spine-html` → `rig-play`.
+
 Confirm a cut by hand: `npm view rig-parts version` and `npm view spine-parts version`
 print the same version, and the smoke's `--alias` compares the two tarballs the
 registry serves.
