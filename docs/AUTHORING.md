@@ -457,11 +457,12 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    read, rather than by rig-c's admission after the call. The row's `source.contour` says so
    (`fitConnectivity: 8`); the contour mode keeps its 4-connected reading and writes no such key. Its weights are the contour mode's — segments and region falloff — under the author's
    `influences`, with no 0.03 floor unless the author writes one.
-2. **The call** — rig-c's `reduceMesh` (`rig-c/mesh`, 2.24.x) refines inside the declared
+2. **The call** — rig-c's `reduceMesh` (`rig-c/mesh`, 2.28.x) refines inside the declared
    regions, then removes vertices while every declared bound still holds. Every number it is
    handed is one of the fields below; `preset` is null (no preset exists yet: a preset will be a
    named, versioned set of these numbers, expanded into the report), and no deform key or linked
-   mesh is passed (this package writes none).
+   mesh is passed (this package writes none). The three Stage B opt-ins (below) are handed over
+   only when written.
 3. **Acceptance** — the result is written only when rig-c's report ends
    `no-further-valid-reduction`, or `budget-exhausted` with `best-meeting-every-bound`, and its
    candidate is `accepted` with every row that has a declared bound at `pass`. Anything else
@@ -486,9 +487,13 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    is refused, never passed.
 5. **The acceptance loop** (rig-c 2.24.0, rigc#1266 mechanism 2; `src/autoreplay.ts`) — only
    when step 4 refuses the full reduction on motion (`AUTO_MESH_MOTION`). rig-c reports every
-   accepted step of the call (`acceptedAt`: N steps, the first I of them the refinement's
-   insertions, the rest removals) and replays the call to any step n by `stopAfterAccepted: n`,
-   byte for byte the mesh the call held after that step. The stage first compares the source with
+   accepted **operation** of the call (`acceptedAt`: N entries `{ step, kind, count,
+   sourceVertices }` since rig-c 2.25.0 — the attempt number, `insertion`, `removal` or
+   `boundary-run`, the vertices it inserted or removed and their source indices; the first I of
+   them, up to the last of kind `insertion`, are the refinement's, the rest removals and boundary
+   runs) and replays the call to any operation n by `stopAfterAccepted: n`, byte for byte the mesh
+   the call held after that operation. A boundary run is one step however many vertices it
+   removes, so every count below — N, I, the chosen step, ⌈log₂(N − I)⌉ — is in operations. The stage first compares the source with
    itself on the idle's `grid` frames (a source the gate would refuse leaves the part refused as
    in step 4, and nothing is searched), then **bisects** over the removal steps strictly between
    I and N: each probe replays step n, holds it to step 3's acceptance (the termination rig-c
@@ -504,8 +509,9 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    the irr frames held out; it is written only when that comparison is `accepted` on every
    frame, the held-out ones included. A step at or below I (the source, refined or not) is never
    written as an automatic result: when no removal step passes, the part is refused with "no
-   reduction passes the motion bound". A part the gate accepts in step 4 runs no replay and writes
-   the row it wrote before; rig-c 2.24.0's report adds only `acceptedAt`, last in `changes`.
+   reduction passes the motion bound". A part the gate accepts in step 4 runs no replay. Since
+   rig-c 2.24.0 the report carries `acceptedAt`, last in `changes`; since 2.25.0 one entry per
+   operation; since 2.26.0 five more geometry rows (below).
 
 The public examples' evidence is re-run from the tree: `bun run fetch-examples`, then
 `bun tools/auto_motion_survey.ts` switches each part item 2 accepted on geometry to `auto`, alone,
@@ -530,6 +536,9 @@ wall time goes to standard error, not into the table).
 | `motion` | **required**: `maxLocalDeformation` (rig px, 0 or more — how far the reduced mesh may carry any art pixel from where its source carries it, at any frame); optional `maxStretch` / `minStretch` (ratios; absent, the rows are reported and not gated); optional `deformMayFold` (absent is **false**: a triangle that turns over refuses the part; true declares the slot in `invariants.deformMayFold` and lists every fold instead) |
 | `protect` | optional; each field optional: `hull` (true keeps every source outline vertex; absent is **false**, the default agreed for this mode), `vertices` and `edges` (source vertex indices and pairs that must survive), `regionBoundaries` (region names whose outline vertices must survive), `weightJump` (an L1 weight difference above which a source edge is kept; absent is none), `influences` (bones never pruned from a vertex; every region's bone is added) |
 | `regions` | optional, each `{name, shape, bone, band, maxEdgeLength, transition, grade, minArtSamples}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`): `bone` and `band` are the control bone and its weight falloff exactly as a contour region's (rig px, multiples of 1/256 px); `maxEdgeLength` is L0, the longest an edge meeting the region may be, px; outside it, across `transition` px, the bound relaxes as `L0 + grade·d`; `transition` 0 is a hard edge; `minArtSamples` is the region's own sample floor |
+| `boundaryRuns` | optional, `{ maxVertices }`, a whole number 2 or more, no default: each removal pass first tries to replace a run of 2 to `maxVertices` consecutive source-hull vertices with one chord, as one step held to every declared row (below) |
+| `retriangulate` | optional, `"delaunay"`: once the reduction ends, the kept vertices are re-triangulated by Delaunay flips, taken whole only when every declared row still passes (below) |
+| `removalOrder` | optional, `"deformation-load"`: the single removals are tried in ascending predicted load instead of ascending source index (below) |
 
 **A bound declared absent.** `maxOvershoot` and `maxUndercut`, in `sourceBounds` and in
 `targets.artFit`, each take a number of px 0 or more or `null`. `null` means *measured and
@@ -546,6 +555,63 @@ residual as rig-c reports it (`state: "undeclared"`, the value, `bound: null`), 
 `overshoot <value> (not bounded)` / `undercut <value> (not bounded)`. The motion gate holds the
 reference and the candidate to the same bounds, `null` included.
 
+**Stage B opt-ins** (rigc#1271, rig-c 2.25.0–2.28.0). Three fields, each the author's and each
+absent by default: left out, it is not sent and the call — mesh and report — is the one it was
+before the field existed. What each promises and does not is rig-c's (its docs/MESH_REDUCTION.md
+§8, the three *Stage B* subsections):
+
+- `boundaryRuns: { maxVertices }` — the boundary half of the reduction. A traced source hull is
+  simplified at about the same 1 px the deviation bound is measured at, so a single removal
+  almost always leaves a sagitta over it; one chord for a run of vertices can meet it. A run is
+  2 to `maxVertices` surviving source-hull vertices, removed as **one** operation held to every
+  declared row exactly as a single removal is, before that pass's single removals; it is one
+  `acceptedAt` entry (`kind: "boundary-run"`, `count` ≥ 2), so the acceptance loop replays to it
+  like any step. Each run tried costs a candidate against `budget.maxCandidates`.
+- `retriangulate: "delaunay"` — the interior half. After the reduction ends (a replay's
+  included) the kept vertices are re-triangulated by Lawson flips toward Delaunay: no vertex
+  added, moved or removed, so UVs and weights are the removals'; no outline edge, protected edge
+  or edge a region holds is flipped. The pass is taken whole only when every declared row still
+  passes, and otherwise the mesh is returned as the removals left it with the row that refused
+  it named. It is not a step: `acceptedAt` and the replay are the call's without it, and a replay
+  to step k is byte for byte the budget cut at that step followed by the same pass (`MO43`
+  holds it on this package's inputs). rig-c does not promise that passing motion is monotone
+  along the steps under it; the acceptance loop finds a passing prefix, not necessarily the last,
+  as it always did.
+- `removalOrder: "deformation-load"` — each pass tries its single removals in ascending
+  L · Δshare (the longest edge the removal's hole adds, times half the L1 weight difference
+  across it), ties by source index; boundary runs keep their own order. It reads weights only:
+  on an unweighted source it is the default order.
+
+A malformed value — `maxVertices` 1 or 2.5, `null`, another spelling — is refused by the loader by
+name (`CONFIG_FIELD_TYPE`, `CONFIG_FIELD_PRESENT`, `CONFIG_KEY_KNOWN`). The row echoes each field
+set in `settings` (after `preset`) and, in `result`, `boundary_runs` (the runs taken and the
+vertices they removed) and `retriangulation` (`taken`, `flips`, `sweeps`, `refusedBy`); the
+`build` line adds `; boundary runs <= k: r run(s), v vertex(es)`, `; retriangulate delaunay taken,
+n flip(s)` (or `refused by <row>`) and `; removal order deformation-load`. A part that sets none
+writes none of these. `bun tools/auto_motion_survey.ts --config
+baseline,boundaryRuns,retriangulate,removalOrder,all` runs the eight public parts under each
+(`docs/evidence/auto-stageb-survey.md`).
+
+**The allocation rows** (rig-c 2.26.0, rigc#1280). rig-c reports five more geometry rows on every
+reduction: `MQ_GRADE` (the sharpest change of local edge size across an edge), `MQ_MIN_ANGLE_P10`
+(the tenth percentile of the triangles' smallest angles), `MQ_ALLOCATION_CONTRAST` (Δ, density no
+declared need explains, with economy E), `MQ_DEFORM_LOAD` (the largest L · Δshare · θ / 4 — a
+location reading, not predicted motion) and `MQ_BOUNDARY_NECESSARY` (B\*, the fewest source-hull
+vertices an outline can keep with every static row held). Every one is `undeclared`: no field
+declares a bound on any of them (a `targets.maxGrade` or the like is refused,
+`CONFIG_KEY_KNOWN`), none is ever required or the `worst_residual`, and each lands in the row's
+`residuals` as rig-c reports it. Δ and the load read a **motion amplitude** — per idle track,
+θ = ‖M − I‖ for each pair of bound bones the track turns or scales against each other, an ε in
+px, and an attachment-wide gradation G. It is not an author field: the rig stage derives it from
+the idle it writes (`src/autoamplitude.ts` — θ from each track's keys, 2 sin(α/2) for a rotation,
+|s − 1| for a scale, 0 for a translation; ε the part's `motion.maxLocalDeformation`), and sends it
+only when every term is derived. **G is not**: it is a rate no field of the config or the rig
+declares (a region's `grade` relaxes that region's own edge bound only), and none is invented —
+so today the field is never sent, Δ and the load read `not-measurable` naming it, and the row's
+`motion_amplitude` says so: `{ "sent": false, "stops": [{ "term": "gradation", "detail": … }] }`.
+A shear track, a constraint, a motion bound of 0, or a pair moved by two bones of one group are
+stopped by name the same way.
+
 A circle is handed to rig-c as the regular polygon with the fewest sides, 3 or more,
 circumscribed about the circle, whose outline lies within 1/256 px of it (the grid the region's
 numbers are on); the rule and its error are echoed in the region's `approximation`. The weights
@@ -559,9 +625,10 @@ triangles, bindings, vertices removed and inserted), every `residuals` row with 
 and bound, `worst_residual` (the declared row nearest its bound, as the share of the bound used)
 and `worst_region`, the `termination` with its reason and `candidatesTried`, what the weights
 lost to the grid (`sharesDroppedOnGrid`, `sharesPruned`, `droppedAtFivePlaces`), per region the
-source vertices its bone reaches and the result vertices bound to it, `replay` — only on a part
+source vertices its bone reaches and the result vertices bound to it, `motion_amplitude` (whether
+the allocation rows' amplitude was sent, and every term that stopped it), `replay` — only on a part
 the acceptance loop wrote at a replayed step (step 5): `rule` (the search in words, "a passing
-prefix, not necessarily the last"), `accepted_steps` (N), `refinement_steps` (I), `chosen_step`,
+prefix, not necessarily the last"), `accepted_steps` (N, in operations), `refinement_steps` (I), `chosen_step`,
 `replays` and `max_replays`, `candidates_tried` across the replays, `full` (the full result's
 reading that the gate refused), every probe (step, pass/fail, value and frame on the grid frames),
 and `selection` and `held_out` (the chosen step's value and worst frame per role); the row's other
@@ -588,10 +655,11 @@ safe is the author's to choose here.
 | rule | means |
 | --- | --- |
 | `CONFIG_MESH_MODE` | `auto` beside `grid` or `contour`, or no mode at all |
-| `CONFIG_FIELD_PRESENT`, `CONFIG_FIELD_TYPE`, `CONFIG_NAME_RESOLVES`, `CONFIG_REGION_NAME_UNIQUE` | a missing or out-of-range number, an unknown bone or region name, a region named twice — every one named in one run |
+| `CONFIG_FIELD_PRESENT`, `CONFIG_FIELD_TYPE`, `CONFIG_NAME_RESOLVES`, `CONFIG_REGION_NAME_UNIQUE` | a missing or out-of-range number, an unknown bone or region name, a region named twice, a Stage B opt-in that is not exactly a value rig-c accepts — every one named in one run |
+| `CONFIG_KEY_KNOWN` | a field the mode does not have — a bound on one of the five allocation rows, or an authored `motionAmplitude` (it is derived, never written) |
 | `CONTOUR_*` | the source is refused by the contour mode's own checks at alpha 1 and above — most often `CONTOUR_ONE_ISLAND`: faint pixels the alpha-above-8 modes never saw are islands here |
 | `AUTO_MESH_INPUT` | rig-c refused the call's input by throwing (a protected vertex the source does not have), in its words and code |
-| `AUTO_MESH_TERMINATION` | rig-c returned no mesh: `invalid-input` (the source fails its own `sourceBounds`, a region it refuses, protected influences over the cap), `unsupported-topology`, or `budget-exhausted` with `none-met-the-targets`; or, in the acceptance loop, a replay that does not end as rig-c's contract promises (`replayed-to-accepted-step` at the step asked, `candidatesTried` the full run's `acceptedAt[n − 1]`, its `acceptedAt` the full run's first n) |
+| `AUTO_MESH_TERMINATION` | rig-c returned no mesh: `invalid-input` (the source fails its own `sourceBounds`, a region it refuses, protected influences over the cap), `unsupported-topology`, or `budget-exhausted` with `none-met-the-targets`; or, in the acceptance loop, a replay that does not end as rig-c's contract promises (`replayed-to-accepted-step` at the step asked, `candidatesTried` the full run's `acceptedAt[n − 1].step`, its `acceptedAt` the full run's first n operations, each the same `step`, `kind`, `count` and `sourceVertices`) |
 | `AUTO_MESH_ACCEPTED` | rig-c returned a mesh that is not accepted; the detail names every declared row not passing and the constraint that stopped it |
 | `AUTO_MESH_NO_STIMULUS` | the idle keys no bone that moves some of the part's bound bones against the others, so no frame deforms it — missing stimulus is not a pass; put the part in `contour` or `grid` mode, or key a bone it binds |
 | `AUTO_MESH_MOTION` | the reduced mesh against its source on the idle is not accepted and the acceptance loop wrote no step in its place: "no reduction passes the motion bound" (the full result's failing rows and every probe named), or the chosen step passes on the grid frames and not on the whole idle (its selection and held-out values and worst frames named); when the source itself is not accepted against itself, the full result's rows as before |
