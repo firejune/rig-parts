@@ -65,6 +65,22 @@ export function examplePolicy(spacing: number): AutoSpec {
 }
 
 /**
+ * rigc#1271 Q1 option (ii): {@link examplePolicy} with the source sampled finer
+ * than the bound it declares — `source.tolerance` set to `tolerance`, every
+ * other number unchanged, every declared bound included. Option (ii) loosens
+ * nothing declared, so a tolerance at or above the policy's
+ * `maxBoundaryDeviation` is not this option and is refused (throws), as is one
+ * below 0, which the contour mode refuses too.
+ */
+export function finerSourcePolicy(spacing: number, tolerance: number): AutoSpec {
+  const stated = examplePolicy(spacing);
+  if (!(tolerance >= 0 && tolerance < stated.targets.maxBoundaryDeviation)) {
+    throw new Error(`finerSourcePolicy: source.tolerance ${tolerance} is not below the declared maxBoundaryDeviation ${stated.targets.maxBoundaryDeviation} (and 0 or more); option (ii) samples the hull finer than the bound`);
+  }
+  return { ...stated, source: { ...stated.source, tolerance } };
+}
+
+/**
  * A square density region, `side` px, centred in {@link STRIP_MASK}'s block:
  * L0 2 px, a 2 px transition at grade 1, one art sample. Its numbers are on
  * the 1/256 px grid by construction (whole pixels).

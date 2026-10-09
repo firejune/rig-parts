@@ -58,7 +58,7 @@
   },
   "dependencies": {
     "ag-psd": "^31.0.2",
-    "rig-c": "^2.24.0"
+    "rig-c": "^2.24.1"
   },
   "devDependencies": {
     "@esotericsoftware/spine-core": "4.3.13",
