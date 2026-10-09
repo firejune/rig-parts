@@ -2,8 +2,8 @@
 
 0.16.0 was the last version published under the package's former name. This page is
 what changed between it and 1.0.0-rc.1 for a user of the command, an author of a
-config and a reader of the files a build writes; what is held stable from here on is
-[STABILITY.md](STABILITY.md). Every figure is quoted from the pull request that
+config and a reader of the files a build writes; what 1.0.0 will hold stable, frozen
+for review as of 1.0.0-rc.1, is [STABILITY.md](STABILITY.md). Every figure is quoted from the pull request that
 measured it.
 
 ## In one paragraph

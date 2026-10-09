@@ -1,7 +1,8 @@
 # Interface stability
 
-This page states what rig-parts holds stable from **1.0.0-rc.1**, and what it does
-not. Every item is read off the tree: the command and flag lists below are held to
+This page states what **1.0.0 will hold stable**, and what it will not, frozen for
+review as of 1.0.0-rc.1: the candidate exists so that this interface can be read and
+objected to before 1.0.0. Every item is read off the tree: the command and flag lists below are held to
 `cli.ts`, and the config field list to the loader in `src/config.ts`, by the
 selftest's `TY13` and `TY14` (the `tree` suite), so neither list can drift from the
 code without a red run. What changed for an author coming from 0.16.0 is
@@ -9,7 +10,8 @@ code without a red run. What changed for an author coming from 0.16.0 is
 
 ## What "stable" means here
 
-From 1.0.0 the package follows semantic versioning over the items on this page. A
+The semantic-versioning promise starts at 1.0.0, not at a release candidate: from
+1.0.0 the package follows semantic versioning over the items on this page. A
 stable item is not removed, renamed, or given another meaning inside a major
 version; a new command, flag, optional config field, report key or refusal may
 arrive in a minor version, because a reader written against the old surface still
