@@ -14792,6 +14792,59 @@ function runTreeSuite(): number {
       `; ${env[0]} and ${env[1]} set, the former alone, the new one empty, neither -> ${twins.map((t) => (t === null ? 'none' : t.name)).join(', ')}${twinNames ? '' : '; a twin is not RIG_PARTS_<x> over SPINE_PARTS_<x>'}`,
     "the package went from its first npm name to rig-parts beside rig-c's own rename; a sentence or command still naming the former one sends an agent to a name kept only for the transition, and an allowance that outlived its line would widen the rule unseen",
   );
+
+  // TY13 — docs/STABILITY.md's command table, held to the commands cli.ts dispatches and the flags it spells.
+  const cliText = readFileSync(join(ROOT, 'cli.ts'), 'utf8');
+  const stabilityText = existsSync(join(ROOT, STABILITY_DOC)) ? readFileSync(join(ROOT, STABILITY_DOC), 'utf8') : '';
+  const surface = cliSurface(cliText);
+  const drift13 = commandDrift(cliText, stabilityText);
+  const docCommands = stableBlock(stabilityText, 'commands');
+  const rowOf = (cmd: string): string => (docCommands ?? '').split('\n').find((l) => l.startsWith(`| \`${cmd}\``)) ?? '';
+  const plants13 = [
+    commandDrift(cliText, stabilityText.replace(`${rowOf('inputs')}\n`, '')),
+    commandDrift(cliText, stabilityText.replace('| (none) |', '| `serve` | `--port` |\n| (none) |')),
+    commandDrift(cliText.replace("  if (command === 'compose') return cmdCompose(rest);", "  if (command === 'compose') return cmdCompose(rest);\n  if (command === 'serve') return cmdServe(['--port']);"), stabilityText),
+    commandDrift(cliText, stabilityText.replace('| `rig` | `--config`', '| rig | `--config`')),
+    commandDrift(cliText, stabilityText.replace('<!-- /stable:commands -->', '')),
+  ];
+  const plantsHit13 =
+    plants13[0].join() === 'command inputs is in cli.ts and not in the table' &&
+    plants13[1].join() === 'command serve is in the table and not in cli.ts,flag --port is in the table and not in cli.ts' &&
+    plants13[2].join() === 'command serve is in cli.ts and not in the table,flag --port is in cli.ts and not in the table' &&
+    plants13[3].some((p) => p.startsWith('a row the reader cannot read:')) &&
+    plants13[4].join() === `${STABILITY_DOC} holds no block between <!-- stable:commands --> and <!-- /stable:commands -->`;
+  say(
+    'TY13_THE_STABILITY_COMMAND_TABLE_IS_THE_COMMANDS_CLI_TS_DISPATCHES_AND_THE_FLAGS_IT_SPELLS',
+    surface.commands.length > 0 && surface.flags.length > 0 && drift13.length === 0 && plantsHit13,
+    `${STABILITY_DOC}: ${drift13.length === 0 ? `the table names the ${surface.commands.length} command(s) cli.ts dispatches (${surface.commands.join(', ')}) and the ${surface.flags.length} flag(s) it spells` : drift13.join('; ')}` +
+      `; planted: a row dropped -> ${plants13[0].join('; ') || 'not found'} | a row cli.ts lacks -> ${plants13[1].join('; ') || 'not found'} | a command and flag only cli.ts has -> ${plants13[2].join('; ') || 'not found'} | a command cell not in backticks -> ${plants13[3].join('; ') || 'not found'} | the closing marker gone -> ${plants13[4].join('; ') || 'not found'}`,
+    "issue #126 item 7: the stability statement is a promise about the CLI, so it is read off the CLI and held to it in both directions — a command or flag the page omits is a surface nobody promised, and one it names that cli.ts does not is a promise the package cannot keep. It holds the names; which command takes which flag is the CLI's, and the cli suite reads it from the help",
+  );
+
+  // TY14 — docs/STABILITY.md's config field list, held to the names the loader's object checks spell.
+  const loaderText = readFileSync(join(ROOT, 'src', 'config.ts'), 'utf8');
+  const loader = loaderFieldNames(loaderText);
+  const drift14 = fieldDrift(loaderText, stabilityText);
+  const plants14 = [
+    fieldDrift(loaderText, stabilityText.replace('- **meshes.&lt;part&gt;.auto.motion.residual** — required: `maxResidual`\n', '')),
+    fieldDrift(loaderText, stabilityText.replace('optional: `minAngle`', 'optional: `minAngle`, `maxEdgeRatio`')),
+    fieldDrift(loaderText.replace("['maxResidual'], []", "['maxResidual'], ['tension']"), stabilityText),
+    fieldDrift(loaderText.replace("c.object(`${at}.budget`, o.budget, ['maxCandidates'], [])", 'c.object(`${at}.budget`, o.budget, BUDGET_KEYS, [])'), stabilityText),
+    fieldDrift(loaderText, stabilityText.replace('<!-- /stable:config -->', 'a sentence the list reader cannot read\n<!-- /stable:config -->')),
+  ];
+  const plantsHit14 =
+    plants14[0].join() === 'field maxResidual is in the loader and not in the list' &&
+    plants14[1].join() === 'field maxEdgeRatio is in the list and not in the loader' &&
+    plants14[2].join() === 'field tension is in the loader and not in the list' &&
+    plants14[3].some((p) => p.includes('BUDGET_KEYS')) &&
+    plants14[4].join() === 'a line of the list the reader cannot read: a sentence the list reader cannot read';
+  say(
+    'TY14_THE_STABILITY_CONFIG_LIST_IS_THE_FIELDS_THE_LOADER_SPELLS',
+    loader.names.length > 0 && loader.unread.length === 0 && drift14.length === 0 && plantsHit14,
+    `${STABILITY_DOC}: ${drift14.length === 0 ? `the list names the ${loader.names.length} field(s) the ${loader.calls} object check(s) in src/config.ts spell` : drift14.join('; ')}` +
+      `; planted: the residual line dropped -> ${plants14[0].join('; ') || 'not found'} | a field the loader lacks -> ${plants14[1].join('; ') || 'not found'} | a field only the loader has -> ${plants14[2].join('; ') || 'not found'} | a key list named by a constant the reader does not resolve -> ${plants14[3].join('; ') || 'not found'} | a stray line in the list -> ${plants14[4].join('; ') || 'not found'}`,
+    "issue #126 item 7: the config contract is the loader's, so the page's field names are read off it in both directions; a key list the reader cannot resolve is named rather than skipped, so a new object check cannot pass this unread. It holds the names, not their nesting or which are required: the config suite holds those, refusal by refusal",
+  );
   runAliasControls(say);
   return bad();
 }
@@ -14857,6 +14910,43 @@ function aliasWorkflowFaults(yml: string, doc: string, packageName: string): str
   for (const name of [packageName, ALIAS]) {
     if (!doc.includes(`npm view ${name} version`)) faults.push(`RELEASING.md carries no \`npm view ${name} version\`, so the cut's own confirmation of that name is stated nowhere`);
   }
+  return faults;
+}
+
+/** The one clause that picks a publish's dist-tag: `rc` exactly when the version in package.json holds a hyphen. */
+const PRERELEASE_TAG_CASE = `case "$(node -p "require('./package.json').version")" in *-*) tag="--tag rc";; esac`;
+
+/**
+ * What is wrong with how `release.yml` keeps a prerelease off `latest`, one sentence per fault; empty when there are
+ * two `npm publish` steps or more and each one sets `tag=""`, then runs `PRERELEASE_TAG_CASE`, then publishes with
+ * `$tag` as its last word and no other `--tag`. A stable version then passes no tag, as before the clause existed.
+ */
+function prereleaseTagFaults(yml: string): string[] {
+  let wf: { jobs?: Record<string, { steps?: AliasStep[] }> };
+  try {
+    wf = Bun.YAML.parse(yml) as { jobs?: Record<string, { steps?: AliasStep[] }> };
+  } catch (error) {
+    return [`release.yml does not parse as YAML: ${error instanceof Error ? error.message : String(error)}`];
+  }
+  const faults: string[] = [];
+  let publishes = 0;
+  for (const body of Object.values(wf.jobs ?? {})) {
+    for (const step of body.steps ?? []) {
+      const lines = (step.run ?? '').split('\n').map((line) => line.trim());
+      const at = lines.findIndex((line) => /^npm publish(\s|$)/.test(line));
+      if (at === -1) continue;
+      publishes++;
+      const name = step.name ?? '(unnamed step)';
+      const reset = lines.indexOf('tag=""');
+      const clause = lines.indexOf(PRERELEASE_TAG_CASE);
+      if (clause === -1 || clause > at) faults.push(`release.yml "${name}": no \`${PRERELEASE_TAG_CASE}\` before its \`npm publish\`, so a prerelease would go out on latest`);
+      else if (reset === -1 || reset > clause) faults.push(`release.yml "${name}": \`tag=""\` is not set before the clause, so a stable version's tag is not empty`);
+      const words = lines[at].split(/\s+/);
+      if (words[words.length - 1] !== '$tag') faults.push(`release.yml "${name}": \`${lines[at]}\` does not end with $tag, so the clause's tag never reaches npm`);
+      if (words.includes('--tag')) faults.push(`release.yml "${name}": \`${lines[at]}\` names a --tag of its own, so the tag does not follow the version`);
+    }
+  }
+  if (publishes < 2) faults.push(`release.yml: ${publishes} \`npm publish\` step(s), where the gated publish and the alias are two`);
   return faults;
 }
 
@@ -15073,6 +15163,35 @@ function runAliasControls(say: (name: string, ok: boolean, detail: string, why: 
     `ALIAS ${ALIAS} ${ALIAS === FORMER_PACKAGE_NAME ? 'is' : 'is NOT'} the former name; ${read.map(([line, want, got]) => `"${line}" -> ${got} hit(s) (${want} required)`).join('; ')}`,
     'the former name stays published as the alias, which is permanent rather than a transition; TY12 admits it introduced as the alias, in the pack and confirmation flags and in the registry confirmation, so an install line or a command naming it still goes red',
   );
+
+  // AL07 — a prerelease goes out under the `rc` dist-tag on both publishes, and a stable version under none.
+  const tagFaults = prereleaseTagFaults(yml);
+  const gatedLine = 'npm publish --provenance --access public $tag';
+  const aliasLine = 'npm publish "$alias_tgz" --provenance --access public $tag';
+  const clauseLine = `          ${PRERELEASE_TAG_CASE}\n`;
+  const firstClause = yml.indexOf(clauseLine);
+  const lastClause = yml.lastIndexOf(clauseLine);
+  const cut = (at: number): string | null => (at === -1 ? null : yml.slice(0, at) + yml.slice(at + clauseLine.length));
+  const tagPlants: Array<{ what: string; yml: string | null; want: string }> = [
+    { what: 'the gated publish drops $tag', yml: edit(yml, gatedLine, 'npm publish --provenance --access public'), want: 'does not end with $tag' },
+    { what: "the alias's clause removed", yml: firstClause === lastClause ? null : cut(lastClause), want: 'Publish the alias' },
+    { what: 'the clause matches rc instead of a hyphen', yml: edit(yml, 'in *-*) tag="--tag rc"', 'in *rc*) tag="--tag rc"'), want: 'a prerelease would go out on latest' },
+    { what: 'the gated publish always tags rc', yml: yml.includes(`          tag=""\n${clauseLine}`) ? yml.replace(`          tag=""\n${clauseLine}`, '          tag="--tag rc"\n') : null, want: '"Publish to npm": no `case' },
+    { what: 'a hard --tag next beside $tag', yml: edit(yml, gatedLine, 'npm publish --provenance --access public --tag next $tag'), want: 'names a --tag of its own' },
+  ];
+  const tagCases = tagPlants.map((p) => {
+    if (p.yml === null) return { what: p.what, ok: false, said: 'the edit found nothing to change, so this plant was never made' };
+    const raised = prereleaseTagFaults(p.yml).filter((f) => !tagFaults.includes(f));
+    return { what: p.what, ok: raised.some((f) => f.includes(p.want)), said: raised.join(' | ') || 'no fault' };
+  });
+  const releasingSays = doc.includes('prereleases go out under the `rc` dist-tag');
+  say(
+    'AL07_BOTH_PUBLISHES_TAG_A_HYPHENATED_VERSION_RC_AND_A_STABLE_ONE_NOT_AT_ALL',
+    tagFaults.length === 0 && tagCases.every((c) => c.ok) && releasingSays,
+    `${tagFaults.length === 0 ? `every \`npm publish\` in release.yml sets tag="" and runs \`${PRERELEASE_TAG_CASE}\` before publishing with $tag last` : tagFaults.join('; ')}; RELEASING.md ${releasingSays ? 'says' : 'does NOT say'} prereleases go out under rc` +
+      ` — planted: ${tagCases.map((c) => `${c.what} -> ${c.ok ? 'named' : 'NOT named'} (${c.said.slice(0, 160)})`).join('; ')}`,
+    'a 0.16.0 user\'s plain install must not receive a release candidate: npm puts an untagged publish on latest (npm 12 refuses a prerelease without --tag; npm 10 publishes it there), so both names take rc exactly when the version holds a hyphen, and a stable cut passes no tag and publishes as it always did',
+  );
 }
 
 /** The package's name, and the name it was published under before the rename, spelled in pieces so TY12 scans this file too. */
@@ -15123,6 +15242,137 @@ function formerNameLines(file: string, text: string): string[] {
     if (rest.includes(FORMER_PACKAGE_NAME)) hits.push(`${file}:${i + 1}: ${line.trim().slice(0, 120)}`);
   });
   return hits;
+}
+
+// ---------------------------------------------------------------------------
+// the stability statement, held to the code it describes (TY13, TY14)
+// ---------------------------------------------------------------------------
+
+/** The page that states what 1.0.0-rc.1 holds stable (issue #126 item 7). */
+const STABILITY_DOC = 'docs/STABILITY.md';
+
+/** The text between `<!-- stable:<name> -->` and `<!-- /stable:<name> -->`, or null when either marker is missing. */
+function stableBlock(doc: string, name: string): string | null {
+  const open = `<!-- stable:${name} -->`;
+  const close = `<!-- /stable:${name} -->`;
+  const from = doc.indexOf(open);
+  const to = from < 0 ? -1 : doc.indexOf(close, from + open.length);
+  return from < 0 || to < 0 ? null : doc.slice(from + open.length, to);
+}
+
+const sortedUnique = (xs: Iterable<string>): string[] => [...new Set(xs)].sort();
+
+/** What `cli.ts` exposes: the commands `main` dispatches and the ones `LATER` registers, and every flag it spells as a quoted literal. */
+function cliSurface(cli: string): { commands: string[]; flags: string[] } {
+  const dispatched = [...cli.matchAll(/if \(command === '([a-z][a-z-]*)'\) return cmd/g)].map((m) => m[1]);
+  const later = /const LATER\b[^=]*=\s*\[([\s\S]*?)\];/.exec(cli);
+  const registered = later === null ? [] : [...later[1].matchAll(/\[\s*'([a-z][a-z-]*)'/g)].map((m) => m[1]);
+  return { commands: sortedUnique([...dispatched, ...registered]), flags: sortedUnique([...cli.matchAll(/'(--[a-z0-9][a-z0-9-]*)'/g)].map((m) => m[1])) };
+}
+
+/** `a` less `b`, each named with `what`. */
+function oneWay(a: readonly string[], b: readonly string[], what: (x: string) => string): string[] {
+  return a.filter((x) => !b.includes(x)).map(what);
+}
+
+/** Every difference between the page's command table and `cli.ts`, in both directions; empty when they agree. */
+function commandDrift(cli: string, doc: string): string[] {
+  const block = stableBlock(doc, 'commands');
+  if (block === null) return [`${STABILITY_DOC} holds no block between <!-- stable:commands --> and <!-- /stable:commands -->`];
+  const rows = block.split('\n').filter((l) => l.startsWith('|') && !l.startsWith('| command |') && !l.startsWith('| ---'));
+  const unread = rows.filter((l) => !/^\| (`[a-z][a-z-]*`|\(none\)) \|/.test(l));
+  const commands = sortedUnique(rows.map((l) => /^\| `([a-z][a-z-]*)` \|/.exec(l)?.[1]).filter((c): c is string => c !== undefined));
+  const flags = sortedUnique([...block.matchAll(/`(--[a-z0-9][a-z0-9-]*)`/g)].map((m) => m[1]));
+  const cliSide = cliSurface(cli);
+  return [
+    ...unread.map((l) => `a row the reader cannot read: ${l.slice(0, 60)}`),
+    ...oneWay(cliSide.commands, commands, (c) => `command ${c} is in cli.ts and not in the table`),
+    ...oneWay(commands, cliSide.commands, (c) => `command ${c} is in the table and not in cli.ts`),
+    ...oneWay(cliSide.flags, flags, (f) => `flag ${f} is in cli.ts and not in the table`),
+    ...oneWay(flags, cliSide.flags, (f) => `flag ${f} is in the table and not in cli.ts`),
+  ];
+}
+
+/** The quoted identifiers in a piece of source. */
+const quotedNames = (src: string): string[] => [...src.matchAll(/'([A-Za-z_][A-Za-z0-9_]*)'/g)].map((m) => m[1]);
+
+/** The text of the call whose `(` is at `open`, without its parentheses, or null when it never closes. */
+function callArguments(src: string, open: number): string | null {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '(') depth++;
+    else if (src[i] === ')' && --depth === 0) return src.slice(open + 1, i);
+  }
+  return null;
+}
+
+/** A call's arguments split at its top-level commas. */
+function topLevelArguments(args: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < args.length; i++) {
+    const ch = args[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') depth--;
+    else if (ch === ',' && depth === 0) {
+      out.push(args.slice(from, i));
+      from = i + 1;
+    }
+  }
+  out.push(args.slice(from));
+  return out;
+}
+
+/**
+ * The field names the config loader spells: every key list handed to `c.object(path, value, required, optional)`
+ * in `src/config.ts`, with the constants those lists name resolved from their declarations — `TOP_KEYS`,
+ * `GENERATION_REQUIRED`, a region's shape fields (`own`), and the required lists derived from `CONFIG_REQUIRES`.
+ * A key list naming anything else is `unread`, so a new object check cannot pass unseen.
+ */
+function loaderFieldNames(src: string): { names: string[]; unread: string[]; calls: number } {
+  const arrayOf = (name: string): string[] => quotedNames(new RegExp(`const ${name}\\b[^=]*=\\s*\\[([^\\]]*)\\]`).exec(src)?.[1] ?? '');
+  const shapes = [...src.matchAll(/const own = ([^;]*);/g)].flatMap((m) => [...m[1].matchAll(/\[([^\]]*)\]/g)].flatMap((a) => quotedNames(a[1])));
+  const requires = /CONFIG_REQUIRES\b[^=]*=\s*\{([^}]*)\}/.exec(src)?.[1] ?? '';
+  const required = [...requires.matchAll(/'([A-Za-z_][\w.]*)'/g)].map((m) => m[1].split('.').pop() as string);
+  const resolves: Record<string, string[]> = { TOP_KEYS: arrayOf('TOP_KEYS'), GENERATION_REQUIRED: arrayOf('GENERATION_REQUIRED'), own: shapes, required, sectionRequired: required };
+  const glue = new Set(['door', 'filter', 'includes', 'k']);
+  const names: string[] = [];
+  const unread: string[] = [];
+  let calls = 0;
+  for (const m of src.matchAll(/\bc\.object\(/g)) {
+    const args = callArguments(src, (m.index ?? 0) + m[0].length - 1);
+    const lists = args === null ? null : topLevelArguments(args).slice(2);
+    if (lists === null || lists.length !== 2) {
+      unread.push(`a c.object call at offset ${m.index ?? 0} whose key lists cannot be read`);
+      continue;
+    }
+    calls++;
+    for (const list of lists) {
+      names.push(...quotedNames(list));
+      for (const id of list.replace(/'[^']*'/g, '').match(/[A-Za-z_$][\w$]*/g) ?? []) {
+        if (id in resolves) names.push(...resolves[id]);
+        else if (!glue.has(id)) unread.push(`a key list names ${id}, which this reader does not resolve: ${list.trim().slice(0, 60)}`);
+      }
+    }
+  }
+  return { names: sortedUnique(names), unread: sortedUnique(unread), calls };
+}
+
+/** Every difference between the page's config field list and the loader, in both directions; empty when they agree. */
+function fieldDrift(loader: string, doc: string): string[] {
+  const block = stableBlock(doc, 'config');
+  if (block === null) return [`${STABILITY_DOC} holds no block between <!-- stable:config --> and <!-- /stable:config -->`];
+  const lines = block.split('\n').filter((l) => l.trim() !== '');
+  const unreadLines = lines.filter((l) => !l.startsWith('- **'));
+  const listed = sortedUnique(lines.filter((l) => l.startsWith('- **')).flatMap((l) => [...l.matchAll(/`([A-Za-z_][A-Za-z0-9_]*)`/g)].map((m) => m[1])));
+  const read = loaderFieldNames(loader);
+  return [
+    ...read.unread,
+    ...unreadLines.map((l) => `a line of the list the reader cannot read: ${l.slice(0, 60)}`),
+    ...oneWay(read.names, listed, (f) => `field ${f} is in the loader and not in the list`),
+    ...oneWay(listed, read.names, (f) => `field ${f} is in the list and not in the loader`),
+  ];
 }
 
 /** The kept lines of `FORMER_NAME_LINES` whose file no longer holds them, so an allowance cannot outlive its line. */

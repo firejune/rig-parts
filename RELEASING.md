@@ -29,6 +29,7 @@ Every push to `main` runs `release.yml`, which hands the new commits to
 - **That pull request is merged** → the merge is a push to `main`, so the
   workflow runs again: release-please tags `vX.Y.Z`, cuts the GitHub release,
   and the same run publishes.
+  A version with a hyphen (`1.0.0-rc.1`) is a prerelease: prereleases go out under the `rc` dist-tag; promotion to `latest` is the owner's, by `npm dist-tag add`, never automatic (both publish steps in `release.yml` read the version and pass `--tag rc` only then, `AL07`).
 
 Squash-merge the release pull request, so the commit on `main` keeps its
 `release: vX.Y.Z` subject.
@@ -82,6 +83,10 @@ npm publish "$(bun scripts/alias_tarball.ts pack --name spine-parts --out ../ali
 Confirm with `bun run smoke -- --source registry --version 0.1.0 --case clean
 --alias spine-parts`.
 
+A prerelease published by hand takes `--tag rc` on both `npm publish` commands,
+as the workflow's do; without it npm 12 refuses the publish and npm 10 puts the
+prerelease on `latest`.
+
 ### Two names, one tree
 
 Every version is published under two names: `rig-parts`, the `name` in
@@ -133,7 +138,7 @@ npm at 2.20.4; its former name is spelled only in `CHANGELOG.md`, `TY11`),
 `rig-parts` and the alias `spine-parts` beside it, and `spine-html` → `rig-play`.
 
 Confirm a cut by hand: `npm view rig-parts version` and `npm view spine-parts version`
-print the same version, and the smoke's `--alias` compares the two tarballs the
+print the same version (they read `latest`; a prerelease shows under `rc` in `npm view rig-parts dist-tags` and the alias's own), and the smoke's `--alias` compares the two tarballs the
 registry serves.
 
 ### The registry side (owner, npmjs.com), after the first publish

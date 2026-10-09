@@ -42,6 +42,8 @@
     "src",
     "workflows",
     "docs/AUTHORING.md",
+    "docs/MIGRATION.md",
+    "docs/STABILITY.md",
     "skills",
     "NOTICE.md"
   ],

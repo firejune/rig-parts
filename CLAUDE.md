@@ -12,10 +12,14 @@ provenance and measurements), and `rig.json` / `motion.json` in
 [rig-c](https://github.com/firejune/rigc)'s spec — then calls rig-c to
 compile, gate, render and check. It is a port of a working reference
 implementation that lives in a private repository (see *Where the private
-oracle lives*). Version 0.1.0 carries every stage — layers, sheet, assemble,
-propose, rig, check, loop — and `build`, which runs assemble, rig and check in
-one process (`src/build.ts`); the optional ComfyUI adapter is the one command
-still registered as not implemented.
+oracle lives*). Every command the CLI registers is implemented — layers,
+sheet, propose, compare, assemble, rig, check, loop, inputs, comfy (the optional
+ComfyUI adapter), compose, and `build`, which runs assemble, rig and check in
+one process (`src/build.ts`); the list of commands not yet implemented (`LATER`
+in `cli.ts`) is empty. 1.0.0-rc.1 is the release candidate: what it holds
+stable, and what it does not, is `docs/STABILITY.md` (held to `cli.ts` and the
+config loader by `TY13`/`TY14`), and what changed for an author coming from
+0.16.0 is `docs/MIGRATION.md`.
 
 ## The doctrine: a tool for AI, not for people
 
