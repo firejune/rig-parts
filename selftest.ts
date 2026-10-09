@@ -181,6 +181,7 @@ import {
 } from './src/requirements.ts';
 import { COMPOSED_HAND_X, COMPOSED_SHOULDER, writeComposedRig, DRIVER_AT, DRIVER_SLIDE, FAR_ABOVE, LOWER_LEN, LURE_ANGLE, OVERREACH_FROM, OVERREACH_TO, POINTER_LEN, REACH_FROM, REACH_TO, REQ_FPS, REQ_STAGE, RIDE_MIX, RIDER_AT, SHOULDER, stageOf, SWING_BROKEN, SWING_PEAK, UPPER_LEN, VANE_AT, VANE_MIX, writeReqRig, writeRequirements } from './fixtures/reqrig.ts';
 import { buildHeaderProblem } from './tools/atlas_population.ts';
+import { ALIAS, AliasTarballError, compareTarballs, MANIFEST as ALIAS_MANIFEST, packAlias, packInto, renamed } from './scripts/alias_tarball.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionSpec, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
@@ -14768,7 +14769,287 @@ function runTreeSuite(): number {
       `; ${env[0]} and ${env[1]} set, the former alone, the new one empty, neither -> ${twins.map((t) => (t === null ? 'none' : t.name)).join(', ')}${twinNames ? '' : '; a twin is not RIG_PARTS_<x> over SPINE_PARTS_<x>'}`,
     "the package went from its first npm name to rig-parts beside rig-c's own rename; a sentence or command still naming the former one sends an agent to a name kept only for the transition, and an allowance that outlived its line would widen the rule unseen",
   );
+  runAliasControls(say);
   return bad();
+}
+
+// ---------------------------------------------------------------------------
+// the alias: one gated tree, published under two names (AL01–AL06)
+// ---------------------------------------------------------------------------
+
+interface AliasStep {
+  name?: string;
+  if?: string;
+  run?: string;
+}
+
+/**
+ * What is wrong with how `release.yml` publishes and confirms the alias, and with how RELEASING.md says to confirm
+ * it, as one sentence per fault; empty when the alias is packed as `ALIAS` by exactly one step, after a gated
+ * `npm publish` in the same job and under the same condition, which publishes the path it printed, and every
+ * `bun run smoke` call confirms that alias. rig-c's `CUR122`, ported.
+ */
+function aliasWorkflowFaults(yml: string, doc: string, packageName: string): string[] {
+  const faults: string[] = [];
+  let wf: { jobs?: Record<string, { steps?: AliasStep[] }> };
+  try {
+    wf = Bun.YAML.parse(yml) as { jobs?: Record<string, { steps?: AliasStep[] }> };
+  } catch (error) {
+    return [`release.yml does not parse as YAML: ${error instanceof Error ? error.message : String(error)}`];
+  }
+  const lines = (step: AliasStep): string[] => (step.run ?? '').split('\n').map((line) => line.trim());
+  const packers: Array<{ job: string; at: number; step: AliasStep }> = [];
+  const publishers: Array<{ job: string; at: number; step: AliasStep }> = [];
+  for (const [job, body] of Object.entries(wf.jobs ?? {})) {
+    (body.steps ?? []).forEach((step, at) => {
+      if (lines(step).some((line) => line.includes('scripts/alias_tarball.ts pack'))) packers.push({ job, at, step });
+      if (lines(step).some((line) => /^npm publish(\s|$)/.test(line))) publishers.push({ job, at, step });
+    });
+  }
+  if (packers.length !== 1) {
+    faults.push(`release.yml: ${packers.length} step(s) pack the alias with scripts/alias_tarball.ts, where one does`);
+  } else {
+    const [packer] = packers;
+    const packLine = lines(packer.step).find((line) => line.includes('scripts/alias_tarball.ts pack')) ?? '';
+    const named = /--name\s+"?([^"\s]+)"?/.exec(packLine)?.[1] ?? null;
+    if (named !== ALIAS) faults.push(`release.yml: the alias is packed as ${JSON.stringify(named)}, and scripts/alias_tarball.ts names it ${JSON.stringify(ALIAS)}`);
+    const variable = /^([A-Za-z_][A-Za-z_\d]*)="\$\(bun scripts\/alias_tarball\.ts pack\b/.exec(packLine)?.[1] ?? null;
+    const publishesIt = variable !== null && lines(packer.step).some((line) => line.startsWith(`npm publish "$${variable}"`));
+    if (!publishesIt) faults.push('release.yml: the step that packs the alias does not `npm publish` the path it printed, so what is published is not what was compared');
+    const gated = publishers.filter((p) => p.job === packer.job && p.at < packer.at);
+    if (gated.length === 0) faults.push(`release.yml: no \`npm publish\` from the checkout runs before the alias in job "${packer.job}", so the alias goes out ahead of — or without — the gated publish`);
+    else if (gated.some((p) => p.step.if !== packer.step.if)) {
+      faults.push(`release.yml: the alias step runs under ${JSON.stringify(packer.step.if ?? null)} and the gated publish under ${JSON.stringify(gated[0].step.if ?? null)}, so one can run where the other does not`);
+    }
+  }
+  const calls: string[] = [];
+  for (const body of Object.values(wf.jobs ?? {})) for (const step of body.steps ?? []) calls.push(...lines(step).filter((line) => line.startsWith('bun run smoke')));
+  if (calls.length === 0) faults.push('release.yml calls no `bun run smoke`, so nothing confirms either name');
+  for (const call of calls) {
+    const argv = call.split(/\s+/);
+    const at = argv.indexOf('--alias');
+    const given = at === -1 ? null : (argv[at + 1] ?? null);
+    if (given !== ALIAS) faults.push(`release.yml: \`${call}\` confirms ${given === null ? 'no alias' : `the alias ${given}`}, and the alias published is ${ALIAS}`);
+  }
+  for (const name of [packageName, ALIAS]) {
+    if (!doc.includes(`npm view ${name} version`)) faults.push(`RELEASING.md carries no \`npm view ${name} version\`, so the cut's own confirmation of that name is stated nowhere`);
+  }
+  return faults;
+}
+
+/** One file's bytes inside a tarball, read with tar rather than with the comparison under test. */
+function tarMember(tgz: string, path: string): Buffer | null {
+  const r = spawnSync('tar', ['-xzOf', tgz, path], { maxBuffer: 64 * 1024 * 1024 });
+  return r.status === 0 ? r.stdout : null;
+}
+
+/** The regular files a tarball lists, by `tar -tzf`, independent of the comparison's own directory walk. */
+function tarFileCount(tgz: string): number {
+  const r = spawnSync('tar', ['-tzf', tgz], { encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.split('\n').filter((l) => l.trim() !== '' && !l.endsWith('/')).length : -1;
+}
+
+/** A copy of `tgz` repacked after `edit` ran on its extraction (`<dir>/package/...`), written into `out`. */
+function editedTarball(tgz: string, out: string, edit: (pkgDir: string) => void): string {
+  const dir = mkdtempSync(join(out, 'edit-'));
+  const unpacked = spawnSync('tar', ['-xzf', tgz, '-C', dir]);
+  if (unpacked.status !== 0) throw new Error(`tar -xzf ${tgz} exited ${unpacked.status}`);
+  edit(join(dir, 'package'));
+  return packInto(join(dir, 'package'), mkdtempSync(join(out, 'packed-')));
+}
+
+function runAliasControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const packageName = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { name: string }).name;
+
+  // AL01 — release.yml publishes the alias it confirms, after the gate, from the tarball it compared.
+  const yml = readFileSync(join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+  const doc = readFileSync(join(ROOT, 'RELEASING.md'), 'utf8');
+  const standing = aliasWorkflowFaults(yml, doc, packageName);
+  const edit = (text: string, from: string, to: string): string | null => (text.includes(from) ? text.split(from).join(to) : null);
+  const aliasStepAt = yml.indexOf('      - name: Publish the alias');
+  const aliasStep = aliasStepAt === -1 ? '' : yml.slice(aliasStepAt, yml.indexOf('\n\n', aliasStepAt) + 2);
+  const gatedStep = '      - name: Publish to npm\n';
+  const condition = "        if: ${{ steps.release.outputs.release_created == 'true' }}\n";
+  const plants: Array<{ what: string; yml: string | null; doc?: string | null; quiet?: boolean }> = [
+    { what: 'the release run stops confirming the alias', yml: edit(yml, `"$version" --wait 15 --case clean --alias ${ALIAS}`, '"$version" --wait 15 --case clean') },
+    { what: 'the re-run stops confirming the alias', yml: edit(yml, `"$VERSION" --wait 15 --case clean --alias ${ALIAS}`, '"$VERSION" --wait 15 --case clean') },
+    { what: 'the alias is packed under another name', yml: edit(yml, `pack --name ${ALIAS}`, `pack --name ${ALIAS}-other`) },
+    { what: 'the alias step is dropped', yml: aliasStep === '' ? null : edit(yml, aliasStep, '') },
+    { what: 'the alias is published ahead of the gated publish', yml: aliasStep === '' ? null : edit(yml.replace(aliasStep, ''), gatedStep, `${aliasStep}${gatedStep}`) },
+    { what: 'the alias step publishes the checkout instead of the tarball', yml: edit(yml, 'npm publish "$alias_tgz" --provenance', 'npm publish --provenance') },
+    { what: 'the alias step loses the release condition', yml: aliasStep === '' || !aliasStep.includes(condition) ? null : edit(yml, aliasStep, aliasStep.replace(condition, '')) },
+    { what: 'RELEASING.md stops confirming the alias', yml, doc: edit(doc, `npm view ${ALIAS} version`, `npm view ${ALIAS} dist-tags`) },
+    { what: 'the alias step is renamed', yml: edit(yml, `name: Publish the alias ${ALIAS}`, 'name: Second name'), quiet: true },
+  ];
+  const probes: string[] = [];
+  const cases: string[] = [];
+  for (const plant of plants) {
+    const plantedDoc = plant.doc === undefined ? doc : plant.doc;
+    if (plant.yml === null || plantedDoc === null) {
+      probes.push(`"${plant.what}": the edit found nothing to change, so this plant was never made`);
+      continue;
+    }
+    const raised = aliasWorkflowFaults(plant.yml, plantedDoc, packageName).filter((f) => !standing.includes(f));
+    if (plant.quiet === true) {
+      if (raised.length > 0) probes.push(`"${plant.what}" changes nothing this gate is about and ${raised.length} fault(s) fired: ${raised[0].slice(0, 160)}`);
+      cases.push(`${plant.what} -> quiet`);
+      continue;
+    }
+    if (raised.length === 0) probes.push(`"${plant.what}" was planted and this gate did not fire`);
+    cases.push(`${plant.what} -> ${raised.length}`);
+  }
+  say(
+    'AL01_RELEASE_YML_PUBLISHES_THE_ALIAS_AFTER_THE_GATED_PUBLISH_FROM_THE_TARBALL_IT_COMPARED_AND_CONFIRMS_THE_SAME_ALIAS',
+    standing.length === 0 && probes.length === 0,
+    `${standing.length === 0 ? `release.yml packs the alias as ${ALIAS} — the name scripts/alias_tarball.ts holds — after the gated \`npm publish\` in the same job, under the same condition, and publishes the tarball it printed; every \`bun run smoke\` call confirms that alias; RELEASING.md carries \`npm view\` for ${packageName} and ${ALIAS}` : standing.join('; ')}` +
+      `${probes.length === 0 ? '' : `; ${probes.join('; ')}`} — over ${plants.length} plant(s): ${cases.join('; ')}`,
+    "an alias named in three places drifts in the one nobody reads, and an alias published ahead of the gate or from another tree than the one compared is the same files only by luck (rig-c's CUR122, rigc#1258)",
+  );
+
+  // AL02–AL05 read tarballs packed from this tree into a temporary directory; the checkout is held untouched.
+  const work = temp('alias');
+  const rootBefore = readdirSync(ROOT).sort().join('\n');
+  const manifestBefore = readFileSync(join(ROOT, 'package.json'));
+  // The control a refusal from the script is reported under, so a pack that cannot be made is a named FAIL, not a crash.
+  let pending = 'AL02_THIS_TREE_PACKED_UNDER_THE_ALIAS_CARRIES_THE_SAME_FILES_AND_THE_CHECKOUT_IS_NOT_TOUCHED';
+  try {
+    const primary = packInto(ROOT, join(work, 'package'));
+    const made = packAlias(ALIAS, join(work, 'alias'), primary);
+    const reread = packAlias(ALIAS, join(work, 'alias-from-tree'));
+    const aliasManifest = tarMember(made.tgz, ALIAS_MANIFEST);
+    const aliasName = aliasManifest === null ? null : (JSON.parse(aliasManifest.toString('utf8')) as { name?: string }).name;
+    const listed = tarFileCount(primary);
+    const untouched = readdirSync(ROOT).sort().join('\n') === rootBefore && readFileSync(join(ROOT, 'package.json')).equals(manifestBefore);
+    say(
+      'AL02_THIS_TREE_PACKED_UNDER_THE_ALIAS_CARRIES_THE_SAME_FILES_AND_THE_CHECKOUT_IS_NOT_TOUCHED',
+      made.comparison.faults.length === 0 &&
+        reread.comparison.faults.length === 0 &&
+        made.comparison.name === packageName &&
+        made.comparison.alias === ALIAS &&
+        aliasName === ALIAS &&
+        listed > 0 &&
+        made.comparison.files === listed &&
+        reread.comparison.files === listed &&
+        untouched,
+      `${packageName} packed from this tree and repacked as ${aliasName ?? '(no manifest)'}: ${made.comparison.faults.length === 0 ? 'no difference but the name line' : made.comparison.faults.join('; ')}; ${made.comparison.files} file(s) compared, \`tar -tzf\` lists ${listed}; ` +
+        `packed again from the tree with no --tarball: ${reread.comparison.faults.length === 0 ? `${reread.comparison.files} file(s), no difference` : reread.comparison.faults.join('; ')}; the checkout's entries and package.json ${untouched ? 'unchanged' : 'CHANGED'}`,
+      "the positive control the planted ones below stand beside: the alias is this tree's own pack with one line changed, and making it writes nothing where the gate and the confirmation read",
+    );
+
+    pending = 'AL03_ONE_BYTE_APPENDED_TO_ONE_FILE_OF_THE_ALIAS_IS_NAMED_BY_PATH_SIZES_AND_OFFSET';
+    // AL03 — one byte appended to one file of the alias is named by its path, both sizes and where they part.
+    const readme = readFileSync(join(ROOT, 'README.md')).length;
+    const oneByte = editedTarball(made.tgz, work, (pkg) => writeFileSync(join(pkg, 'README.md'), Buffer.concat([readFileSync(join(pkg, 'README.md')), Buffer.from('x')])));
+    const byteReading = compareTarballs(primary, oneByte);
+    const wantByte = `package/README.md differs: ${readme} byte(s) in ${packageName}'s tarball and ${readme + 1} in ${ALIAS}'s, first parting at byte ${readme}`;
+    say(
+      'AL03_ONE_BYTE_APPENDED_TO_ONE_FILE_OF_THE_ALIAS_IS_NAMED_BY_PATH_SIZES_AND_OFFSET',
+      byteReading.faults.length === 1 && byteReading.faults[0] === wantByte && made.comparison.faults.length === 0,
+      `planted: one byte appended to package/README.md of the alias -> ${byteReading.faults.length} fault(s): ${byteReading.faults.join('; ') || 'none'} (by hand: the README is ${readme} byte(s) in this tree, so "${wantByte}"); the unplanted pair: ${made.comparison.faults.length} fault(s)`,
+      'the two tarballs cannot share a hash, so the promise is the unpacked content; a difference the size of one byte is the smallest it has to see, and it has to say where',
+    );
+
+    pending = 'AL04_A_FILE_ADDED_OR_REMOVED_A_NAME_UNCHANGED_AND_A_MANIFEST_EDITED_BEYOND_ITS_NAME_ARE_EACH_NAMED';
+    // AL04 — a file added, a file removed, the name left as it was, and a manifest edited beyond its name line.
+    const extra = editedTarball(made.tgz, work, (pkg) => writeFileSync(join(pkg, 'src', 'planted_extra.ts'), 'export {};\n'));
+    const missing = editedTarball(made.tgz, work, (pkg) => rmSync(join(pkg, 'NOTICE.md')));
+    const versioned = editedTarball(made.tgz, work, (pkg) => {
+      const m = join(pkg, 'package.json');
+      writeFileSync(m, readFileSync(m, 'utf8').replace(/^(\s*"version"\s*:\s*")[^"]*(")/m, '$19.9.9$2'));
+    });
+    const readings: Array<[string, string[], string]> = [
+      ['a file added to the alias', compareTarballs(primary, extra).faults, `package/src/planted_extra.ts is in ${ALIAS}'s tarball and not in ${packageName}'s`],
+      ['a file removed from the alias', compareTarballs(primary, missing).faults, `package/NOTICE.md is in ${packageName}'s tarball and not in ${ALIAS}'s`],
+      ['the package compared with itself', compareTarballs(primary, primary).faults, `${ALIAS_MANIFEST} names the alias ${JSON.stringify(packageName)}, the package's own name, so the second tarball is not under another name`],
+      ['the alias version edited', compareTarballs(primary, versioned).faults, `${ALIAS_MANIFEST} differs beyond its name line`],
+    ];
+    const misread = readings.filter(([, faults, want]) => faults.length !== 1 || !faults[0].startsWith(want));
+    say(
+      'AL04_A_FILE_ADDED_OR_REMOVED_A_NAME_UNCHANGED_AND_A_MANIFEST_EDITED_BEYOND_ITS_NAME_ARE_EACH_NAMED',
+      misread.length === 0,
+      readings.map(([what, faults]) => `${what} -> ${faults.length} fault(s): ${faults.join(' | ').slice(0, 220) || 'none'}`).join('; ') +
+        (misread.length === 0 ? '' : `; not read as required: ${misread.map(([what, , want]) => `${what} (one fault starting "${want}")`).join('; ')}`),
+      'the one permitted difference is the name line; every other way two tarballs can part has to be named by the path it parts at, or the alias carries different files and the confirmation says it does not',
+    );
+
+    pending = 'AL05_THE_COMPARE_EXITS_0_1_2_AND_THE_SMOKE_REFUSES_AN_ALIAS_IT_COULD_NOT_CONFIRM';
+    // AL05 — the script's command line: exit 0 on the pair, 1 on the planted one, 2 on a call that measures nothing;
+    // the smoke's --alias refused where it would confirm nothing, before any network.
+    const cli = (args: string[]): { status: number; out: string } => {
+      const r = spawnSync('bun', [join(ROOT, 'scripts', 'alias_tarball.ts'), ...args], { cwd: work, encoding: 'utf8' });
+      return { status: r.status ?? -1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+    };
+    const smoke = (args: string[]): { status: number; out: string } => {
+      const r = spawnSync('bun', [join(ROOT, 'scripts', 'install_smoke.ts'), ...args], { cwd: work, encoding: 'utf8' });
+      return { status: r.status ?? -1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+    };
+    const same = cli(['compare', primary, made.tgz]);
+    const differs = cli(['compare', primary, oneByte]);
+    const absent = cli(['compare', primary, join(work, 'no-such.tgz')]);
+    const ownName = cli(['pack', '--name', packageName, '--out', join(work, 'own'), '--tarball', primary]);
+    const twoNames = renamed(`{\n  "name": "${packageName}",\n  "x": {\n    "name": "${packageName}"\n  }\n}\n`, packageName, ALIAS);
+    const noName = renamed('{\n  "version": "1.0.0"\n}\n', packageName, ALIAS);
+    // `--case` names no case and `--wait 0` asks once, so a smoke that lost a refusal ends in seconds rather than a battery.
+    const tree = smoke(['--case', 'no-such-case', '--alias', ALIAS]);
+    const self = smoke(['--case', 'no-such-case', '--wait', '0', '--source', 'registry', '--alias', packageName]);
+    const bare = smoke(['--case', 'no-such-case', '--wait', '0', '--source', 'registry', '--alias']);
+    const help = smoke(['--help']);
+    const cliOk =
+      same.status === 0 &&
+      same.out.includes('PASS  ALIAS_SAME_CONTENT') &&
+      differs.status === 1 &&
+      differs.out.includes('package/README.md differs') &&
+      absent.status === 2 &&
+      ownName.status === 2 &&
+      ownName.out.includes("is the package's own name") &&
+      twoNames === null &&
+      noName === null;
+    const refusal = 'FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES';
+    const smokeOk =
+      tree.status === 1 &&
+      tree.out.includes(refusal) &&
+      tree.out.includes('is for `--source registry`') &&
+      self.status === 1 &&
+      self.out.includes('is the name this tree publishes') &&
+      bare.status === 1 &&
+      bare.out.includes('needs the second name') &&
+      help.status === 0 &&
+      help.out.includes('--alias <name>') &&
+      ![tree, self, bare].some((r) => r.out.includes('install smoke —'));
+    say(
+      'AL05_THE_COMPARE_EXITS_0_1_2_AND_THE_SMOKE_REFUSES_AN_ALIAS_IT_COULD_NOT_CONFIRM',
+      cliOk && smokeOk,
+      `compare: the pair ${same.status}, the one-byte plant ${differs.status}, an absent tarball ${absent.status}; pack under the package's own name ${ownName.status}; a manifest with two name lines and one with none -> ${twoNames === null ? 'refused' : 'rewritten'}, ${noName === null ? 'refused' : 'rewritten'} (0, 1, 2, 2, refused, refused required); ` +
+        `smoke: --alias on a tree source ${tree.status}, --alias naming the package itself ${self.status}, --alias with no name ${bare.status} (1, 1, 1 required, each before the run's header line), --help ${help.status} and ${help.out.includes('--alias <name>') ? 'lists' : 'does NOT list'} --alias`,
+      'a confirmation given a flag it cannot use would print a reading nobody took; the refusal has to come before the registry is asked anything',
+    );
+  } catch (error) {
+    if (!(error instanceof AliasTarballError)) throw error;
+    say(pending, false, `scripts/alias_tarball.ts refused: ${error.message.slice(0, 600)}`, 'the pack or the extraction this control reads could not be made, so it measured nothing');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+
+  // AL06 — the alias spellings TY12 admits, and only those.
+  const forms: Array<[string, number]> = [
+    [`Publish the alias ${FORMER_PACKAGE_NAME}`, 0],
+    [`and the alias \`${FORMER_PACKAGE_NAME}\`, the name`, 0],
+    [`bun scripts/alias_tarball.ts pack --name ${FORMER_PACKAGE_NAME} --out x`, 0],
+    [`bun run smoke -- --case clean --alias ${FORMER_PACKAGE_NAME}`, 0],
+    [`npm view ${FORMER_PACKAGE_NAME} version`, 0],
+    [`npm install -g ${FORMER_PACKAGE_NAME}`, 1],
+    [`npm view ${FORMER_PACKAGE_NAME} dist-tags`, 1],
+    [`--alias ${FORMER_PACKAGE_NAME}-other`, 1],
+    [`the ${FORMER_PACKAGE_NAME} alias`, 1],
+  ];
+  const read = forms.map(([line, want]) => [line, want, formerNameLines('plant.md', line).length] as const);
+  const wrong = read.filter(([, want, got]) => want !== got);
+  say(
+    'AL06_THE_ALIAS_IS_SPELLED_ONLY_WHERE_IT_IS_NAMED_AS_THE_ALIAS',
+    ALIAS === FORMER_PACKAGE_NAME && wrong.length === 0,
+    `ALIAS ${ALIAS} ${ALIAS === FORMER_PACKAGE_NAME ? 'is' : 'is NOT'} the former name; ${read.map(([line, want, got]) => `"${line}" -> ${got} hit(s) (${want} required)`).join('; ')}`,
+    'the former name stays published as the alias, which is permanent rather than a transition; TY12 admits it introduced as the alias, in the pack and confirmation flags and in the registry confirmation, so an install line or a command naming it still goes red',
+  );
 }
 
 /** The package's name, and the name it was published under before the rename, spelled in pieces so TY12 scans this file too. */
@@ -14783,13 +15064,29 @@ const FORMER_PACKAGE_NAME = ['spine', 'parts'].join('-');
 const FORMER_NAME_SPANS: readonly RegExp[] = [
   new RegExp(`${FORMER_PACKAGE_NAME}-examples`, 'g'),
   new RegExp(`${FORMER_PACKAGE_NAME}-(?:basis|bonemap|keypoints|requirements|scene-report|scene)/\\d+`, 'g'),
+  ...aliasSpans(),
 ];
+
+/**
+ * The former name is also the alias every version is published under (RELEASING.md, *Two names, one tree*), which
+ * is not a transition: it is spelled where it is introduced as the alias, where the pack step and the confirmation
+ * name it, and where a cut confirms it on the registry — and nowhere else, so an install line or a command naming
+ * it is still refused (AL06).
+ */
+function aliasSpans(): RegExp[] {
+  return [
+    new RegExp(`the alias \`?${FORMER_PACKAGE_NAME}\`?`, 'g'),
+    new RegExp(`--(?:name|alias) ${FORMER_PACKAGE_NAME}(?![\\w-])`, 'g'),
+    new RegExp(`npm view ${FORMER_PACKAGE_NAME} version`, 'g'),
+  ];
+}
 
 /** Whole lines that keep the former name, by file, each with why; every one must still be found (`staleFormerNameLines`). */
 const FORMER_NAME_LINES: ReadonlyArray<readonly [string, string, string]> = [
   ['package.json', `    "${FORMER_PACKAGE_NAME}": "./bin/${NEW_PACKAGE_NAME}.cjs"`, 'the transition bin: the former command on the same launcher'],
   ['.gitignore', `/${FORMER_PACKAGE_NAME}-*.tgz`, 'npm pack in a checkout of a tag before the rename writes the tarball under the former name'],
   ['README.md', `as \`${FORMER_PACKAGE_NAME}\`, its former name**, and the install keeps a \`${FORMER_PACKAGE_NAME}\` command`, 'the install section says what the former name was and that its command is kept'],
+  ['scripts/alias_tarball.ts', `export const ALIAS = '${FORMER_PACKAGE_NAME}';`, 'the one place a program reads the alias the package is also published as (AL01)'],
 ];
 
 /** The lines of one file that name the former package outside every allowance, as `file:line: text`. */
