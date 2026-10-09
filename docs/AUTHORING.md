@@ -533,7 +533,7 @@ wall time goes to standard error, not into the table).
 | `influences.{maxInfluences, minWeight}` | the cap on bindings per vertex (1 or more) and the floor below which a share is dropped (0 up to 1; 0 drops only shares that are 0 on the weight grid) — for the source's weights and every inserted vertex |
 | `budget.maxCandidates` | the most steps rig-c may try (each insertion and each removal attempt counts one); 0 returns the source |
 | `minArtSamples` | the fewest art pixels a raster row is taken over, 1 or more |
-| `motion` | **required**: `maxLocalDeformation` (rig px, 0 or more — how far the reduced mesh may carry any art pixel from where its source carries it, at any frame); optional `maxStretch` / `minStretch` (ratios; absent, the rows are reported and not gated); optional `deformMayFold` (absent is **false**: a triangle that turns over refuses the part; true declares the slot in `invariants.deformMayFold` and lists every fold instead) |
+| `motion` | **required**: `maxLocalDeformation` (rig px, 0 or more — how far the reduced mesh may carry any art pixel from where its source carries it, at any frame); optional `maxStretch` / `minStretch` (ratios; absent, the rows are reported and not gated); optional `deformMayFold` (absent is **false**: a triangle that turns over refuses the part; true declares the slot in `invariants.deformMayFold` and lists every fold instead); optional `gradation` (px per px, 0 or more, or `null`; the author's G for `MQ_ALLOCATION_CONTRAST`, never derived — absent or `null`, the contrast reads `not-measurable` naming it; see *The allocation rows* below) |
 | `protect` | optional; each field optional: `hull` (true keeps every source outline vertex; absent is **false**, the default agreed for this mode), `vertices` and `edges` (source vertex indices and pairs that must survive), `regionBoundaries` (region names whose outline vertices must survive), `weightJump` (an L1 weight difference above which a source edge is kept; absent is none), `influences` (bones never pruned from a vertex; every region's bone is added) |
 | `regions` | optional, each `{name, shape, bone, band, maxEdgeLength, transition, grade, minArtSamples}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`): `bone` and `band` are the control bone and its weight falloff exactly as a contour region's (rig px, multiples of 1/256 px); `maxEdgeLength` is L0, the longest an edge meeting the region may be, px; outside it, across `transition` px, the bound relaxes as `L0 + grade·d`; `transition` 0 is a hard edge; `minArtSamples` is the region's own sample floor |
 | `boundaryRuns` | optional, `{ maxVertices }`, a whole number 2 or more, no default: each removal pass first tries to replace a run of 2 to `maxVertices` consecutive source-hull vertices with one chord, as one step held to every declared row (below) |
@@ -602,15 +602,39 @@ declares a bound on any of them (a `targets.maxGrade` or the like is refused,
 `CONFIG_KEY_KNOWN`), none is ever required or the `worst_residual`, and each lands in the row's
 `residuals` as rig-c reports it. Δ and the load read a **motion amplitude** — per idle track,
 θ = ‖M − I‖ for each pair of bound bones the track turns or scales against each other, an ε in
-px, and an attachment-wide gradation G. It is not an author field: the rig stage derives it from
-the idle it writes (`src/autoamplitude.ts` — θ from each track's keys, 2 sin(α/2) for a rotation,
-|s − 1| for a scale, 0 for a translation; ε the part's `motion.maxLocalDeformation`), and sends it
-only when every term is derived. **G is not**: it is a rate no field of the config or the rig
-declares (a region's `grade` relaxes that region's own edge bound only), and none is invented —
-so today the field is never sent, Δ and the load read `not-measurable` naming it, and the row's
-`motion_amplitude` says so: `{ "sent": false, "stops": [{ "term": "gradation", "detail": … }] }`.
-A shear track, a constraint, a motion bound of 0, or a pair moved by two bones of one group are
-stopped by name the same way.
+px, and an attachment-wide gradation G (rig-c 2.29.0). The tracks are not an author field: the
+rig stage derives them from the idle it writes (`src/autoamplitude.ts` — θ from each track's
+keys, 2 sin(α/2) for a rotation, |s − 1| for a scale, 0 for a translation; ε the part's
+`motion.maxLocalDeformation`). **G is the author's**, `motion.gradation`, because nothing a rig
+declares fixes it (rig-c measured every candidate derivation, rigc#1291). In rig-c's own words,
+G (px per px, 0 or more) "is how fast the mesh may coarsen away from something that needs
+density — an edge of the B\* outline, a triangle whose weights turn under the declared motion.
+At d px from a need of size h the reading allows edges up to h + G · d, exactly the form of a
+region's `grade` … if the author would grade a region at some rate on this mesh, that rate is the
+G to declare." A larger G lets a need relax sooner, so more dense vertices read as removable and Δ
+and E rise; at 0 nothing reads as removable. rig-c's fixtures used 0.75, "a value those fixtures
+chose, not a default rigc holds", and this package holds none either.
+
+The amplitude is sent to `reduceMesh` and to the motion gate's comparison whenever its tracks are
+derived, with `gradation` as written or `null` when the config leaves it out. Then:
+
+- `MQ_DEFORM_LOAD` is **measured** — the largest L · Δshare · θ / 4, px, a location reading and
+  not predicted motion; it never reads G. It is `undeclared` (no bound, never the
+  `worst_residual`), and the build line prints it after the unbounded art rows:
+  `; deform load <value> px (undeclared)`.
+- `MQ_ALLOCATION_CONTRAST` (Δ, with economy E in its `allocation.contrast`) is `not-measurable`
+  naming `motionAmplitude.gradation` unless the author set one; with one it is measured,
+  `undeclared`, and printed as `; allocation contrast <value> (undeclared)`.
+- On the comparison, each build's setup section measures the load; Δ there stays
+  `not-measurable` (naming the gradation when it is null, and otherwise
+  `targets.maxBoundaryDeviation`, which a comparison does not declare).
+- The row's `settings.motionAmplitude` is rig-c's echo of what it read, and `motion_amplitude`
+  says `{ "sent": true, "stops": [] }`.
+
+No mesh, step, verdict or acceptance reads either row, so writing a gradation changes the report
+and nothing the rig writes. A shear track, a constraint, a motion bound of 0, or a pair moved by
+two bones of one group still stop the tracks by name (`"sent": false`, each term in `stops`), and
+then nothing is sent and both rows read `not-measurable`.
 
 A circle is handed to rig-c as the regular polygon with the fewest sides, 3 or more,
 circumscribed about the circle, whose outline lies within 1/256 px of it (the grid the region's
@@ -626,7 +650,8 @@ and bound, `worst_residual` (the declared row nearest its bound, as the share of
 and `worst_region`, the `termination` with its reason and `candidatesTried`, what the weights
 lost to the grid (`sharesDroppedOnGrid`, `sharesPruned`, `droppedAtFivePlaces`), per region the
 source vertices its bone reaches and the result vertices bound to it, `motion_amplitude` (whether
-the allocation rows' amplitude was sent, and every term that stopped it), `replay` — only on a part
+the allocation rows' amplitude was sent, and every term that stopped it; what was sent is rig-c's
+echo in `settings.motionAmplitude`), `replay` — only on a part
 the acceptance loop wrote at a replayed step (step 5): `rule` (the search in words, "a passing
 prefix, not necessarily the last"), `accepted_steps` (N, in operations), `refinement_steps` (I), `chosen_step`,
 `replays` and `max_replays`, `candidates_tried` across the replays, `full` (the full result's

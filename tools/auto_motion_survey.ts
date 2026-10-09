@@ -44,7 +44,12 @@
  * replays, the full run's termination, the chosen row's
  * `MQ_BOUNDARY_DEVIATION`, the motion readings with their worst frames, the
  * verdict, what each opt-in did, and the five allocation rows rig-c 2.26.0
- * added. `baseline` is no opt-in: the same calls as the default document.
+ * added — with, since rig-c 2.29.0, the load measured under the derived
+ * amplitude (gradation null), economy E beside Δ, and the comparison's setup
+ * load on the source and the full result. `baseline` is no opt-in: the same
+ * calls as the default document. `gradation` is the baseline with
+ * `motion.gradation` 0.75, the one value rig-c's contract names, so Δ and E
+ * appear once; it is an author's number written for the evidence, no default.
  *
  * Output: Markdown — two tables, one schedule line per part, and the refusal
  * text of every refused part. Every number is read from rig-c's report;
@@ -86,11 +91,21 @@ export const STAGE_B_CONFIGS: ReadonlyArray<readonly [string, Record<string, unk
   ['retriangulate', { retriangulate: 'delaunay' }],
   ['removalOrder', { removalOrder: 'deformation-load' }],
   ['all', { boundaryRuns: { maxVertices: 8 }, retriangulate: 'delaunay', removalOrder: 'deformation-load' }],
+  // The baseline with a declared gradation (rigc#1291): 0.75, the one value rig-c's contract names — §8's fixtures'
+  // ("it is a value those fixtures chose, not a default rigc holds"). An author's number written here for the
+  // evidence so Δ and E appear once; it is no default of this package and no claim that 0.75 suits these parts.
+  ['gradation', { motion: { gradation: 0.75 } }],
 ];
 
 /** A configuration's opt-ins by name; an unknown name is `configsFromArgs`'s to refuse, so none reaches here. */
 export function extraOf(name: string): Record<string, unknown> {
   return STAGE_B_CONFIGS.find(([n]) => n === name)?.[1] ?? {};
+}
+
+/** The policy with a configuration's fields over it; a `motion` field is merged into the policy's motion, key by key. */
+export function withExtra(auto: Record<string, unknown>, extra: Record<string, unknown>): Record<string, unknown> {
+  const { motion, ...rest } = extra;
+  return motion === undefined ? { ...auto, ...rest } : { ...auto, ...rest, motion: { ...(auto.motion as Record<string, unknown>), ...(motion as Record<string, unknown>) } };
 }
 
 /** The five allocation rows rig-c 2.26.0 reports, every one `undeclared` or `not-measurable` (rigc#1280). */
@@ -331,6 +346,21 @@ function residualText(row: AutoMeshReport | undefined, code: string): string {
   return r === undefined ? 'absent' : r.value === null ? r.state : `${r.value}${r.state === 'undeclared' ? '' : ` (${r.state})`}`;
 }
 
+/** Economy E of `MQ_ALLOCATION_CONTRAST`, from the row's rig-c document (`allocation.contrast.economy`), or the row's state. */
+function economyText(row: AutoMeshReport | undefined): string {
+  const doc = row?.quality_report as { candidates?: Array<{ geometry?: { rows?: Array<{ code: string; state: string; allocation?: { contrast?: { economy: number } } }> } }> } | undefined;
+  const r = doc?.candidates?.[0]?.geometry?.rows?.find((x) => x.code === 'MQ_ALLOCATION_CONTRAST');
+  return r === undefined ? 'absent' : r.allocation?.contrast === undefined ? r.state : String(r.allocation.contrast.economy);
+}
+
+/** The comparison's setup section (each build's `geometry`) `MQ_DEFORM_LOAD` on the reference (the source) or the candidate (the full result). */
+function setupLoad(report: MeshQualityReport | null, which: 'reference' | 'candidate'): string {
+  if (report === null) return 'no comparison';
+  const section = which === 'reference' ? report.reference?.geometry : report.candidates[0]?.geometry;
+  const r = section?.rows.find((x) => x.code === 'MQ_DEFORM_LOAD' && x.object.region === null);
+  return r === undefined ? 'absent' : r.value === null ? r.state : String(r.value);
+}
+
 /** What the Stage B opt-ins did on the full run, from its row: runs taken, the post-pass, the order. */
 function stageBText(row: AutoMeshReport | undefined): string {
   if (row === undefined) return 'not built';
@@ -372,15 +402,18 @@ function printMatrix(results: ReadonlyArray<{ config: string; cell: MotionCell }
   }
   console.log('\n### What each opt-in did, and the five allocation rows\n');
   console.log(
-    'Read off the full run\'s row (what the opt-ins did) and the chosen row (the five rows; the full run\'s when nothing was written). The five rows are rig-c\'s, every one undeclared — no bound, never required, never the worst residual. MQ_ALLOCATION_CONTRAST and MQ_DEFORM_LOAD need a motion amplitude; the stage sends none, because its gradation is a number no field declares (src/autoamplitude.ts; the row\'s motion_amplitude names the term), so both read not-measurable.\n',
+    'Read off the full run\'s row (what the opt-ins did) and the chosen row (the five rows; the full run\'s when nothing was written). The five rows are rig-c\'s, every one undeclared — no bound, never required, never the worst residual. MQ_ALLOCATION_CONTRAST and MQ_DEFORM_LOAD read the motion amplitude the stage derives from the idle (src/autoamplitude.ts: θ per pair of bound bones, ε the motion bound) with the author\'s gradation, or null when the config leaves it out (rig-c 2.29.0, rigc#1291). MQ_DEFORM_LOAD is the largest L · Δshare · θ / 4, px — a location reading, not predicted motion; it never reads the gradation. MQ_ALLOCATION_CONTRAST (Δ) and its economy E are measured only with a gradation declared; without one Δ reads not-measurable naming it. The comparison\'s setup load is the same amplitude read on the source and on the full result inside the motion gate (each build\'s setup section); Δ stays not-measurable there, naming targets.maxBoundaryDeviation, which a comparison does not declare.\n',
   );
-  console.log(`| part | config | opt-ins on the full run | ${ALLOCATION_ROWS.join(' | ')} | amplitude |`);
-  console.log(`| --- | --- | --- | ${ALLOCATION_ROWS.map(() => '---').join(' | ')} | --- |`);
+  console.log(`| part | config | opt-ins on the full run | ${ALLOCATION_ROWS.join(' | ')} | E | comparison setup MQ_DEFORM_LOAD: source / full result | amplitude |`);
+  console.log(`| --- | --- | --- | ${ALLOCATION_ROWS.map(() => '---').join(' | ')} | --- | --- | --- |`);
   for (const { config, cell: r } of results) {
     const chosen = r.written ?? r.row;
     const amp = chosen?.motion_amplitude;
-    const ampText = amp === undefined ? 'n/a' : amp.sent ? 'sent' : `not sent: ${amp.stops.map((x) => x.term).join(', ')}`;
-    console.log(`| ${r.example}/${r.part} | ${config} | ${stageBText(r.row)} | ${ALLOCATION_ROWS.map((code) => residualText(chosen, code)).join(' | ')} | ${ampText} |`);
+    const sent = chosen?.settings.motionAmplitude;
+    const ampText = amp === undefined ? 'n/a' : amp.sent ? `sent, gradation ${sent?.gradation === undefined ? 'left out' : String(sent.gradation)}` : `not sent: ${amp.stops.map((x) => x.term).join(', ')}`;
+    console.log(
+      `| ${r.example}/${r.part} | ${config} | ${stageBText(r.row)} | ${ALLOCATION_ROWS.map((code) => residualText(chosen, code)).join(' | ')} | ${economyText(chosen)} | ${setupLoad(r.report, 'reference')} / ${setupLoad(r.report, 'candidate')} | ${ampText} |`,
+    );
   }
   const refused = results.filter((r) => r.cell.refusal !== null);
   if (refused.length > 0) {
@@ -432,7 +465,7 @@ function main(): void {
         if (configs !== null) {
           for (const name of configs) {
             const extra = extraOf(name);
-            const r = motionCell(key, part, { ...withPolicyMotion(examplePolicy(trackedSpacing(key, part))), ...extra }, asm, join(work, key, part, name), rigcBin);
+            const r = motionCell(key, part, withExtra(withPolicyMotion(examplePolicy(trackedSpacing(key, part))) as unknown as Record<string, unknown>, extra), asm, join(work, key, part, name), rigcBin);
             if (r.disagreement !== null) {
               disagreements++;
               console.error(`auto_motion_survey: ${r.disagreement} (${name})`);

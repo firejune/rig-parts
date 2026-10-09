@@ -78,6 +78,8 @@ import {
   reduceMesh,
 } from 'rig-c/mesh';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE } from '../src/assemble.ts';
+import { type AmplitudeBasis, partAmplitude, withAmplitude } from '../src/autoamplitude.ts';
+import type { MotionSpec } from '../src/motion.ts';
 import { AUTO_THRESHOLD, autoReductionInput, autoSource, autoVerdict, type Reducer, reductionKey, type ReductionResult, reuseReductions, runReduction, sourceWeights, terminationText } from '../src/automesh.ts';
 import { build, checkStage, rigStage } from '../src/build.ts';
 import { DEFAULT_PAGE_EDGES, findRigc, type RigcRunner } from '../src/check.ts';
@@ -395,6 +397,22 @@ export interface Weighting {
   segs: Segment[];
   r: number;
   boneOrder: string[];
+  /**
+   * What the motion amplitude is derived from (rig-c 2.29.0): the bones, idle and constraint count of a build of the
+   * same config, read as the rig stage reads them, so the row's input — amplitude included — is the one the stage
+   * builds and `reductionKey` matches it whole (issue #135's reuse).
+   */
+  idle: AmplitudeBasis;
+}
+
+/** The spec the rig stage is handed for a part (`switched`): the policy's motion block added when the spec has none. */
+export function stageSpec(spec: AutoSpec): AutoSpec {
+  return spec.motion === undefined ? withPolicyMotion(spec) : spec;
+}
+
+/** The reduction input the rig stage builds for a weighted part: the geometry input with the amplitude it derives. */
+export function stageInput(base: MeshReductionInput, spec: AutoSpec, w: Weighting, weights: ReadonlyArray<ReadonlyArray<{ bone: string }>>): MeshReductionInput {
+  return withAmplitude(base, partAmplitude(w.idle, weights, stageSpec(spec).motion));
 }
 
 /** The time `f` takes, ms, from a clock the caller hands in (the selftest hands a fixed one). */
@@ -437,7 +455,8 @@ export function geometryRow(name: string, mask: AlphaMask, spec: AutoSpec, w: We
     if ('overlap' in sw) return { ...empty, termination: 'the source weights are refused before the call', verdict: { kind: 'refused', code: 'RIG_CONTOUR_REGIONS_OVERLAP', detail: `source vertex ${sw.vertex}` } };
     weights = sw.weights;
   }
-  const input = autoReductionInput({ part: name, mask, ox: w?.ox ?? 0, oy: w?.oy ?? 0, spec, source, weights, boneOrder: w?.boneOrder ?? [] });
+  const geometryInput = autoReductionInput({ part: name, mask, ox: w?.ox ?? 0, oy: w?.oy ?? 0, spec, source, weights, boneOrder: w?.boneOrder ?? [] });
+  const input = w === null || weights === null ? geometryInput : stageInput(geometryInput, spec, w, weights);
   const t0 = clock();
   COST.reduceGeometry++;
   const ran = reduce(name, input);
@@ -574,6 +593,8 @@ interface Example {
   base: string;
   parts: ReturnType<typeof readParts>;
   boneOrder: string[];
+  /** The tracked build's bones, idle and constraint count: what the stage derives an automatic part's amplitude from. */
+  idle: AmplitudeBasis;
   trackedReport: MeshReport[];
   trackedRig: { skins: { default: Record<string, Record<string, { type?: string; weights?: unknown[][]; uvs?: number[]; width?: number; height?: number }>> } };
   check: Record<string, unknown>;
@@ -618,7 +639,7 @@ function loadExample(key: string, work: string, partsOnly = false): Example {
     const images = new Map<string, Raster>();
     for (const p of parts.parts) images.set(p.name, readPng(join(asm, 'parts', `${p.name}.png`)));
     const out = buildRig(parseConfig(raw), parts, images);
-    return { key, raw, cfg: parseConfig(raw), base: asm, parts, boneOrder: out.rig.bones.map((b) => b.name), trackedReport: out.meshReport, trackedRig: { skins: { default: {} } }, check: {} };
+    return { key, raw, cfg: parseConfig(raw), base: asm, parts, boneOrder: out.rig.bones.map((b) => b.name), idle: basisOf(out, parseConfig(raw)), trackedReport: out.meshReport, trackedRig: { skins: { default: {} } }, check: {} };
   }
   if (!existsSync(join(base, 'check', 'check.json'))) {
     // `cli.ts build` with its defaults, run in this process so its rigc calls are counted (issue #135).
@@ -640,7 +661,8 @@ function loadExample(key: string, work: string, partsOnly = false): Example {
   }
   const tracked = JSON.parse(readFileSync(join(base, 'check', 'check.json'), 'utf8')) as Record<string, unknown>;
   rememberTracked(key, tracked);
-  const rig = JSON.parse(readFileSync(join(base, 'rig', 'rig.json'), 'utf8')) as Example['trackedRig'] & { bones: Array<{ name: string }> };
+  const rig = JSON.parse(readFileSync(join(base, 'rig', 'rig.json'), 'utf8')) as Example['trackedRig'] & { bones: Array<{ name: string; parent?: string }> };
+  const idleMotion = JSON.parse(readFileSync(join(base, 'rig', 'motion.json'), 'utf8')) as MotionSpec;
   return {
     key,
     raw,
@@ -648,6 +670,7 @@ function loadExample(key: string, work: string, partsOnly = false): Example {
     base,
     parts: readParts(join(base, 'parts.json')),
     boneOrder: rig.bones.map((b) => b.name),
+    idle: { bones: rig.bones, motion: idleMotion, constraints: parseConfig(raw).constraints?.length ?? 0 },
     trackedReport: JSON.parse(readFileSync(join(base, 'rig', 'mesh_report.json'), 'utf8')) as MeshReport[],
     trackedRig: rig,
     check: tracked,
@@ -864,17 +887,24 @@ function regionText(rg: { cx: number; cy: number; r: number; band: number; maxEd
   return `circle (${rg.cx}, ${rg.cy}) r ${rg.r}, band ${rg.band}; L0 ${rg.maxEdgeLength}, transition ${rg.transition}, grade ${pyRound(rg.grade, 6)}`;
 }
 
-function weighting(ex: Example, part: string, ox: number, oy: number, boneOrder: string[]): Weighting {
+function weighting(ex: Example, part: string, ox: number, oy: number, basis: { boneOrder: string[]; idle: AmplitudeBasis } = ex): Weighting {
   const m = ex.cfg.meshes[part];
   if (m === undefined) throw new Error(`auto_matrix: ${part} is not a mesh of ${ex.key}`);
-  return { ox, oy, segs: resolveSegments(ex.cfg, m.segments), r: m.r, boneOrder };
+  return { ox, oy, segs: resolveSegments(ex.cfg, m.segments), r: m.r, boneOrder: basis.boneOrder, idle: basis.idle };
 }
 
-/** The bone order the rig stage hands rig-c for a config: its own rig's bones, read off a lattice build of that config (no reduction run). */
-function boneOrderOf(raw: { [k: string]: Json }, ex: Example): string[] {
+/** What the amplitude derives from on a built rig: its bones, its idle as written, the config's constraint count. */
+export function basisOf(out: { rig: { bones: ReadonlyArray<{ name: string; parent?: string }> }; motion: MotionSpec }, cfg: CharacterConfig): AmplitudeBasis {
+  return { bones: out.rig.bones, motion: out.motion, constraints: cfg.constraints?.length ?? 0 };
+}
+
+/** The bone order the rig stage hands rig-c for a config, and the amplitude's basis: read off a lattice build of that config (no reduction run). */
+function rigBasisOf(raw: { [k: string]: Json }, ex: Example): { boneOrder: string[]; idle: AmplitudeBasis } {
   const images = new Map<string, Raster>();
   for (const p of ex.parts.parts) images.set(p.name, readPng(join(ex.base, 'parts', `${p.name}.png`)));
-  return buildRig(parseConfig(raw), ex.parts, images).rig.bones.map((b) => b.name);
+  const cfg = parseConfig(raw);
+  const out = buildRig(cfg, ex.parts, images);
+  return { boneOrder: out.rig.bones.map((b) => b.name), idle: basisOf(out, cfg) };
 }
 
 function withRegionBone(raw: { [k: string]: Json }, t: { cx: number; cy: number; parent: string }): { [k: string]: Json } {
@@ -887,8 +917,7 @@ function switched(raw: { [k: string]: Json }, part: string, spec: AutoSpec): { [
   const c = JSON.parse(JSON.stringify(raw)) as { [k: string]: Json };
   const meshes = c.meshes as { [k: string]: { [k: string]: Json } };
   const m = meshes[part];
-  const withMotion = spec.motion === undefined ? withPolicyMotion(spec) : spec;
-  meshes[part] = { auto: JSON.parse(JSON.stringify(withMotion)) as Json, r: m.r, segments: m.segments };
+  meshes[part] = { auto: JSON.parse(JSON.stringify(stageSpec(spec))) as Json, r: m.r, segments: m.segments };
   return c;
 }
 
@@ -954,10 +983,10 @@ function main(argv: string[]): void {
       const spec = examplePolicy(spacingOf(m[part]));
       const source = autoSource(part, mask, spec);
       if (Array.isArray(source)) return source.map((p) => p.code).join('+');
-      const w = weighting(ex, part, ox, oy, ex.boneOrder);
+      const w = weighting(ex, part, ox, oy);
       const sw = sourceWeights(source.vertices, ox, oy, w.segs, w.r, spec);
       if ('overlap' in sw) return 'overlap';
-      return { input: autoReductionInput({ part, mask, ox, oy, spec, source, weights: sw.weights, boneOrder: w.boneOrder }) };
+      return { input: stageInput(autoReductionInput({ part, mask, ox, oy, spec, source, weights: sw.weights, boneOrder: w.boneOrder }), spec, w, sw.weights) };
     };
     // The region condition's input (section 4) under the strict policy: the same part, its control bone added, the region declared.
     const regionInput = (key: string): { input: MeshReductionInput } | string => {
@@ -972,10 +1001,10 @@ function main(argv: string[]): void {
       const spec = { ...examplePolicy(grid), regions: [matrixRegion(t, grid)] };
       const source = autoSource(part, mask, spec);
       if (Array.isArray(source)) return source.map((p) => p.code).join('+');
-      const w = weighting(ex, part, ox, oy, boneOrderOf(withRegionBone(ex.raw, t), ex));
+      const w = weighting(ex, part, ox, oy, rigBasisOf(withRegionBone(ex.raw, t), ex));
       const sw = sourceWeights(source.vertices, ox, oy, w.segs, w.r, spec);
       if ('overlap' in sw) return 'overlap';
-      return { input: autoReductionInput({ part, mask, ox, oy, spec, source, weights: sw.weights, boneOrder: w.boneOrder }) };
+      return { input: stageInput(autoReductionInput({ part, mask, ox, oy, spec, source, weights: sw.weights, boneOrder: w.boneOrder }), spec, w, sw.weights) };
     };
     timed.push({ label: 'demo / bottomwear', build: () => exampleInput('demo', 'bottomwear') });
     timed.push({ label: 'demo / bottomwear + the declared region', build: () => regionInput('demo') });
@@ -1076,7 +1105,7 @@ function main(argv: string[]): void {
         const spec = make(spacingOf(meshes[part]));
         const load = uptime();
         loadsSeen.push(load);
-        const g = geometryRow(part, mask, spec, weighting(ex, part, ox, oy, ex.boneOrder), trackedCounts(ex, part), clock, reducerFor(join(args.work, 'reduce')));
+        const g = geometryRow(part, mask, spec, weighting(ex, part, ox, oy), trackedCounts(ex, part), clock, reducerFor(join(args.work, 'reduce')));
         remember(g);
         console.log(`${key}/${part} ${policy}: ${verdictText(g.verdict)} ${g.termination.slice(0, 100)} (${Math.round(g.ms ?? 0)} ms)`);
         let alone: Built | null = null;
@@ -1096,7 +1125,7 @@ function main(argv: string[]): void {
         console.log(`${key}/${part}: the region rule passes over it: ${t}`);
       } else {
         const withBone = withRegionBone(ex.raw, t);
-        const order = boneOrderOf(withBone, ex);
+        const order = rigBasisOf(withBone, ex);
         const grid = spacingOf(meshes[part]);
         const region = matrixRegion(t, grid);
         for (const [policy, make] of policies) {

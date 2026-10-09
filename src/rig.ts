@@ -84,8 +84,8 @@
 import { type AutoSpec, type BoneEntry, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, ROOT_BONE } from './config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
-import type { MeshCounts, MeshQualityReport, MeshReductionInput, ReducedMesh, Termination } from 'rig-c/mesh';
-import { type AmplitudeRow, amplitudeRow, deriveMotionAmplitude } from './autoamplitude.ts';
+import type { MeshCounts, MeshQualityReport, MeshReductionInput, MotionAmplitude, ReducedMesh, Termination } from 'rig-c/mesh';
+import { type AmplitudeRow, amplitudeRow, partAmplitude, withAmplitude } from './autoamplitude.ts';
 import { type AutoMotionCase, type AutoSearch, DEFORM_MAY_FOLD_WHY, type MotionDeformation } from './automotion.ts';
 import { refinementSteps, replayVerdict, type ReplayRow } from './autoreplay.ts';
 import {
@@ -414,6 +414,8 @@ export interface AutoMeshReport {
     minArtSamples: number;
     regions: Array<{ name: string; bone: string; band: number; maxEdgeLength: number; transition: number; grade: number; minArtSamples: number; approximation: { from: string; policy: string; maxError: number } | null }>;
     preset: null;
+    /** The amplitude rig-c read and echoed (`effective.motionAmplitude`), after the opt-ins; absent when none was sent. */
+    motionAmplitude?: MotionAmplitude;
   } & StageBOptIns;
   source: { contour: ContourReport; counts: MeshCounts | null };
   /** The counts; with a Stage B opt-in set, `boundary_runs` and `retriangulation` after them (`stageBResult`), each only when its opt-in is. */
@@ -423,10 +425,11 @@ export interface AutoMeshReport {
   worst_region: string | null;
   /**
    * The motion amplitude rig-c's `MQ_ALLOCATION_CONTRAST` and `MQ_DEFORM_LOAD`
-   * read (issue #126 Q2; `src/autoamplitude.ts`): `sent` when every term was
-   * derived from the idle and handed to `reduceMesh`, and otherwise each term
-   * that stopped it, by path — so a reader of the two rows' `not-measurable`
-   * learns which number the rig does not declare.
+   * read (issue #126 Q2; `src/autoamplitude.ts`): `sent` when every track term
+   * was derived from the idle and the amplitude — with the author's
+   * `motion.gradation`, or null — handed to `reduceMesh` and to the motion
+   * gate's comparison, and otherwise each term that stopped it, by path — so a
+   * reader of the two rows' `not-measurable` learns which number is missing.
    */
   motion_amplitude: AmplitudeRow;
   termination: Termination;
@@ -947,21 +950,11 @@ export function buildRig(
       });
       return null;
     }
-    // rig-c's allocation rows read an amplitude this package derives from its own idle (issue #126 Q2); sent only when
-    // every term is derived — today never, for want of a gradation (src/autoamplitude.ts) — so the input is otherwise
-    // the one it was before rig-c 2.28.0.
-    const amplitude = deriveMotionAmplitude({
-      bones: rigBones,
-      motion: idle,
-      constraints: cfg.constraints?.length ?? 0,
-      bound: sw.weights.flatMap((v) => v.map((e) => e.bone)),
-      epsilon: spec.motion?.maxLocalDeformation ?? Number.NaN,
-      gradation: null,
-    });
-    const input: MeshReductionInput = {
-      ...autoReductionInput({ part: p.name, mask, ox, oy, spec, source, weights: sw.weights, boneOrder }),
-      ...('amplitude' in amplitude ? { motionAmplitude: amplitude.amplitude } : {}),
-    };
+    // rig-c's allocation rows read an amplitude this package derives from its own idle (issue #126 Q2), with the
+    // author's gradation or null (rig-c 2.29.0, rigc#1291); sent whenever every track term is derived
+    // (src/autoamplitude.ts). The same amplitude goes on the motion gate's comparison (src/automotion.ts).
+    const amplitude = partAmplitude({ bones: rigBones, motion: idle, constraints: cfg.constraints?.length ?? 0 }, sw.weights, spec.motion);
+    const input: MeshReductionInput = withAmplitude(autoReductionInput({ part: p.name, mask, ox, oy, spec, source, weights: sw.weights, boneOrder }), amplitude);
     const ran = reduce(object, input);
     if ('code' in ran) {
       out.push(ran);
@@ -1058,6 +1051,8 @@ export function buildRig(
             })),
             preset: null,
             ...stageB,
+            // rig-c's own echo of the amplitude it read (`effective.motionAmplitude`, rigc#1287/#1291), only when one was sent.
+            ...(report.effective.motionAmplitude === undefined || report.effective.motionAmplitude === null ? {} : { motionAmplitude: report.effective.motionAmplitude }),
           },
           source: { contour: source.report, counts: report.sourceCounts },
           result: { counts: mesh.counts, removedVertices: candidate.changes?.removedVertices ?? 0, insertedVertices: candidate.changes?.insertedVertices ?? 0, ...stageBResult(report, stageB) },
@@ -1097,6 +1092,7 @@ export function buildRig(
       minArtSamples: input.minArtSamples,
       regions: input.targets.regions.map((rg, k) => ({ name: rg.name, polygon: rg.polygon.map(([x, y]) => [x, y] as [number, number]), minArtSamples: regions[k].minArtSamples })),
       boundBones: [...new Set(srcBound.weights.flatMap((v) => v.map((e) => e.bone)))].sort(),
+      amplitude: 'amplitude' in amplitude ? amplitude.amplitude : null,
       search,
     };
     const full = rowOf(verdict.mesh, ran.report);
