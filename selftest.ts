@@ -190,7 +190,8 @@ import { AUTO_CASES, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, ma
 import { BLOCKED_LABEL, barsOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
 import { type AutoMotionCase, idleSchedule, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
-import { motionGates } from './src/build.ts';
+import { motionGates, type MotionGateRun, replaySearch } from './src/build.ts';
+import { bisectAccepted, finalVerdict, gridFrameIds, maxReplays, type ReplayProbe, replayVerdict, roleReadings, selectionSchedule, splitSchedule } from './src/autoreplay.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
@@ -16612,14 +16613,16 @@ interface MotionStageRun {
 }
 
 /**
- * The rig stage over the auto fixture through the installed rigc, with an optional plant: `plant(call, doc)` edits the
- * parsed `skeleton.model.json` of the `call`-th green build (0 = the stage's own gate, the candidate; 1 = the
- * reference) before the stage reads it, and `fake(call)` stands in for rigc's answer to a call when it returns one.
+ * The rig stage over the auto fixture through the installed rigc, with an optional plant: `plant(call, doc, reference)`
+ * edits the parsed `skeleton.model.json` of the `call`-th green build (0 = the stage's own gate, the candidate; 1 = the
+ * reference; past them, the acceptance loop's replays, then the gate and the reference of the rig with the replayed step)
+ * before the stage reads it — `reference` says whether that build's cloth is the unreduced source — and `fake(call)`
+ * stands in for rigc's answer to a call when it returns one.
  */
 function motionStage(
   dir: string,
   config: Record<string, unknown>,
-  plant?: (call: number, doc: Record<string, unknown>) => void,
+  plant?: (call: number, doc: Record<string, unknown>, reference: boolean) => void,
   fake?: (call: number) => { status: number; out: string } | null,
 ): MotionStageRun {
   const fx = writeRigFixture(dir, config);
@@ -16643,7 +16646,10 @@ function motionStage(
         text = readFileSync(model, 'utf8');
         if (plant !== undefined) {
           const doc = JSON.parse(text) as Record<string, unknown>;
-          plant(n, doc);
+          // A reference build is one whose cloth is the first reference's (call 1): the unreduced source, before and after a replay.
+          const clothText = (rigText: string): string => JSON.stringify((JSON.parse(rigText) as { skins: { default: Record<string, unknown> } }).skins.default.cloth);
+          const rigNow = readFileSync(rigPath, 'utf8');
+          plant(n, doc, n === 1 || (builds[1] !== undefined && clothText(rigNow) === clothText(builds[1].rig)));
           text = `${JSON.stringify(doc, null, 2)}\n`;
           writeFileSync(model, text);
         }
@@ -16687,9 +16693,10 @@ function runAutoMotionSuite(): number {
       'issue #126 item 3: the reduced mesh is accepted only when its motion is measured and passes — two gated builds (the candidate the stage writes and the reference with the unreduced source) and rig-c\'s comparison of their model documents',
     );
 
-    // MO02 — a candidate hull vertex moved 5 world units (every binding's bone-local x + 5) is caught at that vertex.
-    const moved = motionStage(join(root, 'moved'), autoRigConfig(), (call, doc) => {
-      if (call !== 0) return;
+    // MO02 — a candidate hull vertex moved 5 world units (every binding's bone-local x + 5) is caught at that vertex. The
+    // plant is on every candidate build — the full result's and each replay's — so the acceptance loop finds none to keep.
+    const moved = motionStage(join(root, 'moved'), autoRigConfig(), (_call, doc, reference) => {
+      if (reference) return;
       for (const b of clothOf(doc).vertices.bindings[0]) b.x += 5;
     });
     const movedUv = moved.builds[0]?.model === null || moved.builds[0] === undefined ? null : clothOf(JSON.parse(moved.builds[0].model) as Record<string, unknown>).uvs.slice(0, 2);
@@ -16873,8 +16880,8 @@ function runAutoMotionSuite(): number {
     );
 
     // MO15 — deformMayFold: a planted fold (vertex 0 hung from both links with offsets +-4000 along x that cancel at setup).
-    const fold = (call: number, doc: Record<string, unknown>): void => {
-      if (call !== 0) return;
+    const fold = (_call: number, doc: Record<string, unknown>, reference: boolean): void => {
+      if (reference) return;
       const v = clothOf(doc).vertices.bindings[0];
       const a = v.find((b) => b.bone === 'hem0');
       const b = v.find((b2) => b2.bone === 'hem1');
@@ -16958,10 +16965,372 @@ function runAutoMotionSuite(): number {
       `${lines(lat.e)}; builds ${lat.builds.length}; row keys ${latRow === undefined ? 'none' : Object.keys(latRow).join(',')}`,
       'existing inputs behave as before: no motion gate where no part is auto (the example builds\' byte identity is the pull request\'s table)',
     );
+
+    runAutoReplayCases(say, root, pos);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
   return bad();
+}
+
+/**
+ * The acceptance loop with a replay (issue #126, rigc#1266 mechanism 2, rig-c 2.24.0; `src/autoreplay.ts`): MO21–MO34
+ * of the auto-motion suite. `pos` is MO01's run, the fixture's cloth accepted outright with no search.
+ */
+function runAutoReplayCases(say: (name: string, ok: boolean, detail: string, why: string) => void, root: string, pos: MotionStageRun): void {
+  const AT = 'config.meshes.cloth.auto';
+  const has = (e: PartsError | null, code: string, ...words: string[]): boolean => e !== null && e.problems.some((p) => p.code === code && words.every((w) => `${p.object} ${p.detail}`.includes(w)));
+  const lines = (e: PartsError | null): string => (e === null ? 'nothing refused' : e.problems.map(problemLine).join('; ').slice(0, 1500));
+  const auto = (r: MeshReport | undefined): AutoMeshReport | undefined => (r !== undefined && 'mode' in r && r.mode === 'auto' ? r : undefined);
+  const region = { name: 'pinch', shape: 'circle', cx: 18, cy: 14, r: 2, band: 2, bone: 'soft', maxEdgeLength: 2, transition: 1, grade: 1, minArtSamples: 1 };
+  // The full result's candidate build (call 0) moved 5 world units at one vertex, as MO02 plants it; nothing else.
+  const plantFull = (call: number, doc: Record<string, unknown>, reference: boolean): void => {
+    if (call !== 0 || reference) return;
+    for (const b of clothOf(doc).vertices.bindings[0]) b.x += 5;
+  };
+  // Every candidate build — the full result's and every replay's — moved the same way: no replay can pass.
+  const plantAll = (_call: number, doc: Record<string, unknown>, reference: boolean): void => {
+    if (reference) return;
+    for (const b of clothOf(doc).vertices.bindings[0]) b.x += 5;
+  };
+  const c0 = motionCaseOf(autoRigConfig());
+  const N = c0?.search.acceptedAt.length ?? 0;
+  const I = c0?.search.inserted ?? 0;
+  const srcVertices = c0 === null ? 0 : c0.reference.uvs.length / 2;
+
+  // MO21 — the positive control: the full result planted to fail, the replays unplanted; a step is chosen, gated, written.
+  const rep = motionStage(join(root, 'replay'), autoRigConfig(), plantFull);
+  const rrow = auto(rep.rows[0]);
+  const rp = rrow?.replay;
+  const passed = (rp?.probes ?? []).filter((p) => p.verdict === 'pass').map((p) => p.step);
+  say(
+    'MO21_A_FULL_RESULT_THE_GATE_REFUSES_IS_REPLACED_BY_A_REPLAYED_STEP_THAT_PASSES_AND_THE_PART_IS_WRITTEN',
+    rep.e === null &&
+      existsSync(join(rep.out, 'rig.json')) &&
+      rp !== undefined &&
+      rp.chosen_step > I &&
+      rp.chosen_step < N &&
+      rp.chosen_step === Math.max(...passed) &&
+      rp.replays === rp.probes.length &&
+      rep.builds.length === 2 + rp.replays + 2 &&
+      rrow?.termination.reason === 'replayed-to-accepted-step' &&
+      typeof rrow.deformation !== 'string' &&
+      rrow.deformation.verdict === 'pass',
+    `${lines(rep.e)}; N ${N}, I ${I}; chosen ${rp?.chosen_step}, probes ${JSON.stringify(rp?.probes.map((p) => [p.step, p.verdict, p.value]))}; builds ${rep.builds.length}`,
+    'rigc#1266 mechanism 2: a less-reduced step of the same run, replayed by stopAfterAccepted, chosen on the grid frames and accepted on the whole idle, is written instead of a refusal; the builds are the first gate and reference, one unpacked build per replay, and the gate and reference of the rig as written',
+  );
+
+  // MO22 — selection passes and held out fails: refused naming both. The bound sits between the two role values of
+  // MO01's documents (by the definition of the midpoint); the frames read lower are declared the selection.
+  const cand = pos.builds[0]?.model ?? '';
+  const ref = pos.builds[1]?.model ?? '';
+  const full22 = c0 === null || cand === '' ? null : runComparison(AT, motionInput(c0, { maxLocalDeformation: 1 }, ref, cand));
+  const grid22 = full22 === null || 'code' in full22 ? [] : gridFrameIds(full22);
+  const irr22 = full22 === null || 'code' in full22 ? [] : (full22.candidates[0]?.motion?.schedule.walked ?? []).filter((f) => f.phase === 'irr').map((f) => f.id);
+  const split22 = c0 === null || grid22.length === 0 ? null : runComparison(AT, motionInput(c0, { maxLocalDeformation: 1 }, ref, cand, splitSchedule(grid22)));
+  const roles22 = split22 === null || 'code' in split22 ? null : roleReadings(split22);
+  const s22 = roles22?.selection?.value ?? null;
+  const h22 = roles22?.held_out?.value ?? null;
+  const mid22 = s22 === null || h22 === null ? null : (s22 + h22) / 2;
+  const lowIsGrid = s22 !== null && h22 !== null && s22 < h22;
+  const planted22 =
+    c0 === null || mid22 === null ? null : runComparison(AT, motionInput(c0, { maxLocalDeformation: mid22 }, ref, cand, { ...idleSchedule(), selection: lowIsGrid ? grid22 : irr22 }));
+  const v22 = planted22 === null || 'code' in planted22 ? null : finalVerdict(AT, 7, 9, planted22);
+  const ok22 = split22 === null || 'code' in split22 ? null : finalVerdict(AT, 7, 9, split22);
+  say(
+    'MO22_A_REPLAY_THAT_PASSES_ON_SELECTION_AND_FAILS_HELD_OUT_IS_REFUSED_NAMING_BOTH_VALUES_AND_FRAMES',
+    s22 !== null &&
+      h22 !== null &&
+      s22 !== h22 &&
+      ok22 === null &&
+      v22 !== null &&
+      v22.code === 'AUTO_MESH_MOTION' &&
+      v22.detail.includes('the replay to accepted step 7 of 9') &&
+      /selection \S+ <= \S+ at idle@/.test(v22.detail) &&
+      /held out \S+ > \S+ at idle@/.test(v22.detail),
+    `selection ${s22}, held out ${h22}, bound ${mid22} (${lowIsGrid ? 'grid' : 'irr'} declared the selection); at 1: ${ok22 === null ? 'accepted' : problemLine(ok22)}; between: ${v22 === null ? 'accepted' : problemLine(v22).slice(0, 600)}`,
+    'Q9: a candidate chosen on some frames is accepted only when the frames it was not chosen by pass too; the refusal names each role\'s value and worst frame, so a reader sees which side failed',
+  );
+
+  // MO23 — no removal step passes: the source is not written as a result; the words say so, and nothing is written.
+  const none = motionStage(join(root, 'replay-none'), autoRigConfig(), plantAll);
+  const probes23 = /kept none \(([^)]*)\)/.exec(lines(none.e))?.[1] ?? '';
+  say(
+    'MO23_WHEN_NO_REMOVAL_STEP_PASSES_THE_PART_IS_REFUSED_NO_REDUCTION_PASSES_THE_MOTION_BOUND_AND_THE_SOURCE_IS_NOT_WRITTEN',
+    has(none.e, 'AUTO_MESH_MOTION', AT, 'no reduction passes the motion bound', `the full result (accepted step ${N} of ${N})`, 'MQ_LOCAL_DEFORMATION fail', 'the source (step 0) is not an automatic result') &&
+      !existsSync(none.out) &&
+      probes23 !== '' &&
+      !probes23.includes(' pass') &&
+      none.builds.length === 2 + probes23.split(', ').length,
+    `${lines(none.e)}; builds ${none.builds.length}`,
+    'n = 0 is the source: writing it as an automatic result would silently defeat the mode (the brief\'s choice, made here: refuse by name); a search that keeps no removal step refuses the part with every probe named',
+  );
+
+  // MO24 — a region: the first I accepted steps are the refinement's insertions, and no step at or below I is probed.
+  const regionConfig = autoRigConfig((_c, a) => (a.regions = [region]));
+  const c24 = motionCaseOf(regionConfig);
+  const I24 = c24?.search.inserted ?? 0;
+  const inRef = c24 === null || I24 === 0 ? null : c24.search.replay(1);
+  const refined = motionStage(join(root, 'replay-region'), regionConfig, plantFull);
+  const steps24 = refined.e === null ? (auto(refined.rows[0])?.replay?.probes.map((p) => p.step) ?? []) : (/kept none \(([^)]*)\)/.exec(lines(refined.e))?.[1] ?? '').split(', ').map((s) => Number(/^step (\d+)/.exec(s)?.[1] ?? NaN));
+  say(
+    'MO24_A_REPLAY_INSIDE_THE_REFINEMENT_IS_NEVER_PROBED_EVERY_PROBE_IS_A_REMOVAL_STEP',
+    I24 > 0 && steps24.length > 0 && steps24.every((s) => Number.isInteger(s) && s > I24 && s < (c24?.search.acceptedAt.length ?? 0)) && inRef !== null,
+    `I ${I24} of N ${c24?.search.acceptedAt.length}; probed ${JSON.stringify(steps24)}; ${lines(refined.e)}; replay to step 1 (inside the refinement), asked directly: ${inRef === null ? 'not asked' : 'code' in inRef ? problemLine(inRef).slice(0, 300) : 'a mesh'}`,
+    'a refinement step is not required to meet the targets (rigc#1268, "Inside a refinement"), and a step at or below I is the source refined, not a reduction; the bisection runs over (I, N) only',
+  );
+
+  // MO25 — replayVerdict: the termination rig-c promised AND every declared geometry row passing; each plant refused by name.
+  let input25: MeshReductionInput | null = null;
+  buildRig(parseConfig(autoRigConfig()), rigParts(), rigImages(), undefined, undefined, (o, i) => {
+    input25 ??= i;
+    return runReduction(o, i);
+  });
+  const in25 = input25 as MeshReductionInput | null;
+  const k = Math.floor((I + N) / 2);
+  const r25 = in25 === null ? null : runReduction(AT, { ...in25, stopAfterAccepted: k });
+  const acc = c0?.search.acceptedAt ?? [];
+  const forge = (edit: (rep: MeshQualityReport) => void): { mesh: ReducedMesh | null; report: MeshQualityReport } | null => {
+    if (r25 === null || 'code' in r25) return null;
+    const report = structuredClone(r25.report);
+    edit(report);
+    return { mesh: r25.mesh, report };
+  };
+  const v = (x: { mesh: ReducedMesh | null; report: MeshQualityReport } | null): string => (x === null ? 'not run' : ((r) => (r.accepted ? 'accepted' : `${r.problem.code}: ${r.problem.detail}`))(replayVerdict(AT, k, acc, x)));
+  const clean25 = v(forge(() => {}));
+  const geo25 = v(
+    forge((rp2) => {
+      const row = rp2.candidates[0]?.geometry?.rows.find((r) => r.bound !== null);
+      if (row !== undefined) row.state = 'fail';
+    }),
+  );
+  const steps25 = v(forge((rp2) => rp2.termination?.reason === 'replayed-to-accepted-step' && (rp2.termination.acceptedSteps = k + 1)));
+  const tried25 = v(forge((rp2) => rp2.termination?.reason === 'replayed-to-accepted-step' && (rp2.termination.candidatesTried += 1)));
+  const own25 = v(forge((rp2) => rp2.candidates[0]?.changes?.acceptedAt.pop()));
+  const asFull25 = in25 === null ? 'not run' : v(((r) => ('code' in r ? null : r))(runReduction(AT, in25)));
+  say(
+    'MO25_A_REPLAY_IS_ACCEPTED_ONLY_ON_THE_PROMISED_TERMINATION_WITH_EVERY_DECLARED_GEOMETRY_ROW_PASSING',
+    clean25 === 'accepted' &&
+      geo25.startsWith('AUTO_MESH_ACCEPTED') &&
+      steps25.startsWith('AUTO_MESH_TERMINATION') &&
+      steps25.includes(`reports acceptedSteps ${k + 1}`) &&
+      tried25.startsWith('AUTO_MESH_TERMINATION') &&
+      tried25.includes(`where the full run's acceptedAt[${k - 1}] is ${acc[k - 1]}`) &&
+      own25.startsWith('AUTO_MESH_TERMINATION') &&
+      own25.includes(`not the full run's first ${k}`) &&
+      asFull25.startsWith('AUTO_MESH_TERMINATION') &&
+      asFull25.includes('ended no-further-valid-reduction'),
+    `step ${k}: clean ${clean25}; a declared row failing -> ${geo25.slice(0, 160)}; acceptedSteps k+1 -> ${steps25.slice(0, 160)}; candidatesTried +1 -> ${tried25.slice(0, 200)}; own acceptedAt short -> ${own25.slice(0, 160)}; the full run handed as a replay -> ${asFull25.slice(0, 160)}`,
+    'Q2: replayed-to-accepted-step is accepted on the same footing as no-further-valid-reduction, provided every declared row passes; a replay that breaks the contract (one step early or late, another attempt count) is not a candidate',
+  );
+
+  // MO26 — the irr frames are never in selection: by definition from the schedule rig-c walked.
+  const walked26 = ((rrow?.motion_report as { candidates?: Array<{ motion?: { schedule?: { walked?: Array<{ id: string; phase: string; role: string }>; heldOutClaim?: boolean; selection?: string[] } } }> } | undefined)?.candidates?.[0]?.motion?.schedule) ?? null;
+  const count = Math.round(4 * IDLE_FPS);
+  const forged26 = { candidates: [{ motion: { schedule: { walked: [{ id: 'idle@grid@0', phase: 'grid' }, { id: 'idle@irr@0.031831', phase: 'irr' }] } } }] } as unknown as MeshQualityReport;
+  const sel26 = selectionSchedule(grid22);
+  say(
+    'MO26_THE_IRR_FRAMES_ARE_NEVER_IN_SELECTION_THE_SEARCH_WALKS_GRID_ALONE_AND_THE_FINAL_SCHEDULE_HOLDS_IRR_OUT',
+    walked26 !== null &&
+      (walked26.walked ?? []).length === 2 * count + 1 &&
+      (walked26.walked ?? []).every((f) => (f.phase === 'grid') === (f.role === 'selection') && (f.phase === 'irr') === (f.role === 'held-out')) &&
+      walked26.heldOutClaim === true &&
+      (walked26.selection ?? []).length === count + 1 &&
+      sel26.phases.join() === 'grid' &&
+      sel26.selection.length === count + 1 &&
+      sel26.selection.every((id) => id.startsWith('idle@grid@')) &&
+      gridFrameIds(forged26).join() === 'idle@grid@0',
+    `final schedule: ${walked26?.walked?.length} frame(s), selection ${walked26?.selection?.length}, held out claim ${walked26?.heldOutClaim}; search schedule phases [${sel26.phases.join()}], ${sel26.selection.length} id(s); a forged walk of one grid and one irr frame -> [${gridFrameIds(forged26).join()}]`,
+    'Q9: the choosing reads only the grid frames (the search walks no irr frame), the irr frames of the same idle are held out, and the held-out claim is rig-c\'s, from its own walk',
+  );
+
+  // MO27 — determinism on the replay path.
+  const again = motionStage(join(root, 'replay-again'), autoRigConfig(), plantFull);
+  const same = (f: string): boolean => existsSync(join(rep.out, f)) && existsSync(join(again.out, f)) && readFileSync(join(rep.out, f), 'utf8') === readFileSync(join(again.out, f), 'utf8');
+  say(
+    'MO27_TWO_RUNS_OF_THE_REPLAY_PATH_WRITE_THE_SAME_BYTES',
+    same('rig.json') && same('mesh_report.json') && rep.log.join('\n').split(rep.out).join('') === again.log.join('\n').split(again.out).join(''),
+    `rig.json ${same('rig.json')}, mesh_report.json ${same('mesh_report.json')}, log (out path removed) ${rep.log.join('\n').split(rep.out).join('') === again.log.join('\n').split(again.out).join('')}`,
+    'determinism is a contract: the bisection depends only on its answers, and no clock is written (the survey tool reports wall time, the row does not)',
+  );
+
+  // MO28 — the no-search path: the row as before, rig-c's new key the only addition, no replay build.
+  const prow = auto(pos.rows[0]);
+  const changes28 = ((prow?.quality_report as { candidates?: Array<{ changes?: Record<string, unknown> }> } | undefined)?.candidates?.[0]?.changes) ?? {};
+  const keys28 = Object.keys(changes28);
+  const acc28 = changes28.acceptedAt as number[] | undefined;
+  const want28 = 'part,vertices,triangles,hull,bones,max_influences,mean_influences,art_coverage,mode,settings,source,result,residuals,worst_residual,worst_region,termination,weights,regions,deformation,quality_report,motion_report';
+  say(
+    'MO28_A_PART_THE_GATE_ACCEPTS_OUTRIGHT_WRITES_ITS_ROW_AS_BEFORE_WITH_ONLY_RIG_CS_ACCEPTEDAT_ADDED_AND_NO_REPLAY',
+    prow !== undefined &&
+      Object.keys(prow).join() === want28 &&
+      keys28[keys28.length - 1] === 'acceptedAt' &&
+      acc28 !== undefined &&
+      acc28.length === prow.result.insertedVertices + prow.result.removedVertices &&
+      pos.builds.length === 2 &&
+      !pos.log.some((l) => l.includes('replay')),
+    `row keys ${prow === undefined ? 'none' : Object.keys(prow).join(',')}; changes keys ${keys28.join(',')}; acceptedAt ${acc28?.length} = inserted ${prow?.result.insertedVertices} + removed ${prow?.result.removedVertices}; builds ${pos.builds.length}`,
+    'existing behaviour holds where the gate passes: no search runs, no key is added by this package, and the report differs from 2.23.0\'s only by acceptedAt, written last in changes (rigc#1268)',
+  );
+
+  // MO29 — the loaded rig-c is 2.24.0 or later and reads stopAfterAccepted; a planted bad value is its refusal, carried.
+  const ver = (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'rig-c', 'package.json'), 'utf8')) as { version: string }).version;
+  const [maj, min] = ver.split('.').map(Number);
+  const bad29 = in25 === null ? null : runReduction(AT, { ...in25, stopAfterAccepted: 1.5 });
+  const neg29 = in25 === null ? null : runReduction(AT, { ...in25, stopAfterAccepted: -1 });
+  const zero29 = in25 === null ? null : runReduction(AT, { ...in25, stopAfterAccepted: 0 });
+  say(
+    'MO29_THE_LOADED_RIG_C_IS_2_24_OR_LATER_AND_A_STOP_THAT_IS_NOT_A_WHOLE_NUMBER_IS_REFUSED_BY_NAME',
+    (maj > 2 || (maj === 2 && min >= 24)) &&
+      bad29 !== null &&
+      'code' in bad29 &&
+      bad29.code === 'AUTO_MESH_INPUT' &&
+      bad29.detail.includes('stopAfterAccepted') &&
+      neg29 !== null &&
+      'code' in neg29 &&
+      zero29 !== null &&
+      !('code' in zero29) &&
+      zero29.report.termination?.reason === 'replayed-to-accepted-step' &&
+      zero29.report.termination.acceptedSteps === 0,
+    `rig-c ${ver}; 1.5 -> ${bad29 === null ? 'not run' : 'code' in bad29 ? problemLine(bad29).slice(0, 300) : 'a report'}; -1 -> ${neg29 === null ? 'not run' : 'code' in neg29 ? neg29.code : 'a report'}; 0 -> ${zero29 === null || 'code' in zero29 ? 'refused' : terminationText(zero29.report.termination)}`,
+    'the replay is rig-c 2.24.0\'s (rigc#1268): package.json asks for ^2.24.0, and an older rig-c would ignore the field and return the full result — which MO25\'s termination check would refuse',
+  );
+
+  // MO30 — the replay returns what the contract promises on this input: step N is the full result, byte for byte, and
+  // each removal step k at or past I has, by definition, sourceVertices + I − (k − I) vertices.
+  const fullRig = c0 === null ? null : buildRig(parseConfig(autoRigConfig()), rigParts(), rigImages());
+  const fullAtt = fullRig === null ? null : JSON.stringify(fullRig.rig.skins.default.cloth);
+  const atN = c0 === null ? null : c0.search.replay(N);
+  const atK = c0 === null ? null : c0.search.replay(k);
+  const atPrev = c0 === null ? null : c0.search.replay(N - 1);
+  const verts = (x: ReturnType<AutoMotionCase['search']['replay']> | null): number => (x === null || 'code' in x ? -1 : x.row.vertices);
+  say(
+    'MO30_A_REPLAY_TO_STEP_N_IS_THE_FULL_RESULT_BYTE_FOR_BYTE_AND_EVERY_REMOVAL_STEP_HAS_THE_VERTEX_COUNT_ITS_NUMBER_SAYS',
+    atN !== null &&
+      !('code' in atN) &&
+      JSON.stringify({ cloth: atN.attachment }) === fullAtt &&
+      verts(atN) === srcVertices + I - (N - I) &&
+      verts(atPrev) === srcVertices + I - (N - 1 - I) &&
+      verts(atK) === srcVertices + I - (k - I),
+    `N ${N}, I ${I}, source ${srcVertices} vertices; step N attachment identical to the full result's: ${atN !== null && !('code' in atN) && JSON.stringify({ cloth: atN.attachment }) === fullAtt}; vertices at N ${verts(atN)}, N-1 ${verts(atPrev)}, ${k} ${verts(atK)}`,
+    'STOP condition of the brief: a replay that does not return the promised bytes on a parts input; each accepted removal takes one vertex, each insertion adds one, so the count at step k is derived from k',
+  );
+
+  // MO31 — the row: the search's fields, before deformation; the step's own termination and counts.
+  const keys31 = rrow === undefined ? [] : Object.keys(rrow);
+  const tried31 = (rp?.probes ?? []).filter((p) => p.verdict !== 'refused').reduce((n, p) => n + acc[p.step - 1], 0);
+  say(
+    'MO31_THE_ROW_CARRIES_THE_SEARCH_BEFORE_DEFORMATION_AND_THE_CHOSEN_STEPS_TERMINATION_AND_COUNTS',
+    rp !== undefined &&
+      rrow !== undefined &&
+      keys31.slice(-4).join() === 'replay,deformation,quality_report,motion_report' &&
+      Object.keys(rp).join() === 'rule,accepted_steps,refinement_steps,chosen_step,replays,max_replays,candidates_tried,full,probes,selection,held_out' &&
+      rp.accepted_steps === N &&
+      rp.refinement_steps === I &&
+      rp.max_replays === Math.ceil(Math.log2(N - I)) &&
+      rp.replays <= rp.max_replays &&
+      rp.candidates_tried === tried31 &&
+      rp.full !== null &&
+      rp.full.state === 'fail' &&
+      rp.rule.includes('not necessarily the last') &&
+      (rp.selection?.frame ?? '').startsWith('idle@grid@') &&
+      (rp.held_out?.frame ?? '').startsWith('idle@irr@') &&
+      rrow.termination.reason === 'replayed-to-accepted-step' &&
+      rrow.termination.acceptedSteps === rp.chosen_step &&
+      rrow.termination.candidatesTried === acc[rp.chosen_step - 1] &&
+      rrow.vertices === srcVertices + I - (rp.chosen_step - I),
+    `keys ...${keys31.slice(-4).join(',')}; replay ${JSON.stringify(rp === undefined ? null : { ...rp, rule: undefined, probes: rp.probes.length })}; candidates tried by hand ${tried31}; termination ${rrow === undefined ? 'none' : terminationText(rrow.termination)}`,
+    'the row records N, the chosen n, the replays and the candidates they tried (each replay\'s own candidatesTried is acceptedAt[n - 1] by the contract), the selection and held-out readings with their worst frames, and no clock',
+  );
+
+  // MO32 — the build line.
+  const line32 = rep.log.find((l) => l.includes('mesh cloth')) ?? '';
+  const m32 = /replayed-to-accepted-step after (\d+) candidate\(s\); worst .*; motion (\S+) <= 1 at (idle@\S+); replayed to accepted step (\d+) of (\d+) after (\d+) replay\(s\); selection (\S+) <= 1 at (idle@grid@\S+); held out (\S+) <= 1 at (idle@irr@\S+)$/.exec(line32);
+  say(
+    'MO32_THE_MESH_LINE_SAYS_REPLAYED_TO_STEP_N_OF_N_AFTER_K_REPLAYS_WITH_THE_SELECTION_AND_HELD_OUT_VALUES_AS_THE_ROW_HOLDS_THEM',
+    m32 !== null &&
+      rp !== undefined &&
+      Number(m32[4]) === rp.chosen_step &&
+      Number(m32[5]) === rp.accepted_steps &&
+      Number(m32[6]) === rp.replays &&
+      Number(m32[7]) === rp.selection?.value &&
+      m32[8] === rp.selection.frame &&
+      Number(m32[9]) === rp.held_out?.value &&
+      m32[10] === rp.held_out.frame &&
+      rep.log.some((l) => l.includes('the rig with its replayed step(s): exit 0')) &&
+      rep.log.some((l) => /^ {2}replay "cloth": bisection over the removal steps /.test(l)),
+    `${line32.trim()} || ${rep.log.filter((l) => l.includes('replay')).map((l) => l.trim()).join(' || ').slice(0, 800)}`,
+    'the brief\'s line: "replayed to accepted step n of N after k replays; selection v <= b at f; held out v <= b at f", the probes and the gate of the rig as written printed beside it',
+  );
+
+  // MO33 — the bisection by hand: its length, its order, and that it finds a passing prefix, not necessarily the last.
+  const answers = (pass: (s: number) => boolean) => (s: number): ReplayProbe => ({ step: s, verdict: pass(s) ? 'pass' : 'fail', value: null, frame: null, reason: null });
+  const holes = bisectAccepted(0, 8, answers((s) => [1, 2, 3, 7].includes(s)));
+  const allPass = bisectAccepted(0, 5, answers(() => true));
+  const allFail = bisectAccepted(0, 5, answers(() => false));
+  const span = bisectAccepted(3, 4, answers(() => true));
+  say(
+    'MO33_THE_BISECTION_BY_HAND_ITS_ORDER_ITS_LENGTH_AT_MOST_CEIL_LOG2_OF_THE_SPAN_AND_A_PREFIX_NOT_NECESSARILY_THE_LAST',
+    holes.chosen === 3 &&
+      holes.probes.map((p) => p.step).join() === '4,2,3' &&
+      allPass.chosen === 4 &&
+      allPass.probes.map((p) => p.step).join() === '2,3,4' &&
+      allFail.chosen === 0 &&
+      allFail.probes.map((p) => p.step).join() === '2,1' &&
+      span.probes.length === 0 &&
+      maxReplays(41, 0) === 6 &&
+      maxReplays(2, 0) === 1 &&
+      maxReplays(1, 0) === 0 &&
+      maxReplays(4097, 1) === 12 &&
+      maxReplays(4098, 1) === 13,
+    `passes at {1,2,3,7} of (0,8): chose ${holes.chosen} after ${holes.probes.map((p) => p.step).join(',')}; all pass (0,5): ${allPass.chosen} after ${allPass.probes.map((p) => p.step).join(',')}; all fail: ${allFail.chosen} after ${allFail.probes.map((p) => p.step).join(',')}; maxReplays 41/0 ${maxReplays(41, 0)}, 2/0 ${maxReplays(2, 0)}, 4097/1 ${maxReplays(4097, 1)}, 4098/1 ${maxReplays(4098, 1)}`,
+    'M3: validity along the order is not monotone, so a bisection finds a passing prefix (3 here) where a later one (7) also passes; ceil(log2(N - I)) is derived from the domain, not an author number — the brief\'s ceil(log2 N) + 1 counted the endpoints, which are never replayed',
+  );
+
+  // MO34 — a source the gate would refuse against itself: no search runs, the part refused as before, nothing built.
+  const self34 = c0 === null || full22 === null || 'code' in full22 ? null : runComparison(AT, motionInput(c0, { maxLocalDeformation: 1 }, ref, ref, selectionSchedule(grid22)));
+  const over34 = self34 === null || 'code' in self34 ? null : (self34.candidates[0]?.geometry?.rows.find((r) => r.code === 'MQ_OVERSHOOT' && r.object.region === null)?.value ?? null);
+  let builds34 = 0;
+  let replays34 = 0;
+  const strict34: AutoMotionCase | null =
+    c0 === null || over34 === null
+      ? null
+      : {
+          ...c0,
+          artFit: { ...c0.artFit, maxOvershoot: over34 / 2 },
+          search: {
+            ...c0.search,
+            replay: (s) => {
+              replays34++;
+              return c0.search.replay(s);
+            },
+          },
+        };
+  const fullProblem: Problem = { code: 'AUTO_MESH_MOTION', object: AT, detail: 'the full result as the gate refused it (planted)' };
+  const run34: MotionGateRun | null =
+    full22 === null || 'code' in full22 ? null : { part: 'cloth', reference: null, report: full22, problems: [fullProblem], notCompared: null, referenceModel: ref };
+  const fullRig34 = fullRig;
+  const s34 =
+    strict34 === null || run34 === null || fullRig34 === null
+      ? null
+      : replaySearch(fullRig34, strict34, run34, [], [], () => ((builds34 += 1), { status: 0, out: '' }), join(root, 'mo34'));
+  say(
+    'MO34_A_SOURCE_THE_GATE_WOULD_REFUSE_AGAINST_ITSELF_STARTS_NO_SEARCH_AND_THE_PART_IS_REFUSED_AS_BEFORE',
+    self34 !== null &&
+      !('code' in self34) &&
+      motionVerdict(AT, self34) === null &&
+      over34 !== null &&
+      over34 > 0 &&
+      s34 !== null &&
+      s34.chosen === null &&
+      s34.problems.length === 1 &&
+      s34.problems[0] === fullProblem &&
+      builds34 === 0 &&
+      replays34 === 0 &&
+      s34.lines.some((l) => l.endsWith('no search runs')),
+    `the source against itself at the policy: ${self34 === null || 'code' in self34 ? 'not run' : motionVerdict(AT, self34) === null ? 'accepted' : 'refused'} (overshoot ${over34}); held to an overshoot of half that: ${s34 === null ? 'not run' : `${s34.problems.map(problemLine).join('; ')}; ${s34.lines.join('; ')}`}; builds ${builds34}, replays ${replays34}`,
+    'the brief: if step 0 itself fails the gate, the part is refused as today and no search runs — a bisection that assumes its lower end passes would otherwise search under a false premise',
+  );
 }
 
 /** The motion case `buildRig` makes for the fixture's cloth under `config`, for calls made straight to the comparison. */

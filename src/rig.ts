@@ -84,8 +84,9 @@
 import { type AutoSpec, type BoneEntry, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, ROOT_BONE } from './config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
-import type { MeshCounts, Termination } from 'rig-c/mesh';
-import { type AutoMotionCase, DEFORM_MAY_FOLD_WHY, type MotionDeformation } from './automotion.ts';
+import type { MeshCounts, MeshQualityReport, ReducedMesh, Termination } from 'rig-c/mesh';
+import { type AutoMotionCase, type AutoSearch, DEFORM_MAY_FOLD_WHY, type MotionDeformation } from './automotion.ts';
+import { replayVerdict, type ReplayRow } from './autoreplay.ts';
 import {
   autoReductionInput,
   autoSource,
@@ -418,6 +419,16 @@ export interface AutoMeshReport {
   termination: Termination;
   weights: { sharesDroppedOnGrid: number; sharesPruned: number; droppedAtFivePlaces: number };
   regions: Array<{ name: string; bone: string; reached: number; whole: number; bound_in_result: number }>;
+  /**
+   * Only on a part whose full reduction the motion gate refused and whose
+   * acceptance loop wrote a replayed step instead (`src/autoreplay.ts`): the
+   * search — N, I, the step chosen, the replays and the candidates they tried,
+   * every probe, and the chosen step's selection and held-out readings. The
+   * row's other fields are then that step's (its `termination` is
+   * `replayed-to-accepted-step`). Absent on every other row, so a part the
+   * gate accepted outright writes the row it always wrote.
+   */
+  replay?: ReplayRow;
   /**
    * {@link DEFORMATION_UNMEASURED} as `buildRig` writes the row — it measures
    * geometry alone; the rig stage replaces it with the motion gate's rows
@@ -931,7 +942,6 @@ export function buildRig(
       out.push(verdict.problem);
       return null;
     }
-    const mesh = verdict.mesh;
     // One binding for the result and for the source the motion gate compares it with: rounded by roundShares, bound in each bone's frame.
     const bind = (points: ReadonlyArray<readonly [number, number]>, lists: ReadonlyArray<ReadonlyArray<{ bone: string; weight: number }>>) => {
       const weights: WeightEntry[][] = [];
@@ -958,7 +968,6 @@ export function buildRig(
       });
       return { weights, infl, maxInfl, droppedAtFivePlaces, boundTo };
     };
-    const { weights, infl, maxInfl, droppedAtFivePlaces, boundTo } = bind(mesh.points, mesh.weights as Array<Array<{ bone: string; weight: number }>>);
     // The reference of the motion gate (src/automotion.ts): the source exactly as reduceMesh was handed it — its UVs, its
     // triangles in that winding, its hull — and its own weights, bound as the result's are.
     const srcBound = bind(source.vertices, sw.weights);
@@ -972,12 +981,73 @@ export function buildRig(
         if (li.g >= 1) whole[li.region]++;
       }
     }
-    const report = ran.report;
-    const candidate = report.candidates[0];
-    const rows = residuals(report);
     const bones = new Set(segs.map((s) => s.bone));
     for (const rg of regions) bones.add(rg.bone);
     const pro = input.protect;
+    // The attachment and the row of one accepted mesh and the report it came with: the full result's, or a replay's (src/autoreplay.ts).
+    const rowOf = (mesh: ReducedMesh, report: MeshQualityReport): { attachment: MeshAttachment; row: AutoMeshReport } => {
+      const { weights, infl, maxInfl, droppedAtFivePlaces, boundTo } = bind(mesh.points, mesh.weights as Array<Array<{ bone: string; weight: number }>>);
+      const candidate = report.candidates[0];
+      const rows = residuals(report);
+      return {
+        attachment: { type: 'mesh', image: file, width: w, height: h, uvs: [...mesh.uvs], triangles: [...mesh.triangles], hull: mesh.hull, weights },
+        row: {
+          part: p.name,
+          vertices: mesh.points.length,
+          triangles: mesh.triangles.length / 3,
+          hull: mesh.hull,
+          bones: [...bones].sort(),
+          max_influences: maxInfl,
+          mean_influences: pyRound(infl / mesh.points.length, 2),
+          art_coverage: pyRound(legacyArtCoverage(mask, mesh.points, mesh.triangles), 5),
+          mode: 'auto',
+          settings: {
+            threshold: input.art.threshold,
+            source: { tolerance: spec.source.tolerance, margin: spec.source.margin, spacing: spec.source.spacing, stray: spec.source.stray ?? null },
+            sourceBounds: input.sourceBounds,
+            targets: { artFit: input.targets.artFit, maxBoundaryDeviation: input.targets.maxBoundaryDeviation, minAngle: input.targets.minAngle ?? null },
+            protect: { hull: pro.hull, vertices: pro.vertices, edges: pro.edges, regionBoundaries: pro.regionBoundaries, weightJump: pro.weightJump, influences: pro.influences },
+            influences: input.influences as { maxInfluences: number; minWeight: number },
+            budget: input.budget,
+            minArtSamples: input.minArtSamples,
+            regions: regions.map((rg, k) => ({
+              name: rg.name,
+              bone: rg.bone,
+              band: rg.band,
+              maxEdgeLength: rg.maxEdgeLength,
+              transition: rg.transition,
+              grade: rg.grade,
+              minArtSamples: rg.minArtSamples,
+              approximation: input.targets.regions[k].approximation,
+            })),
+            preset: null,
+          },
+          source: { contour: source.report, counts: report.sourceCounts },
+          result: { counts: mesh.counts, removedVertices: candidate.changes?.removedVertices ?? 0, insertedVertices: candidate.changes?.insertedVertices ?? 0 },
+          residuals: rows,
+          worst_residual: worstResidual(rows),
+          worst_region: worstRegion(rows),
+          termination: report.termination as Termination,
+          weights: { sharesDroppedOnGrid: candidate.changes?.sharesDroppedOnGrid ?? 0, sharesPruned: candidate.changes?.sharesPruned ?? 0, droppedAtFivePlaces },
+          regions: regions.map((rg, k) => ({ name: rg.name, bone: rg.bone, reached: reached[k], whole: whole[k], bound_in_result: boundTo[k] })),
+          deformation: DEFORMATION_UNMEASURED,
+          quality_report: qualityDocument(report),
+        },
+      };
+    };
+    const changes = ran.report.candidates[0]?.changes;
+    const acceptedAt = [...(changes?.acceptedAt ?? [])];
+    const search: AutoSearch = {
+      acceptedAt,
+      inserted: changes?.insertedVertices ?? 0,
+      replay: (step) => {
+        const replayed = reduce(object, { ...input, stopAfterAccepted: step });
+        if ('code' in replayed) return replayed;
+        const v = replayVerdict(object, step, acceptedAt, replayed);
+        if (!v.accepted) return v.problem;
+        return { ...rowOf(v.mesh, replayed.report), candidatesTried: v.candidatesTried };
+      },
+    };
     const motion: AutoMotionCase = {
       part: p.name,
       object,
@@ -989,53 +1059,10 @@ export function buildRig(
       minArtSamples: input.minArtSamples,
       regions: input.targets.regions.map((rg, k) => ({ name: rg.name, polygon: rg.polygon.map(([x, y]) => [x, y] as [number, number]), minArtSamples: regions[k].minArtSamples })),
       boundBones: [...new Set(srcBound.weights.flatMap((v) => v.map((e) => e.bone)))].sort(),
+      search,
     };
-    return {
-      motion,
-      attachment: { type: 'mesh', image: file, width: w, height: h, uvs: [...mesh.uvs], triangles: [...mesh.triangles], hull: mesh.hull, weights },
-      report: {
-        part: p.name,
-        vertices: mesh.points.length,
-        triangles: mesh.triangles.length / 3,
-        hull: mesh.hull,
-        bones: [...bones].sort(),
-        max_influences: maxInfl,
-        mean_influences: pyRound(infl / mesh.points.length, 2),
-        art_coverage: pyRound(legacyArtCoverage(mask, mesh.points, mesh.triangles), 5),
-        mode: 'auto',
-        settings: {
-          threshold: input.art.threshold,
-          source: { tolerance: spec.source.tolerance, margin: spec.source.margin, spacing: spec.source.spacing, stray: spec.source.stray ?? null },
-          sourceBounds: input.sourceBounds,
-          targets: { artFit: input.targets.artFit, maxBoundaryDeviation: input.targets.maxBoundaryDeviation, minAngle: input.targets.minAngle ?? null },
-          protect: { hull: pro.hull, vertices: pro.vertices, edges: pro.edges, regionBoundaries: pro.regionBoundaries, weightJump: pro.weightJump, influences: pro.influences },
-          influences: input.influences as { maxInfluences: number; minWeight: number },
-          budget: input.budget,
-          minArtSamples: input.minArtSamples,
-          regions: regions.map((rg, k) => ({
-            name: rg.name,
-            bone: rg.bone,
-            band: rg.band,
-            maxEdgeLength: rg.maxEdgeLength,
-            transition: rg.transition,
-            grade: rg.grade,
-            minArtSamples: rg.minArtSamples,
-            approximation: input.targets.regions[k].approximation,
-          })),
-          preset: null,
-        },
-        source: { contour: source.report, counts: report.sourceCounts },
-        result: { counts: mesh.counts, removedVertices: candidate.changes?.removedVertices ?? 0, insertedVertices: candidate.changes?.insertedVertices ?? 0 },
-        residuals: rows,
-        worst_residual: worstResidual(rows),
-        worst_region: worstRegion(rows),
-        termination: report.termination as Termination,
-        weights: { sharesDroppedOnGrid: candidate.changes?.sharesDroppedOnGrid ?? 0, sharesPruned: candidate.changes?.sharesPruned ?? 0, droppedAtFivePlaces },
-        regions: regions.map((rg, k) => ({ name: rg.name, bone: rg.bone, reached: reached[k], whole: whole[k], bound_in_result: boundTo[k] })),
-        deformation: DEFORMATION_UNMEASURED,
-        quality_report: qualityDocument(report),
-      },
-    };
+    const full = rowOf(verdict.mesh, ran.report);
+    return { motion, attachment: full.attachment, report: full.row };
   };
   for (const p of parts.parts) {
     const img = pad(images.get(p.name) as Raster, PAD, PAD, PAD, PAD, [0, 0, 0, 0]);

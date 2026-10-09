@@ -45,11 +45,12 @@ import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
 import { type Reducer, unboundedClause } from './automesh.ts';
-import { type AutoMotionCase, motionClause, motionDeformation, motionDocument, motionInput, motionStimulus, motionVerdict, noStimulusProblem, runComparison } from './automotion.ts';
+import { type AutoMotionCase, failingRows, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison } from './automotion.ts';
+import { bisectAccepted, finalVerdict, gridFrameIds, maxReplays, noReductionProblem, readingText, REPLAY_RULE, type ReplayProbe, type ReplayRow, roleReadings, selectionSchedule, splitSchedule } from './autoreplay.ts';
 import { BARS, causeLines, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig, loadEarlyConfig } from './config.ts';
 import { PartsError, type Problem, problemLine, refuseIfAny } from './errors.ts';
-import type { MeshQualityReport } from 'rig-c/mesh';
+import type { MeshQualityReport, MotionSchedule } from 'rig-c/mesh';
 import { encodeGif } from './gif.ts';
 import { CONTROL_SUFFIX } from './motion.ts';
 import type { PaletteError } from './palette.ts';
@@ -329,6 +330,8 @@ export interface MotionGateRun {
   problems: Problem[];
   /** Why no comparison ran, for the mesh line; null when one ran. */
   notCompared: string | null;
+  /** The reference build's model document, read off its green build; null when it was not built or is red. Nothing writes it. */
+  referenceModel: string | null;
 }
 
 /** The model document a green gate build wrote, or null. */
@@ -353,9 +356,10 @@ export function motionGates(
   candidateModel: string | null,
   rigc: RigcRunner,
   scratch: string,
+  schedules: ReadonlyMap<string, MotionSchedule> = new Map(),
 ): MotionGateRun[] {
   return rig.autoMotion.map((c: AutoMotionCase): MotionGateRun => {
-    const out = (over: Partial<MotionGateRun>): MotionGateRun => ({ part: c.part, reference: null, report: null, problems: [], notCompared: null, ...over });
+    const out = (over: Partial<MotionGateRun>): MotionGateRun => ({ part: c.part, reference: null, report: null, problems: [], notCompared: null, referenceModel: null, ...over });
     if (c.motion === undefined) {
       return out({
         problems: [{ code: 'CONFIG_FIELD_PRESENT', object: `${c.object}.motion`, detail: 'is absent and required; an automatic mesh is accepted only when its motion is measured and passes (issue #126 item 3)' }],
@@ -390,23 +394,136 @@ export function motionGates(
         notCompared: 'the reference build is red',
       });
     }
-    const ran = runComparison(c.object, motionInput(c, c.motion, refModel, candidateModel));
-    if ('code' in ran) return out({ reference: gate, problems: [ran], notCompared: 'rig-c refused the input' });
+    const ran = runComparison(c.object, motionInput(c, c.motion, refModel, candidateModel, schedules.get(c.part)));
+    if ('code' in ran) return out({ reference: gate, problems: [ran], notCompared: 'rig-c refused the input', referenceModel: refModel });
     const verdict = motionVerdict(c.object, ran);
-    return out({ reference: gate, report: ran, problems: verdict === null ? [] : [verdict] });
+    return out({ reference: gate, report: ran, problems: verdict === null ? [] : [verdict], referenceModel: refModel });
   });
 }
 
 /** The mesh report as written: each automatic row with the motion gate's rows in place of "unmeasured", and its `compare` document after `quality_report`. */
-export function withMotion(rows: readonly MeshReport[], runs: readonly MotionGateRun[], cases: readonly AutoMotionCase[]): MeshReport[] {
+export function withMotion(rows: readonly MeshReport[], runs: readonly MotionGateRun[], cases: readonly AutoMotionCase[], replays: ReadonlyMap<string, ReplayRow> = new Map()): MeshReport[] {
   return rows.map((m) => {
     if (!('mode' in m) || m.mode !== 'auto') return m;
     const run = runs.find((r) => r.part === m.part);
     const c = cases.find((x) => x.part === m.part);
     if (run === undefined || run.report === null || c === undefined || c.motion === undefined) return m;
-    const row: AutoMeshReport = { ...m, deformation: motionDeformation(c.motion, run.report), motion_report: motionDocument(run.report) };
+    const replay = replays.get(m.part);
+    if (replay === undefined) {
+      const row: AutoMeshReport = { ...m, deformation: motionDeformation(c.motion, run.report), motion_report: motionDocument(run.report) };
+      return row;
+    }
+    // A replayed part's row carries `replay` just before `deformation`; every other key keeps its place.
+    const { deformation: _unmeasured, quality_report: quality, ...head } = m;
+    const row: AutoMeshReport = { ...head, replay, deformation: motionDeformation(c.motion, run.report), quality_report: quality, motion_report: motionDocument(run.report) };
     return row;
   });
+}
+
+/** One automatic part's acceptance loop after the gate refused its full result (`src/autoreplay.ts`): the step chosen, or the problem. */
+export interface ReplaySearchRun {
+  part: string;
+  /** The replay to write, the grid frame ids it was chosen on and the search's figures; null when the part is refused. */
+  chosen: { candidate: ReplayCandidate; grid: string[]; row: Omit<ReplayRow, 'selection' | 'held_out'> } | null;
+  problems: Problem[];
+  /** What the stage prints about the search. */
+  lines: string[];
+}
+
+/**
+ * The search of one automatic part (`src/autoreplay.ts`, module header): the
+ * source compared with itself on the grid frames first — a source the gate
+ * would refuse leaves the part refused as the full result was, and no search
+ * runs — then a bisection over the removal steps of the full run's
+ * `acceptedAt`. Each probe replays a step (`AutoSearch.replay`, pure), puts it
+ * into `rig` alone, builds that rig through rigc's gate without packing (the
+ * reference's build, {@link REFERENCE_BUILD_ARGS}) and compares it with the
+ * reference on the grid frames alone ({@link selectionSchedule}). A replay
+ * that breaks rig-c's promise, a red build or a refused comparison refuses the
+ * part; a replay that keeps the promise and misses a geometry target is a probe
+ * that did not pass.
+ */
+export function replaySearch(
+  rig: RigOutput,
+  c: AutoMotionCase,
+  run: MotionGateRun,
+  images: ReadonlyArray<readonly [string, Uint8Array]>,
+  texts: ReadonlyArray<readonly [string, string]>,
+  rigc: RigcRunner,
+  scratch: string,
+): ReplaySearchRun {
+  const lines: string[] = [];
+  const refuse = (p: Problem): ReplaySearchRun => ({ part: c.part, chosen: null, problems: [p], lines });
+  if (c.motion === undefined || run.report === null || run.referenceModel === null) return { part: c.part, chosen: null, problems: run.problems, lines };
+  const motion = c.motion;
+  const refModel = run.referenceModel;
+  const grid = gridFrameIds(run.report);
+  const N = c.search.acceptedAt.length;
+  const I = c.search.inserted;
+  const fullLocal = localRow(run.report);
+  const fullReading = fullLocal === null ? null : { value: fullLocal.value, state: fullLocal.state, frame: fullLocal.worst?.frame?.id ?? null };
+  const fullText = `reads ${failingRows(run.report).map(motionRowText).join('; ') || 'no failing row'}`;
+  // Step 0: the source against itself on the selection frames. It reads no motion; a geometry row it fails leaves the part refused as today.
+  const self = runComparison(c.object, motionInput(c, motion, refModel, refModel, selectionSchedule(grid)));
+  if ('code' in self) return refuse(self);
+  if (motionVerdict(c.object, self) !== null) {
+    lines.push(`replay "${c.part}": the unreduced source is not accepted against itself on the grid frames; no search runs`);
+    return { part: c.part, chosen: null, problems: run.problems, lines };
+  }
+  const kept = new Map<number, ReplayCandidate>();
+  let fatal: Problem | null = null;
+  let candidatesTried = 0;
+  const probe = (step: number): ReplayProbe => {
+    const refused = (reason: string): ReplayProbe => ({ step, verdict: 'refused', value: null, frame: null, reason });
+    if (fatal !== null) return refused('the search was refused at an earlier step');
+    const rep = c.search.replay(step);
+    if ('code' in rep) {
+      if (rep.code !== 'AUTO_MESH_ACCEPTED') fatal = rep;
+      return refused(rep.code);
+    }
+    candidatesTried += rep.candidatesTried;
+    const candRig = JSON.parse(rigJsonText(rig.rig)) as RigSpec;
+    candRig.skins.default[c.part] = { [c.part]: rep.attachment };
+    const candTexts = texts.map(([file, text]) => [file, file === 'rig.json' ? rigJsonText(candRig) : text] as const);
+    let model: string | null = null;
+    const [gate] = gateThroughRigc(images, candTexts, rigc, scratch, null, (dir) => {
+      model = modelAt(dir);
+    });
+    if (gate.status !== 0 || model === null) {
+      fatal = {
+        code: 'AUTO_MESH_MOTION_INPUT',
+        object: c.object,
+        detail: `the replay to accepted step ${step} (the rig with "${c.part}" as that step's mesh) ${gate.status !== 0 ? `is refused by rigc's gate, exit ${gate.status}${gate.lines.length > 0 ? `: ${gate.lines.map((l) => l.trim()).join(' | ')}` : ''}` : `built green and wrote no ${RIGC_MODEL_DOCUMENT}`}; a candidate that is not gated is not evidence, and nothing is built in the part's place`,
+      };
+      return refused(`rigc exit ${gate.status}`);
+    }
+    const cmp = runComparison(c.object, motionInput(c, motion, refModel, model, selectionSchedule(grid)));
+    if ('code' in cmp) {
+      fatal = cmp;
+      return refused(cmp.code);
+    }
+    const r = localRow(cmp);
+    const pass = motionVerdict(c.object, cmp) === null;
+    if (pass) kept.set(step, rep);
+    return { step, verdict: pass ? 'pass' : 'fail', value: r?.value ?? null, frame: r?.worst?.frame?.id ?? null, reason: null };
+  };
+  const { chosen, probes } = bisectAccepted(I, N, probe);
+  lines.push(
+    `replay "${c.part}": bisection over the removal steps ${I + 1}..${N - 1} of ${N} accepted step(s), ${probes.length} replay(s) of at most ${maxReplays(N, I)}: ${probes.map((p) => `${p.step} ${p.verdict}${p.value === null ? '' : ` ${p.value}`}`).join(', ') || 'none'}`,
+  );
+  if (fatal !== null) return refuse(fatal);
+  const candidate = kept.get(chosen);
+  if (chosen <= I || candidate === undefined) return refuse(noReductionProblem(c.object, fullText, N, I, probes));
+  return {
+    part: c.part,
+    chosen: {
+      candidate,
+      grid,
+      row: { rule: REPLAY_RULE, accepted_steps: N, refinement_steps: I, chosen_step: chosen, replays: probes.length, max_replays: maxReplays(N, I), candidates_tried: candidatesTried, full: fullReading, probes },
+    },
+    problems: [],
+    lines,
+  };
 }
 
 /**
@@ -422,21 +539,60 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     const png = join(input.parts, 'parts', `${p.name}.png`);
     if (existsSync(png)) images.set(p.name, readPng(png));
   }
-  const rig = buildRig(cfg, parts, images, undefined, input.idleKeys ?? DEFAULT_IDLE_KEYS, input.reduce);
-  const texts: Array<[string, string]> = [
-    ['rig.json', rigJsonText(rig.rig)],
-    ['motion.json', rigJsonText(rig.motion)],
-    ['mesh_report.json', rigJsonText(rig.meshReport)],
+  const first = buildRig(cfg, parts, images, undefined, input.idleKeys ?? DEFAULT_IDLE_KEYS, input.reduce);
+  const textsOf = (r: RigOutput): Array<[string, string]> => [
+    ['rig.json', rigJsonText(r.rig)],
+    ['motion.json', rigJsonText(r.motion)],
+    ['mesh_report.json', rigJsonText(r.meshReport)],
   ];
+  const firstTexts = textsOf(first);
   // The gate runs before the lines are printed, and its lines print where they always did: an automatic part's motion
   // gate compares the model document of this very build, the one written (issue #126 item 3). mesh_report.json is staged
   // as buildRig wrote it; rigc reads only rig.json, motion.json and images/.
-  const pngs = rig.images.map(([file, img]) => [file, encodePngBytes(img)] as const);
+  const pngs = first.images.map(([file, img]) => [file, encodePngBytes(img)] as const);
   const mode: PackMode = { pageEdges: input.pageEdges ?? DEFAULT_PAGE_EDGES, packShape: input.packShape ?? DEFAULT_PACK_SHAPE };
-  let candidateModel: string | null = null;
-  const gate = gateThroughRigc(pngs, texts, rigc, scratch, mode, rig.autoMotion.length === 0 ? undefined : (dir) => (candidateModel = modelAt(dir)));
+  let firstModel: string | null = null;
+  const firstGate = gateThroughRigc(pngs, firstTexts, rigc, scratch, mode, first.autoMotion.length === 0 ? undefined : (dir) => (firstModel = modelAt(dir)));
+  const firstRed = firstGate.filter((g) => g.status !== 0);
+  const firstMotion = firstRed.length > 0 ? [] : motionGates(first, pngs, firstTexts, firstModel, rigc, scratch);
+  // The acceptance loop (src/autoreplay.ts): a part whose full result the motion gate refused, and only such a part, is
+  // searched for a replayed step. Where no part is, nothing below runs and the stage is the one it always was.
+  const searches = firstMotion
+    .filter((r) => r.report !== null && r.problems.some((p) => p.code === 'AUTO_MESH_MOTION'))
+    .map((r) => replaySearch(first, first.autoMotion.find((c) => c.part === r.part) as AutoMotionCase, r, pngs, firstTexts, rigc, scratch));
+  const searched = new Set(searches.map((s) => s.part));
+  const chosen = searches.flatMap((s) => (s.chosen === null ? [] : [{ part: s.part, ...s.chosen }]));
+  const settled = searches.length > 0 && chosen.length === searches.length && firstMotion.every((r) => searched.has(r.part) || r.problems.length === 0);
+  // Every part's search chose a step: the rig with those steps in place goes through the gate again, as written, and
+  // each automatic part through the motion gate again — a chosen one on the whole idle with its grid frames as selection.
+  let rig = first;
+  let texts = firstTexts;
+  let gate = firstGate;
+  let motion: MotionGateRun[] = firstMotion.map((r) => (searched.has(r.part) ? { ...r, problems: searches.find((s) => s.part === r.part)?.problems ?? r.problems } : r));
+  let finalGate: GateRun[] | null = null;
+  let finalMotion: MotionGateRun[] = [];
+  const replays = new Map<string, ReplayRow>();
+  if (settled) {
+    const swapped = JSON.parse(rigJsonText(first.rig)) as RigSpec;
+    for (const k of chosen) swapped.skins.default[k.part] = { [k.part]: k.candidate.attachment };
+    rig = { ...first, rig: swapped, meshReport: first.meshReport.map((m) => chosen.find((k) => k.part === m.part)?.candidate.row ?? m) };
+    texts = textsOf(rig);
+    let model: string | null = null;
+    finalGate = gateThroughRigc(pngs, texts, rigc, scratch, mode, (dir) => (model = modelAt(dir)));
+    gate = finalGate;
+    finalMotion = gate.some((g) => g.status !== 0) ? [] : motionGates(rig, pngs, texts, model, rigc, scratch, new Map(chosen.map((k) => [k.part, splitSchedule(k.grid)])));
+    motion = finalMotion.map((r) => {
+      const k = chosen.find((x) => x.part === r.part);
+      if (k === undefined || r.report === null) return r;
+      const roles = roleReadings(r.report);
+      replays.set(r.part, { ...k.row, selection: roles.selection, held_out: roles.held_out });
+      if (!r.problems.some((p) => p.code === 'AUTO_MESH_MOTION')) return r;
+      const c = rig.autoMotion.find((x) => x.part === r.part) as AutoMotionCase;
+      const held = finalVerdict(c.object, k.row.chosen_step, k.row.accepted_steps, r.report);
+      return { ...r, problems: held === null ? [] : [held] };
+    });
+  }
   const red = gate.filter((g) => g.status !== 0);
-  const motion = red.length > 0 ? [] : motionGates(rig, pngs, texts, candidateModel, rigc, scratch);
   log(`spine-parts rig: ${cfg.key}, rig ${parts.rig_size[0]}x${parts.rig_size[1]}, ${parts.parts.length} part(s)`);
   let vertices = 0;
   for (const m of rig.meshReport) {
@@ -447,12 +603,17 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
       const s = m.source.counts;
       const r = m.result.counts;
       const t = m.termination;
-      const tried = t.reason === 'no-further-valid-reduction' || t.reason === 'budget-exhausted' ? ` after ${t.candidatesTried} candidate(s)` : '';
+      const tried = t.reason === 'no-further-valid-reduction' || t.reason === 'budget-exhausted' || t.reason === 'replayed-to-accepted-step' ? ` after ${t.candidatesTried} candidate(s)` : '';
       const worst = m.worst_residual === null ? 'none declared' : `${m.worst_residual.code}${m.worst_residual.region === null ? '' : `[${m.worst_residual.region}]`} ${m.worst_residual.value} ${m.worst_residual.bound?.op} ${m.worst_residual.bound?.value}`;
       const from = s === null ? 'unread' : `${s.boundaryVertices}+${s.interiorVertices}`;
       const run = motion.find((x) => x.part === m.part);
       const moved = run === undefined ? 'motion not compared (the gate is red)' : run.report !== null ? motionClause(run.report) : `motion not compared (${run.notCompared ?? 'refused'})`;
-      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}${unboundedClause(m.residuals, m.settings.targets.artFit)}; ${moved}`);
+      const rp = replays.get(m.part);
+      const replayed =
+        rp === undefined || run?.report === null || run === undefined
+          ? ''
+          : `; replayed to accepted step ${rp.chosen_step} of ${rp.accepted_steps} after ${rp.replays} replay(s); selection ${readingText(rp.selection, roleReadings(run.report).bound)}; held out ${readingText(rp.held_out, roleReadings(run.report).bound)}`;
+      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}${unboundedClause(m.residuals, m.settings.targets.artFit)}; ${moved}${replayed}`);
     } else if ('mode' in m) {
       const c = m.contour;
       const stray = c.strayIslands === 0 ? '' : ` left out ${c.strayIslands} island(s), ${c.strayPixels} px`;
@@ -471,14 +632,26 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
       ? `  idle keys ctl: ${rig.meshKeyed.length} mesh-driving bone(s) keyed by the idle, each keyed through a same-origin <bone>_ctl parent`
       : `  idle keys direct: ${rig.meshKeyed.length} mesh-driving bone(s) keyed in place, ${rig.rig.invariants === undefined ? 'so no invariants.idleDrivesMeshes is declared (it would switch nothing off)' : 'invariants.idleDrivesMeshes declared'}`,
   );
-  for (const g of gate) {
+  for (const g of firstGate) {
     log(`  rigc ${g.label}: exit ${g.status}`);
     for (const l of g.lines) log(`    ${l.trim()}`);
   }
-  for (const r of motion) {
+  for (const r of firstMotion) {
     if (r.reference === null) continue;
     log(`  rigc ${r.reference.label}, reference "${r.part}" (its unreduced source mesh): exit ${r.reference.status}`);
     for (const l of r.reference.lines) log(`    ${l.trim()}`);
+  }
+  for (const s of searches) for (const l of s.lines) log(`  ${l}`);
+  if (finalGate !== null) {
+    for (const g of finalGate) {
+      log(`  rigc ${g.label}, the rig with its replayed step(s): exit ${g.status}`);
+      for (const l of g.lines) log(`    ${l.trim()}`);
+    }
+    for (const r of finalMotion) {
+      if (r.reference === null) continue;
+      log(`  rigc ${r.reference.label}, reference "${r.part}" against the rig with its replayed step(s): exit ${r.reference.status}`);
+      for (const l of r.reference.lines) log(`    ${l.trim()}`);
+    }
   }
   if (red.length > 0) {
     const problems: Problem[] = red.map((g) => ({
@@ -491,7 +664,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
   // Emit only after green: a part the motion gate did not accept refuses the stage, every part's problem named at once.
   refuseIfAny(motion.flatMap((r) => r.problems));
   if (motion.length > 0) {
-    const rows = withMotion(rig.meshReport, motion, rig.autoMotion);
+    const rows = withMotion(rig.meshReport, motion, rig.autoMotion, replays);
     rig.meshReport.splice(0, rig.meshReport.length, ...rows);
     texts[2] = ['mesh_report.json', rigJsonText(rig.meshReport)];
   }

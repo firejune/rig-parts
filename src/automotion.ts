@@ -2,7 +2,7 @@
  * The motion gate of the automatic mesh mode (issue #126, item 3): a reduced
  * mesh is written only when it moves like the mesh it was reduced from, on the
  * rig's own idle, measured by rig-c's `compareMeshesInMotion`
- * (`rig-c/meshcompare`, 2.23.x) and held to the bounds the author wrote in
+ * (`rig-c/meshcompare`, 2.24.x) and held to the bounds the author wrote in
  * `meshes.<part>.auto.motion` (`AutoMotionSpec`, `src/config.ts`).
  *
  * ## What is compared
@@ -34,7 +34,10 @@
  * render never selects. **Nothing here chooses a candidate by motion** — the
  * candidate is the one `reduceMesh` returned on geometry alone (item 2) — so
  * `selection` is empty and every frame is held out from selection by
- * construction.
+ * construction. The one place a candidate is chosen by motion is the
+ * acceptance loop (`src/autoreplay.ts`), which runs only after this gate
+ * refused the full result: it chooses on the `grid` frames and declares them
+ * `selection` in its final comparison, so its irr frames are the held-out ones.
  *
  * ## Stimulus ({@link motionStimulus})
  *
@@ -64,7 +67,7 @@ import { compareMeshesInMotion, type MotionComparisonInput } from 'rig-c/meshcom
 import type { AutoMotionSpec } from './config.ts';
 import type { Problem } from './errors.ts';
 import { IDLE_FPS, type MotionSpec } from './motion.ts';
-import type { MeshAttachment, RigBone } from './rig.ts';
+import type { AutoMeshReport, MeshAttachment, RigBone } from './rig.ts';
 
 /** The animation the motion gate walks: the idle, the one animation the rig stage writes and `check` renders. */
 export const MOTION_ANIMATION = 'idle';
@@ -108,6 +111,25 @@ export interface AutoMotionCase {
   regions: Array<{ name: string; polygon: Array<[number, number]>; minArtSamples: number }>;
   /** The bones the reference's weights bind, sorted. */
   boundBones: string[];
+  /** What the acceptance loop replays when the full result fails the gate (`src/autoreplay.ts`). */
+  search: AutoSearch;
+}
+
+/** One replayed step as the rig would write it: its attachment and its row, and the candidates its replay tried. */
+export interface ReplayCandidate {
+  attachment: MeshAttachment;
+  row: AutoMeshReport;
+  candidatesTried: number;
+}
+
+/** The full run's accepted steps and a replay of any of them (`stopAfterAccepted`, rig-c 2.24.0), each held to the full result's acceptance. */
+export interface AutoSearch {
+  /** The full run's `changes.acceptedAt`: N = its length. */
+  acceptedAt: number[];
+  /** The refinement's insertions, the first I accepted steps. */
+  inserted: number;
+  /** The step replayed and accepted on geometry, or the problem that refuses it. Pure. */
+  replay: (step: number) => ReplayCandidate | Problem;
 }
 
 /** The bones the idle keys with changing values: each track's bone, and every member of a group a track keys. */
