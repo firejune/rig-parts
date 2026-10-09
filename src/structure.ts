@@ -71,7 +71,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { CompileError } from 'rig-c/src/errors.ts';
 import { parseRigSpec, RIG_SPEC_VERSION, type RigBone as RigcBone, type RigSpec as RigcSpec, splitRigSkin } from 'rig-c/src/rig.ts';
-import { type ConfigConstraint, CONSTRAINT_FOLLOWS, parseConfig, parseProposalSections, type Point, ROOT_BONE, type SkeletonSections } from './config.ts';
+import { type ConfigConstraint, CONSTRAINT_FOLLOWS, parseConfig, parseProposalSections, type Point, ROOT_BONE, type SkeletonSections, weightsABone } from './config.ts';
 import { computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toWorld } from './coords.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 
@@ -183,7 +183,10 @@ export function configRoles(s: SkeletonSections & { constraints?: readonly Confi
     });
     // A contour mesh's region bone is weighted to, like a segment's (issue #84).
     if ('contour' in m) (m.contour.regions ?? []).forEach((rg, i) => push(bound, rg.bone, `meshes.${part}.contour.regions[${i}]`));
-    if ('auto' in m) (m.auto.regions ?? []).forEach((rg, i) => push(bound, rg.bone, `meshes.${part}.auto.regions[${i}]`));
+    if ('auto' in m) (m.auto.regions ?? []).forEach((rg, i) => {
+        // A density-only region binds no bone (issue #155).
+        if (weightsABone(rg)) push(bound, rg.bone, `meshes.${part}.auto.regions[${i}]`);
+      });
   }
   for (const [part, bone] of Object.entries(s.regions)) push(bound, bone, `regions.${part}`);
   for (const [part, st] of Object.entries(s.motion.blink?.still ?? {})) push(bound, st.bone, `motion.blink.still.${part}`);

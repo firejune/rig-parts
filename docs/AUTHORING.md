@@ -619,7 +619,7 @@ wall time goes to standard error, not into the table).
 | `minArtSamples` | the fewest art pixels a raster row is taken over, 1 or more |
 | `motion` | **required**: `maxLocalDeformation` (rig px, 0 or more — how far the reduced mesh may carry any art pixel from where its source carries it, at any frame); optional `maxStretch` / `minStretch` (ratios; absent, the rows are reported and not gated); optional `deformMayFold` (absent is **false**: a triangle that turns over refuses the part; true declares the slot in `invariants.deformMayFold` and lists every fold instead); optional `gradation` (px per px, 0 or more, or `null`; the author's G for `MQ_ALLOCATION_CONTRAST`, never derived — absent or `null`, the contrast reads `not-measurable` naming it; see *The allocation rows* below); optional `selection` (`{ "policy": "multi-interval", "maxProbes": <whole number, 1 or more> }`; absent, the acceptance loop is the bisection — see *The multi-interval selection* above); optional `residual` (`{ "maxResidual": <px, 0 or more> }`; absent, nothing is sent — see *The skinning residual as a per-step veto* above) |
 | `protect` | optional; each field optional: `hull` (true keeps every source outline vertex; absent is **false**, the default agreed for this mode), `vertices` and `edges` (source vertex indices and pairs that must survive), `regionBoundaries` (region names whose outline vertices must survive), `weightJump` (an L1 weight difference above which a source edge is kept; absent is none), `influences` (bones never pruned from a vertex; every region's bone is added) |
-| `regions` | optional, each `{name, shape, bone, band, maxEdgeLength, transition, grade, minArtSamples}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`): `bone` and `band` are the control bone and its weight falloff exactly as a contour region's (rig px, multiples of 1/256 px); `maxEdgeLength` is L0, the longest an edge meeting the region may be, px; outside it, across `transition` px, the bound relaxes as `L0 + grade·d`; `transition` 0 is a hard edge; `minArtSamples` is the region's own sample floor |
+| `regions` | optional, each `{name, shape, bone?, band?, maxEdgeLength, transition, grade, minArtSamples}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`): `bone` and `band` are the control bone and its weight falloff exactly as a contour region's (rig px, multiples of 1/256 px), written together (the region weights its bone and asks for density) or not at all (density only, issue #155; one without the other is refused by name); `maxEdgeLength` is L0, the longest an edge meeting the region may be, px; outside it, across `transition` px, the bound relaxes as `L0 + grade·d`; `transition` 0 is a hard edge; `minArtSamples` is the region's own sample floor |
 | `boundaryRuns` | optional, `{ maxVertices }`, a whole number 2 or more, no default: each removal pass first tries to replace a run of 2 to `maxVertices` consecutive source-hull vertices with one chord, as one step held to every declared row (below) |
 | `retriangulate` | optional, `"delaunay"`: once the reduction ends, the kept vertices are re-triangulated by Delaunay flips, taken whole only when every declared row still passes (below) |
 | `removalOrder` | optional, `"deformation-load"`: the single removals are tried in ascending predicted load instead of ascending source index (below) |
@@ -723,8 +723,29 @@ then nothing is sent and both rows read `not-measurable`.
 A circle is handed to rig-c as the regular polygon with the fewest sides, 3 or more,
 circumscribed about the circle, whose outline lies within 1/256 px of it (the grid the region's
 numbers are on); the rule and its error are echoed in the region's `approximation`. The weights
-still read the circle. Density regions and weight regions are the same declaration here; two
-regions reaching one source vertex is `RIG_CONTOUR_REGIONS_OVERLAP`, as in the contour mode.
+still read the circle.
+
+A region takes one of two forms, told apart by `bone` (issue #155):
+
+- **Weight and density** — `bone` and `band` written. Inside the shape the bone takes weight 1,
+  falling off across `band` as in the contour mode, and rig-c refines the mesh there to the
+  region's density. Use it where a control bone should move that patch of the part on its own
+  (a pinch, a fold) and the mesh needs the vertices to carry it.
+- **Density only** — neither written. rig-c refines the mesh there to the same density, and the
+  weights are untouched: no vertex takes a share from the region, the row's bone list and
+  `protect.influences` gain nothing, and every source vertex is weighted exactly as with the
+  region left out. A vertex rig-c inserts there carries rig-c's interpolation of the source
+  triangle that holds it (its contract §6), the rule every inserted vertex follows in either
+  form. Use it to place density by itself — where the art's shading, a joint or a field says
+  the mesh needs vertices — so that a change in the vertex count or the motion verdict against
+  the same part without the region is a change in density alone. The row writes its `bone` and
+  `band` as `null`, and its counts of vertices reached and bound as 0.
+
+`bone` without `band`, or `band` without `bone`, is neither form and is refused by name. Two
+regions that both weight a bone and both reach one source vertex is `RIG_CONTOUR_REGIONS_OVERLAP`,
+as in the contour mode. A density-only region decides no weight, so it may overlap any region:
+rig-c holds each region's density rows on its own, the smallest bound applying to an edge two of
+them hold.
 
 **What it reports.** `mesh_report.json`'s row carries `mode: "auto"`, `settings` (every number
 the call saw, the threshold and the circle approximations included), `source` (the contour
@@ -786,6 +807,7 @@ safe is the author's to choose here.
 | --- | --- |
 | `CONFIG_MESH_MODE` | `auto` beside `grid` or `contour`, or no mode at all |
 | `CONFIG_FIELD_PRESENT`, `CONFIG_FIELD_TYPE`, `CONFIG_NAME_RESOLVES`, `CONFIG_REGION_NAME_UNIQUE` | a missing or out-of-range number, an unknown bone or region name, a region named twice, a Stage B opt-in that is not exactly a value rig-c accepts — every one named in one run |
+| `CONFIG_REGION_BAND_NEEDS_BONE`, `CONFIG_REGION_BONE_NEEDS_BAND` | a region with a `band` and no `bone`, or a `bone` and no `band`: write both for a region that weights its bone, neither for a density-only region (issue #155) |
 | `CONFIG_KEY_KNOWN` | a field the mode does not have — a bound on one of the five allocation rows, or an authored `motionAmplitude` (it is derived, never written) |
 | `CONTOUR_*` | the source is refused by the contour mode's own checks at alpha 1 and above — most often `CONTOUR_ONE_ISLAND`: faint pixels the alpha-above-8 modes never saw are islands here |
 | `AUTO_MESH_INPUT` | rig-c refused the call's input by throwing (a protected vertex the source does not have), in its words and code |

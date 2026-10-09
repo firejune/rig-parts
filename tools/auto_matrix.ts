@@ -83,7 +83,7 @@ import type { MotionSpec } from '../src/motion.ts';
 import { AUTO_THRESHOLD, autoReductionInput, autoSource, autoVerdict, type Reducer, reductionKey, type ReductionResult, reuseReductions, runReduction, sourceWeights, terminationText } from '../src/automesh.ts';
 import { build, checkStage, rigStage } from '../src/build.ts';
 import { DEFAULT_PAGE_EDGES, findRigc, type RigcRunner } from '../src/check.ts';
-import { type AutoSpec, type CharacterConfig, parseConfig } from '../src/config.ts';
+import { type AutoSpec, type CharacterConfig, parseConfig, weightsABone } from '../src/config.ts';
 import { PartsError, type Problem, problemLine } from '../src/errors.ts';
 import { readParts } from '../src/parts.ts';
 import { pad, readPng, type Raster } from '../src/raster/index.ts';
@@ -470,7 +470,7 @@ export function geometryRow(name: string, mask: AlphaMask, spec: AutoSpec, w: We
   const mesh = ran.mesh;
   let regionBound: GeometryRow['regionBound'] = null;
   if ((spec.regions ?? []).length > 0 && mesh !== null && mesh.weights !== null) {
-    const bones = new Set((spec.regions ?? []).map((rg) => rg.bone));
+    const bones = new Set((spec.regions ?? []).filter(weightsABone).map((rg) => rg.bone));
     let vertices = 0;
     let bindings = 0;
     for (const list of mesh.weights) {

@@ -19,7 +19,7 @@
  * value admissible for an explicitly chosen geometry investigation).
  */
 import { type AlphaMask, CONTOUR_MIN_COVERAGE } from 'rig-c/mesh';
-import type { AutoRegionSpec, AutoSpec } from '../src/config.ts';
+import type { AutoDensityRegionSpec, AutoSpec, AutoWeightRegionSpec } from '../src/config.ts';
 import { blocks, CONCAVE, CONVEX, HOLE, ISLANDS, SPIKE } from './contour.ts';
 
 /** The numbers every synthetic case starts from; see the module header for where each comes from. */
@@ -85,7 +85,7 @@ export function finerSourcePolicy(spacing: number, tolerance: number): AutoSpec 
  * L0 2 px, a 2 px transition at grade 1, one art sample. Its numbers are on
  * the 1/256 px grid by construction (whole pixels).
  */
-export function squareRegion(cx: number, cy: number, side: number, transition: number): AutoRegionSpec {
+export function squareRegion(cx: number, cy: number, side: number, transition: number): AutoWeightRegionSpec {
   const h = side / 2;
   return {
     name: 'soft',
@@ -103,6 +103,17 @@ export function squareRegion(cx: number, cy: number, side: number, transition: n
     grade: 1,
     minArtSamples: 1,
   };
+}
+
+/**
+ * The density-only form of a region (issue #155): the same name, shape and
+ * density, with `bone` and `band` left out — nothing else changed, so a
+ * control can set the two forms side by side.
+ */
+export function densityOnly(rg: AutoWeightRegionSpec): AutoDensityRegionSpec {
+  const density = { maxEdgeLength: rg.maxEdgeLength, transition: rg.transition, grade: rg.grade, minArtSamples: rg.minArtSamples };
+  if (rg.shape === 'circle') return { name: rg.name, shape: 'circle', cx: rg.cx, cy: rg.cy, r: rg.r, ...density };
+  return { name: rg.name, shape: 'polygon', points: rg.points.map(([x, y]) => [x, y] as [number, number]), ...density };
 }
 
 /** A 56x40 block at (4, 4) in 64x48: room for a region well inside it. */
@@ -222,7 +233,7 @@ export const MATRIX_REGION_BONE = 'test_region';
  *   the background spacing `grid` exactly at the band's outer edge;
  * - `minArtSamples` 1 (P9's geometry investigation, as the policies).
  */
-export function matrixRegion(t: { cx: number; cy: number; r: number; band: number }, grid: number): Extract<AutoRegionSpec, { shape: 'circle' }> {
+export function matrixRegion(t: { cx: number; cy: number; r: number; band: number }, grid: number): Extract<AutoWeightRegionSpec, { shape: 'circle' }> {
   const L0 = grid / 2;
   return { name: 'hem', shape: 'circle', cx: t.cx, cy: t.cy, r: t.r, band: t.band, bone: MATRIX_REGION_BONE, maxEdgeLength: L0, transition: t.r, grade: (grid - L0) / t.r, minArtSamples: 1 };
 }

@@ -23,7 +23,8 @@
  *    contract types it (docs/MESH_REDUCTION.md §1): `art` the padded image's
  *    alpha at threshold 1 in the part-local frame with `pageScale` 1 (the
  *    rig's images are the drawing); `protect.hull` false unless the author
- *    wrote true (P20); the region bones added to `protect.influences`, so an
+ *    wrote true (P20); the region bones added to `protect.influences` (a
+ *    density-only region names none and adds none, issue #155), so an
  *    inserted vertex never loses its region's share silently; `boneOrder` the
  *    rig's bone order; `preset` null (no preset exists in this package: a
  *    preset is a later, versioned thing, P5); `deform` and `linkedMeshes`
@@ -80,7 +81,7 @@ import {
   type Termination,
   writeMeshQualityReport,
 } from 'rig-c/mesh';
-import type { AutoRegionSpec, AutoSpec, Point } from './config.ts';
+import { type AutoRegionSpec, type AutoSpec, type AutoWeightRegionSpec, type Point, weightsABone } from './config.ts';
 import { type ContourMesh, contourMesh, type ContourReport, GRID } from './contour.ts';
 import type { Problem } from './errors.ts';
 import { type LocalInfluence, localInfluences, type RegionOverlap } from './localweights.ts';
@@ -177,7 +178,13 @@ export function autoSource(part: string, mask: AlphaMask, spec: AutoSpec): Conto
   });
 }
 
-/** The source's weights by bone name, unrounded, or the first vertex two regions both reach. */
+/**
+ * The source's weights by bone name, unrounded, or the first vertex two regions both reach. Only the regions
+ * that weight a bone are read (issue #155): a density-only region gives no vertex a `g`, so a source vertex
+ * inside it is weighted as one no region reaches, it can never be one of an overlap's two, and the weights are
+ * the same numbers the part has with the region left out. Region indices in the result (`local[].region`, the
+ * overlap's `first` and `second`) are indices into `spec.regions`, every form counted.
+ */
 export function sourceWeights(
   vertices: ReadonlyArray<readonly [number, number]>,
   ox: number,
@@ -186,15 +193,22 @@ export function sourceWeights(
   r: number,
   spec: AutoSpec,
 ): { weights: Influence[][]; local: LocalInfluence[] } | { overlap: RegionOverlap; vertex: number; at: Point } {
-  const regions = spec.regions ?? [];
+  const all = spec.regions ?? [];
+  const index: number[] = [];
+  const regions: AutoWeightRegionSpec[] = [];
+  all.forEach((rg, k) => {
+    if (!weightsABone(rg)) return;
+    index.push(k);
+    regions.push(rg);
+  });
   const weights: Influence[][] = [];
   const local: LocalInfluence[] = [];
   for (let v = 0; v < vertices.length; v++) {
     const at: Point = [vertices[v][0] + ox, vertices[v][1] + oy];
     const li = localInfluences(at, segs, r, regions, spec.influences);
-    if ('first' in li) return { overlap: li, vertex: v, at };
+    if ('first' in li) return { overlap: { ...li, first: index[li.first], second: index[li.second] }, vertex: v, at };
     weights.push(li.influences.map((e) => ({ bone: e.bone, weight: e.weight })));
-    local.push(li);
+    local.push(li.region < 0 ? li : { ...li, region: index[li.region] });
   }
   return { weights, local };
 }
@@ -216,7 +230,8 @@ export function autoReductionInput(args: {
   const regions = spec.regions ?? [];
   const protect = spec.protect ?? {};
   const guarded: string[] = [...(protect.influences ?? [])];
-  for (const rg of regions) if (!guarded.includes(rg.bone)) guarded.push(rg.bone);
+  // A density-only region names no bone and guards none (issue #155).
+  for (const rg of regions) if (weightsABone(rg) && !guarded.includes(rg.bone)) guarded.push(rg.bone);
   const fit = (f: AutoSpec['sourceBounds']): MeshReductionInput['sourceBounds'] => ({ minCoverage: f.minCoverage, maxOvershoot: f.maxOvershoot, maxUndercut: f.maxUndercut });
   const src: SourceMesh = {
     points: source.vertices.map(([x, y]) => [x, y] as [number, number]),
