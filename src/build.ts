@@ -44,7 +44,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
 import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
-import { type Reducer, stageBClause, unboundedClause } from './automesh.ts';
+import { allocationClause, type Reducer, stageBClause, unboundedClause } from './automesh.ts';
 import { type AutoMotionCase, failingRows, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison } from './automotion.ts';
 import { bisectAccepted, finalVerdict, gridFrameIds, maxReplays, noReductionProblem, readingText, REPLAY_RULE, type ReplayProbe, type ReplayRow, roleReadings, selectionSchedule, splitSchedule } from './autoreplay.ts';
 import { BARS, causeLines, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
@@ -613,7 +613,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
         rp === undefined || run?.report === null || run === undefined
           ? ''
           : `; replayed to accepted step ${rp.chosen_step} of ${rp.accepted_steps} after ${rp.replays} replay(s); selection ${readingText(rp.selection, roleReadings(run.report).bound)}; held out ${readingText(rp.held_out, roleReadings(run.report).bound)}`;
-      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}${unboundedClause(m.residuals, m.settings.targets.artFit)}${stageBClause(m.settings, m.result)}; ${moved}${replayed}`);
+      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}${unboundedClause(m.residuals, m.settings.targets.artFit)}${allocationClause(m.residuals)}${stageBClause(m.settings, m.result)}; ${moved}${replayed}`);
     } else if ('mode' in m) {
       const c = m.contour;
       const stray = c.strayIslands === 0 ? '' : ` left out ${c.strayIslands} island(s), ${c.strayPixels} px`;

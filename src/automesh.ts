@@ -512,6 +512,19 @@ export function unboundedClause(rows: readonly Residual[], artFit: { maxOvershoo
     .join('');
 }
 
+/**
+ * The build line's weight-aware allocation readings (rig-c 2.29.0, rigc#1291), each printed only when rig-c measured it:
+ * `MQ_DEFORM_LOAD` (D · θ / 4, px — a location reading, not predicted motion) and `MQ_ALLOCATION_CONTRAST` (Δ, only
+ * with the author's gradation). Both are `undeclared`: no bound, never required. Nothing is printed for a row that is
+ * `not-measurable`, so a part with no amplitude prints the line it printed before.
+ */
+export function allocationClause(rows: readonly Residual[]): string {
+  const at = (code: string): Residual | undefined => rows.find((r) => r.code === code && r.region === null && r.value !== null);
+  const load = at('MQ_DEFORM_LOAD');
+  const contrast = at('MQ_ALLOCATION_CONTRAST');
+  return `${load === undefined ? '' : `; deform load ${load.value} px (undeclared)`}${contrast === undefined ? '' : `; allocation contrast ${contrast.value} (undeclared)`}`;
+}
+
 /** The region whose density rows are nearest their bounds (the worst residual among `MQ_MAX_EDGE`/`MQ_TRANSITION` rows), or null without a region. */
 export function worstRegion(rows: readonly Residual[]): string | null {
   return worstResidual(rows.filter((r) => r.region !== null))?.region ?? null;

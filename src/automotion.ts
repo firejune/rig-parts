@@ -2,7 +2,7 @@
  * The motion gate of the automatic mesh mode (issue #126, item 3): a reduced
  * mesh is written only when it moves like the mesh it was reduced from, on the
  * rig's own idle, measured by rig-c's `compareMeshesInMotion`
- * (`rig-c/meshcompare`, 2.28.x) and held to the bounds the author wrote in
+ * (`rig-c/meshcompare`, 2.29.x) and held to the bounds the author wrote in
  * `meshes.<part>.auto.motion` (`AutoMotionSpec`, `src/config.ts`).
  *
  * ## What is compared
@@ -62,7 +62,7 @@
  *
  * Pure: no clock, no randomness, nothing read or written.
  */
-import { type AcceptedOperation, MeshReductionError, type AlphaMask, type ArtFitBounds, type MeasureRow, type MeshQualityReport, type MotionBounds, type MotionSchedule, writeMeshQualityReport } from 'rig-c/mesh';
+import { type AcceptedOperation, MeshReductionError, type AlphaMask, type ArtFitBounds, type MeasureRow, type MeshQualityReport, type MotionAmplitude, type MotionBounds, type MotionSchedule, writeMeshQualityReport } from 'rig-c/mesh';
 import { compareMeshesInMotion, type MotionComparisonInput } from 'rig-c/meshcompare';
 import type { AutoMotionSpec } from './config.ts';
 import type { Problem } from './errors.ts';
@@ -111,6 +111,11 @@ export interface AutoMotionCase {
   regions: Array<{ name: string; polygon: Array<[number, number]>; minArtSamples: number }>;
   /** The bones the reference's weights bind, sorted. */
   boundBones: string[];
+  /**
+   * The motion amplitude the reduction was handed (`src/autoamplitude.ts`), handed to the comparison too (rig-c
+   * 2.29.0, rigc#1291), or null when its derivation stopped — then the comparison's input carries no such key.
+   */
+  amplitude: MotionAmplitude | null;
   /** What the acceptance loop replays when the full result fails the gate (`src/autoreplay.ts`). */
   search: AutoSearch;
 }
@@ -203,6 +208,8 @@ export function motionInput(c: AutoMotionCase, motion: AutoMotionSpec, reference
     bounds,
     motionRequired: true,
     perFrame: false,
+    // rig-c 2.29.0: read by the setup measurement of each build only — MQ_DEFORM_LOAD measured there, no verdict moved.
+    ...(c.amplitude === null ? {} : { motionAmplitude: c.amplitude }),
   };
 }
 

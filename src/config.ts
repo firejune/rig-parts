@@ -302,12 +302,20 @@ export interface AutoSpec {
  * written — absent, the rows are reported and not gated, the contract's own
  * rule; `deformMayFold` lets the part's folds be listed instead of refused,
  * false when absent — the one non-numeric default, echoed in the row.
+ * `gradation` (px per px, 0 or more, or null) is the author's G for rig-c's
+ * `MQ_ALLOCATION_CONTRAST` (docs/MESH_REDUCTION.md §8, *G — what it derives
+ * from*): how fast the mesh may coarsen away from something that needs
+ * density — at d px from a need of size h, edges up to h + G · d, the form of
+ * a region's `grade`. Nothing a rig declares fixes it (rigc#1291), so it is
+ * never derived: left out (or null) it is sent as null, and the row reads
+ * `not-measurable` naming it while `MQ_DEFORM_LOAD` is measured.
  */
 export interface AutoMotionSpec {
   maxLocalDeformation: number;
   maxStretch?: number;
   minStretch?: number;
   deformMayFold?: boolean;
+  gradation?: number | null;
 }
 
 /**
@@ -1188,8 +1196,8 @@ function checkContour(c: Check, at: string, v: Json, bones: Set<string>): void {
  * policy), each list empty and `weightJump` null (no such protection, which
  * the report echoes) — and `regions` and `source.stray` may be left out, as in
  * the contour mode. `motion` is required (issue #126 item 3), and inside it
- * `maxLocalDeformation`; `maxStretch`, `minStretch` and `deformMayFold` may be
- * left out (`AutoMotionSpec`). What only rig-c can judge (a region bound under one
+ * `maxLocalDeformation`; `maxStretch`, `minStretch`, `deformMayFold` and
+ * `gradation` may be left out (`AutoMotionSpec`). What only rig-c can judge (a region bound under one
  * texel, a region outside the art, a protected vertex index the source does
  * not have) is its refusal at the rig stage, in its words.
  */
@@ -1208,8 +1216,10 @@ function checkAuto(c: Check, at: string, v: Json, bones: Set<string>): void {
     c.fail('CONFIG_FIELD_TYPE', `${at}.removalOrder`, `is ${show(o.removalOrder)}; "deformation-load" is required (the one order rig-c offers besides its default), or leave the field out for ascending source index`);
   }
   if ('motion' in o) {
-    const m = c.object(`${at}.motion`, o.motion, ['maxLocalDeformation'], ['maxStretch', 'minStretch', 'deformMayFold']);
+    const m = c.object(`${at}.motion`, o.motion, ['maxLocalDeformation'], ['maxStretch', 'minStretch', 'deformMayFold', 'gradation']);
     if (m !== null) {
+      // rigc#1291: the author's G, a number at or above 0, or null (sent as null: Δ not measured); never derived.
+      if ('gradation' in m && m.gradation !== null) c.number(`${at}.motion.gradation`, m.gradation, 'non-negative');
       if ('maxLocalDeformation' in m) c.number(`${at}.motion.maxLocalDeformation`, m.maxLocalDeformation, 'non-negative');
       if ('maxStretch' in m) c.number(`${at}.motion.maxStretch`, m.maxStretch, 'non-negative');
       if ('minStretch' in m) c.number(`${at}.motion.minStretch`, m.minStretch, 'non-negative');

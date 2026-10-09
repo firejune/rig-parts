@@ -190,7 +190,7 @@ import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, typ
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
 import { type AcceptedOperation, type AlphaMask, checkHullOrder, type TrackAmplitude, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline, windCounterClockwiseInSpineWorld, writeMeshQualityReport } from 'rig-c/mesh';
-import { AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, stageBClause, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
+import { allocationClause, AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, stageBClause, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
 import { AUTO_CASES, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, finerSourcePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
 import { BLOCKED_LABEL, barsOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
@@ -16774,7 +16774,8 @@ function runAutoMeshSuite(): number {
         !line43(num43).includes('not bounded') &&
         typeof val43('MQ_OVERSHOOT') === 'number' &&
         typeof val43('MQ_UNDERCUT') === 'number' &&
-        line43(both43).includes(`; overshoot ${val43('MQ_OVERSHOOT')} (not bounded); undercut ${val43('MQ_UNDERCUT')} (not bounded); motion `) &&
+        // rig-c 2.29.0: the load, the other undeclared reading the line prints, follows the unbounded art rows (MO46).
+        line43(both43).includes(`; overshoot ${val43('MQ_OVERSHOOT')} (not bounded); undercut ${val43('MQ_UNDERCUT')} (not bounded); deform load ${val43('MQ_DEFORM_LOAD')} px (undeclared); motion `) &&
         unboundedClause(twin43, { maxOvershoot: null, maxUndercut: null }) === '; overshoot 1 (not bounded); undercut 0.5 (not bounded)' &&
         unboundedClause(twin43, { maxOvershoot: 3, maxUndercut: 0 }) === '' &&
         unboundedClause(twin43, { maxOvershoot: 3, maxUndercut: null }) === '; undercut 0.5 (not bounded)',
@@ -18087,16 +18088,15 @@ function runAutoStageBCases(say: (name: string, ok: boolean, detail: string, why
   const stopTerms = (d: AmplitudeDerivation): string => ('stops' in d ? d.stops.map((s) => s.term).join(', ') : 'none');
   say(
     'MO39_THE_AMPLITUDE_IS_DERIVED_FROM_THE_DECLARED_IDLE_BY_HAND_AND_EVERY_TERM_IT_CANNOT_DERIVE_IS_STOPPED_BY_NAME',
-    'stops' in d39 &&
-      stopTerms(d39) === 'gradation' &&
-      tracksMatch(d39.tracks) &&
+    'amplitude' in d39 &&
+      d39.amplitude.gradation === null &&
+      tracksMatch(d39.amplitude.tracks) &&
       'amplitude' in g39 &&
       g39.amplitude.gradation === 1 &&
       tracksMatch(g39.amplitude.tracks) &&
       posRow !== undefined &&
-      posRow.motion_amplitude.sent === false &&
-      posRow.motion_amplitude.stops.map((s) => s.term).join() === 'gradation' &&
-      !('motionAmplitude' in ((posRow.quality_report as { effective?: Record<string, unknown> }).effective ?? {})) &&
+      posRow.motion_amplitude.sent === true &&
+      posRow.motion_amplitude.stops.length === 0 &&
       thetas(rules) === wantRules &&
       'theta' in bez &&
       near(bez.theta, 2 * Math.sin((40 * Math.PI) / 360)) &&
@@ -18104,8 +18104,8 @@ function runAutoStageBCases(say: (name: string, ok: boolean, detail: string, why
       stopTerms(group) === 'tracks[g.scaley#0].pairs[a, c].theta' &&
       stopTerms(withConstraint) === 'tracks' &&
       stopTerms(flat) === 'tracks[].epsilon',
-    `fixture: A ${A} deg, θ ${theta1}; derived ${'stops' in d39 ? `stops [${stopTerms(d39)}], tracks ${JSON.stringify(d39.tracks)}` : 'an amplitude'}; with G 1 -> ${thetas(g39)}; row ${JSON.stringify(posRow?.motion_amplitude).slice(0, 300)}; hand rig -> ${thetas(rules)}; Bézier ${JSON.stringify(bez)}; shear -> ${stopTerms(shear)}; group -> ${stopTerms(group)}; constraint -> ${stopTerms(withConstraint)}; ε 0 -> ${stopTerms(flat)}`,
-    'issue #126 Q2: parts declares θ and ε from the motion it already declares; θ = ‖M − I‖ of the pair\'s relative linear part (rig-c §8: 2 sin(α/2), |s − 1|; a translation leaves it unchanged), ε the part\'s motion bound; the gradation G is a number nothing here declares, so the field is not sent and the row names the term — the brief\'s STOP, not a default',
+    `fixture: A ${A} deg, θ ${theta1}; derived ${'stops' in d39 ? `stops [${stopTerms(d39)}]` : `${thetas(d39)}, gradation ${d39.amplitude.gradation}`}; with G 1 -> ${thetas(g39)}; row ${JSON.stringify(posRow?.motion_amplitude).slice(0, 300)}; hand rig -> ${thetas(rules)}; Bézier ${JSON.stringify(bez)}; shear -> ${stopTerms(shear)}; group -> ${stopTerms(group)}; constraint -> ${stopTerms(withConstraint)}; ε 0 -> ${stopTerms(flat)}`,
+    'issue #126 Q2: parts declares θ and ε from the motion it already declares; θ = ‖M − I‖ of the pair\'s relative linear part (rig-c §8: 2 sin(α/2), |s − 1|; a translation leaves it unchanged), ε the part\'s motion bound; the gradation G is the author\'s or null (rigc#1291), never a reason to stop — every other underivable term still stops the field by name',
   );
 
   // MO40 — the five rows: in the row's residuals as rig-c reports them, none bounded, none the worst residual.
@@ -18121,9 +18121,13 @@ function runAutoStageBCases(say: (name: string, ok: boolean, detail: string, why
         const r = res40.find((x) => x.code === code);
         return r !== undefined && r.state === 'undeclared' && r.bound === null && typeof r.value === 'number';
       }) &&
-      ['MQ_ALLOCATION_CONTRAST', 'MQ_DEFORM_LOAD'].every((code) => {
+      ['MQ_DEFORM_LOAD'].every((code) => {
         const r = res40.find((x) => x.code === code);
-        return r !== undefined && r.state === 'not-measurable' && r.bound === null && r.value === null && reasonOf(code).includes('motionAmplitude');
+        return r !== undefined && r.state === 'undeclared' && r.bound === null && typeof r.value === 'number';
+      }) &&
+      ['MQ_ALLOCATION_CONTRAST'].every((code) => {
+        const r = res40.find((x) => x.code === code);
+        return r !== undefined && r.state === 'not-measurable' && r.bound === null && r.value === null && reasonOf(code).includes('motionAmplitude.gradation');
       }) &&
       posRow !== undefined &&
       posRow.worst_residual !== null &&
@@ -18133,11 +18137,13 @@ function runAutoStageBCases(say: (name: string, ok: boolean, detail: string, why
       worstResidual(res40)?.code === posRow.worst_residual.code &&
       worstResidual(forgedBound)?.code === 'MQ_GRADE',
     `rows ${FIVE.map((c) => { const r = res40.find((x) => x.code === c); return `${c} ${r?.state} ${r?.value}`; }).join('; ')}; worst ${posRow?.worst_residual?.code}; of the five alone -> ${worstResidual(res40.filter((r) => FIVE.includes(r.code)))?.code ?? 'none'}; with MQ_GRADE given a bound of a thousandth of its value -> ${worstResidual(forgedBound)?.code}`,
-    'Q7 (rigc#1280): all five reported, undeclared, no bound on any — so worst_residual, which reads declared bounds only, can never pick one; Δ and D need the amplitude, which is not sent (MO39), and rig-c names the field',
+    'Q7 (rigc#1280): all five reported, undeclared, no bound on any — so worst_residual, which reads declared bounds only, can never pick one; the amplitude is sent with gradation null (MO39, rigc#1291), so D is measured and Δ reads not-measurable naming the gradation',
   );
 
   // MO41 — an amplitude, when derived, reaches rig-c: D measured as its definition says, nothing else moved.
-  const in41 = inputOf(autoRigConfig());
+  // The stage now sends the amplitude itself (gradation null), so the call without it is that input with the key taken out.
+  const sent41 = inputOf(autoRigConfig());
+  const in41 = sent41 === null ? null : (({ motionAmplitude: _sent, ...bare }) => bare)(sent41);
   const without41 = in41 === null ? null : runReduction(AT, in41);
   const with41 = in41 === null || !('amplitude' in g39) ? null : runReduction(AT, { ...in41, motionAmplitude: g39.amplitude });
   const rowOf41 = (r: ReductionResult | null, code: string): { state: string; value: number | null } | undefined => (r === null || 'code' in r ? undefined : r.report.candidates[0]?.geometry?.rows.find((x) => x.code === code));
@@ -18181,8 +18187,8 @@ function runAutoStageBCases(say: (name: string, ok: boolean, detail: string, why
       same41((r) => r.report.candidates[0]?.changes?.acceptedAt) &&
       same41((r) => r.report.termination) &&
       same41((r) => r.report.candidates[0]?.accepted),
-    `G 1 (the control's own number; no build passes one): MQ_DEFORM_LOAD ${load41?.state} ${load41?.value} against ${D} by hand (θ dropped: ${D0}); MQ_ALLOCATION_CONTRAST ${delta41?.state} ${delta41?.value}; mesh, acceptedAt, termination, accepted unchanged: ${same41((r) => r.mesh)}, ${same41((r) => r.report.candidates[0]?.changes?.acceptedAt)}, ${same41((r) => r.report.termination)}, ${same41((r) => r.report.candidates[0]?.accepted)}`,
-    'rigc#1287: motionAmplitude on reduceMesh is read by the result\'s measurement only — D = max L·Δshare·θ/4 — and no step, so the mesh and every step are the call\'s without it; this is the path the derivation takes once a gradation is declared',
+    `G 1 (the control's own number): MQ_DEFORM_LOAD ${load41?.state} ${load41?.value} against ${D} by hand (θ dropped: ${D0}); MQ_ALLOCATION_CONTRAST ${delta41?.state} ${delta41?.value}; mesh, acceptedAt, termination, accepted unchanged: ${same41((r) => r.mesh)}, ${same41((r) => r.report.candidates[0]?.changes?.acceptedAt)}, ${same41((r) => r.report.termination)}, ${same41((r) => r.report.candidates[0]?.accepted)}`,
+    'rigc#1287: motionAmplitude on reduceMesh is read by the result\'s measurement only — D = max L·Δshare·θ/4 — and no step, so the mesh and every step are the call\'s without it; the stage takes this path on every derived amplitude since rig-c 2.29.0 (MO45)',
   );
 
   // MO42 — a bound on one of the five rows is not a field: the loader refuses it by name, as it refuses an author amplitude.
@@ -18250,9 +18256,219 @@ function runAutoStageBCases(say: (name: string, ok: boolean, detail: string, why
       same44('mesh_report.json') &&
       sb.log.join('\n').split(sb.out).join('') === sb2.log.join('\n').split(sb2.out).join('') &&
       plain44 !== null &&
-      ['boundaryRuns', 'retriangulate', 'removalOrder', 'motionAmplitude', 'stopAfterAccepted'].every((k) => !(k in plain44)),
+      ['boundaryRuns', 'retriangulate', 'removalOrder', 'stopAfterAccepted'].every((k) => !(k in plain44)),
     `${lines(sb.e).slice(0, 300)}; rig.json ${same44('rig.json')}, mesh_report.json ${same44('mesh_report.json')}; opt-out input keys ${plain44 === null ? 'none' : Object.keys(plain44).join(',')}`,
-    'determinism is a contract: the same config writes the same bytes with the opt-ins on; and a config that names none hands rig-c the input it handed 2.24.1',
+    'determinism is a contract: the same config writes the same bytes with the opt-ins on; and a config that names none hands rig-c no opt-in and no replay stop (the amplitude, sent whenever derived since rig-c 2.29.0, is MO45\'s)',
+  );
+
+  runAutoAmplitudeCases(say, root, pos, { AT, inputOf, tracksMatch, theta1, sent41, with41, lines });
+}
+
+/**
+ * rig-c 2.29.0 (rigc#1291) on the automatic mode: the amplitude sent with the author's gradation or null, MO45–MO50 of
+ * the auto-motion suite. `pos` is MO01's run (no gradation). The tracks are MO39's, derived by hand from the fixture's
+ * idle (`tracksMatch`, θ1); the load is computed by hand from its definition; nothing is a number copied from a run.
+ */
+function runAutoAmplitudeCases(
+  say: (name: string, ok: boolean, detail: string, why: string) => void,
+  root: string,
+  pos: MotionStageRun,
+  k: {
+    AT: string;
+    inputOf: (config: Record<string, unknown>) => MeshReductionInput | null;
+    tracksMatch: (got: TrackAmplitude[]) => boolean;
+    theta1: number;
+    sent41: MeshReductionInput | null;
+    with41: ReductionResult | null;
+    lines: (e: PartsError | null) => string;
+  },
+): void {
+  const { AT, inputOf, tracksMatch, theta1, sent41, with41, lines } = k;
+  const auto = (r: MeshReport | undefined): AutoMeshReport | undefined => (r !== undefined && 'mode' in r && r.mode === 'auto' ? r : undefined);
+  const load = (c: Record<string, unknown>): PartsError | null => refusals(() => parseConfig(c));
+  const has = (e: PartsError | null, code: string, ...words: string[]): boolean => e !== null && e.problems.some((p) => p.code === code && words.every((w) => `${p.object} ${p.detail}`.includes(w)));
+  const withGradation = (g: unknown): Record<string, unknown> => autoRigConfig((_c, a) => ((a.motion as Record<string, unknown>).gradation = g));
+  type Amp = { tracks: TrackAmplitude[]; gradation?: number | null } | null | undefined;
+  const ampIs = (a: Amp, g: number | null): boolean => a !== undefined && a !== null && tracksMatch(a.tracks) && a.gradation === g;
+  type Row = { code: string; state: string; value: number | null; reason: string | null; object: { region: string | null }; allocation?: { contrast?: { economy: number } } };
+  const geoRow = (rows: readonly Row[] | undefined, code: string): Row | undefined => rows?.find((x) => x.code === code && x.object.region === null);
+  const reduced = (r: ReductionResult | null, code: string): Row | undefined => (r === null || 'code' in r ? undefined : geoRow(r.report.candidates[0]?.geometry?.rows as Row[] | undefined, code));
+  const posRow = auto(pos.rows[0]);
+  const posLine = pos.log.find((l) => l.includes('mesh cloth')) ?? '';
+  /** max over the mesh's unique edges of L · Δshare · θ / 4, Δshare = ½ Σ_b |w_u − w_v| over the bones it binds (rig-c §8). */
+  const loadByHand = (m: ReducedMesh, theta: number): number => {
+    let D = 0;
+    const seen = new Set<string>();
+    const wOf = (i: number, b: string): number => ((m.weights ?? [])[i] ?? []).find((x) => x.bone === b)?.weight ?? 0;
+    const bones = [...new Set((m.weights ?? []).flatMap((v) => v.map((x) => x.bone)))];
+    for (let t = 0; t < m.triangles.length; t += 3) {
+      for (let e = 0; e < 3; e++) {
+        const u = Math.min(m.triangles[t + e], m.triangles[t + ((e + 1) % 3)]);
+        const v = Math.max(m.triangles[t + e], m.triangles[t + ((e + 1) % 3)]);
+        if (seen.has(`${u},${v}`)) continue;
+        seen.add(`${u},${v}`);
+        const L = Math.hypot(m.points[u][0] - m.points[v][0], m.points[u][1] - m.points[v][1]);
+        const dShare = bones.reduce((s, b) => s + Math.abs(wOf(u, b) - wOf(v, b)), 0) / 2;
+        D = Math.max(D, (L * dShare * theta) / 4);
+      }
+    }
+    return D;
+  };
+
+  // MO45 — rig-c 2.29 loaded; the stage sends the amplitude with gradation null when the author leaves it out, and the author's
+  // number when written; rig-c echoes it, and the row's settings carry that echo.
+  const ver45 = (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'rig-c', 'package.json'), 'utf8')) as { version: string }).version;
+  const [maj45, min45] = ver45.split('.').map(Number);
+  const sentNull = sent41?.motionAmplitude;
+  const sentHalf = inputOf(withGradation(0.5))?.motionAmplitude;
+  const echo45 = posRow?.settings.motionAmplitude;
+  const effective45 = (posRow?.quality_report as { effective?: { motionAmplitude?: unknown } } | undefined)?.effective?.motionAmplitude;
+  // The plant: a stage that defaults a left-out gradation (0.75, the value rig-c declines as a default) fails the same check.
+  const planted45: Amp = sentNull === undefined || sentNull === null ? null : { ...sentNull, gradation: 0.75 };
+  say(
+    'MO45_RIG_C_2_29_IS_LOADED_AND_THE_AMPLITUDE_IS_SENT_WITH_THE_AUTHORS_GRADATION_OR_NULL_AND_ECHOED_IN_THE_ROW',
+    (maj45 > 2 || (maj45 === 2 && min45 >= 29)) &&
+      ampIs(sentNull, null) &&
+      ampIs(sentHalf, 0.5) &&
+      posRow !== undefined &&
+      posRow.motion_amplitude.sent &&
+      JSON.stringify(echo45) === JSON.stringify(sentNull) &&
+      JSON.stringify(effective45) === JSON.stringify(sentNull) &&
+      !ampIs(planted45, null),
+    `rig-c loaded: ${ver45}; sent without a gradation ${JSON.stringify(sentNull)}; with 0.5 gradation ${JSON.stringify(sentHalf?.gradation)}; row settings echo ${JSON.stringify(echo45)?.slice(0, 200)}; a left-out gradation defaulted to 0.75 -> ${ampIs(planted45, null) ? 'accepted (the check is blind)' : 'refused'}`,
+    'rigc#1291: gradation?: number | null is the author\'s; null is sent when the config leaves it out, so θ and ε, which parts does declare, reach rig-c; no gradation is derived or defaulted here',
+  );
+
+  // MO46 — D measured on the reduction without a gradation: undeclared, equal to its definition by hand, the same with G 1,
+  // never the worst residual, and printed on the build line.
+  const run46 = sent41 === null ? null : runReduction(AT, sent41);
+  const mesh46 = run46 === null || 'code' in run46 ? null : run46.mesh;
+  const D46 = mesh46 === null ? -1 : loadByHand(mesh46, theta1);
+  const D46flat = mesh46 === null ? -1 : loadByHand(mesh46, 1);
+  const load46 = reduced(run46, 'MQ_DEFORM_LOAD');
+  const loadG1 = reduced(with41, 'MQ_DEFORM_LOAD');
+  const posLoad = posRow?.residuals.find((r) => r.code === 'MQ_DEFORM_LOAD' && r.region === null);
+  // The plant: the same residuals with D not measured print no load on the line.
+  const silent46 = allocationClause((posRow?.residuals ?? []).map((r) => (r.code === 'MQ_DEFORM_LOAD' ? { ...r, state: 'not-measurable' as const, value: null } : r)));
+  say(
+    'MO46_THE_LOAD_IS_MEASURED_UNDECLARED_WITHOUT_A_GRADATION_AS_DEFINED_THE_SAME_WITH_ONE_AND_PRINTED_ON_THE_LINE',
+    load46 !== undefined &&
+      load46.state === 'undeclared' &&
+      load46.value !== null &&
+      D46 > 0 &&
+      Math.abs(load46.value - D46) <= 1e-6 &&
+      Math.abs(load46.value - D46flat) > 1e-6 &&
+      loadG1?.value === load46.value &&
+      posLoad !== undefined &&
+      posLoad.state === 'undeclared' &&
+      posLoad.bound === null &&
+      typeof posLoad.value === 'number' &&
+      posRow?.worst_residual?.code !== 'MQ_DEFORM_LOAD' &&
+      posLine.includes(`; deform load ${posLoad.value} px (undeclared)`) &&
+      !silent46.includes('deform load'),
+    `MQ_DEFORM_LOAD ${load46?.state} ${load46?.value} against ${D46} by hand (θ 1: ${D46flat}); with G 1 ${loadG1?.value}; the row ${posLoad?.state} ${posLoad?.value}; worst ${posRow?.worst_residual?.code}; line …${posLine.slice(posLine.indexOf('worst'), posLine.indexOf('worst') + 200)}; with D not measured the clause reads "${silent46}"`,
+    'rig-c §8: D = max L · Δshare · θ / 4 px, a location reading and not predicted motion; it never reads G (rigc#1291: "measured from θ alone"), and it is undeclared — no bound, never required, never the worst residual',
+  );
+
+  // MO47 — Δ: not-measurable naming the gradation when it is null or left out, measured (undeclared, with E) when the
+  // author writes one; the mesh is the same either way.
+  const in47 = inputOf(withGradation(0.75));
+  const run47 = in47 === null ? null : runReduction(AT, in47);
+  const amp47 = in47?.motionAmplitude;
+  const leftOut47 = in47 === null || amp47 === undefined || amp47 === null ? null : runReduction(AT, { ...in47, motionAmplitude: { tracks: amp47.tracks } });
+  const dNull = reduced(run46, 'MQ_ALLOCATION_CONTRAST');
+  const dLeft = reduced(leftOut47, 'MQ_ALLOCATION_CONTRAST');
+  const dSet = reduced(run47, 'MQ_ALLOCATION_CONTRAST');
+  const mesh47 = run47 === null || 'code' in run47 ? null : JSON.stringify(run47.mesh);
+  say(
+    'MO47_THE_CONTRAST_IS_NOT_MEASURABLE_NAMING_THE_GRADATION_UNLESS_THE_AUTHOR_WRITES_ONE_AND_MEASURED_WHEN_WRITTEN',
+    dNull?.state === 'not-measurable' &&
+      (dNull.reason ?? '').includes('motionAmplitude.gradation is declared absent (null)') &&
+      dLeft?.state === 'not-measurable' &&
+      (dLeft.reason ?? '').includes('motionAmplitude.gradation is not declared') &&
+      dSet?.state === 'undeclared' &&
+      typeof dSet.value === 'number' &&
+      typeof dSet.allocation?.contrast?.economy === 'number' &&
+      mesh47 !== null &&
+      mesh46 !== null &&
+      mesh47 === JSON.stringify(mesh46),
+    `null -> ${dNull?.state}: ${(dNull?.reason ?? '').slice(0, 140)}; left out -> ${dLeft?.state}: ${(dLeft?.reason ?? '').slice(0, 100)}; 0.75 -> ${dSet?.state} Δ ${dSet?.value}, E ${dSet?.allocation?.contrast?.economy}; mesh the same: ${mesh47 !== null && mesh47 === JSON.stringify(mesh46)}`,
+    'rigc#1291: Δ\'s need field relaxes at the gradation G and nothing a rig declares fixes it, so without the author\'s number Δ is withheld by name, never read at a default; with it Δ and E are measured, undeclared, and no step reads either',
+  );
+
+  // MO48 — the comparison's input carries the same amplitude; its setup sections measure the load on both builds, Δ there
+  // not-measurable naming the deviation bound a comparison does not declare. The plant: the amplitude dropped from the input.
+  const c48 = motionCaseOf(autoRigConfig());
+  const ref48 = pos.builds[1]?.model ?? null;
+  const cand48 = pos.builds[0]?.model ?? null;
+  const mi48 = c48 === null || c48.motion === undefined || ref48 === null || cand48 === null ? null : motionInput(c48, c48.motion, ref48, cand48);
+  const bare48 = c48 === null || c48.motion === undefined || ref48 === null || cand48 === null ? null : motionInput({ ...c48, amplitude: null }, c48.motion, ref48, cand48);
+  const cmp48 = mi48 === null ? null : runComparison(AT, mi48);
+  const cmpBare = bare48 === null ? null : runComparison(AT, bare48);
+  const setup = (r: MeshQualityReport | Problem | null, which: 'reference' | 'candidate', code: string): Row | undefined =>
+    r === null || 'code' in r ? undefined : geoRow((which === 'reference' ? r.reference?.geometry?.rows : r.candidates[0]?.geometry?.rows) as Row[] | undefined, code);
+  const doc48 = posRow?.motion_report as { effective?: { motionAmplitude?: unknown } } | undefined;
+  const loads48 = (['reference', 'candidate'] as const).map((w) => setup(cmp48, w, 'MQ_DEFORM_LOAD'));
+  const bareLoads = (['reference', 'candidate'] as const).map((w) => setup(cmpBare, w, 'MQ_DEFORM_LOAD'));
+  const delta48 = setup(cmp48, 'candidate', 'MQ_ALLOCATION_CONTRAST');
+  // With the author's gradation the comparison still withholds Δ, now naming the deviation bound it does not declare.
+  const c48g = motionCaseOf(withGradation(0.75));
+  const cmp48g = c48g === null || c48g.motion === undefined || ref48 === null || cand48 === null ? null : runComparison(AT, motionInput(c48g, c48g.motion, ref48, cand48));
+  const delta48g = setup(cmp48g, 'candidate', 'MQ_ALLOCATION_CONTRAST');
+  say(
+    'MO48_THE_COMPARISON_INPUT_CARRIES_THE_AMPLITUDE_AND_ITS_SETUP_SECTIONS_MEASURE_THE_LOAD_ON_BOTH_BUILDS',
+    mi48 !== null &&
+      JSON.stringify(mi48.motionAmplitude) === JSON.stringify(sentNull) &&
+      JSON.stringify(doc48?.effective?.motionAmplitude) === JSON.stringify(sentNull) &&
+      loads48.every((r) => r?.state === 'undeclared' && typeof r.value === 'number') &&
+      delta48?.state === 'not-measurable' &&
+      (delta48.reason ?? '').includes('motionAmplitude.gradation is declared absent (null)') &&
+      delta48g?.state === 'not-measurable' &&
+      (delta48g.reason ?? '').includes('targets.maxBoundaryDeviation') &&
+      setup(cmp48g, 'candidate', 'MQ_DEFORM_LOAD')?.value === loads48[1]?.value &&
+      bare48 !== null &&
+      !('motionAmplitude' in bare48) &&
+      bareLoads.every((r) => r?.state === 'not-measurable') &&
+      cmp48 !== null &&
+      cmpBare !== null &&
+      !('code' in cmp48) &&
+      !('code' in cmpBare) &&
+      motionVerdict(AT, cmp48) === motionVerdict(AT, cmpBare),
+    `input amplitude ${JSON.stringify(mi48?.motionAmplitude)?.slice(0, 120)}; the written comparison echoes it: ${JSON.stringify(doc48?.effective?.motionAmplitude) === JSON.stringify(sentNull)}; setup load source / result ${loads48.map((r) => `${r?.state} ${r?.value}`).join(' / ')}; Δ there ${delta48?.state}: ${(delta48?.reason ?? '').slice(0, 120)}; with gradation 0.75 Δ ${delta48g?.state}: ${(delta48g?.reason ?? '').slice(0, 120)}, load ${setup(cmp48g, 'candidate', 'MQ_DEFORM_LOAD')?.value}; amplitude dropped -> key ${bare48 !== null && 'motionAmplitude' in bare48}, load ${bareLoads.map((r) => r?.state).join(' / ')}; verdict the same: ${cmp48 !== null && cmpBare !== null && !('code' in cmp48) && !('code' in cmpBare) && motionVerdict(AT, cmp48) === motionVerdict(AT, cmpBare)}`,
+    'rig-c 2.29.0: compareMeshesInMotion takes motionAmplitude and hands it to each build\'s setup measurement only — the load is measured there; Δ names the gradation when it is null and, when it is set, the deviation bound a comparison does not declare (rig-c §8, *Stage B — the amplitude on a comparison*); no verdict moves',
+  );
+
+  // MO49 — the loader: a gradation that is not a number at or above 0, or null, is refused by name; 0, a number and null load.
+  const bad49: Array<[string, unknown]> = [['-0.5', -0.5], ['"0.75"', '0.75'], ['true', true], ['Infinity', Number.POSITIVE_INFINITY]];
+  const refused49 = bad49.map(([name, g]) => [name, load(withGradation(g))] as const);
+  const good49 = [0, 0.75, null].map((g) => load(withGradation(g)));
+  say(
+    'MO49_A_GRADATION_THAT_IS_NOT_A_NUMBER_AT_OR_ABOVE_0_OR_NULL_IS_REFUSED_BY_THE_LOADER_BY_NAME',
+    refused49.every(([, e]) => has(e, 'CONFIG_FIELD_TYPE', `${AT}.motion.gradation`, 'a number at or above 0')) && good49.every((e) => e === null) && load(autoRigConfig()) === null,
+    `${refused49.map(([n, e]) => `${n} -> ${lines(e).slice(0, 140)}`).join('; ')}; 0, 0.75, null, left out -> ${[...good49, load(autoRigConfig())].map((e) => (e === null ? 'loads' : lines(e).slice(0, 80))).join(', ')}`,
+    'rigc#1291: G is px per px, 0 or more, or declared absent; the loader refuses anything else by the field\'s path before rig-c is reached, and never reads it as a default',
+  );
+
+  // MO50 — determinism with a gradation, and the gradation reaches the bytes (the plant: the run without one differs).
+  const g50a = motionStage(join(root, 'gradation-a'), withGradation(0.75));
+  const g50b = motionStage(join(root, 'gradation-b'), withGradation(0.75));
+  const text = (run: MotionStageRun, f: string): string | null => (existsSync(join(run.out, f)) ? readFileSync(join(run.out, f), 'utf8') : null);
+  const same50 = (f: string): boolean => text(g50a, f) !== null && text(g50a, f) === text(g50b, f);
+  const row50 = auto(g50a.rows[0]);
+  const line50 = g50a.log.find((l) => l.includes('mesh cloth')) ?? '';
+  say(
+    'MO50_TWO_RUNS_WITH_A_GRADATION_WRITE_THE_SAME_BYTES_AND_THE_GRADATION_REACHES_THEM',
+    g50a.e === null &&
+      same50('rig.json') &&
+      same50('mesh_report.json') &&
+      g50a.log.join('\n').split(g50a.out).join('') === g50b.log.join('\n').split(g50b.out).join('') &&
+      row50?.settings.motionAmplitude?.gradation === 0.75 &&
+      row50.residuals.some((r) => r.code === 'MQ_ALLOCATION_CONTRAST' && r.state === 'undeclared') &&
+      line50.includes('; allocation contrast ') &&
+      text(g50a, 'mesh_report.json') !== text(pos, 'mesh_report.json') &&
+      text(g50a, 'rig.json') === text(pos, 'rig.json'),
+    `${lines(g50a.e).slice(0, 200)}; rig.json ${same50('rig.json')}, mesh_report.json ${same50('mesh_report.json')}; echo ${JSON.stringify(row50?.settings.motionAmplitude?.gradation)}; Δ in the row ${row50?.residuals.find((r) => r.code === 'MQ_ALLOCATION_CONTRAST')?.state}; the report against the run without a gradation differs: ${text(g50a, 'mesh_report.json') !== text(pos, 'mesh_report.json')}, the rig the same: ${text(g50a, 'rig.json') === text(pos, 'rig.json')}`,
+    'determinism is a contract; and the gradation changes the report (the echo, Δ) and nothing the rig writes — no step reads it',
   );
 }
 
