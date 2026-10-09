@@ -1,6 +1,6 @@
 # Contributing
 
-spine-parts is small and opinionated, and most of the opinions are written
+rig-parts is small and opinionated, and most of the opinions are written
 down — [CLAUDE.md](CLAUDE.md) is the doctrine, and it is worth ten minutes before
 a first patch.
 
@@ -12,7 +12,7 @@ and where the next reader finds them.
 
 A good defect report names three things:
 
-1. what you gave spine-parts — the command line, and the smallest input that
+1. what you gave rig-parts — the command line, and the smallest input that
    reproduces it (a `layers.json` with one layer is usually enough; do not
    attach art you may not share);
 2. what it printed, verbatim, including the rule name on every `FAIL` line;
@@ -37,8 +37,8 @@ CI runs first), the corpus suite reports a HOLE rather than a result, and the
 summary says so.
 
 The suites run concurrently, one worker process per suite, as many at once as
-the machine's available parallelism (`SPINE_PARTS_SELFTEST_JOBS=<n>` sets the
-number). What the run prints is the same either way: each suite's lines, in
+the machine's available parallelism (`RIG_PARTS_SELFTEST_JOBS=<n>` sets the
+number; the former `SPINE_PARTS_SELFTEST_JOBS` is read when it is not set). What the run prints is the same either way: each suite's lines, in
 the suites' own order, one suite after another.
 
 A fourth needs a network, because it installs packages:
@@ -91,6 +91,6 @@ Keep one unit of work per commit.
 ## Licence
 
 Contributions are accepted under the MIT licence in [LICENSE](LICENSE).
-spine-parts depends on rig-c; `spine-core` is this repository's development
+rig-parts depends on rig-c; `spine-core` is this repository's development
 dependency, for the round trip in the selftest and CI. [NOTICE.md](NOTICE.md) sets
 out what that means.

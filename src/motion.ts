@@ -58,12 +58,12 @@
  * `<bone>_ctl` at the SAME origin, re-parent the bone under it, and move the
  * keys to the control. The pose is the same up to float rounding: the
  * extra bone in each chain moves the rendered idle frames by at most one
- * level in a channel (measured on both public examples, spine-parts #13).
+ * level in a channel (measured on both public examples, rig-parts #13).
  *
  * ⚠️ **This satisfies the rule's wording only.** The meshes are still
  * deformed every frame — by the control's motion, through the bone they are
  * weighted to — so whatever cost `A15` exists to keep off the player is paid
- * all the same. Measured (spine-parts #13): on both public examples every
+ * all the same. Measured (rig-parts #13): on both public examples every
  * shown mesh has a driving bone whose world transform changes on every idle
  * frame, with the controls and without them, so a dirty-skip renderer can
  * skip none either way. rig-c 1.3.0 answered the rule's side

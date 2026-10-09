@@ -154,7 +154,7 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   writePng(outs.recomposite, result.recomposite);
   writePng(outs.errorMap, result.errorMap);
   const [W, H] = result.parts.rig_size;
-  log(`spine-parts assemble: ${result.images.length} part(s) on a ${W}x${H} rig (${result.parts.scale_rig_per_source} rig px per source px), seam rule ${result.seamRule}, projection rule ${result.projectRule}`);
+  log(`rig-parts assemble: ${result.images.length} part(s) on a ${W}x${H} rig (${result.parts.scale_rig_per_source} rig px per source px), seam rule ${result.seamRule}, projection rule ${result.projectRule}`);
   for (const p of result.parts.parts) {
     log(
       `  ${p.name.padEnd(11)} ${p.from.padEnd(16)} ${`${p.w}x${p.h}`.padEnd(9)} @${String(p.x).padStart(4)},${String(p.y).padStart(4)} ` +
@@ -593,7 +593,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     });
   }
   const red = gate.filter((g) => g.status !== 0);
-  log(`spine-parts rig: ${cfg.key}, rig ${parts.rig_size[0]}x${parts.rig_size[1]}, ${parts.parts.length} part(s)`);
+  log(`rig-parts rig: ${cfg.key}, rig ${parts.rig_size[0]}x${parts.rig_size[1]}, ${parts.parts.length} part(s)`);
   let vertices = 0;
   for (const m of rig.meshReport) {
     vertices += m.vertices;
@@ -671,7 +671,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
   mkdirSync(join(input.out, 'images'), { recursive: true });
   for (const [file, img] of rig.images) writePng(join(input.out, 'images', file), img);
   for (const [file, text] of texts) writeFileSync(join(input.out, file), text);
-  log(`spine-parts rig: wrote ${join(input.out, 'rig.json')}, motion.json, mesh_report.json and ${rig.images.length} image(s) under ${join(input.out, 'images')}`);
+  log(`rig-parts rig: wrote ${join(input.out, 'rig.json')}, motion.json, mesh_report.json and ${rig.images.length} image(s) under ${join(input.out, 'images')}`);
   return rig;
 }
 
@@ -746,7 +746,7 @@ export function requirementText(name: string, line: RequirementLine): string {
  */
 export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string, log: Log): CheckReport {
   const v = rigc(['--version']);
-  log(`spine-parts check: ${input.rig} -> ${input.out}`);
+  log(`rig-parts check: ${input.rig} -> ${input.out}`);
   const versionLines = v.out.trim().split('\n');
   const entryLine = versionLines.find((l) => l.startsWith('entry:'));
   log(`  rigc ${versionLines[0]} at ${bin}${entryLine === undefined ? '' : `; ${entryLine}`}`);
@@ -813,7 +813,7 @@ export interface LoopResult {
 export function loopStage(frames: string, out: string, format: LoopFormat, log: Log): LoopResult {
   const set = readFrameSet(frames);
   const images = set.frames.map((fr) => fr.image);
-  log(`spine-parts loop: ${set.dir} -> ${out}`);
+  log(`rig-parts loop: ${set.dir} -> ${out}`);
   log(`  ${images.length} frame(s) ${images[0]?.width ?? 0}x${images[0]?.height ?? 0} at ${set.fps} fps (from frames.json), animation ${set.animation ?? '(none)'}`);
   let used = images;
   const lastName = set.frames[set.frames.length - 1]?.name ?? '';
@@ -956,7 +956,7 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   for (const p of BUILD_OWNS) rmSync(join(out, p), { recursive: true, force: true });
   // The idle-keys value is named only when it is not the default, so a build without the flag, or with the default, prints the line it printed before issue #95.
   const idleKeys = input.idleKeys ?? DEFAULT_IDLE_KEYS;
-  log(`spine-parts build: ${input.config} -> ${out}, seam rule ${input.seam}, projection rule ${input.project}, page edges ${input.pageEdges}, pack shape ${input.packShape ?? DEFAULT_PACK_SHAPE}${idleKeys === DEFAULT_IDLE_KEYS ? '' : `, idle keys ${idleKeys}`}${input.loop ? ', with the idle loop' : ''}`);
+  log(`rig-parts build: ${input.config} -> ${out}, seam rule ${input.seam}, projection rule ${input.project}, page edges ${input.pageEdges}, pack shape ${input.packShape ?? DEFAULT_PACK_SHAPE}${idleKeys === DEFAULT_IDLE_KEYS ? '' : `, idle keys ${idleKeys}`}${input.loop ? ', with the idle loop' : ''}`);
 
   try {
     // build runs rig next, which needs the whole config, so the full loader is

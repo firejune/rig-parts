@@ -83,7 +83,7 @@ export async function runPainting(client: ComfyClient, run: PaintRun, say: (line
     const waited = await client.waitQueueEmpty(run.wait, say);
     if (waited > 0.05) say(`  queue empty after ${waited.toFixed(1)} s`);
     const graph = paintingGraph(g, seed, prompts, `spine_parts_${run.config.key}_${seed}`, skeletonRef);
-    const id = await client.submit(graph, 'spine-parts');
+    const id = await client.submit(graph, 'rig-parts');
     say(`  seed ${seed}: queued prompt ${id}; GPU job started`);
     const { entry, elapsed } = await client.waitHistory(id, run.timeout);
     const image = historyImages(entry).find((im) => im.type === 'output');

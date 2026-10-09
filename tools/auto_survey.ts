@@ -12,7 +12,7 @@
  *   `candidatesTried`, the worst residual and the wall time of the call; beside
  *   it the lattice at grid = the case's spacing and the contour mode at the
  *   case's own parameters (threshold 8, the mode's reading).
- * - **examples**: `<key>=<build dir>` is a `spine-parts build --out` directory
+ * - **examples**: `<key>=<build dir>` is a `rig-parts build --out` directory
  *   of the public example `examples/<key>/` (its `parts.json` and `parts/`).
  *   Every mesh part is switched, alone, to `auto` under {@link POLICY} — ONE
  *   numeric policy, written before any example was reduced and not tuned per
@@ -26,7 +26,7 @@
  *   (`rig/mesh_report.json` of the build) and the contour mode at issue #106's
  *   stated set (threshold 8, tolerance 1, margin 1, stray 4, spacing = grid).
  * - `--write <dir>` writes `<dir>/<key>.json`: the example's config with every
- *   part that built switched to `auto`, for a real `spine-parts build` through
+ *   part that built switched to `auto`, for a real `rig-parts build` through
  *   rigc's gate and `check`. A refused part stays on its tracked mode.
  *
  * Timing is the one clock read in this repository's tools and is not a claim

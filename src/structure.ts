@@ -6,7 +6,7 @@
  * origins. A changed parent, a changed tip and a renamed bone are invisible
  * to it, by its own definition. This module reads the rest — parents, tips,
  * lengths, directions, required bones and roles — through an explicit bone
- * map, and `spine-parts compare` prints it. `compare()` is not touched.
+ * map, and `rig-parts compare` prints it. `compare()` is not touched.
  *
  * ## The inputs, told apart by what they state
  *

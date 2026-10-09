@@ -279,7 +279,7 @@ export function detachedRules(constraints: readonly ConfigConstraint[]): Detache
     for (const b of driven) {
       if (typeof b !== 'string' || seen.has(`${followed}\u0000${b}`)) continue;
       seen.add(`${followed}\u0000${b}`);
-      out.push({ bone: followed, notUnder: b, why: `spine-parts: "${followed}" is the ${field} of ${c.type} constraint "${c.name}" (config.constraints[${i}]), and "${b}" is a bone it drives; under it, driving it would move what it follows` });
+      out.push({ bone: followed, notUnder: b, why: `rig-parts: "${followed}" is the ${field} of ${c.type} constraint "${c.name}" (config.constraints[${i}]), and "${b}" is a bone it drives; under it, driving it would move what it follows` });
     }
   });
   return out;
@@ -295,7 +295,7 @@ export function detachedRules(constraints: readonly ConfigConstraint[]): Detache
  *   declared, which needs rig-c 1.3.0 or later (an older rigc refuses
  *   the unknown invariant by name).
  *
- * Measured on the two public examples (spine-parts #13, `tools/idle_cost.ts`):
+ * Measured on the two public examples (rig-parts #13, `tools/idle_cost.ts`):
  * `direct` removes 31 of 72 bones (demo) and 24 of 56 (sample); every shown
  * mesh (8 and 6) has a driving bone whose world transform changes on every
  * idle frame under both, so the meshes a dirty-skip renderer could skip are 0
@@ -336,7 +336,7 @@ export function isIdleKeys(v: IdleKeys | string): v is IdleKeys {
 export type RigCommand = 'rig' | 'build';
 
 /** The `why` of the `invariants.idleDrivesMeshes` that `idleKeys: 'direct'` declares. */
-export const IDLE_DRIVES_MESHES_WHY = 'painting rig: the idle is meant to deform the meshes it keys (spine-parts rig --idle-keys direct)';
+export const IDLE_DRIVES_MESHES_WHY = 'painting rig: the idle is meant to deform the meshes it keys (rig-parts rig --idle-keys direct)';
 
 /** One row of `mesh_report.json`: a lattice mesh's row is as it always was; a contour mesh's says so. */
 export type MeshReport = LatticeMeshReport | ContourMeshReport | AutoMeshReport;

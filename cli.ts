@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * spine-parts — one painting and its See-through layers in, Spine-ready parts
+ * rig-parts — one painting and its See-through layers in, Spine-ready parts
  * and rig specs out, verified through rig-c.
  *
  * Every command prints named, numeric findings and nothing else an agent has
@@ -51,10 +51,10 @@ function version(): string {
  */
 const LATER: ReadonlyArray<[string, string]> = [];
 
-const HELP = `spine-parts ${version()} — Spine-ready parts from one painting and its See-through layers
+const HELP = `rig-parts ${version()} — Spine-ready parts from one painting and its See-through layers
 
 usage:
-  spine-parts layers <dir | layers.json | file.psd>
+  rig-parts layers <dir | layers.json | file.psd>
       Read a See-through decomposition — the ComfyUI wrapper form (a directory
       holding layers.json and one PNG per layer) or an upstream .psd — and print
       every layer: draw order, name, tag group, box, size, opaque pixels, depth,
@@ -66,7 +66,7 @@ usage:
       unknown tag, a PNG whose size is not its box, and anything else outside
       the input contract — never a WARN.
 
-  spine-parts sheet --source <painting.png> --layers <path> [--layers <path> ...]
+  rig-parts sheet --source <painting.png> --layers <path> [--layers <path> ...]
                     --out <sheet.png> [--cell <px>] [--cols <n>]
       A contact sheet: the painting, then every layer or part, each on a
       checkerboard and labelled with its name, size and opaque pixel count.
@@ -74,7 +74,7 @@ usage:
       from parts/ beside it). --cell defaults to 220, --cols to 8; both are
       printed. The same information is printed as text.
 
-  spine-parts propose --parts <dir> --source <painting.png> --out <dir> [--compare <config.json>]
+  rig-parts propose --parts <dir> --source <painting.png> --out <dir> [--compare <config.json>]
       Propose bones, meshes, regions and an idle from the assembled parts (<dir>
       holds parts.json and parts/). Roles come from each part's See-through tag,
       never its name. Writes <out>/proposal.json (config-shaped: bones, meshes,
@@ -94,7 +94,7 @@ usage:
       and width ("-- no chain proposed" is the one to act on; AUTHORING §3).
       --compare prints each shared bone's distance, proposal to config, in px.
       It reads bone origins only — not parents, tips, lengths, directions or
-      names, so a changed parent or tip scores 0; spine-parts compare reads those.
+      names, so a changed parent or tip scores 0; rig-parts compare reads those.
       After the LINT lines, one "coverage" line per bone says which check read
       it ("checked, clean" or "checked, LINT") or that none did and why ("not
       checked": its role — a control binds nothing and may sit off the art —
@@ -108,7 +108,7 @@ usage:
       bone differs (origin, tip, parent; how far, in px). No confidence is
       computed. It prints "wrote ${BASIS_FILE} (…)" after the coverage lines.
 
-  spine-parts propose … [--keypoints <keypoints.json> [--person <id>]]
+  rig-parts propose … [--keypoints <keypoints.json> [--person <id>]]
       Read the figure's pose from one explicit file (spec "${KEYPOINTS_SPEC}"):
       its space (painting-px, origin top-left, y down — another is refused),
       the image's width and height (held to --source's, KEYPOINTS_IMAGE_SIZE),
@@ -126,19 +126,19 @@ usage:
       instead of by screen y, and prints the rule set it used first. Without
       --keypoints nothing changes.
 
-  spine-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
+  rig-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
       Draw the config's CURRENT bones instead (<out>/render/landmarks_config.png
       and _head) and LINT them (by the joints too, given --keypoints), with the
       coverage lines after them; no ${BASIS_FILE}, as nothing is proposed.
       Exits 1 when any LINT line is printed.
 
-  spine-parts propose --head-box --full <dir | layers.json | file.psd> --canvas <W>x<H>
+  rig-parts propose --head-box --full <dir | layers.json | file.psd> --canvas <W>x<H>
       Propose seethrough.head_box (source px, square) from the full run's
       layers for a painting of WxH px (portrait or landscape: the full run is
       mapped back through the pad inputs added), held inside the painting; a
       shift is printed when one was needed.
 
-  spine-parts compare --left <file> --right <file> [--map <bonemap.json>]
+  rig-parts compare --left <file> --right <file> [--map <bonemap.json>]
       Compare two skeletons bone by bone. Each file is a config, a proposal.json
       or a rig.json (rigc-rig/1), told apart by what it states: "spec" (read by
       rig-c's own reader), "key" (the config loader) or "bones". No parts and
@@ -167,7 +167,7 @@ usage:
       (STRUCTURE_REQUIRED_PRESENT) or each refusal of a file; every other row is
       a figure and exits 0.
 
-  spine-parts rig --config <config.json> --parts <dir> --out <dir> [--idle-keys ctl|direct]
+  rig-parts rig --config <config.json> --parts <dir> --out <dir> [--idle-keys ctl|direct]
                   [--page-edges pot|free] [--pack-shape rect|polygon]
       Author the rig: bones at the config's landmarks (a chain makes
       <chain>0..n, each link turned along its chain with its length, so a
@@ -200,7 +200,7 @@ usage:
       rig-c 1.3.0 or later and makes A15 a SKIP that prints its cost (the
       stage prints that SKIP line). The pose is the same to one level of float
       rounding, and so is the per-frame mesh work (AUTHORING §5).
-  spine-parts check --rig <dir> --out <dir> [--parts <dir>] [--source <painting.png>]
+  rig-parts check --rig <dir> --out <dir> [--parts <dir>] [--source <painting.png>]
                     [--page-edges pot|free] [--pack-shape rect|polygon]
                     [--requirements <file.json>]
       Build, gate, render and measure a rig through rig-c's CLI (the rigc at
@@ -247,7 +247,7 @@ usage:
       never a FAIL, because a pixel no part holds is missing from both sides of
       the seam; SKIP when parts.json has no such block. What a bar cannot
       read it says SKIP for, by name, with the reason (AUTHORING §7, Measuring a
-      rig spine-parts did not assemble): without parts.json the seam,
+      rig rig-parts did not assemble): without parts.json the seam,
       BREATH_VISIBLE, BLINK_NO_HOLE, TIP_OVER_ROOT, STILL_REGIONS_DARK and
       RECOMPOSITE_HOLES; without an idle the loop and every line that reads idle
       frames, and no idle is rendered. The gate always runs. The last line says
@@ -301,7 +301,7 @@ usage:
       CHECK_REQUIREMENT_MEASURABLE, and the run is not PASS. Without the flag
       nothing is read, written or printed for it.
 
-  spine-parts loop --frames <dir> --out <file.png | file.gif> [--palette]
+  rig-parts loop --frames <dir> --out <file.png | file.gif> [--palette]
       Encode a frame set rigc render wrote (its --out directory, or the set
       directory inside it) as a looping animation: .png writes an APNG
       (acTL/fcTL/fdAT, lossless — the exactness record), .png with --palette an
@@ -315,7 +315,7 @@ usage:
       onto frame 0 itself. Animated WebP is not written — it needs a VP8/VP8L
       encoder, out of scope.
 
-  spine-parts assemble --source <painting.png> --full <dir|psd> --head <dir|psd>
+  rig-parts assemble --source <painting.png> --full <dir|psd> --head <dir|psd>
                        --config <config.json> --out <dir> [--seam near-white|silhouette]
                        [--project core|visible]
       Merge the full-body and head-crop See-through runs into rig-space parts:
@@ -344,7 +344,7 @@ usage:
       erodes only along a rim where a later layer is in front. It defaults to
       ${DEFAULT_PROJECT_RULE}.
 
-  spine-parts assemble --propose-plan --source <painting.png> --full <dir|psd>
+  rig-parts assemble --propose-plan --source <painting.png> --full <dir|psd>
                        --head <dir|psd> --config <config.json>
       Print {plan, extend_below_crop, notes} for config.assemble, from the two
       runs. A layer \`layers\` WARNs about (PLAN_LAYER_TRANSLUCENT,
@@ -353,7 +353,7 @@ usage:
       config.seethrough.resolution and config.assemble.rig_scale — the rest of
       the config need not exist yet.
 
-  spine-parts inputs --source <painting.png> --config <config.json> --out <dir>
+  rig-parts inputs --source <painting.png> --config <config.json> --out <dir>
       Cut the two images See-through is fed: <out>/st_input_full.png (the
       painting centred on a white square of its longer side: white left and
       right of a portrait painting, above and below a landscape one) and, when
@@ -361,7 +361,7 @@ usage:
       cropped at its exact size). Refuses a translucent painting and a head box
       outside the painting, by name.
 
-  spine-parts comfy seethrough --image <png> --out <dir> [--host <url>]
+  rig-parts comfy seethrough --image <png> --out <dir> [--host <url>]
                     [--resolution 1024] [--steps 30] [--seed 42] [--offload] [--lama] [--nf4]
                     [--prefix spine_parts] [--wait 1800] [--timeout 3600] [--poll 3]
       Optional. Run See-through on a ComfyUI box with the jtydhr88/ComfyUI-See-through
@@ -374,7 +374,7 @@ usage:
       --lama turns the wrapper's LaMa inpainting on and --nf4 its nf4
       quantisation; both are off unless given, as --offload is.
 
-  spine-parts comfy paint --config <config.json> --out <dir> [--host <url>]
+  rig-parts comfy paint --config <config.json> --out <dir> [--host <url>]
                     [--seeds 1] [--seed0 <generation.seed>] [--wait 1800] [--timeout 3600] [--poll 3]
       Optional. Generate the painting from the config's inline generation block:
       <out>/painting_<seed>.png and painting_<seed>_meta.json (the prompts
@@ -383,7 +383,7 @@ usage:
       is set. The pose words are generation.pose, or the control skeleton's own.
       The config needs only key and generation here; the rest comes later.
 
-  spine-parts build --config <config.json> --source <painting.png> --full <dir|psd>
+  rig-parts build --config <config.json> --source <painting.png> --full <dir|psd>
                     --head <dir|psd> --out <dir> [--seam near-white|silhouette]
                     [--project core|visible] [--page-edges pot|free]
                     [--pack-shape rect|polygon] [--loop] [--requirements <file.json>]
@@ -414,12 +414,12 @@ usage:
       rigc refuses the pair a control splits, and the RIG_RIGC_GREEN line
       names the flag on the command that ran.
 
-  spine-parts compose --scene <scene.json> --out <dir> [--requirements <file.json>]
+  rig-parts compose --scene <scene.json> --out <dir> [--requirements <file.json>]
       Bind several finished characters into one rig. The scene file (spec
       "${SCENE_SPEC}") states the canvas {width, height}, an optional plate
       {image, provenance: ${PROVENANCES.join(' | ')}, note?}, the characters
       [{id, build, offset: [x, y]}] — each build the --out of a green
-      \`spine-parts build\` (its check/check.json PASS), each offset a
+      \`rig-parts build\` (its check/check.json PASS), each offset a
       translation from its rig px to canvas px — and order: the draw order,
       back to front, of character ids (that character's remaining slots, in
       its own order) and "<id>:<slot>" entries, every slot exactly once.
@@ -455,8 +455,8 @@ usage:
       order are the author's and judged by nothing. Exit 0 when the check is
       PASS, 1 otherwise.
 
-  spine-parts --version
-  spine-parts --help
+  rig-parts --version
+  rig-parts --help
 
 ${LATER.length === 0 ? '' : `not implemented in this version (each exits 2):\n${LATER.map(([name, what]) => `  ${name.padEnd(9)} ${what}`).join('\n')}\n\n`}exit codes: 0 done, 1 input refused (FAIL lines name every reason), 2 usage or not implemented
 `;
@@ -472,7 +472,7 @@ function printRefusal(err: unknown): number {
 
 function usage(message: string): number {
   console.log(`  FAIL  USAGE: ${message}`);
-  console.log('spine-parts --help lists the commands');
+  console.log('rig-parts --help lists the commands');
   return EXIT_USAGE;
 }
 
@@ -481,7 +481,7 @@ function fixed(v: number | null): string {
 }
 
 function printLayerTable(set: LayerSet): void {
-  console.log(`spine-parts layers: ${set.form === 'wrapper' ? 'ComfyUI wrapper form' : 'PSD'}, ${set.source}`);
+  console.log(`rig-parts layers: ${set.form === 'wrapper' ? 'ComfyUI wrapper form' : 'PSD'}, ${set.source}`);
   console.log(`  canvas ${set.canvas.w}x${set.canvas.h}, ${set.layers.length} layer(s), back to front`);
   const figures = layerFigures(set);
   const rows = set.layers.map((l, i) => [
@@ -565,7 +565,7 @@ function cmdSheet(args: string[]): number {
     // every other command creates its --out, so this one does too.
     mkdirSync(dirname(out), { recursive: true });
     writePng(out, sheet);
-    console.log(`spine-parts sheet: ${out}`);
+    console.log(`rig-parts sheet: ${out}`);
     console.log(`  ${tiles.length} tile(s) in ${cols} column(s) of ${cell} px, sheet ${sheet.width}x${sheet.height}`);
     tiles.forEach((t, i) => console.log(`  tile ${String(i).padStart(3)}  ${t.name}  ${t.caption ?? defaultCaption(t.image)}`));
     return EXIT_OK;
@@ -635,7 +635,7 @@ function cmdRig(args: string[]): number {
   } catch (err) {
     return printRefusal(err);
   }
-  const scratch = mkdtempSync(join(tmpdir(), 'spine-parts-rig-'));
+  const scratch = mkdtempSync(join(tmpdir(), 'rig-parts-rig-'));
   try {
     rigStage({ config, parts: partsDir, out, idleKeys: keys, pageEdges: edges, packShape: shape }, rigcRunner(bin), scratch, console.log);
     return EXIT_OK;
@@ -748,7 +748,7 @@ function cmdPropose(args: string[]): number {
       const canvas = parseCanvas(canvasArg);
       if (canvas === null) return usage(`--canvas ${canvasArg} is not <W>x<H> in integer px`);
       const r = proposeHeadBox(readLayers(full), canvas);
-      console.log(`spine-parts propose --head-box: ${full}`);
+      console.log(`rig-parts propose --head-box: ${full}`);
       console.log(`  painting ${canvas.w}x${canvas.h}; head layers ${r.layers.map(([n, c]) => `${n} ${c} px`).join(', ')}`);
       if (r.shift[0] !== 0 || r.shift[1] !== 0) {
         console.log(`  clamped: the proposed box [${r.unclamped.join(', ')}] leaves the ${canvas.w}x${canvas.h} painting; shifted by ${r.shift[0]},${r.shift[1]} px at the same size`);
@@ -833,7 +833,7 @@ function cmdCompare(args: string[]): number {
   const map = flags.get('--map') ?? null;
   try {
     const c = loadComparison(left, right, map);
-    console.log(`spine-parts compare: left ${left}, right ${right}${map === null ? ', no map' : `, map ${map}`}`);
+    console.log(`rig-parts compare: left ${left}, right ${right}${map === null ? ', no map' : `, map ${map}`}`);
     for (const l of structureLines(c)) console.log(l);
     const missing = requiredProblems(c, map ?? 'the map');
     for (const p of missing) console.log(`  FAIL  ${problemLine(p)}`);
@@ -994,7 +994,7 @@ async function cmdComfy(args: string[]): Promise<number> {
         wait: wait as number,
         timeout: timeout as number,
       };
-      console.log(`spine-parts comfy seethrough: ${image} -> ${out}`);
+      console.log(`rig-parts comfy seethrough: ${image} -> ${out}`);
       console.log(`  resolution ${run.resolution}, steps ${run.steps}, seed ${run.seed}, offload ${run.offload}, lama ${run.lama}, quant ${run.quant}; wait <= ${run.wait} s, timeout ${run.timeout} s`);
       const r = await runSeeThrough(client, run, (l) => console.log(l));
       console.log(`  ${r.layers.length} layer(s) on a ${r.canvas[0]}x${r.canvas[1]} canvas, read back green by the layer reader: ${r.layers.join(', ')}`);
@@ -1006,7 +1006,7 @@ async function cmdComfy(args: string[]): Promise<number> {
     if (typeof seeds === 'string') return usage(seeds);
     const seed0 = intFlag(v, '--seed0', cfg.generation.seed, 0);
     if (typeof seed0 === 'string') return usage(seed0);
-    console.log(`spine-parts comfy paint: ${cfg.key} -> ${out}`);
+    console.log(`rig-parts comfy paint: ${cfg.key} -> ${out}`);
     console.log(`  ${seeds} seed(s) from ${seed0}${v.has('--seed0') ? '' : ' (generation.seed)'}; wait <= ${wait} s per seed, timeout ${timeout} s`);
     const done = await runPainting(client, { config: cfg, out, seeds, seed0, wait: wait as number, timeout: timeout as number }, (l) => console.log(l));
     console.log(`  wrote ${done.length} painting(s): ${done.map((d) => `${d.file} ${d.size[0]}x${d.size[1]} in ${d.elapsed.toFixed(1)} s`).join(', ')}; GPU job(s) ended`);
@@ -1028,7 +1028,7 @@ function cmdInputs(args: string[]): number {
     const r = makeInputs(painting, cfg, source);
     mkdirSync(out, { recursive: true });
     writePng(join(out, 'st_input_full.png'), r.full);
-    console.log(`spine-parts inputs: ${source} (${painting.width}x${painting.height}) -> ${out}`);
+    console.log(`rig-parts inputs: ${source} (${painting.width}x${painting.height}) -> ${out}`);
     console.log(
       r.padTop > 0
         ? `  st_input_full.png ${r.full.width}x${r.full.height}: the painting at y ${r.padTop}, white above and below (${r.padTop} + ${r.full.height - painting.height - r.padTop} px)`
@@ -1082,7 +1082,7 @@ function cmdBuild(args: string[]): number {
   } catch (err) {
     return printRefusal(err);
   }
-  const scratch = mkdtempSync(join(tmpdir(), 'spine-parts-build-'));
+  const scratch = mkdtempSync(join(tmpdir(), 'rig-parts-build-'));
   try {
     const r = build(
       { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape, ...(flags.has('--requirements') ? { requirements: flags.get('--requirements') as string } : {}), idleKeys: keys },
@@ -1104,7 +1104,7 @@ function cmdCompose(args: string[]): number {
   } catch (err) {
     return printRefusal(err);
   }
-  const scratch = mkdtempSync(join(tmpdir(), 'spine-parts-compose-'));
+  const scratch = mkdtempSync(join(tmpdir(), 'rig-parts-compose-'));
   try {
     const req = f.get('--requirements');
     const r = composeStage(
@@ -1142,7 +1142,7 @@ function main(argv: string[]): number | Promise<number> {
   if (command === 'compose') return cmdCompose(rest);
   const later = LATER.find(([name]) => name === command);
   if (later !== undefined) {
-    console.log(`  FAIL  NOT_IMPLEMENTED: \`spine-parts ${command}\` (${later[1]}) is not implemented in this version, ${version()}`);
+    console.log(`  FAIL  NOT_IMPLEMENTED: \`rig-parts ${command}\` (${later[1]}) is not implemented in this version, ${version()}`);
     return EXIT_USAGE;
   }
   return usage(`unknown command "${command}"`);

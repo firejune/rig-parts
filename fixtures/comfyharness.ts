@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Drives `spine-parts comfy` against the fake ComfyUI of `fakecomfy.ts`, one
+ * Drives `rig-parts comfy` against the fake ComfyUI of `fakecomfy.ts`, one
  * scenario per fake, and prints what happened as one JSON object. The selftest
  * runs this as a child process and judges the result: the selftest itself is
  * synchronous, and a server has to be answering while the CLI runs, so both

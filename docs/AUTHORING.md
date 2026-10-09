@@ -1,4 +1,4 @@
-# Authoring a character with spine-parts
+# Authoring a character with rig-parts
 
 This is the guide an agent authors from. It assumes you cannot see the painting,
 the layers or the rig: what you have is this page, the tool's printed lines, and
@@ -17,10 +17,10 @@ into `examples/sample/inputs/`.
 
 | what | why | how |
 | --- | --- | --- |
-| [Bun](https://bun.sh) 1.2 or later | spine-parts and rig-c are Bun programs | `npm install -g spine-parts` installs the command; it says so if Bun is missing |
-| [rig-c](https://www.npmjs.com/package/rig-c) | compiles, gates, packs and renders every rig; spine-parts writes no Spine data itself | installed with spine-parts as a dependency (`node_modules/.bin/rigc`); with no Spine runtime beside it, it gates with its own validator, and `rigc --version` says `entry: cli_core.ts` |
+| [Bun](https://bun.sh) 1.2 or later | rig-parts and rig-c are Bun programs | `npm install -g rig-parts` installs the command; it says so if Bun is missing |
+| [rig-c](https://www.npmjs.com/package/rig-c) | compiles, gates, packs and renders every rig; rig-parts writes no Spine data itself | installed with rig-parts as a dependency (`node_modules/.bin/rigc`); with no Spine runtime beside it, it gates with its own validator, and `rigc --version` says `entry: cli_core.ts` |
 | [See-through](https://github.com/shitagaki-lab/see-through), somewhere | the layer decomposition is the input | any route in README *Getting See-through layers*; it runs twice per character, outside this tool |
-| a GPU, wherever See-through runs | See-through is a diffusion model | nothing in spine-parts itself uses a GPU |
+| a GPU, wherever See-through runs | See-through is a diffusion model | nothing in rig-parts itself uses a GPU |
 
 The painting is yours to bring: a PNG of one character, front-facing, full body,
 taller than wide, on a plain light background. How it was made is not read by any
@@ -28,7 +28,7 @@ stage (`config.generation` is recorded for the optional adapter only).
 
 ## 2. The folder
 
-Nothing in spine-parts requires a layout; every command takes paths. The one the
+Nothing in rig-parts requires a layout; every command takes paths. The one the
 examples use, and the one this guide assumes:
 
 ```
@@ -629,10 +629,10 @@ the fields the block holds, and a missing `assemble.plan` names
 `assemble --propose-plan`, which prints one. `build` runs `rig`, so it asks the
 full loader before its assemble stage writes anything.
 
-0. **The painting (optional).** `spine-parts comfy paint --config config.json --out inputs --host <url>`
+0. **The painting (optional).** `rig-parts comfy paint --config config.json --out inputs --host <url>`
    generates `painting_<seed>.png` on a ComfyUI box; any other route to a painting
    skips this step and leaves `generation` out. Config: the `paint` row.
-1. **The full image.** `spine-parts inputs --source inputs/painting.png --config config.json --out inputs`
+1. **The full image.** `rig-parts inputs --source inputs/painting.png --config config.json --out inputs`
    writes `st_input_full.png`, the painting centred on a white square of its longer
    side: white left and right of a portrait painting, above and below a landscape
    one. The pad is See-through's input only; `propose --head-box` and `assemble` map
@@ -641,27 +641,27 @@ full loader before its assemble stage writes anything.
    Config: the `layers` row, `head_box` not yet. A translucent painting is refused
    (`INPUTS_PAINTING_OPAQUE`).
 2. **See-through, full run** (external).
-3. `spine-parts layers inputs/layers/full` — read it. A refusal here is about the
+3. `rig-parts layers inputs/layers/full` — read it. A refusal here is about the
    files, not the art (§6, *Reading the inputs*). A `WARN` line is about the art: a
    layer See-through made that is not plausibly part of the figure, which step 6
    leaves out (§6, *Plausibility*). It refuses nothing.
-4. `spine-parts propose --head-box --full inputs/layers/full --canvas <W>x<H>` →
-   `seethrough.head_box`. Run `spine-parts inputs` again: it now also writes
+4. `rig-parts propose --head-box --full inputs/layers/full --canvas <W>x<H>` →
+   `seethrough.head_box`. Run `rig-parts inputs` again: it now also writes
    `st_input_head.png`, the painting cropped to that box at its exact size.
 5. **See-through, head run** (external), on that crop. See-through's own second,
    head stage does not replace it: that stage's layers are pasted back at the full
    run's scale on every route that was read (README *Getting See-through layers*),
    so the full run's eyes stay at its density — 22×13 px for the demo's right eye
    white at `resolution` 1024, against 60×38 px in the head run.
-6. `spine-parts assemble --propose-plan --source … --full … --head … --config config.json`
+6. `rig-parts assemble --propose-plan --source … --full … --head … --config config.json`
    → paste `plan` and `extend_below_crop` into `config.assemble`. Config: the
    `layers` row, with `head_box`.
    Read `notes`: a layer left out by a plausibility rule is named there with its
    figures and the rule (§6, *Plausibility*).
-7. `spine-parts assemble … --out work` — read its `uncovered hole` lines and look at
+7. `rig-parts assemble … --out work` — read its `uncovered hole` lines and look at
    `work/render/recomposite_error_rig.png` (§5): red is painting no part holds, which
    no later stage can see — then
-   `spine-parts propose --parts work/rig --source inputs/painting.png --out work` →
+   `rig-parts propose --parts work/rig --source inputs/painting.png --out work` →
    `work/proposal.json` and `work/render/landmarks.png` (+ `_head`). Copy
    `bones`, `meshes`, `regions` and `motion` into the config. Then read what
    was looked at. After the LINT summary, one `coverage <bone> [<role>]:` line
@@ -689,24 +689,24 @@ full loader before its assemble stage writes anything.
    For a posed figure (seated, reclining), add `--keypoints keypoints.json` (and
    `--person <id>` when the file holds more than one person): the joints it gives
    place the neck, hip, chest and sleeves (§3, *A posed figure*).
-8. Correct, then `spine-parts propose … --from-config config.json` to redraw the
+8. Correct, then `rig-parts propose … --from-config config.json` to redraw the
    config's own bones and LINT them — every chain link against its mesh's art, and
    the single bones `hip` and `chest` against each other and the figure (a config
    without them prints a `note:` that those lines did not run); repeat until it
    prints no LINT line (exit 0). Add the same `--keypoints` to lint by the joints.
    Config from here on: the `full` row.
-   `spine-parts compare --left work/proposal.json --right config.json` says what the
+   `rig-parts compare --left work/proposal.json --right config.json` says what the
    correction changed, bone by bone: each origin, parent, tip, length and direction
    as its own figure, and the bones renamed, added or removed by name (§5). It reads
    no parts and no painting, and fails only on a bone a `--map` file's `required`
    list names that is missing (exit 1). A proposal is read under the loader's own
    rules for `bones`, `meshes`, `regions` and `motion`.
-9. `spine-parts build --config config.json --source inputs/painting.png --full … --head … --out out [--loop]`
+9. `rig-parts build --config config.json --source inputs/painting.png --full … --head … --out out [--loop]`
    — assemble, rig and check in one process. `propose` is not part of it, on purpose:
    a proposal is a draft, and the config you corrected is the input.
    `--idle-keys direct` is forwarded to the rig stage as `rig` takes it; a config
    with a two-bone ik over chain links the idle keys needs it (§3, `constraints`).
-   `spine-parts compare --left config.json --right out/rig/rig.json` reads the rig
+   `rig-parts compare --left config.json --right out/rig/rig.json` reads the rig
    the build wrote against the config it came from: the rig's stage carries it into
    rig px, so every origin reads 0, each chain link's tip, length and direction its
    config's, and every `<bone>_ctl` the rig stage inserted is the bone between a
@@ -715,7 +715,7 @@ full loader before its assemble stage writes anything.
     is known — a hand that stays on a cup, a sleeve that takes half an arm's turn, a
     joint that must stay inside a range — write it into a
     `spine-parts-requirements/1` file and hand it to `check` (or `build`):
-    `spine-parts check --rig out/rig --parts out --out out/scene --requirements scene.json`.
+    `rig-parts check --rig out/rig --parts out --out out/scene --requirements scene.json`.
     Every bar in it is yours; `check` supplies none, solves nothing and poses every
     frame through rig-c (§7, *Declared requirements*). A rig composed of
     several characters is measured the same way, `--rig` naming the composed spec.
@@ -724,7 +724,7 @@ full loader before its assemble stage writes anything.
     `spine-parts-scene/1` file — the canvas, each character's build and offset,
     an optional background plate with its provenance, and the draw order between
     the characters' slots — and run
-    `spine-parts compose --scene scene.json --out scene [--requirements req.json]`
+    `rig-parts compose --scene scene.json --out scene [--requirements req.json]`
     (§7, *Composing several characters*). Nothing in steps 0–9 changes for it, and
     nothing is inferred from the art: the order, the offsets and the plate's
     provenance are yours.
@@ -743,7 +743,7 @@ proposal in as the steps above say (`RL01`); every step must exit 0.
 | `propose` | `note:` lines, `LINT` lines, the `coverage` lines, `landmarks.png`, `basis.json` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter; the `coverage:` summary says how many bones that verdict covers — a `not checked` bone was read by no check (its line says why), and a `ratio` or `fallback` bone in `basis.json` is a guess | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck); a `hanging strand … -- no chain proposed` note — that strand hangs stiff until you add a chain down the x and rows it names (§3); a `no blink: …` or `blink without brows: …` note — the idle will not blink (or its brows will not drop), because no part came from an `eyewhite` (or `eyebrow`) layer; the note names the tags looked for; a `no eyewhite part for eye_<s> …` note — the iris and lash parts it names ride `head` and do not blink, because no `eyewhite-<s>` part made that side's eye bone: take the eyewhite from the other run, or keep them on `head`; a `no face part: face box derived from …` note (always the first) — `head`, `neck` and every face-height scale come from a box guessed off the hair and neck (§3): check `head` and `neck` on `landmarks_head.png` and move them; when it adds `the blink shuts the eyes over no face part`, read `BLINK_NO_HOLE` after `check` — an eye with no face under it can open a hole (the `sample` with only its face removed: 587 px). Under `--keypoints`: the `lint rule set:` line first (joints, or screen and why), then the joint notes — `missing: the rule "…" placed bone X instead` is a bone still guessed; `not used — …` names why an arm's joints did not place its sleeve; `LINT chest at … is not between the neck joint …`, `LINT hip at … is not past chest …`, `LINT hip at … is nearer the neck joint …` and `LINT <chain><i> at … does not advance from <s>_shoulder toward <s>_wrist` are the joint-frame lines: move that bone between, past or along the joints they name |
 | `compare` | one line per pair (origin, parent, tip, length, direction — or SKIP and why), then the per-row summary, the unmapped bones of each side, `required:`, each side's roles and the `controls:` line | proposal against the config you corrected: the rows you changed and no others. Config against the `rig.json` `build` writes for it: measured on both examples, every origin within 6.19e-7 px (the rig's offsets are written to 6 places) and every chain link's tip and length within 4.99e-4 px (`length` is written to 3), printed to three places as `0.000` (a signed figure as `+0.000` or `-0.000`); `parent … is the right's ancestor at depth 2, <bone>_ctl between` for every keyed mesh bone, no `DIFFERENT` and no `NOT MAPPED` | `parent DIFFERENT: left a, right b` — a bone hangs from another parent than the other side's; `frames not related` — a rig with no stage (`skeleton.width`/`height`), two configs at different `rig_scale`: the distance rows SKIP, so declare the frame in a `--map` file if the author knows it; `FAIL  STRUCTURE_REQUIRED_PRESENT` — a bone the map requires is missing through its pairs |
 | `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; the `bones` line; the `idle keys` line; then rigc's gate lines (with A15's declared SKIP under `--idle-keys direct`); in `rig.json`, each chain link's (or its `_ctl`'s) `length` and `rotation` | `cover 1.00000` on every mesh, both gate summaries `0 failed` (the compile and the packed pages); every link's `length` the distance to the next link and `rotation` its direction (Spine degrees, counter-clockwise, y up, local to the parent), every offset under it — a child bone's `x, y`, a weight's bind `x, y`, a region's `x, y` — in that turned frame, and a region on a link carrying `rotation` that turns it back upright. Nothing moved: `flattenRig` (`src/rig.ts`) turns every offset back and gives the unturned numbers | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
-| `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the six judgement lines, `RECOMPOSITE_HOLES` and, under `--source`, `SETUP_POSE_VS_SOURCE` (§7), `check.json`; the last line says how many of the nine bars measured and names the ones that said SKIP | `check: PASS; 9 of 9 bar(s) measured, 0 skipped` on the examples, and a judgement line SKIP only where the character lacks what it reads; on a rig spec with no `parts.json` or no `idle` (a merged rig, §7 *Measuring a rig spine-parts did not assemble*), PASS with the skipped bars named | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
+| `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:`, `seam:`, the six judgement lines, `RECOMPOSITE_HOLES` and, under `--source`, `SETUP_POSE_VS_SOURCE` (§7), `check.json`; the last line says how many of the nine bars measured and names the ones that said SKIP | `check: PASS; 9 of 9 bar(s) measured, 0 skipped` on the examples, and a judgement line SKIP only where the character lacks what it reads; on a rig spec with no `parts.json` or no `idle` (a merged rig, §7 *Measuring a rig rig-parts did not assemble*), PASS with the skipped bars named | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
 | `check --requirements` (and `build --requirements`) | after the lines above, one line per declared requirement, `NAME: PASS`, `FAIL` or `NOT MEASURABLE — …` with its figures, the bar as declared and the worst frame; then `requirements: N declared — M measured (P PASS, F FAIL), K NOT MEASURABLE; not declared: <kinds>`; `check.json`'s `requirements` block; the renders under `requirements/` (§7, *Declared requirements*) | every line PASS and `0 NOT MEASURABLE`; a follow's `released_copy` says whether rigc's consumer-driven door was taken on the throwaway copy | `CHECK_REQUIREMENT_MET` (a figure past its bar; the line names the frame) or `CHECK_REQUIREMENT_MEASURABLE` (the quantity is undefined in the frames: a tip or an axis on a bone of length 0, an aim with no line, a follow no frame of which reaches its least drive); the last line then reads `check: FAIL — B bar(s) not met, R declared requirement(s) not PASS` |
 | `compose` | the `[compose]` lines: one per character (its offset, its placed bounds, the shift and how many first-level bones, regions on `root` and weights bound to `root` it moved, its bone, slot, track and constraint counts, its `rig_scale` and idle), the declared order and the slot count it expands to, rigc's gate lines; then the `[check]` lines as for `check`, and `scene.json` | both gate summaries `0 failed`, `check: PASS` with the bars that measured and the ones that said SKIP named — on a composed rig `4 of 9`: the gate, the loop, `CHAIN_LAG` and `TEXTURE_STRETCH` (there is no `parts.json`; each character's own `build` measured all nine). `scene.json`'s `order.slots` is the order the compiled skeleton draws | a `SCENE_*` refusal (§6, *compose*) — the scene file, a build, or the order; `COMPOSE_RIGC_GREEN` — rigc's own line, quoted |
 | `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line, each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
@@ -847,7 +847,7 @@ its own page; PASS on the packed pass, both shapes, both examples). The pack lin
 both flags. Measured on the two examples with rig-c 2.1.3, and again with 2.10.1,
 whose pages, atlases, idle frames and `check.json` are byte-identical to 2.1.3's under
 both shapes and both edges (the full entry, spine-core 4.3.13 beside it),
-`spine-parts build` with `--page-edges free` and each shape, the table columns by
+`rig-parts build` with `--page-edges free` and each shape, the table columns by
 `tools/atlas_population.ts`:
 
 | build | page | page area | covered | page opaque | page / figure |
@@ -879,7 +879,7 @@ they are byte-identical to rigc 2.0.3's `--page-edges free` build of the same ri
 skeleton JSON differs only in its relative `images` path), and selftest `CK53` holds
 `rect` to rigc's own rectangle page.
 
-The hull ceiling (spine-parts #58: hull area over rectangle area, 0.812 on demo and
+The hull ceiling (rig-parts #58: hull area over rectangle area, 0.812 on demo and
 0.814 on sample) is not what the packer realises here: the hollows inside the meshes'
 rectangles are worth only what fits into them. On the polygon pages, read off the
 atlas, demo's packed rectangles overlap in 21 pairs (17 a region attachment inside a
@@ -914,7 +914,7 @@ bones themselves and writes `invariants.idleDrivesMeshes: { "why": … }` into
 drive M mesh attachment(s) totalling V vertices …`, which the stage prints; with no
 mesh-driving bone keyed it declares nothing, because rigc refuses a declaration
 that switches nothing off. The two write the same slots, skins and keys (`RG18`).
-Measured on the examples with `bun tools/idle_cost.ts` (spine-parts #13): `direct`
+Measured on the examples with `bun tools/idle_cost.ts` (rig-parts #13): `direct`
 has 41 bones for the demo's 72 and 32 for the sample's 56; every shown mesh moves on
 every idle frame under both (8 of 8 and 6 of 6, so 0 a dirty-skip renderer could
 skip); the pose costs 14.8 against 15.3 us per frame (demo) and 8.3 against 8.8 us
@@ -1193,7 +1193,7 @@ See-through with another seed.
 | `CHECK_REQUIREMENTS_FRAMES` | a requirement render did not write every frame rigc sampled, or the as-declared, released and full renders of a follow sampled different frames | a rigc problem; report it |
 | `CHECK_REQUIREMENT_MET` | a declared requirement measured outside its bar; the figure, its frame and the bar are quoted | the rig or its motion (§7, *Declared requirements*) — or the bar, if the scene asks less |
 | `CHECK_REQUIREMENT_MEASURABLE` | a declared requirement is NOT MEASURABLE: what it asks is undefined in the frames, and the reason is quoted. Not a pass | the declaration (a bone with a length, a target off the bone's origin, a least drive the constraint reaches) or the rig |
-| `REQUIREMENTS_SEAM` | a `seam` cannot be read against the rig: there is no `parts.json` (a merged rig, §7 *Measuring a rig spine-parts did not assemble*), or the two parts' art does not meet at the setup pose (no 4-adjacent pair). Refused before anything is built | two parts whose art touches, on a rig with its `parts.json` |
+| `REQUIREMENTS_SEAM` | a `seam` cannot be read against the rig: there is no `parts.json` (a merged rig, §7 *Measuring a rig rig-parts did not assemble*), or the two parts' art does not meet at the setup pose (no 4-adjacent pair). Refused before anything is built | two parts whose art touches, on a rig with its `parts.json` |
 
 ### compose
 
@@ -1208,7 +1208,7 @@ and stay absent).
 | `SCENE_PLATE_PROVENANCE`, `SCENE_PLATE_PRESENT`, `SCENE_PLATE_SIZE` | the plate's `provenance` is not `observed`, `generated` or `unknown`; its image is missing or not a PNG; it is not the canvas's size (it is drawn at canvas (0, 0) and never scaled) | the plate |
 | `SCENE_BUILD_PRESENT` | a build directory, or a file `build` writes in it (`parts.json`, `rig/rig.json`, `rig/motion.json` with an `idle`, an image its skin names, `check/check.json`), is missing | run `build` for that character |
 | `SCENE_BUILD_GREEN` | the build's own `check/check.json` does not say `PASS` and `gate_spine_html_green` | finish that character first: compose binds finished characters |
-| `SCENE_BUILD_FIELD_KNOWN` | a build's `rig.json` or `motion.json` carries a key compose does not know how to prefix or place, or a root with a transform of its own | a rig `build` wrote; a rig written by something else is `check`'s to measure (§7, *Measuring a rig spine-parts did not assemble*), not compose's to merge |
+| `SCENE_BUILD_FIELD_KNOWN` | a build's `rig.json` or `motion.json` carries a key compose does not know how to prefix or place, or a root with a transform of its own | a rig `build` wrote; a rig written by something else is `check`'s to measure (§7, *Measuring a rig rig-parts did not assemble*), not compose's to merge |
 | `SCENE_RIG_SCALE_AGREES` | the characters' `parts.json` `scale_rig_per_source` differ (each named) | one `assemble.rig_scale` for every character; scaling a character in composition is not offered |
 | `SCENE_DURATION_AGREES` | the characters' idles are of different durations (each named) | one `motion.duration` |
 | `SCENE_CHARACTER_INSIDE_CANVAS` | a character's part boxes, placed at its offset, leave the canvas (the boxes and the canvas px quoted) | the offset, or the canvas |
@@ -1225,7 +1225,7 @@ and stay absent).
 
 `check.json`'s `PASS` is true exactly when all of these hold (the reference
 implementation's bars) — each one that measured; a rig with no `parts.json` or no
-`idle` skips the ones that read it, by name (*Measuring a rig spine-parts did not
+`idle` skips the ones that read it, by name (*Measuring a rig rig-parts did not
 assemble*, at the end of this section):
 
 - `gate_spine-html.txt`: every summary line `(N passed, 0 failed)` — the packed build
@@ -1515,11 +1515,11 @@ frame" with issue #33 (the face half of `STILL_REGIONS_DARK`, above, read from g
 since issue #123). A bang over the face or the eyes is still an eye's to judge: `check`
 reports how deep it swings (`crossing`) and nothing more.
 
-### Measuring a rig spine-parts did not assemble
+### Measuring a rig rig-parts did not assemble
 
 `check` takes a rig spec — `rig.json` and `motion.json`, the `rigc-rig/1` and
 `rigc-motion/1` pair `rigc build` compiles — not a compiled `skeleton.json`, because
-the gate is `rigc build`. A rig merged from several spine-parts outputs — by
+the gate is `rigc build`. A rig merged from several rig-parts outputs — by
 `compose` (below), or outside the package (prefixed names, one root, a plate region
 at slot 0) — is such a spec, with no
 `parts.json` beside it and possibly no `idle`. Each bar then measures exactly when what
@@ -1544,7 +1544,7 @@ rig directory, copied away from its `parts.json`, reads `4 of 9`: the gate, the 
 
 ### Composing several characters (`compose`, issue #74)
 
-`spine-parts compose --scene <scene.json> --out <dir> [--requirements <file.json>]`
+`rig-parts compose --scene <scene.json> --out <dir> [--requirements <file.json>]`
 binds characters this package already built into one rig. Each character runs the
 single-character path (§4, steps 0–9) on its own, already isolated input to a green
 `build` first; compose reads what that build wrote and changes nothing in it.

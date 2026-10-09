@@ -93,7 +93,7 @@ export async function runSeeThrough(client: ComfyClient, run: SeeThroughRun, say
   say(`  uploaded ${run.image} (${img.width}x${img.height}) as input/${ref}`);
   const graph = fillSeeThrough(template, { ...params, image: ref });
   const vramBefore = await client.vramFree();
-  const id = await client.submit(graph, 'spine-parts');
+  const id = await client.submit(graph, 'rig-parts');
   say(`  queued prompt ${id} (prefix ${prefix}); GPU job started`);
   const { entry, vramLow, elapsed } = await client.waitHistory(id, run.timeout);
   say(`  GPU job finished in ${elapsed.toFixed(1)} s`);

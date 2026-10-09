@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * spine-parts selftest — proof that every gate here can go RED.
+ * rig-parts selftest — proof that every gate here can go RED.
  *
  * A gate nobody has seen fail is not a gate. So every raster op has a positive
  * control on a raster small enough to compute by hand AND a negative one that
@@ -10,7 +10,7 @@
  *
  *   bun selftest.ts                   the public suites: everything below
  *   bun selftest.ts --corpus <dir>    plus an extra suite that reads real
- *   SPINE_PARTS_CORPUS=<dir> bun selftest.ts   See-through output under <dir>
+ *   RIG_PARTS_CORPUS=<dir> bun selftest.ts     See-through output under <dir>
  *
  * The same extra suite also reads the public examples' fetched inputs,
  * `examples/<key>/inputs` (`bun run fetch-examples`), whenever any are on
@@ -44,7 +44,7 @@
  * ## Suites run concurrently, and are printed and counted one by one
  *
  * Each suite runs in a worker process of its own — this file again, under
- * `--suite-worker <key>` — several at a time (`SPINE_PARTS_SELFTEST_JOBS`, or
+ * `--suite-worker <key>` — several at a time (`RIG_PARTS_SELFTEST_JOBS`, or
  * the machine's available parallelism). The parent prints what each worker
  * printed, in the suites' own order and one suite after another, through the
  * same `RunTally.of` as before, so the case lines and the counts are what a
@@ -52,7 +52,11 @@
  * suite's `SUITE_CRASHED` FAIL (`RT06`), and the suites tallied are held to
  * the list of suites, every one once and in order (`RT08`). The tally's own
  * suite runs last in the parent: it reads the live tally of every suite
- * before it. `SPINE_PARTS_SELFTEST_JOBS=1` runs one worker at a time.
+ * before it. `RIG_PARTS_SELFTEST_JOBS=1` runs one worker at a time.
+ *
+ * Both variables were renamed with the package (`ENV_TWINS`): each new name is
+ * read first and its former `SPINE_PARTS_` name is the fallback, so a script
+ * written before the rename keeps working.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -528,7 +532,7 @@ function px(r: Raster, x: number, y: number): number[] {
 }
 
 function temp(label: string): string {
-  return mkdtempSync(join(tmpdir(), `spine-parts-selftest-${label}-`));
+  return mkdtempSync(join(tmpdir(), `rig-parts-selftest-${label}-`));
 }
 
 // ---------------------------------------------------------------------------
@@ -2139,15 +2143,15 @@ function runCliSuite(): number {
       'the printed tile list is the sheet for a reader that cannot open it, so it has to describe the sheet that was written',
     );
 
-    const shim = spawnSync('node', [join(ROOT, 'bin', 'spine-parts.cjs'), '--version'], { encoding: 'utf8' });
+    const shim = spawnSync('node', [join(ROOT, 'bin', 'rig-parts.cjs'), '--version'], { encoding: 'utf8' });
     say(
       'CL06_THE_BIN_SHIM_HANDS_OFF_TO_BUN',
       shim.status === 0 && (shim.stdout ?? '').trim() === pkg.version,
-      `node bin/spine-parts.cjs --version -> exit ${shim.status}, "${(shim.stdout ?? '').trim()}"`,
+      `node bin/rig-parts.cjs --version -> exit ${shim.status}, "${(shim.stdout ?? '').trim()}"`,
       'npm installs the bin as a Node script; the shim is what makes a Bun program runnable from it, and the smoke checks its no-Bun half on an install',
     );
 
-    const checkHelp = help.out.slice(help.out.indexOf('spine-parts check'), help.out.indexOf('spine-parts loop'));
+    const checkHelp = help.out.slice(help.out.indexOf('rig-parts check'), help.out.indexOf('rig-parts loop'));
     const bare = runCli(['check', '--rig', dir, '--out', join(dir, 'src-bare'), '--source']);
     say(
       'CL07_CHECK_HELP_NAMES_SOURCE_AND_THE_SKIPS_AND_A_SOURCE_WITH_NO_VALUE_IS_A_USAGE_ERROR',
@@ -2164,7 +2168,7 @@ function runCliSuite(): number {
       'two paintings would be two measurements and the line has one; which one was meant is not this package\'s guess',
     );
 
-    // ---- issue #85: spine-parts compare ----
+    // ---- issue #85: rig-parts compare ----
     const sk = join(dir, 'skeletons');
     mkdirSync(sk, { recursive: true });
     const put = (name: string, v: unknown): string => {
@@ -2201,18 +2205,18 @@ function runCliSuite(): number {
 
     const cfgAsRig = put('rig.json', minimalConfig());
     const byContent = runCli(['compare', '--left', cfgAsRig, '--right', put('config.json', armRig())]);
-    const proposeHelp = help.out.slice(help.out.indexOf('spine-parts propose --parts'), help.out.indexOf('spine-parts propose --parts', help.out.indexOf('spine-parts propose --parts') + 1));
-    const compareHelp = help.out.slice(help.out.indexOf('spine-parts compare'), help.out.indexOf('spine-parts rig'));
+    const proposeHelp = help.out.slice(help.out.indexOf('rig-parts propose --parts'), help.out.indexOf('rig-parts propose --parts', help.out.indexOf('rig-parts propose --parts') + 1));
+    const compareHelp = help.out.slice(help.out.indexOf('rig-parts compare'), help.out.indexOf('rig-parts rig'));
     say(
       'CL13_THE_HELP_NAMES_COMPARE_AND_WHAT_PROPOSE_COMPARE_DOES_NOT_READ_AND_A_FILE_IS_READ_BY_WHAT_IT_STATES',
-      compareHelp.includes('spine-parts compare --left <file> --right <file> [--map <bonemap.json>]') &&
+      compareHelp.includes('rig-parts compare --left <file> --right <file> [--map <bonemap.json>]') &&
         compareHelp.includes('spine-parts-bonemap/1') &&
         proposeHelp.includes('It reads bone origins only') &&
-        proposeHelp.includes('spine-parts compare reads those') &&
+        proposeHelp.includes('rig-parts compare reads those') &&
         byContent.status === 0 &&
         byContent.out.includes('  left: config "fixture"') &&
         byContent.out.includes('  right: rig.json "arm_rig"'),
-      `help: compare ${compareHelp.length > 0 ? 'listed' : 'MISSING'}, --compare's sentence ${proposeHelp.includes('spine-parts compare reads those') ? 'present' : 'MISSING'}; a config saved as rig.json and a rig saved as config.json -> exit ${byContent.status}, ${byContent.out.split('\n').filter((l) => /^ {2}(left|right): /.test(l)).map((l) => l.trim().split(',')[0]).join(' / ')}`,
+      `help: compare ${compareHelp.length > 0 ? 'listed' : 'MISSING'}, --compare's sentence ${proposeHelp.includes('rig-parts compare reads those') ? 'present' : 'MISSING'}; a config saved as rig.json and a rig saved as config.json -> exit ${byContent.status}, ${byContent.out.split('\n').filter((l) => /^ {2}(left|right): /.test(l)).map((l) => l.trim().split(',')[0]).join(' / ')}`,
       'issue #85: the flag that reads origins only says so where it is documented, and names the command that reads the rest; a skeleton file is a config, a proposal or a rig.json by its content, never its name',
     );
 
@@ -2244,9 +2248,9 @@ function runCliSuite(): number {
     );
 
     // Issue #75: the propose help names the keypoint door; malformed calls are usage errors before anything is read.
-    const kpHelp = help.out.slice(help.out.indexOf('spine-parts propose --parts'), help.out.indexOf('spine-parts propose --head-box'));
+    const kpHelp = help.out.slice(help.out.indexOf('rig-parts propose --parts'), help.out.indexOf('rig-parts propose --head-box'));
     const kpTokens = ['[--keypoints <keypoints.json> [--person <id>]]', `"${KEYPOINTS_SPEC}"`, 'painting-px, origin top-left, y down', 'KEYPOINTS_IMAGE_SIZE', 'x * W/width', 'nothing picks', 'Without\n      --keypoints nothing changes'];
-    const checkSlice = help.out.slice(help.out.indexOf('spine-parts check'), help.out.indexOf('spine-parts loop'));
+    const checkSlice = help.out.slice(help.out.indexOf('rig-parts check'), help.out.indexOf('rig-parts loop'));
     say(
       'CL09_PROPOSE_HELP_NAMES_THE_KEYPOINT_FILE_ITS_SPACE_THE_PERSON_AND_THE_MAP',
       kpTokens.every((t) => kpHelp.includes(t)) && !kpTokens.every((t) => checkSlice.includes(t)),
@@ -2278,7 +2282,7 @@ function runCliSuite(): number {
     // Issue #86: the help names the coverage lines and the basis file; a refused run writes no basis file and
     // --from-config writes none (nothing is proposed); the new lines sit between the LINT summary and the compare table,
     // and every other line is the one printed before them.
-    const help86 = help.out.slice(help.out.indexOf('spine-parts propose --parts'), help.out.indexOf('spine-parts propose --head-box'));
+    const help86 = help.out.slice(help.out.indexOf('rig-parts propose --parts'), help.out.indexOf('rig-parts propose --head-box'));
     const tokens86 = ['one "coverage" line per bone', '("checked, clean" or "checked, LINT")', `Writes <out>/${BASIS_FILE} beside`, `(spec "${BASIS_SPEC}")`, 'No confidence is', `no ${BASIS_FILE}, as nothing is proposed`];
     say(
       'CL15_PROPOSE_HELP_NAMES_THE_COVERAGE_LINES_AND_THE_BASIS_FILE',
@@ -2390,7 +2394,7 @@ function runCliSuite(): number {
     const helpText = runCli(['--help']).out;
     say(
       'CL20_THE_HELP_NAMES_REQUIREMENTS_UNDER_CHECK_AND_UNDER_BUILD',
-      helpText.split('\n').filter((l) => l.includes('[--requirements <file.json>]')).length === 3 && helpText.split('\n').some((l) => l.trim().startsWith('spine-parts compose') && l.includes('[--requirements <file.json>]')) && helpText.includes('--requirements is forwarded to check') && helpText.includes('CHECK_REQUIREMENT_MEASURABLE'),
+      helpText.split('\n').filter((l) => l.includes('[--requirements <file.json>]')).length === 3 && helpText.split('\n').some((l) => l.trim().startsWith('rig-parts compose') && l.includes('[--requirements <file.json>]')) && helpText.includes('--requirements is forwarded to check') && helpText.includes('CHECK_REQUIREMENT_MEASURABLE'),
       `${helpText.split('\n').filter((l) => l.includes('[--requirements <file.json>]')).map((l) => l.trim()).join(' | ')}`,
       'an agent learns a flag from --help: check, build and compose (issue #74) each show it, and the check text names the two codes a requirement line can be refused with',
     );
@@ -2420,8 +2424,8 @@ function runCliSuite(): number {
     );
 
     // Issue #95: build takes --idle-keys as rig does.
-    const buildUsage = helpText.slice(helpText.indexOf('  spine-parts build '), helpText.indexOf('  spine-parts --version'));
-    const rigUsage = helpText.slice(helpText.indexOf('  spine-parts rig '), helpText.indexOf('  spine-parts check '));
+    const buildUsage = helpText.slice(helpText.indexOf('  rig-parts build '), helpText.indexOf('  rig-parts --version'));
+    const rigUsage = helpText.slice(helpText.indexOf('  rig-parts rig '), helpText.indexOf('  rig-parts check '));
     say(
       'CL24_THE_HELP_NAMES_IDLE_KEYS_UNDER_BUILD_AS_UNDER_RIG_AND_SAYS_WHERE_IT_GOES',
       buildUsage.includes('[--idle-keys ctl|direct]') && rigUsage.includes('[--idle-keys ctl|direct]') && buildUsage.includes('--idle-keys is forwarded to the rig stage') && buildUsage.includes('rigc refuses the pair a control splits, and the RIG_RIGC_GREEN line') && !helpText.includes('takes no --idle-keys'),
@@ -2785,7 +2789,7 @@ function runRigSuite(): number {
     // own and the fault is in parts.json, which no config loader reads: the
     // cloth mesh's box is the whole 40x40 rig, and rigc's spine-html profile
     // refuses a mesh spanning the whole stage (A14_NO_FULL_FRAME_MESH). The
-    // loader's acceptance and the absence of any spine-parts refusal are
+    // loader's acceptance and the absence of any rig-parts refusal are
     // asserted, so the day this repository learns the rule too, this control
     // says so instead of passing on its own line.
     const redParts = rigParts();
@@ -3071,7 +3075,7 @@ function runRigSuite(): number {
 }
 
 /**
- * `rig --idle-keys ctl|direct` (spine-parts #13). `ctl` is the default and
+ * `rig --idle-keys ctl|direct` (rig-parts #13). `ctl` is the default and
  * writes what the stage always wrote; `direct` keys the mesh-driving bones in
  * place and declares `invariants.idleDrivesMeshes`, which rigc 1.3.0's A15
  * reads. The static counts are derived from the ctl build rather than typed:
@@ -3441,7 +3445,7 @@ function runConstraintRigCases(say: (name: string, ok: boolean, detail: string, 
   const ctlOnly = buildRig(conCfg([aim, sway]), rigParts(), rigImages()).rig;
   const swayOnly = buildRig(conCfg([sway]), rigParts(), rigImages()).rig;
   const pairs = (inv: RigSpec['invariants']): string => (inv?.detached ?? []).map((d) => `${d.bone}/${d.notUnder}`).join(',');
-  const why0 = 'spine-parts: "tgt" is the target of ik constraint "reach" (config.constraints[0]), and "hem0" is a bone it drives; under it, driving it would move what it follows';
+  const why0 = 'rig-parts: "tgt" is the target of ik constraint "reach" (config.constraints[0]), and "hem0" is a bone it drives; under it, driving it would move what it follows';
   say(
     'RG55_EVERY_BONE_A_CONSTRAINT_FOLLOWS_IS_DECLARED_DETACHED_FROM_EACH_BONE_IT_DRIVES_BESIDE_THE_IDLE_DECLARATION',
     Object.keys(both.invariants ?? {}).join(',') === 'idleDrivesMeshes,detached' &&
@@ -4911,7 +4915,7 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
   const shownObserved = (notes: readonly string[], J: RigJoints): string[] => KEYPOINT_NAMES.filter((n) => J.joints[n].state !== 'observed' && notes.some((l) => l.includes(`${n} observed`)));
   const plantedNotes = [...stNotes.slice(0, -1), stNotes[stNotes.length - 1].replace('r_ear missing', 'r_ear observed at [0.0, 0.0]')];
   const wantStNotes = [
-    'keypoints: person "a" from "hand-written for the spine-parts selftest", painting 200x300 px to the 200x300 rig by the overlay\'s map (x * 200/200, y * 300/300); a joint with a position places its bone in place of the rule, a joint without one leaves the bone to its rule, and no bone is authored from a joint that no rule places',
+    'keypoints: person "a" from "hand-written for the rig-parts selftest", painting 200x300 px to the 200x300 rig by the overlay\'s map (x * 200/200, y * 300/300); a joint with a position places its bone in place of the rule, a joint without one leaves the bone to its rule, and no bone is authored from a joint that no rule places',
     'neck observed at [100.0, 98.0]: used as given for bone neck',
     'r_hip observed at [90.0, 160.0]: used as given for bone hip, the midpoint of r_hip and l_hip — a point between two joints, not a joint',
     'l_hip observed at [110.0, 160.0]: used as given for bone hip, the midpoint of r_hip and l_hip — a point between two joints, not a joint',
@@ -5113,7 +5117,7 @@ function runKeypointsSuite(): number {
       'KP01_A_WELL_FORMED_FILE_LOADS_AND_AN_UNLISTED_JOINT_IS_MISSING',
       f.width === 200 &&
         f.height === 300 &&
-        f.source === 'hand-written for the spine-parts selftest' &&
+        f.source === 'hand-written for the rig-parts selftest' &&
         f.people.length === 1 &&
         f.people[0].id === 'a' &&
         Object.keys(j).join(',') === KEYPOINT_NAMES.join(',') &&
@@ -7446,7 +7450,7 @@ function runRequirementsSuite(): number {
         !mutedOnly([a47('arm_ik')], sweepFollow) &&
         !mutedOnly([a47('vane_ik')], rideFollow) &&
         !mutedOnly([], sweepFollow) &&
-        JSON.stringify((doorRig.invariants as Record<string, unknown>).consumerDrivenMix) === JSON.stringify([{ constraint: 'vane_ik', type: 'ik', why: `spine-parts check --requirements: the released pose of follow requirement "VANE" forces this mix to 0 on a throwaway copy; the rig under test is not altered` }]) &&
+        JSON.stringify((doorRig.invariants as Record<string, unknown>).consumerDrivenMix) === JSON.stringify([{ constraint: 'vane_ik', type: 'ik', why: `rig-parts check --requirements: the released pose of follow requirement "VANE" forces this mix to 0 on a throwaway copy; the rig under test is not altered` }]) &&
         JSON.stringify(rig) === rigBefore,
       `A47 alone on vane_ik: ${mutedOnly([a47('vane_ik')], sweepFollow)}; A48 alone on ride_tf: ${mutedOnly([a48], rideFollow)}; with an A19 beside it: ${mutedOnly([a47('vane_ik'), 'FAIL  A19_OVERLAY_PNGS_HAVE_ALPHA: slot "plate"'], sweepFollow)}; on another constraint: ${mutedOnly([a47('arm_ik')], sweepFollow)}; the copy declares ${JSON.stringify((doorRig.invariants as Record<string, unknown>).consumerDrivenMix)}`,
       "the released pose fails rig-c's A47/A48 by construction; its door is invariants.consumerDrivenMix, taken on the throwaway copy only and only when rigc's gate refused that copy for that constraint and for nothing else — any other red line is rigc's verdict on the copy and is reported as such",
@@ -8693,7 +8697,7 @@ function runBuildSuite(): number {
     const sceneCheck = readJsonFile(join(notedOut, 'check', 'check.json'));
     say(
       'BU13_A_CONFIG_WITH_A_SCENE_TARGET_AND_A_TRANSFORM_CONSTRAINT_BUILDS_AND_CHECKS_GREEN_WITH_THE_CONSTRAINT_AND_ITS_DETACHED_RULE_IN_RIG_JSON',
-      noted.status === 0 && JSON.stringify(sceneRig?.constraints) === JSON.stringify([level]) && JSON.stringify(sceneRig?.invariants) === JSON.stringify({ detached: [{ bone: 'tgt', notUnder: 'chest', why: 'spine-parts: "tgt" is the source of transform constraint "level" (config.constraints[0]), and "chest" is a bone it drives; under it, driving it would move what it follows' }] }) && sceneCheck?.PASS === true && sceneCheck.gate_spine_html_green === true,
+      noted.status === 0 && JSON.stringify(sceneRig?.constraints) === JSON.stringify([level]) && JSON.stringify(sceneRig?.invariants) === JSON.stringify({ detached: [{ bone: 'tgt', notUnder: 'chest', why: 'rig-parts: "tgt" is the source of transform constraint "level" (config.constraints[0]), and "chest" is a bone it drives; under it, driving it would move what it follows' }] }) && sceneCheck?.PASS === true && sceneCheck.gate_spine_html_green === true,
       `exit ${noted.status}; rig.json constraints ${JSON.stringify(sceneRig?.constraints ?? null)}, invariants ${JSON.stringify(sceneRig?.invariants ?? null)}; check.json PASS ${String(sceneCheck?.PASS)}, gate ${String(sceneCheck?.gate_spine_html_green)}${noted.status === 0 ? '' : `; ${noted.out.split('\n').filter((l) => l.includes('FAIL')).slice(0, 3).join(' | ')}`}`,
       'issue #92 end to end: the constraint goes to rigc as written but its note and record, the scene target is declared detached from the bone it drives, rigc\'s gate passes both (RG60 shows A25 reading the declaration), and every line check reads stays green',
     );
@@ -9448,7 +9452,7 @@ function runChainSuite(): number | null {
 // the README loop, run in order on a fresh config (issue #20)
 // ---------------------------------------------------------------------------
 
-/** The `spine-parts …` lines of README.md's "The loop, for an agent" block, in order, comments dropped; a string says why none could be read. */
+/** The `rig-parts …` lines of README.md's "The loop, for an agent" block, in order, comments dropped; a string says why none could be read. */
 function readmeLoopLines(readme: string): string[] | string {
   const at = readme.indexOf('## The loop, for an agent');
   if (at < 0) return 'README.md has no "## The loop, for an agent" section';
@@ -9459,8 +9463,8 @@ function readmeLoopLines(readme: string): string[] | string {
     .slice(open + 6, close)
     .split('\n')
     .map((l) => l.replace(/\s+#.*$/, '').trim())
-    .filter((l) => l.startsWith('spine-parts '));
-  return lines.length === 0 ? 'the loop block holds no spine-parts line' : lines;
+    .filter((l) => l.startsWith('rig-parts '));
+  return lines.length === 0 ? 'the loop block holds no rig-parts line' : lines;
 }
 
 interface LoopRun {
@@ -9564,7 +9568,7 @@ function runReadmeLoopSuite(): number | null {
       const tracked = readJsonAt(join(ex, 'config.json')) as { meshes?: Record<string, Record<string, unknown>> };
       const proposed = readJsonAt(join(ex, 'proposal.json')) as { meshes?: Record<string, Record<string, unknown>> };
       const corrected = Object.keys(tracked.meshes ?? {}).filter((m) => 'contour' in (tracked.meshes?.[m] ?? {}) && 'grid' in (proposed.meshes?.[m] ?? {})).sort();
-      const buildAt = lines.findIndex((l) => /^spine-parts build /.test(l));
+      const buildAt = lines.findIndex((l) => /^rig-parts build /.test(l));
       const named = (r.refused?.fails ?? []).map((l) => /FAIL {2}CHECK_TIP_OVER_ROOT: part "([^"]+)"/.exec(l)?.[1] ?? '');
       const ok =
         corrected.length === 0
@@ -9582,11 +9586,11 @@ function runReadmeLoopSuite(): number | null {
     // The planted order: assemble before the plan exists. It must stop at
     // that step, name it, and quote the loader's line — the reporter has to be
     // seen naming a refusal, and the refusal has to say which command writes a plan.
-    const assembleAt = lines.findIndex((l) => /^spine-parts assemble /.test(l) && !l.includes('--propose-plan'));
+    const assembleAt = lines.findIndex((l) => /^rig-parts assemble /.test(l) && !l.includes('--propose-plan'));
     const planAt = lines.findIndex((l) => l.includes('--propose-plan'));
     const early = assembleAt > planAt && planAt >= 0 ? [...lines.slice(0, planAt), lines[assembleAt]] : null;
     const planted = early === null ? null : runReadmeLoop(early, found[0], join(dir, 'planted'));
-    const unknown = runReadmeLoop(['spine-parts animate --config config.json'], found[0], join(dir, 'unknown'));
+    const unknown = runReadmeLoop(['rig-parts animate --config config.json'], found[0], join(dir, 'unknown'));
     const plantedLine = planted?.refused?.first ?? '';
     say(
       'RL02_AN_ASSEMBLE_BEFORE_ITS_PLAN_AND_A_LINE_THE_CONTROL_CANNOT_RUN_ARE_NAMED_AS_THE_STEP_THAT_STOPPED',
@@ -11454,7 +11458,10 @@ function corpusDir(): string | null {
       process.exit(2);
     }
     named = resolve(value);
-  } else if (process.env.SPINE_PARTS_CORPUS) named = resolve(process.env.SPINE_PARTS_CORPUS);
+  } else {
+    const set = envTwin(process.env, ENV_TWINS.corpus);
+    if (set !== null) named = resolve(set.value);
+  }
   if (named === null) return null;
   if (!existsSync(named)) {
     // A typo must not read as "no corpus": the one caller who asked for the
@@ -11653,7 +11660,7 @@ function runCorpusSuite(dir: string | null): number | null {
   const keys = exampleKeys();
   if (dir === null && keys.fetched.length === 0) {
     const why = keys.all.length > 0 ? `the example(s) ${keys.all.join(', ')} have no inputs/ (run \`bun run fetch-examples\`)` : 'there is no examples/<key>/config.json';
-    console.log(`  SKIP  no --corpus <dir>, no SPINE_PARTS_CORPUS, and ${why}, so no real layer set was read`);
+    console.log(`  SKIP  no --corpus <dir>, no ${ENV_TWINS.corpus.join(' or ')}, and ${why}, so no real layer set was read`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — the readers were exercised on fixtures only.');
     return null;
   }
@@ -11792,7 +11799,7 @@ function runConstraintRoleCases(say: (name: string, ok: boolean, detail: string,
       'ST29_COMPARE_COUNTS_THE_CONFIGS_TARGET_BESIDE_THE_RIG_IT_BUILT_AND_A_CONFIG_WITHOUT_THE_CONSTRAINT_DOES_NOT',
       built.status === 0 && agree.includes('; targets: left 1, right 1 — ') && differ.includes('; targets: left 0, right 1 — '),
       `config with the ik against its rig.json: ${agree}; the config without it against the same rig.json: ${differ}`,
-      why('spine-parts compare reads roles off each side\'s spec; before, a config could state no constraint, so its targets were 0 against any rig that had one — now the config that made the rig agrees with it'),
+      why('rig-parts compare reads roles off each side\'s spec; before, a config could state no constraint, so its targets were 0 against any rig that had one — now the config that made the rig agrees with it'),
     );
 
     // Coverage (issue #86) reads configRoles: a scene target on a proposal is said to be one, and why it is not checked.
@@ -14724,7 +14731,83 @@ function runTreeSuite(): number {
     `${text.length} text file(s): ${stale.length === 0 ? `none names ${oldPackage} outside CHANGELOG.md` : stale.join(', ')}; dependencies ${Object.keys(deps).join(', ')}; ${RIGC_PACKAGE} ${theirs?.version ?? '(not installed)'} installed; a planted import is found (${plantStale[0] ?? 'not found'}), the changelog's line is not (${plantStale[1] ?? 'exempt'})`,
     'npm renamed the upstream package to rig-c at 2.20.4 with the same exports map; an import of the old name resolves only while a stale node_modules still holds it, and a sentence naming it sends an agent to a package that is no longer published',
   );
+
+  // TY12 — this package was renamed to rig-parts, on rig-c's precedent (TY11). The former name stays only where the
+  // transition keeps it (FORMER_NAME_SPANS, FORMER_NAME_LINES, CHANGELOG.md); spelled here only in pieces, as TY11 does.
+  const ourPkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { name?: string; bin?: Record<string, string>; files?: string[] };
+  const formerHits = text.flatMap(([f, t]) => formerNameLines(f, t));
+  const staleAllowances = staleFormerNameLines(text);
+  const bins = ourPkg.bin ?? {};
+  const launcher = bins[ourPkg.name ?? ''];
+  const binsOk =
+    ourPkg.name === NEW_PACKAGE_NAME &&
+    Object.keys(bins).sort().join() === [NEW_PACKAGE_NAME, FORMER_PACKAGE_NAME].sort().join() &&
+    launcher !== undefined &&
+    bins[FORMER_PACKAGE_NAME] === launcher &&
+    existsSync(join(ROOT, launcher)) &&
+    (ourPkg.files ?? []).includes(launcher.replace(/^\.\//, ''));
+  const plantFormer = [
+    formerNameLines('plant.md', `run \`${FORMER_PACKAGE_NAME} build\` here`),
+    formerNameLines('plant.md', `the [${FORMER_PACKAGE_NAME}-examples](https://github.com/firejune/${FORMER_PACKAGE_NAME}-examples) repository`),
+    formerNameLines('plant.ts', `const spec = '${FORMER_PACKAGE_NAME}-scene/1';`),
+    formerNameLines('CHANGELOG.md', `* ${FORMER_PACKAGE_NAME} 0.1.0`),
+    formerNameLines('README.md', `npm install -g ${FORMER_PACKAGE_NAME}`),
+  ].map((h) => h.length);
+  const aliasLine = FORMER_NAME_LINES[0][1];
+  const plantStaleAllowance = staleFormerNameLines(text.map(([f, t]) => [f, f === 'package.json' ? t.split('\n').filter((l) => l !== aliasLine).join('\n') : t] as const));
+  const env = ENV_TWINS.corpus;
+  const twins = [envTwin({ [env[0]]: 'new', [env[1]]: 'old' }, env), envTwin({ [env[1]]: 'old' }, env), envTwin({ [env[0]]: '', [env[1]]: 'old' }, env), envTwin({}, env)];
+  const twinsOk = twins[0]?.name === env[0] && twins[0]?.value === 'new' && twins[1]?.name === env[1] && twins[2]?.name === env[1] && twins[3] === null;
+  const twinNames = Object.values(ENV_TWINS).every(([now, former]) => now.startsWith('RIG_PARTS_') && former === `SPINE_PARTS_${now.slice('RIG_PARTS_'.length)}`);
+  say(
+    'TY12_THE_FORMER_PACKAGE_NAME_ONLY_WHERE_THE_TRANSITION_KEEPS_IT',
+    formerHits.length === 0 && staleAllowances.length === 0 && binsOk && plantFormer.join() === '1,0,0,0,1' && plantStaleAllowance.length === 1 && twinsOk && twinNames,
+    `${text.length} text file(s): ${formerHits.length === 0 ? `none names ${FORMER_PACKAGE_NAME} outside CHANGELOG.md, the ${FORMER_NAME_SPANS.length} kept span(s) and the ${FORMER_NAME_LINES.length} kept line(s)` : formerHits.slice(0, 6).join('; ')}` +
+      `${staleAllowances.length === 0 ? '' : `; kept line(s) no longer found: ${staleAllowances.join('; ')}`}; package.json ${ourPkg.name ?? '(no name)'}, bin ${JSON.stringify(bins)}${binsOk ? '' : ' (both names on one launcher that exists and is in files were required)'}` +
+      `; planted: a command line, an examples link, a spec id, a changelog line, a README install line -> ${plantFormer.join(', ')} hit(s) (1, 0, 0, 0, 1 required); the alias bin line dropped -> ${plantStaleAllowance.join('; ') || 'not reported'}` +
+      `; ${env[0]} and ${env[1]} set, the former alone, the new one empty, neither -> ${twins.map((t) => (t === null ? 'none' : t.name)).join(', ')}${twinNames ? '' : '; a twin is not RIG_PARTS_<x> over SPINE_PARTS_<x>'}`,
+    "the package went from its first npm name to rig-parts beside rig-c's own rename; a sentence or command still naming the former one sends an agent to a name kept only for the transition, and an allowance that outlived its line would widen the rule unseen",
+  );
   return bad();
+}
+
+/** The package's name, and the name it was published under before the rename, spelled in pieces so TY12 scans this file too. */
+const NEW_PACKAGE_NAME = ['rig', 'parts'].join('-');
+const FORMER_PACKAGE_NAME = ['spine', 'parts'].join('-');
+
+/**
+ * Spans that keep the former name wherever they appear: the examples repository, which was not renamed, and the spec
+ * ids of the files authors write (requirements, scene, keypoints, bonemap) and this package writes (basis, scene
+ * report). Those name a file format, not the tool, and a file written before the rename must still read.
+ */
+const FORMER_NAME_SPANS: readonly RegExp[] = [
+  new RegExp(`${FORMER_PACKAGE_NAME}-examples`, 'g'),
+  new RegExp(`${FORMER_PACKAGE_NAME}-(?:basis|bonemap|keypoints|requirements|scene-report|scene)/\\d+`, 'g'),
+];
+
+/** Whole lines that keep the former name, by file, each with why; every one must still be found (`staleFormerNameLines`). */
+const FORMER_NAME_LINES: ReadonlyArray<readonly [string, string, string]> = [
+  ['package.json', `    "${FORMER_PACKAGE_NAME}": "./bin/${NEW_PACKAGE_NAME}.cjs"`, 'the transition bin: the former command on the same launcher'],
+  ['.gitignore', `/${FORMER_PACKAGE_NAME}-*.tgz`, 'npm pack in a checkout of a tag before the rename writes the tarball under the former name'],
+  ['README.md', `as \`${FORMER_PACKAGE_NAME}\`, its former name**, and the install keeps a \`${FORMER_PACKAGE_NAME}\` command`, 'the install section says what the former name was and that its command is kept'],
+];
+
+/** The lines of one file that name the former package outside every allowance, as `file:line: text`. */
+function formerNameLines(file: string, text: string): string[] {
+  if (file === 'CHANGELOG.md' || !text.includes(FORMER_PACKAGE_NAME)) return [];
+  const kept = new Set(FORMER_NAME_LINES.filter(([f]) => f === file).map(([, line]) => line));
+  const hits: string[] = [];
+  text.split('\n').forEach((line, i) => {
+    if (kept.has(line)) return;
+    const rest = FORMER_NAME_SPANS.reduce((l, span) => l.replace(span, ''), line);
+    if (rest.includes(FORMER_PACKAGE_NAME)) hits.push(`${file}:${i + 1}: ${line.trim().slice(0, 120)}`);
+  });
+  return hits;
+}
+
+/** The kept lines of `FORMER_NAME_LINES` whose file no longer holds them, so an allowance cannot outlive its line. */
+function staleFormerNameLines(files: ReadonlyArray<readonly [string, string]>): string[] {
+  return FORMER_NAME_LINES.filter(([file, line]) => !(files.find(([f]) => f === file)?.[1] ?? '').split('\n').includes(line)).map(([file, line]) => `${file}: ${line.trim()}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -15280,7 +15363,7 @@ function runSceneSuite(): number {
     const refusedOut = join(dir, 'composed-refused');
     const refused = runCli(['compose', '--scene', scene(two({ order: ['plain'] })), '--out', refusedOut]);
     const help = runCli(['--help']).out;
-    const helpWords = ['spine-parts compose --scene <scene.json> --out <dir> [--requirements <file.json>]', SCENE_SPEC, 'judged by nothing', 'not a person', '"<id>:<name>"', "root's own frame", 'whose idle keys it'];
+    const helpWords = ['rig-parts compose --scene <scene.json> --out <dir> [--requirements <file.json>]', SCENE_SPEC, 'judged by nothing', 'not a person', '"<id>:<name>"', "root's own frame", 'whose idle keys it'];
     say(
       'SC22_COMPOSE_EXITS_2_ON_USAGE_1_ON_A_REFUSAL_AND_THE_HELP_NAMES_IT',
       noScene.status === 2 && twiceFlag.status === 2 && refused.status === 1 && composeFail(refused.out, 'SCENE_ORDER_COMPLETE') !== null && !existsSync(join(refusedOut, 'rig')) && helpWords.every((w) => help.includes(w)),
@@ -17973,8 +18056,25 @@ const STARTED_FIRST: readonly string[] = ['readme-loop', 'chain', 'build', 'chec
 /** The argument that makes this file run one suite as a worker, for the parent run, and nothing else. */
 const WORKER_FLAG = '--suite-worker';
 
-/** The environment variable that sets how many workers run at once; the machine's available parallelism when unset. */
-const JOBS_ENV = 'SPINE_PARTS_SELFTEST_JOBS';
+/**
+ * The environment variables renamed with the package: each pair is the name
+ * read first and the former name it falls back to. `jobs` sets how many workers
+ * run at once (the machine's available parallelism when neither is set);
+ * `corpus` names the extra suite's corpus when `--corpus` does not.
+ */
+const ENV_TWINS = {
+  corpus: ['RIG_PARTS_CORPUS', 'SPINE_PARTS_CORPUS'],
+  jobs: ['RIG_PARTS_SELFTEST_JOBS', 'SPINE_PARTS_SELFTEST_JOBS'],
+} as const satisfies Record<string, readonly [string, string]>;
+
+/** The first of a twin's two names that is set to something other than the empty string, and its value; null when neither is. */
+function envTwin(env: Readonly<Record<string, string | undefined>>, twin: readonly [string, string]): { name: string; value: string } | null {
+  for (const name of twin) {
+    const value = env[name];
+    if (value !== undefined && value !== '') return { name, value };
+  }
+  return null;
+}
 
 /** The order workers are started in: `first` in its order, then every other suite in `keys` order. A string names what is wrong. */
 function dispatchOrder(keys: readonly string[], first: readonly string[]): string[] | string {
@@ -18065,15 +18165,15 @@ function workerMain(argv: readonly string[]): void {
   writeFileSync(result, JSON.stringify(record));
 }
 
-/** How many workers run at once: `JOBS_ENV` when set, a positive whole number or the run exits 2; else the machine's available parallelism. */
+/** How many workers run at once: `ENV_TWINS.jobs` when set, a positive whole number or the run exits 2; else the machine's available parallelism. */
 function workerCount(): number {
-  const set = process.env[JOBS_ENV];
-  if (set === undefined || set === '') return availableParallelism();
-  if (!/^[1-9]\d*$/.test(set)) {
-    console.error(`selftest: ${JOBS_ENV} is ${JSON.stringify(set)}; a positive whole number of workers is required`);
+  const set = envTwin(process.env, ENV_TWINS.jobs);
+  if (set === null) return availableParallelism();
+  if (!/^[1-9]\d*$/.test(set.value)) {
+    console.error(`selftest: ${set.name} is ${JSON.stringify(set.value)}; a positive whole number of workers is required`);
     process.exit(2);
   }
-  return Number(set);
+  return Number(set.value);
 }
 
 function launchWorker(key: string, corpus: string | null, dir: string): Promise<WorkerRun> {
@@ -18147,13 +18247,13 @@ async function main(): Promise<void> {
   console.log('');
   const floor = [...tallyFaults(tally.blocks, tally.gutter, tally.total), ...suiteSetFaults(tally.blocks.map((b) => b.key), [...keys, TALLY_SUITE])];
   if (floor.length > 0) {
-    console.error('spine-parts selftest: this run cannot account for itself — that is not a pass, it is an empty gate');
+    console.error('rig-parts selftest: this run cannot account for itself — that is not a pass, it is an empty gate');
     for (const f of floor) console.error(`  ${f}`);
     process.exit(2);
   }
   const bad = tally.failures;
   if (bad > 0) {
-    console.error(`spine-parts selftest: ${bad} control(s) failed`);
+    console.error(`rig-parts selftest: ${bad} control(s) failed`);
     process.exit(1);
   }
   // the summary begins here
@@ -18169,7 +18269,7 @@ async function main(): Promise<void> {
   const inputsClause = holes.includes('inputs-examples') ? '' : `, + ${n('inputs-examples')} example-inputs`;
   const autoExamplesClause = holes.includes('auto-mesh-examples') ? '' : `, + ${n('auto-mesh-examples')} example-auto-mesh`;
   console.log(
-    `spine-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
+    `rig-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
       `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('contour')} contour-mesh, + ${n('contour-wiring')} contour-wiring, + ${n('auto-mesh')} auto-mesh, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('scene')} scene, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${autoExamplesClause}${chainClause}${readmeLoopClause}`,
   );

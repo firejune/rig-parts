@@ -22,7 +22,7 @@
  * `parts/<name>.png` for every part (the last two may sit in a directory of
  * their own, `partsHome`). It is a rig SPEC, which `rigc build` compiles, not
  * a compiled skeleton. Since issue #77 the `idle` and `parts.json` may be
- * missing — a rig merged from several spine-parts outputs has neither — and
+ * missing — a rig merged from several rig-parts outputs has neither — and
  * every line that reads the missing one says SKIP with the reason; the
  * painting (`--source`) adds {@link SOURCE_LINE}. The inputs are read only;
  * everything is written under the output directory (the idle's outputs only
@@ -245,7 +245,7 @@ export const DEFAULT_PAGE_EDGES: PageEdges = 'free';
  * (`A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP`), and the cost is the class already
  * accepted for `free`. Measured with rig-c 2.1.3, and again with 2.10.1,
  * whose pages, atlases and idle frames are byte-identical to it (the full entry,
- * spine-core 4.3.13 beside it), `spine-parts build` on the two public examples
+ * spine-core 4.3.13 beside it), `rig-parts build` on the two public examples
  * under `--page-edges free`: `polygon` takes demo's page from 967x1338 (91.2 %
  * covered) to 922x1348 (95.0 %), 3.9 % less area, and sample's from 479x1166
  * (93.4 %) to 477x1151 (95.0 %), 1.7 % less. Each of the 49 idle frames at 12
@@ -1084,7 +1084,7 @@ export function blackRig(rig: Record<string, unknown>): Record<string, unknown> 
  *   black ({@link blackRig}), is the background times what the art lets
  *   through, channel by channel: `black = bg (1 - a)`. The pose over white is
  *   then `open + (255 - bg) black / bg` — exact for every slot drawn with the
- *   normal blend, which is every slot spine-parts writes.
+ *   normal blend, which is every slot rig-parts writes.
  * - **The coverage.** assemble's "a part has alpha above 128" becomes "the
  *   setup pose has alpha above 128", the alpha read as `255 (1 - black / bg)`
  *   on the channel that lets most through. Where two translucent parts overlap

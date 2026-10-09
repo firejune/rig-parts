@@ -271,7 +271,7 @@ export function loadScene(path: string): SceneFile {
         } else seen.set(id, i);
       }
       if ('build' in c && (typeof c.build !== 'string' || c.build === '')) {
-        fail('SCENE_FIELD_TYPE', `${where}.build`, `is ${show(c.build)}; the directory a green \`spine-parts build\` wrote (its --out), relative to the scene file, is required`);
+        fail('SCENE_FIELD_TYPE', `${where}.build`, `is ${show(c.build)}; the directory a green \`rig-parts build\` wrote (its --out), relative to the scene file, is required`);
         ok = false;
       }
       const off = c.offset;
@@ -350,7 +350,7 @@ export function readCharacterBuild(c: SceneCharacter, problems: Problem[]): Char
   const dir = c.buildDir;
   const who = `character "${c.id}" (${c.build})`;
   if (!existsSync(dir) || !statSync(dir).isDirectory()) {
-    problems.push({ code: 'SCENE_BUILD_PRESENT', object: who, detail: `${dir} is not a directory; the --out of a green \`spine-parts build\` is required` });
+    problems.push({ code: 'SCENE_BUILD_PRESENT', object: who, detail: `${dir} is not a directory; the --out of a green \`rig-parts build\` is required` });
     return null;
   }
   const check = readJson(join(dir, 'check', 'check.json'), "the build's own check; a build that ran its check writes it", problems);
@@ -1024,7 +1024,7 @@ export function composeStage(input: ComposeInput, run: ComposeRunners, log: Log)
   mkdirSync(input.out, { recursive: true });
   for (const p of COMPOSE_OWNS) rmSync(join(input.out, p), { recursive: true, force: true });
   const mode: PackMode = { pageEdges: DEFAULT_PAGE_EDGES, packShape: DEFAULT_PACK_SHAPE };
-  log(`spine-parts compose: ${input.scene} -> ${input.out}, page edges ${mode.pageEdges}, pack shape ${mode.packShape}`);
+  log(`rig-parts compose: ${input.scene} -> ${input.out}, page edges ${mode.pageEdges}, pack shape ${mode.packShape}`);
   let composed: ComposedScene;
   try {
     composed = composeFromFiles(input.scene, input.requirements, mode);

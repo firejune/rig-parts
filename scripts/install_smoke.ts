@@ -16,7 +16,9 @@
  * SOURCE TREE, the `ships` job in `ci.yml` reads packed PATH LISTS, and
  * `release.yml` publishes and never installs. This is the fact about a program:
  * `npm pack`, `npm install` into an empty directory, and real commands run from
- * the install — `--version`, the installed `rigc --version` (which must name
+ * the install — `--version`, the same `--version` from every other command
+ * the package's `bin` declares (the former name kept for the transition), the
+ * installed `rigc --version` (which must name
  * the core entry: an install carries no Spine runtime), `layers` on a wrapper
  * directory, `layers` on a PSD, `sheet`, and `check` on a generated two-part
  * rig, which runs every rigc command a build runs — `build --pack`, `render`,
@@ -30,7 +32,7 @@
  *
  * 🔒 **Nothing under this repository is on the fixture's path at run time.** The
  * fixture generator below is authored as text into the install directory and
- * imports `spine-parts/src/raster/png.ts` and `ag-psd` as BARE specifiers, so
+ * imports `rig-parts/src/raster/png.ts` and `ag-psd` as BARE specifiers, so
  * they resolve inside the install or not at all — and the run refuses a
  * resolution that lands anywhere else. The only thing that crosses from the
  * checkout is the tarball this script packed, which is the subject.
@@ -63,6 +65,8 @@ import { fileURLToPath } from 'node:url';
 
 /** The repository this script packs — it is the subject, and nothing else reaches the fixture. */
 const ROOT = resolve(import.meta.dir, '..');
+/** The package's name, read from the tree's package.json: the directory an install puts it in, the command it installs and the registry spec. */
+const PACKAGE = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { name: string }).name;
 
 // ---------------------------------------------------------------------------
 // the fixture, authored here because the package carries no art
@@ -77,7 +81,7 @@ const GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initializeCanvas, writePsd } from 'ag-psd';
-import { encodePngBytes } from 'spine-parts/src/raster/png.ts';
+import { encodePngBytes } from 'rig-parts/src/raster/png.ts';
 
 // \`fileURLToPath\` and not \`new URL(...).pathname\`: a URL path is
 // percent-encoded, so the unusual-path case would write into a directory with
@@ -111,7 +115,7 @@ const bottomFirst = [...layers].sort((a, b) => b.depth - a.depth);
 const psd = { width: 32, height: 24, children: bottomFirst.map((l) => ({ name: l.name, left: l.left, top: l.top, right: l.left + l.w, bottom: l.top + l.h, imageData: raster(l) })) };
 writeFileSync(join(HERE, 'fixture.psd'), new Uint8Array(writePsd(psd, { noBackground: true })));
 
-console.log('RESOLVED ' + import.meta.resolve('spine-parts/src/raster/png.ts'));
+console.log('RESOLVED ' + import.meta.resolve('rig-parts/src/raster/png.ts'));
 console.log('RESOLVED ' + import.meta.resolve('ag-psd'));
 `;
 
@@ -122,9 +126,9 @@ console.log('RESOLVED ' + import.meta.resolve('ag-psd'));
 const CHECK_RIG_GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cropToSpineY } from 'spine-parts/src/coords.ts';
-import { serializeParts } from 'spine-parts/src/parts.ts';
-import { encodePngBytes } from 'spine-parts/src/raster/png.ts';
+import { cropToSpineY } from 'rig-parts/src/coords.ts';
+import { serializeParts } from 'rig-parts/src/parts.ts';
+import { encodePngBytes } from 'rig-parts/src/raster/png.ts';
 
 const DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'checkrig');
 const W = 48;
@@ -188,9 +192,9 @@ writeFileSync(join(DIR, 'parts.json'), serializeParts({
 const SCENE_GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cropToSpineY } from 'spine-parts/src/coords.ts';
-import { serializeParts } from 'spine-parts/src/parts.ts';
-import { encodePngBytes } from 'spine-parts/src/raster/png.ts';
+import { cropToSpineY } from 'rig-parts/src/coords.ts';
+import { serializeParts } from 'rig-parts/src/parts.ts';
+import { encodePngBytes } from 'rig-parts/src/raster/png.ts';
 
 const HOME = fileURLToPath(new URL('.', import.meta.url));
 const DIR = join(HOME, 'scene-character');
@@ -261,31 +265,31 @@ writeFileSync(join(HOME, 'scene.json'), JSON.stringify({
 /** The slot order the composed scene above must compile to: the plate, then `a:back`, `b:back`, `a`'s rest, `b`'s rest. */
 const EXPECT_SCENE_SLOTS = ['plate', 'a:back', 'b:back', 'a:front', 'b:front'];
 
-// The contour mesh from the install (issue #84): \`spine-parts/src/contour.ts\` imports rigc's outline functions through
+// The contour mesh from the install (issue #84): \`rig-parts/src/contour.ts\` imports rigc's outline functions through
 // the named entry \`rig-c/mesh\`, which nothing on the CLI's contour-free paths runs, so this is where a rigc that
 // moved or narrowed them shows. A 24x16 block at (4, 4) in 32x24, tolerance 0, margin 1, spacing 8: by hand, the block
 // grown by its four neighbours' rows and columns, a 12-vertex outline, 6 interior points and 2·18 − 12 − 2 = 22
 // triangles (the selftest's CT01).
-const CONTOUR_PROBE = `import { contourMesh } from 'spine-parts/src/contour.ts';
+const CONTOUR_PROBE = `import { contourMesh } from 'rig-parts/src/contour.ts';
 
 const alpha = new Uint8Array(32 * 24);
 for (let y = 4; y < 20; y++) for (let x = 4; x < 28; x++) alpha[y * 32 + x] = 255;
 const m = contourMesh('probe', { width: 32, height: 24, alpha }, { threshold: 8, tolerance: 0, margin: 1, spacing: 8, regions: [] });
-console.log('RESOLVED ' + import.meta.resolve('spine-parts/src/contour.ts'));
+console.log('RESOLVED ' + import.meta.resolve('rig-parts/src/contour.ts'));
 console.log('RESOLVED ' + import.meta.resolve('rig-c/mesh'));
 console.log(Array.isArray(m) ? 'REFUSED ' + JSON.stringify(m) : 'CONTOUR ' + m.hull + ' ' + (m.vertices.length - m.hull) + ' ' + m.triangles.length / 3);
 `;
 const EXPECT_CONTOUR = 'CONTOUR 12 6 22';
 
 // The automatic mesh mode from the install (issue #126): the rig fixture's two parts — an opaque 16x8 cloth and a 4x2 eye region (one region alone on a page is rigc's A27) — on a 40x40 rig, its
-// mesh in \`auto\`, through the installed \`spine-parts rig\` — the contour source, rig-c's \`reduceMesh\` through
+// mesh in \`auto\`, through the installed \`rig-parts rig\` — the contour source, rig-c's \`reduceMesh\` through
 // \`rig-c/mesh\`, and the installed rigc's gate, whose launcher runs its core entry in an install with no Spine
 // runtime (the rigc-entry step above holds that). Green means the gate passed, the motion gate (rig-c/meshcompare, no runtime) passed, and \`mesh_report.json\` says \`auto\`.
 const AUTO_GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { serializeParts } from 'spine-parts/src/parts.ts';
-import { encodePngBytes } from 'spine-parts/src/raster/png.ts';
+import { serializeParts } from 'rig-parts/src/parts.ts';
+import { encodePngBytes } from 'rig-parts/src/raster/png.ts';
 
 const DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'auto-character');
 mkdirSync(join(DIR, 'parts'), { recursive: true });
@@ -543,26 +547,42 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   // through the real path (macOS reaches its temp dir as /var and reports /private/var).
   mkdirSync(join(work, spec.dirName), { recursive: true });
   const home = realpathSync(join(work, spec.dirName));
-  writeFileSync(join(home, 'package.json'), `${JSON.stringify({ name: 'spine-parts-install-smoke', private: true, version: '0.0.0', type: 'module' }, null, 2)}\n`);
+  writeFileSync(join(home, 'package.json'), `${JSON.stringify({ name: 'rig-parts-install-smoke', private: true, version: '0.0.0', type: 'module' }, null, 2)}\n`);
   const install = spec.installer === 'npm' ? run('npm', ['install', built.tgz, '--no-audit', '--no-fund'], home) : run('bun', ['add', built.tgz], home);
   output += install.out;
-  const pkgRoot = join(home, 'node_modules', 'spine-parts');
-  const bin = join(home, 'node_modules', '.bin', 'spine-parts');
+  const pkgRoot = join(home, 'node_modules', PACKAGE);
+  const bin = join(home, 'node_modules', '.bin', PACKAGE);
   if (!existsSync(join(pkgRoot, 'package.json')) || !existsSync(bin)) {
-    fault('install', `SMOKE_INSTALL_EMPTY_DIR: ${spec.installer} install of ${built.tgz} exited ${install.status} and left ${existsSync(pkgRoot) ? 'no .bin/spine-parts' : 'no node_modules/spine-parts'} under ${home}. ${install.out.trim().slice(0, 3000)}`);
+    fault('install', `SMOKE_INSTALL_EMPTY_DIR: ${spec.installer} install of ${built.tgz} exited ${install.status} and left ${existsSync(pkgRoot) ? `no .bin/${PACKAGE}` : `no node_modules/${PACKAGE}`} under ${home}. ${install.out.trim().slice(0, 3000)}`);
     if (!keep) rmSync(home, { recursive: true, force: true });
     return { faults, steps, notes, output };
   }
-  const installedVersion = (JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8')) as { version?: string }).version ?? '';
+  const installedPkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8')) as { version?: string; bin?: Record<string, string> };
+  const installedVersion = installedPkg.version ?? '';
 
   // --version, from the install, against the installed package.json.
   const version = run(bin, ['--version'], home);
   output += version.out;
   if (version.status !== 0 || version.out.trim() !== installedVersion) {
-    fault('version', `SMOKE_VERSION_FROM_THE_INSTALL: \`spine-parts --version\` exited ${version.status} saying ${JSON.stringify(version.out.trim().slice(0, 400))}; the installed package.json says ${installedVersion}`);
+    fault('version', `SMOKE_VERSION_FROM_THE_INSTALL: \`${PACKAGE} --version\` exited ${version.status} saying ${JSON.stringify(version.out.trim().slice(0, 400))}; the installed package.json says ${installedVersion}`);
   }
 
-  // The installed rigc's entry: neither spine-parts nor rig-c 2.x installs spine-core, so rigc's launcher
+  // Every other command the installed package.json's \`bin\` declares — the former
+  // name kept for the transition (README, Requirements) — runs too, once, and
+  // says the same version. Read off the install, so what is proved is what an
+  // upgrade from the former name runs, not what the tree meant to ship.
+  const others = Object.keys(installedPkg.bin ?? {}).filter((name) => name !== PACKAGE).sort();
+  for (const name of others) {
+    const other = join(home, 'node_modules', '.bin', name);
+    const said = existsSync(other) ? run(other, ['--version'], home) : null;
+    if (said !== null) output += said.out;
+    if (said === null || said.status !== 0 || said.out.trim() !== installedVersion) {
+      fault('bin', `SMOKE_EVERY_BIN_RUNS_FROM_THE_INSTALL: the installed package.json declares the command \`${name}\`; ${said === null ? `${spec.installer} left no .bin/${name}` : `\`${name} --version\` exited ${said.status} saying ${JSON.stringify(said.out.trim().slice(0, 400))}`}; exit 0 and ${installedVersion} were required`);
+    }
+  }
+  if (others.length > 0 && !steps.includes('bin')) notes.push(`the command(s) ${others.join(', ')} beside ${PACKAGE} ran from the install and said ${installedVersion}`);
+
+  // The installed rigc's entry: neither rig-parts nor rig-c 2.x installs spine-core, so rigc's launcher
   // must find no runtime from its own package root and run cli_core.ts, rigc's own validator.
   const rigcBin = join(home, 'node_modules', '.bin', 'rigc');
   const rigcVersion = existsSync(rigcBin) ? run(rigcBin, ['--version'], home) : null;
@@ -571,7 +591,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   if (rigcVersion === null || rigcVersion.status !== 0 || entryLine === null || !/^entry: cli_core\.ts — @esotericsoftware\/spine-core absent — /.test(entryLine)) {
     fault(
       'rigc-entry',
-      `SMOKE_RIGC_RUNS_THE_CORE_ENTRY: ${rigcVersion === null ? `no rigc at ${rigcBin}` : `\`rigc --version\` exited ${rigcVersion.status}, entry line ${JSON.stringify(entryLine)}`}; "entry: cli_core.ts — ${SPINE_CORE} absent — …" was required — an install of spine-parts carries no Spine runtime, so its build is gated by rigc's own validator`,
+      `SMOKE_RIGC_RUNS_THE_CORE_ENTRY: ${rigcVersion === null ? `no rigc at ${rigcBin}` : `\`rigc --version\` exited ${rigcVersion.status}, entry line ${JSON.stringify(entryLine)}`}; "entry: cli_core.ts — ${SPINE_CORE} absent — …" was required — an install of rig-parts carries no Spine runtime, so its build is gated by rigc's own validator`,
     );
   } else notes.push(`the installed rigc says ${entryLine}`);
 
@@ -603,7 +623,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     if (table.status !== 0 || order !== EXPECT_ORDER.join(' < ') || !counts) {
       fault(
         'layers',
-        `SMOKE_LAYERS_READS_THE_FIXTURE: \`spine-parts layers\` on the ${label} input exited ${table.status} with order "${order}"${counts ? '' : ` and counts ${rows.map((r) => `${r.name}=${r.opaque}`).join(', ')}`}; "${EXPECT_ORDER.join(' < ')}" with ${Object.entries(EXPECT_OPAQUE).map(([n, c]) => `${n}=${c}`).join(', ')} was required. ${table.out.trim().slice(0, 2000)}`,
+        `SMOKE_LAYERS_READS_THE_FIXTURE: \`rig-parts layers\` on the ${label} input exited ${table.status} with order "${order}"${counts ? '' : ` and counts ${rows.map((r) => `${r.name}=${r.opaque}`).join(', ')}`}; "${EXPECT_ORDER.join(' < ')}" with ${Object.entries(EXPECT_OPAQUE).map(([n, c]) => `${n}=${c}`).join(', ')} was required. ${table.out.trim().slice(0, 2000)}`,
       );
     } else notes.push(`layers read the ${label} input: ${order}`);
   }
@@ -616,7 +636,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   const w = header !== null && header.length >= 24 ? header.readUInt32BE(16) : 0;
   const h = header !== null && header.length >= 24 ? header.readUInt32BE(20) : 0;
   if (sheet.status !== 0 || w !== 120 || h !== 120) {
-    fault('sheet', `SMOKE_SHEET_WRITES_ITS_PNG: \`spine-parts sheet\` exited ${sheet.status} and wrote ${header === null ? 'nothing' : `a ${w}x${h} file`}; 120x120 (4 tiles, 2 columns of 60) was required. ${sheet.out.trim().slice(0, 2000)}`);
+    fault('sheet', `SMOKE_SHEET_WRITES_ITS_PNG: \`rig-parts sheet\` exited ${sheet.status} and wrote ${header === null ? 'nothing' : `a ${w}x${h} file`}; 120x120 (4 tiles, 2 columns of 60) was required. ${sheet.out.trim().slice(0, 2000)}`);
   } else notes.push('sheet wrote a 120x120 PNG');
 
   // `check` on a generated two-part rig: every rigc command a build runs, through the entry above.
@@ -630,7 +650,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   if (check === null || check.status !== 0 || !check.out.includes('check: PASS') || checkJson?.PASS !== true || checkJson.rigc_entry?.entry !== 'cli_core.ts') {
     fault(
       'check',
-      `SMOKE_CHECK_FROM_THE_INSTALL: ${check === null ? `\`bun make_checkrig.ts\` exited ${rigGen.status}. ${rigGen.out.trim().slice(0, 2000)}` : `\`spine-parts check\` exited ${check.status}; check.json ${checkJson === null ? 'not written' : `PASS ${String(checkJson.PASS)}, rigc_entry ${JSON.stringify(checkJson.rigc_entry)}`}; exit 0, "check: PASS" and rigc_entry cli_core.ts were required. ${check.out.trim().split('\n').filter((l) => l.includes('FAIL')).slice(0, 3).join(' | ').slice(0, 2000)}`}`,
+      `SMOKE_CHECK_FROM_THE_INSTALL: ${check === null ? `\`bun make_checkrig.ts\` exited ${rigGen.status}. ${rigGen.out.trim().slice(0, 2000)}` : `\`rig-parts check\` exited ${check.status}; check.json ${checkJson === null ? 'not written' : `PASS ${String(checkJson.PASS)}, rigc_entry ${JSON.stringify(checkJson.rigc_entry)}`}; exit 0, "check: PASS" and rigc_entry cli_core.ts were required. ${check.out.trim().split('\n').filter((l) => l.includes('FAIL')).slice(0, 3).join(' | ').slice(0, 2000)}`}`,
     );
   } else notes.push(`check passed on the generated rig, gated by ${checkJson.rigc_entry?.entry as string}`);
 
@@ -653,8 +673,8 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
         compose === null
           ? sceneGen.status !== 0
             ? `\`bun make_scene.ts\` exited ${sceneGen.status}. ${sceneGen.out.trim().slice(0, 2000)}`
-            : `the character's own \`spine-parts check\` exited ${ownCheck?.status}. ${(ownCheck?.out ?? '').trim().split('\n').filter((l) => l.includes('FAIL')).slice(0, 3).join(' | ').slice(0, 2000)}`
-          : `\`spine-parts compose\` exited ${compose.status}; scene.json ${existsSync(join(sceneOut, 'scene.json')) ? 'written' : 'not written'}; check.json ${sceneCheck === null ? 'not written' : `PASS ${String(sceneCheck.PASS)}, rigc_entry ${JSON.stringify(sceneCheck.rigc_entry)}`}; compiled slots ${compiled.join(', ') || '(none)'}; exit 0, scene.json, PASS, rigc_entry cli_core.ts and slots ${EXPECT_SCENE_SLOTS.join(', ')} were required. ${compose.out.trim().split('\n').filter((l) => l.includes('FAIL')).slice(0, 3).join(' | ').slice(0, 2000)}`
+            : `the character's own \`rig-parts check\` exited ${ownCheck?.status}. ${(ownCheck?.out ?? '').trim().split('\n').filter((l) => l.includes('FAIL')).slice(0, 3).join(' | ').slice(0, 2000)}`
+          : `\`rig-parts compose\` exited ${compose.status}; scene.json ${existsSync(join(sceneOut, 'scene.json')) ? 'written' : 'not written'}; check.json ${sceneCheck === null ? 'not written' : `PASS ${String(sceneCheck.PASS)}, rigc_entry ${JSON.stringify(sceneCheck.rigc_entry)}`}; compiled slots ${compiled.join(', ') || '(none)'}; exit 0, scene.json, PASS, rigc_entry cli_core.ts and slots ${EXPECT_SCENE_SLOTS.join(', ')} were required. ${compose.out.trim().split('\n').filter((l) => l.includes('FAIL')).slice(0, 3).join(' | ').slice(0, 2000)}`
       }`,
     );
   } else notes.push(`compose bound two copies of a checked character with a plate, drawing ${compiled.join(', ')}, gated by ${sceneCheck.rigc_entry?.entry as string}`);
@@ -688,7 +708,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
       `SMOKE_AUTO_MESH_FROM_THE_INSTALL: ${
         autoRig === null
           ? `\`bun make_auto.ts\` exited ${autoGen.status}. ${autoGen.out.trim().slice(0, 1500)}`
-          : `\`spine-parts rig\` exited ${autoRig.status}; mesh_report.json ${autoReport === null ? 'not written' : `mode ${JSON.stringify(autoReport[0]?.mode)}`}; exit 0, mode "auto", a motion verdict "pass" and a mesh line reading "motion <value> <= 1 at idle@…" were required. ${autoRig.out.trim().split('\n').filter((l) => /FAIL|rror|rigc/.test(l)).slice(0, 4).join(' | ').slice(0, 1500)}`
+          : `\`rig-parts rig\` exited ${autoRig.status}; mesh_report.json ${autoReport === null ? 'not written' : `mode ${JSON.stringify(autoReport[0]?.mode)}`}; exit 0, mode "auto", a motion verdict "pass" and a mesh line reading "motion <value> <= 1 at idle@…" were required. ${autoRig.out.trim().split('\n').filter((l) => /FAIL|rror|rigc/.test(l)).slice(0, 4).join(' | ').slice(0, 1500)}`
       }`,
     );
   } else notes.push(`an auto mesh built from the install, passed the installed rigc's gate and its motion gate: ${autoLine.trim()}`);
@@ -714,7 +734,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
 // the battery
 // ---------------------------------------------------------------------------
 
-const HELP = `spine-parts install smoke — does the published package run in an empty directory?
+const HELP = `rig-parts install smoke — does the published package run in an empty directory?
 
 usage:
   bun run smoke                          every case below, on a tarball packed from this tree
@@ -754,7 +774,7 @@ function main(): number {
   const sourceKind = flag('source') === 'registry' ? 'registry' : 'tree';
   const pkgVersion = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { version?: string }).version ?? '';
   const wanted = flag('version') ?? pkgVersion;
-  const source: CaseSpec['source'] = sourceKind === 'registry' ? { kind: 'registry', spec: `spine-parts@${wanted}` } : { kind: 'tree' };
+  const source: CaseSpec['source'] = sourceKind === 'registry' ? { kind: 'registry', spec: `${PACKAGE}@${wanted}` } : { kind: 'tree' };
 
   const waitFlag = flag('wait');
   const waitMinutes = waitFlag === null ? DEFAULT_WAIT_MINUTES : Number(waitFlag);
@@ -767,7 +787,7 @@ function main(): number {
     return EXIT_RED;
   }
 
-  console.log(`spine-parts install smoke — ${source.kind === 'tree' ? `a tarball packed from ${ROOT}` : `${source.spec} from the registry`}, installed with ${installer}`);
+  console.log(`rig-parts install smoke — ${source.kind === 'tree' ? `a tarball packed from ${ROOT}` : `${source.spec} from the registry`}, installed with ${installer}`);
   for (const tool of ['npm', 'bun', 'tar', 'node']) {
     if (onPath(tool) === null) {
       console.log(`  FAIL  SMOKE_PREREQ_TOOLS_ON_PATH: \`${tool}\` is not on PATH, and this smoke installs and runs a package that needs it`);
@@ -808,7 +828,7 @@ function main(): number {
   let bad = 0;
   let ran = 0;
   for (const spec of chosen) {
-    const work = mkdtempSync(join(tmpdir(), 'spine-parts-smoke-'));
+    const work = mkdtempSync(join(tmpdir(), 'rig-parts-smoke-'));
     try {
       const result = runCase(spec, work, keep);
       ran += 1;
@@ -847,7 +867,7 @@ function main(): number {
     console.log('  FAIL  SMOKE_CASE_NAMED: no case ran, so this run measured nothing');
     return EXIT_NOTHING_RAN;
   }
-  console.log(bad === 0 ? `spine-parts install smoke: green — ${ran} case(s)` : `spine-parts install smoke: ${bad} of ${ran} case(s) failed`);
+  console.log(bad === 0 ? `rig-parts install smoke: green — ${ran} case(s)` : `rig-parts install smoke: ${bad} of ${ran} case(s) failed`);
   if (bad === 0) return EXIT_GREEN;
   if (served !== null) {
     console.log(`the published artifact does not run: the registry served ${source.kind === 'registry' ? source.spec : ''} and ${bad} of ${ran} case(s) above went red on it. This is a fault in what was published, not a wait that was too short`);

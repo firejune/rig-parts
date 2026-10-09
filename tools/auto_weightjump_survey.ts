@@ -141,7 +141,7 @@ function main(): void {
     process.exit(1);
   }
   const rigcBin = findRigc(ROOT, '');
-  const work = mkdtempSync(join(tmpdir(), 'spine-parts-auto-weightjump-survey-'));
+  const work = mkdtempSync(join(tmpdir(), 'rig-parts-auto-weightjump-survey-'));
   const runs: Run[] = [];
   const jumps: Array<{ example: string; part: string; source: string; j: { largest: number; edges: number[] } | null }> = [];
   let disagreements = 0;

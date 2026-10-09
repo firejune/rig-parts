@@ -109,7 +109,7 @@ export const LYING_PARTS: ProposeFixturePart[] = [
   { name: 'arm_b', from: 'full:handwear-l', x: 70, y: 126, w: 80, h: 14, colour: [240, 240, 240] },
 ];
 
-const SOURCE = 'hand-written for the spine-parts selftest';
+const SOURCE = 'hand-written for the rig-parts selftest';
 
 export const POSES: Record<PoseName, Pose> = {
   /**
