@@ -549,6 +549,54 @@ It cannot skip an operation inside a prefix — every candidate is the call's ow
 n-th accepted operation — and it does not change what the economy of the automatic mode is
 measured against; it only looks at more prefixes of the same call.
 
+**The skinning residual as a per-step veto** (issue #126, rig-c 2.31.0; opt-in,
+`motion.residual: { "maxResidual": <px> }`). Without the field nothing is sent and the stage is
+byte for byte what it was. With it, rig-c's `reduceMesh` receives `targets.skinning` — the
+envelope below and the author's bound — and, in rig-c's words, "every removal, boundary run and
+post-pass is held to `MQ_SKINNING_RESIDUAL` against the call's own source and refused by name
+when over it": a step whose result's residual exceeds the bound is a refusal like any other
+(`MQ_SKINNING_RESIDUAL: <value> against <= <bound>`), the working mesh as it was, the search going
+on within the budget. Refinement insertions are not vetoed one by one; the refinement's outcome is
+held to it whole before any removal. `acceptedAt` records accepted operations only, so a replay
+(step 5) under the veto is the same call's mesh after its n-th accepted operation, byte for byte.
+
+- **What the value is.** "The largest over the samples carried by both meshes of
+  Σk εk·|Δsk| + Σk |Δw̄k|·(εk·|p − ck| + τk): a bound, under the declared envelope only, on how
+  far the candidate draws a UV from where the source draws it — positions only; it certifies no
+  orientation, stretch or squash, no motion outside the envelope, and replaces no motion
+  comparison" (rig-c's `SKINNING_READING`). Drawing px: the part's own pixels (pageScale 1), the
+  same unit as `maxLocalDeformation`. It is **not the motion verdict**: the motion comparison of
+  step 4 still runs on every written candidate and still decides, so a residual that passes
+  never writes a part the comparison refuses. It is conservative, never understating the posed
+  error rig-c measured, and loose on scale and multi-bone chains (rig-c measured 0.26–0.72 of
+  the posed error there, 1.000 on a pure rotation).
+- **The envelope is derived, never written** (`src/autoenvelope.ts`). The reference is the
+  slot's bone (`segments[0]`'s). For every other bone the part's source weights bind, rig-c's
+  `skinningEnvelopeBone({ referenceChain, chain })` composes the chain from the root to the
+  reference and from the reference's child down to the bone, each bone's range read off the
+  idle this package writes: rotation and scale as the [min, max] of every key value and Bézier
+  control value, translation as the length of the largest |x| and |y| offsets, the pivot the
+  bone's setup joint in the part's drawing frame, and the setup the rig's (no scale, shear or
+  inherit mode is written). An author cannot supply one (`CONFIG_KEY_KNOWN`).
+- **Not measurable** — the veto is then **not applied** and the comparison accepts or refuses
+  the part alone, as without the field; no number is invented. Each stop is named with its bone
+  and code: a bone a constraint drives (an ik's, transform's or path's `bones`, a physics
+  constraint's `bone`) is handed to rig-c with that kind as its source and refused by rig-c,
+  `SKINNING_RANGE_UNSUPPORTED` in its words — rig-c certifies only ranges declared by keys and
+  exposes no range read off a posed walk; a shear key (`ENVELOPE_SHEAR_KEYED`: rig-c's range has
+  no shear field); a bound bone that does not hang below the slot's bone
+  (`ENVELOPE_BONE_NOT_BELOW_REFERENCE`: the helper composes no other chain); a slider in the rig
+  (`ENVELOPE_SLIDER_UNREAD`: it drives an animation's bones, which are not read).
+- **The bound is the author's** number, 0 or more, never defaulted. The tracked evidence uses 1,
+  the policy's motion bound: the residual bounds the same displacement the motion row measures,
+  without posing, so the distance already accepted for the posed reading is its first reading.
+- **What it costs.** Every step the rows let through is measured once more, carried rather than
+  recomputed (rig-c measured the carried call at 1.4–5.8 times the call without it on recorded
+  inputs, under a stand-in envelope); a veto changes the trajectory, so the result is a different
+  reduction, not the same steps checked twice.
+- rig-c's report does not count the steps the veto refused; `tools/veto_tally.ts` counts them
+  over the very call (the survey prints them).
+
 The public examples' evidence is re-run from the tree: `bun run fetch-examples`, then
 `bun tools/auto_motion_survey.ts` switches each part item 2 accepted on geometry to `auto`, alone,
 under `examplePolicy` (`fixtures/automesh.ts`) plus `policyMotion` (`fixtures/automotion.ts`), runs
@@ -569,7 +617,7 @@ wall time goes to standard error, not into the table).
 | `influences.{maxInfluences, minWeight}` | the cap on bindings per vertex (1 or more) and the floor below which a share is dropped (0 up to 1; 0 drops only shares that are 0 on the weight grid) — for the source's weights and every inserted vertex |
 | `budget.maxCandidates` | the most steps rig-c may try (each insertion and each removal attempt counts one); 0 returns the source |
 | `minArtSamples` | the fewest art pixels a raster row is taken over, 1 or more |
-| `motion` | **required**: `maxLocalDeformation` (rig px, 0 or more — how far the reduced mesh may carry any art pixel from where its source carries it, at any frame); optional `maxStretch` / `minStretch` (ratios; absent, the rows are reported and not gated); optional `deformMayFold` (absent is **false**: a triangle that turns over refuses the part; true declares the slot in `invariants.deformMayFold` and lists every fold instead); optional `gradation` (px per px, 0 or more, or `null`; the author's G for `MQ_ALLOCATION_CONTRAST`, never derived — absent or `null`, the contrast reads `not-measurable` naming it; see *The allocation rows* below); optional `selection` (`{ "policy": "multi-interval", "maxProbes": <whole number, 1 or more> }`; absent, the acceptance loop is the bisection — see *The multi-interval selection* above) |
+| `motion` | **required**: `maxLocalDeformation` (rig px, 0 or more — how far the reduced mesh may carry any art pixel from where its source carries it, at any frame); optional `maxStretch` / `minStretch` (ratios; absent, the rows are reported and not gated); optional `deformMayFold` (absent is **false**: a triangle that turns over refuses the part; true declares the slot in `invariants.deformMayFold` and lists every fold instead); optional `gradation` (px per px, 0 or more, or `null`; the author's G for `MQ_ALLOCATION_CONTRAST`, never derived — absent or `null`, the contrast reads `not-measurable` naming it; see *The allocation rows* below); optional `selection` (`{ "policy": "multi-interval", "maxProbes": <whole number, 1 or more> }`; absent, the acceptance loop is the bisection — see *The multi-interval selection* above); optional `residual` (`{ "maxResidual": <px, 0 or more> }`; absent, nothing is sent — see *The skinning residual as a per-step veto* above) |
 | `protect` | optional; each field optional: `hull` (true keeps every source outline vertex; absent is **false**, the default agreed for this mode), `vertices` and `edges` (source vertex indices and pairs that must survive), `regionBoundaries` (region names whose outline vertices must survive), `weightJump` (an L1 weight difference above which a source edge is kept; absent is none), `influences` (bones never pruned from a vertex; every region's bone is added) |
 | `regions` | optional, each `{name, shape, bone, band, maxEdgeLength, transition, grade, minArtSamples}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`): `bone` and `band` are the control bone and its weight falloff exactly as a contour region's (rig px, multiples of 1/256 px); `maxEdgeLength` is L0, the longest an edge meeting the region may be, px; outside it, across `transition` px, the bound relaxes as `L0 + grade·d`; `transition` 0 is a hard edge; `minArtSamples` is the region's own sample floor |
 | `boundaryRuns` | optional, `{ maxVertices }`, a whole number 2 or more, no default: each removal pass first tries to replace a run of 2 to `maxVertices` consecutive source-hull vertices with one chord, as one step held to every declared row (below) |
@@ -687,7 +735,13 @@ and `worst_region`, the `termination` with its reason and `candidatesTried`, wha
 lost to the grid (`sharesDroppedOnGrid`, `sharesPruned`, `droppedAtFivePlaces`), per region the
 source vertices its bone reaches and the result vertices bound to it, `motion_amplitude` (whether
 the allocation rows' amplitude was sent, and every term that stopped it; what was sent is rig-c's
-echo in `settings.motionAmplitude`), `replay` — only on a part
+echo in `settings.motionAmplitude`), `skinning_residual` — only under `motion.residual`: `rule`
+(what the residual is and that it is not the motion verdict), `max_residual`, `sent` (whether the
+veto was applied), `reference`, `envelope` (each bone's `linear`, `pivot` and `translation` as
+sent, or null), `stops` (each bone and code that left it not measurable), and `measured` (the
+written mesh's own `MQ_SKINNING_RESIDUAL`: state, value, bound, the worst sample's UV and pixel
+with the value's covariance and lever sums there, the samples carried); the row is also among
+`residuals`, declared with its bound — `replay` — only on a part
 the acceptance loop wrote at a replayed step (step 5): `rule` (the search in words, "a passing
 prefix, not necessarily the last"), `accepted_steps` (N, in operations), `refinement_steps` (I), `chosen_step`,
 `replays` and `max_replays`, `candidates_tried` across the replays, `full` (the full result's
@@ -711,7 +765,9 @@ worst frame and sample counts, and the schedule walked (frames per phase, held o
 every part's evidence. `art_coverage` is over alpha above 8, comparable with the
 other modes; the alpha-1 coverage is a residual. `build` prints one line per auto mesh: source →
 result counts (hull + interior), bindings, the termination, the worst residual, each art bound
-declared `null` with its value and `(not bounded)`, and
+declared `null` with its value and `(not bounded)`, under `motion.residual`
+`; residual <value> <= <bound> (a pose-free bound, not the motion verdict)` or
+`; residual not measurable: <bone> <code>, … (veto not applied; the motion comparison decides)`, and
 `motion <value> <= <bound> at <frame>` (the frame id is `idle@<phase>@<time>`), and the reference
 build's gate lines after the candidate's. A part written at a replayed step adds
 `; replayed to accepted step <n> of <N> after <k> replay(s); selection <value> <= <bound> at

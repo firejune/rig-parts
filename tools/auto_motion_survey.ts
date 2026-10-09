@@ -51,6 +51,12 @@
  * `motion.gradation` 0.75, the one value rig-c's contract names, so Δ and E
  * appear once; it is an author's number written for the evidence, no default.
  *
+ * `residual` and `allResidual` (rig-c 2.31.0, rigc#1295) are the baseline and `all` with
+ * `motion.residual.maxResidual` 1; with either, a third table prints per part whether the envelope
+ * was sent (or every stop that left it not measurable), the envelope, the steps the veto refused on
+ * the full run (`tools/veto_tally.ts`, which re-runs that run's own input after the stage's wall time
+ * was taken), the written mesh's `MQ_SKINNING_RESIDUAL` with its worst sample, and the comparison.
+ *
  * Output: Markdown — two tables, one schedule line per part, and the refusal
  * text of every refused part. Every number is read from rig-c's report;
  * no path, no time and no machine is printed, so two runs of one tree print
@@ -76,6 +82,7 @@ import { readPng, type Raster } from '../src/raster/index.ts';
 import { type AutoMeshReport, buildRig } from '../src/rig.ts';
 import { examplePolicy } from '../fixtures/automesh.ts';
 import { withPolicyMotion } from '../fixtures/automotion.ts';
+import { type VetoTally, vetoTally } from './veto_tally.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 
@@ -100,6 +107,13 @@ export const STAGE_B_CONFIGS: ReadonlyArray<readonly [string, Record<string, unk
   // stated before any part was run under it and not tuned per part; it is an author's number written for the evidence.
   ['multiInterval', { motion: { selection: { policy: 'multi-interval', maxProbes: 18 } } }],
   ['allMultiInterval', { boundaryRuns: { maxVertices: 8 }, retriangulate: 'delaunay', removalOrder: 'deformation-load', motion: { selection: { policy: 'multi-interval', maxProbes: 18 } } }],
+  // The skinning residual as a per-step veto (issue #126, rig-c 2.31.0, rigc#1295): the baseline, and `all`, with
+  // `motion.residual.maxResidual` 1 — the policy's motion bound (policyMotion: 1 rig px = 1 drawing px, pageScale 1).
+  // The residual bounds the same quantity the motion row measures — how far a UV is drawn from where the source draws
+  // it — so the bound the author already accepts for the posed reading is the first reading of the pose-free one; it
+  // is an author's number written for the evidence, stated before any part was run under it and not tuned per part.
+  ['residual', { motion: { residual: { maxResidual: 1 } } }],
+  ['allResidual', { boundaryRuns: { maxVertices: 8 }, retriangulate: 'delaunay', removalOrder: 'deformation-load', motion: { residual: { maxResidual: 1 } } }],
 ];
 
 /** A configuration's opt-ins by name; an unknown name is `configsFromArgs`'s to refuse, so none reaches here. */
@@ -379,7 +393,7 @@ function stageBText(row: AutoMeshReport | undefined): string {
 }
 
 /** The Stage B matrix document (module header, `--config`). */
-function printMatrix(results: ReadonlyArray<{ config: string; cell: MotionCell }>): void {
+function printMatrix(results: ReadonlyArray<{ config: string; cell: MotionCell; tally: VetoTally | { refused: string } | null }>): void {
   const configs = [...new Set(results.map((r) => r.config))];
   console.log('## Stage B on the public examples (tools/auto_motion_survey.ts --config)\n');
   console.log(
@@ -419,6 +433,24 @@ function printMatrix(results: ReadonlyArray<{ config: string; cell: MotionCell }
     console.log(
       `| ${r.example}/${r.part} | ${config} | ${stageBText(r.row)} | ${ALLOCATION_ROWS.map((code) => residualText(chosen, code)).join(' | ')} | ${economyText(chosen)} | ${setupLoad(r.report, 'reference')} / ${setupLoad(r.report, 'candidate')} | ${ampText} |`,
     );
+  }
+  const residual = results.filter((r) => r.tally !== null);
+  if (residual.length > 0) {
+    console.log('\n### The skinning residual as a per-step veto (rig-c 2.31.0, rigc#1295)\n');
+    console.log(
+      "Configurations with `motion.residual.maxResidual` 1 (STAGE_B_CONFIGS). The envelope is derived from the idle (src/autoenvelope.ts) through rig-c's skinningEnvelopeBone with the slot's bone as reference; `sent` says whether targets.skinning reached reduceMesh (no = not measurable, the veto not applied, the comparison deciding alone). Vetoed steps are counted on the full run by tools/veto_tally.ts — rig-c's report does not carry them — over removal-phase attempts refused by the residual (removals / boundary runs) of all attempts, and the post-pass when the residual refused it. The residual and its worst sample are the written mesh's own measurement (the chosen row: a replayed step's when the acceptance loop chose one). The residual is a pose-free bound under the envelope, not the motion verdict: the last two columns are the comparison's, which decides.\n",
+    );
+    console.log('| part | config | sent | reference | envelope (bone linear / translation px) | vetoed: removals / runs of attempts; post-pass | MQ_SKINNING_RESIDUAL (written) @ worst sample | full result\'s motion | verdict |');
+    console.log('| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+    for (const { config, cell: r, tally } of residual) {
+      const row = (r.written ?? r.row)?.skinning_residual;
+      const env = row?.envelope === null || row?.envelope === undefined ? `not sent: ${(row?.stops ?? []).map((x) => `${x.bone} ${x.code}`).join(', ') || 'no row'}` : row.envelope.map((b) => `${b.bone} ${b.linear} / ${b.translation}`).join('; ');
+      const vetoed = tally === null ? 'n/a' : 'refused' in tally ? `not counted: ${tally.refused}` : `${tally.removals} / ${tally.runs} of ${tally.attempts}; ${tally.postPass ?? 'none'}`;
+      const m = row?.measured;
+      const at = m?.worst === null || m?.worst === undefined ? '' : ` @ ${m.worst.pixel === undefined ? `uv ${JSON.stringify(m.worst.uv)}` : `pixel ${JSON.stringify(m.worst.pixel)}`}`;
+      const reading = m === null || m === undefined ? 'not measured' : m.value === null ? `${m.state}: ${m.reason ?? ''}` : `${m.value} / ${m.bound === null ? 'no bound' : `${m.bound.op} ${m.bound.value}`} (${m.state})${at}`;
+      console.log(`| ${r.example}/${r.part} | ${config} | ${row === undefined ? 'no row' : row.sent ? 'yes' : 'no'} | ${row?.reference ?? 'n/a'} | ${env} | ${vetoed} | ${reading} | ${cell(rowOf(r.report, 'MQ_LOCAL_DEFORMATION'))} | ${verdictOf(r)} |`);
+    }
   }
   const refused = results.filter((r) => r.cell.refusal !== null);
   if (refused.length > 0) {
@@ -461,7 +493,7 @@ function main(): void {
   const configs = configsFromArgs(process.argv.slice(2));
   const work = mkdtempSync(join(tmpdir(), 'rig-parts-auto-motion-survey-'));
   const results: MotionCell[] = [];
-  const matrix: Array<{ config: string; cell: MotionCell }> = [];
+  const matrix: Array<{ config: string; cell: MotionCell; tally: VetoTally | { refused: string } | null }> = [];
   let disagreements = 0;
   try {
     for (const [key, parts] of PARTS) {
@@ -476,7 +508,9 @@ function main(): void {
               console.error(`auto_motion_survey: ${r.disagreement} (${name})`);
             }
             console.error(`auto_motion_survey: ${key}/${part} ${name}: ${(r.wallMs / 1000).toFixed(1)} s wall, ${r.builds} rigc build(s), ${verdictOf(r)}`);
-            matrix.push({ config: name, cell: r });
+            // The residual's vetoes, counted on the full run's own input (tools/veto_tally.ts) after the stage's wall time was taken.
+            const residual = (extra.motion as { residual?: unknown } | undefined)?.residual !== undefined;
+            matrix.push({ config: name, cell: r, tally: residual ? (r.input === null ? { refused: 'the stage made no reduction call' } : vetoTally(r.input)) : null });
           }
           continue;
         }

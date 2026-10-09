@@ -86,6 +86,7 @@ import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normalis
 import { type Problem, refuseIfAny } from './errors.ts';
 import type { MeshCounts, MeshQualityReport, MeshReductionInput, MotionAmplitude, ReducedMesh, Termination } from 'rig-c/mesh';
 import { type AmplitudeRow, amplitudeRow, partAmplitude, withAmplitude } from './autoamplitude.ts';
+import { deriveEnvelope, type ResidualRow, residualRow, withSkinning } from './autoenvelope.ts';
 import { type AutoMotionCase, type AutoSearch, DEFORM_MAY_FOLD_WHY, type MotionDeformation } from './automotion.ts';
 import { type MultiIntervalRow, refinementSteps, replayVerdict, type ReplayRow } from './autoreplay.ts';
 import {
@@ -432,6 +433,13 @@ export interface AutoMeshReport {
    * reader of the two rows' `not-measurable` learns which number is missing.
    */
   motion_amplitude: AmplitudeRow;
+  /**
+   * Only on a part whose author set `motion.residual` (issue #126, rig-c 2.31.0, rigc#1295; `src/autoenvelope.ts`):
+   * the envelope sent and the written mesh's `MQ_SKINNING_RESIDUAL` against its bound, or every stop that left the
+   * residual not measurable — the veto then not applied. A pose-free bound, not the motion verdict. Absent otherwise,
+   * so a part without the field writes the row it always wrote.
+   */
+  skinning_residual?: ResidualRow;
   termination: Termination;
   weights: { sharesDroppedOnGrid: number; sharesPruned: number; droppedAtFivePlaces: number };
   regions: Array<{ name: string; bone: string; reached: number; whole: number; bound_in_result: number }>;
@@ -921,6 +929,12 @@ export function buildRig(
   // What the amplitude derivation reads (src/autoamplitude.ts), named here because autoAttachment's own `bones` and `motion` shadow them.
   const rigBones = bones;
   const idle = motion;
+  // Each bone's setup joint in crop px (src/autoenvelope.ts reads it as the pivot of the skinning envelope), off the
+  // rig's bones as written: x back across the root, y through the one door — cropToSpineY is its own inverse (y ↦ H − y).
+  const joints = new Map<string, readonly [number, number]>(bones.map((b) => {
+    const m = world.get(b.name) as BoneTransform;
+    return [b.name, [m.worldX + CX, cropToSpineY(m.worldY, H)] as const];
+  }));
   const autoAttachment = (
     p: PartsFile['parts'][number],
     img: Raster,
@@ -957,7 +971,12 @@ export function buildRig(
     // author's gradation or null (rig-c 2.29.0, rigc#1291); sent whenever every track term is derived
     // (src/autoamplitude.ts). The same amplitude goes on the motion gate's comparison (src/automotion.ts).
     const amplitude = partAmplitude({ bones: rigBones, motion: idle, constraints: cfg.constraints?.length ?? 0 }, sw.weights, spec.motion);
-    const input: MeshReductionInput = withAmplitude(autoReductionInput({ part: p.name, mask, ox, oy, spec, source, weights: sw.weights, boneOrder }), amplitude);
+    // issue #126 (rig-c 2.31.0, rigc#1295): the skinning residual as a per-step veto, only when the author set
+    // motion.residual — its envelope derived from the same idle (src/autoenvelope.ts), the reference the slot's bone (Q4).
+    // A part whose envelope stops is sent nothing: the veto is not applied and the motion comparison decides alone.
+    const residualSpec = spec.motion?.residual;
+    const envelope = residualSpec === undefined ? null : deriveEnvelope({ bones: rigBones, joints, motion: idle, constraints: cfg.constraints ?? [] }, segs[0].bone, sw.weights.flatMap((v) => v.map((e) => e.bone)), [ox, oy]);
+    const input: MeshReductionInput = withSkinning(withAmplitude(autoReductionInput({ part: p.name, mask, ox, oy, spec, source, weights: sw.weights, boneOrder }), amplitude), envelope, residualSpec?.maxResidual);
     const ran = reduce(object, input);
     if ('code' in ran) {
       out.push(ran);
@@ -1063,6 +1082,7 @@ export function buildRig(
           worst_residual: worstResidual(rows),
           worst_region: worstRegion(rows),
           motion_amplitude: amplitudeRow(amplitude),
+          ...(residualSpec === undefined || envelope === null ? {} : { skinning_residual: residualRow(residualSpec.maxResidual, segs[0].bone, envelope, report) }),
           termination: report.termination as Termination,
           weights: { sharesDroppedOnGrid: candidate.changes?.sharesDroppedOnGrid ?? 0, sharesPruned: candidate.changes?.sharesPruned ?? 0, droppedAtFivePlaces },
           regions: regions.map((rg, k) => ({ name: rg.name, bone: rg.bone, reached: reached[k], whole: whole[k], bound_in_result: boundTo[k] })),

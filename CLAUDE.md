@@ -146,7 +146,11 @@ paintings, their See-through runs, the parts and configs the reference produced
   through the named entry `rig-c/mesh` (from 2.16.0): the outline
   functions `src/contour.ts` reuses, every one on the entry's promised list,
   and `reduceMesh` with its `mesh-quality-report/1` types (2.19.0), which
-  `src/automesh.ts` calls. A rig-c release that moves them, or narrows
+  `src/automesh.ts` calls, and `skinningEnvelopeBone` (2.30.0), which
+  `src/autoenvelope.ts` calls. `reduceMeshWith` and `rig-c/src/meshrasters.ts`
+  are rig-c internals; only `tools/veto_tally.ts` reads them, to count the
+  residual's vetoes, and it checks its run against `reduceMesh`'s bytes
+  before it counts. A rig-c release that moves them, or narrows
   the map, breaks this package by name, and `bun run smoke` is where that
   shows first.
 - **Raster ops state which call they stand in for.** Each function in
