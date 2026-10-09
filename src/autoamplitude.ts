@@ -63,8 +63,41 @@
  *
  * Pure: no clock, no randomness, nothing read or written.
  */
-import type { MotionAmplitude, TrackAmplitude } from 'rig-c/mesh';
+import type { MeshReductionInput, MotionAmplitude, TrackAmplitude } from 'rig-c/mesh';
 import type { MotionKey, MotionSpec } from './motion.ts';
+
+/**
+ * What the derivation reads off a rig, besides the part: the rig's bones (name and parent), the idle as the rig stage
+ * writes it, and the rig's constraint count. The rig stage takes them from the rig it is building; a caller that
+ * prepares the stage's reduction input outside it (`tools/auto_matrix.ts`) reads them off a build of the same config
+ * — `rig.json`'s bones, `motion.json`, the config's constraints — so both build the one input `reductionKey` matches.
+ */
+export interface AmplitudeBasis {
+  bones: ReadonlyArray<{ name: string; parent?: string }>;
+  motion: MotionSpec;
+  constraints: number;
+}
+
+/**
+ * The amplitude of one automatic part as the rig stage derives it: the bones its source `weights` bind, ε the part's
+ * `motion.maxLocalDeformation` (NaN, refused by name, when the spec has no motion block), G its `motion.gradation`
+ * or null. The one derivation both the stage and any caller that builds the stage's input use.
+ */
+export function partAmplitude(basis: AmplitudeBasis, weights: ReadonlyArray<ReadonlyArray<{ bone: string }>>, motion: { maxLocalDeformation: number; gradation?: number | null } | undefined): AmplitudeDerivation {
+  return deriveMotionAmplitude({
+    bones: basis.bones,
+    motion: basis.motion,
+    constraints: basis.constraints,
+    bound: weights.flatMap((v) => v.map((e) => e.bone)),
+    epsilon: motion?.maxLocalDeformation ?? Number.NaN,
+    gradation: motion?.gradation ?? null,
+  });
+}
+
+/** The reduction input with the derived amplitude on it, or unchanged when the derivation stopped (no key is added). */
+export function withAmplitude(input: MeshReductionInput, d: AmplitudeDerivation): MeshReductionInput {
+  return 'amplitude' in d ? { ...input, motionAmplitude: d.amplitude } : input;
+}
 
 /** The relative linear part's norm for one track: the largest over its keys' and handles' values, or why it has none. */
 export function trackTheta(property: string, keys: readonly MotionKey[]): { theta: number } | { refused: string } {

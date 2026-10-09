@@ -85,7 +85,7 @@ import { type AutoSpec, type BoneEntry, type CharacterConfig, type ConfigConstra
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import type { MeshCounts, MeshQualityReport, MeshReductionInput, MotionAmplitude, ReducedMesh, Termination } from 'rig-c/mesh';
-import { type AmplitudeRow, amplitudeRow, deriveMotionAmplitude } from './autoamplitude.ts';
+import { type AmplitudeRow, amplitudeRow, partAmplitude, withAmplitude } from './autoamplitude.ts';
 import { type AutoMotionCase, type AutoSearch, DEFORM_MAY_FOLD_WHY, type MotionDeformation } from './automotion.ts';
 import { refinementSteps, replayVerdict, type ReplayRow } from './autoreplay.ts';
 import {
@@ -953,18 +953,8 @@ export function buildRig(
     // rig-c's allocation rows read an amplitude this package derives from its own idle (issue #126 Q2), with the
     // author's gradation or null (rig-c 2.29.0, rigc#1291); sent whenever every track term is derived
     // (src/autoamplitude.ts). The same amplitude goes on the motion gate's comparison (src/automotion.ts).
-    const amplitude = deriveMotionAmplitude({
-      bones: rigBones,
-      motion: idle,
-      constraints: cfg.constraints?.length ?? 0,
-      bound: sw.weights.flatMap((v) => v.map((e) => e.bone)),
-      epsilon: spec.motion?.maxLocalDeformation ?? Number.NaN,
-      gradation: spec.motion?.gradation ?? null,
-    });
-    const input: MeshReductionInput = {
-      ...autoReductionInput({ part: p.name, mask, ox, oy, spec, source, weights: sw.weights, boneOrder }),
-      ...('amplitude' in amplitude ? { motionAmplitude: amplitude.amplitude } : {}),
-    };
+    const amplitude = partAmplitude({ bones: rigBones, motion: idle, constraints: cfg.constraints?.length ?? 0 }, sw.weights, spec.motion);
+    const input: MeshReductionInput = withAmplitude(autoReductionInput({ part: p.name, mask, ox, oy, spec, source, weights: sw.weights, boneOrder }), amplitude);
     const ran = reduce(object, input);
     if ('code' in ran) {
       out.push(ran);

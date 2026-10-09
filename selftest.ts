@@ -192,7 +192,7 @@ import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh
 import { type AcceptedOperation, type AlphaMask, checkHullOrder, type TrackAmplitude, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline, windCounterClockwiseInSpineWorld, writeMeshQualityReport } from 'rig-c/mesh';
 import { allocationClause, AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, stageBClause, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
 import { AUTO_CASES, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, finerSourcePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
-import { BLOCKED_LABEL, barsOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
+import { BLOCKED_LABEL, barsOf, basisOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
 import { type BStar, bStar, type CellRow as ToolCellRow, nearestRank, parseArgs as parseBoundaryArgs, pendingRow, policyAt, render as renderBoundary, sagittas, sagittaSummary } from './tools/auto_boundary_survey.ts';
 import { type AutoMotionCase, idleSchedule, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
@@ -18939,8 +18939,9 @@ function runBuildCostSuite(): number {
       for (let i = 0; i < alpha.length; i++) alpha[i] = padded.data[i * 4 + 3];
       const parsed = parseConfig(cfg);
       const m12 = parsed.meshes.cloth as { segments: Array<string | [string, [number, number], [number, number]]>; r: number; auto: AutoSpec };
-      const order = buildRig(parsed, pf, rigImages()).rig.bones.map((b) => b.name);
-      g12 = geometryRow('cloth', { width: padded.width, height: padded.height, alpha }, m12.auto, { ox: p12.x - PAD, oy: p12.y - PAD, segs: resolveSegments(parsed, m12.segments), r: m12.r, boneOrder: order }, null, () => 0);
+      const out12 = buildRig(parsed, pf, rigImages());
+      const order = out12.rig.bones.map((b) => b.name);
+      g12 = geometryRow('cloth', { width: padded.width, height: padded.height, alpha }, m12.auto, { ox: p12.x - PAD, oy: p12.y - PAD, segs: resolveSegments(parsed, m12.segments), r: m12.r, boneOrder: order, idle: basisOf(out12, parsed) }, null, () => 0);
       const done = new Map<string, ReductionResult>();
       if (g12.input !== null && g12.ran !== undefined && g12.ran !== null) done.set(reductionKey(g12.input), g12.ran);
       const reuse12 = reuseReductions(done, (o, i) => (ran12++, runReduction(o, i)));
@@ -18948,10 +18949,14 @@ function runBuildCostSuite(): number {
       reused12 = reuse12.reused();
     }
     const same12 = (f: string): boolean => stage12 !== null && existsSync(join(stage12.out, f)) && readFileSync(join(stage12.out, f), 'utf8') === readFileSync(join(pos.out, f), 'utf8');
+    // rig-c 2.29.0: the row's input carries the stage's amplitude, and the key covers it — the input without it is another input (the plant).
+    const amp12 = g12 !== null && g12.input !== null && 'motionAmplitude' in g12.input;
+    const bareKey12 = g12 === null || g12.input === null ? '' : reductionKey((({ motionAmplitude: _a, ...bare }) => bare)(g12.input));
+    const keyCovers12 = g12 !== null && g12.input !== null && bareKey12 !== reductionKey(g12.input);
     say(
       'BC12_THE_MATRIX_CELL_PATH_REDUCES_ONCE_THE_RIG_STAGE_REUSES_THE_GEOMETRY_ROWS_RESULT_AND_WRITES_THE_SAME_BYTES',
-      g12 !== null && g12.verdict.kind === 'accepted' && stage12 !== null && stage12.e === null && ran12 === 0 && reused12 === 1 && same12('rig.json') && same12('mesh_report.json') && same12('motion.json'),
-      `geometry row ${g12?.verdict.kind ?? 'not run'}; stage reused ${reused12}, ran ${ran12}; rig.json ${same12('rig.json')}, mesh_report.json ${same12('mesh_report.json')}, motion.json ${same12('motion.json')} against the stage that reduced itself (BC01)`,
+      g12 !== null && g12.verdict.kind === 'accepted' && stage12 !== null && stage12.e === null && ran12 === 0 && reused12 === 1 && same12('rig.json') && same12('mesh_report.json') && same12('motion.json') && amp12 && keyCovers12,
+      `geometry row ${g12?.verdict.kind ?? 'not run'}; stage reused ${reused12}, ran ${ran12}; rig.json ${same12('rig.json')}, mesh_report.json ${same12('mesh_report.json')}, motion.json ${same12('motion.json')} against the stage that reduced itself (BC01); the row's input carries the amplitude: ${amp12}, and without it keys as another input: ${keyCovers12}`,
       'issue #135 item B(i): main ran the cell\'s reduction twice, once in the geometry row and once inside `cli.ts rig`; the tool now hands the row\'s result to the stage, which checks the whole input before reusing it',
     );
 
@@ -18972,9 +18977,10 @@ function runBuildCostSuite(): number {
       stage13 = costStage(join(root, 'cell13'), cfg, { reduce: reuseReductions(done13, () => ({ code: 'BC13_RAN', object: 'cloth', detail: 'the stage ran a reduction it should have reused' })).reduce });
       const parsed13 = parseConfig(cfg);
       const m13 = parsed13.meshes.cloth as { segments: Array<string | [string, [number, number], [number, number]]>; r: number; auto: AutoSpec };
-      const order13 = buildRig(parsed13, pf, rigImages()).rig.bones.map((b) => b.name);
+      const out13 = buildRig(parsed13, pf, rigImages());
+      const order13 = out13.rig.bones.map((b) => b.name);
       const mask13 = input13.art.mask;
-      const w13 = { ox: p12.x - PAD, oy: p12.y - PAD, segs: resolveSegments(parsed13, m13.segments), r: m13.r, boneOrder: order13 };
+      const w13 = { ox: p12.x - PAD, oy: p12.y - PAD, segs: resolveSegments(parsed13, m13.segments), r: m13.r, boneOrder: order13, idle: basisOf(out13, parsed13) };
       child13 = geometryRow('cloth', mask13, m13.auto, w13, null, () => 0, cappedReducer(600, join(root, 'child13b')));
       try {
         planted13 = geometryRow('cloth', mask13, m13.auto, w13, null, () => 0, cappedReducer(1, join(root, 'child13c'), ['bash', '-c', 'sleep 30', '--']));
