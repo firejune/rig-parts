@@ -46,7 +46,29 @@ import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEF
 import { assemble, type AssembleResult, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
 import { allocationClause, type Reducer, stageBClause, unboundedClause } from './automesh.ts';
 import { type AutoMotionCase, failingRows, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison } from './automotion.ts';
-import { bisectAccepted, finalVerdict, gridFrameIds, maxReplays, noReductionProblem, readingText, REPLAY_RULE, type ReplayProbe, type ReplayRow, roleReadings, selectionSchedule, splitSchedule } from './autoreplay.ts';
+import {
+  bisectAccepted,
+  budgetProblem,
+  type CountedProbe,
+  finalVerdict,
+  gridFrameIds,
+  maxReplays,
+  MULTI_INTERVAL_RULE,
+  type MultiIntervalRow,
+  multiIntervalSearch,
+  noMultiReductionProblem,
+  noReductionProblem,
+  passingIntervals,
+  readingText,
+  REPLAY_RULE,
+  type ReplayProbe,
+  type ReplayRow,
+  roleReadings,
+  rolesProblem,
+  selectionSchedule,
+  splitSchedule,
+  untestedIntervals,
+} from './autoreplay.ts';
 import { BARS, causeLines, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_MEAN_BAR, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK } from './check.ts';
 import { loadConfig, loadEarlyConfig } from './config.ts';
 import { PartsError, type Problem, problemLine, refuseIfAny } from './errors.ts';
@@ -402,7 +424,7 @@ export function motionGates(
 }
 
 /** The mesh report as written: each automatic row with the motion gate's rows in place of "unmeasured", and its `compare` document after `quality_report`. */
-export function withMotion(rows: readonly MeshReport[], runs: readonly MotionGateRun[], cases: readonly AutoMotionCase[], replays: ReadonlyMap<string, ReplayRow> = new Map()): MeshReport[] {
+export function withMotion(rows: readonly MeshReport[], runs: readonly MotionGateRun[], cases: readonly AutoMotionCase[], replays: ReadonlyMap<string, ReplayRow | MultiIntervalRow> = new Map()): MeshReport[] {
   return rows.map((m) => {
     if (!('mode' in m) || m.mode !== 'auto') return m;
     const run = runs.find((r) => r.part === m.part);
@@ -424,7 +446,13 @@ export function withMotion(rows: readonly MeshReport[], runs: readonly MotionGat
 export interface ReplaySearchRun {
   part: string;
   /** The replay to write, the grid frame ids it was chosen on and the search's figures; null when the part is refused. */
-  chosen: { candidate: ReplayCandidate; grid: string[]; row: Omit<ReplayRow, 'selection' | 'held_out'> } | null;
+  chosen: {
+    candidate: ReplayCandidate;
+    grid: string[];
+    row: Omit<ReplayRow, 'selection' | 'held_out'> | Omit<MultiIntervalRow, 'selection' | 'held_out'>;
+    /** The multi-interval search only (issue #148): every frame id any probe's comparison walked, for the final roles check. */
+    probeFrames?: string[];
+  } | null;
   problems: Problem[];
   /** What the stage prints about the search. */
   lines: string[];
@@ -470,11 +498,14 @@ export function replaySearch(
     lines.push(`replay "${c.part}": the unreduced source is not accepted against itself on the grid frames; no search runs`);
     return { part: c.part, chosen: null, problems: run.problems, lines };
   }
+  const selection = motion.selection;
+  if (selection !== undefined && selection.maxProbes < maxReplays(N, I)) return refuse(budgetProblem(c.object, selection.maxProbes, N, I));
   const kept = new Map<number, ReplayCandidate>();
+  const probeFrames: string[] = [];
   let fatal: Problem | null = null;
   let candidatesTried = 0;
-  const probe = (step: number): ReplayProbe => {
-    const refused = (reason: string): ReplayProbe => ({ step, verdict: 'refused', value: null, frame: null, reason });
+  const counted = (step: number): CountedProbe => {
+    const refused = (reason: string): CountedProbe => ({ step, verdict: 'refused', value: null, frame: null, reason, vertices: null });
     if (fatal !== null) return refused('the search was refused at an earlier step');
     const rep = c.search.replay(step);
     if ('code' in rep) {
@@ -505,7 +536,14 @@ export function replaySearch(
     const r = localRow(cmp);
     const pass = motionVerdict(c.object, cmp) === null;
     if (pass) kept.set(step, rep);
-    return { step, verdict: pass ? 'pass' : 'fail', value: r?.value ?? null, frame: r?.worst?.frame?.id ?? null, reason: null };
+    for (const f of cmp.candidates[0]?.motion?.schedule.walked ?? []) probeFrames.push(f.id);
+    return { step, verdict: pass ? 'pass' : 'fail', value: r?.value ?? null, frame: r?.worst?.frame?.id ?? null, reason: null, vertices: rep.row.vertices };
+  };
+  if (selection !== undefined) return multiIntervalRun(c, selection.maxProbes, N, I, counted, () => fatal, kept, grid, probeFrames, fullReading, fullText, () => candidatesTried, lines);
+  // The bisection, the stage as it was before issue #148: a probe carries no vertex count.
+  const probe = (step: number): ReplayProbe => {
+    const { vertices: _counted, ...p } = counted(step);
+    return p;
   };
   const { chosen, probes } = bisectAccepted(I, N, probe);
   lines.push(
@@ -520,6 +558,72 @@ export function replaySearch(
       candidate,
       grid,
       row: { rule: REPLAY_RULE, accepted_steps: N, refinement_steps: I, chosen_step: chosen, replays: probes.length, max_replays: maxReplays(N, I), candidates_tried: candidatesTried, full: fullReading, probes },
+    },
+    problems: [],
+    lines,
+  };
+}
+
+/**
+ * The multi-interval search of one automatic part (issue #148; `src/autoreplay.ts`, `multiIntervalSearch`), run by
+ * {@link replaySearch} when the author wrote `motion.selection`: the same probe — a replay, an unpacked gated build, a
+ * comparison on the grid frames alone — called once per distinct step, up to `maxProbes` replays; the fewest-vertex
+ * candidate among the tested steps that passed is chosen, the lower step on a tie. The source (step I) and the full
+ * result (step N) bound the domain and are never written; the bisection's own result is among the tested.
+ */
+function multiIntervalRun(
+  c: AutoMotionCase,
+  maxProbes: number,
+  N: number,
+  I: number,
+  probe: (step: number) => CountedProbe,
+  fatalOf: () => Problem | null,
+  kept: ReadonlyMap<number, ReplayCandidate>,
+  grid: string[],
+  probeFrames: string[],
+  full: MultiIntervalRow['full'],
+  fullText: string,
+  triedOf: () => number,
+  lines: string[],
+): ReplaySearchRun {
+  const run = multiIntervalSearch(I, N, maxProbes, probe, () => fatalOf() !== null);
+  const tested = [...new Set(run.probes.map((p) => p.step))].sort((a, b) => a - b);
+  const pick = run.chosen;
+  lines.push(
+    `replay "${c.part}": multi-interval selection over the removal steps ${I + 1}..${N - 1} of ${N} accepted step(s), ${run.probes.length} replay(s) of at most ${maxProbes} (maxProbes), ended ${run.termination}: ` +
+      `${run.probes.map((p) => `${p.step} ${p.verdict}${p.value === null ? '' : ` ${p.value}`}${p.vertices === null ? '' : ` v=${p.vertices}`}`).join(', ') || 'none'}; ` +
+      `the bisection kept ${run.bisection <= I ? 'none' : `step ${run.bisection}`}; ${pick === null ? 'no tested step passed' : `the fewest vertices among the tested passing steps: step ${pick.step}, ${pick.vertices} vertices`} (best among tested candidates)`,
+  );
+  const fatal = fatalOf();
+  if (fatal !== null) return { part: c.part, chosen: null, problems: [fatal], lines };
+  const candidate = pick === null ? undefined : kept.get(pick.step);
+  if (pick === null || candidate === undefined) return { part: c.part, chosen: null, problems: [noMultiReductionProblem(c.object, fullText, N, I, maxProbes, run.termination, run.probes)], lines };
+  const counts = candidate.row.result.counts;
+  return {
+    part: c.part,
+    chosen: {
+      candidate,
+      grid,
+      probeFrames,
+      row: {
+        rule: MULTI_INTERVAL_RULE,
+        policy: 'multi-interval',
+        max_probes: maxProbes,
+        accepted_steps: N,
+        refinement_steps: I,
+        chosen_step: pick.step,
+        bisection_step: run.bisection,
+        replays: run.probes.length,
+        candidates_tried: triedOf(),
+        termination: run.termination,
+        tested,
+        passing_intervals: passingIntervals(run.probes),
+        untested_intervals: untestedIntervals(I, N, new Set(tested)),
+        chosen: { vertices: candidate.row.vertices, boundary: counts.boundaryVertices, interior: counts.interiorVertices, triangles: candidate.row.triangles, bindings: counts.bindings },
+        full,
+        probes: run.probes,
+        roles: { selection: 'grid', held_out: 'irr', probe_frames: new Set(probeFrames).size },
+      },
     },
     problems: [],
     lines,
@@ -571,7 +675,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
   let motion: MotionGateRun[] = firstMotion.map((r) => (searched.has(r.part) ? { ...r, problems: searches.find((s) => s.part === r.part)?.problems ?? r.problems } : r));
   let finalGate: GateRun[] | null = null;
   let finalMotion: MotionGateRun[] = [];
-  const replays = new Map<string, ReplayRow>();
+  const replays = new Map<string, ReplayRow | MultiIntervalRow>();
   if (settled) {
     const swapped = JSON.parse(rigJsonText(first.rig)) as RigSpec;
     for (const k of chosen) swapped.skins.default[k.part] = { [k.part]: k.candidate.attachment };
@@ -586,8 +690,11 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
       if (k === undefined || r.report === null) return r;
       const roles = roleReadings(r.report);
       replays.set(r.part, { ...k.row, selection: roles.selection, held_out: roles.held_out });
-      if (!r.problems.some((p) => p.code === 'AUTO_MESH_MOTION')) return r;
+      // issue #148: a multi-interval choice holds its roles — no probe read a frame the final comparison holds out.
       const c = rig.autoMotion.find((x) => x.part === r.part) as AutoMotionCase;
+      const leaked = k.probeFrames === undefined ? null : rolesProblem(c.object, k.row.chosen_step, k.probeFrames, r.report);
+      if (leaked !== null) return { ...r, problems: [leaked] };
+      if (!r.problems.some((p) => p.code === 'AUTO_MESH_MOTION')) return r;
       const held = finalVerdict(c.object, k.row.chosen_step, k.row.accepted_steps, r.report);
       return { ...r, problems: held === null ? [] : [held] };
     });

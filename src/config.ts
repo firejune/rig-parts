@@ -316,6 +316,23 @@ export interface AutoMotionSpec {
   minStretch?: number;
   deformMayFold?: boolean;
   gradation?: number | null;
+  /**
+   * How the acceptance loop (`src/autoreplay.ts`) chooses a replayed step when
+   * the full result fails the gate (issue #148). Absent: the bisection, and the
+   * stage is byte for byte the one it was before the field existed.
+   * `{ policy: 'multi-interval', maxProbes }` probes up to `maxProbes` distinct
+   * removal steps (a whole number, 1 or more; the author's, never derived) in
+   * a fixed order and keeps the fewest-vertex candidate among those that
+   * passed — the best among tested candidates, never the last, the minimal
+   * or a complete walk.
+   */
+  selection?: AutoSelectionSpec;
+}
+
+/** `meshes.<part>.auto.motion.selection` (issue #148): the one policy besides the bisection, and its probe budget. */
+export interface AutoSelectionSpec {
+  policy: 'multi-interval';
+  maxProbes: number;
 }
 
 /**
@@ -1216,8 +1233,18 @@ function checkAuto(c: Check, at: string, v: Json, bones: Set<string>): void {
     c.fail('CONFIG_FIELD_TYPE', `${at}.removalOrder`, `is ${show(o.removalOrder)}; "deformation-load" is required (the one order rig-c offers besides its default), or leave the field out for ascending source index`);
   }
   if ('motion' in o) {
-    const m = c.object(`${at}.motion`, o.motion, ['maxLocalDeformation'], ['maxStretch', 'minStretch', 'deformMayFold', 'gradation']);
+    const m = c.object(`${at}.motion`, o.motion, ['maxLocalDeformation'], ['maxStretch', 'minStretch', 'deformMayFold', 'gradation', 'selection']);
     if (m !== null) {
+      // issue #148: the multi-interval selection, opt-in; its budget is the author's whole number, never defaulted.
+      if ('selection' in m) {
+        const sel = c.object(`${at}.motion.selection`, m.selection, ['policy', 'maxProbes'], []);
+        if (sel !== null) {
+          if ('policy' in sel && sel.policy !== 'multi-interval') {
+            c.fail('CONFIG_FIELD_TYPE', `${at}.motion.selection.policy`, `is ${show(sel.policy)}; "multi-interval" is required (the one policy besides the bisection), or leave selection out for the bisection`);
+          }
+          if ('maxProbes' in sel) c.int(`${at}.motion.selection.maxProbes`, sel.maxProbes, 1);
+        }
+      }
       // rigc#1291: the author's G, a number at or above 0, or null (sent as null: Δ not measured); never derived.
       if ('gradation' in m && m.gradation !== null) c.number(`${at}.motion.gradation`, m.gradation, 'non-negative');
       if ('maxLocalDeformation' in m) c.number(`${at}.motion.maxLocalDeformation`, m.maxLocalDeformation, 'non-negative');
