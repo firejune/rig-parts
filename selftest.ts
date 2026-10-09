@@ -189,11 +189,12 @@ import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld 
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
-import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline, writeMeshQualityReport } from 'rig-c/mesh';
+import { type AlphaMask, checkHullOrder, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, simplifyClosedPolygon, traceAlphaOutline, traceOutline, windCounterClockwiseInSpineWorld, writeMeshQualityReport } from 'rig-c/mesh';
 import { AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
-import { AUTO_CASES, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
+import { AUTO_CASES, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, finerSourcePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
 import { BLOCKED_LABEL, barsOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
+import { type BStar, bStar, type CellRow as ToolCellRow, nearestRank, parseArgs as parseBoundaryArgs, pendingRow, policyAt, render as renderBoundary, sagittas, sagittaSummary } from './tools/auto_boundary_survey.ts';
 import { type AutoMotionCase, idleSchedule, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
 import { motionGates, type MotionGateRun, replaySearch } from './src/build.ts';
 import { bisectAccepted, finalVerdict, gridFrameIds, maxReplays, type ReplayProbe, replayVerdict, roleReadings, selectionSchedule, splitSchedule } from './src/autoreplay.ts';
@@ -16915,6 +16916,126 @@ function runAutoMeshSuite(): number {
       planted47.every((v) => v !== '8'),
     `auto row source.contour.fitConnectivity: ${auto47 === undefined ? 'no auto row' : read47(auto47.source.contour)}; contour row: ${contourRep47 === undefined ? 'no contour row' : read47(contourRep47)}; planted (undefined, removed, 4): ${planted47.join(', ')}`,
     'mesh_report.json is what an agent reads when it cannot see the mesh: which fill the overshoot figure was taken against is part of the figure, and the contour mode, which did not change, writes what it wrote',
+  );
+
+  // ---------------------------------------------------------------------------
+  // rigc#1271 Q8 and Q1 option (ii): tools/auto_boundary_survey.ts (BS01-BS04).
+  // ---------------------------------------------------------------------------
+
+  // BS01 — the sagitta by hand: a 2x2 square (every corner sqrt 2 = 2/sqrt 2 from its neighbours' diagonal), an
+  // integer octagon (every vertex 1/sqrt 5 from its neighbours' chord: (2,0) to (1,0)-(3,1), cross 1 over length
+  // sqrt 5), and a triangle (0,0),(4,0),(2,-1): the apex exactly 1 from its base, the base corners sqrt 5 (the segment,
+  // clamped at (2,-1); the infinite line would read 4/sqrt 5).
+  const near01 = (a: number, b: number): boolean => Math.abs(a - b) < 1e-12;
+  const square01: Array<[number, number]> = [[0, 0], [2, 0], [2, 2], [0, 2]];
+  const octagon01: Array<[number, number]> = [[1, 0], [2, 0], [3, 1], [3, 2], [2, 3], [1, 3], [0, 2], [0, 1]];
+  const triangle01: Array<[number, number]> = [[0, 0], [4, 0], [2, -1]];
+  const tri01 = sagittaSummary(triangle01, 1);
+  const byHand01 = (s: readonly number[], want: readonly number[]): boolean => s.length === want.length && s.every((v, k) => near01(v, want[k]));
+  // Planted: one square corner moved half a pixel, and the triangle read against the infinite line instead of the segment.
+  const moved01: Array<[number, number]> = [[0, 0], [2, 0], [2.5, 2], [0, 2]];
+  const lineDistance01 = (p: readonly [number, number], a: readonly [number, number], b: readonly [number, number]): number => Math.abs((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])) / Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const lineRead01 = triangle01.map((p, i) => lineDistance01(p, triangle01[(i + 2) % 3], triangle01[(i + 1) % 3]));
+  say(
+    'BS01_THE_SAGITTA_IS_THE_DISTANCE_TO_THE_NEIGHBOURS_SEGMENT_BY_HAND_AND_ITS_SUMMARY_COUNTS_AT_OR_UNDER_THE_BOUND',
+    byHand01(sagittas(square01), [Math.SQRT2, Math.SQRT2, Math.SQRT2, Math.SQRT2]) &&
+      byHand01(sagittas(octagon01), new Array<number>(8).fill(1 / Math.sqrt(5))) &&
+      byHand01(sagittas(triangle01), [Math.sqrt(5), Math.sqrt(5), 1]) &&
+      tri01.vertices === 3 && tri01.atOrUnder === 1 && tri01.p10 === 1 && tri01.p50 === 2.236068 && tri01.p90 === 2.236068 &&
+      nearestRank([5, 1, 4, 2, 3], 0.5) === 3 && nearestRank([5, 1, 4, 2, 3], 0.1) === 1 && nearestRank([5, 1, 4, 2, 3], 0.9) === 5 &&
+      !byHand01(sagittas(moved01), [Math.SQRT2, Math.SQRT2, Math.SQRT2, Math.SQRT2]) &&
+      !byHand01(lineRead01, [Math.sqrt(5), Math.sqrt(5), 1]),
+    `square ${sagittas(square01).join(', ')}; octagon ${sagittas(octagon01).join(', ')}; triangle ${sagittas(triangle01).join(', ')} -> ${JSON.stringify(tri01)}; planted moved corner ${sagittas(moved01).join(', ')}; planted line reading ${lineRead01.join(', ')}`,
+    'rigc#1271 §8 reads one removal\'s deviation as the removed vertex\'s sagitta over its neighbours\' chord; the boundary-deviation row is a Hausdorff distance between segments, so the reading is to the segment, clamped at its ends, and the count is at or under the declared bound (<=, as the row compares)',
+  );
+
+  // BS02 — B* by definition on a fixture whose answer is by hand: a 16x10 art block at (4, 4) in 24x18, its source
+  // hull the margin-1 rectangle (3,3)-(21,15) with a collinear midpoint on each side and one interior vertex. Each
+  // midpoint lies on its corners' chord (sagitta 0); each corner is 54/sqrt 117 = 4.99 px from its neighbours' chord,
+  // and the chord across it uncovers art pixel (4, 4) — so B* = 4, the corners, at bound 1 and at bound 5 alike (at
+  // bound 5 only coverage holds the corners). Planted: the top midpoint moved 2 px out, (12, 1) — 2 px from the
+  // corners' chord, over the bound — so B* = 5; and a coverage floor below 1, which the cap-local test cannot read.
+  const mask02 = blocks(24, 18, [[4, 4, 16, 10]]);
+  const input02 = (top: [number, number], bound: number, minCoverage = 1): MeshReductionInput => {
+    const points: Array<[number, number]> = [[3, 3], top, [21, 3], [21, 9], [21, 15], [12, 15], [3, 15], [3, 9], [12, 9]];
+    const fan: number[] = [];
+    for (let k = 0; k < 8; k++) fan.push(k, (k + 1) % 8, 8);
+    const fit = { minCoverage, maxOvershoot: 3, maxUndercut: 0 };
+    return {
+      attachment: { skin: null, slot: 'box', attachment: 'box' },
+      art: { mask: mask02, threshold: 1, frame: { space: 'part-local-drawing-px-y-down', width: 24, height: 18, pageScale: 1, conversion: 'texels = px * pageScale' } },
+      source: { points, uvs: points.flatMap(([x, y]) => [pyRound(x / 24, 6), pyRound(y / 18, 6)]), triangles: windCounterClockwiseInSpineWorld(points, fan), hull: 8, weights: null },
+      sourceBounds: fit,
+      targets: { artFit: fit, maxBoundaryDeviation: bound, regions: [] },
+      protect: { hull: false, vertices: [], edges: [], regionBoundaries: [], weightJump: null, influences: [] },
+      influences: { maxInfluences: 4, minWeight: 0 },
+      boneOrder: [],
+      preset: null,
+      budget: { maxCandidates: 100 },
+      minArtSamples: 1,
+      regionArtSamples: [],
+      deform: [],
+      linkedMeshes: [],
+    };
+  };
+  const b02 = bStar(input02([12, 3], 1));
+  const wide02 = bStar(input02([12, 3], 5));
+  const bump02 = bStar(input02([12, 1], 1));
+  const permissive02 = threw(() => bStar(input02([12, 3], 1, 0.995)));
+  say(
+    'BS02_B_STAR_IS_THE_FEWEST_HULL_VERTICES_HOLDING_EVERY_STATIC_ROW_BY_HAND_AND_IS_VERIFIED_GLOBALLY',
+    b02.count === 4 && b02.kept.join() === '0,2,4,6' && b02.failing.length === 0 && b02.crossing === null && b02.rows.length > 0 &&
+      wide02.count === 4 && wide02.kept.join() === '0,2,4,6' && wide02.failing.length === 0 &&
+      bump02.count === 5 && bump02.kept.join() === '0,1,2,4,6' && bump02.failing.length === 0 &&
+      permissive02 !== null && permissive02.includes('minCoverage 0.995'),
+    `bound 1: ${b02.count} kept ${b02.kept.join(',')} verified ${b02.failing.length === 0 ? `(${b02.rows.join('; ')})` : `NO (${b02.failing.join('; ')})`}; bound 5: ${wide02.count} kept ${wide02.kept.join(',')}; planted bump: ${bump02.count} kept ${bump02.kept.join(',')}; planted minCoverage 0.995: ${permissive02 ?? 'not refused'}`,
+    'rigc#1271 §8 defines B* as the fewest source-hull vertices a closed outline can keep with every static row held; the search is the tool\'s, so its answer is held to a fixture counted by hand, both by the deviation bound and by coverage alone, and a policy the search cannot read is refused rather than answered',
+  );
+
+  // BS03 — the tool's document is a function of the rows alone: the same rows render the same bytes, no wall time and
+  // no path is printed, a stopped cell says so, and a row that differs renders differently (the comparison can fire).
+  const row03 = (b: BStar | null): ToolCellRow => ({
+    ...pendingRow('demo', 'neck', 0.5, sagittaSummary(octagon01, 1), b, { hull: 8, interior: 1 }),
+    full: { hull: 6, interior: 0 },
+    chosen: { hull: 6, interior: 0 },
+    verdict: 'accepted',
+  });
+  const stopped03: ToolCellRow = { ...pendingRow('sample', 'sleeves', 0.5, null, null, null), stopped: 'stopped at 600 s (the per-cell cap)' };
+  const doc03a = renderBoundary([row03(b02), stopped03], '9.8.7', 'f'.repeat(40), [1, 0.5], 600).join('\n');
+  const doc03b = renderBoundary([row03(b02), stopped03], '9.8.7', 'f'.repeat(40), [1, 0.5], 600).join('\n');
+  const doc03c = renderBoundary([row03(bump02), stopped03], '9.8.7', 'f'.repeat(40), [1, 0.5], 600).join('\n');
+  const args03 = parseBoundaryArgs(['--tolerances', '1,0.5', '--cell-cap', '600']);
+  const badArg03 = threw(() => parseBoundaryArgs(['--tolerances', '1,-1']));
+  say(
+    'BS03_THE_SURVEY_DOCUMENT_IS_A_FUNCTION_OF_ITS_ROWS_WITH_NO_CLOCK_NO_PATH_AND_A_STOPPED_CELL_NAMED',
+    doc03a === doc03b && doc03a !== doc03c && !/ s wall|\/tmp|\/Users|\/home/.test(doc03a) &&
+      doc03a.includes('| sample/sleeves | 0.5 | not built → not built → nothing |') && doc03a.includes('stopped at 600 s (the per-cell cap)') &&
+      doc03a.includes('| demo/neck | 0.5 | 8 (+1) | 0.447214 / 0.447214 / 0.447214 | 8 / 8 (bound 1) | 4 | yes — ') &&
+      doc03a.includes('## Re-running this evidence') && doc03a.includes(`spine-parts-examples at commit ${'f'.repeat(40)}`) && doc03a.includes('rig-c 9.8.7 as') &&
+      doc03a.includes('timeout 2700 bun tools/auto_boundary_survey.ts --tolerances 1,0.5 --cell-cap 600 > docs/evidence/auto-boundary-survey.md') &&
+      args03.tolerances.join() === '1,0.5' && args03.capSeconds === 600 && args03.child === null && badArg03 !== null && badArg03.includes('--tolerances'),
+    `two renders ${doc03a === doc03b ? 'identical' : 'DIFFER'} (${doc03a.length} chars); planted B* row ${doc03a === doc03c ? 'renders the SAME' : 'renders differently'}; args ${JSON.stringify(args03)}; planted -1 -> ${badArg03}`,
+    'the evidence document must be re-runnable to the byte: what a run measured is printed, what the machine was doing (wall time, paths) is not, and a cell past its cap is a named row rather than a missing one',
+  );
+
+  // BS04 — option (ii)'s policy: the stated policy with only source.tolerance lowered, loading through the config
+  // reader; a tolerance at or above the declared bound is not option (ii) and is refused; the tool runs the stated
+  // policy itself at tolerance 1.
+  const stated04 = examplePolicy(8);
+  const finer04 = finerSourcePolicy(8, 0.5);
+  const quarter04 = finerSourcePolicy(8, 0.25);
+  const loads04 = refusals(() => parseConfig(autoRigConfig((_c, a) => Object.assign(a, JSON.parse(JSON.stringify(withPolicyMotion(finer04)))))));
+  const sameElse04 = JSON.stringify({ ...finer04, source: { ...finer04.source, tolerance: 1 } }) === JSON.stringify(stated04);
+  const atBound04 = threw(() => finerSourcePolicy(8, 1));
+  const negative04 = threw(() => finerSourcePolicy(8, -0.5));
+  say(
+    'BS04_THE_FINER_SOURCE_POLICY_MOVES_ONLY_THE_TOLERANCE_LOADS_AND_REFUSES_A_TOLERANCE_NOT_BELOW_THE_BOUND',
+    loads04 === null && sameElse04 && finer04.source.tolerance === 0.5 && quarter04.source.tolerance === 0.25 &&
+      finer04.targets.maxBoundaryDeviation === stated04.targets.maxBoundaryDeviation &&
+      atBound04 !== null && atBound04.includes('not below the declared maxBoundaryDeviation 1') && negative04 !== null &&
+      JSON.stringify(policyAt(8, 1)) === JSON.stringify(stated04) && JSON.stringify(policyAt(8, 0.5)) === JSON.stringify(finer04),
+    `loads: ${loads04 === null ? 'yes' : loads04.problems.map(problemLine).join('; ')}; every other field the stated policy's: ${sameElse04}; planted tolerance 1 -> ${atBound04}; planted -0.5 -> ${negative04}`,
+    'rigc#1271 Q1 option (ii) loosens nothing declared: the trial policy is the stated one with the hull sampled finer than the bound, so a tolerance equal to the bound (the stated policy) or above it is a different question and is refused by name',
   );
 
   return bad();
