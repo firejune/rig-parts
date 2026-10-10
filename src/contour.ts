@@ -312,6 +312,12 @@ export interface ContourMesh {
   triangles: number[];
   hull: number;
   report: ContourReport;
+  /**
+   * The mask the mesh was traced and measured on: the input mask with every island left out under a declared
+   * `stray` set to alpha 0 (issue #172), so a reader of the mesh's art reads the art the trace read. When nothing
+   * was left out it is the input mask itself, the same object, so nothing downstream of a part without stray moves.
+   */
+  mask: AlphaMask;
 }
 
 // ---------------------------------------------------------------------------
@@ -1438,6 +1444,7 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
     vertices,
     triangles,
     hull: H,
+    mask: meshed,
     report: {
       boundaryVertices: H,
       interiorVertices: kept.length,

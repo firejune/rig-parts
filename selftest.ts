@@ -190,13 +190,13 @@ import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, typ
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
 import { type AcceptedOperation, type AlphaMask, checkHullOrder, type TrackAmplitude, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, type ReductionSkinning, simplifyClosedPolygon, traceAlphaOutline, traceOutline, windCounterClockwiseInSpineWorld, writeMeshQualityReport } from 'rig-c/mesh';
-import { allocationClause, AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, stageBClause, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
+import { allocationClause, AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, stageBClause, legacyArtCoverage, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
 import { AUTO_CASES, densityOnly, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, finerSourcePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
 import { BLOCKED_LABEL, barsOf, basisOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
 import { type BStar, bStar, type CellRow as ToolCellRow, nearestRank, parseArgs as parseBoundaryArgs, pendingRow, policyAt, render as renderBoundary, sagittas, sagittaSummary } from './tools/auto_boundary_survey.ts';
 import { type AutoMotionCase, idleSchedule, localRow, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
-import { motionGates, type MotionGateRun, replaySearch } from './src/build.ts';
+import { motionGates, type MotionGateRun, replaySearch, strayClause } from './src/build.ts';
 import {
   bisectAccepted,
   type CountedProbe,
@@ -330,7 +330,7 @@ import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeyp
 import { LYING_PARTS, LYING_RIG, type PoseName, POSES } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, constraintConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
-import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigSpec, roundShares } from './src/rig.ts';
+import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigOutput, type RigSpec, roundShares } from './src/rig.ts';
 import { type ComposedScene, composeFromFiles, IMAGE_SEP, PLATE, PLATE_IMAGE, PREFIX_SEP, SCENE_REPORT_FILE, SCENE_SPEC, unprefixedNames } from './src/scene.ts';
 import { sceneCharacterRig, sceneText, writeFlatPlate, writeSceneBuild } from './fixtures/scene.ts';
 import { localInfluences, regionWeight } from './src/localweights.ts';
@@ -18678,6 +18678,176 @@ function runAutoMeshSuite(): number {
     oneSm03.px === 4 && oneSm03.ratio === 0.02 && totSm03.px === 4 && totSm03.artPx === 500 && totSm03.ratio === 0.008 && plantSm03.startsWith('LOSS_NOT_SUMMED: the row says 5 px cleared; its 2 island(s) hold 4 px'),
     `one row ${JSON.stringify(oneSm03)}; total ${JSON.stringify(totSm03)}; planted typed figure: ${plantSm03}`,
     'what a declared stray costs is the px it stops drawing; the page\'s loss column is computed from the islands the tool cleared, never typed',
+  );
+
+  // ---------------------------------------------------------------------------
+  // Issue #172 unit 1b: one mask for every reader of a part that declares `source.stray` (SY01-SY06).
+  // ---------------------------------------------------------------------------
+
+  // The fixture: the rig fixture's cloth (16x8 at (10, 10), fixtures/rig.ts) with only its columns 0..9 opaque — 10 x 8 =
+  // 80 px at alpha 255 — and a crumb at (14, 6) at alpha 200, four transparent columns away; a second crumb pixel at
+  // (14, 5) makes it 2 px. Padded by 4 as the rig stage pads it: the block at (4, 4) 10x8 in 24x16, the crumb at (18, 10).
+  const crumbImagesSy = (crumbPx: 0 | 1 | 2): Map<string, Raster> => {
+    const im = rigImages();
+    const cl = block(16, 8, [10, 16]);
+    if (crumbPx >= 1) cl.data.set([200, 120, 80, 200], (6 * 16 + 14) * 4);
+    if (crumbPx === 2) cl.data.set([200, 120, 80, 200], (5 * 16 + 14) * 4);
+    im.set('cloth', cl);
+    return im;
+  };
+  const crumbMaskSy = (crumbPx: 0 | 1 | 2): AlphaMask => {
+    const rects: Array<readonly [number, number, number, number, number?]> = [[4, 4, 10, 8]];
+    if (crumbPx >= 1) rects.push([18, 10, 1, 1, 200]);
+    if (crumbPx === 2) rects.push([18, 9, 1, 1, 200]);
+    return blocks(24, 16, rects);
+  };
+  const strayConfigSy = (stray: number | undefined): Record<string, unknown> =>
+    autoRigConfig((_c, a) => {
+      if (stray !== undefined) (a.source as Record<string, unknown>).stray = stray;
+    });
+  const builtSy = (stray: number | undefined, crumbPx: 0 | 1 | 2): RigOutput | PartsError => {
+    try {
+      return buildRig(parseConfig(strayConfigSy(stray)), rigParts(), crumbImagesSy(crumbPx));
+    } catch (err) {
+      if (err instanceof PartsError) return err;
+      throw err;
+    }
+  };
+  const rowSy = (b: RigOutput | PartsError): AutoMeshReport | undefined => (b instanceof PartsError ? undefined : (b.meshReport.find((m) => m.part === 'cloth') as AutoMeshReport | undefined));
+  const errSy = (b: RigOutput | PartsError): PartsError | null => (b instanceof PartsError ? b : null);
+  const noStraySy = builtSy(undefined, 1);
+  const stray1Sy = builtSy(1, 1);
+  const row1Sy = rowSy(stray1Sy);
+
+  // SY01 — the crumb part refuses without stray (CONTOUR_ONE_ISLAND names the 1 px island at (18, 10)) and builds with
+  // stray 1; its row names what was cleared: 1 island, 1 px, of 81 art px (80 + 1, by hand), right after `source`, and
+  // the printed mesh line says so.
+  const keysSy01 = row1Sy === undefined ? [] : Object.keys(row1Sy);
+  say(
+    'SY01_A_CRUMB_PART_REFUSES_WITHOUT_STRAY_BUILDS_WITH_IT_AND_ITS_ROW_NAMES_THE_CLEARED_ISLAND_AND_PIXELS',
+    has(errSy(noStraySy), 'CONTOUR_ONE_ISLAND', '80 px at (4, 4), 1 px at (18, 10)') &&
+      row1Sy !== undefined &&
+      JSON.stringify(row1Sy.stray_cleared) === JSON.stringify({ islands: 1, pixels: 1, art_pixels: 81 }) &&
+      keysSy01.indexOf('stray_cleared') === keysSy01.indexOf('source') + 1 &&
+      strayClause(row1Sy.stray_cleared) === '; stray cleared 1 island(s), 1 of 81 art px, from the art every reader of the mesh takes (the image is drawn as assembled)',
+    `no stray: ${lines(errSy(noStraySy))}; stray 1: ${row1Sy === undefined ? lines(errSy(stray1Sy)) : `built, stray_cleared ${JSON.stringify(row1Sy.stray_cleared)} after "${keysSy01[keysSy01.indexOf('stray_cleared') - 1]}"; line${strayClause(row1Sy.stray_cleared)}`}`,
+    'issue #172 unit 1b: a declared stray now builds the part it was declared for, and what it cleared is a named field and a printed clause, not a silent drop',
+  );
+
+  // SY02 — the plant is the whole-mask path, the reading before this unit: the same source handed to reduceMesh with
+  // the part's whole alpha ends invalid-input on the source's own coverage, 80 of 81 art pixel centres (the crumb lies 5
+  // px past the block's edge, beyond margin 1 + tolerance 0); the cleared mask, the package's, is accepted.
+  const specSy: AutoSpec = { ...syntheticPolicy(4), source: { ...syntheticPolicy(4).source, stray: 1 } };
+  const wholeSy = crumbMaskSy(1);
+  const srcSy = autoSource('cloth', wholeSy, specSy);
+  const callSy = (mask: AlphaMask): string => {
+    if (Array.isArray(srcSy)) return `source refused: ${srcSy.map(problemLine).join('; ')}`;
+    const ran = runReduction('cloth', autoReductionInput({ part: 'cloth', mask, ox: 0, oy: 0, spec: specSy, source: srcSy, weights: null, boneOrder: [] }));
+    if ('code' in ran) return problemLine(ran);
+    const v = autoVerdict('cloth', ran);
+    return v.accepted ? 'accepted' : problemLine(v.problem);
+  };
+  const clearedCallSy = Array.isArray(srcSy) ? 'no source' : callSy(srcSy.mask);
+  const wholeCallSy = callSy(wholeSy);
+  say(
+    'SY02_THE_WHOLE_MASK_PATH_IS_REFUSED_ON_THE_SOURCES_COVERAGE_AND_THE_CLEARED_MASK_IS_ACCEPTED',
+    clearedCallSy === 'accepted' && wholeCallSy.includes('REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS') && wholeCallSy.includes(`MQ_COVERAGE is ${80 / 81} against >= 1`),
+    `cleared mask: ${clearedCallSy}; planted whole mask: ${wholeCallSy.slice(0, 400)}`,
+    'the measurement of PR #175: the trace and the reduction must read one mask, or the crumb the trace dropped is art no source vertex covers; 80/81 is the hand count, not a figure read off a run',
+  );
+
+  // SY03 — no stray, no move: a part with nothing left out reads the very mask it was handed (the same object, the
+  // same md5) — no stray on the one-island block, stray 5 on it, and the standard cloth — and its row has no
+  // `stray_cleared` key; a declared stray that clears nothing writes zeros and prints nothing. The package's cleared
+  // mask is the #175 instrument's (`strayCleared`), md5 for md5. Planted: the crumb under stray 1 — the md5 moves.
+  const oneSy = crumbMaskSy(0);
+  const sameSy = [autoSource('cloth', oneSy, syntheticPolicy(4)), autoSource('cloth', oneSy, { ...syntheticPolicy(4), source: { ...syntheticPolicy(4).source, stray: 5 } })].map((s) => !Array.isArray(s) && s.mask === oneSy && maskMd5(s.mask) === maskMd5(crumbMaskSy(0)));
+  const clothSy = clothMask();
+  const clothSrcSy = autoSource('cloth', clothSy, syntheticPolicy(4));
+  const plainRowSy = rowSy(builtSy(undefined, 0));
+  const zeroRowSy = rowSy(builtSy(5, 0));
+  const movedSy = !Array.isArray(srcSy) && srcSy.mask !== wholeSy && maskMd5(srcSy.mask) !== maskMd5(wholeSy);
+  const agreeSy = !Array.isArray(srcSy) && maskMd5(srcSy.mask) === strayCleared(crumbMaskSy(1), 1).cleared.md5After;
+  say(
+    'SY03_WITH_NOTHING_LEFT_OUT_THE_MASK_IS_THE_SAME_OBJECT_AND_MD5_AND_A_CLEARED_CRUMB_MOVES_IT',
+    sameSy.every(Boolean) &&
+      !Array.isArray(clothSrcSy) &&
+      clothSrcSy.mask === clothSy &&
+      plainRowSy !== undefined &&
+      !('stray_cleared' in plainRowSy) &&
+      strayClause(plainRowSy.stray_cleared) === '' &&
+      zeroRowSy !== undefined &&
+      JSON.stringify(zeroRowSy.stray_cleared) === JSON.stringify({ islands: 0, pixels: 0, art_pixels: 80 }) &&
+      strayClause(zeroRowSy.stray_cleared) === '' &&
+      movedSy &&
+      agreeSy,
+    `one island, no stray / stray 5: ${sameSy.map((s) => (s ? 'same object, md5 equal' : 'moved')).join(' / ')}; cloth: ${!Array.isArray(clothSrcSy) && clothSrcSy.mask === clothSy ? 'same object' : 'moved'}; no-stray row: ${plainRowSy === undefined ? 'no row' : 'stray_cleared' in plainRowSy ? 'has stray_cleared' : 'no stray_cleared'}; stray 5 on one island: ${JSON.stringify(zeroRowSy?.stray_cleared)}; planted crumb under stray 1: md5 ${movedSy ? 'moved' : 'equal'}; package vs strayCleared: ${agreeSy ? 'equal' : 'differ'}`,
+    'a part without stray, and every lattice and contour part, must reach every reader with the mask it always had — asserted by program on the object and its md5, not read off a row',
+  );
+
+  // SY04 — an island larger than stray is still refused by name: the 2 px crumb under stray 1 is CONTOUR_ONE_ISLAND
+  // naming both counts; under stray 2 it builds, 1 island and 2 px cleared of 82 art px (80 + 2).
+  const two1Sy = builtSy(1, 2);
+  const two2Sy = rowSy(builtSy(2, 2));
+  say(
+    'SY04_AN_ISLAND_ABOVE_STRAY_IS_STILL_CONTOUR_ONE_ISLAND_BY_NAME_AND_AT_THE_FIGURE_IT_IS_CLEARED',
+    has(errSy(two1Sy), 'CONTOUR_ONE_ISLAND', 'With stray 1 px declared, besides the largest (80 px) 1 island(s) hold more than 1 px — 2 px') &&
+      errSy(two1Sy)?.problems.length === 1 &&
+      two2Sy !== undefined &&
+      JSON.stringify(two2Sy.stray_cleared) === JSON.stringify({ islands: 1, pixels: 2, art_pixels: 82 }),
+    `2 px under stray 1: ${lines(errSy(two1Sy))}; under stray 2: ${JSON.stringify(two2Sy?.stray_cleared)}`,
+    'nothing is cleared silently: only an island at or under the declared figure leaves the art, and the refusal above it is the one the contour mode already says',
+  );
+
+  // SY05 — the written image is untouched (docs/AUTHORING.md, `stray`): every check reader of a part's alpha reads
+  // parts/<part>.png as assembled, through the attachment's rest triangles (CHECK_TIP_OVER_ROOT, CHECK_STILL_REGIONS_DARK)
+  // or flat against the render (CHECK_SEAM_WITHIN_BAR), so the rig stage's image keeps the crumb: 81 px at alpha above
+  // 0 (by hand 80 + 1), alpha 200 at (18, 10), byte-identical to the part padded. Planted: that image with the
+  // package's cleared mask applied — 80 px, and (18, 10) named.
+  const imgSy = stray1Sy instanceof PartsError ? undefined : stray1Sy.images.find(([f]) => f === 'cloth.png')?.[1];
+  const paddedSy = pad(crumbImagesSy(1).get('cloth') as Raster, PAD, PAD, PAD, PAD, [0, 0, 0, 0]);
+  const opaqueSy = (r: Raster): number => {
+    let n = 0;
+    for (let i = 0; i < r.width * r.height; i++) if (r.data[i * 4 + 3] > 0) n++;
+    return n;
+  };
+  const alphaDiffSy = (a: Raster, b: Raster): string[] => {
+    const out: string[] = [];
+    for (let i = 0; i < a.width * a.height; i++) if (a.data[i * 4 + 3] !== b.data[i * 4 + 3]) out.push(`(${i % a.width}, ${Math.floor(i / a.width)}): alpha ${a.data[i * 4 + 3]} vs ${b.data[i * 4 + 3]}`);
+    return out;
+  };
+  const clearedImgSy = ((): Raster => {
+    const r = { width: paddedSy.width, height: paddedSy.height, data: new Uint8ClampedArray(paddedSy.data) };
+    if (!Array.isArray(srcSy)) for (let i = 0; i < srcSy.mask.alpha.length; i++) r.data[i * 4 + 3] = srcSy.mask.alpha[i];
+    return r;
+  })();
+  const sameBytesSy = imgSy !== undefined && Buffer.from(imgSy.data).equals(Buffer.from(paddedSy.data));
+  say(
+    'SY05_THE_WRITTEN_IMAGE_KEEPS_THE_CRUMB_AS_ASSEMBLED_AND_A_CLEARED_IMAGE_IS_NAMED',
+    imgSy !== undefined &&
+      opaqueSy(imgSy) === 81 &&
+      imgSy.data[(10 * 24 + 18) * 4 + 3] === 200 &&
+      sameBytesSy &&
+      opaqueSy(clearedImgSy) === 80 &&
+      JSON.stringify(alphaDiffSy(paddedSy, clearedImgSy)) === JSON.stringify(['(18, 10): alpha 200 vs 0']),
+    `written: ${imgSy === undefined ? 'none' : `${opaqueSy(imgSy)} px at alpha above 0, (18, 10) at ${imgSy.data[(10 * 24 + 18) * 4 + 3]}, ${sameBytesSy ? 'byte-identical to the part padded' : 'differs from the part padded'}`}; planted cleared image: ${opaqueSy(clearedImgSy)} px, ${alphaDiffSy(paddedSy, clearedImgSy).join('; ')}`,
+    'one answer for every reader of the image: check reads the assembled part and the runtime draws the rig\'s image, each through the mesh; clearing the rig\'s image alone would make check count a crumb the runtime no longer draws',
+  );
+
+  // SY06 — the coverage and the motion gate read the cleared mask: the row's art_coverage is 1 (80 of 80 at alpha above
+  // 8) and the motion case's mask is the package's cleared mask (alpha 0 at (18, 10), md5 equal). Planted: the
+  // written mesh measured against the whole mask — 80 of 81, 0.98765 at five places.
+  const caseSy = stray1Sy instanceof PartsError ? undefined : stray1Sy.autoMotion.find((c) => c.part === 'cloth');
+  const attSy = stray1Sy instanceof PartsError ? undefined : (stray1Sy.rig.skins.default.cloth?.cloth as MeshAttachment | undefined);
+  const ptsSy: Array<[number, number]> = [];
+  if (attSy !== undefined) for (let k = 0; k < attSy.uvs.length; k += 2) ptsSy.push([attSy.uvs[k] * attSy.width, attSy.uvs[k + 1] * attSy.height]);
+  const wholeCovSy = attSy === undefined ? null : pyRound(legacyArtCoverage(wholeSy, ptsSy, attSy.triangles), 5);
+  const caseMd5Sy = caseSy !== undefined && !Array.isArray(srcSy) && maskMd5(caseSy.mask) === maskMd5(srcSy.mask);
+  say(
+    'SY06_THE_COVERAGE_AND_THE_MOTION_GATE_READ_THE_CLEARED_MASK_AND_THE_WHOLE_MASK_READS_80_OF_81',
+    row1Sy?.art_coverage === 1 && caseSy !== undefined && caseSy.mask.alpha[10 * 24 + 18] === 0 && caseMd5Sy && wholeCovSy === pyRound(80 / 81, 5),
+    `art_coverage ${row1Sy?.art_coverage}; motion case mask at (18, 10): ${caseSy?.mask.alpha[10 * 24 + 18]}, md5 ${caseMd5Sy ? 'the cleared mask\'s' : 'not the cleared mask\'s'}; planted whole mask: ${wholeCovSy} (by hand 80/81 = ${pyRound(80 / 81, 5)})`,
+    'the coverage figure and the motion gate\'s art bounds read the art the mesh was built for; a reader left on the whole mask would report the crumb the declaration accepted as uncovered',
   );
 
   return bad();

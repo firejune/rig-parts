@@ -43,8 +43,8 @@ export const SYNTHETIC_POLICY = syntheticPolicy(8);
  *
  * - source: issue #106's stated contour set — tolerance 1, margin 1 — and the
  *   part's own tracked spacing (its lattice `grid`, or the contour spacing of a
- *   part already in that mode); no `stray`: full coverage is asked below, so
- *   an island left out could never pass it;
+ *   part already in that mode); no `stray`: a declared stray is a per-part
+ *   manual setting, never the policy's;
  * - `sourceBounds` = `targets.artFit` = every art pixel covered (`minCoverage`
  *   1, `maxUndercut` 0), nothing past `margin + tolerance + 1` = 3 px (the
  *   contour mode's own bound);

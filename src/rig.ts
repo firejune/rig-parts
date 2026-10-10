@@ -380,6 +380,13 @@ export interface ContourMeshReport {
   regions: Array<{ name: string; bone: string; reached: number; whole: number }>;
 }
 
+/** What a declared `source.stray` cleared from an automatic part's art (issue #172): islands, their pixels, and the art they were part of. */
+export interface StrayCleared {
+  islands: number;
+  pixels: number;
+  art_pixels: number;
+}
+
 /**
  * An automatic mesh's row (issue #126, item 2): the lattice row's figures,
  * then the mode; `settings`, every number the call saw (the effective
@@ -392,7 +399,9 @@ export interface ContourMeshReport {
  * `mesh-quality-report/1` document rig-c wrote — inside the row rather
  * than beside it, so the rig stage stays pure and one file holds every part's
  * evidence, as it does for the other modes. `art_coverage` is over alpha above
- * 8, the other modes' reading; the threshold-1 coverage is a residual.
+ * 8, the other modes' reading, of the art every reader of the mesh takes (under
+ * a declared `source.stray`, the islands the trace left out are not in it —
+ * `stray_cleared`); the threshold-1 coverage is a residual.
  */
 export interface AutoMeshReport {
   part: string;
@@ -420,6 +429,13 @@ export interface AutoMeshReport {
     motionAmplitude?: MotionAmplitude;
   } & StageBOptIns;
   source: { contour: ContourReport; counts: MeshCounts | null };
+  /**
+   * Only on a part whose author declared `source.stray` (issue #172): the islands the trace left out and their pixels,
+   * cleared from the art every reader of the mesh takes (the reduction, its source bounds, `art_coverage`, the motion
+   * gate), against `art_pixels` — the part's art at alpha 1 and above with those islands counted in. Zero islands
+   * when the declaration left nothing out. Absent without the declaration, so such a part writes the row it always wrote.
+   */
+  stray_cleared?: StrayCleared;
   /** The counts; with a Stage B opt-in set, `boundary_runs` and `retriangulation` after them (`stageBResult`), each only when its opt-in is. */
   result: { counts: MeshCounts; removedVertices: number; insertedVertices: number } & StageBResult;
   residuals: Residual[];
@@ -960,6 +976,11 @@ export function buildRig(
       out.push(...source.map((q) => ({ ...q, detail: `${q.detail} (the automatic mode's source, at alpha ${AUTO_THRESHOLD} and above)` })));
       return null;
     }
+    // One mask for every reader of the part (issue #172): under a declared `source.stray` the islands the trace left
+    // out are cleared from the art the reduction, its source bounds, the coverage and the motion gate read — the mask
+    // `contourMesh` traced. Nothing left out, it is `mask` itself, so a part without stray reads what it always read.
+    // The image written for the part is not touched (the reason is in docs/AUTHORING.md's `stray` row).
+    const art = source.mask;
     const sw = sourceWeights(source.vertices, ox, oy, segs, r, spec);
     if ('overlap' in sw) {
       out.push({
@@ -979,7 +1000,7 @@ export function buildRig(
     // below it, Q4). A part whose envelope stops is sent nothing: the veto is not applied and the comparison decides alone.
     const residualSpec = spec.motion?.residual;
     const envelope = residualSpec === undefined ? null : slotEnvelope({ bones: rigBones, joints, motion: idle, constraints: cfg.constraints ?? [] }, segs[0].bone, sw.weights.flatMap((v) => v.map((e) => e.bone)), [ox, oy]);
-    const input: MeshReductionInput = withSkinning(withAmplitude(autoReductionInput({ part: p.name, mask, ox, oy, spec, source, weights: sw.weights, boneOrder }), amplitude), envelope?.derivation ?? null, residualSpec?.maxResidual);
+    const input: MeshReductionInput = withSkinning(withAmplitude(autoReductionInput({ part: p.name, mask: art, ox, oy, spec, source, weights: sw.weights, boneOrder }), amplitude), envelope?.derivation ?? null, residualSpec?.maxResidual);
     const ran = reduce(object, input);
     if ('code' in ran) {
       out.push(ran);
@@ -1039,6 +1060,8 @@ export function buildRig(
       ...(spec.retriangulate === undefined ? {} : { retriangulate: spec.retriangulate }),
       ...(spec.removalOrder === undefined ? {} : { removalOrder: spec.removalOrder }),
     };
+    // What the declared stray cleared, against the part's art at alpha 1 and above with the cleared islands counted in.
+    const strayCleared: StrayCleared = { islands: source.report.strayIslands, pixels: source.report.strayPixels, art_pixels: source.report.artPixels + source.report.strayPixels };
     const rowOf = (mesh: ReducedMesh, report: MeshQualityReport): { attachment: MeshAttachment; row: AutoMeshReport } => {
       const { weights, infl, maxInfl, droppedAtFivePlaces, boundTo } = bind(mesh.points, mesh.weights as Array<Array<{ bone: string; weight: number }>>);
       const candidate = report.candidates[0];
@@ -1053,7 +1076,7 @@ export function buildRig(
           bones: [...bones].sort(),
           max_influences: maxInfl,
           mean_influences: pyRound(infl / mesh.points.length, 2),
-          art_coverage: pyRound(legacyArtCoverage(mask, mesh.points, mesh.triangles), 5),
+          art_coverage: pyRound(legacyArtCoverage(art, mesh.points, mesh.triangles), 5),
           mode: 'auto',
           settings: {
             threshold: input.art.threshold,
@@ -1080,6 +1103,7 @@ export function buildRig(
             ...(report.effective.motionAmplitude === undefined || report.effective.motionAmplitude === null ? {} : { motionAmplitude: report.effective.motionAmplitude }),
           },
           source: { contour: source.report, counts: report.sourceCounts },
+          ...(spec.source.stray === undefined ? {} : { stray_cleared: strayCleared }),
           result: { counts: mesh.counts, removedVertices: candidate.changes?.removedVertices ?? 0, insertedVertices: candidate.changes?.insertedVertices ?? 0, ...stageBResult(report, stageB) },
           residuals: rows,
           worst_residual: worstResidual(rows),
@@ -1112,7 +1136,7 @@ export function buildRig(
       object,
       motion: spec.motion,
       reference,
-      mask,
+      mask: art,
       sourceBounds: input.sourceBounds,
       artFit: input.targets.artFit,
       minArtSamples: input.minArtSamples,

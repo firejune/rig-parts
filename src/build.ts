@@ -82,7 +82,7 @@ import { type PartRecord, readParts, writeParts } from './parts.ts';
 import { encodePngBytes, readPng, writePng } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
 import { readRequirements, type RequirementLine, summaryText } from './requirements.ts';
-import { type AutoMeshReport, buildRig, DEFAULT_IDLE_KEYS, type IdleKeys, type MeshReport, type RigCommand, rigJsonText, type RigOutput, type RigSpec } from './rig.ts';
+import { type AutoMeshReport, buildRig, DEFAULT_IDLE_KEYS, type IdleKeys, type MeshReport, type RigCommand, rigJsonText, type RigOutput, type RigSpec, type StrayCleared } from './rig.ts';
 
 /** Where a stage's lines go. The commands hand it `console.log`; `build` hands it a prefixing wrapper. */
 export type Log = (line: string) => void;
@@ -721,7 +721,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
         rp === undefined || run?.report === null || run === undefined
           ? ''
           : `; replayed to accepted step ${rp.chosen_step} of ${rp.accepted_steps} after ${rp.replays} replay(s); selection ${readingText(rp.selection, roleReadings(run.report).bound)}; held out ${readingText(rp.held_out, roleReadings(run.report).bound)}`;
-      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}${unboundedClause(m.residuals, m.settings.targets.artFit)}${allocationClause(m.residuals)}${stageBClause(m.settings, m.result)}${residualClause(m.skinning_residual)}; ${moved}${replayed}`);
+      log(`${head}auto ${from} -> ${r.boundaryVertices}+${r.interiorVertices} (hull+interior) bindings ${r.bindings} ${infl} ${t.reason}${tried}; worst ${worst}${unboundedClause(m.residuals, m.settings.targets.artFit)}${allocationClause(m.residuals)}${stageBClause(m.settings, m.result)}${residualClause(m.skinning_residual)}${strayClause(m.stray_cleared)}; ${moved}${replayed}`);
     } else if ('mode' in m) {
       const c = m.contour;
       const stray = c.strayIslands === 0 ? '' : ` left out ${c.strayIslands} island(s), ${c.strayPixels} px`;
@@ -805,6 +805,15 @@ export interface CheckStageInput {
   packShape?: PackShape;
   /** The scene's declared requirements (`--requirements`, issue #93); absent, nothing is read, written or printed for them. */
   requirements?: string;
+}
+
+/**
+ * What a declared `source.stray` cleared, as the rig stage prints it on the part's mesh line (issue #172): empty when
+ * nothing was declared or nothing was left out, so such a line prints what it always printed.
+ */
+export function strayClause(cleared: StrayCleared | undefined): string {
+  if (cleared === undefined || cleared.islands === 0) return '';
+  return `; stray cleared ${cleared.islands} island(s), ${cleared.pixels} of ${cleared.art_pixels} art px, from the art every reader of the mesh takes (the image is drawn as assembled)`;
 }
 
 /** The pack line as it is printed: rigc's own, then the page's opaque share beside the spineboy yardstick. */
