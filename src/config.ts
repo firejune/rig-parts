@@ -185,12 +185,23 @@ export type Segment = string | [string, Point, Point];
  */
 export type MeshSpec = LatticeMeshSpec | ContourMeshSpec | AutoMeshSpec;
 
+/**
+ * `meshes.<part>.rule` (issue #161): how a mesh's vertices are weighted. `"distance"` is `influences()`
+ * (`src/weights.ts`), and what an absent field means; `"heat"` is bone heat over the part's silhouette
+ * (`src/heat.ts`), in every mode. Nothing else is a rule.
+ */
+export type WeightRule = 'distance' | 'heat';
+
+export const WEIGHT_RULES: readonly WeightRule[] = ['distance', 'heat'];
+
 export interface LatticeMeshSpec {
   grid: number;
   r: number;
   segments: Segment[];
   /** The distance rule's exponent, `w = 1/(d + r)^exponent`, above 0 (issue #161); absent is 2, the rule as it always was. */
   exponent?: number;
+  /** Absent: `"distance"`. */
+  rule?: WeightRule;
 }
 
 export interface ContourMeshSpec {
@@ -199,6 +210,8 @@ export interface ContourMeshSpec {
   segments: Segment[];
   /** The distance rule's exponent, `w = 1/(d + r)^exponent`, above 0 (issue #161); absent is 2, the rule as it always was. */
   exponent?: number;
+  /** Absent: `"distance"`. */
+  rule?: WeightRule;
 }
 
 /**
@@ -252,6 +265,8 @@ export interface AutoMeshSpec {
   segments: Segment[];
   /** The distance rule's exponent, `w = 1/(d + r)^exponent`, above 0 (issue #161); absent is 2, the rule as it always was. */
   exponent?: number;
+  /** Absent: `"distance"`. */
+  rule?: WeightRule;
 }
 
 export interface AutoSpec {
@@ -1157,7 +1172,7 @@ function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
     const at = `config.meshes.${part}`;
     // The known keys keep their old order (grid, r, segments) with contour after them, and `r` and `segments` are
     // required in the place and words the object check uses, so a lattice mesh's refusals read as they did.
-    const m = c.object(at, spec, [], ['grid', 'r', 'segments', 'contour', 'auto', 'exponent']);
+    const m = c.object(at, spec, [], ['grid', 'r', 'segments', 'contour', 'auto', 'exponent', 'rule']);
     if (m === null) continue;
     for (const key of ['r', 'segments']) if (!(key in m)) c.fail('CONFIG_FIELD_PRESENT', `${at}.${key}`, 'is absent and required');
     const modes = ['grid', 'contour', 'auto'].filter((k) => k in m);
@@ -1174,6 +1189,13 @@ function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
     if ('r' in m) c.number(`${at}.r`, m.r, 'non-negative');
     // issue #161: the distance rule's exponent, in every mode; absent is 2 (src/weights.ts), nothing is filled in here.
     if ('exponent' in m) c.number(`${at}.exponent`, m.exponent, 'positive');
+    if ('rule' in m && !WEIGHT_RULES.includes(m.rule as WeightRule)) {
+      c.fail('CONFIG_FIELD_TYPE', `${at}.rule`, `is ${show(m.rule)}; "distance" (the distance rule, what an absent rule means) or "heat" (bone heat over the part's silhouette) is required`);
+    }
+    // issue #161: the exponent is the distance rule's; bone heat has none, so declaring both is refused rather than ignored.
+    if ('exponent' in m && m.rule === 'heat') {
+      c.fail('CONFIG_FIELD_TYPE', `${at}.exponent`, `is ${show(m.exponent)} on a mesh that declares rule "heat"; the exponent belongs to the distance rule (w = 1/(d + r)^exponent) and bone heat reads none — remove exponent, or declare rule "distance"`);
+    }
     if ('segments' in m && c.array(`${at}.segments`, m.segments, true)) {
       (m.segments as Json[]).forEach((s, i) => {
         const sp = `${at}.segments[${i}]`;

@@ -329,11 +329,12 @@ import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines
 import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeypoints, parseKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
 import { LYING_PARTS, LYING_RIG, type PoseName, POSES } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
-import { block, constraintConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
+import { block, constraintConfig, HEAT_STRIP_EXPECT, heatStripConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
 import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigOutput, type RigSpec, roundShares, writtenShares } from './src/rig.ts';
 import { type ComposedScene, composeFromFiles, IMAGE_SEP, PLATE, PLATE_IMAGE, PREFIX_SEP, SCENE_REPORT_FILE, SCENE_SPEC, unprefixedNames } from './src/scene.ts';
 import { sceneCharacterRig, sceneText, writeFlatPlate, writeSceneBuild } from './fixtures/scene.ts';
 import { localInfluences, regionWeight } from './src/localweights.ts';
+import { boneHeat as solveBoneHeat, HEAT_MAX_ITERATIONS, HEAT_SOURCE_BAND, HEAT_TOLERANCE, latticeSilhouette } from './src/heat.ts';
 import { influences } from './src/weights.ts';
 import { apply as applyAffine, type ComparedMesh, contourAtBudget, cost, errors, fieldAt, fieldContour, fieldLattice, locator, pixelErrors, pixelsOver } from './tools/local_compare.ts';
 import { FIELD_LATTICE_GRID, FIELD_POSES, fieldRegion, REGION_SPACINGS } from './fixtures/localfield.ts';
@@ -1336,6 +1337,45 @@ function runConfigSuite(): number {
   runBlinkConfigCases(say);
   runRecordConfigCases(say);
   runConstraintConfigCases(say);
+
+  // Issue #161: a mesh's weight rule is one of two names; anything else is the loader's refusal, at the field.
+  const ruled = (rule: unknown): Record<string, unknown> => {
+    const c = minimalConfig();
+    const meshes = c.meshes as Record<string, Record<string, unknown>>;
+    meshes.hair_back = { ...meshes.hair_back, rule: 'distance' };
+    meshes.robe = { ...meshes.robe, rule };
+    return c;
+  };
+  const ruleOk = refusals(() => parseConfig(ruled('heat')));
+  const ruleMutants: Array<[string, unknown]> = [['"heta"', 'heta'], ['2', 2], ['"Heat"', 'Heat']];
+  const ruleOutcomes = ruleMutants.map(([what, v]) => {
+    const err = refusals(() => parseConfig(ruled(v)));
+    const one = err !== null && err.problems.length === 1 ? err.problems[0] : null;
+    return { what, ok: one !== null && one.code === 'CONFIG_FIELD_TYPE' && one.object === 'config.meshes.robe.rule' && one.detail.includes('"distance"') && one.detail.includes('"heat"'), got: err === null ? 'loads' : err.problems.map((q) => `${q.code} ${q.object}: ${q.detail}`).join('; ') };
+  });
+  say(
+    'CF70_A_MESH_RULE_IS_DISTANCE_OR_HEAT_AND_ANY_OTHER_VALUE_IS_REFUSED_AT_THE_FIELD',
+    ruleOk === null && ruleOutcomes.every((o) => o.ok),
+    `rule "distance" on hair_back and "heat" on robe -> ${ruleOk === null ? 'loads' : codes(ruleOk)}; ${ruleOutcomes.map((o) => `rule ${o.what} -> ${o.got}`).join(' | ')}`,
+    'issue #161: an unknown rule mapped to a nearby one would weight a mesh by a rule nobody declared; the two names and what absent means are written in docs/AUTHORING.md',
+  );
+
+  // Issue #161, the two units together: the exponent is the distance rule's, so beside rule "heat" it is refused, not ignored.
+  const both = (rule: string): Record<string, unknown> => {
+    const c = minimalConfig();
+    const meshes = c.meshes as Record<string, Record<string, unknown>>;
+    meshes.robe = { ...meshes.robe, rule, exponent: 4 };
+    return c;
+  };
+  const withDistance = refusals(() => parseConfig(both('distance')));
+  const withHeat = refusals(() => parseConfig(both('heat')));
+  const wh = withHeat !== null && withHeat.problems.length === 1 ? withHeat.problems[0] : null;
+  say(
+    'CF71_AN_EXPONENT_BESIDE_RULE_HEAT_IS_REFUSED_AT_THE_EXPONENT_AND_BESIDE_RULE_DISTANCE_LOADS',
+    withDistance === null && wh !== null && wh.code === 'CONFIG_FIELD_TYPE' && wh.object === 'config.meshes.robe.exponent' && wh.detail.includes('rule "heat"') && wh.detail.includes('distance rule'),
+    `exponent 4 with rule "distance" -> ${withDistance === null ? 'loads' : codes(withDistance)}; exponent 4 with rule "heat" -> ${withHeat === null ? 'loads' : withHeat.problems.map((q) => `${q.code} ${q.object}: ${q.detail}`).join('; ')}`,
+    'issue #161: bone heat reads no exponent, so one declared beside it would be a number nothing reads while its author believes it sharpens the weights',
+  );
   return bad();
 }
 
@@ -3139,6 +3179,7 @@ function runRigSuite(): number {
   runTurnedChainCases(say);
   runConstraintRigCases(say);
   runExponentCases(say);
+  runHeatRuleCases(say);
   return bad();
 }
 
@@ -3228,6 +3269,147 @@ function runExponentCases(say: (name: string, ok: boolean, detail: string, why: 
     same.every((x) => x.weights && x.rest) && modes.every((k) => echo(two[k]) === 'exponent 2'),
     same.map((x) => `${x.k}: weights ${x.weights ? 'identical' : 'DIFFERENT'}, every other byte ${x.rest ? 'identical' : 'DIFFERENT'}, row ${echo(two[x.k])}`).join('; '),
     'at 2 the weight is the multiply (d + r) * (d + r), never Math.pow (src/weights.ts, DISTANCE_EXPONENT), so declaring today\'s rule moves no weight; the only byte that differs is the row\'s echo of what was declared',
+  );
+}
+
+/**
+ * Issue #161: bone heat as an opt-in per-mesh rule (src/heat.ts). Every expected weight is fixtures/rig.ts's
+ * strip, derived there by hand; the tolerance a control allows is the one the rule declares.
+ */
+function runHeatRuleCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const texts = (cfg: CharacterConfig, images: Map<string, Raster> = rigImages()): string[] => {
+    const built = buildRig(cfg, rigParts(), images);
+    return [rigJsonText(built.rig), rigJsonText(built.motion), rigJsonText(built.meshReport)];
+  };
+  const files3 = ['rig.json', 'motion.json', 'mesh_report.json'];
+  const sameAs = (x: string[], y: string[]): string => (x.every((t, i) => t === y[i]) ? 'byte-identical' : `${files3.filter((_, i) => x[i] !== y[i]).join(', ')} DIFFER`);
+  const withRule = (c: Record<string, unknown>, rule: string): Record<string, unknown> => {
+    const m = (c.meshes as Record<string, Record<string, unknown>>).cloth;
+    m.rule = rule;
+    return c;
+  };
+  const contourOf = (c: Record<string, unknown>): Record<string, unknown> => {
+    const m = (c.meshes as Record<string, Record<string, unknown>>).cloth;
+    delete m.grid;
+    m.contour = { tolerance: 0, margin: 0, spacing: 4 };
+    return c;
+  };
+  const autoOf = (c: Record<string, unknown>): Record<string, unknown> => {
+    const m = (c.meshes as Record<string, Record<string, unknown>>).cloth;
+    delete m.grid;
+    m.auto = withPolicyMotion(syntheticPolicy(4));
+    return c;
+  };
+
+  // RG67 — absent and "distance" are one rule: every byte of the three files, on the rig fixture and on the strip, in
+  // the lattice and the contour mode. Planted: "heat" on the strip moves bytes.
+  const pairs: Array<[string, () => Record<string, unknown>]> = [
+    ['the rig fixture (lattice, the hem chain)', () => rigConfig()],
+    ['the strip (lattice)', () => heatStripConfig()],
+    ['the strip (contour, margin 0)', () => contourOf(heatStripConfig())],
+  ];
+  const absentVsDistance = pairs.map(([what, make]) => ({ what, verdict: sameAs(texts(parseConfig(make())), texts(parseConfig(withRule(make(), 'distance')))) }));
+  const plantedHeat = sameAs(texts(parseConfig(heatStripConfig())), texts(parseConfig(withRule(heatStripConfig(), 'heat'))));
+  say(
+    'RG67_RULE_ABSENT_AND_RULE_DISTANCE_WRITE_THE_SAME_BYTES_AND_RULE_HEAT_DOES_NOT',
+    absentVsDistance.every((o) => o.verdict === 'byte-identical') && plantedHeat.includes('rig.json') && plantedHeat.includes('mesh_report.json'),
+    `${absentVsDistance.map((o) => `${o.what}: absent vs "distance" -> ${o.verdict}`).join('; ')}; planted, the strip under "heat" -> ${plantedHeat}`,
+    'issue #161: the rule is a declaration an author turns on — absent, every build is byte-identical, and "distance" is what absent means, so declaring it moves nothing',
+  );
+
+  // RG68 — the strip's equilibrium is linear, so a vertex's weight is its column's fractional position (fixtures/rig.ts).
+  const strip = buildRig(parseConfig(withRule(heatStripConfig(), 'heat')), rigParts(), rigImages());
+  const cloth = strip.rig.skins.default.cloth.cloth as MeshAttachment;
+  const at = HEAT_STRIP_EXPECT.at.map((e) => {
+    let vi = -1;
+    for (let i = 0; i < cloth.uvs.length / 2; i++) if (cloth.uvs[2 * i] === e.uv[0] && cloth.uvs[2 * i + 1] === e.uv[1]) vi = i;
+    const got = vi < 0 ? [] : cloth.weights[vi].map((w) => [w.bone, w.weight]);
+    return { uv: e.uv, got, ok: JSON.stringify(got) === JSON.stringify(e.weights) };
+  });
+  const row = strip.meshReport[0] as { heat?: { rule: string; tolerance: number; max_iterations: number; source_band: number; bones: Array<{ bone: string; sources: number; iterations: number }>; residual: number } };
+  const echoed =
+    row.heat !== undefined &&
+    row.heat.rule === 'heat' &&
+    row.heat.tolerance === HEAT_TOLERANCE &&
+    row.heat.max_iterations === HEAT_MAX_ITERATIONS &&
+    row.heat.source_band === HEAT_SOURCE_BAND &&
+    row.heat.bones.map((b) => `${b.bone}:${b.sources}`).join() === `hem0:${HEAT_STRIP_EXPECT.sources},hem1:${HEAT_STRIP_EXPECT.sources}`;
+  // The contour mode at margin 0 reads the same 16x8 silhouette: every vertex, wherever the outline and the spacing put
+  // it, reads the column whose centre is nearest it (a vertex on a column edge, the one to its left), clamped to the art.
+  const contour = buildRig(parseConfig(withRule(contourOf(heatStripConfig()), 'heat')), rigParts(), rigImages());
+  const cm = contour.rig.skins.default.cloth.cloth as MeshAttachment;
+  let worst = 0;
+  for (let i = 0; i < cm.uvs.length / 2; i++) {
+    const x = Math.round(cm.uvs[2 * i] * cm.width * 256) / 256;
+    const col = Math.min(19, Math.max(4, Number.isInteger(x) ? x - 1 : Math.floor(x)));
+    const hem1 = cm.weights[i].find((w) => w.bone === 'hem1')?.weight ?? 0;
+    worst = Math.max(worst, Math.abs(hem1 - (col - 4) / 15));
+  }
+  // The written weight is rounded to 5 places (half a unit, 5e-6) after a solve stopped within HEAT_TOLERANCE.
+  const allowed = 5e-6 + HEAT_TOLERANCE;
+  say(
+    'RG68_HEAT_ON_A_STRIP_BETWEEN_TWO_BONES_IS_EACH_VERTEXS_FRACTIONAL_POSITION_IN_THE_LATTICE_AND_THE_CONTOUR_MODE',
+    at.every((o) => o.ok) && echoed && cm.weights.length > 0 && worst <= allowed,
+    `lattice: ${at.map((o) => `uv ${o.uv.join(',')} -> ${JSON.stringify(o.got)}`).join('; ')}; row heat ${JSON.stringify(row.heat)}; contour (margin 0): ${cm.weights.length} vertices, largest |hem1 − (column − 4)/15| ${worst} (allowed ${allowed})`,
+    'issue #161: a heat fixture whose answer is derivable by hand — a 1-D strip between two bone sources is linear, so the weight is the fractional position; the row echoes the rule, its tolerance, its iteration bound and the sources each bone held',
+  );
+
+  // RG69 — determinism is the rule's contract: two runs, identical bytes, in the lattice and in the automatic mode
+  // (whose source weights come off the same field; the auto build under "distance" is the witness that heat reached it).
+  const autoHeat = () => parseConfig(withRule(autoOf(heatStripConfig()), 'heat'));
+  const lat1 = texts(parseConfig(withRule(heatStripConfig(), 'heat')));
+  const lat2 = texts(parseConfig(withRule(heatStripConfig(), 'heat')));
+  const auto1 = texts(autoHeat());
+  const auto2 = texts(autoHeat());
+  const autoDistance = texts(parseConfig(autoOf(heatStripConfig())));
+  const autoRow = JSON.parse(auto1[2]) as Array<{ heat?: unknown }>;
+  say(
+    'RG69_TWO_HEAT_BUILDS_WRITE_THE_SAME_BYTES_IN_THE_LATTICE_AND_THE_AUTOMATIC_MODE',
+    sameAs(lat1, lat2) === 'byte-identical' && sameAs(auto1, auto2) === 'byte-identical' && sameAs(auto1, autoDistance) !== 'byte-identical' && autoRow[0]?.heat !== undefined,
+    `lattice twice -> ${sameAs(lat1, lat2)}; automatic twice -> ${sameAs(auto1, auto2)}; automatic under "heat" vs under the distance rule -> ${sameAs(auto1, autoDistance)}; the automatic row ${autoRow[0]?.heat === undefined ? 'lacks' : 'carries'} the heat row`,
+    'issue #161: a fixed sweep order, a fixed tolerance and iteration bound and float64 arithmetic make the solve a function of its input; rig-c compares a second compile byte for byte (A18)',
+  );
+
+  // RG70 — a bound bone with no source pixel is refused by name, never weighted 0: a zero-length segment off the art.
+  const offArt = (rule: string | null): Record<string, unknown> => {
+    const c = heatStripConfig();
+    const m = (c.meshes as Record<string, Record<string, unknown>>).cloth;
+    (m.segments as unknown[]).push(['eye', [2, 2], [2, 2]]);
+    if (rule !== null) m.rule = rule;
+    return c;
+  };
+  const noSource = refusals(() => buildRig(parseConfig(offArt('heat')), rigParts(), rigImages()));
+  const underDistance = refusals(() => buildRig(parseConfig(offArt(null)), rigParts(), rigImages()));
+  const ns = noSource?.problems[0];
+  say(
+    'RG70_A_BOUND_BONE_WITH_NO_SOURCE_PIXEL_IS_REFUSED_BY_NAME_NOT_WEIGHTED_ZERO',
+    noSource?.problems.length === 1 && ns?.code === 'RIG_HEAT_BONE_SOURCE' && ns.object === 'config.meshes.cloth' && ns.detail.includes('bone "eye"') && ns.detail.includes('(2, 2)->(2, 2)') && ns.detail.includes(`${HEAT_SOURCE_BAND} px`) && underDistance === null,
+    `the strip plus ["eye", [2, 2], [2, 2]] under "heat" -> ${noSource === null ? 'no refusal' : noSource.problems.map((q) => `${q.code} ${q.object}: ${q.detail}`).join(' | ')}; the same segments under the distance rule -> ${underDistance === null ? 'builds' : codes(underDistance)}`,
+    'issue #161 (HQ): a bone named in segments is one the author said may pull the layer; weighting it 0 everywhere answers that silently, so the rule refuses it and names what a source pixel would need',
+  );
+
+  // RG71 — the other two refusals: an island no bone has a source in, and a solve that does not converge within its bound.
+  const islands = heatStripConfig({ rule: 'heat', segments: [['hem0', [10.5, 10.5], [10.5, 17.5]], ['hem1', [11.5, 10.5], [11.5, 17.5]]] });
+  const noIsland = refusals(() => buildRig(parseConfig(islands), rigParts(), islandImages()));
+  const ni = noIsland?.problems[0];
+  const segsOf = (c: Record<string, unknown>) => {
+    const raw = (c.meshes as Record<string, { segments: Array<[string, [number, number], [number, number]]> }>).cloth.segments;
+    return raw.map(([bone, a, b]) => ({ bone, a, b }));
+  };
+  const stripArt = latticeSilhouette({ width: 24, height: 16, data: Uint8Array.from({ length: 24 * 16 }, (_, i) => (i % 24 >= 4 && i % 24 < 20 && Math.floor(i / 24) >= 4 && Math.floor(i / 24) < 12 ? 1 : 0)) });
+  const oneSweep = solveBoneHeat('config.meshes.cloth', stripArt, segsOf(heatStripConfig()), 6, 6, { tolerance: HEAT_TOLERANCE, maxIterations: 1 });
+  const fullSolve = solveBoneHeat('config.meshes.cloth', stripArt, segsOf(heatStripConfig()), 6, 6);
+  const cv = Array.isArray(oneSweep) ? oneSweep : [];
+  say(
+    'RG71_AN_ISLAND_WITH_NO_SOURCE_AND_A_SOLVE_PAST_ITS_BOUND_ARE_REFUSED_BY_NAME',
+    noIsland?.problems.length === 1 &&
+      ni?.code === 'RIG_HEAT_ISLAND_SOURCE' &&
+      ni.detail.includes('island of 32 px at rig (22, 10)') &&
+      cv.length === 2 &&
+      cv.every((q) => q.code === 'RIG_HEAT_CONVERGED' && q.detail.includes('within 1 sweeps')) &&
+      !Array.isArray(fullSolve),
+    `the two-island cloth with both bones' segments in the left island -> ${noIsland === null ? 'no refusal' : noIsland.problems.map((q) => `${q.code}: ${q.detail}`).join(' | ')}; the strip solved with an iteration bound of 1 -> ${cv.map((q) => `${q.code}: ${q.detail}`).join(' | ') || 'no refusal'}; with the declared bound -> ${Array.isArray(fullSolve) ? 'refused' : 'solved'}`,
+    'issue #161: with no fixed temperature an island has no answer, and a field stopped short of its tolerance is not the rule — both are refused rather than borrowed or written half-solved. By hand: islandImages clears unpadded columns 4..11, so the right island is padded columns 16..19 by rows 4..11, 32 px, its corner rig (16 + 6, 4 + 6)',
   );
 }
 

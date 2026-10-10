@@ -111,7 +111,7 @@ part name, `[i]` an entry of a list):
 - **assemble.patches[i].draw**, when an object — required: `before`
 - **bones[i]**, a single bone — required: `name`, `parent`, `at`; optional: `tip`
 - **bones[i]**, a chain — required: `chain`, `parent`, `points`, `tip`
-- **meshes.&lt;part&gt;** — exactly one of `grid`, `contour`, `auto`; required in every mode: `r`, `segments`; optional in every mode: `exponent`
+- **meshes.&lt;part&gt;** — exactly one of `grid`, `contour`, `auto`; required in every mode: `r`, `segments`; optional in every mode: `exponent`, `rule`
 - **meshes.&lt;part&gt;.contour** — required: `tolerance`, `margin`, `spacing`; optional: `budget`, `stray`, `regions`
 - **meshes.&lt;part&gt;.contour.regions[i]** — required: `name`, `shape`, `bone`, `spacing`, `band`, and `cx`, `cy`, `r` for a circle or `points` for a polygon
 - **meshes.&lt;part&gt;.auto** — required: `source`, `sourceBounds`, `targets`, `influences`, `budget`, `minArtSamples`, `motion`; optional: `protect`, `regions`, and the three Stage B opt-ins `boundaryRuns`, `retriangulate`, `removalOrder`
