@@ -221,6 +221,7 @@ import { type AmplitudeDerivation, deriveMotionAmplitude, trackTheta } from './s
 import { deriveEnvelope, type EnvelopeBasis, type EnvelopeDerivation, RESIDUAL_RULE, residualClause, type ResidualRow, residualRow, withSkinning } from './src/autoenvelope.ts';
 import { type VetoTally, vetoTally } from './tools/veto_tally.ts';
 import { commonSurvivors, densitySquare, pruneShares, weightDiff } from './tools/auto_density_survey.ts';
+import { comparisonInputRefusal, digestDifferences, inputDigest, inputDigestDeep, jsonDifferences, type LadderRow, ladderInputMoved, ladderPlan, ladderPolicy, ladderSpecDifferences, overdraw, widenedPlan, overdrawText, parseArgs as parseSpacingArgs, pendingLadderRow, renderLadder, pendingRow as spacingPending, reproductionText, render as renderSpacing, spacingPolicy, spacingsFor, type SpacingRow, specDifferences, staticRefusal, summarise as spacingSummary } from './tools/auto_spacing_survey.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec, ConfigConstraint } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
@@ -17617,6 +17618,209 @@ function runAutoMeshSuite(): number {
       JSON.stringify(policyAt(8, 1)) === JSON.stringify(stated04) && JSON.stringify(policyAt(8, 0.5)) === JSON.stringify(finer04),
     `loads: ${loads04 === null ? 'yes' : loads04.problems.map(problemLine).join('; ')}; every other field the stated policy's: ${sameElse04}; planted tolerance 1 -> ${atBound04}; planted -0.5 -> ${negative04}`,
     'rigc#1271 Q1 option (ii) loosens nothing declared: the trial policy is the stated one with the hull sampled finer than the bound, so a tolerance equal to the bound (the stated policy) or above it is a different question and is refused by name',
+  );
+
+  // ---------------------------------------------------------------------------
+  // Issue #159 Stage A: tools/auto_spacing_survey.ts (SP01-SP06).
+  // ---------------------------------------------------------------------------
+
+  // SP01 — "fewest passing" on hand rows: only cells the stage accepted count (a refused or stopped row carrying a
+  // smaller count is planted and must not be read), a tie lists every spacing, and the comparisons with 18 and the
+  // policy's cell are strict. By hand: accepted 150, 120, 105, 105 at 12, 18, 24, 36 -> fewest 105 at 24 and 36,
+  // below 18's 120 (yes), not below the policy's (36) 105 (no); 48 stopped is the one cell not measured.
+  const sp = (spacing: number, policy: number, o: Partial<SpacingRow>): SpacingRow => ({ ...spacingPending('demo', 'x', spacing, policy), ...o });
+  const acc = (spacing: number, policy: number, hull: number, interior: number): SpacingRow => sp(spacing, policy, { kept: { hull, interior }, verdict: 'accepted' });
+  const MOTION_LINE = 'AUTO_MESH_MOTION: config.meshes.x.auto — the reduced mesh against its unreduced source on the idle (geometry pass, motion fail) is not accepted: MQ_LOCAL_DEFORMATION fail 2 against <= 1 at idle@grid@1';
+  const rows01 = [acc(12, 36, 100, 50), acc(18, 36, 100, 20), acc(24, 36, 100, 5), sp(30, 36, { refusal: MOTION_LINE }), acc(36, 36, 100, 5), sp(48, 36, { stopped: 'stopped at 600 s (the per-cell cap)' })];
+  const s01 = spacingSummary(rows01);
+  const s01r = spacingSummary([...rows01].reverse());
+  const refusedSmall01 = spacingSummary(rows01.map((r) => (r.spacing === 30 ? { ...r, kept: { hull: 100, interior: 0 } } : r)));
+  const stoppedSmall01 = spacingSummary(rows01.map((r) => (r.spacing === 48 ? { ...r, kept: { hull: 100, interior: 0 } } : r)));
+  const lower01 = spacingSummary(rows01.map((r) => (r.spacing === 48 ? acc(48, 36, 100, 1) : r)));
+  say(
+    'SP01_FEWEST_PASSING_COUNTS_ONLY_ACCEPTED_CELLS_LISTS_A_TIE_AND_COMPARES_STRICTLY_WITH_18_AND_THE_POLICY',
+    s01.fewest === 105 && s01.fewestAt.join() === '24,36' && s01.atCard === 120 && s01.atPolicy === 105 && s01.belowCard === true && s01.belowPolicy === false &&
+      s01.unmeasured.join() === '48' && s01.coarsestRun === 36 && JSON.stringify(s01r) === JSON.stringify(s01) &&
+      refusedSmall01.fewest === 105 && stoppedSmall01.fewest === 105 && lower01.fewest === 101 && lower01.fewestAt.join() === '48' && lower01.belowPolicy === true,
+    `summary ${JSON.stringify(s01)}; reversed rows ${JSON.stringify(s01r) === JSON.stringify(s01) ? 'the same' : 'DIFFER'}; planted 100+0 on the refused cell -> ${refusedSmall01.fewest}, on the stopped cell -> ${stoppedSmall01.fewest}; planted an accepted 100+1 at 48 -> ${lower01.fewest} at ${lower01.fewestAt.join(', ')}`,
+    'the card\'s criterion is "the fewest passing vertices at a spacing coarser than 18": a count the stage did not accept is not passing, so a parser that reads kept counts off refused or stopped cells would claim a reproduction that did not happen',
+  );
+
+  // SP02 — "first static refusal": the first spacing, ascending over finished cells, whose refusal names a non-motion
+  // line. By hand: 12 refused by the motion gate (not static), 30 refused with MQ_COVERAGE failing, 48 by the contour
+  // source -> 30. Planted: a stopped cell at 18 carrying a static line (not finished: not read) and a static refusal
+  // at 24 (it must move the answer to 24). No 18 cell -> the comparison with 18 is undecided, not "no".
+  const STATIC_LINE = "AUTO_MESH_ACCEPTED: config.meshes.x.auto — rig-c's reduceMesh ended no-further-valid-reduction and its result is not accepted (MQ_COVERAGE fail 0.99 against >= 1; MQ_OVERSHOOT pass 1 against <= 3); every declared bound passing is required";
+  const CONTOUR_LINE = 'CONTOUR_COVERAGE: config.meshes.x.auto — the contour mesh leaves 3 art pixels uncovered';
+  const rows02 = [acc(5, 5, 10, 3), sp(12, 5, { refusal: MOTION_LINE }), acc(24, 5, 10, 0), sp(30, 5, { refusal: STATIC_LINE }), sp(48, 5, { refusal: CONTOUR_LINE })];
+  const s02 = spacingSummary(rows02);
+  const stopped02 = spacingSummary([...rows02, sp(18, 5, { refusal: CONTOUR_LINE, stopped: 'stopped at 600 s (the per-cell cap)' })]);
+  const earlier02 = spacingSummary(rows02.map((r) => (r.spacing === 24 ? sp(24, 5, { refusal: 'CONTOUR_OVERSHOOT: config.meshes.x.auto — 4 px past the art' }) : r)));
+  const none02 = spacingSummary([acc(5, 5, 10, 3), acc(48, 5, 10, 0)]);
+  say(
+    'SP02_FIRST_STATIC_REFUSAL_IS_THE_FIRST_FINISHED_SPACING_WITH_A_NON_MOTION_LINE_AND_A_MOTION_REFUSAL_IS_NOT_ONE',
+    s02.firstStatic?.spacing === 30 && s02.firstStatic.rows === 'AUTO_MESH_ACCEPTED (MQ_COVERAGE)' && s02.belowCard === null && s02.fewest === 10 && s02.atPolicy === 13 && s02.belowPolicy === true &&
+      stopped02.firstStatic?.spacing === 30 && earlier02.firstStatic?.spacing === 24 && earlier02.firstStatic.rows === 'CONTOUR_OVERSHOOT' && none02.firstStatic === null && none02.coarsestRun === 48,
+    `first static ${JSON.stringify(s02.firstStatic)}, below 18 ${s02.belowCard}; planted a stopped static cell at 18 -> ${JSON.stringify(stopped02.firstStatic)}; planted a static refusal at 24 -> ${JSON.stringify(earlier02.firstStatic)}; none -> ${JSON.stringify(none02.firstStatic)} up to ${none02.coarsestRun}`,
+    'the card asks whether a coarser lattice starts refusing on art fit or coverage; a motion refusal is the bound the sweep varies against, not a static row, and a cell that never finished said nothing about either',
+  );
+
+  // SP03 — the refusal parser: each line's code; the motion gate's codes dropped; only the MQ rows a line names failing,
+  // a region tag read through. Planted: the motion line's own "MQ_LOCAL_DEFORMATION fail" must not surface.
+  const regionLine03 = 'AUTO_MESH_ACCEPTED: config.meshes.x.auto — not accepted (MQ_MAX_EDGE [region "soft"] fail 9 against <= 4; MQ_UNDERCUT fail 2 against <= 0; MQ_COVERAGE pass 1 against >= 1)';
+  const mixed03 = staticRefusal([MOTION_LINE, CONTOUR_LINE].join('\n'));
+  const INPUT_LINE03 = "AUTO_MESH_MOTION_INPUT: config.meshes.x.auto — rig-c's compareMeshesInMotion refused the comparison's input (COMPARE_UV_CARRIER_NOT_UNIQUE): the sample lies in 2 UV triangles; nothing is built in the part's place";
+  const input03 = comparisonInputRefusal([CONTOUR_LINE, INPUT_LINE03].join('\n'));
+  const sum03 = spacingSummary([acc(12, 36, 10, 0), sp(18, 36, { refusal: INPUT_LINE03 }), sp(24, 36, { refusal: INPUT_LINE03, stopped: 'stopped at 600 s (the per-cell cap)' })]);
+  say(
+    'SP03_THE_REFUSAL_PARSER_NAMES_EACH_STATIC_LINE_BY_CODE_AND_FAILING_ROW_DROPS_THE_MOTION_GATES_AND_READS_A_REFUSED_COMPARISON_INPUT_APART',
+    staticRefusal(null) === null && staticRefusal(MOTION_LINE) === null && staticRefusal(CONTOUR_LINE) === 'CONTOUR_COVERAGE' &&
+      staticRefusal(regionLine03) === 'AUTO_MESH_ACCEPTED (MQ_MAX_EDGE, MQ_UNDERCUT)' && mixed03 === 'CONTOUR_COVERAGE' && !(mixed03 ?? '').includes('MQ_LOCAL_DEFORMATION') &&
+      staticRefusal('AUTO_MESH_SELECTION_BUDGET: config.meshes.x.auto — spent') === null &&
+      staticRefusal(INPUT_LINE03) === null && comparisonInputRefusal(INPUT_LINE03) === 'AUTO_MESH_MOTION_INPUT (COMPARE_UV_CARRIER_NOT_UNIQUE)' && input03 === 'AUTO_MESH_MOTION_INPUT (COMPARE_UV_CARRIER_NOT_UNIQUE)' &&
+      comparisonInputRefusal(CONTOUR_LINE) === null && comparisonInputRefusal(MOTION_LINE) === null && comparisonInputRefusal(null) === null &&
+      JSON.stringify(sum03.comparisonInput) === JSON.stringify([{ spacing: 18, codes: 'AUTO_MESH_MOTION_INPUT (COMPARE_UV_CARRIER_NOT_UNIQUE)' }]) && sum03.firstStatic === null,
+    `motion -> ${staticRefusal(MOTION_LINE)}; contour -> ${staticRefusal(CONTOUR_LINE)}; region and pass rows -> ${staticRefusal(regionLine03)}; motion + contour -> ${mixed03}; comparison input -> static ${staticRefusal(INPUT_LINE03)}, input ${comparisonInputRefusal(INPUT_LINE03)}; contour + input -> ${input03}; summary (one finished, one stopped) ${JSON.stringify(sum03.comparisonInput)}, first static ${JSON.stringify(sum03.firstStatic)}`,
+    'the page names the static row that refused, so the parser that names it is held to lines whose answer is written by hand, and the motion gate\'s own MQ rows are planted beside them',
+  );
+
+  // SP04 — the sweep's spec: the stated policy with only source.spacing replaced, loading through the config reader;
+  // the unchanged cell is the policy itself; the spacings are the card's six and the part's own, ascending, once each.
+  // Planted: a tolerance and a motion bound moved beside the spacing are each named.
+  const stated04sp = withPolicyMotion(examplePolicy(36));
+  const cell04 = spacingPolicy(36, 18);
+  const loads04sp = refusals(() => parseConfig(autoRigConfig((_c, a) => Object.assign(a, JSON.parse(JSON.stringify(cell04))))));
+  const moved04 = specDifferences(36, { ...cell04, source: { ...cell04.source, tolerance: 0.5 }, motion: { maxLocalDeformation: 2 } });
+  // The ladder's rung (addendum): tol 3 at 48 moves exactly the five fields, by hand; artFit and the motion bound stay;
+  // tol 1 is the sweep's cell; tol 4 loads; a motion bound moved with the rung is named twice (not the rung, outside it).
+  const rung04 = ladderPolicy(36, 48, 3);
+  const loadsRung04 = refusals(() => parseConfig(autoRigConfig((_c, a) => Object.assign(a, JSON.parse(JSON.stringify(ladderPolicy(36, 48, 4)))))));
+  const rungPlant04 = ladderSpecDifferences(36, 48, 3, { ...rung04, motion: { maxLocalDeformation: 3 } });
+  const rungOk04 =
+    jsonDifferences(stated04sp, rung04).join() === 'source.margin,source.spacing,source.tolerance,sourceBounds.maxOvershoot,targets.maxBoundaryDeviation' &&
+    rung04.source.tolerance === 3 && rung04.source.margin === 3 && rung04.sourceBounds.maxOvershoot === 7 && rung04.targets.maxBoundaryDeviation === 3 &&
+    rung04.targets.artFit.maxOvershoot === 3 && rung04.motion?.maxLocalDeformation === 1 && ladderSpecDifferences(36, 48, 3, rung04).length === 0 &&
+    jsonDifferences(ladderPolicy(36, 18, 1), spacingPolicy(36, 18)).length === 0 && loadsRung04 === null &&
+    rungPlant04.join() === 'not the rung: motion.maxLocalDeformation,motion.maxLocalDeformation';
+  // The widened reading: every overshoot bound at 2·tol + 1 (7 at tol 3), coverage 1 and undercut 0 left; the held
+  // reading names the widened field twice (not its rung, outside its fields), and the widened rung loads at tol 4; at
+  // tol 1 the two readings are one policy (2·1 + 1 = 3, the held value).
+  const wide04 = ladderPolicy(36, 48, 3, 'widened');
+  const loadsWide04 = refusals(() => parseConfig(autoRigConfig((_c, a) => Object.assign(a, JSON.parse(JSON.stringify(ladderPolicy(36, 48, 4, 'widened')))))));
+  const wideAsHeld04 = ladderSpecDifferences(36, 48, 3, wide04, 'held');
+  const wideOk04 =
+    jsonDifferences(stated04sp, wide04).join() === 'source.margin,source.spacing,source.tolerance,sourceBounds.maxOvershoot,targets.artFit.maxOvershoot,targets.maxBoundaryDeviation' &&
+    wide04.targets.artFit.maxOvershoot === 7 && wide04.targets.artFit.minCoverage === 1 && wide04.targets.artFit.maxUndercut === 0 && wide04.sourceBounds.maxOvershoot === 7 &&
+    ladderSpecDifferences(36, 48, 3, wide04, 'widened').length === 0 && loadsWide04 === null &&
+    wideAsHeld04.join() === 'not the rung: targets.artFit.maxOvershoot,targets.artFit.maxOvershoot' && jsonDifferences(ladderPolicy(36, 18, 1, 'widened'), ladderPolicy(36, 18, 1, 'held')).length === 0;
+  say(
+    'SP04_A_SWEEP_CELL_IS_THE_STATED_POLICY_WITH_ONLY_SOURCE_SPACING_REPLACED_A_LADDER_RUNG_MOVES_ONLY_ITS_FIVE_FIELDS_AND_ANYTHING_ELSE_IS_NAMED',
+    loads04sp === null && cell04.source.spacing === 18 && specDifferences(36, cell04).length === 0 && jsonDifferences(stated04sp, cell04).join() === 'source.spacing' &&
+      jsonDifferences(spacingPolicy(36, 36), stated04sp).length === 0 && moved04.join() === 'motion.maxLocalDeformation,source.tolerance' &&
+      spacingsFor(36).join() === '12,18,24,30,36,48' && spacingsFor(5).join() === '5,12,18,24,30,36,48' && spacingsFor(28).join() === '12,18,24,28,30,36,48' && rungOk04 && wideOk04,
+    `loads: ${loads04sp === null ? 'yes' : loads04sp.problems.map(problemLine).join('; ')}; differences from the policy ${JSON.stringify(jsonDifferences(stated04sp, cell04))}; planted tolerance and motion -> ${JSON.stringify(moved04)}; spacings for 36 / 5 / 28: ${spacingsFor(36)} / ${spacingsFor(5)} / ${spacingsFor(28)}; ` +
+      `ladder tol 3 at 48 moves ${JSON.stringify(jsonDifferences(stated04sp, rung04))}, artFit overshoot ${rung04.targets.artFit.maxOvershoot}, motion ${rung04.motion?.maxLocalDeformation}; tol 4 loads: ${loadsRung04 === null ? 'yes' : loadsRung04.problems.map(problemLine).join('; ')}; planted motion 3 -> ${JSON.stringify(rungPlant04)}; widened tol 3 moves ${JSON.stringify(jsonDifferences(stated04sp, wide04))}, loads at tol 4: ${loadsWide04 === null ? 'yes' : 'no'}; read as held -> ${JSON.stringify(wideAsHeld04)}`,
+    'issue #159 varies one field; a sweep whose cells moved anything else would attribute that field\'s effect to the spacing',
+  );
+
+  // SP05 — the reduction input: on STRIP_MASK at spacings 8 and 12 under the synthetic policy, every field reduceMesh is
+  // handed but `source` digests to the same bytes (reductionKey) while the whole keys differ (the source moved); a
+  // planted targets change is named "targets" and nothing else.
+  let ok05 = false;
+  let detail05 = 'no source';
+  const src05a = autoSource('strip', STRIP_MASK, syntheticPolicy(8));
+  const src05b = autoSource('strip', STRIP_MASK, syntheticPolicy(12));
+  if (!Array.isArray(src05a) && !Array.isArray(src05b)) {
+    const a05 = autoReductionInput({ part: 'strip', mask: STRIP_MASK, ox: 0, oy: 0, spec: syntheticPolicy(8), source: src05a, weights: null, boneOrder: ['a', 'b'] });
+    const b05 = autoReductionInput({ part: 'strip', mask: STRIP_MASK, ox: 0, oy: 0, spec: syntheticPolicy(12), source: src05b, weights: null, boneOrder: ['a', 'b'] });
+    const planted05 = { ...b05, targets: { ...b05.targets, maxBoundaryDeviation: 2 } };
+    const d05 = digestDifferences(inputDigest(a05), inputDigest(b05));
+    const p05 = digestDifferences(inputDigest(a05), inputDigest(planted05));
+    const deep05 = digestDifferences(inputDigestDeep(a05), inputDigestDeep(b05));
+    const deepPlant05 = digestDifferences(inputDigestDeep(a05), inputDigestDeep(planted05));
+    // Overdraw by hand on a 10x10 mask: a 4x4 block of alpha 255 at (2, 2) and one pixel of alpha 1 at (1, 1) -> 17 art
+    // pixels at threshold 1. Square (2,2)-(6,6): centres 2.5..5.5 -> the 16 block pixels, 0 transparent. Square
+    // (1,1)-(7,7): centres 1.5..6.5 -> 36 pixels, 19 transparent, 19/17 = 111.76 %. Square (2,2)-(6.5,6): the column
+    // at x 6 has its centre 6.5 ON the edge -> 4 more, all transparent (the closed rule). Planted: threshold 2 makes
+    // the alpha-1 pixel transparent -> 20 of 16 (125.00 %).
+    const mask05 = blocks(10, 10, [[2, 2, 4, 4], [1, 1, 1, 1, 1]]);
+    const sq05 = (x0: number, y0: number, x1: number, y1: number): Array<[number, number]> => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    const T05 = [0, 1, 2, 0, 2, 3];
+    const od05 = [overdraw(mask05, 1, sq05(2, 2, 6, 6), T05), overdraw(mask05, 1, sq05(1, 1, 7, 7), T05), overdraw(mask05, 1, sq05(2, 2, 6.5, 6), T05), overdraw(mask05, 2, sq05(1, 1, 7, 7), T05)];
+    const odText05 = od05.map((o) => overdrawText(o, 'none'));
+    const odOk05 = odText05.join(' | ') === '0.00 % (0 / 17) | 111.76 % (19 / 17) | 23.53 % (4 / 17) | 125.00 % (20 / 16)';
+    ok05 =
+      d05.length === 0 && reductionKey(a05) !== reductionKey(b05) && src05a.vertices.length !== src05b.vertices.length && p05.join() === 'targets' && !('source' in inputDigest(a05)) && Object.keys(inputDigest(a05)).length > 3 &&
+      deep05.length === 0 && deepPlant05.join() === 'targets.maxBoundaryDeviation' && Object.keys(inputDigestDeep(a05)).some((k) => k.startsWith('art.')) && odOk05;
+    detail05 = `source vertices ${src05a.vertices.length} at 8, ${src05b.vertices.length} at 12; fields digested ${Object.keys(inputDigest(a05)).join(', ')}; differing but the source: ${JSON.stringify(d05)}; whole keys ${reductionKey(a05) === reductionKey(b05) ? 'EQUAL' : 'differ'}; planted maxBoundaryDeviation 2 -> ${JSON.stringify(p05)}; one level deeper: ${JSON.stringify(deep05)}, planted -> ${JSON.stringify(deepPlant05)}; overdraw ${odText05.join(' | ')}`;
+  }
+  say(
+    'SP05_ONLY_THE_SOURCE_MOVES_IN_THE_REDUCTION_INPUT_WHEN_ONLY_THE_SPACING_DOES_A_PLANTED_TARGET_IS_NAMED_AND_OVERDRAW_COUNTS_BY_PIXEL_CENTRE',
+    ok05,
+    detail05,
+    'the spacing reaches rig-c only through the source the lattice builds; the tool digests every other field of the input per cell and names any that moves, and this holds the digest to a fixture where only the spacing changed',
+  );
+
+  // SP06 — the page: a function of its rows (two renders the same bytes, a planted row renders differently), the
+  // unchanged cell marked, a cell the budget did not reach named, "none up to" the coarsest finished spacing, a digest
+  // difference named in the row, the verdict word by hand (one part below 18 and one not -> Partly), and the arguments.
+  const one06 = [acc(12, 36, 100, 50), acc(18, 36, 100, 20), acc(36, 36, 100, 5), sp(48, 36, { stopped: "not started: the sweep's 3000 s budget was spent" })].map((r) => ({ ...r, digest: { targets: 'a', art: 'b' } }));
+  const two06 = [acc(18, 28, 40, 0), acc(28, 28, 40, 0), acc(48, 28, 40, 0)].map((r) => ({ ...r, example: 'sample', part: 'y', digest: { targets: 'a' } }));
+  const doc06a = renderSpacing([...one06, ...two06], '9.8.7', 'f'.repeat(40), 600, 3000).join('\n');
+  const doc06b = renderSpacing([...one06, ...two06], '9.8.7', 'f'.repeat(40), 600, 3000).join('\n');
+  const doc06c = renderSpacing([...one06, ...two06.map((r) => (r.spacing === 48 ? { ...r, digest: { targets: 'z' } } : r))], '9.8.7', 'f'.repeat(40), 600, 3000).join('\n');
+  const args06 = parseSpacingArgs(['--cell-cap', '600', '--budget', '3000']);
+  const bad06 = threw(() => parseSpacingArgs(['--budget', '0']));
+  const word06 = reproductionText([spacingSummary(one06), spacingSummary(two06)]);
+  // The ladder's plan by hand: a part at policy 5 has phase 1 = tol 1..4 x {5, 48} (8), a part at 48 has tol 1..4 x {48}
+  // (4); phase 2 = tol 2..4 x the five other spacings (15 each); phase 3 = tol 1 x those five (5 each): 52 cells.
+  const plan06 = ladderPlan([['demo', 'n', 5], ['demo', 'b', 48]]);
+  const at06 = (i: number): string => `${plan06[i].part}/${plan06[i].tol}/${plan06[i].spacing}/${plan06[i].phase}`;
+  const planOk06 = plan06.length === 52 && at06(0) === 'n/1/5/1' && at06(1) === 'n/1/48/1' && at06(2) === 'n/2/5/1' && at06(8) === 'b/1/48/1' && at06(12) === 'n/2/12/2' && at06(42) === 'n/1/12/3' && at06(51) === 'b/1/36/3';
+  const lr = (tol: number, spacing: number, o: Partial<LadderRow>): LadderRow => ({ ...pendingLadderRow({ example: 'demo', part: 'x', policySpacing: 36, spacing, tol, phase: spacing === 36 || spacing === 48 ? 1 : 2 }), ...o });
+  const deepBase06 = { 'targets.maxBoundaryDeviation': 'a', 'influences.maxInfluences': 'b' };
+  const ladder06 = [
+    lr(1, 36, { kept: { hull: 100, interior: 5 }, verdict: 'accepted', overdraw: { transparent: 3, art: 300 }, overdrawNote: null, deep: deepBase06 }),
+    lr(2, 36, { kept: { hull: 60, interior: 2 }, verdict: 'accepted', overdraw: { transparent: 9, art: 300 }, overdrawNote: null, deep: { ...deepBase06, 'targets.maxBoundaryDeviation': 'z' } }),
+    lr(2, 48, { refusal: STATIC_LINE, deep: deepBase06 }),
+    lr(3, 12, { stopped: "not started: the ladder's 3000 s budget was spent" }),
+  ];
+  const lad06a = renderLadder(ladder06, '9.8.7', 'f'.repeat(40), 600, 3000).join('\n');
+  const lad06b = renderLadder(ladder06, '9.8.7', 'f'.repeat(40), 600, 3000).join('\n');
+  const ladPlanted06 = ladder06.map((r, i) => (i === 1 ? { ...r, deep: { ...deepBase06, 'targets.maxBoundaryDeviation': 'z', 'influences.maxInfluences': 'q' } } : r));
+  const lad06c = renderLadder(ladPlanted06, '9.8.7', 'f'.repeat(40), 600, 3000).join('\n');
+  // The widened reading: its plan drops phase 3 (52 - 10 = 42 cells); its page names the reading and its command; an
+  // artFit input field moved off tol 1 is the rung's under widened and is named under held; a bad --artfit is refused.
+  const wplan06 = widenedPlan([['demo', 'n', 5], ['demo', 'b', 48]]);
+  const artRows06 = ladder06.map((r, i) => (i === 1 ? { ...r, deep: { ...deepBase06, 'targets.maxBoundaryDeviation': 'z', 'targets.artFit': 'w' } } : r));
+  const wideDoc06 = renderLadder(artRows06, '9.8.7', 'f'.repeat(40), 600, 3000, 'widened').join('\n');
+  const badArtFit06 = threw(() => parseSpacingArgs(['--ladder', '--artfit', 'wide']));
+  const wideOk06 =
+    wplan06.length === 42 && wplan06.every((c) => c.phase !== 3) && wplan06.filter((c) => c.tol === 1).length === 3 &&
+    wideDoc06.startsWith('# The outline tolerance ladder, artFit widened with the rung, and overdraw') && wideDoc06.includes('--ladder --artfit widened --cell-cap 600 --budget 3000 >>') &&
+    ladderInputMoved(artRows06, 'widened').get(artRows06[1])?.length === 0 && ladderInputMoved(artRows06, 'held').get(artRows06[1])?.join() === 'targets.artFit' &&
+    parseSpacingArgs(['--ladder', '--artfit', 'widened']).artFit === 'widened' && badArtFit06 !== null && badArtFit06.includes('--artfit');
+  const ladOk06 =
+    planOk06 && lad06a === lad06b && lad06a !== lad06c && !/\/tmp|\/Users|\/home/.test(lad06a) &&
+    lad06a.includes('| demo/x | 2 | 36 (policy) | 1 | not built → not built → 60+2 | 62 |') && lad06a.includes('| yes | 3.00 % (9 / 300) | accepted |') &&
+    lad06a.includes('| demo/x | 2 | 62 (60+2, at 36) | 3.00 % (9 / 300) | 62 | — | 48: AUTO_MESH_ACCEPTED (MQ_COVERAGE) | none | none |') &&
+    lad06a.includes("- demo/x at tol 3, spacing 12 (phase 2): not started: the ladder's 3000 s budget was spent") &&
+    ladderInputMoved(ladPlanted06).get(ladPlanted06[1])?.join() === 'influences.maxInfluences' && ladderInputMoved(ladder06).get(ladder06[1])?.length === 0 &&
+    lad06c.includes('no — input influences.maxInfluences') && lad06a.includes('--ladder --cell-cap 600 --budget 3000 >> docs/evidence/auto-spacing-survey.md') && parseSpacingArgs(['--ladder']).ladder &&
+    lad06a.startsWith('# The outline tolerance ladder, artFit held at 3, and overdraw') && wideOk06;
+  say(
+    'SP06_THE_SPACING_PAGE_IS_A_FUNCTION_OF_ITS_ROWS_MARKS_THE_UNCHANGED_CELL_NAMES_WHAT_WAS_NOT_MEASURED_AND_WHAT_MOVED',
+    doc06a === doc06b && doc06a !== doc06c && !/\/tmp|\/Users|\/home/.test(doc06a) &&
+      doc06a.includes('| demo/x | 36 (unchanged) | not built → not built → 100+5 | 105 |') &&
+      doc06a.includes("- demo/x at spacing 48: not started: the sweep's 3000 s budget was spent") &&
+      doc06a.includes('| demo/x | 36 | 105 (at 36) | 120 | 105 | yes | no | none up to 36 | none | 48 |') &&
+      doc06a.includes('| sample/y | 28 | 40 (at 18, 28, 48) | 40 | 40 | no | no | none up to 48 | none | none |') &&
+      doc06c.includes('| sample/y | 48 | not built → not built → 40+0 | 40 |') && doc06c.includes('no — input targets') && !doc06a.includes('no — input') &&
+      word06.includes('reproduce on the public parts? Partly.') && word06.includes('Below it: demo/x.') && word06.includes('than 18): sample/y.') &&
+      doc06a.includes('bun tools/auto_spacing_survey.ts --cell-cap 600 --budget 3000 > docs/evidence/auto-spacing-survey.md') && doc06a.includes(`spine-parts-examples at commit ${'f'.repeat(40)}`) &&
+      args06.capSeconds === 600 && args06.budgetSeconds === 3000 && args06.child === null && bad06 !== null && bad06.includes('--budget') && ladOk06,
+    `two renders ${doc06a === doc06b ? 'identical' : 'DIFFER'} (${doc06a.length} chars); planted digest ${doc06a === doc06c ? 'renders the SAME' : `renders differently${doc06c.includes('no — input targets') ? ', naming targets' : ''}`}; verdict "${word06.slice(0, 160)}"; args ${JSON.stringify(args06)}; planted budget 0 -> ${bad06}; ladder plan ${plan06.length} cells, ${[0, 1, 2, 8, 12, 42, 51].map(at06).join(', ')}; ladder page ${lad06a === lad06b ? 'identical twice' : 'DIFFERS'}, planted influences digest ${lad06c.includes('no — input influences.maxInfluences') ? 'named' : 'NOT named'}; rung field allowed: ${JSON.stringify(ladderInputMoved(ladder06).get(ladder06[1]))}; widened plan ${wplan06.length} cells; artFit moved under widened ${JSON.stringify(ladderInputMoved(artRows06, 'widened').get(artRows06[1]))}, under held ${JSON.stringify(ladderInputMoved(artRows06, 'held').get(artRows06[1]))}; planted --artfit wide -> ${badArtFit06}`,
+    'the evidence page is re-run, not edited: what it prints must follow from the rows alone, and a cell the budget did not reach, or a field other than the source that moved, must be on the page by name',
   );
 
   return bad();

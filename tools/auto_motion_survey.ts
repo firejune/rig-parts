@@ -159,6 +159,8 @@ export interface MotionCell {
   builds: number;
   /** Wall time of the stage, ms. Never printed into the Markdown (it is not reproducible); the tool prints it to standard error. */
   wallMs: number;
+  /** Every reduction the stage ran, by its input's `reductionKey` (the full run and each replay), so a caller can read the written mesh without running it again. */
+  reductions: ReadonlyMap<string, ReductionResult>;
 }
 
 /** The examples of `keys` with no fetched painting, so a caller can refuse by name before anything runs. */
@@ -254,7 +256,7 @@ export function motionCell(key: string, part: string, auto: unknown, asm: string
       }
     }
   }
-  return { example: key, part, counts, refusal, report, row, input, disagreement, written, builds: models.length, wallMs };
+  return { example: key, part, counts, refusal, report, row, input, disagreement, written, builds: models.length, wallMs, reductions: reduced };
 }
 
 /** The part-wide motion row `code` of a comparison, or undefined. */
