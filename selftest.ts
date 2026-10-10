@@ -244,6 +244,7 @@ import {
 } from './tools/feature_contour_survey.ts';
 import { affineFit, boneHeat, capFloor, columnsOf, footprintRegion, HEAT as WX_HEAT, heatAt, heaviestOf, l1, lidReading, localOffset, nearestRank as wxNearestRank, skinPoint } from './tools/weight_rule_survey.ts';
 import { exampleTotals, figuresOf, gridFrame, policyEcho, TrialLedger, trialPolicy } from './tools/production_trial.ts';
+import { assertUnchanged, crumbsLeft, lossOf, lossTotal, maskMd5, strayCleared } from './tools/production_trial_stray.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec, ConfigConstraint } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
@@ -18604,6 +18605,79 @@ function runAutoMeshSuite(): number {
     JSON.stringify(wPd04) === JSON.stringify({ vertices: 3, triangles: 1, bindings: 6 }) && JSON.stringify(uPd04) === JSON.stringify({ vertices: 3, triangles: 1, bindings: 0 }) && JSON.stringify(framesPd04) === JSON.stringify([18, 0, null, null, null]),
     `weighted ${JSON.stringify(wPd04)}; unweighted ${JSON.stringify(uPd04)}; frames ${JSON.stringify(framesPd04)}`,
     'the V / T / B columns of both builds are read by one function off the packed skeleton JSON, so the tracked and the automatic counts are counted the same way; the posed frame is the comparison\'s own worst grid frame, never a nearby one',
+  );
+
+  // ---------------------------------------------------------------------------
+  // Issue #172, the nine parts: tools/production_trial_stray.ts's instruments (SM01-SM03), each on a hand-built mask.
+  // ---------------------------------------------------------------------------
+
+  // The fixture: an 8x6 mask, a 4x3 block at (0, 0) at alpha 255 (12 px) and one crumb at (6, 4) at alpha 1 — art at
+  // alpha 1 and above is 13 px in two 4-connected islands.
+  const maskSm = (crumb: boolean): { width: number; height: number; alpha: Uint8Array } => {
+    const alpha = new Uint8Array(8 * 6);
+    for (let y = 0; y < 3; y++) for (let x = 0; x < 4; x++) alpha[y * 8 + x] = 255;
+    if (crumb) alpha[4 * 8 + 6] = 1;
+    return { width: 8, height: 6, alpha };
+  };
+
+  // SM01 — the cleared-mask builder: under stray 1 the crumb is cleared (alpha 0 at (6, 4)), listed as 1 px with its
+  // 1x1 box, the art px counted with it (13), and the result holds no crumb. Planted: the mask as assembled, the crumb
+  // left in — named by `crumbsLeft` with its px and place.
+  const sm01 = strayCleared(maskSm(true), 1);
+  const leftSm01 = crumbsLeft(sm01.mask, 1);
+  const plantSm01 = crumbsLeft(maskSm(true), 1);
+  say(
+    'SM01_THE_ISLANDS_STRAY_LEAVES_OUT_ARE_CLEARED_FROM_THE_MASK_BOTH_READERS_READ_AND_A_CRUMB_LEFT_IN_IS_NAMED',
+    JSON.stringify(sm01.cleared.islands) === JSON.stringify([{ px: 1, left: 6, top: 4, width: 1, height: 1 }]) &&
+      sm01.cleared.artPx === 13 && sm01.cleared.clearedPx === 1 && sm01.mask.alpha[4 * 8 + 6] === 0 && sm01.mask.alpha[0] === 255 &&
+      leftSm01.length === 0 && JSON.stringify(plantSm01) === JSON.stringify(['STRAY_CRUMB_LEFT: 1 px at (6, 4)']),
+    `cleared ${JSON.stringify(sm01.cleared.islands)}, art ${sm01.cleared.artPx} px; left after clearing ${JSON.stringify(leftSm01)}; planted (not cleared) ${JSON.stringify(plantSm01)}`,
+    'the rig stage is handed the mask the trace read: every island `stray` leaves out is gone from it, so the bounds and the reduction read the art the source was traced from; a builder that leaves one in would hand the reduction a crumb no source vertex covers',
+  );
+
+  // SM02 — nothing stray, nothing moves: no stray declared on the two-island mask, and stray 5 on the one-island mask,
+  // each return the mask with md5 before = after = the mask's own md5, no island listed. Planted: one pixel flipped
+  // after the fact — the md5 moves and `assertUnchanged` refuses by name.
+  const noneSm02 = strayCleared(maskSm(true), undefined);
+  const oneSm02 = strayCleared(maskSm(false), 5);
+  const flippedSm02 = maskSm(false);
+  flippedSm02.alpha[5 * 8 + 7] = 9;
+  const plantSm02 = ((): string => {
+    try {
+      assertUnchanged('p', { ...oneSm02.cleared, md5After: maskMd5(flippedSm02) });
+      return 'accepted';
+    } catch (e) {
+      return (e as Error).message;
+    }
+  })();
+  say(
+    'SM02_WITH_NOTHING_STRAY_THE_MASK_MD5_IS_UNCHANGED_AND_A_MOVED_MASK_IS_REFUSED_BY_NAME',
+    noneSm02.cleared.islands.length === 0 && noneSm02.cleared.md5Before === noneSm02.cleared.md5After && noneSm02.cleared.md5Before === maskMd5(maskSm(true)) &&
+      oneSm02.cleared.islands.length === 0 && oneSm02.cleared.md5After === maskMd5(maskSm(false)) && maskMd5(flippedSm02) !== maskMd5(maskSm(false)) &&
+      plantSm02.startsWith('STRAY_MASK_MOVED: part "p"'),
+    `no stray: ${noneSm02.cleared.islands.length} island(s), md5 ${noneSm02.cleared.md5Before === noneSm02.cleared.md5After ? 'equal' : 'moved'}; one island under stray 5: md5 ${oneSm02.cleared.md5Before === oneSm02.cleared.md5After ? 'equal' : 'moved'}; planted flip: ${plantSm02.slice(0, 60)}`,
+    'a part with no `stray` — the eight policy parts of the trial — must reach the rig stage with the very mask it had, so its row is the trial\'s; the md5 is the program\'s assertion of that, not a reading of the row',
+  );
+
+  // SM03 — the loss, summed by program: islands of 3 and 1 px on 200 art px are 4 px, 0.02; with a second row of 0 px on
+  // 300, the total is 4 px of 500, 0.008. Planted: a row whose cleared px was typed (5) — refused by name.
+  const rowSm03 = { stray: 3, artPx: 200, islands: [{ px: 3, left: 0, top: 0, width: 3, height: 1 }, { px: 1, left: 9, top: 9, width: 1, height: 1 }], clearedPx: 4, md5Before: 'a', md5After: 'b' };
+  const zeroSm03 = { stray: null, artPx: 300, islands: [], clearedPx: 0, md5Before: 'c', md5After: 'c' };
+  const oneSm03 = lossOf(rowSm03);
+  const totSm03 = lossTotal([rowSm03, zeroSm03]);
+  const plantSm03 = ((): string => {
+    try {
+      lossTotal([{ ...rowSm03, clearedPx: 5 }, zeroSm03]);
+      return 'summed';
+    } catch (e) {
+      return (e as Error).message;
+    }
+  })();
+  say(
+    'SM03_THE_LOSS_IS_THE_CLEARED_ISLANDS_SUMMED_OVER_THE_ART_AND_A_TYPED_FIGURE_IS_REFUSED',
+    oneSm03.px === 4 && oneSm03.ratio === 0.02 && totSm03.px === 4 && totSm03.artPx === 500 && totSm03.ratio === 0.008 && plantSm03.startsWith('LOSS_NOT_SUMMED: the row says 5 px cleared; its 2 island(s) hold 4 px'),
+    `one row ${JSON.stringify(oneSm03)}; total ${JSON.stringify(totSm03)}; planted typed figure: ${plantSm03}`,
+    'what a declared stray costs is the px it stops drawing; the page\'s loss column is computed from the islands the tool cleared, never typed',
   );
 
   return bad();
