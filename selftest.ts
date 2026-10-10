@@ -242,6 +242,7 @@ import {
   verdict as featureVerdict,
   type WeightedMesh,
 } from './tools/feature_contour_survey.ts';
+import { affineFit, boneHeat, capFloor, columnsOf, footprintRegion, HEAT as WX_HEAT, heatAt, heaviestOf, l1, lidReading, localOffset, nearestRank as wxNearestRank, skinPoint } from './tools/weight_rule_survey.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec, ConfigConstraint } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
@@ -18190,6 +18191,192 @@ function runAutoMeshSuite(): number {
       JSON.stringify(capEv06) === JSON.stringify(['LCA', '65 V (63+2)', 'STEP 77 OF 77', 'RESIDUAL 0.968', 'MOTION 0.81 PX']) && noneEv06[1] === 'NOTHING WRITTEN' && noneEv06[2] === 'NO STEP',
     `caption ${JSON.stringify(capEv06)}; nothing written ${JSON.stringify(noneEv06)}`,
     'the reference starts at the slot\'s bone the stage writes, and HQ reads the picture first, so its counts are the cell\'s figures, not retyped ones',
+  );
+
+  // ---------------------------------------------------------------------------
+  // Issue #161 Stage A: tools/weight_rule_survey.ts's instruments (WX01-WX06), each on a hand-built input.
+  // ---------------------------------------------------------------------------
+
+  // WX01 — bone heat on a 1-D case by hand: a 9x3 block, bone A's segment the vertical line x = 0.5 and B's x = 8.5,
+  // so column 0 holds A's sources and column 8 B's (centres within 0.75 px), nothing else does; with no flux through the
+  // block's edge the heat equilibrium is the linear ramp A(x) = (8 − x) / 8 in every row, and A + B = 1. Planted: B moved
+  // to x = 4.5 (A(2) becomes 0.5, not the hand 0.75), and an iteration bound of 2 (not converged, and said so).
+  const blockWx = (w: number, h: number): Mask => {
+    const m = newMask(w, h);
+    m.data.fill(1);
+    return m;
+  };
+  const segWx = (bone: string, x0: number, y0: number, x1: number, y1: number): { bone: string; a: [number, number]; b: [number, number] } => ({ bone, a: [x0, y0], b: [x1, y1] });
+  const specWx = { ...WX_HEAT, tolerance: 1e-12 };
+  const rampWx01 = boneHeat(blockWx(9, 3), [segWx('A', 0.5, 0, 0.5, 3), segWx('B', 8.5, 0, 8.5, 3)], specWx);
+  let errWx01 = 0;
+  let sumWx01 = 0;
+  for (let y = 0; y < 3; y++) {
+    for (let x = 0; x < 9; x++) {
+      errWx01 = Math.max(errWx01, Math.abs(rampWx01.fields[0][y * 9 + x] - (8 - x) / 8));
+      sumWx01 = Math.max(sumWx01, Math.abs(rampWx01.fields[0][y * 9 + x] + rampWx01.fields[1][y * 9 + x] - 1));
+    }
+  }
+  const movedWx01 = boneHeat(blockWx(9, 3), [segWx('A', 0.5, 0, 0.5, 3), segWx('B', 4.5, 0, 4.5, 3)], specWx);
+  const boundWx01 = boneHeat(blockWx(9, 3), [segWx('A', 0.5, 0, 0.5, 3), segWx('B', 8.5, 0, 8.5, 3)], { ...specWx, maxIterations: 2 });
+  say(
+    'WX01_BONE_HEAT_ON_A_TWO_BONE_STRIP_IS_THE_HAND_LINEAR_RAMP_AND_A_MOVED_BONE_OR_A_SHORT_BOUND_IS_SEEN',
+    errWx01 < 1e-6 && sumWx01 < 1e-6 && rampWx01.converged.every(Boolean) && JSON.stringify(rampWx01.sources) === JSON.stringify([3, 3]) &&
+      Math.abs(movedWx01.fields[0][2] - 0.75) > 0.1 && Math.abs(movedWx01.fields[0][2] - 0.5) < 1e-6 &&
+      boundWx01.converged.every((c) => !c) && JSON.stringify(boundWx01.iterations) === JSON.stringify([2, 2]),
+    `ramp: largest error against (8 − x)/8 ${errWx01.toExponential(1)}, largest |A + B − 1| ${sumWx01.toExponential(1)}, sweeps ${rampWx01.iterations.join('/')}, sources ${rampWx01.sources.join('/')}; planted B at x 4.5: A(2) = ${movedWx01.fields[0][2]}; planted bound 2: converged ${boundWx01.converged.join('/')}`,
+    'issue #161 Stage A: bone heat is this tool\'s rule, and the page echoes its discretisation, tolerance and bound — so the solve is held to the one case whose answer is known by hand, and a solve the bound cut short is reported as not converged rather than read as an answer',
+  );
+
+  // WX02 — the source rule, the sampling and the cap by hand. A 5x1 strip, A a point at (−3, 0.5) outside it, B a point
+  // at (4.5, 0.5) on pixel 4: A has no pixel within the band, so its source is the nearest pixel no bone holds (pixel 0),
+  // and the field is A(x) = (4 − x) / 4; a vertex at (1.2, 0.5) takes pixel 1: A 0.75, B 0.25. Planted: B also outside,
+  // at (−2, 0.5) — B then takes pixel 1, the nearest pixel no bone holds (pixel 0 is A's, though B is nearer it), so each keeps one
+  // source and A(1) is 0, not 0.75. The cap: 0.5, 0.3, 0.15, 0.04, 0.01
+  // capped at 4 keeps a, b, c, d, each over 0.99; planted at cap 2: 0.625, 0.375.
+  const stripWx02 = (bx: number): ReturnType<typeof boneHeat> => boneHeat(blockWx(5, 1), [segWx('A', -3, 0.5, -3, 0.5), segWx('B', bx, 0.5, bx, 0.5)], specWx);
+  const okWx02 = stripWx02(4.5);
+  const atWx02 = heatAt(okWx02, blockWx(5, 1), [1.2, 0.5]);
+  const plantWx02 = stripWx02(-2);
+  const vecWx02 = [
+    { bone: 'a', weight: 0.5 },
+    { bone: 'b', weight: 0.3 },
+    { bone: 'c', weight: 0.15 },
+    { bone: 'd', weight: 0.04 },
+    { bone: 'e', weight: 0.01 },
+  ];
+  const cap4Wx02 = capFloor(vecWx02, DEFAULT_LIMITS);
+  const cap2Wx02 = capFloor(vecWx02, { maxInfluences: 2, minWeight: MIN_WEIGHT });
+  const nearWx02 = (got: ReadonlyArray<{ bone: string; weight: number }>, want: ReadonlyArray<[string, number]>): boolean => got.length === want.length && got.every((e, i) => e.bone === want[i][0] && Math.abs(e.weight - want[i][1]) < 1e-9);
+  say(
+    'WX02_A_BONE_OUTSIDE_THE_SILHOUETTE_IS_SOURCED_AT_ITS_NEAREST_FREE_PIXEL_AND_THE_CAP_IS_INFLUENCES_OWN',
+    JSON.stringify(okWx02.nearest) === JSON.stringify(['A']) && Math.abs(okWx02.fields[0][1] - 0.75) < 1e-6 &&
+      nearWx02(atWx02, [['A', 0.75], ['B', 0.25]]) &&
+      Math.abs(plantWx02.fields[0][1]) < 1e-9 && JSON.stringify(plantWx02.nearest) === JSON.stringify(['A', 'B']) && JSON.stringify(plantWx02.sources) === JSON.stringify([1, 1]) &&
+      nearWx02(cap4Wx02, [['a', 0.5 / 0.99], ['b', 0.3 / 0.99], ['c', 0.15 / 0.99], ['d', 0.04 / 0.99]]) &&
+      nearWx02(cap2Wx02, [['a', 0.625], ['b', 0.375]]),
+    `outside bone: nearest ${JSON.stringify(okWx02.nearest)}, A(1) ${okWx02.fields[0][1]}; vertex at 1.2 ${JSON.stringify(atWx02)}; planted B outside: A(1) ${plantWx02.fields[0][1]}, nearest ${JSON.stringify(plantWx02.nearest)}, sources ${plantWx02.sources.join('/')}; cap 4 ${JSON.stringify(cap4Wx02)}; planted cap 2 ${JSON.stringify(cap2Wx02)}`,
+    'a bone whose segment misses the art still pulls it — the rule says from where, and a bone that loses every source pixel is the case the page names; the capped heat must cap exactly as influences() does, or the cap column measures a different rule',
+  );
+
+  // WX03 — the weight columns by hand: vertex 1 authored a 0.8 b 0.2, rule a 0.6 b 0.4 (L1 0.4, same, on 0.6); vertex 2
+  // authored a 0.3 b 0.7, rule a 0.7 b 0.3 (L1 0.8, not same, on 0.7's complement 0.3). Means: L1 0.6, same 0.5, on
+  // 0.45, authored heaviest 0.75. A tie (0.5 / 0.5) goes to the bone first in the order. Planted: vertex 2's rule
+  // equal to its authored vector (L1 0.2, same 1).
+  const vWx03 = (a: number, b: number): Array<{ bone: string; weight: number }> => [
+    { bone: 'a', weight: a },
+    { bone: 'b', weight: b },
+  ];
+  const colWx03 = columnsOf(
+    [
+      { authored: vWx03(0.8, 0.2), rule: vWx03(0.6, 0.4) },
+      { authored: vWx03(0.3, 0.7), rule: vWx03(0.7, 0.3) },
+    ],
+    ['a', 'b'],
+  );
+  const plantWx03 = columnsOf(
+    [
+      { authored: vWx03(0.8, 0.2), rule: vWx03(0.6, 0.4) },
+      { authored: vWx03(0.3, 0.7), rule: vWx03(0.3, 0.7) },
+    ],
+    ['a', 'b'],
+  );
+  const closeWx = (a: number, b: number): boolean => Math.abs(a - b) < 1e-12;
+  say(
+    'WX03_THE_WEIGHT_COLUMNS_ARE_THE_HAND_MEANS_AND_A_PLANTED_VERTEX_MOVES_THEM',
+    colWx03.vertices === 2 && closeWx(colWx03.l1, 0.6) && closeWx(colWx03.same, 0.5) && closeWx(colWx03.onAuthored, 0.45) && closeWx(colWx03.authoredHeaviest, 0.75) &&
+      heaviestOf(vWx03(0.5, 0.5), ['b', 'a']) === 'b' && heaviestOf(vWx03(0.5, 0.5), ['a', 'b']) === 'a' && closeWx(l1(vWx03(1, 0), [{ bone: 'c', weight: 1 }]), 2) &&
+      !closeWx(plantWx03.l1, 0.6) && closeWx(plantWx03.l1, 0.2) && closeWx(plantWx03.same, 1),
+    `columns ${JSON.stringify(colWx03)}; planted ${JSON.stringify(plantWx03)}`,
+    'the card\'s three columns are what the page ranks the rules by; held to vectors whose means are written by hand, with L1 over the union of bones (two disjoint vectors are 2 apart)',
+  );
+
+  // WX04 — skinning and the percentile by hand: bone A the identity at the origin, bone B rotated 90° (a 0, b −1, c 1,
+  // d 0) at (10, 0). The point (10, 5) is offset (5, 0) in B. Posed: B translated by (3, 4); authored {A: 1} keeps
+  // (10, 5), a rule {A: 0.5, B: 0.5} draws 0.5·(10, 5) + 0.5·(13, 9) = (11.5, 7): 2.5 px away. Nearest rank of 1..10:
+  // p95 = 10, p50 = 5. Planted: B not moved — 0 px.
+  const xA = { a: 1, b: 0, c: 0, d: 1, worldX: 0, worldY: 0 };
+  const xB = { a: 0, b: -1, c: 1, d: 0, worldX: 10, worldY: 0 };
+  const offWx04 = localOffset(xB, [10, 5]);
+  const poseWx04 = new Map([
+    ['A', xA],
+    ['B', { ...xB, worldX: 13, worldY: 4 }],
+  ]);
+  const ruleWx04 = [
+    { bone: 'A', weight: 0.5, offset: localOffset(xA, [10, 5]) },
+    { bone: 'B', weight: 0.5, offset: offWx04 },
+  ];
+  const authWx04 = skinPoint([{ bone: 'A', weight: 1, offset: localOffset(xA, [10, 5]) }], poseWx04);
+  const posedWx04 = skinPoint(ruleWx04, poseWx04);
+  const stillWx04 = skinPoint(ruleWx04, new Map([['A', xA], ['B', xB]]));
+  const tenWx04 = [3, 1, 4, 10, 5, 9, 2, 6, 8, 7];
+  say(
+    'WX04_THE_SKINNED_VERTEX_AND_THE_NEAREST_RANK_PERCENTILE_ARE_THE_HAND_FIGURES',
+    JSON.stringify(offWx04) === JSON.stringify([5, 0]) && JSON.stringify(authWx04) === JSON.stringify([10, 5]) && JSON.stringify(posedWx04) === JSON.stringify([11.5, 7]) &&
+      Math.hypot(posedWx04[0] - authWx04[0], posedWx04[1] - authWx04[1]) === 2.5 && JSON.stringify(stillWx04) === JSON.stringify([10, 5]) &&
+      wxNearestRank(tenWx04, 0.95) === 10 && wxNearestRank(tenWx04, 0.5) === 5 && Number.isNaN(wxNearestRank([], 0.95)),
+    `offset in B ${JSON.stringify(offWx04)}; authored ${JSON.stringify(authWx04)}; rule ${JSON.stringify(posedWx04)}; planted B still ${JSON.stringify(stillWx04)}; p95 ${wxNearestRank(tenWx04, 0.95)}, p50 ${wxNearestRank(tenWx04, 0.5)}`,
+    'the displacement columns compare two meshes skinned from the same bones, so the skinning is held to a hand case (and the page checks it against spine-core\'s own world vertices on the export), and the percentile is named and held: nearest rank, no interpolation',
+  );
+
+  // WX05 — the footprint region's polygon by hand: a base 10x10 block at (1, 1) in 12x12, placed at (0, 0); a layer, a
+  // 3x2 block placed at (4, 5) — its footprint is those 6 pixels; padded by 4, the polygon spans x 8..11, y 9..11 (area 6),
+  // the bone and band passed through; the region's weight is 1 at (9.5, 10) and 1 − 2/4 = 0.5 at 2 px below its bottom
+  // edge, (9.5, 13), at band 4. A second, 1 px island at (9, 2) is counted and the larger kept. Planted: the layer at
+  // alpha 7 (under the footprint's alpha 8) and the layer placed off the base, each refused by name.
+  const baseWx05 = { name: 'base', x: 0, y: 0, img: rasterFc(12, 12, blockFc(12, 12, 1, 1, 10, 10)) };
+  const layerWx05 = { name: 'lash', x: 4, y: 5, img: rasterFc(3, 2, blockFc(3, 2, 0, 0, 3, 2)) };
+  const twoWx05 = { name: 'lash', x: 4, y: 2, img: rasterFc(6, 5, [...blockFc(6, 5, 0, 3, 3, 2), [5, 0, 255]]) };
+  const fpWx05 = footprintRegion(baseWx05, layerWx05, 4, 'eye', 4);
+  const twoFpWx05 = footprintRegion(baseWx05, twoWx05, 4, 'eye', 4);
+  const faintWx05 = footprintRegion(baseWx05, { ...layerWx05, img: rasterFc(3, 2, blockFc(3, 2, 0, 0, 3, 2, 7)) }, 4, 'eye', 4);
+  const offWx05 = footprintRegion(baseWx05, { ...layerWx05, x: 30 }, 4, 'eye', 4);
+  const areaWx05 = (pts: ReadonlyArray<readonly [number, number]>): number => Math.abs(pts.reduce((s, p, i) => s + p[0] * pts[(i + 1) % pts.length][1] - pts[(i + 1) % pts.length][0] * p[1], 0)) / 2;
+  const boxWx05 = (pts: ReadonlyArray<readonly [number, number]>): number[] => [Math.min(...pts.map((q) => q[0])), Math.min(...pts.map((q) => q[1])), Math.max(...pts.map((q) => q[0])), Math.max(...pts.map((q) => q[1]))];
+  const polyWx05 = 'region' in fpWx05 && fpWx05.region.shape === 'polygon' ? fpWx05.region.points : [];
+  say(
+    'WX05_A_FOOTPRINT_REGION_IS_THE_LAYERS_FOOTPRINT_TRACED_ON_THE_BASE_AND_AN_EMPTY_FOOTPRINT_IS_REFUSED_BY_NAME',
+    'region' in fpWx05 && fpWx05.px === 6 && fpWx05.islands === 1 && fpWx05.region.bone === 'eye' && fpWx05.region.band === 4 &&
+      areaWx05(polyWx05) === 6 && JSON.stringify(boxWx05(polyWx05)) === JSON.stringify([8, 9, 11, 11]) &&
+      regionWeight([9.5, 10], fpWx05.region) === 1 && regionWeight([9.5, 13], fpWx05.region) === 0.5 &&
+      'region' in twoFpWx05 && twoFpWx05.islands === 2 && twoFpWx05.px === 6 &&
+      'refused' in faintWx05 && faintWx05.refused.startsWith('FOOTPRINT_EMPTY: layer "lash"') && 'refused' in offWx05 && offWx05.refused.startsWith('FOOTPRINT_EMPTY'),
+    `region ${JSON.stringify(fpWx05)}; area ${areaWx05(polyWx05)}, box ${JSON.stringify(boxWx05(polyWx05))}; two islands ${'region' in twoFpWx05 ? `${twoFpWx05.islands} islands, kept ${twoFpWx05.px} px` : JSON.stringify(twoFpWx05)}; planted alpha 7 ${JSON.stringify(faintWx05)}; planted off the base ${JSON.stringify(offWx05)}`,
+    'issue #161 HQ comment: the region a feature bone owns is derived from the feature layer\'s footprint on the part beneath, not painted — so the derivation is held to a layer whose footprint is known by hand, and a layer that leaves no footprint is refused by name rather than read as an empty region',
+  );
+
+  // WX06 — the lid reading and the fit by hand. T = 10; field 1 on two edge samples where the rule gives the lid 0.8 and
+  // 0.6 (displacements 2 and 4: max 4, nearest-rank p95 of two = 4); one footprint point (lid 0.8: heaviest a lid) and one
+  // off it (lid 0.2, field 0: 2 px, heaviest the head). Planted: no lid bones — every share 0, the edge 10 px. The fit:
+  // a square mapped by x' = 2x + 1, y' = 2y − 3 is recovered with residual 0 and scale 2.
+  const ptsWx06: Array<[number, number]> = [
+    [0, 0],
+    [1, 0],
+    [2, 0],
+    [3, 0],
+  ];
+  const lidAtWx06 = [0.8, 0.6, 0.8, 0.2];
+  const vecWx06 = (p: readonly [number, number]): Array<{ bone: string; weight: number }> => [
+    { bone: 'lid', weight: lidAtWx06[p[0]] },
+    { bone: 'head', weight: 1 - lidAtWx06[p[0]] },
+  ];
+  const fieldWx06 = (p: readonly [number, number]): number => (p[0] === 3 ? 0 : 1);
+  const readWx06 = lidReading(vecWx06, ['lid'], ['head', 'lid'], fieldWx06, 10, ptsWx06.slice(0, 2), [ptsWx06[2]], [ptsWx06[3]]);
+  const plantWx06 = lidReading(vecWx06, [], ['head', 'lid'], fieldWx06, 10, ptsWx06.slice(0, 2), [ptsWx06[2]], [ptsWx06[3]]);
+  const sqWx06: Array<[number, number]> = [
+    [0, 0],
+    [4, 0],
+    [4, 4],
+    [0, 4],
+  ];
+  const fitWx06 = affineFit(sqWx06, sqWx06.map(([x, y]) => [2 * x + 1, 2 * y - 3] as [number, number]));
+  say(
+    'WX06_THE_LID_READING_AND_THE_IMAGE_FIT_ARE_THE_HAND_FIGURES_AND_A_RULE_WITH_NO_LID_IS_SEEN',
+    closeWx(readWx06.edgeMax, 4) && closeWx(readWx06.edgeP95, 4) && closeWx(readWx06.artMax, 2) && readWx06.insideLid === 1 && readWx06.outsideLid === 0 &&
+      closeWx(plantWx06.edgeMax, 10) && plantWx06.insideLid === 0 &&
+      fitWx06.residual < 1e-9 && Math.abs(fitWx06.scale - 2) < 1e-9 && JSON.stringify(fitWx06.map([1, 1]).map((v) => Math.round(v * 1e9) / 1e9)) === JSON.stringify([3, -1]),
+    `reading ${JSON.stringify(readWx06)}; planted no lid ${JSON.stringify(plantWx06)}; fit residual ${fitWx06.residual.toExponential(1)}, scale ${fitWx06.scale}`,
+    'the footprint row on the page is read with #160\'s measure, |lid share − lid field|·|T|, and the export\'s bones reach the image through a fitted map whose residual the page prints; both are held to cases whose answers are written by hand',
   );
 
   return bad();
