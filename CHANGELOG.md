@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.0](https://github.com/firejune/rig-parts/compare/v1.0.0-rc.1...v1.0.0) (2026-10-10)
+
+
+### Features
+
+* **mesh:** add a density-only auto region that refines without a bone or a band and leaves every source weight as without it ([#156](https://github.com/firejune/rig-parts/issues/156)) ([ee4e363](https://github.com/firejune/rig-parts/commit/ee4e363e8721455ceb1e97c275c4e4e1ddb8fd3d)), closes [#155](https://github.com/firejune/rig-parts/issues/155)
+* **mesh:** clear the islands a declared stray leaves out from every reader of an automatic part, and name what was cleared ([#176](https://github.com/firejune/rig-parts/issues/176)) ([56b0c8b](https://github.com/firejune/rig-parts/commit/56b0c8bce5ab45f06482799d3ed8a68e7e08ae6d)), closes [#172](https://github.com/firejune/rig-parts/issues/172)
+* **mesh:** derive the skinning envelope against the lowest common ancestor of the slot's bone and every bound bone, so the residual veto reaches parts skinned across sibling subtrees ([#169](https://github.com/firejune/rig-parts/issues/169)) ([6df4d90](https://github.com/firejune/rig-parts/commit/6df4d90ea186f73e71b2a3f95eac983a5ddfe47b)), closes [#165](https://github.com/firejune/rig-parts/issues/165)
+* **release:** say that 1.0.0 holds the interface stable, and write the migration from 0.16.0 to 1.0.0 ([#177](https://github.com/firejune/rig-parts/issues/177)) ([7ee080b](https://github.com/firejune/rig-parts/commit/7ee080bbebaf5be403bdbf1fa74bc23ad7888fac)), closes [#172](https://github.com/firejune/rig-parts/issues/172)
+
+
+### Bug Fixes
+
+* **deps:** move to rig-c 2.32.1, which refuses a degenerate refinement insertion by name and cuts the reduction's wall time ([#163](https://github.com/firejune/rig-parts/issues/163)) ([0e836b9](https://github.com/firejune/rig-parts/commit/0e836b95f28cc06186070576a938ada84f7eb4f3)), closes [#159](https://github.com/firejune/rig-parts/issues/159)
+* **deps:** move to rig-c 2.32.2, which no longer misrefuses a shared-edge tie in the motion comparison, and re-run the six spacing-survey cells it refused ([#166](https://github.com/firejune/rig-parts/issues/166)) ([5f8cccf](https://github.com/firejune/rig-parts/commit/5f8cccfb66e73ad19c02fbc1af25185277c43dff)), closes [#159](https://github.com/firejune/rig-parts/issues/159)
+* **deps:** move to rig-c 2.33.0, the pin 1.0 ships with; every existing build byte-identical ([#173](https://github.com/firejune/rig-parts/issues/173)) ([3c207ac](https://github.com/firejune/rig-parts/commit/3c207acf3b2fdb604735872d45977ccb65b00415)), closes [#172](https://github.com/firejune/rig-parts/issues/172)
+* **release:** say that 1.0.0, not the release candidate, holds the interface stable ([#158](https://github.com/firejune/rig-parts/issues/158)) ([b91d167](https://github.com/firejune/rig-parts/commit/b91d167317df03e444597b3dfc916fb7681135f9)), closes [#126](https://github.com/firejune/rig-parts/issues/126)
+
 ## [1.0.0-rc.1](https://github.com/firejune/rig-parts/compare/v0.16.0...v1.0.0-rc.1) (2026-10-09)
 
 
