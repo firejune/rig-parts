@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/firejune/rig-parts/compare/v1.0.0...v1.1.0) (2026-10-10)
+
+
+### Features
+
+* **weights:** add bone heat as an opt-in per-mesh weight rule ([#180](https://github.com/firejune/rig-parts/issues/180)) ([69e6041](https://github.com/firejune/rig-parts/commit/69e6041b4d56bfe89c9259d9894dbdfdceacf25b))
+* **weights:** let a mesh declare the distance rule's exponent, w = 1/(d + r)^exponent ([#178](https://github.com/firejune/rig-parts/issues/178)) ([e6d6a2f](https://github.com/firejune/rig-parts/commit/e6d6a2f9dd0fa7922531e535e6d4140541c68a62))
+
 ## [1.0.0](https://github.com/firejune/rig-parts/compare/v1.0.0-rc.1...v1.0.0) (2026-10-10)
 
 
