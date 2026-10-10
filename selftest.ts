@@ -222,6 +222,25 @@ import { deriveEnvelope, type EnvelopeBasis, type EnvelopeDerivation, RESIDUAL_R
 import { type VetoTally, vetoTally } from './tools/veto_tally.ts';
 import { commonSurvivors, densitySquare, pruneShares, weightDiff } from './tools/auto_density_survey.ts';
 import { comparisonInputRefusal, digestDifferences, inputDigest, inputDigestDeep, jsonDifferences, type LadderRow, ladderInputMoved, ladderPlan, ladderPolicy, ladderSpecDifferences, overdraw, widenedPlan, overdrawText, parseArgs as parseSpacingArgs, pendingLadderRow, renderLadder, pendingRow as spacingPending, reproductionText, render as renderSpacing, spacingPolicy, spacingsFor, type SpacingRow, specDifferences, staticRefusal, summarise as spacingSummary } from './tools/auto_spacing_survey.ts';
+import {
+  BLINK as BLINK_FIXTURE,
+  blinkFixture,
+  blinkMask,
+  blinkShare,
+  boneOrigins,
+  censusOf,
+  edgeDisplacement,
+  fixtureEnvelope,
+  footprintsOn,
+  holeCensus,
+  jointsIn,
+  motionAgainstSource,
+  onRings,
+  ringEdges,
+  ringSamples,
+  verdict as featureVerdict,
+  type WeightedMesh,
+} from './tools/feature_contour_survey.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec, ConfigConstraint } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
@@ -17831,6 +17850,165 @@ function runAutoMeshSuite(): number {
       args06.capSeconds === 600 && args06.budgetSeconds === 3000 && args06.child === null && bad06 !== null && bad06.includes('--budget') && ladOk06,
     `two renders ${doc06a === doc06b ? 'identical' : 'DIFFER'} (${doc06a.length} chars); planted digest ${doc06a === doc06c ? 'renders the SAME' : `renders differently${doc06c.includes('no — input targets') ? ', naming targets' : ''}`}; verdict "${word06.slice(0, 160)}"; args ${JSON.stringify(args06)}; planted budget 0 -> ${bad06}; ladder plan ${plan06.length} cells, ${[0, 1, 2, 8, 12, 42, 51].map(at06).join(', ')}; ladder page ${lad06a === lad06b ? 'identical twice' : 'DIFFERS'}, planted influences digest ${lad06c.includes('no — input influences.maxInfluences') ? 'named' : 'NOT named'}; rung field allowed: ${JSON.stringify(ladderInputMoved(ladder06).get(ladder06[1]))}; widened plan ${wplan06.length} cells; artFit moved under widened ${JSON.stringify(ladderInputMoved(artRows06, 'widened').get(artRows06[1]))}, under held ${JSON.stringify(ladderInputMoved(artRows06, 'held').get(artRows06[1]))}; planted --artfit wide -> ${badArtFit06}`,
     'the evidence page is re-run, not edited: what it prints must follow from the rows alone, and a cell the budget did not reach, or a field other than the source that moved, must be on the page by name',
+  );
+
+  // ---------------------------------------------------------------------------
+  // Issue #160 Stage A: tools/feature_contour_survey.ts's instruments (FC01-FC06), each on a hand-built input.
+  // ---------------------------------------------------------------------------
+
+  // A hand raster: `cells` as [x, y, alpha], every other pixel transparent.
+  const rasterFc = (w: number, h: number, cells: ReadonlyArray<readonly [number, number, number]>): Raster => {
+    const r = newRaster(w, h);
+    for (const [x, y, a] of cells) r.data.set([255, 255, 255, a], (y * w + x) * 4);
+    return r;
+  };
+  const blockFc = (w: number, h: number, x0: number, y0: number, bw: number, bh: number, alpha = 255): Array<[number, number, number]> => {
+    const out: Array<[number, number, number]> = [];
+    for (let y = y0; y < y0 + bh; y++) for (let x = x0; x < x0 + bw; x++) if (x < w && y < h) out.push([x, y, alpha]);
+    return out;
+  };
+
+  // FC01 — the hole census by hand: an 8x6 block at (1, 1) in 10x8 (48 px) with a 2x2 hole cleared at (3, 2) (4 px),
+  // one pixel at alpha 5 at (6, 4) (art at >= 1, a hole at >= 8), a notch cleared at the block's edge (1, 3) — open to
+  // the outside, so not a hole — and a 1 px island at (9, 7). At >= 1: one hole of 4 px, box (3, 2) 2x2, two islands;
+  // at >= 8: two holes, 4 + 1 = 5 px, the larger first. The positive control, the bare block, has no hole.
+  const plantedFc01 = blockFc(10, 8, 1, 1, 8, 6)
+    .filter(([x, y]) => !((x === 3 || x === 4) && (y === 2 || y === 3)) && !(x === 1 && y === 3))
+    .map(([x, y, a]): [number, number, number] => (x === 6 && y === 4 ? [x, y, 5] : [x, y, a]));
+  plantedFc01.push([9, 7, 255]);
+  const bare01 = rasterFc(10, 8, blockFc(10, 8, 1, 1, 8, 6));
+  const at1Fc01 = holeCensus(rasterFc(10, 8, plantedFc01), 1);
+  const at8Fc01 = holeCensus(rasterFc(10, 8, plantedFc01), 8);
+  const bare1Fc01 = holeCensus(bare01, 1);
+  say(
+    'FC01_THE_HOLE_CENSUS_COUNTS_ENCLOSED_TRANSPARENT_COMPONENTS_AT_EACH_THRESHOLD_AND_NOT_A_NOTCH_OPEN_TO_THE_OUTSIDE',
+    JSON.stringify(at1Fc01) === JSON.stringify({ threshold: 1, islands: 2, holes: [{ px: 4, box: [3, 2, 2, 2] }], holePixels: 4 }) &&
+      JSON.stringify(at8Fc01) === JSON.stringify({ threshold: 8, islands: 2, holes: [{ px: 4, box: [3, 2, 2, 2] }, { px: 1, box: [6, 4, 1, 1] }], holePixels: 5 }) &&
+      bare1Fc01.holes.length === 0 && bare1Fc01.islands === 1 && holeCensus(bare01, 8).holes.length === 0,
+    `planted at >= 1 ${JSON.stringify(at1Fc01)}; at >= 8 ${JSON.stringify(at8Fc01)}; bare block ${JSON.stringify(bare1Fc01)}`,
+    "issue #160 item 1: the census counts what the filled-silhouette trace spans and discards — fillHoles' 4-connected flood from the border — at the source's alpha >= 1 and at the addendum's >= 8, so a pixel at alpha 5 is art at one and a hole at the other, and a notch open to the outside is never a hole",
+  );
+
+  // FC02 — footprints by hand: a base 8x8 block at (1, 1) in 10x10, placed at (0, 0). Above it: a 4x2 block at
+  // (3, 4) — 8 px on the base, its outline inside the base 4 + 4 + 2 + 2 = 12 edges; a 3x1 strip at (7, 2) crossing
+  // the base's right edge — 2 px on it (x 7 and 8), outline 3 edges at x 7 (left, up, down) + 2 at x 8 (up, down; its
+  // right neighbour is off the silhouette) = 5; a 2x2 block at alpha 7 — under the footprint alpha, no footprint.
+  // Through censusOf, a part listed BEFORE the base (drawn under it) puts no footprint on it, and the base puts one on
+  // that part instead.
+  const baseFc02 = { name: 'base', x: 0, y: 0, img: rasterFc(10, 10, blockFc(10, 10, 1, 1, 8, 8)) };
+  const qFc02 = { name: 'q', x: 3, y: 4, img: rasterFc(4, 2, blockFc(4, 2, 0, 0, 4, 2)) };
+  const stripFc02 = { name: 'strip', x: 7, y: 2, img: rasterFc(3, 1, blockFc(3, 1, 0, 0, 3, 1)) };
+  const faintFc02 = { name: 'faint', x: 2, y: 2, img: rasterFc(2, 2, blockFc(2, 2, 0, 0, 2, 2, 7)) };
+  const fpFc02 = footprintsOn(baseFc02, [qFc02, stripFc02, faintFc02]);
+  const cfgFc02 = parseConfig(rigConfig());
+  const rowsFc02 = censusOf('fixture', cfgFc02, [
+    { ...qFc02, from: 'full:q' },
+    { ...baseFc02, from: 'full:base' },
+  ]);
+  say(
+    'FC02_A_FOOTPRINT_IS_A_LATER_PARTS_PIXELS_AT_ALPHA_8_ON_THE_FILLED_SILHOUETTE_WITH_ITS_OUTLINE_INSIDE_COUNTED_BY_HAND',
+    JSON.stringify(fpFc02) === JSON.stringify([{ part: 'q', px: 8, line: 12 }, { part: 'strip', px: 2, line: 5 }]) &&
+      rowsFc02[1].footprints.length === 0 &&
+      JSON.stringify(rowsFc02[0].footprints) === JSON.stringify([{ part: 'base', px: 8, line: 0 }]),
+    `footprints on the base ${JSON.stringify(fpFc02)}; through censusOf, q listed first: base gets ${JSON.stringify(rowsFc02[1].footprints)}, q gets ${JSON.stringify(rowsFc02[0].footprints)}`,
+    'the census reads features from the parts drawn over a part: a part drawn under it is never a footprint on it, a footprint below alpha 8 is not counted, and a footprint covering the whole of a part has no outline inside it (line 0)',
+  );
+
+  // FC03 — joints and the verdict: on FC01's planted raster placed at (0, 0), a bone at (4.5, 4.5) is inside, a chain
+  // "c" with links at (0.5, 0.5) (transparent: outside) and (3.5, 2.5) (in the 2x2 hole: inside, the silhouette is
+  // filled), named c0 and c1 in points order; one at (1.5, 3.5) sits in the notch, open to the outside: outside. The
+  // verdict: a footprint whose line is 0 supplies no contour.
+  const partFc03 = { name: 'p', x: 0, y: 0, img: rasterFc(10, 8, plantedFc01) };
+  const bonesFc03: BoneEntry[] = [
+    { name: 'a', parent: 'root', at: [4.5, 4.5] },
+    { chain: 'c', parent: 'a', points: [[0.5, 0.5], [3.5, 2.5]], tip: [6, 2] },
+    { name: 'n', parent: 'root', at: [1.5, 3.5] },
+  ];
+  const originsFc03 = boneOrigins(bonesFc03);
+  const jointsFc03 = jointsIn(partFc03, originsFc03);
+  const fp0 = { part: 'x', px: 4, line: 0 };
+  const fp3 = { part: 'x', px: 4, line: 3 };
+  say(
+    'FC03_A_JOINT_IS_A_DECLARED_ORIGIN_ON_THE_FILLED_SILHOUETTE_AND_THE_VERDICT_NEEDS_A_FOOTPRINT_LINE_ABOVE_0',
+    JSON.stringify(originsFc03.map((o) => o.bone)) === JSON.stringify(['a', 'c0', 'c1', 'n']) &&
+      JSON.stringify(jointsFc03) === JSON.stringify(['a', 'c1']) &&
+      featureVerdict([], []) === 'neither' &&
+      featureVerdict([fp0], []) === 'neither' &&
+      featureVerdict([fp3], []) === 'footprints' &&
+      featureVerdict([], ['a']) === 'joints' &&
+      featureVerdict([fp0, fp3], ['a']) === 'footprints + joints',
+    `origins ${JSON.stringify(originsFc03)}; inside ${JSON.stringify(jointsFc03)}; verdicts: none ${featureVerdict([], [])}, line 0 ${featureVerdict([fp0], [])}, line 3 ${featureVerdict([fp3], [])}, joint ${featureVerdict([], ['a'])}, both ${featureVerdict([fp0, fp3], ['a'])}`,
+    'issue #160 addendum 2: per part, which feature contours the declared bones supply — an origin in a hole the source fills is inside the mesh, one in a notch open to the outside is not — and a footprint that draws no line inside the part supplies none',
+  );
+
+  // FC04 — the edge displacement by hand. Mesh A: the square (0,0)-(8,8) in two triangles, the lid's share 1 at y 0 and
+  // 0 at y 8. The rule: 1 at y <= 3, (8 - y)/5 below. T = (0, 5). At (2, 3) A carries 1 - 3/8 = 0.625 against the
+  // rule's 1: (1 - 0.625) * 5 = 1.875 px; at (6, 8) both are 0; (9, 9) is carried by no triangle and is counted, not
+  // read as 0. Mesh B (planted): a vertex row at y 3, share 1 — it carries the kink, and the displacement is 0.
+  const meshAFc: WeightedMesh = {
+    points: [[0, 0], [8, 0], [8, 8], [0, 8]],
+    triangles: [0, 1, 2, 0, 2, 3],
+    weights: [[{ bone: 'lid', weight: 1 }], [{ bone: 'lid', weight: 1 }], [{ bone: 'root', weight: 1 }], [{ bone: 'root', weight: 1 }]],
+  };
+  const meshBFc: WeightedMesh = {
+    points: [[0, 0], [8, 0], [8, 3], [0, 3], [8, 8], [0, 8]],
+    triangles: [0, 1, 2, 0, 2, 3, 3, 2, 4, 3, 4, 5],
+    weights: [[{ bone: 'lid', weight: 1 }], [{ bone: 'lid', weight: 1 }], [{ bone: 'lid', weight: 1 }], [{ bone: 'lid', weight: 1 }], [{ bone: 'root', weight: 1 }], [{ bone: 'root', weight: 1 }]],
+  };
+  const ruleFc = (p: readonly [number, number]): number => (p[1] <= 3 ? 1 : (8 - p[1]) / 5);
+  const samplesFc: Array<[number, number]> = [[2, 3], [6, 8], [9, 9]];
+  const dAFc = edgeDisplacement(meshAFc, 'lid', samplesFc, ruleFc, [0, 5]);
+  const dBFc = edgeDisplacement(meshBFc, 'lid', samplesFc, ruleFc, [0, 5]);
+  say(
+    'FC04_THE_EDGE_DISPLACEMENT_IS_THE_INTERPOLATED_SHARE_AGAINST_THE_RULE_TIMES_T_AND_A_VERTEX_ON_THE_KINK_CLOSES_IT',
+    dAFc.max === 1.875 && JSON.stringify(dAFc.at) === JSON.stringify([2, 3]) && dAFc.carried === 2 && dAFc.uncarried === 1 && dBFc.max === 0 && dBFc.uncarried === 1,
+    `lattice-like A ${JSON.stringify(dAFc)}; planted vertex row on the kink B ${JSON.stringify(dBFc)}`,
+    "issue #160 item 2's measure: a mesh draws p at p + w(p)·T, the dense reference at p + rule(p)·T, so the displacement is |w - rule|·|T|; a sample no triangle carries is counted, never read as 0, and a mesh with a vertex on the rule's kink reads 0 — the instrument tells a lattice from a feature line by hand",
+  );
+
+  // FC05 — the comparison's quantity and the edge samples by hand. A against B over (2, 3) and (4, 6), T = (0, 5):
+  // |0.625 - 1|·5 = 1.875 at (2, 3); at (4, 6) A carries 1 - 6/8 = 0.25 and B, in its triangle (0,3)-(8,8)-(0,8),
+  // 1 - 3/5 = 0.4: 0.75 — the largest is 1.875. A against itself is 0 (the positive control). The samples along the
+  // ring (0,0)-(2,0)-(2,1) every 0.5 px: 4 + 2 + ceil(sqrt 5 / 0.5) = 5, eleven in all, starting at each vertex.
+  const mFc = motionAgainstSource(meshAFc, meshBFc, 'lid', [[2, 3], [4, 6]], [0, 5]);
+  const selfFc = motionAgainstSource(meshAFc, meshAFc, 'lid', [[2, 3], [4, 6]], [0, 5]);
+  const ringFc = ringSamples([[0, 0], [2, 0], [2, 1]], 0.5);
+  say(
+    'FC05_THE_COMPARISONS_QUANTITY_IS_THE_LARGEST_SHARE_GAP_TIMES_T_AND_THE_RING_SAMPLES_COUNT_BY_HAND',
+    mFc.max === 1.875 && mFc.uncarried === 0 && selfFc.max === 0 &&
+      ringFc.length === 11 && JSON.stringify(ringFc.slice(0, 7)) === JSON.stringify([[0, 0], [0.5, 0], [1, 0], [1.5, 0], [2, 0], [2, 0.5], [2, 1]]),
+    `A vs B ${JSON.stringify(mFc)}; A vs A ${JSON.stringify(selfFc)}; ring samples ${ringFc.length}: ${JSON.stringify(ringFc)}`,
+    "the motion comparison's quantity for one translation, computed on the meshes, must read 0 against itself and the hand figure against a mesh that carries the kink; the edge's sample count is ceil(edge / step) per edge",
+  );
+
+  // FC06 — the blink fixture and the ring instruments by hand. The blink: one hole of 24 x 6 = 144 px at (20, 19), one
+  // island; the rule 1 at y 19, 0 at y 25, 0.5 at y 22; its envelope through rig-c's helper: the lid translating by 6
+  // and nothing rotating or scaling — linear 0, translation 6, pivot the hole's top centre (32, 19). The ring
+  // instruments: of the points (0,0), (1,0), (2,0), (5,5) the ring (0,0)-(2,0)-(2,2)-(0,2) holds the first three, in
+  // order along it; triangles (0,1,3), (1,2,3) hold ring edges 0-1 and 1-2 but not 2-0: 2 of 3. Planted: the hole
+  // filled (no census hole), a point moved off the ring by 1/128 px (more than one 1/256 grid unit: off it).
+  const blinkFc06 = blinkFixture();
+  const holesFc06 = holeCensus(
+    { width: BLINK_FIXTURE.w, height: BLINK_FIXTURE.h, data: Uint8ClampedArray.from(Array.from(blinkMask().alpha).flatMap((a) => [255, 255, 255, a])) },
+    1,
+  );
+  const filledFc06 = holeCensus(rasterFc(BLINK_FIXTURE.w, BLINK_FIXTURE.h, blockFc(BLINK_FIXTURE.w, BLINK_FIXTURE.h, BLINK_FIXTURE.block[0], BLINK_FIXTURE.block[1], BLINK_FIXTURE.block[2], BLINK_FIXTURE.block[3])), 1);
+  const envFc06 = fixtureEnvelope(blinkFc06);
+  const ringFc06: Array<[number, number]> = [[0, 0], [2, 0], [2, 2], [0, 2]];
+  const onFc06 = onRings([[0, 0], [1, 0], [2, 0], [5, 5]], [ringFc06]);
+  const offFc06 = onRings([[0, 0], [1, 1 / 128], [2, 0], [5, 5]], [ringFc06]);
+  const edgesFc06 = ringEdges([0, 1, 3, 1, 2, 3], onFc06);
+  say(
+    'FC06_THE_BLINK_FIXTURE_AND_THE_RING_INSTRUMENTS_ARE_THE_HAND_FIGURES_AND_EACH_PLANT_MOVES_ONE',
+    JSON.stringify(holesFc06) === JSON.stringify({ threshold: 1, islands: 1, holes: [{ px: 144, box: [20, 19, 24, 6] }], holePixels: 144 }) &&
+      filledFc06.holes.length === 0 &&
+      blinkShare([30, 19]) === 1 && blinkShare([30, 25]) === 0 && blinkShare([30, 22]) === 0.5 &&
+      envFc06.reference === 'root' && envFc06.bones.length === 1 && envFc06.bones[0].bone === 'lid' && envFc06.bones[0].linear === 0 && envFc06.bones[0].translation === 6 &&
+      JSON.stringify(envFc06.bones[0].pivot) === JSON.stringify([32, 19]) &&
+      JSON.stringify(onFc06) === JSON.stringify([[0, 1, 2]]) && JSON.stringify(offFc06) === JSON.stringify([[0, 2]]) &&
+      edgesFc06.of === 3 && JSON.stringify(edgesFc06.present) === JSON.stringify([[0, 1], [1, 2]]),
+    `blink holes ${JSON.stringify(holesFc06)}; filled ${JSON.stringify(filledFc06)}; rule at 19/25/22 ${blinkShare([30, 19])}/${blinkShare([30, 25])}/${blinkShare([30, 22])}; envelope ${JSON.stringify(envFc06)}; on ring ${JSON.stringify(onFc06)}, planted off by 1/128 ${JSON.stringify(offFc06)}; ring edges ${JSON.stringify(edgesFc06)}`,
+    'the fixture the evidence page reads is the one its text states: the hole, the rule that closes it, and an envelope that bounds exactly the lid\'s travel; the ring instruments, which say how much of a feature line a triangulation holds, are held to a hand case',
   );
 
   return bad();
