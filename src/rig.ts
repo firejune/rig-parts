@@ -115,7 +115,7 @@ import { BLINK, blinkHoldMisses, blinkSpan, CONTROL_SUFFIX, controlledBones, IDL
 import { PAINTING_RUN, type PartsFile, readFrom } from './parts.ts';
 import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
-import { type Influence, influences, type Segment } from './weights.ts';
+import { DISTANCE_EXPONENT, type Influence, influences, type Segment } from './weights.ts';
 
 /** Transparent pixels added round every part image — the reference's `PAD`. */
 export const PAD = 4;
@@ -356,6 +356,8 @@ export interface LatticeMeshReport {
   mean_influences: number;
   art_coverage: number;
   grid: number;
+  /** The distance rule's exponent the mesh declared (issue #161); absent when it declared none and ran at 2. */
+  exponent?: number;
 }
 
 /**
@@ -375,6 +377,8 @@ export interface ContourMeshReport {
   mean_influences: number;
   art_coverage: number;
   mode: 'contour';
+  /** The distance rule's exponent the mesh declared (issue #161); absent when it declared none and ran at 2. */
+  exponent?: number;
   params: { tolerance: number; margin: number; spacing: number; budget: number | null; stray: number | null };
   contour: ContourReport;
   regions: Array<{ name: string; bone: string; reached: number; whole: number }>;
@@ -413,6 +417,8 @@ export interface AutoMeshReport {
   mean_influences: number;
   art_coverage: number;
   mode: 'auto';
+  /** The distance rule's exponent the mesh declared (issue #161); absent when it declared none and ran at 2. */
+  exponent?: number;
   settings: {
     threshold: number;
     source: { tolerance: number; margin: number; spacing: number; stray: number | null };
@@ -860,6 +866,7 @@ export function buildRig(
     file: string,
     spec: ContourSpec,
     r: number,
+    exponent: number | undefined,
     segs: Segment[],
     out: Problem[],
   ): { attachment: MeshAttachment; report: ContourMeshReport } | null => {
@@ -889,7 +896,7 @@ export function buildRig(
     cm.vertices.forEach(([vx, vy], vi) => {
       const wx = vx + ox;
       const wy = vy + oy;
-      const li = localInfluences([wx, wy], segs, r, regions);
+      const li = localInfluences([wx, wy], segs, r, regions, undefined, exponent ?? DISTANCE_EXPONENT);
       if ('first' in li) {
         if (!overlapped) {
           out.push({
@@ -932,6 +939,7 @@ export function buildRig(
         mean_influences: pyRound(infl / cm.vertices.length, 2),
         art_coverage: pyRound(rep.coveredArtPixels / (rep.artPixels + rep.strayPixels), 5),
         mode: 'contour',
+        ...(exponent === undefined ? {} : { exponent }),
         params: { tolerance: spec.tolerance, margin: spec.margin, spacing: spec.spacing, budget: spec.budget ?? null, stray: spec.stray ?? null },
         contour: rep,
         regions: regions.map((rg, k) => ({ name: rg.name, bone: rg.bone, reached: reached[k], whole: whole[k] })),
@@ -959,6 +967,7 @@ export function buildRig(
     file: string,
     spec: AutoSpec,
     r: number,
+    exponent: number | undefined,
     segs: Segment[],
     out: Problem[],
   ): { attachment: MeshAttachment; report: AutoMeshReport; motion: AutoMotionCase } | null => {
@@ -981,7 +990,7 @@ export function buildRig(
     // `contourMesh` traced. Nothing left out, it is `mask` itself, so a part without stray reads what it always read.
     // The image written for the part is not touched (the reason is in docs/AUTHORING.md's `stray` row).
     const art = source.mask;
-    const sw = sourceWeights(source.vertices, ox, oy, segs, r, spec);
+    const sw = sourceWeights(source.vertices, ox, oy, segs, r, spec, exponent ?? DISTANCE_EXPONENT);
     if ('overlap' in sw) {
       out.push({
         code: 'RIG_CONTOUR_REGIONS_OVERLAP',
@@ -1078,6 +1087,7 @@ export function buildRig(
           mean_influences: pyRound(infl / mesh.points.length, 2),
           art_coverage: pyRound(legacyArtCoverage(art, mesh.points, mesh.triangles), 5),
           mode: 'auto',
+          ...(exponent === undefined ? {} : { exponent }),
           settings: {
             threshold: input.art.threshold,
             source: { tolerance: spec.source.tolerance, margin: spec.source.margin, spacing: spec.source.spacing, stray: spec.source.stray ?? null },
@@ -1184,7 +1194,7 @@ export function buildRig(
     }
     const segs = meshSegments.get(p.name) as Segment[];
     if ('auto' in mesh) {
-      const row = autoAttachment(p, img, file, mesh.auto, mesh.r, segs, problems);
+      const row = autoAttachment(p, img, file, mesh.auto, mesh.r, mesh.exponent, segs, problems);
       if (row === null) continue;
       skin[p.name] = { [p.name]: row.attachment };
       slots.push({ name: p.name, bone: segs[0].bone, attachment: p.name });
@@ -1193,7 +1203,7 @@ export function buildRig(
       continue;
     }
     if ('contour' in mesh) {
-      const row = contourAttachment(p, img, file, mesh.contour, mesh.r, segs, problems);
+      const row = contourAttachment(p, img, file, mesh.contour, mesh.r, mesh.exponent, segs, problems);
       if (row === null) continue;
       skin[p.name] = { [p.name]: row.attachment };
       slots.push({ name: p.name, bone: segs[0].bone, attachment: p.name });
@@ -1217,7 +1227,7 @@ export function buildRig(
     for (const [vx0, vy0] of lm.vertices) {
       const wx = vx0 + ox;
       const wy = vy0 + oy;
-      const ent: WeightEntry[] = influences([wx, wy], segs, mesh.r).map(({ bone, weight }) => {
+      const ent: WeightEntry[] = influences([wx, wy], segs, mesh.r, undefined, mesh.exponent ?? DISTANCE_EXPONENT).map(({ bone, weight }) => {
         const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
         return { bone, x: places(x), y: places(y), weight: pyRound(weight, 5) };
       });
@@ -1242,6 +1252,7 @@ export function buildRig(
       mean_influences: pyRound(infl / lm.vertices.length, 2),
       art_coverage: pyRound(artCoverage(lm, art), 5),
       grid: mesh.grid,
+      ...(mesh.exponent === undefined ? {} : { exponent: mesh.exponent }),
     });
   }
   refuseIfAny(problems);

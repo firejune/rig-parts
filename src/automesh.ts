@@ -89,7 +89,7 @@ import type { Problem } from './errors.ts';
 import { type LocalInfluence, localInfluences, type RegionOverlap } from './localweights.ts';
 import { ART_ALPHA } from './mesh.ts';
 import { pyRound } from './round.ts';
-import type { Influence, Segment } from './weights.ts';
+import { DISTANCE_EXPONENT, type Influence, type Segment } from './weights.ts';
 
 /** The final threshold of the automatic mode: art is alpha 1 and above (P4). `contourMesh` reads "above", so it is handed one less. */
 export const AUTO_THRESHOLD = 1;
@@ -185,7 +185,8 @@ export function autoSource(part: string, mask: AlphaMask, spec: AutoSpec): Conto
  * that weight a bone are read (issue #155): a density-only region gives no vertex a `g`, so a source vertex
  * inside it is weighted as one no region reaches, it can never be one of an overlap's two, and the weights are
  * the same numbers the part has with the region left out. Region indices in the result (`local[].region`, the
- * overlap's `first` and `second`) are indices into `spec.regions`, every form counted.
+ * overlap's `first` and `second`) are indices into `spec.regions`, every form counted. `exponent` is the mesh's
+ * distance-rule exponent (issue #161), which the rig stage always passes.
  */
 export function sourceWeights(
   vertices: ReadonlyArray<readonly [number, number]>,
@@ -194,6 +195,7 @@ export function sourceWeights(
   segs: readonly Segment[],
   r: number,
   spec: AutoSpec,
+  exponent: number = DISTANCE_EXPONENT,
 ): { weights: Influence[][]; local: LocalInfluence[] } | { overlap: RegionOverlap; vertex: number; at: Point } {
   const all = spec.regions ?? [];
   const index: number[] = [];
@@ -207,7 +209,7 @@ export function sourceWeights(
   const local: LocalInfluence[] = [];
   for (let v = 0; v < vertices.length; v++) {
     const at: Point = [vertices[v][0] + ox, vertices[v][1] + oy];
-    const li = localInfluences(at, segs, r, regions, spec.influences);
+    const li = localInfluences(at, segs, r, regions, spec.influences, exponent);
     if ('first' in li) return { overlap: { ...li, first: index[li.first], second: index[li.second] }, vertex: v, at };
     weights.push(li.influences.map((e) => ({ bone: e.bone, weight: e.weight })));
     local.push(li.region < 0 ? li : { ...li, region: index[li.region] });

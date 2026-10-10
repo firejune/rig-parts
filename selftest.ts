@@ -330,7 +330,7 @@ import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeyp
 import { LYING_PARTS, LYING_RIG, type PoseName, POSES } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, constraintConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
-import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigOutput, type RigSpec, roundShares } from './src/rig.ts';
+import { blinkHoldProblems, buildRig, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigOutput, type RigSpec, roundShares, writtenShares } from './src/rig.ts';
 import { type ComposedScene, composeFromFiles, IMAGE_SEP, PLATE, PLATE_IMAGE, PREFIX_SEP, SCENE_REPORT_FILE, SCENE_SPEC, unprefixedNames } from './src/scene.ts';
 import { sceneCharacterRig, sceneText, writeFlatPlate, writeSceneBuild } from './fixtures/scene.ts';
 import { localInfluences, regionWeight } from './src/localweights.ts';
@@ -1257,6 +1257,24 @@ function runConfigSuite(): number {
     e4 !== null && e4.problems.length === 3 && ['CONFIG_AMPS_MATCH_CHAIN', 'CONFIG_PERIOD_DIVIDES_DURATION', 'CONFIG_PART_ATTACHED'].every((c) => got.has(c)),
     `three amplitudes for a two-link chain, a 3 s period in a 4 s idle, a part with neither mesh nor region -> ${codes(e4)}`,
     'the reference zipped amplitudes with links (a third amplitude vanished), sampled a sine that did not loop, and stopped at the first unattached part; each is now a refusal naming the field',
+  );
+
+  // CF69 — issue #161: meshes.<part>.exponent is a number above 0; 0 and the string "2" are refused at the field, 4 loads.
+  const withExponent = (v: unknown): Record<string, unknown> => {
+    const c = minimalConfig();
+    (c.meshes as Record<string, Record<string, unknown>>).robe.exponent = v;
+    return c;
+  };
+  const zero69 = refusals(() => parseConfig(withExponent(0)));
+  const text69 = refusals(() => parseConfig(withExponent('2')));
+  const four69 = refusals(() => parseConfig(withExponent(4)));
+  const at69 = (e: PartsError | null, found: string): boolean =>
+    e !== null && e.problems.length === 1 && e.problems[0].code === 'CONFIG_FIELD_TYPE' && e.problems[0].object === 'config.meshes.robe.exponent' && e.problems[0].detail === `is ${found}; a number above 0 is required`;
+  say(
+    'CF69_A_MESH_EXPONENT_THAT_IS_NOT_A_NUMBER_ABOVE_0_IS_REFUSED_AT_THE_FIELD_WITH_THE_VALUE_FOUND',
+    four69 === null && at69(zero69, '0') && at69(text69, '"2"'),
+    `exponent 4 -> ${codes(four69)}; planted exponent 0 -> ${zero69?.problems.map((q) => `${q.code} ${q.object}: ${q.detail}`).join('; ') ?? 'nothing'}; planted "2" -> ${text69?.problems.map((q) => `${q.code} ${q.object}: ${q.detail}`).join('; ') ?? 'nothing'}`,
+    'issue #161: the distance rule w = 1/(d + r)^exponent has no meaning at 0 or below (every bone weighs the same, or the nearest weighs least), and a string is a value no arithmetic reads; absent is 2, which nothing fills in',
   );
 
   const box = { ...minimalConfig(), seethrough: { resolution: 1024, steps: 30, seed: 42, offload: true, head_box: [10, 10, 60, 61] } };
@@ -3120,7 +3138,97 @@ function runRigSuite(): number {
   runBlinkStillCases(say);
   runTurnedChainCases(say);
   runConstraintRigCases(say);
+  runExponentCases(say);
   return bad();
+}
+
+/**
+ * Issue #161, unit 1: the distance rule's declared exponent, `w = 1/(d + r)^exponent`, in all three mesh modes.
+ * The fixture is the rig fixture's (fixtures/rig.ts): `cloth` weighted to the chain `hem`, whose segments are
+ * hem0 (14, 14)->(22, 14) and hem1 (22, 14)->(30, 14), r 8, and the vertex at uv (0.333333, 0.5) is rig (14, 14):
+ * d = 0 to hem0, d = 8 to hem1.
+ */
+function runExponentCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const segs = [
+    { bone: 'hem0', a: [14, 14] as [number, number], b: [22, 14] as [number, number] },
+    { bone: 'hem1', a: [22, 14] as [number, number], b: [30, 14] as [number, number] },
+  ];
+  const contourCloth = (extra: Record<string, unknown>): Record<string, unknown> => ({ contour: { tolerance: 0, margin: 1, spacing: 4 }, r: 8, segments: ['hem'], ...extra });
+  const lattice = (extra: Record<string, unknown>): ReturnType<typeof buildRig> => buildRig(rigCfg((c) => Object.assign((c.meshes as Record<string, Record<string, unknown>>).cloth, extra)), rigParts(), rigImages());
+  const contour = (extra: Record<string, unknown>): ReturnType<typeof buildRig> => buildRig(rigCfg((c) => ((c.meshes as Record<string, unknown>).cloth = contourCloth(extra))), rigParts(), rigImages());
+  const auto = (extra: Record<string, unknown>): ReturnType<typeof buildRig> => buildRig(parseConfig(autoRigConfig((c) => Object.assign((c.meshes as Record<string, Record<string, unknown>>).cloth, extra))), rigParts(), rigImages());
+  const texts = (r: ReturnType<typeof buildRig>): string => [rigJsonText(r.rig), rigJsonText(r.motion), rigJsonText(r.meshReport)].join('\n');
+  const cloth = (r: ReturnType<typeof buildRig>): MeshAttachment => r.rig.skins.default.cloth.cloth as MeshAttachment;
+  const at = (r: ReturnType<typeof buildRig>): string => {
+    const m = cloth(r);
+    for (let i = 0; i < m.uvs.length / 2; i++) if (m.uvs[2 * i] === 0.333333 && m.uvs[2 * i + 1] === 0.5) return JSON.stringify(m.weights[i].map((e) => [e.bone, e.weight]));
+    return 'no vertex at uv (0.333333, 0.5)';
+  };
+  const echo = (r: ReturnType<typeof buildRig>): string => {
+    const row = r.meshReport.find((m) => m.part === 'cloth') as Record<string, unknown> | undefined;
+    return row === undefined ? 'no row' : 'exponent' in row ? `exponent ${String(row.exponent)}` : 'no exponent key';
+  };
+  const runs = { lattice, contour, auto };
+  const absent = Object.fromEntries(Object.entries(runs).map(([k, f]) => [k, f({})])) as Record<keyof typeof runs, ReturnType<typeof buildRig>>;
+  const two = Object.fromEntries(Object.entries(runs).map(([k, f]) => [k, f({ exponent: 2 })])) as Record<keyof typeof runs, ReturnType<typeof buildRig>>;
+  const four = Object.fromEntries(Object.entries(runs).map(([k, f]) => [k, f({ exponent: 4 })])) as Record<keyof typeof runs, ReturnType<typeof buildRig>>;
+  const modes = Object.keys(runs) as Array<keyof typeof runs>;
+
+  // RG63 — absent: the weight RG01 derives by hand, and no mode's row carries the key.
+  say(
+    'RG63_A_MESH_THAT_DECLARES_NO_EXPONENT_IS_WEIGHTED_BY_THE_SQUARE_AND_ITS_ROW_CARRIES_NO_EXPONENT_IN_EVERY_MODE',
+    at(absent.lattice) === '[["hem0",0.8],["hem1",0.2]]' && modes.every((k) => echo(absent[k]) === 'no exponent key'),
+    `lattice vertex at rig (14, 14): ${at(absent.lattice)}; rows: ${modes.map((k) => `${k} ${echo(absent[k])}`).join(', ')}`,
+    'the positive control: by hand, w = 1/(0 + 8)^2 = 1/64 against 1/(8 + 8)^2 = 1/256, normalised 0.8 / 0.2 (fixtures/rig.ts); a row with a key nobody declared would change the bytes of every build that declares nothing',
+  );
+
+  // RG64 — a declared exponent moves the hand-computed weight, in the lattice; 1.5 takes Math.pow off the integers.
+  const half = lattice({ exponent: 1.5 });
+  say(
+    'RG64_A_DECLARED_EXPONENT_GIVES_THE_WEIGHT_COMPUTED_BY_HAND_AND_IS_ECHOED_IN_THE_ROW',
+    at(four.lattice) === '[["hem0",0.94118],["hem1",0.05882]]' && echo(four.lattice) === 'exponent 4' && at(half) === '[["hem0",0.7388],["hem1",0.2612]]' && echo(half) === 'exponent 1.5' && texts(four.lattice) !== texts(absent.lattice),
+    `exponent 4: ${at(four.lattice)}, row ${echo(four.lattice)}; exponent 1.5: ${at(half)}, row ${echo(half)}; bytes against absent: ${texts(four.lattice) === texts(absent.lattice) ? 'the SAME' : 'different'}`,
+    'by hand: at exponent 4, 1/8^4 : 1/16^4 = 16 : 1, so hem0 16/17 = 0.941176... -> 0.94118 and hem1 1 - 0.94118 = 0.05882; at 1.5, 8^1.5 = 16 sqrt 2 and 16^1.5 = 64, so 64 : 16 sqrt 2 = 2 sqrt 2 : 1, hem0 2 sqrt 2 / (2 sqrt 2 + 1) = 0.738796... -> 0.7388 (5 places, written 0.7388) and hem1 1 - 0.7388 = 0.2612',
+  );
+
+  // RG65 — the contour and automatic modes read the declaration: every vertex is the definition at exponent 4.
+  const cm = contourMesh('cloth', clothMask(), { threshold: ART_ALPHA, tolerance: 0, margin: 1, spacing: 4, regions: [] });
+  let contourMiss = 'the contour mesh was refused';
+  if (!Array.isArray(cm)) {
+    const got = cloth(four.contour).weights.map((v) => JSON.stringify(v.map((e) => [e.bone, e.weight])));
+    const want = cm.vertices.map(([x, y]) => {
+      const li = localInfluences([x + 6, y + 6], segs, 8, [], DEFAULT_LIMITS, 4);
+      return 'first' in li ? 'overlap' : JSON.stringify(writtenShares(li).map((e) => [e.bone, e.weight]));
+    });
+    contourMiss = got.length !== want.length ? `${got.length} vertices written, ${want.length} traced` : `${got.filter((g, i) => g !== want[i]).length} of ${got.length} vertices off the definition`;
+  }
+  const spec = (parseConfig(autoRigConfig()).meshes.cloth as { auto: AutoSpec }).auto;
+  const src = autoSource('cloth', clothMask(), spec);
+  let autoMiss = 'the source was refused';
+  if (!Array.isArray(src)) {
+    const ref = four.auto.autoMotion[0]?.reference.weights ?? [];
+    const got = ref.map((v) => JSON.stringify(v.map((e) => [e.bone, e.weight])));
+    const want = src.vertices.map(([x, y]) => JSON.stringify(roundShares(influences([x + 6, y + 6], segs, 8, spec.influences, 4)).map((e) => [e.bone, e.weight])));
+    autoMiss = got.length !== want.length ? `${got.length} source vertices bound, ${want.length} traced` : `${got.filter((g, i) => g !== want[i]).length} of ${got.length} source vertices off the definition`;
+  }
+  say(
+    'RG65_THE_CONTOUR_AND_AUTOMATIC_MODES_WEIGHT_EVERY_VERTEX_BY_THE_DECLARED_EXPONENT',
+    contourMiss.startsWith('0 of ') && autoMiss.startsWith('0 of ') && echo(four.contour) === 'exponent 4' && echo(four.auto) === 'exponent 4' && texts(four.contour) !== texts(absent.contour) && texts(four.auto) !== texts(absent.auto),
+    `contour at exponent 4: ${contourMiss}, row ${echo(four.contour)}; auto at exponent 4: ${autoMiss}, row ${echo(four.auto)}; planted (absent) against exponent 4: contour ${texts(four.contour) === texts(absent.contour) ? 'the SAME bytes' : 'different bytes'}, auto ${texts(four.auto) === texts(absent.auto) ? 'the SAME bytes' : 'different bytes'}`,
+    'a mode that ran at 2 while the config said 4 would be the silent default the doctrine forbids; the definition is influences() at exponent 4 at each traced vertex (rig = part + 6, the box less the pad), rounded as each mode writes it — the contour mode by writtenShares, the automatic mode\'s source (the reference its motion gate reads) by roundShares under the author\'s cap and floor',
+  );
+
+  // RG66 — 2 declared is absent, byte for byte, in every mode.
+  const same = modes.map((k) => {
+    const strip = (t: string): string => t.replace(/,\n? *"exponent": 2/g, '');
+    return { k, weights: JSON.stringify(cloth(two[k]).weights) === JSON.stringify(cloth(absent[k]).weights), rest: strip(texts(two[k])) === texts(absent[k]) };
+  });
+  say(
+    'RG66_EXPONENT_2_DECLARED_WRITES_THE_WEIGHTS_AND_FILES_OF_NO_EXPONENT_BUT_FOR_THE_ECHO',
+    same.every((x) => x.weights && x.rest) && modes.every((k) => echo(two[k]) === 'exponent 2'),
+    same.map((x) => `${x.k}: weights ${x.weights ? 'identical' : 'DIFFERENT'}, every other byte ${x.rest ? 'identical' : 'DIFFERENT'}, row ${echo(two[x.k])}`).join('; '),
+    'at 2 the weight is the multiply (d + r) * (d + r), never Math.pow (src/weights.ts, DISTANCE_EXPONENT), so declaring today\'s rule moves no weight; the only byte that differs is the row\'s echo of what was declared',
+  );
 }
 
 /**
