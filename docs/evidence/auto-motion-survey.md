@@ -1,6 +1,6 @@
 ## The motion gate on the public examples (tools/auto_motion_survey.ts)
 
-Policy: examplePolicy(spacing) (fixtures/automesh.ts) + policyMotion (fixtures/automotion.ts); each part switched alone; the real rig stage, the acceptance loop with a replay included (src/autoreplay.ts), through the installed rig-c 2.28.0. The first table is the full reduction's comparison on the whole idle, every frame held out; the second is the acceptance loop's.
+Policy: examplePolicy(spacing) (fixtures/automesh.ts) + policyMotion (fixtures/automotion.ts); each part switched alone; the real rig stage, the acceptance loop with a replay included (src/autoreplay.ts), through the installed rig-c 2.33.0. The first table is the full reduction's comparison on the whole idle, every frame held out; the second is the acceptance loop's.
 
 | part | source → full result (hull+interior) | MQ_LOCAL_DEFORMATION value / bound @ worst frame | samples (art) | MQ_STRETCH | MQ_SQUASH | MQ_INVERSION | verdict |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -46,7 +46,7 @@ N is the full run's accepted steps (acceptedAt's length), I the refinement's ins
 
 ## Re-running this evidence
 
-Inputs: the public examples demo, sample, scarf of https://github.com/firejune/spine-parts-examples at commit d55a28258505ef1fcdfac7d5c35126a2c8efdbb6 (the pin in `scripts/fetch-examples.sh`; `bun run fetch-examples` copies them into the gitignored `examples/<key>/inputs`), each with its tracked `examples/<key>/config.json`; rig-c 2.28.0 as `bun install --frozen-lockfile` installs it from `bun.lock`. No other input is read, and nothing is written but standard output (the stages run in a temporary directory, removed afterwards). Each part's wall time and rigc build count go to standard error and are not part of this document.
+Inputs: the public examples demo, sample, scarf of https://github.com/firejune/spine-parts-examples at commit d55a28258505ef1fcdfac7d5c35126a2c8efdbb6 (the pin in `scripts/fetch-examples.sh`; `bun run fetch-examples` copies them into the gitignored `examples/<key>/inputs`), each with its tracked `examples/<key>/config.json`; rig-c 2.33.0 as `bun install --frozen-lockfile` installs it from `bun.lock`. No other input is read, and nothing is written but standard output (the stages run in a temporary directory, removed afterwards). Each part's wall time and rigc build count go to standard error and are not part of this document.
 
 ```sh
 bun install --frozen-lockfile
