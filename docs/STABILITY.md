@@ -1,8 +1,7 @@
 # Interface stability
 
-This page states what **1.0.0 will hold stable**, and what it will not, frozen for
-review as of 1.0.0-rc.1: the candidate exists so that this interface can be read and
-objected to before 1.0.0. Every item is read off the tree: the command and flag lists below are held to
+This page states what **1.0.0 holds stable**, and what it does not. Every item is
+read off the tree: the command and flag lists below are held to
 `cli.ts`, and the config field list to the loader in `src/config.ts`, by the
 selftest's `TY13` and `TY14` (the `tree` suite), so neither list can drift from the
 code without a red run. What changed for an author coming from 0.16.0 is
@@ -10,8 +9,7 @@ code without a red run. What changed for an author coming from 0.16.0 is
 
 ## What "stable" means here
 
-The semantic-versioning promise starts at 1.0.0, not at a release candidate: from
-1.0.0 the package follows semantic versioning over the items on this page. A
+From 1.0.0 the package follows semantic versioning over the items on this page. A
 stable item is not removed, renamed, or given another meaning inside a major
 version; a new command, flag, optional config field, report key or refusal may
 arrive in a minor version, because a reader written against the old surface still
@@ -19,10 +17,11 @@ reads it. A refusal may be retired in a minor version when what it refused becom
 accepted (0.13.0 retired two ik refusals that way, when rig-c's parser took them
 over).
 
-1.0.0-rc.1 is a release candidate. Promotion to 1.0.0 waits for the owner's
-acceptance of the production evidence (issue #126, item 7); until then an item here
-may still change, and the change is written into this page and into
-[MIGRATION.md](MIGRATION.md) by the change that makes it.
+The list was frozen for review at the release candidate 1.0.0-rc.1, and 1.0.0 was
+promoted from it after the owner's acceptance of the production evidence (issue #126,
+item 7; `docs/evidence/production-trial.md` in the repository). Every interface
+change between the two is additive, and [MIGRATION.md](MIGRATION.md)'s *Since
+1.0.0-rc.1* names each one, with the build bytes that moved.
 
 Bytes are a separate promise, and a narrower one: **one version of this package
 with one installed rig-c writes the same bytes for the same inputs** (*Determinism*
@@ -34,7 +33,7 @@ winding change of #133 is the example: [MIGRATION.md](MIGRATION.md)).
 
 Exit codes are part of the interface: **0** the command did what it says, **1** it
 refused its input (every reason a `FAIL` line), **2** a usage error or a command
-this version does not implement. No command is unimplemented at 1.0.0-rc.1 (`LATER`
+this version does not implement. No command is unimplemented at 1.0.0 (`LATER`
 in `cli.ts` is empty). A refusal line has the shape
 `  FAIL  <RULE>: <object> — <value found>; <value required>`: the rule name is a
 stable identifier, and the detail after it is prose that may be reworded. A command

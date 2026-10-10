@@ -16,8 +16,8 @@ oracle lives*). Every command the CLI registers is implemented — layers,
 sheet, propose, compare, assemble, rig, check, loop, inputs, comfy (the optional
 ComfyUI adapter), compose, and `build`, which runs assemble, rig and check in
 one process (`src/build.ts`); the list of commands not yet implemented (`LATER`
-in `cli.ts`) is empty. 1.0.0-rc.1 is the release candidate: what it holds
-stable, and what it does not, is `docs/STABILITY.md` (held to `cli.ts` and the
+in `cli.ts`) is empty. From 1.0.0 the package follows semantic versioning:
+what it holds stable, and what it does not, is `docs/STABILITY.md` (held to `cli.ts` and the
 config loader by `TY13`/`TY14`), and what changed for an author coming from
 0.16.0 is `docs/MIGRATION.md`.
 
