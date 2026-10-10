@@ -571,7 +571,15 @@ held to it whole before any removal. `acceptedAt` records accepted operations on
   error rig-c measured, and loose on scale and multi-bone chains (rig-c measured 0.26–0.72 of
   the posed error there, 1.000 on a pure rotation).
 - **The envelope is derived, never written** (`src/autoenvelope.ts`). The reference is the
-  slot's bone (`segments[0]`'s). For every other bone the part's source weights bind, rig-c's
+  lowest common ancestor of the slot's bone (`segments[0]`'s) and every bone the part's source
+  weights bind — the deepest bone on all their ancestries, read off the rig as written (#165).
+  When every bound bone hangs below the slot's bone that is the slot's bone itself, and the
+  envelope is the one derived before #165, byte for byte. When a bound bone hangs in a sibling
+  subtree — a skirt link beside the chest, the hip above it — the reference is the bone they
+  share, and the slot's bone is sent as one more bone, with its own range, **only when the
+  weights bind it**: rig-c's envelope holds every bone either mesh binds and no other, and
+  refuses one neither binds (`SKINNING_BONE_UNKNOWN`). The row's `reference` names the bone
+  used and its `rule` says which of the two cases it is. For every bone sent, rig-c's
   `skinningEnvelopeBone({ referenceChain, chain })` composes the chain from the root to the
   reference and from the reference's child down to the bone, each bone's range read off the
   idle this package writes: rotation and scale as the [min, max] of every key value and Bézier
@@ -584,9 +592,13 @@ held to it whole before any removal. `acceptedAt` records accepted operations on
   constraint's `bone`) is handed to rig-c with that kind as its source and refused by rig-c,
   `SKINNING_RANGE_UNSUPPORTED` in its words — rig-c certifies only ranges declared by keys and
   exposes no range read off a posed walk; a shear key (`ENVELOPE_SHEAR_KEYED`: rig-c's range has
-  no shear field); a bound bone that does not hang below the slot's bone
-  (`ENVELOPE_BONE_NOT_BELOW_REFERENCE`: the helper composes no other chain); a slider in the rig
-  (`ENVELOPE_SLIDER_UNREAD`: it drives an animation's bones, which are not read).
+  no shear field); a slider in the rig (`ENVELOPE_SLIDER_UNREAD`: it drives an animation's bones,
+  which are not read). `ENVELOPE_BONE_NOT_BELOW_REFERENCE` — a bound bone with no chain to the
+  reference, which the helper cannot compose — keeps its name and its check, and is
+  **unreachable by construction** since #165: a common ancestor is above every bound bone, and
+  in one skeleton (one root) a common ancestor always exists. It would fire only on a bone
+  list with two roots, which is not a skeleton; the selftest plants that case so the check is
+  seen to fire.
 - **The bound is the author's** number, 0 or more, never defaulted. The tracked evidence uses 1,
   the policy's motion bound: the residual bounds the same displacement the motion row measures,
   without posing, so the distance already accepted for the posed reading is its first reading.

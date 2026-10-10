@@ -19,18 +19,34 @@
  *
  * ## The terms
  *
- * - **The reference** is the slot's bone (Q4): the bone the rig stage writes
- *   on the part's slot, `segments[0]`'s bone.
+ * - **The reference** (issue #165) is the lowest common ancestor of the
+ *   slot's bone — the bone the rig stage writes on the part's slot,
+ *   `segments[0]`'s — and every bone the part's source weights bind: the
+ *   deepest bone on every one of their ancestries ({@link lowestCommonAncestor},
+ *   {@link slotEnvelope}). When every bound bone hangs below the slot's bone
+ *   that is the slot's bone itself (Q4), and the derivation is the one this
+ *   module made before #165, call for call. When a bound bone hangs in a
+ *   sibling subtree (a skirt link beside the chest) the reference is the bone
+ *   they share — read off the rig as written, never chosen.
  * - **The bones** are every bone the part's source weights bind, other than
  *   the reference, sorted — "every bone either mesh binds, other than
  *   `reference`, once each"; a reduced mesh binds no bone its source does not
- *   (survivors keep their shares, an insertion interpolates them).
+ *   (survivors keep their shares, an insertion interpolates them). The slot's
+ *   bone is one of them exactly when it is not the reference and the weights
+ *   bind it; when they do not, it is not sent (rig-c refuses a bone the
+ *   meshes do not bind, `SKINNING_BONE_UNKNOWN`).
  * - **The chains**: `referenceChain` is the rig's ancestry from the root down
  *   to the reference; `chain` from the reference's child down to the bone,
  *   parents first — read off the rig's bones as written, controls included.
- *   A bound bone that is not below the reference has no such chain, and the
- *   helper composes no other: the part's residual is not measurable, naming
- *   the bone (`ENVELOPE_BONE_NOT_BELOW_REFERENCE`).
+ *   Against a common ancestor every bound bone has such a chain. The check
+ *   stays in {@link deriveEnvelope}, which takes any reference: a bound bone
+ *   that is not below the reference it is handed has no chain the helper
+ *   composes, and the part's residual is not measurable, naming the bone
+ *   (`ENVELOPE_BONE_NOT_BELOW_REFERENCE`). Inside one skeleton — one root —
+ *   {@link slotEnvelope} never hands it such a reference, so the stop cannot
+ *   fire there; it fires only on a bone list with two roots, which is not a
+ *   skeleton, where no common ancestor exists and the slot's bone is kept as
+ *   the reference so that every bone with no chain to it is named.
  * - **Each bone's range** (`BoneMotionRange`) from the idle's tracks that key
  *   it — its own track or a group's that names it: `rotate` the [min, max]
  *   of every key value and every Bézier control value (a cubic Bézier lies
@@ -158,9 +174,10 @@ export function boneRange(basis: EnvelopeBasis, bone: string, origin: readonly [
 }
 
 /**
- * The envelope of one part (module header): `reference` the slot's bone, `bound` the bones its source weights bind,
- * `origin` the part's padded origin in crop px (the drawing frame's (0, 0)). Every bone is tried, so one derivation
- * names every stop.
+ * The envelope of one part against a given `reference` (module header; the rig stage hands it the common ancestor,
+ * {@link slotEnvelope}), `bound` the bones its source weights bind, `origin` the part's padded origin in crop px (the
+ * drawing frame's (0, 0)). Every bone is tried, so one derivation names every stop; a bound bone not below `reference`
+ * is one (`ENVELOPE_BONE_NOT_BELOW_REFERENCE`).
  */
 export function deriveEnvelope(basis: EnvelopeBasis, reference: string, bound: readonly string[], origin: readonly [number, number]): EnvelopeDerivation {
   const stops: EnvelopeStop[] = [];
@@ -219,17 +236,97 @@ export function deriveEnvelope(basis: EnvelopeBasis, reference: string, bound: r
   return { envelope: { reference, bones: entries } };
 }
 
+/** A bone as the reference's derivation reads it: a name and its parent. */
+export interface TreeBone {
+  name: string;
+  parent?: string | null;
+}
+
+/** The bone's ancestry from its root down to the bone, or null when the list does not hold it (or its parents loop). */
+export function ancestry(bones: readonly TreeBone[], name: string): string[] | null {
+  const parent = new Map(bones.map((b) => [b.name, b.parent ?? null]));
+  if (!parent.has(name)) return null;
+  const up: string[] = [];
+  const seen = new Set<string>();
+  for (let b: string | null = name; b !== null; b = parent.get(b) ?? null) {
+    if (seen.has(b)) return null;
+    seen.add(b);
+    up.push(b);
+  }
+  return up.reverse();
+}
+
+/**
+ * The lowest common ancestor of the slot's bone and every bound bone the list holds (issue #165): the deepest bone on
+ * every one of their ancestries. In one skeleton every ancestry starts at the one root, so it always exists; a list
+ * with two roots (a degenerate input, not a skeleton) has none, and the bone that shares no ancestor with the slot's
+ * bone is named under `ENVELOPE_BONE_NOT_BELOW_REFERENCE`, the stop {@link deriveEnvelope} gives a bone with no chain
+ * to the reference. A bound bone the list does not hold is left to {@link deriveEnvelope}, which names it; an unknown
+ * slot's bone stops by its name. Measured first in Stage A (`tools/auto_envelope_survey.ts`, which reads this one).
+ */
+export function lowestCommonAncestor(bones: readonly TreeBone[], slot: string, bound: readonly string[]): { reference: string } | { stop: EnvelopeStop } {
+  const own = ancestry(bones, slot);
+  if (own === null) return { stop: { bone: slot, code: 'ENVELOPE_BONE_UNKNOWN', detail: `the slot's bone "${slot}" is not a bone of the rig` } };
+  let common = own;
+  for (const b of [...new Set(bound)].sort()) {
+    const up = ancestry(bones, b);
+    if (up === null) continue;
+    let k = 0;
+    while (k < common.length && k < up.length && common[k] === up[k]) k++;
+    if (k === 0) {
+      return {
+        stop: {
+          bone: b,
+          code: 'ENVELOPE_BONE_NOT_BELOW_REFERENCE',
+          detail: `the part's weights bind "${b}", which shares no ancestor with the slot's bone "${slot}" (its ancestry: ${up.join(' > ')}; the slot's: ${own.join(' > ')}); one skeleton has one root, so this bone list is not one skeleton and no reference is derived`,
+        },
+      };
+    }
+    common = common.slice(0, k);
+  }
+  return { reference: common[common.length - 1] };
+}
+
+/** The envelope of one part as the rig stage derives it: the reference it was derived against, and the derivation. */
+export interface SlotEnvelope {
+  reference: string;
+  derivation: EnvelopeDerivation;
+}
+
+/**
+ * The envelope of one part (module header, issue #165): `slot` the slot's bone, `bound` the bones its source weights
+ * bind, `origin` the part's padded origin in crop px. The reference is {@link lowestCommonAncestor}; the bound bones
+ * are handed to {@link deriveEnvelope} as they are, so the slot's bone enters with its own range exactly when the
+ * weights bind it and it is not the reference, and is not sent otherwise. When the reference is the slot's bone this
+ * is `deriveEnvelope(basis, slot, bound, origin)`, the call made before #165. Where no common ancestor exists — an
+ * unknown slot's bone, or a bone list with two roots, neither a skeleton the rig stage writes — the slot's bone is
+ * kept as the reference and {@link deriveEnvelope} names every bone with no chain to it: no reference is invented.
+ */
+export function slotEnvelope(basis: EnvelopeBasis, slot: string, bound: readonly string[], origin: readonly [number, number]): SlotEnvelope {
+  const lca = lowestCommonAncestor(basis.bones, slot, bound);
+  const reference = 'reference' in lca ? lca.reference : slot;
+  return { reference, derivation: deriveEnvelope(basis, reference, bound, origin) };
+}
+
 /** The reduction input with `targets.skinning` on it — the envelope and the author's bound — or unchanged when nothing is sent. */
 export function withSkinning(input: MeshReductionInput, d: EnvelopeDerivation | null, maxResidual: number | undefined): MeshReductionInput {
   if (d === null || maxResidual === undefined || !('envelope' in d)) return input;
   return { ...input, targets: { ...input.targets, skinning: { envelope: d.envelope, maxResidual } } };
 }
 
-/** What the row and the build line say the residual is, in so many words. */
-export const RESIDUAL_RULE =
-  "MQ_SKINNING_RESIDUAL (rig-c 2.31.0, rigc#1295): every removal, boundary run and post-pass of the reduction is held to it against the original source, under the envelope derived from the idle with the slot's bone as reference; " +
+const RULE_TAIL =
   'a pose-free bound on how far the candidate draws a UV from where the source draws it, under that envelope only — it certifies no orientation, stretch or squash, and it is not the motion verdict: the motion comparison still runs and decides; ' +
   "rig-c's report does not count the steps the veto refused (tools/veto_tally.ts counts them)";
+
+/** What the row and the build line say the residual is, in so many words — on a part whose reference is the slot's bone. */
+export const RESIDUAL_RULE =
+  "MQ_SKINNING_RESIDUAL (rig-c 2.31.0, rigc#1295): every removal, boundary run and post-pass of the reduction is held to it against the original source, under the envelope derived from the idle with the slot's bone as reference; " +
+  RULE_TAIL;
+
+/** The same, on a part whose reference is not the slot's bone (issue #165): the row's `reference` names the ancestor. */
+export const RESIDUAL_RULE_COMMON_ANCESTOR =
+  "MQ_SKINNING_RESIDUAL (rig-c 2.31.0, rigc#1295): every removal, boundary run and post-pass of the reduction is held to it against the original source, under the envelope derived from the idle with the lowest common ancestor of the slot's bone and every bound bone as reference (issue #165), the slot's bone sent as a bone when the weights bind it; " +
+  RULE_TAIL;
 
 /** The written mesh's `MQ_SKINNING_RESIDUAL` as its own measurement reports it. */
 export interface ResidualReading {
@@ -250,6 +347,7 @@ export interface ResidualRow {
   max_residual: number;
   /** Whether `targets.skinning` was sent — the veto applied. False exactly when the envelope stopped. */
   sent: boolean;
+  /** The bone the envelope was derived against: the slot's bone, or the lowest common ancestor of it and every bound bone (issue #165). */
   reference: string;
   /** The envelope sent, per bone `linear` (dimensionless), `pivot` and `translation` (drawing px); null when nothing was sent. */
   envelope: SkinningEnvelopeBone[] | null;
@@ -259,9 +357,14 @@ export interface ResidualRow {
   measured: ResidualReading | null;
 }
 
-/** The row for one written mesh: the derivation, and the residual row of the report that mesh came with. */
-export function residualRow(maxResidual: number, reference: string, d: EnvelopeDerivation, report: MeshQualityReport): ResidualRow {
-  if (!('envelope' in d)) return { rule: RESIDUAL_RULE, max_residual: maxResidual, sent: false, reference, envelope: null, stops: d.stops, measured: null };
+/**
+ * The row for one written mesh: the derivation, and the residual row of the report that mesh came with. `slot` is the
+ * slot's bone when the caller knows it: a `reference` other than it is the common ancestor, and the row's `rule` says
+ * so; left out, or equal, the rule is the slot's-bone rule the row has always carried.
+ */
+export function residualRow(maxResidual: number, reference: string, d: EnvelopeDerivation, report: MeshQualityReport, slot?: string): ResidualRow {
+  const rule = slot === undefined || slot === reference ? RESIDUAL_RULE : RESIDUAL_RULE_COMMON_ANCESTOR;
+  if (!('envelope' in d)) return { rule, max_residual: maxResidual, sent: false, reference, envelope: null, stops: d.stops, measured: null };
   const r = (report.candidates[0]?.geometry?.rows ?? []).find((x) => x.code === 'MQ_SKINNING_RESIDUAL' && x.object.region === null);
   const at = r?.worst?.at;
   const sk = r?.skinning;
@@ -277,7 +380,7 @@ export function residualRow(maxResidual: number, reference: string, d: EnvelopeD
           reason: r.reason,
         };
   return {
-    rule: RESIDUAL_RULE,
+    rule,
     max_residual: maxResidual,
     sent: true,
     reference,

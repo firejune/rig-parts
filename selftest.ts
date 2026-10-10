@@ -218,7 +218,7 @@ import {
   splitSchedule,
 } from './src/autoreplay.ts';
 import { type AmplitudeDerivation, deriveMotionAmplitude, trackTheta } from './src/autoamplitude.ts';
-import { deriveEnvelope, type EnvelopeBasis, type EnvelopeDerivation, RESIDUAL_RULE, residualClause, type ResidualRow, residualRow, withSkinning } from './src/autoenvelope.ts';
+import { ancestry, deriveEnvelope, type EnvelopeBasis, type EnvelopeDerivation, RESIDUAL_RULE, RESIDUAL_RULE_COMMON_ANCESTOR, residualClause, type ResidualRow, residualRow, slotEnvelope, withSkinning } from './src/autoenvelope.ts';
 import { type VetoTally, vetoTally } from './tools/veto_tally.ts';
 import { commonSurvivors, densitySquare, pruneShares, weightDiff } from './tools/auto_density_survey.ts';
 import { comparisonInputRefusal, digestDifferences, inputDigest, inputDigestDeep, jsonDifferences, type LadderRow, ladderInputMoved, ladderPlan, ladderPolicy, ladderSpecDifferences, overdraw, widenedPlan, overdrawText, parseArgs as parseSpacingArgs, pendingLadderRow, renderLadder, pendingRow as spacingPending, reproductionText, render as renderSpacing, spacingPolicy, spacingsFor, type SpacingRow, specDifferences, staticRefusal, summarise as spacingSummary } from './tools/auto_spacing_survey.ts';
@@ -18194,6 +18194,122 @@ function runAutoMeshSuite(): number {
   );
 
   // ---------------------------------------------------------------------------
+  // Issue #165 Stage B: the reference is the lowest common ancestor, in the package (src/autoenvelope.ts slotEnvelope;
+  // EB01-EB04 here on the EV fixture, EB05-EB06 at the rig stage in the auto-motion suite).
+  // ---------------------------------------------------------------------------
+
+  // EB01 — where every bound bone hangs below the slot's bone the LCA is the slot's bone and slotEnvelope is the call
+  // made before #165, deriveEnvelope(basis, slot, bound, origin), field for field: on chest + neck (neck unkeyed, so by
+  // hand ε 0, pivot (100, 50), τ 0), and on every slot of the EV tree with every set of bound bones drawn from its own
+  // subtree (the slot's bone in or out). Planted: a sibling-subtree bone (skirt_a) forced through the slot's bone as
+  // reference — the old call stops on it by ENVELOPE_BONE_NOT_BELOW_REFERENCE while slotEnvelope moves to hip and sends.
+  const subsetsEb = <T,>(xs: readonly T[]): T[][] => xs.reduce<T[][]>((acc, x) => [...acc, ...acc.map((s) => [...s, x])], [[]]);
+  const belowEb = (slot: string): string[] => treeEv.map((b) => b.name).filter((n) => (ancestry(treeEv, n) ?? []).includes(slot));
+  const neck01 = slotEnvelope(basisEv, 'chest', ['chest', 'neck'], [0, 0]);
+  const neckToday01 = deriveEnvelope(basisEv, 'chest', ['chest', 'neck'], [0, 0]);
+  const neckEnv01 = 'envelope' in neck01.derivation ? neck01.derivation.envelope : null;
+  let sameEb01 = 0;
+  let ofEb01 = 0;
+  for (const slot of treeEv.map((b) => b.name)) {
+    for (const bound of subsetsEb(belowEb(slot))) {
+      ofEb01++;
+      const got = slotEnvelope(basisEv, slot, bound, [3, 7]);
+      if (got.reference === slot && JSON.stringify(got.derivation) === JSON.stringify(deriveEnvelope(basisEv, slot, bound, [3, 7]))) sameEb01++;
+    }
+  }
+  const forced01 = deriveEnvelope(basisEv, 'chest', ['chest', 'neck', 'skirt_a'], [0, 0]);
+  const movedEb01 = slotEnvelope(basisEv, 'chest', ['chest', 'neck', 'skirt_a'], [0, 0]);
+  say(
+    'EB01_WHERE_THE_LCA_IS_THE_SLOT_BONE_THE_DERIVATION_IS_THE_PRE_165_CALL_FIELD_FOR_FIELD_AND_A_SIBLING_BONE_FORCED_THROUGH_IT_STOPS',
+    neck01.reference === 'chest' && JSON.stringify(neck01.derivation) === JSON.stringify(neckToday01) &&
+      neckEnv01 !== null && neckEnv01.reference === 'chest' && neckEnv01.bones.length === 1 && neckEnv01.bones[0].bone === 'neck' && neckEnv01.bones[0].linear === 0 &&
+      neckEnv01.bones[0].pivot[0] === 100 && neckEnv01.bones[0].pivot[1] === 50 && neckEnv01.bones[0].translation === 0 &&
+      ofEb01 > 0 && sameEb01 === ofEb01 &&
+      'stops' in forced01 && JSON.stringify(forced01.stops.map((s) => [s.bone, s.code])) === JSON.stringify([['skirt_a', 'ENVELOPE_BONE_NOT_BELOW_REFERENCE']]) &&
+      movedEb01.reference === 'hip' && 'envelope' in movedEb01.derivation,
+    `chest+neck: reference ${neck01.reference}, envelope ${JSON.stringify(neckEnv01)}, equal to the pre-#165 call ${JSON.stringify(neck01.derivation) === JSON.stringify(neckToday01)}; ${sameEb01} of ${ofEb01} (slot, bound-within-its-subtree) pairs identical; planted skirt_a through chest -> ${JSON.stringify('stops' in forced01 ? forced01.stops.map((s) => [s.bone, s.code]) : forced01)}, slotEnvelope -> ${movedEb01.reference}`,
+    "issue #165 Stage B item 1: the five public parts whose bound bones all hang below the slot's bone stay byte-identical; the derivation they get is the very call they got, so the pairs are compared whole, not a sample of fields",
+  );
+
+  // EB02 — the three public shapes in miniature (docs/evidence/auto-envelope-reference.md, §1), each by hand through
+  // rig-c's helper as in EV02 (every e = 1 except skirt_b's chain): the slot's bone chest throughout.
+  //   topwear  — bound {chest, hip}: the reference hip; sent chest (ε 1, pivot (100, 100), τ 0);
+  //   bottomwear — bound {chest, hip, skirt_a, skirt_b}: hip; sent chest, skirt_a (1, (100, 250), 40), skirt_b (3, (100, 300), 90);
+  //   the skirt alone — bound {chest, skirt_b}: hip; sent chest and skirt_b.
+  // The stop does not fire on any of them. Planted: the pre-#165 call (the slot's bone as reference) on the same three —
+  // each stops by ENVELOPE_BONE_NOT_BELOW_REFERENCE on exactly the bones not below chest, the tree where it used to fire.
+  type HandEb = Array<[string, number, [number, number], number]>;
+  const chestEb: [string, number, [number, number], number] = ['chest', 1, [100, 100], 0];
+  const shapesEb: Array<[string, string[], HandEb, string[]]> = [
+    ['topwear', ['chest', 'hip'], [chestEb], ['hip']],
+    ['bottomwear', ['chest', 'hip', 'skirt_a', 'skirt_b'], [chestEb, ['skirt_a', 1, [100, 250], 40], ['skirt_b', 3, [100, 300], 90]], ['hip', 'skirt_a', 'skirt_b']],
+    ['skirt alone', ['chest', 'skirt_b'], [chestEb, ['skirt_b', 3, [100, 300], 90]], ['skirt_b']],
+  ];
+  const matchesEb = (d: EnvelopeDerivation, want: HandEb): boolean =>
+    'envelope' in d && d.envelope.bones.length === want.length && want.every(([bone, eps, pivot, tau], i) => d.envelope.bones[i].bone === bone && near(d.envelope.bones[i].linear, eps) && d.envelope.bones[i].pivot[0] === pivot[0] && d.envelope.bones[i].pivot[1] === pivot[1] && near(d.envelope.bones[i].translation, tau));
+  const readEb02 = shapesEb.map(([name, bound, want, stopped]) => {
+    const got = slotEnvelope(basisEv, 'chest', bound, [0, 0]);
+    const old = deriveEnvelope(basisEv, 'chest', bound, [0, 0]);
+    const oldStops = 'stops' in old ? old.stops.map((s) => `${s.bone} ${s.code}`) : [];
+    return {
+      name,
+      ok: got.reference === 'hip' && 'envelope' in got.derivation && got.derivation.envelope.reference === 'hip' && matchesEb(got.derivation, want),
+      planted: JSON.stringify(oldStops) === JSON.stringify(stopped.map((b) => `${b} ENVELOPE_BONE_NOT_BELOW_REFERENCE`)),
+      text: `${name}: ${got.reference} ${JSON.stringify('envelope' in got.derivation ? got.derivation.envelope.bones.map((b) => [b.bone, b.linear, b.pivot, b.translation]) : got.derivation)}; pre-#165 stops ${oldStops.join(', ')}`,
+    };
+  });
+  say(
+    'EB02_THE_THREE_PUBLIC_SHAPES_IN_MINIATURE_SEND_THE_HAND_ENVELOPE_AGAINST_THE_LCA_WHERE_THE_SLOT_BONE_REFERENCE_STOPPED',
+    readEb02.every((r) => r.ok && r.planted),
+    readEb02.map((r) => r.text).join(' | '),
+    "issue #165 Stage B items 1 and 3: the reference moves to the bone the slot's bone and the skirt share, the slot's bone enters with its own range because the weights bind it, and the stop the card was about no longer fires on the shapes it fired on",
+  );
+
+  // EB03 — the slot's bone the weights do not bind (no public part has it): bound {skirt_a, skirt_b}, slot chest — the
+  // reference is still the LCA of all three, hip, and only skirt_a and skirt_b are sent (EV02's hand figures); chest is
+  // not, since rig-c refuses a bone neither mesh binds (EB05 measures that refusal). Planted: Stage A's tool derivation,
+  // which hands the slot's bone in always (tools/auto_envelope_survey.ts lcaEnvelope), sends chest as a fourth entry.
+  const unbound03 = slotEnvelope(basisEv, 'chest', ['skirt_a', 'skirt_b'], [0, 0]);
+  const stageA03 = lcaEnvelope(basisEv, 'chest', ['skirt_a', 'skirt_b'], [0, 0]);
+  say(
+    'EB03_A_SLOT_BONE_THE_WEIGHTS_DO_NOT_BIND_IS_NOT_SENT_AND_THE_BOUND_BONES_GO_AGAINST_THE_LCA',
+    unbound03.reference === 'hip' && matchesEb(unbound03.derivation, [['skirt_a', 1, [100, 250], 40], ['skirt_b', 3, [100, 300], 90]]) &&
+      stageA03.reference === 'hip' && 'envelope' in stageA03.derivation && stageA03.derivation.envelope.bones.map((b) => b.bone).join() === 'chest,skirt_a,skirt_b',
+    `unbound slot: ${unbound03.reference} ${JSON.stringify('envelope' in unbound03.derivation ? unbound03.derivation.envelope.bones.map((b) => b.bone) : unbound03.derivation)}; planted Stage A's always-handed slot -> ${JSON.stringify('envelope' in stageA03.derivation ? stageA03.derivation.envelope.bones.map((b) => b.bone) : stageA03.derivation)}`,
+    'issue #165 Stage B item 2: the slot\'s bone enters only when it is not the reference and the weights bind it; the envelope is "every bone either mesh binds", so an unbound one is not invented into it',
+  );
+
+  // EB04 — ENVELOPE_BONE_NOT_BELOW_REFERENCE cannot fire through slotEnvelope inside one skeleton: every slot of the EV
+  // tree with every set of bound bones (7 x 2^7 = 896 derivations) sends, against a reference that is on the ancestry of
+  // the slot's bone and of every bound bone. The check is alive: planted, deriveEnvelope handed a reference that is not
+  // an ancestor (neck, with chest bound) stops on chest by that name; and a bone list with a second root (cape) — not a
+  // skeleton — has no common ancestor, keeps the slot's bone as the reference and names cape by the same stop.
+  let sendsEb04 = 0;
+  let firedEb04 = 0;
+  let onAncestryEb04 = 0;
+  let ofEb04 = 0;
+  const namesEb = treeEv.map((b) => b.name);
+  for (const slot of namesEb) {
+    for (const bound of subsetsEb(namesEb)) {
+      ofEb04++;
+      const got = slotEnvelope(basisEv, slot, bound, [0, 0]);
+      if ('envelope' in got.derivation) sendsEb04++;
+      else if (got.derivation.stops.some((s) => s.code === 'ENVELOPE_BONE_NOT_BELOW_REFERENCE')) firedEb04++;
+      if ([slot, ...bound].every((b) => (ancestry(treeEv, b) ?? []).includes(got.reference))) onAncestryEb04++;
+    }
+  }
+  const alive04 = deriveEnvelope(basisEv, 'neck', ['chest', 'neck'], [0, 0]);
+  const forest04 = slotEnvelope({ ...basisEv, bones: [...treeEv, { name: 'cape' }] }, 'chest', ['chest', 'cape'], [0, 0]);
+  say(
+    'EB04_THE_STOP_CANNOT_FIRE_AGAINST_A_COMMON_ANCESTOR_IN_ONE_SKELETON_AND_IS_ALIVE_FOR_A_REFERENCE_THAT_IS_NOT_ONE',
+    ofEb04 === 896 && sendsEb04 === ofEb04 && firedEb04 === 0 && onAncestryEb04 === ofEb04 &&
+      'stops' in alive04 && JSON.stringify(alive04.stops.map((s) => [s.bone, s.code])) === JSON.stringify([['chest', 'ENVELOPE_BONE_NOT_BELOW_REFERENCE']]) &&
+      forest04.reference === 'chest' && 'stops' in forest04.derivation && JSON.stringify(forest04.derivation.stops.map((s) => [s.bone, s.code])) === JSON.stringify([['cape', 'ENVELOPE_BONE_NOT_BELOW_REFERENCE']]),
+    `${sendsEb04} of ${ofEb04} send, ${firedEb04} fire the stop, ${onAncestryEb04} with the reference on every ancestry; planted reference neck -> ${JSON.stringify('stops' in alive04 ? alive04.stops.map((s) => [s.bone, s.code]) : alive04)}; second root -> reference ${forest04.reference}, ${JSON.stringify('stops' in forest04.derivation ? forest04.derivation.stops.map((s) => [s.bone, s.code]) : forest04.derivation)}`,
+    'issue #165 Stage B item 3: the check and its name stay, documented as unreachable through the rig stage; a gate nobody has seen fail is not a gate, so the same check is made to fire where its premise is broken',
+  );
+
+  // ---------------------------------------------------------------------------
   // Issue #161 Stage A: tools/weight_rule_survey.ts's instruments (WX01-WX06), each on a hand-built input.
   // ---------------------------------------------------------------------------
 
@@ -20587,6 +20703,91 @@ function runAutoResidualCases(say: (name: string, ok: boolean, detail: string, w
       residualClause(stopRow) === '; residual not measurable: a X, b Y (veto not applied; the motion comparison decides)',
     [undefined, passRow, failRow, stopRow].map((r) => JSON.stringify(residualClause(r))).join(' | '),
     'the line is the UI: an agent reading it learns the reading, its bound, and that it is not the motion verdict, or which bone left it unmeasured',
+  );
+
+  // EB05 (issue #165 Stage B item 2, at the rig stage) — the slot's bone the weights do not bind, its bound bones in a
+  // sibling subtree. The fixture's cloth hung on `eye` (root > body > eye) by a first segment far below the art
+  // (y 39, at least 19 px from every source vertex, where hem's segments are within 8) and capped at two influences, so
+  // every vertex keeps hem0 and hem1 and none keeps eye. The reference is the LCA of eye, hem0 and hem1: body. By hand
+  // through rig-c's definition (EV02's), e = 2 sin(θ/2) with θ the hull of each control's rotate keys, the links unkeyed
+  // and each control at its link's joint: hem0 — chain hem0_ctl > hem0, ε e0, pivot (14, 14) less the origin (6, 6),
+  // τ 0; hem1 — chain hem0_ctl > hem0 > hem1_ctl > hem1, ε (1 + e0)(1 + e1) − 1, pivot (16, 8), τ e0 · 8 (hem0_ctl
+  // turns hem1's joint, 8 px away). rig-c takes it (the reduction runs, MQ_SKINNING_RESIDUAL read), and the row says
+  // so: reference body, the common-ancestor rule, no stop. Planted: the slot's bone handed in anyway (the Stage A
+  // tool's rule) — rig-c ends the reduction invalid-input, SKINNING_BONE_UNKNOWN naming eye.
+  const sibling = (c: Record<string, unknown>, a: Record<string, unknown>): void => {
+    (c.meshes as Record<string, Record<string, unknown>>).cloth.segments = [['eye', [17, 39], [18, 39]], 'hem'];
+    (a.influences as Record<string, unknown>).maxInfluences = 2;
+  };
+  const sib05 = reductionOf(withResidual({ maxResidual: 1 }, sibling));
+  const sibRig = buildRig(parseConfig(withResidual({ maxResidual: 1 }, sibling)), rigParts(), rigImages());
+  const sibRow = sib05.row?.skinning_residual;
+  const sibSent = skinningOf(sib05.input);
+  const sibBound = [...new Set((sib05.input?.source.weights ?? []).flatMap((v) => v.map((e) => e.bone)))].sort();
+  const e0 = 2 * Math.sin((hullTheta(sibRig.motion, 'hem0_ctl') * Math.PI) / 360);
+  const e1 = 2 * Math.sin((hullTheta(sibRig.motion, 'hem1_ctl') * Math.PI) / 360);
+  const hand05: Array<[string, number, [number, number], number]> = [
+    ['hem0', e0, [14 - origin[0], 14 - origin[1]], 0],
+    ['hem1', (1 + e0) * (1 + e1) - 1, [22 - origin[0], 14 - origin[1]], e0 * 8],
+  ];
+  const sentBones = sibSent?.envelope.bones ?? [];
+  // The plant: the envelope sent, with the slot's bone appended as one more entry (no motion: linear 0, translation 0,
+  // its joint (17, 28) less the origin) — a bone neither mesh binds.
+  const handed05: EnvelopeDerivation | null = sibSent === null ? null : { envelope: { reference: 'body', bones: [...sentBones, { bone: 'eye', linear: 0, pivot: [17 - origin[0], 28 - origin[1]], translation: 0 }] } };
+  const refused05 = sib05.input === null || handed05 === null ? null : runReduction(AT, withSkinning(sib05.input, handed05, 1));
+  // rig-c does not throw on it: the reduction ends `invalid-input` with the code, and returns no mesh.
+  const plantEnd05 = refused05 === null || 'code' in refused05 ? null : (refused05.report.termination as { reason: string; code?: string; detail?: string });
+  say(
+    'EB05_AT_THE_STAGE_AN_UNBOUND_SLOT_BONE_IS_NOT_SENT_THE_SIBLING_BONES_GO_AGAINST_THE_LCA_RIG_C_TAKES_IT_AND_THE_ROW_SAYS_SO',
+    sib05.row !== undefined &&
+      sibBound.join() === 'hem0,hem1' &&
+      e0 > 0 &&
+      e1 > 0 &&
+      sibSent !== null &&
+      sibSent.envelope.reference === 'body' &&
+      sentBones.length === 2 &&
+      hand05.every(([bone, eps, pivot, tau], i) => sentBones[i].bone === bone && near(sentBones[i].linear, eps) && sentBones[i].pivot[0] === pivot[0] && sentBones[i].pivot[1] === pivot[1] && near(sentBones[i].translation, tau)) &&
+      sibRow !== undefined &&
+      sibRow.sent &&
+      sibRow.reference === 'body' &&
+      sibRow.rule === RESIDUAL_RULE_COMMON_ANCESTOR &&
+      sibRow.stops.length === 0 &&
+      JSON.stringify(sibRow.envelope) === JSON.stringify(sentBones) &&
+      sibRow.measured !== null &&
+      sibRow.measured.value !== null &&
+      plantEnd05 !== null &&
+      plantEnd05.reason === 'invalid-input' &&
+      plantEnd05.code === 'SKINNING_BONE_UNKNOWN' &&
+      (plantEnd05.detail ?? '').includes('"eye"'),
+    `bound ${sibBound.join(', ')}; e0 ${e0}, e1 ${e1}; by hand ${JSON.stringify(hand05)}; sent ${JSON.stringify(sibSent?.envelope)}; row reference ${sibRow?.reference}, sent ${sibRow?.sent}, stops ${JSON.stringify(sibRow?.stops)}, measured ${JSON.stringify(sibRow?.measured?.value)} ${sibRow?.measured?.state}; planted the slot's bone handed in -> ${refused05 === null ? 'no input' : 'code' in refused05 ? refused05.detail.slice(0, 220) : `rig-c ended ${JSON.stringify(refused05.report.termination).slice(0, 400)}`}`,
+    "HQ's Stage B item 2: no public part has an unbound slot's bone, so the fixture is the evidence that the rule sends the envelope rig-c's contract accepts — every bone either mesh binds and no other",
+  );
+
+  // EB06 (issue #165 Stage B item 1, at the rig stage) — where the LCA is the slot's bone (this fixture: hem0 binds with
+  // hem1 below it) the stage sends what the pre-#165 call derives and writes the row it always wrote: slotEnvelope ==
+  // deriveEnvelope(basis, hem0, …), the input's targets.skinning that envelope, the row's reference hem0 and its rule
+  // the slot's-bone rule, byte for byte. Planted: the same row built against another reference than the slot's bone
+  // carries the common-ancestor rule — so a row whose reference moved cannot keep the old words.
+  const slot06 = slotEnvelope(basis(), 'hem0', ['hem0', 'hem1'], origin);
+  const row06 = geo66.row?.skinning_residual;
+  const moved06 = stripped === null || !('envelope' in unit66) ? null : residualRow(1, 'body', unit66, stripped as MeshQualityReport, 'hem0');
+  const same06 = stripped === null || !('envelope' in unit66) ? null : residualRow(1, 'hem0', unit66, stripped as MeshQualityReport, 'hem0');
+  say(
+    'EB06_WHERE_THE_LCA_IS_THE_SLOT_BONE_THE_STAGE_SENDS_THE_PRE_165_ENVELOPE_AND_WRITES_THE_SLOT_BONE_RULE',
+    slot06.reference === 'hem0' &&
+      JSON.stringify(slot06.derivation) === JSON.stringify(unit66) &&
+      JSON.stringify(skinningOf(geo66.input)?.envelope) === JSON.stringify('envelope' in unit66 ? unit66.envelope : null) &&
+      row06 !== undefined &&
+      row06.reference === 'hem0' &&
+      row06.rule === RESIDUAL_RULE &&
+      same06 !== null &&
+      same06.rule === RESIDUAL_RULE &&
+      JSON.stringify(same06) === JSON.stringify(absentRow) &&
+      moved06 !== null &&
+      moved06.rule === RESIDUAL_RULE_COMMON_ANCESTOR &&
+      RESIDUAL_RULE_COMMON_ANCESTOR !== RESIDUAL_RULE,
+    `slotEnvelope reference ${slot06.reference}, equal to the pre-#165 call ${JSON.stringify(slot06.derivation) === JSON.stringify(unit66)}; the stage's row reference ${row06?.reference}, rule is the slot's-bone rule ${row06?.rule === RESIDUAL_RULE}; the row with the slot named equal to the row without ${JSON.stringify(same06) === JSON.stringify(absentRow)}; planted reference body -> common-ancestor rule ${moved06?.rule === RESIDUAL_RULE_COMMON_ANCESTOR}`,
+    "issue #165 Stage B: the five public parts whose LCA is the slot's bone keep their bytes; the derivation and the row's words are the two places that could move them",
   );
 }
 
