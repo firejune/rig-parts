@@ -22,7 +22,9 @@
  *    reduction, every input from the config or from the source, as the
  *    contract types it (docs/MESH_REDUCTION.md §1): `art` the padded image's
  *    alpha at threshold 1 in the part-local frame with `pageScale` 1 (the
- *    rig's images are the drawing); `protect.hull` false unless the author
+ *    rig's images are the drawing) — under a declared `source.stray`, the
+ *    mask the source was traced from (`ContourMesh.mask`, the islands it left
+ *    out at alpha 0; issue #172), which the rig stage hands every reader; `protect.hull` false unless the author
  *    wrote true (P20); the region bones added to `protect.influences` (a
  *    density-only region names none and adds none, issue #155), so an
  *    inserted vertex never loses its region's share silently; `boneOrder` the

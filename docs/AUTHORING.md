@@ -343,7 +343,9 @@ holes), `grownPixels` (added by the margin), `pinchFilledPixels` (added by the p
 `grownHolePixels` (transparent pixels the grown silhouette encloses — a notch whose mouth grew
 shut))
 and, per region, the vertices its bone reaches (`g > 0`) and holds alone (`g = 1`).
-`art_coverage` is over all the part's art, stray islands included. A lattice mesh's row is
+`art_coverage` is over all the part's art, stray islands included (in the automatic mode it is
+not: there the islands `source.stray` leaves out are cleared from every reader's art, see
+`source.stray` below). A lattice mesh's row is
 unchanged.
 
 **Refusals** — every one names the part, the value found and the value required, and every
@@ -621,7 +623,7 @@ wall time goes to standard error, not into the table).
 | field | means |
 | --- | --- |
 | `source.tolerance`, `source.margin`, `source.spacing` | the contour mode's parameters for the source, px (margin 0, or 1 or more) |
-| `source.stray` | optional: as in the contour mode |
+| `source.stray` | optional: the largest island, in art pixels at alpha 1 and above, that may be left out, as in the contour mode (absent: none is; an island other than the largest above it is still `CONTOUR_ONE_ISLAND`). Unlike the contour mode, the islands left out are cleared from the art **every reader of the mesh takes** (issue #172): the reduction's `art` and its `sourceBounds`, the result's `targets.artFit`, `art_coverage`, and the motion gate's art bounds all read the mask the outline was traced from, so a part whose only extra islands are at or under the figure builds where it refused (`REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS`) before. What was cleared is named: the row's `stray_cleared` — `islands`, `pixels`, and `art_pixels` (the part's art at alpha 1 and above with those islands counted in), present whenever `stray` is declared (zeros when nothing was left out), absent otherwise — and the part's mesh line prints `stray cleared N island(s), P of A art px` when N is above 0. The image is not touched: `rig/images/<part>.png` is the part as assembled, so a cleared pixel the written mesh's triangles reach is still drawn and one outside them is not. That is the one answer every reader of the image gives: `check` reads `parts/<part>.png` as assembled, through the attachment's rest triangles (`CHECK_TIP_OVER_ROOT`, `CHECK_STILL_REGIONS_DARK`, a `seam` requirement's pairs) or composited flat against the render (`CHECK_SEAM_WITHIN_BAR`), and the runtime draws the rig's image through the same triangles; clearing the rig's image alone would make `check` count pixels the runtime no longer draws. On the public examples the declared crumbs carry alpha 24 or less (docs/evidence/production-trial-stray.md) |
 | `sourceBounds.{minCoverage, maxOvershoot, maxUndercut}` | what the source must already meet at alpha 1 and above: the share of art pixel centres covered (0..1), the furthest a covered pixel may sit outside the filled silhouette (px, or `null`), the furthest an uncovered art pixel may sit from the covered set (px, or `null`) |
 | `targets.artFit.{minCoverage, maxOvershoot, maxUndercut}` | the same three for the result |
 | `targets.maxBoundaryDeviation` | the largest Hausdorff distance between the result's outline and the source's, px |
@@ -761,7 +763,9 @@ them hold.
 
 **What it reports.** `mesh_report.json`'s row carries `mode: "auto"`, `settings` (every number
 the call saw, the threshold and the circle approximations included), `source` (the contour
-mesh's report and rig-c's counts of it), `result` (boundary and interior vertices,
+mesh's report and rig-c's counts of it), `stray_cleared` — only when `source.stray` is
+declared: the islands and pixels cleared from every reader's art, and the art pixels they were
+part of — `result` (boundary and interior vertices,
 triangles, bindings, vertices removed and inserted), every `residuals` row with its state, value
 and bound, `worst_residual` (the declared row nearest its bound, as the share of the bound used)
 and `worst_region`, the `termination` with its reason and `candidatesTried`, what the weights
