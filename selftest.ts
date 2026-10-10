@@ -16824,15 +16824,25 @@ function runAutoMeshSuite(): number {
   );
 
   // AM35 — the verdict classes: only rig-c's named P16 refinement stop is "stopped"; every other refusal keeps its code.
+  const g35 = geometryRow('tiny region, source spacing 14', STRIP_MASK, { ...syntheticPolicy(14), regions: [squareRegion(32, 24, 4, 2)] }, null, null, still);
+  const p16Detail = g35.verdict.kind === 'accepted' ? '' : g35.verdict.detail;
   const coarse = AUTO_CASES.find((c) => c.name === 'tiny region, coarse source');
-  const g35 = coarse === undefined ? null : geometryRow(coarse.name, coarse.mask, coarse.spec, null, null, still);
+  const g35c = coarse === undefined ? null : geometryRow(coarse.name, coarse.mask, coarse.spec, null, null, still);
   const zero = classify({ code: 'AUTO_MESH_ACCEPTED', object: 'x', detail: 'MQ_MAX_EDGE[soft] (the refinement found no point of edge 256-284 strictly between its ends inside region "soft" or its band)' });
   const other = classify({ code: 'AUTO_MESH_TERMINATION', object: 'x', detail: 'vertex 1 lies 9 px beyond region "soft"\'s 2 px band — P16' });
   say(
     'AM35_ONLY_RIG_CS_NAMED_REFINEMENT_STOP_IS_MARKED_STOPPED_AND_EVERY_OTHER_REFUSAL_KEEPS_ITS_CODE',
-    g35 !== null && g35.verdict.kind === 'blocked' && verdictText(g35.verdict) === "stopped by rig-c's refinement (P16)" && BLOCKED_LABEL === verdictText(g35.verdict) && zero.kind === 'refused' && other.kind === 'refused' && classify(null).kind === 'accepted',
-    `coarse source: ${g35 === null ? 'no case' : verdictText(g35.verdict)}; planted transition-0 stop -> ${verdictText(zero)}; planted P16 words under another code -> ${verdictText(other)}`,
-    'the brief: a row rig-c stops by name in its refinement (AUTO_MESH_ACCEPTED naming P16, an edge end beyond the band) is a limit of the installed rig-c, not a refusal on the part\'s merits, and is not pre-densified; option 1 shipped in 2.19.1 and this coarse strip still stops on 2.20.1, so its inputs stay in fixtures/automesh.ts and the row reruns unchanged',
+    g35.verdict.kind === 'blocked' &&
+      verdictText(g35.verdict) === "stopped by rig-c's refinement (P16)" &&
+      BLOCKED_LABEL === verdictText(g35.verdict) &&
+      !p16Detail.includes('MQ_DEGENERATE') &&
+      g35c !== null &&
+      g35c.verdict.kind === 'refused' &&
+      zero.kind === 'refused' &&
+      other.kind === 'refused' &&
+      classify(null).kind === 'accepted',
+    `source spacing 14: ${verdictText(g35.verdict)}, MQ_DEGENERATE named: ${p16Detail.includes('MQ_DEGENERATE')}; coarse source (spacing 12): ${g35c === null ? 'no case' : verdictText(g35c.verdict)}; planted transition-0 stop -> ${verdictText(zero)}; planted P16 words under another code -> ${verdictText(other)}`,
+    'the brief: a row rig-c stops by name in its refinement (AUTO_MESH_ACCEPTED naming P16, an edge end beyond the band) is a limit of the installed rig-c, not a refusal on the part\'s merits, and is not pre-densified. The positive case is the coarse strip\'s region on a source at spacing 14, which stops on P16 with no degenerate triangle. The coarse strip itself (spacing 12) stopped on P16 through 2.32.0 with 26 degenerate triangles behind the stop; rig-c 2.32.1 (rigc#1311) refuses the degenerate insertion by name before P16 is reached, an author action (move the region), so it is held here as refused',
   );
 
   // AM36 — the strict policy is #131's, unchanged; the permissive one differs in exactly the stated numbers.
