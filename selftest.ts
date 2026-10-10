@@ -243,6 +243,7 @@ import {
   type WeightedMesh,
 } from './tools/feature_contour_survey.ts';
 import { affineFit, boneHeat, capFloor, columnsOf, footprintRegion, HEAT as WX_HEAT, heatAt, heaviestOf, l1, lidReading, localOffset, nearestRank as wxNearestRank, skinPoint } from './tools/weight_rule_survey.ts';
+import { exampleTotals, figuresOf, gridFrame, policyEcho, TrialLedger, trialPolicy } from './tools/production_trial.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec, ConfigConstraint } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
@@ -18493,6 +18494,116 @@ function runAutoMeshSuite(): number {
       fitWx06.residual < 1e-9 && Math.abs(fitWx06.scale - 2) < 1e-9 && JSON.stringify(fitWx06.map([1, 1]).map((v) => Math.round(v * 1e9) / 1e9)) === JSON.stringify([3, -1]),
     `reading ${JSON.stringify(readWx06)}; planted no lid ${JSON.stringify(plantWx06)}; fit residual ${fitWx06.residual.toExponential(1)}, scale ${fitWx06.scale}`,
     'the footprint row on the page is read with #160\'s measure, |lid share − lid field|·|T|, and the export\'s bones reach the image through a fitted map whose residual the page prints; both are held to cases whose answers are written by hand',
+  );
+
+  // ---------------------------------------------------------------------------
+  // Issue #172 unit 1: tools/production_trial.ts's instruments (PD01-PD04), each on a hand-built input.
+  // ---------------------------------------------------------------------------
+
+  // PD01 — no authored count before the build: the ledger hands the tracked mesh out only for an example whose
+  // automatic build ran. Planted: the tracked mesh asked for first — refused by name, the loader never called; and an
+  // example built is not another example built.
+  const ledgerPd01 = new TrialLedger();
+  let calledPd01 = 0;
+  const loadPd01 = (): number => ++calledPd01;
+  const firstPd01 = ((): string => {
+    try {
+      ledgerPd01.read('demo', 'the tracked skeleton', loadPd01);
+      return 'read';
+    } catch (e) {
+      return (e as Error).message;
+    }
+  })();
+  ledgerPd01.built('demo');
+  const afterPd01 = ledgerPd01.read('demo', 'the tracked skeleton', loadPd01);
+  const otherPd01 = ((): string => {
+    try {
+      ledgerPd01.read('sample', 'the tracked skeleton', loadPd01);
+      return 'read';
+    } catch (e) {
+      return (e as Error).message;
+    }
+  })();
+  say(
+    'PD01_THE_TRACKED_MESH_IS_READ_ONLY_AFTER_ITS_EXAMPLES_AUTOMATIC_BUILD_AND_A_READ_BEFORE_IT_IS_REFUSED_BY_NAME',
+    firstPd01.startsWith('TRIAL_TRACKED_BEFORE_BUILD: demo') && afterPd01 === 1 && calledPd01 === 1 && otherPd01.startsWith('TRIAL_TRACKED_BEFORE_BUILD: sample'),
+    `before the build: ${firstPd01.slice(0, 120)}; after it: loader call ${afterPd01}; another example: ${otherPd01.slice(0, 60)}; loader called ${calledPd01} time(s)`,
+    'the trial reads no authored vertex count before a build: the tracked mesh is a comparison column, so the one door to it is shut until the automatic build of its example is on disk',
+  );
+
+  // PD02 — the declared policy echoed by the written row. The row is written by hand as the rig stage echoes the
+  // policy at spacing 12 (settings, the motion bound in `deformation.bounds`, the residual bound in
+  // `skinning_residual`). Planted: the declaration changed after the run (maxBoundaryDeviation 3), and a row with the
+  // residual's echo missing — each one difference, by path.
+  const declPd02 = trialPolicy(12);
+  const rowPd02: Record<string, unknown> = {
+    settings: {
+      threshold: 1,
+      source: { tolerance: 2, margin: 2, spacing: 12, stray: null },
+      sourceBounds: { minCoverage: 1, maxOvershoot: 5, maxUndercut: null },
+      targets: { artFit: { minCoverage: 1, maxOvershoot: 5, maxUndercut: 0 }, maxBoundaryDeviation: 2, minAngle: null },
+      influences: { maxInfluences: 4, minWeight: 0 },
+      budget: { maxCandidates: 5000 },
+      minArtSamples: 1,
+      boundaryRuns: { maxVertices: 8 },
+      retriangulate: 'delaunay',
+      removalOrder: 'deformation-load',
+    },
+    deformation: { bounds: { maxLocalDeformation: 1 } },
+    skinning_residual: { max_residual: 1 },
+  };
+  const echoPd02 = policyEcho(declPd02, rowPd02);
+  const movedPd02 = policyEcho({ ...declPd02, targets: { ...declPd02.targets, maxBoundaryDeviation: 3 } }, rowPd02);
+  const noResPd02 = policyEcho(declPd02, { ...rowPd02, skinning_residual: undefined });
+  say(
+    'PD02_THE_WRITTEN_ROW_ECHOES_THE_DECLARED_POLICY_AND_A_FIELD_CHANGED_AFTER_THE_RUN_IS_NAMED',
+    echoPd02.length === 0 &&
+      JSON.stringify(movedPd02) === JSON.stringify(['targets.maxBoundaryDeviation: declared 3, echoed 2']) &&
+      JSON.stringify(noResPd02) === JSON.stringify(['motion.residual.maxResidual: declared 1, echoed null']),
+    `as written: ${JSON.stringify(echoPd02)}; declaration moved: ${JSON.stringify(movedPd02)}; residual echo missing: ${JSON.stringify(noResPd02)}`,
+    'the page prints the policy once, before the results; every result row is held to it field by field, so a policy edited after the run cannot sit above rows it did not produce',
+  );
+
+  // PD03 — the per-example totals, summed by program. Tracked 10 + 20 + 30 = 60; automatic 4 + 20 (left on its tracked
+  // mesh) + 12 = 36; 2 of 3 switched. Planted: one part with no figure — the total is null, not a partial sum.
+  const setPd03 = (vs: Array<[string, 'auto' | 'tracked', number | null]>) => ({
+    stoppedAt: null,
+    problems: [],
+    wallS: 0,
+    parts: vs.map(([part, mode, v]) => ({ part, mode, figures: v === null ? null : { vertices: v, triangles: 0, bindings: 0 }, step: null, manual: null, fallback: null })),
+  });
+  const exPd03 = {
+    example: 'demo',
+    tracked: setPd03([['a', 'tracked', 10], ['b', 'tracked', 20], ['c', 'tracked', 30]]),
+    auto: setPd03([['a', 'auto', 4], ['b', 'tracked', 20], ['c', 'auto', 12]]),
+  };
+  const totPd03 = exampleTotals(exPd03);
+  const holePd03 = ((): ReturnType<typeof exampleTotals> | string => {
+    try {
+      return exampleTotals({ ...exPd03, auto: setPd03([['a', 'auto', 4], ['b', 'tracked', null], ['c', 'auto', 12]]) });
+    } catch (e) {
+      return `threw: ${(e as Error).message}`;
+    }
+  })();
+  say(
+    'PD03_THE_PER_EXAMPLE_TOTALS_ARE_THE_HAND_SUMS_AND_A_PART_WITH_NO_FIGURE_LEAVES_THE_TOTAL_EMPTY',
+    JSON.stringify(totPd03) === JSON.stringify({ tracked: 60, automatic: 36, switched: 2, parts: 3 }) && typeof holePd03 !== 'string' && holePd03.automatic === null && holePd03.tracked === 60,
+    `totals ${JSON.stringify(totPd03)}; one figure missing ${JSON.stringify(holePd03)}`,
+    'the page\'s per-example totals are computed from the rows, never typed; a total over a set that lacks a part would understate the set, so it is not printed',
+  );
+
+  // PD04 — the figures read off a Spine mesh, and the worst grid frame's index. A weighted mesh of three vertices
+  // binding 2, 1 and 3 bones: 3 vertices, 1 triangle, 6 bindings; the same three unweighted bind nothing. A grid frame id
+  // carries its time: idle@grid@1.5 at 12 fps is frame 18; an irr id, and a time off the grid, give no frame.
+  const uvsPd04 = [0, 0, 1, 0, 0, 1];
+  const wPd04 = figuresOf({ uvs: uvsPd04, triangles: [0, 1, 2], vertices: [2, 0, 0, 0, 0.5, 1, 0, 0, 0.5, 1, 0, 1, 0, 1, 3, 0, 0, 1, 0.2, 1, 0, 1, 0.3, 2, 0, 1, 0.5] });
+  const uPd04 = figuresOf({ uvs: uvsPd04, triangles: [0, 1, 2], vertices: [0, 0, 1, 0, 0, 1] });
+  const framesPd04 = [gridFrame('idle@grid@1.5', 12), gridFrame('idle@grid@0', 12), gridFrame('idle@irr@1.448497', 12), gridFrame('idle@grid@0.04', 12), gridFrame(null, 12)];
+  say(
+    'PD04_A_MESHS_VERTICES_TRIANGLES_AND_BINDINGS_ARE_THE_HAND_COUNTS_AND_ONLY_A_GRID_TIME_NAMES_A_FRAME',
+    JSON.stringify(wPd04) === JSON.stringify({ vertices: 3, triangles: 1, bindings: 6 }) && JSON.stringify(uPd04) === JSON.stringify({ vertices: 3, triangles: 1, bindings: 0 }) && JSON.stringify(framesPd04) === JSON.stringify([18, 0, null, null, null]),
+    `weighted ${JSON.stringify(wPd04)}; unweighted ${JSON.stringify(uPd04)}; frames ${JSON.stringify(framesPd04)}`,
+    'the V / T / B columns of both builds are read by one function off the packed skeleton JSON, so the tracked and the automatic counts are counted the same way; the posed frame is the comparison\'s own worst grid frame, never a nearby one',
   );
 
   return bad();
