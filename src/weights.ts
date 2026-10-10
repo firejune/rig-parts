@@ -7,9 +7,11 @@
  * one authored decision about a layer: which bones may pull it. The weights
  * then follow from the geometry and nothing else:
  *
- *     w = 1 / (d + r)^2          d = distance from the vertex to the segment
+ *     w = 1 / (d + r)^e          d = distance from the vertex to the segment
  *
- * per candidate; a bone named by two segments keeps the larger; the top
+ * per candidate, with `e` the mesh's declared `exponent` (issue #161) and 2 —
+ * {@link DISTANCE_EXPONENT}, the rule as it always was — where none is
+ * declared; a bone named by two segments keeps the larger; the top
  * {@link MAX_INFLUENCES} are kept, normalised, any below {@link MIN_WEIGHT}
  * dropped, the rest normalised again, rounded to 5 decimals, and the last
  * weight written as `1 - sum(others)` so every vertex sums to exactly 1 after
@@ -34,6 +36,16 @@ export const MAX_INFLUENCES = 4;
 
 /** A normalised weight under this is dropped before the final normalisation — the reference's `>= 0.03`. */
 export const MIN_WEIGHT = 0.03;
+
+/**
+ * The exponent of the distance rule where a mesh declares none: `1/(d + r)²`,
+ * the reference's rule. At this value the weight is computed as
+ * `(d + r) * (d + r)`, the reference's operations, and never through
+ * `Math.pow`, which the language does not promise to round as one multiply
+ * does — so a mesh that declares nothing, or declares 2, writes the bytes it
+ * always wrote.
+ */
+export const DISTANCE_EXPONENT = 2;
 
 export interface Segment {
   bone: string;
@@ -78,12 +90,18 @@ export interface InfluenceLimits {
 
 export const DEFAULT_LIMITS: InfluenceLimits = { maxInfluences: MAX_INFLUENCES, minWeight: MIN_WEIGHT };
 
-/** The influences on one vertex at `p` (rig pixels), before rounding. */
-export function influences(p: Point, segments: readonly Segment[], r: number, limits: InfluenceLimits = DEFAULT_LIMITS): Influence[] {
+/**
+ * The influences on one vertex at `p` (rig pixels), before rounding, under
+ * `w = 1/(d + r)^exponent`. The rig stage passes every mesh's exponent
+ * explicitly; the default is for readers of today's rule (the tools, the
+ * selftest's older controls).
+ */
+export function influences(p: Point, segments: readonly Segment[], r: number, limits: InfluenceLimits = DEFAULT_LIMITS, exponent: number = DISTANCE_EXPONENT): Influence[] {
   const agg = new Map<string, number>();
   for (const s of segments) {
     const d = segmentDistance(p, s.a, s.b);
-    const w = 1.0 / ((d + r) * (d + r));
+    // 2 is the reference's multiply, bit for bit (DISTANCE_EXPONENT); any other declared exponent is Math.pow.
+    const w = 1.0 / (exponent === DISTANCE_EXPONENT ? (d + r) * (d + r) : Math.pow(d + r, exponent));
     const was = agg.get(s.bone);
     agg.set(s.bone, was === undefined ? w : Math.max(was, w));
   }

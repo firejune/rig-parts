@@ -27,7 +27,8 @@
  *
  * ## The vertex's weights (see {@link localInfluences})
  *
- * With `S = influences(p, segments, r, limits)` — today's, unchanged. The
+ * With `S = influences(p, segments, r, limits, exponent)` — today's, under the
+ * mesh's declared exponent (issue #161; 2 where none is declared). The
  * cap and the floor are `limits`: `MAX_INFLUENCES` (4) and `MIN_WEIGHT`
  * (0.03) for the contour mode, the author's `influences` for the automatic
  * mode (issue #126, P19):
@@ -64,7 +65,7 @@
  */
 import type { Point } from './config.ts';
 import { GRID } from './contour.ts';
-import { DEFAULT_LIMITS, type Influence, influences, type InfluenceLimits, type Segment, segmentDistance } from './weights.ts';
+import { DEFAULT_LIMITS, DISTANCE_EXPONENT, type Influence, influences, type InfluenceLimits, type Segment, segmentDistance } from './weights.ts';
 
 /**
  * A region as the weights read it: rig px (or any frame, as long as the point
@@ -175,7 +176,14 @@ export interface LocalInfluence {
  * region, `S`'s own order; with a region, the region's bone first, then `S`'s
  * bones in `S`'s order.
  */
-export function localInfluences(p: Point, segments: readonly Segment[], r: number, regions: readonly WeightRegion[], limits: InfluenceLimits = DEFAULT_LIMITS): LocalInfluence | RegionOverlap {
+export function localInfluences(
+  p: Point,
+  segments: readonly Segment[],
+  r: number,
+  regions: readonly WeightRegion[],
+  limits: InfluenceLimits = DEFAULT_LIMITS,
+  exponent: number = DISTANCE_EXPONENT,
+): LocalInfluence | RegionOverlap {
   let region = -1;
   let g = 0;
   for (let k = 0; k < regions.length; k++) {
@@ -185,7 +193,7 @@ export function localInfluences(p: Point, segments: readonly Segment[], r: numbe
     region = k;
     g = gk;
   }
-  const S = influences(p, segments, r, limits);
+  const S = influences(p, segments, r, limits, exponent);
   if (region < 0) return { influences: S, region, g: 0 };
   const bone = regions[region].bone;
   if (g >= 1) return { influences: [{ bone, weight: 1 }], region, g };

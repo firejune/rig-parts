@@ -189,12 +189,16 @@ export interface LatticeMeshSpec {
   grid: number;
   r: number;
   segments: Segment[];
+  /** The distance rule's exponent, `w = 1/(d + r)^exponent`, above 0 (issue #161); absent is 2, the rule as it always was. */
+  exponent?: number;
 }
 
 export interface ContourMeshSpec {
   contour: ContourSpec;
   r: number;
   segments: Segment[];
+  /** The distance rule's exponent, `w = 1/(d + r)^exponent`, above 0 (issue #161); absent is 2, the rule as it always was. */
+  exponent?: number;
 }
 
 /**
@@ -246,6 +250,8 @@ export interface AutoMeshSpec {
   auto: AutoSpec;
   r: number;
   segments: Segment[];
+  /** The distance rule's exponent, `w = 1/(d + r)^exponent`, above 0 (issue #161); absent is 2, the rule as it always was. */
+  exponent?: number;
 }
 
 export interface AutoSpec {
@@ -1151,7 +1157,7 @@ function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
     const at = `config.meshes.${part}`;
     // The known keys keep their old order (grid, r, segments) with contour after them, and `r` and `segments` are
     // required in the place and words the object check uses, so a lattice mesh's refusals read as they did.
-    const m = c.object(at, spec, [], ['grid', 'r', 'segments', 'contour', 'auto']);
+    const m = c.object(at, spec, [], ['grid', 'r', 'segments', 'contour', 'auto', 'exponent']);
     if (m === null) continue;
     for (const key of ['r', 'segments']) if (!(key in m)) c.fail('CONFIG_FIELD_PRESENT', `${at}.${key}`, 'is absent and required');
     const modes = ['grid', 'contour', 'auto'].filter((k) => k in m);
@@ -1166,6 +1172,8 @@ function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
     if ('contour' in m) checkContour(c, `${at}.contour`, m.contour, bones);
     if ('auto' in m) checkAuto(c, `${at}.auto`, m.auto, bones);
     if ('r' in m) c.number(`${at}.r`, m.r, 'non-negative');
+    // issue #161: the distance rule's exponent, in every mode; absent is 2 (src/weights.ts), nothing is filled in here.
+    if ('exponent' in m) c.number(`${at}.exponent`, m.exponent, 'positive');
     if ('segments' in m && c.array(`${at}.segments`, m.segments, true)) {
       (m.segments as Json[]).forEach((s, i) => {
         const sp = `${at}.segments[${i}]`;
