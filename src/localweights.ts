@@ -171,7 +171,10 @@ export interface LocalInfluence {
 }
 
 /**
- * A vertex's weights under the mesh's regions (module header). Returns the
+ * A vertex's weights under the mesh's regions (module header). `shares`, when
+ * given, is `S` from another rule — bone heat's shares at the vertex
+ * (`src/heat.ts`, issue #161), already capped and floored by `limits` — and
+ * the regions apply to it exactly as to the distance rule's. Returns the
  * overlap instead when two regions both reach the vertex. Order: with no
  * region, `S`'s own order; with a region, the region's bone first, then `S`'s
  * bones in `S`'s order.
@@ -183,6 +186,7 @@ export function localInfluences(
   regions: readonly WeightRegion[],
   limits: InfluenceLimits = DEFAULT_LIMITS,
   exponent: number = DISTANCE_EXPONENT,
+  shares?: Influence[],
 ): LocalInfluence | RegionOverlap {
   let region = -1;
   let g = 0;
@@ -193,7 +197,7 @@ export function localInfluences(
     region = k;
     g = gk;
   }
-  const S = influences(p, segments, r, limits, exponent);
+  const S = shares ?? influences(p, segments, r, limits, exponent);
   if (region < 0) return { influences: S, region, g: 0 };
   const bone = regions[region].bone;
   if (g >= 1) return { influences: [{ bone, weight: 1 }], region, g };

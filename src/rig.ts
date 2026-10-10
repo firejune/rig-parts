@@ -81,7 +81,7 @@
  * touches the disk, and the same inputs give the same bytes (key order is the
  * order the objects are built in, and every number is rounded by `pyRound`).
  */
-import { type AutoSpec, type BoneEntry, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, ROOT_BONE, weightsABone } from './config.ts';
+import { type AutoSpec, type BoneEntry, type WeightRule, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, ROOT_BONE, weightsABone } from './config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import type { MeshCounts, MeshQualityReport, MeshReductionInput, MotionAmplitude, ReducedMesh, Termination } from 'rig-c/mesh';
@@ -115,7 +115,8 @@ import { BLINK, blinkHoldMisses, blinkSpan, CONTROL_SUFFIX, controlledBones, IDL
 import { PAINTING_RUN, type PartsFile, readFrom } from './parts.ts';
 import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
-import { DISTANCE_EXPONENT, type Influence, influences, type Segment } from './weights.ts';
+import { boneHeat, heatInfluences, heatRow, type HeatRow, latticeSilhouette, tracedSilhouette } from './heat.ts';
+import { DEFAULT_LIMITS, DISTANCE_EXPONENT, type Influence, influences, type Segment } from './weights.ts';
 
 /** Transparent pixels added round every part image — the reference's `PAD`. */
 export const PAD = 4;
@@ -358,6 +359,8 @@ export interface LatticeMeshReport {
   grid: number;
   /** The distance rule's exponent the mesh declared (issue #161); absent when it declared none and ran at 2. */
   exponent?: number;
+  /** Only under `rule: "heat"` (issue #161): the rule and the solve it ran. Absent otherwise, so a distance mesh writes the row it always wrote. */
+  heat?: HeatRow;
 }
 
 /**
@@ -382,6 +385,8 @@ export interface ContourMeshReport {
   params: { tolerance: number; margin: number; spacing: number; budget: number | null; stray: number | null };
   contour: ContourReport;
   regions: Array<{ name: string; bone: string; reached: number; whole: number }>;
+  /** Only under `rule: "heat"` (issue #161), as the lattice row's. */
+  heat?: HeatRow;
 }
 
 /** What a declared `source.stray` cleared from an automatic part's art (issue #172): islands, their pixels, and the art they were part of. */
@@ -489,6 +494,8 @@ export interface AutoMeshReport {
    * was not measured and passed is refused.
    */
   deformation: string | MotionDeformation;
+  /** Only under `rule: "heat"` (issue #161): the rule and the solve the source's weights came from. */
+  heat?: HeatRow;
   quality_report: unknown;
   motion_report?: unknown;
 }
@@ -868,6 +875,7 @@ export function buildRig(
     r: number,
     exponent: number | undefined,
     segs: Segment[],
+    rule: WeightRule,
     out: Problem[],
   ): { attachment: MeshAttachment; report: ContourMeshReport } | null => {
     const ox = p.x - PAD;
@@ -887,6 +895,13 @@ export function buildRig(
       out.push(...cm);
       return null;
     }
+    // issue #161: under rule "heat", the field over the silhouette the outline was traced from (art above 8, holes
+    // filled, grown by the margin), and every vertex's segment shares read off it instead of the distance rule.
+    const heat = rule === 'heat' ? boneHeat(`config.meshes.${p.name}`, tracedSilhouette(cm.mask, ART_ALPHA, spec.margin), segs, ox, oy) : null;
+    if (Array.isArray(heat)) {
+      out.push(...heat);
+      return null;
+    }
     const weights: WeightEntry[][] = [];
     const reached = regions.map(() => 0);
     const whole = regions.map(() => 0);
@@ -896,7 +911,7 @@ export function buildRig(
     cm.vertices.forEach(([vx, vy], vi) => {
       const wx = vx + ox;
       const wy = vy + oy;
-      const li = localInfluences([wx, wy], segs, r, regions, undefined, exponent ?? DISTANCE_EXPONENT);
+      const li = localInfluences([wx, wy], segs, r, regions, DEFAULT_LIMITS, exponent ?? DISTANCE_EXPONENT, heat === null ? undefined : heatInfluences(heat, [vx, vy], DEFAULT_LIMITS));
       if ('first' in li) {
         if (!overlapped) {
           out.push({
@@ -943,6 +958,7 @@ export function buildRig(
         params: { tolerance: spec.tolerance, margin: spec.margin, spacing: spec.spacing, budget: spec.budget ?? null, stray: spec.stray ?? null },
         contour: rep,
         regions: regions.map((rg, k) => ({ name: rg.name, bone: rg.bone, reached: reached[k], whole: whole[k] })),
+        ...(heat === null ? {} : { heat: heatRow(heat) }),
       },
     };
   };
@@ -969,6 +985,7 @@ export function buildRig(
     r: number,
     exponent: number | undefined,
     segs: Segment[],
+    rule: WeightRule,
     out: Problem[],
   ): { attachment: MeshAttachment; report: AutoMeshReport; motion: AutoMotionCase } | null => {
     const ox = p.x - PAD;
@@ -990,7 +1007,14 @@ export function buildRig(
     // `contourMesh` traced. Nothing left out, it is `mask` itself, so a part without stray reads what it always read.
     // The image written for the part is not touched (the reason is in docs/AUTHORING.md's `stray` row).
     const art = source.mask;
-    const sw = sourceWeights(source.vertices, ox, oy, segs, r, spec, exponent ?? DISTANCE_EXPONENT);
+    // issue #161: under rule "heat", the field over the silhouette the source was traced from (the same mask, at the
+    // automatic mode's alpha 1 and above, holes filled, grown by source.margin).
+    const heat = rule === 'heat' ? boneHeat(`config.meshes.${p.name}`, tracedSilhouette(art, AUTO_THRESHOLD - 1, spec.source.margin), segs, ox, oy) : null;
+    if (Array.isArray(heat)) {
+      out.push(...heat);
+      return null;
+    }
+    const sw = sourceWeights(source.vertices, ox, oy, segs, r, spec, exponent ?? DISTANCE_EXPONENT, heat);
     if ('overlap' in sw) {
       out.push({
         code: 'RIG_CONTOUR_REGIONS_OVERLAP',
@@ -1122,6 +1146,7 @@ export function buildRig(
           ...(residualSpec === undefined || envelope === null ? {} : { skinning_residual: residualRow(residualSpec.maxResidual, envelope.reference, envelope.derivation, report, segs[0].bone) }),
           termination: report.termination as Termination,
           weights: { sharesDroppedOnGrid: candidate.changes?.sharesDroppedOnGrid ?? 0, sharesPruned: candidate.changes?.sharesPruned ?? 0, droppedAtFivePlaces },
+          ...(heat === null ? {} : { heat: heatRow(heat) }),
           regions: regions.map((rg, k) => ({ name: rg.name, bone: weightsABone(rg) ? rg.bone : null, reached: reached[k], whole: whole[k], bound_in_result: boundTo[k] })),
           deformation: DEFORMATION_UNMEASURED,
           quality_report: qualityDocument(report),
@@ -1194,7 +1219,7 @@ export function buildRig(
     }
     const segs = meshSegments.get(p.name) as Segment[];
     if ('auto' in mesh) {
-      const row = autoAttachment(p, img, file, mesh.auto, mesh.r, mesh.exponent, segs, problems);
+      const row = autoAttachment(p, img, file, mesh.auto, mesh.r, mesh.exponent, segs, mesh.rule ?? 'distance', problems);
       if (row === null) continue;
       skin[p.name] = { [p.name]: row.attachment };
       slots.push({ name: p.name, bone: segs[0].bone, attachment: p.name });
@@ -1203,7 +1228,7 @@ export function buildRig(
       continue;
     }
     if ('contour' in mesh) {
-      const row = contourAttachment(p, img, file, mesh.contour, mesh.r, mesh.exponent, segs, problems);
+      const row = contourAttachment(p, img, file, mesh.contour, mesh.r, mesh.exponent, segs, mesh.rule ?? 'distance', problems);
       if (row === null) continue;
       skin[p.name] = { [p.name]: row.attachment };
       slots.push({ name: p.name, bone: segs[0].bone, attachment: p.name });
@@ -1219,6 +1244,12 @@ export function buildRig(
     loopPasses[p.name] = lm.passes;
     const ox = p.x - PAD;
     const oy = p.y - PAD;
+    // issue #161: under rule "heat", the field over the lattice's art (alpha above 8) with its holes filled.
+    const heat = mesh.rule === 'heat' ? boneHeat(`config.meshes.${p.name}`, latticeSilhouette(art), segs, ox, oy) : null;
+    if (Array.isArray(heat)) {
+      problems.push(...heat);
+      continue;
+    }
     const w = img.width;
     const h = img.height;
     const weights: WeightEntry[][] = [];
@@ -1227,7 +1258,7 @@ export function buildRig(
     for (const [vx0, vy0] of lm.vertices) {
       const wx = vx0 + ox;
       const wy = vy0 + oy;
-      const ent: WeightEntry[] = influences([wx, wy], segs, mesh.r, undefined, mesh.exponent ?? DISTANCE_EXPONENT).map(({ bone, weight }) => {
+      const ent: WeightEntry[] = (heat === null ? influences([wx, wy], segs, mesh.r, undefined, mesh.exponent ?? DISTANCE_EXPONENT) : heatInfluences(heat, [vx0, vy0], DEFAULT_LIMITS)).map(({ bone, weight }) => {
         const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
         return { bone, x: places(x), y: places(y), weight: pyRound(weight, 5) };
       });
@@ -1253,6 +1284,7 @@ export function buildRig(
       art_coverage: pyRound(artCoverage(lm, art), 5),
       grid: mesh.grid,
       ...(mesh.exponent === undefined ? {} : { exponent: mesh.exponent }),
+      ...(heat === null ? {} : { heat: heatRow(heat) }),
     });
   }
   refuseIfAny(problems);

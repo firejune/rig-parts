@@ -105,7 +105,16 @@ export function influences(p: Point, segments: readonly Segment[], r: number, li
     const was = agg.get(s.bone);
     agg.set(s.bone, was === undefined ? w : Math.max(was, w));
   }
-  const top = [...agg.entries()].sort((x, y) => y[1] - x[1]).slice(0, limits.maxInfluences);
+  return capAndFloor([...agg.entries()], limits);
+}
+
+/**
+ * The cap and the floor, on raw per-bone values in first-appearance order: sorted (stable), the top
+ * `maxInfluences` normalised, those under `minWeight` dropped, the rest normalised again. The distance rule
+ * above and bone heat (`src/heat.ts`, issue #161) both end here, so the two rules share one cap and one floor.
+ */
+export function capAndFloor(raw: ReadonlyArray<readonly [string, number]>, limits: InfluenceLimits): Influence[] {
+  const top = [...raw].sort((x, y) => y[1] - x[1]).slice(0, limits.maxInfluences);
   let s = 0;
   for (const [, v] of top) s += v;
   const kept = top.map(([bone, v]) => ({ bone, weight: v / s })).filter((e) => e.weight >= limits.minWeight);

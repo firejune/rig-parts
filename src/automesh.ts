@@ -85,6 +85,7 @@ import {
 } from 'rig-c/mesh';
 import { type AutoRegionSpec, type AutoSpec, type AutoWeightRegionSpec, type Point, weightsABone } from './config.ts';
 import { type ContourMesh, contourMesh, type ContourReport, GRID } from './contour.ts';
+import { type HeatField, heatInfluences } from './heat.ts';
 import type { Problem } from './errors.ts';
 import { type LocalInfluence, localInfluences, type RegionOverlap } from './localweights.ts';
 import { ART_ALPHA } from './mesh.ts';
@@ -186,7 +187,8 @@ export function autoSource(part: string, mask: AlphaMask, spec: AutoSpec): Conto
  * inside it is weighted as one no region reaches, it can never be one of an overlap's two, and the weights are
  * the same numbers the part has with the region left out. Region indices in the result (`local[].region`, the
  * overlap's `first` and `second`) are indices into `spec.regions`, every form counted. `exponent` is the mesh's
- * distance-rule exponent (issue #161), which the rig stage always passes.
+ * distance-rule exponent (issue #161), which the rig stage always passes. With `heat` (issue #161,
+ * `rule: "heat"`), each vertex's segment shares are bone heat's at its pixel, under the author's influence limits.
  */
 export function sourceWeights(
   vertices: ReadonlyArray<readonly [number, number]>,
@@ -196,6 +198,7 @@ export function sourceWeights(
   r: number,
   spec: AutoSpec,
   exponent: number = DISTANCE_EXPONENT,
+  heat: HeatField | null = null,
 ): { weights: Influence[][]; local: LocalInfluence[] } | { overlap: RegionOverlap; vertex: number; at: Point } {
   const all = spec.regions ?? [];
   const index: number[] = [];
@@ -209,7 +212,7 @@ export function sourceWeights(
   const local: LocalInfluence[] = [];
   for (let v = 0; v < vertices.length; v++) {
     const at: Point = [vertices[v][0] + ox, vertices[v][1] + oy];
-    const li = localInfluences(at, segs, r, regions, spec.influences, exponent);
+    const li = localInfluences(at, segs, r, regions, spec.influences, exponent, heat === null ? undefined : heatInfluences(heat, [vertices[v][0], vertices[v][1]], spec.influences));
     if ('first' in li) return { overlap: { ...li, first: index[li.first], second: index[li.second] }, vertex: v, at };
     weights.push(li.influences.map((e) => ({ bone: e.bone, weight: e.weight })));
     local.push(li.region < 0 ? li : { ...li, region: index[li.region] });

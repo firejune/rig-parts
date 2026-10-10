@@ -336,3 +336,51 @@ export function lashConfig(still = true): Record<string, unknown> {
     motion: { duration: 4, tracks: [{ bone: 'head', prop: 'rotate', amp: 2, period: 4, phase: 0 }], blink },
   };
 }
+
+/**
+ * The bone-heat strip (issue #161): the rig fixture with `cloth`'s segments
+ * replaced by two vertical lines through the centres of its first and last
+ * art columns, so the heat equilibrium is a 1-D one whose answer is linear.
+ *
+ * ## The field, by hand
+ *
+ * The padded `cloth` image's art is columns 4..19, rows 4..11 (16x8 = 128
+ * px, one island, no hole); its top-left is rig (6, 6). Column 4's centres
+ * are image x 4.5 = rig 10.5 and column 19's are image 19.5 = rig 25.5;
+ * rows 4..11's centres are rig 10.5..17.5. So `hem0`'s segment
+ * (10.5, 10.5)->(10.5, 17.5) passes through every centre of column 4 and
+ * `hem1`'s through every centre of column 19: **8 source pixels each**.
+ * Column 5's centres lie 1 px from `hem0`'s segment, past the 0.75 px band,
+ * so no other pixel is a source. With 0 and 1 held on the two end columns,
+ * no flux through the top and bottom rows and each free pixel the mean of
+ * its neighbours, the solution is constant down a column and linear across:
+ * `hem1`'s field at column c is **(c − 4) / 15**, `hem0`'s 1 − that.
+ *
+ * ## Two vertices, by hand
+ *
+ * A lattice vertex sits on a pixel corner, touching four pixels whose
+ * centres are equally near it; the first in raster order is the one up and
+ * to the left. The vertex at padded (8, 8) (uv 0.333333, 0.5) reads column
+ * 7: hem1 3/15 = **0.2**, hem0 **0.8**. The vertex at padded (16, 8)
+ * (uv 0.666667, 0.5) reads column 15: hem1 11/15 = 0.733333..., written
+ * **0.73333**, and hem0 **1 − 0.73333 = 0.26667**, heaviest first.
+ */
+export const HEAT_STRIP_SEGMENTS = [
+  ['hem0', [10.5, 10.5], [10.5, 17.5]],
+  ['hem1', [25.5, 10.5], [25.5, 17.5]],
+] as const;
+
+export const HEAT_STRIP_EXPECT = {
+  sources: 8,
+  at: [
+    { uv: [0.333333, 0.5], weights: [['hem0', 0.8], ['hem1', 0.2]] },
+    { uv: [0.666667, 0.5], weights: [['hem1', 0.73333], ['hem0', 0.26667]] },
+  ],
+} as const;
+
+/** The rig fixture with `cloth` on the strip's segments; `mesh` adds to (or replaces fields of) the mesh entry. */
+export function heatStripConfig(mesh: Record<string, unknown> = {}): Record<string, unknown> {
+  const c = rigConfig();
+  (c.meshes as Record<string, unknown>).cloth = { grid: 8, r: 8, segments: HEAT_STRIP_SEGMENTS.map(([b, p, q]) => [b, [...p], [...q]]), ...mesh };
+  return c;
+}
