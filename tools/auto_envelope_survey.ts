@@ -6,18 +6,26 @@
  *     bun run fetch-examples          # once: examples/*\/inputs
  *     bun tools/auto_envelope_survey.ts --picture docs/evidence/auto-envelope-reference.png > docs/evidence/auto-envelope-reference.md
  *
- * `src/autoenvelope.ts` derives the envelope `targets.skinning` carries with the slot's bone as the reference, and a
- * bound bone not below it stops the part (`ENVELOPE_BONE_NOT_BELOW_REFERENCE`): no target is sent and the veto is not
- * applied. The derivation under test lives here, not under `src/`: {@link lcaEnvelope} takes the reference to be the
+ * In Stage A, `src/autoenvelope.ts` derived the envelope `targets.skinning` carries with the slot's bone as the
+ * reference, and a bound bone not below it stopped the part (`ENVELOPE_BONE_NOT_BELOW_REFERENCE`): no target was
+ * sent and the veto was not applied. The derivation under test lives here, not under `src/`: {@link lcaEnvelope} takes the reference to be the
  * lowest common ancestor of the slot's bone and every bound bone ({@link lowestCommonAncestor}) and hands the slot's
  * bone to `deriveEnvelope` as one more bound bone, so it enters with its own range when it is not the reference.
- * `deriveEnvelope` already takes the reference as a parameter; nothing under `src/` is changed.
+ * `deriveEnvelope` already takes the reference as a parameter; nothing under `src/` was changed by Stage A.
+ *
+ * Since Stage B (issue #165) the rig stage itself derives the envelope against the lowest common ancestor
+ * (`slotEnvelope` in `src/autoenvelope.ts`, the {@link lowestCommonAncestor} measured here, moved there), so the stage's
+ * `skinning_residual` row on the three parts whose reference moves is no longer the slot's-bone derivation, and this
+ * tool's reproduction check ({@link reproduces}) refuses those three by design. The page it wrote,
+ * `docs/evidence/auto-envelope-reference.md`, is Stage A's record at the commit that added it; "today" there is the
+ * stage before Stage B.
  *
  * The parts are the Stage B survey's eight (`tools/auto_motion_survey.ts`), each switched alone to `auto` in its
  * example's own config under the `residual` configuration (`STAGE_B_CONFIGS`: the policy plus
  * `motion.residual.maxResidual` 1). Per part, each in a process of its own under the cap:
  *
- * - **today** — the real rig stage as it stands (`motionCell`): the slot's bone as reference, the target sent or not.
+ * - **today** — the real rig stage as it stood in Stage A (`motionCell`): the slot's bone as reference, the target sent
+ *   or not. Since Stage B the stage sends the LCA envelope itself (see above).
  *   The tool re-derives the stage's envelope from its own reading of the rig ({@link basisOf}) and refuses to go on
  *   when that does not reproduce the row the stage wrote (`skinning_residual`) — so the LCA derivation below reads the
  *   same rig the stage read.
@@ -43,7 +51,7 @@ import { join, resolve } from 'node:path';
 import type { MeshReductionInput, SkinningEnvelopeBone } from 'rig-c/mesh';
 import { Plate, type RGBA } from 'rig-c/tools/plate.ts';
 import { type Reducer, type ReductionResult, runReduction } from '../src/automesh.ts';
-import { deriveEnvelope, type EnvelopeBasis, type EnvelopeDerivation, type EnvelopeStop, residualRow, withSkinning } from '../src/autoenvelope.ts';
+import { deriveEnvelope, type EnvelopeBasis, type EnvelopeDerivation, type EnvelopeStop, lowestCommonAncestor, residualRow, withSkinning } from '../src/autoenvelope.ts';
 import { findRigc } from '../src/check.ts';
 import { loadConfig } from '../src/config.ts';
 import { computeExactFrameTransforms, cropToSpineY } from '../src/coords.ts';
@@ -84,55 +92,9 @@ export function maxResidualOf(): number {
 // 1. the reference
 // ---------------------------------------------------------------------------
 
-/** A bone as the derivation reads it: a name and its parent. */
-export interface TreeBone {
-  name: string;
-  parent?: string | null;
-}
-
-/** The bone's ancestry from its root down to the bone, or null when the list does not hold it. */
-export function ancestry(bones: readonly TreeBone[], name: string): string[] | null {
-  const parent = new Map(bones.map((b) => [b.name, b.parent ?? null]));
-  if (!parent.has(name)) return null;
-  const up: string[] = [];
-  const seen = new Set<string>();
-  for (let b: string | null = name; b !== null; b = parent.get(b) ?? null) {
-    if (seen.has(b)) return null;
-    seen.add(b);
-    up.push(b);
-  }
-  return up.reverse();
-}
-
-/**
- * The lowest common ancestor of the slot's bone and every bound bone the list holds: the deepest bone on every one of
- * their ancestries. In one skeleton every ancestry starts at the one root, so it always exists; a list with two roots
- * (a degenerate input, not a skeleton) has none, and the bone that shares no ancestor with the slot's bone is named
- * under the stop `src/autoenvelope.ts` already uses for a bone with no chain to the reference. A bound bone the list
- * does not hold is left to `deriveEnvelope`, which names it.
- */
-export function lowestCommonAncestor(bones: readonly TreeBone[], slot: string, bound: readonly string[]): { reference: string } | { stop: EnvelopeStop } {
-  const own = ancestry(bones, slot);
-  if (own === null) return { stop: { bone: slot, code: 'ENVELOPE_BONE_UNKNOWN', detail: `the slot's bone "${slot}" is not a bone of the rig` } };
-  let common = own;
-  for (const b of [...new Set(bound)].sort()) {
-    const up = ancestry(bones, b);
-    if (up === null) continue;
-    let k = 0;
-    while (k < common.length && k < up.length && common[k] === up[k]) k++;
-    if (k === 0) {
-      return {
-        stop: {
-          bone: b,
-          code: 'ENVELOPE_BONE_NOT_BELOW_REFERENCE',
-          detail: `the part's weights bind "${b}", which shares no ancestor with the slot's bone "${slot}" (its ancestry: ${up.join(' > ')}; the slot's: ${own.join(' > ')}); one skeleton has one root, so this bone list is not one skeleton and no reference is derived`,
-        },
-      };
-    }
-    common = common.slice(0, k);
-  }
-  return { reference: common[common.length - 1] };
-}
+// The reference's rule moved into the package in Stage B (src/autoenvelope.ts: `lowestCommonAncestor`, the function this
+// tool measured, unchanged); the tool reads it from there and re-exports it for the selftest's EV controls.
+export { ancestry, lowestCommonAncestor, type TreeBone } from '../src/autoenvelope.ts';
 
 /** The LCA derivation: the reference, the bones handed to `deriveEnvelope` (the bound bones and the slot's), and its result. */
 export interface LcaDerivation {
@@ -543,7 +505,7 @@ export function page(results: readonly PartResult[], machine: string, picturePat
   const sending = results.filter((r) => r.today.sent);
   out.push('# The skinning envelope\'s reference bone on the public parts (issue #165, Stage A)', '');
   out.push(
-    `Generated by \`bun tools/auto_envelope_survey.ts\`; every figure below is the tool's, none typed. The installed rig-c ${installedRigc()}. The parts are the Stage B survey's eight (docs/evidence/auto-stageb-survey.md), each switched alone to \`auto\` in its example's own config under its \`${CONFIG}\` configuration — the policy plus \`motion.residual.maxResidual\` ${maxResidualOf()} — through the real rig stage (gate build, reference build, rig-c's compareMeshesInMotion on the idle, the acceptance loop). "today" is the stage as it stands: the envelope derived with the slot's bone as reference (src/autoenvelope.ts). "LCA" is the derivation under test, in the tool: the reference is the lowest common ancestor of the slot's bone and every bone the part's source weights bind, and the slot's bone is handed to the same deriveEnvelope as one more bound bone, so it enters with its own range when it is not the reference. The LCA run is the same stage with only the part's targets.skinning replaced (a reducer that hands every reduction of the part the LCA envelope); nothing under src/ is changed. Before any figure is read, the tool's own slot-bone derivation is held to the row the stage wrote (skinning_residual): ${results.every((r) => r.reproduced) ? 'it reproduced every part\'s' : `it did NOT reproduce ${results.filter((r) => !r.reproduced).map((r) => `${r.example}/${r.part}`).join(', ')}`}.`,
+    `Generated by \`bun tools/auto_envelope_survey.ts\`; every figure below is the tool's, none typed. The installed rig-c ${installedRigc()}. The parts are the Stage B survey's eight (docs/evidence/auto-stageb-survey.md), each switched alone to \`auto\` in its example's own config under its \`${CONFIG}\` configuration — the policy plus \`motion.residual.maxResidual\` ${maxResidualOf()} — through the real rig stage (gate build, reference build, rig-c's compareMeshesInMotion on the idle, the acceptance loop). "today" is the stage as it stood in Stage A, before Stage B (issue #165) moved the LCA into src/autoenvelope.ts: the envelope derived with the slot's bone as reference (src/autoenvelope.ts). "LCA" is the derivation under test, in the tool: the reference is the lowest common ancestor of the slot's bone and every bone the part's source weights bind, and the slot's bone is handed to the same deriveEnvelope as one more bound bone, so it enters with its own range when it is not the reference. The LCA run is the same stage with only the part's targets.skinning replaced (a reducer that hands every reduction of the part the LCA envelope); nothing under src/ is changed. Before any figure is read, the tool's own slot-bone derivation is held to the row the stage wrote (skinning_residual): ${results.every((r) => r.reproduced) ? 'it reproduced every part\'s' : `it did NOT reproduce ${results.filter((r) => !r.reproduced).map((r) => `${r.example}/${r.part}`).join(', ')}`}.`,
   );
   if (picturePath !== null) out.push('', `The picture, read first: [${picturePath.split('/').pop()}](${picturePath.split('/').pop()}) — per part whose reference moves, today's written mesh (left) beside the LCA run's (right), wires over the art, counts in the captions.`);
   out.push('', '## 1. The reference, the bones sent, the stops', '');
