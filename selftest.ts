@@ -182,7 +182,7 @@ import {
 import { COMPOSED_HAND_X, COMPOSED_SHOULDER, writeComposedRig, DRIVER_AT, DRIVER_SLIDE, FAR_ABOVE, LOWER_LEN, LURE_ANGLE, OVERREACH_FROM, OVERREACH_TO, POINTER_LEN, REACH_FROM, REACH_TO, REQ_FPS, REQ_STAGE, RIDE_MIX, RIDER_AT, SHOULDER, stageOf, SWING_BROKEN, SWING_PEAK, UPPER_LEN, VANE_AT, VANE_MIX, writeReqRig, writeRequirements } from './fixtures/reqrig.ts';
 import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { ALIAS, AliasTarballError, compareTarballs, MANIFEST as ALIAS_MANIFEST, packAlias, packInto, renamed } from './scripts/alias_tarball.ts';
-import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionSpec, sineTrack } from './src/motion.ts';
+import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionKey, type MotionSpec, sineTrack } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadEarlyConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
@@ -222,6 +222,7 @@ import { deriveEnvelope, type EnvelopeBasis, type EnvelopeDerivation, RESIDUAL_R
 import { type VetoTally, vetoTally } from './tools/veto_tally.ts';
 import { commonSurvivors, densitySquare, pruneShares, weightDiff } from './tools/auto_density_survey.ts';
 import { comparisonInputRefusal, digestDifferences, inputDigest, inputDigestDeep, jsonDifferences, type LadderRow, ladderInputMoved, ladderPlan, ladderPolicy, ladderSpecDifferences, overdraw, widenedPlan, overdrawText, parseArgs as parseSpacingArgs, pendingLadderRow, renderLadder, pendingRow as spacingPending, reproductionText, render as renderSpacing, spacingPolicy, spacingsFor, type SpacingRow, specDifferences, staticRefusal, summarise as spacingSummary } from './tools/auto_spacing_survey.ts';
+import { caption as envelopeCaption, lcaEnvelope, lowestCommonAncestor, recorder, reproduces, sameBound, slotBoneOf } from './tools/auto_envelope_survey.ts';
 import {
   BLINK as BLINK_FIXTURE,
   blinkFixture,
@@ -18009,6 +18010,186 @@ function runAutoMeshSuite(): number {
       edgesFc06.of === 3 && JSON.stringify(edgesFc06.present) === JSON.stringify([[0, 1], [1, 2]]),
     `blink holes ${JSON.stringify(holesFc06)}; filled ${JSON.stringify(filledFc06)}; rule at 19/25/22 ${blinkShare([30, 19])}/${blinkShare([30, 25])}/${blinkShare([30, 22])}; envelope ${JSON.stringify(envFc06)}; on ring ${JSON.stringify(onFc06)}, planted off by 1/128 ${JSON.stringify(offFc06)}; ring edges ${JSON.stringify(edgesFc06)}`,
     'the fixture the evidence page reads is the one its text states: the hole, the rule that closes it, and an envelope that bounds exactly the lid\'s travel; the ring instruments, which say how much of a feature line a triangulation holds, are held to a hand case',
+  );
+
+  // ---------------------------------------------------------------------------
+  // Issue #165 Stage A: tools/auto_envelope_survey.ts's instruments (EV01-EV06), each on a hand-built input.
+  // ---------------------------------------------------------------------------
+
+  // A hand skeleton: root > hip > chest > neck, and hip > skirt > skirt_a > skirt_b — the slot's bone (chest) under one
+  // child of hip, the skirt under another, as on the public bottomwear parts. Joints in crop px, x 100 throughout.
+  const treeEv: Array<{ name: string; parent?: string }> = [
+    { name: 'root' },
+    { name: 'hip', parent: 'root' },
+    { name: 'chest', parent: 'hip' },
+    { name: 'neck', parent: 'chest' },
+    { name: 'skirt', parent: 'hip' },
+    { name: 'skirt_a', parent: 'skirt' },
+    { name: 'skirt_b', parent: 'skirt_a' },
+  ];
+
+  // EV01 — the lowest common ancestor by hand: chest with {skirt_a, skirt_b} is hip; chest with {neck} is chest itself;
+  // chest alone is chest; a bound name the list does not hold is left to deriveEnvelope (ignored here). Every pair of
+  // bones of one skeleton has one (the root is one): all 49 ordered pairs are tried and none stops. Planted: a second
+  // root ("cape", no parent) — not one skeleton — must stop by the name src/autoenvelope.ts already gives a bone with
+  // no chain to the reference, naming "cape", and never invent a reference; an unknown slot bone stops by its name.
+  const lca01 = lowestCommonAncestor(treeEv, 'chest', ['skirt_b', 'skirt_a', 'chest']);
+  const self01 = lowestCommonAncestor(treeEv, 'chest', ['neck']);
+  const alone01 = lowestCommonAncestor(treeEv, 'chest', []);
+  const unknownBound01 = lowestCommonAncestor(treeEv, 'chest', ['neck', 'ghost']);
+  const pairs01 = treeEv.flatMap((a) => treeEv.map((b) => lowestCommonAncestor(treeEv, a.name, [b.name])));
+  const forest01 = lowestCommonAncestor([...treeEv, { name: 'cape' }], 'chest', ['skirt_a', 'cape']);
+  const unknownSlot01 = lowestCommonAncestor(treeEv, 'ghost', ['neck']);
+  say(
+    'EV01_THE_LOWEST_COMMON_ANCESTOR_IS_THE_HAND_BONE_EXISTS_FOR_EVERY_PAIR_OF_ONE_SKELETON_AND_A_SECOND_ROOT_STOPS_BY_NAME',
+    JSON.stringify(lca01) === JSON.stringify({ reference: 'hip' }) && JSON.stringify(self01) === JSON.stringify({ reference: 'chest' }) && JSON.stringify(alone01) === JSON.stringify({ reference: 'chest' }) &&
+      JSON.stringify(unknownBound01) === JSON.stringify({ reference: 'chest' }) && pairs01.length === 49 && pairs01.every((x) => 'reference' in x) &&
+      'stop' in forest01 && forest01.stop.bone === 'cape' && forest01.stop.code === 'ENVELOPE_BONE_NOT_BELOW_REFERENCE' &&
+      'stop' in unknownSlot01 && unknownSlot01.stop.bone === 'ghost' && unknownSlot01.stop.code === 'ENVELOPE_BONE_UNKNOWN',
+    `chest+skirts ${JSON.stringify(lca01)}; chest+neck ${JSON.stringify(self01)}; chest alone ${JSON.stringify(alone01)}; with an unknown bound name ${JSON.stringify(unknownBound01)}; ${pairs01.filter((x) => 'reference' in x).length} of ${pairs01.length} pairs have one; planted second root ${JSON.stringify(forest01)}; unknown slot ${JSON.stringify(unknownSlot01)}`,
+    'issue #165: the reference under test is the deepest bone on every ancestry of the slot\'s bone and the bound bones; in one skeleton it always exists, so the only input with none is a list that is not one skeleton, and that input keeps the stop\'s name rather than getting a fabricated reference',
+  );
+
+  // EV02 — the LCA envelope by hand, through rig-c's skinningEnvelopeBone. The idle keys chest's rotate over [-60, 60],
+  // skirt's over [-60, 60] and skirt_b's over [0, 60]: each e = 2·sin(30°) = 1 (θ the largest |rotation|), no scale,
+  // so every S = 1. Joints: chest (100, 100), skirt (100, 210), skirt_a (100, 250), skirt_b (100, 300); the origin
+  // (0, 0). Bound bones {chest, skirt_a, skirt_b}; the LCA is hip. By the helper's definition (ε = Π(1 + e) − 1, τ from
+  // the last bone up: δ = e·|c − cⱼ| + (1 + e)·δ + translate):
+  //   chest:   chain [chest]                  ε = 2 − 1 = 1, pivot (100, 100), τ = 0;
+  //   skirt_a: chain [skirt, skirt_a]         ε = 2·1 − 1 = 1, pivot (100, 250), τ = 1·|250 − 210| = 40;
+  //   skirt_b: chain [skirt, skirt_a, skirt_b] ε = 2·1·2 − 1 = 3, pivot (100, 300), τ = 1·|300 − 210| = 90.
+  // Compared to 1e-12 (2·sin(π/6) is 0.9999999999999999 in doubles). The slot's bone enters as a bone with its range,
+  // and the reference (hip) does not. Planted: today's derivation, the slot's bone as reference, on the same input —
+  // it must stop on skirt_a and skirt_b by ENVELOPE_BONE_NOT_BELOW_REFERENCE (the stop the card is about).
+  const keyEv = (t: number, v: number): MotionKey => ({ t, v: [v] });
+  const motionEv: MotionSpec = {
+    spec: 'rigc-motion/1',
+    archetype: 'fixture',
+    cut: 'fixture',
+    easings: {},
+    groups: {},
+    animations: {
+      idle: {
+        duration: 2,
+        loop: true,
+        note: 'EV fixture',
+        tracks: [
+          { bone: 'chest', property: 'rotate', keys: [keyEv(0, -60), keyEv(1, 60), keyEv(2, -60)] },
+          { bone: 'skirt', property: 'rotate', keys: [keyEv(0, -60), keyEv(1, 60), keyEv(2, -60)] },
+          { bone: 'skirt_b', property: 'rotate', keys: [keyEv(0, 0), keyEv(1, 60), keyEv(2, 0)] },
+        ],
+      },
+    },
+  };
+  const jointsEv = new Map<string, readonly [number, number]>([
+    ['root', [100, 400]],
+    ['hip', [100, 200]],
+    ['chest', [100, 100]],
+    ['neck', [100, 50]],
+    ['skirt', [100, 210]],
+    ['skirt_a', [100, 250]],
+    ['skirt_b', [100, 300]],
+  ]);
+  const basisEv: EnvelopeBasis = { bones: treeEv, joints: jointsEv, motion: motionEv, constraints: [] };
+  const lca02 = lcaEnvelope(basisEv, 'chest', ['skirt_a', 'skirt_b', 'chest'], [0, 0]);
+  const today02 = deriveEnvelope(basisEv, 'chest', ['skirt_a', 'skirt_b', 'chest'], [0, 0]);
+  const near = (a: number, b: number): boolean => Math.abs(a - b) <= 1e-12;
+  const want02: Array<[string, number, [number, number], number]> = [
+    ['chest', 1, [100, 100], 0],
+    ['skirt_a', 1, [100, 250], 40],
+    ['skirt_b', 3, [100, 300], 90],
+  ];
+  const got02 = 'envelope' in lca02.derivation ? lca02.derivation.envelope : null;
+  say(
+    'EV02_THE_LCA_ENVELOPE_IS_THE_HAND_ENVELOPE_WITH_THE_SLOT_BONE_AS_A_BONE_AND_TODAYS_REFERENCE_STOPS_ON_THE_SAME_INPUT',
+    lca02.reference === 'hip' && JSON.stringify(lca02.handed) === JSON.stringify(['chest', 'skirt_a', 'skirt_b']) && got02 !== null && got02.reference === 'hip' &&
+      got02.bones.length === 3 && want02.every(([bone, eps, pivot, tau], i) => got02.bones[i].bone === bone && near(got02.bones[i].linear, eps) && got02.bones[i].pivot[0] === pivot[0] && got02.bones[i].pivot[1] === pivot[1] && near(got02.bones[i].translation, tau)) &&
+      'stops' in today02 && JSON.stringify(today02.stops.map((s) => [s.bone, s.code])) === JSON.stringify([['skirt_a', 'ENVELOPE_BONE_NOT_BELOW_REFERENCE'], ['skirt_b', 'ENVELOPE_BONE_NOT_BELOW_REFERENCE']]),
+    `LCA ${lca02.reference}, handed ${lca02.handed.join(', ')}; envelope ${JSON.stringify(got02)}; planted the slot's bone as reference -> ${JSON.stringify('stops' in today02 ? today02.stops.map((s) => [s.bone, s.code]) : today02)}`,
+    "issue #165 item 1: the derivation under test is deriveEnvelope with the LCA as reference and the slot's bone handed as a bound bone, so every bound bone has a chain the helper composes; the figures are the helper's own definition evaluated by hand, so a reference or chain read wrongly moves one",
+  );
+
+  // EV03 — where every bound bone hangs below the slot's bone, the LCA is the slot's bone and the LCA derivation is
+  // today's byte for byte (the five parts that already send). Planted: skirt_a added to the bound bones — the reference
+  // moves to hip and the two derivations must differ. And `reproduces`, the tool's check that its own slot-bone
+  // derivation is the row the stage wrote: the same envelope reproduces; a linear changed in its last digit does not;
+  // stops reproduce by bone and code, and a different code does not.
+  const lca03 = lcaEnvelope(basisEv, 'chest', ['chest', 'neck'], [0, 0]);
+  const today03 = deriveEnvelope(basisEv, 'chest', ['chest', 'neck'], [0, 0]);
+  const moved03 = lcaEnvelope(basisEv, 'chest', ['chest', 'neck', 'skirt_a'], [0, 0]);
+  const todayMoved03 = deriveEnvelope(basisEv, 'chest', ['chest', 'neck', 'skirt_a'], [0, 0]);
+  const env03 = 'envelope' in today03 ? today03.envelope.bones : [];
+  const stops03 = 'stops' in todayMoved03 ? todayMoved03.stops : [];
+  say(
+    'EV03_WHERE_EVERY_BOUND_BONE_IS_BELOW_THE_SLOT_BONE_THE_LCA_DERIVATION_IS_TODAYS_AND_THE_REPRODUCTION_CHECK_CATCHES_ONE_DIGIT',
+    lca03.reference === 'chest' && JSON.stringify(lca03.derivation) === JSON.stringify(today03) && 'envelope' in today03 &&
+      moved03.reference === 'hip' && JSON.stringify(moved03.derivation) !== JSON.stringify(todayMoved03) &&
+      reproduces(today03, { sent: true, envelope: env03, stops: [] }) &&
+      !reproduces(today03, { sent: true, envelope: env03.map((b, i) => (i === 0 ? { ...b, linear: b.linear + 1e-15 } : b)), stops: [] }) &&
+      !reproduces(today03, { sent: false, envelope: null, stops: [] }) && !reproduces(today03, undefined) &&
+      reproduces(todayMoved03, { sent: false, envelope: null, stops: stops03.map((s) => ({ ...s, detail: 'any wording' })) }) &&
+      !reproduces(todayMoved03, { sent: false, envelope: null, stops: stops03.map((s) => ({ ...s, code: 'ENVELOPE_BONE_UNKNOWN' })) }),
+    `chest+neck: LCA ${lca03.reference}, equal to today's ${JSON.stringify(lca03.derivation) === JSON.stringify(today03)}; planted skirt_a: LCA ${moved03.reference}, equal ${JSON.stringify(moved03.derivation) === JSON.stringify(todayMoved03)}; today's stops ${JSON.stringify(stops03.map((s) => [s.bone, s.code]))}`,
+    "issue #165 item 2 and Stage B's promise: parts whose bones all hang below the slot's bone stay byte-identical; and the survey refuses to read a part whose slot-bone derivation is not the stage's row, so its LCA derivation reads the rig the stage read",
+  );
+
+  // EV04 — the upper-bound check by hand: residual 0.5 against displacement 0.4 holds; equal holds (the bound is
+  // inclusive); planted 0.4 against 0.5 is a counter-example naming both numbers; a missing or non-finite value on
+  // either side is "not measured", never a pass.
+  const holds04 = sameBound(0.5, 0.4);
+  const equal04 = sameBound(0.4, 0.4);
+  const counter04 = sameBound(0.4, 0.5);
+  const missing04 = [sameBound(null, 0.3), sameBound(0.5, null), sameBound(Number.NaN, 0.1), sameBound(0.5, Number.POSITIVE_INFINITY)];
+  say(
+    'EV04_THE_RESIDUAL_HOLDS_AT_OR_ABOVE_THE_DISPLACEMENT_A_LOWER_RESIDUAL_IS_A_COUNTER_EXAMPLE_AND_A_MISSING_VALUE_IS_NOT_A_PASS',
+    holds04.verdict === 'holds' && equal04.verdict === 'holds' && counter04.verdict === 'counter-example' && counter04.text.includes('0.4') && counter04.text.includes('0.5') &&
+      missing04.every((m) => m.verdict === 'not measured'),
+    `0.5/0.4 ${holds04.verdict}; 0.4/0.4 ${equal04.verdict}; planted 0.4/0.5 ${counter04.text}; missing ${missing04.map((m) => m.verdict).join(', ')}`,
+    "issue #165 item 2: the card stops on a counter-example — a residual below the posed displacement on any part — so the check must name one with its numbers and must never read an absent reading as the bound holding",
+  );
+
+  // EV05 — the recorder hands the LCA envelope to the part's own reductions only: through a stub reducer (no rig-c),
+  // the part's object gets the injected input and another part's — including one whose name extends this one's — is
+  // handed through untouched (the same object); every call is recorded with what was sent.
+  const sentEv05: string[] = [];
+  const stubEv05: Reducer = (object, input) => {
+    sentEv05.push(`${object}:${input.minArtSamples}`);
+    return { code: 'STUB', object, detail: 'stub' };
+  };
+  const inputEv05 = { minArtSamples: 1 } as unknown as MeshReductionInput;
+  const recEv05 = recorder('neck', (i) => ({ ...i, minArtSamples: 2 }), stubEv05);
+  recEv05.run('config.meshes.neck.auto', inputEv05);
+  recEv05.run('config.meshes.necklace.auto', inputEv05);
+  recEv05.run('config.meshes.hair.auto', inputEv05);
+  say(
+    'EV05_THE_RECORDER_INJECTS_ONLY_THE_PARTS_OWN_REDUCTIONS_AND_RECORDS_WHAT_IT_SENT',
+    JSON.stringify(sentEv05) === JSON.stringify(['config.meshes.neck.auto:2', 'config.meshes.necklace.auto:1', 'config.meshes.hair.auto:1']) &&
+      recEv05.calls.length === 3 && recEv05.calls[1].sent === inputEv05 && recEv05.calls[2].sent === inputEv05 && recEv05.calls[0].sent !== inputEv05,
+    `sent ${JSON.stringify(sentEv05)}; recorded ${recEv05.calls.length}`,
+    "issue #165: the LCA run differs from today's by the part's targets.skinning alone; a reducer that touched another part's reduction, or matched by prefix, would change what the stage compares",
+  );
+
+  // EV06 — the slot's bone off a mesh entry (its first segment's bone, as the rig stage writes it on the slot) and the
+  // picture's caption counts: [["chest", a, b], "skirt"] -> chest; ["sleeve_r"] -> sleeve_r; planted [] and [[1]] throw
+  // naming the segment. A cell written as 63+2 at step 77 of 77 with residual 0.9684 and motion 0.8104 captions
+  // "65 V (63+2)", "STEP 77 OF 77", "RESIDUAL 0.968", "MOTION 0.81 PX"; nothing written captions "NOTHING WRITTEN".
+  const throwsEv06 = (segs: unknown): boolean => {
+    try {
+      slotBoneOf(segs);
+      return false;
+    } catch (err) {
+      return (err as Error).message.includes('first segment names no bone');
+    }
+  };
+  const cellEv06 = { verdict: 'accepted', steps: 77, chosen: 77, written: { hull: 63, interior: 2 }, wallS: 1, displacement: 0.8104, displacementAt: 'idle@grid@1', residual: 0.9684, residualState: 'pass', mesh: null, refusal: null };
+  const capEv06 = envelopeCaption('LCA', cellEv06);
+  const noneEv06 = envelopeCaption('TODAY', { ...cellEv06, written: null, chosen: null });
+  say(
+    'EV06_THE_SLOT_BONE_IS_THE_FIRST_SEGMENTS_AND_THE_CAPTION_COUNTS_ARE_THE_CELLS',
+    slotBoneOf([['chest', [0, 0], [0, 1]], 'skirt']) === 'chest' && slotBoneOf(['sleeve_r']) === 'sleeve_r' && throwsEv06([]) && throwsEv06([[1]]) &&
+      JSON.stringify(capEv06) === JSON.stringify(['LCA', '65 V (63+2)', 'STEP 77 OF 77', 'RESIDUAL 0.968', 'MOTION 0.81 PX']) && noneEv06[1] === 'NOTHING WRITTEN' && noneEv06[2] === 'NO STEP',
+    `caption ${JSON.stringify(capEv06)}; nothing written ${JSON.stringify(noneEv06)}`,
+    'the reference starts at the slot\'s bone the stage writes, and HQ reads the picture first, so its counts are the cell\'s figures, not retyped ones',
   );
 
   return bad();

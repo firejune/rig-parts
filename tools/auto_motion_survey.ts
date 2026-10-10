@@ -194,9 +194,11 @@ export function trackedSpacing(key: string, part: string): number {
  * through the real rig stage in `dir`, `asm` holding the example's assembled parts. Returns the stage's verdict, the
  * comparison's rows (re-run on the two model documents the stage's builds wrote, with the stage's own function), the
  * part's row and its reduction input. The stage's reductions are handed back to the rebuild (`reuseReductions`), so
- * `reduceMesh` runs once per input.
+ * `reduceMesh` runs once per input. `run` is the call each reduction goes through — `runReduction` unless a caller
+ * hands another (`tools/auto_envelope_survey.ts` hands one that sends a different envelope); the reductions are kept
+ * under the stage's own input either way, so the rebuild reuses them.
  */
-export function motionCell(key: string, part: string, auto: unknown, asm: string, dir: string, rigcBin: string): MotionCell {
+export function motionCell(key: string, part: string, auto: unknown, asm: string, dir: string, rigcBin: string, run: Reducer = runReduction): MotionCell {
   const raw = JSON.parse(readFileSync(join(ROOT, 'examples', key, 'config.json'), 'utf8')) as { meshes: Record<string, { r: number; segments: unknown }> };
   const m = raw.meshes[part];
   (raw.meshes as Record<string, unknown>)[part] = { auto, r: m.r, segments: m.segments };
@@ -217,7 +219,7 @@ export function motionCell(key: string, part: string, auto: unknown, asm: string
   const reduced = new Map<string, ReductionResult>();
   let input: MeshReductionInput | null = null;
   const recording: Reducer = (object, given) => {
-    const r = runReduction(object, given);
+    const r = run(object, given);
     reduced.set(reductionKey(given), r);
     input ??= given;
     return r;
