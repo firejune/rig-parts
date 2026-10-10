@@ -178,7 +178,7 @@ in the package.
 
 ## rig-c
 
-`dependencies` takes `rig-c` `^2.32.2`: 2.32.2 or any later 2.x. Bun 1.2 or later
+`dependencies` takes `rig-c` `^2.33.0`: 2.33.0 or any later 2.x. Bun 1.2 or later
 runs the package (`engines`). What this package relies on in rig-c, every import
 read off `src/` and `cli.ts`:
 

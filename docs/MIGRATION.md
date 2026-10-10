@@ -39,7 +39,7 @@ output change of the rename (#142).
 
 ## rig-c, as this package sees it
 
-The dependency is `rig-c` `^2.32.2`, where 0.16.0 took the same upstream package
+The dependency is `rig-c` `^2.33.0`, where 0.16.0 took the same upstream package
 under its former npm name at `^2.15.0`; that name is spelled only in `CHANGELOG.md`.
 The upstream package was renamed on npm at 2.20.4 with the same `exports` map
 (#138), and every import, probe and sentence here names `rig-c`. A project that
