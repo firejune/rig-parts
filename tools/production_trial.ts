@@ -130,7 +130,7 @@ export class TrialLedger {
 // ---------------------------------------------------------------------------
 
 /** The rigc process exactly as `cli.ts` spawns it, counting the calls. */
-function runner(bin: string, calls: { n: number }): RigcRunner {
+export function rigcRunner(bin: string, calls: { n: number }): RigcRunner {
   return (args) => {
     calls.n++;
     const r = spawnSync(bin, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
@@ -139,7 +139,8 @@ function runner(bin: string, calls: { n: number }): RigcRunner {
   };
 }
 
-interface Built {
+/** What a builder hands `runCell`: the build's result, its log lines (each `[stage] …`), wall seconds and rigc calls. */
+export interface Built {
   result: BuildResult;
   lines: string[];
   wallS: number;
@@ -147,7 +148,7 @@ interface Built {
 }
 
 /** `build` on an example's fetched inputs with the config `config`, into `out`. */
-function runBuild(key: string, config: string, out: string, scratch: string): Built {
+export function runBuild(key: string, config: string, out: string, scratch: string): Built {
   const ex = join(ROOT, 'examples', key, 'inputs');
   const bin = findRigc(ROOT, process.env.PATH ?? '');
   const calls = { n: 0 };
@@ -155,7 +156,7 @@ function runBuild(key: string, config: string, out: string, scratch: string): Bu
   const t0 = performance.now();
   const result = build(
     { config, source: join(ex, 'painting.png'), full: join(ex, 'layers', 'full'), head: join(ex, 'layers', 'head'), out, seam: DEFAULT_SEAM_RULE, project: DEFAULT_PROJECT_RULE, loop: false, pageEdges: DEFAULT_PAGE_EDGES },
-    { rig: runner(bin, calls), check: runner(bin, calls), checkBin: bin, scratch },
+    { rig: rigcRunner(bin, calls), check: rigcRunner(bin, calls), checkBin: bin, scratch },
     (l) => lines.push(l),
   );
   return { result, lines, wallS: Math.round((performance.now() - t0) / 100) / 10, rigcCalls: calls.n };
@@ -306,7 +307,7 @@ function phasesOf(row: Record<string, unknown>): CellRow['motion'] {
 }
 
 /** The config of `key` with `parts` switched to `auto` (each its own spec), the rest as tracked; mesh entries keep r and segments. */
-function switchedConfig(key: string, specs: ReadonlyMap<string, AutoSpec>): Record<string, unknown> {
+export function switchedConfig(key: string, specs: ReadonlyMap<string, AutoSpec>): Record<string, unknown> {
   const raw = JSON.parse(readFileSync(join(ROOT, 'examples', key, 'config.json'), 'utf8')) as { meshes: Record<string, { r: number; segments: unknown }> };
   for (const [part, auto] of specs) {
     const m = raw.meshes[part];
@@ -334,15 +335,18 @@ export function specFor(key: string, part: string, manual: { path: string; value
 /** Problem lines out of the build's log (`[stage]   FAIL  CODE: …`). */
 const failLines = (lines: readonly string[]): string[] => lines.filter((l) => /\]\s+FAIL\s/.test(l)).map((l) => l.replace(/^\[[a-z]+\]\s+FAIL\s+/, ''));
 
-/** One part alone through `build`. */
-export function runCell(key: string, part: string, manual: { path: string; value: unknown } | null): CellRow {
+/** How a cell's build runs: {@link runBuild} (`build` itself), or another path that prints the same stage-prefixed lines (tools/production_trial_stray.ts). */
+export type CellBuilder = (key: string, config: string, out: string, scratch: string) => Built;
+
+/** One part alone through `build` (or through `builder`, the same config and directories). */
+export function runCell(key: string, part: string, manual: { path: string; value: unknown } | null, builder: CellBuilder = runBuild): CellRow {
   const { spec, spacing, from } = specFor(key, part, manual);
   const work = mkdtempSync(join(tmpdir(), 'rig-parts-trial-'));
   try {
     const config = join(work, 'config.json');
     writeFileSync(config, JSON.stringify(switchedConfig(key, new Map([[part, spec]])), null, 1));
     const out = join(work, 'out');
-    const b = runBuild(key, config, out, join(work, 'scratch'));
+    const b = builder(key, config, out, join(work, 'scratch'));
     const row = reportRow(out, part);
     const auto = row !== undefined && row.mode === 'auto' ? row : undefined;
     const green = b.result.stoppedAt === null;
