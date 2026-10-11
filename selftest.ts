@@ -150,7 +150,7 @@ import {
 } from './src/assemble.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
 import { BARS, besideIdleLine, blackRig, buildGateLines, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
-import { blinkFigures, type BoneWorld, frameBox, halfTravels, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, ulpOf } from './src/instruments.ts';
+import { blinkFigures, type BoneWorld, frameBox, halfTravels, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
   contactLine,
@@ -5450,9 +5450,12 @@ function runFacelessCases(dir: string, say: (name: string, ok: boolean, detail: 
     'the fallback is for a figure with no face; one with a face reads the face, as the reference did, so both public proposals are unchanged — a fallback that ran anyway would move the head from y 84 to y 117 here',
   );
 
-  // The ratios are a definition: the mean, to three places, of each ratio on the public examples' expected parts (tracked, so never a HOLE).
+  // The ratios are a definition: the mean, to three places, of each ratio on the expected parts of the two examples they
+  // were measured on (tracked, so never a HOLE). Those are the reference fixtures, kept under their own keys when the
+  // display demo was repainted (issue #227); a later example does not move a written constant, so it is not averaged in.
+  const RATIO_SOURCES = ['reference-demo', 'reference-sample'];
   const measured: Array<{ key: string; r: FacelessRatios; unionTop: number }> = [];
-  for (const key of readdirSync(join(ROOT, 'examples')).sort()) {
+  for (const key of RATIO_SOURCES) {
     const pj = join(ROOT, 'examples', key, 'expected', 'parts.json');
     if (!existsSync(pj)) continue;
     const parts = readParts(pj).parts;
@@ -7535,7 +7538,7 @@ function runCheckSuite(): number {
 
     // The public examples keep their verdicts: their tracked check.json files, read as check.json is read (barsNotMet),
     // pass the bar in rig pixels and passed it in frame pixels, each with the frame scale written.
-    const exampleVerdicts = ['demo', 'sample', 'scarf'].map((key) => {
+    const exampleVerdicts = ['reference-demo', 'reference-sample', 'scarf'].map((key) => {
       const f = readJsonFile(join(ROOT, 'examples', key, 'expected', 'check.json'));
       const s = num(f, 'seam_frame_scale');
       const n = num(f, 'seam_px_over_40');
@@ -10420,6 +10423,11 @@ function runFacelessExample(key: string, ex: string, out: string, dir: string, s
     meshes: Record<string, unknown>;
     regions: Record<string, unknown>;
   };
+  // A pose file the config's generation names is read beside the config (issue #198; the demo's, issue #227); this
+  // variant is written to a directory of its own, so the file is named by its absolute path, as the chain suite's
+  // variants name motion.animations_from.
+  const control = (cfg as { generation?: { control?: { skeleton?: string } } }).generation?.control;
+  if (control?.skeleton !== undefined && existsSync(join(ex, control.skeleton))) control.skeleton = join(ex, control.skeleton);
   const gone = cfg.assemble.plan.filter((e) => FACE_FEATURE_PLAN_TAGS.includes(e[2])).map((e) => e[0]);
   cfg.assemble.plan = cfg.assemble.plan.filter((e) => !FACE_FEATURE_PLAN_TAGS.includes(e[2]));
   if (cfg.assemble.extend_below_crop !== undefined) cfg.assemble.extend_below_crop = cfg.assemble.extend_below_crop.filter((e) => !gone.includes(e.part));
@@ -10586,13 +10594,13 @@ function runChainSuite(): number | null {
       // its bottomwear back on the proposal's lattice (the build the README says fails the line). Each is rigged
       // from this build's parts, checked once, and its geometry rendered at --max 620 and 660: the line's figure,
       // recomputed from either geometry, is the check's to the digit, and the status is the bar's.
-      const variant = key === 'sample' ? 'skirt-x0.1' : key === 'scarf' ? 'bottomwear-lattice' : null;
+      const variant = key === 'reference-sample' ? 'skirt-x0.1' : key === 'scarf' ? 'bottomwear-lattice' : null;
       if (variant !== null) {
         const cfg = readJsonAt(join(ex, 'config.json')) as { motion: { tracks: Array<{ chain?: string; amps?: number[] }>; animations_from?: string }; meshes: Record<string, Record<string, unknown>> };
         // The variant's config is written to a directory of its own; the file motion.animations_from names (sample's
         // animations.json, issue #183) stays beside the example's config, so it is named by its absolute path.
         if (cfg.motion.animations_from !== undefined) cfg.motion.animations_from = join(ex, cfg.motion.animations_from);
-        if (key === 'sample') {
+        if (key === 'reference-sample') {
           for (const t of cfg.motion.tracks) if (t.chain?.startsWith('skirt_') === true && t.amps !== undefined) t.amps = t.amps.map((a) => a * 0.1);
         } else {
           const { contour, note, ...rest } = cfg.meshes.bottomwear as { contour: { spacing: number }; note?: string };
@@ -10896,14 +10904,24 @@ function runReadmeLoopSuite(): number | null {
       // correction a tracked example records against its proposal's meshes (scarf's bottomwear, issue #118, whose
       // lattice fails TIP_OVER_ROOT measured from the geometry). Pasted uncorrected, as this control pastes, the
       // build must stop at check and name exactly those parts on that line, and nothing else.
-      const tracked = readJsonAt(join(ex, 'config.json')) as { meshes?: Record<string, Record<string, unknown>> };
-      const proposed = readJsonAt(join(ex, 'proposal.json')) as { meshes?: Record<string, Record<string, unknown>> };
+      type ChainEntry = { chain?: string; points?: unknown; tip?: unknown };
+      const tracked = readJsonAt(join(ex, 'config.json')) as { meshes?: Record<string, Record<string, unknown>>; bones?: ChainEntry[]; assemble?: { plan?: Array<[string, string, string]> } };
+      const proposed = readJsonAt(join(ex, 'proposal.json')) as { meshes?: Record<string, Record<string, unknown>>; bones?: ChainEntry[] };
       // A contour mesh that declares regions moved off the lattice to carry them (a lattice has none; sample's topwear and
       // bottomwear, issue #183), not as a TIP_OVER_ROOT correction, so the uncorrected build is not required to stop on it.
-      const corrected = Object.keys(tracked.meshes ?? {})
+      const moved = Object.keys(tracked.meshes ?? {})
         .filter((m) => 'contour' in (tracked.meshes?.[m] ?? {}) && 'grid' in (proposed.meshes?.[m] ?? {}))
-        .filter((m) => ((tracked.meshes?.[m]?.contour as { regions?: unknown[] } | undefined)?.regions ?? []).length === 0)
-        .sort();
+        .filter((m) => ((tracked.meshes?.[m]?.contour as { regions?: unknown[] } | undefined)?.regions ?? []).length === 0);
+      // The other correction a tracked example records against TIP_OVER_ROOT (issue #227, the demo's skirt): a chain
+      // whose points or tip the config moves off the proposal's, among the segments of a part TIP_OVER_ROOT reads (a
+      // See-through handwear or bottomwear layer, by the plan's tag). A chain moved on any other part (scarf's robe_r on
+      // topwear, issue #196) is not one, and the uncorrected build is not required to stop on it.
+      const chainAt = (b: ChainEntry): string => JSON.stringify([b.points, b.tip]);
+      const proposedChains = new Map((proposed.bones ?? []).filter((b) => b.chain !== undefined).map((b) => [b.chain as string, chainAt(b)]));
+      const movedChains = new Set((tracked.bones ?? []).filter((b) => b.chain !== undefined && proposedChains.has(b.chain) && proposedChains.get(b.chain) !== chainAt(b)).map((b) => b.chain as string));
+      const swingParts = new Set((tracked.assemble?.plan ?? []).filter((e) => (SWING_TAGS as readonly string[]).includes(readTag(e[2])?.base ?? '')).map((e) => e[0]));
+      const rechained = Object.keys(tracked.meshes ?? {}).filter((m) => swingParts.has(m) && ((tracked.meshes?.[m]?.segments as unknown[] | undefined) ?? []).some((sg) => typeof sg === 'string' && movedChains.has(sg)));
+      const corrected = [...new Set([...moved, ...rechained])].sort();
       const buildAt = lines.findIndex((l) => /^rig-parts build /.test(l));
       const named = (r.refused?.fails ?? []).map((l) => /FAIL {2}CHECK_TIP_OVER_ROOT: part "([^"]+)"/.exec(l)?.[1] ?? '');
       const ok =
@@ -10915,8 +10933,8 @@ function runReadmeLoopSuite(): number | null {
         ok,
         r.refused === null
           ? `${r.ran.length} README step(s) in order, each exit 0: ${r.ran.join(', ')}; the config started with key, seethrough (no head_box) and assemble.rig_scale, and got the head box, the plan and the proposal's four rig sections pasted, uncorrected`
-          : `step ${r.ran.length + (r.refused.status === -1 ? 1 : 0)} of ${lines.length} refused (exit ${r.refused.status}): \`${r.refused.line}\` — ${r.refused.fails.length > 0 ? r.refused.fails.join(' | ') : r.refused.first}${corrected.length > 0 ? `; the tracked config moves [${corrected.join(', ')}] to contour mode, so the uncorrected build is required to stop there naming exactly those on CHECK_TIP_OVER_ROOT` : ''}`,
-        "issue #20: the README loop is what an agent follows, so it is run as written; plain assemble once refused the config for the four sections the next step drafts, and the only way past was a stub of invented rig fields. Issue #118: where an example's tracked config records a mesh-mode correction against its proposal, the uncorrected loop must end where the README says to read check.json, on the FAIL line that names that part and no other",
+          : `step ${r.ran.length + (r.refused.status === -1 ? 1 : 0)} of ${lines.length} refused (exit ${r.refused.status}): \`${r.refused.line}\` — ${r.refused.fails.length > 0 ? r.refused.fails.join(' | ') : r.refused.first}${corrected.length > 0 ? `; the tracked config corrects [${corrected.join(', ')}] (${[moved.length > 0 ? `to contour mode: ${moved.join(', ')}` : '', rechained.length > 0 ? `its chains moved: ${rechained.join(', ')}` : ''].filter((x) => x !== '').join('; ')}), so the uncorrected build is required to stop there naming exactly those on CHECK_TIP_OVER_ROOT` : ''}`,
+        "issue #20: the README loop is what an agent follows, so it is run as written; plain assemble once refused the config for the four sections the next step drafts, and the only way past was a stub of invented rig fields. Issue #118: where an example's tracked config records a correction against its proposal on a part TIP_OVER_ROOT reads — a mesh moved to contour mode (scarf) or a chain of that mesh moved (the demo's skirt, issue #227) — the uncorrected loop must end where the README says to read check.json, on the FAIL line that names that part and no other",
       );
     }
     // The planted order: assemble before the plan exists. It must stop at
@@ -13938,20 +13956,24 @@ function runStructureSuite(): number {
   );
 
   // ST25 — the tracked public examples.
-  // Issue #196: the chains a tracked example's config moves off its proposal by hand, by example. Each carries a `note`
-  // on its config entry citing the issue; its links are the only bones allowed to differ from the proposal, and every
-  // one of them must differ, so a stale entry here is as loud as an unrecorded move.
-  const HAND_MOVED_CHAINS: Readonly<Record<string, readonly string[]>> = { scarf: ['robe_r'] };
-  const handMoved = (proposalPath: string, configPath: string, chains: readonly string[]) => {
+  // Issue #196: the chains a tracked example's config moves off its proposal by hand, by example, and the issue that
+  // moved them (#227: the demo's two outer skirt chains). Each carries a `note` on its config entry citing that issue;
+  // its links are the only bones allowed to differ from the proposal, and every one of them must differ, so a stale
+  // entry here is as loud as an unrecorded move.
+  const HAND_MOVED_CHAINS: Readonly<Record<string, { chains: readonly string[]; issue: string }>> = {
+    scarf: { chains: ['robe_r'], issue: '#196' },
+    demo: { chains: ['skirt_r', 'skirt_l'], issue: '#227' },
+  };
+  const handMoved = (proposalPath: string, configPath: string, chains: readonly string[], issue = '#196') => {
     const propCfg = loadComparison(proposalPath, configPath, null);
     const cfgBones = (readJsonAt(configPath) as { bones?: Array<{ chain?: string; points?: unknown[]; note?: unknown }> }).bones ?? [];
     const entries = chains.map((c) => cfgBones.find((b) => b.chain === c));
     const links = entries.flatMap((b) => (b === undefined ? [] : (b.points ?? []).map((_, i) => `${b.chain}${i}`)));
-    const noted = entries.every((b) => b !== undefined && typeof b.note === 'string' && b.note.includes('#196'));
+    const noted = entries.every((b) => b !== undefined && typeof b.note === 'string' && b.note.includes(issue));
     const loud = loudRows(propCfg).filter((row) => links.includes(row.split(' ')[0]));
     const allMoved = links.every((n) => loud.some((row) => row.startsWith(`${n} `)));
     const rest = loudRows(propCfg, links).length;
-    const text = `proposal vs config loud rows ${rest} off the hand-moved chains (${chains.length === 0 ? 'none' : `${chains.join(', ')}: ${loud.length} row(s) over ${links.length} link(s), every link moved ${allMoved}, note citing #196 ${noted ? 'present' : 'ABSENT'}`})`;
+    const text = `proposal vs config loud rows ${rest} off the hand-moved chains (${chains.length === 0 ? 'none' : `${chains.join(', ')}: ${loud.length} row(s) over ${links.length} link(s), every link moved ${allMoved}, note citing ${issue} ${noted ? 'present' : 'ABSENT'}`})`;
     return { propCfg, ok: rest === 0 && noted && allMoved, text };
   };
   const exampleLines: string[] = [];
@@ -13959,7 +13981,7 @@ function runStructureSuite(): number {
   for (const key of exampleKeys().all) {
     const dir = join(EXAMPLES_DIR, key);
     const cfgRig = loadComparison(join(dir, 'config.json'), join(dir, 'expected', 'rig.json'), null);
-    const moved = handMoved(join(dir, 'proposal.json'), join(dir, 'config.json'), HAND_MOVED_CHAINS[key] ?? []);
+    const moved = handMoved(join(dir, 'proposal.json'), join(dir, 'config.json'), HAND_MOVED_CHAINS[key]?.chains ?? [], HAND_MOVED_CHAINS[key]?.issue);
     const propCfg = moved.propCfg;
     // Issue #183: a bone the config authors beyond the proposal is allowed only as a physics constraint's own bone
     // (sample's chest_jiggle and hip_jiggle): propose writes no constraint, so it cannot have proposed that bone.
@@ -13995,7 +14017,7 @@ function runStructureSuite(): number {
       if (entry !== undefined) edit(entry);
       const path = join(plantDir, `${label}.json`);
       writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`);
-      const r = handMoved(join(exDir, 'proposal.json'), path, HAND_MOVED_CHAINS.scarf ?? []);
+      const r = handMoved(join(exDir, 'proposal.json'), path, HAND_MOVED_CHAINS.scarf.chains, HAND_MOVED_CHAINS.scarf.issue);
       exampleOk &&= !r.ok && entry !== undefined;
       planted.push(`${label} -> ${r.ok ? 'PASSED' : 'refused'} (${r.text})`);
     };
@@ -18111,17 +18133,21 @@ function runSceneSuite(): number {
 
 /**
  * Issue #74 §4 on the public examples, from the chain suite's own green
- * builds (none is built twice): demo and sample side by side on one canvas
+ * builds (none is built twice): the two reference fixtures (examples/reference-demo
+ * and reference-sample, composed under the ids demo and sample) side by side on one canvas
  * with a generated flat plate and a requirements file naming both characters'
  * bones; sample's first mesh slot drawn between demo's first two slots; and
  * each example alone at its own stage, which must compose to its build
  * renamed only. Every compose runs the real gate and the real check.
  */
 function runPublicScenes(green: ReadonlyMap<string, string>, dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
-  const demo = green.get('demo');
-  const sample = green.get('sample');
+  // The two reference fixtures (issue #227 took them off display as examples/reference-demo and reference-sample); the
+  // scenes keep calling them demo and sample, the ids every name below is prefixed with.
+  const FOLDER: Readonly<Record<string, string>> = { demo: 'reference-demo', sample: 'reference-sample' };
+  const demo = green.get(FOLDER.demo);
+  const sample = green.get(FOLDER.sample);
   if (demo === undefined || sample === undefined) {
-    say('SC30_DEMO_AND_SAMPLE_SIDE_BY_SIDE_WITH_A_GENERATED_PLATE_GATE_GREEN_AND_CHECK', false, `green builds: ${[...green.keys()].join(', ') || 'none'}; demo and sample are both required`, 'the chain ran, so both public examples were fetched and must have built green');
+    say('SC30_DEMO_AND_SAMPLE_SIDE_BY_SIDE_WITH_A_GENERATED_PLATE_GATE_GREEN_AND_CHECK', false, `green builds: ${[...green.keys()].join(', ') || 'none'}; reference-demo and reference-sample are both required`, 'the chain ran, so both public examples were fetched and must have built green');
     return;
   }
   const sd = join(dir, 'scenes');
@@ -18136,7 +18162,7 @@ function runPublicScenes(green: ReadonlyMap<string, string>, dir: string, say: (
   // The requirement bars are each example config's own first chain amplitude (degrees), widened by 0.5 degrees for
   // the bezier between keys: read from config.json, the input, never from a run.
   const firstChain = (key: string): { chain: string; amp: number } => {
-    const cfg = readJsonAt(join(ROOT, 'examples', key, 'config.json')) as { motion: { tracks: Array<{ chain?: string; amps?: number[] }> } };
+    const cfg = readJsonAt(join(ROOT, 'examples', FOLDER[key], 'config.json')) as { motion: { tracks: Array<{ chain?: string; amps?: number[] }> } };
     const t = cfg.motion.tracks.find((x) => x.chain !== undefined && x.amps !== undefined) as { chain: string; amps: number[] };
     return { chain: t.chain, amp: Math.abs(t.amps[0]) };
   };
@@ -21200,15 +21226,15 @@ function runAutoMeshSuite(): number {
 }
 
 /**
- * The automatic mode on a public example (issue #126 item 2, Part 3): the demo's `neck` — the smallest mesh
+ * The automatic mode on a public example (issue #126 item 2, Part 3): the reference demo's `neck` — the smallest mesh
  * part that is one island at alpha 1 and above — switched to auto under tools/auto_survey.ts's POLICY, through
  * assemble, the rig stage and the installed rig-c's gate. No fetched inputs: a SKIP and a HOLE.
  */
 function runAutoMeshExamplesSuite(): number | null {
-  section('auto-mesh: a public example part (examples/demo/inputs)');
-  const demo = exampleDirs().find((d) => d.endsWith(`${'/'}demo`) && existsSync(join(d, 'inputs', 'layers', 'head')));
+  section('auto-mesh: a public example part (examples/reference-demo/inputs)');
+  const demo = exampleDirs().find((d) => d.endsWith(`${'/'}reference-demo`) && existsSync(join(d, 'inputs', 'layers', 'head')));
   if (demo === undefined) {
-    console.log('  SKIP  no fetched examples/demo/inputs (painting.png + layers/{full,head}); run bun run fetch-examples');
+    console.log('  SKIP  no fetched examples/reference-demo/inputs (painting.png + layers/{full,head}); run bun run fetch-examples');
     console.log('          ⚠️ This is a HOLE in this run, not a pass — the automatic mode measured no real part.');
     return null;
   }

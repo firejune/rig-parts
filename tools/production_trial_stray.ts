@@ -12,7 +12,7 @@
  * image has the islands `stray` leaves out cleared to alpha 0 ({@link strayCleared}, the same `connectedComponents` and
  * `strayIslands` the trace runs). The check reads the parts as assembled.
  *
- *     bun run fetch-examples                                                 # once: examples/{demo,sample,scarf}/inputs
+ *     bun run fetch-examples                                                 # once: examples/{reference-demo,reference-sample,scarf}/inputs
  *     bun tools/production_trial_stray.ts --cell <key>/<part> [--set <path>=<json>] [--path build|one-mask] > <row>.json
  *     bun tools/production_trial_stray.ts --cell <key>/<part> [--set <path>=<json>] --mask-only --art <dir> > <mask>.json
  *     bun tools/production_trial_stray.ts --compare <a.json> <b.json>        # the fields two rows differ in (wall seconds aside)
@@ -479,7 +479,7 @@ export function strayPage(a: { six: readonly StrayRow[]; controls: readonly Stra
   L.push('');
   L.push(`The picture: [${a.picture.split('/').pop()}](${a.picture.split('/').pop()}) — each part's image as assembled, lightened, the cleared pixels in red with a red ring around each island; the caption is the row above.`);
   L.push('');
-  L.push('## sample/hair_back: the tolerance and margin ladder');
+  L.push('## reference-sample/hair_back: the tolerance and margin ladder');
   L.push('');
   L.push('The trial refused it at the source, `CONTOUR_OVERSHOOT`, under the policy (tolerance 2, margin 2) and at tolerance 1. Here: tolerance {0.5, 1, 1.5} × margin {1, 2}, each one `source` setting over the policy (spacing 21, the part\'s tracked grid), on `build` itself; the part has one island, so no `stray` is declared.');
   L.push('');
@@ -506,15 +506,15 @@ export function strayPage(a: { six: readonly StrayRow[]; controls: readonly Stra
   L.push('```sh');
   L.push('bun install --frozen-lockfile');
   L.push('bun run fetch-examples');
-  L.push('# the six, one mask, with the trial\'s stray retry (demo/hair_back 6, demo/sleeves 7, demo/topwear 7, sample/hair_front 2, scarf/hair_back 3, scarf/topwear 13):');
+  L.push('# the six, one mask, with the trial\'s stray retry (reference-demo/hair_back 6, reference-demo/sleeves 7, reference-demo/topwear 7, reference-sample/hair_front 2, scarf/hair_back 3, scarf/topwear 13):');
   L.push('bun tools/production_trial_stray.ts --cell <key>/<part> --set source.stray=<n> > om-<key>-<part>.json');
   L.push('# the controls, both paths (the three stray = 1 parts with --set source.stray=1; the eight policy parts without):');
   L.push('bun tools/production_trial_stray.ts --cell <key>/<part> [--set source.stray=1] --path build > b-<key>-<part>.json');
   L.push('bun tools/production_trial_stray.ts --cell <key>/<part> [--set source.stray=1] > om-<key>-<part>.json');
   L.push('# the masks alone, with the art the picture reads:');
-  L.push('bun tools/production_trial_stray.ts --cell <key>/<part> [--set source.stray=<n>] --mask-only --art <dir> > mask-<key>-<part>.json   # and sample/hair_back, whose image the ladder\'s pocket line reads');
+  L.push('bun tools/production_trial_stray.ts --cell <key>/<part> [--set source.stray=<n>] --mask-only --art <dir> > mask-<key>-<part>.json   # and reference-sample/hair_back, whose image the ladder\'s pocket line reads');
   L.push('# the ladder:');
-  L.push('bun tools/production_trial_stray.ts --cell sample/hair_back --path build --set \'source={"tolerance":<t>,"margin":<m>,"spacing":21}\' > ladder-<t>-<m>.json');
+  L.push('bun tools/production_trial_stray.ts --cell reference-sample/hair_back --path build --set \'source={"tolerance":<t>,"margin":<m>,"spacing":21}\' > ladder-<t>-<m>.json');
   L.push('bun tools/production_trial_stray.ts --page --six <om rows> --controls <b and om rows> --masks <mask rows> --ladder <ladder rows> --art <dir> --picture docs/evidence/production-trial-stray.png --machine "<where the cells ran>" > docs/evidence/production-trial-stray.md');
   L.push('```');
   return L;
@@ -572,7 +572,7 @@ async function main(argv: string[]): Promise<number> {
     strayPicture(six.map((r) => ({ name: `${r.cell.example}/${r.cell.part}`, art: readPng(join(art, `${r.cell.example}-${r.cell.part}.png`)), cleared: r.cleared as Cleared }))).writePng(picture);
     const tracked = trackedFromTrialPage(readFileSync(join(ROOT, 'docs', 'evidence', 'production-trial.md'), 'utf8'));
     const masks = list('--masks').map((f) => JSON.parse(readFileSync(f, 'utf8')) as MaskRow);
-    const pocket = cornerPockets(readPng(join(art, 'sample-hair_back.png')));
+    const pocket = cornerPockets(readPng(join(art, 'reference-sample-hair_back.png')));
     const alphaOf = (r: StrayRow) => clearedAlpha(readPng(join(art, `${r.cell.example}-${r.cell.part}.png`)), r.cleared?.stray ?? undefined);
     for (const l of strayPage({ six, controls: rows('--controls'), masks, ladder: rows('--ladder'), pocket, alphaOf, tracked, picture, machine: get('--machine') ?? 'local' })) console.log(l);
     return 0;

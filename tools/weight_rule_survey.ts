@@ -62,7 +62,7 @@ export type Vec = ReadonlyArray<{ bone: string; weight: number }>;
  */
 export function publicR(): { r: number; from: number[] } {
   const from: number[] = [];
-  for (const k of ['demo', 'sample', 'scarf']) {
+  for (const k of ['reference-demo', 'reference-sample', 'scarf']) {
     const raw = JSON.parse(readFileSync(join(ROOT, 'examples', k, 'config.json'), 'utf8')) as { meshes: Record<string, { r: number }> };
     for (const m of Object.values(raw.meshes)) from.push(m.r);
   }
@@ -701,7 +701,7 @@ function faceRun(cfg: CharacterConfig, parts: readonly PlacedPart[], r: number):
     if (b === undefined || !('at' in b)) throw new Error(`weight_rule_survey: the sample declares no bone ${name}`);
     return [b.at[0] - ox, b.at[1] - oy];
   };
-  const raw = JSON.parse(readFileSync(join(ROOT, 'examples', 'sample', 'config.json'), 'utf8')) as { meshes: Record<string, { segments: unknown[] }> };
+  const raw = JSON.parse(readFileSync(join(ROOT, 'examples', 'reference-sample', 'config.json'), 'utf8')) as { meshes: Record<string, { segments: unknown[] }> };
   const headSeg = raw.meshes.neck.segments.find((s): s is [string, [number, number], [number, number]] => Array.isArray(s) && s[0] === 'head');
   if (headSeg === undefined) throw new Error('weight_rule_survey: the sample neck mesh declares no head segment');
   const lidOf: Record<string, string> = { lash_l: cfg.regions.lash_l, lash_r: cfg.regions.lash_r };
@@ -982,9 +982,9 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   }
-  const missing = missingInputs(['sample']);
+  const missing = missingInputs(['reference-sample']);
   if (missing.length > 0) {
-    console.error('weight_rule_survey: no fetched examples/sample/inputs; run `bun run fetch-examples` first');
+    console.error('weight_rule_survey: no fetched examples/reference-sample/inputs; run `bun run fetch-examples` first');
     process.exit(1);
   }
   const { r, from } = publicR();
@@ -993,8 +993,8 @@ async function main(): Promise<void> {
   const work = mkdtempSync(join(tmpdir(), 'rig-parts-weight-rule-survey-'));
   let face: FaceRun;
   try {
-    const asm = assembleExample(work, 'sample');
-    const cfg = loadConfig(join(ROOT, 'examples', 'sample', 'config.json'));
+    const asm = assembleExample(work, 'reference-sample');
+    const cfg = loadConfig(join(ROOT, 'examples', 'reference-sample', 'config.json'));
     const parts = readParts(join(asm, 'parts.json')).parts.map((p) => ({ name: p.name, x: p.x, y: p.y, img: readPng(join(asm, 'parts', `${p.name}.png`)) }));
     face = faceRun(cfg, parts, r);
   } finally {

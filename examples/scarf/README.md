@@ -14,7 +14,7 @@ here (gitignored).
 
 ## Why it exists
 
-- **A hanging element the other two lack.** The scarf is painted inside the
+- **A hanging element the two reference examples lack.** The scarf is painted inside the
   `topwear` layer; the proposer's two `robe` chains (`robe_r`, `robe_l`, four links
   each) run down that part's two sides, where the scarf ends hang to the thighs, and
   the idle swings them.
@@ -59,8 +59,8 @@ here (gitignored).
   count and the idle track the proposal's, and the entry's `note` says why. `robe_l` is
   the proposal's: no tie pixel is painted on its side above row 600, where the sleeve
   covers the tie (`docs/evidence/scarf-chain-moved.png` shows `robe_r` before and after).
-- `sheets/` — `rig-parts sheet` contact sheets, written by this port as PNG (demo's
-  and sample's are the reference implementation's JPEGs): the painting with the full
+- `sheets/` — `rig-parts sheet` contact sheets, written by this port as PNG (reference-demo's
+  and reference-sample's are the reference implementation's JPEGs): the painting with the full
   run's layers, the painting with the head run's layers, and the painting with the
   24 assembled parts of the `expected/` build.
 - `expected/` — **this port's own build**, rebuilt by issue #118 (which moved
@@ -76,9 +76,9 @@ here (gitignored).
   port check. `parts.json` (`assemble`), `motion.json` and `mesh_report.json`
   (`rig`), and `check.json` and `gate_spine-html.txt` (`check`) are the build's files
   as written; `rig.json` is the build's `rig/rig.json` carried to its flat form by
-  `flattenRig` (`src/rig.ts`), the form the reference wrote and demo's and sample's
+  `flattenRig` (`src/rig.ts`), the form the reference wrote and reference-demo's and reference-sample's
   `expected/rig.json` are in, so the chain suite (`CH03`) and the structure suite
-  (`ST25`) read all three examples the same way. Issue #126 turned every mesh triangle counter-clockwise in Spine world, the winding rig-c reads a mesh in (the reference, and this port before it, wrote them clockwise there). The declared exception, and nothing else: every mesh `triangles` triple `[a, b, c]` is `[a, c, b]` in `rig.json`; the `check.json` `TEXTURE_STRETCH` entries that print a triangle's vertices and edge print them in that order (16 here, 52 over the three examples; the triangle, frame and figures are unchanged); and the untracked `skeleton.model.json`'s `spine.sha256`, which follows the skeleton bytes. Every rendered frame of the build is pixel-equal before and after. Issue #209 carried the seam's composite onto the render's pixel centres — the setup-pose still renders at frame scale 1.0107 here, not 1 — which moved `check.json`'s `seam_mean` from 0.211 to 0.206, with every other figure as before. Issue #216 judges the seam's pixel count in rig pixels — the frame count divided by s², so the bar reads one rig the same at every frame scale — and writes the scale it divides by as `check.json`'s `seam_frame_scale` (1.010705 here) after the three seam figures; that key is the only byte that moved, and the verdict is as before (2 frame px over 40, 1.96 rig px, against 50). The seam row of the table below is the three builds before it.
+  (`ST25`) read the examples the same way. Issue #126 turned every mesh triangle counter-clockwise in Spine world, the winding rig-c reads a mesh in (the reference, and this port before it, wrote them clockwise there). The declared exception, and nothing else: every mesh `triangles` triple `[a, b, c]` is `[a, c, b]` in `rig.json`; the `check.json` `TEXTURE_STRETCH` entries that print a triangle's vertices and edge print them in that order (16 here, 52 over the three examples; the triangle, frame and figures are unchanged); and the untracked `skeleton.model.json`'s `spine.sha256`, which follows the skeleton bytes. Every rendered frame of the build is pixel-equal before and after. Issue #209 carried the seam's composite onto the render's pixel centres — the setup-pose still renders at frame scale 1.0107 here, not 1 — which moved `check.json`'s `seam_mean` from 0.211 to 0.206, with every other figure as before. Issue #216 judges the seam's pixel count in rig pixels — the frame count divided by s², so the bar reads one rig the same at every frame scale — and writes the scale it divides by as `check.json`'s `seam_frame_scale` (1.010705 here) after the three seam figures; that key is the only byte that moved, and the verdict is as before (2 frame px over 40, 1.96 rig px, against 50). The seam row of the table below is the three builds before it.
 
 ## The four patches
 
@@ -116,7 +116,7 @@ largest 63 px at 347,803 3x60 beside `topwear` (`check.json`, `RECOMPOSITE_HOLES
 - **No neck part.** The scarf covers the neck and `assemble --propose-plan` proposes
   none, so the face-less fallback of issue #76 has nothing to derive a face from: with
   the face plan entries removed, `propose` refuses with `PROPOSE_FACE_PRESENT` naming
-  the missing neck (selftest `EX02`), where demo and sample get a fallback proposal
+  the missing neck (selftest `EX02`), where reference-demo and reference-sample get a fallback proposal
   (`PR53`).
 
 ## Both mesh modes

@@ -3,7 +3,7 @@
  * rigc#1271 Q8, measured on the public examples, and Q1 option (ii) tried, by
  * one command:
  *
- *     bun run fetch-examples          # once: examples/{demo,sample,scarf}/inputs
+ *     bun run fetch-examples          # once: examples/{reference-demo,reference-sample,scarf}/inputs
  *     bun tools/auto_boundary_survey.ts > docs/evidence/auto-boundary-survey.md
  *
  * **Q8** (rig-c's docs/MESH_REDUCTION.md §8, *Questions for parts*): whether
@@ -102,17 +102,17 @@ const ROOT = resolve(import.meta.dir, '..');
 
 /** Q8's parts: the three the motion gate refuses in full (docs/evidence/auto-motion-survey.md) and two it accepts outright, for contrast. */
 export const Q8_PARTS: ReadonlyArray<readonly [string, string]> = [
-  ['demo', 'bottomwear'],
-  ['sample', 'sleeves'],
-  ['sample', 'bottomwear'],
-  ['demo', 'neck'],
+  ['reference-demo', 'bottomwear'],
+  ['reference-sample', 'sleeves'],
+  ['reference-sample', 'bottomwear'],
+  ['reference-demo', 'neck'],
   ['scarf', 'handwear_l'],
 ];
 
 /** The eight parts item 2 accepted on geometry (the motion survey's set), by example. */
 export const ITEM2_PARTS: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ['demo', ['neck', 'bottomwear']],
-  ['sample', ['neck', 'sleeves', 'topwear', 'bottomwear']],
+  ['reference-demo', ['neck', 'bottomwear']],
+  ['reference-sample', ['neck', 'sleeves', 'topwear', 'bottomwear']],
   ['scarf', ['hair_front', 'handwear_l']],
 ];
 

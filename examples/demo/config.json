@@ -1,7 +1,7 @@
 {
   "key": "demo",
   "generation": {
-    "checkpoint": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors",
+    "checkpoint": "hassakuXLIllustrious_v13StyleA.safetensors",
     "loras": [],
     "trigger": "",
     "identity": "1girl, solo, adult woman, very long twin tails, pink hair with light blue streaks, blue eyes, large pink ribbon hair bow, star hair ornament, dangling star earrings",
@@ -13,18 +13,35 @@
     },
     "costume": "idol costume, white and pink frilled dress with long puffy sleeves, high collar, layered ruffled skirt to the knees, white thighhighs, pink ankle boots, fully clothed, empty hands",
     "negative_extra": "revealing clothes, bare shoulders, off shoulder, 2girls, multiple girls, holding, bag, weapon, clouds, cloud, sun, sky, sky background, grey background, blue background, gradient background, scenery, outdoors, from behind, back view, back of head, facing away, vignette, beige background, brown background, dark background, black background, spotlight, lighting gradient, microphone, holding microphone, stage, stage lights, flat color, cel shading, monochrome, lineart",
-    "pose": "full body, head to toe, entire body in frame, front view, facing viewer, looking at viewer, standing, hands clasped in front of waist, own hands together, relaxed pose, gentle smile, feet visible, shoes",
+    "pose": "full body, head to toe, entire body in frame, front view, facing viewer, looking at viewer, standing, arms away from body, hands apart away from skirt, open hands, relaxed fingers, relaxed pose, gentle smile, feet visible, shoes",
     "style": "anime illustration, detailed, soft shading, (white background:1.3), simple background, plain background",
     "negative_pose": "cropped, out of frame, cut off feet, close-up, portrait, upper body, from side, profile, sitting, kneeling, dynamic pose, arms raised, hand on face, contact shadow, cast shadow, floor, multiple views, reference sheet",
     "latent": [
       832,
       1216
     ],
-    "seed": 71004,
+    "seed": 71006,
     "control": {
-      "skeleton": "stand_clasp",
+      "skeleton": "pose.json",
       "strength": 0.8,
       "end_percent": 0.7
+    },
+    "seed_note": "chosen from 16 candidates over two checkpoints and three poses by reading each painting's hands at full resolution (issue #227; the table is demo/candidates.json in the examples repository); the published painting.png is this seed's painting after one hand-detailer pass, recorded under x-hand_detailer, which comfy paint does not run",
+    "x-hand_detailer": {
+      "graph": "demo/detail_graph.json in the examples repository",
+      "mask": "demo/detail_mask.png there: two filled boxes [270, 1140, 471, 1301] and [1190, 1140, 1391, 1301] (x0, y0, x1, y1, painting px, end-exclusive), one per hand, drawn by eye",
+      "node": "Impact Pack MaskToSEGS (crop_factor 3.0, bbox_fill) then DetailerForEach",
+      "positive": "the painting's positive plus ', detailed hands, five fingers'",
+      "negative": "the painting's negative",
+      "seed": 71006,
+      "steps": 20,
+      "cfg": 6.0,
+      "sampler": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 0.45,
+      "guide_size": 512,
+      "max_size": 1024,
+      "feather": 5
     }
   },
   "seethrough": {
@@ -33,12 +50,12 @@
     "seed": 42,
     "offload": true,
     "head_box": [
-      448,
+      268,
       0,
-      1238,
-      790
+      1393,
+      1125
     ],
-    "head_box_note": "proposed [448, -118, 1238, 672] runs 118 px above the canvas and the crop fills that band black; shifted down to y0=0, same 790 px side"
+    "head_box_note": "propose --head-box: the proposed [268, -269, 1393, 856] ran 269 px above the painting; the command shifted it down at the same 1125 px side"
   },
   "assemble": {
     "rig_scale": 0.5,
@@ -49,14 +66,24 @@
         "back hair"
       ],
       [
-        "earring",
+        "handwear_l",
         "full",
-        "earwear"
+        "handwear-l"
+      ],
+      [
+        "handwear_r",
+        "full",
+        "handwear-r"
       ],
       [
         "legwear",
         "full",
         "legwear"
+      ],
+      [
+        "shoes",
+        "full",
+        "footwear"
       ],
       [
         "neck",
@@ -69,19 +96,19 @@
         "bottomwear"
       ],
       [
-        "shoes",
-        "full",
-        "footwear"
-      ],
-      [
         "topwear",
         "full",
         "topwear"
       ],
       [
-        "sleeves",
-        "full",
-        "handwear-r"
+        "earring",
+        "head",
+        "earwear"
+      ],
+      [
+        "hairpin",
+        "head",
+        "headwear"
       ],
       [
         "ear_r",
@@ -94,9 +121,9 @@
         "ears-l"
       ],
       [
-        "hairpin",
+        "brow_l",
         "head",
-        "headwear"
+        "eyebrow-l"
       ],
       [
         "face",
@@ -104,14 +131,14 @@
         "face"
       ],
       [
-        "brow_l",
-        "head",
-        "eyebrow-l"
-      ],
-      [
         "brow_r",
         "head",
         "eyebrow-r"
+      ],
+      [
+        "mouth",
+        "head",
+        "mouth"
       ],
       [
         "eyewhite_r",
@@ -124,9 +151,9 @@
         "eyewhite-l"
       ],
       [
-        "mouth",
+        "lash_l",
         "head",
-        "mouth"
+        "eyelash-l"
       ],
       [
         "iris_l",
@@ -134,19 +161,14 @@
         "irides-l"
       ],
       [
-        "lash_l",
+        "lash_r",
         "head",
-        "eyelash-l"
+        "eyelash-r"
       ],
       [
         "iris_r",
         "head",
         "irides-r"
-      ],
-      [
-        "lash_r",
-        "head",
-        "eyelash-r"
       ],
       [
         "hair_front",
@@ -155,38 +177,38 @@
       ]
     ],
     "extend_below_crop": [],
-    "plan_note": "hand edit: hair_back head->full run and its extend_below_crop entry removed; the twin tails extend left and right of the 790 px head crop, and extend_below_crop only fills below the crop line, leaving the tails beside the crop and above y=395 (rig px) empty (proposed plan: recomposite mean 2.52, within 8 95.9%)"
+    "plan_note": "hand edit, as on reference-demo: hair_back head->full run; the twin tails leave the 1125 px head crop sideways, which no extend_below_crop entry fills (proposed plan: uncovered error 2992 px, the largest holes 464 px at 692,384 and 373 px at 123,385, both tail tips beside the crop; with hair_back from the full run 2939 px, the largest 48 px)"
   },
   "bones": [
     {
       "name": "hip",
       "parent": "root",
       "at": [
-        402,
-        537
+        416,
+        420
       ]
     },
     {
       "name": "chest",
       "parent": "hip",
       "at": [
-        402,
-        385
+        416,
+        324
       ]
     },
     {
       "name": "neck",
       "parent": "chest",
       "at": [
-        413,
-        232
+        415,
+        228
       ]
     },
     {
       "name": "head",
       "parent": "neck",
       "at": [
-        413,
+        415,
         197
       ]
     },
@@ -194,40 +216,40 @@
       "name": "eye_r",
       "parent": "head",
       "at": [
-        387,
-        164
+        384,
+        148
       ]
     },
     {
       "name": "eye_l",
       "parent": "head",
       "at": [
-        440,
-        161
+        446,
+        149
       ]
     },
     {
       "name": "brow_r",
       "parent": "head",
       "at": [
-        388,
-        144
+        384,
+        126
       ]
     },
     {
       "name": "brow_l",
       "parent": "head",
       "at": [
-        436,
-        142
+        444,
+        126
       ]
     },
     {
       "name": "mouth",
       "parent": "head",
       "at": [
-        415,
-        192
+        413,
+        187
       ]
     },
     {
@@ -235,21 +257,21 @@
       "parent": "head",
       "points": [
         [
-          363,
-          163
+          353,
+          149
         ],
         [
-          315,
-          293
+          231,
+          235
         ],
         [
-          297,
-          423
+          229,
+          321
         ]
       ],
       "tip": [
-        297,
-        680
+        229,
+        489
       ]
     },
     {
@@ -257,21 +279,21 @@
       "parent": "head",
       "points": [
         [
-          468,
-          163
+          476,
+          149
         ],
         [
-          514,
-          293
+          601,
+          235
         ],
         [
-          550,
-          423
+          600,
+          321
         ]
       ],
       "tip": [
-        550,
-        680
+        600,
+        489
       ]
     },
     {
@@ -279,17 +301,17 @@
       "parent": "head",
       "points": [
         [
-          388,
-          80
+          384,
+          50
         ],
         [
-          378,
-          115
+          374,
+          92
         ]
       ],
       "tip": [
-        370,
-        158
+        366,
+        142
       ]
     },
     {
@@ -297,17 +319,17 @@
       "parent": "head",
       "points": [
         [
-          416,
-          80
+          414,
+          50
         ],
         [
-          416,
-          115
+          414,
+          92
         ]
       ],
       "tip": [
-        416,
-        158
+        414,
+        142
       ]
     },
     {
@@ -315,55 +337,37 @@
       "parent": "head",
       "points": [
         [
-          443,
-          80
+          444,
+          50
         ],
         [
-          453,
-          115
+          454,
+          92
         ]
       ],
       "tip": [
-        461,
-        158
+        462,
+        142
       ]
     },
     {
       "name": "hairpin",
       "parent": "head",
       "at": [
-        447,
-        65
+        418,
+        71
       ],
       "tip": [
-        290,
-        65
-      ]
-    },
-    {
-      "chain": "hairpin_tassel",
-      "parent": "hairpin",
-      "points": [
-        [
-          468,
-          111
-        ],
-        [
-          468,
-          130
-        ]
-      ],
-      "tip": [
-        468,
-        152
+        520,
+        71
       ]
     },
     {
       "name": "earring",
       "parent": "head",
       "at": [
-        427,
-        184
+        411,
+        173
       ]
     },
     {
@@ -371,21 +375,21 @@
       "parent": "chest",
       "points": [
         [
-          322,
-          385
+          336,
+          260
         ],
         [
-          325,
-          463
+          297,
+          381
         ],
         [
-          324,
-          542
+          259,
+          502
         ]
       ],
       "tip": [
-        405,
-        617
+        175,
+        626
       ]
     },
     {
@@ -393,21 +397,21 @@
       "parent": "chest",
       "points": [
         [
-          513,
-          385
+          491,
+          260
         ],
         [
-          515,
-          463
+          531,
+          381
         ],
         [
-          504,
-          542
+          566,
+          502
         ]
       ],
       "tip": [
-        426,
-        617
+        652,
+        626
       ]
     },
     {
@@ -415,43 +419,44 @@
       "parent": "hip",
       "points": [
         [
-          369,
-          557
+          326,
+          440
         ],
         [
-          294,
-          771
+          274,
+          508
         ],
         [
-          268,
-          985
+          241,
+          575
         ]
       ],
       "tip": [
-        353,
-        1199
-      ]
+        268,
+        610
+      ],
+      "note": "hand correction (issue #227): the proposal's points [[363,440],[340,508],[327,575]], tip [354,643], sit within 90 px of the centre line (x 416) of a skirt 449 px wide, so the skirt's two sides are weighted to the still hip and the three chains swinging together turn the skirt about its middle: across the fixed mid-line of the box that reads as the upper half travelling 0.537 rig px and the lower 0.237 (TIP_OVER_ROOT 0.442 against 1.4725). Each joint now sits 0.8 of the way from the skirt's centre to its right-hand (image-left) edge in its row (the bottomwear art at alpha above 128, rows 440, 508 and 575), and the tip at the same share in row 610, the hem's last full-width row, where the proposal's row 643 holds only the 96 px centre frill; TIP_OVER_ROOT reads 2.425. skirt_c, the link count and the idle track are the proposal's."
     },
     {
       "chain": "skirt_c",
       "parent": "hip",
       "points": [
         [
-          420,
-          557
+          412,
+          440
         ],
         [
           412,
-          771
+          508
         ],
         [
-          396,
-          985
+          416,
+          575
         ]
       ],
       "tip": [
-        434,
-        1199
+        414,
+        643
       ]
     },
     {
@@ -459,22 +464,23 @@
       "parent": "hip",
       "points": [
         [
-          471,
-          557
+          498,
+          440
         ],
         [
-          531,
-          771
+          551,
+          508
         ],
         [
-          525,
-          985
+          589,
+          575
         ]
       ],
       "tip": [
-        515,
-        1199
-      ]
+        559,
+        610
+      ],
+      "note": "hand correction (issue #227): the proposal's points [[461,440],[486,508],[505,575]], tip [473,643], sit within 90 px of the centre line (x 416) of a skirt 449 px wide, so the skirt's two sides are weighted to the still hip and the three chains swinging together turn the skirt about its middle: across the fixed mid-line of the box that reads as the upper half travelling 0.537 rig px and the lower 0.237 (TIP_OVER_ROOT 0.442 against 1.4725). Each joint now sits 0.8 of the way from the skirt's centre to its left-hand (image-right) edge in its row (the bottomwear art at alpha above 128, rows 440, 508 and 575), and the tip at the same share in row 610, the hem's last full-width row, where the proposal's row 643 holds only the 96 px centre frill; TIP_OVER_ROOT reads 2.425. skirt_c, the link count and the idle track are the proposal's."
     }
   ],
   "meshes": {
@@ -485,12 +491,12 @@
         [
           "head",
           [
-            413,
+            415,
             197
           ],
           [
-            413,
-            76
+            415,
+            49
           ]
         ],
         "hairback_r",
@@ -498,18 +504,18 @@
       ]
     },
     "hair_front": {
-      "grid": 12,
-      "r": 5,
+      "grid": 14,
+      "r": 6,
       "segments": [
         [
           "head",
           [
-            413,
+            415,
             197
           ],
           [
-            413,
-            67
+            415,
+            37
           ]
         ],
         "bang_r",
@@ -518,47 +524,46 @@
       ]
     },
     "hairpin": {
-      "grid": 13,
+      "grid": 11,
       "r": 5,
       "segments": [
         [
           "hairpin",
           [
-            447,
-            65
+            418,
+            71
           ],
           [
-            290,
-            65
+            520,
+            71
           ]
         ],
         [
           "hairpin",
           [
-            532,
-            53
+            309,
+            59
           ],
           [
-            447,
-            83
+            418,
+            89
           ]
-        ],
-        "hairpin_tassel"
+        ]
       ]
     },
     "earring": {
-      "grid": 5,
-      "r": 3,
+      "grid": 34,
+      "r": 14,
       "segments": [
         [
           "earring",
           [
-            427,
-            181
+            411,
+            170
           ],
           [
-            427,
-            210
+            411,
+            562
           ]
         ]
       ]
@@ -570,98 +575,115 @@
         [
           "chest",
           [
-            413,
-            250
+            415,
+            246
           ],
           [
-            413,
-            385
+            415,
+            324
           ]
         ],
         [
           "head",
           [
-            413,
+            415,
             197
           ],
           [
-            413,
+            415,
             147
           ]
         ]
       ]
     },
-    "sleeves": {
-      "grid": 24,
-      "r": 10,
+    "handwear_r": {
+      "grid": 21,
+      "r": 9,
       "segments": [
         [
           "chest",
           [
-            402,
-            345
+            336,
+            246
           ],
           [
-            402,
-            537
+            336,
+            262
           ]
         ],
-        "sleeve_r",
+        "sleeve_r"
+      ]
+    },
+    "handwear_l": {
+      "grid": 21,
+      "r": 9,
+      "segments": [
+        [
+          "chest",
+          [
+            491,
+            246
+          ],
+          [
+            491,
+            262
+          ]
+        ],
         "sleeve_l"
       ]
     },
     "topwear": {
-      "grid": 16,
-      "r": 7,
+      "grid": 19,
+      "r": 8,
       "segments": [
         [
           "chest",
           [
-            402,
-            198
+            416,
+            192
           ],
           [
-            402,
-            517
+            416,
+            400
           ]
         ],
         [
           "hip",
           [
-            402,
-            517
+            416,
+            400
           ],
           [
-            402,
-            637
+            416,
+            520
           ]
         ]
       ]
     },
     "bottomwear": {
-      "grid": 36,
-      "r": 15,
+      "grid": 25,
+      "r": 10,
       "segments": [
         [
           "chest",
           [
-            402,
-            355
+            416,
+            294
           ],
           [
-            402,
-            517
+            416,
+            400
           ]
         ],
         [
           "hip",
           [
-            135,
-            542
+            232,
+            425
           ],
           [
-            670,
-            542
+            601,
+            425
           ]
         ],
         "skirt_r",
@@ -676,47 +698,47 @@
     "shoes": "root",
     "ear_r": "head",
     "ear_l": "head",
-    "face": "head",
     "brow_l": "brow_l",
+    "face": "head",
     "brow_r": "brow_r",
     "mouth": "mouth",
-    "iris_l": "eye_l",
     "lash_l": "eye_l",
-    "iris_r": "eye_r",
+    "iris_l": "eye_l",
     "lash_r": "eye_r",
+    "iris_r": "eye_r",
     "legwear": "hip"
   },
   "motion": {
-    "duration": 4.0,
+    "duration": 4,
     "tracks": [
       {
         "bone": "chest",
         "prop": "translatey",
         "amp": 1.3,
-        "period": 4.0,
-        "phase": 0.0,
+        "period": 4,
+        "phase": 0,
         "base": 1.3
       },
       {
         "bone": "chest",
         "prop": "scalex",
         "amp": 0.004,
-        "period": 4.0,
-        "phase": 0.0,
+        "period": 4,
+        "phase": 0,
         "base": 1.004
       },
       {
         "bone": "head",
         "prop": "rotate",
         "amp": 0.9,
-        "period": 4.0,
+        "period": 4,
         "phase": 0.12
       },
       {
         "bone": "neck",
         "prop": "rotate",
         "amp": 0.35,
-        "period": 4.0,
+        "period": 4,
         "phase": 0.08
       },
       {
@@ -726,7 +748,7 @@
           1.4,
           2.4
         ],
-        "period": 4.0,
+        "period": 4,
         "phase": 0.2,
         "lag": 0.08
       },
@@ -737,17 +759,17 @@
           -1.4,
           -2.4
         ],
-        "period": 4.0,
+        "period": 4,
         "phase": 0.2,
         "lag": 0.08
       },
       {
         "chain": "bang_r",
         "amps": [
-          1.0,
+          1,
           2.2
         ],
-        "period": 4.0,
+        "period": 4,
         "phase": 0.18,
         "lag": 0.1
       },
@@ -757,49 +779,39 @@
           0.8,
           1.76
         ],
-        "period": 4.0,
+        "period": 4,
         "phase": 0.18,
         "lag": 0.1
       },
       {
         "chain": "bang_l",
         "amps": [
-          1.0,
+          1,
           2.2
         ],
-        "period": 4.0,
+        "period": 4,
         "phase": 0.18,
         "lag": 0.1
       },
       {
-        "chain": "hairpin_tassel",
-        "amps": [
-          4.0,
-          7.0
-        ],
-        "period": 2.0,
-        "phase": 0.2,
-        "lag": 0.12
-      },
-      {
         "chain": "sleeve_r",
         "amps": [
-          0.25,
-          0.9,
-          1.8
+          0.2,
+          0.6,
+          1.2
         ],
-        "period": 4.0,
+        "period": 4,
         "phase": 0.22,
         "lag": 0.08
       },
       {
         "chain": "sleeve_l",
         "amps": [
-          -0.25,
-          -0.9,
-          -1.8
+          -0.2,
+          -0.6,
+          -1.2
         ],
-        "period": 4.0,
+        "period": 4,
         "phase": 0.27,
         "lag": 0.08
       },
@@ -810,7 +822,7 @@
           0.35,
           0.7
         ],
-        "period": 4.0,
+        "period": 4,
         "phase": 0.3,
         "lag": 0.07
       },
@@ -821,7 +833,7 @@
           0.35,
           0.7
         ],
-        "period": 4.0,
+        "period": 4,
         "phase": 0.34,
         "lag": 0.07
       },
@@ -832,7 +844,7 @@
           0.35,
           0.7
         ],
-        "period": 4.0,
+        "period": 4,
         "phase": 0.38,
         "lag": 0.07
       }

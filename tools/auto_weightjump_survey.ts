@@ -4,7 +4,7 @@
  * parts the automatic mode's motion gate refuses under the stated policy, by
  * one command:
  *
- *     bun run fetch-examples          # once: examples/{demo,sample}/inputs
+ *     bun run fetch-examples          # once: examples/{reference-demo,reference-sample}/inputs
  *     bun tools/auto_weightjump_survey.ts > docs/evidence/auto-motion-weightjump.md
  *
  * Which parts: the three `docs/evidence/auto-motion-survey.md` records as
@@ -58,8 +58,8 @@ const ROOT = resolve(import.meta.dir, '..');
 
 /** The parts the motion survey records as refused `AUTO_MESH_MOTION`, by example. */
 const PARTS: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ['demo', ['bottomwear']],
-  ['sample', ['sleeves', 'bottomwear']],
+  ['reference-demo', ['bottomwear']],
+  ['reference-sample', ['sleeves', 'bottomwear']],
 ];
 
 /** The thresholds the distribution counts edges above. */

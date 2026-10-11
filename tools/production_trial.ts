@@ -5,7 +5,7 @@
  * build, reference build, motion comparison and acceptance loop, then `check`), under one declared policy
  * ({@link trialPolicy}) written down before any part was run and not changed after.
  *
- *     bun run fetch-examples                                        # once: examples/{demo,sample,scarf}/inputs
+ *     bun run fetch-examples                                        # once: examples/{reference-demo,reference-sample,scarf}/inputs
  *     bun tools/production_trial.ts --cell <key>/<part> [--set <path>=<json>] > <key>-<part>.json
  *     bun tools/production_trial.ts --example <key> --cells <file.json>… --keep <dir> > <key>.json
  *     bun tools/production_trial.ts --page --examples <key.json>… --cells <file.json>… --picture-dir docs/evidence > docs/evidence/production-trial.md
@@ -46,7 +46,7 @@ import { installedRigc, pinnedInputs } from './auto_motion_survey.ts';
 const ROOT = resolve(import.meta.dir, '..');
 
 /** The examples and the order the page reads them in. */
-export const TRIAL_EXAMPLES = ['demo', 'sample', 'scarf'] as const;
+export const TRIAL_EXAMPLES = ['reference-demo', 'reference-sample', 'scarf'] as const;
 
 // ---------------------------------------------------------------------------
 // 1. the policy, declared before any part was run

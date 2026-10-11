@@ -3,7 +3,7 @@
  * The motion gate of the automatic mesh mode (`src/automotion.ts`, issue #126
  * item 3) over the public examples, by one command:
  *
- *     bun run fetch-examples          # once: examples/{demo,sample,scarf}/inputs
+ *     bun run fetch-examples          # once: examples/{reference-demo,reference-sample,scarf}/inputs
  *     bun tools/auto_motion_survey.ts
  *
  * Which parts: the eight that item 2 accepted on geometry (issue #126, the
@@ -132,8 +132,8 @@ export const ALLOCATION_ROWS = ['MQ_GRADE', 'MQ_MIN_ANGLE_P10', 'MQ_ALLOCATION_C
 
 /** The parts item 2 accepted on geometry, by example (issue #126, the item-2 comment). */
 const PARTS: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ['demo', ['neck', 'bottomwear']],
-  ['sample', ['neck', 'sleeves', 'topwear', 'bottomwear']],
+  ['reference-demo', ['neck', 'bottomwear']],
+  ['reference-sample', ['neck', 'sleeves', 'topwear', 'bottomwear']],
   ['scarf', ['hair_front', 'handwear_l']],
 ];
 

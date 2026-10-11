@@ -1006,10 +1006,10 @@ function main(argv: string[]): void {
       if ('overlap' in sw) return 'overlap';
       return { input: stageInput(autoReductionInput({ part, mask, ox, oy, spec, source, weights: sw.weights, boneOrder: w.boneOrder }), spec, w, sw.weights) };
     };
-    timed.push({ label: 'demo / bottomwear', build: () => exampleInput('demo', 'bottomwear') });
-    timed.push({ label: 'demo / bottomwear + the declared region', build: () => regionInput('demo') });
-    timed.push({ label: 'sample / sleeves', build: () => exampleInput('sample', 'sleeves') });
-    timed.push({ label: 'sample / bottomwear', build: () => exampleInput('sample', 'bottomwear') });
+    timed.push({ label: 'demo / bottomwear', build: () => exampleInput('reference-demo', 'bottomwear') });
+    timed.push({ label: 'demo / bottomwear + the declared region', build: () => regionInput('reference-demo') });
+    timed.push({ label: 'sample / sleeves', build: () => exampleInput('reference-sample', 'sleeves') });
+    timed.push({ label: 'sample / bottomwear', build: () => exampleInput('reference-sample', 'bottomwear') });
     timed.push({ label: 'scarf / handwear_l', build: () => exampleInput('scarf', 'handwear_l') });
     const strip = AUTO_CASES.find((c) => c.name === 'tiny region, source at L0');
     if (strip !== undefined) {
@@ -1172,7 +1172,7 @@ function main(argv: string[]): void {
 
   // ---- 5. #115 on sample/sleeves -----------------------------------------
   const sep: string[] = [];
-  const sample = examples.get('sample');
+  const sample = examples.get('reference-sample');
   if (args.builds && sample !== undefined && cell === null) {
     const meshes = sample.raw.meshes as { [k: string]: { [k: string]: Json } };
     const grid = spacingOf(meshes.sleeves);
