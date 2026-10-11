@@ -103,6 +103,11 @@
  *   bone a constraint follows is declared detached from the bones it drives
  *   ({@link detachedRules}, `invariants.detached`, rigc's `A25`). Without the
  *   field, no byte of any output moves.
+ * - **The turn control**, only when the config has `turn` (issue #251,
+ *   `src/turn.ts`, {@link applyTurn}): a bone `turn` under `root` nothing
+ *   keys, a leaf twin of every bone a carried part binds, and one transform
+ *   constraint per part carrying its twins `fraction · turn.x` in world x,
+ *   after the config's own constraints. Without the field nothing is added.
  *
  * Every part image is padded by {@link PAD} transparent pixels on each side
  * before it is meshed or placed, and the padded image is what `images/`
@@ -155,6 +160,7 @@ import { EYE_GROUP_TAGS } from './propose.ts';
 import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
 import { boneHeat, heatInfluences, heatRow, type HeatRow, latticeSilhouette, tracedSilhouette } from './heat.ts';
+import { TURN_BONE, type TurnSpec, turnConstraintName, turnFractions, turnTwin } from './turn.ts';
 import { DEFAULT_LIMITS, DISTANCE_EXPONENT, type Influence, influences, type Segment } from './weights.ts';
 
 /** Transparent pixels added round every part image — the reference's `PAD`. */
@@ -441,6 +447,101 @@ export function detachedRules(constraints: readonly ConfigConstraint[]): Detache
   return out;
 }
 
+/** One carried part of the turn control (issue #251): its depth, its fraction, and the twins that carry it. */
+export interface TurnRow {
+  part: string;
+  depth: number;
+  fraction: number;
+  /** Each bone the part's slots and weights bind to, with the leaf twin that now carries it; empty when the fraction is 0 — the part stays with the pivot. */
+  twins: Array<{ bone: string; twin: string }>;
+}
+
+/**
+ * The turn control (issue #251, `src/turn.ts`), added to a built rig in place:
+ * the control {@link TURN_BONE} under `root` at its origin, nothing keying it;
+ * for each part `config.turn.depths` lists, in parts.json order, a leaf twin of
+ * every bone the part's slots bind (its region's bone, a blink.still piece's
+ * bone, a mesh's slot bone and every bone its weights name) — an identity child,
+ * x 0, y 0, no rotation, so its world transform is its bone's exactly and every
+ * idle key, physics step or constraint on the bone reaches it — the part's
+ * slots and weights moved onto the twins, and one transform constraint per part
+ * that adds `fraction · turn.x` to each twin's world x (`localSource`, read
+ * off the control's local x; world target; `additive`).
+ *
+ * Why its own twins and not the `<bone>_ctl` controls: a control is a parent,
+ * keyed by the idle, and carries every part on its bone and every bone under
+ * it, so it cannot hold two parts at two depths; a leaf twin per part and bone
+ * moves that part and nothing else, and nothing else keys or constrains it. A
+ * mesh moves as a whole because its weights sum to 1 and every twin it binds
+ * moves by the same world offset.
+ *
+ * At rest the control's x is 0, so each constraint adds `0 · fraction` to
+ * world x: the build draws what it drew without `turn`. The constraints come
+ * after the config's own, so a physics constraint on a bone has run before its
+ * twin is moved. A part at the pivot depth (fraction 0) gets no twin and no
+ * constraint. A name the turn needs that is taken is refused by name
+ * (`RIG_TURN_NAME_FREE`).
+ */
+function applyTurn(
+  turn: TurnSpec,
+  order: readonly string[],
+  bones: RigBone[],
+  slots: RigSpec['slots'],
+  skin: RigSpec['skins']['default'],
+  constraints: readonly ConfigConstraint[],
+): { constraints: Array<Record<string, unknown>>; detached: DetachedRule[]; rows: TurnRow[] } {
+  const problems: Problem[] = [];
+  const taken = new Set(bones.map((b) => b.name));
+  const transforms = new Set(constraints.filter((c) => c.type === 'transform').map((c) => c.name));
+  if (taken.has(TURN_BONE)) problems.push({ code: 'RIG_TURN_NAME_FREE', object: `bone "${TURN_BONE}"`, detail: 'is the control the rig stage adds for config.turn, and the rig already has a bone of that name; rename it' });
+  const rows: TurnRow[] = [];
+  for (const f of turnFractions(turn, order)) {
+    const row: TurnRow = { ...f, twins: [] };
+    rows.push(row);
+    if (f.fraction === 0) continue;
+    const mine = slots.filter((sl) => sl.name === f.part || sl.name === `${f.part}${STILL_SUFFIX}`);
+    const bound: string[] = [];
+    const bind = (b: string): void => {
+      if (!bound.includes(b)) bound.push(b);
+    };
+    for (const sl of mine) {
+      bind(sl.bone);
+      for (const att of Object.values(skin[sl.name] ?? {})) if ('type' in att) for (const v of att.weights) for (const w of v) bind(w.bone);
+    }
+    for (const b of bound) {
+      const twin = turnTwin(f.part, b);
+      if (taken.has(twin)) problems.push({ code: 'RIG_TURN_NAME_FREE', object: `bone "${twin}"`, detail: `is the twin that carries part "${f.part}" on "${b}" under config.turn, and the rig already has a bone of that name; rename it` });
+      taken.add(twin);
+      row.twins.push({ bone: b, twin });
+    }
+    const cname = turnConstraintName(f.part);
+    if (transforms.has(cname)) problems.push({ code: 'RIG_TURN_NAME_FREE', object: `transform constraint "${cname}"`, detail: `is the constraint that carries part "${f.part}" under config.turn, and config.constraints already names a transform constraint so; rename it` });
+  }
+  refuseIfAny(problems);
+  bones.push({ name: TURN_BONE, parent: ROOT_BONE, x: 0, y: 0 });
+  const out: Array<Record<string, unknown>> = [];
+  const detached: DetachedRule[] = [];
+  for (const row of rows) {
+    if (row.twins.length === 0) continue;
+    const twinOf = new Map(row.twins.map((t) => [t.bone, t.twin]));
+    for (const t of row.twins) bones.push({ name: t.twin, parent: t.bone, x: 0, y: 0 });
+    for (const sl of slots) {
+      if (sl.name !== row.part && sl.name !== `${row.part}${STILL_SUFFIX}`) continue;
+      sl.bone = twinOf.get(sl.bone) as string;
+      const atts = skin[sl.name] ?? {};
+      for (const [k, att] of Object.entries(atts)) {
+        if ('type' in att) atts[k] = { ...att, weights: att.weights.map((v) => v.map((w) => ({ ...w, bone: twinOf.get(w.bone) as string }))) };
+      }
+    }
+    const cname = turnConstraintName(row.part);
+    out.push({ type: 'transform', name: cname, bones: row.twins.map((t) => t.twin), source: TURN_BONE, localSource: true, additive: true, properties: { x: { to: { x: { scale: row.fraction } } } } });
+    for (const t of row.twins) {
+      detached.push({ bone: TURN_BONE, notUnder: t.twin, why: `rig-parts: "${TURN_BONE}" is the source of transform constraint "${cname}" (config.turn, issue #251), and "${t.twin}" is a bone it drives; under it, driving it would move what it follows` });
+    }
+  }
+  return { constraints: out, detached, rows };
+}
+
 /**
  * Where the idle's keys on a mesh-driving bone go (`rig --idle-keys`).
  *
@@ -693,6 +794,8 @@ export interface RigOutput {
   autoMotion: AutoMotionCase[];
   /** The eye line the face bones were turned to, or why there is none (issue #239). */
   faceAxis: FaceAxis;
+  /** The turn control's parts (issue #251), in parts.json order; null when the config has no `turn`. */
+  turn: TurnRow[] | null;
 }
 
 /**
@@ -1637,6 +1740,9 @@ export function buildRig(
     });
   }
   refuseIfAny(problems);
+  // ---- the turn control (issue #251) -------------------------------------
+  // Only when the config has `turn`: every other build adds nothing here, so no byte moves.
+  const turned = cfg.turn === undefined ? null : applyTurn(cfg.turn, parts.parts.map((p) => p.name), bones, slots, skin, cfg.constraints ?? []);
 
   const name = `${cfg.key}_painting`;
   const rig: RigSpec = {
@@ -1649,7 +1755,8 @@ export function buildRig(
     skins: { default: skin },
   };
   if (cfg.constraints !== undefined) rig.constraints = cfg.constraints.map(constraintForRig);
-  const detached = detachedRules(cfg.constraints ?? []);
+  if (turned !== null) rig.constraints = [...(rig.constraints ?? []), ...turned.constraints];
+  const detached = [...detachedRules(cfg.constraints ?? []), ...(turned?.detached ?? [])];
   if (idleKeys === 'direct' && meshKeyed.length > 0) rig.invariants = { idleDrivesMeshes: { why: IDLE_DRIVES_MESHES_WHY } };
   if (detached.length > 0) rig.invariants = { ...rig.invariants, detached };
   // issue #126 item 3: an automatic part whose author set motion.deformMayFold — written only then, so no other rig moves.
@@ -1658,7 +1765,7 @@ export function buildRig(
   // issue #239: the face's line, written only when the face bones were turned to one, so no other rig moves.
   const axes = [faceAxis.axis, faceAxis.tipAxis].flatMap((x) => (x === null ? [] : [x]));
   if (axes.length > 0) rig.invariants = { ...rig.invariants, axes };
-  return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses, autoMotion, faceAxis };
+  return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses, autoMotion, faceAxis, turn: turned?.rows ?? null };
 }
 
 /**
