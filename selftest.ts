@@ -101,7 +101,18 @@ import {
   STRIP_PLAN,
   BAND_FULL_LAYERS,
   BAND_PX,
+  DRIFT_BODY,
+  DRIFT_FULL,
+  DRIFT_HEAD,
+  DRIFT_PLAN,
+  DRIFT_SCATTER_FULL,
+  DRIFT_SCATTER_PX,
   HEADWEAR_BODY,
+  NAVY,
+  OVERLAP_EXPECTED,
+  OVERLAP_FULL,
+  OVERLAP_PLAN,
+  OVERLAP_SHARED,
   TAIL_BODY,
   TAIL_FULL_LAYERS,
   TAIL_HEAD_LAYERS,
@@ -127,6 +138,7 @@ import {
   DEFAULT_PROJECT_RULE,
   DEFAULT_SEAM_RULE,
   drawOrder,
+  driftLine,
   ERROR_LIMIT as ASSEMBLE_ERROR_LIMIT,
   figureSilhouette,
   figuresLine,
@@ -139,9 +151,12 @@ import {
   measureRecomposite,
   type PlacedPart,
   PROJECT_RULES,
+  planRanks,
+  projectSource,
   proposeFields,
   proposePlan,
   pushBackFringe,
+  runLayers,
   recomposite,
   recompositeErrorMap,
   SEAM_LIMIT,
@@ -12898,6 +12913,86 @@ function runAssembleSuite(): number {
       tailRun.figures.uncoveredErrorPx === TAIL_UNCOVERED_ERROR_PX && tailLines.length === 1 && tailLines[0] === tailLine && r1.out.includes(`\n${headwearLine}\n`) && result.uncovered.length === 1 && proposedRun.uncovered.length === 0,
       `the tail twin on its proposed plan: ${tailLines.join(' | ') || 'no line'}; the flat fixture on its own plan, from the CLI: ${r1.out.includes(headwearLine) ? headwearLine : 'MISSING'}; the flat fixture on its proposed plan (hairpin taken, hair continued): ${proposedRun.uncovered.length} line(s)`,
       'the error map showed the lost tail and the summary said only a count; the line puts the layer, the body and the rule into the text an agent reads, and says nothing when every body is covered',
+    );
+
+    // Issue #255: the owner of a painting pixel follows the plan's draw order.
+    const overDir = join(dir, 'overlap');
+    writeAssembleFixture(overDir, assembleConfig({ plan: OVERLAP_PLAN, extend: [] }), flatPainting(), { full: OVERLAP_FULL, head: FRAMED_HEAD });
+    const overBase = fixtureInput(overDir);
+    const overRun = assemble({ ...overBase, seamRule: 'near-white' });
+    const overFrame = checkGeometry({ sourceW: SOURCE_SIDE, sourceH: SOURCE_SIDE, resolution: RESOLUTION, headBox: HEAD_BOX, rigScale: RIG_SCALE });
+    const overSrc = sourceInRig(overBase.source, overFrame.W, overFrame.H);
+    const [sx0, sy0, sx1, sy1] = OVERLAP_SHARED;
+    const rgbOff = (d: Uint8ClampedArray, i: number, rgb: readonly number[]): number => Math.max(Math.abs(d[i] - rgb[0]), Math.abs(d[i + 1] - rgb[1]), Math.abs(d[i + 2] - rgb[2]));
+    const navy = (r: Raster, at: (x: number, y: number) => number): number => {
+      let n = 0;
+      for (let y = sy0; y < sy1; y++) for (let x = sx0; x < sx1; x++) if (r.data[at(x, y) * 4 + 3] >= 250 && rgbOff(r.data, at(x, y) * 4, NAVY) !== 0) n++;
+      return n;
+    };
+    /** The stage's figures per part, and the shared pixels of bottomwear that are not NAVY, under one owner rule (null rank = See-through's depth). */
+    const overRule = (rank: number[] | null): { counts: Record<string, number[]>; stolen: number } => {
+      const layers = runLayers(overBase.full, RESOLUTION);
+      const rigLayers = layers.map((l) => layerToRig(l.canvas, overFrame, 'full'));
+      const st = projectSource(rigLayers, overSrc, overFrame, 'full', 'core', rank);
+      const counts: Record<string, number[]> = {};
+      layers.forEach((l, i) => {
+        let vis = 0;
+        let occ = 0;
+        for (let p = 0; p < overFrame.W * overFrame.H; p++) if (rigLayers[i].data[p * 4 + 3] > 8) st[i].clear.data[p] === 1 ? vis++ : occ++;
+        counts[l.tag] = [st[i].taken, vis, occ];
+      });
+      const bi = layers.findIndex((l) => l.tag === 'bottomwear');
+      return { counts, stolen: navy(rigLayers[bi], (x, y) => y * overFrame.W + x) };
+    };
+    const ranks = planRanks(runLayers(overBase.full, RESOLUTION).map((l) => l.tag), 'full', OVERLAP_PLAN as PlanEntry[]);
+    const byPlan = overRule(ranks);
+    const byDepth = overRule(null);
+    const wantRule = (e: { legwear: readonly number[]; bottomwear: readonly number[]; stolen: number }): string => JSON.stringify({ counts: { legwear: e.legwear, bottomwear: e.bottomwear }, stolen: e.stolen });
+    const gotRule = (g: { counts: Record<string, number[]>; stolen: number }): string => JSON.stringify({ counts: { legwear: g.counts.legwear, bottomwear: g.counts.bottomwear }, stolen: g.stolen });
+    const overPart = (n: string): PlacedPart | undefined => overRun.images.find((q) => q.record.name === n);
+    const skirt = overPart('bottomwear');
+    const thigh = overPart('legwear');
+    const stageStolen = skirt === undefined ? -1 : navy(skirt.image, (x, y) => (y - skirt.record.y) * skirt.record.w + (x - skirt.record.x));
+    const stageCounts = [thigh, skirt].map((q) => (q === undefined ? null : [q.record.source_px_taken, q.record.visible_px, q.record.occluded_px]));
+    let sharedErr = 0;
+    for (let y = sy0; y < sy1; y++) for (let x = sx0; x < sx1; x++) if (rgbOff(overRun.recomposite.data, (y * overFrame.W + x) * 4, C) > ASSEMBLE_ERROR_LIMIT) sharedErr++;
+    say(
+      'AS61_WHERE_DEPTH_AND_THE_PLAN_DISAGREE_THE_PART_THE_PLAN_DRAWS_IN_FRONT_TAKES_THE_SHARED_PIXELS',
+      gotRule(byPlan) === wantRule(OVERLAP_EXPECTED.plan) &&
+        gotRule(byDepth) === wantRule(OVERLAP_EXPECTED.depth) &&
+        JSON.stringify(stageCounts) === JSON.stringify([OVERLAP_EXPECTED.plan.legwear, OVERLAP_EXPECTED.plan.bottomwear]) &&
+        stageStolen === OVERLAP_EXPECTED.plan.stolen &&
+        sharedErr === 0,
+      `plan order (the stage): ${gotRule(byPlan)}, the stage's records [taken, visible, occluded] ${JSON.stringify(stageCounts)}, shared bottomwear px off NAVY in parts/bottomwear.png ${stageStolen}; See-through's depth: ${gotRule(byDepth)}; recomposite error px over the ${(sx1 - sx0) * (sy1 - sy0)}-px shared region ${sharedErr}`,
+      'a skirt See-through puts in front of the thigh the plan draws over it: by depth the skirt takes 208 thigh pixels from the painting (its colour is inside the drift limit), a patchwork that cracks once the two parts move apart; the recomposite cannot see it (the thigh is drawn over it), so the owner rule is the only place it is decided',
+    );
+
+    // Issue #255: refusals that form a body are named, with who holds the body in the draw order.
+    const driftDir = join(dir, 'drift');
+    writeAssembleFixture(driftDir, assembleConfig({ plan: DRIFT_PLAN, extend: [] }), flatPainting(), { full: DRIFT_FULL, head: DRIFT_HEAD });
+    const driftRun = assemble({ ...fixtureInput(driftDir), seamRule: 'near-white' });
+    const db = DRIFT_BODY;
+    const driftWant =
+      `drift: "topwear" refuses ${db.px} px of full:topwear (its colour more than 90 off the painting, max channel), in a body of ${db.px} px at ${db.x},${db.y} ${db.w}x${db.h} (at least 150 px past a 5x5 opening); ` +
+      `by the plan's draw order "face" holds ${db.px} px of it (the top-most part at alpha >= 250), "face" drawn in front of "topwear"`;
+    const driftLines = driftRun.drift.map(driftLine);
+    const driftCli = runCli(['assemble', '--source', join(driftDir, 'painting.png'), '--full', join(driftDir, 'full'), '--head', join(driftDir, 'head'), '--config', join(driftDir, 'config.json'), '--out', join(driftDir, 'out')]);
+    say(
+      'AS62_A_REFUSED_BODY_ANOTHER_PART_HOLDS_IS_NAMED_WITH_ITS_BOX_AND_THAT_PART',
+      driftLines.length === 1 && driftLines[0] === driftWant && driftCli.status === 0 && driftCli.out.includes(`\n${driftWant}\n`),
+      `a Z block on topwear under the head run's face: ${driftLines.join(' | ') || 'no line'}; from the CLI (exit ${driftCli.status}): ${driftCli.out.includes(driftWant) ? 'printed' : 'MISSING'}`,
+      'refused pixels in one large body that the plan draws another part over are the signature of "this layer is not the owner here", and the log gave a count; the line names the part, the body and the part the plan puts there',
+    );
+
+    const scatterDir = join(dir, 'scatter');
+    writeAssembleFixture(scatterDir, assembleConfig({ plan: [['topwear', 'full', 'topwear']], extend: [] }), flatPainting(), { full: DRIFT_SCATTER_FULL, head: FRAMED_HEAD });
+    const scatterRun = assemble({ ...fixtureInput(scatterDir), seamRule: 'near-white' });
+    const scatterRefused = scatterRun.parts.parts.find((q) => q.name === 'topwear')?.refused_drift_px ?? -1;
+    say(
+      'AS63_SCATTERED_REFUSALS_AND_A_BODY_NO_OTHER_PART_HOLDS_PRINT_NO_LINE',
+      scatterRefused === DRIFT_SCATTER_PX && scatterRun.drift.length === 0 && result.parts.parts.find((q) => q.name === 'bottomwear')?.refused_drift_px === 200 && result.drift.length === 0 && overRun.drift.length === 0,
+      `a Z checkerboard over topwear's core: ${scatterRefused} px refused (more than the 150 px bar), ${scatterRun.drift.length} drift line(s); the flat fixture's all-Z bottomwear, a 200-px body nothing is drawn over: ${result.drift.length}; the overlap fixture (NAVY inside the limit): ${overRun.drift.length}`,
+      'a See-through layer disagrees with the painting a pixel here and there all over a real figure, and size alone would print on every part — the 5x5 opening keeps the line to a body; a body the part holds itself names no owner, and on four of five public paintings such bodies exist on parts nothing is drawn over',
     );
 
     const pp = runCli(['assemble', '--propose-plan', '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--config', join(dir, 'config.json')]);

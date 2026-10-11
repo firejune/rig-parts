@@ -73,6 +73,17 @@
  *   recorded with the same `<run>:<tag>` (its pixels came from that layer).
  *   The cut is made after step 4, so the new part takes the merged pixels and
  *   every later step treats it as a part of its own.
+ * - **The owner of a pixel follows the plan** (`pixelOwners`, issue #255):
+ *   where two planned layers of one run are both opaque, the one the plan
+ *   draws in front owns the pixel for projection; the reference went by
+ *   See-through's depth alone. The proposer writes each run's parts in depth
+ *   order, so the two differ only where an author reorders a plan; on the
+ *   public examples no pixel changes owner, and they assemble to the bytes
+ *   they did.
+ * - **The drift line** (`driftBodies`, issue #255) is this port's: a part
+ *   whose `DRIFT_LIMIT` refusals hold a body another part holds in the draw
+ *   order is named, with the body and that part; the reference printed the
+ *   refused count alone.
  * - **What lies under a piece** (`cuts[].under`, `fillUnder`, issue #193) is
  *   this port's: an authored image the base takes where the cut removed its
  *   pixels, so a piece that swings away leaves no hole. The stage reads that
@@ -449,8 +460,8 @@ export interface ProjectionStats {
   taken: number;
   refused: number;
   /**
-   * Where no later layer of the run is opaque (`alpha >= 250`) in front of
-   * this one: the run's owner of the pixel is this layer or one behind it. A
+   * Where no layer of the run in front of this one (`frontOf`) owns the
+   * pixel (`pixelOwners`): the owner is this layer, one behind it, or none. A
    * pixel of this layer with alpha above 8 is VISIBLE exactly where this is
    * set, and OCCLUDED everywhere else.
    */
@@ -467,11 +478,70 @@ function maxDiff(a: Uint8ClampedArray, i: number, b: Uint8ClampedArray, j: numbe
 }
 
 /**
+ * The plan's rank of each layer of one run (issue #255): the index of the
+ * last plan entry that takes the layer from this run, or -1 for a layer no
+ * plan entry takes (an `extend_below_crop` layer included: its pixels are
+ * copied into another part, and it keeps See-through's depth).
+ */
+export function planRanks(tags: readonly string[], run: Run, plan: readonly PlanEntry[]): number[] {
+  return tags.map((tag) => {
+    let r = -1;
+    plan.forEach(([, ru, tg], i) => {
+      if (ru === run && tg === tag) r = i;
+    });
+    return r;
+  });
+}
+
+/**
+ * Whether layer `o` of a run is in front of layer `i` of the same run: by the
+ * plan when both are planned (`rank` >= 0 for both; the later plan entry is
+ * drawn in front), by See-through's depth (the run's own order) otherwise.
+ * `rank` null is depth throughout, the reference's rule.
+ */
+export function frontOf(o: number, i: number, rank: readonly number[] | null): boolean {
+  if (rank !== null && rank[o] >= 0 && rank[i] >= 0) return rank[o] > rank[i];
+  return o > i;
+}
+
+/**
+ * Who owns each rig pixel of one run, for projection (issue #255).
+ *
+ * ⚖️ Invariant: per pixel, the DEPTH owner is the run's top-most layer with
+ * alpha >= `CORE_ALPHA` there (-1: none), the reference's rule. When `rank`
+ * is given and the depth owner is a planned layer, the owner is instead the
+ * planned layer at alpha >= `CORE_ALPHA` there with the greatest rank: where
+ * two planned parts both hold a pixel, the one the plan draws in front takes
+ * it, whatever See-through's depth says. A depth owner no plan entry takes is
+ * kept — the painting there shows a layer the rig does not draw, and no
+ * planned part may take it. Where plan and depth agree the owner is the
+ * reference's, pixel for pixel.
+ */
+export function pixelOwners(rigLayers: readonly Raster[], rank: readonly number[] | null): Int32Array {
+  const n = rigLayers.length === 0 ? 0 : rigLayers[0].width * rigLayers[0].height;
+  const owner = new Int32Array(n).fill(-1);
+  for (let p = 0; p < n; p++) {
+    let depth = -1;
+    let best = -1;
+    for (let i = 0; i < rigLayers.length; i++) {
+      if (rigLayers[i].data[p * 4 + 3] < CORE_ALPHA) continue;
+      depth = i;
+      if (rank !== null && rank[i] >= 0 && (best < 0 || rank[i] > rank[best])) best = i;
+    }
+    owner[p] = rank !== null && depth >= 0 && rank[depth] >= 0 ? best : depth;
+  }
+  return owner;
+}
+
+/**
  * Step 3, over one run's layers in draw order. Modifies each rig layer's
  * colour in place and returns its counts.
  *
- * ⚖️ Invariant: a layer's CORE is where it is the top-most `alpha >= 250`
- * layer of its own run, eroded by a 5x5 square. Inside the core, the pixels
+ * ⚖️ Invariant: a layer's CORE is where it is the pixel's owner
+ * (`pixelOwners`: the top-most `alpha >= 250` layer of its own run, or, with
+ * `rank`, the planned one the plan draws in front — issue #255, not in the
+ * reference, which is the same wherever plan and depth agree), eroded by a
+ * 5x5 square. Inside the core, the pixels
  * that agree with the painting (max channel difference <= `DRIFT_LIMIT`),
  * closed by 5x5 and cut back to the core — and, for the head run, kept
  * `HEAD_WINDOW_INSET` pixels inside the head crop — are the ACCEPTED set. The
@@ -484,22 +554,20 @@ function maxDiff(a: Uint8ClampedArray, i: number, b: Uint8ClampedArray, j: numbe
  *
  * With `rule: 'visible'` (NOT in the reference) the core is the top-most
  * `alpha >= 250` set less every pixel within the 5x5 square of a pixel where a
- * LATER layer of the run is the owner — the erosion kept only along a rim with
+ * layer in front of it (`frontOf`) is the owner — the erosion kept only along a rim with
  * a neighbour in front, where the painting's pixel may be that neighbour's
  * edge. Every other step is the same. Fringe pixels (alpha below 250) are not
  * projected under either rule: the painting there is this layer blended with
  * what is behind it.
  *
- * Both rules return `clear` (no later layer is the owner) and `takenMask`, the
+ * Both rules return `clear` (no layer in front of this one, by `frontOf`, is the owner) and `takenMask`, the
  * masks the part counts in `parts.json` are derived from; `takenMask` is a
  * subset of the top-most set, and so of `clear`.
  */
-export function projectSource(rigLayers: Raster[], srcr: Raster, frame: Frame, run: Run, rule: ProjectRule = DEFAULT_PROJECT_RULE): ProjectionStats[] {
+export function projectSource(rigLayers: Raster[], srcr: Raster, frame: Frame, run: Run, rule: ProjectRule = DEFAULT_PROJECT_RULE, rank: readonly number[] | null = null): ProjectionStats[] {
   const { W, H } = frame;
-  const owner = new Int32Array(W * H).fill(-1);
-  rigLayers.forEach((r, i) => {
-    for (let p = 0; p < W * H; p++) if (r.data[p * 4 + 3] >= CORE_ALPHA) owner[p] = i;
-  });
+  const owner = pixelOwners(rigLayers, rank);
+  const inFront = (o: number, i: number): boolean => frontOf(o, i, rank);
   let win: Mask | null = null;
   if (run === 'head') {
     win = newMask(W, H);
@@ -516,7 +584,7 @@ export function projectSource(rigLayers: Raster[], srcr: Raster, frame: Frame, r
     const takenMask = newMask(W, H);
     let anyTop = false;
     for (let p = 0; p < W * H; p++) {
-      if (owner[p] <= i) clear.data[p] = 1;
+      if (owner[p] === -1 || owner[p] === i || !inFront(owner[p], i)) clear.data[p] = 1;
       if (owner[p] === i && r.data[p * 4 + 3] >= CORE_ALPHA) {
         top.data[p] = 1;
         anyTop = true;
@@ -527,7 +595,7 @@ export function projectSource(rigLayers: Raster[], srcr: Raster, frame: Frame, r
     if (rule === 'core') core = erode(top, CORE_KERNEL);
     else {
       const front = newMask(W, H);
-      for (let p = 0; p < W * H; p++) if (owner[p] > i) front.data[p] = 1;
+      for (let p = 0; p < W * H; p++) if (owner[p] >= 0 && owner[p] !== i && inFront(owner[p], i)) front.data[p] = 1;
       const rim = dilate(front, CORE_KERNEL);
       core = newMask(W, H);
       for (let p = 0; p < W * H; p++) if (top.data[p] === 1 && rim.data[p] === 0) core.data[p] = 1;
@@ -1602,6 +1670,8 @@ export interface AssembleResult {
   cuts: CutCount[];
   /** The full-run layers the plan does not take from the full run whose uncovered error holds a body (`uncoveredErrorLayers`); empty otherwise. */
   uncovered: UncoveredErrorLayer[];
+  /** The parts whose `DRIFT_LIMIT` refusals hold a body another part holds in the draw order (`driftBodies`), in draw order; empty otherwise. */
+  drift: DriftBodies[];
   seamRule: SeamRule;
   projectRule: ProjectRule;
 }
@@ -1664,7 +1734,7 @@ export function assemble(input: AssembleInput): AssembleResult {
     const layers = runLayers(set, input.resolution);
     if (run === 'full') fullTags.push(...layers.filter((l) => l.opaqueRunPx > 0).map((l) => l.tag));
     const rigLayers = layers.map((l) => layerToRig(l.canvas, frame, run));
-    const st = projectSource(rigLayers, srcr, frame, run, projectRule);
+    const st = projectSource(rigLayers, srcr, frame, run, projectRule, planRanks(layers.map((l) => l.tag), run, plan));
     layers.forEach((l, i) => {
       rig.set(`${run}:${l.tag}`, rigLayers[i]);
       stats.set(`${run}:${l.tag}`, st[i]);
@@ -1958,6 +2028,23 @@ export function assemble(input: AssembleInput): AssembleResult {
     return { record: whole, image: b.r };
   });
   const pushedBy = pushBackFringe(stack, srcr, seamRule, seamRule === 'silhouette' ? silhouette : null);
+  // Issue #255: a part's drift refusals in a body, and who holds the body in the draw order (the push-back clears
+  // only fringe below CORE_ALPHA, and the seam override only recolours, so the holders read here are final).
+  const holderAt = new Int32Array(W * H).fill(-1);
+  stack.forEach(({ image }, i) => {
+    for (let p = 0; p < W * H; p++) if (image.data[p * 4 + 3] >= CORE_ALPHA) holderAt[p] = i;
+  });
+  const stackNames = stack.map((q) => q.record.name);
+  const drift: DriftBodies[] = [];
+  order.forEach((d) => {
+    if ('patch' in d) return;
+    const { name, b } = pieceAt(d);
+    if (b.st.refusedMask === null) return;
+    const refused = newMask(W, H);
+    for (let p = 0; p < W * H; p++) if (b.st.refusedMask.data[p] === 1 && (b.region === null || b.region.data[p] === 1)) refused.data[p] = 1;
+    const found = driftBodies(name, b.key, refused, bodyMinPx(frame), holderAt, stackNames);
+    if (found !== null) drift.push(found);
+  });
   const pushedOf: FringePushed[][] = plan.map(() => []);
   const pushedOfCut: FringePushed[][] = cuts.map(() => []);
   order.forEach((d, i) => {
@@ -2048,9 +2135,97 @@ export function assemble(input: AssembleInput): AssembleResult {
     figures,
     cuts: cutCounts,
     uncovered,
+    drift,
     seamRule,
     projectRule,
   };
+}
+
+// ---------------------------------------------------------------------------
+// refused bodies: a part whose layer is not what the painting shows (issue #255)
+// ---------------------------------------------------------------------------
+
+/** A part whose `DRIFT_LIMIT` refusals hold a body, and which parts the draw order puts there. */
+export interface DriftBodies {
+  /** The part, and its `<run>:<tag>`. */
+  part: string;
+  from: string;
+  /** The part's `refused_drift_px`, in a body or not. */
+  refusedPx: number;
+  /** The bar the bodies were held to (`bodyMinPx`, the uncovered line's). */
+  minPx: number;
+  /** The bodies, largest first (`bodiesOf`). */
+  bodies: UncoveredBody[];
+  /**
+   * Over every pixel of the bodies, the part that holds it in the draw order
+   * — the top-most at alpha >= `CORE_ALPHA`, as the seam pass reads a holder
+   * (`seamCandidates`) — with its pixel count, most first, then by name.
+   */
+  holders: Array<{ part: string; px: number }>;
+}
+
+/**
+ * A part's refused bodies that another part holds in the draw order (issue
+ * #255).
+ *
+ * ⚖️ Invariant: `refused` is the part's projection core pixels whose layer
+ * colour is more than `DRIFT_LIMIT` off the painting (`projectSource`'s
+ * `refusedMask`, cut to the part's region); its bodies are `bodiesOf(refused,
+ * minPx)` — the pixels that survive a `BODY_KERNEL` opening, in 8-connected
+ * components of at least `minPx` — the same reading of "a body" as an
+ * uncovered layer's, and the stage passes the same bar (`bodyMinPx`).
+ * `holderAt` is, per rig pixel, the index into `names` of the top-most part
+ * at alpha >= `CORE_ALPHA` in draw order (-1: none), as the seam pass reads a
+ * holder. The result is non-null exactly when the bodies hold a pixel whose
+ * holder is another part: the plan draws that part over the body, which is
+ * the signature of "this layer is not the owner here".
+ *
+ * Not every body: a body the part holds itself, with nothing drawn over it,
+ * is See-through's colour for the part's own pixels disagreeing with the
+ * painting, and on four of the five public paintings it holds bodies of
+ * hundreds to tens of thousands of pixels that no other part touches (the
+ * pull request that added this has the figures); a line there would name no
+ * owner, which is what the line exists to name.
+ */
+export function driftBodies(part: string, from: string, refused: Mask, minPx: number, holderAt: Int32Array, names: readonly string[]): DriftBodies | null {
+  let refusedPx = 0;
+  for (let p = 0; p < refused.data.length; p++) refusedPx += refused.data[p];
+  if (refusedPx === 0) return null;
+  const { bodies, pixels } = bodiesWithPixels(refused, minPx);
+  if (bodies.length === 0) return null;
+  const count = new Map<string, number>();
+  for (let p = 0; p < pixels.data.length; p++) {
+    if (pixels.data[p] === 0 || holderAt[p] < 0) continue;
+    const n = names[holderAt[p]];
+    count.set(n, (count.get(n) ?? 0) + 1);
+  }
+  if (![...count.keys()].some((n) => n !== part)) return null;
+  const holders = [...count.entries()].map(([q, px]) => ({ part: q, px })).sort((a, b) => b.px - a.px || (a.part < b.part ? -1 : a.part > b.part ? 1 : 0));
+  return { part, from, refusedPx, minPx, bodies, holders };
+}
+
+/**
+ * One `drift` line under the `uncovered` lines: the part, its refused pixels,
+ * their bodies, and the parts the plan's draw order puts on them —
+ * `drift: "topwear" refuses 196 px of full:topwear (its colour more than 90
+ * off the painting, max channel), in a body of 196 px at 16,12 14x14 (at
+ * least 150 px past a 5x5 opening); by the plan's draw order "face" holds 196
+ * px of it (the top-most part at alpha >= 250), drawn in front of "topwear"`.
+ */
+export function driftLine(d: DriftBodies): string {
+  const total = d.bodies.reduce((a, b) => a + b.px, 0);
+  const big = d.bodies[0];
+  const held = d.bodies.length > 1 ? `${d.bodies.length} bodies of ${total} px, the largest ${big.px} px at ${bodyBox(big)}` : `a body of ${big.px} px at ${bodyBox(big)}`;
+  const others = d.holders.filter((h) => h.part !== d.part).map((h) => `"${h.part}"`);
+  return (
+    `drift: "${d.part}" refuses ${d.refusedPx} px of ${d.from} (its colour more than ${DRIFT_LIMIT} off the painting, max channel), in ${held} (at least ${fmtPx(d.minPx)} px past a ${BODY_KERNEL}x${BODY_KERNEL} opening); ` +
+    `by the plan's draw order ${d.holders.map((h) => `"${h.part}" holds ${h.px} px`).join(', ')} of it (the top-most part at alpha >= ${CORE_ALPHA}), ${others.join(', ')} drawn in front of "${d.part}"`
+  );
+}
+
+/** A rig-pixel bar as the lines print it: a whole number as it is, otherwise to one decimal. */
+function fmtPx(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -2104,12 +2279,20 @@ export interface UncoveredLayer {
  * the box's top row and left column.
  */
 export function bodiesOf(mask: Mask, minPx: number): UncoveredBody[] {
+  return bodiesWithPixels(mask, minPx).bodies;
+}
+
+/** `bodiesOf`, and the mask of every pixel that lies in one of the bodies it returns. */
+export function bodiesWithPixels(mask: Mask, minPx: number): { bodies: UncoveredBody[]; pixels: Mask } {
   const opened = dilate(erode(mask, BODY_KERNEL), BODY_KERNEL);
   for (let p = 0; p < opened.data.length; p++) if (mask.data[p] === 0) opened.data[p] = 0;
   const cc = connectedComponents(opened, 8);
-  const all = cc.stats.slice(1).filter((s) => s.area > 0 && s.area >= minPx);
+  const keep = cc.stats.map((s, l) => l > 0 && s.area > 0 && s.area >= minPx);
+  const all = cc.stats.filter((s, l) => keep[l]);
   all.sort((a, b) => b.area - a.area || a.top - b.top || a.left - b.left);
-  return all.map((s) => ({ px: s.area, x: s.left, y: s.top, w: s.width, h: s.height }));
+  const pixels = newMask(mask.width, mask.height);
+  for (let p = 0; p < pixels.data.length; p++) if (keep[cc.labels[p]]) pixels.data[p] = 1;
+  return { bodies: all.map((s) => ({ px: s.area, x: s.left, y: s.top, w: s.width, h: s.height })), pixels };
 }
 
 /** A body's box as the hole lines print one: `x,y wxh`. */

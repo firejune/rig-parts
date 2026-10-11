@@ -454,6 +454,66 @@ export const HEM_UNDER_DROP = 42 * 4 + 2 * 26;
 /** The whole gap band, through the figure's edge and the white page either side. */
 export const HEM_BAND: [number, number, number, number] = [0, 36, 64, 40];
 
+/**
+ * Issue #255: See-through's depth and the plan's draw order disagree over a
+ * shared region. On the flat `C` painting, legwear (`C`, run [10, 40) x
+ * [10, 40)) is BEHIND bottomwear (`NAVY`, [10, 40) x [30, 54)) by depth,
+ * and the plan draws legwear in front. The shared region is [10, 40) x
+ * [30, 40), 300 px. `NAVY` is 80 off `C` in its worst channel, inside the
+ * drift limit (90): See-through's skirt colour is close enough to the thigh
+ * the painting shows that projection would take the thigh into the skirt —
+ * the issue's patchwork.
+ *
+ * - By the plan, legwear owns the shared region: its top set is its whole
+ *   900 px rectangle, core [12, 38) x [12, 38) = 676, all taken; bottomwear's
+ *   top set is [10, 40) x [40, 54) = 420, core [12, 38) x [42, 52) = 260, all
+ *   taken, and its 300 shared pixels are occluded and keep `NAVY`.
+ * - By depth (the reference's rule), bottomwear owns it: its top set is
+ *   [10, 40) x [30, 54) = 720, core [12, 38) x [32, 52) = 520; legwear's is
+ *   [10, 40) x [10, 30) = 600, core [12, 38) x [12, 28) = 416. Bottomwear's
+ *   core rows 32..39 lie in the shared region, 8 x 26 = 208 px, each
+ *   blended towards the painting's `C` with a weight above 0.4 (a Gaussian of
+ *   sigma 1 over an accepted set it lies inside), so none of them stays `NAVY`.
+ */
+export const OVERLAP_FULL: RunLayerSpec[] = [
+  { name: 'legwear', depth: 0.6, rects: [rect(10, 10, 40, 40, C)] },
+  { name: 'bottomwear', depth: 0.4, rects: [rect(10, 30, 40, 54, NAVY)] },
+];
+export const OVERLAP_PLAN: Array<[string, 'full' | 'head', string]> = [
+  ['bottomwear', 'full', 'bottomwear'],
+  ['legwear', 'full', 'legwear'],
+];
+export const OVERLAP_SHARED: [number, number, number, number] = [10, 30, 40, 40];
+/** Per owner rule, per part: [source_px_taken, visible_px, occluded_px], and the bottomwear pixels of the shared region that are no longer `NAVY` — as derived above. */
+export const OVERLAP_EXPECTED = {
+  plan: { legwear: [676, 900, 0], bottomwear: [260, 420, 300], stolen: 0 },
+  depth: { legwear: [416, 600, 300], bottomwear: [520, 720, 0], stolen: 208 },
+} as const;
+
+/**
+ * Issue #255's refused body: topwear (`C`, run [10, 40) x [10, 50)) carries a
+ * `Z` block over [16, 30) x [12, 26), 196 px inside its core [12, 38) x
+ * [12, 48), so projection refuses all 196 (`Z` is 210 off `C`). A 14 x 14
+ * block survives a 5 x 5 opening whole: one body of 196 px at 16,12 14x14,
+ * over the full run's bar of 150 rig px (k = 1). The head run's face, run
+ * [0, 28) x [24, 52), lands on rig [16, 30) x [12, 26) — exactly the block —
+ * and the plan draws it after topwear, so the face holds all 196 px.
+ * The scattered twin puts `Z` on every pixel of topwear's core with x + y
+ * even: 26 x 36 / 2 = 468 refusals, more than the bar, and no 5 x 5 square
+ * of them, so no body.
+ */
+export const DRIFT_FULL: RunLayerSpec[] = [{ name: 'topwear', depth: 0.5, rects: [rect(10, 10, 40, 50, C), rect(16, 12, 30, 26, Z)] }];
+export const DRIFT_HEAD: RunLayerSpec[] = [{ name: 'face', depth: 0.5, rects: [rect(0, 24, 28, 52, C)] }];
+export const DRIFT_PLAN: Array<[string, 'full' | 'head', string]> = [
+  ['topwear', 'full', 'topwear'],
+  ['face', 'head', 'face'],
+];
+export const DRIFT_BODY = { px: 196, x: 16, y: 12, w: 14, h: 14 };
+const checker: Rect[] = [];
+for (let y = 12; y < 48; y++) for (let x = 12; x < 38; x++) if ((x + y) % 2 === 0) checker.push(rect(x, y, x + 1, y + 1, Z));
+export const DRIFT_SCATTER_FULL: RunLayerSpec[] = [{ name: 'topwear', depth: 0.5, rects: [rect(10, 10, 40, 50, C), ...checker] }];
+export const DRIFT_SCATTER_PX = 468;
+
 export const FRAMED_HEAD: RunLayerSpec[] = [{ name: 'face', depth: 0.5, rects: [rect(0, 0, 8, 8, C)] }];
 
 /** One run in the wrapper form: `layers.json` plus one PNG per layer, each cut to its rectangles' bounding box. */
