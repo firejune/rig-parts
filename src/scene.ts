@@ -17,6 +17,7 @@
  *
  * - **Names, totally.** Every bone, slot, attachment (skin entry), constraint
  *   (its name and every bone or slot it names), `invariants.detached` bone,
+ *   `invariants.axes` entry (its name, its `through` and its `bones`; issue #239),
  *   track, group and easing of character `<id>` is renamed `<id>:<name>`
  *   ({@link prefixed}); `root` is the one shared root. A name resolves to
  *   exactly one character, and nothing resolves across characters without its
@@ -382,7 +383,7 @@ const BONE_KEYS = ['name', 'parent', 'length', 'rotation', 'x', 'y'];
 const SLOT_KEYS = ['name', 'bone', 'attachment'];
 const ATTACHMENT_KEYS = ['type', 'image', 'width', 'height', 'uvs', 'triangles', 'hull', 'weights', 'x', 'y', 'rotation'];
 const RIG_KEYS = ['spec', 'name', 'images', 'skeleton', 'bones', 'slots', 'skins', 'constraints', 'invariants'];
-const INVARIANT_KEYS = ['idleDrivesMeshes', 'detached'];
+const INVARIANT_KEYS = ['idleDrivesMeshes', 'detached', 'axes'];
 const MOTION_KEYS = ['spec', 'archetype', 'cut', 'easings', 'groups', 'animations'];
 const IDLE_KEYS = ['duration', 'loop', 'note', 'tracks'];
 const TRACK_KEYS = ['bone', 'group', 'property', 'keys'];
@@ -965,6 +966,10 @@ export function composeScene(
       ownBone(b.id, d.bone, `character "${b.id}" rig.json invariants.detached[${k}].bone`);
       ownBone(b.id, d.notUnder, `character "${b.id}" rig.json invariants.detached[${k}].notUnder`);
     }
+    for (const [k, ax] of (b.rig.invariants?.axes ?? []).entries()) {
+      ax.through.forEach((n, j) => ownBone(b.id, n, `character "${b.id}" rig.json invariants.axes[${k}].through[${j}]`));
+      ax.bones.forEach((n, j) => ownBone(b.id, n, `character "${b.id}" rig.json invariants.axes[${k}].bones[${j}]`));
+    }
   }
   // The root is shared: a character that drives it would move every character.
   for (const b of ready) {
@@ -1030,6 +1035,7 @@ export function composeScene(
   }
   const constraints: Array<Record<string, unknown>> = [];
   const detached: NonNullable<NonNullable<RigSpec['invariants']>['detached']> = [];
+  const axes: NonNullable<NonNullable<RigSpec['invariants']>['axes']> = [];
   scene.characters.forEach((c) => {
     const b = byId.get(c.id) as CharacterBuild;
     const id = c.id;
@@ -1090,6 +1096,8 @@ export function composeScene(
       constraints.push(out);
     }
     for (const d of b.rig.invariants?.detached ?? []) detached.push({ ...d, bone: P(id, d.bone), notUnder: P(id, d.notUnder) });
+    // An axis entry's name is unique within one rig, and two characters each carry a "face": the name is prefixed too.
+    for (const ax of b.rig.invariants?.axes ?? []) axes.push({ name: prefixed(id, ax.name), through: [P(id, ax.through[0]), P(id, ax.through[1])], bones: ax.bones.map((n) => P(id, n)), tolerance: ax.tolerance });
   });
   const slots: RigSpec['slots'] = [];
   if (scene.plate !== null && plate !== null) slots.push({ name: PLATE, bone: PLATE, attachment: PLATE });
@@ -1101,6 +1109,7 @@ export function composeScene(
   const invariants: NonNullable<RigSpec['invariants']> = {};
   if (whys.length === 1) invariants.idleDrivesMeshes = { why: whys[0] };
   if (detached.length > 0) invariants.detached = detached;
+  if (axes.length > 0) invariants.axes = axes;
   if (Object.keys(invariants).length > 0) rig.invariants = invariants;
 
   // ---- the motion ---------------------------------------------------------------
@@ -1245,6 +1254,10 @@ export function unprefixedNames(rig: RigSpec, motion: MotionSpec, ids: readonly 
   for (const d of rig.invariants?.detached ?? []) {
     name('invariants.detached bone', d.bone, false);
     name('invariants.detached notUnder', d.notUnder, false);
+  }
+  for (const ax of rig.invariants?.axes ?? []) {
+    name('invariants.axes name', ax.name, false);
+    for (const n of [...ax.through, ...ax.bones]) name(`invariants.axes ${ax.name} bone`, n, false);
   }
   for (const [k, v] of Object.entries(motion.easings)) name('easing', k, false);
   for (const [g, members] of Object.entries(motion.groups)) {

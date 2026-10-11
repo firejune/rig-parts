@@ -946,12 +946,19 @@ export function barsSummary(r: CheckReport): string {
 /**
  * The rig stage's face-axis line (issue #239): the eye line's angle, the parts it runs between and the face bones
  * turned to it, or why there is no line and the face bones keep the page's axes — the note a one-eyed painting gets.
+ * With a line it also names the `invariants.axes` entry written for rigc's A51, its tolerance, or why none was.
  */
 export function faceAxisLine(f: FaceAxis): string {
   const own = f.ownTip.length === 0 ? '' : `; ${f.ownTip.join(', ')} ${f.ownTip.length === 1 ? 'takes its' : 'take their'} own tip`;
   if (f.degrees === null) return `  face axis: none — ${f.none}; ${f.ownTip.length === 0 ? 'the face bones keep' : 'the other face bones keep'} the page's axes${own}`;
   const turned = f.turned.length === 0 ? 'no face bone to turn' : `${f.turned.join(', ')} turned to it`;
-  return `  face axis: ${pyRound(f.degrees, 6)} degrees, the line from the centre of ${f.parts[0]} to the centre of ${f.parts[1]}; ${turned}${own}`;
+  const held =
+    f.axis !== null
+      ? `; invariants.axes "${f.axis.name}" holds ${f.axis.bones.join(', ')} to the line through ${f.axis.through.join(' -> ')}, tolerance ${f.axis.tolerance} degrees (rigc's A51)`
+      : f.noAxis !== null
+        ? `; no invariants.axes entry: ${f.noAxis}`
+        : '';
+  return `  face axis: ${pyRound(f.degrees, 6)} degrees, the line through the eye bones eye_r and eye_l (on ${f.parts[0]} and ${f.parts[1]}); ${turned}${own}${held}`;
 }
 
 /** A judgement line as the console prints it: its name, its status, then its figures and bars as check.json holds them (a SKIP prints its reason). */

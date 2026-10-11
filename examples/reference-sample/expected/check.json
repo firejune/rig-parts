@@ -53,7 +53,7 @@
   "box_px": 1520,
   "hole_px": 0,
   "hole_bar": 0,
-  "patch_max": 9,
+  "patch_max": 10,
   "patch_px_over_40": 0
  },
  "CHAIN_LAG": {

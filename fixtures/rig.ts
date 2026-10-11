@@ -401,7 +401,8 @@ export function heatStripConfig(mesh: Record<string, unknown> = {}): Record<stri
  *
  * ## The eye line, by hand
  *
- * From the image-left centre (20, 28) to the image-right one (36, 16): in
+ * Through the eye bones, which stand on the eyewhites' centres: from the
+ * image-left `eye_r` (20, 28) to the image-right `eye_l` (36, 16): in
  * Spine's axes (y up) that is (16, 12), a 3-4-5 triangle, so the line's angle
  * is atan2(12, 16) = atan(3/4) = **36.869898 degrees** (6 places). `head`
  * stands unturned under `root`, so each of the five face bones is written
