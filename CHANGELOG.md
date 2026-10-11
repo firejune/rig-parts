@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.0](https://github.com/rig-c/parts/compare/v1.7.0...v1.8.0) (2026-10-11)
+
+
+### Features
+
+* **propose:** draft a 40-frame idle whose breath travels 2.5 % of the torso's height, and read the loop's last frame within 1e-9 s ([#263](https://github.com/rig-c/parts/issues/263)) ([536f401](https://github.com/rig-c/parts/commit/536f40192ca9b90511528175c278fb4ff47bdb37)), closes [#244](https://github.com/rig-c/parts/issues/244) [#252](https://github.com/rig-c/parts/issues/252) [#262](https://github.com/rig-c/parts/issues/262)
+* **propose:** the fringe chains stand in the head's frame, rooted on the art, and lint names a link that leaves the lock ([#264](https://github.com/rig-c/parts/issues/264)) ([e3e78e2](https://github.com/rig-c/parts/commit/e3e78e2bd84ab4a99fd6bc33ccff740a112604c3)), closes [#249](https://github.com/rig-c/parts/issues/249)
+* **rig:** the head frame — head_up along the face's up axis, propose's frame notes, tipped face bones held by A51 ([#260](https://github.com/rig-c/parts/issues/260)) ([923cec8](https://github.com/rig-c/parts/commit/923cec81135a85d6b01b7974a913e644ffedf724))
+
+
+### Bug Fixes
+
+* **assemble:** a painting pixel's owner follows the plan's draw order, and a refused body another part holds is named ([#259](https://github.com/rig-c/parts/issues/259)) ([22f1423](https://github.com/rig-c/parts/commit/22f142341ba94ba316e19f23caf4b6e562ad6501)), closes [#255](https://github.com/rig-c/parts/issues/255)
+
 ## [1.7.0](https://github.com/rig-c/parts/compare/v1.6.0...v1.7.0) (2026-10-11)
 
 
