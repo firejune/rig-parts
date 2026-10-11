@@ -3122,9 +3122,21 @@ interface FlatFormRender {
  * installed rigc — the setup pose (a throwaway `still` animation keying the
  * root by 0) and every idle frame at `IDLE_FPS`, `IDLE_MAX_PX` — and compared
  * frame for frame. A string is the reason nothing was compared.
+ *
+ * Both forms are compared with every physics constraint left out
+ * (`withoutPhysics`, the loop bar's own door; issue #224). What the two forms
+ * must share is the keyed pose, and a spring is not part of it: a `rotate`
+ * drive steps off a bone's tip, and the flat form keeps no bone length, so
+ * rigc's gate refuses that drive there by name (`A23_PHYSICS_CONSTRAINT_EFFECTIVE`,
+ * "whose length is 0"), and where it is accepted it reads each bone's own
+ * frame, which the two forms do not share.
  */
-function flatFormRender(dir: string, a: RigSpec, b: RigSpec, motion: unknown, images: string): FlatFormRender | string {
-  const m = JSON.parse(JSON.stringify(motion)) as { animations: Record<string, unknown> };
+function flatFormRender(dir: string, rigA: RigSpec, rigB: RigSpec, motion: unknown, images: string): FlatFormRender | string {
+  const plainA = withoutPhysics(rigA as unknown as Record<string, unknown>, motion as Record<string, unknown>);
+  const plainB = withoutPhysics(rigB as unknown as Record<string, unknown>, motion as Record<string, unknown>);
+  const a = (plainA === null ? rigA : plainA.rig) as unknown as RigSpec;
+  const b = (plainB === null ? rigB : plainB.rig) as unknown as RigSpec;
+  const m = JSON.parse(JSON.stringify(plainA === null ? motion : plainA.motion)) as { animations: Record<string, unknown> };
   m.animations.still = { duration: 0.1, loop: true, note: 'the setup pose', tracks: [{ bone: a.bones[0].name, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.1, v: [0] }] }] };
   const rigc = findRigc(ROOT, '');
   const sets: Record<string, string[]> = {};
@@ -10718,7 +10730,7 @@ function runChainSuite(): number | null {
         `CH12_THE_BUILD_RENDERS_AS_ITS_FLAT_FORM_WITHIN_THE_MEASURED_CEILING[${key}]`,
         typeof flatRender !== 'string' && flatRender.max <= FLAT_FORM_RENDER_CEILING,
         flatFormLine(flatRender),
-        `issue #73: no world position moves, so the turned rig draws what the reference's flat one draws; measured on both examples at 1 level everywhere but sample's idle frame 30 (one opaque pixel, 2 levels in blue), with every vertex within 8.21e-5 units — the ceiling is that measurement (FLAT_FORM_RENDER_CEILING = ${FLAT_FORM_RENDER_CEILING}), and the pixels above 1 are counted so a new one shows`,
+        `issue #73: no world position moves, so the turned rig draws what the reference's flat one draws; measured on both examples at 1 level everywhere but sample's idle frame 30 (one opaque pixel, 2 levels in blue), with every vertex within 8.21e-5 units — the ceiling is that measurement (FLAT_FORM_RENDER_CEILING = ${FLAT_FORM_RENDER_CEILING}), and the pixels above 1 are counted so a new one shows; both forms are rendered with their physics constraints left out (issue #224: the flat form keeps no bone length, so a rotate drive has no lever there)`,
       );
 
       const expectedCheck = readJsonAt(join(exp, 'check.json'));

@@ -29058,5 +29058,328 @@
     }
    }
   }
- }
+ },
+ "constraints": [
+  {
+   "type": "physics",
+   "name": "hairback_r0_phys",
+   "bone": "hairback_r0",
+   "rotate": 1,
+   "inertia": 0.5,
+   "strength": 90,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "hairback_r1_phys",
+   "bone": "hairback_r1",
+   "rotate": 1,
+   "inertia": 0.5,
+   "strength": 74.25,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "hairback_r2_phys",
+   "bone": "hairback_r2",
+   "rotate": 1,
+   "inertia": 0.5,
+   "strength": 58.5,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "hairback_l0_phys",
+   "bone": "hairback_l0",
+   "rotate": 1,
+   "inertia": 0.5,
+   "strength": 90,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "hairback_l1_phys",
+   "bone": "hairback_l1",
+   "rotate": 1,
+   "inertia": 0.5,
+   "strength": 74.25,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "hairback_l2_phys",
+   "bone": "hairback_l2",
+   "rotate": 1,
+   "inertia": 0.5,
+   "strength": 58.5,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "bang_r0_phys",
+   "bone": "bang_r0",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 200,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "bang_r1_phys",
+   "bone": "bang_r1",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 130,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "bang_c0_phys",
+   "bone": "bang_c0",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 200,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "bang_c1_phys",
+   "bone": "bang_c1",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 130,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "bang_l0_phys",
+   "bone": "bang_l0",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 200,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "bang_l1_phys",
+   "bone": "bang_l1",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 130,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "skirt_r0_phys",
+   "bone": "skirt_r0",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 200,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "skirt_r1_phys",
+   "bone": "skirt_r1",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 165,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "skirt_r2_phys",
+   "bone": "skirt_r2",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 130,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "skirt_c0_phys",
+   "bone": "skirt_c0",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 200,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "skirt_c1_phys",
+   "bone": "skirt_c1",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 165,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "skirt_c2_phys",
+   "bone": "skirt_c2",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 130,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "skirt_l0_phys",
+   "bone": "skirt_l0",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 200,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "skirt_l1_phys",
+   "bone": "skirt_l1",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 165,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "skirt_l2_phys",
+   "bone": "skirt_l2",
+   "rotate": 1,
+   "inertia": 0.2,
+   "strength": 130,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "sleeve_r0_phys",
+   "bone": "sleeve_r0",
+   "rotate": 1,
+   "inertia": 0.15,
+   "strength": 250,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 0.6
+  },
+  {
+   "type": "physics",
+   "name": "sleeve_r1_phys",
+   "bone": "sleeve_r1",
+   "rotate": 1,
+   "inertia": 0.15,
+   "strength": 206.25,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 0.6
+  },
+  {
+   "type": "physics",
+   "name": "sleeve_r2_phys",
+   "bone": "sleeve_r2",
+   "rotate": 1,
+   "inertia": 0.15,
+   "strength": 162.5,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 0.6
+  },
+  {
+   "type": "physics",
+   "name": "sleeve_l0_phys",
+   "bone": "sleeve_l0",
+   "rotate": 1,
+   "inertia": 0.15,
+   "strength": 250,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 0.6
+  },
+  {
+   "type": "physics",
+   "name": "sleeve_l1_phys",
+   "bone": "sleeve_l1",
+   "rotate": 1,
+   "inertia": 0.15,
+   "strength": 206.25,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 0.6
+  },
+  {
+   "type": "physics",
+   "name": "sleeve_l2_phys",
+   "bone": "sleeve_l2",
+   "rotate": 1,
+   "inertia": 0.15,
+   "strength": 162.5,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 0.6
+  },
+  {
+   "type": "physics",
+   "name": "hairpin_phys",
+   "bone": "hairpin",
+   "x": 0.5,
+   "y": 1,
+   "inertia": 0.3,
+   "strength": 160,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  },
+  {
+   "type": "physics",
+   "name": "earring_phys",
+   "bone": "earring",
+   "x": 0.5,
+   "y": 1,
+   "inertia": 0.5,
+   "strength": 100,
+   "damping": 0.85,
+   "mass": 1,
+   "mix": 1
+  }
+ ]
 }
