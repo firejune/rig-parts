@@ -43,7 +43,13 @@
  *   including every `painting:` patch (`assemble.patches`), which has no tag,
  *   so no rule above ever reads it: it is never a mesh or a chain, it moves
  *   no bone the rules place, and the note says the bone is the config's to
- *   name in `regions.<name>`.
+ *   name in `regions.<name>`. A cut's piece (`assemble.cuts`, recorded with
+ *   `cut_from`) goes the same way (issue #230): it shares its base's tag, and
+ *   the rules that run once per part of a tag would name the base's bones and
+ *   chains a second time. The one exception is the sleeve rule, which names
+ *   its chains by side and takes a cut sleeve as a blob of its own (#199). A
+ *   `parts.json` sharing a layer between parts with no `cut_from` (an
+ *   assemble before 1.5.6) is refused, `PROPOSE_CUT_FROM_RECORDED`.
  *
  * What it cannot know is written into `notes` when it guessed, and otherwise
  * left to the person correcting: things hidden inside a layer (a sash tail
@@ -237,6 +243,54 @@ function konst(name: string, value: number): BasisConstant {
 }
 
 /**
+ * The `assemble` section {@link checkProposal} hands the loader, rebuilt from
+ * parts.json: every See-through part a plan entry or a cut, every patch a
+ * patches entry. Exported so a control can read which part went back as the
+ * plan part and which as the piece (issue #230).
+ */
+export function proposalAssemble(P: PartSet): Record<string, unknown> {
+  // A patch is not a plan entry; it goes back as the patches entry it came
+  // from, so the loader holds it to its own rule (a region, never a mesh).
+  // Its box, alpha and draw are the record's own box and placeholders the
+  // loader only type-checks: nothing here is written anywhere.
+  // A part that shares another's `from` is the piece of an `assemble.cuts`
+  // entry (issue #170) — the only way two parts share a layer — and goes back
+  // as a cut of its base, its polygon the record's box, a placeholder the
+  // loader only type-checks like the patches' fields. The piece names its base
+  // (`cut_from`, issue #230); file order cannot, as a piece drawn "back" comes
+  // before its base. A file with an unmarked shared layer (an assemble before
+  // 1.5.6, which propose refuses) goes back with the first part of the layer
+  // as the plan part, as it did before the field.
+  const run = P.recs.filter((r) => splitFrom(r.from)[0] !== PAINTING_RUN);
+  const painted = P.recs.filter((r) => splitFrom(r.from)[0] === PAINTING_RUN);
+  const firstOf = new Map<string, string>();
+  for (const r of run) if (r.cut_from === undefined && !firstOf.has(r.from)) firstOf.set(r.from, r.name);
+  const baseOf = (r: PartRecord): string => r.cut_from ?? (firstOf.get(r.from) as string);
+  const planned = run.filter((r) => r.cut_from === undefined && firstOf.get(r.from) === r.name);
+  const pieces = run.filter((r) => r.cut_from !== undefined || firstOf.get(r.from) !== r.name);
+  return {
+    rig_scale: 1,
+    plan: planned.map((r) => [r.name, ...splitFrom(r.from)]),
+    patches: painted.map((r) => ({ name: r.name, box: [r.x, r.y, r.x + r.w, r.y + r.h], alpha: 'box', draw: 'front' })),
+    ...(pieces.length === 0
+      ? {}
+      : {
+          cuts: pieces.map((r) => ({
+            from: baseOf(r),
+            into: r.name,
+            polygon: [
+              [r.x, r.y],
+              [r.x + r.w, r.y],
+              [r.x + r.w, r.y + r.h],
+            ],
+            draw: 'front',
+            overlap: 0,
+          })),
+        }),
+  };
+}
+
+/**
  * Hold the proposal to the config contract before it is written: it is copied
  * into a config field by field, so a proposal the loader would refuse is a
  * wrong file waiting to be pasted. The plan the loader needs is the parts
@@ -246,42 +300,9 @@ function konst(name: string, value: number): BasisConstant {
  * refusals.
  */
 export function checkProposal(P: PartSet, p: Proposal): void {
-  // A patch is not a plan entry; it goes back as the patches entry it came
-  // from, so the loader holds it to its own rule (a region, never a mesh).
-  // Its box, alpha and draw are the record's own box and placeholders the
-  // loader only type-checks: nothing here is written anywhere.
-  // A part whose `from` an earlier part already has is the piece of an
-  // `assemble.cuts` entry (issue #170) — the only way two parts share a layer
-  // — and goes back as a cut of that earlier part, its polygon the record's
-  // box, a placeholder the loader only type-checks like the patches' fields.
-  const run = P.recs.filter((r) => splitFrom(r.from)[0] !== PAINTING_RUN);
-  const painted = P.recs.filter((r) => splitFrom(r.from)[0] === PAINTING_RUN);
-  const firstOf = new Map<string, string>();
-  for (const r of run) if (!firstOf.has(r.from)) firstOf.set(r.from, r.name);
-  const planned = run.filter((r) => firstOf.get(r.from) === r.name);
-  const pieces = run.filter((r) => firstOf.get(r.from) !== r.name);
   parseConfig({
     key: 'proposal',
-    assemble: {
-      rig_scale: 1,
-      plan: planned.map((r) => [r.name, ...splitFrom(r.from)]),
-      patches: painted.map((r) => ({ name: r.name, box: [r.x, r.y, r.x + r.w, r.y + r.h], alpha: 'box', draw: 'front' })),
-      ...(pieces.length === 0
-        ? {}
-        : {
-            cuts: pieces.map((r) => ({
-              from: firstOf.get(r.from) as string,
-              into: r.name,
-              polygon: [
-                [r.x, r.y],
-                [r.x + r.w, r.y],
-                [r.x + r.w, r.y + r.h],
-              ],
-              draw: 'front',
-              overlap: 0,
-            })),
-          }),
-    },
+    assemble: proposalAssemble(P),
     bones: p.bones,
     meshes: p.meshes,
     regions: p.regions,
@@ -312,12 +333,31 @@ export class PartSet {
     this.images = images;
   }
 
-  /** Parts whose `from` tag is exactly `tag`, optionally from one run, in parts.json order. A `painting:` patch has no tag and is never one. */
-  byTag(tag: string, run?: 'full' | 'head'): PartRecord[] {
+  /**
+   * Parts whose `from` tag is exactly `tag`, optionally from one run, in
+   * parts.json order. A `painting:` patch has no tag and is never one, and a
+   * cut's piece (`cut_from`, issue #230) is not one either unless `pieces` is
+   * set: it shares its base's layer, and a rule that runs once per part of a
+   * tag would run for its base a second time — the same chains named twice.
+   */
+  byTag(tag: string, run?: 'full' | 'head', pieces = false): PartRecord[] {
     return this.recs.filter((p) => {
       const [r, t] = splitFrom(p.from);
-      return r !== PAINTING_RUN && t === tag && (run === undefined || r === run);
+      return r !== PAINTING_RUN && t === tag && (run === undefined || r === run) && (pieces || p.cut_from === undefined);
     });
+  }
+
+  /**
+   * The layers more than one part holds with no `cut_from` to tell the piece
+   * from its base: a `parts.json` an `assemble` before 1.5.6 wrote with
+   * `assemble.cuts`. parts.json is in draw order and a piece drawn `"back"`
+   * comes before its base, so which part takes the layer's rule cannot be
+   * read off the file. Each entry is the layer and its parts, in file order.
+   */
+  unmarkedShares(): Array<{ from: string; parts: string[] }> {
+    const by = new Map<string, string[]>();
+    for (const p of this.layered()) if (p.cut_from === undefined) by.set(p.from, [...(by.get(p.from) ?? []), p.name]);
+    return [...by.entries()].filter(([, names]) => names.length > 1).map(([from, parts]) => ({ from, parts }));
   }
 
   /** The See-through parts: every part but the `painting:` patches. */
@@ -830,6 +870,16 @@ export function propose(P: PartSet, joints?: RigJoints, wristSnap: number | null
  * alone, and every value and note is the one written before it existed.
  */
 export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: number | null = null): { proposal: Proposal; basis: ProposalBasis } {
+  // Issue #230: a piece is not given its base's rule a second time, which
+  // needs to know which part is the piece. A file that cannot say is refused
+  // here, and only here: every other reader of parts.json still takes it.
+  refuseIfAny(
+    P.unmarkedShares().map(({ from, parts }) => ({
+      code: 'PROPOSE_CUT_FROM_RECORDED',
+      object: `parts ${parts.map((n) => `"${n}"`).join(', ')} (${from})`,
+      detail: `share one layer and none of them records cut_from, so which is the plan part and which the piece an assemble.cuts entry took cannot be read off parts.json (it is in draw order, and a piece drawn "back" comes before its base); re-run assemble (1.5.6+) to record cut_from`,
+    })),
+  );
   const bones: BoneEntry[] = [];
   const records: BoneBasis[] = [];
   // No prototype: a part may be named anything file-safe, "__proto__" included.
@@ -1018,6 +1068,8 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
   const eyeless: string[] = [];
   const eyelessSides = new Set<'r' | 'l'>();
   for (const p of P.layered()) {
+    // A cut's piece takes no tag's role (issue #230): it falls to the trunk rule below, which says so.
+    if (p.cut_from !== undefined) continue;
     const t = splitFrom(p.from)[1];
     let role: string | undefined = TAG_REGION[t];
     if (browOf.has(p.name)) role = browOf.get(p.name);
@@ -1383,7 +1435,9 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
   }
 
   // ---- sleeves
-  const hw = [...P.byTag('handwear-r'), ...P.byTag('handwear-l')].filter((p) => p.opaque_px > 500);
+  // A cut's piece counts here (issue #230): the sleeve rule names its chains by side, not once per part, so a piece
+  // never repeats one, and cutting one sleeve out of a both-arms part is how #199's note says to separate them.
+  const hw = [...P.byTag('handwear-r', undefined, true), ...P.byTag('handwear-l', undefined, true)].filter((p) => p.opaque_px > 500);
   const sides = new Map<'r' | 'l', PartRecord[]>();
   for (const p of hw) {
     const s = center(p)[0] < axis ? 'r' : 'l';
@@ -1611,6 +1665,10 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
       regions[p.name] = cy < neckY ? 'head' : cy < hip[1] ? 'chest' : 'hip';
       if (splitFrom(p.from)[0] === PAINTING_RUN) {
         notes.push(`${p.name} (${p.from}): a painting patch has no tag, so no rule -> region on ${regions[p.name]}, the nearest trunk bone; config.regions.${p.name} is the bone it rides`);
+      } else if (p.cut_from !== undefined) {
+        notes.push(
+          `${p.name} (${p.from}): a piece an assemble.cuts entry took from ${p.cut_from}, so not given that layer's rule a second time (it would name ${p.cut_from}'s bones and chains again) -> region on ${regions[p.name]}, the nearest trunk bone; config.regions.${p.name} is the bone it rides, and a mesh in config.meshes is the author's to give it`,
+        );
       } else notes.push(`${p.name} (${p.from}): no rule -> region on ${regions[p.name]}`);
     }
   }

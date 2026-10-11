@@ -35,6 +35,13 @@
  *   issue #119). They are not in `opaque_px`: the counts above are taken
  *   after it.
  *
+ * One field names a part rather than counting pixels: `cut_from`, written only
+ * on a piece an `assemble.cuts` entry made (issue #230) — the plan part it was
+ * cut from, which shares its `from`. The record is in draw order, and a piece
+ * drawn `"back"` comes before its base, so order cannot say which of two parts
+ * sharing a layer is the piece; this field does. A `parts.json` written before
+ * 1.5.6 has none, and still reads.
+ *
  * ⭐ **A patch is 100 % source.** Every pixel of a `painting:` part is the
  * painting's own, so it is all visible (the painting shows it; nothing of it
  * is synthesis), all candidates and all taken: `visible_px =
@@ -71,6 +78,12 @@ import { readTag } from './tags.ts';
 export interface PartRecord {
   name: string;
   from: string;
+  /**
+   * Written only on a piece an `assemble.cuts` entry made (issue #230): the
+   * name of the plan part it was cut from, which has the same `from`. Absent
+   * on every other part, and in a `parts.json` written before 1.5.6.
+   */
+  cut_from?: string;
   x: number;
   y: number;
   w: number;
@@ -132,6 +145,7 @@ const BORDER_KEYS = ['part', 'px'] as const;
 export const PART_KEYS = [
   'name',
   'from',
+  'cut_from',
   'x',
   'y',
   'w',
@@ -149,10 +163,12 @@ export const PART_KEYS = [
 ] as const;
 /** The one part field that is not a count: a list of `{part, px}`, written only when it is not empty. */
 const FRINGE_KEY = 'fringe_pushed_back';
-const COUNT_KEYS = PART_KEYS.slice(2).filter((k) => k !== FRINGE_KEY) as ReadonlyArray<(typeof PART_KEYS)[number]>;
+/** The one part field that names another part: a cut's piece names its base, written only on a piece. */
+const CUT_FROM_KEY = 'cut_from';
+const COUNT_KEYS = PART_KEYS.slice(2).filter((k) => k !== FRINGE_KEY && k !== CUT_FROM_KEY) as ReadonlyArray<(typeof PART_KEYS)[number]>;
 /** The port's own counts: all three or none (none = a record the reference wrote). */
 export const VISIBILITY_KEYS = ['visible_px', 'occluded_px', 'visible_not_projected_px'] as const;
-const REQUIRED_KEYS = PART_KEYS.filter((k) => !(VISIBILITY_KEYS as readonly string[]).includes(k) && k !== FRINGE_KEY);
+const REQUIRED_KEYS = PART_KEYS.filter((k) => !(VISIBILITY_KEYS as readonly string[]).includes(k) && k !== FRINGE_KEY && k !== CUT_FROM_KEY);
 
 /** Where a part came from: a See-through run and a v3 tag, or the painting itself for a patch. */
 export type From = { run: 'full' | 'head'; tag: string } | { run: 'painting'; patch: string };
@@ -317,6 +333,27 @@ function checkParts(raw: unknown, path: string): PartsFile {
         if (typeof held === 'string' && !named.has(held)) fail('PARTS_FROM_KNOWN', `part "${String(r.name)}" field "${FRINGE_KEY}"`, `names "${held}", which is no part of this file; the part that holds a pushed-back pixel is one of its parts`);
       }
     });
+  }
+  if (Array.isArray(o.parts)) {
+    // A cut's piece (issue #230) names its base: a part of this file, with the
+    // same "<run>:<tag>", that is not itself a piece (a cut of a cut has no
+    // single plan part behind it; the config loader refuses one).
+    const recs = o.parts.filter((p): p is Record<string, unknown> => typeof p === 'object' && p !== null && !Array.isArray(p));
+    const byName = new Map<unknown, Record<string, unknown>>(recs.map((r) => [r.name, r]));
+    for (const r of recs) {
+      if (!(CUT_FROM_KEY in r)) continue;
+      const object = `part "${String(r.name)}" field "${CUT_FROM_KEY}"`;
+      const base = r[CUT_FROM_KEY];
+      if (typeof base !== 'string' || base === '') {
+        fail('PARTS_FIELD_TYPE', object, `is ${show(base)}; the name of the part the cut took it from is required (the field is absent on a part no cut made)`);
+        continue;
+      }
+      const b = byName.get(base);
+      if (b === undefined) fail('PARTS_CUT_FROM_KNOWN', object, `names "${base}", which is no part of this file; the plan part the cut took this piece from is required`);
+      else if (base === r.name) fail('PARTS_CUT_FROM_KNOWN', object, `names the piece itself; the plan part the cut took it from is required`);
+      else if (CUT_FROM_KEY in b) fail('PARTS_CUT_FROM_KNOWN', object, `names "${base}", which is itself a piece (cut from ${show(b[CUT_FROM_KEY])}); a plan part is required, as a cut of a cut has no single layer behind it`);
+      else if (b.from !== r.from) fail('PARTS_CUT_FROM_KNOWN', object, `names "${base}", whose from is ${show(b.from)}; this piece's is ${show(r.from)}, and a piece shares its base's layer`);
+    }
   }
   if ('recomposite' in o && sizeOk) {
     const names = Array.isArray(o.parts) ? new Set(o.parts.map((p) => (typeof p === 'object' && p !== null ? (p as Record<string, unknown>).name : undefined)).filter((n): n is string => typeof n === 'string')) : new Set<string>();

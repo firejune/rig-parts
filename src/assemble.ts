@@ -1962,11 +1962,13 @@ export function assemble(input: AssembleInput): AssembleResult {
 
   const planned: Array<PlacedPart | null> = plan.map(() => null);
   const cutPlaced: Array<PlacedPart | null> = cuts.map(() => null);
-  const pieceList: Array<{ name: string; b: Built; pushed: FringePushed[]; at: string; set: (p: PlacedPart) => void }> = [
-    ...plan.map(([name], pi) => ({ name, b: built[pi] as Built, pushed: pushedOf[pi], at: `config.assemble.plan[${pi}]`, set: (q: PlacedPart) => (planned[pi] = q) })),
-    ...cuts.map((q, i) => ({ name: q.into, b: pieces[i] as Built, pushed: pushedOfCut[i], at: `config.assemble.cuts[${i}]`, set: (pp: PlacedPart) => (cutPlaced[i] = pp) })),
+  // A cut's piece records the plan part it was cut from (issue #230): parts.json is in draw order, so a piece drawn
+  // "back" comes before its base, and nothing else in the file says which of the two is the piece.
+  const pieceList: Array<{ name: string; b: Built; pushed: FringePushed[]; at: string; cutFrom: string | null; set: (p: PlacedPart) => void }> = [
+    ...plan.map(([name], pi) => ({ name, b: built[pi] as Built, pushed: pushedOf[pi], at: `config.assemble.plan[${pi}]`, cutFrom: null, set: (q: PlacedPart) => (planned[pi] = q) })),
+    ...cuts.map((q, i) => ({ name: q.into, b: pieces[i] as Built, pushed: pushedOfCut[i], at: `config.assemble.cuts[${i}]`, cutFrom: q.from, set: (pp: PlacedPart) => (cutPlaced[i] = pp) })),
   ];
-  pieceList.forEach(({ name, b, pushed: pushedHere, at, set }) => {
+  pieceList.forEach(({ name, b, pushed: pushedHere, at, cutFrom, set }) => {
     const { key, r, st, extendKeys, trace, merged, region } = b;
     // A pixel the merge wrote is judged in the extend layer's run, every other
     // in the part's own. Projected = the colour came from projectSource's
@@ -1996,6 +1998,7 @@ export function assemble(input: AssembleInput): AssembleResult {
     const record: PartRecord = {
       name,
       from: key,
+      ...(cutFrom === null ? {} : { cut_from: cutFrom }),
       x: x0,
       y: y0,
       w: x1 - x0 + 1,

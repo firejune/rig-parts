@@ -1474,14 +1474,25 @@ immediately behind `X`; `"front"` patches last, then `"front"` pieces). Its coun
 A part's `from` is `<full|head>:<tag>` — the See-through run and tag, which every
 role (`propose`) and every judgement-line region (`check`) is read from — or, for a
 patch, `painting:<its own name>`; a cut's piece carries the `<run>:<tag>` of the part
-it was cut from, so two records may share one. **A patch is 100 % source**: every pixel is the
+it was cut from, so two records may share one, and names that part in `cut_from` (issue
+#230; written on a piece only). The records are in draw order, so a piece drawn `"back"`
+or before its base comes first, and only `cut_from` says which of the two the cut made.
+The reader refuses a `cut_from` that names no part of the file, the piece itself, another
+piece, or a part on another layer (`PARTS_CUT_FROM_KNOWN`). A `parts.json` written before
+1.5.6 has no `cut_from` and still reads; `propose` alone refuses it when two of its parts
+share a layer (`PROPOSE_CUT_FROM_RECORDED`): re-run assemble. **A patch is 100 % source**: every pixel is the
 painting's, so it is all visible and all taken — `visible_px`, `projected_core_px`
 and `source_px_taken` equal `opaque_px`, and `occluded_px`,
 `visible_not_projected_px`, `refused_drift_px` and `merged_px` are 0. The reader
 refuses a `painting:` record that says anything else, or that names another part
 (`PARTS_FROM_KNOWN`, `PARTS_COUNTS_ADD_UP`). No tag rule reads a patch: `propose`
 puts it on the nearest trunk bone as a region with a note, and `check` counts it
-in no region.
+in no region. No tag rule reads a cut's piece either (issue #230): its base already took
+the tag's rule, and a rule that runs once per part of a tag would name the base's bones
+and chains a second time, so the piece rides the nearest trunk bone as a region with a
+note saying so — give it a mesh in `meshes` if it should bend. The one exception is the
+sleeve rule, which names its chains by side and takes a cut sleeve as a blob of its own
+(the `one handwear part holds both wrists` note, §3).
 
 `visible_px + occluded_px = opaque_px`, and every projected pixel is visible; the stage
 refuses (`ASSEMBLE_COUNTS_ADD_UP`) rather than write counts that break either, and the
@@ -1658,13 +1669,14 @@ See-through with another seed.
 | `HEADBOX_FACE_PRESENT`, `HEADBOX_RUN_SQUARE`, `HEADBOX_CANVAS_SIZE`, `HEADBOX_FITS_CANVAS` | the full run has no face or is not square; `--canvas` is not a positive size; or the painting cannot hold the proposed box at its size — its shorter side is the bound (shrinking it would cut the head) | `--full`, `--canvas`, or the painting |
 | `PROPOSE_SOURCE_PRESENT`, `PROPOSE_PNG_PRESENT`, `PROPOSE_PNG_MATCHES_BOX` | the painting or a part PNG is missing, or a PNG is not its box | `--source`, `--parts` (re-run assemble) |
 | `PROPOSE_FACE_PRESENT` | no part comes from a `face` layer, and the face-less fallback cannot derive a face box either: it needs the head run's `neck` and at least one head-run `front hair`/`back hair` part whose top is above the neck's, and the message names the half that is missing. With both, `propose` does not refuse — it derives the box and says so in its first note (§5) | `assemble.plan`: take the face, or the head run's hair and neck |
+| `PROPOSE_CUT_FROM_RECORDED` | two parts share one layer and none of them records `cut_from`: a `parts.json` an `assemble` before 1.5.6 wrote with `assemble.cuts`. The records are in draw order, so which is the plan part and which the piece cannot be read off the file; the message names the parts and the layer. Every other reader still takes the file | `--parts`: re-run assemble (1.5.6+) to record `cut_from` |
 | `PROPOSE_ACCESSORY_BODY` | an accessory has nothing above its pendant rows to hang its bone on | that part's plan entry, or author its bones by hand |
 | `KEYPOINTS_FILE_PRESENT`, `KEYPOINTS_IS_JSON`, `KEYPOINTS_KEY_KNOWN`, `KEYPOINTS_FIELD_PRESENT`, `KEYPOINTS_FIELD_TYPE` | the `--keypoints` file is absent, not JSON, has a key this reader does not know, lacks one of `spec`, `space`, `width`, `height`, `source`, `people`, or holds a value of the wrong type (a size that is not a whole positive px count, an empty `source`, no people) | the keypoint file (§3, *A posed figure*) |
 | `KEYPOINTS_SPEC_KNOWN`, `KEYPOINTS_SPACE_STATED` | the file is not `spine-parts-keypoints/1`, or states a space other than painting-px, origin top-left, y down | convert the file to that space; it is not read as if it were in it |
 | `KEYPOINTS_JOINT_KNOWN`, `KEYPOINTS_JOINT_STATE`, `KEYPOINTS_POSITION_STATED`, `KEYPOINTS_POSITION_INSIDE` | a joint name outside body-18, a state outside observed / occluded / missing, an observed joint with no `at` or a missing one with one, or a position outside the `width`x`height` image | that joint |
 | `KEYPOINTS_PERSON_UNIQUE`, `KEYPOINTS_PERSON_CHOSEN` | two people share an id; or the file holds more than one person and no `--person` names one, or `--person` names none of them (the message lists the ids) | `--person <id>` |
 | `KEYPOINTS_IMAGE_SIZE` | the file's `width`x`height` is not the `--source` painting's | a file measured on this painting |
-| `PARTS_*` (`PARTS_FILE_PRESENT`, `PARTS_IS_JSON`, `PARTS_KEY_KNOWN`, `PARTS_FIELD_PRESENT`, `PARTS_FIELD_TYPE`, `PARTS_NAME_UNIQUE`, `PARTS_FROM_KNOWN`, `PARTS_BOX_INSIDE_RIG`, `PARTS_COUNTS_ADD_UP`, `PARTS_HOLES_LARGEST_FIRST`, `PARTS_HOLE_PART_KNOWN`) | the `parts.json` read is not assemble's contract (`PARTS_COUNTS_ADD_UP`: `visible_px + occluded_px` is not `opaque_px`, `visible_not_projected_px` is above `visible_px`, or the `recomposite` block's figures disagree — more uncovered than error pixels, a hole larger than its box, the wrong number of holes listed, listed areas that do not sum to `uncovered_error_px`; the last two codes are the block's order and its border names, §5) | re-run assemble; do not edit `parts.json` |
+| `PARTS_*` (`PARTS_FILE_PRESENT`, `PARTS_IS_JSON`, `PARTS_KEY_KNOWN`, `PARTS_FIELD_PRESENT`, `PARTS_FIELD_TYPE`, `PARTS_NAME_UNIQUE`, `PARTS_FROM_KNOWN`, `PARTS_CUT_FROM_KNOWN`, `PARTS_BOX_INSIDE_RIG`, `PARTS_COUNTS_ADD_UP`, `PARTS_HOLES_LARGEST_FIRST`, `PARTS_HOLE_PART_KNOWN`) | the `parts.json` read is not assemble's contract (`PARTS_COUNTS_ADD_UP`: `visible_px + occluded_px` is not `opaque_px`, `visible_not_projected_px` is above `visible_px`, or the `recomposite` block's figures disagree — more uncovered than error pixels, a hole larger than its box, the wrong number of holes listed, listed areas that do not sum to `uncovered_error_px`; the last two codes are the block's order and its border names, §5) | re-run assemble; do not edit `parts.json` |
 
 ### rig
 
