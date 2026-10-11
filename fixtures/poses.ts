@@ -182,3 +182,41 @@ export const POSES: Record<PoseName, Pose> = {
     }),
   },
 };
+
+/**
+ * Two legwear parts for the standing figure (issue #241), each a `legs`
+ * (full:legwear) part added to {@link POSES}' standing parts, read with its
+ * joints plus `r_ankle` (88, 285) and `l_ankle` (112, 285):
+ *
+ * - {@link LEGS_APART}: two legs 12 px wide, x 82..93 and 106..117, y 200..294
+ *   — the line from r_knee (92, 230) to l_knee (108, 230) holds art at x
+ *   92..93, none at 94..105, art at 106..108, and the ankles' line likewise:
+ *   the legs are painted apart.
+ * - {@link LEGS_JOINED}: the same two shins from y 240, and the thighs one
+ *   block x 82..117, y 200..239 — the knees' line runs on art all the way,
+ *   the ankles' line still breaks: the legs touch at the knees.
+ *
+ * Both boxes are x 82..117, y 200..294 (36x95).
+ */
+export const LEGS_APART: ProposeFixturePart = {
+  name: 'legs',
+  from: 'full:legwear',
+  x: 82,
+  y: 200,
+  w: 36,
+  h: 95,
+  colour: [60, 60, 70],
+  rects: [
+    [82, 200, 12, 95],
+    [106, 200, 12, 95],
+  ],
+};
+
+export const LEGS_JOINED: ProposeFixturePart = {
+  ...LEGS_APART,
+  rects: [
+    [82, 200, 36, 40],
+    [82, 240, 12, 55],
+    [106, 240, 12, 55],
+  ],
+};
