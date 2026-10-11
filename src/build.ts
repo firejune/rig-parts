@@ -82,7 +82,8 @@ import { type PartRecord, readParts, writeParts } from './parts.ts';
 import { encodePngBytes, readPng, writePng } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
 import { readRequirements, type RequirementLine, summaryText } from './requirements.ts';
-import { type AutoMeshReport, buildRig, DEFAULT_IDLE_KEYS, type IdleKeys, type MeshReport, type RigCommand, rigJsonText, type RigOutput, type RigSpec, type StrayCleared } from './rig.ts';
+import { type AutoMeshReport, buildRig, DEFAULT_IDLE_KEYS, type FaceAxis, type IdleKeys, type MeshReport, type RigCommand, rigJsonText, type RigOutput, type RigSpec, type StrayCleared } from './rig.ts';
+import { pyRound } from './round.ts';
 
 /** Where a stage's lines go. The commands hand it `console.log`; `build` hands it a prefixing wrapper. */
 export type Log = (line: string) => void;
@@ -819,6 +820,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     `  bones ${rig.rig.bones.length} (${rig.controls.length} control) slots ${rig.rig.slots.length} meshes ${rig.meshReport.length} regions ${regions} vertices ${vertices}; idle ${rig.motion.animations.idle.duration} s, ${tracks.length} track(s), ${keys} key(s)`,
   );
   if (from !== null) log(`  animations beside the idle, from ${from.file} as written: ${Object.keys(from.table).join(', ') || 'none'}`);
+  log(faceAxisLine(rig.faceAxis));
   log(
     rig.idleKeys === 'ctl'
       ? `  idle keys ctl: ${rig.meshKeyed.length} mesh-driving bone(s) keyed by the idle, each keyed through a same-origin <bone>_ctl parent`
@@ -939,6 +941,17 @@ function showFigure(v: unknown): string {
 export function barsSummary(r: CheckReport): string {
   const { measured, skipped } = r.bars;
   return `${measured.length} of ${BARS.length} bar(s) measured, ${skipped.length} skipped${skipped.length === 0 ? '' : ` (${skipped.map((s) => s.bar).join(', ')})`}`;
+}
+
+/**
+ * The rig stage's face-axis line (issue #239): the eye line's angle, the parts it runs between and the face bones
+ * turned to it, or why there is no line and the face bones keep the page's axes — the note a one-eyed painting gets.
+ */
+export function faceAxisLine(f: FaceAxis): string {
+  const own = f.ownTip.length === 0 ? '' : `; ${f.ownTip.join(', ')} ${f.ownTip.length === 1 ? 'takes its' : 'take their'} own tip`;
+  if (f.degrees === null) return `  face axis: none — ${f.none}; ${f.ownTip.length === 0 ? 'the face bones keep' : 'the other face bones keep'} the page's axes${own}`;
+  const turned = f.turned.length === 0 ? 'no face bone to turn' : `${f.turned.join(', ')} turned to it`;
+  return `  face axis: ${pyRound(f.degrees, 6)} degrees, the line from the centre of ${f.parts[0]} to the centre of ${f.parts[1]}; ${turned}${own}`;
 }
 
 /** A judgement line as the console prints it: its name, its status, then its figures and bars as check.json holds them (a SKIP prints its reason). */
