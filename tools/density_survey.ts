@@ -44,6 +44,13 @@
  * centroid that lies inside both meshes, carried through both meshes' skinning
  * at every idle frame (`rigc render --geometry`, 12 fps), the largest distance.
  *
+ * `--arm3 <group>;<group>…` (Stage A2) runs arm 0 and then arm 3 instead of arms 1 and 2: each group — a
+ * comma-separated list of parts, or `grid` for every lattice mesh — switched together
+ * ({@link armThreeConfig}) at every T in {@link ARM3_TOLERANCES} and every stations count in
+ * {@link ARM3_STATIONS}. Arm 0 then also reports each mesh's art area, for overdraw.
+ *
+ * `--islands <key> <build dir> <config>` prints, as a Markdown section, per `grid` mesh, its art's 4-connected islands ({@link islandCensus}).
+ *
  * `--reuse` reads back a stage whose output, log and exit a previous run left in
  * `--work` instead of running it again (arm 2's rows are always rebuilt).
  *
@@ -56,7 +63,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync,
 import { dirname, join, resolve } from 'node:path';
 import { contourTopologyProblems, GRID } from '../src/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from '../src/mesh.ts';
-import { alphaAbove, readPng } from '../src/raster/index.ts';
+import { alphaAbove, connectedComponents, readPng } from '../src/raster/index.ts';
 import { OFFSET_PLACES, PAD, rigJsonText } from '../src/rig.ts';
 import { pyRound } from '../src/round.ts';
 import { DEFAULT_LIMITS, influences, type Segment } from '../src/weights.ts';
@@ -82,6 +89,20 @@ export const ROW_STATIONS = [1, 2, 3] as const;
  * apart along it as arm 1's lattice corners. Fixed before the run.
  */
 export const ROW_SPACING_DIVISOR = 37;
+
+/** Arm 3's outline tolerances T, rig px (issue #265 Stage A2; HQ's T ∈ {2, 4, 8}). The margin is T too: see {@link armThreeConfig}. */
+export const ARM3_TOLERANCES = [2, 4, 8] as const;
+
+/** Arm 3's rib stations per link (Stage A2: a row at each link origin, `stations` 0 and 1). */
+export const ARM3_STATIONS = [0, 1] as const;
+
+/**
+ * Arm 3's background `spacing`, px: above every part image's longer side (the rig is 1216 px tall), so the
+ * background grid's only candidate is the image's corner (0, 0), and with a keep radius of half of it no candidate
+ * survives beside a rib — the interior is the ribs' and nothing else (`interiorCandidates`, `keepPoints`,
+ * `src/contour.ts`). A rib's halves are cut at the same spacing, so each rib is its two ends and its own point.
+ */
+export const ARM3_SPACING = 4096;
 
 // ---------------------------------------------------------------------------
 // small readers
@@ -151,6 +172,64 @@ export function armOneConfig(config: Obj, B: number): { config: Obj; moved: stri
     } else moved.push(`${name} not moved (mode ${Object.keys(m).join('/')})`);
   }
   return { config: out, moved };
+}
+
+/**
+ * Arm 3's config (Stage A2): each named `grid` mesh becomes a contour mesh at tolerance T and margin T — the
+ * Douglas–Peucker simplification moves the outline at most T inward of the grown silhouette, so a margin of T is
+ * the least that keeps every art pixel inside by construction; the stage's own coverage check (`CONTOUR_COVERAGE`)
+ * holds it — with background spacing {@link ARM3_SPACING} and, for every chain its segments name, `ribs` at
+ * `stations`. Its `r`, `segments`, `exponent` and `rule` stay as written; nothing else in the config moves, no
+ * `stray` is added. A mesh whose segments name no chain gets no ribs — `ribs` keys must be chains (issue #188) —
+ * and is listed in `gaps` with where its bones' weights cross ({@link weightCrossing}).
+ */
+export function armThreeConfig(config: Obj, names: readonly string[], T: number, stations: number): { config: Obj; moved: string[]; gaps: string[] } {
+  const out = JSON.parse(JSON.stringify(config)) as Obj;
+  const meshes = obj(out.meshes, 'meshes');
+  const bones = arr(config.bones, 'bones').map((b, i) => obj(b, `bones[${i}]`));
+  const chainNames = new Set(bones.filter((b) => typeof b.chain === 'string').map((b) => str(b.chain, 'chain')));
+  const moved: string[] = [];
+  const gaps: string[] = [];
+  for (const name of names) {
+    const m = obj(meshes[name], `meshes.${name}`);
+    if (!('grid' in m)) {
+      moved.push(`${name} not moved (not a grid mesh)`);
+      continue;
+    }
+    const chains = arr(m.segments, `meshes.${name}.segments`).filter((x): x is string => typeof x === 'string' && chainNames.has(x));
+    const next: Obj = { contour: { tolerance: T, margin: T, spacing: ARM3_SPACING, regions: [] }, r: m.r as Json, segments: m.segments as Json };
+    if (chains.length > 0) next.ribs = Object.fromEntries(chains.map((c) => [c, { stations }])) as Json;
+    for (const k of ['exponent', 'rule']) if (k in m) next[k] = m[k] as Json;
+    meshes[name] = next;
+    const others = resolveSegments(config, name).filter((sg) => !chains.some((c) => sg.bone.startsWith(c) && /^\d+$/.test(sg.bone.slice(c.length))));
+    moved.push(`${name} grid ${num(m.grid, 'grid')} -> contour T ${T} margin ${T} spacing ${ARM3_SPACING}${chains.length > 0 ? `, ribs ${chains.map((c) => `${c} stations ${stations}`).join(', ')}` : ', no ribs'}`);
+    if (others.length > 0) {
+      const cross = chains.length === 0 ? weightCrossing(config, name) : null;
+      gaps.push(`${name}: segment(s) ${others.map((o) => o.bone).join(', ')} are bone segments, not chains; ribs take chains only, so no row is placed across them${cross === null ? '' : ` — ${cross}`}`);
+    }
+  }
+  return { config: out, moved, gaps };
+}
+
+/**
+ * Where the weights of a chainless mesh's two heaviest bones cross, read off the rig stage's own rule
+ * (`influences`) along the vertical through the mean x of its segments' ends, at every 1/4 rig px of the part's
+ * box: the first y where the leading bone changes. Reported only — `ribs` cannot place a row there.
+ */
+function weightCrossing(config: Obj, name: string): string | null {
+  const segs = resolveSegments(config, name);
+  const mesh = obj(obj(config.meshes, 'meshes')[name], `meshes.${name}`);
+  const r = num(mesh.r, 'r');
+  const x = segs.reduce((a, sg) => a + sg.a[0] + sg.b[0], 0) / (2 * segs.length);
+  const ys = segs.flatMap((sg) => [sg.a[1], sg.b[1]]);
+  let lead: string | null = null;
+  for (let y = Math.min(...ys); y <= Math.max(...ys); y += 0.25) {
+    const inf = influences([x, y], segs.map((sg) => ({ bone: sg.bone, a: sg.a, b: sg.b })), r);
+    const top = [...inf].sort((p, q) => q.weight - p.weight)[0].bone;
+    if (lead !== null && top !== lead) return `the weights of ${lead} and ${top} cross at (${pyRound(x, 2)}, ${pyRound(y, 2)}) rig px, along x = ${pyRound(x, 2)}`;
+    lead = top;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -258,11 +337,21 @@ function triArea(v: readonly number[], tri: readonly number[]): number {
 }
 
 /** Each mesh's triangles and setup-pose area. */
-function meshFigures(g: Geometry): Array<{ slot: string; triangles: number; vertices: number; hull: number; area: number }> {
+function meshFigures(g: Geometry, images: string | null): Array<{ slot: string; triangles: number; vertices: number; hull: number; area: number; art?: number }> {
   return [...g.rest.values()].map((m) => {
     const v = g.setup.get(m.slot) as number[];
-    return { slot: m.slot, triangles: m.triangles.length / 3, vertices: v.length / 2, hull: m.hull, area: triArea(v, m.triangles) };
+    const row = { slot: m.slot, triangles: m.triangles.length / 3, vertices: v.length / 2, hull: m.hull, area: triArea(v, m.triangles) };
+    const png = images === null ? null : join(images, `${m.slot}.png`);
+    return png === null || !existsSync(png) ? row : { ...row, art: artPixels(png) };
   });
+}
+
+/** The art's area, px²: the pixels of the part's image with alpha above the mesh's art threshold (`ART_ALPHA`). */
+function artPixels(png: string): number {
+  const m = alphaAbove(readPng(png), ART_ALPHA);
+  let n = 0;
+  for (let i = 0; i < m.data.length; i++) n += m.data[i];
+  return n;
 }
 
 // ---------------------------------------------------------------------------
@@ -821,7 +910,8 @@ export interface ArmResult {
   exit: number;
   refusals: string[];
   moved: string[];
-  meshes: Array<{ slot: string; triangles: number; vertices: number; hull: number; area: number }>;
+  meshes: Array<{ slot: string; triangles: number; vertices: number; hull: number; area: number; art?: number }>;
+  gaps?: string[];
   check: Obj | null;
   checkLines: string[];
   displacement: DisplacementRow[];
@@ -836,7 +926,7 @@ function checkLines(log: string): string[] {
     .map((l) => l.replace(/^\[check\] +/, '').slice(0, 400));
 }
 
-function measured(arm: string, B: number | null, dir: string, r: RunResult, moved: string[], base: Geometry | null, armTwo: ArmTwoPart[]): { result: ArmResult; geometry: Geometry | null } {
+function measured(arm: string, B: number | null, dir: string, r: RunResult, moved: string[], base: Geometry | null, armTwo: ArmTwoPart[], art = false, gaps: string[] = []): { result: ArmResult; geometry: Geometry | null } {
   const checkJson = join(dir, 'check', 'check.json');
   const check = existsSync(checkJson) ? obj(readJson(checkJson), checkJson) : null;
   const candidate = join(dir, 'check', 'build');
@@ -854,7 +944,8 @@ function measured(arm: string, B: number | null, dir: string, r: RunResult, move
       exit: r.exit,
       refusals: r.exit === 0 ? [] : refusals(r.log).slice(0, 12),
       moved,
-      meshes: geometry === null ? [] : meshFigures(geometry),
+      meshes: geometry === null ? [] : meshFigures(geometry, art ? join(dir, 'rig', 'images') : null),
+      ...(gaps.length > 0 ? { gaps } : {}),
       check,
       checkLines: checkLines(r.log),
       displacement: geometry === null || base === null ? [] : displacement(base, geometry),
@@ -865,7 +956,7 @@ function measured(arm: string, B: number | null, dir: string, r: RunResult, move
   };
 }
 
-function runExample(key: string, configPath: string, inputs: string, requirements: string | null, work: string, chainRows: string[], reuse: boolean): Obj {
+function runExample(key: string, configPath: string, inputs: string, requirements: string | null, work: string, chainRows: string[], reuse: boolean, arm3: ReadonlyArray<readonly string[] | 'grid'> | null = null): Obj {
   for (const p of [configPath, join(inputs, 'painting.png'), join(inputs, 'layers', 'full', 'layers.json'), join(inputs, 'layers', 'head', 'layers.json'), ...(requirements === null ? [] : [requirements])]) {
     if (!existsSync(p)) {
       console.error(`density_survey: ${p} is not there`);
@@ -880,7 +971,7 @@ function runExample(key: string, configPath: string, inputs: string, requirement
   const dir0 = join(work, 'arm0');
   log('arm 0 build');
   const r0 = stage(dir0, reuse, 'bun', buildArgs(configPath, inputs, requirements, dir0));
-  const m0 = measured('0', null, dir0, r0, [], null, []);
+  const m0 = measured('0', null, dir0, r0, [], null, [], arm3 !== null);
   arms.push(m0.result);
   if (m0.geometry === null || r0.exit !== 0) {
     log(`arm 0 did not build (exit ${r0.exit}); nothing else runs`);
@@ -890,7 +981,24 @@ function runExample(key: string, configPath: string, inputs: string, requirement
   const parts = partBoxes(join(dir0, 'parts.json'));
   const fig = figureHeight(parts);
 
-  for (const c of FIGURE_DIVISORS) {
+  if (arm3 !== null) {
+    const gridParts = Object.entries(obj(config.meshes, 'meshes')).filter(([, m]) => 'grid' in obj(m, 'mesh')).map(([n]) => n);
+    arm3.forEach((group, gi) => {
+      const names = group === 'grid' ? gridParts : group;
+      const label = group === 'grid' ? 'every grid part' : names.join('+');
+      for (const T of ARM3_TOLERANCES) {
+        for (const st of ARM3_STATIONS) {
+          const dir = join(work, `arm3-g${gi}-t${T}-s${st}`);
+          const { config: cfg, moved, gaps } = armThreeConfig(config, names, T, st);
+          const at = stageConfig(configPath, cfg, join(work, `cfg-g${gi}-t${T}-s${st}`));
+          log(`arm 3 ${label} T ${T} stations ${st} build`);
+          const r = stage(dir, reuse, 'bun', buildArgs(at, inputs, requirements, dir));
+          arms.push(measured(`3 ${label} (T ${T}, st ${st})`, null, dir, r, moved, base, [], true, gaps).result);
+        }
+      }
+    });
+  }
+  for (const c of arm3 === null ? FIGURE_DIVISORS : []) {
     const B = Math.round(fig.height / c);
     const dir = join(work, `arm1-c${c}`);
     const { config: cfg, moved } = armOneConfig(config, B);
@@ -900,7 +1008,7 @@ function runExample(key: string, configPath: string, inputs: string, requirement
     arms.push(measured(`1 (c ${c})`, B, dir, r, moved, base, []).result);
   }
 
-  if (chainRows.length > 0) {
+  if (chainRows.length > 0 && arm3 === null) {
     const spacing = fig.height / ROW_SPACING_DIVISOR;
     for (const k of ROW_STATIONS) {
       const dir = join(work, `arm2-k${k}`);
@@ -1083,6 +1191,132 @@ function renderPage(docs: Obj[]): string {
   return L.join('\n');
 }
 
+/** Σ mesh area over Σ art area, over the meshes that carry an art count; null when none does. */
+function overdrawOf(meshes: ArmResult['meshes'], only: ReadonlySet<string> | null = null): number | null {
+  const rows = meshes.filter((m) => m.art !== undefined && (only === null || only.has(m.slot)));
+  if (rows.length === 0) return null;
+  return rows.reduce((a, m) => a + m.area, 0) / rows.reduce((a, m) => a + (m.art as number), 0);
+}
+
+function stretchOf(check: Obj | null, slot: string): string {
+  const ts = check === null ? undefined : check.TEXTURE_STRETCH;
+  if (ts === undefined || ts === null || typeof ts !== 'object' || Array.isArray(ts) || !Array.isArray(ts.per_mesh)) return '—';
+  const row = ts.per_mesh.find((r) => r !== null && typeof r === 'object' && !Array.isArray(r) && r.slot === slot);
+  return row !== undefined && row !== null && typeof row === 'object' && !Array.isArray(row) && typeof row.severity === 'number' ? String(row.severity) : '—';
+}
+
+/** The parts an arm-3 row switched, read off its `moved` lines. */
+function switchedOf(a: ArmResult): string[] {
+  return a.moved.filter((l) => l.includes('-> contour')).map((l) => l.split(' ')[0]);
+}
+
+/** Stage A2's page: arm 0 and every arm-3 cell, per example. */
+function renderArmThree(docs: Obj[]): string {
+  const L: string[] = [];
+  L.push('# Arm 3: a blunt contour outline with ribs only (issue #265, Stage A2)');
+  L.push('');
+  L.push(`Generated by \`tools/density_survey.ts --page-arm3\` over \`--run … --arm3 …\` documents; every figure is the tool's. Each named \`grid\` mesh becomes a \`contour\` mesh at tolerance T ∈ {${ARM3_TOLERANCES.join(', ')}} rig px and margin T (the least margin that keeps the art covered by construction; \`CONTOUR_COVERAGE\` holds it), background spacing ${ARM3_SPACING} (no lattice point survives), and \`ribs\` at stations ∈ {${ARM3_STATIONS.join(', ')}} on every chain its segments name. Nothing else moves; no \`stray\` is added. A refusal is the cell's result. "Overdraw" is the mesh's setup-pose area over its art area (alpha above 8, the mesh's own threshold); "displacement" is the largest posed distance against arm 0 over the idle (the Stage A rule). Bars: the nine of \`check\`.`);
+  L.push('');
+  L.push('The pictures (trailer; rig-c 2.43.0\'s `rigc inspect --show art,mesh --dim`, installed beside this tree for the pictures only), read before the tables:');
+  L.push('');
+  L.push('- `density-arm3-parts.png` — neck (left pair) and legwear (right pair) at T 2, 4 and 8, stations 0, each arm 0 (A) beside arm 3 (B), from the cells that switch that part alone: `rigc inspect --candidate <work>/arm0/check/build --compare <cell>/check/build --show art,mesh --dim --overlay-slot <part> --zoom slot:<part>:10 --max 520`. handwear_l has no arm-3 build (below).');
+  L.push('- `density-arm3-figure.png` — the whole figure of the legwear cell at T 2, stations 0: `rigc inspect --candidate <cell>/check/build --show art,mesh --dim --max 1400`.');
+  L.push('');
+  L.push('![arm 3, the parts](density-arm3-parts.png)');
+  L.push('');
+  L.push('![arm 3, legwear at T 2, the figure](density-arm3-figure.png)');
+  for (const doc of docs) {
+    const key = str(doc.key, 'key');
+    const arms = armsOf(doc);
+    const a0 = arms[0];
+    const t0 = a0.meshes.reduce((x, m) => x + m.triangles, 0);
+    L.push('');
+    L.push(`## ${key}`);
+    L.push('');
+    L.push('| arm | build | refused by | Σ triangles | vs arm 0 | triangles on the switched parts (arm 0) | overdraw, figure | overdraw, switched parts (arm 0) | ' + BARS.join(' | ') + ' | largest displacement on the switched parts (rig px) |');
+    L.push('| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ' + BARS.map(() => '---').join(' | ') + ' | --- |');
+    for (const a of arms) {
+      const sw = new Set(a === a0 ? [] : switchedOf(a));
+      const T = a.meshes.reduce((x, m) => x + m.triangles, 0);
+      const on = a.meshes.filter((m) => sw.has(m.slot)).reduce((x, m) => x + m.triangles, 0);
+      const on0 = a0.meshes.filter((m) => sw.has(m.slot)).reduce((x, m) => x + m.triangles, 0);
+      const codes = [...new Set(a.refusals.map((r) => (/\b([A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+):/.exec(r) ?? ['', '?'])[1]))];
+      const od = overdrawOf(a.meshes);
+      const ods = overdrawOf(a.meshes, sw);
+      const ods0 = overdrawOf(a0.meshes, sw);
+      const disp = a.displacement.filter((d) => sw.has(d.slot)).sort((p, q) => q.max - p.max)[0];
+      const built = a.meshes.length > 0;
+      L.push(
+        `| ${a.arm} | ${a.exit === 0 ? 'PASS' : `exit ${a.exit}`} | ${codes.length > 0 ? codes.join(', ') : '—'} | ${built ? T : '—'} | ${built ? `${fx((100 * T) / t0, 1)} %` : '—'} | ${built && sw.size > 0 ? `${on} (${on0})` : '—'} | ${od === null ? '—' : fx(od, 3)} | ${ods === null || sw.size === 0 ? '—' : `${fx(ods, 3)} (${ods0 === null ? '—' : fx(ods0, 3)})`} | ${BARS.map((b) => barCell(a.check, b)).join(' | ')} | ${disp === undefined ? '—' : `${fx(disp.max, 3)} (${disp.slot}, frame ${disp.frame})`} |`,
+      );
+    }
+    L.push('');
+    L.push('Per switched part (arm 0\'s own row first):');
+    L.push('');
+    L.push('| arm | part | vertices | hull | triangles | mesh area px² | art px | overdraw | displacement vs arm 0 | TEXTURE_STRETCH severity |');
+    L.push('| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+    const all = [...new Set(arms.flatMap((a) => switchedOf(a)))];
+    for (const part of all) {
+      const m0 = a0.meshes.find((m) => m.slot === part);
+      if (m0 !== undefined) L.push(`| 0 | ${part} | ${m0.vertices} | ${m0.hull} | ${m0.triangles} | ${fx(m0.area, 1)} | ${m0.art ?? '—'} | ${m0.art === undefined ? '—' : fx(m0.area / m0.art, 3)} | — | ${stretchOf(a0.check, part)} |`);
+      for (const a of arms.slice(1)) {
+        if (!switchedOf(a).includes(part)) continue;
+        const m = a.meshes.find((x) => x.slot === part);
+        const d = a.displacement.find((x) => x.slot === part);
+        if (m === undefined) L.push(`| ${a.arm} | ${part} | — | — | — | — | — | — | — | — |`);
+        else L.push(`| ${a.arm} | ${part} | ${m.vertices} | ${m.hull} | ${m.triangles} | ${fx(m.area, 1)} | ${m.art ?? '—'} | ${m.art === undefined ? '—' : fx(m.area / m.art, 3)} | ${d === undefined ? '—' : fx(d.max, 3)} | ${stretchOf(a.check, part)} |`);
+      }
+    }
+    const refused = arms.filter((a) => a.exit !== 0);
+    if (refused.length > 0) {
+      L.push('');
+      L.push('Refusals, as the stage printed them:');
+      for (const a of refused) {
+        L.push('');
+        L.push(`- arm ${a.arm}:`);
+        for (const r of a.refusals) L.push(`  - \`${r}\``);
+        for (const c of a.checkLines.filter((l) => /FAIL/.test(l))) L.push(`  - \`${c}\``);
+      }
+    }
+    const gaps = [...new Set(arms.flatMap((a) => a.gaps ?? []))];
+    if (gaps.length > 0) {
+      L.push('');
+      L.push('What `ribs` cannot express (no row is placed; the mesh is weighted as declared):');
+      L.push('');
+      for (const g of gaps) L.push(`- ${g}`);
+    }
+    L.push('');
+    L.push('Every arm\'s `check` lines, as the build printed them:');
+    for (const a of arms) {
+      L.push('');
+      L.push(`<details><summary>arm ${a.arm}</summary>`);
+      L.push('');
+      L.push('```');
+      for (const l of a.moved) L.push(`moved: ${l}`);
+      for (const l of a.checkLines) L.push(l);
+      L.push('```');
+      L.push('');
+      L.push('</details>');
+    }
+  }
+  L.push('');
+  return L.join('\n');
+}
+
+/**
+ * The island census (Stage A2): for every `grid` mesh of a config, the 4-connected islands of its part image's art
+ * (alpha above 8) in a build's `rig/images` — the count the contour mode refuses above one without a declared `stray`
+ * (`CONTOUR_ONE_ISLAND`, `src/contour.ts`), so a whole-figure arm 3 builds only if every row reads 1.
+ */
+export function islandCensus(build: string, config: Obj): Array<{ part: string; islands: number[] }> {
+  return Object.entries(obj(config.meshes, 'meshes'))
+    .filter(([, m]) => 'grid' in obj(m, 'mesh'))
+    .map(([part]) => {
+      const c = connectedComponents(alphaAbove(readPng(join(build, 'rig', 'images', `${part}.png`)), ART_ALPHA), 4);
+      return { part, islands: c.stats.slice(1).map((st) => st.area).sort((a, b) => b - a) };
+    });
+}
+
 // ---------------------------------------------------------------------------
 // the command
 // ---------------------------------------------------------------------------
@@ -1092,6 +1326,18 @@ function main(argv: string[]): void {
     const i = argv.indexOf(name);
     return i >= 0 && i + 1 < argv.length ? argv[i + 1] : null;
   };
+  if (argv.includes('--islands')) {
+    const [key, build, config] = argv.slice(argv.indexOf('--islands') + 1);
+    const rows = islandCensus(resolve(build), obj(readJson(resolve(config)), config));
+    process.stdout.write(`\n### ${key}: ${rows.filter((r) => r.islands.length === 1).length} of ${rows.length} grid parts are one island\n\n`);
+    for (const row of rows) process.stdout.write(`- ${row.part}: ${row.islands.length} island(s)${row.islands.length > 1 ? ` — ${row.islands.join(', ')} px` : ''}\n`);
+    return;
+  }
+  if (argv.includes('--page-arm3')) {
+    const files = argv.slice(argv.indexOf('--page-arm3') + 1);
+    process.stdout.write(renderArmThree(files.map((f) => obj(readJson(f), f))));
+    return;
+  }
   if (argv.includes('--page')) {
     const files = argv.slice(argv.indexOf('--page') + 1);
     process.stdout.write(renderPage(files.map((f) => obj(readJson(f), f))));
@@ -1107,11 +1353,11 @@ function main(argv: string[]): void {
       process.exit(2);
     }
     const chain = flag('--chain-rows');
-    const doc = runExample(key, resolve(config), resolve(inputs), flag('--requirements') === null ? null : resolve(flag('--requirements') as string), resolve(work), chain === null ? [] : chain.split(','), argv.includes('--reuse'));
+    const doc = runExample(key, resolve(config), resolve(inputs), flag('--requirements') === null ? null : resolve(flag('--requirements') as string), resolve(work), chain === null ? [] : chain.split(','), argv.includes('--reuse'), flag('--arm3') === null ? null : (flag('--arm3') as string).split(';').map((g) => (g === 'grid' ? 'grid' : g.split(','))));
     process.stdout.write(`${JSON.stringify(doc)}\n`);
     return;
   }
-  console.error('usage: density_survey --run --key <k> --config <path> --inputs <dir> --work <dir> [--requirements <path>] [--chain-rows a,b,c] | --page <doc.json>…');
+  console.error('usage: density_survey --run --key <k> --config <path> --inputs <dir> --work <dir> [--requirements <path>] [--chain-rows a,b,c | --arm3 <a,b,c | grid>] | --page <doc.json>… | --page-arm3 <doc.json>…');
   process.exit(2);
 }
 
