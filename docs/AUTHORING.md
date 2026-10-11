@@ -1048,10 +1048,15 @@ constraint. Declare the bend in `meshes.<part>.auto.stimulus` (issue #196, the f
 Choose `degrees` as the largest bend, per link, that the physics is expected to reach in the
 animations that drive it: the mesh is held only to what was declared, so a smaller bend passes a
 mesh that tears at the real one, and nothing here checks the declaration against the
-constraint. A thin strand may still be refused at the default motion bound: the reduction
-leaves it its hull alone, and a hull cannot hold a bend to 1 px — on the scarf strap cut out
-of the sweater the automatic mesh passes only at `maxLocalDeformation` 3 (31 vertices against
-the contour mesh's 133), and raising that bound is the author's choice, not the package's.
+constraint. The recipe for a thin strand only physics moves is therefore two steps: put its
+chain on the strand's own art, and declare the stimulus. The chain's position decides whether
+the motion bound can be held at all: on the scarf strap cut out of the sweater, with the chain
+on the strap (the tracked example's), the automatic mesh passes at the default
+`maxLocalDeformation` 1 with 68 vertices (the contour mesh's 133); with the chain beside the
+strap, as the proposal first placed it, the same part is refused `AUTO_MESH_MOTION` at 1 and
+passes only at 3, with its hull alone (31 vertices) — a hull cannot hold a bend the chain does
+not run through. Raising the bound is the author's choice, not the package's; moving the chain
+is the fix.
 - **An added animation can move the idle's figures.** The render's viewport is fitted over
   every animation, and the idle frames share it, so an animation that travels further than the
   idle redraws the idle at another size: adding `hop` to `sample` narrowed the idle render from
