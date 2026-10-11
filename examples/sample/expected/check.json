@@ -21,8 +21,8 @@
    "in": "rig.json"
   }
  ],
- "seam_mean": 0.208,
- "seam_px_over_40": 0,
+ "seam_mean": 0.204,
+ "seam_px_over_40": 2,
  "seam_px_over_80": 0,
  "BREATH_VISIBLE": {
   "status": "PASS",

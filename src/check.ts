@@ -70,7 +70,7 @@
  * own stage box through `src/coords.ts` rather than an open-coded `-W/2`; and
  * the last idle frame is refused unless it sits at t = duration.
  */
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { measureRecomposite, type RecompositeFigures, recompositeRecord, sourceInRig } from './assemble.ts';
 import { cropToSpineY } from './coords.ts';
@@ -145,7 +145,7 @@ import { alphaComposite } from './raster/composite.ts';
 import { readPng, writePng } from './raster/png.ts';
 import { newFloatImage, newRaster, type Raster } from './raster/types.ts';
 import type { BaseTag } from './tags.ts';
-import { warpAffine } from './raster/warp.ts';
+import { type ScaleTranslate, warpAffine } from './raster/warp.ts';
 
 // ---------------------------------------------------------------------------
 // the bars
@@ -1041,7 +1041,7 @@ export interface SeamFigures {
   /** The frame pixels {@link over40} counts, by index into the frame, ascending; each one's max-channel |d| is in {@link countedDiff}. */
   counted: number[];
   countedDiff: number[];
-  /** The rig-to-frame map the composite was warped by: frame = (sx u + tx, sy v + ty), as float32 values. */
+  /** The rig-to-frame map the composite was warped by ({@link rigToFrameMap}): frame = (sx u + tx, sy v + ty), pixel index to pixel index, as float32 values. */
   map: { sx: number; sy: number; tx: number; ty: number };
 }
 
@@ -1059,29 +1059,78 @@ export function flatComposite(parts: PartsFile, partsDir: string, background: re
 }
 
 /**
+ * The map from rig (crop) pixel indices to frame pixel indices that the seam
+ * and the source line warp by: frame = (sx u + tx, sy v + ty).
+ *
+ * Crop pixel (u, v) covers world x from stage.x + u to stage.x + u + 1 (y
+ * through `cropToSpineY`, the one door), and world (wx, wy) is the frame's
+ * continuous position ((wx - vp.x) s, (vp.y + vp.height - wy) s). rig-c's
+ * renderer samples at pixel centres (`x + 0.5`), and cv2's `warpAffine` (which
+ * `src/raster/warp.ts` reproduces) maps index to index with no half-pixel
+ * offset, so the centre of crop pixel u, at continuous u + 0.5, lands at frame
+ * index s (u + 0.5) + t - 0.5 = s u + t + 0.5 (s - 1) (issue #209). Measured
+ * through rig-c's own `render`: a one-pixel column and row on a rig rendered
+ * at s = 1.0069, 1.3889, 1.5046 and 2.0023 sit within 0.042 frame px of this
+ * map on both axes and 0.499 px off the map without the 0.5 (s - 1) term at
+ * s = 2.0023 [measured for issue #209, a scratch rig, not tracked]. At s = 1
+ * the term is 0 and the map is the reference's.
+ *
+ * The reference hands cv2 the matrix as float32 (`np.float32([[...]])`), and
+ * that quantisation moves a sample row across a 1/32-pixel step: in float64 one
+ * row of one rig's 1216-row frame (C1 in ORACLE_check.md) sampled differently
+ * and the unrounded mean drifted 3.1e-4. The map is rounded to float32 the same
+ * way. ⚠️ The reference has no centre term, so from issue #209 this map
+ * mirrors the reference — and ORACLE_check.md's figures are matched — at
+ * s = 1 only; above or below it the reference laid the composite 0.5 (s - 1)
+ * frame px off the render on each axis.
+ *
+ * `centres` false drops the term: the reference's map, kept so the `check`
+ * suite can plant it (issue #209). Every caller in `src/` leaves it true.
+ */
+export function rigToFrameMap(stage: StageBox, rigH: number, vp: Viewport, centres = true): ScaleTranslate {
+  const s = vp.scale;
+  const f = Math.fround;
+  const c = centres ? 0.5 * (s - 1) : 0;
+  return { sx: f(s), sy: f(s), tx: f((stage.x - vp.x) * s + c), ty: f((vp.y + vp.height - (stage.y + cropToSpineY(0, rigH))) * s + c) };
+}
+
+/**
+ * {@link rigToFrameMap} turned round, from frame pixel indices to rig pixel
+ * indices: u = (frame - t - 0.5 (s - 1)) / s, rounded to float32 as the
+ * forward map is. The source line warps the frame onto the stage by it.
+ */
+export function frameToRigMap(stage: StageBox, rigH: number, vp: Viewport): ScaleTranslate {
+  const s = vp.scale;
+  const f = Math.fround;
+  const c = 0.5 * (s - 1);
+  return { sx: f(1 / s), sy: f(1 / s), tx: f(vp.x - stage.x - c / s), ty: f(stage.y + cropToSpineY(0, rigH) - (vp.y + vp.height) - c / s) };
+}
+
+/**
  * The seam figures: the setup-pose frame vs the flat composite carried onto the
  * frame's pixel grid.
  *
- * Crop pixel (u, v) is world (stage.x + u, stage.y + cropToSpineY(v, H)), and
- * world (wx, wy) is frame pixel ((wx - vp.x) s, (vp.y + vp.height - wy) s), so
- * the map is a scale by s and a translate. It is warped with
+ * The map is {@link rigToFrameMap}: a scale by s and a translate, from rig
+ * pixel indices to frame pixel indices, centre to centre. It is warped with
  * `src/raster/warp.ts` (cv2's bilinear `warpAffine`, which is also what the
  * reference's `INTER_AREA` flag gets from cv2 — see that file) in float32.
  * cv2's `borderValue` is the background; this warp's border is 0, so the
  * composite is warped as `(pixel - background)` and the background added back,
  * which is the same linear sum. The per-pixel figure is the largest channel
  * |d|, as in the reference.
+ *
+ * `map` is for the controls alone (the `check` suite plants the map without
+ * the centre term, issue #209); every caller in `src/` leaves it to the default.
  */
-export function seamFigures(composite: Raster, frame: Raster, stage: StageBox, vp: Viewport, background: readonly [number, number, number, number]): SeamFigures {
+export function seamFigures(
+  composite: Raster,
+  frame: Raster,
+  stage: StageBox,
+  vp: Viewport,
+  background: readonly [number, number, number, number],
+  map: ScaleTranslate = rigToFrameMap(stage, composite.height, vp),
+): SeamFigures {
   const [W, H] = [composite.width, composite.height];
-  const s = vp.scale;
-  // The reference hands cv2 the matrix as float32 (`np.float32([[...]])`), and
-  // that quantisation moves a sample row across a 1/32-pixel step: in float64
-  // one row of one rig's 1216-row frame (C1 in ORACLE_check.md) sampled
-  // differently and the unrounded mean drifted 3.1e-4. The map is rounded to
-  // float32 the same way.
-  const f = Math.fround;
-  const map = { sx: f(s), sy: f(s), tx: f((stage.x - vp.x) * s), ty: f((vp.y + vp.height - (stage.y + cropToSpineY(0, H))) * s) };
   const src = newFloatImage(W, H, 3);
   for (let p = 0; p < W * H; p++) for (let c = 0; c < 3; c++) src.data[p * 3 + c] = composite.data[p * 4 + c] - background[c];
   const warped = warpAffine(src, map, vp.pixelWidth, vp.pixelHeight, 'bilinear');
@@ -1111,6 +1160,16 @@ export function seamFigures(composite: Raster, frame: Raster, stage: StageBox, v
   }
   return { mean: sum / n, over40, over80, counted, countedDiff, map };
 }
+
+/**
+ * Where `check --keep-stills` leaves the setup-pose still under `--out`
+ * (issue #209): rigc's own render directory as `render` wrote it —
+ * `frames.json` (the viewport the seam and the source line map by, and the
+ * background) and the set directory beside it — so a reader compares against
+ * the frame the bars read rather than rebuilding it. Removed at the start of
+ * every run, so it is on disk only after a run that asked for it.
+ */
+export const STILL_DIR = 'setup_still';
 
 /** Where `check` writes the seam pictures, under `--out` (issue #202): one per row of {@link SeamPairRow}, named by its rank and its two parts. */
 export const SEAM_DIR = 'seam';
@@ -1379,10 +1438,9 @@ export function blackRig(rig: Record<string, unknown>): Record<string, unknown> 
  *   uncovered in assemble's reading too, never the reverse.
  *
  * Both are carried from the frame's grid onto the stage's with the seam's map
- * turned round (the stage pixel (u, v) is world (stage.x + u, stage.y +
- * cropToSpineY(v, H)), the frame pixel ((wx - vp.x) s, (vp.y + vp.height -
- * wy) s)), through the same bilinear `warpAffine` in float32, the border
- * reading as no art; then rounded to 8 bits, as assemble's composite is.
+ * turned round ({@link frameToRigMap}, pixel centre to pixel centre, issue
+ * #209), through the same bilinear `warpAffine` in float32, the border reading
+ * as no art; then rounded to 8 bits, as assemble's composite is.
  */
 export function sourceFigures(open: Raster, black: Raster, vp: Viewport, background: readonly [number, number, number, number], stage: StageBox, srcr: Raster): RecompositeFigures {
   const problems: Problem[] = [];
@@ -1407,11 +1465,8 @@ export function sourceFigures(open: Raster, black: Raster, vp: Viewport, backgro
     }
     ink.data[p * 4 + 3] = 255 * (1 - Math.min(1, through));
   }
-  const s = vp.scale;
-  const f = Math.fround;
-  // The seam's map is crop -> frame: x' = s x + (stage.x - vp.x) s, y' = s y + (vp.y + vp.height - (stage.y + cropToSpineY(0, H))) s. This is its inverse.
-  const map = { sx: f(1 / s), sy: f(1 / s), tx: f(vp.x - stage.x), ty: f(stage.y + cropToSpineY(0, H) - (vp.y + vp.height)) };
-  const warped = warpAffine(ink, map, W, H, 'bilinear');
+  // The seam's map turned round, centre to centre (issue #209).
+  const warped = warpAffine(ink, frameToRigMap(stage, H, vp), W, H, 'bilinear');
   const to8 = (v: number): number => Math.min(255, Math.max(0, Math.round(v)));
   const can = newRaster(W, H);
   const cover = newRaster(W, H);
@@ -1640,7 +1695,7 @@ export function rigcFailed(what: string, call: RigcCall, lines: readonly string[
  * MEASURABLE is a problem. Without it nothing here reads, writes or prints
  * anything it did not before.
  */
-export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome?: string, mode: PackMode = DEFAULT_PACK_MODE, source?: string, requirements?: string, seamPairsAsked = false): CheckReport {
+export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome?: string, mode: PackMode = DEFAULT_PACK_MODE, source?: string, requirements?: string, seamPairsAsked = false, keepStills = false): CheckReport {
   let inp: CheckInputs;
   let reqFile: RequirementsFile | null = null;
   let seams: Map<string, SeamPair[]> | null = null;
@@ -1683,7 +1738,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   const isoDir = join(out, '_isolated');
   const loopDir = join(out, '_loop');
   const seamDir = join(out, SEAM_DIR);
-  for (const d of [buildDir, idleDir, stillDir, isoDir, loopDir, seamDir]) rmSync(d, { recursive: true, force: true });
+  const keptDir = join(out, STILL_DIR);
+  for (const d of [buildDir, idleDir, stillDir, isoDir, loopDir, seamDir, keptDir]) rmSync(d, { recursive: true, force: true });
   const written: string[] = [];
   const write = (name: string, data: string): void => {
     writeFileSync(join(out, name), data);
@@ -1835,6 +1891,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
       if (sr.status !== 0) refuseIfAny(rigcFailed('render (the setup-pose still)', sr, sr.out.split('\n').filter((l) => l.includes('FAIL'))));
       const stillSet = readFrameSet(join(stillDir, 'render'));
       seamViewport = stillSet.viewport;
+      if (keepStills) cpSync(join(stillDir, 'render'), keptDir, { recursive: true });
       if (inp.parts !== null) {
         const composite = flatComposite(inp.parts, inp.partsDir, stillSet.background);
         seam = seamFigures(composite, stillSet.frames[0].image, inp.stage, stillSet.viewport, stillSet.background);

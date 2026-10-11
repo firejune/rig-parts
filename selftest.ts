@@ -148,7 +148,7 @@ import {
   stageFields,
   visibilityCounts,
 } from './src/assemble.ts';
-import { maxRgbDiff, SEAM_BOX, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, type SeamFigures, seamPairRows, seamPairText, withoutPhysics } from './src/check.ts';
+import { flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
 import { BARS, besideIdleLine, blackRig, buildGateLines, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { blinkFigures, type BoneWorld, frameBox, halfTravels, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, ulpOf } from './src/instruments.ts';
 import {
@@ -7211,6 +7211,109 @@ function runCheckSuite(): number {
       statesWhere(seamBullet(authoring)) && !statesWhere(seamBullet(before202)),
       `§7 seam bullet ${seamBullet(authoring).length} chars, states the rows, picture and band: ${statesWhere(seamBullet(authoring))}; the pre-#202 bullet: ${statesWhere(seamBullet(before202))}`,
       'the document is the interface for the author who meets the line: it must say which frame the bar reads, how a pixel is given to a pair, where the picture is, and that the band is counted and why — and the bullet as it stood before issue #202 is the planted negative',
+    );
+
+    // Issue #209: a figure that fills less of its canvas renders at a frame scale above 1, where the map's centre term
+    // 0.5 (s - 1) is not 0. The fixture's two parts on a 72x130 canvas: rig-c fits the figure (the same 80-row stack as
+    // CK01's) and check asks for the canvas's longest side, so the still renders at s = 130 / (the fitted height) ~ 1.5.
+    const PAD = { w: 72, h: 130 };
+    const padRig = join(dir, 'padded');
+    writeCheckRig(padRig, { canvas: PAD });
+    const padOut = join(dir, 'padded-out');
+    const pad = runCli(['check', '--rig', padRig, '--out', padOut, '--keep-stills']);
+    const padFig = readJsonFile(join(padOut, 'check.json'));
+    const kept = existsSync(join(padOut, STILL_DIR, 'frames.json')) ? readFrameSet(join(padOut, STILL_DIR)) : null;
+    const padStage = { x: -PAD.w / 2, y: 0, width: PAD.w, height: PAD.h };
+    const padParts = readParts(join(padRig, 'parts.json'));
+    const padComposite = kept === null ? null : flatComposite(padParts, join(padRig, 'parts'), kept.background);
+    const seamAt = (map?: Parameters<typeof seamFigures>[5]): SeamFigures | null =>
+      kept === null || padComposite === null ? null : seamFigures(padComposite, kept.frames[0].image, padStage, kept.viewport, kept.background, map);
+    const centred = seamAt();
+    const sPad = kept?.viewport.scale ?? 1;
+    // The registration read off the figure itself: the corrected map moved a tenth of a frame px either way on either axis.
+    const nudged = kept === null ? [] : [[0.1, 0], [-0.1, 0], [0, 0.1], [0, -0.1]].map(([dx, dy]) => {
+      const m = rigToFrameMap(padStage, PAD.h, kept.viewport);
+      return seamAt({ ...m, tx: m.tx + dx, ty: m.ty + dy })?.mean ?? -1;
+    });
+    const ck01Mean = typeof fig?.seam_mean === 'number' ? fig.seam_mean : NaN;
+    say(
+      'CK101_A_FIGURE_RENDERED_AT_A_FRAME_SCALE_NEAR_ONE_AND_A_HALF_KEEPS_THE_SEAM_IT_HAS_AT_SCALE_ONE',
+      pad.status === 0 &&
+        padFig !== null &&
+        kept !== null &&
+        sPad > 1.4 &&
+        centred !== null &&
+        typeof padFig.seam_mean === 'number' &&
+        Math.abs(centred.mean - padFig.seam_mean) <= 0.0005 &&
+        centred.over40 === padFig.seam_px_over_40 &&
+        centred.over80 === padFig.seam_px_over_80 &&
+        padFig.seam_px_over_40 === fig?.seam_px_over_40 &&
+        typeof padFig.seam_mean === 'number' &&
+        padFig.seam_mean <= 2 * ck01Mean &&
+        nudged.length === 4 &&
+        nudged.every((m) => m > centred.mean),
+      `exit ${pad.status}; frame scale ${sPad}; seam mean ${String(padFig?.seam_mean)}, ${String(padFig?.seam_px_over_40)} px over 40 (CK01's rig, near scale 1: mean ${ck01Mean}, ${String(fig?.seam_px_over_40)} px); recomputed off the kept still: mean ${centred?.mean.toFixed(4)}, ${String(centred?.over40)} px; the map nudged 0.1 frame px: means ${nudged.map((m) => m.toFixed(4)).join(', ')}`,
+      "issue #209's consumer reading: two rigs at s = 1.59 and 1.35 failed the seam bar with nothing that reads as a seam, because the composite was laid 0.5 (s - 1) frame px off the render on each axis. The fixture's own stack, rendered at s ~ 1.5, must keep the pixel count CK01's run has and a mean no larger than twice CK01's (the order of the s ~ 1 figure, not a measured number), check.json's figures must be the ones the kept still and rigToFrameMap give, and the map must sit at the mean's minimum: a tenth of a frame px off it on either axis reads worse",
+    );
+
+    // The mutant: the same kept still against the reference's map, the term removed. Its offset is 0.5 (s - 1) frame px
+    // on each axis by hand; at s ~ 1.5 that is a quarter of a frame px, and the soft edges' |d| over the whole figure
+    // lifts the mean over the bar.
+    const reference = kept === null ? null : seamAt(rigToFrameMap(padStage, PAD.h, kept.viewport, false));
+    const termX = kept === null ? NaN : rigToFrameMap(padStage, PAD.h, kept.viewport).tx - rigToFrameMap(padStage, PAD.h, kept.viewport, false).tx;
+    say(
+      'CK102_THE_MAP_WITHOUT_THE_CENTRE_TERM_FAILS_THE_SEAM_BAR_ON_THE_SAME_STILL',
+      reference !== null &&
+        Math.abs(termX - 0.5 * (sPad - 1)) < 1e-5 &&
+        reference.mean > SEAM_MEAN_BAR &&
+        centred !== null &&
+        centred.mean <= SEAM_MEAN_BAR,
+      `the term ${termX.toFixed(6)} frame px (0.5 (s - 1) = ${(0.5 * (sPad - 1)).toFixed(6)} by hand); the reference's map: mean ${reference?.mean.toFixed(4)}, ${String(reference?.over40)} px over 40; the corrected map: mean ${centred?.mean.toFixed(4)}; the bar ${SEAM_MEAN_BAR}`,
+      "the planted negative of CK101, planted through rigToFrameMap's centres flag rather than by editing src: the map issue #209 replaced must fail CHECK_SEAM_WITHIN_BAR on the still CK101 passes, so the term is what holds the bar, not the fixture's softness",
+    );
+
+    // At s = 1 the term is 0 and both maps are the reference's to the bit. By hand, stage x -24, y 0, 48x80; viewport x
+    // -30, y -5, 64x90: forward t = ((-24 + 30) s, (-5 + 90 - (0 + 80)) s) = (6, 5) at s = 1 and (9 + 0.25, 7.5 + 0.25)
+    // at s = 1.5; the inverse at s = 1.5 is (-6 - 0.25 / 1.5, -5 - 0.25 / 1.5) at scale 1 / 1.5.
+    const handStage = { x: -24, y: 0, width: 48, height: 80 };
+    const handVp = (scale: number) => ({ x: -30, y: -5, width: 64, height: 90, scale, pixelWidth: 96, pixelHeight: 135 });
+    const f32 = Math.fround;
+    const at1 = rigToFrameMap(handStage, 80, handVp(1));
+    const at1Ref = rigToFrameMap(handStage, 80, handVp(1), false);
+    const inv1 = frameToRigMap(handStage, 80, handVp(1));
+    const at15 = rigToFrameMap(handStage, 80, handVp(1.5));
+    const inv15 = frameToRigMap(handStage, 80, handVp(1.5));
+    // forward then inverse at a few frame indices: u = inv(x), x' = fwd(u) must be x within float32.
+    const back = [0, 17.5, 95].map((x) => at15.sx * (inv15.sx * x + inv15.tx) + at15.tx - x);
+    say(
+      'CK103_AT_FRAME_SCALE_ONE_THE_MAPS_ARE_THE_REFERENCE_S_TO_THE_BIT_AND_ABOVE_IT_CARRY_THE_HAND_COMPUTED_TERM',
+      JSON.stringify(at1) === JSON.stringify(at1Ref) &&
+        JSON.stringify(at1) === JSON.stringify({ sx: 1, sy: 1, tx: 6, ty: 5 }) &&
+        JSON.stringify(inv1) === JSON.stringify({ sx: 1, sy: 1, tx: -6, ty: -5 }) &&
+        JSON.stringify(at15) === JSON.stringify({ sx: 1.5, sy: 1.5, tx: 9.25, ty: 7.75 }) &&
+        JSON.stringify(inv15) === JSON.stringify({ sx: f32(1 / 1.5), sy: f32(1 / 1.5), tx: f32(-6 - 0.25 / 1.5), ty: f32(-5 - 0.25 / 1.5) }) &&
+        back.every((d) => Math.abs(d) < 1e-5),
+      `s = 1: ${JSON.stringify(at1)} (the reference's ${JSON.stringify(at1Ref)}), inverse ${JSON.stringify(inv1)}; s = 1.5: ${JSON.stringify(at15)}, inverse ${JSON.stringify(inv15)}; forward after inverse at frame x 0, 17.5, 95 off by ${back.map((d) => d.toExponential(2)).join(', ')}`,
+      "issue #209 item 3: the reference implementation, and ORACLE_check.md's figures, are matched at s = 1 only, so at s = 1 the new map must be the old one bit for bit — the positive control of the byte contract wherever a still renders at exactly 1 — and above it each map must carry the term computed by hand, the inverse the source line warps by undoing the forward one the seam warps by",
+    );
+
+    // --keep-stills: the files with the flag, none without (CK01's plain run), and the kept frames.json is the grid the seam read.
+    const keptFiles = existsSync(join(padOut, STILL_DIR)) ? readdirSync(join(padOut, STILL_DIR)) : [];
+    const twiceKeep = runCli(['check', '--rig', rig, '--out', join(dir, 'out-keep-twice'), '--keep-stills', '--keep-stills']);
+    say(
+      'CK104_KEEP_STILLS_LEAVES_THE_SETUP_POSE_STILL_AND_ITS_FRAMES_JSON_AND_A_PLAIN_RUN_LEAVES_NOTHING',
+      kept !== null &&
+        keptFiles.includes('frames.json') &&
+        kept.frames.length > 0 &&
+        kept.viewport.pixelWidth === kept.frames[0].image.width &&
+        pad.out.includes(join(padOut, STILL_DIR)) &&
+        !existsSync(join(out, STILL_DIR)) &&
+        !ok.out.includes(STILL_DIR) &&
+        !existsSync(join(padOut, '_still')) &&
+        twiceKeep.status === 2 &&
+        twiceKeep.out.includes('--keep-stills is given twice'),
+      `with the flag: ${STILL_DIR}/ holds ${keptFiles.join(', ') || 'nothing'}; ${kept === null ? 'no frame set' : `${kept.frames.length} frame(s) on ${kept.viewport.pixelWidth}x${kept.viewport.pixelHeight}, scale ${kept.viewport.scale}`}; the wrote line ${pad.out.includes(join(padOut, STILL_DIR)) ? 'names it' : 'DOES NOT name it'}; CK01's plain run: ${existsSync(join(out, STILL_DIR)) ? 'WROTE it' : 'none'}; given twice: exit ${twiceKeep.status}`,
+      "issue #209 item 4: a reader comparing against the tool's own frame needs that frame and the viewport it was mapped by, not a reconstruction from the seam pictures; the request is the only door to them, so a run not asked leaves its out directory as before, and a doubled switch is a usage error",
     );
 
     const redRig = join(dir, 'red');

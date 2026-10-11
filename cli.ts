@@ -205,7 +205,7 @@ usage:
       rounding, and so is the per-frame mesh work (AUTHORING §5).
   rig-parts check --rig <dir> --out <dir> [--parts <dir>] [--source <painting.png>]
                     [--page-edges pot|free] [--pack-shape rect|polygon]
-                    [--requirements <file.json>] [--seam-pairs]
+                    [--requirements <file.json>] [--seam-pairs] [--keep-stills]
       Build, gate, render and measure a rig through rig-c's CLI (the rigc at
       node_modules/.bin/rigc, or on PATH). --rig holds rig.json and motion.json:
       a rig spec, which rigc build compiles, not a compiled skeleton.json.
@@ -226,7 +226,9 @@ usage:
       --seam-pairs, is split by the pair of parts each counted pixel lies
       between: one "seam pair" line each, worst first, with its count, frame
       and rig boxes and a picture under seam/, and check.json's seam_pairs
-      (AUTHORING §7). Then six judgement lines, each in
+      (AUTHORING §7). --keep-stills leaves the setup-pose still the seam reads,
+      rigc's render directory with its frames.json (viewport and background),
+      under setup_still/. Then six judgement lines, each in
       check.json and on the console as NAME: PASS|FAIL|SKIP with its figures and
       bars (AUTHORING §7): BREATH_VISIBLE (the topwear moves, the footwear does
       not, each rendered alone), BLINK_NO_HOLE (the setup pose with the blink
@@ -703,11 +705,13 @@ function flags(args: string[], known: readonly string[], command: string, option
 }
 
 function cmdCheck(args: string[]): number {
-  // The one switch check takes (issue #202): it carries no value, so it is taken out before the valued flags are read.
+  // The two switches check takes (issues #202, #209): they carry no value, so they are taken out before the valued flags are read.
   const seamPairs = args.filter((a) => a === '--seam-pairs').length;
   if (seamPairs > 1) return usage('--seam-pairs is given twice');
+  const keepStills = args.filter((a) => a === '--keep-stills').length;
+  if (keepStills > 1) return usage('--keep-stills is given twice');
   const f = flags(
-    args.filter((a) => a !== '--seam-pairs'),
+    args.filter((a) => a !== '--seam-pairs' && a !== '--keep-stills'),
     ['--rig', '--out'],
     'check',
     ['--parts', '--source', '--page-edges', '--pack-shape', '--requirements'],
@@ -722,7 +726,7 @@ function cmdCheck(args: string[]): number {
   try {
     const bin = findRigc(import.meta.dir, process.env.PATH ?? '');
     const r = checkStage(
-      { rig, parts: f.get('--parts'), source: f.get('--source'), out, pageEdges: edges, packShape: shape, requirements: f.get('--requirements'), seamPairs: seamPairs === 1 },
+      { rig, parts: f.get('--parts'), source: f.get('--source'), out, pageEdges: edges, packShape: shape, requirements: f.get('--requirements'), seamPairs: seamPairs === 1, keepStills: keepStills === 1 },
       rigcRunner(bin),
       bin,
       console.log,

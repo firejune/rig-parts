@@ -1752,7 +1752,12 @@ assemble*, at the end of this section):
   line runs along the scarf's red edge [observed, issue #202]. A wider band moves
   neither; the polygon's edge does — run it through art of one colour on both
   sides, in both copies, which `rig/parts/<from>.png` and `rig/parts/<into>.png`
-  show pixel for pixel;
+  show pixel for pixel. The composite meets the frame pixel centre to pixel
+  centre: rig pixel index u lands on frame index s·u + t + 0.5·(s − 1), `s` the
+  scale the `seam:` line prints (issue #209; the reference implementation's map
+  lacks the last term, so the two agree only at s = 1). `check --keep-stills`
+  leaves that frame — rigc's render directory, its `frames.json` (viewport,
+  background) beside the PNG — under `check/setup_still/`;
 - **loop**: idle frame 0 against the frame at `t = duration`: max |d| exactly 0. The bar
   measures the keys (issue #183): a rig that declares a physics constraint — a `rig.json`
   `constraints` entry of `type` `"physics"`, or an entry of `motion.json`'s `physics`
