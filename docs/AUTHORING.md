@@ -200,6 +200,7 @@ What a joint with a position places, as given — no ratio is applied over it:
 | `chest` | its rule, half way from neck to hip, taken along the line between the placed ends | the rule as before when neither end is a joint |
 | `sleeve_<s>` | `<s>_shoulder` → `<s>_elbow` (two links), tip at `<s>_wrist`, with the two-blob rule's first two amplitudes and its chest stub laid along the upper arm — when every handwear part over 500 px holds one such wrist within 15 px of its art (the larger of the x and y gaps, the LINT's own tolerance), or is bound one by `--wrist-snap` (below) | the sleeve rule places every sleeve chain, and each arm joint's note says why: for a wrist on no part, `… lies on the art of no handwear part within 15 px, so it does not say which sleeve it ends; the nearest is <part>, <d> px from its art by the larger of the x and y gaps (--wrist-snap <d> would bind it)` — `(beyond --wrist-snap <px>)` when the flag was given and fell short, and `the nearest are <a> and <b>, each <d> px …, so no tolerance says which` when two parts tie |
 | `eye_<s>`, `head`, the face box | not moved: they are measured off the parts | the note prints the eye joint's distance from the eye bone, with no bar |
+| `leg_<s>` or `leg` (issue #241) | on a `legwear` part over 500 px: `<s>_hip` → `<s>_knee` (two links), tip at `<s>_ankle`, parent `hip`, the part meshed on the chain and a `hip` stub laid along the thigh — when every such part holds the ankle of a leg whose three joints are given, within 15 px of its art. A part holding both ankles gets a chain per leg only when its art breaks along the line from `r_knee` to `l_knee` and along the line from `r_ankle` to `l_ankle` (the legs painted apart); otherwise one chain, `leg`, through the midpoints of the two hips, the two knees and the two ankles. No idle track: the chain is drafted whatever the pose, and whether the legs move is the scene's. A note on the part says which and why | no leg with all three joints: no chain, and the part is the trunk rule's region with the note it always had, byte for byte. A complete leg whose ankle lies on no legwear part, or on two: no chain, and a note `<parts>: no leg chain — <why>; the trunk rule places it` |
 
 **`--wrist-snap <px>`** (issue #199), with `--keypoints` only, declares a tolerance
 for a wrist that lies on no handwear part within the built-in 15 px — hands folded
@@ -229,8 +230,8 @@ silently:
 The `assemble.cuts` entry (§3; §5, *Cutting a piece out of a layer*) splits the part; the
 proposer does not.
 
-Every other joint (`nose`, knees, ankles, ears; the eyes with no eyewhite) is named
-with its state in one note: no bone is authored from it. Every joint the proposer
+Every other joint (`nose`, ears, the knees and ankles no leg chain used; the eyes
+with no eyewhite) is named with its state in one note: no bone is authored from it. Every joint the proposer
 could use gets its own note — `used as given for bone X`, `used as the producer's
 estimate for bone X`, or `missing: the rule "…" placed bone X instead` — after every
 note the rules wrote. LINT then reads the torso by the relations the joints declare:

@@ -79,6 +79,11 @@
  * never moved by a joint. `lint` then reads the torso and the sleeves by the
  * relations the joints declare instead of by screen y. Without joints every
  * value, note and LINT line is the one written before the option existed.
+ * One rule runs only with joints (issue #241): a `legwear` part holding the
+ * ankle of a leg whose hip, knee and ankle are given is meshed on a leg chain
+ * (hip -> knee, tip at the ankle; one per leg, or one through the midpoints
+ * when the part's art does not separate the legs — {@link legsFromJoints}),
+ * where without them it rides `hip` as a region.
  *
  * Issue #86 adds what the proposer and lint looked at, and changes nothing
  * they wrote: {@link proposeWithBasis} records, at each placement, what the
@@ -1658,6 +1663,41 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
     meshes[p.name] = { grid: g, r, segments: segs };
   }
 
+  // ---- legs (issue #241)
+  // Only with joints: a legwear part whose art holds the ankle of a leg whose hip, knee and ankle are all given is
+  // meshed on a leg chain hip -> knee, tip at the ankle; without them no line below runs, and the part stays the
+  // region the trunk rule gives it, its note unchanged. No idle track is written for a leg chain: the chain is
+  // drafted whatever the pose, and a standing figure's legs are planted — whether they move is the scene's.
+  const lw = P.byTag('legwear', undefined, true).filter((p) => p.opaque_px > 500);
+  const legPlan = joints !== undefined && lw.length > 0 ? legsFromJoints(P, lw, joints) : null;
+  if (legPlan !== null && legPlan.chains !== null) {
+    for (const c of legPlan.chains) {
+      const J = (joints as RigJoints).joints;
+      const used = (n: KeypointName): Placement => placement('joint', `the ${n} joint, ${usedAs(J[n])}`, { joints: [jointRef(n)] });
+      const mid = (what: string, a: KeypointName, b: KeypointName): Placement => placement('joint', `the midpoint of the ${a} and ${b} joints (${what}) — a point between two joints, not a joint`, { joints: [jointRef(a), jointRef(b)] });
+      const why =
+        c.side === null
+          ? [mid('the hips', 'r_hip', 'l_hip'), mid('the knees', 'r_knee', 'l_knee')]
+          : [used(`${c.side}_hip`), used(`${c.side}_knee`)];
+      const tipWhy = c.side === null ? mid('the ankles', 'r_ankle', 'l_ankle') : used(`${c.side}_ankle`);
+      C(c.chain, 'hip', [c.hip, c.knee], c.ankle, why, tipWhy);
+    }
+    for (const p of lw) {
+      const [g, r] = gridR(p);
+      const segs: Segment[] = [];
+      for (const c of legPlan.chains.filter((q) => q.part === p)) {
+        // The sleeve's chest stub, laid along the thigh from the hip: 14 px above the hip to 2 px below it.
+        const len = Math.hypot(c.knee[0] - c.hip[0], c.knee[1] - c.hip[1]);
+        const d: [number, number] = [(c.knee[0] - c.hip[0]) / len, (c.knee[1] - c.hip[1]) / len];
+        segs.push(['hip', rnd([c.hip[0] - 14 * d[0], c.hip[1] - 14 * d[1]]), rnd([c.hip[0] + 2 * d[0], c.hip[1] + 2 * d[1]])], c.chain);
+      }
+      meshes[p.name] = { grid: g, r, segments: segs };
+    }
+    notes.push(...legPlan.notes);
+  } else if (legPlan !== null && legPlan.why !== null) {
+    notes.push(`${lw.map((p) => p.name).join(', ')}: no leg chain — ${legPlan.why}; the trunk rule places ${lw.length === 1 ? 'it' : 'them'}`);
+  }
+
   // Anything no rule claimed rides its nearest trunk bone rigidly, so the rig stage never meets an unassigned part.
   for (const p of P.recs) {
     if (!(p.name in meshes) && !(p.name in regions)) {
@@ -1680,6 +1720,7 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
         chest: chestAlong ? { neck: neckAt, hip } : null,
         sleeveRule,
         armWhy: armPlan === null ? null : armPlan.why,
+        legs: legPlan === null ? null : legPlan.chains,
         arms: armPlan === null ? null : armPlan.arms,
         wristSnap,
         eyes: (['r', 'l'] as const).map((s) => {
@@ -1808,6 +1849,128 @@ function armsFromJoints(P: PartSet, hw: readonly PartRecord[], joints: RigJoints
   return { arms, why: null };
 }
 
+/**
+ * One leg chain drafted from joints (issue #241): its name, the side whose
+ * joints it runs through (`null` for the one chain that carries both legs,
+ * through the midpoints of the two hips, the two knees and the two ankles),
+ * its two links and tip in rig px, and the legwear part it meshes.
+ */
+interface LegChain {
+  chain: string;
+  side: 'r' | 'l' | null;
+  hip: [number, number];
+  knee: [number, number];
+  ankle: [number, number];
+  part: PartRecord;
+}
+
+/**
+ * Whether `m`'s art breaks along the straight line from `a` to `b`: walked
+ * one pixel step at a time (the larger of the x and y gaps, in steps of at
+ * most one pixel, each point read as {@link isOn} reads it), some point with
+ * no art lies between two points with art. Art that only starts or stops
+ * along the line — an end point off the art — is no break.
+ */
+function artBreaks(m: Mask, a: readonly [number, number], b: readonly [number, number]): boolean {
+  const n = Math.ceil(Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])));
+  let seenArt = false;
+  let gapAfterArt = false;
+  for (let i = 0; i <= n; i++) {
+    const t = n === 0 ? 0 : i / n;
+    const on = isOn(m, a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]));
+    if (on && gapAfterArt) return true;
+    if (on) seenArt = true;
+    else if (seenArt) gapAfterArt = true;
+  }
+  return false;
+}
+
+/**
+ * The leg chains a keypoint file drafts for the legwear parts, or why none
+ * is drafted (issue #241) — the sleeve's {@link armsFromJoints} for the legs.
+ * A leg is complete when its hip, knee and ankle all have a position and the
+ * hip and knee are two points; a legwear part carries a leg when the ankle
+ * lies on its art within the LINT's own tolerance ({@link WRIST_ON_PART_PX}).
+ * The joints are used only when every complete leg's ankle is on exactly one
+ * part and every legwear part carries one, as for the sleeves; when a leg is
+ * complete and they are not, `why` says so. With no complete leg nothing is
+ * drafted and `why` is `null`: the proposal is the one written before the
+ * rule existed.
+ *
+ * One chain or two is read off the part and the joints. A part carrying one
+ * leg gets that leg's chain, `leg_<side>`. A part carrying both gets one
+ * chain per leg only when its art breaks ({@link artBreaks}) along the line
+ * from r_knee to l_knee and along the line from r_ankle to l_ankle — the
+ * legs painted apart at both; otherwise the legs touch, cross or overlap in
+ * its art, two chains would pull one stretch of it two ways, and it gets one
+ * chain, `leg`, through the midpoints of the hips, the knees and the ankles.
+ * Each part gets one note saying which and why.
+ */
+function legsFromJoints(P: PartSet, lw: readonly PartRecord[], joints: RigJoints): { chains: LegChain[] | null; notes: string[]; why: string | null } {
+  const complete: Array<{ side: 'r' | 'l'; hip: [number, number]; knee: [number, number]; ankle: [number, number] }> = [];
+  const gaps: string[] = [];
+  for (const s of ['r', 'l'] as const) {
+    const hp = joints.joints[`${s}_hip`].at;
+    const kn = joints.joints[`${s}_knee`].at;
+    const an = joints.joints[`${s}_ankle`].at;
+    if (hp === null || kn === null || an === null) {
+      const absent = [hp === null ? `${s}_hip` : null, kn === null ? `${s}_knee` : null, an === null ? `${s}_ankle` : null].filter((n): n is string => n !== null);
+      gaps.push(`${absent.join(', ')} ${absent.length === 1 ? 'has' : 'have'} no position`);
+    } else if (hp[0] === kn[0] && hp[1] === kn[1]) gaps.push(`${s}_hip and ${s}_knee are one point, so the thigh has no direction`);
+    else complete.push({ side: s, hip: hp, knee: kn, ankle: an });
+  }
+  // No complete leg is the file before this rule existed: nothing is said, and the part stays the trunk rule's.
+  if (complete.length === 0) return { chains: null, notes: [], why: null };
+  const near = new Map(lw.map((p) => [p, dilate(P.alpha(p), 2 * WRIST_ON_PART_PX + 1)]));
+  const bound: Array<(typeof complete)[number] & { part: PartRecord }> = [];
+  for (const g of complete) {
+    const on = lw.filter((p) => isOn(near.get(p) as Mask, g.ankle[0], g.ankle[1]));
+    if (on.length !== 1) {
+      const where = on.length === 0 ? `the art of no legwear part within ${WRIST_ON_PART_PX} px` : `the art of ${on.length} legwear parts (${on.map((p) => p.name).join(', ')})`;
+      return { chains: null, notes: [], why: `${g.side}_ankle at ${fmtAt(g.ankle)} lies on ${where}, so it does not say which part its leg is` };
+    }
+    bound.push({ ...g, part: on[0] });
+  }
+  const idle = lw.filter((p) => !bound.some((g) => g.part === p));
+  if (idle.length > 0) {
+    const why = gaps.length > 0 ? ` (${gaps.join('; ')})` : '';
+    return { chains: null, notes: [], why: `${idle.map((p) => p.name).join(', ')} ${idle.length === 1 ? 'carries' : 'carry'} the ankle of no leg whose three joints are given${why}` };
+  }
+  const chains: LegChain[] = [];
+  const notes: string[] = [];
+  const still = 'no idle track is written for it: the chain is drafted whatever the pose, and whether the legs move is the scene\'s to key or drive';
+  for (const p of lw) {
+    const on = bound.filter((g) => g.part === p);
+    if (on.length === 1) {
+      const g = on[0];
+      chains.push({ chain: `leg_${g.side}`, side: g.side, hip: g.hip, knee: g.knee, ankle: g.ankle, part: p });
+      const other = g.side === 'r' ? 'l' : 'r';
+      const lack = complete.some((q) => q.side === other) ? `${other}_ankle lies on another part` : gaps.join('; ');
+      notes.push(`${p.name} (${p.from}): one leg chain, leg_${g.side}, hip -> knee -> ankle from the ${g.side} joints — ${g.side}_ankle lies on its art and no ${other} leg is bound to it (${lack}); ${still}`);
+      continue;
+    }
+    const [r, l] = on;
+    const m = P.alpha(p);
+    const kneesBreak = artBreaks(m, r.knee, l.knee);
+    const anklesBreak = artBreaks(m, r.ankle, l.ankle);
+    if (kneesBreak && anklesBreak) {
+      for (const g of on) chains.push({ chain: `leg_${g.side}`, side: g.side, hip: g.hip, knee: g.knee, ankle: g.ankle, part: p });
+      notes.push(
+        `${p.name} (${p.from}): one chain per leg, leg_r and leg_l, sharing its mesh — both ankles lie on its art, and its art breaks along the line from r_knee to l_knee and along the line from r_ankle to l_ankle, so the legs are painted apart; each runs hip -> knee -> ankle from its side's joints, and ${still}`,
+      );
+      continue;
+    }
+    const mid = (a: [number, number], b: [number, number]): [number, number] => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    chains.push({ chain: 'leg', side: null, hip: mid(r.hip, l.hip), knee: mid(r.knee, l.knee), ankle: mid(r.ankle, l.ankle), part: p });
+    const unbroken = [kneesBreak ? null : 'from r_knee to l_knee', anklesBreak ? null : 'from r_ankle to l_ankle'].filter((s): s is string => s !== null);
+    notes.push(
+      `${p.name} (${p.from}): one leg chain, leg, for both legs — both ankles lie on its art, and its art runs unbroken along the line ${unbroken.join(' and along the line ')}, so the legs touch, cross or overlap in it and a chain per leg would pull one stretch of art two ways; ` +
+        `the chain runs hip -> knee -> ankle through the midpoints of the two hips, the two knees and the two ankles, and ${still}`,
+    );
+  }
+  return { chains, notes, why: null };
+}
+
 /** A rig-px point as the notes and LINT lines print it: one decimal place. */
 function fmtAt(p: readonly [number, number]): string {
   return `[${pyFixed(p[0], 1)}, ${pyFixed(p[1], 1)}]`;
@@ -1833,6 +1996,8 @@ interface JointNoteFacts {
   sleeveRule: string;
   armWhy: string | null;
   arms: JointArm[] | null;
+  /** The leg chains drafted (issue #241), or `null` when none was: then no line here names a leg joint. */
+  legs: LegChain[] | null;
   /** `propose --wrist-snap`, or `null` without it. */
   wristSnap: number | null;
   eyes: ReadonlyArray<{ bone: string; part: string; at: [number, number] } | null>;
@@ -1901,6 +2066,29 @@ function jointNotes(joints: RigJoints, f: JointNoteFacts): string[] {
       `one handwear part holds both wrists: r_wrist and l_wrist both end on ${both}, so chains sleeve_r and sleeve_l share its mesh and its art bends with both arms; ` +
         `to separate them, cut one sleeve out of ${both} with an assemble.cuts entry (a polygon round it) and propose again`,
     );
+  }
+  // Issue #241: the knees and ankles a leg chain was drafted from, and the hips as its first link.
+  for (const c of f.legs ?? []) {
+    const on = `the ankle${c.side === null ? 's lie' : ' lies'} on ${c.part.name}`;
+    if (c.side === null) {
+      out.push(`chain leg: link 0 is the midpoint of r_hip and l_hip, ${fmtAt(c.hip)} — the point bone hip stands on`);
+      for (const [joint, role, pair] of [
+        ['r_knee', 'link 1', 'r_knee and l_knee'],
+        ['l_knee', 'link 1', 'r_knee and l_knee'],
+        ['r_ankle', 'the tip', 'r_ankle and l_ankle'],
+        ['l_ankle', 'the tip', 'r_ankle and l_ankle'],
+      ] as const) {
+        tell(joint, `${said(joint, J[joint])}: ${usedAs(J[joint])} for chain leg, ${role}, the midpoint of ${pair} — a point between two joints, not a joint (${on})`);
+      }
+      continue;
+    }
+    out.push(`chain leg_${c.side}: link 0 is the ${c.side}_hip joint, ${fmtAt(c.hip)}`);
+    for (const [joint, role] of [
+      [`${c.side}_knee`, 'link 1'],
+      [`${c.side}_ankle`, 'the tip'],
+    ] as const) {
+      tell(joint, `${said(joint, J[joint])}: ${usedAs(J[joint])} for chain leg_${c.side}, ${role} (${on})`);
+    }
   }
   (['r', 'l'] as const).forEach((s, i) => {
     const n = `${s}_eye` as const;

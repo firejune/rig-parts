@@ -339,7 +339,7 @@ import {
 } from './src/propose.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeypoints, parseKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
-import { LYING_PARTS, LYING_RIG, type PoseName, POSES, SEATED_PARTS, SEATED_RIG } from './fixtures/poses.ts';
+import { LEGS_APART, LEGS_JOINED, LYING_PARTS, LYING_RIG, type PoseName, POSES, SEATED_PARTS, SEATED_RIG } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, constraintConfig, HEAT_STRIP_EXPECT, heatStripConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
 import { blinkHoldProblems, buildRig, DEFAULT_IDLE_KEYS, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigOutput, type RigSpec, roundShares, writtenShares } from './src/rig.ts';
@@ -5802,16 +5802,19 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
   };
   const wrongSe = Object.entries(wantSe).filter(([n, v]) => boneAt(se.bones, n) !== v).map(([n, v]) => `${n} ${boneAt(se.bones, n)} (want ${v})`);
   const seSegs = JSON.stringify(se.meshes.arm_b?.segments ?? null);
+  // Issue #241: the seated legs get a leg chain (PR82), rooted at the hips' midpoint (100, 145) — 25 px left of the
+  // thighs' art (x 125; dilated 15 px, 110), so the one LINT line on the joints' rule set is that root, off the art.
+  const seLint = lint(Pe, se, Je).findings.map(lintLine).join('|');
   say(
     'PR56_SEATED_JOINTS_PLACE_THE_HIP_AT_THE_HIPS_AND_EACH_SLEEVE_ALONG_ITS_BENT_ARM',
     wrongSe.length === 0 &&
       seSegs === '[["chest",[134,70],[134,86]],"sleeve_l"]' &&
-      lint(Pe, se, Je).findings.length === 0 &&
+      seLint === "LINT leg0 at [100, 145] is off the art of mesh 'legs'" &&
       boneAt(seRule.bones, 'hip') === '[100,117]' &&
       boneAt(seRule.bones, 'chest') === '[100,96]' &&
       lint(Pe, seRule).findings.length === 0 &&
       refusals(() => checkProposal(Pe, se)) === null,
-    `${wrongSe.length === 0 ? Object.keys(wantSe).map((n) => `${n} ${boneAt(se.bones, n)}`).join(', ') : `wrong: ${wrongSe.join('; ')}`}; arm_b ${seSegs}; the rule without joints: hip ${boneAt(seRule.bones, 'hip')}, chest ${boneAt(seRule.bones, 'chest')}, ${lint(Pe, seRule).findings.length} LINT line(s)`,
+    `${wrongSe.length === 0 ? Object.keys(wantSe).map((n) => `${n} ${boneAt(se.bones, n)}`).join(', ') : `wrong: ${wrongSe.join('; ')}`}; arm_b ${seSegs}; with joints: ${seLint || 'no LINT line'}; the rule without joints: hip ${boneAt(seRule.bones, 'hip')}, chest ${boneAt(seRule.bones, 'chest')}, ${lint(Pe, seRule).findings.length} LINT line(s)`,
     'a seated figure\'s hip is where its thighs leave the torso, not the top of the skirt; the rule places it 28 px high and the screen-y lines pass it, because a hip below the chest and inside the figure is all they can ask — the joints say where it is',
   );
 
@@ -6072,12 +6075,131 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
   const moved = cases.filter(([, P, p]) => serializeProposal(p) !== serializeProposal(propose(P)));
   say(
     'PR69_WITHOUT_KEYPOINTS_NOTHING_MOVES_AND_WITH_THEM_NO_BONE_IS_AUTHORED',
-    same.length === 3 && moved.length === 3 && extra.length === 0 && plantedExtra.join(',') === 'knee_r',
+    same.length === 3 && moved.length === 3 && extra.join(',') === 'seated:leg' && plantedExtra.join(',') === 'knee_r',
     `${same.length} of 3 poses propose the same bytes with the parameter absent and no LINT basis; with keypoints ${moved.length} of 3 differ (the comparison can see a move); bones a keypoint run adds: [${extra.join(', ')}]; planted knee_r: [${plantedExtra.join(', ')}]`,
-    'ruling 7 and 8: the default path is the old one, and the joints say where joints are — the knees and ankles are read and named, but no leg, auxiliary or control bone is made from them',
+    'ruling 7 and 8: the default path is the old one, and the joints say where joints are — no auxiliary or control bone is made from them; the one chain a keypoint run adds is the leg rule\'s (issue #241), which runs only with the hips, knees and ankles given, on the one pose with a legwear part (the seated figure, PR82)',
   );
 
   runWristSnapCases(dir, SE, Pe, Je, se, say);
+  runLegChainCases(dir, Pe, Je, se, say);
+}
+
+/**
+ * Issue #241: a leg chain for the legwear part when the keypoints give hip, knee and ankle. On the seated figure
+ * (fixtures/poses.ts) `legs` is the thighs x 125..184, y 140..159 and the shins x 165..184, y 160..229; the knees
+ * (175, 145) and (178, 150) and the ankles (175, 225) and (178, 225) all lie on that art, and the art runs unbroken
+ * between each pair. On the standing figure, `legs` is {@link LEGS_APART} or {@link LEGS_JOINED}, with ankles added.
+ */
+function runLegChainCases(dir: string, Pe: PartSet, Je: RigJoints, se: Proposal, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const still = "no idle track is written for it: the chain is drafted whatever the pose, and whether the legs move is the scene's to key or drive";
+  const legBones = (p: Proposal): string[] => p.bones.filter((b) => 'chain' in b && b.chain.startsWith('leg')).map((b) => ('chain' in b ? b.chain : ''));
+  const legTracks = (p: Proposal): number => p.motion.tracks.filter((t) => 'chain' in t && t.chain.startsWith('leg')).length;
+
+  // Seated, one chain: the knees' midpoint (176.5, 147.5) and the ankles' (176.5, 225) round half to even -> (176, 148)
+  // and (176, 225); link 0 is the hips' midpoint (100, 145). The hip stub runs along the thigh, d = (76.5, 2.5) / 76.54
+  // = (0.9995, 0.0327): 14 px back -> (86.01, 144.54) -> (86, 145), 2 px on -> (102.00, 145.07) -> (102, 145). The
+  // part's box is 60x90: grid round(60 / 10) = 6, r max(3, round(6 * 0.42)) = 3.
+  const seNote = `legs (full:legwear): one leg chain, leg, for both legs — both ankles lie on its art, and its art runs unbroken along the line from r_knee to l_knee and along the line from r_ankle to l_ankle, so the legs touch, cross or overlap in it and a chain per leg would pull one stretch of art two ways; the chain runs hip -> knee -> ankle through the midpoints of the two hips, the two knees and the two ankles, and ${still}`;
+  const seKnee = 'r_knee observed at [175.0, 145.0]: used as given for chain leg, link 1, the midpoint of r_knee and l_knee — a point between two joints, not a joint (the ankles lie on legs)';
+  const seMesh = JSON.stringify(se.meshes.legs ?? null);
+  const unread = jointNoteLines(se).find((n) => n.startsWith('no rule reads ')) ?? '';
+  say(
+    'PR82_WITH_HIPS_KNEES_AND_ANKLES_THE_LEGWEAR_PART_IS_MESHED_ON_A_LEG_CHAIN',
+    boneAt(se.bones, 'leg') === '[[100,145],[176,148]]->[176,225]' &&
+      seMesh === '{"grid":6,"r":3,"segments":[["hip",[86,145],[102,145]],"leg"]}' &&
+      !('legs' in se.regions) &&
+      legTracks(se) === 0 &&
+      se.notes.includes(seNote) &&
+      jointNoteLines(se).includes('chain leg: link 0 is the midpoint of r_hip and l_hip, [100.0, 145.0] — the point bone hip stands on') &&
+      jointNoteLines(se).includes(seKnee) &&
+      !/knee|ankle/.test(unread) &&
+      propose(Pe).regions.legs === 'hip' &&
+      refusals(() => checkProposal(Pe, se)) === null,
+    `leg ${boneAt(se.bones, 'leg')}; legs ${seMesh}; region ${se.regions.legs ?? 'none'}; ${legTracks(se)} leg track(s); the rule note ${se.notes.includes(seNote) ? 'as written' : 'ABSENT'}; r_knee ${JSON.stringify(jointNoteLines(se).find((n) => n.startsWith('r_knee')))}; without joints legs rides ${propose(Pe).regions.legs}; loads ${codes(refusals(() => checkProposal(Pe, se)))}`,
+    'issue #241: a seated or lying figure\'s legs are not planted, and the keypoints are what tell it from a standing one — so with the hip, knee and ankle given, the legwear part is meshed on a chain hip -> knee -> ankle as a sleeve is on shoulder -> elbow -> wrist, and the knees and ankles are named as used; the chain carries no idle track, because it is drafted whatever the pose',
+  );
+
+  // Standing, legs apart: r (90,160) -> (92,230), tip (88,285); l (110,160) -> (108,230), tip (112,285). Stubs: d_r =
+  // (2, 70) / 70.03 = (0.0286, 0.9996): (89.60, 146.01) -> (90, 146) to (90.06, 162.00) -> (90, 162); d_l mirrors it
+  // about x: (110, 146) to (110, 162). Box 36x95: grid max(5, round(3.6)) = 5, r 3. Joined at the knees: one chain
+  // through (100, 160), (100, 230), (100, 285), its stub straight down, (100, 146) to (100, 162).
+  const ankles = (k: KeypointJson): void => {
+    k.people[0].joints.r_ankle = { state: 'observed', at: [88, 285] };
+    k.people[0].joints.l_ankle = { state: 'observed', at: [112, 285] };
+  };
+  const Ja = poseJoints('standing', ankles);
+  const dApart = join(dir, 'legs-apart');
+  const dJoined = join(dir, 'legs-joined');
+  writeProposeFixture(dApart, [...POSES.standing.parts, LEGS_APART], POSES.standing.rig);
+  writeProposeFixture(dJoined, [...POSES.standing.parts, LEGS_JOINED], POSES.standing.rig);
+  const Pa = readPartSet(dApart);
+  const Pj = readPartSet(dJoined);
+  const apart = propose(Pa, Ja);
+  const joined = propose(Pj, Ja);
+  const apartNote = `legs (full:legwear): one chain per leg, leg_r and leg_l, sharing its mesh — both ankles lie on its art, and its art breaks along the line from r_knee to l_knee and along the line from r_ankle to l_ankle, so the legs are painted apart; each runs hip -> knee -> ankle from its side's joints, and ${still}`;
+  const joinedNote = `legs (full:legwear): one leg chain, leg, for both legs — both ankles lie on its art, and its art runs unbroken along the line from r_knee to l_knee, so the legs touch, cross or overlap in it and a chain per leg would pull one stretch of art two ways; the chain runs hip -> knee -> ankle through the midpoints of the two hips, the two knees and the two ankles, and ${still}`;
+  say(
+    'PR83_A_LEGWEAR_PART_GETS_A_CHAIN_PER_LEG_ONLY_WHERE_ITS_ART_SEPARATES_THE_KNEES_AND_THE_ANKLES',
+    legBones(apart).join(',') === 'leg_r,leg_l' &&
+      boneAt(apart.bones, 'leg_r') === '[[90,160],[92,230]]->[88,285]' &&
+      boneAt(apart.bones, 'leg_l') === '[[110,160],[108,230]]->[112,285]' &&
+      JSON.stringify(apart.meshes.legs) === '{"grid":5,"r":3,"segments":[["hip",[90,146],[90,162]],"leg_r",["hip",[110,146],[110,162]],"leg_l"]}' &&
+      apart.notes.includes(apartNote) &&
+      jointNoteLines(apart).includes('l_ankle observed at [112.0, 285.0]: used as given for chain leg_l, the tip (the ankle lies on legs)') &&
+      legBones(joined).join(',') === 'leg' &&
+      boneAt(joined.bones, 'leg') === '[[100,160],[100,230]]->[100,285]' &&
+      JSON.stringify(joined.meshes.legs) === '{"grid":5,"r":3,"segments":[["hip",[100,146],[100,162]],"leg"]}' &&
+      joined.notes.includes(joinedNote) &&
+      legTracks(apart) + legTracks(joined) === 0 &&
+      refusals(() => checkProposal(Pa, apart)) === null &&
+      refusals(() => checkProposal(Pj, joined)) === null,
+    `apart: ${legBones(apart).map((c) => `${c} ${boneAt(apart.bones, c)}`).join(', ')}, legs ${JSON.stringify(apart.meshes.legs?.segments ?? null)}; joined at the knees: ${legBones(joined).map((c) => `${c} ${boneAt(joined.bones, c)}`).join(', ')}, legs ${JSON.stringify(joined.meshes.legs?.segments ?? null)}; loads ${codes(refusals(() => checkProposal(Pa, apart)))} / ${codes(refusals(() => checkProposal(Pj, joined)))}`,
+    'one chain or two is read off the part and the joints, never a setting: two chains in one mesh weight each vertex to the nearer leg, which is right where the art has a gap between the legs and tears where they touch or cross — so a chain per leg needs a break in the art between the two knees and between the two ankles, and anything less is one chain through the midpoints',
+  );
+
+  // Negative: the seated figure with neither knee listed has no complete leg — no chain, and legs is the trunk rule's
+  // region with the note it always had; the knees and ankles stay on the unread line. The same with the legs apart and
+  // no ankles listed (the standing file as written).
+  const noKnees = propose(Pe, poseJoints('seated', (k) => {
+    delete k.people[0].joints.r_knee;
+    delete k.people[0].joints.l_knee;
+  }));
+  const noAnkles = propose(Pa, poseJoints('standing'));
+  const plain = (p: Proposal): boolean =>
+    legBones(p).length === 0 && p.regions.legs === 'hip' && !('legs' in p.meshes) && p.notes.includes('legs (full:legwear): no rule -> region on hip') && !p.notes.some((n) => n.includes('leg chain') || n.startsWith('chain leg'));
+  const noKneesUnread = jointNoteLines(noKnees).find((n) => n.startsWith('no rule reads ')) ?? '';
+  say(
+    'PR84_WITHOUT_A_LEG_S_HIP_KNEE_AND_ANKLE_THE_LEGWEAR_PART_KEEPS_THE_TRUNK_RULE_AND_ITS_NOTE',
+    plain(noKnees) && plain(noAnkles) && noKneesUnread.includes('r_knee missing (not listed), r_ankle observed at [175.0, 225.0], l_knee missing (not listed), l_ankle observed at [178.0, 225.0]'),
+    `seated without knees: ${legBones(noKnees).length} leg chain(s), legs ${noKnees.regions.legs ?? 'not a region'}; ${JSON.stringify(noKneesUnread)}; standing apart without ankles: ${legBones(noAnkles).length} leg chain(s), legs ${noAnkles.regions.legs ?? 'not a region'}`,
+    'the rule runs only on a complete leg; with less, nothing is drafted and nothing new is said, so a keypoint file without the leg joints proposes what it proposed before the rule existed',
+  );
+
+  // One complete leg: r_knee unlisted on the legs-apart figure drafts leg_l alone, and its note says why no r leg is
+  // bound. r_ankle moved to (150, 285): the nearest art is x 117, 33 px off (over 15), so no leg is drafted and one note
+  // says why, beside the trunk rule's.
+  const oneLeg = propose(Pa, poseJoints('standing', (k) => {
+    ankles(k);
+    delete k.people[0].joints.r_knee;
+  }));
+  const offAnkle = propose(Pa, poseJoints('standing', (k) => {
+    ankles(k);
+    k.people[0].joints.r_ankle = { state: 'observed', at: [150, 285] };
+  }));
+  const offWhy = 'legs: no leg chain — r_ankle at [150.0, 285.0] lies on the art of no legwear part within 15 px, so it does not say which part its leg is; the trunk rule places it';
+  say(
+    'PR85_ONE_COMPLETE_LEG_DRAFTS_ITS_SIDE_AND_AN_ANKLE_OFF_EVERY_LEGWEAR_PART_DRAFTS_NONE_AND_SAYS_WHY',
+    legBones(oneLeg).join(',') === 'leg_l' &&
+      boneAt(oneLeg.bones, 'leg_l') === '[[110,160],[108,230]]->[112,285]' &&
+      JSON.stringify(oneLeg.meshes.legs?.segments ?? null) === '[["hip",[110,146],[110,162]],"leg_l"]' &&
+      oneLeg.notes.includes(`legs (full:legwear): one leg chain, leg_l, hip -> knee -> ankle from the l joints — l_ankle lies on its art and no r leg is bound to it (r_knee has no position); ${still}`) &&
+      legBones(offAnkle).length === 0 &&
+      offAnkle.regions.legs === 'hip' &&
+      offAnkle.notes.includes(offWhy) &&
+      offAnkle.notes.includes('legs (full:legwear): no rule -> region on hip'),
+    `r_knee unlisted: ${legBones(oneLeg).map((c) => `${c} ${boneAt(oneLeg.bones, c)}`).join(', ')}, ${JSON.stringify(oneLeg.notes.find((n) => n.startsWith('legs (full:legwear): one')))}; r_ankle off the art: ${legBones(offAnkle).length} chain(s), ${JSON.stringify(offAnkle.notes.find((n) => n.startsWith('legs: ')))}`,
+    'a leg is placed from its own three joints or not at all, as an arm is; where a complete leg ends on no legwear part the joints do not say which part it moves, so nothing is drafted and the note names the ankle and the tolerance it missed',
+  );
 }
 
 /**
@@ -6113,13 +6235,13 @@ function runWristSnapCases(dir: string, SE: string, Pe: PartSet, Je: RigJoints, 
       jointNoteLines(bound).includes('r_wrist observed at [84.0, 150.0]: used as given for chain sleeve_r, the tip (the wrist is bound to arm_a by --wrist-snap)') &&
       jointNoteLines(bound).includes('l_wrist observed at [116.0, 124.0]: used as given for chain sleeve_l, the tip (the wrist lies on arm_b)') &&
       snaps(bound) === 1 &&
-      lint(Pe, bound, Jm).findings.length === 0 &&
+      lint(Pe, bound, Jm).findings.filter((f) => !(f.kind === 'off-art' && f.bone === 'leg0')).length === 0 &&
       refusals(() => checkProposal(Pe, bound)) === null &&
       serializeProposal(propose(Pe, Je, 40)) === serializeProposal(se) &&
       snaps(se) === 0 &&
       jointNoteLines(tie).some((n) => n.startsWith('r_wrist observed at [100.0, 150.0]: not used — ') && n.includes(tieWhy)) &&
       snaps(tie) === 0,
-    `no flag: sleeve_r ${boneAt(none.bones, 'sleeve_r')}, ${JSON.stringify(jointNoteLines(none).find((n) => n.startsWith('r_wrist')))}; 20: ${JSON.stringify(jointNoteLines(short).find((n) => n.startsWith('r_wrist')))}; 21: sleeve_r ${boneAt(bound.bones, 'sleeve_r')}, sleeve_l ${boneAt(bound.bones, 'sleeve_l')}, ${snaps(bound)} snap note(s) ${JSON.stringify(bound.notes.filter((n) => n.startsWith('wrist snap')))}, ${lint(Pe, bound, Jm).findings.length} LINT line(s), loads ${codes(refusals(() => checkProposal(Pe, bound)))}; the seated figure with 40 ${serializeProposal(propose(Pe, Je, 40)) === serializeProposal(se) ? 'the same bytes as without' : 'DIFFERENT bytes'}; the tie: ${JSON.stringify(jointNoteLines(tie).find((n) => n.startsWith('r_wrist')))}`,
+    `no flag: sleeve_r ${boneAt(none.bones, 'sleeve_r')}, ${JSON.stringify(jointNoteLines(none).find((n) => n.startsWith('r_wrist')))}; 20: ${JSON.stringify(jointNoteLines(short).find((n) => n.startsWith('r_wrist')))}; 21: sleeve_r ${boneAt(bound.bones, 'sleeve_r')}, sleeve_l ${boneAt(bound.bones, 'sleeve_l')}, ${snaps(bound)} snap note(s) ${JSON.stringify(bound.notes.filter((n) => n.startsWith('wrist snap')))}, ${lint(Pe, bound, Jm).findings.filter((f) => !(f.kind === 'off-art' && f.bone === 'leg0')).length} LINT line(s) besides leg0's (PR56), loads ${codes(refusals(() => checkProposal(Pe, bound)))}; the seated figure with 40 ${serializeProposal(propose(Pe, Je, 40)) === serializeProposal(se) ? 'the same bytes as without' : 'DIFFERENT bytes'}; the tie: ${JSON.stringify(jointNoteLines(tie).find((n) => n.startsWith('r_wrist')))}`,
     'issue #199: 15 px is the built-in tolerance; where the author knows the wrist ends a sleeve it does not touch, a declared tolerance binds the one nearest part and a note says which wrist, which part and how far — and where nothing binds, the note names the distance that would have, so the flag is chosen from a number, not by trial. A wrist already on a part is not touched by the flag, and two parts at one distance are refused like a wrist on two parts',
   );
 
