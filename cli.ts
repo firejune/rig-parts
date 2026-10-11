@@ -26,7 +26,7 @@ import { makeInputs } from './src/inputs.ts';
 import { idleKeysOf, isIdleKeys } from './src/rig.ts';
 import { figuresPhrase, implausibleRules, layerFigures, type LayerSet, pct, readLayers, ruleSummary, times } from './src/layers.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPEC, loadKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
-import { basisLines, checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal } from './src/propose.ts';
+import { basisLines, checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal, WRIST_ON_PART_PX } from './src/propose.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { readPng, writePng } from './src/raster/png.ts';
 import { REQUIREMENTS_SENTENCE } from './src/requirements.ts';
@@ -108,7 +108,7 @@ usage:
       bone differs (origin, tip, parent; how far, in px). No confidence is
       computed. It prints "wrote ${BASIS_FILE} (…)" after the coverage lines.
 
-  rig-parts propose … [--keypoints <keypoints.json> [--person <id>]]
+  rig-parts propose … [--keypoints <keypoints.json> [--person <id>] [--wrist-snap <px>]]
       Read the figure's pose from one explicit file (spec "${KEYPOINTS_SPEC}"):
       its space (painting-px, origin top-left, y down — another is refused),
       the image's width and height (held to --source's, KEYPOINTS_IMAGE_SIZE),
@@ -124,7 +124,11 @@ usage:
       the rule. One note per joint says which. LINT then reads the torso along
       the neck -> hips line and each sleeve chain along shoulder -> wrist
       instead of by screen y, and prints the rule set it used first. Without
-      --keypoints nothing changes.
+      --keypoints nothing changes. A wrist holds a part when it lies within
+      ${WRIST_ON_PART_PX} px of its art (the larger of the x and y gaps);
+      --wrist-snap <px>, an integer above ${WRIST_ON_PART_PX}, binds a wrist on no
+      part to the one nearest part within <px>, said in a "wrist snap:" note
+      (with --keypoints, not with --from-config). Without it nothing changes.
 
   rig-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
       Draw the config's CURRENT bones instead (<out>/render/landmarks_config.png
@@ -760,7 +764,7 @@ function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: 
 function cmdPropose(args: string[]): number {
   const flags = new Map<string, string>();
   let headBox = false;
-  const valued = ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--canvas', '--keypoints', '--person'];
+  const valued = ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--canvas', '--keypoints', '--person', '--wrist-snap'];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--head-box') {
@@ -803,6 +807,18 @@ function cmdPropose(args: string[]): number {
     if (out === undefined) return usage('propose needs --out <dir>');
     if (flags.has('--from-config') && flags.has('--compare')) return usage('--from-config and --compare are two modes; give one');
     if (flags.has('--person') && !flags.has('--keypoints')) return usage('--person names a person in the --keypoints file; give --keypoints <file>');
+    // Issue #199: a declared tolerance for a wrist on no handwear part. Whole px above the built-in one: the distance is
+    // counted in whole px, so a fraction would bind what its floor binds, and a value at or under the built-in binds nothing.
+    const snapArg = flags.get('--wrist-snap');
+    let wristSnap: number | null = null;
+    if (snapArg !== undefined) {
+      if (!flags.has('--keypoints')) return usage('--wrist-snap binds a wrist joint to a handwear part; give --keypoints <file>');
+      if (flags.has('--from-config')) return usage('--wrist-snap binds a wrist while proposing; --from-config proposes nothing');
+      if (!/^[0-9]+$/.test(snapArg) || Number(snapArg) <= WRIST_ON_PART_PX) {
+        return usage(`--wrist-snap ${snapArg} is not an integer above ${WRIST_ON_PART_PX}, the px within which a wrist already holds a part`);
+      }
+      wristSnap = Number(snapArg);
+    }
     const partsDir = existsSync(partsArg) && statSync(partsArg).isFile() ? dirname(partsArg) : partsArg;
     if (!existsSync(source)) {
       throw new PartsError([{ code: 'PROPOSE_SOURCE_PRESENT', object: source, detail: 'no such file; the painting is drawn under the overlay' }]);
@@ -830,7 +846,7 @@ function cmdPropose(args: string[]): number {
     }
     const cmpPath = flags.get('--compare');
     const cfg = cmpPath === undefined ? null : loadConfig(cmpPath);
-    const { proposal: prop, basis } = proposeWithBasis(P, joints);
+    const { proposal: prop, basis } = proposeWithBasis(P, joints, wristSnap);
     // Emit only after green: a proposal the config loader would refuse is not written, nor a basis record that does not hold to it.
     checkProposal(P, prop);
     const bfile = basisFile(P, prop, basis, cfg === null || cmpPath === undefined ? null : { where: cmpPath, config: cfg });

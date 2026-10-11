@@ -330,7 +330,7 @@ import {
 } from './src/propose.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeypoints, parseKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
-import { LYING_PARTS, LYING_RIG, type PoseName, POSES } from './fixtures/poses.ts';
+import { LYING_PARTS, LYING_RIG, type PoseName, POSES, SEATED_PARTS, SEATED_RIG } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, constraintConfig, HEAT_STRIP_EXPECT, heatStripConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
 import { blinkHoldProblems, buildRig, DEFAULT_IDLE_KEYS, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigOutput, type RigSpec, roundShares, writtenShares } from './src/rig.ts';
@@ -2682,7 +2682,7 @@ function runCliSuite(): number {
 
     // Issue #75: the propose help names the keypoint door; malformed calls are usage errors before anything is read.
     const kpHelp = help.out.slice(help.out.indexOf('rig-parts propose --parts'), help.out.indexOf('rig-parts propose --head-box'));
-    const kpTokens = ['[--keypoints <keypoints.json> [--person <id>]]', `"${KEYPOINTS_SPEC}"`, 'painting-px, origin top-left, y down', 'KEYPOINTS_IMAGE_SIZE', 'x * W/width', 'nothing picks', 'Without\n      --keypoints nothing changes'];
+    const kpTokens = ['[--keypoints <keypoints.json> [--person <id>] [--wrist-snap <px>]]', '--wrist-snap <px>, an integer above 15', `"${KEYPOINTS_SPEC}"`, 'painting-px, origin top-left, y down', 'KEYPOINTS_IMAGE_SIZE', 'x * W/width', 'nothing picks', 'Without\n      --keypoints nothing changes'];
     const checkSlice = help.out.slice(help.out.indexOf('rig-parts check'), help.out.indexOf('rig-parts loop'));
     say(
       'CL09_PROPOSE_HELP_NAMES_THE_KEYPOINT_FILE_ITS_SPACE_THE_PERSON_AND_THE_MAP',
@@ -5854,6 +5854,107 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
     same.length === 3 && moved.length === 3 && extra.length === 0 && plantedExtra.join(',') === 'knee_r',
     `${same.length} of 3 poses propose the same bytes with the parameter absent and no LINT basis; with keypoints ${moved.length} of 3 differ (the comparison can see a move); bones a keypoint run adds: [${extra.join(', ')}]; planted knee_r: [${plantedExtra.join(', ')}]`,
     'ruling 7 and 8: the default path is the old one, and the joints say where joints are — the knees and ankles are read and named, but no leg, auxiliary or control bone is made from them',
+  );
+
+  runWristSnapCases(dir, SE, Pe, Je, se, say);
+}
+
+/**
+ * Issue #199: `propose --wrist-snap <px>`, the one-part-two-wrists note, and the nearest part named where a wrist binds
+ * none. On the seated figure (fixtures/poses.ts): arm_a's art is x 60..71, y 80..117 and x 60..89, y 118..129; arm_b's is
+ * x 128..139, y 80..117 and x 110..139, y 118..129.
+ */
+function runWristSnapCases(dir: string, SE: string, Pe: PartSet, Je: RigJoints, se: Proposal, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  // r_wrist moved to (84, 150), below arm_a's forearm. By the larger of the x and y gaps: to arm_a's nearest pixel (84, 129)
+  // dx 0, dy 21 -> 21; to arm_b's (110, 129) dx 26, dy 21 -> 26. Over the built-in 15, so no flag binds nothing and names
+  // arm_a at 21; --wrist-snap 20 still binds nothing; 21 binds arm_a. Moved to (100, 150) instead: arm_a's (89, 129) dx 11,
+  // dy 21 -> 21 and arm_b's (110, 129) dx 10, dy 21 -> 21, a tie no tolerance breaks.
+  const moved = (at: [number, number]): RigJoints => poseJoints('seated', (k) => (k.people[0].joints.r_wrist = { state: 'observed', at }));
+  const Jm = moved([84, 150]);
+  const none = propose(Pe, Jm);
+  const short = propose(Pe, Jm, 20);
+  const bound = propose(Pe, Jm, 21);
+  const tie = propose(Pe, moved([100, 150]), 40);
+  const twoBlob = 'the two-blob sleeve rule (one chain per handwear blob, down its rows) stands in';
+  const off = 'r_wrist at [84.0, 150.0] lies on the art of no handwear part within 15 px, so it does not say which sleeve it ends; the nearest is arm_a, 21 px from its art by the larger of the x and y gaps';
+  const snapNote = 'wrist snap: r_wrist at [84.0, 150.0] lies on no handwear part within 15 px; --wrist-snap 21 bound it to arm_a, the nearest, 21 px from its art by the larger of the x and y gaps';
+  const tieWhy = 'r_wrist at [100.0, 150.0] lies on the art of no handwear part within 15 px, so it does not say which sleeve it ends; the nearest are arm_a and arm_b, each 21 px from its art by the larger of the x and y gaps, so no tolerance says which';
+  const snaps = (p: Proposal): number => p.notes.filter((n) => n.startsWith('wrist snap: ')).length;
+  say(
+    'PR74_A_WRIST_OFF_EVERY_PART_BINDS_THE_NEAREST_WITHIN_WRIST_SNAP_AND_OTHERWISE_ITS_NOTE_NAMES_THE_NEAREST',
+    boneAt(none.bones, 'sleeve_r') !== '[[66,84],[66,124]]->[84,150]' &&
+      jointNoteLines(none).includes(`r_wrist observed at [84.0, 150.0]: not used — ${off} (--wrist-snap 21 would bind it); ${twoBlob}`) &&
+      jointNoteLines(short).includes(`r_wrist observed at [84.0, 150.0]: not used — ${off} (beyond --wrist-snap 20); ${twoBlob}`) &&
+      serializeProposal(short) !== serializeProposal(bound) &&
+      boneAt(bound.bones, 'sleeve_r') === '[[66,84],[66,124]]->[84,150]' &&
+      boneAt(bound.bones, 'sleeve_l') === '[[134,84],[134,124]]->[116,124]' &&
+      jointNoteLines(bound).includes(snapNote) &&
+      jointNoteLines(bound).includes('r_wrist observed at [84.0, 150.0]: used as given for chain sleeve_r, the tip (the wrist is bound to arm_a by --wrist-snap)') &&
+      jointNoteLines(bound).includes('l_wrist observed at [116.0, 124.0]: used as given for chain sleeve_l, the tip (the wrist lies on arm_b)') &&
+      snaps(bound) === 1 &&
+      lint(Pe, bound, Jm).findings.length === 0 &&
+      refusals(() => checkProposal(Pe, bound)) === null &&
+      serializeProposal(propose(Pe, Je, 40)) === serializeProposal(se) &&
+      snaps(se) === 0 &&
+      jointNoteLines(tie).some((n) => n.startsWith('r_wrist observed at [100.0, 150.0]: not used — ') && n.includes(tieWhy)) &&
+      snaps(tie) === 0,
+    `no flag: sleeve_r ${boneAt(none.bones, 'sleeve_r')}, ${JSON.stringify(jointNoteLines(none).find((n) => n.startsWith('r_wrist')))}; 20: ${JSON.stringify(jointNoteLines(short).find((n) => n.startsWith('r_wrist')))}; 21: sleeve_r ${boneAt(bound.bones, 'sleeve_r')}, sleeve_l ${boneAt(bound.bones, 'sleeve_l')}, ${snaps(bound)} snap note(s) ${JSON.stringify(bound.notes.filter((n) => n.startsWith('wrist snap')))}, ${lint(Pe, bound, Jm).findings.length} LINT line(s), loads ${codes(refusals(() => checkProposal(Pe, bound)))}; the seated figure with 40 ${serializeProposal(propose(Pe, Je, 40)) === serializeProposal(se) ? 'the same bytes as without' : 'DIFFERENT bytes'}; the tie: ${JSON.stringify(jointNoteLines(tie).find((n) => n.startsWith('r_wrist')))}`,
+    'issue #199: 15 px is the built-in tolerance; where the author knows the wrist ends a sleeve it does not touch, a declared tolerance binds the one nearest part and a note says which wrist, which part and how far — and where nothing binds, the note names the distance that would have, so the flag is chosen from a number, not by trial. A wrist already on a part is not touched by the flag, and two parts at one distance are refused like a wrist on two parts',
+  );
+
+  // One handwear part, `arms`, holding both of the seated figure's arms: two components (forearms 60..89 and 110..139
+  // apart), so not clasped hands. Both wrists (84, 124) and (116, 124) lie on its art, so both chains are placed on it as
+  // before, the stubs along each upper arm (d = (0, 1): 84 - 14 = 70 to 84 + 2 = 86), and the note says the part is shared.
+  const odir = join(dir, 'pose-seated-one-piece');
+  const arms = SEATED_PARTS.filter((p) => p.name === 'arm_a' || p.name === 'arm_b');
+  writeProposeFixture(odir, [...SEATED_PARTS.filter((p) => !arms.includes(p)), { name: 'arms', from: 'full:handwear-r', x: 60, y: 80, w: 80, h: 50, colour: [240, 240, 240], rects: arms.flatMap((p) => p.rects ?? []) }], SEATED_RIG, true);
+  const Po = readPartSet(odir);
+  const one = propose(Po, Je);
+  const shared =
+    'one handwear part holds both wrists: r_wrist and l_wrist both end on arms, so chains sleeve_r and sleeve_l share its mesh and its art bends with both arms; to separate them, cut one sleeve out of arms with an assemble.cuts entry (a polygon round it) and propose again';
+  const sharedOf = (p: Proposal): number => p.notes.filter((n) => n.startsWith('one handwear part holds both wrists')).length;
+  say(
+    'PR75_ONE_HANDWEAR_PART_HOLDING_BOTH_WRISTS_IS_SAID_AND_POINTS_AT_ASSEMBLE_CUTS',
+    boneAt(one.bones, 'sleeve_r') === '[[66,84],[66,124]]->[84,124]' &&
+      boneAt(one.bones, 'sleeve_l') === '[[134,84],[134,124]]->[116,124]' &&
+      JSON.stringify(one.meshes.arms?.segments ?? null) === '[["chest",[66,70],[66,86]],"sleeve_r",["chest",[134,70],[134,86]],"sleeve_l"]' &&
+      jointNoteLines(one).includes(shared) &&
+      sharedOf(one) === 1 &&
+      sharedOf(se) === 0 &&
+      refusals(() => checkProposal(Po, one)) === null,
+    `one piece: sleeve_r ${boneAt(one.bones, 'sleeve_r')}, sleeve_l ${boneAt(one.bones, 'sleeve_l')}, arms ${JSON.stringify(one.meshes.arms?.segments ?? null)}, ${sharedOf(one)} shared-part note(s) ${JSON.stringify(one.notes.filter((n) => n.startsWith('one handwear')))}; two parts: ${sharedOf(se)}; loads ${codes(refusals(() => checkProposal(Po, one)))}`,
+    'issue #199: two sleeves and folded hands decomposed as one piece get both chains on one mesh, so the art between the arms bends with both; the chains are kept (splitting the part is the author\'s), and the note names the part and the config field that separates it, instead of leaving two chains to share it silently',
+  );
+
+  // The flag at the door: an integer above the built-in 15, with --keypoints, not with --from-config. The seated parts
+  // with r_wrist at (84, 150) as above: 21 binds arm_a and prints the snap note; without the flag the note names 21.
+  const kp = structuredClone(POSES.seated.keypoints) as KeypointJson;
+  kp.people[0].joints.r_wrist = { state: 'observed', at: [84, 150] };
+  const kpFile = join(dir, 'seated-wrist-off.json');
+  writeFileSync(kpFile, JSON.stringify(kp));
+  const base = ['propose', '--parts', SE, '--source', join(SE, 'painting.png')];
+  const withSnap = runCli([...base, '--out', join(dir, 'snap-21'), '--keypoints', kpFile, '--wrist-snap', '21']);
+  const without = runCli([...base, '--out', join(dir, 'snap-none'), '--keypoints', kpFile]);
+  const bad = ['0', '-3', 'abc', '15', '20.5', ''].map((v) => {
+    const r = runCli([...base, '--out', join(dir, 'snap-bad'), '--keypoints', kpFile, '--wrist-snap', v]);
+    return { v, ok: r.status === 2 && r.out.includes(`USAGE: --wrist-snap ${v} is not an integer above 15, the px within which a wrist already holds a part`) };
+  });
+  const noKp = runCli([...base, '--out', join(dir, 'snap-bad'), '--wrist-snap', '21']);
+  const fromCfg = runCli([...base, '--out', join(dir, 'snap-bad'), '--keypoints', kpFile, '--from-config', join(dir, 'no-such-config.json'), '--wrist-snap', '21']);
+  say(
+    'PR76_WRIST_SNAP_IS_AN_INTEGER_ABOVE_THE_BUILT_IN_15_WITH_KEYPOINTS_AND_IS_REFUSED_BY_NAME_OTHERWISE',
+    withSnap.status === 0 &&
+      withSnap.out.split('\n').includes(`note: ${snapNote}`) &&
+      without.status === 0 &&
+      !without.out.includes('wrist snap:') &&
+      without.out.includes('(--wrist-snap 21 would bind it)') &&
+      bad.every((b) => b.ok) &&
+      noKp.status === 2 &&
+      noKp.out.includes('USAGE: --wrist-snap binds a wrist joint to a handwear part; give --keypoints <file>') &&
+      fromCfg.status === 2 &&
+      fromCfg.out.includes('USAGE: --wrist-snap binds a wrist while proposing; --from-config proposes nothing'),
+    `21: exit ${withSnap.status}, snap note ${withSnap.out.includes('note: wrist snap:') ? 'printed' : 'ABSENT'}; no flag: exit ${without.status}, ${without.out.includes('(--wrist-snap 21 would bind it)') ? 'names 21' : 'does NOT name 21'}; refused: [${bad.map((b) => `${JSON.stringify(b.v)} ${b.ok ? 'by name' : 'NOT'}`).join(', ')}]; without --keypoints exit ${noKp.status}; with --from-config exit ${fromCfg.status}`,
+    'issue #199: a tolerance is counted in whole px, so a fraction would bind exactly what its floor binds, and one at or under 15 binds nothing the built-in does not; each is refused by name with the value found and the value required, as is the flag where there is no wrist to bind (no --keypoints) or no proposal to bind it in (--from-config)',
   );
 }
 
