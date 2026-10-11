@@ -132,6 +132,12 @@ export interface CheckRigOptions {
    * #209).
    */
   canvas?: { w: number; h: number };
+  /**
+   * The idle's duration in seconds, default 1 (issue #244). The root's three
+   * `translatex` keys sit at 0, half of it and it. Only with none of
+   * `blinkSquash`, `stretchMesh` and `head`, whose keys are written over 1 s.
+   */
+  duration?: number;
 }
 
 /** Where the fixture's `head` bone stands, in rig pixels (y down): the bottom centre of the back part, a neck. */
@@ -153,6 +159,8 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
   const eyeAt = { x: stage.x + front.x + front.w / 2, y: stage.y + cropToSpineY(front.y + front.h / 2, H) };
   const peak = opts.peak ?? IDLE_PEAK;
   const mesh = opts.stretchMesh !== undefined;
+  const T = opts.duration ?? 1;
+  if (T !== 1 && (blink || mesh || opts.head !== undefined)) throw new Error('writeCheckRig: duration is only for the bare fixture; the blink, mesh and head keys are written over 1 s');
   const back = CHECK_PARTS[0];
   const hemAt = { x: stage.x + back.x + back.w / 2, y: stage.y + cropToSpineY(back.y + back.h, H) };
   const corners = [
@@ -241,9 +249,9 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
     groups: blink ? { eyes: ['eye'] } : {},
     animations: {
       idle: {
-        duration: 1,
+        duration: T,
         loop: true,
-        tracks: [{ bone: 'root', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [peak] }, { t: 1, v: [opts.lastKey ?? 0] }] }, ...blinkTracks, ...hemTracks, ...headTracks],
+        tracks: [{ bone: 'root', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: T / 2, v: [peak] }, { t: T, v: [opts.lastKey ?? 0] }] }, ...blinkTracks, ...hemTracks, ...headTracks],
       },
     },
   };

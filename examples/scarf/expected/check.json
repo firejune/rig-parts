@@ -170,7 +170,7 @@
   "torso_parts": [
    "topwear"
   ],
-  "torso_heat_mean": 15.509,
+  "torso_heat_mean": 16.263,
   "torso_floor": 3.809,
   "feet_parts": [
    "shoes"
@@ -199,17 +199,17 @@
  "CHAIN_LAG": {
   "status": "PASS",
   "chains": [
-   "neck > head_ctl: period 4s, phase 0.080 0.120, amp 0.350 0.900",
-   "bang_r0_ctl > bang_r1_ctl: period 4s, phase 0.180 0.280, amp 1.000 2.200",
-   "bang_c0_ctl > bang_c1_ctl: period 4s, phase 0.180 0.280, amp 0.800 1.760",
-   "bang_l0_ctl > bang_l1_ctl: period 4s, phase 0.180 0.280, amp 1.000 2.200",
-   "sleeve_r0_ctl > sleeve_r1_ctl > sleeve_r2_ctl: period 4s, phase 0.220 0.300 0.380, amp 0.200 0.600 1.200",
-   "sleeve_l0_ctl > sleeve_l1_ctl > sleeve_l2_ctl: period 4s, phase 0.770 0.850 0.930, amp 0.200 0.600 1.200",
-   "robe_r0_ctl > robe_r1_ctl > robe_r2_ctl > robe_r3_ctl: period 4s, phase 0.250 0.320 0.390 0.460, amp 0.120 0.300 0.600 1.100",
-   "robe_l0_ctl > robe_l1_ctl > robe_l2_ctl > robe_l3_ctl: period 4s, phase 0.790 0.860 0.930 0.000, amp 0.120 0.300 0.600 1.100",
-   "skirt_r0_ctl > skirt_r1_ctl > skirt_r2_ctl: period 4s, phase 0.300 0.370 0.440, amp 0.150 0.350 0.700",
-   "skirt_c0_ctl > skirt_c1_ctl > skirt_c2_ctl: period 4s, phase 0.340 0.410 0.480, amp 0.150 0.350 0.700",
-   "skirt_l0_ctl > skirt_l1_ctl > skirt_l2_ctl: period 4s, phase 0.380 0.450 0.520, amp 0.150 0.350 0.700"
+   "neck > head_ctl: period 3.333s, phase 0.080 0.120, amp 0.350 0.900",
+   "bang_r0_ctl > bang_r1_ctl: period 3.333s, phase 0.180 0.280, amp 1.000 2.200",
+   "bang_c0_ctl > bang_c1_ctl: period 3.333s, phase 0.180 0.280, amp 0.800 1.760",
+   "bang_l0_ctl > bang_l1_ctl: period 3.333s, phase 0.180 0.280, amp 1.000 2.200",
+   "sleeve_r0_ctl > sleeve_r1_ctl > sleeve_r2_ctl: period 3.333s, phase 0.220 0.300 0.380, amp 0.200 0.600 1.200",
+   "sleeve_l0_ctl > sleeve_l1_ctl > sleeve_l2_ctl: period 3.333s, phase 0.770 0.850 0.930, amp 0.200 0.600 1.200",
+   "robe_r0_ctl > robe_r1_ctl > robe_r2_ctl > robe_r3_ctl: period 3.333s, phase 0.250 0.320 0.390 0.460, amp 0.120 0.300 0.600 1.100",
+   "robe_l0_ctl > robe_l1_ctl > robe_l2_ctl > robe_l3_ctl: period 3.333s, phase 0.790 0.860 0.930 0.000, amp 0.120 0.300 0.600 1.100",
+   "skirt_r0_ctl > skirt_r1_ctl > skirt_r2_ctl: period 3.333s, phase 0.300 0.370 0.440, amp 0.150 0.350 0.700",
+   "skirt_c0_ctl > skirt_c1_ctl > skirt_c2_ctl: period 3.333s, phase 0.340 0.410 0.480, amp 0.150 0.350 0.700",
+   "skirt_l0_ctl > skirt_l1_ctl > skirt_l2_ctl: period 3.333s, phase 0.380 0.450 0.520, amp 0.150 0.350 0.700"
   ],
   "lags": [
    "neck > head_ctl +0.040",
@@ -249,21 +249,21 @@
   "parts": [
    {
     "part": "handwear_r",
-    "root_rig_px": 0.913,
-    "tip_rig_px": 6.092,
-    "ratio": 6.672
+    "root_rig_px": 0.992,
+    "tip_rig_px": 6.106,
+    "ratio": 6.152
    },
    {
     "part": "handwear_l",
-    "root_rig_px": 1.06,
-    "tip_rig_px": 5.656,
-    "ratio": 5.334
+    "root_rig_px": 1.131,
+    "tip_rig_px": 5.678,
+    "ratio": 5.022
    },
    {
     "part": "bottomwear",
-    "root_rig_px": 0.083,
-    "tip_rig_px": 0.147,
-    "ratio": 1.763
+    "root_rig_px": 0.096,
+    "tip_rig_px": 0.148,
+    "ratio": 1.534
    }
   ],
   "ratio_floor": 1.4725
@@ -279,13 +279,13 @@
    "still_slots": [
     {
      "slot": "face",
-     "max_rig_px": 4.224e-13,
-     "rms_rig_px": 1.402e-13
+     "max_rig_px": 4.427e-13,
+     "rms_rig_px": 1.22e-13
     }
    ],
-   "max_rig_px": 4.224e-13,
+   "max_rig_px": 4.427e-13,
    "at": null,
-   "rms_rig_px": 1.402e-13,
+   "rms_rig_px": 1.22e-13,
    "tolerance_rig_px": 2.286e-11,
    "crossing": [
     {
@@ -320,8 +320,8 @@
   "status": "PASS",
   "meshes": 6,
   "triangles": 2633,
-  "frames": 49,
-  "severity": 1.097,
+  "frames": 41,
+  "severity": 1.098,
   "severity_ceiling": 1.926544,
   "worst": {
    "slot": "hair_front",
@@ -335,65 +335,65 @@
     32,
     31
    ],
-   "frame": 23,
-   "ratio": 1.097
+   "frame": 19,
+   "ratio": 1.098
   },
-  "max_ratio": 1.097,
+  "max_ratio": 1.098,
   "min_ratio": 0.912,
   "per_mesh": [
    {
     "slot": "hair_back",
     "triangles": 264,
     "max_ratio": 1.027,
-    "max_at": "triangle 167 (vertices 116 124 125), edge 124-125, idle frame 20",
+    "max_at": "triangle 167 (vertices 116 124 125), edge 124-125, idle frame 17",
     "min_ratio": 0.982,
-    "min_at": "triangle 167 (vertices 116 124 125), edge 124-125, idle frame 44",
+    "min_at": "triangle 167 (vertices 116 124 125), edge 124-125, idle frame 37",
     "severity": 1.027
    },
    {
     "slot": "handwear_r",
     "triangles": 642,
     "max_ratio": 1.021,
-    "max_at": "triangle 259 (vertices 223 26 25), edge 26-25, idle frame 7",
+    "max_at": "triangle 259 (vertices 223 26 25), edge 26-25, idle frame 6",
     "min_ratio": 0.987,
-    "min_at": "triangle 259 (vertices 223 26 25), edge 26-25, idle frame 31",
+    "min_at": "triangle 259 (vertices 223 26 25), edge 26-25, idle frame 26",
     "severity": 1.021
    },
    {
     "slot": "handwear_l",
     "triangles": 822,
     "max_ratio": 1.023,
-    "max_at": "triangle 371 (vertices 284 291 292), edge 291-292, idle frame 9",
+    "max_at": "triangle 371 (vertices 284 291 292), edge 291-292, idle frame 7",
     "min_ratio": 0.985,
-    "min_at": "triangle 371 (vertices 284 291 292), edge 291-292, idle frame 33",
+    "min_at": "triangle 371 (vertices 284 291 292), edge 291-292, idle frame 27",
     "severity": 1.023
    },
    {
     "slot": "bottomwear",
     "triangles": 287,
-    "max_ratio": 1.035,
-    "max_at": "triangle 65 (vertices 44 47 46), edge 47-46, idle frame 33",
+    "max_ratio": 1.037,
+    "max_at": "triangle 97 (vertices 63 82 69), edge 63-82, idle frame 10",
     "min_ratio": 0.965,
-    "min_at": "triangle 65 (vertices 44 47 46), edge 47-46, idle frame 9",
-    "severity": 1.036
+    "min_at": "triangle 65 (vertices 44 47 46), edge 47-46, idle frame 8",
+    "severity": 1.037
    },
    {
     "slot": "topwear",
     "triangles": 392,
-    "max_ratio": 1.051,
-    "max_at": "triangle 273 (vertices 196 204 205), edge 205-196, idle frame 12",
-    "min_ratio": 0.959,
-    "min_at": "triangle 385 (vertices 38 37 36), edge 37-36, idle frame 37",
-    "severity": 1.051
+    "max_ratio": 1.061,
+    "max_at": "triangle 273 (vertices 196 204 205), edge 205-196, idle frame 10",
+    "min_ratio": 0.958,
+    "min_at": "triangle 385 (vertices 38 37 36), edge 37-36, idle frame 31",
+    "severity": 1.061
    },
    {
     "slot": "hair_front",
     "triangles": 226,
-    "max_ratio": 1.097,
-    "max_at": "triangle 215 (vertices 142 32 31), edge 32-31, idle frame 23",
+    "max_ratio": 1.098,
+    "max_at": "triangle 215 (vertices 142 32 31), edge 32-31, idle frame 19",
     "min_ratio": 0.912,
     "min_at": "triangle 215 (vertices 142 32 31), edge 32-31, idle frame 0",
-    "severity": 1.097
+    "severity": 1.098
    }
   ]
  },

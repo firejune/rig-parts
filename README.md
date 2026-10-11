@@ -15,7 +15,7 @@ input is silent.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/demo-source.png" alt="The demo painting: a generated full-body character in a white and pink idol dress with a layered skirt and long pink twin tails, standing with her arms held away from her body and her hands open" height="420" />
-  <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/demo-idle.png" alt="The same character rigged, breathing, blinking once and swaying her hair, sleeves and skirt in a four-second loop" height="420" />
+  <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/demo-idle.png" alt="The same character rigged, breathing, blinking once and swaying her hair, sleeves and skirt in a 3.3-second loop" height="420" />
 </p>
 
 <p align="center">
@@ -37,17 +37,17 @@ config beside the values it replaced: the two outer skirt chains were moved out 
 against 1.4725; moved, 2.425). One input-stage edit: <code>hair_back</code> is taken
 from the full run, because the twin tails leave the head crop sideways (a plan edit).
 <code>check</code> printed, verbatim:<br/>
-<code>50 assertions: 25 measured (25 passed, 0 failed), 25 skipped, 0 not in profile "spine-html"</code><br/>
-<code>loop: idle 49 frame(s) at 12 fps, f0000 vs f0048 (t = 4s): max |d| 0 (0 required)</code><br/>
+<code>51 assertions: 25 measured (25 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"</code><br/>
+<code>loop: idle 41 frame(s) at 12 fps, f0000 vs f0040 (t = 3.333333333333333s): max |d| 0 (0 required)</code><br/>
 <code>seam: setup pose at 654x1216, scale 0.9438: mean |d| 0.147 (&lt;= 1.0), 0 px over 40, 0.00 rig px (the count / s²; &lt;= 50), 0 px over 80 (reported)</code><br/>
 <code>pack: skeleton.png 1051x972, 23 region(s), 96.9% covered, padding 2, page edges free, shape polygon</code><br/>
-The loop is that build's indexed APNG, 48 frames at 12 fps, 727,486 bytes, one
-256-entry palette at a measured error of max 69, mean 0.630 per channel over every
-frame (the lossless APNG beside it, the exactness record, is 5,148,992 bytes; the
-GIF, at the same error, 781,526). The rig's hair, skirt, sleeves, bows and earrings
+The loop is that build's indexed APNG, 40 frames at 12 fps, 725,845 bytes, one
+256-entry palette at a measured error of max 70, mean 0.631 per channel over every
+frame (the lossless APNG beside it, the exactness record, is 4,514,756 bytes; the
+GIF, at the same error, 784,074). The rig's hair, skirt, sleeves, bows and earrings
 carry physics, which rigc's render starts from rest, so the idle is played three
-periods ahead and the loop is the fourth: its last frame and the first differ by at
-most 1 level (<code>--lead-in</code>). Frame 29 (2.417 s) is the
+periods ahead and the loop is the fourth: the frame one period after its first differs
+from it by max 7 levels, 0 px over 40 (<code>--lead-in</code>). Frame 29 (2.417 s) is the
 closed eye: the blink holds for 0.084 s, one 12 fps frame rounded up; the painting is
 shown at half size, resampled and written by this package's PNG codec (nothing here
 encodes JPEG). <code>rig-parts sheet</code> made the contact sheet. Its
