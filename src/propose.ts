@@ -457,8 +457,13 @@ export function draftTurn(P: PartSet, runs: TurnRuns): { turn: TurnSpec | null; 
     `turn: control "${TURN_BONE}" under root, keyed by nothing — its x is the dial. Pivot depth ${pivot}: the mean of the ${rows.length} carried parts' See-through depth_median weighted by opaque_px, the one depth at which the painted pixels' centroid does not slide (correct it in turn.pivot). ` +
       `Each part travels (pivot - depth) / (pivot - ${nearest.depth}) of the control's x, "${nearest.part}" (nearest) all of it: ${fr.map((f) => `${f.part} ${f.fraction} (depth ${f.depth})`).join(', ')}`,
   );
+  notes.push(TURN_DEPTH_CAVEAT);
   return { turn, notes };
 }
+
+/** The note beside every drafted turn (issue #251): what a See-through depth is, and where it misleads. */
+export const TURN_DEPTH_CAVEAT =
+  "turn: depth is the See-through layer's median and each part takes its own run's axis; a seated or forward-reaching limb can read further back than it is (trailer legwear 0.770 sits behind the pivot)";
 
 /** The proposal with `turn` written after `motion` and `notes` extended; the proposal itself when `turn` is null. */
 export function withTurn(p: Proposal, draft: { turn: TurnSpec | null; notes: string[] }): Proposal {

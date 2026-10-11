@@ -476,7 +476,10 @@ export interface TurnRow {
  * moves by the same world offset.
  *
  * At rest the control's x is 0, so each constraint adds `0 · fraction` to
- * world x: the build draws what it drew without `turn`. The constraints come
+ * world x. At rest: with `turn` declared, no pixel differs by more than 1
+ * level at dial 0 (not byte-identical; the cause is float noise in the
+ * identity child bones, and the constraints add nothing); without `turn`,
+ * byte-identical. The constraints come
  * after the config's own, so a physics constraint on a bone has run before its
  * twin is moved. A part at the pivot depth (fraction 0) gets no twin and no
  * constraint. A name the turn needs that is taken is refused by name
