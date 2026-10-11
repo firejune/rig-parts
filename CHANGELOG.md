@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.4](https://github.com/rig-c/parts/compare/v1.5.3...v1.5.4) (2026-10-11)
+
+
+### Bug Fixes
+
+* **pkg:** the package is @rig-c/parts and the repository is rig-c/parts — rig-parts stays as an alias ([#223](https://github.com/rig-c/parts/issues/223)) ([796fcee](https://github.com/rig-c/parts/commit/796fcee89f0b19fd23da744b4b371cee6cd7d989))
+
 ## [1.5.3](https://github.com/firejune/rig-parts/compare/v1.5.2...v1.5.3) (2026-10-11)
 
 
