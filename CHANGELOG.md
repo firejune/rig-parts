@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.3](https://github.com/firejune/rig-parts/compare/v1.5.2...v1.5.3) (2026-10-11)
+
+
+### Bug Fixes
+
+* **cli:** every unknown-flag refusal lists exactly the flags its command takes, read from one table the parsers read ([#220](https://github.com/firejune/rig-parts/issues/220)) ([3fed808](https://github.com/firejune/rig-parts/commit/3fed8080d1f9a54f57a7d4fe6355763f1083b269))
+
 ## [1.5.2](https://github.com/firejune/rig-parts/compare/v1.5.1...v1.5.2) (2026-10-11)
 
 
