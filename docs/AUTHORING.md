@@ -1242,7 +1242,7 @@ proposal in as the steps above say (`RL01`); every step must exit 0.
 | `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:` (and `loop physics:` when the rig declares a physics constraint, §7), `seam:`, the six judgement lines, `RECOMPOSITE_HOLES` and, under `--source`, `SETUP_POSE_VS_SOURCE` (§7), `check.json`; the last line says how many of the nine bars measured and names the ones that said SKIP | `check: PASS; 9 of 9 bar(s) measured, 0 skipped` on the examples, and a judgement line SKIP only where the character lacks what it reads; on a rig spec with no `parts.json` or no `idle` (a merged rig, §7 *Measuring a rig rig-parts did not assemble*), PASS with the skipped bars named | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
 | `check --requirements` (and `build --requirements`) | after the lines above, one line per declared requirement, `NAME: PASS`, `FAIL` or `NOT MEASURABLE — …` with its figures, the bar as declared and the worst frame; then `requirements: N declared — M measured (P PASS, F FAIL), K NOT MEASURABLE; not declared: <kinds>`; `check.json`'s `requirements` block; the renders under `requirements/` (§7, *Declared requirements*) | every line PASS and `0 NOT MEASURABLE`; a follow's `released_copy` says whether rigc's consumer-driven door was taken on the throwaway copy | `CHECK_REQUIREMENT_MET` (a figure past its bar; the line names the frame) or `CHECK_REQUIREMENT_MEASURABLE` (the quantity is undefined in the frames: a tip or an axis on a bone of length 0, an aim with no line, a follow no frame of which reaches its least drive); the last line then reads `check: FAIL — B bar(s) not met, R declared requirement(s) not PASS` |
 | `compose` | the `[compose]` lines: one per character (its offset, its scale, its placed bounds, the shift and how many first-level bones, regions on `root` and weights bound to `root` it moved, its bone, slot, track and constraint counts, its `rig_scale` and idle), the declared order and the slot count it expands to, rigc's gate lines; then the `[check]` lines as for `check`, and `scene.json` | both gate summaries `0 failed`, `check: PASS` with the bars that measured and the ones that said SKIP named — on a composed rig `4 of 9`: the gate, the loop, `CHAIN_LAG` and `TEXTURE_STRETCH` (there is no `parts.json`; each character's own `build` measured all nine). `scene.json`'s `order.slots` is the order the compiled skeleton draws | a `SCENE_*` refusal (§6, *compose*) — the scene file, a build, or the order; `COMPOSE_RIGC_GREEN` — rigc's own line, quoted |
-| `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line, each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
+| `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line (under `build --lead-in`, the lead-in line in its place: the frames kept and the jump at the wrap), each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
 
 `loop` writes three files from one frame set, and they are not interchangeable.
 `idle.png` (`loop --out x.png`) is the lossless APNG: every frame decodes to the
@@ -1253,10 +1253,26 @@ entry, no dithering, filter None) — and is the small file to show. `idle.gif`
 (`loop --out x.gif`) is the same median cut in a GIF. The indexed APNG and the GIF
 print their palette error, per channel over R, G and B of every frame (and alpha's
 max for the APNG); a figure is a measurement of the file, not a bar. On the demo
-(the README's animation since issue #227: `build --loop`, default flags, rig-c 2.33.0):
-5,832,634 B lossless, 827,857 B indexed and 889,063 B GIF, both palette files at
-max 65, mean 0.879 — the two share one quantiser, so their error is the same by
-construction and the size is the difference. On reference-demo with `--seam silhouette`
+(the README's animation since issue #224's follow-up: `build --loop --lead-in 3`, rig-c
+2.33.0): 5,148,992 B lossless, 727,486 B indexed and 781,526 B GIF, both palette files
+at max 69, mean 0.630 — the two share one quantiser, so their error is the same by
+construction and the size is the difference. From issue #227 until then, `build --loop`
+with default flags, before the demo carried physics: 5,832,634, 827,857 and 889,063 B
+at max 65, mean 0.879.
+
+**`build --loop --lead-in <n>`** is for a rig with physics. rigc's render resets every
+physics constraint at frame 0, so such an idle does not end where it starts: on the demo
+(issue #224's strands, the tails at inertia 0.8) frame 0 and frame 48 differ by max |d|
+132, 626 px over 40, and
+the plain loop keeps all 49 frames and jumps at the wrap. With `--lead-in n` the build
+renders the idle played n + 1 times back to back (`idle_lead_in`, the build's other
+animations kept so the viewport is fitted as for the idle frames), keeps the last
+period, drops its end frame (the next period's first) and prints how far that end frame
+is from the first kept one — the jump the loop will show. The settling is the rig's, not
+a constant: on the demo, `--lead-in 1` and `2` each still read max |d| 117, 305 px over 40, and `3` reads max 1, 0 px over 40. The idle
+must repeat without an invented value — every track keyed from 0 to the duration, ending
+where it starts — or the build refuses it (`LOOP_LEAD_IN_IDLE`). `check` and its bars
+read `check/idle_frames/` as before; only the loop files move. On reference-demo with `--seam silhouette`
 (the README's animation until issue #227, rig-c 2.1.3, and 2.10.1 to the byte):
 13,645,503 B lossless, 1,706,719 B indexed and 1,812,288 B GIF at max 57, mean 1.601;
 with `--pack-shape rect` the same build writes 13,645,350, 1,706,520 and 1,812,238 B,
@@ -1510,7 +1526,7 @@ it was cut from, so two records may share one, and names that part in `cut_from`
 or before its base comes first, and only `cut_from` says which of the two the cut made.
 The reader refuses a `cut_from` that names no part of the file, the piece itself, another
 piece, or a part on another layer (`PARTS_CUT_FROM_KNOWN`). A `parts.json` written before
-1.5.6 has no `cut_from` and still reads; `propose` alone refuses it when two of its parts
+1.6.0 has no `cut_from` and still reads; `propose` alone refuses it when two of its parts
 share a layer (`PROPOSE_CUT_FROM_RECORDED`): re-run assemble. **A patch is 100 % source**: every pixel is the
 painting's, so it is all visible and all taken — `visible_px`, `projected_core_px`
 and `source_px_taken` equal `opaque_px`, and `occluded_px`,
@@ -1700,7 +1716,7 @@ See-through with another seed.
 | `HEADBOX_FACE_PRESENT`, `HEADBOX_RUN_SQUARE`, `HEADBOX_CANVAS_SIZE`, `HEADBOX_FITS_CANVAS` | the full run has no face or is not square; `--canvas` is not a positive size; or the painting cannot hold the proposed box at its size — its shorter side is the bound (shrinking it would cut the head) | `--full`, `--canvas`, or the painting |
 | `PROPOSE_SOURCE_PRESENT`, `PROPOSE_PNG_PRESENT`, `PROPOSE_PNG_MATCHES_BOX` | the painting or a part PNG is missing, or a PNG is not its box | `--source`, `--parts` (re-run assemble) |
 | `PROPOSE_FACE_PRESENT` | no part comes from a `face` layer, and the face-less fallback cannot derive a face box either: it needs the head run's `neck` and at least one head-run `front hair`/`back hair` part whose top is above the neck's, and the message names the half that is missing. With both, `propose` does not refuse — it derives the box and says so in its first note (§5) | `assemble.plan`: take the face, or the head run's hair and neck |
-| `PROPOSE_CUT_FROM_RECORDED` | two parts share one layer and none of them records `cut_from`: a `parts.json` an `assemble` before 1.5.6 wrote with `assemble.cuts`. The records are in draw order, so which is the plan part and which the piece cannot be read off the file; the message names the parts and the layer. Every other reader still takes the file | `--parts`: re-run assemble (1.5.6+) to record `cut_from` |
+| `PROPOSE_CUT_FROM_RECORDED` | two parts share one layer and none of them records `cut_from`: a `parts.json` an `assemble` before 1.6.0 wrote with `assemble.cuts`. The records are in draw order, so which is the plan part and which the piece cannot be read off the file; the message names the parts and the layer. Every other reader still takes the file | `--parts`: re-run assemble (1.6.0+) to record `cut_from` |
 | `PROPOSE_ACCESSORY_BODY` | an accessory has nothing above its pendant rows to hang its bone on | that part's plan entry, or author its bones by hand |
 | `KEYPOINTS_FILE_PRESENT`, `KEYPOINTS_IS_JSON`, `KEYPOINTS_KEY_KNOWN`, `KEYPOINTS_FIELD_PRESENT`, `KEYPOINTS_FIELD_TYPE` | the `--keypoints` file is absent, not JSON, has a key this reader does not know, lacks one of `spec`, `space`, `width`, `height`, `source`, `people`, or holds a value of the wrong type (a size that is not a whole positive px count, an empty `source`, no people) | the keypoint file (§3, *A posed figure*) |
 | `KEYPOINTS_SPEC_KNOWN`, `KEYPOINTS_SPACE_STATED` | the file is not `spine-parts-keypoints/1`, or states a space other than painting-px, origin top-left, y down | convert the file to that space; it is not read as if it were in it |
@@ -1748,6 +1764,7 @@ See-through with another seed.
 | `CHECK_TEXTURE_STRETCH` | a mesh triangle's edge, in some idle frame, is more than 1.926544 times its rest length or less than 1/1.926544 of it (the mesh, triangle, its three vertices, the edge and the frame are named); or a rest edge has length 0 | the chain tracks' `amps` on the bones that mesh is weighted to (the stretch grows with them), or the mesh's `segments` — a vertex blending two bones that swing against each other |
 | `CHECK_SEAM_FRAME_SIZE`, `FRAMES_SIDECAR`, `CHECK_GEOMETRY_FILE` | rigc's render is not what its `frames.json` says, or its `geometry.json` is not a whole `rigc-geometry/1` export of the frames beside it (a frame count, a mesh whose vertex count differs from its rest entry; for the face half, another viewport than `frames.json`'s, other frame indices, the head bone or a feature's bone missing from a frame, a non-finite transform or time) | a rigc problem; report it |
 | `LOOP_ENCODE` | the loop encoder refused a frame (translucent pixel in a GIF, a size change) | the frames; for a translucent frame write the lossless or the indexed APNG, which keep alpha |
+| `LOOP_LEAD_IN_IDLE` | `build --lead-in`: the idle cannot be repeated without inventing a value (a track not keyed from 0 to the duration, or ending where it does not start; a field besides `duration`, `loop`, `note`, `tracks`), the motion already has an `idle_lead_in`, or the render did not write whole periods | the refusal names the track or field; the demo's idle, as the rig stage writes it, repeats as written |
 | `CHECK_PACK_LINE_READS` | rigc printed a `pack:` line that is not `pack: <page> <W>x<H>, <N> region(s), <P>% covered, padding <D>`, then `, page edges free` or nothing, then `, shape rect`, `, shape polygon` or nothing (rig-c 2.1 prints the shape; 1.5–2.0 printed none, read as `rect`); an unknown shape is this refusal; the line is quoted | a rigc this package does not know the output of; report it, with `rigc --version` |
 | `CHECK_PACK_PAGE_EDGES` | the pack line disagrees with the `--page-edges` the build was run with — its `, page edges free` clause is there under `pot` or missing under `free`, or a `pot` page is not a power of two on both edges | a rigc problem; report it, with `rigc --version` |
 | `CHECK_PACK_SHAPE` | the pack line disagrees with the `--pack-shape` the build was run with — it ends `, shape rect` under `polygon` or `, shape polygon` under `rect`, or it has no shape clause (the 1.5–2.0 form, read as `rect`) under `polygon` | a rigc older than 2.1.0 on `PATH`: rigc 2.0.3 takes `--pack-shape` without a word, packs by rectangles and prints the form with no shape clause, so this refusal is what catches it — `bun install` (this package depends on rig-c ^2.20.4); otherwise a rigc problem, report it with `rigc --version` |

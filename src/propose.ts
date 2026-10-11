@@ -49,7 +49,7 @@
  *   chains a second time. The one exception is the sleeve rule, which names
  *   its chains by side and takes a cut sleeve as a blob of its own (#199). A
  *   `parts.json` sharing a layer between parts with no `cut_from` (an
- *   assemble before 1.5.6) is refused, `PROPOSE_CUT_FROM_RECORDED`.
+ *   assemble before 1.6.0) is refused, `PROPOSE_CUT_FROM_RECORDED`.
  *
  * What it cannot know is written into `notes` when it guessed, and otherwise
  * left to the person correcting: things hidden inside a layer (a sash tail
@@ -259,7 +259,7 @@ export function proposalAssemble(P: PartSet): Record<string, unknown> {
   // loader only type-checks like the patches' fields. The piece names its base
   // (`cut_from`, issue #230); file order cannot, as a piece drawn "back" comes
   // before its base. A file with an unmarked shared layer (an assemble before
-  // 1.5.6, which propose refuses) goes back with the first part of the layer
+  // 1.6.0, which propose refuses) goes back with the first part of the layer
   // as the plan part, as it did before the field.
   const run = P.recs.filter((r) => splitFrom(r.from)[0] !== PAINTING_RUN);
   const painted = P.recs.filter((r) => splitFrom(r.from)[0] === PAINTING_RUN);
@@ -349,7 +349,7 @@ export class PartSet {
 
   /**
    * The layers more than one part holds with no `cut_from` to tell the piece
-   * from its base: a `parts.json` an `assemble` before 1.5.6 wrote with
+   * from its base: a `parts.json` an `assemble` before 1.6.0 wrote with
    * `assemble.cuts`. parts.json is in draw order and a piece drawn `"back"`
    * comes before its base, so which part takes the layer's rule cannot be
    * read off the file. Each entry is the layer and its parts, in file order.
@@ -877,7 +877,7 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
     P.unmarkedShares().map(({ from, parts }) => ({
       code: 'PROPOSE_CUT_FROM_RECORDED',
       object: `parts ${parts.map((n) => `"${n}"`).join(', ')} (${from})`,
-      detail: `share one layer and none of them records cut_from, so which is the plan part and which the piece an assemble.cuts entry took cannot be read off parts.json (it is in draw order, and a piece drawn "back" comes before its base); re-run assemble (1.5.6+) to record cut_from`,
+      detail: `share one layer and none of them records cut_from, so which is the plan part and which the piece an assemble.cuts entry took cannot be read off parts.json (it is in draw order, and a piece drawn "back" comes before its base); re-run assemble (1.6.0+) to record cut_from`,
     })),
   );
   const bones: BoneEntry[] = [];

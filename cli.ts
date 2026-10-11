@@ -417,7 +417,7 @@ usage:
                     --head <dir|psd> --out <dir> [--seam near-white|silhouette]
                     [--project core|visible] [--page-edges pot|free]
                     [--pack-shape rect|polygon] [--loop] [--requirements <file.json>]
-                    [--idle-keys ctl|direct]
+                    [--idle-keys ctl|direct] [--lead-in <periods>]
       assemble, then rig, then check, in one process, each stage's own lines
       printed under [assemble], [rig] and [check]; the first stage that refuses
       stops the build with its own FAIL lines. The config must already carry
@@ -428,7 +428,9 @@ usage:
       rig/ (rig), check/ (check, with the packed build in check/build/), and with
       --loop idle.png (lossless APNG), idle-indexed.png (indexed APNG) and
       idle.gif from check/idle_frames/, then one loop: line with the three sizes
-      and the two palette errors. The paths it writes are cleared first. A
+      and the two palette errors. --lead-in <n> (with --loop) encodes them
+      instead from the last of n + 1 idle periods played back to back, for a
+      rig whose physics does not end where rigc's render starts it. The paths it writes are cleared first. A
       green build ends with the pack line beside the spineboy yardstick and the
       three artifact paths — skeleton .json, .atlas and the packed page: the
       packed atlas is the result, the loose parts are the intermediate it was
@@ -574,7 +576,7 @@ const TAKES = {
   'comfy seethrough': { valued: ['--image', '--out', '--resolution', '--steps', '--seed', '--prefix', '--host', '--wait', '--timeout', '--poll'], switches: ['--offload', '--lama', '--nf4'] },
   'comfy paint': { valued: ['--config', '--out', '--seeds', '--seed0', '--host', '--wait', '--timeout', '--poll'], switches: [] },
   inputs: { valued: ['--source', '--config', '--out'], switches: [] },
-  build: { valued: ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys'], switches: ['--loop'] },
+  build: { valued: ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys', '--lead-in'], switches: ['--loop'] },
   compose: { valued: ['--scene', '--out', '--requirements', '--accept'], switches: [] },
 } as const satisfies Record<string, { valued: readonly string[]; switches: readonly string[] }>;
 
@@ -1171,6 +1173,9 @@ function cmdBuild(args: string[]): number {
   if (!isPackShape(shape)) return usage(shape);
   const keys = idleKeysOf(flags.get('--idle-keys'));
   if (!isIdleKeys(keys)) return usage(keys);
+  const leadText = flags.get('--lead-in');
+  if (leadText !== undefined && !/^[1-9][0-9]*$/.test(leadText)) return usage(`--lead-in ${leadText}; a whole number of idle periods, 1 or more, is required`);
+  if (leadText !== undefined && !loop) return usage('--lead-in needs --loop; it says which frames the loop is encoded from');
   const [config, source, full, head, out] = ['--config', '--source', '--full', '--head', '--out'].map((f) => flags.get(f) as string);
   let bin: string;
   try {
@@ -1181,7 +1186,7 @@ function cmdBuild(args: string[]): number {
   const scratch = mkdtempSync(join(tmpdir(), 'rig-parts-build-'));
   try {
     const r = build(
-      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape, ...(flags.has('--requirements') ? { requirements: flags.get('--requirements') as string } : {}), idleKeys: keys },
+      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape, ...(flags.has('--requirements') ? { requirements: flags.get('--requirements') as string } : {}), idleKeys: keys, ...(leadText === undefined ? {} : { leadIn: Number(leadText) }) },
       { rig: rigcRunner(bin), check: rigcRunner(bin), checkBin: bin, scratch: join(scratch, 'rig-gate') },
       console.log,
     );

@@ -165,7 +165,7 @@
   "torso_parts": [
    "topwear"
   ],
-  "torso_heat_mean": 14.271,
+  "torso_heat_mean": 14.352,
   "torso_floor": 3.809,
   "feet_parts": [
    "shoes"
@@ -338,11 +338,11 @@
    {
     "slot": "hair_back",
     "triangles": 226,
-    "max_ratio": 1.056,
-    "max_at": "triangle 185 (vertices 139 56 55), edge 56-55, idle frame 7",
-    "min_ratio": 0.952,
-    "min_at": "triangle 185 (vertices 139 56 55), edge 56-55, idle frame 30",
-    "severity": 1.056
+    "max_ratio": 1.062,
+    "max_at": "triangle 185 (vertices 139 56 55), edge 56-55, idle frame 8",
+    "min_ratio": 0.947,
+    "min_at": "triangle 215 (vertices 151 61 60), edge 61-60, idle frame 8",
+    "severity": 1.062
    },
    {
     "slot": "handwear_l",
