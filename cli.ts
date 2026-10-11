@@ -26,7 +26,7 @@ import { makeInputs } from './src/inputs.ts';
 import { idleKeysOf, isIdleKeys } from './src/rig.ts';
 import { figuresPhrase, implausibleRules, layerFigures, type LayerSet, pct, readLayers, ruleSummary, times } from './src/layers.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPEC, loadKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
-import { basisLines, checkProposal, compare, compareLines, drawLandmarks, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal, WRIST_ON_PART_PX } from './src/propose.ts';
+import { basisLines, checkProposal, compare, compareLines, drawLandmarks, FRINGE_STEP_PX, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal, WRIST_ON_PART_PX } from './src/propose.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { readPng, writePng } from './src/raster/png.ts';
 import { REQUIREMENTS_SENTENCE } from './src/requirements.ts';
@@ -88,8 +88,13 @@ usage:
       from the head run's hair and neck, said in the first note; with no
       head-run hair or neck it is refused (PROPOSE_FACE_PRESENT). Prints every
       note and a LINT line for each chain link that lies off its mesh's art, for a
+      link of a fringe chain (hung from head on a head-run front hair mesh, its tip
+      no lower than the chin) that drifts more than ${FRINGE_STEP_PX} px plus a pixel's
+      rounding across the head's down axis (the eye line's perpendicular), for a
       hip that is not below the chest, and for a hip above ${HIP_MIN_FRACTION} of the figure's
-      height (the shoulders); a headwear/earwear layer with hanging strands
+      height (the shoulders); the fringe's three chains stand in the head's frame,
+      rooted on the part's art, and a note says they are a template, not its
+      locks; a headwear/earwear layer with hanging strands
       gets one pendulum chain per strand and a note with each strand's x, rows
       and width ("-- no chain proposed" is the one to act on; AUTHORING §3).
       --compare prints each shared bone's distance, proposal to config, in px.
@@ -799,6 +804,7 @@ function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: 
   if (res.basis !== undefined) for (const l of basisLines(res.basis)) console.log(l);
   for (const f of res.findings) console.log(lintLine(f));
   for (const m of res.unknownMeshes) console.log(`note: mesh ${JSON.stringify(m)} names no part in parts.json, so it was not linted`);
+  for (const w of res.lockUnread) console.log(`note: off-lock not read: ${w}`);
   for (const b of res.missingTorsoBones) {
     console.log(
       res.basis?.torso.read === true

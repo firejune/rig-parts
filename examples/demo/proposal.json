@@ -121,17 +121,17 @@
       "parent": "head",
       "points": [
         [
-          384,
-          50
+          386,
+          55
         ],
         [
-          374,
-          92
+          375,
+          95
         ]
       ],
       "tip": [
-        366,
-        142
+        367,
+        141
       ]
     },
     {
@@ -139,11 +139,11 @@
       "parent": "head",
       "points": [
         [
-          414,
+          416,
           50
         ],
         [
-          414,
+          415,
           92
         ]
       ],
@@ -157,17 +157,17 @@
       "parent": "head",
       "points": [
         [
-          444,
-          50
+          445,
+          57
         ],
         [
           454,
-          92
+          96
         ]
       ],
       "tip": [
         462,
-        142
+        143
       ]
     },
     {
@@ -685,6 +685,7 @@
     "head frame: the bar runs through eye_r [384.0, 148.0] and eye_l [446.0, 149.0], the eye bones' origins, 62.008 px; roll -0.924 degrees (Spine's, counter-clockwise) — the line the rig turns the face bones to and declares as invariants.axes; eye midpoint [415.0, 148.5]",
     "head pitch: the nose sits — (not read: no part tagged nose) of the way from the eye midpoint to the mouth (frontal 0.474..0.630); the stem, eye midpoint -> mouth, is 0.629 of the bar (frontal 0.510..0.675); frontal ranges read on demo, scarf, the rig-c/trailer character; the turn is not reported (src/propose.ts FRONTAL_REFERENCE says why)",
     "breath: chest translatey 5.92 px peak to peak (amp 2.96, base 2.96) = 2.5 % of the torso's height, 237 px (layer full:topwear, y 192..429), once per 40-frame idle at 12 fps",
+    "hair_front (head:front hair): bang_r, bang_c, bang_l are a template, not its locks — columns at 0.25, 0.5 and 0.75 of the face box's width, along the head's down axis (the eye line's perpendicular, roll -0.924 degrees), each rooted on the part's art; the opaque shape does not separate the locks painted inside one mass of hair, so a lock that runs elsewhere is not followed — move the chains onto the locks",
     "hairpin: pendant chain would run off the art -> no tassel chain (add one by hand if it swings)",
     "earring: pendant top is off the art -> rigid bone, no chain",
     "handwear is two blobs: one sleeve chain per mesh, chest only at the shoulder",

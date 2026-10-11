@@ -124,7 +124,7 @@ import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src
 import { artifactPaths, assembleStage, build, BUILD_OWNS, checkStage, ctlRemedies, faceAxisLine, fringeLines, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
-import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
+import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LEVEL_FRINGE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, TILTED_FRINGE_PARTS, TWO_LOCK_PARTS, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
 import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'rig-c/src/render.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
@@ -342,6 +342,7 @@ import {
   type FacelessRatios,
   lint,
   lintLine,
+  FRINGE_STEP_PX,
   FRONTAL_REFERENCE,
   headFrameNotes,
   PartSet,
@@ -5591,7 +5592,8 @@ function runBasisFixtureCases(dir: string, say: (name: string, ok: boolean, deta
   const fl = proposeWithBasis(readPartSet(facelessDir)).basis;
   const flWrong = basisMismatch(fl.bones, {
     neck: ['ratio parts=throat joints= bones= frame=face_box|eye_axis k=share_chin_to_neck_bottom=0.5 fb=-', 'none'],
-    bang_c0: ['ratio parts=fringe joints= bones= frame=face_box k=of_face_width=0.5|px_below_part_top=13 fb=-', 'none'],
+    // Issue #249: the root is read off the fringe's art on its column (a mask), from the face box and the eye line.
+    bang_c0: ['mask parts=fringe joints= bones= frame=face_box|eye_axis|eye_line k=of_face_width=0.5|px_below_art_start=13 fb=-', 'none'],
   });
   // Planted: the hand-built figure, which has a face part, names it as its face box and nothing derived.
   const withFace = proposeWithBasis(readPartSet(join(dir))).basis.frame.face_box;
@@ -6505,6 +6507,127 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
   runLegChainCases(dir, Pe, Je, se, say);
   runTrunkSegmentCases(dir, say);
   runHeadFrameCases(say);
+  runFringeFrameCases(dir, say);
+}
+
+/**
+ * Issue #249: the fringe's columns in the head's frame. The tilted head (fixtures/propose.ts TILTED_FRINGE_PARTS):
+ * eye_r (82, 82), eye_l (114, 58), roll 36.869898 degrees; along the bar u = (0.8, -0.6), down the face n = (0.6, 0.8)
+ * as drawn. The eye midpoint M = (98, 70); the face box 60,40 80x80, so the brow line is 0.18 * 80 = 14.4 px above the
+ * eye line (depth -14.4) and the tip's depth is -14.4 + 19 = 4.6. The columns' feet are M + s u for
+ * s = 60 + f * 80 - 98 = -18, 2, 22: (83.6, 80.8), (99.6, 68.8), (115.6, 56.8). Each column runs up-left into the
+ * fringe's top row, y 10 (centre 10.5): the pixels of that row within half a pixel of the column, across =
+ * 0.8 (cx - fx) - 0.6 (cy - fy), are cx 30.5 and 31.5 for bang_r, 55.5 and 56.5 for bang_c, 80.5 and 81.5 for
+ * bang_l; the first of each is the shallower, depth 0.6 (cx - fx) + 0.8 (cy - fy) = -88.1, -73.1, -58.1, so the art
+ * starts half a pixel above: -88.6, -73.6, -58.6. The block is solid, so that run holds the brow line and a point 13
+ * px in. Roots at depth -75.6, -60.6, -45.6: (38.24, 20.32) -> (38, 20), (63.24, 20.32) -> (63, 20), (88.24, 20.32)
+ * -> (88, 20). Link 1 at depth (d0 - 14.4) / 2 + 6 = -39, -31.5, -24 and -10, 0, +10 across: (52.2, 55.6) -> (52, 56),
+ * (80.7, 43.6) -> (81, 44), (109.2, 31.6) -> (109, 32). Tips at depth 4.6 and -18, 0, +18 across: (71.96, 95.28) ->
+ * (72, 95), (102.36, 72.48) -> (102, 72), (132.76, 49.68) -> (133, 50).
+ *
+ * The page template the reference wrote there: x 80, 100, 120, root 13 below the box's top (y 23), link 1 at
+ * (23 + 55.6) / 2 + 6 = 45.3 -> 45 (the brow line y 70 - 14.4 = 55.6), tip y 74.6 -> 75, steps -10/0/+10 and
+ * -18/0/+18. In the head's frame a link (dx, dy) as drawn is across 0.8 dx - 0.6 dy and down 0.6 dx + 0.8 dy; the
+ * limit is atan((10 + sqrt(2)) / down). bang_r0 (-10, 22): across -21.2, down 11.6, 61.3 degrees > 44.5; bang_r1
+ * (-8, 30): 51.8 > 30.7; bang_c0 (0, 22): 36.9 > 33.0; bang_c1 (0, 30): 36.9 > 25.4; bang_l0 (10, 22): across -5.2,
+ * down 23.6, 12.4 < 25.8 (its outward step happens to lean with the head) — silent; bang_l1 (8, 30): across -11.6,
+ * down 28.8, 21.9 > 21.6. The new chains: bang_r0 (14, 36) across -10.4, down 37.2, 15.6 < 17.1; bang_r1 (20, 39)
+ * 9.7 < 14.8; bang_c0 (18, 24) and bang_c1 (21, 28) across 0; bang_l0 (21, 12) across 9.6, down 22.2, 23.4 < 27.2;
+ * bang_l1 (24, 18) 16.3 < 21.6.
+ */
+function runFringeFrameCases(dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const at = (sub: string, parts: ProposeFixturePart[]): PartSet => {
+    const d = join(dir, sub);
+    writeProposeFixture(d, parts);
+    return readPartSet(d);
+  };
+  const Pt = at('fringe-tilted', TILTED_FRINGE_PARTS);
+  const tp = propose(Pt);
+  const want: Record<string, string> = {
+    bang_r: '[[38,20],[52,56]]->[72,95]',
+    bang_c: '[[63,20],[81,44]]->[102,72]',
+    bang_l: '[[88,20],[109,32]]->[133,50]',
+  };
+  const wrong = Object.entries(want).filter(([n, v]) => boneAt(tp.bones, n) !== v).map(([n, v]) => `${n} ${boneAt(tp.bones, n)} (want ${v})`);
+  const fringe = Pt.alpha(Pt.recs.find((p) => p.name === 'fringe') as PartRecord);
+  const roots = ['bang_r', 'bang_c', 'bang_l'].map((n) => {
+    const e = tp.bones.find((b) => 'chain' in b && b.chain === n);
+    return e !== undefined && 'chain' in e ? e.points[0] : null;
+  });
+  const onArt = roots.every((q) => q !== null && fringe.data[q[1] * fringe.width + q[0]] === 1);
+  say(
+    'PR90_ON_A_TILTED_HEAD_THE_FRINGE_CHAINS_LEAN_WITH_THE_HEAD_AND_ROOT_ON_THE_ART',
+    wrong.length === 0 && onArt,
+    `${Object.keys(want)
+      .map((n) => `${n} ${boneAt(tp.bones, n)}`)
+      .join('; ')}; roots on the fringe's art: ${onArt}${wrong.length === 0 ? '' : `; wrong: ${wrong.join('; ')}`}`,
+    "issue #249: on the trailer's seated character (head 23.7 degrees off vertical) the page template started in the hat and crossed the fringe; the columns now stand on the eye line's perpendicular, read off the eye bones as written (the one roll), and each root sits 13 px into the column's art",
+  );
+
+  const oldTemplate: BoneEntry[] = [
+    ...tp.bones.filter((b) => !('chain' in b && b.chain.startsWith('bang_'))),
+    { chain: 'bang_r', parent: 'head', points: [[80, 23], [70, 45]], tip: [62, 75] },
+    { chain: 'bang_c', parent: 'head', points: [[100, 23], [100, 45]], tip: [100, 75] },
+    { chain: 'bang_l', parent: 'head', points: [[120, 23], [130, 45]], tip: [138, 75] },
+  ];
+  const fired = lint(Pt, { bones: oldTemplate, meshes: tp.meshes }).findings.filter((f) => f.kind === 'off-lock');
+  const quiet = lint(Pt, tp);
+  const deg = (n: string): string => {
+    const f = fired.find((x) => x.kind === 'off-lock' && x.bone === n);
+    return f === undefined || f.kind !== 'off-lock' ? 'silent' : `${f.degrees.toFixed(1)}>${f.limit === null ? 'none' : f.limit.toFixed(1)}`;
+  };
+  const wantDeg: Record<string, string> = { bang_r0: '61.3>44.5', bang_r1: '51.8>30.7', bang_c0: '36.9>33.0', bang_c1: '36.9>25.4', bang_l0: 'silent', bang_l1: '21.9>21.6' };
+  // A strand hanging past the chin on the same mesh is not a lock the head carries: the chin (100, 120) lies
+  // 0.6 * 2 + 0.8 * 50 = 41.2 px down the face's axis from M, the strand's tip (40, 200) 0.6 * -58 + 0.8 * 130 = 69.2.
+  const hanging: BoneEntry = { chain: 'strand', parent: 'head', points: [[40, 40], [40, 70]], tip: [40, 200] };
+  const withStrand = lint(Pt, { bones: [...tp.bones, hanging], meshes: { ...tp.meshes, fringe: { ...tp.meshes.fringe, segments: [...tp.meshes.fringe.segments, 'strand'] } } });
+  const strandRead = withStrand.coverage.filter((c) => c.bone.startsWith('strand') && c.read.some((r) => r.startsWith('off-lock')));
+  const line = fired.length > 0 ? lintLine(fired[0]) : '';
+  say(
+    'PR91_THE_OFF_LOCK_LINT_FIRES_ON_THE_PAGE_TEMPLATE_AND_IS_SILENT_ON_THE_TURNED_CHAINS',
+    Object.entries(wantDeg).every(([n, v]) => deg(n) === v) &&
+      fired.length === 5 &&
+      quiet.findings.length === 0 &&
+      quiet.coverage.filter((c) => c.read.some((r) => r === "off-lock on mesh 'fringe'")).length === 6 &&
+      withStrand.findings.length === 0 &&
+      strandRead.length === 0 &&
+      line.startsWith("LINT bang_r0 at [80, 23] runs to [70, 45] 61.3 degrees off the head's down axis (the eye line's perpendicular, roll 36.9), more than the 44.5 its reach allows") &&
+      FRINGE_STEP_PX === 10,
+    `the page template: ${Object.keys(wantDeg)
+      .map((n) => `${n} ${deg(n)}`)
+      .join(', ')}; the turned chains: ${quiet.findings.length} finding(s), ${quiet.coverage.filter((c) => c.read.some((r) => r.startsWith('off-lock'))).length} link(s) read; a strand to y 200, past the chin: ${withStrand.findings.length} finding(s), read ${strandRead.length}; ${JSON.stringify(line.slice(0, 160))}`,
+    "the stated angle is derived, not chosen: a link may drift across the head's down axis by the template's widest step (10 px, the reference's) and a whole-pixel rounding at each end (sqrt(2) px), so atan(11.41 / reach); the page template leans the wrong way on a tilted head and fires, and the outward step of bang_l0 happens to lean with this head, which the hand derivation shows",
+  );
+
+  const P2 = at('fringe-two-locks', TWO_LOCK_PARTS);
+  const two = proposeWithBasis(P2);
+  const lRoot = two.basis.bones.find((b) => b.bone === 'bang_l0');
+  const Pl = at('fringe-level', LEVEL_FRINGE_PARTS);
+  const level = propose(Pl);
+  const levelLint = lint(Pl, level);
+  const note = (p: Proposal): string => p.notes.find((n) => n.startsWith('fringe (head:front hair): bang_r, bang_c, bang_l are a template, not its locks')) ?? '';
+  // Two locks, 20..79 and 100..159: bang_r and bang_c enter the left lock as on the solid block (same chains); bang_l's
+  // column enters the box's top at x 80.5, in the gap, and meets the right lock only at x 100, depth (100 - 115.6) / 0.6
+  // = -26, too low to hold a root 13 px in above the brow line (-14.4): it falls back to 13 px below where the column
+  // enters the box, depth (10 - 56.8) / 0.8 + 13 = -45.5, (88.3, 20.4) -> (88, 20), and the basis says so.
+  // No eye pair: the page's axes, x 80, 100, 120 from the face box, the art's top y 10 -> root y 23, the brow line
+  // 82 - 14.4 = 67.6, link 1 (23 + 67.6) / 2 + 6 = 51.3 -> 51, tip 86.6 -> 87: the reference's template.
+  say(
+    'PR92_A_PART_OF_SEVERAL_LOCKS_IS_NOTED_AS_A_TEMPLATE_AND_WITH_NO_EYE_PAIR_THE_COLUMNS_STAND_ON_THE_PAGE',
+    boneAt(two.proposal.bones, 'bang_r') === want.bang_r &&
+      boneAt(two.proposal.bones, 'bang_c') === want.bang_c &&
+      boneAt(two.proposal.bones, 'bang_l') === '[[88,20],[109,32]]->[133,50]' &&
+      (lRoot?.origin.fallback ?? '').startsWith("no run of fringe's art on the column holds a point 13 px in above the brow line") &&
+      note(two.proposal).includes('roll 36.870 degrees') &&
+      boneAt(level.bones, 'bang_r') === '[[80,23],[70,51]]->[62,87]' &&
+      boneAt(level.bones, 'bang_c') === '[[100,23],[100,51]]->[100,87]' &&
+      boneAt(level.bones, 'bang_l') === '[[120,23],[130,51]]->[138,87]' &&
+      note(level).includes('on the page') &&
+      note(level).endsWith('no head frame to turn the columns to: no single bone eye_l, so there is no eye line to turn to') &&
+      levelLint.lockUnread.join('|') === "no single bone eye_l, so there is no eye line to turn to, so no chain was read against the head's down axis",
+    `two locks: ${['bang_r', 'bang_c', 'bang_l'].map((n) => `${n} ${boneAt(two.proposal.bones, n)}`).join('; ')}; bang_l0's fallback ${JSON.stringify(lRoot?.origin.fallback ?? null)}; note ${JSON.stringify(note(two.proposal).slice(0, 120))}; no eye pair: ${['bang_r', 'bang_c', 'bang_l'].map((n) => `${n} ${boneAt(level.bones, n)}`).join('; ')}; lint: ${JSON.stringify(levelLint.lockUnread)}`,
+    "issue #249 item 2: the opaque shape does not tell the locks painted inside one mass apart (each published front hair part and the trailer's is one 8-connected mass but for strays of 1-2 px), so every front hair part's columns are named a template rather than given a chain per lock; with no eye line there is no head frame, and the columns keep the page's axes, said, rather than a roll invented",
+  );
 }
 
 /**
@@ -15236,17 +15359,27 @@ function runStructureSuite(): number {
     scarf: { chains: ['robe_r'], issue: '#196' },
     demo: { chains: ['skirt_r', 'skirt_l'], issue: '#227' },
   };
+  // Issue #249: the proposer now drafts the fringe in the head's frame, rooted on the art, and every tracked config
+  // keeps the bang chains it was built with (the reference-* configs are the oracle; demo's and scarf's bang physics
+  // was tuned on theirs in #224, and on these upright heads the move is 2-7 px). Exactly these chains may differ from
+  // the proposal in every example — each by at least one row, so a stale entry is loud — and no other chain may.
+  const DRIFTED_CHAINS: { chains: readonly string[]; issue: string } = { chains: ['bang_r', 'bang_c', 'bang_l'], issue: '#249' };
   const handMoved = (proposalPath: string, configPath: string, chains: readonly string[], issue = '#196') => {
     const propCfg = loadComparison(proposalPath, configPath, null);
+    const drifted = propCfg.rows.map((r) => r.left).filter((n) => DRIFTED_CHAINS.chains.some((c) => n.startsWith(c) && /^[0-9]+$/.test(n.slice(c.length))));
+    const driftRows = loudRows(propCfg).filter((row) => drifted.includes(row.split(' ')[0]));
+    const everyDrifted = DRIFTED_CHAINS.chains.every((c) => driftRows.some((row) => row.startsWith(c)));
     const cfgBones = (readJsonAt(configPath) as { bones?: Array<{ chain?: string; points?: unknown[]; note?: unknown }> }).bones ?? [];
     const entries = chains.map((c) => cfgBones.find((b) => b.chain === c));
     const links = entries.flatMap((b) => (b === undefined ? [] : (b.points ?? []).map((_, i) => `${b.chain}${i}`)));
     const noted = entries.every((b) => b !== undefined && typeof b.note === 'string' && b.note.includes(issue));
     const loud = loudRows(propCfg).filter((row) => links.includes(row.split(' ')[0]));
     const allMoved = links.every((n) => loud.some((row) => row.startsWith(`${n} `)));
-    const rest = loudRows(propCfg, links).length;
-    const text = `proposal vs config loud rows ${rest} off the hand-moved chains (${chains.length === 0 ? 'none' : `${chains.join(', ')}: ${loud.length} row(s) over ${links.length} link(s), every link moved ${allMoved}, note citing ${issue} ${noted ? 'present' : 'ABSENT'}`})`;
-    return { propCfg, ok: rest === 0 && noted && allMoved, text };
+    const rest = loudRows(propCfg, [...links, ...drifted]).length;
+    const text =
+      `proposal vs config loud rows ${rest} off the hand-moved chains (${chains.length === 0 ? 'none' : `${chains.join(', ')}: ${loud.length} row(s) over ${links.length} link(s), every link moved ${allMoved}, note citing ${issue} ${noted ? 'present' : 'ABSENT'}`})` +
+      ` and the ${DRIFTED_CHAINS.issue} chains (${DRIFTED_CHAINS.chains.join(', ')}: ${driftRows.length} row(s) over ${drifted.length} link(s), each chain differs ${everyDrifted})`;
+    return { propCfg, ok: rest === 0 && noted && allMoved && everyDrifted, text };
   };
   const exampleLines: string[] = [];
   let exampleOk = true;
@@ -15300,6 +15433,15 @@ function runStructureSuite(): number {
     plant('robe_r note without #196', (b) => {
       b.note = String(b.note).split('#196').join('the issue');
     });
+    // Issue #249: the declaration names the bang chains and nothing else — a non-bang chain moved 1 px is still loud.
+    const cfg = readJsonAt(join(exDir, 'config.json')) as { bones: Array<Record<string, unknown>> };
+    const skirt = cfg.bones.find((b) => b.chain === 'skirt_c') as { points: Array<[number, number]> } | undefined;
+    if (skirt !== undefined) skirt.points = skirt.points.map((q, i) => (i === 0 ? [q[0] + 1, q[1]] : q));
+    const skirtPath = join(plantDir, 'skirt_c.json');
+    writeFileSync(skirtPath, `${JSON.stringify(cfg, null, 2)}\n`);
+    const sr = handMoved(join(exDir, 'proposal.json'), skirtPath, HAND_MOVED_CHAINS.scarf.chains, HAND_MOVED_CHAINS.scarf.issue);
+    exampleOk &&= !sr.ok && skirt !== undefined;
+    planted.push(`skirt_c0 moved 1 px (a chain the #249 declaration does not name) -> ${sr.ok ? 'PASSED' : 'refused'} (${sr.text})`);
   } finally {
     rmSync(plantDir, { recursive: true, force: true });
   }
@@ -15308,7 +15450,7 @@ function runStructureSuite(): number {
     'ST25_EACH_TRACKED_EXAMPLE_S_CONFIG_IS_ITS_RIG_JSON_THROUGH_THE_STAGE_AND_ITS_PROPOSAL_IS_ITS_CONFIG',
     exampleOk && exampleLines.length > 0,
     exampleLines.join('; '),
-    why('expected/rig.json is a flat rig — the reference\'s, or for an example the reference never built (scarf) this port\'s build carried to the flat form by flattenRig — every offset a difference of integer landmarks at 3 places, so the stage rule must give every origin exactly 0; the only parents not the same are the rig stage\'s controls, one bone up; the tracked proposal and config carry equal bones (the reference used only to score) but for a physics constraint\'s own bone, which the config authors and propose cannot write (issue #183), and the links of a chain the example moves by hand, each link moved and the move\'s reason in the entry\'s note (scarf\'s robe_r, put onto its tie, issue #196)'),
+    why('expected/rig.json is a flat rig — the reference\'s, or for an example the reference never built (scarf) this port\'s build carried to the flat form by flattenRig — every offset a difference of integer landmarks at 3 places, so the stage rule must give every origin exactly 0; the only parents not the same are the rig stage\'s controls, one bone up; the tracked proposal and config carry equal bones (the reference used only to score) but for a physics constraint\'s own bone, which the config authors and propose cannot write (issue #183), and the links of a chain the example moves by hand, each link moved and the move\'s reason in the entry\'s note (scarf\'s robe_r, put onto its tie, issue #196); and the fringe\'s bang chains in every example, which the configs keep from before the proposer turned the fringe into the head\'s frame (issue #249) — those three by name, each differing, and no other'),
   );
 
   // ST26 — the printout and its determinism.

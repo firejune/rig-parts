@@ -48,6 +48,36 @@ export function eyeLineDegrees(a: Point, b: Point, H: number): number {
   return (Math.atan2(dy, dx) * 180) / Math.PI;
 }
 
+/**
+ * The head's two axes in crop px on a canvas `H` px tall, for a roll in Spine
+ * degrees ({@link eyeLineDegrees}; issue #249): `at(p, across, down)` is `p`
+ * moved `across` px along the eye line (image-left to image-right) and `down`
+ * px along the face's down axis (the eye line's perpendicular toward the
+ * chin), and `of(p, q)` is the inverse, q's `[across, down]` from p. The
+ * axes are taken in Spine's frame, where the roll is an angle, and every
+ * point crosses the y flip through `cropToSpineY` both ways; a roll of 0 is
+ * the page's axes.
+ */
+export interface HeadAxes {
+  at(p: readonly [number, number], across: number, down: number): [number, number];
+  of(p: readonly [number, number], q: readonly [number, number]): [number, number];
+}
+
+export function headAxes(roll: number, H: number): HeadAxes {
+  const t = (roll * Math.PI) / 180;
+  const bar: [number, number] = [Math.cos(t), Math.sin(t)];
+  // The face's up axis is the roll + 90 degrees, (−sin, cos) in Spine's frame; down is its opposite.
+  const down: [number, number] = [Math.sin(t), -Math.cos(t)];
+  return {
+    at: (p, across, d) => [p[0] + across * bar[0] + d * down[0], cropToSpineY(cropToSpineY(p[1], H) + across * bar[1] + d * down[1], H)],
+    of: (p, q) => {
+      const dx = q[0] - p[0];
+      const dy = cropToSpineY(q[1], H) - cropToSpineY(p[1], H);
+      return [dx * bar[0] + dy * bar[1], dx * down[0] + dy * down[1]];
+    },
+  };
+}
+
 /** One stem reading: a feature's point off the eye midpoint, along the bar and down it, as fractions of the inter-eye distance. */
 export interface StemReading {
   /** The feature's tag (`nose` or `mouth`). */
