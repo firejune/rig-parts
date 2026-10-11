@@ -147,6 +147,28 @@ export interface RequirementsFile {
   fps: number;
   targets: SceneTarget[];
   requirements: Requirement[];
+  /**
+   * Issue #231: the parts the scene's figure does not stand on, by name — each
+   * a part `check` would otherwise read as a planted foot (a `footwear` part),
+   * which the feet halves of `BREATH_VISIBLE` and `STILL_REGIONS_DARK` then
+   * name as declared and do not hold still. Empty when the file does not
+   * declare it: every footwear part is a planted foot, as before.
+   */
+  not_planted: string[];
+  /**
+   * Issue #231: the swinging parts (`handwear`, `bottomwear`) the scene does
+   * not mean to swing — a piece cut off and left still — by name.
+   * `TIP_OVER_ROOT` names each in its line and does not hold it to the bar.
+   * Empty when not declared.
+   */
+  not_swinging: string[];
+  /**
+   * Issue #231: the swinging parts whose tip is up — a raised forearm, its
+   * chain rising from the elbow — by name. `TIP_OVER_ROOT` reads their upper
+   * half as the tip's, after checking that the chain carrying each does rise,
+   * and names each in its line. Empty when not declared: every part hangs.
+   */
+  rises: string[];
 }
 
 /** What `check --requirements` and `build --requirements` name, said once for the help and the refusals. */
@@ -182,10 +204,24 @@ const KIND_FIELDS: Record<RequirementKind, readonly string[]> = {
 
 const NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
 
+/** The three lists of parts a scene excepts from a bar that assumes a standing figure (issue #231), in the order they are read. */
+export const EXCEPTION_LISTS = ['not_planted', 'not_swinging', 'rises'] as const;
+type ExceptionList = (typeof EXCEPTION_LISTS)[number];
+
+/** What each list's absence declares. */
+const EXCEPTION_ABSENT: Record<ExceptionList, string> = {
+  not_planted: 'every footwear part a planted foot',
+  not_swinging: 'every handwear and bottomwear part one that swings',
+  rises: 'every swinging part one that hangs',
+};
+
 /**
  * Read and shape-check a requirements file. Every problem is collected before
  * one refusal: the file, `spec`, `fps` (required, a positive number: no
- * default), `targets` (optional) and `requirements` (required, possibly empty),
+ * default), `targets` (optional), `requirements` (required, possibly empty)
+ * and `not_planted`, `not_swinging` and `rises` (each optional, issue #231: a
+ * non-empty list of distinct part names, no part in both of the last two;
+ * which parts they are is read against parts.json and the rig by `check`),
  * each entry's every field and bar by name, a key the format does not read,
  * and a name used twice. Resolving the names against the rig is
  * {@link resolveRequirements}'s.
@@ -209,7 +245,7 @@ export function readRequirements(path: string): RequirementsFile {
     problems.push({ code: 'REQUIREMENTS_FIELD', object, detail });
   };
   if (raw.spec !== REQUIREMENTS_SPEC) field(`${at} field "spec"`, `is ${JSON.stringify(raw.spec)}; ${JSON.stringify(REQUIREMENTS_SPEC)} is required`);
-  for (const k of Object.keys(raw)) if (!['spec', 'fps', 'targets', 'requirements'].includes(k) && !freeKey(k, raw[k])) field(`${at} field "${k}"`, 'is not a field this format reads (spec, fps, targets, requirements; note or *_note as a string; x-<name> as a record)');
+  for (const k of Object.keys(raw)) if (!['spec', 'fps', 'targets', 'requirements', ...EXCEPTION_LISTS].includes(k) && !freeKey(k, raw[k])) field(`${at} field "${k}"`, 'is not a field this format reads (spec, fps, targets, requirements, not_planted, not_swinging, rises; note or *_note as a string; x-<name> as a record)');
   let fps = NaN;
   if (!(finite(raw.fps) && raw.fps > 0)) field(`${at} field "fps"`, `is ${JSON.stringify(raw.fps)}; a positive number of frames per second is required — every named animation is sampled at it, and there is no default`);
   else fps = raw.fps;
@@ -336,8 +372,27 @@ export function readRequirements(path: string): RequirementsFile {
       });
     }
   }
+  const lists = {} as Record<ExceptionList, string[]>;
+  for (const key of EXCEPTION_LISTS) {
+    const names: string[] = [];
+    lists[key] = names;
+    const v = raw[key];
+    if (v === undefined) continue;
+    if (!Array.isArray(v) || v.length === 0) {
+      field(`${at} field "${key}"`, `is ${JSON.stringify(v)?.slice(0, 60)}; a non-empty list of part names is required when the field is given — leave it out to declare ${EXCEPTION_ABSENT[key]}`);
+      continue;
+    }
+    v.forEach((n, i) => {
+      if (typeof n !== 'string' || n.length === 0) field(`${at} field "${key}"[${i}]`, `is ${JSON.stringify(n)?.slice(0, 40)}; a part name is required`);
+      else if (names.includes(n)) field(`${at} field "${key}"[${i}]`, `names "${n}" a second time; each part is declared once`);
+      else names.push(n);
+    });
+  }
+  lists.rises.forEach((n, i) => {
+    if (lists.not_swinging.includes(n)) field(`${at} field "rises"[${i}]`, `names "${n}", which "not_swinging" names too; a part that does not swing has no tip to read up or down`);
+  });
   refuseIfAny(problems);
-  return { path: at, fps, targets, requirements };
+  return { path: at, fps, targets, requirements, not_planted: lists.not_planted, not_swinging: lists.not_swinging, rises: lists.rises };
 }
 
 // ---------------------------------------------------------------------------

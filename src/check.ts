@@ -111,6 +111,8 @@ import {
   topmostIndex,
   TORSO_TAGS,
   halfTravels,
+  chainToward,
+  type Toward,
   type WorldBox,
 } from './instruments.ts';
 import { type PartRecord, type PartsFile, readParts } from './parts.ts';
@@ -1757,6 +1759,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     const file = reqFile as RequirementsFile;
     const ready = inp;
     take(() => resolveRequirements(file, ready.rig, ready.motion, ready.rootBone));
+    take(() => refuseIfAny(exceptionProblems(file, ready.parts, ready.noParts)));
     // A seam's pairs are read off parts.json's art (issue #111); both resolvers' problems are named in one refusal.
     if (file.requirements.some((r) => r.kind === 'seam')) {
       const parts = ready.parts;
@@ -1873,12 +1876,14 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     if (r.status !== 0) refuseIfAny(rigcFailed(`render --animation idle --slot ${ps.map((p) => p.name).join(',')}`, r, r.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
     return readFrameSet(dir);
   };
+  // Issue #231: the footwear parts the scene file declares not planted; none without --requirements or the field.
+  const notPlanted = reqFile === null ? [] : reqFile.not_planted;
   let breath: JudgementLine = skip(lacking);
   let tip: JudgementLine = skip(lacking);
   if (full !== null) {
     try {
-      breath = breathLine(full, isolated, problems);
-      if (idle !== null) tip = tipLine(full, join(idle.dir, GEOMETRY_FILE), idle.written, problems);
+      breath = breathLine(full, isolated, problems, notPlanted);
+      if (idle !== null) tip = tipLine(full, join(idle.dir, GEOMETRY_FILE), idle.written, problems, reqFile === null ? NO_TIP_EXCEPTIONS : { path: reqFile.path, not_swinging: reqFile.not_swinging, rises: reqFile.rises });
     } finally {
       rmSync(isoDir, { recursive: true, force: true });
     }
@@ -1892,7 +1897,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     const geometryPath = join(idle.dir, GEOMETRY_FILE);
     const geometry = readGeometry(geometryPath, idle.written);
     stretch = stretchLine(geometry, geometryPath, problems);
-    if (full !== null) still = stillLine(full, idle, geometry, geometryPath, problems);
+    if (full !== null) still = stillLine(full, idle, geometry, geometryPath, problems, notPlanted);
   }
 
   // 4. the setup pose as a one-key throwaway animation — the seam reads it against the parts, the source line against
@@ -2242,22 +2247,98 @@ function quoteParts(ps: readonly PartRecord[]): string {
 
 type Isolate = (label: string, ps: readonly PartRecord[]) => FrameSet;
 
-/** (1) The torso moves while the feet do not: each rendered alone, heat over its own box. */
-function breathLine(inp: FullInputs, isolated: Isolate, problems: Problem[]): JudgementLine {
+/**
+ * The scene file's three exceptions (issue #231), read against parts.json
+ * before anything is built: each name must be a part parts.json lists
+ * (`REQUIREMENTS_RESOLVES`), and one the bar it relaxes reads — a `footwear`
+ * part for `not_planted` (`REQUIREMENTS_NOT_PLANTED`), a `handwear` or
+ * `bottomwear` part for `not_swinging` and `rises`
+ * (`REQUIREMENTS_TIP_EXCEPTION`): an exception that excepts nothing is a miss,
+ * refused by name. With no parts.json every name is refused. Whether a `rises`
+ * part's chain does rise is read off the idle's geometry by `TIP_OVER_ROOT`.
+ */
+export function exceptionProblems(file: Pick<RequirementsFile, 'not_planted' | 'not_swinging' | 'rises' | 'path'>, parts: PartsFile | null, noParts: string | null): Problem[] {
+  const out: Problem[] = [];
+  // Issue #231: not_swinging and rises name swinging parts, the ones TIP_OVER_ROOT reads; whether a rises part's chain does rise is read off the idle's geometry, in the line.
+  for (const key of ['not_swinging', 'rises'] as const) {
+    file[key].forEach((name, i) => {
+      const object = `${file.path} field "${key}"[${i}]`;
+      if (parts === null) {
+        out.push({ code: 'REQUIREMENTS_TIP_EXCEPTION', object, detail: `names part "${name}", and the swinging parts are chosen by parts.json's See-through tags, of which none was read: ${noParts ?? 'no parts.json'}` });
+        return;
+      }
+      const rec = parts.parts.find((p) => p.name === name);
+      if (rec === undefined) {
+        out.push({ code: 'REQUIREMENTS_RESOLVES', object, detail: `names part "${name}", which parts.json does not list; it lists ${parts.parts.map((p) => `"${p.name}"`).join(', ') || 'none'}` });
+        return;
+      }
+      const swing = partsTagged(parts, SWING_TAGS).map((p) => p.name);
+      if (!swing.includes(name)) {
+        out.push({
+          code: 'REQUIREMENTS_TIP_EXCEPTION',
+          object,
+          detail: `names part "${name}" (from "${rec.from}"), which TIP_OVER_ROOT does not read; only a part from a See-through ${tagWords(SWING_TAGS)} layer is (${swing.map((n) => `"${n}"`).join(', ') || 'none here'}), so declaring it excepts nothing`,
+        });
+      }
+    });
+  }
+  file.not_planted.forEach((name, i) => {
+    const object = `${file.path} field "not_planted"[${i}]`;
+    if (parts === null) {
+      out.push({ code: 'REQUIREMENTS_NOT_PLANTED', object, detail: `names part "${name}", and the feet are chosen by parts.json's See-through tags, of which none was read: ${noParts ?? 'no parts.json'}` });
+      return;
+    }
+    const rec = parts.parts.find((p) => p.name === name);
+    if (rec === undefined) {
+      out.push({ code: 'REQUIREMENTS_RESOLVES', object, detail: `names part "${name}", which parts.json does not list; it lists ${parts.parts.map((p) => `"${p.name}"`).join(', ') || 'none'}` });
+      return;
+    }
+    const feet = partsTagged(parts, FEET_TAGS).map((p) => p.name);
+    if (!feet.includes(name)) {
+      out.push({
+        code: 'REQUIREMENTS_NOT_PLANTED',
+        object,
+        detail: `names part "${name}" (from "${rec.from}"), which is not read as a planted foot; only a part from a See-through ${tagWords(FEET_TAGS)} layer is (${feet.map((n) => `"${n}"`).join(', ') || 'none here'}), so declaring it excepts nothing`,
+      });
+    }
+  });
+  return out;
+}
+
+/** The feet a line holds still (issue #231): the `footwear` parts less those the scene file declares not planted, and the declared ones, in parts.json's order. */
+function plantedFeet(parts: PartsFile, notPlanted: readonly string[]): { all: PartRecord[]; held: PartRecord[]; declared: string[] } {
+  const all = partsTagged(parts, FEET_TAGS);
+  return { all, held: all.filter((p) => !notPlanted.includes(p.name)), declared: all.filter((p) => notPlanted.includes(p.name)).map((p) => p.name) };
+}
+
+/** The sentence a feet half carries when every footwear part is declared not planted (issue #231). */
+function noneHeldText(declared: readonly string[]): string {
+  return `every ${tagWords(FEET_TAGS)} part (${declared.map((n) => `"${n}"`).join(', ')}) is declared not planted by the scene file's not_planted, so there are no feet to hold still`;
+}
+
+/**
+ * (1) The torso moves while the feet do not: each rendered alone, heat over
+ * its own box. The feet are the `footwear` parts less those the scene file
+ * declares `not_planted` (issue #231); a declaration is the line's first
+ * figure, `declared_not_planted`, so the line never reads as though the feet
+ * it names were held still. With every foot declared, the torso is measured
+ * and the feet figures are an empty list and null.
+ */
+function breathLine(inp: FullInputs, isolated: Isolate, problems: Problem[], notPlanted: readonly string[] = []): JudgementLine {
   const torso = partsTagged(inp.parts, TORSO_TAGS);
-  const feet = partsTagged(inp.parts, FEET_TAGS);
-  if (torso.length === 0) return skip(`no part comes from a See-through ${tagWords(TORSO_TAGS)} layer, so there is no torso to see breathe`);
-  if (feet.length === 0) return skip(`no part comes from a See-through ${tagWords(FEET_TAGS)} layer, so there are no feet to hold still`);
+  const { all: allFeet, held: feet, declared } = plantedFeet(inp.parts, notPlanted);
+  if (torso.length === 0) return skip(`no part comes from a See-through ${tagWords(TORSO_TAGS)} layer, so there is no torso to see breathe${declared.length === 0 ? '' : `; ${declared.map((n) => `"${n}"`).join(', ')} declared not planted`}`);
+  if (allFeet.length === 0) return skip(`no part comes from a See-through ${tagWords(FEET_TAGS)} layer, so there are no feet to hold still`);
   const H = inp.parts.rig_size[1];
   const ts = isolated('torso', torso);
-  const fs = isolated('feet', feet);
+  const fs = feet.length === 0 ? null : isolated('feet', feet);
   const tb = frameBox(torso, H, inp.stage, ts.viewport);
-  const fb = frameBox(feet, H, inp.stage, fs.viewport);
-  if (tb === null || fb === null) return skip(`the ${tb === null ? 'torso' : 'feet'} box falls outside the idle frame`);
+  const fb = fs === null ? null : frameBox(feet, H, inp.stage, fs.viewport);
+  if (tb === null || (fs !== null && fb === null)) return skip(`the ${tb === null ? 'torso' : 'feet'} box falls outside the idle frame`);
   const th = regionHeat(heatField(ts.frames.map((f) => f.image)), ts.viewport.pixelWidth, tb);
-  const fh = regionHeat(heatField(fs.frames.map((f) => f.image)), fs.viewport.pixelWidth, fb);
+  const fh = fs === null || fb === null ? null : regionHeat(heatField(fs.frames.map((f) => f.image)), fs.viewport.pixelWidth, fb);
   const mean = round3(th.mean);
-  const ok = mean >= BREATH_TORSO_MEAN_FLOOR && fh.max <= BREATH_FEET_MAX_CEILING;
+  const ok = mean >= BREATH_TORSO_MEAN_FLOOR && (fh === null || fh.max <= BREATH_FEET_MAX_CEILING);
   if (mean < BREATH_TORSO_MEAN_FLOOR) {
     problems.push({
       code: 'CHECK_BREATH_VISIBLE',
@@ -2265,23 +2346,33 @@ function breathLine(inp: FullInputs, isolated: Isolate, problems: Problem[]): Ju
       detail: `heat mean ${mean}/255 over the idle; >= ${BREATH_TORSO_MEAN_FLOOR} is required — the chest's breath track moves too little, or the torso is not weighted to the bone it keys`,
     });
   }
-  if (fh.max > BREATH_FEET_MAX_CEILING) {
+  if (fh !== null && fb !== null && fh.max > BREATH_FEET_MAX_CEILING) {
     problems.push({
       code: 'CHECK_BREATH_VISIBLE',
-      object: `feet ${quoteParts(feet)} rendered alone, frame box ${boxLabel(fb)}`,
+      object: `feet ${quoteParts(feet)} rendered alone, frame box ${boxLabel(fb)}${declared.length === 0 ? '' : ` (${declared.map((n) => `"${n}"`).join(', ')} declared not planted)`}`,
       detail: `heat max ${fh.max}/255 over the idle; <= ${BREATH_FEET_MAX_CEILING} is required — the feet move: their slot rides, or their mesh is weighted to, a bone the idle keys`,
     });
   }
   return {
     status: ok ? 'PASS' : 'FAIL',
+    ...(declared.length === 0 ? {} : { declared_not_planted: declared }),
     torso_parts: torso.map((p) => p.name),
     torso_heat_mean: mean,
     torso_floor: BREATH_TORSO_MEAN_FLOOR,
     feet_parts: feet.map((p) => p.name),
-    feet_heat_max: fh.max,
+    feet_heat_max: fh === null ? null : fh.max,
     feet_ceiling: BREATH_FEET_MAX_CEILING,
   };
 }
+
+/** The scene file's two exceptions to `TIP_OVER_ROOT` (issue #231), and the file they were read from, which a refusal names. */
+export interface TipExceptions {
+  path: string;
+  not_swinging: readonly string[];
+  rises: readonly string[];
+}
+
+const NO_TIP_EXCEPTIONS: TipExceptions = { path: '', not_swinging: [], rises: [] };
 
 /**
  * What `TIP_OVER_ROOT` is measured with, written into its line (issue #118):
@@ -2301,37 +2392,139 @@ export const TIP_INSTRUMENT = 'geometry';
  * binary-coverage centroid per half; every root half on the three examples
  * travels under a frame pixel, where that centroid scatters by up to 0.3 px
  * with the grid, so the ratio was set by the grid.
+ *
+ * Issue #231: the scene file's `not_swinging` parts are left out, each row
+ * saying so, and its `rises` parts are read with the halves swapped once the
+ * chain carrying each is measured to rise ({@link chainDirection}; refused by
+ * name otherwise); both lists are the line's first figures. Without them the
+ * line is the one written before.
  */
-function tipLine(inp: FullInputs, geometryPath: string, frames: number, problems: Problem[]): JudgementLine {
+function tipLine(inp: FullInputs, geometryPath: string, frames: number, problems: Problem[], excepted: TipExceptions = NO_TIP_EXCEPTIONS): JudgementLine {
   const swing = partsTagged(inp.parts, SWING_TAGS);
   if (swing.length === 0) return skip(`no part comes from a See-through ${tagWords(SWING_TAGS)} layer, so there is no hem or sleeve to swing`);
   const poses = attachmentPoses(geometryPath, frames);
+  // Issue #231: a part declared `rises` is read up only when the chain carrying it does rise, measured at the setup pose.
+  if (excepted.rises.length > 0) {
+    const geo = readGeometry(geometryPath, frames);
+    const origins = new Map<string, { x: number; y: number }>();
+    for (const b of Array.isArray(geo?.setupBones) ? geo.setupBones : []) {
+      if (isRecord(b) && typeof b.name === 'string' && typeof b.worldX === 'number' && typeof b.worldY === 'number') origins.set(b.name, { x: b.worldX, y: b.worldY });
+    }
+    const refused: Problem[] = [];
+    excepted.rises.forEach((name, i) => {
+      const dir = chainDirection(inp.rig, inp.motion, name, origins);
+      if ('toward' in dir && dir.toward === 'up') return;
+      refused.push({
+        code: 'REQUIREMENTS_TIP_EXCEPTION',
+        object: `${excepted.path} field "rises"[${i}]`,
+        detail: `names part "${name}", whose tip is not up: ${'none' in dir ? dir.none : `its chain runs ${dir.toward} — ${dir.chains.join('; ')}`}; a part declared rises must be carried by a chain whose last link's origin is above its first's at the setup pose`,
+      });
+    });
+    refuseIfAny(refused);
+  }
   const rows: Array<Record<string, unknown>> = [];
   let measured = 0;
   let failed = false;
   for (const p of swing) {
+    if (excepted.not_swinging.includes(p.name)) {
+      rows.push({ part: p.name, unmeasured: "declared not swinging by the scene file's not_swinging, so it is not held to the bar" });
+      continue;
+    }
+    const rises = excepted.rises.includes(p.name);
+    const [rootHalf, tipHalf] = rises ? ['lower', 'upper'] : ['upper', 'lower'];
     const art = placedArt(p.x, p.y, readPng(join(inp.partsDir, `${p.name}.png`)));
     const shown = poses.map((f) => f.get(p.name) ?? null);
-    const t = halfTravels(art, p, inp.stage, shown);
+    const t = halfTravels(art, p, inp.stage, shown, rises ? 'up' : 'down');
+    // A part not declared writes the row it wrote before issue #231; a declared one says which half is its tip's.
+    const said = rises ? { tip_half: tipHalf } : {};
     if (t.root === null || t.tip === null) {
-      rows.push({ part: p.name, unmeasured: shown[0] === null ? 'its slot shows no attachment on idle frame 0' : `on idle frame 0 the ${t.root === null ? 'upper' : 'lower'} half of its box holds no art its attachment draws` });
+      rows.push({ part: p.name, ...said, unmeasured: shown[0] === null ? 'its slot shows no attachment on idle frame 0' : `on idle frame 0 the ${t.root === null ? rootHalf : tipHalf} half of its box holds no art its attachment draws` });
       continue;
     }
     measured++;
     const ratio = t.root > 0 ? round3(t.tip / t.root) : null;
     const ok = ratio === null ? t.tip > 0 : ratio >= TIP_RATIO_FLOOR;
-    rows.push({ part: p.name, root_rig_px: round3(t.root), tip_rig_px: round3(t.tip), ratio });
+    rows.push({ part: p.name, ...said, root_rig_px: round3(t.root), tip_rig_px: round3(t.tip), ratio });
     if (!ok) {
       failed = true;
       problems.push({
         code: 'CHECK_TIP_OVER_ROOT',
-        object: `part "${p.name}", box ${p.x},${p.y} ${p.w}x${p.h} rig px, posed by the idle's geometry`,
-        detail: `the art in its lower half travels ${round3(t.tip)} rig px and in its upper half ${round3(t.root)} rig px (ratio ${ratio ?? 'undefined: nothing moves'}); a ratio >= ${TIP_RATIO_FLOOR} is required — the chain's amplitudes do not grow toward the tip, or the mesh is not weighted to the chain`,
+        object: `part "${p.name}", box ${p.x},${p.y} ${p.w}x${p.h} rig px, posed by the idle's geometry${rises ? ', declared rises' : ''}`,
+        detail: `the art in its ${tipHalf} half travels ${round3(t.tip)} rig px and in its ${rootHalf} half ${round3(t.root)} rig px (ratio ${ratio ?? 'undefined: nothing moves'}); a ratio >= ${TIP_RATIO_FLOOR} is required — the chain's amplitudes do not grow toward the tip, or the mesh is not weighted to the chain`,
       });
     }
   }
+  const declared = {
+    ...(excepted.not_swinging.length === 0 ? {} : { declared_not_swinging: swing.filter((p) => excepted.not_swinging.includes(p.name)).map((p) => p.name) }),
+    ...(excepted.rises.length === 0 ? {} : { declared_rises: swing.filter((p) => excepted.rises.includes(p.name)).map((p) => p.name) }),
+  };
   if (measured === 0) return { status: 'SKIP', reason: `none of ${quoteParts(swing)} could be measured: ${rows.map((r) => `${String(r.part)}: ${String(r.unmeasured)}`).join('; ')}` };
-  return { status: failed ? 'FAIL' : 'PASS', instrument: TIP_INSTRUMENT, parts: rows, ratio_floor: TIP_RATIO_FLOOR };
+  return { status: failed ? 'FAIL' : 'PASS', ...declared, instrument: TIP_INSTRUMENT, parts: rows, ratio_floor: TIP_RATIO_FLOOR };
+}
+
+/**
+ * Which way the chain carrying a part runs (issue #231), for a part the scene
+ * declares `rises`: the bones its attachments are bound to in the default skin
+ * (a mesh's weights, or its slot's bone); the leaves among them — those with
+ * no other of them below — walked up the bone tree to the first link of a
+ * chain `CHAIN_LAG` reads ({@link chainFigures}: two or more rotate-keyed
+ * links, each under the one before at one period); each chain so found runs
+ * from its first link's setup-pose origin to its last link's
+ * ({@link chainToward}). `{ none }`, the reason, when no leaf is under a chain,
+ * when a chain runs as far across as along, or when the part's chains run
+ * different ways.
+ */
+export function chainDirection(rig: Record<string, unknown>, motion: Record<string, unknown>, part: string, origins: ReadonlyMap<string, { x: number; y: number }>): { toward: Toward; chains: string[] } | { none: string } {
+  const bones = (Array.isArray(rig.bones) ? rig.bones : []).filter(isRecord).filter((b) => typeof b.name === 'string');
+  const parent = new Map(bones.map((b) => [String(b.name), typeof b.parent === 'string' ? b.parent : null]));
+  const slot = (Array.isArray(rig.slots) ? rig.slots : []).filter(isRecord).find((sl) => sl.name === part);
+  const skins = isRecord(rig.skins) ? rig.skins : {};
+  const skin = isRecord(skins.default) ? skins.default : {};
+  const atts = isRecord(skin[part]) ? Object.values(skin[part]) : [];
+  const bound = new Set<string>();
+  for (const a of atts) {
+    if (isRecord(a) && Array.isArray(a.weights)) for (const v of a.weights) for (const w of Array.isArray(v) ? v : []) if (isRecord(w) && typeof w.bone === 'string') bound.add(w.bone);
+    if (!(isRecord(a) && Array.isArray(a.weights)) && slot !== undefined && typeof slot.bone === 'string') bound.add(slot.bone);
+  }
+  const under = (b: string, anc: string): boolean => {
+    const seen = new Set<string>();
+    for (let x = parent.get(b) ?? null; x !== null && !seen.has(x); x = parent.get(x) ?? null) {
+      if (x === anc) return true;
+      seen.add(x);
+    }
+    return false;
+  };
+  const leaves = [...bound].filter((b) => ![...bound].some((o) => o !== b && under(o, b)));
+  const chains = chainFigures(rig, motion).chains.filter((c) => c.length >= 2);
+  const chainOf = new Map<string, string[]>();
+  for (const c of chains) for (const l of c) chainOf.set(l.bone, c.map((x) => x.bone));
+  const found: string[][] = [];
+  for (const leaf of leaves) {
+    const seen = new Set<string>();
+    for (let b: string | null = leaf; b !== null && !seen.has(b); b = parent.get(b) ?? null) {
+      seen.add(b);
+      const c = chainOf.get(b);
+      if (c !== undefined) {
+        if (!found.some((f) => f[0] === c[0])) found.push(c);
+        break;
+      }
+    }
+  }
+  const boundText = [...bound].map((b) => `"${b}"`).join(', ') || 'no bone';
+  if (found.length === 0) return { none: `it rides no chain: none of the bones it is bound to (${boundText}) is under a chain of rotate-keyed links` };
+  const read = found.map((c) => {
+    const a = origins.get(c[0]);
+    const z = origins.get(c[c.length - 1]);
+    const label = c.join(' > ');
+    if (a === undefined || z === undefined) return { label, toward: null, text: `${label}: no setup-pose origin for ${a === undefined ? c[0] : c[c.length - 1]} in the idle's geometry` };
+    const dx = z.x - a.x;
+    const dy = z.y - a.y;
+    const toward = chainToward(dx, dy);
+    return { label, toward, text: `${label} ${toward ?? 'runs as far across as along'} (${round3(dx)}, ${round3(dy)} world px)` };
+  });
+  const ways = [...new Set(read.map((r) => r.toward))];
+  if (ways.length !== 1 || ways[0] === null) return { none: `its chains do not run one way: ${read.map((r) => r.text).join('; ')}` };
+  return { toward: ways[0], chains: read.map((r) => r.text) };
 }
 
 /**
@@ -2474,10 +2667,10 @@ interface StillHalf {
  * features go; `footwear` on top) is reported per slot, `crossing`, with no
  * bar ({@link crossingOf}). No render grid enters either half.
  */
-export function stillLine(inp: FullInputs, idle: FrameSet, geo: IdleGeometry | null, geometryPath: string, problems: Problem[]): JudgementLine {
+export function stillLine(inp: FullInputs, idle: FrameSet, geo: IdleGeometry | null, geometryPath: string, problems: Problem[], notPlanted: readonly string[] = []): JudgementLine {
   const face = partsTagged(inp.parts, FACE_TAGS);
-  const feet = partsTagged(inp.parts, FEET_TAGS);
-  if (face.length === 0 && feet.length === 0) return skip(`no part comes from a See-through ${tagWords([...FACE_TAGS, ...FEET_TAGS])} layer, so there is no still region to read`);
+  const { all: allFeet, held: feet, declared } = plantedFeet(inp.parts, notPlanted);
+  if (face.length === 0 && allFeet.length === 0) return skip(`no part comes from a See-through ${tagWords([...FACE_TAGS, ...FEET_TAGS])} layer, so there is no still region to read`);
   if (geo === null) return skip(`${geometryPath} does not exist; \`rigc render --geometry\` (rig-c ${RIGC_GEOMETRY_VERSION} or later) writes it, and the still regions are read off it`);
   const H = inp.parts.rig_size[1];
   const W = inp.parts.rig_size[0];
@@ -2618,7 +2811,8 @@ export function stillLine(inp: FullInputs, idle: FrameSet, geo: IdleGeometry | n
   };
 
   const feetHalf = (): Record<string, unknown> | string => {
-    if (feet.length === 0) return `no part comes from a See-through ${tagWords(FEET_TAGS)} layer`;
+    if (allFeet.length === 0) return `no part comes from a See-through ${tagWords(FEET_TAGS)} layer`;
+    if (feet.length === 0) return noneHeldText(declared);
     const names = feet.map((p) => p.name);
     const h = half(names, firstOf(names), poses.map(() => null), 1, 0, regionOf(new Set(feet.map((p) => index.get(p.name) as number)), []));
     for (const o of h.over) {
@@ -2635,7 +2829,9 @@ export function stillLine(inp: FullInputs, idle: FrameSet, geo: IdleGeometry | n
   const t = feetHalf();
   if (typeof f === 'string' && typeof t === 'string') return skip(`face: ${f}; feet: ${t}`);
   const failed = problems.some((q) => q.code === 'CHECK_STILL_REGIONS_DARK');
-  return { status: failed ? 'FAIL' : 'PASS', face: typeof f === 'string' ? { unmeasured: f } : f, feet: typeof t === 'string' ? { unmeasured: t } : t };
+  // Issue #231: a declaration is the feet half's first figure, measured or not.
+  const said = declared.length === 0 ? {} : { declared_not_planted: declared };
+  return { status: failed ? 'FAIL' : 'PASS', face: typeof f === 'string' ? { unmeasured: f } : f, feet: typeof t === 'string' ? { ...said, unmeasured: t } : { ...said, ...t } };
 }
 
 function fmt3(x: number): string {
