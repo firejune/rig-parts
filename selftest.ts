@@ -2514,6 +2514,48 @@ function runCli(args: string[]): { status: number; out: string } {
   return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }
 
+/** What is wrong between one command's listed flags and the flags its parser accepts, one sentence per difference. */
+function listDrift(command: string, listed: readonly string[], accepted: readonly string[]): string[] {
+  return [
+    ...accepted.filter((f) => !listed.includes(f)).map((f) => `${command} accepts ${f} and its refusal does not list it`),
+    ...listed.filter((f) => !accepted.includes(f)).map((f) => `${command} lists ${f} and does not accept it`),
+    ...(new Set(listed).size === listed.length ? [] : [`${command} lists a flag twice`]),
+  ];
+}
+
+/**
+ * Every command `cli.ts` dispatches (comfy by the subcommands its own refusal names; `layers`, which takes a path
+ * and no flag, left out), each probed twice over: once with a flag no command takes, whose refusal is read for the
+ * flags it lists, and once with each flag `cli.ts` spells, given alone, where a refusal naming that flag as not
+ * taken means the parser does not accept it. A flag given alone stops at a usage error before any work.
+ */
+function usageDrift(run: (args: string[]) => { status: number; out: string }, surface: { commands: string[]; flags: string[] }): { rows: Array<{ command: string; listed: string[]; accepted: string[] }>; faults: string[]; candidates: number } {
+  const bogus = '--not-a-flag';
+  const faults: string[] = [];
+  const commands: string[][] = [];
+  for (const c of surface.commands) {
+    if (c === 'layers') continue;
+    if (c !== 'comfy') {
+      commands.push([c]);
+      continue;
+    }
+    const subs = /comfy takes ([a-z]+) or ([a-z]+);/.exec(run(['comfy']).out);
+    if (subs === null) faults.push('comfy with no subcommand does not name its subcommands');
+    else commands.push(['comfy', subs[1]], ['comfy', subs[2]]);
+  }
+  const rows = commands.map((cmd) => {
+    const command = cmd.join(' ');
+    const r = run([...cmd, bogus]);
+    const m = new RegExp(`^ {2}FAIL {2}USAGE: ${command} does not take "${bogus}"; it takes (.+)$`, 'm').exec(r.out);
+    if (r.status !== 2 || m === null) faults.push(`${command} ${bogus} -> exit ${r.status}, "${r.out.split('\n')[0].trim()}"; a refusal listing the flags it takes was required`);
+    const listed = m === null ? [] : m[1].split(', ');
+    const accepted = surface.flags.filter((f) => !run([...cmd, f]).out.includes(`does not take "${f}"`));
+    faults.push(...listDrift(command, listed, accepted));
+    return { command, listed, accepted };
+  });
+  return { rows, faults, candidates: surface.flags.length };
+}
+
 function runCliSuite(): number {
   section('cli: the command surface');
   const { say, bad } = counter();
@@ -2881,6 +2923,20 @@ function runCliSuite(): number {
       got.every((g) => g.runs.every((r) => r.status === 2 && r.line === g.want)) && !existsSync(join(dir, 'ik-usage-rig')) && !existsSync(join(dir, 'ik-usage-build')),
       got.map((g) => `${g.what}: rig exit ${g.runs[0].status} "${g.runs[0].line.trim()}", build exit ${g.runs[1].status} "${g.runs[1].line.trim()}"`).join('; '),
       'ruling 1 of issue #95: one parser for the value (idleKeysOf in src/rig.ts), so the two commands refuse the same input with the same line; the three plants are the three ways a valued flag is malformed',
+    );
+
+    // CL26: every command's unknown-flag refusal lists exactly the flags its parser accepts, both read off the CLI.
+    const usageReport = usageDrift((args) => runCli(args), cliSurface(readFileSync(join(ROOT, 'cli.ts'), 'utf8')));
+    const dropLast = (listed: readonly string[]): string[] => listed.slice(0, -1);
+    const planted = usageReport.rows.map((r) => listDrift(r.command, dropLast(r.listed), r.accepted));
+    const plantedAll = planted.length > 0 && planted.every((p) => p.length > 0);
+    say(
+      'CL26_EVERY_UNKNOWN_FLAG_REFUSAL_LISTS_EXACTLY_THE_FLAGS_ITS_PARSER_ACCEPTS',
+      usageReport.rows.length > 0 && usageReport.faults.length === 0 && plantedAll,
+      `${usageReport.rows.length} command(s) probed with each of the ${usageReport.candidates} flag(s) cli.ts spells: ${usageReport.faults.length === 0 ? usageReport.rows.map((r) => `${r.command} ${r.accepted.length}`).join(', ') : usageReport.faults.join('; ')}` +
+        `; layers takes one positional path and no flag, so it has no refusal to read` +
+        `; planted: the last listed flag dropped from each refusal -> ${planted.filter((p) => p.length > 0).length} of ${planted.length} caught (${planted[0]?.[0] ?? 'none'})`,
+      'an agent that guesses a flag learns the real ones from the refusal, so a refusal that leaves one out (loop omitted --palette; sheet, rig and assemble listed none) hides a flag the command takes; the accepted set is probed flag by flag, not read from the table the refusal prints',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

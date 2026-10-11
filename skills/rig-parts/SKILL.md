@@ -125,7 +125,7 @@ it and the order as `scene.json` records it (AUTHORING §7, *Composing several
 characters*).
 
 `--seam silhouette` repairs more of the seam on white garments than the default
-`near-white` (the demo: 11,050 → 9,540 recomposite error pixels); the default is
+`near-white` (the demo: 10,340 → 8,644 recomposite error pixels); the default is
 the reference implementation's rule. `--project visible` lets thin visible parts
 (lashes, brows, irises) take the painting's pixels, which the default `core` rule
 erodes away. Name both rules you used in your report, and quote the assemble
