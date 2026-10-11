@@ -8,7 +8,7 @@ a public checkpoint (Pony Diffusion V6 XL) and no LoRA; `config.json`'s `generat
 block is the whole record, and its `seed_note` says how seed 72004 was chosen from
 72001–72006. Its heavy inputs (the painting, the two images See-through was fed, and
 the `full` and `head` See-through layer sets) live in the
-[spine-parts-examples](https://github.com/firejune/spine-parts-examples) repository,
+[parts-examples](https://github.com/rig-c/parts-examples) repository,
 which also holds the licence; `bun run fetch-examples` copies them into `inputs/`
 here (gitignored).
 
