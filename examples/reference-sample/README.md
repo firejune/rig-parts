@@ -19,7 +19,8 @@ repository (as `reference-sample/`), which also holds the generation record and 
 `bun run fetch-examples` copies them into `inputs/` here (gitignored). What is
 tracked is the light half: `config.json` (the reference's config converted to
 this schema, `src/config.ts`), `proposal.json` (what the proposer wrote — the
-`propose` stage), and under `expected/` the reference implementation's outputs,
+`propose` stage — but for its first two notes, the head frame and pitch
+this port adds, issue #250), and under `expected/` the reference implementation's outputs,
 for the TypeScript stages to be compared against — `parts.json` (`assemble`;
 its `visible_px`, `occluded_px` and `visible_not_projected_px`, and its
 top-level `recomposite` block of uncovered holes, are this port's counts, which

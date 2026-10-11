@@ -341,7 +341,9 @@ import {
   type FacelessRatios,
   lint,
   lintLine,
-  type PartSet,
+  FRONTAL_REFERENCE,
+  headFrameNotes,
+  PartSet,
   type Placement,
   type Proposal,
   type ProposalBasis,
@@ -352,12 +354,13 @@ import {
   readPartSet,
   serializeProposal,
 } from './src/propose.ts';
+import { headFrame } from './src/headframe.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeypoints, parseKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
 import { LEGS_APART, LEGS_JOINED, LYING_PARTS, LYING_RIG, type PoseName, POSES, SEATED_PARTS, SEATED_RIG } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, constraintConfig, FACE_EXPECT, faceConfig, faceImages, faceParts, HEAT_STRIP_EXPECT, heatStripConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
-import { blinkHoldProblems, buildRig, DEFAULT_IDLE_KEYS, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigOutput, type RigSpec, roundShares, writtenShares } from './src/rig.ts';
+import { blinkHoldProblems, buildRig, DEFAULT_IDLE_KEYS, FACE_TIPS_AXIS_NAME, HEAD_UP_BONE, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigOutput, type RigSpec, roundShares, tipRoundingBound, writtenShares } from './src/rig.ts';
 import { type ComposedScene, composeFromFiles, IMAGE_SEP, PLATE, PLATE_IMAGE, PREFIX_SEP, SCENE_REPORT_FILE, SCENE_SPEC, scaledConstraint, unprefixedNames } from './src/scene.ts';
 import { sceneCharacterRig, sceneText, writeFlatPlate, writeSceneBuild } from './fixtures/scene.ts';
 import { localInfluences, regionWeight } from './src/localweights.ts';
@@ -4795,7 +4798,9 @@ function runFaceAxisCases(say: (name: string, ok: boolean, detail: string, why: 
   const flatBones = new Map(flat.bones.map((b) => [b.name, b]));
   const handFlat: Record<string, [number, number]> = { eye_r: [-12, 22], eye_l: [4, 34], brow_r: [-15, 28], brow_l: [1, 40], mouth: [2, 12] };
   const flatOk = Object.entries(handFlat).every(([n, [x, y]]) => flatBones.get(n)?.x === x && flatBones.get(n)?.y === y) && ['eyewhite_r', 'eyewhite_l', 'mouth'].every((p) => JSON.stringify(regionOf(flat, p)) === JSON.stringify({ image: `${p}.png`, x: 0, y: 0 }));
-  const gap = worldGaps(setupWorld(r.rig), setupWorld(flat), 1e-6);
+  // flattenRig drops head_up by name (issue #250: a slotless bone carrying only a direction, nothing hangs from it), so
+  // the built side is compared without it, by that name alone.
+  const gap = worldGaps(setupWorld({ ...r.rig, bones: r.rig.bones.filter((b) => b.name !== HEAD_UP_BONE) }), setupWorld(flat), 1e-6);
   const dir = temp('face-axis');
   try {
     const images = join(dir, 'images');
@@ -4959,6 +4964,81 @@ function runFaceAxisCases(say: (name: string, ok: boolean, detail: string, why: 
       oneEye.rig.invariants?.axes === undefined && oneEye.faceAxis.axis === null && skipLines.length === 1 && /^SKIP {2}A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS: the rig "[^"]+" declares no axes \(invariants\.axes\)$/.test(skipLines[0]),
       `one eyewhite: invariants ${JSON.stringify(oneEye.rig.invariants ?? null)}; rigc: ${skipLines.join(' | ') || 'no A51 line'}; ${faceAxisLine(oneEye.faceAxis).trim()}`,
       'issue #239: with no line the face bones keep the page\'s axes and there is nothing to hold them to; an entry written anyway would hold them to a line nobody derived, so none is written and rigc reports A51 as SKIP — never a pass',
+    );
+
+    // Issue #258: every face bone carries its own tip. On the fixture's eye line, (4, -3) as drawn (36.869898 degrees),
+    // four tips lie exactly along it, (8, -6) from their origins; mouth's is (7, -5), atan2(5, 7) = 35.537678 degrees,
+    // 1.332220 off, at sqrt(74) = 8.602 px, where whole-pixel rounding allows asin((sqrt(2)/2) / 8.602) = 4.715 degrees:
+    // all five are held. Planted: mouth's tip straight up, (0, -8), 90 - 36.869898 = 53.130102 degrees off, past the
+    // 5.07 degrees rounding allows at 8 px: not held, and the line says so by name.
+    const tipAll = (mouthTip: [number, number]): Record<string, unknown> => {
+      const c = faceConfig();
+      const tips: Record<string, [number, number]> = { eye_r: [28, 22], eye_l: [44, 10], brow_r: [25, 16], brow_l: [41, 4], mouth: mouthTip };
+      for (const b of c.bones as Array<{ name?: string; tip?: [number, number] }>) if (b.name !== undefined && b.name in tips) b.tip = tips[b.name];
+      return c;
+    };
+    const allTipped = buildRig(parseConfig(tipAll([41, 33])), faceParts(), faceImages());
+    const offTipped = buildRig(parseConfig(tipAll([34, 30])), faceParts(), faceImages());
+    const tipEntry = allTipped.rig.invariants?.axes ?? [];
+    const mouthGap = FACE_EXPECT.degrees - (Math.atan2(5, 7) * 180) / Math.PI;
+    const tipsGreen = a51(gate('tips', allTipped.rig, allTipped.motion));
+    const tipTurned = JSON.parse(JSON.stringify(allTipped.rig)) as RigSpec;
+    const eyeR = tipTurned.bones.find((b) => b.name === 'eye_r') as RigSpec['bones'][number];
+    eyeR.rotation = pyRound((eyeR.rotation ?? 0) + 5, 6);
+    const tipsOff = a51(gate('tips-off', tipTurned, allTipped.motion));
+    const offLineText = faceAxisLine(offTipped.faceAxis);
+    say(
+      'RG85_FACE_BONES_WITH_THEIR_OWN_TIPS_ON_THE_EYE_LINE_ARE_HELD_AND_A_TIP_OFF_IT_IS_NAMED',
+      allTipped.faceAxis.turned.length === 0 &&
+        allTipped.faceAxis.axis === null &&
+        tipEntry.length === 1 &&
+        tipEntry[0].name === FACE_TIPS_AXIS_NAME &&
+        JSON.stringify(tipEntry[0].through) === JSON.stringify(['eye_r', 'eye_l']) &&
+        JSON.stringify([...tipEntry[0].bones].sort()) === JSON.stringify([...FACE].sort()) &&
+        tipEntry[0].tolerance > mouthGap &&
+        tipEntry[0].tolerance < mouthGap + 3e-6 &&
+        Math.abs((tipRoundingBound(Math.sqrt(74)) as number) - 4.715) < 5e-4 &&
+        tipsGreen.length === 1 &&
+        tipsGreen[0] === 'PASS  A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS' &&
+        tipsOff.some((l) => l.startsWith(`FAIL  A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS: axis "${FACE_TIPS_AXIS_NAME}"`) && l.includes('bone "eye_r"')) &&
+        JSON.stringify(offTipped.rig.invariants?.axes?.[0]?.bones ?? []) === JSON.stringify(['eye_r', 'eye_l', 'brow_r', 'brow_l']) &&
+        offTipped.faceAxis.tipOff.length === 1 &&
+        offTipped.faceAxis.tipOff[0].startsWith("mouth's tip points 53.130102 degrees off the line through eye_r and eye_l") &&
+        offLineText.includes(offTipped.faceAxis.tipOff[0]),
+      `all five tipped: ${JSON.stringify(tipEntry)} (mouth by hand ${pyRound(mouthGap, 6)} off); rigc: ${tipsGreen.join(' | ') || 'no A51 line'}; planted, eye_r turned 5 degrees off its tip: ${tipsOff.join(' | ') || 'no A51 line'}; mouth's tip straight up: ${offLineText.trim()}`,
+      "issue #258: when every face bone carried its own tip (the 1.6.0 workaround) no axes entry was written and nothing said so — a green build with the face unguarded. A tip written in whole pixels can sit at most asin((sqrt(2)/2) / length) off the line it stands for, so a tip within that is held in an entry of its own with a measured tolerance, and one further off is the author's own axis, named with its gap and the bound",
+    );
+
+    // Issue #250: head_up. On the fixture head stands at (32, 50) and the eye midpoint at (28, 22); in Spine's axes
+    // the midpoint is (-4, 28) from head. The up axis is 36.869898 + 90 = 126.869898 degrees, unit (-0.6, 0.8), so the
+    // midpoint lies -4 * -0.6 + 28 * 0.8 = 24.8 px along it. head is unturned, so head_up's local rotation is its world
+    // one. Planted: head moved to (32, 10), above the eyes, (-4, -12) from head, 2.4 - 9.6 = -7.2 px of reach: no head_up, and the line says why; a config
+    // bone named head_up is refused by name.
+    const upOf = (rr: RigOutput): RigSpec['bones'][number] | undefined => rr.rig.bones.find((b) => b.name === HEAD_UP_BONE);
+    const headUp = upOf(r);
+    const headAbove = faceConfig();
+    (headAbove.bones as Array<{ name?: string; at?: [number, number] }>).find((b) => b.name === 'head')!.at = [32, 10];
+    const above = buildRig(parseConfig(headAbove), faceParts(), faceImages());
+    const named = faceConfig();
+    (named.bones as unknown[]).push({ name: HEAD_UP_BONE, parent: 'head', at: [32, 40] });
+    const clash = refusals(() => buildRig(parseConfig(named), faceParts(), faceImages()));
+    say(
+      'RG86_HEAD_UP_POINTS_ALONG_THE_FACES_UP_AXIS_AS_FAR_AS_THE_EYE_MIDPOINT_AND_HEAD_KEEPS_ITS_FRAME',
+      headUp !== undefined &&
+        headUp.parent === 'head' &&
+        headUp.x === 0 &&
+        headUp.y === 0 &&
+        Math.abs((headUp.rotation ?? 0) - (FACE_EXPECT.degrees + 90)) <= 1e-6 &&
+        headUp.length === 24.8 &&
+        r.rig.bones.find((b) => b.name === 'head')?.rotation === undefined &&
+        r.rig.bones[r.rig.bones.length - 1].name === HEAD_UP_BONE &&
+        !r.rig.slots.some((sl) => sl.bone === HEAD_UP_BONE) &&
+        upOf(above) === undefined &&
+        (above.faceAxis.headUpNone ?? '').includes('lies 7.2 px below head') &&
+        faceAxisLine(above.faceAxis).includes('no head_up:') &&
+        clash?.problems.some((q) => q.code === 'RIG_HEAD_UP_NAME_FREE') === true,
+      `head_up ${JSON.stringify(headUp ?? null)} (by hand rotation 126.869898, length 24.8); head ${JSON.stringify(r.rig.bones.find((b) => b.name === 'head'))}; head above the eyes: ${above.faceAxis.headUpNone ?? 'written'}; a config head_up: ${codes(clash)}`,
+      "issue #250: the face's frame rides a slotless bone under head, at head's origin, along the eye line + 90 and as long as the eye midpoint lies along it, so head keeps its frame and no key on or under it changes meaning; a head above the eyes has no length toward the crown and is said, not guessed",
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -6383,6 +6463,7 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
   runWristSnapCases(dir, SE, Pe, Je, se, say);
   runLegChainCases(dir, Pe, Je, se, say);
   runTrunkSegmentCases(dir, say);
+  runHeadFrameCases(say);
 }
 
 /**
@@ -6484,6 +6565,72 @@ function runTrunkSegmentCases(dir: string, say: (name: string, ok: boolean, deta
       !onePoint.notes.some((n) => n.startsWith('trunk segments (')),
     `without keypoints: ${segsOf(no, ['throat', 'coat', 'skirt'])}; standing with its joints: ${segsOf(st, ['skirt'])}; neck on the hips: ${segsOf(onePoint, ['throat', 'coat', 'skirt'])}, ${JSON.stringify(onePoint.notes.find((n) => n.startsWith('trunk segments')) ?? null)}`,
     'the default path is the old one byte for byte; the line generalises the vertical draft rather than replacing it, so an upright trunk writes what it wrote; and a line through one point has no direction, so nothing is invented for it',
+  );
+}
+
+/**
+ * Issue #250: the head's frame. The face fixture (fixtures/rig.ts): eye_r (20, 28) and eye_l (36, 16), (16, -12) as
+ * drawn, a 3-4-5 bar of 20 px at atan2(12, 16) = 36.869898 degrees, midpoint (28, 22); along the bar u = (0.8, -0.6),
+ * down the face n = (0.6, 0.8). The mouth is an 8x4 block at (30, 36): its blob centroid in index coordinates is
+ * (33.5, 37.5), (5.5, 15.5) off the midpoint, so down = (5.5 * 0.6 + 15.5 * 0.8) / 20 = 0.785. There is no nose part.
+ */
+function runHeadFrameCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const cfgOf = (moveEyeL?: [number, number]): Record<string, unknown> => {
+    const c = faceConfig();
+    if (moveEyeL !== undefined) (c.bones as Array<{ name?: string; at?: [number, number] }>).find((b) => b.name === 'eye_l')!.at = moveEyeL;
+    return c;
+  };
+  const P = new PartSet(faceParts(), faceImages());
+  const notes = headFrameNotes(P, parseConfig(cfgOf()).bones);
+  const rig = buildRig(parseConfig(cfgOf()), faceParts(), faceImages());
+  const roll = /roll (-?[0-9.]+) degrees/.exec(notes[0] ?? '')?.[1];
+  const wantBar =
+    "head frame: the bar runs through eye_r [20.0, 28.0] and eye_l [36.0, 16.0], the eye bones' origins, 20.000 px; roll 36.870 degrees (Spine's, counter-clockwise) — the line the rig turns the face bones to and declares as invariants.axes; eye midpoint [28.0, 22.0]";
+  const wantPitch = `head pitch: the nose sits — (not read: no part tagged nose) of the way from the eye midpoint to the mouth (frontal 0.474..0.630); the stem, eye midpoint -> mouth, is 0.785 of the bar (frontal 0.510..0.675); frontal ranges read on ${FRONTAL_REFERENCE.faces.join(', ')}; the turn is not reported (src/propose.ts FRONTAL_REFERENCE says why)`;
+  // Planted: eye_l's bone moved onto eye_r's row, its part left where it is. The frame follows the bones the rig turns
+  // the face to, not the parts, so the roll reads 0 — as the rig's line does.
+  const level = headFrameNotes(P, parseConfig(cfgOf([36, 28])).bones);
+  const levelRig = buildRig(parseConfig(cfgOf([36, 28])), faceParts(), faceImages());
+  const hf = headFrame([[20, 28], [36, 16]], 64, { nose: { missing: 'none' }, mouth: { part: 'mouth', at: [33.5, 37.5] } }, [], { missing: 'none' });
+  say(
+    'PR88_THE_HEAD_FRAMES_ROLL_IS_THE_LINE_THE_RIG_TURNS_THE_FACE_BONES_TO_AND_A_MISSING_NOSE_IS_NAMED',
+    notes.length === 2 &&
+      notes[0] === wantBar &&
+      notes[1] === wantPitch &&
+      hf.roll === rig.faceAxis.degrees &&
+      pyRound(hf.roll, 6) === FACE_EXPECT.degrees &&
+      level[0].includes('roll 0.000 degrees') &&
+      levelRig.faceAxis.degrees === 0 &&
+      refusals(() => headFrameNotes(P, parseConfig(cfgOf()).bones)) === null,
+    `notes ${JSON.stringify(notes)}; headFrame's roll ${hf.roll}, the rig's face axis ${rig.faceAxis.degrees}; planted, eye_l's bone on eye_r's row: ${JSON.stringify(/roll [^ ]+ degrees/.exec(level[0])?.[0] ?? null)}, the rig's ${levelRig.faceAxis.degrees} (roll read ${roll ?? 'none'})`,
+    "issue #250: the roll has one derivation — the line through the eye bones' origins as written, the line the rig turns the five face bones to and declares for rigc's A51 — so the frame propose notes cannot disagree with the rig; a feature with no part is named, never estimated",
+  );
+
+  // Level eyes (10, 20) and (30, 20) on a 64 px canvas: bar 20, u = (1, 0), n = (0, 1), midpoint (20, 20). A nose at
+  // (24, 28) is 4 px across and 8 px down: side 0.2, down 0.4, skew atan2(0.2, 0.4) = 26.565051 degrees. The image-left
+  // eyewhite is 4 px wide (pixel centres 8.5..11.5, 3 px), the image-right 6 px (27.5..32.5, 5 px): 3 / 5 = 0.6. The
+  // face row runs x 5..39 (centres 5.5..39.5): 14.5 left of the midpoint, 19.5 right, 14.5 / 19.5 = 0.743590.
+  const rect = (x0: number, x1: number, y: number): ReturnType<typeof newMask> => {
+    const m = newMask(64, 64);
+    for (let x = x0; x <= x1; x++) m.data[y * 64 + x] = 1;
+    return m;
+  };
+  const read = (nose: [number, number], eyes: [[number, number], [number, number]]): ReturnType<typeof headFrame> =>
+    headFrame(eyes, 64, { nose: { part: 'nose', at: nose }, mouth: { missing: 'no part tagged mouth' } }, [
+      { part: 'ew_l', mask: rect(8, 11, 20), eye: [10, 20] },
+      { part: 'ew_r', mask: rect(27, 32, 20), eye: [30, 20] },
+    ], { part: 'face', mask: rect(5, 39, 20) });
+  const off = read([24, 28], [[10, 20], [30, 20]]);
+  const swapped = read([24, 28], [[30, 20], [10, 20]]);
+  const onStem = read([20, 28], [[10, 20], [30, 20]]);
+  const fig = (h: ReturnType<typeof headFrame>): string =>
+    `nose ${'missing' in h.nose ? h.nose.missing : `${pyRound(h.nose.side, 6)}/${pyRound(h.nose.down, 6)}/${pyRound(h.nose.skew, 6)}`}; mouth ${'missing' in h.mouth ? h.mouth.missing : 'read'}; eyewhites ${'missing' in h.eyeWidths ? h.eyeWidths.missing : pyRound(h.eyeWidths.ratio, 6)}; face ${'missing' in h.faceHalves ? h.faceHalves.missing : pyRound(h.faceHalves.ratio, 6)}; nose along ${h.noseAlongStem}`;
+  const want = 'nose 0.2/0.4/26.565051; mouth no part tagged mouth; eyewhites 0.6; face 0.74359; nose along null';
+  say(
+    'PR89_THE_TURN_FIGURES_READ_A_SYNTHETIC_OFFSET_STEM_BY_HAND_AND_A_STEM_ON_THE_PERPENDICULAR_READS_0',
+    fig(off) === want && fig(swapped) === want && off.roll === 0 && 'side' in onStem.nose && onStem.nose.side === 0 && onStem.nose.skew === 0,
+    `offset: ${fig(off)}; eyes handed right first: ${fig(swapped)}; nose on the perpendicular: ${fig(onStem)}`,
+    "issue #250's T construction: the stem's skew off the bar's perpendicular, the eyewhites' widths and the face's halves along the bar; computed and controlled here, written by propose only once a three-quarter face reads it in order (FRONTAL_REFERENCE)",
   );
 }
 
@@ -11469,6 +11616,17 @@ function runChainSuite(): number | null {
             if (miss > 1e-5) offAim.push(`${m} turned ${pyRound(turnOf.get(m) ?? 0, 6)} (the eye line: ${pyRound(eyeDeg, 6)})`);
           }
         }
+      }
+      // Issue #250: head_up, under head, points along the eye line + 90 and is as long as the eye midpoint lies from
+      // head's origin along that axis, read off the config's head, eye_r and eye_l.
+      const headAt = exCfg.bones.find((e) => e.name === 'head')?.at;
+      if (eyeDeg !== null && headAt !== undefined) {
+        const up = byBuilt.get(HEAD_UP_BONE);
+        links.add(HEAD_UP_BONE);
+        const a = ((eyeDeg + 90) * Math.PI) / 180;
+        const reach = ((eyeA[0] + eyeB[0]) / 2 - headAt[0]) * Math.cos(a) + (cropToSpineY((eyeA[1] + eyeB[1]) / 2, rigH) - cropToSpineY(headAt[1], rigH)) * Math.sin(a);
+        const miss = Math.abs(wrapDegrees((turnOf.get(HEAD_UP_BONE) ?? 0) - (eyeDeg + 90)));
+        if (up === undefined || up.parent !== 'head' || miss > 1e-5 || up.length !== pyRound(reach, 3)) offAim.push(`${HEAD_UP_BONE} ${up === undefined ? 'absent' : `turned ${pyRound(turnOf.get(HEAD_UP_BONE) ?? 0, 6)} length ${up.length}`} (the eye line + 90: ${pyRound(eyeDeg + 90, 6)}, ${pyRound(reach, 3)})`);
       }
       const turnedOthers = builtRig.bones.filter((b) => !links.has(b.name) && turnOf.get(b.name) !== 0).map((b) => `${b.name} ${turnOf.get(b.name)}`);
       say(
