@@ -83,7 +83,10 @@
  * ankle of a leg whose hip, knee and ankle are given is meshed on a leg chain
  * (hip -> knee, tip at the ankle; one per leg, or one through the midpoints
  * when the part's art does not separate the legs — {@link legsFromJoints}),
- * where without them it rides `hip` as a region.
+ * where without them it rides `hip` as a region. And with a joint at either
+ * end of the trunk (issue #243), the trunk parts' fixed segments run along
+ * neck -> hip, the line the chest is placed on, instead of down the screen
+ * ({@link trunkLineOf}).
  *
  * Issue #86 adds what the proposer and lint looked at, and changes nothing
  * they wrote: {@link proposeWithBasis} records, at each placement, what the
@@ -1001,6 +1004,13 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
   // down the screen, because the torso need not be upright.
   const chestAlong = neckJ !== null || hipFromJoints;
   const chest: [number, number] = chestAlong ? [(neckAt[0] + hip[0]) / 2, (neckAt[1] + hip[1]) / 2] : [hip[0], neckY + 0.5 * (hip[1] - neckY)];
+  // Issue #243: on that same line, neck -> hip, the trunk parts' fixed segments are laid too (neck, topwear,
+  // bottomwear; {@link trunkSegments}), not down the screen through the bones' x. Without a joint at either end,
+  // today's verticals; with the two ends on one point the line has no direction, and a note says the verticals stay.
+  const trunk = chestAlong ? trunkLineOf(neckAt, hip) : null;
+  if (chestAlong && trunk === null) {
+    notes.push(`trunk segments: neck and hip are one point, ${fmtAt(hip)}, so neck -> hip declares no line; the trunk parts' segments are drafted down the screen, as without keypoints`);
+  }
   // Each placement hands its basis with its value: one record per bone, in the order the bones are written.
   const B = (name: string, parent: string, at: readonly [number, number], why: Placement, tip?: readonly [number, number], tipWhy?: Placement): void => {
     bones.push(tip === undefined ? { name, parent, at: rnd(at) } : { name, parent, at: rnd(at), tip: rnd(tip) });
@@ -1433,7 +1443,7 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
       grid: g,
       r,
       segments: [
-        ['chest', rnd([axis, neckY + 18]), rnd([axis, chest[1]])],
+        trunk === null ? ['chest', rnd([axis, neckY + 18]), rnd([axis, chest[1]])] : ['chest', rnd(along(neckAt, trunk.u, 18)), rnd(chest)],
         ['head', rnd(head), rnd([axis, head[1] - 50])],
       ],
     };
@@ -1579,10 +1589,17 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
     const mask = P.alpha(p);
     const top = chest[1] - 0.3 * fh;
     const bot = p.y + p.h;
-    const segs: Segment[] = [
-      ['chest', rnd([chest[0], p.y]), rnd([chest[0], hip[1] - 20])],
-      ['hip', rnd([chest[0], hip[1] - 20]), rnd([chest[0], hip[1] + 100])],
-    ];
+    const segs: Segment[] =
+      trunk === null
+        ? [
+            ['chest', rnd([chest[0], p.y]), rnd([chest[0], hip[1] - 20])],
+            ['hip', rnd([chest[0], hip[1] - 20]), rnd([chest[0], hip[1] + 100])],
+          ]
+        : [
+            // The part's top read along the trunk: the nearest its art comes to the neck end of the line.
+            ['chest', rnd(along(hip, trunk.u, artExtent(mask, p, hip, trunk.u)[0])), rnd(along(hip, trunk.u, -20))],
+            ['hip', rnd(along(hip, trunk.u, -20)), rnd(along(hip, trunk.u, 100))],
+          ];
     if (bw.length > 0 && bot < hip[1] + 0.25 * fh) {
       // A bodice that stops at the waist: robe chains down to the hem would fall off the art.
       meshes[p.name] = { grid: g, r, segments: segs };
@@ -1636,10 +1653,19 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
     const mask = P.alpha(p);
     const bot = p.y + p.h;
     const y0 = hip[1] + 20;
-    const segs: Segment[] = [
+    let segs: Segment[] = [
       ['chest', rnd([chest[0], chest[1] - 30]), rnd([chest[0], hip[1] - 20])],
       ['hip', rnd([p.x + 0.09 * p.w, hip[1] + 5]), rnd([p.x + 0.91 * p.w, hip[1] + 5])],
     ];
+    if (trunk !== null) {
+      // The waist line runs across the trunk, 5 px down it from the hip, over 0.09 to 0.91 of the art's width across it.
+      const [s0, s1] = artExtent(mask, p, hip, trunk.v);
+      const waist = along(hip, trunk.u, 5);
+      segs = [
+        ['chest', rnd(along(chest, trunk.u, -30)), rnd(along(hip, trunk.u, -20))],
+        ['hip', rnd(along(waist, trunk.v, s0 + 0.09 * (s1 - s0))), rnd(along(waist, trunk.v, s0 + 0.91 * (s1 - s0)))],
+      ];
+    }
     for (const [tag, f, ph] of [
       ['skirt_r', 0.3, 0.3],
       ['skirt_c', 0.5, 0.34],
@@ -1712,6 +1738,14 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
       } else notes.push(`${p.name} (${p.from}): no rule -> region on ${regions[p.name]}`);
     }
   }
+  if (trunk !== null) {
+    const laid = [...P.headFirst('neck'), ...tw, ...bw].map((p) => p.name);
+    if (laid.length > 0) {
+      notes.push(
+        `trunk segments (${laid.join(', ')}): laid along neck -> hip, the line the chest was placed on (${pyFixed((Math.atan2(trunk.u[0], trunk.u[1]) * 180) / Math.PI, 1)} degrees off the screen's downward vertical, positive towards +x): each [bone, from, to] segment the rule drafts down the screen runs along that line instead, and the waist segment across it`,
+      );
+    }
+  }
   if (joints !== undefined) {
     notes.push(
       ...jointNotes(joints, {
@@ -1736,6 +1770,55 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
 // ---------------------------------------------------------------------------
 // external keypoints (issue #75)
 // ---------------------------------------------------------------------------
+
+/**
+ * The trunk's line (issue #243), from the neck bone's origin to the hip's, when a joint placed either end: `u` is
+ * its unit direction, down the trunk, and `v` the unit across it, `u` turned a quarter (`[u_y, -u_x]`). An upright
+ * trunk's `u` is `[0, 1]` and its `v` `[1, 0]`, the screen's y and x, which is what the vertical drafts read: each
+ * trunk segment is that draft with "down the screen" read as "along `u`" and "across the screen" as "along `v`".
+ * `null` when the two ends are one point: a line through one point has no direction.
+ */
+interface TrunkLine {
+  u: [number, number];
+  v: [number, number];
+}
+
+function trunkLineOf(neck: readonly [number, number], hip: readonly [number, number]): TrunkLine | null {
+  const dx = hip[0] - neck[0];
+  const dy = hip[1] - neck[1];
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return null;
+  const u: [number, number] = [dx / len, dy / len];
+  return { u, v: [u[1], -u[0]] };
+}
+
+/** The point `k` px from `p` along the unit direction `d`. */
+function along(p: readonly [number, number], d: readonly [number, number], k: number): [number, number] {
+  return [p[0] + k * d[0], p[1] + k * d[1]];
+}
+
+/**
+ * The extent of a part's art along the unit direction `d`, measured from `o`: the least and the greatest
+ * projection onto `d` of its opaque pixels, each taken as the unit square it covers. An axis-aligned box tight on
+ * its art therefore projects onto `[1, 0]` as its own left and right edges and onto `[0, 1]` as its top and bottom,
+ * the values the vertical drafts read off the box. A part with no opaque pixel is read as its box.
+ */
+function artExtent(mask: Mask, p: PartRecord, o: readonly [number, number], d: readonly [number, number]): [number, number] {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let y = Math.max(0, p.y); y < Math.min(mask.height, p.y + p.h); y++) {
+    for (let x = Math.max(0, p.x); x < Math.min(mask.width, p.x + p.w); x++) {
+      if (mask.data[y * mask.width + x] !== 1) continue;
+      const t = (x - o[0]) * d[0] + (y - o[1]) * d[1];
+      if (t < lo) lo = t;
+      if (t > hi) hi = t;
+    }
+  }
+  const w = lo === Infinity ? p.w : 1;
+  const h = lo === Infinity ? p.h : 1;
+  if (lo === Infinity) lo = hi = (p.x - o[0]) * d[0] + (p.y - o[1]) * d[1];
+  return [lo + Math.min(0, d[0]) * w + Math.min(0, d[1]) * h, hi + Math.max(0, d[0]) * w + Math.max(0, d[1]) * h];
+}
 
 /**
  * How far a wrist joint may lie from a handwear part's art and still be on

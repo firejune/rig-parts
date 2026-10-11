@@ -6314,6 +6314,109 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
 
   runWristSnapCases(dir, SE, Pe, Je, se, say);
   runLegChainCases(dir, Pe, Je, se, say);
+  runTrunkSegmentCases(dir, say);
+}
+
+/**
+ * Issue #243: with the trunk joints, the trunk parts' [bone, from, to] segments run along neck -> hip, the line the
+ * chest is placed on, instead of down the screen. The leaning figure (fixtures/poses.ts): neck (70, 70), the hips'
+ * midpoint (130, 150), so the line's direction is (60, 80), unit u = (0.6, 0.8), atan(3/4) = 36.87 degrees off the
+ * screen's vertical; across it v = (0.8, -0.6); the chest half way, (100, 110).
+ *
+ * Hand-derived, along the line: throat's chest segment from neck + 18u = (80.8, 84.4) -> (81, 84) to the chest
+ * (100, 110); coat's chest segment from the coat's least extent along u — its corner (43, 52), (43 - 130) * 0.6 +
+ * (52 - 150) * 0.8 = -130.6 from the hip, hip - 130.6u = (51.64, 45.52) -> (52, 46) — to hip - 20u = (118, 134), and its
+ * hip segment from there to hip + 100u = (190, 230); skirt's chest segment from chest - 30u = (82, 86) to (118, 134).
+ * The waist runs across, through hip + 5u = (133, 154), over 0.09..0.91 of the skirt's extent along v: every band's
+ * bottom-left corner projects to -19.6 and top-right to +19.6 (each band is 9 px right and 12 px down of the last,
+ * 9 * 0.8 - 12 * 0.6 = 0), so -16.072 and +16.072: (120.14, 163.64) -> (120, 164) and (145.86, 144.36) -> (146, 144).
+ *
+ * The tolerance: the shortest of these segments is the throat's, |chest - neck| - 18 = 50 - 18 = 32 px, and each end
+ * is rounded by at most sqrt(0.5) px, so its direction is off by at most atan(2 * 0.7071 / 32) = 2.53 degrees; the bar
+ * is 3. The draft before this card, on the same bones (the planted input): every segment down the screen — throat
+ * [65, 88] -> [65, 110] on the eye axis, coat [100, 52] -> [100, 130] -> [100, 250] on the chest's x from its top row,
+ * skirt [100, 80] -> [100, 130] — and the waist along the screen's x, [114, 155] -> [206, 155] (104 + 0.09 * 112 and
+ * 104 + 0.91 * 112, rounded); each 36.87 degrees off its line.
+ */
+function runTrunkSegmentCases(dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const LE = poseDir(dir, 'leaning');
+  const Pl = readPartSet(LE);
+  const Jl = poseJoints('leaning');
+  const kp = propose(Pl, Jl);
+  type Seg = [string, [number, number], [number, number]];
+  const fixed = (p: Proposal, mesh: string, bone: string): Seg[] => (p.meshes[mesh]?.segments ?? []).filter((q): q is Seg => typeof q !== 'string' && q[0] === bone);
+  // Degrees between the segment's direction and a unit direction.
+  const off = (q: Seg, d: readonly [number, number]): number => {
+    const dx = q[2][0] - q[1][0];
+    const dy = q[2][1] - q[1][1];
+    return (Math.acos(Math.max(-1, Math.min(1, (dx * d[0] + dy * d[1]) / Math.hypot(dx, dy)))) * 180) / Math.PI;
+  };
+  const U: [number, number] = [0.6, 0.8];
+  const V: [number, number] = [0.8, -0.6];
+  const BAR = 3;
+  const read = (p: Proposal): Array<{ what: string; seg: Seg | undefined; d: [number, number] }> => [
+    { what: 'throat chest', seg: fixed(p, 'throat', 'chest')[0], d: U },
+    { what: 'coat chest', seg: fixed(p, 'coat', 'chest')[0], d: U },
+    { what: 'coat hip', seg: fixed(p, 'coat', 'hip')[0], d: U },
+    { what: 'skirt chest', seg: fixed(p, 'skirt', 'chest')[0], d: U },
+    { what: 'skirt waist', seg: fixed(p, 'skirt', 'hip')[0], d: V },
+  ];
+  const within = (p: Proposal): boolean => read(p).every((r) => r.seg !== undefined && off(r.seg, r.d) <= BAR);
+  const shown = (p: Proposal): string => read(p).map((r) => `${r.what} ${JSON.stringify(r.seg ?? null)} ${r.seg === undefined ? '-' : off(r.seg, r.d).toFixed(2)} deg`).join('; ');
+  const want = '[81,84],[100,110] [52,46],[118,134] [118,134],[190,230] [82,86],[118,134] [120,164],[146,144]';
+  const got = read(kp).map((r) => (r.seg === undefined ? 'none' : `${JSON.stringify(r.seg[1])},${JSON.stringify(r.seg[2])}`)).join(' ');
+  // The planted input: the same bones, the segments as the draft before this card wrote them.
+  const old: Proposal = {
+    ...kp,
+    meshes: {
+      ...kp.meshes,
+      throat: { ...kp.meshes.throat, segments: [['chest', [65, 88], [65, 110]], ...(kp.meshes.throat?.segments ?? []).slice(1)] },
+      coat: { ...kp.meshes.coat, segments: [['chest', [100, 52], [100, 130]], ['hip', [100, 130], [100, 250]]] },
+      skirt: { ...kp.meshes.skirt, segments: [['chest', [100, 80], [100, 130]], ['hip', [114, 155], [206, 155]], ...(kp.meshes.skirt?.segments ?? []).slice(2)] },
+    },
+  };
+  const note = kp.notes.find((n) => n.startsWith('trunk segments ('));
+  say(
+    'PR86_WITH_THE_TRUNK_JOINTS_THE_TRUNK_SEGMENTS_RUN_ALONG_NECK_TO_HIP_AND_THE_WAIST_ACROSS_IT',
+    got === want &&
+      within(kp) &&
+      !within(old) &&
+      read(old).every((r) => r.seg !== undefined && off(r.seg, r.d) > 36) &&
+      note === "trunk segments (throat, coat, skirt): laid along neck -> hip, the line the chest was placed on (36.9 degrees off the screen's downward vertical, positive towards +x): each [bone, from, to] segment the rule drafts down the screen runs along that line instead, and the waist segment across it" &&
+      refusals(() => checkProposal(Pl, kp)) === null,
+    `with the joints: ${shown(kp)}; the planted draft before this card: ${shown(old)}; bar ${BAR} deg; note ${JSON.stringify(note ?? null)}; loads: ${codes(refusals(() => checkProposal(Pl, kp)))}`,
+    'issue #243: the weights are measured from these segments, so on a leaning or lying trunk a segment down the screen weights the page, not the body; with the joints the bones already run along neck -> hip, and the segments now run where the bones do',
+  );
+
+  // Without keypoints the rule places the trunk (neck part: half way from the chin 58 to the throat's bottom 82 -> y 70 on
+  // the eye axis 65; hip: the skirt's top 136 + 0.14 * 50 = 143 at its box's centre x 160; chest (160, 106.5)) and the
+  // segments are today's verticals: throat [65, 88] -> [65, 106] (106.5 rounds to even), coat [160, 52] -> [160, 123] ->
+  // [160, 243], skirt [160, 76] -> [160, 123] (76.5 to even) and the waist [114, 148] -> [206, 148]. On the standing figure
+  // with its joints the line is upright, (100, 98) -> (100, 160), and the boxes are tight on the art, so the line's draft
+  // is the screen's to the byte: skirt [100, 99] -> [100, 140] (chest 129 - 30, hip 160 - 20) and the waist [67, 165] ->
+  // [133, 165] (60 + 0.09 * 80 = 67.2, 60 + 0.91 * 80 = 132.8). A neck joint on the hips' midpoint declares no line: the
+  // screen's draft runs, and the note says why.
+  const no = propose(Pl);
+  const segsOf = (p: Proposal, ms: readonly string[]): string => ms.map((m) => JSON.stringify((p.meshes[m]?.segments ?? []).filter((q) => typeof q !== 'string'))).join(' ');
+  const noWant = '[["chest",[65,88],[65,106]],["head",[65,52],[65,2]]] [["chest",[160,52],[160,123]],["hip",[160,123],[160,243]]] [["chest",[160,76],[160,123]],["hip",[114,148],[206,148]]]';
+  const Ps = readPartSet(poseDir(dir, 'standing'));
+  const st = propose(Ps, poseJoints('standing'));
+  const stWant = '[["chest",[100,99],[100,140]],["hip",[67,165],[133,165]]]';
+  const onePoint = propose(Pl, poseJoints('leaning', (k) => (k.people[0].joints.neck = { state: 'observed', at: [130, 150] })));
+  const oneWant = '[["chest",[65,168],[65,150]],["head",[65,52],[65,2]]] [["chest",[130,52],[130,130]],["hip",[130,130],[130,250]]] [["chest",[130,120],[130,130]],["hip",[114,155],[206,155]]]';
+  const oneNote = "trunk segments: neck and hip are one point, [130.0, 150.0], so neck -> hip declares no line; the trunk parts' segments are drafted down the screen, as without keypoints";
+  say(
+    'PR87_WITHOUT_A_TRUNK_LINE_THE_SEGMENTS_ARE_TODAYS_AND_AN_UPRIGHT_LINE_DRAFTS_THE_SAME_BYTES',
+    segsOf(no, ['throat', 'coat', 'skirt']) === noWant &&
+      !no.notes.some((n) => n.startsWith('trunk segments')) &&
+      serializeProposal(no) === serializeProposal(propose(Pl, undefined)) &&
+      segsOf(st, ['skirt']) === stWant &&
+      segsOf(onePoint, ['throat', 'coat', 'skirt']) === oneWant &&
+      onePoint.notes.includes(oneNote) &&
+      !onePoint.notes.some((n) => n.startsWith('trunk segments (')),
+    `without keypoints: ${segsOf(no, ['throat', 'coat', 'skirt'])}; standing with its joints: ${segsOf(st, ['skirt'])}; neck on the hips: ${segsOf(onePoint, ['throat', 'coat', 'skirt'])}, ${JSON.stringify(onePoint.notes.find((n) => n.startsWith('trunk segments')) ?? null)}`,
+    'the default path is the old one byte for byte; the line generalises the vertical draft rather than replacing it, so an upright trunk writes what it wrote; and a line through one point has no direction, so nothing is invented for it',
+  );
 }
 
 /**
