@@ -99,6 +99,13 @@ import {
   STRIP_EXPECTED,
   STRIP_FULL,
   STRIP_PLAN,
+  BAND_FULL_LAYERS,
+  BAND_PX,
+  HEADWEAR_BODY,
+  TAIL_BODY,
+  TAIL_FULL_LAYERS,
+  TAIL_HEAD_LAYERS,
+  TAIL_UNCOVERED_ERROR_PX,
   writeAssembleFixture,
   writeRun,
 } from './fixtures/assemble_fixture.ts';
@@ -146,6 +153,7 @@ import {
   cutBand,
   pixelsInPolygon,
   stageFields,
+  uncoveredLine,
   visibilityCounts,
 } from './src/assemble.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
@@ -186,7 +194,7 @@ import { COMPOSED_HAND_X, COMPOSED_SHOULDER, writeComposedRig, DRIVER_AT, DRIVER
 import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { ALIASES, AliasTarballError, compareTarballs, MANIFEST as ALIAS_MANIFEST, packAlias, packInto, renamed } from './scripts/alias_tarball.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionKey, type MotionSpec, sineTrack } from './src/motion.ts';
-import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Cut, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
@@ -12268,6 +12276,54 @@ function runAssembleSuite(): number {
       rr.status === 1 && /^ {2}FAIL {2}ASSEMBLE_PART_OPAQUE: part "neck"/m.test(rr.out) && !existsSync(refusedOut),
       `exit ${rr.status}, "${rr.out.split('\n')[0].trim()}"; ${existsSync(refusedOut) ? `wrote ${filesUnder(refusedOut).join(', ')}` : 'the out directory was never created'}`,
       'emit only after green: a wrong file on disk outlives the console that warned about it',
+    );
+
+    // Issue #233: a full-run body no planned part covers is named, by the proposer and by the assemble summary
+    // (fixtures/assemble_fixture.ts, "The uncovered-body twins", derives every figure below).
+    const tailDir = join(dir, 'tail');
+    writeAssembleFixture(tailDir, assembleConfig({ plan: EXPECTED_PROPOSAL.plan, extend: EXPECTED_PROPOSAL.extend_below_crop }), flatPainting(), { full: TAIL_FULL_LAYERS, head: TAIL_HEAD_LAYERS });
+    const tailBase = fixtureInput(tailDir);
+    const g0 = { sourceW: SOURCE_SIDE, sourceH: SOURCE_SIDE, resolution: RESOLUTION, headBox: HEAD_BOX, rigScale: RIG_SCALE };
+    const tailProp = proposePlan(tailBase.full, tailBase.head, g0);
+    const tb = TAIL_BODY;
+    const tailNote =
+      `back hair: the full run's layer holds a body of ${tb.px} rig px at ${tb.x},${tb.y} ${tb.w}x${tb.h} that no planned part covers (a body: at least 150 rig px past a 5x5 opening); ` +
+      'hair_back takes the head run\'s "back hair"; extend_below_crop continues a head-run part only from the columns where it reaches the head crop\'s bottom line (alpha above 128 on rig row 26), and hair_back reaches it nowhere ' +
+      '-> take hair_back from the full run (["hair_back", "full", "back hair"]), or add the full-run layer as a second part drawn just behind hair_back';
+    const tailWant = { ...EXPECTED_PROPOSAL, notes: [...EXPECTED_PROPOSAL.notes, tailNote] };
+    say(
+      'AS58_PROPOSE_PLAN_NAMES_A_FULL_RUN_BODY_THE_HEAD_RUN_PART_DOES_NOT_REACH',
+      JSON.stringify(tailProp) === JSON.stringify(tailWant),
+      `a head-run bob that stops above the crop line and a full-run tail beside it -> notes: ${tailProp.notes.join(' | ')}`,
+      'the plan is printed before anything is assembled; a tail extend_below_crop cannot reach is lost whole, and notes: [] told the author nothing — the note names the layer, the body, the rule that skipped it and the continuation',
+    );
+
+    const bandDir = join(dir, 'band');
+    writeAssembleFixture(bandDir, assembleConfig(), flatPainting(), { full: BAND_FULL_LAYERS, head: HEAD_LAYERS });
+    const bandBase = fixtureInput(bandDir);
+    const bandProp = proposePlan(bandBase.full, bandBase.head, g0);
+    const baseProp = proposePlan(base.full, base.head, g0);
+    const quietNotes = (p: { notes: string[] }): boolean => p.notes.every((n) => !n.includes('no planned part covers'));
+    say(
+      'AS59_HAIR_CONTINUED_BELOW_THE_CROP_AND_A_SEAM_BAND_ARE_NOT_UNCOVERED_BODIES',
+      JSON.stringify(baseProp) === JSON.stringify(EXPECTED_PROPOSAL) && JSON.stringify(bandProp) === JSON.stringify(EXPECTED_PROPOSAL) && quietNotes(baseProp) && quietNotes(bandProp),
+      `hair reaching the crop line, continued: notes ${JSON.stringify(baseProp.notes)}; the same hair grown by a ${BAND_PX}-px band (over the 150 bar, no 5x5 square inside): notes ${JSON.stringify(bandProp.notes)}`,
+      'extend_below_crop covers a lock that reaches the crop line, as today, so nothing is said; and the two runs\' silhouettes of one layer differ by a few pixels all round, a long band that is no hair — the opening is what keeps the note off every outline',
+    );
+
+    const tailRun = assemble({ ...tailBase, seamRule: 'near-white' });
+    const tailLines = tailRun.uncovered.map(uncoveredLine);
+    const tailLine =
+      `uncovered: ${tb.px} of the ${TAIL_UNCOVERED_ERROR_PX} uncovered error px lie on the full run's "back hair", in a body of ${tb.px} px at ${tb.x},${tb.y} ${tb.w}x${tb.h}; ` +
+      'hair_back takes the head run\'s "back hair"; extend_below_crop continues a head-run part only from the columns where it reaches the head crop\'s bottom line (alpha above 128 on rig row 26), and hair_back reaches it nowhere';
+    const hb = HEADWEAR_BODY;
+    const headwearLine = `uncovered: ${hb.px} of the 2611 uncovered error px lie on the full run's "headwear", in a body of ${hb.px} px at ${hb.x},${hb.y} ${hb.w}x${hb.h}; the plan takes no part from "headwear"`;
+    const proposedRun = assemble({ ...base, plan: EXPECTED_PROPOSAL.plan as PlanEntry[], extend: EXPECTED_PROPOSAL.extend_below_crop as Extend[], seamRule: 'near-white' });
+    say(
+      'AS60_THE_ASSEMBLE_SUMMARY_NAMES_THE_FULL_RUN_LAYER_ITS_UNCOVERED_ERROR_LIES_ON',
+      tailRun.figures.uncoveredErrorPx === TAIL_UNCOVERED_ERROR_PX && tailLines.length === 1 && tailLines[0] === tailLine && r1.out.includes(`\n${headwearLine}\n`) && result.uncovered.length === 1 && proposedRun.uncovered.length === 0,
+      `the tail twin on its proposed plan: ${tailLines.join(' | ') || 'no line'}; the flat fixture on its own plan, from the CLI: ${r1.out.includes(headwearLine) ? headwearLine : 'MISSING'}; the flat fixture on its proposed plan (hairpin taken, hair continued): ${proposedRun.uncovered.length} line(s)`,
+      'the error map showed the lost tail and the summary said only a count; the line puts the layer, the body and the rule into the text an agent reads, and says nothing when every body is covered',
     );
 
     const pp = runCli(['assemble', '--propose-plan', '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--config', join(dir, 'config.json')]);

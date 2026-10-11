@@ -43,7 +43,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
-import { assemble, type AssembleResult, cutLines, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
+import { assemble, type AssembleResult, cutLines, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
 import { allocationClause, type Reducer, stageBClause, unboundedClause } from './automesh.ts';
 import { residualClause } from './autoenvelope.ts';
 import { type AutoMotionCase, failingRows, idleSchedule, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison, stimulusMotion, withStimulus } from './automotion.ts';
@@ -228,6 +228,7 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   log(`  ghost px removed: ${ghosts} over ${Object.keys(result.parts.ghost_px).length} layer(s)`);
   log(figuresLine(result.figures));
   for (const l of holeLines(result.figures)) log(l);
+  for (const u of result.uncovered) log(uncoveredLine(u));
   log(`wrote ${outs.partsJson}, ${result.images.length} PNG(s) in ${outs.partsDir}, ${outs.recomposite}, ${outs.errorMap} (uncovered error px red, covered error px blue, the painting grey)`);
   return result;
 }

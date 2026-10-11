@@ -358,7 +358,11 @@ usage:
       mean channel; error px: max channel > 40; uncovered: of those, where no
       part has alpha above 128), then the uncovered holes (8-connected) and the
       largest ${HOLES_LISTED}, each \`uncovered hole N: <px> px at x,y wxh (between
-      "<part>" <px> px, …)\` — the list parts.json holds under recomposite.
+      "<part>" <px> px, …)\` — the list parts.json holds under recomposite —
+      and one \`uncovered:\` line per full-run layer the plan does not take from
+      the full run whose uncovered error holds a body (5x5-opened, 8-connected,
+      at least 150 full-run px in rig px), naming the layer, its pixels and the
+      rule that left it out.
       Writes nothing unless every check passed.
       --seam defaults to ${DEFAULT_SEAM_RULE}. --project says where a layer takes
       the painting's pixel: core (the reference's) erodes every layer's top-most
@@ -371,7 +375,11 @@ usage:
       Print {plan, extend_below_crop, notes} for config.assemble, from the two
       runs. A layer \`layers\` WARNs about (PLAN_LAYER_TRANSLUCENT,
       PLAN_LAYER_BACKGROUND, PLAN_LAYER_OVERSIZED) is not proposed, and a note
-      names it, its figures and the rule. Reads only config.seethrough.head_box,
+      names it, its figures and the rule. A full-run layer holding a body no
+      planned part covers (a lock the head run's part does not reach and
+      extend_below_crop cannot continue) is named in a note with the body, the
+      rule that skipped it and the continuation; the plan itself is not
+      changed. Reads only config.seethrough.head_box,
       config.seethrough.resolution and config.assemble.rig_scale — the rest of
       the config need not exist yet.
 

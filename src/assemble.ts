@@ -1600,6 +1600,8 @@ export interface AssembleResult {
   figures: RecompositeFigures;
   /** What each `assemble.cuts` entry took, counted when it was made (`cutLines`); empty without cuts. */
   cuts: CutCount[];
+  /** The full-run layers the plan does not take from the full run whose uncovered error holds a body (`uncoveredErrorLayers`); empty otherwise. */
+  uncovered: UncoveredErrorLayer[];
   seamRule: SeamRule;
   projectRule: ProjectRule;
 }
@@ -1656,8 +1658,11 @@ export function assemble(input: AssembleInput): AssembleResult {
   const rig = new Map<string, Raster>();
   const stats = new Map<string, ProjectionStats>();
   const ghost: Record<string, number> = {};
+  /** The full run's layers with an opaque pixel, in draw order: the candidates `uncoveredErrorLayers` reads. */
+  const fullTags: string[] = [];
   for (const [run, set] of [['full', full], ['head', head]] as const) {
     const layers = runLayers(set, input.resolution);
+    if (run === 'full') fullTags.push(...layers.filter((l) => l.opaqueRunPx > 0).map((l) => l.tag));
     const rigLayers = layers.map((l) => layerToRig(l.canvas, frame, run));
     const st = projectSource(rigLayers, srcr, frame, run, projectRule);
     layers.forEach((l, i) => {
@@ -2022,6 +2027,19 @@ export function assemble(input: AssembleInput): AssembleResult {
   seamOverride(placed, srcr, seamRule, seamRule === 'silhouette' ? silhouette : null);
   const can = recomposite(placed, W, H);
   const figures = measureRecomposite(can, srcr, placed);
+  const fullRig = fullTags.map((tag) => ({ tag, rig: rig.get(`full:${tag}`) as Raster }));
+  const uncovered = uncoveredErrorLayers(
+    fullRig,
+    coveredMask(placed, W, H),
+    errorMask(can, srcr),
+    figures.uncoveredErrorPx,
+    plan,
+    extend,
+    layerFigures(full),
+    (tag) => rig.get(`head:${tag}`) ?? null,
+    frame.headBottom,
+    bodyMinPx(frame),
+  );
   return {
     parts: { rig_size: [W, H], scale_rig_per_source: frame.S, parts: placed.map((p) => p.record), ghost_px: ghost, recomposite: recompositeRecord(figures) },
     images: placed,
@@ -2029,9 +2047,260 @@ export function assemble(input: AssembleInput): AssembleResult {
     errorMap: recompositeErrorMap(can, srcr, placed),
     figures,
     cuts: cutCounts,
+    uncovered,
     seamRule,
     projectRule,
   };
+}
+
+// ---------------------------------------------------------------------------
+// uncovered bodies: a full-run layer the plan leaves out (issue #233)
+// ---------------------------------------------------------------------------
+
+/**
+ * The kernel that separates a body from a seam: a full-run pixel no planned
+ * part covers counts toward a body only where it survives an opening (erode,
+ * then dilate) by this square. It is `CORE_KERNEL`, the stage's own measure of
+ * "a few pixels wide": the two runs' silhouettes of one layer differ by a band
+ * that narrow all along their outline (the full run is resampled up, the head
+ * run down), and that band, joined end to end, is one long component that
+ * holds no hair.
+ */
+export const BODY_KERNEL = CORE_KERNEL;
+
+/**
+ * The smallest uncovered body, in rig pixels: `PROPOSE_MIN_PX` full-run pixels
+ * carried into the rig by the full run's map (each run pixel spans `k * k`
+ * rig pixels, `k = fullK * rig_scale`). It is the bar below which the proposer
+ * drops a whole tag as too small to be a part, so a body under it is one the
+ * proposer would not have made a part of had it been a layer of its own.
+ */
+export function bodyMinPx(frame: Frame, minPx = PROPOSE_MIN_PX): number {
+  return minPx * (frame.fullK * frame.S) ** 2;
+}
+
+/** One 8-connected body of a full-run layer that no planned part covers, rig pixels (y down, origin top-left). */
+export interface UncoveredBody {
+  px: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** A full-run layer whose uncovered bodies the plan leaves out, and the rule that left them out. */
+export interface UncoveredLayer {
+  /** The full-run tag. */
+  tag: string;
+  /** Its bodies, largest first (then top row, then left column); each at least `bodyMinPx`. */
+  bodies: UncoveredBody[];
+  /** The rule that skipped it (`skippedBy`). */
+  rule: string;
+}
+
+/**
+ * The bodies of `mask`: its pixels that survive an opening by `BODY_KERNEL`,
+ * as 8-connected components of at least `minPx` pixels, largest first, then by
+ * the box's top row and left column.
+ */
+export function bodiesOf(mask: Mask, minPx: number): UncoveredBody[] {
+  const opened = dilate(erode(mask, BODY_KERNEL), BODY_KERNEL);
+  for (let p = 0; p < opened.data.length; p++) if (mask.data[p] === 0) opened.data[p] = 0;
+  const cc = connectedComponents(opened, 8);
+  const all = cc.stats.slice(1).filter((s) => s.area > 0 && s.area >= minPx);
+  all.sort((a, b) => b.area - a.area || a.top - b.top || a.left - b.left);
+  return all.map((s) => ({ px: s.area, x: s.left, y: s.top, w: s.width, h: s.height }));
+}
+
+/** A body's box as the hole lines print one: `x,y wxh`. */
+export function bodyBox(b: UncoveredBody): string {
+  return `${b.x},${b.y} ${b.w}x${b.h}`;
+}
+
+/**
+ * Which rule left the full-run layer `tag` out of the plan's coverage, in
+ * words that name it. `headPart` is the head-run part's rig raster when the
+ * plan takes `tag` from the head run; `why` is the proposer's reason for not
+ * proposing an extend entry, when the caller is the proposer.
+ *
+ * ⚖️ Invariant: exactly one of four cases, decided in this order — the plan
+ * takes no part from `tag`; it takes one from the head run and no
+ * `extend_below_crop` entry continues that part from the full run's `tag`;
+ * an entry does, and the head-run part has no pixel of alpha above
+ * `CROP_PROBE_ALPHA` on the probe row (`headBottom - CROP_PROBE_ROWS`), so
+ * `belowCrop` seeds nothing; or it reaches the line and the body is not one
+ * of the components `belowCrop` seeds.
+ */
+export function skippedBy(tag: string, plan: readonly PlanEntry[], extend: readonly Extend[], headPart: Raster | null, headBottom: number, why: string | null): string {
+  const entry = plan.find((e) => e[2] === tag);
+  if (entry === undefined) return `the plan takes no part from "${tag}"`;
+  const part = entry[0];
+  const taken = `${part} takes the head run's "${tag}"`;
+  if (!extend.some((e) => e.part === part && e.run === 'full' && e.tag === tag)) {
+    return `${taken}, and no extend_below_crop entry continues it from the full run${why === null ? '' : ` (${why})`}`;
+  }
+  const probe = headBottom - CROP_PROBE_ROWS;
+  let reaches = false;
+  if (headPart !== null && probe >= 0 && probe < headPart.height) {
+    for (let x = 0; x < headPart.width && !reaches; x++) if (headPart.data[(probe * headPart.width + x) * 4 + 3] > CROP_PROBE_ALPHA) reaches = true;
+  }
+  if (!reaches) {
+    return `${taken}; extend_below_crop continues a head-run part only from the columns where it reaches the head crop's bottom line (alpha above ${CROP_PROBE_ALPHA} on rig row ${probe}), and ${part} reaches it nowhere`;
+  }
+  return `${taken}; extend_below_crop continues only the full-run components that touch rig rows ${headBottom}..${headBottom + CROP_SEED_ROWS - 1} within ${CROP_SEED_COLUMNS} columns of where ${part} reaches the head crop's bottom line, and this body is not one of them`;
+}
+
+/**
+ * The full-run layers holding a body no planned part covers. `covered` is 1
+ * where some planned part has alpha above `COVERED_ALPHA` (the recomposite's
+ * own "covered"); `fullRig` maps each full-run tag to its rig raster. A layer
+ * is a candidate when no plan entry takes its tag from the full run and it
+ * crosses no plausibility rule (a layer that does is noted by the proposer
+ * and refused as a part by `layers`, so it is no continuation). Its body
+ * pixels are its alpha-above-`COVERED_ALPHA` pixels where `covered` is 0;
+ * `bodiesOf` keeps the bodies of at least `minPx`. Layers in the full run's
+ * draw order.
+ */
+export function uncoveredLayers(
+  fullRig: ReadonlyArray<{ tag: string; rig: Raster }>,
+  covered: Uint8Array,
+  plan: readonly PlanEntry[],
+  extend: readonly Extend[],
+  figures: readonly LayerFigures[],
+  headRig: (tag: string) => Raster | null,
+  headBottom: number,
+  minPx: number,
+  why: (tag: string) => string | null,
+): UncoveredLayer[] {
+  const out: UncoveredLayer[] = [];
+  for (const { tag, rig } of fullRig) {
+    if (plan.some((e) => e[1] === 'full' && e[2] === tag)) continue;
+    const f = figures.find((x) => x.name === tag);
+    if (f !== undefined && implausibleRules(f).length > 0) continue;
+    const mask = newMask(rig.width, rig.height);
+    let any = false;
+    for (let p = 0; p < covered.length; p++) {
+      if (covered[p] === 0 && rig.data[p * 4 + 3] > COVERED_ALPHA) {
+        mask.data[p] = 1;
+        any = true;
+      }
+    }
+    if (!any) continue;
+    const bodies = bodiesOf(mask, minPx);
+    if (bodies.length === 0) continue;
+    const entry = plan.find((e) => e[2] === tag);
+    out.push({ tag, bodies, rule: skippedBy(tag, plan, extend, entry !== undefined && entry[1] === 'head' ? headRig(tag) : null, headBottom, why(tag)) });
+  }
+  return out;
+}
+
+/**
+ * Where the plan's parts cover the rig before any pixel is projected: 1 where
+ * some plan entry's layer, warped into the rig (`layerToRig`), has alpha above
+ * `COVERED_ALPHA`, or where an `extend_below_crop` entry's `belowCrop`
+ * selection copies such a pixel into its part. Projection never changes alpha,
+ * so this is the stage's own coverage less what `growRim`'s ring, the fringe
+ * push-back and the seam override add or clear along an outline — a pixel
+ * wide, below any body (`BODY_KERNEL`).
+ */
+export function planCoverage(plan: readonly PlanEntry[], extend: readonly Extend[], rigOf: (run: Run, tag: string) => Raster, headBottom: number): Uint8Array {
+  let covered: Uint8Array | null = null;
+  const mark = (r: Raster, sel: Mask | null): void => {
+    if (covered === null) covered = new Uint8Array(r.width * r.height);
+    for (let p = 0; p < covered.length; p++) if (r.data[p * 4 + 3] > COVERED_ALPHA && (sel === null || sel.data[p] === 1)) covered[p] = 1;
+  };
+  for (const [name, run, tag] of plan) {
+    const part = rigOf(run, tag);
+    mark(part, null);
+    for (const e of extend) {
+      if (e.part !== name) continue;
+      const extra = rigOf(e.run, e.tag);
+      mark(extra, belowCrop(part, extra, headBottom));
+    }
+  }
+  return covered ?? new Uint8Array(0);
+}
+
+/** A full-run layer the recomposite's uncovered error lies on in a body (`uncoveredErrorLayers`). */
+export interface UncoveredErrorLayer {
+  /** The layer, its uncovered error bodies, and the rule that skipped it. */
+  layer: UncoveredLayer;
+  /** Every uncovered error pixel under the layer's alpha above `COVERED_ALPHA`, in a body or not … */
+  errorPx: number;
+  /** … of the recomposite's `uncoveredErrorPx`. */
+  of: number;
+}
+
+/**
+ * The full-run layers the plan does not take from the full run that the
+ * recomposite's uncovered error lies on in a body.
+ *
+ * ⚖️ Invariant: exactly `uncoveredLayers` with "covered" widened to every
+ * pixel that is covered or is not an error pixel — so a layer is listed when
+ * its uncovered ERROR pixels hold a body of at least `minPx` (`bodiesOf`), the
+ * proposer's bar for an uncovered layer applied to what the recomposite shows.
+ * `covered` and `err` are the recomposite's own masks (`coveredMask`,
+ * `errorMask`). Draw order of the full run.
+ *
+ * Not "a layer holding most of the uncovered error": on the public examples'
+ * proposed plans the seam scatter along every outline outweighs a missing
+ * lock (the pull request that added this has the figures), so a majority
+ * test would stay silent exactly where the proposer's note fires.
+ */
+export function uncoveredErrorLayers(
+  fullRig: ReadonlyArray<{ tag: string; rig: Raster }>,
+  covered: Uint8Array,
+  err: Uint8Array,
+  of: number,
+  plan: readonly PlanEntry[],
+  extend: readonly Extend[],
+  figures: readonly LayerFigures[],
+  headRig: (tag: string) => Raster | null,
+  headBottom: number,
+  minPx: number,
+): UncoveredErrorLayer[] {
+  if (of === 0) return [];
+  const quiet = new Uint8Array(covered.length);
+  for (let p = 0; p < quiet.length; p++) quiet[p] = covered[p] === 1 || err[p] === 0 ? 1 : 0;
+  return uncoveredLayers(fullRig, quiet, plan, extend, figures, headRig, headBottom, minPx, () => null).map((layer) => {
+    const rig = (fullRig.find((l) => l.tag === layer.tag) as { rig: Raster }).rig;
+    let n = 0;
+    for (let p = 0; p < err.length; p++) if (quiet[p] === 0 && rig.data[p * 4 + 3] > COVERED_ALPHA) n++;
+    return { layer, errorPx: n, of };
+  });
+}
+
+/**
+ * One `uncovered` line under the hole lines: the layer, its share of the
+ * uncovered error, its bodies, and the rule that skipped it — `uncovered: 240
+ * of the 240 uncovered error px lie on the full run's "back hair", in a body
+ * of 240 px at 36,22 8x30; hair_back takes the head run's "back hair"; …`.
+ */
+export function uncoveredLine(d: UncoveredErrorLayer): string {
+  const u = d.layer;
+  const total = u.bodies.reduce((a, b) => a + b.px, 0);
+  const big = u.bodies[0];
+  const held = u.bodies.length > 1 ? `${u.bodies.length} bodies of ${total} px, the largest ${big.px} px at ${bodyBox(big)}` : `a body of ${big.px} px at ${bodyBox(big)}`;
+  return `uncovered: ${d.errorPx} of the ${d.of} uncovered error px lie on the full run's "${u.tag}", in ${held}; ${u.rule}`;
+}
+
+/**
+ * The proposer's note for an uncovered layer: the layer, its pixel count and
+ * largest body, the rule that skipped it, and the continuations — the plan is
+ * not changed, because which one fits (the full run's resolution for the whole
+ * part, or a second part behind it) is the author's to choose.
+ */
+export function uncoveredNote(u: UncoveredLayer, plan: readonly PlanEntry[], minPx: number): string {
+  const total = u.bodies.reduce((a, b) => a + b.px, 0);
+  const big = u.bodies[0];
+  const held =
+    u.bodies.length > 1 ? `${u.bodies.length} bodies of ${total} rig px, the largest ${big.px} px at ${bodyBox(big)},` : `a body of ${big.px} rig px at ${bodyBox(big)}`;
+  const entry = plan.find((e) => e[2] === u.tag);
+  const fix =
+    entry === undefined
+      ? `take it as a part: ["${aliasOf(u.tag)}", "full", "${u.tag}"]`
+      : `take ${entry[0]} from the full run (["${entry[0]}", "full", "${u.tag}"]), or add the full-run layer as a second part drawn just behind ${entry[0]}`;
+  return `${u.tag}: the full run's layer holds ${held} that no planned part covers (a body: at least ${fmt0(minPx)} rig px past a ${BODY_KERNEL}x${BODY_KERNEL} opening); ${u.rule} -> ${fix}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2122,9 +2391,19 @@ function fmt0(v: number): string {
  * background-coloured haze, or out of proportion with the rest of its run's
  * figure) is neither proposed, nor taken as the head-run fallback, nor extended
  * below the crop, and a note names the layer, its three figures and every rule
- * it crossed with the bar. Those notes follow the reference's. [observed] No
- * layer of either public example crosses a rule, so their proposals are the
- * reference's byte for byte.
+ * it crossed with the bar. Those notes come last. [observed] No layer of a
+ * public example crosses a rule.
+ *
+ * ⚖️ This port's too (issue #233): the proposer measures what its own plan
+ * leaves uncovered before it prints it. Every plan entry's layer is warped
+ * into the rig and every extend entry's `belowCrop` selection added
+ * (`planCoverage`); a full-run layer no entry takes from the full run whose
+ * uncovered pixels hold a body (`uncoveredLayers`, `bodyMinPx`) gets a note
+ * after the reference's, naming the body, the rule that skipped it
+ * (`skippedBy`) and the two continuations (`uncoveredNote`). The plan is not
+ * changed. [observed] reference-sample's proposal is the reference's byte for
+ * byte; demo's, reference-demo's and scarf's each gain one note, on the hair
+ * their configs had already corrected by hand.
  */
 export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx = PROPOSE_MIN_PX): PlanProposal {
   const frame = checkGeometry(g, { full, head });
@@ -2186,6 +2465,8 @@ export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx =
   }
   for (const t of heads) plan.push([aliasOf(t), 'head', t]);
   const extend: Extend[] = [];
+  /** A hair tag the proposer did not continue below the crop: how far its full-run layer reaches, rig px (null: no opaque row). */
+  const reaches = new Map<string, number | null>();
   for (const t of ['front hair', 'back hair']) {
     const fl = find('full', t);
     if (fl === undefined || !plan.some((p) => p[1] === 'head' && p[2] === t)) continue;
@@ -2201,9 +2482,45 @@ export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx =
       }
     }
     // The run row maps to the rig as the warp maps it: k * row, less the top pad in rig px.
-    if (last >= 0 && (last + 1) * frame.fullK * frame.S - frame.fullPadTop * frame.S > frame.headBottom + 8) extend.push({ part: PROPOSE_ALIAS[t], run: 'full', tag: t });
+    const reach = (last + 1) * frame.fullK * frame.S - frame.fullPadTop * frame.S;
+    if (last >= 0 && reach > frame.headBottom + 8) extend.push({ part: PROPOSE_ALIAS[t], run: 'full', tag: t });
+    else reaches.set(t, last < 0 ? null : reach);
   }
-  return { plan, extend_below_crop: extend, notes: [...notes, ...dropNotes] };
+  // What the plan leaves uncovered (issue #233): a full-run layer whose body no planned part covers is named, never dropped in silence.
+  const rigs = new Map<string, Raster>();
+  const rigOf = (run: Run, tag: string): Raster => {
+    const key = `${run}:${tag}`;
+    let r = rigs.get(key);
+    if (r === undefined) {
+      r = layerToRig((find(run, tag) as RunLayer).canvas, frame, run);
+      rigs.set(key, r);
+    }
+    return r;
+  };
+  const covered = planCoverage(plan, extend, rigOf, frame.headBottom);
+  const minBody = bodyMinPx(frame, minPx);
+  const why = (tag: string): string => {
+    if (!reaches.has(tag)) return 'the proposer continues only front hair and back hair below the head crop';
+    const r = reaches.get(tag);
+    return `the proposer continues ${tag} only when its full-run layer reaches more than 8 rig px below the crop line, rig row ${frame.headBottom}; it reaches ${r === null || r === undefined ? 'no row' : `rig row ${fmt0(r)}`}`;
+  };
+  const left =
+    covered.length === 0
+      ? []
+      : uncoveredLayers(
+          runs.full.filter((l) => l.opaqueRunPx > 0).map((l) => ({ tag: l.tag, rig: rigOf('full', l.tag) })),
+          covered,
+          plan,
+          extend,
+          figures.full,
+          (tag) => rigOf('head', tag),
+          frame.headBottom,
+          minBody,
+          why,
+        );
+  const bodyNotes = left.map((u) => uncoveredNote(u, plan, minBody));
+  // The reference's notes, then the uncovered bodies, then the plausibility drops — a drop note is last, as it was.
+  return { plan, extend_below_crop: extend, notes: [...notes, ...bodyNotes, ...dropNotes] };
 }
 
 // ---------------------------------------------------------------------------

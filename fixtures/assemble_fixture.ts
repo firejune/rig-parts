@@ -191,6 +191,42 @@
  *   1,485 / 3,968 = 0.37424… -> 0.3742; `error_px` = `uncovered_error_px` =
  *   2,483, one hole of 2,483 px whose box is the whole rig, 0,0 64x62, with
  *   the portrait's borders (no part touches an edge, so none changes).
+ *
+ * ## The uncovered-body twins (issue #233)
+ * The flat fixture with only the back hair changed. The full run maps 1:1 to
+ * the rig, so `bodyMinPx` is `PROPOSE_MIN_PX` x 1 x 1 = 150 rig px, and the
+ * crop line is rig row 28 (probe row 26).
+ * - `TAIL_FULL_LAYERS` / `TAIL_HEAD_LAYERS`, the positive: the head run's back
+ *   hair is a bob, run [44, 60) x [20, 40) -> rig [38, 46) x [10, 20), which
+ *   stops 8 rows above the probe row. The full run's back hair is the same bob
+ *   at rig [38, 46) x [10, 20) and a tail [36, 44) x [22, 52) that does not
+ *   touch it (rows 20..21 lie between). The proposer still extends the hair
+ *   (the full layer ends on rig row 51, 52 > 28 + 8), but `belowCrop` seeds
+ *   nothing: the bob has no pixel on row 26. So the tail, 8 x 30 = 240 px,
+ *   is covered by no part; a 5x5 opening keeps an 8-wide block whole, and
+ *   240 >= 150: one body, 240 px at 36,22 8x30. The plan, its extend entry and
+ *   the headwear note are the flat fixture's (`EXPECTED_PROPOSAL`): the bob
+ *   is 16 x 20 = 320 run px, above the 150 floor, and nothing else moved.
+ *   Assembled on that plan, the parts cover hair_back 80 (the bob) + hairpin
+ *   192 + bottomwear 336 + topwear 600 + face 144, less the 4 x 6 = 24 px
+ *   where the face [16, 28) x [8, 20) overlaps the hairpin [4, 20) x [2, 14):
+ *   1,328 px, so 4,096 - 1,328 = 2,768 uncovered error px (white page over
+ *   `C`), of which the tail's 240 are one body. The shoes (120 px, under the
+ *   150 floor) are not planned and are no body.
+ * - `BAND_FULL_LAYERS`, the negative beside the flat fixture's continued
+ *   hair: the full run's back hair is the head part's footprint grown by 4 px
+ *   at the sides and 2 px on top, [34, 50) x [8, 44). Below the crop line the
+ *   whole component is continued (the head part reaches row 26 in columns
+ *   38..45), so what no part covers is two 4-px side bands, rows 8..27
+ *   (2 x 4 x 20 = 160), joined by a 2-row top band over columns 38..45 (16):
+ *   one 8-connected component of 176 px, over the 150 bar — and no 5x5 square
+ *   fits inside it, so its opening is empty and there is no body. It is the
+ *   seam the two runs' silhouettes leave round a part, which is not hair.
+ * - The flat fixture itself on its own `PLAN`, which takes no part from the
+ *   full run's headwear: [4, 20) x [2, 14) less the face's 24 px is 168 px,
+ *   whose opening keeps all 168 (the 12 x 12 block and the 4 x 6 strip right
+ *   of it are each 5 wide or more where they join), so the assemble summary
+ *   names it: 168 of the 2,611 uncovered error px, one body at 4,2 16x12.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -312,6 +348,20 @@ export const EXPECTED_PROPOSAL = {
   extend_below_crop: [{ part: 'hair_back', run: 'full', tag: 'back hair' }],
   notes: ['headwear: head run 0 rig px < 0.8 x full run 192 -> full-run layer, drawn behind the face'],
 };
+
+/** The full run with the back hair a bob and a tail that does not touch it (issue #233), as the module doc derives it. */
+export const TAIL_FULL_LAYERS: RunLayerSpec[] = FULL_LAYERS.map((l) => (l.name === 'back hair' ? { ...l, rects: [rect(38, 10, 46, 20, C), rect(36, 22, 44, 52, C)] } : l));
+/** The head run whose back hair stops above the crop line: run [44, 60) x [20, 40), rig [38, 46) x [10, 20). */
+export const TAIL_HEAD_LAYERS: RunLayerSpec[] = HEAD_LAYERS.map((l) => (l.name === 'back hair' ? { ...l, rects: [rect(44, 20, 60, 40, C)] } : l));
+/** The tail's body, rig px, and the uncovered error px of the tail twin assembled on its proposed plan. */
+export const TAIL_BODY = { px: 240, x: 36, y: 22, w: 8, h: 30 };
+export const TAIL_UNCOVERED_ERROR_PX = 2768;
+/** The full run with the back hair grown by a band no 5x5 square fits in, as the module doc derives it. */
+export const BAND_FULL_LAYERS: RunLayerSpec[] = FULL_LAYERS.map((l) => (l.name === 'back hair' ? { ...l, rects: [rect(34, 8, 50, 44, C)] } : l));
+/** The band's uncovered pixels before the opening: one component, over the 150-px bar. */
+export const BAND_PX = 176;
+/** The flat fixture's headwear on its own plan, which takes no part from it. */
+export const HEADWEAR_BODY = { px: 168, x: 4, y: 2, w: 16, h: 12 };
 
 /** The landscape twin's painting height and its derived pads, as the module doc derives them. */
 export const LANDSCAPE_H = 124;
