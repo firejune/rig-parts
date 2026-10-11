@@ -4756,18 +4756,24 @@ function runFaceAxisCases(say: (name: string, ok: boolean, detail: string, why: 
   const swapped = faceParts();
   for (const p of swapped.parts) p.from = p.from === 'head:eyewhite-r' ? 'head:eyewhite-l' : p.from === 'head:eyewhite-l' ? 'head:eyewhite-r' : p.from;
   const swappedRig = buildRig(parseConfig(faceConfig()), swapped, faceImages());
+  // The line follows the eye bones, not the eyewhites' centres: eye_l's bone alone moved onto eye_r's row (its part
+  // left where it is) levels the line.
+  const boneOnly = faceConfig();
+  (boneOnly.bones as Array<{ name?: string; at?: [number, number] }>).find((b) => b.name === 'eye_l')!.at = [36, 28];
+  const boneOnlyRig = buildRig(parseConfig(boneOnly), faceParts(), faceImages());
   const rots = (rig: RigSpec): string => FACE.map((n) => `${n} ${rig.bones.find((b) => b.name === n)?.rotation ?? 'none'}`).join(', ');
   say(
-    'RG76_THE_FIVE_FACE_BONES_TAKE_THE_EYE_LINES_ANGLE_READ_OFF_THE_EYEWHITES',
+    'RG76_THE_FIVE_FACE_BONES_TAKE_THE_ANGLE_OF_THE_LINE_THROUGH_THE_EYE_BONES',
     FACE.every((n) => byName.get(n)?.rotation === FACE_EXPECT.degrees && Math.abs((byName.get(n)?.rotation ?? 0) - byHand) <= 0.5) &&
       byName.get('head')?.rotation === undefined &&
       ['eyewhite_r', 'eyewhite_l', 'mouth'].every((p) => regionOf(r.rig, p).rotation === -FACE_EXPECT.degrees && regionOf(r.rig, p).x === 0 && regionOf(r.rig, p).y === 0) &&
       JSON.stringify(r.faceAxis.parts) === JSON.stringify(['eyewhite_r', 'eyewhite_l']) &&
       FACE.every((n) => !('rotation' in (levelRig.rig.bones.find((b) => b.name === n) ?? { rotation: 1 }))) &&
       FACE.every((n) => downRig.rig.bones.find((b) => b.name === n)?.rotation === -FACE_EXPECT.degrees) &&
-      rots(swappedRig.rig) === rots(r.rig),
-    `tilted: ${rots(r.rig)} (by hand atan2(12, 16) = ${pyRound(byHand, 6)}); regions ${['eyewhite_r', 'eyewhite_l', 'mouth'].map((p) => JSON.stringify(regionOf(r.rig, p))).join(' ')}; ${faceAxisLine(r.faceAxis).trim()}; planted, eyewhite_l moved down 12 px onto eyewhite_r's row: ${rots(levelRig.rig)}; moved down 24 px: ${rots(downRig.rig)}; the two eyewhite tags swapped: ${rots(swappedRig.rig) === rots(r.rig) ? 'the same rotations' : rots(swappedRig.rig)}`,
-    "issue #239: the blink and the expressions scale the face bones along their own axes, so the axes are the face's — the line between the eyewhites' box centres (16, 12) in Spine's axes, a 3-4-5 triangle, 36.869898 degrees; a level line measures 0 and writes no rotation, the mirrored one -36.869898, and the line is read image-left to image-right, so which tag is which side does not enter it",
+      rots(swappedRig.rig) === rots(r.rig) &&
+      FACE.every((n) => !('rotation' in (boneOnlyRig.rig.bones.find((b) => b.name === n) ?? { rotation: 1 }))),
+    `tilted: ${rots(r.rig)} (by hand atan2(12, 16) = ${pyRound(byHand, 6)}); regions ${['eyewhite_r', 'eyewhite_l', 'mouth'].map((p) => JSON.stringify(regionOf(r.rig, p))).join(' ')}; ${faceAxisLine(r.faceAxis).trim()}; planted, eyewhite_l moved down 12 px onto eyewhite_r's row: ${rots(levelRig.rig)}; moved down 24 px: ${rots(downRig.rig)}; the two eyewhite tags swapped: ${rots(swappedRig.rig) === rots(r.rig) ? 'the same rotations' : rots(swappedRig.rig)}; eye_l's bone alone moved to (36, 28), its part left: ${rots(boneOnlyRig.rig)}`,
+    "issue #239: the blink and the expressions scale the face bones along their own axes, so the axes are the face's — the line through the eye bones eye_r (20, 28) and eye_l (36, 16), (16, 12) in Spine's axes, a 3-4-5 triangle, 36.869898 degrees, the line rigc's A51 draws; a level line measures 0 and writes no rotation, the mirrored one -36.869898, and the line is read image-left to image-right, so which tag is which side does not enter it; the line follows the bones, so an eye bone moved off its eyewhite's centre moves it",
   );
 
   const flat = flattenRig(r.rig);
@@ -4891,6 +4897,53 @@ function runFaceAxisCases(say: (name: string, ok: boolean, detail: string, why: 
         holeOf(chkRun.out).startsWith('BLINK_NO_HOLE: PASS'),
       `rig exit ${rigRun.status}, eye_r at ${turnedRig?.bones.find((b) => b.name === 'eye_r')?.rotation ?? 'not built'}; check exit ${chkRun.status}: "${holeOf(chkRun.out)}" | the flat form (1.6.0's unturned bones), check exit ${flatChk.status}: "${holeOf(flatChk.out)}"`,
       "the blink's hole line had been measured only on unturned eye bones; here it reads the closed eye squashed across a 36.87-degree eye line, the build as `rig` writes it, so a shut eye that opened a hole on the face's axes would be named here",
+    );
+
+    // rig-c 2.40.0's A51 (issue #239, rig-c/core#1351): the tilted build declares its axis and rigc's gate holds it.
+    const gate = (sub: string, rig: RigSpec, motion: unknown): string => {
+      const d = join(dir, 'gate', sub);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, 'rig.json'), rigJsonText({ ...rig, images }));
+      writeFileSync(join(d, 'motion.json'), rigJsonText(motion));
+      const g = spawnSync(findRigc(ROOT, ''), ['build', '--rig', join(d, 'rig.json'), '--motion', join(d, 'motion.json'), '--out', join(d, 'build'), ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      return `${g.stdout ?? ''}${g.stderr ?? ''}`;
+    };
+    // rigc gates the compile and the packed pages, so each A51 line can print twice: the distinct lines are read.
+    const a51 = (out: string): string[] => [...new Set(out.split('\n').filter((l) => l.includes('A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS')).map((l) => l.trim()))];
+    const axis = r.rig.invariants?.axes ?? [];
+    const green = a51(gate('tilted', r.rig, r.motion));
+    const offLine = JSON.parse(JSON.stringify(r.rig)) as RigSpec;
+    const browL = offLine.bones.find((b) => b.name === 'brow_l') as RigSpec['bones'][number];
+    browL.rotation = pyRound((browL.rotation ?? 0) + 5, 6);
+    const turnedOff = a51(gate('brow-off', offLine, r.motion));
+    const tight = JSON.parse(JSON.stringify(r.rig)) as RigSpec;
+    const tightAxis = (tight.invariants?.axes ?? [])[0];
+    if (tightAxis !== undefined) tightAxis.tolerance = pyRound(tightAxis.tolerance / 4, 7);
+    const tightLines = a51(gate('tight', tight, r.motion));
+    say(
+      'RG83_THE_TILTED_BUILD_DECLARES_ITS_FACE_AXIS_AND_RIGC_HOLDS_IT_A_BONE_TURNED_OFF_IT_FAILS_A51_BY_NAME',
+      axis.length === 1 &&
+        axis[0].name === 'face' &&
+        JSON.stringify(axis[0].through) === JSON.stringify(['eye_r', 'eye_l']) &&
+        JSON.stringify(axis[0].bones) === JSON.stringify(FACE) &&
+        axis[0].tolerance > 0 &&
+        axis[0].tolerance < 90 &&
+        green.length === 1 &&
+        green[0] === 'PASS  A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS' &&
+        turnedOff.length === 1 &&
+        turnedOff[0].startsWith('FAIL  A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS: axis "face" (through "eye_r"→"eye_l", 36.8699°): bone "brow_l" world x axis at 41.8699°, 5.0000° off') &&
+        tightLines.some((l) => l.startsWith('FAIL  A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS')),
+      `invariants.axes ${JSON.stringify(axis)}; rigc: ${green.join(' | ') || 'no A51 line'}; planted, brow_l turned 5 degrees off: ${turnedOff.join(' | ') || 'no A51 line'}; planted, the tolerance a quarter of the derived one: ${tightLines.length} line(s), the first "${tightLines[0] ?? ''}"`,
+      "rig-c 2.40.0 holds a declared axis with A51: the line through eye_r and eye_l's setup origins, and each listed bone's world x axis within the tolerance as a line. The rig stage writes the entry whenever it turned the face bones; its tolerance is the largest gap the emitted bones (x, y, rotation through rig-c's f32) have to that line, rounded up to 6 places, plus one 6-place unit — so a bone turned 5 degrees off is refused by name, and a quarter of the derived tolerance is too tight for the build's own floats",
+    );
+
+    const oneEye = buildRig(parseConfig(faceConfig(['r'])), faceParts(['r']), faceImages());
+    const skipLines = a51(gate('one-eye', oneEye.rig, oneEye.motion));
+    say(
+      'RG84_WITHOUT_AN_EYE_LINE_NO_AXES_ENTRY_IS_WRITTEN_AND_A51_SKIPS',
+      oneEye.rig.invariants?.axes === undefined && oneEye.faceAxis.axis === null && skipLines.length === 1 && /^SKIP {2}A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS: the rig "[^"]+" declares no axes \(invariants\.axes\)$/.test(skipLines[0]),
+      `one eyewhite: invariants ${JSON.stringify(oneEye.rig.invariants ?? null)}; rigc: ${skipLines.join(' | ') || 'no A51 line'}; ${faceAxisLine(oneEye.faceAxis).trim()}`,
+      'issue #239: with no line the face bones keep the page\'s axes and there is nothing to hold them to; an entry written anyway would hold them to a line nobody derived, so none is written and rigc reports A51 as SKIP — never a pass',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -11366,8 +11419,8 @@ function runChainSuite(): number | null {
         }
       }
       // Issue #239: a single bone with a tip points at it, and the face bones stand on the eye line — read here off
-      // the config and the built parts.json, by the definition (the first eyewhite-r and eyewhite-l part, image-left to
-      // image-right centre), not off the emitter.
+      // the config and the built parts.json, by the definition (both eyewhites present; the line through the config's
+      // eye_r and eye_l, image-left to image-right), not off the emitter.
       const tipped = new Set<string>();
       for (const e of exCfg.bones) {
         if (e.name === undefined || e.at === undefined || e.tip === undefined) continue;
@@ -11385,9 +11438,10 @@ function runChainSuite(): number | null {
         }
       }
       const builtParts = readParts(join(out, 'parts.json')).parts;
-      const eyeCentres = ['eyewhite-r', 'eyewhite-l'].map((t) => builtParts.find((p) => p.from.endsWith(`:${t}`) && p.cut_from === undefined)).flatMap((p) => (p === undefined ? [] : [[p.x + p.w / 2, p.y + p.h / 2]]));
+      const eyewhites = ['eyewhite-r', 'eyewhite-l'].filter((t) => builtParts.some((p) => p.from.endsWith(`:${t}`) && p.cut_from === undefined));
+      const eyeCentres = ['eye_r', 'eye_l'].flatMap((n) => exCfg.bones.filter((e) => e.name === n && e.at !== undefined).map((e) => e.at as [number, number]));
       const [eyeA, eyeB] = [...eyeCentres].sort((a, b) => a[0] - b[0]);
-      const eyeDeg = eyeCentres.length === 2 ? (Math.atan2(cropToSpineY(eyeB[1], rigH) - cropToSpineY(eyeA[1], rigH), eyeB[0] - eyeA[0]) * 180) / Math.PI : null;
+      const eyeDeg = eyewhites.length === 2 && eyeCentres.length === 2 ? (Math.atan2(cropToSpineY(eyeB[1], rigH) - cropToSpineY(eyeA[1], rigH), eyeB[0] - eyeA[0]) * 180) / Math.PI : null;
       const faceBones: string[] = [];
       if (eyeDeg !== null) {
         for (const n of ['eye_r', 'eye_l', 'brow_r', 'brow_l', 'mouth']) {
@@ -11406,7 +11460,7 @@ function runChainSuite(): number | null {
         `CH11_EVERY_LINK_AND_TIPPED_BONE_POINTS_AT_ITS_END_THE_FACE_BONES_ON_THE_EYE_LINE_AND_NO_OTHER_BONE_TURNED[${key}]`,
         links.size > 0 && offAim.length === 0 && turnedOthers.length === 0,
         `${links.size} chain link(s), tipped bone(s), face bone(s) and their controls (face: ${faceBones.length === 0 ? 'none' : `${faceBones.join(', ')} on ${pyRound(eyeDeg as number, 6)} degrees`}): ${offAim.length === 0 ? 'every world turn within 1e-5 degrees of the config\'s direction or the eye line, and every length the config\'s to 3 places' : offAim.slice(0, 3).join('; ')}; other bones turned: ${turnedOthers.length === 0 ? 'none' : turnedOthers.slice(0, 3).join(', ')}`,
-        "issue #73's ask, read off the config rather than the emitter: each link points from its origin to the next link's (the last to the tip) with that distance as its length, so a physics constraint added downstream finds a lever; issue #239: a single bone with a tip points at it the same way, and the five face bones stand on the eye line read off parts.json; every other bone keeps world rotation 0, so nothing else a consumer reads changes meaning",
+        "issue #73's ask, read off the config rather than the emitter: each link points from its origin to the next link's (the last to the tip) with that distance as its length, so a physics constraint added downstream finds a lever; issue #239: a single bone with a tip points at it the same way, and the five face bones stand on the line through the config's eye bones (when parts.json holds both eyewhites); every other bone keeps world rotation 0, so nothing else a consumer reads changes meaning",
       );
 
       const flatRender = flatFormRender(join(dir, `${key}-flat-form`), builtRig, flattenRig(builtRig), withoutEyeSquash(readJsonAt(join(out, 'rig', 'motion.json'))), join(out, 'rig', 'images'));

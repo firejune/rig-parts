@@ -152,7 +152,10 @@ paintings, their See-through runs, the parts and configs the reference produced
   functions `src/contour.ts` reuses, every one on the entry's promised list,
   and `reduceMesh` with its `mesh-quality-report/1` types (2.19.0), which
   `src/automesh.ts` calls, and `skinningEnvelopeBone` (2.30.0), which
-  `src/autoenvelope.ts` calls. `reduceMeshWith` and `rig-c/src/meshrasters.ts`
+  `src/autoenvelope.ts` calls. `f32` comes through the named entry
+  `rig-c/compile` (2.40.0): the float32 rigc stores a bone's numbers as,
+  which `src/rig.ts` poses the face bones through to measure the
+  `invariants.axes` tolerance. `reduceMeshWith` and `rig-c/src/meshrasters.ts`
   are rig-c internals; only `tools/veto_tally.ts` reads them, to count the
   residual's vetoes, and it checks its run against `reduceMesh`'s bytes
   before it counts. A rig-c release that moves them, or narrows

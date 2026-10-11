@@ -36,13 +36,15 @@
  *   expression scales or translates, {@link FACE_BONES}, take the eye line's
  *   angle as their world rotation, so the blink's `scaley` squashes across
  *   the eye line and not across the page's horizontal on a tilted head. The
- *   eye line runs between the box centres of the parts tagged
- *   `eyewhite-r` and `eyewhite-l` (the first of each in parts.json, a cut's
- *   piece not counted — the parts `propose` places `eye_r` and `eye_l` on),
- *   read from the image-left centre to the image-right one, so the angle is
- *   always the measured one, inside (−90°, 90°), and which tag is which side
- *   does not enter it. With one eyewhite or none, or two whose centres share a
- *   column, there is no line: {@link FaceAxis} says why and the face bones
+ *   line exists when parts.json holds the parts tagged `eyewhite-r` and
+ *   `eyewhite-l` (the first of each, a cut's piece not counted — the parts
+ *   `propose` stands `eye_r` and `eye_l` on) and config.bones declares both
+ *   eye bones; it runs through the two eye bones' origins, read from the
+ *   image-left one to the image-right one, so the angle is always the
+ *   measured one, inside (−90°, 90°), which tag is which side does not enter
+ *   it, and it is the line rigc's A51 draws. With one eyewhite or none, an
+ *   eye bone missing, or two eye bones in one column, there is no line:
+ *   {@link FaceAxis} says why and the face bones
  *   keep the page's axes. A face bone with its own `tip` takes the tip. A
  *   bone under a face bone that nothing else turns keeps its parent's axis,
  *   so a key on it means the face's axis too; the face bones' controls carry
@@ -51,7 +53,12 @@
  *   bone, and a translate key on a bone under one, mean the face's axes and
  *   are not refused. A translate key on a face bone itself still moves it
  *   along its parent's (the head's) axes — Spine's rule, which turning the
- *   bone does not change.
+ *   bone does not change. With a line the rig spec also declares
+ *   `invariants.axes` (rig-c 2.40.0): one entry, {@link FACE_AXIS_NAME},
+ *   through `eye_r` and `eye_l`, holding the turned bones and their controls,
+ *   which rigc's `A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS` checks. Its
+ *   tolerance is measured on the bones as rigc emits them (see where it is
+ *   written), the float floor; with no line no entry is written.
  * - **Meshes** over the parts named in `meshes`: a square lattice (`src/mesh.ts`)
  *   weighted by distance to the mesh's candidate segments (`src/weights.ts`),
  *   written in rigc's by-name `weights` form. The slot's bone is the first
@@ -106,6 +113,7 @@
 import { type AutoSpec, type BoneEntry, type WeightRule, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, type RibsSpec, ROOT_BONE, weightsABone } from './config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
+import { f32 } from 'rig-c/compile';
 import type { MeshCounts, MeshQualityReport, MeshReductionInput, MotionAmplitude, ReducedMesh, Termination } from 'rig-c/mesh';
 import { type AmplitudeRow, amplitudeRow, partAmplitude, withAmplitude } from './autoamplitude.ts';
 import { type ResidualRow, residualRow, slotEnvelope, withSkinning } from './autoenvelope.ts';
@@ -186,7 +194,7 @@ export const FACE_BONES: readonly string[] = ['eye_r', 'eye_l', 'brow_r', 'brow_
 export interface FaceAxis {
   /** The eye line's angle in Spine degrees (counter-clockwise, y up), as written; null with no line. */
   degrees: number | null;
-  /** The eyewhite parts the line runs between, image-left first; fewer than two when there is no line. */
+  /** The eyewhite parts that make the line exist, `eyewhite-r`'s first; fewer than two when they are what is missing. */
   parts: string[];
   /** The face bones turned to the line, in {@link FACE_BONES} order; empty with no line. */
   turned: string[];
@@ -194,17 +202,50 @@ export interface FaceAxis {
   ownTip: string[];
   /** Why there is no line, or null. */
   none: string | null;
+  /** The `invariants.axes` entry written for the line (issue #239, rig-c's `A51`), or null with the reason in {@link FaceAxis.noAxis}. */
+  axis: RigAxis | null;
+  /** Why no axes entry was written, or null when one was (or there is no line, which {@link FaceAxis.none} says). */
+  noAxis: string | null;
 }
 
+/** One `invariants.axes` entry: rig-c's `RigAxis`, held by its gate rule `A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS` (2.40.0). */
+export interface RigAxis {
+  name: string;
+  through: [string, string];
+  bones: string[];
+  tolerance: number;
+}
+
+/** The name of the face's `invariants.axes` entry. */
+export const FACE_AXIS_NAME = 'face';
+
+/** One unit in the last place a rotation is written to ({@link OFFSET_PLACES}): the axes entry's tolerance stands this far above the gap it measures. */
+const WRITTEN_UNIT = 10 ** -6;
+
+/** Two directions' gap as lines, 0 to 90 degrees — rig-c's `lineGap` (A51), restated here because it is not on an entry this package imports. */
+function lineGap(a: number, b: number): number {
+  const d = (((a - b) % 180) + 180) % 180;
+  return Math.min(d, 180 - d);
+}
+
+/** The bones the face's line runs through: rigc's A51 draws its line through their origins, and the face bones are turned to that same line. */
+export const EYE_BONES: readonly [string, string] = ['eye_r', 'eye_l'];
+
 /**
- * The eye line, read off parts.json: the box centres of the first part
- * tagged `eyewhite-r` and the first tagged `eyewhite-l` (a cut's piece is
- * neither), from the image-left one to the image-right one, in Spine's axes
- * through the one y flip. Null with the reason when there are not two, or
- * when the two centres share a column, so the line has no left-to-right
- * direction to read.
+ * The eye line (issue #239). It exists when parts.json holds an eye on each
+ * side — the first part tagged `eyewhite-r` and the first tagged `eyewhite-l`
+ * (a cut's piece is neither), the parts `propose` stands `eye_r` and `eye_l`
+ * on — and config.bones declares both eye bones. Its angle is read off the
+ * two eye bones' origins as the config writes them, image-left to
+ * image-right, in Spine's axes through the one y flip: the very line rigc's
+ * A51 draws through those bones, so the face bones stand on what the gate
+ * measures (the eyewhites' unrounded centres would sit up to a rounding off
+ * it — demo's half pixel was 0.47 degrees), and a moved eye bone moves the
+ * line with it. Null with the reason when an eyewhite or an eye bone is
+ * missing, or when the two eye bones share a column, so the line has no
+ * left-to-right direction to read.
  */
-export function eyeLine(parts: PartsFile): { degrees: number; parts: [string, string] } | { degrees: null; parts: string[]; none: string } {
+export function eyeLine(parts: PartsFile, eyeBones: ReadonlyMap<string, Point>): { degrees: number; parts: [string, string] } | { degrees: null; parts: string[]; none: string } {
   const H = parts.rig_size[1];
   const found = EYE_GROUP_TAGS.map((tag) => ({ tag, part: parts.parts.find((p) => tagOf(p.from) === tag && p.cut_from === undefined) }));
   const have = found.flatMap((f) => (f.part === undefined ? [] : [f.part]));
@@ -212,16 +253,15 @@ export function eyeLine(parts: PartsFile): { degrees: number; parts: [string, st
     const missing = found.filter((f) => f.part === undefined).map((f) => f.tag);
     return { degrees: null, parts: have.map((p) => p.name), none: `parts.json holds no part tagged ${missing.join(' or ')} (a cut's piece is not counted), so there is no eye line` };
   }
-  const centre = (p: PartsFile['parts'][number]): Point => [p.x + p.w / 2, p.y + p.h / 2];
-  const [a, b] = have.map(centre);
-  if (a[0] === b[0]) {
-    return { degrees: null, parts: have.map((p) => p.name), none: `the centres of ${have[0].name} ${pt(a)} and ${have[1].name} ${pt(b)} share the column x = ${a[0]}, so the eye line has no left-to-right direction to read` };
-  }
-  const [left, right] = a[0] < b[0] ? [0, 1] : [1, 0];
-  const [l, r] = [centre(have[left]), centre(have[right])];
+  const names = have.map((p) => p.name);
+  const absent = EYE_BONES.filter((n) => !eyeBones.has(n));
+  if (absent.length > 0) return { degrees: null, parts: names, none: `config.bones declares no single bone ${absent.join(' or ')}, so there is no pair of eye bones for the eye line to run through` };
+  const [a, b] = EYE_BONES.map((n) => eyeBones.get(n) as Point);
+  if (a[0] === b[0]) return { degrees: null, parts: names, none: `${EYE_BONES[0]} ${pt(a)} and ${EYE_BONES[1]} ${pt(b)} share the column x = ${a[0]}, so the eye line has no left-to-right direction to read` };
+  const [l, r] = a[0] < b[0] ? [a, b] : [b, a];
   const dx = r[0] - l[0];
   const dy = cropToSpineY(r[1], H) - cropToSpineY(l[1], H);
-  return { degrees: (Math.atan2(dy, dx) * 180) / Math.PI, parts: [have[left].name, have[right].name] };
+  return { degrees: (Math.atan2(dy, dx) * 180) / Math.PI, parts: [names[0], names[1]] };
 }
 
 /**
@@ -322,7 +362,7 @@ export interface RigSpec {
    * the idle keys a mesh-driving bone. `detached`: written only when a
    * constraint follows a bone ({@link detachedRules}).
    */
-  invariants?: { idleDrivesMeshes?: { why: string }; detached?: DetachedRule[]; deformMayFold?: Array<{ slot: string; why: string }> };
+  invariants?: { idleDrivesMeshes?: { why: string }; detached?: DetachedRule[]; deformMayFold?: Array<{ slot: string; why: string }>; axes?: RigAxis[] };
 }
 
 /** One `invariants.detached` entry: rig-c's `RigDetachedRule`, checked by its gate rule `A25`. */
@@ -924,7 +964,9 @@ export function buildRig(
   // ---- the face's axis (issue #239) --------------------------------------
   // Each face bone config.bones declares as a single bone with no tip of its own stands on the eye line, and its
   // control with it; a bone under a face-framed bone that nothing else turns keeps that frame.
-  const line = eyeLine(parts);
+  const eyeAt = new Map<string, Point>();
+  for (const e of cfg.bones) if (!('chain' in e) && (EYE_BONES as readonly string[]).includes(e.name)) eyeAt.set(e.name, [e.at[0], e.at[1]]);
+  const line = eyeLine(parts, eyeAt);
   const declared = FACE_BONES.filter((n) => cfg.bones.some((e) => !('chain' in e) && e.name === n));
   const faceAxis: FaceAxis = {
     degrees: line.degrees,
@@ -932,6 +974,8 @@ export function buildRig(
     turned: line.degrees === null ? [] : declared.filter((n) => !singleTips.has(n)),
     ownTip: declared.filter((n) => singleTips.has(n)),
     none: line.degrees === null ? line.none : null,
+    axis: null,
+    noAxis: null,
   };
   const faceTurn = new Map<string, number>();
   for (const n of faceAxis.turned) {
@@ -967,6 +1011,34 @@ export function buildRig(
     bones.push({ name: b.name, parent: b.parent, ...(a === undefined ? {} : { length: a.length }), ...(a !== undefined || rotation !== 0 ? { rotation } : {}), x: places(x), y: places(y) });
   }
   const world = computeExactFrameTransforms(bones);
+
+  // ---- the face's axes entry (issue #239, rig-c 2.40.0's A51) -------------
+  // The gate draws its line through the eye bones' setup origins, and the face bones were turned to the line through
+  // the same two origins as the config writes them ({@link eyeLine}); what separates the two is only how the numbers
+  // are stored. So the tolerance is measured, not chosen: the largest gap, as lines, between the line through
+  // eye_r -> eye_l and any listed bone's world x axis, in the setup frames of the bones as rigc emits them (each x, y
+  // and rotation through rig-c's own `f32`, the float32 the skeleton stores — 36.869898 is stored 1.6e-6 degrees off,
+  // more than a 6-place unit), rounded up to the places a rotation is written to, plus one unit of that last place —
+  // the float floor of the emitted rig, to the precision this stage writes. A bone turned further off is A51's.
+  if (faceAxis.turned.length > 0) {
+    const through: [string, string] = [EYE_BONES[0], EYE_BONES[1]];
+    const listed = bones.map((b) => b.name).filter((n) => faceTurn.has(n));
+    const emitted = computeExactFrameTransforms(
+      bones.map((bn) => ({ ...bn, x: f32(bn.x), y: f32(bn.y), ...(bn.rotation === undefined ? {} : { rotation: f32(bn.rotation) }) })),
+    );
+    const [a, b] = through.map((n) => emitted.get(n) as BoneTransform);
+    const gateLine = (Math.atan2(b.worldY - a.worldY, b.worldX - a.worldX) * 180) / Math.PI;
+    if (a.worldX === b.worldX && a.worldY === b.worldY) faceAxis.noAxis = `eye_r and eye_l share the world origin (${a.worldX}, ${a.worldY}), so they draw no line`;
+    else {
+      const gap = Math.max(...listed.map((n) => {
+        const t = emitted.get(n) as BoneTransform;
+        return lineGap((Math.atan2(t.c, t.a) * 180) / Math.PI, gateLine);
+      }));
+      const tolerance = pyRound(Math.ceil(gap / WRITTEN_UNIT) * WRITTEN_UNIT + WRITTEN_UNIT, OFFSET_PLACES);
+      if (tolerance >= 90) faceAxis.noAxis = `the face bones lie ${pyRound(gap, 6)} degrees off the line through eye_r and eye_l, and rigc takes a tolerance below 90 only`;
+      else faceAxis.axis = { name: FACE_AXIS_NAME, through, bones: listed, tolerance };
+    }
+  }
 
   // ---- keys a turned frame would change ----------------------------------
   // A rotate key turns a bone about its origin whatever its frame, so the
@@ -1480,6 +1552,8 @@ export function buildRig(
   // issue #126 item 3: an automatic part whose author set motion.deformMayFold — written only then, so no other rig moves.
   const mayFold = autoMotion.filter((c) => c.motion?.deformMayFold === true).map((c) => ({ slot: c.part, why: DEFORM_MAY_FOLD_WHY }));
   if (mayFold.length > 0) rig.invariants = { ...rig.invariants, deformMayFold: mayFold };
+  // issue #239: the face's line, written only when the face bones were turned to one, so no other rig moves.
+  if (faceAxis.axis !== null) rig.invariants = { ...rig.invariants, axes: [faceAxis.axis] };
   return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses, autoMotion, faceAxis };
 }
 
@@ -1498,7 +1572,9 @@ export function rigJsonText(value: unknown): string {
  * weight's bind `x, y` and each region's `x, y` is carried out of its frame as
  * written (rigc's `toWorld`, `src/coords.ts`) and back in as a difference from
  * the frame's origin, at the reference's 3 places; `length` and `rotation` are
- * dropped. Everything else is copied.
+ * dropped, and so is `invariants.axes` (issue #239): it holds bones to a
+ * line they lie along only when turned, which the flat form undoes, and the
+ * reference declared none. Everything else is copied.
  *
  * It exists so the reference's outputs stay an oracle: the chain suite and
  * `scripts/rig_oracle.ts` compare `flattenRig(built)` with the reference's
@@ -1557,5 +1633,11 @@ export function flattenRig(rig: RigSpec, sense: 1 | -1 = 1): RigSpec {
     skin[slot] = flat;
   }
   refuseIfAny(problems);
-  return { ...rig, bones, skins: { default: skin } };
+  const flat: RigSpec = { ...rig, bones, skins: { default: skin } };
+  if (rig.invariants?.axes !== undefined) {
+    const { axes: _axes, ...rest } = rig.invariants;
+    if (Object.keys(rest).length > 0) flat.invariants = rest;
+    else delete flat.invariants;
+  }
+  return flat;
 }

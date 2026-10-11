@@ -1,5 +1,5 @@
-  ..    50 assertions: 24 measured (24 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"
+  ..    51 assertions: 25 measured (25 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"
   ..    pages=24 regions=24 bones=72 slots=24 animations=8 version=4.3.13 regionAttachments=18 meshAttachments=6 physicsConstraints=30 physicsTimelineKeys=0 rig=scarf_painting profile=spine-html
   ..    pack: skeleton.png 392x1270, 24 region(s), 96.0% covered, padding 2, page edges free, shape polygon
-  ..    50 assertions: 25 measured (25 passed, 0 failed), 25 skipped, 0 not in profile "spine-html"
+  ..    51 assertions: 26 measured (26 passed, 0 failed), 25 skipped, 0 not in profile "spine-html"
   ..    pages=1 regions=24 bones=72 slots=24 animations=8 version=4.3.13 regionAttachments=18 meshAttachments=6 physicsConstraints=30 physicsTimelineKeys=0 rig=scarf_painting profile=spine-html
