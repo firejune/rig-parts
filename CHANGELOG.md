@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.2](https://github.com/firejune/rig-parts/compare/v1.5.1...v1.5.2) (2026-10-11)
+
+
+### Bug Fixes
+
+* **check:** judge the seam's pixel count in rig pixels — the frame count divided by s² — so the bar means the same at every frame scale ([#217](https://github.com/firejune/rig-parts/issues/217)) ([216b4d4](https://github.com/firejune/rig-parts/commit/216b4d48adef765ddb7ffc631b556af2148ffd6f))
+* **cli:** check's unknown-flag refusal names its two switches; README quotes the current seam line ([#219](https://github.com/firejune/rig-parts/issues/219)) ([2768a87](https://github.com/firejune/rig-parts/commit/2768a87baf3481b623bd522ccf911f39549fb10e))
+
 ## [1.5.1](https://github.com/firejune/rig-parts/compare/v1.5.0...v1.5.1) (2026-10-11)
 
 
