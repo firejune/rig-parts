@@ -815,8 +815,8 @@ const SIDES = [
  * which rule stood in; without it every value and note is the one this
  * function wrote before the parameter existed.
  */
-export function propose(P: PartSet, joints?: RigJoints): Proposal {
-  return proposeWithBasis(P, joints).proposal;
+export function propose(P: PartSet, joints?: RigJoints, wristSnap: number | null = null): Proposal {
+  return proposeWithBasis(P, joints, wristSnap).proposal;
 }
 
 /**
@@ -824,8 +824,12 @@ export function propose(P: PartSet, joints?: RigJoints): Proposal {
  * (issue #86): recorded at each placement below, from the values that placed
  * it — no bone's value is touched by the recording, and `propose` returns the
  * same proposal, byte for byte, as before the record existed.
+ *
+ * `wristSnap` (`propose --wrist-snap`, issue #199) is read only with
+ * `joints`: see {@link armsFromJoints}. `null` is the built-in tolerance
+ * alone, and every value and note is the one written before it existed.
  */
-export function proposeWithBasis(P: PartSet, joints?: RigJoints): { proposal: Proposal; basis: ProposalBasis } {
+export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: number | null = null): { proposal: Proposal; basis: ProposalBasis } {
   const bones: BoneEntry[] = [];
   const records: BoneBasis[] = [];
   // No prototype: a part may be named anything file-safe, "__proto__" included.
@@ -1390,7 +1394,7 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints): { proposal: Pr
   // Issue #75: arms from joints, when every handwear part carries the wrist of
   // an arm whose shoulder, elbow and wrist are all given; otherwise the rule
   // below places every sleeve chain, and the notes say why.
-  const armPlan = joints !== undefined && clasped === null && hw.length > 0 ? armsFromJoints(P, hw, joints) : null;
+  const armPlan = joints !== undefined && clasped === null && hw.length > 0 ? armsFromJoints(P, hw, joints, wristSnap) : null;
   let sleeveRule = '';
   if (clasped !== null) {
     sleeveRule = 'the clasped-hands rule (the handwear is a region on hip, with no sleeve chain)';
@@ -1619,6 +1623,7 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints): { proposal: Pr
         sleeveRule,
         armWhy: armPlan === null ? null : armPlan.why,
         arms: armPlan === null ? null : armPlan.arms,
+        wristSnap,
         eyes: (['r', 'l'] as const).map((s) => {
           const e = eyes.get(s);
           return e === undefined ? null : { bone: `eye_${s}`, part: (ew[s] as PartRecord).name, at: e };
@@ -1633,13 +1638,50 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints): { proposal: Pr
 // external keypoints (issue #75)
 // ---------------------------------------------------------------------------
 
-/** One arm placed from joints: its side (the subject's), its three joints in rig px, and the handwear part whose art holds its wrist. */
+/**
+ * How far a wrist joint may lie from a handwear part's art and still be on
+ * it: the LINT's own tolerance, the part's mask dilated this many px each way
+ * (a `2 * 15 + 1` square). `propose --wrist-snap <px>` (issue #199) extends
+ * it for a wrist on no part; it never narrows it.
+ */
+export const WRIST_ON_PART_PX = 15;
+
+/**
+ * One arm placed from joints: its side (the subject's), its three joints in
+ * rig px, the handwear part whose art holds its wrist, and `snap` — `null`
+ * when the wrist is within {@link WRIST_ON_PART_PX} of that part's art, else
+ * the distance `--wrist-snap` bound it across.
+ */
 interface JointArm {
   side: 'r' | 'l';
   shoulder: [number, number];
   elbow: [number, number];
   wrist: [number, number];
   part: PartRecord;
+  snap: number | null;
+}
+
+/**
+ * The distance from the pixel holding `at` (truncated, as {@link isOn} reads
+ * it) to the nearest pixel of `m`'s art by the larger of the x and y gaps
+ * (Chebyshev) — the measure of the dilation that holds a wrist within
+ * {@link WRIST_ON_PART_PX}, so a wrist this far off its part is on the part's
+ * mask dilated `2 * d + 1`. Infinity on a mask with no art.
+ */
+function artDistance(m: Mask, at: readonly [number, number]): number {
+  const xi = pyInt(at[0]);
+  const yi = pyInt(at[1]);
+  let best = Infinity;
+  for (let y = 0; y < m.height; y++) {
+    const dy = Math.abs(y - yi);
+    if (dy >= best) continue;
+    for (let x = 0; x < m.width; x++) {
+      if (m.data[y * m.width + x] !== 1) continue;
+      const d = Math.max(dy, Math.abs(x - xi));
+      if (d < best) best = d;
+    }
+  }
+  return best;
 }
 
 /**
@@ -1653,9 +1695,17 @@ interface JointArm {
  * be read by two rules at once. Sides come from the joints, not from the eye
  * axis, so a figure seen from behind or lying across the axis is paired by
  * where its wrists are.
+ *
+ * Issue #199: a wrist on no part within that tolerance is measured to every
+ * part by the same Chebyshev distance ({@link artDistance}). With
+ * `wristSnap` (an integer above {@link WRIST_ON_PART_PX}, the CLI's to hold)
+ * it is bound to the one nearest part when that part is at most `wristSnap`
+ * px away; two parts tied nearest bind neither, as a wrist on two parts
+ * does not. Otherwise the why names the nearest part and its distance, the
+ * tolerance that would have bound it.
  */
-function armsFromJoints(P: PartSet, hw: readonly PartRecord[], joints: RigJoints): { arms: JointArm[] | null; why: string | null } {
-  const complete: Array<Omit<JointArm, 'part'>> = [];
+function armsFromJoints(P: PartSet, hw: readonly PartRecord[], joints: RigJoints, wristSnap: number | null): { arms: JointArm[] | null; why: string | null } {
+  const complete: Array<Omit<JointArm, 'part' | 'snap'>> = [];
   const gaps: string[] = [];
   for (const s of ['r', 'l'] as const) {
     const sh = joints.joints[`${s}_shoulder`].at;
@@ -1668,15 +1718,29 @@ function armsFromJoints(P: PartSet, hw: readonly PartRecord[], joints: RigJoints
     else complete.push({ side: s, shoulder: sh, elbow: el, wrist: wr });
   }
   if (complete.length === 0) return { arms: null, why: `no arm has its shoulder, elbow and wrist all given (${gaps.join('; ')})` };
-  const near = new Map(hw.map((p) => [p, dilate(P.alpha(p), 31)]));
+  const near = new Map(hw.map((p) => [p, dilate(P.alpha(p), 2 * WRIST_ON_PART_PX + 1)]));
   const arms: JointArm[] = [];
   for (const a of complete) {
     const on = hw.filter((p) => isOn(near.get(p) as Mask, a.wrist[0], a.wrist[1]));
-    if (on.length !== 1) {
-      const where = on.length === 0 ? 'no handwear part' : `${on.length} handwear parts (${on.map((p) => p.name).join(', ')})`;
-      return { arms: null, why: `${a.side}_wrist at ${fmtAt(a.wrist)} lies on the art of ${where}, so it does not say which sleeve it ends` };
+    if (on.length > 1) return { arms: null, why: `${a.side}_wrist at ${fmtAt(a.wrist)} lies on the art of ${on.length} handwear parts (${on.map((p) => p.name).join(', ')}), so it does not say which sleeve it ends` };
+    if (on.length === 1) {
+      arms.push({ ...a, part: on[0], snap: null });
+      continue;
     }
-    arms.push({ ...a, part: on[0] });
+    const far = hw.map((p) => ({ p, d: artDistance(P.alpha(p), a.wrist) }));
+    const d = Math.min(...far.map((q) => q.d));
+    const nearest = far.filter((q) => q.d === d).map((q) => q.p);
+    if (wristSnap !== null && d <= wristSnap && nearest.length === 1) {
+      arms.push({ ...a, part: nearest[0], snap: d });
+      continue;
+    }
+    const gap = 'by the larger of the x and y gaps';
+    const reach = wristSnap === null ? `--wrist-snap ${Math.max(d, WRIST_ON_PART_PX + 1)} would bind it` : `beyond --wrist-snap ${wristSnap}`;
+    const nearestIs =
+      nearest.length === 1
+        ? `the nearest is ${nearest[0].name}, ${d} px from its art ${gap} (${reach})`
+        : `the nearest are ${nearest.map((p) => p.name).join(' and ')}, each ${d} px from its art ${gap}, so no tolerance says which`;
+    return { arms: null, why: `${a.side}_wrist at ${fmtAt(a.wrist)} lies on the art of no handwear part within ${WRIST_ON_PART_PX} px, so it does not say which sleeve it ends; ${nearestIs}` };
   }
   const idle = hw.filter((p) => !arms.some((a) => a.part === p));
   if (idle.length > 0) {
@@ -1711,6 +1775,8 @@ interface JointNoteFacts {
   sleeveRule: string;
   armWhy: string | null;
   arms: JointArm[] | null;
+  /** `propose --wrist-snap`, or `null` without it. */
+  wristSnap: number | null;
   eyes: ReadonlyArray<{ bone: string; part: string; at: [number, number] } | null>;
 }
 
@@ -1757,11 +1823,26 @@ function jointNotes(joints: RigJoints, f: JointNoteFacts): string[] {
       [`${s}_wrist`, 'the tip'],
     ] as const) {
       const j = J[joint];
-      if (arm !== null) tell(joint, `${said(joint, j)}: ${usedAs(j)} for chain sleeve_${s}, ${role} (the wrist lies on ${arm.part.name})`);
+      const on = arm === null ? '' : arm.snap === null ? `the wrist lies on ${arm.part.name}` : `the wrist is bound to ${arm.part.name} by --wrist-snap`;
+      if (arm !== null) tell(joint, `${said(joint, j)}: ${usedAs(j)} for chain sleeve_${s}, ${role} (${on})`);
       else if (j.at !== null && f.armWhy !== null) tell(joint, `${said(joint, j)}: not used — ${f.armWhy}; ${standIn}`);
       else if (j.at !== null) tell(joint, `${said(joint, j)}: not used — ${standIn}`);
       else tell(joint, `${said(joint, j)}: ${standIn}`);
     }
+    // Issue #199: which wrist the declared tolerance bound, to which part, and how far.
+    if (arm !== null && arm.snap !== null) {
+      out.push(
+        `wrist snap: ${s}_wrist at ${fmtAt(arm.wrist)} lies on no handwear part within ${WRIST_ON_PART_PX} px; --wrist-snap ${f.wristSnap} bound it to ${arm.part.name}, the nearest, ${arm.snap} px from its art by the larger of the x and y gaps`,
+      );
+    }
+  }
+  // Issue #199: two chains on one part are said, not left to share its mesh unremarked.
+  const both = f.arms !== null && f.arms.length === 2 && f.arms[0].part === f.arms[1].part ? f.arms[0].part.name : null;
+  if (both !== null) {
+    out.push(
+      `one handwear part holds both wrists: r_wrist and l_wrist both end on ${both}, so chains sleeve_r and sleeve_l share its mesh and its art bends with both arms; ` +
+        `to separate them, cut one sleeve out of ${both} with an assemble.cuts entry (a polygon round it) and propose again`,
+    );
   }
   (['r', 'l'] as const).forEach((s, i) => {
     const n = `${s}_eye` as const;

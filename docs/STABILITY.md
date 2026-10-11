@@ -52,7 +52,7 @@ defaults are the help's too, and none is guessed from the art.
 | `comfy` | `seethrough`: `--image`, `--out`; optional `--resolution`, `--steps`, `--seed`, `--prefix`, `--offload`, `--lama`, `--nf4`, `--host`, `--wait`, `--timeout`, `--poll` |
 | `assemble` | `--propose-plan` with `--source`, `--full`, `--head`, `--config`; or `--source`, `--full`, `--head`, `--config`, `--out`, optional `--seam` (near-white, silhouette), `--project` (core, visible) |
 | `propose` | `--head-box` with `--full`, `--canvas` |
-| `propose` | `--parts`, `--source`, `--out`; optional `--compare` or `--from-config` (one of them), `--keypoints`, `--person` (with `--keypoints`) |
+| `propose` | `--parts`, `--source`, `--out`; optional `--compare` or `--from-config` (one of them), `--keypoints`, `--person` and `--wrist-snap` (each with `--keypoints`) |
 | `compare` | `--left`, `--right`; optional `--map` |
 | `rig` | `--config`, `--parts`, `--out`; optional `--idle-keys` (ctl, direct), `--page-edges` (pot, free), `--pack-shape` (rect, polygon) |
 | `check` | `--rig`, `--out`; optional `--parts`, `--source`, `--page-edges`, `--pack-shape`, `--requirements`, `--seam-pairs`, `--keep-stills` |
