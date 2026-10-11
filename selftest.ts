@@ -148,7 +148,7 @@ import {
   stageFields,
   visibilityCounts,
 } from './src/assemble.ts';
-import { flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
+import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
 import { BARS, besideIdleLine, blackRig, buildGateLines, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { blinkFigures, type BoneWorld, frameBox, halfTravels, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, ulpOf } from './src/instruments.ts';
 import {
@@ -6396,7 +6396,7 @@ function readJsonFile(path: string): Record<string, unknown> | null {
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>) : null;
 }
 
-const CHECK_KEYS = ['gate_spine_html_green', 'rigc_entry', 'pack_mode', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', ...JUDGEMENT_LINES, ...REPORTED_LINES, 'PASS'];
+const CHECK_KEYS = ['gate_spine_html_green', 'rigc_entry', 'pack_mode', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', 'seam_frame_scale', ...JUDGEMENT_LINES, ...REPORTED_LINES, 'PASS'];
 
 /** A judgement line's status in a check.json read back, or null. */
 function lineStatus(fig: Record<string, unknown> | null, name: string): string | null {
@@ -7179,7 +7179,7 @@ function runCheckSuite(): number {
     const sl = failLine(seam.out, 'CHECK_SEAM_WITHIN_BAR');
     say(
       'CK04_A_PART_SHIFTED_THREE_PIXELS_FAILS_THE_SEAM_WITH_THE_NUMBERS',
-      seam.status === 1 && sl !== null && sf !== null && sl.includes(`mean |d| ${String(sf.seam_mean)}/255`) && sl.includes(`${String(sf.seam_px_over_40)} px over`) && sf.loop_max_diff === 0 && sf.gate_spine_html_green === true,
+      seam.status === 1 && sl !== null && sf !== null && sl.includes(`mean |d| ${String(sf.seam_mean)}/255`) && sl.includes(`${String(sf.seam_px_over_40)} frame px over`) && typeof sf.seam_frame_scale === 'number' && sl.includes(`${seamRigPxText(sf.seam_px_over_40 as number, sf.seam_frame_scale)} rig px`) && sf.loop_max_diff === 0 && sf.gate_spine_html_green === true,
       `exit ${seam.status}; ${sl?.trim() ?? 'no CHECK_SEAM_WITHIN_BAR line'}`,
       'parts/ is what the seam composites and images/ is what rigc draws; a part moved 3 px in one and not the other is the drift an assembler bug produces, and the gate passes it',
     );
@@ -7415,6 +7415,99 @@ function runCheckSuite(): number {
         twiceKeep.out.includes('--keep-stills is given twice'),
       `with the flag: ${STILL_DIR}/ holds ${keptFiles.join(', ') || 'nothing'}; ${kept === null ? 'no frame set' : `${kept.frames.length} frame(s) on ${kept.viewport.pixelWidth}x${kept.viewport.pixelHeight}, scale ${kept.viewport.scale}`}; the wrote line ${pad.out.includes(join(padOut, STILL_DIR)) ? 'names it' : 'DOES NOT name it'}; CK01's plain run: ${existsSync(join(out, STILL_DIR)) ? 'WROTE it' : 'none'}; given twice: exit ${twiceKeep.status}`,
       "issue #209 item 4: a reader comparing against the tool's own frame needs that frame and the viewport it was mapped by, not a reconstruction from the seam pictures; the request is the only door to them, so a run not asked leaves its out directory as before, and a doubled switch is a usage error",
+    );
+
+    // Issue #216: the seam bar's count is in rig pixels, the frame count over s², so it reads one rig the same at every
+    // frame scale. The fixture's stack on a 72-wide canvas 87, 130 and 173 tall: rig-c fits the same figure (CK101's)
+    // and check asks for the canvas's longest side, so the still renders at s ~ 1.0, 1.5 and 2.0.
+    const SCALED = [87, 130, 173] as const;
+    interface ScaledRun { h: number; status: number; out: string; fig: Record<string, unknown> | null }
+    const scaledRun = (tag: string, h: number, plant: (rigDir: string) => void): ScaledRun => {
+      const d = join(dir, `${tag}-${h}`);
+      writeCheckRig(d, { canvas: { w: PAD.w, h } });
+      plant(d);
+      const r = runCli(['check', '--rig', d, '--out', join(d, 'out')]);
+      return { h, status: r.status, out: r.out, fig: readJsonFile(join(d, 'out', 'check.json')) };
+    };
+    const num = (fig: Record<string, unknown> | null, k: string): number => (typeof fig?.[k] === 'number' ? (fig[k] as number) : NaN);
+    const rigPxOf = (r: ScaledRun): number => seamRigPx(num(r.fig, 'seam_px_over_40'), num(r.fig, 'seam_frame_scale'));
+    const showRun = (r: ScaledRun): string =>
+      `canvas h ${r.h}: exit ${r.status}, s ${String(r.fig?.seam_frame_scale)}, mean ${String(r.fig?.seam_mean)}, ${String(r.fig?.seam_px_over_40)} frame px over 40 = ${rigPxOf(r).toFixed(2)} rig px`;
+    // The planted seam: parts/'s copy of the back part moved 2 px right inside its box (CK04 moves it 3), images/ as drawn.
+    const seamed = SCALED.map((h) =>
+      scaledRun('seam2', h, (d) => writeFileSync(join(d, 'parts', `${CHECK_PARTS[0].name}.png`), encodePngBytes(shiftRight(checkPartRaster(CHECK_PARTS[0]), 2)))),
+    );
+    const seamedRig = seamed.map(rigPxOf);
+    const seamedFrame = seamed.map((r) => num(r.fig, 'seam_px_over_40'));
+    say(
+      'CK105_A_PLANTED_TWO_PIXEL_SEAM_IS_RED_IN_RIG_PIXELS_AT_FRAME_SCALES_ONE_ONE_AND_A_HALF_AND_TWO',
+      seamed.every((r) => r.status === 1 && failLine(r.out, 'CHECK_SEAM_WITHIN_BAR') !== null && barsNotMet(r.fig ?? {}).includes('seam')) &&
+        seamed.every((r) => (failLine(r.out, 'CHECK_SEAM_WITHIN_BAR') ?? '').includes(`${seamRigPxText(num(r.fig, 'seam_px_over_40'), num(r.fig, 'seam_frame_scale'))} rig px (the count / s²)`)) &&
+        seamedRig.every((x) => x > SEAM_PX_BAR) &&
+        Math.abs(num(seamed[0].fig, 'seam_frame_scale') - 1) < 0.05 &&
+        Math.abs(num(seamed[1].fig, 'seam_frame_scale') - 1.5) < 0.05 &&
+        Math.abs(num(seamed[2].fig, 'seam_frame_scale') - 2) < 0.05 &&
+        Math.max(...seamedRig) / Math.min(...seamedRig) <= 1.25 &&
+        seamedFrame[2] / seamedFrame[0] >= 3,
+      seamed.map(showRun).join('; '),
+      "issue #216 item 2: a real seam has an area on the rig, so the frame counts it s² times over — the bar in rig pixels must read it red at every scale and read it as the same seam (the three rig-pixel figures within a quarter of each other, while the frame count grows by more than three from s ~ 1 to s ~ 2, the s² the form divides out). On the public sample a part moved 2 rig px read 400, 891 and 1,560 frame px over 40 at s = 1.0, 1.5 and 2.0 and 400, 396 and 390 rig px [measured for issue #216, a scratch run]",
+    );
+
+    // The aligned stack (CK01's, CK101's at s ~ 1.5) and a 6x6 colour patch planted in parts/'s back part: both green at
+    // all three scales. The patch is the consumer's case — at s ~ 2 its frame count passes the reference's bar of 50
+    // frame px, while what it covers on the rig is the 6x6 block and the one rig pixel round it a bilinear sample
+    // reaches, 7x7 = 49 rig px at most, under 50 whatever the scale.
+    const aligned = SCALED.map((h) => scaledRun('aligned', h, () => undefined));
+    const patched = SCALED.map((h) =>
+      scaledRun('patch6', h, (d) => {
+        const r0 = checkPartRaster(CHECK_PARTS[0]);
+        // local (6..11, 8..13): opaque, left of the front part (which starts at rig x 18), red lowered by 100
+        for (let y = 8; y < 14; y++) for (let x = 6; x < 12; x++) r0.data[(y * r0.width + x) * 4] -= 100;
+        writeFileSync(join(d, 'parts', `${CHECK_PARTS[0].name}.png`), encodePngBytes(r0));
+      }),
+    );
+    say(
+      'CK106_THE_ALIGNED_STACK_AND_A_SIX_PIXEL_PATCH_ARE_GREEN_AT_ALL_THREE_SCALES_WHERE_THE_FRAME_COUNT_WOULD_FAIL_THE_PATCH',
+      [...aligned, ...patched].every((r) => r.status === 0 && r.fig?.PASS === true && barsNotMet(r.fig).length === 0) &&
+        aligned.every((r) => num(r.fig, 'seam_px_over_40') === 0) &&
+        patched.every((r) => rigPxOf(r) > 0 && rigPxOf(r) <= 49) &&
+        num(patched[2].fig, 'seam_px_over_40') > SEAM_PX_BAR &&
+        barsNotMet({ ...(patched[2].fig ?? {}), seam_frame_scale: undefined }).includes('seam'),
+      `aligned: ${aligned.map(showRun).join('; ')} | patch: ${patched.map(showRun).join('; ')}; the patch at s ~ 2 read by the frame count (check.json without seam_frame_scale): bars not met ${JSON.stringify(barsNotMet({ ...(patched[2].fig ?? {}), seam_frame_scale: undefined }))}`,
+      "issue #216's consumer reading: a correct rig drawn small on its stage (s = 1.59) passed with a margin of 0 — 50 frame px against the bar of 50 — because the frame holds s² pixels per rig pixel. The patch is the planted negative of the frame count: green under the bar in rig pixels at every scale, red at s ~ 2 when the same check.json is read the way a file written before this field is (barsNotMet without seam_frame_scale, the frame count). On the fixture the patch read 19, 52 and 86 frame px at s ~ 1.0, 1.5 and 2.0, about 19 to 23 rig px [observed, the prototype of this control]",
+    );
+
+    // The public examples keep their verdicts: their tracked check.json files, read as check.json is read (barsNotMet),
+    // pass the bar in rig pixels and passed it in frame pixels, each with the frame scale written.
+    const exampleVerdicts = ['demo', 'sample', 'scarf'].map((key) => {
+      const f = readJsonFile(join(ROOT, 'examples', key, 'expected', 'check.json'));
+      const s = num(f, 'seam_frame_scale');
+      const n = num(f, 'seam_px_over_40');
+      return { key, pass: f?.PASS === true, s, n, newBar: barsNotMet(f ?? {}).length === 0, oldBar: n <= SEAM_PX_BAR, keys: f === null ? '' : Object.keys(f).slice(Object.keys(f).indexOf('seam_mean'), Object.keys(f).indexOf('seam_mean') + 4).join(',') };
+    });
+    say(
+      'CK107_THE_THREE_PUBLIC_EXAMPLES_NEAR_FRAME_SCALE_ONE_KEEP_THEIR_VERDICTS_UNDER_THE_BAR_IN_RIG_PIXELS',
+      exampleVerdicts.every((e) => e.pass && e.newBar && e.oldBar && Math.abs(e.s - 1) < 0.1 && e.keys === 'seam_mean,seam_px_over_40,seam_px_over_80,seam_frame_scale'),
+      exampleVerdicts.map((e) => `${e.key}: PASS ${e.pass}, s ${e.s}, ${e.n} frame px = ${seamRigPx(e.n, e.s).toFixed(2)} rig px; bars not met (rig px) ${e.newBar ? 'none' : 'SOME'}; frame count <= ${SEAM_PX_BAR} ${e.oldBar}; seam keys ${e.keys}`).join('; '),
+      'issue #216 item 3: the examples render at s = 0.9422, 1.0116 and 1.0107 (issue #209), where dividing by s² moves a count of 2 by less than 0.3; each tracked check.json must carry the scale after the three seam figures and read green under both forms, so the change of form changed no verdict the chain suite (CH04) holds them to',
+    );
+
+    // The legend of the seam pictures, and the bar's form, in the two places an author meets them.
+    const help = runCli(['--help']).out;
+    const helpCheck = help.slice(help.indexOf('rig-parts check --rig'), help.indexOf('rig-parts check --rig') + 6000);
+    const pairLine = authoring.split('\n').findIndex((l) => l.includes('Each pair is a console line `seam pair'));
+    const besidePair = pairLine === -1 ? '' : authoring.split('\n').slice(pairLine, pairLine + 4).join('\n');
+    say(
+      'CK108_THE_SEAM_PICTURE_LEGEND_AND_THE_BAR_IN_RIG_PIXELS_ARE_IN_THE_HELP_AND_BESIDE_AUTHORING_S_SEAM_PAIR_LINE',
+      helpCheck.includes('magenta = a counted pixel') &&
+        helpCheck.includes(`${SEAM_PX_BAR} rig px over ${SEAM_PX_LEVEL}`) &&
+        helpCheck.includes('divided by s²') &&
+        besidePair.includes('**magenta = a counted pixel**') &&
+        seamBullet(authoring).includes('at most 50 **rig** pixels over 40') &&
+        seamBullet(authoring).includes('`seam_frame_scale`') &&
+        !seamBullet(before202).includes('**rig** pixels'),
+      `help: legend ${helpCheck.includes('magenta = a counted pixel')}, bar in rig px ${helpCheck.includes(`${SEAM_PX_BAR} rig px over ${SEAM_PX_LEVEL}`)}; AUTHORING beside the seam pair line: legend ${besidePair.includes('**magenta = a counted pixel**')}; §7 bullet states rig pixels ${seamBullet(authoring).includes('at most 50 **rig** pixels over 40')} and seam_frame_scale ${seamBullet(authoring).includes('`seam_frame_scale`')}`,
+      'issue #216 item 4: an agent reading a seam picture cannot see what the magenta marks unless the text says so, where it reads the pair line; the help and §7 state the bar as it now reads, and the pre-#202 bullet (the planted negative of CK100) does not',
     );
 
     const redRig = join(dir, 'red');
