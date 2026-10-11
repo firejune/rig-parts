@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.5](https://github.com/rig-c/parts/compare/v1.5.4...v1.5.5) (2026-10-11)
+
+
+### Bug Fixes
+
+* **docs:** the public examples repository is rig-c/parts-examples ([#228](https://github.com/rig-c/parts/issues/228)) ([1c95d36](https://github.com/rig-c/parts/commit/1c95d3670d80477cc0c032be04b4ce6bb010b646))
+* **examples:** repaint the display demo with readable hands, keep the reference demo and sample as oracle fixtures ([#232](https://github.com/rig-c/parts/issues/232)) ([c82ddfc](https://github.com/rig-c/parts/commit/c82ddfcf5e4ff3801a98831045bb417133666c70))
+
 ## [1.5.4](https://github.com/rig-c/parts/compare/v1.5.3...v1.5.4) (2026-10-11)
 
 
