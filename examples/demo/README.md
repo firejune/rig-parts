@@ -27,12 +27,16 @@ here (gitignored).
   the older examples were chosen on cannot see fingers.
 - **The proposal, two corrections.** The config's `bones`, `meshes`, `regions` and
   `motion` are `proposal.json`'s, value for value, but for the points of two chains
-  (below); its `assemble.plan` is `assemble --propose-plan`'s but for one entry
+  (below) and the two authored additions of issue #224 (`motion.animations_from` and
+  `constraints`, *Gestures, expressions and trailing strands* below); its `assemble.plan` is `assemble --propose-plan`'s but for one entry
   (below); its `seethrough.head_box` is `propose --head-box`'s as printed.
 
 ## What is tracked
 
 - `config.json` — the config the build reads.
+- `animations.json` — the named animations beside the idle (issue #224), in rig-c's
+  motion-spec shape, which `motion.animations_from` names; *Gestures, expressions and
+  trailing strands* below.
 - `pose.json` — the pose file `generation.control.skeleton` names, read beside the
   config by `comfy paint`; the copy in parts-examples is the same file.
 - `proposal.json` — what `rig-parts propose --parts <build> --source painting.png`
@@ -50,7 +54,15 @@ here (gitignored).
   `mesh_report.json` (`rig`), and `check.json` and `gate_spine-html.txt` (`check`)
   are the build's files as written; `rig.json` is the build's `rig/rig.json`
   carried to its flat form by `flattenRig` (`src/rig.ts`), the form every example's
-  `expected/rig.json` is in.
+  `expected/rig.json` is in. Issue #224 moved `rig.json` (the 29 physics constraints),
+  `motion.json` (the seven animations after `idle`), `gate_spine-html.txt` (the
+  counts it prints: `animations=8`, `physicsConstraints=29`, and one more rule
+  measured, 25 of 50 on the packed build) and `check.json` (`loop_physics` names the
+  constraints the loop bar leaves out; the idle's figures move by the physics the idle
+  itself drives and by the render's viewport, now fitted over the hop and the wave:
+  `BREATH_VISIBLE` `torso_heat_mean` 14.056 to 14.271, `TIP_OVER_ROOT` 2.425 / 6.93 /
+  6.521 to 2.426 / 6.932 / 6.525, every status as before); `parts.json` and
+  `mesh_report.json` did not move.
 
 ## The two corrections
 
@@ -108,11 +120,11 @@ The README loop pasted uncorrected stops where the README says to read
 
 | | |
 | --- | --- |
-| gate | `50 assertions: 24 measured (24 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"` |
+| gate | `50 assertions: 25 measured (25 passed, 0 failed), 25 skipped, 0 not in profile "spine-html"` |
 | pack | `skeleton.png 1051x972, 23 region(s), 96.9% covered, padding 2, page edges free, shape polygon` |
 | seam | mean 0.147, 0 px over 40, frame scale 0.943777 |
 | loop | max \|d\| 0 |
-| `TIP_OVER_ROOT` | `bottomwear` 2.425, `handwear_r` 6.93, `handwear_l` 6.521 (floor 1.4725) |
+| `TIP_OVER_ROOT` | `bottomwear` 2.426, `handwear_r` 6.932, `handwear_l` 6.525 (floor 1.4725) |
 | `TEXTURE_STRETCH` | severity 1.097, `hair_front` (ceiling 1.926544) |
 | `BLINK_NO_HOLE` | idle frame 29 closed, hole 0 px |
 | `RECOMPOSITE_HOLES` | error px 14,570; uncovered 2,939 in 1,020 holes, the largest 48 px at 204,519 27x25 beside `bottomwear` |
@@ -121,6 +133,82 @@ The README loop pasted uncorrected stops where the README says to read
 `--seam silhouette` changes little here: recomposite error pixels 14,570 → 14,534,
 uncovered 2,939 under both. The README's animation is the default build's.
 
+## Gestures, expressions and trailing strands
+
+Issue #224 gave the character named animations beside the idle and physics on its
+strands, so a reader has a worked set to copy and the toolchain trailer a rig that can
+perform. Everything is authored in two places: `animations.json` (named by
+`motion.animations_from`) and the config's `constraints`. Nothing in the package
+proposes or judges either.
+
+**The clips.** Each is a one-shot (`loop: false`) that keys only what it needs and
+starts and ends at the setup pose, so it plays over the idle on a second track of the
+player. None keys a constraint, the draw order, a deform or an attachment. They key the
+bones the idle leaves alone — `head` (the idle turns `head_ctl` and `neck`), `chest`
+(the idle breathes `chest_ctl`), `hip`, `root`, `mouth`, and the chain links `sleeve_l0`
+to `sleeve_l2` (the idle turns the `*_ctl` bones above them) — so the idle's sway, breath
+and chain swing stay alive under every clip. Every key carries an ease-in-out Bézier
+(`curve`, control points at a quarter and three quarters of the span).
+
+| clip | s | keys |
+| --- | --- | --- |
+| `tilt` | 1.6 | `head` rotate to 10°, held, a small overshoot past the rest, settles |
+| `look_l`, `look_r` | 1.8 | `head` only: translatex ±16 with an overshoot, rotate ∓5°, scalex 0.95 (the near side foreshortened) |
+| `smile` | 1.4 | `mouth` scale 1.3 × 0.7 and up 3; `eye_r`, `eye_l` scaley 0.72 (the eyes narrow); `brow_r`, `brow_l` up 4; `head` 5° |
+| `startled` | 1.4 | anticipation at 0.12 s (brows down, eyes 0.85, `head` and `chest` down), the start at 0.24 s (brows up 12, eyes 1.25, `mouth` 0.75 × 1.8, `head` and `chest` up 8), a held beat, a settle |
+| `wave` | 2.21 | `sleeve_l0` +48°, `sleeve_l1` +20° (the arm out to the side), `sleeve_l2` +10°, −10°, +10° (the hand), back down |
+| `hop` | 1.2 | `hip` down 14 (anticipation), `root` up 90 at 0.42 s (`root` carries the shoes, which ride `root`, with the body), `hip` down 18.2 on landing (squash), a small rebound; `chest` scale squashes and stretches 2–4 % |
+
+An expression is what the bones can do. Every slot holds one attachment, the part's own
+image: the mouth widens, narrows and lifts, the eyes narrow and widen, the brows rise,
+and no mouth or eye shape is ever swapped for another — there is no second image to key.
+
+**The strands.** One `physics` constraint per chain link, on the link bone itself
+(`hairback_r0`, not `hairback_r0_ctl`), driving `rotate` only, strength falling to 0.825
+and 0.65 of the chain's value down its links so the tip is the softest:
+
+| strands | inertia | strength (root link) | damping | mix |
+| --- | --- | --- | --- | --- |
+| twin tails `hairback_r`, `hairback_l` | 0.5 | 90 | 0.85 | 1 |
+| bangs `bang_r`, `bang_c`, `bang_l`; skirt `skirt_r`, `skirt_c`, `skirt_l` | 0.2 | 200 | 0.85 | 1 |
+| arms (sleeves) `sleeve_r`, `sleeve_l` | 0.15 | 250 | 0.85 | 0.6 |
+
+The ribbon bows (`hairpin`) and the earrings (`earring`) are single bones with no
+length, and a `rotate` drive on a bone with no length is refused by rig-c's gate
+(`A23`, as rig-c's own AUTHORING documents it: with no tip the solver aims the bone at
+a world angle); each takes a translation-only constraint
+instead (`x` 0.5, `y` 1; inertia 0.3, strength 160 for the bows, 0.5 and 100 for the
+earrings) and bounces as one piece.
+
+**What was measured, and against what.** `check` reads the idle alone, so each clip was
+read by `check`'s own `TEXTURE_STRETCH` reading (`stretchLine`, `src/check.ts`) applied to
+the clip's `rigc render --geometry --fps 30 --max 640` geometry, the clip played alone
+from frame 0 with physics on, against the same ceiling, 1.926544:
+
+| clip | severity | worst mesh |
+| --- | --- | --- |
+| `tilt` | 1.133 | `neck` |
+| `look_l`, `look_r` | 1.323, 1.331 | `neck` |
+| `smile` | 1.062 | `neck` |
+| `startled` | 1.284 | `neck` |
+| `wave` | 1.829 | `handwear_l` |
+| `hop` | 1.362 | `hair_front` |
+
+What set the values: the first draft (the arm raised overhead, `sleeve_l0` +55° and
+`sleeve_l1` +60°, bangs and skirt at inertia 0.4, strength 120) read 5.327 on `wave`
+(`handwear_l`, the inside of the elbow) and 2.285 on `hop` (`bottomwear`; `hair_front`
+2.096). The arm does not go higher: with the sleeve constraints left out, +40° / +60°
+read 3.082, +60° / +15° 2.185, +80° / +20° 3.195, and +50° / +20° with the hand at ±14°
+1.902; the tracked +48° / +20° / ±10° reads 1.829 with the sleeve constraints in. A wave
+overhead tears the elbow of a mesh whose weights blend two links there, so this one is
+an arm out to the side with the hand waving. Stiffening the bangs and the skirt to
+inertia 0.2, strength 200 brought `hop` to 1.362.
+
+**Limits.** No bar here reads a clip: the figures above are a measurement made for this
+issue, not a gate, and a clip played over the idle on a player's tracks adds the idle's
+small motion to them. The render fits its viewport over every animation, so the hop and
+the wave moved the idle's figures in `check.json` (above), every status as before.
+
 ## Known limits
 
 - **The hands are part of the sleeves.** See-through puts each forearm and hand
@@ -128,5 +216,7 @@ uncovered 2,939 under both. The README's animation is the default build's.
   posed on their own.
 - **The skirt's centre swings least.** `skirt_c` keeps the proposal's points and
   amplitudes; the two moved chains carry the sides.
-- **Earrings are rigid.** The proposer found the earring's pendant top off the art
-  and proposed no chain (its note); the earrings ride `head`.
+- **Earrings have no chain.** The proposer found the earring's pendant top off the art
+  and proposed no chain (its note); the earrings ride `earring`, a child of `head`,
+  which a translation-only physics constraint bounces (issue #224, below) — they
+  never swing about their own hooks.

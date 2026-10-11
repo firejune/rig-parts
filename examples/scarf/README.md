@@ -20,7 +20,9 @@ here (gitignored).
   the idle swings them.
 - **The first character run through the pipeline with the proposal unedited.** The
   config's `bones`, `meshes` and `motion` are `proposal.json`'s, value for value, but
-  for one mesh mode (below) and the `robe_r` chain's points (below), and its
+  for one mesh mode (below), the `robe_r` chain's points (below) and the two authored
+  additions of issue #224 (`motion.animations_from` and `constraints`, *Gestures,
+  expressions and trailing strands* below), and its
   `regions` are the proposal's for every part but the two shoe patches. Every other
   hand correction is an `assemble.patches` entry (below), with its reason in
   `assemble.patches_note`.
@@ -46,6 +48,9 @@ here (gitignored).
 ## What is tracked
 
 - `config.json` — the config the build reads.
+- `animations.json` — the named animations beside the idle (issue #224), in rig-c's
+  motion-spec shape, which `motion.animations_from` names; *Gestures, expressions and
+  trailing strands* below.
 - `proposal.json` — what `rig-parts propose --parts <build> --source painting.png`
   writes on the parts of the build in `expected/` (selftest `CH06`, `PR52`). #119
   moved the first two points of the `robe_l` chain by 1 and 2 px from what the
@@ -78,7 +83,17 @@ here (gitignored).
   as written; `rig.json` is the build's `rig/rig.json` carried to its flat form by
   `flattenRig` (`src/rig.ts`), the form the reference wrote and reference-demo's and reference-sample's
   `expected/rig.json` are in, so the chain suite (`CH03`) and the structure suite
-  (`ST25`) read the examples the same way. Issue #126 turned every mesh triangle counter-clockwise in Spine world, the winding rig-c reads a mesh in (the reference, and this port before it, wrote them clockwise there). The declared exception, and nothing else: every mesh `triangles` triple `[a, b, c]` is `[a, c, b]` in `rig.json`; the `check.json` `TEXTURE_STRETCH` entries that print a triangle's vertices and edge print them in that order (16 here, 52 over the three examples; the triangle, frame and figures are unchanged); and the untracked `skeleton.model.json`'s `spine.sha256`, which follows the skeleton bytes. Every rendered frame of the build is pixel-equal before and after. Issue #209 carried the seam's composite onto the render's pixel centres — the setup-pose still renders at frame scale 1.0107 here, not 1 — which moved `check.json`'s `seam_mean` from 0.211 to 0.206, with every other figure as before. Issue #216 judges the seam's pixel count in rig pixels — the frame count divided by s², so the bar reads one rig the same at every frame scale — and writes the scale it divides by as `check.json`'s `seam_frame_scale` (1.010705 here) after the three seam figures; that key is the only byte that moved, and the verdict is as before (2 frame px over 40, 1.96 rig px, against 50). The seam row of the table below is the three builds before it.
+  (`ST25`) read the examples the same way. Issue #126 turned every mesh triangle counter-clockwise in Spine world, the winding rig-c reads a mesh in (the reference, and this port before it, wrote them clockwise there). The declared exception, and nothing else: every mesh `triangles` triple `[a, b, c]` is `[a, c, b]` in `rig.json`; the `check.json` `TEXTURE_STRETCH` entries that print a triangle's vertices and edge print them in that order (16 here, 52 over the three examples; the triangle, frame and figures are unchanged); and the untracked `skeleton.model.json`'s `spine.sha256`, which follows the skeleton bytes. Every rendered frame of the build is pixel-equal before and after. Issue #209 carried the seam's composite onto the render's pixel centres — the setup-pose still renders at frame scale 1.0107 here, not 1 — which moved `check.json`'s `seam_mean` from 0.211 to 0.206, with every other figure as before. Issue #216 judges the seam's pixel count in rig pixels — the frame count divided by s², so the bar reads one rig the same at every frame scale — and writes the scale it divides by as `check.json`'s `seam_frame_scale` (1.010705 here) after the three seam figures; that key is the only byte that moved, and the verdict is as before (2 frame px over 40, 1.96 rig px, against 50). The seam row of the table below is the three builds before it. Issue #224 moved
+  `rig.json` (the 30 physics constraints), `motion.json` (the seven animations after
+  `idle`), `gate_spine-html.txt` (`animations=8`, `physicsConstraints=30`, and one more
+  rule measured, 25 of 50 on the packed build) and `check.json` (`loop_physics` names the
+  constraints the loop bar leaves out; the idle's figures move by the physics the idle
+  itself drives and by the render's viewport, now fitted over the hop:
+  `BREATH_VISIBLE` `torso_heat_mean` 16.038 to 15.509, `TIP_OVER_ROOT` `handwear_r`,
+  `handwear_l`, `bottomwear` 6.683 / 5.345 / 1.738 to 6.672 / 5.334 / 1.763,
+  `TEXTURE_STRETCH` 1.098 to 1.097, every status as before; the table under *Both mesh
+  modes* is the builds of issue #118, before it); `parts.json` and `mesh_report.json`
+  did not move.
 
 ## The four patches
 
@@ -100,6 +115,53 @@ inside it, the full run's is haze); the proposer, run on the patched parts, prop
 bone. With all four, the recomposite's uncovered error is 1,365 px in 291 holes, the
 largest 63 px at 347,803 3x60 beside `topwear` (`check.json`, `RECOMPOSITE_HOLES`;
 2,921 px with no patch, 1,752 px with the hair patches alone).
+
+## Gestures, expressions and trailing strands
+
+Issue #224 gave the character the same set of named animations as `demo` (its README
+has the rule they follow: one-shots that key only bones the idle leaves alone, ease-in-out
+Bézier keys, no constraint, draw-order, deform or attachment key) and physics on its
+strands, with the values this figure takes:
+
+| clip | s | keys |
+| --- | --- | --- |
+| `tilt` | 1.6 | `head` rotate to 6°, held, overshoot, settle |
+| `look_l`, `look_r` | 1.8 | `head` only: translatex ±10 with an overshoot, rotate ∓4°, scalex 0.95 |
+| `smile` | 1.4 | `mouth` scale 1.3 × 0.7 and up 3; `eye_r`, `eye_l` scaley 0.72; `brow_r`, `brow_l` up 4; `head` 3° |
+| `startled` | 1.4 | anticipation at 0.12 s, the start at 0.24 s (brows up 12, eyes 1.25, `mouth` 0.75 × 1.8, `chest` up 8), a held beat, a settle; `head` is not keyed (below) |
+| `bow` | 1.8 | `chest` down 18 and scaley 0.94, `head` down 18 and scaley 0.86, held, back |
+| `hop` | 1.2 | as `demo`'s: `hip` down 14, `root` up 90 at 0.42 s, `hip` down 18.2 on landing, a rebound; `chest` squash and stretch |
+
+The head moves less than `demo`'s, and `startled` does not lift it, because the face's
+lower edge is not covered: there is no neck part (*Known limits*), and the `hair_back`
+layer, which See-through painted grey, shows in the gap under the chin as soon as the
+head turns or rises. `bow` in place of `wave`: the arms hang straight beside the body,
+and the arm raised by its first link reads, by `check`'s `TEXTURE_STRETCH` reading on the
+clip (below), 1.864 at +25° and 2.366 at +35° (`handwear_l`, ceiling 1.926544) — a wave
+that low does not read as one.
+
+One `physics` constraint per chain link, on the link bone, driving `rotate` only, strength
+falling down the links to 0.65 of the root link's:
+
+| strands | inertia | strength (root link) | damping | mix |
+| --- | --- | --- | --- | --- |
+| scarf ends `robe_r`, `robe_l` | 0.7 | 70 | 0.85 | 1 |
+| bangs `bang_r`, `bang_c`, `bang_l`; skirt `skirt_r`, `skirt_c`, `skirt_l` | 0.12 | 300 | 0.85 | 1 |
+| arms (sleeves) `sleeve_r`, `sleeve_l` | 0.15 | 250 | 0.85 | 0.6 |
+| the bun, `bun` (no length: translation only, `x` 0.5, `y` 1) | 0.15 | 300 | 0.85 | 1 |
+
+The bun first took inertia 0.4, strength 120, and the hop then read
+`CHECK_TEXTURE_STRETCH: mesh "hair_back" triangle 167 (vertices 116 124 125), edge 125-116, idle frame 18 — the edge is 0.123 times its rest length (max(ratio, 1/ratio) 8.125); <= 1.926544 is required`;
+at 0.15 and 300 it reads 1.279 there. The side hair (`hair_side_r`, `hair_side_l`) stays
+rigid on `head`: both are region parts with no mesh to bend, and `hair_side_r`'s art
+holds part of the face; no chain was tried on them.
+
+Measured as on `demo` (`check`'s `TEXTURE_STRETCH` reading applied to each clip's
+`rigc render --geometry --fps 30 --max 640`, the clip alone from frame 0, physics on;
+ceiling 1.926544): `tilt` 1.023, `look_l` 1.108, `look_r` 1.118, `smile` 1.014 (all
+`hair_front`), `startled` 1.152 (`topwear`), `bow` 1.246 (`hair_back`), `hop` 1.336
+(`hair_front`). No bar reads a clip; these are a measurement made for the issue, not a
+gate.
 
 ## Known limits
 

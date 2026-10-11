@@ -961,10 +961,35 @@ recipe below). With exactly this file beside `examples/reference-sample`'s confi
 A bone the rig lacks is rigc's refusal at the rig stage, in rigc's words (`RIG_RIGC_GREEN`); a
 fault in the file itself is the loader's (the row above names each one).
 
+**Worked sets.** `examples/demo/animations.json` and `examples/scarf/animations.json`
+(issue #224) carry `tilt`, `look_l`, `look_r`, `smile`, `startled`, a gesture (`wave` on
+`demo`, `bow` on `scarf`) and `hop`, each a one-shot that keys only what it needs; the
+examples' READMEs list what each keys and why. Two rules make a clip layer over the idle on
+a player's second track rather than replace it:
+
+- **Key the bones the idle leaves alone.** The idle turns and breathes the `*_ctl` bones
+  the rig stage writes (`head_ctl`, `chest_ctl`, a chain's `<chain><i>_ctl`) and `neck`; the
+  bone under each (`head`, `chest`, `<chain><i>`) is free. A `look_l` that keys `head` alone
+  leaves the idle's sway alive under it; one that keys `head_ctl` or `neck` stops it for as
+  long as the clip holds the key.
+- **Key no constraint, draw order, deform or attachment.** A player mixing tracks refuses
+  those; bones are all a clip needs.
+
+**Strands that trail.** A chain whose links lag the body is one `physics` constraint per
+link in `constraints`, on the link bone (`hairback_r0`, not `hairback_r0_ctl`), driving
+`rotate`; the examples soften it down the chain. A single bone with no `length` (a bow, an
+earring, a bun) cannot take a `rotate` drive (rig-c's `A23`) and takes `x`/`y` instead. The
+values that read on the examples, and the ones refused on the way there, are in their
+READMEs.
+
 **Limits.** Every slot holds one attachment, the part's own image, so an expression moves,
 turns and scales the face's parts and never swaps one for another: there is no second mouth
-shape to key, and no lip-sync. `check` measures the idle alone: an animation beside it has
-passed rigc's gate and nothing else — no seam, stretch or hole bar has read it.
+or eye shape to key, and no lip-sync. `check` measures the idle alone: an animation beside it
+has passed rigc's gate and nothing else — no seam, stretch or hole bar has read it. On the
+examples each clip was read by `check`'s own `TEXTURE_STRETCH` reading applied to the clip's
+`rigc render --geometry` (their READMEs give the figures); that is a measurement, not a
+gate, and it is where an arm raised overhead was found to tear `demo`'s elbow (5.327
+against 1.926544).
 
 ### Recipe: a soft region driven by physics
 
