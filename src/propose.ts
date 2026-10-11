@@ -101,6 +101,7 @@ import { join } from 'node:path';
 import { drawText, GLYPH_H } from 'rig-c/tools/font5x7.ts';
 import { type BoneEntry, type ConfigConstraint, type MeshSpec, parseConfig, type Point, type Segment, type SkeletonSections } from './config.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
+import { type FrameFeature, headFrame, type HeadFrame } from './headframe.ts';
 import { OPAQUE_ALPHA_ABOVE } from './layers.ts';
 import { PAINTING_RUN, type PartRecord, type PartsFile, readParts } from './parts.ts';
 import { connectedComponents } from './raster/components.ts';
@@ -1072,6 +1073,9 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
       B('mouth', 'head', [cc.stats[best].cx, cc.stats[best].cy], placement('mask', `the centroid of the biggest 8-connected blob of ${mouth[0].name}`, { parts: [mouth[0].name] }));
     } else B('mouth', 'head', center(mouth[0]), placement('mask', `the centre of ${mouth[0].name}'s box`, { parts: [mouth[0].name], fallback: 'its mask has no opaque pixel, so no blob' }));
   }
+  // Issue #250: the head's frame, read off the head run once, written as notes. The bar is the line through the eye
+  // bones' origins as written here: the one roll the rig turns the face bones to (src/headframe.ts).
+  notes.push(...headFrameNotes(P, bones));
   // An eye bone comes only from an eyewhite (EYE_GROUP_TAGS). An iris or a
   // lash on a side with none has no eye bone to ride, and writing its region
   // as `eye_<s>` anyway named a bone that does not exist — refused by the
@@ -2209,6 +2213,90 @@ export const LASH_PAIR_RATIO_BAR = 1.2;
 
 function pct(v: number): string {
   return `${Math.round(v * 100)} %`;
+}
+
+/**
+ * The frontal reference the pitch proportions are written beside (issue #250):
+ * each figure's range, `[min, max]`, over three drawn faces that face front —
+ * `demo` and `scarf` as built here, and the seated character of
+ * https://github.com/rig-c/trailer (its `inputs/`, assembled by this port at
+ * the same plan) — read by {@link headFrame} with a `nose` part added to each
+ * plan, which `assemble --propose-plan` never proposes (the reference's rule):
+ * where the nose sits along eye midpoint -> mouth, demo 0.474, scarf 0.564,
+ * trailer 0.630; the stem against the bar, demo 0.629, scarf 0.675, trailer
+ * 0.510 (each on the eye bones `propose` writes). A drawn face does not carry a human face's ratios (the eyes are
+ * larger and lower, the nose a dot), so no published human model's are used.
+ *
+ * The turn is not written (issue #250): on a face painted three-quarter
+ * toward image left, the stem via the nose (skew −45.9 degrees, frontal
+ * −8.2 to 0.8) and via the mouth (−11.1, frontal −5.3 to 3.6) and the face's
+ * halves (image-left over image-right 0.681, frontal 0.839 to 1.032) all read
+ * it beyond the frontal range on the turned side, but the eyewhites' widths
+ * (0.913) read it inside the frontal range (0.898 to 1.000) — the trailer
+ * character, facing front, reads more turned by that figure than the turned
+ * face. Three readings that do not agree in order are not reported as one.
+ */
+export const FRONTAL_REFERENCE = {
+  faces: ['demo', 'scarf', 'the rig-c/trailer character'],
+  noseAlongStem: [0.474, 0.63],
+  stemOverBar: [0.51, 0.675],
+} as const;
+
+/** The centroid of a part's biggest 8-connected blob — the mouth bone's rule — or why it has none. */
+function blobPoint(P: PartSet, tag: string): FrameFeature {
+  const ps = P.headFirst(tag);
+  if (ps.length === 0) return { missing: `no part tagged ${tag}` };
+  const cc = connectedComponents(P.alpha(ps[0]), 8);
+  if (cc.count < 2) return { missing: `${ps[0].name} (${tag}) has no opaque pixel` };
+  let best = 1;
+  for (let i = 2; i < cc.count; i++) if (cc.stats[i].area > cc.stats[best].area) best = i;
+  return { part: ps[0].name, at: [cc.stats[best].cx, cc.stats[best].cy] };
+}
+
+/** `[min, max]` as `a..b` at 3 places. */
+function refRange(r: readonly [number, number] | readonly number[]): string {
+  return `${pyFixed(r[0], 3)}..${pyFixed(r[1], 3)}`;
+}
+
+/**
+ * The head frame's notes (issue #250): the bar through the eye bones'
+ * origins as `bones` writes them, its roll, the eye midpoint and the
+ * inter-eye distance; then the pitch proportions beside their frontal
+ * reference ({@link FRONTAL_REFERENCE}). The turn is read by
+ * {@link headFrame} but not written (the reference says why). A figure whose
+ * part is missing is named, never estimated.
+ * With no pair of eye bones there is no bar, and one note says why.
+ */
+export function headFrameNotes(P: PartSet, bones: readonly BoneEntry[]): string[] {
+  const at = (n: string): Point | null => {
+    const e = bones.find((b) => 'name' in b && b.name === n);
+    return e === undefined || 'chain' in e ? null : e.at;
+  };
+  const r = at('eye_r');
+  const l = at('eye_l');
+  if (r === null || l === null) {
+    const missing = [r === null ? 'eye_r' : null, l === null ? 'eye_l' : null].filter((n) => n !== null).join(' and ');
+    return [`head frame: not read — no ${missing} bone (an eye bone comes only from an eyewhite), so there is no bar to read the roll, the turn or the pitch against`];
+  }
+  if (r[0] === l[0]) return [`head frame: not read — eye_r ${fmtAt(r)} and eye_l ${fmtAt(l)} share the column x = ${r[0]}, so the bar has no left-to-right direction`];
+  const ew = (['eyewhite-r', 'eyewhite-l'] as const).map((t, i) => {
+    const p = P.byTag(t)[0];
+    return { part: p.name, mask: P.alpha(p), eye: i === 0 ? r : l };
+  });
+  const facePart = P.headFirst('face')[0];
+  const hf: HeadFrame = headFrame([r, l], P.H, { nose: blobPoint(P, 'nose'), mouth: blobPoint(P, 'mouth') }, ew, facePart === undefined ? { missing: 'no part tagged face' } : { part: facePart.name, mask: P.alpha(facePart) });
+  const f3 = (v: number): string => pyFixed(v, 3);
+  const [el, er] = hf.eyes;
+  const bar =
+    `head frame: the bar runs through ${el === l ? 'eye_l' : 'eye_r'} ${fmtAt(el)} and ${er === l ? 'eye_l' : 'eye_r'} ${fmtAt(er)}, the eye bones' origins, ${f3(hf.bar)} px; ` +
+    `roll ${f3(hf.roll)} degrees (Spine's, counter-clockwise) — the line the rig turns the face bones to and declares as invariants.axes; eye midpoint ${fmtAt(hf.mid)}`;
+  const ref = FRONTAL_REFERENCE;
+  const nose = hf.nose;
+  const mouth = hf.mouth;
+  const pitch =
+    `head pitch: the nose sits ${hf.noseAlongStem === null ? `— (not read: ${'missing' in nose ? nose.missing : 'missing' in mouth ? mouth.missing : 'the mouth sits on the bar'})` : f3(hf.noseAlongStem)} of the way from the eye midpoint to the mouth (frontal ${refRange(ref.noseAlongStem)}); ` +
+    `the stem, eye midpoint -> mouth, is ${'missing' in mouth ? `— (not read: ${mouth.missing})` : `${f3(mouth.down)} of the bar`} (frontal ${refRange(ref.stemOverBar)}); frontal ranges read on ${ref.faces.join(', ')}; the turn is not reported (src/propose.ts FRONTAL_REFERENCE says why)`;
+  return [bar, pitch];
 }
 
 /**

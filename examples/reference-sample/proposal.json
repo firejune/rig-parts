@@ -552,6 +552,8 @@
   }
  },
  "notes": [
+  "head frame: the bar runs through eye_r [390.0, 160.0] and eye_l [437.0, 164.0], the eye bones' origins, 47.170 px; roll -4.865 degrees (Spine's, counter-clockwise) — the line the rig turns the face bones to and declares as invariants.axes; eye midpoint [413.5, 162.0]",
+  "head pitch: the nose sits — (not read: no part tagged nose) of the way from the eye midpoint to the mouth (frontal 0.474..0.630); the stem, eye midpoint -> mouth, is 0.756 of the bar (frontal 0.510..0.675); frontal ranges read on demo, scarf, the rig-c/trailer character; the turn is not reported (src/propose.ts FRONTAL_REFERENCE says why)",
   "handwear is one blob (sleeves): both sleeves in one mesh, split at the eye axis x=413",
   "topwear ends at y=457 (hip 457): no robe chains -- add a sash chain by hand if one hangs",
   "legwear (full:legwear): no rule -> region on hip"

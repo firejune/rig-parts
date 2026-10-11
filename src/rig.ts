@@ -58,7 +58,14 @@
  *   through `eye_r` and `eye_l`, holding the turned bones and their controls,
  *   which rigc's `A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS` checks. Its
  *   tolerance is measured on the bones as rigc emits them (see where it is
- *   written), the float floor; with no line no entry is written.
+ *   written), the float floor; with no line no entry is written. A face bone
+ *   with its own `tip` along the line is held too (issue #258), in a second
+ *   entry, {@link FACE_TIPS_AXIS_NAME}: one whose tip lies within the
+ *   whole-pixel rounding bound ({@link tipRoundingBound}) of the line is
+ *   listed, its tolerance measured the same way, and one further off is its
+ *   own axis, named with its gap in `FaceAxis.tipOff` — never silent. The
+ *   roll the face bones stand on has one derivation, `src/headframe.ts`'s
+ *   `eyeLineDegrees`, which `propose`'s head frame reads too (issue #250).
  * - **Meshes** over the parts named in `meshes`: a square lattice (`src/mesh.ts`)
  *   weighted by distance to the mesh's candidate segments (`src/weights.ts`),
  *   written in rigc's by-name `weights` form. The slot's bone is the first
@@ -113,6 +120,7 @@
 import { type AutoSpec, type BoneEntry, type WeightRule, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, type RibsSpec, ROOT_BONE, weightsABone } from './config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
+import { eyeLineDegrees } from './headframe.ts';
 import { f32 } from 'rig-c/compile';
 import type { MeshCounts, MeshQualityReport, MeshReductionInput, MotionAmplitude, ReducedMesh, Termination } from 'rig-c/mesh';
 import { type AmplitudeRow, amplitudeRow, partAmplitude, withAmplitude } from './autoamplitude.ts';
@@ -206,6 +214,14 @@ export interface FaceAxis {
   axis: RigAxis | null;
   /** Why no axes entry was written, or null when one was (or there is no line, which {@link FaceAxis.none} says). */
   noAxis: string | null;
+  /** The `invariants.axes` entry holding the face bones whose own tip lies along the line within whole-pixel rounding (issue #258), or null when none does. */
+  tipAxis: RigAxis | null;
+  /** For each face bone whose own tip points further off the line than whole-pixel rounding allows, why it is not held (issue #258); in {@link FACE_BONES} order. */
+  tipOff: string[];
+  /** {@link HEAD_UP_BONE} as written (issue #250): its world rotation (the eye line + 90) and its length; null with the reason in {@link FaceAxis.headUpNone}, or with no line. */
+  headUp: { rotation: number; length: number } | null;
+  /** Why {@link HEAD_UP_BONE} was not written, when there is a line; null otherwise. */
+  headUpNone: string | null;
 }
 
 /** One `invariants.axes` entry: rig-c's `RigAxis`, held by its gate rule `A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS` (2.40.0). */
@@ -218,6 +234,29 @@ export interface RigAxis {
 
 /** The name of the face's `invariants.axes` entry. */
 export const FACE_AXIS_NAME = 'face';
+
+/**
+ * The slotless bone the rig stage adds under `head` (issue #250): at head's origin, pointing along the face's up axis
+ * (the eye line + 90 degrees), as long as the eye midpoint lies from head's origin along it. `head` keeps its own frame,
+ * so no key on it or under it changes meaning; a rule that needs the head's frame (issue #249) reads this bone.
+ */
+export const HEAD_UP_BONE = 'head_up';
+
+/** The name of the `invariants.axes` entry for the face bones whose own tip lies along the eye line (issue #258). */
+export const FACE_TIPS_AXIS_NAME = 'face_tips';
+
+/**
+ * The most a bone's direction can sit off a line through whole-pixel
+ * rounding of its tip alone (issue #258): a tip written in whole pixels is
+ * within half a pixel in each coordinate, sqrt(2)/2 px, of the point on the
+ * line it stands for, so at `length` px from the origin its direction is
+ * within asin((sqrt(2)/2) / length) degrees. Null when the tip is closer than
+ * sqrt(2)/2 px, where rounding alone can point it anywhere.
+ */
+export function tipRoundingBound(length: number): number | null {
+  const s = Math.SQRT1_2 / length;
+  return s >= 1 ? null : (Math.asin(s) * 180) / Math.PI;
+}
 
 /** One unit in the last place a rotation is written to ({@link OFFSET_PLACES}): the axes entry's tolerance stands this far above the gap it measures. */
 const WRITTEN_UNIT = 10 ** -6;
@@ -258,10 +297,8 @@ export function eyeLine(parts: PartsFile, eyeBones: ReadonlyMap<string, Point>):
   if (absent.length > 0) return { degrees: null, parts: names, none: `config.bones declares no single bone ${absent.join(' or ')}, so there is no pair of eye bones for the eye line to run through` };
   const [a, b] = EYE_BONES.map((n) => eyeBones.get(n) as Point);
   if (a[0] === b[0]) return { degrees: null, parts: names, none: `${EYE_BONES[0]} ${pt(a)} and ${EYE_BONES[1]} ${pt(b)} share the column x = ${a[0]}, so the eye line has no left-to-right direction to read` };
-  const [l, r] = a[0] < b[0] ? [a, b] : [b, a];
-  const dx = r[0] - l[0];
-  const dy = cropToSpineY(r[1], H) - cropToSpineY(l[1], H);
-  return { degrees: (Math.atan2(dy, dx) * 180) / Math.PI, parts: [names[0], names[1]] };
+  // The one derivation of the roll (issue #250): propose's head frame reads the same function on the same origins.
+  return { degrees: eyeLineDegrees(a, b, H), parts: [names[0], names[1]] };
 }
 
 /**
@@ -908,6 +945,8 @@ export function buildRig(
       fail('RIG_CONTROL_NAME_FREE', `bone "${k}"`, `is keyed by the idle and weighted to by a mesh, so it needs the control bone "${ctl}", and config.bones already declares a bone of that name`);
     }
   }
+  // The face's up-axis bone is the rig stage's (issue #250): a config bone of that name would be shadowed.
+  if (B.has(HEAD_UP_BONE)) fail('RIG_HEAD_UP_NAME_FREE', `bone "${HEAD_UP_BONE}"`, `is the bone the rig stage adds under head to carry the face's up axis (issue #250), and config.bones already declares a bone of that name; rename it`);
   // A two-bone ik over a link and its child link stops being one when the
   // child gets a control: `<child>_ctl` stands between them. rig-c 2.15.0
   // refuses that pair by name (issue #103); the rig stage adds the flag to
@@ -976,6 +1015,10 @@ export function buildRig(
     none: line.degrees === null ? line.none : null,
     axis: null,
     noAxis: null,
+    tipAxis: null,
+    tipOff: [],
+    headUp: null,
+    headUpNone: null,
   };
   const faceTurn = new Map<string, number>();
   for (const n of faceAxis.turned) {
@@ -1010,6 +1053,32 @@ export function buildRig(
     const [x, y] = toBoneLocal(frame, spineX(b.x), spineY(b.y));
     bones.push({ name: b.name, parent: b.parent, ...(a === undefined ? {} : { length: a.length }), ...(a !== undefined || rotation !== 0 ? { rotation } : {}), x: places(x), y: places(y) });
   }
+  // ---- the head's up axis (issue #250) ----------------------------------
+  // `head` keeps its frame, so every key on it and under it — the idle, the blink's brow drop, an authored
+  // animation's scale or translate — means what it meant. The face's frame is carried by one slotless bone under it,
+  // {@link HEAD_UP_BONE}, at head's origin, turned to the eye line's angle + 90 (the same line, {@link eyeLine}) and
+  // as long as the eye midpoint lies from head's origin along that axis: derived from the three bones the config
+  // writes, so it moves with them. A rule that needs the head's frame reads it here; nothing binds to it or keys it.
+  const headEntry = cfg.bones.find((e) => !('chain' in e) && e.name === 'head');
+  if (line.degrees !== null && headEntry !== undefined && !('chain' in headEntry)) {
+    const up = line.degrees + 90;
+    const [eR, eL] = EYE_BONES.map((n) => eyeAt.get(n) as Point);
+    const mid: Point = [(eR[0] + eL[0]) / 2, (eR[1] + eL[1]) / 2];
+    const h = B.get('head') as Bone;
+    const ux = Math.cos((up * Math.PI) / 180);
+    const uy = Math.sin((up * Math.PI) / 180);
+    const reach = (spineX(mid[0]) - spineX(h.x)) * ux + (spineY(mid[1]) - spineY(h.y)) * uy;
+    if (reach <= 0) {
+      faceAxis.headUpNone = `the eye midpoint ${pt(mid)} lies ${pyRound(-reach, 3)} px below head's origin ${pt([h.x, h.y])} along the face's up axis, so ${HEAD_UP_BONE} would have no length toward the crown; not written`;
+    } else {
+      const parentTurn = turn.get('head') as number;
+      const rotation = places(normaliseDegrees(up - parentTurn));
+      const length = pyRound(reach, 3);
+      bones.push({ name: HEAD_UP_BONE, parent: 'head', length, rotation, x: 0, y: 0 });
+      faceAxis.headUp = { rotation: places(parentTurn + rotation), length };
+    }
+  } else if (line.degrees !== null) faceAxis.headUpNone = 'config.bones declares no single bone "head" for it to hang from';
+
   const world = computeExactFrameTransforms(bones);
 
   // ---- the face's axes entry (issue #239, rig-c 2.40.0's A51) -------------
@@ -1020,23 +1089,57 @@ export function buildRig(
   // and rotation through rig-c's own `f32`, the float32 the skeleton stores — 36.869898 is stored 1.6e-6 degrees off,
   // more than a 6-place unit), rounded up to the places a rotation is written to, plus one unit of that last place —
   // the float floor of the emitted rig, to the precision this stage writes. A bone turned further off is A51's.
-  if (faceAxis.turned.length > 0) {
+  // Issue #258: a face bone with its own tip is the author's statement of its axis (#239) and is not turned here, but
+  // a tip written to lie along the eye line is held too, in an entry of its own ({@link FACE_TIPS_AXIS_NAME}), so the
+  // turned bones' entry keeps its float floor. Which tips are meant to lie along the line is read, not chosen: a tip
+  // written in whole pixels sits at most half a pixel off in each coordinate, sqrt(2)/2 px, from the point of the line
+  // it stands for, so its direction can sit up to asin((sqrt(2)/2) / length) degrees off the line through rounding
+  // alone ({@link tipRoundingBound}); a tip within that bone's own bound is held, its entry's tolerance measured as the
+  // turned bones' is, and a tip further off is an axis of its own, said by name in faceAxis.tipOff, never silent.
+  if (line.degrees !== null && (faceAxis.turned.length > 0 || faceAxis.ownTip.length > 0)) {
     const through: [string, string] = [EYE_BONES[0], EYE_BONES[1]];
-    const listed = bones.map((b) => b.name).filter((n) => faceTurn.has(n));
     const emitted = computeExactFrameTransforms(
       bones.map((bn) => ({ ...bn, x: f32(bn.x), y: f32(bn.y), ...(bn.rotation === undefined ? {} : { rotation: f32(bn.rotation) }) })),
     );
     const [a, b] = through.map((n) => emitted.get(n) as BoneTransform);
     const gateLine = (Math.atan2(b.worldY - a.worldY, b.worldX - a.worldX) * 180) / Math.PI;
+    const gapOf = (n: string): number => {
+      const t = emitted.get(n) as BoneTransform;
+      return lineGap((Math.atan2(t.c, t.a) * 180) / Math.PI, gateLine);
+    };
+    const entry = (name: string, listed: string[]): { axis: RigAxis | null; gap: number } => {
+      const gap = Math.max(...listed.map(gapOf));
+      const tolerance = pyRound(Math.ceil(gap / WRITTEN_UNIT) * WRITTEN_UNIT + WRITTEN_UNIT, OFFSET_PLACES);
+      return { axis: tolerance >= 90 ? null : { name, through, bones: listed, tolerance }, gap };
+    };
     if (a.worldX === b.worldX && a.worldY === b.worldY) faceAxis.noAxis = `eye_r and eye_l share the world origin (${a.worldX}, ${a.worldY}), so they draw no line`;
     else {
-      const gap = Math.max(...listed.map((n) => {
-        const t = emitted.get(n) as BoneTransform;
-        return lineGap((Math.atan2(t.c, t.a) * 180) / Math.PI, gateLine);
-      }));
-      const tolerance = pyRound(Math.ceil(gap / WRITTEN_UNIT) * WRITTEN_UNIT + WRITTEN_UNIT, OFFSET_PLACES);
-      if (tolerance >= 90) faceAxis.noAxis = `the face bones lie ${pyRound(gap, 6)} degrees off the line through eye_r and eye_l, and rigc takes a tolerance below 90 only`;
-      else faceAxis.axis = { name: FACE_AXIS_NAME, through, bones: listed, tolerance };
+      if (faceAxis.turned.length > 0) {
+        const e = entry(FACE_AXIS_NAME, bones.map((bn) => bn.name).filter((n) => faceTurn.has(n)));
+        if (e.axis === null) faceAxis.noAxis = `the face bones lie ${pyRound(e.gap, 6)} degrees off the line through eye_r and eye_l, and rigc takes a tolerance below 90 only`;
+        else faceAxis.axis = e.axis;
+      }
+      const held: string[] = [];
+      for (const n of faceAxis.ownTip) {
+        const length = (aim.get(n) as { length: number }).length;
+        const bound = tipRoundingBound(length);
+        const gap = gapOf(n);
+        if (bound !== null && gap <= bound) {
+          held.push(n);
+          if (controls.includes(n)) held.push(`${n}${CONTROL_SUFFIX}`);
+        } else {
+          faceAxis.tipOff.push(
+            bound === null
+              ? `${n}'s tip is ${length} px from its origin, under the sqrt(2)/2 px a whole-pixel tip can sit off the line, so no direction it states can be read as the line's; its own axis, not held`
+              : `${n}'s tip points ${pyRound(gap, 6)} degrees off the line through eye_r and eye_l, more than the ${pyRound(bound, 6)} degrees a tip ${length} px from its origin can sit off it through whole-pixel rounding; its own axis, not held`,
+          );
+        }
+      }
+      if (held.length > 0) {
+        // In the rig's bone order, as the turned bones' entry lists them.
+        const e = entry(FACE_TIPS_AXIS_NAME, bones.map((bn) => bn.name).filter((n) => held.includes(n)));
+        faceAxis.tipAxis = e.axis;
+      }
     }
   }
 
@@ -1553,7 +1656,8 @@ export function buildRig(
   const mayFold = autoMotion.filter((c) => c.motion?.deformMayFold === true).map((c) => ({ slot: c.part, why: DEFORM_MAY_FOLD_WHY }));
   if (mayFold.length > 0) rig.invariants = { ...rig.invariants, deformMayFold: mayFold };
   // issue #239: the face's line, written only when the face bones were turned to one, so no other rig moves.
-  if (faceAxis.axis !== null) rig.invariants = { ...rig.invariants, axes: [faceAxis.axis] };
+  const axes = [faceAxis.axis, faceAxis.tipAxis].flatMap((x) => (x === null ? [] : [x]));
+  if (axes.length > 0) rig.invariants = { ...rig.invariants, axes };
   return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses, autoMotion, faceAxis };
 }
 
@@ -1574,7 +1678,9 @@ export function rigJsonText(value: unknown): string {
  * the frame's origin, at the reference's 3 places; `length` and `rotation` are
  * dropped, and so is `invariants.axes` (issue #239): it holds bones to a
  * line they lie along only when turned, which the flat form undoes, and the
- * reference declared none. Everything else is copied.
+ * reference declared none; and so is {@link HEAD_UP_BONE} (issue #250), a
+ * slotless bone that carries only a direction, which the reference never
+ * wrote. Everything else is copied.
  *
  * It exists so the reference's outputs stay an oracle: the chain suite and
  * `scripts/rig_oracle.ts` compare `flattenRig(built)` with the reference's
@@ -1600,7 +1706,8 @@ export function flattenRig(rig: RigSpec, sense: 1 | -1 = 1): RigSpec {
     const [wx, wy] = toWorld(m, x, y);
     return [placed(wx - m.worldX, FLAT_PLACES), placed(wy - m.worldY, FLAT_PLACES)];
   };
-  const bones: RigBone[] = rig.bones.map((b) => {
+  // The head's up-axis bone (issue #250) carries only a direction, which the flat form undoes; the reference wrote none.
+  const bones: RigBone[] = rig.bones.filter((b) => b.name !== HEAD_UP_BONE).map((b) => {
     if (b.parent === undefined) return { name: b.name, x: b.x, y: b.y };
     const [x, y] = out(origin(b.parent), b.x, b.y);
     return { name: b.name, parent: b.parent, x, y };
