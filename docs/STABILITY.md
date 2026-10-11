@@ -52,7 +52,7 @@ defaults are the help's too, and none is guessed from the art.
 | `comfy` | `seethrough`: `--image`, `--out`; optional `--resolution`, `--steps`, `--seed`, `--prefix`, `--offload`, `--lama`, `--nf4`, `--host`, `--wait`, `--timeout`, `--poll` |
 | `assemble` | `--propose-plan` with `--source`, `--full`, `--head`, `--config`; or `--source`, `--full`, `--head`, `--config`, `--out`, optional `--seam` (near-white, silhouette), `--project` (core, visible) |
 | `propose` | `--head-box` with `--full`, `--canvas` |
-| `propose` | `--parts`, `--source`, `--out`; optional `--compare` or `--from-config` (one of them), `--keypoints`, `--person` and `--wrist-snap` (each with `--keypoints`) |
+| `propose` | `--parts`, `--source`, `--out`; optional `--compare` or `--from-config` (one of them), `--keypoints`, `--person` and `--wrist-snap` (each with `--keypoints`), `--full`, `--head` (the turn control's depths; not with `--from-config`) |
 | `compare` | `--left`, `--right`; optional `--map` |
 | `rig` | `--config`, `--parts`, `--out`; optional `--idle-keys` (ctl, direct), `--page-edges` (pot, free), `--pack-shape` (rect, polygon) |
 | `check` | `--rig`, `--out`; optional `--parts`, `--source`, `--page-edges`, `--pack-shape`, `--requirements`, `--seam-pairs`, `--keep-stills` |
@@ -94,12 +94,15 @@ rules that make the contract:
 - **`constraints`** are rig-c's own rig-spec constraints (`RigConstraint` in
   rig-c's `src/rig.ts`), handed to rigc as written; this loader checks their
   `type`, their `name` and that every bone they name resolves.
+- **`turn`** (issue #251) adds a control bone `turn` under `root` that nothing
+  keys, and carries each part in `depths` by `(pivot − depth) / (pivot − nearest
+  depth)` of its x. Without the field no byte of any output moves.
 
 The fields, object by object (a bold path is where the object sits; `<part>` is a
 part name, `[i]` an entry of a list):
 
 <!-- stable:config -->
-- **config** — required by the full loader, in front of rig and build: `key`, `assemble`, `bones`, `meshes`, `regions`, `motion`; optional: `generation`, `seethrough`, `constraints`
+- **config** — required by the full loader, in front of rig and build: `key`, `assemble`, `bones`, `meshes`, `regions`, `motion`; optional: `generation`, `seethrough`, `constraints`, `turn`
 - **generation** — required: `checkpoint`, `loras`, `trigger`, `identity`, `sampler`, `costume`, `negative_extra`, `style`, `negative_pose`, `latent`, `seed`; optional: `pose`, `control`
 - **generation.loras[i]** — required: `name`, `strength`; optional: `strength_clip`
 - **generation.sampler** — required: `steps`, `cfg`, `sampler`, `scheduler`
@@ -138,7 +141,9 @@ part name, `[i]` an entry of a list):
 - **motion.blink** — required: `t`, `eyes`, `squash`; optional: `brows`, `brow_drop`, `still`
 - **motion.blink.still.&lt;part&gt;** — required: `row`, `bone`
 - **motion.animations_from**, the file it names — required: `spec`, `animations`
-- **proposal.json**, the file propose writes — `bones`, `meshes`, `regions`, `motion` under the rules above, and `notes`
+- **turn** — required: `pivot`, `depths`
+- **turn.depths.&lt;part&gt;** — a See-through depth
+- **proposal.json**, the file propose writes — `bones`, `meshes`, `regions`, `motion` under the rules above, `turn` with `--full`/`--head`, and `notes`
 <!-- /stable:config -->
 
 `TY14` holds the set of field names in backticks above to the set of names the
@@ -159,7 +164,7 @@ every number) are AUTHORING §3's tables, and the loader refuses any other by na
 | `rig/rig.json`, `rig/motion.json`, `rig/images/` | `rig`, `build`, `compose` | rig-c's rig spec and motion spec, `spec` `rigc-rig/1` and `rigc-motion/1`: the format is rig-c's, and this package writes only what rig-c's parser accepts |
 | `rig/mesh_report.json` | `rig`, `build` | one row per mesh: `part`, `vertices`, `triangles`, `hull`, `bones`, `max_influences`, `mean_influences`, `art_coverage`, then `grid` (a lattice); `mode` "contour" with `params`, `contour`, `regions`; or `mode` "auto" with `settings`, `source`, `result`, `residuals`, `worst_residual`, `worst_region`, `motion_amplitude`, `termination`, `weights`, `regions`, `deformation`, `quality_report` (rig-c's `mesh-quality-report/1` document whole), `motion_report`, and, only when they apply, `stray_cleared` (after `source`, when `source.stray` is declared), `skinning_residual` and `replay` (`AutoMeshReport` in `src/rig.ts`); in every mode, `exponent` when the mesh declares one (after `grid`, or after `mode`); `ribs` when a contour or auto mesh declares them (after `exponent`, or after `mode`), and then `contour.ribs` (`source.contour.ribs` in the automatic mode) |
 | `check/check.json` and the rest of `check/` | `check`, `build`, `compose` | the reference's fields in its order (`gate_spine_html_green`, `rigc_entry`, `pack_mode`, `loop_max_diff`, the seam figures — `seam_mean`, `seam_px_over_40`, `seam_px_over_80` and, from issue #216, `seam_frame_scale`, the frame scale the bar divides the count by), `loop_physics` after `loop_max_diff` when the rig declares a physics constraint, `seam_pairs` after the seam figures when the seam bar fails or `--seam-pairs` asks (each row's picture under `check/seam/`; `--keep-stills` leaves the setup-pose still and its `frames.json` under `check/setup_still/`), then the judgement lines (`BREATH_VISIBLE`, `BLINK_NO_HOLE`, `CHAIN_LAG`, `TIP_OVER_ROOT`, `STILL_REGIONS_DARK`, `TEXTURE_STRETCH`), `RECOMPOSITE_HOLES`, `SETUP_POSE_VS_SOURCE`, `skipped`, a `requirements` block under `--requirements`, and `PASS`; `check/build/skeleton.json`, `.atlas` and `.png` are the packed artifact rig-c writes |
-| `proposal.json`, `render/landmarks*.png` | `propose` | the config's four rig sections and `notes` |
+| `proposal.json`, `render/landmarks*.png` | `propose` | the config's four rig sections, `turn` with `--full`/`--head`, and `notes` |
 | `basis.json` | `propose` | spec `spine-parts-basis/1` |
 | the scene report | `compose` | spec `spine-parts-scene-report/1` |
 | `idle.png`, `idle-indexed.png`, `idle.gif` | `loop`, `build --loop` | APNG and GIF encodings of the rendered idle |

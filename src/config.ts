@@ -55,6 +55,11 @@
  * object the loader vouches for, and the rig stage leaves them out of what it
  * hands rigc ({@link constraintForRig}).
  *
+ * 🧭 **`turn` is this package's (issue #251, `src/turn.ts`).** An optional
+ * `{pivot, depths}`: each carried part's See-through `depth_median` and the
+ * depth that stays put, both stated — `propose --full/--head` drafts them —
+ * from which the rig stage derives every fraction ({@link checkTurn}).
+ *
  * 🔗 **`motion.animations_from` is rig-c's too, verbatim (issue #183).** An
  * optional path, relative to the config file's directory, to a file in
  * rig-c's motion-spec shape whose `animations` are written into `motion.json`
@@ -75,6 +80,7 @@ import { GRID, MAX_SIDE } from './contour.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { isSkeletonName, KEYPOINT_NAMES, type KeypointName, type PosePoints, SKELETON_NAMES, type SkeletonName } from './skeleton.ts';
 import { acceptedTagNames, readTag } from './tags.ts';
+import { TURN_BONE, type TurnSpec, turnNearest } from './turn.ts';
 
 export type Point = [number, number];
 
@@ -604,6 +610,8 @@ export interface CharacterConfig {
   regions: Record<string, string>;
   motion: Motion;
   constraints?: ConfigConstraint[];
+  /** The turn control (issue #251, `src/turn.ts`): absent, no control is added and no byte of any output moves. */
+  turn?: TurnSpec;
 }
 
 /** The fields of one constraint kind, as rig-c's interface for that kind declares them. */
@@ -885,7 +893,7 @@ export interface AssembleConfig {
   assemble: Assemble;
 }
 
-const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'bones', 'meshes', 'regions', 'motion', 'constraints'] as const;
+const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'bones', 'meshes', 'regions', 'motion', 'constraints', 'turn'] as const;
 
 /**
  * The one partial entry point. It validates exactly what its door requires —
@@ -1086,6 +1094,7 @@ function parseConfigFrom(raw: Json, base: string | null): { config: CharacterCon
   if ('meshes' in t && 'regions' in t && 'assemble' in t) checkCoverage(c, [...parts, ...cuts], patches, t.meshes, t.regions);
   if ('motion' in t) checkMotion(c, t.motion, names.bones, names.chains, 'regions' in t ? t.regions : undefined);
   if ('constraints' in t) checkConstraints(c, t.constraints, names.bones, names.parents);
+  if ('turn' in t) checkTurn(c, t.turn, attachedParts(t.meshes, t.regions), names.bones);
   const from = isPlainObject(t.motion) ? t.motion.animations_from : undefined;
   const animations = base !== null && typeof from === 'string' && from !== '' ? readAnimationsFrom(c, resolve(base, from)) : null;
   if (base !== null) poseBeside(c, t.generation, base);
@@ -2280,4 +2289,69 @@ function checkConstraints(c: Check, v: Json, bones: Set<string>, parents: Map<st
       }
     }
   });
+}
+
+/** The parts `meshes` and `regions` attach, read off whatever they hold; `turn.depths` may name only these. */
+function attachedParts(meshes: Json, regions: Json): Set<string> {
+  const out = new Set<string>();
+  for (const v of [meshes, regions]) if (isPlainObject(v)) for (const k of Object.keys(v)) out.add(k);
+  return out;
+}
+
+/**
+ * `config.turn` (issue #251, `src/turn.ts`): `pivot`, the depth that stays put
+ * when the control moves, and `depths`, each carried part's See-through
+ * `depth_median` as `propose` read it. Neither has a default: a config without
+ * `turn` gets no control, and one with it states both.
+ *
+ * - `CONFIG_FIELD_TYPE` / `CONFIG_FIELD_PRESENT` / `CONFIG_KEY_KNOWN`: not an
+ *   object; `pivot` or `depths` absent; another key (records and annotations
+ *   aside); a pivot or a depth that is not a finite number; `depths` not an
+ *   object or empty.
+ * - `CONFIG_NAME_RESOLVES`: a `depths` key that names no part `meshes` or
+ *   `regions` attaches. Its keys are part names, so no annotation or record
+ *   door is open there.
+ * - `CONFIG_TURN_PIVOT_BEHIND_NEAREST`: a pivot at or in front of the nearest
+ *   part's depth. The law divides by `pivot − nearest`, so at the nearest depth
+ *   it has no value, and in front of it every part would travel against the
+ *   dial — no part would be nearer than what stays put.
+ * - `CONFIG_TURN_BONE_FREE`: `bones` declares a bone named {@link TURN_BONE},
+ *   the control the rig stage adds.
+ */
+function checkTurn(c: Check, v: Json, attached: Set<string>, bones: Set<string>): void {
+  const at = 'config.turn';
+  const o = c.object(at, v, ['pivot', 'depths'], []);
+  if (o === null) return;
+  const pivot = 'pivot' in o && c.number(`${at}.pivot`, o.pivot) ? (o.pivot as number) : null;
+  const depths: Record<string, number> = {};
+  let depthsOk = false;
+  if ('depths' in o) {
+    const d = o.depths;
+    if (!isPlainObject(d) || Object.keys(d).length === 0) {
+      c.fail('CONFIG_FIELD_TYPE', `${at}.depths`, `is ${show(d)}; a non-empty object of part name -> See-through depth_median is required`);
+    } else {
+      depthsOk = true;
+      for (const [part, depth] of Object.entries(d)) {
+        if (!attached.has(part)) {
+          c.fail('CONFIG_NAME_RESOLVES', `${at}.depths.${part}`, `names "${part}", which neither config.meshes nor config.regions attaches; a part the rig draws is required — a depth for a part nobody draws carries nothing`);
+          depthsOk = false;
+        }
+        if (c.number(`${at}.depths.${part}`, depth)) depths[part] = depth;
+        else depthsOk = false;
+      }
+    }
+  }
+  if (pivot !== null && depthsOk) {
+    const nearest = turnNearest(depths);
+    if (nearest !== null && !(pivot > nearest.depth)) {
+      c.fail(
+        'CONFIG_TURN_PIVOT_BEHIND_NEAREST',
+        `${at}.pivot`,
+        `is ${pivot}; the nearest part, "${nearest.part}", lies at depth ${nearest.depth}, and a pivot above that (further back) is required — each part travels (pivot − depth) / (pivot − ${nearest.depth}) of the control's offset, which has no value at the nearest depth and turns every part against the dial in front of it`,
+      );
+    }
+  }
+  if (bones.has(TURN_BONE)) {
+    c.fail('CONFIG_TURN_BONE_FREE', `bone "${TURN_BONE}"`, `is the control the rig stage adds under root for config.turn, and config.bones already declares a bone of that name; rename it`);
+  }
 }

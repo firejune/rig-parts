@@ -26,7 +26,7 @@ import { makeInputs } from './src/inputs.ts';
 import { idleKeysOf, isIdleKeys } from './src/rig.ts';
 import { figuresPhrase, implausibleRules, layerFigures, type LayerSet, pct, readLayers, ruleSummary, times } from './src/layers.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPEC, loadKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
-import { basisLines, checkProposal, compare, compareLines, drawLandmarks, FRINGE_STEP_PX, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal, WRIST_ON_PART_PX } from './src/propose.ts';
+import { basisLines, checkProposal, compare, compareLines, draftTurn, drawLandmarks, FRINGE_STEP_PX, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal, withTurn, WRIST_ON_PART_PX } from './src/propose.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { readPng, writePng } from './src/raster/png.ts';
 import { REQUIREMENTS_SENTENCE } from './src/requirements.ts';
@@ -134,6 +134,20 @@ usage:
       --wrist-snap <px>, an integer above ${WRIST_ON_PART_PX}, binds a wrist on no
       part to the one nearest part within <px>, said in a "wrist snap:" note
       (with --keypoints, not with --from-config). Without it nothing changes.
+
+  rig-parts propose … [--full <dir | layers.json>] [--head <dir | layers.json>]
+      Draft the turn control (issue #251) into proposal.json's "turn": the
+      See-through runs the parts came from, read for each part's layer
+      depth_median (larger = further back). turn.depths holds every part's
+      depth, turn.pivot their mean weighted by opaque_px — the depth at which
+      the painted pixels' centroid stays put. The rig stage adds a bone "turn"
+      under root that nothing keys; each part travels (pivot - depth) /
+      (pivot - nearest depth) of its x, the nearest part all of it, a part
+      behind the pivot the other way. A note states the pivot and every
+      fraction with its depth; a painting patch has no depth, is not carried,
+      and is named in a note. A part from a run not given, a tag the run lacks
+      or a layer with no depth is refused by name. Without either flag nothing
+      changes.
 
   rig-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
       Draw the config's CURRENT bones instead (<out>/render/landmarks_config.png
@@ -573,7 +587,7 @@ function printLayerTable(set: LayerSet): void {
 const TAKES = {
   sheet: { valued: ['--source', '--layers', '--out', '--cell', '--cols'], switches: [] },
   rig: { valued: ['--config', '--parts', '--out', '--idle-keys', '--page-edges', '--pack-shape'], switches: [] },
-  propose: { valued: ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--canvas', '--keypoints', '--person', '--wrist-snap'], switches: ['--head-box'] },
+  propose: { valued: ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--head', '--canvas', '--keypoints', '--person', '--wrist-snap'], switches: ['--head-box'] },
   compare: { valued: ['--left', '--right', '--map'], switches: [] },
   check: { valued: ['--rig', '--out', '--parts', '--source', '--page-edges', '--pack-shape', '--requirements'], switches: ['--seam-pairs', '--keep-stills'] },
   loop: { valued: ['--frames', '--out'], switches: ['--palette'] },
@@ -854,7 +868,7 @@ function cmdPropose(args: string[]): number {
       console.log(JSON.stringify({ head_box: r.head_box }));
       return EXIT_OK;
     }
-    for (const f of ['--full', '--canvas']) if (flags.has(f)) return usage(`${f} belongs to --head-box`);
+    if (flags.has('--canvas')) return usage('--canvas belongs to --head-box');
     const partsArg = flags.get('--parts');
     const source = flags.get('--source');
     const out = flags.get('--out');
@@ -863,6 +877,8 @@ function cmdPropose(args: string[]): number {
     if (out === undefined) return usage('propose needs --out <dir>');
     if (flags.has('--from-config') && flags.has('--compare')) return usage('--from-config and --compare are two modes; give one');
     if (flags.has('--person') && !flags.has('--keypoints')) return usage('--person names a person in the --keypoints file; give --keypoints <file>');
+    // Issue #251: the See-through runs the turn control's depths are read from; without them nothing is drafted.
+    if (flags.has('--from-config') && (flags.has('--full') || flags.has('--head'))) return usage('--full and --head draft the turn control while proposing; --from-config proposes nothing');
     // Issue #199: a declared tolerance for a wrist on no handwear part. Whole px above the built-in one: the distance is
     // counted in whole px, so a fraction would bind what its floor binds, and a value at or under the built-in binds nothing.
     const snapArg = flags.get('--wrist-snap');
@@ -902,7 +918,13 @@ function cmdPropose(args: string[]): number {
     }
     const cmpPath = flags.get('--compare');
     const cfg = cmpPath === undefined ? null : loadConfig(cmpPath);
-    const { proposal: prop, basis } = proposeWithBasis(P, joints, wristSnap);
+    const { proposal: drafted, basis } = proposeWithBasis(P, joints, wristSnap);
+    const fullRun = flags.get('--full');
+    const headRun = flags.get('--head');
+    const prop =
+      fullRun === undefined && headRun === undefined
+        ? drafted
+        : withTurn(drafted, draftTurn(P, { ...(fullRun === undefined ? {} : { full: readLayers(fullRun) }), ...(headRun === undefined ? {} : { head: readLayers(headRun) }) }));
     // Emit only after green: a proposal the config loader would refuse is not written, nor a basis record that does not hold to it.
     checkProposal(P, prop);
     const bfile = basisFile(P, prop, basis, cfg === null || cmpPath === undefined ? null : { where: cmpPath, config: cfg });

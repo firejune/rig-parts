@@ -117,7 +117,7 @@ import { drawText, GLYPH_H } from 'rig-c/tools/font5x7.ts';
 import { type BoneEntry, type ConfigConstraint, type MeshSpec, parseConfig, type Point, type Segment, type SkeletonSections } from './config.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 import { eyeLineDegrees, type FrameFeature, headAxes, type HeadAxes, headFrame, type HeadFrame } from './headframe.ts';
-import { OPAQUE_ALPHA_ABOVE } from './layers.ts';
+import { type LayerSet, OPAQUE_ALPHA_ABOVE } from './layers.ts';
 import { PAINTING_RUN, type PartRecord, type PartsFile, readParts } from './parts.ts';
 import { connectedComponents } from './raster/components.ts';
 import { dilate, morphGradient } from './raster/morph.ts';
@@ -130,6 +130,7 @@ import { IDLE_FPS } from './motion.ts';
 import { pyRound as roundTo } from './round.ts';
 import { KEYPOINT_NAMES, type KeypointName } from './skeleton.ts';
 import { configRoles, type RoleOf } from './structure.ts';
+import { TURN_BONE, turnFractions, turnNearest, turnPivot, type TurnSpec } from './turn.ts';
 
 // ---------------------------------------------------------------------------
 // the output shape — config-shaped, key order as the reference writes it
@@ -212,6 +213,8 @@ export interface Proposal {
     /** Absent when no part feeds the `eyes` group ({@link EYE_GROUP_TAGS}): a blink with nothing to blink is not written. */
     blink?: ProposedBlink;
   };
+  /** Only with `propose --full`/`--head` (issue #251, {@link draftTurn}); absent otherwise, so a proposal without them is the one written before it. */
+  turn?: TurnSpec;
   notes: string[];
 }
 
@@ -368,12 +371,105 @@ export function checkProposal(P: PartSet, p: Proposal): void {
     meshes: p.meshes,
     regions: p.regions,
     motion: p.motion,
+    ...(p.turn === undefined ? {} : { turn: p.turn }),
   });
 }
 
 /** Fixed key order, two-space indent, trailing newline: the same inputs write the same bytes. */
 export function serializeProposal(p: Proposal): string {
   return `${JSON.stringify(p, null, 2)}\n`;
+}
+
+// ---------------------------------------------------------------------------
+// the turn control (issue #251)
+// ---------------------------------------------------------------------------
+
+/** The See-through runs `propose --full/--head` reads depths from, by run. */
+export type TurnRuns = Partial<Record<'full' | 'head', LayerSet>>;
+
+/**
+ * Draft `turn` (issue #251, `src/turn.ts`) from the parts and the See-through
+ * runs they came from: each part's depth is its layer's `depth_median` — the
+ * layer of its run named by its tag, a cut's piece its base's — and the pivot
+ * is {@link turnPivot} over the parts' `opaque_px`. A `painting:` patch has no
+ * layer and so no depth: it is not carried, and a note names it. What a depth
+ * cannot be read for is refused by name, every one at once:
+ *
+ * - `PROPOSE_TURN_RUN_GIVEN`: a part from a run whose layers were not given.
+ * - `PROPOSE_TURN_LAYER_PRESENT`: the run given holds no layer of the part's tag.
+ * - `PROPOSE_TURN_DEPTH_PRESENT`: the layer carries no depth (a PSD carries none).
+ *
+ * With no part to carry, or every carried part at one depth (nothing nearer
+ * than the pivot), no `turn` is drafted and a note says why. Otherwise one note
+ * states the pivot and its rule, the law, and every part's fraction with the
+ * depth it came from.
+ */
+export function draftTurn(P: PartSet, runs: TurnRuns): { turn: TurnSpec | null; notes: string[] } {
+  const problems: Problem[] = [];
+  const rows: Array<{ part: string; depth: number; area: number }> = [];
+  const patches: string[] = [];
+  const unread = new Map<string, string[]>();
+  for (const r of P.recs) {
+    const [run, tag] = splitFrom(r.from);
+    if (run === PAINTING_RUN) {
+      patches.push(r.name);
+      continue;
+    }
+    const set = run === 'full' || run === 'head' ? runs[run] : undefined;
+    if (set === undefined) {
+      unread.set(run, [...(unread.get(run) ?? []), r.name]);
+      continue;
+    }
+    const layer = set.layers.find((l) => l.name === tag);
+    if (layer === undefined) {
+      problems.push({ code: 'PROPOSE_TURN_LAYER_PRESENT', object: `part "${r.name}" (${r.from})`, detail: `came from the ${run} run's "${tag}" layer, and ${set.source} holds no layer of that name; the run its parts were assembled from is required` });
+      continue;
+    }
+    if (layer.depth === null) {
+      problems.push({ code: 'PROPOSE_TURN_DEPTH_PRESENT', object: `part "${r.name}" (${r.from})`, detail: `its layer in ${set.source} carries no depth_median (a ${set.form} input); the turn orders parts by See-through's per-layer depth, so a run that carries one is required` });
+      continue;
+    }
+    rows.push({ part: r.name, depth: layer.depth, area: r.opaque_px });
+  }
+  for (const [run, names] of unread) {
+    problems.push({ code: 'PROPOSE_TURN_RUN_GIVEN', object: `the ${run} run`, detail: `part(s) ${names.map((n) => `"${n}"`).join(', ')} came from it and its layers were not given; --${run} <dir | layers.json> is required to read their depth` });
+  }
+  refuseIfAny(problems);
+  const notes: string[] = [];
+  if (patches.length > 0) {
+    notes.push(`turn: painting patch(es) ${patches.map((n) => `"${n}"`).join(', ')} carry no See-through depth and are not carried — each moves only as its bone does, as the pivot depth does; a value in config.turn.depths carries one`);
+  }
+  const pivot = turnPivot(rows);
+  const depths = Object.create(null) as Record<string, number>;
+  for (const r of rows) depths[r.part] = r.depth;
+  const nearest = turnNearest(depths);
+  if (pivot === null || nearest === null) {
+    notes.push('turn: no part carries a See-through depth with any opaque pixel, so no turn control is drafted');
+    return { turn: null, notes };
+  }
+  if (!(pivot > nearest.depth)) {
+    notes.push(`turn: every carried part lies at depth ${nearest.depth}, so none is nearer than the pivot and no turn control is drafted`);
+    return { turn: null, notes };
+  }
+  const turn: TurnSpec = { pivot, depths };
+  const fr = turnFractions(turn, rows.map((r) => r.part));
+  notes.push(
+    `turn: control "${TURN_BONE}" under root, keyed by nothing — its x is the dial. Pivot depth ${pivot}: the mean of the ${rows.length} carried parts' See-through depth_median weighted by opaque_px, the one depth at which the painted pixels' centroid does not slide (correct it in turn.pivot). ` +
+      `Each part travels (pivot - depth) / (pivot - ${nearest.depth}) of the control's x, "${nearest.part}" (nearest) all of it: ${fr.map((f) => `${f.part} ${f.fraction} (depth ${f.depth})`).join(', ')}`,
+  );
+  notes.push(...TURN_DEPTH_CAVEAT);
+  return { turn, notes };
+}
+
+/** The notes beside every drafted turn (issue #251): what a See-through depth is, where it misleads, and that the two runs' axes are not reconciled. */
+export const TURN_DEPTH_CAVEAT: readonly string[] = [
+  "turn: depth is the See-through layer's median and each part takes its own run's axis; a seated or forward-reaching limb can read further back than it is (trailer legwear 0.770 sits behind the pivot)",
+  "turn: the two runs' depth axes are not reconciled (parts#271)",
+];
+
+/** The proposal with `turn` written after `motion` and `notes` extended; the proposal itself when `turn` is null. */
+export function withTurn(p: Proposal, draft: { turn: TurnSpec | null; notes: string[] }): Proposal {
+  return { bones: p.bones, meshes: p.meshes, regions: p.regions, motion: p.motion, ...(draft.turn === null ? {} : { turn: draft.turn }), notes: [...p.notes, ...draft.notes] };
 }
 
 // ---------------------------------------------------------------------------

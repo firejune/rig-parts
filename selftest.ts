@@ -121,7 +121,7 @@ import {
   writeRun,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
-import { artifactPaths, assembleStage, build, BUILD_OWNS, checkStage, ctlRemedies, faceAxisLine, fringeLines, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
+import { artifactPaths, assembleStage, build, BUILD_OWNS, checkStage, ctlRemedies, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LEVEL_FRINGE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, TILTED_FRINGE_PARTS, TWO_LOCK_PARTS, writeProposeFixture } from './fixtures/propose.ts';
@@ -211,6 +211,7 @@ import { ALIASES, AliasTarballError, compareTarballs, MANIFEST as ALIAS_MANIFEST
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionKey, type MotionSpec, sineTrack, TIME_SLACK } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
+import { TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, NOTCHED, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRAND, STRAND_CHAIN, STRIP } from './fixtures/contour.ts';
@@ -355,6 +356,9 @@ import {
   proposeWithBasis,
   readPartSet,
   serializeProposal,
+  draftTurn,
+  TURN_DEPTH_CAVEAT,
+  withTurn,
 } from './src/propose.ts';
 import { headFrame } from './src/headframe.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines, serializeBasis } from './src/diagnostics.ts';
@@ -1730,6 +1734,68 @@ function runConfigSuite(): number {
       one75(typo83, 'CONFIG_KEY_KNOWN', `${SAT}.degree`),
     `planted 0 -> ${show75(zero83)}; -5 -> ${show75(neg83)}; "25" -> ${show75(text83)}; no degrees -> ${show75(none83)}; [] -> ${show75(empty83)}; "hem" -> ${show75(word83)}; a misspelt key -> ${show75(typo83)}`,
     'issue #196: a bend of 0 measures nothing and a negative one is the other sign, which is measured anyway; no default is guessed for a bend the author did not write',
+  );
+
+  // CF84 — issue #251: `turn` loads with a pivot and a depth per part the config attaches (an annotation beside them),
+  // and each malformed field is refused at its field: no pivot, a pivot that is not a number, empty depths, a depth
+  // for a part nobody attaches, a depth that is not a number, an unknown key, a turn that is not an object.
+  const turned84 = (turn: unknown, edit: (c: Record<string, unknown>) => void = () => {}): Record<string, unknown> => {
+    const c = { ...minimalConfig(), turn };
+    edit(c);
+    return c;
+  };
+  const TT = 'config.turn';
+  const good84 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4, robe: 0.6 }, note: 'drafted by propose' })));
+  const nopivot84 = refusals(() => parseConfig(turned84({ depths: { face: 0.4 } })));
+  const text84 = refusals(() => parseConfig(turned84({ pivot: '0.5', depths: { face: 0.4 } })));
+  const empty84 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: {} })));
+  const ghost84 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4, ghost: 0.3 } })));
+  const nan84 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: null } })));
+  const typo84 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4 }, centre: 0.5 })));
+  const word84 = refusals(() => parseConfig(turned84('left')));
+  say(
+    'CF84_A_TURN_LOADS_AND_EVERY_MALFORMED_TURN_FIELD_IS_REFUSED_AT_ITS_FIELD',
+    good84 === null &&
+      one75(nopivot84, 'CONFIG_FIELD_PRESENT', `${TT}.pivot`, 'is absent and required') &&
+      one75(text84, 'CONFIG_FIELD_TYPE', `${TT}.pivot`, 'is "0.5"; a finite number is required') &&
+      one75(empty84, 'CONFIG_FIELD_TYPE', `${TT}.depths`, 'is {}; a non-empty object of part name -> See-through depth_median is required') &&
+      one75(ghost84, 'CONFIG_NAME_RESOLVES', `${TT}.depths.ghost`) &&
+      one75(nan84, 'CONFIG_FIELD_TYPE', `${TT}.depths.face`, 'is null; a finite number is required') &&
+      one75(typo84, 'CONFIG_KEY_KNOWN', `${TT}.centre`) &&
+      one75(word84, 'CONFIG_FIELD_TYPE', TT, 'is "left"; an object is required'),
+    `{pivot 0.5, depths {face 0.4, robe 0.6}, note} -> ${show75(good84)}; planted: no pivot -> ${show75(nopivot84)}; "0.5" -> ${show75(text84)}; depths {} -> ${show75(empty84)}; ghost -> ${show75(ghost84)}; face null -> ${show75(nan84)}; centre -> ${show75(typo84)}; "left" -> ${show75(word84)}`,
+    "issue #251: the turn is a pivot and a depth per part, both stated — no default pivot is guessed and no depth is invented for a part — and a depth for a part nothing draws would carry nothing, so it is refused by name",
+  );
+
+  // CF85 — the pivot must lie behind the nearest part. By hand on {face 0.4, robe 0.6}: the nearest is face at 0.4, so
+  // 0.4 (the law's denominator 0) and 0.3 (every part against the dial) are refused by name; 0.400001 loads. A config
+  // bone named "turn" is the control's name, refused only when the config has a turn.
+  const at85 = refusals(() => parseConfig(turned84({ pivot: 0.4, depths: { face: 0.4, robe: 0.6 } })));
+  const front85 = refusals(() => parseConfig(turned84({ pivot: 0.3, depths: { face: 0.4, robe: 0.6 } })));
+  const just85 = refusals(() => parseConfig(turned84({ pivot: 0.400001, depths: { face: 0.4, robe: 0.6 } })));
+  const addTurnBone = (c: Record<string, unknown>): void => {
+    c.bones = [...(c.bones as unknown[]), { name: 'turn', parent: 'root', at: [32, 60] }];
+  };
+  const bone85 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4 } }, addTurnBone)));
+  const noTurn85 = refusals(() => {
+    const c = minimalConfig();
+    addTurnBone(c);
+    return parseConfig(c);
+  });
+  say(
+    'CF85_A_PIVOT_AT_OR_IN_FRONT_OF_THE_NEAREST_PART_IS_REFUSED_BY_NAME_AND_SO_IS_A_BONE_NAMED_FOR_THE_CONTROL',
+    one75(
+      at85,
+      'CONFIG_TURN_PIVOT_BEHIND_NEAREST',
+      `${TT}.pivot`,
+      `is 0.4; the nearest part, "face", lies at depth 0.4, and a pivot above that (further back) is required — each part travels (pivot − depth) / (pivot − 0.4) of the control's offset, which has no value at the nearest depth and turns every part against the dial in front of it`,
+    ) &&
+      one75(front85, 'CONFIG_TURN_PIVOT_BEHIND_NEAREST', `${TT}.pivot`) &&
+      just85 === null &&
+      one75(bone85, 'CONFIG_TURN_BONE_FREE', 'bone "turn"') &&
+      noTurn85 === null,
+    `pivot 0.4 -> ${show75(at85)}; 0.3 -> ${show75(front85)}; 0.400001 -> ${show75(just85)}; a bone "turn" with a turn -> ${show75(bone85)}; without one -> ${show75(noTurn85)}`,
+    "issue #251: the fraction law (pivot − depth) / (pivot − nearest) has no value when the pivot is the nearest depth and points every part against the dial in front of it, so the bad pivot is refused by the rule's name, not clamped",
   );
   return bad();
 }
@@ -3652,6 +3718,7 @@ function runRigSuite(): number {
   runExponentCases(say);
   runHeatRuleCases(say);
   runAnimationsFromCases(say);
+  runTurnRigCases(say);
   return bad();
 }
 
@@ -4304,6 +4371,168 @@ function turnGap(a: Array<Map<string, GeometryBone>>, boneA: string, b: Array<Ma
     worst = Math.max(worst, Math.abs(((((d + 180) % 360) + 360) % 360) - 180));
   });
   return worst;
+}
+
+/**
+ * Issue #251 at the rig stage: the turn control on the rig fixture, with a
+ * physics constraint on `hem1` so the idle and a physics step both run on the
+ * bones the twins hang from.
+ *
+ * ## By hand
+ *
+ * `turn: {pivot: 0.5, depths: {cloth: 0.6, eye: 0.2}}`. The nearest part is
+ * `eye` at 0.2, so the law's denominator is 0.5 − 0.2 = 0.3: `eye` travels
+ * (0.5 − 0.2) / 0.3 = **1** of the control's x and `cloth` (0.5 − 0.6) / 0.3 =
+ * **−0.333333**. `cloth` is a mesh on `hem` — slot bone `hem0`, weights on
+ * `hem0` and `hem1` — and `eye` a region on `eye`, so the rig gains, after its
+ * own bones, **turn** (under root, at its origin), **turn_cloth_hem0**,
+ * **turn_cloth_hem1** and **turn_eye_eye**, each an identity child of its bone;
+ * two transform constraints after the physics one; three detached rules. With
+ * the control's x at 6 the eye's twin sits 6 to the right of `eye` and each
+ * cloth twin 2 to the left of its link, in every idle frame, while every other
+ * bone is where the build without `turn` puts it.
+ */
+function runTurnRigCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('turn-rig');
+  try {
+    const physics = { type: 'physics', name: 'hem1_phys', bone: 'hem1', rotate: 1, inertia: 0.5, strength: 100, damping: 0.85, mass: 1, mix: 1 };
+    const base = (): Record<string, unknown> => ({ ...rigConfig(), constraints: [physics] });
+    const withTurn = (turn: Record<string, unknown>, edit: (c: Record<string, unknown>) => void = () => {}): Record<string, unknown> => {
+      const c = { ...base(), turn };
+      edit(c);
+      return c;
+    };
+    const TURN = { pivot: 0.5, depths: { cloth: 0.6, eye: 0.2 } };
+    const plain = buildRig(parseConfig(base()), rigParts(), rigImages());
+    const t = buildRig(parseConfig(withTurn(TURN)), rigParts(), rigImages());
+    const added = t.rig.bones.slice(plain.rig.bones.length);
+    const tc = (t.rig.constraints ?? []).slice(1);
+    const clothWeights = new Set(((t.rig.skins.default.cloth.cloth as MeshAttachment).weights ?? []).flatMap((v) => v.map((w) => w.bone)));
+    // Undo the turn by hand: drop what it added and put each twin's bone back. What is left must be the plain build.
+    const undone = JSON.parse(JSON.stringify(t.rig)) as RigSpec;
+    const back = new Map(added.filter((b) => b.parent !== undefined && b.name !== TURN_BONE).map((b) => [b.name, b.parent as string]));
+    undone.bones = undone.bones.filter((b) => b.name !== TURN_BONE && !back.has(b.name));
+    for (const sl of undone.slots) sl.bone = back.get(sl.bone) ?? sl.bone;
+    for (const atts of Object.values(undone.skins.default)) for (const a of Object.values(atts)) if ('type' in a) for (const v of a.weights) for (const w of v) w.bone = back.get(w.bone) ?? w.bone;
+    undone.constraints = (undone.constraints ?? []).filter((c) => c.type !== 'transform');
+    if (undone.invariants?.detached !== undefined) {
+      undone.invariants.detached = undone.invariants.detached.filter((d) => d.bone !== TURN_BONE);
+      if (undone.invariants.detached.length === 0) delete undone.invariants.detached;
+      if (Object.keys(undone.invariants).length === 0) delete undone.invariants;
+    }
+    say(
+      'RG87_THE_TURN_ADDS_THE_CONTROL_A_TWIN_PER_PART_AND_BONE_AND_A_CONSTRAINT_PER_PART_WITH_THE_HAND_FRACTIONS_AND_MOVES_NOTHING_ELSE',
+      JSON.stringify(added) ===
+        JSON.stringify([
+          { name: 'turn', parent: 'root', x: 0, y: 0 },
+          { name: 'turn_cloth_hem0', parent: 'hem0', x: 0, y: 0 },
+          { name: 'turn_cloth_hem1', parent: 'hem1', x: 0, y: 0 },
+          { name: 'turn_eye_eye', parent: 'eye', x: 0, y: 0 },
+        ]) &&
+        JSON.stringify(tc) ===
+          JSON.stringify([
+            { type: 'transform', name: 'turn_cloth', bones: ['turn_cloth_hem0', 'turn_cloth_hem1'], source: 'turn', localSource: true, additive: true, properties: { x: { to: { x: { scale: -0.333333 } } } } },
+            { type: 'transform', name: 'turn_eye', bones: ['turn_eye_eye'], source: 'turn', localSource: true, additive: true, properties: { x: { to: { x: { scale: 1 } } } } },
+          ]) &&
+        JSON.stringify(t.rig.slots.map((s) => s.bone)) === JSON.stringify(['turn_cloth_hem0', 'turn_eye_eye']) &&
+        JSON.stringify([...clothWeights].sort()) === JSON.stringify(['turn_cloth_hem0', 'turn_cloth_hem1']) &&
+        (t.rig.invariants?.detached ?? []).filter((d) => d.bone === TURN_BONE).length === 3 &&
+        JSON.stringify(t.turn?.map((r) => [r.part, r.fraction, r.twins.length])) === JSON.stringify([['cloth', -0.333333, 2], ['eye', 1, 1]]) &&
+        rigJsonText(undone) === rigJsonText(plain.rig) &&
+        plain.turn === null &&
+        plain.rig.bones.every((b) => b.name !== TURN_BONE),
+      `added ${JSON.stringify(added)}; constraints ${JSON.stringify(tc)}; slots ${t.rig.slots.map((s) => `${s.name}->${s.bone}`).join(', ')}; cloth weights on ${[...clothWeights].sort().join(', ')}; ${turnLine(t.turn ?? []).trim()}; the turned rig with the turn taken back out ${rigJsonText(undone) === rigJsonText(plain.rig) ? 'is' : 'is NOT'} the plain build byte for byte`,
+      'issue #251: each part is carried by leaf twins of the bones it binds — never by the <bone>_ctl parents the idle keys, which carry every part on the bone at one depth — and everything but the control, the twins, the slots and weights moved onto them, the constraints and their detached rules is the build without `turn`',
+    );
+
+    // Measured through rigc: the gate on the drafted constraints, the idle and the physics step on the bones, at rest and dialled.
+    const plainR = constraintRender(join(dir, 'plain'), base(), 'ctl');
+    const restR = constraintRender(join(dir, 'rest'), withTurn(TURN), 'ctl');
+    const twinsR = constraintRender(join(dir, 'twins'), withTurn(TURN), 'ctl', (r) => ({ ...r, constraints: (r.constraints ?? []).filter((c) => c.type !== 'transform'), invariants: { ...r.invariants, detached: (r.invariants?.detached ?? []).filter((d) => d.bone !== TURN_BONE) } }));
+    const DIAL = 6;
+    const dialR = constraintRender(join(dir, 'dial'), withTurn(TURN), 'ctl', (r) => ({ ...r, bones: r.bones.map((b) => (b.name === TURN_BONE ? { ...b, x: DIAL } : b)) }));
+    const framesOf = (r: ReturnType<typeof constraintRender>): Array<Map<string, GeometryBone>> => (typeof r.frames === 'string' ? [] : r.frames);
+    const pf = framesOf(plainR);
+    /** The largest |difference| over every frame and every bone of the plain build, field by field: 0 is bit-equal. */
+    const offPlain = (fr: Array<Map<string, GeometryBone>>): number => {
+      let worst = fr.length === pf.length && pf.length > 0 ? 0 : Number.POSITIVE_INFINITY;
+      pf.forEach((m, i) => {
+        for (const [n, b] of m) {
+          const o = fr[i]?.get(n);
+          if (o === undefined) worst = Number.POSITIVE_INFINITY;
+          else for (const k of ['a', 'b', 'c', 'd', 'worldX', 'worldY'] as const) worst = Math.max(worst, Math.abs(o[k] - b[k]));
+        }
+      });
+      return worst;
+    };
+    /** Per twin, the largest gap over every frame between (twin − its bone) and (dx, 0) in world units. */
+    const twinGap = (fr: Array<Map<string, GeometryBone>>, twin: string, bone: string, dx: number): number => {
+      let worst = fr.length > 0 ? 0 : Number.POSITIVE_INFINITY;
+      for (const m of fr) {
+        const a = m.get(twin);
+        const b = m.get(bone);
+        worst = a === undefined || b === undefined ? Number.POSITIVE_INFINITY : Math.max(worst, Math.abs(a.worldX - b.worldX - dx), Math.abs(a.worldY - b.worldY));
+      }
+      return worst;
+    };
+    const restOff = offPlain(framesOf(restR));
+    const dialOff = offPlain(framesOf(dialR));
+    const restTwin = Math.max(twinGap(framesOf(restR), 'turn_eye_eye', 'eye', 0), twinGap(framesOf(restR), 'turn_cloth_hem0', 'hem0', 0), twinGap(framesOf(restR), 'turn_cloth_hem1', 'hem1', 0));
+    const eyeGap = twinGap(framesOf(dialR), 'turn_eye_eye', 'eye', DIAL);
+    const clothGap = Math.max(twinGap(framesOf(dialR), 'turn_cloth_hem0', 'hem0', -DIAL / 3), twinGap(framesOf(dialR), 'turn_cloth_hem1', 'hem1', -DIAL / 3));
+    // The physics step is running: hem1's world rotation is not the same in every frame.
+    const hem1Turn = pf.map((m) => worldDeg(m.get('hem1') as GeometryBone));
+    const swings = Math.max(...hem1Turn) - Math.min(...hem1Turn);
+    const pngs = (sub: string): string[] => {
+      const d = join(dir, sub, 'render', 'idle');
+      return existsSync(d) ? readdirSync(d).filter((f) => /^f\d+\.png$/.test(f)).sort().map((f) => join(d, f)) : [];
+    };
+    const sameBytes = (a: string, b: string): number => {
+      const x = pngs(a);
+      const y = pngs(b);
+      return x.length === y.length ? x.filter((f, i) => readFileSync(f).equals(readFileSync(y[i]))).length : -1;
+    };
+    const restFrames = pngs('rest').length;
+    const greenLine = (r: ReturnType<typeof constraintRender>): string => (typeof r.frames === 'string' ? r.frames : `rigc build exit 0, ${r.frames.length} idle frame(s)`);
+    say(
+      'RG88_RIGC_GATES_THE_TURN_GREEN_AND_THE_DIAL_MOVES_ONLY_THE_TWINS_BY_THE_HAND_FRACTIONS_WHILE_IDLE_AND_PHYSICS_RUN_ON_THE_BONES_AS_BEFORE',
+      typeof restR.frames !== 'string' &&
+        typeof dialR.frames !== 'string' &&
+        swings > POSE_BAR &&
+        restOff === 0 &&
+        dialOff === 0 &&
+        restTwin === 0 &&
+        eyeGap <= POSE_BAR &&
+        clothGap <= POSE_BAR &&
+        restFrames > 0 &&
+        sameBytes('twins', 'rest') === restFrames &&
+        sameBytes('dial', 'rest') === 0,
+      `plain: ${greenLine(plainR)}, hem1 swings ${pyRound(swings, 6)} degrees over the idle (physics and keys); turned at rest: ${greenLine(restR)}; every plain bone in every frame off by at most ${restOff} at rest and ${dialOff} with the control at x ${DIAL}; twins at rest off their bones by ${restTwin}; dialled, eye's twin off (+${DIAL}, 0) by ${pyRound(eyeGap, 9)} and cloth's off (−${DIAL}/3, 0) by ${pyRound(clothGap, 9)}; idle PNGs byte-equal to the turned build at rest: ${sameBytes('twins', 'rest')} of ${restFrames} with the transform constraints taken out, ${sameBytes('dial', 'rest')} of ${restFrames} with the control at ${DIAL} (the planted negative)`,
+      'issue #251: the control is a dial — at rest the constraints add exactly nothing (the frames are the twins-only rig\'s, byte for byte), and turned it moves each part by its fraction and nothing the idle keys or a physics constraint owns: their bones are bit-equal to the build without `turn` in every frame, so the twins ride the idle and the physics step rather than replacing them',
+    );
+
+    // Names the turn needs, taken; and a part at the pivot depth, which stays.
+    const twinTaken = refusals(() => buildRig(parseConfig(withTurn(TURN, (c) => (c.bones as unknown[]).push({ name: 'turn_eye_eye', parent: 'body', at: [20, 20] }))), rigParts(), rigImages()));
+    const cTaken = refusals(() => buildRig(parseConfig(withTurn(TURN, (c) => (c.constraints as unknown[]).push({ type: 'transform', name: 'turn_eye', bones: ['eye'], source: 'body' }))), rigParts(), rigImages()));
+    const atPivot = buildRig(parseConfig(withTurn({ pivot: 0.6, depths: { cloth: 0.6, eye: 0.2 } })), rigParts(), rigImages());
+    const pivotAdded = atPivot.rig.bones.slice(plain.rig.bones.length).map((b) => b.name);
+    say(
+      'RG89_A_NAME_THE_TURN_NEEDS_THAT_IS_TAKEN_IS_REFUSED_BY_NAME_AND_A_PART_AT_THE_PIVOT_DEPTH_STAYS',
+      twinTaken?.problems.length === 1 &&
+        twinTaken.problems[0].code === 'RIG_TURN_NAME_FREE' &&
+        twinTaken.problems[0].object === 'bone "turn_eye_eye"' &&
+        cTaken?.problems.length === 1 &&
+        cTaken.problems[0].code === 'RIG_TURN_NAME_FREE' &&
+        cTaken.problems[0].object === 'transform constraint "turn_eye"' &&
+        JSON.stringify(pivotAdded) === JSON.stringify(['turn', 'turn_eye_eye']) &&
+        (atPivot.rig.constraints ?? []).filter((c) => c.type === 'transform').length === 1 &&
+        turnLine(atPivot.turn ?? []).includes('cloth stays (depth 0.6, the pivot\'s)'),
+      `a config bone "turn_eye_eye" -> ${codes(twinTaken)}: ${twinTaken?.problems[0]?.object ?? ''}; a config transform "turn_eye" -> ${codes(cTaken)}: ${cTaken?.problems[0]?.object ?? ''}; pivot 0.6 = cloth's depth -> added ${pivotAdded.join(', ')}; ${turnLine(atPivot.turn ?? []).trim()}`,
+      'issue #251: a twin or a constraint the turn writes under a name the rig already holds would shadow it, so it is refused by name; a part at the pivot depth travels 0 of the dial and is said to stay rather than given a twin that does nothing',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -5482,6 +5711,97 @@ function runProposeSuite(): number {
       same && pprop.regions.bottomwear === 'hip' && !('bottomwear' in pprop.meshes) && pNote.includes('config.regions.bottomwear is the bone it rides') && pLoad === null,
       `bones, meshes and motion ${same ? 'identical to' : 'DIFFER from'} the unpatched proposal; regions.bottomwear = ${pprop.regions.bottomwear}; note "${pNote}"; the proposal ${pLoad === null ? 'loads' : `is refused: ${codes(pLoad)}`}`,
       'a patch has no See-through tag, so a patch named "bottomwear" must not become a skirt; its centre (y 255) is below the hip (157), so the trunk rule puts it on hip, and the loader then holds it to a patch\'s rule (a region, never a mesh)',
+    );
+
+    // Issue #251: the turn control's draft. By hand on PROPOSE_PARTS with these depths (fixtures/propose.ts boxes, all
+    // opaque): skirt 80x100 = 8000 px at 0.75, sleeve_a 20x60 = 1200 px at 0.5, sleeve_b 1200 px at 0.875, face 40x50 =
+    // 2000 px at 0.25. Pivot = (8000 * 0.75 + 1200 * 0.5 + 1200 * 0.875 + 2000 * 0.25) / 12400 = 8150 / 12400 =
+    // 0.6572580645 -> 0.657258. Nearest: face at 0.25, so the denominator is 0.407258 and the fractions are skirt
+    // -0.092742 / 0.407258 = -0.227723, sleeve_a 0.386139, sleeve_b -0.534654, face 1.
+    const TURN_DEPTHS: Array<[string, string, number]> = [
+      ['full', 'bottomwear', 0.75],
+      ['full', 'handwear-r', 0.5],
+      ['full', 'handwear-l', 0.875],
+      ['head', 'face', 0.25],
+    ];
+    const depthRun = (run: 'full' | 'head', skip: string | null = null, depth: number | null | undefined = undefined): LayerSet => ({
+      form: 'wrapper',
+      source: `fixture ${run} layers.json`,
+      canvas: { w: 1, h: 1 },
+      layers: TURN_DEPTHS.filter(([r, tag]) => r === run && tag !== skip).map(([, tag, d], i) => ({ name: tag, tag: readTag(tag) as TagReading, file: null, pixels: newRaster(1, 1), left: 0, top: 0, right: 1, bottom: 1, depth: depth === undefined ? d : depth, drawOrder: i, opaquePx: 1 })),
+    });
+    const tdir = join(dir, 'turn');
+    writeProposeFixture(tdir);
+    const TP = readPartSet(tdir);
+    const tprop = propose(TP);
+    const draft = draftTurn(TP, { full: depthRun('full'), head: depthRun('head') });
+    const turned = withTurn(tprop, draft);
+    const tNote = draft.notes.find((n) => n.startsWith('turn: control')) ?? '';
+    const tLoad = refusals(() => checkProposal(TP, turned));
+    say(
+      'PR93_THE_DRAFTED_TURN_HOLDS_EACH_PARTS_DEPTH_THE_AREA_WEIGHTED_PIVOT_AND_THE_HAND_FRACTIONS_AND_LOADS',
+      JSON.stringify(draft.turn) === JSON.stringify({ pivot: 0.657258, depths: { skirt: 0.75, sleeve_a: 0.5, sleeve_b: 0.875, face: 0.25 } }) &&
+        tNote.includes('Pivot depth 0.657258') &&
+        JSON.stringify(draft.notes.slice(-TURN_DEPTH_CAVEAT.length)) === JSON.stringify(TURN_DEPTH_CAVEAT) &&
+        tNote.includes('skirt -0.227723 (depth 0.75), sleeve_a 0.386139 (depth 0.5), sleeve_b -0.534654 (depth 0.875), face 1 (depth 0.25)') &&
+        JSON.stringify(Object.keys(turned)) === JSON.stringify(['bones', 'meshes', 'regions', 'motion', 'turn', 'notes']) &&
+        serializeProposal(withTurn(tprop, { turn: null, notes: [] })) === serializeProposal(tprop) &&
+        tLoad === null,
+      `turn ${JSON.stringify(draft.turn)}; note "${tNote}"; keys ${Object.keys(turned).join(', ')}; the proposal with it ${tLoad === null ? 'loads' : `is refused: ${codes(tLoad)}`}`,
+      "issue #251: the pivot is the opaque_px-weighted mean depth, the one depth at which the painted pixels' centroid does not slide under the dial, and each fraction is (pivot − depth) / (pivot − nearest) — stated in the proposal beside the depth it came from, every figure here derived by hand",
+    );
+
+    // What a depth cannot be read for, refused by name and all at once; a patch, noted and not carried; one depth, no turn.
+    const noHead = refusals(() => draftTurn(TP, { full: depthRun('full') }));
+    const both = refusals(() => draftTurn(TP, { full: depthRun('full', 'handwear-l'), head: depthRun('head', null, null) }));
+    const pdir = join(dir, 'turn-patched');
+    writeProposeFixture(pdir, [...PROPOSE_PARTS, { name: 'mole', from: 'painting:mole', x: 60, y: 250, w: 4, h: 4, colour: [90, 60, 40] }]);
+    const patchDraft = draftTurn(readPartSet(pdir), { full: depthRun('full'), head: depthRun('head') });
+    const flatDraft = draftTurn(TP, { full: depthRun('full', null, 0.5), head: depthRun('head', null, 0.5) });
+    say(
+      'PR94_A_DEPTH_THAT_CANNOT_BE_READ_IS_REFUSED_BY_NAME_A_PATCH_IS_NOTED_AND_NOT_CARRIED_AND_ONE_DEPTH_DRAFTS_NO_TURN',
+      noHead?.problems.length === 1 &&
+        noHead.problems[0].code === 'PROPOSE_TURN_RUN_GIVEN' &&
+        noHead.problems[0].object === 'the head run' &&
+        noHead.problems[0].detail.startsWith('part(s) "face" came from it') &&
+        both?.problems.map((q) => `${q.code} ${q.object}`).join(' | ') === 'PROPOSE_TURN_LAYER_PRESENT part "sleeve_b" (full:handwear-l) | PROPOSE_TURN_DEPTH_PRESENT part "face" (head:face)' &&
+        patchDraft.turn !== null &&
+        !('mole' in patchDraft.turn.depths) &&
+        patchDraft.notes[0] === 'turn: painting patch(es) "mole" carry no See-through depth and are not carried — each moves only as its bone does, as the pivot depth does; a value in config.turn.depths carries one' &&
+        flatDraft.turn === null &&
+        flatDraft.notes.at(-1) === 'turn: every carried part lies at depth 0.5, so none is nearer than the pivot and no turn control is drafted',
+      `no head run -> ${noHead?.problems.map((q) => `${q.code} ${q.object}: ${q.detail}`).join(' | ') ?? 'accepted'}; handwear-l missing and a depthless head run -> ${both?.problems.map((q) => `${q.code} ${q.object}`).join(' | ') ?? 'accepted'}; a painting patch -> depths ${JSON.stringify(Object.keys(patchDraft.turn?.depths ?? {}))}, "${patchDraft.notes[0] ?? ''}"; every part at 0.5 -> turn ${JSON.stringify(flatDraft.turn)}, "${flatDraft.notes.at(-1) ?? ''}"`,
+      "issue #251: a depth is read off See-through's layer or not at all — never guessed for a part whose run, layer or depth is missing — and a patch, which no layer made, is said to stay rather than given a depth",
+    );
+
+    // The CLI: without --full/--head the proposal is the one written before the flags existed; with them it carries
+    // the turn draftTurn writes, from wrapper runs on disk; --from-config refuses them.
+    const wrap = (sub: string, run: 'full' | 'head'): string => {
+      const d = join(tdir, 'runs', sub);
+      writeWrapperFixture(
+        d,
+        TURN_DEPTHS.filter(([r]) => r === run).map(([, tag, depth]) => ({ name: tag, left: 0, top: 0, width: 2, height: 2, depth, colour: [100, 100, 100] as [number, number, number], painted: 4, layout: 'by-tag' as const })),
+      );
+      return d;
+    };
+    const fullDir = wrap('full', 'full');
+    const headDir = wrap('head', 'head');
+    const painting = join(tdir, 'painting.png');
+    const cliPlain = runCli(['propose', '--parts', tdir, '--source', painting, '--out', join(tdir, 'o-plain')]);
+    const cliTurn = runCli(['propose', '--parts', tdir, '--source', painting, '--out', join(tdir, 'o-turn'), '--full', fullDir, '--head', headDir]);
+    const cliCfg = runCli(['propose', '--parts', tdir, '--source', painting, '--out', join(tdir, 'o-cfg'), '--from-config', join(tdir, 'none.json'), '--full', fullDir]);
+    const read = (sub: string): string => (existsSync(join(tdir, sub, 'proposal.json')) ? readFileSync(join(tdir, sub, 'proposal.json'), 'utf8') : '');
+    say(
+      'PR95_PROPOSE_DRAFTS_THE_TURN_ONLY_WITH_FULL_OR_HEAD_AND_WITHOUT_THEM_WRITES_WHAT_IT_WROTE_BEFORE',
+      cliPlain.status === 0 &&
+        read('o-plain') === serializeProposal(tprop) &&
+        cliTurn.status === 0 &&
+        read('o-turn') === serializeProposal(turned) &&
+        cliTurn.out.includes(`note: ${tNote}`) &&
+        cliCfg.status === 2 &&
+        cliCfg.out.includes('--full and --head draft the turn control while proposing; --from-config proposes nothing'),
+      `no flags: exit ${cliPlain.status}, proposal.json ${read('o-plain') === serializeProposal(tprop) ? 'is' : 'is NOT'} propose()'s; --full/--head: exit ${cliTurn.status}, proposal.json ${read('o-turn') === serializeProposal(turned) ? 'is' : 'is NOT'} withTurn(propose(), draftTurn()), the turn note ${cliTurn.out.includes(`note: ${tNote}`) ? 'printed' : 'NOT printed'}; --from-config with --full: exit ${cliCfg.status}`,
+      'issue #251: the depths live in the See-through runs, which propose did not read before; the flags are the only way in, so a proposal written without them is byte for byte the one before the turn existed',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

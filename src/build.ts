@@ -82,7 +82,8 @@ import { type PartRecord, readParts, writeParts } from './parts.ts';
 import { encodePngBytes, readPng, writePng } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
 import { readRequirements, type RequirementLine, summaryText } from './requirements.ts';
-import { type AutoMeshReport, buildRig, DEFAULT_IDLE_KEYS, type FaceAxis, type IdleKeys, type MeshReport, type RigCommand, rigJsonText, type RigOutput, type RigSpec, type StrayCleared } from './rig.ts';
+import { type AutoMeshReport, buildRig, DEFAULT_IDLE_KEYS, type FaceAxis, type IdleKeys, type MeshReport, type RigCommand, rigJsonText, type RigOutput, type RigSpec, type StrayCleared, type TurnRow } from './rig.ts';
+import { TURN_BONE } from './turn.ts';
 import { pyRound } from './round.ts';
 
 /** Where a stage's lines go. The commands hand it `console.log`; `build` hands it a prefixing wrapper. */
@@ -822,6 +823,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
   );
   if (from !== null) log(`  animations beside the idle, from ${from.file} as written: ${Object.keys(from.table).join(', ') || 'none'}`);
   log(faceAxisLine(rig.faceAxis));
+  if (rig.turn !== null) log(turnLine(rig.turn));
   log(
     rig.idleKeys === 'ctl'
       ? `  idle keys ctl: ${rig.meshKeyed.length} mesh-driving bone(s) keyed by the idle, each keyed through a same-origin <bone>_ctl parent`
@@ -969,6 +971,17 @@ export function faceAxisLine(f: FaceAxis): string {
   // Issue #250: the slotless bone carrying the face's up axis under head, or why there is none.
   const up = f.headUp !== null ? `; head_up under head along the face's up axis, ${f.headUp.rotation} degrees, ${f.headUp.length} px (head's origin to the eye midpoint along it)` : f.headUpNone !== null ? `; no head_up: ${f.headUpNone}` : '';
   return `  face axis: ${pyRound(f.degrees, 6)} degrees, the line through the eye bones eye_r and eye_l (on ${f.parts[0]} and ${f.parts[1]}); ${turned}${own}${held}${tips}${up}`;
+}
+
+/**
+ * The rig stage's turn line (issue #251): the control, and per carried part its fraction, the depth it came from and
+ * how many twins carry it — a part at the pivot depth said to stay. Printed only when the config has `turn`.
+ */
+export function turnLine(rows: readonly TurnRow[]): string {
+  const carried = rows.filter((r) => r.twins.length > 0);
+  const twins = carried.reduce((n, r) => n + r.twins.length, 0);
+  const parts = rows.map((r) => (r.twins.length === 0 ? `${r.part} stays (depth ${r.depth}, the pivot's)` : `${r.part} ${r.fraction} (depth ${r.depth}, ${r.twins.length} twin(s))`));
+  return `  turn: control "${TURN_BONE}" under root, keyed by nothing; ${carried.length} part(s) carried by ${carried.length} transform constraint(s) over ${twins} twin bone(s), each part's x a fraction of the control's: ${parts.join(', ')}`;
 }
 
 /** A judgement line as the console prints it: its name, its status, then its figures and bars as check.json holds them (a SKIP prints its reason). */
