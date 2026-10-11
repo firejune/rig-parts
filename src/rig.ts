@@ -87,7 +87,7 @@ import { type Problem, refuseIfAny } from './errors.ts';
 import type { MeshCounts, MeshQualityReport, MeshReductionInput, MotionAmplitude, ReducedMesh, Termination } from 'rig-c/mesh';
 import { type AmplitudeRow, amplitudeRow, partAmplitude, withAmplitude } from './autoamplitude.ts';
 import { type ResidualRow, residualRow, slotEnvelope, withSkinning } from './autoenvelope.ts';
-import { type AutoMotionCase, type AutoSearch, DEFORM_MAY_FOLD_WHY, type MotionDeformation } from './automotion.ts';
+import { type AutoMotionCase, type AutoSearch, DEFORM_MAY_FOLD_WHY, type MotionDeformation, type StimulusPose, stimulusAnimationNames } from './automotion.ts';
 import { type MultiIntervalRow, refinementSteps, replayVerdict, type ReplayRow } from './autoreplay.ts';
 import {
   autoReductionInput,
@@ -481,6 +481,12 @@ export interface AutoMeshReport {
    * reader of the two rows' `not-measurable` learns which number is missing.
    */
   motion_amplitude: AmplitudeRow;
+  /**
+   * Only on a part whose author declared `auto.stimulus` (issue #196): each declared bend as the motion gate walked it —
+   * the chain, the degrees, the links turned and the two animations (+ and −) its comparison builds carry. Absent
+   * otherwise, so a part without the field writes the row it always wrote.
+   */
+  stimulus?: Array<{ chain: string; degrees: number; links: string[]; animations: [string, string] }>;
   /**
    * Only on a part whose author set `motion.residual` (issue #126, rig-c 2.31.0, rigc#1295; `src/autoenvelope.ts`):
    * the envelope sent and the written mesh's `MQ_SKINNING_RESIDUAL` against its bound, or every stop that left the
@@ -1036,6 +1042,10 @@ export function buildRig(
     const mask = { width: w, height: h, alpha };
     const object = `config.meshes.${p.name}.auto`;
     const regions = spec.regions ?? [];
+    // issue #196: the declared bends, as a list, each chain's links resolved (the loader held each chain to the segments).
+    const segmentChains = ribSpec.segments.filter((x): x is string => typeof x === 'string' && chains.has(x));
+    const stimulus: StimulusPose[] | null =
+      spec.stimulus === undefined ? null : (Array.isArray(spec.stimulus) ? spec.stimulus : [spec.stimulus]).map((x) => ({ chain: x.chain, degrees: x.degrees, links: [...(chains.get(x.chain) ?? [])] }));
     const source = autoSource(p.name, mask, spec, chainRibs(ribSpec.segments, ribSpec.ribs, ox, oy));
     if (Array.isArray(source)) {
       out.push(...source.map((q) => ({ ...q, detail: `${q.detail} (the automatic mode's source, at alpha ${AUTO_THRESHOLD} and above)` })));
@@ -1183,6 +1193,7 @@ export function buildRig(
           worst_residual: worstResidual(rows),
           worst_region: worstRegion(rows),
           motion_amplitude: amplitudeRow(amplitude),
+          ...(stimulus === null ? {} : { stimulus: stimulus.map((x) => ({ chain: x.chain, degrees: x.degrees, links: [...x.links], animations: stimulusAnimationNames(x) })) }),
           ...(residualSpec === undefined || envelope === null ? {} : { skinning_residual: residualRow(residualSpec.maxResidual, envelope.reference, envelope.derivation, report, segs[0].bone) }),
           termination: report.termination as Termination,
           weights: { sharesDroppedOnGrid: candidate.changes?.sharesDroppedOnGrid ?? 0, sharesPruned: candidate.changes?.sharesPruned ?? 0, droppedAtFivePlaces },
@@ -1217,6 +1228,8 @@ export function buildRig(
       minArtSamples: input.minArtSamples,
       regions: input.targets.regions.map((rg, k) => ({ name: rg.name, polygon: rg.polygon.map(([x, y]) => [x, y] as [number, number]), minArtSamples: regions[k].minArtSamples })),
       boundBones: [...new Set(srcBound.weights.flatMap((v) => v.map((e) => e.bone)))].sort(),
+      segmentChains,
+      stimulus,
       amplitude: 'amplitude' in amplitude ? amplitude.amplitude : null,
       search,
     };

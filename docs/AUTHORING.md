@@ -529,7 +529,11 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
    moves some of the bones the part is weighted to and not all of them (a key on their shared
    ancestor, or on the one bone a single-bone part binds, moves every vertex by one affine map and
    would read 0 over nothing). Constraints are not read for this: a part only a constraint moves
-   is refused, never passed.
+   is refused, never passed — unless its author declares the motion, `stimulus` (issue #196,
+   the field table below and *A part only physics moves* after the physics recipe): each
+   declared bend is two more frames, every link of the chain turned by +`degrees` and by
+   −`degrees`, walked in both builds at time 0 beside the idle's, and its links count as keys
+   by the rule above.
 5. **The acceptance loop** (rig-c 2.24.0, rigc#1266 mechanism 2; `src/autoreplay.ts`) — only
    when step 4 refuses the full reduction on motion (`AUTO_MESH_MOTION`). rig-c reports every
    accepted **operation** of the call (`acceptedAt`: N entries `{ step, kind, count,
@@ -680,6 +684,7 @@ wall time goes to standard error, not into the table).
 | `boundaryRuns` | optional, `{ maxVertices }`, a whole number 2 or more, no default: each removal pass first tries to replace a run of 2 to `maxVertices` consecutive source-hull vertices with one chord, as one step held to every declared row (below) |
 | `retriangulate` | optional, `"delaunay"`: once the reduction ends, the kept vertices are re-triangulated by Delaunay flips, taken whole only when every declared row still passes (below) |
 | `removalOrder` | optional, `"deformation-load"`: the single removals are tried in ascending predicted load instead of ascending source index (below) |
+| `stimulus` | optional (issue #196), `{ "chain", "degrees" }` or a non-empty list of them: a bend the motion gate measures the part against, for a part no idle key deforms (*A part only physics moves*, after the physics recipe). `chain` is a chain this mesh's `segments` name, each named once; `degrees` a number above 0. Each link of the chain is turned by +`degrees` and by −`degrees` about its joint — a `rotate` key on the link, so the chain curls — in two animations of duration 0 (`stimulus <chain> +<degrees>`, `stimulus <chain> -<degrees>`) that only the comparison's builds carry: the reference and a candidate built from the written rig with them added (`build --profile spine-html` without `--pack`, one more gated build per part); `rig/motion.json` never holds them. Each is walked at time 0, right after the physics reset, so the pose is the declared bend and no constraint has moved it; the idle is walked as before, so where idle keys also move the part both are measured, against the one `motion` bound. The acceptance loop's probes walk them too, as `selection` beside the grid frames. The row echoes `stimulus` (chain, degrees, links, the two animation names); absent, nothing is added and every byte is the same. A chain the segments do not name is `CONFIG_NAME_RESOLVES`, `degrees` that is not a number above 0 `CONFIG_FIELD_TYPE`, both at the field; an animation of `motion.animations_from` already called by one of the two names is `AUTO_MESH_MOTION_INPUT`. The amplitude (*The allocation rows*) is still derived from the idle alone |
 
 **A bound declared absent.** `maxOvershoot` and `maxUndercut`, in `sourceBounds` and in
 `targets.artFit`, each take a number of px 0 or more or `null`. `null` means *measured and
@@ -872,7 +877,7 @@ safe is the author's to choose here.
 | `AUTO_MESH_INPUT` | rig-c refused the call's input by throwing (a protected vertex the source does not have), in its words and code |
 | `AUTO_MESH_TERMINATION` | rig-c returned no mesh: `invalid-input` (the source fails its own `sourceBounds`, a region it refuses, protected influences over the cap), `unsupported-topology`, or `budget-exhausted` with `none-met-the-targets`; or, in the acceptance loop, a replay that does not end as rig-c's contract promises (`replayed-to-accepted-step` at the step asked, `candidatesTried` the full run's `acceptedAt[n − 1].step`, its `acceptedAt` the full run's first n operations, each the same `step`, `kind`, `count` and `sourceVertices`) |
 | `AUTO_MESH_ACCEPTED` | rig-c returned a mesh that is not accepted; the detail names every declared row not passing and the constraint that stopped it |
-| `AUTO_MESH_NO_STIMULUS` | the idle keys no bone that moves some of the part's bound bones against the others, so no frame deforms it — missing stimulus is not a pass; put the part in `contour` or `grid` mode, or key a bone it binds |
+| `AUTO_MESH_NO_STIMULUS` | neither the idle nor a declared `stimulus` moves some of the part's bound bones against the others, so no frame deforms it — the detail names the bones with no motion against each other and the field to declare; missing stimulus is not a pass; declare `meshes.<part>.auto.stimulus`, put the part in `contour` or `grid` mode, or key a bone it binds |
 | `AUTO_MESH_MOTION` | the reduced mesh against its source on the idle is not accepted and the acceptance loop wrote no step in its place: "no reduction passes the motion bound" (the full result's failing rows and every probe named; under `motion.selection`, "… among the tested candidates", with `maxProbes` and the termination), or the chosen step passes on the grid frames and not on the whole idle (its selection and held-out values and worst frames named); when the source itself is not accepted against itself, the full result's rows as before |
 | `AUTO_MESH_SELECTION_BUDGET` | `motion.selection.maxProbes` is below ⌈log₂(N − I)⌉, the bisection the multi-interval search runs whole first; N, I and the number required named; nothing replayed |
 | `AUTO_MESH_SELECTION_ROLES` | a multi-interval choice whose probes read a frame the final comparison holds out, or one it does not declare `selection`; the frames named, the held-out claim withdrawn |
@@ -997,6 +1002,28 @@ into the landing), and both overshoot after it, 3.38 and 1.38 rig px (frames 21 
   `CHECK_TEXTURE_STRETCH: mesh "bottomwear" triangle 13 (vertices 5 183 6), edge 6-5, idle frame 13 — the edge is 0.233 times its rest length (max(ratio, 1/ratio) 4.29); <= 1.926544 is required`
   and `topwear` 2.597; with the values tracked now it reads 1.697 (`topwear`) and 1.566
   (`bottomwear`). Tune the constraint against the animation that drives it, not the idle.
+
+#### A part only physics moves, in the automatic mode
+
+A tie, a strand or a hem whose chain only a `physics` constraint turns has no idle key that
+deforms it, so `auto` refuses it, `AUTO_MESH_NO_STIMULUS`, naming the bones with no motion and
+the field: the motion gate measures against motion, and the package derives none from a
+constraint. Declare the bend in `meshes.<part>.auto.stimulus` (issue #196, the field table in
+*An automatic mesh*):
+
+```jsonc
+"scarf": { "auto": { …, "motion": { "maxLocalDeformation": 1 },
+                     "stimulus": { "chain": "robe_r", "degrees": 9 } },
+           "r": 6, "segments": [ "robe_r" ] }
+```
+
+Choose `degrees` as the largest bend, per link, that the physics is expected to reach in the
+animations that drive it: the mesh is held only to what was declared, so a smaller bend passes a
+mesh that tears at the real one, and nothing here checks the declaration against the
+constraint. A thin strand may still be refused at the default motion bound: the reduction
+leaves it its hull alone, and a hull cannot hold a bend to 1 px — on the scarf strap cut out
+of the sweater the automatic mesh passes only at `maxLocalDeformation` 3 (31 vertices against
+the contour mesh's 133), and raising that bound is the author's choice, not the package's.
 - **An added animation can move the idle's figures.** The render's viewport is fitted over
   every animation, and the idle frames share it, so an animation that travels further than the
   idle redraws the idle at another size: adding `hop` to `sample` narrowed the idle render from

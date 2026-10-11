@@ -46,7 +46,7 @@ import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEF
 import { assemble, type AssembleResult, cutLines, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields } from './assemble.ts';
 import { allocationClause, type Reducer, stageBClause, unboundedClause } from './automesh.ts';
 import { residualClause } from './autoenvelope.ts';
-import { type AutoMotionCase, failingRows, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison } from './automotion.ts';
+import { type AutoMotionCase, failingRows, idleSchedule, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison, stimulusMotion, withStimulus } from './automotion.ts';
 import {
   bisectAccepted,
   budgetProblem,
@@ -386,6 +386,26 @@ export interface MotionGateRun {
   notCompared: string | null;
   /** The reference build's model document, read off its green build; null when it was not built or is red. Nothing writes it. */
   referenceModel: string | null;
+  /**
+   * Only on a part with a declared stimulus (issue #196): the build of the written rig with the stimulus animations
+   * added (`stimulusTexts`), the candidate the comparison reads in place of the stage's own gate build. Absent otherwise.
+   */
+  candidate?: GateRun;
+}
+
+/**
+ * The texts a comparison build of one part stages: `texts` with `motion.json`
+ * carrying the part's declared stimulus animations (`stimulusMotion`,
+ * src/automotion.ts), or `texts` as given when the part declares none.
+ */
+export function stimulusTexts(c: AutoMotionCase, texts: ReadonlyArray<readonly [string, string]>): ReadonlyArray<readonly [string, string]> | Problem {
+  if (c.stimulus === null) return texts;
+  const at = texts.find(([file]) => file === 'motion.json');
+  if (at === undefined) return { code: 'AUTO_MESH_MOTION_INPUT', object: `${c.object}.stimulus`, detail: 'the stage staged no motion.json to add the declared stimulus to; the comparison builds read the motion the stage writes' };
+  const m = stimulusMotion(c, JSON.parse(at[1]) as Record<string, unknown>);
+  if ('problem' in m) return m.problem;
+  const text = rigJsonText(m.motion);
+  return texts.map(([file, t]) => [file, file === 'motion.json' ? text : t] as const);
 }
 
 /** The model document a green gate build wrote, or null. */
@@ -420,9 +440,34 @@ export function motionGates(
         notCompared: 'no motion bounds',
       });
     }
-    const stim = motionStimulus(rig.rig.bones, rig.motion, c.boundBones);
+    const stim = motionStimulus(rig.rig.bones, rig.motion, c.boundBones, c.stimulus?.flatMap((x) => x.links) ?? []);
     if (stim.by.length === 0) return out({ problems: [noStimulusProblem(c, stim.keyed)], notCompared: 'no stimulus' });
-    if (candidateModel === null) {
+    const staged = stimulusTexts(c, texts);
+    if ('code' in staged) return out({ problems: [staged], notCompared: 'the stimulus could not be staged' });
+    // issue #196: a declared stimulus is walked in both builds, so the candidate is the written rig built again with it.
+    let candidate: GateRun | undefined;
+    let compared = candidateModel;
+    if (c.stimulus !== null && compared !== null) {
+      let model: string | null = null;
+      [candidate] = gateThroughRigc(images, staged, rigc, scratch, null, (dir) => {
+        model = modelAt(dir);
+      });
+      if (candidate.status !== 0 || model === null) {
+        return out({
+          candidate,
+          problems: [
+            {
+              code: 'AUTO_MESH_MOTION_INPUT',
+              object: c.object,
+              detail: `the candidate with the declared stimulus (the rig as written, its motion carrying the stimulus animations) ${candidate.status !== 0 ? `is refused by rigc's gate, exit ${candidate.status}${candidate.lines.length > 0 ? `: ${candidate.lines.map((l) => l.trim()).join(' | ')}` : ''}` : `built green and wrote no ${RIGC_MODEL_DOCUMENT}`}; a candidate that is not gated is not evidence, and nothing is built in the part's place`,
+            },
+          ],
+          notCompared: 'the stimulus candidate build is red',
+        });
+      }
+      compared = model;
+    }
+    if (compared === null) {
       return out({
         problems: [{ code: 'AUTO_MESH_MOTION_INPUT', object: c.object, detail: `the rig stage's gate build wrote no ${RIGC_MODEL_DOCUMENT}, so there is no candidate document to compare; rigc's build writes one beside every green build` }],
         notCompared: `no candidate ${RIGC_MODEL_DOCUMENT}`,
@@ -430,13 +475,15 @@ export function motionGates(
     }
     const refRig = JSON.parse(rigJsonText(rig.rig)) as RigSpec;
     refRig.skins.default[c.part] = { [c.part]: c.reference };
-    const refTexts = texts.map(([file, text]) => [file, file === 'rig.json' ? rigJsonText(refRig) : text] as const);
+    const refTexts = staged.map(([file, text]) => [file, file === 'rig.json' ? rigJsonText(refRig) : text] as const);
     let refModel: string | null = null;
     const [gate] = gateThroughRigc(images, refTexts, rigc, scratch, null, (dir) => {
       refModel = modelAt(dir);
     });
+    const withCandidate = candidate === undefined ? {} : { candidate };
     if (gate.status !== 0 || refModel === null) {
       return out({
+        ...withCandidate,
         reference: gate,
         problems: [
           {
@@ -448,10 +495,10 @@ export function motionGates(
         notCompared: 'the reference build is red',
       });
     }
-    const ran = runComparison(c.object, motionInput(c, c.motion, refModel, candidateModel, schedules.get(c.part)));
-    if ('code' in ran) return out({ reference: gate, problems: [ran], notCompared: 'rig-c refused the input', referenceModel: refModel });
+    const ran = runComparison(c.object, motionInput(c, c.motion, refModel, compared, withStimulus(schedules.get(c.part) ?? idleSchedule(), c.stimulus)));
+    if ('code' in ran) return out({ ...withCandidate, reference: gate, problems: [ran], notCompared: 'rig-c refused the input', referenceModel: refModel });
     const verdict = motionVerdict(c.object, ran);
-    return out({ reference: gate, report: ran, problems: verdict === null ? [] : [verdict], referenceModel: refModel });
+    return out({ ...withCandidate, reference: gate, report: ran, problems: verdict === null ? [] : [verdict], referenceModel: refModel });
   });
 }
 
@@ -524,7 +571,11 @@ export function replaySearch(
   const fullReading = fullLocal === null ? null : { value: fullLocal.value, state: fullLocal.state, frame: fullLocal.worst?.frame?.id ?? null };
   const fullText = `reads ${failingRows(run.report).map(motionRowText).join('; ') || 'no failing row'}`;
   // Step 0: the source against itself on the selection frames. It reads no motion; a geometry row it fails leaves the part refused as today.
-  const self = runComparison(c.object, motionInput(c, motion, refModel, refModel, selectionSchedule(grid)));
+  // issue #196: a declared stimulus is walked in every probe too, and read to choose (`withStimulus`), as the grid is.
+  const probeSchedule = withStimulus(selectionSchedule(grid), c.stimulus);
+  const staged = stimulusTexts(c, texts);
+  if ('code' in staged) return refuse(staged);
+  const self = runComparison(c.object, motionInput(c, motion, refModel, refModel, probeSchedule));
   if ('code' in self) return refuse(self);
   if (motionVerdict(c.object, self) !== null) {
     lines.push(`replay "${c.part}": the unreduced source is not accepted against itself on the grid frames; no search runs`);
@@ -547,7 +598,7 @@ export function replaySearch(
     candidatesTried += rep.candidatesTried;
     const candRig = JSON.parse(rigJsonText(rig.rig)) as RigSpec;
     candRig.skins.default[c.part] = { [c.part]: rep.attachment };
-    const candTexts = texts.map(([file, text]) => [file, file === 'rig.json' ? rigJsonText(candRig) : text] as const);
+    const candTexts = staged.map(([file, text]) => [file, file === 'rig.json' ? rigJsonText(candRig) : text] as const);
     let model: string | null = null;
     const [gate] = gateThroughRigc(images, candTexts, rigc, scratch, null, (dir) => {
       model = modelAt(dir);
@@ -560,7 +611,7 @@ export function replaySearch(
       };
       return refused(`rigc exit ${gate.status}`);
     }
-    const cmp = runComparison(c.object, motionInput(c, motion, refModel, model, selectionSchedule(grid)));
+    const cmp = runComparison(c.object, motionInput(c, motion, refModel, model, probeSchedule));
     if ('code' in cmp) {
       fatal = cmp;
       return refused(cmp.code);
@@ -777,6 +828,10 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     for (const l of g.lines) log(`    ${l.trim()}`);
   }
   for (const r of firstMotion) {
+    if (r.candidate !== undefined) {
+      log(`  rigc ${r.candidate.label}, candidate "${r.part}" with its declared stimulus: exit ${r.candidate.status}`);
+      for (const l of r.candidate.lines) log(`    ${l.trim()}`);
+    }
     if (r.reference === null) continue;
     log(`  rigc ${r.reference.label}, reference "${r.part}" (its unreduced source mesh): exit ${r.reference.status}`);
     for (const l of r.reference.lines) log(`    ${l.trim()}`);
@@ -788,6 +843,10 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
       for (const l of g.lines) log(`    ${l.trim()}`);
     }
     for (const r of finalMotion) {
+      if (r.candidate !== undefined) {
+        log(`  rigc ${r.candidate.label}, candidate "${r.part}" with its declared stimulus and replayed step(s): exit ${r.candidate.status}`);
+        for (const l of r.candidate.lines) log(`    ${l.trim()}`);
+      }
       if (r.reference === null) continue;
       log(`  rigc ${r.reference.label}, reference "${r.part}" against the rig with its replayed step(s): exit ${r.reference.status}`);
       for (const l of r.reference.lines) log(`    ${l.trim()}`);

@@ -118,7 +118,7 @@ part name, `[i]` an entry of a list):
 - **meshes.&lt;part&gt;.ribs.&lt;chain&gt;** — required: `stations`
 - **meshes.&lt;part&gt;.contour** — required: `tolerance`, `margin`, `spacing`; optional: `budget`, `stray`, `regions`
 - **meshes.&lt;part&gt;.contour.regions[i]** — required: `name`, `shape`, `bone`, `spacing`, `band`, and `cx`, `cy`, `r` for a circle or `points` for a polygon
-- **meshes.&lt;part&gt;.auto** — required: `source`, `sourceBounds`, `targets`, `influences`, `budget`, `minArtSamples`, `motion`; optional: `protect`, `regions`, and the three Stage B opt-ins `boundaryRuns`, `retriangulate`, `removalOrder`
+- **meshes.&lt;part&gt;.auto** — required: `source`, `sourceBounds`, `targets`, `influences`, `budget`, `minArtSamples`, `motion`; optional: `protect`, `regions`, the three Stage B opt-ins `boundaryRuns`, `retriangulate`, `removalOrder`, and `stimulus`
 - **meshes.&lt;part&gt;.auto.source** — required: `tolerance`, `margin`, `spacing`; optional: `stray`
 - **meshes.&lt;part&gt;.auto.sourceBounds** and **meshes.&lt;part&gt;.auto.targets.artFit** — required: `minCoverage`, `maxOvershoot`, `maxUndercut` (each of the last two a number or null, the bound declared absent)
 - **meshes.&lt;part&gt;.auto.targets** — required: `artFit`, `maxBoundaryDeviation`; optional: `minAngle`
@@ -130,6 +130,7 @@ part name, `[i]` an entry of a list):
 - **meshes.&lt;part&gt;.auto.protect** — optional: `hull`, `vertices`, `edges`, `regionBoundaries`, `weightJump`, `influences`
 - **meshes.&lt;part&gt;.auto.regions[i]** — required: `name`, `shape`, `maxEdgeLength`, `transition`, `grade`, `minArtSamples`, and `cx`, `cy`, `r` for a circle or `points` for a polygon; optional: `bone`, `band` (both or neither; with neither the region is density only)
 - **meshes.&lt;part&gt;.auto.boundaryRuns** — required: `maxVertices`
+- **meshes.&lt;part&gt;.auto.stimulus**, or each entry of it when a list — required: `chain`, `degrees`
 - **regions.&lt;part&gt;** — a bone name
 - **motion** — required: `duration`, `tracks`; optional: `blink`, `animations_from`
 - **motion.tracks[i]**, a single track — required: `bone`, `prop`, `amp`, `period`, `phase`; optional: `base`
