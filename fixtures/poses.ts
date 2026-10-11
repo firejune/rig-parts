@@ -1,5 +1,5 @@
 /**
- * Three generated figures — standing, seated, lying — and a hand-written
+ * Four generated figures — standing, seated, lying, leaning — and a hand-written
  * keypoint file for each (issue #75). Flat colour blocks, as
  * `fixtures/propose.ts` makes them, so every bone the proposer places and
  * every LINT line is computable by hand from the numbers here; the selftest
@@ -23,11 +23,20 @@
  *   (full:handwear-l) 70,126 80x14 along its lower side. The figure spans
  *   y 60..139. Both arms are right of the eye axis (x 40), so without joints
  *   the proposer reads them as one blob on one side — the card's case.
+ * - **Leaning** (issue #243), 240x270: the trunk on the line from the neck
+ *   joint (70, 70) to the hips' midpoint (130, 150) — direction (60, 80),
+ *   unit (0.6, 0.8), 36.87 degrees off the screen's vertical (atan(3/4)).
+ *   Face 45,8 40x50 (upright: the head is not the trunk); `throat`
+ *   (head:neck), `coat` (full:topwear) and `skirt` (full:bottomwear) are
+ *   stairs of 12-row bands, each band centred on that line at its middle row
+ *   (x = 70 + 0.75 * (y - 70), rounded): throat 20 px wide, y 58..81; coat
+ *   36 px wide, y 52..159 (it stops 10 px below the hips, a bodice); skirt
+ *   40 px wide, y 136..243. No arm, so no sleeve rule runs.
  */
 import { KEYPOINTS_SPACE, KEYPOINTS_SPEC } from '../src/keypoints.ts';
 import { PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart } from './propose.ts';
 
-export type PoseName = 'standing' | 'seated' | 'lying';
+export type PoseName = 'standing' | 'seated' | 'lying' | 'leaning';
 
 export interface Pose {
   rig: { w: number; h: number };
@@ -109,6 +118,66 @@ export const LYING_PARTS: ProposeFixturePart[] = [
   { name: 'arm_b', from: 'full:handwear-l', x: 70, y: 126, w: 80, h: 14, colour: [240, 240, 240] },
 ];
 
+export const LEANING_RIG = { w: 240, h: 270 };
+
+/** 12-row bands `[x, y, w, 12]`, each centred on the leaning trunk's line at its middle row. */
+export const LEANING_PARTS: ProposeFixturePart[] = [
+  { name: 'face', from: 'head:face', x: 45, y: 8, w: 40, h: 50, colour: [240, 210, 190] },
+  {
+    name: 'throat',
+    from: 'head:neck',
+    x: 55,
+    y: 58,
+    w: 29,
+    h: 24,
+    colour: [240, 210, 190],
+    rects: [
+      [55, 58, 20, 12],
+      [64, 70, 20, 12],
+    ],
+  },
+  {
+    name: 'coat',
+    from: 'full:topwear',
+    x: 43,
+    y: 52,
+    w: 108,
+    h: 108,
+    colour: [150, 60, 60],
+    rects: [
+      [43, 52, 36, 12],
+      [52, 64, 36, 12],
+      [61, 76, 36, 12],
+      [70, 88, 36, 12],
+      [79, 100, 36, 12],
+      [88, 112, 36, 12],
+      [97, 124, 36, 12],
+      [106, 136, 36, 12],
+      [115, 148, 36, 12],
+    ],
+  },
+  {
+    name: 'skirt',
+    from: 'full:bottomwear',
+    x: 104,
+    y: 136,
+    w: 112,
+    h: 108,
+    colour: [70, 110, 200],
+    rects: [
+      [104, 136, 40, 12],
+      [113, 148, 40, 12],
+      [122, 160, 40, 12],
+      [131, 172, 40, 12],
+      [140, 184, 40, 12],
+      [149, 196, 40, 12],
+      [158, 208, 40, 12],
+      [167, 220, 40, 12],
+      [176, 232, 40, 12],
+    ],
+  },
+];
+
 const SOURCE = 'hand-written for the rig-parts selftest';
 
 export const POSES: Record<PoseName, Pose> = {
@@ -179,6 +248,16 @@ export const POSES: Record<PoseName, Pose> = {
       l_ankle: obs(255, 105),
       r_eye: obs(30, 85),
       l_eye: obs(30, 105),
+    }),
+  },
+  /** The trunk joints only: the neck and the two hips, 10 px either side of their midpoint (130, 150) across the trunk. */
+  leaning: {
+    rig: LEANING_RIG,
+    parts: LEANING_PARTS,
+    keypoints: file(240, 270, SOURCE, {
+      neck: obs(70, 70),
+      r_hip: obs(122, 156),
+      l_hip: obs(138, 144),
     }),
   },
 };
