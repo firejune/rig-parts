@@ -5742,7 +5742,7 @@ function runProposeSuite(): number {
       'PR93_THE_DRAFTED_TURN_HOLDS_EACH_PARTS_DEPTH_THE_AREA_WEIGHTED_PIVOT_AND_THE_HAND_FRACTIONS_AND_LOADS',
       JSON.stringify(draft.turn) === JSON.stringify({ pivot: 0.657258, depths: { skirt: 0.75, sleeve_a: 0.5, sleeve_b: 0.875, face: 0.25 } }) &&
         tNote.includes('Pivot depth 0.657258') &&
-        draft.notes.at(-1) === TURN_DEPTH_CAVEAT &&
+        JSON.stringify(draft.notes.slice(-TURN_DEPTH_CAVEAT.length)) === JSON.stringify(TURN_DEPTH_CAVEAT) &&
         tNote.includes('skirt -0.227723 (depth 0.75), sleeve_a 0.386139 (depth 0.5), sleeve_b -0.534654 (depth 0.875), face 1 (depth 0.25)') &&
         JSON.stringify(Object.keys(turned)) === JSON.stringify(['bones', 'meshes', 'regions', 'motion', 'turn', 'notes']) &&
         serializeProposal(withTurn(tprop, { turn: null, notes: [] })) === serializeProposal(tprop) &&
