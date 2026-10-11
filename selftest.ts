@@ -110,7 +110,7 @@ import {
   writeRun,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
-import { artifactPaths, assembleStage, build, BUILD_OWNS, checkStage, ctlRemedies, fringeLines, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
+import { artifactPaths, assembleStage, build, BUILD_OWNS, checkStage, ctlRemedies, faceAxisLine, fringeLines, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
@@ -341,7 +341,7 @@ import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines
 import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeypoints, parseKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
 import { LYING_PARTS, LYING_RIG, type PoseName, POSES, SEATED_PARTS, SEATED_RIG } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
-import { block, constraintConfig, HEAT_STRIP_EXPECT, heatStripConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
+import { block, constraintConfig, FACE_EXPECT, faceConfig, faceImages, faceParts, HEAT_STRIP_EXPECT, heatStripConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
 import { blinkHoldProblems, buildRig, DEFAULT_IDLE_KEYS, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigOutput, type RigSpec, roundShares, writtenShares } from './src/rig.ts';
 import { type ComposedScene, composeFromFiles, IMAGE_SEP, PLATE, PLATE_IMAGE, PREFIX_SEP, SCENE_REPORT_FILE, SCENE_SPEC, scaledConstraint, unprefixedNames } from './src/scene.ts';
 import { sceneCharacterRig, sceneText, writeFlatPlate, writeSceneBuild } from './fixtures/scene.ts';
@@ -3114,6 +3114,8 @@ function worldGaps(a: SetupWorld, b: SetupWorld, tol: number): { max: number; of
 }
 
 interface FlatFormRender {
+  /** What was rendered: `still` (the setup pose) and/or `idle`. */
+  anims: readonly string[];
   frames: number;
   /** The largest per-frame max |d|, in levels. */
   max: number;
@@ -3139,7 +3141,18 @@ interface FlatFormRender {
  * "whose length is 0"), and where it is accepted it reads each bone's own
  * frame, which the two forms do not share.
  */
-function flatFormRender(dir: string, rigA: RigSpec, rigB: RigSpec, motion: unknown, images: string): FlatFormRender | string {
+/**
+ * A motion.json without the blink's `eyes` `scaley` track (issue #239): the face bones are turned to the eye line,
+ * so the squash runs across it, and the flat form — every bone unturned — squashes across the page instead. What
+ * the two forms must still draw alike is everything else.
+ */
+function withoutEyeSquash(motion: unknown): unknown {
+  const m = JSON.parse(JSON.stringify(motion)) as { animations: Record<string, { tracks: Array<{ group?: string; property: string }> }> };
+  for (const a of Object.values(m.animations)) a.tracks = a.tracks.filter((t) => !(t.group === 'eyes' && t.property === 'scaley'));
+  return m;
+}
+
+function flatFormRender(dir: string, rigA: RigSpec, rigB: RigSpec, motion: unknown, images: string, anims: readonly string[] = ['still', 'idle']): FlatFormRender | string {
   const plainA = withoutPhysics(rigA as unknown as Record<string, unknown>, motion as Record<string, unknown>);
   const plainB = withoutPhysics(rigB as unknown as Record<string, unknown>, motion as Record<string, unknown>);
   const a = (plainA === null ? rigA : plainA.rig) as unknown as RigSpec;
@@ -3158,7 +3171,7 @@ function flatFormRender(dir: string, rigA: RigSpec, rigB: RigSpec, motion: unkno
       const why = `${built.stdout ?? ''}${built.stderr ?? ''}`.split('\n').filter((l) => /FAIL|rror/.test(l)).slice(0, 2);
       return `${name}: rigc build exit ${built.status}: ${why.join(' | ')}`;
     }
-    for (const anim of ['still', 'idle']) {
+    for (const anim of anims) {
       const r = spawnSync(rigc, ['render', '--candidate', join(d, 'build'), '--animation', anim, '--fps', String(anim === 'still' ? 10 : IDLE_FPS), '--max', String(IDLE_MAX_PX), '--out', join(d, anim)], { encoding: 'utf8', maxBuffer: 1 << 28 });
       if (r.status !== 0) return `${name}: rigc render ${anim} exit ${r.status}`;
       const sub = readdirSync(join(d, anim)).find((n) => n === anim || n.startsWith(`${anim}@`));
@@ -3169,8 +3182,8 @@ function flatFormRender(dir: string, rigA: RigSpec, rigB: RigSpec, motion: unkno
         .map((f) => join(d, anim, sub, f));
     }
   }
-  const out: FlatFormRender = { frames: 0, max: 0, at1: 0, over1: 0, overFrames: [] };
-  for (const anim of ['still', 'idle']) {
+  const out: FlatFormRender = { anims, frames: 0, max: 0, at1: 0, over1: 0, overFrames: [] };
+  for (const anim of anims) {
     const fa = sets[`a/${anim}`];
     const fb = sets[`b/${anim}`];
     if (fa.length === 0 || fa.length !== fb.length) return `${anim}: ${fa.length} frame(s) against ${fb.length}`;
@@ -3204,7 +3217,7 @@ function flatFormRender(dir: string, rigA: RigSpec, rigB: RigSpec, motion: unkno
 
 function flatFormLine(r: FlatFormRender | string): string {
   if (typeof r === 'string') return `not compared: ${r}`;
-  return `${r.frames} frame(s) (setup pose + idle), max |d| ${r.max} level(s), ${r.at1} px at 1, ${r.over1} px above 1${r.overFrames.length > 0 ? ` (${r.overFrames.join(', ')})` : ''}`;
+  return `${r.frames} frame(s) (${r.anims.map((a) => (a === 'still' ? 'setup pose' : a)).join(' + ')}), max |d| ${r.max} level(s), ${r.at1} px at 1, ${r.over1} px above 1${r.overFrames.length > 0 ? ` (${r.overFrames.join(', ')})` : ''}`;
 }
 
 function runRigSuite(): number {
@@ -3614,6 +3627,7 @@ function runRigSuite(): number {
 
   runBlinkStillCases(say);
   runTurnedChainCases(say);
+  runFaceAxisCases(say);
   runConstraintRigCases(say);
   runExponentCases(say);
   runHeatRuleCases(say);
@@ -4663,6 +4677,224 @@ function runTurnedChainCases(say: (name: string, ok: boolean, detail: string, wh
     `direct: hem0 ${dBy.get('hem0')?.rotation}/${dBy.get('hem0')?.length}, hem1 ${dBy.get('hem1')?.rotation}/${dBy.get('hem1')?.length}, ${d.rig.bones.length} bones; against ctl: ${dGap.off.length} object(s) off, largest ${dGap.max.toExponential(2)}; skins ${JSON.stringify(d.rig.skins) === JSON.stringify(r.rig.skins) ? 'identical' : 'DIFFERENT'}`,
     'under --idle-keys direct there is no control, so the link itself carries the turn and the lever; it stands where the control stood, so every weight and region is bound in the same frames and the skins are the same bytes',
   );
+}
+
+/**
+ * One frame of one animation of a rig, rendered by rigc as check renders the idle (`--max` IDLE_MAX_PX), or why not.
+ * `still` is the setup pose, as {@link flatFormRender} adds it.
+ */
+function renderFrame(dir: string, rig: RigSpec, motion: unknown, images: string, anim: string, index: number): Raster | string {
+  const m = JSON.parse(JSON.stringify(motion)) as { animations: Record<string, unknown> };
+  m.animations.still = { duration: 0.1, loop: true, note: 'the setup pose', tracks: [{ bone: rig.bones[0].name, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.1, v: [0] }] }] };
+  const rigc = findRigc(ROOT, '');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'rig.json'), rigJsonText({ ...rig, images }));
+  writeFileSync(join(dir, 'motion.json'), rigJsonText(m));
+  const built = spawnSync(rigc, ['build', '--rig', join(dir, 'rig.json'), '--motion', join(dir, 'motion.json'), '--out', join(dir, 'build'), ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 28 });
+  if (built.status !== 0) return `rigc build exit ${built.status}`;
+  const r = spawnSync(rigc, ['render', '--candidate', join(dir, 'build'), '--animation', anim, '--fps', String(anim === 'still' ? 10 : IDLE_FPS), '--max', String(IDLE_MAX_PX), '--out', join(dir, anim)], { encoding: 'utf8', maxBuffer: 1 << 28 });
+  if (r.status !== 0) return `rigc render ${anim} exit ${r.status}`;
+  const sub = readdirSync(join(dir, anim)).find((n) => n === anim || n.startsWith(`${anim}@`));
+  if (sub === undefined) return `rigc render ${anim} wrote no frame directory`;
+  const frames = readdirSync(join(dir, anim, sub)).filter((f) => /^f\d+\.png$/.test(f)).sort();
+  if (index >= frames.length) return `${frames.length} frame(s), no frame ${index}`;
+  return readPng(join(dir, anim, sub, frames[index]));
+}
+
+/**
+ * The direction of each of the two largest dark blobs of a frame (r, g and b all below 128, alpha above 128), by its
+ * second moments, in degrees counter-clockwise with y up, inside (−90, 90]; the blobs left to right.
+ */
+function strokeAngles(img: Raster): number[] {
+  const mask = newMask(img.width, img.height);
+  for (let i = 0; i < img.width * img.height; i++) {
+    const d = img.data.subarray(i * 4, i * 4 + 4);
+    if (d[0] < 128 && d[1] < 128 && d[2] < 128 && d[3] > 128) mask.data[i] = 1;
+  }
+  const cc = connectedComponents(mask, 8);
+  const big = cc.stats.slice(1).sort((a, b) => b.area - a.area).slice(0, 2).sort((a, b) => a.cx - b.cx);
+  return big.map((st) => {
+    let xx = 0;
+    let yy = 0;
+    let xy = 0;
+    for (let i = 0; i < cc.labels.length; i++) {
+      if (cc.labels[i] !== st.label) continue;
+      const dx = (i % img.width) - st.cx;
+      const dy = -(Math.floor(i / img.width) - st.cy);
+      xx += dx * dx;
+      yy += dy * dy;
+      xy += dx * dy;
+    }
+    return (0.5 * Math.atan2(2 * xy, xx - yy) * 180) / Math.PI;
+  });
+}
+
+/**
+ * Issue #239: the five face bones stand on the eye line read off the eyewhites, the setup pose is the same picture,
+ * one eye is a note, a single bone's tip turns it, and the closed blink lies along the eye line. Every expected value
+ * is worked out by hand in fixtures/rig.ts (the tilted-face fixture).
+ */
+function runFaceAxisCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const FACE = ['eye_r', 'eye_l', 'brow_r', 'brow_l', 'mouth'];
+  const r = buildRig(parseConfig(faceConfig()), faceParts(), faceImages());
+  const byName = new Map(r.rig.bones.map((b) => [b.name, b]));
+  const byHand = (Math.atan2(12, 16) * 180) / Math.PI;
+  const regionOf = (rig: RigSpec, part: string): RegionAttachment => rig.skins.default[part][part] as RegionAttachment;
+  const moved = (dy: number): { parts: PartsFile; cfg: CharacterConfig } => {
+    const parts = faceParts();
+    const l = parts.parts.find((p) => p.name === 'eyewhite_l') as PartsFile['parts'][number];
+    l.y += dy;
+    const c = faceConfig();
+    const eyeL = (c.bones as Array<{ name?: string; at?: [number, number] }>).find((b) => b.name === 'eye_l') as { at: [number, number] };
+    eyeL.at = [eyeL.at[0], eyeL.at[1] + dy];
+    return { parts, cfg: parseConfig(c) };
+  };
+  const level = moved(12);
+  const levelRig = buildRig(level.cfg, level.parts, faceImages());
+  const down = moved(24);
+  const downRig = buildRig(down.cfg, down.parts, faceImages());
+  const swapped = faceParts();
+  for (const p of swapped.parts) p.from = p.from === 'head:eyewhite-r' ? 'head:eyewhite-l' : p.from === 'head:eyewhite-l' ? 'head:eyewhite-r' : p.from;
+  const swappedRig = buildRig(parseConfig(faceConfig()), swapped, faceImages());
+  const rots = (rig: RigSpec): string => FACE.map((n) => `${n} ${rig.bones.find((b) => b.name === n)?.rotation ?? 'none'}`).join(', ');
+  say(
+    'RG76_THE_FIVE_FACE_BONES_TAKE_THE_EYE_LINES_ANGLE_READ_OFF_THE_EYEWHITES',
+    FACE.every((n) => byName.get(n)?.rotation === FACE_EXPECT.degrees && Math.abs((byName.get(n)?.rotation ?? 0) - byHand) <= 0.5) &&
+      byName.get('head')?.rotation === undefined &&
+      ['eyewhite_r', 'eyewhite_l', 'mouth'].every((p) => regionOf(r.rig, p).rotation === -FACE_EXPECT.degrees && regionOf(r.rig, p).x === 0 && regionOf(r.rig, p).y === 0) &&
+      JSON.stringify(r.faceAxis.parts) === JSON.stringify(['eyewhite_r', 'eyewhite_l']) &&
+      FACE.every((n) => !('rotation' in (levelRig.rig.bones.find((b) => b.name === n) ?? { rotation: 1 }))) &&
+      FACE.every((n) => downRig.rig.bones.find((b) => b.name === n)?.rotation === -FACE_EXPECT.degrees) &&
+      rots(swappedRig.rig) === rots(r.rig),
+    `tilted: ${rots(r.rig)} (by hand atan2(12, 16) = ${pyRound(byHand, 6)}); regions ${['eyewhite_r', 'eyewhite_l', 'mouth'].map((p) => JSON.stringify(regionOf(r.rig, p))).join(' ')}; ${faceAxisLine(r.faceAxis).trim()}; planted, eyewhite_l moved down 12 px onto eyewhite_r's row: ${rots(levelRig.rig)}; moved down 24 px: ${rots(downRig.rig)}; the two eyewhite tags swapped: ${rots(swappedRig.rig) === rots(r.rig) ? 'the same rotations' : rots(swappedRig.rig)}`,
+    "issue #239: the blink and the expressions scale the face bones along their own axes, so the axes are the face's — the line between the eyewhites' box centres (16, 12) in Spine's axes, a 3-4-5 triangle, 36.869898 degrees; a level line measures 0 and writes no rotation, the mirrored one -36.869898, and the line is read image-left to image-right, so which tag is which side does not enter it",
+  );
+
+  const flat = flattenRig(r.rig);
+  const flatBones = new Map(flat.bones.map((b) => [b.name, b]));
+  const handFlat: Record<string, [number, number]> = { eye_r: [-12, 22], eye_l: [4, 34], brow_r: [-15, 28], brow_l: [1, 40], mouth: [2, 12] };
+  const flatOk = Object.entries(handFlat).every(([n, [x, y]]) => flatBones.get(n)?.x === x && flatBones.get(n)?.y === y) && ['eyewhite_r', 'eyewhite_l', 'mouth'].every((p) => JSON.stringify(regionOf(flat, p)) === JSON.stringify({ image: `${p}.png`, x: 0, y: 0 }));
+  const gap = worldGaps(setupWorld(r.rig), setupWorld(flat), 1e-6);
+  const dir = temp('face-axis');
+  try {
+    const images = join(dir, 'images');
+    mkdirSync(images, { recursive: true });
+    for (const [f, img] of r.images) writeFileSync(join(images, f), encodePngBytes(img));
+    const same = flatFormRender(join(dir, 'setup'), r.rig, flat, r.motion, images, ['still']);
+    const unturned = JSON.parse(JSON.stringify(r.rig)) as RigSpec;
+    delete (unturned.skins.default.eyewhite_r.eyewhite_r as RegionAttachment).rotation;
+    const bad = flatFormRender(join(dir, 'planted'), unturned, flat, r.motion, images, ['still']);
+    say(
+      'RG77_THE_SETUP_POSE_IS_THE_PICTURE_THE_UNTURNED_BUILD_DRAWS_AND_A_REGION_NOT_TURNED_BACK_IS_NOT',
+      flatOk && gap.off.length === 0 && typeof same !== 'string' && same.max === 0 && typeof bad !== 'string' && bad.max > FLAT_FORM_RENDER_CEILING,
+      `the flat form (what 1.6.0 wrote: every bone unturned): ${Object.keys(handFlat).map((n) => `${n} ${flatBones.get(n)?.x},${flatBones.get(n)?.y}`).join('; ')}, regions at 0,0 unturned: ${flatOk}; setup world against it: ${gap.off.length} object(s) off, largest ${gap.max.toExponential(2)}; setup pose rendered: ${flatFormLine(same)}; planted, eyewhite_r without its rotation: ${flatFormLine(bad)}`,
+      "issue #239's condition: the turn moves no pixel of the setup pose. Every flat value is a landmark difference worked out in fixtures/rig.ts; the setup pose is rendered through rigc for both forms and compared pixel by pixel, and a region left unturned on its turned bone is drawn 36.87 degrees off",
+    );
+
+    const oneR = buildRig(parseConfig(faceConfig(['r'])), faceParts(['r']), faceImages());
+    const none = buildRig(parseConfig({ ...faceConfig([]), motion: { duration: 4, tracks: [] } }), faceParts([]), faceImages());
+    const lineOne = faceAxisLine(oneR.faceAxis);
+    const lineNone = faceAxisLine(none.faceAxis);
+    say(
+      'RG78_ONE_EYEWHITE_OR_NONE_IS_A_NOTE_AND_THE_FACE_BONES_KEEP_THE_PAGES_AXES',
+      oneR.rig.bones.every((b) => b.rotation === undefined) &&
+        none.rig.bones.every((b) => b.rotation === undefined) &&
+        oneR.faceAxis.degrees === null &&
+        lineOne === "  face axis: none — parts.json holds no part tagged eyewhite-l (a cut's piece is not counted), so there is no eye line; the face bones keep the page's axes" &&
+        lineNone.includes('no part tagged eyewhite-r or eyewhite-l') &&
+        r.rig.bones.some((b) => b.rotation !== undefined),
+      `one eyewhite: rotations ${rots(oneR.rig)}; "${lineOne.trim()}" | none: "${lineNone.trim()}" | the positive, two eyewhites: ${rots(r.rig)}`,
+      'issue #239: with one eye there is no line to derive, and an angle that is not derived is not written; the rig stage says so in its face-axis line and leaves every bone at world rotation 0, as 1.6.0 wrote it',
+    );
+
+    // A single bone with a tip (fixtures/rig.ts' rig fixture, by hand here): pin at rig (20, 20), Spine (0, 20), under
+    // body at Spine (0, 10); its tip at rig (23, 16), Spine (3, 24): (3, 4), length 5, atan2(4, 3) = 53.130102 degrees.
+    // The region eye on pin: its centre (18, 27), Spine (-2, 13), is (-2, -7) from pin; in pin's frame
+    // R(-53.130102)(-2, -7) = (-2*0.6 - 7*0.8, 2*0.8 - 7*0.6) = (-6.8, -2.6), turned back by -53.130102.
+    const tipCfg = (tip: [number, number]): CharacterConfig =>
+      rigCfg((c) => {
+        (c.bones as unknown[]).push({ name: 'pin', parent: 'body', at: [20, 20], tip });
+        c.regions = { eye: 'pin' };
+      });
+    const tipped = buildRig(tipCfg([23, 16]), rigParts(), rigImages());
+    const pin = tipped.rig.bones.find((b) => b.name === 'pin');
+    const pinEye = tipped.rig.skins.default.eye.eye as RegionAttachment;
+    const pinGap = worldGaps(setupWorld(tipped.rig), setupWorld(flattenRig(tipped.rig)), 1e-6);
+    const onOrigin = refusals(() => buildRig(tipCfg([20, 20]), rigParts(), rigImages()));
+    const faceTip = faceConfig();
+    (faceTip.bones as Array<{ name?: string; tip?: [number, number] }>).find((b) => b.name === 'eye_r')!.tip = [20, 18];
+    const faceTipped = buildRig(parseConfig(faceTip), faceParts(), faceImages());
+    say(
+      'RG79_A_SINGLE_BONES_TIP_TURNS_IT_TOWARDS_THE_TIP_AND_A_TIP_ON_ITS_OWN_ORIGIN_IS_REFUSED',
+      JSON.stringify(pin) === JSON.stringify({ name: 'pin', parent: 'body', length: 5, rotation: 53.130102, x: 0, y: 10 }) &&
+        JSON.stringify(pinEye) === JSON.stringify({ image: 'eye.png', x: -6.8, y: -2.6, rotation: -53.130102 }) &&
+        pinGap.off.length === 0 &&
+        onOrigin?.problems.length === 1 &&
+        onOrigin.problems[0].code === 'RIG_TIP_DISTINCT' &&
+        onOrigin.problems[0].object === 'config.bones[3] "pin".tip' &&
+        faceTipped.rig.bones.find((b) => b.name === 'eye_r')?.rotation === 90 &&
+        faceTipped.rig.bones.find((b) => b.name === 'eye_l')?.rotation === FACE_EXPECT.degrees &&
+        JSON.stringify(faceTipped.faceAxis.ownTip) === JSON.stringify(['eye_r']),
+      `pin ${JSON.stringify(pin)}; eye on pin ${JSON.stringify(pinEye)}; setup world against the flat form: ${pinGap.off.length} off; planted, the tip on the origin: ${onOrigin === null ? 'accepted' : onOrigin.problems.map((q) => `${q.code}: ${q.object} — ${q.detail}`).join(' | ')}; eye_r given its own tip (20, 18), straight up: eye_r ${faceTipped.rig.bones.find((b) => b.name === 'eye_r')?.rotation}, eye_l ${faceTipped.rig.bones.find((b) => b.name === 'eye_l')?.rotation}; ${faceAxisLine(faceTipped.faceAxis).trim()}`,
+      "issue #239: a tip the config states was accepted and changed nothing; it is now the bone's axis — the segment its weights already run along — and a tip with no direction is refused by name rather than read as 0. A face bone's own tip is the author's statement of its axis and wins over the eye line",
+    );
+
+    const irisCfg = faceConfig();
+    (irisCfg.bones as unknown[]).push({ name: 'iris_r', parent: 'eye_r', at: [21, 28] });
+    (irisCfg.motion as { tracks: unknown[] }).tracks.push({ bone: 'iris_r', prop: 'translatex', amp: 0.5, period: 4, phase: 0 });
+    const iris = refusals(() => buildRig(parseConfig(irisCfg), faceParts(), faceImages()));
+    const irisRig = iris === null ? buildRig(parseConfig(irisCfg), faceParts(), faceImages()) : null;
+    const irisBone = irisRig?.rig.bones.find((b) => b.name === 'iris_r');
+    say(
+      'RG80_A_BONE_UNDER_A_FACE_BONE_KEEPS_THE_FACES_AXIS_AND_ITS_TRANSLATE_KEY_IS_NOT_REFUSED',
+      iris === null && JSON.stringify(irisBone) === JSON.stringify({ name: 'iris_r', parent: 'eye_r', x: 0.8, y: -0.6 }),
+      iris === null ? `iris_r ${JSON.stringify(irisBone)}, its translatex track accepted` : iris.problems.map((q) => `${q.code}: ${q.object}`).join(' | '),
+      "issue #239 (the consumer's iris translatex): a bone under eye_r sits at local rotation 0, so its world axis is the eye line and a translate key moves it along the eye line — the key RIG_KEY_FRAME_UNTURNED refuses under a turned chain link (RG52) means the face's axis here and is kept. By hand: iris_r is (1, 0) from eye_r in Spine's axes, R(-36.869898)(1, 0) = (0.8, -0.6)",
+    );
+
+    const shut = Math.ceil((1 + BLINK.shut) * IDLE_FPS);
+    const after = renderFrame(join(dir, 'after'), r.rig, r.motion, images, 'idle', shut);
+    const before = renderFrame(join(dir, 'before'), flat, r.motion, images, 'idle', shut);
+    const aa = typeof after === 'string' ? [] : strokeAngles(after);
+    const ba = typeof before === 'string' ? [] : strokeAngles(before);
+    const nearer = (a: number, to: number, other: number): boolean => Math.abs(a - to) < Math.abs(a - other);
+    say(
+      'RG81_THE_CLOSED_BLINK_LIES_ALONG_THE_EYE_LINE_AND_THE_UNTURNED_ONES_ACROSS_THE_PAGE',
+      aa.length === 2 && ba.length === 2 && aa.every((a) => nearer(a, FACE_EXPECT.degrees, FACE_EXPECT.flatClosed)) && ba.every((a) => nearer(a, FACE_EXPECT.flatClosed, FACE_EXPECT.degrees)),
+      `idle frame ${shut} (t = ${pyRound(shut / IDLE_FPS, 6)} s, inside the closed hold from ${pyRound(1 + BLINK.shut, 6)} s): the turned build's closed strokes at ${typeof after === 'string' ? after : aa.map((a) => pyRound(a, 2)).join(', ')} degrees; the flat form's (1.6.0's), the planted negative, at ${typeof before === 'string' ? before : ba.map((a) => pyRound(a, 2)).join(', ')}`,
+      `issue #239's defect, measured on the render: each eye is a stroke on the eye line, and the squash to ${0.12} along the eye bones' y keeps it at ${FACE_EXPECT.degrees} degrees on the face's axis, while on the page's it becomes (4, 0.36), ${FACE_EXPECT.flatClosed} degrees (fixtures/rig.ts); each stroke's direction is its pixels' second moments, judged by which of the two hand values it is nearer`,
+    );
+
+    // BLINK_NO_HOLE on the face's axes (HQ's comment on #239): the consumer's hand-stood build sat outside `check`, so
+    // the line had only been measured on unturned eye bones. The tilted fixture goes through `rig` and `check` as a
+    // user runs them; the same check on the flat form (1.6.0's bones, the rig.json swapped in) is the line beside it.
+    const fx = writeRigFixture(join(dir, 'cli'), faceConfig(), faceImages(), faceParts());
+    const rigRun = runCli(['rig', '--config', fx.config, '--parts', fx.parts, '--out', join(dir, 'cli', 'rig')]);
+    const chkRun = runCli(['check', '--rig', join(dir, 'cli', 'rig'), '--parts', fx.parts, '--out', join(dir, 'cli', 'check')]);
+    const flatDir = join(dir, 'cli', 'rig-flat');
+    mkdirSync(flatDir, { recursive: true });
+    let flatChk = { status: -1, out: 'the rig stage did not write rig.json' };
+    if (rigRun.status === 0) {
+      const built = readJsonAt(join(dir, 'cli', 'rig', 'rig.json')) as RigSpec;
+      writeFileSync(join(flatDir, 'rig.json'), rigJsonText({ ...flattenRig(built), images: join(dir, 'cli', 'rig', 'images') }));
+      cpSync(join(dir, 'cli', 'rig', 'motion.json'), join(flatDir, 'motion.json'));
+      flatChk = runCli(['check', '--rig', flatDir, '--parts', fx.parts, '--out', join(dir, 'cli', 'check-flat')]);
+    }
+    const holeOf = (out: string): string => (out.split('\n').find((l) => l.includes('BLINK_NO_HOLE:')) ?? 'no BLINK_NO_HOLE line').trim();
+    const turnedRig = rigRun.status === 0 ? (readJsonAt(join(dir, 'cli', 'rig', 'rig.json')) as RigSpec) : null;
+    say(
+      'RG82_BLINK_NO_HOLE_IS_MEASURED_ON_THE_FACES_AXES_THROUGH_RIG_AND_CHECK',
+      rigRun.status === 0 &&
+        rigRun.out.includes('face axis: 36.869898 degrees') &&
+        turnedRig?.bones.find((b) => b.name === 'eye_r')?.rotation === FACE_EXPECT.degrees &&
+        chkRun.status === 0 &&
+        holeOf(chkRun.out).startsWith('BLINK_NO_HOLE: PASS'),
+      `rig exit ${rigRun.status}, eye_r at ${turnedRig?.bones.find((b) => b.name === 'eye_r')?.rotation ?? 'not built'}; check exit ${chkRun.status}: "${holeOf(chkRun.out)}" | the flat form (1.6.0's unturned bones), check exit ${flatChk.status}: "${holeOf(flatChk.out)}"`,
+      "the blink's hole line had been measured only on unturned eye bones; here it reads the closed eye squashed across a 36.87-degree eye line, the build as `rig` writes it, so a shut eye that opened a hole on the face's axes would be named here",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function boxLabelOf(b: { x0: number; y0: number; x1: number; y1: number }): string {
@@ -10882,7 +11114,7 @@ function runChainSuite(): number | null {
         "the rig stage is exact against the reference given the same parts, but for the blink's two hold-end and two open-end key times per example, which issue #32 moved on purpose (expected/motion.json is regenerated by build since); motion key times are compared to 6 decimals, the precision the rig stage writes; rig.json is read through flattenRig, which turns every chain link back (issue #73) and must give the reference's numbers exactly",
       );
 
-      const exCfg = readJsonAt(join(ex, 'config.json')) as { bones: Array<{ chain?: string; points?: Array<[number, number]>; tip?: [number, number] }> };
+      const exCfg = readJsonAt(join(ex, 'config.json')) as { bones: Array<{ chain?: string; name?: string; at?: [number, number]; points?: Array<[number, number]>; tip?: [number, number] }> };
       const rigH = expParts.rig_size[1];
       const rigW = expParts.rig_size[0];
       const turnOf = new Map<string, number>();
@@ -10908,20 +11140,56 @@ function runChainSuite(): number | null {
           }
         }
       }
+      // Issue #239: a single bone with a tip points at it, and the face bones stand on the eye line — read here off
+      // the config and the built parts.json, by the definition (the first eyewhite-r and eyewhite-l part, image-left to
+      // image-right centre), not off the emitter.
+      const tipped = new Set<string>();
+      for (const e of exCfg.bones) {
+        if (e.name === undefined || e.at === undefined || e.tip === undefined) continue;
+        const dx = e.tip[0] - e.at[0];
+        const dy = cropToSpineY(e.tip[1], rigH) - cropToSpineY(e.at[1], rigH);
+        const deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+        const len = pyRound(Math.sqrt(dx * dx + dy * dy), 3);
+        tipped.add(e.name);
+        for (const m of [e.name, `${e.name}${CONTROL_SUFFIX}`]) {
+          const b = byBuilt.get(m);
+          if (b === undefined) continue;
+          links.add(m);
+          const miss = Math.abs(wrapDegrees((turnOf.get(m) ?? 0) - deg));
+          if (miss > 1e-5 || b.length !== len) offAim.push(`${m} turned ${pyRound(turnOf.get(m) ?? 0, 6)} length ${b.length} (its tip: ${pyRound(deg, 6)}, ${len})`);
+        }
+      }
+      const builtParts = readParts(join(out, 'parts.json')).parts;
+      const eyeCentres = ['eyewhite-r', 'eyewhite-l'].map((t) => builtParts.find((p) => p.from.endsWith(`:${t}`) && p.cut_from === undefined)).flatMap((p) => (p === undefined ? [] : [[p.x + p.w / 2, p.y + p.h / 2]]));
+      const [eyeA, eyeB] = [...eyeCentres].sort((a, b) => a[0] - b[0]);
+      const eyeDeg = eyeCentres.length === 2 ? (Math.atan2(cropToSpineY(eyeB[1], rigH) - cropToSpineY(eyeA[1], rigH), eyeB[0] - eyeA[0]) * 180) / Math.PI : null;
+      const faceBones: string[] = [];
+      if (eyeDeg !== null) {
+        for (const n of ['eye_r', 'eye_l', 'brow_r', 'brow_l', 'mouth']) {
+          if (tipped.has(n)) continue;
+          for (const m of [n, `${n}${CONTROL_SUFFIX}`]) {
+            if (!byBuilt.has(m)) continue;
+            faceBones.push(m);
+            links.add(m);
+            const miss = Math.abs(wrapDegrees((turnOf.get(m) ?? 0) - eyeDeg));
+            if (miss > 1e-5) offAim.push(`${m} turned ${pyRound(turnOf.get(m) ?? 0, 6)} (the eye line: ${pyRound(eyeDeg, 6)})`);
+          }
+        }
+      }
       const turnedOthers = builtRig.bones.filter((b) => !links.has(b.name) && turnOf.get(b.name) !== 0).map((b) => `${b.name} ${turnOf.get(b.name)}`);
       say(
-        `CH11_EVERY_CHAIN_LINK_POINTS_ALONG_ITS_CHAIN_AND_EVERY_OTHER_BONE_STAYS_UNTURNED[${key}]`,
+        `CH11_EVERY_LINK_AND_TIPPED_BONE_POINTS_AT_ITS_END_THE_FACE_BONES_ON_THE_EYE_LINE_AND_NO_OTHER_BONE_TURNED[${key}]`,
         links.size > 0 && offAim.length === 0 && turnedOthers.length === 0,
-        `${links.size} chain link(s) and control(s): ${offAim.length === 0 ? 'every world turn within 1e-5 degrees of the config\'s direction and every length the config\'s to 3 places' : offAim.slice(0, 3).join('; ')}; other bones turned: ${turnedOthers.length === 0 ? 'none' : turnedOthers.slice(0, 3).join(', ')}`,
-        "issue #73's ask, read off the config rather than the emitter: each link points from its origin to the next link's (the last to the tip) with that distance as its length, so a physics constraint added downstream finds a lever; named bones keep world rotation 0, so nothing else a consumer reads changes meaning",
+        `${links.size} chain link(s), tipped bone(s), face bone(s) and their controls (face: ${faceBones.length === 0 ? 'none' : `${faceBones.join(', ')} on ${pyRound(eyeDeg as number, 6)} degrees`}): ${offAim.length === 0 ? 'every world turn within 1e-5 degrees of the config\'s direction or the eye line, and every length the config\'s to 3 places' : offAim.slice(0, 3).join('; ')}; other bones turned: ${turnedOthers.length === 0 ? 'none' : turnedOthers.slice(0, 3).join(', ')}`,
+        "issue #73's ask, read off the config rather than the emitter: each link points from its origin to the next link's (the last to the tip) with that distance as its length, so a physics constraint added downstream finds a lever; issue #239: a single bone with a tip points at it the same way, and the five face bones stand on the eye line read off parts.json; every other bone keeps world rotation 0, so nothing else a consumer reads changes meaning",
       );
 
-      const flatRender = flatFormRender(join(dir, `${key}-flat-form`), builtRig, flattenRig(builtRig), readJsonAt(join(out, 'rig', 'motion.json')), join(out, 'rig', 'images'));
+      const flatRender = flatFormRender(join(dir, `${key}-flat-form`), builtRig, flattenRig(builtRig), withoutEyeSquash(readJsonAt(join(out, 'rig', 'motion.json'))), join(out, 'rig', 'images'));
       say(
         `CH12_THE_BUILD_RENDERS_AS_ITS_FLAT_FORM_WITHIN_THE_MEASURED_CEILING[${key}]`,
         typeof flatRender !== 'string' && flatRender.max <= FLAT_FORM_RENDER_CEILING,
         flatFormLine(flatRender),
-        `issue #73: no world position moves, so the turned rig draws what the reference's flat one draws; measured on both examples at 1 level everywhere but sample's idle frame 30 (one opaque pixel, 2 levels in blue), with every vertex within 8.21e-5 units — the ceiling is that measurement (FLAT_FORM_RENDER_CEILING = ${FLAT_FORM_RENDER_CEILING}), and the pixels above 1 are counted so a new one shows; both forms are rendered with their physics constraints left out (issue #224: the flat form keeps no bone length, so a rotate drive has no lever there)`,
+        `issue #73: no world position moves, so the turned rig draws what the reference's flat one draws; measured on both examples at 1 level everywhere but sample's idle frame 30 (one opaque pixel, 2 levels in blue), with every vertex within 8.21e-5 units — the ceiling is that measurement (FLAT_FORM_RENDER_CEILING = ${FLAT_FORM_RENDER_CEILING}), and the pixels above 1 are counted so a new one shows; both forms are rendered with their physics constraints left out (issue #224: the flat form keeps no bone length, so a rotate drive has no lever there), and without the blink's eyes scaley track, which since issue #239 squashes across the eye line — an axis the flat form, every bone unturned, cannot draw (the rig suite's face-axis cases hold the blink)`,
       );
 
       const expectedCheck = readJsonAt(join(exp, 'check.json'));

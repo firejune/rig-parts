@@ -384,3 +384,119 @@ export function heatStripConfig(mesh: Record<string, unknown> = {}): Record<stri
   (c.meshes as Record<string, unknown>).cloth = { grid: 8, r: 8, segments: HEAT_STRIP_SEGMENTS.map(([b, p, q]) => [b, [...p], [...q]]), ...mesh };
   return c;
 }
+
+/**
+ * The tilted-face fixture (issue #239): a 64x64 rig whose two eyes sit on a
+ * line at a known angle, so the face bones' turn can be read off by hand.
+ *
+ * ## The parts
+ *
+ * `face` (head:face) is a 48x48 skin block at (8, 8). Each eye is a 12x10
+ * part holding a dark bar along the direction (4, -3) in rig pixels (y down)
+ * — the pixels whose centre lies within 1.5 px of the line through the box's
+ * centre in that direction — so each eye is a stroke on the eye line.
+ * `eyewhite_r` (head:eyewhite-r) at (14, 23), centre **(20, 28)**;
+ * `eyewhite_l` (head:eyewhite-l) at (30, 11), centre **(36, 16)**. `mouth`
+ * (head:mouth), an 8x4 block at (30, 36), centre (34, 38).
+ *
+ * ## The eye line, by hand
+ *
+ * From the image-left centre (20, 28) to the image-right one (36, 16): in
+ * Spine's axes (y up) that is (16, 12), a 3-4-5 triangle, so the line's angle
+ * is atan2(12, 16) = atan(3/4) = **36.869898 degrees** (6 places). `head`
+ * stands unturned under `root`, so each of the five face bones is written
+ * with local rotation 36.869898, and each region on one is turned back by
+ * **-36.869898**. Every face bone stands on its part's centre or on a whole
+ * pixel, and the region on a bone at its part's centre sits at offset (0, 0).
+ *
+ * ## The blink, by hand
+ *
+ * The blink (t = 1) squashes `eyes` to 0.12 along each eye bone's own y. On
+ * the eye line that is across the stroke, so the closed stroke still runs at
+ * 36.87 degrees; on the page's axes (before issue #239) the stroke's
+ * direction (4, 3) (y up) becomes (4, 0.12 x 3) = (4, 0.36), atan(0.09) =
+ * **5.14 degrees** — the closed eye lies nearly flat on a tilted face.
+ */
+export const FACE_RIG: [number, number] = [64, 64];
+export const FACE_EXPECT = { degrees: 36.869898, flatClosed: 5.14 } as const;
+
+function eyeBar(): Raster {
+  const r = newRaster(12, 10);
+  // The box centre is (6, 5); the line's unit direction (4, -3)/5 in raster axes, its normal (3, 4)/5.
+  for (let y = 0; y < 10; y++) {
+    for (let x = 0; x < 12; x++) {
+      const d = Math.abs(((x + 0.5 - 6) * 3 + (y + 0.5 - 5) * 4) / 5);
+      if (d <= 1.5) r.data.set([30, 20, 20, 255], (y * 12 + x) * 4);
+    }
+  }
+  return r;
+}
+
+function skin(w: number, h: number): Raster {
+  const r = newRaster(w, h);
+  for (let i = 0; i < w * h; i++) r.data.set([250, 220, 200, 255], i * 4);
+  return r;
+}
+
+/** The fixture's parts; `eyes` names which eyewhite parts it holds (both by default). */
+export function faceParts(eyes: ReadonlyArray<'r' | 'l'> = ['r', 'l']): PartsFile {
+  const rec = (name: string, from: string, x: number, y: number, w: number, h: number): PartsFile['parts'][number] => ({
+    name,
+    from,
+    x,
+    y,
+    w,
+    h,
+    opaque_px: w * h,
+    projected_core_px: 0,
+    source_px_taken: 0,
+    refused_drift_px: 0,
+    merged_px: 0,
+    seam_override_px: 0,
+  });
+  const parts = [rec('face', 'head:face', 8, 8, 48, 48)];
+  if (eyes.includes('r')) parts.push(rec('eyewhite_r', 'head:eyewhite-r', 14, 23, 12, 10));
+  if (eyes.includes('l')) parts.push(rec('eyewhite_l', 'head:eyewhite-l', 30, 11, 12, 10));
+  parts.push(rec('mouth', 'head:mouth', 30, 36, 8, 4));
+  return { rig_size: [...FACE_RIG], scale_rig_per_source: 0.5, parts, ghost_px: {} };
+}
+
+export function faceImages(): Map<string, Raster> {
+  return new Map([
+    ['face', skin(48, 48)],
+    ['eyewhite_r', eyeBar()],
+    ['eyewhite_l', eyeBar()],
+    ['mouth', block(8, 4)],
+  ]);
+}
+
+/** The fixture's config; `eyes` as {@link faceParts}. A part a side lacks is left out of the plan and the regions, and its eye bone out of the blink. */
+export function faceConfig(eyes: ReadonlyArray<'r' | 'l'> = ['r', 'l']): Record<string, unknown> {
+  const plan: string[][] = [['face', 'head', 'face']];
+  const regions: Record<string, string> = { face: 'head' };
+  if (eyes.includes('r')) {
+    plan.push(['eyewhite_r', 'head', 'eyewhite-r']);
+    regions.eyewhite_r = 'eye_r';
+  }
+  if (eyes.includes('l')) {
+    plan.push(['eyewhite_l', 'head', 'eyewhite-l']);
+    regions.eyewhite_l = 'eye_l';
+  }
+  plan.push(['mouth', 'head', 'mouth']);
+  regions.mouth = 'mouth';
+  return {
+    key: 'face_fixture',
+    assemble: { rig_scale: 0.5, plan },
+    bones: [
+      { name: 'head', parent: 'root', at: [32, 50] },
+      { name: 'eye_r', parent: 'head', at: [20, 28] },
+      { name: 'eye_l', parent: 'head', at: [36, 16] },
+      { name: 'brow_r', parent: 'head', at: [17, 22] },
+      { name: 'brow_l', parent: 'head', at: [33, 10] },
+      { name: 'mouth', parent: 'head', at: [34, 38] },
+    ],
+    meshes: {},
+    regions,
+    motion: { duration: 4, tracks: [], blink: { t: 1, eyes: ['eye_r', 'eye_l'], brows: ['brow_r', 'brow_l'], squash: 0.12, brow_drop: 1 } },
+  };
+}

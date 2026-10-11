@@ -27,9 +27,31 @@
  *   numbers the reference wrote. A key the turn would re-aim — a translate
  *   key under a turned parent, a scale or shear key on a turned bone — is
  *   refused (`RIG_KEY_FRAME_UNTURNED`); rotate keys mean what they meant.
- *   A single bone with a `tip` is not turned (its tip is still a segment
- *   end for the weights); giving it a lever would be the same change on
- *   that bone and its children, and is not made here.
+ *   A single bone with a `tip` is turned the same way (issue #239): its
+ *   `rotation` is the direction from its origin to its tip and its `length`
+ *   that distance, the segment its weights are already measured along, so a
+ *   `tip` the config states is never accepted and ignored. A tip on its own
+ *   origin has no direction and is refused (`RIG_TIP_DISTINCT`).
+ * - **The face's axis** (issue #239). The five face bones a blink or an
+ *   expression scales or translates, {@link FACE_BONES}, take the eye line's
+ *   angle as their world rotation, so the blink's `scaley` squashes across
+ *   the eye line and not across the page's horizontal on a tilted head. The
+ *   eye line runs between the box centres of the parts tagged
+ *   `eyewhite-r` and `eyewhite-l` (the first of each in parts.json, a cut's
+ *   piece not counted — the parts `propose` places `eye_r` and `eye_l` on),
+ *   read from the image-left centre to the image-right one, so the angle is
+ *   always the measured one, inside (−90°, 90°), and which tag is which side
+ *   does not enter it. With one eyewhite or none, or two whose centres share a
+ *   column, there is no line: {@link FaceAxis} says why and the face bones
+ *   keep the page's axes. A face bone with its own `tip` takes the tip. A
+ *   bone under a face bone that nothing else turns keeps its parent's axis,
+ *   so a key on it means the face's axis too; the face bones' controls carry
+ *   the turn as a link's do. Regions on these bones are turned back as every
+ *   region is, so the setup pose is the same picture; a scale key on a face
+ *   bone, and a translate key on a bone under one, mean the face's axes and
+ *   are not refused. A translate key on a face bone itself still moves it
+ *   along its parent's (the head's) axes — Spine's rule, which turning the
+ *   bone does not change.
  * - **Meshes** over the parts named in `meshes`: a square lattice (`src/mesh.ts`)
  *   weighted by distance to the mesh's candidate segments (`src/weights.ts`),
  *   written in rigc's by-name `weights` form. The slot's bone is the first
@@ -112,7 +134,8 @@ import { type ContourChainRibs, type ContourReport, contourMesh, type ContourReg
 import { type LocalInfluence, localInfluences } from './localweights.ts';
 import { artCoverage, ART_ALPHA, latticeMesh, ONE_LOOP_PASSES } from './mesh.ts';
 import { BLINK, blinkHoldMisses, blinkSpan, CONTROL_SUFFIX, controlledBones, IDLE_FPS, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
-import { PAINTING_RUN, type PartsFile, readFrom } from './parts.ts';
+import { PAINTING_RUN, type PartsFile, readFrom, tagOf } from './parts.ts';
+import { EYE_GROUP_TAGS } from './propose.ts';
 import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
 import { boneHeat, heatInfluences, heatRow, type HeatRow, latticeSilhouette, tracedSilhouette } from './heat.ts';
@@ -149,6 +172,56 @@ function placed(v: number, n: number): number {
 
 function places(v: number): number {
   return placed(v, OFFSET_PLACES);
+}
+
+/**
+ * The face bones that take the face's axis (issue #239): the bones `propose`
+ * writes for the eyes, the brows and the mouth, which the blink and an
+ * expression scale or translate. Read by name, as the blink's groups name
+ * them; a config without one of them has nothing of that name to turn.
+ */
+export const FACE_BONES: readonly string[] = ['eye_r', 'eye_l', 'brow_r', 'brow_l', 'mouth'];
+
+/** The eye line the face bones are turned to, or why there is none (issue #239). */
+export interface FaceAxis {
+  /** The eye line's angle in Spine degrees (counter-clockwise, y up), as written; null with no line. */
+  degrees: number | null;
+  /** The eyewhite parts the line runs between, image-left first; fewer than two when there is no line. */
+  parts: string[];
+  /** The face bones turned to the line, in {@link FACE_BONES} order; empty with no line. */
+  turned: string[];
+  /** The face bones a `tip` of their own turns instead, in {@link FACE_BONES} order. */
+  ownTip: string[];
+  /** Why there is no line, or null. */
+  none: string | null;
+}
+
+/**
+ * The eye line, read off parts.json: the box centres of the first part
+ * tagged `eyewhite-r` and the first tagged `eyewhite-l` (a cut's piece is
+ * neither), from the image-left one to the image-right one, in Spine's axes
+ * through the one y flip. Null with the reason when there are not two, or
+ * when the two centres share a column, so the line has no left-to-right
+ * direction to read.
+ */
+export function eyeLine(parts: PartsFile): { degrees: number; parts: [string, string] } | { degrees: null; parts: string[]; none: string } {
+  const H = parts.rig_size[1];
+  const found = EYE_GROUP_TAGS.map((tag) => ({ tag, part: parts.parts.find((p) => tagOf(p.from) === tag && p.cut_from === undefined) }));
+  const have = found.flatMap((f) => (f.part === undefined ? [] : [f.part]));
+  if (have.length < 2) {
+    const missing = found.filter((f) => f.part === undefined).map((f) => f.tag);
+    return { degrees: null, parts: have.map((p) => p.name), none: `parts.json holds no part tagged ${missing.join(' or ')} (a cut's piece is not counted), so there is no eye line` };
+  }
+  const centre = (p: PartsFile['parts'][number]): Point => [p.x + p.w / 2, p.y + p.h / 2];
+  const [a, b] = have.map(centre);
+  if (a[0] === b[0]) {
+    return { degrees: null, parts: have.map((p) => p.name), none: `the centres of ${have[0].name} ${pt(a)} and ${have[1].name} ${pt(b)} share the column x = ${a[0]}, so the eye line has no left-to-right direction to read` };
+  }
+  const [left, right] = a[0] < b[0] ? [0, 1] : [1, 0];
+  const [l, r] = [centre(have[left]), centre(have[right])];
+  const dx = r[0] - l[0];
+  const dy = cropToSpineY(r[1], H) - cropToSpineY(l[1], H);
+  return { degrees: (Math.atan2(dy, dx) * 180) / Math.PI, parts: [have[left].name, have[right].name] };
 }
 
 /**
@@ -541,6 +614,8 @@ export interface RigOutput {
   loopPasses: Record<string, number>;
   /** Per automatic mesh, in parts.json order: what the rig stage's motion gate compares (`src/automotion.ts`). Nothing written. */
   autoMotion: AutoMotionCase[];
+  /** The eye line the face bones were turned to, or why there is none (issue #239). */
+  faceAxis: FaceAxis;
 }
 
 /**
@@ -614,6 +689,8 @@ export function buildRig(
   const chains = new Map<string, string[]>();
   /** Each chain's points and tip, rig px, as declared (issue #188: the ribs are placed along them). */
   const chainLines = new Map<string, Point[]>();
+  /** The single bones that state a `tip` (issue #239: each is turned towards it). */
+  const singleTips = new Set<string>();
   cfg.bones.forEach((e: BoneEntry, i) => {
     if ('chain' in e) {
       const names: string[] = [];
@@ -641,7 +718,17 @@ export function buildRig(
       chainLines.set(e.chain, polyline);
     } else {
       B.set(e.name, { name: e.name, parent: e.parent, x: e.at[0], y: e.at[1] });
-      if (e.tip !== undefined) tips.set(e.name, [e.tip[0], e.tip[1]]);
+      if (e.tip !== undefined) {
+        if (same(e.at, e.tip)) {
+          fail(
+            'RIG_TIP_DISTINCT',
+            `config.bones[${i}] "${e.name}".tip`,
+            `is ${pt(e.tip)}, the bone's own origin; a bone is turned from its origin towards its tip (issue #239), and a tip on the origin has no direction — give a tip other than ${pt(e.at)}, or leave the tip out`,
+          );
+        }
+        tips.set(e.name, [e.tip[0], e.tip[1]]);
+        singleTips.add(e.name);
+      }
     }
   });
 
@@ -824,6 +911,34 @@ export function buildRig(
       if (controls.includes(l)) aim.set(`${l}${CONTROL_SUFFIX}`, a);
     }
   }
+  // A single bone with a tip points at it the same way, and its control with it (issue #239).
+  for (const n of singleTips) {
+    const b = B.get(n) as Bone;
+    const end = tips.get(n) as Point;
+    const dx = spineX(end[0]) - spineX(b.x);
+    const dy = spineY(end[1]) - spineY(b.y);
+    const a = { rotation: (Math.atan2(dy, dx) * 180) / Math.PI, length: pyRound(Math.sqrt(dx * dx + dy * dy), 3) };
+    aim.set(n, a);
+    if (controls.includes(n)) aim.set(`${n}${CONTROL_SUFFIX}`, a);
+  }
+  // ---- the face's axis (issue #239) --------------------------------------
+  // Each face bone config.bones declares as a single bone with no tip of its own stands on the eye line, and its
+  // control with it; a bone under a face-framed bone that nothing else turns keeps that frame.
+  const line = eyeLine(parts);
+  const declared = FACE_BONES.filter((n) => cfg.bones.some((e) => !('chain' in e) && e.name === n));
+  const faceAxis: FaceAxis = {
+    degrees: line.degrees,
+    parts: line.parts,
+    turned: line.degrees === null ? [] : declared.filter((n) => !singleTips.has(n)),
+    ownTip: declared.filter((n) => singleTips.has(n)),
+    none: line.degrees === null ? line.none : null,
+  };
+  const faceTurn = new Map<string, number>();
+  for (const n of faceAxis.turned) {
+    faceTurn.set(n, line.degrees as number);
+    if (controls.includes(n)) faceTurn.set(`${n}${CONTROL_SUFFIX}`, line.degrees as number);
+  }
+  const faceRoots = new Set(declared.flatMap((n) => (controls.includes(n) ? [n, `${n}${CONTROL_SUFFIX}`] : [n])));
   // Each bone's local rotation turns it from its parent's world rotation to
   // the one it should have: its chain's direction, or 0 for every other bone,
   // so a named bone under a chain link is turned back upright. `turn` is the
@@ -831,6 +946,8 @@ export function buildRig(
   // tree. Each local offset is the bone's origin carried into its parent's
   // setup frame as written, through rigc's inverse (`src/coords.ts`).
   const turn = new Map<string, number>();
+  /** The bones whose frame is the face's (issue #239): the face bones, their controls, and what hangs under them unturned. */
+  const faceFramed = new Set<string>();
   const bones: RigBone[] = [];
   for (const b of ordered) {
     if (b.parent === null) {
@@ -840,7 +957,10 @@ export function buildRig(
     }
     const up = turn.get(b.parent) as number;
     const a = aim.get(b.name);
-    const rotation = places(normaliseDegrees((a?.rotation ?? 0) - up));
+    const inherits = a === undefined && !faceRoots.has(b.name) && faceFramed.has(b.parent);
+    if (faceRoots.has(b.name) || inherits) faceFramed.add(b.name);
+    const target = a?.rotation ?? faceTurn.get(b.name) ?? (inherits ? up : 0);
+    const rotation = places(normaliseDegrees(target - up));
     turn.set(b.name, places(up + rotation));
     const frame = computeExactFrameTransforms(bones).get(b.parent) as BoneTransform;
     const [x, y] = toBoneLocal(frame, spineX(b.x), spineY(b.y));
@@ -866,7 +986,8 @@ export function buildRig(
     const translate = k.prop.startsWith('translate');
     const frameBone = translate ? parent : k.bone;
     const deg = turn.get(frameBone) as number;
-    if (deg === 0) continue;
+    // A key in a face-framed bone's frame means the face's axes: that is the point of the turn (issue #239).
+    if (deg === 0 || faceFramed.has(frameBone)) continue;
     const axis = k.prop.slice(-1);
     fail(
       'RIG_KEY_FRAME_UNTURNED',
@@ -1359,7 +1480,7 @@ export function buildRig(
   // issue #126 item 3: an automatic part whose author set motion.deformMayFold — written only then, so no other rig moves.
   const mayFold = autoMotion.filter((c) => c.motion?.deformMayFold === true).map((c) => ({ slot: c.part, why: DEFORM_MAY_FOLD_WHY }));
   if (mayFold.length > 0) rig.invariants = { ...rig.invariants, deformMayFold: mayFold };
-  return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses, autoMotion };
+  return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses, autoMotion, faceAxis };
 }
 
 /**
