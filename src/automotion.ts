@@ -49,7 +49,28 @@
  * stimulated when the idle keys, with changing values, a bone that is (or is
  * an ancestor of) some of the bound bones but not all of them; otherwise it is
  * refused `AUTO_MESH_NO_STIMULUS` before anything is compiled. Constraints are
- * not read: a part only a constraint would move is refused, never passed.
+ * not read: a part only a constraint would move is refused, never passed —
+ * unless its author declares the motion (below).
+ *
+ * ## A declared stimulus ({@link stimulusAnimations}, issue #196)
+ *
+ * A part only a physics constraint moves (a tie, a strand, a hem) has no idle
+ * key that deforms it. Its author may declare `meshes.<part>.auto.stimulus`:
+ * `{ chain, degrees }`, or a list of them. Each declaration is two poses —
+ * every link of the chain rotated by +degrees, and by −degrees, about its own
+ * joint (a rotate key of that value on the link, which Spine adds to the setup
+ * rotation; the links inherit, so the chain curls) — written as two one-key
+ * animations of duration 0 into the motion of the builds the comparison reads
+ * (the reference's and a candidate's built from the written rig with them
+ * added; never into the motion the stage writes), and walked at the explicit
+ * time 0: right after the physics reset, so the pose is the declared bend
+ * itself and no physics step has moved it. Those frames are appended to every
+ * schedule the gate and its acceptance loop walk; where a schedule declares a
+ * selection (the search's), they are selection — read to choose — and
+ * otherwise held out as every frame is. The idle is walked as before, so where
+ * idle keys also deform the part both are measured. A declared link counts as
+ * a stimulus by the rule above exactly as a keyed bone does; nothing is
+ * derived from the constraint.
  *
  * ## Acceptance ({@link motionVerdict})
  *
@@ -66,7 +87,7 @@ import { type AcceptedOperation, MeshReductionError, type AlphaMask, type ArtFit
 import { compareMeshesInMotion, type MotionComparisonInput } from 'rig-c/meshcompare';
 import type { AutoMotionSpec } from './config.ts';
 import type { Problem } from './errors.ts';
-import { IDLE_FPS, type MotionSpec } from './motion.ts';
+import { IDLE_FPS, type MotionSpec, type MotionTrack } from './motion.ts';
 import type { AutoMeshReport, MeshAttachment, RigBone } from './rig.ts';
 
 /** The animation the motion gate walks: the idle, the one animation the rig stage writes and `check` renders. */
@@ -111,6 +132,10 @@ export interface AutoMotionCase {
   regions: Array<{ name: string; polygon: Array<[number, number]>; minArtSamples: number }>;
   /** The bones the reference's weights bind, sorted. */
   boundBones: string[];
+  /** The chains the mesh's segments name, in their order: what a declared stimulus may bend (issue #196). */
+  segmentChains: string[];
+  /** The author's `auto.stimulus`, each chain's links resolved, as a list; null when none was declared. */
+  stimulus: StimulusPose[] | null;
   /**
    * The motion amplitude the reduction was handed (`src/autoamplitude.ts`), handed to the comparison too (rig-c
    * 2.29.0, rigc#1291), or null when its derivation stopped — then the comparison's input carries no such key.
@@ -137,6 +162,82 @@ export interface AutoSearch {
   replay: (step: number) => ReplayCandidate | Problem;
 }
 
+/** One declared bend (issue #196): the chain, its links root first, and the degrees each link turns, both signs measured. */
+export interface StimulusPose {
+  chain: string;
+  degrees: number;
+  links: string[];
+}
+
+/** The two animations one declared bend is walked as: the chain bent by +degrees, then by −degrees. */
+export function stimulusAnimationNames(s: StimulusPose): [string, string] {
+  return [`stimulus ${s.chain} +${s.degrees}`, `stimulus ${s.chain} -${s.degrees}`];
+}
+
+/** What every stimulus animation says of itself in `motion.json`'s note field. */
+export const STIMULUS_NOTE = 'rig-parts: a declared stimulus (meshes.<part>.auto.stimulus) — every link of the chain turned by the declared degrees about its joint, walked at time 0 by the motion gate only; never written';
+
+/**
+ * The animations of every declared bend, by name: each one key at time 0 on
+ * every link of the chain, `rotate` by +degrees or −degrees, duration 0. Only
+ * the comparison's builds carry them ({@link stimulusMotion}).
+ */
+export function stimulusAnimations(stimulus: readonly StimulusPose[]): Record<string, { duration: number; note: string; tracks: MotionTrack[] }> {
+  const out: Record<string, { duration: number; note: string; tracks: MotionTrack[] }> = {};
+  for (const s of stimulus) {
+    const [plus, minus] = stimulusAnimationNames(s);
+    for (const [name, v] of [[plus, s.degrees], [minus, -s.degrees]] as const) {
+      out[name] = { duration: 0, note: STIMULUS_NOTE, tracks: s.links.map((bone) => ({ bone, property: 'rotate', keys: [{ t: 0, v: [v] }] })) };
+    }
+  }
+  return out;
+}
+
+/**
+ * The motion a comparison build reads for one part: the motion as written
+ * (`motion.json`'s parsed object) with that part's stimulus animations added
+ * after every animation it already has. A name already taken is refused by
+ * name — an animation of the author's is never replaced. With no stimulus,
+ * the motion as given.
+ */
+export function stimulusMotion(c: AutoMotionCase, written: Record<string, unknown>): { motion: Record<string, unknown> } | { problem: Problem } {
+  if (c.stimulus === null) return { motion: written };
+  const animations = (written.animations ?? {}) as Record<string, unknown>;
+  const added = stimulusAnimations(c.stimulus);
+  const taken = Object.keys(added).filter((n) => n in animations);
+  if (taken.length > 0) {
+    return {
+      problem: {
+      code: 'AUTO_MESH_MOTION_INPUT',
+      object: `${c.object}.stimulus`,
+      detail: `walks the animation(s) ${taken.map((n) => `"${n}"`).join(', ')}, and the motion already has an animation of that name; a stimulus is added beside the motion's animations and never replaces one — rename the animation in config.motion.animations_from`,
+      },
+    };
+  }
+  return { motion: { ...written, animations: { ...animations, ...added } } };
+}
+
+/** The frame id rig-c gives an explicit time 0 of `animation` (`<animation>@explicit@0`, `planSchedule` in rig-c/meshcompare). */
+export function explicitFrameId(animation: string): string {
+  return `${animation}@explicit@0`;
+}
+
+/**
+ * `schedule` with the declared bends walked after it: each stimulus animation
+ * at time 0. Where the schedule declares a selection (the acceptance loop's),
+ * their frames join it — they are read to choose; otherwise every frame stays
+ * held out. With no stimulus, the schedule as given.
+ */
+export function withStimulus(schedule: MotionSchedule, stimulus: readonly StimulusPose[] | null): MotionSchedule {
+  if (stimulus === null) return schedule;
+  const names = stimulus.flatMap((s) => stimulusAnimationNames(s));
+  return {
+    ...schedule,
+    frames: [...schedule.frames, ...names.map((animation) => ({ animation, times: [0] }))],
+    selection: schedule.selection.length === 0 ? schedule.selection : [...schedule.selection, ...names.map(explicitFrameId)],
+  };
+}
+
 /** The bones the idle keys with changing values: each track's bone, and every member of a group a track keys. */
 export function movingKeyedBones(motion: MotionSpec): string[] {
   const out = new Set<string>();
@@ -156,30 +257,40 @@ export function movingKeyedBones(motion: MotionSpec): string[] {
  * them: then those bones move by its key and the others do not. A key that
  * reaches every bound bone (their shared ancestor, the one bone of a
  * single-bone part, or a bound bone every other one hangs from) moves them all
- * by one affine map, which carries both meshes' samples alike.
+ * by one affine map, which carries both meshes' samples alike. `declared` is
+ * the links a declared stimulus turns (issue #196), read by the same rule as
+ * a moving key; `keyed` is returned as the idle's own.
  */
-export function motionStimulus(bones: readonly RigBone[], motion: MotionSpec, bound: readonly string[]): { by: string[]; keyed: string[] } {
+export function motionStimulus(bones: readonly RigBone[], motion: MotionSpec, bound: readonly string[], declared: readonly string[] = []): { by: string[]; keyed: string[] } {
   const parent = new Map(bones.map((b) => [b.name, b.parent ?? null]));
   const keyed = movingKeyedBones(motion);
+  const movers = [...new Set([...keyed, ...declared])].sort();
   const under = (bone: string, k: string): boolean => {
     for (let b: string | null = bone; b !== null; b = parent.get(b) ?? null) if (b === k) return true;
     return false;
   };
-  const by = keyed.filter((k) => {
+  const by = movers.filter((k) => {
     const reached = bound.filter((b) => under(b, k)).length;
     return reached > 0 && reached < bound.length;
   });
   return { by, keyed };
 }
 
-/** The refusal of a part the idle cannot deform. */
+/**
+ * The refusal of a part neither the idle nor a declared stimulus can deform:
+ * which bones had no motion against each other, and the field that declares
+ * one (issue #196). `keyed` is the idle's moving keys ({@link motionStimulus}'s
+ * `keyed`); the declared links are read off the case.
+ */
 export function noStimulusProblem(c: AutoMotionCase, keyed: readonly string[]): Problem {
+  const declared = c.stimulus === null ? '' : ` and the declared stimulus turns [${c.stimulus.flatMap((s) => s.links).join(', ')}]`;
+  const chains = c.segmentChains.length > 0 ? `a chain its segments name: ${c.segmentChains.join(', ')}` : 'its segments name no chain, so name one there first';
   return {
     code: 'AUTO_MESH_NO_STIMULUS',
     object: c.object,
     detail:
-      `the part binds [${c.boundBones.join(', ')}] and the idle keys [${keyed.join(', ') || 'nothing'}] with changing values; none of those keys moves some bound bones against the others, so no frame deforms the part and a comparison would read 0 over nothing — ` +
-      'missing stimulus is not a PASS. Put the part in contour or grid mode, or key a bone it binds (a chain link it is weighted to)',
+      `the part binds [${c.boundBones.join(', ')}] and the idle keys [${keyed.join(', ') || 'nothing'}] with changing values${declared}; none of those moves some bound bones against the others, so the bones [${c.boundBones.join(', ')}] have no motion against each other, no frame deforms the part and a comparison would read 0 over nothing — ` +
+      `missing stimulus is not a PASS. Declare ${c.object}.stimulus ({ "chain", "degrees" }: ${chains}; degrees the largest bend the physics is expected to reach), put the part in contour or grid mode, or key a bone it binds (a chain link it is weighted to)`,
   };
 }
 

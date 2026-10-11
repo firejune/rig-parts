@@ -382,6 +382,21 @@ export interface AutoSpec {
   boundaryRuns?: { maxVertices: number };
   retriangulate?: 'delaunay';
   removalOrder?: 'deformation-load';
+  /**
+   * The declared stimulus of a part no idle key deforms (issue #196): each
+   * link of the named chain rotated by +`degrees` and by −`degrees` about its
+   * joint, poses the motion gate measures against beside the idle's
+   * (`src/automotion.ts`). A list for a part bound to several chains. Absent:
+   * none, and the stage is byte for byte the one it was before the field
+   * existed — nothing here derives a motion.
+   */
+  stimulus?: StimulusSpec | StimulusSpec[];
+}
+
+/** `meshes.<part>.auto.stimulus` (issue #196): a chain this mesh's segments name, and the bend, degrees above 0. */
+export interface StimulusSpec {
+  chain: string;
+  degrees: number;
 }
 
 /**
@@ -1654,7 +1669,49 @@ function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
       });
     }
     if ('ribs' in m) checkRibs(c, `${at}.ribs`, m, chains);
+    if ('auto' in m && typeof m.auto === 'object' && m.auto !== null && !Array.isArray(m.auto) && 'stimulus' in m.auto) {
+      checkStimulus(c, `${at}.auto.stimulus`, (m.auto as Record<string, Json>).stimulus, m, chains);
+    }
   }
+}
+
+/**
+ * `meshes.<part>.auto.stimulus` (issue #196): a declared bend, `{ chain,
+ * degrees }` or a non-empty list of them, for a part no idle key deforms (a
+ * part only a physics constraint moves). Each `chain` must be one this mesh's
+ * `segments` name — the bend is measured on the bones the part is weighted to
+ * — and named once; `degrees` a number above 0, the rotation each link of the
+ * chain takes about its joint, both signs measured (`src/automotion.ts`).
+ * Nothing is defaulted: absent, no stimulus is declared and the stage is the
+ * one it was before the field existed.
+ */
+function checkStimulus(c: Check, at: string, v: Json, m: Record<string, Json>, chains: Map<string, number>): void {
+  const list = Array.isArray(v) ? v : [v];
+  if (Array.isArray(v) && v.length === 0) {
+    c.fail('CONFIG_FIELD_TYPE', at, 'is []; { chain, degrees } or a non-empty list of them is required — remove stimulus to declare none');
+    return;
+  }
+  const named = new Set((Array.isArray(m.segments) ? m.segments : []).filter((s): s is string => typeof s === 'string' && chains.has(s)));
+  const seen = new Set<string>();
+  list.forEach((e, i) => {
+    const eat = Array.isArray(v) ? `${at}[${i}]` : at;
+    const o = c.object(eat, e, ['chain', 'degrees'], []);
+    if (o === null) return;
+    if ('chain' in o) {
+      if (typeof o.chain !== 'string') {
+        c.fail('CONFIG_FIELD_TYPE', `${eat}.chain`, `is ${show(o.chain)}; the name of a chain this mesh's segments name is required`);
+      } else if (!named.has(o.chain)) {
+        c.fail(
+          'CONFIG_NAME_RESOLVES',
+          `${eat}.chain`,
+          `names "${o.chain}", which ${chains.has(o.chain) ? "is a chain this mesh's segments do not name" : 'is not a chain config.bones declares'}; a chain among this mesh's segments is required${named.size > 0 ? ` (${[...named].join(', ')})` : ' (it names none)'} — a bend of bones the part is not weighted to moves none of it`,
+        );
+      } else if (seen.has(o.chain)) {
+        c.fail('CONFIG_FIELD_TYPE', `${eat}.chain`, `names "${o.chain}" a second time; each chain is bent once, by its one declared degrees`);
+      } else seen.add(o.chain);
+    }
+    if ('degrees' in o) c.number(`${eat}.degrees`, o.degrees, 'positive');
+  });
 }
 
 /**
@@ -1764,7 +1821,7 @@ function checkContour(c: Check, at: string, v: Json, bones: Set<string>): void {
  * not have) is its refusal at the rig stage, in its words.
  */
 function checkAuto(c: Check, at: string, v: Json, bones: Set<string>): void {
-  const o = c.object(at, v, ['source', 'sourceBounds', 'targets', 'influences', 'budget', 'minArtSamples', 'motion'], ['protect', 'regions', 'boundaryRuns', 'retriangulate', 'removalOrder']);
+  const o = c.object(at, v, ['source', 'sourceBounds', 'targets', 'influences', 'budget', 'minArtSamples', 'motion'], ['protect', 'regions', 'boundaryRuns', 'retriangulate', 'removalOrder', 'stimulus']);
   if (o === null) return;
   // Stage B (rigc#1271): three opt-ins, each absent = not sent; a value is exactly one rig-c accepts, or it is refused by name.
   if ('boundaryRuns' in o) {

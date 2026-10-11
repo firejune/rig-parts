@@ -198,8 +198,8 @@ import { AUTO_CASES, densityOnly, DIAGONAL_POCKET_SIDE, diagonalPocketMask, exam
 import { BLOCKED_LABEL, barsOf, basisOf, cappedReducer, classify, costLine, countingRunner, type Counts as MatrixCounts, countsCell, deadlineRunner, emptyCost, fromWire, geometryRow, lossAgainstOriginal, pinnedExamplesCommit, quietLabel, rerunSection, STOPPED_CODE, stretchOf, toWire, verdictText } from './tools/auto_matrix.ts';
 import { withPolicyMotion } from './fixtures/automotion.ts';
 import { type BStar, bStar, type CellRow as ToolCellRow, nearestRank, parseArgs as parseBoundaryArgs, pendingRow, policyAt, render as renderBoundary, sagittas, sagittaSummary } from './tools/auto_boundary_survey.ts';
-import { type AutoMotionCase, idleSchedule, localRow, motionInput, motionStimulus, motionVerdict, runComparison } from './src/automotion.ts';
-import { motionGates, type MotionGateRun, replaySearch, strayClause } from './src/build.ts';
+import { type AutoMotionCase, explicitFrameId, idleSchedule, localRow, motionInput, motionStimulus, motionVerdict, runComparison, stimulusAnimations, withStimulus } from './src/automotion.ts';
+import { motionGates, type MotionGateRun, replaySearch, stimulusTexts, strayClause } from './src/build.ts';
 import {
   bisectAccepted,
   type CountedProbe,
@@ -1647,6 +1647,60 @@ function runConfigSuite(): number {
       parsed81 === null,
     `pose file, no generation.pose -> ${show75(words81)}; with it -> ${show75(wordsIn81)}; stand_clasp, no generation.pose -> ${show75(clasp81)}; the full loader from a path, file absent -> ${full81 === null ? 'loads' : codes(full81)}; parseConfig, no path -> ${show75(parsed81)}`,
     'issue #198: the pose words come from the config or a built-in, and none is guessed for a file; a config is not half-known at any door, so a broken pose file is refused wherever the config is read from a path',
+  );
+
+  // CF82–CF83 — issue #196: meshes.<part>.auto.stimulus. The robe of minimalConfig in the automatic mode, segments
+  // [chest, hem], with a second chain `tail` declared and named by no segment.
+  const stimulated = (stimulus: unknown): Record<string, unknown> => {
+    const c = minimalConfig();
+    (c.bones as unknown[]).push({ chain: 'tail', parent: 'hip', points: [[36, 40]], tip: [36, 46] });
+    const robe = (c.meshes as Record<string, Record<string, unknown>>).robe;
+    delete robe.grid;
+    robe.auto = { ...withPolicyMotion(syntheticPolicy(4)), stimulus };
+    return c;
+  };
+  const SAT = 'config.meshes.robe.auto.stimulus';
+  const one82 = refusals(() => parseConfig(stimulated({ chain: 'hem', degrees: 25 })));
+  const list82 = refusals(() => parseConfig(stimulated([{ chain: 'hem', degrees: 25 }])));
+  const tail82 = refusals(() => parseConfig(stimulated({ chain: 'tail', degrees: 25 })));
+  const ghost82 = refusals(() => parseConfig(stimulated({ chain: 'ghost', degrees: 25 })));
+  const bone82 = refusals(() => parseConfig(stimulated([{ chain: 'chest', degrees: 25 }])));
+  const twice82 = refusals(() => parseConfig(stimulated([{ chain: 'hem', degrees: 25 }, { chain: 'hem', degrees: 10 }])));
+  // CF82 — the field loads in both forms; a chain the mesh's segments do not name — another chain, no chain, a bone —
+  // is CONFIG_NAME_RESOLVES at the field, and a chain named twice is refused.
+  say(
+    'CF82_A_STIMULUS_LOADS_ONE_OR_A_LIST_AND_A_CHAIN_THE_SEGMENTS_DO_NOT_NAME_IS_REFUSED_BY_NAME_AT_THE_FIELD',
+    one82 === null &&
+      list82 === null &&
+      one75(tail82, 'CONFIG_NAME_RESOLVES', `${SAT}.chain`, 'names "tail", which is a chain this mesh\'s segments do not name; a chain among this mesh\'s segments is required (hem) — a bend of bones the part is not weighted to moves none of it') &&
+      one75(ghost82, 'CONFIG_NAME_RESOLVES', `${SAT}.chain`, 'names "ghost", which is not a chain config.bones declares; a chain among this mesh\'s segments is required (hem) — a bend of bones the part is not weighted to moves none of it') &&
+      one75(bone82, 'CONFIG_NAME_RESOLVES', `${SAT}[0].chain`) &&
+      one75(twice82, 'CONFIG_FIELD_TYPE', `${SAT}[1].chain`),
+    `{ hem, 25 } -> ${show75(one82)}; [{ hem, 25 }] -> ${show75(list82)}; planted tail -> ${show75(tail82)}; ghost -> ${show75(ghost82)}; [chest] -> ${show75(bone82)}; hem twice -> ${show75(twice82)}`,
+    'issue #196: the bend is measured on the bones the part is weighted to, so a chain its segments do not name has nothing to bend; the compiler resolves every name and refuses a miss by name',
+  );
+
+  // CF83 — degrees is a number above 0 and required; 0, a negative, a string, its absence, an empty list, a non-object
+  // and an unknown key are each refused at their field.
+  const zero83 = refusals(() => parseConfig(stimulated({ chain: 'hem', degrees: 0 })));
+  const neg83 = refusals(() => parseConfig(stimulated({ chain: 'hem', degrees: -5 })));
+  const text83 = refusals(() => parseConfig(stimulated([{ chain: 'hem', degrees: '25' }])));
+  const none83 = refusals(() => parseConfig(stimulated({ chain: 'hem' })));
+  const empty83 = refusals(() => parseConfig(stimulated([])));
+  const word83 = refusals(() => parseConfig(stimulated('hem')));
+  const typo83 = refusals(() => parseConfig(stimulated({ chain: 'hem', degrees: 25, degree: 25 })));
+  say(
+    'CF83_STIMULUS_DEGREES_IS_A_NUMBER_ABOVE_0_AND_EVERY_MALFORMED_STIMULUS_IS_REFUSED_AT_ITS_FIELD',
+    one82 === null &&
+      one75(zero83, 'CONFIG_FIELD_TYPE', `${SAT}.degrees`, 'is 0; a number above 0 is required') &&
+      one75(neg83, 'CONFIG_FIELD_TYPE', `${SAT}.degrees`, 'is -5; a number above 0 is required') &&
+      one75(text83, 'CONFIG_FIELD_TYPE', `${SAT}[0].degrees`, 'is "25"; a number above 0 is required') &&
+      one75(none83, 'CONFIG_FIELD_PRESENT', `${SAT}.degrees`) &&
+      one75(empty83, 'CONFIG_FIELD_TYPE', SAT, 'is []; { chain, degrees } or a non-empty list of them is required — remove stimulus to declare none') &&
+      one75(word83, 'CONFIG_FIELD_TYPE', SAT) &&
+      one75(typo83, 'CONFIG_KEY_KNOWN', `${SAT}.degree`),
+    `planted 0 -> ${show75(zero83)}; -5 -> ${show75(neg83)}; "25" -> ${show75(text83)}; no degrees -> ${show75(none83)}; [] -> ${show75(empty83)}; "hem" -> ${show75(word83)}; a misspelt key -> ${show75(typo83)}`,
+    'issue #196: a bend of 0 measures nothing and a negative one is the other sign, which is measured anyway; no default is guessed for a bend the author did not write',
   );
   return bad();
 }
@@ -20622,6 +20676,129 @@ function runAutoMeshSuite(): number {
     `contour: ${echo59(c59)}; auto: ${echo59(a59)}; contour without ribs: ${echo59(n59)}`,
     'issue #188: mesh_report.json is what an agent reads, so it says how many ribs each part carries and how many vertices hold them (two ribs of five on the fixture: two ends, the joint and a cut each side); each rib\'s own vertex list is in the contour report beside it',
   );
+
+  // AM60–AM63 — issue #196: meshes.<part>.auto.stimulus. The fixture is the motion suite's MO05 cloth: the idle keys
+  // only `body`, the parent of `hem0`, which carries `hem1` — one map for both bound bones, so no idle frame deforms
+  // the part. A declared bend of `hem` turns each link about its joint; `hem1` turned moves `hem1` and not `hem0`.
+  const still60 = (stimulus?: unknown): Record<string, unknown> =>
+    autoRigConfig((c, a) => {
+      (c.motion as Record<string, unknown>).tracks = [{ bone: 'body', prop: 'rotate', amp: 2, period: 4, phase: 0 }];
+      if (stimulus !== undefined) a.stimulus = stimulus;
+    });
+  const case60 = (stimulus: unknown): AutoMotionCase | string => {
+    try {
+      return buildRig(parseConfig(still60(stimulus)), rigParts(), rigImages()).autoMotion.find((c) => c.part === 'cloth') ?? 'no case';
+    } catch (e) {
+      return e instanceof PartsError ? e.problems.map(problemLine).join('; ') : String(e);
+    }
+  };
+  const rowOf60 = (stimulus: unknown): MeshReport | string => {
+    try {
+      return buildRig(parseConfig(still60(stimulus)), rigParts(), rigImages()).meshReport.find((m) => m.part === 'cloth') ?? 'no row';
+    } catch (e) {
+      return e instanceof PartsError ? e.problems.map(problemLine).join('; ') : String(e);
+    }
+  };
+  const texts60: Array<readonly [string, string]> = [['rig.json', '{}'], ['motion.json', '{"animations":{"idle":{}}}\n'], ['mesh_report.json', '[]']];
+  const absent60 = case60(undefined);
+  const declared60 = case60({ chain: 'hem', degrees: 2 });
+  const absentRow60 = rowOf60(undefined);
+  const declaredRow60 = rowOf60({ chain: 'hem', degrees: 2 });
+  const idle60 = idleSchedule();
+  const sameSchedule60 = typeof absent60 !== 'string' && withStimulus(idle60, absent60.stimulus) === idle60;
+  const sameTexts60 = typeof absent60 !== 'string' && stimulusTexts(absent60, texts60) === texts60;
+  const plantTexts60 = typeof declared60 === 'string' ? null : stimulusTexts(declared60, texts60);
+  const plantMotion60 = plantTexts60 === null || 'code' in plantTexts60 ? null : plantTexts60.find(([f]) => f === 'motion.json')?.[1];
+  // AM60 — absent: the case carries null, the schedule and the staged texts come back as the very objects handed in, and
+  // the row has no stimulus key. Planted: a declared bend changes the staged motion.json and adds the row's key.
+  say(
+    'AM60_WITHOUT_A_STIMULUS_THE_SCHEDULE_THE_STAGED_TEXTS_AND_THE_ROW_ARE_THE_ONES_THEY_WERE_AND_A_DECLARED_ONE_CHANGES_EACH',
+    typeof absent60 !== 'string' &&
+      absent60.stimulus === null &&
+      sameSchedule60 &&
+      sameTexts60 &&
+      typeof absentRow60 !== 'string' &&
+      !('stimulus' in absentRow60) &&
+      typeof declaredRow60 !== 'string' &&
+      'stimulus' in declaredRow60 &&
+      typeof plantMotion60 === 'string' &&
+      plantMotion60 !== texts60[1][1],
+    `absent: case stimulus ${typeof absent60 === 'string' ? absent60 : JSON.stringify(absent60.stimulus)}, schedule ${sameSchedule60 ? 'the same object' : 'CHANGED'}, texts ${sameTexts60 ? 'the same object' : 'CHANGED'}, row key ${typeof absentRow60 === 'string' ? absentRow60 : 'stimulus' in absentRow60 ? 'PRESENT' : 'absent'}; planted { hem, 2 }: motion.json ${plantMotion60 === texts60[1][1] ? 'UNCHANGED' : 'changed'}, row key ${typeof declaredRow60 === 'string' ? declaredRow60 : 'stimulus' in declaredRow60 ? 'present' : 'ABSENT'}`,
+    'issue #196: the compiler invents no motion — a config that declares none takes the path it always took, object for object (the byte identity of every written file is the pull request\'s cmp on the sample)',
+  );
+
+  // AM61 — the poses by hand: { hem, 7 } is two animations of duration 0, one key at t 0 on each link, +7 and -7; the
+  // schedule walks each at the explicit time 0, appended after the idle; a schedule with a selection takes their ids into
+  // it (rig-c's id for an explicit time is <animation>@explicit@<time>). The declared links read as moving keys:
+  // hem1 (under hem0) reaches one of the two bound bones and is a stimulus, hem0 reaches both and is not.
+  const pose61 = { chain: 'hem', degrees: 7, links: ['hem0', 'hem1'] };
+  const anims61 = stimulusAnimations([pose61]);
+  const want61 = {
+    'stimulus hem +7': { duration: 0, note: anims61['stimulus hem +7']?.note, tracks: [{ bone: 'hem0', property: 'rotate', keys: [{ t: 0, v: [7] }] }, { bone: 'hem1', property: 'rotate', keys: [{ t: 0, v: [7] }] }] },
+    'stimulus hem -7': { duration: 0, note: anims61['stimulus hem +7']?.note, tracks: [{ bone: 'hem0', property: 'rotate', keys: [{ t: 0, v: [-7] }] }, { bone: 'hem1', property: 'rotate', keys: [{ t: 0, v: [-7] }] }] },
+  };
+  const full61 = withStimulus(idle60, [pose61]);
+  const sel61 = withStimulus({ ...idle60, phases: ['grid'], selection: ['idle@grid@0'] }, [pose61]);
+  const bones61 = [{ name: 'root', x: 0, y: 0 }, { name: 'body', parent: 'root', x: 0, y: 0 }, { name: 'hem0', parent: 'body', x: 0, y: 0 }, { name: 'hem1', parent: 'hem0', x: 0, y: 0 }];
+  const body61: MotionSpec = { spec: 'rigc-motion/1', archetype: 'x', cut: 'x', easings: {}, groups: {}, animations: { idle: { duration: 1, loop: true, note: '', tracks: [{ bone: 'body', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [2] }] }] } } };
+  const by61 = motionStimulus(bones61, body61, ['hem0', 'hem1'], pose61.links);
+  const none61 = motionStimulus(bones61, body61, ['hem0', 'hem1']);
+  say(
+    'AM61_A_DECLARED_BEND_IS_TWO_ONE_KEY_POSES_WALKED_AT_TIME_0_AND_ITS_INNER_LINK_IS_A_STIMULUS_BY_THE_KEYED_RULE',
+    JSON.stringify(anims61) === JSON.stringify(want61) &&
+      JSON.stringify(full61.frames) === JSON.stringify([...idle60.frames, { animation: 'stimulus hem +7', times: [0] }, { animation: 'stimulus hem -7', times: [0] }]) &&
+      full61.selection.length === 0 &&
+      JSON.stringify(sel61.selection) === JSON.stringify(['idle@grid@0', 'stimulus hem +7@explicit@0', 'stimulus hem -7@explicit@0']) &&
+      explicitFrameId('a') === 'a@explicit@0' &&
+      by61.by.join() === 'hem1' &&
+      by61.keyed.join() === 'body' &&
+      none61.by.length === 0,
+    `animations ${JSON.stringify(anims61).slice(0, 400)}; frames ${JSON.stringify(full61.frames)}; selection with one ${JSON.stringify(sel61.selection)}; by ${JSON.stringify(by61)}; without the declaration ${JSON.stringify(none61)}`,
+    'issue #196: each link rotated by +degrees and by -degrees about its joint, both signs measured; at time 0, right after the physics reset, the pose is the declared bend and nothing a constraint does; Spine adds a rotate key to the setup rotation, so the value is the turn',
+  );
+
+  // AM62 — the stage: MO05's cloth, refused AUTO_MESH_NO_STIMULUS today, builds with { hem, 2 } declared — three
+  // gated builds (the stage's own, the candidate with the stimulus, the reference), the comparison walks the two
+  // stimulus frames, and the row echoes the declaration.
+  const root62 = temp('auto-stimulus');
+  try {
+    const run62 = motionStage(join(root62, 'declared'), still60({ chain: 'hem', degrees: 2 }));
+    const row62 = run62.rows.find((r) => r.part === 'cloth');
+    const echo62 = row62 !== undefined && 'stimulus' in row62 ? JSON.stringify(row62.stimulus) : 'absent';
+    const want62 = JSON.stringify([{ chain: 'hem', degrees: 2, links: ['hem0', 'hem1'], animations: ['stimulus hem +2', 'stimulus hem -2'] }]);
+    const report62 = row62 !== undefined && 'motion_report' in row62 ? (row62.motion_report as { candidates: Array<{ motion: { schedule: { walked: Array<{ id: string; role: string }> } } }> }) : null;
+    const walked62 = report62?.candidates[0]?.motion.schedule.walked.filter((f) => f.id.startsWith('stimulus ')) ?? [];
+    const written62 = existsSync(join(run62.out, 'motion.json')) ? readFileSync(join(run62.out, 'motion.json'), 'utf8') : '';
+    say(
+      'AM62_A_PART_NO_IDLE_KEY_DEFORMS_BUILDS_WITH_A_DECLARED_STIMULUS_WALKED_IN_BOTH_BUILDS_AND_ECHOED_IN_ITS_ROW',
+      run62.e === null &&
+        run62.builds.length === 3 &&
+        run62.builds.every((b) => b.model !== null) &&
+        echo62 === want62 &&
+        JSON.stringify(walked62.map((f) => [f.id, f.role])) === JSON.stringify([['stimulus hem +2@explicit@0', 'held-out'], ['stimulus hem -2@explicit@0', 'held-out']]) &&
+        written62 !== '' &&
+        !written62.includes('stimulus'),
+      `${run62.e === null ? 'built' : run62.e.problems.map(problemLine).join('; ').slice(0, 1500)}; builds ${run62.builds.length}; row ${echo62}; walked ${JSON.stringify(walked62)}; written motion.json ${written62.includes('stimulus') ? 'CARRIES the stimulus' : 'carries no stimulus'}`,
+      'issue #196: the declared poses are measured exactly as keyed ones are — the same comparison, the same bound — in builds that carry them, while the motion the stage writes carries none',
+    );
+
+    // AM63 — the refusal: without the declaration the part is refused before any reference is compiled, and the refusal
+    // says which bones had no motion against each other and names the field to declare.
+    const run63 = motionStage(join(root62, 'absent'), still60());
+    const p63 = run63.e?.problems.find((q) => q.code === 'AUTO_MESH_NO_STIMULUS');
+    say(
+      'AM63_AUTO_MESH_NO_STIMULUS_NAMES_THE_BONES_WITH_NO_MOTION_AND_THE_STIMULUS_FIELD_TO_DECLARE',
+      p63 !== undefined &&
+        p63.object === 'config.meshes.cloth.auto' &&
+        p63.detail.includes('the bones [hem0, hem1] have no motion against each other') &&
+        p63.detail.includes('Declare config.meshes.cloth.auto.stimulus ({ "chain", "degrees" }: a chain its segments name: hem;') &&
+        run63.builds.length === 1,
+      `${p63 === undefined ? 'not refused' : problemLine(p63).slice(0, 1500)}; builds ${run63.builds.length}`,
+      'issue #196: a refusal the author can act on names the field that resolves it; missing stimulus is still not a PASS',
+    );
+  } finally {
+    rmSync(root62, { recursive: true, force: true });
+  }
 
   return bad();
 }
