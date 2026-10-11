@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.7.0](https://github.com/rig-c/parts/compare/v1.6.0...v1.7.0) (2026-10-11)
+
+
+### Features
+
+* **build:** --lead-in for the idle loop of a rig with physics; the README loop shows the shipped demo ([#240](https://github.com/rig-c/parts/issues/240)) ([eb2ac4d](https://github.com/rig-c/parts/commit/eb2ac4d19c1e9ba66a7e9ad1afd20fbf7a5670c9)), closes [#224](https://github.com/rig-c/parts/issues/224)
+* **propose:** a leg chain for the legwear part when the keypoints give hip, knee and ankle ([#248](https://github.com/rig-c/parts/issues/248)) ([3c9bb99](https://github.com/rig-c/parts/commit/3c9bb99de079b8faeea5839d224d14b4acd42c36)), closes [#241](https://github.com/rig-c/parts/issues/241)
+* **propose:** with --keypoints, the trunk's mesh segments run along neck -&gt; hip ([#253](https://github.com/rig-c/parts/issues/253)) ([5a60cad](https://github.com/rig-c/parts/commit/5a60cad3da90a68d25790dd430b3a2eabd56f67f)), closes [#243](https://github.com/rig-c/parts/issues/243)
+* **rig:** read the eye line through the eye bones and declare it as invariants.axes for rig-c 2.40.0's A51 ([#254](https://github.com/rig-c/parts/issues/254)) ([5d5e2aa](https://github.com/rig-c/parts/commit/5d5e2aae3b210b99572428c5078d0859a0cfd802)), closes [#239](https://github.com/rig-c/parts/issues/239)
+
+
+### Bug Fixes
+
+* **rig:** stand the face bones on the eye line and turn a single bone towards its tip ([#247](https://github.com/rig-c/parts/issues/247)) ([934f8e7](https://github.com/rig-c/parts/commit/934f8e71c1f3975ea680e8e78dd3ea0336f2c13a)), closes [#239](https://github.com/rig-c/parts/issues/239)
+
 ## [1.6.0](https://github.com/rig-c/parts/compare/v1.5.5...v1.6.0) (2026-10-11)
 
 
