@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/firejune/rig-parts/compare/v1.5.0...v1.5.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **docs:** the thin-strand recipe is chain on the art plus stimulus, with the tracked chain's figures ([#214](https://github.com/firejune/rig-parts/issues/214)) ([8bd3fd2](https://github.com/firejune/rig-parts/commit/8bd3fd279a78f07d352bbaa95de87345abb87ae4))
+
 ## [1.5.0](https://github.com/firejune/rig-parts/compare/v1.4.0...v1.5.0) (2026-10-11)
 
 
