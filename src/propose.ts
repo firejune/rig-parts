@@ -29,7 +29,10 @@
  *   midline, split at the eye axis — unless the blob is clasped hands (at the
  *   axis and at most half the shoulders' width), which ride `hip` as a region.
  * - `front hair` -> three fringe chains + one lock chain per strand that hangs
- *   0.3 face heights below the chin.
+ *   0.3 face heights below the chin. The fringe chains are the reference's
+ *   template turned into the head's frame (issue #249): columns along the
+ *   eye line's perpendicular ({@link headRollOf}), each rooted on the part's
+ *   own art, and a note saying they are a template, not the part's locks.
  * - `back hair` -> one `bun` bone if it ends above the shoulders, else two
  *   hanging chains.
  * - `headwear` / `earwear` -> the biggest layer of the tag gets a rigid bone
@@ -87,6 +90,12 @@
  * end of the trunk (issue #243), the trunk parts' fixed segments run along
  * neck -> hip, the line the chest is placed on, instead of down the screen
  * ({@link trunkLineOf}).
+ * One departure moves every published proposal, the reference's own two
+ * included (issue #249): the reference stood the fringe's three columns on
+ * the page and rooted them 13 px below the part's box, which on a tilted head
+ * put them on a hat above the hair and across the locks; here they stand in
+ * the head's frame and are rooted 13 px below the art on each column, and
+ * `lint` names a fringe link that does not lean with the head.
  *
  * The idle departs from the reference's too (issue #252): it is
  * {@link IDLE_FRAMES} frames at 12 fps rather than 4 s, every period scaled
@@ -107,7 +116,7 @@ import { join } from 'node:path';
 import { drawText, GLYPH_H } from 'rig-c/tools/font5x7.ts';
 import { type BoneEntry, type ConfigConstraint, type MeshSpec, parseConfig, type Point, type Segment, type SkeletonSections } from './config.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
-import { type FrameFeature, headFrame, type HeadFrame } from './headframe.ts';
+import { eyeLineDegrees, type FrameFeature, headAxes, type HeadAxes, headFrame, type HeadFrame } from './headframe.ts';
 import { OPAQUE_ALPHA_ABOVE } from './layers.ts';
 import { PAINTING_RUN, type PartRecord, type PartsFile, readParts } from './parts.ts';
 import { connectedComponents } from './raster/components.ts';
@@ -1222,43 +1231,78 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
   }
 
   // ---- front hair: fringe + locks
+  // Issue #249: the fringe's columns stand in the head's frame — the roll read once, off the eye bones as written
+  // (headRollOf, the one derivation) — and each column's root sits on the part's own art. With no eye pair the
+  // frame is the page's, said in a note.
+  const roll = headRollOf(bones, P.H);
+  const ax = headAxes('none' in roll ? 0 : roll.degrees, P.H);
+  const eyeMid: [number, number] = [axis, eyeY];
+  const turned = 'none' in roll ? 'on the page' : `along the head's down axis (the eye line's perpendicular, roll ${pyFixed(roll.degrees, 3)} degrees)`;
+  const rollBones = 'none' in roll ? [] : ['eye_r', 'eye_l'];
   for (const p of P.headFirst('front hair')) {
     const [g, r] = gridR(p);
     const mask = P.alpha(p);
     const top = p.y;
     const segs: Segment[] = [['head', rnd(head), rnd([axis, top])]];
-    const browY = eyeY - 0.18 * fh;
+    // Depths along the face's down axis from the eye line (through the eye midpoint): the brow line and the tip's.
+    const browD = -0.18 * fh;
+    const tipD = browD + 19;
+    const columns: string[] = [];
     for (const [tag, f, dx] of [
-      ['bang_r', 0.25, -10],
+      ['bang_r', 0.25, -FRINGE_STEP_PX],
       ['bang_c', 0.5, 0],
-      ['bang_l', 0.75, 10],
+      ['bang_l', 0.75, FRINGE_STEP_PX],
     ] as const) {
-      const x0 = fx0 + f * fw;
+      const foot = ax.at(eyeMid, fx0 + f * fw - axis, 0);
+      // The root is 13 px into a run of the column's art and above the brow line: the lowest run that holds such a
+      // point. A strand's end under the fringe (demo's centre column has one, 7 px below it) or a lock that starts
+      // at the brow line is not where the fringe's lock starts.
+      const runs = columnRuns(mask, p, ax, foot);
+      const held = runs.filter(([s0, s1]) => s0 + 13 < browD && s0 + 13 <= s1);
+      const artD = held.length === 0 ? null : held[held.length - 1][0];
+      const d0 = (artD ?? boxEntry(p, ax, foot)) + 13;
+      const d1 = (d0 + browD) / 2 + 6;
+      const rootWhy = placement(
+        'mask',
+        `link 0: on the column at ${f} of the face box's width from its left, ${turned}, 13 px below where ${p.name}'s art starts on that column — the lowest run of its art there that holds a point 13 px in and above the brow line (0.18 face heights above the eye line)`,
+        {
+          parts: [p.name],
+          bones: rollBones,
+          frame: ['face_box', 'eye_axis', 'eye_line'],
+          constants: [konst('of_face_width', f), konst('px_below_art_start', 13)],
+          fallback: artD === null ? `no run of ${p.name}'s art on the column holds a point 13 px in above the brow line: 13 px below the top of its box along the column` : null,
+        },
+      );
       C(
         tag,
         'head',
+        [ax.at(foot, 0, d0), ax.at(foot, dx, d1)],
+        ax.at(foot, dx * 1.8, tipD),
         [
-          [x0, top + 13],
-          [x0 + dx, (top + 13 + browY) / 2 + 6],
-        ],
-        [x0 + dx * 1.8, browY + 19],
-        [
-          placement('ratio', `link 0: ${f} of the face box's width from its left, 13 px below the top of ${p.name}`, { parts: [p.name], frame: ['face_box'], constants: [konst('of_face_width', f), konst('px_below_part_top', 13)] }),
-          placement('ratio', `link 1: ${dx} px across from link 0, 6 px below half way from link 0's row to the brow line (0.18 face heights above the eye line)`, {
+          rootWhy,
+          placement('ratio', `link 1: ${dx} px across the column from link 0, 6 px below half way from link 0 to the brow line (0.18 face heights above the eye line), ${turned}`, {
             parts: [p.name],
+            bones: rollBones,
             frame: ['face_box', 'eye_line'],
             constants: [konst('px_across', dx), konst('px_below_half_way', 6), konst('brow_line_face_heights_above_eye_line', 0.18)],
           }),
         ],
-        placement('ratio', `${dx * 1.8} px across from link 0 (1.8 times link 1's offset), 19 px below the brow line (0.18 face heights above the eye line)`, {
+        placement('ratio', `${dx * 1.8} px across the column (1.8 times link 1's step), 19 px below the brow line (0.18 face heights above the eye line), ${turned}`, {
+          bones: rollBones,
           frame: ['face_box', 'eye_line'],
           constants: [konst('times_link_1_offset', 1.8), konst('px_below_brow_line', 19), konst('brow_line_face_heights_above_eye_line', 0.18)],
         }),
       );
       segs.push(tag);
+      columns.push(tag);
       const a = tag === 'bang_c' ? 0.8 : 1.0;
       tracks.push({ chain: tag, amps: [a, Number((a * 2.2).toFixed(4))], period: 4.0, phase: 0.18, lag: 0.1 });
     }
+    notes.push(
+      `${p.name} (${p.from}): ${columns.join(', ')} are a template, not its locks — columns at 0.25, 0.5 and 0.75 of the face box's width, ${turned}, each rooted on the part's art; ` +
+        `the opaque shape does not separate the locks painted inside one mass of hair, so a lock that runs elsewhere is not followed — move the chains onto the locks` +
+        ('none' in roll ? `; no head frame to turn the columns to: ${roll.none}` : ''),
+    );
     const below = newMask(P.W, P.H);
     below.data.set(mask.data);
     const [c0, c1] = pySlice(0, pyInt(chin) + 4, P.H);
@@ -2334,6 +2378,94 @@ function blobPoint(P: PartSet, tag: string): FrameFeature {
   return { part: ps[0].name, at: [cc.stats[best].cx, cc.stats[best].cy] };
 }
 
+/**
+ * The head's roll as the hair chains and their lint read it (issue #249):
+ * {@link eyeLineDegrees} on the origins of the single bones `eye_r` and
+ * `eye_l` as `bones` writes them — the one derivation of the roll, the one
+ * {@link headFrameNotes} prints and the rig turns the face bones to. With no
+ * such pair, or a pair in one column, why there is none.
+ */
+export function headRollOf(bones: readonly BoneEntry[], H: number): { degrees: number; eyes: [Point, Point] } | { none: string } {
+  const at = (n: string): Point | null => {
+    const e = bones.find((b) => 'name' in b && b.name === n);
+    return e === undefined || 'chain' in e ? null : e.at;
+  };
+  const r = at('eye_r');
+  const l = at('eye_l');
+  if (r === null || l === null) return { none: `no single bone ${[r === null ? 'eye_r' : null, l === null ? 'eye_l' : null].filter((n) => n !== null).join(' or ')}, so there is no eye line to turn to` };
+  if (r[0] === l[0]) return { none: `eye_r ${fmtAt(r)} and eye_l ${fmtAt(l)} share the column x = ${r[0]}, so the eye line has no left-to-right direction` };
+  return { degrees: eyeLineDegrees(r, l, H), eyes: [r, l] };
+}
+
+/**
+ * The px a fringe link of the template steps across its column, image-outward
+ * (issue #249 keeps it; the reference's `dx`): `bang_r`'s first link 10 px
+ * toward image-left, `bang_l`'s toward image-right, each tip 1.8 times that
+ * from its root. It is the widest step across the column the fringe rule
+ * writes in one link (the second steps 0.8 of it), so the off-lock LINT
+ * ({@link lint}) allows a link this much drift across the head's down axis.
+ */
+export const FRINGE_STEP_PX = 10;
+
+/**
+ * The runs of `mask`'s art along a column of the head's frame (issue #249):
+ * the column is the line through `foot` along the face's down axis, and the
+ * pixels it reads are those inside the part's box whose centre lies within
+ * half a pixel of that line. Ordered by the depth of their centre along the
+ * down axis, two pixels whose centres are within sqrt(2) px in depth
+ * (8-connected neighbours at most) are one run. Each run is `[start, end]`:
+ * its first centre's depth less half a pixel and its last's plus half a
+ * pixel — on the page's axes, exactly the top edge of its first row and the
+ * bottom edge of its last. Shallowest first.
+ */
+function columnRuns(mask: Mask, box: PartRecord, ax: HeadAxes, foot: readonly [number, number]): Array<[number, number]> {
+  const ds: number[] = [];
+  for (let y = box.y; y < box.y + box.h; y++) {
+    for (let x = box.x; x < box.x + box.w; x++) {
+      if (mask.data[y * mask.width + x] !== 1) continue;
+      const [a, d] = ax.of(foot, [x + 0.5, y + 0.5]);
+      if (Math.abs(a) <= 0.5) ds.push(d);
+    }
+  }
+  ds.sort((p, q) => p - q);
+  const runs: Array<[number, number]> = [];
+  for (let i = 0; i < ds.length; i++) {
+    if (i === 0 || ds[i] - ds[i - 1] > Math.SQRT2) runs.push([ds[i] - 0.5, ds[i] + 0.5]);
+    else runs[runs.length - 1][1] = ds[i] + 0.5;
+  }
+  return runs;
+}
+
+/**
+ * The depth along the face's down axis at which the column through `foot`
+ * enters the part's box (issue #249): on the page's axes, the box's top row
+ * less the foot's y, which is where the reference rooted the fringe. A column
+ * that misses the box enters it nowhere, and its corners' least depth stands
+ * in.
+ */
+function boxEntry(box: PartRecord, ax: HeadAxes, foot: readonly [number, number]): number {
+  const o = ax.at(foot, 0, 0);
+  const one = ax.at(foot, 0, 1);
+  const n: [number, number] = [one[0] - o[0], one[1] - o[1]];
+  const corners = (): number => Math.min(...[[box.x, box.y], [box.x + box.w, box.y], [box.x, box.y + box.h], [box.x + box.w, box.y + box.h]].map((c) => ax.of(foot, [c[0], c[1]])[1]));
+  let lo = -Infinity;
+  let hi = Infinity;
+  for (const [k, a, b] of [
+    [0, box.x, box.x + box.w],
+    [1, box.y, box.y + box.h],
+  ] as const) {
+    if (n[k] === 0) {
+      if (o[k] < a || o[k] > b) return corners();
+      continue;
+    }
+    const t0 = (a - o[k]) / n[k];
+    const t1 = (b - o[k]) / n[k];
+    lo = Math.max(lo, Math.min(t0, t1));
+    hi = Math.min(hi, Math.max(t0, t1));
+  }
+  return lo <= hi ? lo : corners();
+}
+
 /** `[min, max]` as `a..b` at 3 places. */
 function refRange(r: readonly [number, number] | readonly number[]): string {
   return `${pyFixed(r[0], 3)}..${pyFixed(r[1], 3)}`;
@@ -2468,6 +2600,26 @@ export interface OffArtFinding {
   at: [number, number];
 }
 
+/**
+ * A link of a lock the head carries whose line leaves the lock's run (issue
+ * #249): it drifts across the head's down axis by more than the fringe
+ * template's widest step, {@link FRINGE_STEP_PX}, plus a pixel's rounding at
+ * each end. `degrees` is the link's angle off that axis and `limit` the angle
+ * that drift allows over the link's reach down the axis; a link that does not
+ * reach down the axis at all has no limit (`null`) and is named whatever its
+ * angle.
+ */
+export interface OffLockFinding {
+  kind: 'off-lock';
+  bone: string;
+  mesh: string;
+  from: [number, number];
+  to: [number, number];
+  degrees: number;
+  limit: number | null;
+  roll: number;
+}
+
 /** The hip at or above the chest: breathing and every skirt chain hang from the wrong end of the torso. */
 export interface HipAboveChestFinding {
   kind: 'hip-not-below-chest';
@@ -2527,7 +2679,7 @@ export interface ChainNotAdvancingFinding {
   toJoint: KeypointName;
 }
 
-export type LintFinding = OffArtFinding | HipAboveChestFinding | HipTooHighFinding | ChestNotBetweenFinding | HipNotPastChestFinding | HipNearerNeckFinding | ChainNotAdvancingFinding;
+export type LintFinding = OffArtFinding | OffLockFinding | HipAboveChestFinding | HipTooHighFinding | ChestNotBetweenFinding | HipNotPastChestFinding | HipNearerNeckFinding | ChainNotAdvancingFinding;
 
 /** Which rule set read the torso and the sleeve chains, under `--keypoints`. */
 export interface LintBasis {
@@ -2541,6 +2693,8 @@ export interface LintResult {
   findings: LintFinding[];
   /** Meshes naming no part in parts.json: nothing to lint them against. */
   unknownMeshes: string[];
+  /** Why the off-lock check (issue #249) read nothing though a head-run front hair mesh names a chain hung from head: no head frame, or no face box to find the chin by. Empty when it ran or had nothing to read. */
+  lockUnread: string[];
   /** Single bones the torso checks read (`hip`, `chest`) that the bones do not hold: those checks did not run. */
   missingTorsoBones: string[];
   /** Present only under `--keypoints`: the rule set that read the torso and the chains. */
@@ -2584,6 +2738,17 @@ export function coverageOutcome(c: BoneCoverage): CoverageOutcome {
  * As in the reference, only CHAIN segments are linted: a string segment names
  * the links `<segment><digits>`, so a single bone named as a segment has none,
  * and an explicit `[bone, from, to]` segment is a line, not an origin.
+ *
+ * Then the fringe (issue #249): every chain hung from `head` that a head-run
+ * `front hair` part's mesh names, its tip no lower than the chin (the face
+ * box's bottom centre) along the head's down axis — the eye line's
+ * perpendicular, read by {@link headRollOf} — is a lock the head carries,
+ * and a link of it that drifts across that axis by more than
+ * {@link FRINGE_STEP_PX} plus sqrt(2) px (the template's widest step, and
+ * each end rounded to whole px) is named, with its angle and the angle its
+ * reach allows. A strand that hangs past the chin hangs with its weight and
+ * is not held to the head. With no head frame or no face box, `lockUnread`
+ * says why nothing was read.
  *
  * Then the torso, which the reference did not lint: a single bone `hip` that
  * is not below a single bone `chest` (larger y), and a `hip` above
@@ -2643,6 +2808,52 @@ export function lint(
       if (!isOn(mask, x, y)) findings.push({ kind: 'off-art', bone: n, mesh: mname, at: [x, y] });
     }
   }
+  // Issue #249: a lock the head carries runs along the head's down axis. The links read are those of every chain
+  // hung from head that a head-run front hair part's mesh names, when the chain's tip lies no lower along that axis
+  // than the chin (the face box's bottom centre): a strand that hangs past the chin hangs with its weight, not with
+  // the head, and is not held to the head's axis. The roll is headRollOf's, the one derivation.
+  const lockUnread: string[] = [];
+  const lockMeshes = Object.entries(spec.meshes).filter(([mname]) => {
+    const part = parts.get(mname);
+    return part !== undefined && splitFrom(part.from)[0] === 'head' && splitFrom(part.from)[1] === 'front hair';
+  });
+  const lockChains = lockMeshes.flatMap(([mname, m]) =>
+    m.segments.flatMap((sp) => {
+      if (typeof sp !== 'string') return [];
+      const e = spec.bones.find((b) => 'chain' in b && b.chain === sp);
+      return e !== undefined && 'chain' in e && e.parent === 'head' ? [{ mesh: mname, entry: e }] : [];
+    }),
+  );
+  if (lockChains.length > 0) {
+    const roll = headRollOf(spec.bones, P.H);
+    let chin: [number, number] | null = null;
+    try {
+      const [fx0, fy0, fw, fh] = faceBoxOf(P).box;
+      chin = [fx0 + fw / 2, fy0 + fh];
+    } catch (err) {
+      if (!(err instanceof PartsError)) throw err;
+      lockUnread.push(`no face box to find the chin by (${err.message.split('\n')[0]}), so no chain was read as a lock the head carries`);
+    }
+    if ('none' in roll) lockUnread.push(`${roll.none}, so no chain was read against the head's down axis`);
+    else if (chin !== null) {
+      const ax = headAxes(roll.degrees, P.H);
+      const mid: [number, number] = [(roll.eyes[0][0] + roll.eyes[1][0]) / 2, (roll.eyes[0][1] + roll.eyes[1][1]) / 2];
+      const chinD = ax.of(mid, chin)[1];
+      for (const { mesh, entry } of lockChains) {
+        if (ax.of(mid, entry.tip)[1] > chinD) continue;
+        const pts = [...entry.points, entry.tip];
+        entry.points.forEach((q, i) => {
+          const bone = `${entry.chain}${i}`;
+          readBy(bone, `off-lock on mesh ${pyRepr(mesh)}`);
+          const [across, down] = ax.of(q, pts[i + 1]);
+          const degrees = (Math.atan2(Math.abs(across), down) * 180) / Math.PI;
+          // A drift of FRINGE_STEP_PX across, and each end within sqrt(2)/2 px of the point it was rounded from.
+          const limit = down > 0 ? (Math.atan2(FRINGE_STEP_PX + Math.SQRT2, down) * 180) / Math.PI : null;
+          if (limit === null || degrees > limit) findings.push({ kind: 'off-lock', bone, mesh, from: [q[0], q[1]], to: [pts[i + 1][0], pts[i + 1][1]], degrees, limit, roll: roll.degrees });
+        });
+      }
+    }
+  }
   const single = (n: string): [number, number] | null => {
     const e = spec.bones.find((b) => 'name' in b && b.name === n);
     return e !== undefined && 'name' in e ? [e.at[0], e.at[1]] : null;
@@ -2694,13 +2905,14 @@ export function lint(
     }
   }
   const coverage = lintCoverage(spec, byName, read, findings, unknownMeshes, basis);
-  return basis === undefined ? { findings, unknownMeshes, missingTorsoBones, coverage } : { findings, unknownMeshes, missingTorsoBones, basis, coverage };
+  return basis === undefined ? { findings, unknownMeshes, lockUnread, missingTorsoBones, coverage } : { findings, unknownMeshes, lockUnread, missingTorsoBones, basis, coverage };
 }
 
 /** The bones a finding names: the off-art link; hip and chest for a relation between them; a chain's last link for its tip. */
 function findingBones(f: LintFinding, bones: readonly BoneEntry[]): string[] {
   switch (f.kind) {
     case 'off-art':
+    case 'off-lock':
       return [f.bone];
     case 'hip-not-below-chest':
     case 'hip-not-past-chest':
@@ -2857,6 +3069,14 @@ export function lintLine(f: LintFinding): string {
   switch (f.kind) {
     case 'off-art':
       return `LINT ${f.bone} at ${pyIntList(f.at)} is off the art of mesh ${pyRepr(f.mesh)}`;
+    case 'off-lock':
+      return (
+        `LINT ${f.bone} at ${pyIntList(f.from)} runs to ${pyIntList(f.to)} ${pyFixed(f.degrees, 1)} degrees off the head's down axis (the eye line's perpendicular, roll ${pyFixed(f.roll, 1)}), ` +
+        (f.limit === null
+          ? 'and does not reach down it at all'
+          : `more than the ${pyFixed(f.limit, 1)} its reach allows (a drift of ${FRINGE_STEP_PX} px across, the fringe template's widest step, and a pixel's rounding at each end)`) +
+        `: a lock of mesh ${pyRepr(f.mesh)} the head carries runs along the head, and this link leaves it`
+      );
     case 'hip-not-below-chest':
       return `LINT hip at ${pyIntList(f.hip)} is not below chest at ${pyIntList(f.chest)}: the hip must have the larger y, or breathing and the skirt hang from the shoulders`;
     case 'hip-too-high':

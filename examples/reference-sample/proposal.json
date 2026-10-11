@@ -89,17 +89,17 @@
    "parent": "head",
    "points": [
     [
-     392,
+     397,
      98
     ],
     [
-     382,
-     125
+     385,
+     123
     ]
    ],
    "tip": [
     374,
-    159
+    156
    ]
   },
   {
@@ -107,11 +107,11 @@
    "parent": "head",
    "points": [
     [
-     415,
+     420,
      98
     ],
     [
-     415,
+     418,
      125
     ]
    ],
@@ -125,17 +125,17 @@
    "parent": "head",
    "points": [
     [
-     438,
-     98
+     443,
+     111
     ],
     [
-     448,
-     125
+     451,
+     134
     ]
    ],
    "tip": [
-    456,
-    159
+    457,
+    163
    ]
   },
   {
@@ -419,7 +419,7 @@
     "prop": "translatey",
     "amp": 2.93,
     "period": 3.3333333333333335,
-    "phase": 0.0,
+    "phase": 0,
     "base": 2.93
    },
    {
@@ -427,7 +427,7 @@
     "prop": "scalex",
     "amp": 0.004,
     "period": 3.3333333333333335,
-    "phase": 0.0,
+    "phase": 0,
     "base": 1.004
    },
    {
@@ -454,7 +454,7 @@
    {
     "chain": "bang_r",
     "amps": [
-     1.0,
+     1,
      2.2
     ],
     "period": 3.3333333333333335,
@@ -474,7 +474,7 @@
    {
     "chain": "bang_l",
     "amps": [
-     1.0,
+     1,
      2.2
     ],
     "period": 3.3333333333333335,
@@ -555,6 +555,7 @@
   "head frame: the bar runs through eye_r [390.0, 160.0] and eye_l [437.0, 164.0], the eye bones' origins, 47.170 px; roll -4.865 degrees (Spine's, counter-clockwise) — the line the rig turns the face bones to and declares as invariants.axes; eye midpoint [413.5, 162.0]",
   "head pitch: the nose sits — (not read: no part tagged nose) of the way from the eye midpoint to the mouth (frontal 0.474..0.630); the stem, eye midpoint -> mouth, is 0.756 of the bar (frontal 0.510..0.675); frontal ranges read on demo, scarf, the rig-c/trailer character; the turn is not reported (src/propose.ts FRONTAL_REFERENCE says why)",
   "breath: chest translatey 5.86 px peak to peak (amp 2.93, base 2.93) = 2.5 % of the torso's height, 234 px (layer full:topwear, y 223..457), once per 40-frame idle at 12 fps",
+  "hair_front (head:front hair): bang_r, bang_c, bang_l are a template, not its locks — columns at 0.25, 0.5 and 0.75 of the face box's width, along the head's down axis (the eye line's perpendicular, roll -4.865 degrees), each rooted on the part's art; the opaque shape does not separate the locks painted inside one mass of hair, so a lock that runs elsewhere is not followed — move the chains onto the locks",
   "handwear is one blob (sleeves): both sleeves in one mesh, split at the eye axis x=413",
   "topwear ends at y=457 (hip 457): no robe chains -- add a sash chain by hand if one hangs",
   "legwear (full:legwear): no rule -> region on hip"

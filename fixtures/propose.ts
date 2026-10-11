@@ -78,6 +78,39 @@ export const FACELESS_PARTS: ProposeFixturePart[] = [
 ];
 
 /**
+ * The tilted head (issue #249), on {@link PROPOSE_RIG}: the skirt and the two
+ * sleeves of {@link PROPOSE_PARTS}, a `face` (head:face) 60,40 80x80, two
+ * 4x4 eyewhites, `white_r` (head:eyewhite-r) at 80,80 and `white_l`
+ * (head:eyewhite-l) at 112,56 — centres (82, 82) and (114, 58), a bar of
+ * (32, -24), 40 px, roll atan2(24, 32) = 36.869898 degrees — and a `fringe`
+ * (head:front hair) 20,10 140x70, one solid block. {@link TWO_LOCK_PARTS} is
+ * the same with the fringe painted as two locks, 20,10 60x70 and 100,10
+ * 60x70, the gap 80..99 transparent; {@link LEVEL_FRINGE_PARTS} has the
+ * solid fringe and only the right eyewhite, so there is no eye pair.
+ */
+export const TILTED_FRINGE_PARTS: ProposeFixturePart[] = [
+  ...PROPOSE_PARTS.filter((p) => p.name !== 'face'),
+  { name: 'face', from: 'head:face', x: 60, y: 40, w: 80, h: 80, colour: [240, 210, 190] },
+  { name: 'white_r', from: 'head:eyewhite-r', x: 80, y: 80, w: 4, h: 4, colour: [250, 250, 250] },
+  { name: 'white_l', from: 'head:eyewhite-l', x: 112, y: 56, w: 4, h: 4, colour: [250, 250, 250] },
+  { name: 'fringe', from: 'head:front hair', x: 20, y: 10, w: 140, h: 70, colour: [110, 70, 50] },
+];
+
+export const TWO_LOCK_PARTS: ProposeFixturePart[] = TILTED_FRINGE_PARTS.map((p) =>
+  p.name === 'fringe'
+    ? {
+        ...p,
+        rects: [
+          [20, 10, 60, 70],
+          [100, 10, 60, 70],
+        ],
+      }
+    : p,
+);
+
+export const LEVEL_FRINGE_PARTS: ProposeFixturePart[] = TILTED_FRINGE_PARTS.filter((p) => p.name !== 'white_l');
+
+/**
  * The cut fixture (issue #230), on {@link PROPOSE_RIG}: {@link CUT_BASE_PARTS}
  * is {@link PROPOSE_PARTS} with a `coat` (full:topwear) 50,100 100x160, a
  * `mop` (head:back hair) 60,10 80x50 and a `fringe` (head:front hair) 70,20
