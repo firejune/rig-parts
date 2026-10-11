@@ -62,7 +62,10 @@ here (gitignored).
   itself drives and by the render's viewport, now fitted over the hop and the wave:
   `BREATH_VISIBLE` `torso_heat_mean` 14.056 to 14.271, `TIP_OVER_ROOT` 2.425 / 6.93 /
   6.521 to 2.426 / 6.932 / 6.525, every status as before); `parts.json` and
-  `mesh_report.json` did not move.
+  `mesh_report.json` did not move. A follow-up raised the twin tails' physics inertia
+  from 0.5 to 0.8 (below), which moved `rig.json` (those six values) and `check.json`
+  (`torso_heat_mean` 14.271 to 14.352, `hair_back`'s `TEXTURE_STRETCH` 1.056 to 1.062,
+  every status as before) and nothing else.
 
 ## The two corrections
 
@@ -159,9 +162,14 @@ and chain swing stay alive under every clip. Every key carries an ease-in-out B�
 | `wave` | 2.21 | `sleeve_l0` +48°, `sleeve_l1` +20° (the arm out to the side), `sleeve_l2` +10°, −10°, +10° (the hand), back down |
 | `hop` | 1.2 | `hip` down 14 (anticipation), `root` up 90 at 0.42 s (`root` carries the shoes, which ride `root`, with the body), `hip` down 18.2 on landing (squash), a small rebound; `chest` scale squashes and stretches 2–4 % |
 
-An expression is what the bones can do. Every slot holds one attachment, the part's own
-image: the mouth widens, narrows and lifts, the eyes narrow and widen, the brows rise,
-and no mouth or eye shape is ever swapped for another — there is no second image to key.
+An expression is what the bones can do, and here that is not much. Every slot holds one
+attachment, the part's own image: the mouth widens, narrows and lifts, the eyes narrow
+and widen, the brows rise, and no mouth or eye shape is ever swapped for another — there
+is no second image to key. On the contact sheets made for this issue (full body at
+640 px, with a 2x head crop), `look_l`, `look_r`, `smile` and `startled` differ only
+slightly from the idle: the head turn is a shift of a few pixels and the face changes
+are a few pixels on parts tens of pixels wide. They are kept as worked examples of the
+keys, not as expressions that read at that size.
 
 **The strands.** One `physics` constraint per chain link, on the link bone itself
 (`hairback_r0`, not `hairback_r0_ctl`), driving `rotate` only, strength falling to 0.825
@@ -169,7 +177,7 @@ and 0.65 of the chain's value down its links so the tip is the softest:
 
 | strands | inertia | strength (root link) | damping | mix |
 | --- | --- | --- | --- | --- |
-| twin tails `hairback_r`, `hairback_l` | 0.5 | 90 | 0.85 | 1 |
+| twin tails `hairback_r`, `hairback_l` | 0.8 | 90 | 0.85 | 1 |
 | bangs `bang_r`, `bang_c`, `bang_l`; skirt `skirt_r`, `skirt_c`, `skirt_l` | 0.2 | 200 | 0.85 | 1 |
 | arms (sleeves) `sleeve_r`, `sleeve_l` | 0.15 | 250 | 0.85 | 0.6 |
 
@@ -187,12 +195,12 @@ from frame 0 with physics on, against the same ceiling, 1.926544:
 
 | clip | severity | worst mesh |
 | --- | --- | --- |
-| `tilt` | 1.133 | `neck` |
+| `tilt` | 1.151 | `hair_back` |
 | `look_l`, `look_r` | 1.323, 1.331 | `neck` |
-| `smile` | 1.062 | `neck` |
+| `smile` | 1.07 | `hair_back` |
 | `startled` | 1.284 | `neck` |
 | `wave` | 1.829 | `handwear_l` |
-| `hop` | 1.362 | `hair_front` |
+| `hop` | 1.561 | `hair_back` |
 
 What set the values: the first draft (the arm raised overhead, `sleeve_l0` +55° and
 `sleeve_l1` +60°, bangs and skirt at inertia 0.4, strength 120) read 5.327 on `wave`
@@ -202,7 +210,13 @@ read 3.082, +60° / +15° 2.185, +80° / +20° 3.195, and +50° / +20° with the
 1.902; the tracked +48° / +20° / ±10° reads 1.829 with the sleeve constraints in. A wave
 overhead tears the elbow of a mesh whose weights blend two links there, so this one is
 an arm out to the side with the hand waving. Stiffening the bangs and the skirt to
-inertia 0.2, strength 200 brought `hop` to 1.362.
+inertia 0.2, strength 200 brought `hop` to 1.362. The tails then trailed less in the hop
+than `scarf`'s ends: at the apex (0.43 s) the last link of each tail sat 20.3 and 19.7
+rig px from where the keys put it relative to `head`. One number moved it: the tails'
+inertia, 0.5 to 0.8, gives 32.0 and 31.1 at the apex and 46.6 and 45.3 at the landing
+(0.73 s; 34.1 and 33.0 before), with `hop` at 1.561 (`hair_back`). Lowering the tails'
+strength instead saturates (90, 45, 30, 15 give 20.3, 26.7, 29.0, 31.4 at the apex),
+and inertia 1 tears `hair_back` in the hop (3.258). The skirt is left as it was.
 
 **Limits.** No bar here reads a clip: the figures above are a measurement made for this
 issue, not a gate, and a clip played over the idle on a player's tracks adds the idle's

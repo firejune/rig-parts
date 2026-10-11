@@ -40,7 +40,7 @@
  * cut from, which shares its `from`. The record is in draw order, and a piece
  * drawn `"back"` comes before its base, so order cannot say which of two parts
  * sharing a layer is the piece; this field does. A `parts.json` written before
- * 1.5.6 has none, and still reads.
+ * 1.6.0 has none, and still reads.
  *
  * ⭐ **A patch is 100 % source.** Every pixel of a `painting:` part is the
  * painting's own, so it is all visible (the painting shows it; nothing of it
@@ -81,7 +81,7 @@ export interface PartRecord {
   /**
    * Written only on a piece an `assemble.cuts` entry made (issue #230): the
    * name of the plan part it was cut from, which has the same `from`. Absent
-   * on every other part, and in a `parts.json` written before 1.5.6.
+   * on every other part, and in a `parts.json` written before 1.6.0.
    */
   cut_from?: string;
   x: number;

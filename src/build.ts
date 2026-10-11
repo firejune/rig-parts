@@ -70,7 +70,7 @@ import {
   splitSchedule,
   untestedIntervals,
 } from './autoreplay.ts';
-import { BARS, besideIdleLine, causeLines, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
+import { BARS, besideIdleLine, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
 import { type Cut, loadConfig, loadConfigAndAnimations, loadEarlyConfig } from './config.ts';
 import { PartsError, type Problem, problemLine, refuseIfAny } from './errors.ts';
 import type { MeshQualityReport, MotionSchedule } from 'rig-c/mesh';
@@ -1027,18 +1027,140 @@ export interface LoopResult {
 }
 
 /**
+ * The idle `build --loop --lead-in <n>` renders (issue #224's follow-up):
+ * `idle` played n + 1 times back to back, of which the loop keeps the last
+ * period. rigc's render resets physics at frame 0, so an idle whose rig
+ * carries a physics constraint does not end where it starts; played on, a
+ * spring the idle drives settles into the idle's period, and the last period
+ * of the run is that steady state.
+ */
+export const LEAD_IN_ANIMATION = 'idle_lead_in';
+
+/** Which frames of a lead-in run the loop keeps: the last of `periods + 1` periods. */
+export interface LoopWindow {
+  periods: number;
+}
+
+const LEAD_IN_ANIMATION_KEYS = ['duration', 'loop', 'note', 'tracks'];
+
+/**
+ * `motion` with {@link LEAD_IN_ANIMATION} added: every idle track's keys
+ * repeated `periods + 1` times, each copy shifted by one idle duration, its
+ * Bezier `curve` times with it, and the key at the end of a copy dropped for
+ * the next copy's first key at the same time. Refused by name
+ * (`LOOP_LEAD_IN_IDLE`), every problem at once, when the motion has no idle,
+ * already has an animation of that name, or the idle is not a loop this can
+ * repeat without inventing a value: a field besides duration, loop, note and
+ * tracks; a track whose keys do not start at 0 and end at the duration; or one
+ * whose last value is not its first.
+ */
+export function repeatIdle(motion: Record<string, unknown>, periods: number): Record<string, unknown> {
+  const problems: Problem[] = [];
+  const fail = (object: string, detail: string): void => {
+    problems.push({ code: 'LOOP_LEAD_IN_IDLE', object, detail });
+  };
+  const anims = motion.animations;
+  const table = typeof anims === 'object' && anims !== null && !Array.isArray(anims) ? (anims as Record<string, unknown>) : null;
+  const idle = table?.idle;
+  if (table === null || typeof idle !== 'object' || idle === null || Array.isArray(idle)) {
+    fail('motion.json animations.idle', 'is absent; the lead-in repeats the idle');
+    refuseIfAny(problems);
+  }
+  const t = table as Record<string, unknown>;
+  const a = idle as Record<string, unknown>;
+  if (LEAD_IN_ANIMATION in t) fail(`motion.json animations.${LEAD_IN_ANIMATION}`, 'exists; the lead-in writes an animation of that name and never replaces one');
+  for (const k of Object.keys(a)) if (!LEAD_IN_ANIMATION_KEYS.includes(k)) fail(`motion.json animations.idle.${k}`, `is a field the lead-in does not repeat; the idle it repeats holds ${LEAD_IN_ANIMATION_KEYS.join(', ')}`);
+  const d = a.duration;
+  if (typeof d !== 'number' || !(d > 0)) fail('motion.json animations.idle.duration', `is ${JSON.stringify(d)}; a positive number is required`);
+  const tracks = Array.isArray(a.tracks) ? a.tracks : [];
+  const duration = d as number;
+  const out: unknown[] = [];
+  tracks.forEach((track, i) => {
+    const tr = track as Record<string, unknown>;
+    const keys = Array.isArray(tr.keys) ? (tr.keys as Array<Record<string, unknown>>) : [];
+    const at = `motion.json animations.idle.tracks[${i}]`;
+    const first = keys[0];
+    const last = keys[keys.length - 1];
+    if (first === undefined || first.t !== 0 || last.t !== duration) {
+      fail(at, `keys run from ${String(first?.t)} to ${String(last?.t)}; a track the lead-in repeats starts at 0 and ends at the duration ${duration}`);
+      return;
+    }
+    if (JSON.stringify(first.v) !== JSON.stringify(last.v)) {
+      fail(at, `ends at ${JSON.stringify(last.v)} and starts at ${JSON.stringify(first.v)}; repeated, the idle would jump where one copy meets the next`);
+      return;
+    }
+    const repeated: Array<Record<string, unknown>> = [];
+    for (let r = 0; r <= periods; r++) {
+      const shift = r * duration;
+      keys.forEach((k, j) => {
+        if (r < periods && j === keys.length - 1) return;
+        const moved: Record<string, unknown> = { ...k, t: (k.t as number) + shift };
+        if (Array.isArray(k.curve)) moved.curve = (k.curve as number[]).map((c, n) => (n % 2 === 0 ? c + shift : c));
+        repeated.push(moved);
+      });
+    }
+    out.push({ ...tr, keys: repeated });
+  });
+  refuseIfAny(problems);
+  return { ...motion, animations: { ...t, [LEAD_IN_ANIMATION]: { duration: duration * (periods + 1), loop: false, tracks: out } } };
+}
+
+/**
+ * Render {@link LEAD_IN_ANIMATION} of the rig in `rigDir` as `check` renders
+ * the idle (the packed build, `IDLE_FPS`, `IDLE_MAX_PX`), every other
+ * animation kept so the viewport is fitted as for the idle frames. Writes
+ * under `dir` and returns the frame set's directory.
+ */
+export function leadInFrames(rigDir: string, dir: string, periods: number, rigc: RigcRunner, mode: PackMode): string {
+  const rig = JSON.parse(readFileSync(join(rigDir, 'rig.json'), 'utf8')) as Record<string, unknown>;
+  const motion = repeatIdle(JSON.parse(readFileSync(join(rigDir, 'motion.json'), 'utf8')) as Record<string, unknown>, periods);
+  const images = typeof rig.images === 'string' ? resolve(rigDir, rig.images) : rig.images;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'rig.json'), JSON.stringify({ ...rig, images }));
+  writeFileSync(join(dir, 'motion.json'), JSON.stringify(motion));
+  const what = `the idle played ${periods + 1} times (${LEAD_IN_ANIMATION})`;
+  const b = rigc(['build', '--rig', join(dir, 'rig.json'), '--motion', join(dir, 'motion.json'), '--out', join(dir, 'build'), ...packedBuildArgs(mode)]);
+  if (b.status !== 0) refuseIfAny(rigcFailed(`${packedBuildLabel(mode)} (${what})`, b, buildGateLines(b.out)));
+  const r = rigc(['render', '--candidate', join(dir, 'build'), '--animation', LEAD_IN_ANIMATION, '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--out', join(dir, 'frames')]);
+  if (r.status !== 0) refuseIfAny(rigcFailed(`render --animation ${LEAD_IN_ANIMATION} (${what})`, r, r.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+  return join(dir, 'frames');
+}
+
+/** Pixels whose largest RGB channel difference between `a` and `b` is above `level`. */
+function pixelsOver(a: Raster, b: Raster, level: number): number {
+  let n = 0;
+  for (let p = 0; p < a.width * a.height; p++) {
+    let m = 0;
+    for (let c = 0; c < 3; c++) m = Math.max(m, Math.abs(a.data[p * 4 + c] - b.data[p * 4 + c]));
+    if (m > level) n++;
+  }
+  return n;
+}
+
+/**
  * Encode a rigc frame set as a looping APNG, indexed APNG or GIF and write it.
  * An encoder refusal is a PartsError coded `LOOP_ENCODE`, so it prints like
  * every other.
  */
-export function loopStage(frames: string, out: string, format: LoopFormat, log: Log): LoopResult {
+export function loopStage(frames: string, out: string, format: LoopFormat, log: Log, window?: LoopWindow): LoopResult {
   const set = readFrameSet(frames);
   const images = set.frames.map((fr) => fr.image);
   log(`rig-parts loop: ${set.dir} -> ${out}`);
   log(`  ${images.length} frame(s) ${images[0]?.width ?? 0}x${images[0]?.height ?? 0} at ${set.fps} fps (from frames.json), animation ${set.animation ?? '(none)'}`);
   let used = images;
   const lastName = set.frames[set.frames.length - 1]?.name ?? '';
-  if (images.length > 1 && sameRgba(images[0].data, images[images.length - 1].data)) {
+  if (window !== undefined) {
+    const per = (images.length - 1) / (window.periods + 1);
+    if (!Number.isInteger(per) || per < 1) {
+      throw new PartsError([{ code: 'LOOP_LEAD_IN_IDLE', object: set.dir, detail: `holds ${images.length} frame(s), which is not ${window.periods + 1} whole period(s) and the end frame; the lead-in keeps the last period` }]);
+    }
+    const start = window.periods * per;
+    const end = start + per;
+    const jump = maxRgbDiff(images[start], images[end]);
+    used = images.slice(start, end);
+    const name = (i: number): string => set.frames[i].name.replace('.png', '');
+    log(`  lead-in: ${window.periods} period(s) of the idle played ahead, physics running; ${name(start)}–${name(end - 1)} kept (${per} frame(s), the last period); ${name(end)}, one period after ${name(start)}, differs from it by max |d| ${jump.max}, ${pixelsOver(images[start], images[end], 40)} px over 40 — the jump at the wrap`);
+  } else if (images.length > 1 && sameRgba(images[0].data, images[images.length - 1].data)) {
     used = images.slice(0, -1);
     log(`  ${lastName} equals f0000.png byte for byte, so it is dropped: the loop wraps onto frame 0, and showing it twice would hold that pose for two ticks`);
   } else if (images.length > 1) {
@@ -1102,6 +1224,12 @@ export interface BuildInput {
   requirements?: string;
   /** `--idle-keys`, forwarded to the rig stage as `rig` takes it (issue #95); {@link DEFAULT_IDLE_KEYS} when absent. */
   idleKeys?: IdleKeys;
+  /**
+   * `--lead-in <n>`, with `loop` only: the loop is encoded from the last of n + 1
+   * idle periods played back to back ({@link leadInFrames}) instead of from
+   * `check/idle_frames/`; absent, the loop is as before.
+   */
+  leadIn?: number;
 }
 
 /**
@@ -1115,7 +1243,7 @@ export interface BuildRunners {
   check: RigcRunner;
   /** Where the check's rigc binary is, for its header line. */
   checkBin: string;
-  /** A directory the rig stage may stage its gate in; emptied before and after. */
+  /** A directory the rig stage may stage its gate in, and the loop its lead-in render after it; emptied before and after each. */
   scratch: string;
 }
 
@@ -1177,7 +1305,7 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   for (const p of BUILD_OWNS) rmSync(join(out, p), { recursive: true, force: true });
   // The idle-keys value is named only when it is not the default, so a build without the flag, or with the default, prints the line it printed before issue #95.
   const idleKeys = input.idleKeys ?? DEFAULT_IDLE_KEYS;
-  log(`rig-parts build: ${input.config} -> ${out}, seam rule ${input.seam}, projection rule ${input.project}, page edges ${input.pageEdges}, pack shape ${input.packShape ?? DEFAULT_PACK_SHAPE}${idleKeys === DEFAULT_IDLE_KEYS ? '' : `, idle keys ${idleKeys}`}${input.loop ? ', with the idle loop' : ''}`);
+  log(`rig-parts build: ${input.config} -> ${out}, seam rule ${input.seam}, projection rule ${input.project}, page edges ${input.pageEdges}, pack shape ${input.packShape ?? DEFAULT_PACK_SHAPE}${idleKeys === DEFAULT_IDLE_KEYS ? '' : `, idle keys ${idleKeys}`}${input.loop ? `, with the idle loop${input.leadIn === undefined ? '' : ` after a lead-in of ${input.leadIn} period(s)`}` : ''}`);
 
   try {
     // build runs rig next, which needs the whole config, so the full loader is
@@ -1214,12 +1342,15 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   }
 
   if (input.loop) {
-    const frames = join(out, 'check', 'idle_frames');
     try {
       const say = prefixed('loop');
-      const lossless = loopStage(frames, join(out, 'idle.png'), 'apng', say);
-      const indexed = loopStage(frames, join(out, 'idle-indexed.png'), 'indexed', say);
-      const gif = loopStage(frames, join(out, 'idle.gif'), 'gif', say);
+      const window = input.leadIn === undefined ? undefined : { periods: input.leadIn };
+      if (window !== undefined) rmSync(run.scratch, { recursive: true, force: true });
+      const frames = window === undefined ? join(out, 'check', 'idle_frames') : leadInFrames(join(out, 'rig'), run.scratch, window.periods, run.check, { pageEdges: input.pageEdges, packShape: input.packShape ?? DEFAULT_PACK_SHAPE });
+      const lossless = loopStage(frames, join(out, 'idle.png'), 'apng', say, window);
+      const indexed = loopStage(frames, join(out, 'idle-indexed.png'), 'indexed', say, window);
+      const gif = loopStage(frames, join(out, 'idle.gif'), 'gif', say, window);
+      if (window !== undefined) rmSync(run.scratch, { recursive: true, force: true });
       const fig = (e: PaletteError | null): string => (e === null ? 'lossless' : `max ${e.max}, mean ${e.mean.toFixed(3)}`);
       say(`loop: idle.png ${lossless.bytes} B (${fig(lossless.error)}); idle-indexed.png ${indexed.bytes} B (${fig(indexed.error)}); idle.gif ${gif.bytes} B (${fig(gif.error)}) — palette error per channel over all frames`);
     } catch (err) {

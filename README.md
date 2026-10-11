@@ -29,7 +29,7 @@ pose that holds the hands apart, then given one hand-detailer pass; its generati
 record, See-through layers and licence are in
 <a href="https://github.com/rig-c/parts-examples">parts-examples</a>.
 See-through ran twice, once on the whole figure and once on a square head crop.
-Then one command: <code>rig-parts build --loop</code>. The proposer's bones, meshes,
+Then one command: <code>rig-parts build --loop --lead-in 3</code>. The proposer's bones, meshes,
 regions and motion were used as proposed but for one correction, written in the
 config beside the values it replaced: the two outer skirt chains were moved out to
 0.8 of the skirt's half-width (the proposal's, within 90 px of the centre of a skirt
@@ -41,10 +41,13 @@ from the full run, because the twin tails leave the head crop sideways (a plan e
 <code>loop: idle 49 frame(s) at 12 fps, f0000 vs f0048 (t = 4s): max |d| 0 (0 required)</code><br/>
 <code>seam: setup pose at 654x1216, scale 0.9438: mean |d| 0.147 (&lt;= 1.0), 0 px over 40, 0.00 rig px (the count / s²; &lt;= 50), 0 px over 80 (reported)</code><br/>
 <code>pack: skeleton.png 1051x972, 23 region(s), 96.9% covered, padding 2, page edges free, shape polygon</code><br/>
-The loop is <code>rig-parts loop --palette</code>'s indexed APNG, 48 frames at
-12 fps, 827,857 bytes, one 256-entry palette at a measured error of max 65, mean 0.879
-per channel over every frame (the lossless APNG beside it, the exactness record, is
-5,832,634 bytes; the GIF, at the same error, 889,063). Frame 29 (2.417 s) is the
+The loop is that build's indexed APNG, 48 frames at 12 fps, 727,486 bytes, one
+256-entry palette at a measured error of max 69, mean 0.630 per channel over every
+frame (the lossless APNG beside it, the exactness record, is 5,148,992 bytes; the
+GIF, at the same error, 781,526). The rig's hair, skirt, sleeves, bows and earrings
+carry physics, which rigc's render starts from rest, so the idle is played three
+periods ahead and the loop is the fourth: its last frame and the first differ by at
+most 1 level (<code>--lead-in</code>). Frame 29 (2.417 s) is the
 closed eye: the blink holds for 0.084 s, one 12 fps frame rounded up; the painting is
 shown at half size, resampled and written by this package's PNG codec (nothing here
 encodes JPEG). <code>rig-parts sheet</code> made the contact sheet. Its
@@ -284,7 +287,7 @@ agent skill.
 | `rig --config --parts --out [--idle-keys ctl\|direct]` | author `rig.json` + `motion.json`, written only after rig-c's gate is green; each mesh is in the mode its config entry names — `grid` (the lattice, what `propose` writes), `contour` (the traced outline with declared interior points) or `auto` (the contour mesh at alpha 1 and above, reduced and locally refined by rig-c's `reduceMesh` under the author's declared bounds, written only when its motion against the unreduced source on the idle passes the author's `motion` bounds through rig-c's `compareMeshesInMotion`; [AUTHORING §3](docs/AUTHORING.md)); every chain link is turned along its chain and carries its `length`, so a physics constraint added later has a lever, with every offset under it in the turned frame so nothing moves; `--idle-keys` says whether the idle's keys on mesh-driving bones go through `<bone>_ctl` parents (default) or stay on the bones with `invariants.idleDrivesMeshes` declared; the config's `constraints` go to rigc as written, and a two-bone ik over keyed links needs `--idle-keys direct` (on `rig` or `build`) |
 | `check --rig --out [--parts] [--source] [--requirements]` | build packed, gated under `spine-html`, render the idle, measure seam, loop and the six judgement lines (mesh texture stretch among them, from the idle's `render --geometry`), and report the recomposite's holes from `parts.json`; on a rig spec with no `parts.json` or no `idle` (a merged rig, issue #77) the gate still runs and every line that needs the missing input says SKIP by name; `--source <painting.png>` adds `SETUP_POSE_VS_SOURCE`, the setup pose against the painting by assemble's recomposite figures; `--requirements <scene.json>` measures what a scene declares of the motion — a contact, a follow fraction, an aim, a joint range, a mesh's stretch, the seam between two parts over the motion — each against the author's own bar, from rig-c's posed frames, one line each, PASS, FAIL or NOT MEASURABLE (AUTHORING §7, *Declared requirements*) |
 | `loop --frames <dir> --out <file.gif \| file.png> [--palette]` | encode a rendered idle as a looping GIF, lossless APNG, or indexed APNG (`--palette`) |
-| `build --config --source --full --head --out [--seam] [--project] [--loop] [--requirements] [--idle-keys ctl\|direct]` | assemble, rig and check in one process, stopping at the first refusal; `--requirements` is forwarded to check, `--idle-keys` to rig |
+| `build --config --source --full --head --out [--seam] [--project] [--loop] [--lead-in <periods>] [--requirements] [--idle-keys ctl\|direct]` | assemble, rig and check in one process, stopping at the first refusal; `--requirements` is forwarded to check, `--idle-keys` to rig; `--lead-in` (with `--loop`) encodes the loop from the last of n + 1 idle periods played back to back, for a rig whose physics does not end where the render starts it |
 | `compose --scene <scene.json> --out [--requirements] [--accept]` | bind several characters' green builds into one rig (or, under `--accept`, builds failing only the bars named — for looking, not shipping): every name prefixed `<id>:` under one shared root, each character's offset added at its first-level bones, an optional background plate (its provenance recorded, judged by nothing) drawn first, and the draw order between the characters' slots as the scene file declares it — nothing inferred, nothing scaled; gated through rig-c as `rig` is, then checked ([AUTHORING §7](docs/AUTHORING.md), *Composing several characters*) |
 
 `rig-parts --help` has every flag. Exit codes: 0 done, 1 input refused (every
@@ -334,8 +337,10 @@ These are limits of the approach, stated so nobody reads more into a green run:
 
 This package makes no expression and no jiggle, but the rig it writes is the material for
 both, and the config has a field for each; `examples/demo` and `examples/scarf` carry a worked
-set of each (issue #224: a tilt, two looks, a smile, a startle, a wave or a bow and a hop,
-with physics on the hair, the skirt, the sleeves and the scarf ends). [docs/AUTHORING.md](docs/AUTHORING.md) has a recipe
+set of each (issue #224: a hop, a head tilt, a wave or a bow, and physics on the hair, the
+skirt, the sleeves and the scarf ends; also two head turns, a smile and a startle, which at
+full-body size read as small moves of the head and face rather than as expressions —
+one image per slot leaves the face only what its bones can do). [docs/AUTHORING.md](docs/AUTHORING.md) has a recipe
 for each — a config fragment, the `check` lines it passes with, and its limit:
 
 - [**Expressions and other named animations**](docs/AUTHORING.md#recipe-expressions-and-other-named-animations):

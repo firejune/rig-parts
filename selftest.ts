@@ -103,7 +103,7 @@ import {
   writeRun,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
-import { artifactPaths, assembleStage, build, BUILD_OWNS, checkStage, ctlRemedies, fringeLines, REFERENCE_BUILD_ARGS, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
+import { artifactPaths, assembleStage, build, BUILD_OWNS, checkStage, ctlRemedies, fringeLines, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
@@ -5427,7 +5427,7 @@ function runCutPieceCases(dir: string, say: (name: string, ok: boolean, detail: 
   const unmarked = refusals(() => propose(U));
   const wantObjects = ['parts "skirt_under", "skirt" (full:bottomwear)', 'parts "coat", "lapel" (full:topwear)', 'parts "mop", "mop_lock" (head:back hair)', 'parts "fringe_lock", "fringe" (head:front hair)'];
   const got = (unmarked?.problems ?? []).map((q) => `${q.code} ${q.object}`);
-  const said = (unmarked?.problems ?? []).every((q) => q.detail.endsWith('re-run assemble (1.5.6+) to record cut_from'));
+  const said = (unmarked?.problems ?? []).every((q) => q.detail.endsWith('re-run assemble (1.6.0+) to record cut_from'));
   say(
     'PR79_PARTS_SHARING_A_LAYER_WITH_NO_CUT_FROM_ARE_READ_AND_PROPOSE_REFUSES_THEM_BY_NAME',
     readsOk && JSON.stringify(got) === JSON.stringify(wantObjects.map((o) => `PROPOSE_CUT_FROM_RECORDED ${o}`)) && said,
@@ -10527,6 +10527,33 @@ function runBuildSuite(): number {
         plantFiles.some((d) => d.startsWith(join('rig', 'rig.json'))) && plantLines > 0 && dir2.lines[0].endsWith(', idle keys direct'),
       `no flag (exit ${bare.status}) against --idle-keys ctl (exit ${ctl.status}): ${files.length === 0 ? `${filesUnder(bare.out).length} file(s) byte-identical` : files.slice(0, 3).join('; ')}, ${bare.lines.length} printed line(s) ${sameLines ? 'identical' : 'DIFFER'} (--out written as <out>); planted, --idle-keys direct (exit ${dir2.status}): ${plantFiles.length} file(s) differ (${plantFiles.slice(0, 2).join('; ')}), ${plantLines} line(s) differ`,
       'issue #95, ruling 2: the flag is new, so where it is not used, or names the default, the build is the one main writes — the first line names the value only when it is not the default — and the plant shows the comparison sees the value when it moves',
+    );
+
+    // Issue #224's follow-up: --lead-in encodes the loop from the last of n + 1 idle periods. On this fixture, which
+    // has no physics, every period is the first, so the wrap reads 0 and the loop holds as many frames as the plain
+    // one (BU01's, whose duplicated last frame is dropped). Not byte for byte: a later period's key times are the
+    // first's plus the duration in float, which moved single pixels by 1 level where measured (demo with its
+    // constraints removed, period 2 against period 1). The plants are the refusals: an idle track that does not end
+    // at the duration, the flag without --loop, and a count of 0.
+    const leadOut = join(dir, 'lead-in');
+    const lead = runCli([...buildArgs(dir, leadOut), '--loop', '--lead-in', '1']);
+    const leadLine = lead.out.split('\n').find((l) => l.includes('lead-in: 1 period(s)')) ?? '';
+    const encoded = (text: string): string => /(\d+) frame\(s\) encoded/.exec(text)?.[1] ?? 'none';
+    const sameLoop = existsSync(join(leadOut, 'idle.png')) && encoded(lead.out) === encoded(green.out) && encoded(green.out) !== 'none';
+    const leadIdle = { animations: { idle: { duration: 1, loop: true, tracks: [{ bone: 'b', property: 'rotate', keys: [{ t: 0, v: [0], curve: [0.25, 0, 0.75, 2] }, { t: 0.5, v: [2] }, { t: 1, v: [0] }] }] } } };
+    const repeated = repeatIdle(leadIdle, 1).animations as Record<string, { duration: number; tracks: Array<{ keys: Array<{ t: number; curve?: number[] }> }> }>;
+    const lk = repeated[LEAD_IN_ANIMATION].tracks[0].keys;
+    const repeatOk = repeated[LEAD_IN_ANIMATION].duration === 2 && lk.map((k) => k.t).join(',') === '0,0.5,1,1.5,2' && JSON.stringify(lk[2].curve) === '[1.25,0,1.75,2]';
+    const shortIdle = { animations: { idle: { duration: 1, tracks: [{ bone: 'b', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [2] }] }] } } };
+    const shortErr = refusals(() => repeatIdle(shortIdle, 1));
+    const noLoop = runCli([...buildArgs(dir, join(dir, 'lead-no-loop')), '--lead-in', '1']);
+    const zero = runCli([...buildArgs(dir, join(dir, 'lead-zero')), '--loop', '--lead-in', '0']);
+    say(
+      'BU25_BUILD_LOOP_LEAD_IN_KEEPS_THE_LAST_PERIOD_AND_A_PERIODIC_IDLE_LOOPS_AS_WITHOUT_IT',
+      lead.status === 0 && /kept \(\d+ frame\(s\), the last period\); f\d+, one period after f\d+, differs from it by max \|d\| 0, 0 px over 40/.test(leadLine) && sameLoop && repeatOk &&
+        shortErr !== null && shortErr.problems.some((p) => p.code === 'LOOP_LEAD_IN_IDLE') && noLoop.status === 2 && zero.status === 2,
+      `--lead-in 1 exit ${lead.status}: ${leadLine.trim() || 'no lead-in line'}; ${encoded(lead.out)} frame(s) encoded against the plain --loop build's ${encoded(green.out)}; repeatIdle keys ${lk.map((k) => k.t).join(',')}, the second copy's curve ${JSON.stringify(lk[2].curve)}; planted: a track ending at 0.5 of 1 -> ${shortErr === null ? 'accepted' : shortErr.problems.map((p) => p.code).join(', ')}; --lead-in without --loop exit ${noLoop.status}; --lead-in 0 exit ${zero.status}`,
+      "issue #224's follow-up: rigc's render resets physics at frame 0, so a rig with physics does not end its idle where it starts; the lead-in plays the idle on and keeps the last period. On an idle with nothing to settle the last period is the first, so the flag must change nothing there, and an idle the repeat would have to invent a value for is refused by name",
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
