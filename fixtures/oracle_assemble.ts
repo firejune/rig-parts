@@ -32,6 +32,8 @@ import type { PartRecord, PartsFile } from '../src/parts.ts';
 import { readPng, writePng } from '../src/raster/png.ts';
 import type { Raster } from '../src/raster/types.ts';
 
+// The reference corpus's own directory names for its two public characters: this repository tracks them as
+// examples/reference-sample and examples/reference-demo (issue #227), and their configs keep these keys.
 const PUBLIC_KEYS = ['sample', 'demo'];
 
 /** The legacy config reduced to what the assemble stage reads, plus the placeholders the loader requires. */

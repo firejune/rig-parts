@@ -68,12 +68,12 @@ const ROOT = resolve(import.meta.dir, '..');
 
 /** The Stage B survey's eight parts, in its order. */
 export const PARTS: ReadonlyArray<readonly [string, string]> = [
-  ['demo', 'neck'],
-  ['demo', 'bottomwear'],
-  ['sample', 'neck'],
-  ['sample', 'sleeves'],
-  ['sample', 'topwear'],
-  ['sample', 'bottomwear'],
+  ['reference-demo', 'neck'],
+  ['reference-demo', 'bottomwear'],
+  ['reference-sample', 'neck'],
+  ['reference-sample', 'sleeves'],
+  ['reference-sample', 'topwear'],
+  ['reference-sample', 'bottomwear'],
   ['scarf', 'hair_front'],
   ['scarf', 'handwear_l'],
 ];

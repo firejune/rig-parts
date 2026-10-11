@@ -6,12 +6,19 @@ the files it writes. Every refusal the tool prints names a rule, an object, the
 value found and the value required — §6 maps each rule to the field or input that
 has to change.
 
-The worked example throughout is [`examples/sample`](../examples/sample): its
+The worked example throughout is [`examples/reference-sample`](../examples/reference-sample): its
 `config.json` is a complete, loading config, `proposal.json` is what the proposer
 wrote for it, and `expected/` is what the reference implementation produced from
 the same inputs — except `check.json`, which this port's `build` regenerates since
 the reference has no judgement lines (§7). `bun run fetch-examples` puts its painting and See-through layers
-into `examples/sample/inputs/`.
+into `examples/reference-sample/inputs/`.
+
+The examples' names: `reference-sample` and `reference-demo` are the two characters
+the reference implementation ran (published as `sample` and `demo` until issue #227),
+kept as fixtures because their `expected/` is that implementation's own output; every
+figure this guide quotes for them was measured on them. `demo` is the painting the
+README shows since issue #227 and `scarf` the hanging-element example; both have
+`expected/` from this port's own build, and a figure quoted for them says so.
 
 ## 1. Prerequisites
 
@@ -244,8 +251,8 @@ box every rule scales by is derived from the head run's hair (`front hair`,
 `back hair`: their highest top) and its `neck` (its top, and its centre x for the
 axis): with `L` the span from the hair's top to the neck's top, the face is
 1.067 `L` tall, its top 0.131 `L` below the hair's, its width 0.798 of its height.
-Those ratios are the means of the two public examples (`demo` 1.073 / 0.105 /
-0.820, `sample` 1.061 / 0.158 / 0.777) — a sample of two. On each example
+Those ratios are the means of the two public examples (`reference-demo` 1.073 / 0.105 /
+0.820, `reference-sample` 1.061 / 0.158 / 0.777) — a sample of two. On each example
 re-assembled without its face, the derived box put `head` and `neck` within
 5.0 px (0.038 face heights) of the with-face proposal's, `chest` and `hip` at
 the same pixel. The first note says so —
@@ -270,7 +277,7 @@ Two rules read the figure rather than one tag, and each says so in a note:
   0.8 of the shoulders — or `hip from 0.32 of figure height (no waist found: …)`,
   naming why. Without `bottomwear` the hip is 0.32 of the figure height, as before
   (`no bottomwear: hip from 0.32 of figure height`). Neither published example
-  meets either branch: their hips sit at 0.436 (`demo`) and 0.342 (`sample`) of
+  meets either branch: their hips sit at 0.436 (`reference-demo`) and 0.342 (`reference-sample`) of
   their figures.
 - **Clasped hands.** When every `handwear` part together is one blob (over
   500 px) at most half the shoulders' width and centred within a quarter of it
@@ -289,7 +296,7 @@ sub-shape of the layer's **pendant rows** (the run of rows at the bottom narrowe
 than 35 % of its widest row; the whole layer for `earwear` or a layer that is over
 80 % pendant) that is at least **3×** as tall as wide, at least **0.2** of the
 layer's height and at least **10** rows. On the public examples nothing is one: the
-demo's hairpin pendant sub-shapes measure 0.54 and 0.89 tall-per-wide and its
+reference-demo's hairpin pendant sub-shapes measure 0.54 and 0.89 tall-per-wide and its
 earrings 1.04 and 1.08, so both proposals are unchanged. Every layer with strands
 gets exactly one note carrying each strand's column centroid, first–last row and
 width, and what became of it (two of the selftest's fixtures, PR12 and PR15):
@@ -323,7 +330,7 @@ the eyewhite's top with no art across its whole width, the lowest such row is pr
 `motion.blink.still` on `head`, and the rows above it stop blinking; when it has none, the
 note says so and nothing is cut — clear a row between the crease and the lash line in the
 part, or leave the crease to blink. The cut has to be a clear row: two pieces cut through
-art are each resampled against their own transparent edge, and on the demo example a cut
+art are each resampled against their own transparent edge, and on the reference-demo example a cut
 through its lash line changed 36 px of the setup-pose render (up to 7 levels, at render
 scale 0.942) and up to 21 levels in the idle frames where the head rolls; a clear-row cut
 changed none, at rest or rolled. The eye bone is not moved: scaling about the eyewhite's
@@ -442,23 +449,23 @@ crescent; the other four 1.5 or less). No cell refused overshoot, and along each
 a margin passed every larger one passed — where the offset this replaced moved an acute corner
 up to 4 × margin and closed the window from above. That is the generated shapes: on a real part
 a larger margin can close a gap whose enclosed pocket lies further from the art than the bound,
-which the overshoot check refuses (the demo's hairpin builds at margin 1 and refuses at 1.5, 2
+which the overshoot check refuses (reference-demo's hairpin builds at margin 1 and refuses at 1.5, 2
 and 3: 5.39 px). On the public examples at tolerance 1, margin 1, `stray` 4 and spacing = the
-part's grid, 13 of the 14 mesh parts build; the 14th is the demo's earring, two pieces.
+part's grid, 13 of the 14 mesh parts build; the 14th is reference-demo's earring, two pieces.
 
-**When not to use it.** A part that is two pieces (the demo's earring: 411 and 358 px) — keep
+**When not to use it.** A part that is two pieces (reference-demo's earring: 411 and 358 px) — keep
 the lattice, which bridges islands, or split the part. And a part nothing deforms locally: at
 tolerance 1 the contour outline is dense, and on the examples' 13 parts the contour mesh used
-more vertices than the lattice at the same spacing (demo 1785 against 1431, sample 974 against
-852) while enclosing 5.8 and 9.8 times less transparent area (demo 25078 against 144782 px², sample
+more vertices than the lattice at the same spacing (reference-demo 1785 against 1431, reference-sample 974 against
+852) while enclosing 5.8 and 9.8 times less transparent area (reference-demo 25078 against 144782 px², reference-sample
 6563 against 64445), with thinner triangles — smallest angles 2.46°–11.31° against the lattice's
-12.09°–45° (#106). Switched, every part that builds: the sample passes `check` (9 of 9;
-`TEXTURE_STRETCH` 1.227 → 1.384, ceiling 1.927); the demo's gate is green but `check` refuses
+12.09°–45° (#106). Switched, every part that builds: reference-sample passes `check` (9 of 9;
+`TEXTURE_STRETCH` 1.227 → 1.384, ceiling 1.927); reference-demo's gate is green but `check` refuses
 `TEXTURE_STRETCH` on its back hair (2.535: an edge of a contour triangle squeezed to 0.394 of
 its length in the idle), and with the back hair left on the lattice it passes 9 of 9 (1.388 →
 1.68).
 
-**Why the demo's back hair fails, and what passes** (issue #115). The squeezed edge is an
+**Why reference-demo's back hair fails, and what passes** (issue #115). The squeezed edge is an
 outline edge 2 px long, near the hair's tip, whose two ends sit either side of a step in the
 weight field: one end keeps `hairback_l1` at 0.031, the other drops it, because a weight under
 0.03 is dropped (`src/weights.ts`, the reference's `>= 0.03`). `hairback_l1` and `hairback_r2`
@@ -469,7 +476,7 @@ gives 1.316 on the contour mesh and 1.336 on the lattice: the lattice's 36 px ed
 step, the outline's 2 px edges show it. Interior vertices cannot change it — an outline edge is
 in every triangulation — so the background spacing does not move the figure (36, 24, 18 and
 12 px all give 2.535). Raising `tolerance` to 1.5 removes every short edge across a step (the
-shortest is then 8.2 px) and the part passes (1.345; with every buildable demo part switched,
+shortest is then 8.2 px) and the part passes (1.345; with every buildable reference-demo part switched,
 `check` passes 9 of 9 at 1.68), at 313 vertices against the lattice's 268 and 18155.5 px²
 enclosed against 58346. The window is one value wide on this part: 1.25 keeps the same 2 px
 edge (2.535) and 1.75 leaves art uncovered at margin 1. No other switched part of either
@@ -481,7 +488,7 @@ generated fixture of `tools/local_compare.ts` it reached a local shape error (0.
 in #106, the same figures).
 
 **On real parts the generated result did not carry over unchanged** (issues #107 and #110,
-`bun tools/real_compare.ts --work <dir> --examples demo,sample --builds --sweep`, a declared test region on two demo
+`bun tools/real_compare.ts --work <dir> --examples reference-demo,reference-sample --builds --sweep`, a declared test region on two reference-demo
 parts — a place to measure, not a claim about the painting; the region spacing chosen by vertex
 count alone). On `bottomwear` (a region of radius 65 px inside the part) the contour mesh passes
 the same rule: 336 vertices against the lattice's 352, largest local shape error 1.535 px against
@@ -922,7 +929,7 @@ that crosses the region with no point of it inside to split at — is still stop
 ### Recipe: expressions and other named animations
 
 The package proposes no expression and keys nothing but the idle; what it gives is a rig whose
-face is bones (`eye_r`, `eye_l`, `brow_r`, `brow_l`, `mouth` on `sample`) and one door for
+face is bones (`eye_r`, `eye_l`, `brow_r`, `brow_l`, `mouth` on `reference-sample`) and one door for
 animations you write over them, `motion.animations_from` (the row above, issue #183). Write a
 file in rig-c's motion-spec shape beside the config and name it:
 
@@ -941,8 +948,8 @@ file in rig-c's motion-spec shape beside the config and name it:
 ```
 
 `build` writes `surprised` into `rig/motion.json` after `idle`, gates it with the rig, and
-`check` names it on a line of its own (`examples/sample` carries one, `animations.json` with `hop`, the
-recipe below). With exactly this file beside `examples/sample`'s config in its place,
+`check` names it on a line of its own (`examples/reference-sample` carries one, `animations.json` with `hop`, the
+recipe below). With exactly this file beside `examples/reference-sample`'s config in its place,
 `build` printed (this tree, rig-c as `package.json` pins it):
 
 ```
@@ -963,7 +970,7 @@ passed rigc's gate and nothing else — no seam, stretch or hole bar has read it
 
 A jiggle (a bust, the hips) is a patch of one part that lags behind the body. The package
 proposes none and judges none; what it gives is the three pieces to build one, all in the
-config. `examples/sample` carries a worked one (issue #183, PR #187), and its config is the
+config. `examples/reference-sample` carries a worked one (issue #183, PR #187), and its config is the
 fragment below, cut to the bust:
 
 ```jsonc
@@ -983,14 +990,14 @@ fragment below, cut to the bust:
   bone and no constraint; it is yours, and nothing keys it — the constraint moves it.
 - **A region in a `contour` (or `auto`) mesh** that hands the patch to that bone: weight 1
   inside the shape, falling to 0 across `band` (*A contour mesh*, above). A `grid` mesh carries
-  no region, so the part moves from the lattice to the outline mode first; `sample` traced
+  no region, so the part moves from the lattice to the outline mode first; `reference-sample` traced
   `topwear` at its former grid spacing (18) and `bottomwear` at 28. Place the shape on the
-  patch alone: on `sample` one circle at the hip centre reached the clasped hands, painted
+  patch alone: on `reference-sample` one circle at the hip centre reached the clasped hands, painted
   inside `bottomwear`, so the hips are two side circles (`hip_r`, `hip_l`) on one bone.
 - **A `physics` constraint** on that bone in `constraints`, in rig-c's shape; every field but
   the bone is rigc's to accept.
 
-`build` on `sample` as tracked (PR #187; the values above are the ones tuned for its `hop`, issue #183):
+`build` on `reference-sample` as tracked (PR #187; the values above are the ones tuned for its `hop`, issue #183):
 
 ```
 check: PASS; 9 of 9 bar(s) measured, 0 skipped
@@ -1004,7 +1011,7 @@ by whatever the spring is still doing; the bar is read off the same rig with eve
 constraint left out, and the constraints left out are listed, reported and not judged
 (`check.json`'s `loop_physics`, PR #184). It is not a measure of the jiggle.
 
-**Limits.** The idle drives the spring, and a slow idle barely moves it. Measured on `sample`
+**Limits.** The idle drives the spring, and a slow idle barely moves it. Measured on `reference-sample`
 (PR #187, rig-c `render --geometry`, the physics build against the same build with
 `constraints` removed): under its 4 s breath (`chest` `translatey` amplitude 1.3 px), the bust
 moves at most 0.155 rig px (idle frame 3, t 0.25 s); the hips move 0.000 at all 49 frames,
@@ -1014,7 +1021,7 @@ frequency, about 0.2 px (PR #187, from the definition): no setting makes a 4 s b
 jiggle (with the values tracked now, `bust_phys` inertia 0.25, strength 120, damping 0.92, the
 idle moves the bust at most 0.066 rig px, idle frame 2). Faster keys on the parent bone — a hop,
 a turn, in a named animation (the recipe above) or a consumer's own — are what the spring
-answers. `sample`'s `animations.json` holds one, `hop` (1 s: `hip` `translate` y down 5, up 24,
+answers. `reference-sample`'s `animations.json` holds one, `hop` (1 s: `hip` `translate` y down 5, up 24,
 landing at -6 at 0.45 s, settling at 0.55 s; nothing keys the jiggle bones): rendered at 30 fps
 against the same build without its constraints, the bust moves at most 6.583 rig px and the hips
 (`hip_phys` inertia 0.2, strength 160, damping 0.88, mass 1.5) at most 4.432 (frame 13, the fall
@@ -1059,7 +1066,7 @@ not run through. Raising the bound is the author's choice, not the package's; mo
 is the fix.
 - **An added animation can move the idle's figures.** The render's viewport is fitted over
   every animation, and the idle frames share it, so an animation that travels further than the
-  idle redraws the idle at another size: adding `hop` to `sample` narrowed the idle render from
+  idle redraws the idle at another size: adding `hop` to `reference-sample` narrowed the idle render from
   201 to 198 px wide and moved `check.json`'s `BREATH_VISIBLE` `torso_heat_mean` from 7.8 to
   7.705, every status unchanged, although `check` reads the idle alone.
 
@@ -1109,7 +1116,7 @@ full loader before its assemble stage writes anything.
 5. **See-through, head run** (external), on that crop. See-through's own second,
    head stage does not replace it: that stage's layers are pasted back at the full
    run's scale on every route that was read (README *Getting See-through layers*),
-   so the full run's eyes stay at its density — 22×13 px for the demo's right eye
+   so the full run's eyes stay at its density — 22×13 px for reference-demo's right eye
    white at `resolution` 1024, against 60×38 px in the head run.
 6. `rig-parts assemble --propose-plan --source … --full … --head … --config config.json`
    → paste `plan` and `extend_below_crop` into `config.assemble`. Config: the
@@ -1197,8 +1204,8 @@ proposal in as the steps above say (`RL01`); every step must exit 0.
 | --- | --- | --- | --- |
 | `layers` | the table, then the `WARN` lines | every tag the plan will need has opaque pixels; one `face` in the head run; `0 WARN line(s)` | a run whose layer PNG is not its box's size (`LAYERS_PNG_MATCHES_BBOX`); a `WARN  PLAN_LAYER_…` line (§6, *Plausibility*) |
 | `sheet` of both runs | the tile list (and the sheet, if you can see) | eyes, irises, lashes and brows as left/right pairs in the head run | a head box that cut off an ornament: move `head_box`, re-run the head crop |
-| `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px`, then `uncovered holes (8-connected): N` and the largest five as `uncovered hole K: <px> px at x,y wxh (between "<part>" <px> px, …)`; and look at `render/recomposite_error_rig.png`. Between the part lines and the totals, one `cut: "<part>" opaque <n> = "<part>" <kept> + "<piece>" <taken> …` line per part an `assemble.cuts` entry cut (below; it ends `; under <n> px filled, <m> px left empty` when a cut of that part has `under`), then one `fringe pushed back: "<part>" <px> px, where the painting shows "<holder>" <px> px, …` line per part whose fringe was cleared (below) | on the examples: `sample` 0.83 / 98.0 % / 4,359 / 1,185, 259 holes, the largest 94 px; `demo` 2.34 / 95.8 % / 10,340 / 1,564, 453 holes, the largest 70 px (default rule) — many slivers along part edges, no hole a region could hide | one large hole: part of the figure is in no layer — a plan entry is missing, hair left the head crop sideways (the demo's `hair_back` is taken from the full run for that reason), or See-through split one garment into two and left the space between them in neither (a skirt as two trouser legs); the `between` parts say where. When neither run holds it at all, an `assemble.patches` entry cuts it from the painting (below) |
-| `propose` | `note:` lines, `LINT` lines, the `coverage` lines, `landmarks.png`, `basis.json` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter; the `coverage:` summary says how many bones that verdict covers — a `not checked` bone was read by no check (its line says why), and a `ratio` or `fallback` bone in `basis.json` is a guess | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck); a `hanging strand … -- no chain proposed` note — that strand hangs stiff until you add a chain down the x and rows it names (§3); a `no blink: …` or `blink without brows: …` note — the idle will not blink (or its brows will not drop), because no part came from an `eyewhite` (or `eyebrow`) layer; the note names the tags looked for; a `no eyewhite part for eye_<s> …` note — the iris and lash parts it names ride `head` and do not blink, because no `eyewhite-<s>` part made that side's eye bone: take the eyewhite from the other run, or keep them on `head`; a `no face part: face box derived from …` note (always the first) — `head`, `neck` and every face-height scale come from a box guessed off the hair and neck (§3): check `head` and `neck` on `landmarks_head.png` and move them; when it adds `the blink shuts the eyes over no face part`, read `BLINK_NO_HOLE` after `check` — an eye with no face under it can open a hole (the `sample` with only its face removed: 587 px). Under `--keypoints`: the `lint rule set:` line first (joints, or screen and why), then the joint notes — `missing: the rule "…" placed bone X instead` is a bone still guessed; `not used — …` names why an arm's joints did not place its sleeve (for a wrist on no part, the nearest part and the `--wrist-snap` that would bind it); a `wrist snap: …` note is a wrist bound past 15 px by the flag — check that chain's tip on `landmarks.png`; a `one handwear part holds both wrists` note is two chains on one mesh — cut the part with `assemble.cuts` to separate them; `LINT chest at … is not between the neck joint …`, `LINT hip at … is not past chest …`, `LINT hip at … is nearer the neck joint …` and `LINT <chain><i> at … does not advance from <s>_shoulder toward <s>_wrist` are the joint-frame lines: move that bone between, past or along the joints they name |
+| `assemble` | one line per part, the `pixels:` totals (opaque = visible + occluded; taken; visible but not projected), then `recomposite vs source: mean \|d\|, within 8, error px > 40, uncovered error px`, then `uncovered holes (8-connected): N` and the largest five as `uncovered hole K: <px> px at x,y wxh (between "<part>" <px> px, …)`; and look at `render/recomposite_error_rig.png`. Between the part lines and the totals, one `cut: "<part>" opaque <n> = "<part>" <kept> + "<piece>" <taken> …` line per part an `assemble.cuts` entry cut (below; it ends `; under <n> px filled, <m> px left empty` when a cut of that part has `under`), then one `fringe pushed back: "<part>" <px> px, where the painting shows "<holder>" <px> px, …` line per part whose fringe was cleared (below) | on the examples: `reference-sample` 0.83 / 98.0 % / 4,359 / 1,185, 259 holes, the largest 94 px; `reference-demo` 2.34 / 95.8 % / 10,340 / 1,564, 453 holes, the largest 70 px (default rule) — many slivers along part edges, no hole a region could hide | one large hole: part of the figure is in no layer — a plan entry is missing, hair left the head crop sideways (reference-demo's `hair_back` is taken from the full run for that reason), or See-through split one garment into two and left the space between them in neither (a skirt as two trouser legs); the `between` parts say where. When neither run holds it at all, an `assemble.patches` entry cuts it from the painting (below) |
+| `propose` | `note:` lines, `LINT` lines, the `coverage` lines, `landmarks.png`, `basis.json` | no LINT line: every chain link lies on its mesh's art, and the hip is below the chest and the figure's top quarter; the `coverage:` summary says how many bones that verdict covers — a `not checked` bone was read by no check (its line says why), and a `ratio` or `fallback` bone in `basis.json` is a guess | a link off the art (a bone on the background) — move it onto the layer; `LINT hip at [x, y] is not below chest at [x, y]: …` or `LINT hip at [x, y] is above 0.25 of the figure height (figure y T..B, so hip y must be at least L): a hip at the shoulders` — move `hip` down to the waist (and `chest` between it and the neck); a `hanging strand … -- no chain proposed` note — that strand hangs stiff until you add a chain down the x and rows it names (§3); a `no blink: …` or `blink without brows: …` note — the idle will not blink (or its brows will not drop), because no part came from an `eyewhite` (or `eyebrow`) layer; the note names the tags looked for; a `no eyewhite part for eye_<s> …` note — the iris and lash parts it names ride `head` and do not blink, because no `eyewhite-<s>` part made that side's eye bone: take the eyewhite from the other run, or keep them on `head`; a `no face part: face box derived from …` note (always the first) — `head`, `neck` and every face-height scale come from a box guessed off the hair and neck (§3): check `head` and `neck` on `landmarks_head.png` and move them; when it adds `the blink shuts the eyes over no face part`, read `BLINK_NO_HOLE` after `check` — an eye with no face under it can open a hole (the `reference-sample` with only its face removed: 587 px). Under `--keypoints`: the `lint rule set:` line first (joints, or screen and why), then the joint notes — `missing: the rule "…" placed bone X instead` is a bone still guessed; `not used — …` names why an arm's joints did not place its sleeve (for a wrist on no part, the nearest part and the `--wrist-snap` that would bind it); a `wrist snap: …` note is a wrist bound past 15 px by the flag — check that chain's tip on `landmarks.png`; a `one handwear part holds both wrists` note is two chains on one mesh — cut the part with `assemble.cuts` to separate them; `LINT chest at … is not between the neck joint …`, `LINT hip at … is not past chest …`, `LINT hip at … is nearer the neck joint …` and `LINT <chain><i> at … does not advance from <s>_shoulder toward <s>_wrist` are the joint-frame lines: move that bone between, past or along the joints they name |
 | `compare` | one line per pair (origin, parent, tip, length, direction — or SKIP and why), then the per-row summary, the unmapped bones of each side, `required:`, each side's roles and the `controls:` line | proposal against the config you corrected: the rows you changed and no others. Config against the `rig.json` `build` writes for it: measured on both examples, every origin within 6.19e-7 px (the rig's offsets are written to 6 places) and every chain link's tip and length within 4.99e-4 px (`length` is written to 3), printed to three places as `0.000` (a signed figure as `+0.000` or `-0.000`); `parent … is the right's ancestor at depth 2, <bone>_ctl between` for every keyed mesh bone, no `DIFFERENT` and no `NOT MAPPED` | `parent DIFFERENT: left a, right b` — a bone hangs from another parent than the other side's; `frames not related` — a rig with no stage (`skeleton.width`/`height`), two configs at different `rig_scale`: the distance rows SKIP, so declare the frame in a `--map` file if the author knows it; `FAIL  STRUCTURE_REQUIRED_PRESENT` — a bone the map requires is missing through its pairs |
 | `rig` (inside `build`) | one line per mesh: vertices, triangles, bones, influences, `cover`; the `bones` line; the `idle keys` line; then rigc's gate lines (with A15's declared SKIP under `--idle-keys direct`); in `rig.json`, each chain link's (or its `_ctl`'s) `length` and `rotation` | `cover 1.00000` on every mesh, both gate summaries `0 failed` (the compile and the packed pages); every link's `length` the distance to the next link and `rotation` its direction (Spine degrees, counter-clockwise, y up, local to the parent), every offset under it — a child bone's `x, y`, a weight's bind `x, y`, a region's `x, y` — in that turned frame, and a region on a link carrying `rotation` that turns it back upright. Nothing moved: `flattenRig` (`src/rig.ts`) turns every offset back and gives the unturned numbers | `RIG_LATTICE_ONE_LOOP`: change that mesh's `grid` |
 | `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:` (and `loop physics:` when the rig declares a physics constraint, §7), `seam:`, the six judgement lines, `RECOMPOSITE_HOLES` and, under `--source`, `SETUP_POSE_VS_SOURCE` (§7), `check.json`; the last line says how many of the nine bars measured and names the ones that said SKIP | `check: PASS; 9 of 9 bar(s) measured, 0 skipped` on the examples, and a judgement line SKIP only where the character lacks what it reads; on a rig spec with no `parts.json` or no `idle` (a merged rig, §7 *Measuring a rig rig-parts did not assemble*), PASS with the skipped bars named | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
@@ -1214,25 +1221,27 @@ every frame (255 median-cut colours and one transparent entry, alpha graded per
 entry, no dithering, filter None) — and is the small file to show. `idle.gif`
 (`loop --out x.gif`) is the same median cut in a GIF. The indexed APNG and the GIF
 print their palette error, per channel over R, G and B of every frame (and alpha's
-max for the APNG); a figure is a measurement of the file, not a bar. On the demo:
-13,645,503 B lossless, 1,706,719 B indexed and 1,812,288 B GIF, both palette files at
-max 57, mean 1.601 — the two share one quantiser, so their error is the same by
-construction and the size is the difference. That is `--seam silhouette` (the README's
-animation, rig-c 2.1.3, and 2.10.1 to the byte); with `--pack-shape rect` the same
-build writes 13,645,350, 1,706,520 and 1,812,238 B, and with `--page-edges pot
---pack-shape rect` 13,645,519, 1,706,785 and 1,812,625 B, all at the same error (2.10.1
-reproduces both). The loop shows the blink closed: the
+max for the APNG); a figure is a measurement of the file, not a bar. On the demo
+(the README's animation since issue #227: `build --loop`, default flags, rig-c 2.33.0):
+5,832,634 B lossless, 827,857 B indexed and 889,063 B GIF, both palette files at
+max 65, mean 0.879 — the two share one quantiser, so their error is the same by
+construction and the size is the difference. On reference-demo with `--seam silhouette`
+(the README's animation until issue #227, rig-c 2.1.3, and 2.10.1 to the byte):
+13,645,503 B lossless, 1,706,719 B indexed and 1,812,288 B GIF at max 57, mean 1.601;
+with `--pack-shape rect` the same build writes 13,645,350, 1,706,520 and 1,812,238 B,
+and with `--page-edges pot --pack-shape rect` 13,645,519, 1,706,785 and 1,812,625 B,
+all at the same error (2.10.1 reproduces both). The loop shows the blink closed: the
 eyes' hold is at least one 12 fps frame (below), so whatever `motion.blink.t` is, one
 idle frame lands inside it, and `check.json`'s `BLINK_NO_HOLE.idle_frames_closed`
-names it — `[29]` on both examples.
+names it — `[29]` on the two reference examples and on the demo.
 
 `--seam near-white` (the default) is the reference implementation's rule: where the
 flat stack of parts differs from the painting by more than 60, the top part takes the
 painting's colour — except where the painting is near-white, which protects the page
 and also every white garment. `--seam silhouette` protects near-white pixels only
-outside the figure. On the demo it lowers recomposite error pixels from 10,340 to
-8,644 (`assemble`'s `error px > 40`, at v1.5.2); on the sample it changes nothing
-(4,359 under both). At v0.14.0 the demo's were 11,050 and 9,540, and no check bar
+outside the figure. On reference-demo it lowers recomposite error pixels from 10,340 to
+8,644 (`assemble`'s `error px > 40`, at v1.5.2); on reference-sample it changes nothing
+(4,359 under both). At v0.14.0 reference-demo's were 11,050 and 9,540, and no check bar
 changed. The default stays
 the reference's so the examples stay comparable with it.
 
@@ -1253,8 +1262,8 @@ and a cleared bridge to opaque art is put back, so no part gains an island
 (`CONTOUR_ONE_ISLAND` reads the islands it read before). `parts.json` records each part's cleared pixels by holder
 (`fringe_pushed_back`), the counts in it are taken after, and the assemble line above
 names them. On the examples (default flags, measured against the v0.14.0 build of
-the same inputs): `demo` 1,193 px over 16 parts, recomposite error pixels 11,050 →
-10,340; `sample` 276 px over 15 parts, 4,512 → 4,359; uncovered error pixels and
+the same inputs): `reference-demo` 1,193 px over 16 parts, recomposite error pixels 11,050 →
+10,340; `reference-sample` 276 px over 15 parts, 4,512 → 4,359; uncovered error pixels and
 holes unchanged on both, `check` 9 of 9 on both. The `--project` comparison in
 this section and the `SETUP_POSE_VS_SOURCE` example figures in §7 were measured
 before it, at v0.14.0; the `--seam` figures above are v1.5.2's.
@@ -1272,10 +1281,10 @@ to 2.1.3's):
 
 | build | page | covered | page opaque | page / figure |
 | --- | --- | --- | --- | --- |
-| demo, `pot` | 1024x2048 | 56.3 % | 36.8 % | 2.651 |
-| demo, `free` | 967x1338 | 91.2 % | 59.7 % | 1.636 |
-| sample, `pot` | 512x2048 | 49.7 % | 28.7 % | 3.294 |
-| sample, `free` | 479x1166 | 93.4 % | 53.9 % | 1.755 |
+| reference-demo, `pot` | 1024x2048 | 56.3 % | 36.8 % | 2.651 |
+| reference-demo, `free` | 967x1338 | 91.2 % | 59.7 % | 1.636 |
+| reference-sample, `pot` | 512x2048 | 49.7 % | 28.7 % | 3.294 |
+| reference-sample, `free` | 479x1166 | 93.4 % | 53.9 % | 1.755 |
 
 rigc's help states the cost: *"a smaller page, at the cost of region attachments
 sampling within 1 LSB of the loose build rather than exactly"*. On these builds
@@ -1284,10 +1293,10 @@ in any channel:
 
 | example | idle frames that differ | pixels that differ (all 49 frames) | max \|d\| |
 | --- | --- | --- | --- |
-| demo | 49 of 49 | 2,373 | 1 |
-| sample | 49 of 49 | 651 | 1 |
+| reference-demo | 49 of 49 | 2,373 | 1 |
+| reference-sample | 49 of 49 | 651 | 1 |
 
-Only one check figure moved. It had no bar: sample's reported screen-space face
+Only one check figure moved. It had no bar: reference-sample's reported screen-space face
 mean in `STILL_REGIONS_DARK`, 11.475 under `pot` and 11.472 under `free` (a pixel
 figure the line no longer reports since issue #123; it reads geometry, which the page
 does not enter). Every
@@ -1312,10 +1321,10 @@ both shapes and both edges (the full entry, spine-core 4.3.13 beside it),
 
 | build | page | page area | covered | page opaque | page / figure |
 | --- | --- | --- | --- | --- | --- |
-| demo, `rect` | 967x1338 | 1,293,846 | 91.2 % | 59.7 % | 1.636 |
-| demo, `polygon` | 922x1348 | 1,242,856 (−3.9 %) | 95.0 % | 62.1 % | 1.571 |
-| sample, `rect` | 479x1166 | 558,514 | 93.4 % | 53.9 % | 1.755 |
-| sample, `polygon` | 477x1151 | 549,027 (−1.7 %) | 95.0 % | 54.8 % | 1.725 |
+| reference-demo, `rect` | 967x1338 | 1,293,846 | 91.2 % | 59.7 % | 1.636 |
+| reference-demo, `polygon` | 922x1348 | 1,242,856 (−3.9 %) | 95.0 % | 62.1 % | 1.571 |
+| reference-sample, `rect` | 479x1166 | 558,514 | 93.4 % | 53.9 % | 1.755 |
+| reference-sample, `polygon` | 477x1151 | 549,027 (−1.7 %) | 95.0 % | 54.8 % | 1.725 |
 
 Covered is Σ region rectangles over page area, as rigc prints it; under `polygon` the
 rectangles may overlap where a hull leaves room, so it is not a union and can exceed
@@ -1328,8 +1337,8 @@ idle --fps 12 --max 640`, compared frame by frame, max over R, G, B and A):
 
 | example | idle frames that differ | pixels that differ (all 49 frames) | max \|d\| |
 | --- | --- | --- | --- |
-| demo | 49 of 49 | 2,594 | 1 |
-| sample | 49 of 49 | 740 | 1 |
+| reference-demo | 49 of 49 | 2,594 | 1 |
+| reference-sample | 49 of 49 | 740 | 1 |
 
 That is the class `free` already costs (the table above, measured by the same
 comparison), a little larger. No figure in `check.json` moved but `pack_mode`: every
@@ -1339,11 +1348,11 @@ they are byte-identical to rigc 2.0.3's `--page-edges free` build of the same ri
 skeleton JSON differs only in its relative `images` path), and selftest `CK53` holds
 `rect` to rigc's own rectangle page.
 
-The hull ceiling (rig-parts #58: hull area over rectangle area, 0.812 on demo and
-0.814 on sample) is not what the packer realises here: the hollows inside the meshes'
+The hull ceiling (rig-parts #58: hull area over rectangle area, 0.812 on reference-demo and
+0.814 on reference-sample) is not what the packer realises here: the hollows inside the meshes'
 rectangles are worth only what fits into them. On the polygon pages, read off the
-atlas, demo's packed rectangles overlap in 21 pairs (17 a region attachment inside a
-mesh's rectangle, 4 a mesh inside another's) and sample's in 12 (10 and 2); no two
+atlas, reference-demo's packed rectangles overlap in 21 pairs (17 a region attachment inside a
+mesh's rectangle, 4 a mesh inside another's) and reference-sample's in 12 (10 and 2); no two
 region attachments overlap. Meshes in place of regions would be rigc's stage 2 of
 polygon packing (firejune/rigc#1093), which rigc measured and folded: on the three
 production rigs most favourable to it, it adds 0.15 % of the rectangle area over
@@ -1356,7 +1365,7 @@ so a part a few pixels wide (a lash, a brow, an iris) takes none. `--project vis
 keeps the erosion only along a rim where a later layer of the run is in front, and
 takes every other top-most `alpha >= 250` pixel; neither rule takes a fringe pixel
 (alpha below 250). On the examples it lowered the pixels that are visible but not
-projected from 36,227 to 22,476 (`sample`) and 76,801 to 49,672 (`demo`), recomposite
+projected from 36,227 to 22,476 (`reference-sample`) and 76,801 to 49,672 (`reference-demo`), recomposite
 error pixels from 4,512 to 4,116 and 11,050 to 9,820, and the check seam from 0.207 to
 0.206 and 0.326 to 0.325, with no other check figure changed. The default stays the
 reference's so the examples stay comparable with it. `build` takes both flags.
@@ -1375,10 +1384,10 @@ drive M mesh attachment(s) totalling V vertices …`, which the stage prints; wi
 mesh-driving bone keyed it declares nothing, because rigc refuses a declaration
 that switches nothing off. The two write the same slots, skins and keys (`RG18`).
 Measured on the examples with `bun tools/idle_cost.ts` (rig-parts #13): `direct`
-has 41 bones for the demo's 72 and 32 for the sample's 56; every shown mesh moves on
+has 41 bones for reference-demo's 72 and 32 for reference-sample's 56; every shown mesh moves on
 every idle frame under both (8 of 8 and 6 of 6, so 0 a dirty-skip renderer could
-skip); the pose costs 14.8 against 15.3 us per frame (demo) and 8.3 against 8.8 us
-(sample), the difference all in `updateWorldTransform`; the rendered idle frames
+skip); the pose costs 14.8 against 15.3 us per frame (reference-demo) and 8.3 against 8.8 us
+(reference-sample), the difference all in `updateWorldTransform`; the rendered idle frames
 differ by at most one level in a channel. The default stays `ctl`: the examples'
 `expected/rig.json` and `motion.json` are the reference's output, and the
 declaration is in the rig spec only, so `rigc validate <build> --profile spine-html`
@@ -1544,15 +1553,15 @@ above 8, the table's `opaque_px`), on the layer as read:
 | `background` | the share of opaque pixels whose own colour (straight alpha) has a min channel above 235 — the seam rule's "near-white", applied to the layer |
 | `area` | opaque pixels over the opaque pixels of the union of every **other** layer of the run ("the rest of the figure"); `-` when no other layer has any |
 
-Not over alpha above 0: See-through hazes whole canvases at alpha 1..8 (the demo's
+Not over alpha above 0: See-through hazes whole canvases at alpha 1..8 (reference-demo's
 full-run face is 99.1 % translucent that way and 4.2 % over its opaque pixels). Not
 over the whole union: a layer is part of it, so it could never be more than 1x.
 
 | rule | crossed when | [observed] on the two examples' 116 layers (four runs) |
 | --- | --- | --- |
-| `PLAN_LAYER_TRANSLUCENT` | judged, and `translucent` above 50 % | the most translucent judged layer is 17.8 % (sample, full run, `front hair`) |
-| `PLAN_LAYER_BACKGROUND` | judged, `background` above 50 %, and `translucent` above 25 % | the most background-coloured judged layer is 21.9 % (demo, head run, `topwear`, a white dress); of judged layers above 10 % background, the most translucent is 5.6 % (demo, full run, `handwear-r`) |
-| `PLAN_LAYER_OVERSIZED` | `area` above 4x | the largest is 1.681x (demo, head run, `back hair`, which fills the crop) |
+| `PLAN_LAYER_TRANSLUCENT` | judged, and `translucent` above 50 % | the most translucent judged layer is 17.8 % (reference-sample, full run, `front hair`) |
+| `PLAN_LAYER_BACKGROUND` | judged, `background` above 50 %, and `translucent` above 25 % | the most background-coloured judged layer is 21.9 % (reference-demo, head run, `topwear`, a white dress); of judged layers above 10 % background, the most translucent is 5.6 % (reference-demo, full run, `handwear-r`) |
+| `PLAN_LAYER_OVERSIZED` | `area` above 4x | the largest is 1.681x (reference-demo, head run, `back hair`, which fills the crop) |
 
 **Judged** means `area` at least 0.05x (or `-`). The two colour rules skip smaller
 layers on purpose: **[observed]** all 27 example layers of 150 px or more that are above
@@ -1749,7 +1758,7 @@ assemble*, at the end of this section):
 - `gate_spine-html.txt`: every summary line `(N passed, 0 failed)` — the packed build
   under the `spine-html` profile, gated once over the compile and once over the packed
   pages on disk. There is no `spine` gate of its own: `spine-html` holds every rule
-  `spine` measures (on the demo, rigc 1.5.1 and 2.0.3: `validate --profile spine`'s 14
+  `spine` measures (on reference-demo, rigc 1.5.1 and 2.0.3: `validate --profile spine`'s 14
   measured rules are all among the build's 23, the 15 others not in `spine`; rigc
   2.1.3 and 2.10.1: the same 14 among the build's 24, which adds
   `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` on the packed pass, 16 not in `spine`; `CH09`
@@ -1760,19 +1769,19 @@ assemble*, at the end of this section):
   prints and `check.json`'s `seam_frame_scale` holds (issue #216). The frame
   holds s² pixels per rig pixel, so a stack that parts from the render over a
   fixed area of the rig reads s² times as many frame pixels: on the public
-  `sample` a part moved 2 rig px read 400, 891 and 1,560 frame px over 40 at
-  s = 1.0, 1.5 and 2.0, and 400, 396 and 390 rig px; the sample as built read
+  `reference-sample` a part moved 2 rig px read 400, 891 and 1,560 frame px over 40 at
+  s = 1.0, 1.5 and 2.0, and 400, 396 and 390 rig px; reference-sample as built read
   3, 3 and 7 frame px [measured, issue #216]. Divided by s² the bar reads the
   same rig at every scale, and at s = 1 it is the reference's count. The mean
   is a share of the frame and needs no such division (0.242, 0.188 and 0.226 on
-  the sample as built; 0.353, 0.305 and 0.340 with the part moved).
+  reference-sample as built; 0.353, 0.305 and 0.340 with the part moved).
   `seam_px_over_40` and `seam_px_over_80` stay frame pixels, and so does each
   pair's count below. The bar reads one
   frame, the setup-pose still, never the idle. When it fails (or when `check
   --seam-pairs` asks, pass or fail), the pixels over 40 are split by the pair of
   parts that answers for each (issue #202): the two parts drawn last among those
   whose art (alpha above 0) lies in the 2x2 rig pixels the composite's bilinear
-  sample reads for that frame pixel, lower first, `(no art)` standing in where
+  reference-sample reads for that frame pixel, lower first, `(no art)` standing in where
   fewer than two do. Each pair is a console line `seam pair <i> of <n>: "<a>" /
   "<b>" at the setup pose: <count> px over 40 (<count> over 80), frame box x
   <x0>..<x1>, y <y0>..<y1>, rig box …, picture seam/<i>_<a>_<b>.png` (in the
@@ -1818,8 +1827,8 @@ assemble*, at the end of this section):
   `loop_max_diff`; they are reported, not judged. A rig with none is measured from the
   idle render itself, exactly as before, and writes no such line or key.
 
-On the examples: `sample` 23/23, seam 0.207 with 0 pixels over 40, loop 0;
-`demo` (default rule) 23/23, seam 0.326 with 2 pixels over 40, loop 0.
+On the examples: `reference-sample` 23/23, seam 0.207 with 0 pixels over 40, loop 0;
+`reference-demo` (default rule) 23/23, seam 0.326 with 2 pixels over 40, loop 0.
 
 A green gate cannot see a wrong animation, so `check` also writes six **judgement
 lines** (issue #11; `TEXTURE_STRETCH`, issue #31), each a key of `check.json` and a console line
@@ -1836,10 +1845,10 @@ model itself fixes (a part on an unkeyed bone does not move, a lag is above 0, a
 is 0 pixels) is that value, not a margin — and where the model's value is an error
 the model fixes at "nothing moves" and the instrument reads exactly (the still regions,
 from geometry since issue #123), the bar is the arithmetic's own rounding, derived, not
-measured. A bar is set once, from the figures of the day it was set, and is not chased: the torso floor 3.809 is half of sample's 7.618, which reads 7.617 since the chain links are turned (issue #73), a factor of 1.9997. The figures are this port's, measured on
+measured. A bar is set once, from the figures of the day it was set, and is not chased: the torso floor 3.809 is half of reference-sample's 7.618, which reads 7.617 since the chain links are turned (issue #73), a factor of 1.9997. The figures are this port's, measured on
 the two examples [observed]:
 
-| line | measures | bar | `demo` | `sample` | SKIP when |
+| line | measures | bar | `reference-demo` | `reference-sample` | SKIP when |
 | --- | --- | --- | --- | --- | --- |
 | `BREATH_VISIBLE` | `topwear` parts rendered alone (`rigc render --slot`): heat mean over their box; `footwear` parts alone: heat max over theirs | torso mean ≥ 3.809; feet max ≤ 0 | 15.251; 0 | 7.617; 0 | no `topwear` or no `footwear` part |
 | `BLINK_NO_HOLE` | the setup pose with every `scaley` track on the eyewhite slots' bones held at its closed value, against the setup pose, at full size: pixels in the eyewhite box that show the page where the open eye had art | 0 px | 0 | 0 | no `eyewhite` part, or no `scaley` track on its bones goes below its first key |
@@ -1856,27 +1865,27 @@ centroid of every pixel that was not the background; its fields were `root_px` a
 mercy of which edge pixels the grid flips: over `--max` 620–660 the pixel figure
 scattered around the exact one by up to 0.3 frame px whatever the travel [observed,
 13 half-bands on the three examples and a variant], and every **root** half on every
-example travels 0.04–0.6 frame px, so the ratio's denominator was noise — sample's
-`bottomwear` read 4.187–6.849 over the sweep, demo's `sleeves` 2.960–6.503, and sample
+example travels 0.04–0.6 frame px, so the ratio's denominator was noise — reference-sample's
+`bottomwear` read 4.187–6.849 over the sweep, reference-demo's `sleeves` 2.960–6.503, and reference-sample
 with its skirt amplitudes ×0.1 read 0.512–13.53, FAIL or PASS by the grid. The exact
 reading of the same definition is the same at every size (4.007 on that skirt, a PASS).
 The fields are now `root_rig_px` and `tip_rig_px`, rig px, beside `instrument:
 "geometry"`, so an old and a new `check.json` are not read as one instrument. The bar
-is the one set from the pixel instrument (half of demo's `bottomwear` 2.945, by the
-rule above, not chased); demo's exact 3.222 clears it 2.19 times. The figures the two
+is the one set from the pixel instrument (half of reference-demo's `bottomwear` 2.945, by the
+rule above, not chased); reference-demo's exact 3.222 clears it 2.19 times. The figures the two
 instruments give the examples, and `scarf` (whose `bottomwear` is tracked in contour
 mode because its lattice fails the line — its README):
 
 | part | pixel, `--max 640` (until #118) | geometry |
 | --- | --- | --- |
-| `demo` `bottomwear`, `sleeves` | 2.990, 3.287 | 3.222, 4.721 |
-| `sample` `bottomwear`, `sleeves` | 4.396, 12.475 | 4.956, 11.830 |
+| `reference-demo` `bottomwear`, `sleeves` | 2.990, 3.287 | 3.222, 4.721 |
+| `reference-sample` `bottomwear`, `sleeves` | 4.396, 12.475 | 4.956, 11.830 |
 | `scarf` `handwear_r`, `handwear_l` | 6.242, 5.558 | 6.683, 5.345 |
 | `scarf` `bottomwear`, lattice / contour | 4.537 / 2.661 | 1.207 / 1.738 |
 
 The part rendered alone at up to `--max 8000` — the motion spanning pixels — converges
 on the geometric figure (`scarf`'s lattice `bottomwear` 1.337, 1.316, 1.285, 1.270 at
-1200, 2400, 4800, 8000), with one gap not explained: `sample`'s `bottomwear` tip reads
+1200, 2400, 4800, 8000), with one gap not explained: `reference-sample`'s `bottomwear` tip reads
 2.342 rig px there against 2.596 from geometry, its root agreeing to 0.4 %.
 
 **`STILL_REGIONS_DARK` is measured from geometry too, and its scope changed (issue #123).**
@@ -1889,8 +1898,8 @@ on the geometric figure (`scarf`'s lattice `bottomwear` 1.337, 1.316, 1.285, 1.2
 
 Both were means of about one level, and both moved with the grid. Over `--max` 620–660
 on the three examples:
-- demo read 1.03–1.16 times its calibration;
-- sample read 0.95–1.07;
+- reference-demo read 1.03–1.16 times its calibration;
+- reference-sample read 0.95–1.07;
 - scarf read 0.99–1.38, with its head-frame mean between 1.350 and 1.869.
 
 The feet half was a screen-space heat mean held to 3.244.
@@ -1902,7 +1911,7 @@ In all three examples `hair_front` is drawn over the face and weighted to `head`
 bang bones. Its art swings into the face outline, relative to the head, on every idle
 frame:
 
-| | `demo` | `sample` | `scarf` |
+| | `reference-demo` | `reference-sample` | `scarf` |
 | --- | --- | --- | --- |
 | deepest reach into the face | 2.816 rig px | 2.194 rig px | 2.479 rig px |
 | most face area covered on one frame | 89.395 rig px² | 50.605 rig px² | 31.908 rig px² |
@@ -1960,7 +1969,7 @@ reported `crossing` depth is the only instrument for it.
 **Before and after, the same builds, only `IDLE_MAX_PX` changed** (scratch copies of the
 tree):
 
-| `--max` | before: face mean / calibration (ratio), feet mean, demo · sample · scarf | after: face `max_rig_px`, feet `max_rig_px`, all three |
+| `--max` | before: face mean / calibration (ratio), feet mean, reference-demo · reference-sample · scarf | after: face `max_rig_px`, feet `max_rig_px`, all three |
 | --- | --- | --- |
 | 620 | 1.283 / 1.196 (1.07), 1.504 · 0.933 / 0.900 (1.04), 0 · 1.350 / 1.360 (0.99), 0 | 4.202e-13, 0 · 4.418e-13, 0 · 4.224e-13, 0 |
 | 640 | 1.328 / 1.145 (1.16), 1.619 · 0.898 / 0.897 (1.00), 0 · 1.869 / 1.352 (1.38), 0 | the same |
@@ -1978,7 +1987,7 @@ The selftest's planted cases (by hand):
 
 After them, one **reported line** with no bar:
 
-| line | reports | bar | `demo` | `sample` | SKIP when |
+| line | reports | bar | `reference-demo` | `reference-sample` | SKIP when |
 | --- | --- | --- | --- | --- | --- |
 | `RECOMPOSITE_HOLES` | `parts.json`'s `recomposite` block (§5), read rather than measured: `error_px`, `uncovered_error_px`, `hole_count`, and the largest hole's `px`, `box` (`x,y wxh`) and `borders` (`<part> <px> px`) | none — status `REPORTED`, never FAIL, and `PASS` does not read it | 1,564 px in 453 holes; largest 70 px at 351,155 6x22, `hair_back` 53 px, `hair_front` 12 px | 1,185 px in 259 holes; largest 94 px at 479,412 7x34, `sleeves` 42 px, `topwear` 40 px, `bottomwear` 6 px | `parts.json` has no `recomposite` block (the reference's files) |
 
@@ -1996,16 +2005,16 @@ look at `recomposite_error_rig.png` when the largest hole is more than a sliver.
 Under `--source <painting.png>`, a second reported line, also never a FAIL
 (issue #77):
 
-| line | reports | bar | `demo` | `sample` | SKIP when |
+| line | reports | bar | `reference-demo` | `reference-sample` | SKIP when |
 | --- | --- | --- | --- | --- | --- |
 | `SETUP_POSE_VS_SOURCE` | the setup pose against the painting, by `assemble`'s own `measureRecomposite` over the stage's pixels — `mean_abs` and `within_share` (mean channel, within 8), `error_px` (max channel over 40), `uncovered_error_px` (of those, where the pose has alpha 128 or less), `hole_count` and the largest hole's box — with `painting_px`, `stage_px`, `render_px` and `render_scale` beside them. The painting is resampled onto the stage as assemble resamples it (lanczos3, alpha dropped). rigc renders onto an opaque grey, so the pose over white and its alpha are read off a second still of the same pose with every slot tinted black; both are carried onto the stage with the seam's map turned round (bilinear) | none — status `REPORTED`; assemble applies no bar to the figures it measures, so none is derived here | 3.146 / 93.43 % / 12,399 / 1,732, 518 holes, the largest 61 px at 351,157 6x20 (assemble's recomposite: 2.391 / 95.81 % / 11,050 / 1,564, 453) | 1.095 / 97.30 % / 5,348 / 1,239, 313 holes, the largest 88 px at 479,416 6x29 (assemble's: 0.835 / 97.95 % / 4,512 / 1,185, 259) | not written without `--source` |
 
 The figures are assemble's by construction, not a second definition beside them;
 what differs is what they are taken of — the pose rigc draws, not the flat stack —
 and the gap between the two columns above is that drawing: the render's resampling at
-its scale (0.942 on the demo, 1.012 on the sample) and the warp back onto the stage,
+its scale (0.942 on reference-demo, 1.012 on reference-sample) and the warp back onto the stage,
 which soften every part edge by a pixel or two. It moves with the render's grid
-[observed, the demo's still rendered at four sizes: mean 2.663 at scale 1.0003, 3.091
+[observed, reference-demo's still rendered at four sizes: mean 2.663 at scale 1.0003, 3.091
 at 1.0073, 3.146 at 0.942, 3.186 at 1.884], so compare the line with itself across
 rigs or edits, and with `RECOMPOSITE_HOLES` for where a hole is, not digit for digit
 with the recomposite. On the examples the line reads the same with and without
@@ -2035,11 +2044,11 @@ What each figure is, and is not:
   chains of both examples are written the first way — so the reading folds a step into
   (−¼, ¼] of a cycle and reports amplitudes unsigned. A lag of a quarter cycle or more
   cannot be told from a lead. Tracks whose keys are not a sampled sine are listed as
-  `unread`, and a keyed bone under a keyed ancestor of another period (the demo's
+  `unread`, and a keyed bone under a keyed ancestor of another period (reference-demo's
   tassel under the head) is listed in `other_period` and not compared.
 - **Tip over root is a centroid, not a displacement.** Art entering or leaving a half
   moves its centroid too. The halves' mean heat was the brief's first choice and was
-  rejected: heat is texture times motion, and on the demo's sleeves the lower half's
+  rejected: heat is texture times motion, and on reference-demo's sleeves the lower half's
   mean heat is 1.1 times the upper half's while its centroid travels 3.7 times as far.
   The halves split the box across its rows, which assumes the part hangs — true of a
   front-facing standing figure, the only input this tool takes.
@@ -2047,9 +2056,9 @@ What each figure is, and is not:
   distorts a texture as much as stretch — an edge at half its rest length squeezes
   the texels on it by the factor an edge at twice its length spreads them — so the
   figure is max(ratio, 1/ratio), and on both examples the worst triangle is a
-  compression (demo 0.720, sample 0.815). The ceiling rule is applied to the quantity
+  compression (reference-demo 0.720, reference-sample 0.815). The ceiling rule is applied to the quantity
   whose zero means "nothing happened", as it is for heat: for a ratio that is |ln r|,
-  so twice demo's |ln 1.388| is ln(1.388²) = ln 1.926544 and sample clears it by 3.2
+  so twice reference-demo's |ln 1.388| is ln(1.388²) = ln 1.926544 and reference-sample clears it by 3.2
   times. Doubling the ratio itself (2.776) was rejected: its zero is not at 1, and it
   passes an edge drawn at 2.7 times its rest length. The rest is the art's own
   proportions — on both examples every rest edge equals its `uvs` edge times the
@@ -2080,7 +2089,7 @@ What each figure is, and is not:
   its depth is reported per slot in `crossing`, which no bar reads.
 - **The feet are measured in screen space.** They ride the root, which the idle does not
   key, so the screen is their own frame.
-  - Until #123 the feet half read the screen-space heat. On the demo the long skirt,
+  - Until #123 the feet half read the screen-space heat. On reference-demo the long skirt,
     drawn under the shoes, swings beside them and lit their rim to 1.622.
   - From the geometry, nothing drawn over the shoes enters them on any example, and
     the shoes move exactly 0.
@@ -2116,7 +2125,7 @@ it reads is there, and says SKIP with the reason when it is not:
 `PASS` reads every bar that measured, and the last console line says how many did:
 `check: PASS; 1 of 9 bar(s) measured, 8 skipped (loop, seam, …)` is a rig whose gate is
 green and nothing else was looked at. Without an idle no idle is rendered
-(`idle_frames/`, `contact.png` and `motion_heat.png` are not written). The demo's own
+(`idle_frames/`, `contact.png` and `motion_heat.png` are not written). Reference-demo's own
 rig directory, copied away from its `parts.json`, reads `4 of 9`: the gate, the loop,
 `CHAIN_LAG` and `TEXTURE_STRETCH`.
 
@@ -2152,7 +2161,7 @@ What is composed:
 
 - **Images are `<id>.<file>`, not `<id>:<file>`.** rig-c names an atlas region
   by its PNG's basename, and an atlas region line that holds `:` is read as a
-  `key: value` line: measured through rig-c 2.15.0 on the demo renamed
+  `key: value` line: measured through rig-c 2.15.0 on reference-demo renamed
   `demo:<name>` with images `demo:<file>`, `A07_ATLAS_TEXT_SHAPE` fails once per
   region; with the images under a `demo/` folder the rig gates green but the region
   keeps the bare basename, so two characters' `face` would collide. So the
@@ -2367,7 +2376,7 @@ is built (`CK83`–`CK85`, `RQ30`–`RQ35`).
 
 ## 8. What one character costs
 
-| step | sample | demo | source |
+| step | reference-sample | reference-demo | source |
 | --- | --- | --- | --- |
 | painting (GPU) | 20.2 s | 18.3 s | `generation.json` `elapsed_s`, in [parts-examples](https://github.com/rig-c/parts-examples) |
 | See-through full run (GPU) | 194.9 s | 198.5 s | `inputs/layers/full/meta.json` `elapsed_s` |
@@ -2376,12 +2385,12 @@ is built (`CK83`–`CK85`, `RQ30`–`RQ35`).
 
 About 6.5 minutes of GPU and under a minute of CPU per character, before any hand
 correction. The GPU figures are one run each on one machine; the painting's figure
-excludes choosing among seeds (the demo was chosen from eighteen candidates).
+excludes choosing among seeds (reference-demo was chosen from eighteen candidates).
 Since issue #33 `check` runs one more `rigc build` and one more idle render (the face
 calibration, §7); the idle's `geometry.json` is the one issue #31 already writes. The `build` row
 was not re-measured: A/B against the tree before that change, alternating on one
 machine under a load average of 5 to 11, the difference in user + sys was +5.6 and
-+0.8 s on the demo and +6.5 and −1.6 s on the sample over two rounds — inside what
-the load moves the same build by (the pre-change demo build alone took 43.6 to
++0.8 s on reference-demo and +6.5 and −1.6 s on reference-sample over two rounds — inside what
+the load moves the same build by (the pre-change reference-demo build alone took 43.6 to
 45.8 s there). Since issue #123 that build and render are gone again — the still regions read the
 idle's geometry — and the `build` row was not re-measured for it either.

@@ -125,7 +125,7 @@ it and the order as `scene.json` records it (AUTHORING §7, *Composing several
 characters*).
 
 `--seam silhouette` repairs more of the seam on white garments than the default
-`near-white` (the demo: 10,340 → 8,644 recomposite error pixels); the default is
+`near-white` (reference-demo: 10,340 → 8,644 recomposite error pixels); the default is
 the reference implementation's rule. `--project visible` lets thin visible parts
 (lashes, brows, irises) take the painting's pixels, which the default `core` rule
 erodes away. Name both rules you used in your report, and quote the assemble
@@ -159,7 +159,7 @@ leaves to you:
 - An expression or any other named animation: AUTHORING §3, *Recipe: expressions and other
   named animations* (`motion.animations_from`; built and gated with the rig, not measured).
 - A jiggle (a bust, the hips): AUTHORING §3, *Recipe: a soft region driven by physics* (a
-  config-only bone, a `contour` region on it, a `physics` constraint; `examples/sample`
+  config-only bone, a `contour` region on it, a `physics` constraint; `examples/reference-sample`
   carries one, and its slow idle barely moves it).
 
 A `RIG_RIGC_GREEN` or `CHECK_RIGC_GREEN`

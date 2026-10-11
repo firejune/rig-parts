@@ -3,7 +3,7 @@
  * Issue #159 Stage A: the automatic mode's `source.spacing` swept on the public
  * parts, everything else held, by one command:
  *
- *     bun run fetch-examples          # once: examples/{demo,sample,scarf}/inputs
+ *     bun run fetch-examples          # once: examples/{reference-demo,reference-sample,scarf}/inputs
  *     bun tools/auto_spacing_survey.ts > docs/evidence/auto-spacing-survey.md
  *
  * **The parts**: the eight the Stage B survey measures

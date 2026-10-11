@@ -59,7 +59,7 @@ import { assembleExample, installedRigc, missingInputs, pinnedInputs } from './a
 const ROOT = resolve(import.meta.dir, '..');
 
 /** The three public examples, in the order the census reads them. */
-export const EXAMPLES = ['demo', 'sample', 'scarf'] as const;
+export const EXAMPLES = ['reference-demo', 'reference-sample', 'scarf'] as const;
 
 type Pt = readonly [number, number];
 
@@ -691,7 +691,7 @@ export function blinkFixture(): FixtureCase {
 // --- the public sample's face ---------------------------------------------------
 
 /** The face fixture's parts on the public sample: the face, the lid's two lashes, and the other feature footprints. */
-export const FACE = { example: 'sample', part: 'face', lashes: ['lash_l', 'lash_r'], others: ['eyewhite_l', 'eyewhite_r', 'mouth'], eyewhites: ['eyewhite_l', 'eyewhite_r'] } as const;
+export const FACE = { example: 'reference-sample', part: 'face', lashes: ['lash_l', 'lash_r'], others: ['eyewhite_l', 'eyewhite_r', 'mouth'], eyewhites: ['eyewhite_l', 'eyewhite_r'] } as const;
 
 /** The bones from the root down to a bone, read off the config (root first). */
 export function ancestry(cfg: CharacterConfig, bone: string): string[] {

@@ -96,16 +96,29 @@ ships none and downloads none, and the terms that govern an image they produce
 are the terms of those models. A painting from any other source works the same
 way.
 
-The images this repository ships — `assets/demo-*` and `assets/sample-parts.png`
-— and the public examples' paintings were generated with
-`ponyDiffusionV6XL_v6StartWithThisOne.safetensors`,
-[Pony Diffusion V6 XL](https://civitai.com/models/257749), with no LoRA. The
-checkpoint itself is not redistributed. **[observed 2026-09-27]** CivitAI's model
-API reported for it `allowCommercialUse: ["Image", "RentCivit"]`,
-`allowNoCredit: false`, `allowDerivatives: true` and
-`allowDifferentLicense: false`: generated images may be used commercially and
-the model must be credited, which this line and the
-[parts-examples](https://github.com/rig-c/parts-examples) README do.
+The images this repository ships, and the public examples' paintings, were
+generated with one of two checkpoints, with no LoRA; neither checkpoint is
+redistributed.
+
+- `assets/demo-*` and the `demo` example's painting (since issue #227):
+  `hassakuXLIllustrious_v13StyleA.safetensors`,
+  [Hassaku XL (Illustrious)](https://civitai.com/models/140272) v1.3 Style A, by
+  Ikena. Credit, as sharing it requires: *Painted with Hassaku XL (Illustrious)
+  v1.3 Style A by Ikena (https://civitai.com/models/140272), Fair AI Public
+  License 1.0-SD.* **[observed 2026-10-11]** The model page's version and licence
+  section reads "All Models using the Fair AI Public License 1.0-SD license", and
+  CivitAI's model API reported `allowCommercialUse: ["RentCivit", "Rent", "Image"]`,
+  `allowNoCredit: false`, `allowDerivatives: true` and `allowDifferentLicense: false`.
+- `assets/sample-parts.png` and the `scarf`, `reference-sample` and `reference-demo`
+  paintings: `ponyDiffusionV6XL_v6StartWithThisOne.safetensors`,
+  [Pony Diffusion V6 XL](https://civitai.com/models/257749). **[observed
+  2026-09-27]** CivitAI's model API reported for it `allowCommercialUse: ["Image",
+  "RentCivit"]`, `allowNoCredit: false`, `allowDerivatives: true` and
+  `allowDifferentLicense: false`: generated images may be used commercially and
+  the model must be credited, which this line does.
+
+The [parts-examples](https://github.com/rig-c/parts-examples) README records
+both, beside each character's generation record.
 
 ## 4. Behaviour reimplemented, not code copied
 

@@ -4,7 +4,7 @@
  * no `band`) added to the automatic mode, against the same part without it, by
  * one command:
  *
- *     bun run fetch-examples          # once: examples/demo/inputs
+ *     bun run fetch-examples          # once: examples/reference-demo/inputs
  *     bun tools/auto_density_survey.ts > docs/evidence/auto-density-region.md
  *
  * **The part**: demo `bottomwear`, the one the Stage B survey
@@ -77,7 +77,7 @@ import { assembleExample, cell, installedRigc, missingInputs, type MotionCell, m
 import { placedMask, testRegion } from './real_compare.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
-const EXAMPLE = 'demo';
+const EXAMPLE = 'reference-demo';
 const PART = 'bottomwear';
 
 type Lists = ReadonlyArray<ReadonlyArray<{ bone: string; weight: number }>>;

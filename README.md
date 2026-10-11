@@ -14,63 +14,60 @@ input is silent.
 ## What you get
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/demo-source.png" alt="The demo painting: a generated full-body character in a white and pink frilled dress with long pink twin tails, standing with her hands clasped" height="420" />
+  <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/demo-source.png" alt="The demo painting: a generated full-body character in a white and pink idol dress with a layered skirt and long pink twin tails, standing with her arms held away from her body and her hands open" height="420" />
   <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/demo-idle.png" alt="The same character rigged, breathing, blinking once and swaying her hair, sleeves and skirt in a four-second loop" height="420" />
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/demo-parts.png" alt="Contact sheet of the painting and the 22 assembled parts it was split into: hair, dress, sleeves, shoes, face, eyes, brows, mouth and ornaments" width="100%" />
+  <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/demo-parts.png" alt="Contact sheet of the painting and the 23 assembled parts it was split into: hair, sleeves, legs, boots, neck, skirt, bodice, earrings, hair ornaments, ears, face, brows, mouth and eyes" width="100%" />
 </p>
 
 <p align="center"><em>
-The painting was generated for this repository with a public checkpoint (Pony
-Diffusion V6 XL) and no LoRA; its generation record, See-through layers and licence
-are in <a href="https://github.com/rig-c/parts-examples">parts-examples</a>
-(that repository keeps the name it was published under before this package's rename).
+The painting was generated for this repository with a public checkpoint (Hassaku XL
+(Illustrious) v1.3 Style A, by Ikena, Fair AI Public License 1.0-SD) and no LoRA, on a
+pose that holds the hands apart, then given one hand-detailer pass; its generation
+record, See-through layers and licence are in
+<a href="https://github.com/rig-c/parts-examples">parts-examples</a>.
 See-through ran twice, once on the whole figure and once on a square head crop.
-Then one command: <code>rig-parts build --seam silhouette --loop</code>. The
-proposer's bones, meshes, regions and motion were used <b>unedited</b>. Two input-stage
-edits were made by hand for the reference run this example reproduces: the head box
-was shifted down into the canvas (its proposal ran 118 px above the top edge;
-<code>propose --head-box</code> now makes that shift itself), and <code>hair_back</code>
-is taken from the full run, because the twin tails leave the head crop sideways
-(a plan edit). <code>check</code> printed, verbatim:<br/>
+Then one command: <code>rig-parts build --loop</code>. The proposer's bones, meshes,
+regions and motion were used as proposed but for one correction, written in the
+config beside the values it replaced: the two outer skirt chains were moved out to
+0.8 of the skirt's half-width (the proposal's, within 90 px of the centre of a skirt
+449 px wide, swung it about its middle and failed <code>TIP_OVER_ROOT</code>, 0.442
+against 1.4725; moved, 2.425). One input-stage edit: <code>hair_back</code> is taken
+from the full run, because the twin tails leave the head crop sideways (a plan edit).
+<code>check</code> printed, verbatim:<br/>
 <code>50 assertions: 24 measured (24 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"</code><br/>
 <code>loop: idle 49 frame(s) at 12 fps, f0000 vs f0048 (t = 4s): max |d| 0 (0 required)</code><br/>
-<code>seam: setup pose at 714x1216, scale 0.9422: mean |d| 0.234 (&lt;= 1.0), 2 px over 40, 2.25 rig px (the count / s²; &lt;= 50), 0 px over 80 (reported)</code><br/>
-<code>pack: skeleton.png 922x1348, 22 region(s), 94.9% covered, padding 2, page edges free, shape polygon</code><br/>
-<code>--seam silhouette</code> repaired the navy blobs the default rule leaves on the white
-blouse (recomposite error pixels 10,340 → 8,644); the default stays
-<code>near-white</code>, the reference implementation's rule, so the examples stay
-comparable with it. The loop is <code>rig-parts loop --palette</code>'s indexed APNG, 48 frames at
-12 fps, 1,706,719 bytes, one 256-entry palette at a measured error of max 57, mean 1.601
+<code>seam: setup pose at 654x1216, scale 0.9438: mean |d| 0.147 (&lt;= 1.0), 0 px over 40, 0.00 rig px (the count / s²; &lt;= 50), 0 px over 80 (reported)</code><br/>
+<code>pack: skeleton.png 1051x972, 23 region(s), 96.9% covered, padding 2, page edges free, shape polygon</code><br/>
+The loop is <code>rig-parts loop --palette</code>'s indexed APNG, 48 frames at
+12 fps, 827,857 bytes, one 256-entry palette at a measured error of max 65, mean 0.879
 per channel over every frame (the lossless APNG beside it, the exactness record, is
-13,645,503 bytes; the GIF, at the same error, 1,812,288). Frame 29 (2.417 s) is the
-closed eye: the blink holds for 0.084 s, one 12 fps frame rounded up, where the
-reference implementation held 0.04 s and no frame of its loop showed the eyes shut
-(issue #32); the painting is shown at half size, resampled and written
-by this package's PNG codec (nothing here encodes JPEG). <code>rig-parts sheet</code>
-made the contact sheet.
-</em></p>
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/sample-parts.png" alt="Contact sheet of the sample character's painting and its 20 parts" width="560" />
-</p>
-
-<p align="center"><em>
-The plain fixture, <code>examples/sample</code>: same checkpoint, no LoRA, and a rig
-built from its own proposal with no hand edit at all —
-<code>seam: setup pose at 379x1216, scale 1.0116: mean |d| 0.204 (&lt;= 1.0), 2 px over 40, 1.95 rig px (the count / s²; &lt;= 50), 0 px over 80 (reported)</code>, loop max |d| 0.
+5,832,634 bytes; the GIF, at the same error, 889,063). Frame 29 (2.417 s) is the
+closed eye: the blink holds for 0.084 s, one 12 fps frame rounded up; the painting is
+shown at half size, resampled and written by this package's PNG codec (nothing here
+encodes JPEG). <code>rig-parts sheet</code> made the contact sheet. Its
+<code>expected/</code> is this port's own build (<a href="examples/demo/README.md">examples/demo</a>).
 </em></p>
 
 <p align="center"><em>
-The hanging element, <code>examples/scarf</code>: same checkpoint, no LoRA, a very long
+The hanging element, <code>examples/scarf</code>: Pony Diffusion V6 XL, no LoRA, a very long
 red scarf whose ends hang free, and the first character run through this pipeline
 with its proposal used unedited — the only hand corrections are four
 <code>assemble.patches</code>, each answering an <code>uncovered hole</code> line.
 <code>check</code> passes 9 of 9 with every mesh on the lattice and with every mesh
 switched to the contour mode. It has no reference output: its <code>expected/</code>
 is this port's own build (<a href="examples/scarf/README.md">examples/scarf</a>).
+</em></p>
+
+<p align="center"><em>
+Two more characters are tracked as fixtures and not shown:
+<code>examples/reference-demo</code> and <code>examples/reference-sample</code>, the two
+the reference implementation ran (published as <code>demo</code> and <code>sample</code>
+until issue #227, which took the clasped-hands painting off display). Their
+<code>expected/</code> is that implementation's own output, which the selftest holds
+this port to.
 </em></p>
 
 ## What it takes in
@@ -102,7 +99,7 @@ page** (issue #2):
 
 | path under `--out` | what |
 | --- | --- |
-| `check/build/skeleton.json`, `skeleton.atlas`, `skeleton.png` | **the artifact** — Spine 4.3 skeleton data and one packed page, written by `rigc build --pack --page-edges free --pack-shape polygon` and gated under `spine-html`, which holds every rule `spine` measures (on the demo, rigc 2.1.3 and 2.10.1: the 14 rules `validate --profile spine` measures are among the build's 24; 16 are not in `spine`) |
+| `check/build/skeleton.json`, `skeleton.atlas`, `skeleton.png` | **the artifact** — Spine 4.3 skeleton data and one packed page, written by `rigc build --pack --page-edges free --pack-shape polygon` and gated under `spine-html`, which holds every rule `spine` measures (on reference-demo, rigc 2.1.3 and 2.10.1: the 14 rules `validate --profile spine` measures are among the build's 24; 16 are not in `spine`) |
 | `parts/*.png`, `parts.json`, `recomposite_rig.png`, `recomposite_error_rig.png` | the loose parts, each cropped to its alpha box; the record of where every part came from, how many of its pixels were re-taken from the painting, and the recomposite's uncovered holes with their boxes; the flat stack of parts; its error map — red where no part covers a pixel the painting has, blue where a part covers it in the wrong colour |
 | `rig/` | `rig.json` and `motion.json` in rig-c's spec, `mesh_report.json`, the padded `images/` |
 | `check/` | both gate files verbatim, the idle's frames and their `geometry.json` (skinned vertices per frame), `contact.png`, `motion_heat.png`, `check.json` (with `pack_mode`, the `--page-edges` and `--pack-shape` the page was packed under) |
@@ -110,7 +107,7 @@ page** (issue #2):
 
 The last lines of a green build are the pack line, printed beside the Spine example
 export's `spineboy.png` as a yardstick (a reference, not a bar), and the three
-artifact paths — here for `examples/sample`:
+artifact paths — here for `examples/reference-sample`:
 
 ```
 build: PASS — the packed atlas is the artifact; parts/ and rig/ are the intermediates it was made from
@@ -121,7 +118,7 @@ build: PASS — the packed atlas is the artifact; parts/ and rig/ are the interm
 ```
 
 The page's edges are free by default: rigc picks the least-area page the parts need,
-not the next power of two. On the two examples, packed by rectangles, that is 967x1338
+not the next power of two. On the two reference examples, packed by rectangles, that is 967x1338
 and 479x1166, where a power-of-two page is 1024x2048 and 512x2048, and covered goes from 56.3 % to 91.2 % and
 from 49.7 % to 93.4 %. The cost is the one rigc's help states: *"region attachments
 sampling within 1 LSB of the loose build rather than exactly"*. Measured on both
@@ -192,7 +189,7 @@ head run on `st_input_head.png` is what gives the eyes more pixels
 **See-through is required; ComfyUI is not.** The wrapper is one route among
 four, and `rig-parts comfy` is only a convenience for that route: every
 stage after See-through reads files, whichever route wrote them. On the two
-public examples each run took 171–199 s through the wrapper (each run's
+reference examples each run took 171–199 s through the wrapper, and on the demo 179 s (each run's
 `meta.json`, in [parts-examples](https://github.com/rig-c/parts-examples)).
 
 ### The two images See-through is fed: `inputs`
@@ -346,9 +343,9 @@ for each — a config fragment, the `check` lines it passes with, and its limit:
   image; `check` measures the idle alone.
 - [**A soft region driven by physics**](docs/AUTHORING.md#recipe-a-soft-region-driven-by-physics)
   (a bust, the hips): a bone the config authors, a contour-mode region that hands it the patch,
-  and a `physics` constraint on it; `examples/sample` carries one. Under the sample's slow
+  and a `physics` constraint on it; `examples/reference-sample` carries one. Under its slow
   4 s idle the bust moves at most 0.066 rig px and the hips not at all: the spring answers
-  faster keys on the body. The sample's `hop`, a named animation keying only `hip`, moves the
+  faster keys on the body. Its `hop`, a named animation keying only `hip`, moves the
   bust up to 6.583 and the hips up to 4.432 rig px; the region's `band` caps how far a patch may
   go before the texture-stretch ceiling, and `check` measures the idle alone.
 
@@ -357,15 +354,16 @@ for each — a config fragment, the `check` lines it passes with, and its limit:
 `parts.json` splits each part's opaque pixels (`opaque_px`) into `visible_px` — no
 later layer of its See-through run is opaque in front of them — and `occluded_px`,
 and counts the visible ones whose colour was not taken from the painting
-(`visible_not_projected_px`). On the three public examples, from the totals of their
+(`visible_not_projected_px`). On the four examples, from the totals of their
 `expected/parts.json` (the default `--project core`; `scarf`'s painting patches are
 whole painting pixels, so they count as taken):
 
 | | opaque px | occluded | visible, not projected | taken from the painting |
 | --- | --- | --- | --- | --- |
-| `sample` | 298,363 | 79,122 (26.5 %) | 35,979 (12.1 %) | 183,262 (61.4 %) |
-| `demo` | 765,924 | 202,343 (26.4 %) | 75,626 (9.9 %) | 487,955 (63.7 %) |
+| `demo` | 362,441 | 69,098 (19.1 %) | 67,164 (18.5 %) | 226,179 (62.4 %) |
 | `scarf` | 283,813 | 78,503 (27.7 %) | 56,699 (20.0 %) | 148,611 (52.4 %) |
+| `reference-sample` | 298,363 | 79,122 (26.5 %) | 35,979 (12.1 %) | 183,262 (61.4 %) |
+| `reference-demo` | 765,924 | 202,343 (26.4 %) | 75,626 (9.9 %) | 487,955 (63.7 %) |
 
 The occluded share is art the painting does not show — a back-hair layer, a neck, the
 parts of an ear under the hair — and is See-through's synthesis by necessity; it is
@@ -373,18 +371,19 @@ what the decomposition is for. The visible-but-not-projected share is synthesis 
 the painting was there to be taken: a part too thin for the reference rule's 5x5
 eroded core, an anti-aliased fringe below alpha 250, a rim beside a layer in front, a
 pixel refused for drift. `--project visible` keeps the erosion only along a rim with a
-layer in front, which takes that share to 22,476 (7.5 %) on `sample` and 49,672 (6.5 %)
-on `demo` (from the `parts.json` of a `--project visible` build). On the eleven thin
+layer in front, which takes that share to 22,476 (7.5 %) on `reference-sample` and 49,672 (6.5 %)
+on `reference-demo` (from the `parts.json` of a `--project visible` build). On the eleven thin
 head parts — brows, lashes, irises, eye whites, ears, mouth — it takes 296 of
-`sample`'s 1,289 visible pixels where `core` takes 110, and 824 of `demo`'s 2,162
+`reference-sample`'s 1,289 visible pixels where `core` takes 110, and 824 of `reference-demo`'s 2,162
 where `core` takes 343. What neither rule takes is the fringe: a per-pixel
 classification of those parts under `visible`, recorded with the change that added
-the flag, puts 813 of `sample`'s 993 still-unprojected pixels and 879 of `demo`'s
+the flag, puts 813 of `reference-sample`'s 993 still-unprojected pixels and 879 of `reference-demo`'s
 1,338 below alpha 250. Where such a fringe keeps the stack off the painting and a part
 beneath holds the pixel in the painting's colour, `assemble` clears it instead, and
 the assemble line and `parts.json` say how many pixels, of which part, over which
 (AUTHORING §5, *The fringe push-back*; the figures in this section were measured
-before it, at v0.14.0).
+before it, at v0.14.0, but for the `demo` row, which is its `expected/parts.json`
+as this port wrote it in issue #227).
 
 ## Requirements
 

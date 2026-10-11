@@ -231,7 +231,7 @@ the input and the machine. Measured: the evidence tools run every cell under a
 rig-c 2.23.0 (the same document's quiet timing table, a remote WSL runner, pool,
 load under 2); at rig-c 2.31.0 the whole rig stage of one automatic part, motion
 gate and acceptance loop included, took 1.1 s to 61.6 s on the eight parts the
-surveys switch, demo `bottomwear` the slowest at 12 gated builds, with a run-to-run
+surveys switch, reference-demo `bottomwear` the slowest at 12 gated builds, with a run-to-run
 spread of ±15 % on that part (pull request #152's paired exclusive timing, remote
 20-core runner; the surveys print wall time to standard error, not into the
 documents). On CI (`ubuntu-latest`), the last two green runs on `main` took 4 min
