@@ -527,21 +527,21 @@
     "legwear": "hip"
   },
   "motion": {
-    "duration": 4,
+    "duration": 3.3333333333333335,
     "tracks": [
       {
         "bone": "chest",
         "prop": "translatey",
-        "amp": 1.3,
-        "period": 4,
+        "amp": 2.96,
+        "period": 3.3333333333333335,
         "phase": 0,
-        "base": 1.3
+        "base": 2.96
       },
       {
         "bone": "chest",
         "prop": "scalex",
         "amp": 0.004,
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0,
         "base": 1.004
       },
@@ -549,14 +549,14 @@
         "bone": "head",
         "prop": "rotate",
         "amp": 0.9,
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0.12
       },
       {
         "bone": "neck",
         "prop": "rotate",
         "amp": 0.35,
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0.08
       },
       {
@@ -566,7 +566,7 @@
           1.4,
           2.4
         ],
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0.2,
         "lag": 0.08
       },
@@ -577,7 +577,7 @@
           -1.4,
           -2.4
         ],
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0.2,
         "lag": 0.08
       },
@@ -587,7 +587,7 @@
           1,
           2.2
         ],
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0.18,
         "lag": 0.1
       },
@@ -597,7 +597,7 @@
           0.8,
           1.76
         ],
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0.18,
         "lag": 0.1
       },
@@ -607,7 +607,7 @@
           1,
           2.2
         ],
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0.18,
         "lag": 0.1
       },
@@ -618,7 +618,7 @@
           0.6,
           1.2
         ],
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0.22,
         "lag": 0.08
       },
@@ -629,7 +629,7 @@
           -0.6,
           -1.2
         ],
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0.27,
         "lag": 0.08
       },
@@ -640,7 +640,7 @@
           0.35,
           0.7
         ],
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0.3,
         "lag": 0.07
       },
@@ -651,7 +651,7 @@
           0.35,
           0.7
         ],
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0.34,
         "lag": 0.07
       },
@@ -662,7 +662,7 @@
           0.35,
           0.7
         ],
-        "period": 4,
+        "period": 3.3333333333333335,
         "phase": 0.38,
         "lag": 0.07
       }
@@ -684,6 +684,7 @@
   "notes": [
     "head frame: the bar runs through eye_r [384.0, 148.0] and eye_l [446.0, 149.0], the eye bones' origins, 62.008 px; roll -0.924 degrees (Spine's, counter-clockwise) — the line the rig turns the face bones to and declares as invariants.axes; eye midpoint [415.0, 148.5]",
     "head pitch: the nose sits — (not read: no part tagged nose) of the way from the eye midpoint to the mouth (frontal 0.474..0.630); the stem, eye midpoint -> mouth, is 0.629 of the bar (frontal 0.510..0.675); frontal ranges read on demo, scarf, the rig-c/trailer character; the turn is not reported (src/propose.ts FRONTAL_REFERENCE says why)",
+    "breath: chest translatey 5.92 px peak to peak (amp 2.96, base 2.96) = 2.5 % of the torso's height, 237 px (layer full:topwear, y 192..429), once per 40-frame idle at 12 fps",
     "hairpin: pendant chain would run off the art -> no tassel chain (add one by hand if it swings)",
     "earring: pendant top is off the art -> rigid bone, no chain",
     "handwear is two blobs: one sleeve chain per mesh, chest only at the shoulder",

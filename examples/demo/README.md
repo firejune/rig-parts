@@ -66,6 +66,14 @@ here (gitignored).
   from 0.5 to 0.8 (below), which moved `rig.json` (those six values) and `check.json`
   (`torso_heat_mean` 14.271 to 14.352, `hair_back`'s `TEXTURE_STRETCH` 1.056 to 1.062,
   every status as before) and nothing else.
+  Issue #252 moved the config's `motion` with the proposal's: the idle is 40 frames at
+  12 fps (`duration` 40/12 s, every period scaled with it) and the breath travels 2.5 %
+  of the `topwear` part's 237 px height, 5.92 px peak to peak (amplitude 2.96, was 1.3).
+  That moved `motion.json` (the idle's keys) and `check.json` (41 idle frames, not 49;
+  `torso_heat_mean` 14.352 to 29.905, `TIP_OVER_ROOT` `bottomwear` / `handwear_r` /
+  `handwear_l` 2.426 / 6.932 / 6.525 to 2.395 / 4.232 / 4.256, `TEXTURE_STRETCH` 1.097
+  to 1.169, now on `bottomwear`; every status as before); `parts.json`, `rig.json`,
+  `mesh_report.json` and the gate file did not move.
 
 ## The two corrections
 

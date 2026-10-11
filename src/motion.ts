@@ -19,7 +19,9 @@
  * single track without `base` oscillates about 0: `base` is the value the
  * sine is centred on, and an absent one is the sine as written.
  *
- * Times are rounded to 6 decimals and values to 4, as the reference wrote them.
+ * Times are rounded to 6 decimals and values to 4, as the reference wrote them,
+ * but for each track's last key, which is the idle's duration as given (issue
+ * #252: 40/12 s is not on the 6-decimal grid).
  *
  * ## Blink
  *
@@ -87,6 +89,18 @@ export const KEYS_PER_PERIOD = 8;
  */
 export const IDLE_FPS = 12;
 
+/**
+ * How far apart two times, in seconds, may be and still name the same moment
+ * (issue #244): one frame at {@link IDLE_FPS} is 1/12 s, and this is 10^-9 s,
+ * eight orders of magnitude below it. A time is written in seconds, and a
+ * whole number of frames is often not exact in binary — 40/12 s is
+ * 3.3333333333333335, while rigc's last frame of it sits at 40 * (1/12) =
+ * 3.333333333333333 — so two times are compared within this, never with `===`.
+ * It is the slack {@link framesInside} has always read a frame against a key
+ * time with.
+ */
+export const TIME_SLACK = 1e-9;
+
 /** The blink's fixed timing, in seconds after `blink.t`. The holds are 1/{@link IDLE_FPS} s rounded up (see the Blink section above). */
 export const BLINK = {
   shut: 0.07,
@@ -153,7 +167,10 @@ export function sineTrack(bone: string, property: string, amp: number, period: n
     raw.push([t, base + amp * Math.sin(arg), amp * w * Math.cos(arg)]);
   }
   const keys: MotionKey[] = raw.map(([t, v, m], i) => {
-    const key: MotionKey = { t: pyRound(t, 6), v: [pyRound(v, 4)] };
+    // The last key sits at the duration as given, not rounded (issue #252): 40/12 s rounds to 3.333333, 3.3e-7 s short
+    // of the loop's end, and the build's lead-in refuses a track that does not end at the duration. Bytes are unchanged
+    // for any duration already on the 6-decimal grid.
+    const key: MotionKey = { t: i === raw.length - 1 ? duration : pyRound(t, 6), v: [pyRound(v, 4)] };
     if (i < raw.length - 1) {
       const [t1, v1, m1] = raw[i + 1];
       const dt = t1 - t;
@@ -232,7 +249,7 @@ export function idleMotion(cfg: CharacterConfig, chains: ReadonlyMap<string, str
  */
 export function framesInside(from: number, to: number, fps: number, count: number): number[] {
   const out: number[] = [];
-  for (let k = 0; k < count; k++) if (k / fps >= from - 1e-9 && k / fps <= to + 1e-9) out.push(k);
+  for (let k = 0; k < count; k++) if (k / fps >= from - TIME_SLACK && k / fps <= to + TIME_SLACK) out.push(k);
   return out;
 }
 

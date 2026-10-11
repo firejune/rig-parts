@@ -88,6 +88,12 @@
  * neck -> hip, the line the chest is placed on, instead of down the screen
  * ({@link trunkLineOf}).
  *
+ * The idle departs from the reference's too (issue #252): it is
+ * {@link IDLE_FRAMES} frames at 12 fps rather than 4 s, every period scaled
+ * with it, and the chest's breath travels {@link BREATH_FRACTION} of the torso
+ * part's height ({@link breathTrack}) rather than a fixed 1.3 px amplitude, so
+ * no tracked proposal is the reference's output any more in its `motion`.
+ *
  * Issue #86 adds what the proposer and lint looked at, and changes nothing
  * they wrote: {@link proposeWithBasis} records, at each placement, what the
  * bone rests on ({@link BoneBasis}; `basis.json`, `src/diagnostics.ts`), and
@@ -111,6 +117,8 @@ import { resize } from './raster/resize.ts';
 import { type Mask, newMask, newRaster, type Raster } from './raster/types.ts';
 import { npMean, npMedian, npPercentile, pyFixed, pyInt, pyIntList, pyRepr, pyRound, pyStrList } from './pyfmt.ts';
 import type { JointState, RigJoint, RigJoints } from './keypoints.ts';
+import { IDLE_FPS } from './motion.ts';
+import { pyRound as roundTo } from './round.ts';
 import { KEYPOINT_NAMES, type KeypointName } from './skeleton.ts';
 import { configRoles, type RoleOf } from './structure.ts';
 
@@ -149,6 +157,41 @@ export interface ProposedBlink {
 export const EYE_GROUP_TAGS: readonly string[] = ['eyewhite-r', 'eyewhite-l'];
 /** The tags whose parts make the brow bones, the blink's `brows` group. */
 export const BROW_GROUP_TAGS: readonly string[] = ['eyebrow-r', 'eyebrow-l'];
+
+/**
+ * The drafted idle's length, in frames at {@link IDLE_FPS} (issue #252): 40
+ * frames, 40/12 s. The reference drafted a 4 s idle; HQ calibrated the breath
+ * over 40 frames at 12 fps, and a duration of a whole number of frames is what
+ * `check`'s loop compares frame 0 with (issue #244).
+ */
+export const IDLE_FRAMES = 40;
+/** {@link IDLE_FRAMES} in seconds: 3.3333333333333335 as a double, the time rigc's last frame is read at within `TIME_SLACK`. */
+export const IDLE_SECONDS = IDLE_FRAMES / IDLE_FPS;
+/**
+ * The idle the reference drafted, in seconds. Every drafted track's period is
+ * written against it (4 s: one cycle per idle; 2 s: two) and scaled by
+ * `IDLE_SECONDS / REFERENCE_IDLE_SECONDS` when the proposal is returned, so
+ * each keeps its number of cycles per idle — the loader refuses a period that
+ * does not divide the idle (`CONFIG_PERIOD_DIVIDES_DURATION`). The scale is
+ * 10/12 = 0.8333333333333334, and 4 and 2 times it are 40/12 and 20/12 to the
+ * last bit, since only a power of two multiplies it.
+ */
+export const REFERENCE_IDLE_SECONDS = 4;
+/**
+ * The breath's travel, peak to peak, as a fraction of the torso part's height
+ * (issue #252). The size is the height because the breath is a `translatey`:
+ * its travel is read along y, against the part's extent along y. HQ's
+ * calibration: about 2.5 %. On the trailer's seated character the torso part
+ * (`topwear`) is 267 px tall and the reference's fixed 2.6 px peak to peak
+ * (amplitude 1.3, the base 1.3 so the chest rises from its setup pose and
+ * returns) was 0.97 % of it, read by its owner as a still paper doll; the
+ * production scene rig that replaced it breathes 6.4 px, 2.4 %.
+ */
+export const BREATH_FRACTION = 0.025;
+/** The breath's amplitude the reference drafted on every figure, kept only where there is no torso part to scale by. */
+export const REFERENCE_BREATH_AMP = 1.3;
+/** The See-through tag of the torso part, whose height the breath is a fraction of. */
+export const BREATH_SIZE_TAG = 'topwear';
 
 export interface Proposal {
   bones: BoneEntry[];
@@ -1122,8 +1165,13 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
     if (Object.keys(still).length > 0) blink.still = still;
     if (browBonesProposed.length === 0) notes.push(`blink without brows: no eyebrow part (looked for: ${BROW_GROUP_TAGS.join(', ')}), so the blink has no brows group and no brow_drop`);
   }
+  // Issue #252: the breath's travel is BREATH_FRACTION of the torso part's height, not the reference's fixed 1.3 px
+  // amplitude. Its base stays its amplitude (the chest rises from the setup pose and returns). The other three tracks
+  // are an angle and a ratio and stay as drafted. A rig with no torso part keeps the reference's amplitude, and a note.
+  const breath = breathTrack(P);
+  notes.push(breath.note);
   tracks.push(
-    { bone: 'chest', prop: 'translatey', amp: 1.3, period: 4.0, phase: 0.0, base: 1.3 },
+    breath.track,
     { bone: 'chest', prop: 'scalex', amp: 0.004, period: 4.0, phase: 0.0, base: 1.004 },
     { bone: 'head', prop: 'rotate', amp: 0.9, period: 4.0, phase: 0.12 },
     { bone: 'neck', prop: 'rotate', amp: 0.35, period: 4.0, phase: 0.08 },
@@ -1768,7 +1816,40 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
       }),
     );
   }
-  return { proposal: { bones, meshes, regions, motion: blink === undefined ? { duration: 4.0, tracks } : { duration: 4.0, tracks, blink }, notes }, basis: { frame, bones: records } };
+  // Issue #252: the idle is IDLE_FRAMES long, and every period drafted against the reference's 4 s idle keeps its
+  // cycles per idle (REFERENCE_IDLE_SECONDS).
+  const scale = IDLE_SECONDS / REFERENCE_IDLE_SECONDS;
+  const idleTracks = tracks.map((tr) => ({ ...tr, period: tr.period * scale }));
+  return { proposal: { bones, meshes, regions, motion: blink === undefined ? { duration: IDLE_SECONDS, tracks: idleTracks } : { duration: IDLE_SECONDS, tracks: idleTracks, blink }, notes }, basis: { frame, bones: records } };
+}
+
+/**
+ * The drafted breath (issue #252): `chest` `translatey`, its travel peak to
+ * peak {@link BREATH_FRACTION} of the height of the {@link BREATH_SIZE_TAG}
+ * layer — the box around every part from it, cut pieces included, since a cut
+ * does not shorten the torso — amplitude half of it to two decimals, and the
+ * base the amplitude. With no such part there is no height to take a fraction
+ * of, and inventing one is not done: the track keeps the reference's
+ * amplitude, {@link REFERENCE_BREATH_AMP}, and the note says so.
+ */
+export function breathTrack(P: PartSet): { track: ProposedSingleTrack; note: string } {
+  const parts = P.byTag(BREATH_SIZE_TAG, undefined, true);
+  if (parts.length === 0) {
+    const a = REFERENCE_BREATH_AMP;
+    return {
+      track: { bone: 'chest', prop: 'translatey', amp: a, period: REFERENCE_IDLE_SECONDS, phase: 0.0, base: a },
+      note: `breath: no ${BREATH_SIZE_TAG} part, so no torso height to take a fraction of: chest translatey keeps the reference's amplitude ${a} (${pyFixed(2 * a, 2)} px peak to peak), not ${pyFixed(BREATH_FRACTION * 100, 1)} % of a torso — scale it to the figure`,
+    };
+  }
+  const top = Math.min(...parts.map((p) => p.y));
+  const bottom = Math.max(...parts.map((p) => p.y + p.h));
+  const height = bottom - top;
+  const amp = roundTo((BREATH_FRACTION * height) / 2, 2);
+  const layers = [...new Set(parts.map((p) => p.from))].join(', ');
+  return {
+    track: { bone: 'chest', prop: 'translatey', amp, period: REFERENCE_IDLE_SECONDS, phase: 0.0, base: amp },
+    note: `breath: chest translatey ${pyFixed(2 * amp, 2)} px peak to peak (amp ${pyFixed(amp, 2)}, base ${pyFixed(amp, 2)}) = ${pyFixed(BREATH_FRACTION * 100, 1)} % of the torso's height, ${height} px (layer ${layers}, y ${top}..${bottom}), once per ${IDLE_FRAMES}-frame idle at ${IDLE_FPS} fps`,
+  };
 }
 
 // ---------------------------------------------------------------------------

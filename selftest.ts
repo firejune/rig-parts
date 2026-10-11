@@ -208,7 +208,7 @@ import {
 import { COMPOSED_HAND_X, COMPOSED_SHOULDER, writeComposedRig, DRIVER_AT, DRIVER_SLIDE, FAR_ABOVE, LOWER_LEN, LURE_ANGLE, OVERREACH_FROM, OVERREACH_TO, POINTER_LEN, REACH_FROM, REACH_TO, REQ_FPS, REQ_STAGE, RIDE_MIX, RIDER_AT, SHOULDER, stageOf, SWING_BROKEN, SWING_PEAK, UPPER_LEN, VANE_AT, VANE_MIX, writeReqRig, writeRequirements } from './fixtures/reqrig.ts';
 import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { ALIASES, AliasTarballError, compareTarballs, MANIFEST as ALIAS_MANIFEST, packAlias, packInto, renamed } from './scripts/alias_tarball.ts';
-import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionKey, type MotionSpec, sineTrack } from './src/motion.ts';
+import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionKey, type MotionSpec, sineTrack, TIME_SLACK } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
@@ -330,6 +330,7 @@ import {
   type BoneBasis,
   type BoneCoverage,
   basisLines,
+  BREATH_FRACTION,
   checkProposal,
   compare,
   compareLines,
@@ -5156,6 +5157,45 @@ function runProposeSuite(): number {
       "the LINT line is the reference's, verbatim, so an agent reading either tool reads the same finding; a mesh's candidate bone sitting in the background still weights by distance, which is how a rig moves the wrong pixels in silence",
     );
 
+    // Issue #252: the breath travels BREATH_FRACTION (2.5 %) of the topwear's height, peak to peak, the amplitude half
+    // of it and the base the amplitude. By hand: a vest 80,96 40x80 -> 0.025 * 80 = 2 px, amp 1; the cut fixture's coat
+    // 50,100 100x160 -> 4 px, amp 2 — twice the vest's for twice the height — and the same with its lapel piece cut out
+    // (120,110 10x20, inside it). No topwear (PROPOSE_PARTS) -> the reference's amplitude 1.3, and a note that says so. Chest scalex, head and neck are the same on all three; the
+    // idle is 40 frames at 12 fps with every period scaled from the reference's 4 s idle by 40/12 / 4: 4 s -> 40/12.
+    const breathOf = (label: string, parts: typeof PROPOSE_PARTS) => {
+      const d = join(dir, `breath-${label}`);
+      writeProposeFixture(d, parts);
+      const pr = propose(readPartSet(d));
+      const tr = pr.motion.tracks.find((t) => 'bone' in t && t.bone === 'chest' && t.prop === 'translatey');
+      const others = JSON.stringify(pr.motion.tracks.filter((t) => 'bone' in t && ((t.bone === 'chest' && t.prop === 'scalex') || t.bone === 'head' || t.bone === 'neck')));
+      return { pr, tr, others, note: pr.notes.find((n) => n.startsWith('breath:') || n.startsWith('no breath:')) ?? 'no breath note', loads: refusals(() => parseConfig(proposalConfig(parts, pr))) };
+    };
+    const vest = breathOf('vest', [...PROPOSE_PARTS, { name: 'vest', from: 'full:topwear', x: 80, y: 96, w: 40, h: 80, colour: [60, 90, 60] }]);
+    const coat = breathOf('coat', CUT_BASE_PARTS);
+    const cut = breathOf('cut', CUT_PARTS);
+    const bare = breathOf('bare', PROPOSE_PARTS);
+    const amp = (b: ReturnType<typeof breathOf>): string => (b.tr === undefined ? 'none' : `amp ${(b.tr as { amp: number }).amp} base ${String((b.tr as { base?: number }).base)} period ${b.tr.period}`);
+    say(
+      'PR88_THE_BREATH_TRAVELS_A_FRACTION_OF_THE_TORSO_PARTS_HEIGHT_AND_THE_IDLE_IS_FORTY_FRAMES',
+      BREATH_FRACTION === 0.025 &&
+        amp(vest) === `amp 1 base 1 period ${40 / 12}` &&
+        amp(coat) === `amp 2 base 2 period ${40 / 12}` &&
+        amp(cut) === amp(coat) &&
+        cut.note === coat.note &&
+        amp(bare) === `amp 1.3 base 1.3 period ${40 / 12}` &&
+        vest.note === 'breath: chest translatey 2.00 px peak to peak (amp 1.00, base 1.00) = 2.5 % of the torso\'s height, 80 px (layer full:topwear, y 96..176), once per 40-frame idle at 12 fps' &&
+        coat.note === 'breath: chest translatey 4.00 px peak to peak (amp 2.00, base 2.00) = 2.5 % of the torso\'s height, 160 px (layer full:topwear, y 100..260), once per 40-frame idle at 12 fps' &&
+        bare.note.startsWith('breath: no topwear part, so no torso height to take a fraction of: chest translatey keeps the reference\'s amplitude 1.3') &&
+        [vest, coat, bare].every((b) => b.pr.motion.duration === 40 / 12 && b.loads === null) &&
+        cut.pr.motion.duration === 40 / 12 &&
+        vest.others === bare.others &&
+        coat.others === bare.others &&
+        cut.others === bare.others &&
+        vest.pr.motion.tracks.every((t) => t.period === 40 / 12),
+      `vest (80 px) -> ${amp(vest)}; coat (160 px) -> ${amp(coat)}; coat cut with its lapel piece -> ${amp(cut)}, note ${cut.note === coat.note ? 'the same' : 'DIFFERENT'}; no topwear -> ${amp(bare)}, "${bare.note.slice(0, 90)}…"; duration ${vest.pr.motion.duration}; chest scalex, head and neck ${vest.others === bare.others && coat.others === bare.others ? 'identical' : 'DIFFERENT'} on all three; loader ${[vest, coat, bare].map((b) => codes(b.loads)).join(', ')}`,
+      "issue #252: a fixed 1.3 px amplitude is 1.0 % of one figure's torso and still reads as a paper doll; the travel is a fraction of the torso part's height (the breath is a translatey, so its travel is read along y), and a figure with no torso part keeps the reference's amplitude, said in the note, rather than an invented size. The scalex ratio and the head and neck angles do not scale",
+    );
+
     const unknownDir = join(dir, 'unknown');
     // writeParts refuses an unknown tag itself, so the plant is made in the file after a green write.
     writeProposeFixture(unknownDir);
@@ -5600,7 +5640,8 @@ function runStrandCases(dir: string, say: (name: string, ok: boolean, detail: st
     '{"chain":"hairpin_strand1_","parent":"hairpin","points":[[92,16],[92,34]],"tip":[92,55]}',
   ];
   const strandTracks = prop.motion.tracks.filter((t) => 'chain' in t).map((t) => JSON.stringify(t));
-  const wantTrack = (c: string): string => `{"chain":"${c}","amps":[4,7],"period":2,"phase":0.2,"lag":0.12}`;
+  // The drafted 2 s period, scaled with the idle from the reference's 4 s to 40 frames at 12 fps (issue #252): 20/12 s.
+  const wantTrack = (c: string): string => `{"chain":"${c}","amps":[4,7],"period":${20 / 12},"phase":0.2,"lag":0.12}`;
   // The body: 100 px wide, rows 0..15 -> its mean row 7.5, which rounds to even 8; the hold segment spans it.
   const segs = JSON.stringify(prop.meshes.crown?.segments ?? null);
   const segsOk = segs.endsWith(',["hairpin",[0,8],[99,8]],"hairpin_strand0_","hairpin_strand1_"]');
@@ -7974,6 +8015,32 @@ function runCheckSuite(): number {
       loop.status === 1 && quoted !== null && Number(quoted[1]) > 0 && lf !== null && lf.loop_max_diff === Number(quoted[1]) && lf.PASS === false && failLine(loop.out, 'CHECK_SEAM') === null,
       `exit ${loop.status}; ${ll?.trim() ?? 'no CHECK_LOOP_CLOSES line'}; check.json loop_max_diff ${lf?.loop_max_diff ?? 'absent'}`,
       'the gate cannot see a loop that jumps — it passes it — so the loop check is the only thing between that idle and a README; the setup pose is unchanged, so the seam must stay quiet',
+    );
+
+    // Issue #244: a duration of a whole number of 1/12 s frames is accepted whether or not it is exact in binary.
+    // 40/12 is 3.3333333333333335 and rigc writes its last frame at 40 * (1/12) = 3.333333333333333 — `!==` refused
+    // it; 39/12 = 3.25 and 41/12 = 3.4166666666666665 round-trip exactly and passed before. Half a frame off, 40.5/12
+    // = 3.375 s, rigc samples round(40.5) + 1 = 42 frames, the last at 41/12 s, 1/24 s past the duration: refused.
+    const durations = ([['40', 40 / 12], ['39', 39 / 12], ['41', 41 / 12], ['40.5', 40.5 / 12]] as const).map(([label, d]) => {
+      const r = join(dir, `duration-${label}`);
+      writeCheckRig(r, { duration: d });
+      const res = runCli(['check', '--rig', r, '--out', join(dir, `duration-${label}-out`)]);
+      return { label, d, ...res, fig: readJsonFile(join(dir, `duration-${label}-out`, 'check.json')), refusal: failLine(res.out, 'CHECK_LOOP_LAST_FRAME_AT_DURATION') };
+    });
+    const whole = durations.filter((r) => r.label !== '40.5');
+    const half = durations.find((r) => r.label === '40.5');
+    say(
+      'CK115_A_DURATION_OF_A_WHOLE_NUMBER_OF_FRAMES_IS_ACCEPTED_AND_HALF_A_FRAME_OFF_IS_REFUSED_BY_NAME',
+      whole.every((r) => r.status === 0 && r.refusal === null && r.fig !== null && r.fig.loop_max_diff === 0) &&
+        half !== undefined &&
+        half.status !== 0 &&
+        half.fig === null &&
+        half.refusal !== null &&
+        half.refusal.includes('the last at t = 3.4166666666666665s') &&
+        half.refusal.includes("the idle's duration, 3.375s") &&
+        half.refusal.includes(`(within ${TIME_SLACK} s)`),
+      `${durations.map((r) => `${r.label}/12 = ${r.d} s: exit ${r.status}, ${r.refusal === null ? `loop_max_diff ${String(r.fig?.loop_max_diff)}` : r.refusal.trim().slice(0, 150)}`).join('; ')}`,
+      `issue #244: the last frame's time and the duration are compared within TIME_SLACK (${TIME_SLACK} s, eight orders below a 1/12 s frame), the slack framesInside reads frames against key times with; a duration half a frame off is still refused, naming the last frame's time and the duration`,
     );
 
     // Issue #183: CHECK_LOOP_CLOSES reads the keyed loop. The front part hung on a bone `bob` at the root's origin

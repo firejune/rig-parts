@@ -68,14 +68,15 @@
  * was that for every rig it ever saw); the grey is read from rigc's
  * `frames.json` rather than typed; the crop-to-world map comes from the rig's
  * own stage box through `src/coords.ts` rather than an open-coded `-W/2`; and
- * the last idle frame is refused unless it sits at t = duration.
+ * the last idle frame is refused unless it sits at t = duration (within
+ * `TIME_SLACK`, issue #244).
  */
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { measureRecomposite, type RecompositeFigures, recompositeRecord, sourceInRig } from './assemble.ts';
 import { cropToSpineY } from './coords.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
-import { framesInside, IDLE_FPS } from './motion.ts';
+import { framesInside, IDLE_FPS, TIME_SLACK } from './motion.ts';
 import {
   blinkFigures,
   type GeometryPose,
@@ -1816,12 +1817,14 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     if (render.status !== 0) refuseIfAny(rigcFailed('render --animation idle --geometry', render, render.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
     idle = readFrameSet(idleDir);
     const last = idle.frames[idle.frames.length - 1];
-    if (idle.stride !== 1 || idle.written !== idle.sampled || idle.duration !== inp.idleDuration || last.index !== idle.sampled - 1) {
+    // Issue #244: the last frame's time and the duration are compared within TIME_SLACK, not with `!==` — a whole
+    // number of frames (40/12 s) is not exact in binary, and rigc writes its last frame at 40 * (1/12), one ulp off.
+    if (idle.stride !== 1 || idle.written !== idle.sampled || Math.abs(idle.duration - inp.idleDuration) > TIME_SLACK || last.index !== idle.sampled - 1) {
       refuseIfAny([
         {
           code: 'CHECK_LOOP_LAST_FRAME_AT_DURATION',
           object: `idle frame ${last.name}`,
-          detail: `rigc sampled ${idle.sampled} frame(s), wrote ${idle.written} at stride ${idle.stride}, the last at t = ${idle.duration}s; the loop compares frame 0 with the frame at the idle's duration, ${inp.idleDuration}s, so a duration that is a whole number of 1/${IDLE_FPS} s ticks and every frame written are required`,
+          detail: `rigc sampled ${idle.sampled} frame(s), wrote ${idle.written} at stride ${idle.stride}, the last at t = ${idle.duration}s; the loop compares frame 0 with the frame at the idle's duration, ${inp.idleDuration}s, so a duration that is a whole number of 1/${IDLE_FPS} s ticks (within ${TIME_SLACK} s) and every frame written are required`,
         },
       ]);
     }

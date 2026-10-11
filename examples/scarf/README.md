@@ -20,7 +20,8 @@ here (gitignored).
   the idle swings them.
 - **The first character run through the pipeline with the proposal unedited.** The
   config's `bones`, `meshes` and `motion` are `proposal.json`'s, value for value, but
-  for one mesh mode (below), the `robe_r` chain's points (below) and the two authored
+  for one mesh mode (below), the `robe_r` chain's points (below), the breath's amplitude
+  (below) and the two authored
   additions of issue #224 (`motion.animations_from` and `constraints`, *Gestures,
   expressions and trailing strands* below), and its
   `regions` are the proposal's for every part but the two shoe patches. Every other
@@ -37,6 +38,15 @@ here (gitignored).
   not raised; what fails is the lattice's weighting of this part, not the motion. A
   pixel reading of the lattice build at `--max` up to 8000 (the part alone, so the
   motion spans pixels) converges on about 1.27 from above, below the bar.
+- **The breath is authored, for now (issue #252).** The proposal's breath travels 2.5 %
+  of the `topwear` part's height; scarf's `topwear` is a robe 690 px tall, so that is
+  17.24 px peak to peak (amplitude 8.62). The config authors amplitude 1.55 (3.10 px,
+  0.449 %), with its reason in the track's `note`. This is temporary: the short skirt's
+  root rides `chest` through a mesh segment, so the breath stretches the waistband
+  (TIP_OVER_ROOT 0.300 at 2.5 %); parts#262 fixes the cause, and this line is removed
+  then. Measured on this build, `bottomwear`'s ratio against the bar 1.4725: 0.449 %
+  1.534, 0.470 % 1.478, 0.501 % 1.398 (FAIL); 0.449 % was taken over 0.470 %, which
+  clears the bar by 0.006. The bar does not move.
 - **Two rules came from it.** Issue #119's fringe push-back: the `topwear` layer ends
   inside the left sleeve in a fringe below alpha 250 coloured scarf red, which drew as
   a red line down the sleeve; `assemble` now prints, on this config,
@@ -94,6 +104,13 @@ here (gitignored).
   `TEXTURE_STRETCH` 1.098 to 1.097, every status as before; the table under *Both mesh
   modes* is the builds of issue #118, before it); `parts.json` and `mesh_report.json`
   did not move.
+  Issue #252 moved the config's `motion` with the proposal's (the idle 40 frames at 12
+  fps, `duration` 40/12 s, every period scaled with it; the breath authored, above),
+  which moved `motion.json` (the idle's keys) and `check.json` (41 idle frames, not 49;
+  `torso_heat_mean` 15.509 to 16.263, `TIP_OVER_ROOT` `handwear_r` / `handwear_l` /
+  `bottomwear` 6.672 / 5.334 / 1.763 to 6.152 / 5.022 / 1.534, `TEXTURE_STRETCH` 1.097
+  to 1.098; every status as before); `parts.json`, `rig.json`, `mesh_report.json` and
+  the gate file did not move.
 
 ## The four patches
 
