@@ -489,7 +489,7 @@
   },
   {
    "name": "bottomwear",
-   "bone": "chest",
+   "bone": "hip",
    "attachment": "bottomwear"
   },
   {
@@ -24366,25 +24366,25 @@
         "bone": "hip",
         "x": 80,
         "y": 16,
-        "weight": 0.71921
+        "weight": 0.72523
        },
        {
         "bone": "skirt_l0",
         "x": 42,
         "y": 36,
-        "weight": 0.13363
+        "weight": 0.13475
        },
        {
         "bone": "skirt_l1",
         "x": 40,
         "y": 61,
-        "weight": 0.08002
+        "weight": 0.08069
        },
        {
-        "bone": "chest",
-        "x": 80,
-        "y": -200,
-        "weight": 0.06714
+        "bone": "skirt_c0",
+        "x": 78,
+        "y": 36,
+        "weight": 0.05933
        }
       ],
       [
@@ -24392,25 +24392,25 @@
         "bone": "hip",
         "x": 83,
         "y": 16,
-        "weight": 0.72882
+        "weight": 0.73426
        },
        {
         "bone": "skirt_l0",
         "x": 45,
         "y": 36,
-        "weight": 0.12768
+        "weight": 0.12863
        },
        {
         "bone": "skirt_l1",
         "x": 43,
         "y": 61,
-        "weight": 0.07897
+        "weight": 0.07956
        },
        {
-        "bone": "chest",
-        "x": 83,
-        "y": -200,
-        "weight": 0.06453
+        "bone": "skirt_c0",
+        "x": 81,
+        "y": 36,
+        "weight": 0.05755
        }
       ],
       [
@@ -24418,25 +24418,25 @@
         "bone": "hip",
         "x": 87,
         "y": 9,
-        "weight": 0.81068
+        "weight": 0.81212
        },
        {
         "bone": "skirt_l0",
         "x": 49,
         "y": 29,
-        "weight": 0.09013
+        "weight": 0.09029
        },
        {
         "bone": "skirt_l1",
         "x": 47,
         "y": 54,
-        "weight": 0.05895
+        "weight": 0.05905
        },
        {
-        "bone": "chest",
-        "x": 87,
-        "y": -207,
-        "weight": 0.04024
+        "bone": "skirt_c0",
+        "x": 85,
+        "y": 29,
+        "weight": 0.03854
        }
       ],
       [
@@ -25794,25 +25794,25 @@
         "bone": "hip",
         "x": -81,
         "y": 8,
-        "weight": 0.8358
+        "weight": 0.83947
        },
        {
         "bone": "skirt_r0",
         "x": -47,
         "y": 28,
-        "weight": 0.07726
+        "weight": 0.07759
        },
        {
         "bone": "skirt_r1",
         "x": -44,
         "y": 53,
-        "weight": 0.05045
+        "weight": 0.05068
        },
        {
-        "bone": "chest",
-        "x": -81,
-        "y": -208,
-        "weight": 0.03649
+        "bone": "skirt_c0",
+        "x": -83,
+        "y": 28,
+        "weight": 0.03226
        }
       ],
       [
@@ -25820,25 +25820,25 @@
         "bone": "hip",
         "x": -78,
         "y": 14,
-        "weight": 0.74766
+        "weight": 0.75613
        },
        {
         "bone": "skirt_r0",
         "x": -44,
         "y": 34,
-        "weight": 0.11725
+        "weight": 0.11858
        },
        {
         "bone": "skirt_r1",
         "x": -41,
         "y": 59,
-        "weight": 0.07292
+        "weight": 0.07375
        },
        {
-        "bone": "chest",
-        "x": -78,
-        "y": -202,
-        "weight": 0.06217
+        "bone": "skirt_c0",
+        "x": -80,
+        "y": 34,
+        "weight": 0.05154
        }
       ],
       [
@@ -25846,25 +25846,25 @@
         "bone": "hip",
         "x": -70,
         "y": 11,
-        "weight": 0.75349
+        "weight": 0.7614
        },
        {
         "bone": "skirt_r0",
         "x": -36,
         "y": 31,
-        "weight": 0.12052
+        "weight": 0.12179
        },
        {
         "bone": "skirt_r1",
         "x": -33,
         "y": 56,
-        "weight": 0.06781
+        "weight": 0.06853
        },
        {
-        "bone": "chest",
-        "x": -70,
-        "y": -205,
-        "weight": 0.05818
+        "bone": "skirt_c0",
+        "x": -72,
+        "y": 31,
+        "weight": 0.04828
        }
       ],
       [
@@ -25872,25 +25872,25 @@
         "bone": "hip",
         "x": -63,
         "y": 12,
-        "weight": 0.70555
+        "weight": 0.7169
        },
        {
         "bone": "skirt_r0",
         "x": -29,
         "y": 32,
-        "weight": 0.14707
+        "weight": 0.14944
        },
        {
         "bone": "skirt_r1",
         "x": -26,
         "y": 57,
-        "weight": 0.07462
+        "weight": 0.07582
        },
        {
-        "bone": "chest",
-        "x": -63,
-        "y": -204,
-        "weight": 0.07276
+        "bone": "skirt_c0",
+        "x": -65,
+        "y": 32,
+        "weight": 0.05784
        }
       ],
       [
@@ -25898,25 +25898,25 @@
         "bone": "hip",
         "x": -57,
         "y": 10,
-        "weight": 0.70489
+        "weight": 0.71613
        },
        {
         "bone": "skirt_r0",
         "x": -23,
         "y": 30,
-        "weight": 0.1539
-       },
-       {
-        "bone": "chest",
-        "x": -57,
-        "y": -206,
-        "weight": 0.07133
+        "weight": 0.15636
        },
        {
         "bone": "skirt_r1",
         "x": -20,
         "y": 55,
-        "weight": 0.06988
+        "weight": 0.07099
+       },
+       {
+        "bone": "skirt_c0",
+        "x": -59,
+        "y": 30,
+        "weight": 0.05652
        }
       ],
       [
@@ -25924,25 +25924,25 @@
         "bone": "hip",
         "x": -38,
         "y": 10,
-        "weight": 0.60323
+        "weight": 0.639
        },
        {
         "bone": "skirt_r0",
         "x": -4,
         "y": 30,
-        "weight": 0.19402
-       },
-       {
-        "bone": "chest",
-        "x": -38,
-        "y": -206,
-        "weight": 0.12299
+        "weight": 0.20552
        },
        {
         "bone": "skirt_c0",
         "x": -40,
         "y": 30,
-        "weight": 0.07976
+        "weight": 0.0845
+       },
+       {
+        "bone": "skirt_r1",
+        "x": -1,
+        "y": 55,
+        "weight": 0.07098
        }
       ],
       [
@@ -25950,25 +25950,25 @@
         "bone": "hip",
         "x": 27,
         "y": 11,
-        "weight": 0.5207
-       },
-       {
-        "bone": "chest",
-        "x": 27,
-        "y": -205,
-        "weight": 0.2051
+        "weight": 0.60993
        },
        {
         "bone": "skirt_l0",
         "x": -11,
         "y": 31,
-        "weight": 0.15992
+        "weight": 0.18732
        },
        {
         "bone": "skirt_c0",
         "x": 25,
         "y": 31,
-        "weight": 0.11428
+        "weight": 0.13387
+       },
+       {
+        "bone": "skirt_l1",
+        "x": -13,
+        "y": 56,
+        "weight": 0.06888
        }
       ],
       [
@@ -25976,25 +25976,25 @@
         "bone": "hip",
         "x": 55,
         "y": 15,
-        "weight": 0.61112
+        "weight": 0.62611
        },
        {
         "bone": "skirt_l0",
         "x": 17,
         "y": 35,
-        "weight": 0.1981
-       },
-       {
-        "bone": "chest",
-        "x": 55,
-        "y": -201,
-        "weight": 0.1053
+        "weight": 0.20296
        },
        {
         "bone": "skirt_l1",
         "x": 15,
         "y": 60,
-        "weight": 0.08548
+        "weight": 0.08757
+       },
+       {
+        "bone": "skirt_c0",
+        "x": 53,
+        "y": 35,
+        "weight": 0.08336
        }
       ],
       [
@@ -26002,25 +26002,25 @@
         "bone": "hip",
         "x": 60,
         "y": 15,
-        "weight": 0.63604
+        "weight": 0.64794
        },
        {
         "bone": "skirt_l0",
         "x": 22,
         "y": 35,
-        "weight": 0.18512
-       },
-       {
-        "bone": "chest",
-        "x": 60,
-        "y": -201,
-        "weight": 0.09349
+        "weight": 0.18858
        },
        {
         "bone": "skirt_l1",
         "x": 20,
         "y": 60,
-        "weight": 0.08535
+        "weight": 0.08695
+       },
+       {
+        "bone": "skirt_c0",
+        "x": 58,
+        "y": 35,
+        "weight": 0.07653
        }
       ],
       [
@@ -26028,25 +26028,25 @@
         "bone": "hip",
         "x": 63,
         "y": 12,
-        "weight": 0.69186
+        "weight": 0.69886
        },
        {
         "bone": "skirt_l0",
         "x": 25,
         "y": 32,
-        "weight": 0.16098
+        "weight": 0.16261
        },
        {
         "bone": "skirt_l1",
         "x": 23,
         "y": 57,
-        "weight": 0.0758
+        "weight": 0.07657
        },
        {
-        "bone": "chest",
-        "x": 63,
-        "y": -204,
-        "weight": 0.07136
+        "bone": "skirt_c0",
+        "x": 61,
+        "y": 32,
+        "weight": 0.06196
        }
       ],
       [
@@ -26054,25 +26054,25 @@
         "bone": "hip",
         "x": 66,
         "y": 14,
-        "weight": 0.67926
+        "weight": 0.6874
        },
        {
         "bone": "skirt_l0",
         "x": 28,
         "y": 34,
-        "weight": 0.16265
+        "weight": 0.1646
        },
        {
         "bone": "skirt_l1",
         "x": 26,
         "y": 59,
-        "weight": 0.08106
+        "weight": 0.08203
        },
        {
-        "bone": "chest",
-        "x": 66,
-        "y": -202,
-        "weight": 0.07703
+        "bone": "skirt_c0",
+        "x": 64,
+        "y": 34,
+        "weight": 0.06597
        }
       ],
       [
@@ -26080,25 +26080,25 @@
         "bone": "hip",
         "x": 74,
         "y": 14,
-        "weight": 0.7177
+        "weight": 0.72357
        },
        {
         "bone": "skirt_l0",
         "x": 36,
         "y": 34,
-        "weight": 0.13909
+        "weight": 0.14023
        },
        {
         "bone": "skirt_l1",
         "x": 34,
         "y": 59,
-        "weight": 0.07737
+        "weight": 0.078
        },
        {
-        "bone": "chest",
-        "x": 74,
-        "y": -202,
-        "weight": 0.06584
+        "bone": "skirt_c0",
+        "x": 72,
+        "y": 34,
+        "weight": 0.0582
        }
       ],
       [
@@ -26106,25 +26106,25 @@
         "bone": "hip",
         "x": 43,
         "y": 7,
-        "weight": 0.67158
+        "weight": 0.68411
        },
        {
         "bone": "skirt_l0",
         "x": 5,
         "y": 27,
-        "weight": 0.18421
-       },
-       {
-        "bone": "chest",
-        "x": 43,
-        "y": -209,
-        "weight": 0.07788
+        "weight": 0.18765
        },
        {
         "bone": "skirt_c0",
         "x": 41,
         "y": 27,
-        "weight": 0.06633
+        "weight": 0.06757
+       },
+       {
+        "bone": "skirt_l1",
+        "x": 3,
+        "y": 52,
+        "weight": 0.06067
        }
       ],
       [
@@ -26132,25 +26132,25 @@
         "bone": "hip",
         "x": 55,
         "y": 7,
-        "weight": 0.72927
+        "weight": 0.73294
        },
        {
         "bone": "skirt_l0",
         "x": 17,
         "y": 27,
-        "weight": 0.15474
+        "weight": 0.15551
        },
        {
         "bone": "skirt_l1",
         "x": 15,
         "y": 52,
-        "weight": 0.0603
+        "weight": 0.0606
        },
        {
-        "bone": "chest",
-        "x": 55,
-        "y": -209,
-        "weight": 0.05569
+        "bone": "skirt_c0",
+        "x": 53,
+        "y": 27,
+        "weight": 0.05095
        }
       ],
       [
@@ -26158,25 +26158,25 @@
         "bone": "hip",
         "x": 67,
         "y": 7,
-        "weight": 0.78711
+        "weight": 0.78898
        },
        {
         "bone": "skirt_l0",
         "x": 29,
         "y": 27,
-        "weight": 0.11424
+        "weight": 0.11451
        },
        {
         "bone": "skirt_l1",
         "x": 27,
         "y": 52,
-        "weight": 0.05625
+        "weight": 0.05638
        },
        {
-        "bone": "chest",
-        "x": 67,
-        "y": -209,
-        "weight": 0.0424
+        "bone": "skirt_c0",
+        "x": 65,
+        "y": 27,
+        "weight": 0.04013
        }
       ],
       [
@@ -26184,25 +26184,25 @@
         "bone": "hip",
         "x": 79,
         "y": 7,
-        "weight": 0.83494
+        "weight": 0.83592
        },
        {
         "bone": "skirt_l0",
         "x": 41,
         "y": 27,
-        "weight": 0.08247
+        "weight": 0.08257
        },
        {
         "bone": "skirt_l1",
         "x": 39,
         "y": 52,
-        "weight": 0.04924
+        "weight": 0.0493
        },
        {
-        "bone": "chest",
-        "x": 79,
-        "y": -209,
-        "weight": 0.03335
+        "bone": "skirt_c0",
+        "x": 77,
+        "y": 27,
+        "weight": 0.03221
        }
       ],
       [

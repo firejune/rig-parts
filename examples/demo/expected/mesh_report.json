@@ -70,7 +70,6 @@
   "triangles": 292,
   "hull": 60,
   "bones": [
-   "chest",
    "hip",
    "skirt_c0",
    "skirt_c1",
@@ -83,7 +82,7 @@
    "skirt_r2"
   ],
   "max_influences": 4,
-  "mean_influences": 3.56,
+  "mean_influences": 3.54,
   "art_coverage": 1,
   "grid": 25
  },

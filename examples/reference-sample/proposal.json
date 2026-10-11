@@ -368,17 +368,6 @@
    "r": 12,
    "segments": [
     [
-     "chest",
-     [
-      419,
-      320
-     ],
-     [
-      419,
-      437
-     ]
-    ],
-    [
      "hip",
      [
       306,
@@ -558,6 +547,7 @@
   "hair_front (head:front hair): bang_r, bang_c, bang_l are a template, not its locks — columns at 0.25, 0.5 and 0.75 of the face box's width, along the head's down axis (the eye line's perpendicular, roll -4.865 degrees), each rooted on the part's art; the opaque shape does not separate the locks painted inside one mass of hair, so a lock that runs elsewhere is not followed — move the chains onto the locks",
   "handwear is one blob (sleeves): both sleeves in one mesh, split at the eye axis x=413",
   "topwear ends at y=457 (hip 457): no robe chains -- add a sash chain by hand if one hangs",
+  "bottomwear (full:bottomwear): its art starts 89.8 px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root",
   "legwear (full:legwear): no rule -> region on hip"
  ]
 }

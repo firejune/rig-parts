@@ -411,17 +411,6 @@
       "r": 5,
       "segments": [
         [
-          "chest",
-          [
-            414,
-            411
-          ],
-          [
-            414,
-            637
-          ]
-        ],
-        [
           "hip",
           [
             335,
@@ -628,6 +617,7 @@
     "breath: chest translatey 17.24 px peak to peak (amp 8.62, base 8.62) = 2.5 % of the torso's height, 690 px (layer full:topwear, y 201..891), once per 40-frame idle at 12 fps",
     "hair_front (head:front hair): bang_r, bang_c, bang_l are a template, not its locks — columns at 0.25, 0.5 and 0.75 of the face box's width, along the head's down axis (the eye line's perpendicular, roll 2.663 degrees), each rooted on the part's art; the opaque shape does not separate the locks painted inside one mass of hair, so a lock that runs elsewhere is not followed — move the chains onto the locks",
     "handwear is two blobs: one sleeve chain per mesh, chest only at the shoulder",
+    "bottomwear (full:bottomwear): its art starts 200.9 px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root",
     "hair_side_r (painting:hair_side_r): a painting patch has no tag, so no rule -> region on head, the nearest trunk bone; config.regions.hair_side_r is the bone it rides",
     "hair_side_l (painting:hair_side_l): a painting patch has no tag, so no rule -> region on head, the nearest trunk bone; config.regions.hair_side_l is the bone it rides",
     "legwear (full:legwear): no rule -> region on hip",

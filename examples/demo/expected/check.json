@@ -255,9 +255,9 @@
    },
    {
     "part": "bottomwear",
-    "root_rig_px": 0.397,
+    "root_rig_px": 0.392,
     "tip_rig_px": 0.952,
-    "ratio": 2.395
+    "ratio": 2.428
    }
   ],
   "ratio_floor": 1.4725
@@ -315,24 +315,24 @@
   "meshes": 9,
   "triangles": 1816,
   "frames": 41,
-  "severity": 1.169,
+  "severity": 1.097,
   "severity_ceiling": 1.926544,
   "worst": {
-   "slot": "bottomwear",
-   "triangle": 6,
+   "slot": "hair_front",
+   "triangle": 175,
    "vertices": [
-    3,
-    63,
-    4
+    121,
+    33,
+    32
    ],
    "edge": [
-    63,
-    4
+    33,
+    32
    ],
-   "frame": 10,
-   "ratio": 1.169
+   "frame": 20,
+   "ratio": 0.912
   },
-  "max_ratio": 1.169,
+  "max_ratio": 1.096,
   "min_ratio": 0.912,
   "per_mesh": [
    {
@@ -374,11 +374,11 @@
    {
     "slot": "bottomwear",
     "triangles": 292,
-    "max_ratio": 1.169,
-    "max_at": "triangle 6 (vertices 3 63 4), edge 63-4, idle frame 10",
+    "max_ratio": 1.019,
+    "max_at": "triangle 180 (vertices 126 144 127), edge 126-144, idle frame 29",
     "min_ratio": 0.981,
     "min_at": "triangle 180 (vertices 126 144 127), edge 126-144, idle frame 9",
-    "severity": 1.169
+    "severity": 1.019
    },
    {
     "slot": "topwear",

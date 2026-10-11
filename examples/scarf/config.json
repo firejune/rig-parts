@@ -621,17 +621,6 @@
       "r": 5,
       "segments": [
         [
-          "chest",
-          [
-            414,
-            411
-          ],
-          [
-            414,
-            637
-          ]
-        ],
-        [
           "hip",
           [
             335,
@@ -674,11 +663,10 @@
       {
         "bone": "chest",
         "prop": "translatey",
-        "amp": 1.55,
+        "amp": 8.62,
         "period": 3.3333333333333335,
         "phase": 0,
-        "base": 1.55,
-        "note": "hand correction (issue #252), TEMPORARY: the proposal's breath is 2.5 % of the topwear's height, 17.24 px peak to peak (amp 8.62); the short skirt's root rides `chest` through a mesh segment, so the breath stretches the waistband (TIP_OVER_ROOT 0.300 at 2.5 %); parts#262 fixes the cause, and this line is removed then. amp 1.55 (3.10 px, 0.449 % of 690 px) is under the largest that holds, measured: 0.449 % -> bottomwear ratio 1.534, 0.470 % -> 1.478, 0.501 % -> 1.398 (FAIL) against 1.4725"
+        "base": 8.62
       },
       {
         "bone": "chest",
