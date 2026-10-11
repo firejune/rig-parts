@@ -272,6 +272,7 @@ import {
 import { affineFit, boneHeat, capFloor, columnsOf, footprintRegion, HEAT as WX_HEAT, heatAt, heaviestOf, l1, lidReading, localOffset, nearestRank as wxNearestRank, skinPoint } from './tools/weight_rule_survey.ts';
 import { exampleTotals, figuresOf, gridFrame, policyEcho, TrialLedger, trialPolicy } from './tools/production_trial.ts';
 import { assertUnchanged, crumbsLeft, lossOf, lossTotal, maskMd5, strayCleared } from './tools/production_trial_stray.ts';
+import { ART_ARM_ALPHA, ARMS, armSpec, clearFaint, finalPassOf, rowOf, specPaths, strayFor } from './tools/auto_policy_survey.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec, ConfigConstraint } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
@@ -22652,6 +22653,86 @@ function runAutoMeshSuite(): number {
     oneSm03.px === 4 && oneSm03.ratio === 0.02 && totSm03.px === 4 && totSm03.artPx === 500 && totSm03.ratio === 0.008 && plantSm03.startsWith('LOSS_NOT_SUMMED: the row says 5 px cleared; its 2 island(s) hold 4 px'),
     `one row ${JSON.stringify(oneSm03)}; total ${JSON.stringify(totSm03)}; planted typed figure: ${plantSm03}`,
     'what a declared stray costs is the px it stops drawing; the page\'s loss column is computed from the islands the tool cleared, never typed',
+  );
+
+  // ---------------------------------------------------------------------------
+  // Issue #266 Stage A: tools/auto_policy_survey.ts's instruments (PV01-PV03), each on a hand-built input.
+  // ---------------------------------------------------------------------------
+
+  // PV01 — each arm is the one change its row of the card names, over trialPolicy at spacing 12: the leaf paths it
+  // differs from base at, written by hand. `both` derives its result overshoot as the source bound 5 + the deviation 8.
+  // Planted: an arm that also moved a second field is named by the same comparison.
+  const basePv01 = armSpec('base', 12);
+  const pathsPv01 = Object.fromEntries(ARMS.map((a) => [a, specPaths(basePv01, armSpec(a, 12))]));
+  const wantPv01: Record<string, string[]> = {
+    base: [],
+    art: [],
+    dev4: ['targets.maxBoundaryDeviation'],
+    dev8: ['targets.maxBoundaryDeviation'],
+    cover: ['targets.artFit.minCoverage', 'targets.artFit.maxUndercut'],
+    res2: ['motion.maxLocalDeformation', 'motion.residual.maxResidual'],
+    res4: ['motion.maxLocalDeformation', 'motion.residual.maxResidual'],
+    both: ['targets.artFit.minCoverage', 'targets.artFit.maxOvershoot', 'targets.artFit.maxUndercut', 'targets.maxBoundaryDeviation', 'motion.maxLocalDeformation', 'motion.residual.maxResidual'],
+    trace4: ['source.tolerance', 'source.margin', 'sourceBounds.maxOvershoot', 'targets.artFit.maxOvershoot', 'targets.maxBoundaryDeviation'],
+    trace8: ['source.tolerance', 'source.margin', 'sourceBounds.maxOvershoot', 'targets.artFit.maxOvershoot', 'targets.maxBoundaryDeviation'],
+  };
+  const bothPv01 = armSpec('both', 12);
+  const t8Pv01 = armSpec('trace8', 12);
+  const plantPv01 = specPaths(basePv01, { ...armSpec('cover', 12), targets: { ...armSpec('cover', 12).targets, maxBoundaryDeviation: 3 } });
+  say(
+    'PV01_EACH_ARM_DIFFERS_FROM_BASE_AT_THE_PATHS_ITS_ROW_NAMES_AND_A_SECOND_MOVED_FIELD_IS_NAMED',
+    JSON.stringify(pathsPv01) === JSON.stringify(wantPv01) && bothPv01.targets.artFit.maxOvershoot === 13 && bothPv01.motion?.maxLocalDeformation === 4 &&
+      t8Pv01.source.tolerance === 8 && t8Pv01.sourceBounds.maxOvershoot === 17 && JSON.stringify(plantPv01) === JSON.stringify(['targets.artFit.minCoverage', 'targets.artFit.maxUndercut', 'targets.maxBoundaryDeviation']),
+    `paths ${JSON.stringify(pathsPv01)}; both overshoot ${bothPv01.targets.artFit.maxOvershoot}; trace8 source overshoot ${t8Pv01.sourceBounds.maxOvershoot}; planted ${JSON.stringify(plantPv01)}`,
+    'the card asks for one change at a time; an arm that moved a second bound would credit the first with the second\'s effect, so each arm is held to the fields its row names',
+  );
+
+  // PV02 — the final pass, counted by hand. A source of 6 vertices, hull 4 (0..3 outline, 4..5 interior). Pass 1: a
+  // removal of 5 taken and one of 2 refused by MQ_COVERAGE (an earlier pass, not counted). Pass 2: 0 refused by
+  // MQ_BOUNDARY_DEVIATION, 1 by the same row decided by the floor, 4 by MQ_SKINNING_RESIDUAL, a boundary run refused
+  // by MQ_OVERSHOOT. So: deviation 2 outline, residual 1 interior, 1 floored, 0 taken, runs { MQ_OVERSHOOT: 1 }.
+  // Planted: the same attempts with pass 2's taken, the count says one taken and keeps the refusals.
+  const attPv02 = [
+    { kind: 'removal' as const, pass: 1, sourceVertices: [5], refusal: null, floored: false },
+    { kind: 'removal' as const, pass: 1, sourceVertices: [2], refusal: 'MQ_COVERAGE: 0.98 against >= 1', floored: false },
+    { kind: 'removal' as const, pass: 2, sourceVertices: [0], refusal: 'MQ_BOUNDARY_DEVIATION: 2.4 against <= 2', floored: false },
+    { kind: 'removal' as const, pass: 2, sourceVertices: [1], refusal: 'MQ_BOUNDARY_DEVIATION: 3.1 against <= 2', floored: true },
+    { kind: 'removal' as const, pass: 2, sourceVertices: [4], refusal: 'MQ_SKINNING_RESIDUAL: 1.2 against <= 1', floored: false },
+    { kind: 'boundary-run' as const, pass: 2, sourceVertices: [2, 3], refusal: 'MQ_OVERSHOOT: 6 against <= 5', floored: false },
+  ];
+  const finPv02 = finalPassOf(attPv02, { vertices: 6, hull: 4 });
+  const takenPv02 = finalPassOf([...attPv02, { kind: 'removal' as const, pass: 2, sourceVertices: [3], refusal: null, floored: false }], { vertices: 6, hull: 4 });
+  say(
+    'PV02_THE_FINAL_PASS_COUNTS_EACH_REFUSED_SINGLE_REMOVAL_UNDER_ITS_ROW_SPLIT_BY_THE_HULL_AND_NOTHING_FROM_AN_EARLIER_PASS',
+    JSON.stringify(finPv02) === JSON.stringify({ pass: 2, byRow: { MQ_BOUNDARY_DEVIATION: { outline: 2, interior: 0 }, MQ_SKINNING_RESIDUAL: { outline: 0, interior: 1 } }, floored: 1, taken: 0, runs: { MQ_OVERSHOOT: 1 }, source: { vertices: 6, hull: 4 } }) &&
+      takenPv02.taken === 1 && JSON.stringify(takenPv02.byRow) === JSON.stringify(finPv02.byRow) && rowOf('MQ_X: 1 against <= 0') === 'MQ_X',
+    `final ${JSON.stringify(finPv02)}; with one taken ${takenPv02.taken}`,
+    'which bound holds the outline and which the interior is the card\'s question; the count is the kept vertices of the last pass, each under the row that refused it, outline and interior by the source hull',
+  );
+
+  // PV03 — the art arm's clearing and the stray rule. An 8x6 image: a 4x3 block at (0, 0) alpha 255 (12 px), a 2 px
+  // crumb at (6, 0)-(7, 0) alpha 200, and 1 px at (6, 4) alpha 8 — art 15 px in 3 islands; stray = the second largest,
+  // 2, leaving 3 px out. Cleared at 8: the alpha-8 pixel goes (all four channels 0), 14 px in 2 islands. Planted: alpha
+  // 9 at the same pixel is kept.
+  const imgPv03 = (a: number): Raster => {
+    const data = new Uint8ClampedArray(8 * 6 * 4);
+    for (let y = 0; y < 3; y++) for (let x = 0; x < 4; x++) data.set([10, 20, 30, 255], (y * 8 + x) * 4);
+    data.set([1, 2, 3, 200], 6 * 4);
+    data.set([1, 2, 3, 200], 7 * 4);
+    data.set([40, 50, 60, a], (4 * 8 + 6) * 4);
+    return { width: 8, height: 6, data };
+  };
+  const strayPv03 = strayFor(imgPv03(8));
+  const clrPv03 = clearFaint(imgPv03(8), ART_ARM_ALPHA);
+  const afterPv03 = strayFor(clrPv03.image);
+  const keepPv03 = clearFaint(imgPv03(9), ART_ARM_ALPHA);
+  const px = (r: Raster, x: number, y: number): number[] => [...r.data.subarray((y * r.width + x) * 4, (y * r.width + x) * 4 + 4)];
+  say(
+    'PV03_THE_ART_ARM_CLEARS_ALPHA_8_AND_BELOW_AND_THE_STRAY_RULE_TAKES_THE_SECOND_LARGEST_ISLAND',
+    JSON.stringify(strayPv03) === JSON.stringify({ stray: 2, islands: 3, leftOutPx: 3, artPx: 15 }) && clrPv03.cleared === 1 && JSON.stringify(px(clrPv03.image, 6, 4)) === '[0,0,0,0]' &&
+      JSON.stringify(afterPv03) === JSON.stringify({ stray: 2, islands: 2, leftOutPx: 2, artPx: 14 }) && keepPv03.cleared === 0 && JSON.stringify(px(keepPv03.image, 6, 4)) === '[40,50,60,9]',
+    `stray ${JSON.stringify(strayPv03)}; cleared ${clrPv03.cleared}, after ${JSON.stringify(afterPv03)}; alpha 9 cleared ${keepPv03.cleared}`,
+    'the card reads the art at alpha > 8 by pre-clearing the mask; the boundary is the card\'s number, and a part of several islands is built by one rule on every arm, never by a value chosen per part',
   );
 
   // ---------------------------------------------------------------------------
