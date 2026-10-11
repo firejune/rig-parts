@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.9.0](https://github.com/rig-c/parts/compare/v1.8.0...v1.9.0) (2026-10-11)
+
+
+### Features
+
+* **propose:** a turn control — one dial, each part carried by its See-through depth ([#267](https://github.com/rig-c/parts/issues/267)) ([0b5b1ce](https://github.com/rig-c/parts/commit/0b5b1ce8f3202ab5c094c9c1325853d4894c72f1))
+
+
+### Bug Fixes
+
+* **propose:** a skirt whose art starts below the chest hangs from the hip, and TIP_OVER_ROOT names a root the breath carries ([#269](https://github.com/rig-c/parts/issues/269)) ([f8ddcdd](https://github.com/rig-c/parts/commit/f8ddcddcd7dc50efc07908123b799a8656764c52))
+
 ## [1.8.0](https://github.com/rig-c/parts/compare/v1.7.0...v1.8.0) (2026-10-11)
 
 
