@@ -5450,9 +5450,12 @@ function runFacelessCases(dir: string, say: (name: string, ok: boolean, detail: 
     'the fallback is for a figure with no face; one with a face reads the face, as the reference did, so both public proposals are unchanged — a fallback that ran anyway would move the head from y 84 to y 117 here',
   );
 
-  // The ratios are a definition: the mean, to three places, of each ratio on the public examples' expected parts (tracked, so never a HOLE).
+  // The ratios are a definition: the mean, to three places, of each ratio on the expected parts of the two examples they
+  // were measured on (tracked, so never a HOLE). Those are the reference fixtures, kept under their own keys when the
+  // display demo was repainted (issue #227); a later example does not move a written constant, so it is not averaged in.
+  const RATIO_SOURCES = ['reference-demo', 'reference-sample'];
   const measured: Array<{ key: string; r: FacelessRatios; unionTop: number }> = [];
-  for (const key of readdirSync(join(ROOT, 'examples')).sort()) {
+  for (const key of RATIO_SOURCES) {
     const pj = join(ROOT, 'examples', key, 'expected', 'parts.json');
     if (!existsSync(pj)) continue;
     const parts = readParts(pj).parts;
