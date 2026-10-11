@@ -51,6 +51,8 @@
  *
  * `--islands <key> <build dir> <config>` prints, as a Markdown section, per `grid` mesh, its art's 4-connected islands ({@link islandCensus}).
  *
+ * `--draft` (Stage B) runs arm 0 and then the drafted figure ({@link draftConfig}); `--page-draft` renders it.
+ *
  * `--reuse` reads back a stage whose output, log and exit a previous run left in
  * `--work` instead of running it again (arm 2's rows are always rebuilt).
  *
@@ -62,6 +64,8 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { contourTopologyProblems, GRID } from '../src/contour.ts';
+import type { LatticeMeshSpec } from '../src/config.ts';
+import { type ChainLine, draftContourMesh, outlineTolerance } from './contourdraft.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from '../src/mesh.ts';
 import { alphaAbove, connectedComponents, readPng } from '../src/raster/index.ts';
 import { OFFSET_PLACES, PAD, rigJsonText } from '../src/rig.ts';
@@ -176,9 +180,9 @@ export function armOneConfig(config: Obj, B: number): { config: Obj; moved: stri
 
 /**
  * Arm 3's config (Stage A2): each named `grid` mesh becomes a contour mesh at tolerance T and margin T — the
- * Douglas–Peucker simplification moves the outline at most T inward of the grown silhouette, so a margin of T is
- * the least that keeps every art pixel inside by construction; the stage's own coverage check (`CONTOUR_COVERAGE`)
- * holds it — with background spacing {@link ARM3_SPACING} and, for every chain its segments name, `ribs` at
+ * margin chosen to match the tolerance, not a guarantee of coverage: measured, T 8 fails `CONTOUR_COVERAGE` on
+ * scarf `handwear_r` (1 of 21,404 art px outside) while T 2 and T 4 cover; the stage's own coverage check holds
+ * every cell — with background spacing {@link ARM3_SPACING} and, for every chain its segments name, `ribs` at
  * `stations`. Its `r`, `segments`, `exponent` and `rule` stay as written; nothing else in the config moves, no
  * `stray` is added. A mesh whose segments name no chain gets no ribs — `ribs` keys must be chains (issue #188) —
  * and is listed in `gaps` with where its bones' weights cross ({@link weightCrossing}).
@@ -230,6 +234,38 @@ function weightCrossing(config: Obj, name: string): string | null {
     lead = top;
   }
   return null;
+}
+
+/**
+ * Stage B's config: every `grid` mesh run through `draftContourMesh` (`tools/contourdraft.ts`, the rule `propose` would
+ * draft by) on arm 0's own part images, at T = `outlineTolerance(H)`. A part the draft keeps on the lattice keeps
+ * its entry as written; `rows` says, per part, what was drafted and why.
+ */
+export function draftConfig(config: Obj, partsDir: string, parts: readonly PartBox[], H: number): { config: Obj; rows: Array<{ part: string; mode: string; chains: number; ribbed: number; stations: string; note: string }>; T: number } {
+  const out = JSON.parse(JSON.stringify(config)) as Obj;
+  const meshes = obj(out.meshes, 'meshes');
+  const chains = new Map<string, ChainLine>();
+  for (const b0 of arr(config.bones, 'bones')) {
+    const b = obj(b0, 'bone');
+    if (typeof b.chain === 'string') chains.set(b.chain, { name: b.chain, points: [...arr(b.points, 'points').map((q) => nums(q, 'point') as P2), nums(b.tip, 'tip') as P2] });
+  }
+  const T = outlineTolerance(H);
+  const rows: Array<{ part: string; mode: string; chains: number; ribbed: number; stations: string; note: string }> = [];
+  for (const [name, m0] of Object.entries(meshes)) {
+    const m = obj(m0, `meshes.${name}`);
+    if (!('grid' in m)) continue;
+    const box = parts.find((q) => q.name === name);
+    if (box === undefined) throw new Error(`draftConfig: no part "${name}"`);
+    const d = draftContourMesh(name, readPng(join(partsDir, `${name}.png`)), [box.x, box.y], m as unknown as LatticeMeshSpec, chains, T);
+    if (d.mode === 'grid') {
+      rows.push({ part: name, mode: 'grid', chains: 0, ribbed: 0, stations: '—', note: d.note });
+      continue;
+    }
+    meshes[name] = d.mesh as unknown as Json;
+    const st = [...new Set(Object.values(d.mesh.ribs ?? {}).map((r) => r.stations))].sort();
+    rows.push({ part: name, mode: 'contour', chains: d.chains, ribbed: d.ribbed, stations: st.length === 0 ? '—' : st.join('/'), note: d.note });
+  }
+  return { config: out, rows, T };
 }
 
 // ---------------------------------------------------------------------------
@@ -956,7 +992,7 @@ function measured(arm: string, B: number | null, dir: string, r: RunResult, move
   };
 }
 
-function runExample(key: string, configPath: string, inputs: string, requirements: string | null, work: string, chainRows: string[], reuse: boolean, arm3: ReadonlyArray<readonly string[] | 'grid'> | null = null): Obj {
+function runExample(key: string, configPath: string, inputs: string, requirements: string | null, work: string, chainRows: string[], reuse: boolean, arm3: ReadonlyArray<readonly string[] | 'grid'> | null = null, draft = false): Obj {
   for (const p of [configPath, join(inputs, 'painting.png'), join(inputs, 'layers', 'full', 'layers.json'), join(inputs, 'layers', 'head', 'layers.json'), ...(requirements === null ? [] : [requirements])]) {
     if (!existsSync(p)) {
       console.error(`density_survey: ${p} is not there`);
@@ -971,7 +1007,7 @@ function runExample(key: string, configPath: string, inputs: string, requirement
   const dir0 = join(work, 'arm0');
   log('arm 0 build');
   const r0 = stage(dir0, reuse, 'bun', buildArgs(configPath, inputs, requirements, dir0));
-  const m0 = measured('0', null, dir0, r0, [], null, [], arm3 !== null);
+  const m0 = measured('0', null, dir0, r0, [], null, [], arm3 !== null || draft);
   arms.push(m0.result);
   if (m0.geometry === null || r0.exit !== 0) {
     log(`arm 0 did not build (exit ${r0.exit}); nothing else runs`);
@@ -981,6 +1017,17 @@ function runExample(key: string, configPath: string, inputs: string, requirement
   const parts = partBoxes(join(dir0, 'parts.json'));
   const fig = figureHeight(parts);
 
+  let drafted: Json = null;
+  if (draft) {
+    const { config: cfg, rows, T } = draftConfig(config, join(dir0, 'parts'), parts, fig.height);
+    drafted = { T, rows } as unknown as Json;
+    const dir = join(work, 'draft');
+    const at = stageConfig(configPath, cfg, join(work, 'cfg-draft'));
+    writeFileSync(join(work, 'draft-config.json'), `${JSON.stringify(cfg, null, 2)}\n`);
+    log(`draft T ${T} build`);
+    const r = stage(dir, reuse, 'bun', buildArgs(at, inputs, requirements, dir));
+    arms.push(measured(`draft (T ${T})`, null, dir, r, rows.map((x) => `${x.part} -> ${x.mode}`), base, [], true).result);
+  }
   if (arm3 !== null) {
     const gridParts = Object.entries(obj(config.meshes, 'meshes')).filter(([, m]) => 'grid' in obj(m, 'mesh')).map(([n]) => n);
     arm3.forEach((group, gi) => {
@@ -998,7 +1045,7 @@ function runExample(key: string, configPath: string, inputs: string, requirement
       }
     });
   }
-  for (const c of arm3 === null ? FIGURE_DIVISORS : []) {
+  for (const c of arm3 === null && !draft ? FIGURE_DIVISORS : []) {
     const B = Math.round(fig.height / c);
     const dir = join(work, `arm1-c${c}`);
     const { config: cfg, moved } = armOneConfig(config, B);
@@ -1008,7 +1055,7 @@ function runExample(key: string, configPath: string, inputs: string, requirement
     arms.push(measured(`1 (c ${c})`, B, dir, r, moved, base, []).result);
   }
 
-  if (chainRows.length > 0 && arm3 === null) {
+  if (chainRows.length > 0 && arm3 === null && !draft) {
     const spacing = fig.height / ROW_SPACING_DIVISOR;
     for (const k of ROW_STATIONS) {
       const dir = join(work, `arm2-k${k}`);
@@ -1033,6 +1080,7 @@ function runExample(key: string, configPath: string, inputs: string, requirement
     })()])) as Json,
     part_sizes: Object.fromEntries(parts.map((p) => [p.name, `${p.w}x${p.h}`])) as Json,
     mesh_bones: Object.fromEntries(Object.keys(obj(config.meshes, 'meshes')).map((n) => [n, new Set(resolveSegments(config, n).map((s) => s.bone)).size])) as Json,
+    ...(draft ? { draft: drafted } : {}),
     arms: arms as unknown as Json,
   };
 }
@@ -1215,7 +1263,7 @@ function renderArmThree(docs: Obj[]): string {
   const L: string[] = [];
   L.push('# Arm 3: a blunt contour outline with ribs only (issue #265, Stage A2)');
   L.push('');
-  L.push(`Generated by \`tools/density_survey.ts --page-arm3\` over \`--run … --arm3 …\` documents; every figure is the tool's. Each named \`grid\` mesh becomes a \`contour\` mesh at tolerance T ∈ {${ARM3_TOLERANCES.join(', ')}} rig px and margin T (the least margin that keeps the art covered by construction; \`CONTOUR_COVERAGE\` holds it), background spacing ${ARM3_SPACING} (no lattice point survives), and \`ribs\` at stations ∈ {${ARM3_STATIONS.join(', ')}} on every chain its segments name. Nothing else moves; no \`stray\` is added. A refusal is the cell's result. "Overdraw" is the mesh's setup-pose area over its art area (alpha above 8, the mesh's own threshold); "displacement" is the largest posed distance against arm 0 over the idle (the Stage A rule). Bars: the nine of \`check\`.`);
+  L.push(`Generated by \`tools/density_survey.ts --page-arm3\` over \`--run … --arm3 …\` documents; every figure is the tool's. Each named \`grid\` mesh becomes a \`contour\` mesh at tolerance T ∈ {${ARM3_TOLERANCES.join(', ')}} rig px and margin T (matched to the tolerance, not a guarantee of coverage: T 8 fails \`CONTOUR_COVERAGE\` on scarf handwear_r, 1 of 21,404 art px, while T 2 and T 4 cover; the stage's own check holds every cell), background spacing ${ARM3_SPACING} (no lattice point survives), and \`ribs\` at stations ∈ {${ARM3_STATIONS.join(', ')}} on every chain its segments name. Nothing else moves; no \`stray\` is added. A refusal is the cell's result. "Overdraw" is the mesh's setup-pose area over its art area (alpha above 8, the mesh's own threshold); "displacement" is the largest posed distance against arm 0 over the idle (the Stage A rule). Bars: the nine of \`check\`.`);
   L.push('');
   L.push('The pictures (trailer; rig-c 2.43.0\'s `rigc inspect --show art,mesh --dim`, installed beside this tree for the pictures only), read before the tables:');
   L.push('');
@@ -1317,6 +1365,80 @@ export function islandCensus(build: string, config: Obj): Array<{ part: string; 
     });
 }
 
+/** Stage B's page: arm 0 against the drafted figure, per example, with the line's three readings. */
+function renderDraft(docs: Obj[]): string {
+  const L: string[] = [];
+  L.push('# The drafted outline mesh on the whole figure (issue #265, Stage B)');
+  L.push('');
+  L.push('Generated by `tools/density_survey.ts --page-draft` over `--run … --draft` documents; every figure is the tool\'s. The draft is `tools/contourdraft.ts` (`draftContourMesh`) applied to every `grid` mesh of each example\'s config on arm 0\'s own part images: a contour outline at T = max(1, round(H / 554)) with margin T, interior from `ribs` only, dust dropped by a drafted `stray`, ribs lowered or dropped where the rig stage refuses them, and a part with real pieces or any other refusal kept on `grid`. Overdraw is the mesh\'s setup-pose area over its art (alpha above 8); displacement is the largest posed distance against arm 0 over the idle.');
+  L.push('');
+  L.push('The pictures (rig-c 2.43.0\'s `rigc inspect --show art,mesh --dim`, installed beside this tree for the pictures only; the drafted builds were rebuilt on macOS with the same triangle totals), read before the tables:');
+  L.push('');
+  L.push('- `density-draft-figure.png` — demo, scarf and the trailer, each drafted figure whole (`--max 1200`).');
+  L.push('- `density-draft-fringe-skirt.png` — per example, the fringe (`hair_front`) and the skirt (`bottomwear`; scarf: `topwear`, which carries its robe chains), arm 0 (A) beside the draft (B): `--compare <draft build> --overlay-slot <part> --zoom slot:<part>:10 --max 560`.');
+  L.push('');
+  L.push('![the drafted figures](density-draft-figure.png)');
+  L.push('');
+  L.push('![fringe and skirt](density-draft-fringe-skirt.png)');
+  for (const doc of docs) {
+    const key = str(doc.key, 'key');
+    const arms = armsOf(doc);
+    const [a0, ad] = [arms[0], arms[1]];
+    const d = obj(doc.draft, 'draft');
+    const rows = arr(d.rows, 'rows').map((r) => obj(r, 'row'));
+    const t0 = a0.meshes.reduce((x, m) => x + m.triangles, 0);
+    L.push('');
+    L.push(`## ${key}`);
+    L.push('');
+    L.push(`T = ${num(d.T, 'T')}.`);
+    L.push('');
+    L.push('| arm | build | Σ triangles | vs arm 0 | overdraw, figure | ' + BARS.join(' | ') + ' | seam mean / px>40 | largest displacement vs arm 0 (rig px) |');
+    L.push('| --- | --- | ---: | ---: | ---: | ' + BARS.map(() => '---').join(' | ') + ' | --- | --- |');
+    for (const a of [a0, ad]) {
+      if (a === undefined) continue;
+      const T = a.meshes.reduce((x, m) => x + m.triangles, 0);
+      const od = overdrawOf(a.meshes);
+      const disp = [...a.displacement].sort((p, q) => q.max - p.max)[0];
+      L.push(`| ${a.arm} | ${a.exit === 0 ? 'PASS' : `exit ${a.exit}`} | ${a.meshes.length > 0 ? T : '—'} | ${a.meshes.length > 0 ? `${fx((100 * T) / t0, 1)} %` : '—'} | ${od === null ? '—' : fx(od, 3)} | ${BARS.map((b) => barCell(a.check, b)).join(' | ')} | ${seamCell(a.check)} | ${disp === undefined ? '—' : `${fx(disp.max, 3)} (${disp.slot}, frame ${disp.frame})`} |`);
+    }
+    if (ad !== undefined && ad.exit !== 0) {
+      L.push('');
+      for (const r of ad.refusals) L.push(`- \`${r}\``);
+      for (const c of ad.checkLines.filter((l) => /FAIL/.test(l))) L.push(`- \`${c}\``);
+    }
+    L.push('');
+    L.push('| part | drafted | ribs: N of M chains, S stations | triangles arm 0 → draft | overdraw arm 0 → draft | displacement vs arm 0 | TEXTURE_STRETCH arm 0 → draft |');
+    L.push('| --- | --- | --- | ---: | ---: | ---: | ---: |');
+    for (const r of rows) {
+      const part = str(r.part, 'part');
+      const m0 = a0.meshes.find((m) => m.slot === part);
+      const m1 = ad === undefined ? undefined : ad.meshes.find((m) => m.slot === part);
+      const dsp = ad === undefined ? undefined : ad.displacement.find((x) => x.slot === part);
+      const o = (m: ArmResult['meshes'][number] | undefined): string => (m === undefined || m.art === undefined ? '—' : fx(m.area / m.art, 3));
+      const ribs = str(r.mode, 'mode') === 'grid' ? '—' : `${num(r.ribbed, 'ribbed')} of ${num(r.chains, 'chains')}, ${str(r.stations, 'stations')}`;
+      L.push(`| ${part} | ${str(r.mode, 'mode')} | ${ribs} | ${m0?.triangles ?? '—'} → ${m1?.triangles ?? '—'} | ${o(m0)} → ${o(m1)} | ${dsp === undefined ? '—' : fx(dsp.max, 3)} | ${stretchOf(a0.check, part)} → ${ad === undefined ? '—' : stretchOf(ad.check, part)} |`);
+    }
+    L.push('');
+    L.push('The draft\'s note per part, as written:');
+    L.push('');
+    for (const r of rows) L.push(`- ${str(r.note, 'note')}`);
+    L.push('');
+    L.push('Every arm\'s `check` lines, as the build printed them:');
+    for (const a of arms) {
+      L.push('');
+      L.push(`<details><summary>arm ${a.arm}</summary>`);
+      L.push('');
+      L.push('```');
+      for (const l of a.checkLines) L.push(l);
+      L.push('```');
+      L.push('');
+      L.push('</details>');
+    }
+  }
+  L.push('');
+  return L.join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // the command
 // ---------------------------------------------------------------------------
@@ -1331,6 +1453,11 @@ function main(argv: string[]): void {
     const rows = islandCensus(resolve(build), obj(readJson(resolve(config)), config));
     process.stdout.write(`\n### ${key}: ${rows.filter((r) => r.islands.length === 1).length} of ${rows.length} grid parts are one island\n\n`);
     for (const row of rows) process.stdout.write(`- ${row.part}: ${row.islands.length} island(s)${row.islands.length > 1 ? ` — ${row.islands.join(', ')} px` : ''}\n`);
+    return;
+  }
+  if (argv.includes('--page-draft')) {
+    const files = argv.slice(argv.indexOf('--page-draft') + 1);
+    process.stdout.write(renderDraft(files.map((f) => obj(readJson(f), f))));
     return;
   }
   if (argv.includes('--page-arm3')) {
@@ -1353,7 +1480,7 @@ function main(argv: string[]): void {
       process.exit(2);
     }
     const chain = flag('--chain-rows');
-    const doc = runExample(key, resolve(config), resolve(inputs), flag('--requirements') === null ? null : resolve(flag('--requirements') as string), resolve(work), chain === null ? [] : chain.split(','), argv.includes('--reuse'), flag('--arm3') === null ? null : (flag('--arm3') as string).split(';').map((g) => (g === 'grid' ? 'grid' : g.split(','))));
+    const doc = runExample(key, resolve(config), resolve(inputs), flag('--requirements') === null ? null : resolve(flag('--requirements') as string), resolve(work), chain === null ? [] : chain.split(','), argv.includes('--reuse'), flag('--arm3') === null ? null : (flag('--arm3') as string).split(';').map((g) => (g === 'grid' ? 'grid' : g.split(','))), argv.includes('--draft'));
     process.stdout.write(`${JSON.stringify(doc)}\n`);
     return;
   }
