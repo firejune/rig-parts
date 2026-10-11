@@ -20,9 +20,10 @@ here (gitignored).
   the idle swings them.
 - **The first character run through the pipeline with the proposal unedited.** The
   config's `bones`, `meshes` and `motion` are `proposal.json`'s, value for value, but
-  for one mesh mode (below), and its `regions` are the proposal's for every part but
-  the two shoe patches. Every other hand correction is an `assemble.patches` entry
-  (below), with its reason in `assemble.patches_note`.
+  for one mesh mode (below) and the `robe_r` chain's points (below), and its
+  `regions` are the proposal's for every part but the two shoe patches. Every other
+  hand correction is an `assemble.patches` entry (below), with its reason in
+  `assemble.patches_note`.
 - **The one mixed-mode example.** `meshes.bottomwear` is tracked in contour mode —
   `contour {tolerance 1, margin 1, spacing 12, stray 4}`, spacing the proposal's grid —
   while every other mesh keeps the proposal's lattice; its `note` says why. Issue #118
@@ -50,13 +51,23 @@ here (gitignored).
   moved the first two points of the `robe_l` chain by 1 and 2 px from what the
   proposer wrote on the parts assembled before it (`[503, 410]`, `[513, 541]` →
   `[502, 410]`, `[511, 541]`); the config followed the proposal in those two values.
+  The config leaves the proposal in one chain (issue #196): the proposer's `robe_r`
+  (`[318, 410]`, `[306, 541]`, `[303, 672]`, `[304, 803]`, tip `[295, 886]`) put its
+  first two joints on the sleeve, 18 px right of the tie's painted pixels in those rows,
+  and its tip 20 px below the fringe, on no art; the config's points are on the tie
+  (`[298, 410]`, `[284, 541]`, `[280, 672]`, `[304, 803]`, tip `[295, 860]`), the link
+  count and the idle track the proposal's, and the entry's `note` says why. `robe_l` is
+  the proposal's: no tie pixel is painted on its side above row 600, where the sleeve
+  covers the tie (`docs/evidence/scarf-chain-moved.png` shows `robe_r` before and after).
 - `sheets/` — `rig-parts sheet` contact sheets, written by this port as PNG (demo's
   and sample's are the reference implementation's JPEGs): the painting with the full
   run's layers, the painting with the head run's layers, and the painting with the
   24 assembled parts of the `expected/` build.
 - `expected/` — **this port's own build**, rebuilt by issue #118 (which moved
   `bottomwear` to contour mode and `TIP_OVER_ROOT` to the geometry; `parts.json` did
-  not move):
+  not move) and by issue #196 (which moved `robe_r` onto the tie: `rig.json`,
+  `mesh_report.json` and `check.json` moved, `parts.json`, `motion.json` and the gate
+  file did not):
   `rig-parts build --config examples/scarf/config.json --source
   inputs/painting.png --full inputs/layers/full --head inputs/layers/head --out
   <dir>`, the call the selftest's chain suite makes. The reference implementation
@@ -136,7 +147,7 @@ build's `check.json` (`TEXTURE_STRETCH.per_mesh`):
 | `hair_front` | 8 | 143 (58) · 1773 · 9.22 · 32.01 | 119 (50) · 422.5 · 2 · 9.46 | 1.098 / 1.144 |
 | `handwear_r` | 9 | 382 (120) · 4579 · 10.44 · 37.87 | 291 (65) · 917 · 2 · 4.4 | 1.021 / 1.021 |
 | `handwear_l` | 8 | 478 (132) · 4168 · 9.22 · 41.19 | 364 (55) · 962 · 2 · 2.6 | 1.022 / 1.027 |
-| `topwear` | 29 | 239 (84) · 30230 · 32.20 · 17.24 | 283 (153) · 2599.5 · 2 · 3.69 | 1.051 / 1.095 |
+| `topwear` | 29 | 239 (84) · 30230 · 32.20 · 17.24 | 283 (153) · 2599.5 · 2 · 3.69 | 1.051 / 1.112 |
 | `bottomwear` | 12 | 182 (54) · 3563 · 13.04 · 42.51 | 179 (69) · 528.5 · 2 · 7.7 | 1.106 / 1.036 |
 
 All six parts build in both modes; over them the lattice uses 1583 vertices and

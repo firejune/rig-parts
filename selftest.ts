@@ -13531,12 +13531,29 @@ function runStructureSuite(): number {
   );
 
   // ST25 — the tracked public examples.
+  // Issue #196: the chains a tracked example's config moves off its proposal by hand, by example. Each carries a `note`
+  // on its config entry citing the issue; its links are the only bones allowed to differ from the proposal, and every
+  // one of them must differ, so a stale entry here is as loud as an unrecorded move.
+  const HAND_MOVED_CHAINS: Readonly<Record<string, readonly string[]>> = { scarf: ['robe_r'] };
+  const handMoved = (proposalPath: string, configPath: string, chains: readonly string[]) => {
+    const propCfg = loadComparison(proposalPath, configPath, null);
+    const cfgBones = (readJsonAt(configPath) as { bones?: Array<{ chain?: string; points?: unknown[]; note?: unknown }> }).bones ?? [];
+    const entries = chains.map((c) => cfgBones.find((b) => b.chain === c));
+    const links = entries.flatMap((b) => (b === undefined ? [] : (b.points ?? []).map((_, i) => `${b.chain}${i}`)));
+    const noted = entries.every((b) => b !== undefined && typeof b.note === 'string' && b.note.includes('#196'));
+    const loud = loudRows(propCfg).filter((row) => links.includes(row.split(' ')[0]));
+    const allMoved = links.every((n) => loud.some((row) => row.startsWith(`${n} `)));
+    const rest = loudRows(propCfg, links).length;
+    const text = `proposal vs config loud rows ${rest} off the hand-moved chains (${chains.length === 0 ? 'none' : `${chains.join(', ')}: ${loud.length} row(s) over ${links.length} link(s), every link moved ${allMoved}, note citing #196 ${noted ? 'present' : 'ABSENT'}`})`;
+    return { propCfg, ok: rest === 0 && noted && allMoved, text };
+  };
   const exampleLines: string[] = [];
   let exampleOk = true;
   for (const key of exampleKeys().all) {
     const dir = join(EXAMPLES_DIR, key);
     const cfgRig = loadComparison(join(dir, 'config.json'), join(dir, 'expected', 'rig.json'), null);
-    const propCfg = loadComparison(join(dir, 'proposal.json'), join(dir, 'config.json'), null);
+    const moved = handMoved(join(dir, 'proposal.json'), join(dir, 'config.json'), HAND_MOVED_CHAINS[key] ?? []);
+    const propCfg = moved.propCfg;
     // Issue #183: a bone the config authors beyond the proposal is allowed only as a physics constraint's own bone
     // (sample's chest_jiggle and hip_jiggle): propose writes no constraint, so it cannot have proposed that bone.
     const exCons = ((readJsonAt(join(dir, 'config.json')) as { constraints?: Array<{ type?: string; bone?: string }> }).constraints ?? []).filter((c) => c.type === 'physics');
@@ -13552,16 +13569,45 @@ function runStructureSuite(): number {
       ctl.every((n) => n.endsWith(CONTROL_SUFFIX)) &&
       cfgRig.unmappedLeft.length === 0 &&
       cfgRig.unmappedRight.join(',') === ctl.join(',') &&
-      loudRows(propCfg).length === 0 &&
+      moved.ok &&
       propCfg.unmappedLeft.length + propCfg.unmappedRight.length === authored.length;
     exampleOk &&= ok;
-    exampleLines.push(`${key}: config vs expected/rig.json ${origins.length} origins at 0, ${ctl.length} ${CONTROL_SUFFIX} between, other parents ${odd.length}; proposal vs config loud rows ${loudRows(propCfg).length}, unmatched ${propCfg.unmappedLeft.length + propCfg.unmappedRight.length} (physics bones the config authors: ${authored.length === 0 ? 'none' : authored.join(', ')})`);
+    exampleLines.push(`${key}: config vs expected/rig.json ${origins.length} origins at 0, ${ctl.length} ${CONTROL_SUFFIX} between, other parents ${odd.length}; ${moved.text}, unmatched ${propCfg.unmappedLeft.length + propCfg.unmappedRight.length} (physics bones the config authors: ${authored.length === 0 ? 'none' : authored.join(', ')})`);
   }
+  // The planted negatives, on a temp copy of scarf's pair (the tracked files are not touched): the hand-moved chain put
+  // back on the proposal's points, so no link differs, and its note with the issue number removed. Each must fail.
+  const plantDir = temp('hand-moved');
+  const planted: string[] = [];
+  try {
+    const exDir = join(EXAMPLES_DIR, 'scarf');
+    const prop = readJsonAt(join(exDir, 'proposal.json')) as { bones: Array<{ chain?: string; points?: unknown; tip?: unknown }> };
+    const fromProp = prop.bones.find((b) => b.chain === 'robe_r');
+    const plant = (label: string, edit: (b: Record<string, unknown>) => void): void => {
+      const cfg = readJsonAt(join(exDir, 'config.json')) as { bones: Array<Record<string, unknown>> };
+      const entry = cfg.bones.find((b) => b.chain === 'robe_r');
+      if (entry !== undefined) edit(entry);
+      const path = join(plantDir, `${label}.json`);
+      writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`);
+      const r = handMoved(join(exDir, 'proposal.json'), path, HAND_MOVED_CHAINS.scarf ?? []);
+      exampleOk &&= !r.ok && entry !== undefined;
+      planted.push(`${label} -> ${r.ok ? 'PASSED' : 'refused'} (${r.text})`);
+    };
+    plant('robe_r back on the proposal\'s points', (b) => {
+      b.points = fromProp?.points;
+      b.tip = fromProp?.tip;
+    });
+    plant('robe_r note without #196', (b) => {
+      b.note = String(b.note).split('#196').join('the issue');
+    });
+  } finally {
+    rmSync(plantDir, { recursive: true, force: true });
+  }
+  exampleLines.push(`planted on a temp copy of scarf: ${planted.join('; ')}`);
   say(
     'ST25_EACH_TRACKED_EXAMPLE_S_CONFIG_IS_ITS_RIG_JSON_THROUGH_THE_STAGE_AND_ITS_PROPOSAL_IS_ITS_CONFIG',
     exampleOk && exampleLines.length > 0,
     exampleLines.join('; '),
-    why('expected/rig.json is a flat rig — the reference\'s, or for an example the reference never built (scarf) this port\'s build carried to the flat form by flattenRig — every offset a difference of integer landmarks at 3 places, so the stage rule must give every origin exactly 0; the only parents not the same are the rig stage\'s controls, one bone up; the tracked proposal and config carry equal bones (the reference used only to score) but for a physics constraint\'s own bone, which the config authors and propose cannot write (issue #183)'),
+    why('expected/rig.json is a flat rig — the reference\'s, or for an example the reference never built (scarf) this port\'s build carried to the flat form by flattenRig — every offset a difference of integer landmarks at 3 places, so the stage rule must give every origin exactly 0; the only parents not the same are the rig stage\'s controls, one bone up; the tracked proposal and config carry equal bones (the reference used only to score) but for a physics constraint\'s own bone, which the config authors and propose cannot write (issue #183), and the links of a chain the example moves by hand, each link moved and the move\'s reason in the entry\'s note (scarf\'s robe_r, put onto its tie, issue #196)'),
   );
 
   // ST26 — the printout and its determinism.

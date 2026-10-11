@@ -390,15 +390,15 @@
       "parent": "chest",
       "points": [
         [
-          318,
+          298,
           410
         ],
         [
-          306,
+          284,
           541
         ],
         [
-          303,
+          280,
           672
         ],
         [
@@ -408,8 +408,9 @@
       ],
       "tip": [
         295,
-        886
-      ]
+        860
+      ],
+      "note": "hand correction (issue #196): the proposal's points [[318,410],[306,541],[303,672],[304,803]], tip [295,886], put the first two joints on the sleeve, 18 px right of the tie's painted pixels at those rows, and the tip 20 px below the fringe on no art; each joint and the tip now sit on the tie's own pixels in topwear (rows 410, 541, 672 and 803 at the tie's left run, the tip on the fringe at row 860). The link count and the idle track are the proposal's. robe_l is unchanged: its side has no tie pixel above row 600, where the sleeve covers it."
     },
     {
       "chain": "robe_l",
