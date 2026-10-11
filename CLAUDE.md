@@ -5,11 +5,12 @@ link to this file.
 
 ## What this is
 
-rig-parts takes one anime character painting and its
+`@rig-c/parts` (this repository, `rig-c/parts`; the command is `rig-parts`)
+takes one anime character painting and its
 [See-through](https://github.com/shitagaki-lab/see-through) layer decomposition
 and produces Spine-ready parts — `parts/*.png`, `parts.json` (per-part
 provenance and measurements), and `rig.json` / `motion.json` in
-[rig-c](https://github.com/firejune/rigc)'s spec — then calls rig-c to
+[rig-c](https://github.com/rig-c/core)'s spec — then calls rig-c to
 compile, gate, render and check. It is a port of a working reference
 implementation that lives in a private repository (see *Where the private
 oracle lives*). Every command the CLI registers is implemented — layers,
@@ -54,7 +55,7 @@ rig-c under it, to convert that silence into named failures.
   spine-core round trip where it does, rigc's own validator over the compiled
   model document where it does not, and the report's last lines say which
   ran. In this repository and its CI the runtime is a development
-  dependency, so the round trip runs here; an install of rig-parts carries
+  dependency, so the round trip runs here; an install of `@rig-c/parts` carries
   no Spine runtime and runs rigc's own gate, and `check.json` records which
   gated the build. `build`'s gate is the one gate: rigc runs it once over the
   compile and once over the packed pages on disk, under `spine-html`, which
@@ -121,7 +122,7 @@ paintings, their See-through runs, the parts and configs the reference produced
 - ✅ **The public examples are not that corpus.** `examples/<key>/` holds
   characters generated to be published — a public checkpoint, no identity
   LoRA, no private character text; the generation record and the licence are
-  in the [spine-parts-examples](https://github.com/firejune/spine-parts-examples)
+  in the [parts-examples](https://github.com/rig-c/parts-examples)
   repository. Their config, proposal, contact sheets and the reference's
   outputs (`expected/`) are tracked here — for `scarf`, which no reference
   ever ran, `expected/` is this port's own build at the commit that added
