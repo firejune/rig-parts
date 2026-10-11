@@ -1662,7 +1662,8 @@ and stay absent).
 | `SCENE_ID_UNIQUE`, `SCENE_ID_FORM` | an `id` repeated, empty, or holding `:` — the separator of a prefixed name — or `/`, `\` or a leading `.`, because an id begins every image file of its character | another id |
 | `SCENE_PLATE_PROVENANCE`, `SCENE_PLATE_PRESENT`, `SCENE_PLATE_SIZE` | the plate's `provenance` is not `observed`, `generated` or `unknown`; its image is missing or not a PNG; it is not the canvas's size (it is drawn at canvas (0, 0) and never scaled) | the plate |
 | `SCENE_BUILD_PRESENT` | a build directory, or a file `build` writes in it (`parts.json`, `rig/rig.json`, `rig/motion.json` with an `idle`, an image its skin names, `check/check.json`), is missing | run `build` for that character |
-| `SCENE_BUILD_GREEN` | the build's own `check/check.json` does not say `PASS` and `gate_spine_html_green` | finish that character first: compose binds finished characters |
+| `SCENE_BUILD_GREEN` | the build's own `check/check.json` does not say `PASS` and `gate_spine_html_green`; under an accept list (`--accept`, `characters[].accept`), it failed a bar the list does not name, its gate is red, a declared requirement is not PASS, or it names no failing bar — the bars not met and the ones accepted are listed | finish that character first: compose binds finished characters. To look at the scene meanwhile, name the failing bars (§7, *Composing several characters*) |
+| `SCENE_ACCEPT_KNOWN` | an `--accept` name, or one in a character's `accept`, is not a bar `check` holds a build to: a problem code (`CHECK_LOOP_CLOSES`) where the bar's name (`loop`) belongs, a misspelling, or `gate`, which is rig-c's and never accepted | one of the names the message lists |
 | `SCENE_BUILD_FIELD_KNOWN` | a build's `rig.json` or `motion.json` carries a key compose does not know how to prefix or place, or a root with a transform of its own | a rig `build` wrote; a rig written by something else is `check`'s to measure (§7, *Measuring a rig rig-parts did not assemble*), not compose's to merge |
 | `SCENE_RIG_SCALE_AGREES` | the characters' `parts.json` `scale_rig_per_source` differ (each named) | one `assemble.rig_scale` for every character; `characters[].scale` sizes a placed character, it does not make two `rig_scale`s one |
 | `SCENE_SCALE_EXACT` | a character at a `scale` other than 1 carries something no per-character value can scale: a physics constraint with a nonzero `wind` or `gravity` (Spine applies both through the skeleton's `referenceScale`, which the composed skeleton holds once for every character), a track whose `property` compose does not know to be a length or not, or a translate key whose `v` is neither a list of numbers nor a map of them | `scale` 1 for that character, or rebuild it at another `assemble.rig_scale` |
@@ -2042,7 +2043,7 @@ rig directory, copied away from its `parts.json`, reads `4 of 9`: the gate, the 
 
 ### Composing several characters (`compose`, issue #74)
 
-`rig-parts compose --scene <scene.json> --out <dir> [--requirements <file.json>]`
+`rig-parts compose --scene <scene.json> --out <dir> [--requirements <file.json>] [--accept <bar>[,<bar>…]]`
 binds characters this package already built into one rig. Each character runs the
 single-character path (§4, steps 0–9) on its own, already isolated input to a green
 `build` first; compose reads what that build wrote and changes nothing in it.
@@ -2065,6 +2066,7 @@ single-character path (§4, steps 0–9) on its own, already isolated input to a
 | `characters[].build` | a `build --out` directory (relative to the scene file) whose own `check/check.json` is green |
 | `characters[].offset` | `[x, y]`, a translation from the build's rig px to canvas px. Every character is built at one `assemble.rig_scale`, so its rig px are canvas px at scale 1 |
 | `characters[].scale` | optional, a positive number; absent is 1, and 1 composes to the bytes a scene without the key writes. The character's size on the canvas, about its stage's top-left corner: a rig px `p` lands at canvas px `scale * p + offset` (issue #197). A character scaled up past its art is drawn soft — the art is not resampled; rebuild it at a higher `assemble.rig_scale` if that matters |
+| `characters[].accept` | optional, a list of bar names: the bars this character's own check may have failed and still be composed (issue #203). `compose --accept <bar>[,<bar>…]` is the same list for every character; the two are joined, so the command line applies to every character and a character's list adds to it. Each name is one of the bars `check`'s summary names, less the gate — `loop`, `seam`, `BREATH_VISIBLE`, `BLINK_NO_HOLE`, `CHAIN_LAG`, `TIP_OVER_ROOT`, `STILL_REGIONS_DARK`, `TEXTURE_STRETCH`; anything else is `SCENE_ACCEPT_KNOWN`. A build is taken when every bar its `check.json` failed is named; its gate red, a declared requirement not PASS, or a bar not named is `SCENE_BUILD_GREEN` as before. **It is for looking, not for shipping:** the `[compose]` line says which failing bars were accepted, `scene.json` records them as the character's `accepted`, the composed rig's own check measures them again and reports them as it finds them, and the run exits 1 even when that check is PASS (a composed rig has no `parts.json`, so the seam and four judgement lines say SKIP there). A list that accepts nothing — every build green — composes to the bytes a scene without one writes |
 | `order` | the draw order, back to front: a character id (its slots not named elsewhere, in its own order) or one `<id>:<slot>`. Every slot of every character is drawn exactly once. Interleaving is written by naming slots: `["a", "b:arm_l", "b"]` draws `b`'s left arm between `a` and the rest of `b` |
 
 What is composed:
@@ -2134,7 +2136,8 @@ What is composed:
   image, provenance, note, bone, slot, size, `judged_by: "nothing"`), per character
   its build, offset, `scale` (only when it is not 1), `rig_size`, `rig_scale`, placed bounds (the union of its part
   boxes, canvas px), shift and what it moved (`shifted`: the first-level bones, the
-  regions on `root`, the count of weights bound to `root`), and its counts, and the
+  regions on `root`, the count of weights bound to `root`), its counts and `accepted`
+  (the failing bars of its own check that an accept list took, only when there are any), and the
   order —
   as declared and as the slot list it expands to, `judged_by: "nothing"`.
 

@@ -17515,6 +17515,98 @@ function runSceneSuite(): number {
       `no --scene: exit ${noScene.status} ${failLine(noScene.out, 'USAGE') ?? ''}; --scene twice: exit ${twiceFlag.status}; a scene missing reach's slots: exit ${refused.status}, ${composeFail(refused.out, 'SCENE_ORDER_COMPLETE')?.slice(0, 100) ?? 'no line'}, rig/ written ${existsSync(join(refusedOut, 'rig'))}; help: ${helpWords.map((w) => `${JSON.stringify(w.slice(0, 30))} ${help.includes(w)}`).join(', ')}`,
       'the messages are the UI and exit codes are part of it: 2 usage, 1 refused (every FAIL line printed), as every other command',
     );
+
+    // ---- a failing bar, accepted by name (issue #203) ------------------------------
+    // check.json is the fixture's hand-written file (fixtures/scene.ts); each planted one names the bars as check writes
+    // them: the loop by loop_max_diff (7, not the 0 LOOP_MAX_BAR requires), CHAIN_LAG by its status FAIL, the seam by a
+    // mean of 2 (over SEAM_MEAN_BAR 1.0). By hand, a build red on the loop alone is taken under "loop" and its row
+    // records ["loop"]; red on the loop and CHAIN_LAG under "loop" alone leaves CHAIN_LAG not accepted.
+    const redOn = (fields: Record<string, unknown>, gate = true): { pass: boolean; checkFields: Record<string, unknown> } => ({ pass: false, checkFields: { gate_spine_html_green: gate, ...fields } });
+    // The loop is opened for real in this build (its first idle track's last key moved off its first), so the composed
+    // rig's own check measures it red too (SC41).
+    const openLoop = (m: Record<string, unknown>): void => {
+      const keys = ((m.animations as { idle: { tracks: Array<{ keys: Array<{ v: number[] }> }> } }).idle.tracks[0]).keys;
+      keys[keys.length - 1].v = [0.5];
+    };
+    writeSceneBuild(join(dir, 'loopy'), 'plain', { ...redOn({ loop_max_diff: 7 }), motion: openLoop });
+    writeSceneBuild(join(dir, 'twobars'), 'plain', redOn({ loop_max_diff: 7, CHAIN_LAG: { status: 'FAIL' } }));
+    writeSceneBuild(join(dir, 'gatered'), 'plain', redOn({ loop_max_diff: 7 }, false));
+    writeSceneBuild(join(dir, 'reqred'), 'plain', redOn({ loop_max_diff: 7, requirements: { lines: { reach_tip: { status: 'FAIL' } } } }));
+    writeSceneBuild(join(dir, 'seamy'), 'plain', redOn({ seam_mean: 2, seam_px_over_40: 0 }));
+    const composeA = (body: Record<string, unknown>, accept: string[] = []): { ok: ComposedScene | null; err: PartsError | null } => {
+      let ok: ComposedScene | null = null;
+      const err = refusals(() => {
+        ok = composeFromFiles(scene(body), undefined, undefined, accept);
+      });
+      return { ok, err };
+    };
+    const withPlain = (build: string, accept?: unknown): Record<string, unknown> => two({ characters: [{ id: 'plain', build, offset: [0, 20], ...(accept === undefined ? {} : { accept }) }, { id: 'reach', build: 'reach', offset: [50, 10] }] });
+    const rowOf = (c: ComposedScene | null, id: string): Record<string, unknown> | undefined => c?.report.characters.find((x) => x.id === id) as Record<string, unknown> | undefined;
+    const sceneBytes = (c: ComposedScene | null): string => (c === null ? '' : rigJsonText(c.rig) + rigJsonText(c.motion) + rigJsonText({ ...c.report, scene: '' }));
+
+    const loopBare = composeA(withPlain('loopy'));
+    const loopCli = composeA(withPlain('loopy'), ['loop']);
+    const loopFile = composeA(withPlain('loopy', ['loop']));
+    const greenAccepting = composeA(two({ characters: [{ id: 'plain', build: 'plain', offset: [0, 20], accept: ['loop'] }, { id: 'reach', build: 'reach', offset: [50, 10], accept: ['seam', 'CHAIN_LAG'] }] }), ['TEXTURE_STRETCH']);
+    const cliRow = rowOf(loopCli.ok, 'plain');
+    const G0 = good.ok as ComposedScene | null;
+    say(
+      'SC39_A_BUILD_RED_ON_ONE_NAMED_BAR_COMPOSES_UNDER_ACCEPT_IS_REFUSED_WITHOUT_AND_GREEN_BUILDS_WRITE_THE_SAME_BYTES',
+      has(loopBare.err, 'SCENE_BUILD_GREEN', 'character "plain"') &&
+        loopCli.err === null && JSON.stringify(cliRow?.accepted) === '["loop"]' && rowOf(loopCli.ok, 'reach')?.accepted === undefined &&
+        loopFile.err === null && sceneBytes(loopFile.ok) === sceneBytes(loopCli.ok) &&
+        greenAccepting.err === null && G0 !== null && sceneBytes(greenAccepting.ok) === sceneBytes(G0) && !sceneBytes(G0).includes('"accepted"'),
+      `red on the loop alone: no accept -> ${codes(loopBare.err)}; --accept loop -> ${loopCli.err === null ? 'composes' : codes(loopCli.err)}, plain's row accepted ${JSON.stringify(cliRow?.accepted)}, reach's ${JSON.stringify(rowOf(loopCli.ok, 'reach')?.accepted)}; the character's own "accept": ["loop"] -> ${loopFile.err === null ? 'composes' : codes(loopFile.err)}, ${sceneBytes(loopFile.ok) === sceneBytes(loopCli.ok) ? 'the same bytes as' : 'different bytes from'} --accept; green builds under accept lists on both characters and --accept TEXTURE_STRETCH -> ${greenAccepting.err === null ? 'composes' : codes(greenAccepting.err)}, rig, motion and scene.json (its path aside) ${G0 !== null && sceneBytes(greenAccepting.ok) === sceneBytes(G0) ? 'byte-identical to' : 'differ from'} the scene without one`,
+      'issue #203: an author mid-trial has builds that pose and play but fail a bar they are still working on, and could not look at the scene at all; the build is taken when every failing bar is named, the row says which, and a list that accepts nothing changes no byte',
+    );
+
+    const twoOne = composeA(withPlain('twobars'), ['loop']);
+    const twoBoth = composeA(withPlain('twobars', ['CHAIN_LAG']), ['loop']);
+    const gateRed = composeA(withPlain('gatered'), ['loop']);
+    const reqRed = composeA(withPlain('reqred'), ['loop']);
+    say(
+      'SC40_RED_ON_TWO_BARS_WITH_ONE_NAMED_IS_REFUSED_AND_THE_GATE_AND_A_REQUIREMENT_ARE_NEVER_ACCEPTED',
+      has(twoOne.err, 'SCENE_BUILD_GREEN', 'CHAIN_LAG is not accepted') &&
+        twoBoth.err === null && JSON.stringify(rowOf(twoBoth.ok, 'plain')?.accepted) === '["loop","CHAIN_LAG"]' &&
+        has(gateRed.err, 'SCENE_BUILD_GREEN', 'gate is not accepted (the gate never is)') &&
+        has(reqRed.err, 'SCENE_BUILD_GREEN', 'declared requirement(s) "reach_tip" not PASS'),
+      `red on the loop and CHAIN_LAG, --accept loop -> ${twoOne.err === null ? 'composes' : problemLine(twoOne.err.problems[0]).slice(0, 220)}; --accept loop joined with the character's "accept": ["CHAIN_LAG"] -> ${twoBoth.err === null ? `composes, accepted ${JSON.stringify(rowOf(twoBoth.ok, 'plain')?.accepted)}` : codes(twoBoth.err)}; the gate red beside the loop -> ${codes(gateRed.err)}; a requirement FAIL beside the loop -> ${codes(reqRed.err)}`,
+      'issue #203: a build failing only the named bars is taken, anything else is refused as before and by name; the two lists are joined, so the command line applies to every character and a character adds its own',
+    );
+
+    const acceptOut = join(dir, 'composed-accepted');
+    const accepted = runCli(['compose', '--scene', scene(withPlain('loopy')), '--out', acceptOut, '--accept', 'loop']);
+    const refusedLoopOut = join(dir, 'composed-loop-refused');
+    const refusedLoop = runCli(['compose', '--scene', scene(withPlain('loopy')), '--out', refusedLoopOut]);
+    const seamOut = join(dir, 'composed-seam');
+    const seamTaken = runCli(['compose', '--scene', scene(withPlain('seamy')), '--out', seamOut, '--accept', 'seam']);
+    const aFig = readJsonFile(join(acceptOut, 'check', 'check.json'));
+    const aRep = readJsonFile(join(acceptOut, SCENE_REPORT_FILE));
+    const sFig = readJsonFile(join(seamOut, 'check', 'check.json'));
+    const plainLine = accepted.out.split('\n').find((l) => l.startsWith('[compose]   plain: ')) ?? '';
+    const loopFail = accepted.out.split('\n').find((l) => l.startsWith('[check]   FAIL  CHECK_LOOP_CLOSES'));
+    const aRow = (aRep?.characters as Array<Record<string, unknown>> | undefined)?.find((c) => c.id === 'plain');
+    say(
+      'SC41_THE_COMPOSED_CHECK_STAYS_RED_ON_THE_ACCEPTED_BAR_AND_AN_ACCEPTED_RUN_NEVER_EXITS_0',
+      accepted.status === 1 && plainLine.includes('FAILED loop, accepted') && JSON.stringify(aRow?.accepted) === '["loop"]' &&
+        typeof aFig?.loop_max_diff === 'number' && aFig.loop_max_diff !== 0 && aFig.PASS === false && loopFail !== undefined &&
+        refusedLoop.status === 1 && composeFail(refusedLoop.out, 'SCENE_BUILD_GREEN') !== null && !existsSync(join(refusedLoopOut, 'rig')) &&
+        seamTaken.status === 1 && sFig?.PASS === true && seamTaken.out.includes('not green, whatever the composed check reads'),
+      `--accept loop on the build whose loop is open -> exit ${accepted.status}; "${plainLine.slice(plainLine.indexOf('; its own check'))}"; scene.json accepted ${JSON.stringify(aRow?.accepted)}; the composed check: loop max |d| ${String(aFig?.loop_max_diff)}, PASS ${String(aFig?.PASS)}, ${(loopFail ?? 'no CHECK_LOOP_CLOSES line').slice(0, 120)}; without --accept -> exit ${refusedLoop.status}, ${composeFail(refusedLoop.out, 'SCENE_BUILD_GREEN') === null ? 'no SCENE_BUILD_GREEN line' : 'SCENE_BUILD_GREEN'}, rig/ written ${existsSync(join(refusedLoopOut, 'rig'))}; --accept seam on a build red on the seam, which the composed rig (no parts.json) cannot measure -> composed check PASS ${String(sFig?.PASS)}, exit ${seamTaken.status}: ${lastLines(seamTaken.out, 1).join('').slice(0, 160)}`,
+      'issue #203: nothing is hidden — the composed rig is measured again and reports the bar as it finds it, and a scene taken with a failing bar is a picture to look at, never a green, even where the composed check cannot see the bar',
+    );
+
+    const badCli = composeA(two(), ['LOOP', 'gate', '']);
+    const badFile = composeA(two({ characters: [{ id: 'plain', build: 'plain', offset: [0, 20], accept: ['CHECK_LOOP_CLOSES'] }, { id: 'reach', build: 'reach', offset: [50, 10], accept: 'loop' }] }));
+    const badRun = runCli(['compose', '--scene', scene(two()), '--out', join(dir, 'composed-bad-accept'), '--accept', 'loop,nope']);
+    say(
+      'SC42_AN_ACCEPT_NAME_THAT_IS_NO_BAR_CHECK_HOLDS_A_BUILD_TO_IS_REFUSED_BY_NAME',
+      has(badCli.err, 'SCENE_ACCEPT_KNOWN', '--accept[0] — is "LOOP"') && has(badCli.err, 'SCENE_ACCEPT_KNOWN', "--accept[1] — is \"gate\", rig-c's gate") && has(badCli.err, 'SCENE_ACCEPT_KNOWN', '--accept[2] — is ""') &&
+        has(badFile.err, 'SCENE_ACCEPT_KNOWN', 'scene.characters[0].accept[0] — is "CHECK_LOOP_CLOSES"') && has(badFile.err, 'SCENE_FIELD_TYPE', 'scene.characters[1].accept') &&
+        badRun.status === 1 && (composeFail(badRun.out, 'SCENE_ACCEPT_KNOWN') ?? '').includes('--accept[1] — is "nope"'),
+      `--accept LOOP,gate,"" -> ${badCli.err?.problems.length ?? 0} problem(s): ${badCli.err === null ? 'none' : problemLine(badCli.err.problems[0]).slice(0, 200)}; a character's accept ["CHECK_LOOP_CLOSES"] and another's "loop" -> ${codes(badFile.err)}; on the command line, --accept loop,nope -> exit ${badRun.status}, ${(composeFail(badRun.out, 'SCENE_ACCEPT_KNOWN') ?? 'no line').slice(0, 120)}`,
+      "issue #203: never invent a value — a misspelt bar, a problem code in place of the bar's name, or the gate would otherwise accept nothing, or everything, silently; the names are check's own BARS list less the gate",
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

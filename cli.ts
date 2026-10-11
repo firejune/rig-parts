@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
 import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage } from './src/build.ts';
-import { DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, findRigc, PACK_SHAPES, type PackShape, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, NO_PARTS_SENTENCE, SEAM_MEAN_BAR, SOURCE_SENTENCE, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
+import { ACCEPTABLE_BARS, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, findRigc, PACK_SHAPES, type PackShape, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, NO_PARTS_SENTENCE, SEAM_MEAN_BAR, SOURCE_SENTENCE, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
 import { type CharacterConfig, loadConfig, loadEarlyConfig, loadPaintConfig } from './src/config.ts';
 import { PartsError, problemLine } from './src/errors.ts';
@@ -425,7 +425,7 @@ usage:
       rigc refuses the pair a control splits, and the RIG_RIGC_GREEN line
       names the flag on the command that ran.
 
-  rig-parts compose --scene <scene.json> --out <dir> [--requirements <file.json>]
+  rig-parts compose --scene <scene.json> --out <dir> [--requirements <file.json>] [--accept <bar>[,<bar>...]]
       Bind several finished characters into one rig. The scene file (spec
       "${SCENE_SPEC}") states the canvas {width, height}, an optional plate
       {image, provenance: ${PROVENANCES.join(' | ')}, note?}, the characters
@@ -470,8 +470,14 @@ usage:
       TIP_OVER_ROOT, STILL_REGIONS_DARK and RECOMPOSITE_HOLES say SKIP and
       why), --requirements forwarded. Nothing is inferred: not the order, not
       an overlap, not a scale, not a person; the plate's provenance and the
-      order are the author's and judged by nothing. Exit 0 when the check is
-      PASS, 1 otherwise.
+      order are the author's and judged by nothing. --accept (or a
+      character's "accept": [...] in the scene file; the two lists are
+      joined, the command line's applying to every character) takes a build
+      whose own check failed only the bars named — ${ACCEPTABLE_BARS.join(', ')};
+      the gate, a declared requirement and an unknown name are refused
+      (SCENE_ACCEPT_KNOWN). It is for looking, not shipping: the [compose]
+      line and ${SCENE_REPORT_FILE} name what was accepted, and the run exits 1.
+      Exit 0 when the check is PASS and nothing was accepted, 1 otherwise.
 
   rig-parts --version
   rig-parts --help
@@ -1128,7 +1134,7 @@ function cmdBuild(args: string[]): number {
 }
 
 function cmdCompose(args: string[]): number {
-  const f = flags(args, ['--scene', '--out'], 'compose', ['--requirements']);
+  const f = flags(args, ['--scene', '--out'], 'compose', ['--requirements', '--accept']);
   if (typeof f === 'string') return usage(f);
   let bin: string;
   try {
@@ -1139,8 +1145,9 @@ function cmdCompose(args: string[]): number {
   const scratch = mkdtempSync(join(tmpdir(), 'rig-parts-compose-'));
   try {
     const req = f.get('--requirements');
+    const accept = f.get('--accept');
     const r = composeStage(
-      { scene: f.get('--scene') as string, out: f.get('--out') as string, ...(req === undefined ? {} : { requirements: req }) },
+      { scene: f.get('--scene') as string, out: f.get('--out') as string, ...(req === undefined ? {} : { requirements: req }), ...(accept === undefined ? {} : { accept: accept.split(',') }) },
       { rig: rigcRunner(bin), check: rigcRunner(bin), checkBin: bin, scratch: join(scratch, 'gate') },
       console.log,
     );

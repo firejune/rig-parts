@@ -68,6 +68,15 @@
  *   `generated`, `unknown`) is copied into `scene.json` and nothing reads it.
  * - **The idle**: one `idle` holding every character's tracks, which needs
  *   every character's idle to be the same length (`SCENE_DURATION_AGREES`).
+ * - **A failing bar, by name (issue #203).** A build whose own check is not
+ *   green is refused (`SCENE_BUILD_GREEN`) unless every bar it failed is named
+ *   in `compose --accept` or the character's `accept` — the two lists are
+ *   joined, the command line's applying to every character. The gate, a
+ *   declared requirement and a check.json that names no failing bar are never
+ *   accepted; a name that is not one of {@link ACCEPTABLE_BARS} is refused
+ *   (`SCENE_ACCEPT_KNOWN`). What was accepted is printed and written into
+ *   `scene.json`, and the composed rig's own check measures it again: an
+ *   accepted failure is for looking at the scene, never a green.
  *
  * Every refusal is collected and thrown at once. A key a build's rig or
  * motion carries that this module does not know is refused rather than
@@ -82,7 +91,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { checkStage, gateThroughRigc, type Log } from './build.ts';
-import { BARS, type CheckReport, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, type PackMode, type RigcRunner } from './check.ts';
+import { ACCEPTABLE_BARS, BARS, barsNotMet, type CheckReport, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, type PackMode, requirementsNotPass, type RigcRunner } from './check.ts';
 import { CONSTRAINT_BONE_FIELDS, ROOT_BONE } from './config.ts';
 import { cropToSpineY } from './coords.ts';
 import { PartsError, type Problem, problemLine, refuseIfAny } from './errors.ts';
@@ -140,6 +149,8 @@ export interface SceneCharacter {
   offset: [number, number];
   /** {@link SceneCharacter.scale}: the character's size on the canvas, 1 (as built) when the file leaves it out (issue #197). */
   scale: number;
+  /** The bars this character's own check may have failed and still be taken (issue #203), as the file lists them; empty when it lists none. */
+  accept: string[];
 }
 
 export interface ScenePlate {
@@ -184,6 +195,23 @@ export function idProblem(id: string): string | null {
   if (id.includes(PREFIX_SEP)) return `holds "${PREFIX_SEP}", which separates an id from the name it prefixes, so "${id}${PREFIX_SEP}x" would not read back as one id and one name`;
   if (/[\\/]/.test(id) || id.startsWith('.')) return `begins every image file of its character ("${id}${IMAGE_SEP}<file>.png"), so a "/", a "\\" or a leading "." is refused, as in a part name`;
   return null;
+}
+
+/**
+ * `SCENE_ACCEPT_KNOWN` for every name of an accept list (`--accept`, or a
+ * character's `accept`) that is not one of {@link ACCEPTABLE_BARS}: the gate
+ * is named as rig-c's and never accepted, anything else as no bar `check`
+ * holds a build to (issue #203).
+ */
+export function acceptProblems(names: readonly string[], where: string): Problem[] {
+  const out: Problem[] = [];
+  names.forEach((n, i) => {
+    if (ACCEPTABLE_BARS.includes(n)) return;
+    const at = `${where}[${i}]`;
+    if (n === 'gate') out.push({ code: 'SCENE_ACCEPT_KNOWN', object: at, detail: `is "gate", rig-c's gate, which is never accepted — a build rig-c refused is not a rig; one of ${ACCEPTABLE_BARS.join(', ')} is required` });
+    else out.push({ code: 'SCENE_ACCEPT_KNOWN', object: at, detail: `is ${show(n)}, which names no bar check holds a build to; one of ${ACCEPTABLE_BARS.join(', ')} (as check's summary names them) is required` });
+  });
+  return out;
 }
 
 /**
@@ -263,7 +291,7 @@ export function loadScene(path: string): SceneFile {
         fail('SCENE_FIELD_TYPE', where, `is ${show(c)}; {"id", "build", "offset"} is required`);
         return;
       }
-      known(c, where, ['id', 'build', 'offset', 'scale']);
+      known(c, where, ['id', 'build', 'offset', 'scale', 'accept']);
       let ok = true;
       for (const k of ['id', 'build', 'offset']) {
         if (!(k in c)) {
@@ -301,7 +329,18 @@ export function loadScene(path: string): SceneFile {
         fail('SCENE_FIELD_TYPE', `${where}.scale`, `is ${show(sc)}; a positive finite number is required — the character's size on the canvas about its stage's top-left corner, 1 drawing it as built (the default when the key is absent)`);
         ok = false;
       }
-      if (ok) characters.push({ id: id as string, build: c.build as string, buildDir: resolve(base, c.build as string), offset: [(off as number[])[0], (off as number[])[1]], scale: 'scale' in c ? (sc as number) : 1 });
+      const acc = c.accept;
+      if ('accept' in c) {
+        if (!(Array.isArray(acc) && acc.every((v) => typeof v === 'string'))) {
+          fail('SCENE_FIELD_TYPE', `${where}.accept`, `is ${show(acc)}; a list of bar names is required — the bars this character's own check may fail and still be composed, one of ${ACCEPTABLE_BARS.join(', ')} each`);
+          ok = false;
+        } else {
+          const named = acceptProblems(acc as string[], `${where}.accept`);
+          problems.push(...named);
+          if (named.length > 0) ok = false;
+        }
+      }
+      if (ok) characters.push({ id: id as string, build: c.build as string, buildDir: resolve(base, c.build as string), offset: [(off as number[])[0], (off as number[])[1]], scale: 'scale' in c ? (sc as number) : 1, accept: 'accept' in c ? [...(acc as string[])] : [] });
     });
   }
 
@@ -335,6 +374,8 @@ export interface CharacterBuild {
   artBox: [number, number, number, number];
   /** Every image the build's skin names, as `rig/images/<file>` holds it, in the order the skin names them. */
   images: Array<[string, Uint8Array]>;
+  /** The bars its own check failed that were accepted (issue #203), in check's order; empty for a green build. */
+  accepted: string[];
 }
 
 const BONE_KEYS = ['name', 'parent', 'length', 'rotation', 'x', 'y'];
@@ -374,8 +415,14 @@ function readJson(path: string, what: string, problems: Problem[]): unknown {
  * `check/check.json` with `PASS` and `gate_spine_html_green` both true — a
  * build stopped at check has a check.json saying so), and every key of its
  * rig and motion one this module knows (`SCENE_BUILD_FIELD_KNOWN`).
+ *
+ * `accept` (issue #203) is `compose --accept`, joined with the character's own
+ * `accept`: a check that is not green is taken when every bar it failed is
+ * named in that join, its gate green and every declared requirement PASS;
+ * otherwise it is `SCENE_BUILD_GREEN`, naming the bars not accepted. Without
+ * an accept list the refusal reads as it always did.
  */
-export function readCharacterBuild(c: SceneCharacter, problems: Problem[]): CharacterBuild | null {
+export function readCharacterBuild(c: SceneCharacter, problems: Problem[], accept: readonly string[] = []): CharacterBuild | null {
   const before = problems.length;
   const dir = c.buildDir;
   const who = `character "${c.id}" (${c.build})`;
@@ -384,9 +431,28 @@ export function readCharacterBuild(c: SceneCharacter, problems: Problem[]): Char
     return null;
   }
   const check = readJson(join(dir, 'check', 'check.json'), "the build's own check; a build that ran its check writes it", problems);
+  const joined = new Set([...accept, ...c.accept]);
+  let accepted: string[] = [];
   if (check !== undefined) {
     const ck = isRecord(check) ? check : {};
-    if (ck.PASS !== true || ck.gate_spine_html_green !== true) {
+    if ((ck.PASS !== true || ck.gate_spine_html_green !== true) && joined.size > 0) {
+      const failed = barsNotMet(ck);
+      const reqs = requirementsNotPass(ck);
+      const not = failed.filter((b) => !joined.has(b));
+      if (not.length === 0 && reqs.length === 0 && failed.length > 0) accepted = failed;
+      else {
+        const why = [
+          ...(not.length === 0 ? [] : [`${not.join(', ')} ${not.length === 1 ? 'is' : 'are'} not accepted${not.includes('gate') ? ' (the gate never is)' : ''}`]),
+          ...(reqs.length === 0 ? [] : [`declared requirement(s) ${reqs.map((r) => `"${r}"`).join(', ')} not PASS, which no accept list takes`]),
+          ...(failed.length === 0 && reqs.length === 0 ? ['it names no failing bar, so there is nothing an accept list could name'] : []),
+        ];
+        problems.push({
+          code: 'SCENE_BUILD_GREEN',
+          object: who,
+          detail: `check/check.json says PASS ${show(ck.PASS)}, gate_spine_html_green ${show(ck.gate_spine_html_green)}, the bar(s) not met ${failed.length === 0 ? 'none' : failed.join(', ')}; accepted ${[...joined].join(', ')}, and ${why.join('; ')} — a build whose own check fails only accepted bars is required`,
+        });
+      }
+    } else if (ck.PASS !== true || ck.gate_spine_html_green !== true) {
       problems.push({
         code: 'SCENE_BUILD_GREEN',
         object: who,
@@ -481,7 +547,7 @@ export function readCharacterBuild(c: SceneCharacter, problems: Problem[]): Char
     }
   }
   if (problems.length > before) return null;
-  return { id: c.id, dir, rig: rigRaw as RigSpec, motion: motionRaw as MotionSpec, rigSize, rigScale, artBox, images };
+  return { id: c.id, dir, rig: rigRaw as RigSpec, motion: motionRaw as MotionSpec, rigSize, rigScale, artBox, images, accepted };
 }
 
 // ---------------------------------------------------------------------------
@@ -703,6 +769,8 @@ export interface SceneCharacterReport {
   tracks: number;
   constraints: number;
   idle_duration: number;
+  /** The bars the character's own check failed that `--accept` or its `accept` took (issue #203); written only when there are any, so a scene of green builds writes the bytes it wrote before the field existed. */
+  accepted?: string[];
 }
 
 export interface SceneReport {
@@ -810,6 +878,7 @@ export function composeScene(
       tracks: b.motion.animations.idle.tracks.length,
       constraints: b.rig.constraints?.length ?? 0,
       idle_duration: b.motion.animations.idle.duration,
+      ...(b.accepted.length === 0 ? {} : { accepted: [...b.accepted] }),
     });
   });
 
@@ -1197,14 +1266,15 @@ export function unprefixedNames(rig: RigSpec, motion: MotionSpec, ids: readonly 
 
 /**
  * Everything before the gate, from the files: the scene, every character's
- * build, the plate and the `--requirements` file, each read with its problems
- * collected, then {@link composeScene} — one refusal naming every problem the
+ * build (with `accept`, `compose --accept`, issue #203), the plate and the
+ * `--requirements` file, each read with its problems collected, then
+ * {@link composeScene} — one refusal naming every problem the
  * files hold. Pure but for the reads.
  */
-export function composeFromFiles(scenePath: string, requirementsPath?: string, mode: PackMode = { pageEdges: DEFAULT_PAGE_EDGES, packShape: DEFAULT_PACK_SHAPE }): ComposedScene {
+export function composeFromFiles(scenePath: string, requirementsPath?: string, mode: PackMode = { pageEdges: DEFAULT_PAGE_EDGES, packShape: DEFAULT_PACK_SHAPE }, accept: readonly string[] = []): ComposedScene {
   const scene = loadScene(scenePath);
-  const problems: Problem[] = [];
-  const builds = scene.characters.map((c) => readCharacterBuild(c, problems));
+  const problems: Problem[] = acceptProblems(accept, '--accept');
+  const builds = scene.characters.map((c) => readCharacterBuild(c, problems, accept));
   let plate: PlateImage | null = null;
   if (scene.plate !== null) {
     const where = `scene.plate.image (${scene.plate.image})`;
@@ -1234,6 +1304,8 @@ export interface ComposeInput {
   scene: string;
   out: string;
   requirements?: string;
+  /** `--accept`: the bars every character's own check may fail and still be composed (issue #203). */
+  accept?: readonly string[];
 }
 
 export interface ComposeRunners {
@@ -1279,7 +1351,7 @@ export function composeStage(input: ComposeInput, run: ComposeRunners, log: Log)
   log(`rig-parts compose: ${input.scene} -> ${input.out}, page edges ${mode.pageEdges}, pack shape ${mode.packShape}`);
   let composed: ComposedScene;
   try {
-    composed = composeFromFiles(input.scene, input.requirements, mode);
+    composed = composeFromFiles(input.scene, input.requirements, mode, input.accept ?? []);
   } catch (err) {
     return refused('compose', err);
   }
@@ -1287,7 +1359,7 @@ export function composeStage(input: ComposeInput, run: ComposeRunners, log: Log)
   r.scene = input.scene;
   say(`${r.characters.length} character(s) on a ${r.canvas.width}x${r.canvas.height} canvas, rig "${r.rig_name}"${r.plate === null ? ', no plate' : `, plate ${r.plate.image} (provenance ${r.plate.provenance}, judged by nothing)`}`);
   for (const c of r.characters) {
-    say(`  ${c.id}: ${c.build} at offset [${c.offset.join(', ')}], scale ${c.scale ?? 1}, bounds [${c.bounds.join(', ')}], shift [${c.shift.join(', ')}] on ${c.shifted.bones.length} first-level bone(s), ${c.shifted.root_regions.length} region(s) on root and ${c.shifted.root_weights} weight(s) bound to root; ${c.bones} bone(s), ${c.slots} slot(s), ${c.tracks} track(s), ${c.constraints} constraint(s), rig_scale ${c.rig_scale}, idle ${c.idle_duration} s`);
+    say(`  ${c.id}: ${c.build} at offset [${c.offset.join(', ')}], scale ${c.scale ?? 1}, bounds [${c.bounds.join(', ')}], shift [${c.shift.join(', ')}] on ${c.shifted.bones.length} first-level bone(s), ${c.shifted.root_regions.length} region(s) on root and ${c.shifted.root_weights} weight(s) bound to root; ${c.bones} bone(s), ${c.slots} slot(s), ${c.tracks} track(s), ${c.constraints} constraint(s), rig_scale ${c.rig_scale}, idle ${c.idle_duration} s${c.accepted === undefined ? '' : `; its own check FAILED ${c.accepted.join(', ')}, accepted — the scene is for looking, not shipping`}`);
   }
   say(`  order (declared, judged by nothing): ${r.order.declared.join(', ')} -> ${r.order.slots.length} slot(s), back to front`);
   const texts: Array<[string, string]> = [
@@ -1324,8 +1396,16 @@ export function composeStage(input: ComposeInput, run: ComposeRunners, log: Log)
   } catch (err) {
     return refused('check', err, composed);
   }
+  // Issue #203: a character taken with an accepted failing bar never makes the scene green, even where the composed
+  // rig's check cannot measure that bar (no parts.json: the seam and four judgement lines say SKIP).
+  const taken = r.characters.filter((c) => c.accepted !== undefined).map((c) => `"${c.id}" (${(c.accepted as string[]).join(', ')})`);
+  const acceptedLine = taken.length === 0 ? '' : `; accepted failing bar(s) of ${taken.join(', ')} — not green, whatever the composed check reads`;
   if (!report.figures.PASS) {
-    log(`compose: stopped at check; ${report.problems.length} bar(s) or requirement(s) not met (the composed rig and scene.json are written, as build writes its rig before its check)`);
+    log(`compose: stopped at check; ${report.problems.length} bar(s) or requirement(s) not met (the composed rig and scene.json are written, as build writes its rig before its check)${acceptedLine}`);
+    return { stoppedAt: 'check', composed, check: report };
+  }
+  if (taken.length > 0) {
+    log(`compose: stopped at check; the composed rig's check is PASS${acceptedLine} (the composed rig and scene.json are written; the scene is for looking, not shipping)`);
     return { stoppedAt: 'check', composed, check: report };
   }
   log(`compose: PASS — ${report.bars.measured.length} of ${BARS.length} bar(s) measured; the packed atlas under ${join(input.out, 'check', 'build')} is the artifact`);

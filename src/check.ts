@@ -1525,6 +1525,45 @@ export interface RequirementsBlock {
 /** The bars `PASS` reads, in the order the summary counts them: the gate, the reference's two, then the judgement lines. */
 export const BARS = ['gate', 'loop', 'seam', ...JUDGEMENT_LINES] as const;
 
+/**
+ * The bars a character's own check may have failed and `compose --accept`
+ * still take (issue #203): every bar of {@link BARS} but the gate, which is
+ * rig-c's and never accepted.
+ */
+export const ACCEPTABLE_BARS: readonly string[] = BARS.filter((b) => b !== 'gate');
+
+/**
+ * The bars a `check.json`, as `check` writes it, says were not met, in
+ * {@link BARS} order: the gate when `gate_spine_html_green` is not true, the
+ * loop when `loop_max_diff` is a number other than {@link LOOP_MAX_BAR}, the
+ * seam when its figures fail {@link seamFails}, and each judgement line whose
+ * status is `FAIL`. A bar that measured nothing (null figures, `SKIP`) is not
+ * one of them. Read off the file rather than its problems, because the file is
+ * all a finished build leaves (issue #203).
+ */
+export function barsNotMet(fig: Readonly<Record<string, unknown>>): string[] {
+  const out: string[] = [];
+  if (fig.gate_spine_html_green !== true) out.push('gate');
+  if (typeof fig.loop_max_diff === 'number' && fig.loop_max_diff !== LOOP_MAX_BAR) out.push('loop');
+  if (typeof fig.seam_mean === 'number' && typeof fig.seam_px_over_40 === 'number' && seamFails(fig.seam_mean, fig.seam_px_over_40)) out.push('seam');
+  for (const n of JUDGEMENT_LINES) {
+    const l = fig[n];
+    if (typeof l === 'object' && l !== null && (l as { status?: unknown }).status === 'FAIL') out.push(n);
+  }
+  return out;
+}
+
+/** The declared requirements a `check.json` says were not PASS (FAIL or NOT MEASURABLE), by name, in the file's order; none without a `requirements` block. */
+export function requirementsNotPass(fig: Readonly<Record<string, unknown>>): string[] {
+  const block = fig.requirements;
+  if (typeof block !== 'object' || block === null) return [];
+  const lines = (block as { lines?: unknown }).lines;
+  if (typeof lines !== 'object' || lines === null) return [];
+  return Object.entries(lines as Record<string, unknown>)
+    .filter(([, l]) => typeof l !== 'object' || l === null || (l as { status?: unknown }).status !== 'PASS')
+    .map(([n]) => n);
+}
+
 export interface CheckReport {
   figures: CheckFigures;
   gateHtml: string[];
