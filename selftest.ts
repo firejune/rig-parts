@@ -106,7 +106,7 @@ import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src
 import { artifactPaths, assembleStage, build, BUILD_OWNS, checkStage, ctlRemedies, fringeLines, REFERENCE_BUILD_ARGS, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, shiftRight, writeCheckRig, writeMergedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
-import { BARE_CROWN_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
+import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
 import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'rig-c/src/render.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
@@ -323,6 +323,7 @@ import {
   type Proposal,
   type ProposalBasis,
   propose,
+  proposalAssemble,
   STRAND_LINK_AT,
   proposeWithBasis,
   readPartSet,
@@ -2451,6 +2452,40 @@ function runPartsSuite(): number {
       patchOk === null && patchMissed.length === 0,
       patchOk !== null ? `a correct painting:hem record is refused: ${codes(patchOk)}` : patchMissed.length === 0 ? `painting:hem with every count 20 or 0 reads; ${patchSeen.length} planted records, each refused once: ${patchSeen.map((o) => o.got).join(' | ')}` : patchMissed.map((o) => `${o.what}: ${o.got}`).join(' | '),
       'a patch is cut from the painting, so its record can only say one thing about where its pixels came from; a "painting:" record that says anything else is a record assemble did not write',
+    );
+
+    // A cut's piece (issue #230) names its base in cut_from: a part of the file, with the same from, that is no piece itself.
+    const baseRec = { name: 'skirt', from: 'full:bottomwear', x: 2, y: 14, w: 10, h: 8, opaque_px: 80, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 };
+    const pieceRec = { ...baseRec, name: 'lining', cut_from: 'skirt', x: 4, w: 4, opaque_px: 32 };
+    const withCut = (recs: Array<Record<string, unknown>>): string => {
+      writeFileSync(path, JSON.stringify({ ...file, parts: [...recs, ...file.parts] }));
+      return path;
+    };
+    const cutOk = refusals(() => readParts(withCut([pieceRec, baseRec])));
+    const cutBytes = cutOk === null ? serializeParts(readParts(path)) : '';
+    const cutOrder = cutBytes.indexOf('"from": "full:bottomwear",\n      "cut_from": "skirt",\n      "x"') > 0 && (cutBytes.match(/"cut_from"/g) ?? []).length === 1;
+    const legacyOk = refusals(() => readParts(withCut([{ ...baseRec, name: 'lining', x: 4, w: 4, opaque_px: 32 }, baseRec]))) === null;
+    const cutFaults: Array<[string, Array<Record<string, unknown>>, string, string]> = [
+      ['a base no part has', [{ ...pieceRec, cut_from: 'hem' }, baseRec], 'PARTS_CUT_FROM_KNOWN', 'names "hem", which is no part of this file'],
+      ['the piece itself', [{ ...pieceRec, cut_from: 'lining' }, baseRec], 'PARTS_CUT_FROM_KNOWN', 'names the piece itself'],
+      ['a base that is a piece', [pieceRec, { ...pieceRec, name: 'tuck', cut_from: 'lining' }, baseRec], 'PARTS_CUT_FROM_KNOWN', 'which is itself a piece (cut from "skirt")'],
+      ['a base on another layer', [{ ...pieceRec, from: 'full:topwear' }, baseRec], 'PARTS_CUT_FROM_KNOWN', 'whose from is "full:bottomwear"'],
+      ['a cut_from that is not a name', [{ ...pieceRec, cut_from: 3 }, baseRec], 'PARTS_FIELD_TYPE', 'is 3; the name of the part the cut took it from is required'],
+    ];
+    const cutSeen = cutFaults.map(([what, recs, code, text]) => {
+      const err = refusals(() => readParts(withCut(recs)));
+      const one = err !== null && err.problems.length === 1 ? err.problems[0] : null;
+      return { what, ok: one !== null && one.code === code && one.detail.includes(text), got: err === null ? 'reads' : err.problems.map((q) => `${q.code}: ${q.object} — ${q.detail}`).join('; ') };
+    });
+    const cutMissed = cutSeen.filter((o) => !o.ok);
+    say(
+      'PT06_A_CUT_PIECE_NAMES_ITS_BASE_AND_A_NAME_THAT_IS_NOT_ITS_BASE_IS_REFUSED',
+      cutOk === null && cutOrder && legacyOk && cutMissed.length === 0,
+      cutOk !== null
+        ? `a piece naming its base is refused: ${codes(cutOk)}`
+        : `lining (cut_from skirt, written after from: ${cutOrder}) reads; the same pair with no cut_from ${legacyOk ? 'reads' : 'is REFUSED'}; ` +
+            (cutMissed.length === 0 ? `${cutSeen.length} planted records, each refused once: ${cutSeen.map((o) => o.got).join(' | ')}` : cutMissed.map((o) => `${o.what}: ${o.got}`).join(' | ')),
+      'parts.json is in draw order, so a piece drawn "back" comes before its base and only the field says which is which; a field naming the wrong part would hand the base\'s rule to the piece, and a file from before the field must still read for check and rig',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -4957,6 +4992,7 @@ function runProposeSuite(): number {
     runStrandCases(dir, say);
     runBlinkCases(dir, say);
     runFacelessCases(dir, say);
+    runCutPieceCases(dir, say);
     runKeypointPoseCases(dir, say);
     runBasisFixtureCases(dir, say);
 
@@ -5312,6 +5348,112 @@ function runBlinkCases(dir: string, say: (name: string, ok: boolean, detail: str
   );
 
   runEyelessFeatureCases(dir, say);
+}
+
+/**
+ * Issue #230: a piece an `assemble.cuts` entry took (parts.json `cut_from`)
+ * is not given its base's rule a second time. Every expectation follows from
+ * fixtures/propose.ts's CUT_PARTS doc: the pieces sit inside their bases'
+ * boxes and the bases keep those pixels, so the proposal must be the uncut
+ * set's plus one trunk region and one note per piece.
+ */
+function runCutPieceCases(dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const cdir = join(dir, 'cut-pieces');
+  const bdir = join(dir, 'cut-bases');
+  const udir = join(dir, 'cut-unmarked');
+  writeProposeFixture(cdir, CUT_PARTS);
+  writeProposeFixture(bdir, CUT_BASE_PARTS);
+  writeProposeFixture(
+    udir,
+    CUT_PARTS.map(({ cut_from: _, ...rest }) => rest),
+  );
+  const C = readPartSet(cdir);
+  const cut = propose(C);
+  const base = propose(readPartSet(bdir));
+  const wantRegions: Record<string, string> = { skirt_under: 'hip', fringe_lock: 'head', mop_lock: 'head', lapel: 'chest' };
+  const baseOf: Record<string, [string, string]> = { skirt_under: ['skirt', 'full:bottomwear'], fringe_lock: ['fringe', 'head:front hair'], mop_lock: ['mop', 'head:back hair'], lapel: ['coat', 'full:topwear'] };
+  // The note per piece, in parts.json order (the trunk rule walks the file): skirt_under, fringe_lock, mop_lock, lapel.
+  const wantNotes = Object.keys(wantRegions).map((n) => {
+    const [b, from] = baseOf[n];
+    return `${n} (${from}): a piece an assemble.cuts entry took from ${b}, so not given that layer's rule a second time (it would name ${b}'s bones and chains again) -> region on ${wantRegions[n]}, the nearest trunk bone; config.regions.${n} is the bone it rides, and a mesh in config.meshes is the author's to give it`;
+  });
+  const sorted = (r: Record<string, string>): string => JSON.stringify(Object.entries(r).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  const pieceNotes = cut.notes.filter((n) => n.includes('a piece an assemble.cuts entry took'));
+  const otherNotes = cut.notes.filter((n) => !n.includes('a piece an assemble.cuts entry took'));
+  const names = cut.bones.map((b) => ('name' in b ? b.name : b.chain));
+  const dup = names.filter((n, i) => names.indexOf(n) !== i);
+  const ruled = ['bun', 'bang_r', 'bang_c', 'bang_l', 'robe_r', 'robe_l', 'skirt_r', 'skirt_c', 'skirt_l'];
+  const missing = ruled.filter((n) => !names.includes(n));
+  const same = JSON.stringify(cut.bones) === JSON.stringify(base.bones) && JSON.stringify(cut.meshes) === JSON.stringify(base.meshes) && JSON.stringify(cut.motion) === JSON.stringify(base.motion);
+  const regionsOk = sorted(cut.regions) === sorted({ ...base.regions, ...wantRegions });
+  const loads = refusals(() => checkProposal(C, cut));
+  say(
+    'PR77_A_PIECE_CUT_FROM_A_CHAIN_RULED_LAYER_RIDES_ITS_TRUNK_BONE_AND_THE_PROPOSAL_LOADS',
+    same && regionsOk && dup.length === 0 && missing.length === 0 && JSON.stringify(pieceNotes) === JSON.stringify(wantNotes) && JSON.stringify(otherNotes) === JSON.stringify(base.notes) && loads === null,
+    `pieces of bottomwear, topwear, back hair and front hair: bones, meshes and motion ${same ? 'identical to' : 'DIFFERENT from'} the uncut set's; regions ${regionsOk ? 'the uncut set\'s plus' : 'NOT the uncut set\'s plus'} ${JSON.stringify(wantRegions)} (got ${sorted(cut.regions)}); bones named twice: ${dup.join(', ') || 'none'}; rule bones missing: ${missing.join(', ') || 'none'}; piece notes ${JSON.stringify(pieceNotes) === JSON.stringify(wantNotes) ? 'as written by hand' : `got ${JSON.stringify(pieceNotes)}`}; other notes ${JSON.stringify(otherNotes) === JSON.stringify(base.notes) ? 'the uncut set\'s' : 'DIFFERENT'}; loads: ${codes(loads)}`,
+    'issue #230: a cut from bottomwear ran the skirt rule for the piece as well as its base, naming skirt_r, skirt_c and skirt_l twice, and propose wrote a proposal its own loader refused; a piece now gets what a painting patch gets — a region on the nearest trunk bone, said in a note — and the author may mesh it',
+  );
+
+  // The old behaviour, planted: the piece given its base's skirt rule again (the chains and tracks repeated, a mesh on it).
+  const skirtChains = cut.bones.filter((b) => 'chain' in b && b.chain.startsWith('skirt_'));
+  const skirtTracks = cut.motion.tracks.filter((t) => 'chain' in t && t.chain.startsWith('skirt_'));
+  const regionsLess = Object.fromEntries(Object.entries(cut.regions).filter(([n]) => n !== 'skirt_under'));
+  const twice: Proposal = { ...cut, bones: [...cut.bones, ...skirtChains], meshes: { ...cut.meshes, skirt_under: cut.meshes.skirt }, regions: regionsLess, motion: { ...cut.motion, tracks: [...cut.motion.tracks, ...skirtTracks] } };
+  const dupErr = refusals(() => checkProposal(C, twice));
+  const dupChains = (dupErr?.problems ?? []).filter((q) => q.code === 'CONFIG_BONE_UNIQUE' && /declares the chain "skirt_[rcl]" a second time/.test(q.detail)).length;
+  const keyedTwice = (dupErr?.problems ?? []).some((q) => q.code === 'CONFIG_BONE_PROPERTY_KEYED_ONCE');
+  say(
+    'PR78_A_PIECE_GIVEN_ITS_BASE_S_CHAIN_RULE_AGAIN_IS_REFUSED_BY_THE_LOADER_BY_NAME',
+    dupErr !== null && dupChains === 3 && keyedTwice,
+    `the skirt rule repeated for skirt_under (3 chains, 3 tracks, its mesh) -> ${dupChains} CONFIG_BONE_UNIQUE chain refusal(s) for skirt_r/c/l, CONFIG_BONE_PROPERTY_KEYED_ONCE ${keyedTwice ? 'present' : 'ABSENT'}; e.g. ${dupErr?.problems[0]?.code}: ${dupErr?.problems[0]?.object} — ${dupErr?.problems[0]?.detail}`,
+    "the planted proposal is the issue's: the gate that caught it then must still catch it, so PR77's green is the fix and not a loader that stopped looking",
+  );
+
+  // An assembly from before cut_from: the reader takes it, propose refuses by name, once per shared layer.
+  const U = readPartSet(udir);
+  const readsOk = refusals(() => readParts(join(udir, 'parts.json'))) === null;
+  const unmarked = refusals(() => propose(U));
+  const wantObjects = ['parts "skirt_under", "skirt" (full:bottomwear)', 'parts "coat", "lapel" (full:topwear)', 'parts "mop", "mop_lock" (head:back hair)', 'parts "fringe_lock", "fringe" (head:front hair)'];
+  const got = (unmarked?.problems ?? []).map((q) => `${q.code} ${q.object}`);
+  const said = (unmarked?.problems ?? []).every((q) => q.detail.endsWith('re-run assemble (1.5.6+) to record cut_from'));
+  say(
+    'PR79_PARTS_SHARING_A_LAYER_WITH_NO_CUT_FROM_ARE_READ_AND_PROPOSE_REFUSES_THEM_BY_NAME',
+    readsOk && JSON.stringify(got) === JSON.stringify(wantObjects.map((o) => `PROPOSE_CUT_FROM_RECORDED ${o}`)) && said,
+    `CUT_PARTS with cut_from stripped: parts.json ${readsOk ? 'reads' : 'is REFUSED'}; propose -> ${got.join('; ') || 'nothing'}; every detail ends with the re-run line: ${said}`,
+    'parts.json is in draw order and a piece drawn "back" comes first, so with no cut_from which part takes the layer\'s rule is not in the file; propose says so per layer instead of guessing by order, while check, rig and the rest still read a 1.3.0-1.5.5 assembly',
+  );
+
+  // The plan propose's config check rebuilds: cut_from decides, not the file order.
+  const shape = (a: Record<string, unknown>): string =>
+    `plan ${(a.plan as Array<[string]>).map((e) => e[0]).join(',')}; cuts ${((a.cuts ?? []) as Array<{ from: string; into: string }>).map((q) => `${q.into}<-${q.from}`).join(',')}`;
+  const marked = shape(proposalAssemble(C));
+  const byOrder = shape(proposalAssemble(U));
+  const wantMarked = 'plan skirt,sleeve_a,sleeve_b,face,coat,mop,fringe; cuts skirt_under<-skirt,fringe_lock<-fringe,mop_lock<-mop,lapel<-coat';
+  const wantByOrder = 'plan skirt_under,sleeve_a,sleeve_b,face,coat,mop,fringe_lock; cuts skirt<-skirt_under,fringe<-fringe_lock,mop_lock<-mop,lapel<-coat';
+  say(
+    'PR80_A_PIECE_DRAWN_BEHIND_ITS_BASE_GOES_BACK_AS_THE_CUT_AND_ITS_BASE_AS_THE_PLAN_PART',
+    marked === wantMarked && byOrder === wantByOrder,
+    `with cut_from: ${marked} (by hand ${wantMarked}); the same file by order alone: ${byOrder} (by hand ${wantByOrder})`,
+    'the old reading took the first part of a layer as its plan part, and a piece drawn "back" or before its base is first: skirt_under went back as the plan part and skirt as its cut. The loader cannot see the swap, so the reading itself is the control',
+  );
+
+  // The one rule that takes a piece (#199): a cut sleeve is a blob of its own, so the two-blob rule runs as for two layers.
+  const hdir = join(dir, 'cut-sleeve');
+  const pdir = join(dir, 'cut-sleeve-plain');
+  const sleevePiece = PROPOSE_PARTS.map((p) => (p.name === 'sleeve_b' ? { ...p, from: 'full:handwear-r', cut_from: 'sleeve_a' } : p));
+  writeProposeFixture(hdir, sleevePiece);
+  writeProposeFixture(pdir, PROPOSE_PARTS);
+  const H = readPartSet(hdir);
+  const hp = propose(H);
+  const pp = propose(readPartSet(pdir));
+  const sleeveSame = JSON.stringify([hp.bones, hp.meshes, hp.regions, hp.motion]) === JSON.stringify([pp.bones, pp.meshes, pp.regions, pp.motion]);
+  const hLoads = refusals(() => checkProposal(H, hp));
+  say(
+    'PR81_A_SLEEVE_CUT_FROM_A_HANDWEAR_PART_STILL_TAKES_THE_SLEEVE_RULE_AS_A_BLOB_OF_ITS_OWN',
+    sleeveSame && hLoads === null && !hp.notes.some((n) => n.includes('a piece an assemble.cuts entry took')),
+    `sleeve_b as a piece of sleeve_a (full:handwear-r): bones, meshes, regions and motion ${sleeveSame ? 'identical to' : 'DIFFERENT from'} PR01's two layers (sleeve chains ${hp.bones.map((b) => ('chain' in b ? b.chain : '')).filter((n) => n.startsWith('sleeve_')).join(', ')}); loads: ${codes(hLoads)}`,
+    "issue #199's note tells the author to cut one sleeve out of a part holding both wrists and propose again; the sleeve rule names its chains by side, never once per part, so the piece repeats nothing and keeps its chain",
+  );
 }
 
 /**
@@ -11610,10 +11752,22 @@ function runAssembleSuite(): number {
           `parts.json read back: ${set.recs.map((p) => `${p.name} <- ${p.from}`).join(', ')}; every piece attached -> ${takes === null ? 'loads' : codes(takes)}; "knot" left out -> ${looseLine}`,
           'propose rebuilds a plan from parts.json to check its proposal against the loader; two parts sharing one layer would read as one layer taken twice (CONFIG_PART_UNIQUE) unless the second goes back as a cut, and then the coverage rule names the piece itself',
         );
+        // Issue #230: each piece names the plan part it was cut from; no other record carries the field, and the uncut run's bytes have none.
+        const marks = split.r.parts.parts.map((p) => `${p.name}:${p.cut_from ?? '-'}`).join(', ');
+        const wantMarks = 'tie:topwear, handwear_l:-, topwear:-, knot:topwear';
+        const uncutBytes = readFileSync(join(whole.out, 'parts.json'), 'utf8');
+        const splitBytes = readFileSync(join(split.out, 'parts.json'), 'utf8');
+        say(
+          'AS57_A_CUT_S_PIECE_RECORDS_THE_PART_IT_WAS_CUT_FROM_AND_NO_OTHER_PART_DOES',
+          marks === wantMarks && !uncutBytes.includes('cut_from') && (splitBytes.match(/"cut_from": "topwear"/g) ?? []).length === 2,
+          `cut_from per part, in parts.json order: ${marks} (by hand ${wantMarks}); the uncut run's parts.json ${uncutBytes.includes('cut_from') ? 'HAS' : 'has no'} cut_from; the split run's has ${(splitBytes.match(/"cut_from": "topwear"/g) ?? []).length} (by hand 2)`,
+          'parts.json is in draw order, so "tie" (drawn before handwear_l) comes before its base and nothing but this field says which of tie and topwear the cut made; propose gives a base its tag\'s rule and a piece a trunk region by it',
+        );
       } catch (err) {
         const why = `the stage threw: ${(err as Error).message.split('\n')[0]}`;
         say('AS49_A_CUT_TAKES_ITS_POLYGON_S_PIXELS_INTO_A_PART_OF_ITS_OWN_WITH_THE_HAND_COUNTED_SPLIT_AND_NOTHING_ELSE_MOVES', false, why, 'the stage must assemble the planted cut green');
         say('AS50_THE_PIECE_READS_BACK_AND_PROPOSE_HOLDS_IT_AS_A_CUT_BY_ITS_OWN_NAME', false, `not measured: ${why}`, 'the parts AS49 writes are the ones read back here');
+        say('AS57_A_CUT_S_PIECE_RECORDS_THE_PART_IT_WAS_CUT_FROM_AND_NO_OTHER_PART_DOES', false, `not measured: ${why}`, 'the parts AS49 writes are the ones read here');
       }
 
       // Each refusal planted alone, then two of the first phase in one config: both named in one throw.

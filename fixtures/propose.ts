@@ -50,6 +50,8 @@ export interface ProposeFixturePart {
   colour: [number, number, number];
   /** Rig-space rectangles `[x, y, w, h]` inside the box that are opaque; absent -> the whole box. */
   rects?: Array<[number, number, number, number]>;
+  /** A cut's piece: the part it was cut from, written to parts.json as `cut_from` (issue #230); absent -> not a piece. */
+  cut_from?: string;
 }
 
 export const PROPOSE_PARTS: ProposeFixturePart[] = [
@@ -73,6 +75,52 @@ export const FACELESS_PARTS: ProposeFixturePart[] = [
   { name: 'mop', from: 'head:back hair', x: 60, y: 10, w: 80, h: 50, colour: [90, 60, 40] },
   { name: 'fringe', from: 'head:front hair', x: 70, y: 20, w: 60, h: 40, colour: [110, 70, 50] },
   { name: 'throat', from: 'head:neck', x: 90, y: 110, w: 20, h: 30, colour: [240, 210, 190] },
+];
+
+/**
+ * The cut fixture (issue #230), on {@link PROPOSE_RIG}: {@link CUT_BASE_PARTS}
+ * is {@link PROPOSE_PARTS} with a `coat` (full:topwear) 50,100 100x160, a
+ * `mop` (head:back hair) 60,10 80x50 and a `fringe` (head:front hair) 70,20
+ * 60x40 — one part for each tag whose rule names chains or a bone once per
+ * part (skirt, robe and bang chains; the bun). {@link CUT_PARTS} adds a piece
+ * of each, `cut_from` its base, every one a 10x10 or 20x20 block inside its
+ * base's box:
+ *
+ * - `skirt_under` (of `skirt`) 70,200 20x20, centre y 210, first in the file
+ *   as a piece drawn `"back"` is;
+ * - `fringe_lock` (of `fringe`) 80,30 10x10, centre y 35, just before its base
+ *   as `{before: "fringe"}` puts it;
+ * - `mop_lock` (of `mop`) 130,40 10x10, centre y 45, and `lapel` (of `coat`)
+ *   120,110 10x20, centre y 120, last, as `"front"` puts them.
+ *
+ * A real cut takes its piece's pixels out of the base; here the base keeps
+ * them, so every base mask, the figure and the torso are the uncut set's, and
+ * the proposal for CUT_PARTS must be the one for CUT_BASE_PARTS plus a region
+ * and a note per piece. The trunk rule reads the centre y against the neck
+ * (chin 90 + 0.12 x 50 = 96) and the hip (skirt top 150 + 0.14 x 50 = 157):
+ * the two hair pieces ride head, `lapel` chest, `skirt_under` hip.
+ */
+export const CUT_BASE_PARTS: ProposeFixturePart[] = [
+  ...PROPOSE_PARTS,
+  { name: 'coat', from: 'full:topwear', x: 50, y: 100, w: 100, h: 160, colour: [60, 90, 60] },
+  { name: 'mop', from: 'head:back hair', x: 60, y: 10, w: 80, h: 50, colour: [90, 60, 40] },
+  { name: 'fringe', from: 'head:front hair', x: 70, y: 20, w: 60, h: 40, colour: [110, 70, 50] },
+];
+
+export const CUT_PIECES: ProposeFixturePart[] = [
+  { name: 'skirt_under', from: 'full:bottomwear', x: 70, y: 200, w: 20, h: 20, colour: [30, 40, 80], cut_from: 'skirt' },
+  { name: 'fringe_lock', from: 'head:front hair', x: 80, y: 30, w: 10, h: 10, colour: [130, 80, 60], cut_from: 'fringe' },
+  { name: 'mop_lock', from: 'head:back hair', x: 130, y: 40, w: 10, h: 10, colour: [100, 70, 50], cut_from: 'mop' },
+  { name: 'lapel', from: 'full:topwear', x: 120, y: 110, w: 10, h: 20, colour: [80, 110, 80], cut_from: 'coat' },
+];
+
+export const CUT_PARTS: ProposeFixturePart[] = [
+  CUT_PIECES[0],
+  ...CUT_BASE_PARTS.slice(0, CUT_BASE_PARTS.length - 1),
+  CUT_PIECES[1],
+  CUT_BASE_PARTS[CUT_BASE_PARTS.length - 1],
+  CUT_PIECES[2],
+  CUT_PIECES[3],
 ];
 
 /**
@@ -312,6 +360,7 @@ export function writeProposeFixture(dir: string, parts: ProposeFixturePart[] = P
     return {
       name: p.name,
       from: p.from,
+      ...(p.cut_from === undefined ? {} : { cut_from: p.cut_from }),
       x: p.x,
       y: p.y,
       w: p.w,
