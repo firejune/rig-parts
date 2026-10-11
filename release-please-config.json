@@ -69,7 +69,7 @@
   ],
   "packages": {
     ".": {
-      "package-name": "rig-parts",
+      "package-name": "@rig-c/parts",
       "changelog-path": "CHANGELOG.md",
       "include-component-in-tag": false
     }

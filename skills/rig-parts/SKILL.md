@@ -2,7 +2,7 @@
 name: rig-parts
 description: Turn one anime character painting and its See-through layer decomposition into a verified 2D character rig (Spine 4.3 skeleton data) — measured parts, weighted meshes, bone chains and a looping idle — with rig-parts, which gates everything through rig-c before it is written. Use for a request to rig or animate a single character painting, to run or read rig-parts layers, sheet, assemble, propose, rig, check, loop or build, or to write or fix a rig-parts config.json. Not for cutting art into parts by hand, for authoring a rig from loose PNGs (that is the rigc skill), for lip-sync or swapping a part's image, or for running See-through itself.
 license: MIT
-compatibility: Requires Bun 1.2 or later. The tool is the npm package rig-parts (bunx rig-parts, or bun add -d rig-parts); rig-c is installed with it. See-through is run separately.
+compatibility: Requires Bun 1.2 or later. The tool is the npm package @rig-c/parts (npm i -D @rig-c/parts, or bun add -d @rig-c/parts), whose command is rig-parts; rig-c is installed with it. See-through is run separately.
 ---
 
 # rig-parts — a painting to a Spine rig, for agents
@@ -150,9 +150,9 @@ share is synthesis where the painting was there to be taken.
 
 ## Where to read next
 
-[docs/AUTHORING.md](https://github.com/firejune/rig-parts/blob/main/docs/AUTHORING.md)
+[docs/AUTHORING.md](https://github.com/rig-c/parts/blob/main/docs/AUTHORING.md)
 first — every config field, the command order, what to read after each stage, every
-refusal. It is in the installed package at `node_modules/rig-parts/docs/AUTHORING.md`,
+refusal. It is in the installed package at `node_modules/@rig-c/parts/docs/AUTHORING.md`,
 the copy that matches the version you run. Two recipes there cover what this package
 leaves to you:
 
