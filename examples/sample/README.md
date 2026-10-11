@@ -7,7 +7,7 @@ be this repository's plain public fixture: base checkpoint, no LoRA, and a rig
 the reference implementation built from its own proposal with no hand edit.
 Its heavy inputs (the painting, the two images See-through was fed, and the
 `full` and `head` See-through layer sets) live in the
-[spine-parts-examples](https://github.com/firejune/spine-parts-examples)
+[parts-examples](https://github.com/rig-c/parts-examples)
 repository, which also holds the generation record and the licence;
 `bun run fetch-examples` copies them into `inputs/` here (gitignored). What is
 tracked is the light half: `config.json` (the reference's config converted to

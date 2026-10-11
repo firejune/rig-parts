@@ -25,7 +25,7 @@ input is silent.
 <p align="center"><em>
 The painting was generated for this repository with a public checkpoint (Pony
 Diffusion V6 XL) and no LoRA; its generation record, See-through layers and licence
-are in <a href="https://github.com/firejune/spine-parts-examples">spine-parts-examples</a>
+are in <a href="https://github.com/rig-c/parts-examples">parts-examples</a>
 (that repository keeps the name it was published under before this package's rename).
 See-through ran twice, once on the whole figure and once on a square head crop.
 Then one command: <code>rig-parts build --seam silhouette --loop</code>. The
@@ -193,7 +193,7 @@ head run on `st_input_head.png` is what gives the eyes more pixels
 four, and `rig-parts comfy` is only a convenience for that route: every
 stage after See-through reads files, whichever route wrote them. On the two
 public examples each run took 171–199 s through the wrapper (each run's
-`meta.json`, in [spine-parts-examples](https://github.com/firejune/spine-parts-examples)).
+`meta.json`, in [parts-examples](https://github.com/rig-c/parts-examples)).
 
 ### The two images See-through is fed: `inputs`
 

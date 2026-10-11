@@ -105,7 +105,7 @@ API reported for it `allowCommercialUse: ["Image", "RentCivit"]`,
 `allowNoCredit: false`, `allowDerivatives: true` and
 `allowDifferentLicense: false`: generated images may be used commercially and
 the model must be credited, which this line and the
-[spine-parts-examples](https://github.com/firejune/spine-parts-examples) README do.
+[parts-examples](https://github.com/rig-c/parts-examples) README do.
 
 ## 4. Behaviour reimplemented, not code copied
 

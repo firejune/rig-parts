@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fetches the heavy inputs of the public example characters — each painting,
 # the two images See-through was fed, and the two See-through layer sets — from
-# https://github.com/firejune/spine-parts-examples into the gitignored
+# https://github.com/rig-c/parts-examples into the gitignored
 # examples/<key>/inputs/ of this checkout.
 #
 # What lives HERE, tracked, is the light half of each example: its config, the
@@ -33,8 +33,8 @@
 # and both layers.json manifests before the exit status may be 0.
 set -euo pipefail
 
-REPO_URL="https://github.com/firejune/spine-parts-examples"
-# ⚠️ PLACEHOLDER. Set this to the full 40-character commit of spine-parts-examples
+REPO_URL="https://github.com/rig-c/parts-examples"
+# ⚠️ PLACEHOLDER. Set this to the full 40-character commit of parts-examples
 # these fixtures were compared against. The script refuses to run until it is.
 PINNED_COMMIT=d55a28258505ef1fcdfac7d5c35126a2c8efdbb6
 
@@ -90,7 +90,7 @@ else
     exit 1
   fi
   work="$(mktemp -d)"
-  upstream="$work/spine-parts-examples"
+  upstream="$work/parts-examples"
   git init -q "$upstream"
   git -C "$upstream" remote add origin "$REPO_URL"
   if ! git -C "$upstream" fetch -q --depth 1 origin "$PINNED_COMMIT"; then
