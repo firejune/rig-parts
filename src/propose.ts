@@ -1858,6 +1858,20 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
         ['hip', rnd(along(waist, trunk.v, s0 + 0.09 * (s1 - s0))), rnd(along(waist, trunk.v, s0 + 0.91 * (s1 - s0)))],
       ];
     }
+    // Issue #262: a skirt whose art starts below the chest bone hangs from the waist. Its root is the hip line's,
+    // and the chest segment goes: with it the breath carries the waistband (a vertex near the chest segment's
+    // lower end takes chest weight), so the root travels with the breath while the hem, on the skirt's chains,
+    // does not. A bottomwear reaching up past the chest (the long robe the hip rule above reads the waist for) has
+    // art on the chest and keeps the segment. Read along the trunk where there is one, down the screen otherwise.
+    const down: readonly [number, number] = trunk === null ? [0, 1] : trunk.u;
+    const artTop = artExtent(mask, p, hip, down)[0];
+    const chestAt = (chest[0] - hip[0]) * down[0] + (chest[1] - hip[1]) * down[1];
+    if (artTop >= chestAt) {
+      segs = segs.filter((s) => typeof s === 'string' || s[0] !== 'chest');
+      notes.push(
+        `${p.name} (${p.from}): its art starts ${pyFixed(artTop - chestAt, 1)} px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root`,
+      );
+    }
     for (const [tag, f, ph] of [
       ['skirt_r', 0.3, 0.3],
       ['skirt_c', 0.5, 0.34],

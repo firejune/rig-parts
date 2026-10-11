@@ -485,17 +485,6 @@
    "r": 15,
    "segments": [
     [
-     "chest",
-     [
-      402,
-      355
-     ],
-     [
-      402,
-      517
-     ]
-    ],
-    [
      "hip",
      [
       135,
@@ -701,6 +690,7 @@
   "earring: pendant top is off the art -> rigid bone, no chain",
   "handwear is one blob (sleeves): both sleeves in one mesh, split at the eye axis x=413",
   "topwear ends at y=553 (hip 537): no robe chains -- add a sash chain by hand if one hangs",
+  "bottomwear (full:bottomwear): its art starts 133.4 px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root",
   "legwear (full:legwear): no rule -> region on hip"
  ]
 }

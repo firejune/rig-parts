@@ -5355,7 +5355,7 @@ function runProposeSuite(): number {
     const meshOk =
       segs('sleeve_a') === '[["chest",[30,101],[30,117]],"sleeve_r"]' &&
       segs('sleeve_b') === '[["chest",[170,101],[170,117]],"sleeve_l"]' &&
-      segs('skirt') === '[["chest",[100,96],[100,137]],["hip",[67,162],[133,162]],"skirt_r","skirt_c","skirt_l"]';
+      segs('skirt') === '[["hip",[67,162],[133,162]],"skirt_r","skirt_c","skirt_l"]';
     const bytes = serializeProposal(prop);
     const again = serializeProposal(propose(readPartSet(dir)));
     const loads = refusals(() => parseConfig(proposalConfig(PROPOSE_PARTS, prop)));
@@ -5406,7 +5406,7 @@ function runProposeSuite(): number {
     const bare = breathOf('bare', PROPOSE_PARTS);
     const amp = (b: ReturnType<typeof breathOf>): string => (b.tr === undefined ? 'none' : `amp ${(b.tr as { amp: number }).amp} base ${String((b.tr as { base?: number }).base)} period ${b.tr.period}`);
     say(
-      'PR88_THE_BREATH_TRAVELS_A_FRACTION_OF_THE_TORSO_PARTS_HEIGHT_AND_THE_IDLE_IS_FORTY_FRAMES',
+      'PR97_THE_BREATH_TRAVELS_A_FRACTION_OF_THE_TORSO_PARTS_HEIGHT_AND_THE_IDLE_IS_FORTY_FRAMES',
       BREATH_FRACTION === 0.025 &&
         amp(vest) === `amp 1 base 1 period ${40 / 12}` &&
         amp(coat) === `amp 2 base 2 period ${40 / 12}` &&
@@ -5568,6 +5568,40 @@ function runProposeSuite(): number {
         boneAt(robe.bones, 'skirt_c') === '[[100,197],[100,250],[100,303]]->[100,356]',
       `hip ${boneAt(robe.bones, 'hip')} (want [100,177]), chest ${boneAt(robe.bones, 'chest')} (want [100,136]), skirt_c ${boneAt(robe.bones, 'skirt_c')}; notes: ${robe.notes.filter((n) => n.startsWith('hip')).join(' | ')}; ${robeLint.length} LINT line(s)${robeLint.length > 0 ? `: ${robeLint.join(' | ')}` : ''}`,
       "issue #22: a long under-robe tagged bottomwear starts at the collar, and the reference put the hip 0.14 face heights below that edge — three px under the chest at the collar, with breath and skirt sway hanging from the shoulders and no line saying so",
+    );
+
+    // Issue #262: a skirt whose art starts below the chest bone hangs from the waist — no chest segment, so the breath
+    // does not carry its root. The fixture's skirt starts at y 150, 23.5 px under chest's 126.5; the draft before #262
+    // gave it ['chest', [100, 96], [100, 137]] (chest - 30 down to hip - 20), which pulled its top rows by chest. The
+    // robe above starts at y 95, over chest's 136: its art is on the chest and keeps the segment.
+    const linksOf = (q: Proposal, segments: readonly (string | [string, [number, number], [number, number]])[]): Array<{ bone: string; a: [number, number]; b: [number, number] }> =>
+      segments.flatMap((sg) => {
+        if (typeof sg !== 'string') return [{ bone: sg[0], a: sg[1], b: sg[2] }];
+        const c = q.bones.find((b) => 'chain' in b && b.chain === sg);
+        if (c === undefined || !('chain' in c)) return [];
+        const pts = [...c.points, c.tip];
+        return c.points.map((pt, k) => ({ bone: `${sg}${k}`, a: pt, b: pts[k + 1] }));
+      });
+    const skirtNow = prop.meshes.skirt?.segments ?? [];
+    const skirtOld: Array<string | [string, [number, number], [number, number]]> = [['chest', [100, 96], [100, 137]], ...skirtNow];
+    // The chest's largest weight over the skirt's top rows (y 150..157, x 60..139), the waistband the breath carried.
+    const chestOnTop = (segments: readonly (string | [string, [number, number], [number, number]])[]): number => {
+      let most = 0;
+      for (let y = 150; y < 158; y++) for (let x = 60; x < 140; x++) for (const w of influences([x, y], linksOf(prop, segments), prop.meshes.skirt?.r ?? 0)) if (w.bone === 'chest') most = Math.max(most, w.weight);
+      return most;
+    };
+    const hangNote = prop.notes.find((n) => n.startsWith('skirt (full:bottomwear): its art starts '));
+    const robeSegs = JSON.stringify((robe.meshes.robe?.segments ?? []).filter((sg) => typeof sg !== 'string').map((sg) => sg[0]));
+    say(
+      'PR96_A_SKIRT_BELOW_THE_CHEST_HANGS_FROM_THE_HIP_AND_A_ROBE_OVER_THE_CHEST_KEEPS_THE_CHEST',
+      !skirtNow.some((sg) => typeof sg !== 'string' && sg[0] === 'chest') &&
+        chestOnTop(skirtNow) === 0 &&
+        chestOnTop(skirtOld) >= MIN_WEIGHT &&
+        hangNote === 'skirt (full:bottomwear): its art starts 23.5 px below chest\'s origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root' &&
+        robeSegs === '["chest","hip"]' &&
+        !robe.notes.some((n) => n.startsWith('robe (full:bottomwear): its art starts ')),
+      `skirt segments ${JSON.stringify(skirtNow)}: chest's largest weight on rows 150..157 ${chestOnTop(skirtNow)}; the draft before #262 (chest - 30 to hip - 20 first): ${chestOnTop(skirtOld)} (floor ${MIN_WEIGHT}); note ${JSON.stringify(hangNote ?? null)}; the robe from the collar keeps ${robeSegs}`,
+      'issue #262: on scarf the chest segment ending 5 px over the skirt gave the waistband chest weight, so the 2.5 % breath moved the root 0.492 rig px against a 0.148 hem (TIP_OVER_ROOT 0.300); a skirt hangs from the waist, and only a bottomwear whose art is on the chest is pulled by it',
     );
 
     // No waist: the same robe as one 80 px column (60,95 80x265). Every torso row is the shoulders' 80 px, none reaches 64 ->
@@ -6991,12 +7025,12 @@ function runTrunkSegmentCases(dir: string, say: (name: string, ok: boolean, deta
     { what: 'throat chest', seg: fixed(p, 'throat', 'chest')[0], d: U },
     { what: 'coat chest', seg: fixed(p, 'coat', 'chest')[0], d: U },
     { what: 'coat hip', seg: fixed(p, 'coat', 'hip')[0], d: U },
-    { what: 'skirt chest', seg: fixed(p, 'skirt', 'chest')[0], d: U },
     { what: 'skirt waist', seg: fixed(p, 'skirt', 'hip')[0], d: V },
   ];
   const within = (p: Proposal): boolean => read(p).every((r) => r.seg !== undefined && off(r.seg, r.d) <= BAR);
   const shown = (p: Proposal): string => read(p).map((r) => `${r.what} ${JSON.stringify(r.seg ?? null)} ${r.seg === undefined ? '-' : off(r.seg, r.d).toFixed(2)} deg`).join('; ');
-  const want = '[81,84],[100,110] [52,46],[118,134] [118,134],[190,230] [82,86],[118,134] [120,164],[146,144]';
+  // Issue #262: the skirt (art from y 150, under the chest) hangs from the waist and drafts no chest segment, on this line or any.
+  const want = '[81,84],[100,110] [52,46],[118,134] [118,134],[190,230] [120,164],[146,144]';
   const got = read(kp).map((r) => (r.seg === undefined ? 'none' : `${JSON.stringify(r.seg[1])},${JSON.stringify(r.seg[2])}`)).join(' ');
   // The planted input: the same bones, the segments as the draft before this card wrote them.
   const old: Proposal = {
@@ -7012,6 +7046,7 @@ function runTrunkSegmentCases(dir: string, say: (name: string, ok: boolean, deta
   say(
     'PR86_WITH_THE_TRUNK_JOINTS_THE_TRUNK_SEGMENTS_RUN_ALONG_NECK_TO_HIP_AND_THE_WAIST_ACROSS_IT',
     got === want &&
+      fixed(kp, 'skirt', 'chest').length === 0 &&
       within(kp) &&
       !within(old) &&
       read(old).every((r) => r.seg !== undefined && off(r.seg, r.d) > 36) &&
@@ -7024,17 +7059,18 @@ function runTrunkSegmentCases(dir: string, say: (name: string, ok: boolean, deta
   // Without keypoints the rule places the trunk (neck part: half way from the chin 58 to the throat's bottom 82 -> y 70 on
   // the eye axis 65; hip: the skirt's top 136 + 0.14 * 50 = 143 at its box's centre x 160; chest (160, 106.5)) and the
   // segments are today's verticals: throat [65, 88] -> [65, 106] (106.5 rounds to even), coat [160, 52] -> [160, 123] ->
-  // [160, 243], skirt [160, 76] -> [160, 123] (76.5 to even) and the waist [114, 148] -> [206, 148]. On the standing figure
-  // with its joints the line is upright, (100, 98) -> (100, 160), and the boxes are tight on the art, so the line's draft
-  // is the screen's to the byte: skirt [100, 99] -> [100, 140] (chest 129 - 30, hip 160 - 20) and the waist [67, 165] ->
-  // [133, 165] (60 + 0.09 * 80 = 67.2, 60 + 0.91 * 80 = 132.8). A neck joint on the hips' midpoint declares no line: the
-  // screen's draft runs, and the note says why.
+  // [160, 243], and the skirt's waist [114, 148] -> [206, 148] — its art starts at 136, under the chest, so since issue
+  // #262 it drafts no chest segment. On the standing figure with its joints the line is upright, (100, 98) -> (100, 160),
+  // and the boxes are tight on the art, so the line's draft is the screen's to the byte: the waist [67, 165] -> [133, 165]
+  // (60 + 0.09 * 80 = 67.2, 60 + 0.91 * 80 = 132.8). A neck joint on the hips' midpoint declares no line: the screen's
+  // draft runs, and the note says why; there the chest is (130, 150), the skirt's art starts above it, and it keeps
+  // [130, 120] -> [130, 130] (chest - 30 down to hip - 20).
   const no = propose(Pl);
   const segsOf = (p: Proposal, ms: readonly string[]): string => ms.map((m) => JSON.stringify((p.meshes[m]?.segments ?? []).filter((q) => typeof q !== 'string'))).join(' ');
-  const noWant = '[["chest",[65,88],[65,106]],["head",[65,52],[65,2]]] [["chest",[160,52],[160,123]],["hip",[160,123],[160,243]]] [["chest",[160,76],[160,123]],["hip",[114,148],[206,148]]]';
+  const noWant = '[["chest",[65,88],[65,106]],["head",[65,52],[65,2]]] [["chest",[160,52],[160,123]],["hip",[160,123],[160,243]]] [["hip",[114,148],[206,148]]]';
   const Ps = readPartSet(poseDir(dir, 'standing'));
   const st = propose(Ps, poseJoints('standing'));
-  const stWant = '[["chest",[100,99],[100,140]],["hip",[67,165],[133,165]]]';
+  const stWant = '[["hip",[67,165],[133,165]]]';
   const onePoint = propose(Pl, poseJoints('leaning', (k) => (k.people[0].joints.neck = { state: 'observed', at: [130, 150] })));
   const oneWant = '[["chest",[65,168],[65,150]],["head",[65,52],[65,2]]] [["chest",[130,52],[130,130]],["hip",[130,130],[130,250]]] [["chest",[130,120],[130,130]],["hip",[114,155],[206,155]]]';
   const oneNote = "trunk segments: neck and hip are one point, [130.0, 150.0], so neck -> hip declares no line; the trunk parts' segments are drafted down the screen, as without keypoints";
@@ -9087,6 +9123,39 @@ function runCheckSuite(): number {
       slide.status === 1 && tipFail !== null && /ratio 1\b/.test(tipFail),
       `exit ${slide.status}; ${tipFail?.trim() ?? 'no CHECK_TIP_OVER_ROOT line'}`,
       'a sleeve translated whole has its tip travel exactly as far as its root — the swing a chain is for is absent',
+    );
+
+    // Issue #262: the failing line names a root the breath carries. The planted skirt: its waistband on `chest`, which
+    // the idle lifts 4 rig px, its hem on `hem`, which sways 1 px across; the root half rises with the breath and the
+    // tip half does not. Its negatives: the same skirt with no sway (the breath held still, the tip moves nothing,
+    // so the chain is what fails), and CK11's sleeve, a region the root's slide carries whole — both keep the
+    // chain's line.
+    const carriedRun = judged('tip-carried', { from: ['full:bottomwear', 'full:topwear'], peak: 0, carried: { breath: 4, sway: 1 } });
+    const carriedFail = failLine(carriedRun.out, 'CHECK_TIP_OVER_ROOT');
+    const carriedRow = ((carriedRun.fig?.TIP_OVER_ROOT as { parts?: Array<Record<string, unknown>> } | undefined)?.parts ?? []).find((r) => r.part === 'back');
+    const stillHem = judged('tip-carried-still', { from: ['full:bottomwear', 'full:topwear'], peak: 0, carried: { breath: 4, sway: 0 } });
+    const stillHemFail = failLine(stillHem.out, 'CHECK_TIP_OVER_ROOT');
+    const chainWords = "the chain's amplitudes do not grow toward the tip, or the mesh is not weighted to the chain";
+    say(
+      'CK116_A_ROOT_THE_BREATH_CARRIES_IS_NAMED_WITH_ITS_CARRIER_AND_A_ROOT_THAT_SLIDES_WITH_ITS_TIP_IS_NOT',
+      carriedRun.status === 1 &&
+        carriedFail !== null &&
+        /the root travels with the breath \([0-9.]+ px of 4 px\): it is carried by `chest`, which moves it more than the tip/.test(carriedFail) &&
+        !carriedFail.includes(chainWords) &&
+        carriedRow?.carried_by === 'chest' &&
+        carriedRow?.breath_rig_px === 4 &&
+        typeof carriedRow?.root_without_breath_rig_px === 'number' &&
+        typeof carriedRow?.tip_without_breath_rig_px === 'number' &&
+        (carriedRow.tip_without_breath_rig_px as number) >= TIP_RATIO_FLOOR * (carriedRow.root_without_breath_rig_px as number) &&
+        stillHem.status === 1 &&
+        stillHemFail !== null &&
+        stillHemFail.includes(chainWords) &&
+        !stillHemFail.includes('travels with the breath') &&
+        tipFail !== null &&
+        tipFail.includes(chainWords) &&
+        !tipFail.includes('travels with the breath'),
+      `carried: exit ${carriedRun.status}; ${carriedFail?.trim() ?? 'no CHECK_TIP_OVER_ROOT line'}; row ${JSON.stringify(carriedRow ?? null)} | no sway: ${stillHemFail?.trim() ?? 'no CHECK_TIP_OVER_ROOT line'} | CK11's slide: ${tipFail?.trim().slice(-120) ?? 'no line'}`,
+      "issue #262: scarf's skirt failed at 0.300 because its waistband rode chest, and the line blamed the chain's amplitudes; the line now names the carrier when the part posed with the breath held still passes the bar — the bar's own margin — and keeps the chain's words when it does not",
     );
 
     // Issue #118: the half travels read off posed geometry, exact, with no render grid. A 12x20 block of art in a
@@ -12166,7 +12235,8 @@ function runChainSuite(): number | null {
       // Issue #118 on real art: TIP_OVER_ROOT reads the posed geometry, which no render size enters. One variant per
       // example that has the case: sample with its skirt amplitudes x0.1 (the card's reproduction, the hem under a
       // fifth of a frame pixel, which the pixel reading took from 0.512 to 13.53 over --max 620-660), and scarf with
-      // its bottomwear back on the proposal's lattice (the build the README says fails the line). Each is rigged
+      // its bottomwear on the proposal's lattice with the pre-#262 chest segment put back (issue #118's failing build
+      // had both; #262 found the segment was the cause). Each is rigged
       // from this build's parts, checked once, and its geometry rendered at --max 620 and 660: the line's figure,
       // recomputed from either geometry, is the check's to the digit, and the status is the bar's.
       const variant = key === 'reference-sample' ? 'skirt-x0.1' : key === 'scarf' ? 'bottomwear-lattice' : null;
@@ -12178,9 +12248,10 @@ function runChainSuite(): number | null {
         if (key === 'reference-sample') {
           for (const t of cfg.motion.tracks) if (t.chain?.startsWith('skirt_') === true && t.amps !== undefined) t.amps = t.amps.map((a) => a * 0.1);
         } else {
-          const { contour, note, ...rest } = cfg.meshes.bottomwear as { contour: { spacing: number }; note?: string };
-          void note;
-          cfg.meshes.bottomwear = { grid: contour.spacing, ...rest };
+          // Issue #262: the tracked config is the proposal's lattice again (grid 12, which passes at 3.487); the plant
+          // puts back the chest segment the proposer drafted before #262, which is what the lattice failed by.
+          const { segments, ...rest } = cfg.meshes.bottomwear as { grid: number; segments: unknown[] };
+          cfg.meshes.bottomwear = { ...rest, segments: [['chest', [414, 411], [414, 637]], ...segments] };
         }
         const vDir = join(dir, `${key}-${variant}`);
         mkdirSync(vDir, { recursive: true });
@@ -12215,10 +12286,10 @@ function runChainSuite(): number | null {
             atMax[0]?.root === atMax[1]?.root &&
             atMax[0]?.tip === atMax[1]?.tip &&
             ratios.every((r) => r === row?.ratio) &&
-            (!wantFail || (failLine(vChk.out, 'CHECK_TIP_OVER_ROOT')?.includes('part "bottomwear"') ?? false)),
-          `${variant}: rig exit ${vRig.status}, check exit ${vChk.status}, TIP_OVER_ROOT ${vTip?.status} (instrument ${vTip?.instrument}), bottomwear root ${row?.root_rig_px} tip ${row?.tip_rig_px} rig px, ratio ${row?.ratio} against ${TIP_RATIO_FLOOR}; from the geometry at --max 620 and 660: ${atMax.map((t, i) => `${[620, 660][i]}: root ${t?.root} tip ${t?.tip}`).join('; ')} (${atMax[0]?.root === atMax[1]?.root && atMax[0]?.tip === atMax[1]?.tip ? 'bit-identical' : 'DIFFERENT'})`,
+            (!wantFail || ((failLine(vChk.out, 'CHECK_TIP_OVER_ROOT')?.includes('part "bottomwear"') ?? false) && (failLine(vChk.out, 'CHECK_TIP_OVER_ROOT')?.includes('the root travels with the breath (') ?? false) && (failLine(vChk.out, 'CHECK_TIP_OVER_ROOT')?.includes('it is carried by `chest`') ?? false))),
+          `${variant}: rig exit ${vRig.status}, check exit ${vChk.status}, TIP_OVER_ROOT ${vTip?.status} (instrument ${vTip?.instrument}), bottomwear root ${row?.root_rig_px} tip ${row?.tip_rig_px} rig px, ratio ${row?.ratio} against ${TIP_RATIO_FLOOR}; from the geometry at --max 620 and 660: ${atMax.map((t, i) => `${[620, 660][i]}: root ${t?.root} tip ${t?.tip}`).join('; ')} (${atMax[0]?.root === atMax[1]?.root && atMax[0]?.tip === atMax[1]?.tip ? 'bit-identical' : 'DIFFERENT'})${wantFail ? `; ${failLine(vChk.out, 'CHECK_TIP_OVER_ROOT')?.trim().slice(-330) ?? 'no CHECK_TIP_OVER_ROOT line'}` : ''}`,
           wantFail
-            ? "the planted negative of CK90, on real art: scarf's short skirt on the proposal's lattice. Its art in the lower half truly travels less than 1.4725 times the upper half's — the part rendered alone at --max 8000 converges on about 1.27 from above (issue #118) — and the pixel reading had passed it at 640 (4.537) by the grid; the geometric one fails it at every size, naming the part"
+            ? "the planted negative of CK90, on real art: scarf's short skirt on the proposal's lattice with the chest segment the proposer drafted before issue #262. Its art in the lower half truly travels less than 1.4725 times the upper half's — the part rendered alone at --max 8000 converged on about 1.27 from above at the breath of issue #118 — and the pixel reading had passed it at 640 (4.537) by the grid; the geometric one fails it at every size, naming the part and, since #262, the bone that carries its root (the line's planted positive on real art)"
             : "issue #118's reproduction: the same rig the pixel reading failed at --max 620, 640 and 650 and passed elsewhere; from the geometry the figure is one number at every render size and the bar decides it, not the grid",
         );
       }
@@ -12476,9 +12547,10 @@ function runReadmeLoopSuite(): number | null {
       const key = relative(join(ROOT, 'examples'), ex);
       const r = runReadmeLoop(lines, ex, join(dir, key));
       // The meshes the example's tracked config moved off the proposal's lattice into contour mode — the one
-      // correction a tracked example records against its proposal's meshes (scarf's bottomwear, issue #118, whose
-      // lattice fails TIP_OVER_ROOT measured from the geometry). Pasted uncorrected, as this control pastes, the
-      // build must stop at check and name exactly those parts on that line, and nothing else.
+      // correction a tracked example records against its proposal's meshes (scarf's bottomwear from issue #118, whose
+      // lattice failed TIP_OVER_ROOT measured from the geometry, until issue #262 removed the chest segment that failed
+      // it and scarf went back to the lattice). Pasted uncorrected, as this control pastes, the build must stop at
+      // check and name exactly those parts on that line, and nothing else; with none, it must build green.
       type ChainEntry = { chain?: string; points?: unknown; tip?: unknown };
       const tracked = readJsonAt(join(ex, 'config.json')) as { meshes?: Record<string, Record<string, unknown>>; bones?: ChainEntry[]; assemble?: { plan?: Array<[string, string, string]> } };
       const proposed = readJsonAt(join(ex, 'proposal.json')) as { meshes?: Record<string, Record<string, unknown>>; bones?: ChainEntry[] };
@@ -16133,9 +16205,11 @@ function runDiagnosticsSuite(): number {
     });
     const single = lint(P, tailSpec(false)).coverage.find((c) => c.bone === 'tail');
     const asChain = lint(P, tailSpec(true)).coverage.find((c) => c.bone === 'tail0');
+    // Issue #262: the skirt (art from y 150, under chest) drafts no chest segment, so its segments are the hip line
+    // and three chains, [0..3], and the two planted ones land at [4] and [5].
     const wantSingle = [
-      'named as a single bone by meshes.skirt.segments[5]: a single bone has no links, and the off-art check reads only the links <segment><digits> of a chain',
-      'bound by the explicit [bone, from, to] segment meshes.skirt.segments[6]: a segment is a line, not an origin, and the off-art check reads origins',
+      'named as a single bone by meshes.skirt.segments[4]: a single bone has no links, and the off-art check reads only the links <segment><digits> of a chain',
+      'bound by the explicit [bone, from, to] segment meshes.skirt.segments[5]: a segment is a line, not an origin, and the off-art check reads origins',
     ];
     say(
       'DG02_A_SINGLE_BONE_NAMED_AS_A_SEGMENT_AND_AN_EXPLICIT_SEGMENT_ARE_NOT_CHECKED_AND_SAY_WHICH_SEGMENT',
@@ -16197,7 +16271,8 @@ function runDiagnosticsSuite(): number {
       'DG05_A_MESH_NAMING_NO_PART_LEAVES_ITS_CHAIN_NOT_CHECKED_AND_NAMES_THE_SEGMENT',
       kilt.unknownMeshes.join(',') === 'kilt' &&
         kiltC1 !== undefined &&
-        kiltC1.why.join('\n') === 'its chain is named by meshes.kilt.segments[3] (mesh "kilt"), which names no part in parts.json' &&
+        // Issue #262: no chest segment on the skirt, so skirt_c is its third segment, [2].
+        kiltC1.why.join('\n') === 'its chain is named by meshes.kilt.segments[2] (mesh "kilt"), which names no part in parts.json' &&
         gotCov.find((g) => g.startsWith('skirt_c1 ')) === "skirt_c1 checked, clean [deforms] read=off-art on mesh 'skirt' lint=0 why=",
       `skirt mesh renamed kilt: unknown meshes [${kilt.unknownMeshes.join(', ')}]; ${kiltC1 === undefined ? 'skirt_c1 absent' : coverageRow(kiltC1)}`,
       'lint already printed that the mesh was not linted; the coverage says which bones that left unread',
@@ -16219,7 +16294,8 @@ function runDiagnosticsSuite(): number {
       'DG06_WITHOUT_HIP_THE_CHEST_SAYS_WHY_IT_IS_NOT_CHECKED_AND_WITH_JOINTS_THE_TORSO_RULES_READ_HIP_AND_CHEST',
       noHip !== undefined &&
         noHip.why.join('\n') ===
-          'bound by the explicit [bone, from, to] segments meshes.sleeve_a.segments[0], meshes.sleeve_b.segments[0], meshes.skirt.segments[0]: a segment is a line, not an origin, and the off-art check reads origins\nthe torso checks read chest beside a single bone "hip", which the bones do not hold' &&
+          // Issue #262: the skirt hangs from the hip and no longer binds chest; the two sleeve stubs still do.
+          'bound by the explicit [bone, from, to] segments meshes.sleeve_a.segments[0], meshes.sleeve_b.segments[0]: a segment is a line, not an origin, and the off-art check reads origins\nthe torso checks read chest beside a single bone "hip", which the bones do not hold' &&
         at('chest') === 'chest checked, clean [deforms] read=chest-not-between|hip-not-past-chest lint=0 why=' &&
         at('hip') === 'hip checked, clean [deforms] read=hip-not-past-chest|hip-nearer-neck lint=0 why=' &&
         at('neck').startsWith('neck not checked [control]'),

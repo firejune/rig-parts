@@ -133,6 +133,15 @@ export interface CheckRigOptions {
    */
   canvas?: { w: number; h: number };
   /**
+   * Issue #262: draw the back part as {@link CheckRigOptions.stretchMesh}'s four-vertex mesh, but with its top two
+   * vertices weighted to a bone `chest` (through `chest_ctl`, which the idle keys `translatey` 0, `breath`, 0 — a
+   * breath) and its bottom two to `hem` (through `hem_ctl`, keyed `translatex` 0, `sway`, 0 at the same times); the
+   * slot rides `chest`. The root half of the box goes up with the breath further than the tip half does, and only
+   * the tip half follows the sway: a skirt whose waistband the breath carries. Not with `stretchMesh`, `blinkSquash`
+   * or `head`.
+   */
+  carried?: { breath: number; sway: number };
+  /**
    * The idle's duration in seconds, default 1 (issue #244). The root's three
    * `translatex` keys sit at 0, half of it and it. Only with none of
    * `blinkSquash`, `stretchMesh` and `head`, whose keys are written over 1 s.
@@ -158,7 +167,9 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
   const front = CHECK_PARTS[1];
   const eyeAt = { x: stage.x + front.x + front.w / 2, y: stage.y + cropToSpineY(front.y + front.h / 2, H) };
   const peak = opts.peak ?? IDLE_PEAK;
-  const mesh = opts.stretchMesh !== undefined;
+  const carried = opts.carried;
+  if (carried !== undefined && (opts.stretchMesh !== undefined || opts.blinkSquash !== undefined || opts.head !== undefined)) throw new Error('writeCheckRig: carried is not with stretchMesh, blinkSquash or head');
+  const mesh = opts.stretchMesh !== undefined || carried !== undefined;
   const T = opts.duration ?? 1;
   if (T !== 1 && (blink || mesh || opts.head !== undefined)) throw new Error('writeCheckRig: duration is only for the bare fixture; the blink, mesh and head keys are written over 1 s');
   const back = CHECK_PARTS[0];
@@ -177,9 +188,17 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
     uvs: [0, 0, 1, 0, 1, 1, 0, 1],
     triangles: [0, 1, 2, 2, 3, 0],
     hull: 4,
-    weights: corners.map((c, i) => (i < 2 ? [{ bone: 'yoke', x: c.x, y: c.y, weight: 1 }] : [{ bone: 'hem', x: c.x - hemAt.x, y: c.y - hemAt.y, weight: 1 }])),
+    weights: corners.map((c, i) => (i < 2 ? [{ bone: carried === undefined ? 'yoke' : 'chest', x: c.x, y: c.y, weight: 1 }] : [{ bone: 'hem', x: c.x - hemAt.x, y: c.y - hemAt.y, weight: 1 }])),
   };
-  const hemTracks = mesh ? [{ bone: 'hem_ctl', property: 'translatey', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [-(opts.stretchMesh as number)] }, { t: 1, v: [0] }] }] : [];
+  const hemTracks =
+    carried !== undefined
+      ? [
+          { bone: 'chest_ctl', property: 'translatey', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [carried.breath] }, { t: 1, v: [0] }] },
+          { bone: 'hem_ctl', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [carried.sway] }, { t: 1, v: [0] }] },
+        ]
+      : mesh
+        ? [{ bone: 'hem_ctl', property: 'translatey', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [-(opts.stretchMesh as number)] }, { t: 1, v: [0] }] }]
+        : [];
   const head = opts.head;
   const headAt = { x: stage.x + HEAD_AT.x, y: stage.y + cropToSpineY(HEAD_AT.y, H) };
   const slide = head?.slide !== undefined;
@@ -235,9 +254,10 @@ export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
       { name: 'root', x: 0, y: 0 },
       ...(blink ? [{ name: 'eye', parent: 'root', x: eyeAt.x, y: eyeAt.y }] : []),
       ...(mesh ? [{ name: 'yoke', parent: 'root', x: 0, y: 0 }, { name: 'hem_ctl', parent: 'root', x: hemAt.x, y: hemAt.y }, { name: 'hem', parent: 'hem_ctl', x: 0, y: 0 }] : []),
+      ...(carried !== undefined ? [{ name: 'chest_ctl', parent: 'root', x: 0, y: 0 }, { name: 'chest', parent: 'chest_ctl', x: 0, y: 0 }] : []),
       ...headBones,
     ],
-    slots: CHECK_PARTS.map((p, i) => ({ name: p.name, bone: head !== undefined ? 'head' : blink && i === 1 ? 'eye' : mesh && i === 0 ? 'yoke' : 'root', attachment: p.name })),
+    slots: CHECK_PARTS.map((p, i) => ({ name: p.name, bone: head !== undefined ? 'head' : blink && i === 1 ? 'eye' : mesh && i === 0 ? (carried === undefined ? 'yoke' : 'chest') : 'root', attachment: p.name })),
     skins: { default: Object.fromEntries(CHECK_PARTS.map((p, i) => [p.name, { [p.name]: attachment(p, i) }])) },
   };
   writeFileSync(join(dir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);

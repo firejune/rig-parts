@@ -74,6 +74,17 @@ here (gitignored).
   `handwear_l` 2.426 / 6.932 / 6.525 to 2.395 / 4.232 / 4.256, `TEXTURE_STRETCH` 1.097
   to 1.169, now on `bottomwear`; every status as before); `parts.json`, `rig.json`,
   `mesh_report.json` and the gate file did not move.
+  Issue #262 took the `chest` segment off `bottomwear` (`['chest', [416, 294],
+  [416, 400]]`, which ended on the skirt's top row): a skirt whose art starts below the
+  chest bone hangs from the hip line and its chains, and the config follows the proposal.
+  Here the breath was not what carried the skirt's upper half — it travels 0.397 rig px
+  with the segment and 0.392 without, the rest the chains' — so `check` barely moves.
+  That moved `proposal.json` (the segment, and a note naming the rule), `rig.json`
+  (`bottomwear`'s weights, and its slot's bone `chest` to `hip`, the first segment's),
+  `mesh_report.json` (`chest` off `bottomwear`'s bones; `mean_influences` 3.56 to 3.54)
+  and `check.json` (`TIP_OVER_ROOT` `bottomwear` 2.395 to 2.428; `TEXTURE_STRETCH` 1.169
+  on `bottomwear` to 1.097 on `hair_front`, `bottomwear` itself 1.019; every status as
+  before); `motion.json`, `parts.json` and the gate file did not move.
 
 ## The two corrections
 
