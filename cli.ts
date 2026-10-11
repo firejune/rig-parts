@@ -225,12 +225,17 @@ usage:
       contact.png, motion_heat.png and check.json (with rigc_entry, the rigc
       entry that gated the build, and pack_mode, the two pack flags). PASS needs every gate summary
       "0 failed", the seam (setup pose vs the flat composite of parts/) at mean
-      |d| <= ${SEAM_MEAN_BAR.toFixed(1)} with <= ${SEAM_PX_BAR} px over ${SEAM_PX_LEVEL}, and the loop (idle frame 0 vs the
-      frame at t = duration) at max |d| 0. A failing seam, or any seam under
-      --seam-pairs, is split by the pair of parts each counted pixel lies
-      between: one "seam pair" line each, worst first, with its count, frame
-      and rig boxes and a picture under seam/, and check.json's seam_pairs
-      (AUTHORING §7). --keep-stills leaves the setup-pose still the seam reads,
+      |d| <= ${SEAM_MEAN_BAR.toFixed(1)} with <= ${SEAM_PX_BAR} rig px over ${SEAM_PX_LEVEL} (the frame pixels over ${SEAM_PX_LEVEL}
+      divided by s², s the frame scale the seam: line prints and check.json's
+      seam_frame_scale holds, so the bar means the same at every scale), and
+      the loop (idle frame 0 vs the frame at t = duration) at max |d| 0. A
+      failing seam, or any seam under --seam-pairs, is split by the pair of
+      parts each counted pixel lies between: one "seam pair" line each, worst
+      first, with its count in frame px, frame and rig boxes and a picture
+      under seam/, and check.json's seam_pairs (AUTHORING §7). A seam picture
+      is the setup-pose frame with that pair's counted pixels painted magenta
+      (255, 0, 255) — magenta = a counted pixel — and a cyan (0, 255, 255)
+      box one pixel outside them. --keep-stills leaves the setup-pose still the seam reads,
       rigc's render directory with its frames.json (viewport and background),
       under setup_still/. Then six judgement lines, each in
       check.json and on the console as NAME: PASS|FAIL|SKIP with its figures and

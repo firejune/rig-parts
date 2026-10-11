@@ -1685,7 +1685,7 @@ See-through with another seed.
 | `CHECK_RIGC_GREEN` | a rigc step failed; its line is quoted | as `RIG_RIGC_GREEN` |
 | `CHECK_LOOP_LAST_FRAME_AT_DURATION` | the idle's last frame does not sit at `duration` | `motion.duration` — a whole number of 1/12 s |
 | `CHECK_LOOP_CLOSES` | frame 0 and the frame at `duration` differ (max and first pixel quoted); with a physics constraint, the frames of the rig with every physics constraint left out, and the object says so (§7, *loop*) | a track whose last key is not its first |
-| `CHECK_SEAM_WITHIN_BAR` | the setup pose does not reproduce the flat stack of parts | read the `seam pair` lines and `check/seam/` pictures (§7): the pair, its boxes and the pixels counted. Usually a region or mesh placed off its part; compare with `recomposite_rig.png`. A pair of one layer cut in two with `differing_copies_px` is the cut line: move the polygon's edge, not `overlap` |
+| `CHECK_SEAM_WITHIN_BAR` | the setup pose does not reproduce the flat stack of parts | read the `seam pair` lines and `check/seam/` pictures (§7; magenta = a counted pixel, cyan = the box round them): the pair, its boxes and the pixels counted. Usually a region or mesh placed off its part; compare with `recomposite_rig.png`. A pair of one layer cut in two with `differing_copies_px` is the cut line: move the polygon's edge, not `overlap` |
 | `CHECK_BREATH_VISIBLE` | the torso (`topwear`), rendered alone, barely moves over the idle — or the feet (`footwear`), rendered alone, move at all | the chest's breath tracks (`motion.tracks` on `chest`), or the torso mesh's `segments`; for the feet, the bone their region rides (`regions.<part>`, `root` in both examples) |
 | `CHECK_BLINK_NO_HOLE` | with the blink held shut, the eyewhite box shows the page where the open eye had art | the layer under the eye: the `face` part has no art there. Take the face from the other run, or add a part under the eye; `motion.blink.squash` only hides the hole less |
 | `CHECK_CHAIN_LAG` | a rotate track leads (or does not lag) the keyed bone above it, or a chain link swings less than the link above | that chain track's `phase`/`lag` (a positive `lag`, a child `phase` above its parent's) or its `amps` (non-decreasing toward the tip) |
@@ -1753,7 +1753,19 @@ assemble*, at the end of this section):
   `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` on the packed pass, 16 not in `spine`; `CH09`
   holds it on every fetched example);
 - **seam**: the setup-pose render against the flat composite of `parts/`: mean
-  max-channel |d| ≤ 1.0 of 255, and at most 50 pixels over 40. The bar reads one
+  max-channel |d| ≤ 1.0 of 255, and at most 50 **rig** pixels over 40 — the
+  frame pixels over 40 divided by s², `s` the frame scale the `seam:` line
+  prints and `check.json`'s `seam_frame_scale` holds (issue #216). The frame
+  holds s² pixels per rig pixel, so a stack that parts from the render over a
+  fixed area of the rig reads s² times as many frame pixels: on the public
+  `sample` a part moved 2 rig px read 400, 891 and 1,560 frame px over 40 at
+  s = 1.0, 1.5 and 2.0, and 400, 396 and 390 rig px; the sample as built read
+  3, 3 and 7 frame px [measured, issue #216]. Divided by s² the bar reads the
+  same rig at every scale, and at s = 1 it is the reference's count. The mean
+  is a share of the frame and needs no such division (0.242, 0.188 and 0.226 on
+  the sample as built; 0.353, 0.305 and 0.340 with the part moved).
+  `seam_px_over_40` and `seam_px_over_80` stay frame pixels, and so does each
+  pair's count below. The bar reads one
   frame, the setup-pose still, never the idle. When it fails (or when `check
   --seam-pairs` asks, pass or fail), the pixels over 40 are split by the pair of
   parts that answers for each (issue #202): the two parts drawn last among those
@@ -1761,7 +1773,8 @@ assemble*, at the end of this section):
   sample reads for that frame pixel, lower first, `(no art)` standing in where
   fewer than two do. Each pair is a console line `seam pair <i> of <n>: "<a>" /
   "<b>" at the setup pose: <count> px over 40 (<count> over 80), frame box x
-  <x0>..<x1>, y <y0>..<y1>, rig box …, picture seam/<i>_<a>_<b>.png`, worst first,
+  <x0>..<x1>, y <y0>..<y1>, rig box …, picture seam/<i>_<a>_<b>.png` (in the
+  picture, **magenta = a counted pixel**, cyan = the box round them), worst first,
   and a row of `check.json`'s `seam_pairs` (`parts`, `px_over_40`, `px_over_80`,
   `frame_box` in frame pixels, `rig_box` in the rig pixels of `parts.json` and
   `cuts[].polygon`, `picture`); `CHECK_SEAM_WITHIN_BAR`'s line quotes the worst.

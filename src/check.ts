@@ -153,7 +153,17 @@ import { type ScaleTranslate, warpAffine } from './raster/warp.ts';
 
 /** Seam: mean max-channel |d| over the frame, in levels of 255, at most this. */
 export const SEAM_MEAN_BAR = 1.0;
-/** Seam: pixels whose max-channel |d| exceeds {@link SEAM_PX_LEVEL}, at most this many. */
+/**
+ * Seam: pixels whose max-channel |d| exceeds {@link SEAM_PX_LEVEL}, at most
+ * this many **rig** pixels — the frame count divided by s², s the frame scale
+ * the setup-pose still renders at (issue #216). The frame holds s² pixels per
+ * rig pixel, so a stack that parts from the render over a fixed area of the
+ * rig reads s² times as many frame pixels: on the public sample a part moved
+ * 2 rig px read 400, 891 and 1,560 frame px over 40 at s = 1.0, 1.5 and 2.0,
+ * and 400, 396 and 390 divided by s²; the uncut sample 3, 3 and 7 frame px
+ * [measured for issue #216, a scratch run, not tracked]. At s = 1 the bar is
+ * the reference's frame count.
+ */
 export const SEAM_PX_BAR = 50;
 export const SEAM_PX_LEVEL = 40;
 /** Seam: the second, reported-only level. */
@@ -1372,9 +1382,29 @@ function round3(x: number): number {
   return Number(x.toFixed(3));
 }
 
-/** The seam bar, on the figures as check.json writes them: the mean (rounded to three places) over {@link SEAM_MEAN_BAR}, or more than {@link SEAM_PX_BAR} pixels over {@link SEAM_PX_LEVEL}. */
-function seamFails(mean: number, over40: number): boolean {
-  return mean > SEAM_MEAN_BAR || over40 > SEAM_PX_BAR;
+/** Python's `round(x, 6)` for the frame scale written: to six places, on the value's exact decimal expansion. */
+function round6(x: number): number {
+  return Number(x.toFixed(6));
+}
+
+/** The seam's count in rig pixels (issue #216): the frame pixels over {@link SEAM_PX_LEVEL} divided by the square of the frame scale. */
+export function seamRigPx(over40: number, scale: number): number {
+  return over40 / (scale * scale);
+}
+
+/** {@link seamRigPx} as the console and the refusal print it, to two places. */
+export function seamRigPxText(over40: number, scale: number): string {
+  return seamRigPx(over40, scale).toFixed(2);
+}
+
+/**
+ * The seam bar, on the figures as check.json writes them: the mean (rounded
+ * to three places) over {@link SEAM_MEAN_BAR}, or more than
+ * {@link SEAM_PX_BAR} rig pixels over {@link SEAM_PX_LEVEL} — the frame count
+ * over the square of the written frame scale (issue #216).
+ */
+function seamFails(mean: number, over40: number, scale: number): boolean {
+  return mean > SEAM_MEAN_BAR || seamRigPx(over40, scale) > SEAM_PX_BAR;
 }
 
 /** A seam row as the console prints it: the pair, the frame, the counts, both boxes and the picture. */
@@ -1536,10 +1566,16 @@ export interface CheckFigures {
    * read from. Reported, not judged; a rig without one writes the keys it always wrote.
    */
   loop_physics?: LoopPhysics[];
-  /** The three seam figures: null when there is no parts.json (issue #77); `skipped.seam` then says why. */
+  /** The seam figures: null when there is no parts.json (issue #77); `skipped.seam` then says why. The two counts are frame pixels. */
   seam_mean: number | null;
   seam_px_over_40: number | null;
   seam_px_over_80: number | null;
+  /**
+   * The frame scale s the setup-pose still rendered at (rigc's viewport
+   * scale, to six places), issue #216: the seam bar reads `seam_px_over_40`
+   * divided by its square ({@link seamRigPx}). Null with the other three.
+   */
+  seam_frame_scale: number | null;
   /**
    * Written only when the seam bar fails, or when it was asked for (`check
    * --seam-pairs`), issue #202: the counted pixels split by the pair of parts
@@ -1600,7 +1636,9 @@ export function barsNotMet(fig: Readonly<Record<string, unknown>>): string[] {
   const out: string[] = [];
   if (fig.gate_spine_html_green !== true) out.push('gate');
   if (typeof fig.loop_max_diff === 'number' && fig.loop_max_diff !== LOOP_MAX_BAR) out.push('loop');
-  if (typeof fig.seam_mean === 'number' && typeof fig.seam_px_over_40 === 'number' && seamFails(fig.seam_mean, fig.seam_px_over_40)) out.push('seam');
+  // A check.json written before issue #216 has no seam_frame_scale; it is read by the frame count, the bar it was written under.
+  const scale = typeof fig.seam_frame_scale === 'number' ? fig.seam_frame_scale : 1;
+  if (typeof fig.seam_mean === 'number' && typeof fig.seam_px_over_40 === 'number' && seamFails(fig.seam_mean, fig.seam_px_over_40, scale)) out.push('seam');
   for (const n of JUDGEMENT_LINES) {
     const l = fig[n];
     if (typeof l === 'object' && l !== null && (l as { status?: unknown }).status === 'FAIL') out.push(n);
@@ -1895,7 +1933,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
       if (inp.parts !== null) {
         const composite = flatComposite(inp.parts, inp.partsDir, stillSet.background);
         seam = seamFigures(composite, stillSet.frames[0].image, inp.stage, stillSet.viewport, stillSet.background);
-        if (seamPairsAsked || seamFails(round3(seam.mean), seam.over40)) {
+        if (seamPairsAsked || seamFails(round3(seam.mean), seam.over40, round6(stillSet.viewport.scale))) {
           const placed = inp.parts.parts.map((p) => ({ name: p.name, from: p.from, x: p.x, y: p.y, image: readPng(join(inp.partsDir, `${p.name}.png`)) }));
           const split = seamPairRows(seam, placed, inp.parts.rig_size, stillSet.viewport);
           mkdirSync(seamDir, { recursive: true });
@@ -1955,6 +1993,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     seam_mean: seam === null ? null : round3(seam.mean),
     seam_px_over_40: seam === null ? null : seam.over40,
     seam_px_over_80: seam === null ? null : seam.over80,
+    seam_frame_scale: seam === null || seamViewport === null ? null : round6(seamViewport.scale),
     ...(seamPairs === null ? {} : { seam_pairs: seamPairs }),
     BREATH_VISIBLE: breath,
     BLINK_NO_HOLE: blink,
@@ -1978,13 +2017,13 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
       detail: `max |d| ${loop.max}/255, first at pixel ${loop.x},${loop.y} of ${loopSet.viewport.pixelWidth}x${loopSet.viewport.pixelHeight}; ${LOOP_MAX_BAR} is required — the idle's last key must equal its first`,
     });
   }
-  if (figures.seam_mean !== null && figures.seam_px_over_40 !== null && seamFails(figures.seam_mean, figures.seam_px_over_40)) {
+  if (figures.seam_mean !== null && figures.seam_px_over_40 !== null && figures.seam_frame_scale !== null && seamFails(figures.seam_mean, figures.seam_px_over_40, figures.seam_frame_scale)) {
     const worst = seamPairs === null || seamPairs.length === 0 ? null : seamPairs[0];
     barProblems.push({
       code: 'CHECK_SEAM_WITHIN_BAR',
       object: 'the setup-pose render vs the flat composite of parts/',
       detail:
-        `mean |d| ${figures.seam_mean}/255 and ${figures.seam_px_over_40} px over ${SEAM_PX_LEVEL} (${figures.seam_px_over_80} over ${SEAM_PX_LEVEL_HIGH}); mean <= ${SEAM_MEAN_BAR.toFixed(1)} and <= ${SEAM_PX_BAR} px over ${SEAM_PX_LEVEL} are required` +
+        `mean |d| ${figures.seam_mean}/255 and ${figures.seam_px_over_40} frame px over ${SEAM_PX_LEVEL} (${figures.seam_px_over_80} over ${SEAM_PX_LEVEL_HIGH}) at frame scale ${figures.seam_frame_scale}, ${seamRigPxText(figures.seam_px_over_40, figures.seam_frame_scale)} rig px (the count / s²); mean <= ${SEAM_MEAN_BAR.toFixed(1)} and <= ${SEAM_PX_BAR} rig px over ${SEAM_PX_LEVEL} are required` +
         (worst === null
           ? `; no pixel is over ${SEAM_PX_LEVEL}, so the mean alone fails and there is no pair to name`
           : `; worst of ${(seamPairs as SeamPairRow[]).length} pair(s): ${seamPairText(worst)} — every pair is a \`seam pair\` line above and a row of check.json's seam_pairs`),

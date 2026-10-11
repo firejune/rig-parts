@@ -12,6 +12,7 @@
  "seam_mean": 0.235,
  "seam_px_over_40": 2,
  "seam_px_over_80": 0,
+ "seam_frame_scale": 0.942197,
  "BREATH_VISIBLE": {
   "status": "PASS",
   "torso_parts": [
