@@ -4,7 +4,7 @@
 are written.** rig-parts takes a single character painting and the layers
 [See-through](https://github.com/shitagaki-lab/see-through) decomposed it into,
 merges them into measured rig-space parts, authors weighted meshes, bone chains
-and a looping idle over them in [rig-c](https://github.com/firejune/rigc)'s
+and a looping idle over them in [rig-c](https://github.com/rig-c/core)'s
 spec, and hands that spec to rig-c to compile, gate, pack, render and check.
 It is built for agents that cannot see the image: every stage prints named,
 numeric findings, a refusal names the object, the value found and the value
@@ -14,12 +14,12 @@ input is silent.
 ## What you get
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/firejune/rig-parts/main/assets/demo-source.png" alt="The demo painting: a generated full-body character in a white and pink frilled dress with long pink twin tails, standing with her hands clasped" height="420" />
-  <img src="https://raw.githubusercontent.com/firejune/rig-parts/main/assets/demo-idle.png" alt="The same character rigged, breathing, blinking once and swaying her hair, sleeves and skirt in a four-second loop" height="420" />
+  <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/demo-source.png" alt="The demo painting: a generated full-body character in a white and pink frilled dress with long pink twin tails, standing with her hands clasped" height="420" />
+  <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/demo-idle.png" alt="The same character rigged, breathing, blinking once and swaying her hair, sleeves and skirt in a four-second loop" height="420" />
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/firejune/rig-parts/main/assets/demo-parts.png" alt="Contact sheet of the painting and the 22 assembled parts it was split into: hair, dress, sleeves, shoes, face, eyes, brows, mouth and ornaments" width="100%" />
+  <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/demo-parts.png" alt="Contact sheet of the painting and the 22 assembled parts it was split into: hair, dress, sleeves, shoes, face, eyes, brows, mouth and ornaments" width="100%" />
 </p>
 
 <p align="center"><em>
@@ -54,7 +54,7 @@ made the contact sheet.
 </em></p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/firejune/rig-parts/main/assets/sample-parts.png" alt="Contact sheet of the sample character's painting and its 20 parts" width="560" />
+  <img src="https://raw.githubusercontent.com/rig-c/parts/main/assets/sample-parts.png" alt="Contact sheet of the sample character's painting and its 20 parts" width="560" />
 </p>
 
 <p align="center"><em>
@@ -148,9 +148,9 @@ atlas written by anything else would have no oracle behind it.
 
 | stage | tool | what it owns |
 | --- | --- | --- |
-| painting + See-through layers → parts and specs | **rig-parts** | the merge of two runs, the measurements, the rig spec and motion spec |
-| specs → Spine skeleton data | **[rig-c](https://github.com/firejune/rigc)** | compile, the gate (rigc's own validator in an install; the round trip through `spine-core` where the runtime is beside it, as in this repository's CI), the named assertions, the packer, the renderer |
-| skeleton data → a page | **[rig-play](https://github.com/firejune/rig-play)** (formerly spine-html), a sibling project | a DOM renderer; rigc's `spine-html` profile is its policy, and every build here is gated under that profile as well as under `spine` |
+| painting + See-through layers → parts and specs | **rig-parts** (npm `@rig-c/parts`) | the merge of two runs, the measurements, the rig spec and motion spec |
+| specs → Spine skeleton data | **[rig-c](https://github.com/rig-c/core)** (npm `rig-c`) | compile, the gate (rigc's own validator in an install; the round trip through `spine-core` where the runtime is beside it, as in this repository's CI), the named assertions, the packer, the renderer |
+| skeleton data → a page | **[rig-play](https://github.com/rig-c/play)** (npm `@rig-c/play`; formerly spine-html), a sibling project | a DOM renderer; rigc's `spine-html` profile is its policy, and every build here is gated under that profile as well as under `spine` |
 
 rig-parts never writes Spine data itself. Everything on disk under `check/build/`
 was written by rig-c after its own gate passed.
@@ -388,15 +388,17 @@ before it, at v0.14.0).
 
 ## Requirements
 
-[Bun](https://bun.sh) 1.2 or later. `npm install -g rig-parts` installs the
-`rig-parts` command; it hands off to Bun and says so in one sentence if Bun is not
-on `PATH`. **`rig-parts` is the package's name; versions up to 0.16.0 were published
+[Bun](https://bun.sh) 1.2 or later. `npm i -D @rig-c/parts` installs the
+`rig-parts` command (`npm install -g @rig-c/parts` puts it on `PATH`); it hands off
+to Bun and says so in one sentence if Bun is not on `PATH`. **`@rig-c/parts` is the
+package's name; versions 1.0.0-rc.1 to 1.5.3 were published as `rig-parts`, and
+versions up to 0.16.0
 as `spine-parts`, its former name**, and the install keeps a `spine-parts` command
 beside `rig-parts` for the transition, the same launcher under both names. On npm
-the alias `spine-parts` stays published beside `rig-parts` at every version,
+both former names stay published beside `@rig-c/parts` at every version, as aliases
 carrying the same files with only the `name` in `package.json` changed, so a
-project that depends on the former name keeps receiving every release; a new
-install names `rig-parts` ([RELEASING.md](RELEASING.md), *The registry side*). rig-c
+project that depends on either keeps receiving every release; a new
+install names `@rig-c/parts` ([RELEASING.md](RELEASING.md), *The registry side*). rig-c
 comes with it as a dependency. No Spine runtime does: since
 rig-c 2.0 the installed `rigc` gates every build with its own validator over the
 compiled model document, and `rigc --version` says `entry: cli_core.ts —

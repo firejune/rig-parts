@@ -19,8 +19,10 @@
 # on every run.
 node_modules
 .DS_Store
-# `npm pack` output, from checking what a publish would ship; a checkout of a
-# tag before the rename packs under the former name.
+# `npm pack` output, from checking what a publish would ship: the scoped name
+# packs as rig-c-parts-<version>.tgz, and a checkout of a tag before either
+# rename packs under that tag's name.
+/rig-c-parts-*.tgz
 /rig-parts-*.tgz
 /spine-parts-*.tgz
 # Local-only areas: session notes, a private corpus link, scratch output. Never

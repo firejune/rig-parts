@@ -5,7 +5,7 @@
  *     bun run smoke                      the whole battery, on this tree's tarball
  *     bun run smoke -- --case clean      just the green one
  *     bun run smoke -- --source registry --version 0.1.0 --wait 15
- *     bun run smoke -- --source registry --version 0.1.0 --case clean --alias <name>
+ *     bun run smoke -- --source registry --version 0.1.0 --case clean --alias <name> [--alias <name>…]
  *
  * Four exit codes, because a caller has to be able to tell the outcomes apart
  * without reading prose: **0** every case passed, **1** a case went red —
@@ -33,7 +33,7 @@
  *
  * 🔒 **Nothing under this repository is on the fixture's path at run time.** The
  * fixture generator below is authored as text into the install directory and
- * imports `rig-parts/src/raster/png.ts` and `ag-psd` as BARE specifiers, so
+ * imports the package's `src/raster/png.ts` and `ag-psd` as BARE specifiers, so
  * they resolve inside the install or not at all — and the run refuses a
  * resolution that lands anywhere else. The only thing that crosses from the
  * checkout is the tarball this script packed, which is the subject.
@@ -54,9 +54,10 @@
  * artifact the registry did serve is exit 1. ⚠️ The wait's probe is `npm view
  * <spec> version`, the packument, not the tarball.
  *
- * 🪞 **The alias.** `--alias <name>` (registry only) adds the package's second
- * name: after the cases, the same version under that name is asked for within
- * what is left of `--wait` (at least once), both tarballs are fetched from the
+ * 🪞 **The aliases.** Each `--alias <name>` (registry only) adds one of the
+ * package's other names: after the cases, the same version under that name is
+ * asked for within what is left of `--wait` (at least once), both tarballs are
+ * fetched from the
  * registry, and `scripts/alias_tarball.ts`'s `compare` holds the alias to the
  * package — every path, every byte, the `name` line of `package.json`
  * excepted. Compared rather than installed a second time: identical files are
@@ -76,8 +77,13 @@ import { AliasTarballError, compareTarballs } from './alias_tarball.ts';
 
 /** The repository this script packs — it is the subject, and nothing else reaches the fixture. */
 const ROOT = resolve(import.meta.dir, '..');
-/** The package's name, read from the tree's package.json: the directory an install puts it in, the command it installs and the registry spec. */
+/** The package's name, read from the tree's package.json: the directory an install puts it in, the specifier the fixtures import it by, and the registry spec. */
 const PACKAGE = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { name: string }).name;
+/**
+ * The command the install puts on PATH. A scoped package's name is not a command, so the tool's command is its own
+ * `bin` entry; every other command the installed package.json declares is run beside it (SMOKE_EVERY_BIN_RUNS_FROM_THE_INSTALL).
+ */
+const COMMAND = 'rig-parts';
 
 // ---------------------------------------------------------------------------
 // the fixture, authored here because the package carries no art
@@ -92,7 +98,7 @@ const GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initializeCanvas, writePsd } from 'ag-psd';
-import { encodePngBytes } from 'rig-parts/src/raster/png.ts';
+import { encodePngBytes } from '${PACKAGE}/src/raster/png.ts';
 
 // \`fileURLToPath\` and not \`new URL(...).pathname\`: a URL path is
 // percent-encoded, so the unusual-path case would write into a directory with
@@ -126,7 +132,7 @@ const bottomFirst = [...layers].sort((a, b) => b.depth - a.depth);
 const psd = { width: 32, height: 24, children: bottomFirst.map((l) => ({ name: l.name, left: l.left, top: l.top, right: l.left + l.w, bottom: l.top + l.h, imageData: raster(l) })) };
 writeFileSync(join(HERE, 'fixture.psd'), new Uint8Array(writePsd(psd, { noBackground: true })));
 
-console.log('RESOLVED ' + import.meta.resolve('rig-parts/src/raster/png.ts'));
+console.log('RESOLVED ' + import.meta.resolve('${PACKAGE}/src/raster/png.ts'));
 console.log('RESOLVED ' + import.meta.resolve('ag-psd'));
 `;
 
@@ -137,9 +143,9 @@ console.log('RESOLVED ' + import.meta.resolve('ag-psd'));
 const CHECK_RIG_GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cropToSpineY } from 'rig-parts/src/coords.ts';
-import { serializeParts } from 'rig-parts/src/parts.ts';
-import { encodePngBytes } from 'rig-parts/src/raster/png.ts';
+import { cropToSpineY } from '${PACKAGE}/src/coords.ts';
+import { serializeParts } from '${PACKAGE}/src/parts.ts';
+import { encodePngBytes } from '${PACKAGE}/src/raster/png.ts';
 
 const DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'checkrig');
 const W = 48;
@@ -203,9 +209,9 @@ writeFileSync(join(DIR, 'parts.json'), serializeParts({
 const SCENE_GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cropToSpineY } from 'rig-parts/src/coords.ts';
-import { serializeParts } from 'rig-parts/src/parts.ts';
-import { encodePngBytes } from 'rig-parts/src/raster/png.ts';
+import { cropToSpineY } from '${PACKAGE}/src/coords.ts';
+import { serializeParts } from '${PACKAGE}/src/parts.ts';
+import { encodePngBytes } from '${PACKAGE}/src/raster/png.ts';
 
 const HOME = fileURLToPath(new URL('.', import.meta.url));
 const DIR = join(HOME, 'scene-character');
@@ -276,17 +282,17 @@ writeFileSync(join(HOME, 'scene.json'), JSON.stringify({
 /** The slot order the composed scene above must compile to: the plate, then `a:back`, `b:back`, `a`'s rest, `b`'s rest. */
 const EXPECT_SCENE_SLOTS = ['plate', 'a:back', 'b:back', 'a:front', 'b:front'];
 
-// The contour mesh from the install (issue #84): \`rig-parts/src/contour.ts\` imports rigc's outline functions through
+// The contour mesh from the install (issue #84): the package's \`src/contour.ts\` imports rigc's outline functions through
 // the named entry \`rig-c/mesh\`, which nothing on the CLI's contour-free paths runs, so this is where a rigc that
 // moved or narrowed them shows. A 24x16 block at (4, 4) in 32x24, tolerance 0, margin 1, spacing 8: by hand, the block
 // grown by its four neighbours' rows and columns, a 12-vertex outline, 6 interior points and 2·18 − 12 − 2 = 22
 // triangles (the selftest's CT01).
-const CONTOUR_PROBE = `import { contourMesh } from 'rig-parts/src/contour.ts';
+const CONTOUR_PROBE = `import { contourMesh } from '${PACKAGE}/src/contour.ts';
 
 const alpha = new Uint8Array(32 * 24);
 for (let y = 4; y < 20; y++) for (let x = 4; x < 28; x++) alpha[y * 32 + x] = 255;
 const m = contourMesh('probe', { width: 32, height: 24, alpha }, { threshold: 8, tolerance: 0, margin: 1, spacing: 8, regions: [] });
-console.log('RESOLVED ' + import.meta.resolve('rig-parts/src/contour.ts'));
+console.log('RESOLVED ' + import.meta.resolve('${PACKAGE}/src/contour.ts'));
 console.log('RESOLVED ' + import.meta.resolve('rig-c/mesh'));
 console.log(Array.isArray(m) ? 'REFUSED ' + JSON.stringify(m) : 'CONTOUR ' + m.hull + ' ' + (m.vertices.length - m.hull) + ' ' + m.triangles.length / 3);
 `;
@@ -299,8 +305,8 @@ const EXPECT_CONTOUR = 'CONTOUR 12 6 22';
 const AUTO_GENERATOR = `import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { serializeParts } from 'rig-parts/src/parts.ts';
-import { encodePngBytes } from 'rig-parts/src/raster/png.ts';
+import { serializeParts } from '${PACKAGE}/src/parts.ts';
+import { encodePngBytes } from '${PACKAGE}/src/raster/png.ts';
 
 const DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'auto-character');
 mkdirSync(join(DIR, 'parts'), { recursive: true });
@@ -562,9 +568,9 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   const install = spec.installer === 'npm' ? run('npm', ['install', built.tgz, '--no-audit', '--no-fund'], home) : run('bun', ['add', built.tgz], home);
   output += install.out;
   const pkgRoot = join(home, 'node_modules', PACKAGE);
-  const bin = join(home, 'node_modules', '.bin', PACKAGE);
+  const bin = join(home, 'node_modules', '.bin', COMMAND);
   if (!existsSync(join(pkgRoot, 'package.json')) || !existsSync(bin)) {
-    fault('install', `SMOKE_INSTALL_EMPTY_DIR: ${spec.installer} install of ${built.tgz} exited ${install.status} and left ${existsSync(pkgRoot) ? `no .bin/${PACKAGE}` : `no node_modules/${PACKAGE}`} under ${home}. ${install.out.trim().slice(0, 3000)}`);
+    fault('install', `SMOKE_INSTALL_EMPTY_DIR: ${spec.installer} install of ${built.tgz} exited ${install.status} and left ${existsSync(pkgRoot) ? `no .bin/${COMMAND}` : `no node_modules/${PACKAGE}`} under ${home}. ${install.out.trim().slice(0, 3000)}`);
     if (!keep) rmSync(home, { recursive: true, force: true });
     return { faults, steps, notes, output };
   }
@@ -575,14 +581,14 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   const version = run(bin, ['--version'], home);
   output += version.out;
   if (version.status !== 0 || version.out.trim() !== installedVersion) {
-    fault('version', `SMOKE_VERSION_FROM_THE_INSTALL: \`${PACKAGE} --version\` exited ${version.status} saying ${JSON.stringify(version.out.trim().slice(0, 400))}; the installed package.json says ${installedVersion}`);
+    fault('version', `SMOKE_VERSION_FROM_THE_INSTALL: \`${COMMAND} --version\` exited ${version.status} saying ${JSON.stringify(version.out.trim().slice(0, 400))}; the installed package.json says ${installedVersion}`);
   }
 
   // Every other command the installed package.json's \`bin\` declares — the former
   // name kept for the transition (README, Requirements) — runs too, once, and
   // says the same version. Read off the install, so what is proved is what an
   // upgrade from the former name runs, not what the tree meant to ship.
-  const others = Object.keys(installedPkg.bin ?? {}).filter((name) => name !== PACKAGE).sort();
+  const others = Object.keys(installedPkg.bin ?? {}).filter((name) => name !== COMMAND).sort();
   for (const name of others) {
     const other = join(home, 'node_modules', '.bin', name);
     const said = existsSync(other) ? run(other, ['--version'], home) : null;
@@ -591,7 +597,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
       fault('bin', `SMOKE_EVERY_BIN_RUNS_FROM_THE_INSTALL: the installed package.json declares the command \`${name}\`; ${said === null ? `${spec.installer} left no .bin/${name}` : `\`${name} --version\` exited ${said.status} saying ${JSON.stringify(said.out.trim().slice(0, 400))}`}; exit 0 and ${installedVersion} were required`);
     }
   }
-  if (others.length > 0 && !steps.includes('bin')) notes.push(`the command(s) ${others.join(', ')} beside ${PACKAGE} ran from the install and said ${installedVersion}`);
+  if (others.length > 0 && !steps.includes('bin')) notes.push(`the command(s) ${others.join(', ')} beside ${COMMAND} ran from the install and said ${installedVersion}`);
 
   // The installed rigc's entry: neither rig-parts nor rig-c 2.x installs spine-core, so rigc's launcher
   // must find no runtime from its own package root and run cli_core.ts, rigc's own validator.
@@ -751,22 +757,22 @@ usage:
   bun run smoke                          every case below, on a tarball packed from this tree
   bun run smoke -- --case clean          one case by name
   bun run smoke -- --source registry --version 0.1.0 [--wait 15]
-  bun run smoke -- --source registry --version 0.1.0 --case clean --alias <name>
+  bun run smoke -- --source registry --version 0.1.0 --case clean --alias <name> [--alias <name>…]
   bun run smoke -- --installer bun       install with \`bun add\` instead of \`npm install\`
   bun run smoke -- --keep                leave the install directories where they are
 
---alias <name> is for \`--source registry\` too: after the cases, the same version
-under the second name the package is published as is asked for within what is
-left of --wait (at least once), and its unpacked files are held to the package's,
-both fetched from the registry, byte for byte but for the name line of
-package.json (scripts/alias_tarball.ts compare).
+--alias <name> is for \`--source registry\` too, once per alias: after the cases,
+the same version under each other name the package is published as is asked for
+within what is left of --wait (at least once), and its unpacked files are held to
+the package's, both fetched from the registry, byte for byte but for the name line
+of package.json (scripts/alias_tarball.ts compare).
 
 exit codes:
   0  every case passed
   1  a case went red — against \`--source registry\`, the published artifact does not run —
-     or the --alias tarball carries other files or other bytes than the package's
+     or an --alias tarball carries other files or other bytes than the package's
   2  no case ran, so this run measured nothing
-  3  the registry did not serve the version — under the name or under --alias — within
+  3  the registry did not serve the version — under the name or under an --alias — within
      --wait, so the confirmation was NOT taken
 
 cases:
@@ -806,22 +812,34 @@ function main(): number {
     console.log(`  FAIL  SMOKE_WAIT_IS_FOR_THE_REGISTRY: --wait ${JSON.stringify(waitFlag)} is not a number of minutes`);
     return EXIT_RED;
   }
-  // The same rule for the alias: a tarball this tree packs carries one name, so a
-  // run that was given a second one and read none would print a confirmation nobody took.
-  const alias = flag('alias');
-  if (argv.includes('--alias') && (alias === null || alias.startsWith('--'))) {
-    console.log('  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias needs the second name the package is published as');
+  // The same rule for the aliases: a tarball this tree packs carries one name, so a
+  // run that was given another one and read none would print a confirmation nobody took.
+  // `--alias` repeats, once per alias, and each one is confirmed in the order given.
+  const aliases: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] !== '--alias') continue;
+    const name = argv[i + 1];
+    if (name === undefined || name.startsWith('--')) {
+      console.log('  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias needs the other name the package is published as');
+      return EXIT_RED;
+    }
+    aliases.push(name);
+  }
+  if (aliases.length > 0 && sourceKind !== 'registry') {
+    console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias is for \`--source registry\`. A tarball this tree packs carries one name, ${PACKAGE}, so there is no other tarball here to hold to it`);
     return EXIT_RED;
   }
-  if (alias !== null && sourceKind !== 'registry') {
-    console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias is for \`--source registry\`. A tarball this tree packs carries one name, ${PACKAGE}, so there is no second tarball here to hold to it`);
+  const own = aliases.find((name) => name === PACKAGE);
+  if (own !== undefined) {
+    console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias ${own} is the name this tree publishes, not another one`);
     return EXIT_RED;
   }
-  if (alias === PACKAGE) {
-    console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias ${alias} is the name this tree publishes, not a second one`);
+  const twice = aliases.find((name, i) => aliases.indexOf(name) !== i);
+  if (twice !== undefined) {
+    console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias ${twice} is given twice, so one confirmation would be printed for two`);
     return EXIT_RED;
   }
-  const byHand = `bun run smoke -- --source registry --version ${wanted} --case clean${alias === null ? '' : ` --alias ${alias}`}`;
+  const byHand = `bun run smoke -- --source registry --version ${wanted} --case clean${aliases.map((name) => ` --alias ${name}`).join('')}`;
 
   console.log(`rig-parts install smoke — ${source.kind === 'tree' ? `a tarball packed from ${ROOT}` : `${source.spec} from the registry`}, installed with ${installer}`);
   for (const tool of ['npm', 'bun', 'tar', 'node']) {
@@ -904,10 +922,14 @@ function main(): number {
     console.log('  FAIL  SMOKE_CASE_NAMED: no case ran, so this run measured nothing');
     return EXIT_NOTHING_RAN;
   }
-  const aliasReading = alias !== null && served !== null && source.kind === 'registry' ? confirmAlias(source.spec, `${alias}@${wanted}`, Math.max(0, waitMinutes - (Date.now() - waitStarted) / 60_000), waitMinutes, byHand) : null;
-  const aliasRed = aliasReading === 'differs';
-  const aliasLate = aliasReading === 'late';
-  const aliasNote = aliasReading === null ? '' : aliasRed ? `; the alias ${alias} differs` : aliasLate ? `; the alias ${alias} was NOT confirmed` : `; the alias ${alias} carries the same files`;
+  const readings =
+    served !== null && source.kind === 'registry'
+      ? aliases.map((name) => ({ name, reading: confirmAlias(source.spec, `${name}@${wanted}`, Math.max(0, waitMinutes - (Date.now() - waitStarted) / 60_000), waitMinutes, byHand) }))
+      : [];
+  const aliasRed = readings.some((r) => r.reading === 'differs');
+  const aliasLate = readings.some((r) => r.reading === 'late');
+  const said = { same: 'carries the same files', differs: 'differs', late: 'was NOT confirmed' } as const;
+  const aliasNote = readings.map((r) => `; the alias ${r.name} ${said[r.reading]}`).join('');
   console.log(bad === 0 && !aliasRed && !aliasLate ? `rig-parts install smoke: green — ${ran} case(s)${aliasNote}` : `rig-parts install smoke: ${bad} of ${ran} case(s) failed${aliasNote}`);
   if (bad === 0 && !aliasRed && !aliasLate) return EXIT_GREEN;
   if (bad === 0 && !aliasRed) return EXIT_NOT_SERVED;

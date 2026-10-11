@@ -9,14 +9,14 @@ from the pull request that measured it.
 
 ## In one paragraph
 
-Install `rig-parts`. A config that built on 0.16.0 loads and builds unchanged: every
-config change since is a new, opt-in field inside a new mesh mode. The bytes a
-config without that mode builds moved once, by a declared exception (every mesh
-triangle's vertex order, #133); apart from it, each change since 0.16.0 that touched
-the code was measured against the tree before it on the three public examples'
-builds, and moved no byte of them. Inside the automatic mode, one change after the
-candidate moves declared bytes, named in *Since 1.0.0-rc.1*: the skinning envelope's
-reference (#169).
+Install `@rig-c/parts` (the package's name after 1.5.3; *After 1.5.3* below). A
+config that built on 0.16.0 loads and builds unchanged: every config change since is
+a new, opt-in field inside a new mesh mode. The bytes a config without that mode
+builds moved once, by a declared exception (every mesh triangle's vertex order,
+#133); apart from it, each change since 0.16.0 that touched the code was measured
+against the tree before it on the three public examples' builds, and moved no byte
+of them. Inside the automatic mode, one change after the candidate moves declared
+bytes, named in *Since 1.0.0-rc.1*: the skinning envelope's reference (#169).
 
 ## From 0.16.0 to 1.0.0-rc.1
 
@@ -31,7 +31,7 @@ reference (#169).
 | spec ids of the files authors write and this package writes | `spine-parts-requirements/1`, `spine-parts-scene/1`, `spine-parts-keypoints/1`, `spine-parts-bonemap/1`, `spine-parts-basis/1`, `spine-parts-scene-report/1` | unchanged: they name a file format, not the tool, so a file written before the rename still reads |
 | public examples repository | `spine-parts-examples` | unchanged (it keeps the name it was published under) |
 
-What to do: install with `npm install -g rig-parts` and write `rig-parts` in scripts.
+What to do: install with `npm install -g @rig-c/parts` and write `rig-parts` in scripts.
 A script or a dependant that names the alias `spine-parts` keeps working and keeps
 receiving every release; how long the alias stays is RELEASING.md's *The alias stays
 until its retirement questions have written answers*. No build output carries the
@@ -135,3 +135,16 @@ What to do: nothing for a config without `auto`. A config under `auto` that decl
 `motion.residual` may write a different mesh than 1.0.0-rc.1 did, as above; a
 consumer that compares builds byte for byte with 1.0.0-rc.1 expects that move and
 nothing else.
+
+## After 1.5.3: the scoped name
+
+| | 1.0.0 to 1.5.3 | after 1.5.3 |
+| --- | --- | --- |
+| npm package | `rig-parts` | `@rig-c/parts`; `rig-parts` and the alias `spine-parts` are published beside it at every version as aliases, the same files with only the `name` in `package.json` changed |
+| command | `rig-parts`, and the alias `spine-parts` on the same launcher | unchanged |
+| repository | `firejune/rig-parts` (GitHub redirects it) | `rig-c/parts`, beside `rig-c/core` (npm `rig-c`) and `rig-c/play` |
+| spec ids, the config, the bytes a build writes | | unchanged |
+
+What to do: install with `npm i -D @rig-c/parts` (or `npm install -g @rig-c/parts`);
+command lines do not change. A dependant that names `rig-parts` keeps receiving
+every release under it (#222).

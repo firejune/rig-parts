@@ -47,7 +47,9 @@ its remedy is a visible type or a `Release-As:` footer in a commit message.
 
 **Settings → Actions → General → Workflow permissions → tick "Allow GitHub
 Actions to create and approve pull requests."** While it is off release-please
-cannot open the release pull request at all.
+cannot open the release pull request at all. The repository lives in the `rig-c`
+organisation, whose own Actions settings can hold the box unticked for every
+repository in it; a transfer into the organisation is where it went off last.
 
 `release-please-config.json` needs a `bootstrap-sha` — the commit release-please
 stops reading history at on its first run — set once, to the commit that
@@ -60,8 +62,11 @@ owner adds it in the commit after.
 npm trusted publishing is configured on a package's settings page, and the page
 does not exist until the package does. So the first version under a name goes up
 by hand, from the tagged tree, and every version after it is the workflow's. That
-was 0.1.0 under the package's former name; under `rig-parts` it is the first
-version cut after the rename, with that version's tag in place of `v0.1.0` below:
+was 0.1.0 under the package's first name and 1.0.0-rc.1 under `rig-parts`; under
+`@rig-c/parts` it is the first version cut after the move to the scope (#222), with
+that version's tag in place of `v0.1.0` below. A scoped name publishes only into a
+scope that exists and that the publishing account belongs to, so the `rig-c`
+organisation on npmjs.com comes first:
 
 ```sh
 npm login                        # once per machine; `npm whoami` to check
@@ -73,51 +78,55 @@ npm publish                      # runs prepublishOnly, then asks for the OTP
 `prepublishOnly` runs `bun run typecheck && bun run lint && bun run selftest`
 before npm packs anything, so a tree that fails its own gates cannot be
 published by the workflow or by hand. `publishConfig.access` already says
-`public`. The alias goes out after it, from the same tree, as a tarball (*Two
+`public`. The aliases go out after it, from the same tree, as tarballs (*Three
 names, one tree* below):
 
 ```sh
+npm publish "$(bun scripts/alias_tarball.ts pack --name rig-parts --out ../alias)"
 npm publish "$(bun scripts/alias_tarball.ts pack --name spine-parts --out ../alias)"
 ```
 
 Confirm with `bun run smoke -- --source registry --version 0.1.0 --case clean
---alias spine-parts`.
+--alias rig-parts --alias spine-parts`.
 
-A prerelease published by hand takes `--tag rc` on both `npm publish` commands,
+A prerelease published by hand takes `--tag rc` on every `npm publish` command,
 as the workflow's do; without it npm 12 refuses the publish and npm 10 puts the
 prerelease on `latest`.
 
-### Two names, one tree
+### Three names, one tree
 
-Every version is published under two names: `rig-parts`, the `name` in
-`package.json`, and the alias `spine-parts`, the name the package shipped under
-up to 0.16.0, kept so an install or a dependant that names it keeps receiving
-every release. The two carry the same files; the one difference is the `name`
-line of `package.json`.
+Every version is published under three names: `@rig-c/parts`, the `name` in
+`package.json`; `rig-parts`, its name from 1.0.0-rc.1 to 1.5.3;
+and the alias `spine-parts`, the name the package shipped under up to 0.16.0.
+The two aliases are kept so an install or a dependant that names one keeps
+receiving every release. All three carry the same files; the one difference is
+the `name` line of `package.json`.
 
-- **The alias is published from a tarball, after the gated publish, in the same
-  job.** `release.yml`'s step *Publish the alias spine-parts* runs
+- **Each alias is published from a tarball, after the gated publish, in the same
+  job.** `release.yml` has one step per alias, *Publish the alias rig-parts* and
+  the next, and each runs
   [`scripts/alias_tarball.ts`](scripts/alias_tarball.ts)` pack`, which packs the
   checkout the gated publish just published from into the runner's temp
   directory, rewrites the one `"name"` line of the extracted `package.json`,
   packs it again, and prints the path only after `compare` reads it as the
   package's files byte for byte but for that line. `npm publish <that tarball>`
   publishes it. The checkout is never modified.
-- **No lifecycle script runs on the alias, by design.** `npm publish <tarball>`
-  runs none, so `prepublishOnly` gates the first publish and only that one. A
-  second gated publish would need the package renamed in the checkout, and the
-  gate would then pass a modified tree rather than the tagged commit; the alias
+- **No lifecycle script runs on an alias, by design.** `npm publish <tarball>`
+  runs none, so `prepublishOnly` gates the first publish and only that one.
+  Another gated publish would need the package renamed in the checkout, and the
+  gate would then pass a modified tree rather than the tagged commit; each alias
   is that commit's files, which is what the gate's verdict is about.
-- **The name is written once for a program to read**: `ALIAS` in
+- **The names are written once for a program to read**: `ALIASES` in
   `scripts/alias_tarball.ts`. The selftest's `AL01` holds `release.yml`'s pack
-  step and both confirmation calls to it, and the alias publish to run after the
-  gated one in the same job, from the tarball the pack step printed.
+  steps and both confirmation calls to it — one step per alias, every alias
+  confirmed — and each alias publish to run after the gated one in the same
+  job, from the tarball its pack step printed.
 
 #### The alias stays until its retirement questions have written answers
 
-The alias is kept for as long as links from outside this repository point at
+Each alias is kept for as long as links from outside this repository point at
 it — the npm page, forum threads, articles, badges other READMEs copied. It
-**never gets its own version**: every version goes out under both names from
+**never gets its own version**: every version goes out under every name from
 the one gated tree, and no version goes out under the alias alone. Retiring it — deprecating it,
 un-publishing it, or letting the name fall behind the package's version line —
 is not a release step and not a convention; it is a separate card, which opens
@@ -135,20 +144,22 @@ only after three things are written down:
 
 The same policy holds for every package of the toolchain: `rig-c` (renamed on
 npm at 2.20.4; its former name is spelled only in `CHANGELOG.md`, `TY11`),
-`rig-parts` and the alias `spine-parts` beside it, and `spine-html` → `rig-play`.
+`@rig-c/parts` with `rig-parts` and the alias `spine-parts` beside it, and
+`spine-html` → `rig-play` (npm `@rig-c/play`).
 
-Confirm a cut by hand: `npm view rig-parts version` and `npm view spine-parts version`
-print the same version (they read `latest`; a prerelease shows under `rc` in `npm view rig-parts dist-tags` and the alias's own), and the smoke's `--alias` compares the two tarballs the
-registry serves.
+Confirm a cut by hand: `npm view @rig-c/parts version`, `npm view rig-parts version`
+and `npm view spine-parts version`
+print the same version (they read `latest`; a prerelease shows under `rc` in `npm view @rig-c/parts dist-tags` and each alias's own), and the smoke's `--alias` flags compare each alias's tarball with the package's as the
+registry serves them.
 
 ### The registry side (owner, npmjs.com), after the first publish
 
-One trusted-publisher form per name — npmjs.com → **rig-parts** → **Settings** →
-**Trusted Publisher** → *GitHub Actions*, and the same under
-the alias `spine-parts` — both pinned to the same workflow, with the same fields:
+One trusted-publisher form per name — npmjs.com → **@rig-c/parts** → **Settings** →
+**Trusted Publisher** → *GitHub Actions*, and the same under `rig-parts` and under
+the alias `spine-parts` — all three pinned to the same workflow, with the same fields:
 
-- Organization or user: `firejune`
-- Repository: `rig-parts`
+- Organization or user: `rig-c`
+- Repository: `parts`
 - Workflow filename: `release.yml`
 - Environment name: *blank* (the workflow declares none)
 - Allowed actions: `npm publish`
@@ -160,15 +171,17 @@ presents no token, so it costs the automation nothing, and it closes the
 unattended path.
 
 A form is matched against the repository name and the workflow filename the
-run's OIDC token carries, so a form saved before the repository was renamed
-names the old repository; read both forms after a rename. Until a name's form
-matches, its publish is refused, and because the alias step runs after the
-package's publish, a refused package publish stops the cut before the alias.
+run's OIDC token carries, so a form saved before the repository was renamed or
+moved names the old repository; read every form after a move. Provenance names
+the repository too: `repository.url` in `package.json` has to be the repository
+the workflow runs in. Until a name's form matches, its publish is refused, and
+because the alias steps run after the package's publish, a refused package
+publish stops the cut before the aliases.
 
 Two properties of that configuration are load-bearing in the workflow:
 
-- Both publish steps must live in **`release.yml`**. Renaming the file, or moving
-  either publish into another workflow, breaks that name's trusted publisher until
+- Every publish step must live in **`release.yml`**. Renaming the file, or moving
+  any publish into another workflow, breaks that name's trusted publisher until
   its form is updated to match.
 - It must run on a **GitHub-hosted runner**. npm does not support trusted
   publishing from self-hosted runners.
@@ -185,12 +198,12 @@ publish. The workflow passes `--provenance` on the command line instead.
 3. **Approve its `ci` run.** A `pull_request` run started by `GITHUB_TOKEN`
    lands in `action_required`, so the required check reads as blocked until a
    human approves it (**Approve and run** in the Actions tab, or `gh api -X POST
-   repos/firejune/rig-parts/actions/runs/<id>/approve`). A `workflow_dispatch`
+   repos/rig-c/parts/actions/runs/<id>/approve`). A `workflow_dispatch`
    run on the same commit does not satisfy a required check: it is matched by
    the run that reported it, not by the SHA.
 4. **Merge it.** That is the cut.
-5. Watch the second `release` run: it tags, releases, publishes under both
-   names, and then confirms the published package installs and runs and that the
+5. Watch the second `release` run: it tags, releases, publishes under all three
+   names, and then confirms the published package installs and runs and that each
    alias carries its files, waiting up to 15 minutes for the registry.
 
 ## Whether the tarball runs
@@ -211,19 +224,19 @@ missing. A correct package installed at a path with spaces and non-ASCII in it
 must pass too.
 
 ⚖️ **The registry half is a confirmation, not the gate**: the last step of
-`release.yml` runs the same script with `--source registry --alias spine-parts`
-after both publishes. It is not the gate because its own firing cannot be
-observed without publishing something broken. `--alias` fetches the same version
-under the alias and holds its unpacked files to the package's with
+`release.yml` runs the same script with `--source registry --alias rig-parts
+--alias spine-parts` after every publish. It is not the gate because its own firing cannot be
+observed without publishing something broken. Each `--alias` fetches the same version
+under that alias and holds its unpacked files to the package's with
 `scripts/alias_tarball.ts compare`, rather than installing it a second time. Its
 exits:
 
 | exit | what it means | what to do |
 | --- | --- | --- |
-| `0` | the published package installs and runs, and the alias carries its files | nothing |
-| `1` | the registry served it and a case went red on it, or the alias differs beyond its name | read the named fault; the cut needs a follow-up |
+| `0` | the published package installs and runs, and every alias carries its files | nothing |
+| `1` | the registry served it and a case went red on it, or an alias differs beyond its name | read the named fault; the cut needs a follow-up |
 | `2` | no case ran | a broken invocation, not a verdict |
-| `3` | the registry did not serve the version, or the alias, inside `--wait` — the confirmation was NOT taken | re-run it: Actions → release → Run workflow, with the version |
+| `3` | the registry did not serve the version, or an alias, inside `--wait` — the confirmation was NOT taken | re-run it: Actions → release → Run workflow, with the version |
 
 The dispatch runs the `confirm` job only; the job holding release-please, the
 tag and `npm publish` runs only on a push, so a re-run cannot re-cut anything.

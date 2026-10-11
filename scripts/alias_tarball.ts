@@ -1,20 +1,20 @@
 /**
- * The package under its second name: the same bytes as the tarball this tree
+ * The package under another name: the same bytes as the tarball this tree
  * packs, with the `name` field of `package.json` changed and nothing else.
  *
  *     bun scripts/alias_tarball.ts pack --name <alias> --out <dir> [--tarball <tgz>]
  *     bun scripts/alias_tarball.ts compare <package.tgz> <alias.tgz>
  *
  * The package is published as `name` in `package.json` and, at every version,
- * as an alias carrying the same files: the name it first shipped under keeps
- * being served, so nobody who installed or depends on it is stranded. rig-c
- * does the same for its own former name (rigc#1258), and this script is a
- * port of the one it publishes with. RELEASING.md *The registry side* says
- * which name is which.
+ * under each of its aliases carrying the same files: the names it shipped
+ * under before keep being served, so nobody who installed or depends on one is
+ * stranded. rig-c does the same for its own former name (rigc#1258), and
+ * this script is a port of the one it publishes with. RELEASING.md *The
+ * registry side* says which name is which.
  *
- * `pack` writes the alias tarball into `--out` and prints its path as the last
- * line of stdout, which is what `release.yml` hands to its second
- * `npm publish`. It packs this tree (or takes `--tarball`), extracts the
+ * `pack` makes one alias per call: it writes the alias tarball into `--out`
+ * and prints its path as the last line of stdout, which is what each alias
+ * step of `release.yml` hands to its `npm publish`. It packs this tree (or takes `--tarball`), extracts the
  * result, rewrites the one `"name": …` line of the extracted `package.json`,
  * packs the extraction again, and refuses to print a path unless `compare`
  * then reads the two tarballs as identical but for that line. Nothing is
@@ -61,12 +61,14 @@ import { join, relative, resolve, sep } from 'node:path';
 const ROOT = resolve(import.meta.dir, '..');
 
 /**
- * The second name: the one every version up to 0.16.0 shipped under, kept as
- * an alias. Not in `package.json`, which names the package once; this is the
- * one place in the tree that names the alias for a program to read, and the
- * selftest's `AL01` holds `release.yml`'s publish and confirmation to it.
+ * The other names, in the order `release.yml` publishes them: `rig-parts`, the
+ * package's name from 1.0.0-rc.1 to 1.5.3,
+ * and the alias `spine-parts`, the name every version up to 0.16.0 shipped under.
+ * Not in `package.json`, which names the package once; this is the one place in
+ * the tree that names the aliases for a program to read, and the selftest's
+ * `AL01` holds `release.yml`'s alias steps and its confirmations to it.
  */
-export const ALIAS = 'spine-parts';
+export const ALIASES: readonly string[] = ['rig-parts', 'spine-parts'];
 
 const EXIT_SAME = 0;
 const EXIT_DIFFERENT = 1;
@@ -244,7 +246,7 @@ export function packAlias(alias: string, out: string, packageTgz?: string): { tg
   }
 }
 
-const HELP = `rig-parts alias tarball — the package under its second name, with nothing else changed
+const HELP = `rig-parts alias tarball — the package under another name, with nothing else changed
 
 usage:
   bun scripts/alias_tarball.ts pack --name <alias> --out <dir> [--tarball <tgz>]

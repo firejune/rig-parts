@@ -69,7 +69,7 @@ only as a development dependency, and an install of rig-c gates a build with
 its own validator. rig-parts does not install it either; it is this repository's
 development dependency, at the version rig-c develops against, for the round
 trip in the selftest and CI and the selftest's posing oracle.
-rig-c's [NOTICE.md](https://github.com/firejune/rigc/blob/main/NOTICE.md)
+rig-c's [NOTICE.md](https://github.com/rig-c/core/blob/main/NOTICE.md)
 sets out the chain in full; briefly, as a restatement of Esoteric Software's
 terms and not a term of this project:
 
