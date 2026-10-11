@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.0](https://github.com/rig-c/parts/compare/v1.5.5...v1.6.0) (2026-10-11)
+
+
+### Features
+
+* **check:** a scene declares where the standing-figure bars do not hold — not_planted, not_swinging, rises ([#237](https://github.com/rig-c/parts/issues/237)) ([d176b47](https://github.com/rig-c/parts/commit/d176b47b3436b8737e87db36c6c651dcba67897a)), closes [#231](https://github.com/rig-c/parts/issues/231)
+* **examples:** gestures, expressions and trailing strands on demo and scarf ([#236](https://github.com/rig-c/parts/issues/236)) ([cae0786](https://github.com/rig-c/parts/commit/cae0786535dd4a82a294d21a73137be135d5d2a7)), closes [#224](https://github.com/rig-c/parts/issues/224)
+
+
+### Bug Fixes
+
+* **assemble:** the proposed plan names a full-run body no planned part covers, and the summary names the layer its uncovered error lies on ([#238](https://github.com/rig-c/parts/issues/238)) ([aa85b17](https://github.com/rig-c/parts/commit/aa85b173e750d78cfd6bc800d2cd6600e1c598d9)), closes [#233](https://github.com/rig-c/parts/issues/233)
+* **propose:** a cut's piece rides its trunk bone instead of taking its base's rule a second time ([#234](https://github.com/rig-c/parts/issues/234)) ([b84614a](https://github.com/rig-c/parts/commit/b84614a9a445adc467eac515f1e088440ad04402)), closes [#230](https://github.com/rig-c/parts/issues/230)
+
 ## [1.5.5](https://github.com/rig-c/parts/compare/v1.5.4...v1.5.5) (2026-10-11)
 
 
