@@ -11915,7 +11915,8 @@ function runChainSuite(): number | null {
       // Issue #118 on real art: TIP_OVER_ROOT reads the posed geometry, which no render size enters. One variant per
       // example that has the case: sample with its skirt amplitudes x0.1 (the card's reproduction, the hem under a
       // fifth of a frame pixel, which the pixel reading took from 0.512 to 13.53 over --max 620-660), and scarf with
-      // its bottomwear back on the proposal's lattice (the build the README says fails the line). Each is rigged
+      // its bottomwear on the proposal's lattice with the pre-#262 chest segment put back (issue #118's failing build
+      // had both; #262 found the segment was the cause). Each is rigged
       // from this build's parts, checked once, and its geometry rendered at --max 620 and 660: the line's figure,
       // recomputed from either geometry, is the check's to the digit, and the status is the bar's.
       const variant = key === 'reference-sample' ? 'skirt-x0.1' : key === 'scarf' ? 'bottomwear-lattice' : null;
@@ -11927,11 +11928,10 @@ function runChainSuite(): number | null {
         if (key === 'reference-sample') {
           for (const t of cfg.motion.tracks) if (t.chain?.startsWith('skirt_') === true && t.amps !== undefined) t.amps = t.amps.map((a) => a * 0.1);
         } else {
-          // Issue #262: and with the chest segment the proposer drafted before it, which was what the lattice failed
-          // by — without it the lattice passes too (3.487 at the proposal's breath).
-          const { contour, note, segments, ...rest } = cfg.meshes.bottomwear as { contour: { spacing: number }; note?: string; segments: unknown[] };
-          void note;
-          cfg.meshes.bottomwear = { grid: contour.spacing, ...rest, segments: [['chest', [414, 411], [414, 637]], ...segments] };
+          // Issue #262: the tracked config is the proposal's lattice again (grid 12, which passes at 3.487); the plant
+          // puts back the chest segment the proposer drafted before #262, which is what the lattice failed by.
+          const { segments, ...rest } = cfg.meshes.bottomwear as { grid: number; segments: unknown[] };
+          cfg.meshes.bottomwear = { ...rest, segments: [['chest', [414, 411], [414, 637]], ...segments] };
         }
         const vDir = join(dir, `${key}-${variant}`);
         mkdirSync(vDir, { recursive: true });
@@ -12227,9 +12227,10 @@ function runReadmeLoopSuite(): number | null {
       const key = relative(join(ROOT, 'examples'), ex);
       const r = runReadmeLoop(lines, ex, join(dir, key));
       // The meshes the example's tracked config moved off the proposal's lattice into contour mode — the one
-      // correction a tracked example records against its proposal's meshes (scarf's bottomwear, issue #118, whose
-      // lattice fails TIP_OVER_ROOT measured from the geometry). Pasted uncorrected, as this control pastes, the
-      // build must stop at check and name exactly those parts on that line, and nothing else.
+      // correction a tracked example records against its proposal's meshes (scarf's bottomwear from issue #118, whose
+      // lattice failed TIP_OVER_ROOT measured from the geometry, until issue #262 removed the chest segment that failed
+      // it and scarf went back to the lattice). Pasted uncorrected, as this control pastes, the build must stop at
+      // check and name exactly those parts on that line, and nothing else; with none, it must build green.
       type ChainEntry = { chain?: string; points?: unknown; tip?: unknown };
       const tracked = readJsonAt(join(ex, 'config.json')) as { meshes?: Record<string, Record<string, unknown>>; bones?: ChainEntry[]; assemble?: { plan?: Array<[string, string, string]> } };
       const proposed = readJsonAt(join(ex, 'proposal.json')) as { meshes?: Record<string, Record<string, unknown>>; bones?: ChainEntry[] };
@@ -15884,9 +15885,11 @@ function runDiagnosticsSuite(): number {
     });
     const single = lint(P, tailSpec(false)).coverage.find((c) => c.bone === 'tail');
     const asChain = lint(P, tailSpec(true)).coverage.find((c) => c.bone === 'tail0');
+    // Issue #262: the skirt (art from y 150, under chest) drafts no chest segment, so its segments are the hip line
+    // and three chains, [0..3], and the two planted ones land at [4] and [5].
     const wantSingle = [
-      'named as a single bone by meshes.skirt.segments[5]: a single bone has no links, and the off-art check reads only the links <segment><digits> of a chain',
-      'bound by the explicit [bone, from, to] segment meshes.skirt.segments[6]: a segment is a line, not an origin, and the off-art check reads origins',
+      'named as a single bone by meshes.skirt.segments[4]: a single bone has no links, and the off-art check reads only the links <segment><digits> of a chain',
+      'bound by the explicit [bone, from, to] segment meshes.skirt.segments[5]: a segment is a line, not an origin, and the off-art check reads origins',
     ];
     say(
       'DG02_A_SINGLE_BONE_NAMED_AS_A_SEGMENT_AND_AN_EXPLICIT_SEGMENT_ARE_NOT_CHECKED_AND_SAY_WHICH_SEGMENT',
@@ -15948,7 +15951,8 @@ function runDiagnosticsSuite(): number {
       'DG05_A_MESH_NAMING_NO_PART_LEAVES_ITS_CHAIN_NOT_CHECKED_AND_NAMES_THE_SEGMENT',
       kilt.unknownMeshes.join(',') === 'kilt' &&
         kiltC1 !== undefined &&
-        kiltC1.why.join('\n') === 'its chain is named by meshes.kilt.segments[3] (mesh "kilt"), which names no part in parts.json' &&
+        // Issue #262: no chest segment on the skirt, so skirt_c is its third segment, [2].
+        kiltC1.why.join('\n') === 'its chain is named by meshes.kilt.segments[2] (mesh "kilt"), which names no part in parts.json' &&
         gotCov.find((g) => g.startsWith('skirt_c1 ')) === "skirt_c1 checked, clean [deforms] read=off-art on mesh 'skirt' lint=0 why=",
       `skirt mesh renamed kilt: unknown meshes [${kilt.unknownMeshes.join(', ')}]; ${kiltC1 === undefined ? 'skirt_c1 absent' : coverageRow(kiltC1)}`,
       'lint already printed that the mesh was not linted; the coverage says which bones that left unread',
@@ -15970,7 +15974,8 @@ function runDiagnosticsSuite(): number {
       'DG06_WITHOUT_HIP_THE_CHEST_SAYS_WHY_IT_IS_NOT_CHECKED_AND_WITH_JOINTS_THE_TORSO_RULES_READ_HIP_AND_CHEST',
       noHip !== undefined &&
         noHip.why.join('\n') ===
-          'bound by the explicit [bone, from, to] segments meshes.sleeve_a.segments[0], meshes.sleeve_b.segments[0], meshes.skirt.segments[0]: a segment is a line, not an origin, and the off-art check reads origins\nthe torso checks read chest beside a single bone "hip", which the bones do not hold' &&
+          // Issue #262: the skirt hangs from the hip and no longer binds chest; the two sleeve stubs still do.
+          'bound by the explicit [bone, from, to] segments meshes.sleeve_a.segments[0], meshes.sleeve_b.segments[0]: a segment is a line, not an origin, and the off-art check reads origins\nthe torso checks read chest beside a single bone "hip", which the bones do not hold' &&
         at('chest') === 'chest checked, clean [deforms] read=chest-not-between|hip-not-past-chest lint=0 why=' &&
         at('hip') === 'hip checked, clean [deforms] read=hip-not-past-chest|hip-nearer-neck lint=0 why=' &&
         at('neck').startsWith('neck not checked [control]'),

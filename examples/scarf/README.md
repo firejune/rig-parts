@@ -20,23 +20,24 @@ here (gitignored).
   the idle swings them.
 - **The first character run through the pipeline with the proposal unedited.** The
   config's `bones`, `meshes` and `motion` are `proposal.json`'s, value for value, but
-  for one mesh mode (below), the `robe_r` chain's points (below) and the two authored
+  for the `robe_r` chain's points (below) and the two authored
   additions of issue #224 (`motion.animations_from` and `constraints`, *Gestures,
   expressions and trailing strands* below), and its
   `regions` are the proposal's for every part but the two shoe patches. Every other
   hand correction is an `assemble.patches` entry (below), with its reason in
   `assemble.patches_note`.
-- **The one mixed-mode example.** `meshes.bottomwear` is tracked in contour mode —
-  `contour {tolerance 1, margin 1, spacing 12, stray 4}`, spacing the proposal's grid —
-  while every other mesh keeps the proposal's lattice; its `note` says why. Issue #118
-  measures `TIP_OVER_ROOT` exactly from the posed geometry, and on this short skirt
-  (195x116 rig px) the proposal's lattice fails it: the art in the lower half of the
-  box travels 0.137 rig px against the upper half's 0.113 (ratio 1.207, bar 1.4725).
-  The same part in contour mode, with the same segments, weighting radius and idle,
-  passes: 0.145 against 0.083 (ratio 1.738). The amplitudes the proposal declared are
-  not raised; what fails is the lattice's weighting of this part, not the motion. A
-  pixel reading of the lattice build at `--max` up to 8000 (the part alone, so the
-  motion spans pixels) converges on about 1.27 from above, below the bar.
+- **Once the one mixed-mode example (issues #118 to #262).** From #118 `meshes.bottomwear`
+  was tracked in contour mode (`contour {tolerance 1, margin 1, spacing 12, stray 4}`)
+  because the proposal's lattice failed `TIP_OVER_ROOT` on this short skirt (195x116 rig
+  px): its upper half travelled 0.113 rig px against the lower half's 0.137 (ratio
+  1.207, bar 1.4725), the contour mesh 0.083 against 0.145 (1.738). The reason given then
+  — "what fails is the lattice's weighting of this part, not the motion" — was half right:
+  what failed was the `chest` segment the proposer gave the skirt, which carried the
+  waistband with the breath, and the contour mesh had fewer vertices on that row. Issue
+  #262 took the segment off, and the proposal's lattice reads 3.487 (0.040 against
+  0.139 at the proposal's breath), above the contour mesh's 2.614 on the same idle; the
+  config is the proposal's again in `bottomwear`, and the *Both mesh modes* table below
+  is the record of #118's builds.
 - **Two rules came from it.** Issue #119's fringe push-back: the `topwear` layer ends
   inside the left sleeve in a fringe below alpha 250 coloured scarf red, which drew as
   a red line down the sleeve; `assemble` now prints, on this config,
@@ -111,15 +112,18 @@ here (gitignored).
   breath, whose authored 1.55 and `note` are gone. Measured at the proposal's breath, the
   segment alone moves `bottomwear` from 0.300 to 2.614 (upper half 0.056) and its
   `TEXTURE_STRETCH` from 1.208 to 1.036, and nothing else. Against the build before it,
+  With the segment gone the contour correction had no reason left (above), so
+  `bottomwear` went back to the proposal's lattice, grid 12. Against the build before it,
   that moved `proposal.json` (the segment, and a note naming the rule), `rig.json`
-  (`bottomwear`'s weights, and its slot's bone `chest` to `hip`, the first segment's),
-  `mesh_report.json` (`chest` off `bottomwear`'s bones), `motion.json` (the breath's
-  keys) and `check.json`: `torso_heat_mean` 16.263 to 30.836, `TIP_OVER_ROOT`
-  `handwear_r` / `handwear_l` / `bottomwear` 6.152 / 5.022 / 1.534 to 2.006 / 1.925 /
-  2.614, `TEXTURE_STRETCH` 1.098 (`hair_front`) to 1.337 (`topwear`, which the breath now
-  stretches in full; `bottomwear` 1.037 to 1.036), the face half of
+  (`bottomwear`'s mesh, its weights, and its slot's bone `chest` to `hip`, the first
+  segment's), `mesh_report.json` (`bottomwear`'s row, the lattice's), `motion.json` (the
+  breath's keys), the gate file's pack line (392x1270, 96.0 % covered, to 393x1273, 95.5 %)
+  and `check.json`: `torso_heat_mean` 16.263 to 30.836, `TIP_OVER_ROOT` `handwear_r` /
+  `handwear_l` / `bottomwear` 6.152 / 5.022 / 1.534 to 2.006 / 1.925 / 3.487,
+  `TEXTURE_STRETCH` 1.098 (`hair_front`) to 1.337 (`topwear`, which the breath now
+  stretches in full; `bottomwear` 1.037 to 1.018), 2633 triangles to 2654, the face half of
   `STILL_REGIONS_DARK` rms 1.22e-13 to 1.311e-13 and its reported crossing depth 2.474 to
-  2.524; every status as before. `parts.json` and the gate file did not move.
+  2.524; every status as before. `parts.json` did not move.
 
 ## The four patches
 
@@ -209,8 +213,9 @@ gate.
 
 ## Both mesh modes
 
-`expected/` is the mixed build: every mesh on the proposal's lattice but `bottomwear`
-in contour mode. The lattice build is the same command on a scratch copy of
+Issue #118's builds, before issue #262 (whose rule took the `chest` segment off
+`bottomwear`, after which `expected/` is the lattice build): then `expected/` was the
+mixed build, every mesh on the proposal's lattice but `bottomwear` in contour mode. The lattice build is the same command on a scratch copy of
 `config.json` with `bottomwear` back on `grid: 12` (the proposal's), and the contour
 build one whose every mesh's `grid` is replaced by
 `contour: {tolerance: 1, margin: 1, spacing: <that grid>, stray: 4}` — #108's
