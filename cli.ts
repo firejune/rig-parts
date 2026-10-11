@@ -699,12 +699,13 @@ function rigcRunner(bin: string): RigcRunner {
   };
 }
 
-function flags(args: string[], known: readonly string[], command: string, optional: readonly string[] = []): Map<string, string> | string {
+/** `switches` are the command's bare flags, taken out by the caller before this reads the valued ones; they are only named in the unknown-flag refusal, so it lists every flag the command takes. */
+function flags(args: string[], known: readonly string[], command: string, optional: readonly string[] = [], switches: readonly string[] = []): Map<string, string> | string {
   const got = new Map<string, string>();
   const all = [...known, ...optional];
   for (let i = 0; i < args.length; i += 2) {
     const flag = args[i];
-    if (!all.includes(flag)) return `${command} does not take "${flag}"; it takes ${all.join(', ')}`;
+    if (!all.includes(flag)) return `${command} does not take "${flag}"; it takes ${[...all, ...switches].join(', ')}`;
     if (args[i + 1] === undefined) return `${flag} needs a value`;
     if (got.has(flag)) return `${flag} is given twice`;
     got.set(flag, args[i + 1]);
@@ -724,6 +725,7 @@ function cmdCheck(args: string[]): number {
     ['--rig', '--out'],
     'check',
     ['--parts', '--source', '--page-edges', '--pack-shape', '--requirements'],
+    ['--seam-pairs', '--keep-stills'],
   );
   if (typeof f === 'string') return usage(f);
   const rig = f.get('--rig') as string;
