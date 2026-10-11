@@ -53,6 +53,8 @@ export interface SceneBuildOptions {
   rigScale?: number;
   /** Leave check/check.json out. */
   noCheck?: boolean;
+  /** Fields written into check/check.json between gate_spine_html_green and PASS — a bar's figures, as check writes them (issue #203). */
+  checkFields?: Record<string, unknown>;
 }
 
 /** Write one fixture character as `build --out` leaves it, under `dir`. Returns `dir`. */
@@ -70,7 +72,7 @@ export function writeSceneBuild(dir: string, kind: SceneCharacterKind, opts: Sce
   if (opts.noCheck !== true) {
     mkdirSync(join(dir, 'check'), { recursive: true });
     const green = opts.pass ?? true;
-    writeFileSync(join(dir, 'check', 'check.json'), `${JSON.stringify({ gate_spine_html_green: green, PASS: green }, null, 1)}\n`);
+    writeFileSync(join(dir, 'check', 'check.json'), `${JSON.stringify({ gate_spine_html_green: green, ...opts.checkFields, PASS: green }, null, 1)}\n`);
   }
   return dir;
 }
