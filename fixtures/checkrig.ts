@@ -123,6 +123,15 @@ export interface CheckRigOptions {
    * part. Not with `blinkSquash`.
    */
   head?: { roll: number; slide?: number; bang?: number };
+  /**
+   * The canvas (the stage, and parts.json's rig_size), default
+   * {@link CHECK_RIG}; the parts keep their rig-pixel boxes. rig-c's render
+   * fits the figure and `check` asks for the canvas's longest side, so a canvas
+   * larger than the figure renders the setup-pose still at a frame scale above
+   * 1 — the regime of a consumer's figure that fills less of its stage (issue
+   * #209).
+   */
+  canvas?: { w: number; h: number };
 }
 
 /** Where the fixture's `head` bone stands, in rig pixels (y down): the bottom centre of the back part, a neck. */
@@ -131,7 +140,7 @@ export const HEAD_AT = { x: 19, y: 78 };
 export const IDLE_PEAK = 2;
 
 export function writeCheckRig(dir: string, opts: CheckRigOptions = {}): void {
-  const { w: W, h: H } = CHECK_RIG;
+  const { w: W, h: H } = opts.canvas ?? CHECK_RIG;
   mkdirSync(join(dir, 'images'), { recursive: true });
   mkdirSync(join(dir, 'parts'), { recursive: true });
   for (const p of CHECK_PARTS) {

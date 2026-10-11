@@ -9,7 +9,7 @@
   "pack_shape": "polygon"
  },
  "loop_max_diff": 0,
- "seam_mean": 0.326,
+ "seam_mean": 0.235,
  "seam_px_over_40": 2,
  "seam_px_over_80": 0,
  "BREATH_VISIBLE": {

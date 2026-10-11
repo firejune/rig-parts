@@ -79,6 +79,12 @@ function frameY(v: number, H: number, stage: StageBox, vp: Viewport): number {
  * The frame-pixel box covering the union of parts' rig boxes: every frame
  * pixel any of them touches (floor of the near edge, ceil of the far one),
  * clipped to the frame. Null for no part or a box entirely off the frame.
+ *
+ * {@link frameX} and {@link frameY} carry pixel EDGES, continuous positions,
+ * so they take no `0.5 (s - 1)` term: that term belongs to a map between
+ * pixel indices, centre to centre (`rigToFrameMap` in check.ts, issue #209).
+ * Rig pixel u's left edge is frame position s (stage.x + u - vp.x), and the
+ * frame pixel holding it is that position's floor.
  */
 export function frameBox(ps: readonly PartRecord[], rigH: number, stage: StageBox, vp: Viewport): PixelBox | null {
   if (ps.length === 0) return null;
