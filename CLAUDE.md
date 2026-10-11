@@ -5,9 +5,8 @@ link to this file.
 
 ## What this is
 
-`@rig-c/parts` — this repository, `rig-c/parts`; the command is `rig-parts`, and
-`rig-parts` and `spine-parts` are the same package under the names it shipped as
-before — takes one anime character painting and its
+`@rig-c/parts` (this repository, `rig-c/parts`; the command is `rig-parts`)
+takes one anime character painting and its
 [See-through](https://github.com/shitagaki-lab/see-through) layer decomposition
 and produces Spine-ready parts — `parts/*.png`, `parts.json` (per-part
 provenance and measurements), and `rig.json` / `motion.json` in
