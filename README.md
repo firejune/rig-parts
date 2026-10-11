@@ -37,8 +37,8 @@ is taken from the full run, because the twin tails leave the head crop sideways
 (a plan edit). <code>check</code> printed, verbatim:<br/>
 <code>50 assertions: 24 measured (24 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"</code><br/>
 <code>loop: idle 49 frame(s) at 12 fps, f0000 vs f0048 (t = 4s): max |d| 0 (0 required)</code><br/>
-<code>seam: setup pose at 714x1216, scale 0.9422: mean |d| 0.324 (&lt;= 1.0), 2 px over 40 (&lt;= 50), 0 px over 80 (reported)</code><br/>
-<code>pack: skeleton.png 922x1348, 22 region(s), 95.0% covered, padding 2, page edges free, shape polygon</code><br/>
+<code>seam: setup pose at 714x1216, scale 0.9422: mean |d| 0.234 (&lt;= 1.0), 2 px over 40, 2.25 rig px (the count / s²; &lt;= 50), 0 px over 80 (reported)</code><br/>
+<code>pack: skeleton.png 922x1348, 22 region(s), 94.9% covered, padding 2, page edges free, shape polygon</code><br/>
 <code>--seam silhouette</code> repaired the navy blobs the default rule leaves on the white
 blouse (recomposite error pixels 11,050 → 9,540); the default stays
 <code>near-white</code>, the reference implementation's rule, so the examples stay
@@ -60,7 +60,7 @@ made the contact sheet.
 <p align="center"><em>
 The plain fixture, <code>examples/sample</code>: same checkpoint, no LoRA, and a rig
 built from its own proposal with no hand edit at all —
-<code>seam: … mean |d| 0.207 (&lt;= 1.0), 0 px over 40 (&lt;= 50)</code>, loop max |d| 0.
+<code>seam: setup pose at 379x1216, scale 1.0116: mean |d| 0.204 (&lt;= 1.0), 2 px over 40, 1.95 rig px (the count / s²; &lt;= 50), 0 px over 80 (reported)</code>, loop max |d| 0.
 </em></p>
 
 <p align="center"><em>
