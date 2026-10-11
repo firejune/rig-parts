@@ -1230,8 +1230,10 @@ names it — `[29]` on both examples.
 flat stack of parts differs from the painting by more than 60, the top part takes the
 painting's colour — except where the painting is near-white, which protects the page
 and also every white garment. `--seam silhouette` protects near-white pixels only
-outside the figure. On the demo it lowered recomposite error pixels from 11,050 to
-9,540 and changed no check bar; on the sample it changed nothing. The default stays
+outside the figure. On the demo it lowers recomposite error pixels from 10,340 to
+8,644 (`assemble`'s `error px > 40`, at v1.5.2); on the sample it changes nothing
+(4,359 under both). At v0.14.0 the demo's were 11,050 and 9,540, and no check bar
+changed. The default stays
 the reference's so the examples stay comparable with it.
 
 **The fringe push-back** (issue #119; under either seam rule, no flag). Both places
@@ -1253,9 +1255,9 @@ and a cleared bridge to opaque art is put back, so no part gains an island
 names them. On the examples (default flags, measured against the v0.14.0 build of
 the same inputs): `demo` 1,193 px over 16 parts, recomposite error pixels 11,050 →
 10,340; `sample` 276 px over 15 parts, 4,512 → 4,359; uncovered error pixels and
-holes unchanged on both, `check` 9 of 9 on both. The `--seam` and `--project`
-comparisons in this section and the `SETUP_POSE_VS_SOURCE` example figures in §7
-were measured before it, at v0.14.0.
+holes unchanged on both, `check` 9 of 9 on both. The `--project` comparison in
+this section and the `SETUP_POSE_VS_SOURCE` example figures in §7 were measured
+before it, at v0.14.0; the `--seam` figures above are v1.5.2's.
 
 **Page edges.** `rig`, `check` and `build` pack through `rigc build --pack
 --page-edges <v>`, and hand the value to rigc verbatim. The default is `free`,

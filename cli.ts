@@ -550,6 +550,39 @@ function printLayerTable(set: LayerSet): void {
   console.log(`  ${warned} WARN line(s)`);
 }
 
+/**
+ * Every flag each command takes: `valued` flags carry a value, `switches` are bare. Each parser reads its row to
+ * decide what it accepts, and {@link notTaken} prints the same row in the unknown-flag refusal, so the refusal
+ * lists exactly the flags the parser accepts (CL26). `layers` takes one positional path and no flag, so it has no row.
+ */
+const TAKES = {
+  sheet: { valued: ['--source', '--layers', '--out', '--cell', '--cols'], switches: [] },
+  rig: { valued: ['--config', '--parts', '--out', '--idle-keys', '--page-edges', '--pack-shape'], switches: [] },
+  propose: { valued: ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--canvas', '--keypoints', '--person', '--wrist-snap'], switches: ['--head-box'] },
+  compare: { valued: ['--left', '--right', '--map'], switches: [] },
+  check: { valued: ['--rig', '--out', '--parts', '--source', '--page-edges', '--pack-shape', '--requirements'], switches: ['--seam-pairs', '--keep-stills'] },
+  loop: { valued: ['--frames', '--out'], switches: ['--palette'] },
+  assemble: { valued: ['--source', '--full', '--head', '--config', '--out', '--seam', '--project'], switches: ['--propose-plan'] },
+  'comfy seethrough': { valued: ['--image', '--out', '--resolution', '--steps', '--seed', '--prefix', '--host', '--wait', '--timeout', '--poll'], switches: ['--offload', '--lama', '--nf4'] },
+  'comfy paint': { valued: ['--config', '--out', '--seeds', '--seed0', '--host', '--wait', '--timeout', '--poll'], switches: [] },
+  inputs: { valued: ['--source', '--config', '--out'], switches: [] },
+  build: { valued: ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys'], switches: ['--loop'] },
+  compose: { valued: ['--scene', '--out', '--requirements', '--accept'], switches: [] },
+} as const satisfies Record<string, { valued: readonly string[]; switches: readonly string[] }>;
+
+type Command = keyof typeof TAKES;
+
+/** Whether `command` takes `flag` as a valued flag, read off its {@link TAKES} row. */
+function takesValued(command: Command, flag: string): boolean {
+  return (TAKES[command].valued as readonly string[]).includes(flag);
+}
+
+/** The unknown-flag refusal: the flag, and every flag the command's {@link TAKES} row holds, valued then bare. */
+function notTaken(command: Command, flag: string): string {
+  const row = TAKES[command];
+  return `${command} does not take "${flag}"; it takes ${[...row.valued, ...row.switches].join(', ')}`;
+}
+
 function cmdLayers(args: string[]): number {
   if (args.length !== 1) return usage(`layers takes one path; got ${args.length}`);
   try {
@@ -569,7 +602,7 @@ function cmdSheet(args: string[]): number {
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     const value = args[i + 1];
-    if (!['--source', '--layers', '--out', '--cell', '--cols'].includes(flag)) return usage(`sheet does not take "${flag}"`);
+    if (!takesValued('sheet', flag)) return usage(notTaken('sheet', flag));
     if (value === undefined) return usage(`${flag} needs a value`);
     i++;
     if (flag === '--source') source = value;
@@ -639,7 +672,7 @@ function cmdRig(args: string[]): number {
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     const value = args[i + 1];
-    if (!['--config', '--parts', '--out', '--idle-keys', '--page-edges', '--pack-shape'].includes(flag)) return usage(`rig does not take "${flag}"`);
+    if (!takesValued('rig', flag)) return usage(notTaken('rig', flag));
     if (value === undefined) return usage(`${flag} needs a value`);
     i++;
     if (flag === '--config') config = value;
@@ -699,18 +732,17 @@ function rigcRunner(bin: string): RigcRunner {
   };
 }
 
-/** `switches` are the command's bare flags, taken out by the caller before this reads the valued ones; they are only named in the unknown-flag refusal, so it lists every flag the command takes. */
-function flags(args: string[], known: readonly string[], command: string, optional: readonly string[] = [], switches: readonly string[] = []): Map<string, string> | string {
+/** The command's valued flags as `--flag value` pairs, each one its {@link TAKES} row holds; `required` must all be given. Its bare switches are taken out by the caller before this reads the rest. A string is a usage error. */
+function flags(args: string[], command: Command, required: readonly string[]): Map<string, string> | string {
   const got = new Map<string, string>();
-  const all = [...known, ...optional];
   for (let i = 0; i < args.length; i += 2) {
     const flag = args[i];
-    if (!all.includes(flag)) return `${command} does not take "${flag}"; it takes ${[...all, ...switches].join(', ')}`;
+    if (!takesValued(command, flag)) return notTaken(command, flag);
     if (args[i + 1] === undefined) return `${flag} needs a value`;
     if (got.has(flag)) return `${flag} is given twice`;
     got.set(flag, args[i + 1]);
   }
-  for (const k of known) if (!got.has(k)) return `${command} needs ${k} <value>`;
+  for (const k of required) if (!got.has(k)) return `${command} needs ${k} <value>`;
   return got;
 }
 
@@ -722,10 +754,8 @@ function cmdCheck(args: string[]): number {
   if (keepStills > 1) return usage('--keep-stills is given twice');
   const f = flags(
     args.filter((a) => a !== '--seam-pairs' && a !== '--keep-stills'),
-    ['--rig', '--out'],
     'check',
-    ['--parts', '--source', '--page-edges', '--pack-shape', '--requirements'],
-    ['--seam-pairs', '--keep-stills'],
+    ['--rig', '--out'],
   );
   if (typeof f === 'string') return usage(f);
   const rig = f.get('--rig') as string;
@@ -775,14 +805,13 @@ function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: 
 function cmdPropose(args: string[]): number {
   const flags = new Map<string, string>();
   let headBox = false;
-  const valued = ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--canvas', '--keypoints', '--person', '--wrist-snap'];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--head-box') {
       headBox = true;
       continue;
     }
-    if (!valued.includes(flag)) return usage(`propose does not take "${flag}"; it takes --head-box and ${valued.join(', ')}`);
+    if (!takesValued('propose', flag)) return usage(notTaken('propose', flag));
     const value = args[i + 1];
     if (value === undefined) return usage(`${flag} needs a value`);
     if (flags.has(flag)) return usage(`${flag} is given twice`);
@@ -880,10 +909,9 @@ function cmdPropose(args: string[]): number {
 
 function cmdCompare(args: string[]): number {
   const flags = new Map<string, string>();
-  const valued = ['--left', '--right', '--map'];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
-    if (!valued.includes(flag)) return usage(`compare does not take "${flag}"; it takes ${valued.join(', ')}`);
+    if (!takesValued('compare', flag)) return usage(notTaken('compare', flag));
     const value = args[i + 1];
     if (value === undefined) return usage(`${flag} needs a value`);
     if (flags.has(flag)) return usage(`${flag} is given twice`);
@@ -912,8 +940,8 @@ function cmdLoop(args: string[]): number {
   if (palettes > 1) return usage('--palette is given twice');
   const f = flags(
     args.filter((a) => a !== '--palette'),
-    ['--frames', '--out'],
     'loop',
+    ['--frames', '--out'],
   );
   if (typeof f === 'string') return usage(f);
   const out = f.get('--out') as string;
@@ -932,14 +960,13 @@ function cmdLoop(args: string[]): number {
 function cmdAssemble(args: string[]): number {
   const flags = new Map<string, string>();
   let propose = false;
-  const valued = ['--source', '--full', '--head', '--config', '--out', '--seam', '--project'];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--propose-plan') {
       propose = true;
       continue;
     }
-    if (!valued.includes(flag)) return usage(`assemble does not take "${flag}"`);
+    if (!takesValued('assemble', flag)) return usage(notTaken('assemble', flag));
     const value = args[i + 1];
     if (value === undefined) return usage(`${flag} needs a value`);
     if (flags.has(flag)) return usage(`${flag} is given twice`);
@@ -975,8 +1002,9 @@ function cmdAssemble(args: string[]): number {
   }
 }
 
-/** Parse `--flag value` pairs and bare `--switch`es; a string is a usage error. */
-function comfyFlags(args: string[], valued: readonly string[], switches: readonly string[], command: string): { v: Map<string, string>; on: Set<string> } | string {
+/** Parse `--flag value` pairs and bare `--switch`es, as the command's {@link TAKES} row names them; a string is a usage error. */
+function comfyFlags(args: string[], command: 'comfy seethrough' | 'comfy paint'): { v: Map<string, string>; on: Set<string> } | string {
+  const switches: readonly string[] = TAKES[command].switches;
   const v = new Map<string, string>();
   const on = new Set<string>();
   for (let i = 0; i < args.length; i++) {
@@ -986,7 +1014,7 @@ function comfyFlags(args: string[], valued: readonly string[], switches: readonl
       on.add(flag);
       continue;
     }
-    if (!valued.includes(flag)) return `${command} does not take "${flag}"; it takes ${[...valued, ...switches].join(', ')}`;
+    if (!takesValued(command, flag)) return notTaken(command, flag);
     const value = args[i + 1];
     if (value === undefined) return `${flag} needs a value`;
     if (v.has(flag)) return `${flag} is given twice`;
@@ -1012,14 +1040,10 @@ function secondsFlag(v: Map<string, string>, flag: string, fallback: number): nu
   return Number.isFinite(n) && n > 0 ? n : `${flag} ${raw} is not a number of seconds above 0`;
 }
 
-const COMFY_TIMING = ['--host', '--wait', '--timeout', '--poll'] as const;
-
 async function cmdComfy(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   if (sub !== 'seethrough' && sub !== 'paint') return usage(`comfy takes seethrough or paint; got ${sub === undefined ? 'nothing' : `"${sub}"`}`);
-  const valued = sub === 'seethrough' ? ['--image', '--out', '--resolution', '--steps', '--seed', '--prefix', ...COMFY_TIMING] : ['--config', '--out', '--seeds', '--seed0', ...COMFY_TIMING];
-  const switches = sub === 'seethrough' ? ['--offload', '--lama', '--nf4'] : [];
-  const f = comfyFlags(rest, valued, switches, `comfy ${sub}`);
+  const f = comfyFlags(rest, `comfy ${sub}`);
   if (typeof f === 'string') return usage(f);
   const { v, on } = f;
   const wait = secondsFlag(v, '--wait', 1800);
@@ -1082,7 +1106,7 @@ async function cmdComfy(args: string[]): Promise<number> {
 }
 
 function cmdInputs(args: string[]): number {
-  const f = flags(args, ['--source', '--config', '--out'], 'inputs');
+  const f = flags(args, 'inputs', ['--source', '--config', '--out']);
   if (typeof f === 'string') return usage(f);
   const source = f.get('--source') as string;
   const out = f.get('--out') as string;
@@ -1114,7 +1138,6 @@ function cmdInputs(args: string[]): number {
 function cmdBuild(args: string[]): number {
   const flags = new Map<string, string>();
   let loop = false;
-  const valued = ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys'];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--loop') {
@@ -1122,7 +1145,7 @@ function cmdBuild(args: string[]): number {
       loop = true;
       continue;
     }
-    if (!valued.includes(flag)) return usage(`build does not take "${flag}"; it takes --loop and ${valued.join(', ')}`);
+    if (!takesValued('build', flag)) return usage(notTaken('build', flag));
     const value = args[i + 1];
     if (value === undefined) return usage(`${flag} needs a value`);
     if (flags.has(flag)) return usage(`${flag} is given twice`);
@@ -1161,7 +1184,7 @@ function cmdBuild(args: string[]): number {
 }
 
 function cmdCompose(args: string[]): number {
-  const f = flags(args, ['--scene', '--out'], 'compose', ['--requirements', '--accept']);
+  const f = flags(args, 'compose', ['--scene', '--out']);
   if (typeof f === 'string') return usage(f);
   let bin: string;
   try {

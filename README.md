@@ -40,7 +40,7 @@ is taken from the full run, because the twin tails leave the head crop sideways
 <code>seam: setup pose at 714x1216, scale 0.9422: mean |d| 0.234 (&lt;= 1.0), 2 px over 40, 2.25 rig px (the count / s²; &lt;= 50), 0 px over 80 (reported)</code><br/>
 <code>pack: skeleton.png 922x1348, 22 region(s), 94.9% covered, padding 2, page edges free, shape polygon</code><br/>
 <code>--seam silhouette</code> repaired the navy blobs the default rule leaves on the white
-blouse (recomposite error pixels 11,050 → 9,540); the default stays
+blouse (recomposite error pixels 10,340 → 8,644); the default stays
 <code>near-white</code>, the reference implementation's rule, so the examples stay
 comparable with it. The loop is <code>rig-parts loop --palette</code>'s indexed APNG, 48 frames at
 12 fps, 1,706,719 bytes, one 256-entry palette at a measured error of max 57, mean 1.601
