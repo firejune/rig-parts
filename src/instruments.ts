@@ -186,6 +186,23 @@ export interface HalfTravels {
   tip: number | null;
 }
 
+/** Where a chain's tip lies from its root on the screen (issue #231). */
+export type Toward = 'down' | 'up' | 'left' | 'right';
+
+/**
+ * Where a chain's tip is from its root (issue #231): the vector from its first
+ * link's origin to its last link's at the setup pose, in the world (y up),
+ * read along whichever axis it runs further on — `down`/`up` when |dy| > |dx|,
+ * `left`/`right` when |dx| > |dy|. Null when it runs as far on both, which
+ * includes a chain whose links share one origin. `check` holds a part the
+ * scene declares `rises` to it: the chain carrying it must read `up`.
+ */
+export function chainToward(dx: number, dy: number): Toward | null {
+  if (Math.abs(dy) > Math.abs(dx)) return dy < 0 ? 'down' : 'up';
+  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'right' : 'left';
+  return null;
+}
+
 /** A polygon as x, y pairs. */
 type Polygon = number[];
 
@@ -348,17 +365,24 @@ function artPieces(art: ArtMask, a: PosedTriangles, stage: StageBox): ArtPieces 
  * Art outside every rest triangle is not drawn by the runtime and is not
  * counted. A frame on which the slot shows nothing (null) is skipped; a half
  * with no art on frame 0 is null. Each distinct rest attachment is cut once.
+ *
+ * `toward` is where the tip is from the root (issue #231): `down` — the upper
+ * half is the root's and the lower the tip's, the reading before #231 and the
+ * default — or `up`, the two swapped, for a part the scene declares `rises`.
  */
-export function halfTravels(art: ArtMask, box: { x: number; y: number; w: number; h: number }, stage: StageBox, frames: ReadonlyArray<PosedTriangles | null>): HalfTravels {
+export function halfTravels(art: ArtMask, box: { x: number; y: number; w: number; h: number }, stage: StageBox, frames: ReadonlyArray<PosedTriangles | null>, toward: 'down' | 'up' = 'down'): HalfTravels {
   const H = stage.height;
   const bx0 = stage.x + box.x;
   const bx1 = stage.x + box.x + box.w;
   const top = stage.y + cropToSpineY(box.y, H);
   const mid = stage.y + cropToSpineY(box.y + box.h / 2, H);
   const bottom = stage.y + cropToSpineY(box.y + box.h, H);
-  const bands = { root: [mid, top], tip: [bottom, mid] } as const;
+  // Each band is a rectangle of the world, [x0, y0, x1, y1] (y up).
+  const upper = [bx0, mid, bx1, top] as const;
+  const lower = [bx0, bottom, bx1, mid] as const;
+  const bands = toward === 'down' ? { root: upper, tip: lower } : { root: lower, tip: upper };
   const cut = new Map<readonly number[], ArtPieces>();
-  const centroidIn = (a: PosedTriangles, y0: number, y1: number): [number, number] | null => {
+  const centroidIn = (a: PosedTriangles, x0: number, y0: number, x1: number, y1: number): [number, number] | null => {
     let pc = cut.get(a.rest);
     if (pc === undefined) {
       pc = artPieces(art, a, stage);
@@ -384,13 +408,13 @@ export function halfTravels(art: ArtMask, box: { x: number; y: number; w: number
       const xmax = Math.max(px, px + e1x, px + e2x);
       const ymin = Math.min(py, py + e1y, py + e2y);
       const ymax = Math.max(py, py + e1y, py + e2y);
-      if (xmax <= bx0 || xmin >= bx1 || ymax <= y0 || ymin >= y1) continue;
+      if (xmax <= x0 || xmin >= x1 || ymax <= y0 || ymin >= y1) continue;
       const R = a.rest;
       const restDet = (R[2 * j] - R[2 * i]) * (R[2 * k + 1] - R[2 * i + 1]) - (R[2 * k] - R[2 * i]) * (R[2 * j + 1] - R[2 * i + 1]);
       const posedDet = e1x * e2y - e2x * e1y;
       // The posed area of a rest area: |posed det / rest det| times it.
       const scale = Math.abs(posedDet / restDet);
-      if (xmin >= bx0 && xmax <= bx1 && ymin >= y0 && ymax <= y1) {
+      if (xmin >= x0 && xmax <= x1 && ymin >= y0 && ymax <= y1) {
         const w = pc.area[t] * scale;
         const l1 = pc.centroid[2 * t];
         const l2 = pc.centroid[2 * t + 1];
@@ -402,7 +426,7 @@ export function halfTravels(art: ArtMask, box: { x: number; y: number; w: number
       for (const bary of pc.pieces[t]) {
         const poly: Polygon = [];
         for (let q = 0; q < bary.length; q += 2) poly.push(px + bary[q] * e1x + bary[q + 1] * e2x, py + bary[q] * e1y + bary[q + 1] * e2y);
-        const c = clipRect(poly, bx0, y0, bx1, y1);
+        const c = clipRect(poly, x0, y0, x1, y1);
         if (c.length < 6) continue;
         const [pa, pmx, pmy] = polygonMoments(c);
         // A triangle the pose turns over winds its pieces the other way; what is drawn is the area either way.
@@ -414,19 +438,19 @@ export function halfTravels(art: ArtMask, box: { x: number; y: number; w: number
     }
     return A > 0 ? [MX / A, MY / A] : null;
   };
-  const travel = (y0: number, y1: number): number | null => {
+  const travel = (band: readonly [number, number, number, number]): number | null => {
     const first = frames[0];
-    const c0 = first === null ? null : centroidIn(first, y0, y1);
+    const c0 = first === null ? null : centroidIn(first, ...band);
     if (c0 === null) return null;
     let max = 0;
     for (const f of frames) {
-      const c = f === null ? null : centroidIn(f, y0, y1);
+      const c = f === null ? null : centroidIn(f, ...band);
       if (c === null) continue;
       max = Math.max(max, Math.hypot(c[0] - c0[0], c[1] - c0[1]));
     }
     return max;
   };
-  return { root: travel(bands.root[0], bands.root[1]), tip: travel(bands.tip[0], bands.tip[1]) };
+  return { root: travel(bands.root), tip: travel(bands.tip) };
 }
 
 // ---------------------------------------------------------------------------

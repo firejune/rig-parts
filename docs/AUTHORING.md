@@ -1747,14 +1747,16 @@ See-through with another seed.
 | `CHECK_PACK_SHAPE` | the pack line disagrees with the `--pack-shape` the build was run with — it ends `, shape rect` under `polygon` or `, shape polygon` under `rect`, or it has no shape clause (the 1.5–2.0 form, read as `rect`) under `polygon` | a rigc older than 2.1.0 on `PATH`: rigc 2.0.3 takes `--pack-shape` without a word, packs by rectangles and prints the form with no shape clause, so this refusal is what catches it — `bun install` (this package depends on rig-c ^2.20.4); otherwise a rigc problem, report it with `rigc --version` |
 | `BUILD_ARTIFACT_PRESENT` | the packed build lacks its `.json`, `.atlas` or page | a rigc problem; report it |
 | `REQUIREMENTS_FILE` | `--requirements` names no file, or one that does not parse as a JSON object. Refused before anything is built (by `build`, before assemble) | the path of a `spine-parts-requirements/1` file |
-| `REQUIREMENTS_FIELD` | a field of the file is missing, of the wrong type, or not one the format reads: `spec`, `fps` (no default), `requirements`, each requirement's `name` (letters, digits, underscores; once each), `kind`, `animation` and its kind's fields — every bar among them (`within_px`, `fraction`, `tolerance`, `least_drive` above 0, `within_degrees` from 0 to 180, `lo_degrees` ≤ `hi_degrees`, `within_ratio` ≥ 1) — and each target's `bone`, `animation` and exactly one of `at` and `keys` (times strictly increasing). `note`, `*_note` (strings) and `x-…` (any value) are read by nothing, as in the config | write the field; the bar is yours |
-| `REQUIREMENTS_RESOLVES` | a bone, an `ik` or `transform` constraint (by name and `constraint_type`, as rig-c resolves it), a slot, a mesh attachment or an animation the file names is not in `rig.json` or `motion.json`, or a seam's part is not in `parts.json` — the detail lists the ones that are; or an animation whose name cannot be a directory. Refused before anything is built | the name as the rig spells it |
+| `REQUIREMENTS_FIELD` | a field of the file is missing, of the wrong type, or not one the format reads: `spec`, `fps` (no default), `requirements`, each requirement's `name` (letters, digits, underscores; once each), `kind`, `animation` and its kind's fields — every bar among them (`within_px`, `fraction`, `tolerance`, `least_drive` above 0, `within_degrees` from 0 to 180, `lo_degrees` ≤ `hi_degrees`, `within_ratio` ≥ 1) — and each target's `bone`, `animation` and exactly one of `at` and `keys` (times strictly increasing), and `not_planted`, `not_swinging` and `rises` when given (each a non-empty list of part names, each once; no part both in `not_swinging` and in `rises`). `note`, `*_note` (strings) and `x-…` (any value) are read by nothing, as in the config | write the field; the bar is yours |
+| `REQUIREMENTS_RESOLVES` | a bone, an `ik` or `transform` constraint (by name and `constraint_type`, as rig-c resolves it), a slot, a mesh attachment or an animation the file names is not in `rig.json` or `motion.json`, or a seam's part or a `not_planted`, `not_swinging` or `rises` name is not in `parts.json` — the detail lists the ones that are; or an animation whose name cannot be a directory. Refused before anything is built | the name as the rig spells it |
 | `REQUIREMENTS_CONSTRAINT_DRIVES` | a `follow` names a bone its constraint does not constrain, or a property it does not drive: an `ik` drives `rotate` only; a `transform` drives `rotate` when a `to` names `rotate`, `translate` when one names `x` or `y` | the constraint's own bone and property |
 | `REQUIREMENTS_TARGET_PARENT` | a scene target's bone is the root or is not parented to it, or the root is not at rest at the origin, or the animation keys the root — a stage point is a bone's position only under a root that stands still at the origin | a bone under the root for the scene to place |
 | `REQUIREMENTS_TARGET` | a scene target places one bone twice for one animation, places it for an animation no requirement measures, has a key outside the animation's `[0, duration]`, or sits in a group the animation translates | one placement per bone and animation, inside it, for an animation a requirement reads |
 | `CHECK_REQUIREMENTS_FRAMES` | a requirement render did not write every frame rigc sampled, or the as-declared, released and full renders of a follow sampled different frames | a rigc problem; report it |
 | `CHECK_REQUIREMENT_MET` | a declared requirement measured outside its bar; the figure, its frame and the bar are quoted | the rig or its motion (§7, *Declared requirements*) — or the bar, if the scene asks less |
 | `CHECK_REQUIREMENT_MEASURABLE` | a declared requirement is NOT MEASURABLE: what it asks is undefined in the frames, and the reason is quoted. Not a pass | the declaration (a bone with a length, a target off the bone's origin, a least drive the constraint reaches) or the rig |
+| `REQUIREMENTS_NOT_PLANTED` | a `not_planted` name is a part `check` does not read as a planted foot — it does not come from a See-through `footwear` layer — or there is no `parts.json` to choose the feet by (issue #231). Refused before anything is built | a `footwear` part's name |
+| `REQUIREMENTS_TIP_EXCEPTION` | a `not_swinging` or `rises` name is a part `TIP_OVER_ROOT` does not read — not from a See-through `handwear` or `bottomwear` layer — or there is no `parts.json` (refused before anything is built); or a `rises` part is not carried by a chain that rises: the chain's first link to its last, at the setup pose, runs other than up, the detail giving the direction measured (refused after the idle is rendered, before `check.json` is written) (issue #231) | a swinging part's name; for `rises`, a part whose chain does rise |
 | `REQUIREMENTS_SEAM` | a `seam` cannot be read against the rig: there is no `parts.json` (a merged rig, §7 *Measuring a rig rig-parts did not assemble*), or the two parts' art does not meet at the setup pose (no 4-adjacent pair). Refused before anything is built | two parts whose art touches, on a rig with its `parts.json` |
 
 ### compose
@@ -2311,6 +2313,34 @@ unit (the stage box maps to the world by a translation and the y flip,
   ]
 }
 ```
+
+**Feet that are not planted** (issue #231). The feet halves of `BREATH_VISIBLE` and
+`STILL_REGIONS_DARK` assume a figure that stands: every `footwear` part holds still.
+Whether the figure stands is the scene's knowledge, so a scene where it sits and its
+legs swing says so here, by part: `"not_planted": ["shoes"]`. Each name must be a
+`footwear` part in `parts.json` (`REQUIREMENTS_RESOLVES`, `REQUIREMENTS_NOT_PLANTED`).
+A declared part is left out of both feet halves, and the declaration is the first
+figure of each line it relaxes — `declared_not_planted` in `BREATH_VISIBLE`, and in
+`STILL_REGIONS_DARK`'s `feet` — in `check.json` and on the console, so a relaxed bar
+never reads as a passed one. With every foot declared, the torso is still measured
+(`feet_parts` `[]`, `feet_heat_max` null) and the feet half reads `unmeasured` with
+the reason. The field absent, nothing changes: every `footwear` part is a planted foot.
+
+**Swinging parts that do not hang** (issue #231). `TIP_OVER_ROOT` reads every
+`handwear` and `bottomwear` part as hanging: the lower half of its box is the tip's.
+Two declarations, by part, say where that does not hold. `"not_swinging": ["under"]`
+— a piece cut off and left still — leaves the part out of the bar; its row reads
+`unmeasured` with the reason. `"rises": ["arm"]` — a forearm raised from the elbow —
+reads the part's **upper** half as the tip's (its row carries `tip_half: "upper"`),
+and only after checking the chain that carries it does rise: the part's bound bones
+walked up to a chain `CHAIN_LAG` reads, its first link's origin to its last at the
+setup pose, read along its longer axis, must run up, or the declaration is refused
+naming the direction measured. The line's first figures after `status` are
+`declared_not_swinging` and `declared_rises`. Each name must be a swinging part in
+`parts.json`, and no part may be in both lists.
+
+`fps` and `requirements` are required as always; a file that declares only exceptions
+is `{ "spec": "spine-parts-requirements/1", "fps": 12, "requirements": [], "not_planted": ["shoes"], "not_swinging": ["under"], "rises": ["arm"] }`.
 
 **Four outcomes, never merged** (#87):
 

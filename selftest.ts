@@ -104,7 +104,7 @@ import {
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
 import { artifactPaths, assembleStage, build, BUILD_OWNS, checkStage, ctlRemedies, fringeLines, REFERENCE_BUILD_ARGS, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
-import { CHECK_PARTS, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, shiftRight, writeCheckRig, writeMergedCheckRig } from './fixtures/checkrig.ts';
+import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
@@ -150,7 +150,7 @@ import {
 } from './src/assemble.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
 import { BARS, besideIdleLine, blackRig, buildGateLines, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
-import { blinkFigures, type BoneWorld, frameBox, halfTravels, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
+import { blinkFigures, type BoneWorld, chainToward, frameBox, halfTravels, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
   contactLine,
@@ -7723,6 +7723,124 @@ function runCheckSuite(): number {
       'issue #216 item 4: an agent reading a seam picture cannot see what the magenta marks unless the text says so, where it reads the pair line; the help and §7 state the bar as it now reads, and the pre-#202 bullet (the planted negative of CK100) does not',
     );
 
+    // Issue #231: the seated figure — legs that swing, a raised forearm on its own chain, a still cut piece. Without a
+    // declaration every bar reads it as main does and four fail; with the scene file's not_planted, not_swinging and
+    // rises the run passes, and each line it relaxes names the exception first.
+    const seatedRun = (label: string, req: Record<string, unknown> | null, opts: { armHangs?: boolean } = {}): { status: number; out: string; fig: Record<string, unknown> | null } => {
+      const rigDir = join(dir, `seated-${label}-rig`);
+      writeSeatedCheckRig(rigDir, opts);
+      const args = ['check', '--rig', rigDir, '--out', join(dir, `seated-${label}`)];
+      if (req !== null) {
+        const reqPath = join(dir, `seated-${label}.json`);
+        writeFileSync(reqPath, JSON.stringify({ spec: 'spine-parts-requirements/1', fps: 12, requirements: [], ...req }));
+        args.push('--requirements', reqPath);
+      }
+      const r = runCli(args);
+      return { ...r, fig: readJsonFile(join(dir, `seated-${label}`, 'check.json')) };
+    };
+    type TipRow = { part: string; tip_half?: string; root_rig_px?: number; tip_rig_px?: number; ratio?: number | null; unmeasured?: string };
+    const tipOf = (fig: Record<string, unknown> | null): Record<string, unknown> => (fig?.TIP_OVER_ROOT ?? {}) as Record<string, unknown>;
+    const tipRowOf = (fig: Record<string, unknown> | null, part: string): TipRow | undefined => ((tipOf(fig).parts ?? []) as TipRow[]).find((r) => r.part === part);
+    const consoleOf = (o: string, name: string): string => o.split('\n').find((l) => l.startsWith(`  ${name}: `)) ?? '';
+    const bare = seatedRun('bare', null);
+    const bArm = tipRowOf(bare.fig, 'arm');
+    const bUnder = tipRowOf(bare.fig, 'under');
+    const tipFails = bare.out.split('\n').filter((l) => l.startsWith('  FAIL  CHECK_TIP_OVER_ROOT'));
+    say(
+      'CK109_A_SEATED_FIGURE_WITHOUT_A_DECLARATION_FAILS_THE_FOUR_STANDING_BARS_AS_BEFORE',
+      bare.status === 1 &&
+        JSON.stringify(barsNotMet(bare.fig ?? {})) === JSON.stringify(['BREATH_VISIBLE', 'TIP_OVER_ROOT', 'STILL_REGIONS_DARK']) &&
+        (failLine(bare.out, 'CHECK_BREATH_VISIBLE') ?? '').includes('feet "shoes"') &&
+        (failLine(bare.out, 'CHECK_STILL_REGIONS_DARK') ?? '').includes('slot "shoes" of the feet') &&
+        tipFails.length === 2 &&
+        tipFails[0].includes('part "under"') &&
+        tipFails[0].includes('(ratio 1)') &&
+        tipFails[1].includes('part "arm"') &&
+        typeof bArm?.ratio === 'number' &&
+        bArm.ratio < 1 &&
+        JSON.stringify(Object.keys(tipOf(bare.fig))) === JSON.stringify(['status', 'instrument', 'parts', 'ratio_floor']) &&
+        JSON.stringify(Object.keys(bArm)) === JSON.stringify(['part', 'root_rig_px', 'tip_rig_px', 'ratio']) &&
+        bUnder?.ratio === 1 &&
+        !bare.out.includes('declared_'),
+      `exit ${bare.status}; bars not met ${JSON.stringify(barsNotMet(bare.fig ?? {}))}; ${tipFails.map((l) => l.trim().slice(0, 170)).join(' | ')}`,
+      'issue #231: the four bars hold a standing figure, and the issue puts lowering them out of scope — so a figure that sits fails exactly the four the issue reports until the scene says otherwise: feet that move (twice), a forearm whose upper half out-travels its lower (read down the screen, ratio under 1), and a cut piece slid whole with the root (both halves travel alike, ratio 1 by construction)',
+    );
+    const seatedDecl = { not_planted: ['shoes'], not_swinging: ['under'], rises: ['arm'] };
+    const declared = seatedRun('declared', seatedDecl);
+    const dBreath = (declared.fig?.BREATH_VISIBLE ?? {}) as Record<string, unknown>;
+    const dFeet = ((declared.fig?.STILL_REGIONS_DARK as { feet?: Record<string, unknown> } | undefined)?.feet ?? {}) as Record<string, unknown>;
+    const bBreath = (bare.fig?.BREATH_VISIBLE ?? {}) as Record<string, unknown>;
+    const dTip = tipOf(declared.fig);
+    const dArm = tipRowOf(declared.fig, 'arm');
+    const dUnder = tipRowOf(declared.fig, 'under');
+    say(
+      'CK110_THE_SAME_FIGURE_WITH_ITS_THREE_EXCEPTIONS_DECLARED_PASSES_AND_EVERY_LINE_NAMES_THEM_FIRST',
+      declared.status === 0 &&
+        declared.fig?.PASS === true &&
+        barsNotMet(declared.fig ?? {}).length === 0 &&
+        Object.keys(dBreath)[1] === 'declared_not_planted' &&
+        JSON.stringify(dBreath.declared_not_planted) === '["shoes"]' &&
+        JSON.stringify(dBreath.feet_parts) === '[]' &&
+        dBreath.feet_heat_max === null &&
+        dBreath.torso_heat_mean === bBreath.torso_heat_mean &&
+        Object.keys(dFeet)[0] === 'declared_not_planted' &&
+        String(dFeet.unmeasured).includes('declared not planted') &&
+        JSON.stringify(Object.keys(dTip).slice(0, 3)) === JSON.stringify(['status', 'declared_not_swinging', 'declared_rises']) &&
+        JSON.stringify(dTip.declared_not_swinging) === '["under"]' &&
+        JSON.stringify(dTip.declared_rises) === '["arm"]' &&
+        (dUnder?.unmeasured ?? '').startsWith('declared not swinging') &&
+        dArm?.tip_half === 'upper' &&
+        dArm.root_rig_px === bArm?.tip_rig_px &&
+        dArm.tip_rig_px === bArm?.root_rig_px &&
+        typeof dArm.ratio === 'number' &&
+        dArm.ratio >= TIP_RATIO_FLOOR &&
+        consoleOf(declared.out, 'BREATH_VISIBLE').startsWith('  BREATH_VISIBLE: PASS — declared_not_planted shoes;') &&
+        consoleOf(declared.out, 'TIP_OVER_ROOT').startsWith('  TIP_OVER_ROOT: PASS — declared_not_swinging under; declared_rises arm;') &&
+        consoleOf(declared.out, 'STILL_REGIONS_DARK').includes('feet declared_not_planted shoes'),
+      `exit ${declared.status}, PASS ${String(declared.fig?.PASS)}; ${consoleOf(declared.out, 'BREATH_VISIBLE').trim().slice(0, 110)}; ${consoleOf(declared.out, 'TIP_OVER_ROOT').trim().slice(0, 260)}; STILL feet ${JSON.stringify(dFeet).slice(0, 120)}`,
+      "issue #231: each exception is the author's, by name and per part, and a relaxed bar must never read as a passed one — so the declaration is the first figure of each line it relaxes, in check.json and on the console; the torso is still measured, and the raised forearm's two halves are the same two travels as undeclared, swapped",
+    );
+    const refusedNp = seatedRun('refused', { not_planted: ['boots', 'body'], not_swinging: ['skirt_x'] });
+    say(
+      'CK111_AN_EXCEPTION_NAMING_AN_UNKNOWN_PART_OR_A_PART_ITS_BAR_DOES_NOT_READ_IS_REFUSED_BY_NAME_BEFORE_ANYTHING_IS_BUILT',
+      refusedNp.status === 1 &&
+        refusedNp.fig === null &&
+        refusedNp.out.includes('names part "boots", which parts.json does not list') &&
+        refusedNp.out.includes('REQUIREMENTS_NOT_PLANTED') &&
+        refusedNp.out.includes('names part "body" (from "full:topwear"), which is not read as a planted foot') &&
+        refusedNp.out.includes('field "not_swinging"[0]') &&
+        refusedNp.out.includes('names part "skirt_x", which parts.json does not list') &&
+        !existsSync(join(dir, 'seated-refused', 'build')),
+      `exit ${refusedNp.status}; check.json ${refusedNp.fig === null ? 'not written' : 'WRITTEN'}; ${refusedNp.out.split('\n').filter((l) => l.includes('REQUIREMENTS_')).map((l) => l.trim().slice(0, 140)).join(' | ')}`,
+      'issue #231: everything resolves by name and a miss is refused by name — an exception naming a part parts.json does not list, or one its bar never reads, excepts nothing, and one refusal names every one',
+    );
+
+    const risesUnknown = seatedRun('rises-unknown', { rises: ['sleeve', 'shoes'] });
+    say(
+      'CK113_A_RISES_NAMING_AN_UNKNOWN_PART_OR_ONE_TIP_OVER_ROOT_DOES_NOT_READ_IS_REFUSED_BY_NAME_BEFORE_ANYTHING_IS_BUILT',
+      risesUnknown.status === 1 &&
+        risesUnknown.fig === null &&
+        risesUnknown.out.includes('field "rises"[0]') &&
+        risesUnknown.out.includes('REQUIREMENTS_RESOLVES') &&
+        risesUnknown.out.includes('names part "sleeve", which parts.json does not list') &&
+        risesUnknown.out.includes('REQUIREMENTS_TIP_EXCEPTION') &&
+        risesUnknown.out.includes('names part "shoes" (from "full:footwear"), which TIP_OVER_ROOT does not read') &&
+        !existsSync(join(dir, 'seated-rises-unknown', 'build')),
+      `exit ${risesUnknown.status}; check.json ${risesUnknown.fig === null ? 'not written' : 'WRITTEN'}; ${risesUnknown.out.split('\n').filter((l) => l.includes('REQUIREMENTS_')).map((l) => l.trim().slice(0, 140)).join(' | ')}`,
+      'issue #231: rises is resolved by name like every other declaration — a part parts.json does not list, or a part TIP_OVER_ROOT never reads, is a miss, refused before the build',
+    );
+    const risesHung = seatedRun('rises-hung', seatedDecl, { armHangs: true });
+    const hungLine = risesHung.out.split('\n').find((l) => l.includes('REQUIREMENTS_TIP_EXCEPTION')) ?? '';
+    say(
+      'CK114_A_RISES_ON_A_PART_WHOSE_CHAIN_HANGS_IS_REFUSED_WITH_THE_MEASURED_DIRECTION',
+      risesHung.status === 1 &&
+        risesHung.fig === null &&
+        hungLine.includes('field "rises"[0]') &&
+        hungLine.includes('names part "arm", whose tip is not up: its chain runs down — arm0_ctl > arm1_ctl down (0, -15 world px)'),
+      `exit ${risesHung.status}; check.json ${risesHung.fig === null ? 'not written' : 'WRITTEN'}; ${hungLine.trim().slice(0, 260) || 'no REQUIREMENTS_TIP_EXCEPTION line'}`,
+      'issue #231: rises swaps which half is the tip\'s, so it is held to the chain it describes — the arm chain moved below the elbow (crop y 36 to 51, 15 px down, by hand) runs down at the setup pose, and the declaration is refused naming that direction rather than read up on the author\'s word',
+    );
+
     const redRig = join(dir, 'red');
     writeCheckRig(redRig, { opaqueFront: true });
     const red = runCli(['check', '--rig', redRig, '--out', join(dir, 'red-out')]);
@@ -7832,6 +7950,18 @@ function runCheckSuite(): number {
       'the shears of CK86 keep every triangle\'s area, so a whole-triangle path that ignored the posed area or the art centroid would pass them; a single pulled corner grows one triangle and not its neighbour, and only the area-weighted centroid gives the hand figure',
     );
     const emptyArt = { ...tArt, data: new Uint8Array(400).map((_, i) => (i < 200 && i % 20 >= 4 && i % 20 < 16 ? 1 : 0)) };
+    // Issue #231: a part declared rises has its halves swapped, to the bit; and a chain's direction is the axis it
+    // runs further on, none when it runs as far.
+    const sheared = [posedBy(meshA, (x, y) => [x, y]), posedBy(meshA, hemShear(2))];
+    const tDown = halfTravels(tArt, tBox, tStage, sheared);
+    const tUp = halfTravels(tArt, tBox, tStage, sheared, 'up');
+    const towards = [[0, -5], [0, 5], [5, 1], [-5, -1], [3, 3], [-3, 3], [0, 0]].map(([dx, dy]) => chainToward(dx, dy));
+    say(
+      'CK112_A_RISING_PART_READS_THE_SAME_TWO_HALVES_SWAPPED_AND_A_CHAIN_RUNS_THE_WAY_ITS_LONGER_AXIS_SAYS',
+      tDown.root !== null && tUp.root === tDown.tip && tUp.tip === tDown.root && tDown.tip !== null && JSON.stringify(towards) === JSON.stringify(['down', 'up', 'right', 'left', null, null, null]),
+      `hem sheared 2: down root ${tDown.root} tip ${tDown.tip}; up root ${tUp.root} tip ${tUp.tip}; (0,-5) (0,5) (5,1) (-5,-1) (3,3) (-3,3) (0,0) -> ${towards.map(String).join(', ')}`,
+      'issue #231: a raised forearm has its tip up, so a part declared rises is read with the two bands swapped and nothing else changed; whether its chain does rise is the vector from its first link to its last, read along its longer axis — a chain that runs as far across as along is not up, and a rises declaration on it is refused (CK114)',
+    );
     const noLower = halfTravels(emptyArt, tBox, tStage, [posedBy(meshA, (x, y) => [x, y]), posedBy(meshA, hemShear(2))]);
     const noShown = halfTravels(tArt, tBox, tStage, [null, posedBy(meshA, hemShear(2))]);
     const offMesh = halfTravels({ ...tArt, data: new Uint8Array(400).map((_, i) => (i % 20 < 4 ? 1 : 0)) }, tBox, tStage, [posedBy(meshA, (x, y) => [x, y]), posedBy(meshA, hemShear(2))]);
@@ -9057,7 +9187,7 @@ function runRequirementsSuite(): number {
       "a 2x2 square stretched to 3x2: edge 0-1 is 1.5 times its rest length; squeezed to 1x2 it is 0.5, which is a severity of 2 (compression distorts as stretch does) — the figure TEXTURE_STRETCH's stretchFigures and stretchSeverity give (imported, not rewritten — #87); a ratio with no rest length, or a mesh no frame shows, is undefined",
     );
 
-    const asFile = (rs: RequirementsFile['requirements']): RequirementsFile => ({ path: 'x', fps: REQ_FPS, targets: [], requirements: rs });
+    const asFile = (rs: RequirementsFile['requirements']): RequirementsFile => ({ path: 'x', fps: REQ_FPS, targets: [], requirements: rs, not_planted: [], not_swinging: [], rises: [] });
     const two = asFile([okRead.requirements[0], okRead.requirements[3]]);
     const lines = new Map<string, RequirementLine>([['HAND', cFail], ['SWING', cTip]]);
     const pFail = requirementProblem(okRead.requirements[0], cFail);
@@ -9213,6 +9343,32 @@ function runRequirementsSuite(): number {
         offRest.pair_frames_unread === 3,
       `neighbour shown on no frame: ${hidden.status} — ${String(hidden.reason)}; hidden on frame 1 only: ${someHidden.status}, ${String(someHidden.largest_px)} px, frames not measurable ${JSON.stringify(someHidden.frames_not_measurable)}; a pair off both rest squares: ${String(offRest.largest_px)} px, ${String(offRest.pair_frames_unread)} pair-frame(s) unread`,
       'a slot showing nothing has no displacement, so its frame is named as not measurable — hiding the frame where the seam opened leaves 0 measured, and the line says which frame it could not read; a pair whose pixel no rest triangle holds is unread on each of the 3 frames, never a 0 that would pass',
+    );
+
+    // Issue #231: the three exception lists, read as written, absent as none, and each malformed form refused by name.
+    const npBase = { spec, fps: REQ_FPS, requirements: [] };
+    const npRead = readRequirements(file('np-ok', { ...npBase, not_planted: ['shoe_l', 'shoe_r'], not_swinging: ['cut'], rises: ['arm'] }));
+    const npAbsent = readRequirements(file('np-absent', npBase));
+    const npBad = [
+      refusals(() => readRequirements(file('np-empty', { ...npBase, not_planted: [] }))),
+      refusals(() => readRequirements(file('np-string', { ...npBase, not_swinging: 'cut' }))),
+      refusals(() => readRequirements(file('np-twice', { ...npBase, rises: ['arm', 'arm'] }))),
+      refusals(() => readRequirements(file('np-blank', { ...npBase, not_planted: ['shoes', ''] }))),
+      refusals(() => readRequirements(file('np-both', { ...npBase, not_swinging: ['arm'], rises: ['arm'] }))),
+    ];
+    const npDetail = npBad.map((e) => e?.problems.map((q) => `${q.object.slice(q.object.indexOf(' field '))}: ${q.detail.slice(0, 60)}`).join(' / ') ?? 'not refused');
+    say(
+      'RQ36_THE_EXCEPTION_LISTS_READ_AS_WRITTEN_ABSENT_IS_NONE_AND_AN_EMPTY_A_NON_LIST_A_REPEAT_A_BLANK_OR_A_PART_BOTH_STILL_AND_RISING_IS_REFUSED',
+      JSON.stringify([npRead.not_planted, npRead.not_swinging, npRead.rises]) === '[["shoe_l","shoe_r"],["cut"],["arm"]]' &&
+        JSON.stringify([npAbsent.not_planted, npAbsent.not_swinging, npAbsent.rises]) === '[[],[],[]]' &&
+        npBad.every((e) => e !== null && e.problems.length === 1 && e.problems[0].code === 'REQUIREMENTS_FIELD') &&
+        npDetail[0].startsWith(' field "not_planted": is []; a non-empty list of part names is required') &&
+        npDetail[1].startsWith(' field "not_swinging": is "cut"; a non-empty list of part names is required') &&
+        npDetail[2].startsWith(' field "rises"[1]: names "arm" a second time') &&
+        npDetail[3].startsWith(' field "not_planted"[1]: is ""; a part name is required') &&
+        npDetail[4].startsWith(' field "rises"[0]: names "arm", which "not_swinging" names too'),
+      `read ${JSON.stringify([npRead.not_planted, npRead.not_swinging, npRead.rises])}; absent ${JSON.stringify([npAbsent.not_planted, npAbsent.not_swinging, npAbsent.rises])}; refused: ${npDetail.join(' | ')}`,
+      'issue #231: an exception is declared by name per part, so each field is a list of names, each once — an empty list declares nothing and is refused rather than read as no exception, a part cannot be both still and rising, and which parts the names are is resolved against parts.json and the rig by check (CK111, CK113, CK114)',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

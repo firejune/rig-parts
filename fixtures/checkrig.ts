@@ -378,3 +378,126 @@ export function writeMergedCheckRig(dir: string, opts: MergedRigOptions): void {
   const motion = { spec: 'rigc-motion/1', archetype: 'merged_probe', cut: 'merged_probe', easings: {}, groups: {}, animations: opts.idle ? { idle } : {} };
   writeFileSync(join(dir, 'motion.json'), `${JSON.stringify(motion, null, 2)}\n`);
 }
+
+// ---------------------------------------------------------------------------
+// issue #231: a seated figure — legs that swing, a raised forearm on its own chain, a cut piece left still
+// ---------------------------------------------------------------------------
+
+/**
+ * The seated figure of issue #231 on {@link CHECK_RIG}'s canvas, back to
+ * front. `under` is the piece cut off the skirt and sent behind: a region on
+ * `root`, on no chain. `body` the torso, `face` the face on a bone `head`.
+ * `shoes` the feet, a region on the last link of a leg chain hanging from the
+ * knee. `arm` the raised forearm, a region on the first link of an arm chain
+ * whose links rise from the elbow at the bottom of its box (crop y 36) to
+ * crop y 21: its tip is up.
+ */
+export const SEATED_CHECK_PARTS: ReadonlyArray<CheckPart & { from: string }> = [
+  { name: 'under', from: 'full:bottomwear', x: 10, y: 40, w: 24, h: 14, rgb: [120, 60, 160] },
+  { name: 'body', from: 'full:topwear', x: 8, y: 14, w: 30, h: 36, rgb: [200, 60, 40] },
+  { name: 'face', from: 'head:face', x: 14, y: 0, w: 20, h: 18, rgb: [230, 180, 150] },
+  { name: 'shoes', from: 'full:footwear', x: 12, y: 60, w: 24, h: 18, rgb: [60, 60, 60] },
+  { name: 'arm', from: 'full:handwear-r', x: 32, y: 6, w: 12, h: 30, rgb: [40, 90, 200] },
+];
+
+/** The two chains' amplitude in degrees (each link the same, so `CHAIN_LAG`'s non-decreasing amplitude holds) and the lag of the second link, cycles. */
+export const SEATED_SWING = { arm: 20, leg: 8, lag: 0.1 };
+
+/** Eight samples of `amp sin(2 pi (t - phase))` over one second and the first again at t = 1, so the loop closes exactly and `CHAIN_LAG` reads the sine. */
+function sineKeys(amp: number, phase: number): Array<{ t: number; v: number[] }> {
+  const keys = Array.from({ length: 8 }, (_, k) => ({ t: k / 8, v: [amp * Math.sin(2 * Math.PI * (k / 8 - phase))] }));
+  return [...keys, { t: 1, v: keys[0].v }];
+}
+
+/** Write the seated figure's rig directory: rig.json, motion.json, images/, parts/ and parts.json. The idle slides the root {@link IDLE_PEAK} right and back, as {@link writeCheckRig}'s does, and swings both chains. `armHangs` puts the arm chain's second link below the elbow (issue #231's planted negative of `rises`). */
+export function writeSeatedCheckRig(dir: string, opts: { armHangs?: boolean } = {}): void {
+  const { w: W, h: H } = CHECK_RIG;
+  mkdirSync(join(dir, 'images'), { recursive: true });
+  mkdirSync(join(dir, 'parts'), { recursive: true });
+  for (const p of SEATED_CHECK_PARTS) {
+    writeFileSync(join(dir, 'images', `${p.name}.png`), encodePngBytes(checkPartRaster(p)));
+    writeFileSync(join(dir, 'parts', `${p.name}.png`), encodePngBytes(checkPartRaster(p)));
+  }
+  const stage = { x: -W / 2, y: 0, width: W, height: H };
+  const world = (u: number, v: number): { x: number; y: number } => ({ x: stage.x + u, y: stage.y + cropToSpineY(v, H) });
+  const elbow = world(38, 36);
+  // With armHangs the arm chain's second link sits below the elbow instead: a chain that hangs, under the same art.
+  const wrist = world(38, opts.armHangs === true ? 51 : 21);
+  const knee = world(24, 54);
+  const ankle = world(24, 66);
+  const head = world(24, 18);
+  const bones = [
+    { name: 'root', x: 0, y: 0 },
+    { name: 'head', parent: 'root', x: head.x, y: head.y },
+    { name: 'arm0_ctl', parent: 'root', x: elbow.x, y: elbow.y },
+    { name: 'arm0', parent: 'arm0_ctl', x: 0, y: 0 },
+    { name: 'arm1_ctl', parent: 'arm0', x: wrist.x - elbow.x, y: wrist.y - elbow.y },
+    { name: 'arm1', parent: 'arm1_ctl', x: 0, y: 0 },
+    { name: 'leg0_ctl', parent: 'root', x: knee.x, y: knee.y },
+    { name: 'leg0', parent: 'leg0_ctl', x: 0, y: 0 },
+    { name: 'leg1_ctl', parent: 'leg0', x: ankle.x - knee.x, y: ankle.y - knee.y },
+    { name: 'leg1', parent: 'leg1_ctl', x: 0, y: 0 },
+  ];
+  const at: Record<string, { x: number; y: number }> = { root: { x: 0, y: 0 }, head, arm0: elbow, leg1: ankle };
+  const slotBone: Record<string, string> = { under: 'root', body: 'root', face: 'head', shoes: 'leg1', arm: 'arm0' };
+  const rig = {
+    spec: 'rigc-rig/1',
+    name: 'seated_probe',
+    images: 'images',
+    skeleton: stage,
+    bones,
+    slots: SEATED_CHECK_PARTS.map((p) => ({ name: p.name, bone: slotBone[p.name], attachment: p.name })),
+    skins: {
+      default: Object.fromEntries(
+        SEATED_CHECK_PARTS.map((p) => {
+          const c = world(p.x + p.w / 2, p.y + p.h / 2);
+          const b = at[slotBone[p.name]];
+          return [p.name, { [p.name]: { image: `${p.name}.png`, x: c.x - b.x, y: c.y - b.y } }];
+        }),
+      ),
+    },
+  };
+  writeFileSync(join(dir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+  const { arm, leg, lag } = SEATED_SWING;
+  const motion = {
+    spec: 'rigc-motion/1',
+    archetype: 'seated_probe',
+    cut: 'seated_probe',
+    easings: {},
+    groups: {},
+    animations: {
+      idle: {
+        duration: 1,
+        loop: true,
+        tracks: [
+          { bone: 'root', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [IDLE_PEAK] }, { t: 1, v: [0] }] },
+          { bone: 'arm0_ctl', property: 'rotate', keys: sineKeys(arm, 0) },
+          { bone: 'arm1_ctl', property: 'rotate', keys: sineKeys(arm, lag) },
+          { bone: 'leg0_ctl', property: 'rotate', keys: sineKeys(leg, 0) },
+          { bone: 'leg1_ctl', property: 'rotate', keys: sineKeys(leg, lag) },
+        ],
+      },
+    },
+  };
+  writeFileSync(join(dir, 'motion.json'), `${JSON.stringify(motion, null, 2)}\n`);
+  const parts: PartsFile = {
+    rig_size: [W, H],
+    scale_rig_per_source: 1,
+    parts: SEATED_CHECK_PARTS.map((p) => ({
+      name: p.name,
+      from: p.from,
+      x: p.x,
+      y: p.y,
+      w: p.w,
+      h: p.h,
+      opaque_px: Array.from(checkPartRaster(p).data.filter((_, i) => i % 4 === 3)).filter((a) => a > OPAQUE_ALPHA_ABOVE).length,
+      projected_core_px: 0,
+      source_px_taken: 0,
+      refused_drift_px: 0,
+      merged_px: 0,
+      seam_override_px: 0,
+    })),
+    ghost_px: {},
+  };
+  writeFileSync(join(dir, 'parts.json'), serializeParts(parts));
+}
