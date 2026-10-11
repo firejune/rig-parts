@@ -4783,7 +4783,9 @@ function runFaceAxisCases(say: (name: string, ok: boolean, detail: string, why: 
   const flatBones = new Map(flat.bones.map((b) => [b.name, b]));
   const handFlat: Record<string, [number, number]> = { eye_r: [-12, 22], eye_l: [4, 34], brow_r: [-15, 28], brow_l: [1, 40], mouth: [2, 12] };
   const flatOk = Object.entries(handFlat).every(([n, [x, y]]) => flatBones.get(n)?.x === x && flatBones.get(n)?.y === y) && ['eyewhite_r', 'eyewhite_l', 'mouth'].every((p) => JSON.stringify(regionOf(flat, p)) === JSON.stringify({ image: `${p}.png`, x: 0, y: 0 }));
-  const gap = worldGaps(setupWorld(r.rig), setupWorld(flat), 1e-6);
+  // flattenRig drops head_up by name (issue #250: a slotless bone carrying only a direction, nothing hangs from it), so
+  // the built side is compared without it, by that name alone.
+  const gap = worldGaps(setupWorld({ ...r.rig, bones: r.rig.bones.filter((b) => b.name !== HEAD_UP_BONE) }), setupWorld(flat), 1e-6);
   const dir = temp('face-axis');
   try {
     const images = join(dir, 'images');
@@ -11599,6 +11601,17 @@ function runChainSuite(): number | null {
             if (miss > 1e-5) offAim.push(`${m} turned ${pyRound(turnOf.get(m) ?? 0, 6)} (the eye line: ${pyRound(eyeDeg, 6)})`);
           }
         }
+      }
+      // Issue #250: head_up, under head, points along the eye line + 90 and is as long as the eye midpoint lies from
+      // head's origin along that axis, read off the config's head, eye_r and eye_l.
+      const headAt = exCfg.bones.find((e) => e.name === 'head')?.at;
+      if (eyeDeg !== null && headAt !== undefined) {
+        const up = byBuilt.get(HEAD_UP_BONE);
+        links.add(HEAD_UP_BONE);
+        const a = ((eyeDeg + 90) * Math.PI) / 180;
+        const reach = ((eyeA[0] + eyeB[0]) / 2 - headAt[0]) * Math.cos(a) + (cropToSpineY((eyeA[1] + eyeB[1]) / 2, rigH) - cropToSpineY(headAt[1], rigH)) * Math.sin(a);
+        const miss = Math.abs(wrapDegrees((turnOf.get(HEAD_UP_BONE) ?? 0) - (eyeDeg + 90)));
+        if (up === undefined || up.parent !== 'head' || miss > 1e-5 || up.length !== pyRound(reach, 3)) offAim.push(`${HEAD_UP_BONE} ${up === undefined ? 'absent' : `turned ${pyRound(turnOf.get(HEAD_UP_BONE) ?? 0, 6)} length ${up.length}`} (the eye line + 90: ${pyRound(eyeDeg + 90, 6)}, ${pyRound(reach, 3)})`);
       }
       const turnedOthers = builtRig.bones.filter((b) => !links.has(b.name) && turnOf.get(b.name) !== 0).map((b) => `${b.name} ${turnOf.get(b.name)}`);
       say(
