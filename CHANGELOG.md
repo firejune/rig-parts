@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.5.0](https://github.com/firejune/rig-parts/compare/v1.4.0...v1.5.0) (2026-10-11)
+
+
+### Features
+
+* **compose:** take a build that fails only the bars named by --accept, and say so everywhere ([#208](https://github.com/firejune/rig-parts/issues/208)) ([a2adb56](https://github.com/firejune/rig-parts/commit/a2adb5680c39ca2889f2590ee6ce84ab41f94f55))
+* **generate:** a control skeleton from a pose file, beside the two built-in standing poses ([#206](https://github.com/firejune/rig-parts/issues/206)) ([f9eec2d](https://github.com/firejune/rig-parts/commit/f9eec2d2d174dd74cc46a47ff50b1f519e42cb0e))
+* **mesh:** a declared stimulus for the automatic mesh of a part only physics moves ([#211](https://github.com/firejune/rig-parts/issues/211)) ([a580eea](https://github.com/firejune/rig-parts/commit/a580eea413cb051f65fab324679e5de874d1a7f3))
+* **propose:** a declared tolerance for a wrist that lies on no handwear part ([#213](https://github.com/firejune/rig-parts/issues/213)) ([7405ed8](https://github.com/firejune/rig-parts/commit/7405ed80ed3c0fce90449b5a07b2de1ddcdeaae0))
+
+
+### Bug Fixes
+
+* **check:** carry rig pixel centres onto frame pixel centres in the seam and source maps, so a figure rendered above scale 1 is not failed on registration ([#212](https://github.com/firejune/rig-parts/issues/212)) ([add91cd](https://github.com/firejune/rig-parts/commit/add91cd78219c5dc276acbd16f4a181fbd96d9ff))
+* **examples:** put the scarf's robe_r chain on the tie it drives ([#210](https://github.com/firejune/rig-parts/issues/210)) ([5ce44f7](https://github.com/firejune/rig-parts/commit/5ce44f78ec6731e09ff1e591c0507ba24376a5be))
+
 ## [1.4.0](https://github.com/firejune/rig-parts/compare/v1.3.0...v1.4.0) (2026-10-11)
 
 
