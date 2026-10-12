@@ -70,7 +70,7 @@ import {
   splitSchedule,
   untestedIntervals,
 } from './autoreplay.ts';
-import { besideIdleLine, FOLD_LINE, type FoldsLine, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
+import { besideIdleLine, FOLD_LINE, type FoldsLine, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, rigcIdentity, rigcRanClause, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
 import { type Cut, loadConfig, loadConfigAndAnimations, loadEarlyConfig } from './config.ts';
 import { PartsError, type Problem, problemLine, refuseIfAny } from './errors.ts';
 import type { MeshQualityReport, MotionSchedule } from 'rig-c/mesh';
@@ -277,6 +277,8 @@ export interface GateRun {
    * {@link causeLines} says name why.
    */
   lines: string[];
+  /** Which rigc ran it, when the runner said ({@link RigcCall.ran}; issue #337). */
+  ran?: string;
 }
 
 /**
@@ -295,7 +297,7 @@ function gateRun(label: string, rigc: RigcRunner, args: string[]): GateRun {
   const r = rigc(args);
   const lines = r.out.split('\n').filter((l) => /^ {2}FAIL {2}/.test(l) || /assertions: \d+ measured/.test(l) || /^rigc compile error/.test(l) || DECLARED_SKIP.test(l) || HERE_LINE.test(l));
   const failed = lines.some((l) => /^ {2}FAIL {2}/.test(l) || /^rigc compile error/.test(l));
-  return { label, status: r.status, lines: r.status !== 0 && !failed ? [...lines, ...causeLines(r.out)] : lines };
+  return { label, status: r.status, lines: r.status !== 0 && !failed ? [...lines, ...causeLines(r.out)] : lines, ...(r.ran === undefined ? {} : { ran: r.ran }) };
 }
 
 /**
@@ -490,7 +492,7 @@ export function motionGates(
             {
               code: 'AUTO_MESH_MOTION_INPUT',
               object: c.object,
-              detail: `the candidate with the declared stimulus (the rig as written, its motion carrying the stimulus animations) ${candidate.status !== 0 ? `is refused by rigc's gate, exit ${candidate.status}${candidate.lines.length > 0 ? `: ${candidate.lines.map((l) => l.trim()).join(' | ')}` : ''}` : `built green and wrote no ${RIGC_MODEL_DOCUMENT}`}; a candidate that is not gated is not evidence, and nothing is built in the part's place`,
+              detail: `the candidate with the declared stimulus (the rig as written, its motion carrying the stimulus animations) ${candidate.status !== 0 ? `is refused by rigc's gate, exit ${candidate.status}${candidate.lines.length > 0 ? `: ${candidate.lines.map((l) => l.trim()).join(' | ')}` : ''}${rigcRanClause(candidate)}` : `built green and wrote no ${RIGC_MODEL_DOCUMENT}`}; a candidate that is not gated is not evidence, and nothing is built in the part's place`,
             },
           ],
           notCompared: 'the stimulus candidate build is red',
@@ -520,7 +522,7 @@ export function motionGates(
           {
             code: 'AUTO_MESH_MOTION_INPUT',
             object: c.object,
-            detail: `the reference (the rig with "${c.part}" as its unreduced source mesh) ${gate.status !== 0 ? `is refused by rigc's gate, exit ${gate.status}${gate.lines.length > 0 ? `: ${gate.lines.map((l) => l.trim()).join(' | ')}` : ''}` : `built green and wrote no ${RIGC_MODEL_DOCUMENT}`}; a reference that is not gated is not evidence, and nothing is built in the part's place`,
+            detail: `the reference (the rig with "${c.part}" as its unreduced source mesh) ${gate.status !== 0 ? `is refused by rigc's gate, exit ${gate.status}${gate.lines.length > 0 ? `: ${gate.lines.map((l) => l.trim()).join(' | ')}` : ''}${rigcRanClause(gate)}` : `built green and wrote no ${RIGC_MODEL_DOCUMENT}`}; a reference that is not gated is not evidence, and nothing is built in the part's place`,
           },
         ],
         notCompared: 'the reference build is red',
@@ -642,7 +644,7 @@ export function replaySearch(
       fatal = {
         code: 'AUTO_MESH_MOTION_INPUT',
         object: c.object,
-        detail: `the replay to accepted step ${step} (the rig with "${c.part}" as that step's mesh) ${gate.status !== 0 ? `is refused by rigc's gate, exit ${gate.status}${gate.lines.length > 0 ? `: ${gate.lines.map((l) => l.trim()).join(' | ')}` : ''}` : `built green and wrote no ${RIGC_MODEL_DOCUMENT}`}; a candidate that is not gated is not evidence, and nothing is built in the part's place`,
+        detail: `the replay to accepted step ${step} (the rig with "${c.part}" as that step's mesh) ${gate.status !== 0 ? `is refused by rigc's gate, exit ${gate.status}${gate.lines.length > 0 ? `: ${gate.lines.map((l) => l.trim()).join(' | ')}` : ''}${rigcRanClause(gate)}` : `built green and wrote no ${RIGC_MODEL_DOCUMENT}`}; a candidate that is not gated is not evidence, and nothing is built in the part's place`,
       };
       return refused(`rigc exit ${gate.status}`);
     }
@@ -897,7 +899,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     const problems: Problem[] = red.map((g) => ({
       code: 'RIG_RIGC_GREEN',
       object: `rigc ${g.label}`,
-      detail: `exited ${g.status}${g.lines.length > 0 ? `: ${g.lines.map((l) => l.trim()).join(' | ')}` : ', and it printed nothing'}; ${ctlRemedies(g.lines, rig.controls, input.command ?? 'rig').map((s) => `${s}; `).join('')}exit 0 is required before anything is written, and nothing was`,
+      detail: `exited ${g.status}${g.lines.length > 0 ? `: ${g.lines.map((l) => l.trim()).join(' | ')}` : ', and it printed nothing'}${rigcRanClause(g)}; ${ctlRemedies(g.lines, rig.controls, input.command ?? 'rig').map((s) => `${s}; `).join('')}exit 0 is required before anything is written, and nothing was`,
     }));
     throw new PartsError(problems);
   }
@@ -1060,7 +1062,7 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   log(`rig-parts check: ${input.rig} -> ${input.out}`);
   const versionLines = v.out.trim().split('\n');
   const entryLine = versionLines.find((l) => l.startsWith('entry:'));
-  log(`  rigc ${versionLines[0]} at ${bin}${entryLine === undefined ? '' : `; ${entryLine}`}`);
+  log(`  ${rigcIdentity(bin, v)}${entryLine === undefined ? '' : `; ${entryLine}`}`);
   const mode: PackMode = { pageEdges: input.pageEdges ?? DEFAULT_PAGE_EDGES, packShape: input.packShape ?? DEFAULT_PACK_SHAPE };
   const r = runCheck(input.rig, input.out, rigc, input.parts, mode, input.source, input.requirements, input.seamPairs === true, input.keepStills === true);
   log(`  gate spine-html (rigc ${packedBuildLabel(mode)}), verbatim:`);

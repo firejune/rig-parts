@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
 import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage, suppliedCheckFlag } from './src/build.ts';
-import { ACCEPTABLE_BARS, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, findRigc, PACK_SHAPES, type PackShape, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, NO_PARTS_SENTENCE, SEAM_MEAN_BAR, SOURCE_SENTENCE, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
+import { ACCEPTABLE_BARS, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, findRigc, PACK_SHAPES, rigcRunnerAt, type PackShape, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, NO_PARTS_SENTENCE, SEAM_MEAN_BAR, SOURCE_SENTENCE, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
 import { type CharacterConfig, loadConfig, loadEarlyConfig, loadPaintConfig } from './src/config.ts';
 import { PartsError, problemLine } from './src/errors.ts';
@@ -825,14 +825,15 @@ function cmdRig(args: string[]): number {
  * `cli_core.ts` and rigc's own validator where it does not. No stage runs a
  * rigc source file by path: under rig-c 2.0, `cli.ts` by path is the
  * spine-core entry whether or not spine-core is there. `src/` is pure and takes
- * the spawn from here.
+ * the spawn from here. A call that fails carries which rigc ran it, path and
+ * version ({@link rigcRunnerAt}, issue #337), and every refusal quoting it says so.
  */
 function rigcRunner(bin: string): RigcRunner {
-  return (args) => {
-    const r = spawnSync(bin, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
-    if (r.error !== undefined) return { status: 127, out: `could not start ${bin}: ${r.error.message}` };
+  return rigcRunnerAt(bin, (b, args) => {
+    const r = spawnSync(b, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
+    if (r.error !== undefined) return { status: 127, out: `could not start ${b}: ${r.error.message}` };
     return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
-  };
+  });
 }
 
 /** The command's valued flags as `--flag value` pairs, each one its {@link TAKES} row holds; `required` must all be given. Its bare switches are taken out by the caller before this reads the rest. A string is a usage error. */
