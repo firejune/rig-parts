@@ -93,7 +93,7 @@ export type RuleName = (typeof ALL_RULES)[number];
 /** Stage A's rules, the default; Stage B runs `--rules` with the family rule. */
 export const RULE_NAMES: readonly RuleName[] = ['as built', 'continuous cap', 'continuous floor', 'both', 'lifted'];
 
-const ALL = { maxInfluences: Number.MAX_SAFE_INTEGER, minWeight: 0 };
+export const ALL = { maxInfluences: Number.MAX_SAFE_INTEGER, minWeight: 0 };
 
 function normalise(list: readonly Influence[]): Influence[] {
   let s = 0;
@@ -151,7 +151,7 @@ export function ruleInfluences(rule: RuleName, rp: P2, segs: readonly Segment[],
 }
 
 /** `roundShares` (src/rig.ts), the region rounding: 5 places, zeros dropped, the remainder to the heaviest. */
-function roundShares(list: readonly Influence[]): Influence[] {
+export function roundShares(list: readonly Influence[]): Influence[] {
   const kept = list.map((e) => ({ bone: e.bone, weight: pyRound(e.weight, 5) })).filter((e) => e.weight > 0);
   let heavy = 0;
   for (let k = 1; k < kept.length; k++) if (kept[k].weight > kept[heavy].weight) heavy = k;
@@ -162,7 +162,7 @@ function roundShares(list: readonly Influence[]): Influence[] {
 }
 
 /** The lattice's rounding (src/rig.ts): each weight to 5 places, the last entry `1 − sum(others)` — what `rule: "heat"` writes. */
-function latticeRound(list: readonly Influence[]): Influence[] {
+export function latticeRound(list: readonly Influence[]): Influence[] {
   const out = list.map((e) => ({ bone: e.bone, weight: pyRound(e.weight, 5) }));
   let others = 0;
   for (let k = 0; k < out.length - 1; k++) others += out[k].weight;
@@ -171,7 +171,7 @@ function latticeRound(list: readonly Influence[]): Influence[] {
 }
 
 /** A bone's offset to a world point, in the bone's setup frame (`weightsAt`'s construction, unrounded). */
-function local(bones: ReadonlyMap<string, BoneMatrix>, bone: string, w: P2): [number, number] {
+export function local(bones: ReadonlyMap<string, BoneMatrix>, bone: string, w: P2): [number, number] {
   const m = bones.get(bone);
   if (m === undefined) throw new Error(`tear_survey: bone "${bone}" is not in the setup geometry`);
   const det = m.a * m.d - m.b * m.c;
@@ -179,7 +179,7 @@ function local(bones: ReadonlyMap<string, BoneMatrix>, bone: string, w: P2): [nu
   return [(m.d * dx - m.b * dy) / det, (-m.c * dx + m.a * dy) / det];
 }
 
-const placesZ = (v: number): number => (pyRound(v, OFFSET_PLACES) === 0 ? 0 : pyRound(v, OFFSET_PLACES));
+export const placesZ = (v: number): number => (pyRound(v, OFFSET_PLACES) === 0 ? 0 : pyRound(v, OFFSET_PLACES));
 
 function sameInfluences(a: readonly Influence[], b: readonly Influence[]): boolean {
   return a.length === b.length && a.every((e, i) => e.bone === b[i].bone && Math.abs(e.weight - b[i].weight) <= 1e-12);
@@ -189,7 +189,7 @@ function sameInfluences(a: readonly Influence[], b: readonly Influence[]): boole
 // one part's context
 // ---------------------------------------------------------------------------
 
-interface PartCtx {
+export interface PartCtx {
   part: string;
   box: PartBox;
   att: Obj;
@@ -212,7 +212,7 @@ interface PartCtx {
   heatIterations: number[] | null;
 }
 
-function partCtx(config: Obj, arm0: string, rig: Obj, box: PartBox, latG: Geometry): PartCtx | string {
+export function partCtx(config: Obj, arm0: string, rig: Obj, box: PartBox, latG: Geometry): PartCtx | string {
   const part = box.name;
   const m = o(o(config.meshes)[part]);
   if (!('grid' in m)) return `${'contour' in m ? 'contour' : 'auto' in m ? 'auto' : 'region'} mesh: keeps its weights`;
@@ -274,10 +274,10 @@ function writtenFor(ctx: PartCtx, i: number, rule: RuleName, bones: ReadonlyMap<
 // the reference under a rule, and its tears
 // ---------------------------------------------------------------------------
 
-type RuleRef = Reference & { rig: P2[]; kept: string[] };
+export type RuleRef = Reference & { rig: P2[]; kept: string[] };
 
 /** `referenceField` (tools/bend_survey.ts) under `rule`: the same samples, each skinned by the rule unrounded. */
-function referenceUnder(ctx: { box: PartBox; segs: readonly Segment[]; r: number; exponent: number | undefined; rigToWorld: (p: P2) => P2; ci: ChainInfo; heat: HeatArg | null }, png: string, bones: ReadonlyMap<string, BoneMatrix>, poses: ReadonlyArray<ReadonlyMap<string, BoneMatrix>>, rule: RuleName): RuleRef {
+export function referenceUnder(ctx: { box: PartBox; segs: readonly Segment[]; r: number; exponent: number | undefined; rigToWorld: (p: P2) => P2; ci: ChainInfo; heat: HeatArg | null }, png: string, bones: ReadonlyMap<string, BoneMatrix>, poses: ReadonlyArray<ReadonlyMap<string, BoneMatrix>>, rule: RuleName): RuleRef {
   const img = readPng(png);
   let art = 0;
   for (let i = 0; i < img.width * img.height; i++) if (img.data[i * 4 + 3] > ART_ALPHA) art++;
@@ -911,7 +911,7 @@ export function runTears(key: string, configPath: string, inputs: string, work: 
   };
 }
 
-function worldToRigOf(c: PartCtx): (p: P2) => P2 {
+export function worldToRigOf(c: PartCtx): (p: P2) => P2 {
   const world: P2[] = c.rig.map((p) => c.rigToWorld(p));
   return fitAffine(world, c.rig);
 }
