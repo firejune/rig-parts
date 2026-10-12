@@ -179,7 +179,7 @@ import {
   visibilityCounts,
 } from './src/assemble.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
-import { BARS, besideIdleLine, blackRig, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
+import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, FOLD_LINE, foldsLine, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { baseTagOf, blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
@@ -4075,7 +4075,7 @@ function runAnimationsFromCases(say: (name: string, ok: boolean, detail: string,
       'issue #183: the merge is not a bypass — the animations go through the one gate the idle goes through, so a key on a bone the rig does not have is refused in rigc\'s words and emit-only-after-green holds',
     );
 
-    // RG74 — check measures the idle alone and names the others on one line; a rig of the idle alone prints no such line.
+    // RG74 — check names the others on one line, which says the fold bar reads them and every other bar the idle; a rig of the idle alone prints no such line.
     const chk = runCli(['check', '--rig', gated.out, '--parts', gated.parts, '--out', join(dir, 'gated', 'check')]);
     const lines = chk.out.split('\n');
     const besideLines = lines.filter((l) => l.trim().startsWith('beside the idle:'));
@@ -4084,10 +4084,10 @@ function runAnimationsFromCases(say: (name: string, ok: boolean, detail: string,
     // rigc's own count of the skeleton it built from the packed pages: the idle and nod.
     const built = lines.filter((l) => l.includes(' animations=2 '));
     say(
-      'RG74_CHECK_READS_THE_IDLE_ALONE_AND_NAMES_THE_ANIMATIONS_BESIDE_IT_ON_ONE_LINE',
-      besideLines.length === 1 && besideLines[0].includes('1 animation(s), nod') && loopLine.startsWith('loop: idle ') && built.length > 0 && none === null,
+      'RG74_CHECK_NAMES_THE_ANIMATIONS_BESIDE_THE_IDLE_ON_ONE_LINE_AND_WHICH_BAR_READS_THEM',
+      besideLines.length === 1 && besideLines[0].includes('1 animation(s), nod') && besideLines[0].includes(`${FOLD_LINE} reads each for folds, every other bar here reads the idle`) && loopLine.startsWith('loop: idle ') && built.length > 0 && none === null,
       `check on the rig with nod -> exit ${chk.status}; ${besideLines.length} beside line(s): "${besideLines[0]?.trim() ?? ''}"; ${loopLine}; rigc's gate lines naming animations=2: ${built.length}; planted, no animation beside the idle -> ${none === null ? 'no line' : `"${none}"`}`,
-      'issue #183: every bar reads the idle (the loop, the seam, the frames rigc renders with --animation idle); the others were built and gated, which the gate line says, and the line says they were not measured rather than leaving a reader to infer it',
+      'issue #183: every bar but one reads the idle (the loop, the seam, the frames rigc renders with --animation idle); the others were built and gated, which the gate line says, and since issue #320 read for folds (CK243), and the line says which bar reads them rather than leaving a reader to infer it',
     );
 
     // RG75 — a file the loader refuses stops the rig stage before rigc runs, and nothing is written.
@@ -11097,7 +11097,192 @@ function runCheckSuite(): number {
     `declared, shrinking: ${String(restShrink.line.status)}, resting ${JSON.stringify(restShrink.line.resting_chains)} (undeclared ${String(shrink.line.status)}); declared, growing: ${String(restGrow.line.first_violation)} — ${growDetail?.object ?? 'no problem'}: ${growDetail?.detail.slice(0, 120) ?? ''}; declared, leading: ${String(restBack.line.first_violation)}; declared on a part no chain carries: ${String(restLoose.line.first_violation)}`,
     "issue #245, from the consumer's lying figure: CHAIN_LAG asked a leg chain for amplitudes growing toward the foot, the end that rests. A chain carrying a part declared rests (its bound bone walked up to the chain, as rises finds its chain) is read the opposite way — non-increasing, the planted growing chain refused at its first link that grows — while the lag is kept, since the declaration says how far the tip moves and not when; a declared part no chain carries relaxes nothing",
   );
+  runAnimationFoldCases(say);
   return bad();
+}
+
+/**
+ * Issue #320: ANIMATIONS_DO_NOT_FOLD, through the CLI on the rig stage's own
+ * fixture (fixtures/rig.ts). `cloth` is a 12-triangle mesh weighted to the
+ * chain `hem`; `nod` turns `body` 6 degrees and back, which carries the whole
+ * cloth rigidly, so no triangle turns over. The planted `bend` translates
+ * `hem1` 40 px to the left at its peak: the cloth's vertices move by their
+ * `hem1` weight times that, so a column weighted more to `hem1` passes one
+ * weighted less (fixtures/rig.ts: 0.2 at `hem0`'s origin, more toward the tip)
+ * and the triangles between them turn over. Which triangles and frames is
+ * rigc's reading and is not asserted; that `bend` folds `cloth` and `nod`
+ * folds nothing is.
+ */
+function runAnimationFoldCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('animation-folds');
+  try {
+    const nod = { duration: 1, tracks: [{ bone: 'body', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [6] }, { t: 1, v: [0] }] }] };
+    const bend = { duration: 1, tracks: [{ bone: 'hem1', property: 'translate', keys: [{ t: 0, v: [0, 0] }, { t: 0.5, v: [-40, 0] }, { t: 1, v: [0, 0] }] }] };
+    const rigged = (name: string, animations: Record<string, unknown>): { rig: string; parts: string; status: number } => {
+      const c = rigConfig();
+      (c.motion as Record<string, unknown>).animations_from = 'anims/extra.json';
+      const f = writeRigFixture(join(dir, name), c);
+      mkdirSync(join(dir, name, 'anims'), { recursive: true });
+      writeFileSync(join(dir, name, 'anims', 'extra.json'), `${JSON.stringify({ spec: 'rigc-motion/1', animations }, null, 2)}\n`);
+      const r = runCli(['rig', '--config', f.config, '--parts', f.parts, '--out', join(dir, name, 'rig')]);
+      return { rig: join(dir, name, 'rig'), parts: f.parts, status: r.status };
+    };
+    const checked = (label: string, rig: { rig: string; parts: string }, extra: string[] = []): { status: number; out: string; fig: Record<string, unknown> | null; outDir: string } => {
+      const outDir = join(dir, `${label}-out`);
+      const r = runCli(['check', '--rig', rig.rig, '--parts', rig.parts, '--out', outDir, ...extra]);
+      return { ...r, fig: readJsonFile(join(outDir, 'check.json')), outDir };
+    };
+    const foldOf = (fig: Record<string, unknown> | null): Record<string, unknown> | null => {
+      const l = fig?.[FOLD_LINE];
+      return typeof l === 'object' && l !== null ? (l as Record<string, unknown>) : null;
+    };
+    const rows = (fig: Record<string, unknown> | null): Array<Record<string, unknown>> => (Array.isArray(foldOf(fig)?.folding) ? (foldOf(fig)?.folding as Array<Record<string, unknown>>) : []);
+    const summary = (out: string): string => out.split('\n').find((l) => l.startsWith('check: ')) ?? 'no summary';
+    const foldPrinted = (out: string): string[] => out.split('\n').filter((l) => l.startsWith(`  ${FOLD_LINE}: `) || l.startsWith('    folds  '));
+
+    // CK243 — the positive control (nod alone) and the planted fold (nod and bend).
+    const calm = rigged('calm', { nod });
+    const folded = rigged('folded', { nod, bend });
+    const ok = checked('calm', calm);
+    const red = checked('folded', folded);
+    const okKeys = ok.fig === null ? [] : Object.keys(ok.fig);
+    const redRows = rows(red.fig);
+    const redFail = failLine(red.out, `CHECK_${FOLD_LINE}`);
+    const rigcLine = String(redRows[0]?.line ?? '');
+    say(
+      'CK243_AN_ANIMATION_BESIDE_THE_IDLE_THAT_FOLDS_A_MESH_FAILS_CHECK_IN_RIGCS_WORDS_AND_ONE_THAT_DOES_NOT_PASSES',
+      calm.status === 0 &&
+        folded.status === 0 &&
+        ok.status === 0 &&
+        foldOf(ok.fig)?.status === 'PASS' &&
+        rows(ok.fig).length === 0 &&
+        JSON.stringify(foldOf(ok.fig)?.animations) === '["nod"]' &&
+        foldOf(ok.fig)?.fps === 12 &&
+        okKeys.indexOf(FOLD_LINE) === okKeys.indexOf('TEXTURE_STRETCH') + 1 &&
+        summary(ok.out).startsWith('check: PASS; ') &&
+        summary(ok.out).includes(' of 10 bar(s) measured') &&
+        !existsSync(join(ok.outDir, '_folds')) &&
+        red.status === 1 &&
+        red.fig?.PASS === false &&
+        foldOf(red.fig)?.status === 'FAIL' &&
+        JSON.stringify(foldOf(red.fig)?.animations) === '["nod","bend"]' &&
+        redRows.length === 1 &&
+        redRows[0].animation === 'bend' &&
+        redRows[0].slot === 'cloth' &&
+        redRows[0].declared === null &&
+        rigcLine.startsWith('"bend": mesh "cloth" (slot "cloth") folds on ') &&
+        rigcLine.includes(' at 12 fps; worst frame ') &&
+        foldOf(red.fig)?.folding_undeclared === 1 &&
+        redFail !== null &&
+        redFail.includes('animation "bend", mesh "cloth" (slot "cloth")') &&
+        redFail.includes(rigcLine) &&
+        redFail.includes('may_fold') &&
+        foldPrinted(red.out).some((l) => l === `    folds  ${rigcLine}`) &&
+        summary(red.out).startsWith('check: FAIL — 1 bar(s) not met; ') &&
+        !existsSync(join(red.outDir, '_folds')),
+      `nod alone: exit ${ok.status}, ${String(foldOf(ok.fig)?.status)}, key after ${okKeys[okKeys.indexOf(FOLD_LINE) - 1] ?? 'nothing'}, "${summary(ok.out)}"; planted bend: exit ${red.status}, ${String(foldOf(red.fig)?.status)}, ${redRows.length} row(s) ${redRows.map((r) => `${String(r.animation)}/${String(r.slot)}`).join(', ')}; ${redFail?.trim().slice(0, 200) ?? 'no FAIL line'}…; "${summary(red.out)}"; scratch ${existsSync(join(red.outDir, '_folds')) ? 'LEFT' : 'removed'}`,
+      "issue #320: check read the animations beside the idle for nothing, so a gesture that turned a garment's triangles over passed with PASS printed; rigc render --folds over every animation is the reading, its line is quoted verbatim in the FAIL, check.json and the console, and the bar counts once in the summary where it is written (a rig of the idle alone writes no key and counts what it did — CK01's keys, and the examples' check.json in the chain suite)",
+    );
+
+    // CK244 — a fold the art means, declared in the requirements file, is named with its why and not held; a declaration that excepts nothing fails.
+    const reqFile = (name: string, mayFold: unknown[]): string => {
+      const p = join(dir, `${name}.json`);
+      writeFileSync(p, `${JSON.stringify({ spec: 'spine-parts-requirements/1', fps: 12, requirements: [], may_fold: mayFold }, null, 2)}\n`);
+      return p;
+    };
+    const why = 'the hem is meant to tuck under itself on the bend';
+    const declared = checked('declared', folded, ['--requirements', reqFile('declared', [{ slot: 'cloth', animation: 'bend', why }])]);
+    const stale = checked('stale', folded, ['--requirements', reqFile('stale', [{ slot: 'cloth', animation: 'bend', why }, { slot: 'cloth', animation: 'nod', why: 'no reason' }])]);
+    const declaredRows = rows(declared.fig);
+    const staleFail = failLine(stale.out, `CHECK_${FOLD_LINE}`);
+    say(
+      'CK244_A_FOLD_DECLARED_IN_MAY_FOLD_IS_NAMED_WITH_ITS_WHY_AND_NOT_HELD_AND_A_DECLARATION_THAT_EXCEPTS_NOTHING_FAILS',
+      declared.status === 0 &&
+        foldOf(declared.fig)?.status === 'PASS' &&
+        declaredRows.length === 1 &&
+        declaredRows[0].declared === why &&
+        foldOf(declared.fig)?.folding_undeclared === 0 &&
+        foldPrinted(declared.out).some((l) => l.startsWith('    folds  "bend": mesh "cloth"') && l.endsWith(` — declared in may_fold: ${why}`)) &&
+        stale.status === 1 &&
+        foldOf(stale.fig)?.status === 'FAIL' &&
+        JSON.stringify(foldOf(stale.fig)?.declared_not_folding) === '[{"slot":"cloth","animation":"nod"}]' &&
+        staleFail !== null &&
+        staleFail.includes('may_fold (slot "cloth", animation "nod")') &&
+        staleFail.includes('reads no folded triangle on slot "cloth" in animation "nod"'),
+      `declared: exit ${declared.status}, ${String(foldOf(declared.fig)?.status)}, row declared ${JSON.stringify(declaredRows[0]?.declared ?? null)}; planted, nod declared too: exit ${stale.status}, ${staleFail?.trim().slice(0, 220) ?? 'no FAIL line'}`,
+      "issue #320, HQ's reading: a fold the art means (a sleeve hidden behind the body) is the author's to accept, by slot and animation with a reason, as rig-c's invariants.deformMayFold is — and, as rig-c refuses an exemption that exempts nothing, an entry that matches no fold fails rather than sitting in the file after the fold it excused is gone",
+    );
+
+    // CK245 — with a physics constraint the folds are read from the keyed build, which still sees the keys' fold.
+    const physical = join(dir, 'folded', 'rig');
+    const rigText = readFileSync(join(physical, 'rig.json'), 'utf8');
+    const withPhys = JSON.parse(rigText) as { constraints?: unknown[] };
+    withPhys.constraints = [...(withPhys.constraints ?? []), { type: 'physics', name: 'hem1_phys', bone: 'hem1', rotate: 1, inertia: 0.5, strength: 100, damping: 0.85, mass: 1, mix: 1 }];
+    writeFileSync(join(physical, 'rig.json'), `${JSON.stringify(withPhys, null, 2)}\n`);
+    const phys = checked('physics', folded);
+    writeFileSync(join(physical, 'rig.json'), rigText);
+    const physFail = failLine(phys.out, `CHECK_${FOLD_LINE}`);
+    say(
+      'CK245_WITH_A_PHYSICS_CONSTRAINT_THE_FOLDS_ARE_READ_FROM_THE_KEYED_BUILD_AND_THE_KEYS_FOLD_STILL_FAILS',
+      phys.status === 1 &&
+        foldOf(phys.fig)?.physics_left_out === 1 &&
+        rows(phys.fig).length === 1 &&
+        rows(phys.fig)[0].animation === 'bend' &&
+        physFail !== null &&
+        physFail.includes('rigc render --folds at 12 fps, its 1 physics constraint(s) left out: "bend": mesh "cloth"') &&
+        Array.isArray(phys.fig?.loop_physics) &&
+        !existsSync(join(phys.outDir, '_loop')) &&
+        !existsSync(join(phys.outDir, '_folds')),
+      `exit ${phys.status}; physics_left_out ${String(foldOf(phys.fig)?.physics_left_out)}; ${physFail?.trim().slice(0, 200) ?? 'no FAIL line'}…; loop_physics ${JSON.stringify(phys.fig?.loop_physics ?? null)}; scratch _loop ${existsSync(join(phys.outDir, '_loop')) ? 'LEFT' : 'removed'}`,
+      "issue #320: rig-c's render steps physics by 1/fps from frame 0, so a physics fold is the sampling rate's (on the public scarf, hop folds bottomwear at 12 fps and at none of 10, 15, 24, 30, 36, 48 or 60, and at no rate with its physics left out [measured for issue #320]); the fold bar reads the keys from the one build the loop already reads them from, and leaving the physics out must not hide a fold the keys make",
+    );
+
+    // CK246 — the reader: a set rigc did not write, or a folding mesh rigc printed no line for, is refused by name.
+    const setDir = join(dir, 'reading');
+    mkdirSync(join(setDir, 'wave'), { recursive: true });
+    writeFileSync(join(setDir, 'frames.json'), `${JSON.stringify({ spec: 'rigc-frames/1', sets: [{ dir: 'wave', animation: 'wave', fps: 12 }] })}\n`);
+    const mesh = (slot: string, worst: unknown): Record<string, unknown> => ({ slot, attachment: slot, triangleCount: 4, frames: worst === null ? [] : [{ index: 2 }], worst });
+    writeFileSync(join(setDir, 'wave', 'folds.json'), `${JSON.stringify({ spec: 'rigc-folds/1', animation: 'wave', fps: 12, meshes: [mesh('sleeve', { index: 2, triangles: [0, 1] }), mesh('skirt', null)] })}\n`);
+    const printedLine = '"wave": mesh "sleeve" (slot "sleeve") folds on 1 frame(s) [2] at 12 fps; worst frame 2';
+    const read = refusals(() => readFoldSets(setDir, ['wave'], 12, `  ..    folds    ${printedLine}\n`));
+    const good = readFoldSets(setDir, ['wave'], 12, `  ..    folds    ${printedLine}\n`);
+    const unprinted = refusals(() => readFoldSets(setDir, ['wave'], 12, ''));
+    const unset = refusals(() => readFoldSets(setDir, ['wave', 'hop'], 12, `  ..    folds    ${printedLine}\n`));
+    const offRate = refusals(() => readFoldSets(setDir, ['wave'], 24, `  ..    folds    ${printedLine}\n`));
+    const probs: Problem[] = [];
+    const line = foldsLine(['wave'], 12, 0, good, [], null, probs);
+    say(
+      'CK246_THE_FOLD_READER_TAKES_RIGCS_FILE_AND_LINE_AND_REFUSES_A_MISSING_SET_AN_UNPRINTED_FOLD_OR_ANOTHER_RATE_BY_NAME',
+      read === null &&
+        JSON.stringify(good.get('wave')?.map((m) => [m.slot, m.frames, m.worstFrame, m.worstTriangles, m.triangleCount, m.line])) === JSON.stringify([['sleeve', 1, 2, 2, 4, printedLine]]) &&
+        line.status === 'FAIL' &&
+        probs.length === 1 &&
+        unprinted !== null &&
+        unprinted.problems.length === 1 &&
+        unprinted.problems[0].code === 'CHECK_FOLDS_READ' &&
+        unprinted.problems[0].detail.includes('rigc printed no line beginning "wave": mesh "sleeve" (slot "sleeve") folds on') &&
+        unset !== null &&
+        unset.problems.length === 1 &&
+        unset.problems[0].detail.startsWith('names no frame set for animation "hop"') &&
+        offRate !== null &&
+        offRate.problems.length === 1 &&
+        offRate.problems[0].detail === 'fps is 12; 24, the rate asked for, is required',
+      `read: ${read === null ? 'taken' : codes(read)}, ${JSON.stringify(good.get('wave')?.map((m) => m.slot))} (skirt never folds, so no row), line ${line.status} with ${probs.length} problem(s); planted: unprinted ${codes(unprinted)} — ${unprinted?.problems[0]?.detail.slice(0, 120) ?? ''}; a set not written ${codes(unset)} — ${unset?.problems[0]?.detail.slice(0, 80) ?? ''}; another rate ${codes(offRate)} — ${offRate?.problems[0]?.detail ?? ''}`,
+      "the fold line quotes rigc rather than re-wording it, so a folding mesh with no printed line is a reading that does not add up and is refused, never a row with an empty line; a set or rate the run did not write is the same — the bar is read off the files rigc wrote for the animations asked, or not at all",
+    );
+
+    // CK247 — a check.json whose fold line failed names that bar to compose, and compose may accept it like any bar but the gate.
+    const notMet = barsNotMet({ gate_spine_html_green: true, loop_max_diff: 0, [FOLD_LINE]: { status: 'FAIL' } });
+    const absent = barsNotMet({ gate_spine_html_green: true, loop_max_diff: 0 });
+    say(
+      'CK247_A_FAILED_FOLD_LINE_IS_A_BAR_NOT_MET_COMPOSE_MAY_ACCEPT_AND_AN_ABSENT_ONE_IS_NONE',
+      JSON.stringify(notMet) === JSON.stringify([FOLD_LINE]) && absent.length === 0 && ACCEPTABLE_BARS.includes(FOLD_LINE) && !ACCEPTABLE_BARS.includes('gate') && !BARS.includes(FOLD_LINE as (typeof BARS)[number]),
+      `FAIL: ${JSON.stringify(notMet)}; absent: ${JSON.stringify(absent)}; acceptable ${ACCEPTABLE_BARS.join(', ')}`,
+      "issue #203's accept list takes every bar check holds a character to but rig-c's gate; the fold bar is one where it is written, and BARS — the bars every check counts — does not list it, so a rig of the idle alone counts what it counted",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -11552,7 +11737,7 @@ function runRequirementsSuite(): number {
       "a 2x2 square stretched to 3x2: edge 0-1 is 1.5 times its rest length; squeezed to 1x2 it is 0.5, which is a severity of 2 (compression distorts as stretch does) — the figure TEXTURE_STRETCH's stretchFigures and stretchSeverity give (imported, not rewritten — #87); a ratio with no rest length, or a mesh no frame shows, is undefined",
     );
 
-    const asFile = (rs: RequirementsFile['requirements']): RequirementsFile => ({ path: 'x', fps: REQ_FPS, targets: [], requirements: rs, not_planted: [], not_swinging: [], rises: [], rests: [] });
+    const asFile = (rs: RequirementsFile['requirements']): RequirementsFile => ({ path: 'x', fps: REQ_FPS, targets: [], requirements: rs, not_planted: [], not_swinging: [], rises: [], rests: [], may_fold: [] });
     const two = asFile([okRead.requirements[0], okRead.requirements[3]]);
     const lines = new Map<string, RequirementLine>([['HAND', cFail], ['SWING', cTip]]);
     const pFail = requirementProblem(okRead.requirements[0], cFail);
@@ -11754,9 +11939,60 @@ function runRequirementsSuite(): number {
         rsDetail[1].startsWith(' field "rests"[1]: names "hem" a second time') &&
         rsDetail[2].startsWith(' field "rests"[0]: names "hem", which "not_swinging" names too') &&
         rsDetail[3].startsWith(' field "rest": is not a field this format reads') &&
-        (rsBad[3]?.problems[0].detail ?? '').includes('rises, rests;'),
+        (rsBad[3]?.problems[0].detail ?? '').includes('rises, rests, may_fold;'),
       `read ${JSON.stringify([rsRead.rises, rsRead.rests])}; absent ${JSON.stringify(npAbsent.rests)}; refused: ${rsDetail.join(' | ')}`,
       'issue #245: rests is declared per part like its siblings — a list of names, each once, empty refused rather than read as none, a misspelt key refused by the format; a resting tip may also rise (a raised hand resting on something), but a part declared not swinging has no reading to hold at rest',
+    );
+    // Issue #320: may_fold, read as written (an annotation beside it allowed), absent as none, and each malformed form refused by name.
+    const mfEntry = { slot: 'back', animation: 'sway', why: 'the cape turns over behind the body', note: 'seen at frame 8' };
+    const mfRead = readRequirements(file('mf-ok', { ...npBase, may_fold: [mfEntry, { slot: 'back', animation: 'bow', why: 'the same cape' }] }));
+    const mfBad = [
+      refusals(() => readRequirements(file('mf-empty', { ...npBase, may_fold: [] }))),
+      refusals(() => readRequirements(file('mf-names', { ...npBase, may_fold: ['back'] }))),
+      refusals(() => readRequirements(file('mf-reason', { ...npBase, may_fold: [{ slot: 'back', animation: 'sway', reason: 'x' }] }))),
+      refusals(() => readRequirements(file('mf-blank', { ...npBase, may_fold: [{ slot: 'back', animation: 'sway', why: ' ' }] }))),
+      refusals(() => readRequirements(file('mf-twice', { ...npBase, may_fold: [mfEntry, { ...mfEntry, why: 'again' }] }))),
+    ];
+    const mfDetail = mfBad.map((e) => e?.problems.map((q) => `${q.object.slice(q.object.indexOf(' field '))}: ${q.detail.slice(0, 90)}`).join(' / ') ?? 'not refused');
+    say(
+      'RQ117_MAY_FOLD_READS_AS_WRITTEN_ABSENT_IS_NONE_AND_AN_EMPTY_LIST_A_BARE_NAME_A_MISSPELT_FIELD_A_BLANK_WHY_OR_A_REPEATED_PAIR_IS_REFUSED',
+      JSON.stringify(mfRead.may_fold) === JSON.stringify([{ slot: 'back', animation: 'sway', why: mfEntry.why }, { slot: 'back', animation: 'bow', why: 'the same cape' }]) &&
+        JSON.stringify(npAbsent.may_fold) === '[]' &&
+        mfBad.every((e) => e !== null && e.problems.every((q) => q.code === 'REQUIREMENTS_FIELD')) &&
+        mfDetail[0].startsWith(' field "may_fold": is []; a non-empty list of { "slot", "animation", "why" } is required') &&
+        mfDetail[1].startsWith(' field "may_fold"[0]: is "back"; { "slot": <name>, "animation": <name>, "why": <text> } is required') &&
+        mfBad[2]?.problems.length === 2 &&
+        mfDetail[2].startsWith(' field "may_fold"[0] field "reason": is not a field a may_fold entry reads (slot, animation, why) /  field "may_fold"[0] field "why": is undefined;') &&
+        mfDetail[3].startsWith(' field "may_fold"[0] field "why": is " "; the reason the fold is the art\'s') &&
+        mfDetail[4].startsWith(' field "may_fold"[1]: declares slot "back" in animation "sway" a second time'),
+      `read ${JSON.stringify(mfRead.may_fold)}; absent ${JSON.stringify(npAbsent.may_fold)}; refused: ${mfDetail.join(' | ')}`,
+      "issue #320: a declared fold is a slot, an animation and the author's why — three names, no default: an empty list declares nothing and is refused rather than read as none, a why left blank is a silenced bar, and the pair is declared once; which slot and animation they are is resolved against the rig (RQ118)",
+    );
+    // Issue #320: may_fold resolved against the check fixture's rig: a mesh slot and an animation beside the idle resolve; the idle, a name the rig lacks and a region are refused by name.
+    const mfRig = JSON.parse(readFileSync(join(meshRig, 'rig.json'), 'utf8')) as Record<string, unknown>;
+    const mfMotionRaw = JSON.parse(readFileSync(join(meshRig, 'motion.json'), 'utf8')) as Record<string, unknown>;
+    const mfMotion = { ...mfMotionRaw, animations: { ...(mfMotionRaw.animations as Record<string, unknown>), sway: { duration: 1, tracks: [] } } };
+    const mfOk = refusals(() => resolveRequirements(readRequirements(file('mf-resolves', { ...npBase, may_fold: [{ slot: 'back', animation: 'sway', why: 'w' }] })), mfRig, mfMotion, 'root'));
+    const mfOff = refusals(() =>
+      resolveRequirements(
+        readRequirements(file('mf-off', { ...npBase, may_fold: [{ slot: 'back', animation: 'idle', why: 'w' }, { slot: 'back', animation: 'wave', why: 'w' }, { slot: 'cape', animation: 'sway', why: 'w' }, { slot: 'front', animation: 'sway', why: 'w' }] })),
+        mfRig,
+        mfMotion,
+        'root',
+      ),
+    );
+    const mfOffText = mfOff?.problems.map((q) => `${q.code} ${q.object}: ${q.detail.slice(0, 70)}`) ?? [];
+    say(
+      'RQ118_MAY_FOLD_RESOLVES_A_MESH_SLOT_AND_AN_ANIMATION_BESIDE_THE_IDLE_AND_REFUSES_THE_IDLE_AN_UNKNOWN_NAME_AND_A_REGION_BY_NAME',
+      mfOk === null &&
+        mfOff !== null &&
+        mfOff.problems.length === 4 &&
+        mfOffText[0].startsWith('REQUIREMENTS_MAY_FOLD may_fold[0] (slot "back", animation "idle"): names the idle, which ANIMATIONS_DO_NOT_FOLD does not read') &&
+        mfOffText[1].startsWith('REQUIREMENTS_RESOLVES may_fold[1] (slot "back", animation "wave"): names animation "wave", which motion.json does not declare') &&
+        mfOffText[2].startsWith('REQUIREMENTS_RESOLVES may_fold[2] (slot "cape", animation "sway"): names slot "cape", which rig.json does not declare') &&
+        mfOffText[3].startsWith('REQUIREMENTS_MAY_FOLD may_fold[3] (slot "front", animation "sway"): names slot "front", which no skin in rig.json gives a mesh attachment'),
+      `a mesh slot in an animation beside the idle: ${codes(mfOk)}; planted: ${mfOffText.join(' | ')}`,
+      'issue #320: the bar reads the meshes of the animations beside the idle, so a declaration naming the idle, a region (one quad, which cannot fold) or a name the rig does not hold would except nothing — each is refused with the others, by name, before anything is built',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
