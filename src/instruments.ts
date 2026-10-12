@@ -191,12 +191,13 @@ export interface HalfTravels {
 export type Toward = 'down' | 'up' | 'left' | 'right';
 
 /**
- * Where a chain's tip is from its root (issue #231): the vector from its first
- * link's origin to its last link's at the setup pose, in the world (y up),
- * read along whichever axis it runs further on — `down`/`up` when |dy| > |dx|,
+ * Which way a vector in the world (y up) runs (issue #231), read along
+ * whichever axis it runs further on — `down`/`up` when |dy| > |dx|,
  * `left`/`right` when |dx| > |dy|. Null when it runs as far on both, which
- * includes a chain whose links share one origin. `check` holds a part the
- * scene declares `rises` to it: the chain carrying it must read `up`.
+ * includes the zero vector. `check` holds a part the scene declares `rises` to
+ * it: the last link of the chain carrying it, at the setup pose, must read
+ * `up` (issue #322; until then the vector was the first link's origin to the
+ * last's).
  */
 export function chainToward(dx: number, dy: number): Toward | null {
   if (Math.abs(dy) > Math.abs(dx)) return dy < 0 ? 'down' : 'up';

@@ -2453,7 +2453,8 @@ export const TIP_INSTRUMENT = 'geometry';
  * saying so, and its `rises` parts are read with the halves swapped once the
  * chain carrying each is measured to rise ({@link chainDirection}; refused by
  * name otherwise); both lists are the line's first figures. Without them the
- * line is the one written before.
+ * line is the one written before. Issue #322: the chain is read at its last
+ * link, and a declared row carries `tip_read`, the reading that let it rise.
  *
  * Issue #245: a part the scene declares `rests` — its tip at rest while its
  * root moves — is measured with the same halves and held to the opposite
@@ -2466,20 +2467,27 @@ function tipLine(inp: FullInputs, geometryPath: string, frames: number, problems
   if (swing.length === 0) return skip(`no part comes from a See-through ${tagWords(SWING_TAGS)} layer, so there is no hem or sleeve to swing`);
   const poses = attachmentPoses(geometryPath, frames);
   // Issue #231: a part declared `rises` is read up only when the chain carrying it does rise, measured at the setup pose.
+  // Issue #322: at its last link, the end the tip half is the art of; the row says what was read.
+  const risesRead = new Map<string, string>();
   if (excepted.rises.length > 0) {
     const geo = readGeometry(geometryPath, frames);
-    const origins = new Map<string, { x: number; y: number }>();
+    const origins = new Map<string, SetupBone>();
     for (const b of Array.isArray(geo?.setupBones) ? geo.setupBones : []) {
-      if (isRecord(b) && typeof b.name === 'string' && typeof b.worldX === 'number' && typeof b.worldY === 'number') origins.set(b.name, { x: b.worldX, y: b.worldY });
+      if (isRecord(b) && typeof b.name === 'string' && typeof b.worldX === 'number' && typeof b.worldY === 'number') {
+        origins.set(b.name, { x: b.worldX, y: b.worldY, ...(typeof b.a === 'number' && typeof b.c === 'number' ? { a: b.a, c: b.c } : {}) });
+      }
     }
     const refused: Problem[] = [];
     excepted.rises.forEach((name, i) => {
       const dir = chainDirection(inp.rig, inp.motion, name, origins);
-      if ('toward' in dir && dir.toward === 'up') return;
+      if ('toward' in dir && dir.toward === 'up') {
+        risesRead.set(name, dir.chains.join('; '));
+        return;
+      }
       refused.push({
         code: 'REQUIREMENTS_TIP_EXCEPTION',
         object: `${excepted.path} field "rises"[${i}]`,
-        detail: `names part "${name}", whose tip is not up: ${'none' in dir ? dir.none : `its chain runs ${dir.toward} — ${dir.chains.join('; ')}`}; a part declared rises must be carried by a chain whose last link's origin is above its first's at the setup pose`,
+        detail: `names part "${name}", whose tip is not up: ${'none' in dir ? dir.none : `its chain runs ${dir.toward} — ${dir.chains.join('; ')}`}; a part declared rises must be carried by a chain whose last link runs up at the setup pose — from its origin along its length, or, a last link with no length, from the link before's origin to its own`,
       });
     });
     refuseIfAny(refused);
@@ -2499,7 +2507,7 @@ function tipLine(inp: FullInputs, geometryPath: string, frames: number, problems
     const shown = poses.map((f) => f.get(p.name) ?? null);
     const t = halfTravels(art, p, inp.stage, shown, rises ? 'up' : 'down');
     // A part not declared writes the row it wrote before issue #231; a declared one says which half is its tip's.
-    const said = { ...(rests ? { declared: 'rests' } : {}), ...(rises ? { tip_half: tipHalf } : {}) };
+    const said = { ...(rests ? { declared: 'rests' } : {}), ...(rises ? { tip_half: tipHalf, tip_read: risesRead.get(p.name) as string } : {}) };
     if (t.root === null || t.tip === null) {
       rows.push({ part: p.name, ...said, unmeasured: shown[0] === null ? 'its slot shows no attachment on idle frame 0' : `on idle frame 0 the ${t.root === null ? rootHalf : tipHalf} half of its box holds no art its attachment draws` });
       continue;
@@ -2645,34 +2653,65 @@ function breathCarrier(
   return null;
 }
 
+/** A bone at the setup pose off the idle's geometry: its world origin, and its world x axis (a, c) when the file gives it. */
+export interface SetupBone {
+  x: number;
+  y: number;
+  a?: number;
+  c?: number;
+}
+
 /**
- * Which way the chain carrying a part runs (issue #231), for a part the scene
- * declares `rises`: the bones its attachments are bound to in the default skin
- * (a mesh's weights, or its slot's bone); the leaves among them — those with
- * no other of them below — walked up the bone tree to the first link of a
- * chain `CHAIN_LAG` reads ({@link chainFigures}: two or more rotate-keyed
- * links, each under the one before at one period); each chain so found runs
- * from its first link's setup-pose origin to its last link's
- * ({@link chainToward}). `{ none }`, the reason, when no leaf is under a chain,
- * when a chain runs as far across as along, or when the part's chains run
+ * Which way the chain carrying a part runs at its tip (issues #231, #322), for
+ * a part the scene declares `rises`: the bones its attachments are bound to in
+ * the default skin (a mesh's weights, or its slot's bone); the leaves among
+ * them — those with no other of them below — walked up the bone tree to the
+ * first link of a chain `CHAIN_LAG` reads ({@link chainFigures}: two or more
+ * rotate-keyed links, each under the one before at one period). Each chain so
+ * found is read at its **last link** ({@link chainToward}), the end
+ * `TIP_OVER_ROOT`'s tip half is the art of: from the link's setup-pose origin
+ * along its `length` in rig.json on its world x axis — the extent the rig
+ * stage turns a link to (issue #73) — or, a last link with no length, from the
+ * link before's origin to its own, the last extent the skeleton states. Until
+ * #322 it was the first link's origin to the last's, which reads a chain that
+ * hangs and then rises — a folded arm — as down, and on a two-link chain read
+ * the first link only. `{ none }`, the reason, when no leaf is under a chain,
+ * when a last link runs as far across as along, or when the part's chains run
  * different ways.
  */
-export function chainDirection(rig: Record<string, unknown>, motion: Record<string, unknown>, part: string, origins: ReadonlyMap<string, { x: number; y: number }>): { toward: Toward; chains: string[] } | { none: string } {
+export function chainDirection(rig: Record<string, unknown>, motion: Record<string, unknown>, part: string, origins: ReadonlyMap<string, SetupBone>): { toward: Toward; chains: string[] } | { none: string } {
   const { found, bound } = chainsCarrying(rig, motion, part);
   const boundText = [...bound].map((b) => `"${b}"`).join(', ') || 'no bone';
   if (found.length === 0) return { none: `it rides no chain: none of the bones it is bound to (${boundText}) is under a chain of rotate-keyed links` };
+  const lengths = new Map<string, number>();
+  for (const b of (Array.isArray(rig.bones) ? rig.bones : []).filter(isRecord)) if (typeof b.name === 'string' && typeof b.length === 'number' && b.length > 0) lengths.set(b.name, b.length);
   const read = found.map((c) => {
-    const a = origins.get(c[0]);
-    const z = origins.get(c[c.length - 1]);
+    const last = c[c.length - 1];
+    const before = c[c.length - 2];
     const label = c.join(' > ');
-    if (a === undefined || z === undefined) return { label, toward: null, text: `${label}: no setup-pose origin for ${a === undefined ? c[0] : c[c.length - 1]} in the idle's geometry` };
-    const dx = z.x - a.x;
-    const dy = z.y - a.y;
+    const z = origins.get(last);
+    const len = lengths.get(last);
+    if (z === undefined) return { label, toward: null, text: `${label}: no setup-pose origin for ${last} in the idle's geometry` };
+    let dx: number;
+    let dy: number;
+    let how: string;
+    if (len !== undefined) {
+      if (z.a === undefined || z.c === undefined) return { label, toward: null, text: `${label}: no setup-pose axis (a, c) for its last link ${last} in the idle's geometry` };
+      dx = len * z.a;
+      dy = len * z.c;
+      how = `its last link ${last}, from its origin along its length ${len},`;
+    } else {
+      const a = origins.get(before);
+      if (a === undefined) return { label, toward: null, text: `${label}: no setup-pose origin for ${before} in the idle's geometry` };
+      dx = z.x - a.x;
+      dy = z.y - a.y;
+      how = `its last link ${last}, which has no length, from ${before}'s origin to its own,`;
+    }
     const toward = chainToward(dx, dy);
-    return { label, toward, text: `${label} ${toward ?? 'runs as far across as along'} (${round3(dx)}, ${round3(dy)} world px)` };
+    return { label, toward, text: `${label}: ${how} ${toward === null ? 'runs as far across as along' : `runs ${toward}`} (${round3(dx)}, ${round3(dy)} world px)` };
   });
   const ways = [...new Set(read.map((r) => r.toward))];
-  if (ways.length !== 1 || ways[0] === null) return { none: `its chains do not run one way: ${read.map((r) => r.text).join('; ')}` };
+  if (ways.length !== 1 || ways[0] === null) return { none: `its chains do not run one way at the tip: ${read.map((r) => r.text).join('; ')}` };
   return { toward: ways[0], chains: read.map((r) => r.text) };
 }
 

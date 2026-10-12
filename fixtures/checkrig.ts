@@ -437,8 +437,18 @@ function sineKeys(amp: number, phase: number): Array<{ t: number; v: number[] }>
   return [...keys, { t: 1, v: keys[0].v }];
 }
 
-/** Write the seated figure's rig directory: rig.json, motion.json, images/, parts/ and parts.json. The idle slides the root {@link IDLE_PEAK} right and back, as {@link writeCheckRig}'s does, and swings both chains. `armHangs` puts the arm chain's second link below the elbow (issue #231's planted negative of `rises`). */
-export function writeSeatedCheckRig(dir: string, opts: { armHangs?: boolean } = {}): void {
+/**
+ * Write the seated figure's rig directory: rig.json, motion.json, images/, parts/ and parts.json. The idle slides the
+ * root {@link IDLE_PEAK} right and back, as {@link writeCheckRig}'s does, and swings both chains. `armHangs` puts the
+ * arm chain's second link below the elbow (issue #231's planted negative of `rises`).
+ *
+ * `armFolds` (issue #322) folds the arm under the same art: the chain's first link hangs from a shoulder at crop
+ * (38, 21) to the elbow at the bottom of the box, crop (38, 36), 15 px down; the second, from the elbow, is turned as
+ * the rig stage turns a link (rotation and `length`, issue #73) — `up` 90 degrees with length 30, to crop (38, 6),
+ * longer than half the art; `down` -90 degrees, the same length the other way (the planted negative: a declared tip
+ * that does not rise). The art rides the second link, its region turned back upright.
+ */
+export function writeSeatedCheckRig(dir: string, opts: { armHangs?: boolean; armFolds?: 'up' | 'down' } = {}): void {
   const { w: W, h: H } = CHECK_RIG;
   mkdirSync(join(dir, 'images'), { recursive: true });
   mkdirSync(join(dir, 'parts'), { recursive: true });
@@ -454,20 +464,37 @@ export function writeSeatedCheckRig(dir: string, opts: { armHangs?: boolean } = 
   const knee = world(24, 54);
   const ankle = world(24, 66);
   const head = world(24, 18);
+  const shoulder = world(38, 21);
+  const fold = opts.armFolds;
+  // Folded: the second link turned up (or down) by 90 degrees, so a world offset (dx, dy) is (dy, -dx) in its frame
+  // (or (-dy, dx)), written by hand rather than through a cosine that is not exactly 0.
+  const turn = fold === undefined ? 0 : fold === 'up' ? 90 : -90;
+  const intoLink = (dx: number, dy: number): { x: number; y: number } => (turn === 90 ? { x: dy, y: -dx } : turn === -90 ? { x: -dy, y: dx } : { x: dx, y: dy });
+  const armLinks =
+    fold === undefined
+      ? [
+          { name: 'arm0_ctl', parent: 'root', x: elbow.x, y: elbow.y },
+          { name: 'arm0', parent: 'arm0_ctl', x: 0, y: 0 },
+          { name: 'arm1_ctl', parent: 'arm0', x: wrist.x - elbow.x, y: wrist.y - elbow.y },
+          { name: 'arm1', parent: 'arm1_ctl', x: 0, y: 0 },
+        ]
+      : [
+          { name: 'arm0_ctl', parent: 'root', x: shoulder.x, y: shoulder.y },
+          { name: 'arm0', parent: 'arm0_ctl', x: 0, y: 0 },
+          { name: 'arm1_ctl', parent: 'arm0', length: 30, rotation: turn, x: elbow.x - shoulder.x, y: elbow.y - shoulder.y },
+          { name: 'arm1', parent: 'arm1_ctl', x: 0, y: 0 },
+        ];
   const bones = [
     { name: 'root', x: 0, y: 0 },
     { name: 'head', parent: 'root', x: head.x, y: head.y },
-    { name: 'arm0_ctl', parent: 'root', x: elbow.x, y: elbow.y },
-    { name: 'arm0', parent: 'arm0_ctl', x: 0, y: 0 },
-    { name: 'arm1_ctl', parent: 'arm0', x: wrist.x - elbow.x, y: wrist.y - elbow.y },
-    { name: 'arm1', parent: 'arm1_ctl', x: 0, y: 0 },
+    ...armLinks,
     { name: 'leg0_ctl', parent: 'root', x: knee.x, y: knee.y },
     { name: 'leg0', parent: 'leg0_ctl', x: 0, y: 0 },
     { name: 'leg1_ctl', parent: 'leg0', x: ankle.x - knee.x, y: ankle.y - knee.y },
     { name: 'leg1', parent: 'leg1_ctl', x: 0, y: 0 },
   ];
-  const at: Record<string, { x: number; y: number }> = { root: { x: 0, y: 0 }, head, arm0: elbow, leg1: ankle };
-  const slotBone: Record<string, string> = { under: 'root', body: 'root', face: 'head', shoes: 'leg1', arm: 'arm0' };
+  const at: Record<string, { x: number; y: number }> = { root: { x: 0, y: 0 }, head, arm0: elbow, arm1: elbow, leg1: ankle };
+  const slotBone: Record<string, string> = { under: 'root', body: 'root', face: 'head', shoes: 'leg1', arm: fold === undefined ? 'arm0' : 'arm1' };
   const rig = {
     spec: 'rigc-rig/1',
     name: 'seated_probe',
@@ -480,6 +507,10 @@ export function writeSeatedCheckRig(dir: string, opts: { armHangs?: boolean } = 
         SEATED_CHECK_PARTS.map((p) => {
           const c = world(p.x + p.w / 2, p.y + p.h / 2);
           const b = at[slotBone[p.name]];
+          if (slotBone[p.name] === 'arm1') {
+            const o = intoLink(c.x - b.x, c.y - b.y);
+            return [p.name, { [p.name]: { image: `${p.name}.png`, x: o.x, y: o.y, rotation: -turn } }];
+          }
           return [p.name, { [p.name]: { image: `${p.name}.png`, x: c.x - b.x, y: c.y - b.y } }];
         }),
       ),

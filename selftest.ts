@@ -178,6 +178,7 @@ import {
   uncoveredLine,
   visibilityCounts,
 } from './src/assemble.ts';
+import { chainDirection } from './src/check.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
 import { BARS, besideIdleLine, blackRig, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { baseTagOf, blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
@@ -9809,7 +9810,7 @@ function runCheckSuite(): number {
     // Issue #231: the seated figure — legs that swing, a raised forearm on its own chain, a still cut piece. Without a
     // declaration every bar reads it as main does and four fail; with the scene file's not_planted, not_swinging and
     // rises the run passes, and each line it relaxes names the exception first.
-    const seatedRun = (label: string, req: Record<string, unknown> | null, opts: { armHangs?: boolean } = {}): { status: number; out: string; fig: Record<string, unknown> | null } => {
+    const seatedRun = (label: string, req: Record<string, unknown> | null, opts: { armHangs?: boolean; armFolds?: 'up' | 'down' } = {}): { status: number; out: string; fig: Record<string, unknown> | null } => {
       const rigDir = join(dir, `seated-${label}-rig`);
       writeSeatedCheckRig(rigDir, opts);
       const args = ['check', '--rig', rigDir, '--out', join(dir, `seated-${label}`)];
@@ -9919,9 +9920,82 @@ function runCheckSuite(): number {
       risesHung.status === 1 &&
         risesHung.fig === null &&
         hungLine.includes('field "rises"[0]') &&
-        hungLine.includes('names part "arm", whose tip is not up: its chain runs down — arm0_ctl > arm1_ctl down (0, -15 world px)'),
+        hungLine.includes("names part \"arm\", whose tip is not up: its chain runs down — arm0_ctl > arm1_ctl: its last link arm1_ctl, which has no length, from arm0_ctl's origin to its own, runs down (0, -15 world px)"),
       `exit ${risesHung.status}; check.json ${risesHung.fig === null ? 'not written' : 'WRITTEN'}; ${hungLine.trim().slice(0, 260) || 'no REQUIREMENTS_TIP_EXCEPTION line'}`,
       'issue #231: rises swaps which half is the tip\'s, so it is held to the chain it describes — the arm chain moved below the elbow (crop y 36 to 51, 15 px down, by hand) runs down at the setup pose, and the declaration is refused naming that direction rather than read up on the author\'s word',
+    );
+
+    // Issue #322: a folded arm — the first link hangs from the shoulder (crop y 21) to the elbow (crop y 36), the second
+    // is turned up from the elbow with length 30 to crop y 6, longer than half the art, and carries it. Undeclared, the
+    // bar reads it down the screen and fails; declared rises, the chain is read at its last link, which runs up.
+    const foldBare = seatedRun('fold-bare', { not_planted: ['shoes'], not_swinging: ['under'] }, { armFolds: 'up' });
+    const foldUp = seatedRun('fold-up', seatedDecl, { armFolds: 'up' });
+    const fbArm = tipRowOf(foldBare.fig, 'arm');
+    const fuArm = tipRowOf(foldUp.fig, 'arm') as (TipRow & { tip_read?: string }) | undefined;
+    const foldRead = 'arm0_ctl > arm1_ctl: its last link arm1_ctl, from its origin along its length 30, runs up (0, 30 world px)';
+    say(
+      'CK282_A_FOLDED_ARM_DECLARED_RISES_IS_READ_AT_ITS_LAST_LINK_WHICH_RUNS_UP_AND_ITS_HALVES_ARE_SWAPPED',
+      foldBare.status === 1 &&
+        (failLine(foldBare.out, 'CHECK_TIP_OVER_ROOT') ?? '').includes('part "arm"') &&
+        typeof fbArm?.ratio === 'number' &&
+        fbArm.ratio < 1 &&
+        foldUp.status === 0 &&
+        foldUp.fig?.PASS === true &&
+        !foldUp.out.includes('REQUIREMENTS_TIP_EXCEPTION') &&
+        JSON.stringify(tipOf(foldUp.fig).declared_rises) === '["arm"]' &&
+        fuArm !== undefined &&
+        JSON.stringify(Object.keys(fuArm)) === JSON.stringify(['part', 'tip_half', 'tip_read', 'root_rig_px', 'tip_rig_px', 'ratio']) &&
+        fuArm.tip_half === 'upper' &&
+        fuArm.tip_read === foldRead &&
+        fuArm.root_rig_px === fbArm.tip_rig_px &&
+        fuArm.tip_rig_px === fbArm.root_rig_px &&
+        typeof fuArm.ratio === 'number' &&
+        fuArm.ratio >= TIP_RATIO_FLOOR &&
+        consoleOf(foldUp.out, 'TIP_OVER_ROOT').includes(`tip_half upper, tip_read ${foldRead}`),
+      `undeclared: exit ${foldBare.status}, arm ratio ${String(fbArm?.ratio)}; declared rises: exit ${foldUp.status}, PASS ${String(foldUp.fig?.PASS)}; arm row ${JSON.stringify(fuArm)}`,
+      "issue #322: the tip half TIP_OVER_ROOT reads is the art of the chain's last link, so that is the link rises is held to. Before #322 this declaration was refused — `names part \"arm\", whose tip is not up: its chain runs down — arm0_ctl > arm1_ctl down (0, -15 world px); a part declared rises must be carried by a chain whose last link's origin is above its first's at the setup pose` [observed on this fixture at the parent commit, a scratch run] — because the first link's origin to the last's is the shoulder to the elbow. Read at the last link (length 30 along its world x axis, turned 90 degrees: (0, 30) by hand), it rises; the row says which reading let it, and its two travels are the undeclared row's, swapped",
+    );
+    const foldDown = seatedRun('fold-down', seatedDecl, { armFolds: 'down' });
+    const downLine = foldDown.out.split('\n').find((l) => l.includes('REQUIREMENTS_TIP_EXCEPTION')) ?? '';
+    say(
+      'CK283_A_RISES_ON_A_FOLDED_CHAIN_WHOSE_LAST_LINK_RUNS_DOWN_IS_STILL_REFUSED_NAMING_THE_LINK_AND_THE_DIRECTION',
+      foldDown.status === 1 &&
+        foldDown.fig === null &&
+        downLine.includes('field "rises"[0]') &&
+        downLine.includes('names part "arm", whose tip is not up: its chain runs down — arm0_ctl > arm1_ctl: its last link arm1_ctl, from its origin along its length 30, runs down (0, -30 world px)') &&
+        downLine.includes('a part declared rises must be carried by a chain whose last link runs up at the setup pose'),
+      `exit ${foldDown.status}; check.json ${foldDown.fig === null ? 'not written' : 'WRITTEN'}; ${downLine.trim().slice(0, 320) || 'no REQUIREMENTS_TIP_EXCEPTION line'}`,
+      "issue #322's planted negative: the same art and the same first link, the last link turned -90 degrees instead (length 30, (0, -30) by hand) — a declared tip that does not rise is refused by name, so reading the last link relaxes the declaration only where the tip half's link does point up",
+    );
+    // The rule itself, on hand-made setup poses over the folded rig (its last link has length 30): the last link's axis
+    // decides, the first link's direction does not enter; with the length gone it is the link before's origin to its own.
+    const foldRigDir = join(dir, 'seated-fold-up-rig');
+    const foldRig = readJsonFile(join(foldRigDir, 'rig.json')) ?? {};
+    const foldMotion = readJsonFile(join(foldRigDir, 'motion.json')) ?? {};
+    const unlengthed = {
+      ...foldRig,
+      bones: (Array.isArray(foldRig.bones) ? (foldRig.bones as Array<Record<string, unknown>>) : []).map((b) => (b.name === 'arm1_ctl' ? Object.fromEntries(Object.entries(b).filter(([k]) => k !== 'length')) : b)),
+    };
+    const poseOf = (a: number, c: number): Map<string, { x: number; y: number; a: number; c: number }> =>
+      new Map([
+        ['arm0_ctl', { x: 0, y: 0, a: 1, c: 0 }],
+        ['arm1_ctl', { x: 0, y: -15, a, c }],
+      ]);
+    const dirText = (r: ReturnType<typeof chainDirection>): string => ('none' in r ? `none: ${r.none}` : `${r.toward}: ${r.chains.join('; ')}`);
+    const ruleUp = dirText(chainDirection(foldRig, foldMotion, 'arm', poseOf(0, 1)));
+    const ruleLeft = dirText(chainDirection(foldRig, foldMotion, 'arm', poseOf(-1, 0.5)));
+    const ruleEven = dirText(chainDirection(foldRig, foldMotion, 'arm', poseOf(0.6, 0.6)));
+    const ruleNoLen = dirText(chainDirection(unlengthed, foldMotion, 'arm', poseOf(0, 1)));
+    const ruleNoAxis = dirText(chainDirection(foldRig, foldMotion, 'arm', new Map([['arm0_ctl', { x: 0, y: 0 }], ['arm1_ctl', { x: 0, y: -15 }]])));
+    say(
+      'CK284_A_CHAIN_IS_READ_AT_ITS_LAST_LINK_ALONG_ITS_LENGTH_OR_WITHOUT_ONE_FROM_THE_LINK_BEFORE_AND_A_MISSING_AXIS_IS_NAMED',
+      ruleUp === 'up: arm0_ctl > arm1_ctl: its last link arm1_ctl, from its origin along its length 30, runs up (0, 30 world px)' &&
+        ruleLeft === 'left: arm0_ctl > arm1_ctl: its last link arm1_ctl, from its origin along its length 30, runs left (-30, 15 world px)' &&
+        ruleEven.startsWith('none: its chains do not run one way at the tip: arm0_ctl > arm1_ctl: its last link arm1_ctl, from its origin along its length 30, runs as far across as along (18, 18 world px)') &&
+        ruleNoLen === "down: arm0_ctl > arm1_ctl: its last link arm1_ctl, which has no length, from arm0_ctl's origin to its own, runs down (0, -15 world px)" &&
+        ruleNoAxis === "none: its chains do not run one way at the tip: arm0_ctl > arm1_ctl: no setup-pose axis (a, c) for its last link arm1_ctl in the idle's geometry",
+      [ruleUp, ruleLeft, ruleEven, ruleNoLen, ruleNoAxis].join(' | '),
+      'issue #322: every figure by hand — length 30 times the axis (0, 1), (-1, 0.5) and (0.6, 0.6); the same chain with the length removed reads the only extent the skeleton states for its end, the shoulder to the elbow, 15 px down; and a geometry that gives an origin but no axis is a named miss, never a direction guessed from the origins',
     );
 
     const redRig = join(dir, 'red');
@@ -10158,7 +10232,7 @@ function runCheckSuite(): number {
       'CK112_A_RISING_PART_READS_THE_SAME_TWO_HALVES_SWAPPED_AND_A_CHAIN_RUNS_THE_WAY_ITS_LONGER_AXIS_SAYS',
       tDown.root !== null && tUp.root === tDown.tip && tUp.tip === tDown.root && tDown.tip !== null && JSON.stringify(towards) === JSON.stringify(['down', 'up', 'right', 'left', null, null, null]),
       `hem sheared 2: down root ${tDown.root} tip ${tDown.tip}; up root ${tUp.root} tip ${tUp.tip}; (0,-5) (0,5) (5,1) (-5,-1) (3,3) (-3,3) (0,0) -> ${towards.map(String).join(', ')}`,
-      'issue #231: a raised forearm has its tip up, so a part declared rises is read with the two bands swapped and nothing else changed; whether its chain does rise is the vector from its first link to its last, read along its longer axis — a chain that runs as far across as along is not up, and a rises declaration on it is refused (CK114)',
+      'issue #231: a raised forearm has its tip up, so a part declared rises is read with the two bands swapped and nothing else changed; whether its chain does rise is the extent of its last link (issue #322; until then the vector from its first link to its last), read along its longer axis — a vector that runs as far across as along is not up, and a rises declaration on it is refused (CK114, CK283, CK284)',
     );
     const noLower = halfTravels(emptyArt, tBox, tStage, [posedBy(meshA, (x, y) => [x, y]), posedBy(meshA, hemShear(2))]);
     const noShown = halfTravels(tArt, tBox, tStage, [null, posedBy(meshA, hemShear(2))]);

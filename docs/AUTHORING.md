@@ -2156,7 +2156,7 @@ exits 0, and `mesh_draft.json` and the console name the reading and the amount.
 | `CHECK_REQUIREMENT_MET` | a declared requirement measured outside its bar; the figure, its frame and the bar are quoted | the rig or its motion (§7, *Declared requirements*) — or the bar, if the scene asks less |
 | `CHECK_REQUIREMENT_MEASURABLE` | a declared requirement is NOT MEASURABLE: what it asks is undefined in the frames, and the reason is quoted. Not a pass | the declaration (a bone with a length, a target off the bone's origin, a least drive the constraint reaches) or the rig |
 | `REQUIREMENTS_NOT_PLANTED` | a `not_planted` name is a part `check` does not read as a planted foot — it does not come from a See-through `footwear` layer — or there is no `parts.json` to choose the feet by (issue #231). Refused before anything is built | a `footwear` part's name |
-| `REQUIREMENTS_TIP_EXCEPTION` | a `not_swinging`, `rises` or `rests` name is a part `TIP_OVER_ROOT` does not read — not from a See-through `handwear` or `bottomwear` layer — or there is no `parts.json` (refused before anything is built); or a `rises` part is not carried by a chain that rises: the chain's first link to its last, at the setup pose, runs other than up, the detail giving the direction measured (refused after the idle is rendered, before `check.json` is written) (issue #231) | a swinging part's name; for `rises`, a part whose chain does rise |
+| `REQUIREMENTS_TIP_EXCEPTION` | a `not_swinging`, `rises` or `rests` name is a part `TIP_OVER_ROOT` does not read — not from a See-through `handwear` or `bottomwear` layer — or there is no `parts.json` (refused before anything is built); or a `rises` part is not carried by a chain that rises: the chain's **last link**, at the setup pose, runs other than up — from its origin along its `length` (the extent the rig stage turns a link to), or, a last link with no length, from the link before's origin to its own — the detail giving the link read and the direction measured (refused after the idle is rendered, before `check.json` is written) (issues #231, #322; until #322 it read the chain's first link's origin to its last's, which refused a folded arm — a link that hangs, then a forearm raised) | a swinging part's name; for `rises`, a part whose chain does rise |
 | `REQUIREMENTS_SEAM` | a `seam` cannot be read against the rig: there is no `parts.json` (a merged rig, §7 *Measuring a rig rig-parts did not assemble*), or the two parts' art does not meet at the setup pose (no 4-adjacent pair). Refused before anything is built | two parts whose art touches, on a rig with its `parts.json` |
 
 ### compose
@@ -2735,9 +2735,17 @@ Two declarations, by part, say where that does not hold. `"not_swinging": ["unde
 `unmeasured` with the reason. `"rises": ["arm"]` — a forearm raised from the elbow —
 reads the part's **upper** half as the tip's (its row carries `tip_half: "upper"`),
 and only after checking the chain that carries it does rise: the part's bound bones
-walked up to a chain `CHAIN_LAG` reads, its first link's origin to its last at the
-setup pose, read along its longer axis, must run up, or the declaration is refused
-naming the direction measured. The line's first figures after `status` are
+walked up to a chain `CHAIN_LAG` reads, the chain's **last link** at the setup pose —
+from its origin along its `length`, the extent the rig stage turns a link to, or, a
+last link with no length, from the link before's origin to its own — read along its
+longer axis, must run up, or the declaration is refused naming the link and the
+direction measured. The last link is read because the tip half is its art: a folded
+arm — an upper arm hanging to the elbow, a forearm raised above the shoulder — rises
+at its last link though its first runs down (issue #322; until then the first link's
+origin to the last's was read, and such an arm was refused). The row then carries
+`tip_read` after `tip_half`, the reading that let it rise, e.g. `"arm0_ctl >
+arm1_ctl: its last link arm1_ctl, from its origin along its length 30, runs up (0,
+30 world px)"`. The line's first figures after `status` are
 `declared_not_swinging` and `declared_rises`. Each name must be a swinging part in
 `parts.json`, and no part may be in both lists.
 
