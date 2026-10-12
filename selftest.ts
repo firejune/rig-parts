@@ -179,7 +179,7 @@ import {
   visibilityCounts,
 } from './src/assemble.ts';
 import { chainDirection } from './src/check.ts';
-import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
+import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics, BREATH_TORSO_MEAN_FLOOR } from './src/check.ts';
 import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, FOLD_LINE, foldsLine, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { baseTagOf, blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
@@ -8926,9 +8926,9 @@ function runSourceCases(dir: string, say: (name: string, ok: boolean, detail: st
   const defaultSummary = summaryOf(defaultRun.out);
   say(
     'CK67_THE_DEFAULT_RUN_COUNTS_ITS_BARS_AND_WRITES_NO_KEY_IT_DID_NOT_WRITE_BEFORE',
-    defaultRun.status === 0 && defaultSummary === `check: PASS; 3 of ${BARS.length} bar(s) measured, 6 skipped (${JUDGEMENT_LINES.join(', ')})` && !defaultRun.out.includes(`${SOURCE_LINE}:`),
+    defaultRun.status === 0 && defaultSummary === `check: PASS; 4 of ${BARS.length} bar(s) measured, 5 skipped (${JUDGEMENT_LINES.filter((n) => n !== 'BREATH_VISIBLE').join(', ')})` && !defaultRun.out.includes(`${SOURCE_LINE}:`),
     `"${defaultSummary}"; ${SOURCE_LINE} printed: ${defaultRun.out.includes(`${SOURCE_LINE}:`)}`,
-    "with parts.json and an idle and no --source, check.json keeps exactly its keys (CK01) and the examples' check.json and gate file their bytes (CH04, CH05); the summary now says how many of the bars measured — on this fixture the gate, the loop and the seam, its two topwear parts giving the judgement lines nothing to read",
+    "with parts.json and an idle and no --source, check.json keeps exactly its keys (CK01) and the examples' check.json and gate file their bytes (CH04, CH05); the summary now says how many of the bars measured — on this fixture the gate, the loop, the seam and, since issue #323, BREATH_VISIBLE's torso half: its two topwear parts give the torso half something to read and the other judgement lines nothing",
   );
 }
 
@@ -9306,11 +9306,11 @@ function runCheckSuite(): number {
         listing(rig).join('|') === before.join('|') &&
         !existsSync(join(out, '_still')) &&
         !existsSync(join(out, '_isolated')) &&
-        JUDGEMENT_LINES.every((n) => lineStatus(fig, n) === 'SKIP' && ok.out.includes(`  ${n}: SKIP — `)) &&
+        JUDGEMENT_LINES.every((n) => (n === 'BREATH_VISIBLE' ? lineStatus(fig, n) === 'PASS' && ok.out.includes(`  ${n}: PASS — halves_measured 1 of 2; `) : lineStatus(fig, n) === 'SKIP' && ok.out.includes(`  ${n}: SKIP — `))) &&
         lineStatus(fig, 'RECOMPOSITE_HOLES') === 'SKIP' &&
         ok.out.includes('  RECOMPOSITE_HOLES: SKIP — parts.json has no "recomposite" block'),
       `exit ${ok.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig).slice(0, 220)}…; judgement lines ${JUDGEMENT_LINES.map((n) => `${n} ${lineStatus(fig, n) ?? 'absent'}`).join(', ')}; RECOMPOSITE_HOLES ${lineStatus(fig, 'RECOMPOSITE_HOLES') ?? 'absent'}; missing outputs: ${missing.join(', ') || 'none'}; pack ${pack.map((p) => p.line).join(' | ') || 'none'} for ${CHECK_PARTS.length} part(s); --rig ${listing(rig).join('|') === before.join('|') ? 'unchanged' : 'CHANGED'}`,
-      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from the spine-html gate, with the reference's check.json keys in its order (gate_spine_green gone with the second gate, rigc_entry after the gate, pack_mode after it) and the six judgement lines and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line has nothing to read (and neither part is a mesh, so neither has TEXTURE_STRETCH) and must say SKIP, by name, with its reason — never PASS — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
+      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from the spine-html gate, with the reference's check.json keys in its order (gate_spine_green gone with the second gate, rigc_entry after the gate, pack_mode after it) and the six judgement lines and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line but BREATH_VISIBLE has nothing to read (and neither part is a mesh, so neither has TEXTURE_STRETCH) and must say SKIP, by name, with its reason — never PASS — while BREATH_VISIBLE reads its torso half and says it measured 1 of 2 halves (issue #323) — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
     );
 
     const again = runCli(['check', '--rig', rig, '--out', join(dir, 'out2')]);
@@ -10070,6 +10070,89 @@ function runCheckSuite(): number {
       `exit ${walk.status}; ${feetFail[0]?.trim() ?? 'no feet CHECK_BREATH_VISIBLE line'}; ${darkFail?.trim().slice(0, 160) ?? 'no CHECK_STILL_REGIONS_DARK line'}…`,
       'the fixture\'s footwear part rides the root the idle slides: rendered alone it moves (the feet half of the breath line, bar 0) and in screen space its art moves the slide, by hand (the still-region line), and neither gate can tell',
     );
+    // Issue #323: one half present, the other still read — the torso with no footwear, the feet with no topwear; each with a mutant.
+    const NO_FEET = 'no part comes from a See-through "footwear" layer, so there are no feet to hold still';
+    const NO_TORSO = 'no part comes from a See-through "topwear" layer, so there is no torso to see breathe';
+    const breathOf = (fig: Record<string, unknown> | null): Record<string, unknown> => (fig?.BREATH_VISIBLE ?? {}) as Record<string, unknown>;
+    const torsoOnly = judged('breath-torso-only', { from: ['full:topwear', 'full:topwear'] });
+    const tOnly = breathOf(torsoOnly.fig);
+    say(
+      'CK302_WITH_NO_FOOTWEAR_THE_TORSO_HALF_IS_STILL_MEASURED_AND_DECIDES_THE_LINE_AND_THE_FEET_HALF_SAYS_SKIP_BY_NAME',
+      tOnly.status === 'PASS' &&
+        JSON.stringify(Object.keys(tOnly)) === JSON.stringify(['status', 'halves_measured', 'torso_status', 'torso_parts', 'torso_heat_mean', 'torso_floor', 'feet_status', 'feet_reason']) &&
+        tOnly.halves_measured === '1 of 2' &&
+        tOnly.torso_status === 'PASS' &&
+        typeof tOnly.torso_heat_mean === 'number' &&
+        tOnly.torso_heat_mean >= BREATH_TORSO_MEAN_FLOOR &&
+        tOnly.feet_status === 'SKIP' &&
+        tOnly.feet_reason === NO_FEET &&
+        failLine(torsoOnly.out, 'CHECK_BREATH_VISIBLE') === null &&
+        lineOf(torsoOnly.out, 'BREATH_VISIBLE').startsWith('BREATH_VISIBLE: PASS — halves_measured 1 of 2; torso_status PASS; torso_parts ') &&
+        lineOf(torsoOnly.out, 'BREATH_VISIBLE').endsWith(`; feet_status SKIP; feet_reason ${NO_FEET}`),
+      `${lineOf(torsoOnly.out, 'BREATH_VISIBLE')}`,
+      'issue #323: a figure with no footwear part — feet merged into the legs, out of frame, cut at the knee — still has a torso to read; until #323 the line skipped both halves on the feet\'s absence and said nothing of the torso. Both fixture parts are topwear and ride the root the idle slides, so the torso moves',
+    );
+    const torsoStill = judged('breath-torso-only-still', { from: ['full:topwear', 'full:topwear'], peak: 0 });
+    const tStill = breathOf(torsoStill.fig);
+    const tStillFail = failLine(torsoStill.out, 'CHECK_BREATH_VISIBLE');
+    say(
+      'CK303_WITH_NO_FOOTWEAR_A_TORSO_THE_IDLE_DOES_NOT_MOVE_FAILS_THE_LINE_NAMING_THE_HALF_NOT_MEASURED',
+      torsoStill.status === 1 &&
+        tStill.status === 'FAIL' &&
+        tStill.torso_status === 'FAIL' &&
+        tStill.torso_heat_mean === 0 &&
+        tStill.feet_status === 'SKIP' &&
+        tStillFail !== null &&
+        tStillFail.includes('torso "') &&
+        tStillFail.includes(`the feet half not measured: ${NO_FEET}`) &&
+        tStillFail.includes('heat mean 0/255') &&
+        barsNotMet(torsoStill.fig ?? {}).includes('BREATH_VISIBLE'),
+      `exit ${torsoStill.status}; ${lineOf(torsoStill.out, 'BREATH_VISIBLE').slice(0, 120)}; ${tStillFail?.trim() ?? 'no CHECK_BREATH_VISIBLE line'}`,
+      'issue #323, the torso half\'s mutant: the same figure with a zero-amplitude idle — the half that is measured decides the line, so its failure is a FAIL by name, not hidden behind the half that is absent',
+    );
+    const feetOnly = judged('breath-feet-only', { from: ['full:footwear', 'full:footwear'], peak: 0 });
+    const fOnly = breathOf(feetOnly.fig);
+    say(
+      'CK304_WITH_NO_TOPWEAR_THE_FEET_HALF_IS_STILL_MEASURED_AND_DECIDES_THE_LINE_AND_THE_TORSO_HALF_SAYS_SKIP_BY_NAME',
+      fOnly.status === 'PASS' &&
+        JSON.stringify(Object.keys(fOnly)) === JSON.stringify(['status', 'halves_measured', 'torso_status', 'torso_reason', 'feet_status', 'feet_parts', 'feet_heat_max', 'feet_ceiling']) &&
+        fOnly.halves_measured === '1 of 2' &&
+        fOnly.torso_status === 'SKIP' &&
+        fOnly.torso_reason === NO_TORSO &&
+        fOnly.feet_status === 'PASS' &&
+        fOnly.feet_heat_max === 0 &&
+        failLine(feetOnly.out, 'CHECK_BREATH_VISIBLE') === null &&
+        lineOf(feetOnly.out, 'BREATH_VISIBLE').startsWith(`BREATH_VISIBLE: PASS — halves_measured 1 of 2; torso_status SKIP; torso_reason ${NO_TORSO}; feet_status PASS; feet_parts `),
+      `${lineOf(feetOnly.out, 'BREATH_VISIBLE')}`,
+      'issue #323, the reverse: with no topwear part the feet are still read against their bar (max heat 0); the fixture\'s idle moves nothing, so the feet hold still',
+    );
+    const feetWalk = judged('breath-feet-only-walk', { from: ['full:footwear', 'full:footwear'] });
+    const fWalk = breathOf(feetWalk.fig);
+    const fWalkFail = failLine(feetWalk.out, 'CHECK_BREATH_VISIBLE');
+    say(
+      'CK305_WITH_NO_TOPWEAR_FEET_ON_A_KEYED_BONE_FAIL_THE_LINE_NAMING_THE_HALF_NOT_MEASURED',
+      feetWalk.status === 1 &&
+        fWalk.status === 'FAIL' &&
+        fWalk.feet_status === 'FAIL' &&
+        typeof fWalk.feet_heat_max === 'number' &&
+        fWalk.feet_heat_max > 0 &&
+        fWalk.torso_status === 'SKIP' &&
+        fWalkFail !== null &&
+        fWalkFail.includes('feet "') &&
+        fWalkFail.includes(`the torso half not measured: ${NO_TORSO}`) &&
+        barsNotMet(feetWalk.fig ?? {}).includes('BREATH_VISIBLE'),
+      `exit ${feetWalk.status}; ${lineOf(feetWalk.out, 'BREATH_VISIBLE').slice(0, 160)}; ${fWalkFail?.trim() ?? 'no CHECK_BREATH_VISIBLE line'}`,
+      'issue #323, the feet half\'s mutant: the same figure on the idle that slides the root its parts ride — the feet move, and the half that is measured fails the line by name',
+    );
+    const neither = judged('breath-neither', { from: ['full:neck', 'full:neck'] });
+    const nLine = breathOf(neither.fig);
+    say(
+      'CK306_WITH_NEITHER_TOPWEAR_NOR_FOOTWEAR_THE_LINE_IS_THE_SKIP_IT_WAS',
+      JSON.stringify(nLine) === JSON.stringify({ status: 'SKIP', reason: NO_TORSO }) && lineOf(neither.out, 'BREATH_VISIBLE') === `BREATH_VISIBLE: SKIP — ${NO_TORSO}` && failLine(neither.out, 'CHECK_BREATH_VISIBLE') === null,
+      `${lineOf(neither.out, 'BREATH_VISIBLE')}`,
+      'issue #323: with no half to read the line says SKIP with its reason, as before — never a pass, and never a "1 of 2"',
+    );
+
     const slide = judged('tip-slide', { from: ['head:face', 'full:handwear-r'], peak: 8 });
     const tipFail = failLine(slide.out, 'CHECK_TIP_OVER_ROOT');
     say(
@@ -11218,6 +11301,11 @@ function runAnimationFoldCases(say: (name: string, ok: boolean, detail: string, 
     const rigged = (name: string, animations: Record<string, unknown>): { rig: string; parts: string; status: number } => {
       const c = rigConfig();
       (c.motion as Record<string, unknown>).animations_from = 'anims/extra.json';
+      // Issue #323: the fixture's one torso part, `cloth` (full:topwear), is read by BREATH_VISIBLE now that a figure with no
+      // footwear has its torso half measured; rigConfig's idle sways only the hem (heat mean 3.678 < 3.809), so these cases
+      // give the torso the breath a figure has — `body` translatey, amplitude 1 over the idle's 4 s (35.068) — and the fold
+      // bar is the only one a case here fails.
+      ((c.motion as Record<string, unknown>).tracks as unknown[]).push({ bone: 'body', prop: 'translatey', amp: 1, period: 4, phase: 0 });
       const f = writeRigFixture(join(dir, name), c);
       mkdirSync(join(dir, name, 'anims'), { recursive: true });
       writeFileSync(join(dir, name, 'anims', 'extra.json'), `${JSON.stringify({ spec: 'rigc-motion/1', animations }, null, 2)}\n`);
