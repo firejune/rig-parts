@@ -43,7 +43,10 @@
  *   strand and what became of it — a strand left without a chain is never
  *   silent (issue #24).
  * - anything no rule claims rides its nearest trunk bone as a region —
- *   including every `painting:` patch (`assemble.patches`), which has no tag,
+ *   including every part from an author-made layer (`<run>:author:<label>`,
+ *   issue #256), which is no See-through tag and so has no role: no rule
+ *   reads it, and its note says the bone is the config's to name — and
+ *   every `painting:` patch (`assemble.patches`), which has no tag,
  *   so no rule above ever reads it: it is never a mesh or a chain, it moves
  *   no bone the rules place, and the note says the bone is the config's to
  *   name in `regions.<name>`. A cut's piece (`assemble.cuts`, recorded with
@@ -130,6 +133,7 @@ import { IDLE_FPS } from './motion.ts';
 import { pyRound as roundTo } from './round.ts';
 import { KEYPOINT_NAMES, type KeypointName } from './skeleton.ts';
 import { configRoles, type RoleOf } from './structure.ts';
+import { AUTHOR_NO_ROLE, isAuthorTag } from './tags.ts';
 import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER_TAGS, turnFractions, turnNearest, turnPivot, turnRiderDepth, type TurnSpec } from './turn.ts';
 import { edgeLength } from './length.ts';
 
@@ -456,7 +460,7 @@ export type TurnRuns = Partial<Record<'full' | 'head', LayerSet>>;
  */
 export function draftTurn(P: PartSet, runs: TurnRuns): { turn: TurnSpec | null; notes: string[] } {
   const problems: Problem[] = [];
-  const read: Array<{ part: string; run: 'full' | 'head'; tag: string; base: string; own: number; area: number; order: number; piece: boolean }> = [];
+  const read: Array<{ part: string; run: 'full' | 'head'; tag: string; base: string | null; own: number; area: number; order: number; piece: boolean }> = [];
   const patches: string[] = [];
   const unread = new Map<string, string[]>();
   P.recs.forEach((r, order) => {
@@ -479,7 +483,7 @@ export function draftTurn(P: PartSet, runs: TurnRuns): { turn: TurnSpec | null; 
       problems.push({ code: 'PROPOSE_TURN_DEPTH_PRESENT', object: `part "${r.name}" (${r.from})`, detail: `its layer in ${set.source} carries no depth_median (a ${set.form} input); the turn orders parts by See-through's per-layer depth, so a run that carries one is required` });
       return;
     }
-    read.push({ part: r.name, run: run as 'full' | 'head', tag, base: layer.tag.base, own: layer.depth, area: r.opaque_px, order, piece: r.cut_from !== undefined });
+    read.push({ part: r.name, run: run as 'full' | 'head', tag, base: 'base' in layer.tag ? layer.tag.base : null, own: layer.depth, area: r.opaque_px, order, piece: r.cut_from !== undefined });
   });
   for (const [run, names] of unread) {
     problems.push({ code: 'PROPOSE_TURN_RUN_GIVEN', object: `the ${run} run`, detail: `part(s) ${names.map((n) => `"${n}"`).join(', ')} came from it and its layers were not given; --${run} <dir | layers.json> is required to read their depth` });
@@ -490,7 +494,8 @@ export function draftTurn(P: PartSet, runs: TurnRuns): { turn: TurnSpec | null; 
     notes.push(`turn: painting patch(es) ${patches.map((n) => `"${n}"`).join(', ')} carry no See-through depth and are not carried — each moves only as its bone does, as the pivot depth does; a value in config.turn.depths carries one`);
   }
   // Issue #271: the riders take the face's depth; everything else is its own carrier.
-  const isRider = (x: { base: string }): boolean => TURN_RIDER_TAGS.includes(x.base);
+  // An author-made layer (issue #256) has no tag, so it is neither a rider nor the carrier: it carries itself at its own depth.
+  const isRider = (x: { base: string | null }): boolean => x.base !== null && TURN_RIDER_TAGS.includes(x.base);
   const faces = read.filter((x) => x.base === TURN_CARRIER_TAG && !x.piece);
   const face = faces.length === 1 ? faces[0] : null;
   const riders = read.filter(isRider);
@@ -2027,6 +2032,9 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
       regions[p.name] = cy < neckY ? 'head' : cy < hip[1] ? 'chest' : 'hip';
       if (splitFrom(p.from)[0] === PAINTING_RUN) {
         notes.push(`${p.name} (${p.from}): a painting patch has no tag, so no rule -> region on ${regions[p.name]}, the nearest trunk bone; config.regions.${p.name} is the bone it rides`);
+      } else if (isAuthorTag(splitFrom(p.from)[1])) {
+        // Issue #256: no rule reads an author-made layer, and none is guessed for it.
+        notes.push(`${p.name} (${p.from}): ${AUTHOR_NO_ROLE}; no rule reads it -> region on ${regions[p.name]}, the nearest trunk bone, until config.regions.${p.name} names the bone it rides`);
       } else if (p.cut_from !== undefined) {
         notes.push(
           `${p.name} (${p.from}): a piece an assemble.cuts entry took from ${p.cut_from}, so not given that layer's rule a second time (it would name ${p.cut_from}'s bones and chains again) -> region on ${regions[p.name]}, the nearest trunk bone; config.regions.${p.name} is the bone it rides, and a mesh in config.meshes is the author's to give it`,

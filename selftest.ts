@@ -67,6 +67,9 @@ import { inflateSync } from 'node:zlib';
 import ts from 'typescript';
 import {
   assembleConfig,
+  AUTHOR_PART,
+  authorFullLayers,
+  authorPlan,
   C,
   EXPECTED_PARTS,
   EXPECTED_PROPOSAL,
@@ -175,7 +178,7 @@ import {
 } from './src/assemble.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
 import { BARS, besideIdleLine, blackRig, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
-import { blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
+import { baseTagOf, blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
   contactLine,
@@ -285,7 +288,7 @@ import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paint
 import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs, squarePad } from './src/inputs.ts';
 import { implausibleRules, type Layer, layerFigures, type LayerSet, PLAUSIBLE_AREA_RATIO_MAX, PLAUSIBLE_JUDGED_AREA_RATIO, PLAUSIBLE_TRANSLUCENT_MAX, PLAUSIBLE_BACKGROUND_MAX, PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN, readLayers, readPsdLayers, readWrapperLayers, ruleSummary } from './src/layers.ts';
-import { PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, readParts, serializeParts, writeParts } from './src/parts.ts';
+import { PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, readFrom, readParts, serializeParts, tagOf, writeParts } from './src/parts.ts';
 import {
   alphaComposite,
   connectedComponents,
@@ -387,7 +390,7 @@ import { BEND_DEGREES, BEND_WORST_SHARE, bendAnimationNames, bendAnimations, typ
 import { DRAFT_COARSE_GRID, DRAFT_COSTLY_GRID, DRAFT_FIGURE, DRAFT_FINE_GRID, DRAFT_LINKS, draftConfig, draftParts, writeDraftFixture } from './fixtures/meshdraft.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, isSkeletonName, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
-import { readTag, type TagReading } from './src/tags.ts';
+import { AUTHOR_LABEL_RULE, AUTHOR_NO_ROLE, authorLayerLine, readAuthorTag, readLayerTag, readTag, type TagReading } from './src/tags.ts';
 
 const ROOT = import.meta.dir;
 
@@ -1179,6 +1182,38 @@ function runWrapperSuite(): number {
       `eyebrow-l present flat AND under parts/ with different bytes -> ${codes(e4)}`,
       'two layouts are supported; when both answer differently, choosing one would be a guess',
     );
+
+    // LW125 — issue #256: a layer the author made is named `author:<label>` and read with group "author" and
+    // no v3 base, at its place in the depth order like any layer; an `author:` name whose label could not be a
+    // part name, and a bare word, are refused by name — the first saying what the label must be, the second
+    // naming the author form beside the v3 tags.
+    const authored = fresh('wrapper-author');
+    writeWrapperFixture(authored, [...WRAPPER_LAYERS, { ...WRAPPER_LAYERS[1], name: 'author:hand', depth: 0.3, layout: 'flat' }]);
+    const aset = readWrapperLayers(authored);
+    const hand = aset.layers.find((l) => l.name === 'author:hand');
+    const aorder = aset.layers.map((l) => l.name).join(' < ');
+    const badAuthor = fresh('wrapper-author-bad');
+    writeWrapperFixture(badAuthor, [
+      { ...WRAPPER_LAYERS[0], name: 'author:', layout: 'flat' },
+      { ...WRAPPER_LAYERS[1], name: 'author: hand', layout: 'flat' },
+      { ...WRAPPER_LAYERS[3], name: 'hand', layout: 'flat' },
+    ]);
+    const e125 = refusals(() => readWrapperLayers(badAuthor));
+    const d125 = (object: string): string => e125?.problems.find((p) => p.code === 'LAYERS_TAG_KNOWN' && p.object === object)?.detail ?? '';
+    say(
+      'LW125_AN_AUTHOR_MADE_LAYER_READS_WITH_GROUP_AUTHOR_AND_A_MALFORMED_ONE_IS_REFUSED_BY_NAME',
+      hand !== undefined &&
+        hand.tag.group === 'author' &&
+        !('base' in hand.tag) &&
+        aorder === 'neckwear < back hair < face < author:hand < eyebrow-l < eyebrow-r' &&
+        e125 !== null &&
+        e125.problems.length === 3 &&
+        d125('layer "author:"') === `is an author-made layer's name with the label ""; ${AUTHOR_LABEL_RULE} is required after "author:"` &&
+        d125('layer "author: hand"').startsWith('is an author-made layer\'s name with the label " hand"') &&
+        d125('layer "hand"').endsWith(', or "author:<label>" for a layer the author made'),
+      `author:hand at depth 0.3 -> group ${hand?.tag.group ?? 'not read'}, order ${aorder}; "author:", "author: hand", "hand" -> ${codes(e125)}`,
+      'issue #256: an author who splits a layer by hand had no tag to give it, so a consumer borrowed tail and wings; the author form is read as what it is, and a label that is no part name is refused, not trimmed into one',
+    );
   } finally {
     for (const d of dirs) rmSync(d, { recursive: true, force: true });
   }
@@ -1231,6 +1266,34 @@ function runPsdSuite(): number {
       e !== null && got.includes('PSD_LAYER_PLAIN PSD layer "back hair"') && got.includes('PSD_LAYER_PLAIN PSD layer "face"') && got.includes('LAYERS_TAG_KNOWN PSD layer "hair"'),
       got.join('; '),
       'each of these changes what the composite looks like, and the reader cannot see which the author meant, so it refuses instead of interpreting',
+    );
+
+    // PS122 — issue #256: the PSD reader admits an author-made layer as the wrapper's does, in stacking order, and
+    // refuses an `author:` name with no label by name.
+    const authored = join(dir, 'author.psd');
+    writePsdFixture(authored, CANVAS.w, CANVAS.h, [
+      { name: 'back hair', left: 10, top: 0, pixels: hair },
+      { name: 'author:lock', left: 34, top: 12, pixels: brow },
+      { name: 'face', left: 20, top: 8, pixels: face },
+    ]);
+    const aset = readPsdLayers(authored);
+    const anames = aset.layers.map((l) => `${l.drawOrder}:${l.name}:${l.tag.group}`).join(' ');
+    const emptyLabel = join(dir, 'author-empty.psd');
+    writePsdFixture(emptyLabel, CANVAS.w, CANVAS.h, [
+      { name: 'back hair', left: 10, top: 0, pixels: hair },
+      { name: 'author:', left: 34, top: 12, pixels: brow },
+    ]);
+    const e122 = refusals(() => readPsdLayers(emptyLabel));
+    say(
+      'PS122_A_PSD_READS_AN_AUTHOR_MADE_LAYER_IN_STACKING_ORDER_AND_REFUSES_ONE_WITH_NO_LABEL',
+      anames === '0:back hair:body 1:author:lock:author 2:face:head' &&
+        e122 !== null &&
+        e122.problems.length === 1 &&
+        e122.problems[0].code === 'LAYERS_TAG_KNOWN' &&
+        e122.problems[0].object === 'PSD layer "author:"' &&
+        e122.problems[0].detail.includes(AUTHOR_LABEL_RULE),
+      `${anames}; a layer named "author:" -> ${codes(e122)}`,
+      'issue #256: the two readers are one contract, so a layer the author made reads the same from a PSD as from the wrapper',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -1830,6 +1893,36 @@ function runConfigSuite(): number {
       one75(earlyField125, 'CONFIG_KEY_KNOWN', 'config.scene.contacts'),
     `{} -> ${show75(empty125)}; {note, x-why} -> ${show75(doors125)}; true -> ${show75(bool125)}; {contacts} -> ${show75(field125)}; at the assemble door: {} -> ${show75(earlyEmpty125)}, {contacts} -> ${show75(earlyField125)}`,
     "issue #242: the figure and its threshold are derived, so the declaration has nothing to choose; an object, not true, so a later field adds to it without changing what a config that has it means — and until then a field in it is a typo or a wish, refused by name",
+  );
+
+  // CF245 — issue #256: a plan entry and an extend entry may take an author-made layer, `author:<label>`; an
+  // `author:` name with a label that is no part name, and a word that is neither a v3 tag nor that form, are
+  // refused by name, the first saying what the label must be and the second naming the author form.
+  const authored245 = (tag: string, extendTag = 'back hair'): Record<string, unknown> => {
+    const c = minimalConfig();
+    const a = c.assemble as { plan: unknown[]; extend_below_crop: Array<Record<string, unknown>> };
+    a.plan = [...a.plan, ['hand', 'full', tag]];
+    a.extend_below_crop = [{ part: 'hair_back', run: 'full', tag: extendTag }];
+    (c.regions as Record<string, string>).hand = 'hip';
+    return c;
+  };
+  const good245 = refusals(() => parseConfig(authored245('author:hand')));
+  const extend245 = refusals(() => parseConfig(authored245('author:hand', 'author:lock')));
+  const empty245 = refusals(() => parseConfig(authored245('author:')));
+  const dot245 = refusals(() => parseConfig(authored245('author:.hand')));
+  const bare245 = refusals(() => parseConfig(authored245('hand')));
+  const at245 = 'config.assemble.plan[4] tag';
+  say(
+    'CF245_A_PLAN_MAY_TAKE_AN_AUTHOR_MADE_LAYER_AND_A_MALFORMED_ONE_IS_REFUSED_BY_NAME',
+    good245 === null &&
+      extend245 === null &&
+      one75(empty245, 'CONFIG_TAG_KNOWN', at245) &&
+      (empty245?.problems[0].detail.endsWith(`; after "author:", ${AUTHOR_LABEL_RULE}`) ?? false) &&
+      one75(dot245, 'CONFIG_TAG_KNOWN', at245) &&
+      one75(bare245, 'CONFIG_TAG_KNOWN', at245) &&
+      (bare245?.problems[0].detail.endsWith('— or "author:<label>" for a layer the author made') ?? false),
+    `["hand", "full", "author:hand"] -> ${show75(good245)}; extend tag "author:lock" -> ${show75(extend245)}; "author:" -> ${show75(empty245)}; "author:.hand" -> ${show75(dot245)}; "hand" -> ${show75(bare245)}`,
+    'issue #256: an author who splits a layer by hand had no tag to give it and borrowed an unused See-through one; the author form is admitted, and a label that could not be a part name is refused rather than trimmed into one',
   );
   return bad();
 }
@@ -2614,6 +2707,38 @@ function runPartsSuite(): number {
         : `lining (cut_from skirt, written after from: ${cutOrder}) reads; the same pair with no cut_from ${legacyOk ? 'reads' : 'is REFUSED'}; ` +
             (cutMissed.length === 0 ? `${cutSeen.length} planted records, each refused once: ${cutSeen.map((o) => o.got).join(' | ')}` : cutMissed.map((o) => `${o.what}: ${o.got}`).join(' | ')),
       'parts.json is in draw order, so a piece drawn "back" comes before its base and only the field says which is which; a field naming the wrong part would hand the base\'s rule to the piece, and a file from before the field must still read for check and rig',
+    );
+
+    // PT126 — issue #256: a part from an author-made layer is recorded `<run>:author:<label>`, with its ghost count
+    // under the same key, and reads back; its tag is no v3 tag, so the role readers (baseTagOf) see none. An
+    // `author:` with no label, and a word that is neither, are refused by name.
+    const authorRec = { ...baseRec, name: 'hand', from: 'full:author:hand' };
+    writeFileSync(path, JSON.stringify({ ...file, parts: [...file.parts, authorRec], ghost_px: { ...file.ghost_px, 'full:author:hand': 0 } }));
+    const authorOk = refusals(() => readParts(path));
+    const authorBack = authorOk === null ? readParts(path).parts.find((q) => q.name === 'hand') : undefined;
+    const authorFaults: Array<[string, string]> = [
+      ['full:author:', 'PARTS_FROM_KNOWN'],
+      ['full:hand', 'PARTS_FROM_KNOWN'],
+    ];
+    const authorSeen = authorFaults.map(([from, code]) => {
+      writeFileSync(path, JSON.stringify({ ...file, parts: [...file.parts, { ...authorRec, from }] }));
+      const err = refusals(() => readParts(path));
+      const one = err !== null && err.problems.length === 1 ? err.problems[0] : null;
+      return { from, ok: one !== null && one.code === code && one.detail.includes('"<full|head>:author:<label>" for a layer the author made'), got: codes(err) };
+    });
+    const authorTag = tagOf('full:author:hand');
+    say(
+      'PT126_A_PART_FROM_AN_AUTHOR_MADE_LAYER_READS_BACK_AND_NO_ROLE_READER_SEES_A_TAG_IN_IT',
+      authorOk === null &&
+        authorBack?.from === 'full:author:hand' &&
+        JSON.stringify(readFrom('full:author:hand')) === JSON.stringify({ run: 'full', tag: 'author:hand' }) &&
+        authorTag === 'author:hand' &&
+        readTag(authorTag) === null &&
+        baseTagOf(authorRec as PartRecord) === null &&
+        baseTagOf({ ...authorRec, from: 'full:tail' } as PartRecord) === 'tail' &&
+        authorSeen.every((o) => o.ok),
+      `full:author:hand with ghost key full:author:hand -> ${authorOk === null ? 'reads' : codes(authorOk)}; tagOf ${authorTag ?? 'null'}, baseTagOf ${String(baseTagOf(authorRec as PartRecord))} (the borrowed full:tail -> ${String(baseTagOf({ ...authorRec, from: 'full:tail' } as PartRecord))}); ${authorSeen.map((o) => `${o.from} -> ${o.got}`).join('; ')}`,
+      'issue #256: the provenance is the only thing a role is read from, so a hand-made layer is recorded as one and never as a See-through tag; the borrowed tag beside it is the negative control a role reader does see',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -14485,10 +14610,142 @@ function runAssembleSuite(): number {
     } finally {
       rmSync(hemDir, { recursive: true, force: true });
     }
+    authorLayerControls(say);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
   return bad();
+}
+
+/**
+ * Issue #256: one layer set holding one author-made layer, `author:hand`, taken through `layers`,
+ * `assemble --propose-plan`, `assemble` and `propose` from the CLI — what each prints for it — beside the
+ * borrowed-tag workaround it replaces (the same rectangle named `tail`). Every figure is the twin's
+ * (`authorFullLayers` in fixtures/assemble_fixture.ts derives the part's box and count).
+ */
+function authorLayerControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('assemble-author');
+  try {
+    const twin = (key: string, tag: string, plan: Array<[string, 'full' | 'head', string]> = authorPlan(tag)): string => {
+      const d = join(dir, key);
+      writeAssembleFixture(d, assembleConfig({ plan, extend: EXPECTED_PROPOSAL.extend_below_crop }), flatPainting(), { full: authorFullLayers(tag), head: HEAD_LAYERS });
+      return d;
+    };
+    const authored = twin('authored', 'author:hand');
+    const borrowed = twin('borrowed', 'tail');
+    const plain = join(dir, 'plain');
+    writeAssembleFixture(plain, assembleConfig({ plan: EXPECTED_PROPOSAL.plan, extend: EXPECTED_PROPOSAL.extend_below_crop }));
+    const inputs = (d: string): string[] => ['--source', join(d, 'painting.png'), '--full', join(d, 'full'), '--head', join(d, 'head'), '--config', join(d, 'config.json')];
+    const hasLine = (out: string, line: string): boolean => out.split('\n').includes(line);
+
+    // layers
+    const lyA = runCli(['layers', join(authored, 'full')]);
+    const lyP = runCli(['layers', join(plain, 'full')]);
+    const rowA = /^ {2}4 +author:hand +author +31,46 +44,59 +13x13 +169 /m.test(lyA.out);
+    say(
+      'AS225_LAYERS_PRINTS_AN_AUTHOR_MADE_LAYER_IN_GROUP_AUTHOR_AND_SAYS_IT_HAS_NO_ROLE',
+      lyA.status === 0 && rowA && hasLine(lyA.out, `  ${authorLayerLine('author:hand')}`) && lyP.status === 0 && !lyP.out.includes('author-made') && !lyP.out.includes(' author '),
+      `exit ${lyA.status}; row "4 author:hand author 31,46 44,59 13x13 169": ${rowA}; the line: ${lyA.out.split('\n').find((l) => l.includes('author-made:'))?.trim() ?? 'absent'}; the plain run (exit ${lyP.status}) prints an author group or line ${lyP.out.includes('author-made') || lyP.out.includes(' author ') ? 'SOMEWHERE' : 'nowhere'}`,
+      'issue #256: the layer table is the first place an agent reads a run, so a layer the author made is printed as one there — its group column says author, never body or head — and a run with none prints what it printed before',
+    );
+
+    // assemble --propose-plan
+    const ppA = runCli(['assemble', '--propose-plan', ...inputs(authored)]);
+    const ppP = runCli(['assemble', '--propose-plan', ...inputs(plain)]);
+    const authorNote = `author:hand: ${AUTHOR_NO_ROLE}; proposed as "hand" from the full run, at its place in that run's draw order`;
+    const wantA = { plan: authorPlan(), extend_below_crop: EXPECTED_PROPOSAL.extend_below_crop, notes: [...EXPECTED_PROPOSAL.notes, authorNote] };
+    const gotA = ppA.status === 0 ? JSON.stringify(JSON.parse(ppA.out)) : '';
+    const gotP = ppP.status === 0 ? JSON.stringify(JSON.parse(ppP.out)) : '';
+    say(
+      'AS226_PROPOSE_PLAN_TAKES_AN_AUTHOR_MADE_LAYER_AT_ITS_RUN_S_DRAW_ORDER_NAMED_BY_ITS_LABEL_WITH_A_NOTE',
+      gotA === JSON.stringify(wantA) && gotP === JSON.stringify(EXPECTED_PROPOSAL),
+      `exit ${ppA.status}: plan ${ppA.status === 0 ? JSON.stringify((JSON.parse(ppA.out) as { plan: unknown }).plan) : '-'}; equals the hand-derived one (["hand", "full", "author:hand"] after topwear, its fifth place in the full run; the note last): ${gotA === JSON.stringify(wantA)}; the plain twin's proposal is still EXPECTED_PROPOSAL: ${gotP === JSON.stringify(EXPECTED_PROPOSAL)}`,
+      'issue #256: the draw position of an author-made part comes from the plan like any part\'s, so the proposer drafts it where its run draws it and says, in the note, that it has no role',
+    );
+
+    // assemble
+    const asA = runCli(['assemble', ...inputs(authored), '--out', join(authored, 'out')]);
+    const asP = runCli(['assemble', ...inputs(plain), '--out', join(plain, 'out')]);
+    const recA = asA.status === 0 ? readParts(join(authored, 'out', 'rig', 'parts.json')) : null;
+    const handRec = recA?.parts.find((q) => q.name === 'hand');
+    const partRow = asA.out.split('\n').find((l) => l.startsWith('  hand ')) ?? '';
+    const asLine = `  author-made: part "hand" (full:author:hand) — ${AUTHOR_NO_ROLE}`;
+    writeFileSync(join(authored, 'empty-label.json'), JSON.stringify(assembleConfig({ plan: authorPlan('author:'), extend: EXPECTED_PROPOSAL.extend_below_crop })));
+    const refused = runCli(['assemble', ...inputs(authored).slice(0, 6), '--config', join(authored, 'empty-label.json'), '--out', join(authored, 'refused')]);
+    say(
+      'AS227_ASSEMBLE_WRITES_THE_AUTHOR_MADE_PART_WITH_ITS_PROVENANCE_AND_SAYS_IT_HAS_NO_ROLE',
+      asA.status === 0 &&
+        handRec !== undefined &&
+        handRec.from === 'full:author:hand' &&
+        handRec.x === AUTHOR_PART.x && handRec.y === AUTHOR_PART.y && handRec.w === AUTHOR_PART.w && handRec.h === AUTHOR_PART.h && handRec.opaque_px === AUTHOR_PART.opaque_px &&
+        recA?.ghost_px['full:author:hand'] === 0 &&
+        recA?.parts.map((q) => q.name).join(',') === authorPlan().map((e) => e[0]).join(',') &&
+        partRow.startsWith('  hand        full:author:hand 13x13     @  31,  46 op=   169 ') &&
+        hasLine(asA.out, asLine) &&
+        asP.status === 0 && !asP.out.includes('author-made') &&
+        refused.status === 1 && /^ {2}FAIL {2}CONFIG_TAG_KNOWN: config\.assemble\.plan\[4\] tag — is "author:"/m.test(refused.out) && !existsSync(join(authored, 'refused')),
+      `exit ${asA.status}; ${partRow.trim()}; the line: ${asA.out.split('\n').find((l) => l.includes('author-made:'))?.trim() ?? 'absent'}; parts.json hand ${handRec === undefined ? 'absent' : `${handRec.from} ${handRec.x},${handRec.y} ${handRec.w}x${handRec.h} ${handRec.opaque_px} px`}, ghost full:author:hand ${String(recA?.ghost_px['full:author:hand'])}, draw order ${recA?.parts.map((q) => q.name).join(', ') ?? '-'}; the plain twin prints "author-made" ${asP.out.includes('author-made') ? 'SOMEWHERE' : 'nowhere'}; a plan taking "author:" -> exit ${refused.status}, ${refused.out.split('\n')[0].trim()}`,
+      'issue #256: the part records where it came from, author-made, and its draw position is its place in the plan; a label that is no part name is refused before anything is written',
+    );
+
+    // propose
+    const prA = asA.status === 0 ? runCli(['propose', '--parts', join(authored, 'out', 'rig'), '--source', join(authored, 'painting.png'), '--out', join(authored, 'prop')]) : { status: -1, out: '' };
+    const proposal = prA.status === 0 ? (JSON.parse(readFileSync(join(authored, 'prop', 'proposal.json'), 'utf8')) as { bones: Array<Record<string, unknown>>; meshes: Record<string, unknown>; regions: Record<string, string> }) : null;
+    const prLine = `note: hand (full:author:hand): ${AUTHOR_NO_ROLE}; no rule reads it -> region on hip, the nearest trunk bone, until config.regions.hand names the bone it rides`;
+    const boneNames = proposal?.bones.map((b) => String(b.name ?? b.chain)) ?? [];
+    say(
+      'AS228_PROPOSE_GIVES_AN_AUTHOR_MADE_PART_NO_ROLE_AND_SAYS_THE_BONE_IS_THE_CONFIG_S',
+      prA.status === 0 && hasLine(prA.out, prLine) && proposal?.regions.hand === 'hip' && !('hand' in (proposal?.meshes ?? {})) && !boneNames.some((n) => n.includes('hand')),
+      `exit ${prA.status}; the note: ${prA.out.split('\n').find((l) => l.startsWith('note: hand '))?.trim() ?? 'absent'}; proposal regions.hand ${proposal?.regions.hand ?? '-'}, a mesh for it ${'hand' in (proposal?.meshes ?? {})}, a bone or chain named for it ${boneNames.filter((n) => n.includes('hand')).join(', ') || 'none'}`,
+      'issue #256: propose reads roles from tags, and this layer has none, so no rule reads it and none is guessed: it rides the nearest trunk bone only until the config names its bone, and the note says so',
+    );
+
+    // the borrowed-tag workaround, today
+    const lyB = runCli(['layers', join(borrowed, 'full')]);
+    const asB = runCli(['assemble', ...inputs(borrowed), '--out', join(borrowed, 'out')]);
+    const prB = asB.status === 0 ? runCli(['propose', '--parts', join(borrowed, 'out', 'rig'), '--source', join(borrowed, 'painting.png'), '--out', join(borrowed, 'prop')]) : { status: -1, out: '' };
+    const recB = asB.status === 0 ? readParts(join(borrowed, 'out', 'rig', 'parts.json')).parts.find((q) => q.name === 'hand') : undefined;
+    const tagB = recB === undefined ? null : readLayerTag(tagOf(recB.from) ?? '');
+    const borrowedRow = /^ {2}4 +tail +body +31,46 /m.test(lyB.out);
+    say(
+      'AS229_THE_BORROWED_TAG_WORKAROUND_RECORDS_THE_HAND_AS_SEE_THROUGH_S_TAIL',
+      borrowedRow &&
+        !lyB.out.includes('author-made') &&
+        recB?.from === 'full:tail' &&
+        tagB !== null && tagB.group === 'body' && 'base' in tagB && tagB.base === 'tail' &&
+        hasLine(prB.out, 'note: hand (full:tail): no rule -> region on hip') &&
+        !prB.out.includes('author-made'),
+      `layers: ${lyB.out.split('\n').find((l) => /^ {2}4 /.test(l))?.trim().replace(/ +/g, ' ') ?? 'absent'}; parts.json hand from ${recB?.from ?? '-'}, read as v3 tag ${tagB !== null && 'base' in tagB ? `${tagB.base} (group ${tagB.group})` : 'none'}; propose: ${prB.out.split('\n').find((l) => l.startsWith('note: hand '))?.trim() ?? 'absent'}`,
+      'issue #256: the workaround the issue reports — a hand-made layer named with an unused See-through tag — is printed as a body layer, recorded as See-through\'s tail and read by propose as a tail no rule handles: a role the part does not have. Against it, AS225–AS228 hold the author form',
+    );
+
+    // both runs, and the head run alone, in memory
+    const geometry = { sourceW: SOURCE_SIDE, sourceH: SOURCE_SIDE, resolution: RESOLUTION, headBox: HEAD_BOX, rigScale: RIG_SCALE };
+    const runIn = (key: string, layers: Parameters<typeof writeRun>[1]): LayerSet => {
+      writeRun(join(dir, key), layers);
+      return readWrapperLayers(join(dir, key));
+    };
+    const fullA = readWrapperLayers(join(authored, 'full'));
+    const fullP = readWrapperLayers(join(plain, 'full'));
+    const headBoth = runIn('head-both', [...HEAD_LAYERS, { name: 'author:hand', depth: 0.4, rects: [{ x0: 30, y0: 44, x1: 42, y1: 58, colour: C }] }]);
+    const headOnly = runIn('head-only', [...HEAD_LAYERS, { name: 'author:lock', depth: 0.3, rects: [{ x0: 30, y0: 0, x1: 40, y1: 16, colour: C }] }]);
+    const both = proposePlan(fullA, headBoth, geometry);
+    const only = proposePlan(fullP, headOnly, geometry);
+    const bothNote = 'author:hand: the head run holds a layer of this name too, and the proposer drafts one part per author-made layer, from the full run; to take the head run\'s as well, add ["<a part name>", "head", "author:hand"] to the plan';
+    const lockNote = `author:lock: ${AUTHOR_NO_ROLE}; proposed as "lock" from the head run, at its place in that run's draw order`;
+    const wantOnly = [...EXPECTED_PROPOSAL.plan, ['lock', 'head', 'author:lock']];
+    say(
+      'AS230_AN_AUTHOR_MADE_LAYER_IN_BOTH_RUNS_IS_PROPOSED_ONCE_AND_ONE_IN_THE_HEAD_RUN_ALONE_FROM_THE_HEAD_RUN',
+      JSON.stringify(both.plan) === JSON.stringify(authorPlan()) &&
+        JSON.stringify(both.notes) === JSON.stringify([...EXPECTED_PROPOSAL.notes, authorNote, bothNote]) &&
+        JSON.stringify(only.plan) === JSON.stringify(wantOnly) &&
+        JSON.stringify(only.notes) === JSON.stringify([...EXPECTED_PROPOSAL.notes, lockNote]),
+      `both runs: plan ${JSON.stringify(both.plan.map((e) => e[0]))}, notes ${both.notes.length} (last: ${both.notes[both.notes.length - 1] ?? '-'}); the head run alone: plan ${JSON.stringify(only.plan.map((e) => `${e[0]}<-${e[1]}:${e[2]}`))}`,
+      'issue #256: one part per layer the proposer drafts, so a name both runs hold would otherwise be proposed twice under one part name; a layer only the head run holds is drafted from it, at its place in that run\'s draw order (here last, depth 0.3 under the face\'s 0.5), as a full-run one is',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -26,6 +26,22 @@
  * Nothing downstream classifies a part by its NAME. The role of a part — what
  * a proposer may do with it — is read from the tag it came from, which is why
  * `parts.json` records `from` for every part.
+ *
+ * ⭐ **An author-made layer** (issue #256) is a layer the author split or
+ * painted by hand outside the tool — a hand laid over a hip taken out of
+ * `handwear`, a loop of hair over a shoulder taken out of `back hair` — and
+ * added to a run. It is named `author:<label>` ({@link AUTHOR_PREFIX}), the
+ * label the author's own. It is not a See-through tag and carries no role:
+ * {@link readTag} never reads it, so no rule that reads roles from tags ever
+ * sees it, and every reader that admits a layer reads it through
+ * {@link readLayerTag}, which says `group: "author"`. Why a prefix and this
+ * one: a single reserved name would let a run hold one such layer (a tag
+ * names one layer, `LAYERS_NAME_UNIQUE`, and one layer makes one part); no
+ * v3 tag holds a colon, so the prefix cannot be read as a See-through tag or
+ * as one of its `-r`/`-l` halves; and `<origin>:<name>` is already how
+ * `parts.json` says "not a See-through layer" for a patch (`painting:<name>`).
+ * Every reader of a part's `from` splits at the first colon, so
+ * `full:author:hand` is the full run's layer `author:hand`.
  */
 
 export const BODY_TAGS = [
@@ -118,4 +134,74 @@ export function pairOf(name: string): string | null {
   const t = readTag(name);
   if (t === null || t.side === null) return null;
   return `${t.base}-${t.side === 'r' ? 'l' : 'r'}`;
+}
+
+/** The prefix of an author-made layer's name (issue #256): `author:<label>`. */
+export const AUTHOR_PREFIX = 'author:';
+
+/** An author-made layer's name read: the label after {@link AUTHOR_PREFIX}, and no tag, so no role. */
+export interface AuthorTagReading {
+  /** The name as the layer carries it: `author:hand`. */
+  name: string;
+  /** What follows the prefix: the author's own word, read by nothing as a role. */
+  label: string;
+  group: 'author';
+}
+
+/** What a layer name reads as: a See-through v3 tag, or an author-made layer's name. */
+export type LayerTagReading = TagReading | AuthorTagReading;
+
+/** What an author-made layer's label must be, as a refusal quotes it. */
+export const AUTHOR_LABEL_RULE = 'a label that is not empty, does not start with "." or whitespace, does not end with whitespace, and holds no slash, backslash or colon';
+
+/**
+ * Whether `label` may follow {@link AUTHOR_PREFIX}. It becomes part of a part
+ * name the plan proposes and of a file name the wrapper form may look for
+ * (`parts/<name>.png`), so it is held to what a part name may be, and it holds
+ * no colon, so the name keeps exactly one.
+ */
+export function authorLabelOk(label: string): boolean {
+  return label !== '' && !label.startsWith('.') && label.trim() === label && !/[\\/:]/.test(label);
+}
+
+/** Read a layer name as an author-made layer's, or `null` when it is not one (no prefix, or a label {@link authorLabelOk} refuses). */
+export function readAuthorTag(name: string): AuthorTagReading | null {
+  if (!name.startsWith(AUTHOR_PREFIX)) return null;
+  const label = name.slice(AUTHOR_PREFIX.length);
+  return authorLabelOk(label) ? { name, label, group: 'author' } : null;
+}
+
+/** Read a layer name as a v3 tag or an author-made layer's name, or `null` when it is neither. */
+export function readLayerTag(name: string): LayerTagReading | null {
+  return readTag(name) ?? readAuthorTag(name);
+}
+
+/** Whether a tag string names an author-made layer. */
+export function isAuthorTag(name: string): boolean {
+  return readAuthorTag(name) !== null;
+}
+
+/**
+ * Why `name` is no layer tag, as the detail of a `*_TAG_KNOWN` refusal: an
+ * `author:` name whose label is refused says what the label must be; any
+ * other names the accepted v3 tags and the author form.
+ */
+export function layerTagRequirement(name: string): string {
+  if (name.startsWith(AUTHOR_PREFIX)) {
+    return `is an author-made layer's name with the label ${JSON.stringify(name.slice(AUTHOR_PREFIX.length))}; ${AUTHOR_LABEL_RULE} is required after "${AUTHOR_PREFIX}"`;
+  }
+  return `is not a See-through v3 tag; one of ${acceptedTagNames().join(', ')} is required, or "${AUTHOR_PREFIX}<label>" for a layer the author made`;
+}
+
+/**
+ * What every stage says of an author-made layer (issue #256), so it never
+ * reads as a See-through layer: `layers` prints it per layer, `assemble` per
+ * part, and `--propose-plan` and `propose` carry it in their notes.
+ */
+export const AUTHOR_NO_ROLE =
+  'an author-made layer, not a See-through one: no tag, so no role — it rides the bone the config gives it (config.regions.<part>, or a mesh in config.meshes), and its draw position is its place in config.assemble.plan';
+
+/** The `layers` line for an author-made layer. */
+export function authorLayerLine(name: string): string {
+  return `author-made: layer "${name}" — ${AUTHOR_NO_ROLE}`;
 }

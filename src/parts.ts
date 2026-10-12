@@ -6,7 +6,9 @@
  * came from (`from` = `<run>:<tag>`, the See-through run and tag — the only
  * thing downstream stages classify a part by — or `painting:<name>` for an
  * `assemble.patches` entry, cut from the painting itself and named for the
- * part it made, which no tag classifies), where it sits in rig pixels
+ * part it made, which no tag classifies; a part from a layer the author made
+ * is `<run>:author:<label>`, issue #256, which no tag classifies either),
+ * where it sits in rig pixels
  * (`x`/`y`/`w`/`h`, y down, origin top-left: the PNG's own box), and what the
  * assembler did to its pixels, counted:
  *
@@ -73,7 +75,7 @@
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { type Problem, refuseIfAny } from './errors.ts';
-import { readTag } from './tags.ts';
+import { readLayerTag } from './tags.ts';
 
 export interface PartRecord {
   name: string;
@@ -186,22 +188,22 @@ const COUNT_KEYS = PART_KEYS.slice(2).filter((k) => k !== FRINGE_KEY && k !== CU
 export const VISIBILITY_KEYS = ['visible_px', 'occluded_px', 'visible_not_projected_px'] as const;
 const REQUIRED_KEYS = PART_KEYS.filter((k) => !(VISIBILITY_KEYS as readonly string[]).includes(k) && k !== FRINGE_KEY && k !== CUT_FROM_KEY);
 
-/** Where a part came from: a See-through run and a v3 tag, or the painting itself for a patch. */
+/** Where a part came from: a See-through run and a v3 tag or an author-made layer's `author:<label>` (issue #256), or the painting itself for a patch. */
 export type From = { run: 'full' | 'head'; tag: string } | { run: 'painting'; patch: string };
 
 /** The `from` a patch's record carries. */
 export const PAINTING_RUN = 'painting';
 
-/** `<run>:<tag>` with run `full` or `head` and a v3 tag, `painting:<patch name>`, or null. */
+/** `<run>:<tag>` with run `full` or `head` and a v3 tag or an `author:<label>` (`full:author:hand`), `painting:<patch name>`, or null. */
 export function readFrom(from: string): From | null {
   const p = /^painting:(.+)$/.exec(from);
   if (p !== null) return { run: 'painting', patch: p[1] };
   const m = /^(full|head):(.+)$/.exec(from);
-  if (m === null || readTag(m[2]) === null) return null;
+  if (m === null || readLayerTag(m[2]) === null) return null;
   return { run: m[1] as 'full' | 'head', tag: m[2] };
 }
 
-/** The See-through tag a part came from, or null for a `painting:` patch (or a `from` that is neither). */
+/** The tag a part came from — a See-through tag, or an author-made layer's `author:<label>`, which no role reader matches — or null for a `painting:` patch (or a `from` that is neither). */
 export function tagOf(from: string): string | null {
   const f = readFrom(from);
   return f === null || f.run === 'painting' ? null : f.tag;
@@ -274,7 +276,7 @@ function checkParts(raw: unknown, path: string): PartsFile {
     if (typeof g !== 'object' || g === null || Array.isArray(g)) fail('PARTS_FIELD_TYPE', `${path} field "ghost_px"`, `is ${show(g)}; an object of "<run>:<tag>" -> pixels is required`);
     else {
       for (const [k, v] of Object.entries(g as Record<string, unknown>)) {
-        if (tagOf(k) === null) fail('PARTS_FROM_KNOWN', `${path} ghost_px key "${k}"`, 'is not "<full|head>:<v3 tag>" (a patch has no See-through layer, so no ghost count)');
+        if (tagOf(k) === null) fail('PARTS_FROM_KNOWN', `${path} ghost_px key "${k}"`, 'is not "<full|head>:<v3 tag>" or "<full|head>:author:<label>" (a patch has no See-through layer, so no ghost count)');
         if (!(Number.isInteger(v) && (v as number) >= 0)) fail('PARTS_FIELD_TYPE', `${path} ghost_px "${k}"`, `is ${show(v)}; a pixel count is required`);
       }
     }
@@ -301,7 +303,7 @@ function checkParts(raw: unknown, path: string): PartsFile {
       } else if (seen.has(r.name)) fail('PARTS_NAME_UNIQUE', label, `appears at parts[${seen.get(r.name)}] and parts[${i}]`);
       else seen.set(r.name, i);
       const from = typeof r.from === 'string' ? readFrom(r.from) : null;
-      if (from === null) fail('PARTS_FROM_KNOWN', `${label} field "from"`, `is ${show(r.from)}; "<full|head>:<v3 tag>", or "painting:<the part's own name>" for a patch, is required`);
+      if (from === null) fail('PARTS_FROM_KNOWN', `${label} field "from"`, `is ${show(r.from)}; "<full|head>:<v3 tag>", "<full|head>:author:<label>" for a layer the author made, or "painting:<the part's own name>" for a patch, is required`);
       else if (from.run === 'painting' && from.patch !== r.name) {
         fail('PARTS_FROM_KNOWN', `${label} field "from"`, `is ${show(r.from)}; a patch's provenance names the patch itself, so "painting:${String(r.name)}" is required`);
       }

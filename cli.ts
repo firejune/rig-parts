@@ -34,6 +34,7 @@ import { REQUIREMENTS_SENTENCE } from './src/requirements.ts';
 import { composeStage, IMAGE_SEP, PLATE, PROVENANCES, SCENE_REPORT_FILE, SCENE_REPORT_SPEC, SCENE_SPEC } from './src/scene.ts';
 import { buildSheet, defaultCaption, type Tile, tilesFrom } from './src/sheet.ts';
 import { loadComparison, requiredProblems, structureLines } from './src/structure.ts';
+import { authorLayerLine } from './src/tags.ts';
 
 const EXIT_OK = 0;
 const EXIT_REFUSED = 1;
@@ -63,9 +64,11 @@ usage:
       (alpha below 128), background share (min channel above 235) and area as a
       multiple of the rest of the figure (the other layers' union). A layer that
       crosses a plausibility rule gets a WARN line naming the rule and the bar;
-      --propose-plan leaves it out. Refuses, by name, a missing file, an
-      unknown tag, a PNG whose size is not its box, and anything else outside
-      the input contract — never a WARN.
+      --propose-plan leaves it out. A layer named author:<label> is one the
+      author made by hand: its group is author, and a line says it has no
+      role. Refuses, by name, a missing file, an unknown tag, a PNG whose
+      size is not its box, and anything else outside the input contract —
+      never a WARN.
 
   rig-parts sheet --source <painting.png> --layers <path> [--layers <path> ...]
                     --out <sheet.png> [--cell <px>] [--cols <n>]
@@ -78,7 +81,8 @@ usage:
   rig-parts propose --parts <dir> --source <painting.png> --out <dir> [--compare <config.json>]
       Propose bones, meshes, regions and an idle from the assembled parts (<dir>
       holds parts.json and parts/). Roles come from each part's See-through tag,
-      never its name. Writes <out>/proposal.json (config-shaped: bones, meshes,
+      never its name; a part from an author:<label> layer has no role and
+      rides the nearest trunk bone until the config names one. Writes <out>/proposal.json (config-shaped: bones, meshes,
       regions, motion with its blink — and a blink.still cut for a lash that
       reaches far above its eyewhite, when a clear row allows one; no blink
       when no part is an eyewhite, and no brows in it when no part is an
@@ -622,6 +626,8 @@ function printLayerTable(set: LayerSet): void {
   for (const r of rows) console.log(line(r));
   const painted = set.layers.filter((l) => l.opaquePx > 0).length;
   console.log(`  ${set.layers.length} layer(s): ${painted} with opaque pixels, ${set.layers.length - painted} with none`);
+  // Issue #256: a layer the author made is said to be one, so it never reads as See-through's. None, no line.
+  for (const l of set.layers) if (l.tag.group === 'author') console.log(`  ${authorLayerLine(l.name)}`);
   // A reader refuses nothing on plausibility: it says what --propose-plan will leave out, and why.
   let warned = 0;
   for (const f of figures) {
