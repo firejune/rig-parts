@@ -204,6 +204,46 @@ export const BREATH_FRACTION = 0.025;
 /** The breath's amplitude the reference drafted on every figure, kept only where the trunk has no length to scale by. */
 export const REFERENCE_BREATH_AMP = 1.3;
 
+/**
+ * How a drafted lattice's spacing (`meshes.<part>.grid`) is chosen (issue #265):
+ *
+ * - `figure`, the default: one spacing for the figure, `round(H / FIGURE_GRID_DIVISOR)` rig px, H the height of the
+ *   union of every part's box in parts.json ({@link figureGrid}); a part whose own spacing (the `part` rule) is
+ *   already coarser keeps its own. `r` is the `part` rule's either way, so the weights a vertex would take at a point
+ *   do not move, only where the vertices are.
+ * - `part`: the reference implementation's rule, a tenth of the part's own short side, clamped to 5..36. The
+ *   oracle examples (`reference-demo`, `reference-sample`) are proposed under it, because their `proposal.json` holds
+ *   this proposer to the reference's.
+ */
+export type GridRule = 'figure' | 'part';
+export const GRID_RULES: readonly GridRule[] = ['figure', 'part'];
+export const DEFAULT_GRID_RULE: GridRule = 'figure';
+
+/**
+ * The divisor of the figure's spacing: Stage A of issue #265 (docs/evidence/density-survey.md) built every lattice
+ * of demo, scarf and the public trailer at round(H / c) for c in {26, 37, 52}; 37 is the coarsest at which every
+ * `check` bar passed on all three (c 26 failed scarf's TIP_OVER_ROOT). Calibrated on those three figures only, all
+ * of similar size (H 1106, 1108 and 1185 rig px).
+ */
+export const FIGURE_GRID_DIVISOR = 37;
+
+/** The largest idle displacement Stage A measured at {@link FIGURE_GRID_DIVISOR} against each example's finer lattice, rig px (the trailer's hairpin), which no `check` bar reads. */
+export const FIGURE_GRID_IDLE_PX = 1.427;
+
+/** The figure's spacing: the union of every part's box in parts.json, its height H, and round(H / {@link FIGURE_GRID_DIVISOR}). */
+export function figureGrid(recs: readonly PartRecord[]): { top: number; bottom: number; height: number; grid: number } {
+  const top = Math.min(...recs.map((r) => r.y));
+  const bottom = Math.max(...recs.map((r) => r.y + r.h));
+  const height = bottom - top;
+  return { top, bottom, height, grid: pyInt(pyRound(height / FIGURE_GRID_DIVISOR)) };
+}
+
+/** The `part` rule's spacing and the weight falloff `r` both rules draft (the reference's). */
+export function partGrid(p: { w: number; h: number }): [number, number] {
+  const g = pyInt(Math.min(36, Math.max(5, pyRound(Math.min(p.w, p.h) / 10))));
+  return [g, Math.max(3, pyInt(pyRound(g * 0.42)))];
+}
+
 export interface Proposal {
   bones: BoneEntry[];
   meshes: Record<string, MeshSpec>;
@@ -1013,8 +1053,8 @@ const SIDES = [
  * which rule stood in; without it every value and note is the one this
  * function wrote before the parameter existed.
  */
-export function propose(P: PartSet, joints?: RigJoints, wristSnap: number | null = null): Proposal {
-  return proposeWithBasis(P, joints, wristSnap).proposal;
+export function propose(P: PartSet, joints?: RigJoints, wristSnap: number | null = null, gridRule: GridRule = DEFAULT_GRID_RULE): Proposal {
+  return proposeWithBasis(P, joints, wristSnap, gridRule).proposal;
 }
 
 /**
@@ -1027,7 +1067,7 @@ export function propose(P: PartSet, joints?: RigJoints, wristSnap: number | null
  * `joints`: see {@link armsFromJoints}. `null` is the built-in tolerance
  * alone, and every value and note is the one written before it existed.
  */
-export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: number | null = null): { proposal: Proposal; basis: ProposalBasis } {
+export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: number | null = null, gridRule: GridRule = DEFAULT_GRID_RULE): { proposal: Proposal; basis: ProposalBasis } {
   // Issue #230: a piece is not given its base's rule a second time, which
   // needs to know which part is the piece. A file that cannot say is refused
   // here, and only here: every other reader of parts.json still takes it.
@@ -1285,9 +1325,13 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
     { bone: 'neck', prop: 'rotate', amp: 0.35, period: 4.0, phase: 0.08 },
   );
 
+  // Issue #265: the figure's spacing unless the reference's rule is asked for; r is the part rule's either way.
+  const fig = figureGrid(P.recs);
+  const ownGrid = new Map<string, number>();
   const gridR = (p: PartRecord): [number, number] => {
-    const g = pyInt(Math.min(36, Math.max(5, pyRound(Math.min(p.w, p.h) / 10))));
-    return [g, Math.max(3, pyInt(pyRound(g * 0.42)))];
+    const [g, r] = partGrid(p);
+    ownGrid.set(p.name, g);
+    return [gridRule === 'part' ? g : Math.max(g, fig.grid), r];
   };
 
   // ---- back hair
@@ -1955,6 +1999,10 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
       );
     }
   }
+  if (gridRule === 'figure') {
+    const latt = Object.keys(meshes).filter((m) => 'grid' in meshes[m] && ownGrid.has(m));
+    if (latt.length > 0) notes.push(gridNote(fig, latt.map((m) => [m, ownGrid.get(m) as number])));
+  }
   if (joints !== undefined) {
     notes.push(
       ...jointNotes(joints, {
@@ -1978,6 +2026,19 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
   const scale = IDLE_SECONDS / REFERENCE_IDLE_SECONDS;
   const idleTracks = tracks.map((tr) => ({ ...tr, period: tr.period * scale }));
   return { proposal: { bones, meshes, regions, motion: blink === undefined ? { duration: IDLE_SECONDS, tracks: idleTracks } : { duration: IDLE_SECONDS, tracks: idleTracks, blink }, notes }, basis: { frame, bones: records } };
+}
+
+/**
+ * The note the `figure` grid rule writes (issue #265): the spacing and where it came from, per lattice part its own
+ * spacing and the one drafted, what it costs and what it was calibrated on.
+ */
+export function gridNote(fig: { top: number; bottom: number; height: number; grid: number }, parts: ReadonlyArray<readonly [string, number]>): string {
+  const took = parts.filter(([, g]) => g < fig.grid).map(([m, g]) => `${m} ${g} -> ${fig.grid}`);
+  const kept = parts.filter(([, g]) => g >= fig.grid).map(([m, g]) => `${m} ${g}`);
+  return (
+    `mesh spacing: grid ${fig.grid} = round(H / ${FIGURE_GRID_DIVISOR}), H ${fig.height} rig px the height of every part's box together (rows ${fig.top} to ${fig.bottom}), in place of a tenth of each part's short side (${took.length > 0 ? took.join(', ') : 'none'}; kept, already as coarse: ${kept.length > 0 ? kept.join(', ') : 'none'}); r is the part's own. ` +
+    `Calibrated on three figures of similar size (H 1106-1185 rig px, issue #265 Stage A), where every check bar passed at this divisor and the idle moved by up to ${FIGURE_GRID_IDLE_PX} rig px against the finer lattice — no bar reads that. propose --grid-rule part drafts the part's own spacing`
+  );
 }
 
 /**

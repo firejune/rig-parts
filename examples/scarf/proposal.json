@@ -303,7 +303,7 @@
   ],
   "meshes": {
     "hair_back": {
-      "grid": 12,
+      "grid": 30,
       "r": 5,
       "segments": [
         [
@@ -321,7 +321,7 @@
       ]
     },
     "hair_front": {
-      "grid": 8,
+      "grid": 30,
       "r": 3,
       "segments": [
         [
@@ -341,7 +341,7 @@
       ]
     },
     "handwear_r": {
-      "grid": 9,
+      "grid": 30,
       "r": 4,
       "segments": [
         [
@@ -359,7 +359,7 @@
       ]
     },
     "handwear_l": {
-      "grid": 8,
+      "grid": 30,
       "r": 3,
       "segments": [
         [
@@ -377,7 +377,7 @@
       ]
     },
     "topwear": {
-      "grid": 29,
+      "grid": 30,
       "r": 12,
       "segments": [
         [
@@ -407,7 +407,7 @@
       ]
     },
     "bottomwear": {
-      "grid": 12,
+      "grid": 30,
       "r": 5,
       "segments": [
         [
@@ -622,6 +622,7 @@
     "hair_side_l (painting:hair_side_l): a painting patch has no tag, so no rule -> region on head, the nearest trunk bone; config.regions.hair_side_l is the bone it rides",
     "legwear (full:legwear): no rule -> region on hip",
     "shoe_gap_r (painting:shoe_gap_r): a painting patch has no tag, so no rule -> region on hip, the nearest trunk bone; config.regions.shoe_gap_r is the bone it rides",
-    "shoe_gap_l (painting:shoe_gap_l): a painting patch has no tag, so no rule -> region on hip, the nearest trunk bone; config.regions.shoe_gap_l is the bone it rides"
+    "shoe_gap_l (painting:shoe_gap_l): a painting patch has no tag, so no rule -> region on hip, the nearest trunk bone; config.regions.shoe_gap_l is the bone it rides",
+    "mesh spacing: grid 30 = round(H / 37), H 1106 rig px the height of every part's box together (rows 83 to 1189), in place of a tenth of each part's short side (hair_back 12 -> 30, hair_front 8 -> 30, handwear_r 9 -> 30, handwear_l 8 -> 30, topwear 29 -> 30, bottomwear 12 -> 30; kept, already as coarse: none); r is the part's own. Calibrated on three figures of similar size (H 1106-1185 rig px, issue #265 Stage A), where every check bar passed at this divisor and the idle moved by up to 1.427 rig px against the finer lattice — no bar reads that. propose --grid-rule part drafts the part's own spacing"
   ]
 }

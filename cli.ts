@@ -26,7 +26,7 @@ import { makeInputs } from './src/inputs.ts';
 import { idleKeysOf, isIdleKeys } from './src/rig.ts';
 import { figuresPhrase, implausibleRules, layerFigures, type LayerSet, pct, readLayers, ruleSummary, times } from './src/layers.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPEC, loadKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
-import { basisLines, checkProposal, compare, compareLines, draftTurn, drawLandmarks, FRINGE_STEP_PX, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal, withTurn, WRIST_ON_PART_PX } from './src/propose.ts';
+import { basisLines, checkProposal, compare, compareLines, DEFAULT_GRID_RULE, draftTurn, drawLandmarks, FIGURE_GRID_DIVISOR, FRINGE_STEP_PX, GRID_RULES, type GridRule, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal, withTurn, WRIST_ON_PART_PX } from './src/propose.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { readPng, writePng } from './src/raster/png.ts';
 import { REQUIREMENTS_SENTENCE } from './src/requirements.ts';
@@ -148,6 +148,16 @@ usage:
       and is named in a note. A part from a run not given, a tag the run lacks
       or a layer with no depth is refused by name. Without either flag nothing
       changes.
+
+  rig-parts propose … [--grid-rule figure|part]
+      How each drafted lattice's spacing (meshes.<part>.grid) is chosen.
+      figure, the default: round(H / ${FIGURE_GRID_DIVISOR}) rig px for every lattice, H the
+      height of every part's box together, and a part whose own spacing is
+      already coarser keeps it; a note says which parts took it, that it was
+      calibrated on three figures of similar size, and what it costs (the
+      idle moved against the finer lattice, which no bar reads). part: the
+      reference's rule, a tenth of the part's short side clamped to 5..36.
+      r is the part rule's under both.
 
   rig-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
       Draw the config's CURRENT bones instead (<out>/render/landmarks_config.png
@@ -587,7 +597,7 @@ function printLayerTable(set: LayerSet): void {
 const TAKES = {
   sheet: { valued: ['--source', '--layers', '--out', '--cell', '--cols'], switches: [] },
   rig: { valued: ['--config', '--parts', '--out', '--idle-keys', '--page-edges', '--pack-shape'], switches: [] },
-  propose: { valued: ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--head', '--canvas', '--keypoints', '--person', '--wrist-snap'], switches: ['--head-box'] },
+  propose: { valued: ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--head', '--canvas', '--keypoints', '--person', '--wrist-snap', '--grid-rule'], switches: ['--head-box'] },
   compare: { valued: ['--left', '--right', '--map'], switches: [] },
   check: { valued: ['--rig', '--out', '--parts', '--source', '--page-edges', '--pack-shape', '--requirements'], switches: ['--seam-pairs', '--keep-stills'] },
   loop: { valued: ['--frames', '--out'], switches: ['--palette'] },
@@ -891,6 +901,11 @@ function cmdPropose(args: string[]): number {
       }
       wristSnap = Number(snapArg);
     }
+    // Issue #265: the drafted lattice's spacing; the figure's unless the reference's per-part rule is asked for.
+    const ruleArg = flags.get('--grid-rule');
+    if (ruleArg !== undefined && flags.has('--from-config')) return usage('--grid-rule chooses the drafted spacing; --from-config proposes nothing');
+    if (ruleArg !== undefined && !(GRID_RULES as readonly string[]).includes(ruleArg)) return usage(`--grid-rule ${ruleArg}; one of ${GRID_RULES.join(', ')} is required`);
+    const gridRule = (ruleArg ?? DEFAULT_GRID_RULE) as GridRule;
     const partsDir = existsSync(partsArg) && statSync(partsArg).isFile() ? dirname(partsArg) : partsArg;
     if (!existsSync(source)) {
       throw new PartsError([{ code: 'PROPOSE_SOURCE_PRESENT', object: source, detail: 'no such file; the painting is drawn under the overlay' }]);
@@ -918,7 +933,7 @@ function cmdPropose(args: string[]): number {
     }
     const cmpPath = flags.get('--compare');
     const cfg = cmpPath === undefined ? null : loadConfig(cmpPath);
-    const { proposal: drafted, basis } = proposeWithBasis(P, joints, wristSnap);
+    const { proposal: drafted, basis } = proposeWithBasis(P, joints, wristSnap, gridRule);
     const fullRun = flags.get('--full');
     const headRun = flags.get('--head');
     const prop =

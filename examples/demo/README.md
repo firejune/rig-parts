@@ -28,7 +28,12 @@ here (gitignored).
 - **The proposal, two corrections.** The config's `bones`, `meshes`, `regions` and
   `motion` are `proposal.json`'s, value for value, but for the points of two chains
   (below) and the two authored additions of issue #224 (`motion.animations_from` and
-  `constraints`, *Gestures, expressions and trailing strands* below); its `assemble.plan` is `assemble --propose-plan`'s but for one entry
+  `constraints`, *Gestures, expressions and trailing strands* below), and every
+  mesh's `grid`: the config keeps the part rule's (`propose --grid-rule part`), and
+  `proposal.json` has carried the figure's spacing since issue #265 (grid 32 for every
+  lattice but `hair_back` 36 and `earring` 34, already coarser); built with it, every
+  `check` bar passes and the figure's triangles fall from 1,816 to 878. Adopting it
+  here is a change of its own; its `assemble.plan` is `assemble --propose-plan`'s but for one entry
   (below); its `seethrough.head_box` is `propose --head-box`'s as printed.
 
 ## What is tracked

@@ -322,7 +322,7 @@
       ]
     },
     "hair_front": {
-      "grid": 14,
+      "grid": 32,
       "r": 6,
       "segments": [
         [
@@ -342,7 +342,7 @@
       ]
     },
     "hairpin": {
-      "grid": 11,
+      "grid": 32,
       "r": 5,
       "segments": [
         [
@@ -387,7 +387,7 @@
       ]
     },
     "neck": {
-      "grid": 5,
+      "grid": 32,
       "r": 3,
       "segments": [
         [
@@ -415,7 +415,7 @@
       ]
     },
     "handwear_r": {
-      "grid": 21,
+      "grid": 32,
       "r": 9,
       "segments": [
         [
@@ -433,7 +433,7 @@
       ]
     },
     "handwear_l": {
-      "grid": 21,
+      "grid": 32,
       "r": 9,
       "segments": [
         [
@@ -451,7 +451,7 @@
       ]
     },
     "topwear": {
-      "grid": 19,
+      "grid": 32,
       "r": 8,
       "segments": [
         [
@@ -479,7 +479,7 @@
       ]
     },
     "bottomwear": {
-      "grid": 25,
+      "grid": 32,
       "r": 10,
       "segments": [
         [
@@ -680,6 +680,7 @@
     "handwear is two blobs: one sleeve chain per mesh, chest only at the shoulder",
     "topwear ends at y=429 (hip 420): no robe chains -- add a sash chain by hand if one hangs",
     "bottomwear (full:bottomwear): its art starts 75.9 px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root",
-    "legwear (full:legwear): no rule -> region on hip"
+    "legwear (full:legwear): no rule -> region on hip",
+    "mesh spacing: grid 32 = round(H / 37), H 1185 rig px the height of every part's box together (rows 26 to 1211), in place of a tenth of each part's short side (hair_front 14 -> 32, hairpin 11 -> 32, neck 5 -> 32, handwear_r 21 -> 32, handwear_l 21 -> 32, topwear 19 -> 32, bottomwear 25 -> 32; kept, already as coarse: hair_back 36, earring 34); r is the part's own. Calibrated on three figures of similar size (H 1106-1185 rig px, issue #265 Stage A), where every check bar passed at this divisor and the idle moved by up to 1.427 rig px against the finer lattice — no bar reads that. propose --grid-rule part drafts the part's own spacing"
   ]
 }
