@@ -276,7 +276,7 @@ import { exampleTotals, figuresOf, gridFrame, policyEcho, TrialLedger, trialPoli
 import { assertUnchanged, crumbsLeft, lossOf, lossTotal, maskMd5, strayCleared } from './tools/production_trial_stray.ts';
 import { ART_ARM_ALPHA, ARMS, armSpec, clearFaint, finalPassOf, rowOf, specPaths, strayFor } from './tools/auto_policy_survey.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
-import type { AutoSpec, ConfigConstraint } from './src/config.ts';
+import type { AutoSpec, ConfigConstraint, LatticeMeshSpec, Segment } from './src/config.ts';
 import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
 import type { AutoMeshReport, MeshReport } from './src/rig.ts';
 import { PartsError, type Problem, problemLine } from './src/errors.ts';
@@ -383,6 +383,8 @@ import { influences } from './src/weights.ts';
 import { apply as applyAffine, type ComparedMesh, contourAtBudget, cost, errors, fieldAt, fieldContour, fieldLattice, locator, pixelErrors, pixelsOver } from './tools/local_compare.ts';
 import { FIELD_LATTICE_GRID, FIELD_POSES, fieldRegion, REGION_SPACINGS } from './fixtures/localfield.ts';
 import { BASE_SPACINGS, CONTROL, describeWorst, displacement, frameOpenings, kindOf, neighbours, pickAtBudget, type PlacedMask, POSE_PHASE, ranked, regionPoses, regionSpacings, resolveSegments, seamOpening, seamPairs, sineAt, SWEEP_TOLERANCES, testRegion, toWorldPx, variantConfig } from './tools/real_compare.ts';
+import { BEND_DEGREES, BEND_WORST_SHARE, bendAnimationNames, bendAnimations, type BendFigure, bendLinks, CALIBRATED_SENTENCE, candidateMesh, MORE_TRIANGLES_FLAG, RELATIVE_SENTENCE, DUST_MAX_PX, DUST_MAX_SHARE, dustOf, figureRules, type GateLine, gateVerdict, IDLE_BOUND_PX, jsonValueSpan, MEASURED_SENTENCE, MESH_DRAFT_REPORT, meshDraftStage, partsNamed, type PartReadings, type Reading, READINGS, splicedConfig, TOLERANCE_FIGURE_DIVISOR } from './src/meshdraft.ts';
+import { DRAFT_COARSE_GRID, DRAFT_COSTLY_GRID, DRAFT_FIGURE, DRAFT_FINE_GRID, DRAFT_LINKS, draftConfig, draftParts, writeDraftFixture } from './fixtures/meshdraft.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, isSkeletonName, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
 import { readTag, type TagReading } from './src/tags.ts';
@@ -3030,9 +3032,9 @@ function runCliSuite(): number {
     const helpText = runCli(['--help']).out;
     say(
       'CL20_THE_HELP_NAMES_REQUIREMENTS_UNDER_CHECK_AND_UNDER_BUILD',
-      helpText.split('\n').filter((l) => l.includes('[--requirements <file.json>]')).length === 3 && helpText.split('\n').some((l) => l.trim().startsWith('rig-parts compose') && l.includes('[--requirements <file.json>]')) && helpText.includes('--requirements is forwarded to check') && helpText.includes('CHECK_REQUIREMENT_MEASURABLE'),
+      helpText.split('\n').filter((l) => l.includes('[--requirements <file.json>]')).length === 4 && helpText.split('\n').some((l) => l.trim().startsWith('rig-parts compose') && l.includes('[--requirements <file.json>]')) && helpText.split('\n').some((l) => l.trim().startsWith('rig-parts mesh-draft') && l.includes('[--requirements <file.json>]')) && helpText.includes('--requirements is forwarded to check') && helpText.includes('CHECK_REQUIREMENT_MEASURABLE'),
       `${helpText.split('\n').filter((l) => l.includes('[--requirements <file.json>]')).map((l) => l.trim()).join(' | ')}`,
-      'an agent learns a flag from --help: check, build and compose (issue #74) each show it, and the check text names the two codes a requirement line can be refused with',
+      'an agent learns a flag from --help: check, build, compose (issue #74) and mesh-draft (issue #265, which forwards it to its checks) each show it, and the check text names the two codes a requirement line can be refused with',
     );
     const bareReq = runCli(['check', '--rig', join(dir, 'nowhere'), '--out', join(dir, 'req-usage'), '--requirements']);
     const twiceReq = runCli(['build', '--config', 'c', '--source', 's', '--full', 'f', '--head', 'h', '--out', join(dir, 'req-usage-build'), '--requirements', 'a.json', '--requirements', 'b.json']);
@@ -17787,6 +17789,67 @@ function runContourSuite(): number {
     "issue #188: the circle through the rib's left edge and the corner (19, 17) holds the apex (10, 54) on its other side (fixtures/contour.ts NOTCHED, by hand), so a free triangulation flips that edge away and the strand has no row there; the edge is recovered by flipping the edges across it and then locked, as an outline edge is, and the Delaunay count is read with it excused, exactly as the outline's edges are",
   );
 
+  // CT101 — issue #265: maxEdge cuts every simplified edge longer than it into equal pieces; CONVEX by hand.
+  const capped = built(contourOf(CONVEX, { ...CONVEX.params, maxEdge: 8 }));
+  const cappedHull: Array<[number, number]> = [[4, 3], [12, 3], [20, 3], [28, 3], [28, 4], [29, 4], [29, 12], [29, 20], [28, 20], [28, 21], [20, 21], [12, 21], [4, 21], [4, 20], [3, 20], [3, 12], [3, 4], [4, 4]];
+  say(
+    'CT101_MAXEDGE_CUTS_EVERY_LONGER_OUTLINE_EDGE_INTO_EQUAL_PIECES_AND_LEAVES_THE_INTERIOR_AS_IT_WAS',
+    capped !== null &&
+      capped.hull === 18 &&
+      sameVertices(capped.vertices, [...cappedHull, ...convexInside]) &&
+      capped.triangles.length / 3 === 2 * 24 - 18 - 2 &&
+      capped.report.outlineCut === 6 &&
+      capped.report.coveredArtPixels === 24 * 16 &&
+      capped.report.meshArea === 24 * 16 + 2 * 24 + 2 * 16,
+    capped === null ? `refused: ${contourCodes(contourOf(CONVEX, { ...CONVEX.params, maxEdge: 8 }))}` : `vertices ${vertexText(capped.vertices)} (hull ${capped.hull}); ${capped.triangles.length / 3} triangles; outlineCut ${String(capped.report.outlineCut)}`,
+    "issue #265 (G′), diagnosis 1: CONVEX's outline (CT01) has two 24-px edges and two 16-px edges; at maxEdge 8 each 24 is cut in ceil(24/8) = 3 (two points each, at 12 and 20) and each 16 in 2 (one point, at 12): 6 points, hull 18; the six interior points are the same (each is held to the edges' distance, which a cut does not move), so V = 24 and T = 2V - hull - 2 = 28; the enclosed area is CT01's",
+  );
+
+  // CT102 — the cut on a shape with slanted edges: no edge over maxEdge, every traced vertex kept in order, the interior unmoved.
+  const bottleAt = { ...BOTTLE.params, tolerance: 1, margin: 1 };
+  const bottle0 = built(contourOf(BOTTLE, bottleAt));
+  const bottle3 = built(contourOf(BOTTLE, { ...bottleAt, maxEdge: 3 }));
+  const hullOf = (m: ContourMesh): Array<[number, number]> => m.vertices.slice(0, m.hull);
+  const subsequence = (small: ReadonlyArray<readonly [number, number]>, big: ReadonlyArray<readonly [number, number]>): boolean => {
+    let k = 0;
+    for (const v of big) if (k < small.length && v[0] === small[k][0] && v[1] === small[k][1]) k++;
+    return k === small.length && big[0][0] === small[0][0] && big[0][1] === small[0][1];
+  };
+  const longest = (m: ContourMesh): number => Math.max(...hullOf(m).map((a, i) => { const b = m.vertices[(i + 1) % m.hull]; return Math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2); }));
+  const slanted = bottle0 === null ? 0 : hullOf(bottle0).filter((a, i) => { const b = bottle0.vertices[(i + 1) % bottle0.hull]; return a[0] !== b[0] && a[1] !== b[1]; }).length;
+  say(
+    'CT102_ON_SLANTED_EDGES_NO_CUT_EDGE_PASSES_MAXEDGE_AND_EVERY_TRACED_VERTEX_IS_KEPT_IN_ITS_PLACE',
+    bottle0 !== null &&
+      bottle3 !== null &&
+      slanted > 0 &&
+      longest(bottle3) <= 3 + Math.SQRT2 / GRID &&
+      subsequence(hullOf(bottle0), hullOf(bottle3)) &&
+      bottle3.report.outlineCut === bottle3.hull - bottle0.hull &&
+      sameVertices(bottle3.vertices.slice(bottle3.hull), bottle0.vertices.slice(bottle0.hull)) &&
+      bottle3.vertices.every(([x, y]) => Number.isInteger(x * GRID) && Number.isInteger(y * GRID)),
+    bottle0 === null || bottle3 === null ? `refused: ${contourCodes(contourOf(BOTTLE, bottleAt))} / ${contourCodes(contourOf(BOTTLE, { ...bottleAt, maxEdge: 3 }))}` : `hull ${bottle0.hull} -> ${bottle3.hull} (${slanted} slanted edge(s) before), longest edge ${longest(bottle0)} -> ${longest(bottle3)}, interior ${bottle0.vertices.length - bottle0.hull} -> ${bottle3.vertices.length - bottle3.hull}`,
+    'a cut point is snapped to the 1/256 px grid, so an edge between two snapped points can pass maxEdge by at most the diagonal of a grid unit; the cut adds points between the traced ones and moves none of them, and the interior is decided by the edges, which a cut does not move',
+  );
+
+  // CT103 — a maxEdge at or above every edge cuts nothing; undeclared, the report carries no outlineCut.
+  const plain103 = built(contourOf(CONVEX));
+  const uncut = built(contourOf(CONVEX, { ...CONVEX.params, maxEdge: 24 }));
+  say(
+    'CT103_A_MAXEDGE_NO_EDGE_PASSES_CUTS_NOTHING_AND_UNDECLARED_THE_REPORT_IS_THE_ONE_IT_WAS',
+    plain103 !== null && uncut !== null && sameVertices(uncut.vertices, plain103.vertices) && uncut.triangles.join() === plain103.triangles.join() && uncut.report.outlineCut === 0 && !('outlineCut' in plain103.report),
+    plain103 === null || uncut === null ? 'refused' : `vertices ${uncut.vertices.length} vs ${plain103.vertices.length}; outlineCut ${String(uncut.report.outlineCut)}; undeclared report keys end ${Object.keys(plain103.report).slice(-2).join(', ')}`,
+    "CONVEX's longest edge is 24 px, so maxEdge 24 cuts none (ceil(24/24) = 1 piece); a mesh that does not declare it is byte for byte the mesh it was before the field existed",
+  );
+
+  // CT104 — a maxEdge whose pieces could snap together, or that is no length, is refused by name.
+  const bad104 = [1 / GRID, 0, -3, Number.NaN].map((v) => ({ v, r: contourOf(CONVEX, { ...CONVEX.params, maxEdge: v }) }));
+  say(
+    'CT104_A_MAXEDGE_UNDER_TWO_GRID_UNITS_OR_NOT_A_LENGTH_IS_REFUSED_CONTOUR_PARAMETER_BY_NAME',
+    bad104.every(({ r }) => Array.isArray(r) && r.length === 1 && r[0].code === 'CONTOUR_PARAMETER' && r[0].object === 'contour mesh "convex", maxEdge') && built(contourOf(CONVEX, { ...CONVEX.params, maxEdge: 4 })) !== null,
+    bad104.map(({ v, r }) => `${v}: ${Array.isArray(r) ? r.map(problemLine).join('; ').slice(0, 160) : 'built'}`).join(' | '),
+    `each edge is cut into pieces longer than half of maxEdge, and two cut points one grid unit (1/${GRID} px) apart or less could snap onto each other: so maxEdge must be at least 2/${GRID} px, and a number`,
+  );
+
   runContourGrowthControls(say, built, has);
   runOutlineInRegionControls(say, built);
 
@@ -18935,6 +18998,33 @@ function runContourWiringSuite(): number {
       !saidLattice.includes('from the outline'),
     `${said} | planted, as a lattice: ${saidLattice}`,
     'by hand: (1.5, 0.5) is 0.5 px from the edge y = 0, √2.5 - 2 = -0.419 px from the circle, in triangle 0 whose corners are hull vertices 0, 1, 2 at g 1, 0, 0 and whose longest edge is the diagonal 4√2; a lattice\'s hull is not the art\'s outline, so no distance to it is printed',
+  );
+
+  // CW88 — issue #265: contour.maxEdge loads as a length, and anything else is refused by name.
+  const edge88 = (v: unknown): PartsError | null => load(contourRigConfig((c) => (contourCloth(c).maxEdge = v as number)));
+  const bad88 = [0, -1, '4'].map((v) => ({ v, e: edge88(v) }));
+  say(
+    'CW88_CONTOUR_MAXEDGE_LOADS_AS_A_LENGTH_ABOVE_0_AND_ANYTHING_ELSE_IS_REFUSED_BY_NAME',
+    edge88(4) === null && bad88.every(({ e }) => e !== null && e.problems.length === 1 && e.problems[0].code === 'CONFIG_FIELD_TYPE' && e.problems[0].object === 'config.meshes.cloth.contour.maxEdge'),
+    `4: ${lines(edge88(4))}; ${bad88.map(({ v, e }) => `${JSON.stringify(v)}: ${lines(e)}`).join(' | ')}`,
+    'issue #265: the outline\'s longest edge is an authored length like spacing, optional and with no default — absent cuts nothing',
+  );
+
+  // CW89 — the rig stage hands maxEdge to the contour mesh and echoes it in the row only when declared.
+  const rowOf89 = (r: RigOutput): Record<string, unknown> => r.meshReport.find((m) => m.part === 'cloth') as unknown as Record<string, unknown>;
+  const with89 = rowOf89(buildRig(parseConfig(contourRigConfig((c) => (contourCloth(c).maxEdge = 4))), rigParts(), rigImages()));
+  const without89 = rowOf89(buildRig(parseConfig(contourRigConfig()), rigParts(), rigImages()));
+  const params89 = (row: Record<string, unknown>): Record<string, unknown> => row.params as Record<string, unknown>;
+  const cut89 = (row: Record<string, unknown>): unknown => (row.contour as Record<string, unknown>).outlineCut;
+  say(
+    'CW89_THE_RIG_STAGE_CUTS_THE_OUTLINE_AT_MAXEDGE_AND_ECHOES_IT_ONLY_WHEN_DECLARED',
+    params89(with89).maxEdge === 4 &&
+      cut89(with89) === 8 &&
+      (with89.hull as number) === (without89.hull as number) + 8 &&
+      Object.keys(params89(without89)).join() === 'tolerance,margin,spacing,budget,stray' &&
+      cut89(without89) === undefined,
+    `with: params ${JSON.stringify(params89(with89))}, hull ${String(with89.hull)}, outlineCut ${String(cut89(with89))}; without: params ${JSON.stringify(params89(without89))}, hull ${String(without89.hull)}`,
+    "by hand: the fixture's cloth (16x8 at margin 1, tolerance 0) traces CT01's outline at 16x8 — two 16-px edges cut in 4 (3 points each) and two 8-px edges in 2 (1 each) at maxEdge 4: 8 points, none where the pinch region's support (radius 4 round part px (12, 8)) reaches the outline; a mesh that does not declare it writes the row it always wrote",
   );
 
   return bad();
@@ -20700,6 +20790,340 @@ function runPublicScenes(green: ReadonlyMap<string, string>, dir: string, say: (
     'SC33 passes when nothing differs; this is the half that shows a difference would be found',
   );
   rmSync(sd, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// mesh-draft: the traced outline around a coarse grid, gated per part against its lattice (issue #265)
+// ---------------------------------------------------------------------------
+
+/** One `meshDraftStage` run over the strip fixture through the installed rigc, with what the controls plant on its calls. */
+function meshDraftRun(
+  dir: string,
+  grid: number,
+  plant: { candidateModel?: (doc: Record<string, unknown>) => void; failFirstBuild?: boolean; finalGeometry?: (geometry: Record<string, unknown>) => void } = {},
+  fixture: { config: string; parts: string } = writeDraftFixture(join(dir, 'fx'), grid),
+): { e: PartsError | null; log: string[]; out: string; fx: { config: string; parts: string }; calls: string[] } {
+  const rigc = findRigc(ROOT, '');
+  const calls: string[] = [];
+  const runner: RigcRunner = (args) => {
+    calls.push(args.join(' '));
+    if (plant.failFirstBuild === true && args[0] === 'build' && calls.filter((c) => c.startsWith('build ')).length === 1) {
+      return { status: 1, out: '  FAIL  A00_PLANTED: the first build, failed by the control\n..    1 assertions: 1 measured (0 passed, 1 failed), 0 skipped\n' };
+    }
+    const r = spawnSync(rigc, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
+    const outDir = args[0] === 'build' ? args[args.indexOf('--out') + 1] : '';
+    if (plant.candidateModel !== undefined && r.status === 0 && outDir.includes('compare-candidate')) {
+      const path = join(outDir, RIGC_MODEL_DOCUMENT);
+      const doc = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+      plant.candidateModel(doc);
+      writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`);
+    }
+    // The drafted config's own check: its idle geometry, as rigc's render wrote it, edited before check reads it.
+    const renderOut = args[0] === 'render' ? args[args.indexOf('--out') + 1] : '';
+    if (plant.finalGeometry !== undefined && r.status === 0 && renderOut.includes('final-') && args.includes('--geometry')) {
+      for (const set of readdirSync(renderOut)) {
+        const path = join(renderOut, set, GEOMETRY_FILE);
+        if (!existsSync(path)) continue;
+        const geometry = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+        plant.finalGeometry(geometry);
+        writeFileSync(path, `${JSON.stringify(geometry)}\n`);
+      }
+    }
+    return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  };
+  const log: string[] = [];
+  const out = join(dir, 'out');
+  const e = refusals(() => meshDraftStage({ config: fixture.config, parts: fixture.parts, out }, runner, rigc, join(dir, 'scratch'), (l) => log.push(l)));
+  return { e, log, out, fx: fixture, calls };
+}
+
+/** MD15's readings: every motion line passing, exactly at its line. */
+const MD15_BASE: PartReadings = { bars: [], idle: 1, bend: { links: ['l0'], lattice: { worst: 10, inverted: 0 }, candidate: { worst: 10, inverted: 0 } }, triangles: { lattice: 100, candidate: 100 } };
+
+/** The mesh-draft report as written, or null. */
+function draftReport(out: string): { parts: Array<{ part: string; mode: string; gate: GateLine[]; note: string }>; draft_check: { PASS: boolean } } | null {
+  const p = join(out, MESH_DRAFT_REPORT);
+  return existsSync(p) ? (JSON.parse(readFileSync(p, 'utf8')) as ReturnType<typeof draftReport>) : null;
+}
+
+function runMeshDraftSuite(): number {
+  section('mesh-draft: the traced outline around a coarse grid, held per part to its lattice through rig-c (issue #265)');
+  const { say, bad } = counter();
+  const root = temp('mesh-draft');
+  const gateText = (lines: readonly GateLine[]): string => lines.map((l) => `${l.reading} ${l.pass ? 'pass' : 'FAIL'}: ${l.text}`).join(' | ');
+  try {
+    // MD01 — the positive control, through the CLI: the strip on a lattice coarser than the figure's spacing is drafted.
+    const fx1 = writeDraftFixture(join(root, 'pos'), DRAFT_COARSE_GRID);
+    const run1 = runCli(['mesh-draft', '--config', fx1.config, '--parts', fx1.parts, '--out', join(root, 'pos', 'out')]);
+    const cfg1 = readJsonFile(join(root, 'pos', 'out', 'config.json'));
+    const strip1 = ((cfg1?.meshes ?? {}) as Record<string, Record<string, unknown>>).strip ?? {};
+    const rep1 = draftReport(join(root, 'pos', 'out'));
+    const row1 = rep1?.parts.find((p) => p.part === 'strip');
+    const rest1 = (c: Record<string, unknown> | null): string => JSON.stringify({ ...c, meshes: { ...((c?.meshes ?? {}) as Record<string, unknown>), strip: null } });
+    say(
+      'MD01_A_CANDIDATE_THAT_HOLDS_EVERY_READING_IS_DRAFTED_AT_THE_FIGURES_NUMBERS_AND_THE_REST_OF_THE_CONFIG_IS_AS_READ',
+      run1.status === 0 &&
+        JSON.stringify(strip1.contour) === JSON.stringify({ tolerance: DRAFT_FIGURE.tolerance, margin: DRAFT_FIGURE.tolerance, spacing: DRAFT_FIGURE.spacing, maxEdge: DRAFT_FIGURE.spacing }) &&
+        strip1.r === 8 &&
+        JSON.stringify(strip1.segments) === '["tail"]' &&
+        !('grid' in strip1) &&
+        typeof strip1.note === 'string' &&
+        strip1.note.includes(MEASURED_SENTENCE) &&
+        strip1.note.includes(CALIBRATED_SENTENCE) &&
+        strip1.note.includes(RELATIVE_SENTENCE) &&
+        rest1(cfg1) === rest1(JSON.parse(readFileSync(fx1.config, 'utf8')) as Record<string, unknown>) &&
+        row1?.mode === 'contour' &&
+        row1.gate.length === READINGS.length &&
+        row1.gate.every((g, i) => g.pass && g.reading === READINGS[i]) &&
+        row1.gate.filter((g) => g.margin !== null).map((g) => g.reading).join() === 'idle,bend inverted,bend worst,triangles' &&
+        row1.gate.every((g) => g.margin === null || g.margin.percent === null || g.margin.percent >= 0) &&
+        rep1?.draft_check.PASS === true &&
+        readdirSync(join(root, 'pos', 'out')).sort().join() === ['config.json', MESH_DRAFT_REPORT].sort().join(),
+      `exit ${run1.status}; strip ${JSON.stringify(strip1.contour ?? null)} r ${String(strip1.r)}; gate ${row1 === undefined ? 'no row' : gateText(row1.gate)}; ${lastLines(run1.out, 1).join('')}`,
+      'issue #265, the ruling of 2026-10-12: by hand (fixtures/meshdraft.ts) H = 408, so T = 1 and S = 11; the candidate is contour {T, T, S, maxEdge S} with the lattice\'s r and segments, it passes every reading against a lattice of 10 (164 triangles to its 148), every reading with a number carries its margin to its line inside the line, and nothing but its entry moves in the written config',
+    );
+
+    // MD02 — the natural negative: on a lattice finer than S, the candidate's worst bend sample reads more than a tenth above the lattice's.
+    const fine = meshDraftRun(join(root, 'fine'), DRAFT_FINE_GRID);
+    const rep2 = draftReport(fine.out);
+    const row2 = rep2?.parts.find((p) => p.part === 'strip');
+    const failed2 = row2?.gate.filter((g) => !g.pass) ?? [];
+    const bytes2 = existsSync(join(fine.out, 'config.json')) && readFileSync(join(fine.out, 'config.json'), 'utf8') === readFileSync(fine.fx.config, 'utf8');
+    say(
+      'MD02_A_PART_THAT_FAILS_A_READING_KEEPS_ITS_LATTICE_AND_THE_WRITTEN_CONFIG_IS_THE_INPUT_BYTE_FOR_BYTE',
+      fine.e === null && row2?.mode === 'grid' && failed2.length === 1 && failed2[0].reading === 'bend worst' && /\(\+[0-9.]+ %\); at most/.test(failed2[0].text) && bytes2 && row2.note.startsWith('keeps its lattice at grid 8: bend worst — ') && rep2?.draft_check.PASS === true,
+      `${fine.e === null ? 'written' : codes(fine.e)}; gate ${row2 === undefined ? 'no row' : gateText(row2.gate)}; config bytes as read: ${bytes2}`,
+      'a failing part ends as today\'s mesh: its entry is not touched, so a config with nothing drafted is written as it was read, and the report names the reading and by how much',
+    );
+
+    // MD03 — the idle reading, planted on the comparison: the candidate build's first vertex moved 5 world units.
+    const moved = meshDraftRun(join(root, 'moved'), DRAFT_COARSE_GRID, {
+      candidateModel: (doc) => {
+        const skins = doc.skins as Array<{ attachments: Record<string, Record<string, { vertices: { bindings: Array<Array<{ x: number }>> } }>> }>;
+        for (const b of skins[0].attachments.strip.strip.vertices.bindings[0]) b.x += 50;
+      },
+    });
+    const row3 = draftReport(moved.out)?.parts.find((p) => p.part === 'strip');
+    const idle3 = row3?.gate.find((g) => g.reading === 'idle');
+    const idleValue3 = Number(/^([0-9.]+) rig px from the lattice/.exec(idle3?.text ?? '')?.[1] ?? NaN);
+    const bytes3 = existsSync(join(moved.out, 'config.json')) && readFileSync(join(moved.out, 'config.json'), 'utf8') === readFileSync(moved.fx.config, 'utf8');
+    say(
+      'MD03_A_CANDIDATE_PLANTED_TO_MOVE_A_VERTEX_50_UNITS_FAILS_THE_IDLE_READING_BY_NAME_AND_KEEPS_THE_LATTICE',
+      moved.e === null && row3?.mode === 'grid' && idle3 !== undefined && !idle3.pass && idleValue3 > IDLE_BOUND_PX && idle3.text.endsWith(`; at most ${IDLE_BOUND_PX} is required`) && bytes3,
+      `${moved.e === null ? 'written' : codes(moved.e)}; ${row3 === undefined ? 'no row' : gateText(row3.gate)}; config bytes as read: ${bytes3}`,
+      'the plant rig-c\'s own comparison controls use (an edit inside the allowlist), on the candidate\'s comparison build only: its first hull vertex moved 50 units along each binding\'s bone axis, so every art sample in the triangles round it is carried away from where the lattice carries it — the idle reading names the move, and the part ends on its lattice',
+    );
+
+    // MD12 — reading 1 through the stage: the drafted config's check planted to fail TEXTURE_STRETCH on the strip.
+    const stretched = meshDraftRun(join(root, 'stretched'), DRAFT_COARSE_GRID, {
+      finalGeometry: (g) => {
+        const frame = (g.frames as Array<{ attachments: Array<{ slot: string; vertices: number[] }> }>)[1];
+        const strip = frame.attachments.find((a) => a.slot === 'strip');
+        if (strip !== undefined) strip.vertices[0] += 40;
+      },
+    });
+    const row12 = draftReport(stretched.out)?.parts.find((p) => p.part === 'strip');
+    const failed12 = row12?.gate.filter((g) => !g.pass) ?? [];
+    const bytes12 = existsSync(join(stretched.out, 'config.json')) && readFileSync(join(stretched.out, 'config.json'), 'utf8') === readFileSync(stretched.fx.config, 'utf8');
+    say(
+      'MD12_A_DRAFTED_RIG_WHOSE_CHECK_FAILS_A_BAR_NAMING_THE_PART_KEEPS_THAT_PARTS_LATTICE',
+      stretched.e === null && row12?.mode === 'grid' && failed12.length === 1 && failed12[0].reading === 'bars' && failed12[0].text.includes('CHECK_TEXTURE_STRETCH: mesh "strip"') && bytes12 && stretched.calls.some((c) => c.startsWith('render ') && c.includes('final-0')) && !stretched.calls.some((c) => c.includes('final-1')),
+      `${stretched.e === null ? 'written' : codes(stretched.e)}; ${row12 === undefined ? 'no row' : gateText(row12.gate).slice(0, 600)}; config bytes as read: ${bytes12}`,
+      'reading 1 is check\'s own bars on the config as it would be written: one vertex of the strip moved 40 rig px in one idle frame stretches its edges past TEXTURE_STRETCH\'s ceiling, the problem names mesh "strip", and the part ends on its lattice with no further check needed (nothing is left to draft)',
+    );
+
+    // MD13 — reading 5 through the stage: on a lattice with fewer triangles than the candidate, the part keeps it.
+    const costly = meshDraftRun(join(root, 'costly'), DRAFT_COSTLY_GRID);
+    const row13 = draftReport(costly.out)?.parts.find((p) => p.part === 'strip');
+    const failed13 = row13?.gate.filter((g) => !g.pass) ?? [];
+    const bytes13 = existsSync(join(costly.out, 'config.json')) && readFileSync(join(costly.out, 'config.json'), 'utf8') === readFileSync(costly.fx.config, 'utf8');
+    say(
+      'MD13_A_CANDIDATE_WITH_MORE_TRIANGLES_THAN_ITS_LATTICE_FAILS_THE_TRIANGLE_READING_BY_NAME_AND_KEEPS_THE_LATTICE',
+      costly.e === null && row13?.mode === 'grid' && failed13.length === 1 && failed13[0].reading === 'triangles' && (failed13[0].margin?.percent ?? 0) < 0 && bytes13 && row13.note.startsWith('keeps its lattice at grid 12: triangles — '),
+      `${costly.e === null ? 'written' : codes(costly.e)}; ${row13 === undefined ? 'no row' : gateText(row13.gate)}; margin ${JSON.stringify(failed13[0]?.margin ?? null)}; config bytes as read: ${bytes13}`,
+      "HQ's fifth reading (#295): a candidate that holds every motion line but costs more triangles than the lattice it would replace is not drafted — at grid 12 the strip's lattice is the cheaper mesh, so it stays, byte for byte",
+    );
+
+    // MD14 — --more-triangles, the positive control through the CLI: the same costlier candidate is drafted, its trade recorded.
+    const fx14 = writeDraftFixture(join(root, 'more'), DRAFT_COSTLY_GRID);
+    const run14 = runCli(['mesh-draft', '--config', fx14.config, '--parts', fx14.parts, '--out', join(root, 'more', 'out'), MORE_TRIANGLES_FLAG]);
+    const rep14 = draftReport(join(root, 'more', 'out')) as unknown as { rules: { gate: { more_triangles: boolean } }; parts: Array<{ part: string; mode: string; gate: GateLine[]; delta?: { triangles: number; overdraw: number }; lattice: { triangles: number; overdraw: number }; candidate: { triangles: number; overdraw: number } | null }> } | null;
+    const row14 = rep14?.parts.find((p) => p.part === 'strip');
+    const tri14 = row14?.gate.find((g) => g.reading === 'triangles');
+    say(
+      'MD14_UNDER_MORE_TRIANGLES_A_CANDIDATE_HOLDING_THE_FOUR_MOTION_READINGS_IS_DRAFTED_WITH_ITS_TRIANGLE_AND_OVERDRAW_DELTA',
+      run14.status === 0 &&
+        rep14?.rules.gate.more_triangles === true &&
+        row14?.mode === 'contour' &&
+        row14.gate.every((g) => g.pass) &&
+        tri14 !== undefined &&
+        tri14.text.includes(`not a line under ${MORE_TRIANGLES_FLAG}`) &&
+        (tri14.margin?.percent ?? 0) < 0 &&
+        row14.candidate !== null &&
+        row14.delta !== undefined &&
+        row14.delta.triangles === row14.candidate.triangles - row14.lattice.triangles &&
+        row14.delta.triangles > 0 &&
+        row14.delta.overdraw < 0,
+      `exit ${run14.status}; ${row14 === undefined ? 'no row' : gateText(row14.gate)}; delta ${JSON.stringify(row14?.delta ?? null)}`,
+      `HQ's ruling on #295: ${MORE_TRIANGLES_FLAG} is the author's to pass, and under it the triangle count is reported with the overdraw it buys rather than held as a line; the strip at grid 12 is MD13's lattice, which the default keeps`,
+    );
+
+    // MD15 — --more-triangles lifts the triangle line and nothing else, planted: each motion reading still fails alone.
+    const plain15 = gateVerdict({ ...MD15_BASE, triangles: { lattice: 100, candidate: 140 } });
+    const lifted15 = gateVerdict({ ...MD15_BASE, triangles: { lattice: 100, candidate: 140 } }, true);
+    const motion15 = [gateVerdict({ ...MD15_BASE, idle: 1.5, triangles: { lattice: 100, candidate: 140 } }, true), gateVerdict({ ...MD15_BASE, bend: { links: ['l0'], lattice: { worst: 10, inverted: 0 }, candidate: { worst: 12, inverted: 1 } }, triangles: { lattice: 100, candidate: 140 } }, true)];
+    say(
+      'MD15_MORE_TRIANGLES_LIFTS_THE_TRIANGLE_LINE_ONLY_AND_A_PLANTED_MOTION_FAILURE_STILL_REFUSES',
+      !plain15.pass && plain15.lines.filter((l) => !l.pass).map((l) => l.reading).join() === 'triangles' && lifted15.pass && motion15[0].lines.filter((l) => !l.pass).map((l) => l.reading).join() === 'idle' && motion15[1].lines.filter((l) => !l.pass).map((l) => l.reading).join() === 'bend inverted,bend worst',
+      `default: ${gateText(plain15.lines.filter((l) => !l.pass))} | under the flag: ${lifted15.pass ? 'pass' : 'FAIL'} | idle 1.5 under the flag: ${gateText(motion15[0].lines.filter((l) => !l.pass))} | a folding bend under the flag: ${gateText(motion15[1].lines.filter((l) => !l.pass))}`,
+      'the flag answers one question (may the outline cost more triangles?) and no motion question: a candidate that moves wrong is refused with it as without it',
+    );
+
+    // MD04 — the gate's five lines, pure: each reading planted past its line fails that reading alone, by name and amount.
+    const at: PartReadings = { bars: [], idle: IDLE_BOUND_PX, bend: { links: [...DRAFT_LINKS], lattice: { worst: 10, inverted: 2 }, candidate: { worst: 10 * (1 + BEND_WORST_SHARE), inverted: 2 } }, triangles: { lattice: 100, candidate: 100 } };
+    const bendOf = (c: Partial<BendFigure>): PartReadings['bend'] => ({ links: [...DRAFT_LINKS], lattice: { worst: 10, inverted: 2 }, candidate: { worst: 10 * (1 + BEND_WORST_SHARE), inverted: 2, ...c } });
+    const plants4: Array<[Reading, PartReadings, string]> = [
+      ['bars', { ...at, bars: ['CHECK_TEXTURE_STRETCH: mesh "strip" planted'] }, 'CHECK_TEXTURE_STRETCH: mesh "strip" planted'],
+      ['idle', { ...at, idle: 1.001 }, '1.001 rig px'],
+      ['bend inverted', { ...at, bend: bendOf({ inverted: 3 }) }, "3 inverted triangle(s) at the bend set against the lattice's 2"],
+      ['bend worst', { ...at, bend: bendOf({ worst: 11.01 }) }, "worst sample 11.01 rig px from the dense reference at the bend set against the lattice's 10 (+10.1 %)"],
+      ['triangles', { ...at, triangles: { lattice: 100, candidate: 101 } }, "101 triangle(s) against the lattice's 100; no more than the lattice's is required"],
+    ];
+    const got4 = plants4.map(([reading, r, words]) => {
+      const v = gateVerdict(r);
+      const failed = v.lines.filter((l) => !l.pass);
+      const m = failed[0]?.margin ?? null;
+      return { reading, ok: !v.pass && failed.length === 1 && failed[0].reading === reading && failed[0].text.includes(words) && (reading === 'bars' ? m === null : m !== null && m.percent !== null && m.percent < 0), text: `${gateText(failed)} margin ${JSON.stringify(m)}` };
+    });
+    const atLine = gateVerdict(at);
+    const unread = [gateVerdict({ ...at, idle: 'no row' }), gateVerdict({ ...at, bend: 'no table' }), gateVerdict({ ...at, bars: null }), gateVerdict({ ...at, triangles: 'not built' })];
+    const noChain = gateVerdict({ ...at, bend: null });
+    say(
+      'MD04_EACH_OF_THE_FIVE_READINGS_PLANTED_PAST_ITS_LINE_FAILS_THAT_READING_ALONE_AND_EXACTLY_AT_THE_LINE_PASSES_WITH_MARGIN_0',
+      got4.every((g) => g.ok) &&
+        atLine.pass &&
+        atLine.lines.filter((l) => l.margin !== null).length === 4 &&
+        atLine.lines.every((l) => l.margin === null || l.margin.percent === 0) &&
+        unread.every((v) => !v.pass) &&
+        unread[1].lines.filter((l) => !l.pass).map((l) => l.reading).join() === 'bend inverted,bend worst' &&
+        noChain.pass &&
+        noChain.lines.filter((l) => l.reading.startsWith('bend')).every((l) => l.text.includes('no chain link')),
+      `${got4.map((g) => `${g.reading}: ${g.text}`).join(' || ')}; at the lines ${atLine.pass ? 'pass' : gateText(atLine.lines)}; unmeasured ${unread.map((v) => (v.pass ? 'PASS' : 'FAIL')).join(', ')}; no chain ${noChain.pass ? 'pass' : 'FAIL'}`,
+      `the ruling's four readings and HQ's fifth (#295), each held alone: a bar naming the part, idle above ${IDLE_BOUND_PX} rig px, more inverted triangles than the lattice, the worst bend sample above the lattice's + ${BEND_WORST_SHARE * 100} %, more triangles than the lattice; each number's margin is 100 (line - value) / line, 0 exactly at the line and negative past it; a reading not measured is not a pass; a part whose segments name no chain link has an empty bend set (Stage C's definition) and its note says the idle was all it was measured on`,
+    );
+
+    // MD05 — laying a check problem on the parts it names.
+    const among = ['strip', 'neck'];
+    const lay = (code: string, object: string, detail = '', seams: Parameters<typeof partsNamed>[2] = null): string => partsNamed({ code, object, detail }, among, seams).join(',');
+    const named5 = {
+      stretch: lay('CHECK_TEXTURE_STRETCH', 'mesh "strip" triangle 3'),
+      still: lay('CHECK_STILL_REGIONS_DARK', 'slot "neck" of the face\'s still set ("strip", "neck"), in the frame of its head bone "head"'),
+      seamGrew: lay('CHECK_SEAM_WITHIN_BAR', 'the setup-pose render', '', { draft: [{ parts: ['mark', 'strip'], px_over_40: 30 }], lattice: [{ parts: ['strip', 'mark'], px_over_40: 10 }] }),
+      seamSame: lay('CHECK_SEAM_WITHIN_BAR', 'the setup-pose render', '', { draft: [{ parts: ['mark', 'strip'], px_over_40: 10 }], lattice: [{ parts: ['strip', 'mark'], px_over_40: 10 }] }),
+      config: lay('CONTOUR_COVERAGE', 'config.meshes.strip.contour'),
+      detail: lay('RIG_RIGC_GREEN', 'rigc build', 'FAIL  A39: slot "neck" folds'),
+      none: lay('CHECK_LOOP_CLOSES', 'idle frame f0000.png vs f0048.png'),
+    };
+    say(
+      'MD05_A_FAILING_CHECK_PROBLEM_IS_LAID_ON_THE_PARTS_IT_NAMES_AND_ON_NO_OTHER',
+      named5.stretch === 'strip' && named5.still === 'neck' && named5.seamGrew === 'strip' && named5.seamSame === '' && named5.config === 'strip' && named5.detail === 'neck' && named5.none === '',
+      JSON.stringify(named5),
+      'reading 1 is "every bar that reads the part": a problem names the parts it reads by its own words — the still set\'s slot, the seam pairs whose count grew over the lattice\'s, a quoted part or its config path — and one naming none is laid on every candidate by the stage, never on none',
+    );
+
+    // MD06 — the dust rule on flat blocks.
+    const withDots = (dots: Array<[number, number, number]>): Raster => {
+      const r = newRaster(120, 100);
+      for (let y = 0; y < 100; y++) for (let x = 0; x < 100; x++) r.data.set([9, 9, 9, 255], (y * 120 + x) * 4);
+      for (const [x0, y0, n] of dots) for (let k = 0; k < n; k++) r.data.set([9, 9, 9, 255], (y0 * 120 + x0 + k) * 4);
+      return r;
+    };
+    const two = newRaster(30, 10);
+    for (let y = 0; y < 10; y++) for (const x0 of [0, 20]) for (let x = x0; x < x0 + 10; x++) two.data.set([9, 9, 9, 255], (y * 30 + x) * 4);
+    const d6 = { one: dustOf(withDots([])), dot: dustOf(withDots([[110, 5, 1], [110, 50, 4]])), piece: dustOf(withDots([[110, 5, 5]])), tie: dustOf(two) };
+    say(
+      'MD06_DUST_IS_AN_EXTRA_ISLAND_OF_AT_MOST_4_PX_AND_A_THOUSANDTH_OF_THE_ART_ANYTHING_ELSE_KEEPS_THE_LATTICE',
+      !('keep' in d6.one) && d6.one.stray === undefined && !('keep' in d6.dot) && d6.dot.stray === 4 && d6.dot.dust.join() === '4,1' && 'keep' in d6.piece && d6.piece.keep.includes('real piece') && 'keep' in d6.tie && d6.tie.keep.includes('share the largest count'),
+      JSON.stringify(d6),
+      `Stage B's rule (${DUST_MAX_PX} px, ${DUST_MAX_SHARE * 100} %): a 100x100 block (10000 art px) with a 4-px and a 1-px run drafts stray 4 (the larger dust island); a 5-px run is a real piece; two 10x10 blocks have no largest island, which the contour mode refuses`,
+    );
+
+    // MD07 — the figure's rules by hand, and the candidate's fields.
+    const rules7 = figureRules(draftParts());
+    const small7 = figureRules(rigParts());
+    const lat7: LatticeMeshSpec = { grid: 9, r: 4, segments: ['tail', ['body', [0, 0], [0, 9]]], exponent: 3, rule: 'distance' };
+    const cand7 = candidateMesh(lat7, { tolerance: 2, spacing: 30 }, 7);
+    say(
+      'MD07_THE_FIGURES_RULES_ARE_READ_OFF_THE_BOXES_A_FIGURE_WITH_SPACING_0_IS_REFUSED_AND_THE_CANDIDATE_KEEPS_THE_WEIGHT_FIELDS',
+      !('code' in rules7) &&
+        rules7.height === DRAFT_FIGURE.height &&
+        rules7.tolerance === DRAFT_FIGURE.tolerance &&
+        rules7.spacing === DRAFT_FIGURE.spacing &&
+        'code' in small7 &&
+        small7.code === 'MESH_DRAFT_FIGURE' &&
+        small7.detail.startsWith('is 18 px tall, so the spacing rule round(H / 37) gives 0') &&
+        JSON.stringify(cand7) === JSON.stringify({ contour: { tolerance: 2, margin: 2, spacing: 30, maxEdge: 30, stray: 7 }, r: 4, segments: ['tail', ['body', [0, 0], [0, 9]]], exponent: 3, rule: 'distance' }),
+      `${JSON.stringify(rules7)}; the rig fixture -> ${'code' in small7 ? problemLine(small7) : JSON.stringify(small7)}; candidate ${JSON.stringify(cand7)}`,
+      `by hand (fixtures/meshdraft.ts and fixtures/rig.ts): H 408 gives T max(1, round(408/${TOLERANCE_FIGURE_DIVISOR})) = 1 and S round(408/${FIGURE_GRID_DIVISOR}) = 11; the rig fixture's 18 px gives S 0, which no rule raises`,
+    );
+
+    // MD08 — the written config: the input's own text with the drafted entries spliced in.
+    const text8 = readFileSync(join(ROOT, 'examples', 'demo', 'config.json'), 'utf8');
+    const entry8 = { contour: { tolerance: 2, margin: 2, spacing: 32, maxEdge: 32 }, r: 3, segments: ['x'], note: 'n' };
+    const spliced8 = splicedConfig(text8, new Map([['neck', entry8]]));
+    const span8 = jsonValueSpan(text8, ['meshes', 'neck']);
+    const span8b = jsonValueSpan(spliced8, ['meshes', 'neck']);
+    say(
+      'MD08_THE_WRITTEN_CONFIG_IS_THE_INPUTS_TEXT_WITH_ONLY_THE_DRAFTED_ENTRIES_REPLACED',
+      splicedConfig(text8, new Map()) === text8 &&
+        spliced8.slice(0, span8b.start) === text8.slice(0, span8.start) &&
+        spliced8.slice(span8b.end) === text8.slice(span8.end) &&
+        JSON.stringify((JSON.parse(spliced8) as { meshes: Record<string, unknown> }).meshes.neck) === JSON.stringify(entry8),
+      `nothing drafted: ${splicedConfig(text8, new Map()) === text8 ? 'the same bytes' : 'different bytes'}; neck's span ${span8.start}..${span8.end} -> ${span8b.start}..${span8b.end}`,
+      'the command reads a config and writes one: every byte outside a drafted entry is the author\'s, so a part that keeps its lattice keeps its text',
+    );
+
+    // MD09 — the bend set's links and animations.
+    const cfg9 = parseConfig(draftConfig(DRAFT_COARSE_GRID));
+    const explicit9: Segment = ['tail1', [0, 0], [0, 1]];
+    const links9 = { chain: bendLinks(cfg9, ['tail']), link: bendLinks(cfg9, [explicit9]), bone: bendLinks(cfg9, ['body']) };
+    const anims9 = bendAnimations([{ part: 'strip', links: links9.chain }, { part: 'mark', links: [] }]);
+    const names9 = bendAnimationNames('strip');
+    say(
+      'MD09_THE_BEND_SET_TURNS_EVERY_CHAIN_LINK_THE_SEGMENTS_NAME_BY_15_DEGREES_BOTH_WAYS_AND_NOTHING_ELSE',
+      links9.chain.join() === DRAFT_LINKS.join() &&
+        links9.link.join() === 'tail1' &&
+        links9.bone.length === 0 &&
+        Object.keys(anims9).join() === names9.join() &&
+        names9.every((n, i) => anims9[n].duration === 0 && anims9[n].tracks.length === 3 && anims9[n].tracks.every((t) => t.property === 'rotate' && t.keys.length === 1 && t.keys[0].t === 0 && t.keys[0].v[0] === (i === 0 ? BEND_DEGREES : -BEND_DEGREES))),
+      `${JSON.stringify(links9)}; ${JSON.stringify(Object.keys(anims9))}`,
+      `Stage C's bend set: every link of every chain a part's segments name turned by ±${BEND_DEGREES}° about its joint, each on its parent's; a bone segment is not a chain and turns nothing`,
+    );
+
+    // MD10 — what refuses the command before anything is written.
+    let calls10 = 0;
+    const small = refusals(() => meshDraftStage({ config: writeRigFixture(join(root, 'small')).config, parts: join(root, 'small', 'parts-in'), out: join(root, 'small', 'out') }, () => ((calls10 += 1), { status: 0, out: '' }), 'rigc', join(root, 'small', 'scratch'), () => {}));
+    const red = meshDraftRun(join(root, 'red'), DRAFT_COARSE_GRID, { failFirstBuild: true });
+    say(
+      'MD10_A_FIGURE_WITH_NO_SPACING_AND_A_RED_LATTICE_BASELINE_ARE_REFUSED_BY_NAME_AND_NOTHING_IS_WRITTEN',
+      small !== null && small.problems.length === 1 && small.problems[0].code === 'MESH_DRAFT_FIGURE' && calls10 === 0 && !existsSync(join(root, 'small', 'out')) && red.e !== null && red.e.problems.length >= 1 && red.e.problems.every((p) => p.code === 'MESH_DRAFT_LATTICE_GREEN') && red.e.problems[0].detail.includes('A00_PLANTED') && !existsSync(red.out),
+      `the rig fixture: ${codes(small)}, ${calls10} rigc call(s); a red baseline: ${red.e === null ? 'nothing refused' : red.e.problems.map(problemLine).join('; ').slice(0, 300)}`,
+      'a gate held against a red baseline is no gate, and a spacing the rule does not give is not raised; both refuse before anything is written',
+    );
+
+    // MD11 — the flags.
+    const noParts = runCli(['mesh-draft', '--config', 'c.json', '--out', join(root, 'usage')]);
+    const unknown = runCli(['mesh-draft', '--config', 'c.json', '--parts', 'p', '--out', join(root, 'usage'), '--grid', '9']);
+    say(
+      'MD11_MESH_DRAFT_WITHOUT_PARTS_OR_WITH_A_FLAG_IT_DOES_NOT_TAKE_IS_A_USAGE_ERROR',
+      noParts.status === 2 && noParts.out.includes('USAGE: mesh-draft needs --parts <value>') && unknown.status === 2 && unknown.out.includes('mesh-draft does not take "--grid"; it takes --config, --parts, --out, --requirements, --idle-keys, --page-edges, --pack-shape, --more-triangles') && !existsSync(join(root, 'usage')),
+      `${noParts.out.split('\n')[0].trim()} | ${unknown.out.split('\n')[0].trim()}`,
+      'the command takes the flags its TAKES row names and no other: no spacing, tolerance or grid is an input, because every number is the figure\'s',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return bad();
 }
 
 // ---------------------------------------------------------------------------
@@ -26685,6 +27109,7 @@ const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number 
   ['build', runBuildSuite],
   ['scene', runSceneSuite],
   ['chain', runChainSuite],
+  ['mesh-draft', runMeshDraftSuite],
   ['readme-loop', runReadmeLoopSuite],
   ['tree', runTreeSuite],
   ['corpus', runCorpusSuite],

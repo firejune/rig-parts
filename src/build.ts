@@ -820,7 +820,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
       const c = m.contour;
       const stray = c.strayIslands === 0 ? '' : ` left out ${c.strayIslands} island(s), ${c.strayPixels} px`;
       const regions = m.regions.map((rg) => ` region ${rg.name}->${rg.bone} reaches ${rg.reached} (${rg.whole} whole)`).join('');
-      log(`${head}contour tol=${m.params.tolerance} margin=${m.params.margin} spacing=${m.params.spacing} ${infl} overshoot ${c.overshoot} min angle ${c.smallestAngle.value}${stray}${regions}`);
+      log(`${head}contour tol=${m.params.tolerance} margin=${m.params.margin} spacing=${m.params.spacing}${m.params.maxEdge === undefined ? '' : ` maxEdge=${m.params.maxEdge} (outline +${c.outlineCut ?? 0})`} ${infl} overshoot ${c.overshoot} min angle ${c.smallestAngle.value}${stray}${regions}`);
     } else log(`${head}grid=${m.grid} ${infl} loop passes ${rig.loopPasses[m.part]}`);
   }
   const regions = rig.rig.slots.length - rig.meshReport.length;

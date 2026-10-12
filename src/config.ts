@@ -312,6 +312,8 @@ export interface ContourSpec {
   margin: number;
   /** The background interior spacing, px, above 0. */
   spacing: number;
+  /** The longest outline edge, px (issue #265): a longer simplified edge is cut into equal pieces; absent cuts nothing. */
+  maxEdge?: number;
   /** The most vertices the mesh may have; absent is no budget. */
   budget?: number;
   /** The largest island, in art pixels, that may be left out of the mesh; absent leaves none out. */
@@ -1775,7 +1777,7 @@ function checkRibs(c: Check, at: string, m: Record<string, Json>, chains: Map<st
 
 /**
  * `meshes.<part>.contour` (issue #84). `tolerance`, `margin` and `spacing` are
- * required — nothing is defaulted; `budget`, `stray` and `regions` are
+ * required — nothing is defaulted; `maxEdge`, `budget`, `stray` and `regions` are
  * optional, and an absent one is "none", not a guessed value. What the outline
  * itself refuses (a band that folds a polygon, a spacing whose keep radius
  * snaps to nothing) is `src/contour.ts`'s, at the rig stage, in its words;
@@ -1783,13 +1785,14 @@ function checkRibs(c: Check, at: string, m: Record<string, Json>, chains: Map<st
  * the grid every region number must sit on.
  */
 function checkContour(c: Check, at: string, v: Json, bones: Set<string>): void {
-  const o = c.object(at, v, ['tolerance', 'margin', 'spacing'], ['budget', 'stray', 'regions']);
+  const o = c.object(at, v, ['tolerance', 'margin', 'spacing'], ['maxEdge', 'budget', 'stray', 'regions']);
   if (o === null) return;
   if ('tolerance' in o) c.number(`${at}.tolerance`, o.tolerance, 'non-negative');
   if ('margin' in o && c.number(`${at}.margin`, o.margin, 'non-negative') && (o.margin as number) > 0 && (o.margin as number) < 1) {
     c.fail('CONFIG_FIELD_TYPE', `${at}.margin`, `is ${o.margin as number}; 0, or 1 px or more, is required — the outline's silhouette grows by the pixels whose centre lies within the margin of an art pixel's centre, and none lies closer than 1 px, so a margin under 1 px would add nothing`);
   }
   if ('spacing' in o) c.number(`${at}.spacing`, o.spacing, 'positive');
+  if ('maxEdge' in o) c.number(`${at}.maxEdge`, o.maxEdge, 'positive');
   if ('budget' in o) c.int(`${at}.budget`, o.budget, 3);
   if ('stray' in o) c.int(`${at}.stray`, o.stray, 0);
   if (!('regions' in o) || !c.array(`${at}.regions`, o.regions, false)) return;

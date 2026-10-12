@@ -33,25 +33,15 @@ import { alphaAbove, connectedComponents, pad, type Raster } from '../src/raster
 /** The pad the rig stage puts round every part image (`PAD`, `src/rig.ts`), so the draft runs on the image the stage meshes. */
 const IMAGE_PAD = 4;
 
-/**
- * T = max(1, round(H / 554)), H the figure's height in rig px (the union of
- * every part's box). 554 puts T at 2 on the trailer's 1108 px figure, the
- * point Stage A2 measured; it is a constant fitted on three similarly sized
- * examples (heights 1106, 1108, 1185), not a law of figure size.
- */
-export const TOLERANCE_FIGURE_DIVISOR = 554;
+/** T = max(1, round(H / 554)) and the dust rule: `src/meshdraft.ts` states them for `rig-parts mesh-draft`, and this draft reads them from there. */
+export { DUST_MAX_PX, DUST_MAX_SHARE, TOLERANCE_FIGURE_DIVISOR } from '../src/meshdraft.ts';
+import { DUST_MAX_PX, DUST_MAX_SHARE, TOLERANCE_FIGURE_DIVISOR } from '../src/meshdraft.ts';
 
 /** The background spacing that leaves the interior to the ribs: above any part side the rig allows (32768 px is the contour cap; a figure is far below 4096). */
 export const RIBS_ONLY_SPACING = 4096;
 
 /** Stations per link the draft starts every chain at (Stage A2 measured 0 and 1). */
 export const DRAFT_STATIONS = 1;
-
-/** Dust: an extra island of at most this many art px … */
-export const DUST_MAX_PX = 4;
-
-/** … and at most this share of the part's art px. */
-export const DUST_MAX_SHARE = 0.001;
 
 /** The figure's outline tolerance, rig px. */
 export function outlineTolerance(figureHeight: number): number {

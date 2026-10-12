@@ -638,7 +638,8 @@ export interface ContourMeshReport {
   exponent?: number;
   /** Only when the mesh declared ribs (issue #188): what it declared and what was placed. Absent otherwise, so a mesh without ribs writes the row it always wrote. */
   ribs?: RibsRow;
-  params: { tolerance: number; margin: number; spacing: number; budget: number | null; stray: number | null };
+  /** `maxEdge` only when the mesh declared it (issue #265), so a mesh without it writes the row it always wrote. */
+  params: { tolerance: number; margin: number; spacing: number; maxEdge?: number; budget: number | null; stray: number | null };
   contour: ContourReport;
   regions: Array<{ name: string; bone: string; reached: number; whole: number }>;
   /** Only under `rule: "heat"` (issue #161), as the lattice row's. */
@@ -1335,7 +1336,7 @@ export function buildRig(
         : { name: rg.name, shape: 'polygon', points: rg.points.map(([x, y]) => [x - ox, y - oy] as [number, number]), spacing: rg.spacing, band: rg.band },
     );
     const ribs = chainRibs(ribSpec.segments, ribSpec.ribs, ox, oy);
-    const cm = contourMesh(p.name, { width: w, height: h, alpha }, { threshold: ART_ALPHA, tolerance: spec.tolerance, margin: spec.margin, spacing: spec.spacing, budget: spec.budget, stray: spec.stray, regions: inPart, ...(ribs.length === 0 ? {} : { ribs }) });
+    const cm = contourMesh(p.name, { width: w, height: h, alpha }, { threshold: ART_ALPHA, tolerance: spec.tolerance, margin: spec.margin, spacing: spec.spacing, ...(spec.maxEdge === undefined ? {} : { maxEdge: spec.maxEdge }), budget: spec.budget, stray: spec.stray, regions: inPart, ...(ribs.length === 0 ? {} : { ribs }) });
     if (Array.isArray(cm)) {
       out.push(...cm);
       return null;
@@ -1401,7 +1402,7 @@ export function buildRig(
         mode: 'contour',
         ...(exponent === undefined ? {} : { exponent }),
         ...(ribSpec.ribs === undefined ? {} : { ribs: ribsRow(ribSpec.ribs, cm.ribs ?? []) }),
-        params: { tolerance: spec.tolerance, margin: spec.margin, spacing: spec.spacing, budget: spec.budget ?? null, stray: spec.stray ?? null },
+        params: { tolerance: spec.tolerance, margin: spec.margin, spacing: spec.spacing, ...(spec.maxEdge === undefined ? {} : { maxEdge: spec.maxEdge }), budget: spec.budget ?? null, stray: spec.stray ?? null },
         contour: rep,
         regions: regions.map((rg, k) => ({ name: rg.name, bone: rg.bone, reached: reached[k], whole: whole[k] })),
         ...(heat === null ? {} : { heat: heatRow(heat) }),
