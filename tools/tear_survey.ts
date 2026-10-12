@@ -181,7 +181,7 @@ export function local(bones: ReadonlyMap<string, BoneMatrix>, bone: string, w: P
 
 export const placesZ = (v: number): number => (pyRound(v, OFFSET_PLACES) === 0 ? 0 : pyRound(v, OFFSET_PLACES));
 
-function sameInfluences(a: readonly Influence[], b: readonly Influence[]): boolean {
+export function sameInfluences(a: readonly Influence[], b: readonly Influence[]): boolean {
   return a.length === b.length && a.every((e, i) => e.bone === b[i].bone && Math.abs(e.weight - b[i].weight) <= 1e-12);
 }
 
@@ -276,8 +276,8 @@ function writtenFor(ctx: PartCtx, i: number, rule: RuleName, bones: ReadonlyMap<
 
 export type RuleRef = Reference & { rig: P2[]; kept: string[] };
 
-/** `referenceField` (tools/bend_survey.ts) under `rule`: the same samples, each skinned by the rule unrounded. */
-export function referenceUnder(ctx: { box: PartBox; segs: readonly Segment[]; r: number; exponent: number | undefined; rigToWorld: (p: P2) => P2; ci: ChainInfo; heat: HeatArg | null }, png: string, bones: ReadonlyMap<string, BoneMatrix>, poses: ReadonlyArray<ReadonlyMap<string, BoneMatrix>>, rule: RuleName): RuleRef {
+/** `referenceField` (tools/bend_survey.ts) under `rule`: the same samples, each skinned by the rule unrounded. A function in place of a rule's name is the rule (tools/cap_survey.ts passes its caps that way). */
+export function referenceUnder(ctx: { box: PartBox; segs: readonly Segment[]; r: number; exponent: number | undefined; rigToWorld: (p: P2) => P2; ci: ChainInfo; heat: HeatArg | null }, png: string, bones: ReadonlyMap<string, BoneMatrix>, poses: ReadonlyArray<ReadonlyMap<string, BoneMatrix>>, rule: RuleName | ((rp: P2) => Influence[])): RuleRef {
   const img = readPng(png);
   let art = 0;
   for (let i = 0; i < img.width * img.height; i++) if (img.data[i * 4 + 3] > ART_ALPHA) art++;
@@ -291,7 +291,7 @@ export function referenceUnder(ctx: { box: PartBox; segs: readonly Segment[]; r:
       if (img.data[(y * img.width + x) * 4 + 3] <= ART_ALPHA) continue;
       const rp: P2 = [ctx.box.x + x + 0.5, ctx.box.y + y + 0.5];
       const w = ctx.rigToWorld(rp);
-      const ws = ruleInfluences(rule, rp, ctx.segs, ctx.r, ctx.exponent, ctx.ci, ctx.heat).map(({ bone, weight }) => {
+      const ws = (typeof rule === 'function' ? rule(rp) : ruleInfluences(rule, rp, ctx.segs, ctx.r, ctx.exponent, ctx.ci, ctx.heat)).map(({ bone, weight }) => {
         const [lx, ly] = local(bones, bone, w);
         return { bone, x: lx, y: ly, weight };
       });
