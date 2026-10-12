@@ -92,6 +92,7 @@ import { type Problem, refuseIfAny } from './errors.ts';
 import { isSkeletonName, KEYPOINT_NAMES, type KeypointName, type PosePoints, SKELETON_NAMES, type SkeletonName } from './skeleton.ts';
 import { acceptedTagNames, AUTHOR_LABEL_RULE, AUTHOR_PREFIX, readLayerTag } from './tags.ts';
 import { TURN_BONE, type TurnSpec, turnNearest } from './turn.ts';
+import { FLOOR_FORMS, type FloorForm, type MeshInfluences } from './weights.ts';
 
 export type Point = [number, number];
 
@@ -275,6 +276,8 @@ export interface LatticeMeshSpec {
   exponent?: number;
   /** Absent: `"distance"`. */
   rule?: WeightRule;
+  /** The cap and the floor's form (issue #284); absent is 4 and the cut at 0.03, the rule as it always was. */
+  influences?: MeshInfluences;
 }
 
 export interface ContourMeshSpec {
@@ -285,6 +288,8 @@ export interface ContourMeshSpec {
   exponent?: number;
   /** Absent: `"distance"`. */
   rule?: WeightRule;
+  /** As the lattice's (issue #284). */
+  influences?: MeshInfluences;
   /** Rows of vertices across the part along the chains named here (issue #188); absent places none. */
   ribs?: RibsSpec;
 }
@@ -1660,7 +1665,7 @@ function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
     const at = `config.meshes.${part}`;
     // The known keys keep their old order (grid, r, segments) with contour after them, and `r` and `segments` are
     // required in the place and words the object check uses, so a lattice mesh's refusals read as they did.
-    const m = c.object(at, spec, [], ['grid', 'r', 'segments', 'contour', 'auto', 'exponent', 'rule', 'ribs']);
+    const m = c.object(at, spec, [], ['grid', 'r', 'segments', 'contour', 'auto', 'exponent', 'rule', 'ribs', 'influences']);
     if (m === null) continue;
     for (const key of ['r', 'segments']) if (!(key in m)) c.fail('CONFIG_FIELD_PRESENT', `${at}.${key}`, 'is absent and required');
     const modes = ['grid', 'contour', 'auto'].filter((k) => k in m);
@@ -1701,6 +1706,7 @@ function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
       });
     }
     if ('ribs' in m) checkRibs(c, `${at}.ribs`, m, chains);
+    if ('influences' in m) checkMeshInfluences(c, `${at}.influences`, m);
     if ('auto' in m && typeof m.auto === 'object' && m.auto !== null && !Array.isArray(m.auto) && 'stimulus' in m.auto) {
       checkStimulus(c, `${at}.auto.stimulus`, (m.auto as Record<string, Json>).stimulus, m, chains);
     }
@@ -1744,6 +1750,29 @@ function checkStimulus(c: Check, at: string, v: Json, m: Record<string, Json>, c
     }
     if ('degrees' in o) c.number(`${eat}.degrees`, o.degrees, 'positive');
   });
+}
+
+/**
+ * `meshes.<part>.influences` (issue #284): the lattice and contour modes' cut, the author's per mesh —
+ * `maxInfluences`, a whole number 1 or more or `null` (no cap), and `floor`, `"cut"` or `"continuous"` (`FloorForm`,
+ * `src/weights.ts`). Either may be absent (4, and the cut); an object naming neither is refused, since it would
+ * declare nothing. The automatic mode states its cap and floor in `auto.influences`, which rig-c's reduction is
+ * handed, so this field beside `auto` is refused by name (`CONFIG_INFLUENCES_MODE`) rather than read by nothing.
+ */
+function checkMeshInfluences(c: Check, at: string, m: Record<string, Json>): void {
+  if ('auto' in m) {
+    c.fail('CONFIG_INFLUENCES_MODE', at, `is ${show(m.influences)} on an automatic mesh (auto); the automatic mode states its cap and floor in auto.influences (maxInfluences, minWeight), which rig-c's reduction is handed — declare them there, or remove influences`);
+    return;
+  }
+  const l = c.object(at, m.influences, [], ['maxInfluences', 'floor']);
+  if (l === null) return;
+  if (!('maxInfluences' in l) && !('floor' in l)) c.fail('CONFIG_FIELD_TYPE', at, `is ${show(m.influences)}, which names neither maxInfluences nor floor; remove influences to keep the cap of 4 and the cut at 0.03`);
+  if ('maxInfluences' in l && l.maxInfluences !== null && !(typeof l.maxInfluences === 'number' && Number.isInteger(l.maxInfluences) && l.maxInfluences >= 1)) {
+    c.fail('CONFIG_FIELD_TYPE', `${at}.maxInfluences`, `is ${show(l.maxInfluences)}; an integer at or above 1, or null (no cap: every bone the mesh's segments name), is required`);
+  }
+  if ('floor' in l && !FLOOR_FORMS.includes(l.floor as FloorForm)) {
+    c.fail('CONFIG_FIELD_TYPE', `${at}.floor`, `is ${show(l.floor)}; "cut" (shares under 0.03 dropped, what an absent floor means) or "continuous" (0.03 subtracted from every share, those at or below 0 dropped) is required`);
+  }
 }
 
 /**

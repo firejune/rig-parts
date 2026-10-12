@@ -95,6 +95,7 @@ read by no CPU stage).
 | `meshes.<part>` | rig | **proposed**, then corrected. Exactly one of `grid` (the lattice: cell size, px — what `propose` writes: by default one spacing for the figure, round(H / 37) rig px with H the height of every part's box together, a part whose tenth of its short side is already coarser keeping that, and under `propose --grid-rule part` the reference's tenth of the part's short side clamped to 5..36, issue #265), `contour` (the outline mode, authored; the next row and "A contour mesh" below) or `auto` (the automatic mode, authored; "An automatic mesh" below) — two, or none, is `CONFIG_MESH_MODE`. In every mode: `r` (added to every distance before weighting: `w = 1/(d + r)²`), `segments` (a chain name, a bone name with a `tip`, or `[bone, [x0,y0], [x1,y1]]`), and, **authored**, optional, `exponent` (issue #161): a number above 0 that replaces the 2 in that rule, `w = 1/(d + r)^exponent` — a larger one hands each vertex more fully to its nearest bone; absent is 2 and changes no byte, a value that is not a number above 0 is `CONFIG_FIELD_TYPE` at `meshes.<part>.exponent`, and a declared one is echoed as `exponent` in the mesh's `mesh_report.json` row; the exponent is the distance rule's, so declared beside `rule: "heat"` it is refused (`CONFIG_FIELD_TYPE` at `meshes.<part>.exponent`). The segment list is the one authored decision about a layer: which bones may pull it. The slot's bone is the first segment's. Optional `rule` (issue #161): `"distance"` — the rule above, and what an absent `rule` means (every byte is the same) — or `"heat"`, bone heat over the part's own silhouette, in every mode: the lattice's art (alpha above 8) with holes filled, or for `contour` and `auto` the silhouette their outline is traced from (that mode's art — alpha above 8 for `contour`, alpha 1 and above for `auto` — less any island a declared `stray` left out, holes filled, grown by its `margin`); each bound bone's sources are the silhouette pixels whose centre lies within 0.75 px of its segment (a pixel two bones reach goes to the nearer, a tie to the first listed), held at 1 for that bone and 0 for the others; the field is solved by row-major Gauss–Seidel over-relaxation to a sweep change under 1e-7 within 20000 sweeps; a vertex reads the nearest silhouette pixel and takes the same cap and floor (and `regions`) as the distance rule; `r` is not read. The mesh's `mesh_report.json` row gains `heat` (the constants, each bone's sources and sweeps, the residual). Any other value is `CONFIG_FIELD_TYPE`; a bound bone with no source pixel is `RIG_HEAT_BONE_SOURCE`, an island no bone has a source in `RIG_HEAT_ISLAND_SOURCE`, a solve past its sweep bound `RIG_HEAT_CONVERGED` — none is weighted 0 |
 | `meshes.<part>.contour` | rig | **authored**, optional (issue #84): `{tolerance, margin, spacing, maxEdge?, budget?, stray?, regions?}`. `tolerance` — rig-c's Douglas–Peucker tolerance on the traced outline, px, 0 or more; `margin` — how far the silhouette grows before it is traced, px: 0, or 1 or more (a pixel joins when its centre lies within `margin` of an art pixel's centre; a value above 0 and below 1 adds nothing and is refused, `CONFIG_FIELD_TYPE`); `spacing` — the background interior spacing, px, above 0; `maxEdge` (issue #265) — the longest outline edge, px, above 0: every simplified edge longer than it is cut into `ceil(length / maxEdge)` equal pieces, each cut point on the 1/256 px grid, before any region or rib touches the outline (absent: nothing is cut, and no byte moves; under 2/256 px the rig stage refuses it, `CONTOUR_PARAMETER`, because two cut points could snap together); the row echoes it in `params` and counts the points it added in `contour.outlineCut`, both only when declared; `budget` — the most vertices the mesh may have (refused above it, nothing thinned); `stray` — the largest island, in art pixels, that may be left out of the mesh (absent: none is); `regions` — local deformation regions, each `{name, shape, bone, spacing, band}` with `shape` `"circle"` (`cx, cy, r`) or `"polygon"` (`points`, 3 or more): `bone` is the region's control bone (any bone `bones` declares), `spacing` the interior spacing inside the region and its band, `band` the width the bone's weight falls across. Every length and position is **rig px**, like every other in the config; the part image is the rig less `(x − 4, y − 4)` (its box less the pad), a translation, so a length is the same number in both. A region's `cx`, `cy`, `r`, `band` and `points` are multiples of 1/256 px (`CONFIG_FIELD_TYPE` otherwise); region names are unique per mesh (`CONFIG_REGION_NAME_UNIQUE`). The alpha threshold is not a field: art is alpha above 8, the lattice's and `check`'s |
 | `meshes.<part>.ribs` | rig | **authored**, optional (issue #188), in the `contour` and `auto` modes: `{<chain>: {stations}, …}`, each key a chain this mesh's `segments` name. Each link of the chain gets a row of vertices across the part at its origin and at `stations` points evenly between its origin and its end (`stations`, a whole number, 0 or more, required; a chain of L links carries L × (stations + 1) ribs), each rib a row of vertices across the part, kept as a row of locked edges; the rule is "Ribs along a chain" under "A contour mesh". Absent places none and changes no byte. Refused: a lattice mesh with ribs (`CONFIG_RIBS_MODE` — its vertices are its grid's corners), a key that is not one of the mesh's chains (`CONFIG_NAME_RESOLVES`), an object naming no chain or a `stations` that is not a whole number from 0 (`CONFIG_FIELD_TYPE`); at the rig stage `CONTOUR_RIB_ART`, `CONTOUR_RIB_LINK`, `CONTOUR_RIB_CROSSING`, `CONTOUR_RIB_EDGE` (the contour refusals). The mesh's `mesh_report.json` row gains `ribs` — the declaration, the ribs placed and the vertices they hold — and its contour report (the source's, in `auto`) lists each rib's vertices |
+| `meshes.<part>.influences` | rig | **authored**, optional (issue #284), in the `grid` and `contour` modes: `{maxInfluences?, floor?}`, at least one. `maxInfluences` — the most bones that pull one vertex, a whole number 1 or more, or `null`, no cap (every bone the mesh's `segments` name; `null` is the config's spelling of a bound declared absent, as in `maxOvershoot` and `weightJump`); absent is 4. `floor` — `"cut"` (the capped shares normalised, any under 0.03 dropped, the rest normalised again; what an absent `floor` means) or `"continuous"` (0.03 subtracted from every capped share, those at or below 0 dropped, the rest normalised again, so a bone fades out of a vertex instead of leaving it in one step). Absent, the mesh is weighted at 4 and the cut and every byte is the one written before the field existed; declared, it applies under either `rule`, and is echoed as `influences` in the mesh's `mesh_report.json` row. `propose` never writes it, and `mesh-draft` carries a lattice's declaration to the contour candidate it drafts. A cap that is not a whole number 1 or more or `null` (the string `"none"` included), another `floor`, or an object naming neither is `CONFIG_FIELD_TYPE`; a vertex the declared cut leaves with no bone is `RIG_INFLUENCES_KEPT`; beside `auto` it is `CONFIG_INFLUENCES_MODE` (that mode's cap and floor are `auto.influences`). What each setting trades is "The weight cut" below |
 | `regions.<part>` | rig | **proposed**: the bone a rigid part rides. Every plan part is exactly one of a mesh or a region (`CONFIG_PART_ATTACHED`) |
 | `motion.duration` | rig; check (the loop is measured at this time) | proposed as 40 frames at 12 fps, `40/12` s, written `3.3333333333333335` (issue #252; the reference proposed 4 s, and every period it drafted is scaled with it so each track keeps its cycles per idle); a whole number of 1/12 s ticks, because `check` renders at 12 fps and compares frame 0 with the frame at this time — read within 10^-9 s (`TIME_SLACK`, issue #244), since a whole number of frames is often not exact in binary: rigc's 40th frame sits at `40 × (1/12)` = `3.333333333333333`. Half a frame off is `CHECK_LOOP_LAST_FRAME_AT_DURATION` |
 | `motion.tracks` | rig | **proposed**, then tuned. Single `{bone, prop, amp, period, phase, base?}` or chain `{chain, amps, period, phase, lag}` — one amplitude per link, link `i` at phase `phase + lag·i`. Every `period` must divide `duration` (`CONFIG_PERIOD_DIVIDES_DURATION`). A bone property is keyed by one track (`CONFIG_BONE_PROPERTY_KEYED_ONCE`): a chain keys `rotate` on every link, the blink's `eyes` group `scaley` and its `brows` group `translatey` on every member, so a single track on any of those is a second track on it — rigc would refuse it one stage later, `animation "idle" has two tracks on eye.scaley`. The proposed breath (issues #252, #270) is `chest` `translatey` travelling 2.5 % of the torso's length peak to peak — the distance from the `neck` bone to the `hip` bone as the proposal writes them, the run the chest sits half way along, whichever rule placed them — (amplitude half of it to two decimals, `base` the amplitude, so the chest rises from the setup pose and returns); the `breath:` note prints the fraction, the length, the two bones and the pixels. Until #270 it was 2.5 % of the `topwear` part's height, and a sweater to the thighs (`scarf`, 690 px) breathed 2.9 times as deep as `demo`; on neck → hip `scarf` reads 431 px (10.78 px) and `demo` 192 px (4.80 px). Neck and hip on one point: no length to scale by, so the breath keeps the reference's amplitude 1.3 (2.6 px peak to peak) and the note says so — scale it to the figure. `chest` `scalex` and the `head` and `neck` rolls are a ratio and angles and are proposed the same on every figure. A chain link is turned along its chain (the `bones` row), so a `translatex`/`translatey` key on a bone whose parent is a turned link, or a `scale`/`shear` key on a turned link, would move or stretch along the link and not along the picture's axis: the rig stage refuses it (`RIG_KEY_FRAME_UNTURNED`); `rotate` is keyed on any bone |
@@ -373,6 +374,75 @@ changed none, at rest or rolled. The eye bone is not moved: scaling about the ey
 top edge instead would close the eye upward onto the upper lid and still move whatever sits
 above it by (1 − squash) × its height above the pivot, so the cut, not the pivot, is what
 holds the crease.
+
+### The weight cut (`meshes.<part>.influences`, issue #284)
+
+The distance rule (and bone heat) shares a vertex among the bones its mesh's segments name,
+then cuts the list: the 4 largest kept, any share under 0.03 dropped. Both numbers are the
+reference implementation's (`[:4]` and `>= 0.03`), carried over as port constants. Neither
+is a limit of the format — spine-core reads a weighted vertex as a bone count followed by
+that many bindings, with no bound on the count — and rig-c neither refuses nor warns above
+four: its one assertion on a mesh's weights, `A20_MESH_WEIGHTS_COHERENT`, checks that they
+are coherent, not how many there are (`docs/evidence/weight-cap.md`, *Where four comes
+from*, in the repository). The cut is where a vertex changes hands in one step, and in the
+lattice and contour modes a mesh may declare it:
+
+```json
+"bottomwear": { "grid": 25, "r": 10, "segments": [["hip", [232, 425], [601, 425]], "skirt_r", "skirt_c", "skirt_l"], "influences": { "maxInfluences": 6, "floor": "continuous" } }
+```
+
+**When to reach for it:** a part that folds where two chains meet, or at the end of a curl.
+The default does not move; a fold is today found by looking at a build that passes every
+bar, and this field is what there is to turn once one is seen.
+
+**What it trades.** Every figure below is issue #284 Stage E's, verbatim from
+[`docs/evidence/weight-cap.md`](evidence/weight-cap.md), on every lattice mesh of `demo`,
+`scarf` and the trailer (`rig-c/trailer` at a99d976): the inverted triangles at the bend
+sets (±15° on every chain link; on the trailer also ± the film's own bends, after the
+slash), the largest idle displacement against today's rig in rig px (the part in the
+survey's tables), and the cost — bindings (one per bone per vertex) in the whole
+`rig.json`, `rig.json`'s length and the compiled `skeleton.json`'s, in bytes. Every
+setting passed every `check` bar on all three examples, and `rigc render`'s time did not
+separate them (the run's own spread was as large). "Cap none" is the survey's name for
+`maxInfluences: null`.
+
+| setting | inverted at the bends: demo / scarf / trailer ±15° / trailer film | idle vs today, rig px: demo / scarf / trailer | bindings: demo / scarf / trailer | `rig.json` bytes: demo / scarf / trailer | `skeleton.json` bytes: demo / scarf / trailer |
+| --- | --- | --- | --- | --- | --- |
+| cap 4, cut (today, absent) | 1 / 36 / 6 / 7 | — | 3008 / 4192 / 5014 | 471635 / 665178 / 773228 | 648296 / 886481 / 993045 |
+| cap 4, continuous | 1 / 42 / 5 / 0 | 1.252 / 0.676 / 1.471 | 3008 / 4192 / 5014 | 471627 / 665230 / 773235 | 648282 / 886533 / 993052 |
+| cap 5, cut | 1 / 35 / 5 / 1 | 1.853 / 1.291 / 1.875 | 3257 / 4546 / 5337 | 502053 / 707658 / 812385 | 670404 / 917493 / 1021528 |
+| cap 5, continuous | 1 / 46 / 3 / 0 | 1.293 / 1.139 / 1.580 | 3257 / 4546 / 5337 | 502059 / 707681 / 812407 | 670410 / 917516 / 1021550 |
+| cap 6, cut | 1 / 41 / 7 / 0 | 2.417 / 1.274 / 2.235 | 3423 / 4787 / 5562 | 522287 / 736622 / 839712 | 685243 / 938707 / 1041677 |
+| cap 6, continuous | 1 / 45 / 3 / 0 | 1.329 / 1.132 / 1.750 | 3423 / 4787 / 5561 | 522272 / 736693 / 839600 | 685228 / 938778 / 1041595 |
+| cap 8, cut | 1 / 43 / 20 / 3 | 3.350 / 1.274 / 3.106 | 3532 / 4969 / 5692 | 535476 / 758656 / 855632 | 694930 / 954712 / 1053604 |
+| cap 8, continuous | 1 / 46 / 7 / 0 | 1.365 / 1.122 / 2.248 | 3532 / 4969 / 5692 | 535455 / 758684 / 855638 | 694909 / 954740 / 1053610 |
+| cap none, cut | 1 / 43 / 22 / 3 | 3.350 / 1.291 / 3.179 | 3514 / 4987 / 5684 | 533305 / 760874 / 854648 | 693337 / 956381 / 1052864 |
+| cap none, continuous | 1 / 47 / 7 / 0 | 1.365 / 1.114 / 2.197 | 3513 / 4987 / 5684 | 533169 / 760956 / 854631 | 693238 / 956463 / 1052847 |
+| every bone, nothing dropped (the survey's reference; not a setting) | 0 / 36 / 0 / 0 | 3.350 / 1.336 / 3.286 | 5446 / 8969 / 9087 | 770980 / 1244841 / 1270495 | 866749 / 1314917 / 1358750 |
+
+In the survey's words: cap 5 adds 6.4–8.4 % bindings, cap 6 10.9–14.2 %, cap 8 13.5–18.5 %,
+no cap 13.4–19.0 %; `rig.json` grows 5.1–6.5 % at cap 5 and 10.5–14.4 % with no cap, the
+compiled `skeleton.json` 2.9–3.5 % and 6.0–7.9 %; nothing dropped at all costs 81–114 % more
+bindings. Read per part, where the folds are: on the trailer the skirt's hem corner at the
+film's bends folds 5 today and none at caps 5 and 6 with either floor, and none at any cap
+with the continuous floor; the long hair's curl tips fold 4 at ±15° today and none at caps
+5 and 6 with the continuous floor, and more, not fewer, above six with the cut (17 at cap
+8, 19 with no cap); demo's one fold, on the fringe, is there under every setting. The idle
+moves under every setting that changes a weight: that column is the price of the change
+itself, not a defect of the setting, and it is what to look at on the part before keeping
+one. The survey's own pages hold the per-part tables and the pictures.
+
+**What a declaration writes.** On `demo` and `scarf`, a config declaring each setting on
+every lattice mesh writes, at every lattice vertex, the bones and weights the survey wrote
+for that setting (measured when the field landed: 0 vertices differ in each of the twenty
+builds), so the bindings and the largest count are the table's. `rig.json`'s length matches
+the table at cap 4 and is a little shorter above it (demo at cap 5: 500517 bytes against
+the survey's 502053), because the survey bound a bone new to a vertex at an offset read off
+the rendered setup pose, and the rig stage writes that offset exactly, as it writes every
+other. Under the continuous floor a share can round to 0, so such a mesh is rounded as a
+contour region is (each share to 5 places, a 0 dropped, the remainder to the heaviest); under
+the cut it is rounded as the lattice always was. In the contour mode a region's bone counts
+toward the cap like any other (*The vertex's weights* in `src/localweights.ts`).
 
 ### A contour mesh (`meshes.<part>.contour`, issue #84)
 
@@ -1773,6 +1843,7 @@ See-through with another seed.
 | `CONFIG_BONE_UNIQUE` | a bone or chain declared twice, or `root` declared | `bones` |
 | `CONFIG_PART_ATTACHED` | a plan part or a cut's piece with neither or both of a mesh and a region; a patch with a mesh, or with no region | `meshes` / `regions` |
 | `CONFIG_RIBS_MODE` | `meshes.<part>.ribs` on a lattice (`grid`) mesh: its vertices are its grid's corners, which no row can move (issue #188) | put the part in `contour` or `auto`, or remove `ribs` |
+| `CONFIG_INFLUENCES_MODE` | `meshes.<part>.influences` on an automatic (`auto`) mesh: that mode's cap and floor are `auto.influences`, which rig-c's reduction is handed (issue #284) | declare them in `auto.influences`, or remove `influences` |
 | `CONFIG_PATCH_BOX` | an `assemble.patches` box with `x1 <= x0` or `y1 <= y0` | that patch's `box` (`x1`, `y1` are exclusive) |
 | `CONFIG_AMPS_MATCH_CHAIN` | a chain track's `amps` is not one per link | that track's `amps` |
 | `CONFIG_PERIOD_DIVIDES_DURATION` | a period that is not a whole fraction of the idle — the loop could not close | that track's `period`, or `motion.duration` |
@@ -1852,6 +1923,7 @@ See-through with another seed.
 | `RIG_PART_PRESENT`, `RIG_PART_ATTACHED` | a `meshes`/`regions` key that is not in `parts.json`, a part with neither, or a `painting:` part with a mesh | the config and the plan must name the same parts; a patch is a region |
 | `RIG_PNG_PRESENT`, `RIG_PNG_MATCHES_BOX`, `RIG_PART_HAS_ART` | a part's PNG is missing, the wrong size, or has no art pixel | re-run assemble |
 | `RIG_NAME_RESOLVES`, `RIG_SEGMENT_DEFINED`, `RIG_CHAIN_POINTS` | a segment names an undeclared bone, a bone with no `tip` and no next link, or a chain too short to make a link | that bone's `tip`, or write the segment out as `[bone, [x0,y0], [x1,y1]]` |
+| `RIG_INFLUENCES_KEPT` | a mesh's declared `influences` leaves a vertex with no bone: every capped share is under 0.03 (at or under it, for the continuous floor). The largest of k shares is at least 1/k, so this needs 34 or more kept bones; the default cap of 4 never reaches it (issue #284). The detail names the first vertex, how many more, and its largest share | declare `maxInfluences` 33 or less, or name fewer bones in `segments` |
 | `RIG_LATTICE_ONE_LOOP` | the lattice over a part does not close into one outline even after the repair passes | that mesh's `grid` |
 | `RIG_CONTROL_NAME_FREE` | a keyed, mesh-weighted bone needs `<bone>_ctl` and that name is taken | rename the declared bone |
 | `RIG_TURN_NAME_FREE` | with `turn`: a twin (`turn_<part>_<bone>`), the control `turn` or a transform constraint `turn_<part>` the turn writes is a name the rig already holds | rename the declared bone or constraint |
