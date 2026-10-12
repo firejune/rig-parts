@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
-import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage } from './src/build.ts';
+import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage, suppliedCheckFlag } from './src/build.ts';
 import { ACCEPTABLE_BARS, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, findRigc, PACK_SHAPES, type PackShape, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, NO_PARTS_SENTENCE, SEAM_MEAN_BAR, SOURCE_SENTENCE, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
 import { type CharacterConfig, loadConfig, loadEarlyConfig, loadPaintConfig } from './src/config.ts';
@@ -446,7 +446,7 @@ usage:
                     --head <dir|psd> --out <dir> [--seam near-white|silhouette]
                     [--project core|visible] [--page-edges pot|free]
                     [--pack-shape rect|polygon] [--loop] [--requirements <file.json>]
-                    [--idle-keys ctl|direct] [--lead-in <periods>]
+                    [--idle-keys ctl|direct] [--lead-in <periods>] [--seam-pairs] [--keep-stills]
       assemble, then rig, then check, in one process, each stage's own lines
       printed under [assemble], [rig] and [check]; the first stage that refuses
       stops the build with its own FAIL lines. The config must already carry
@@ -469,6 +469,13 @@ usage:
       and check's artifact, take them). --requirements is forwarded to check
       (as for check); the file's own shape is read before assemble runs, and
       its names resolve against the rig in the check, before it builds.
+      --seam-pairs and --keep-stills are forwarded to check (as for check:
+      the seam split by pair on a pass too, under check/seam/; the setup-pose
+      still under check/setup_still/). check's --rig and --parts are refused:
+      build's check reads the rig and the parts it wrote, <out>/rig and <out>.
+      build's --source is the painting assemble reads and is not handed to
+      the check, so check.json carries no SETUP_POSE_VS_SOURCE; run check
+      --rig <out>/rig --parts <out> --source <painting> for that line.
       --idle-keys is forwarded to the rig stage (as for rig) and defaults to
       ctl; the first line names it when it is direct. A config with a
       two-bone ik over chain links the idle keys needs --idle-keys direct:
@@ -605,7 +612,7 @@ const TAKES = {
   'comfy seethrough': { valued: ['--image', '--out', '--resolution', '--steps', '--seed', '--prefix', '--host', '--wait', '--timeout', '--poll'], switches: ['--offload', '--lama', '--nf4'] },
   'comfy paint': { valued: ['--config', '--out', '--seeds', '--seed0', '--host', '--wait', '--timeout', '--poll'], switches: [] },
   inputs: { valued: ['--source', '--config', '--out'], switches: [] },
-  build: { valued: ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys', '--lead-in'], switches: ['--loop'] },
+  build: { valued: ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys', '--lead-in'], switches: ['--loop', '--seam-pairs', '--keep-stills'] },
   compose: { valued: ['--scene', '--out', '--requirements', '--accept'], switches: [] },
 } as const satisfies Record<string, { valued: readonly string[]; switches: readonly string[] }>;
 
@@ -1190,14 +1197,19 @@ function cmdInputs(args: string[]): number {
 
 function cmdBuild(args: string[]): number {
   const flags = new Map<string, string>();
-  let loop = false;
+  // The bare switches build takes: --loop its own, --seam-pairs and --keep-stills check's, forwarded (issue #257).
+  const on = new Set<string>();
+  const switches: readonly string[] = TAKES.build.switches;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
-    if (flag === '--loop') {
-      if (loop) return usage('--loop is given twice');
-      loop = true;
+    if (switches.includes(flag)) {
+      if (on.has(flag)) return usage(`${flag} is given twice`);
+      on.add(flag);
       continue;
     }
+    // A check flag whose value build supplies itself (--rig, --parts) is refused with what build reads instead (issue #257).
+    const supplied = suppliedCheckFlag(flag);
+    if (supplied !== null) return usage(supplied);
     if (!takesValued('build', flag)) return usage(notTaken('build', flag));
     const value = args[i + 1];
     if (value === undefined) return usage(`${flag} needs a value`);
@@ -1216,6 +1228,7 @@ function cmdBuild(args: string[]): number {
   if (!isPackShape(shape)) return usage(shape);
   const keys = idleKeysOf(flags.get('--idle-keys'));
   if (!isIdleKeys(keys)) return usage(keys);
+  const loop = on.has('--loop');
   const leadText = flags.get('--lead-in');
   if (leadText !== undefined && !/^[1-9][0-9]*$/.test(leadText)) return usage(`--lead-in ${leadText}; a whole number of idle periods, 1 or more, is required`);
   if (leadText !== undefined && !loop) return usage('--lead-in needs --loop; it says which frames the loop is encoded from');
@@ -1229,7 +1242,7 @@ function cmdBuild(args: string[]): number {
   const scratch = mkdtempSync(join(tmpdir(), 'rig-parts-build-'));
   try {
     const r = build(
-      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape, ...(flags.has('--requirements') ? { requirements: flags.get('--requirements') as string } : {}), idleKeys: keys, ...(leadText === undefined ? {} : { leadIn: Number(leadText) }) },
+      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape, ...(flags.has('--requirements') ? { requirements: flags.get('--requirements') as string } : {}), idleKeys: keys, ...(leadText === undefined ? {} : { leadIn: Number(leadText) }), seamPairs: on.has('--seam-pairs'), keepStills: on.has('--keep-stills') },
       { rig: rigcRunner(bin), check: rigcRunner(bin), checkBin: bin, scratch: join(scratch, 'rig-gate') },
       console.log,
     );

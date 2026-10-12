@@ -1282,6 +1282,40 @@ export interface BuildInput {
    * `check/idle_frames/`; absent, the loop is as before.
    */
   leadIn?: number;
+  /** `--seam-pairs`, forwarded to the check as `check` takes it (issue #257): the seam split by pair on a pass too; absent, nothing moves. */
+  seamPairs?: boolean;
+  /** `--keep-stills`, forwarded to the check as `check` takes it (issue #257): the setup-pose still under `check/setup_still/`; absent, nothing moves. */
+  keepStills?: boolean;
+}
+
+/** What `build` does with one flag `check` takes: hands it to its check stage, takes it as its own, or refuses it because build supplies the value itself. */
+export type CheckFlagInBuild =
+  | { as: 'forwarded' }
+  | { as: 'own'; why: string }
+  | { as: 'supplied'; why: string };
+
+/**
+ * Every flag `check` takes and what `build` does with it (issue #257). `cli.ts`
+ * refuses a `supplied` flag on `build` with its `why`; the selftest holds the
+ * table's keys to the flags `check`'s own refusal lists, so a flag added to
+ * `check` without a line here is a named failure, not a flag `build` drops.
+ */
+export const CHECK_FLAGS_IN_BUILD: Readonly<Record<string, CheckFlagInBuild>> = {
+  '--rig': { as: 'supplied', why: 'its check reads the rig its rig stage writes, <out>/rig; run check --rig to measure another rig' },
+  '--out': { as: 'own', why: 'build\'s own --out; its check writes under <out>/check' },
+  '--parts': { as: 'supplied', why: 'its check reads the parts its assemble stage writes, <out>; run check --parts to measure against others' },
+  '--source': { as: 'own', why: 'the painting assemble reads; it is not handed to the check, so check.json carries no SETUP_POSE_VS_SOURCE — run check --rig <out>/rig --parts <out> --source <painting> for that line' },
+  '--page-edges': { as: 'forwarded' },
+  '--pack-shape': { as: 'forwarded' },
+  '--requirements': { as: 'forwarded' },
+  '--seam-pairs': { as: 'forwarded' },
+  '--keep-stills': { as: 'forwarded' },
+};
+
+/** The `build` refusal of a `check` flag build supplies itself ({@link CHECK_FLAGS_IN_BUILD}), or null for any other flag. */
+export function suppliedCheckFlag(flag: string): string | null {
+  const row = Object.hasOwn(CHECK_FLAGS_IN_BUILD, flag) ? CHECK_FLAGS_IN_BUILD[flag] : undefined;
+  return row?.as === 'supplied' ? `build does not take "${flag}"; ${row.why}` : null;
 }
 
 /**
@@ -1386,7 +1420,7 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
 
   let report: CheckReport;
   try {
-    report = checkStage({ rig: join(out, 'rig'), parts: out, out: join(out, 'check'), pageEdges: input.pageEdges, packShape: input.packShape, ...(input.requirements === undefined ? {} : { requirements: input.requirements }) }, run.check, run.checkBin, prefixed('check'));
+    report = checkStage({ rig: join(out, 'rig'), parts: out, out: join(out, 'check'), pageEdges: input.pageEdges, packShape: input.packShape, ...(input.requirements === undefined ? {} : { requirements: input.requirements }), seamPairs: input.seamPairs === true, keepStills: input.keepStills === true }, run.check, run.checkBin, prefixed('check'));
   } catch (err) {
     return refused('check', err);
   }
