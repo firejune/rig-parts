@@ -53,7 +53,7 @@ import { OFFSET_PLACES, PAD, rigJsonText } from '../src/rig.ts';
 import { pyRound } from '../src/round.ts';
 import { DEFAULT_LIMITS, type Influence, influences, MAX_INFLUENCES, MIN_WEIGHT, type Segment } from '../src/weights.ts';
 import { bendPoses, bendReading, bentBones, MAX_SAMPLES, type Reference, readSkeleton, type Skeleton } from './bend_survey.ts';
-import { draftContourMesh, outlineTolerance } from './contourdraft.ts';
+import { type ChainLine, draftContourMesh, outlineTolerance } from './contourdraft.ts';
 import {
   BARS,
   barCell,
@@ -86,8 +86,11 @@ export const TEAR_PAIR_PX = 3;
 /** A pair whose posed distance exceeds its rest distance by more than this (rig px) is a tear. Fixed before the run. */
 export const TEAR_PX = 3;
 
-export const RULE_NAMES = ['as built', 'continuous cap', 'continuous floor', 'both', 'lifted'] as const;
-export type RuleName = (typeof RULE_NAMES)[number];
+export const ALL_RULES = ['as built', 'continuous cap', 'continuous floor', 'both', 'lifted', 'family', 'family + continuous floor'] as const;
+export type RuleName = (typeof ALL_RULES)[number];
+
+/** Stage A's rules, the default; Stage B runs `--rules` with the family rule. */
+export const RULE_NAMES: readonly RuleName[] = ['as built', 'continuous cap', 'continuous floor', 'both', 'lifted'];
 
 const ALL = { maxInfluences: Number.MAX_SAFE_INTEGER, minWeight: 0 };
 
@@ -97,11 +100,33 @@ function normalise(list: readonly Influence[]): Influence[] {
   return list.map((e) => ({ bone: e.bone, weight: e.weight / s }));
 }
 
-/** The influences at a rig-px point under `rule`, unrounded, largest first. */
-export function ruleInfluences(rule: RuleName, rp: P2, segs: readonly Segment[], r: number, exponent: number | undefined): Influence[] {
+/**
+ * Stage B's proposal, the **family** of a point: when its largest bone is a link of chain C, only C's links, the bone
+ * C hangs from and the part's declared segments that are no chain's link may claim it; when its largest bone is a
+ * declared segment, every bone may (unchanged). Read off `config.bones` (`chain`, `parent`) and the mesh's `segments`.
+ */
+export function family(all: readonly Influence[], ci: ChainInfo): Influence[] {
+  const c = ci.chainOf.get(all[0].bone);
+  if (c === undefined) return [...all];
+  const parent = ci.parentOf.get(c);
+  return all.filter((e) => {
+    const ce = ci.chainOf.get(e.bone);
+    return ce === c || ce === undefined || e.bone === parent;
+  });
+}
+
+/** The influences at a rig-px point under `rule`, unrounded, largest first. `ci` is required by the family rules. */
+export function ruleInfluences(rule: RuleName, rp: P2, segs: readonly Segment[], r: number, exponent: number | undefined, ci: ChainInfo | null = null): Influence[] {
   if (rule === 'as built') return influences(rp, segs, r, DEFAULT_LIMITS, exponent);
-  const all = influences(rp, segs, r, ALL, exponent); // every bone, normalised: proportional to the raw weights, largest first
+  let all = influences(rp, segs, r, ALL, exponent); // every bone, normalised: proportional to the raw weights, largest first
   if (rule === 'lifted') return all;
+  if (rule === 'family' || rule === 'family + continuous floor') {
+    if (ci === null) throw new Error('tear_survey: the family rule needs the config\'s chains');
+    all = normalise(family(all, ci));
+    const top = normalise(all.slice(0, MAX_INFLUENCES));
+    if (rule === 'family') return normalise(top.filter((e) => e.weight >= MIN_WEIGHT));
+    return normalise(top.map((e) => ({ bone: e.bone, weight: e.weight - MIN_WEIGHT })).filter((e) => e.weight > 0));
+  }
   let top: Influence[];
   if (rule === 'continuous cap' || rule === 'both') {
     const fifth = all.length > MAX_INFLUENCES ? all[MAX_INFLUENCES].weight : 0;
@@ -157,6 +182,7 @@ interface PartCtx {
   rigToWorld: (p: P2) => P2;
   rest: number[];
   original: WeightEntry[][];
+  ci: ChainInfo;
 }
 
 function partCtx(config: Obj, arm0: string, rig: Obj, box: PartBox, latG: Geometry): PartCtx | string {
@@ -191,6 +217,7 @@ function partCtx(config: Obj, arm0: string, rig: Obj, box: PartBox, latG: Geomet
     rigToWorld,
     rest,
     original,
+    ci: chainInfo(config),
   };
 }
 
@@ -198,7 +225,7 @@ function partCtx(config: Obj, arm0: string, rig: Obj, box: PartBox, latG: Geomet
 function writtenFor(ctx: PartCtx, i: number, rule: RuleName, bones: ReadonlyMap<string, BoneMatrix>): { entry: WeightEntry[]; changed: boolean } {
   const p = ctx.rig[i];
   const built = influences(p, ctx.segs, ctx.r, DEFAULT_LIMITS, ctx.exponent);
-  const mine = ruleInfluences(rule, p, ctx.segs, ctx.r, ctx.exponent);
+  const mine = ruleInfluences(rule, p, ctx.segs, ctx.r, ctx.exponent, ctx.ci);
   if (sameInfluences(built, mine)) return { entry: ctx.original[i], changed: false };
   const w = ctx.rigToWorld(p);
   const entry = roundShares(mine).map(({ bone, weight }) => {
@@ -218,7 +245,7 @@ function writtenFor(ctx: PartCtx, i: number, rule: RuleName, bones: ReadonlyMap<
 type RuleRef = Reference & { rig: P2[]; kept: string[] };
 
 /** `referenceField` (tools/bend_survey.ts) under `rule`: the same samples, each skinned by the rule unrounded. */
-function referenceUnder(ctx: { box: PartBox; segs: readonly Segment[]; r: number; exponent: number | undefined; rigToWorld: (p: P2) => P2 }, png: string, bones: ReadonlyMap<string, BoneMatrix>, poses: ReadonlyArray<ReadonlyMap<string, BoneMatrix>>, rule: RuleName): RuleRef {
+function referenceUnder(ctx: { box: PartBox; segs: readonly Segment[]; r: number; exponent: number | undefined; rigToWorld: (p: P2) => P2; ci: ChainInfo }, png: string, bones: ReadonlyMap<string, BoneMatrix>, poses: ReadonlyArray<ReadonlyMap<string, BoneMatrix>>, rule: RuleName): RuleRef {
   const img = readPng(png);
   let art = 0;
   for (let i = 0; i < img.width * img.height; i++) if (img.data[i * 4 + 3] > ART_ALPHA) art++;
@@ -232,7 +259,7 @@ function referenceUnder(ctx: { box: PartBox; segs: readonly Segment[]; r: number
       if (img.data[(y * img.width + x) * 4 + 3] <= ART_ALPHA) continue;
       const rp: P2 = [ctx.box.x + x + 0.5, ctx.box.y + y + 0.5];
       const w = ctx.rigToWorld(rp);
-      const ws = ruleInfluences(rule, rp, ctx.segs, ctx.r, ctx.exponent).map(({ bone, weight }) => {
+      const ws = ruleInfluences(rule, rp, ctx.segs, ctx.r, ctx.exponent, ctx.ci).map(({ bone, weight }) => {
         const [lx, ly] = local(bones, bone, w);
         return { bone, x: lx, y: ly, weight };
       });
@@ -280,6 +307,13 @@ export function tearsOf(ref: RuleRef): Tears {
 
 interface ProbeMesh { name: string; note: string; rig: P2[]; triangles: number[]; hull: number }
 
+/** The chains `config.bones` declares, as `tools/contourdraft.ts` reads them: link origins then the tip, rig px. */
+function chainLines(config: Obj): Map<string, ChainLine> {
+  const out = new Map<string, ChainLine>();
+  for (const b of config.bones as Obj[]) if (typeof b.chain === 'string') out.set(b.chain, { name: b.chain, points: [...(b.points as Json[]).map((q) => q as unknown as [number, number]), b.tip as unknown as [number, number]] });
+  return out;
+}
+
 /** Every outline edge longer than `cap` cut into equal pieces at most `cap` long (PR #286's (G′) construction). */
 function capOutline(outline: readonly P2[], cap: number): P2[] {
   const out: P2[] = [];
@@ -323,9 +357,16 @@ function probeMeshes(config: Obj, arm0: string, ctx: PartCtx, T: number, S: numb
     if (Array.isArray(cm)) throw new Error(`tear_survey: ${ctx.part} at T ${T} refused: ${cm.map((p) => p.code).join(', ')}`);
     return { outline: cm.vertices.slice(0, cm.hull).map((v) => [v[0], v[1]] as P2), interior: cm.vertices.slice(cm.hull).map((v) => [v[0], v[1]] as P2) };
   };
-  const build = (name: string, note: string, outline: readonly P2[], interior: readonly P2[]): ProbeMesh => {
+  const build = (name: string, note: string, outline: readonly P2[], interior: readonly P2[], lines: ReadonlyArray<readonly [P2, P2]> = []): ProbeMesh => {
     const pts: P2[] = [...outline, ...interior.filter((p) => insidePoly(p, outline))];
-    const tri = counterClockwiseInSpineWorld(cdt(pts, outline.length, outline.map((_, i) => [i, (i + 1) % outline.length] as [number, number])));
+    const at = new Map(pts.map((p, i) => [`${p[0]},${p[1]}`, i]));
+    const idx = (p: P2): number => {
+      const i = at.get(`${p[0]},${p[1]}`);
+      if (i === undefined) throw new Error(`tear_survey: a rib point (${p[0]}, ${p[1]}) is not a vertex`);
+      return i;
+    };
+    const cons: Array<[number, number]> = [...outline.map((_, i) => [i, (i + 1) % outline.length] as [number, number]), ...lines.map(([a, b]) => [idx(a), idx(b)] as [number, number])];
+    const tri = counterClockwiseInSpineWorld(cdt(pts, outline.length, cons));
     return { name, note, rig: pts.map(toRig), triangles: tri, hull: outline.length };
   };
   const g = traced(S);
@@ -336,33 +377,49 @@ function probeMeshes(config: Obj, arm0: string, ctx: PartCtx, T: number, S: numb
   const gi = traced(half);
   out.push(build(`G' interior ${half}`, `(G′) with the edges cut to at most S, the interior grid at S/2`, capOutline(gi.outline, S), gi.interior));
   out.push(build(`G' both ${half}`, `edges and interior at S/2`, capOutline(gi.outline, half), gi.interior));
+  // (G′) + Stage B's draft ribs: the stations the draft settles on (lowered where the art refuses a rib), placed by the contour mode at S
+  const chains = chainLines(config);
+  const dr = draftContourMesh(ctx.part, readPng(join(arm0, 'parts', `${ctx.part}.png`)), [ctx.box.x, ctx.box.y], o(o(config.meshes)[ctx.part]) as never, chains, T);
+  if (dr.mode === 'contour' && dr.mesh.ribs !== undefined) {
+    const ribs = Object.entries(dr.mesh.ribs).map(([chain, r]) => ({ chain, points: (chains.get(chain) as ChainLine).points.map(([x, y]) => [x - offset[0], y - offset[1]] as [number, number]), stations: r.stations }));
+    const params: ContourParams = { threshold: ART_ALPHA, tolerance: T, margin: T, spacing: S, regions: [], ...(stray === undefined ? {} : { stray }), ribs };
+    const cm = contourMesh(ctx.part, { width: img.width, height: img.height, alpha }, params);
+    if (Array.isArray(cm)) throw new Error(`tear_survey: ${ctx.part} with ribs refused: ${cm.map((p) => `${p.code} ${p.detail}`).join('; ')}`);
+    const V = cm.vertices.map((v) => [v[0], v[1]] as P2);
+    const lines: Array<[P2, P2]> = [];
+    for (const rb of cm.ribs ?? []) for (let i = 0; i + 1 < rb.vertices.length; i++) lines.push([V[rb.vertices[i]], V[rb.vertices[i + 1]]]);
+    out.push(build(`G' + ribs`, `(G′) with Stage B's draft ribs, ${(cm.ribs ?? []).length} rows, each an edge the triangulation keeps; the draft: ${dr.note}`, capOutline(V.slice(0, cm.hull), S), V.slice(cm.hull), lines));
+  } else throw new Error(`tear_survey: no ribs drafted on ${ctx.part}: ${dr.note}`);
   return out;
 }
 
-interface ProbeRow { mesh: string; note: string; triangles: number; hull: number; readings: Record<string, Record<string, { displacement: number; flipped: number; site: P2 | null; lattice: number | null; where: string }>> }
+interface ProbeRow { mesh: string; note: string; triangles: number; hull: number; idleVsLattice: Record<string, number>; readings: Record<string, Record<string, { displacement: number; flipped: number; site: P2 | null; lattice: number | null; where: string }>> }
 
 /** The probe: each mesh weighted by the rule (unrounded) and read against that rule's dense reference. */
 export function probe(config: Obj, arm0: string, ctx: PartCtx, latG: Geometry, sk: Skeleton, T: number, S: number, sets: readonly string[]): ProbeRow[] {
   const meshes = probeMeshes(config, arm0, ctx, T, S);
   const png = join(arm0, 'parts', `${ctx.part}.png`);
-  const rows: ProbeRow[] = meshes.map((m) => ({ mesh: m.name, note: m.note, triangles: m.triangles.length / 3, hull: m.hull, readings: {} }));
+  const rows: ProbeRow[] = meshes.map((m) => ({ mesh: m.name, note: m.note, triangles: m.triangles.length / 3, hull: m.hull, idleVsLattice: {}, readings: {} }));
   for (const rule of ['as built', 'lifted'] as const) {
     for (const set of ['idle', ...sets]) {
       const poses = set === 'idle' ? latG.frameBones : bendPoses(config, ctx.part, set === 'film').poses.map((t) => bentBones(sk, latG.setupBones, t));
       if (poses.length === 0) continue;
       const ref = referenceUnder(ctx, png, latG.setupBones, poses, rule);
       let latticePer: number[] | null = null;
+      const carried: Array<{ rest: number[]; triangles: number[]; weights: WeightEntry[][] }> = [];
       meshes.forEach((m, k) => {
         const rest = m.rig.flatMap((p) => ctx.rigToWorld(p));
         const weights = m.rig.map((p) => {
           const w = ctx.rigToWorld(p);
-          return ruleInfluences(rule, p, ctx.segs, ctx.r, ctx.exponent).map(({ bone, weight }) => {
+          return ruleInfluences(rule, p, ctx.segs, ctx.r, ctx.exponent, ctx.ci).map(({ bone, weight }) => {
             const [x, y] = local(latG.setupBones, bone, w);
             return { bone, x, y, weight };
           });
         });
         const per = perSample(rest, m.triangles, weights, ref, poses);
         if (k === 0) latticePer = per;
+        carried.push({ rest, triangles: m.triangles, weights });
+        if (set === 'idle') rows[k].idleVsLattice[rule] = k === 0 ? 0 : idleAgainst(carried[0], carried[k], poses);
         const rd = bendReading(rest, m.triangles, weights, ref, poses);
         let worst = -1;
         per.forEach((d, s) => {
@@ -374,6 +431,55 @@ export function probe(config: Obj, arm0: string, ctx: PartCtx, latG: Geometry, s
     }
   }
   return rows;
+}
+
+/** Where a world point lies in a mesh: its triangle and barycentrics, or null. */
+function locateIn(m: { rest: readonly number[]; triangles: readonly number[] }, p: P2): { t: number; u: number; w: number; z: number } | null {
+  const v = m.rest;
+  for (let t = 0; t < m.triangles.length; t += 3) {
+    const [i, j, k] = [m.triangles[t] * 2, m.triangles[t + 1] * 2, m.triangles[t + 2] * 2];
+    const det = (v[j + 1] - v[k + 1]) * (v[i] - v[k]) + (v[k] - v[j]) * (v[i + 1] - v[k + 1]);
+    if (Math.abs(det) < 1e-12) continue;
+    const u = ((v[j + 1] - v[k + 1]) * (p[0] - v[k]) + (v[k] - v[j]) * (p[1] - v[k + 1])) / det;
+    const w = ((v[k + 1] - v[i + 1]) * (p[0] - v[k]) + (v[i] - v[k]) * (p[1] - v[k + 1])) / det;
+    if (u >= -1e-9 && w >= -1e-9 && 1 - u - w >= -1e-9) return { t, u, w, z: 1 - u - w };
+  }
+  return null;
+}
+
+/**
+ * The idle's posed displacement of one mesh against another (`displacement`'s construction, tools/density_survey.ts):
+ * every vertex and triangle centroid of either mesh that lies inside both, carried through both at every frame.
+ */
+function idleAgainst(a: { rest: number[]; triangles: number[]; weights: WeightEntry[][] }, b: { rest: number[]; triangles: number[]; weights: WeightEntry[][] }, frames: ReadonlyArray<ReadonlyMap<string, BoneMatrix>>): number {
+  const pts: P2[] = [];
+  for (const m of [a, b]) {
+    for (let i = 0; i < m.rest.length; i += 2) pts.push([m.rest[i], m.rest[i + 1]]);
+    for (let t = 0; t < m.triangles.length; t += 3) {
+      const [i, j, k] = [m.triangles[t] * 2, m.triangles[t + 1] * 2, m.triangles[t + 2] * 2];
+      pts.push([(m.rest[i] + m.rest[j] + m.rest[k]) / 3, (m.rest[i + 1] + m.rest[j + 1] + m.rest[k + 1]) / 3]);
+    }
+  }
+  const la = pts.map((p) => locateIn(a, p));
+  const lb = pts.map((p) => locateIn(b, p));
+  let worst = 0;
+  for (const pose of frames) {
+    const pa = a.weights.flatMap((ws) => skin(ws, pose));
+    const pb = b.weights.flatMap((ws) => skin(ws, pose));
+    const at = (posed: readonly number[], m: { triangles: readonly number[] }, l: { t: number; u: number; w: number; z: number }): P2 => {
+      const [i, j, k] = [m.triangles[l.t] * 2, m.triangles[l.t + 1] * 2, m.triangles[l.t + 2] * 2];
+      return [l.u * posed[i] + l.w * posed[j] + l.z * posed[k], l.u * posed[i + 1] + l.w * posed[j + 1] + l.z * posed[k + 1]];
+    };
+    pts.forEach((_, s) => {
+      const x = la[s];
+      const y = lb[s];
+      if (x === null || y === null) return;
+      const p = at(pa, a, x);
+      const q = at(pb, b, y);
+      worst = Math.max(worst, Math.hypot(p[0] - q[0], p[1] - q[1]));
+    });
+  }
+  return worst;
 }
 
 function distToSeg(p: P2, a: P2, b: P2): number {
@@ -390,8 +496,8 @@ function siteText(p: P2, m: ProbeMesh, ctx: PartCtx, rule: RuleName): string {
   for (let i = 0; i < outline.length; i++) toOutline = Math.min(toOutline, distToSeg(p, outline[i], outline[(i + 1) % outline.length]));
   let toVertex = Infinity;
   for (const v of m.rig) toVertex = Math.min(toVertex, Math.hypot(v[0] - p[0], v[1] - p[1]));
-  const top = ruleInfluences(rule, p, ctx.segs, ctx.r, ctx.exponent)[0];
-  const wOf = (q: P2): number => ruleInfluences(rule, q, ctx.segs, ctx.r, ctx.exponent).find((e) => e.bone === top.bone)?.weight ?? 0;
+  const top = ruleInfluences(rule, p, ctx.segs, ctx.r, ctx.exponent, ctx.ci)[0];
+  const wOf = (q: P2): number => ruleInfluences(rule, q, ctx.segs, ctx.r, ctx.exponent, ctx.ci).find((e) => e.bone === top.bone)?.weight ?? 0;
   let corners = '—';
   for (let t = 0; t < m.triangles.length; t += 3) {
     const [a, b, c] = [m.rig[m.triangles[t]], m.rig[m.triangles[t + 1]], m.rig[m.triangles[t + 2]]];
@@ -436,14 +542,111 @@ function perSample(rest: readonly number[], triangles: readonly number[], weight
 }
 
 // ---------------------------------------------------------------------------
+// Stage B: who claims a point
+// ---------------------------------------------------------------------------
+
+/** A bone claims a sample when its raw weight is at least this share of the sample's largest. Fixed before the run. */
+export const CLAIM_SHARE = 0.1;
+
+/** A sample with this many claimants or more is the census's case. */
+export const CLAIM_COUNT = 5;
+
+export interface ChainInfo { chainOf: Map<string, string>; parentOf: Map<string, string> }
+
+/** Every chain link's chain, and the bone each chain hangs from, read off `config.bones`. */
+export function chainInfo(config: Obj): ChainInfo {
+  const chainOf = new Map<string, string>();
+  const parentOf = new Map<string, string>();
+  const chains = new Map<string, Obj>();
+  for (const b0 of config.bones as Obj[]) if (typeof b0.chain === 'string') chains.set(b0.chain, b0);
+  for (const [name, b] of chains) {
+    parentOf.set(name, b.parent as string);
+    const n = (b.points as Json[]).length;
+    for (let i = 0; i < n; i++) chainOf.set(`${name}${i}`, name);
+  }
+  return { chainOf, parentOf };
+}
+
+/** A claimant's relation to the sample's largest bone. */
+export function relation(bone: string, top: string, ci: ChainInfo): string {
+  if (bone === top) return 'itself';
+  const cb = ci.chainOf.get(bone);
+  const ct = ci.chainOf.get(top);
+  if (ct !== undefined) {
+    if (cb === ct) return 'its own chain';
+    if (cb === undefined) return bone === ci.parentOf.get(ct) ? 'the bone its chain hangs from' : 'a body segment';
+    return ci.parentOf.get(cb) === ci.parentOf.get(ct) ? 'a sibling chain' : 'a chain hanging elsewhere';
+  }
+  if (cb === undefined) return 'a body segment';
+  return ci.parentOf.get(cb) === top ? 'a chain hanging from it' : 'a chain hanging elsewhere';
+}
+
+export interface CensusPart { part: string; samples: number; many: number; byRelation: Record<string, number>; sets: Array<[string, number]>; nearest: { min: number; median: number } | null; stride: number }
+
+/** The census of one part: every sample's claimants under the lifted rule. `codes` gets one code per sample (0: fewer than five; 1: five or more, another chain among them; 2: five or more, own chain, its parent and body segments only). */
+export function census(ctx: { part: string; box: PartBox; segs: readonly Segment[]; r: number; exponent: number | undefined }, png: string, ci: ChainInfo, codes: Array<[number, number, number]>): CensusPart {
+  const img = readPng(png);
+  let art = 0;
+  for (let i = 0; i < img.width * img.height; i++) if (img.data[i * 4 + 3] > ART_ALPHA) art++;
+  const stride = Math.max(1, Math.ceil(Math.sqrt(art / MAX_SAMPLES)));
+  let samples = 0;
+  let many = 0;
+  const byRelation: Record<string, number> = {};
+  const sets = new Map<string, number>();
+  const near: number[] = [];
+  for (let y = 0; y < img.height; y += stride) {
+    for (let x = 0; x < img.width; x += stride) {
+      if (img.data[(y * img.width + x) * 4 + 3] <= ART_ALPHA) continue;
+      samples++;
+      const rp: P2 = [ctx.box.x + x + 0.5, ctx.box.y + y + 0.5];
+      const all = influences(rp, ctx.segs, ctx.r, ALL, ctx.exponent);
+      const claim = all.filter((e) => e.weight >= CLAIM_SHARE * all[0].weight);
+      if (claim.length < CLAIM_COUNT) {
+        codes.push([rp[0], rp[1], 0]);
+        continue;
+      }
+      many++;
+      const rel = new Set(claim.map((e) => relation(e.bone, all[0].bone, ci)));
+      for (const k of rel) byRelation[k] = (byRelation[k] ?? 0) + 1;
+      const key = claim.map((e) => e.bone).join(', ');
+      sets.set(key, (sets.get(key) ?? 0) + 1);
+      let d = Infinity;
+      for (const sg of ctx.segs) d = Math.min(d, distToSeg(rp, sg.a as P2, sg.b as P2));
+      near.push(d);
+      codes.push([rp[0], rp[1], rel.has('a sibling chain') || rel.has('a chain hanging elsewhere') ? 1 : 2]);
+    }
+  }
+  near.sort((a, b) => a - b);
+  return { part: ctx.part, samples, many, byRelation, sets: [...sets].sort((a, b) => b[1] - a[1]).slice(0, 3), nearest: near.length === 0 ? null : { min: near[0], median: near[Math.floor(near.length / 2)] }, stride };
+}
+
+/** Where a mesh folds: each inverted (triangle, pose), its centroid in rig px and its corners' largest bones. */
+export function flipsOf(rest: readonly number[], rig: readonly P2[], triangles: readonly number[], weights: readonly WeightEntry[][], poses: ReadonlyArray<ReadonlyMap<string, BoneMatrix>>): Array<{ pose: number; at: P2; corners: string[] }> {
+  const out: Array<{ pose: number; at: P2; corners: string[] }> = [];
+  const area = (v: readonly number[], t: number): number => {
+    const [i, j, k] = [triangles[t] * 2, triangles[t + 1] * 2, triangles[t + 2] * 2];
+    return (v[j] - v[i]) * (v[k + 1] - v[i + 1]) - (v[j + 1] - v[i + 1]) * (v[k] - v[i]);
+  };
+  poses.forEach((pose, k) => {
+    const posed = weights.flatMap((ws) => skin(ws, pose));
+    for (let t = 0; t < triangles.length; t += 3) {
+      if (area(rest, t) * area(posed, t) > 0) continue;
+      const c = [triangles[t], triangles[t + 1], triangles[t + 2]];
+      out.push({ pose: k, at: [(rig[c[0]][0] + rig[c[1]][0] + rig[c[2]][0]) / 3, (rig[c[0]][1] + rig[c[1]][1] + rig[c[2]][1]) / 3], corners: c.map((i) => [...weights[i]].sort((a, b) => b.weight - a.weight).slice(0, 2).map((e) => `${e.bone} ${e.weight.toFixed(2)}`).join(' + ')) });
+    }
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // one example
 // ---------------------------------------------------------------------------
 
 interface SetCensus { flipped: number; displacement: number; tears: Tears }
-interface PartRow { part: string; changed: number; vertices: number; maxInfluences: number; sets: Record<string, SetCensus> }
+interface PartRow { part: string; changed: number; vertices: number; maxInfluences: number; sets: Record<string, SetCensus>; idle: number; boneSet: 'same' | string }
 interface RuleRow { rule: RuleName; parts: PartRow[]; exit: number | null; check: Obj | null; checkLog: string[]; idleVsToday: { max: number; part: string | null }; rigBytes: number; maxInfluences: number; changed: number; vertices: number; valuesChanged: number }
 
-export function runTears(key: string, configPath: string, inputs: string, work: string, film: boolean, requirements: string | null, picture: string | null, probePart: string | null): Obj {
+export function runTears(key: string, configPath: string, inputs: string, work: string, film: boolean, requirements: string | null, picture: string | null, probePart: string | null, ruleList: readonly RuleName[] = RULE_NAMES): Obj {
   const config = o(readJ(configPath));
   const arm0 = join(work, 'arm0');
   const log = (s: string): void => void process.stderr.write(`[${key}] ${s}\n`);
@@ -493,9 +696,15 @@ export function runTears(key: string, configPath: string, inputs: string, work: 
     });
   }
 
+  const ci = chainInfo(config);
+  const codes: Array<[number, number, number]> = [];
+  const censusRows = ctxs.map((c) => census(c, join(arm0, 'parts', `${c.part}.png`), ci, codes));
+  writeFileSync(join(work, `census-${key}.json`), JSON.stringify({ key, codes }));
+  const flips: Record<string, unknown> = {};
+
   const rows: RuleRow[] = [];
   const pictures: Record<string, unknown> = {};
-  for (const rule of RULE_NAMES) {
+  for (const rule of ruleList) {
     log(`${rule}: census`);
     const written = ctxs.map((c) => c.rig.map((_, i) => writtenFor(c, i, rule, latG.setupBones)));
     const partRows: PartRow[] = [];
@@ -511,14 +720,19 @@ export function runTears(key: string, configPath: string, inputs: string, work: 
         for (const b of new Set([...before.keys(), ...after.keys()])) if (before.get(b) !== after.get(b)) valuesChanged++;
       });
       // the idle against today's rig, vertex by vertex
+      let partIdle = 0;
       latG.frameBones.forEach((bones) => {
         W.forEach((ws, i) => {
           const a = skin(ws, bones);
           const b = skin(c.original[i], bones);
           const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+          partIdle = Math.max(partIdle, d);
           if (d > idleMax) [idleMax, idlePart] = [d, c.part];
         });
       });
+      const setOf = (rows: readonly WeightEntry[][]): string[] => [...new Set(rows.flatMap((ws) => ws.map((e) => e.bone)))].sort();
+      const [was, now] = [setOf(c.original), setOf(W)];
+      const boneSet = was.join(',') === now.join(',') ? 'same' : `${[...was.filter((b) => !now.includes(b)).map((b) => `-${b}`), ...now.filter((b) => !was.includes(b)).map((b) => `+${b}`)].join(' ')}`;
       const png = join(arm0, 'parts', `${c.part}.png`);
       const census: Record<string, SetCensus> = {};
       for (const set of ['idle', ...sets]) {
@@ -527,11 +741,12 @@ export function runTears(key: string, configPath: string, inputs: string, work: 
         const ref = referenceUnder(c, png, latG.setupBones, poses, rule);
         const rd = bendReading(c.rest, c.triangles, W, ref, poses);
         census[set] = { flipped: rd.flipped, displacement: rd.displacement, tears: tearsOf(ref) };
+        if ((rule === 'as built' || rule === 'lifted') && set !== 'idle' && rd.flipped > 0) flips[`${rule}|${set}|${c.part}`] = flipsOf(c.rest, c.rig, c.triangles, W, poses);
         if (picture === c.part && set === (film ? 'film' : 'fallback')) {
           pictures[rule] = { uvsRig: c.rig, triangles: c.triangles, hull: c.hull, posed: poses.map((pose) => W.map((ws) => skin(ws, pose)).map((p) => worldToRigOf(c)(p))) };
         }
       }
-      partRows.push({ part: c.part, changed: written[k].filter((x) => x.changed).length, vertices: c.rig.length, maxInfluences: Math.max(...W.map((ws) => ws.length)), sets: census });
+      partRows.push({ part: c.part, changed: written[k].filter((x) => x.changed).length, vertices: c.rig.length, maxInfluences: Math.max(...W.map((ws) => ws.length)), sets: census, idle: partIdle, boneSet });
     });
     // the rig with the weights replaced, and the real check
     let exit: number | null = null;
@@ -596,6 +811,9 @@ export function runTears(key: string, configPath: string, inputs: string, work: 
     kept,
     rules: rows.map((r) => ({ ...r, check: r.check === null ? null : (Object.fromEntries(BARS.map((b) => [b, barCell(r.check, b)])) as unknown as Json) })) as unknown as Json,
     probe: probeRows as unknown as Json,
+    census: censusRows as unknown as Json,
+    flips: flips as unknown as Json,
+    claim: { share: CLAIM_SHARE, count: CLAIM_COUNT },
   };
 }
 
@@ -636,6 +854,34 @@ export function renderTears(docs: Obj[]): string {
       L.push(`| ${r.rule} | ${sets.map(cell).join(' | ')} | ${r.maxInfluences} | ${r.changed} of ${r.vertices} | ${r.valuesChanged} | ${r.rigBytes} | ${r.exit === 0 ? 'PASS' : `exit ${String(r.exit)}`} | ${BARS.map((b) => (r.check === null ? '—' : r.check[b])).join(' | ')} | ${r.rule === 'as built' ? '—' : `${r.idleVsToday.max.toFixed(3)} (${r.idleVsToday.part ?? '—'})`} |`);
     }
     for (const r of rules) if (r.checkLog.length > 0) L.push(`- ${r.rule}, check: ${r.checkLog.map((x) => `\`${x}\``).join('; ')}`);
+    if (rules.some((r) => r.parts.some((p) => typeof p.idle === 'number'))) {
+      L.push('');
+      L.push('Per part, the idle against today\'s rig (rig px) and whether the rule leaves the part\'s bone set as it is today (the bones it drops or adds when not):');
+      L.push('');
+      L.push(`| part | ${rules.filter((r) => r.rule !== 'as built').map((r) => r.rule).join(' | ')} |`);
+      L.push(`| --- | ${rules.filter((r) => r.rule !== 'as built').map(() => '---').join(' | ')} |`);
+      for (const p of rules[0].parts) L.push(`| ${p.part} | ${rules.filter((r) => r.rule !== 'as built').map((r) => {
+        const q = r.parts.find((x) => x.part === p.part) as PartRow;
+        return `${q.idle.toFixed(3)}${q.boneSet === 'same' ? '' : ` (bone set: ${q.boneSet})`}`;
+      }).join(' | ')} |`);
+    }
+    const cs = doc.census as unknown as CensusPart[] | undefined;
+    if (cs !== undefined) {
+      const claim = o(doc.claim);
+      L.push('');
+      L.push(`The census: per lattice part, its art samples (the dense reference's grid), how many have ${String(claim.count)} or more claimants — bones whose raw weight is at least ${String(claim.share)} of the sample's largest — and, of those, how many count each relation to the sample's largest bone among their claimants; the nearest segment's distance (least, median); and the three commonest claimant lists.`);
+      L.push('');
+      L.push(`| part | samples | ${String(claim.count)}+ claimants | relations (samples having one) | nearest segment: least / median px | commonest lists |`);
+      L.push('| --- | ---: | ---: | --- | --- | --- |');
+      for (const c of cs) {
+        if (c.many === 0) {
+          L.push(`| ${c.part} | ${c.samples} | 0 | — | — | — |`);
+          continue;
+        }
+        const rel = Object.entries(c.byRelation).filter(([k]) => k !== 'itself').sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join('; ');
+        L.push(`| ${c.part} | ${c.samples} | ${c.many} (${((100 * c.many) / c.samples).toFixed(1)} %) | ${rel} | ${c.nearest === null ? '—' : `${c.nearest.min.toFixed(1)} / ${c.nearest.median.toFixed(1)}`} | ${c.sets.map(([k, n]) => `${n}× ${k}`).join('; ')} |`);
+      }
+    }
     L.push('');
     L.push('Per part — inverted / tears (of them, pairs that keep different bones) / worst, under each rule:');
     L.push('');
@@ -667,9 +913,10 @@ export function renderTears(docs: Obj[]): string {
       L.push('');
       const keys = Object.keys(pr[0].readings);
       const psets = Object.keys(pr[0].readings[keys[0]]);
-      L.push(`| mesh | triangles | hull | ${keys.flatMap((k) => psets.map((s) => `${k}, ${s}: worst / inverted (where; the lattice there)`)).join(' | ')} |`);
-      L.push(`| --- | ---: | ---: | ${keys.flatMap(() => psets.map(() => '---')).join(' | ')} |`);
-      for (const r of pr) L.push(`| ${r.mesh} | ${r.triangles} | ${r.hull} | ${keys.flatMap((k) => psets.map((s) => {
+      const idle = pr.every((r) => r.idleVsLattice !== undefined);
+      L.push(`| mesh | triangles | hull | ${idle ? `${keys.map((k) => `${k}: idle vs the lattice`).join(' | ')} | ` : ''}${keys.flatMap((k) => psets.map((s) => `${k}, ${s}: worst / inverted (where; the lattice there)`)).join(' | ')} |`);
+      L.push(`| --- | ---: | ---: | ${idle ? `${keys.map(() => '---:').join(' | ')} | ` : ''}${keys.flatMap(() => psets.map(() => '---')).join(' | ')} |`);
+      for (const r of pr) L.push(`| ${r.mesh} | ${r.triangles} | ${r.hull} | ${idle ? `${keys.map((k) => (r.idleVsLattice[k] ?? 0).toFixed(3)).join(' | ')} | ` : ''}${keys.flatMap((k) => psets.map((s) => {
         const x = r.readings[k][s];
         return `${f2(x.displacement)} / ${x.flipped} (${pt(x.site)}; ${x.lattice === null ? '—' : x.lattice < 0 ? 'outside' : f2(x.lattice)})`;
       })).join(' | ')} |`);
@@ -695,12 +942,21 @@ function main(argv: string[]): void {
   }
   const [key, config, inputs, work, out] = [flag('--key'), flag('--config'), flag('--inputs'), flag('--work'), flag('--out')];
   if (!argv.includes('--run') || key === null || config === null || inputs === null || work === null || out === null) {
-    console.error('usage: tear_survey --run --key <k> --config <cfg> --inputs <dir> --work <W> [--film] [--requirements <r>] [--picture <part>] [--probe <part>] --out <doc.json> | --page <doc.json>…');
+    console.error('usage: tear_survey --run --key <k> --config <cfg> --inputs <dir> --work <W> [--film] [--requirements <r>] [--picture <part>] [--probe <part>] [--rules <a,b,…>] --out <doc.json> | --page <doc.json>…');
     process.exit(2);
   }
   const req = flag('--requirements');
+  const rl = flag('--rules');
+  const ruleList = rl === null ? RULE_NAMES : rl.split(',').map((x) => {
+    const r = ALL_RULES.find((n) => n === x.trim());
+    if (r === undefined) {
+      console.error(`tear_survey: --rules names "${x}"; one of ${ALL_RULES.join(', ')} is required`);
+      process.exit(2);
+    }
+    return r;
+  });
   // a file, not stdout: a large write to a redirected stdout was cut at 64 KiB on Nova's bun
-  writeFileSync(resolve(out), `${JSON.stringify(runTears(key, resolve(config), resolve(inputs), resolve(work), argv.includes('--film'), req === null ? null : resolve(req), flag('--picture'), flag('--probe')))}\n`);
+  writeFileSync(resolve(out), `${JSON.stringify(runTears(key, resolve(config), resolve(inputs), resolve(work), argv.includes('--film'), req === null ? null : resolve(req), flag('--picture'), flag('--probe'), ruleList))}\n`);
 }
 
 if (import.meta.main) main(process.argv.slice(2));
