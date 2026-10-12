@@ -180,7 +180,7 @@ import {
 } from './src/assemble.ts';
 import { chainDirection } from './src/check.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics, BREATH_TORSO_MEAN_FLOOR } from './src/check.ts';
-import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, FOLD_LINE, foldsLine, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
+import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, FOLD_LINE, foldsLine, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, packageRigc, rigcIdentity, rigcRunnerAt, type RigcSpawn, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { baseTagOf, blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
@@ -565,8 +565,44 @@ function reportCase(name: string, ok: boolean, detail: string, why: string): num
     console.log(`          origin: ${why}`);
     return 0;
   }
-  console.log(`  FAIL  ${name}: ${detail}`);
+  console.log(failText(name, detail, suiteRigcBin === null ? null : suiteRigcIdentity()));
   return 1;
+}
+
+/**
+ * A FAIL line: the case's name and detail, and — in a suite that ran rigc — which rigc that was, path and version
+ * (issue #337: six face-axis controls failed on an error only a rigc older than 2.40.0 gives, and the line did not
+ * say which rigc had run).
+ */
+function failText(name: string, detail: string, rigc: string | null): string {
+  return `  FAIL  ${name}: ${detail}${rigc === null ? '' : ` [this suite ran ${rigc}]`}`;
+}
+
+/** The process primitive the suites hand {@link rigcRunnerAt}, as `cli.ts`'s runner spawns: stdout then stderr, a process that did not start as 127. */
+const spawnRigc: RigcSpawn = (bin, args) => {
+  const r = spawnSync(bin, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
+  if (r.error !== undefined) return { status: 127, out: `could not start ${bin}: ${r.error.message}` };
+  return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+};
+
+/** The rigc this worker's suite resolved, once it has; null while it has run none. Each suite runs in a worker of its own, so this is that suite's. */
+let suiteRigcBin: string | null = null;
+let suiteRigcSeen: string | null = null;
+
+/**
+ * The rigc every suite runs (issue #337): this package's own `node_modules/.bin/rigc`, resolved from the package root
+ * by {@link packageRigc} — not from a fixture's directory, not from a directory above the package, not from PATH — so
+ * a fixture in a temp directory cannot pick another tree's.
+ */
+function suiteRigc(): string {
+  suiteRigcBin ??= packageRigc(ROOT);
+  return suiteRigcBin;
+}
+
+/** {@link suiteRigc} as {@link rigcIdentity} words it, read off one `--version` run the first time a FAIL line asks. */
+function suiteRigcIdentity(): string {
+  suiteRigcSeen ??= rigcIdentity(suiteRigc(), spawnRigc(suiteRigc(), ['--version']));
+  return suiteRigcSeen;
 }
 
 /** One suite's `say`, counting its own failures, so no call site keeps a `bad +=` of its own. */
@@ -3537,7 +3573,7 @@ function flatFormRender(dir: string, rigA: RigSpec, rigB: RigSpec, motion: unkno
   const b = (plainB === null ? rigB : plainB.rig) as unknown as RigSpec;
   const m = JSON.parse(JSON.stringify(plainA === null ? motion : plainA.motion)) as { animations: Record<string, unknown> };
   m.animations.still = { duration: 0.1, loop: true, note: 'the setup pose', tracks: [{ bone: a.bones[0].name, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.1, v: [0] }] }] };
-  const rigc = findRigc(ROOT, '');
+  const rigc = suiteRigc();
   const sets: Record<string, string[]> = {};
   for (const [name, rig] of [['a', a], ['b', b]] as const) {
     const d = join(dir, name);
@@ -4113,7 +4149,7 @@ function runAnimationsFromCases(say: (name: string, ok: boolean, detail: string,
       sign_up: { duration: 0, tracks: [{ bone: 'eye', property: 'translatey', keys: [{ t: 0, v: [2] }] }] },
     });
     const signRig = runCli(['rig', '--config', signs.config, '--parts', signs.parts, '--out', signs.out]);
-    const rigc = findRigc(ROOT, '');
+    const rigc = suiteRigc();
     const signBuild = signRig.status === 0 ? spawnSync(rigc, ['build', '--rig', join(signs.out, 'rig.json'), '--motion', join(signs.out, 'motion.json'), '--out', join(dir, 'signs', 'build'), ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 26 }).status : null;
     const posed = (animation: string, bone: string): [number, number] | string => {
       if (signBuild !== 0) return `not built (rig exit ${signRig.status}, rigc build exit ${signBuild})`;
@@ -4709,7 +4745,7 @@ function runIdleKeysCases(say: (name: string, ok: boolean, detail: string, why: 
       const raw = JSON.parse(readFileSync(join(dir, 'direct', 'rig.json'), 'utf8')) as Record<string, unknown>;
       delete raw.invariants;
       writeFileSync(join(plant, 'rig.json'), JSON.stringify({ ...raw, images: join(dir, 'direct', 'images') }));
-      const r = spawnSync(findRigc(ROOT, ''), ['build', '--rig', join(plant, 'rig.json'), '--motion', join(dir, 'direct', 'motion.json'), '--out', join(plant, 'build'), '--profile', 'spine-html', '--pack', '--page-edges', DEFAULT_PAGE_EDGES], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      const r = spawnSync(suiteRigc(), ['build', '--rig', join(plant, 'rig.json'), '--motion', join(dir, 'direct', 'motion.json'), '--out', join(plant, 'build'), '--profile', 'spine-html', '--pack', '--page-edges', DEFAULT_PAGE_EDGES], { encoding: 'utf8', maxBuffer: 1 << 26 });
       const fails = `${r.stdout}${r.stderr}`.split('\n').filter((l) => /^ {2}FAIL {2}A15_IDLE_NO_MESH_BONE_KEYS: idle keys bone "/.test(l));
       const distinct = [...new Set(fails)];
       undeclaredRed = r.status !== 0 && distinct.length === a.meshKeyed.length;
@@ -4765,7 +4801,7 @@ function stillAndShut(rigDir: string, dest: string, squash: number): { open: Fra
     shut: hold([{ group: 'eyes', property: 'scaley', keys: [{ t: 0, v: [squash] }, { t: 0.1, v: [squash] }] }]),
   };
   writeFileSync(join(dest, 'motion.json'), JSON.stringify({ ...motion, animations }));
-  const rigc = findRigc(ROOT, '');
+  const rigc = suiteRigc();
   const run = (args: string[]): string | null => {
     const r = spawnSync(rigc, args, { encoding: 'utf8', maxBuffer: 1 << 26 });
     return r.status === 0 ? null : `rigc ${args[0]} exit ${r.status}: ${`${r.stdout}${r.stderr}`.trim().split('\n').slice(-2).join(' | ')}`;
@@ -4937,7 +4973,7 @@ function constraintRender(dir: string, config: Record<string, unknown>, idleKeys
     rig = edit(rig);
     writeFileSync(join(outDir, 'rig.json'), rigJsonText(rig));
   }
-  const rigc = findRigc(ROOT, '');
+  const rigc = suiteRigc();
   const built = spawnSync(rigc, ['build', '--rig', join(outDir, 'rig.json'), '--motion', join(outDir, 'motion.json'), '--out', join(dir, 'build'), ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 26 });
   const buildOut = `${built.stdout ?? ''}${built.stderr ?? ''}`;
   if (built.status !== 0) return { status: cli.status, out: cli.out, rig, build: buildOut, frames: `rigc build exit ${built.status}` };
@@ -5535,7 +5571,7 @@ function runTurnedChainCases(say: (name: string, ok: boolean, detail: string, wh
 function renderFrame(dir: string, rig: RigSpec, motion: unknown, images: string, anim: string, index: number): Raster | string {
   const m = JSON.parse(JSON.stringify(motion)) as { animations: Record<string, unknown> };
   m.animations.still = { duration: 0.1, loop: true, note: 'the setup pose', tracks: [{ bone: rig.bones[0].name, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.1, v: [0] }] }] };
-  const rigc = findRigc(ROOT, '');
+  const rigc = suiteRigc();
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'rig.json'), rigJsonText({ ...rig, images }));
   writeFileSync(join(dir, 'motion.json'), rigJsonText(m));
@@ -5756,7 +5792,7 @@ function runFaceAxisCases(say: (name: string, ok: boolean, detail: string, why: 
       mkdirSync(d, { recursive: true });
       writeFileSync(join(d, 'rig.json'), rigJsonText({ ...rig, images }));
       writeFileSync(join(d, 'motion.json'), rigJsonText(motion));
-      const g = spawnSync(findRigc(ROOT, ''), ['build', '--rig', join(d, 'rig.json'), '--motion', join(d, 'motion.json'), '--out', join(d, 'build'), ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      const g = spawnSync(suiteRigc(), ['build', '--rig', join(d, 'rig.json'), '--motion', join(d, 'motion.json'), '--out', join(d, 'build'), ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 28 });
       return `${g.stdout ?? ''}${g.stderr ?? ''}`;
     };
     // rigc gates the compile and the packed pages, so each A51 line can print twice: the distinct lines are read.
@@ -10363,7 +10399,7 @@ function runCheckSuite(): number {
     // The line recomputed from the same build's geometry rendered at another --max: no render grid may enter it.
     const atGrid = (label: string, m: number): string | null => {
       const g = join(dir, `${label}-geometry-${m}`);
-      const r = spawnSync(findRigc(ROOT, ''), ['render', '--candidate', join(dir, `${label}-out`, 'build'), '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(m), '--geometry', '--out', g], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      const r = spawnSync(suiteRigc(), ['render', '--candidate', join(dir, `${label}-out`, 'build'), '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(m), '--geometry', '--out', g], { encoding: 'utf8', maxBuffer: 1 << 28 });
       if (r.status !== 0) return null;
       const ci = readCheckInputs(join(dir, label));
       const set = readFrameSet(g);
@@ -10924,7 +10960,7 @@ function runCheckSuite(): number {
     // At the depth check's own build/ sits (<dir>/<name>/build), so skeleton.json's relative images path is the same text.
     const direct = (name: string, extra: readonly string[]): string => {
       const d = join(dir, name, 'build');
-      spawnSync(findRigc(ROOT, ''), ['build', '--rig', join(rig, 'rig.json'), '--motion', join(rig, 'motion.json'), '--out', d, '--profile', 'spine-html', '--pack', ...extra], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      spawnSync(suiteRigc(), ['build', '--rig', join(rig, 'rig.json'), '--motion', join(rig, 'motion.json'), '--out', d, '--profile', 'spine-html', '--pack', ...extra], { encoding: 'utf8', maxBuffer: 1 << 26 });
       return d;
     };
     const ARTIFACT = ['skeleton.atlas', 'skeleton.json', 'skeleton.png'];
@@ -11141,7 +11177,7 @@ function runCheckSuite(): number {
   const coreEntry = readRigcEntry('2.0.3\nentry: cli_core.ts — @esotericsoftware/spine-core absent — the round trip and the commands that need it are not available here; see --help\n');
   const thirdEntry = refusals(() => readRigcEntry('2.1.0\nentry: cli_wasm.ts — something else\n'));
   const noEntry = refusals(() => readRigcEntry('1.5.1\n'));
-  const live = spawnSync(findRigc(ROOT, ''), ['--version'], { encoding: 'utf8' });
+  const live = spawnSync(suiteRigc(), ['--version'], { encoding: 'utf8' });
   const liveEntry = readRigcEntry(`${live.stdout ?? ''}${live.stderr ?? ''}`);
   const pinned = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { devDependencies: Record<string, string> }).devDependencies['@esotericsoftware/spine-core'];
   say(
@@ -11280,7 +11316,87 @@ function runCheckSuite(): number {
     "issue #245, from the consumer's lying figure: CHAIN_LAG asked a leg chain for amplitudes growing toward the foot, the end that rests. A chain carrying a part declared rests (its bound bone walked up to the chain, as rises finds its chain) is read the opposite way — non-increasing, the planted growing chain refused at its first link that grows — while the lag is kept, since the declaration says how far the tip moves and not when; a declared part no chain carries relaxes nothing",
   );
   runAnimationFoldCases(say);
+  runRigcIdentityCases(say);
   return bad();
+}
+
+/**
+ * Issue #337: which rigc ran. Six face-axis controls once failed on `"invariants" has a key this compiler does not
+ * read: "axes"`, the refusal a rigc older than rig-c 2.40.0 (A51) gives, and no line said which rigc had run. A fake
+ * rigc — a shell script in this case's own temp directory that says it is 2.33.0 and refuses every build with that
+ * line — is put where {@link findRigc} reaches it from a tree with no install of its own beneath it, and every
+ * refusal it causes is held to naming its path and version; the suites' own rigc is held to this package's.
+ */
+function runRigcIdentityCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('rigc-identity');
+  try {
+    const AXES = 'rigc compile error: "invariants" has a key this compiler does not read: "axes"';
+    const fake = (at: string, version: string): string => {
+      mkdirSync(dirname(at), { recursive: true });
+      writeFileSync(
+        at,
+        `#!/bin/sh\nif [ "$1" = "--version" ]; then echo ${version}; echo "entry: cli.ts — @esotericsoftware/spine-core 4.3.13 present" >&2; exit 0; fi\necho '${AXES}' >&2\nexit 1\n`,
+        { mode: 0o755 },
+      );
+      return at;
+    };
+    // The old rigc sits in <dir>/node_modules/.bin, above <dir>/nested, which has no install of its own: the shape of a
+    // harness worktree under the main checkout's .claude/worktrees/ whose own `bun install` is missing or unfinished.
+    const old = fake(join(dir, 'node_modules', '.bin', 'rigc'), '2.33.0');
+    const older = fake(join(dir, 'older', 'rigc'), '1.3.0');
+    const nested = join(dir, 'nested');
+    const rig = join(nested, 'rig');
+    writeCheckRig(rig);
+    const walked = findRigc(nested, '');
+    const pinned = refusals(() => packageRigc(nested));
+    const oldCheck = refusals(() => runCheck(rig, join(dir, 'out-old'), rigcRunnerAt(old, spawnRigc)));
+    const olderCheck = refusals(() => runCheck(rig, join(dir, 'out-older'), rigcRunnerAt(older, spawnRigc)));
+    const own = join(ROOT, 'node_modules', '.bin', 'rigc');
+    const ownVersion = (JSON.parse(readFileSync(join(ROOT, 'node_modules', 'rig-c', 'package.json'), 'utf8')) as { version: string }).version;
+    const live = rigcRunnerAt(suiteRigc(), spawnRigc);
+    const liveVersion = live(['--version']);
+    const liveFailed = live(['build', '--rig', join(dir, 'missing', 'rig.json'), '--motion', join(dir, 'missing', 'motion.json'), '--out', join(dir, 'missing', 'build')]);
+    const liveHelp = live(['--help']);
+    const oldClause = `; rigc 2.33.0 at ${old} ran it`;
+    const ownAt = `rigc ${ownVersion} at ${own}`;
+    say(
+      'CK307_A_REFUSAL_FROM_AN_OLD_RIGC_NAMES_ITS_PATH_AND_VERSION_AND_THE_SUITES_RUN_THE_PACKAGES_OWN',
+      walked === old &&
+        pinned?.problems.length === 1 &&
+        pinned.problems[0].code === 'CHECK_RIGC_PACKAGE' &&
+        pinned.problems[0].object === join(nested, 'node_modules', '.bin', 'rigc') &&
+        (oldCheck?.problems.length ?? 0) > 0 &&
+        (oldCheck?.problems ?? []).every((q) => q.code === 'CHECK_RIGC_GREEN' && q.detail.endsWith(oldClause)) &&
+        (oldCheck?.problems.some((q) => q.detail.includes(AXES)) ?? false) &&
+        olderCheck?.problems.length === 1 &&
+        olderCheck.problems[0].code === 'CHECK_RIGC_VERSION' &&
+        olderCheck.problems[0].detail.startsWith(`is 1.3.0; rigc 1.3.0 at ${older} ran it; rig-c ${RIGC_GEOMETRY_VERSION} or later is required`) &&
+        suiteRigc() === own &&
+        packageRigc(ROOT) === own &&
+        liveVersion.ran === ownAt &&
+        liveFailed.status !== 0 &&
+        liveFailed.ran === ownAt &&
+        liveHelp.status === 0 &&
+        liveHelp.ran === undefined &&
+        failText('X', 'd', ownAt) === `  FAIL  X: d [this suite ran ${ownAt}]` &&
+        failText('X', 'd', null) === '  FAIL  X: d',
+      `planted, a rigc in a directory above a tree with no install: findRigc from the tree finds ${relative(dir, walked)}, packageRigc refuses ${codes(pinned)}; check through the 2.33.0 fake: ${(oldCheck?.problems ?? []).map((q) => `${q.code}: ${q.object} — ${q.detail}`).join(' | ') || 'accepted'}; through a 1.3.0 fake: ${(olderCheck?.problems ?? []).map((q) => `${q.code}: ${q.detail.slice(0, 120)}`).join(' | ') || 'accepted'} | the positive: the suites' rigc ${relative(ROOT, suiteRigc())}; --version ran "${liveVersion.ran ?? 'unsaid'}"; a build of a missing rig, exit ${liveFailed.status}, ran "${liveFailed.ran ?? 'unsaid'}"; a green --help, exit ${liveHelp.status}, carries ${liveHelp.ran === undefined ? 'no identity' : `"${liveHelp.ran}"`}`,
+      "issue #337: the face-axis controls failed once on the refusal a rigc older than rig-c 2.40.0 gives, and nothing said which rigc it was. Every refusal quoting a rigc call now ends with the rigc that ran it, path and version (the `rigc <version> at <path>` line check prints), read once per runner and only when a call fails; the suites run this package's own node_modules/.bin/rigc, resolved from the package root and nowhere above it, where findRigc — which a user's install needs — walks up to whatever sits above a tree that has none. The fake's refusal line is the issue's wording; no rig-c 2.33.0 output was captured",
+    );
+
+    const fx = writeRigFixture(join(dir, 'stage'), rigConfig());
+    const stage = refusals(() => rigStage({ config: fx.config, parts: fx.parts, out: join(dir, 'stage', 'out') }, rigcRunnerAt(old, spawnRigc), join(dir, 'stage', 'scratch'), () => {}));
+    say(
+      'CK308_THE_RIG_STAGES_GATE_REFUSAL_FROM_AN_OLD_RIGC_NAMES_ITS_PATH_AND_VERSION',
+      (stage?.problems.length ?? 0) > 0 &&
+        (stage?.problems ?? []).every((q) => q.code === 'RIG_RIGC_GREEN' && q.detail.includes(AXES) && q.detail.includes(oldClause)) &&
+        !existsSync(join(dir, 'stage', 'out', 'rig.json')),
+      `rig stage through the 2.33.0 fake: ${(stage?.problems ?? []).map((q) => `${q.code}: ${q.object} — ${q.detail}`).join(' | ') || 'accepted'}; rig.json written: ${existsSync(join(dir, 'stage', 'out', 'rig.json'))}`,
+      "issue #337: the rig stage's gate is rigc's build, and its refusal is where the face-axis rig's `axes` would be refused by an older rigc; it names that rigc beside rigc's own line, and nothing is written",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -14071,7 +14187,7 @@ function runChainSuite(): number | null {
         const art = placedArt(rec.x, rec.y, readPng(join(out, 'parts', 'bottomwear.png')));
         const atMax = [620, 660].map((m) => {
           const g = join(vDir, `geometry-${m}`);
-          const r = spawnSync(findRigc(ROOT, ''), ['render', '--candidate', join(vDir, 'check', 'build'), '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(m), '--geometry', '--out', g], { encoding: 'utf8', maxBuffer: 1 << 28 });
+          const r = spawnSync(suiteRigc(), ['render', '--candidate', join(vDir, 'check', 'build'), '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(m), '--geometry', '--out', g], { encoding: 'utf8', maxBuffer: 1 << 28 });
           if (r.status !== 0) return null;
           const set = readFrameSet(g);
           return halfTravels(art, rec, vStage, attachmentPoses(join(set.dir, GEOMETRY_FILE), set.written).map((f) => f.get('bottomwear') ?? null));
@@ -14129,8 +14245,8 @@ function runChainSuite(): number | null {
       // The one gate: rigc's build under spine-html measures every rule validate under spine would. Run here,
       // where spine-core is present (the full entry), on this example's own rig; validate is not a stage any more.
       const subsetDir = join(dir, `${key}-subset`);
-      const subBuild = spawnSync(findRigc(ROOT, ''), ['build', '--rig', join(out, 'rig', 'rig.json'), '--motion', join(out, 'rig', 'motion.json'), '--out', subsetDir, ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 28 });
-      const subValidate = spawnSync(findRigc(ROOT, ''), ['validate', subsetDir, '--profile', 'spine'], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      const subBuild = spawnSync(suiteRigc(), ['build', '--rig', join(out, 'rig', 'rig.json'), '--motion', join(out, 'rig', 'motion.json'), '--out', subsetDir, ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 28 });
+      const subValidate = spawnSync(suiteRigc(), ['validate', subsetDir, '--profile', 'spine'], { encoding: 'utf8', maxBuffer: 1 << 28 });
       const builtRules = measuredRules(`${subBuild.stdout ?? ''}${subBuild.stderr ?? ''}`);
       const validRules = measuredRules(`${subValidate.stdout ?? ''}${subValidate.stderr ?? ''}`);
       const outside = validRules.filter((r) => !builtRules.includes(r));
@@ -19099,7 +19215,7 @@ function runContourSuite(): number {
   try {
     // FULL is left out: its PNG has no transparent texel, which spine-html's A19 refuses for the image whatever draws it.
     const meshes = all.filter((p): p is readonly [ContourCase, ContourMesh] => p[1] !== null && p[0] !== FULL);
-    const rigc = findRigc(ROOT, '');
+    const rigc = suiteRigc();
     const gate = (sub: string, list: ReadonlyArray<readonly [ContourCase, ContourMesh]>): { status: number; lines: string[]; out: string } => {
       const d = join(dir, sub);
       writeContourRig(d, list);
@@ -19592,7 +19708,7 @@ function runOutlineInRegionControls(say: (name: string, ok: boolean, detail: str
   // CE16 — rig-c's gate takes the strip with its inserted (straight) hull vertices, and refuses it with two hull vertices swapped.
   const dir = temp('contour-outline-regions');
   try {
-    const rigc = findRigc(ROOT, '');
+    const rigc = suiteRigc();
     // The convex block rides along: spine-html's A27 refuses a lone region on a page not named for it.
     const convex = built(contourOf(CONVEX));
     const gate = (sub: string, m: ContourMesh): { status: number; lines: string[] } => {
@@ -22446,7 +22562,7 @@ function meshDraftRun(
   plant: { candidateModel?: (doc: Record<string, unknown>) => void; failFirstBuild?: boolean; finalGeometry?: (geometry: Record<string, unknown>) => void } = {},
   fixture: { config: string; parts: string } = writeDraftFixture(join(dir, 'fx'), grid),
 ): { e: PartsError | null; log: string[]; out: string; fx: { config: string; parts: string }; calls: string[] } {
-  const rigc = findRigc(ROOT, '');
+  const rigc = suiteRigc();
   const calls: string[] = [];
   const runner: RigcRunner = (args) => {
     calls.push(args.join(' '));
@@ -23480,7 +23596,7 @@ function runAutoMeshSuite(): number {
   const dir28 = temp('auto-gate');
   try {
     const fx = writeRigFixture(dir28, autoRigConfig());
-    const rigc = findRigc(ROOT, '');
+    const rigc = suiteRigc();
     const runner: RigcRunner = (args) => {
       const r = spawnSync(rigc, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
       return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
@@ -25957,7 +26073,7 @@ function runAutoMeshExamplesSuite(): number | null {
     const neck = raw.meshes.neck;
     raw.meshes.neck = { auto: withPolicyMotion(examplePolicy(neck.grid)), r: neck.r, segments: neck.segments } as unknown as typeof neck;
     writeFileSync(join(dir, 'config.json'), JSON.stringify(raw));
-    const rigc = findRigc(ROOT, '');
+    const rigc = suiteRigc();
     const runner: RigcRunner = (args) => {
       const r = spawnSync(rigc, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
       return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
@@ -26017,7 +26133,7 @@ function motionStage(
   fake?: (call: number) => { status: number; out: string } | null,
 ): MotionStageRun {
   const fx = writeRigFixture(dir, config);
-  const rigc = findRigc(ROOT, '');
+  const rigc = suiteRigc();
   const builds: MotionStageRun['builds'] = [];
   const calls: string[] = [];
   const runner: RigcRunner = (args) => {
@@ -28484,7 +28600,7 @@ function costStage(
   opts: { fake?: (n: number) => { status: number; out: string } | null; also?: (n: number, args: string[]) => Array<{ label: string; out: string[]; flags: string[] }>; reduce?: Reducer } = {},
 ): CostRun {
   const fx = writeRigFixture(dir, config);
-  const rigc = findRigc(ROOT, '');
+  const rigc = suiteRigc();
   const calls: CostCall[] = [];
   const extra = new Map<string, string | null>();
   let builds = 0;
@@ -28682,7 +28798,7 @@ function runBuildCostSuite(): number {
 
     // BC10 — render sharing: the rig stage renders nothing, so check's renders have no twin; a size change is never shared.
     const checkCalls: string[][] = [];
-    const bin = findRigc(ROOT, '');
+    const bin = suiteRigc();
     const runner10: RigcRunner = (args) => {
       checkCalls.push([...args]);
       const r = spawnSync(bin, [...args], { encoding: 'utf8', maxBuffer: 1 << 28 });

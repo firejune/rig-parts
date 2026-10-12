@@ -317,9 +317,57 @@ export interface RigcCall {
   status: number;
   /** stdout then stderr. */
   out: string;
+  /**
+   * Which rigc ran the call, as {@link rigcIdentity} words it (`rigc <version> at <path>`), from a runner that knows
+   * its binary ({@link rigcRunnerAt}): set on every call that exited non-zero and on every `--version` call, so a
+   * refusal quoting the call names the binary and its version (issue #337). Absent from a runner that does not know.
+   */
+  ran?: string;
 }
 
 export type RigcRunner = (args: readonly string[]) => RigcCall;
+
+/** The process primitive {@link rigcRunnerAt} is given: `src/` spawns nothing, so the caller's spawn is injected. */
+export type RigcSpawn = (bin: string, args: readonly string[]) => RigcCall;
+
+/**
+ * A rigc binary as what it says it is: `rigc <version> at <path>`, the version being the first line `--version`
+ * printed — the line `check` prints before it builds (`checkStage`). A `--version` run that exited non-zero or
+ * printed nothing is said so, with the path, rather than read as a version.
+ */
+export function rigcIdentity(bin: string, version: RigcCall): string {
+  const first = version.out.trim().split('\n')[0] ?? '';
+  if (version.status === 0 && first !== '') return `rigc ${first} at ${bin}`;
+  return `rigc (\`--version\` exited ${version.status}${first === '' ? ' and printed nothing' : `, printing ${JSON.stringify(first)}`}) at ${bin}`;
+}
+
+/** The clause a refusal quoting a rigc call ends with: which rigc ran it ({@link RigcCall.ran}), or nothing when the runner did not say. */
+export function rigcRanClause(call: { ran?: string }): string {
+  return call.ran === undefined ? '' : `; ${call.ran} ran it`;
+}
+
+/**
+ * The runner every stage is given (issue #337): `bin` spawned through `spawn`, each call that exited non-zero, and
+ * each `--version` call, carrying {@link RigcCall.ran}. The identity is read once per runner, off its first
+ * `--version` call or, when a call fails before any, off one `--version` run then — so a green run spawns nothing
+ * extra, and a failure names the binary and version that produced it rather than leaving the reader to guess
+ * which rigc a path resolved to.
+ */
+export function rigcRunnerAt(bin: string, spawn: RigcSpawn): RigcRunner {
+  let identity: string | null = null;
+  return (args) => {
+    const call = spawn(bin, args);
+    const version = args.length === 1 && args[0] === '--version';
+    if (version) {
+      const own = rigcIdentity(bin, call);
+      identity ??= own;
+      return { ...call, ran: own };
+    }
+    if (call.status === 0) return call;
+    identity ??= rigcIdentity(bin, spawn(bin, ['--version']));
+    return { ...call, ran: identity };
+  };
+}
 
 /** A line in which a rigc run that stopped says why: Bun's own `error: …`, rigc's `rigc <command>: …` refusals, a `usage: …` line. */
 const CAUSE = /^(error: |rigc[\w -]*: |usage: )/;
@@ -394,6 +442,27 @@ export function readRigcEntry(versionOut: string): RigcEntryRecord {
     },
   ]);
   throw new Error('unreachable');
+}
+
+/**
+ * This package's own rigc: `node_modules/.bin/rigc` under `root` and nowhere else — no directory above it and no
+ * PATH, which {@link findRigc} walks (issue #337). The selftest's suites run rigc through it from the package root,
+ * so a fixture in a temp directory, or a tree nested inside another checkout (a harness worktree under
+ * `.claude/worktrees/`) whose own install is missing, cannot reach another tree's rigc. A miss is refused naming
+ * the one path looked at.
+ */
+export function packageRigc(root: string): string {
+  const bin = join(resolve(root), 'node_modules', '.bin', 'rigc');
+  if (!existsSync(bin)) {
+    refuseIfAny([
+      {
+        code: 'CHECK_RIGC_PACKAGE',
+        object: bin,
+        detail: `does not exist; this package's own rigc is required here and no other is looked for — not in a directory above ${resolve(root)}, not on PATH (\`bun install\` puts it there)`,
+      },
+    ]);
+  }
+  return bin;
 }
 
 /**
@@ -1962,8 +2031,9 @@ export function rigcFailed(what: string, call: RigcCall, lines: readonly string[
   const named = lines.filter((l) => l.includes('FAIL') || l.includes('compile error'));
   const quoted = named.length > 0 ? named.map((l) => l.trim()) : causeLines(call.out);
   const object = `\`rigc ${what}\``;
-  if (quoted.length === 0) return [{ code: 'CHECK_RIGC_GREEN', object, detail: `exit ${call.status}, and it printed nothing` }];
-  return quoted.map((l) => ({ code: 'CHECK_RIGC_GREEN', object, detail: `exit ${call.status}: ${l}` }));
+  const ran = rigcRanClause(call);
+  if (quoted.length === 0) return [{ code: 'CHECK_RIGC_GREEN', object, detail: `exit ${call.status}, and it printed nothing${ran}` }];
+  return quoted.map((l) => ({ code: 'CHECK_RIGC_GREEN', object, detail: `exit ${call.status}: ${l}${ran}` }));
 }
 
 /**
@@ -3517,7 +3587,7 @@ export function requireRigcVersion(rigc: RigcRunner): string {
       {
         code: 'CHECK_RIGC_VERSION',
         object: '`rigc --version`',
-        detail: `${got === null ? `exit ${v.status}, printed ${JSON.stringify(v.out.trim().split('\n')[0] ?? '')} — no version` : `is ${got.join('.')}`}; rig-c ${RIGC_GEOMETRY_VERSION} or later is required — its \`render --geometry\` writes the skinned mesh vertices TEXTURE_STRETCH is measured from (\`bun install\` puts this package's own rig-c at node_modules/.bin/rigc)`,
+        detail: `${got === null ? `exit ${v.status}, printed ${JSON.stringify(v.out.trim().split('\n')[0] ?? '')} — no version` : `is ${got.join('.')}`}${rigcRanClause(v)}; rig-c ${RIGC_GEOMETRY_VERSION} or later is required — its \`render --geometry\` writes the skinned mesh vertices TEXTURE_STRETCH is measured from (\`bun install\` puts this package's own rig-c at node_modules/.bin/rigc)`,
       },
     ]);
   }
