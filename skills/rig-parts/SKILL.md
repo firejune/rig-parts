@@ -82,10 +82,12 @@ stage writes are the whole interface.
    keeps under the piece's edge; 1 px closed the seam on scarf) — and give the piece its own
    `meshes` entry; the `cut:` line gives the split. At overlap 0 a cut through
    opaque art leaves a seam `check` reads (AUTHORING §5).
-   A seated or reclining figure: add `--keypoints <file>` (body-18 joints in
-   painting px, each observed, occluded or missing; AUTHORING §3, *A posed
-   figure*) so the neck, hip, chest and sleeves follow the pose and LINT reads
-   the joints, not screen y. Never write a joint you did not get from an
+   A figure whose joints are not where the screen-y rules put them — reclining,
+   an arm raised, seated in a skirt that does not start at the hip: add
+   `--keypoints <file>` (body-18 joints in painting px, each observed, occluded
+   or missing; AUTHORING §3, *A posed figure*) so the neck, hip, chest and
+   sleeves follow the pose and LINT reads the joints, not screen y. A clean
+   LINT does not show a seated hip is right; the overlay does. Never write a joint you did not get from an
    estimator or the painting: say `missing` and let the rule stand in.
 6. Correct against `render/landmarks.png` and `note:` lines; a
    `coverage … not checked` line is a bone no check read (the line says why),
@@ -109,7 +111,8 @@ stage writes are the whole interface.
 8. Read `out/check/check.json` — the six judgement lines the same way as the seam
    and the loop: a FAIL names the field to change (AUTHORING §6);
    `TEXTURE_STRETCH` names the worst mesh triangle (slot, triangle, vertices, edge,
-   frame), so quote it even on a PASS. Quote
+   frame), so quote it even on a PASS; its FAIL line also names the bones the
+   edge's two vertices are weighted to and the idle chains they hang on. Quote
    `RECOMPOSITE_HOLES` (uncovered px, hole count, the largest hole's box) in the
    report whatever `PASS` says. The artifact is the three paths the build prints
    last: `check/build/skeleton.json`, `skeleton.atlas` and the packed page. Report

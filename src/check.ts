@@ -1948,7 +1948,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     // One reader for the one geometry file: the stretch reads its meshes, the still regions every slot and the head bone.
     const geometryPath = join(idle.dir, GEOMETRY_FILE);
     const geometry = readGeometry(geometryPath, idle.written);
-    stretch = stretchLine(geometry, geometryPath, problems);
+    stretch = stretchLine(geometry, geometryPath, problems, inp);
     if (full !== null) still = stillLine(full, idle, geometry, geometryPath, problems, notPlanted);
   }
 
@@ -3301,14 +3301,75 @@ function stretchAtText(s: { triangle: number; vertices: readonly number[]; edge:
 }
 
 /**
+ * Issue #314: what a failing edge's two vertices hang on, read off rig.json and motion.json — so the cause reads off
+ * the line rather than off a hand decoding of the weight runs. Each vertex's bones from the default skin's weights,
+ * the largest two by weight (equal weights in rig.json's order), with how many it has; then every bone named, grouped
+ * by the idle chain it hangs on — the nearest link at or above it of a chain `CHAIN_LAG` reads
+ * ({@link chainFigures}: two or more rotate-keyed links at one period), each chain named once, by its first link — and
+ * the bones on none. A mesh with no weights rides its slot's bone, and an attachment the skin does not hold, or a
+ * vertex its weights do not reach, is said rather than guessed.
+ */
+export function edgeBonesText(rig: Record<string, unknown>, motion: Record<string, unknown>, slot: string, attachment: string, edge: readonly number[]): string {
+  const skins = isRecord(rig.skins) ? rig.skins : {};
+  const skin = isRecord(skins.default) ? skins.default : {};
+  const onSlot = isRecord(skin[slot]) ? skin[slot] : {};
+  const att = onSlot[attachment];
+  if (!isRecord(att)) return `its weights are not read: rig.json's default skin holds no attachment "${attachment}" on slot "${slot}"`;
+  if (!Array.isArray(att.weights)) {
+    const sl = (Array.isArray(rig.slots) ? rig.slots : []).filter(isRecord).find((x) => x.name === slot);
+    return `the mesh carries no weights, so vertex ${edge.join(' and vertex ')} ride slot "${slot}"'s bone ${sl !== undefined && typeof sl.bone === 'string' ? `"${sl.bone}"` : '(rig.json names none)'}`;
+  }
+  const weights = att.weights;
+  const missing = edge.filter((v) => !Array.isArray(weights[v]));
+  if (missing.length > 0) return `its weights are not read: rig.json's mesh "${attachment}" weights ${weights.length} vertices, and vertex ${missing.join(' and ')} is not among them`;
+  const named: string[] = [];
+  const parts = edge.map((v, i) => {
+    const list = (weights[v] as unknown[]).filter(isRecord).filter((w) => typeof w.bone === 'string' && typeof w.weight === 'number') as Array<{ bone: string; weight: number }>;
+    const top = [...list].sort((a, b) => b.weight - a.weight).slice(0, 2);
+    for (const w of top) if (!named.includes(w.bone)) named.push(w.bone);
+    const shown = top.map((w) => `"${w.bone}" ${w.weight}`).join(', ');
+    return `${i === 0 ? `vertex ${v} is weighted to` : `vertex ${v} to`} ${shown}${list.length > 2 ? ` (the largest 2 of ${list.length})` : ''}`;
+  });
+  const bones = (Array.isArray(rig.bones) ? rig.bones : []).filter(isRecord);
+  const parent = new Map(bones.filter((b) => typeof b.name === 'string').map((b) => [String(b.name), typeof b.parent === 'string' ? b.parent : null]));
+  const firstLink = new Map<string, string>();
+  for (const c of chainFigures(rig, motion).chains) if (c.length >= 2) for (const l of c) firstLink.set(l.bone, c[0].bone);
+  const carries = new Map<string, string[]>();
+  const none: string[] = [];
+  for (const b of named) {
+    let chain: string | null = null;
+    const seen = new Set<string>();
+    for (let x: string | null = b; x !== null && !seen.has(x); x = parent.get(x) ?? null) {
+      const f = firstLink.get(x);
+      if (f !== undefined) {
+        chain = f;
+        break;
+      }
+      seen.add(x);
+    }
+    if (chain === null) none.push(b);
+    else carries.set(chain, [...(carries.get(chain) ?? []), b]);
+  }
+  const quoted = (l: readonly string[]): string => l.map((n) => `"${n}"`).join(', ');
+  const chains =
+    carries.size === 0
+      ? 'none of these bones hangs on a chain of the idle'
+      : `on the idle's chains, ${[...carries].map(([c, l]) => `the chain from "${c}" carries ${quoted(l)}`).join(' and ')}${none.length === 0 ? '' : `, and ${quoted(none)} ${none.length === 1 ? 'hangs' : 'hang'} on none`}`;
+  return `${parts.join(' and ')}; ${chains}`;
+}
+
+/**
  * (6) No visible texture stretch: for every mesh triangle, each edge's length
  * in each idle frame over its rest length (the setup pose's bones, no deform —
  * which on both examples is the art's own proportions, the attachment's `uvs`
  * times its size, to 2.4e-5). The figure is the rig's worst max(ratio,
  * 1/ratio); each mesh's largest and smallest ratio, and where, are the detail.
- * SKIP when the render wrote no geometry file or the rig draws no mesh.
+ * SKIP when the render wrote no geometry file or the rig draws no mesh. With
+ * `bound`, the rig and motion `check` read, a failing edge's line also names the
+ * bones its two vertices hang on and their chains ({@link edgeBonesText}, issue
+ * #314).
  */
-export function stretchLine(geo: IdleGeometry | null, path: string, problems: Problem[]): JudgementLine {
+export function stretchLine(geo: IdleGeometry | null, path: string, problems: Problem[], bound?: Pick<CheckInputs, 'rig' | 'motion'>): JudgementLine {
   if (geo === null) return skip(`${path} does not exist; \`rigc render --geometry\` (rig-c ${RIGC_GEOMETRY_VERSION} or later) writes it, and the skinned mesh vertices are read from it`);
   if (geo.meshes.length === 0) return skip('the rig draws no mesh attachment (every slot is a region), so there is no triangle to stretch');
   const figures = stretchFigures(geo.meshes, geo.frames);
@@ -3343,7 +3404,7 @@ export function stretchLine(geo: IdleGeometry | null, path: string, problems: Pr
       problems.push({
         code: 'CHECK_TEXTURE_STRETCH',
         object: `mesh "${m.slot}" ${stretchAtText(at)}`,
-        detail: `the edge is ${round3(at.ratio)} times its rest length (max(ratio, 1/ratio) ${severity}); <= ${TEXTURE_STRETCH_CEILING} is required — the texture on it is ${at.ratio >= 1 ? 'stretched' : 'squeezed'}: the bones this mesh is weighted to move apart (amplitudes too large down a chain), or a vertex blends bones that move against each other`,
+        detail: `the edge is ${round3(at.ratio)} times its rest length (max(ratio, 1/ratio) ${severity}); <= ${TEXTURE_STRETCH_CEILING} is required${bound === undefined ? '' : `; ${edgeBonesText(bound.rig, bound.motion, m.slot, m.attachment, at.edge)}`} — the texture on it is ${at.ratio >= 1 ? 'stretched' : 'squeezed'}: the bones this mesh is weighted to move apart (amplitudes too large down a chain), or a vertex blends bones that move against each other`,
       });
     }
   }

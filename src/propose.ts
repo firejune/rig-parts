@@ -136,6 +136,8 @@ import { configRoles, type RoleOf } from './structure.ts';
 import { AUTHOR_NO_ROLE, isAuthorTag } from './tags.ts';
 import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER_TAGS, turnFractions, turnNearest, turnPivot, turnRiderDepth, type TurnSpec } from './turn.ts';
 import { edgeLength } from './length.ts';
+import { chainSqueezes, type SqueezeFinding } from './squeeze.ts';
+import { TEXTURE_STRETCH_CEILING } from './check.ts';
 
 // ---------------------------------------------------------------------------
 // the output shape — config-shaped, key order as the reference writes it
@@ -2905,7 +2907,10 @@ export interface ChainNotAdvancingFinding {
   toJoint: KeypointName;
 }
 
-export type LintFinding = OffArtFinding | OffLockFinding | HipAboveChestFinding | HipTooHighFinding | ChestNotBetweenFinding | HipNotPastChestFinding | HipNearerNeckFinding | ChainNotAdvancingFinding;
+/** Issue #314: two chains on one lattice whose own swing closes or opens an edge between them past check's TEXTURE_STRETCH bar (`src/squeeze.ts`). */
+export type SqueezeLintFinding = { kind: 'squeeze' } & SqueezeFinding;
+
+export type LintFinding = OffArtFinding | OffLockFinding | HipAboveChestFinding | HipTooHighFinding | ChestNotBetweenFinding | HipNotPastChestFinding | HipNearerNeckFinding | ChainNotAdvancingFinding | SqueezeLintFinding;
 
 /** Which rule set read the torso and the sleeve chains, under `--keypoints`. */
 export interface LintBasis {
@@ -2923,6 +2928,8 @@ export interface LintResult {
   lockUnread: string[];
   /** Single bones the torso checks read (`hip`, `chest`) that the bones do not hold: those checks did not run. */
   missingTorsoBones: string[];
+  /** Issue #314: the pairs of keyed chains on one mesh the squeeze check could not build a lattice for, and why. Empty when it read every pair or had none. */
+  squeezeUnread: string[];
   /** Present only under `--keypoints`: the rule set that read the torso and the chains. */
   basis?: LintBasis;
   /** One record per bone of the spec, in its bone order (chain links as `<chain><i>`): which checks read it, or why none did (issue #86). */
@@ -3130,8 +3137,21 @@ export function lint(
       }
     }
   }
+  // Issue #314: every pair of keyed chains a lattice mesh names, swung on the rig stage's own lattice and weights, held
+  // to check's TEXTURE_STRETCH bar (src/squeeze.ts). Only with a motion: without one nothing swings.
+  const sq = chainSqueezes({ bones: spec.bones, meshes: spec.meshes, motion: spec.motion }, new Map(P.recs.filter((p) => P.images.has(p.name)).map((p) => [p.name, { x: p.x, y: p.y, image: P.images.get(p.name) as Raster }])));
+  for (const { mesh, a, b } of sq.read) {
+    for (const [c, other] of [[a, b], [b, a]]) {
+      const e = spec.bones.find((x) => 'chain' in x && x.chain === c);
+      if (e !== undefined && 'chain' in e) e.points.forEach((_, i) => readBy(`${c}${i}`, `squeeze with ${other} on mesh ${pyRepr(mesh)}`));
+    }
+  }
+  for (const f of sq.findings) findings.push({ kind: 'squeeze', ...f });
+  const squeezeUnread = sq.unread;
   const coverage = lintCoverage(spec, byName, read, findings, unknownMeshes, basis);
-  return basis === undefined ? { findings, unknownMeshes, lockUnread, missingTorsoBones, coverage } : { findings, unknownMeshes, lockUnread, missingTorsoBones, basis, coverage };
+  return basis === undefined
+    ? { findings, unknownMeshes, lockUnread, missingTorsoBones, squeezeUnread, coverage }
+    : { findings, unknownMeshes, lockUnread, missingTorsoBones, squeezeUnread, basis, coverage };
 }
 
 /** The bones a finding names: the off-art link; hip and chest for a relation between them; a chain's last link for its tip. */
@@ -3148,6 +3168,8 @@ function findingBones(f: LintFinding, bones: readonly BoneEntry[]): string[] {
       return ['hip'];
     case 'chest-not-between':
       return ['chest'];
+    case 'squeeze':
+      return [...new Set(f.vertices.map((v) => v.weights[0]?.bone).filter((n): n is string => n !== undefined))];
     case 'chain-not-advancing': {
       if (!f.point.endsWith(' tip')) return [f.point];
       const chain = f.point.slice(0, -' tip'.length);
@@ -3313,9 +3335,40 @@ export function lintLine(f: LintFinding): string {
       return `LINT hip at ${pyIntList(f.hip)} is not past chest at ${pyIntList(f.chest)} on the way from the neck joint to the hip joints (hip at ${pyFixed(f.tHip, 2)}, chest at ${pyFixed(f.tChest, 2)} of the way): breathing and the skirt hang from the wrong end of the torso`;
     case 'hip-nearer-neck':
       return `LINT hip at ${pyIntList(f.hip)} is nearer the neck joint ${fmtAt(f.neck)} (${pyFixed(f.dNeck, 1)} px) than the midpoint of the hip joints ${fmtAt(f.hips)} (${pyFixed(f.dHips, 1)} px): a hip at the shoulders`;
+    case 'squeeze':
+      return squeezeLine(f);
     case 'chain-not-advancing':
       return `LINT ${f.point} at ${pyIntList(f.at)} does not advance from ${f.fromJoint} toward ${f.toJoint}: it falls ${pyFixed(f.t, 1)} px along that line and ${f.previous} ${pyFixed(f.tPrevious, 1)} px, and each must fall further than the one before`;
   }
+}
+
+/**
+ * The squeeze LINT line (issue #314): the pair and the mesh, the worst edge with both swinging and the bone each of
+ * its two vertices rides most, the bar it is held to (check's), each chain swung alone, the tips' distance and the
+ * amplitudes, and the remedies whose figure passes the bar — one sign when the amplitudes are opposed, dropping a
+ * chain when the other alone passes — or, when none does, that the amplitudes are too large for this lattice.
+ */
+function squeezeLine(f: SqueezeLintFinding): string {
+  const e = f.both.at;
+  const C = TEXTURE_STRETCH_CEILING;
+  const rides = f.vertices.map((v) => (v.weights.length === 0 ? `vertex ${v.vertex} rides no bone` : `vertex ${v.vertex} rides ${v.weights[0].bone} ${v.weights[0].weight}`)).join(', ');
+  const amps = (c: { amps: readonly number[] }): string => `[${c.amps.join(', ')}]`;
+  const remedies: string[] = [];
+  if (f.turned !== null && f.turned <= C) remedies.push(`give both the same sign (then ${pyFixed(f.turned, 3)})`);
+  if (f.aloneA <= C && f.aloneB <= C) remedies.push('drop one chain');
+  else if (f.aloneA <= C) remedies.push(`drop ${f.b.chain}, which alone is past the bar too`);
+  else if (f.aloneB <= C) remedies.push(`drop ${f.a.chain}, which alone is past the bar too`);
+  const said =
+    f.turned !== null
+      ? `their amplitudes are opposed (${f.a.chain} ${amps(f.a)}, ${f.b.chain} ${amps(f.b)}), so their tips swing towards each other and apart`
+      : `their amplitudes are ${f.a.chain} ${amps(f.a)} and ${f.b.chain} ${amps(f.b)}`;
+  const remedy = remedies.length > 0 ? remedies.join(', or ') : 'neither one sign nor either chain alone passes the bar: lower the amplitudes';
+  return (
+    `LINT ${f.a.chain} and ${f.b.chain} on mesh ${pyRepr(f.mesh)} ${e.ratio >= 1 ? 'stretch' : 'squeeze'} it: swung together, every other bone held, ` +
+    `edge ${e.edge.join('-')} of triangle ${e.triangle} ${e.ratio >= 1 ? 'opens' : 'closes'} to ${pyFixed(e.ratio, 3)} times its rest length at idle frame ${e.frame} (max(ratio, 1/ratio) ${pyFixed(f.both.severity, 3)}; ` +
+    `<= ${C} is required, check's TEXTURE_STRETCH bar) — ${rides}; alone, ${f.a.chain} reads ${pyFixed(f.aloneA, 3)} and ${f.b.chain} ${pyFixed(f.aloneB, 3)}. ` +
+    `Their tips are ${pyFixed(f.tipGap, 1)} px apart and ${said}: ${remedy}`
+  );
 }
 
 export interface Comparison {

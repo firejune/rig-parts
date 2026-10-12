@@ -323,9 +323,13 @@ These are limits of the approach, stated so nobody reads more into a green run:
   existence proof, not a rate.
 - **`loop` writes GIF and APNG (lossless and indexed), not WebP**: an animated WebP needs a VP8/VP8L
   encoder, which this package does not carry.
-- **The proposer assumes a standing figure unless it is told the pose.** Its ratios
-  put the hip below the chest and hang the sleeves from the shoulders. A seated or
-  reclining figure needs `propose --keypoints`, a file of its joints from any pose
+- **The proposer reads the torso by screen y unless it is told the pose.** Its ratios
+  put the hip below `bottomwear`'s top edge and the chest above it, and hang the sleeves
+  from the shoulders. A figure whose joints are not there — reclining, an arm raised, or
+  seated in a skirt that does not start at the hip — needs `propose --keypoints`; sitting
+  alone does not, but a clean LINT does not show the hip is right (it asks only that the
+  hip be below the chest and the shoulders), so read the overlay ([AUTHORING §3](docs/AUTHORING.md)). The
+  file of joints comes from any pose
   estimator or a hand; this package does not estimate a pose itself, and its
   keypoint support has been measured on generated figures and on files read off the
   examples' own configs, never on an estimator's output.

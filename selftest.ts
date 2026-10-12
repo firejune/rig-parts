@@ -126,7 +126,7 @@ import {
   writeRun,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
-import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, type CheckFlagInBuild, checkStage, ctlRemedies, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
+import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, type CheckFlagInBuild, checkStage, ctlRemedies, driftShare, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LEVEL_FRINGE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, TILTED_FRINGE_PARTS, TWO_LOCK_PARTS, writeProposeFixture } from './fixtures/propose.ts';
@@ -179,7 +179,7 @@ import {
   visibilityCounts,
 } from './src/assemble.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
-import { BARS, besideIdleLine, blackRig, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
+import { BARS, besideIdleLine, blackRig, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { baseTagOf, blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
@@ -375,6 +375,8 @@ import {
   type GridRule,
 } from './src/propose.ts';
 import { headFrame } from './src/headframe.ts';
+import { pyFixed } from './src/pyfmt.ts';
+import { SQUEEZE_AMPS, SQUEEZE_TIPS, squeezeConfig, squeezeImages, squeezeParts } from './fixtures/squeeze.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeypoints, parseKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
 import { LEGS_APART, LEGS_JOINED, LYING_PARTS, LYING_RIG, type PoseName, POSES, SEATED_PARTS, SEATED_RIG } from './fixtures/poses.ts';
@@ -6461,10 +6463,82 @@ function runProposeSuite(): number {
     );
 
     runGridRuleControls(dir, say);
+    runSqueezeControls(say);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
   return bad();
+}
+
+/**
+ * Issue #314: two keyed chains on one lattice that swing into each other. On fixtures/squeeze.ts, by hand: the tips
+ * stand at x 31 and 70 on one row, 39 px apart, and the proposer's mirror keys hairback_l at minus hairback_r's
+ * amplitudes, link for link — opposed. The figures themselves are the rig stage's lattice and weights posed, never
+ * typed in: the control holds them to check's bar (the pair above it, each chain alone and the one-sign reading at or
+ * below it) and the check suite holds the predicted edge to the one `check` fails (CK241). Planted beside it: the same
+ * pair with one sign is silent; with one chain's amplitudes doubled, past the bar alone, the pair is still named and
+ * only the drop that leaves a passing chain is offered; under rule "heat" the pair is said not read.
+ */
+function runSqueezeControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const P = new PartSet(squeezeParts(), squeezeImages());
+  const spec = (sign: 1 | -1, heat = false): SkeletonSections => {
+    const c = squeezeConfig(sign) as unknown as SkeletonSections;
+    return heat ? { ...c, meshes: { hair: { ...c.meshes.hair, rule: 'heat' } } } : c;
+  };
+  const opposed = lint(P, spec(-1));
+  const same = lint(P, spec(1));
+  const heat = lint(P, spec(-1, true));
+  // Planted: hairback_l's amplitudes doubled, so it alone is past the bar — the pair is still named, and "drop one
+  // chain" names the one whose removal leaves a passing chain, never the other.
+  const heavySpec = spec(-1);
+  const heavyRun = lint(P, { ...heavySpec, motion: { ...heavySpec.motion, tracks: heavySpec.motion.tracks.map((t) => ('chain' in t && t.chain === 'hairback_l' ? { ...t, amps: t.amps.map((a) => 2 * a) } : t)) } });
+  const heavyF = heavyRun.findings.find((x) => x.kind === 'squeeze');
+  const heavy = heavyF !== undefined && heavyF.kind === 'squeeze' ? heavyF : null;
+  const heavyLine = heavyF === undefined ? '' : lintLine(heavyF);
+  const fired = opposed.findings.filter((f) => f.kind === 'squeeze');
+  const f = fired[0];
+  const line = fired.length > 0 ? lintLine(f) : '';
+  const sq = f !== undefined && f.kind === 'squeeze' ? f : null;
+  const tops = sq === null ? [] : sq.vertices.map((v) => v.weights[0]?.bone);
+  const cov = (n: string): BoneCoverage | undefined => opposed.coverage.find((c) => c.bone === n);
+  const ceiling = TEXTURE_STRETCH_CEILING;
+  say(
+    'PR120_TWO_CHAINS_ON_ONE_LATTICE_SWUNG_INTO_EACH_OTHER_ARE_A_LINT_LINE_WITH_EACH_REMEDY_S_FIGURE_AND_ONE_SIGN_IS_SILENT',
+    fired.length === 1 &&
+      opposed.findings.length === 1 &&
+      sq !== null &&
+      sq.mesh === 'hair' &&
+      sq.a.chain === 'hairback_r' &&
+      sq.b.chain === 'hairback_l' &&
+      sq.tipGap === SQUEEZE_TIPS.l[0] - SQUEEZE_TIPS.r[0] &&
+      sq.tipGap === 39 &&
+      sq.both.severity > ceiling &&
+      sq.aloneA <= ceiling &&
+      sq.aloneB <= ceiling &&
+      sq.turned !== null &&
+      sq.turned <= ceiling &&
+      JSON.stringify([...tops].sort()) === '["hairback_l2","hairback_r2"]' &&
+      line.startsWith("LINT hairback_r and hairback_l on mesh 'hair' squeeze it: swung together, every other bone held, edge ") &&
+      line.includes(`(max(ratio, 1/ratio) ${pyFixed(sq.both.severity, 3)}; <= ${ceiling} is required, check's TEXTURE_STRETCH bar)`) &&
+      line.endsWith(
+        `Their tips are 39.0 px apart and their amplitudes are opposed (hairback_r [${SQUEEZE_AMPS.join(', ')}], hairback_l [${SQUEEZE_AMPS.map((a) => -a).join(', ')}]), so their tips swing towards each other and apart: give both the same sign (then ${pyFixed(sq.turned, 3)}), or drop one chain`,
+      ) &&
+      line.includes(`; alone, hairback_r reads ${pyFixed(sq.aloneA, 3)} and hairback_l ${pyFixed(sq.aloneB, 3)}. `) &&
+      heavy !== null &&
+      heavy.aloneA <= ceiling &&
+      heavy.aloneB > ceiling &&
+      heavyLine.endsWith(heavy.turned !== null && heavy.turned <= ceiling ? `give both the same sign (then ${pyFixed(heavy.turned, 3)}), or drop hairback_l, which alone is past the bar too` : 'drop hairback_l, which alone is past the bar too') &&
+      cov('hairback_r0')?.read.includes("squeeze with hairback_l on mesh 'hair'") === true &&
+      cov('hairback_l2')?.read.includes("squeeze with hairback_r on mesh 'hair'") === true &&
+      cov('hairback_r2')?.lint === 1 &&
+      cov('hairback_l2')?.lint === 1 &&
+      same.findings.length === 0 &&
+      same.squeezeUnread.length === 0 &&
+      heat.findings.length === 0 &&
+      heat.squeezeUnread.join('|') === 'mesh "hair" (hairback_r and hairback_l) is weighted by rule "heat"; only the distance rule is read here',
+    `opposed: ${opposed.findings.length} finding(s), ${JSON.stringify(line.slice(0, 260))}…; hairback_l doubled: alone ${heavy?.aloneA.toFixed(3)} / ${heavy?.aloneB.toFixed(3)}, ${JSON.stringify(heavyLine.slice(-110))}; both ${sq?.both.severity.toFixed(3)}, alone ${sq?.aloneA.toFixed(3)} / ${sq?.aloneB.toFixed(3)}, one sign ${sq?.turned?.toFixed(3)}, tips ${sq?.tipGap}, the edge's vertices ride ${tops.join(', ')}; one sign: ${same.findings.length} finding(s); rule heat: ${heat.squeezeUnread.join('|') || 'read'}`,
+    "issue #314: a consumer's proposal mirrored the back hair's two chains on one mass 39 px apart and lint printed 0 lines, then check failed an edge between them at 15.3; the proposer holds every number that squeeze follows from, so the lint builds the rig stage's lattice and weights, swings the pair alone and holds it to check's own bar — and one sign, the examinee's remedy, is silent",
+  );
 }
 
 /**
@@ -10379,10 +10453,10 @@ function runCheckSuite(): number {
       hard.status === 1 &&
         hard.fig?.PASS === false &&
         lineStatus(hard.fig, 'TEXTURE_STRETCH') === 'FAIL' &&
-        hardFail === `  FAIL  CHECK_TEXTURE_STRETCH: mesh "${CHECK_PARTS[0].name}" triangle 0 (vertices 0 1 2), edge 1-2, idle frame ${IDLE_FPS / 2} — the edge is 2 times its rest length (max(ratio, 1/ratio) 2); <= ${TEXTURE_STRETCH_CEILING} is required — the texture on it is stretched: the bones this mesh is weighted to move apart (amplitudes too large down a chain), or a vertex blends bones that move against each other` &&
+        hardFail === `  FAIL  CHECK_TEXTURE_STRETCH: mesh "${CHECK_PARTS[0].name}" triangle 0 (vertices 0 1 2), edge 1-2, idle frame ${IDLE_FPS / 2} — the edge is 2 times its rest length (max(ratio, 1/ratio) 2); <= ${TEXTURE_STRETCH_CEILING} is required; vertex 1 is weighted to "yoke" 1 and vertex 2 to "hem" 1; none of these bones hangs on a chain of the idle — the texture on it is stretched: the bones this mesh is weighted to move apart (amplitudes too large down a chain), or a vertex blends bones that move against each other` &&
         others.length === 0,
       `exit ${hard.status}; ${hardFail?.trim().slice(0, 200) ?? 'no CHECK_TEXTURE_STRETCH line'}…; other FAIL lines: ${others.length}`,
-      `the side lowered by its own length (${rest} units) doubles; the gate passes it, the loop closes and the seam is the setup pose, so this line is the only one that sees it`,
+      `the side lowered by its own length (${rest} units) doubles; the gate passes it, the loop closes and the seam is the setup pose, so this line is the only one that sees it — and, since issue #314, it names the edge's bones off rig.json: vertex 1 (top-right) is weighted wholly to yoke and vertex 2 (bottom-right) to hem, and the idle keys hem_ctl's translatey and the root's translatex, no rotate, so there is no chain to name`,
     );
 
     const stretchAgain = stretchRun('stretch-mild-2', stretchBy);
@@ -10433,6 +10507,110 @@ function runCheckSuite(): number {
         JSON.stringify(ba.max.edge) === '[3,4]',
       `edgeLength ${edgeLength(34.26716181006313, 0.5713103861783111)} (Math.hypot here ${Math.hypot(34.26716181006313, 0.5713103861783111)}); listed a, b: max ${ab.max?.ratio} triangle ${ab.max?.triangle} edge ${JSON.stringify(ab.max?.edge)} frame ${ab.max?.frame}; listed b, a: max ${ba.max?.ratio} triangle ${ba.max?.triangle} edge ${JSON.stringify(ba.max?.edge)} frame ${ba.max?.frame}`,
       "issue #270: demo's check.json named triangle 85 for the earring's largest stretch on macOS and 22 on Linux from bit-identical vertices, because Math.hypot's last bit differs between the two; a figure the tree holds to bytes is computed with operations that round one way, and an exact tie is broken by position, never by the platform",
+    );
+
+    // Issue #314: the FAIL line names the bones the edge's two vertices hang on and the idle chains they hang on.
+    // fixtures/squeeze.ts through the rig stage (its default control bones) and check: the proposer's mirror fails, and
+    // the line names hairback_r2 and hairback_l2 on two chains, by their first links; the edge is the one propose's
+    // squeeze lint predicted off the same lattice (PR120); one sign passes.
+    const squeezeRun = (label: string, sign: 1 | -1): { rig: { status: number; out: string }; check: { status: number; out: string }; fig: Record<string, unknown> | null } => {
+      const d = join(dir, label);
+      const fx = writeRigFixture(d, squeezeConfig(sign), squeezeImages(), squeezeParts());
+      const rig = runCli(['rig', '--config', fx.config, '--parts', fx.parts, '--out', join(d, 'rig')]);
+      const check = runCli(['check', '--rig', join(d, 'rig'), '--parts', fx.parts, '--out', join(d, 'out')]);
+      return { rig, check, fig: readJsonFile(join(d, 'out', 'check.json')) };
+    };
+    const mirrored = squeezeRun('squeeze-mirrored', -1);
+    const oneSign = squeezeRun('squeeze-one-sign', 1);
+    const predicted = lint(new PartSet(squeezeParts(), squeezeImages()), squeezeConfig(-1) as unknown as SkeletonSections).findings.find((x) => x.kind === 'squeeze');
+    const sqFail = failLine(mirrored.check.out, 'CHECK_TEXTURE_STRETCH');
+    const sqOthers = mirrored.check.out.split('\n').filter((l) => l.startsWith('  FAIL  ') && !l.startsWith('  FAIL  CHECK_TEXTURE_STRETCH'));
+    const sqWorst = (mirrored.fig?.TEXTURE_STRETCH as StretchFig | undefined)?.worst;
+    const sqWhere = predicted === undefined || predicted.kind !== 'squeeze' ? null : predicted.both.at;
+    const vertexText = (v: { vertex: number; weights: Array<{ bone: string; weight: number }>; of: number }, first: boolean): string =>
+      `${first ? `vertex ${v.vertex} is weighted to` : `vertex ${v.vertex} to`} ${v.weights.map((w) => `"${w.bone}" ${w.weight}`).join(', ')}${v.of > 2 ? ` (the largest 2 of ${v.of})` : ''}`;
+    const sqBones =
+      predicted === undefined || predicted.kind !== 'squeeze'
+        ? null
+        : `; ${predicted.vertices.map((v, i) => vertexText(v, i === 0)).join(' and ')}; on the idle's chains, the chain from "hairback_r0_ctl" carries "hairback_r2" and the chain from "hairback_l0_ctl" carries "hairback_l2" — the texture on it is squeezed`;
+    say(
+      'CK241_A_STRETCH_FAIL_NAMES_THE_BONES_ITS_EDGE_HANGS_ON_AND_THEIR_TWO_CHAINS_AND_ONE_SIGN_PASSES',
+      mirrored.rig.status === 0 &&
+        mirrored.check.status === 1 &&
+        lineStatus(mirrored.fig, 'TEXTURE_STRETCH') === 'FAIL' &&
+        sqOthers.length === 0 &&
+        sqFail !== null &&
+        sqWhere !== null &&
+        sqWorst !== undefined &&
+        sqWorst.triangle === sqWhere.triangle &&
+        JSON.stringify(sqWorst.edge) === JSON.stringify(sqWhere.edge) &&
+        sqWorst.frame === sqWhere.frame &&
+        sqFail.startsWith(`  FAIL  CHECK_TEXTURE_STRETCH: mesh "hair" triangle ${sqWhere.triangle} (vertices ${sqWhere.vertices.join(' ')}), edge ${sqWhere.edge.join('-')}, idle frame ${sqWhere.frame} — `) &&
+        sqBones !== null &&
+        sqFail.includes(sqBones) &&
+        oneSign.rig.status === 0 &&
+        oneSign.check.status === 0 &&
+        lineStatus(oneSign.fig, 'TEXTURE_STRETCH') === 'PASS',
+      `mirrored: rig exit ${mirrored.rig.status}, check exit ${mirrored.check.status}; ${sqFail?.trim().slice(0, 520) ?? 'no CHECK_TEXTURE_STRETCH line'}…; check's worst ${JSON.stringify(sqWorst ?? null)}, lint's ${JSON.stringify(sqWhere)}; other FAIL lines ${sqOthers.length}; one sign: check exit ${oneSign.check.status}, TEXTURE_STRETCH ${lineStatus(oneSign.fig, 'TEXTURE_STRETCH')} ${(oneSign.fig?.TEXTURE_STRETCH as StretchFig | undefined)?.severity ?? ''}`,
+      "issue #314: the examinee found which bones squeezed the edge by decoding rig.json's weight runs by hand; the line now carries that lookup — each vertex's two largest weights and the idle chains (CHAIN_LAG's) the bones hang on, each named once — and the weights it prints are the rig stage's, the same the squeeze lint rebuilt (the vertex text is composed from the lint's own weights)",
+    );
+
+    // edgeBonesText by hand: a chain a0_ctl > a1_ctl (two rotate-keyed links at one period), `tail` under a1, `body` on
+    // root. One chain named once however many of its bones are named; a bone on no chain said; no chain at all; a mesh
+    // with no weights rides its slot's bone; an attachment or a vertex the skin does not hold is said, not guessed.
+    const hb = {
+      bones: [
+        { name: 'root' },
+        { name: 'a0_ctl', parent: 'root' },
+        { name: 'a0', parent: 'a0_ctl' },
+        { name: 'a1_ctl', parent: 'a0' },
+        { name: 'a1', parent: 'a1_ctl' },
+        { name: 'tail', parent: 'a1' },
+        { name: 'body', parent: 'root' },
+      ],
+      slots: [
+        { name: 'm', bone: 'root', attachment: 'm' },
+        { name: 'plain', bone: 'body', attachment: 'plain' },
+      ],
+      skins: {
+        default: {
+          m: {
+            m: {
+              type: 'mesh',
+              weights: [
+                [{ bone: 'a1', weight: 0.2 }, { bone: 'a0', weight: 0.7 }, { bone: 'body', weight: 0.1 }],
+                [{ bone: 'tail', weight: 1 }],
+                [{ bone: 'body', weight: 1 }],
+              ],
+            },
+          },
+          plain: { plain: { type: 'mesh' } },
+        },
+      },
+    };
+    const hm = { animations: { idle: { duration: 4, tracks: [sineTrack('a0_ctl', 'rotate', 1, 4, 0, 0, 4), sineTrack('a1_ctl', 'rotate', 2, 4, 0.1, 0, 4)] } } };
+    const unkeyed = { animations: { idle: { duration: 4, tracks: [] } } };
+    const ebt = [
+      edgeBonesText(hb, hm, 'm', 'm', [0, 1]),
+      edgeBonesText(hb, hm, 'm', 'm', [1, 2]),
+      edgeBonesText(hb, unkeyed, 'm', 'm', [0, 1]),
+      edgeBonesText(hb, hm, 'plain', 'plain', [0, 1]),
+      edgeBonesText(hb, hm, 'm', 'other', [0, 1]),
+      edgeBonesText(hb, hm, 'm', 'm', [2, 3]),
+    ];
+    const ebtWant = [
+      'vertex 0 is weighted to "a0" 0.7, "a1" 0.2 (the largest 2 of 3) and vertex 1 to "tail" 1; on the idle\'s chains, the chain from "a0_ctl" carries "a0", "a1", "tail"',
+      'vertex 1 is weighted to "tail" 1 and vertex 2 to "body" 1; on the idle\'s chains, the chain from "a0_ctl" carries "tail", and "body" hangs on none',
+      'vertex 0 is weighted to "a0" 0.7, "a1" 0.2 (the largest 2 of 3) and vertex 1 to "tail" 1; none of these bones hangs on a chain of the idle',
+      'the mesh carries no weights, so vertex 0 and vertex 1 ride slot "plain"\'s bone "body"',
+      'its weights are not read: rig.json\'s default skin holds no attachment "other" on slot "m"',
+      'its weights are not read: rig.json\'s mesh "m" weights 3 vertices, and vertex 3 is not among them',
+    ];
+    say(
+      'CK242_THE_EDGE_BONES_TEXT_NAMES_ONE_CHAIN_ONCE_A_BONE_ON_NONE_AND_WHAT_IT_COULD_NOT_READ',
+      ebt.every((t, i) => t === ebtWant[i]),
+      ebt.map((t, i) => (t === ebtWant[i] ? `ok ${i}` : `${i}: ${JSON.stringify(t)}`)).join('; '),
+      "the card's second line: where the edge's vertices hang on one chain's bones, that chain is named once (by its first link, CHAIN_LAG's chain); a bone under a link (tail) hangs on its chain; with no rotate track there is no chain to name, and saying so is not a pass; a vertex's weights are taken largest first, not in rig.json's order",
     );
 
     const calls: string[] = [];
@@ -14809,6 +14987,24 @@ function runAssembleSuite(): number {
       'a See-through layer disagrees with the painting a pixel here and there all over a real figure, and size alone would print on every part — the 5x5 opening keeps the line to a body; a body the part holds itself names no owner, and on four of five public paintings such bodies exist on parts nothing is drawn over',
     );
 
+    // Issue #314: the per-part line's drift= carries its scale — refused_drift_px against the part's projection
+    // candidates (projected_core_px), which it is a subset of. By hand: 13 of 77 is 16.883 %, one decimal 16.9; a part
+    // with no candidate has nothing to refuse. From the CLI, AS62's topwear row prints its record's two counts so.
+    const driftRec = driftRun.parts.parts.find((q) => q.name === 'topwear');
+    const driftRow = driftCli.out.split('\n').find((l) => l.startsWith('  topwear ')) ?? '';
+    const driftCol = driftRec === undefined ? '' : `drift=${String(driftRec.refused_drift_px).padStart(5)} (${((100 * driftRec.refused_drift_px) / driftRec.projected_core_px).toFixed(1)}% of core) merged=`;
+    say(
+      'AS233_THE_PART_LINE_PRINTS_DRIFT_WITH_ITS_SHARE_OF_THE_PART_S_PROJECTION_CANDIDATES',
+      driftShare(13, 77) === '(16.9% of core)' &&
+        driftShare(0, 0) === '(no core)' &&
+        driftShare(0, 5) === '(0.0% of core)' &&
+        driftRec !== undefined &&
+        driftRec.projected_core_px > 0 &&
+        driftRow.includes(driftCol),
+      `13 of 77: ${driftShare(13, 77)}; 0 of 0: ${driftShare(0, 0)}; 0 of 5: ${driftShare(0, 5)}; AS62's topwear row: ${driftRow.trim()}`,
+      "issue #314: an examinee read drift=21999 on one part, far above the others, and could not tell whether it mattered — the column gave a count with nothing to read it against; it is now read against the candidates it was taken from (no bar reads it: AUTHORING §5)",
+    );
+
     // Issue #242: a scene painting. The flat fixture is one already — the painting is C everywhere and the full run
     // holds only the figure — so it is the scene fixture as it stands. Its figure, by hand: the union of the full
     // run's layers after ghost clean-up (the neck speck and the footwear speck are ghosts, removed in the run), all
@@ -17495,7 +17691,10 @@ function runDiagnosticsSuite(): number {
     // so off-art reads it; neck binds nothing and motion.tracks[3] keys it -> control; head binds the face region only.
     const cov = lint(P, spec).coverage;
     const off = (m: string): string => `off-art on mesh '${m}'`;
-    const links = (c: string, m: string): string[] => [0, 1, 2].map((k) => `${c}${k} checked, clean [deforms] read=${off(m)} lint=0 why=`);
+    // Issue #314: the three skirt chains share the skirt's lattice and are keyed, so each pair is read by the squeeze
+    // check (in pair order: r with c, r with l, c with l) after off-art; the sleeves are one chain to a mesh.
+    const sq = (m: string, others: readonly string[]): string => others.map((o) => `|squeeze with ${o} on mesh '${m}'`).join('');
+    const links = (c: string, m: string, others: readonly string[] = []): string[] => [0, 1, 2].map((k) => `${c}${k} checked, clean [deforms] read=${off(m)}${sq(m, others)} lint=0 why=`);
     const wantCov = [
       'hip checked, clean [deforms] read=hip-not-below-chest|hip-too-high lint=0 why=',
       'chest checked, clean [deforms] read=hip-not-below-chest lint=0 why=',
@@ -17503,9 +17702,9 @@ function runDiagnosticsSuite(): number {
       "head not checked [deforms] read= lint=0 why=bound rigidly by regions.face: no check reads a region's bone",
       ...links('sleeve_r', 'sleeve_a'),
       ...links('sleeve_l', 'sleeve_b'),
-      ...links('skirt_r', 'skirt'),
-      ...links('skirt_c', 'skirt'),
-      ...links('skirt_l', 'skirt'),
+      ...links('skirt_r', 'skirt', ['skirt_c', 'skirt_l']),
+      ...links('skirt_c', 'skirt', ['skirt_r', 'skirt_l']),
+      ...links('skirt_l', 'skirt', ['skirt_r', 'skirt_c']),
     ];
     const gotCov = cov.map(coverageRow);
     const wrongCov = wantCov.filter((w, i) => gotCov[i] !== w).map((w) => `${w.split(' ')[0]}: ${gotCov.find((g) => g.startsWith(`${w.split(' ')[0]} `)) ?? 'absent'}`);
@@ -17518,7 +17717,7 @@ function runDiagnosticsSuite(): number {
       gotCov.length === wantCov.length &&
         wrongCov.length === 0 &&
         summary === 'coverage: 19 bone(s) — 17 checked and clean, 0 checked with a LINT line, 2 not checked; roles 0 target, 18 deforms, 1 control, 0 unclassified' &&
-        movedLines.includes("coverage skirt_c1 [deforms]: checked, LINT — read by off-art on mesh 'skirt'; named by 1 LINT line(s)") &&
+        movedLines.includes("coverage skirt_c1 [deforms]: checked, LINT — read by off-art on mesh 'skirt', squeeze with skirt_r on mesh 'skirt', squeeze with skirt_l on mesh 'skirt'; named by 1 LINT line(s)") &&
         movedLines.at(-1) === 'coverage: 19 bone(s) — 14 checked and clean, 3 checked with a LINT line, 2 not checked; roles 0 target, 18 deforms, 1 control, 0 unclassified',
       `${gotCov.length} record(s) (want ${wantCov.length}); ${wrongCov.length === 0 ? 'every one as derived' : `NOT as derived: ${wrongCov.join(' || ')}`}; ${summary}; planted skirt_c at x 190: ${movedLines.at(-1)}`,
       'the card: "checked, clean" and "not checked" are different lines and the summary counts both — 4 single bones and 5 three-link chains are 19 bones, 15 links and hip and chest read, neck and head not; the planted control moves three links off the art, and they turn from clean to LINT without leaving the checked count',
@@ -17601,7 +17800,7 @@ function runDiagnosticsSuite(): number {
         kiltC1 !== undefined &&
         // Issue #262: no chest segment on the skirt, so skirt_c is its third segment, [2].
         kiltC1.why.join('\n') === 'its chain is named by meshes.kilt.segments[2] (mesh "kilt"), which names no part in parts.json' &&
-        gotCov.find((g) => g.startsWith('skirt_c1 ')) === "skirt_c1 checked, clean [deforms] read=off-art on mesh 'skirt' lint=0 why=",
+        gotCov.find((g) => g.startsWith('skirt_c1 ')) === "skirt_c1 checked, clean [deforms] read=off-art on mesh 'skirt'|squeeze with skirt_r on mesh 'skirt'|squeeze with skirt_l on mesh 'skirt' lint=0 why=",
       `skirt mesh renamed kilt: unknown meshes [${kilt.unknownMeshes.join(', ')}]; ${kiltC1 === undefined ? 'skirt_c1 absent' : coverageRow(kiltC1)}`,
       'lint already printed that the mesh was not linted; the coverage says which bones that left unread',
     );
