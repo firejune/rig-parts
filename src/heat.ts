@@ -44,10 +44,19 @@
  *   silhouette, or one whose every reached pixel is nearer another bone. A
  *   bone named in `segments` is a bone the author said may pull the layer;
  *   giving it 0 everywhere would be a silent answer to a question the
- *   config asked.
+ *   config asked. The rule is chosen per mesh (`meshes.<part>.rule`), so the
+ *   refusal names the third remedy too (issue #303): this part keeps the
+ *   distance rule — the one an author whose bone anchors the part from
+ *   outside its art (a torso bone on a neck) can take without moving a bone
+ *   another part placed or dropping the anchor.
  * - `RIG_HEAT_ISLAND_SOURCE`: a 4-connected island of the silhouette that no
  *   bone has a source in. With no fixed temperature the equation has no
- *   answer there; nothing nearest is borrowed.
+ *   answer there; nothing nearest is borrowed. When the caller can say the
+ *   island is dust that its `stray` would leave out ({@link HeatDust}: the
+ *   lattice, issue #303) the refusal names that field and the figure that
+ *   leaves the island out instead of a segment nobody would place on it; an
+ *   island above the dust line keeps the segment remedy, a real piece being
+ *   a real authoring question.
  * - `RIG_HEAT_CONVERGED`: above.
  *
  * Two runs on the same input write the same bytes: the claims, the sweep
@@ -55,6 +64,8 @@
  */
 import type { Point } from './config.ts';
 import { artMask, growSilhouette } from './contour.ts';
+import { DUST_MAX_PX, DUST_MAX_SHARE, isDust } from './mesh.ts';
+import { pyRound } from './round.ts';
 import type { Problem } from './errors.ts';
 import { connectedComponents, fillHoles, type Mask } from './raster/index.ts';
 import { capAndFloor, type Influence, type InfluenceLimits, type Segment, segmentDistance } from './weights.ts';
@@ -121,10 +132,33 @@ export interface HeatRow {
 const fmt = (v: number): string => String(Math.round(v * 1000) / 1000);
 
 /**
- * Solve bone heat over `sil` (part-image pixels) for `segs` (rig px; the image is the rig less `(ox, oy)`).
- * `object` names the mesh in every refusal. Every problem found is returned at once.
+ * What a mesh's `stray` can say about a silhouette island no bone reaches (issue #303), handed in by the mode that has
+ * the field (the lattice): the field's path, its declared figure (null when absent), and the part's art islands it
+ * reads — the art px (`isDust`'s share is of them) and the largest island's area, which `stray` never leaves out. It
+ * is read only when an island is refused, so a build that solves never computes it.
  */
-export function boneHeat(object: string, sil: Mask, segs: readonly Segment[], ox: number, oy: number, limits: HeatLimits = HEAT_LIMITS): HeatField | Problem[] {
+export interface HeatDust {
+  field: string;
+  declared: number | null;
+  artPixels: number;
+  largest: number;
+}
+
+/** The refusal's remedy for an island of `area` px no bone reaches: the stray field when the island is dust it would leave out, else a segment. */
+function islandRemedy(area: number, dust: HeatDust | null): string {
+  if (dust !== null && isDust(area, dust.artPixels) && area < dust.largest) {
+    const now = dust.declared === null ? 'it is absent' : `it is ${dust.declared}`;
+    return `the island is dust — at most ${DUST_MAX_PX} px and at most ${pyRound(DUST_MAX_SHARE * 100, 6)} % of the part's ${dust.artPixels} art px, mesh-draft's dust line — which no bone is meant to sit on: declare ${dust.field} at ${area} or more (${now}), which leaves an island that small out of the mesh and the silhouette heat solves over`;
+  }
+  return `under rule "heat" every island needs a segment within ${HEAT_SOURCE_BAND} px of one of its pixel centres — nothing is borrowed from the nearest island`;
+}
+
+/**
+ * Solve bone heat over `sil` (part-image pixels) for `segs` (rig px; the image is the rig less `(ox, oy)`).
+ * `object` names the mesh in every refusal. Every problem found is returned at once. `dust`, when the mesh's mode has
+ * a `stray` field, is read only to word an island refusal ({@link HeatDust}).
+ */
+export function boneHeat(object: string, sil: Mask, segs: readonly Segment[], ox: number, oy: number, limits: HeatLimits = HEAT_LIMITS, dust: (() => HeatDust) | null = null): HeatField | Problem[] {
   const { width: w, height: h, data } = sil;
   const n = w * h;
   const bones: string[] = [];
@@ -166,19 +200,21 @@ export function boneHeat(object: string, sil: Mask, segs: readonly Segment[], ox
     problems.push({
       code: 'RIG_HEAT_BONE_SOURCE',
       object,
-      detail: `bone "${bone}" — its segment ${where} (rig px) ${why}, so it holds no source pixel; under rule "heat" every bound bone needs at least one: a silhouette pixel (${silPixels} px) whose centre lies within ${HEAT_SOURCE_BAND} px of the segment and nearer it than any other bound bone's. A bone with no source is not weighted 0 — move its segment onto the art, or take the bone out of segments`,
+      detail: `bone "${bone}" — its segment ${where} (rig px) ${why}, so it holds no source pixel; under rule "heat" every bound bone needs at least one: a silhouette pixel (${silPixels} px) whose centre lies within ${HEAT_SOURCE_BAND} px of the segment and nearer it than any other bound bone's. A bone with no source is not weighted 0 — move its segment onto the art, take the bone out of segments, or keep this part on the distance rule (rule "distance", or no rule, on this mesh: the rule is chosen per mesh)`,
     });
   });
   const cc = connectedComponents(sil, 4);
   const sourced = new Uint8Array(cc.count);
   for (let i = 0; i < n; i++) if (owner[i] >= 0) sourced[cc.labels[i]] = 1;
+  let dustRead: HeatDust | null = null;
   for (let c = 1; c < cc.count; c++) {
     if (sourced[c]) continue;
     const st = cc.stats[c];
+    if (dust !== null && dustRead === null) dustRead = dust();
     problems.push({
       code: 'RIG_HEAT_ISLAND_SOURCE',
       object,
-      detail: `the silhouette's 4-connected island of ${st.area} px at rig (${st.left + ox}, ${st.top + oy}) holds no bound bone's source pixel, so the heat equation has no fixed temperature there and no answer; under rule "heat" every island needs a segment within ${HEAT_SOURCE_BAND} px of one of its pixel centres — nothing is borrowed from the nearest island`,
+      detail: `the silhouette's 4-connected island of ${st.area} px at rig (${st.left + ox}, ${st.top + oy}) holds no bound bone's source pixel, so the heat equation has no fixed temperature there and no answer; ${islandRemedy(st.area, dustRead)}`,
     });
   }
   if (problems.length > 0) return problems;

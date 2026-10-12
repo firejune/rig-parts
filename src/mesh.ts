@@ -360,3 +360,64 @@ export function latticeMesh(part: string, art: Mask, grid: number, maxPasses: nu
   }
   return mesh;
 }
+
+/**
+ * Dust (issue #265, Stage B's rule; moved here from `src/meshdraft.ts` by issue #303, so the rig stage's heat refusal
+ * and `mesh-draft` read one line): an extra 4-connected island of the art of at most this many art px …
+ */
+export const DUST_MAX_PX = 4;
+
+/** … and at most this share of the part's art px. */
+export const DUST_MAX_SHARE = 0.001;
+
+/** Whether an island of `area` art px is dust in a part of `artPixels` art px ({@link DUST_MAX_PX}, {@link DUST_MAX_SHARE}). */
+export function isDust(area: number, artPixels: number): boolean {
+  return area <= DUST_MAX_PX && area <= DUST_MAX_SHARE * artPixels;
+}
+
+/** What a declared `meshes.<part>.stray` left out of a lattice's art (issue #303). */
+export interface LatticeStray {
+  /** The art the lattice is built over: `art` itself when nothing was left out. */
+  art: Mask;
+  /** Islands left out, and their art px. */
+  islands: number;
+  pixels: number;
+  /** The art px of the part before anything was left out. */
+  artPixels: number;
+  /** The area of the largest island; an island this large is never left out. */
+  largest: number;
+}
+
+/**
+ * The lattice's `stray` (issue #303), the contour mode's field with the same meaning — the largest island, in art
+ * pixels, that may be left out of the mesh — read over the same islands: the 4-connected islands of the art (alpha
+ * above {@link ART_ALPHA}). Every island of `stray` art px or fewer is cleared from the art the lattice and its heat
+ * silhouette are built over, except an island as large as the largest, which is never left out (two equal largest
+ * pieces both stay: leaving one would be a choice the declaration does not make). Unlike the contour mode, an island
+ * above the figure is not refused: the lattice bridges every island it keeps (step 2 above), so it is meshed as it
+ * always was. The part's image is not touched; `artCoverage` is read over all the art, the islands left out included.
+ */
+export function latticeStray(art: Mask, stray: number): LatticeStray {
+  const comp = connectedComponents(art, 4);
+  let largest = 0;
+  let artPixels = 0;
+  for (let l = 1; l < comp.count; l++) {
+    largest = Math.max(largest, comp.stats[l].area);
+    artPixels += comp.stats[l].area;
+  }
+  const out = new Uint8Array(comp.count);
+  let islands = 0;
+  let pixels = 0;
+  for (let l = 1; l < comp.count; l++) {
+    const a = comp.stats[l].area;
+    if (a <= stray && a < largest) {
+      out[l] = 1;
+      islands++;
+      pixels += a;
+    }
+  }
+  if (islands === 0) return { art, islands, pixels, artPixels, largest };
+  const data = new Uint8Array(art.data);
+  for (let i = 0; i < data.length; i++) if (out[comp.labels[i]] === 1) data[i] = 0;
+  return { art: { width: art.width, height: art.height, data }, islands, pixels, artPixels, largest };
+}

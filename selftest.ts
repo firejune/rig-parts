@@ -220,7 +220,7 @@ import { TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, NOTCHED, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRAND, STRAND_CHAIN, STRIP } from './fixtures/contour.ts';
-import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from './src/mesh.ts';
+import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh, latticeStray } from './src/mesh.ts';
 import { type AcceptedOperation, type AlphaMask, checkHullOrder, type TrackAmplitude, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, type ReductionSkinning, simplifyClosedPolygon, traceAlphaOutline, traceOutline, windCounterClockwiseInSpineWorld, writeMeshQualityReport } from 'rig-c/mesh';
 import { allocationClause, AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, stageBClause, legacyArtCoverage, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
 import { AUTO_CASES, densityOnly, DIAGONAL_POCKET_SIDE, diagonalPocketMask, examplePolicy, finerSourcePolicy, matrixRegion, permissivePolicy, permissiveSyntheticPolicy, SMALL_STRIP_MASK, SPECK_RULE_PX, speckMask, squareRegion, STRIP_MASK, syntheticPolicy, TWO_PIECES_MASK } from './fixtures/automesh.ts';
@@ -376,7 +376,7 @@ import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines
 import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeypoints, parseKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
 import { LEGS_APART, LEGS_JOINED, LYING_PARTS, LYING_RIG, type PoseName, POSES, SEATED_PARTS, SEATED_RIG } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
-import { block, constraintConfig, FACE_EXPECT, faceConfig, faceImages, faceParts, HEAT_STRIP_EXPECT, heatStripConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
+import { block, constraintConfig, dustImages, dustParts, FACE_EXPECT, faceConfig, faceImages, faceParts, HEAT_STRIP_EXPECT, heatStripConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
 import { blinkHoldProblems, buildRig, DEFAULT_IDLE_KEYS, FACE_TIPS_AXIS_NAME, HEAD_UP_BONE, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigOutput, type RigSpec, roundShares, tipRoundingBound, writtenShares } from './src/rig.ts';
 import { type ComposedScene, composeFromFiles, IMAGE_SEP, PLATE, PLATE_IMAGE, PREFIX_SEP, SCENE_REPORT_FILE, SCENE_SPEC, scaledConstraint, unprefixedNames } from './src/scene.ts';
 import { sceneCharacterRig, sceneText, writeFlatPlate, writeSceneBuild } from './fixtures/scene.ts';
@@ -1976,6 +1976,40 @@ function runConfigSuite(): number {
       (auto126?.problems[0].detail.includes('auto.influences (maxInfluences, minWeight)') ?? false),
     `loads: ${loads126.map(show75).join(', ')}; planted: cap 0 -> ${show75(zero126)}; 4.5 -> ${show75(half126)}; "none" -> ${show75(word126)}; "5" -> ${show75(text126)}; floor "smooth" -> ${show75(floor126)}; {} -> ${show75(empty126)}; maxInfluence (typo) -> ${show75(typo126)}; 5 -> ${show75(bare126)}; on an auto mesh -> ${show75(auto126)}`,
     'issue #284: the cut becomes the author\'s, so a malformed one is a refusal naming the field, never a nearby value: a cap of 0 keeps no bone, 4.5 bones is no count, no cap is null — the config\'s spelling of a bound declared absent (maxOvershoot, weightJump) — so the word "none" is a string no reader takes, and an unknown floor form is not mapped to a known one; an empty declaration declares nothing; and on an automatic mesh the field would be read by nothing while its author believed it cut the weights — that mode is handed its cap and floor in auto.influences',
+  );
+  // CF246 — issue #303: meshes.<part>.stray, the lattice's largest island that may be left out, a whole number 0 or
+  // more; beside contour or auto it is refused by name, since those modes state it in contour.stray and auto.source.stray.
+  const SAT246 = 'config.meshes.robe.stray';
+  const strayed = (stray: unknown, mode: 'grid' | 'contour' | 'auto' = 'grid'): PartsError | null =>
+    refusals(() =>
+      parseConfig(
+        (() => {
+          const c = minimalConfig();
+          const robe = (c.meshes as Record<string, Record<string, unknown>>).robe;
+          if (mode !== 'grid') delete robe.grid;
+          if (mode === 'contour') robe.contour = { tolerance: 0, margin: 1, spacing: 4 };
+          if (mode === 'auto') robe.auto = withPolicyMotion(syntheticPolicy(4));
+          robe.stray = stray;
+          return c;
+        })(),
+      ),
+    );
+  const loads246 = [strayed(0), strayed(4)];
+  const neg246 = strayed(-1);
+  const half246 = strayed(1.5);
+  const text246 = strayed('4');
+  const contour246 = strayed(4, 'contour');
+  const auto246 = strayed(4, 'auto');
+  say(
+    'CF246_A_LATTICE_STRAY_LOADS_AND_A_MALFORMED_ONE_OR_ONE_BESIDE_CONTOUR_OR_AUTO_IS_REFUSED_BY_NAME',
+    loads246.every((e) => e === null) &&
+      one75(neg246, 'CONFIG_FIELD_TYPE', SAT246, 'is -1; an integer at or above 0 is required') &&
+      one75(half246, 'CONFIG_FIELD_TYPE', SAT246, 'is 1.5; an integer at or above 0 is required') &&
+      one75(text246, 'CONFIG_FIELD_TYPE', SAT246, 'is "4"; an integer at or above 0 is required') &&
+      one75(contour246, 'CONFIG_STRAY_MODE', SAT246, 'is 4 on a contour mesh (contour); that mode states the largest island it may leave out in contour.stray, which its trace reads — declare it there, or remove stray') &&
+      one75(auto246, 'CONFIG_STRAY_MODE', SAT246, 'is 4 on an automatic mesh (auto); that mode states the largest island it may leave out in auto.source.stray, which its trace reads — declare it there, or remove stray'),
+    `loads: ${loads246.map(show75).join(', ')}; planted: -1 -> ${show75(neg246)}; 1.5 -> ${show75(half246)}; "4" -> ${show75(text246)}; beside contour -> ${show75(contour246)}; beside auto -> ${show75(auto246)}`,
+    'issue #303: the lattice gains the contour mode\'s stray with its meaning and its type; beside a mode that already states it elsewhere the field would be read by nothing while its author believed it left islands out, so it is refused naming the place it belongs',
   );
   return bad();
 }
@@ -4463,6 +4497,109 @@ function runHeatRuleCases(say: (name: string, ok: boolean, detail: string, why: 
       !Array.isArray(fullSolve),
     `the two-island cloth with both bones' segments in the left island -> ${noIsland === null ? 'no refusal' : noIsland.problems.map((q) => `${q.code}: ${q.detail}`).join(' | ')}; the strip solved with an iteration bound of 1 -> ${cv.map((q) => `${q.code}: ${q.detail}`).join(' | ') || 'no refusal'}; with the declared bound -> ${Array.isArray(fullSolve) ? 'refused' : 'solved'}`,
     'issue #161: with no fixed temperature an island has no answer, and a field stopped short of its tolerance is not the rule — both are refused rather than borrowed or written half-solved. By hand: islandImages clears unpadded columns 4..11, so the right island is padded columns 16..19 by rows 4..11, 32 px, its corner rig (16 + 6, 4 + 6)',
+  );
+
+  // RG95 — issue #303: the lattice's `stray` leaves a dust island out of the mesh and of heat's silhouette, and the
+  // island refusal names that field when the island is dust (fixtures/rig.ts, the dust fixture, every figure by hand).
+  type Row303 = { vertices: number; triangles: number; art_coverage: number; stray?: number; stray_cleared?: { islands: number; pixels: number; art_pixels: number }; heat?: unknown };
+  const dust303 = (mesh: Record<string, unknown>, runs: Array<[number, number, number]>): { row: Row303 | null; err: PartsError | null } => {
+    let row: Row303 | null = null;
+    const err = refusals(() => {
+      row = buildRig(parseConfig(heatStripConfig(mesh)), dustParts(), dustImages(runs)).meshReport[0] as unknown as Row303;
+    });
+    return { row, err };
+  };
+  const one303 = (e: PartsError | null, detail: string): boolean => e !== null && e.problems.length === 1 && e.problems[0].code === 'RIG_HEAT_ISLAND_SOURCE' && e.problems[0].object === 'config.meshes.cloth' && e.problems[0].detail === detail;
+  const show303 = (o: { row: Row303 | null; err: PartsError | null }): string =>
+    o.err !== null ? o.err.problems.map((q) => `${q.code} ${q.object}: ${q.detail}`).join(' | ') : `v ${o.row?.vertices} t ${o.row?.triangles} cover ${o.row?.art_coverage} stray ${JSON.stringify(o.row?.stray ?? null)} cleared ${JSON.stringify(o.row?.stray_cleared ?? null)} heat ${o.row?.heat === undefined ? 'absent' : 'solved'}`;
+  const DUST_HEAD = (px: number) => `the silhouette's 4-connected island of ${px} px at rig (63, 30) holds no bound bone's source pixel, so the heat equation has no fixed temperature there and no answer; `;
+  const latticeOnDust = dust303({}, [[53, 20, 1]]);
+  const latticeStrayed = dust303({ stray: 1 }, [[53, 20, 1]]);
+  const heatOnDust = dust303({ rule: 'heat' }, [[53, 20, 1]]);
+  const heatStrayed = dust303({ rule: 'heat', stray: 1 }, [[53, 20, 1]]);
+  const oneAbove = dust303({ rule: 'heat', stray: 1 }, [[53, 20, 2]]);
+  const realPiece = dust303({ rule: 'heat' }, [[53, 20, 3]]);
+  say(
+    'RG95_A_LATTICE_STRAY_LEAVES_A_DUST_ISLAND_OUT_AND_THE_HEAT_REFUSAL_NAMES_IT_ONLY_WHERE_THE_ISLAND_IS_DUST',
+    latticeOnDust.row?.vertices === 58 &&
+      latticeOnDust.row.triangles === 86 &&
+      latticeOnDust.row.stray === undefined &&
+      latticeOnDust.row.stray_cleared === undefined &&
+      latticeStrayed.row?.vertices === 56 &&
+      latticeStrayed.row.triangles === 84 &&
+      latticeStrayed.row.art_coverage === 0.9995 &&
+      latticeStrayed.row.stray === 1 &&
+      JSON.stringify(latticeStrayed.row.stray_cleared) === '{"islands":1,"pixels":1,"art_pixels":2001}' &&
+      one303(heatOnDust.err, `${DUST_HEAD(1)}the island is dust — at most 4 px and at most 0.1 % of the part's 2001 art px, mesh-draft's dust line — which no bone is meant to sit on: declare config.meshes.cloth.stray at 1 or more (it is absent), which leaves an island that small out of the mesh and the silhouette heat solves over`) &&
+      heatStrayed.err === null &&
+      heatStrayed.row?.vertices === 56 &&
+      heatStrayed.row.heat !== undefined &&
+      one303(oneAbove.err, `${DUST_HEAD(2)}the island is dust — at most 4 px and at most 0.1 % of the part's 2002 art px, mesh-draft's dust line — which no bone is meant to sit on: declare config.meshes.cloth.stray at 2 or more (it is 1), which leaves an island that small out of the mesh and the silhouette heat solves over`) &&
+      one303(realPiece.err, `${DUST_HEAD(3)}under rule "heat" every island needs a segment within ${HEAT_SOURCE_BAND} px of one of its pixel centres — nothing is borrowed from the nearest island`),
+    `a 1-px run beside the 2000-px block, lattice: ${show303(latticeOnDust)}; with stray 1: ${show303(latticeStrayed)}; under "heat": ${show303(heatOnDust)}; under "heat" with stray 1: ${show303(heatStrayed)}; planted, a 2-px run under "heat" with stray 1 (one pixel above the figure): ${show303(oneAbove)}; planted, a 3-px run under "heat" (not dust: 3 > 0.1 % of 2003): ${show303(realPiece)}`,
+    'issue #303: an island of antialiasing dust is refused under heat asking for a bone nobody would place on it; the lattice gains the contour mode\'s stray, the refusal names it — field, figure and the declared value — only where the island is dust by mesh-draft\'s line, and a real piece keeps the segment remedy. By hand (fixtures/rig.ts): 58/86 with the dust cell, 56/84 without; cover 2000/2001 = 0.9995',
+  );
+
+  // RG96 — issue #303: absent, no byte moves; a stray that leaves nothing out moves no byte of rig.json or motion.json
+  // and only echoes itself in the row. Planted: a stray that leaves the dust out moves rig.json.
+  const rigTexts303 = (mesh: Record<string, unknown>, parts: () => ReturnType<typeof rigParts>, images: Map<string, Raster>): string[] => {
+    const b = buildRig(parseConfig(heatStripConfig(mesh)), parts(), images);
+    return [rigJsonText(b.rig), rigJsonText(b.motion), rigJsonText(b.meshReport)];
+  };
+  const oneIsland = rigTexts303({}, rigParts, rigImages());
+  const oneIslandStray = rigTexts303({ stray: 4 }, rigParts, rigImages());
+  const dustAbsent = rigTexts303({}, dustParts, dustImages([[53, 20, 1]]));
+  const dustZero = rigTexts303({ stray: 0 }, dustParts, dustImages([[53, 20, 1]]));
+  const dustOne = rigTexts303({ stray: 1 }, dustParts, dustImages([[53, 20, 1]]));
+  const echoOnly = (a: string, b: string): boolean => {
+    const x = JSON.parse(a) as Array<Record<string, unknown>>;
+    const y = JSON.parse(b) as Array<Record<string, unknown>>;
+    const { stray, stray_cleared, ...rest } = y[0];
+    return JSON.stringify([rest]) === JSON.stringify(x) && typeof stray === 'number' && (stray_cleared as { islands: number }).islands === 0;
+  };
+  say(
+    'RG96_A_STRAY_THAT_LEAVES_NOTHING_OUT_MOVES_NO_BYTE_OF_THE_RIG_AND_ONE_THAT_LEAVES_DUST_OUT_DOES',
+    sameAs(oneIsland.slice(0, 2), oneIslandStray.slice(0, 2)) === 'byte-identical' &&
+      echoOnly(oneIsland[2], oneIslandStray[2]) &&
+      sameAs(dustAbsent.slice(0, 2), dustZero.slice(0, 2)) === 'byte-identical' &&
+      echoOnly(dustAbsent[2], dustZero[2]) &&
+      dustAbsent[0] !== dustOne[0],
+    `the strip (one island), stray 4 vs absent -> rig.json, motion.json ${sameAs(oneIsland.slice(0, 2), oneIslandStray.slice(0, 2))}, the row ${echoOnly(oneIsland[2], oneIslandStray[2]) ? 'differs by the echo only' : 'DIFFERS beyond the echo'}; the dust fixture, stray 0 vs absent -> ${sameAs(dustAbsent.slice(0, 2), dustZero.slice(0, 2))}, the row ${echoOnly(dustAbsent[2], dustZero[2]) ? 'differs by the echo only' : 'DIFFERS beyond the echo'}; planted, stray 1 vs absent -> rig.json ${dustAbsent[0] === dustOne[0] ? 'IDENTICAL' : 'moves'}`,
+    'issue #303: absent, the lattice is the one it always was; a declaration that leaves no island out changes no vertex, and the examples\' expected/ bytes (the chain suite) hold the absent case on real parts',
+  );
+
+  // RG97 — issue #303: the rule is chosen per mesh, so a bone with no source names the remedy that exists without moving
+  // a bone or dropping it — this part keeps the distance rule — and that remedy, taken, builds.
+  const offArtMesh = (rule: string | null): Record<string, unknown> => offArt(rule);
+  const bs = refusals(() => buildRig(parseConfig(offArtMesh('heat')), rigParts(), rigImages()));
+  const keptDistance = refusals(() => buildRig(parseConfig(offArtMesh('distance')), rigParts(), rigImages()));
+  const BS_DETAIL = `bone "eye" — its segment (2, 2)->(2, 2) (rig px) reaches no pixel of the silhouette, so it holds no source pixel; under rule "heat" every bound bone needs at least one: a silhouette pixel (128 px) whose centre lies within ${HEAT_SOURCE_BAND} px of the segment and nearer it than any other bound bone's. A bone with no source is not weighted 0 — move its segment onto the art, take the bone out of segments, or keep this part on the distance rule (rule "distance", or no rule, on this mesh: the rule is chosen per mesh)`;
+  say(
+    'RG97_A_BONE_WITH_NO_SOURCE_NAMES_THE_DISTANCE_RULE_FOR_THIS_PART_AND_THAT_REMEDY_BUILDS',
+    bs !== null && bs.problems.length === 1 && bs.problems[0].code === 'RIG_HEAT_BONE_SOURCE' && bs.problems[0].object === 'config.meshes.cloth' && bs.problems[0].detail === BS_DETAIL && keptDistance === null && underDistance === null,
+    `the strip plus ["eye", [2, 2], [2, 2]] under "heat" -> ${bs === null ? 'no refusal' : bs.problems.map((q) => `${q.code} ${q.object}: ${q.detail}`).join(' | ')}; the remedy taken, rule "distance" -> ${keptDistance === null ? 'builds' : codes(keptDistance)}; no rule -> ${underDistance === null ? 'builds' : codes(underDistance)}`,
+    'issue #303: a torso bone that anchors a neck lies below the neck\'s art by construction; moving it moves a bone another part placed, and dropping it drops the anchor the author meant, so the refusal also names the remedy the per-mesh rule gives — this part keeps the distance rule',
+  );
+
+  // RG98 — issue #303: the lattice's stray rule on islands counted by hand: every island at or under the figure is left
+  // out but one as large as the largest, and an island above the figure stays (the lattice bridges it).
+  const mask303 = (w: number, on: number[]): { width: number; height: number; data: Uint8Array } => {
+    const data = new Uint8Array(w * 4);
+    for (const i of on) data[i] = 1;
+    return { width: w, height: 4, data };
+  };
+  // A 10x4 mask, four 4-connected islands: 5 px (row 0, x 0..4), 2 px (row 2, x 0..1), 2 px (row 2, x 5..6) and 3 px
+  // (row 2, x 9, and row 3, x 8..9).
+  const mixed = mask303(10, [0, 1, 2, 3, 4, 20, 21, 25, 26, 29, 38, 39]);
+  const m3 = latticeStray(mixed, 2);
+  const tied = latticeStray(mask303(10, [0, 1, 20, 21]), 2);
+  const none = latticeStray(mixed, 1);
+  const kept = (r: ReturnType<typeof latticeStray>): string => [...r.art.data].map((v, i) => (v === 1 ? i : -1)).filter((i) => i >= 0).join(',');
+  say(
+    'RG98_THE_LATTICE_STRAY_LEAVES_OUT_EVERY_ISLAND_AT_OR_UNDER_THE_FIGURE_BUT_ONE_AS_LARGE_AS_THE_LARGEST',
+    m3.islands === 2 && m3.pixels === 4 && m3.artPixels === 12 && m3.largest === 5 && kept(m3) === '0,1,2,3,4,29,38,39' && tied.islands === 0 && kept(tied) === '0,1,20,21' && none.islands === 0 && none.art === mixed,
+    `islands 5, 2, 2, 3 at stray 2 -> left out ${m3.islands} island(s), ${m3.pixels} px of ${m3.artPixels}, kept pixels ${kept(m3)}; two 2-px islands at stray 2 (a tie for the largest) -> left out ${tied.islands}, kept ${kept(tied)}; stray 1 on the first -> left out ${none.islands}, art ${none.art === mixed ? 'the same object' : 'A COPY'}`,
+    'issue #303: the contour mode\'s meaning on the lattice — the largest island in art px that may be left out — over the same 4-connected islands; the largest is never left out, and a tie for it leaves both, since keeping one of two equal pieces is a choice the declaration does not make; with nothing left out the art is the input itself, so nothing downstream moves',
   );
 }
 

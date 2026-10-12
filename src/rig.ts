@@ -153,13 +153,13 @@ import {
 } from './automesh.ts';
 import { type ContourChainRibs, type ContourReport, contourMesh, type ContourRegion, type ContourRib } from './contour.ts';
 import { type LocalInfluence, localInfluences } from './localweights.ts';
-import { artCoverage, ART_ALPHA, latticeMesh, ONE_LOOP_PASSES } from './mesh.ts';
+import { artCoverage, ART_ALPHA, latticeMesh, latticeStray, ONE_LOOP_PASSES } from './mesh.ts';
 import { BLINK, blinkHoldMisses, blinkSpan, CONTROL_SUFFIX, controlledBones, IDLE_FPS, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
 import { PAINTING_RUN, type PartsFile, readFrom, tagOf } from './parts.ts';
 import { EYE_GROUP_TAGS } from './propose.ts';
 import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
-import { boneHeat, heatInfluences, heatRow, type HeatRow, latticeSilhouette, tracedSilhouette } from './heat.ts';
+import { boneHeat, type HeatDust, heatInfluences, HEAT_LIMITS, heatRow, type HeatRow, latticeSilhouette, tracedSilhouette } from './heat.ts';
 import { TURN_BONE, type TurnSpec, turnConstraintName, turnFractions, turnTwin } from './turn.ts';
 import { DISTANCE_EXPONENT, type FloorForm, type Influence, influences, type InfluenceLimits, type MeshInfluences, meshLimits, type Segment } from './weights.ts';
 
@@ -650,6 +650,10 @@ export interface LatticeMeshReport {
   exponent?: number;
   /** The cap and floor form the mesh declared, as declared (issue #284); absent when it declared none and ran at 4 and the cut. */
   influences?: MeshInfluences;
+  /** The `stray` the mesh declared (issue #303); absent when it declared none. */
+  stray?: number;
+  /** Only beside a declared `stray` (issue #303): the islands it left out of the lattice, their art px, and the part's art px. */
+  stray_cleared?: StrayCleared;
   /** Only under `rule: "heat"` (issue #161): the rule and the solve it ran. Absent otherwise, so a distance mesh writes the row it always wrote. */
   heat?: HeatRow;
 }
@@ -1745,7 +1749,11 @@ export function buildRig(
       meshReport.push(row.report);
       continue;
     }
-    const art = alphaAbove(img, ART_ALPHA);
+    const allArt = alphaAbove(img, ART_ALPHA);
+    // issue #303: under a declared `stray`, the islands it leaves out are cleared from the art the lattice and its heat
+    // silhouette are built over; absent, `art` is `allArt` itself and nothing downstream moves.
+    const stray = mesh.stray === undefined ? null : latticeStray(allArt, mesh.stray);
+    const art = stray === null ? allArt : stray.art;
     const lm = latticeMesh(p.name, art, mesh.grid, maxLoopPasses);
     if ('code' in lm) {
       problems.push(lm);
@@ -1755,7 +1763,12 @@ export function buildRig(
     const ox = p.x - PAD;
     const oy = p.y - PAD;
     // issue #161: under rule "heat", the field over the lattice's art (alpha above 8) with its holes filled.
-    const heat = mesh.rule === 'heat' ? boneHeat(`config.meshes.${p.name}`, latticeSilhouette(art), segs, ox, oy) : null;
+    // issue #303: an island no bone reaches is worded against the lattice's own `stray` when it is dust.
+    const dust = (): HeatDust => {
+      const read = stray ?? latticeStray(allArt, 0);
+      return { field: `config.meshes.${p.name}.stray`, declared: mesh.stray ?? null, artPixels: read.artPixels, largest: read.largest };
+    };
+    const heat = mesh.rule === 'heat' ? boneHeat(`config.meshes.${p.name}`, latticeSilhouette(art), segs, ox, oy, HEAT_LIMITS, dust) : null;
     if (Array.isArray(heat)) {
       problems.push(...heat);
       continue;
@@ -1803,10 +1816,11 @@ export function buildRig(
       bones: [...new Set(segs.map((s) => s.bone))].sort(),
       max_influences: maxInfl,
       mean_influences: pyRound(infl / lm.vertices.length, 2),
-      art_coverage: pyRound(artCoverage(lm, art), 5),
+      art_coverage: pyRound(artCoverage(lm, allArt), 5),
       grid: mesh.grid,
       ...(mesh.exponent === undefined ? {} : { exponent: mesh.exponent }),
       ...(mesh.influences === undefined ? {} : { influences: mesh.influences }),
+      ...(stray === null ? {} : { stray: mesh.stray as number, stray_cleared: { islands: stray.islands, pixels: stray.pixels, art_pixels: stray.artPixels } }),
       ...(heat === null ? {} : { heat: heatRow(heat) }),
     });
   }
