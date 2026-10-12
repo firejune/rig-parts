@@ -30,6 +30,37 @@
  */
 import { pyRound } from './round.ts';
 
+/**
+ * The layers that ride on the face (issue #271): See-through makes no depth
+ * of their own for them, so `propose` does not read theirs. The eye group —
+ * eyewhite, irides, eyelash, eyebrow — is cut from one depth map predicted for
+ * the combined eyes layer (`compose_list` in See-through's
+ * `common/utils/inference_utils.py`, commit df019de), which is why
+ * `eyewhite-r` and `eyewhite-l` read the same median in every run measured
+ * for #251; nose and mouth are clamped by See-through to the face's median
+ * minus {@link TURN_RIDER_OFFSET} when they read behind it (the same file,
+ * lines 528-531). Their own medians disagreed across the two runs by up to
+ * 0.474 (demo `eyebrow-r`, #251's table), and the disagreement swapped their
+ * order against the face. Matched on the layer's base tag, either side.
+ */
+export const TURN_RIDER_TAGS: readonly string[] = ['eyewhite', 'irides', 'eyelash', 'eyebrow', 'nose', 'mouth'];
+
+/** The tag of the part the riders take their depth from. */
+export const TURN_CARRIER_TAG = 'face';
+
+/** See-through's own offset between a clamped face feature and the face (`face − 0.001`, the file named at {@link TURN_RIDER_TAGS}). */
+export const TURN_RIDER_OFFSET = 0.001;
+
+/**
+ * A rider's depth: its carrier's, {@link TURN_RIDER_OFFSET} nearer when the
+ * rider is drawn after the carrier (above it) and as much further when it is
+ * drawn before (under it), so the draw order the depths imply is the one
+ * parts.json holds.
+ */
+export function turnRiderDepth(carrier: number, above: boolean): number {
+  return above ? carrier - TURN_RIDER_OFFSET : carrier + TURN_RIDER_OFFSET;
+}
+
 /** The control bone the rig stage adds under `root` when the config has `turn`: nothing keys it, and its local x is the dial. */
 export const TURN_BONE = 'turn';
 
