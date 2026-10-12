@@ -8627,7 +8627,8 @@ function readJsonFile(path: string): Record<string, unknown> | null {
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>) : null;
 }
 
-const CHECK_KEYS = ['gate_spine_html_green', 'rigc_entry', 'pack_mode', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', 'seam_frame_scale', ...JUDGEMENT_LINES, ...REPORTED_LINES, 'PASS'];
+// Issue #333: the fold bar reads the idle too, so every rig whose motion holds an animation writes it after the judgement lines.
+const CHECK_KEYS = ['gate_spine_html_green', 'rigc_entry', 'pack_mode', 'loop_max_diff', 'seam_mean', 'seam_px_over_40', 'seam_px_over_80', 'seam_frame_scale', ...JUDGEMENT_LINES, FOLD_LINE, ...REPORTED_LINES, 'PASS'];
 
 /** A judgement line's status in a check.json read back, or null. */
 function lineStatus(fig: Record<string, unknown> | null, name: string): string | null {
@@ -8723,7 +8724,8 @@ function runSourceCases(dir: string, say: (name: string, ok: boolean, detail: st
   // The card's shape: two prefixed copies under one root, a plate region at slot 0, no parts.json, an idle.
   const withIdle = merged('merged-idle', { idle: true, plate: true });
   const skippedIdle = withIdle.fig?.skipped as { loop?: string; seam?: string } | undefined;
-  const wantSummary1 = `check: PASS; 2 of ${BARS.length} bar(s) measured, 7 skipped (seam, ${JUDGEMENT_LINES.join(', ')})`;
+  // Issue #333: the idle is read for folds, so the fold bar is written and measured beside the gate and the loop.
+  const wantSummary1 = `check: PASS; 3 of ${BARS.length + 1} bar(s) measured, 7 skipped (seam, ${JUDGEMENT_LINES.join(', ')})`;
   say(
     'CK56_A_MERGED_RIG_WITH_NO_PARTS_JSON_GATES_LOOPS_AND_SAYS_SKIP_BY_NAME_FOR_EVERY_LINE_THAT_READS_PARTS',
     withIdle.status === 0 &&
@@ -8926,9 +8928,9 @@ function runSourceCases(dir: string, say: (name: string, ok: boolean, detail: st
   const defaultSummary = summaryOf(defaultRun.out);
   say(
     'CK67_THE_DEFAULT_RUN_COUNTS_ITS_BARS_AND_WRITES_NO_KEY_IT_DID_NOT_WRITE_BEFORE',
-    defaultRun.status === 0 && defaultSummary === `check: PASS; 4 of ${BARS.length} bar(s) measured, 5 skipped (${JUDGEMENT_LINES.filter((n) => n !== 'BREATH_VISIBLE').join(', ')})` && !defaultRun.out.includes(`${SOURCE_LINE}:`),
+    defaultRun.status === 0 && defaultSummary === `check: PASS; 5 of ${BARS.length + 1} bar(s) measured, 5 skipped (${JUDGEMENT_LINES.filter((n) => n !== 'BREATH_VISIBLE').join(', ')})` && !defaultRun.out.includes(`${SOURCE_LINE}:`),
     `"${defaultSummary}"; ${SOURCE_LINE} printed: ${defaultRun.out.includes(`${SOURCE_LINE}:`)}`,
-    "with parts.json and an idle and no --source, check.json keeps exactly its keys (CK01) and the examples' check.json and gate file their bytes (CH04, CH05); the summary now says how many of the bars measured — on this fixture the gate, the loop, the seam and, since issue #323, BREATH_VISIBLE's torso half: its two topwear parts give the torso half something to read and the other judgement lines nothing",
+    "with parts.json and an idle and no --source, check.json keeps exactly its keys (CK01) and the examples' check.json and gate file their bytes (CH04, CH05); the summary now says how many of the bars measured — on this fixture the gate, the loop, the seam, since issue #323 BREATH_VISIBLE's torso half, and since issue #333 the fold bar over the idle: its two topwear parts give the torso half something to read and the other judgement lines nothing",
   );
 }
 
@@ -9310,7 +9312,7 @@ function runCheckSuite(): number {
         lineStatus(fig, 'RECOMPOSITE_HOLES') === 'SKIP' &&
         ok.out.includes('  RECOMPOSITE_HOLES: SKIP — parts.json has no "recomposite" block'),
       `exit ${ok.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig).slice(0, 220)}…; judgement lines ${JUDGEMENT_LINES.map((n) => `${n} ${lineStatus(fig, n) ?? 'absent'}`).join(', ')}; RECOMPOSITE_HOLES ${lineStatus(fig, 'RECOMPOSITE_HOLES') ?? 'absent'}; missing outputs: ${missing.join(', ') || 'none'}; pack ${pack.map((p) => p.line).join(' | ') || 'none'} for ${CHECK_PARTS.length} part(s); --rig ${listing(rig).join('|') === before.join('|') ? 'unchanged' : 'CHANGED'}`,
-      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from the spine-html gate, with the reference's check.json keys in its order (gate_spine_green gone with the second gate, rigc_entry after the gate, pack_mode after it) and the six judgement lines and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line but BREATH_VISIBLE has nothing to read (and neither part is a mesh, so neither has TEXTURE_STRETCH) and must say SKIP, by name, with its reason — never PASS — while BREATH_VISIBLE reads its torso half and says it measured 1 of 2 halves (issue #323) — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
+      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from the spine-html gate, with the reference's check.json keys in its order (gate_spine_green gone with the second gate, rigc_entry after the gate, pack_mode after it) and the six judgement lines, the fold bar over the idle (issue #333) and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line but BREATH_VISIBLE has nothing to read (and neither part is a mesh, so neither has TEXTURE_STRETCH) and must say SKIP, by name, with its reason — never PASS — while BREATH_VISIBLE reads its torso half and says it measured 1 of 2 halves (issue #323) — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
     );
 
     const again = runCli(['check', '--rig', rig, '--out', join(dir, 'out2')]);
@@ -11300,15 +11302,18 @@ function runAnimationFoldCases(say: (name: string, ok: boolean, detail: string, 
     const bend = { duration: 1, tracks: [{ bone: 'hem1', property: 'translate', keys: [{ t: 0, v: [0, 0] }, { t: 0.5, v: [-40, 0] }, { t: 1, v: [0, 0] }] }] };
     const rigged = (name: string, animations: Record<string, unknown>): { rig: string; parts: string; status: number } => {
       const c = rigConfig();
-      (c.motion as Record<string, unknown>).animations_from = 'anims/extra.json';
+      // An empty table is the idle alone (CK364): the config names no animations_from at all.
+      if (Object.keys(animations).length > 0) (c.motion as Record<string, unknown>).animations_from = 'anims/extra.json';
       // Issue #323: the fixture's one torso part, `cloth` (full:topwear), is read by BREATH_VISIBLE now that a figure with no
       // footwear has its torso half measured; rigConfig's idle sways only the hem (heat mean 3.678 < 3.809), so these cases
       // give the torso the breath a figure has — `body` translatey, amplitude 1 over the idle's 4 s (35.068) — and the fold
-      // bar is the only one a case here fails.
+      // bar is the only one a case here fails (but CK364's planted idle, whose collapsed edges fail TEXTURE_STRETCH too).
       ((c.motion as Record<string, unknown>).tracks as unknown[]).push({ bone: 'body', prop: 'translatey', amp: 1, period: 4, phase: 0 });
       const f = writeRigFixture(join(dir, name), c);
-      mkdirSync(join(dir, name, 'anims'), { recursive: true });
-      writeFileSync(join(dir, name, 'anims', 'extra.json'), `${JSON.stringify({ spec: 'rigc-motion/1', animations }, null, 2)}\n`);
+      if (Object.keys(animations).length > 0) {
+        mkdirSync(join(dir, name, 'anims'), { recursive: true });
+        writeFileSync(join(dir, name, 'anims', 'extra.json'), `${JSON.stringify({ spec: 'rigc-motion/1', animations }, null, 2)}\n`);
+      }
       const r = runCli(['rig', '--config', f.config, '--parts', f.parts, '--out', join(dir, name, 'rig')]);
       return { rig: join(dir, name, 'rig'), parts: f.parts, status: r.status };
     };
@@ -11341,7 +11346,7 @@ function runAnimationFoldCases(say: (name: string, ok: boolean, detail: string, 
         ok.status === 0 &&
         foldOf(ok.fig)?.status === 'PASS' &&
         rows(ok.fig).length === 0 &&
-        JSON.stringify(foldOf(ok.fig)?.animations) === '["nod"]' &&
+        JSON.stringify(foldOf(ok.fig)?.animations) === '["idle","nod"]' &&
         foldOf(ok.fig)?.fps === 12 &&
         okKeys.indexOf(FOLD_LINE) === okKeys.indexOf('TEXTURE_STRETCH') + 1 &&
         summary(ok.out).startsWith('check: PASS; ') &&
@@ -11350,7 +11355,7 @@ function runAnimationFoldCases(say: (name: string, ok: boolean, detail: string, 
         red.status === 1 &&
         red.fig?.PASS === false &&
         foldOf(red.fig)?.status === 'FAIL' &&
-        JSON.stringify(foldOf(red.fig)?.animations) === '["nod","bend"]' &&
+        JSON.stringify(foldOf(red.fig)?.animations) === '["idle","nod","bend"]' &&
         redRows.length === 1 &&
         redRows[0].animation === 'bend' &&
         redRows[0].slot === 'cloth' &&
@@ -11366,7 +11371,7 @@ function runAnimationFoldCases(say: (name: string, ok: boolean, detail: string, 
         summary(red.out).startsWith('check: FAIL — 1 bar(s) not met; ') &&
         !existsSync(join(red.outDir, '_folds')),
       `nod alone: exit ${ok.status}, ${String(foldOf(ok.fig)?.status)}, key after ${okKeys[okKeys.indexOf(FOLD_LINE) - 1] ?? 'nothing'}, "${summary(ok.out)}"; planted bend: exit ${red.status}, ${String(foldOf(red.fig)?.status)}, ${redRows.length} row(s) ${redRows.map((r) => `${String(r.animation)}/${String(r.slot)}`).join(', ')}; ${redFail?.trim().slice(0, 200) ?? 'no FAIL line'}…; "${summary(red.out)}"; scratch ${existsSync(join(red.outDir, '_folds')) ? 'LEFT' : 'removed'}`,
-      "issue #320: check read the animations beside the idle for nothing, so a gesture that turned a garment's triangles over passed with PASS printed; rigc render --folds over every animation is the reading, its line is quoted verbatim in the FAIL, check.json and the console, and the bar counts once in the summary where it is written (a rig of the idle alone writes no key and counts what it did — CK01's keys, and the examples' check.json in the chain suite)",
+      "issue #320: check read the animations beside the idle for nothing, so a gesture that turned a garment's triangles over passed with PASS printed; rigc render --folds over every animation is the reading, its line is quoted verbatim in the FAIL, check.json and the console, and the bar counts once in the summary where it is written (since issue #333 on every rig whose motion holds an animation, the idle read first — CK01's keys, CK364, and the examples' check.json in the chain suite)",
     );
 
     // CK244 — a fold the art means, declared in the requirements file, is named with its why and not held; a declaration that excepts nothing fails.
@@ -11463,7 +11468,77 @@ function runAnimationFoldCases(say: (name: string, ok: boolean, detail: string, 
       'CK247_A_FAILED_FOLD_LINE_IS_A_BAR_NOT_MET_COMPOSE_MAY_ACCEPT_AND_AN_ABSENT_ONE_IS_NONE',
       JSON.stringify(notMet) === JSON.stringify([FOLD_LINE]) && absent.length === 0 && ACCEPTABLE_BARS.includes(FOLD_LINE) && !ACCEPTABLE_BARS.includes('gate') && !BARS.includes(FOLD_LINE as (typeof BARS)[number]),
       `FAIL: ${JSON.stringify(notMet)}; absent: ${JSON.stringify(absent)}; acceptable ${ACCEPTABLE_BARS.join(', ')}`,
-      "issue #203's accept list takes every bar check holds a character to but rig-c's gate; the fold bar is one where it is written, and BARS — the bars every check counts — does not list it, so a rig of the idle alone counts what it counted",
+      "issue #203's accept list takes every bar check holds a character to but rig-c's gate; the fold bar is one where it is written, and BARS — the bars every check counts — does not list it, so a rig whose motion holds no animation counts what it counted",
+    );
+
+    // CK364 — issue #333: the idle is read for folds like any other animation. The positive control is the rig stage's
+    // own idle alone (no animations_from); the mutant is the same idle with CK243's bend laid into it — on hem1's
+    // control, hem1_ctl, which the idle already keys (rigc's A15 refuses an idle keying hem1 itself, a mesh bone),
+    // translated 40 px to the left at its middle and back, so the loop still closes.
+    const idleOnly = rigged('idle-only', {});
+    const idleCalm = checked('idle-calm', idleOnly);
+    const idleBent = join(dir, 'idle-bent');
+    cpSync(idleOnly.rig, join(idleBent, 'rig'), { recursive: true });
+    const bentMotion = JSON.parse(readFileSync(join(idleBent, 'rig', 'motion.json'), 'utf8')) as { animations: Record<string, { duration: number; tracks: unknown[] }> };
+    const idleClip = bentMotion.animations.idle;
+    idleClip.tracks.push({ bone: 'hem1_ctl', property: 'translate', keys: [{ t: 0, v: [0, 0] }, { t: idleClip.duration / 2, v: [-40, 0] }, { t: idleClip.duration, v: [0, 0] }] });
+    writeFileSync(join(idleBent, 'rig', 'motion.json'), `${JSON.stringify(bentMotion, null, 2)}\n`);
+    const idleRed = checked('idle-bent', { rig: join(idleBent, 'rig'), parts: idleOnly.parts });
+    const idleRedRows = rows(idleRed.fig);
+    const idleRedFail = failLine(idleRed.out, `CHECK_${FOLD_LINE}`);
+    const idleRigcLine = String(idleRedRows[0]?.line ?? '');
+    const calmKeys = idleCalm.fig === null ? [] : Object.keys(idleCalm.fig);
+    say(
+      'CK364_AN_IDLE_THAT_FOLDS_A_MESH_FAILS_THE_FOLD_BAR_IN_RIGCS_WORDS_AND_AN_IDLE_ALONE_THAT_DOES_NOT_IS_READ_AND_PASSES',
+      idleOnly.status === 0 &&
+        idleCalm.status === 0 &&
+        foldOf(idleCalm.fig)?.status === 'PASS' &&
+        JSON.stringify(foldOf(idleCalm.fig)?.animations) === '["idle"]' &&
+        rows(idleCalm.fig).length === 0 &&
+        calmKeys.indexOf(FOLD_LINE) === calmKeys.indexOf('TEXTURE_STRETCH') + 1 &&
+        foldPrinted(idleCalm.out).some((l) => l.startsWith(`  ${FOLD_LINE}: PASS — 1 animation(s) read by rigc render --folds at 12 fps (idle): 0 folding mesh(es)`)) &&
+        summary(idleCalm.out).includes(' of 10 bar(s) measured') &&
+        !idleCalm.out.includes('beside the idle: ') &&
+        idleRed.status === 1 &&
+        foldOf(idleRed.fig)?.status === 'FAIL' &&
+        JSON.stringify(foldOf(idleRed.fig)?.animations) === '["idle"]' &&
+        idleRedRows.length === 1 &&
+        idleRedRows[0].animation === 'idle' &&
+        idleRedRows[0].slot === 'cloth' &&
+        idleRedRows[0].declared === null &&
+        idleRigcLine.startsWith('"idle": mesh "cloth" (slot "cloth") folds on ') &&
+        idleRedFail !== null &&
+        idleRedFail.includes('animation "idle", mesh "cloth" (slot "cloth")') &&
+        idleRedFail.includes(idleRigcLine) &&
+        idleRedFail.includes('{ "slot": "cloth", "animation": "idle", "why": … }') &&
+        !existsSync(join(idleRed.outDir, '_folds')),
+      `idle alone: exit ${idleCalm.status}, ${String(foldOf(idleCalm.fig)?.status)}, animations ${JSON.stringify(foldOf(idleCalm.fig)?.animations ?? null)}, key after ${calmKeys[calmKeys.indexOf(FOLD_LINE) - 1] ?? 'nothing'}, "${summary(idleCalm.out)}"; planted bend in the idle: exit ${idleRed.status}, ${String(foldOf(idleRed.fig)?.status)}, ${idleRedRows.length} row(s) ${idleRedRows.map((r) => `${String(r.animation)}/${String(r.slot)}`).join(', ')}; ${idleRedFail?.trim().slice(0, 220) ?? 'no FAIL line'}…`,
+      "issue #333: TEXTURE_STRETCH reads how far the idle's triangles stretch, and a triangle that turns inside out is a different defect — the one ANIMATIONS_DO_NOT_FOLD names, which until now read every animation but the one every rig has. The idle is read in the same rigc run, at the same rate, from the same keyed build, so a rig of the idle alone writes the key too; the planted fold is CK243's bend moved into the idle, and the FAIL names the idle as it names any animation",
+    );
+
+    // CK365 — issue #333: may_fold takes the idle by name, as any animation; a declaration of an idle that does not fold fails.
+    const idleWhy = 'the hem is meant to tuck under itself at the bottom of the breath';
+    const idleDeclared = checked('idle-declared', { rig: join(idleBent, 'rig'), parts: idleOnly.parts }, ['--requirements', reqFile('idle-declared', [{ slot: 'cloth', animation: 'idle', why: idleWhy }])]);
+    const idleStale = checked('idle-stale', idleOnly, ['--requirements', reqFile('idle-stale', [{ slot: 'cloth', animation: 'idle', why: idleWhy }])]);
+    const idleDeclaredRows = rows(idleDeclared.fig);
+    const idleStaleFail = failLine(idleStale.out, `CHECK_${FOLD_LINE}`);
+    say(
+      'CK365_MAY_FOLD_TAKES_THE_IDLE_BY_NAME_WITH_ITS_WHY_AND_A_DECLARED_IDLE_THAT_DOES_NOT_FOLD_FAILS',
+      foldOf(idleDeclared.fig)?.status === 'PASS' &&
+        idleDeclaredRows.length === 1 &&
+        idleDeclaredRows[0].animation === 'idle' &&
+        idleDeclaredRows[0].declared === idleWhy &&
+        foldOf(idleDeclared.fig)?.folding_undeclared === 0 &&
+        failLine(idleDeclared.out, `CHECK_${FOLD_LINE}`) === null &&
+        foldPrinted(idleDeclared.out).some((l) => l.startsWith('    folds  "idle": mesh "cloth"') && l.endsWith(` — declared in may_fold: ${idleWhy}`)) &&
+        idleStale.status === 1 &&
+        foldOf(idleStale.fig)?.status === 'FAIL' &&
+        JSON.stringify(foldOf(idleStale.fig)?.declared_not_folding) === '[{"slot":"cloth","animation":"idle"}]' &&
+        idleStaleFail !== null &&
+        idleStaleFail.includes('may_fold (slot "cloth", animation "idle")') &&
+        idleStaleFail.includes('reads no folded triangle on slot "cloth" in animation "idle"'),
+      `declared on the bent idle: exit ${idleDeclared.status}, ${String(foldOf(idleDeclared.fig)?.status)}, row ${JSON.stringify(idleDeclaredRows.map((r) => [r.animation, r.declared]))}; declared on the calm idle: exit ${idleStale.status}, ${idleStaleFail?.trim().slice(0, 220) ?? 'no FAIL line'}`,
+      "issue #333: idle is an animation name in may_fold like any other — before it, the requirements file refused it (REQUIREMENTS_MAY_FOLD, the bar did not read it); a fold the art means in the idle is named with its why and not held, and an idle declaration that excepts nothing fails as CK244's does",
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -12187,7 +12262,7 @@ function runRequirementsSuite(): number {
     const mfOk = refusals(() => resolveRequirements(readRequirements(file('mf-resolves', { ...npBase, may_fold: [{ slot: 'back', animation: 'sway', why: 'w' }] })), mfRig, mfMotion, 'root'));
     const mfOff = refusals(() =>
       resolveRequirements(
-        readRequirements(file('mf-off', { ...npBase, may_fold: [{ slot: 'back', animation: 'idle', why: 'w' }, { slot: 'back', animation: 'wave', why: 'w' }, { slot: 'cape', animation: 'sway', why: 'w' }, { slot: 'front', animation: 'sway', why: 'w' }] })),
+        readRequirements(file('mf-off', { ...npBase, may_fold: [{ slot: 'back', animation: 'wave', why: 'w' }, { slot: 'cape', animation: 'sway', why: 'w' }, { slot: 'front', animation: 'sway', why: 'w' }] })),
         mfRig,
         mfMotion,
         'root',
@@ -12195,16 +12270,31 @@ function runRequirementsSuite(): number {
     );
     const mfOffText = mfOff?.problems.map((q) => `${q.code} ${q.object}: ${q.detail.slice(0, 70)}`) ?? [];
     say(
-      'RQ118_MAY_FOLD_RESOLVES_A_MESH_SLOT_AND_AN_ANIMATION_BESIDE_THE_IDLE_AND_REFUSES_THE_IDLE_AN_UNKNOWN_NAME_AND_A_REGION_BY_NAME',
+      'RQ118_MAY_FOLD_RESOLVES_A_MESH_SLOT_AND_A_DECLARED_ANIMATION_AND_REFUSES_AN_UNKNOWN_NAME_AND_A_REGION_BY_NAME',
       mfOk === null &&
         mfOff !== null &&
-        mfOff.problems.length === 4 &&
-        mfOffText[0].startsWith('REQUIREMENTS_MAY_FOLD may_fold[0] (slot "back", animation "idle"): names the idle, which ANIMATIONS_DO_NOT_FOLD does not read') &&
-        mfOffText[1].startsWith('REQUIREMENTS_RESOLVES may_fold[1] (slot "back", animation "wave"): names animation "wave", which motion.json does not declare') &&
-        mfOffText[2].startsWith('REQUIREMENTS_RESOLVES may_fold[2] (slot "cape", animation "sway"): names slot "cape", which rig.json does not declare') &&
-        mfOffText[3].startsWith('REQUIREMENTS_MAY_FOLD may_fold[3] (slot "front", animation "sway"): names slot "front", which no skin in rig.json gives a mesh attachment'),
+        mfOff.problems.length === 3 &&
+        mfOffText[0].startsWith('REQUIREMENTS_RESOLVES may_fold[0] (slot "back", animation "wave"): names animation "wave", which motion.json does not declare') &&
+        mfOffText[1].startsWith('REQUIREMENTS_RESOLVES may_fold[1] (slot "cape", animation "sway"): names slot "cape", which rig.json does not declare') &&
+        mfOffText[2].startsWith('REQUIREMENTS_MAY_FOLD may_fold[2] (slot "front", animation "sway"): names slot "front", which no skin in rig.json gives a mesh attachment'),
       `a mesh slot in an animation beside the idle: ${codes(mfOk)}; planted: ${mfOffText.join(' | ')}`,
-      'issue #320: the bar reads the meshes of the animations beside the idle, so a declaration naming the idle, a region (one quad, which cannot fold) or a name the rig does not hold would except nothing — each is refused with the others, by name, before anything is built',
+      'issue #320: the bar reads the meshes of every animation motion.json declares, so a declaration naming a region (one quad, which cannot fold) or a name the rig does not hold would except nothing — each is refused with the others, by name, before anything is built (the idle is one of those animations since issue #333, RQ198)',
+    );
+    // Issue #333: the idle resolves like any animation; the same idle on a region, and on a slot the rig lacks, is still refused.
+    const mfIdle = refusals(() => resolveRequirements(readRequirements(file('mf-idle', { ...npBase, may_fold: [{ slot: 'back', animation: 'idle', why: 'w' }] })), mfRig, mfMotionRaw, 'root'));
+    const mfIdleOff = refusals(() =>
+      resolveRequirements(readRequirements(file('mf-idle-off', { ...npBase, may_fold: [{ slot: 'front', animation: 'idle', why: 'w' }, { slot: 'cape', animation: 'idle', why: 'w' }] })), mfRig, mfMotionRaw, 'root'),
+    );
+    const mfIdleText = mfIdleOff?.problems.map((q) => `${q.code} ${q.object}: ${q.detail.slice(0, 70)}`) ?? [];
+    say(
+      'RQ198_MAY_FOLD_RESOLVES_THE_IDLE_ON_A_MESH_SLOT_AND_REFUSES_IT_ON_A_REGION_OR_AN_UNKNOWN_SLOT_BY_NAME',
+      mfIdle === null &&
+        mfIdleOff !== null &&
+        mfIdleOff.problems.length === 2 &&
+        mfIdleText[0].startsWith('REQUIREMENTS_MAY_FOLD may_fold[0] (slot "front", animation "idle"): names slot "front", which no skin in rig.json gives a mesh attachment') &&
+        mfIdleText[1].startsWith('REQUIREMENTS_RESOLVES may_fold[1] (slot "cape", animation "idle"): names slot "cape", which rig.json does not declare'),
+      `the idle on mesh slot "back", the fixture's own motion.json: ${codes(mfIdle)}; planted: ${mfIdleText.join(' | ')}`,
+      'issue #333: ANIMATIONS_DO_NOT_FOLD reads the idle, so a declared fold in it is an exception that can except something and resolves — where until now it was refused as naming an animation the bar did not read; the slot is still held to the same rule as in any animation',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

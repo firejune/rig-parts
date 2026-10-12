@@ -56,9 +56,9 @@
  * uncovered holes `assemble` recorded in `parts.json`'s `recomposite` block,
  * copied into `check.json` because the seam cannot see them — it compares the
  * setup pose with the flat stack of parts, and a pixel no part holds is
- * missing from both. When `motion.json` holds an animation beside the idle,
- * one more bar, `ANIMATIONS_DO_NOT_FOLD` (issue #320): rigc's own
- * `render --folds` over every animation, physics constraints left out
+ * missing from both. When `motion.json` holds an animation, one more bar,
+ * `ANIMATIONS_DO_NOT_FOLD` (issues #320, #333): rigc's own `render --folds`
+ * over every animation, the idle included, physics constraints left out
  * ({@link FOLD_LINE}). The part-alone renders, the shut-eye still, the keyed
  * build and the fold render are scratch (`_isolated/`, `_still/`, `_loop/`,
  * `_folds/`), removed before the stage returns.
@@ -1646,7 +1646,7 @@ export interface CheckFigures {
   TIP_OVER_ROOT: JudgementLine;
   STILL_REGIONS_DARK: JudgementLine;
   TEXTURE_STRETCH: JudgementLine;
-  /** Written only when motion.json holds an animation beside the idle (issue #320): {@link FoldsLine}. */
+  /** Written whenever motion.json holds an animation, the idle included (issues #320, #333): {@link FoldsLine}. */
   [FOLD_LINE]?: FoldsLine;
   RECOMPOSITE_HOLES: ReportedLine;
   /** Written only under `--source` (issue #77): the setup pose against the painting, REPORTED. */
@@ -1672,8 +1672,9 @@ export interface RequirementsBlock {
 }
 
 /**
- * The bar over the animations beside the idle (issue #320): no mesh triangle
- * turned over against the setup pose on any frame, on rig-c's own reading —
+ * The bar over every animation, the idle included (issues #320, #333): no mesh
+ * triangle turned over against the setup pose on any frame, on rig-c's own
+ * reading —
  * `rigc render --folds`, one run over every animation the build holds — and
  * not a reading of this package's. A fold the art means is declared in the
  * requirements file's `may_fold`, by slot and animation with its why, and is
@@ -1689,8 +1690,12 @@ export interface RequirementsBlock {
  * not tracked]. The keys and weights fold at every rate or at none that the
  * sampling resolves; the rate a consumer steps physics at is the scene's.
  *
- * The idle is not read here: written only when the motion holds an animation
- * beside it, so a rig of the idle alone writes and prints what it did.
+ * The idle is read like any other animation (issue #333): `TEXTURE_STRETCH`
+ * reads how far the idle's triangles stretch, and a triangle that turns inside
+ * out is this bar's. Written whenever the motion holds an animation, so a rig
+ * of the idle alone writes it too; on the public examples and the trailer no
+ * idle folds, keys only [measured for issue #333, rigc 2.47.1, a scratch run,
+ * not tracked].
  */
 export const FOLD_LINE = 'ANIMATIONS_DO_NOT_FOLD';
 
@@ -1777,7 +1782,7 @@ export function besideIdleLine(names: readonly string[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// the animations beside the idle, read for folds (issue #320)
+// every animation, the idle included, read for folds (issues #320, #333)
 // ---------------------------------------------------------------------------
 
 /**
@@ -1792,7 +1797,7 @@ export const FOLD_RENDER_MAX = 16;
 /** The fold render, under `--out`; removed before the stage returns. */
 const FOLD_SCRATCH = '_folds';
 
-/** One mesh that folds in one animation beside the idle: rigc's figures, the declaration that takes it if any, and rigc's own line. */
+/** One mesh that folds in one animation: rigc's figures, the declaration that takes it if any, and rigc's own line. */
 export interface FoldRow {
   animation: string;
   slot: string;
@@ -1811,10 +1816,10 @@ export interface FoldRow {
   line: string;
 }
 
-/** `check.json`'s `ANIMATIONS_DO_NOT_FOLD`: written only when the motion holds an animation beside the idle. */
+/** `check.json`'s `ANIMATIONS_DO_NOT_FOLD`: written whenever the motion holds an animation, the idle included. */
 export interface FoldsLine {
   status: 'PASS' | 'FAIL';
-  /** Every animation beside the idle, in motion.json's order: each one read. */
+  /** Every animation, the idle included, in motion.json's order: each one read. */
   animations: string[];
   fps: number;
   /** How many physics constraints the read build left out ({@link withoutPhysics}); 0 when the rig has none. */
@@ -2065,7 +2070,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   let loopSet: FrameSet | null = null;
   let loopPhysics: LoopPhysics[] | null = null;
   // The keyed build (issues #183, #320): with a physics constraint, the same rig and motion with every one left out,
-  // built once the same way, which the loop and the folds of the animations beside the idle are both read from.
+  // built once the same way, which the loop and the folds of every animation are both read from.
   const stripped = withoutPhysics(inp.rig, inp.motion);
   let keyed: string | null = null;
   const keyedBuild = (what: string): string => {
@@ -2080,7 +2085,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     keyed = join(loopDir, 'build');
     return keyed;
   };
-  const named = isRecord(inp.motion.animations) ? Object.keys(inp.motion.animations).filter((n) => n !== 'idle') : [];
+  const animationNames = isRecord(inp.motion.animations) ? Object.keys(inp.motion.animations) : [];
+  const named = animationNames.filter((n) => n !== 'idle');
   let folds: FoldsLine | null = null;
   const foldProblems: Problem[] = [];
   try {
@@ -2133,15 +2139,15 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
       written.push('motion_heat.png');
     }
 
-    // 3a. the animations beside the idle, read for folds by rigc (issue #320) — only when there is one; at the idle's
-    // rate whatever --requirements says, so a requirements file moves only what it declares (CK78), from the keyed build
-    if (named.length > 0) {
+    // 3a. every animation, the idle included, read for folds by rigc (issues #320, #333) — only when there is one; at
+    // the idle's rate whatever --requirements says, so a requirements file moves only what it declares (CK78), from the keyed build
+    if (animationNames.length > 0) {
       const fps = IDLE_FPS;
       try {
-        const fr = rigc(['render', '--candidate', keyedBuild('the animations beside the idle with their physics constraint(s) left out'), '--folds', '--fps', String(fps), '--max', String(FOLD_RENDER_MAX), '--out', foldDir]);
+        const fr = rigc(['render', '--candidate', keyedBuild('the animations with their physics constraint(s) left out'), '--folds', '--fps', String(fps), '--max', String(FOLD_RENDER_MAX), '--out', foldDir]);
         if (fr.status !== 0) refuseIfAny(rigcFailed(`render --folds --fps ${fps}${stripped === null ? '' : ' (physics constraint(s) left out)'}`, fr, fr.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
-        const readings = readFoldSets(foldDir, named, fps, fr.out);
-        folds = foldsLine(named, fps, stripped === null ? 0 : stripped.physics.length, readings, reqFile === null ? [] : reqFile.may_fold, reqFile === null ? null : reqFile.path, foldProblems);
+        const readings = readFoldSets(foldDir, animationNames, fps, fr.out);
+        folds = foldsLine(animationNames, fps, stripped === null ? 0 : stripped.physics.length, readings, reqFile === null ? [] : reqFile.may_fold, reqFile === null ? null : reqFile.path, foldProblems);
       } finally {
         rmSync(foldDir, { recursive: true, force: true });
       }
@@ -2334,7 +2340,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     const l = figures[n];
     tally(n, l.status === 'SKIP' ? l.reason : null);
   }
-  // Issue #320: the fold bar is counted only where it is written, so a rig of the idle alone counts what it counted.
+  // Issues #320, #333: the fold bar is counted where it is written — on every rig whose motion holds an animation.
   if (folds !== null) tally(FOLD_LINE, null);
   return {
     figures,

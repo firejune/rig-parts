@@ -1031,14 +1031,14 @@ export function judgementLine(name: string, line: JudgementLine | ReportedLine):
 }
 
 /**
- * The fold line (issue #320) as the console prints it: the status, what was
+ * The fold line (issues #320, #333) as the console prints it: the status, what was
  * read and at what rate, and then each folding mesh on a line of its own,
  * rigc's own words, with the declaration's why where `may_fold` takes it.
  */
 export function foldsLines(line: FoldsLine): string[] {
   const physics = line.physics_left_out === 0 ? '' : `, its ${line.physics_left_out} physics constraint(s) left out`;
   const head =
-    `${FOLD_LINE}: ${line.status} — ${line.animations.length} animation(s) beside the idle read by rigc render --folds at ${line.fps} fps${physics} (${line.animations.join(', ')}): ` +
+    `${FOLD_LINE}: ${line.status} — ${line.animations.length} animation(s) read by rigc render --folds at ${line.fps} fps${physics} (${line.animations.join(', ')}): ` +
     `${line.folding.length} folding mesh(es), ${line.folding_undeclared} not declared in may_fold (<= ${line.bar})` +
     (line.declared_not_folding.length === 0 ? '' : `; may_fold declares ${line.declared_not_folding.map((d) => `slot "${d.slot}" in "${d.animation}"`).join(', ')}, which do(es) not fold`);
   return [head, ...line.folding.map((r) => `  folds  ${r.line}${r.declared === null ? '' : ` — declared in may_fold: ${r.declared}`}`)];

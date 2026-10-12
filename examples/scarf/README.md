@@ -147,7 +147,8 @@ here (gitignored).
   Issue #320 reads the animations beside the idle for folds (`ANIMATIONS_DO_NOT_FOLD`,
   rigc's `render --folds` with the 30 physics constraints left out): the seven clips fold
   no mesh. That added the key to `check.json` after `TEXTURE_STRETCH`, and nothing else in
-  it or any other file moved. With the physics in, at 12 fps, `hop` folds `bottomwear` (3
+  it or any other file moved. Issue #333 reads the idle in the same run: it folds no mesh
+  either, and `check.json`'s `animations` gains `"idle"` first — nothing else moved. With the physics in, at 12 fps, `hop` folds `bottomwear` (3
   of 308 triangles, frames 7–8) — and at none of 10, 15, 24, 30, 36, 48 or 60 fps: the
   physics step's, which is why the bar reads the keys.
 
