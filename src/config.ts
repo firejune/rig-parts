@@ -60,6 +60,17 @@
  * depth that stays put, both stated — `propose --full/--head` drafts them —
  * from which the rig stage derives every fraction ({@link checkTurn}).
  *
+ * 🖼️ **`scene` declares the painting a scene (issue #242).** An optional
+ * object, `{}` today: the painting holds the figure and its surroundings (a
+ * room, a ground), and See-through's full run holds only the figure. With it,
+ * `assemble` reads the recomposite inside the figure and writes the figure's
+ * mask, and `check` reads `RECOMPOSITE_HOLES` and the seam that way too, each
+ * line saying so first (`src/assemble.ts`, `sceneFigure`). It takes no field
+ * because nothing in it is the author's to choose: the figure is derived (the
+ * union of the full run's layers), and so is the threshold. A key in it that is
+ * not a record or an annotation is refused by name ({@link checkScene}); the
+ * object leaves room for a field a later issue gives it.
+ *
  * 🔗 **`motion.animations_from` is rig-c's too, verbatim (issue #183).** An
  * optional path, relative to the config file's directory, to a file in
  * rig-c's motion-spec shape whose `animations` are written into `motion.json`
@@ -612,7 +623,12 @@ export interface CharacterConfig {
   constraints?: ConfigConstraint[];
   /** The turn control (issue #251, `src/turn.ts`): absent, no control is added and no byte of any output moves. */
   turn?: TurnSpec;
+  /** The painting is a scene (issue #242): absent, no byte of any output moves. */
+  scene?: SceneSpec;
 }
+
+/** `config.scene` (issue #242): the declaration that the painting is a scene. It holds no field today. */
+export type SceneSpec = Readonly<Record<string, unknown>>;
 
 /** The fields of one constraint kind, as rig-c's interface for that kind declares them. */
 type ConstraintField<K extends RigSkinConstraintKey> = Exclude<keyof Extract<RigConstraint, { type: K }>, number | symbol>;
@@ -891,9 +907,10 @@ export interface AssembleConfig {
   key: string;
   seethrough: SeeThrough;
   assemble: Assemble;
+  scene?: SceneSpec;
 }
 
-const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'bones', 'meshes', 'regions', 'motion', 'constraints', 'turn'] as const;
+const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'bones', 'meshes', 'regions', 'motion', 'constraints', 'turn', 'scene'] as const;
 
 /**
  * The one partial entry point. It validates exactly what its door requires —
@@ -943,6 +960,7 @@ function parseEarlyConfigFrom(raw: Json, door: EarlyDoor, base: string | null): 
   if (door === 'assemble') {
     if ('seethrough' in t) checkSeeThrough(c, t.seethrough);
     if ('assemble' in t) checkAssemble(c, t.assemble, door);
+    if ('scene' in t) checkScene(c, t.scene);
   }
   const pose = base === null ? null : poseBeside(c, t.generation, base);
   refuseIfAny(c.problems);
@@ -1095,6 +1113,7 @@ function parseConfigFrom(raw: Json, base: string | null): { config: CharacterCon
   if ('motion' in t) checkMotion(c, t.motion, names.bones, names.chains, 'regions' in t ? t.regions : undefined);
   if ('constraints' in t) checkConstraints(c, t.constraints, names.bones, names.parents);
   if ('turn' in t) checkTurn(c, t.turn, attachedParts(t.meshes, t.regions), names.bones);
+  if ('scene' in t) checkScene(c, t.scene);
   const from = isPlainObject(t.motion) ? t.motion.animations_from : undefined;
   const animations = base !== null && typeof from === 'string' && from !== '' ? readAnimationsFrom(c, resolve(base, from)) : null;
   if (base !== null) poseBeside(c, t.generation, base);
@@ -2318,6 +2337,28 @@ function attachedParts(meshes: Json, regions: Json): Set<string> {
  * - `CONFIG_TURN_BONE_FREE`: `bones` declares a bone named {@link TURN_BONE},
  *   the control the rig stage adds.
  */
+/**
+ * `config.scene` (issue #242): an object, and today one with no field — a key
+ * that is not a record (`x-…`) or an annotation (`note`, `…_note`) is
+ * `CONFIG_KEY_KNOWN`, naming the key and saying the object is the whole
+ * declaration. Not `true`: an object is what a later field can be added to
+ * without changing what an existing config means.
+ */
+function checkScene(c: Check, v: Json): void {
+  if (!isPlainObject(v)) {
+    c.fail('CONFIG_FIELD_TYPE', 'config.scene', `is ${show(v)}; an object is required — {} declares the painting a scene`);
+    return;
+  }
+  for (const key of Object.keys(v)) {
+    if (isRecordKey(key)) continue;
+    if (key === 'note' || key.endsWith('_note')) {
+      if (typeof v[key] !== 'string') c.fail('CONFIG_FIELD_TYPE', `config.scene.${key}`, `is ${show(v[key])}; an annotation is a string`);
+      continue;
+    }
+    c.fail('CONFIG_KEY_KNOWN', `config.scene.${key}`, `is not a field here; scene takes no field — {} is the whole declaration (the figure and its threshold are derived, not chosen) — ${DOORS}`);
+  }
+}
+
 function checkTurn(c: Check, v: Json, attached: Set<string>, bones: Set<string>): void {
   const at = 'config.turn';
   const o = c.object(at, v, ['pivot', 'depths'], []);

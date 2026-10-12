@@ -43,7 +43,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
-import { assemble, type AssembleResult, cutLines, driftLine, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
+import { assemble, type AssembleResult, cutLines, driftLine, FIGURE_MASK_FILE, figuresLine, holeLines, type ProjectRule, scenePhrase, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
 import { allocationClause, type Reducer, stageBClause, unboundedClause } from './automesh.ts';
 import { residualClause } from './autoenvelope.ts';
 import { type AutoMotionCase, failingRows, idleSchedule, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison, sourceSelfFailure, stimulusMotion, withStimulus } from './automotion.ts';
@@ -207,6 +207,9 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   for (const { record, image } of result.images) writePng(join(outs.partsDir, `${record.name}.png`), image);
   writePng(outs.recomposite, result.recomposite);
   writePng(outs.errorMap, result.errorMap);
+  // Issue #242: under config.scene, the figure the recomposite was read inside, beside the recomposite.
+  const figurePath = result.figure === null ? null : join(dirname(outs.recomposite), FIGURE_MASK_FILE);
+  if (figurePath !== null) writePng(figurePath, result.figure as Raster);
   const [W, H] = result.parts.rig_size;
   log(`rig-parts assemble: ${result.images.length} part(s) on a ${W}x${H} rig (${result.parts.scale_rig_per_source} rig px per source px), seam rule ${result.seamRule}, projection rule ${result.projectRule}`);
   for (const p of result.parts.parts) {
@@ -228,11 +231,12 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   );
   const ghosts = Object.values(result.parts.ghost_px).reduce((a, b) => a + b, 0);
   log(`  ghost px removed: ${ghosts} over ${Object.keys(result.parts.ghost_px).length} layer(s)`);
-  log(figuresLine(result.figures));
-  for (const l of holeLines(result.figures)) log(l);
-  for (const u of result.uncovered) log(uncoveredLine(u));
+  const scene = result.parts.scene === undefined ? null : scenePhrase(result.parts.scene, W * H);
+  log(figuresLine(result.figures, scene));
+  for (const l of holeLines(result.figures, scene)) log(l);
+  for (const u of result.uncovered) log(uncoveredLine(u, scene));
   for (const d of result.drift) log(driftLine(d));
-  log(`wrote ${outs.partsJson}, ${result.images.length} PNG(s) in ${outs.partsDir}, ${outs.recomposite}, ${outs.errorMap} (uncovered error px red, covered error px blue, the painting grey)`);
+  log(`wrote ${outs.partsJson}, ${result.images.length} PNG(s) in ${outs.partsDir}, ${outs.recomposite}, ${outs.errorMap} (uncovered error px red, covered error px blue, the painting grey)${figurePath === null ? '' : `, ${figurePath} (the figure, white, the recomposite was read inside)`}`);
   return result;
 }
 
@@ -1028,7 +1032,7 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   if (r.seamViewport === null || fig.seam_mean === null) log(`  seam: SKIP — ${fig.skipped?.seam ?? ''}`);
   else {
     log(
-      `  seam: setup pose at ${r.seamViewport.pixelWidth}x${r.seamViewport.pixelHeight}, scale ${r.seamViewport.scale.toFixed(4)}: mean |d| ${fig.seam_mean} (<= ${SEAM_MEAN_BAR.toFixed(1)}), ` +
+      `  seam${fig.seam_border === undefined ? '' : ` (config.scene: ${fig.seam_border.frame_px_left_out} frame px on the painting's border rows and columns left out, ${fig.seam_border.px_over_40_left_out} of them over ${SEAM_PX_LEVEL})`}: setup pose at ${r.seamViewport.pixelWidth}x${r.seamViewport.pixelHeight}, scale ${r.seamViewport.scale.toFixed(4)}: mean |d| ${fig.seam_mean} (<= ${SEAM_MEAN_BAR.toFixed(1)}), ` +
         `${fig.seam_px_over_40} px over ${SEAM_PX_LEVEL}, ${fig.seam_frame_scale === null || fig.seam_px_over_40 === null ? '' : seamRigPxText(fig.seam_px_over_40, fig.seam_frame_scale)} rig px (the count / s²; <= ${SEAM_PX_BAR}), ${fig.seam_px_over_80} px over ${SEAM_PX_LEVEL_HIGH} (reported)`,
     );
     const pairs = fig.seam_pairs ?? [];
@@ -1351,6 +1355,8 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   const out = input.out;
   mkdirSync(out, { recursive: true });
   for (const p of BUILD_OWNS) rmSync(join(out, p), { recursive: true, force: true });
+  // Issue #242: the figure mask is written only under config.scene; one left by an earlier scene build is not this build's.
+  rmSync(join(out, FIGURE_MASK_FILE), { force: true });
   // The idle-keys value is named only when it is not the default, so a build without the flag, or with the default, prints the line it printed before issue #95.
   const idleKeys = input.idleKeys ?? DEFAULT_IDLE_KEYS;
   log(`rig-parts build: ${input.config} -> ${out}, seam rule ${input.seam}, projection rule ${input.project}, page edges ${input.pageEdges}, pack shape ${input.packShape ?? DEFAULT_PACK_SHAPE}${idleKeys === DEFAULT_IDLE_KEYS ? '' : `, idle keys ${idleKeys}`}${input.loop ? `, with the idle loop${input.leadIn === undefined ? '' : ` after a lead-in of ${input.leadIn} period(s)`}` : ''}`);
