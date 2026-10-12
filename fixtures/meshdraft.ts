@@ -93,3 +93,20 @@ export function draftConfig(grid: number): Record<string, unknown> {
 export function writeDraftFixture(dir: string, grid: number): { config: string; parts: string } {
   return writeRigFixture(dir, draftConfig(grid), draftImages(), draftParts());
 }
+
+/**
+ * The mark's contour entry (issue #307): the same fixture with `mark` meshed in the outline mode instead of drawn as
+ * a region, so the config holds one entry that is not a lattice. `mesh-draft` drafts lattice entries only; this one
+ * it must name as not compared, and the strip's lattice row must not move. The numbers are the outline mode's
+ * smallest on a 4x4 block (tolerance and margin 1, spacing 2) and the segment runs along the block's left edge on
+ * `body`; nothing reads a figure off the mark's mesh.
+ */
+export const DRAFT_CONTOUR_MARK = { contour: { tolerance: 1, margin: 1, spacing: 2 }, r: 8, segments: [['body', [2, 2], [2, 6]]] } as const;
+
+/** The fixture with `mark` as {@link DRAFT_CONTOUR_MARK} rather than a region, its strip on a lattice of `grid`. */
+export function writeDraftFixtureWithContour(dir: string, grid: number): { config: string; parts: string } {
+  const c = draftConfig(grid);
+  c.meshes = { ...(c.meshes as Record<string, unknown>), mark: DRAFT_CONTOUR_MARK };
+  c.regions = {};
+  return writeRigFixture(dir, c, draftImages(), draftParts());
+}

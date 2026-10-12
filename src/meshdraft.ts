@@ -118,6 +118,33 @@ export const MORE_TRIANGLES_FLAG = '--more-triangles';
  */
 export const RELATIVE_SENTENCE = 'the gate is a judgment relative to this config\'s lattice, not an absolute quality: when the lattice coarsens, the reference moves with it';
 
+/**
+ * What `mesh-draft` says of a part whose config entry is not a lattice (`contour` or `auto`, issue #307): it drafts
+ * lattice entries only, so such a part was neither drafted nor compared. Said because the answer to "which mode comes
+ * out smaller" is not the one the names suggest: on one figure (rig-c/trailer 45becfb) an `auto` reduction held to a
+ * large declared bend kept two to three times the triangles of the outline this command drafts (AUTHORING §3, *Which
+ * mode comes out smaller*).
+ */
+export const NOT_COMPARED_SENTENCE = 'mesh-draft drafts lattice entries only, so it drafted nothing for this part and compared it with nothing; whether a lattice, or the outline mesh-draft drafts over one, comes out smaller is not known from this run — build the part once on a lattice, run mesh-draft, and compare the rig stage\'s mesh lines before keeping this entry';
+
+/** A config entry `mesh-draft` did not draft because it is not a lattice (issue #307), in config order. */
+export interface NotCompared {
+  part: string;
+  mode: 'contour' | 'auto';
+  note: string;
+}
+
+/** The entries of `meshes` that are not lattices, in config order, each with its note ({@link NOT_COMPARED_SENTENCE}). */
+export function notCompared(meshes: CharacterConfig['meshes']): NotCompared[] {
+  const out: NotCompared[] = [];
+  for (const [part, spec] of Object.entries(meshes)) {
+    if ('grid' in spec) continue;
+    const mode = 'auto' in spec ? 'auto' : 'contour';
+    out.push({ part, mode, note: `its entry is "${mode}", not a lattice: ${NOT_COMPARED_SENTENCE}` });
+  }
+  return out;
+}
+
 /** The five readings, in the order the gate reads them. */
 export const READINGS = ['bars', 'idle', 'bend inverted', 'bend worst', 'triangles'] as const;
 export type Reading = (typeof READINGS)[number];
@@ -534,6 +561,8 @@ export interface PartRow {
 export interface MeshDraftResult {
   rules: FigureRules;
   rows: PartRow[];
+  /** The entries not drafted because they are not lattices (issue #307), in config order. */
+  notCompared: NotCompared[];
   written: string[];
 }
 
@@ -810,6 +839,7 @@ export function meshDraftStage(input: MeshDraftInput, rigc: RigcRunner, checkBin
   }
   const configText = splicedConfig(text, drafted);
   const rowsOut = [...rows.values()];
+  const others = notCompared(cfg.meshes);
   const report = {
     spec: MESH_DRAFT_SPEC,
     rules: {
@@ -834,6 +864,9 @@ export function meshDraftStage(input: MeshDraftInput, rigc: RigcRunner, checkBin
       gate: r.gate,
       note: r.note,
     })),
+    // Issue #307: present only when the config holds an entry that is not a lattice, so a config of lattices alone
+    // writes the bytes it wrote before the key existed.
+    ...(others.length === 0 ? {} : { not_compared: others }),
   };
   mkdirSync(input.out, { recursive: true });
   const written = [join(input.out, 'config.json'), join(input.out, MESH_DRAFT_REPORT)];
@@ -845,14 +878,15 @@ export function meshDraftStage(input: MeshDraftInput, rigc: RigcRunner, checkBin
     for (const g of r.gate) log(`    ${g.pass ? 'pass' : 'FAIL'}  ${g.reading}: ${g.text}`);
     if (r.mode === 'grid' && r.gate.length === 0) log(`    ${r.note}`);
   }
+  for (const o of others) log(`  NOT COMPARED  ${o.part}: ${o.note}`);
   const nDrafted = rowsOut.filter((r) => r.mode === 'contour').length;
   const tri = (pick: (r: PartRow) => number): number => rowsOut.reduce((a, r) => a + pick(r), 0);
-  log(`rig-parts mesh-draft: ${nDrafted} of ${rowsOut.length} lattice part(s) drafted; their triangles ${tri((r) => r.lattice.triangles)} -> ${tri((r) => (r.mode === 'contour' && r.candidate !== null ? r.candidate.triangles : r.lattice.triangles))}, the figure's overdraw over them ${report.figure_overdraw.lattice} -> ${report.figure_overdraw.written}${input.moreTriangles === true ? ` (${MORE_TRIANGLES_FLAG}: triangles reported, not a line)` : ''}; the drafted config's check: ${final.report.figures.PASS ? 'PASS' : 'FAIL'}`);
+  log(`rig-parts mesh-draft: ${nDrafted} of ${rowsOut.length} lattice part(s) drafted; their triangles ${tri((r) => r.lattice.triangles)} -> ${tri((r) => (r.mode === 'contour' && r.candidate !== null ? r.candidate.triangles : r.lattice.triangles))}, the figure's overdraw over them ${report.figure_overdraw.lattice} -> ${report.figure_overdraw.written}${input.moreTriangles === true ? ` (${MORE_TRIANGLES_FLAG}: triangles reported, not a line)` : ''}${others.length === 0 ? '' : `; ${others.length} part(s) not a lattice, not drafted and not compared: ${others.map((o) => `${o.part} (${o.mode})`).join(', ')}`}; the drafted config's check: ${final.report.figures.PASS ? 'PASS' : 'FAIL'}`);
   if (resolve(configDir) !== resolve(input.out)) {
     for (const r of relativePaths(raw)) log(`  note: ${r.at} is "${r.value}", relative to the config's directory; the written config keeps the text, so it resolves against ${input.out} — copy the file beside the written config, or the written config beside it`);
   }
   log(`rig-parts mesh-draft: wrote ${written.join(' and ')}`);
-  return { rules, rows: rowsOut, written };
+  return { rules, rows: rowsOut, notCompared: others, written };
 }
 
 /**

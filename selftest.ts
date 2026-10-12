@@ -388,8 +388,8 @@ import { influences } from './src/weights.ts';
 import { apply as applyAffine, type ComparedMesh, contourAtBudget, cost, errors, fieldAt, fieldContour, fieldLattice, locator, pixelErrors, pixelsOver } from './tools/local_compare.ts';
 import { FIELD_LATTICE_GRID, FIELD_POSES, fieldRegion, REGION_SPACINGS } from './fixtures/localfield.ts';
 import { BASE_SPACINGS, CONTROL, describeWorst, displacement, frameOpenings, kindOf, neighbours, pickAtBudget, type PlacedMask, POSE_PHASE, ranked, regionPoses, regionSpacings, resolveSegments, seamOpening, seamPairs, sineAt, SWEEP_TOLERANCES, testRegion, toWorldPx, variantConfig } from './tools/real_compare.ts';
-import { BEND_DEGREES, BEND_WORST_SHARE, bendAnimationNames, bendAnimations, type BendFigure, bendLinks, CALIBRATED_SENTENCE, candidateMesh, MORE_TRIANGLES_FLAG, RELATIVE_SENTENCE, DUST_MAX_PX, DUST_MAX_SHARE, dustOf, figureRules, type GateLine, gateVerdict, IDLE_BOUND_PX, jsonValueSpan, MEASURED_SENTENCE, MESH_DRAFT_REPORT, meshDraftStage, partsNamed, type PartReadings, type Reading, READINGS, splicedConfig, TOLERANCE_FIGURE_DIVISOR } from './src/meshdraft.ts';
-import { DRAFT_COARSE_GRID, DRAFT_COSTLY_GRID, DRAFT_FIGURE, DRAFT_FINE_GRID, DRAFT_LINKS, draftConfig, draftParts, writeDraftFixture } from './fixtures/meshdraft.ts';
+import { BEND_DEGREES, BEND_WORST_SHARE, bendAnimationNames, bendAnimations, type BendFigure, bendLinks, CALIBRATED_SENTENCE, candidateMesh, MORE_TRIANGLES_FLAG, RELATIVE_SENTENCE, DUST_MAX_PX, DUST_MAX_SHARE, dustOf, figureRules, type GateLine, gateVerdict, IDLE_BOUND_PX, jsonValueSpan, MEASURED_SENTENCE, MESH_DRAFT_REPORT, meshDraftStage, NOT_COMPARED_SENTENCE, notCompared, partsNamed, type PartReadings, type Reading, READINGS, splicedConfig, TOLERANCE_FIGURE_DIVISOR } from './src/meshdraft.ts';
+import { DRAFT_COARSE_GRID, DRAFT_COSTLY_GRID, DRAFT_FIGURE, DRAFT_FINE_GRID, DRAFT_LINKS, draftConfig, draftParts, writeDraftFixture, writeDraftFixtureWithContour } from './fixtures/meshdraft.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, isSkeletonName, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
 import { AUTHOR_LABEL_RULE, AUTHOR_NO_ROLE, authorLayerLine, readAuthorTag, readLayerTag, readTag, type TagReading } from './src/tags.ts';
@@ -21696,6 +21696,33 @@ function runMeshDraftSuite(): number {
       !plain15.pass && plain15.lines.filter((l) => !l.pass).map((l) => l.reading).join() === 'triangles' && lifted15.pass && motion15[0].lines.filter((l) => !l.pass).map((l) => l.reading).join() === 'idle' && motion15[1].lines.filter((l) => !l.pass).map((l) => l.reading).join() === 'bend inverted,bend worst',
       `default: ${gateText(plain15.lines.filter((l) => !l.pass))} | under the flag: ${lifted15.pass ? 'pass' : 'FAIL'} | idle 1.5 under the flag: ${gateText(motion15[0].lines.filter((l) => !l.pass))} | a folding bend under the flag: ${gateText(motion15[1].lines.filter((l) => !l.pass))}`,
       'the flag answers one question (may the outline cost more triangles?) and no motion question: a candidate that moves wrong is refused with it as without it',
+    );
+
+    // MD16 — issue #307: an entry that is not a lattice is named as not compared, and the lattice part's outputs do not move.
+    const fx16 = writeDraftFixtureWithContour(join(root, 'other'), DRAFT_COARSE_GRID);
+    const run16 = runCli(['mesh-draft', '--config', fx16.config, '--parts', fx16.parts, '--out', join(root, 'other', 'out')]);
+    const raw16 = readJsonFile(join(root, 'other', 'out', MESH_DRAFT_REPORT));
+    const raw1 = readJsonFile(join(root, 'pos', 'out', MESH_DRAFT_REPORT));
+    const note16 = `its entry is "contour", not a lattice: ${NOT_COMPARED_SENTENCE}`;
+    const strip16 = ((readJsonFile(join(root, 'other', 'out', 'config.json'))?.meshes ?? {}) as Record<string, unknown>).strip;
+    const pure16 = notCompared({ a: { grid: 9, r: 1, segments: ['x'] }, b: { auto: {} as never, r: 1, segments: ['x'] }, c: { contour: { tolerance: 1, margin: 1, spacing: 2 }, r: 1, segments: ['x'] } });
+    const keys = (o: Record<string, unknown> | null): string => Object.keys(o ?? {}).join();
+    say(
+      'MD16_AN_AUTO_OR_CONTOUR_ENTRY_IS_NAMED_AS_NOT_COMPARED_AND_A_CONFIG_OF_LATTICES_WRITES_WHAT_IT_WROTE_BEFORE',
+      run16.status === 0 &&
+        JSON.stringify(raw16?.not_compared) === JSON.stringify([{ part: 'mark', mode: 'contour', note: note16 }]) &&
+        run16.out.includes(`  NOT COMPARED  mark: ${note16}`) &&
+        run16.out.includes('; 1 part(s) not a lattice, not drafted and not compared: mark (contour); the drafted config\'s check: PASS') &&
+        keys(raw16) === 'spec,rules,lattice_check,draft_check,figure_overdraw,parts,not_compared' &&
+        JSON.stringify(raw16?.parts) === JSON.stringify(raw1?.parts) &&
+        JSON.stringify(raw16?.figure_overdraw) === JSON.stringify(raw1?.figure_overdraw) &&
+        JSON.stringify(strip16) === JSON.stringify(strip1) &&
+        keys(raw1) === 'spec,rules,lattice_check,draft_check,figure_overdraw,parts' &&
+        !run1.out.includes('NOT COMPARED') &&
+        !run1.out.includes('not a lattice') &&
+        pure16.map((o) => `${o.part}:${o.mode}`).join() === 'b:auto,c:contour',
+      `exit ${run16.status}; not_compared ${JSON.stringify(raw16?.not_compared ?? null).slice(0, 160)}; keys ${keys(raw16)} against MD01's ${keys(raw1)}; strip row as MD01's: ${JSON.stringify(raw16?.parts) === JSON.stringify(raw1?.parts)}; pure ${pure16.map((o) => `${o.part}:${o.mode}`).join()}`,
+      'issue #307: mesh-draft drafts lattice entries only, and a part outside it was silent; the fixture is MD01\'s with the mark meshed in the outline mode instead of drawn as a region, so the strip\'s row, the figure\'s overdraw and its written entry must equal MD01\'s byte for byte, and MD01\'s report — a config of lattices alone — must hold no not_compared key and its console no such line (the key is written only when it has an entry)',
     );
 
     // MD04 — the gate's five lines, pure: each reading planted past its line fails that reading alone, by name and amount.
