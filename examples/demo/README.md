@@ -116,6 +116,10 @@ here (gitignored).
   smallest ratio 0.947 to 0.944 (triangle 185, frame 27), `earring`'s largest at triangle
   22, frame 10; every status as before. The README's animation was rebuilt with the same
   command: 703,909 B, the jump at the wrap max 1 (was 7), 0 px over 40.
+  Issue #320 reads the animations beside the idle for folds (`ANIMATIONS_DO_NOT_FOLD`,
+  rigc's `render --folds` with the 29 physics constraints left out): the seven clips fold
+  no mesh. That added the key to `check.json` after `TEXTURE_STRETCH`, and nothing else in
+  it or any other file moved.
 
 ## The two corrections
 
@@ -169,7 +173,7 @@ The README loop pasted uncorrected stops where the README says to read
 
 ## The build, by figure
 
-`check` 9 of 9 bars measured, PASS:
+`check` 10 of 10 bars measured, PASS (the tenth, issue #320, reads the clips beside the idle for folds):
 
 | | |
 | --- | --- |
@@ -180,6 +184,7 @@ The README loop pasted uncorrected stops where the README says to read
 | `TIP_OVER_ROOT` | `bottomwear` 2.426, `handwear_r` 6.932, `handwear_l` 6.525 (floor 1.4725) |
 | `TEXTURE_STRETCH` | severity 1.097, `hair_front` (ceiling 1.926544) |
 | `BLINK_NO_HOLE` | idle frame 29 closed, hole 0 px |
+| `ANIMATIONS_DO_NOT_FOLD` | the seven clips at 12 fps, the 29 physics constraints left out: no folding mesh |
 | `RECOMPOSITE_HOLES` | error px 14,570; uncovered 2,939 in 1,020 holes, the largest 48 px at 204,519 27x25 beside `bottomwear` |
 | meshes | 9, 1,192 vertices (`mesh_report.json`) |
 
@@ -192,7 +197,8 @@ Issue #224 gave the character named animations beside the idle and physics on it
 strands, so a reader has a worked set to copy and the toolchain trailer a rig that can
 perform. Everything is authored in two places: `animations.json` (named by
 `motion.animations_from`) and the config's `constraints`. Nothing in the package
-proposes or judges either.
+proposes either, and of the clips `check` judges one thing: that no mesh folds in them
+(`ANIMATIONS_DO_NOT_FOLD`, issue #320).
 
 **The clips.** Each is a one-shot (`loop: false`) that keys only what it needs and
 starts and ends at the setup pose, so it plays over the idle on a second track of the

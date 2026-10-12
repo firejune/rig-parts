@@ -70,7 +70,7 @@ import {
   splitSchedule,
   untestedIntervals,
 } from './autoreplay.ts';
-import { BARS, besideIdleLine, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
+import { besideIdleLine, FOLD_LINE, type FoldsLine, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
 import { type Cut, loadConfig, loadConfigAndAnimations, loadEarlyConfig } from './config.ts';
 import { PartsError, type Problem, problemLine, refuseIfAny } from './errors.ts';
 import type { MeshQualityReport, MotionSchedule } from 'rig-c/mesh';
@@ -972,13 +972,15 @@ function showFigure(v: unknown): string {
 }
 
 /**
- * How many of the {@link BARS} measured and how many said SKIP, by name — the
+ * How many of the bars measured and how many said SKIP, by name — the
  * summary's second half (issue #77): `PASS` reads only the bars that measured,
- * so a run that measured one bar says so on the line that says PASS.
+ * so a run that measured one bar says so on the line that says PASS. The
+ * count is every bar `check` tallied: the `BARS` of `src/check.ts`, and
+ * `ANIMATIONS_DO_NOT_FOLD` where it is written (issue #320).
  */
 export function barsSummary(r: CheckReport): string {
   const { measured, skipped } = r.bars;
-  return `${measured.length} of ${BARS.length} bar(s) measured, ${skipped.length} skipped${skipped.length === 0 ? '' : ` (${skipped.map((s) => s.bar).join(', ')})`}`;
+  return `${measured.length} of ${measured.length + skipped.length} bar(s) measured, ${skipped.length} skipped${skipped.length === 0 ? '' : ` (${skipped.map((s) => s.bar).join(', ')})`}`;
 }
 
 /**
@@ -1028,6 +1030,20 @@ export function judgementLine(name: string, line: JudgementLine | ReportedLine):
     .join('; ')}`;
 }
 
+/**
+ * The fold line (issue #320) as the console prints it: the status, what was
+ * read and at what rate, and then each folding mesh on a line of its own,
+ * rigc's own words, with the declaration's why where `may_fold` takes it.
+ */
+export function foldsLines(line: FoldsLine): string[] {
+  const physics = line.physics_left_out === 0 ? '' : `, its ${line.physics_left_out} physics constraint(s) left out`;
+  const head =
+    `${FOLD_LINE}: ${line.status} — ${line.animations.length} animation(s) beside the idle read by rigc render --folds at ${line.fps} fps${physics} (${line.animations.join(', ')}): ` +
+    `${line.folding.length} folding mesh(es), ${line.folding_undeclared} not declared in may_fold (<= ${line.bar})` +
+    (line.declared_not_folding.length === 0 ? '' : `; may_fold declares ${line.declared_not_folding.map((d) => `slot "${d.slot}" in "${d.animation}"`).join(', ')}, which do(es) not fold`);
+  return [head, ...line.folding.map((r) => `  folds  ${r.line}${r.declared === null ? '' : ` — declared in may_fold: ${r.declared}`}`)];
+}
+
 /** A requirement's line as the console prints it: its name and status, the reason first when NOT MEASURABLE, then its figures as check.json holds them. */
 export function requirementText(name: string, line: RequirementLine): string {
   const rest = Object.entries(line).filter(([k]) => k !== 'status' && k !== 'reason');
@@ -1066,6 +1082,8 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
     pairs.forEach((row, i) => log(`  seam pair ${i + 1} of ${pairs.length}: ${seamPairText(row)}`));
   }
   for (const name of JUDGEMENT_LINES) log(`  ${judgementLine(name, fig[name])}`);
+  const folds = fig[FOLD_LINE];
+  if (folds !== undefined) for (const l of foldsLines(folds)) log(`  ${l}`);
   for (const name of REPORTED_LINES) log(`  ${judgementLine(name, fig[name])}`);
   const vsSource = fig[SOURCE_LINE];
   if (vsSource !== undefined) log(`  ${judgementLine(SOURCE_LINE, vsSource)}`);

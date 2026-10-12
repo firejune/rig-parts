@@ -253,6 +253,18 @@
    }
   ]
  },
+ "ANIMATIONS_DO_NOT_FOLD": {
+  "status": "PASS",
+  "animations": [
+   "hop"
+  ],
+  "fps": 12,
+  "physics_left_out": 2,
+  "folding": [],
+  "folding_undeclared": 0,
+  "declared_not_folding": [],
+  "bar": 0
+ },
  "RECOMPOSITE_HOLES": {
   "status": "REPORTED",
   "error_px": 4359,

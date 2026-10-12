@@ -56,9 +56,12 @@
  * uncovered holes `assemble` recorded in `parts.json`'s `recomposite` block,
  * copied into `check.json` because the seam cannot see them — it compares the
  * setup pose with the flat stack of parts, and a pixel no part holds is
- * missing from both. The
- * part-alone renders and the shut-eye still are scratch (`_isolated/`,
- * `_still/`), removed before the stage returns.
+ * missing from both. When `motion.json` holds an animation beside the idle,
+ * one more bar, `ANIMATIONS_DO_NOT_FOLD` (issue #320): rigc's own
+ * `render --folds` over every animation, physics constraints left out
+ * ({@link FOLD_LINE}). The part-alone renders, the shut-eye still, the keyed
+ * build and the fold render are scratch (`_isolated/`, `_still/`, `_loop/`,
+ * `_folds/`), removed before the stage returns.
  *
  * Where this port deliberately differs from the reference, each written where
  * it applies below: a gate summary is read with a pattern rather than the
@@ -130,6 +133,7 @@ import {
   rangeLine,
   readRequirements,
   type RequirementLine,
+  type MayFold,
   type RequirementsFile,
   requirementProblem,
   type RequirementsSummary,
@@ -1642,6 +1646,8 @@ export interface CheckFigures {
   TIP_OVER_ROOT: JudgementLine;
   STILL_REGIONS_DARK: JudgementLine;
   TEXTURE_STRETCH: JudgementLine;
+  /** Written only when motion.json holds an animation beside the idle (issue #320): {@link FoldsLine}. */
+  [FOLD_LINE]?: FoldsLine;
   RECOMPOSITE_HOLES: ReportedLine;
   /** Written only under `--source` (issue #77): the setup pose against the painting, REPORTED. */
   SETUP_POSE_VS_SOURCE?: ReportedLine;
@@ -1665,22 +1671,46 @@ export interface RequirementsBlock {
   lines: Record<string, RequirementLine>;
 }
 
+/**
+ * The bar over the animations beside the idle (issue #320): no mesh triangle
+ * turned over against the setup pose on any frame, on rig-c's own reading —
+ * `rigc render --folds`, one run over every animation the build holds — and
+ * not a reading of this package's. A fold the art means is declared in the
+ * requirements file's `may_fold`, by slot and animation with its why, and is
+ * named and not held to the bar.
+ *
+ * ⭐ **Read with the physics constraints left out**, as the loop is, from the
+ * same build ({@link withoutPhysics}). rig-c's render steps physics by 1/fps
+ * from frame 0, so a fold a physics constraint makes is the sampling rate's:
+ * on the public `scarf` example `hop` folds `bottomwear` (3 of 308 triangles,
+ * frames 7-8) at 12 fps, and at none of 10, 15, 24, 30, 36, 48 and 60 fps;
+ * `hair_front` at 6 fps; and nothing at 6, 12 or 24 fps with its 30 physics
+ * constraints left out [measured for issue #320, rigc 2.47.1, a scratch run,
+ * not tracked]. The keys and weights fold at every rate or at none that the
+ * sampling resolves; the rate a consumer steps physics at is the scene's.
+ *
+ * The idle is not read here: written only when the motion holds an animation
+ * beside it, so a rig of the idle alone writes and prints what it did.
+ */
+export const FOLD_LINE = 'ANIMATIONS_DO_NOT_FOLD';
+
 /** The bars `PASS` reads, in the order the summary counts them: the gate, the reference's two, then the judgement lines. */
 export const BARS = ['gate', 'loop', 'seam', ...JUDGEMENT_LINES] as const;
 
 /**
  * The bars a character's own check may have failed and `compose --accept`
  * still take (issue #203): every bar of {@link BARS} but the gate, which is
- * rig-c's and never accepted.
+ * rig-c's and never accepted, and {@link FOLD_LINE} (issue #320).
  */
-export const ACCEPTABLE_BARS: readonly string[] = BARS.filter((b) => b !== 'gate');
+export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== 'gate'), FOLD_LINE];
 
 /**
  * The bars a `check.json`, as `check` writes it, says were not met, in
  * {@link BARS} order: the gate when `gate_spine_html_green` is not true, the
  * loop when `loop_max_diff` is a number other than {@link LOOP_MAX_BAR}, the
  * seam when its figures fail {@link seamFails}, and each judgement line whose
- * status is `FAIL`. A bar that measured nothing (null figures, `SKIP`) is not
+ * status is `FAIL`, then {@link FOLD_LINE} when it is written and `FAIL`
+ * (issue #320). A bar that measured nothing (null figures, `SKIP`) is not
  * one of them. Read off the file rather than its problems, because the file is
  * all a finished build leaves (issue #203).
  */
@@ -1691,7 +1721,7 @@ export function barsNotMet(fig: Readonly<Record<string, unknown>>): string[] {
   // A check.json written before issue #216 has no seam_frame_scale; it is read by the frame count, the bar it was written under.
   const scale = typeof fig.seam_frame_scale === 'number' ? fig.seam_frame_scale : 1;
   if (typeof fig.seam_mean === 'number' && typeof fig.seam_px_over_40 === 'number' && seamFails(fig.seam_mean, fig.seam_px_over_40, scale)) out.push('seam');
-  for (const n of JUDGEMENT_LINES) {
+  for (const n of [...JUDGEMENT_LINES, FOLD_LINE]) {
     const l = fig[n];
     if (typeof l === 'object' && l !== null && (l as { status?: unknown }).status === 'FAIL') out.push(n);
   }
@@ -1743,7 +1773,179 @@ export interface CheckReport {
  */
 export function besideIdleLine(names: readonly string[]): string | null {
   if (names.length === 0) return null;
-  return `beside the idle: ${names.length} animation(s), ${names.join(', ')} — built and gated by rigc with the rig, not measured: every bar here reads the idle`;
+  return `beside the idle: ${names.length} animation(s), ${names.join(', ')} — built and gated by rigc with the rig; ${FOLD_LINE} reads each for folds, every other bar here reads the idle`;
+}
+
+// ---------------------------------------------------------------------------
+// the animations beside the idle, read for folds (issue #320)
+// ---------------------------------------------------------------------------
+
+/**
+ * The fold render's `--max`, rigc's smallest: `--folds` reads posed vertices
+ * in world units, which the frame size does not change (rig-c AUTHORING §8.3),
+ * so the frames are drawn as small as rigc draws them and thrown away. On
+ * `scarf` the `hop` folds.json was byte-identical at `--max` 16 and 640
+ * [measured for issue #320, a scratch run].
+ */
+export const FOLD_RENDER_MAX = 16;
+
+/** The fold render, under `--out`; removed before the stage returns. */
+const FOLD_SCRATCH = '_folds';
+
+/** One mesh that folds in one animation beside the idle: rigc's figures, the declaration that takes it if any, and rigc's own line. */
+export interface FoldRow {
+  animation: string;
+  slot: string;
+  attachment: string;
+  /** How many frames show a folded triangle. */
+  frames: number;
+  /** The frame with the most, the earliest on a tie (rigc's `worst`). */
+  worst_frame: number;
+  /** How many triangles are folded on that frame. */
+  worst_triangles: number;
+  /** How many triangles the mesh has. */
+  triangles: number;
+  /** The `may_fold` entry's why when the requirements file declares this slot and animation; null when nothing does. */
+  declared: string | null;
+  /** rigc's printed line for the mesh, verbatim (`rigc render --folds`). */
+  line: string;
+}
+
+/** `check.json`'s `ANIMATIONS_DO_NOT_FOLD`: written only when the motion holds an animation beside the idle. */
+export interface FoldsLine {
+  status: 'PASS' | 'FAIL';
+  /** Every animation beside the idle, in motion.json's order: each one read. */
+  animations: string[];
+  fps: number;
+  /** How many physics constraints the read build left out ({@link withoutPhysics}); 0 when the rig has none. */
+  physics_left_out: number;
+  /** Every mesh that folds in an animation read, in that animation's order and rigc's mesh order. */
+  folding: FoldRow[];
+  /** The rows no `may_fold` entry takes: the bar's figure. */
+  folding_undeclared: number;
+  /** The `may_fold` entries no row matches, each a FAIL — an exception that excepts nothing. */
+  declared_not_folding: Array<{ slot: string; animation: string }>;
+  /** The bar: undeclared folds, at most this many. */
+  bar: number;
+}
+
+/** One folding mesh as the reading states it. */
+export interface FoldingMesh {
+  slot: string;
+  attachment: string;
+  triangleCount: number;
+  frames: number;
+  worstFrame: number;
+  worstTriangles: number;
+  line: string;
+}
+
+/** The marker rigc prints before each fold line (`rigc render --folds`). */
+const FOLD_PRINTED = /^\s*\.\.\s+folds\s+(.*)$/;
+
+/**
+ * The folding meshes of each named animation, read off a `rigc render
+ * --folds` run over every animation: `frames.json` names each set's
+ * directory, each `folds.json` (`rigc-folds/1`) its meshes, and each folding
+ * mesh's line is the one rigc printed for it. Refuses (`CHECK_FOLDS_READ`),
+ * every problem at once, a set or file that is missing, a file that is not
+ * the animation's or not at the rate asked, a field of the wrong shape, and a
+ * folding mesh rigc printed no line for.
+ */
+export function readFoldSets(dir: string, named: readonly string[], fps: number, printed: string): Map<string, FoldingMesh[]> {
+  const problems: Problem[] = [];
+  const bad = (object: string, detail: string): void => {
+    problems.push({ code: 'CHECK_FOLDS_READ', object, detail });
+  };
+  const lines = printed.split('\n').map((l) => FOLD_PRINTED.exec(l)?.[1]).filter((l): l is string => l !== undefined);
+  const out = new Map<string, FoldingMesh[]>();
+  const sidecar = readJson(join(dir, 'frames.json'), problems);
+  const sets = sidecar !== null && Array.isArray(sidecar.sets) ? sidecar.sets.filter(isRecord) : [];
+  for (const name of named) {
+    const set = sets.find((x) => x.animation === name);
+    if (set === undefined || typeof set.dir !== 'string') {
+      bad(join(dir, 'frames.json'), `names no frame set for animation ${JSON.stringify(name)}; \`rigc render --folds\` over the build writes one per animation`);
+      continue;
+    }
+    const path = join(dir, set.dir, 'folds.json');
+    const file = readJson(path, problems);
+    if (file === null) continue;
+    if (file.spec !== 'rigc-folds/1') bad(path, `spec is ${JSON.stringify(file.spec)}; "rigc-folds/1" is required`);
+    if (file.animation !== name) bad(path, `animation is ${JSON.stringify(file.animation)}; ${JSON.stringify(name)} is required`);
+    if (file.fps !== fps) bad(path, `fps is ${JSON.stringify(file.fps)}; ${fps}, the rate asked for, is required`);
+    if (!Array.isArray(file.meshes)) {
+      bad(path, `meshes is ${JSON.stringify(file.meshes)?.slice(0, 40)}; an array is required`);
+      continue;
+    }
+    const rows: FoldingMesh[] = [];
+    file.meshes.forEach((m, i) => {
+      const at = `${path} meshes[${i}]`;
+      if (!isRecord(m) || typeof m.slot !== 'string' || typeof m.attachment !== 'string' || typeof m.triangleCount !== 'number' || !Array.isArray(m.frames)) {
+        bad(at, 'is not { slot, attachment, triangleCount, frames, worst } as rigc-folds/1 writes it');
+        return;
+      }
+      if (m.worst === null) return;
+      const worst = isRecord(m.worst) ? m.worst : null;
+      if (worst === null || typeof worst.index !== 'number' || !Array.isArray(worst.triangles)) {
+        bad(at, `worst is ${JSON.stringify(m.worst)?.slice(0, 40)}; null or { index, triangles, … } is required`);
+        return;
+      }
+      const prefix = `${JSON.stringify(name)}: mesh "${m.attachment}" (slot "${m.slot}") folds on `;
+      const line = lines.find((l) => l.startsWith(prefix));
+      if (line === undefined) {
+        bad(at, `folds on ${m.frames.length} frame(s), and rigc printed no line beginning ${prefix.trim()}`);
+        return;
+      }
+      rows.push({ slot: m.slot, attachment: m.attachment, triangleCount: m.triangleCount, frames: m.frames.length, worstFrame: worst.index, worstTriangles: worst.triangles.length, line });
+    });
+    out.set(name, rows);
+  }
+  refuseIfAny(problems);
+  return out;
+}
+
+/**
+ * The fold line (issue #320) from the reading: every folding mesh a row, a
+ * row no `may_fold` entry takes a `CHECK_ANIMATIONS_DO_NOT_FOLD` problem
+ * naming the animation, the slot and rigc's line, and an entry no row
+ * matches a problem of its own — a declaration that excepts nothing.
+ */
+export function foldsLine(named: readonly string[], fps: number, physicsLeftOut: number, readings: ReadonlyMap<string, readonly FoldingMesh[]>, mayFold: readonly MayFold[], requirementsPath: string | null, problems: Problem[]): FoldsLine {
+  const folding: FoldRow[] = [];
+  for (const name of named) {
+    for (const m of readings.get(name) ?? []) {
+      const entry = mayFold.find((e) => e.slot === m.slot && e.animation === name);
+      folding.push({ animation: name, slot: m.slot, attachment: m.attachment, frames: m.frames, worst_frame: m.worstFrame, worst_triangles: m.worstTriangles, triangles: m.triangleCount, declared: entry === undefined ? null : entry.why, line: m.line });
+    }
+  }
+  const physics = physicsLeftOut === 0 ? '' : `, its ${physicsLeftOut} physics constraint(s) left out`;
+  for (const r of folding) {
+    if (r.declared !== null) continue;
+    problems.push({
+      code: `CHECK_${FOLD_LINE}`,
+      object: `animation "${r.animation}", mesh "${r.attachment}" (slot "${r.slot}")`,
+      detail: `rigc render --folds at ${fps} fps${physics}: ${r.line}; no triangle turned over against the setup pose is required — a fold the art means is declared in the --requirements file's may_fold, { "slot": "${r.slot}", "animation": "${r.animation}", "why": … }`,
+    });
+  }
+  const declaredNotFolding = mayFold.filter((e) => !folding.some((r) => r.slot === e.slot && r.animation === e.animation)).map((e) => ({ slot: e.slot, animation: e.animation }));
+  for (const e of declaredNotFolding) {
+    problems.push({
+      code: `CHECK_${FOLD_LINE}`,
+      object: `${requirementsPath ?? 'the requirements file'} may_fold (slot "${e.slot}", animation "${e.animation}")`,
+      detail: `declares a fold, and rigc render --folds at ${fps} fps${physics} reads no folded triangle on slot "${e.slot}" in animation "${e.animation}"; an exception that excepts nothing is taken out of the file`,
+    });
+  }
+  const undeclared = folding.filter((r) => r.declared === null).length;
+  return {
+    status: undeclared === 0 && declaredNotFolding.length === 0 ? 'PASS' : 'FAIL',
+    animations: [...named],
+    fps,
+    physics_left_out: physicsLeftOut,
+    folding,
+    folding_undeclared: undeclared,
+    declared_not_folding: declaredNotFolding,
+    bar: 0,
+  };
 }
 
 /**
@@ -1830,7 +2032,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   const loopDir = join(out, '_loop');
   const seamDir = join(out, SEAM_DIR);
   const keptDir = join(out, STILL_DIR);
-  for (const d of [buildDir, idleDir, stillDir, isoDir, loopDir, seamDir, keptDir]) rmSync(d, { recursive: true, force: true });
+  const foldDir = join(out, FOLD_SCRATCH);
+  for (const d of [buildDir, idleDir, stillDir, isoDir, loopDir, seamDir, keptDir, foldDir]) rmSync(d, { recursive: true, force: true });
   const written: string[] = [];
   const write = (name: string, data: string): void => {
     writeFileSync(join(out, name), data);
@@ -1861,43 +2064,55 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   let loop: { max: number; x: number; y: number } | null = null;
   let loopSet: FrameSet | null = null;
   let loopPhysics: LoopPhysics[] | null = null;
-  if (inp.idleDuration !== null) {
-    const render = rigc(['render', '--candidate', buildDir, '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--geometry', '--out', idleDir]);
-    if (render.status !== 0) refuseIfAny(rigcFailed('render --animation idle --geometry', render, render.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
-    idle = readFrameSet(idleDir);
-    const last = idle.frames[idle.frames.length - 1];
-    // Issue #244: the last frame's time and the duration are compared within TIME_SLACK, not with `!==` — a whole
-    // number of frames (40/12 s) is not exact in binary, and rigc writes its last frame at 40 * (1/12), one ulp off.
-    if (idle.stride !== 1 || idle.written !== idle.sampled || Math.abs(idle.duration - inp.idleDuration) > TIME_SLACK || last.index !== idle.sampled - 1) {
-      refuseIfAny([
-        {
-          code: 'CHECK_LOOP_LAST_FRAME_AT_DURATION',
-          object: `idle frame ${last.name}`,
-          detail: `rigc sampled ${idle.sampled} frame(s), wrote ${idle.written} at stride ${idle.stride}, the last at t = ${idle.duration}s; the loop compares frame 0 with the frame at the idle's duration, ${inp.idleDuration}s, so a duration that is a whole number of 1/${IDLE_FPS} s ticks (within ${TIME_SLACK} s) and every frame written are required`,
-        },
-      ]);
-    }
-    const contact = join(idle.dir, 'contact.png');
-    if (existsSync(contact)) {
-      copyFileSync(contact, join(out, 'contact.png'));
-      written.push('contact.png');
-    }
-    loop = maxRgbDiff(idle.frames[0].image, last.image);
-    loopSet = idle;
-    // The keyed loop (issue #183): with a physics constraint, the same rig and motion with every one left out, built
-    // the same way and rendered the same way, is what frame 0 and the frame at the duration are read from.
-    const stripped = withoutPhysics(inp.rig, inp.motion);
-    if (stripped !== null) {
-      loopPhysics = stripped.physics;
-      try {
-        mkdirSync(loopDir, { recursive: true });
-        const images = typeof inp.rig.images === 'string' ? resolve(inp.rigDir, inp.rig.images) : inp.rig.images;
-        writeFileSync(join(loopDir, 'rig.json'), JSON.stringify({ ...stripped.rig, images }));
-        writeFileSync(join(loopDir, 'motion.json'), JSON.stringify(stripped.motion));
+  // The keyed build (issues #183, #320): with a physics constraint, the same rig and motion with every one left out,
+  // built once the same way, which the loop and the folds of the animations beside the idle are both read from.
+  const stripped = withoutPhysics(inp.rig, inp.motion);
+  let keyed: string | null = null;
+  const keyedBuild = (what: string): string => {
+    if (stripped === null) return buildDir;
+    if (keyed !== null) return keyed;
+    mkdirSync(loopDir, { recursive: true });
+    const images = typeof inp.rig.images === 'string' ? resolve(inp.rigDir, inp.rig.images) : inp.rig.images;
+    writeFileSync(join(loopDir, 'rig.json'), JSON.stringify({ ...stripped.rig, images }));
+    writeFileSync(join(loopDir, 'motion.json'), JSON.stringify(stripped.motion));
+    const lb = rigc(['build', '--rig', join(loopDir, 'rig.json'), '--motion', join(loopDir, 'motion.json'), '--out', join(loopDir, 'build'), ...packedBuildArgs(mode)]);
+    if (lb.status !== 0) refuseIfAny(rigcFailed(`${packedBuildLabel(mode)} (${what})`, lb, buildGateLines(lb.out)));
+    keyed = join(loopDir, 'build');
+    return keyed;
+  };
+  const named = isRecord(inp.motion.animations) ? Object.keys(inp.motion.animations).filter((n) => n !== 'idle') : [];
+  let folds: FoldsLine | null = null;
+  const foldProblems: Problem[] = [];
+  try {
+    if (inp.idleDuration !== null) {
+      const render = rigc(['render', '--candidate', buildDir, '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--geometry', '--out', idleDir]);
+      if (render.status !== 0) refuseIfAny(rigcFailed('render --animation idle --geometry', render, render.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+      idle = readFrameSet(idleDir);
+      const last = idle.frames[idle.frames.length - 1];
+      // Issue #244: the last frame's time and the duration are compared within TIME_SLACK, not with `!==` — a whole
+      // number of frames (40/12 s) is not exact in binary, and rigc writes its last frame at 40 * (1/12), one ulp off.
+      if (idle.stride !== 1 || idle.written !== idle.sampled || Math.abs(idle.duration - inp.idleDuration) > TIME_SLACK || last.index !== idle.sampled - 1) {
+        refuseIfAny([
+          {
+            code: 'CHECK_LOOP_LAST_FRAME_AT_DURATION',
+            object: `idle frame ${last.name}`,
+            detail: `rigc sampled ${idle.sampled} frame(s), wrote ${idle.written} at stride ${idle.stride}, the last at t = ${idle.duration}s; the loop compares frame 0 with the frame at the idle's duration, ${inp.idleDuration}s, so a duration that is a whole number of 1/${IDLE_FPS} s ticks (within ${TIME_SLACK} s) and every frame written are required`,
+          },
+        ]);
+      }
+      const contact = join(idle.dir, 'contact.png');
+      if (existsSync(contact)) {
+        copyFileSync(contact, join(out, 'contact.png'));
+        written.push('contact.png');
+      }
+      loop = maxRgbDiff(idle.frames[0].image, last.image);
+      loopSet = idle;
+      // The keyed loop (issue #183): with a physics constraint, the same rig and motion with every one left out, built
+      // the same way and rendered the same way, is what frame 0 and the frame at the duration are read from.
+      if (stripped !== null) {
+        loopPhysics = stripped.physics;
         const what = 'the idle with its physics constraint(s) left out';
-        const lb = rigc(['build', '--rig', join(loopDir, 'rig.json'), '--motion', join(loopDir, 'motion.json'), '--out', join(loopDir, 'build'), ...packedBuildArgs(mode)]);
-        if (lb.status !== 0) refuseIfAny(rigcFailed(`${packedBuildLabel(mode)} (${what})`, lb, buildGateLines(lb.out)));
-        const lr = rigc(['render', '--candidate', join(loopDir, 'build'), '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--out', join(loopDir, 'frames')]);
+        const lr = rigc(['render', '--candidate', keyedBuild(what), '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--out', join(loopDir, 'frames')]);
         if (lr.status !== 0) refuseIfAny(rigcFailed(`render --animation idle (${what})`, lr, lr.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
         const kept = readFrameSet(join(loopDir, 'frames'));
         const keptLast = kept.frames[kept.frames.length - 1];
@@ -1912,13 +2127,27 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
         }
         loop = maxRgbDiff(kept.frames[0].image, keptLast.image);
         loopSet = kept;
+      }
+      const idleImages = idle.frames.map((f) => f.image);
+      writePng(join(out, 'motion_heat.png'), motionHeat(idleImages));
+      written.push('motion_heat.png');
+    }
+
+    // 3a. the animations beside the idle, read for folds by rigc (issue #320) — only when there is one; at the idle's
+    // rate whatever --requirements says, so a requirements file moves only what it declares (CK78), from the keyed build
+    if (named.length > 0) {
+      const fps = IDLE_FPS;
+      try {
+        const fr = rigc(['render', '--candidate', keyedBuild('the animations beside the idle with their physics constraint(s) left out'), '--folds', '--fps', String(fps), '--max', String(FOLD_RENDER_MAX), '--out', foldDir]);
+        if (fr.status !== 0) refuseIfAny(rigcFailed(`render --folds --fps ${fps}${stripped === null ? '' : ' (physics constraint(s) left out)'}`, fr, fr.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+        const readings = readFoldSets(foldDir, named, fps, fr.out);
+        folds = foldsLine(named, fps, stripped === null ? 0 : stripped.physics.length, readings, reqFile === null ? [] : reqFile.may_fold, reqFile === null ? null : reqFile.path, foldProblems);
       } finally {
-        rmSync(loopDir, { recursive: true, force: true });
+        rmSync(foldDir, { recursive: true, force: true });
       }
     }
-    const idleImages = idle.frames.map((f) => f.image);
-    writePng(join(out, 'motion_heat.png'), motionHeat(idleImages));
-    written.push('motion_heat.png');
+  } finally {
+    rmSync(loopDir, { recursive: true, force: true });
   }
 
   // 3b. the parts a judgement reads alone: each rendered by its own slots, on the whole rig's grid
@@ -2059,6 +2288,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     TIP_OVER_ROOT: tip,
     STILL_REGIONS_DARK: still,
     TEXTURE_STRETCH: stretch,
+    ...(folds === null ? {} : { [FOLD_LINE]: folds }),
     RECOMPOSITE_HOLES: inp.parts === null ? { status: 'SKIP', reason: inp.noParts ?? '' } : holesLine(inp.parts),
     ...(sourceRead === null ? {} : { [SOURCE_LINE]: sourceRead }),
     ...(Object.keys(skipped).length === 0 ? {} : { skipped }),
@@ -2090,7 +2320,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   const rank = (q: Problem): number => JUDGEMENT_LINES.findIndex((n) => q.code === `CHECK_${n}`);
   problems.sort((a, b) => rank(a) - rank(b));
   problems.unshift(...barProblems);
-  problems.push(...reqProblems);
+  problems.push(...foldProblems, ...reqProblems);
   figures.PASS = problems.length === 0;
   write('check.json', `${JSON.stringify(figures, null, 1)}\n`);
   const bars: CheckReport['bars'] = { measured: ['gate'], skipped: [] };
@@ -2104,6 +2334,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     const l = figures[n];
     tally(n, l.status === 'SKIP' ? l.reason : null);
   }
+  // Issue #320: the fold bar is counted only where it is written, so a rig of the idle alone counts what it counted.
+  if (folds !== null) tally(FOLD_LINE, null);
   return {
     figures,
     gateHtml,
@@ -2116,7 +2348,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     problems,
     written,
     requirements: reqBlock,
-    besideIdle: isRecord(inp.motion.animations) ? Object.keys(inp.motion.animations).filter((n) => n !== 'idle') : [],
+    besideIdle: named,
   };
 }
 

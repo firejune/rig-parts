@@ -179,6 +179,23 @@ export interface RequirementsFile {
    * Empty when not declared: every swinging part's tip swings.
    */
   rests: string[];
+  /**
+   * Issue #320: the folds the scene means — a slot whose mesh turns a triangle
+   * over in a named animation on purpose (a sleeve hidden behind the body as
+   * the arm crosses it), each by slot and animation with the author's why.
+   * `ANIMATIONS_DO_NOT_FOLD` names each such fold with its why and does not
+   * hold it to the bar, and fails an entry whose slot does not fold in that
+   * animation, as rig-c refuses an exemption that exempts nothing. Empty when
+   * not declared: no fold in a named animation is meant.
+   */
+  may_fold: MayFold[];
+}
+
+/** One declared fold (issue #320): a slot, a named animation, and why the fold is the art's. */
+export interface MayFold {
+  slot: string;
+  animation: string;
+  why: string;
 }
 
 /** What `check --requirements` and `build --requirements` name, said once for the help and the refusals. */
@@ -257,7 +274,7 @@ export function readRequirements(path: string): RequirementsFile {
     problems.push({ code: 'REQUIREMENTS_FIELD', object, detail });
   };
   if (raw.spec !== REQUIREMENTS_SPEC) field(`${at} field "spec"`, `is ${JSON.stringify(raw.spec)}; ${JSON.stringify(REQUIREMENTS_SPEC)} is required`);
-  for (const k of Object.keys(raw)) if (!['spec', 'fps', 'targets', 'requirements', ...EXCEPTION_LISTS].includes(k) && !freeKey(k, raw[k])) field(`${at} field "${k}"`, 'is not a field this format reads (spec, fps, targets, requirements, not_planted, not_swinging, rises, rests; note or *_note as a string; x-<name> as a record)');
+  for (const k of Object.keys(raw)) if (!['spec', 'fps', 'targets', 'requirements', ...EXCEPTION_LISTS, 'may_fold'].includes(k) && !freeKey(k, raw[k])) field(`${at} field "${k}"`, 'is not a field this format reads (spec, fps, targets, requirements, not_planted, not_swinging, rises, rests, may_fold; note or *_note as a string; x-<name> as a record)');
   let fps = NaN;
   if (!(finite(raw.fps) && raw.fps > 0)) field(`${at} field "fps"`, `is ${JSON.stringify(raw.fps)}; a positive number of frames per second is required — every named animation is sampled at it, and there is no default`);
   else fps = raw.fps;
@@ -407,8 +424,31 @@ export function readRequirements(path: string): RequirementsFile {
   lists.rests.forEach((n, i) => {
     if (lists.not_swinging.includes(n)) field(`${at} field "rests"[${i}]`, `names "${n}", which "not_swinging" names too; a part declared not swinging is not measured, so there is no tip to hold at rest — leave it in one list`);
   });
+  // Issue #320: may_fold, a non-empty list of { slot, animation, why }, each pair once; which slots and animations they are is read against the rig by resolveRequirements.
+  const mayFold: MayFold[] = [];
+  if (raw.may_fold !== undefined) {
+    if (!Array.isArray(raw.may_fold) || raw.may_fold.length === 0) field(`${at} field "may_fold"`, `is ${JSON.stringify(raw.may_fold)?.slice(0, 60)}; a non-empty list of { "slot", "animation", "why" } is required when the field is given — leave it out to declare that no fold in a named animation is meant`);
+    else {
+      raw.may_fold.forEach((e, i) => {
+        const where = `${at} field "may_fold"[${i}]`;
+        if (!isRecord(e)) {
+          field(where, `is ${JSON.stringify(e)?.slice(0, 40)}; { "slot": <name>, "animation": <name>, "why": <text> } is required`);
+          return;
+        }
+        const before = problems.length;
+        for (const k of Object.keys(e)) if (!['slot', 'animation', 'why'].includes(k) && !freeKey(k, e[k])) field(`${where} field "${k}"`, 'is not a field a may_fold entry reads (slot, animation, why)');
+        for (const k of ['slot', 'animation', 'why'] as const) {
+          if (typeof e[k] !== 'string' || (e[k] as string).trim().length === 0) field(`${where} field "${k}"`, `is ${JSON.stringify(e[k])}; ${k === 'why' ? 'the reason the fold is the art\'s, in words, is required — an exception without one is a silenced bar' : `a ${k} name is required`}`);
+        }
+        if (problems.length !== before) return;
+        const entry: MayFold = { slot: e.slot as string, animation: e.animation as string, why: e.why as string };
+        if (mayFold.some((m) => m.slot === entry.slot && m.animation === entry.animation)) field(where, `declares slot "${entry.slot}" in animation "${entry.animation}" a second time; each pair is declared once`);
+        else mayFold.push(entry);
+      });
+    }
+  }
   refuseIfAny(problems);
-  return { path: at, fps, targets, requirements, not_planted: lists.not_planted, not_swinging: lists.not_swinging, rises: lists.rises, rests: lists.rests };
+  return { path: at, fps, targets, requirements, not_planted: lists.not_planted, not_swinging: lists.not_swinging, rises: lists.rises, rests: lists.rests, may_fold: mayFold };
 }
 
 // ---------------------------------------------------------------------------
@@ -540,6 +580,21 @@ export function resolveRequirements(file: RequirementsFile, rig: Record<string, 
       else if (!meshes.includes(r.attachment)) unresolved(object, `names mesh attachment "${r.attachment}" on slot "${r.slot}", which no skin in rig.json declares; its mesh attachments are ${listed(meshes)}`);
     }
   }
+
+  // Issue #320: each declared fold names a slot that holds a mesh and an animation beside the idle, the ones ANIMATIONS_DO_NOT_FOLD reads.
+  file.may_fold.forEach((m, i) => {
+    const object = `may_fold[${i}] (slot "${m.slot}", animation "${m.animation}")`;
+    if (m.animation === 'idle') problems.push({ code: 'REQUIREMENTS_MAY_FOLD', object, detail: 'names the idle, which ANIMATIONS_DO_NOT_FOLD does not read — it reads the animations beside the idle, so declaring it excepts nothing' });
+    else if (!(m.animation in anims)) unresolved(object, `names animation "${m.animation}", which motion.json does not declare; it declares ${listed(animNames)}`);
+    const slots = (Array.isArray(rig.slots) ? rig.slots : []).filter(isRecord).map((s) => s.name);
+    if (!slots.includes(m.slot)) {
+      unresolved(object, `names slot "${m.slot}", which rig.json does not declare`);
+      return;
+    }
+    const meshes = meshAttachmentsOf(rig, m.slot);
+    if (typeof meshes === 'string') problems.push({ code: 'REQUIREMENTS_RESOLVES', object, detail: meshes });
+    else if (meshes.length === 0) problems.push({ code: 'REQUIREMENTS_MAY_FOLD', object, detail: `names slot "${m.slot}", which no skin in rig.json gives a mesh attachment; a region is one quad and cannot fold, so declaring it excepts nothing` });
+  });
 
   const root = bones.find((b) => b.name === rootBone);
   const measured = new Set(file.requirements.map((r) => r.animation));

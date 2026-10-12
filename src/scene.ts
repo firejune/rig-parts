@@ -92,7 +92,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { checkStage, gateThroughRigc, type Log } from './build.ts';
-import { ACCEPTABLE_BARS, BARS, barsNotMet, type CheckReport, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, type PackMode, requirementsNotPass, type RigcRunner } from './check.ts';
+import { ACCEPTABLE_BARS, barsNotMet, type CheckReport, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, type PackMode, requirementsNotPass, type RigcRunner } from './check.ts';
 import { CONSTRAINT_BONE_FIELDS, ROOT_BONE } from './config.ts';
 import { cropToSpineY } from './coords.ts';
 import { PartsError, type Problem, problemLine, refuseIfAny } from './errors.ts';
@@ -1421,7 +1421,7 @@ export function composeStage(input: ComposeInput, run: ComposeRunners, log: Log)
     log(`compose: stopped at check; the composed rig's check is PASS${acceptedLine} (the composed rig and scene.json are written; the scene is for looking, not shipping)`);
     return { stoppedAt: 'check', composed, check: report };
   }
-  log(`compose: PASS — ${report.bars.measured.length} of ${BARS.length} bar(s) measured; the packed atlas under ${join(input.out, 'check', 'build')} is the artifact`);
+  log(`compose: PASS — ${report.bars.measured.length} of ${report.bars.measured.length + report.bars.skipped.length} bar(s) measured; the packed atlas under ${join(input.out, 'check', 'build')} is the artifact`);
   return { stoppedAt: null, composed, check: report };
 }
 
