@@ -72,7 +72,7 @@
  * stage; 0 otherwise — a refusal is a result.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -96,7 +96,7 @@ import { readPng, type Raster } from '../src/raster/index.ts';
 import { buildRig } from '../src/rig.ts';
 import { examplePolicy, finerSourcePolicy } from '../fixtures/automesh.ts';
 import { withPolicyMotion } from '../fixtures/automotion.ts';
-import { assembleExample, cell, installedRigc, missingInputs, type MotionCell, motionCell, pinnedInputs, rowOf, trackedSpacing, verdictOf } from './auto_motion_survey.ts';
+import { assembleExample, cell, installedRigc, missingInputs, type MotionCell, motionCell, pinnedInputs, rowOf, trackedSpacing, verdictOf, writeSwitchedConfig } from './auto_motion_survey.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 
@@ -545,8 +545,7 @@ export function stageInput(example: string, part: string, auto: unknown, asm: st
   const raw = JSON.parse(readFileSync(join(ROOT, 'examples', example, 'config.json'), 'utf8')) as { meshes: Record<string, { r: number; segments: unknown }> };
   const m = raw.meshes[part];
   (raw.meshes as Record<string, unknown>)[part] = { auto, r: m.r, segments: m.segments };
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'config.json'), JSON.stringify(raw, null, 1));
+  writeSwitchedConfig(example, raw, dir);
   const images = new Map<string, Raster>();
   const partsFile = readParts(join(asm, 'parts.json'));
   for (const p of partsFile.parts) images.set(p.name, readPng(join(asm, 'parts', `${p.name}.png`)));

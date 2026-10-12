@@ -41,7 +41,7 @@ import { DEFAULT_PAGE_EDGES, findRigc, type RigcRunner } from '../src/check.ts';
 import type { AutoSpec } from '../src/config.ts';
 import { IDLE_FPS } from '../src/motion.ts';
 import { readPng, type Raster } from '../src/raster/index.ts';
-import { installedRigc, pinnedInputs } from './auto_motion_survey.ts';
+import { installedRigc, pinnedInputs, writeSwitchedConfig } from './auto_motion_survey.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 
@@ -343,8 +343,7 @@ export function runCell(key: string, part: string, manual: { path: string; value
   const { spec, spacing, from } = specFor(key, part, manual);
   const work = mkdtempSync(join(tmpdir(), 'rig-parts-trial-'));
   try {
-    const config = join(work, 'config.json');
-    writeFileSync(config, JSON.stringify(switchedConfig(key, new Map([[part, spec]])), null, 1));
+    const config = writeSwitchedConfig(key, switchedConfig(key, new Map([[part, spec]])), work);
     const out = join(work, 'out');
     const b = builder(key, config, out, join(work, 'scratch'));
     const row = reportRow(out, part);
@@ -426,8 +425,7 @@ export function runExample(key: string, cells: readonly CellRow[], keepDir: stri
   for (const [part, c] of chosen) if (c.accepted !== null) specs.set(part, c.accepted.declared);
   const work = mkdtempSync(join(tmpdir(), 'rig-parts-trial-'));
   try {
-    const autoCfg = join(work, 'auto.json');
-    writeFileSync(autoCfg, JSON.stringify(switchedConfig(key, specs), null, 1));
+    const autoCfg = writeSwitchedConfig(key, switchedConfig(key, specs), join(work, 'auto-config'));
     const ao = join(work, 'auto');
     const ab = runBuild(key, autoCfg, ao, join(work, 'scratch-a'));
     ledger.built(key);

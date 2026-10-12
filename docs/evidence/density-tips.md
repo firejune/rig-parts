@@ -1,5 +1,7 @@
 # The curled tips are a tear in the weight rule (issue #265, diagnosis)
 
+> Measured on rig-c 2.40.0 (`bun.lock` at the merge of PR #283). rig-c 2.45.2 fixed `rigc render`'s physics clock (core#1380), so figures read through `rigc render` move under it: on demo `tools/tear_survey.ts` reads 2.428 → 2.426 and 1.823 → 1.844 (rig-c 2.40.0 against 2.47.0), a move in the second and third decimal that flips no verdict there; no verdict on this page sits within 0.021 of its line, the larger of the two moves. This page is a record and is not re-run (#311).
+
 Stage D's (G) — the traced outline with a coarse interior grid — read worse than the lattice on the trailer's
 `hair_long` at the bends, in every traced arm alike (19.54 against 17.38 at 15°, 13 inverted triangles against 4).
 This page asks what the lattice's staircase carries at the strand tips that a traced outline does not, on that one
