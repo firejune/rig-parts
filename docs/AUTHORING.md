@@ -1183,10 +1183,12 @@ idle moves the bust at most 0.066 rig px, idle frame 2). Faster keys on the pare
 a turn, in a named animation (the recipe above) or a consumer's own — are what the spring
 answers. `reference-sample`'s `animations.json` holds one, `hop` (1 s: `hip` `translate` y down 5, up 24,
 landing at -6 at 0.45 s, settling at 0.55 s; nothing keys the jiggle bones): rendered at 30 fps
-against the same build without its constraints, the bust moves at most 6.583 rig px and the hips
-(`hip_phys` inertia 0.2, strength 160, damping 0.88, mass 1.5) at most 4.432 (frame 13, the fall
-into the landing), and both overshoot after it, 3.38 and 1.38 rig px (frames 21 and 22;
-[`docs/evidence/sample-hop.png`](https://github.com/rig-c/parts/blob/main/docs/evidence/sample-hop.png)). No bar here judges the jiggle, and two limits follow from that:
+against the same build without its constraints, the bust moves at most 6.702 rig px and the hips
+(`hip_phys` inertia 0.2, strength 160, damping 0.88, mass 1.5) at most 4.609 (frame 14, at the
+landing), and both overshoot after it, 3.27 and 1.35 rig px (frames 21 and 22). These are rig-c
+2.45.2's renders, whose physics no longer ends a frame on a step's tie; on rig-c 2.40.0 the same
+build read 6.583 and 4.432 (frame 13) and 3.38 and 1.38, which
+[`docs/evidence/sample-hop.png`](https://github.com/rig-c/parts/blob/main/docs/evidence/sample-hop.png) shows. No bar here judges the jiggle, and two limits follow from that:
 
 - **The region's `band` caps the displacement.** The patch moves as one piece and the band is
   where the mesh stretches to follow it, so physics values that carry the patch further than
@@ -1195,8 +1197,8 @@ into the landing), and both overshoot after it, 3.38 and 1.38 rig px (frames 21 
   geometry with PR #187's values (inertia 0.5, strength 100, damping 0.85, mass 1, a bone
   displacement of 9.85 rig px against bands of 16 and 12) gives
   `CHECK_TEXTURE_STRETCH: mesh "bottomwear" triangle 13 (vertices 5 183 6), edge 6-5, idle frame 13 — the edge is 0.233 times its rest length (max(ratio, 1/ratio) 4.29); <= 1.926544 is required`
-  and `topwear` 2.597; with the values tracked now it reads 1.697 (`topwear`) and 1.566
-  (`bottomwear`). Tune the constraint against the animation that drives it, not the idle.
+  and `topwear` 2.597; with the values tracked now it reads 1.719 (`topwear`) and 1.602
+  (`bottomwear`) (1.697 and 1.566 on rig-c 2.40.0, before 2.45.2's render clock). Tune the constraint against the animation that drives it, not the idle.
 
 #### A part only physics moves, in the automatic mode
 
@@ -1464,8 +1466,10 @@ entry, no dithering, filter None) — and is the small file to show. `idle.gif`
 print their palette error, per channel over R, G and B of every frame (and alpha's
 max for the APNG); a figure is a measurement of the file, not a bar. On the demo
 (the README's animation since issue #224's follow-up: `build --loop --lead-in 3`), with
-the breath of issue #270 (2.5 % of neck -> hip, 4.80 px peak to peak): 4,446,263 B lossless,
-704,009 B indexed and 760,294 B GIF, both palette files at max 70, mean 0.631; on the
+the breath of issue #270 (2.5 % of neck -> hip, 4.80 px peak to peak): 4,449,233 B lossless,
+703,909 B indexed and 760,058 B GIF, both palette files at max 71, mean 0.636 (rig-c 2.45.2
+and later, whose render no longer ends a frame on a physics step's tie; on rig-c 2.40.0,
+4,446,263, 704,009 and 760,294 B at max 70, mean 0.631); on the
 40-frame idle of issue #252 (rig-c 2.40.0, the breath 2.5 % of the topwear's height, 5.92 px):
 4,514,756 B lossless, 725,845 B indexed and 784,074 B GIF, at the same error; on the 4 s idle before it
 (rig-c 2.33.0): 5,148,992, 727,486 and 781,526 B at max 69, mean 0.630 — the two share one quantiser, so their error is the same by
@@ -1482,7 +1486,7 @@ renders the idle played n + 1 times back to back (`idle_lead_in`, the build's ot
 animations kept so the viewport is fitted as for the idle frames), keeps the last
 period, drops its end frame (the next period's first) and prints how far that end frame
 is from the first kept one — the jump the loop will show. The settling is the rig's, not
-a constant: on the demo's 4 s idle, `--lead-in 1` and `2` each still read max |d| 117, 305 px over 40, and `3` reads max 1, 0 px over 40; on its 40-frame idle (issue #252, a shorter period and a breath twice as far), `3` reads max 7, 0 px over 40. The idle
+a constant: on the demo's 4 s idle, `--lead-in 1` and `2` each still read max |d| 117, 305 px over 40, and `3` reads max 1, 0 px over 40; on its 40-frame idle (issue #252, a shorter period and a breath twice as far), `3` reads max 1, 0 px over 40 (max 7 before rig-c 2.45.2, whose render no longer ends a frame on a physics step's tie). The idle
 must repeat without an invented value — every track keyed from 0 to the duration, ending
 where it starts — or the build refuses it (`LOOP_LEAD_IN_IDLE`). `check` and its bars
 read `check/idle_frames/` as before; only the loop files move. On reference-demo with `--seam silhouette`

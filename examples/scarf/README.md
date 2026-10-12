@@ -136,6 +136,14 @@ here (gitignored).
   `topwear` both, the face half of `STILL_REGIONS_DARK` rms 1.311e-13 to 1.305e-13 and
   its reported crossing depth 2.524 to 2.498; every status as before. `rig.json`,
   `mesh_report.json`, `parts.json` and the gate file did not move.
+  Issue #305 moved rig-c from 2.40.0 to 2.47.1. Every build file is byte-identical
+  across 2.40.0, 2.45.1, 2.45.2, 2.46.0, 2.47.0 and 2.47.1 (`parts.json`, `rig/`, the packed
+  skeleton and the gate file); 2.45.2, whose render no longer ends a frame on a physics
+  step's tie (core#1380), moved the idle frames `check` reads and so `check.json`:
+  `torso_heat_mean` 25.208 to 24.777, `TIP_OVER_ROOT` `handwear_r` 2.634 to 2.632 (tip
+  6.451 to 6.447) and `bottomwear` 3.487 to 3.437 (root 0.04 to 0.041), `TEXTURE_STRETCH`
+  `topwear`'s smallest ratio 0.958 to 0.961 (the same triangle, frame 32, was 31) and
+  `hair_front`'s largest 1.097 to 1.096; every status as before.
 
 ## The four patches
 
@@ -200,8 +208,10 @@ holds part of the face; no chain was tried on them.
 
 Measured as on `demo` (`check`'s `TEXTURE_STRETCH` reading applied to each clip's
 `rigc render --geometry --fps 30 --max 640`, the clip alone from frame 0, physics on;
-ceiling 1.926544): `tilt` 1.023, `look_l` 1.108, `look_r` 1.118, `smile` 1.014 (all
-`hair_front`), `startled` 1.152 (`topwear`), `bow` 1.246 (`hair_back`), `hop` 1.336
+ceiling 1.926544; rig-c 2.45.2 and later, whose render no longer ends a frame on a physics
+step's tie, with rig-c 2.40.0's figure in brackets where it differs): `tilt` 1.025 [1.023],
+`look_l` 1.121 [1.108], `look_r` 1.118, `smile` 1.015 [1.014] (all `hair_front`),
+`startled` 1.152 (`topwear`), `bow` 1.246 (`hair_back`), `hop` 1.403 [1.336]
 (`hair_front`). No bar reads a clip; these are a measurement made for the issue, not a
 gate.
 
