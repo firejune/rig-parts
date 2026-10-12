@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/rig-c/parts/compare/v1.10.0...v1.11.0) (2026-10-12)
+
+
+### Features
+
+* **rig:** the weight cut is the author's per mesh — meshes.&lt;part&gt;.influences declares the cap (a whole number, or null for none) and the floor's form (cut or continuous) in the lattice and contour modes ([#284](https://github.com/rig-c/parts/issues/284)) ([#301](https://github.com/rig-c/parts/issues/301)) ([0ebd884](https://github.com/rig-c/parts/commit/0ebd8843f16493623815f1d06e823348bb91ff10))
+
 ## [1.10.0](https://github.com/rig-c/parts/compare/v1.9.1...v1.10.0) (2026-10-12)
 
 
