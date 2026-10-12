@@ -76,7 +76,7 @@ import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from '../src/mes
 import { alphaAbove, connectedComponents, readPng } from '../src/raster/index.ts';
 import { OFFSET_PLACES, PAD, rigJsonText } from '../src/rig.ts';
 import { pyRound } from '../src/round.ts';
-import { DEFAULT_LIMITS, influences, type Segment } from '../src/weights.ts';
+import { DEFAULT_LIMITS, type InfluenceLimits, influences, type Segment } from '../src/weights.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const RIGC = join(ROOT, 'node_modules', '.bin', 'rigc');
@@ -852,9 +852,9 @@ export function fitAffine(from: readonly P2[], to: readonly P2[]): (p: P2) => P2
 export interface WeightEntry { bone: string; x: number; y: number; weight: number }
 
 /** The rig stage's distance-rule weights at a part-image point, bound in each bone's setup frame. */
-export function weightsAt(p: P2, offset: P2, segs: readonly Segment[], r: number, toWorld: (q: P2) => P2, bones: ReadonlyMap<string, BoneMatrix>, exponent?: number): WeightEntry[] {
+export function weightsAt(p: P2, offset: P2, segs: readonly Segment[], r: number, toWorld: (q: P2) => P2, bones: ReadonlyMap<string, BoneMatrix>, exponent?: number, limits: InfluenceLimits = DEFAULT_LIMITS): WeightEntry[] {
   const [wx, wy] = toWorld(p);
-  const ent = influences([p[0] + offset[0], p[1] + offset[1]], segs, r, DEFAULT_LIMITS, exponent).map(({ bone, weight }) => {
+  const ent = influences([p[0] + offset[0], p[1] + offset[1]], segs, r, limits, exponent).map(({ bone, weight }) => {
     const m = bones.get(bone);
     if (m === undefined) throw new Error(`weightsAt: bone "${bone}" is not in the setup geometry`);
     const det = m.a * m.d - m.b * m.c;
