@@ -2611,12 +2611,24 @@ function noneHeldText(declared: readonly string[]): string {
  * figure, `declared_not_planted`, so the line never reads as though the feet
  * it names were held still. With every foot declared, the torso is measured
  * and the feet figures are an empty list and null.
+ *
+ * Issue #323: the two halves are read apart. With no `topwear` part the feet
+ * half is still measured, and with no `footwear` part the torso half is; the
+ * half that was measured decides the line, and the line says so first —
+ * `halves_measured` `1 of 2`, then each half's own status, the unmeasured one
+ * `SKIP` with its reason — so a half nobody read never passes by being silent.
+ * With neither, the line is the SKIP it was. A run that measured both halves
+ * writes the keys it always wrote.
  */
 function breathLine(inp: FullInputs, isolated: Isolate, problems: Problem[], notPlanted: readonly string[] = []): JudgementLine {
   const torso = partsTagged(inp.parts, TORSO_TAGS);
   const { all: allFeet, held: feet, declared } = plantedFeet(inp.parts, notPlanted);
-  if (torso.length === 0) return skip(`no part comes from a See-through ${tagWords(TORSO_TAGS)} layer, so there is no torso to see breathe${declared.length === 0 ? '' : `; ${declared.map((n) => `"${n}"`).join(', ')} declared not planted`}`);
-  if (allFeet.length === 0) return skip(`no part comes from a See-through ${tagWords(FEET_TAGS)} layer, so there are no feet to hold still`);
+  const noTorso = `no part comes from a See-through ${tagWords(TORSO_TAGS)} layer, so there is no torso to see breathe`;
+  const noFeet = `no part comes from a See-through ${tagWords(FEET_TAGS)} layer, so there are no feet to hold still`;
+  // Issue #323: a figure without one of the two halves still has the other read; with neither, the SKIP it always was.
+  if (torso.length === 0 && feet.length === 0) return skip(`${noTorso}${declared.length === 0 ? '' : `; ${declared.map((n) => `"${n}"`).join(', ')} declared not planted`}`);
+  if (torso.length === 0) return oneHalf(inp, isolated, problems, 'feet', feet, noTorso, declared);
+  if (allFeet.length === 0) return oneHalf(inp, isolated, problems, 'torso', torso, noFeet, []);
   const H = inp.parts.rig_size[1];
   const ts = isolated('torso', torso);
   const fs = feet.length === 0 ? null : isolated('feet', feet);
@@ -2649,6 +2661,62 @@ function breathLine(inp: FullInputs, isolated: Isolate, problems: Problem[], not
     torso_floor: BREATH_TORSO_MEAN_FLOOR,
     feet_parts: feet.map((p) => p.name),
     feet_heat_max: fh === null ? null : fh.max,
+    feet_ceiling: BREATH_FEET_MAX_CEILING,
+  };
+}
+
+/**
+ * `BREATH_VISIBLE` with one half to read (issue #323): the torso with no
+ * `footwear` part, or the feet with no `topwear` part. The half read decides
+ * the line by the bar it always had, its figures under the names they always
+ * had; the other half is `SKIP` with `reason`, and the line's first figure,
+ * `halves_measured`, says `1 of 2` — after `declared_not_planted` when the scene
+ * file declares some of the feet read (issue #231), which stays the first.
+ */
+function oneHalf(inp: FullInputs, isolated: Isolate, problems: Problem[], half: 'torso' | 'feet', ps: readonly PartRecord[], reason: string, declared: readonly string[]): JudgementLine {
+  const H = inp.parts.rig_size[1];
+  const fs = isolated(half, ps);
+  const box = frameBox(ps, H, inp.stage, fs.viewport);
+  if (box === null) return skip(`the ${half} box falls outside the idle frame, and ${reason}`);
+  const heat = regionHeat(heatField(fs.frames.map((f) => f.image)), fs.viewport.pixelWidth, box);
+  if (half === 'torso') {
+    const mean = round3(heat.mean);
+    const ok = mean >= BREATH_TORSO_MEAN_FLOOR;
+    if (!ok) {
+      problems.push({
+        code: 'CHECK_BREATH_VISIBLE',
+        object: `torso ${quoteParts(ps)} rendered alone, frame box ${boxLabel(box)}; the feet half not measured: ${reason}`,
+        detail: `heat mean ${mean}/255 over the idle; >= ${BREATH_TORSO_MEAN_FLOOR} is required — the chest's breath track moves too little, or the torso is not weighted to the bone it keys`,
+      });
+    }
+    return {
+      status: ok ? 'PASS' : 'FAIL',
+      halves_measured: '1 of 2',
+      torso_status: ok ? 'PASS' : 'FAIL',
+      torso_parts: ps.map((p) => p.name),
+      torso_heat_mean: mean,
+      torso_floor: BREATH_TORSO_MEAN_FLOOR,
+      feet_status: 'SKIP',
+      feet_reason: reason,
+    };
+  }
+  const ok = heat.max <= BREATH_FEET_MAX_CEILING;
+  if (!ok) {
+    problems.push({
+      code: 'CHECK_BREATH_VISIBLE',
+      object: `feet ${quoteParts(ps)} rendered alone, frame box ${boxLabel(box)}${declared.length === 0 ? '' : ` (${declared.map((n) => `"${n}"`).join(', ')} declared not planted)`}; the torso half not measured: ${reason}`,
+      detail: `heat max ${heat.max}/255 over the idle; <= ${BREATH_FEET_MAX_CEILING} is required — the feet move: their slot rides, or their mesh is weighted to, a bone the idle keys`,
+    });
+  }
+  return {
+    status: ok ? 'PASS' : 'FAIL',
+    ...(declared.length === 0 ? {} : { declared_not_planted: [...declared] }),
+    halves_measured: '1 of 2',
+    torso_status: 'SKIP',
+    torso_reason: reason,
+    feet_status: ok ? 'PASS' : 'FAIL',
+    feet_parts: ps.map((p) => p.name),
+    feet_heat_max: heat.max,
     feet_ceiling: BREATH_FEET_MAX_CEILING,
   };
 }
