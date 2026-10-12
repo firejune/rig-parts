@@ -1149,6 +1149,19 @@ file in rig-c's motion-spec shape beside the config and name it:
       { "bone": "mouth",  "property": "scaley",     "keys": [ { "t": 0, "v": [1] }, { "t": 0.25, "v": [1.4] }, { "t": 0.5, "v": [1] } ] } ] } } }
 ```
 
+**Which way a key moves a bone.** A `rotate` value is degrees added to the bone's setup
+rotation, counter-clockwise positive in the rig's y-up space — rig-c's convention (its
+AUTHORING §3.2, `rotation`: "degrees, counter-clockwise, y up"; its `src/transform.ts`, "World
+rotation in degrees, CCW, y up") — and the rendered image shows the same turn, so on the
+painting a positive key swings a hanging arm toward the image's right and up, a negative one
+toward the image's left and up. `translatex` and `translatey` are in the bone's parent's axes,
+y up, so the positive `translatey` on `brow_r` above raises the brow. Measured on `demo` (one
+key at time 0, rendered by rigc on its 330x512 grid): `sleeve_l0`, the sleeve on the image's
+right, at +30 moved its hand bone `sleeve_l2` 43.9 px right and 27.6 px up, at −30 51.8 px left
+(toward the body) and 2.0 px down; `sleeve_r0`, on the image's left, at +30 moved `sleeve_r2`
+51.9 px right, toward the body — so `demo`'s `wave` raises the image's right arm with
+`sleeve_l0` at +48 (selftest `RG99` holds the sign on the rig fixture).
+
 `build` writes `surprised` into `rig/motion.json` after `idle`, gates it with the rig, and
 `check` names it on a line of its own ([`examples/reference-sample`](https://github.com/rig-c/parts/tree/main/examples/reference-sample), in the repository, carries one, `animations.json` with `hop`, the
 recipe below). With exactly this file beside `examples/reference-sample`'s config in its place,
