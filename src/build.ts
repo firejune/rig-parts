@@ -46,7 +46,7 @@ import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEF
 import { assemble, type AssembleResult, cutLines, driftLine, figuresLine, holeLines, type ProjectRule, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
 import { allocationClause, type Reducer, stageBClause, unboundedClause } from './automesh.ts';
 import { residualClause } from './autoenvelope.ts';
-import { type AutoMotionCase, failingRows, idleSchedule, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison, stimulusMotion, withStimulus } from './automotion.ts';
+import { type AutoMotionCase, failingRows, idleSchedule, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison, sourceSelfFailure, stimulusMotion, withStimulus } from './automotion.ts';
 import {
   bisectAccepted,
   budgetProblem,
@@ -582,8 +582,12 @@ export function replaySearch(
   const self = runComparison(c.object, motionInput(c, motion, refModel, refModel, probeSchedule));
   if ('code' in self) return refuse(self);
   if (motionVerdict(c.object, self) !== null) {
-    lines.push(`replay "${c.part}": the unreduced source is not accepted against itself on the grid frames; no search runs`);
-    return { part: c.part, chosen: null, problems: run.problems, lines };
+    // Issue #280: the refusal says, in its own sentence, that the source fails itself — where, the row, the remedy;
+    // the reduction's reading follows it for the record. The line names the stimulus where it is read at one.
+    const why = sourceSelfFailure(self, c.stimulus);
+    lines.push(`replay "${c.part}": the unreduced source is not accepted against itself ${why === null ? 'on its selection frames' : why.where}; no search runs`);
+    const problems = why === null ? run.problems : run.problems.map((p) => (p.code === 'AUTO_MESH_MOTION' ? { ...p, detail: `${why.sentence}. The reduction's own reading, for the record: ${p.detail}` } : p));
+    return { part: c.part, chosen: null, problems, lines };
   }
   const selection = motion.selection;
   if (selection !== undefined && selection.maxProbes < maxReplays(N, I)) return refuse(budgetProblem(c.object, selection.maxProbes, N, I));

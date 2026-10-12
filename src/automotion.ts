@@ -344,6 +344,47 @@ export function motionRowText(r: MeasureRow): string {
   return `${r.code}${region} ${r.state}: ${r.reason ?? ''}`;
 }
 
+/**
+ * Where a row of a comparison was read at its worst, in the words a reader can act on (issue #280), with its
+ * preposition: a declared stimulus by its animation's name (`at stimulus tail_l -10`, the frame rig-c ids
+ * `stimulus tail_l -10@explicit@0`), an idle frame as `at idle frame <id>`, a geometry row — read on the mesh, at
+ * no frame — as `in its geometry`, and a motion row that names no frame as `on the idle`.
+ */
+export function readingPlace(r: MeasureRow, stimulus: readonly StimulusPose[] | null, geometry: boolean): { text: string; stimulus: boolean } {
+  const id = r.worst?.frame?.id;
+  if (id === undefined) return { text: geometry ? 'in its geometry' : 'on the idle', stimulus: false };
+  const name = (stimulus ?? []).flatMap((st) => stimulusAnimationNames(st)).find((n) => explicitFrameId(n) === id);
+  return name === undefined ? { text: `at idle frame ${id}`, stimulus: false } : { text: `at ${name}`, stimulus: true };
+}
+
+/**
+ * Issue #280: the source compared with itself failed, so no replayed step can pass — the one sentence that says
+ * so (`the unreduced source itself fails <where> (<row> <value> against <bound>), so …`): where (a declared stimulus by name, or the idle frame), each failing row and its value against its bound,
+ * and the remedy, which is the source's (its spacing or outline), or the stimulus's when the failure is read at
+ * one. A row the source fails against itself is an absolute reading (`MQ_INVERSION` counts the source's own
+ * flipped triangles), which is why no reduction of it can pass. Null when the comparison has no failing row.
+ */
+export function sourceSelfFailure(self: MeshQualityReport, stimulus: readonly StimulusPose[] | null): { where: string; sentence: string } | null {
+  const rows = failingRows(self);
+  if (rows.length === 0) return null;
+  const geometryRows = new Set(self.candidates[0]?.geometry?.rows ?? []);
+  const places = rows.map((r) => readingPlace(r, stimulus, geometryRows.has(r)));
+  const distinct = [...new Set(places.map((p) => p.text))];
+  const where = distinct.join(', ');
+  // One place: the rows say only their values; several: each row says its own.
+  const read = rows
+    .map((r, i) => {
+      const at = distinct.length > 1 ? ` ${places[i].text}` : '';
+      return r.state === 'fail' || r.state === 'pass' || r.state === 'undeclared' ? `${r.code} ${r.value}${r.bound === null ? '' : ` against ${r.bound.op} ${r.bound.value}`}${at}` : `${r.code} ${r.state}${at}: ${r.reason ?? ''}`;
+    })
+    .join('; ');
+  const atStimulus = places.some((p) => p.stimulus);
+  return {
+    where,
+    sentence: `the unreduced source itself fails ${where} (${read}), so no replayed step can pass — change the source (its spacing or its outline)${atStimulus ? ' or lower the stimulus' : ''}`,
+  };
+}
+
 /** The candidate's rows with a declared bound that did not pass, geometry then motion. */
 export function failingRows(report: MeshQualityReport): MeasureRow[] {
   const c = report.candidates[0];

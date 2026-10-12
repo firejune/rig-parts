@@ -23175,6 +23175,34 @@ function runAutoMeshSuite(): number {
       `${p63 === undefined ? 'not refused' : problemLine(p63).slice(0, 1500)}; builds ${run63.builds.length}`,
       'issue #196: a refusal the author can act on names the field that resolves it; missing stimulus is still not a PASS',
     );
+
+    // AM64 — issue #280: a source that inverts under its own declared stimulus. The cloth's hem bent 150 degrees flips
+    // a triangle of the unreduced source itself (MQ_INVERSION is an absolute count, so the source against itself reads
+    // it), so no replayed step can pass and no search runs. The one FAIL line says so: the source, the stimulus by its
+    // animation's name, the row and its value, the remedy; and the replay line names the stimulus, not "the grid
+    // frames". At 90 degrees the source holds and the search runs (its refusal is the reduction's, MO23's words).
+    const run64 = motionStage(join(root62, 'inverts'), still60({ chain: 'hem', degrees: 150 }));
+    const fails64 = (run64.e?.problems ?? []).filter((q) => q.code === 'AUTO_MESH_MOTION');
+    const line64 = fails64.length === 1 ? problemLine(fails64[0]) : '';
+    const replay64 = run64.log.filter((l) => l.includes('replay "cloth"'));
+    const run64b = motionStage(join(root62, 'holds'), still60({ chain: 'hem', degrees: 90 }));
+    const line64b = (run64b.e?.problems ?? []).filter((q) => q.code === 'AUTO_MESH_MOTION').map(problemLine).join(' | ');
+    say(
+      'AM64_A_SOURCE_THAT_FAILS_ITSELF_AT_A_STIMULUS_IS_REFUSED_IN_ONE_LINE_NAMING_THE_SOURCE_THE_STIMULUS_AND_THE_ROW',
+      run64.e !== null &&
+        run64.e.problems.length === 1 &&
+        fails64.length === 1 &&
+        fails64[0].object === 'config.meshes.cloth.auto' &&
+        fails64[0].detail.startsWith('the unreduced source itself fails at stimulus hem +150 (MQ_INVERSION 1 against <= 0), so no replayed step can pass — change the source (its spacing or its outline) or lower the stimulus. ') &&
+        !line64.includes('grid frames') &&
+        replay64.length === 1 &&
+        replay64[0].trim() === 'replay "cloth": the unreduced source is not accepted against itself at stimulus hem +150; no search runs' &&
+        run64b.e !== null &&
+        !line64b.includes('the unreduced source itself fails') &&
+        line64b.includes('a bisection over the removal steps'),
+      `150 degrees: ${run64.e === null ? 'built' : run64.e.problems.map(problemLine).join(' | ').slice(0, 900)}; replay line(s) ${JSON.stringify(replay64.map((l) => l.trim()))}; 90 degrees: ${line64b.slice(0, 300)}`,
+      "issue #280: on the trailer's hair_long the source itself flipped 7 triangles at tail_l -10, and the FAIL line pointed at the reduction while the reason sat five lines up, said to be on \"the grid frames\"; the refusal now carries the reason, where it was read and what to change",
+    );
   } finally {
     rmSync(root62, { recursive: true, force: true });
   }
@@ -23969,7 +23997,10 @@ function runAutoReplayCases(say: (name: string, ok: boolean, detail: string, why
       s34 !== null &&
       s34.chosen === null &&
       s34.problems.length === 1 &&
-      s34.problems[0] === fullProblem &&
+      // Issue #280: the refusal is the full result's, now led by the sentence that says the source fails itself.
+      s34.problems[0].code === 'AUTO_MESH_MOTION' &&
+      s34.problems[0].detail.startsWith('the unreduced source itself fails in its geometry (MQ_OVERSHOOT ') &&
+      s34.problems[0].detail.endsWith(`. The reduction's own reading, for the record: ${fullProblem.detail}`) &&
       builds34 === 0 &&
       replays34 === 0 &&
       s34.lines.some((l) => l.endsWith('no search runs')),
@@ -24900,7 +24931,10 @@ function runAutoSelectionCases(say: (name: string, ok: boolean, detail: string, 
       s58 !== null &&
       s58.chosen === null &&
       s58.problems.length === 1 &&
-      s58.problems[0] === fullProblem &&
+      // Issue #280: the refusal is the full result's, now led by the sentence that says the source fails itself.
+      s58.problems[0].code === 'AUTO_MESH_MOTION' &&
+      s58.problems[0].detail.startsWith('the unreduced source itself fails in its geometry (MQ_OVERSHOOT ') &&
+      s58.problems[0].detail.endsWith(`. The reduction's own reading, for the record: ${fullProblem.detail}`) &&
       builds58 === 0 &&
       replays58 === 0 &&
       s58.lines.some((l) => l.endsWith('no search runs')) &&
