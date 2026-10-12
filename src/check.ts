@@ -201,6 +201,16 @@ export const BLINK_PATCH_LEVEL = SEAM_PX_LEVEL;
 export const CHAIN_LAG_MIN_STEP = 0.001;
 export const TIP_RATIO_FLOOR = 1.4725;
 /**
+ * Issue #245: the bar a part the scene declares `rests` is held to — its tip
+ * half travels no further than its root half, tip / root <= 1, read at the
+ * line's precision (three places), and with a root that does not move, a tip
+ * that does not either. The declaration's own relation fixes it ("the tip's
+ * motion no greater than the root's"), a value the model fixes and not a
+ * margin: no example declares `rests`, so the floor-and-ceiling rule above
+ * has no figure to halve or double.
+ */
+export const TIP_REST_RATIO_CEILING = 1;
+/**
  * `TEXTURE_STRETCH`'s ceiling on max(ratio, 1/ratio) (issue #31): the worse
  * example's figure (demo, 1.388) squared. The ceiling rule is "twice the worse
  * one's", and it is applied to the quantity whose zero means "nothing
@@ -1925,7 +1935,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   if (full !== null) {
     try {
       breath = breathLine(full, isolated, problems, notPlanted);
-      if (idle !== null) tip = tipLine(full, join(idle.dir, GEOMETRY_FILE), idle.written, problems, reqFile === null ? NO_TIP_EXCEPTIONS : { path: reqFile.path, not_swinging: reqFile.not_swinging, rises: reqFile.rises });
+      if (idle !== null) tip = tipLine(full, join(idle.dir, GEOMETRY_FILE), idle.written, problems, reqFile === null ? NO_TIP_EXCEPTIONS : { path: reqFile.path, not_swinging: reqFile.not_swinging, rises: reqFile.rises, rests: reqFile.rests });
     } finally {
       rmSync(isoDir, { recursive: true, force: true });
     }
@@ -1934,7 +1944,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   let stretch: JudgementLine = skip(inp.noIdle ?? '');
   let still: JudgementLine = skip(lacking);
   if (idle !== null) {
-    chain = chainLine(inp, problems);
+    chain = chainLine(inp, problems, reqFile === null ? NO_CHAIN_RESTS : { path: reqFile.path, rests: reqFile.rests });
     // One reader for the one geometry file: the stretch reads its meshes, the still regions every slot and the head bone.
     const geometryPath = join(idle.dir, GEOMETRY_FILE);
     const geometry = readGeometry(geometryPath, idle.written);
@@ -2297,15 +2307,15 @@ type Isolate = (label: string, ps: readonly PartRecord[]) => FrameSet;
  * before anything is built: each name must be a part parts.json lists
  * (`REQUIREMENTS_RESOLVES`), and one the bar it relaxes reads — a `footwear`
  * part for `not_planted` (`REQUIREMENTS_NOT_PLANTED`), a `handwear` or
- * `bottomwear` part for `not_swinging` and `rises`
+ * `bottomwear` part for `not_swinging`, `rises` and `rests` (issue #245)
  * (`REQUIREMENTS_TIP_EXCEPTION`): an exception that excepts nothing is a miss,
  * refused by name. With no parts.json every name is refused. Whether a `rises`
  * part's chain does rise is read off the idle's geometry by `TIP_OVER_ROOT`.
  */
-export function exceptionProblems(file: Pick<RequirementsFile, 'not_planted' | 'not_swinging' | 'rises' | 'path'>, parts: PartsFile | null, noParts: string | null): Problem[] {
+export function exceptionProblems(file: Pick<RequirementsFile, 'not_planted' | 'not_swinging' | 'rises' | 'rests' | 'path'>, parts: PartsFile | null, noParts: string | null): Problem[] {
   const out: Problem[] = [];
-  // Issue #231: not_swinging and rises name swinging parts, the ones TIP_OVER_ROOT reads; whether a rises part's chain does rise is read off the idle's geometry, in the line.
-  for (const key of ['not_swinging', 'rises'] as const) {
+  // Issue #231: not_swinging and rises name swinging parts, the ones TIP_OVER_ROOT reads; whether a rises part's chain does rise is read off the idle's geometry, in the line. Issue #245: rests too.
+  for (const key of ['not_swinging', 'rises', 'rests'] as const) {
     file[key].forEach((name, i) => {
       const object = `${file.path} field "${key}"[${i}]`;
       if (parts === null) {
@@ -2410,14 +2420,15 @@ function breathLine(inp: FullInputs, isolated: Isolate, problems: Problem[], not
   };
 }
 
-/** The scene file's two exceptions to `TIP_OVER_ROOT` (issue #231), and the file they were read from, which a refusal names. */
+/** The scene file's exceptions to `TIP_OVER_ROOT` (issues #231, #245), and the file they were read from, which a refusal names. */
 export interface TipExceptions {
   path: string;
   not_swinging: readonly string[];
   rises: readonly string[];
+  rests: readonly string[];
 }
 
-const NO_TIP_EXCEPTIONS: TipExceptions = { path: '', not_swinging: [], rises: [] };
+const NO_TIP_EXCEPTIONS: TipExceptions = { path: '', not_swinging: [], rises: [], rests: [] };
 
 /**
  * What `TIP_OVER_ROOT` is measured with, written into its line (issue #118):
@@ -2443,6 +2454,12 @@ export const TIP_INSTRUMENT = 'geometry';
  * chain carrying each is measured to rise ({@link chainDirection}; refused by
  * name otherwise); both lists are the line's first figures. Without them the
  * line is the one written before.
+ *
+ * Issue #245: a part the scene declares `rests` — its tip at rest while its
+ * root moves — is measured with the same halves and held to the opposite
+ * relation: tip / root at most {@link TIP_REST_RATIO_CEILING}. Its row says
+ * so first (`declared: "rests"`), the list is the line's first figure after
+ * the other two, and the ceiling follows the floor.
  */
 function tipLine(inp: FullInputs, geometryPath: string, frames: number, problems: Problem[], excepted: TipExceptions = NO_TIP_EXCEPTIONS): JudgementLine {
   const swing = partsTagged(inp.parts, SWING_TAGS);
@@ -2476,21 +2493,30 @@ function tipLine(inp: FullInputs, geometryPath: string, frames: number, problems
       continue;
     }
     const rises = excepted.rises.includes(p.name);
+    const rests = excepted.rests.includes(p.name);
     const [rootHalf, tipHalf] = rises ? ['lower', 'upper'] : ['upper', 'lower'];
     const art = placedArt(p.x, p.y, readPng(join(inp.partsDir, `${p.name}.png`)));
     const shown = poses.map((f) => f.get(p.name) ?? null);
     const t = halfTravels(art, p, inp.stage, shown, rises ? 'up' : 'down');
     // A part not declared writes the row it wrote before issue #231; a declared one says which half is its tip's.
-    const said = rises ? { tip_half: tipHalf } : {};
+    const said = { ...(rests ? { declared: 'rests' } : {}), ...(rises ? { tip_half: tipHalf } : {}) };
     if (t.root === null || t.tip === null) {
       rows.push({ part: p.name, ...said, unmeasured: shown[0] === null ? 'its slot shows no attachment on idle frame 0' : `on idle frame 0 the ${t.root === null ? rootHalf : tipHalf} half of its box holds no art its attachment draws` });
       continue;
     }
     measured++;
     const ratio = t.root > 0 ? round3(t.tip / t.root) : null;
-    const ok = ratio === null ? t.tip > 0 : ratio >= TIP_RATIO_FLOOR;
+    // Issue #245: a resting tip is held to the opposite relation — no further than its root, at the line's precision.
+    const ok = rests ? (ratio === null ? round3(t.tip) === 0 : ratio <= TIP_REST_RATIO_CEILING) : ratio === null ? t.tip > 0 : ratio >= TIP_RATIO_FLOOR;
     rows.push({ part: p.name, ...said, root_rig_px: round3(t.root), tip_rig_px: round3(t.tip), ratio });
-    if (!ok) {
+    if (!ok && rests) {
+      failed = true;
+      problems.push({
+        code: 'CHECK_TIP_OVER_ROOT',
+        object: `part "${p.name}", box ${p.x},${p.y} ${p.w}x${p.h} rig px, posed by the idle's geometry, declared rests${rises ? ' and rises' : ''}`,
+        detail: `the art in its ${tipHalf} half travels ${round3(t.tip)} rig px and in its ${rootHalf} half ${round3(t.root)} rig px (ratio ${ratio ?? 'undefined: the root does not move'}); the scene file's rests declares its tip at rest, so a ratio <= ${TIP_REST_RATIO_CEILING} is required — the tip swings: the chain's amplitudes grow toward the tip, or the tip of the mesh is weighted to a bone the idle swings`,
+      });
+    } else if (!ok) {
       failed = true;
       // Issue #262: a root the breath carries is named with its carrier, not blamed on the chain.
       const carry = breathCarrier(inp.rig, inp.motion, p.name, geometryPath, frames, { art, box: p, stage: inp.stage, shown, toward: rises ? 'up' : 'down', root: t.root, tip: t.tip });
@@ -2509,9 +2535,10 @@ function tipLine(inp: FullInputs, geometryPath: string, frames: number, problems
   const declared = {
     ...(excepted.not_swinging.length === 0 ? {} : { declared_not_swinging: swing.filter((p) => excepted.not_swinging.includes(p.name)).map((p) => p.name) }),
     ...(excepted.rises.length === 0 ? {} : { declared_rises: swing.filter((p) => excepted.rises.includes(p.name)).map((p) => p.name) }),
+    ...(excepted.rests.length === 0 ? {} : { declared_rests: swing.filter((p) => excepted.rests.includes(p.name)).map((p) => p.name) }),
   };
   if (measured === 0) return { status: 'SKIP', reason: `none of ${quoteParts(swing)} could be measured: ${rows.map((r) => `${String(r.part)}: ${String(r.unmeasured)}`).join('; ')}` };
-  return { status: failed ? 'FAIL' : 'PASS', ...declared, instrument: TIP_INSTRUMENT, parts: rows, ratio_floor: TIP_RATIO_FLOOR };
+  return { status: failed ? 'FAIL' : 'PASS', ...declared, instrument: TIP_INSTRUMENT, parts: rows, ratio_floor: TIP_RATIO_FLOOR, ...(excepted.rests.length === 0 ? {} : { rest_ratio_ceiling: TIP_REST_RATIO_CEILING }) };
 }
 
 /**
@@ -2631,6 +2658,33 @@ function breathCarrier(
  * different ways.
  */
 export function chainDirection(rig: Record<string, unknown>, motion: Record<string, unknown>, part: string, origins: ReadonlyMap<string, { x: number; y: number }>): { toward: Toward; chains: string[] } | { none: string } {
+  const { found, bound } = chainsCarrying(rig, motion, part);
+  const boundText = [...bound].map((b) => `"${b}"`).join(', ') || 'no bone';
+  if (found.length === 0) return { none: `it rides no chain: none of the bones it is bound to (${boundText}) is under a chain of rotate-keyed links` };
+  const read = found.map((c) => {
+    const a = origins.get(c[0]);
+    const z = origins.get(c[c.length - 1]);
+    const label = c.join(' > ');
+    if (a === undefined || z === undefined) return { label, toward: null, text: `${label}: no setup-pose origin for ${a === undefined ? c[0] : c[c.length - 1]} in the idle's geometry` };
+    const dx = z.x - a.x;
+    const dy = z.y - a.y;
+    const toward = chainToward(dx, dy);
+    return { label, toward, text: `${label} ${toward ?? 'runs as far across as along'} (${round3(dx)}, ${round3(dy)} world px)` };
+  });
+  const ways = [...new Set(read.map((r) => r.toward))];
+  if (ways.length !== 1 || ways[0] === null) return { none: `its chains do not run one way: ${read.map((r) => r.text).join('; ')}` };
+  return { toward: ways[0], chains: read.map((r) => r.text) };
+}
+
+/**
+ * The chains that carry a part (issues #231, #245): the bones its attachments
+ * are bound to in the default skin ({@link boundBones}); the leaves among them
+ * — those with no other of them below — each walked up the bone tree to the
+ * first link of a chain `CHAIN_LAG` reads ({@link chainFigures}: two or more
+ * rotate-keyed links, each under the one before at one period). Each chain is
+ * its links' names from the root, once, in the order the leaves find them.
+ */
+export function chainsCarrying(rig: Record<string, unknown>, motion: Record<string, unknown>, part: string): { found: string[][]; bound: Set<string> } {
   const bones = (Array.isArray(rig.bones) ? rig.bones : []).filter(isRecord).filter((b) => typeof b.name === 'string');
   const parent = new Map(bones.map((b) => [String(b.name), typeof b.parent === 'string' ? b.parent : null]));
   const bound = boundBones(rig, part);
@@ -2658,21 +2712,7 @@ export function chainDirection(rig: Record<string, unknown>, motion: Record<stri
       }
     }
   }
-  const boundText = [...bound].map((b) => `"${b}"`).join(', ') || 'no bone';
-  if (found.length === 0) return { none: `it rides no chain: none of the bones it is bound to (${boundText}) is under a chain of rotate-keyed links` };
-  const read = found.map((c) => {
-    const a = origins.get(c[0]);
-    const z = origins.get(c[c.length - 1]);
-    const label = c.join(' > ');
-    if (a === undefined || z === undefined) return { label, toward: null, text: `${label}: no setup-pose origin for ${a === undefined ? c[0] : c[c.length - 1]} in the idle's geometry` };
-    const dx = z.x - a.x;
-    const dy = z.y - a.y;
-    const toward = chainToward(dx, dy);
-    return { label, toward, text: `${label} ${toward ?? 'runs as far across as along'} (${round3(dx)}, ${round3(dy)} world px)` };
-  });
-  const ways = [...new Set(read.map((r) => r.toward))];
-  if (ways.length !== 1 || ways[0] === null) return { none: `its chains do not run one way: ${read.map((r) => r.text).join('; ')}` };
-  return { toward: ways[0], chains: read.map((r) => r.text) };
+  return { found, bound };
 }
 
 /**
@@ -2986,10 +3026,34 @@ function fmt3(x: number): string {
   return x.toFixed(3);
 }
 
-/** (3) Down every chain the phase lags and the amplitude does not shrink, read off motion.json's rotate tracks. */
-export function chainLine(inp: Pick<CheckInputs, 'rig' | 'motion'>, problems: Problem[]): JudgementLine {
+/** The scene file's `rests` parts as `CHAIN_LAG` reads them (issue #245), and the file they were read from. */
+export interface ChainRests {
+  path: string;
+  rests: readonly string[];
+}
+
+const NO_CHAIN_RESTS: ChainRests = { path: '', rests: [] };
+
+/**
+ * (3) Down every chain the phase lags and the amplitude does not shrink, read off motion.json's rotate tracks.
+ *
+ * Issue #245: a chain that carries a part the scene file declares `rests` ({@link chainsCarrying}) is held to the
+ * opposite amplitude relation — non-increasing toward the tip, the tip moving no more than the root, as
+ * `TIP_OVER_ROOT` holds the part. The lag is not relaxed: the declaration says how far the tip moves, not when.
+ * The declared parts are the line's first figure (`declared_rests`), and the chains they hold, `resting_chains`,
+ * follow it; a declared part no chain carries is named in neither. Without the field the line is the one written
+ * before.
+ */
+export function chainLine(inp: Pick<CheckInputs, 'rig' | 'motion'>, problems: Problem[], declared: ChainRests = NO_CHAIN_RESTS): JudgementLine {
   const cf = chainFigures(inp.rig, inp.motion);
   const long = cf.chains.filter((c) => c.length >= 2);
+  // Issue #245: each resting chain by its first link, with the declared parts that ride it, in the file's order.
+  const resting = new Map<string, string[]>();
+  for (const part of declared.rests) {
+    for (const c of chainsCarrying(inp.rig, inp.motion, part).found) resting.set(c[0], [...(resting.get(c[0]) ?? []), part]);
+  }
+  const restingChains = long.filter((c) => resting.has(c[0].bone));
+  const said = declared.rests.length === 0 ? {} : { declared_rests: [...declared.rests], resting_chains: restingChains.map((c) => c.map((l) => l.bone).join(' > ')) };
   if (cf.edges.length === 0 && long.length === 0) {
     return skip(`no idle "rotate" track sits under another at the same period${cf.unread.length > 0 ? ` (unread, not sampled sines: ${cf.unread.join(', ')})` : ''}, so there is no chain to lag`);
   }
@@ -3002,9 +3066,21 @@ export function chainLine(inp: Pick<CheckInputs, 'rig' | 'motion'>, problems: Pr
     }
   }
   for (const c of long) {
+    const rests = resting.get(c[0].bone);
     for (let i = 1; i < c.length; i++) {
       const a = round3(c[i - 1].reading.amp);
       const b = round3(c[i].reading.amp);
+      if (rests !== undefined) {
+        if (b > a) {
+          violations.push(`"${c[i].bone}" swings ${fmt3(b)} over "${c[i - 1].bone}"'s ${fmt3(a)} in a chain declared resting`);
+          problems.push({
+            code: 'CHECK_CHAIN_LAG',
+            object: `bone "${c[i].bone}" in the chain from "${c[0].bone}", which carries ${rests.map((n) => `"${n}"`).join(', ')}, declared rests by ${declared.path}`,
+            detail: `amplitude ${fmt3(b)} above the link above's ${fmt3(a)}; non-increasing down the chain is required — the scene file's rests declares the tip at rest, so it moves no more than the root ("amps" shrink toward the tip)`,
+          });
+        }
+        continue;
+      }
       if (b < a) {
         violations.push(`"${c[i].bone}" swings ${fmt3(b)} under "${c[i - 1].bone}"'s ${fmt3(a)}`);
         problems.push({ code: 'CHECK_CHAIN_LAG', object: `bone "${c[i].bone}" in the chain from "${c[0].bone}"`, detail: `amplitude ${fmt3(b)} below the link above's ${fmt3(a)}; non-decreasing down the chain is required — "amps" grow toward the tip` });
@@ -3014,6 +3090,7 @@ export function chainLine(inp: Pick<CheckInputs, 'rig' | 'motion'>, problems: Pr
   const minStep = cf.edges.length === 0 ? null : round3(Math.min(...cf.edges.map((e) => e.step)));
   return {
     status: violations.length === 0 ? 'PASS' : 'FAIL',
+    ...said,
     chains: long.map((c) => `${c.map((l) => l.bone).join(' > ')}: period ${round3(c[0].reading.period)}s, phase ${c.map((l) => fmt3(l.reading.phase)).join(' ')}, amp ${c.map((l) => fmt3(l.reading.amp)).join(' ')}`),
     lags: cf.edges.map((e) => `${e.parent} > ${e.child} ${e.step >= 0 ? '+' : ''}${fmt3(e.step)}`),
     min_step: minStep,

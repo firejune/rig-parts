@@ -174,7 +174,7 @@ import {
   visibilityCounts,
 } from './src/assemble.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
-import { BARS, besideIdleLine, blackRig, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
+import { BARS, besideIdleLine, blackRig, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
@@ -9315,6 +9315,88 @@ function runCheckSuite(): number {
       "issue #262: scarf's skirt failed at 0.300 because its waistband rode chest, and the line blamed the chain's amplitudes; the line now names the carrier when the part posed with the breath held still passes the bar — the bar's own margin — and keeps the chain's words when it does not",
     );
 
+    // Issue #245: a tip at rest. CK116's skirt with no sway is the case — its waistband rides `chest`, which the idle
+    // lifts 4 rig px, its hem on `hem`, which the idle does not move — so the root moves and the tip rests. Read as
+    // hanging it fails (CK116); declared rests it is held to the opposite relation, tip / root <= 1, and passes. The
+    // same skirt with its hem swung 8 rig px across is the planted negative: under rests it fails, by name.
+    const restsRun = (label: string, sway: number, req: Record<string, unknown> | null): { status: number; out: string; fig: Record<string, unknown> | null } => {
+      const r = join(dir, label);
+      writeCheckRig(r, { from: ['full:bottomwear', 'full:topwear'], peak: 0, carried: { breath: 4, sway } });
+      const args = ['check', '--rig', r, '--out', join(dir, `${label}-out`)];
+      if (req !== null) {
+        const reqPath = join(dir, `${label}.json`);
+        writeFileSync(reqPath, JSON.stringify({ spec: 'spine-parts-requirements/1', fps: 12, requirements: [], ...req }));
+        args.push('--requirements', reqPath);
+      }
+      const res = runCli(args);
+      return { ...res, fig: readJsonFile(join(dir, `${label}-out`, 'check.json')) };
+    };
+    const restLine = (fig: Record<string, unknown> | null): Record<string, unknown> => (fig?.TIP_OVER_ROOT ?? {}) as Record<string, unknown>;
+    const restRow = (fig: Record<string, unknown> | null): Record<string, unknown> | undefined => ((restLine(fig).parts ?? []) as Array<Record<string, unknown>>).find((r) => r.part === 'back');
+    const tipConsole = (o: string): string => o.split('\n').find((l) => l.startsWith('  TIP_OVER_ROOT: ')) ?? '';
+    const restAt = restsRun('rest-still', 0, { rests: ['back'] });
+    const restBare = restsRun('rest-still-bare', 0, null);
+    const restAtRow = restRow(restAt.fig);
+    const restBareRow = restRow(restBare.fig);
+    say(
+      'CK237_A_ROOT_THAT_MOVES_UNDER_A_TIP_AT_REST_PASSES_TIP_OVER_ROOT_DECLARED_RESTS_AND_FAILS_IT_UNDECLARED',
+      lineStatus(restAt.fig, 'TIP_OVER_ROOT') === 'PASS' &&
+        failLine(restAt.out, 'CHECK_TIP_OVER_ROOT') === null &&
+        JSON.stringify(Object.keys(restLine(restAt.fig))) === JSON.stringify(['status', 'declared_rests', 'instrument', 'parts', 'ratio_floor', 'rest_ratio_ceiling']) &&
+        JSON.stringify(restLine(restAt.fig).declared_rests) === '["back"]' &&
+        restLine(restAt.fig).rest_ratio_ceiling === TIP_REST_RATIO_CEILING &&
+        JSON.stringify(Object.keys(restAtRow ?? {})) === JSON.stringify(['part', 'declared', 'root_rig_px', 'tip_rig_px', 'ratio']) &&
+        restAtRow?.declared === 'rests' &&
+        typeof restAtRow.ratio === 'number' &&
+        restAtRow.ratio <= TIP_REST_RATIO_CEILING &&
+        (restAtRow.root_rig_px as number) > 0 &&
+        tipConsole(restAt.out).startsWith('  TIP_OVER_ROOT: PASS — declared_rests back;') &&
+        lineStatus(restBare.fig, 'TIP_OVER_ROOT') === 'FAIL' &&
+        (failLine(restBare.out, 'CHECK_TIP_OVER_ROOT') ?? '').includes('part "back"') &&
+        restBareRow?.root_rig_px === restAtRow.root_rig_px &&
+        restBareRow?.tip_rig_px === restAtRow.tip_rig_px &&
+        !('declared' in (restBareRow ?? {})) &&
+        !('rest_ratio_ceiling' in restLine(restBare.fig)),
+      `declared rests: ${tipConsole(restAt.out).trim().slice(0, 200)}; row ${JSON.stringify(restAtRow ?? null)} | undeclared: ${lineStatus(restBare.fig, 'TIP_OVER_ROOT')}, ${failLine(restBare.out, 'CHECK_TIP_OVER_ROOT')?.trim().slice(0, 200) ?? 'no CHECK_TIP_OVER_ROOT line'}`,
+      "issue #245: a hand resting on the bed while the shoulder breathes stood TIP_OVER_ROOT the wrong way up, and not_swinging left it with no bar. The scene's positive knowledge — the tip rests — is measured with the same halves and the opposite relation, tip / root <= 1, the declaration's own words; the two halves read the same travels declared or not, the row says `declared: \"rests\"` first and the line lists the declared parts first",
+    );
+    const restSwung = restsRun('rest-swung', 8, { rests: ['back'] });
+    const swungFail = failLine(restSwung.out, 'CHECK_TIP_OVER_ROOT') ?? '';
+    const restSwungRow = restRow(restSwung.fig);
+    say(
+      'CK238_THE_SAME_TIP_MADE_TO_SWING_FAILS_TIP_OVER_ROOT_DECLARED_RESTS_BY_NAME',
+      restSwung.status === 1 &&
+        lineStatus(restSwung.fig, 'TIP_OVER_ROOT') === 'FAIL' &&
+        barsNotMet(restSwung.fig ?? {}).includes('TIP_OVER_ROOT') &&
+        swungFail.includes('part "back"') &&
+        swungFail.includes('declared rests') &&
+        swungFail.includes(`the scene file's rests declares its tip at rest, so a ratio <= ${TIP_REST_RATIO_CEILING} is required`) &&
+        !swungFail.includes('travels with the breath') &&
+        typeof restSwungRow?.ratio === 'number' &&
+        restSwungRow.ratio > TIP_REST_RATIO_CEILING &&
+        restSwungRow.declared === 'rests',
+      `exit ${restSwung.status}; ${swungFail.trim().slice(0, 300) || 'no CHECK_TIP_OVER_ROOT line'}; row ${JSON.stringify(restSwungRow ?? null)}`,
+      'issue #245: a declaration that only relaxes is not a bar — the hem swung 8 rig px across (by hand, the fixture\'s hem_ctl translatex) carries the tip half further than the breath carries the root, and the declared part is refused by name with both travels, the ratio and the ceiling',
+    );
+    const restsUnknown = seatedRun('rests-unknown', { rests: ['sleeve', 'shoes'] });
+    const restsStill = seatedRun('rests-still', { not_swinging: ['under'], rests: ['under'] });
+    say(
+      'CK239_A_RESTS_NAMING_AN_UNKNOWN_PART_A_PART_TIP_OVER_ROOT_DOES_NOT_READ_OR_A_PART_DECLARED_NOT_SWINGING_IS_REFUSED_BEFORE_ANYTHING_IS_BUILT',
+      restsUnknown.status === 1 &&
+        restsUnknown.fig === null &&
+        restsUnknown.out.includes('field "rests"[0]') &&
+        restsUnknown.out.includes('names part "sleeve", which parts.json does not list') &&
+        restsUnknown.out.includes('REQUIREMENTS_TIP_EXCEPTION') &&
+        restsUnknown.out.includes('names part "shoes" (from "full:footwear"), which TIP_OVER_ROOT does not read') &&
+        !existsSync(join(dir, 'seated-rests-unknown', 'build')) &&
+        restsStill.status === 1 &&
+        restsStill.fig === null &&
+        restsStill.out.includes('field "rests"[0]') &&
+        restsStill.out.includes('names "under", which "not_swinging" names too'),
+      `unknown: exit ${restsUnknown.status}; ${restsUnknown.out.split('\n').filter((l) => l.includes('REQUIREMENTS_')).map((l) => l.trim().slice(0, 140)).join(' | ')} | both: exit ${restsStill.status}; ${restsStill.out.split('\n').filter((l) => l.includes('REQUIREMENTS_')).map((l) => l.trim().slice(0, 160)).join(' | ')}`,
+      'issue #245: rests resolves by name like its siblings — a part parts.json does not list, or one TIP_OVER_ROOT never reads, excepts nothing and is refused before the build; and not_swinging stays the declaration for a piece with no reading, so a part in both is refused rather than read one way',
+    );
+
     // Issue #118: the half travels read off posed geometry, exact, with no render grid. A 12x20 block of art in a
     // 20x20 box (stage px 10,10; the stage 40x40 at world x -20), sheared by hand: a horizontal shear of the hem by
     // d moves world row y by d (30 - y) / 20, so the art's area in the lower half (y 10..20) moves 0.75 d and in the
@@ -10174,6 +10256,43 @@ function runCheckSuite(): number {
     `in order: ${String((good.line.chains as string[] | undefined)?.[0])}; reversed: ${String(back.line.first_violation)}; shrinking: ${String(shrink.line.first_violation)}; mirrored (negative amps) ${String(mirrored.line.status)}; a 2 s sine at phase 0.37, amp 0.25 reads ${JSON.stringify(read)}; a lag across the cycle's end (0.9 -> 0.05) reads ${lagStep(0.9, 0.05).toFixed(3)}`,
     'the model writes phase + lag*i and one amplitude per link (src/motion.ts); the reading recovers them from the keys alone, a mirrored chain (negative amps, half a cycle) is the same lag, and a chain that leads or shrinks toward its tip is named at its first link that does',
   );
+
+  // Issue #245: a chain carrying a part the scene declares rests is held to the opposite amplitude relation — the tip
+  // moves no more than the root — and keeps its lag. The part `hand` is a region on `c`, the chain's last link; `loose`
+  // is a region on `root`, which no chain carries.
+  const restRig = { ...chainRig, slots: [{ name: 'hand', bone: 'c', attachment: 'hand' }, { name: 'loose', bone: 'root', attachment: 'loose' }], skins: { default: { hand: { hand: { type: 'region' } }, loose: { loose: { type: 'region' } } } } };
+  const judgeRest = (m: Record<string, unknown>, rests: string[]): { line: Record<string, unknown>; problems: Problem[] } => {
+    const ps: Problem[] = [];
+    const line = chainLine({ rig: restRig, motion: m }, ps, { path: 'scene.json', rests }) as Record<string, unknown>;
+    return { line, problems: ps };
+  };
+  const restShrink = judgeRest(chainMotion([0.1, 0.2, 0.3], [3, 2, 1]), ['hand']);
+  const restGrow = judgeRest(chainMotion([0.1, 0.2, 0.3], [1, 2, 3]), ['hand']);
+  const restBack = judgeRest(chainMotion([0.3, 0.2, 0.1], [3, 2, 1]), ['hand']);
+  const restLoose = judgeRest(chainMotion([0.1, 0.2, 0.3], [3, 2, 1]), ['loose']);
+  const growDetail = restGrow.problems[0];
+  say(
+    'CK240_A_CHAIN_CARRYING_A_PART_DECLARED_RESTS_IS_HELD_TO_AMPLITUDES_THAT_DO_NOT_GROW_AND_KEEPS_ITS_LAG',
+    restShrink.line.status === 'PASS' &&
+      restShrink.problems.length === 0 &&
+      JSON.stringify(Object.keys(restShrink.line).slice(0, 4)) === JSON.stringify(['status', 'declared_rests', 'resting_chains', 'chains']) &&
+      JSON.stringify(restShrink.line.declared_rests) === '["hand"]' &&
+      JSON.stringify(restShrink.line.resting_chains) === '["a > b > c"]' &&
+      shrink.line.status === 'FAIL' &&
+      restGrow.line.status === 'FAIL' &&
+      restGrow.problems.length === 2 &&
+      restGrow.problems.every((q) => q.code === 'CHECK_CHAIN_LAG') &&
+      growDetail?.object === 'bone "b" in the chain from "a", which carries "hand", declared rests by scene.json' &&
+      growDetail.detail.startsWith('amplitude 2.000 above the link above\'s 1.000; non-increasing down the chain is required') &&
+      String(restGrow.line.first_violation) === '"b" swings 2.000 over "a"\'s 1.000 in a chain declared resting' &&
+      restBack.line.status === 'FAIL' &&
+      String(restBack.line.first_violation).includes('"b" follows its keyed ancestor "a" by -0.100') &&
+      restLoose.line.status === 'FAIL' &&
+      JSON.stringify(restLoose.line.resting_chains) === '[]' &&
+      String(restLoose.line.first_violation) === String(shrink.line.first_violation),
+    `declared, shrinking: ${String(restShrink.line.status)}, resting ${JSON.stringify(restShrink.line.resting_chains)} (undeclared ${String(shrink.line.status)}); declared, growing: ${String(restGrow.line.first_violation)} — ${growDetail?.object ?? 'no problem'}: ${growDetail?.detail.slice(0, 120) ?? ''}; declared, leading: ${String(restBack.line.first_violation)}; declared on a part no chain carries: ${String(restLoose.line.first_violation)}`,
+    "issue #245, from the consumer's lying figure: CHAIN_LAG asked a leg chain for amplitudes growing toward the foot, the end that rests. A chain carrying a part declared rests (its bound bone walked up to the chain, as rises finds its chain) is read the opposite way — non-increasing, the planted growing chain refused at its first link that grows — while the lag is kept, since the declaration says how far the tip moves and not when; a declared part no chain carries relaxes nothing",
+  );
   return bad();
 }
 
@@ -10629,7 +10748,7 @@ function runRequirementsSuite(): number {
       "a 2x2 square stretched to 3x2: edge 0-1 is 1.5 times its rest length; squeezed to 1x2 it is 0.5, which is a severity of 2 (compression distorts as stretch does) — the figure TEXTURE_STRETCH's stretchFigures and stretchSeverity give (imported, not rewritten — #87); a ratio with no rest length, or a mesh no frame shows, is undefined",
     );
 
-    const asFile = (rs: RequirementsFile['requirements']): RequirementsFile => ({ path: 'x', fps: REQ_FPS, targets: [], requirements: rs, not_planted: [], not_swinging: [], rises: [] });
+    const asFile = (rs: RequirementsFile['requirements']): RequirementsFile => ({ path: 'x', fps: REQ_FPS, targets: [], requirements: rs, not_planted: [], not_swinging: [], rises: [], rests: [] });
     const two = asFile([okRead.requirements[0], okRead.requirements[3]]);
     const lines = new Map<string, RequirementLine>([['HAND', cFail], ['SWING', cTip]]);
     const pFail = requirementProblem(okRead.requirements[0], cFail);
@@ -10811,6 +10930,29 @@ function runRequirementsSuite(): number {
         npDetail[4].startsWith(' field "rises"[0]: names "arm", which "not_swinging" names too'),
       `read ${JSON.stringify([npRead.not_planted, npRead.not_swinging, npRead.rises])}; absent ${JSON.stringify([npAbsent.not_planted, npAbsent.not_swinging, npAbsent.rises])}; refused: ${npDetail.join(' | ')}`,
       'issue #231: an exception is declared by name per part, so each field is a list of names, each once — an empty list declares nothing and is refused rather than read as no exception, a part cannot be both still and rising, and which parts the names are is resolved against parts.json and the rig by check (CK111, CK113, CK114)',
+    );
+    // Issue #245: rests, the fourth list — read as written beside rises, absent as none, and each misuse refused by name.
+    const rsRead = readRequirements(file('rs-ok', { ...npBase, rises: ['arm'], rests: ['arm', 'hem'] }));
+    const rsBad = [
+      refusals(() => readRequirements(file('rs-empty', { ...npBase, rests: [] }))),
+      refusals(() => readRequirements(file('rs-twice', { ...npBase, rests: ['hem', 'hem'] }))),
+      refusals(() => readRequirements(file('rs-both', { ...npBase, not_swinging: ['hem'], rests: ['hem'] }))),
+      refusals(() => readRequirements(file('rs-typo', { ...npBase, rest: ['hem'] }))),
+    ];
+    const rsDetail = rsBad.map((e) => e?.problems.map((q) => `${q.object.slice(q.object.indexOf(' field '))}: ${q.detail.slice(0, 80)}`).join(' / ') ?? 'not refused');
+    say(
+      'RQ116_RESTS_READS_AS_WRITTEN_BESIDE_RISES_ABSENT_IS_NONE_AND_AN_EMPTY_A_REPEAT_A_PART_ALSO_NOT_SWINGING_OR_A_MISSPELLING_IS_REFUSED',
+      JSON.stringify([rsRead.rises, rsRead.rests]) === '[["arm"],["arm","hem"]]' &&
+        JSON.stringify(npAbsent.rests) === '[]' &&
+        rsBad.every((e) => e !== null && e.problems.length === 1 && e.problems[0].code === 'REQUIREMENTS_FIELD') &&
+        rsDetail[0].startsWith(' field "rests": is []; a non-empty list of part names is required') &&
+        (rsBad[0]?.problems[0].detail ?? '').endsWith('leave it out to declare every swinging part one whose tip swings further than its root') &&
+        rsDetail[1].startsWith(' field "rests"[1]: names "hem" a second time') &&
+        rsDetail[2].startsWith(' field "rests"[0]: names "hem", which "not_swinging" names too') &&
+        rsDetail[3].startsWith(' field "rest": is not a field this format reads') &&
+        (rsBad[3]?.problems[0].detail ?? '').includes('rises, rests;'),
+      `read ${JSON.stringify([rsRead.rises, rsRead.rests])}; absent ${JSON.stringify(npAbsent.rests)}; refused: ${rsDetail.join(' | ')}`,
+      'issue #245: rests is declared per part like its siblings — a list of names, each once, empty refused rather than read as none, a misspelt key refused by the format; a resting tip may also rise (a raised hand resting on something), but a part declared not swinging has no reading to hold at rest',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
