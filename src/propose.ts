@@ -99,8 +99,8 @@
  *
  * The idle departs from the reference's too (issue #252): it is
  * {@link IDLE_FRAMES} frames at 12 fps rather than 4 s, every period scaled
- * with it, and the chest's breath travels {@link BREATH_FRACTION} of the torso
- * part's height ({@link breathTrack}) rather than a fixed 1.3 px amplitude, so
+ * with it, and the chest's breath travels {@link BREATH_FRACTION} of the torso's
+ * length, neck to hip ({@link breathTrack}; issue #270), rather than a fixed 1.3 px amplitude, so
  * no tracked proposal is the reference's output any more in its `motion`.
  *
  * Issue #86 adds what the proposer and lint looked at, and changes nothing
@@ -188,20 +188,20 @@ export const IDLE_SECONDS = IDLE_FRAMES / IDLE_FPS;
  */
 export const REFERENCE_IDLE_SECONDS = 4;
 /**
- * The breath's travel, peak to peak, as a fraction of the torso part's height
- * (issue #252). The size is the height because the breath is a `translatey`:
- * its travel is read along y, against the part's extent along y. HQ's
- * calibration: about 2.5 %. On the trailer's seated character the torso part
- * (`topwear`) is 267 px tall and the reference's fixed 2.6 px peak to peak
- * (amplitude 1.3, the base 1.3 so the chest rises from its setup pose and
- * returns) was 0.97 % of it, read by its owner as a still paper doll; the
- * production scene rig that replaced it breathes 6.4 px, 2.4 %.
+ * The breath's travel, peak to peak, as a fraction of the torso (issue #252):
+ * HQ's calibration, about 2.5 %. Issue #252 took the torso as the `topwear`
+ * part's height; on the trailer's seated character that is 267 px, and the
+ * reference's fixed 2.6 px peak to peak (amplitude 1.3, the base 1.3 so the
+ * chest rises from its setup pose and returns) was 0.97 % of it, read by its
+ * owner as a still paper doll; the production scene rig that replaced it
+ * breathes 6.4 px, 2.4 %. Issue #270 measures the torso as the trunk the rig
+ * has instead — the neck bone to the hip bone, {@link breathTrack} — because a
+ * garment's box is not the body: `scarf`'s sweater runs to the thighs (690 px)
+ * and breathed 2.9 times as deep as `demo`.
  */
 export const BREATH_FRACTION = 0.025;
-/** The breath's amplitude the reference drafted on every figure, kept only where there is no torso part to scale by. */
+/** The breath's amplitude the reference drafted on every figure, kept only where the trunk has no length to scale by. */
 export const REFERENCE_BREATH_AMP = 1.3;
-/** The See-through tag of the torso part, whose height the breath is a fraction of. */
-export const BREATH_SIZE_TAG = 'topwear';
 
 export interface Proposal {
   bones: BoneEntry[];
@@ -1270,10 +1270,12 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
     if (Object.keys(still).length > 0) blink.still = still;
     if (browBonesProposed.length === 0) notes.push(`blink without brows: no eyebrow part (looked for: ${BROW_GROUP_TAGS.join(', ')}), so the blink has no brows group and no brow_drop`);
   }
-  // Issue #252: the breath's travel is BREATH_FRACTION of the torso part's height, not the reference's fixed 1.3 px
-  // amplitude. Its base stays its amplitude (the chest rises from the setup pose and returns). The other three tracks
-  // are an angle and a ratio and stay as drafted. A rig with no torso part keeps the reference's amplitude, and a note.
-  const breath = breathTrack(P);
+  // Issue #252: the breath's travel is BREATH_FRACTION of the torso, not the reference's fixed 1.3 px amplitude; issue
+  // #270: the torso is the neck -> hip run as the two bones are written above, not a garment's height. Its base stays
+  // its amplitude (the chest rises from the setup pose and returns). The other three tracks are an angle and a ratio
+  // and stay as drafted. A trunk of no length (neck and hip on one point) keeps the reference's amplitude, and a note.
+  const writtenAt = (n: string): Point => (bones.find((b) => 'name' in b && b.name === n) as { at: Point }).at;
+  const breath = breathTrack(writtenAt('neck'), writtenAt('hip'));
   notes.push(breath.note);
   tracks.push(
     breath.track,
@@ -1978,31 +1980,32 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
 }
 
 /**
- * The drafted breath (issue #252): `chest` `translatey`, its travel peak to
- * peak {@link BREATH_FRACTION} of the height of the {@link BREATH_SIZE_TAG}
- * layer — the box around every part from it, cut pieces included, since a cut
- * does not shorten the torso — amplitude half of it to two decimals, and the
- * base the amplitude. With no such part there is no height to take a fraction
- * of, and inventing one is not done: the track keeps the reference's
- * amplitude, {@link REFERENCE_BREATH_AMP}, and the note says so.
+ * The drafted breath (issues #252, #270): `chest` `translatey`, its travel peak
+ * to peak {@link BREATH_FRACTION} of the torso's length — the distance from the
+ * `neck` bone's origin to the `hip` bone's, as the proposal writes them (so the
+ * figure can be recomputed from proposal.json): the run the chest is placed
+ * half way along and the trunk segments are laid along (issue #243), whichever
+ * rule placed the two ends (joints, the face and bottomwear, the waist, or the
+ * figure's proportion — the hip's own note names it). Amplitude half of it to
+ * two decimals, and the base the amplitude. When neck and hip are one point the
+ * trunk has no length to take a fraction of, and inventing one is not done: the
+ * track keeps the reference's amplitude, {@link REFERENCE_BREATH_AMP}, and the
+ * note says so.
  */
-export function breathTrack(P: PartSet): { track: ProposedSingleTrack; note: string } {
-  const parts = P.byTag(BREATH_SIZE_TAG, undefined, true);
-  if (parts.length === 0) {
+export function breathTrack(neck: readonly [number, number], hip: readonly [number, number]): { track: ProposedSingleTrack; note: string } {
+  const length = Math.hypot(hip[0] - neck[0], hip[1] - neck[1]);
+  const run = `neck ${pyIntList(neck)} -> hip ${pyIntList(hip)}`;
+  if (length === 0) {
     const a = REFERENCE_BREATH_AMP;
     return {
       track: { bone: 'chest', prop: 'translatey', amp: a, period: REFERENCE_IDLE_SECONDS, phase: 0.0, base: a },
-      note: `breath: no ${BREATH_SIZE_TAG} part, so no torso height to take a fraction of: chest translatey keeps the reference's amplitude ${a} (${pyFixed(2 * a, 2)} px peak to peak), not ${pyFixed(BREATH_FRACTION * 100, 1)} % of a torso — scale it to the figure`,
+      note: `breath: ${run} are one point, so the trunk has no length to take a fraction of: chest translatey keeps the reference's amplitude ${a} (${pyFixed(2 * a, 2)} px peak to peak), not ${pyFixed(BREATH_FRACTION * 100, 1)} % of a torso — scale it to the figure`,
     };
   }
-  const top = Math.min(...parts.map((p) => p.y));
-  const bottom = Math.max(...parts.map((p) => p.y + p.h));
-  const height = bottom - top;
-  const amp = roundTo((BREATH_FRACTION * height) / 2, 2);
-  const layers = [...new Set(parts.map((p) => p.from))].join(', ');
+  const amp = roundTo((BREATH_FRACTION * length) / 2, 2);
   return {
     track: { bone: 'chest', prop: 'translatey', amp, period: REFERENCE_IDLE_SECONDS, phase: 0.0, base: amp },
-    note: `breath: chest translatey ${pyFixed(2 * amp, 2)} px peak to peak (amp ${pyFixed(amp, 2)}, base ${pyFixed(amp, 2)}) = ${pyFixed(BREATH_FRACTION * 100, 1)} % of the torso's height, ${height} px (layer ${layers}, y ${top}..${bottom}), once per ${IDLE_FRAMES}-frame idle at ${IDLE_FPS} fps`,
+    note: `breath: chest translatey ${pyFixed(2 * amp, 2)} px peak to peak (amp ${pyFixed(amp, 2)}, base ${pyFixed(amp, 2)}) = ${pyFixed(BREATH_FRACTION * 100, 1)} % of the torso's length, ${pyFixed(length, 1)} px (${run}), once per ${IDLE_FRAMES}-frame idle at ${IDLE_FPS} fps`,
   };
 }
 

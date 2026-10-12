@@ -657,10 +657,10 @@
       {
         "bone": "chest",
         "prop": "translatey",
-        "amp": 8.62,
+        "amp": 5.39,
         "period": 3.3333333333333335,
         "phase": 0,
-        "base": 8.62
+        "base": 5.39
       },
       {
         "bone": "chest",

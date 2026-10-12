@@ -523,10 +523,10 @@
    {
     "bone": "chest",
     "prop": "translatey",
-    "amp": 4.44,
+    "amp": 3.81,
     "period": 3.3333333333333335,
     "phase": 0,
-    "base": 4.44
+    "base": 3.81
    },
    {
     "bone": "chest",
@@ -685,7 +685,7 @@
  "notes": [
   "head frame: the bar runs through eye_r [387.0, 164.0] and eye_l [440.0, 161.0], the eye bones' origins, 53.085 px; roll 3.240 degrees (Spine's, counter-clockwise) — the line the rig turns the face bones to and declares as invariants.axes; eye midpoint [413.5, 162.5]",
   "head pitch: the nose sits — (not read: no part tagged nose) of the way from the eye midpoint to the mouth (frontal 0.474..0.630); the stem, eye midpoint -> mouth, is 0.565 of the bar (frontal 0.510..0.675); frontal ranges read on demo, scarf, the rig-c/trailer character; the turn is not reported (src/propose.ts FRONTAL_REFERENCE says why)",
-  "breath: chest translatey 8.88 px peak to peak (amp 4.44, base 4.44) = 2.5 % of the torso's height, 355 px (layer full:topwear, y 198..553), once per 40-frame idle at 12 fps",
+  "breath: chest translatey 7.62 px peak to peak (amp 3.81, base 3.81) = 2.5 % of the torso's length, 305.2 px (neck [413, 232] -> hip [402, 537]), once per 40-frame idle at 12 fps",
   "hair_front (head:front hair): bang_r, bang_c, bang_l are a template, not its locks — columns at 0.25, 0.5 and 0.75 of the face box's width, along the head's down axis (the eye line's perpendicular, roll 3.240 degrees), each rooted on the part's art; the opaque shape does not separate the locks painted inside one mass of hair, so a lock that runs elsewhere is not followed — move the chains onto the locks",
   "earring: pendant top is off the art -> rigid bone, no chain",
   "handwear is one blob (sleeves): both sleeves in one mesh, split at the eye axis x=413",
