@@ -43,7 +43,7 @@ import { ART_ALPHA, counterClockwiseInSpineWorld } from '../src/mesh.ts';
 import { readPng } from '../src/raster/index.ts';
 import { PAD, rigJsonText } from '../src/rig.ts';
 import { pyRound } from '../src/round.ts';
-import { DEFAULT_LIMITS, influences, type Segment } from '../src/weights.ts';
+import { DEFAULT_LIMITS, type InfluenceLimits, influences, type Segment } from '../src/weights.ts';
 import { bendPoses, bendReading, bentBones, type Reference, referenceField, readSkeleton, type Skeleton } from './bend_survey.ts';
 import { type ChainLine, draftContourMesh, outlineTolerance } from './contourdraft.ts';
 import {
@@ -382,7 +382,7 @@ export function edgeMesh(part: string, img: { width: number; height: number; dat
 const NO_CHAINS = new Map<string, ChainLine>();
 
 /** Stage B's dust rule on one lattice part: the `stray` to draft, or why the part keeps the lattice. */
-function dustOf(config: Obj, part: string, partsDir: string, box: PartBox, T: number): { stray: number | undefined } | { keep: string } {
+export function dustOf(config: Obj, part: string, partsDir: string, box: PartBox, T: number): { stray: number | undefined } | { keep: string } {
   const m = o(o(config.meshes)[part]);
   const d = draftContourMesh(part, readPng(join(partsDir, `${part}.png`)), [box.x, box.y], m as never, NO_CHAINS, T);
   if (d.mode === 'grid') return { keep: d.note };
@@ -467,7 +467,7 @@ export function gridConfig(config: Obj, arm0: string, parts: readonly PartBox[],
 export interface DenseRow { part: string; idle: { displacement: number; flipped: number }; bend: Record<string, { displacement: number; flipped: number; stretch: number; degrees: Record<string, number> }> }
 
 /** Every lattice part's reading against the dense reference, at the idle's frames and at each bend set, on one built arm. */
-function denseReadings(config: Obj, arm0: string, parts: readonly PartBox[], latG: Geometry, armBuild: string, work: string, name: string, sets: readonly string[]): DenseRow[] | string {
+export function denseReadings(config: Obj, arm0: string, parts: readonly PartBox[], latG: Geometry, armBuild: string, work: string, name: string, sets: readonly string[], limits: InfluenceLimits = DEFAULT_LIMITS): DenseRow[] | string {
   const g = renderGeometry(armBuild, join(work, `render-${name}`));
   if (typeof g === 'string') return g;
   const sk: Skeleton = readSkeleton(join(armBuild, 'skeleton.json'));
@@ -490,14 +490,14 @@ function denseReadings(config: Obj, arm0: string, parts: readonly PartBox[], lat
     }
     const rigToWorld = fitAffine(rigPts, worldPts);
     const png = join(arm0, 'parts', `${part}.png`);
-    const idleRef: Reference = referenceField(config, part, png, box, rigToWorld, latG.setupBones, g.frameBones);
+    const idleRef: Reference = referenceField(config, part, png, box, rigToWorld, latG.setupBones, g.frameBones, limits);
     const idle = bendReading(rest, m.triangles, m.weights, idleRef, g.frameBones);
     const bend: DenseRow['bend'] = {};
     for (const set of sets) {
       const { poses: turns, degrees } = bendPoses(config, part, set === 'film');
       if (turns.length === 0) continue;
       const poses = turns.map((t) => bentBones(sk, g.setupBones, t));
-      const ref = referenceField(config, part, png, box, rigToWorld, latG.setupBones, poses);
+      const ref = referenceField(config, part, png, box, rigToWorld, latG.setupBones, poses, limits);
       const rd = bendReading(rest, m.triangles, m.weights, ref, poses);
       bend[set] = { displacement: rd.displacement, flipped: rd.flipped, stretch: rd.stretch, degrees };
     }
@@ -510,7 +510,7 @@ function denseReadings(config: Obj, arm0: string, parts: readonly PartBox[], lat
 // one example
 // ---------------------------------------------------------------------------
 
-function stageCfg(original: string, config: Obj, dir: string): string {
+export function stageCfg(original: string, config: Obj, dir: string): string {
   mkdirSync(dir, { recursive: true });
   for (const f of readdirSync(dirname(original))) {
     const p = join(dirname(original), f);

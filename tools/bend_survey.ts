@@ -36,7 +36,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ART_ALPHA } from '../src/mesh.ts';
 import { readPng } from '../src/raster/index.ts';
-import { DEFAULT_LIMITS, influences, type Segment } from '../src/weights.ts';
+import { DEFAULT_LIMITS, type InfluenceLimits, influences, type Segment } from '../src/weights.ts';
 import {
   type ArmResult,
   BARS,
@@ -189,7 +189,7 @@ export interface Reference { samples: P2[]; posed: P2[][]; stride: number }
  * part's own rule at that point under every pose. `rigToWorld` carries rig px to setup world (fitted off a mesh of the
  * part: rig px = image px + the padded box origin).
  */
-export function referenceField(config: Obj, part: string, image: string, box: PartBox, rigToWorld: (p: P2) => P2, setup: ReadonlyMap<string, BoneMatrix>, poses: ReadonlyArray<ReadonlyMap<string, BoneMatrix>>): Reference {
+export function referenceField(config: Obj, part: string, image: string, box: PartBox, rigToWorld: (p: P2) => P2, setup: ReadonlyMap<string, BoneMatrix>, poses: ReadonlyArray<ReadonlyMap<string, BoneMatrix>>, limits: InfluenceLimits = DEFAULT_LIMITS): Reference {
   const img = readPng(image);
   let art = 0;
   for (let i = 0; i < img.width * img.height; i++) if (img.data[i * 4 + 3] > ART_ALPHA) art++;
@@ -205,7 +205,7 @@ export function referenceField(config: Obj, part: string, image: string, box: Pa
       if (img.data[(y * img.width + x) * 4 + 3] <= ART_ALPHA) continue;
       const rp: P2 = [box.x + x + 0.5, box.y + y + 0.5];
       const w = rigToWorld(rp);
-      const ws = influences(rp, segs, r, DEFAULT_LIMITS, exponent).map(({ bone, weight }) => {
+      const ws = influences(rp, segs, r, limits, exponent).map(({ bone, weight }) => {
         const m = setup.get(bone) as BoneMatrix;
         const det = m.a * m.d - m.b * m.c;
         const [dx, dy] = [w[0] - m.x, w[1] - m.y];
