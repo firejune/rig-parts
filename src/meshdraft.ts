@@ -70,7 +70,7 @@ import { BARS, type CheckReport, type PackShape, type PageEdges, type RigcRunner
 import { type CharacterConfig, type ContourMeshSpec, type LatticeMeshSpec, loadConfigAndAnimations, type Segment } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
 import { IDLE_FPS } from './motion.ts';
-import type { ContourBridges } from './contour.ts';
+import { type ContourBridges, FAINT_ALPHA } from './contour.ts';
 import { ART_ALPHA, DUST_MAX_PX, DUST_MAX_SHARE, isDust } from './mesh.ts';
 import { type PartsFile, readParts } from './parts.ts';
 import { alphaAbove, connectedComponents } from './raster/index.ts';
@@ -607,6 +607,12 @@ export interface BridgeFigure {
   area_px2: number;
   /** That area over the part's art px: the share of the candidate's overdraw the bridges draw (4 decimals). */
   overdraw: number;
+  /**
+   * Only when one was left out (HQ's ruling on #326): each faint island — every pixel's alpha under `FAINT_ALPHA`
+   * (`src/contour.ts`) — with its art px, its brightest pixel's alpha and its box in part-image px. Not meshed, so not
+   * drawn.
+   */
+  faint?: Array<{ art_px: number; max_alpha: number; box: [number, number, number, number] }>;
 }
 
 export interface PartRow {
@@ -637,7 +643,13 @@ export function bridgesOf(rigDir: string, part: string, art: number): BridgeFigu
   const b = rows.find((r) => r.part === part)?.contour?.bridges;
   if (b === undefined) return null;
   const area = b.joins.reduce((t, j) => t + j.area, 0);
-  return { units: b.units, joins: b.joins.map((j) => ({ span: j.span, area_px2: j.area })), area_px2: area, overdraw: art === 0 ? 0 : pyRound(area / art, 4) };
+  return {
+    units: b.units,
+    joins: b.joins.map((j) => ({ span: j.span, area_px2: j.area })),
+    area_px2: area,
+    overdraw: art === 0 ? 0 : pyRound(area / art, 4),
+    ...(b.faint === undefined ? {} : { faint: b.faint.map((f) => ({ art_px: f.art, max_alpha: f.maxAlpha, box: f.box })) }),
+  };
 }
 
 /** The mesh's area over the art's: the triangles' area in image px over the image's art px. */
@@ -772,11 +784,20 @@ export function meshDraftStage(input: MeshDraftInput, rigc: RigcRunner, checkBin
     return d === null || 'keep' in d || d.dust.length === 0 ? 'no dust' : `stray ${d.stray as number} leaves out ${d.dust.length} dust island(s) of ${d.dust.join(', ')} px`;
   };
   const row = (part: string): PartRow => rows.get(part) as PartRow;
+  const faintText = (faint: NonNullable<BridgeFigure['faint']>): string =>
+    `LEFT OUT as faint, every pixel under alpha ${FAINT_ALPHA}: ${faint.map((f) => `${f.art_px} px (brightest alpha ${f.max_alpha}, at part-image px ${f.box[0]},${f.box[1]} ${f.box[2]}x${f.box[3]})`).join('; ')} — not meshed, so not drawn; if those pixels matter to you, keep the lattice for this part`;
   const bridgeText = (r: PartRow): string => {
     const j = joined.get(r.part) as { real: number[]; bone: string };
     const b = r.candidate?.bridges;
-    const joins = b === undefined ? 'its bridges were not read' : `${b.joins.length} bridge(s) of ${b.joins.map((x) => `${x.span[0]} and ${x.span[1]} px`).join('; ')} span, ${b.area_px2} px² over no art (overdraw ${b.overdraw} of the candidate's ${r.candidate?.overdraw})`;
-    return `its ${j.real.length} real islands (${j.real.join(', ')} px) traced as ${b === undefined ? 'its' : b.units.length} grown silhouette(s) and joined into one outline by ${joins}, every vertex bound to the one bone "${j.bone}" (issue #326)`;
+    const joins =
+      b === undefined
+        ? 'its bridges were not read'
+        : b.joins.length === 0
+          ? 'no bridge'
+          : `${b.joins.length} bridge(s) of ${b.joins.map((x) => `${x.span[0]} and ${x.span[1]} px`).join('; ')} span, ${b.area_px2} px² over no art (overdraw ${b.overdraw} of the candidate's ${r.candidate?.overdraw}; overdraw is reported, never a reason to leave art out)`;
+    const faint = b?.faint ?? [];
+    const visible = j.real.length - faint.length;
+    return `its ${j.real.length} real islands (${j.real.join(', ')} px)${faint.length === 0 ? '' : `: ${faintText(faint)}; the ${visible} visible`} traced as ${b === undefined ? 'its' : b.units.length} grown silhouette(s) and joined into one outline by ${joins}, every vertex bound to the one bone "${j.bone}" (issue #326)`;
   };
 
   // 3. The drafted rig must build: a refusal laid on a part keeps that part's lattice.
@@ -933,7 +954,8 @@ export function meshDraftStage(input: MeshDraftInput, rigc: RigcRunner, checkBin
       drafted.set(row.part, { ...cand, note: row.note });
     } else if (row.note === '') {
       const failed = row.gate.filter((x) => !x.pass);
-      row.note = `keeps its lattice at grid ${row.lattice.grid}: ${failed.length === 0 ? 'no candidate was read' : failed.map((x) => `${x.reading} — ${x.text}`).join('; ')}`;
+      const faint = row.candidate?.bridges?.faint ?? [];
+      row.note = `keeps its lattice at grid ${row.lattice.grid}: ${failed.length === 0 ? 'no candidate was read' : failed.map((x) => `${x.reading} — ${x.text}`).join('; ')}${faint.length === 0 ? '' : `; on the bridged candidate those readings read: ${faintText(faint)}`}`;
     }
   }
   const configText = splicedConfig(text, drafted);
@@ -972,7 +994,7 @@ export function meshDraftStage(input: MeshDraftInput, rigc: RigcRunner, checkBin
   writeFileSync(written[0], configText);
   writeFileSync(written[1], `${JSON.stringify(report, null, 2)}\n`);
   for (const r of rowsOut) {
-    const cand = r.candidate === null ? '' : `; candidate ${r.candidate.triangles} triangle(s), overdraw ${r.candidate.overdraw}${r.candidate.bridges === undefined ? '' : ` (${r.candidate.bridges.joins.length} bridge(s), ${r.candidate.bridges.area_px2} px² over no art: overdraw ${r.candidate.bridges.overdraw} of it)`}`;
+    const cand = r.candidate === null ? '' : `; candidate ${r.candidate.triangles} triangle(s), overdraw ${r.candidate.overdraw}${r.candidate.bridges === undefined ? '' : ` (${r.candidate.bridges.joins.length} bridge(s), ${r.candidate.bridges.area_px2} px² over no art: overdraw ${r.candidate.bridges.overdraw} of it${(r.candidate.bridges.faint ?? []).map((f) => `; LEFT OUT faint ${f.art_px} px, brightest alpha ${f.max_alpha} < ${FAINT_ALPHA}`).join('')})`}`;
     log(`  ${r.mode === 'contour' ? 'DRAFTED' : 'LATTICE'}  ${r.part}: lattice grid ${r.lattice.grid} ${r.lattice.triangles} triangle(s), overdraw ${r.lattice.overdraw}${cand}`);
     for (const g of r.gate) log(`    ${g.pass ? 'pass' : 'FAIL'}  ${g.reading}: ${g.text}`);
     if (r.mode === 'grid' && r.gate.length === 0) log(`    ${r.note}`);

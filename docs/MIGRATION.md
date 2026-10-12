@@ -149,9 +149,9 @@ What to do: install with `npm i -D @rig-c/parts` (or `npm install -g @rig-c/part
 command lines do not change. A dependant that names `rig-parts` keeps receiving
 every release under it (#222).
 
-## After 1.13.1: the idle is read for folds
+## After 1.14.0: the idle is read for folds
 
-| | 1.13.1 | after 1.13.1 |
+| | 1.14.0 | after 1.14.0 |
 | --- | --- | --- |
 | `check.json`'s `ANIMATIONS_DO_NOT_FOLD` | written only when `motion.json` holds an animation beside the idle; its `animations` lists those | written whenever `motion.json` holds an animation, a rig of the idle alone included; its `animations` lists every one read, the idle first (#333) |
 | the console's fold line | `N animation(s) beside the idle read by rigc render --folds …` | `N animation(s) read by rigc render --folds …`, the idle counted and named |
@@ -194,3 +194,19 @@ What to do: nothing for a rig whose idle does not fold. A consumer that reads
 `check.json` finds the key on every rig with an animation. An idle that folds on purpose
 is declared, `"may_fold": [{ "slot": …, "animation": "idle", "why": … }]`, in the
 `--requirements` file.
+
+## After 1.14.0: faint islands under `contour.bridges`
+
+`contour.bridges` shipped in 1.14.0 meshing every island past `stray` and bridging it.
+The patch after it reads islands in a fixed order (issue #326, HQ's ruling): dust first
+(`stray`), then **faint** islands — every pixel's alpha under 64 — left out and named,
+then every visible island bridged whatever its bridge costs. No field was added and
+no declared form changed.
+
+| change | what moved | measured |
+| --- | --- | --- |
+| #326, faint islands left out | only a part that declares `contour.bridges` and holds a faint island (not the largest): its mesh, its `mesh_report.json` row (`contour.bridges.faint`, and `art_coverage`, which counts those pixels as art not covered) and, from `mesh-draft`, its written entry's note and `mesh_draft.json`'s `candidate.bridges.faint`. A part without a faint island writes the bytes 1.14.0 wrote | demo `earring` (the only such part a `mesh-draft` of the public examples drafts): its 8, 2 and 1 px specks, brightest alpha 17, 17 and 11, are left out — 33 → 26 triangles, overdraw 4.82 → 1.94; the idle rendered at scale 1.01 differs from the build of #335 (the change 1.14.0 carries) by at most 9 of 255 levels on at most 38 px where the specks were (4 frames; elsewhere 158 px differ by 1 level, as they do with the earring slot hidden), and `check`'s seam bar reads 0 px over 40 on both |
+
+What to do: nothing for a config without `contour.bridges`. A part that declares it and
+holds a faint island no longer draws that island; if those pixels matter, keep the
+lattice for that part.

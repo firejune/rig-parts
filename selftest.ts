@@ -221,8 +221,8 @@ import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegi
 import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
-import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
-import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FAR, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NEAR, NOTCH, NOTCH_CUT, NOTCHED, PAIR, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRAND, STRAND_CHAIN, STRIP } from './fixtures/contour.ts';
+import { artMask, contourFit, type ContourMesh, contourMesh, FAINT_ALPHA, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
+import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FAINT, FAINT_AT_LINE, FAR, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NEAR, NOTCH, NOTCH_CUT, NOTCHED, PAIR, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRAND, STRAND_CHAIN, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh, latticeStray } from './src/mesh.ts';
 import { type AcceptedOperation, type AlphaMask, checkHullOrder, type TrackAmplitude, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, type ReductionSkinning, simplifyClosedPolygon, traceAlphaOutline, traceOutline, windCounterClockwiseInSpineWorld, writeMeshQualityReport } from 'rig-c/mesh';
 import { allocationClause, AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, stageBClause, legacyArtCoverage, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
@@ -393,7 +393,7 @@ import { apply as applyAffine, type ComparedMesh, contourAtBudget, cost, errors,
 import { FIELD_LATTICE_GRID, FIELD_POSES, fieldRegion, REGION_SPACINGS } from './fixtures/localfield.ts';
 import { BASE_SPACINGS, CONTROL, describeWorst, displacement, frameOpenings, kindOf, neighbours, pickAtBudget, type PlacedMask, POSE_PHASE, ranked, regionPoses, regionSpacings, resolveSegments, seamOpening, seamPairs, sineAt, SWEEP_TOLERANCES, testRegion, toWorldPx, variantConfig } from './tools/real_compare.ts';
 import { BEND_DEGREES, BEND_WORST_SHARE, bendAnimationNames, bendAnimations, type BendFigure, bendLinks, CALIBRATED_SENTENCE, candidateMesh, carriedBy, islandsJoin, MORE_TRIANGLES_FLAG, RELATIVE_SENTENCE, DUST_MAX_PX, DUST_MAX_SHARE, dustOf, figureRules, type GateLine, gateVerdict, IDLE_BOUND_PX, jsonValueSpan, MEASURED_SENTENCE, MESH_DRAFT_REPORT, meshDraftStage, NOT_COMPARED_SENTENCE, notCompared, partsNamed, type PartReadings, type Reading, READINGS, splicedConfig, TOLERANCE_FIGURE_DIVISOR } from './src/meshdraft.ts';
-import { DRAFT_COARSE_GRID, DRAFT_COSTLY_GRID, DRAFT_FIGURE, DRAFT_FINE_GRID, DRAFT_LINKS, draftConfig, draftParts, writeDraftFixture, writeDraftFixtureWithContour, writeDraftIslandsFixture } from './fixtures/meshdraft.ts';
+import { DRAFT_COARSE_GRID, DRAFT_COSTLY_GRID, DRAFT_FIGURE, DRAFT_FINE_GRID, DRAFT_LINKS, DRAFT_SPECK_ALPHA, draftConfig, draftParts, writeDraftFixture, writeDraftFixtureWithContour, writeDraftIslandsFixture } from './fixtures/meshdraft.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, isSkeletonName, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
 import { AUTHOR_LABEL_RULE, AUTHOR_NO_ROLE, authorLayerLine, readAuthorTag, readLayerTag, readTag, type TagReading } from './src/tags.ts';
@@ -19472,6 +19472,41 @@ function runContourSuite(): number {
     'issue #326: on one island the bridged path traces the one grown silhouette and triangulates it exactly as the one-island rule does, so the mesh is the same bytes; a mesh that does not declare bridges is the mesh it was before the field existed',
   );
 
+  // CT109 — HQ's ruling on #326, in order: dust first, then a faint island left out and named, then the rest bridged.
+  const faint109 = built(contourOf(FAINT));
+  const faintHull: Array<[number, number]> = [[3, 4], [13, 4], [25, 4], [33, 4], [33, 14], [25, 14], [13, 14], [3, 14]];
+  say(
+    'CT109_DUST_GOES_FIRST_THEN_A_FAINT_ISLAND_IS_LEFT_OUT_AND_NAMED_AND_A_VISIBLE_ONE_IS_BRIDGED_WHATEVER_ITS_BRIDGE_COSTS',
+    faint109 !== null &&
+      faint109.hull === 8 &&
+      sameVertices(faint109.vertices, faintHull) &&
+      faint109.triangles.length / 3 === 6 &&
+      JSON.stringify(faint109.report.bridges) ===
+        JSON.stringify({ islands: [100, 80], units: [[100], [80]], joins: [{ unit: 1, span: [12, 12], area: 120, pair: 1, vertices: [1, 6, 2, 5] }], faint: [{ art: 9, maxAlpha: 40, box: [3, 18, 3, 3] }] }) &&
+      faint109.report.strayIslands === 1 &&
+      faint109.report.strayPixels === 1 &&
+      faint109.report.artPixels === 180 &&
+      faint109.report.coveredArtPixels === 180 &&
+      FAINT_ALPHA === 64,
+    faint109 === null ? `refused: ${contourCodes(contourOf(FAINT))}` : `hull ${vertexText(faint109.vertices.slice(0, faint109.hull))}; ${faint109.triangles.length / 3} triangles; bridges ${JSON.stringify(faint109.report.bridges)}; stray ${faint109.report.strayIslands} island(s), ${faint109.report.strayPixels} px; art ${faint109.report.artPixels}, covered ${faint109.report.coveredArtPixels}`,
+    `by hand (fixtures/contour.ts FAINT): the 1-px island at stray 1 is dust and goes first (counted as stray, not named faint); the 9-px island whose every pixel is alpha 40 is under ${FAINT_ALPHA}, left out and named with its size, its brightest alpha and its box; the 80-px block 12 px off is visible and bridged although its 120-px² bridge outweighs it — overdraw is reported, never a reason to drop art`,
+  );
+
+  // CT110 — the line's other side: an island whose brightest pixel is at 64 is visible, and is bridged.
+  const line110 = built(contourOf(FAINT_AT_LINE));
+  say(
+    'CT110_AN_ISLAND_WITH_A_PIXEL_AT_ALPHA_64_IS_VISIBLE_AND_BRIDGED_AND_NOTHING_IS_NAMED_FAINT',
+    line110 !== null &&
+      JSON.stringify(line110.report.bridges?.units) === '[[100],[80],[9]]' &&
+      line110.report.bridges?.joins.length === 2 &&
+      line110.report.bridges.faint === undefined &&
+      line110.report.coveredArtPixels === 189 &&
+      line110.report.strayIslands === 1 &&
+      contourTopologyProblems('faint-at-line', line110.vertices, line110.triangles, line110.hull).length === 0,
+    line110 === null ? `refused: ${contourCodes(contourOf(FAINT_AT_LINE))}` : `bridges ${JSON.stringify(line110.report.bridges)}; covered ${line110.report.coveredArtPixels}; stray ${line110.report.strayIslands}`,
+    `FAINT with the 3x3 island at alpha 64: "every pixel under ${FAINT_ALPHA}" no longer holds, so it is a third silhouette and is bridged; no faint key is written`,
+  );
+
   runContourGrowthControls(say, built, has);
   runOutlineInRegionControls(say, built);
 
@@ -22690,6 +22725,28 @@ function runMeshDraftSuite(): number {
         outText17.slice(jsonValueSpan(outText17, ['meshes', 'studs']).start, jsonValueSpan(outText17, ['meshes', 'studs']).end) === inText17.slice(jsonValueSpan(inText17, ['meshes', 'studs']).start, jsonValueSpan(inText17, ['meshes', 'studs']).end),
       `studs ${studs17?.mode ?? 'no row'}: ${studs17?.note ?? ''}`,
       "HQ's ruling on #326 Stage A, item 2: no two-bone join is drafted, not even on a fixture — the line says why, naming the bones; the studs are the pins' image with one segment on each block's own bone, so the lattice's vertices are bound to both, and the written entry is the input's text",
+    );
+
+    // MD20 — HQ's ruling on #326, same run: a faint island is left out of the draft and named; a visible far one is bridged.
+    type Faint20 = { art_px: number; max_alpha: number; box: [number, number, number, number] };
+    const specks20 = rows17.find((r) => r.part === 'specks');
+    const faint20 = ((specks20?.candidate?.bridges as { faint?: Faint20[] } | undefined)?.faint ?? []) as Faint20[];
+    const pinsBridge20 = pins17?.candidate?.bridges as { joins: unknown[]; area_px2?: number; faint?: unknown } | undefined;
+    say(
+      'MD20_A_FAINT_ISLAND_IS_LEFT_OUT_OF_THE_DRAFT_AND_NAMED_AND_A_VISIBLE_FAR_ONE_IS_BRIDGED_WHATEVER_ITS_BRIDGE_COSTS',
+      run17.status === 0 &&
+        specks20?.mode === 'contour' &&
+        specks20.gate.every((l) => l.pass) &&
+        JSON.stringify(faint20) === JSON.stringify([{ art_px: 6, max_alpha: DRAFT_SPECK_ALPHA, box: [30, 6, 2, 3] }]) &&
+        specks20.note.includes(`LEFT OUT as faint, every pixel under alpha ${FAINT_ALPHA}: 6 px (brightest alpha ${DRAFT_SPECK_ALPHA}, at part-image px 30,6 2x3) — not meshed, so not drawn; if those pixels matter to you, keep the lattice for this part`) &&
+        run17.out.includes(`LEFT OUT faint 6 px, brightest alpha ${DRAFT_SPECK_ALPHA} < ${FAINT_ALPHA}`) &&
+        pins17?.mode === 'contour' &&
+        pinsBridge20 !== undefined &&
+        pinsBridge20.joins.length === 1 &&
+        (pinsBridge20.area_px2 ?? 0) > 48 &&
+        pinsBridge20.faint === undefined,
+      `specks ${specks20?.mode ?? 'no row'}: faint ${JSON.stringify(faint20)}; console ${run17.out.split('\n').find((l) => l.includes('  specks: ')) ?? 'no line'}; pins: ${pinsBridge20?.joins.length ?? 0} bridge(s), ${pinsBridge20?.area_px2 ?? '?'} px² to a 48-px block`,
+      `HQ's ruling on #326: dust first, then faint islands — every pixel under alpha ${FAINT_ALPHA} — left out and named, then every visible island bridged whatever the bridge costs; the specks part's 6-px speck at alpha ${DRAFT_SPECK_ALPHA} (fixtures/meshdraft.ts) is named at its box in the padded part image (pad 4), and the pins' 48-px block, 16 px off, keeps a bridge larger than itself`,
     );
 
     // MD19 — the same-bones test and the islands it joins, pure (islandsJoin, carriedBy).

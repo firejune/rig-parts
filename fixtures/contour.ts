@@ -295,3 +295,24 @@ export const FAR: ContourCase = { name: 'far', mask: blocks(40, 20, [[3, 4, 10, 
  * the mesh is refused `CONTOUR_BRIDGE` (16 pairs: 4 vertices each).
  */
 export const NOTCH_CUT: ContourCase = { name: 'notch-cut', mask: blocks(24, 16, [[1, 6, 20, 6], [7, 6, 7, 3, 0], [8, 1, 5, 7]]), params: { ...BRIDGE_BASE } };
+
+/**
+ * FAINT and FAINT_AT_LINE (issue #326, HQ's ruling: dust first, then faint islands left out, then every visible island
+ * bridged whatever the bridge costs), under {@link BRIDGE_BASE} with `stray: 1`, in 40x24:
+ *
+ * - A, 10x10 at (3, 4), alpha 255: 100 px, the largest.
+ * - B, 8x10 at (25, 4), alpha 255: 80 px, visible and 12 px off. Its bridge is the 12x10 rectangle between the blocks,
+ *   120 px² — more than the 80 px it reaches — and it is bridged all the same.
+ * - C, 3x3 at (3, 18), alpha 40: 9 px, every pixel under 64 — faint, left out and named in `bridges.faint`
+ *   (`{art 9, maxAlpha 40, box [3, 18, 3, 3]}`).
+ * - D, 1x1 at (36, 20), alpha 40: 1 px, at `stray` — dust, taken out first, so it is counted in `strayIslands`
+ *   (1, 1 px) and is not named faint.
+ *
+ * With C and D gone the mesh is A and B joined across their 12-px gap: the outline (3, 4) (13, 4) (25, 4) (33, 4)
+ * (33, 14) (25, 14) (13, 14) (3, 14) — the nearest vertex pairs tie at 12 px and the joined outline's earlier
+ * position takes it, as in {@link PAIR} — 6 triangles, the join `{unit 1, span [12, 12], area 120, pair 1, vertices
+ * [1, 6, 2, 5]}`, 180 art px meshed. FAINT_AT_LINE is the same with C at alpha 64 — at the line, so visible — and C is
+ * a third silhouette, bridged, and nothing is named faint.
+ */
+export const FAINT: ContourCase = { name: 'faint', mask: blocks(40, 24, [[3, 4, 10, 10], [25, 4, 8, 10], [3, 18, 3, 3, 40], [36, 20, 1, 1, 40]]), params: { ...BRIDGE_BASE, stray: 1 } };
+export const FAINT_AT_LINE: ContourCase = { name: 'faint-at-line', mask: blocks(40, 24, [[3, 4, 10, 10], [25, 4, 8, 10], [3, 18, 3, 3, 64], [36, 20, 1, 1, 40]]), params: { ...BRIDGE_BASE, stray: 1 } };
