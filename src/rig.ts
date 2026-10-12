@@ -161,7 +161,7 @@ import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
 import { boneHeat, heatInfluences, heatRow, type HeatRow, latticeSilhouette, tracedSilhouette } from './heat.ts';
 import { TURN_BONE, type TurnSpec, turnConstraintName, turnFractions, turnTwin } from './turn.ts';
-import { DEFAULT_LIMITS, DISTANCE_EXPONENT, type Influence, influences, type Segment } from './weights.ts';
+import { DISTANCE_EXPONENT, type FloorForm, type Influence, influences, type InfluenceLimits, type MeshInfluences, meshLimits, type Segment } from './weights.ts';
 
 /** Transparent pixels added round every part image — the reference's `PAD`. */
 export const PAD = 4;
@@ -309,12 +309,47 @@ export function eyeLine(parts: PartsFile, eyeBones: ReadonlyMap<string, Point>):
 
 /**
  * The weights a contour vertex is written with: a vertex no region reaches is
- * rounded as the lattice rounds (each to 5 places, the last `1 − sum(others)`),
- * one a region reaches by {@link roundShares}.
+ * rounded as the lattice rounds ({@link latticeShares}), one a region reaches
+ * by {@link roundShares} — and so is every vertex of a mesh that declares the
+ * continuous floor (issue #284), whose shares, like a region's ramp, reach
+ * below 0.03 and may round to 0.
  */
-export function writtenShares(li: LocalInfluence): Influence[] {
-  if (li.region >= 0) return roundShares(li.influences);
-  const shares = li.influences.map(({ bone, weight }) => ({ bone, weight: pyRound(weight, 5) }));
+export function writtenShares(li: LocalInfluence, floor?: FloorForm): Influence[] {
+  if (li.region >= 0 || floor === 'continuous') return roundShares(li.influences);
+  return latticeShares(li.influences);
+}
+
+/**
+ * The refusal for a mesh some of whose vertices the cut leaves with no bone (issue #284): the first such vertex, with
+ * its capped shares before the floor, and how many more there are.
+ *
+ * When it can happen, by arithmetic: the capped shares of a vertex are normalised, so over k kept bones they sum to 1
+ * and the largest is at least 1/k. The cut keeps a share of at least 0.03 and the continuous floor one above 0.03, so a
+ * vertex keeps no bone only if 1/k ≤ 0.03, that is k ≥ 34 (1/33 = 0.0303… keeps its largest under both forms). At the
+ * default cap of 4 the largest share is at least 0.25, so a mesh that declares nothing never reaches this; only a
+ * declared cap of 34 or more, or `null`, over 34 or more bones whose shares are all at or below the floor does — and a
+ * share that is not a number (raw values summing to 0) lands here too rather than in the file. Rare, so refused by
+ * name rather than left to a crash in the rounding.
+ */
+export function nothingKeptProblem(part: string, floor: FloorForm | undefined, first: { vertex: number; at: Point; capped: readonly Influence[] }, more: number): Problem {
+  const largest = first.capped.length === 0 ? null : Math.max(...first.capped.map((e) => e.weight));
+  const form = floor === 'continuous' ? 'the continuous floor (0.03 subtracted from every share) keeps none at or below 0.03' : 'the cut drops every share below 0.03';
+  return {
+    code: 'RIG_INFLUENCES_KEPT',
+    object: `config.meshes.${part}.influences`,
+    detail: `vertex ${first.vertex} at rig (${first.at[0]}, ${first.at[1]})${more > 0 ? ` and ${more} more` : ''} keeps no bone: its ${first.capped.length} capped share(s) have the largest ${largest === null || !Number.isFinite(largest) ? String(largest) : pyRound(largest, 6)}, and ${form}; a largest share above 0.03 is required, which every vertex has when 33 or fewer bones are kept (the largest of k shares is at least 1/k) — declare maxInfluences 33 or less, or name fewer bones in segments`,
+  };
+}
+
+/**
+ * The lattice's rounding: each weight to 5 places, the last entry written as
+ * `1 − sum(others)`. Safe because under the cut every kept entry is at least
+ * `MIN_WEIGHT`, so the last cannot be taken negative; a mesh that declares the
+ * continuous floor is rounded by {@link roundShares} instead (issue #284, as
+ * Stage E wrote it: `docs/evidence/weight-cap.md`).
+ */
+export function latticeShares(list: readonly Influence[]): Influence[] {
+  const shares = list.map(({ bone, weight }) => ({ bone, weight: pyRound(weight, 5) }));
   let others = 0;
   for (let k = 0; k < shares.length - 1; k++) others += shares[k].weight;
   shares[shares.length - 1].weight = pyRound(1 - others, 5);
@@ -613,6 +648,8 @@ export interface LatticeMeshReport {
   grid: number;
   /** The distance rule's exponent the mesh declared (issue #161); absent when it declared none and ran at 2. */
   exponent?: number;
+  /** The cap and floor form the mesh declared, as declared (issue #284); absent when it declared none and ran at 4 and the cut. */
+  influences?: MeshInfluences;
   /** Only under `rule: "heat"` (issue #161): the rule and the solve it ran. Absent otherwise, so a distance mesh writes the row it always wrote. */
   heat?: HeatRow;
 }
@@ -636,6 +673,8 @@ export interface ContourMeshReport {
   mode: 'contour';
   /** The distance rule's exponent the mesh declared (issue #161); absent when it declared none and ran at 2. */
   exponent?: number;
+  /** As the lattice row's (issue #284). */
+  influences?: MeshInfluences;
   /** Only when the mesh declared ribs (issue #188): what it declared and what was placed. Absent otherwise, so a mesh without ribs writes the row it always wrote. */
   ribs?: RibsRow;
   /** `maxEdge` only when the mesh declared it (issue #265), so a mesh without it writes the row it always wrote. */
@@ -1321,8 +1360,10 @@ export function buildRig(
     segs: Segment[],
     rule: WeightRule,
     ribSpec: { segments: ReadonlyArray<string | readonly [string, Point, Point]>; ribs?: RibsSpec },
+    declared: MeshInfluences | undefined,
     out: Problem[],
   ): { attachment: MeshAttachment; report: ContourMeshReport } | null => {
+    const limits = meshLimits(declared);
     const ox = p.x - PAD;
     const oy = p.y - PAD;
     const w = img.width;
@@ -1354,10 +1395,12 @@ export function buildRig(
     let infl = 0;
     let maxInfl = 0;
     let overlapped = false;
+    let emptied: { vertex: number; at: Point; capped: Influence[] } | null = null;
+    let emptiedMore = 0;
     cm.vertices.forEach(([vx, vy], vi) => {
       const wx = vx + ox;
       const wy = vy + oy;
-      const li = localInfluences([wx, wy], segs, r, regions, DEFAULT_LIMITS, exponent ?? DISTANCE_EXPONENT, heat === null ? undefined : heatInfluences(heat, [vx, vy], DEFAULT_LIMITS));
+      const li = localInfluences([wx, wy], segs, r, regions, limits, exponent ?? DISTANCE_EXPONENT, heat === null ? undefined : heatInfluences(heat, [vx, vy], limits));
       if ('first' in li) {
         if (!overlapped) {
           out.push({
@@ -1369,11 +1412,17 @@ export function buildRig(
         overlapped = true;
         return;
       }
+      if (li.influences.length === 0) {
+        // issue #284: a declared cut that keeps no bone (nothingKeptProblem says when that can be); a region's bone would be kept.
+        if (emptied === null) emptied = { vertex: vi, at: [wx, wy], capped: heat === null ? influences([wx, wy], segs, r, { maxInfluences: limits.maxInfluences, minWeight: 0 }, exponent ?? DISTANCE_EXPONENT) : heatInfluences(heat, [vx, vy], { maxInfluences: limits.maxInfluences, minWeight: 0 }) };
+        else emptiedMore++;
+        return;
+      }
       if (li.region >= 0) {
         reached[li.region]++;
         if (li.g >= 1) whole[li.region]++;
       }
-      const shares = writtenShares(li);
+      const shares = writtenShares(li, limits.floor);
       const ent: WeightEntry[] = shares.map(({ bone, weight }) => {
         const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
         return { bone, x: places(x), y: places(y), weight };
@@ -1383,6 +1432,10 @@ export function buildRig(
       maxInfl = Math.max(maxInfl, ent.length);
     });
     if (overlapped) return null;
+    if (emptied !== null) {
+      out.push(nothingKeptProblem(p.name, limits.floor, emptied, emptiedMore));
+      return null;
+    }
     const uvs: number[] = [];
     for (const [x, y] of cm.vertices) uvs.push(pyRound(x / w, 6), pyRound(y / h, 6));
     const bones = new Set(segs.map((s) => s.bone));
@@ -1401,6 +1454,7 @@ export function buildRig(
         art_coverage: pyRound(rep.coveredArtPixels / (rep.artPixels + rep.strayPixels), 5),
         mode: 'contour',
         ...(exponent === undefined ? {} : { exponent }),
+        ...(declared === undefined ? {} : { influences: declared }),
         ...(ribSpec.ribs === undefined ? {} : { ribs: ribsRow(ribSpec.ribs, cm.ribs ?? []) }),
         params: { tolerance: spec.tolerance, margin: spec.margin, spacing: spec.spacing, ...(spec.maxEdge === undefined ? {} : { maxEdge: spec.maxEdge }), budget: spec.budget ?? null, stray: spec.stray ?? null },
         contour: rep,
@@ -1684,7 +1738,7 @@ export function buildRig(
       continue;
     }
     if ('contour' in mesh) {
-      const row = contourAttachment(p, img, file, mesh.contour, mesh.r, mesh.exponent, segs, mesh.rule ?? 'distance', mesh, problems);
+      const row = contourAttachment(p, img, file, mesh.contour, mesh.r, mesh.exponent, segs, mesh.rule ?? 'distance', mesh, mesh.influences, problems);
       if (row === null) continue;
       skin[p.name] = { [p.name]: row.attachment };
       slots.push({ name: p.name, bone: segs[0].bone, attachment: p.name });
@@ -1711,19 +1765,31 @@ export function buildRig(
     const weights: WeightEntry[][] = [];
     let infl = 0;
     let maxInfl = 0;
-    for (const [vx0, vy0] of lm.vertices) {
+    // issue #284: the mesh's declared cap and floor form, or DEFAULT_LIMITS itself when it declares none.
+    const limits: InfluenceLimits = meshLimits(mesh.influences);
+    let emptied: { vertex: number; at: Point; capped: Influence[] } | null = null;
+    let emptiedMore = 0;
+    for (const [vi, [vx0, vy0]] of lm.vertices.entries()) {
       const wx = vx0 + ox;
       const wy = vy0 + oy;
-      const ent: WeightEntry[] = (heat === null ? influences([wx, wy], segs, mesh.r, undefined, mesh.exponent ?? DISTANCE_EXPONENT) : heatInfluences(heat, [vx0, vy0], DEFAULT_LIMITS)).map(({ bone, weight }) => {
+      const shares = heat === null ? influences([wx, wy], segs, mesh.r, limits, mesh.exponent ?? DISTANCE_EXPONENT) : heatInfluences(heat, [vx0, vy0], limits);
+      if (shares.length === 0) {
+        // issue #284: a declared cut that keeps no bone (nothingKeptProblem says when that can be).
+        if (emptied === null) emptied = { vertex: vi, at: [wx, wy], capped: heat === null ? influences([wx, wy], segs, mesh.r, { maxInfluences: limits.maxInfluences, minWeight: 0 }, mesh.exponent ?? DISTANCE_EXPONENT) : heatInfluences(heat, [vx0, vy0], { maxInfluences: limits.maxInfluences, minWeight: 0 }) };
+        else emptiedMore++;
+        continue;
+      }
+      const ent: WeightEntry[] = (limits.floor === 'continuous' ? roundShares(shares) : latticeShares(shares)).map(({ bone, weight }) => {
         const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
-        return { bone, x: places(x), y: places(y), weight: pyRound(weight, 5) };
+        return { bone, x: places(x), y: places(y), weight };
       });
-      let others = 0;
-      for (let k = 0; k < ent.length - 1; k++) others += ent[k].weight;
-      ent[ent.length - 1].weight = pyRound(1 - others, 5);
       weights.push(ent);
       infl += ent.length;
       maxInfl = Math.max(maxInfl, ent.length);
+    }
+    if (emptied !== null) {
+      problems.push(nothingKeptProblem(p.name, limits.floor, emptied, emptiedMore));
+      continue;
     }
     const uvs: number[] = [];
     for (const [x, y] of lm.vertices) uvs.push(pyRound(x / w, 6), pyRound(y / h, 6));
@@ -1740,6 +1806,7 @@ export function buildRig(
       art_coverage: pyRound(artCoverage(lm, art), 5),
       grid: mesh.grid,
       ...(mesh.exponent === undefined ? {} : { exponent: mesh.exponent }),
+      ...(mesh.influences === undefined ? {} : { influences: mesh.influences }),
       ...(heat === null ? {} : { heat: heatRow(heat) }),
     });
   }

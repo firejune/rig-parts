@@ -14,7 +14,7 @@
  * - dust left out: an extra 4-connected island of the art (alpha above `ART_ALPHA`) of at most {@link DUST_MAX_PX} px
  *   and at most {@link DUST_MAX_SHARE} of the part's art is dust, and a `stray` equal to the largest such island leaves
  *   it out. A part with any other extra island holds a real piece, and keeps its lattice ({@link dustOf});
- * - `r`, `segments`, `exponent` and `rule` as the lattice entry states them.
+ * - `r`, `segments`, `exponent`, `rule` and `influences` as the lattice entry states them.
  *
  * The constants are the ones issue #265's stages measured (Stage A passed every bar at c = 37 on three examples; T 2
  * at the trailer's 1108 px figure is Stage A2's point; the dust rule is Stage B's). They are calibrated on three
@@ -200,6 +200,7 @@ export function candidateMesh(lattice: LatticeMeshSpec, rules: Pick<FigureRules,
     segments: lattice.segments,
     ...(lattice.exponent === undefined ? {} : { exponent: lattice.exponent }),
     ...(lattice.rule === undefined ? {} : { rule: lattice.rule }),
+    ...(lattice.influences === undefined ? {} : { influences: lattice.influences }),
   };
 }
 
@@ -692,7 +693,7 @@ export function meshDraftStage(input: MeshDraftInput, rigc: RigcRunner, checkBin
     const denseMeshes = new Map<string, LatticeMeshSpec>();
     for (const part of names) {
       const l = cfg.meshes[part] as LatticeMeshSpec;
-      denseMeshes.set(part, { grid: denseGrid(artPixels(images.get(part) as Raster)), r: l.r, segments: l.segments, ...(l.exponent === undefined ? {} : { exponent: l.exponent }), ...(l.rule === undefined ? {} : { rule: l.rule }) });
+      denseMeshes.set(part, { grid: denseGrid(artPixels(images.get(part) as Raster)), r: l.r, segments: l.segments, ...(l.exponent === undefined ? {} : { exponent: l.exponent }), ...(l.rule === undefined ? {} : { rule: l.rule }), ...(l.influences === undefined ? {} : { influences: l.influences }) });
     }
     const denseRig = buildRig({ ...cfg, meshes: { ...cfg.meshes, ...Object.fromEntries(denseMeshes) } }, parts, images, undefined, input.idleKeys).rig;
     const pngs: Array<[string, Uint8Array]> = readdirSync(join(draftedRig.rigDir, 'images')).sort().map((f) => [f, new Uint8Array(readFileSync(join(draftedRig.rigDir, 'images', f)))]);

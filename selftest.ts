@@ -280,7 +280,7 @@ import { assertUnchanged, crumbsLeft, lossOf, lossTotal, maskMd5, strayCleared }
 import { ART_ARM_ALPHA, ARMS, armSpec, clearFaint, finalPassOf, rowOf, specPaths, strayFor } from './tools/auto_policy_survey.ts';
 import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec, ConfigConstraint, LatticeMeshSpec, Segment } from './src/config.ts';
-import { DEFAULT_LIMITS, MIN_WEIGHT } from './src/weights.ts';
+import { DEFAULT_LIMITS, meshLimits, MIN_WEIGHT } from './src/weights.ts';
 import type { AutoMeshReport, MeshReport } from './src/rig.ts';
 import { PartsError, type Problem, problemLine } from './src/errors.ts';
 import { encodeGif } from './src/gif.ts';
@@ -1923,6 +1923,59 @@ function runConfigSuite(): number {
       (bare245?.problems[0].detail.endsWith('— or "author:<label>" for a layer the author made') ?? false),
     `["hand", "full", "author:hand"] -> ${show75(good245)}; extend tag "author:lock" -> ${show75(extend245)}; "author:" -> ${show75(empty245)}; "author:.hand" -> ${show75(dot245)}; "hand" -> ${show75(bare245)}`,
     'issue #256: an author who splits a layer by hand had no tag to give it and borrowed an unused See-through one; the author form is admitted, and a label that could not be a part name is refused rather than trimmed into one',
+  );
+  // CF126 — issue #284: meshes.<part>.influences, the lattice and contour modes' cut. maxInfluences is a whole number
+  // at or above 1 or null (no cap), floor "cut" or "continuous"; either may be absent, but not both; beside auto it is
+  // refused by name, since the automatic mode states its cap and floor in auto.influences.
+  const IAT = 'config.meshes.robe.influences';
+  const capped = (influences: unknown, mode: 'grid' | 'contour' | 'auto' = 'grid'): PartsError | null =>
+    refusals(() =>
+      parseConfig(
+        (() => {
+          const c = minimalConfig();
+          const robe = (c.meshes as Record<string, Record<string, unknown>>).robe;
+          if (mode !== 'grid') delete robe.grid;
+          if (mode === 'contour') robe.contour = { tolerance: 0, margin: 1, spacing: 4 };
+          if (mode === 'auto') robe.auto = withPolicyMotion(syntheticPolicy(4));
+          robe.influences = influences;
+          return c;
+        })(),
+      ),
+    );
+  const loads126 = [
+    capped({ maxInfluences: 5 }),
+    capped({ maxInfluences: null, floor: 'continuous' }),
+    capped({ floor: 'cut', note: 'today, written out' }),
+    capped({ maxInfluences: 1, 'x-why': { by: 'selftest' } }, 'contour'),
+    capped({ maxInfluences: null, floor: 'continuous' }, 'contour'),
+  ];
+  const zero126 = capped({ maxInfluences: 0 });
+  const half126 = capped({ maxInfluences: 4.5 });
+  const word126 = capped({ maxInfluences: 'none' });
+  const text126 = capped({ maxInfluences: '5' });
+  const floor126 = capped({ floor: 'smooth' });
+  const empty126 = capped({});
+  const typo126 = capped({ maxInfluence: 5 });
+  const bare126 = capped(5);
+  const auto126 = capped({ maxInfluences: 5 }, 'auto');
+  const CAP_NEED = 'an integer at or above 1, or null (no cap: every bone the mesh\'s segments name), is required';
+  say(
+    'CF126_A_MESHS_DECLARED_CAP_AND_FLOOR_FORM_LOAD_IN_THE_LATTICE_AND_CONTOUR_MODES_AND_EACH_MALFORMED_ONE_IS_REFUSED_BY_NAME',
+    loads126.every((e) => e === null) &&
+      one75(zero126, 'CONFIG_FIELD_TYPE', `${IAT}.maxInfluences`, `is 0; ${CAP_NEED}`) &&
+      one75(half126, 'CONFIG_FIELD_TYPE', `${IAT}.maxInfluences`, `is 4.5; ${CAP_NEED}`) &&
+      one75(word126, 'CONFIG_FIELD_TYPE', `${IAT}.maxInfluences`, `is "none"; ${CAP_NEED}`) &&
+      one75(text126, 'CONFIG_FIELD_TYPE', `${IAT}.maxInfluences`, `is "5"; ${CAP_NEED}`) &&
+      one75(floor126, 'CONFIG_FIELD_TYPE', `${IAT}.floor`) &&
+      (floor126?.problems[0].detail.startsWith('is "smooth"; "cut" (shares under 0.03 dropped, what an absent floor means) or "continuous"') ?? false) &&
+      one75(empty126, 'CONFIG_FIELD_TYPE', IAT, 'is {}, which names neither maxInfluences nor floor; remove influences to keep the cap of 4 and the cut at 0.03') &&
+      typo126 !== null &&
+      typo126.problems.map((q) => `${q.code} ${q.object}`).join('; ') === `CONFIG_KEY_KNOWN ${IAT}.maxInfluence; CONFIG_FIELD_TYPE ${IAT}` &&
+      one75(bare126, 'CONFIG_FIELD_TYPE', IAT, 'is 5; an object is required') &&
+      one75(auto126, 'CONFIG_INFLUENCES_MODE', IAT) &&
+      (auto126?.problems[0].detail.includes('auto.influences (maxInfluences, minWeight)') ?? false),
+    `loads: ${loads126.map(show75).join(', ')}; planted: cap 0 -> ${show75(zero126)}; 4.5 -> ${show75(half126)}; "none" -> ${show75(word126)}; "5" -> ${show75(text126)}; floor "smooth" -> ${show75(floor126)}; {} -> ${show75(empty126)}; maxInfluence (typo) -> ${show75(typo126)}; 5 -> ${show75(bare126)}; on an auto mesh -> ${show75(auto126)}`,
+    'issue #284: the cut becomes the author\'s, so a malformed one is a refusal naming the field, never a nearby value: a cap of 0 keeps no bone, 4.5 bones is no count, no cap is null — the config\'s spelling of a bound declared absent (maxOvershoot, weightJump) — so the word "none" is a string no reader takes, and an unknown floor form is not mapped to a known one; an empty declaration declares nothing; and on an automatic mesh the field would be read by nothing while its author believed it cut the weights — that mode is handed its cap and floor in auto.influences',
   );
   return bad();
 }
@@ -3916,6 +3969,7 @@ function runRigSuite(): number {
   runConstraintRigCases(say);
   runExponentCases(say);
   runHeatRuleCases(say);
+  runInfluencesCases(say);
   runAnimationsFromCases(say);
   runTurnRigCases(say);
   return bad();
@@ -4098,6 +4152,176 @@ function runExponentCases(say: (name: string, ok: boolean, detail: string, why: 
     same.every((x) => x.weights && x.rest) && modes.every((k) => echo(two[k]) === 'exponent 2'),
     same.map((x) => `${x.k}: weights ${x.weights ? 'identical' : 'DIFFERENT'}, every other byte ${x.rest ? 'identical' : 'DIFFERENT'}, row ${echo(two[x.k])}`).join('; '),
     'at 2 the weight is the multiply (d + r) * (d + r), never Math.pow (src/weights.ts, DISTANCE_EXPONENT), so declaring today\'s rule moves no weight; the only byte that differs is the row\'s echo of what was declared',
+  );
+}
+
+/**
+ * Issue #284: the cut made the author's — `meshes.<part>.influences`, a cap (`maxInfluences`, a whole number or
+ * `"none"`) and the floor's form (`"cut"` or `"continuous"`), in the lattice and contour modes. The fixture is the rig
+ * fixture's cloth (fixtures/rig.ts) with six single bones under `body` and six explicit segments round its vertex at
+ * uv (0.333333, 0.5), rig (14, 14), each ending one or two px from it: w1 at (15, 14) and w2 at (13, 14), d = 1; w3 at
+ * (16, 14), w4 at (12, 14), w5 at (14, 16), w6 at (14, 12), d = 2 (each segment runs away from the vertex, so its
+ * nearest point is its origin). With r 0 the raw weights are 1/d^2: 1, 1, 1/4, 1/4, 1/4, 1/4, and the stable sort
+ * keeps that order.
+ */
+function runInfluencesCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const SIX: Array<[string, [number, number], [number, number]]> = [
+    ['w1', [15, 14], [16, 14]],
+    ['w2', [13, 14], [12, 14]],
+    ['w3', [16, 14], [17, 14]],
+    ['w4', [12, 14], [11, 14]],
+    ['w5', [14, 16], [14, 17]],
+    ['w6', [14, 12], [14, 11]],
+  ];
+  const sixBones = (c: Record<string, unknown>): void => {
+    c.bones = [...(c.bones as unknown[]), ...SIX.map(([name]) => ({ name, parent: 'body', at: [20, 30] }))];
+  };
+  type Built = ReturnType<typeof buildRig>;
+  const lattice = (influences?: unknown, r = 0): Built =>
+    buildRig(rigCfg((c) => {
+      sixBones(c);
+      (c.meshes as Record<string, unknown>).cloth = { grid: 8, r, segments: SIX, ...(influences === undefined ? {} : { influences }) };
+    }), rigParts(), rigImages());
+  const contour = (influences?: unknown, extra: Record<string, unknown> = {}): Built =>
+    buildRig(rigCfg((c) => {
+      sixBones(c);
+      (c.meshes as Record<string, unknown>).cloth = { contour: { tolerance: 0, margin: 1, spacing: 4 }, r: 1, segments: SIX, ...extra, ...(influences === undefined ? {} : { influences }) };
+    }), rigParts(), rigImages());
+  const cloth = (b: Built): MeshAttachment => b.rig.skins.default.cloth.cloth as MeshAttachment;
+  const texts = (b: Built): string => [rigJsonText(b.rig), rigJsonText(b.motion), rigJsonText(b.meshReport)].join('\n');
+  const at = (b: Built): string => {
+    const m = cloth(b);
+    for (let i = 0; i < m.uvs.length / 2; i++) if (m.uvs[2 * i] === 0.333333 && m.uvs[2 * i + 1] === 0.5) return JSON.stringify(m.weights[i].map((e) => [e.bone, e.weight]));
+    return 'no vertex at uv (0.333333, 0.5)';
+  };
+  const echo = (b: Built): string => {
+    const row = b.meshReport.find((m) => m.part === 'cloth') as Record<string, unknown> | undefined;
+    return row === undefined ? 'no row' : 'influences' in row ? JSON.stringify(row.influences) : 'no influences key';
+  };
+  const w = (pairs: Array<[string, number]>): string => JSON.stringify(pairs);
+
+  // RG90 — the lattice, by hand: the cap and the floor form each move the vertex's weights as the definition says.
+  const absent = lattice();
+  const runs90: Array<[string, Built, string]> = [
+    ['absent (4, cut)', absent, w([['w1', 0.4], ['w2', 0.4], ['w3', 0.1], ['w4', 0.1]])],
+    ['cap 5', lattice({ maxInfluences: 5 }), w([['w1', 0.36364], ['w2', 0.36364], ['w3', 0.09091], ['w4', 0.09091], ['w5', 0.0909]])],
+    ['cap none', lattice({ maxInfluences: null }), w([['w1', 0.33333], ['w2', 0.33333], ['w3', 0.08333], ['w4', 0.08333], ['w5', 0.08333], ['w6', 0.08335]])],
+    ['cap 4, continuous', lattice({ floor: 'continuous' }), w([['w1', 0.42045], ['w2', 0.42045], ['w3', 0.07955], ['w4', 0.07955]])],
+    ['cap 5, continuous', lattice({ maxInfluences: 5, floor: 'continuous' }), w([['w1', 0.39251], ['w2', 0.39251], ['w3', 0.07166], ['w4', 0.07166], ['w5', 0.07166]])],
+    ['cap none, continuous', lattice({ maxInfluences: null, floor: 'continuous' }), w([['w1', 0.36992], ['w2', 0.36992], ['w3', 0.06504], ['w4', 0.06504], ['w5', 0.06504], ['w6', 0.06504]])],
+  ];
+  say(
+    'RG90_A_DECLARED_CAP_AND_FLOOR_FORM_GIVE_THE_LATTICE_WEIGHTS_COMPUTED_BY_HAND_AND_ARE_ECHOED_IN_THE_ROW',
+    runs90.every(([, b, want]) => at(b) === want) &&
+      echo(absent) === 'no influences key' &&
+      echo(runs90[5][1]) === '{"maxInfluences":null,"floor":"continuous"}' &&
+      echo(runs90[1][1]) === '{"maxInfluences":5}' &&
+      runs90.slice(1).every(([, b]) => texts(b) !== texts(absent)),
+    runs90.map(([name, b]) => `${name}: ${at(b)}, row ${echo(b)}`).join('; '),
+    'by hand from the raw 1, 1, 1/4 x 4: the cut at cap 4 keeps 1 : 1 : 1/4 : 1/4 = 0.4, 0.4, 0.1, 0.1; at cap 5 over 2.75, 1/2.75 = 0.363636 -> 0.36364 and 0.25/2.75 = 0.090909 -> 0.09091, the last 1 - 0.9091 = 0.0909; with no cap over 3, 0.33333 and 0.08333, the last 1 - 0.91665 = 0.08335. The continuous floor subtracts 0.03 from each capped share and normalises again: at cap 4 0.37 : 0.37 : 0.07 : 0.07 over 0.88 = 0.420455 and 0.079545; at cap 5 0.333636 and 0.060909 over 0.85 = 0.392513 and 0.071658; with no cap 0.303333 and 0.053333 over 0.82 = 0.369919 and 0.065041 — each rounded to 5 places with the remainder to the heaviest entry, the first of equals (roundShares), which here leaves each as rounded',
+  );
+
+  // RG91 — today's values declared are absence, byte for byte, but for the row's echo, in both modes.
+  const strip = (t: string): string => t.replace(/,\n? *"influences": \{[^}]*\}/g, '');
+  const pairs91: Array<[string, Built, Built]> = [
+    ['lattice', lattice({ maxInfluences: 4, floor: 'cut' }), absent],
+    ['contour', contour({ maxInfluences: 4, floor: 'cut' }), contour()],
+  ];
+  const same91 = pairs91.map(([k, d, a]) => ({ k, weights: JSON.stringify(cloth(d).weights) === JSON.stringify(cloth(a).weights), rest: strip(texts(d)) === texts(a), echoed: echo(d) === '{"maxInfluences":4,"floor":"cut"}' }));
+  say(
+    'RG91_A_CAP_OF_4_AND_THE_CUT_DECLARED_WRITE_THE_WEIGHTS_AND_FILES_OF_NO_DECLARATION_BUT_FOR_THE_ECHO',
+    same91.every((x) => x.weights && x.rest && x.echoed) && texts(pairs91[0][1]) !== texts(absent),
+    same91.map((x) => `${x.k}: weights ${x.weights ? 'identical' : 'DIFFERENT'}, every other byte ${x.rest ? 'identical' : 'DIFFERENT'}, row ${x.echoed ? 'echoes the declaration' : 'does NOT echo it'}`).join('; '),
+    'absent, a mesh runs at DEFAULT_LIMITS itself (meshLimits), so a declaration of today\'s values moves no weight; the only byte that differs is the row\'s echo of what was declared, as with exponent 2 (RG66)',
+  );
+
+  // RG92 — the contour mode reads the declaration at every vertex: the definition under the declared limits, rounded as
+  // that mode writes a mesh with the continuous floor.
+  const decl92 = { maxInfluences: null, floor: 'continuous' } as const;
+  const lim92 = meshLimits(decl92);
+  const segs92 = SIX.map(([bone, a, b]) => ({ bone, a, b }));
+  const cm = contourMesh('cloth', clothMask(), { threshold: ART_ALPHA, tolerance: 0, margin: 1, spacing: 4, regions: [] });
+  const got92 = contour(decl92);
+  let miss92 = 'the contour mesh was refused';
+  if (!Array.isArray(cm)) {
+    const got = cloth(got92).weights.map((v) => JSON.stringify(v.map((e) => [e.bone, e.weight])));
+    const want = cm.vertices.map(([x, y]) => {
+      const li = localInfluences([x + 6, y + 6], segs92, 1, [], lim92);
+      return 'first' in li ? 'overlap' : JSON.stringify(roundShares(li.influences).map((e) => [e.bone, e.weight]));
+    });
+    miss92 = got.length !== want.length ? `${got.length} vertices written, ${want.length} traced` : `${got.filter((g, i) => g !== want[i]).length} of ${got.length} vertices off the definition`;
+  }
+  const most92 = Math.max(...cloth(got92).weights.map((v) => v.length));
+  say(
+    'RG92_THE_CONTOUR_MODE_WEIGHTS_EVERY_VERTEX_BY_THE_DECLARED_CAP_AND_FLOOR_FORM',
+    miss92.startsWith('0 of ') && most92 > 4 && echo(got92) === JSON.stringify(decl92) && texts(got92) !== texts(contour()),
+    `contour, no cap and the continuous floor: ${miss92}; the most bones on one vertex ${most92}; row ${echo(got92)}; planted (absent) against it: ${texts(got92) === texts(contour()) ? 'the SAME bytes' : 'different bytes'}`,
+    'a contour mesh that ran at 4 and the cut while its config said otherwise would be the silent default the doctrine forbids; the definition is localInfluences at the declared limits (meshLimits: null is a count no vertex reaches) at each traced vertex (rig = part + 6), rounded by roundShares, since under the continuous floor a share may round to 0',
+  );
+
+  // RG93 — bone heat takes the same cap: with a cap of 1 every vertex is one bone at weight 1, in both modes.
+  const heatL = (influences?: unknown): Built =>
+    buildRig(rigCfg((c) => Object.assign((c.meshes as Record<string, Record<string, unknown>>).cloth, { rule: 'heat', ...(influences === undefined ? {} : { influences }) })), rigParts(), rigImages());
+  const heatC = (influences?: unknown): Built =>
+    buildRig(rigCfg((c) => ((c.meshes as Record<string, unknown>).cloth = { contour: { tolerance: 0, margin: 1, spacing: 4 }, r: 8, segments: ['hem'], rule: 'heat', ...(influences === undefined ? {} : { influences }) })), rigParts(), rigImages());
+  const counts = (b: Built): string => {
+    const ws = cloth(b).weights;
+    return `${ws.filter((v) => v.length === 1 && v[0].weight === 1).length} of ${ws.length} at one bone, weight 1; the most bones ${Math.max(...ws.map((v) => v.length))}`;
+  };
+  const one93 = (b: Built): boolean => cloth(b).weights.every((v) => v.length === 1 && v[0].weight === 1);
+  const runs93 = { 'lattice heat': [heatL({ maxInfluences: 1 }), heatL()], 'contour heat': [heatC({ maxInfluences: 1 }), heatC()], 'contour distance': [contour({ maxInfluences: 1 }), contour()] } as const;
+  say(
+    'RG93_A_CAP_OF_1_LEAVES_EVERY_VERTEX_ONE_BONE_UNDER_BONE_HEAT_AND_THE_CONTOUR_MODE',
+    Object.values(runs93).every(([capped, free]) => one93(capped) && !one93(free)),
+    Object.entries(runs93).map(([k, [capped, free]]) => `${k}: cap 1 -> ${counts(capped)}; planted (absent) -> ${counts(free)}`).join('; '),
+    'by definition: the cap keeps the largest share alone, and one share normalised is 1 — the floor in either form leaves it whole (1 - 0.03 normalised is 1); bone heat ends in the same capAndFloor (src/heat.ts), so a cap the heat rule ignored would show as a vertex holding two bones',
+  );
+
+  // RG94 — a declared cut that keeps no bone is refused by name, in both modes and under both forms. By hand: k bones
+  // on one identical segment, d = 1 from the vertex, give k equal raw weights, so every capped share is 1/k. With no
+  // cap, 34 bones give 1/34 = 0.029412, below 0.03: the cut drops all, and the continuous floor leaves none above 0.
+  // 33 bones give 1/33 = 0.030303: kept under both forms (the positive control), and so are 34 at the default cap
+  // (1/4 each). nothingKeptProblem's comment is the arithmetic: the largest of k shares is at least 1/k.
+  const many = (k: number): Array<[string, [number, number], [number, number]]> => Array.from({ length: k }, (_, i) => [`m${i}`, [15, 14], [16, 14]]);
+  const pile = (k: number, mesh: Record<string, unknown>): Built | PartsError =>
+    ((): Built | PartsError => {
+      try {
+        return buildRig(rigCfg((c) => {
+          c.bones = [...(c.bones as unknown[]), ...many(k).map(([name]) => ({ name, parent: 'body', at: [20, 30] }))];
+          (c.meshes as Record<string, unknown>).cloth = { r: 0, segments: many(k), ...mesh };
+        }), rigParts(), rigImages());
+      } catch (err) {
+        if (err instanceof PartsError) return err;
+        throw err;
+      }
+    })();
+  const GRID8 = { grid: 8 };
+  const CONTOUR = { contour: { tolerance: 0, margin: 1, spacing: 4 } };
+  const shown = (b: Built | PartsError): string => (b instanceof PartsError ? b.problems.map((q) => `${q.code} ${q.object}: ${q.detail}`).join('; ') : `builds, at most ${Math.max(...cloth(b).weights.map((v) => v.length))} bone(s) a vertex`);
+  const refused94 = {
+    'lattice, cut': pile(34, { ...GRID8, influences: { maxInfluences: null } }),
+    'lattice, continuous': pile(34, { ...GRID8, influences: { maxInfluences: null, floor: 'continuous' } }),
+    'contour, cut': pile(34, { ...CONTOUR, influences: { maxInfluences: null } }),
+    'contour, continuous': pile(34, { ...CONTOUR, influences: { maxInfluences: 40, floor: 'continuous' } }),
+  };
+  const kept94 = {
+    'lattice, 33, cut': pile(33, { ...GRID8, influences: { maxInfluences: null } }),
+    'lattice, 33, continuous': pile(33, { ...GRID8, influences: { maxInfluences: null, floor: 'continuous' } }),
+    'contour, 33, cut': pile(33, { ...CONTOUR, influences: { maxInfluences: null } }),
+    'lattice, 34, absent': pile(34, GRID8),
+  };
+  const named94 = (b: Built | PartsError): boolean =>
+    b instanceof PartsError &&
+    b.problems.length === 1 &&
+    b.problems[0].code === 'RIG_INFLUENCES_KEPT' &&
+    b.problems[0].object === 'config.meshes.cloth.influences' &&
+    /^vertex \d+ at rig \([\d.]+, [\d.]+\) and \d+ more keeps no bone: its 34 capped share\(s\) have the largest 0\.029412, and /.test(b.problems[0].detail) &&
+    b.problems[0].detail.includes('a largest share above 0.03 is required');
+  say(
+    'RG94_A_DECLARED_CUT_THAT_KEEPS_NO_BONE_IS_REFUSED_BY_NAME_WITH_THE_VERTEX_AND_ITS_LARGEST_SHARE',
+    Object.values(refused94).every(named94) && Object.values(kept94).every((b) => !(b instanceof PartsError)) && !(kept94['lattice, 34, absent'] instanceof PartsError) && Math.max(...cloth(kept94['lattice, 34, absent'] as Built).weights.map((v) => v.length)) === 4,
+    `planted: ${Object.entries(refused94).map(([k, b]) => `${k}, 34 bones, no cap -> ${shown(b)}`).join(' | ')}; positive: ${Object.entries(kept94).map(([k, b]) => `${k} -> ${shown(b)}`).join(' | ')}`,
+    'by hand: k equal raw weights normalise to 1/k each; 1/34 = 0.029412 is under the floor in both forms, 1/33 = 0.030303 is not, and the default cap keeps 4 at 0.25. A vertex with no bone has no weight to write — the rounding would crash on it — so the rule, the mesh, the first vertex, its largest share and what is required are named instead',
   );
 }
 
@@ -21308,7 +21532,7 @@ function runMeshDraftSuite(): number {
     // MD07 — the figure's rules by hand, and the candidate's fields.
     const rules7 = figureRules(draftParts());
     const small7 = figureRules(rigParts());
-    const lat7: LatticeMeshSpec = { grid: 9, r: 4, segments: ['tail', ['body', [0, 0], [0, 9]]], exponent: 3, rule: 'distance' };
+    const lat7: LatticeMeshSpec = { grid: 9, r: 4, segments: ['tail', ['body', [0, 0], [0, 9]]], exponent: 3, rule: 'distance', influences: { maxInfluences: null, floor: 'continuous' } };
     const cand7 = candidateMesh(lat7, { tolerance: 2, spacing: 30 }, 7);
     say(
       'MD07_THE_FIGURES_RULES_ARE_READ_OFF_THE_BOXES_A_FIGURE_WITH_SPACING_0_IS_REFUSED_AND_THE_CANDIDATE_KEEPS_THE_WEIGHT_FIELDS',
@@ -21319,9 +21543,9 @@ function runMeshDraftSuite(): number {
         'code' in small7 &&
         small7.code === 'MESH_DRAFT_FIGURE' &&
         small7.detail.startsWith('is 18 px tall, so the spacing rule round(H / 37) gives 0') &&
-        JSON.stringify(cand7) === JSON.stringify({ contour: { tolerance: 2, margin: 2, spacing: 30, maxEdge: 30, stray: 7 }, r: 4, segments: ['tail', ['body', [0, 0], [0, 9]]], exponent: 3, rule: 'distance' }),
+        JSON.stringify(cand7) === JSON.stringify({ contour: { tolerance: 2, margin: 2, spacing: 30, maxEdge: 30, stray: 7 }, r: 4, segments: ['tail', ['body', [0, 0], [0, 9]]], exponent: 3, rule: 'distance', influences: { maxInfluences: null, floor: 'continuous' } }),
       `${JSON.stringify(rules7)}; the rig fixture -> ${'code' in small7 ? problemLine(small7) : JSON.stringify(small7)}; candidate ${JSON.stringify(cand7)}`,
-      `by hand (fixtures/meshdraft.ts and fixtures/rig.ts): H 408 gives T max(1, round(408/${TOLERANCE_FIGURE_DIVISOR})) = 1 and S round(408/${FIGURE_GRID_DIVISOR}) = 11; the rig fixture's 18 px gives S 0, which no rule raises`,
+      `by hand (fixtures/meshdraft.ts and fixtures/rig.ts): H 408 gives T max(1, round(408/${TOLERANCE_FIGURE_DIVISOR})) = 1 and S round(408/${FIGURE_GRID_DIVISOR}) = 11; the rig fixture's 18 px gives S 0, which no rule raises; the weight fields — exponent, rule and the declared cut (issue #284) — are the lattice's, or the candidate would be weighted by a rule nobody wrote`,
     );
 
     // MD08 — the written config: the input's own text with the drafted entries spliced in.
