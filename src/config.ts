@@ -278,6 +278,11 @@ export interface LatticeMeshSpec {
   rule?: WeightRule;
   /** The cap and the floor's form (issue #284); absent is 4 and the cut at 0.03, the rule as it always was. */
   influences?: MeshInfluences;
+  /**
+   * The largest island, in art pixels, that may be left out of the lattice (issue #303) — the contour mode's
+   * `contour.stray`, with the same meaning (`latticeStray`, `src/mesh.ts`); absent leaves none out.
+   */
+  stray?: number;
 }
 
 export interface ContourMeshSpec {
@@ -1665,7 +1670,7 @@ function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
     const at = `config.meshes.${part}`;
     // The known keys keep their old order (grid, r, segments) with contour after them, and `r` and `segments` are
     // required in the place and words the object check uses, so a lattice mesh's refusals read as they did.
-    const m = c.object(at, spec, [], ['grid', 'r', 'segments', 'contour', 'auto', 'exponent', 'rule', 'ribs', 'influences']);
+    const m = c.object(at, spec, [], ['grid', 'r', 'segments', 'contour', 'auto', 'exponent', 'rule', 'ribs', 'influences', 'stray']);
     if (m === null) continue;
     for (const key of ['r', 'segments']) if (!(key in m)) c.fail('CONFIG_FIELD_PRESENT', `${at}.${key}`, 'is absent and required');
     const modes = ['grid', 'contour', 'auto'].filter((k) => k in m);
@@ -1707,6 +1712,7 @@ function checkMeshes(c: Check, v: Json, bones: Set<string>, chains: Map<string, 
     }
     if ('ribs' in m) checkRibs(c, `${at}.ribs`, m, chains);
     if ('influences' in m) checkMeshInfluences(c, `${at}.influences`, m);
+    if ('stray' in m) checkLatticeStray(c, `${at}.stray`, m);
     if ('auto' in m && typeof m.auto === 'object' && m.auto !== null && !Array.isArray(m.auto) && 'stimulus' in m.auto) {
       checkStimulus(c, `${at}.auto.stimulus`, (m.auto as Record<string, Json>).stimulus, m, chains);
     }
@@ -1773,6 +1779,21 @@ function checkMeshInfluences(c: Check, at: string, m: Record<string, Json>): voi
   if ('floor' in l && !FLOOR_FORMS.includes(l.floor as FloorForm)) {
     c.fail('CONFIG_FIELD_TYPE', `${at}.floor`, `is ${show(l.floor)}; "cut" (shares under 0.03 dropped, what an absent floor means) or "continuous" (0.03 subtracted from every share, those at or below 0 dropped) is required`);
   }
+}
+
+/**
+ * `meshes.<part>.stray` (issue #303): the lattice's largest island, in art pixels, that may be left out — a whole
+ * number, 0 or more, as the contour mode's `contour.stray` is. The contour and automatic modes already state it in
+ * their own place (`contour.stray`, `auto.source.stray`), so beside either it is refused by name
+ * (`CONFIG_STRAY_MODE`) rather than read by nothing.
+ */
+function checkLatticeStray(c: Check, at: string, m: Record<string, Json>): void {
+  const elsewhere = 'contour' in m ? ['a contour mesh (contour)', 'contour.stray'] : 'auto' in m ? ['an automatic mesh (auto)', 'auto.source.stray'] : null;
+  if (elsewhere !== null && !('grid' in m)) {
+    c.fail('CONFIG_STRAY_MODE', at, `is ${show(m.stray)} on ${elsewhere[0]}; that mode states the largest island it may leave out in ${elsewhere[1]}, which its trace reads — declare it there, or remove stray`);
+    return;
+  }
+  c.int(at, m.stray, 0);
 }
 
 /**

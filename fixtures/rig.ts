@@ -386,6 +386,48 @@ export function heatStripConfig(mesh: Record<string, unknown> = {}): Record<stri
 }
 
 /**
+ * The dust fixture (issue #303): the rig fixture's config on a 72x56 rig, with
+ * `cloth` a 56x40 part at (10, 10) whose columns 0..49 are an opaque 50x40
+ * block — **2000 art px** — and beside it the runs `dustImages` is handed,
+ * each a horizontal run of opaque pixels in columns 51..55 (unpadded), so
+ * each is its own 4-connected island.
+ *
+ * ## Dust, by hand
+ *
+ * Dust is at most 4 px and at most 0.1 % of the part's art (`isDust`,
+ * `src/mesh.ts`). With one run of n px beside the block the art is 2000 + n
+ * px: 1 px (1 <= 2.001) and 2 px (2 <= 2.002) are dust, 3 px is not
+ * (3 > 2.003), by the share alone.
+ *
+ * ## The lattice, by hand (grid 8)
+ *
+ * Padded by 4 the image is 64x48, top-left rig (6, 6); the block covers
+ * padded x 4..53 and y 4..43, so cell columns 0..6 and rows 0..5: 7x6 = 42
+ * cells, 8x7 = **56 vertices**, **84 triangles**. A run at unpadded (53, 20)
+ * sits at padded (57, 24), alone in cell (7, 3), which shares its left edge
+ * with the block's cell (6, 3): one cell more, its two right corners new —
+ * **58 vertices, 86 triangles** — and its corner is rig (6 + 57, 6 + 24) =
+ * **(63, 30)**. The heat segments (`HEAT_STRIP_SEGMENTS`) lie on the block's
+ * columns 0 and 15, so no bone reaches a run.
+ */
+export const DUST_RIG: [number, number] = [72, 56];
+
+export function dustParts(): PartsFile {
+  const p = rigParts();
+  return { ...p, rig_size: [...DUST_RIG], parts: p.parts.map((r) => (r.name === 'cloth' ? { ...r, w: 56, h: 40, opaque_px: 2000 } : r)) };
+}
+
+/** `cloth` as the 50x40 block plus a run of `length` opaque px for each `[x, y, length]` (unpadded part px). */
+export function dustImages(runs: ReadonlyArray<readonly [number, number, number]>): Map<string, Raster> {
+  const r = block(56, 40, [50, 56]);
+  for (const [x, y, n] of runs) for (let i = 0; i < n; i++) r.data.set([200, 120, 80, 255], (y * 56 + x + i) * 4);
+  return new Map([
+    ['cloth', r],
+    ['eye', block(4, 2)],
+  ]);
+}
+
+/**
  * The tilted-face fixture (issue #239): a 64x64 rig whose two eyes sit on a
  * line at a known angle, so the face bones' turn can be read off by hand.
  *

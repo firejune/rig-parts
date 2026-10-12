@@ -68,7 +68,7 @@ import { BARS, type CheckReport, type PackShape, type PageEdges, type RigcRunner
 import { type CharacterConfig, type ContourMeshSpec, type LatticeMeshSpec, loadConfigAndAnimations, type Segment } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
 import { IDLE_FPS } from './motion.ts';
-import { ART_ALPHA } from './mesh.ts';
+import { ART_ALPHA, DUST_MAX_PX, DUST_MAX_SHARE, isDust } from './mesh.ts';
 import { type PartsFile, readParts } from './parts.ts';
 import { alphaAbove, connectedComponents } from './raster/index.ts';
 import { readPng } from './raster/png.ts';
@@ -90,11 +90,11 @@ export const TOLERANCE_FIGURE_DIVISOR = 554;
 /** The heights of the three figures the two divisors were measured on, rig px (demo, the trailer, scarf). */
 export const CALIBRATION_HEIGHTS: readonly number[] = [1106, 1108, 1185];
 
-/** Dust: an extra island of at most this many art px (Stage B: 1–2 px dots were the measured case) … */
-export const DUST_MAX_PX = 4;
-
-/** … and at most this share of the part's art px. */
-export const DUST_MAX_SHARE = 0.001;
+/**
+ * Dust (Stage B: 1–2 px dots were the measured case): `src/mesh.ts` holds the line since issue #303, which the rig
+ * stage's heat refusal reads too; re-exported here, where it was first written.
+ */
+export { DUST_MAX_PX, DUST_MAX_SHARE } from './mesh.ts';
 
 /** The bend set's turn per link, degrees: the fallback Stage C stated, a physics constraint's reach not being derivable from it. */
 export const BEND_DEGREES = 15;
@@ -182,7 +182,7 @@ export function dustOf(image: Raster): DustReading {
   if (islands.length === 0) return { keep: `its image has no pixel with alpha above ${ART_ALPHA}`, islands };
   if (islands.length > 1 && islands[0] === islands[1]) return { keep: `its art is ${islands.length} islands (${islands.join(', ')} px) of which two share the largest count, so no one island is the largest`, islands };
   const extra = islands.slice(1);
-  const pieces = extra.filter((n) => !(n <= DUST_MAX_PX && n <= DUST_MAX_SHARE * art));
+  const pieces = extra.filter((n) => !isDust(n, art));
   if (pieces.length > 0) {
     return {
       keep: `its art is ${islands.length} islands (${islands.join(', ')} px); ${pieces.length} beside the largest ${pieces.length === 1 ? 'is a real piece' : 'are real pieces'}, not dust (at most ${DUST_MAX_PX} px and at most ${pyRound(DUST_MAX_SHARE * 100, 6)} % of the part's ${art} art px), and the contour mode meshes one island`,
