@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.1](https://github.com/rig-c/parts/compare/v1.13.0...v1.13.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **docs:** say which way a rotate key turns a bone — counter-clockwise, y up, as rig-c defines it; translatey raises ([#318](https://github.com/rig-c/parts/issues/318)) ([f2c3786](https://github.com/rig-c/parts/commit/f2c3786270e98d9fefaca302d22c9e7650a50773)), closes [#317](https://github.com/rig-c/parts/issues/317)
+
 ## [1.13.0](https://github.com/rig-c/parts/compare/v1.12.0...v1.13.0) (2026-10-12)
 
 
