@@ -1,5 +1,7 @@
 # Why scarf's topwear and bottomwear fail on every non-lattice arm (issue #265, diagnosis 1)
 
+> Measured on rig-c 2.40.0 (`bun.lock` at the merge of PR #286). rig-c 2.45.2 fixed `rigc render`'s physics clock (core#1380), so figures read through `rigc render` move under it: on demo `tools/tear_survey.ts` reads 2.428 → 2.426 and 1.823 → 1.844 (rig-c 2.40.0 against 2.47.0), a move in the second and third decimal that flips no verdict there; no verdict on this page sits within 0.021 of its line, the larger of the two moves. This page is a record and is not re-run (#311).
+
 ![the three meshes: topwear at the bend set, bottomwear at rest with its outline vertices coloured by hip weight](density-scarf-cause.png)
 
 **The cause is one, it is the outline, and it is not scarf's own.** The traced outline is simplified by geometry alone (Douglas–Peucker at T). Where the art's edge is straight it keeps one long edge, and on scarf those straight edges run across places where the weight field changes along the boundary:

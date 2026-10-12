@@ -257,6 +257,7 @@ import { type VetoTally, vetoTally } from './tools/veto_tally.ts';
 import { commonSurvivors, densitySquare, pruneShares, weightDiff } from './tools/auto_density_survey.ts';
 import { comparisonInputRefusal, digestDifferences, inputDigest, inputDigestDeep, jsonDifferences, type LadderRow, ladderInputMoved, ladderPlan, ladderPolicy, ladderSpecDifferences, overdraw, widenedPlan, overdrawText, parseArgs as parseSpacingArgs, pendingLadderRow, renderLadder, pendingRow as spacingPending, reproductionText, render as renderSpacing, spacingPolicy, spacingsFor, type SpacingRow, specDifferences, staticRefusal, summarise as spacingSummary } from './tools/auto_spacing_survey.ts';
 import { caption as envelopeCaption, lcaEnvelope, lowestCommonAncestor, recorder, reproduces, sameBound, slotBoneOf } from './tools/auto_envelope_survey.ts';
+import { writeSwitchedConfig } from './tools/auto_motion_survey.ts';
 import {
   BLINK as BLINK_FIXTURE,
   blinkFixture,
@@ -27147,6 +27148,47 @@ function runAutoResidualCases(say: (name: string, ok: boolean, detail: string, w
       residualClause(stopRow) === '; residual not measurable: a X, b Y (veto not applied; the motion comparison decides)',
     [undefined, passRow, failRow, stopRow].map((r) => JSON.stringify(residualClause(r))).join(' | '),
     'the line is the UI: an agent reading it learns the reading, its bound, and that it is not the motion verdict, or which bone left it unmeasured',
+  );
+
+  // MO77 (issue #311) — the motion survey's switched config (tools/auto_motion_survey.ts writeSwitchedConfig, which
+  // tools/auto_boundary_survey.ts writes through too) loads beside the file its motion.animations_from names, on every
+  // tracked example whose config names one; the planted config written alone, as the survey wrote it before, is refused
+  // by the loader with CONFIG_FILE_PRESENT on that field. Read off the tracked configs, so no fetched input is needed.
+  const keys77 = readdirSync(join(ROOT, 'examples')).filter((k) => existsSync(join(ROOT, 'examples', k, 'config.json'))).sort();
+  const named77 = keys77.filter((k) => {
+    const m = (JSON.parse(readFileSync(join(ROOT, 'examples', k, 'config.json'), 'utf8')) as { motion?: { animations_from?: unknown } }).motion;
+    return typeof m?.animations_from === 'string';
+  });
+  const runs77 = named77.map((k) => {
+    const raw = JSON.parse(readFileSync(join(ROOT, 'examples', k, 'config.json'), 'utf8')) as { motion: { animations_from: string } };
+    const from = raw.motion.animations_from;
+    const at = writeSwitchedConfig(k, raw, join(root, 'mo77', k, 'carried'));
+    let carried: string;
+    try {
+      loadConfig(at);
+      carried = readFileSync(join(dirname(at), from), 'utf8') === readFileSync(join(ROOT, 'examples', k, from), 'utf8') && readFileSync(at, 'utf8') === JSON.stringify(raw, null, 1) ? 'loads' : 'loads, but a carried byte differs';
+    } catch (err) {
+      if (!(err instanceof PartsError)) throw err;
+      carried = lines(err);
+    }
+    const alone = join(root, 'mo77', k, 'alone');
+    mkdirSync(alone, { recursive: true });
+    writeFileSync(join(alone, 'config.json'), JSON.stringify(raw, null, 1));
+    let planted: PartsError | null = null;
+    try {
+      loadConfig(join(alone, 'config.json'));
+    } catch (err) {
+      if (!(err instanceof PartsError)) throw err;
+      planted = err;
+    }
+    return { k, from, carried, planted };
+  });
+  say(
+    'MO77_THE_SURVEYS_SWITCHED_CONFIG_CARRIES_THE_FILE_ITS_ANIMATIONS_FROM_NAMES_AND_ONE_WRITTEN_ALONE_IS_REFUSED',
+    named77.includes('reference-sample') &&
+      runs77.every((r) => r.carried === 'loads' && r.planted !== null && r.planted.problems.some((p) => p.code === 'CONFIG_FILE_PRESENT' && p.object === 'config.motion.animations_from')),
+    runs77.map((r) => `${r.k} (${r.from}): carried ${r.carried}; alone ${r.planted === null ? 'NOT refused' : r.planted.problems.map((p) => `${p.code} ${p.object}`).join(', ')}`).join(' | ') || `no tracked example names motion.animations_from (examples: ${keys77.join(', ')})`,
+    'issue #311: motion.animations_from resolves against the config\'s own directory (issue #183), so a survey that writes a switched config into a temporary directory carries the file beside it; written alone it refused reference-sample, and a broken instrument is found on the day it is needed',
   );
 
   // EB05 (issue #165 Stage B item 2, at the rig stage) — the slot's bone the weights do not bind, its bound bones in a

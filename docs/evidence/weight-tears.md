@@ -1,5 +1,7 @@
 # The weight rule's two cuts, measured (issue #284, Stage A)
 
+> Measured on rig-c 2.40.0 (`bun.lock` at the merge of PR #287). rig-c 2.45.2 fixed `rigc render`'s physics clock (core#1380), so figures read through `rigc render` move under it: on demo `tools/tear_survey.ts` reads 2.428 → 2.426 and 1.823 → 1.844 (rig-c 2.40.0 against 2.47.0), a move in the second and third decimal that flips no verdict there; no verdict on this page sits within 0.021 of its line, the larger of the two moves. This page is a record and is not re-run (#311).
+
 The rule keeps a vertex's four largest influences and drops any under 0.03. This page measures the shipped lattice
 meshes of `demo`, `scarf` and the trailer under that rule as built and under three candidates that keep the influence
 count at four and make a cut continuous, with the cap and floor lifted as a reference. Every figure is

@@ -104,6 +104,7 @@ import {
   TWO_PIECES_MASK,
 } from '../fixtures/automesh.ts';
 import { policyMotion, withPolicyMotion } from '../fixtures/automotion.ts';
+import { writeSwitchedConfig } from './auto_motion_survey.ts';
 import { placedMask, resolveSegments, testRegion } from './real_compare.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
@@ -762,9 +763,7 @@ function refusalLines(err: unknown): string[] {
  * `rig.log` and `check.log` hold the lines the commands print.
  */
 function rigAndCheck(ex: Example, raw: { [k: string]: Json }, dir: string, slot: string): Built {
-  mkdirSync(dir, { recursive: true });
-  const config = join(dir, 'config.json');
-  writeFileSync(config, `${JSON.stringify(raw, null, 2)}\n`);
+  const config = writeSwitchedConfig(ex.key, raw, dir, `${JSON.stringify(raw, null, 2)}\n`);
   const rig = join(dir, 'rig');
   const bin = findRigc(ROOT, process.env.PATH ?? '');
   const capped = CELL_CAP === null ? null : deadlineRunner(bin, CELL_CAP);

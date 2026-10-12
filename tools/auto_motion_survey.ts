@@ -66,7 +66,7 @@
  * included — a refusal is a result.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { MeasureRow, MeshQualityReport, MeshReductionInput } from 'rig-c/mesh';
@@ -190,6 +190,26 @@ export function trackedSpacing(key: string, part: string): number {
 }
 
 /**
+ * The switched config of example `key` written as `<dir>/config.json`, with the files the config names beside it carried
+ * into `dir`: `motion.animations_from` (issue #183) resolves against the config's own directory, so a config copied alone
+ * refuses with `CONFIG_FILE_PRESENT` (issue #311). Every JSON file of `examples/<key>/` but the config is copied, as
+ * `tools/density_survey.ts`, `tools/tear_survey.ts`, `tools/edge_survey.ts` and `tools/auto_policy_survey.ts` do; the
+ * config keeps the relative name it tracks, so no machine's path enters what the config reads or what a refusal prints.
+ * `text` is the config's bytes when a caller writes them its own way (`tools/auto_matrix.ts` writes two-space JSON).
+ */
+export function writeSwitchedConfig(key: string, raw: unknown, dir: string, text: string = JSON.stringify(raw, null, 1)): string {
+  mkdirSync(dir, { recursive: true });
+  const from = join(ROOT, 'examples', key);
+  for (const f of readdirSync(from)) {
+    const p = join(from, f);
+    if (f.endsWith('.json') && f !== 'config.json' && statSync(p).isFile()) copyFileSync(p, join(dir, f));
+  }
+  const at = join(dir, 'config.json');
+  writeFileSync(at, text);
+  return at;
+}
+
+/**
  * One part of one example switched alone to `auto` — `auto` is the block written into the example's own config — and run
  * through the real rig stage in `dir`, `asm` holding the example's assembled parts. Returns the stage's verdict, the
  * comparison's rows (re-run on the two model documents the stage's builds wrote, with the stage's own function), the
@@ -202,8 +222,7 @@ export function motionCell(key: string, part: string, auto: unknown, asm: string
   const raw = JSON.parse(readFileSync(join(ROOT, 'examples', key, 'config.json'), 'utf8')) as { meshes: Record<string, { r: number; segments: unknown }> };
   const m = raw.meshes[part];
   (raw.meshes as Record<string, unknown>)[part] = { auto, r: m.r, segments: m.segments };
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'config.json'), JSON.stringify(raw, null, 1));
+  writeSwitchedConfig(key, raw, dir);
   // The documents the stage's builds wrote: 0 is the gate build (the candidate), 1 the reference.
   const models: Array<string | null> = [];
   const runner: RigcRunner = (args) => {

@@ -1,5 +1,7 @@
 # Bone heat, as it ships (issue #284, Stage C)
 
+> Measured on rig-c 2.40.0 (`bun.lock` at the merge of PR #290). rig-c 2.45.2 fixed `rigc render`'s physics clock (core#1380), so figures read through `rigc render` move under it: on demo `tools/tear_survey.ts` reads 2.428 → 2.426 and 1.823 → 1.844 (rig-c 2.40.0 against 2.47.0), a move in the second and third decimal that flips no verdict there; no verdict on this page sits within 0.021 of its line, the larger of the two moves. This page is a record and is not re-run (#311).
+
 Stage B found that only the art separates two strands from two panels of one cloth. The package already has a weight
 rule that measures distance through the art: `rule: "heat"` (#161, `src/heat.ts`). This stage runs it unchanged on
 every lattice mesh of `demo`, `scarf` and the trailer, with today's cut and with the continuous floor, in Stage A's

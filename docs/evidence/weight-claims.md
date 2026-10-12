@@ -1,5 +1,7 @@
 # Who claims a point (issue #284, Stage B)
 
+> Measured on rig-c 2.40.0 (`bun.lock` at the merge of PR #288). rig-c 2.45.2 fixed `rigc render`'s physics clock (core#1380), which moved render-read figures by up to 0.021 (`tools/tear_survey.ts` on demo: 2.428 → 2.426 and 1.823 → 1.844, rig-c 2.40.0 against 2.47.0); on this page "family + continuous floor"'s miss of the idle line on demo `bottomwear` is 1.006 vs 1.0 = 0.006, under that 0.021, so its verdict is the verdict of that date only. The decision it fed, today's cut (4 influences, the 0.03 floor) as the default, is held live by `RG91` (declaring that cut writes the weights and files of no declaration, byte for byte, but for the echo) and by Stage E's page, `weight-cap.md`. This page is a record and is not re-run (#311).
+
 Stage A found the rule's remaining trouble where five or more bones hold nearly the same weight. This stage asks which
 bones those are, proposes an exclusion from the config's own terms, and measures it beside today's cut and the
 continuous floor, in Stage A's columns. Every figure is `tools/tear_survey.ts`'s. Nothing under `src/` changes.

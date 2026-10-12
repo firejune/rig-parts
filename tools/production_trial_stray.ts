@@ -27,7 +27,7 @@
  * The policy is the trial's (`trialPolicy`), unchanged; the one manual setting per row is the trial's `--set`.
  */
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Plate, type RGBA } from 'rig-c/tools/plate.ts';
@@ -41,7 +41,7 @@ import { strayIslands } from '../src/contour.ts';
 import { PartsError, problemLine } from '../src/errors.ts';
 import { connectedComponents, fillHoles, readPng, type Raster, writePng } from '../src/raster/index.ts';
 import { DEFAULT_IDLE_KEYS } from '../src/rig.ts';
-import { installedRigc, pinnedInputs } from './auto_motion_survey.ts';
+import { installedRigc, pinnedInputs, writeSwitchedConfig } from './auto_motion_survey.ts';
 import { type Built, type CellRow, rigcRunner, runCell, specFor, switchedConfig } from './production_trial.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
@@ -248,8 +248,7 @@ export function maskOnly(key: string, part: string, manual: { path: string; valu
   const work = mkdtempSync(join(tmpdir(), 'rig-parts-stray-'));
   try {
     const ex = join(ROOT, 'examples', key, 'inputs');
-    const config = join(work, 'config.json');
-    writeFileSync(config, JSON.stringify(switchedConfig(key, new Map([[part, spec]])), null, 1));
+    const config = writeSwitchedConfig(key, switchedConfig(key, new Map([[part, spec]])), work);
     const out = join(work, 'out');
     loadConfig(config);
     assembleStage(
