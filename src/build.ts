@@ -227,7 +227,7 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
     log(
       `  ${p.name.padEnd(11)} ${p.from.padEnd(16)} ${`${p.w}x${p.h}`.padEnd(9)} @${String(p.x).padStart(4)},${String(p.y).padStart(4)} ` +
         `op=${String(p.opaque_px).padStart(6)} vis=${String(p.visible_px).padStart(6)} src=${String(p.source_px_taken).padStart(6)}/${String(p.projected_core_px).padStart(6)} ` +
-        `unproj=${String(p.visible_not_projected_px).padStart(5)} drift=${String(p.refused_drift_px).padStart(5)} merged=${p.merged_px} seam=${p.seam_override_px}`,
+        `unproj=${String(p.visible_not_projected_px).padStart(5)} drift=${String(p.refused_drift_px).padStart(5)} ${driftShare(p.refused_drift_px, p.projected_core_px)} merged=${p.merged_px} seam=${p.seam_override_px}`,
     );
   }
   // Issue #256: one line per part from an author-made layer, so it never reads as See-through's. None without one.
@@ -251,6 +251,16 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   for (const d of result.drift) log(driftLine(d));
   log(`wrote ${outs.partsJson}, ${result.images.length} PNG(s) in ${outs.partsDir}, ${outs.recomposite}, ${outs.errorMap} (uncovered error px red, covered error px blue, the painting grey)${figurePath === null ? '' : `, ${figurePath} (the figure, white, the recomposite was read inside)`}`);
   return result;
+}
+
+/**
+ * The scale the per-part line prints `drift=` with (issue #314): `refused_drift_px` counts the part's projection
+ * candidates (`projected_core_px`, the `src=` column's second figure) refused because See-through's colour sits more
+ * than the drift limit off the painting's, so it is read against them — `(<p>% of core)`, one decimal; a part with no
+ * candidate has nothing to refuse and says so. No bar reads either figure (AUTHORING §5, `assemble`).
+ */
+export function driftShare(refused: number, core: number): string {
+  return core === 0 ? '(no core)' : `(${((100 * refused) / core).toFixed(1)}% of core)`;
 }
 
 // ---------------------------------------------------------------------------

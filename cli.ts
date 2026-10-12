@@ -96,8 +96,13 @@ usage:
       link of a fringe chain (hung from head on a head-run front hair mesh, its tip
       no lower than the chin) that drifts more than ${FRINGE_STEP_PX} px plus a pixel's
       rounding across the head's down axis (the eye line's perpendicular), for a
-      hip that is not below the chest, and for a hip above ${HIP_MIN_FRACTION} of the figure's
-      height (the shoulders); the fringe's three chains stand in the head's frame,
+      hip that is not below the chest, for a hip above ${HIP_MIN_FRACTION} of the figure's
+      height (the shoulders), and for two keyed chains on one lattice mesh whose
+      own swing, every other bone held, takes an edge of the rig stage's lattice
+      past check's TEXTURE_STRETCH bar (with each chain alone, the tips'
+      distance, and each remedy's own figure: one sign for opposed amplitudes,
+      dropping a chain; a contour or automatic mesh, or rule "heat", is said in
+      a "squeeze not read" note); the fringe's three chains stand in the head's frame,
       rooted on the part's art, and a note says they are a template, not its
       locks; a headwear/earwear layer with hanging strands
       gets one pendulum chain per strand and a note with each strand's x, rows
@@ -883,6 +888,7 @@ function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: 
   for (const f of res.findings) console.log(lintLine(f));
   for (const m of res.unknownMeshes) console.log(`note: mesh ${JSON.stringify(m)} names no part in parts.json, so it was not linted`);
   for (const w of res.lockUnread) console.log(`note: off-lock not read: ${w}`);
+  for (const w of res.squeezeUnread) console.log(`note: squeeze not read: ${w}`);
   for (const b of res.missingTorsoBones) {
     console.log(
       res.basis?.torso.read === true
