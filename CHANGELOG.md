@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.12.0](https://github.com/rig-c/parts/compare/v1.11.0...v1.12.0) (2026-10-12)
+
+
+### Features
+
+* **rig:** a lattice declares `stray`, and heat's two refusals name a remedy the author can take ([#304](https://github.com/rig-c/parts/issues/304)) ([6080178](https://github.com/rig-c/parts/commit/6080178d86e09d8fa418ca656d0f1c2080536a9b))
+
+
+### Bug Fixes
+
+* **assemble:** --propose-plan names every layer no row takes, with why; nose says what a nose part buys ([#309](https://github.com/rig-c/parts/issues/309)) ([0e13e71](https://github.com/rig-c/parts/commit/0e13e71b70cacec1cf143c8ba936f98741473c03)), closes [#308](https://github.com/rig-c/parts/issues/308)
+* **deps:** rig-c ^2.47.1 — build bytes unchanged; the render's physics clock (2.45.2) moves check's idle readings, the lead-in loop and the clip figures, re-measured ([#310](https://github.com/rig-c/parts/issues/310)) ([2be19d1](https://github.com/rig-c/parts/commit/2be19d159da0dd7b0307d3e5c3169e5ac9e05685)), closes [#305](https://github.com/rig-c/parts/issues/305)
+
 ## [1.11.0](https://github.com/rig-c/parts/compare/v1.10.0...v1.11.0) (2026-10-12)
 
 
