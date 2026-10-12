@@ -95,7 +95,7 @@ import type { CharacterConfig, Cut, EarlyConfig, Extend, Patch, PlanEntry, Run, 
 import { type Problem, refuseIfAny } from './errors.ts';
 import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
 import { squarePad } from './inputs.ts';
-import { PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord } from './parts.ts';
+import { PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, type SceneRecord } from './parts.ts';
 import {
   alphaComposite,
   connectedComponents,
@@ -237,6 +237,8 @@ export interface AssembleInput {
   under?: ReadonlyArray<Raster | null>;
   seamRule: SeamRule;
   projectRule: ProjectRule;
+  /** `config.scene` (issue #242): the painting is a scene, so the recomposite is read inside the figure ({@link sceneFigure}). Absent or false: nothing changes. */
+  scene?: boolean;
 }
 
 /** The derived numbers of the two runs' geometry. */
@@ -1239,11 +1241,12 @@ function coveredMask(parts: PlacedPart[], W: number, H: number): Uint8Array {
   return covered;
 }
 
-/** Per rig pixel: 1 where the recomposite's max-channel difference from the painting is above `ERROR_LIMIT`. */
-function errorMask(can: Raster, srcr: Raster): Uint8Array {
+/** Per rig pixel: 1 where the recomposite's max-channel difference from the painting is above `ERROR_LIMIT` — and, with `inside` (a scene, issue #242), the pixel is the figure's. */
+function errorMask(can: Raster, srcr: Raster, inside: Uint8Array | null = null): Uint8Array {
   const n = srcr.width * srcr.height;
   const err = new Uint8Array(n);
   for (let p = 0; p < n; p++) {
+    if (inside !== null && inside[p] === 0) continue;
     let m = 0;
     for (let c = 0; c < 3; c++) m = Math.max(m, Math.abs(can.data[p * 4 + c] - srcr.data[p * 4 + c]));
     if (m > ERROR_LIMIT) err[p] = 1;
@@ -1270,10 +1273,10 @@ function errorMask(can: Raster, srcr: Raster): Uint8Array {
  * This is not in the reference, whose report stopped at the count. The count
  * cannot say where to look; a box and the parts round it can.
  */
-export function uncoveredHoles(can: Raster, srcr: Raster, parts: PlacedPart[]): { count: number; holes: RecompositeHole[] } {
+export function uncoveredHoles(can: Raster, srcr: Raster, parts: PlacedPart[], inside: Uint8Array | null = null): { count: number; holes: RecompositeHole[] } {
   const { width: W, height: H } = srcr;
   const covered = coveredMask(parts, W, H);
-  const err = errorMask(can, srcr);
+  const err = errorMask(can, srcr, inside);
   const mask = newMask(W, H);
   for (let p = 0; p < W * H; p++) if (err[p] === 1 && covered[p] === 0) mask.data[p] = 1;
   const cc = connectedComponents(mask, 8);
@@ -1312,14 +1315,23 @@ export function uncoveredHoles(can: Raster, srcr: Raster, parts: PlacedPart[]): 
   return { count: all.length, holes };
 }
 
-export function measureRecomposite(can: Raster, srcr: Raster, parts: PlacedPart[]): RecompositeFigures {
+/**
+ * The recomposite's four figures and its holes. With `inside` (a scene, issue
+ * #242; {@link sceneFigure}) every one is read over the figure's pixels alone:
+ * the mean and the within share are over them, and a pixel outside is neither an
+ * error pixel nor a hole's. Without it, over the whole rig, as always.
+ */
+export function measureRecomposite(can: Raster, srcr: Raster, parts: PlacedPart[], inside: Uint8Array | null = null): RecompositeFigures {
   const { width: W, height: H } = srcr;
   const covered = coveredMask(parts, W, H);
   let sum = 0;
   let within = 0;
   let errorPx = 0;
   let uncoveredErrorPx = 0;
+  let read = 0;
   for (let p = 0; p < W * H; p++) {
+    if (inside !== null && inside[p] === 0) continue;
+    read++;
     let s = 0;
     let m = 0;
     for (let c = 0; c < 3; c++) {
@@ -1335,8 +1347,44 @@ export function measureRecomposite(can: Raster, srcr: Raster, parts: PlacedPart[
       if (covered[p] === 0) uncoveredErrorPx++;
     }
   }
-  const { count, holes } = uncoveredHoles(can, srcr, parts);
-  return { meanAbs: sum / (W * H), within: within / (W * H), errorPx, uncoveredErrorPx, holeCount: count, holes };
+  const { count, holes } = uncoveredHoles(can, srcr, parts, inside);
+  // Over the whole rig `read` is W * H, and the two quotients are the ones they always were.
+  return { meanAbs: inside === null ? sum / (W * H) : read === 0 ? 0 : sum / read, within: inside === null ? within / (W * H) : read === 0 ? 0 : within / read, errorPx, uncoveredErrorPx, holeCount: count, holes };
+}
+
+/** The figure mask's file name, beside the recomposite (issue #242): `recomposite_rig.png` -> `figure_rig.png`. */
+export const FIGURE_MASK_FILE = 'figure_rig.png';
+
+/**
+ * The figure of a scene painting (issue #242): per rig pixel, 1 where any
+ * full-run layer — See-through's decomposition of the whole figure, each layer
+ * placed on the rig as the stage places it — has alpha above
+ * `OPAQUE_ALPHA_ABOVE` (8), the cut this package already reads a layer's
+ * painted pixels by (ghost clean-up, the sheets, every part's opaque count).
+ * The threshold is that one, not a new one: a pixel no layer paints is the
+ * scene's, and a pixel any layer paints is the figure's, by the same rule that
+ * says what a layer holds. The head run is not read: it is a crop of the same
+ * figure, inside the full run's.
+ */
+export function sceneFigure(fullRig: readonly Raster[], W: number, H: number): Uint8Array {
+  const inside = new Uint8Array(W * H);
+  for (const r of fullRig) for (let p = 0; p < W * H; p++) if (r.data[p * 4 + 3] > OPAQUE_ALPHA_ABOVE) inside[p] = 1;
+  return inside;
+}
+
+/** The figure as an image, the mask `assemble` writes beside the recomposite: opaque white where the figure is, opaque black elsewhere. */
+export function figureImage(inside: Uint8Array, W: number, H: number): Raster {
+  const r = newRaster(W, H);
+  for (let p = 0; p < W * H; p++) {
+    const v = inside[p] === 1 ? 255 : 0;
+    r.data.set([v, v, v, 255], p * 4);
+  }
+  return r;
+}
+
+/** What a scene declaration says first on each recomposite line (issue #242): where it was read, and the figure's size against the rig's. */
+export function scenePhrase(s: SceneRecord, rigPx: number): string {
+  return `inside the figure (config.scene: the union of the full run's layers at alpha above ${s.figure_alpha_above}, ${s.figure_px} of ${rigPx} rig px)`;
 }
 
 /** The error map's colour for an uncovered error pixel: no part is there, so the page shows through. */
@@ -1359,10 +1407,10 @@ export const MAP_MISMATCHED: readonly [number, number, number] = [0, 0, 255];
  * both), so the two colours mean exactly the two masks. Integer arithmetic
  * only, so the bytes are deterministic.
  */
-export function recompositeErrorMap(can: Raster, srcr: Raster, parts: PlacedPart[]): Raster {
+export function recompositeErrorMap(can: Raster, srcr: Raster, parts: PlacedPart[], inside: Uint8Array | null = null): Raster {
   const { width: W, height: H } = srcr;
   const covered = coveredMask(parts, W, H);
-  const err = errorMask(can, srcr);
+  const err = errorMask(can, srcr, inside);
   const map = newRaster(W, H);
   for (let p = 0; p < W * H; p++) {
     const s = p * 4;
@@ -1381,9 +1429,9 @@ export function recompositeErrorMap(can: Raster, srcr: Raster, parts: PlacedPart
   return map;
 }
 
-export function figuresLine(f: RecompositeFigures): string {
+export function figuresLine(f: RecompositeFigures, scene: string | null = null): string {
   return (
-    `recomposite vs source: mean |d|=${f.meanAbs.toFixed(2)}, within ${WITHIN_LIMIT}: ${(100 * f.within).toFixed(1)}%, ` +
+    `${scene === null ? '' : `${scene}: `}recomposite vs source: mean |d|=${f.meanAbs.toFixed(2)}, within ${WITHIN_LIMIT}: ${(100 * f.within).toFixed(1)}%, ` +
     `error px > ${ERROR_LIMIT}: ${f.errorPx}, uncovered error px: ${f.uncoveredErrorPx}`
   );
 }
@@ -1398,8 +1446,8 @@ export function holeBox(h: RecompositeHole): string {
  * hole — `uncovered hole 1: 2340 px at 412,1088 30x78 (between "legwear_r"
  * 120 px, "legwear_l" 96 px)`, or `(borders no part)`.
  */
-export function holeLines(f: RecompositeFigures): string[] {
-  const head = `uncovered holes (8-connected): ${f.holeCount}${f.holeCount > f.holes.length ? `, the largest ${f.holes.length} listed` : ''}`;
+export function holeLines(f: RecompositeFigures, scene: string | null = null): string[] {
+  const head = `${scene === null ? '' : `${scene}: `}uncovered holes (8-connected): ${f.holeCount}${f.holeCount > f.holes.length ? `, the largest ${f.holes.length} listed` : ''}`;
   return [
     head,
     ...f.holes.map(
@@ -1665,6 +1713,8 @@ export interface AssembleResult {
   recomposite: Raster;
   /** `recompositeErrorMap`: uncovered error pixels red, covered ones blue, the painting dimmed grey. */
   errorMap: Raster;
+  /** Under `config.scene` (issue #242), the figure the recomposite was read inside ({@link figureImage}); null otherwise. */
+  figure: Raster | null;
   figures: RecompositeFigures;
   /** What each `assemble.cuts` entry took, counted when it was made (`cutLines`); empty without cuts. */
   cuts: CutCount[];
@@ -2113,12 +2163,15 @@ export function assemble(input: AssembleInput): AssembleResult {
 
   seamOverride(placed, srcr, seamRule, seamRule === 'silhouette' ? silhouette : null);
   const can = recomposite(placed, W, H);
-  const figures = measureRecomposite(can, srcr, placed);
+  // Issue #242: on a scene painting the figure is read off the full run, and every recomposite figure inside it.
+  const inside = input.scene === true ? sceneFigure([...rig.entries()].filter(([k]) => k.startsWith('full:')).map(([, r]) => r), W, H) : null;
+  const sceneRecord: SceneRecord | null = inside === null ? null : { figure_alpha_above: OPAQUE_ALPHA_ABOVE, figure_px: inside.reduce((a, b) => a + b, 0), figure_mask: FIGURE_MASK_FILE };
+  const figures = measureRecomposite(can, srcr, placed, inside);
   const fullRig = fullTags.map((tag) => ({ tag, rig: rig.get(`full:${tag}`) as Raster }));
   const uncovered = uncoveredErrorLayers(
     fullRig,
     coveredMask(placed, W, H),
-    errorMask(can, srcr),
+    errorMask(can, srcr, inside),
     figures.uncoveredErrorPx,
     plan,
     extend,
@@ -2128,10 +2181,11 @@ export function assemble(input: AssembleInput): AssembleResult {
     bodyMinPx(frame),
   );
   return {
-    parts: { rig_size: [W, H], scale_rig_per_source: frame.S, parts: placed.map((p) => p.record), ghost_px: ghost, recomposite: recompositeRecord(figures) },
+    parts: { rig_size: [W, H], scale_rig_per_source: frame.S, parts: placed.map((p) => p.record), ghost_px: ghost, recomposite: recompositeRecord(figures), ...(sceneRecord === null ? {} : { scene: sceneRecord }) },
     images: placed,
     recomposite: can,
-    errorMap: recompositeErrorMap(can, srcr, placed),
+    errorMap: recompositeErrorMap(can, srcr, placed, inside),
+    figure: inside === null ? null : figureImage(inside, W, H),
     figures,
     cuts: cutCounts,
     uncovered,
@@ -2459,12 +2513,12 @@ export function uncoveredErrorLayers(
  * of the 240 uncovered error px lie on the full run's "back hair", in a body
  * of 240 px at 36,22 8x30; hair_back takes the head run's "back hair"; …`.
  */
-export function uncoveredLine(d: UncoveredErrorLayer): string {
+export function uncoveredLine(d: UncoveredErrorLayer, scene: string | null = null): string {
   const u = d.layer;
   const total = u.bodies.reduce((a, b) => a + b.px, 0);
   const big = u.bodies[0];
   const held = u.bodies.length > 1 ? `${u.bodies.length} bodies of ${total} px, the largest ${big.px} px at ${bodyBox(big)}` : `a body of ${big.px} px at ${bodyBox(big)}`;
-  return `uncovered: ${d.errorPx} of the ${d.of} uncovered error px lie on the full run's "${u.tag}", in ${held}; ${u.rule}`;
+  return `${scene === null ? '' : `${scene}: `}uncovered: ${d.errorPx} of the ${d.of} uncovered error px lie on the full run's "${u.tag}", in ${held}; ${u.rule}`;
 }
 
 /**
@@ -2719,7 +2773,7 @@ export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx =
  * the loader, because `inputs` runs before it exists; `seethrough` too, for a
  * full-loader config, where it is optional.
  */
-export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble'>): {
+export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble' | 'scene'>): {
   resolution: number;
   headBox: [number, number, number, number];
   rigScale: number;
@@ -2727,6 +2781,7 @@ export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble'
   extend: Extend[];
   patches: Patch[];
   cuts: Cut[];
+  scene?: boolean;
 } {
   const problems: Problem[] = [];
   if (cfg.seethrough === undefined) {
@@ -2744,6 +2799,7 @@ export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble'
     extend: cfg.assemble.extend_below_crop ?? [],
     patches: cfg.assemble.patches ?? [],
     cuts: cfg.assemble.cuts ?? [],
+    ...(cfg.scene === undefined ? {} : { scene: true }),
   };
 }
 

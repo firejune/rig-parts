@@ -134,10 +134,26 @@ export interface PartsFile {
   ghost_px: Record<string, number>;
   /** Absent in a `parts.json` the reference wrote; `assemble` always writes it. */
   recomposite?: RecompositeRecord;
+  /** Written only under `config.scene` (issue #242): the recomposite was read inside this figure; absent otherwise. */
+  scene?: SceneRecord;
 }
 
-const TOP_KEYS = ['rig_size', 'scale_rig_per_source', 'parts', 'ghost_px', 'recomposite'] as const;
-const REQUIRED_TOP_KEYS = TOP_KEYS.filter((k) => k !== 'recomposite');
+/**
+ * `parts.json`'s `scene` block (issue #242): the painting is a scene, so the
+ * `recomposite` block beside it was measured inside the figure — the rig pixels
+ * where a full-run layer's alpha is above `figure_alpha_above` — and `check`
+ * reads `RECOMPOSITE_HOLES` and the seam that way. `figure_px` is the figure's
+ * size; `figure_mask` the image `assemble` wrote of it, beside the recomposite.
+ */
+export interface SceneRecord {
+  figure_alpha_above: number;
+  figure_px: number;
+  figure_mask: string;
+}
+
+const TOP_KEYS = ['rig_size', 'scale_rig_per_source', 'parts', 'ghost_px', 'recomposite', 'scene'] as const;
+const REQUIRED_TOP_KEYS = TOP_KEYS.filter((k) => k !== 'recomposite' && k !== 'scene');
+export const SCENE_KEYS = ['figure_alpha_above', 'figure_px', 'figure_mask'] as const;
 export const RECOMPOSITE_KEYS = ['mean_abs', 'within_limit', 'within_share', 'error_limit', 'error_px', 'covered_alpha', 'uncovered_error_px', 'hole_count', 'holes_listed', 'holes'] as const;
 const RECOMPOSITE_COUNTS = ['within_limit', 'error_limit', 'error_px', 'covered_alpha', 'uncovered_error_px', 'hole_count', 'holes_listed'] as const;
 export const HOLE_KEYS = ['px', 'x', 'y', 'w', 'h', 'borders'] as const;
@@ -207,6 +223,7 @@ export function serializeParts(file: PartsFile): string {
             holes: file.recomposite.holes.map((h) => ({ ...Object.fromEntries(HOLE_KEYS.filter((k) => k !== 'borders').map((k) => [k, h[k]])), borders: h.borders.map((b) => ({ part: b.part, px: b.px })) })),
           },
         }),
+    ...(file.scene === undefined ? {} : { scene: Object.fromEntries(SCENE_KEYS.map((k) => [k, (file.scene as SceneRecord)[k]])) }),
   };
   return `${JSON.stringify(ordered, null, 2)}\n`;
 }
@@ -353,6 +370,18 @@ function checkParts(raw: unknown, path: string): PartsFile {
       else if (base === r.name) fail('PARTS_CUT_FROM_KNOWN', object, `names the piece itself; the plan part the cut took it from is required`);
       else if (CUT_FROM_KEY in b) fail('PARTS_CUT_FROM_KNOWN', object, `names "${base}", which is itself a piece (cut from ${show(b[CUT_FROM_KEY])}); a plan part is required, as a cut of a cut has no single layer behind it`);
       else if (b.from !== r.from) fail('PARTS_CUT_FROM_KNOWN', object, `names "${base}", whose from is ${show(b.from)}; this piece's is ${show(r.from)}, and a piece shares its base's layer`);
+    }
+  }
+  if ('scene' in o) {
+    const sc = o.scene;
+    if (typeof sc !== 'object' || sc === null || Array.isArray(sc)) fail('PARTS_FIELD_TYPE', `${path} field "scene"`, `is ${show(sc)}; an object is required`);
+    else {
+      const r = sc as Record<string, unknown>;
+      for (const k of Object.keys(r)) if (!(SCENE_KEYS as readonly string[]).includes(k)) fail('PARTS_KEY_KNOWN', `${path} scene key "${k}"`, `is not a scene field; known: ${SCENE_KEYS.join(', ')}`);
+      for (const k of SCENE_KEYS) if (!(k in r)) fail('PARTS_FIELD_PRESENT', `${path} scene field "${k}"`, 'is absent and required');
+      for (const k of ['figure_alpha_above', 'figure_px'] as const) if (k in r && !(Number.isInteger(r[k]) && (r[k] as number) >= 0)) fail('PARTS_FIELD_TYPE', `${path} scene field "${k}"`, `is ${show(r[k])}; a non-negative integer is required`);
+      if ('figure_mask' in r && !(typeof r.figure_mask === 'string' && r.figure_mask !== '')) fail('PARTS_FIELD_TYPE', `${path} scene field "figure_mask"`, `is ${show(r.figure_mask)}; the mask's file name is required`);
+      if (!('recomposite' in o)) fail('PARTS_FIELD_PRESENT', `${path} field "recomposite"`, 'is absent; a scene block says how the recomposite block beside it was measured, so it is required with one');
     }
   }
   if ('recomposite' in o && sizeOk) {

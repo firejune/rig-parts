@@ -140,6 +140,7 @@ import {
   drawOrder,
   driftLine,
   ERROR_LIMIT as ASSEMBLE_ERROR_LIMIT,
+  FIGURE_MASK_FILE,
   figureSilhouette,
   figuresLine,
   growRim,
@@ -161,6 +162,7 @@ import {
   recompositeErrorMap,
   SEAM_LIMIT,
   SEAM_RULES,
+  scenePhrase,
   seamCandidates,
   seamOverride,
   type SeamRule,
@@ -172,7 +174,7 @@ import {
   visibilityCounts,
 } from './src/assemble.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
-import { BARS, besideIdleLine, blackRig, buildGateLines, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
+import { BARS, besideIdleLine, blackRig, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
@@ -1797,6 +1799,30 @@ function runConfigSuite(): number {
       noTurn85 === null,
     `pivot 0.4 -> ${show75(at85)}; 0.3 -> ${show75(front85)}; 0.400001 -> ${show75(just85)}; a bone "turn" with a turn -> ${show75(bone85)}; without one -> ${show75(noTurn85)}`,
     "issue #251: the fraction law (pivot − depth) / (pivot − nearest) has no value when the pivot is the nearest depth and points every part against the dial in front of it, so the bad pivot is refused by the rule's name, not clamped",
+  );
+
+  // CF125 — issue #242: config.scene is an object with no field. {} and one holding only a record and an annotation
+  // load, through the full loader and plain assemble's door alike; `true` is not an object; a field — here the
+  // contacts a later issue may add — is refused by name, at both doors.
+  const sceneCfg = (scene: unknown): Record<string, unknown> => ({ ...minimalConfig(), scene });
+  const early125 = (scene: unknown): PartsError | null => refusals(() => parseEarlyConfig({ ...minimalConfig(), seethrough: { resolution: 64, steps: 1, seed: 1, offload: false, head_box: [0, 0, 8, 8] }, scene }, 'assemble'));
+  const empty125 = refusals(() => parseConfig(sceneCfg({})));
+  const doors125 = refusals(() => parseConfig(sceneCfg({ note: 'the room is painted', 'x-why': { by: 'selftest' } })));
+  const bool125 = refusals(() => parseConfig(sceneCfg(true)));
+  const field125 = refusals(() => parseConfig(sceneCfg({ contacts: [['hand_r', 'hip']] })));
+  const earlyEmpty125 = early125({});
+  const earlyField125 = early125({ contacts: [] });
+  say(
+    'CF125_THE_SCENE_DECLARATION_IS_AN_OBJECT_WITH_NO_FIELD_AND_A_FIELD_IN_IT_IS_REFUSED_BY_NAME_AT_BOTH_DOORS',
+    empty125 === null &&
+      doors125 === null &&
+      one75(bool125, 'CONFIG_FIELD_TYPE', 'config.scene', 'is true; an object is required — {} declares the painting a scene') &&
+      one75(field125, 'CONFIG_KEY_KNOWN', 'config.scene.contacts') &&
+      (field125?.problems[0].detail.startsWith('is not a field here; scene takes no field — {} is the whole declaration') ?? false) &&
+      earlyEmpty125 === null &&
+      one75(earlyField125, 'CONFIG_KEY_KNOWN', 'config.scene.contacts'),
+    `{} -> ${show75(empty125)}; {note, x-why} -> ${show75(doors125)}; true -> ${show75(bool125)}; {contacts} -> ${show75(field125)}; at the assemble door: {} -> ${show75(earlyEmpty125)}, {contacts} -> ${show75(earlyField125)}`,
+    "issue #242: the figure and its threshold are derived, so the declaration has nothing to choose; an object, not true, so a later field adds to it without changing what a config that has it means — and until then a field in it is a typo or a wish, refused by name",
   );
   return bad();
 }
@@ -8647,6 +8673,46 @@ function runCheckSuite(): number {
       'parts/ is what the seam composites and images/ is what rigc draws; a part moved 3 px in one and not the other is the drift an assembler bug produces, and the gate passes it',
     );
 
+    // CK157 — issue #242: on a scene the painting's border rows and columns are not seams. The fixture's back part
+    // runs the canvas's full height (rows 0..79). Planted in parts/ only (the copy the seam composites, not the one
+    // rigc draws): red over the part's top row, columns 5..24 — on the painting's border — and over row 40, columns
+    // 10..19 — inside. Without a scene block both are counted; with one, the frame pixels whose composite sample
+    // reaches row 0 or 79 or column 0 or 47 are left out, and the line says how many and how many of them were over
+    // 40. By definition the two runs' over-40 counts differ by exactly the left-out ones, and the inside plant stays.
+    const borderRec: RecompositeRecord = { mean_abs: 0, within_limit: 8, within_share: 1, error_limit: 40, error_px: 0, covered_alpha: 128, uncovered_error_px: 0, hole_count: 0, holes_listed: 5, holes: [] };
+    const borderRun = (scene: boolean): { status: number; out: string; fig: Record<string, unknown> | null } => {
+      const d = join(dir, scene ? 'border-scene' : 'border-plain');
+      writeCheckRig(d, { recomposite: borderRec });
+      const back = checkPartRaster(CHECK_PARTS[0]);
+      for (let x = 5; x < 25; x++) back.data.set([255, 0, 0, 255], x * 4);
+      for (let x = 10; x < 20; x++) back.data.set([255, 0, 0, 255], (40 * back.width + x) * 4);
+      writeFileSync(join(d, 'parts', `${CHECK_PARTS[0].name}.png`), encodePngBytes(back));
+      if (scene) writeFileSync(join(d, 'parts.json'), serializeParts({ ...readParts(join(d, 'parts.json')), scene: { figure_alpha_above: 8, figure_px: 1, figure_mask: 'figure_rig.png' } }));
+      const r = runCli(['check', '--rig', d, '--out', join(d, 'out')]);
+      return { ...r, fig: readJsonFile(join(d, 'out', 'check.json')) };
+    };
+    const bPlain = borderRun(false);
+    const bScene = borderRun(true);
+    const bLeft = bScene.fig?.seam_border as { frame_px_left_out?: number; px_over_40_left_out?: number } | undefined;
+    const bLine = bScene.out.split('\n').find((l) => l.trim().startsWith('seam (config.scene: ')) ?? '';
+    say(
+      'CK157_ON_A_SCENE_THE_PAINTINGS_BORDER_IS_NOT_A_SEAM_AND_THE_LINE_SAYS_HOW_MANY_WERE_LEFT_OUT',
+      bPlain.fig !== null &&
+        !('seam_border' in bPlain.fig) &&
+        typeof bPlain.fig.seam_px_over_40 === 'number' &&
+        bLeft !== undefined &&
+        typeof bLeft.frame_px_left_out === 'number' &&
+        typeof bLeft.px_over_40_left_out === 'number' &&
+        bLeft.px_over_40_left_out > 0 &&
+        typeof bScene.fig?.seam_px_over_40 === 'number' &&
+        (bScene.fig.seam_px_over_40 as number) > 0 &&
+        (bScene.fig.seam_px_over_40 as number) + bLeft.px_over_40_left_out === bPlain.fig.seam_px_over_40 &&
+        bLine.includes(`(config.scene: ${bLeft.frame_px_left_out} frame px on the painting's border rows and columns left out, ${bLeft.px_over_40_left_out} of them over 40)`) &&
+        !bPlain.out.includes('config.scene'),
+      `without a scene: ${String(bPlain.fig?.seam_px_over_40)} px over 40, mean ${String(bPlain.fig?.seam_mean)}; with one: ${String(bScene.fig?.seam_px_over_40)} px over 40, mean ${String(bScene.fig?.seam_mean)}, left out ${JSON.stringify(bLeft ?? null)}; "${bLine.trim()}"`,
+      "issue #242: a scene's figure is cut by the painting's frame, so a part reaching the border meets no part there — the consumer's seam bar tripped on 35 px at the last rows (read as 50.7 rig px) and was cleared by hand; the border is left out, said and counted, and a seam inside the painting is still a seam",
+    );
+
     // Issue #202: the failing seam says where — every pair, its counts, its boxes and its picture, read back off the files.
     const rows = Array.isArray(sf?.seam_pairs) ? (sf?.seam_pairs as Array<Record<string, unknown>>) : [];
     const rowOf = (r: Record<string, unknown>): { parts: [string, string]; px_over_40: number; px_over_80: number; frame_box: [number, number, number, number]; rig_box: [number, number, number, number]; picture: string } =>
@@ -8741,7 +8807,7 @@ function runCheckSuite(): number {
     ];
     const counted = [[0, 0], [2, 0], [1, 1], [5, 0], [4, 1]].map(([x, y]) => y * 6 + x).sort((a, b) => a - b);
     const diffs = counted.map((p) => (p === 2 ? 90 : 50));
-    const fixtureSeam: SeamFigures = { mean: 0, over40: 5, over80: 1, counted, countedDiff: diffs, map: { sx: 1, sy: 1, tx: 0, ty: 0 } };
+    const fixtureSeam: SeamFigures = { mean: 0, over40: 5, over80: 1, border: null, counted, countedDiff: diffs, map: { sx: 1, sy: 1, tx: 0, ty: 0 } };
     const vp6 = { x: 0, y: 0, width: 6, height: 2, scale: 1, pixelWidth: 6, pixelHeight: 2 };
     const got = seamPairRows(fixtureSeam, cutParts(200), [6, 2], vp6).map((x) => x.row);
     const agreeing = seamPairRows(fixtureSeam, cutParts(100), [6, 2], vp6).map((x) => x.row);
@@ -13691,7 +13757,7 @@ function runAssembleSuite(): number {
     );
 
     const tailRun = assemble({ ...tailBase, seamRule: 'near-white' });
-    const tailLines = tailRun.uncovered.map(uncoveredLine);
+    const tailLines = tailRun.uncovered.map((d) => uncoveredLine(d));
     const tailLine =
       `uncovered: ${tb.px} of the ${TAIL_UNCOVERED_ERROR_PX} uncovered error px lie on the full run's "back hair", in a body of ${tb.px} px at ${tb.x},${tb.y} ${tb.w}x${tb.h}; ` +
       'hair_back takes the head run\'s "back hair"; extend_below_crop continues a head-run part only from the columns where it reaches the head crop\'s bottom line (alpha above 128 on rig row 26), and hair_back reaches it nowhere';
@@ -13783,6 +13849,83 @@ function runAssembleSuite(): number {
       scatterRefused === DRIFT_SCATTER_PX && scatterRun.drift.length === 0 && result.parts.parts.find((q) => q.name === 'bottomwear')?.refused_drift_px === 200 && result.drift.length === 0 && overRun.drift.length === 0,
       `a Z checkerboard over topwear's core: ${scatterRefused} px refused (more than the 150 px bar), ${scatterRun.drift.length} drift line(s); the flat fixture's all-Z bottomwear, a 200-px body nothing is drawn over: ${result.drift.length}; the overlap fixture (NAVY inside the limit): ${overRun.drift.length}`,
       'a See-through layer disagrees with the painting a pixel here and there all over a real figure, and size alone would print on every part — the 5x5 opening keeps the line to a body; a body the part holds itself names no owner, and on four of five public paintings such bodies exist on parts nothing is drawn over',
+    );
+
+    // Issue #242: a scene painting. The flat fixture is one already — the painting is C everywhere and the full run
+    // holds only the figure — so it is the scene fixture as it stands. Its figure, by hand: the union of the full
+    // run's layers after ghost clean-up (the neck speck and the footwear speck are ghosts, removed in the run), all
+    // disjoint — headwear [4, 20) x [2, 14) 192, back hair [38, 44) x [22, 44) 132, bottomwear [48, 62) x [30, 54)
+    // 336, topwear [10, 30) x [20, 50) 600, footwear [10, 30) x [54, 60) 120 — 1,380 of 4,096 rig px. Inside it
+    // every planned layer is covered by its part (exact C, |d| 0), and the headwear, which no plan entry takes,
+    // is covered only where the head run's face [16, 28) x [8, 20) lies over it, [16, 20) x [8, 14) = 24 px: 168
+    // uncovered error px, each white page over C (mean channel 565 / 3). So mean |d| = 168 x 565 / 3 / 1,380 =
+    // 22.928 -> 22.93; within = 1,212 / 1,380 = 87.8 %; error = uncovered = 168; one hole, its box 4,2 16x12,
+    // bordered by the face pixels with a hole pixel 8-adjacent: column 16 at rows 8..14 (the hole holds column 15,
+    // rows 2..13) — 7 — and row 8 at columns 17..20 (the hole holds row 7, columns 4..19) — 4: 11 px.
+    const sceneIn = fixtureInput(dir);
+    const plain = assemble({ ...sceneIn, seamRule: 'near-white' });
+    const sceneRun = assemble({ ...sceneIn, seamRule: 'near-white', scene: true });
+    const phrase = "inside the figure (config.scene: the union of the full run's layers at alpha above 8, 1380 of 4096 rig px)";
+    const sp = sceneRun.parts.scene === undefined ? null : scenePhrase(sceneRun.parts.scene, 64 * 64);
+    const sceneHoles = holesLine(sceneRun.parts);
+    const plainHoles = holesLine(plain.parts);
+    let figureWhite = 0;
+    for (let q = 0; q < 64 * 64; q++) if (sceneRun.figure !== null && sceneRun.figure.data[q * 4] === 255) figureWhite++;
+    say(
+      'AS103_A_SCENE_READS_THE_RECOMPOSITE_HOLES_AND_THE_REPORTED_LINE_INSIDE_THE_FIGURE_AND_SAYS_SO_FIRST',
+      serializeParts(plain.parts) === serializeParts(EXPECTED_PARTS) &&
+        plain.figure === null &&
+        !('declared_scene' in plainHoles) &&
+        figuresLine(plain.figures) === 'recomposite vs source: mean |d|=120.05, within 8: 36.3%, error px > 40: 2611, uncovered error px: 2611' &&
+        sp === phrase &&
+        JSON.stringify(sceneRun.parts.scene) === '{"figure_alpha_above":8,"figure_px":1380,"figure_mask":"figure_rig.png"}' &&
+        figureWhite === 1380 &&
+        figuresLine(sceneRun.figures, sp) === `${phrase}: recomposite vs source: mean |d|=22.93, within 8: 87.8%, error px > 40: 168, uncovered error px: 168` &&
+        holeLines(sceneRun.figures, sp).join(' | ') === `${phrase}: uncovered holes (8-connected): 1 |   uncovered hole 1: 168 px at 4,2 16x12 (between "face" 11 px)` &&
+        JSON.stringify(sceneHoles) === JSON.stringify({ status: 'REPORTED', declared_scene: phrase, error_px: 168, uncovered_error_px: 168, hole_count: 1, largest: { px: 168, box: '4,2 16x12', borders: ['face 11 px'] } }),
+      `without the declaration: ${figuresLine(plain.figures)}; ${holeLines(plain.figures).join(' | ')}; RECOMPOSITE_HOLES ${JSON.stringify(plainHoles)}; with it: ${figuresLine(sceneRun.figures, sp)}; ${holeLines(sceneRun.figures, sp).join(' | ')}; RECOMPOSITE_HOLES ${JSON.stringify(sceneHoles)}; parts.json scene ${JSON.stringify(sceneRun.parts.scene ?? null)}; figure image ${figureWhite} white px`,
+      "issue #242: on a scene painting every background pixel is error the parts fail to cover — 449,673 uncovered px on the consumer's — and the one figure that says a piece is missing is buried; read inside the figure, the fixture's 2,611 become the 168 of the one full-run layer the plan never took, and every line says first where it was read",
+    );
+
+    // ... and a real piece dropped on that fixture: the plan without shoes. Inside the figure the footwear layer's
+    // 120 px [10, 30) x [54, 60) are uncovered, rows 50..53 and every column round it free, so a second hole, 120 px
+    // at 10,54 20x6 bordered by no part, after the headwear's 168: 288 in all.
+    const droppedRun = assemble({ ...sceneIn, plan: sceneIn.plan.filter((e) => e[0] !== 'shoes'), seamRule: 'near-white', scene: true });
+    const droppedLines = holeLines(droppedRun.figures, droppedRun.parts.scene === undefined ? null : scenePhrase(droppedRun.parts.scene, 64 * 64));
+    say(
+      'AS104_ON_A_SCENE_A_DROPPED_PIECE_OF_THE_FIGURE_IS_STILL_NAMED_IN_THE_HOLE_LIST',
+      droppedRun.figures.uncoveredErrorPx === 288 &&
+        droppedLines.join(' | ') === `${phrase}: uncovered holes (8-connected): 2 |   uncovered hole 1: 168 px at 4,2 16x12 (between "face" 11 px) |   uncovered hole 2: 120 px at 10,54 20x6 (borders no part)`,
+      `${droppedRun.figures.uncoveredErrorPx} uncovered error px; ${droppedLines.join(' | ')}`,
+      'issue #242: reading inside the figure must not hide what the figure is missing — the shoes the plan dropped are inside the full run, so they stay a hole, with their box',
+    );
+
+    // ... and the stage: plain `assemble` with config.scene writes the figure beside the recomposite (white = figure,
+    // 1,380 px), the parts.json scene block, and prints the declaration first; without it, no figure file.
+    const sceneDir = join(dir, 'scene');
+    writeAssembleFixture(sceneDir, { ...assembleConfig(), scene: {} });
+    const sceneCli = runCli(['assemble', '--source', join(sceneDir, 'painting.png'), '--full', join(sceneDir, 'full'), '--head', join(sceneDir, 'head'), '--config', join(sceneDir, 'config.json'), '--out', join(sceneDir, 'out')]);
+    const figureFile = join(sceneDir, 'out', 'render', FIGURE_MASK_FILE);
+    const figurePng = existsSync(figureFile) ? readPng(figureFile) : null;
+    let filePx = 0;
+    if (figurePng !== null) for (let q = 0; q < figurePng.width * figurePng.height; q++) if (figurePng.data[q * 4] === 255 && figurePng.data[q * 4 + 3] === 255) filePx++;
+    const sceneParts = existsSync(join(sceneDir, 'out', 'rig', 'parts.json')) ? readParts(join(sceneDir, 'out', 'rig', 'parts.json')) : null;
+    const plainOut = join(dir, 'scene-plain');
+    const plainCli = runCli(['assemble', '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--config', join(dir, 'config.json'), '--out', plainOut]);
+    say(
+      'AS105_THE_SCENE_STAGE_WRITES_THE_FIGURE_BESIDE_THE_RECOMPOSITE_AND_NOTHING_WITHOUT_THE_DECLARATION',
+      sceneCli.status === 0 &&
+        figurePng !== null &&
+        figurePng.width === 64 &&
+        filePx === 1380 &&
+        sceneParts?.scene?.figure_px === 1380 &&
+        sceneCli.out.includes(`${phrase}: recomposite vs source:`) &&
+        plainCli.status === 0 &&
+        !existsSync(join(plainOut, 'render', FIGURE_MASK_FILE)) &&
+        !plainCli.out.includes('inside the figure') &&
+        readParts(join(plainOut, 'rig', 'parts.json')).scene === undefined,
+      `with scene: exit ${sceneCli.status}, ${figurePng === null ? 'no figure file' : `${FIGURE_MASK_FILE} ${figurePng.width}x${figurePng.height}, ${filePx} white px`}, parts.json scene ${JSON.stringify(sceneParts?.scene ?? null)}; without: exit ${plainCli.status}, figure file ${existsSync(join(plainOut, 'render', FIGURE_MASK_FILE)) ? 'WRITTEN' : 'absent'}`,
+      "issue #242: the figure the declaration reads against is inspectable, and the consumer repaints the scene with it as its mask; a painting that is not a scene writes what it wrote",
     );
 
     const pp = runCli(['assemble', '--propose-plan', '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--config', join(dir, 'config.json')]);

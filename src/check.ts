@@ -73,7 +73,7 @@
  */
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
-import { measureRecomposite, type RecompositeFigures, recompositeRecord, sourceInRig } from './assemble.ts';
+import { measureRecomposite, type RecompositeFigures, recompositeRecord, scenePhrase, sourceInRig } from './assemble.ts';
 import { cropToSpineY } from './coords.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 import { framesInside, IDLE_FPS, TIME_SLACK } from './motion.ts';
@@ -1052,6 +1052,12 @@ export interface SeamFigures {
   mean: number;
   over40: number;
   over80: number;
+  /**
+   * Under a scene (issue #242), the frame pixels on the painting's border that the
+   * figures above leave out ({@link seamFigures}): how many there are, and how many
+   * of them were over {@link SEAM_PX_LEVEL}. Null when the painting is not a scene.
+   */
+  border: { framePx: number; over40: number } | null;
   /** The frame pixels {@link over40} counts, by index into the frame, ascending; each one's max-channel |d| is in {@link countedDiff}. */
   counted: number[];
   countedDiff: number[];
@@ -1135,6 +1141,16 @@ export function frameToRigMap(stage: StageBox, rigH: number, vp: Viewport): Scal
  *
  * `map` is for the controls alone (the `check` suite plants the map without
  * the centre term, issue #209); every caller in `src/` leaves it to the default.
+ *
+ * `scene` (issue #242; `parts.json`'s `scene` block): the painting is a scene,
+ * and a figure cut by its frame has an edge there that no part meets. A frame
+ * pixel whose bilinear sample of the composite reads the painting's outermost
+ * row or column, or past it — its two-by-two footprint, `floor(u)` and
+ * `floor(u) + 1` with `u = (x - tx) / sx`, reaching column 0 or `W - 1` or
+ * beyond, and the same for rows — is on the painting's border, and is not
+ * counted: not in the mean, not over either level. How many such pixels there
+ * were, and how many of them were over {@link SEAM_PX_LEVEL}, is returned
+ * (`border`) for the line to say.
  */
 export function seamFigures(
   composite: Raster,
@@ -1143,6 +1159,7 @@ export function seamFigures(
   vp: Viewport,
   background: readonly [number, number, number, number],
   map: ScaleTranslate = rigToFrameMap(stage, composite.height, vp),
+  scene = false,
 ): SeamFigures {
   const [W, H] = [composite.width, composite.height];
   const src = newFloatImage(W, H, 3);
@@ -1154,15 +1171,29 @@ export function seamFigures(
   let sum = 0;
   let over40 = 0;
   let over80 = 0;
+  let borderPx = 0;
+  let borderOver40 = 0;
   const counted: number[] = [];
   const countedDiff: number[] = [];
   const n = vp.pixelWidth * vp.pixelHeight;
+  // Issue #242: on a scene, the frame columns and rows whose composite sample reaches the painting's border.
+  const onEdge = (i: number, t: number, s: number, size: number): boolean => {
+    const k = Math.floor((i - t) / s);
+    return k <= 0 || k + 1 >= size - 1;
+  };
+  const edgeCol = scene ? Array.from({ length: vp.pixelWidth }, (_, x) => onEdge(x, map.tx, map.sx, W)) : null;
+  const edgeRow = scene ? Array.from({ length: vp.pixelHeight }, (_, y) => onEdge(y, map.ty, map.sy, H)) : null;
   for (let p = 0; p < n; p++) {
     let m = 0;
     for (let c = 0; c < 3; c++) {
       const w = Math.fround(warped.data[p * 3 + c] + background[c]);
       const d = Math.abs(w - frame.data[p * 4 + c]);
       if (d > m) m = d;
+    }
+    if (edgeCol !== null && edgeRow !== null && (edgeCol[p % vp.pixelWidth] || edgeRow[Math.floor(p / vp.pixelWidth)])) {
+      borderPx++;
+      if (m > SEAM_PX_LEVEL) borderOver40++;
+      continue;
     }
     sum += m;
     if (m > SEAM_PX_LEVEL) {
@@ -1172,7 +1203,7 @@ export function seamFigures(
     }
     if (m > SEAM_PX_LEVEL_HIGH) over80++;
   }
-  return { mean: sum / n, over40, over80, counted, countedDiff, map };
+  return { mean: scene ? (n - borderPx === 0 ? 0 : sum / (n - borderPx)) : sum / n, over40, over80, border: scene ? { framePx: borderPx, over40: borderOver40 } : null, counted, countedDiff, map };
 }
 
 /**
@@ -1581,6 +1612,13 @@ export interface CheckFigures {
    */
   seam_frame_scale: number | null;
   /**
+   * Written only when `parts.json` declares a scene (issue #242): the frame pixels
+   * on the painting's border that the seam figures above leave out, and how many
+   * of them were over 40 ({@link seamFigures}). A painting that is not a scene
+   * writes the keys it always wrote.
+   */
+  seam_border?: { frame_px_left_out: number; px_over_40_left_out: number };
+  /**
    * Written only when the seam bar fails, or when it was asked for (`check
    * --seam-pairs`), issue #202: the counted pixels split by the pair of parts
    * that answers for each, worst first ({@link SeamPairRow}), each with its
@@ -1941,7 +1979,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
       if (keepStills) cpSync(join(stillDir, 'render'), keptDir, { recursive: true });
       if (inp.parts !== null) {
         const composite = flatComposite(inp.parts, inp.partsDir, stillSet.background);
-        seam = seamFigures(composite, stillSet.frames[0].image, inp.stage, stillSet.viewport, stillSet.background);
+        seam = seamFigures(composite, stillSet.frames[0].image, inp.stage, stillSet.viewport, stillSet.background, undefined, inp.parts.scene !== undefined);
         if (seamPairsAsked || seamFails(round3(seam.mean), seam.over40, round6(stillSet.viewport.scale))) {
           const placed = inp.parts.parts.map((p) => ({ name: p.name, from: p.from, x: p.x, y: p.y, image: readPng(join(inp.partsDir, `${p.name}.png`)) }));
           const split = seamPairRows(seam, placed, inp.parts.rig_size, stillSet.viewport);
@@ -2003,6 +2041,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     seam_px_over_40: seam === null ? null : seam.over40,
     seam_px_over_80: seam === null ? null : seam.over80,
     seam_frame_scale: seam === null || seamViewport === null ? null : round6(seamViewport.scale),
+    ...(seam === null || seam.border === null ? {} : { seam_border: { frame_px_left_out: seam.border.framePx, px_over_40_left_out: seam.border.over40 } }),
     ...(seamPairs === null ? {} : { seam_pairs: seamPairs }),
     BREATH_VISIBLE: breath,
     BLINK_NO_HOLE: blink,
@@ -2223,6 +2262,8 @@ export function holesLine(parts: PartsFile): ReportedLine {
   if (r === undefined) return { status: 'SKIP', reason: 'parts.json has no "recomposite" block (a parts.json the reference wrote has none); re-run assemble, which writes it' };
   return {
     status: 'REPORTED',
+    // Issue #242: a scene's figures were read inside the figure, and the line says so first.
+    ...(parts.scene === undefined ? {} : { declared_scene: scenePhrase(parts.scene, parts.rig_size[0] * parts.rig_size[1]) }),
     error_px: r.error_px,
     uncovered_error_px: r.uncovered_error_px,
     hole_count: r.hole_count,
