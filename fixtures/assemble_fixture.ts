@@ -336,6 +336,22 @@ export const EXPECTED_PARTS = {
   },
 };
 
+/**
+ * The flat fixture's layers in no plan row (issue #308), one note each, in the
+ * full run's draw order: `footwear` holds 20 x 6 = 120 run px once its 2 x 2
+ * speck is cleaned as a ghost, under the 150-px floor, and the head run has
+ * no footwear; `neck` is a head tag, which the proposer takes from the head
+ * run only, and the full run's 3 x 3 neck is all ghost (0 px) — the head run
+ * has no neck. Every other tag either run holds is in a row.
+ */
+export const EXPECTED_UNPLANNED_NOTES: string[] = [
+  "footwear: in no plan row — full run: 120 px, empty: below the proposer's floor of 150 (PROPOSE_MIN_PX, src/assemble.ts); head run: no layer (px: run pixels of alpha above 8 after ghost clean-up)",
+  'neck: in no plan row — full run: 0 px, but the proposer takes neck from the head run only (PROPOSE_HEAD_TAGS, src/assemble.ts); head run: no layer (px: run pixels of alpha above 8 after ghost clean-up)',
+];
+
+/** The flat fixture's one note before the layers in no row: the head run lacks headwear (0 rig px) while the full run has 192. */
+export const EXPECTED_HEADWEAR_NOTE = 'headwear: head run 0 rig px < 0.8 x full run 192 -> full-run layer, drawn behind the face';
+
 /** What `--propose-plan` must say for the flat fixture, derived in `selftest.ts` beside the control. */
 export const EXPECTED_PROPOSAL = {
   plan: [
@@ -346,7 +362,7 @@ export const EXPECTED_PROPOSAL = {
     ['face', 'head', 'face'],
   ],
   extend_below_crop: [{ part: 'hair_back', run: 'full', tag: 'back hair' }],
-  notes: ['headwear: head run 0 rig px < 0.8 x full run 192 -> full-run layer, drawn behind the face'],
+  notes: [EXPECTED_HEADWEAR_NOTE, ...EXPECTED_UNPLANNED_NOTES],
 };
 
 /**

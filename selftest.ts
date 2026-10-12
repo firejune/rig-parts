@@ -72,7 +72,9 @@ import {
   authorPlan,
   C,
   EXPECTED_PARTS,
+  EXPECTED_HEADWEAR_NOTE,
   EXPECTED_PROPOSAL,
+  EXPECTED_UNPLANNED_NOTES,
   FULL_LAYERS,
   FRAMED_FULL,
   FRAMED_HEAD,
@@ -14636,7 +14638,7 @@ function runAssembleSuite(): number {
       `back hair: the full run's layer holds a body of ${tb.px} rig px at ${tb.x},${tb.y} ${tb.w}x${tb.h} that no planned part covers (a body: at least 150 rig px past a 5x5 opening); ` +
       'hair_back takes the head run\'s "back hair"; extend_below_crop continues a head-run part only from the columns where it reaches the head crop\'s bottom line (alpha above 128 on rig row 26), and hair_back reaches it nowhere ' +
       '-> take hair_back from the full run (["hair_back", "full", "back hair"]), or add the full-run layer as a second part drawn just behind hair_back';
-    const tailWant = { ...EXPECTED_PROPOSAL, notes: [...EXPECTED_PROPOSAL.notes, tailNote] };
+    const tailWant = { ...EXPECTED_PROPOSAL, notes: [EXPECTED_HEADWEAR_NOTE, tailNote, ...EXPECTED_UNPLANNED_NOTES] };
     say(
       'AS58_PROPOSE_PLAN_NAMES_A_FULL_RUN_BODY_THE_HEAD_RUN_PART_DOES_NOT_REACH',
       JSON.stringify(tailProp) === JSON.stringify(tailWant),
@@ -14655,6 +14657,60 @@ function runAssembleSuite(): number {
       JSON.stringify(baseProp) === JSON.stringify(EXPECTED_PROPOSAL) && JSON.stringify(bandProp) === JSON.stringify(EXPECTED_PROPOSAL) && quietNotes(baseProp) && quietNotes(bandProp),
       `hair reaching the crop line, continued: notes ${JSON.stringify(baseProp.notes)}; the same hair grown by a ${BAND_PX}-px band (over the 150 bar, no 5x5 square inside): notes ${JSON.stringify(bandProp.notes)}`,
       'extend_below_crop covers a lock that reaches the crop line, as today, so nothing is said; and the two runs\' silhouettes of one layer differ by a few pixels all round, a long band that is no hair — the opening is what keeps the note off every outline',
+    );
+
+    // Issue #308: every tag a layer of either run holds that no row takes is named once, with why. Derived by hand
+    // (fixtures/assemble_fixture.ts, EXPECTED_UNPLANNED_NOTES): the flat fixture leaves out footwear (120 run px, under
+    // the 150 floor) and the full run's neck (a head tag, all ghost); the planted twins below move one fact each.
+    const px = '(px: run pixels of alpha above 8 after ghost clean-up)';
+    const inNoRow = (p: { notes: string[] }): string[] => p.notes.filter((n) => n.includes(': in no plan row — '));
+    const namedOnce = (p: { plan: unknown[]; notes: string[] }, full: LayerSet, head: LayerSet): string[] => {
+      const rows = new Set((p.plan as PlanEntry[]).map((e) => e[2]));
+      const tags = [...new Set([...full.layers, ...head.layers].map((l) => l.name))];
+      return tags.filter((t) => (rows.has(t) ? 1 : 0) + p.notes.filter((n) => n.startsWith(`${t}: in no plan row — `)).length !== 1);
+    };
+    // The footwear grown to 20 x 8 = 160 px, over the floor: proposed as shoes, in the full run's draw order after topwear, and named no more.
+    const grownFull = withLayer(base.full, paintedLayer('footwear', [10, 54, 20, 8], () => [100, 60, 40, 255]));
+    const grown = proposePlan(grownFull, base.head, g0);
+    // A head-run eyewear of 20 x 10 = 200 px: over the floor, but eyewear is no head tag, and the full run holds none.
+    const eyeHead = withLayer(base.head, paintedLayer('eyewear', [0, 0, 20, 10], () => [100, 60, 40, 255]));
+    const eyed = proposePlan(base.full, eyeHead, g0);
+    const eyewearNote = `eyewear: in no plan row — full run: no layer; head run: 200 px, but the proposer takes eyewear from the full run only (it is not one of PROPOSE_HEAD_TAGS, src/assemble.ts) ${px}`;
+    say(
+      'AS231_PROPOSE_PLAN_NAMES_EVERY_LAYER_IN_NO_ROW_ONCE_WITH_WHY',
+      JSON.stringify(inNoRow(baseProp)) === JSON.stringify(EXPECTED_UNPLANNED_NOTES) &&
+        namedOnce(baseProp, base.full, base.head).length === 0 &&
+        JSON.stringify(grown.plan.map((e) => e[0])) === JSON.stringify(['hair_back', 'hairpin', 'bottomwear', 'topwear', 'shoes', 'face']) &&
+        JSON.stringify(inNoRow(grown)) === JSON.stringify([EXPECTED_UNPLANNED_NOTES[1]]) &&
+        namedOnce(grown, grownFull, base.head).length === 0 &&
+        JSON.stringify(eyed.plan) === JSON.stringify(EXPECTED_PROPOSAL.plan) &&
+        JSON.stringify(inNoRow(eyed)) === JSON.stringify([...EXPECTED_UNPLANNED_NOTES, eyewearNote]) &&
+        namedOnce(eyed, base.full, eyeHead).length === 0,
+      `flat fixture: ${JSON.stringify(inNoRow(baseProp))}; tags named other than once: ${JSON.stringify(namedOnce(baseProp, base.full, base.head))}; footwear grown to 160 px -> plan ${grown.plan.map((e) => e[0]).join(', ')}, in-no-row notes ${JSON.stringify(inNoRow(grown).map((n) => n.split(':')[0]))}; a 200-px head-run eyewear -> ${JSON.stringify(inNoRow(eyed).at(-1) ?? null)}`,
+      'issue #308: a run of 29 layers drafted a plan of 22 rows with notes: [] — the reader could not tell an empty layer from one no rule takes from one left out by mistake; each is named once with its count and the line or the rule, and a layer the plan takes is named by none',
+    );
+
+    // nose: never planned (the reference's rule) at any size, and the note says what a nose part would buy.
+    const noseHead = (n: number): LayerSet => withLayer(base.head, paintedLayer('nose', [30, 30, 8, 8], (i) => (i < n ? [100, 60, 40, 255] : null)));
+    const noseNote = (counts: string, how: string): string =>
+      `nose: in no plan row — the proposer never plans nose (the reference implementation's rule, which this port keeps); ${counts} ${px}; ${how}`;
+    const addRow =
+      'propose reads the head\'s pitch (where the nose sits between the eye midpoint and the mouth) only off a part tagged nose, and without one prints "not read: no part tagged nose"; to have it read, add ["nose", "head", "nose"] to assemble.plan after the row that takes "face" (the head run\'s layer holds the more of it) and run assemble and propose again';
+    // 48 px (six rows of the 8 x 8 box): under the floor, kept by the ghost rule (one component of at least 40 px); 64 px: the whole box, still under the floor.
+    const small = proposePlan(base.full, noseHead(48), g0);
+    const whole = proposePlan(base.full, noseHead(64), g0);
+    const blank = proposePlan(base.full, noseHead(0), g0);
+    const wantSmall = noseNote('full run no layer, head run 48 px', addRow);
+    const wantWhole = noseNote('full run no layer, head run 64 px', addRow);
+    const wantBlank = noseNote('full run no layer, head run 0 px', "neither run's layer holds a pixel, so there is no nose part to add");
+    say(
+      'AS232_NOSE_IS_NAMED_AS_NEVER_PLANNED_WITH_THE_ROW_THAT_LETS_PROPOSE_READ_THE_PITCH',
+      JSON.stringify(small.plan) === JSON.stringify(EXPECTED_PROPOSAL.plan) &&
+        JSON.stringify(inNoRow(small)) === JSON.stringify([...EXPECTED_UNPLANNED_NOTES, wantSmall]) &&
+        JSON.stringify(inNoRow(whole)) === JSON.stringify([...EXPECTED_UNPLANNED_NOTES, wantWhole]) &&
+        JSON.stringify(inNoRow(blank)) === JSON.stringify([...EXPECTED_UNPLANNED_NOTES, wantBlank]),
+      `48 px -> ${JSON.stringify(inNoRow(small).at(-1) ?? null)}; 0 px -> ${JSON.stringify(inNoRow(blank).at(-1) ?? null)}`,
+      "issue #308: propose said 'the nose sits — (not read: no part tagged nose)' and was the first to mention the layer at all; the plan step is where the author can still add the row, so it says the layer existed, that leaving it out is the rule, and what adding it buys",
     );
 
     const tailRun = assemble({ ...tailBase, seamRule: 'near-white' });
@@ -15014,7 +15070,7 @@ function authorLayerControls(say: (name: string, ok: boolean, detail: string, wh
     const ppA = runCli(['assemble', '--propose-plan', ...inputs(authored)]);
     const ppP = runCli(['assemble', '--propose-plan', ...inputs(plain)]);
     const authorNote = `author:hand: ${AUTHOR_NO_ROLE}; proposed as "hand" from the full run, at its place in that run's draw order`;
-    const wantA = { plan: authorPlan(), extend_below_crop: EXPECTED_PROPOSAL.extend_below_crop, notes: [...EXPECTED_PROPOSAL.notes, authorNote] };
+    const wantA = { plan: authorPlan(), extend_below_crop: EXPECTED_PROPOSAL.extend_below_crop, notes: [EXPECTED_HEADWEAR_NOTE, authorNote, ...EXPECTED_UNPLANNED_NOTES] };
     const gotA = ppA.status === 0 ? JSON.stringify(JSON.parse(ppA.out)) : '';
     const gotP = ppP.status === 0 ? JSON.stringify(JSON.parse(ppP.out)) : '';
     say(
@@ -15098,9 +15154,9 @@ function authorLayerControls(say: (name: string, ok: boolean, detail: string, wh
     say(
       'AS230_AN_AUTHOR_MADE_LAYER_IN_BOTH_RUNS_IS_PROPOSED_ONCE_AND_ONE_IN_THE_HEAD_RUN_ALONE_FROM_THE_HEAD_RUN',
       JSON.stringify(both.plan) === JSON.stringify(authorPlan()) &&
-        JSON.stringify(both.notes) === JSON.stringify([...EXPECTED_PROPOSAL.notes, authorNote, bothNote]) &&
+        JSON.stringify(both.notes) === JSON.stringify([EXPECTED_HEADWEAR_NOTE, authorNote, bothNote, ...EXPECTED_UNPLANNED_NOTES]) &&
         JSON.stringify(only.plan) === JSON.stringify(wantOnly) &&
-        JSON.stringify(only.notes) === JSON.stringify([...EXPECTED_PROPOSAL.notes, lockNote]),
+        JSON.stringify(only.notes) === JSON.stringify([EXPECTED_HEADWEAR_NOTE, lockNote, ...EXPECTED_UNPLANNED_NOTES]),
       `both runs: plan ${JSON.stringify(both.plan.map((e) => e[0]))}, notes ${both.notes.length} (last: ${both.notes[both.notes.length - 1] ?? '-'}); the head run alone: plan ${JSON.stringify(only.plan.map((e) => `${e[0]}<-${e[1]}:${e[2]}`))}`,
       'issue #256: one part per layer the proposer drafts, so a name both runs hold would otherwise be proposed twice under one part name; a layer only the head run holds is drafted from it, at its place in that run\'s draw order (here last, depth 0.3 under the face\'s 0.5), as a full-run one is',
     );
@@ -15292,6 +15348,21 @@ function runPlausibilitySuite(): number {
       missed.length === 0,
       missed.length === 0 ? `${outcomes.length} planted layers, each left out under its one rule; e.g. "${outcomes[2][2]}"` : missed.map(([what, , note]) => `${what}: "${note}"`).join('; '),
       'the body order, the head-run fallback and the extend below the crop each read a layer; a rule that guarded one of them would let the haze in through another',
+    );
+
+    // Issue #308: a tag left out by a plausibility rule in one run and empty in the other is named once in no row, the rule
+    // pointing at its own note; one only a plausibility note leaves out (PL03's, full run alone) gets no second note.
+    // The head run's wings: 8 x 8 = 64 px of C, one component (kept by the ghost rule); wings is no head tag, so the head run's reason is that rule.
+    const headWings = withLayer(base.head, paintedLayer('wings', [0, 40, 8, 8], () => [100, 60, 40, 255]));
+    const mixed = proposePlan(withLayer(base.full, hazeLayer('wings', RESOLUTION, 2780)), headWings, g);
+    const mixedNote =
+      "wings: in no plan row — full run: 2780 px, crosses PLAN_LAYER_TRANSLUCENT, PLAN_LAYER_BACKGROUND (named with its figures in the note below); head run: 64 px, but the proposer takes wings from the full run only (it is not one of PROPOSE_HEAD_TAGS, src/assemble.ts) (px: run pixels of alpha above 8 after ghost clean-up)";
+    const wingsNamed = (p: { notes: string[] }): string[] => p.notes.filter((n) => n.startsWith('wings: '));
+    say(
+      'PL07_A_LAYER_A_RULE_LEFT_OUT_IS_NAMED_IN_NO_ROW_ONLY_WHERE_ANOTHER_RUN_HOLDS_IT_TOO',
+      samePlan(mixed) && JSON.stringify(wingsNamed(mixed)) === JSON.stringify([mixedNote, hazeNote]) && mixed.notes.at(-1) === hazeNote && JSON.stringify(wingsNamed(hazed)) === JSON.stringify([hazeNote]),
+      `haze in the full run, 64 px in the head run -> ${JSON.stringify(wingsNamed(mixed))}; haze in the full run alone -> ${wingsNamed(hazed).length} wings note(s)`,
+      'a plausibility note names its layer with the figures and the rule, so a second note for the same layer would say it twice; where the other run holds the tag too, that run\'s reason has nowhere else to be said',
     );
 
     // The reader: `layers` prints the figures and a WARN line per rule crossed, and refuses nothing.
@@ -15735,7 +15806,9 @@ function runAssembleExamplesSuite(): number | null {
         hazed !== null &&
         JSON.stringify(hazed.plan) === JSON.stringify(clean.plan) &&
         JSON.stringify(hazed.extend_below_crop) === JSON.stringify(clean.extend_below_crop) &&
-        hazed.notes.slice(0, -1).join('|') === clean.notes.join('|') &&
+        // Issue #308: the wings' in-no-row note follows the full run's layer from empty to the haze; every other note is as before.
+        hazed.notes.slice(0, -1).filter((n) => !n.startsWith('wings: in no plan row — ')).join('|') === clean.notes.filter((n) => !n.startsWith('wings: in no plan row — ')).join('|') &&
+        hazed.notes.filter((n) => n.startsWith('wings: in no plan row — full run: ') && n.includes(', crosses PLAN_LAYER_TRANSLUCENT, PLAN_LAYER_BACKGROUND (named with its figures in the note below)')).length === 1 &&
         note.startsWith('wings: full run layer 80.0% translucent, 100.0% background-coloured, 2.000x the rest of the figure -> not proposed by PLAN_LAYER_TRANSLUCENT') &&
         copied !== null &&
         copied.plan.some((p) => p[2] === 'wings') &&
@@ -15749,6 +15822,34 @@ function runAssembleExamplesSuite(): number | null {
       pOk,
       pDetail,
       'the bars were set off these layers with margin, so a real layer crossing one means the bar is wrong; the planted haze is the issue\'s layer on a real run, whose other layers are the figure it is measured against',
+    );
+
+    // Issue #308: on a real pair of runs every tag either run holds is in a row or named once in no row, and nose is
+    // named with the row that lets propose read the pitch. [observed] On the four examples nose is in no row and its
+    // head-run layer holds the more of it.
+    let uDetail: string;
+    let uOk = false;
+    try {
+      const painting = readPng(join(ex, 'inputs', 'painting.png'));
+      const full = readLayers(join(ex, 'inputs', 'layers', 'full'));
+      const head = readLayers(join(ex, 'inputs', 'layers', 'head'));
+      const prop = proposePlan(full, head, { sourceW: painting.width, sourceH: painting.height, ...proposeFields(loadEarlyConfig(join(ex, 'config.json'), 'layers')) });
+      const rows = new Set([...prop.plan.map((e) => e[2]), ...prop.extend_below_crop.map((e) => e.tag)]);
+      const tags = [...new Set([...full.layers, ...head.layers].map((l) => l.name))];
+      const named = (t: string): number => prop.notes.filter((n) => n.startsWith(`${t}: in no plan row — `)).length;
+      const wrong = tags.filter((t) => (rows.has(t) ? 1 : 0) + named(t) !== 1);
+      const left = tags.filter((t) => !rows.has(t));
+      const nose = prop.notes.find((n) => n.startsWith('nose: in no plan row — ')) ?? '';
+      uOk = wrong.length === 0 && left.length > 0 && nose.includes('add ["nose", "head", "nose"] to assemble.plan after the row that takes "face"');
+      uDetail = `${tags.length} tags over both runs, ${tags.length - left.length} in a row, ${left.length} named in no row (${left.join(', ')}); named other than once: ${wrong.join(', ') || 'none'}; nose note ${nose === '' ? 'ABSENT' : 'names the head-run row'}`;
+    } catch (err) {
+      uDetail = `refused or crashed: ${(err as Error).message.split('\n')[0]}`;
+    }
+    say(
+      `AE03_EVERY_TAG_OF_EITHER_RUN_IS_IN_A_ROW_OR_NAMED_ONCE_IN_NO_ROW[${name}]`,
+      uOk,
+      uDetail,
+      'issue #308: on a real painting the proposer left seven layers out with notes: [] — a reader of a real run has to be able to account for every layer the decomposition made, nose included',
     );
   }
   return bad();

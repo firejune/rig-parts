@@ -2654,6 +2654,14 @@ function fmt0(v: number): string {
  * no role. One both runs hold is proposed once, from the full run, and a note
  * says how to take the head run's too. No public example holds one, so no
  * proposal of theirs moves.
+ *
+ * ⚖️ This port's too (issue #308): every tag a layer of either run holds that
+ * no plan row or extend entry takes is named once, with why, run by run
+ * (`unplannedNotes`), after the uncovered bodies and before the plausibility
+ * drops. The plan is not changed. [observed] On the four public examples the
+ * plan, the extend entries and every earlier note are byte for byte as
+ * before; each gains one such note per tag left out (demo 6, scarf 9,
+ * reference-demo 7, reference-sample 9).
  */
 export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx = PROPOSE_MIN_PX): PlanProposal {
   const frame = checkGeometry(g, { full, head });
@@ -2778,8 +2786,83 @@ export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx =
           why,
         );
   const bodyNotes = left.map((u) => uncoveredNote(u, plan, minBody));
-  // The reference's notes, then the uncovered bodies, then the plausibility drops — a drop note is last, as it was.
-  return { plan, extend_below_crop: extend, notes: [...notes, ...bodyNotes, ...dropNotes] };
+  const unplanned = unplannedNotes(runs, plan, extend, noted, figures, minPx, (run, tag) => (find(run, tag)?.opaqueRunPx ?? 0) * (run === 'head' ? headArea : fullArea), new Set(left.map((u) => u.tag)));
+  // The reference's notes, then the uncovered bodies, then the layers in no row (issue #308), then the plausibility drops — a drop note is last, as it was.
+  return { plan, extend_below_crop: extend, notes: [...notes, ...bodyNotes, ...unplanned, ...dropNotes] };
+}
+
+/** What every `--propose-plan` note on a layer in no row says its pixel figures are. */
+export const UNPLANNED_PX = 'px: run pixels of alpha above 8 after ghost clean-up';
+
+/**
+ * One note per tag that a layer of either run holds and no plan row or
+ * extend entry takes (issue #308), in the full run's draw order and then the
+ * head run's, saying for each run why: it holds no such layer; the proposer
+ * takes the tag from the other run only (`PROPOSE_HEAD_TAGS`); its layer is
+ * empty, its opaque count below the floor (`PROPOSE_MIN_PX`); it crosses a
+ * plausibility rule (that layer's own note, which follows, names its figures);
+ * or, for a full-run `headwear` or `earwear`, the head run's was not below 0.8
+ * of it in rig px. A tag every holding run of which a plausibility note
+ * already names gets no second note. `nose`, which the proposer never plans
+ * (the reference's rule), gets a note of its own: the counts, and the row that
+ * lets `propose` read the head's pitch, the only reading in this package made
+ * off a part tagged `nose` (`headFrameNotes`, `src/propose.ts`). The plan is
+ * not changed.
+ */
+function unplannedNotes(
+  runs: Record<Run, RunLayer[]>,
+  plan: readonly PlanEntry[],
+  extend: readonly Extend[],
+  noted: ReadonlySet<string>,
+  figures: Record<Run, LayerFigures[]>,
+  minPx: number,
+  rigPx: (run: Run, tag: string) => number,
+  bodies: ReadonlySet<string>,
+): string[] {
+  const inRow = new Set<string>([...plan.map((p) => p[2]), ...extend.map((e) => e.tag)]);
+  const find = (run: Run, tag: string): RunLayer | undefined => runs[run].find((l) => l.tag === tag);
+  const floor = minPx === PROPOSE_MIN_PX ? `the proposer's floor of ${minPx} (PROPOSE_MIN_PX, src/assemble.ts)` : `the floor of ${minPx} this proposal was given`;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const { tag } of [...runs.full, ...runs.head]) {
+    if (seen.has(tag) || inRow.has(tag)) continue;
+    seen.add(tag);
+    const held = (['full', 'head'] as const).filter((r) => find(r, tag) !== undefined);
+    const body = bodies.has(tag) ? "; the full run's layer holds a body no planned part covers, named in its note above" : '';
+    if (tag === 'nose') {
+      const counts = (['full', 'head'] as const).map((r) => `${r} run ${find(r, tag)?.opaqueRunPx ?? 'no layer'}${find(r, tag) === undefined ? '' : ' px'}`).join(', ');
+      const best = (['head', 'full'] as const).reduce((a, b) => ((find(b, tag)?.opaqueRunPx ?? 0) > (find(a, tag)?.opaqueRunPx ?? 0) ? b : a));
+      const most = find(best, tag)?.opaqueRunPx ?? 0;
+      const after = plan.some((p) => p[2] === 'face') ? ` after the row that takes "face"` : '';
+      const how =
+        most === 0
+          ? 'neither run\'s layer holds a pixel, so there is no nose part to add'
+          : `propose reads the head's pitch (where the nose sits between the eye midpoint and the mouth) only off a part tagged nose, and without one prints "not read: no part tagged nose"; to have it read, add ["nose", "${best}", "nose"] to assemble.plan${after} (the ${best} run's layer holds the more of it) and run assemble and propose again`;
+      out.push(`nose: in no plan row — the proposer never plans nose (the reference implementation's rule, which this port keeps); ${counts} (${UNPLANNED_PX}); ${how}${body}`);
+      continue;
+    }
+    if (held.every((r) => noted.has(`${r}:${tag}`))) continue;
+    const reason = (run: Run): string => {
+      const l = find(run, tag);
+      if (l === undefined) return `${run} run: no layer`;
+      const px = `${run} run: ${l.opaqueRunPx} px`;
+      const headTag = PROPOSE_HEAD_TAGS.includes(tag);
+      const fallback = tag === 'headwear' || tag === 'earwear';
+      if (run === 'full' && headTag && !fallback) return `${px}, but the proposer takes ${tag} from the head run only (PROPOSE_HEAD_TAGS, src/assemble.ts)`;
+      if (run === 'head' && !headTag && readAuthorTag(tag) === null) return `${px}, but the proposer takes ${tag} from the full run only (it is not one of PROPOSE_HEAD_TAGS, src/assemble.ts)`;
+      if (l.opaqueRunPx < minPx) return `${px}, empty: below ${floor}`;
+      if (noted.has(`${run}:${tag}`)) {
+        const f = figures[run].find((x) => x.name === tag) as LayerFigures;
+        return `${px}, crosses ${implausibleRules(f).join(', ')} (named with its figures in the note below)`;
+      }
+      if (run === 'full' && fallback) {
+        return `${px}, but the proposer takes ${tag} from the full run only when the head run's is below 0.8 of it in rig px (head run ${fmt0(rigPx('head', tag))}, full run ${fmt0(rigPx('full', tag))})`;
+      }
+      throw new Error(`unplannedNotes: no rule left ${run}:${tag} out of the plan, yet no row takes it`);
+    };
+    out.push(`${tag}: in no plan row — ${(['full', 'head'] as const).map(reason).join('; ')} (${UNPLANNED_PX})${body}`);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

@@ -6,12 +6,17 @@ the files it writes. Every refusal the tool prints names a rule, an object, the
 value found and the value required — §6 maps each rule to the field or input that
 has to change.
 
-The worked example throughout is [`examples/reference-sample`](../examples/reference-sample): its
+The worked example throughout is [`examples/reference-sample`](https://github.com/rig-c/parts/tree/main/examples/reference-sample): its
 `config.json` is a complete, loading config, `proposal.json` is what the proposer
 wrote for it, and `expected/` is what the reference implementation produced from
 the same inputs — except `check.json`, which this port's `build` regenerates since
 the reference has no judgement lines (§7). `bun run fetch-examples` puts its painting and See-through layers
-into `examples/reference-sample/inputs/`.
+into `examples/reference-sample/inputs/` in a clone of the repository.
+
+A path this page names that the installed package does not hold — anything under
+`examples/`, `docs/evidence/`, `tools/`, `fixtures/` or `scripts/`, and the scripts
+`bun run` names — is in the repository, https://github.com/rig-c/parts; the package holds the files
+`package.json` lists under `files` (`npm pack --dry-run` prints them).
 
 The examples' names: `reference-sample` and `reference-demo` are the two characters
 the reference implementation ran (published as `sample` and `demo` until issue #227),
@@ -397,7 +402,7 @@ The default does not move; a fold is today found by looking at a build that pass
 bar, and this field is what there is to turn once one is seen.
 
 **What it trades.** Every figure below is issue #284 Stage E's, verbatim from
-[`docs/evidence/weight-cap.md`](evidence/weight-cap.md), on every lattice mesh of `demo`,
+[`docs/evidence/weight-cap.md`](https://github.com/rig-c/parts/blob/main/docs/evidence/weight-cap.md), on every lattice mesh of `demo`,
 `scarf` and the trailer (`rig-c/trailer` at a99d976): the inverted triangles at the bend
 sets (±15° on every chain link; on the trailer also ± the film's own bends, after the
 slash), the largest idle displacement against today's rig in rig px (the part in the
@@ -1055,7 +1060,7 @@ file in rig-c's motion-spec shape beside the config and name it:
 ```
 
 `build` writes `surprised` into `rig/motion.json` after `idle`, gates it with the rig, and
-`check` names it on a line of its own (`examples/reference-sample` carries one, `animations.json` with `hop`, the
+`check` names it on a line of its own ([`examples/reference-sample`](https://github.com/rig-c/parts/tree/main/examples/reference-sample), in the repository, carries one, `animations.json` with `hop`, the
 recipe below). With exactly this file beside `examples/reference-sample`'s config in its place,
 `build` printed (this tree, rig-c as `package.json` pins it):
 
@@ -1068,10 +1073,10 @@ recipe below). With exactly this file beside `examples/reference-sample`'s confi
 A bone the rig lacks is rigc's refusal at the rig stage, in rigc's words (`RIG_RIGC_GREEN`); a
 fault in the file itself is the loader's (the row above names each one).
 
-**Worked sets.** `examples/demo/animations.json` and `examples/scarf/animations.json`
-(issue #224) carry `tilt`, `look_l`, `look_r`, `smile`, `startled`, a gesture (`wave` on
+**Worked sets.** [`examples/demo/animations.json`](https://github.com/rig-c/parts/blob/main/examples/demo/animations.json) and [`examples/scarf/animations.json`](https://github.com/rig-c/parts/blob/main/examples/scarf/animations.json)
+(issue #224; in the repository, not the package) carry `tilt`, `look_l`, `look_r`, `smile`, `startled`, a gesture (`wave` on
 `demo`, `bow` on `scarf`) and `hop`, each a one-shot that keys only what it needs; the
-examples' READMEs list what each keys and why. Two rules make a clip layer over the idle on
+examples' READMEs ([demo](https://github.com/rig-c/parts/blob/main/examples/demo/README.md), [scarf](https://github.com/rig-c/parts/blob/main/examples/scarf/README.md)) list what each keys and why. Two rules make a clip layer over the idle on
 a player's second track rather than replace it:
 
 - **Key the bones the idle leaves alone.** The idle turns and breathes the `*_ctl` bones
@@ -1084,10 +1089,33 @@ a player's second track rather than replace it:
 
 **Strands that trail.** A chain whose links lag the body is one `physics` constraint per
 link in `constraints`, on the link bone (`hairback_r0`, not `hairback_r0_ctl`), driving
-`rotate`; the examples soften it down the chain. A single bone with no `length` (a bow, an
-earring, a bun) cannot take a `rotate` drive (rig-c's `A23`) and takes `x`/`y` instead. The
-values that read on the examples, and the ones refused on the way there, are in their
-READMEs.
+`rotate`; the examples soften it down the chain: every link takes the root link's `inertia`,
+`damping`, `mass` and `mix`, and link i of n (i = 0 at the root) takes the root link's `strength` times
+1 − 0.35 · i / (n − 1), so the last link is the softest at 0.65 of the root's. `demo`'s right
+twin tail, the three links of chain `hairback_r`, as
+[`examples/demo/config.json`](https://github.com/rig-c/parts/blob/main/examples/demo/config.json) (in the repository)
+holds it:
+
+```json
+"constraints": [
+  { "type": "physics", "name": "hairback_r0_phys", "bone": "hairback_r0", "rotate": 1, "inertia": 0.8, "strength": 90.0, "damping": 0.85, "mass": 1, "mix": 1 },
+  { "type": "physics", "name": "hairback_r1_phys", "bone": "hairback_r1", "rotate": 1, "inertia": 0.8, "strength": 74.25, "damping": 0.85, "mass": 1, "mix": 1 },
+  { "type": "physics", "name": "hairback_r2_phys", "bone": "hairback_r2", "rotate": 1, "inertia": 0.8, "strength": 58.5, "damping": 0.85, "mass": 1, "mix": 1 },
+  … ]
+```
+
+`scarf`'s scarf ends, four links each, take the same shape at inertia 0.7: `strength` 70,
+61.8333, 53.6667 and 45.5 down `robe_r` ([`examples/scarf/config.json`](https://github.com/rig-c/parts/blob/main/examples/scarf/config.json)).
+What these values do, measured on the clips and not by any bar: in `demo`'s `hop` the last
+link of each tail sat 46.6 and 45.3 rig px from where the keys put it relative to `head` at
+the landing (0.73 s); inertia 1 tore `hair_back` in that hop (`TEXTURE_STRETCH` 3.258 against
+1.926544), and lowering `strength` instead of raising inertia saturates (the demo README,
+*The strands*). A single bone with no `length` (a bow, an earring, a bun) cannot take a
+`rotate` drive (rig-c's `A23`) and takes `x`/`y` instead — `demo`'s bows `"x": 0.5, "y": 1`,
+inertia 0.3, strength 160. The values that read on the examples, and the ones refused on the
+way there, are in their READMEs, in the repository:
+[`examples/demo/README.md`](https://github.com/rig-c/parts/blob/main/examples/demo/README.md) and
+[`examples/scarf/README.md`](https://github.com/rig-c/parts/blob/main/examples/scarf/README.md).
 
 **Limits.** Every slot holds one attachment, the part's own image, so an expression moves,
 turns and scales the face's parts and never swaps one for another: there is no second mouth
@@ -1102,7 +1130,7 @@ against 1.926544).
 
 A jiggle (a bust, the hips) is a patch of one part that lags behind the body. The package
 proposes none and judges none; what it gives is the three pieces to build one, all in the
-config. `examples/reference-sample` carries a worked one (issue #183, PR #187), and its config is the
+config. [`examples/reference-sample`](https://github.com/rig-c/parts/tree/main/examples/reference-sample) carries a worked one (issue #183, PR #187), and its config is the
 fragment below, cut to the bust:
 
 ```jsonc
@@ -1158,7 +1186,7 @@ landing at -6 at 0.45 s, settling at 0.55 s; nothing keys the jiggle bones): ren
 against the same build without its constraints, the bust moves at most 6.583 rig px and the hips
 (`hip_phys` inertia 0.2, strength 160, damping 0.88, mass 1.5) at most 4.432 (frame 13, the fall
 into the landing), and both overshoot after it, 3.38 and 1.38 rig px (frames 21 and 22;
-`docs/evidence/sample-hop.png`). No bar here judges the jiggle, and two limits follow from that:
+[`docs/evidence/sample-hop.png`](https://github.com/rig-c/parts/blob/main/docs/evidence/sample-hop.png)). No bar here judges the jiggle, and two limits follow from that:
 
 - **The region's `band` caps the displacement.** The patch moves as one piece and the band is
   where the mesh stretches to follow it, so physics values that carry the patch further than
@@ -1253,8 +1281,26 @@ full loader before its assemble stage writes anything.
 6. `rig-parts assemble --propose-plan --source … --full … --head … --config config.json`
    → paste `plan` and `extend_below_crop` into `config.assemble`. Config: the
    `layers` row, with `head_box`.
-   Read `notes`: a layer left out by a plausibility rule is named there with its
-   figures and the rule (§6, *Plausibility*), and a full-run layer holding a body
+   Read `notes`: every layer not planned — each tag a layer of either run holds that no
+   row takes — is named there once, `<tag>: in no plan row — …`, with why, run by run: the
+   run holds no such layer; the proposer takes that tag from the other run only
+   (`PROPOSE_HEAD_TAGS` in `src/assemble.ts` lists the tags it takes from the head run,
+   and every other tag comes from the full run); the layer is empty, its opaque count (run
+   pixels of alpha above 8 after ghost clean-up) below the proposer's floor of 150
+   (`PROPOSE_MIN_PX`, `src/assemble.ts`); or it crosses a plausibility rule, and the
+   layer's own note, last, gives its figures and the rule (§6, *Plausibility*; a layer
+   only such a note leaves out is named by it alone). On the four examples the
+   `neckwear`, `tail`, `wings`, `objects` and `eyewear` layers hold 62 to 74 px in each
+   run, so each is named empty (or taken from the other run only). `nose` is never
+   planned — the reference implementation's rule, which this port keeps; the reference
+   records no reason — and its note gives both runs' counts and what a nose part buys:
+   `propose`'s `head pitch:` note reads where the nose sits between the eye midpoint and
+   the mouth only off a part tagged `nose`, so the note names the row to add,
+   `["nose", "head", "nose"]` after the row that takes `face` (the run whose layer holds
+   more of the nose). With that one row added to a copy of each config, `demo` reads
+   0.474 and `scarf` 0.564 (the figures `FRONTAL_REFERENCE` in `src/propose.ts` quotes),
+   and the recomposite moves by 2 error px on `demo` (14,570 to 14,568) and none on
+   `scarf`, uncovered error px unchanged on both. A full-run layer holding a body
    no planned part covers — long hair that leaves the head crop sideways, or a
    head-run part that stops above the crop line so `extend_below_crop` continues
    nothing — is named with the body, the rule that skipped it and the two
@@ -1306,7 +1352,10 @@ full loader before its assemble stage writes anything.
    rules for `bones`, `meshes`, `regions` and `motion`.
 9. `rig-parts build --config config.json --source inputs/painting.png --full … --head … --out out [--loop]`
    — assemble, rig and check in one process. `propose` is not part of it, on purpose:
-   a proposal is a draft, and the config you corrected is the input.
+   a proposal is a draft, and the config you corrected is the input. How long it takes
+   is §8 (the two reference examples, 12.7 s and 27.5 s wall clock on one machine): a
+   run your harness stopped before its last line printed no verdict, which is not a
+   failed build — the build's verdict is its `check:` line or a named refusal (§5, §6).
    `--idle-keys direct` is forwarded to the rig stage as `rig` takes it; a config
    with a two-bone ik over chain links the idle keys needs it (§3, `constraints`).
    Every flag `check` takes is forwarded to the check stage, taken by `build` as
@@ -1396,6 +1445,14 @@ proposal in as the steps above say (`RL01`); every step must exit 0.
 | `check --requirements` (and `build --requirements`) | after the lines above, one line per declared requirement, `NAME: PASS`, `FAIL` or `NOT MEASURABLE — …` with its figures, the bar as declared and the worst frame; then `requirements: N declared — M measured (P PASS, F FAIL), K NOT MEASURABLE; not declared: <kinds>`; `check.json`'s `requirements` block; the renders under `requirements/` (§7, *Declared requirements*) | every line PASS and `0 NOT MEASURABLE`; a follow's `released_copy` says whether rigc's consumer-driven door was taken on the throwaway copy | `CHECK_REQUIREMENT_MET` (a figure past its bar; the line names the frame) or `CHECK_REQUIREMENT_MEASURABLE` (the quantity is undefined in the frames: a tip or an axis on a bone of length 0, an aim with no line, a follow no frame of which reaches its least drive); the last line then reads `check: FAIL — B bar(s) not met, R declared requirement(s) not PASS` |
 | `compose` | the `[compose]` lines: one per character (its offset, its scale, its placed bounds, the shift and how many first-level bones, regions on `root` and weights bound to `root` it moved, its bone, slot, track and constraint counts, its `rig_scale` and idle), the declared order and the slot count it expands to, rigc's gate lines; then the `[check]` lines as for `check`, and `scene.json` | both gate summaries `0 failed`, `check: PASS` with the bars that measured and the ones that said SKIP named — on a composed rig `4 of 9`: the gate, the loop, `CHAIN_LAG` and `TEXTURE_STRETCH` (there is no `parts.json`; each character's own `build` measured all nine). `scene.json`'s `order.slots` is the order the compiled skeleton draws | a `SCENE_*` refusal (§6, *compose*) — the scene file, a build, or the order; `COMPOSE_RIGC_GREEN` — rigc's own line, quoted |
 | `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line (under `build --lead-in`, the lead-in line in its place: the frames kept and the jump at the wrap), each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
+
+`RECOMPOSITE_HOLES` is `REPORTED`, never judged, and its count reads large: for scale, the
+four examples, each a green build, report 259 (`reference-sample`), 291 (`scarf`), 453
+(`reference-demo`) and 1,020 (`demo`) uncovered holes, holding 1,185, 1,365, 1,564 and
+2,939 uncovered error px, the largest hole 94, 63, 70 and 48 px (each example's
+`expected/parts.json`, its `recomposite` block, in the repository) — hundreds of slivers
+along part edges are what a green build reports; one hole of hundreds of px is the red
+the `assemble` row above describes.
 
 `loop` writes three files from one frame set, and they are not interchangeable.
 `idle.png` (`loop --out x.png`) is the lossless APNG: every frame decodes to the
