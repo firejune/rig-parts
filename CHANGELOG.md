@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.9.1](https://github.com/rig-c/parts/compare/v1.9.0...v1.9.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **determinism:** every length is sqrt(dx*dx + dy*dy) — no Math.hypot under src/ or in cli.ts ([#285](https://github.com/rig-c/parts/issues/285)) ([b7cf4e4](https://github.com/rig-c/parts/commit/b7cf4e4f096e5f0d281f21aa0b1cecaf33a7a936)), closes [#279](https://github.com/rig-c/parts/issues/279)
+* **propose:** the drafted breath is 2.5 % of the neck-to-hip run, not of the topwear part's height ([#276](https://github.com/rig-c/parts/issues/276)) ([0a53820](https://github.com/rig-c/parts/commit/0a538206f2bf6a6c2466142e609d26d8f3a4719c))
+* **rig:** when the unreduced source fails against itself, AUTO_MESH_MOTION says so — where (the stimulus by name), the row, the remedy ([#289](https://github.com/rig-c/parts/issues/289)) ([6fea4be](https://github.com/rig-c/parts/commit/6fea4be9cec30a8d83fa2574fafc97c11b87e215)), closes [#280](https://github.com/rig-c/parts/issues/280)
+
 ## [1.9.0](https://github.com/rig-c/parts/compare/v1.8.0...v1.9.0) (2026-10-11)
 
 
