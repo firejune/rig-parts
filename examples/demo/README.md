@@ -105,6 +105,17 @@ here (gitignored).
   (`assets/demo-idle.png`) was rebuilt with the same command: 704,009 B (it was 725,845 B,
   the build of #252; this config before #270 gives 724,053 B, so it had already gone
   stale with #262).
+  Issue #305 moved rig-c from 2.40.0 to 2.47.1. Every build file is byte-identical
+  across 2.40.0, 2.45.1, 2.45.2, 2.46.0, 2.47.0 and 2.47.1 (`parts.json`, `rig/`, the packed
+  skeleton and the gate file); 2.45.2, whose render no longer ends a frame on a physics
+  step's tie (core#1380), moved the idle frames `check` reads and so `check.json`:
+  `torso_heat_mean` 25.167 to 25.073, `TIP_OVER_ROOT` `handwear_l` / `handwear_r` /
+  `bottomwear` 4.803 / 4.846 / 2.428 to 4.791 / 4.836 / 2.426 (tips 7.049 / 6.959 / 0.952
+  to 7.032 / 6.946 / 0.951), `TEXTURE_STRETCH` severity 1.097 to 1.096 (`hair_front`, its
+  worst now frame 0 at 1.096, was frame 20 at 0.912; its smallest ratio 0.916), `hair_back`'s
+  smallest ratio 0.947 to 0.944 (triangle 185, frame 27), `earring`'s largest at triangle
+  22, frame 10; every status as before. The README's animation was rebuilt with the same
+  command: 703,909 B, the jump at the wrap max 1 (was 7), 0 px over 40.
 
 ## The two corrections
 
@@ -230,30 +241,33 @@ earrings) and bounces as one piece.
 **What was measured, and against what.** `check` reads the idle alone, so each clip was
 read by `check`'s own `TEXTURE_STRETCH` reading (`stretchLine`, `src/check.ts`) applied to
 the clip's `rigc render --geometry --fps 30 --max 640` geometry, the clip played alone
-from frame 0 with physics on, against the same ceiling, 1.926544:
+from frame 0 with physics on, against the same ceiling, 1.926544 (rig-c 2.45.2 and later,
+whose render no longer ends a frame on a physics step's tie; the figures on rig-c 2.40.0 in
+brackets where they differ):
 
 | clip | severity | worst mesh |
 | --- | --- | --- |
-| `tilt` | 1.151 | `hair_back` |
+| `tilt` | 1.162 [1.151] | `hair_back` |
 | `look_l`, `look_r` | 1.323, 1.331 | `neck` |
-| `smile` | 1.07 | `hair_back` |
+| `smile` | 1.075 [1.07] | `hair_back` |
 | `startled` | 1.284 | `neck` |
-| `wave` | 1.829 | `handwear_l` |
-| `hop` | 1.561 | `hair_back` |
+| `wave` | 1.836 [1.829] | `handwear_l` |
+| `hop` | 1.648 [1.561] | `hair_back` |
 
 What set the values: the first draft (the arm raised overhead, `sleeve_l0` +55° and
 `sleeve_l1` +60°, bangs and skirt at inertia 0.4, strength 120) read 5.327 on `wave`
 (`handwear_l`, the inside of the elbow) and 2.285 on `hop` (`bottomwear`; `hair_front`
 2.096). The arm does not go higher: with the sleeve constraints left out, +40° / +60°
 read 3.082, +60° / +15° 2.185, +80° / +20° 3.195, and +50° / +20° with the hand at ±14°
-1.902; the tracked +48° / +20° / ±10° reads 1.829 with the sleeve constraints in. A wave
+1.902; the tracked +48° / +20° / ±10° reads 1.829 with the sleeve constraints in (1.836
+from rig-c 2.45.2). A wave
 overhead tears the elbow of a mesh whose weights blend two links there, so this one is
 an arm out to the side with the hand waving. Stiffening the bangs and the skirt to
 inertia 0.2, strength 200 brought `hop` to 1.362. The tails then trailed less in the hop
 than `scarf`'s ends: at the apex (0.43 s) the last link of each tail sat 20.3 and 19.7
 rig px from where the keys put it relative to `head`. One number moved it: the tails'
 inertia, 0.5 to 0.8, gives 32.0 and 31.1 at the apex and 46.6 and 45.3 at the landing
-(0.73 s; 34.1 and 33.0 before), with `hop` at 1.561 (`hair_back`). Lowering the tails'
+(0.73 s; 34.1 and 33.0 before), with `hop` at 1.561 (`hair_back`; 1.648 from rig-c 2.45.2). Lowering the tails'
 strength instead saturates (90, 45, 30, 15 give 20.3, 26.7, 29.0, 31.4 at the apex),
 and inertia 1 tears `hair_back` in the hop (3.258). The skirt is left as it was.
 
