@@ -380,7 +380,30 @@ export interface ContourBridges {
   units: number[][];
   /** One per unit but unit 0, in the order they were joined. */
   joins: ContourBridge[];
+  /**
+   * Only when one was left out (HQ's ruling on #326): each faint island — every pixel's alpha under
+   * {@link FAINT_ALPHA} — largest first. Its pixels stay in the image and are not meshed, so not drawn, as `stray`
+   * leaves dust; `artPixels` does not count them.
+   */
+  faint?: ContourFaintIsland[];
 }
+
+/** A faint island a bridged mesh left out (issue #326): its art px, its brightest pixel's alpha, and its box in part-image px `[x, y, w, h]`. */
+export interface ContourFaintIsland {
+  art: number;
+  maxAlpha: number;
+  box: [number, number, number, number];
+}
+
+/**
+ * Issue #326, HQ's ruling: under `bridges`, an island whose every pixel has alpha below this is faint, left out and
+ * named; any island with one pixel at or above it is visible and bridged, whatever the bridge costs. 64/255 is a
+ * quarter of full opacity — a faint pixel moves the composite by at most 63/255 of the colour beneath it — and it
+ * sits below the 128 that assemble and `check` read as covered (`FRONT_ALPHA`, `COVERED_ALPHA`, check's coverage),
+ * so nothing those readings count as drawn is left out. Read over what a bridged draft reaches on the public figures
+ * (the four examples and rig-c/trailer 6e2de45), the faint islands peak at 11–17 and the visible ones at 255.
+ */
+export const FAINT_ALPHA = 64;
 
 export interface ContourMesh {
   /** Part-image px, y down, every value a multiple of 1/{@link GRID}; the first `hull` are the outline, in walk order. */
@@ -2010,8 +2033,11 @@ interface BridgeUnit {
  * The bridged mesh (issue #326, Stage B; `bridges: true`). Stage A (`docs/evidence/island-draft.md`) measured the
  * join this builds by hand: rig-c reads one closed outline per mesh, and a bridge is what a join costs.
  *
- * 1. **Islands.** Every 4-connected island of the art is kept, but an island that is not the largest (nor tied
- *    with it) and holds `stray` art px or fewer, which is left out as the one-island rule leaves it out.
+ * 1. **Islands**, in this order. Dust first: an island that is not the largest (nor tied with it) and holds `stray`
+ *    art px or fewer is left out as the one-island rule leaves it out. Then faint islands: one that is not the
+ *    largest and whose every pixel has alpha under {@link FAINT_ALPHA} is left out the same way and named in
+ *    `bridges.faint`. Every other island is kept, and step 3 bridges it whatever its bridge costs — overdraw is
+ *    reported (`joins[].area`), never a reason to drop art.
  * 2. **Silhouettes, in the trace.** The kept islands with their holes filled grow together by the margin
  *    ({@link growSilhouette}, its pinch fill included), and each 4-connected piece of the grown set is one unit,
  *    traced on its own. Islands closer than about twice the margin grow into one unit and are traced as one
@@ -2044,17 +2070,26 @@ function bridgedMesh(part: string, mask: AlphaMask, params: ContourParams, comp:
   for (let l = 1; l <= n; l++) largest = Math.max(largest, comp.stats[l].area);
   const leave: number[] = [];
   for (let l = 1; l <= n; l++) if (comp.stats[l].area !== largest && params.stray !== undefined && comp.stats[l].area <= params.stray) leave.push(l);
+  // Issue #326 (HQ's ruling): after dust, a faint island — every pixel's alpha under FAINT_ALPHA — is left out and
+  // named; every other island is bridged whatever its bridge costs. The largest island (or a tie for it) is never left out.
+  const peak = new Array<number>(n + 1).fill(0);
+  for (let i = 0; i < comp.labels.length; i++) if (comp.labels[i] > 0) peak[comp.labels[i]] = Math.max(peak[comp.labels[i]], mask.alpha[i]);
+  const faint: number[] = [];
+  for (let l = 1; l <= n; l++) if (comp.stats[l].area !== largest && !leave.includes(l) && peak[l] < FAINT_ALPHA) faint.push(l);
   let meshed = mask;
   let strayPixels = 0;
-  if (leave.length > 0) {
-    const out = new Set(leave);
+  if (leave.length > 0 || faint.length > 0) {
+    const out = new Set([...leave, ...faint]);
     const alpha = new Uint8Array(mask.alpha);
     for (let i = 0; i < alpha.length; i++) if (out.has(comp.labels[i])) alpha[i] = 0;
     meshed = { width: w, height: h, alpha };
     for (const l of leave) strayPixels += comp.stats[l].area;
   }
   const keptIslands = new Set<number>();
-  for (let l = 1; l <= n; l++) if (!leave.includes(l)) keptIslands.add(l);
+  for (let l = 1; l <= n; l++) if (!leave.includes(l) && !faint.includes(l)) keptIslands.add(l);
+  const left: ContourFaintIsland[] = faint
+    .map((l) => ({ art: comp.stats[l].area, maxAlpha: peak[l], box: [comp.stats[l].left, comp.stats[l].top, comp.stats[l].width, comp.stats[l].height] as [number, number, number, number] }))
+    .sort((a, b) => b.art - a.art || a.box[1] - b.box[1] || a.box[0] - b.box[0]);
 
   const island = artMask(meshed, threshold);
   const filled = fillHoles(island);
@@ -2269,6 +2304,7 @@ function bridgedMesh(part: string, mask: AlphaMask, params: ContourParams, comp:
         islands: [...keptIslands].map((l) => comp.stats[l].area).sort((a, b) => b - a),
         units: units.map((u) => u.islands),
         joins: joins.map((j, i) => ({ ...j, vertices: quads[i].map(at) as [number, number, number, number] })),
+        ...(left.length === 0 ? {} : { faint: left }),
       },
     },
   };

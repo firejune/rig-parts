@@ -1455,7 +1455,7 @@ export function buildRig(
         bones: [...bones].sort(),
         max_influences: maxInfl,
         mean_influences: pyRound(infl / cm.vertices.length, 2),
-        art_coverage: pyRound(rep.coveredArtPixels / (rep.artPixels + rep.strayPixels), 5),
+        art_coverage: pyRound(rep.coveredArtPixels / (rep.artPixels + rep.strayPixels + (rep.bridges?.faint ?? []).reduce((t, f) => t + f.art, 0)), 5),
         mode: 'contour',
         ...(exponent === undefined ? {} : { exponent }),
         ...(declared === undefined ? {} : { influences: declared }),

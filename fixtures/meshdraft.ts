@@ -121,8 +121,12 @@ export function writeDraftFixtureWithContour(dir: string, grid: number): { confi
  * - `studs` at (40, 60), carried by **two**: one segment on `stud_a` down the left block's left edge ([40, 60] →
  *   [40, 68]) and one on `stud_b` down the right block's right edge ([70, 60] → [70, 68]), r 4, so the lattice's
  *   vertices are bound to both bones and mesh-draft keeps the lattice, naming them.
+ * - `specks` at (40, 100), 30x8, on `pin` too (issue #326, HQ's ruling on the speck): the 8x8 block at alpha 255 and
+ *   a 2x3 speck at x 26..27, y 2..4 at **alpha 40** — 6 px, a real piece (more than 4 px), every pixel under 64: faint,
+ *   so the draft leaves it out and its line names it. The pins beside it are the positive: their 6x8 block is visible
+ *   and bridged although its bridge, across the 14 px left between the grown blocks, covers more than its 48 px.
  *
- * The figure does not move: the two new boxes lie inside rows 20..68, within the union's rows 2..410, so H = 408,
+ * The figure does not move: the new boxes lie inside rows 20..108, within the union's rows 2..410, so H = 408,
  * T = 1 and S = 11 as {@link DRAFT_FIGURE} says. At T = 1 the blocks grow by one pixel each and stay 14 px apart, so
  * each image traces as two silhouettes. The lattices are at grid {@link DRAFT_ISLANDS_GRID}, finer than the
  * candidate is coarse; no control reads a figure off the lattice but the verdict and the note.
@@ -132,21 +136,31 @@ export const DRAFT_ISLANDS_GRID = 2;
 /** The two-block image both parts share. */
 export const DRAFT_ISLANDS_IMAGE: readonly [number, number, readonly [number, number]] = [30, 8, [8, 24]];
 
+/** The speck image: the 8x8 block at x 0..7 and a faint 2x3 speck (alpha 40) at x 26..27, y 2..4, in 30x8. */
+export const DRAFT_SPECK_ALPHA = 40;
+
+export function speckImage(): Raster {
+  const r = block(30, 8, [8, 30]);
+  for (let y = 2; y < 5; y++) for (let x = 26; x < 28; x++) r.data.set([200, 120, 80, DRAFT_SPECK_ALPHA], (y * 30 + x) * 4);
+  return r;
+}
+
 export function draftIslandsParts(): PartsFile {
   const p = draftParts();
-  const rec = (name: string, tag: string, y: number): PartsFile['parts'][number] => ({ ...p.parts[0], name, from: `full:${tag}`, x: 40, y, w: 30, h: 8, opaque_px: 112 });
-  return { ...p, rig_size: [80, 420], parts: [...p.parts, rec('pins', 'earwear', 20), rec('studs', 'headwear', 60)] };
+  const rec = (name: string, tag: string, y: number, px: number): PartsFile['parts'][number] => ({ ...p.parts[0], name, from: `full:${tag}`, x: 40, y, w: 30, h: 8, opaque_px: px });
+  return { ...p, rig_size: [80, 420], parts: [...p.parts, rec('pins', 'earwear', 20, 112), rec('studs', 'headwear', 60, 112), rec('specks', 'objects', 100, 64)] };
 }
 
 export function draftIslandsConfig(grid: number): Record<string, unknown> {
   const c = draftConfig(grid);
   const a = c.assemble as { plan: string[][] };
-  c.assemble = { ...a, plan: [...a.plan, ['pins', 'full', 'earwear'], ['studs', 'full', 'headwear']] };
+  c.assemble = { ...a, plan: [...a.plan, ['pins', 'full', 'earwear'], ['studs', 'full', 'headwear'], ['specks', 'full', 'objects']] };
   c.bones = [...(c.bones as unknown[]), { name: 'pin', parent: 'body', at: [40, 24] }, { name: 'stud_a', parent: 'body', at: [40, 60] }, { name: 'stud_b', parent: 'body', at: [70, 60] }];
   c.meshes = {
     ...(c.meshes as Record<string, unknown>),
     pins: { grid: DRAFT_ISLANDS_GRID, r: 4, segments: [['pin', [40, 24], [70, 24]]] },
     studs: { grid: DRAFT_ISLANDS_GRID, r: 4, segments: [['stud_a', [40, 60], [40, 68]], ['stud_b', [70, 60], [70, 68]]] },
+    specks: { grid: DRAFT_ISLANDS_GRID, r: 4, segments: [['pin', [40, 104], [70, 104]]] },
   };
   return c;
 }
@@ -157,5 +171,6 @@ export function writeDraftIslandsFixture(dir: string, grid: number): { config: s
   const images = draftImages();
   images.set('pins', block(w, h, [gap[0], gap[1]]));
   images.set('studs', block(w, h, [gap[0], gap[1]]));
+  images.set('specks', speckImage());
   return writeRigFixture(dir, draftIslandsConfig(grid), images, draftIslandsParts());
 }
