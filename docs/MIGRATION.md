@@ -148,3 +148,49 @@ nothing else.
 What to do: install with `npm i -D @rig-c/parts` (or `npm install -g @rig-c/parts`);
 command lines do not change. A dependant that names `rig-parts` keeps receiving
 every release under it (#222).
+
+## After 1.13.1: the idle is read for folds
+
+| | 1.13.1 | after 1.13.1 |
+| --- | --- | --- |
+| `check.json`'s `ANIMATIONS_DO_NOT_FOLD` | written only when `motion.json` holds an animation beside the idle; its `animations` lists those | written whenever `motion.json` holds an animation, a rig of the idle alone included; its `animations` lists every one read, the idle first (#333) |
+| the console's fold line | `N animation(s) beside the idle read by rigc render --folds …` | `N animation(s) read by rigc render --folds …`, the idle counted and named |
+| the summary of a rig with an idle and no other animation | `… of 9 bar(s) measured …` | `… of 10 bar(s) measured …` |
+| `may_fold` naming `"animation": "idle"` | refused, `REQUIREMENTS_MAY_FOLD` (the bar did not read the idle) | accepted like any animation name; a fold it names is listed with its why and not held, and one that does not fold fails the bar |
+
+The reading is the one #320 made for the other animations — one `rigc render --folds` at
+12 fps over the build with its physics constraints left out — and now takes the idle in
+the same run. A rig whose idle turns a mesh triangle over against the setup pose, which
+`check` passed before, fails it, naming the idle and quoting rigc's line. On the four
+public examples and the trailer no idle folds [measured for #333, rig-c 2.47.1], so no
+verdict moved; every example's `expected/check.json` moved by the key and nothing else.
+`reference-demo`, an idle alone, gains the whole key after `TEXTURE_STRETCH`:
+
+```diff
+@@ -259,6 +259,18 @@
+     "severity": 1.074
+    }
+   ]
++ },
++ "ANIMATIONS_DO_NOT_FOLD": {
++  "status": "PASS",
++  "animations": [
++   "idle"
++  ],
++  "fps": 12,
++  "physics_left_out": 0,
++  "folding": [],
++  "folding_undeclared": 0,
++  "declared_not_folding": [],
++  "bar": 0
+  },
+  "RECOMPOSITE_HOLES": {
+```
+
+and `demo`, `scarf` and `reference-sample` gain `"idle"` as the first entry of its
+`animations`.
+
+What to do: nothing for a rig whose idle does not fold. A consumer that reads
+`check.json` finds the key on every rig with an animation. An idle that folds on purpose
+is declared, `"may_fold": [{ "slot": …, "animation": "idle", "why": … }]`, in the
+`--requirements` file.

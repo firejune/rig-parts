@@ -347,8 +347,8 @@ usage:
       BREATH_VISIBLE, BLINK_NO_HOLE, TIP_OVER_ROOT, STILL_REGIONS_DARK and
       RECOMPOSITE_HOLES; without an idle the loop and every line that reads idle
       frames, and no idle is rendered. The gate always runs. When motion.json
-      holds an animation beside the idle, ANIMATIONS_DO_NOT_FOLD reads each with
-      rigc render --folds, physics constraints left out: a mesh triangle turned
+      holds an animation, ANIMATIONS_DO_NOT_FOLD reads each, the idle included,
+      with rigc render --folds, physics constraints left out: a mesh triangle turned
       over against the setup pose fails, unless the --requirements file's
       may_fold declares that slot and animation with a why. The last line says
       how many of the bars measured — nine, ten with the fold bar — and names

@@ -119,7 +119,8 @@ here (gitignored).
   Issue #320 reads the animations beside the idle for folds (`ANIMATIONS_DO_NOT_FOLD`,
   rigc's `render --folds` with the 29 physics constraints left out): the seven clips fold
   no mesh. That added the key to `check.json` after `TEXTURE_STRETCH`, and nothing else in
-  it or any other file moved.
+  it or any other file moved. Issue #333 reads the idle in the same run: it folds no mesh
+  either, and `check.json`'s `animations` gains `"idle"` first — nothing else moved.
 
 ## The two corrections
 
@@ -173,7 +174,7 @@ The README loop pasted uncorrected stops where the README says to read
 
 ## The build, by figure
 
-`check` 10 of 10 bars measured, PASS (the tenth, issue #320, reads the clips beside the idle for folds):
+`check` 10 of 10 bars measured, PASS (the tenth, issues #320 and #333, reads the idle and the clips beside it for folds):
 
 | | |
 | --- | --- |
@@ -184,7 +185,7 @@ The README loop pasted uncorrected stops where the README says to read
 | `TIP_OVER_ROOT` | `bottomwear` 2.426, `handwear_r` 6.932, `handwear_l` 6.525 (floor 1.4725) |
 | `TEXTURE_STRETCH` | severity 1.097, `hair_front` (ceiling 1.926544) |
 | `BLINK_NO_HOLE` | idle frame 29 closed, hole 0 px |
-| `ANIMATIONS_DO_NOT_FOLD` | the seven clips at 12 fps, the 29 physics constraints left out: no folding mesh |
+| `ANIMATIONS_DO_NOT_FOLD` | the idle and the seven clips at 12 fps, the 29 physics constraints left out: no folding mesh |
 | `RECOMPOSITE_HOLES` | error px 14,570; uncovered 2,939 in 1,020 holes, the largest 48 px at 204,519 27x25 beside `bottomwear` |
 | meshes | 9, 1,192 vertices (`mesh_report.json`) |
 
@@ -198,7 +199,7 @@ strands, so a reader has a worked set to copy and the toolchain trailer a rig th
 perform. Everything is authored in two places: `animations.json` (named by
 `motion.animations_from`) and the config's `constraints`. Nothing in the package
 proposes either, and of the clips `check` judges one thing: that no mesh folds in them
-(`ANIMATIONS_DO_NOT_FOLD`, issue #320).
+(`ANIMATIONS_DO_NOT_FOLD`, issue #320, which reads the idle too since issue #333).
 
 **The clips.** Each is a one-shot (`loop: false`) that keys only what it needs and
 starts and ends at the setup pose, so it plays over the idle on a second track of the

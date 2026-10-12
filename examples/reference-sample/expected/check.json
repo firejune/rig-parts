@@ -256,6 +256,7 @@
  "ANIMATIONS_DO_NOT_FOLD": {
   "status": "PASS",
   "animations": [
+   "idle",
    "hop"
   ],
   "fps": 12,

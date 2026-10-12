@@ -181,8 +181,9 @@ export interface RequirementsFile {
   rests: string[];
   /**
    * Issue #320: the folds the scene means — a slot whose mesh turns a triangle
-   * over in a named animation on purpose (a sleeve hidden behind the body as
-   * the arm crosses it), each by slot and animation with the author's why.
+   * over in an animation, the idle included (issue #333), on purpose (a sleeve
+   * hidden behind the body as the arm crosses it), each by slot and animation
+   * with the author's why.
    * `ANIMATIONS_DO_NOT_FOLD` names each such fold with its why and does not
    * hold it to the bar, and fails an entry whose slot does not fold in that
    * animation, as rig-c refuses an exemption that exempts nothing. Empty when
@@ -581,11 +582,11 @@ export function resolveRequirements(file: RequirementsFile, rig: Record<string, 
     }
   }
 
-  // Issue #320: each declared fold names a slot that holds a mesh and an animation beside the idle, the ones ANIMATIONS_DO_NOT_FOLD reads.
+  // Issues #320, #333: each declared fold names a slot that holds a mesh and an animation motion.json declares — the idle
+  // included, since ANIMATIONS_DO_NOT_FOLD reads every animation.
   file.may_fold.forEach((m, i) => {
     const object = `may_fold[${i}] (slot "${m.slot}", animation "${m.animation}")`;
-    if (m.animation === 'idle') problems.push({ code: 'REQUIREMENTS_MAY_FOLD', object, detail: 'names the idle, which ANIMATIONS_DO_NOT_FOLD does not read — it reads the animations beside the idle, so declaring it excepts nothing' });
-    else if (!(m.animation in anims)) unresolved(object, `names animation "${m.animation}", which motion.json does not declare; it declares ${listed(animNames)}`);
+    if (!(m.animation in anims)) unresolved(object, `names animation "${m.animation}", which motion.json does not declare; it declares ${listed(animNames)}`);
     const slots = (Array.isArray(rig.slots) ? rig.slots : []).filter(isRecord).map((s) => s.name);
     if (!slots.includes(m.slot)) {
       unresolved(object, `names slot "${m.slot}", which rig.json does not declare`);

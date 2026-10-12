@@ -421,6 +421,7 @@
  "ANIMATIONS_DO_NOT_FOLD": {
   "status": "PASS",
   "animations": [
+   "idle",
    "tilt",
    "look_l",
    "look_r",
