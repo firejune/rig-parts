@@ -170,6 +170,15 @@ export interface RequirementsFile {
    * and names each in its line. Empty when not declared: every part hangs.
    */
   rises: string[];
+  /**
+   * Issue #245: the swinging parts whose tip is at rest — a hand lying on the
+   * bed while the shoulder moves with the breath — by name. `TIP_OVER_ROOT`
+   * holds each to the opposite relation, its tip half travelling no further
+   * than its root half, and `CHAIN_LAG` holds the chain carrying each to
+   * amplitudes that do not grow toward the tip; each line names them first.
+   * Empty when not declared: every swinging part's tip swings.
+   */
+  rests: string[];
 }
 
 /** What `check --requirements` and `build --requirements` name, said once for the help and the refusals. */
@@ -205,8 +214,8 @@ const KIND_FIELDS: Record<RequirementKind, readonly string[]> = {
 
 const NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
 
-/** The three lists of parts a scene excepts from a bar that assumes a standing figure (issue #231), in the order they are read. */
-export const EXCEPTION_LISTS = ['not_planted', 'not_swinging', 'rises'] as const;
+/** The lists of parts a scene excepts from a bar that assumes a standing figure (issues #231, #245), in the order they are read. */
+export const EXCEPTION_LISTS = ['not_planted', 'not_swinging', 'rises', 'rests'] as const;
 type ExceptionList = (typeof EXCEPTION_LISTS)[number];
 
 /** What each list's absence declares. */
@@ -214,14 +223,16 @@ const EXCEPTION_ABSENT: Record<ExceptionList, string> = {
   not_planted: 'every footwear part a planted foot',
   not_swinging: 'every handwear and bottomwear part one that swings',
   rises: 'every swinging part one that hangs',
+  rests: 'every swinging part one whose tip swings further than its root',
 };
 
 /**
  * Read and shape-check a requirements file. Every problem is collected before
  * one refusal: the file, `spec`, `fps` (required, a positive number: no
  * default), `targets` (optional), `requirements` (required, possibly empty)
- * and `not_planted`, `not_swinging` and `rises` (each optional, issue #231: a
- * non-empty list of distinct part names, no part in both of the last two;
+ * and `not_planted`, `not_swinging`, `rises` and `rests` (each optional,
+ * issues #231 and #245: a non-empty list of distinct part names, no part both
+ * in `not_swinging` and in `rises` or `rests`;
  * which parts they are is read against parts.json and the rig by `check`),
  * each entry's every field and bar by name, a key the format does not read,
  * and a name used twice. Resolving the names against the rig is
@@ -246,7 +257,7 @@ export function readRequirements(path: string): RequirementsFile {
     problems.push({ code: 'REQUIREMENTS_FIELD', object, detail });
   };
   if (raw.spec !== REQUIREMENTS_SPEC) field(`${at} field "spec"`, `is ${JSON.stringify(raw.spec)}; ${JSON.stringify(REQUIREMENTS_SPEC)} is required`);
-  for (const k of Object.keys(raw)) if (!['spec', 'fps', 'targets', 'requirements', ...EXCEPTION_LISTS].includes(k) && !freeKey(k, raw[k])) field(`${at} field "${k}"`, 'is not a field this format reads (spec, fps, targets, requirements, not_planted, not_swinging, rises; note or *_note as a string; x-<name> as a record)');
+  for (const k of Object.keys(raw)) if (!['spec', 'fps', 'targets', 'requirements', ...EXCEPTION_LISTS].includes(k) && !freeKey(k, raw[k])) field(`${at} field "${k}"`, 'is not a field this format reads (spec, fps, targets, requirements, not_planted, not_swinging, rises, rests; note or *_note as a string; x-<name> as a record)');
   let fps = NaN;
   if (!(finite(raw.fps) && raw.fps > 0)) field(`${at} field "fps"`, `is ${JSON.stringify(raw.fps)}; a positive number of frames per second is required — every named animation is sampled at it, and there is no default`);
   else fps = raw.fps;
@@ -392,8 +403,12 @@ export function readRequirements(path: string): RequirementsFile {
   lists.rises.forEach((n, i) => {
     if (lists.not_swinging.includes(n)) field(`${at} field "rises"[${i}]`, `names "${n}", which "not_swinging" names too; a part that does not swing has no tip to read up or down`);
   });
+  // Issue #245: rests is a reading (the tip no further than the root) and not_swinging is none, so a part cannot be both.
+  lists.rests.forEach((n, i) => {
+    if (lists.not_swinging.includes(n)) field(`${at} field "rests"[${i}]`, `names "${n}", which "not_swinging" names too; a part declared not swinging is not measured, so there is no tip to hold at rest — leave it in one list`);
+  });
   refuseIfAny(problems);
-  return { path: at, fps, targets, requirements, not_planted: lists.not_planted, not_swinging: lists.not_swinging, rises: lists.rises };
+  return { path: at, fps, targets, requirements, not_planted: lists.not_planted, not_swinging: lists.not_swinging, rises: lists.rises, rests: lists.rests };
 }
 
 // ---------------------------------------------------------------------------
