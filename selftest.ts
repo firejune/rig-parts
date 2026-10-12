@@ -18483,6 +18483,23 @@ function runTreeSuite(): number {
     'measured while writing the config loader: Bun strips a statement `declare(...)` as a TypeScript ambient declaration while tsc accepts it as a call, so the call vanished at run time with typecheck and lint green, and no bone was ever registered',
   );
 
+  // Issue #279: no Math.hypot on any path that writes: Bun 1.4.2 rounds its last bit one way on macOS and another on
+  // Linux (#276 measured it on bit-identical vertices), so every length is src/length.ts's edgeLength, which is
+  // correctly rounded everywhere. The scan reads code only (comments and strings stripped), so the doc comments
+  // that name the function stay, and it catches the identifier in any form a call could take — Math.hypot(...),
+  // const { hypot } = Math, a local alias.
+  const hypotWord = /\bhypot\b/;
+  const hypotScanned = sources.filter(([f]) => f === 'cli.ts' || f.startsWith('src/'));
+  const hypotFound = hypotScanned.filter(([f, t]) => hypotWord.test(codeOnly(f, t))).map(([f]) => f);
+  const hypotPlants = ['export const d = Math.hypot(3, 4);\n', 'const { hypot } = Math;\nexport const d = hypot(3, 4);\n'].map((t) => hypotWord.test(codeOnly('plant.ts', t)));
+  const hypotQuiet = hypotWord.test(codeOnly('plant.ts', '// Math.hypot rounds per platform\nexport const why = "Math.hypot";\n'));
+  say(
+    'TY15_NO_MATH_HYPOT_UNDER_SRC_OR_IN_CLI_TS',
+    hypotScanned.length > 0 && hypotScanned.some(([f]) => f === 'cli.ts') && hypotFound.length === 0 && hypotPlants.every((x) => x) && !hypotQuiet && edgeLength(34.26716181006313, 0.5713103861783111) === 34.27192399143071,
+    `${hypotScanned.length} file(s) (src/ and cli.ts): ${hypotFound.length === 0 ? 'no hypot in code' : `hypot in ${hypotFound.join(', ')}`}; planted Math.hypot(3, 4) and a destructured hypot ${hypotPlants.map((x) => (x ? 'found' : 'MISSED')).join(', ')}; the word in a comment and a string ${hypotQuiet ? 'FLAGGED' : 'not flagged'}; edgeLength on #276's edge ${edgeLength(34.26716181006313, 0.5713103861783111)}`,
+    "issue #279: Math.hypot's last bit differs between Bun on macOS and on Linux, which split one check.json between two CI machines on bit-identical geometry (#276); a written byte may not depend on the platform, so the one length is sqrt(dx*dx + dy*dy) and the call is refused by name",
+  );
+
   const self = readFileSync(join(ROOT, 'selftest.ts'), 'utf8');
   const from = self.indexOf(SUMMARY_START);
   const to = from < 0 ? -1 : self.indexOf(SUMMARY_END, from);

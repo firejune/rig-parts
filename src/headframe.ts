@@ -34,6 +34,7 @@
 import type { Point } from './config.ts';
 import { cropToSpineY } from './coords.ts';
 import type { Mask } from './raster/types.ts';
+import { edgeLength } from './length.ts';
 
 /**
  * The eye line's angle in Spine degrees (counter-clockwise, y up) through two
@@ -167,7 +168,7 @@ export function headFrame(
   const [l, r] = eyes[0][0] < eyes[1][0] ? [eyes[0], eyes[1]] : [eyes[1], eyes[0]];
   const dx = r[0] - l[0];
   const dy = r[1] - l[1];
-  const bar = Math.hypot(dx, dy);
+  const bar = edgeLength(dx, dy);
   const u: [number, number] = [dx / bar, dy / bar];
   // The bar's perpendicular toward the chin: u turned a quarter clockwise as drawn (y down).
   const n: [number, number] = [-u[1], u[0]];
