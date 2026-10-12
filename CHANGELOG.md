@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.10.0](https://github.com/rig-c/parts/compare/v1.9.1...v1.10.0) (2026-10-12)
+
+
+### Features
+
+* **assemble:** a scene painting — read the recomposite inside the figure, write its mask, and leave the frame's border out of the seam ([#291](https://github.com/rig-c/parts/issues/291)) ([76aec5a](https://github.com/rig-c/parts/commit/76aec5ae0d2f44be95446f86472c8cae237e8557)), closes [#242](https://github.com/rig-c/parts/issues/242)
+* **build:** forward check's --seam-pairs and --keep-stills, and refuse --rig and --parts by name ([#298](https://github.com/rig-c/parts/issues/298)) ([ce5b6ad](https://github.com/rig-c/parts/commit/ce5b6ad7f1f65a0e8431ee54eab268d80be30687)), closes [#257](https://github.com/rig-c/parts/issues/257)
+* **check:** a scene declares a swinging part's tip at rest — rests, the opposite relation on TIP_OVER_ROOT and CHAIN_LAG ([#296](https://github.com/rig-c/parts/issues/296)) ([81815e1](https://github.com/rig-c/parts/commit/81815e1c0bfce9e8bc836744d6d3a7bfb672a18b)), closes [#245](https://github.com/rig-c/parts/issues/245)
+* **layers:** an author-made layer is named author:&lt;label&gt; and carries no role ([#300](https://github.com/rig-c/parts/issues/300)) ([b5dc9ec](https://github.com/rig-c/parts/commit/b5dc9ecbfc5b752f86a58922f69891c5bcc1c06f)), closes [#256](https://github.com/rig-c/parts/issues/256)
+* **mesh-draft:** draft a traced outline around a coarse grid per lattice part, kept only where it holds against that part's lattice through rig-c ([#265](https://github.com/rig-c/parts/issues/265)) ([#295](https://github.com/rig-c/parts/issues/295)) ([82d2d5b](https://github.com/rig-c/parts/commit/82d2d5b3bdb032ba22999d625b6bc032b0e451e7))
+* **propose:** draft every lattice at the figure's spacing, round(H / 37), unless the part rule is asked for ([#265](https://github.com/rig-c/parts/issues/265)) ([#294](https://github.com/rig-c/parts/issues/294)) ([df11089](https://github.com/rig-c/parts/commit/df110892a917146ddf0f3c45ed37d95908d9edb3))
+
+
+### Bug Fixes
+
+* **propose:** the eye group, nose and mouth take the face's depth in the drafted turn ([#292](https://github.com/rig-c/parts/issues/292)) ([5767170](https://github.com/rig-c/parts/commit/5767170df44f2d8f1843344fd2ddb25f64ed0c94)), closes [#271](https://github.com/rig-c/parts/issues/271)
+
 ## [1.9.1](https://github.com/rig-c/parts/compare/v1.9.0...v1.9.1) (2026-10-12)
 
 
