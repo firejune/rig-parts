@@ -22,8 +22,11 @@ here (gitignored).
   config's `bones`, `meshes` and `motion` are `proposal.json`'s, value for value, but
   for the `robe_r` chain's points (below) and the two authored
   additions of issue #224 (`motion.animations_from` and `constraints`, *Gestures,
-  expressions and trailing strands* below), and its
-  `regions` are the proposal's for every part but the two shoe patches. Every other
+  expressions and trailing strands* below) and every mesh's `grid` — the config keeps
+  the part rule's (`propose --grid-rule part`), and `proposal.json` has carried the
+  figure's spacing, grid 30, since issue #265; built with it, every `check` bar passes
+  and the figure's triangles fall from 2,654 to 664; adopting it here is a change of
+  its own — and its `regions` are the proposal's for every part but the two shoe patches. Every other
   hand correction is an `assemble.patches` entry (below), with its reason in
   `assemble.patches_note`.
 - **Once the one mixed-mode example (issues #118 to #262).** From #118 `meshes.bottomwear`

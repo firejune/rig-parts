@@ -362,6 +362,11 @@ import {
   draftTurn,
   TURN_DEPTH_CAVEAT,
   withTurn,
+  DEFAULT_GRID_RULE,
+  FIGURE_GRID_DIVISOR,
+  FIGURE_GRID_IDLE_PX,
+  GRID_RULES,
+  type GridRule,
 } from './src/propose.ts';
 import { headFrame } from './src/headframe.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines, serializeBasis } from './src/diagnostics.ts';
@@ -5862,10 +5867,71 @@ function runProposeSuite(): number {
       `no flags: exit ${cliPlain.status}, proposal.json ${read('o-plain') === serializeProposal(tprop) ? 'is' : 'is NOT'} propose()'s; --full/--head: exit ${cliTurn.status}, proposal.json ${read('o-turn') === serializeProposal(turned) ? 'is' : 'is NOT'} withTurn(propose(), draftTurn()), the turn note ${cliTurn.out.includes(`note: ${tNote}`) ? 'printed' : 'NOT printed'}; --from-config with --full: exit ${cliCfg.status}`,
       'issue #251: the depths live in the See-through runs, which propose did not read before; the flags are the only way in, so a proposal written without them is byte for byte the one before the turn existed',
     );
+
+    runGridRuleControls(dir, say);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
   return bad();
+}
+
+/**
+ * Issue #265 (half 1): the drafted lattice's spacing. On fixtures/propose.ts's PROPOSE_PARTS (written into `dir`), by
+ * hand: the parts' boxes run from y 40 (face) to 250 (skirt, 150 + 100), so H = 210 and the figure's spacing is
+ * round(210 / 37) = round(5.676) = 6. The part rule: the sleeves (20x60) round(20 / 10) = 2, clamped to 5; the skirt
+ * (80x100) round(80 / 10) = 8. So the default drafts the sleeves at 6 (5 -> 6) and keeps the skirt at 8, coarser
+ * than 6; r is the part rule's, max(3, round(0.42 g)) = 3 for all three (2.1 and 3.36 round to 2 and 3); the face
+ * is a region. Under `part` the grids are 5, 5, 8 and no spacing note is written.
+ */
+function runGridRuleControls(dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const P = readPartSet(dir);
+  const fig = propose(P);
+  const part = propose(P, undefined, null, 'part');
+  const wantNote =
+    "mesh spacing: grid 6 = round(H / 37), H 210 rig px the height of every part's box together (rows 40 to 250), in place of a tenth of each part's short side (sleeve_a 5 -> 6, sleeve_b 5 -> 6; kept, already as coarse: skirt 8); r is the part's own. " +
+    'Calibrated on three figures of similar size (H 1106-1185 rig px, issue #265 Stage A), where every check bar passed at this divisor and the idle moved by up to 1.427 rig px against the finer lattice — no bar reads that. propose --grid-rule part drafts the part\'s own spacing';
+  const meshes = (pr: Proposal): string =>
+    Object.entries(pr.meshes)
+      .map(([n, m]) => `${n} ${'grid' in m ? `grid ${m.grid} r ${m.r}` : Object.keys(m).join('/')}`)
+      .join(', ');
+  // The proposal with its grids and the spacing note taken out: what must not move between the two rules.
+  const rest = (pr: Proposal): string => serializeProposal({ ...pr, meshes: Object.fromEntries(Object.entries(pr.meshes).map(([n, m]) => [n, 'grid' in m ? { ...m, grid: 0 } : m])), notes: pr.notes.filter((n) => !n.startsWith('mesh spacing:')) });
+  const figureHeld = (pr: Proposal): boolean =>
+    meshes(pr) === 'sleeve_a grid 6 r 3, sleeve_b grid 6 r 3, skirt grid 8 r 3' && pr.notes.filter((n) => n.startsWith('mesh spacing:')).length === 1 && pr.notes.includes(wantNote) && rest(pr) === rest(part);
+  // Planted: the coarser skirt brought down to the figure's spacing — a rule that replaced every grid instead of raising the finer ones.
+  const flattened: Proposal = { ...fig, meshes: { ...fig.meshes, skirt: { ...(fig.meshes.skirt as Extract<Proposal['meshes'][string], { grid: number }>), grid: 6 } } };
+  say(
+    'PR99_THE_DRAFTED_LATTICE_TAKES_THE_FIGURE_SPACING_AND_A_COARSER_PART_KEEPS_ITS_OWN',
+    figureHeld(fig) && !figureHeld(part) && !figureHeld(flattened) && Object.values(fig.meshes).every((m) => 'grid' in m) && DEFAULT_GRID_RULE === 'figure' && FIGURE_GRID_DIVISOR === 37 && FIGURE_GRID_IDLE_PX === 1.427,
+    `default: ${meshes(fig)}; note ${fig.notes.includes(wantNote) ? 'as derived' : `NOT as derived: ${JSON.stringify(fig.notes.find((n) => n.startsWith('mesh spacing:')) ?? null)}`}; everything else ${rest(fig) === rest(part) ? 'the part rule\'s' : 'DIFFERENT from the part rule\'s'}; ` +
+      `the planted part-rule proposal (${meshes(part)}) ${figureHeld(part) ? 'PASSES' : 'fails'} the reading and the planted flattened skirt ${figureHeld(flattened) ? 'PASSES' : 'fails'} it; every drafted mesh a lattice: ${Object.values(fig.meshes).every((m) => 'grid' in m)}`,
+    'issue #265 half 1: one spacing for the figure, round(H / 37), the divisor at which Stage A found every check bar passing on three figures — the finer parts are raised to it, a part already coarser keeps its own, r and every other value stay the part rule\'s, and the note says the cost and the calibration. propose drafts lattices only, so no drafted mesh has a soft region whose spacing could move',
+  );
+
+  const painting = join(dir, 'painting.png');
+  const cliFig = runCli(['propose', '--parts', dir, '--source', painting, '--out', join(dir, 'g-figure')]);
+  const cliPart = runCli(['propose', '--parts', dir, '--source', painting, '--out', join(dir, 'g-part'), '--grid-rule', 'part']);
+  const cliBad = runCli(['propose', '--parts', dir, '--source', painting, '--out', join(dir, 'g-bad'), '--grid-rule', 'lattice']);
+  const cliCfg = runCli(['propose', '--parts', dir, '--source', painting, '--out', join(dir, 'g-cfg'), '--from-config', join(dir, 'none.json'), '--grid-rule', 'part']);
+  const read = (sub: string): string => (existsSync(join(dir, sub, 'proposal.json')) ? readFileSync(join(dir, sub, 'proposal.json'), 'utf8') : '');
+  say(
+    'PR100_THE_REFERENCE_GRID_RULE_IS_ASKED_FOR_BY_NAME_AND_WRITES_THE_PART_SPACING_WITH_NO_SPACING_NOTE',
+    meshes(part) === 'sleeve_a grid 5 r 3, sleeve_b grid 5 r 3, skirt grid 8 r 3' &&
+      !part.notes.some((n) => n.startsWith('mesh spacing:')) &&
+      GRID_RULES.join(',') === 'figure,part' &&
+      cliFig.status === 0 &&
+      read('g-figure') === serializeProposal(fig) &&
+      cliPart.status === 0 &&
+      read('g-part') === serializeProposal(part) &&
+      read('g-part') !== read('g-figure') &&
+      cliBad.status === 2 &&
+      cliBad.out.includes('--grid-rule lattice; one of figure, part is required') &&
+      !existsSync(join(dir, 'g-bad', 'proposal.json')) &&
+      cliCfg.status === 2 &&
+      cliCfg.out.includes('--grid-rule chooses the drafted spacing; --from-config proposes nothing'),
+    `part: ${meshes(part)}, spacing note ${part.notes.some((n) => n.startsWith('mesh spacing:')) ? 'WRITTEN' : 'absent'}; CLI without the flag exit ${cliFig.status}, proposal.json ${read('g-figure') === serializeProposal(fig) ? 'is' : 'is NOT'} propose()'s; --grid-rule part exit ${cliPart.status}, ${read('g-part') === serializeProposal(part) ? 'is' : 'is NOT'} propose(…, 'part')'s and ${read('g-part') !== read('g-figure') ? 'differs from' : 'is THE SAME AS'} the default's; --grid-rule lattice exit ${cliBad.status}; with --from-config exit ${cliCfg.status}`,
+    "issue #265: the reference's per-part rule is what the oracle examples are held to, so it must stay reachable by name and write exactly what it wrote before — an author who asks for nothing gets the figure's spacing, and a rule the proposer does not know is a usage error naming the two it does",
+  );
 }
 
 /**
@@ -7254,8 +7320,9 @@ function runLegChainCases(dir: string, Pe: PartSet, Je: RigJoints, se: Proposal,
   writeProposeFixture(dJoined, [...POSES.standing.parts, LEGS_JOINED], POSES.standing.rig);
   const Pa = readPartSet(dApart);
   const Pj = readPartSet(dJoined);
-  const apart = propose(Pa, Ja);
-  const joined = propose(Pj, Ja);
+  // The reference's grid rule (issue #265), under which the box arithmetic above derives grid 5.
+  const apart = propose(Pa, Ja, null, 'part');
+  const joined = propose(Pj, Ja, null, 'part');
   const apartNote = `legs (full:legwear): one chain per leg, leg_r and leg_l, sharing its mesh — both ankles lie on its art, and its art breaks along the line from r_knee to l_knee and along the line from r_ankle to l_ankle, so the legs are painted apart; each runs hip -> knee -> ankle from its side's joints, and ${still}`;
   const joinedNote = `legs (full:legwear): one leg chain, leg, for both legs — both ankles lie on its art, and its art runs unbroken along the line from r_knee to l_knee, so the legs touch, cross or overlap in it and a chain per leg would pull one stretch of art two ways; the chain runs hip -> knee -> ankle through the midpoints of the two hips, the two knees and the two ankles, and ${still}`;
   say(
@@ -12055,6 +12122,17 @@ function summarise(d: { over: string[]; within: string[] }, limit = 3): string {
   return `${over}${d.within.length > 0 ? `; ${d.within.length} within: ${d.within.slice(0, limit).join('; ')}${d.within.length > limit ? '; …' : ''}` : ''}`;
 }
 
+/**
+ * The examples whose `proposal.json` is the oracle (issue #265): the reference implementation's proposals, which hold
+ * this proposer to the reference's rules, its per-part grid rule among them. They are proposed under `part`; every
+ * other example under the default, the figure's spacing.
+ */
+const ORACLE_EXAMPLES: readonly string[] = ['reference-demo', 'reference-sample'];
+
+function exampleGridRule(key: string): GridRule {
+  return ORACLE_EXAMPLES.includes(key) ? 'part' : DEFAULT_GRID_RULE;
+}
+
 /** The face-feature tags issue #76's measurement removes from an example's plan (its variant B): the face and everything on it. */
 const FACE_FEATURE_PLAN_TAGS: readonly string[] = ['face', 'eyewhite-r', 'eyewhite-l', 'irides-r', 'irides-l', 'eyelash-r', 'eyelash-l', 'eyebrow-r', 'eyebrow-l', 'mouth'];
 
@@ -12115,7 +12193,7 @@ function runFacelessExample(key: string, ex: string, out: string, dir: string, s
   let withFace: Proposal | null = null;
   let exact = 'not proposed';
   try {
-    withFace = propose(readPartSet(out));
+    withFace = propose(readPartSet(out), undefined, null, exampleGridRule(key));
     const tracked = `${JSON.stringify(JSON.parse(readFileSync(join(ex, 'proposal.json'), 'utf8')), null, 2)}\n`;
     const built = serializeProposal(withFace);
     exact = built === tracked ? `identical, ${built.length} bytes` : `DIFFERENT from byte ${[...built].findIndex((c, i) => c !== tracked[i])}`;
@@ -12457,7 +12535,7 @@ function runChainSuite(): number | null {
       let proposalOk = false;
       try {
         const P = readPartSet(out);
-        const prop = propose(P);
+        const prop = propose(P, undefined, null, exampleGridRule(key));
         checkProposal(P, prop);
         const d = jsonDiffs(readJsonAt(join(ex, 'proposal.json')), JSON.parse(serializeProposal(prop)) as unknown, () => null);
         proposalOk = d.over.length === 0;
@@ -12470,6 +12548,28 @@ function runChainSuite(): number | null {
         proposalOk,
         proposal,
         "the tracked proposal.json is what the reference proposer wrote from the reference's parts (for scarf, which the reference never saw, this port's proposer on this port's build); the port's proposer on the port's parts must write the same, which is the proposer's half the examples could not reach before a build existed",
+      );
+
+      // Issue #265: which grid rule the tracked proposal holds, read both ways — the oracle's is the part rule's and the
+      // default would move it; every other example's is the default's and the part rule would move it.
+      let ruleDetail = '';
+      let ruleOk = false;
+      try {
+        const P = readPartSet(out);
+        const tracked = `${JSON.stringify(JSON.parse(readFileSync(join(ex, 'proposal.json'), 'utf8')), null, 2)}\n`;
+        const asFig = serializeProposal(propose(P)) === tracked;
+        const asPart = serializeProposal(propose(P, undefined, null, 'part')) === tracked;
+        const oracle = ORACLE_EXAMPLES.includes(key);
+        ruleOk = oracle ? asPart && !asFig : asFig && !asPart;
+        ruleDetail = `${oracle ? 'an oracle example' : 'not an oracle example'}: the tracked proposal ${asFig ? 'IS' : 'is not'} the figure rule's and ${asPart ? 'IS' : 'is not'} the part rule's`;
+      } catch (err) {
+        ruleDetail = `refused or crashed: ${(err as Error).message.split('\n')[0]}`;
+      }
+      say(
+        `CH17_THE_ORACLE_PROPOSALS_HOLD_THE_PART_GRID_RULE_AND_EVERY_OTHER_THE_FIGURE_SPACING[${key}]`,
+        ruleOk,
+        ruleDetail,
+        "issue #265: the reference proposals are the oracle and keep the reference's grid rule byte for byte, asked for by name; an example of this port is what an author who asks for nothing gets — each read both ways, so a rule that stopped mattering on either side shows",
       );
 
       runFacelessExample(key, ex, out, dir, say);
