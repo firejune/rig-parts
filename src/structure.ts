@@ -74,6 +74,7 @@ import { parseRigSpec, RIG_SPEC_VERSION, type RigBone as RigcBone, type RigSpec 
 import { type ConfigConstraint, CONSTRAINT_FOLLOWS, parseConfig, parseProposalSections, type Point, ROOT_BONE, type SkeletonSections, weightsABone } from './config.ts';
 import { computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toWorld } from './coords.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
+import { edgeLength } from './length.ts';
 
 // ---------------------------------------------------------------------------
 // the normal form
@@ -633,16 +634,16 @@ function pairRow(l: NormalBone, r: NormalBone, left: Skeleton, right: Skeleton, 
     return sides;
   };
   const originWhy = geometric(l.originWhy, r.originWhy);
-  const origin: Figure = originWhy !== null || l.origin === null || r.origin === null ? { skip: originWhy ?? '' } : { value: Math.hypot(carry(l.origin)[0] - r.origin[0], carry(l.origin)[1] - r.origin[1]) };
+  const origin: Figure = originWhy !== null || l.origin === null || r.origin === null ? { skip: originWhy ?? '' } : { value: edgeLength(carry(l.origin)[0] - r.origin[0], carry(l.origin)[1] - r.origin[1]) };
   const tipWhy = geometric(l.tipWhy, r.tipWhy);
   const lo = l.origin;
   const ro = r.origin;
   const lt = l.tip;
   const rt = r.tip;
   const both = lo !== null && ro !== null && lt !== null && rt !== null;
-  const tip: Figure = tipWhy !== null || !both ? { skip: tipWhy ?? '' } : { value: Math.hypot(carry(lt)[0] - rt[0], carry(lt)[1] - rt[1]) };
-  const ll = lo !== null && lt !== null ? Math.hypot(lt[0] - lo[0], lt[1] - lo[1]) : null;
-  const rl = ro !== null && rt !== null ? Math.hypot(rt[0] - ro[0], rt[1] - ro[1]) : null;
+  const tip: Figure = tipWhy !== null || !both ? { skip: tipWhy ?? '' } : { value: edgeLength(carry(lt)[0] - rt[0], carry(lt)[1] - rt[1]) };
+  const ll = lo !== null && lt !== null ? edgeLength(lt[0] - lo[0], lt[1] - lo[1]) : null;
+  const rl = ro !== null && rt !== null ? edgeLength(rt[0] - ro[0], rt[1] - ro[1]) : null;
   const difference: Figure = tipWhy !== null || ll === null || rl === null ? { skip: tipWhy ?? '' } : { value: rl - scale * ll };
   const dir: Figure = tipWhy !== null || !both ? { skip: tipWhy ?? '' } : { value: normaliseDegrees(direction(ro, rt) - direction(lo, lt)) };
   return { left: l.name, right: r.name, origin, parent: parentVerdict(l, r, left, right, fwd, inv), tip, length: { left: ll, right: rl, difference }, direction: dir };

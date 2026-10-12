@@ -55,6 +55,7 @@ import { refuseIfAny } from './errors.ts';
 import { type BoneWorld, type GeometryPose, type MeshRest, stretchFigures, stretchSeverity } from './instruments.ts';
 import { ART_ALPHA } from './mesh.ts';
 import { alphaAbove, type Raster } from './raster/types.ts';
+import { edgeLength } from './length.ts';
 
 /** The file's `spec`. */
 export const REQUIREMENTS_SPEC = 'spine-parts-requirements/1';
@@ -820,7 +821,7 @@ export function contactLine(r: ContactRequirement, p: Poses, facts: RigFacts): R
   for (let i = 0; i < p.times.length; i++) {
     const a = pointOf(track.frames[i], r.point, len);
     const b = at(i);
-    const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    const d = edgeLength(a[0] - b[0], a[1] - b[1]);
     if (d > worst) {
       worst = d;
       wi = i;
@@ -1214,7 +1215,7 @@ export function seamLine(r: SeamRequirement, pairs: readonly SeamPair[], frames:
         continue;
       }
       read++;
-      const o = Math.hypot(da[0] - db[0], da[1] - db[1]);
+      const o = edgeLength(da[0] - db[0], da[1] - db[1]);
       if (o > worst) {
         worst = o;
         wi = i;

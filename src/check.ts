@@ -149,6 +149,7 @@ import { readPng, writePng } from './raster/png.ts';
 import { newFloatImage, newRaster, type Raster } from './raster/types.ts';
 import type { BaseTag } from './tags.ts';
 import { type ScaleTranslate, warpAffine } from './raster/warp.ts';
+import { edgeLength } from './length.ts';
 
 // ---------------------------------------------------------------------------
 // the bars
@@ -2564,7 +2565,7 @@ function breathCarrier(
     const a0 = added[0];
     if (a0 === null || added.some((d) => d === null)) continue;
     const delta = (added as Array<[number, number]>).map(([x, y]) => [x - a0[0], y - a0[1]] as const);
-    const breath = Math.max(...delta.map(([x, y]) => Math.hypot(x, y)));
+    const breath = Math.max(...delta.map(([x, y]) => edgeLength(x, y)));
     if (!(breath > 0)) continue;
     const share = weights.map((v) => v.filter((w) => atOrUnder(String(w.bone), k)).reduce((s, w) => s + (w.weight as number), 0));
     const held = m.shown.map((f, i) => (f === null ? null : { rest: f.rest, triangles: f.triangles, posed: f.posed.map((v, j) => v - share[j >> 1] * delta[i][j & 1]) }));

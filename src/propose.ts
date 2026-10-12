@@ -131,6 +131,7 @@ import { pyRound as roundTo } from './round.ts';
 import { KEYPOINT_NAMES, type KeypointName } from './skeleton.ts';
 import { configRoles, type RoleOf } from './structure.ts';
 import { TURN_BONE, turnFractions, turnNearest, turnPivot, type TurnSpec } from './turn.ts';
+import { edgeLength } from './length.ts';
 
 // ---------------------------------------------------------------------------
 // the output shape — config-shaped, key order as the reference writes it
@@ -1682,7 +1683,7 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
       const [g, r] = gridR(p);
       const segs: Segment[] = [];
       for (const a of armPlan.arms.filter((q) => q.part === p)) {
-        const len = Math.hypot(a.elbow[0] - a.shoulder[0], a.elbow[1] - a.shoulder[1]);
+        const len = edgeLength(a.elbow[0] - a.shoulder[0], a.elbow[1] - a.shoulder[1]);
         const d: [number, number] = [(a.elbow[0] - a.shoulder[0]) / len, (a.elbow[1] - a.shoulder[1]) / len];
         segs.push(['chest', rnd([a.shoulder[0] - 14 * d[0], a.shoulder[1] - 14 * d[1]]), rnd([a.shoulder[0] + 2 * d[0], a.shoulder[1] + 2 * d[1]])], `sleeve_${a.side}`);
       }
@@ -1921,7 +1922,7 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
       const segs: Segment[] = [];
       for (const c of legPlan.chains.filter((q) => q.part === p)) {
         // The sleeve's chest stub, laid along the thigh from the hip: 14 px above the hip to 2 px below it.
-        const len = Math.hypot(c.knee[0] - c.hip[0], c.knee[1] - c.hip[1]);
+        const len = edgeLength(c.knee[0] - c.hip[0], c.knee[1] - c.hip[1]);
         const d: [number, number] = [(c.knee[0] - c.hip[0]) / len, (c.knee[1] - c.hip[1]) / len];
         segs.push(['hip', rnd([c.hip[0] - 14 * d[0], c.hip[1] - 14 * d[1]]), rnd([c.hip[0] + 2 * d[0], c.hip[1] + 2 * d[1]])], c.chain);
       }
@@ -1993,7 +1994,7 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
  * note says so.
  */
 export function breathTrack(neck: readonly [number, number], hip: readonly [number, number]): { track: ProposedSingleTrack; note: string } {
-  const length = Math.hypot(hip[0] - neck[0], hip[1] - neck[1]);
+  const length = edgeLength(hip[0] - neck[0], hip[1] - neck[1]);
   const run = `neck ${pyIntList(neck)} -> hip ${pyIntList(hip)}`;
   if (length === 0) {
     const a = REFERENCE_BREATH_AMP;
@@ -2028,7 +2029,7 @@ interface TrunkLine {
 function trunkLineOf(neck: readonly [number, number], hip: readonly [number, number]): TrunkLine | null {
   const dx = hip[0] - neck[0];
   const dy = hip[1] - neck[1];
-  const len = Math.hypot(dx, dy);
+  const len = edgeLength(dx, dy);
   if (len === 0) return null;
   const u: [number, number] = [dx / len, dy / len];
   return { u, v: [u[1], -u[0]] };
@@ -2421,7 +2422,7 @@ function jointNotes(joints: RigJoints, f: JointNoteFacts): string[] {
     if (j.at === null) return;
     const e = f.eyes[i];
     if (e === null) tell(n, `${said(n, j)}: no bone takes it — an eye bone comes only from an eyewhite part`);
-    else tell(n, `${said(n, j)}: bone ${e.bone} is measured off ${e.part} (its box centre ${fmtAt(e.at)}) and is not moved; the joint is ${pyFixed(Math.hypot(j.at[0] - e.at[0], j.at[1] - e.at[1]), 1)} px from it`);
+    else tell(n, `${said(n, j)}: bone ${e.bone} is measured off ${e.part} (its box centre ${fmtAt(e.at)}) and is not moved; the joint is ${pyFixed(edgeLength(j.at[0] - e.at[0], j.at[1] - e.at[1]), 1)} px from it`);
   });
   const rest = KEYPOINT_NAMES.filter((n) => !told.has(n));
   if (rest.length > 0) out.push(`no rule reads ${rest.map((n) => said(n, J[n])).join(', ')} — no bone is authored from them`);
@@ -2988,8 +2989,8 @@ export function lint(
     if (chest !== null && !(along(chest) > 0 && along(chest) < 1)) findings.push({ kind: 'chest-not-between', chest, t: along(chest), neck: T.neck, hips: T.hips });
     if (hip !== null && chest !== null && along(hip) <= along(chest)) findings.push({ kind: 'hip-not-past-chest', hip, chest, tHip: along(hip), tChest: along(chest) });
     if (hip !== null) {
-      const dNeck = Math.hypot(hip[0] - T.neck[0], hip[1] - T.neck[1]);
-      const dHips = Math.hypot(hip[0] - T.hips[0], hip[1] - T.hips[1]);
+      const dNeck = edgeLength(hip[0] - T.neck[0], hip[1] - T.neck[1]);
+      const dHips = edgeLength(hip[0] - T.hips[0], hip[1] - T.hips[1]);
       if (dNeck < dHips) findings.push({ kind: 'hip-nearer-neck', hip, neck: T.neck, hips: T.hips, dNeck, dHips });
     }
   } else {
@@ -3006,7 +3007,7 @@ export function lint(
     for (const c of basis.chains) {
       if (c.line === null) continue;
       const { from, to } = c.line;
-      const len = Math.hypot(to[0] - from[0], to[1] - from[1]);
+      const len = edgeLength(to[0] - from[0], to[1] - from[1]);
       const e = spec.bones.find((b) => 'chain' in b && b.chain === c.chain);
       if (e === undefined || !('chain' in e)) continue;
       const pts: Array<[string, Point]> = [...e.points.map((q, i): [string, Point] => [`${c.chain}${i}`, q]), [`${c.chain} tip`, e.tip]];
@@ -3218,7 +3219,7 @@ export function compare(proposal: readonly BoneEntry[], config: readonly BoneEnt
   const rows: Array<[string, number]> = [];
   for (const [n, cb] of b) {
     const pb = a.get(n);
-    if (pb !== undefined) rows.push([n, Math.hypot(pb.x - cb.x, pb.y - cb.y)]);
+    if (pb !== undefined) rows.push([n, edgeLength(pb.x - cb.x, pb.y - cb.y)]);
   }
   return { rows, onlyConfig: [...b.keys()].filter((n) => !a.has(n)), onlyProposal: [...a.keys()].filter((n) => !b.has(n)) };
 }
@@ -3287,7 +3288,7 @@ function line(r: Raster, a: readonly [number, number], b: readonly [number, numb
 function dot(r: Raster, cx: number, cy: number): void {
   for (let dy = -4; dy <= 4; dy++) {
     for (let dx = -4; dx <= 4; dx++) {
-      const d = Math.hypot(dx, dy);
+      const d = edgeLength(dx, dy);
       if (d <= 3.5) setPx(r, Math.round(cx) + dx, Math.round(cy) + dy, [255, 0, 0]);
       else if (d <= 4.5) setPx(r, Math.round(cx) + dx, Math.round(cy) + dy, [0, 0, 0]);
     }

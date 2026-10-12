@@ -82,6 +82,7 @@
 import { type BoneMotionRange, type EnvelopeBoneRanges, MeshReductionError, type MeshQualityReport, type MeshReductionInput, type SkinningEnvelope, type SkinningEnvelopeBone, skinningEnvelopeBone } from 'rig-c/mesh';
 import type { ConfigConstraint } from './config.ts';
 import type { MotionKey, MotionSpec } from './motion.ts';
+import { edgeLength } from './length.ts';
 
 /** What the derivation reads off the rig besides the part: the bones (name, parent), each bone's setup joint in crop px, the idle as written, the constraints. */
 export interface EnvelopeBasis {
@@ -168,7 +169,7 @@ export function boneRange(basis: EnvelopeBasis, bone: string, origin: readonly [
     rotate,
     scaleX,
     scaleY,
-    translate: Math.hypot(tx, ty),
+    translate: edgeLength(tx, ty),
     setup: { ...SETUP },
   };
 }

@@ -35,6 +35,7 @@
  * latent size scales every point by `w / 832`, `h / 1216`.
  */
 import { newRaster, type Raster } from './raster/types.ts';
+import { edgeLength } from './length.ts';
 
 export type SkeletonName = 'stand_sides' | 'stand_clasp';
 
@@ -391,7 +392,7 @@ export function renderSkeleton(pose: SkeletonName | PosePoints, w: number, h: nu
     const [x1, y1] = kp[i1 - 1];
     const [x2, y2] = kp[i2 - 1];
     const angle = Math.atan2(y1 - y2, x1 - x2) * RAD_TO_DEG;
-    const poly = ellipsePoly((x1 + x2) / 2, (y1 + y2) / 2, Math.hypot(x1 - x2, y1 - y2) / 2, sw, angle);
+    const poly = ellipsePoly((x1 + x2) / 2, (y1 + y2) / 2, edgeLength(x1 - x2, y1 - y2) / 2, sw, angle);
     const c = COLORS[i];
     pilFillPolygon(r, poly, [Math.trunc(c[0] * 0.6), Math.trunc(c[1] * 0.6), Math.trunc(c[2] * 0.6)]);
   });
