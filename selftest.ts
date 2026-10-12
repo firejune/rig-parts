@@ -230,7 +230,7 @@ import { BLOCKED_LABEL, barsOf, basisOf, cappedReducer, classify, costLine, coun
 import { withPolicyMotion } from './fixtures/automotion.ts';
 import { type BStar, bStar, type CellRow as ToolCellRow, nearestRank, parseArgs as parseBoundaryArgs, pendingRow, policyAt, render as renderBoundary, sagittas, sagittaSummary } from './tools/auto_boundary_survey.ts';
 import { type AutoMotionCase, explicitFrameId, idleSchedule, localRow, motionInput, motionStimulus, motionVerdict, runComparison, stimulusAnimations, withStimulus } from './src/automotion.ts';
-import { motionGates, type MotionGateRun, replaySearch, stimulusTexts, strayClause } from './src/build.ts';
+import { loopCheckLine, loopStage, motionGates, type MotionGateRun, replaySearch, stimulusTexts, strayClause } from './src/build.ts';
 import {
   bisectAccepted,
   type CountedProbe,
@@ -12222,6 +12222,62 @@ function runLoopSuite(): number {
       kept.status === 0 && keptFrames === 3 && kept.out.includes('differs from f0000.png') && !kept.out.includes('is dropped'),
       `exit ${kept.status}; ${keptFrames} frame(s) in the APNG for 3 rendered`,
       'the drop is a consequence of a measured equality, not a habit: when the last frame is not frame 0, dropping it would cut a real pose',
+    );
+
+    // Issue #325: the jump line names its cause and its figures. The open set by hand: f0000 is white in columns 0-9 and
+    // (200,30,30) after, f0002 white in 0-4 and (30,200,30) after, so columns 5-9 differ by 220 (250 vs 30) and 10-39 by
+    // 170; max |d| 220, and 35 columns x 30 rows = 1050 px over 40. The planted negative is a set that closes ([a, b2, a]):
+    // told the rig holds physics, it must still drop its end frame and print no jump and no remedy.
+    const jumpWith = (frames: string, physics: number | undefined): string[] => {
+      const lines: string[] = [];
+      loopStage(frames, join(dir, 'jump.png'), 'apng', (l) => lines.push(l), undefined, physics);
+      return lines.filter((l) => l.includes('f0000.png'));
+    };
+    const closedDir = join(dir, 'closed', 'idle');
+    mkdirSync(closedDir, { recursive: true });
+    [a, b2, a].forEach((im, i) => writeFileSync(join(closedDir, `f${String(i).padStart(4, '0')}.png`), encodePngBytes(im)));
+    writeFileSync(join(dir, 'closed', 'frames.json'), readFileSync(join(dir, 'open', 'frames.json')));
+    const figures = 'f0002.png differs from f0000.png by max |d| 220, 1050 px over 40, so every frame is kept and the loop will jump at the wrap';
+    const phys = jumpWith(join(dir, 'open'), 2);
+    const none = jumpWith(join(dir, 'open'), 0);
+    const unknown = jumpWith(join(dir, 'open'), undefined);
+    const closedPhys = jumpWith(join(dir, 'closed'), 2);
+    const remedy = '`build --loop --lead-in <n>`';
+    say(
+      'LP11_THE_JUMP_AT_THE_WRAP_NAMES_ITS_FIGURES_ITS_CAUSE_AND_WITH_PHYSICS_THE_LEAD_IN',
+      phys.length === 1 &&
+        phys[0].startsWith(`  ${figures}: the rig holds 2 physics constraint(s), and rigc's render starts every one at rest at frame 0`) &&
+        phys[0].includes(remedy) &&
+        phys[0].includes('docs/AUTHORING.md §5') &&
+        none.length === 1 &&
+        none[0].startsWith(`  ${figures}: the rig holds no physics constraint`) &&
+        none[0].includes('CHECK_LOOP_CLOSES') &&
+        !none[0].includes(remedy) &&
+        unknown.length === 1 &&
+        unknown[0].startsWith(`  ${figures}; the frames alone do not say why`) &&
+        unknown[0].includes(remedy) &&
+        unknown[0].includes('CHECK_LOOP_CLOSES') &&
+        closedPhys.length === 1 &&
+        closedPhys[0].includes('equals f0000.png byte for byte, so it is dropped') &&
+        !closedPhys[0].includes('jump') &&
+        !closedPhys[0].includes(remedy),
+      `physics 2: ${phys.join(' | ') || 'no line'}; physics 0: ${none.join(' | ') || 'no line'}; not known (loop --frames): ${unknown.join(' | ') || 'no line'}; planted closed set told physics 2: ${closedPhys.join(' | ') || 'no line'}`,
+      "a consumer that has just read check's `max |d| 0` and then 'the loop will jump' needs the cause and the flag on the line that reports the jump; with no physics the lead-in settles nothing, so it is not offered, and a set that closes has no jump to explain whatever the rig holds",
+    );
+
+    // Issue #325: check's loop line says on itself that physics was left out of its comparison. The figures are written
+    // by hand: the demo's idle, 41 frames at 12 fps, its last at 40 x (1/12) s as rigc writes it.
+    const idle41 = { frames: 41, fps: 12, duration: 40 * (1 / 12), lastIndex: 40 };
+    const checkPlain = loopCheckLine(idle41, 0, 0);
+    const withPhys = loopCheckLine(idle41, 0, 29);
+    say(
+      'LP12_CHECKS_LOOP_LINE_SAYS_ON_ITSELF_THAT_ITS_PHYSICS_WAS_LEFT_OUT',
+      checkPlain === `loop: idle 41 frame(s) at 12 fps, f0000 vs f0040 (t = ${40 * (1 / 12)}s): max |d| 0 (0 required)` &&
+        withPhys.startsWith(`loop: idle 41 frame(s) at 12 fps, f0000 vs f0040 (t = ${40 * (1 / 12)}s) with the rig's 29 physics constraint(s) left out (`) &&
+        withPhys.includes(remedy) &&
+        withPhys.endsWith(': max |d| 0 (0 required)'),
+      `no physics: ${checkPlain}; 29 constraints: ${withPhys}`,
+      "the comparison's max |d| 0 is true of the rig without its physics; said five lines later it reads as the loop closing, which the frames rendered with physics do not",
     );
 
     const openIdx = join(dir, 'open-indexed.png');

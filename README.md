@@ -38,7 +38,7 @@ against 1.4725; moved, 2.425). One input-stage edit: <code>hair_back</code> is t
 from the full run, because the twin tails leave the head crop sideways (a plan edit).
 <code>check</code> printed, verbatim:<br/>
 <code>51 assertions: 25 measured (25 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"</code><br/>
-<code>loop: idle 41 frame(s) at 12 fps, f0000 vs f0040 (t = 3.333333333333333s): max |d| 0 (0 required)</code><br/>
+<code>loop: idle 41 frame(s) at 12 fps, f0000 vs f0040 (t = 3.333333333333333s) with the rig's 29 physics constraint(s) left out (named on the `loop physics:` line; rendered with them, the ends need not meet — `build --loop --lead-in &lt;n&gt;`): max |d| 0 (0 required)</code><br/>
 <code>seam: setup pose at 654x1216, scale 0.9438: mean |d| 0.147 (&lt;= 1.0), 0 px over 40, 0.00 rig px (the count / s²; &lt;= 50), 0 px over 80 (reported)</code><br/>
 <code>pack: skeleton.png 1051x972, 23 region(s), 96.9% covered, padding 2, page edges free, shape polygon</code><br/>
 The loop is that build's indexed APNG, 40 frames at 12 fps, 703,909 bytes, one
