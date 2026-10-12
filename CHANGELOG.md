@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.14.0](https://github.com/rig-c/parts/compare/v1.13.1...v1.14.0) (2026-10-12)
+
+
+### Features
+
+* **check:** read every animation beside the idle for folds with rigc render --folds — a bar on the keys, with may_fold exceptions ([#332](https://github.com/rig-c/parts/issues/332)) ([e7aee13](https://github.com/rig-c/parts/commit/e7aee13389787e0e6f241031baae7ed2e7bfcd58)), closes [#320](https://github.com/rig-c/parts/issues/320)
+* **mesh-draft:** draft a part whose islands ride one bone as the islands joined by bridges ([#335](https://github.com/rig-c/parts/issues/335)) ([f32d002](https://github.com/rig-c/parts/commit/f32d002d1f3691ec7027e040af63c5548ad60f19)), closes [#326](https://github.com/rig-c/parts/issues/326)
+
+
+### Bug Fixes
+
+* **build:** the loop's jump line names its figures, its cause and `--lead-in`; check's loop line says its physics was left out ([#328](https://github.com/rig-c/parts/issues/328)) ([86a76ce](https://github.com/rig-c/parts/commit/86a76ce74305b32c648b0650e4021d369c3a36dd)), closes [#325](https://github.com/rig-c/parts/issues/325)
+* **check:** a stretch requirement's line names the worst edge's bones and chains, as CHECK_TEXTURE_STRETCH does ([#331](https://github.com/rig-c/parts/issues/331)) ([b1269ae](https://github.com/rig-c/parts/commit/b1269ae109d7c7b27d6b3c09f57b2e14107f677a)), closes [#321](https://github.com/rig-c/parts/issues/321)
+* **check:** BREATH_VISIBLE reads the torso without footwear and the feet without topwear, and says 1 of 2 halves measured ([#334](https://github.com/rig-c/parts/issues/334)) ([89ae116](https://github.com/rig-c/parts/commit/89ae116c76e1e8c08d9b1ab2c5161ebbf2ea3c7c))
+* **check:** rises reads the chain's last link, the end the tip half is the art of — a folded arm declared rises is accepted ([#330](https://github.com/rig-c/parts/issues/330)) ([5c85b33](https://github.com/rig-c/parts/commit/5c85b332ecbd236181bd0d78dec0706ce9140c5a)), closes [#322](https://github.com/rig-c/parts/issues/322)
+
 ## [1.13.1](https://github.com/rig-c/parts/compare/v1.13.0...v1.13.1) (2026-10-12)
 
 
