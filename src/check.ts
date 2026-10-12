@@ -2452,7 +2452,8 @@ export function measureRequirements(inp: CheckInputs, file: RequirementsFile, bu
       if (r.kind === 'contact') line = contactLine(r, d.poses, facts);
       else if (r.kind === 'aim') line = aimLine(r, d.poses, facts);
       else if (r.kind === 'range') line = rangeLine(r, d.poses, facts);
-      else if (r.kind === 'stretch') line = stretchRequirementLine(r, d.geo.meshes, d.geo.frames, d.poses);
+      // Issue #321: the worst edge's vertices named as CHECK_TEXTURE_STRETCH names them (#314), off the rig this render posed.
+      else if (r.kind === 'stretch') line = stretchRequirementLine(r, d.geo.meshes, d.geo.frames, d.poses, (edge) => edgeBonesText(scene.rig, scene.motion, r.slot, r.attachment, edge));
       else if (r.kind === 'seam') {
         const shown = attachmentPoses(d.path, d.poses.indices.length);
         const frames: SeamFrame[] = shown.map((f) => ({ part: f.get(r.part) ?? null, neighbour: f.get(r.neighbour) ?? null }));
