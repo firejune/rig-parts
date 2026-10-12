@@ -110,3 +110,52 @@ export function writeDraftFixtureWithContour(dir: string, grid: number): { confi
   c.regions = {};
   return writeRigFixture(dir, c, draftImages(), draftParts());
 }
+
+/**
+ * The islands fixture (issue #326, Stage B): {@link draftConfig}'s figure with two more lattice parts, each one image
+ * of two flat blocks — `block(30, 8, [8, 24])`, an 8x8 block (x 0..7, 64 px) and a 6x8 one (x 24..29, 48 px), 16 px
+ * apart — on a rig 80 px wide:
+ *
+ * - `pins` at (40, 20), carried by **one** bone: its one segment runs along `pin` ([40, 24] → [70, 24]), so every
+ *   lattice vertex is bound to `pin` alone and mesh-draft drafts the two blocks joined by a bridge.
+ * - `studs` at (40, 60), carried by **two**: one segment on `stud_a` down the left block's left edge ([40, 60] →
+ *   [40, 68]) and one on `stud_b` down the right block's right edge ([70, 60] → [70, 68]), r 4, so the lattice's
+ *   vertices are bound to both bones and mesh-draft keeps the lattice, naming them.
+ *
+ * The figure does not move: the two new boxes lie inside rows 20..68, within the union's rows 2..410, so H = 408,
+ * T = 1 and S = 11 as {@link DRAFT_FIGURE} says. At T = 1 the blocks grow by one pixel each and stay 14 px apart, so
+ * each image traces as two silhouettes. The lattices are at grid {@link DRAFT_ISLANDS_GRID}, finer than the
+ * candidate is coarse; no control reads a figure off the lattice but the verdict and the note.
+ */
+export const DRAFT_ISLANDS_GRID = 2;
+
+/** The two-block image both parts share. */
+export const DRAFT_ISLANDS_IMAGE: readonly [number, number, readonly [number, number]] = [30, 8, [8, 24]];
+
+export function draftIslandsParts(): PartsFile {
+  const p = draftParts();
+  const rec = (name: string, tag: string, y: number): PartsFile['parts'][number] => ({ ...p.parts[0], name, from: `full:${tag}`, x: 40, y, w: 30, h: 8, opaque_px: 112 });
+  return { ...p, rig_size: [80, 420], parts: [...p.parts, rec('pins', 'earwear', 20), rec('studs', 'headwear', 60)] };
+}
+
+export function draftIslandsConfig(grid: number): Record<string, unknown> {
+  const c = draftConfig(grid);
+  const a = c.assemble as { plan: string[][] };
+  c.assemble = { ...a, plan: [...a.plan, ['pins', 'full', 'earwear'], ['studs', 'full', 'headwear']] };
+  c.bones = [...(c.bones as unknown[]), { name: 'pin', parent: 'body', at: [40, 24] }, { name: 'stud_a', parent: 'body', at: [40, 60] }, { name: 'stud_b', parent: 'body', at: [70, 60] }];
+  c.meshes = {
+    ...(c.meshes as Record<string, unknown>),
+    pins: { grid: DRAFT_ISLANDS_GRID, r: 4, segments: [['pin', [40, 24], [70, 24]]] },
+    studs: { grid: DRAFT_ISLANDS_GRID, r: 4, segments: [['stud_a', [40, 60], [40, 68]], ['stud_b', [70, 60], [70, 68]]] },
+  };
+  return c;
+}
+
+/** The islands fixture on disk, its strip on a lattice of `grid`. */
+export function writeDraftIslandsFixture(dir: string, grid: number): { config: string; parts: string } {
+  const [w, h, gap] = DRAFT_ISLANDS_IMAGE;
+  const images = draftImages();
+  images.set('pins', block(w, h, [gap[0], gap[1]]));
+  images.set('studs', block(w, h, [gap[0], gap[1]]));
+  return writeRigFixture(dir, draftIslandsConfig(grid), images, draftIslandsParts());
+}

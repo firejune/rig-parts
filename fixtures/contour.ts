@@ -256,3 +256,42 @@ export const NOTCHED: ContourCase = { name: 'notched', mask: blocks(60, 60, [[10
  * profile refuses for the image (A19), whatever attachment draws it.
  */
 export const BUILDING: readonly ContourCase[] = [CONVEX, CONCAVE, SPIKE, FEATHERED, HOLE, REGION, FULL];
+
+/** The parameters of the bridged cases (issue #326): margin and tolerance 0, so a block's outline is its four corners; spacing 32, so a block under 32 px a side keeps no interior point (keep radius 16). */
+export const BRIDGE_BASE: ContourParams = { threshold: 8, tolerance: 0, margin: 0, spacing: 32, regions: [], bridges: true };
+
+/**
+ * PAIR (issue #326): a 10x10 block at (3, 4) and an 8x10 one at (25, 4) in 40x20, under {@link BRIDGE_BASE}. Art 100
+ * + 80 px. Two islands, two silhouettes (margin 0 grows nothing): unit 0 the 100-px block, outlined (3, 4) (13, 4)
+ * (13, 14) (3, 14); unit 1 the 80-px one, (25, 4) (33, 4) (33, 14) (25, 14) — clockwise on screen, from the first
+ * pixel in row order. The nearest vertex pairs are (13, 4)–(25, 4) and (13, 14)–(25, 14), both 12 px; the tie goes
+ * to the joined outline's earlier position, (13, 4) at 1. So a = (13, 4), b = (25, 4), b′ = (25, 14) (b's
+ * predecessor) and a′ = (13, 14) (a's successor), and the outline runs
+ *
+ *     (3, 4) (13, 4) (25, 4) (33, 4) (33, 14) (25, 14) (13, 14) (3, 14)
+ *
+ * — 8 vertices, 2·8 − 8 − 2 = 6 triangles: two per block, two for the bridge. The bridge's two crossing edges are 12
+ * and 12 px, its quad the 12x10 rectangle between the blocks, 120 px², at mesh vertices a 1, a′ 6, b 2, b′ 5. The
+ * outline encloses 100 + 80 + 120 = 300 px²; the blocks' triangles cover the 180 art px and reach past none (overshoot
+ * 0). Without `bridges`, the same mask is `CONTOUR_ONE_ISLAND`.
+ */
+export const PAIR: ContourCase = { name: 'pair', mask: blocks(40, 20, [[3, 4, 10, 10], [25, 4, 8, 10]]), params: { ...BRIDGE_BASE } };
+
+/**
+ * NEAR and FAR (issue #326): the same two blocks at margin 1 (and tolerance 1), 2 and 3 px apart. Margin 1 grows each
+ * block one pixel sideways, so a 2-px gap (x 13 and 14) fills from both sides and the two islands trace as one grown
+ * silhouette with no bridge; a 3-px gap (x 13..15) keeps x 14 clear, two silhouettes, one bridge. "Closer than about
+ * twice the margin" is this: the growth decides it, in the trace, and nothing is painted between them.
+ */
+export const NEAR: ContourCase = { name: 'near', mask: blocks(40, 20, [[3, 4, 10, 10], [15, 4, 8, 10]]), params: { ...BRIDGE_BASE, margin: 1, tolerance: 1 } };
+export const FAR: ContourCase = { name: 'far', mask: blocks(40, 20, [[3, 4, 10, 10], [16, 4, 8, 10]]), params: { ...BRIDGE_BASE, margin: 1, tolerance: 1 } };
+
+/**
+ * NOTCH_CUT (issue #326): a 20x6 bar at (1, 6) with a 7x3 notch cut from its top (x 7..13, y 6..8), and a 5x7 block
+ * at (8, 1) standing in the notch, a pixel clear of it on three sides — 99 and 35 art px, two silhouettes at margin 0.
+ * At tolerance 0 they join (one bridge across the gap). At tolerance 3 the bar's simplified outline drops the
+ * notch — its two deep corners lie 3 px from the chord, and Douglas–Peucker keeps a point only further than the tolerance —
+ * so its top edge runs straight along y 6 through the block: every bridge leaves an outline that crosses itself, and
+ * the mesh is refused `CONTOUR_BRIDGE` (16 pairs: 4 vertices each).
+ */
+export const NOTCH_CUT: ContourCase = { name: 'notch-cut', mask: blocks(24, 16, [[1, 6, 20, 6], [7, 6, 7, 3, 0], [8, 1, 5, 7]]), params: { ...BRIDGE_BASE } };

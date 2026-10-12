@@ -222,7 +222,7 @@ import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
-import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NOTCH, NOTCHED, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRAND, STRAND_CHAIN, STRIP } from './fixtures/contour.ts';
+import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FAR, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NEAR, NOTCH, NOTCH_CUT, NOTCHED, PAIR, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRAND, STRAND_CHAIN, STRIP } from './fixtures/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh, latticeStray } from './src/mesh.ts';
 import { type AcceptedOperation, type AlphaMask, checkHullOrder, type TrackAmplitude, earClip, findSelfIntersection, measureAuthoredMeshFit, measureMeshQuality, type MeshQualityReport, type MeshReductionInput, offsetPolygon, type ReducedMesh, type ReductionSkinning, simplifyClosedPolygon, traceAlphaOutline, traceOutline, windCounterClockwiseInSpineWorld, writeMeshQualityReport } from 'rig-c/mesh';
 import { allocationClause, AUTO_SOURCE_FIT_CONNECTIVITY, AUTO_THRESHOLD, autoReductionInput, autoSource, type AutoVerdict, autoVerdict, CIRCLE_CLEARANCE, circlePolygon, type Reducer, type ReductionResult, reductionKey, type Residual, residuals, reuseReductions, runReduction, sourceWeights, stageBClause, legacyArtCoverage, terminationText, unboundedClause, worstRegion, worstResidual } from './src/automesh.ts';
@@ -392,8 +392,8 @@ import { influences } from './src/weights.ts';
 import { apply as applyAffine, type ComparedMesh, contourAtBudget, cost, errors, fieldAt, fieldContour, fieldLattice, locator, pixelErrors, pixelsOver } from './tools/local_compare.ts';
 import { FIELD_LATTICE_GRID, FIELD_POSES, fieldRegion, REGION_SPACINGS } from './fixtures/localfield.ts';
 import { BASE_SPACINGS, CONTROL, describeWorst, displacement, frameOpenings, kindOf, neighbours, pickAtBudget, type PlacedMask, POSE_PHASE, ranked, regionPoses, regionSpacings, resolveSegments, seamOpening, seamPairs, sineAt, SWEEP_TOLERANCES, testRegion, toWorldPx, variantConfig } from './tools/real_compare.ts';
-import { BEND_DEGREES, BEND_WORST_SHARE, bendAnimationNames, bendAnimations, type BendFigure, bendLinks, CALIBRATED_SENTENCE, candidateMesh, MORE_TRIANGLES_FLAG, RELATIVE_SENTENCE, DUST_MAX_PX, DUST_MAX_SHARE, dustOf, figureRules, type GateLine, gateVerdict, IDLE_BOUND_PX, jsonValueSpan, MEASURED_SENTENCE, MESH_DRAFT_REPORT, meshDraftStage, NOT_COMPARED_SENTENCE, notCompared, partsNamed, type PartReadings, type Reading, READINGS, splicedConfig, TOLERANCE_FIGURE_DIVISOR } from './src/meshdraft.ts';
-import { DRAFT_COARSE_GRID, DRAFT_COSTLY_GRID, DRAFT_FIGURE, DRAFT_FINE_GRID, DRAFT_LINKS, draftConfig, draftParts, writeDraftFixture, writeDraftFixtureWithContour } from './fixtures/meshdraft.ts';
+import { BEND_DEGREES, BEND_WORST_SHARE, bendAnimationNames, bendAnimations, type BendFigure, bendLinks, CALIBRATED_SENTENCE, candidateMesh, carriedBy, islandsJoin, MORE_TRIANGLES_FLAG, RELATIVE_SENTENCE, DUST_MAX_PX, DUST_MAX_SHARE, dustOf, figureRules, type GateLine, gateVerdict, IDLE_BOUND_PX, jsonValueSpan, MEASURED_SENTENCE, MESH_DRAFT_REPORT, meshDraftStage, NOT_COMPARED_SENTENCE, notCompared, partsNamed, type PartReadings, type Reading, READINGS, splicedConfig, TOLERANCE_FIGURE_DIVISOR } from './src/meshdraft.ts';
+import { DRAFT_COARSE_GRID, DRAFT_COSTLY_GRID, DRAFT_FIGURE, DRAFT_FINE_GRID, DRAFT_LINKS, draftConfig, draftParts, writeDraftFixture, writeDraftFixtureWithContour, writeDraftIslandsFixture } from './fixtures/meshdraft.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, isSkeletonName, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
 import { AUTHOR_LABEL_RULE, AUTHOR_NO_ROLE, authorLayerLine, readAuthorTag, readLayerTag, readTag, type TagReading } from './src/tags.ts';
@@ -19219,6 +19219,81 @@ function runContourSuite(): number {
     `each edge is cut into pieces longer than half of maxEdge, and two cut points one grid unit (1/${GRID} px) apart or less could snap onto each other: so maxEdge must be at least 2/${GRID} px, and a number`,
   );
 
+  // CT105 — issue #326: two islands joined by one bridge, every figure by hand (fixtures/contour.ts PAIR).
+  const pair = built(contourOf(PAIR));
+  const pairHull: Array<[number, number]> = [[3, 4], [13, 4], [25, 4], [33, 4], [33, 14], [25, 14], [13, 14], [3, 14]];
+  const pairWithout = contourOf(PAIR, { ...PAIR.params, bridges: undefined });
+  say(
+    'CT105_TWO_ISLANDS_ARE_JOINED_BY_ONE_BRIDGE_BETWEEN_THEIR_NEAREST_OUTLINE_VERTICES_EVERY_FIGURE_BY_HAND',
+    pair !== null &&
+      pair.hull === 8 &&
+      sameVertices(pair.vertices, pairHull) &&
+      pair.triangles.length / 3 === 2 * 8 - 8 - 2 &&
+      contourTopologyProblems('pair', pair.vertices, pair.triangles, pair.hull).length === 0 &&
+      JSON.stringify(pair.report.bridges) === JSON.stringify({ islands: [100, 80], units: [[100], [80]], joins: [{ unit: 1, span: [12, 12], area: 120, pair: 1, vertices: [1, 6, 2, 5] }] }) &&
+      pair.report.meshArea === 300 &&
+      pair.report.coveredArtPixels === 180 &&
+      pair.report.overshoot === 0 &&
+      pair.report.nonDelaunayEdges === 0 &&
+      has(pairWithout, 'CONTOUR_ONE_ISLAND'),
+    pair === null
+      ? `refused: ${contourCodes(contourOf(PAIR))}`
+      : `vertices ${vertexText(pair.vertices)} (hull ${pair.hull}); ${pair.triangles.length / 3} triangles; bridges ${JSON.stringify(pair.report.bridges)}; area ${pair.report.meshArea} px², covered ${pair.report.coveredArtPixels}, overshoot ${pair.report.overshoot}; without bridges: ${contourCodes(pairWithout)}`,
+    'by hand (fixtures/contour.ts PAIR): the nearest vertex pairs tie at 12 px and the joined outline\'s earlier position takes it; the outline walks the 100-px block to (13, 4), crosses to (25, 4), walks the 80-px block to (25, 14) and crosses back to (13, 14) — 8 vertices, two triangles per block and two for the 12x10 quad between them (120 px²); the blocks\' triangles hold the art, so the fit reads them alone',
+  );
+
+  // CT106 — islands closer than about twice the margin grow into one silhouette, in the trace; one pixel further, two and a bridge.
+  const near106 = built(contourOf(NEAR));
+  const far106 = built(contourOf(FAR));
+  say(
+    'CT106_ISLANDS_THE_MARGIN_GROWS_TOGETHER_ARE_TRACED_AS_ONE_SILHOUETTE_AND_A_PIXEL_FURTHER_APART_ARE_BRIDGED',
+    near106 !== null &&
+      far106 !== null &&
+      JSON.stringify(near106.report.bridges) === JSON.stringify({ islands: [100, 80], units: [[100, 80]], joins: [] }) &&
+      far106.report.bridges?.units.length === 2 &&
+      far106.report.bridges.joins.length === 1 &&
+      near106.report.coveredArtPixels === 180 &&
+      far106.report.coveredArtPixels === 180 &&
+      contourTopologyProblems('far', far106.vertices, far106.triangles, far106.hull).length === 0,
+    `2 px apart: ${near106 === null ? contourCodes(contourOf(NEAR)) : JSON.stringify(near106.report.bridges)}; 3 px apart: ${far106 === null ? contourCodes(contourOf(FAR)) : JSON.stringify(far106.report.bridges)}`,
+    'HQ\'s ruling on #326 Stage A, item 4: margin 1 grows each block a pixel sideways, so a 2-px gap fills from both sides and the two islands are one grown silhouette (no bridge, nothing painted); a 3-px gap keeps its middle column clear — two silhouettes, one bridge',
+  );
+
+  // CT107 — the refusals: a bridge that cannot be made, a value that is not true, ribs beside bridges.
+  const cut0 = built(contourOf(NOTCH_CUT, { ...NOTCH_CUT.params, tolerance: 0 }));
+  const cut3 = contourOf(NOTCH_CUT, { ...NOTCH_CUT.params, tolerance: 3 });
+  const notTrue = contourOf(PAIR, { ...PAIR.params, bridges: false as unknown as true });
+  const withRibs = contourOf(PAIR, { ...PAIR.params, ribs: [{ chain: 'c', points: [[8, 4], [8, 14]], stations: 0 }] });
+  say(
+    'CT107_A_JOIN_NO_BRIDGE_CAN_MAKE_A_BRIDGES_VALUE_THAT_IS_NOT_TRUE_AND_RIBS_BESIDE_BRIDGES_ARE_REFUSED_BY_NAME',
+    cut0 !== null &&
+      cut0.report.bridges?.joins.length === 1 &&
+      has(cut3, 'CONTOUR_BRIDGE', 'contour mesh "notch-cut"', 'of the 16 pairs', '(4 vertices round 99 art px)', '(35 art px)') &&
+      (cut3 as Problem[]).length === 1 &&
+      has(notTrue, 'CONTOUR_PARAMETER', 'contour mesh "pair", bridges', 'is false; true is required') &&
+      has(withRibs, 'CONTOUR_PARAMETER', 'contour mesh "pair", bridges', 'beside ribs on c'),
+    `notch-cut at tolerance 0: ${cut0 === null ? contourCodes(contourOf(NOTCH_CUT, { ...NOTCH_CUT.params, tolerance: 0 })) : `${cut0.report.bridges?.joins.length} bridge(s)`}; at tolerance 3: ${Array.isArray(cut3) ? cut3.map(problemLine).join('; ') : 'built'} | false: ${Array.isArray(notTrue) ? notTrue.map(problemLine).join('; ') : 'built'} | ribs: ${Array.isArray(withRibs) ? withRibs.map(problemLine).join('; ') : 'built'}`,
+    'by hand (fixtures/contour.ts NOTCH_CUT): at tolerance 3 the bar\'s outline drops its 3-px notch and runs through the block standing in it, so every bridge leaves an outline that crosses itself — the positive beside it is the same mask at tolerance 0; bridges has one value, and a rib is placed across one outline',
+  );
+
+  // CT108 — one island under bridges is the mesh it was without them; only the report gains the bridges row.
+  const one = built(contourOf(CONVEX));
+  const oneBridged = built(contourOf(CONVEX, { ...CONVEX.params, bridges: true }));
+  const restOf = (m: ContourMesh): string => JSON.stringify({ ...m.report, bridges: undefined });
+  say(
+    'CT108_ONE_ISLAND_UNDER_BRIDGES_IS_BYTE_FOR_BYTE_THE_MESH_IT_WAS_AND_UNDECLARED_THE_REPORT_HAS_NO_BRIDGES',
+    one !== null &&
+      oneBridged !== null &&
+      JSON.stringify(oneBridged.vertices) === JSON.stringify(one.vertices) &&
+      oneBridged.triangles.join() === one.triangles.join() &&
+      oneBridged.hull === one.hull &&
+      restOf(oneBridged) === restOf(one) &&
+      JSON.stringify(oneBridged.report.bridges) === JSON.stringify({ islands: [384], units: [[384]], joins: [] }) &&
+      !('bridges' in one.report),
+    one === null || oneBridged === null ? 'refused' : `vertices ${oneBridged.vertices.length} vs ${one.vertices.length}, triangles equal ${oneBridged.triangles.join() === one.triangles.join()}, report but bridges equal ${restOf(oneBridged) === restOf(one)}; bridges ${JSON.stringify(oneBridged.report.bridges)}; undeclared keys end ${Object.keys(one.report).slice(-2).join(', ')}`,
+    'issue #326: on one island the bridged path traces the one grown silhouette and triangulates it exactly as the one-island rule does, so the mesh is the same bytes; a mesh that does not declare bridges is the mesh it was before the field existed',
+  );
+
   runContourGrowthControls(say, built, has);
   runOutlineInRegionControls(say, built);
 
@@ -20394,6 +20469,27 @@ function runContourWiringSuite(): number {
       cut89(without89) === undefined,
     `with: params ${JSON.stringify(params89(with89))}, hull ${String(with89.hull)}, outlineCut ${String(cut89(with89))}; without: params ${JSON.stringify(params89(without89))}, hull ${String(without89.hull)}`,
     "by hand: the fixture's cloth (16x8 at margin 1, tolerance 0) traces CT01's outline at 16x8 — two 16-px edges cut in 4 (3 points each) and two 8-px edges in 2 (1 each) at maxEdge 4: 8 points, none where the pinch region's support (radius 4 round part px (12, 8)) reaches the outline; a mesh that does not declare it writes the row it always wrote",
+  );
+
+  // CW90 — issue #326: contour.bridges loads as true only, and the rig stage hands it to the mesh and echoes it only when declared.
+  const bridges90 = (v: unknown): PartsError | null => load(contourRigConfig((c) => (contourCloth(c).bridges = v as true)));
+  const bad90 = [false, 'yes', 1].map((v) => ({ v, e: bridges90(v) }));
+  const with90 = rowOf89(buildRig(parseConfig(contourRigConfig((c) => (contourCloth(c).bridges = true))), rigParts(), rigImages()));
+  const att90 = (r: RigOutput): unknown => (r.rig.skins.default.cloth as Record<string, unknown>).cloth;
+  const meshWith90 = att90(buildRig(parseConfig(contourRigConfig((c) => (contourCloth(c).bridges = true))), rigParts(), rigImages()));
+  const meshWithout90 = att90(buildRig(parseConfig(contourRigConfig()), rigParts(), rigImages()));
+  const bridgesRow90 = (row: Record<string, unknown>): unknown => (row.contour as Record<string, unknown>).bridges;
+  say(
+    'CW90_CONTOUR_BRIDGES_LOADS_AS_TRUE_ONLY_AND_THE_RIG_STAGE_ECHOES_IT_ONLY_WHEN_DECLARED',
+    bridges90(true) === null &&
+      bad90.every(({ e }) => e !== null && e.problems.length === 1 && e.problems[0].code === 'CONFIG_FIELD_TYPE' && e.problems[0].object === 'config.meshes.cloth.contour.bridges') &&
+      params89(with90).bridges === true &&
+      JSON.stringify(bridgesRow90(with90)) === JSON.stringify({ islands: [128], units: [[128]], joins: [] }) &&
+      JSON.stringify(meshWith90) === JSON.stringify(meshWithout90) &&
+      !('bridges' in params89(without89)) &&
+      bridgesRow90(without89) === undefined,
+    `true: ${lines(bridges90(true))}; ${bad90.map(({ v, e }) => `${JSON.stringify(v)}: ${lines(e)}`).join(' | ')}; declared: params ${JSON.stringify(params89(with90))}, bridges ${JSON.stringify(bridgesRow90(with90))}, attachment as undeclared ${JSON.stringify(meshWith90) === JSON.stringify(meshWithout90)}`,
+    "issue #326: bridges has one value, true, and no default; the fixture's cloth is one 16x8 island (128 art px), so declaring it writes the attachment it always wrote and only the row says it was read",
   );
 
   return bad();
@@ -22373,6 +22469,77 @@ function runMeshDraftSuite(): number {
         pure16.map((o) => `${o.part}:${o.mode}`).join() === 'b:auto,c:contour',
       `exit ${run16.status}; not_compared ${JSON.stringify(raw16?.not_compared ?? null).slice(0, 160)}; keys ${keys(raw16)} against MD01's ${keys(raw1)}; strip row as MD01's: ${JSON.stringify(raw16?.parts) === JSON.stringify(raw1?.parts)}; pure ${pure16.map((o) => `${o.part}:${o.mode}`).join()}`,
       'issue #307: mesh-draft drafts lattice entries only, and a part outside it was silent; the fixture is MD01\'s with the mark meshed in the outline mode instead of drawn as a region, so the strip\'s row, the figure\'s overdraw and its written entry must equal MD01\'s byte for byte, and MD01\'s report — a config of lattices alone — must hold no not_compared key and its console no such line (the key is written only when it has an entry)',
+    );
+
+    // MD17–MD18 — issue #326 Stage B, one run over the islands fixture: two blocks on one bone, two blocks on two.
+    const fx17 = writeDraftIslandsFixture(join(root, 'islands'), DRAFT_COARSE_GRID);
+    const run17 = runCli(['mesh-draft', '--config', fx17.config, '--parts', fx17.parts, '--out', join(root, 'islands', 'out')]);
+    const raw17 = readJsonFile(join(root, 'islands', 'out', MESH_DRAFT_REPORT));
+    const rows17 = (raw17?.parts ?? []) as Array<{ part: string; mode: string; candidate: { triangles: number; bridges?: { units: number[][]; joins: unknown[] } } | null; gate: GateLine[]; note: string }>;
+    const cfg17 = readJsonFile(join(root, 'islands', 'out', 'config.json'));
+    const meshes17 = (cfg17?.meshes ?? {}) as Record<string, Record<string, unknown>>;
+    const pins17 = rows17.find((r) => r.part === 'pins');
+    const studs17 = rows17.find((r) => r.part === 'studs');
+    const strip17 = rows17.find((r) => r.part === 'strip');
+    const strip1row = ((raw1?.parts ?? []) as Array<{ part: string }>).find((r) => r.part === 'strip');
+    const inText17 = readFileSync(fx17.config, 'utf8');
+    const outText17 = existsSync(join(root, 'islands', 'out', 'config.json')) ? readFileSync(join(root, 'islands', 'out', 'config.json'), 'utf8') : '';
+    say(
+      'MD17_A_PART_WHOSE_ISLANDS_ARE_CARRIED_BY_ONE_BONE_IS_DRAFTED_AS_THE_ISLANDS_JOINED_BY_A_BRIDGE',
+      run17.status === 0 &&
+        pins17?.mode === 'contour' &&
+        pins17.gate.length === READINGS.length &&
+        pins17.gate.every((l) => l.pass) &&
+        JSON.stringify(pins17.candidate?.bridges?.units) === '[[64],[48]]' &&
+        pins17.candidate?.bridges?.joins.length === 1 &&
+        JSON.stringify(meshes17.pins?.contour) === JSON.stringify({ tolerance: DRAFT_FIGURE.tolerance, margin: DRAFT_FIGURE.tolerance, spacing: DRAFT_FIGURE.spacing, maxEdge: DRAFT_FIGURE.spacing, bridges: true }) &&
+        pins17.note.includes('its 2 real islands (64, 48 px) traced as 2 grown silhouette(s) and joined into one outline by 1 bridge(s)') &&
+        pins17.note.includes('every vertex bound to the one bone "pin" (issue #326)') &&
+        run17.out.includes('  DRAFTED  pins: ') &&
+        JSON.stringify(strip17) === JSON.stringify(strip1row),
+      `exit ${run17.status}; pins ${pins17?.mode ?? 'no row'}: ${gateText(pins17?.gate ?? [])}; bridges ${JSON.stringify(pins17?.candidate?.bridges ?? null)}; entry ${JSON.stringify(meshes17.pins ?? null).slice(0, 160)}; strip row as MD01's: ${JSON.stringify(strip17) === JSON.stringify(strip1row)}`,
+      "HQ's ruling on #326 Stage A, item 1: the islands of a part carried by one bone cannot move against each other, so mesh-draft drafts them per island joined by a bridge and reads the candidate through its five readings unchanged (fixtures/meshdraft.ts: an 8x8 and a 6x8 block 16 px apart, every lattice vertex on \"pin\"); the strip beside them, one island, writes MD01's row byte for byte",
+    );
+    say(
+      'MD18_A_PART_WHOSE_ISLANDS_ARE_CARRIED_BY_DIFFERENT_BONES_KEEPS_ITS_LATTICE_AND_ITS_NOTE_NAMES_THE_BONES',
+      run17.status === 0 &&
+        studs17?.mode === 'grid' &&
+        studs17.candidate === null &&
+        studs17.gate.length === 0 &&
+        studs17.note.includes('its 2 real islands are carried by different bones') &&
+        studs17.note.includes('bound to "stud_a", "stud_b"') &&
+        studs17.note.includes('joins islands by bridges only when every vertex is bound to one and the same bone') &&
+        outText17.slice(jsonValueSpan(outText17, ['meshes', 'studs']).start, jsonValueSpan(outText17, ['meshes', 'studs']).end) === inText17.slice(jsonValueSpan(inText17, ['meshes', 'studs']).start, jsonValueSpan(inText17, ['meshes', 'studs']).end),
+      `studs ${studs17?.mode ?? 'no row'}: ${studs17?.note ?? ''}`,
+      "HQ's ruling on #326 Stage A, item 2: no two-bone join is drafted, not even on a fixture — the line says why, naming the bones; the studs are the pins' image with one segment on each block's own bone, so the lattice's vertices are bound to both, and the written entry is the input's text",
+    );
+
+    // MD19 — the same-bones test and the islands it joins, pure (islandsJoin, carriedBy).
+    const one19 = [[{ bone: 'pin', x: 0, y: 0, weight: 1 }], [{ bone: 'pin', x: 1, y: 0, weight: 1 }]];
+    const apart19 = [[{ bone: 'a', x: 0, y: 0, weight: 1 }], [{ bone: 'b', x: 1, y: 0, weight: 1 }]];
+    const blend19 = [[{ bone: 'a', x: 0, y: 0, weight: 0.5 }, { bone: 'b', x: 0, y: 0, weight: 0.5 }]];
+    const j19 = {
+      pieces: islandsJoin([10000, 50, 4, 1], { weights: one19 }),
+      specks: islandsJoin([406, 342, 8, 2, 1], { weights: one19 }),
+      tie: islandsJoin([64, 64], { weights: one19 }),
+      dustOnly: islandsJoin([10000, 4, 1], { weights: one19 }),
+      single: islandsJoin([100], { weights: one19 }),
+      apart: islandsJoin([64, 48], { weights: apart19 }),
+      blend: islandsJoin([64, 48], { weights: blend19 }),
+    };
+    const keepOf = (r: ReturnType<typeof islandsJoin>): string => (r !== null && 'keep' in r ? r.keep : '');
+    say(
+      'MD19_THE_SAME_BONES_TEST_IS_EVERY_LATTICE_VERTEX_BOUND_TO_ONE_AND_THE_SAME_BONE_AND_DUST_STAYS_STRAY',
+      JSON.stringify(j19.pieces) === JSON.stringify({ stray: 4, real: [10000, 50], bone: 'pin' }) &&
+        JSON.stringify(j19.specks) === JSON.stringify({ stray: undefined, real: [406, 342, 8, 2, 1], bone: 'pin' }) &&
+        JSON.stringify(j19.tie) === JSON.stringify({ stray: undefined, real: [64, 64], bone: 'pin' }) &&
+        j19.dustOnly === null &&
+        j19.single === null &&
+        keepOf(j19.apart).includes('bound to "a", "b" —') &&
+        keepOf(j19.blend).includes('bound to "a", "b", 1 of them to more than one') &&
+        JSON.stringify(carriedBy({ weights: blend19 })) === JSON.stringify({ bones: ['a', 'b'], vertices: 1, blended: 1 }),
+      JSON.stringify(j19).slice(0, 700),
+      `by hand: on 10054 art px a 50-px island is a real piece and the 4- and 1-px ones dust (${DUST_MAX_PX} px, ${DUST_MAX_SHARE * 100} %), so stray is 4; Stage A's earring specks (8, 2, 1 px on 759) are real, since a thousandth of 759 is under a pixel; a tie for the largest is two real islands; one bone on every vertex joins, two bones — whether each vertex holds one or several — keep the lattice, naming them`,
     );
 
     // MD04 — the gate's five lines, pure: each reading planted past its line fails that reading alone, by name and amount.
