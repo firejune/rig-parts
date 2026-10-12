@@ -41,10 +41,10 @@ from the full run, because the twin tails leave the head crop sideways (a plan e
 <code>loop: idle 41 frame(s) at 12 fps, f0000 vs f0040 (t = 3.333333333333333s): max |d| 0 (0 required)</code><br/>
 <code>seam: setup pose at 654x1216, scale 0.9438: mean |d| 0.147 (&lt;= 1.0), 0 px over 40, 0.00 rig px (the count / s²; &lt;= 50), 0 px over 80 (reported)</code><br/>
 <code>pack: skeleton.png 1051x972, 23 region(s), 96.9% covered, padding 2, page edges free, shape polygon</code><br/>
-The loop is that build's indexed APNG, 40 frames at 12 fps, 725,845 bytes, one
+The loop is that build's indexed APNG, 40 frames at 12 fps, 704,009 bytes, one
 256-entry palette at a measured error of max 70, mean 0.631 per channel over every
-frame (the lossless APNG beside it, the exactness record, is 4,514,756 bytes; the
-GIF, at the same error, 784,074). The rig's hair, skirt, sleeves, bows and earrings
+frame (the lossless APNG beside it, the exactness record, is 4,446,263 bytes; the
+GIF, at the same error, 760,294). The rig's hair, skirt, sleeves, bows and earrings
 carry physics, which rigc's render starts from rest, so the idle is played three
 periods ahead and the loop is the fourth: the frame one period after its first differs
 from it by max 7 levels, 0 px over 40 (<code>--lead-in</code>). Frame 29 (2.417 s) is the

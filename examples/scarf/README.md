@@ -111,8 +111,7 @@ here (gitignored).
   from the hip line and its chains, and the config follows the proposal there and in the
   breath, whose authored 1.55 and `note` are gone. Measured at the proposal's breath, the
   segment alone moves `bottomwear` from 0.300 to 2.614 (upper half 0.056) and its
-  `TEXTURE_STRETCH` from 1.208 to 1.036, and nothing else. Against the build before it,
-  With the segment gone the contour correction had no reason left (above), so
+  `TEXTURE_STRETCH` from 1.208 to 1.036, and nothing else. With the segment gone the contour correction had no reason left (above), so
   `bottomwear` went back to the proposal's lattice, grid 12. Against the build before it,
   that moved `proposal.json` (the segment, and a note naming the rule), `rig.json`
   (`bottomwear`'s mesh, its weights, and its slot's bone `chest` to `hip`, the first
@@ -124,6 +123,16 @@ here (gitignored).
   stretches in full; `bottomwear` 1.037 to 1.018), 2633 triangles to 2654, the face half of
   `STILL_REGIONS_DARK` rms 1.22e-13 to 1.311e-13 and its reported crossing depth 2.474 to
   2.524; every status as before. `parts.json` did not move.
+  Issue #270 took the breath's size off the torso the rig has rather than the garment:
+  2.5 % of neck [412, 226] -> hip [414, 657], 431.0 px, is 10.78 px peak to peak
+  (amplitude 5.39, was 8.62 off the 690 px robe), and the config follows the proposal.
+  That moved `proposal.json` (the amplitude and the `breath:` note), `motion.json` (the
+  breath's keys) and `check.json`: `torso_heat_mean` 30.836 to 25.208, `TIP_OVER_ROOT`
+  `handwear_r` / `handwear_l` 2.006 / 1.925 to 2.634 / 2.456 (`bottomwear` 3.487, as
+  before: the skirt no longer rides the chest), `TEXTURE_STRETCH` 1.337 to 1.211, on
+  `topwear` both, the face half of `STILL_REGIONS_DARK` rms 1.311e-13 to 1.305e-13 and
+  its reported crossing depth 2.524 to 2.498; every status as before. `rig.json`,
+  `mesh_report.json`, `parts.json` and the gate file did not move.
 
 ## The four patches
 

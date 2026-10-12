@@ -5388,11 +5388,15 @@ function runProposeSuite(): number {
       "the LINT line is the reference's, verbatim, so an agent reading either tool reads the same finding; a mesh's candidate bone sitting in the background still weights by distance, which is how a rig moves the wrong pixels in silence",
     );
 
-    // Issue #252: the breath travels BREATH_FRACTION (2.5 %) of the topwear's height, peak to peak, the amplitude half
-    // of it and the base the amplitude. By hand: a vest 80,96 40x80 -> 0.025 * 80 = 2 px, amp 1; the cut fixture's coat
-    // 50,100 100x160 -> 4 px, amp 2 — twice the vest's for twice the height — and the same with its lapel piece cut out
-    // (120,110 10x20, inside it). No topwear (PROPOSE_PARTS) -> the reference's amplitude 1.3, and a note that says so. Chest scalex, head and neck are the same on all three; the
-    // idle is 40 frames at 12 fps with every period scaled from the reference's 4 s idle by 40/12 / 4: 4 s -> 40/12.
+    // Issues #252, #270: the breath travels BREATH_FRACTION (2.5 %) of the torso — the neck bone to the hip bone as
+    // written — peak to peak, the amplitude half of it and the base the amplitude. By hand, on PROPOSE_PARTS: no neck
+    // part, so neck [100, 96] (chin 90 + 0.12 x 50); hip [100, 157] (skirt top 150 + 0.14 x 50, 157 to the integer);
+    // 61 px, 0.025 x 61 = 1.525 px, amp round(0.7625, 2) = 0.76 under Python's round (the double 0.025 * 61 / 2 sits on
+    // the 0.76 side), 1.52 px peak to peak. The same figure in a vest (80,96 40x80, topwear 80 px), in the cut
+    // fixture's coat (50,100 100x160, 160 px) and with no topwear at all writes that one breath: under #252's rule
+    // (2.5 % of the topwear's height) the first two were 2.00 and 4.00 px and the third the reference's 2.60. Chest
+    // scalex, head and neck are the same on all; the idle is 40 frames at 12 fps, every period scaled from the
+    // reference's 4 s idle by 40/12 / 4.
     const breathOf = (label: string, parts: typeof PROPOSE_PARTS) => {
       const d = join(dir, `breath-${label}`);
       writeProposeFixture(d, parts);
@@ -5406,25 +5410,19 @@ function runProposeSuite(): number {
     const cut = breathOf('cut', CUT_PARTS);
     const bare = breathOf('bare', PROPOSE_PARTS);
     const amp = (b: ReturnType<typeof breathOf>): string => (b.tr === undefined ? 'none' : `amp ${(b.tr as { amp: number }).amp} base ${String((b.tr as { base?: number }).base)} period ${b.tr.period}`);
+    const wantBreath = "breath: chest translatey 1.52 px peak to peak (amp 0.76, base 0.76) = 2.5 % of the torso's length, 61.0 px (neck [100, 96] -> hip [100, 157]), once per 40-frame idle at 12 fps";
     say(
-      'PR97_THE_BREATH_TRAVELS_A_FRACTION_OF_THE_TORSO_PARTS_HEIGHT_AND_THE_IDLE_IS_FORTY_FRAMES',
+      'PR97_THE_BREATH_TRAVELS_A_FRACTION_OF_THE_NECK_TO_HIP_RUN_WHATEVER_THE_TOP_AND_THE_IDLE_IS_FORTY_FRAMES',
       BREATH_FRACTION === 0.025 &&
-        amp(vest) === `amp 1 base 1 period ${40 / 12}` &&
-        amp(coat) === `amp 2 base 2 period ${40 / 12}` &&
-        amp(cut) === amp(coat) &&
-        cut.note === coat.note &&
-        amp(bare) === `amp 1.3 base 1.3 period ${40 / 12}` &&
-        vest.note === 'breath: chest translatey 2.00 px peak to peak (amp 1.00, base 1.00) = 2.5 % of the torso\'s height, 80 px (layer full:topwear, y 96..176), once per 40-frame idle at 12 fps' &&
-        coat.note === 'breath: chest translatey 4.00 px peak to peak (amp 2.00, base 2.00) = 2.5 % of the torso\'s height, 160 px (layer full:topwear, y 100..260), once per 40-frame idle at 12 fps' &&
-        bare.note.startsWith('breath: no topwear part, so no torso height to take a fraction of: chest translatey keeps the reference\'s amplitude 1.3') &&
+        [vest, coat, cut, bare].every((b) => amp(b) === `amp 0.76 base 0.76 period ${40 / 12}` && b.note === wantBreath) &&
         [vest, coat, bare].every((b) => b.pr.motion.duration === 40 / 12 && b.loads === null) &&
         cut.pr.motion.duration === 40 / 12 &&
         vest.others === bare.others &&
         coat.others === bare.others &&
         cut.others === bare.others &&
         vest.pr.motion.tracks.every((t) => t.period === 40 / 12),
-      `vest (80 px) -> ${amp(vest)}; coat (160 px) -> ${amp(coat)}; coat cut with its lapel piece -> ${amp(cut)}, note ${cut.note === coat.note ? 'the same' : 'DIFFERENT'}; no topwear -> ${amp(bare)}, "${bare.note.slice(0, 90)}…"; duration ${vest.pr.motion.duration}; chest scalex, head and neck ${vest.others === bare.others && coat.others === bare.others ? 'identical' : 'DIFFERENT'} on all three; loader ${[vest, coat, bare].map((b) => codes(b.loads)).join(', ')}`,
-      "issue #252: a fixed 1.3 px amplitude is 1.0 % of one figure's torso and still reads as a paper doll; the travel is a fraction of the torso part's height (the breath is a translatey, so its travel is read along y), and a figure with no torso part keeps the reference's amplitude, said in the note, rather than an invented size. The scalex ratio and the head and neck angles do not scale",
+      `vest (topwear 80 px) -> ${amp(vest)}; coat (160 px) -> ${amp(coat)}; coat cut with its lapel piece -> ${amp(cut)}; no topwear -> ${amp(bare)}; note ${JSON.stringify(vest.note)}${[coat, cut, bare].every((b) => b.note === vest.note) ? ', the same on all four' : ', NOT the same on all four'}; duration ${vest.pr.motion.duration}; chest scalex, head and neck ${vest.others === bare.others && coat.others === bare.others ? 'identical' : 'DIFFERENT'}; loader ${[vest, coat, bare].map((b) => codes(b.loads)).join(', ')}`,
+      "issue #270: #252 took the torso as the topwear part's height, and scarf's sweater, which runs to the thighs, breathed 2.9 times as deep as demo; a garment's box is not the body, so the breath is a fraction of the trunk the rig has — neck to hip, the run the chest sits half way along — and one figure breathes one breath in whatever it wears. A fixed 1.3 px (#252) stays only where the trunk has no length (PR98). The scalex ratio and the head and neck angles do not scale",
     );
 
     const unknownDir = join(dir, 'unknown');
@@ -7075,6 +7073,31 @@ function runTrunkSegmentCases(dir: string, say: (name: string, ok: boolean, deta
   const onePoint = propose(Pl, poseJoints('leaning', (k) => (k.people[0].joints.neck = { state: 'observed', at: [130, 150] })));
   const oneWant = '[["chest",[65,168],[65,150]],["head",[65,52],[65,2]]] [["chest",[130,52],[130,130]],["hip",[130,130],[130,250]]] [["chest",[130,120],[130,130]],["hip",[114,155],[206,155]]]';
   const oneNote = "trunk segments: neck and hip are one point, [130.0, 150.0], so neck -> hip declares no line; the trunk parts' segments are drafted down the screen, as without keypoints";
+  // Issue #270: the breath is a fraction of neck -> hip; on the neck-on-the-hips plant both are written at [130, 150],
+  // the trunk has no length, and the breath keeps the reference's 1.3 with a note naming the two bones — never a
+  // length invented for it. The same leaning figure with its joints as given gets the fraction of its own run, the
+  // distance between the two written bones, not of its height on the screen: neck [70, 70] -> hip [130, 150] is a
+  // 3-4-5 run, (60, 80), 100 px, so 2.50 px peak to peak, amp 1.25, by hand.
+  const breathNote = (p: Proposal): string => p.notes.find((n) => n.startsWith('breath:')) ?? 'no breath note';
+  const breathAmp = (p: Proposal): number | null => {
+    const t = p.motion.tracks.find((x) => 'bone' in x && x.bone === 'chest' && x.prop === 'translatey');
+    return t === undefined ? null : (t as { amp: number }).amp;
+  };
+  const leanAt = (p: Proposal, n: string): [number, number] => (p.bones.find((b) => 'name' in b && b.name === n) as { at: [number, number] }).at;
+  const leanP = propose(Pl, Jl);
+  const [ln, lh] = [leanAt(leanP, 'neck'), leanAt(leanP, 'hip')];
+  const leanLen = Math.hypot(lh[0] - ln[0], lh[1] - ln[1]);
+  say(
+    'PR98_A_TRUNK_OF_NO_LENGTH_KEEPS_THE_REFERENCE_BREATH_AND_SAYS_SO_AND_A_LEANING_ONE_BREATHES_ITS_OWN_RUN',
+    breathAmp(onePoint) === 1.3 &&
+      breathNote(onePoint) === "breath: neck [130, 150] -> hip [130, 150] are one point, so the trunk has no length to take a fraction of: chest translatey keeps the reference's amplitude 1.3 (2.60 px peak to peak), not 2.5 % of a torso — scale it to the figure" &&
+      JSON.stringify([ln, lh]) === '[[70,70],[130,150]]' &&
+      leanLen === 100 &&
+      breathAmp(leanP) === 1.25 &&
+      breathNote(leanP).includes(`of the torso's length, ${leanLen.toFixed(1)} px (neck [${ln[0]}, ${ln[1]}] -> hip [${lh[0]}, ${lh[1]}])`),
+    `neck on the hips: amp ${breathAmp(onePoint)}, ${JSON.stringify(breathNote(onePoint))}; leaning with its joints: neck ${JSON.stringify(ln)} -> hip ${JSON.stringify(lh)}, ${leanLen.toFixed(3)} px, amp ${breathAmp(leanP)}, ${JSON.stringify(breathNote(leanP))}`,
+    "issue #270: the breath's size is read off the trunk the proposal writes; a trunk of no length gives no size, and the rule falls back to the reference's amplitude by name rather than invent one, while a trunk along the page's diagonal breathes the fraction of its own run, not of its height on the screen",
+  );
   say(
     'PR87_WITHOUT_A_TRUNK_LINE_THE_SEGMENTS_ARE_TODAYS_AND_AN_UPRIGHT_LINE_DRAFTS_THE_SAME_BYTES',
     segsOf(no, ['throat', 'coat', 'skirt']) === noWant &&

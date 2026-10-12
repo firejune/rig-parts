@@ -85,6 +85,21 @@ here (gitignored).
   and `check.json` (`TIP_OVER_ROOT` `bottomwear` 2.395 to 2.428; `TEXTURE_STRETCH` 1.169
   on `bottomwear` to 1.097 on `hair_front`, `bottomwear` itself 1.019; every status as
   before); `motion.json`, `parts.json` and the gate file did not move.
+  Issue #270 took the breath's size off the torso the rig has rather than the garment:
+  2.5 % of neck [415, 228] -> hip [416, 420], 192.0 px, is 4.80 px peak to peak
+  (amplitude 2.40, was 2.96 off the 237 px `topwear`). Demo moves because its top is not
+  its torso either: the `topwear` box runs from y 192, 36 px above the neck bone (the
+  collar), to y 429, 9 px below the hip. The config follows the proposal. That moved
+  `proposal.json` (the amplitude and the `breath:` note), `motion.json` (the breath's
+  keys) and `check.json`: `torso_heat_mean` 29.905 to 25.167, `TIP_OVER_ROOT`
+  `handwear_r` / `handwear_l` 4.232 / 4.256 to 4.846 / 4.803 (`bottomwear` 2.428, as
+  before), `TEXTURE_STRETCH` per mesh `topwear` 1.095 to 1.077 and `hair_back` 1.062 to
+  1.063 (the severity 1.097 on `hair_front`, as before), the face half of
+  `STILL_REGIONS_DARK` rms 1.139e-13 to 1.233e-13; every status as before. `rig.json`,
+  `mesh_report.json`, `parts.json` and the gate file did not move. The README's animation
+  (`assets/demo-idle.png`) was rebuilt with the same command: 704,009 B (it was 725,845 B,
+  the build of #252; this config before #270 gives 724,053 B, so it had already gone
+  stale with #262).
 
 ## The two corrections
 
