@@ -35,7 +35,9 @@
  *    pixels, so its trace cannot cross itself; a notch narrower than about
  *    twice the margin grows shut. A margin above 0 and below 1 px adds no
  *    pixel and is refused by name. This module does not raise a margin by
- *    itself: a margin that clips art is refused (`CONTOUR_COVERAGE`).
+ *    itself: a margin that clips art is refused (`CONTOUR_COVERAGE`). With
+ *    `maxEdge` declared (issue #265), every simplified edge longer than it is
+ *    then cut into equal pieces ({@link capOutlineEdges}); undeclared, nothing is.
  * 4. **Interior vertices are declared**, never inferred: see
  *    {@link interiorCandidates} for the candidates and {@link KEEP_FRACTION}
  *    for the one rule that keeps or drops each. Where the outline passes
@@ -141,6 +143,7 @@
  * automatic mode hands these triangles to rig-c as they are.
  */
 import { type Problem } from './errors.ts';
+import { edgeLength } from './length.ts';
 import { counterClockwiseInSpineWorld } from './mesh.ts';
 import { connectedComponents, fillHoles, type Mask } from './raster/index.ts';
 import {
@@ -224,6 +227,12 @@ export interface ContourParams {
   margin: number;
   /** The background interior spacing, px, above 0. */
   spacing: number;
+  /**
+   * The longest outline edge, px (issue #265): every edge of the simplified outline longer than this is cut into
+   * `ceil(length / maxEdge)` equal pieces ({@link capOutlineEdges}), before any region or rib touches the outline.
+   * Absent, nothing is cut and the mesh is byte for byte the one it was before the field existed; there is no default.
+   */
+  maxEdge?: number;
   /** Refuse a mesh with more vertices than this; absent is no budget. */
   budget?: number;
   /**
@@ -330,6 +339,8 @@ export interface ContourReport {
   grownHolePixels: number;
   /** Only when ribs were declared (issue #188): every rib, in placement order, with its vertices. Absent otherwise, so a mesh without ribs reports what it always reported. */
   ribs?: ContourRib[];
+  /** Only when `maxEdge` was declared (issue #265): the outline vertices the cap added. Absent otherwise, so a mesh without it reports what it always reported. */
+  outlineCut?: number;
 }
 
 export interface ContourMesh {
@@ -382,6 +393,10 @@ function parameterProblems(part: string, mask: AlphaMask, p: ContourParams): Pro
     else if (keepRadius(s) > MAX_RADIUS) bad(field, `is ${s}; its keep radius is ${keepRadius(s)} grid units, past the ${MAX_RADIUS} (${MAX_RADIUS / GRID} px) whose square is exact in a double`);
   };
   spacingOk('spacing', p.spacing);
+  // issue #265: a cut piece must be longer than one grid unit, so two cut points never snap onto one another.
+  if (p.maxEdge !== undefined && (!finite(p.maxEdge) || p.maxEdge * GRID < 2)) {
+    bad('maxEdge', `is ${p.maxEdge}; a number of px of at least 2/${GRID} is required — each edge is cut into pieces longer than half of it, and a piece must be longer than one 1/${GRID} px grid unit for its two ends to stay apart once snapped`);
+  }
   if (p.budget !== undefined && (!Number.isInteger(p.budget) || p.budget < 3)) bad('budget', `is ${p.budget}; a whole number of vertices, 3 or more, is required`);
   if (p.fitConnectivity !== undefined && p.fitConnectivity !== 4 && p.fitConnectivity !== 8) bad('fitConnectivity', `is ${JSON.stringify(p.fitConnectivity)}; 4 or 8 is required (how the background is flooded when overshoot is measured)`);
   if (p.stray !== undefined && (!Number.isInteger(p.stray) || p.stray < 0)) bad('stray', `is ${p.stray}; a whole number of art pixels, 0 or more, is required (the largest island that may be left out)`);
@@ -732,6 +747,26 @@ export function outlineInRegions(outline: ReadonlyArray<readonly [number, number
       placed.push({ x, y });
       out.push([x / GRID, y / GRID]);
     }
+  }
+  return out;
+}
+
+/**
+ * An outline with every edge longer than `maxEdge` px cut into `n = ceil(length / maxEdge)` equal pieces (issue
+ * #265): between each edge's two ends, the points `a + (b − a)·k/n` for k = 1..n−1, each snapped to the {@link GRID}.
+ * Every vertex of the outline is kept, in the same cyclic order and position from index 0, and an edge at or under
+ * `maxEdge` gains nothing. The length is {@link edgeLength}'s. The snap moves a cut point off its edge by at most
+ * half a grid unit (1/512 px); the mesh's topology and coverage checks read the cut outline as they read any other.
+ * The measured reference is `capOutline` in `tools/outline_survey.ts` (issue #265, (G′)), which this states in `src/`.
+ */
+export function capOutlineEdges(outline: ReadonlyArray<readonly [number, number]>, maxEdge: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < outline.length; i++) {
+    const [ax, ay] = outline[i];
+    const [bx, by] = outline[(i + 1) % outline.length];
+    out.push([ax, ay]);
+    const n = Math.ceil(edgeLength(bx - ax, by - ay) / maxEdge);
+    for (let k = 1; k < n; k++) out.push([snap(ax + ((bx - ax) * k) / n) / GRID, snap(ay + ((by - ay) * k) / n) / GRID]);
   }
   return out;
 }
@@ -1767,7 +1802,9 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
   const stage = contourOutline(part, filled, threshold, tolerance, margin);
   if (Array.isArray(stage)) return stage;
   const { grown } = stage;
-  let outline = outlineInRegions(stage.outline, params.regions);
+  // issue #265: the cap cuts the simplified outline's long edges first; undeclared, the outline is the stage's own.
+  const capped = params.maxEdge === undefined ? stage.outline : capOutlineEdges(stage.outline, params.maxEdge);
+  let outline = outlineInRegions(capped, params.regions);
   // issue #188: the ribs' ends join the outline, and their interior points come first among the interior vertices.
   // None declared, nothing here runs and every list below is the one it always was.
   let ribs: RibPlacement | null = null;
@@ -1854,6 +1891,7 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
       pinchFilledPixels: grown.pinchFilledPixels,
       grownHolePixels: stage.grownHolePixels,
       ...(ribs === null ? {} : { ribs: ribs.ribs }),
+      ...(params.maxEdge === undefined ? {} : { outlineCut: capped.length - stage.outline.length }),
     },
   };
 }

@@ -42,6 +42,7 @@ import { PAD, rigJsonText } from '../src/rig.ts';
 import { pyRound } from '../src/round.ts';
 import { type InfluenceLimits, type Segment } from '../src/weights.ts';
 import { outlineTolerance } from './contourdraft.ts';
+import { FIGURE_GRID_DIVISOR } from '../src/propose.ts';
 import {
   type ArmResult,
   BARS,
@@ -66,8 +67,8 @@ import { cdt, type DenseRow, denseReadings, dustOf, type EdgePart, gridConfig, s
 
 const ROOT = resolve(import.meta.dir, '..');
 
-/** S = round(H / SPACING_DIVISOR), Stage A's middle B and Stage D's (G). */
-export const SPACING_DIVISOR = 37;
+/** S = round(H / SPACING_DIVISOR), Stage A's middle B and Stage D's (G); `src/propose.ts` states it (`FIGURE_GRID_DIVISOR`). */
+export const SPACING_DIVISOR = FIGURE_GRID_DIVISOR;
 
 const readJ = (p: string): Json => JSON.parse(readFileSync(p, 'utf8')) as Json;
 const o = (v: Json | undefined): Obj => v as Obj;

@@ -28,6 +28,7 @@ import { figuresPhrase, implausibleRules, layerFigures, type LayerSet, pct, read
 import { checkImageSize, choosePerson, KEYPOINTS_SPEC, loadKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
 import { basisLines, checkProposal, compare, compareLines, DEFAULT_GRID_RULE, draftTurn, drawLandmarks, FIGURE_GRID_DIVISOR, FRINGE_STEP_PX, GRID_RULES, type GridRule, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal, withTurn, WRIST_ON_PART_PX } from './src/propose.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, coverageLines, serializeBasis } from './src/diagnostics.ts';
+import { BEND_DEGREES, BEND_WORST_SHARE, DUST_MAX_PX, DUST_MAX_SHARE, IDLE_BOUND_PX, MESH_DRAFT_REPORT, MESH_DRAFT_SPEC, meshDraftStage, MORE_TRIANGLES_FLAG, TOLERANCE_FIGURE_DIVISOR } from './src/meshdraft.ts';
 import { readPng, writePng } from './src/raster/png.ts';
 import { REQUIREMENTS_SENTENCE } from './src/requirements.ts';
 import { composeStage, IMAGE_SEP, PLATE, PROVENANCES, SCENE_REPORT_FILE, SCENE_REPORT_SPEC, SCENE_SPEC } from './src/scene.ts';
@@ -236,6 +237,42 @@ usage:
       rig-c 1.3.0 or later and makes A15 a SKIP that prints its cost (the
       stage prints that SKIP line). The pose is the same to one level of float
       rounding, and so is the per-frame mesh work (AUTHORING §5).
+  rig-parts mesh-draft --config <config.json> --parts <dir> --out <dir> [--requirements <file.json>]
+                  [--idle-keys ctl|direct] [--page-edges pot|free] [--pack-shape rect|polygon]
+                  [--more-triangles]
+      Draft a traced outline around a coarse grid for every lattice mesh the
+      config states, and keep it only where it holds against that part's
+      lattice (issue #265). The config is read, never written: --out receives
+      config.json — the input's own text with each drafted part's meshes entry
+      replaced, every other byte as read — and ${MESH_DRAFT_REPORT} (spec
+      "${MESH_DRAFT_SPEC}": the rules, both checks' bars, and per part its
+      lattice and candidate triangles and overdraw, the five readings, each
+      with its margin to its line, and the note). H is the height of the union of the parts' boxes; the candidate is
+      contour {tolerance T, margin T, spacing S, maxEdge S, stray} with
+      T = max(1, round(H / ${TOLERANCE_FIGURE_DIVISOR})) and S = round(H / ${FIGURE_GRID_DIVISOR}) (a figure whose S is 0 is
+      refused, MESH_DRAFT_FIGURE), stray the largest dust island (at most
+      ${DUST_MAX_PX} px and ${DUST_MAX_SHARE * 100} % of the part's art); a part with any other extra island
+      keeps its lattice. The config as written must build and check PASS first
+      (MESH_DRAFT_LATTICE_GREEN). Then each candidate is held to its lattice:
+      every check bar that reads the part passes on the drafted rig; within
+      ${IDLE_BOUND_PX} rig px of the lattice over the idle; at the bend set (every chain
+      link the part's segments name turned ${BEND_DEGREES} degrees, both ways) no more
+      inverted triangles than the lattice and the worst sample within
+      ${BEND_WORST_SHARE * 100} % of the lattice's, both against a denser lattice of the same
+      part; and no more triangles than the lattice — every motion reading
+      rig-c's (check, and compareMeshesInMotion over three unpacked gate
+      builds). The lattice is the config's own grid entry: for a proposed
+      config, the figure's spacing propose drafts. The gate is a judgment
+      relative to that lattice, not an absolute quality: when the lattice
+      coarsens, the reference moves with it. --more-triangles drafts a
+      candidate that holds the four motion readings even with more triangles
+      than its lattice, and the report records each part's triangle and
+      overdraw difference. A part that passes is drafted, its note saying
+      what it was measured against; one that fails keeps its entry, and the
+      report names each failed reading and by how much. Written only when the
+      drafted config's check is PASS. --requirements, --idle-keys,
+      --page-edges and --pack-shape are as for rig and check.
+
   rig-parts check --rig <dir> --out <dir> [--parts <dir>] [--source <painting.png>]
                     [--page-edges pot|free] [--pack-shape rect|polygon]
                     [--requirements <file.json>] [--seam-pairs] [--keep-stills]
@@ -607,6 +644,7 @@ const TAKES = {
   inputs: { valued: ['--source', '--config', '--out'], switches: [] },
   build: { valued: ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys', '--lead-in'], switches: ['--loop'] },
   compose: { valued: ['--scene', '--out', '--requirements', '--accept'], switches: [] },
+  'mesh-draft': { valued: ['--config', '--parts', '--out', '--requirements', '--idle-keys', '--page-edges', '--pack-shape'], switches: ['--more-triangles'] },
 } as const satisfies Record<string, { valued: readonly string[]; switches: readonly string[] }>;
 
 type Command = keyof typeof TAKES;
@@ -1263,6 +1301,46 @@ function cmdCompose(args: string[]): number {
   }
 }
 
+function cmdMeshDraft(args: string[]): number {
+  // The one switch mesh-draft takes (#295): taken out before the valued flags are read.
+  const more = args.filter((a) => a === MORE_TRIANGLES_FLAG).length;
+  if (more > 1) return usage(`${MORE_TRIANGLES_FLAG} is given twice`);
+  const f = flags(
+    args.filter((a) => a !== MORE_TRIANGLES_FLAG),
+    'mesh-draft',
+    ['--config', '--parts', '--out'],
+  );
+  if (typeof f === 'string') return usage(f);
+  const keys = idleKeysOf(f.get('--idle-keys'));
+  if (!isIdleKeys(keys)) return usage(keys);
+  const edges = pageEdgesOf(f.get('--page-edges'));
+  if (!isPageEdges(edges)) return usage(edges);
+  const shape = packShapeOf(f.get('--pack-shape'));
+  if (!isPackShape(shape)) return usage(shape);
+  let bin: string;
+  try {
+    bin = findRigc(import.meta.dir, process.env.PATH ?? '');
+  } catch (err) {
+    return printRefusal(err);
+  }
+  const scratch = mkdtempSync(join(tmpdir(), 'rig-parts-mesh-draft-'));
+  try {
+    const req = f.get('--requirements');
+    meshDraftStage(
+      { config: f.get('--config') as string, parts: f.get('--parts') as string, out: f.get('--out') as string, idleKeys: keys, pageEdges: edges, packShape: shape, ...(req === undefined ? {} : { requirements: req }), ...(more === 1 ? { moreTriangles: true } : {}) },
+      rigcRunner(bin),
+      bin,
+      scratch,
+      console.log,
+    );
+    return EXIT_OK;
+  } catch (err) {
+    return printRefusal(err);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 function main(argv: string[]): number | Promise<number> {
   const [command, ...rest] = argv;
   if (command === undefined || command === '--help' || command === '-h' || command === 'help') {
@@ -1285,6 +1363,7 @@ function main(argv: string[]): number | Promise<number> {
   if (command === 'comfy') return cmdComfy(rest);
   if (command === 'build') return cmdBuild(rest);
   if (command === 'compose') return cmdCompose(rest);
+  if (command === 'mesh-draft') return cmdMeshDraft(rest);
   const later = LATER.find(([name]) => name === command);
   if (later !== undefined) {
     console.log(`  FAIL  NOT_IMPLEMENTED: \`rig-parts ${command}\` (${later[1]}) is not implemented in this version, ${version()}`);
