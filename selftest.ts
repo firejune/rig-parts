@@ -173,7 +173,7 @@ import {
 } from './src/assemble.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics } from './src/check.ts';
 import { BARS, besideIdleLine, blackRig, buildGateLines, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
-import { blinkFigures, type BoneWorld, chainToward, frameBox, halfTravels, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
+import { blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
   contactLine,
@@ -9600,6 +9600,32 @@ function runCheckSuite(): number {
         absent.reason.startsWith(`${absentPath} does not exist; \`rigc render --geometry\` (rig-c ${RIGC_GEOMETRY_VERSION} or later) writes it`),
       `CK01's two-region fixture: ${noMesh?.status} — ${noMesh?.reason}; no file: ${absent.status} — ${'reason' in absent ? String(absent.reason).slice(0, 120) : ''}`,
       'a rig with nothing to stretch is unmeasured, not certified, and says which of the two reasons it is',
+    );
+
+    // Issue #270's CH04 on Linux: the edge length is sqrt(dx * dx + dy * dy), which rounds the same everywhere, not
+    // Math.hypot, which Bun rounds one way on macOS and another on Linux. Planted (a): the demo earring's edge 11-10 at
+    // idle frame 10, (dx, dy) = (34.26716181006313, 0.5713103861783111) over a rest edge of 34: its length must be
+    // 34.27192399143071 to the bit (Linux's Math.hypot gives 34.27192399143072, measured). Planted (b): an exact tie —
+    // two triangles on the same three points (vertices 0-2 and 3-5) stretched alike on two frames, listed either way round — names the earliest frame and
+    // the lowest triangle index.
+    const tieRest = (order: 'ab' | 'ba'): MeshRest => ({ slot: 's', attachment: 's', vertices: [0, 0, 34, 0, 0, 10, 0, 0, 34, 0, 0, 10], triangles: order === 'ab' ? [0, 1, 2, 3, 4, 5] : [3, 4, 5, 0, 1, 2] });
+    const tiePose = (index: number): GeometryPose => ({ index, attachments: [{ slot: 's', attachment: 's', vertices: [0, 0, 34.26716181006313, 0.5713103861783111, 0, 10, 0, 0, 34.26716181006313, 0.5713103861783111, 0, 10] }] });
+    const [ab] = stretchFigures([tieRest('ab')], [tiePose(0), tiePose(1)]);
+    const [ba] = stretchFigures([tieRest('ba')], [tiePose(0), tiePose(1)]);
+    const want117 = 34.27192399143071 / 34;
+    say(
+      'CK117_AN_EDGE_LENGTH_ROUNDS_THE_SAME_ON_EVERY_PLATFORM_AND_A_TIE_NAMES_THE_EARLIEST_FRAME_AND_LOWEST_TRIANGLE',
+      edgeLength(34.26716181006313, 0.5713103861783111) === 34.27192399143071 &&
+        ab.max?.ratio === want117 &&
+        ab.max.triangle === 0 &&
+        ab.max.frame === 0 &&
+        JSON.stringify(ab.max.edge) === '[0,1]' &&
+        ba.max?.ratio === want117 &&
+        ba.max.triangle === 0 &&
+        ba.max.frame === 0 &&
+        JSON.stringify(ba.max.edge) === '[3,4]',
+      `edgeLength ${edgeLength(34.26716181006313, 0.5713103861783111)} (Math.hypot here ${Math.hypot(34.26716181006313, 0.5713103861783111)}); listed a, b: max ${ab.max?.ratio} triangle ${ab.max?.triangle} edge ${JSON.stringify(ab.max?.edge)} frame ${ab.max?.frame}; listed b, a: max ${ba.max?.ratio} triangle ${ba.max?.triangle} edge ${JSON.stringify(ba.max?.edge)} frame ${ba.max?.frame}`,
+      "issue #270: demo's check.json named triangle 85 for the earring's largest stretch on macOS and 22 on Linux from bit-identical vertices, because Math.hypot's last bit differs between the two; a figure the tree holds to bytes is computed with operations that round one way, and an exact tie is broken by position, never by the platform",
     );
 
     const calls: string[] = [];

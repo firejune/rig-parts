@@ -781,6 +781,19 @@ export function stretchSeverity(ratio: number): number {
 }
 
 /**
+ * An edge's length, `sqrt(dx * dx + dy * dy)` (issue #270's CH04). Not `Math.hypot`: the language does not
+ * promise how it rounds, and Bun 1.4.2 rounds it differently on two platforms — on the demo's `earring`, edge 11-10
+ * at idle frame 10 (dx 34.26716181006313, dy 0.5713103861783111), 34.27192399143071 on macOS and
+ * 34.27192399143072 on Linux, measured, with the posed vertices bit-identical on both. That last bit decided which
+ * of two edges 2 ulp apart held the mesh's largest ratio, so `TEXTURE_STRETCH`'s `max_at` named triangle 85 on
+ * one machine and 22 on the other. A multiply, an add and a square root are each correctly rounded, so this gives
+ * the same bits everywhere (34.27192399143071 on both, measured).
+ */
+export function edgeLength(dx: number, dy: number): number {
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/**
  * For every mesh in `rest`, every triangle's three edges in every frame that
  * shows the attachment: deformed length over rest length, the largest and the
  * smallest, each with the triangle, its vertices, the edge and the frame.
@@ -792,7 +805,7 @@ export function stretchFigures(rest: readonly MeshRest[], frames: readonly Geome
   return rest.map((m) => {
     const t = m.triangles;
     const v0 = m.vertices;
-    const len = (v: readonly number[], a: number, b: number): number => Math.hypot(v[2 * a] - v[2 * b], v[2 * a + 1] - v[2 * b + 1]);
+    const len = (v: readonly number[], a: number, b: number): number => edgeLength(v[2 * a] - v[2 * b], v[2 * a + 1] - v[2 * b + 1]);
     const out: MeshStretch = { slot: m.slot, attachment: m.attachment, triangles: t.length / 3, frames: 0, max: null, min: null, degenerate: [] };
     const restLen: number[] = [];
     for (let i = 0; i < t.length; i += 3) {
