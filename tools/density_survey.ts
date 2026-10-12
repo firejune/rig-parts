@@ -53,6 +53,9 @@
  *
  * `--draft` (Stage B) runs arm 0 and then the drafted figure ({@link draftConfig}); `--page-draft` renders it.
  *
+ * `--insert` (Stage C) runs arm 0, the draft and arm 5 at every bound in {@link INSERT_BOUNDS} ({@link insertRig});
+ * `--page-insert` renders it.
+ *
  * `--auto-table --evidence <dir> --key <k> --work <dir> [--arms base,trace4]` reads `tools/auto_policy_survey.ts`'s kept
  * builds with this tool's instruments ({@link autoTable}); `--page-auto` renders the table.
  *
@@ -115,8 +118,8 @@ export const ARM3_SPACING = 4096;
 // small readers
 // ---------------------------------------------------------------------------
 
-type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
-type Obj = { [k: string]: Json };
+export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
+export type Obj = { [k: string]: Json };
 
 function obj(v: Json | undefined, what: string): Obj {
   if (v === null || v === undefined || typeof v !== 'object' || Array.isArray(v)) throw new Error(`${what}: an object is required`);
@@ -145,7 +148,7 @@ function nums(v: Json | undefined, what: string): number[] {
 // the figure
 // ---------------------------------------------------------------------------
 
-interface PartBox { name: string; x: number; y: number; w: number; h: number }
+export interface PartBox { name: string; x: number; y: number; w: number; h: number }
 
 export function partBoxes(partsJson: string): PartBox[] {
   const p = obj(readJson(partsJson), partsJson);
@@ -283,7 +286,7 @@ function run(cmd: string, args: string[]): RunResult {
 }
 
 /** A stage run into `dir`, its log and exit kept beside it; under `--reuse` a kept one is read back instead of run again. */
-function stage(dir: string, reuse: boolean, cmd: string, args: string[]): RunResult {
+export function stage(dir: string, reuse: boolean, cmd: string, args: string[]): RunResult {
   const logAt = `${dir}.log`;
   const exitAt = `${dir}.exit`;
   if (reuse && existsSync(logAt) && existsSync(exitAt) && existsSync(dir)) return { exit: Number(readFileSync(exitAt, 'utf8')), log: readFileSync(logAt, 'utf8') };
@@ -325,13 +328,15 @@ function refusals(log: string): string[] {
 // geometry: rigc render --geometry
 // ---------------------------------------------------------------------------
 
-interface BoneMatrix { a: number; b: number; c: number; d: number; x: number; y: number }
-interface RestMesh { slot: string; triangles: number[]; hull: number }
-interface Geometry {
+export interface BoneMatrix { a: number; b: number; c: number; d: number; x: number; y: number }
+export interface RestMesh { slot: string; triangles: number[]; hull: number }
+export interface Geometry {
   rest: Map<string, RestMesh>;
   setupBones: Map<string, BoneMatrix>;
   setup: Map<string, number[]>;
   frames: Array<Map<string, number[]>>;
+  /** Every bone's world transform at each idle frame. */
+  frameBones: Array<Map<string, BoneMatrix>>;
 }
 
 export function readGeometry(path: string): Geometry {
@@ -351,12 +356,16 @@ export function readGeometry(path: string): Geometry {
     return m;
   };
   const setup = obj(g.setup, 'setup');
-  const setupBones = new Map<string, BoneMatrix>();
-  for (const b0 of arr(setup.bones, 'setup.bones')) {
-    const b = obj(b0, 'bone');
-    setupBones.set(str(b.name, 'name'), { a: num(b.a, 'a'), b: num(b.b, 'b'), c: num(b.c, 'c'), d: num(b.d, 'd'), x: num(b.worldX, 'worldX'), y: num(b.worldY, 'worldY') });
-  }
-  return { rest, setupBones, setup: verts(setup.attachments), frames: arr(g.frames, 'frames').map((f) => verts(obj(f, 'frame').attachments)) };
+  const boneMap = (list: Json | undefined): Map<string, BoneMatrix> => {
+    const m = new Map<string, BoneMatrix>();
+    for (const b0 of arr(list, 'bones')) {
+      const b = obj(b0, 'bone');
+      m.set(str(b.name, 'name'), { a: num(b.a, 'a'), b: num(b.b, 'b'), c: num(b.c, 'c'), d: num(b.d, 'd'), x: num(b.worldX, 'worldX'), y: num(b.worldY, 'worldY') });
+    }
+    return m;
+  };
+  const frames = arr(g.frames, 'frames').map((f) => obj(f, 'frame'));
+  return { rest, setupBones: boneMap(setup.bones), setup: verts(setup.attachments), frames: frames.map((f) => verts(f.attachments)), frameBones: frames.map((f) => boneMap(f.bones)) };
 }
 
 export function renderGeometry(candidate: string, out: string): Geometry | string {
@@ -400,7 +409,7 @@ function artPixels(png: string): number {
 interface Located { tri: number; u: number; v: number; w: number }
 
 /** The triangle of a mesh (setup pose) holding a point, with its barycentric weights; null outside. */
-function locate(v: readonly number[], tri: readonly number[], px: number, py: number): Located | null {
+export function locate(v: readonly number[], tri: readonly number[], px: number, py: number): Located | null {
   const eps = 1e-9;
   for (let t = 0; t < tri.length; t += 3) {
     const [i, j, k] = [tri[t] * 2, tri[t + 1] * 2, tri[t + 2] * 2];
@@ -414,7 +423,7 @@ function locate(v: readonly number[], tri: readonly number[], px: number, py: nu
   return null;
 }
 
-function at(v: readonly number[], tri: readonly number[], l: Located): [number, number] {
+export function at(v: readonly number[], tri: readonly number[], l: Located): [number, number] {
   const [i, j, k] = [tri[l.tri] * 2, tri[l.tri + 1] * 2, tri[l.tri + 2] * 2];
   return [l.u * v[i] + l.v * v[j] + l.w * v[k], l.u * v[i + 1] + l.v * v[j + 1] + l.w * v[k + 1]];
 }
@@ -471,9 +480,9 @@ export function displacement(base: Geometry, arm: Geometry): DisplacementRow[] {
 // arm 2: rows across the chain
 // ---------------------------------------------------------------------------
 
-type P2 = [number, number];
+export type P2 = [number, number];
 
-function orient(a: P2, b: P2, c: P2): number {
+export function orient(a: P2, b: P2, c: P2): number {
   return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
 }
 
@@ -778,7 +787,7 @@ export function rowMesh(outline0: readonly P2[], segs: ReadonlyArray<{ bone: str
 }
 
 /** The mesh's bound segments as the rig stage resolves them (`buildRig`'s `meshSegments`), in rig px, each chain link with the joint before it. */
-function resolveSegments(config: Obj, part: string): Array<{ bone: string; a: P2; b: P2; chainJoint: P2 | null }> {
+export function resolveSegments(config: Obj, part: string): Array<{ bone: string; a: P2; b: P2; chainJoint: P2 | null }> {
   const bones = arr(config.bones, 'bones').map((b, i) => obj(b, `bones[${i}]`));
   const mesh = obj(obj(config.meshes, 'meshes')[part], `meshes.${part}`);
   const out: Array<{ bone: string; a: P2; b: P2; chainJoint: P2 | null }> = [];
@@ -803,7 +812,7 @@ function resolveSegments(config: Obj, part: string): Array<{ bone: string; a: P2
 }
 
 /** A 2D affine map fitted by least squares: p -> (a·x + b·y + c, d·x + e·y + f). */
-function fitAffine(from: readonly P2[], to: readonly P2[]): (p: P2) => P2 {
+export function fitAffine(from: readonly P2[], to: readonly P2[]): (p: P2) => P2 {
   const solve3 = (rhs: (i: number) => number): [number, number, number] => {
     let [sxx, sxy, sx, syy, sy, s1, bx, by, b1] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
     from.forEach(([x, y], i) => {
@@ -840,12 +849,12 @@ function fitAffine(from: readonly P2[], to: readonly P2[]): (p: P2) => P2 {
   return ([x, y]) => [a * x + b * y + c, d * x + e * y + f];
 }
 
-interface WeightEntry { bone: string; x: number; y: number; weight: number }
+export interface WeightEntry { bone: string; x: number; y: number; weight: number }
 
 /** The rig stage's distance-rule weights at a part-image point, bound in each bone's setup frame. */
-function weightsAt(p: P2, offset: P2, segs: readonly Segment[], r: number, toWorld: (q: P2) => P2, bones: ReadonlyMap<string, BoneMatrix>): WeightEntry[] {
+export function weightsAt(p: P2, offset: P2, segs: readonly Segment[], r: number, toWorld: (q: P2) => P2, bones: ReadonlyMap<string, BoneMatrix>, exponent?: number): WeightEntry[] {
   const [wx, wy] = toWorld(p);
-  const ent = influences([p[0] + offset[0], p[1] + offset[1]], segs, r).map(({ bone, weight }) => {
+  const ent = influences([p[0] + offset[0], p[1] + offset[1]], segs, r, DEFAULT_LIMITS, exponent).map(({ bone, weight }) => {
     const m = bones.get(bone);
     if (m === undefined) throw new Error(`weightsAt: bone "${bone}" is not in the setup geometry`);
     const det = m.a * m.d - m.b * m.c;
@@ -940,6 +949,277 @@ export function armTwoRig(arm0: string, out: string, config: Obj, parts: readonl
 }
 
 // ---------------------------------------------------------------------------
+// arm 5 (Stage C): insertion where the motion says
+// ---------------------------------------------------------------------------
+
+/** Arm 5's bound on the idle's posed displacement against the lattice, rig px (Stage C: 1.0). */
+export const INSERT_BOUNDS = [1.0] as const;
+
+/**
+ * The most vertices arm 5 inserts into one part. Reaching it with the bound still exceeded is the part's refusal,
+ * not a result. 64 is about a quarter of the smallest arm-0 lattice it replaces on these examples (the trailer neck's
+ * 170 vertices sit far above it; demo's neck has 159): an insertion count that met it would leave the draft no
+ * cheaper than the lattice on a small part. Fixed before the run.
+ */
+export const INSERT_CAP = 64;
+
+/** A sample this close (rig px) to a vertex of the candidate mesh is not an insertion site: the vertex is already there. */
+const NEAR_VERTEX_PX = 0.5;
+
+/** A sample this close (rig px) to a bound segment's end is "at a joint". */
+const JOINT_PX = 8;
+
+/** One vertex's position after skinning by its weights at one frame. */
+export function skin(ws: readonly WeightEntry[], bones: ReadonlyMap<string, BoneMatrix>): P2 {
+  let x = 0;
+  let y = 0;
+  for (const e of ws) {
+    const m = bones.get(e.bone) as BoneMatrix;
+    x += e.weight * (m.a * e.x + m.b * e.y + m.x);
+    y += e.weight * (m.c * e.x + m.d * e.y + m.y);
+  }
+  return [x, y];
+}
+
+export interface Insertion { at: [number, number]; displacement: number; frame: number; bones: string; where: string }
+export interface InsertPart { part: string; inserted: number; capped: boolean; stopped?: 'bound' | 'cap' | 'attempts' | 'no site'; rejected?: number; before: number; after: number; extraBefore?: number | null; extraAfter?: number | null; triangles: number; vertices: number; ms: number; skinControl: number; weightControl: number; insertions: Insertion[] }
+
+/**
+ * Arm 5 on one part: the draft's mesh (outline and ribs kept and locked) against arm 0's lattice as the dense
+ * reference, both posed over the idle — the candidate by its own weights and each frame's bone transforms, the
+ * reference by `rigc render --geometry`. Samples are every vertex and triangle centroid of both meshes lying in both
+ * (the Stage A rule); while the largest displacement over the samples is above the bound and fewer than
+ * {@link INSERT_CAP} vertices were inserted, one vertex goes in at the largest-displacement sample that is no vertex
+ * already (farther than {@link NEAR_VERTEX_PX}), weighted by the part's own rule (`influences` at its `r`, segments
+ * and exponent), and the mesh is re-triangulated: the holding triangle split, then flipped to the constrained
+ * Delaunay triangulation with every outline and rib edge locked.
+ *
+ * Two controls run first and fail by name: the draft's own weights recomputed (≤ 1e-3) and its posed vertices
+ * re-skinned from the frames' bone transforms (≤ 1e-3 rig px, every frame).
+ */
+/**
+ * A second insertion criterion beside the idle bound (Stage C on idle ∪ bend, `tools/bend_survey.ts`): read on the
+ * candidate as it stands — its vertices in setup world, weights and triangles — it says whether the part still
+ * violates it, and the sample (setup world) to insert at; `near` says whether a point is already a vertex.
+ */
+export type ExtraCriterion = (worldV: readonly P2[], W: readonly WeightEntry[][], tri: readonly number[], near: (p: P2) => boolean) => { violated: boolean; site: P2 | null; value: number; flipped: number };
+
+function insertPart(part: string, att: Obj, ribEdges: ReadonlyArray<readonly [number, number]>, config: Obj, box: PartBox, cand: Geometry, ref: Geometry, bound: number, extra: ExtraCriterion | null = null): { attachment: Obj; row: InsertPart } {
+  const t0 = performance.now();
+  const w = num(att.width, 'width');
+  const h = num(att.height, 'height');
+  const uvs = nums(att.uvs, 'uvs');
+  const V: P2[] = [];
+  // a contour vertex sits on the 1/256 px grid and its uv is rounded to 6 places (under 1/512 px on any part here), so snapping recovers it exactly
+  for (let i = 0; i < uvs.length; i += 2) V.push(snap([uvs[i] * w, uvs[i + 1] * h]));
+  const H = num(att.hull, 'hull');
+  const setup = cand.setup.get(part) as number[];
+  const worldOf: P2[] = V.map((_, i) => [setup[2 * i], setup[2 * i + 1]]);
+  const toWorld = fitAffine(V, worldOf);
+  const toPart = fitAffine(worldOf, V);
+  const mesh = obj(obj(config.meshes, 'meshes')[part], `meshes.${part}`);
+  const r = num(mesh.r, 'r');
+  const exponent = typeof mesh.exponent === 'number' ? mesh.exponent : undefined;
+  const segs = resolveSegments(config, part);
+  const wsegs: Segment[] = segs.map((sg) => ({ bone: sg.bone, a: sg.a, b: sg.b }));
+  const offset: P2 = [box.x - PAD, box.y - PAD];
+  const W: WeightEntry[][] = arr(att.weights, 'weights').map((row) => arr(row, 'row').map((e0) => {
+    const e = obj(e0, 'entry');
+    return { bone: str(e.bone, 'bone'), x: num(e.x, 'x'), y: num(e.y, 'y'), weight: num(e.weight, 'weight') };
+  }));
+  // controls
+  let weightControl = 0;
+  V.forEach((v, i) => {
+    const mine = weightsAt(v, offset, wsegs, r, toWorld, cand.setupBones, exponent);
+    if (mine.length !== W[i].length || mine.some((m, j) => m.bone !== W[i][j].bone)) throw new Error(`insertPart: control — vertex ${i} of "${part}" is weighted to other bones here than in the draft`);
+    mine.forEach((m, j) => (weightControl = Math.max(weightControl, Math.abs(m.weight - W[i][j].weight), Math.abs(m.x - W[i][j].x), Math.abs(m.y - W[i][j].y))));
+  });
+  if (weightControl > 1e-3) throw new Error(`insertPart: control — the draft's weights of "${part}" recomputed differ by ${weightControl}`);
+  let skinControl = 0;
+  cand.frames.forEach((f, fi) => {
+    const posed = f.get(part) as number[];
+    W.forEach((ws, i) => {
+      const [x, y] = skin(ws, cand.frameBones[fi]);
+      skinControl = Math.max(skinControl, Math.hypot(x - posed[2 * i], y - posed[2 * i + 1]));
+    });
+  });
+  if (skinControl > 1e-3) throw new Error(`insertPart: control — the draft's posed vertices of "${part}" re-skinned differ by ${skinControl} rig px`);
+
+  const refRest = ref.rest.get(part) as RestMesh;
+  const refV = ref.setup.get(part) as number[];
+  const frames = Math.min(cand.frames.length, ref.frames.length);
+  let tri = nums(att.triangles, 'triangles');
+  const locked = new Set<string>();
+  for (let i = 0; i < H; i++) locked.add(`${i},${(i + 1) % H}`);
+  for (const [a, b] of ribEdges) locked.add(`${a},${b}`);
+  const insertions: Insertion[] = [];
+  const chainNames = arr(config.bones, 'bones').map((b) => obj(b, 'bone').chain).filter((c): c is string => typeof c === 'string');
+  const chainOf = (bone: string): string | null => chainNames.find((c) => bone.startsWith(c) && /^\d+$/.test(bone.slice(c.length))) ?? null;
+  const skipped: P2[] = [];
+
+  const measure = (): { max: number; frame: number; site: P2 | null; siteD: number; siteFrame: number } => {
+    const cw = V.map((v) => toWorld(v));
+    const flat = cw.flat();
+    const posed = Array.from({ length: frames }, (_, fi) => W.map((ws) => skin(ws, cand.frameBones[fi])).flat());
+    const pts: P2[] = [];
+    for (let i = 0; i < refV.length; i += 2) pts.push([refV[i], refV[i + 1]]);
+    for (let t = 0; t < refRest.triangles.length; t += 3) pts.push([(refV[refRest.triangles[t] * 2] + refV[refRest.triangles[t + 1] * 2] + refV[refRest.triangles[t + 2] * 2]) / 3, (refV[refRest.triangles[t] * 2 + 1] + refV[refRest.triangles[t + 1] * 2 + 1] + refV[refRest.triangles[t + 2] * 2 + 1]) / 3]);
+    for (const p of cw) pts.push(p);
+    for (let t = 0; t < tri.length; t += 3) pts.push([(flat[tri[t] * 2] + flat[tri[t + 1] * 2] + flat[tri[t + 2] * 2]) / 3, (flat[tri[t] * 2 + 1] + flat[tri[t + 1] * 2 + 1] + flat[tri[t + 2] * 2 + 1]) / 3]);
+    let max = 0;
+    let frame = -1;
+    let site: P2 | null = null;
+    let siteD = 0;
+    let siteFrame = -1;
+    for (const p of pts) {
+      const a = locate(refV, refRest.triangles, p[0], p[1]);
+      const b = locate(flat, tri, p[0], p[1]);
+      if (a === null || b === null) continue;
+      let d = 0;
+      let df = -1;
+      for (let fi = 0; fi < frames; fi++) {
+        const [x0, y0] = at(ref.frames[fi].get(part) as number[], refRest.triangles, a);
+        const [x1, y1] = at(posed[fi], tri, b);
+        const dd = Math.hypot(x1 - x0, y1 - y0);
+        if (dd > d) [d, df] = [dd, fi];
+      }
+      if (d > max) [max, frame] = [d, df];
+      const near = cw.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) <= NEAR_VERTEX_PX) || skipped.some((q) => q[0] === p[0] && q[1] === p[1]);
+      if (!near && d > siteD) [site, siteD, siteFrame] = [p, d, df];
+    }
+    return { max, frame, site, siteD, siteFrame };
+  };
+
+  const nearVertex = (p: P2): boolean => V.some((v) => {
+    const q = toWorld(v);
+    return Math.hypot(q[0] - p[0], q[1] - p[1]) <= NEAR_VERTEX_PX;
+  }) || skipped.some((q) => q[0] === p[0] && q[1] === p[1]);
+  const extraNow = (): ReturnType<ExtraCriterion> | null => (extra === null ? null : extra(V.map((v) => toWorld(v)), W, tri, nearVertex));
+  let m = measure();
+  let e = extraNow();
+  const before = m.max;
+  const extraBefore = e?.value ?? null;
+  let capped = false;
+  let attempts = 0;
+  let stopped: InsertPart['stopped'] = 'bound';
+  while (m.max > bound || e?.violated === true) {
+    const byIdle = m.max > bound;
+    const site = byIdle ? m.site : (e as ReturnType<ExtraCriterion>).site;
+    if (insertions.length >= INSERT_CAP || site === null) {
+      stopped = site === null ? 'no site' : 'cap';
+      capped = site !== null;
+      break;
+    }
+    const pw = site;
+    const pp = toPart(pw);
+    // split the triangle holding the point
+    let held = -1;
+    for (let t = 0; t < tri.length && held < 0; t += 3) {
+      const [a, b, c] = [V[tri[t]], V[tri[t + 1]], V[tri[t + 2]]];
+      const o1 = orient(a, b, pp);
+      const o2 = orient(b, c, pp);
+      const o3 = orient(c, a, pp);
+      if ((o1 > 1e-9 && o2 > 1e-9 && o3 > 1e-9) || (o1 < -1e-9 && o2 < -1e-9 && o3 < -1e-9)) held = t;
+    }
+    if (held < 0) {
+      // on an edge (or the outline) to within rounding: not a site; the next largest is taken instead
+      skipped.push(pw);
+      m = measure();
+      e = extraNow();
+      continue;
+    }
+    const was = tri;
+    const k = V.length;
+    V.push(pp);
+    const ws = weightsAt(pp, offset, wsegs, r, toWorld, cand.setupBones, exponent);
+    W.push(ws);
+    const [a, b, c] = [tri[held], tri[held + 1], tri[held + 2]];
+    tri = [...tri.slice(0, held), ...tri.slice(held + 3), a, b, k, b, c, k, c, a, k];
+    tri = delaunay(tri, V, locked);
+    // an insertion that leaves the idle worse above the bound, flips more triangles at the bend, or (a bend site)
+    // leaves the bend reading larger, is undone and its site skipped; 4 x the cap undone stops the part ('attempts')
+    const m2 = measure();
+    const e2 = extraNow();
+    if ((m2.max > bound && m2.max > m.max) || (e !== null && e2 !== null && (e2.flipped > e.flipped || (!byIdle && e2.value > e.value)))) {
+      V.pop();
+      W.pop();
+      tri = was;
+      skipped.push(pw);
+      attempts++;
+      if (attempts > 4 * INSERT_CAP) {
+        stopped = 'attempts';
+        break;
+      }
+      continue;
+    }
+    const rp: P2 = [pp[0] + offset[0], pp[1] + offset[1]];
+    const top = [...ws].sort((x, y) => y.weight - x.weight);
+    const joint = segs.some((sg) => Math.hypot(sg.a[0] - rp[0], sg.a[1] - rp[1]) <= JOINT_PX || Math.hypot(sg.b[0] - rp[0], sg.b[1] - rp[1]) <= JOINT_PX);
+    const [c1, c2] = [chainOf(top[0].bone), top.length > 1 ? chainOf(top[1].bone) : null];
+    const second = top.length > 1 && top[1].weight >= 0.25;
+    const where = joint
+      ? 'at a joint'
+      : !second
+        ? `inside ${top[0].bone}`
+        : c1 !== null && c2 !== null && c1 !== c2
+          ? `between chains ${c1} / ${c2}`
+          : c1 === null && c2 === null
+            ? `segment crossing ${top[0].bone} / ${top[1].bone}`
+            : c1 !== null && c1 === c2
+              ? `along chain ${c1}`
+              : `chain and segment ${top[0].bone} / ${top[1].bone}`;
+    insertions.push({ at: [pyRound(rp[0], 2), pyRound(rp[1], 2)], displacement: pyRound(byIdle ? m.siteD : (e as ReturnType<ExtraCriterion>).value, 3), frame: byIdle ? m.siteFrame : -1, bones: top.slice(0, 2).map((x) => `${x.bone} ${x.weight}`).join(', '), where: `${byIdle ? 'idle' : 'bend'}: ${where}` });
+    m = m2;
+    e = e2;
+  }
+  // the triangles back to the lattice's winding, then Spine's
+  const oriented: number[] = [];
+  for (let t = 0; t < tri.length; t += 3) {
+    const [a, b, c] = [tri[t], tri[t + 1], tri[t + 2]];
+    if (orient(V[a], V[b], V[c]) > 0) oriented.push(a, b, c);
+    else oriented.push(a, c, b);
+  }
+  const triangles = counterClockwiseInSpineWorld(oriented);
+  const attachment: Obj = {
+    ...att,
+    uvs: V.flatMap(([x, y]) => [pyRound(x / w, 6), pyRound(y / h, 6)]),
+    triangles,
+    hull: H,
+    weights: W.map((ws) => ws.map((e) => ({ bone: e.bone, x: e.x, y: e.y, weight: e.weight }))) as unknown as Json,
+  };
+  return { attachment, row: { part, inserted: insertions.length, capped, stopped, rejected: attempts, before: pyRound(before, 3), after: pyRound(m.max, 3), extraBefore: extraBefore === null ? null : pyRound(extraBefore, 3), extraAfter: e === null ? null : pyRound(e.value, 3), triangles: triangles.length / 3, vertices: V.length, ms: Math.round(performance.now() - t0), skinControl, weightControl, insertions } };
+}
+
+/** Arm 5's rig: the draft's rig directory copied, every mesh the draft turned to contour (`drafted`) run through {@link insertPart}; an author's own contour mesh (a soft region's) is left as it was. */
+export function insertRig(draftDir: string, out: string, config: Obj, parts: readonly PartBox[], cand: Geometry, ref: Geometry, bound: number, drafted: ReadonlySet<string>, extraFor: ((part: string, cand: Geometry) => ExtraCriterion | null) | null = null): InsertPart[] {
+  rmSync(out, { recursive: true, force: true });
+  cpSync(join(draftDir, 'rig'), out, { recursive: true });
+  const rigPath = join(out, 'rig.json');
+  const rig = obj(readJson(rigPath), rigPath);
+  const skin0 = obj(obj(rig.skins, 'skins').default, 'skins.default');
+  const report = arr(readJson(join(draftDir, 'rig', 'mesh_report.json')), 'mesh_report').map((x) => obj(x, 'row'));
+  const rows: InsertPart[] = [];
+  for (const row of report) {
+    const part = str(row.part, 'part');
+    if (row.mode !== 'contour' || !drafted.has(part)) continue;
+    const box = parts.find((q) => q.name === part);
+    if (box === undefined || !ref.rest.has(part)) continue;
+    const contour = obj(row.contour, 'contour');
+    const ribEdges: Array<[number, number]> = [];
+    for (const rb of arr(contour.ribs ?? [], 'ribs')) {
+      const vs = nums(obj(rb, 'rib').vertices, 'vertices');
+      for (let i = 0; i + 1 < vs.length; i++) ribEdges.push([vs[i], vs[i + 1]]);
+    }
+    const att = obj(obj(skin0[part], `skin ${part}`)[part], `attachment ${part}`);
+    const r = insertPart(part, att, ribEdges, config, box, cand, ref, bound, extraFor === null ? null : extraFor(part, cand));
+    skin0[part] = { [part]: r.attachment };
+    rows.push(r.row);
+  }
+  writeFileSync(rigPath, rigJsonText(rig));
+  return rows;
+}
+
+// ---------------------------------------------------------------------------
 // one arm, measured
 // ---------------------------------------------------------------------------
 
@@ -955,6 +1235,7 @@ export interface ArmResult {
   checkLines: string[];
   displacement: DisplacementRow[];
   armTwo: ArmTwoPart[];
+  insert?: InsertPart[];
   error: string | null;
 }
 
@@ -965,7 +1246,7 @@ function checkLines(log: string): string[] {
     .map((l) => l.replace(/^\[check\] +/, '').slice(0, 400));
 }
 
-function measured(arm: string, B: number | null, dir: string, r: RunResult, moved: string[], base: Geometry | null, armTwo: ArmTwoPart[], art = false, gaps: string[] = []): { result: ArmResult; geometry: Geometry | null } {
+export function measured(arm: string, B: number | null, dir: string, r: RunResult, moved: string[], base: Geometry | null, armTwo: ArmTwoPart[], art = false, gaps: string[] = []): { result: ArmResult; geometry: Geometry | null } {
   const checkJson = join(dir, 'check', 'check.json');
   const check = existsSync(checkJson) ? obj(readJson(checkJson), checkJson) : null;
   const candidate = join(dir, 'check', 'build');
@@ -995,7 +1276,7 @@ function measured(arm: string, B: number | null, dir: string, r: RunResult, move
   };
 }
 
-function runExample(key: string, configPath: string, inputs: string, requirements: string | null, work: string, chainRows: string[], reuse: boolean, arm3: ReadonlyArray<readonly string[] | 'grid'> | null = null, draft = false): Obj {
+function runExample(key: string, configPath: string, inputs: string, requirements: string | null, work: string, chainRows: string[], reuse: boolean, arm3: ReadonlyArray<readonly string[] | 'grid'> | null = null, draft = false, insert = false): Obj {
   for (const p of [configPath, join(inputs, 'painting.png'), join(inputs, 'layers', 'full', 'layers.json'), join(inputs, 'layers', 'head', 'layers.json'), ...(requirements === null ? [] : [requirements])]) {
     if (!existsSync(p)) {
       console.error(`density_survey: ${p} is not there`);
@@ -1029,7 +1310,22 @@ function runExample(key: string, configPath: string, inputs: string, requirement
     writeFileSync(join(work, 'draft-config.json'), `${JSON.stringify(cfg, null, 2)}\n`);
     log(`draft T ${T} build`);
     const r = stage(dir, reuse, 'bun', buildArgs(at, inputs, requirements, dir));
-    arms.push(measured(`draft (T ${T})`, null, dir, r, rows.map((x) => `${x.part} -> ${x.mode}`), base, [], true).result);
+    const md = measured(`draft (T ${T})`, null, dir, r, rows.map((x) => `${x.part} -> ${x.mode}`), base, [], true);
+    arms.push(md.result);
+    if (insert && md.geometry !== null && r.exit === 0) {
+      for (const bound of INSERT_BOUNDS) {
+        const idir = join(work, `insert-${bound}`);
+        rmSync(idir, { recursive: true, force: true });
+        mkdirSync(idir, { recursive: true });
+        log(`arm 5 bound ${bound}: insertion, check`);
+        const ins = insertRig(dir, join(idir, 'rig'), cfg, parts, md.geometry, base, bound, new Set(rows.filter((x) => x.mode === 'contour').map((x) => x.part)));
+        const args = [join(ROOT, 'cli.ts'), 'check', '--rig', join(idir, 'rig'), '--out', join(idir, 'check'), '--parts', dir0];
+        if (requirements !== null) args.push('--requirements', requirements);
+        const rc = stage(join(idir, 'check'), false, 'bun', args);
+        const mi = measured(`5 (bound ${bound})`, null, idir, { exit: rc.exit, log: rc.log.split('\n').map((l) => `[check] ${l}`).join('\n') }, [], base, [], true);
+        arms.push({ ...mi.result, insert: ins });
+      }
+    }
   }
   if (arm3 !== null) {
     const gridParts = Object.entries(obj(config.meshes, 'meshes')).filter(([, m]) => 'grid' in obj(m, 'mesh')).map(([n]) => n);
@@ -1094,7 +1390,7 @@ function runExample(key: string, configPath: string, inputs: string, requirement
 
 const fx = (v: number, n: number): string => v.toFixed(n);
 
-function armsOf(doc: Obj): ArmResult[] {
+export function armsOf(doc: Obj): ArmResult[] {
   return arr(doc.arms, 'arms') as unknown as ArmResult[];
 }
 
@@ -1104,9 +1400,9 @@ function figureDensity(a: ArmResult): number {
   return t / ar;
 }
 
-const BARS = ['BREATH_VISIBLE', 'BLINK_NO_HOLE', 'CHAIN_LAG', 'TIP_OVER_ROOT', 'STILL_REGIONS_DARK', 'TEXTURE_STRETCH'] as const;
+export const BARS = ['BREATH_VISIBLE', 'BLINK_NO_HOLE', 'CHAIN_LAG', 'TIP_OVER_ROOT', 'STILL_REGIONS_DARK', 'TEXTURE_STRETCH'] as const;
 
-function barCell(check: Obj | null, bar: string): string {
+export function barCell(check: Obj | null, bar: string): string {
   if (check === null) return '—';
   const v = check[bar];
   if (v === undefined || v === null || typeof v !== 'object' || Array.isArray(v)) return '—';
@@ -1119,7 +1415,7 @@ function barCell(check: Obj | null, bar: string): string {
   return s;
 }
 
-function seamCell(check: Obj | null): string {
+export function seamCell(check: Obj | null): string {
   if (check === null) return '—';
   const m = check.seam_mean;
   const p = check.seam_px_over_40;
@@ -1243,13 +1539,13 @@ function renderPage(docs: Obj[]): string {
 }
 
 /** Σ mesh area over Σ art area, over the meshes that carry an art count; null when none does. */
-function overdrawOf(meshes: ArmResult['meshes'], only: ReadonlySet<string> | null = null): number | null {
+export function overdrawOf(meshes: ArmResult['meshes'], only: ReadonlySet<string> | null = null): number | null {
   const rows = meshes.filter((m) => m.art !== undefined && (only === null || only.has(m.slot)));
   if (rows.length === 0) return null;
   return rows.reduce((a, m) => a + m.area, 0) / rows.reduce((a, m) => a + (m.art as number), 0);
 }
 
-function stretchOf(check: Obj | null, slot: string): string {
+export function stretchOf(check: Obj | null, slot: string): string {
   const ts = check === null ? undefined : check.TEXTURE_STRETCH;
   if (ts === undefined || ts === null || typeof ts !== 'object' || Array.isArray(ts) || !Array.isArray(ts.per_mesh)) return '—';
   const row = ts.per_mesh.find((r) => r !== null && typeof r === 'object' && !Array.isArray(r) && r.slot === slot);
@@ -1489,6 +1785,88 @@ export function autoTable(evidence: string, key: string, arms: readonly string[]
   return { key, arms: out };
 }
 
+/** Stage C's page: arm 0, the draft, and arm 5 at each bound, per example. */
+function renderInsert(docs: Obj[]): string {
+  const L: string[] = [];
+  L.push('# Insertion where the motion says (issue #265, Stage C, arm 5)');
+  L.push('');
+  L.push(`Generated by \`tools/density_survey.ts --page-insert\` over \`--run … --insert\` documents; every figure is the tool's. Arm 5 starts from Stage B's draft (\`tools/contourdraft.ts\`: outline, surviving ribs) and, on every part the draft turned to \`contour\`, inserts one vertex at a time where the posed displacement against the dense reference — arm 0's own lattice, posed by \`rigc render --geometry\` — is largest, weighted by the part's rule, re-triangulated with the outline and ribs locked, until the largest displacement is within the bound (${INSERT_BOUNDS.join(' and ')} rig px) or ${INSERT_CAP} vertices were inserted (the cap; reaching it is the part's refusal); an insertion that leaves the reading worse above the bound is undone and its site skipped, and ${4 * INSERT_CAP} undone stop the part (\"attempts\"). An author's own contour mesh (a soft region's) and a part the draft kept on \`grid\` are not touched. "Where" classifies each inserted vertex by its two heaviest bones: at a joint (within ${JOINT_PX} px of a bound segment's end), inside one bone (second weight under 0.25), along one chain, between two chains, on a crossing of two bone segments, or between a chain and a bone segment. Time is the insertion loop's wall time on the run's machine (not reproducible to the byte).`);
+  L.push('');
+  L.push('The pictures, read before the tables: `density-stageC-figure.png` — each example\'s figure (its arm-0 recomposite, faded) with every vertex Stage C inserted marked (circles: at the idle bound; squares: on idle ∪ bend, red for an idle site and blue for a bend site); `density-stageC-film.png` — the trailer\'s skirt, legs and long hair at the film\'s bends, lattice, auto base, Stage B and Stage C at the idle side by side, each mesh drawn over its own texture (`tools/bend_survey.ts` poses, this tool\'s skinning). The bend set is `docs/evidence/density-bend.md`.');
+  L.push('');
+  L.push('![Stage C, the inserted vertices](density-stageC-figure.png)');
+  L.push('');
+  L.push('![the film bends](density-stageC-film.png)');
+  for (const doc of docs) {
+    const key = str(doc.key, 'key');
+    const arms = armsOf(doc);
+    const a0 = arms[0];
+    const t0 = a0.meshes.reduce((x, m) => x + m.triangles, 0);
+    const od0 = overdrawOf(a0.meshes);
+    L.push('');
+    L.push(`## ${key}`);
+    L.push('');
+    L.push('| arm | build | Σ triangles | vs arm 0 | inserted | parts at the cap | overdraw, figure | parts above their arm-0 overdraw by more than 5 % | ' + BARS.join(' | ') + ' | largest displacement vs arm 0 (rig px) | insertion time (ms) |');
+    L.push('| --- | --- | ---: | ---: | ---: | --- | ---: | --- | ' + BARS.map(() => '---').join(' | ') + ' | --- | ---: |');
+    for (const a of arms) {
+      const T = a.meshes.reduce((x, m) => x + m.triangles, 0);
+      const od = overdrawOf(a.meshes);
+      const over = a.meshes.filter((m) => {
+        const z = a0.meshes.find((q) => q.slot === m.slot);
+        return z !== undefined && z.art !== undefined && m.art !== undefined && m.area / m.art > 1.05 * (z.area / z.art);
+      }).map((m) => {
+        const z = a0.meshes.find((q) => q.slot === m.slot) as ArmResult['meshes'][number];
+        return `${m.slot} ${fx(z.area / (z.art as number), 3)} → ${fx(m.area / (m.art as number), 3)}`;
+      });
+      const disp = [...a.displacement].sort((p, q) => q.max - p.max)[0];
+      const ins = a.insert ?? [];
+      L.push(`| ${a.arm} | ${a.exit === 0 ? 'PASS' : `exit ${a.exit}`} | ${T} | ${fx((100 * T) / t0, 1)} % | ${a.insert === undefined ? '—' : ins.reduce((x, r) => x + r.inserted, 0)} | ${a.insert === undefined ? '—' : ins.filter((r) => r.capped).map((r) => r.part).join(', ') || 'none'} | ${od === null ? '—' : fx(od, 3)}${od !== null && od0 !== null ? (od <= od0 ? '' : ' (above arm 0)') : ''} | ${a === a0 ? '—' : over.join(', ') || 'none'} | ${BARS.map((b) => barCell(a.check, b)).join(' | ')} | ${disp === undefined ? '—' : `${fx(disp.max, 3)} (${disp.slot}, frame ${disp.frame})`} | ${a.insert === undefined ? '—' : ins.reduce((x, r) => x + r.ms, 0)} |`);
+    }
+    const fives = arms.filter((a) => a.insert !== undefined);
+    const parts = [...new Set(fives.flatMap((a) => (a.insert as InsertPart[]).map((r) => r.part)))];
+    L.push('');
+    L.push(`Per drafted part: triangles (arm 0 / draft / ${fives.map((a) => a.arm).join(' / ')}), vertices inserted, and the largest displacement against arm 0 before and after.`);
+    L.push('');
+    L.push(`| part | triangles | ${fives.map((a) => `${a.arm}: inserted, displacement before → after`).join(' | ')} | TEXTURE_STRETCH arm 0 / draft / ${fives.map((a) => a.arm).join(' / ')} |`);
+    L.push(`| --- | --- | ${fives.map(() => '---').join(' | ')} | --- |`);
+    for (const part of parts) {
+      const tri = arms.map((a) => a.meshes.find((m) => m.slot === part)?.triangles ?? '—').join(' / ');
+      const cells = fives.map((a) => {
+        const r = (a.insert as InsertPart[]).find((x) => x.part === part);
+        return r === undefined ? '—' : `${r.inserted}${r.stopped !== undefined && r.stopped !== 'bound' ? ` (stopped: ${r.stopped}${r.rejected !== undefined ? `, ${r.rejected} undone` : ''})` : r.capped ? ' (cap)' : ''}, ${fx(r.before, 3)} → ${fx(r.after, 3)}`;
+      });
+      L.push(`| ${part} | ${tri} | ${cells.join(' | ')} | ${arms.map((a) => stretchOf(a.check, part)).join(' / ')} |`);
+    }
+    for (const a of fives) {
+      const rows = (a.insert as InsertPart[]).filter((r) => r.inserted > 0);
+      if (rows.length === 0) continue;
+      L.push('');
+      L.push(`Inserted vertices, arm ${a.arm} (rig px, in insertion order; the displacement there before it went in, its frame, its two heaviest bones):`);
+      L.push('');
+      for (const r of rows) L.push(`- ${r.part}: ${r.insertions.map((i) => `(${i.at[0]}, ${i.at[1]}) ${i.displacement} f${i.frame} [${i.bones}] ${i.where}`).join('; ')}`);
+    }
+    for (const a of fives) {
+      const ctl = (a.insert as InsertPart[]).reduce((x, r) => Math.max(x, r.skinControl, r.weightControl), 0);
+      L.push('');
+      L.push(`Controls, arm ${a.arm}: the draft's own weights recomputed and its posed vertices re-skinned from the frames' bone transforms agree to ${ctl.toExponential(1)} (largest of either, over every part).`);
+    }
+    L.push('');
+    L.push('Every arm\'s `check` lines, as the build printed them:');
+    for (const a of arms) {
+      L.push('');
+      L.push(`<details><summary>arm ${a.arm}</summary>`);
+      L.push('');
+      L.push('```');
+      for (const l of a.checkLines) L.push(l);
+      L.push('```');
+      L.push('');
+      L.push('</details>');
+    }
+  }
+  L.push('');
+  return L.join('\n');
+}
+
 /** The #265/#266 table, per example. */
 function renderAutoTable(docs: Obj[]): string {
   const L: string[] = [];
@@ -1572,6 +1950,11 @@ function main(argv: string[]): void {
     for (const row of rows) process.stdout.write(`- ${row.part}: ${row.islands.length} island(s)${row.islands.length > 1 ? ` — ${row.islands.join(', ')} px` : ''}\n`);
     return;
   }
+  if (argv.includes('--page-insert')) {
+    const files = argv.slice(argv.indexOf('--page-insert') + 1);
+    process.stdout.write(renderInsert(files.map((f) => obj(readJson(f), f))));
+    return;
+  }
   if (argv.includes('--auto-table')) {
     const evidence = flag('--evidence');
     const key = flag('--key');
@@ -1613,7 +1996,7 @@ function main(argv: string[]): void {
       process.exit(2);
     }
     const chain = flag('--chain-rows');
-    const doc = runExample(key, resolve(config), resolve(inputs), flag('--requirements') === null ? null : resolve(flag('--requirements') as string), resolve(work), chain === null ? [] : chain.split(','), argv.includes('--reuse'), flag('--arm3') === null ? null : (flag('--arm3') as string).split(';').map((g) => (g === 'grid' ? 'grid' : g.split(','))), argv.includes('--draft'));
+    const doc = runExample(key, resolve(config), resolve(inputs), flag('--requirements') === null ? null : resolve(flag('--requirements') as string), resolve(work), chain === null ? [] : chain.split(','), argv.includes('--reuse'), flag('--arm3') === null ? null : (flag('--arm3') as string).split(';').map((g) => (g === 'grid' ? 'grid' : g.split(','))), argv.includes('--draft') || argv.includes('--insert'), argv.includes('--insert'));
     process.stdout.write(`${JSON.stringify(doc)}\n`);
     return;
   }
