@@ -1052,7 +1052,7 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   for (const l of packLines(r)) log(`  ${l}`);
   const fig = r.figures;
   if (r.idle === null) log(`  loop: SKIP — ${fig.skipped?.loop ?? ''}`);
-  else log(`  loop: idle ${r.idle.frames} frame(s) at ${r.idle.fps} fps, f0000 vs f${String(r.idle.lastIndex).padStart(4, '0')} (t = ${r.idle.duration}s): max |d| ${fig.loop_max_diff} (0 required)`);
+  else log(`  ${loopCheckLine(r.idle, fig.loop_max_diff, fig.loop_physics?.length ?? 0)}`);
   if (r.loopPhysics !== null) log(`  ${r.loopPhysics}`);
   const beside = besideIdleLine(r.besideIdle);
   if (beside !== null) log(`  ${beside}`);
@@ -1217,11 +1217,48 @@ function pixelsOver(a: Raster, b: Raster, level: number): number {
 }
 
 /**
+ * `check`'s `loop:` line (issue #325). With physics constraints in the rig the
+ * comparison it reports was made with them left out (issue #183), and the line
+ * says so itself rather than leaving it to the `loop physics:` line below: the
+ * loop stage compares the frames rendered with them, and on a rig with physics
+ * those ends differ although this line reads max |d| 0.
+ */
+export function loopCheckLine(idle: { frames: number; fps: number; duration: number; lastIndex: number }, max: number | null, physics: number): string {
+  const left = physics === 0 ? '' : ` with the rig's ${physics} physics constraint(s) left out (named on the \`loop physics:\` line; rendered with them, the ends need not meet — \`build --loop --lead-in <n>\`)`;
+  return `loop: idle ${idle.frames} frame(s) at ${idle.fps} fps, f0000 vs f${String(idle.lastIndex).padStart(4, '0')} (t = ${idle.duration}s)${left}: max |d| ${String(max)} (0 required)`;
+}
+
+/**
+ * The loop stage's line when the end frame is not frame 0 (issue #325): the
+ * jump as measured (max |d| over R, G and B, and pixels over 40 — the lead-in
+ * line's figures), then why. `physics` is how many physics constraints the rig
+ * behind the frames holds; `build --loop` knows it from `check`, while
+ * `loop --frames` reads frames alone and does not, so its line names both
+ * causes. With physics, rigc's render starts every constraint at rest at frame
+ * 0, so the idle does not end where it starts, and `--lead-in` is the remedy;
+ * with none, the idle itself does not close, which `check`'s `loop:` line
+ * measures — under `build`, which stops at that bar, the branch is reached
+ * only by a difference the bar does not read.
+ */
+export function loopJumpLine(lastName: string, max: number, over40: number, physics: number | undefined): string {
+  const jump = `${lastName} differs from f0000.png by max |d| ${max}, ${over40} px over 40, so every frame is kept and the loop will jump at the wrap`;
+  const remedy = '`build --loop --lead-in <n>` plays the idle n periods ahead and keeps the last (docs/AUTHORING.md §5, *build --loop --lead-in*)';
+  if (physics === undefined) {
+    return `${jump}; the frames alone do not say why — if their rig holds a physics constraint, rigc's render starts it at rest at frame 0 and ${remedy}; if it holds none, the idle itself does not close, which \`check\`'s \`loop:\` line (CHECK_LOOP_CLOSES) measures`;
+  }
+  if (physics === 0) {
+    return `${jump}: the rig holds no physics constraint, so the idle itself does not close — \`check\`'s \`loop:\` line (CHECK_LOOP_CLOSES) measures the same two frames, and \`--lead-in\`, which settles physics, is not the remedy`;
+  }
+  return `${jump}: the rig holds ${physics} physics constraint(s), and rigc's render starts every one at rest at frame 0, so the idle does not end where it starts — \`check\`'s \`loop:\` line read its ends with them left out; ${remedy}`;
+}
+
+/**
  * Encode a rigc frame set as a looping APNG, indexed APNG or GIF and write it.
  * An encoder refusal is a PartsError coded `LOOP_ENCODE`, so it prints like
- * every other.
+ * every other. `physics` is how many physics constraints the frames' rig holds,
+ * when the caller knows it ({@link loopJumpLine}).
  */
-export function loopStage(frames: string, out: string, format: LoopFormat, log: Log, window?: LoopWindow): LoopResult {
+export function loopStage(frames: string, out: string, format: LoopFormat, log: Log, window?: LoopWindow, physics?: number): LoopResult {
   const set = readFrameSet(frames);
   const images = set.frames.map((fr) => fr.image);
   log(`rig-parts loop: ${set.dir} -> ${out}`);
@@ -1243,7 +1280,8 @@ export function loopStage(frames: string, out: string, format: LoopFormat, log: 
     used = images.slice(0, -1);
     log(`  ${lastName} equals f0000.png byte for byte, so it is dropped: the loop wraps onto frame 0, and showing it twice would hold that pose for two ticks`);
   } else if (images.length > 1) {
-    log(`  ${lastName} differs from f0000.png, so every frame is kept and the loop will jump at the wrap`);
+    const last = images[images.length - 1];
+    log(`  ${loopJumpLine(lastName, maxRgbDiff(images[0], last).max, pixelsOver(images[0], last, 40), physics)}`);
   }
   const anim: AnimFrame[] = used.map((image) => ({ image, ticks: 1 }));
   log(`  ${anim.length} frame(s) encoded, ${(anim.length / set.fps).toFixed(3)}s per loop, looping forever`);
@@ -1462,9 +1500,10 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
       const window = input.leadIn === undefined ? undefined : { periods: input.leadIn };
       if (window !== undefined) rmSync(run.scratch, { recursive: true, force: true });
       const frames = window === undefined ? join(out, 'check', 'idle_frames') : leadInFrames(join(out, 'rig'), run.scratch, window.periods, run.check, { pageEdges: input.pageEdges, packShape: input.packShape ?? DEFAULT_PACK_SHAPE });
-      const lossless = loopStage(frames, join(out, 'idle.png'), 'apng', say, window);
-      const indexed = loopStage(frames, join(out, 'idle-indexed.png'), 'indexed', say, window);
-      const gif = loopStage(frames, join(out, 'idle.gif'), 'gif', say, window);
+      const physics = report.figures.loop_physics?.length ?? 0;
+      const lossless = loopStage(frames, join(out, 'idle.png'), 'apng', say, window, physics);
+      const indexed = loopStage(frames, join(out, 'idle-indexed.png'), 'indexed', say, window, physics);
+      const gif = loopStage(frames, join(out, 'idle.gif'), 'gif', say, window, physics);
       if (window !== undefined) rmSync(run.scratch, { recursive: true, force: true });
       const fig = (e: PaletteError | null): string => (e === null ? 'lossless' : `max ${e.max}, mean ${e.mean.toFixed(3)}`);
       say(`loop: idle.png ${lossless.bytes} B (${fig(lossless.error)}); idle-indexed.png ${indexed.bytes} B (${fig(indexed.error)}); idle.gif ${gif.bytes} B (${fig(gif.error)}) — palette error per channel over all frames`);

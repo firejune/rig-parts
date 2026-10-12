@@ -1265,7 +1265,7 @@ fragment below, cut to the bust:
 ```
 check: PASS; 9 of 9 bar(s) measured, 0 skipped
 loop physics: 2 physics constraint(s) left out of the loop's frames, reported, not judged — "bust_phys" on bone "chest_jiggle" (rig.json), "hip_phys" on bone "hip_jiggle" (rig.json)
-loop: idle 49 frame(s) at 12 fps, f0000 vs f0048 (t = 4s): max |d| 0 (0 required)
+loop: idle 49 frame(s) at 12 fps, f0000 vs f0048 (t = 4s) with the rig's 2 physics constraint(s) left out (named on the `loop physics:` line; rendered with them, the ends need not meet — `build --loop --lead-in <n>`): max |d| 0 (0 required)
 ```
 
 The `loop physics:` line is the loop bar saying what it did not read (§7, *loop*): rig-c's
@@ -1552,7 +1552,7 @@ proposal in as the steps above say (`RL01`); every step must exit 0.
 | `check` (inside `build`) | the gate lines verbatim, the pack line, `loop:` (and `loop physics:` when the rig declares a physics constraint, §7), `seam:`, the six judgement lines, `RECOMPOSITE_HOLES` and, under `--source`, `SETUP_POSE_VS_SOURCE` (§7), `check.json`; the last line says how many of the nine bars measured and names the ones that said SKIP | `check: PASS; 9 of 9 bar(s) measured, 0 skipped` on the examples, and a judgement line SKIP only where the character lacks what it reads; on a rig spec with no `parts.json` or no `idle` (a merged rig, §7 *Measuring a rig rig-parts did not assemble*), PASS with the skipped bars named | `CHECK_SEAM_WITHIN_BAR` or `CHECK_LOOP_CLOSES` (§6) |
 | `check --requirements` (and `build --requirements`) | after the lines above, one line per declared requirement, `NAME: PASS`, `FAIL` or `NOT MEASURABLE — …` with its figures, the bar as declared and the worst frame; then `requirements: N declared — M measured (P PASS, F FAIL), K NOT MEASURABLE; not declared: <kinds>`; `check.json`'s `requirements` block; the renders under `requirements/` (§7, *Declared requirements*) | every line PASS and `0 NOT MEASURABLE`; a follow's `released_copy` says whether rigc's consumer-driven door was taken on the throwaway copy | `CHECK_REQUIREMENT_MET` (a figure past its bar; the line names the frame) or `CHECK_REQUIREMENT_MEASURABLE` (the quantity is undefined in the frames: a tip or an axis on a bone of length 0, an aim with no line, a follow no frame of which reaches its least drive); the last line then reads `check: FAIL — B bar(s) not met, R declared requirement(s) not PASS` |
 | `compose` | the `[compose]` lines: one per character (its offset, its scale, its placed bounds, the shift and how many first-level bones, regions on `root` and weights bound to `root` it moved, its bone, slot, track and constraint counts, its `rig_scale` and idle), the declared order and the slot count it expands to, rigc's gate lines; then the `[check]` lines as for `check`, and `scene.json` | both gate summaries `0 failed`, `check: PASS` with the bars that measured and the ones that said SKIP named — on a composed rig `4 of 9`: the gate, the loop, `CHAIN_LAG` and `TEXTURE_STRETCH` (there is no `parts.json`; each character's own `build` measured all nine). `scene.json`'s `order.slots` is the order the compiled skeleton draws | a `SCENE_*` refusal (§6, *compose*) — the scene file, a build, or the order; `COMPOSE_RIGC_GREEN` — rigc's own line, quoted |
-| `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line (under `build --lead-in`, the lead-in line in its place: the frames kept and the jump at the wrap), each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
+| `loop` (inside `build --loop`, or `loop --frames … --out …`) | the dropped-duplicate line, or, when the end frame is not frame 0, the jump line: its max \|d\| and px over 40, then why — under `build`, `the rig holds N physics constraint(s), and rigc's render starts every one at rest at frame 0` with the remedy `build --loop --lead-in <n>`, or `the rig holds no physics constraint, so the idle itself does not close` (`CHECK_LOOP_CLOSES`); under `loop --frames`, which reads frames alone, both causes (issue #325); under `build --lead-in`, the lead-in line in its place (the frames kept and the jump at the wrap); each file's line, then `loop: idle.png N B (lossless); idle-indexed.png N B (max …, mean …); idle.gif N B (max …, mean …)` | `f0048.png equals f0000.png byte for byte, so it is dropped` | `LOOP_ENCODE` (§6) |
 
 `RECOMPOSITE_HOLES` is `REPORTED`, never judged, and its count reads large: for scale, the
 four examples, each a green build, report 259 (`reference-sample`), 291 (`scarf`), 453
@@ -1585,9 +1585,11 @@ at max 65, mean 0.879.
 
 **`build --loop --lead-in <n>`** is for a rig with physics. rigc's render resets every
 physics constraint at frame 0, so such an idle does not end where it starts: on the demo
-(issue #224's strands, the tails at inertia 0.8) frame 0 and frame 48 differ by max |d|
-132, 626 px over 40, and
-the plain loop keeps all 49 frames and jumps at the wrap. With `--lead-in n` the build
+(issue #224's strands, the tails at inertia 0.8) frame 0 and frame 48 of the 4 s idle differ by max |d|
+132, 626 px over 40, and on its 40-frame idle (rig-c 2.47.1) frame 0 and frame 40 by max |d| 143,
+914 px over 40; the plain loop keeps every frame and jumps at the wrap, and its line says so
+with those figures, the count of constraints and this flag (issue #325) — while `check`'s
+`loop:` line, read with the constraints left out, says max |d| 0 and that they were left out. With `--lead-in n` the build
 renders the idle played n + 1 times back to back (`idle_lead_in`, the build's other
 animations kept so the viewport is fitted as for the idle frames), keeps the last
 period, drops its end frame (the next period's first) and prints how far that end frame
@@ -2259,8 +2261,9 @@ assemble*, at the end of this section):
   (with a skin's `physics` list and any track keying one), built and rendered as the idle
   is, because rig-c's render resets physics at frame 0 and steps it, so the last frame
   differs from the first by what the simulation is still doing. The constraints left out
-  are printed on one line of their own, `loop physics: … "<name>" on bone "<bone>"
-  (rig.json|motion.json)`, and written as `check.json`'s `loop_physics` after
+  are counted on the `loop:` line itself (`… (t = <duration>s) with the rig's N physics
+  constraint(s) left out (…): max |d| 0`, issue #325), printed on one line of their own,
+  `loop physics: … "<name>" on bone "<bone>" (rig.json|motion.json)`, and written as `check.json`'s `loop_physics` after
   `loop_max_diff`; they are reported, not judged. A rig with none is measured from the
   idle render itself, exactly as before, and writes no such line or key.
 
