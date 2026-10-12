@@ -11301,6 +11301,11 @@ function runAnimationFoldCases(say: (name: string, ok: boolean, detail: string, 
     const rigged = (name: string, animations: Record<string, unknown>): { rig: string; parts: string; status: number } => {
       const c = rigConfig();
       (c.motion as Record<string, unknown>).animations_from = 'anims/extra.json';
+      // Issue #323: the fixture's one torso part, `cloth` (full:topwear), is read by BREATH_VISIBLE now that a figure with no
+      // footwear has its torso half measured; rigConfig's idle sways only the hem (heat mean 3.678 < 3.809), so these cases
+      // give the torso the breath a figure has — `body` translatey, amplitude 1 over the idle's 4 s (35.068) — and the fold
+      // bar is the only one a case here fails.
+      ((c.motion as Record<string, unknown>).tracks as unknown[]).push({ bone: 'body', prop: 'translatey', amp: 1, period: 4, phase: 0 });
       const f = writeRigFixture(join(dir, name), c);
       mkdirSync(join(dir, name, 'anims'), { recursive: true });
       writeFileSync(join(dir, name, 'anims', 'extra.json'), `${JSON.stringify({ spec: 'rigc-motion/1', animations }, null, 2)}\n`);
