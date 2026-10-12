@@ -9128,6 +9128,29 @@ function runRequirementCases(dir: string, say: (name: string, ok: boolean, detai
     "the check fixture's mesh hem moves down 8 at t = 0.5 s, so its vertical edges are (80 + 8) / 80 = 1.1 their rest length (fixtures/checkrig.ts); the requirement reads TEXTURE_STRETCH's own measure for that one mesh, so its figure is the idle's line's — held to 1.05 it fails, to 1.2 it passes, and the fixed ceiling the idle line holds is untouched",
   );
 
+  // Issue #321: the stretch requirement's line names the worst edge's bones as CHECK_TEXTURE_STRETCH does (#314), with
+  // the one function, edgeBonesText, read here off the very rig.json and motion.json the run was given.
+  const rigOf = (r: Run, f: string): Record<string, unknown> => JSON.parse(readFileSync(join(r.rig, f), 'utf8')) as Record<string, unknown>;
+  const worstEdge = (l: Record<string, unknown>): number[] => (/edge (\d+)-(\d+)/.exec(String(l.worst)) ?? []).slice(1).map(Number);
+  const tightEdge = worstEdge(tight);
+  const tightHeld = tightEdge.length === 2 ? edgeBonesText(rigOf(stretchRun, 'rig.json'), rigOf(stretchRun, 'motion.json'), 'back', 'back', tightEdge) : 'no edge read off the worst text';
+  // By hand from fixtures/checkrig.ts: the top two corners (0, 1) weighted wholly to "yoke", the bottom two (2, 3) to
+  // "hem"; the idle keys hem_ctl's translatey only, so no rotate-keyed chain is there for a bone to hang on.
+  const handHeld = (e: readonly number[]): string => `vertex ${e[0]} is weighted to "${e[0] < 2 ? 'yoke' : 'hem'}" 1 and vertex ${e[1]} to "${e[1] < 2 ? 'yoke' : 'hem'}" 1; none of these bones hangs on a chain of the idle`;
+  say(
+    'CK262_A_STRETCH_REQUIREMENT_NAMES_THE_WORST_EDGE_S_BONES_WITH_TEXTURE_STRETCH_S_OWN_FUNCTION_ON_THE_FAIL_AND_THE_PASS',
+    tightEdge.length === 2 &&
+      tight.held_by === tightHeld &&
+      tight.held_by === handHeld(tightEdge) &&
+      worstEdge(loose).join('-') === tightEdge.join('-') &&
+      loose.held_by === tight.held_by &&
+      Object.keys(tight).indexOf('held_by') === Object.keys(tight).indexOf('worst') + 1 &&
+      printed(stretchRun, 'BACK_TIGHT').includes(`worst ${String(tight.worst)}; held_by ${tightHeld}; at `) &&
+      failLine(stretchRun.text, 'CHECK_REQUIREMENT_MET: requirement "BACK_TIGHT"')?.includes(`; ${tightHeld}; `) === true,
+    `edge ${tightEdge.join('-')}: held_by ${JSON.stringify(tight.held_by)}; edgeBonesText on the run's rig ${JSON.stringify(tightHeld)}; the PASS line's ${JSON.stringify(loose.held_by)}; printed: ${printed(stretchRun, 'BACK_TIGHT').slice(0, 320)}`,
+    "the consumer met a stretch requirement's line with a triangle number only and wrote a script to find which bones held it; the line now carries what CHECK_TEXTURE_STRETCH carries since #314, built by edgeBonesText itself (handed to stretchRequirementLine, so the two cannot drift), on a PASS as on a FAIL, and the FAIL's problem quotes it",
+  );
+
   const plain = run('plain', null);
   const empty = run('empty', { requirements: [] });
   // Each run has its own directory, which the SKIP reasons name; both sides are read with it written <rig> and <out>.
@@ -11809,6 +11832,33 @@ function runRequirementsSuite(): number {
         [sDegenerate, sHidden, sAbsent].every((l) => l.status === 'NOT MEASURABLE'),
       `${sPass.status} severity ${String(sPass.severity)} at ${String(sPass.at)}, ${String(sPass.worst)}; at 1.49 ${sFail.status}; squeezed to 1x2: severity ${String(sSqueeze.severity)} (min ratio ${String(sSqueeze.min_ratio)}) against 1.9, ${sSqueeze.status}; a rest edge of length 0: ${sDegenerate.status}; no frame shows it: ${sHidden.status}; no such mesh in the rest pose: ${sAbsent.status}`,
       "a 2x2 square stretched to 3x2: edge 0-1 is 1.5 times its rest length; squeezed to 1x2 it is 0.5, which is a severity of 2 (compression distorts as stretch does) — the figure TEXTURE_STRETCH's stretchFigures and stretchSeverity give (imported, not rewritten — #87); a ratio with no rest length, or a mesh no frame shows, is undefined",
+    );
+
+    // Issue #321: `heldBy` is called once, with the worst edge, and its text lands in `held_by` and in the FAIL's
+    // problem; absent, the line is the one it was (no key). Planted: a squeeze makes another edge the worst, and the
+    // text follows it.
+    const heldAsked: string[] = [];
+    const heldText = (e: readonly number[]): string => {
+      heldAsked.push(e.join('-'));
+      return `held ${e.join('-')}`;
+    };
+    const stretchReq = { name: 'S', kind: 'stretch', animation: 'a', slot: 's', attachment: 'm', within_ratio: 1.49 } as const;
+    const hFail = stretchRequirementLine(stretchReq, [square], geomFrames, sPoses, heldText);
+    const hSqueeze = stretchRequirementLine({ ...stretchReq, within_ratio: 1.9 }, [square], [geomFrames[0], { index: 1, attachments: [{ slot: 's', attachment: 'm', vertices: [0, 0, 2, 0, 2, 1, 0, 1] }] }], sPoses, heldText);
+    const hProblem = requirementProblem(stretchReq, hFail);
+    const plainProblem = requirementProblem(stretchReq, sFail);
+    say(
+      'RQ56_A_STRETCH_LINE_CARRIES_THE_WORST_EDGE_S_HELD_BY_TEXT_AND_WITHOUT_ONE_IS_THE_LINE_IT_WAS',
+      heldAsked.join(',') === '0-1,1-2' &&
+        hFail.held_by === 'held 0-1' &&
+        String(hFail.worst).includes('edge 0-1,') &&
+        hSqueeze.held_by === 'held 1-2' &&
+        String(hSqueeze.worst).includes('edge 1-2,') &&
+        Object.keys(hFail).join() === [...Object.keys(sFail).slice(0, Object.keys(sFail).indexOf('worst') + 1), 'held_by', ...Object.keys(sFail).slice(Object.keys(sFail).indexOf('worst') + 1)].join() &&
+        !('held_by' in sFail) &&
+        hProblem?.detail === plainProblem?.detail.replace(`${String(sFail.worst)};`, `${String(sFail.worst)}; held 0-1;`),
+      `asked ${heldAsked.join(', ')}; stretched: ${String(hFail.worst)} -> ${String(hFail.held_by)}; squeezed in y: ${String(hSqueeze.worst)} -> ${String(hSqueeze.held_by)}; keys ${Object.keys(hFail).join(',')}; problem: ${hProblem?.detail ?? 'none'}`,
+      'the 2x2 square stretched to 3x2 is worst at edge 0-1 (1.5); squeezed to 2x1 instead, the vertical edge 1-2 is worst (0.5, severity 2): the text is asked of the edge the figure names, once per line, and sits right after `worst`; with no heldBy the line and its problem are the ones written before #321',
     );
 
     const asFile = (rs: RequirementsFile['requirements']): RequirementsFile => ({ path: 'x', fps: REQ_FPS, targets: [], requirements: rs, not_planted: [], not_swinging: [], rises: [], rests: [], may_fold: [] });

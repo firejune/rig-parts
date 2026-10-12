@@ -1064,8 +1064,14 @@ export function followLine(r: FollowRequirement, declared: Poses, released: Pose
   };
 }
 
-/** `stretch`: `TEXTURE_STRETCH`'s per-mesh figure for one mesh over the named animation's frames — its worst max(ratio, 1/ratio) and where. */
-export function stretchRequirementLine(r: StretchRequirement, meshes: readonly MeshRest[], frames: readonly GeometryPose[], p: Poses): RequirementLine {
+/**
+ * `stretch`: `TEXTURE_STRETCH`'s per-mesh figure for one mesh over the named animation's frames — its worst
+ * max(ratio, 1/ratio) and where. With `heldBy`, the line also carries `held_by` (issue #321): what the worst edge's two
+ * vertices hang on. `check` passes `edgeBonesText` (`src/check.ts`), the function `CHECK_TEXTURE_STRETCH` names them
+ * with since #314, so the two lines cannot drift; it is handed in rather than imported because `src/check.ts` imports
+ * this module.
+ */
+export function stretchRequirementLine(r: StretchRequirement, meshes: readonly MeshRest[], frames: readonly GeometryPose[], p: Poses, heldBy?: (edge: readonly number[]) => string): RequirementLine {
   const mesh = meshes.find((m) => m.slot === r.slot && m.attachment === r.attachment);
   if (mesh === undefined) return notMeasurable('stretch', r.animation, `geometry.json's rest pose holds no mesh "${r.attachment}" on slot "${r.slot}", so no frame shows it`);
   const [m] = stretchFigures([mesh], frames);
@@ -1087,6 +1093,7 @@ export function stretchRequirementLine(r: StretchRequirement, meshes: readonly M
     triangles: m.triangles,
     severity: round6(severity),
     worst: `triangle ${at.triangle} (vertices ${at.vertices.join(' ')}), edge ${at.edge.join('-')}, ratio ${round6(at.ratio)}`,
+    ...(heldBy === undefined ? {} : { held_by: heldBy(at.edge) }),
     at: fi < 0 ? `frame ${at.frame}` : frameText(p, fi),
     max_ratio: round6(m.max.ratio),
     min_ratio: round6(m.min.ratio),
@@ -1329,7 +1336,7 @@ function failText(r: Requirement, l: RequirementLine): string {
   if (r.kind === 'contact') return `largest distance ${String(l.largest_px)} px at ${String(l.at)}, between ${String(l.of)} and ${String(l.against)}`;
   if (r.kind === 'aim') return `largest angle ${String(l.largest_degrees)} degrees at ${String(l.at)}, between ${String(l.of)} and the line to ${String(l.against)}`;
   if (r.kind === 'range') return `least ${String(l.least_degrees)} degrees at ${String(l.least_at)}, greatest ${String(l.greatest_degrees)} at ${String(l.greatest_at)}`;
-  if (r.kind === 'stretch') return `max(ratio, 1/ratio) ${String(l.severity)} at ${String(l.at)}, ${String(l.worst)}`;
+  if (r.kind === 'stretch') return `max(ratio, 1/ratio) ${String(l.severity)} at ${String(l.at)}, ${String(l.worst)}${typeof l.held_by === 'string' ? `; ${l.held_by}` : ''}`;
   if (r.kind === 'seam') return `largest opening ${String(l.largest_px)} px at ${String(l.at)}, ${String(l.pair)}`;
   return `measured fraction ${String(l.fraction_measured)} over ${String(l.frames_counted)} frame(s) that reach the least drive`;
 }
