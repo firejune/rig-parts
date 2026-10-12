@@ -228,7 +228,7 @@ than queueing behind someone else's job.
 ## The loop, for an agent
 
 ```sh
-rig-parts inputs --source painting.png --config config.json --out inputs   # st_input_full.png
+rig-parts inputs --source painting.png --config config.json --out inputs   # st_input_full.png; the config needs assemble.rig_scale
 #    See-through on st_input_full.png (external, or `rig-parts comfy seethrough`) -> layers/full
 rig-parts layers layers/full                      # every layer: box, opaque px, depth, plausibility figures; WARN lines
 rig-parts propose --head-box --full layers/full --canvas 1664x2432

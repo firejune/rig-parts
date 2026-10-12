@@ -450,6 +450,48 @@ contour region is (each share to 5 places, a 0 dropped, the remainder to the hea
 the cut it is rounded as the lattice always was. In the contour mode a region's bone counts
 toward the cap like any other (*The vertex's weights* in `src/localweights.ts`).
 
+### Which mode comes out smaller (issue #307)
+
+The names suggest that `auto`, the mode that reduces a mesh, is the smallest. Measured on one
+figure, it is not always: a reduction held to a large declared bend keeps many vertices to stay
+near its dense source, and on such a part the outline `mesh-draft` drafts over a coarse grid
+came out two to three times lighter. On parts that bend little, `auto` was far the smallest.
+
+The figure is the trailer's (`rig-c/trailer`, 1108 px tall). Triangles per part, as the rig
+stage's `mesh` lines print them: the kept modes from commit 45becfb; the `auto` counts of the
+three parts that left it from the commit before, 24bd8ec (each `auto` with the film's bends
+declared as `auto.stimulus` and `auto.motion.maxLocalDeformation` 3 px); the lattice column each
+part at `"grid": 30`, the spacing `propose` drafts for this figure, in 45becfb's config
+(`topwear` left on `auto`); and `mesh-draft` run over that lattice config. The bends are the
+largest turns the trailer's `WORKING.md` states for its film, not re-measured here.
+
+| part | the film bends it | `auto`, bends declared, 3 px | `mesh-draft` | lattice at `"grid": 30` |
+| --- | --- | --- | --- | --- |
+| `bottomwear` | 24° | 276 | 132 | 140 |
+| `handwear_r` | 33° | 148 | 49 | 52 |
+| `hairpin` | 95° (refused by `auto`; `contour` at its own spacing 13: 120) | — | 47, kept on its lattice (below) | 46 |
+| `legwear` | 12° | 77 | — | 176 |
+| `hair_back` | a few degrees | 28 | — | 120 |
+| `handwear_l` | 4° | 31 | — | 72 |
+| `neck` | — | 7 | — | 12 |
+| `hair_front` | 11° | 112 | — | 114 |
+
+Every count reproduces with `@rig-c/parts` 1.11.0 and rig-c 2.47.0 (the trailer's pins at
+45becfb, both configs over the same assembled parts), and the lattice and `mesh-draft` columns
+again with this package on rig-c 2.40.0. `mesh-draft` kept the hairpin on its lattice: its
+candidate, 47 triangles, sat 1.055 rig px from the lattice over the idle against a line of 1, and
+had one triangle more than the lattice's 46 (with the hairpin's lattice declaring
+`influences: {floor: "continuous"}`, as 45becfb's contour entry does, the idle reads 0.822 and
+passes, and the triangle line alone keeps it). The trailer's 47 is that candidate, written by
+hand. The film's two cuts were compared at their most different frame, enlarged; no difference
+showed, and every `check` bar passed on both.
+
+So, before keeping an `auto` entry on a part a chain or physics bends far: build the part once on
+a lattice, run `mesh-draft` (§4, step 12), and compare the two `mesh` lines. Nothing else reports
+the difference; `mesh-draft` names every `auto` or `contour` entry as not compared, because it
+drafts lattice entries only. This is one figure, and the two examples here were not measured this
+way.
+
 ### A contour mesh (`meshes.<part>.contour`, issue #84)
 
 The lattice keeps every grid cell that holds an art pixel, so its boundary and its interior
@@ -1425,7 +1467,10 @@ full loader before its assemble stage writes anything.
     The two divisors are calibrated on three figures of similar size (1106 to
     1185 px), and the bend set is a calibration, not your animation: a chain
     your animations or physics bend further than 15° a link was not measured
-    there. An `auto` or `contour` entry is yours and is left as it is. A
+    there. An `auto` or `contour` entry is yours and is left as it is, and it
+    is compared with nothing: a `NOT COMPARED` line and the report's
+    `not_compared` name each such part, since which mode comes out smaller is
+    measured, not named (§3, *Which mode comes out smaller*; issue #307). A
     relative `motion.animations_from` or `generation.control.skeleton` keeps its
     text, so it resolves against `draft/`; the command says so.
 

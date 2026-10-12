@@ -273,8 +273,11 @@ usage:
       than its lattice, and the report records each part's triangle and
       overdraw difference. A part that passes is drafted, its note saying
       what it was measured against; one that fails keeps its entry, and the
-      report names each failed reading and by how much. Written only when the
-      drafted config's check is PASS. --requirements, --idle-keys,
+      report names each failed reading and by how much. An auto or contour
+      entry is neither drafted nor compared with anything: a NOT COMPARED line
+      and the report's not_compared name each, so build it once on a lattice
+      and compare the rig stage's mesh lines (AUTHORING §3, issue #307).
+      Written only when the drafted config's check is PASS. --requirements, --idle-keys,
       --page-edges and --pack-shape are as for rig and check.
 
   rig-parts check --rig <dir> --out <dir> [--parts <dir>] [--source <painting.png>]
