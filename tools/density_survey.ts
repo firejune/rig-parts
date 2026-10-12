@@ -557,7 +557,7 @@ function earClip(cycle: readonly number[], V: readonly P2[]): number[] | null {
 }
 
 /** Lawson's flips to the constrained Delaunay triangulation: an edge in `locked` is never flipped. Triangles come back with orient > 0. */
-function delaunay(tri: number[], V: readonly P2[], locked: ReadonlySet<string>): number[] {
+export function delaunay(tri: number[], V: readonly P2[], locked: ReadonlySet<string>): number[] {
   const T: Array<[number, number, number]> = [];
   for (let t = 0; t < tri.length; t += 3) {
     const [a, b, c] = [tri[t], tri[t + 1], tri[t + 2]];
