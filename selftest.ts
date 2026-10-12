@@ -4100,6 +4100,40 @@ function runAnimationsFromCases(say: (name: string, ok: boolean, detail: string,
       `an animation named idle -> exit ${refused.status}, ${fail.length} FAIL line(s): ${fail[0]?.trim().replace(dir, '<dir>').slice(0, 200) ?? 'none'}; rigc ran: ${refused.out.includes('rigc build')}; --out exists: ${existsSync(idled.out)}`,
       'issue #183: the idle is the config\'s, so a second one would replace it or be replaced without a word; the loader refuses it before anything runs',
     );
+
+    // RG99 — issue #317: the sign the recipe states, read off rigc's posed geometry. By hand (fixtures/rig.ts): `hem0`
+    // at world (-6, 26) with `hem1` 8 along its unturned x axis, at (2, 26); `eye` at (-3, 12) under the unturned
+    // `body`. A `rotate` key of +90 on `hem0` turns that (8, 0) counter-clockwise in y-up space to (0, 8), so `hem1`
+    // poses at (-6, 34) — up and to the left on the image; -90 puts it at (-6, 18), down and to the left, the planted
+    // sign that must land elsewhere. A `translatey` key of +2 on `eye` moves it to (-3, 14): up, in its parent's axes.
+    const signs = fixture('signs', {
+      sign_plus: { duration: 0, tracks: [{ bone: 'hem0', property: 'rotate', keys: [{ t: 0, v: [90] }] }] },
+      sign_minus: { duration: 0, tracks: [{ bone: 'hem0', property: 'rotate', keys: [{ t: 0, v: [-90] }] }] },
+      sign_up: { duration: 0, tracks: [{ bone: 'eye', property: 'translatey', keys: [{ t: 0, v: [2] }] }] },
+    });
+    const signRig = runCli(['rig', '--config', signs.config, '--parts', signs.parts, '--out', signs.out]);
+    const rigc = findRigc(ROOT, '');
+    const signBuild = signRig.status === 0 ? spawnSync(rigc, ['build', '--rig', join(signs.out, 'rig.json'), '--motion', join(signs.out, 'motion.json'), '--out', join(dir, 'signs', 'build'), ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 26 }).status : null;
+    const posed = (animation: string, bone: string): [number, number] | string => {
+      if (signBuild !== 0) return `not built (rig exit ${signRig.status}, rigc build exit ${signBuild})`;
+      const out = join(dir, 'signs', `render-${animation}`);
+      const r = spawnSync(rigc, ['render', '--candidate', join(dir, 'signs', 'build'), '--animation', animation, '--geometry', '--out', out], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      const at = join(out, animation, GEOMETRY_FILE);
+      if (r.status !== 0 || !existsSync(at)) return `rigc render exit ${r.status}`;
+      const b = (JSON.parse(readFileSync(at, 'utf8')) as { frames: Array<{ bones: GeometryBone[] }> }).frames[0]?.bones.find((x) => x.name === bone);
+      return b === undefined ? `no bone ${bone} in frame 0` : [b.worldX, b.worldY];
+    };
+    const near = (got: [number, number] | string, want: [number, number]): boolean => typeof got !== 'string' && Math.abs(got[0] - want[0]) <= POSE_BAR && Math.abs(got[1] - want[1]) <= POSE_BAR;
+    const shown = (got: [number, number] | string): string => (typeof got === 'string' ? got : `(${got[0].toFixed(4)}, ${got[1].toFixed(4)})`);
+    const plus = posed('sign_plus', 'hem1');
+    const minus = posed('sign_minus', 'hem1');
+    const up = posed('sign_up', 'eye');
+    say(
+      'RG99_A_POSITIVE_ROTATE_TURNS_COUNTER_CLOCKWISE_Y_UP_AND_A_POSITIVE_TRANSLATEY_RAISES',
+      near(plus, [-6, 34]) && near(minus, [-6, 18]) && near(up, [-3, 14]),
+      `hem1 under hem0 rotate +90 -> ${shown(plus)} (by hand (-6, 34)); planted, -90 -> ${shown(minus)} (by hand (-6, 18)); eye under translatey +2 -> ${shown(up)} (by hand (-3, 14)); world units, y up, bar ${POSE_BAR}`,
+      "issue #317: the named-animation recipe states that a rotate key turns a bone counter-clockwise in the rig's y-up space and that translatey is y up in the parent's axes; this holds the statement to rigc's own poser, and the opposite sign lands a link's length away",
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
