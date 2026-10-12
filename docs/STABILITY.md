@@ -57,7 +57,7 @@ defaults are the help's too, and none is guessed from the art.
 | `rig` | `--config`, `--parts`, `--out`; optional `--idle-keys` (ctl, direct), `--page-edges` (pot, free), `--pack-shape` (rect, polygon) |
 | `check` | `--rig`, `--out`; optional `--parts`, `--source`, `--page-edges`, `--pack-shape`, `--requirements`, `--seam-pairs`, `--keep-stills` |
 | `loop` | `--frames`, `--out`; optional `--palette` |
-| `build` | `--config`, `--source`, `--full`, `--head`, `--out`; optional `--seam`, `--project`, `--page-edges`, `--pack-shape`, `--loop`, `--lead-in`, `--requirements`, `--idle-keys` |
+| `build` | `--config`, `--source`, `--full`, `--head`, `--out`; optional `--seam`, `--project`, `--page-edges`, `--pack-shape`, `--loop`, `--lead-in`, `--requirements`, `--idle-keys`, `--seam-pairs`, `--keep-stills` |
 | `compose` | `--scene`, `--out`; optional `--requirements`, `--accept` |
 | (none) | `--version`, `--help` |
 <!-- /stable:commands -->

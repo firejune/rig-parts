@@ -1236,6 +1236,18 @@ full loader before its assemble stage writes anything.
    a proposal is a draft, and the config you corrected is the input.
    `--idle-keys direct` is forwarded to the rig stage as `rig` takes it; a config
    with a two-bone ik over chain links the idle keys needs it (§3, `constraints`).
+   Every flag `check` takes is forwarded to the check stage, taken by `build` as
+   its own, or refused by name (issue #257; `CHECK_FLAGS_IN_BUILD` in
+   `src/build.ts` is the one list, and the `cli` suite holds it to `check`'s own
+   refusal): `--page-edges`, `--pack-shape`, `--requirements`, `--seam-pairs` and
+   `--keep-stills` are forwarded, so `build --seam-pairs` writes the rows
+   `check --seam-pairs` writes on the same rig; `--out` is `build`'s (the check
+   writes under `<out>/check`); `--rig` and `--parts` are refused, because the
+   check reads the rig and the parts the build wrote (`<out>/rig`, `<out>`);
+   `--source` is the painting assemble reads and is not handed to the check, so
+   `check.json` carries no `SETUP_POSE_VS_SOURCE` — run
+   `rig-parts check --rig out/rig --parts out --out <dir> --source inputs/painting.png`
+   for that line.
    `rig-parts compare --left config.json --right out/rig/rig.json` reads the rig
    the build wrote against the config it came from: the rig's stage carries it into
    rig px, so every origin reads 0, each chain link's tip, length and direction its
@@ -1890,7 +1902,7 @@ assemble*, at the end of this section):
   `seam_px_over_40` and `seam_px_over_80` stay frame pixels, and so does each
   pair's count below. The bar reads one
   frame, the setup-pose still, never the idle. When it fails (or when `check
-  --seam-pairs` asks, pass or fail), the pixels over 40 are split by the pair of
+  --seam-pairs` asks, or `build --seam-pairs`, which forwards it, pass or fail), the pixels over 40 are split by the pair of
   parts that answers for each (issue #202): the two parts drawn last among those
   whose art (alpha above 0) lies in the 2x2 rig pixels the composite's bilinear
   reference-sample reads for that frame pixel, lower first, `(no art)` standing in where
@@ -1925,7 +1937,7 @@ assemble*, at the end of this section):
   centre: rig pixel index u lands on frame index s·u + t + 0.5·(s − 1), `s` the
   scale the `seam:` line prints (issue #209; the reference implementation's map
   lacks the last term, so the two agree only at s = 1). `check --keep-stills`
-  leaves that frame — rigc's render directory, its `frames.json` (viewport,
+  (and `build --keep-stills`, which forwards it) leaves that frame — rigc's render directory, its `frames.json` (viewport,
   background) beside the PNG — under `check/setup_still/`;
 - **loop**: idle frame 0 against the frame at `t = duration`: max |d| exactly 0. The bar
   measures the keys (issue #183): a rig that declares a physics constraint — a `rig.json`

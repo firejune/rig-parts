@@ -121,7 +121,7 @@ import {
   writeRun,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
-import { artifactPaths, assembleStage, build, BUILD_OWNS, checkStage, ctlRemedies, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
+import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, type CheckFlagInBuild, checkStage, ctlRemedies, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LEVEL_FRINGE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, TILTED_FRINGE_PARTS, TWO_LOCK_PARTS, writeProposeFixture } from './fixtures/propose.ts';
@@ -3098,6 +3098,46 @@ function runCliSuite(): number {
         `; layers takes one positional path and no flag, so it has no refusal to read` +
         `; planted: the last listed flag dropped from each refusal -> ${planted.filter((p) => p.length > 0).length} of ${planted.length} caught (${planted[0]?.[0] ?? 'none'})`,
       'an agent that guesses a flag learns the real ones from the refusal, so a refusal that leaves one out (loop omitted --palette; sheet, rig and assemble listed none) hides a flag the command takes; the accepted set is probed flag by flag, not read from the table the refusal prints',
+    );
+
+    // CL166 (issue #257): every flag check takes is forwarded by build, taken by build as its own, or refused by build by
+    // name with what build reads instead — read off the two refusals and probed, held to CHECK_FLAGS_IN_BUILD.
+    const takenBy = (command: string): string[] => /it takes (.+)$/m.exec(runCli([command, '--not-a-flag']).out)?.[1].split(', ') ?? [];
+    const checkTakes = takenBy('check');
+    const buildTakes = takenBy('build');
+    const refusalOf = (flag: string): { status: number; line: string } => {
+      const r = runCli(['build', flag, 'x']);
+      return { status: r.status, line: r.out.split('\n')[0] };
+    };
+    const auditFaults = (table: Readonly<Record<string, CheckFlagInBuild>>, checkFlags: readonly string[]): string[] => [
+      ...checkFlags.filter((f) => !Object.hasOwn(table, f)).map((f) => `check takes ${f} and CHECK_FLAGS_IN_BUILD says nothing of it`),
+      ...Object.keys(table).filter((f) => !checkFlags.includes(f)).map((f) => `CHECK_FLAGS_IN_BUILD names ${f}, which check does not take`),
+      ...Object.entries(table).flatMap(([f, row]) => {
+        if (row.as !== 'supplied') return buildTakes.includes(f) ? [] : [`${f} is ${row.as} and build does not take it`];
+        const r = refusalOf(f);
+        const want = `  FAIL  USAGE: build does not take "${f}"; ${row.why}`;
+        return r.status === 2 && r.line === want && !buildTakes.includes(f) ? [] : [`build ${f} -> exit ${r.status}, "${r.line.trim()}"; "${want.trim()}" was required`];
+      }),
+    ];
+    const audit = auditFaults(CHECK_FLAGS_IN_BUILD, checkTakes);
+    const lastKey = Object.keys(CHECK_FLAGS_IN_BUILD).at(-1) ?? '';
+    const lessOne = Object.fromEntries(Object.entries(CHECK_FLAGS_IN_BUILD).filter(([f]) => f !== lastKey));
+    const plantedUnsaid = auditFaults(lessOne, checkTakes);
+    const plantedNewFlag = auditFaults(CHECK_FLAGS_IN_BUILD, [...checkTakes, '--not-yet-a-check-flag']);
+    const plantedDropped = auditFaults({ ...CHECK_FLAGS_IN_BUILD, '--seam-pairs': { as: 'supplied', why: 'planted' } }, checkTakes);
+    const byKind = (as: CheckFlagInBuild['as']): string => Object.entries(CHECK_FLAGS_IN_BUILD).filter(([, r]) => r.as === as).map(([f]) => f).join(', ');
+    say(
+      'CL166_EVERY_CHECK_FLAG_IS_FORWARDED_BY_BUILD_TAKEN_AS_ITS_OWN_OR_REFUSED_BY_NAME',
+      checkTakes.length > 0 &&
+        buildTakes.length > 0 &&
+        audit.length === 0 &&
+        plantedUnsaid.join() === `check takes ${lastKey} and CHECK_FLAGS_IN_BUILD says nothing of it` &&
+        plantedNewFlag.join() === 'check takes --not-yet-a-check-flag and CHECK_FLAGS_IN_BUILD says nothing of it' &&
+        plantedDropped.length === 1 &&
+        plantedDropped[0].startsWith('build --seam-pairs -> exit 2, '),
+      `check takes ${checkTakes.length} flag(s): forwarded ${byKind('forwarded')}; build's own ${byKind('own')}; refused ${byKind('supplied')}; ${audit.length === 0 ? 'no fault' : audit.join('; ')}` +
+        `; planted: ${lastKey} left out of the table -> ${plantedUnsaid.join('; ') || 'NOT CAUGHT'}; a check flag the table does not know -> ${plantedNewFlag.join('; ') || 'NOT CAUGHT'}; --seam-pairs said refused -> ${plantedDropped.join('; ').slice(0, 120) || 'NOT CAUGHT'}`,
+      "issue #257: build forwarded --requirements and silently dropped --seam-pairs, so a build's artifact was checked without what the consumer asked check for; the table is the one statement of what build does with each check flag, held to check's own refusal so a flag check gains is a named fault here until it is forwarded or refused",
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -11687,6 +11727,76 @@ function runBuildSuite(): number {
         partsSame,
       `exit ${green.status}; --out holds [${tree.join(', ')}]; last lines: ${tail.map((l) => l.trim()).join(' | ')}; stage prefixes at ${stageOrder.join(', ')}; parts.json equals the fixture's hand-derived one: ${partsSame}`,
       "issue #2: the packed page is the artifact and the loose parts an intermediate, so the lines a reader stops at are the pack line and the three files; the parts.json equality is what shows build called the assemble stage rather than something like it",
+    );
+
+    // Issue #257: build forwards check's two switches. The moving config with the topwear cut by a triangle at overlap 0
+    // (assemble.cuts, issue #170): the piece's resampled edge meets the base's along the cut line, so the seam counts a
+    // few pixels over 40 and still passes its bar — rows on a green build. One build with both switches, then check with
+    // both on the rig and the parts that build wrote: the same measurement, so check.json, the seam pair lines, the
+    // pictures under seam/ and the kept still must be the same bytes. The same build without them must have none of it.
+    const cutDir = join(dir, 'cut-seam');
+    const cutConfig = JSON.parse(JSON.stringify(moving)) as Record<string, unknown>;
+    cutConfig.regions = { ...(cutConfig.regions as Record<string, string>), tie: 'chest' };
+    (cutConfig.assemble as Record<string, unknown>).cuts = [{ from: 'topwear', into: 'tie', polygon: [[12, 22], [29, 30], [12, 47]], draw: { before: 'bottomwear' }, overlap: 0 }];
+    writeAssembleFixture(cutDir, cutConfig);
+    const fwdOut = join(cutDir, 'out-forwarded');
+    const fwd = runCli([...buildArgs(cutDir, fwdOut), '--seam-pairs', '--keep-stills']);
+    const cutPlainOut = join(cutDir, 'out-plain');
+    const cutPlain = runCli(buildArgs(cutDir, cutPlainOut));
+    const byHand = join(dir, 'check-by-hand');
+    const hand = runCli(['check', '--rig', join(fwdOut, 'rig'), '--parts', fwdOut, '--out', byHand, '--seam-pairs', '--keep-stills']);
+    const fwdCheck = join(fwdOut, 'check');
+    const fwdFig = readJsonFile(join(fwdCheck, 'check.json'));
+    const handFig = readJsonFile(join(byHand, 'check.json'));
+    const plainCheck = join(cutPlainOut, 'check');
+    const plainFig = readJsonFile(join(plainCheck, 'check.json'));
+    const pairLinesOf = (text: string, prefix: string): string[] => text.split('\n').filter((l) => l.startsWith(`${prefix}  seam pair `)).map((l) => l.slice(prefix.length));
+    const filesUnder = (at: string): string[] => (existsSync(at) ? (readdirSync(at, { recursive: true }) as string[]).filter((f) => statSync(join(at, f)).isFile()).sort() : []);
+    const sameFiles = (a: string, b: string): boolean => filesUnder(a).length > 0 && filesUnder(a).join() === filesUnder(b).join() && filesUnder(a).every((f) => Buffer.compare(readFileSync(join(a, f)), readFileSync(join(b, f))) === 0);
+    const fwdRows = fwdFig?.seam_pairs;
+    const handRows = handFig?.seam_pairs;
+    const { seam_pairs: _fwdRows, ...fwdRest } = fwdFig ?? {};
+    const fwdPairs = pairLinesOf(fwd.out, '[check] ');
+    const handPairs = pairLinesOf(hand.out, '');
+    const pairsTwice = runCli([...buildArgs(cutDir, join(cutDir, 'out-pairs-twice')), '--seam-pairs', '--seam-pairs']);
+    say(
+      'BU165_BUILD_SEAM_PAIRS_AND_CHECK_SEAM_PAIRS_ON_THE_SAME_RIG_READ_THE_SAME_SEAM_ROWS',
+      fwd.status === 0 &&
+        hand.status === 0 &&
+        Array.isArray(fwdRows) &&
+        (fwdRows as unknown[]).length > 0 &&
+        JSON.stringify(fwdRows) === JSON.stringify(handRows) &&
+        JSON.stringify(fwdFig) === JSON.stringify(handFig) &&
+        fwdPairs.length === (fwdRows as unknown[]).length &&
+        fwdPairs.join('\n') === handPairs.join('\n') &&
+        sameFiles(join(fwdCheck, SEAM_DIR), join(byHand, SEAM_DIR)) &&
+        plainFig !== null &&
+        !('seam_pairs' in plainFig) &&
+        JSON.stringify(fwdRest) === JSON.stringify(plainFig) &&
+        !existsSync(join(plainCheck, SEAM_DIR)) &&
+        cutPlain.status === 0 &&
+        pairLinesOf(cutPlain.out, '[check] ').length === 0 &&
+        pairsTwice.status === 2 &&
+        pairsTwice.out.includes('--seam-pairs is given twice') &&
+        !existsSync(join(cutDir, 'out-pairs-twice')),
+      `build --seam-pairs: exit ${fwd.status}, ${Array.isArray(fwdRows) ? `${(fwdRows as unknown[]).length} seam row(s)` : 'no seam_pairs'}, ${fwdPairs.length} seam pair line(s); check --seam-pairs on its rig and parts: exit ${hand.status}, ${Array.isArray(handRows) ? `${(handRows as unknown[]).length} row(s)` : 'no seam_pairs'}, check.json ${JSON.stringify(fwdFig) === JSON.stringify(handFig) ? 'the same' : 'DIFFERENT'}, pair lines ${fwdPairs.join('\n') === handPairs.join('\n') ? 'the same' : 'DIFFERENT'}, ${SEAM_DIR}/ ${sameFiles(join(fwdCheck, SEAM_DIR), join(byHand, SEAM_DIR)) ? `${filesUnder(join(byHand, SEAM_DIR)).length} picture(s) byte-identical` : 'DIFFERENT or empty'}; ` +
+        `the same build without it: exit ${cutPlain.status}, seam_pairs ${plainFig !== null && 'seam_pairs' in plainFig ? 'WRITTEN' : 'absent'}, ${SEAM_DIR}/ ${existsSync(join(plainCheck, SEAM_DIR)) ? 'WRITTEN' : 'absent'}, the rest of check.json ${JSON.stringify(fwdRest) === JSON.stringify(plainFig) ? 'the same' : 'DIFFERENT'}; given twice: exit ${pairsTwice.status}`,
+      'issue #257: build dropped the flag, so a consumer who needed the pairs ran check a second time by hand and the artifact build reported was checked without them; forwarded, the check inside build is the check by hand, row for row and byte for byte, and without the flag build writes what it wrote before',
+    );
+    const fwdStill = join(fwdCheck, STILL_DIR);
+    const keepTwice = runCli([...buildArgs(cutDir, join(cutDir, 'out-keep-twice')), '--keep-stills', '--keep-stills']);
+    say(
+      'BU166_BUILD_KEEP_STILLS_LEAVES_THE_STILL_CHECK_KEEP_STILLS_LEAVES_ON_THE_SAME_RIG',
+      filesUnder(fwdStill).includes('frames.json') &&
+        sameFiles(fwdStill, join(byHand, STILL_DIR)) &&
+        fwd.out.includes(`[check]   wrote `) &&
+        fwd.out.includes(`${fwdStill}/`) &&
+        !existsSync(join(plainCheck, STILL_DIR)) &&
+        keepTwice.status === 2 &&
+        keepTwice.out.includes('--keep-stills is given twice') &&
+        !existsSync(join(cutDir, 'out-keep-twice')),
+      `build --keep-stills: ${STILL_DIR}/ holds [${filesUnder(fwdStill).join(', ')}], ${sameFiles(fwdStill, join(byHand, STILL_DIR)) ? "byte-identical to check --keep-stills's" : 'DIFFERENT from check --keep-stills\'s, or empty'}, the wrote line ${fwd.out.includes(`${fwdStill}/`) ? 'names it' : 'DOES NOT name it'}; the same build without it: ${existsSync(join(plainCheck, STILL_DIR)) ? 'WROTE it' : 'none'}; given twice: exit ${keepTwice.status}`,
+      "issue #257's audit: --keep-stills was the other check switch build dropped; forwarded, the frame the seam read and the viewport it was mapped by are the check's own, and a build not asked leaves check/ as before",
     );
 
     // Issue #78: the landscape twin through the same driver (fixtures/assemble_fixture.ts, "The landscape
