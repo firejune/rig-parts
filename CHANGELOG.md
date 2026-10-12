@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.13.0](https://github.com/rig-c/parts/compare/v1.12.0...v1.13.0) (2026-10-12)
+
+
+### Features
+
+* **mesh-draft:** name every auto or contour entry as not compared, and say in AUTHORING which mode comes out smaller ([#313](https://github.com/rig-c/parts/issues/313)) ([578c5a3](https://github.com/rig-c/parts/commit/578c5a39ffa538a0d0008fcaf2576c59873dfd35)), closes [#307](https://github.com/rig-c/parts/issues/307)
+* **propose:** name two chains that squeeze one lattice, and the bones a stretched edge hangs on ([#316](https://github.com/rig-c/parts/issues/316)) ([219721d](https://github.com/rig-c/parts/commit/219721da292c1ee07e45a3fccf10a4f0115be4f5)), closes [#314](https://github.com/rig-c/parts/issues/314)
+
 ## [1.12.0](https://github.com/rig-c/parts/compare/v1.11.0...v1.12.0) (2026-10-12)
 
 
