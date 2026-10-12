@@ -21,7 +21,9 @@
  *    at or under that figure are taken out of the art before the trace, and
  *    the report says how many and how many pixels (`strayIslands`,
  *    `strayPixels`). A hole is filled, as rigc's trace and the lattice both
- *    fill it, and its area is reported (`filledHolePixels`).
+ *    fill it, and its area is reported (`filledHolePixels`). Or the caller
+ *    declares `bridges` (issue #326), and every island is meshed and the
+ *    pieces joined into one outline by bridges ({@link bridgedMesh}).
  * 3. **The outline** ({@link contourOutline}; issue #106 replaced rigc's
  *    `offsetPolygon`, which folded the outline over any notch narrower than
  *    twice the margin): the silhouette F — the kept island with its holes
@@ -145,7 +147,7 @@
 import { type Problem } from './errors.ts';
 import { edgeLength } from './length.ts';
 import { counterClockwiseInSpineWorld } from './mesh.ts';
-import { connectedComponents, fillHoles, type Mask } from './raster/index.ts';
+import { type Components, connectedComponents, fillHoles, type Mask } from './raster/index.ts';
 import {
   type AlphaMask,
   checkHullOrder,
@@ -241,6 +243,12 @@ export interface ContourParams {
    * the settled rule says; there is no default. See {@link strayIslands}.
    */
   stray?: number;
+  /**
+   * Issue #326: `true` meshes every island the art holds (past those `stray` leaves out) and joins them into the one
+   * outline rig-c takes by bridges ({@link bridgedMesh}). Absent, a second island refuses as the settled rule says,
+   * and the mesh is byte for byte the one it was before the field existed; there is no `false`.
+   */
+  bridges?: true;
   /** Refinement regions, in the order their points are placed. */
   regions: readonly ContourRegion[];
   /**
@@ -341,6 +349,37 @@ export interface ContourReport {
   ribs?: ContourRib[];
   /** Only when `maxEdge` was declared (issue #265): the outline vertices the cap added. Absent otherwise, so a mesh without it reports what it always reported. */
   outlineCut?: number;
+  /**
+   * Only when `bridges` was declared (issue #326): the islands kept, the grown silhouettes traced and the bridges
+   * that join them. Absent otherwise, so a mesh without it reports what it always reported. Under `bridges` the fit
+   * figures above (`coveredArtPixels`, `overshoot`) are read on the silhouettes' triangles alone: a bridge covers no
+   * art by construction, and its area is `meshArea`'s and is reported here per bridge.
+   */
+  bridges?: ContourBridges;
+}
+
+/** One bridge (issue #326): the quad that joins a grown silhouette to the outline of the ones joined before it. */
+export interface ContourBridge {
+  /** The silhouette joined, by its index in {@link ContourBridges.units} (1 or more: the outline starts as unit 0's). */
+  unit: number;
+  /** The quad's two crossing edges, px: the joined outline's vertex to the unit's, and the unit's back to the joined outline's next. */
+  span: [number, number];
+  /** The quad's area, px² (exact on the grid), drawn over no art. */
+  area: number;
+  /** The quad's vertices in the mesh as written: the joined outline's a and a′, the unit's b and b′ (the outline runs a → b … b′ → a′). */
+  vertices: [number, number, number, number];
+  /** The pair's rank among every pair of a joined outline vertex and a vertex of a unit still apart, nearest first (1: the nearest pair was taken). */
+  pair: number;
+}
+
+/** What a bridged mesh was made of (issue #326). */
+export interface ContourBridges {
+  /** The art px of every island kept, largest first. */
+  islands: number[];
+  /** The grown silhouettes traced, numbered by art px (most first, then raster order): the art px of each one's islands, largest first. */
+  units: number[][];
+  /** One per unit but unit 0, in the order they were joined. */
+  joins: ContourBridge[];
 }
 
 export interface ContourMesh {
@@ -399,6 +438,8 @@ function parameterProblems(part: string, mask: AlphaMask, p: ContourParams): Pro
   }
   if (p.budget !== undefined && (!Number.isInteger(p.budget) || p.budget < 3)) bad('budget', `is ${p.budget}; a whole number of vertices, 3 or more, is required`);
   if (p.fitConnectivity !== undefined && p.fitConnectivity !== 4 && p.fitConnectivity !== 8) bad('fitConnectivity', `is ${JSON.stringify(p.fitConnectivity)}; 4 or 8 is required (how the background is flooded when overshoot is measured)`);
+  if (p.bridges !== undefined && p.bridges !== true) bad('bridges', `is ${JSON.stringify(p.bridges)}; true is required — remove the field for the one-island rule`);
+  if (p.bridges === true && (p.ribs ?? []).length > 0) bad('bridges', `is declared beside ribs on ${(p.ribs ?? []).map((r) => r.chain).join(', ')}; the two are not combined — a rib is placed across one outline, and a bridged mesh's outline runs round several silhouettes — so declare one of them`);
   if (p.stray !== undefined && (!Number.isInteger(p.stray) || p.stray < 0)) bad('stray', `is ${p.stray}; a whole number of art pixels, 0 or more, is required (the largest island that may be left out)`);
   ribProblems(part, p, out);
   const names = new Set<string>();
@@ -1733,23 +1774,36 @@ export function contourOutline(part: string, filled: Mask, threshold: number, to
   const grown = growSilhouette(filled, margin);
   const traced = margin === 0 ? silhouette : trace(grown.mask);
   if (Array.isArray(traced)) return traced;
-  const simplified = simplifyClosedPolygon(traced.outline, tolerance);
+  const simple = simplifiedOutline(object, traced.outline, w, h, tolerance, margin);
+  if ('problems' in simple) return simple.problems;
+  return { outline: simple.outline, tracedVertices: traced.outline.length, grown, grownHolePixels: margin === 0 ? 0 : traced.holePixels };
+}
+
+/**
+ * A traced outline simplified at `tolerance` (`simplifyClosedPolygon`), clamped to the window, snapped to the
+ * {@link GRID} and pruned (`prunePolygon`) — {@link contourOutline}'s step 3 — or the `CONTOUR_SELF_INTERSECTION`
+ * that refuses it (step 4). `object` is the refusal's object.
+ */
+function simplifiedOutline(object: string, traced: Array<[number, number]>, w: number, h: number, tolerance: number, margin: number): { outline: Array<[number, number]> } | { problems: Problem[] } {
+  const simplified = simplifyClosedPolygon(traced, tolerance);
   const snapped = simplified.map(([x, y]) => [snap(Math.min(w, Math.max(0, x))) / GRID, snap(Math.min(h, Math.max(0, y))) / GRID] as [number, number]);
   const outline = prunePolygon(snapped);
   if (outline.length < 3 || signedArea(outline) <= 0 || findSelfIntersection(outline) !== null) {
     const crossing = outline.length < 3 ? null : findSelfIntersection(outline);
-    return [
-      {
-        code: 'CONTOUR_SELF_INTERSECTION',
-        object,
-        detail:
-          crossing !== null
-            ? `after margin ${margin} px and tolerance ${tolerance} px its simplified outline's edge ${crossing[0]} meets edge ${crossing[1]}; an outline that touches itself nowhere is required — lower the tolerance`
-            : `after margin ${margin} px and tolerance ${tolerance} px its outline has ${outline.length} vertices enclosing ${outline.length < 3 ? 0 : signedArea(outline)} px² (clockwise on screen is positive); 3 or more enclosing a positive area are required — lower the tolerance`,
-      },
-    ];
+    return {
+      problems: [
+        {
+          code: 'CONTOUR_SELF_INTERSECTION',
+          object,
+          detail:
+            crossing !== null
+              ? `after margin ${margin} px and tolerance ${tolerance} px its simplified outline's edge ${crossing[0]} meets edge ${crossing[1]}; an outline that touches itself nowhere is required — lower the tolerance`
+              : `after margin ${margin} px and tolerance ${tolerance} px its outline has ${outline.length} vertices enclosing ${outline.length < 3 ? 0 : signedArea(outline)} px² (clockwise on screen is positive); 3 or more enclosing a positive area are required — lower the tolerance`,
+        },
+      ],
+    };
   }
-  return { outline, tracedVertices: traced.outline.length, grown, grownHolePixels: margin === 0 ? 0 : traced.holePixels };
+  return { outline };
 }
 
 /**
@@ -1769,6 +1823,7 @@ export function contourMesh(part: string, mask: AlphaMask, params: ContourParams
   if (islands === 0) {
     return [{ code: 'CONTOUR_PART_HAS_ART', object, detail: `its ${w}x${h} image has no pixel with alpha above ${threshold}; a mesh needs at least one art pixel` }];
   }
+  if (params.bridges === true) return bridgedMesh(part, mask, params, comp);
   const split = strayIslands(comp.stats.map((s) => s.area), params.stray);
   if (split.refused !== null) {
     const sizes = comp.stats.slice(1).map((s) => `${s.area} px at (${s.left}, ${s.top})`);
@@ -1936,4 +1991,285 @@ export function strayIslands(areas: readonly number[], stray: number | undefined
     return { keep: -1, leave: [], refused: `besides the largest (${largest} px) ${above.length} island(s) hold more than ${stray} px — ${above.map((l) => `${areas[l]} px`).join(', ')} — and only an island at or under the figure may be left out` };
   }
   return { keep, leave, refused: null };
+}
+
+// ---------------------------------------------------------------------------
+// several islands joined by bridges (issue #326)
+// ---------------------------------------------------------------------------
+
+/** One grown silhouette of a bridged mesh: its outline (grid units, walk order), its kept interior points and its own triangles (local indices, wound as the triangulation builds them). */
+interface BridgeUnit {
+  hx: number[];
+  hy: number[];
+  kept: Candidate[];
+  tri: number[];
+  islands: number[];
+}
+
+/**
+ * The bridged mesh (issue #326, Stage B; `bridges: true`). Stage A (`docs/evidence/island-draft.md`) measured the
+ * join this builds by hand: rig-c reads one closed outline per mesh, and a bridge is what a join costs.
+ *
+ * 1. **Islands.** Every 4-connected island of the art is kept, but an island that is not the largest (nor tied
+ *    with it) and holds `stray` art px or fewer, which is left out as the one-island rule leaves it out.
+ * 2. **Silhouettes, in the trace.** The kept islands with their holes filled grow together by the margin
+ *    ({@link growSilhouette}, its pinch fill included), and each 4-connected piece of the grown set is one unit,
+ *    traced on its own. Islands closer than about twice the margin grow into one unit and are traced as one
+ *    silhouette; nothing is painted between them. A unit is traced, simplified, capped, refined in regions and
+ *    triangulated exactly as a one-island mesh is (steps 3–5 of the module header).
+ * 3. **Bridges.** The units are numbered by art px (most first, then raster order). The outline starts as unit
+ *    0's; then, while a unit is apart, it takes the nearest pair of a vertex a on the joined outline and a vertex b
+ *    of a unit still apart (squared distance on the grid, then the unit's number, a's position, b's index) whose
+ *    quad holds: the joined outline runs a → b round the unit to b′ → a′, the quad (a, b, b′, a′) is two triangles
+ *    wound as the mesh's, it crosses no outline edge of the joined outline or of any unit still apart and holds no
+ *    other vertex, and the join passes {@link contourTopologyProblems}. Nearest first, so a unit is not joined
+ *    across one still apart. Each bridge adds two triangles and keeps `2V − hull − 2`. When no pair holds,
+ *    `CONTOUR_BRIDGE` names the silhouettes joined and apart (selftest `CT44` plants one: a tolerance that cuts an
+ *    outline across its notch and through the unit sitting in it).
+ * 4. **Readings.** Topology and the budget read the whole mesh; coverage and overshoot read the units' triangles
+ *    only (a bridge spans the gap between islands by design, so it covers no art and reaches past it — its area
+ *    is reported per bridge, `bridges.joins[].area`, and in `meshArea`). The three interior edges each bridge
+ *    makes (its diagonal and the two outline edges it opens) are not asked to be Delaunay, as an outline edge
+ *    is not.
+ *
+ * The F-level pinch guard of {@link contourOutline} is not run: a pinch between two islands is two islands, which
+ * the growth joins (its pinch fill) or the bridge check reads as outlines that touch.
+ */
+function bridgedMesh(part: string, mask: AlphaMask, params: ContourParams, comp: Components): ContourMesh | Problem[] {
+  const object = `contour mesh "${part}"`;
+  const { width: w, height: h } = mask;
+  const { threshold, tolerance, margin } = params;
+  const n = comp.count - 1;
+  let largest = 0;
+  for (let l = 1; l <= n; l++) largest = Math.max(largest, comp.stats[l].area);
+  const leave: number[] = [];
+  for (let l = 1; l <= n; l++) if (comp.stats[l].area !== largest && params.stray !== undefined && comp.stats[l].area <= params.stray) leave.push(l);
+  let meshed = mask;
+  let strayPixels = 0;
+  if (leave.length > 0) {
+    const out = new Set(leave);
+    const alpha = new Uint8Array(mask.alpha);
+    for (let i = 0; i < alpha.length; i++) if (out.has(comp.labels[i])) alpha[i] = 0;
+    meshed = { width: w, height: h, alpha };
+    for (const l of leave) strayPixels += comp.stats[l].area;
+  }
+  const keptIslands = new Set<number>();
+  for (let l = 1; l <= n; l++) if (!leave.includes(l)) keptIslands.add(l);
+
+  const island = artMask(meshed, threshold);
+  const filled = fillHoles(island);
+  let filledHolePixels = 0;
+  for (let i = 0; i < filled.data.length; i++) if (filled.data[i] && !island.data[i]) filledHolePixels++;
+  const grown = growSilhouette(filled, margin);
+  const gc = connectedComponents(grown.mask, 4);
+  // Each grown piece and the kept islands in it (an island inside another's hole is filled into that one's piece).
+  const members = new Map<number, number[]>();
+  for (let i = 0; i < comp.labels.length; i++) {
+    const l = comp.labels[i];
+    if (l === 0 || !keptIslands.has(l)) continue;
+    const g = gc.labels[i];
+    const list = members.get(g) ?? [];
+    if (!list.includes(l)) list.push(l);
+    members.set(g, list);
+  }
+  const order = [...members.keys()]
+    .map((g) => ({ g, px: (members.get(g) as number[]).reduce((t, l) => t + comp.stats[l].area, 0) }))
+    .sort((p, q) => q.px - p.px || p.g - q.g);
+
+  const candidates = interiorCandidates(w, h, params).filter((c) => c.x >= 0 && c.y >= 0 && c.x <= w * GRID && c.y <= h * GRID);
+  const units: BridgeUnit[] = [];
+  let tracedVertices = 0;
+  let grownHolePixels = 0;
+  let outlineCut = 0;
+  for (const [k, { g, px }] of order.entries()) {
+    const at = `${object} (silhouette ${k + 1} of ${order.length}, ${px} art px)`;
+    const data = new Uint8Array(w * h);
+    for (let i = 0; i < data.length; i++) data[i] = gc.labels[i] === g ? 1 : 0;
+    let traced: ReturnType<typeof traceAlphaOutline>;
+    try {
+      traced = traceAlphaOutline({ width: w, height: h, alpha: data }, 1);
+    } catch (err) {
+      if (!(err instanceof MeshError)) throw err;
+      return [{ code: 'CONTOUR_TRACE', object: at, detail: `rig-c's traceAlphaOutline refused the grown silhouette at alpha above ${threshold}: ${err.message}` }];
+    }
+    const simple = simplifiedOutline(at, traced.outline, w, h, tolerance, margin);
+    if ('problems' in simple) return simple.problems;
+    tracedVertices += traced.outline.length;
+    grownHolePixels += margin === 0 ? 0 : traced.holePixels;
+    const capped = params.maxEdge === undefined ? simple.outline : capOutlineEdges(simple.outline, params.maxEdge);
+    outlineCut += capped.length - simple.outline.length;
+    const outline = outlineInRegions(capped, params.regions);
+    const hx = outline.map((q) => snap(q[0]));
+    const hy = outline.map((q) => snap(q[1]));
+    const kept = keepPoints(hx, hy, candidates);
+    const mesh = new Triangulation([...hx, ...kept.map((c) => c.x)], [...hy, ...kept.map((c) => c.y)]);
+    const ears = earClip(outline);
+    for (let t = 0; t < ears.length; t += 3) mesh.set(t / 3, ears[t], ears[t + 1], ears[t + 2]);
+    mesh.legalizeAll();
+    for (let q = 0; q < kept.length; q++) mesh.insert(outline.length + q);
+    mesh.legalizeAll();
+    units.push({ hx, hy, kept, tri: [...mesh.tri], islands: (members.get(g) as number[]).map((l) => comp.stats[l].area).sort((a, b) => b - a) });
+  }
+
+  // The join: `ring` is the outline as [unit, hull index] in walk order; it starts as unit 0's.
+  type Ref = readonly [number, number];
+  let ring: Ref[] = units[0].hx.map((_x, i) => [0, i] as const);
+  const quads: Array<[Ref, Ref, Ref, Ref]> = [];
+  const joins: Array<Omit<ContourBridge, 'vertices'>> = [];
+  const X = (r: Ref): number => units[r[0]].hx[r[1]];
+  const Y = (r: Ref): number => units[r[0]].hy[r[1]];
+  const ori = (p: Ref, q: Ref, r: Ref): number => orient(X(p), Y(p), X(q), Y(q), X(r), Y(r));
+  /** The mesh of the units joined so far: vertices (px) in ring order then each joined unit's interior points, and its triangles, wound as the triangulation's. */
+  const assemble = (r: readonly Ref[], joined: readonly number[], q: ReadonlyArray<readonly [Ref, Ref, Ref, Ref]>): { vertices: Array<[number, number]>; tri: number[]; own: number; bridgeEdges: Array<[number, number]> } => {
+    const index = new Map<string, number>();
+    r.forEach((ref, i) => index.set(`${ref[0]}:${ref[1]}`, i));
+    const vertices = r.map((ref) => [X(ref) / GRID, Y(ref) / GRID] as [number, number]);
+    const tri: number[] = [];
+    for (const u of joined) {
+      const U = units[u];
+      const base = vertices.length;
+      for (const c of U.kept) vertices.push([c.x / GRID, c.y / GRID]);
+      const H = U.hx.length;
+      for (const v of U.tri) tri.push(v < H ? (index.get(`${u}:${v}`) as number) : base + v - H);
+    }
+    const own = tri.length;
+    const bridgeEdges: Array<[number, number]> = [];
+    for (const [a, a2, b, bp] of q) {
+      const [ia, ia2, ib, ibp] = [a, a2, b, bp].map((ref) => index.get(`${ref[0]}:${ref[1]}`) as number);
+      tri.push(ia, ib, ibp, ia, ibp, ia2);
+      bridgeEdges.push([ia, ibp], [ia, ia2], [ib, ibp]);
+    }
+    return { vertices, tri, own, bridgeEdges };
+  };
+  const joinedUnits = [0];
+  while (joinedUnits.length < units.length) {
+    const R = ring.length;
+    const waiting = units.map((_u, k) => k).filter((k) => !joinedUnits.includes(k));
+    // Every pair of a joined outline vertex and a waiting unit's: nearest first, then the waiting unit, the ring position, the unit's vertex.
+    const pairs: Array<[number, number, number, number]> = [];
+    for (const k of waiting) {
+      const B = units[k];
+      for (let p = 0; p < R; p++) {
+        for (let j = 0; j < B.hx.length; j++) {
+          const dx = X(ring[p]) - B.hx[j];
+          const dy = Y(ring[p]) - B.hy[j];
+          pairs.push([dx * dx + dy * dy, k, p, j]);
+        }
+      }
+    }
+    pairs.sort((s, t) => s[0] - t[0] || s[1] - t[1] || s[2] - t[2] || s[3] - t[3]);
+    // Every outline edge of every unit, for the crossing test: the joined ring's and every waiting unit's.
+    const edges: Array<[Ref, Ref]> = [];
+    for (let i = 0; i < R; i++) edges.push([ring[i], ring[(i + 1) % R]]);
+    for (const u of waiting) for (let i = 0; i < units[u].hx.length; i++) edges.push([[u, i], [u, (i + 1) % units[u].hx.length]]);
+    const others: Ref[] = [];
+    for (let u = 0; u < units.length; u++) for (let i = 0; i < units[u].hx.length; i++) others.push([u, i]);
+    const same = (p: Ref, q: Ref): boolean => p[0] === q[0] && p[1] === q[1];
+    let taken: { k: number; p: number; j: number; rank: number; ring: Ref[] } | null = null;
+    for (let rank = 0; rank < pairs.length && taken === null; rank++) {
+      const [, k, p, j] = pairs[rank];
+      const HB = units[k].hx.length;
+      const a = ring[p];
+      const a2 = ring[(p + 1) % R];
+      const b: Ref = [k, j];
+      const bp: Ref = [k, (j - 1 + HB) % HB];
+      if (ori(a, b, bp) <= 0 || ori(a, bp, a2) <= 0) continue;
+      const crosses = (s: Ref, t: Ref): boolean =>
+        edges.some(([e0, e1]) => !same(e0, s) && !same(e1, s) && !same(e0, t) && !same(e1, t) && segmentsMeet(X(s), Y(s), X(t), Y(t), X(e0), Y(e0), X(e1), Y(e1)));
+      if (crosses(a, b) || crosses(bp, a2)) continue;
+      const inside = (v: Ref, t0: Ref, t1: Ref, t2: Ref): boolean => ori(t0, t1, v) >= 0 && ori(t1, t2, v) >= 0 && ori(t2, t0, v) >= 0;
+      if (others.some((v) => !same(v, a) && !same(v, a2) && !same(v, b) && !same(v, bp) && (inside(v, a, b, bp) || inside(v, a, bp, a2)))) continue;
+      const next: Ref[] = [...ring.slice(0, p + 1)];
+      for (let s = 0; s < HB; s++) next.push([k, (j + s) % HB]);
+      next.push(...ring.slice(p + 1));
+      const trial = assemble(next, [...joinedUnits, k], [...quads, [a, a2, b, bp]]);
+      if (contourTopologyProblems(part, trial.vertices, counterClockwiseInSpineWorld(canonicalTriangles(trial.tri)), next.length).length > 0) continue;
+      taken = { k, p, j, rank, ring: next };
+    }
+    if (taken === null) {
+      const px = (k: number): number => units[k].islands.reduce((t, x) => t + x, 0);
+      return [
+        {
+          code: 'CONTOUR_BRIDGE',
+          object,
+          detail: `its ${units.length} grown silhouettes cannot all be joined: of the ${pairs.length} pairs of a vertex on the outline joined so far (${R} vertices round ${joinedUnits.map(px).join(' + ')} art px) and one on a silhouette still apart (${waiting.map(px).join(', ')} art px), none gives a bridge quad wound as the mesh that crosses no outline, holds no other vertex and leaves one closed outline; a bridge is required, because rig-c takes one closed outline per mesh — lower the tolerance (a simplified outline can cut across a neighbour), or keep the lattice mode for this part`,
+        },
+      ];
+    }
+    const { k } = taken;
+    const HB = units[k].hx.length;
+    const a = ring[taken.p];
+    const a2 = ring[(taken.p + 1) % R];
+    const b: Ref = [k, taken.j];
+    const bp: Ref = [k, (taken.j - 1 + HB) % HB];
+    const len = (s: Ref, t: Ref): number => r6(Math.sqrt((X(s) - X(t)) ** 2 + (Y(s) - Y(t)) ** 2) / GRID);
+    const twice = ori(a, b, bp) + ori(a, bp, a2);
+    joins.push({ unit: k, span: [len(a, b), len(bp, a2)], area: twice / 2 / (GRID * GRID), pair: taken.rank + 1 });
+    quads.push([a, a2, b, bp]);
+    ring = taken.ring;
+    joinedUnits.push(k);
+  }
+
+  const all = assemble(ring, joinedUnits, quads);
+  const vertices = all.vertices;
+  const triangles = counterClockwiseInSpineWorld(canonicalTriangles(all.tri));
+  const ownTriangles = counterClockwiseInSpineWorld(canonicalTriangles(all.tri.slice(0, all.own)));
+  const H = ring.length;
+  const problems = contourTopologyProblems(part, vertices, triangles, H);
+  const fit = contourFit(part, meshed, threshold, { margin, tolerance }, vertices, ownTriangles, params.fitConnectivity ?? 4);
+  problems.push(...fit.problems);
+  if (params.budget !== undefined && vertices.length > params.budget) {
+    problems.push({
+      code: 'CONTOUR_BUDGET',
+      object,
+      detail: `has ${vertices.length} vertices (${H} on the outline, ${vertices.length - H} inside); the declared budget is ${params.budget} — nothing is thinned to fit, so raise the spacing or the tolerance, or the budget`,
+    });
+  }
+  if (problems.length > 0) return problems;
+
+  const index = new Map<string, number>();
+  ring.forEach((ref, i) => index.set(`${ref[0]}:${ref[1]}`, i));
+  const at = (r: Ref): number => index.get(`${r[0]}:${r[1]}`) as number;
+  const bySource = new Map<string, number>();
+  for (const r of params.regions) bySource.set(`region "${r.name}"`, 0);
+  bySource.set('background', 0);
+  for (const u of joinedUnits) for (const c of units[u].kept) bySource.set(c.source, (bySource.get(c.source) as number) + 1);
+  const hx = ring.map(X);
+  const hy = ring.map(Y);
+  const meshArea = unitsToPx2(twiceAreaUnits(hx, hy));
+  return {
+    vertices,
+    triangles,
+    hull: H,
+    mask: meshed,
+    report: {
+      boundaryVertices: H,
+      interiorVertices: vertices.length - H,
+      interiorBySource: [...bySource].map(([source, v]) => ({ source, vertices: v })),
+      triangles: triangles.length / 3,
+      tracedVertices,
+      artPixels: fit.artPixels,
+      coveredArtPixels: fit.coveredArt,
+      coverage: fit.coverage,
+      overshoot: fit.overshoot,
+      overshootBound: fit.overshootBound,
+      ...(params.fitConnectivity === undefined ? {} : { fitConnectivity: params.fitConnectivity }),
+      meshArea,
+      enclosedTransparentArea: meshArea - fit.coveredArt,
+      filledHolePixels,
+      ...triangleQuality(vertices, triangles),
+      nonDelaunayEdges: delaunayViolations(vertices, triangles, all.bridgeEdges),
+      strayIslands: leave.length,
+      strayPixels,
+      grownPixels: grown.grownPixels,
+      pinchFilledPixels: grown.pinchFilledPixels,
+      grownHolePixels,
+      ...(params.maxEdge === undefined ? {} : { outlineCut }),
+      bridges: {
+        islands: [...keptIslands].map((l) => comp.stats[l].area).sort((a, b) => b - a),
+        units: units.map((u) => u.islands),
+        joins: joins.map((j, i) => ({ ...j, vertices: quads[i].map(at) as [number, number, number, number] })),
+      },
+    },
+  };
 }

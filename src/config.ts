@@ -328,6 +328,11 @@ export interface ContourSpec {
   budget?: number;
   /** The largest island, in art pixels, that may be left out of the mesh; absent leaves none out. */
   stray?: number;
+  /**
+   * Issue #326: `true` meshes every island past those `stray` leaves out and joins them into one outline by bridges
+   * (`src/contour.ts`); absent, a second island refuses as it always has. There is no `false`.
+   */
+  bridges?: true;
   /** Local deformation regions; absent is none. */
   regions?: ContourRegionSpec[];
 }
@@ -1837,7 +1842,7 @@ function checkRibs(c: Check, at: string, m: Record<string, Json>, chains: Map<st
  * the grid every region number must sit on.
  */
 function checkContour(c: Check, at: string, v: Json, bones: Set<string>): void {
-  const o = c.object(at, v, ['tolerance', 'margin', 'spacing'], ['maxEdge', 'budget', 'stray', 'regions']);
+  const o = c.object(at, v, ['tolerance', 'margin', 'spacing'], ['maxEdge', 'budget', 'stray', 'bridges', 'regions']);
   if (o === null) return;
   if ('tolerance' in o) c.number(`${at}.tolerance`, o.tolerance, 'non-negative');
   if ('margin' in o && c.number(`${at}.margin`, o.margin, 'non-negative') && (o.margin as number) > 0 && (o.margin as number) < 1) {
@@ -1847,6 +1852,7 @@ function checkContour(c: Check, at: string, v: Json, bones: Set<string>): void {
   if ('maxEdge' in o) c.number(`${at}.maxEdge`, o.maxEdge, 'positive');
   if ('budget' in o) c.int(`${at}.budget`, o.budget, 3);
   if ('stray' in o) c.int(`${at}.stray`, o.stray, 0);
+  if ('bridges' in o && o.bridges !== true) c.fail('CONFIG_FIELD_TYPE', `${at}.bridges`, `is ${show(o.bridges)}; true is required (every island joined into one outline by bridges, issue #326) — remove the field for the one-island rule`);
   if (!('regions' in o) || !c.array(`${at}.regions`, o.regions, false)) return;
   const names = new Set<string>();
   (o.regions as Json[]).forEach((rv, i) => {

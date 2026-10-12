@@ -13,7 +13,9 @@
  * - the interior grid at spacing S = round(H / {@link FIGURE_GRID_DIVISOR});
  * - dust left out: an extra 4-connected island of the art (alpha above `ART_ALPHA`) of at most {@link DUST_MAX_PX} px
  *   and at most {@link DUST_MAX_SHARE} of the part's art is dust, and a `stray` equal to the largest such island leaves
- *   it out. A part with any other extra island holds a real piece, and keeps its lattice ({@link dustOf});
+ *   it out. A part with any other extra island holds a real piece ({@link dustOf}): issue #326 drafts it per island,
+ *   `bridges: true`, only when every island is carried by the same bones ({@link islandsJoin}: every vertex of the
+ *   part's lattice bound to one bone, the same one); otherwise it keeps its lattice, and the note names the bones;
  * - `r`, `segments`, `exponent`, `rule` and `influences` as the lattice entry states them.
  *
  * The constants are the ones issue #265's stages measured (Stage A passed every bar at c = 37 on three examples; T 2
@@ -68,6 +70,7 @@ import { BARS, type CheckReport, type PackShape, type PageEdges, type RigcRunner
 import { type CharacterConfig, type ContourMeshSpec, type LatticeMeshSpec, loadConfigAndAnimations, type Segment } from './config.ts';
 import { PartsError, type Problem, problemLine } from './errors.ts';
 import { IDLE_FPS } from './motion.ts';
+import type { ContourBridges } from './contour.ts';
 import { ART_ALPHA, DUST_MAX_PX, DUST_MAX_SHARE, isDust } from './mesh.ts';
 import { type PartsFile, readParts } from './parts.ts';
 import { alphaAbove, connectedComponents } from './raster/index.ts';
@@ -219,15 +222,64 @@ export function dustOf(image: Raster): DustReading {
   return { stray: extra.length === 0 ? undefined : extra[0], islands, dust: extra };
 }
 
-/** The candidate for one lattice entry: the outline mesh at the figure's numbers, its weights' fields as the lattice states them. */
-export function candidateMesh(lattice: LatticeMeshSpec, rules: Pick<FigureRules, 'tolerance' | 'spacing'>, stray: number | undefined): ContourMeshSpec {
+/**
+ * The candidate for one lattice entry: the outline mesh at the figure's numbers, its weights' fields as the lattice
+ * states them. `bridges` (issue #326): every real island meshed and joined by bridges ({@link islandsJoin}).
+ */
+export function candidateMesh(lattice: LatticeMeshSpec, rules: Pick<FigureRules, 'tolerance' | 'spacing'>, stray: number | undefined, bridges = false): ContourMeshSpec {
   return {
-    contour: { tolerance: rules.tolerance, margin: rules.tolerance, spacing: rules.spacing, maxEdge: rules.spacing, ...(stray === undefined ? {} : { stray }) },
+    contour: { tolerance: rules.tolerance, margin: rules.tolerance, spacing: rules.spacing, maxEdge: rules.spacing, ...(stray === undefined ? {} : { stray }), ...(bridges ? { bridges: true as const } : {}) },
     r: lattice.r,
     segments: lattice.segments,
     ...(lattice.exponent === undefined ? {} : { exponent: lattice.exponent }),
     ...(lattice.rule === undefined ? {} : { rule: lattice.rule }),
     ...(lattice.influences === undefined ? {} : { influences: lattice.influences }),
+  };
+}
+
+/** What the same-bones test reads off a part's lattice as the rig stage weighted it (issue #326). */
+export interface CarriedBy {
+  /** Every bone a vertex is bound to, sorted. */
+  bones: string[];
+  /** The lattice's vertices, and how many are bound to more than one bone. */
+  vertices: number;
+  blended: number;
+}
+
+/** The bones a mesh attachment's vertices are bound to ({@link CarriedBy}). */
+export function carriedBy(att: Pick<MeshAttachment, 'weights'>): CarriedBy {
+  const bones = new Set<string>();
+  let blended = 0;
+  for (const w of att.weights) {
+    for (const e of w) bones.add(e.bone);
+    if (w.length > 1) blended++;
+  }
+  return { bones: [...bones].sort(), vertices: att.weights.length, blended };
+}
+
+/**
+ * Issue #326 (HQ's ruling on Stage A): a part whose art holds a second real island is drafted per island, joined by
+ * bridges, **only when every island is carried by the same bones**. The test, read off the part's lattice as the rig
+ * stage weighted it ({@link carriedBy}): every vertex is bound to one bone, and it is the same bone for every
+ * vertex. Then every point of the part — each island and every bridge between them — moves with that one bone, so no
+ * island moves against another and no bridge stretches. Anything else keeps the lattice, and the sentence says which
+ * bones; no two-bone join is drafted, measured or not (the ruling: nothing measured needs it).
+ *
+ * `islands` is {@link dustOf}'s reading of the same image. Returns the `stray` the candidate declares (the largest
+ * dust island: every real island is larger than any dust island on one part, since dust is at most
+ * {@link DUST_MAX_PX} px and a share of at most {@link DUST_MAX_SHARE}) and the real islands' px; or why the lattice
+ * is kept. A reading that is not a real piece or a tie for the largest — no art, or one island — is not this path's.
+ */
+export function islandsJoin(islands: readonly number[], lattice: Pick<MeshAttachment, 'weights'>): { stray: number | undefined; real: number[]; bone: string } | { keep: string } | null {
+  if (islands.length < 2) return null;
+  const art = islands.reduce((a, b) => a + b, 0);
+  const real = islands.filter((n, i) => i === 0 || n === islands[0] || !isDust(n, art));
+  const dust = islands.filter((n, i) => !(i === 0 || n === islands[0] || !isDust(n, art)));
+  if (real.length < 2) return null;
+  const c = carriedBy(lattice);
+  if (c.bones.length === 1 && c.blended === 0) return { stray: dust.length === 0 ? undefined : dust[0], real, bone: c.bones[0] };
+  return {
+    keep: `its ${real.length} real islands are carried by different bones — the lattice's ${c.vertices} vertices are bound to ${c.bones.map((b) => `"${b}"`).join(', ')}${c.blended > 0 ? `, ${c.blended} of them to more than one` : ''} — and mesh-draft joins islands by bridges only when every vertex is bound to one and the same bone, so that no island moves against another and no bridge between them stretches (issue #326)`,
   };
 }
 
@@ -546,13 +598,24 @@ export interface MeshFigure {
   overdraw: number;
 }
 
+/** A bridged candidate's bridges (issue #326), off the rig stage's mesh report: the silhouettes, each join, and their area over the part's art. */
+export interface BridgeFigure {
+  /** The grown silhouettes, numbered by art px: each one's islands' art px. */
+  units: number[][];
+  joins: Array<{ span: [number, number]; area_px2: number }>;
+  /** Σ of the joins' area, px². */
+  area_px2: number;
+  /** That area over the part's art px: the share of the candidate's overdraw the bridges draw (4 decimals). */
+  overdraw: number;
+}
+
 export interface PartRow {
   part: string;
   /** What the written config holds for the part. */
   mode: 'contour' | 'grid';
   lattice: MeshFigure & { grid: number; art_px: number };
   /** Null when no candidate was drafted for it (a real piece, or the stage refused it before any reading). */
-  candidate: (MeshFigure & { mesh: ContourMeshSpec }) | null;
+  candidate: (MeshFigure & { mesh: ContourMeshSpec; bridges?: BridgeFigure }) | null;
   readings: PartReadings | null;
   gate: GateLine[];
   note: string;
@@ -564,6 +627,17 @@ export interface MeshDraftResult {
   /** The entries not drafted because they are not lattices (issue #307), in config order. */
   notCompared: NotCompared[];
   written: string[];
+}
+
+/** A bridged part's {@link BridgeFigure} off `<rigDir>/mesh_report.json`, or null when the report holds none for it. */
+export function bridgesOf(rigDir: string, part: string, art: number): BridgeFigure | null {
+  const path = join(rigDir, 'mesh_report.json');
+  if (!existsSync(path)) return null;
+  const rows = JSON.parse(readFileSync(path, 'utf8')) as Array<{ part: string; contour?: { bridges?: ContourBridges } }>;
+  const b = rows.find((r) => r.part === part)?.contour?.bridges;
+  if (b === undefined) return null;
+  const area = b.joins.reduce((t, j) => t + j.area, 0);
+  return { units: b.units, joins: b.joins.map((j) => ({ span: j.span, area_px2: j.area })), area_px2: area, overdraw: art === 0 ? 0 : pyRound(area / art, 4) };
 }
 
 /** The mesh's area over the art's: the triangles' area in image px over the image's art px. */
@@ -660,6 +734,7 @@ export function meshDraftStage(input: MeshDraftInput, rigc: RigcRunner, checkBin
   // 2. Candidates for every lattice entry; a real piece keeps the lattice.
   const rows = new Map<string, PartRow>();
   const candidates = new Map<string, ContourMeshSpec>();
+  const joined = new Map<string, { stray: number | undefined; real: number[]; bone: string }>();
   for (const [part, spec] of Object.entries(cfg.meshes)) {
     if (!('grid' in spec)) continue;
     const img = images.get(part);
@@ -673,15 +748,35 @@ export function meshDraftStage(input: MeshDraftInput, rigc: RigcRunner, checkBin
     }
     const dust = dustOf(img);
     if ('keep' in dust) {
-      row.note = `keeps its lattice: ${dust.keep}`;
+      // Issue #326: islands carried by one bone are drafted per island and joined by bridges.
+      const join = islandsJoin(dust.islands, att);
+      if (join === null || 'keep' in join) {
+        row.note = `keeps its lattice: ${dust.keep}${join === null ? '' : `; ${join.keep}`}`;
+        continue;
+      }
+      joined.set(part, join);
+      candidates.set(part, candidateMesh(spec, rules, join.stray, true));
       continue;
     }
     candidates.set(part, candidateMesh(spec, rules, dust.stray));
   }
   const dustText = (part: string): string => {
+    const j = joined.get(part);
+    if (j !== undefined) {
+      const img = images.get(part) as Raster;
+      const dust = (dustOf(img) as { islands: number[] }).islands.slice(j.real.length);
+      return `${dust.length === 0 ? 'no dust' : `stray ${j.stray as number} leaves out ${dust.length} dust island(s) of ${dust.join(', ')} px`}; ${bridgeText(row(part))}`;
+    }
     const img = images.get(part);
     const d = img === undefined ? null : dustOf(img);
     return d === null || 'keep' in d || d.dust.length === 0 ? 'no dust' : `stray ${d.stray as number} leaves out ${d.dust.length} dust island(s) of ${d.dust.join(', ')} px`;
+  };
+  const row = (part: string): PartRow => rows.get(part) as PartRow;
+  const bridgeText = (r: PartRow): string => {
+    const j = joined.get(r.part) as { real: number[]; bone: string };
+    const b = r.candidate?.bridges;
+    const joins = b === undefined ? 'its bridges were not read' : `${b.joins.length} bridge(s) of ${b.joins.map((x) => `${x.span[0]} and ${x.span[1]} px`).join('; ')} span, ${b.area_px2} px² over no art (overdraw ${b.overdraw} of the candidate's ${r.candidate?.overdraw})`;
+    return `its ${j.real.length} real islands (${j.real.join(', ')} px) traced as ${b === undefined ? 'its' : b.units.length} grown silhouette(s) and joined into one outline by ${joins}, every vertex bound to the one bone "${j.bone}" (issue #326)`;
   };
 
   // 3. The drafted rig must build: a refusal laid on a part keeps that part's lattice.
@@ -784,6 +879,10 @@ export function meshDraftStage(input: MeshDraftInput, rigc: RigcRunner, checkBin
       const att = attachmentOf(draftRig, part);
       const img = images.get(part) as Raster;
       row.candidate = { triangles: att.triangles.length / 3, overdraw: overdrawOf(att, artPixels(img)), mesh: candidates.get(part) as ContourMeshSpec };
+      if (joined.has(part)) {
+        const b = bridgesOf(draftedRig.rigDir, part, artPixels(img));
+        if (b !== null) row.candidate.bridges = b;
+      }
       const readings: PartReadings = { bars: null, idle: idleReading(idle, part), bend: read === null || typeof read === 'string' ? read : { links, ...read }, triangles: { lattice: row.lattice.triangles, candidate: row.candidate.triangles } };
       row.readings = readings;
       const v = gateVerdict({ ...readings, bars: [] }, input.moreTriangles === true);
@@ -857,7 +956,7 @@ export function meshDraftStage(input: MeshDraftInput, rigc: RigcRunner, checkBin
       part: r.part,
       mode: r.mode,
       lattice: r.lattice,
-      candidate: r.candidate === null ? null : { triangles: r.candidate.triangles, overdraw: r.candidate.overdraw },
+      candidate: r.candidate === null ? null : { triangles: r.candidate.triangles, overdraw: r.candidate.overdraw, ...(r.candidate.bridges === undefined ? {} : { bridges: r.candidate.bridges }) },
       // Under --more-triangles only: what accepting a costlier candidate trades, triangles against overdraw.
       ...(input.moreTriangles === true && r.candidate !== null ? { delta: { triangles: r.candidate.triangles - r.lattice.triangles, overdraw: pyRound(r.candidate.overdraw - r.lattice.overdraw, 4) } } : {}),
       readings: r.readings,
@@ -873,7 +972,7 @@ export function meshDraftStage(input: MeshDraftInput, rigc: RigcRunner, checkBin
   writeFileSync(written[0], configText);
   writeFileSync(written[1], `${JSON.stringify(report, null, 2)}\n`);
   for (const r of rowsOut) {
-    const cand = r.candidate === null ? '' : `; candidate ${r.candidate.triangles} triangle(s), overdraw ${r.candidate.overdraw}`;
+    const cand = r.candidate === null ? '' : `; candidate ${r.candidate.triangles} triangle(s), overdraw ${r.candidate.overdraw}${r.candidate.bridges === undefined ? '' : ` (${r.candidate.bridges.joins.length} bridge(s), ${r.candidate.bridges.area_px2} px² over no art: overdraw ${r.candidate.bridges.overdraw} of it)`}`;
     log(`  ${r.mode === 'contour' ? 'DRAFTED' : 'LATTICE'}  ${r.part}: lattice grid ${r.lattice.grid} ${r.lattice.triangles} triangle(s), overdraw ${r.lattice.overdraw}${cand}`);
     for (const g of r.gate) log(`    ${g.pass ? 'pass' : 'FAIL'}  ${g.reading}: ${g.text}`);
     if (r.mode === 'grid' && r.gate.length === 0) log(`    ${r.note}`);
