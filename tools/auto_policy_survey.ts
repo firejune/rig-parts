@@ -661,6 +661,8 @@ export function runTracked(ex: Example, keep: string | null): ExampleRun & { par
       copyFileSync(join(b.out, 'parts.json'), join(keep, 'parts.json'));
       const dir = join(b.out, 'check', 'build');
       if (existsSync(dir)) for (const n of readdirSync(dir)) if (n.endsWith('.json') || n.endsWith('.atlas') || n.endsWith('.png')) copyFileSync(join(dir, n), join(keep, n));
+      // the lattice build's own check figures, beside its skeleton, as runExample keeps its arm's (density_survey --auto-table reads them)
+      if (existsSync(join(b.out, 'check', 'check.json'))) copyFileSync(join(b.out, 'check', 'check.json'), join(keep, 'check.json'));
     }
     return {
       example: ex.key,
