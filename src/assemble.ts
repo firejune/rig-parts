@@ -114,6 +114,7 @@ import {
   warpAffine,
 } from './raster/index.ts';
 import { pyRound } from './round.ts';
+import { AUTHOR_NO_ROLE, readAuthorTag } from './tags.ts';
 
 const f32 = Math.fround;
 
@@ -2588,7 +2589,10 @@ export const PROPOSE_ALIAS: Readonly<Record<string, string>> = {
   earwear: 'earring',
 };
 
+/** An author-made layer's part is named by its label as the author wrote it (issue #256): the label is already a part name (`authorLabelOk`). */
 function aliasOf(tag: string): string {
+  const author = readAuthorTag(tag);
+  if (author !== null) return author.label;
   return PROPOSE_ALIAS[tag] ?? tag.replaceAll(' ', '_').replaceAll('-', '_');
 }
 
@@ -2641,6 +2645,15 @@ function fmt0(v: number): string {
  * changed. [observed] reference-sample's proposal is the reference's byte for
  * byte; demo's, reference-demo's and scarf's each gain one note, on the hair
  * their configs had already corrected by hand.
+ *
+ * ⚖️ This port's too (issue #256): an author-made layer (`author:<label>`,
+ * `src/tags.ts`) is proposed from the run that holds it, at its place in that
+ * run's draw order, as the part named by its label, under the same floor and
+ * plausibility rules as any layer — its draw position is then the plan's,
+ * where the author moves it. A note per such part says it has no tag and so
+ * no role. One both runs hold is proposed once, from the full run, and a note
+ * says how to take the head run's too. No public example holds one, so no
+ * proposal of theirs moves.
  */
 export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx = PROPOSE_MIN_PX): PlanProposal {
   const frame = checkGeometry(g, { full, head });
@@ -2665,7 +2678,10 @@ export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx =
     return tag !== 'nose' && l !== undefined && l.opaqueRunPx >= minPx && !implausible(run, tag, 'not proposed');
   };
   const body = runs.full.filter((l) => !PROPOSE_HEAD_TAGS.includes(l.tag) && ok('full', l.tag)).map((l) => l.tag);
-  const heads = runs.head.filter((l) => PROPOSE_HEAD_TAGS.includes(l.tag) && ok('head', l.tag)).map((l) => l.tag);
+  // Issue #256: an author-made layer is proposed from the run that holds it, at its place in that run's draw order,
+  // like any layer; one both runs hold is proposed once, from the full run when the full run's is proposed, and the note says so.
+  const authorBoth = runs.head.filter((l) => readAuthorTag(l.tag) !== null && body.includes(l.tag)).map((l) => l.tag);
+  const heads = runs.head.filter((l) => (PROPOSE_HEAD_TAGS.includes(l.tag) || (readAuthorTag(l.tag) !== null && !authorBoth.includes(l.tag))) && ok('head', l.tag)).map((l) => l.tag);
   const hw = body.filter((t) => t.startsWith('handwear'));
   const plan: PlanEntry[] = [];
   const drop = (t: string): void => {
@@ -2701,6 +2717,12 @@ export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx =
     }
   }
   for (const t of heads) plan.push([aliasOf(t), 'head', t]);
+  for (const [part, run, tag] of plan) {
+    if (readAuthorTag(tag) !== null) notes.push(`${tag}: ${AUTHOR_NO_ROLE}; proposed as "${part}" from the ${run} run, at its place in that run's draw order`);
+  }
+  for (const tag of authorBoth) {
+    notes.push(`${tag}: the head run holds a layer of this name too, and the proposer drafts one part per author-made layer, from the full run; to take the head run's as well, add ["<a part name>", "head", "${tag}"] to the plan`);
+  }
   const extend: Extend[] = [];
   /** A hair tag the proposer did not continue below the crop: how far its full-run layer reaches, rig px (null: no opaque row). */
   const reaches = new Map<string, number | null>();

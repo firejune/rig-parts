@@ -25,6 +25,11 @@
  * and for a PSD it is the stacking order itself, with `depth` null because a
  * PSD carries none. Every refusal is collected and thrown once, so one run
  * names every missing file.
+ *
+ * A layer is named by a See-through v3 tag or, for a layer the author made
+ * by hand and added to the run (issue #256), by `author:<label>`
+ * (`src/tags.ts`, `AUTHOR_PREFIX`): read with `group` "author", it has no
+ * role, and its place in the draw order is read like any other layer's.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -32,7 +37,7 @@ import { initializeCanvas, type Layer as PsdLayer, readPsd } from 'ag-psd';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { decodePngBytes } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
-import { acceptedTagNames, readTag, type TagReading } from './tags.ts';
+import { type LayerTagReading, layerTagRequirement, readLayerTag } from './tags.ts';
 
 /** Alpha strictly above this counts as painted. The reference uses the same cut for its ghost clean-up and its sheets. */
 export const OPAQUE_ALPHA_ABOVE = 8;
@@ -45,9 +50,9 @@ export const OPAQUE_ALPHA_ABOVE = 8;
 export const NEAR_WHITE_MIN = 235;
 
 export interface Layer {
-  /** As the input names it; always a v3 tag, possibly with a `-r`/`-l` side. */
+  /** As the input names it: a v3 tag, possibly with a `-r`/`-l` side, or an author-made layer's `author:<label>`. */
   name: string;
-  tag: TagReading;
+  tag: LayerTagReading;
   /** The file the pixels came from, or null for a PSD layer. */
   file: string | null;
   /** The layer's own pixels, `(right-left)x(bottom-top)`, straight alpha. */
@@ -197,9 +202,9 @@ export function readWrapperLayers(path: string): LayerSet {
       return;
     }
     const name = e.name;
-    const tag = readTag(name);
+    const tag = readLayerTag(name);
     if (tag === null) {
-      refuse('LAYERS_TAG_KNOWN', `layer "${name}"`, `is not a See-through v3 tag; one of ${acceptedTagNames().join(', ')} is required`);
+      refuse('LAYERS_TAG_KNOWN', `layer "${name}"`, layerTagRequirement(name));
       ok = false;
     }
     for (const key of ['left', 'top', 'right', 'bottom'] as const) {
@@ -369,9 +374,9 @@ export function readPsdLayers(path: string): LayerSet {
   const layers: Layer[] = [];
   leaves.forEach((layer) => {
     const name = layer.name ?? '';
-    const tag = readTag(name);
+    const tag = readLayerTag(name);
     if (tag === null) {
-      refuse('LAYERS_TAG_KNOWN', `PSD layer "${name}"`, `is not a See-through v3 tag; one of ${acceptedTagNames().join(', ')} is required`);
+      refuse('LAYERS_TAG_KNOWN', `PSD layer "${name}"`, layerTagRequirement(name));
       return;
     }
     if (seen.has(name)) {

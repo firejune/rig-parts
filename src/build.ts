@@ -78,11 +78,12 @@ import { encodeGif } from './gif.ts';
 import { CONTROL_SUFFIX, withAnimations } from './motion.ts';
 import type { PaletteError } from './palette.ts';
 import { type LayerSet, readLayers } from './layers.ts';
-import { type PartRecord, readParts, writeParts } from './parts.ts';
+import { type PartRecord, readParts, tagOf, writeParts } from './parts.ts';
 import { encodePngBytes, readPng, writePng } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
 import { readRequirements, type RequirementLine, summaryText } from './requirements.ts';
 import { type AutoMeshReport, buildRig, DEFAULT_IDLE_KEYS, type FaceAxis, type IdleKeys, type MeshReport, type RigCommand, rigJsonText, type RigOutput, type RigSpec, type StrayCleared, type TurnRow } from './rig.ts';
+import { AUTHOR_NO_ROLE, isAuthorTag } from './tags.ts';
 import { TURN_BONE } from './turn.ts';
 import { pyRound } from './round.ts';
 
@@ -162,6 +163,16 @@ export function fringeLines(parts: readonly PartRecord[]): string[] {
 }
 
 /**
+ * One line per part whose layer the author made (issue #256), in draw order:
+ * `  author-made: part "hand" (full:author:hand) — an author-made layer, …`.
+ * No line when no part came from one, so a plan of See-through layers prints
+ * what it printed before.
+ */
+export function authorPartLines(parts: readonly PartRecord[]): string[] {
+  return parts.filter((p) => isAuthorTag(tagOf(p.from) ?? '')).map((p) => `  author-made: part "${p.name}" (${p.from}) — ${AUTHOR_NO_ROLE}`);
+}
+
+/**
  * Each cut's `under` image (issue #193), read from its path relative to the
  * config's directory, null for a cut without one. Every cut is read before
  * one refusal names them all: no such file (`ASSEMBLE_UNDER_PRESENT`), or a
@@ -219,6 +230,8 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
         `unproj=${String(p.visible_not_projected_px).padStart(5)} drift=${String(p.refused_drift_px).padStart(5)} merged=${p.merged_px} seam=${p.seam_override_px}`,
     );
   }
+  // Issue #256: one line per part from an author-made layer, so it never reads as See-through's. None without one.
+  for (const l of authorPartLines(result.parts.parts)) log(l);
   // One line per plan part an assemble.cuts entry cut, before the fringe lines: the cut is made first. None without cuts.
   for (const l of cutLines(result.cuts)) log(l);
   for (const l of fringeLines(result.parts.parts)) log(l);

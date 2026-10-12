@@ -349,6 +349,29 @@ export const EXPECTED_PROPOSAL = {
   notes: ['headwear: head run 0 rig px < 0.8 x full run 192 -> full-run layer, drawn behind the face'],
 };
 
+/**
+ * The author-made layer twin (issue #256): the flat fixture's full run plus one
+ * layer the author made, `author:hand`, run [31, 44) x [46, 59) — 13 x 13 =
+ * 169 opaque px, at or above the proposer's 150-px floor, and disjoint from
+ * every other full-run layer (topwear ends at x 30, back hair at y 44,
+ * bottomwear starts at x 48, footwear's two rectangles are x [10, 30) and
+ * [60, 62)). Depth 0.45 lies between topwear (0.5) and footwear (0.4), so it
+ * is fifth in the run's draw order. The full run maps 1:1 onto the rig (the
+ * 128-px painting at rig scale 0.5 is 64 rig px over 64 run px, no pad), so the
+ * part is rig [31, 44) x [46, 59), 169 px, and nothing is drawn in front of it.
+ * `tag` lets the same rectangle stand for the borrowed-tag workaround.
+ */
+export function authorFullLayers(tag = 'author:hand'): RunLayerSpec[] {
+  return [...FULL_LAYERS, { name: tag, depth: 0.45, rects: [rect(31, 46, 44, 59, C)] }];
+}
+/** The author layer's part as `assemble` writes it: the box and the opaque count derived above. */
+export const AUTHOR_PART = { name: 'hand', x: 31, y: 46, w: 13, h: 13, opaque_px: 169 };
+/** The flat fixture's proposed plan with the author layer's part where the proposer puts it: after topwear, before the head run's face. */
+export function authorPlan(tag = 'author:hand'): Array<[string, 'full' | 'head', string]> {
+  const p = EXPECTED_PROPOSAL.plan as Array<[string, 'full' | 'head', string]>;
+  return [...p.slice(0, 4), [AUTHOR_PART.name, 'full', tag], p[4]];
+}
+
 /** The full run with the back hair a bob and a tail that does not touch it (issue #233), as the module doc derives it. */
 export const TAIL_FULL_LAYERS: RunLayerSpec[] = FULL_LAYERS.map((l) => (l.name === 'back hair' ? { ...l, rects: [rect(38, 10, 46, 20, C), rect(36, 22, 44, 52, C)] } : l));
 /** The head run whose back hair stops above the crop line: run [44, 60) x [20, 40), rig [38, 46) x [10, 20). */

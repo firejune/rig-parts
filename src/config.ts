@@ -90,7 +90,7 @@ import { RIG_SKIN_CONSTRAINT_KEYS, type RigConstraint, type RigSkinConstraintKey
 import { GRID, MAX_SIDE } from './contour.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { isSkeletonName, KEYPOINT_NAMES, type KeypointName, type PosePoints, SKELETON_NAMES, type SkeletonName } from './skeleton.ts';
-import { acceptedTagNames, readTag } from './tags.ts';
+import { acceptedTagNames, AUTHOR_LABEL_RULE, AUTHOR_PREFIX, readLayerTag } from './tags.ts';
 import { TURN_BONE, type TurnSpec, turnNearest } from './turn.ts';
 
 export type Point = [number, number];
@@ -1420,8 +1420,10 @@ function checkSeeThrough(c: Check, v: Json): void {
 
 function checkRunTag(c: Check, path: string, run: Json, tag: Json): void {
   if (run !== 'full' && run !== 'head') c.fail('CONFIG_FIELD_TYPE', `${path} run`, `is ${show(run)}; "full" or "head" is required`);
-  if (typeof tag !== 'string' || readTag(tag) === null) {
-    c.fail('CONFIG_TAG_KNOWN', `${path} tag`, `is ${show(tag)}; a See-through v3 tag is required — one of ${acceptedTagNames().join(', ')}`);
+  // Issue #256: an author-made layer's `author:<label>` is a tag the readers admit, with no role.
+  if (typeof tag !== 'string' || readLayerTag(tag) === null) {
+    const label = typeof tag === 'string' && tag.startsWith(AUTHOR_PREFIX) ? `; after "${AUTHOR_PREFIX}", ${AUTHOR_LABEL_RULE}` : '';
+    c.fail('CONFIG_TAG_KNOWN', `${path} tag`, `is ${show(tag)}; a See-through v3 tag is required — one of ${acceptedTagNames().join(', ')} — or "${AUTHOR_PREFIX}<label>" for a layer the author made${label}`);
   }
 }
 
