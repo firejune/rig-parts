@@ -44,13 +44,14 @@
  * `--picture <part>` keeps that part's mesh posed at the film's (or the fallback's) bend under every rule, for the
  * picture. `--probe <part>` reads the part's alternative meshes under the rule as built and lifted ({@link probe}).
  */
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { type ContourParams, contourMesh } from '../src/contour.ts';
 import { ART_ALPHA, counterClockwiseInSpineWorld, latticeMesh } from '../src/mesh.ts';
 import { alphaAbove, readPng } from '../src/raster/index.ts';
 import { OFFSET_PLACES, PAD, rigJsonText } from '../src/rig.ts';
 import { pyRound } from '../src/round.ts';
+import { boneHeat, type HeatField, heatInfluences, latticeSilhouette } from '../src/heat.ts';
 import { DEFAULT_LIMITS, type Influence, influences, MAX_INFLUENCES, MIN_WEIGHT, type Segment } from '../src/weights.ts';
 import { bendPoses, bendReading, bentBones, MAX_SAMPLES, type Reference, readSkeleton, type Skeleton } from './bend_survey.ts';
 import { type ChainLine, draftContourMesh, outlineTolerance } from './contourdraft.ts';
@@ -86,7 +87,7 @@ export const TEAR_PAIR_PX = 3;
 /** A pair whose posed distance exceeds its rest distance by more than this (rig px) is a tear. Fixed before the run. */
 export const TEAR_PX = 3;
 
-export const ALL_RULES = ['as built', 'continuous cap', 'continuous floor', 'both', 'lifted', 'family', 'family + continuous floor'] as const;
+export const ALL_RULES = ['as built', 'continuous cap', 'continuous floor', 'both', 'lifted', 'family', 'family + continuous floor', 'heat', 'heat + continuous floor'] as const;
 export type RuleName = (typeof ALL_RULES)[number];
 
 /** Stage A's rules, the default; Stage B runs `--rules` with the family rule. */
@@ -115,9 +116,21 @@ export function family(all: readonly Influence[], ci: ChainInfo): Influence[] {
   });
 }
 
-/** The influences at a rig-px point under `rule`, unrounded, largest first. `ci` is required by the family rules. */
-export function ruleInfluences(rule: RuleName, rp: P2, segs: readonly Segment[], r: number, exponent: number | undefined, ci: ChainInfo | null = null): Influence[] {
+/** A part's bone heat as the rig stage solves it (`boneHeat` over `latticeSilhouette`, src/heat.ts), and the image's origin in rig px. */
+export interface HeatArg { field: HeatField; ox: number; oy: number }
+
+const isHeat = (rule: RuleName): boolean => rule === 'heat' || rule === 'heat + continuous floor';
+
+/** The influences at a rig-px point under `rule`, unrounded, largest first. `ci` is required by the family rules, `heat` by the heat rules. */
+export function ruleInfluences(rule: RuleName, rp: P2, segs: readonly Segment[], r: number, exponent: number | undefined, ci: ChainInfo | null = null, heat: HeatArg | null = null): Influence[] {
   if (rule === 'as built') return influences(rp, segs, r, DEFAULT_LIMITS, exponent);
+  if (isHeat(rule)) {
+    if (heat === null) throw new Error('tear_survey: the heat rules need the part\'s solved field');
+    const p: P2 = [rp[0] - heat.ox, rp[1] - heat.oy];
+    if (rule === 'heat') return heatInfluences(heat.field, p, DEFAULT_LIMITS);
+    const top = normalise(heatInfluences(heat.field, p, ALL).slice(0, MAX_INFLUENCES));
+    return normalise(top.map((e) => ({ bone: e.bone, weight: e.weight - MIN_WEIGHT })).filter((e) => e.weight > 0));
+  }
   let all = influences(rp, segs, r, ALL, exponent); // every bone, normalised: proportional to the raw weights, largest first
   if (rule === 'lifted') return all;
   if (rule === 'family' || rule === 'family + continuous floor') {
@@ -146,6 +159,15 @@ function roundShares(list: readonly Influence[]): Influence[] {
   for (let k = 0; k < kept.length; k++) if (k !== heavy) others += kept[k].weight;
   kept[heavy].weight = pyRound(1 - others, 5);
   return kept;
+}
+
+/** The lattice's rounding (src/rig.ts): each weight to 5 places, the last entry `1 − sum(others)` — what `rule: "heat"` writes. */
+function latticeRound(list: readonly Influence[]): Influence[] {
+  const out = list.map((e) => ({ bone: e.bone, weight: pyRound(e.weight, 5) }));
+  let others = 0;
+  for (let k = 0; k < out.length - 1; k++) others += out[k].weight;
+  out[out.length - 1].weight = pyRound(1 - others, 5);
+  return out;
 }
 
 /** A bone's offset to a world point, in the bone's setup frame (`weightsAt`'s construction, unrounded). */
@@ -183,6 +205,11 @@ interface PartCtx {
   rest: number[];
   original: WeightEntry[][];
   ci: ChainInfo;
+  /** Solved on demand for the heat rules; a refusal is kept by its codes. */
+  heat: HeatArg | null;
+  heatRefused: string | null;
+  heatMs: number | null;
+  heatIterations: number[] | null;
 }
 
 function partCtx(config: Obj, arm0: string, rig: Obj, box: PartBox, latG: Geometry): PartCtx | string {
@@ -218,17 +245,22 @@ function partCtx(config: Obj, arm0: string, rig: Obj, box: PartBox, latG: Geomet
     rest,
     original,
     ci: chainInfo(config),
+    heat: null,
+    heatRefused: null,
+    heatMs: null,
+    heatIterations: null,
   };
 }
 
 /** What a rule writes for one vertex, and whether it differs from the build's entry. */
 function writtenFor(ctx: PartCtx, i: number, rule: RuleName, bones: ReadonlyMap<string, BoneMatrix>): { entry: WeightEntry[]; changed: boolean } {
   const p = ctx.rig[i];
+  if (isHeat(rule) && ctx.heat === null) return { entry: ctx.original[i], changed: false }; // refused by heat: today's weights, named
   const built = influences(p, ctx.segs, ctx.r, DEFAULT_LIMITS, ctx.exponent);
-  const mine = ruleInfluences(rule, p, ctx.segs, ctx.r, ctx.exponent, ctx.ci);
+  const mine = ruleInfluences(rule, p, ctx.segs, ctx.r, ctx.exponent, ctx.ci, ctx.heat);
   if (sameInfluences(built, mine)) return { entry: ctx.original[i], changed: false };
   const w = ctx.rigToWorld(p);
-  const entry = roundShares(mine).map(({ bone, weight }) => {
+  const entry = (rule === 'heat' ? latticeRound(mine) : roundShares(mine)).map(({ bone, weight }) => {
     const was = ctx.original[i].find((e) => e.bone === bone);
     if (was !== undefined) return { bone, x: was.x, y: was.y, weight };
     const [x, y] = local(bones, bone, w);
@@ -245,7 +277,7 @@ function writtenFor(ctx: PartCtx, i: number, rule: RuleName, bones: ReadonlyMap<
 type RuleRef = Reference & { rig: P2[]; kept: string[] };
 
 /** `referenceField` (tools/bend_survey.ts) under `rule`: the same samples, each skinned by the rule unrounded. */
-function referenceUnder(ctx: { box: PartBox; segs: readonly Segment[]; r: number; exponent: number | undefined; rigToWorld: (p: P2) => P2; ci: ChainInfo }, png: string, bones: ReadonlyMap<string, BoneMatrix>, poses: ReadonlyArray<ReadonlyMap<string, BoneMatrix>>, rule: RuleName): RuleRef {
+function referenceUnder(ctx: { box: PartBox; segs: readonly Segment[]; r: number; exponent: number | undefined; rigToWorld: (p: P2) => P2; ci: ChainInfo; heat: HeatArg | null }, png: string, bones: ReadonlyMap<string, BoneMatrix>, poses: ReadonlyArray<ReadonlyMap<string, BoneMatrix>>, rule: RuleName): RuleRef {
   const img = readPng(png);
   let art = 0;
   for (let i = 0; i < img.width * img.height; i++) if (img.data[i * 4 + 3] > ART_ALPHA) art++;
@@ -259,7 +291,7 @@ function referenceUnder(ctx: { box: PartBox; segs: readonly Segment[]; r: number
       if (img.data[(y * img.width + x) * 4 + 3] <= ART_ALPHA) continue;
       const rp: P2 = [ctx.box.x + x + 0.5, ctx.box.y + y + 0.5];
       const w = ctx.rigToWorld(rp);
-      const ws = ruleInfluences(rule, rp, ctx.segs, ctx.r, ctx.exponent, ctx.ci).map(({ bone, weight }) => {
+      const ws = ruleInfluences(rule, rp, ctx.segs, ctx.r, ctx.exponent, ctx.ci, ctx.heat).map(({ bone, weight }) => {
         const [lx, ly] = local(bones, bone, w);
         return { bone, x: lx, y: ly, weight };
       });
@@ -411,7 +443,7 @@ export function probe(config: Obj, arm0: string, ctx: PartCtx, latG: Geometry, s
         const rest = m.rig.flatMap((p) => ctx.rigToWorld(p));
         const weights = m.rig.map((p) => {
           const w = ctx.rigToWorld(p);
-          return ruleInfluences(rule, p, ctx.segs, ctx.r, ctx.exponent, ctx.ci).map(({ bone, weight }) => {
+          return ruleInfluences(rule, p, ctx.segs, ctx.r, ctx.exponent, ctx.ci, ctx.heat).map(({ bone, weight }) => {
             const [x, y] = local(latG.setupBones, bone, w);
             return { bone, x, y, weight };
           });
@@ -496,8 +528,8 @@ function siteText(p: P2, m: ProbeMesh, ctx: PartCtx, rule: RuleName): string {
   for (let i = 0; i < outline.length; i++) toOutline = Math.min(toOutline, distToSeg(p, outline[i], outline[(i + 1) % outline.length]));
   let toVertex = Infinity;
   for (const v of m.rig) toVertex = Math.min(toVertex, Math.hypot(v[0] - p[0], v[1] - p[1]));
-  const top = ruleInfluences(rule, p, ctx.segs, ctx.r, ctx.exponent, ctx.ci)[0];
-  const wOf = (q: P2): number => ruleInfluences(rule, q, ctx.segs, ctx.r, ctx.exponent, ctx.ci).find((e) => e.bone === top.bone)?.weight ?? 0;
+  const top = ruleInfluences(rule, p, ctx.segs, ctx.r, ctx.exponent, ctx.ci, ctx.heat)[0];
+  const wOf = (q: P2): number => ruleInfluences(rule, q, ctx.segs, ctx.r, ctx.exponent, ctx.ci, ctx.heat).find((e) => e.bone === top.bone)?.weight ?? 0;
   let corners = '—';
   for (let t = 0; t < m.triangles.length; t += 3) {
     const [a, b, c] = [m.rig[m.triangles[t]], m.rig[m.triangles[t + 1]], m.rig[m.triangles[t + 2]]];
@@ -651,9 +683,12 @@ export function runTears(key: string, configPath: string, inputs: string, work: 
   const arm0 = join(work, 'arm0');
   const log = (s: string): void => void process.stderr.write(`[${key}] ${s}\n`);
   const reqArgs = requirements === null ? [] : ['--requirements', requirements];
+  let latticeMs: number | null = null;
   if (!existsSync(join(arm0, 'check', 'build', 'skeleton.json'))) {
     log('lattice build');
+    const t0 = performance.now();
     const r = stage(arm0, false, 'bun', [join(ROOT, 'cli.ts'), 'build', '--config', configPath, '--source', join(inputs, 'painting.png'), '--full', join(inputs, 'layers', 'full'), '--head', join(inputs, 'layers', 'head'), '--out', arm0, ...reqArgs]);
+    latticeMs = Math.round(performance.now() - t0);
     if (r.exit !== 0) throw new Error(`tear_survey: the lattice did not build (exit ${r.exit})`);
   }
   const parts = partBoxes(join(arm0, 'parts.json'));
@@ -696,6 +731,64 @@ export function runTears(key: string, configPath: string, inputs: string, work: 
     });
   }
 
+  // Stage C: bone heat as the rig stage solves it, timed per part; a refusal is the part's finding, kept by name
+  let heatBuild: Obj | null = null;
+  if (ruleList.some(isHeat)) {
+    for (const c of ctxs) {
+      const img = readPng(join(arm0, 'rig', 'images', c.att.image as string));
+      const [ox, oy] = [c.box.x - PAD, c.box.y - PAD];
+      const t0 = performance.now();
+      const f = boneHeat(`config.meshes.${c.part}`, latticeSilhouette(alphaAbove(img, ART_ALPHA)), c.segs, ox, oy);
+      c.heatMs = Math.round(performance.now() - t0);
+      if (Array.isArray(f)) c.heatRefused = f.map((x) => `${x.code}: ${x.detail}`).join('; ');
+      else {
+        c.heat = { field: f, ox, oy };
+        c.heatIterations = f.iterations;
+      }
+    }
+    // the shipped path: the real build with every lattice mesh at rule "heat"
+    const cfg = JSON.parse(JSON.stringify(config)) as Obj;
+    for (const m of Object.values(o(cfg.meshes))) if ('grid' in o(m)) o(m).rule = 'heat';
+    const cdir = join(work, 'cfg-heat');
+    mkdirSync(cdir, { recursive: true });
+    for (const f of readdirSync(dirname(configPath))) {
+      const q = join(dirname(configPath), f);
+      if (f.endsWith('.json') && statSync(q).isFile()) copyFileSync(q, join(cdir, f));
+    }
+    writeFileSync(join(cdir, 'config.json'), `${JSON.stringify(cfg, null, 2)}\n`);
+    const hdir = join(work, 'heat-build');
+    log('heat: the real build');
+    const t0 = performance.now();
+    const hb = stage(hdir, false, 'bun', [join(ROOT, 'cli.ts'), 'build', '--config', join(cdir, 'config.json'), '--source', join(inputs, 'painting.png'), '--full', join(inputs, 'layers', 'full'), '--head', join(inputs, 'layers', 'head'), '--out', hdir, ...reqArgs]);
+    const ms = Math.round(performance.now() - t0);
+    const refusals = hb.log.split('\n').filter((l) => /RIG_HEAT_[A-Z_]+/.test(l)).map((l) => l.trim().slice(0, 400));
+    // control: the heat weights written here are the build's, entry for entry
+    let control: string | null = null;
+    if (hb.exit === 0) {
+      const hr = o(o(o(readJ(join(hdir, 'rig', 'rig.json'))).skins).default);
+      let worstW = 0;
+      let worstXY = 0;
+      let bonesDiffer = 0;
+      for (const c of ctxs) {
+        if (c.heat === null) continue;
+        const theirs = (o(o(hr[c.part])[c.part]).weights as Json[]).map((row) => row as Obj[]);
+        c.rig.forEach((_, i) => {
+          const mine = writtenFor(c, i, 'heat', latG.setupBones).entry;
+          const t = theirs[i];
+          if (t.length !== mine.length || t.some((e, k) => e.bone !== mine[k].bone)) {
+            bonesDiffer++;
+            return;
+          }
+          mine.forEach((e, k) => {
+            worstW = Math.max(worstW, Math.abs(e.weight - (t[k].weight as number)));
+            worstXY = Math.max(worstXY, Math.abs(e.x - (t[k].x as number)), Math.abs(e.y - (t[k].y as number)));
+          });
+        });
+      }
+      control = `vertices whose bones differ ${bonesDiffer}; largest weight difference ${worstW}; largest offset difference ${worstXY.toExponential(1)}`;
+    }
+    heatBuild = { exit: hb.exit, ms, latticeMs, refusals: refusals as unknown as Json, control, check: existsSync(join(hdir, 'check', 'check.json')) ? (Object.fromEntries(BARS.map((b) => [b, barCell(o(readJ(join(hdir, 'check', 'check.json'))), b)])) as unknown as Json) : null };
+  }
   const ci = chainInfo(config);
   const codes: Array<[number, number, number]> = [];
   const censusRows = ctxs.map((c) => census(c, join(arm0, 'parts', `${c.part}.png`), ci, codes));
@@ -738,10 +831,10 @@ export function runTears(key: string, configPath: string, inputs: string, work: 
       for (const set of ['idle', ...sets]) {
         const poses = set === 'idle' ? latG.frameBones : bendPoses(config, c.part, set === 'film').poses.map((t) => bentBones(sk, latG.setupBones, t));
         if (poses.length === 0) continue;
-        const ref = referenceUnder(c, png, latG.setupBones, poses, rule);
+        const ref = referenceUnder(c, png, latG.setupBones, poses, isHeat(rule) && c.heat === null ? 'as built' : rule);
         const rd = bendReading(c.rest, c.triangles, W, ref, poses);
         census[set] = { flipped: rd.flipped, displacement: rd.displacement, tears: tearsOf(ref) };
-        if ((rule === 'as built' || rule === 'lifted') && set !== 'idle' && rd.flipped > 0) flips[`${rule}|${set}|${c.part}`] = flipsOf(c.rest, c.rig, c.triangles, W, poses);
+        if ((rule === 'as built' || rule === 'lifted' || isHeat(rule)) && set !== 'idle' && rd.flipped > 0) flips[`${rule}|${set}|${c.part}`] = flipsOf(c.rest, c.rig, c.triangles, W, poses);
         if (picture === c.part && set === (film ? 'film' : 'fallback')) {
           pictures[rule] = { uvsRig: c.rig, triangles: c.triangles, hull: c.hull, posed: poses.map((pose) => W.map((ws) => skin(ws, pose)).map((p) => worldToRigOf(c)(p))) };
         }
@@ -814,6 +907,7 @@ export function runTears(key: string, configPath: string, inputs: string, work: 
     census: censusRows as unknown as Json,
     flips: flips as unknown as Json,
     claim: { share: CLAIM_SHARE, count: CLAIM_COUNT },
+    heat: heatBuild === null ? null : ({ build: heatBuild, parts: ctxs.map((c) => ({ part: c.part, ms: c.heatMs, iterations: c.heatIterations, refused: c.heatRefused, vertices: c.rig.length })) } as unknown as Json),
   };
 }
 
@@ -864,6 +958,15 @@ export function renderTears(docs: Obj[]): string {
         const q = r.parts.find((x) => x.part === p.part) as PartRow;
         return `${q.idle.toFixed(3)}${q.boneSet === 'same' ? '' : ` (bone set: ${q.boneSet})`}`;
       }).join(' | ')} |`);
+    }
+    const ht = doc.heat as unknown as { build: { exit: number; ms: number; latticeMs: number | null; refusals: string[]; control: string | null; check: Record<string, string> | null }; parts: Array<{ part: string; ms: number | null; iterations: number[] | null; refused: string | null; vertices: number }> } | null | undefined;
+    if (ht !== undefined && ht !== null) {
+      L.push('');
+      L.push(`Bone heat as it ships: the real \`rig-parts build\` with every lattice mesh at \`rule: "heat"\` — exit ${ht.build.exit} in ${(ht.build.ms / 1000).toFixed(1)} s (the lattice build as tracked: ${ht.build.latticeMs === null ? '—' : `${(ht.build.latticeMs / 1000).toFixed(1)} s`})${ht.build.refusals.length === 0 ? '' : `, refused: ${ht.build.refusals.map((x) => `\`${x}\``).join('; ')}`}${ht.build.control === null ? '' : `; the heat weights written by this tool against that build's: ${ht.build.control}`}${ht.build.check === null ? '' : `; its bars: ${BARS.map((b) => `${b} ${(ht.build.check as Record<string, string>)[b]}`).join(', ')}`}. A part heat refuses keeps today's weights under both heat rules, and is named here. The solve, per part (this tool's own call of \`boneHeat\`, timed on the run's machine):`);
+      L.push('');
+      L.push('| part | vertices | heat | solve ms | sweeps per bone |');
+      L.push('| --- | ---: | --- | ---: | --- |');
+      for (const x of ht.parts) L.push(`| ${x.part} | ${x.vertices} | ${x.refused === null ? 'solved' : `refused — ${x.refused}`} | ${x.ms ?? '—'} | ${x.iterations === null ? '—' : x.iterations.join(', ')} |`);
     }
     const cs = doc.census as unknown as CensusPart[] | undefined;
     if (cs !== undefined) {
