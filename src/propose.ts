@@ -130,7 +130,7 @@ import { IDLE_FPS } from './motion.ts';
 import { pyRound as roundTo } from './round.ts';
 import { KEYPOINT_NAMES, type KeypointName } from './skeleton.ts';
 import { configRoles, type RoleOf } from './structure.ts';
-import { TURN_BONE, turnFractions, turnNearest, turnPivot, type TurnSpec } from './turn.ts';
+import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER_TAGS, turnFractions, turnNearest, turnPivot, turnRiderDepth, type TurnSpec } from './turn.ts';
 import { edgeLength } from './length.ts';
 
 // ---------------------------------------------------------------------------
@@ -430,48 +430,57 @@ export type TurnRuns = Partial<Record<'full' | 'head', LayerSet>>;
 
 /**
  * Draft `turn` (issue #251, `src/turn.ts`) from the parts and the See-through
- * runs they came from: each part's depth is its layer's `depth_median` — the
- * layer of its run named by its tag, a cut's piece its base's — and the pivot
- * is {@link turnPivot} over the parts' `opaque_px`. A `painting:` patch has no
- * layer and so no depth: it is not carried, and a note names it. What a depth
- * cannot be read for is refused by name, every one at once:
+ * runs they came from: each carrier's depth is its layer's `depth_median` —
+ * the layer of the run its part was assembled from, named by its tag, a cut's
+ * piece its base's — and the pivot is {@link turnPivot} over the parts'
+ * `opaque_px`. A `painting:` patch has no layer and so no depth: it is not
+ * carried, and a note names it. What a depth cannot be read for is refused by
+ * name, every one at once:
  *
  * - `PROPOSE_TURN_RUN_GIVEN`: a part from a run whose layers were not given.
  * - `PROPOSE_TURN_LAYER_PRESENT`: the run given holds no layer of the part's tag.
  * - `PROPOSE_TURN_DEPTH_PRESENT`: the layer carries no depth (a PSD carries none).
  *
+ * A rider (issue #271, {@link TURN_RIDER_TAGS}: the eye group, nose, mouth)
+ * does not carry its own median: it takes the face part's, offset by
+ * {@link turnRiderDepth} by draw order. With no face part, or more than one,
+ * the riders keep their own medians and a note says so. Every other layer is
+ * its own carrier.
+ *
  * With no part to carry, or every carried part at one depth (nothing nearer
  * than the pivot), no `turn` is drafted and a note says why. Otherwise one note
  * states the pivot and its rule, the law, and every part's fraction with the
- * depth it came from.
+ * depth it came from; one lists where each depth came from; and one line names
+ * each carrier the other run places more than {@link TURN_RUN_APART} of the
+ * span away.
  */
 export function draftTurn(P: PartSet, runs: TurnRuns): { turn: TurnSpec | null; notes: string[] } {
   const problems: Problem[] = [];
-  const rows: Array<{ part: string; depth: number; area: number }> = [];
+  const read: Array<{ part: string; run: 'full' | 'head'; tag: string; base: string; own: number; area: number; order: number; piece: boolean }> = [];
   const patches: string[] = [];
   const unread = new Map<string, string[]>();
-  for (const r of P.recs) {
+  P.recs.forEach((r, order) => {
     const [run, tag] = splitFrom(r.from);
     if (run === PAINTING_RUN) {
       patches.push(r.name);
-      continue;
+      return;
     }
     const set = run === 'full' || run === 'head' ? runs[run] : undefined;
     if (set === undefined) {
       unread.set(run, [...(unread.get(run) ?? []), r.name]);
-      continue;
+      return;
     }
     const layer = set.layers.find((l) => l.name === tag);
     if (layer === undefined) {
       problems.push({ code: 'PROPOSE_TURN_LAYER_PRESENT', object: `part "${r.name}" (${r.from})`, detail: `came from the ${run} run's "${tag}" layer, and ${set.source} holds no layer of that name; the run its parts were assembled from is required` });
-      continue;
+      return;
     }
     if (layer.depth === null) {
       problems.push({ code: 'PROPOSE_TURN_DEPTH_PRESENT', object: `part "${r.name}" (${r.from})`, detail: `its layer in ${set.source} carries no depth_median (a ${set.form} input); the turn orders parts by See-through's per-layer depth, so a run that carries one is required` });
-      continue;
+      return;
     }
-    rows.push({ part: r.name, depth: layer.depth, area: r.opaque_px });
-  }
+    read.push({ part: r.name, run: run as 'full' | 'head', tag, base: layer.tag.base, own: layer.depth, area: r.opaque_px, order, piece: r.cut_from !== undefined });
+  });
   for (const [run, names] of unread) {
     problems.push({ code: 'PROPOSE_TURN_RUN_GIVEN', object: `the ${run} run`, detail: `part(s) ${names.map((n) => `"${n}"`).join(', ')} came from it and its layers were not given; --${run} <dir | layers.json> is required to read their depth` });
   }
@@ -480,6 +489,21 @@ export function draftTurn(P: PartSet, runs: TurnRuns): { turn: TurnSpec | null; 
   if (patches.length > 0) {
     notes.push(`turn: painting patch(es) ${patches.map((n) => `"${n}"`).join(', ')} carry no See-through depth and are not carried — each moves only as its bone does, as the pivot depth does; a value in config.turn.depths carries one`);
   }
+  // Issue #271: the riders take the face's depth; everything else is its own carrier.
+  const isRider = (x: { base: string }): boolean => TURN_RIDER_TAGS.includes(x.base);
+  const faces = read.filter((x) => x.base === TURN_CARRIER_TAG && !x.piece);
+  const face = faces.length === 1 ? faces[0] : null;
+  const riders = read.filter(isRider);
+  if (riders.length > 0 && face === null) {
+    notes.push(
+      `turn: rider(s) ${riders.map((x) => `"${x.part}"`).join(', ')} keep their own See-through depth_median: ${faces.length === 0 ? `no part comes from a "${TURN_CARRIER_TAG}" layer` : `${faces.length} parts (${faces.map((x) => `"${x.part}"`).join(', ')}) come from a "${TURN_CARRIER_TAG}" layer, and which one carries them cannot be read off the parts`} — a value in config.turn.depths sets one`,
+    );
+  }
+  const rows = read.map((x) => {
+    if (face === null || !isRider(x)) return { ...x, depth: x.own, source: `own, ${x.run}:${x.tag}` };
+    const above = x.order > face.order;
+    return { ...x, depth: turnRiderDepth(face.own, above), source: `"${face.part}" ${above ? '-' : '+'} ${TURN_RIDER_OFFSET}, drawn ${above ? 'above' : 'under'} it; own ${x.run}:${x.tag} ${x.own}` };
+  });
   const pivot = turnPivot(rows);
   const depths = Object.create(null) as Record<string, number>;
   for (const r of rows) depths[r.part] = r.depth;
@@ -495,17 +519,36 @@ export function draftTurn(P: PartSet, runs: TurnRuns): { turn: TurnSpec | null; 
   const turn: TurnSpec = { pivot, depths };
   const fr = turnFractions(turn, rows.map((r) => r.part));
   notes.push(
-    `turn: control "${TURN_BONE}" under root, keyed by nothing — its x is the dial. Pivot depth ${pivot}: the mean of the ${rows.length} carried parts' See-through depth_median weighted by opaque_px, the one depth at which the painted pixels' centroid does not slide (correct it in turn.pivot). ` +
+    `turn: control "${TURN_BONE}" under root, keyed by nothing — its x is the dial. Pivot depth ${pivot}: the mean of the ${rows.length} carried parts' depths weighted by opaque_px, the one depth at which the painted pixels' centroid does not slide (correct it in turn.pivot). ` +
       `Each part travels (pivot - depth) / (pivot - ${nearest.depth}) of the control's x, "${nearest.part}" (nearest) all of it: ${fr.map((f) => `${f.part} ${f.fraction} (depth ${f.depth})`).join(', ')}`,
   );
+  notes.push(`turn: where each depth came from — ${rows.map((r) => `${r.part} ${r.depth} (${r.source})`).join('; ')}`);
+  // Issue #271: a carrier the other run places elsewhere is named; the run read stays the part's own.
+  const span = pivot - nearest.depth;
+  for (const r of rows) {
+    if (isRider(r) && face !== null) continue;
+    const other = r.run === 'full' ? 'head' : 'full';
+    const there = runs[other]?.layers.find((l) => l.name === r.tag);
+    if (there === undefined || there.depth === null || there.opaquePx === 0 || !(there.depth < 1)) continue;
+    if (Math.abs(there.depth - r.own) > TURN_RUN_APART * span) {
+      notes.push(`turn: "${r.part}" reads ${r.own} in the ${r.run} run and ${there.depth} in the ${other} run, more than ${TURN_RUN_APART * 100} % of the span ${roundTo(span, TURN_PLACES)} apart; the ${r.run} run it was assembled from is read`);
+    }
+  }
   notes.push(...TURN_DEPTH_CAVEAT);
   return { turn, notes };
 }
 
-/** The notes beside every drafted turn (issue #251): what a See-through depth is, where it misleads, and that the two runs' axes are not reconciled. */
+/**
+ * The share of the span (`pivot − nearest`) past which a carrier's two runs
+ * are said to disagree: issue #271's judgment line, set before it was measured
+ * (from #251's record). It only writes a note; the run read does not change.
+ */
+export const TURN_RUN_APART = 0.1;
+
+/** The notes beside every drafted turn (issues #251, #271): what a See-through depth is, where it misleads, and that the two runs' axes are not reconciled. */
 export const TURN_DEPTH_CAVEAT: readonly string[] = [
-  "turn: depth is the See-through layer's median and each part takes its own run's axis; a seated or forward-reaching limb can read further back than it is (trailer legwear 0.770 sits behind the pivot)",
-  "turn: the two runs' depth axes are not reconciled (parts#271)",
+  "turn: depth is the See-through layer's median, a carrier's read from the run its part was assembled from and a rider's (eye group, nose, mouth) taken from the face; a seated or forward-reaching limb can read further back than it is (trailer legwear 0.770 sits behind the pivot)",
+  "turn: the two runs' depth axes are not reconciled — a linear map cannot reconcile them, since the runs order the shared layers differently (parts#271)",
 ];
 
 /** The proposal with `turn` written after `motion` and `notes` extended; the proposal itself when `turn` is null. */

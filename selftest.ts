@@ -5868,6 +5868,67 @@ function runProposeSuite(): number {
       'issue #251: the depths live in the See-through runs, which propose did not read before; the flags are the only way in, so a proposal written without them is byte for byte the one before the turn existed',
     );
 
+    // Issue #271: riders (eye group, nose, mouth) take the face's depth, offset 0.001 by draw order; everything else
+    // is its own carrier. By hand on PROPOSE_PARTS plus `nose` (head:nose) 98,60 4x4 = 16 px drawn before the face,
+    // `ear` (head:ears-r) 70,60 6x10 = 60 px and `brow` (head:eyebrow-l) 90,50 10x3 = 30 px drawn after it. Own
+    // medians: nose 0.1, ear 0.3, brow 0.6 — the brow's and the nose's are not read. Riders: nose 0.25 + 0.001 = 0.251
+    // (under the face), brow 0.25 - 0.001 = 0.249 (above it); the ear keeps 0.3. Pivot = (8000 * 0.75 + 1200 * 0.5 +
+    // 1200 * 0.875 + 16 * 0.251 + 2000 * 0.25 + 60 * 0.3 + 30 * 0.249) / 12506 = 8179.486 / 12506 = 0.65404494 ->
+    // 0.654045; nearest brow 0.249, span 0.405045, 10 % of it 0.0405045. The head run also holds bottomwear at 0.6
+    // (0.15 from the full run's 0.75: named) and handwear-r at 0.52 (0.02 from 0.5: not named); the full run holds
+    // eyebrow-l at 0.9 (a rider: never compared).
+    const RIDE_PARTS = [
+      ...PROPOSE_PARTS.filter((q) => q.name !== 'face'),
+      { name: 'nose', from: 'head:nose', x: 98, y: 60, w: 4, h: 4, colour: [230, 190, 170] as [number, number, number] },
+      ...PROPOSE_PARTS.filter((q) => q.name === 'face'),
+      { name: 'ear', from: 'head:ears-r', x: 70, y: 60, w: 6, h: 10, colour: [235, 200, 180] as [number, number, number] },
+      { name: 'brow', from: 'head:eyebrow-l', x: 90, y: 50, w: 10, h: 3, colour: [60, 40, 30] as [number, number, number] },
+    ];
+    const rideRun = (rows: Array<[string, number]>): LayerSet => ({
+      form: 'wrapper',
+      source: 'fixture layers.json',
+      canvas: { w: 1, h: 1 },
+      layers: rows.map(([tag, d], i) => ({ name: tag, tag: readTag(tag) as TagReading, file: null, pixels: newRaster(1, 1), left: 0, top: 0, right: 1, bottom: 1, depth: d, drawOrder: i, opaquePx: 1 })),
+    });
+    const RIDE_FULL: Array<[string, number]> = [['bottomwear', 0.75], ['handwear-r', 0.5], ['handwear-l', 0.875], ['eyebrow-l', 0.9]];
+    const RIDE_HEAD: Array<[string, number]> = [['face', 0.25], ['nose', 0.1], ['ears-r', 0.3], ['eyebrow-l', 0.6], ['bottomwear', 0.6], ['handwear-r', 0.52]];
+    const rdir = join(dir, 'turn-ride');
+    writeProposeFixture(rdir, RIDE_PARTS);
+    const RideP = readPartSet(rdir);
+    const ride = draftTurn(RideP, { full: rideRun(RIDE_FULL), head: rideRun(RIDE_HEAD) });
+    const whence = ride.notes.find((n) => n.startsWith('turn: where each depth came from')) ?? '';
+    const apart = ride.notes.filter((n) => / reads .* more than 10 % of the span /.test(n));
+    const rideLoad = refusals(() => checkProposal(RideP, withTurn(propose(RideP), ride)));
+    say(
+      'PR118_A_RIDER_TAKES_THE_FACES_DEPTH_OFFSET_BY_DRAW_ORDER_AN_EAR_KEEPS_ITS_OWN_AND_A_CARRIER_THE_RUNS_PLACE_APART_IS_NAMED',
+      JSON.stringify(ride.turn) === JSON.stringify({ pivot: 0.654045, depths: { skirt: 0.75, sleeve_a: 0.5, sleeve_b: 0.875, nose: 0.251, face: 0.25, ear: 0.3, brow: 0.249 } }) &&
+        whence.includes('nose 0.251 ("face" + 0.001, drawn under it; own head:nose 0.1)') &&
+        whence.includes('brow 0.249 ("face" - 0.001, drawn above it; own head:eyebrow-l 0.6)') &&
+        whence.includes('ear 0.3 (own, head:ears-r)') &&
+        whence.includes('skirt 0.75 (own, full:bottomwear)') &&
+        apart.length === 1 &&
+        apart[0] === 'turn: "skirt" reads 0.75 in the full run and 0.6 in the head run, more than 10 % of the span 0.405045 apart; the full run it was assembled from is read' &&
+        rideLoad === null,
+      `turn ${JSON.stringify(ride.turn)}; "${whence}"; ${apart.length} run note(s): ${apart.join(' | ')}; the proposal with it ${rideLoad === null ? 'loads' : `is refused: ${codes(rideLoad)}`}`,
+      "issue #271 (HQ ruling): See-through makes no depth of its own for the eye group (cut from one eyes depth map) and clamps nose and mouth to face - 0.001, so those ride the face at that offset, its sign set by parts.json's draw order; ears and every other layer keep their own median, read from the run their part came from; the 10 % line is the issue's judgment line, set before measuring — every figure here derived by hand",
+    );
+
+    // Planted: no face part. The riders cannot be carried, so they keep their own medians and a note says why;
+    // pivot = (8000 * 0.75 + 1200 * 0.5 + 1200 * 0.875 + 16 * 0.1 + 60 * 0.3 + 30 * 0.6) / 10506 = 7687.6 / 10506 =
+    // 0.73173425 -> 0.731734.
+    const ndir = join(dir, 'turn-faceless');
+    writeProposeFixture(ndir, RIDE_PARTS.filter((q) => q.name !== 'face'));
+    const lone = draftTurn(readPartSet(ndir), { full: rideRun(RIDE_FULL.filter(([t]) => t !== 'eyebrow-l')), head: rideRun(RIDE_HEAD) });
+    const loneNote = lone.notes.find((n) => n.startsWith('turn: rider(s)')) ?? '';
+    say(
+      'PR119_WITH_NO_FACE_PART_THE_RIDERS_KEEP_THEIR_OWN_DEPTH_AND_A_NOTE_SAYS_WHY',
+      JSON.stringify(lone.turn) === JSON.stringify({ pivot: 0.731734, depths: { skirt: 0.75, sleeve_a: 0.5, sleeve_b: 0.875, nose: 0.1, ear: 0.3, brow: 0.6 } }) &&
+        loneNote === 'turn: rider(s) "nose", "brow" keep their own See-through depth_median: no part comes from a "face" layer — a value in config.turn.depths sets one' &&
+        lone.notes.some((n) => n.includes('nose 0.1 (own, head:nose)')),
+      `turn ${JSON.stringify(lone.turn)}; "${loneNote}"`,
+      'issue #271: a rider is carried by the face part; where there is none, its own median is the only depth there is, and the draft says so rather than inventing a carrier',
+    );
+
     runGridRuleControls(dir, say);
   } finally {
     rmSync(dir, { recursive: true, force: true });
