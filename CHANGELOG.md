@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.15.0](https://github.com/rig-c/parts/compare/v1.14.0...v1.15.0) (2026-10-12)
+
+
+### Features
+
+* **check:** the fold bar reads the idle — ANIMATIONS_DO_NOT_FOLD over every animation, may_fold takes "idle" ([#338](https://github.com/rig-c/parts/issues/338)) ([a9009c1](https://github.com/rig-c/parts/commit/a9009c1de6809a728b85cec4cfbb3e024e37eeb7)), closes [#333](https://github.com/rig-c/parts/issues/333)
+
+
+### Bug Fixes
+
+* **mesh-draft:** dust first, then leave out and name faint islands, then bridge every visible one whatever it costs ([#340](https://github.com/rig-c/parts/issues/340)) ([0dc97ad](https://github.com/rig-c/parts/commit/0dc97ad8ae623f50cac80d16a222e0ea22bdc3ba))
+* **selftest:** pin the suites' rigc to the package's own, and name the rigc a failed call ran ([#341](https://github.com/rig-c/parts/issues/341)) ([750f118](https://github.com/rig-c/parts/commit/750f118430f65b023fb2b2770f63f13399753eb9)), closes [#337](https://github.com/rig-c/parts/issues/337)
+
 ## [1.14.0](https://github.com/rig-c/parts/compare/v1.13.1...v1.14.0) (2026-10-12)
 
 
