@@ -1,0 +1,1513 @@
+{
+  "bones": [
+    {
+      "name": "hip",
+      "parent": "root",
+      "at": [
+        416,
+        612
+      ]
+    },
+    {
+      "name": "chest",
+      "parent": "hip",
+      "at": [
+        416,
+        432
+      ]
+    },
+    {
+      "name": "neck",
+      "parent": "chest",
+      "at": [
+        416,
+        252
+      ]
+    },
+    {
+      "name": "head",
+      "parent": "neck",
+      "at": [
+        411,
+        212
+      ]
+    },
+    {
+      "name": "eye_r",
+      "parent": "head",
+      "at": [
+        378,
+        164
+      ]
+    },
+    {
+      "name": "eye_l",
+      "parent": "head",
+      "at": [
+        444,
+        160
+      ]
+    },
+    {
+      "name": "brow_r",
+      "parent": "head",
+      "at": [
+        376,
+        140
+      ]
+    },
+    {
+      "name": "brow_l",
+      "parent": "head",
+      "at": [
+        443,
+        133
+      ]
+    },
+    {
+      "name": "mouth",
+      "parent": "head",
+      "at": [
+        413,
+        200
+      ]
+    },
+    {
+      "chain": "hairback_r0_",
+      "parent": "head",
+      "points": [
+        [
+          288,
+          162
+        ]
+      ],
+      "tip": [
+        242,
+        471
+      ]
+    },
+    {
+      "chain": "hairback_r0a_",
+      "parent": "hairback_r0_0",
+      "points": [
+        [
+          242,
+          471
+        ],
+        [
+          270,
+          690
+        ]
+      ],
+      "tip": [
+        192,
+        845
+      ]
+    },
+    {
+      "chain": "hairback_r0b_",
+      "parent": "hairback_r0_0",
+      "points": [
+        [
+          242,
+          471
+        ],
+        [
+          292,
+          690
+        ]
+      ],
+      "tip": [
+        194,
+        845
+      ]
+    },
+    {
+      "chain": "hairback_l0_",
+      "parent": "head",
+      "points": [
+        [
+          530,
+          162
+        ]
+      ],
+      "tip": [
+        585,
+        471
+      ]
+    },
+    {
+      "chain": "hairback_l0a_",
+      "parent": "hairback_l0_0",
+      "points": [
+        [
+          585,
+          471
+        ],
+        [
+          510,
+          690
+        ]
+      ],
+      "tip": [
+        595,
+        845
+      ]
+    },
+    {
+      "chain": "hairback_l0b_",
+      "parent": "hairback_l0_0",
+      "points": [
+        [
+          585,
+          471
+        ],
+        [
+          528,
+          690
+        ]
+      ],
+      "tip": [
+        596,
+        845
+      ]
+    },
+    {
+      "chain": "bang_r",
+      "parent": "head",
+      "points": [
+        [
+          373,
+          72
+        ],
+        [
+          366,
+          110
+        ]
+      ],
+      "tip": [
+        360,
+        156
+      ]
+    },
+    {
+      "chain": "bang_c",
+      "parent": "head",
+      "points": [
+        [
+          404,
+          61
+        ],
+        [
+          407,
+          103
+        ]
+      ],
+      "tip": [
+        410,
+        153
+      ]
+    },
+    {
+      "chain": "bang_l",
+      "parent": "head",
+      "points": [
+        [
+          437,
+          67
+        ],
+        [
+          449,
+          105
+        ]
+      ],
+      "tip": [
+        460,
+        150
+      ]
+    },
+    {
+      "name": "hairpin",
+      "parent": "head",
+      "at": [
+        537,
+        308
+      ],
+      "tip": [
+        168,
+        308
+      ]
+    },
+    {
+      "chain": "hairpin_tassel",
+      "parent": "hairpin",
+      "points": [
+        [
+          541,
+          575
+        ],
+        [
+          541,
+          585
+        ]
+      ],
+      "tip": [
+        541,
+        597
+      ]
+    },
+    {
+      "chain": "sleeve_r",
+      "parent": "chest",
+      "points": [
+        [
+          340,
+          272
+        ],
+        [
+          258,
+          418
+        ]
+      ],
+      "tip": [
+        160,
+        540
+      ]
+    },
+    {
+      "chain": "sleeve_l",
+      "parent": "chest",
+      "points": [
+        [
+          492,
+          272
+        ],
+        [
+          574,
+          418
+        ]
+      ],
+      "tip": [
+        665,
+        540
+      ]
+    },
+    {
+      "chain": "robe_r",
+      "parent": "chest",
+      "points": [
+        [
+          357,
+          385
+        ],
+        [
+          321,
+          469
+        ],
+        [
+          249,
+          553
+        ],
+        [
+          221,
+          637
+        ]
+      ],
+      "tip": [
+        216,
+        688
+      ]
+    },
+    {
+      "chain": "robe_l",
+      "parent": "chest",
+      "points": [
+        [
+          472,
+          385
+        ],
+        [
+          507,
+          469
+        ],
+        [
+          572,
+          553
+        ],
+        [
+          606,
+          637
+        ]
+      ],
+      "tip": [
+        612,
+        688
+      ]
+    },
+    {
+      "chain": "skirt0_",
+      "parent": "hip",
+      "points": [
+        [
+          224,
+          632
+        ]
+      ],
+      "tip": [
+        191,
+        702
+      ]
+    },
+    {
+      "chain": "skirt0a_",
+      "parent": "skirt0_0",
+      "points": [
+        [
+          191,
+          702
+        ],
+        [
+          197,
+          752
+        ]
+      ],
+      "tip": [
+        284,
+        787
+      ]
+    },
+    {
+      "chain": "skirt0b_",
+      "parent": "skirt0_0",
+      "points": [
+        [
+          191,
+          702
+        ],
+        [
+          260,
+          752
+        ]
+      ],
+      "tip": [
+        320,
+        787
+      ]
+    },
+    {
+      "chain": "skirt1_",
+      "parent": "hip",
+      "points": [
+        [
+          350,
+          632
+        ]
+      ],
+      "tip": [
+        339,
+        702
+      ]
+    },
+    {
+      "chain": "skirt1a_",
+      "parent": "skirt1_0",
+      "points": [
+        [
+          339,
+          702
+        ],
+        [
+          322,
+          752
+        ]
+      ],
+      "tip": [
+        357,
+        787
+      ]
+    },
+    {
+      "chain": "skirt1b_",
+      "parent": "skirt1_0",
+      "points": [
+        [
+          339,
+          702
+        ],
+        [
+          384,
+          752
+        ]
+      ],
+      "tip": [
+        393,
+        787
+      ]
+    },
+    {
+      "chain": "skirt2_",
+      "parent": "hip",
+      "points": [
+        [
+          476,
+          632
+        ]
+      ],
+      "tip": [
+        487,
+        702
+      ]
+    },
+    {
+      "chain": "skirt2a_",
+      "parent": "skirt2_0",
+      "points": [
+        [
+          487,
+          702
+        ],
+        [
+          447,
+          752
+        ]
+      ],
+      "tip": [
+        429,
+        787
+      ]
+    },
+    {
+      "chain": "skirt2b_",
+      "parent": "skirt2_0",
+      "points": [
+        [
+          487,
+          702
+        ],
+        [
+          509,
+          752
+        ]
+      ],
+      "tip": [
+        465,
+        787
+      ]
+    },
+    {
+      "chain": "skirt3_",
+      "parent": "hip",
+      "points": [
+        [
+          602,
+          632
+        ]
+      ],
+      "tip": [
+        635,
+        702
+      ]
+    },
+    {
+      "chain": "skirt3a_",
+      "parent": "skirt3_0",
+      "points": [
+        [
+          635,
+          702
+        ],
+        [
+          571,
+          752
+        ]
+      ],
+      "tip": [
+        502,
+        787
+      ]
+    },
+    {
+      "chain": "skirt3b_",
+      "parent": "skirt3_0",
+      "points": [
+        [
+          635,
+          702
+        ],
+        [
+          634,
+          752
+        ]
+      ],
+      "tip": [
+        538,
+        787
+      ]
+    },
+    {
+      "name": "skirt_swing",
+      "parent": "hip",
+      "at": [
+        413,
+        632
+      ],
+      "tip": [
+        413,
+        702
+      ]
+    },
+    {
+      "chain": "leg_r",
+      "parent": "hip",
+      "points": [
+        [
+          374,
+          612
+        ],
+        [
+          350,
+          860
+        ]
+      ],
+      "tip": [
+        328,
+        1095
+      ]
+    },
+    {
+      "chain": "leg_l",
+      "parent": "hip",
+      "points": [
+        [
+          458,
+          612
+        ],
+        [
+          480,
+          860
+        ]
+      ],
+      "tip": [
+        502,
+        1095
+      ]
+    },
+    {
+      "name": "foot_r",
+      "parent": "leg_r1",
+      "at": [
+        328,
+        1095
+      ],
+      "inherit": "noRotationOrReflection"
+    },
+    {
+      "name": "foot_l",
+      "parent": "leg_l1",
+      "at": [
+        502,
+        1095
+      ],
+      "inherit": "noRotationOrReflection"
+    }
+  ],
+  "meshes": {
+    "hair_back": {
+      "grid": 36,
+      "r": 15,
+      "segments": [
+        [
+          "head",
+          [
+            411,
+            212
+          ],
+          [
+            411,
+            56
+          ]
+        ],
+        "hairback_r0_",
+        "hairback_r0a_",
+        "hairback_r0b_",
+        "hairback_l0_",
+        "hairback_l0a_",
+        "hairback_l0b_"
+      ]
+    },
+    "hair_front": {
+      "grid": 31,
+      "r": 6,
+      "segments": [
+        [
+          "head",
+          [
+            411,
+            212
+          ],
+          [
+            411,
+            47
+          ]
+        ],
+        "bang_r",
+        "bang_c",
+        "bang_l"
+      ]
+    },
+    "hairpin": {
+      "grid": 36,
+      "r": 15,
+      "segments": [
+        [
+          "hairpin",
+          [
+            537,
+            308
+          ],
+          [
+            168,
+            308
+          ]
+        ],
+        [
+          "hairpin",
+          [
+            649,
+            296
+          ],
+          [
+            537,
+            326
+          ]
+        ],
+        "hairpin_tassel"
+      ]
+    },
+    "neck": {
+      "grid": 31,
+      "r": 3,
+      "segments": [
+        [
+          "chest",
+          [
+            416,
+            270
+          ],
+          [
+            416,
+            432
+          ]
+        ],
+        [
+          "head",
+          [
+            411,
+            212
+          ],
+          [
+            411,
+            162
+          ]
+        ]
+      ]
+    },
+    "topwear": {
+      "grid": 36,
+      "r": 15,
+      "segments": [
+        [
+          "chest",
+          [
+            416,
+            238
+          ],
+          [
+            416,
+            592
+          ]
+        ],
+        [
+          "hip",
+          [
+            416,
+            592
+          ],
+          [
+            416,
+            712
+          ]
+        ],
+        "robe_r",
+        "robe_l"
+      ]
+    },
+    "bottomwear": {
+      "grid": 31,
+      "r": 8,
+      "segments": [
+        [
+          "hip",
+          [
+            170,
+            617
+          ],
+          [
+            657,
+            617
+          ]
+        ],
+        "skirt0_",
+        "skirt0a_",
+        "skirt0b_",
+        "skirt1_",
+        "skirt1a_",
+        "skirt1b_",
+        "skirt2_",
+        "skirt2a_",
+        "skirt2b_",
+        "skirt3_",
+        "skirt3a_",
+        "skirt3b_"
+      ]
+    }
+  },
+  "regions": {
+    "eyewhite_r": "eye_r",
+    "eyewhite_l": "eye_l",
+    "ear_r": "head",
+    "ear_l": "head",
+    "face": "head",
+    "mouth": "mouth",
+    "brow_l": "brow_l",
+    "iris_l": "eye_l",
+    "iris_r": "eye_r",
+    "brow_r": "brow_r",
+    "lash_l": "eye_l",
+    "lash_r": "eye_r",
+    "upperarm_r": "sleeve_r0",
+    "forearm_r": "sleeve_r1",
+    "upperarm_l": "sleeve_l0",
+    "forearm_l": "sleeve_l1",
+    "thigh_r": "leg_r0",
+    "shin_r": "leg_r1",
+    "foot_r": "foot_r",
+    "thigh_l": "leg_l0",
+    "shin_l": "leg_l1",
+    "foot_l": "foot_l"
+  },
+  "limbs": {
+    "arm_r": {
+      "segments": [
+        {
+          "part": "upperarm_r",
+          "from": "handwear_r",
+          "bone": "sleeve_r0"
+        },
+        {
+          "part": "forearm_r",
+          "from": "handwear_r",
+          "bone": "sleeve_r1",
+          "joint": "elbow"
+        }
+      ]
+    },
+    "arm_l": {
+      "segments": [
+        {
+          "part": "upperarm_l",
+          "from": "handwear_l",
+          "bone": "sleeve_l0"
+        },
+        {
+          "part": "forearm_l",
+          "from": "handwear_l",
+          "bone": "sleeve_l1",
+          "joint": "elbow"
+        }
+      ]
+    },
+    "leg_r": {
+      "segments": [
+        {
+          "part": "thigh_r",
+          "from": "legwear",
+          "bone": "leg_r0"
+        },
+        {
+          "part": "shin_r",
+          "from": "legwear",
+          "bone": "leg_r1",
+          "joint": "knee"
+        },
+        {
+          "part": "foot_r",
+          "from": "shoes",
+          "bone": "foot_r",
+          "joint": "ankle"
+        }
+      ]
+    },
+    "leg_l": {
+      "segments": [
+        {
+          "part": "thigh_l",
+          "from": "legwear",
+          "bone": "leg_l0"
+        },
+        {
+          "part": "shin_l",
+          "from": "legwear",
+          "bone": "leg_l1",
+          "joint": "knee"
+        },
+        {
+          "part": "foot_l",
+          "from": "shoes",
+          "bone": "foot_l",
+          "joint": "ankle"
+        }
+      ]
+    }
+  },
+  "motion": {
+    "duration": 3.3333333333333335,
+    "tracks": [
+      {
+        "bone": "chest",
+        "prop": "translatey",
+        "amp": 4.5,
+        "period": 3.3333333333333335,
+        "phase": 0,
+        "base": 4.5
+      },
+      {
+        "bone": "chest",
+        "prop": "scalex",
+        "amp": 0.004,
+        "period": 3.3333333333333335,
+        "phase": 0,
+        "base": 1.004
+      },
+      {
+        "bone": "head",
+        "prop": "rotate",
+        "amp": 0.9,
+        "period": 3.3333333333333335,
+        "phase": 0.12
+      },
+      {
+        "bone": "neck",
+        "prop": "rotate",
+        "amp": 0.35,
+        "period": 3.3333333333333335,
+        "phase": 0.08
+      },
+      {
+        "chain": "hairpin_tassel",
+        "amps": [
+          4,
+          7
+        ],
+        "period": 1.6666666666666667,
+        "phase": 0.2,
+        "lag": 0.12
+      },
+      {
+        "chain": "sleeve_r",
+        "amps": [
+          0.2,
+          0.6
+        ],
+        "period": 3.3333333333333335,
+        "phase": 0.22,
+        "lag": 0.08
+      },
+      {
+        "chain": "sleeve_l",
+        "amps": [
+          -0.2,
+          -0.6
+        ],
+        "period": 3.3333333333333335,
+        "phase": 0.27,
+        "lag": 0.08
+      },
+      {
+        "chain": "robe_r",
+        "amps": [
+          0.12,
+          0.3,
+          0.6,
+          1.1
+        ],
+        "period": 3.3333333333333335,
+        "phase": 0.25,
+        "lag": 0.07
+      },
+      {
+        "chain": "robe_l",
+        "amps": [
+          -0.12,
+          -0.3,
+          -0.6,
+          -1.1
+        ],
+        "period": 3.3333333333333335,
+        "phase": 0.29,
+        "lag": 0.07
+      }
+    ],
+    "blink": {
+      "t": 2.3,
+      "eyes": [
+        "eye_r",
+        "eye_l"
+      ],
+      "brows": [
+        "brow_r",
+        "brow_l"
+      ],
+      "squash": 0.12,
+      "brow_drop": 1.2
+    }
+  },
+  "constraints": [
+    {
+      "type": "physics",
+      "name": "hairback_r0_0_physics",
+      "bone": "hairback_r0_0",
+      "rotate": 1,
+      "strength": 100,
+      "wind": 1,
+      "gravity": 4
+    },
+    {
+      "type": "physics",
+      "name": "hairback_r0a_0_physics",
+      "bone": "hairback_r0a_0",
+      "rotate": 1,
+      "strength": 50,
+      "wind": 4.5,
+      "gravity": 14
+    },
+    {
+      "type": "physics",
+      "name": "hairback_r0a_1_physics",
+      "bone": "hairback_r0a_1",
+      "rotate": 1,
+      "strength": 50,
+      "wind": 8,
+      "gravity": 24
+    },
+    {
+      "type": "physics",
+      "name": "hairback_r0b_0_physics",
+      "bone": "hairback_r0b_0",
+      "rotate": 1,
+      "strength": 100,
+      "wind": 4.5,
+      "gravity": 14
+    },
+    {
+      "type": "physics",
+      "name": "hairback_r0b_1_physics",
+      "bone": "hairback_r0b_1",
+      "rotate": 1,
+      "strength": 100,
+      "wind": 8,
+      "gravity": 24
+    },
+    {
+      "type": "physics",
+      "name": "hairback_l0_0_physics",
+      "bone": "hairback_l0_0",
+      "rotate": 1,
+      "strength": 100,
+      "wind": 1,
+      "gravity": 4
+    },
+    {
+      "type": "physics",
+      "name": "hairback_l0a_0_physics",
+      "bone": "hairback_l0a_0",
+      "rotate": 1,
+      "strength": 100,
+      "wind": 4.5,
+      "gravity": 14
+    },
+    {
+      "type": "physics",
+      "name": "hairback_l0a_1_physics",
+      "bone": "hairback_l0a_1",
+      "rotate": 1,
+      "strength": 100,
+      "wind": 8,
+      "gravity": 24
+    },
+    {
+      "type": "physics",
+      "name": "hairback_l0b_0_physics",
+      "bone": "hairback_l0b_0",
+      "rotate": 1,
+      "strength": 50,
+      "wind": 4.5,
+      "gravity": 14
+    },
+    {
+      "type": "physics",
+      "name": "hairback_l0b_1_physics",
+      "bone": "hairback_l0b_1",
+      "rotate": 1,
+      "strength": 50,
+      "wind": 8,
+      "gravity": 24
+    },
+    {
+      "type": "physics",
+      "name": "bang_r0_physics",
+      "bone": "bang_r0",
+      "rotate": 1,
+      "strength": 50,
+      "wind": 1,
+      "gravity": 2
+    },
+    {
+      "type": "physics",
+      "name": "bang_r1_physics",
+      "bone": "bang_r1",
+      "rotate": 1,
+      "strength": 50,
+      "wind": 6,
+      "gravity": 12
+    },
+    {
+      "type": "physics",
+      "name": "bang_r1_translate",
+      "bone": "bang_r1",
+      "x": 0.2,
+      "y": 0.2,
+      "strength": 50
+    },
+    {
+      "type": "physics",
+      "name": "bang_c0_physics",
+      "bone": "bang_c0",
+      "rotate": 1,
+      "strength": 100,
+      "wind": 1,
+      "gravity": 2
+    },
+    {
+      "type": "physics",
+      "name": "bang_c1_physics",
+      "bone": "bang_c1",
+      "rotate": 1,
+      "strength": 100,
+      "wind": 6,
+      "gravity": 12
+    },
+    {
+      "type": "physics",
+      "name": "bang_c1_translate",
+      "bone": "bang_c1",
+      "x": 0.2,
+      "y": 0.2,
+      "strength": 100
+    },
+    {
+      "type": "physics",
+      "name": "bang_l0_physics",
+      "bone": "bang_l0",
+      "rotate": 1,
+      "strength": 50,
+      "wind": 1,
+      "gravity": 2
+    },
+    {
+      "type": "physics",
+      "name": "bang_l1_physics",
+      "bone": "bang_l1",
+      "rotate": 1,
+      "strength": 50,
+      "wind": 6,
+      "gravity": 12
+    },
+    {
+      "type": "physics",
+      "name": "bang_l1_translate",
+      "bone": "bang_l1",
+      "x": 0.2,
+      "y": 0.2,
+      "strength": 50
+    },
+    {
+      "type": "physics",
+      "name": "skirt_swing_physics",
+      "bone": "skirt_swing",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.85,
+      "wind": 2,
+      "gravity": 5
+    },
+    {
+      "type": "transform",
+      "name": "skirt_swing_0",
+      "source": "skirt_swing",
+      "bones": [
+        "skirt0_0"
+      ],
+      "localSource": true,
+      "localTarget": true,
+      "additive": true,
+      "properties": {
+        "rotate": {
+          "offset": -90,
+          "to": {
+            "rotate": {
+              "scale": 1.3
+            }
+          }
+        }
+      },
+      "mixRotate": 1
+    },
+    {
+      "type": "transform",
+      "name": "skirt_swing_1",
+      "source": "skirt_swing",
+      "bones": [
+        "skirt1_0"
+      ],
+      "localSource": true,
+      "localTarget": true,
+      "additive": true,
+      "properties": {
+        "rotate": {
+          "offset": -90,
+          "to": {
+            "rotate": {
+              "scale": 1
+            }
+          }
+        }
+      },
+      "mixRotate": 1
+    },
+    {
+      "type": "transform",
+      "name": "skirt_swing_2",
+      "source": "skirt_swing",
+      "bones": [
+        "skirt2_0"
+      ],
+      "localSource": true,
+      "localTarget": true,
+      "additive": true,
+      "properties": {
+        "rotate": {
+          "offset": -90,
+          "to": {
+            "rotate": {
+              "scale": 1
+            }
+          }
+        }
+      },
+      "mixRotate": 1
+    },
+    {
+      "type": "transform",
+      "name": "skirt_swing_3",
+      "source": "skirt_swing",
+      "bones": [
+        "skirt3_0"
+      ],
+      "localSource": true,
+      "localTarget": true,
+      "additive": true,
+      "properties": {
+        "rotate": {
+          "offset": -90,
+          "to": {
+            "rotate": {
+              "scale": 1.3
+            }
+          }
+        }
+      },
+      "mixRotate": 1
+    },
+    {
+      "type": "physics",
+      "name": "skirt0a_0_physics",
+      "bone": "skirt0a_0",
+      "rotate": 1,
+      "strength": 50,
+      "damping": 0.85,
+      "wind": 6,
+      "gravity": 17.5
+    },
+    {
+      "type": "physics",
+      "name": "skirt0a_1_physics",
+      "bone": "skirt0a_1",
+      "rotate": 1,
+      "strength": 50,
+      "damping": 0.85,
+      "wind": 10,
+      "gravity": 30
+    },
+    {
+      "type": "physics",
+      "name": "skirt0a_1_translate",
+      "bone": "skirt0a_1",
+      "x": 0.2,
+      "y": 0.2,
+      "strength": 50,
+      "damping": 0.85
+    },
+    {
+      "type": "physics",
+      "name": "skirt0b_0_physics",
+      "bone": "skirt0b_0",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.85,
+      "wind": 6,
+      "gravity": 17.5
+    },
+    {
+      "type": "physics",
+      "name": "skirt0b_1_physics",
+      "bone": "skirt0b_1",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.85,
+      "wind": 10,
+      "gravity": 30
+    },
+    {
+      "type": "physics",
+      "name": "skirt0b_1_translate",
+      "bone": "skirt0b_1",
+      "x": 0.2,
+      "y": 0.2,
+      "strength": 100,
+      "damping": 0.85
+    },
+    {
+      "type": "physics",
+      "name": "skirt1a_0_physics",
+      "bone": "skirt1a_0",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.7,
+      "wind": 6,
+      "gravity": 17.5
+    },
+    {
+      "type": "physics",
+      "name": "skirt1a_1_physics",
+      "bone": "skirt1a_1",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.7,
+      "wind": 10,
+      "gravity": 30
+    },
+    {
+      "type": "physics",
+      "name": "skirt1a_1_translate",
+      "bone": "skirt1a_1",
+      "x": 0.2,
+      "y": 0.2,
+      "strength": 100,
+      "damping": 0.7
+    },
+    {
+      "type": "physics",
+      "name": "skirt1b_0_physics",
+      "bone": "skirt1b_0",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.7,
+      "wind": 6,
+      "gravity": 17.5
+    },
+    {
+      "type": "physics",
+      "name": "skirt1b_1_physics",
+      "bone": "skirt1b_1",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.7,
+      "wind": 10,
+      "gravity": 30
+    },
+    {
+      "type": "physics",
+      "name": "skirt1b_1_translate",
+      "bone": "skirt1b_1",
+      "x": 0.2,
+      "y": 0.2,
+      "strength": 100,
+      "damping": 0.7
+    },
+    {
+      "type": "physics",
+      "name": "skirt2a_0_physics",
+      "bone": "skirt2a_0",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.85,
+      "wind": 6,
+      "gravity": 17.5
+    },
+    {
+      "type": "physics",
+      "name": "skirt2a_1_physics",
+      "bone": "skirt2a_1",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.85,
+      "wind": 10,
+      "gravity": 30
+    },
+    {
+      "type": "physics",
+      "name": "skirt2a_1_translate",
+      "bone": "skirt2a_1",
+      "x": 0.2,
+      "y": 0.2,
+      "strength": 100,
+      "damping": 0.85
+    },
+    {
+      "type": "physics",
+      "name": "skirt2b_0_physics",
+      "bone": "skirt2b_0",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.85,
+      "wind": 6,
+      "gravity": 17.5
+    },
+    {
+      "type": "physics",
+      "name": "skirt2b_1_physics",
+      "bone": "skirt2b_1",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.85,
+      "wind": 10,
+      "gravity": 30
+    },
+    {
+      "type": "physics",
+      "name": "skirt2b_1_translate",
+      "bone": "skirt2b_1",
+      "x": 0.2,
+      "y": 0.2,
+      "strength": 100,
+      "damping": 0.85
+    },
+    {
+      "type": "physics",
+      "name": "skirt3a_0_physics",
+      "bone": "skirt3a_0",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.7,
+      "wind": 6,
+      "gravity": 17.5
+    },
+    {
+      "type": "physics",
+      "name": "skirt3a_1_physics",
+      "bone": "skirt3a_1",
+      "rotate": 1,
+      "strength": 100,
+      "damping": 0.7,
+      "wind": 10,
+      "gravity": 30
+    },
+    {
+      "type": "physics",
+      "name": "skirt3a_1_translate",
+      "bone": "skirt3a_1",
+      "x": 0.2,
+      "y": 0.2,
+      "strength": 100,
+      "damping": 0.7
+    },
+    {
+      "type": "physics",
+      "name": "skirt3b_0_physics",
+      "bone": "skirt3b_0",
+      "rotate": 1,
+      "strength": 50,
+      "damping": 0.7,
+      "wind": 6,
+      "gravity": 17.5
+    },
+    {
+      "type": "physics",
+      "name": "skirt3b_1_physics",
+      "bone": "skirt3b_1",
+      "rotate": 1,
+      "strength": 50,
+      "damping": 0.7,
+      "wind": 10,
+      "gravity": 30
+    },
+    {
+      "type": "physics",
+      "name": "skirt3b_1_translate",
+      "bone": "skirt3b_1",
+      "x": 0.2,
+      "y": 0.2,
+      "strength": 50,
+      "damping": 0.7
+    }
+  ],
+  "notes": [
+    "head frame: the bar runs through eye_r [378.0, 164.0] and eye_l [444.0, 160.0], the eye bones' origins, 66.121 px; roll 3.468 degrees (Spine's, counter-clockwise) — the line the rig turns the face bones to and declares as invariants.axes; eye midpoint [411.0, 162.0]",
+    "head pitch: the nose sits — (not read: no part tagged nose) of the way from the eye midpoint to the mouth (frontal 0.474..0.630); the stem, eye midpoint -> mouth, is 0.571 of the bar (frontal 0.510..0.675); frontal ranges read on demo, scarf, the rig-c/trailer character; the turn is not reported (src/propose.ts FRONTAL_REFERENCE says why)",
+    "breath: chest translatey 9.00 px peak to peak (amp 4.50, base 4.50) = 2.5 % of the torso's length, 360.0 px (neck [416, 252] -> hip [416, 612]), once per 40-frame idle at 12 fps",
+    "hair_back (back hair): config.cloth.\"back hair\" -> 1 tree(s) per side of the eye axis, from head, rooted on the eye line and tipped 4 px above its bottom, a 1-link trunk forking into 2 branches, 3 links root to tip (hairback_r0_, hairback_r0a_, hairback_r0b_, hairback_l0_, hairback_l0a_, hairback_l0b_); 10 constraint(s), physics on every link, wind 1 -> 8 and gravity 4 -> 24 root to tip (multipliers of the consumer's environment; no direction is drafted), no idle key; the recipe's own defaults, measured on its synthetic fixture (AUTHORING §3): length_ratio 0.5, strength 100/100/50",
+    "hair_front (head:front hair): bang_r, bang_c, bang_l are a template, not its locks — columns at 0.25, 0.5 and 0.75 of the face box's width, along the head's down axis (the eye line's perpendicular, roll 3.468 degrees), each rooted on the part's art; the opaque shape does not separate the locks painted inside one mass of hair, so a lock that runs elsewhere is not followed — move the chains onto the locks",
+    "hair_front (head:front hair): config.cloth.\"front hair\" -> bang_r, bang_c, bang_l carry physics on both links (bang_r and bang_l the edge's strength, bang_c the trunk's; wind and gravity on the recipe's root-to-tip ramp over their two links) and no idle key; the recipe's chains, links and split shape the hanging strands, not the fringe",
+    "limb arm_r: handwear_r (full:handwear-r) is cut at the r_elbow joint into upperarm_r on sleeve_r0 and forearm_r (with the hand) on sleeve_r1, each rigid on its link with weight 1 — a bend is a rotation at the joint; assemble with this limbs block cuts the layer, and the forearm carries a cap past the elbow (its line counts the cap's pixels, and names any the layer does not hold)",
+    "limb arm_l: handwear_l (full:handwear-l) is cut at the l_elbow joint into upperarm_l on sleeve_l0 and forearm_l (with the hand) on sleeve_l1, each rigid on its link with weight 1 — a bend is a rotation at the joint; assemble with this limbs block cuts the layer, and the forearm carries a cap past the elbow (its line counts the cap's pixels, and names any the layer does not hold)",
+    "bottomwear (full:bottomwear): its art starts 181.0 px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root",
+    "bottomwear (bottomwear): config.cloth.\"bottomwear\" -> 4 tree(s) on one shared swing, skirt_swing (each tree's first link takes its rotation times 1.3/1/1/1.3, its setup rotation -90 degrees subtracted) from hip, rooted 20 px below its y and tipped 4 px above bottomwear's bottom, laid down the screen, a 1-link trunk forking into 2 branches, 3 links root to tip (skirt0_, skirt0a_, skirt0b_, skirt1_, skirt1a_, skirt1b_, skirt2_, skirt2a_, skirt2b_, skirt3_, skirt3a_, skirt3b_); 29 constraint(s), physics on every link, wind 2 -> 10 and gravity 5 -> 30 root to tip (multipliers of the consumer's environment; no direction is drafted), no idle key; the recipe's own defaults, measured on its synthetic fixture (AUTHORING §3): length_ratio 0.5, strength 100/100/50",
+    "limb leg_r: legwear (full:legwear) is cut at the r_knee joint into thigh_r on leg_r0 and shin_r on leg_r1, each rigid on its link with weight 1, and foot_r, shoes's share below the ankle, on bone foot_r at the r_ankle joint under leg_r1 with inherit \"noRotationOrReflection\" — the shoe keeps its setup angle while the leg turns (FEET_STAY_LEVEL); the shin carries a cap past the knee",
+    "limb leg_l: legwear (full:legwear) is cut at the l_knee joint into thigh_l on leg_l0 and shin_l on leg_l1, each rigid on its link with weight 1, and foot_l, shoes's share below the ankle, on bone foot_l at the l_ankle joint under leg_l1 with inherit \"noRotationOrReflection\" — the shoe keeps its setup angle while the leg turns (FEET_STAY_LEVEL); the shin carries a cap past the knee",
+    "legwear (full:legwear): one chain per leg, leg_r and leg_l — both ankles lie on its art; each runs hip -> knee -> ankle from its side's joints, the two limbs split the part between them (each pixel to the leg whose bones pass nearest it), and no idle track is written for it: the chain is drafted whatever the pose, and whether the legs move is the scene's to key or drive",
+    "trunk segments (neck, topwear, bottomwear): laid along neck -> hip, the line the chest was placed on (0.0 degrees off the screen's downward vertical, positive towards +x): each [bone, from, to] segment the rule drafts down the screen runs along that line instead, and the waist segment across it",
+    "mesh spacing: grid 31 = round(H / 37), H 1165 rig px the height of every part's box together (rows 40 to 1205), in place of a tenth of each part's short side (hair_front 15 -> 31, neck 7 -> 31, bottomwear 18 -> 31; kept, already as coarse: hair_back 36, hairpin 36, topwear 36); r is the part's own. Calibrated on three figures of similar size (H 1106-1185 rig px, issue #265 Stage A), where every check bar passed at this divisor and the idle moved by up to 1.427 rig px against the finer lattice — no bar reads that. propose --grid-rule part drafts the part's own spacing",
+    "keypoints: person \"a\" from \"read by eye from painting.png at full resolution on a 50 px grid (wrists, knees, ankles); the hips, under the skirt, occluded, at the pose file x2; the head and shoulders the pose file x2 (pose.json) — the joints rig-parts painting read for issue #372\", painting 1664x2432 px to the 832x1216 rig by the overlay's map (x * 832/1664, y * 1216/2432); a joint with a position places its bone in place of the rule, a joint without one leaves the bone to its rule, and no bone is authored from a joint that no rule places",
+    "neck observed at [416.0, 252.0]: used as given for bone neck",
+    "r_hip occluded at [374.0, 612.0]: used as the producer's estimate for bone hip, the midpoint of r_hip and l_hip — a point between two joints, not a joint",
+    "l_hip occluded at [458.0, 612.0]: used as the producer's estimate for bone hip, the midpoint of r_hip and l_hip — a point between two joints, not a joint",
+    "chest: its rule, half way from neck to hip, taken along the line from neck [416.0, 252.0] to hip [416.0, 612.0] rather than down the screen",
+    "r_shoulder observed at [340.0, 272.0]: used as given for chain sleeve_r, link 0 (the wrist lies on handwear_r)",
+    "r_elbow observed at [258.0, 418.0]: used as given for chain sleeve_r, link 1 (the wrist lies on handwear_r)",
+    "r_wrist observed at [160.0, 540.0]: used as given for chain sleeve_r, the tip (the wrist lies on handwear_r)",
+    "l_shoulder observed at [492.0, 272.0]: used as given for chain sleeve_l, link 0 (the wrist lies on handwear_l)",
+    "l_elbow observed at [574.0, 418.0]: used as given for chain sleeve_l, link 1 (the wrist lies on handwear_l)",
+    "l_wrist observed at [665.0, 540.0]: used as given for chain sleeve_l, the tip (the wrist lies on handwear_l)",
+    "chain leg_r: link 0 is the r_hip joint, [374.0, 612.0]",
+    "r_knee observed at [350.0, 860.0]: used as given for chain leg_r, link 1 (the ankle lies on legwear)",
+    "r_ankle observed at [327.5, 1095.0]: used as given for chain leg_r, the tip (the ankle lies on legwear)",
+    "chain leg_l: link 0 is the l_hip joint, [458.0, 612.0]",
+    "l_knee observed at [480.0, 860.0]: used as given for chain leg_l, link 1 (the ankle lies on legwear)",
+    "l_ankle observed at [502.5, 1095.0]: used as given for chain leg_l, the tip (the ankle lies on legwear)",
+    "r_eye observed at [398.0, 160.0]: bone eye_r is measured off eyewhite_r (its box centre [378.5, 164.0]) and is not moved; the joint is 19.9 px from it",
+    "l_eye observed at [434.0, 160.0]: bone eye_l is measured off eyewhite_l (its box centre [443.5, 159.5]) and is not moved; the joint is 9.5 px from it",
+    "no rule reads nose observed at [416.0, 176.0], r_ear observed at [378.0, 170.0], l_ear observed at [454.0, 170.0] — no bone is authored from them",
+    "stop at the legs: leg chains leg_r, leg_l are drafted, and no stop is drafted for the skirt's trees — on the recipe's fixture the environment alone pushed no hem link through a thigh, but a hip the consumer moves can (AUTHORING §3, *Recipe: cloth and hair*); that case is rig-c/core#1413 (open), and until it lands a stop is the author's own constraint network in config.constraints"
+  ]
+}

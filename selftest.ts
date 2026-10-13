@@ -137,7 +137,7 @@ import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, 
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { CLOTH_PARTS, CLOTH_RIG, clothRecipe } from './fixtures/cloth.ts';
-import { linkRows } from './src/cloth.ts';
+import { type ClothRecipes, linkRows } from './src/cloth.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LEVEL_FRINGE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, TILTED_FRINGE_PARTS, TWO_LOCK_PARTS, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
 import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'rig-c/src/render.ts';
@@ -154,6 +154,8 @@ import {
   DEFAULT_SEAM_RULE,
   drawOrder,
   driftLine,
+  type LimbPart,
+  limbOrder,
   ERROR_LIMIT as ASSEMBLE_ERROR_LIMIT,
   FIGURE_MASK_FILE,
   figureSilhouette,
@@ -233,7 +235,7 @@ import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { ALIASES, AliasTarballError, compareTarballs, MANIFEST as ALIAS_MANIFEST, packAlias, packInto, renamed } from './scripts/alias_tarball.ts';
 import { blobId, checkExampleInputs, type Copier, FETCH_RECORD, recordText, runSync } from './scripts/example_inputs.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionKey, type MotionSpec, sineTrack, TIME_SLACK } from './src/motion.ts';
-import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, loadClothConfig, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type Limb, loadClothConfig, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_BONE_INHERIT, RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
@@ -4728,6 +4730,24 @@ function runClothRigCases(say: (name: string, ok: boolean, detail: string, why: 
       a.rig.status === 0 && b.rig.status === 0 && c.rig.status === 0 && handed && bytes(a.out) === bytes(b.out) && bytes(a.out) !== bytes(c.out),
       `rig exits ${a.rig.status}, ${b.rig.status}, ${c.rig.status}; rig.json's constraints are the config's, in order: ${handed} (${(rig.constraints ?? []).length}); with the cloth block, rig.json, motion.json and mesh_report.json ${bytes(a.out) === bytes(b.out) ? 'byte-identical' : 'DIFFERENT'}; with the constraints left out they differ: ${bytes(a.out) !== bytes(c.out)}`,
       'propose --cloth is the only reader of cloth; what it drafted reaches the rig through constraints and bones, which the config carries as written',
+    );
+
+    // RG201 — issue #372: the flat form of the swing's transforms. The fixture's swing stands under hip, which the
+    // proposer drafts unturned, pointing straight down: setup rotation -90, and the recipe writes the rotate offset as
+    // that rotation (src/cloth.ts), so spine-core's (rotation - offset) is 0 at rest. The flat form drops the rotation,
+    // so by hand its offset is -90 - (-90) = 0; copied as written it would stay -90 and turn each tree 90 degrees. A
+    // transform that reads its source in world space is outside the rule and is copied unchanged (the planted copy).
+    const built = existsSync(join(a.out, 'rig.json')) ? (JSON.parse(readFileSync(join(a.out, 'rig.json'), 'utf8')) as RigSpec) : null;
+    const offsets = (r: RigSpec | null): string[] => (r?.constraints ?? []).filter((k) => k.type === 'transform').map((k) => `${String(k.name)} ${JSON.stringify((k.properties as Record<string, { offset?: number }> | undefined)?.rotate?.offset ?? null)}`);
+    const swingRot = built?.bones.find((bn) => bn.name === 'skirt_swing')?.rotation;
+    const flatOffsets = built === null ? [] : offsets(flattenRig(built));
+    const worldCopy = built === null ? null : ({ ...built, constraints: (built.constraints ?? []).map((k) => (k.type === 'transform' ? { ...k, localSource: false } : k)) } as RigSpec);
+    const worldFlat = worldCopy === null ? [] : offsets(flattenRig(worldCopy));
+    say(
+      'RG201_THE_FLAT_FORM_CARRIES_A_LOCAL_ADDITIVE_TRANSFORM_S_OFFSET_BY_ITS_SOURCE_S_DROPPED_ROTATION',
+      built !== null && swingRot === -90 && offsets(built).length > 0 && offsets(built).every((o) => o.endsWith(' -90')) && flatOffsets.length === offsets(built).length && flatOffsets.every((o) => o.endsWith(' 0')) && worldFlat.every((o) => o.endsWith(' -90')) && worldFlat.length === flatOffsets.length,
+      `skirt_swing's setup rotation ${swingRot}; built offsets [${offsets(built).join(', ')}]; flat [${flatOffsets.join(', ')}]; planted, the same with localSource false: flat [${worldFlat.join(', ')}]`,
+      "issue #372: the chain suite holds each example's flat form to render as the built rig (CH12); wind is the first example with the recipe's swing, and its flat form, the swing offsets copied, drew every skirt tree 90 degrees off — 252 levels at the setup pose",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -15884,6 +15904,57 @@ function exampleGridRule(key: string): GridRule {
   return ORACLE_EXAMPLES.includes(key) ? 'part' : DEFAULT_GRID_RULE;
 }
 
+/**
+ * The cloth recipe an example's tracked config declares (issue #372: `wind`, the first example proposed with
+ * `propose --cloth`), read through the loader `propose --cloth` reads it with, or null when the config has no `cloth`
+ * block. Its tracked proposal.json is what `propose --cloth config.json` writes on the build's parts, so every control
+ * that proposes on an example's parts proposes with this, as the author did.
+ */
+function exampleCloth(ex: string): ClothRecipes | null {
+  const path = join(ex, 'config.json');
+  return 'cloth' in (readJsonAt(path) as Record<string, unknown>) ? loadClothConfig(path).cloth : null;
+}
+
+/**
+ * The keypoints file an example tracks beside its config (issue #372: wind's, the joints `rig-parts painting` read off
+ * the painting — the wrists, knees and ankles by eye, the hips occluded), or null. Its config's `limbs` are what
+ * `propose --keypoints` drafts from it, so every control that proposes on the example proposes with these joints.
+ */
+function exampleKeypointsFile(ex: string): string | null {
+  const path = join(ex, 'keypoints.json');
+  return existsSync(path) ? path : null;
+}
+
+/** {@link exampleKeypointsFile} read as the proposer reads it, on the part set `P`; undefined when the example tracks none. */
+function exampleJoints(ex: string, P: PartSet): RigJoints | undefined {
+  const file = exampleKeypointsFile(ex);
+  if (file === null) return undefined;
+  const kp = loadKeypoints(file);
+  return toRigJoints(kp, choosePerson(kp, undefined, file), P.W, P.H);
+}
+
+/**
+ * The parts an example's proposal is drafted on. A config with `limbs` cuts its limb layers at assemble, and the
+ * proposer drafts limbs from the parts before the cut (PROPOSE_LIMB_PARTS refuses the cut ones), so for such an
+ * example (wind, issue #372) the parts are its config assembled again with `limbs` left out, into `dir`; for every
+ * other example they are the build's own, `out`.
+ */
+function exampleProposalParts(ex: string, out: string, dir: string, key: string): string {
+  const cfg = readJsonAt(join(ex, 'config.json')) as Record<string, unknown> & { generation?: { control?: { skeleton?: string } } };
+  if (cfg.limbs === undefined) return out;
+  const vdir = join(dir, `${key}-uncut`);
+  if (existsSync(join(vdir, 'rig', 'parts.json'))) return join(vdir, 'rig');
+  delete cfg.limbs;
+  const control = cfg.generation?.control;
+  if (control?.skeleton !== undefined && existsSync(join(ex, control.skeleton))) control.skeleton = join(ex, control.skeleton);
+  mkdirSync(vdir, { recursive: true });
+  writeFileSync(join(vdir, 'config.json'), JSON.stringify(cfg));
+  const inputs = join(ex, 'inputs');
+  const r = runCli(['assemble', '--source', join(inputs, 'painting.png'), '--full', join(inputs, 'layers', 'full'), '--head', join(inputs, 'layers', 'head'), '--config', join(vdir, 'config.json'), '--out', vdir]);
+  if (r.status !== 0) throw new Error(`${key}: assemble with the config's limbs left out exited ${r.status}: ${lastLines(r.out, 2).join(' | ')}`);
+  return join(vdir, 'rig');
+}
+
 /** The face-feature tags issue #76's measurement removes from an example's plan (its variant B): the face and everything on it. */
 const FACE_FEATURE_PLAN_TAGS: readonly string[] = ['face', 'eyewhite-r', 'eyewhite-l', 'irides-r', 'irides-l', 'eyelash-r', 'eyelash-l', 'eyebrow-r', 'eyebrow-l', 'mouth'];
 
@@ -15894,12 +15965,12 @@ const FACE_FEATURE_PLAN_TAGS: readonly string[] = ['face', 'eyewhite-r', 'eyewhi
  * each record's role is structure.ts's. The figures (outcomes, roles, kinds, and against the tracked config) are printed,
  * not barred.
  */
-function runExampleDiagnostics(key: string, ex: string, out: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+function runExampleDiagnostics(key: string, ex: string, out: string, say: (name: string, ok: boolean, detail: string, why: string) => void, dir: string): void {
   let ok = false;
   let detail = '';
   try {
-    const P = readPartSet(out);
-    const { proposal, basis } = proposeWithBasis(P);
+    const P = readPartSet(exampleProposalParts(ex, out, dir, key));
+    const { proposal, basis } = proposeWithBasis(P, exampleJoints(ex, P), null, DEFAULT_GRID_RULE, exampleCloth(ex));
     const held = refusals(() => checkBasis(P, proposal, basis));
     const sections = proposal as unknown as SkeletonSections;
     const cov = lint(P, sections).coverage;
@@ -15944,7 +16015,8 @@ function runFacelessExample(key: string, ex: string, out: string, dir: string, s
   let withFace: Proposal | null = null;
   let exact = 'not proposed';
   try {
-    withFace = propose(readPartSet(out), undefined, null, exampleGridRule(key));
+    const P = readPartSet(exampleProposalParts(ex, out, dir, key));
+    withFace = propose(P, exampleJoints(ex, P), null, exampleGridRule(key), exampleCloth(ex));
     const tracked = `${JSON.stringify(JSON.parse(readFileSync(join(ex, 'proposal.json'), 'utf8')), null, 2)}\n`;
     const built = serializeProposal(withFace);
     exact = built === tracked ? `identical, ${built.length} bytes` : `DIFFERENT from byte ${[...built].findIndex((c, i) => c !== tracked[i])}`;
@@ -15969,6 +16041,8 @@ function runFacelessExample(key: string, ex: string, out: string, dir: string, s
   // variants name motion.animations_from.
   const control = (cfg as { generation?: { control?: { skeleton?: string } } }).generation?.control;
   if (control?.skeleton !== undefined && existsSync(join(ex, control.skeleton))) control.skeleton = join(ex, control.skeleton);
+  // Issue #372: the limbs are not what this variant measures, and the proposer drafts from the parts before their cut.
+  delete cfg.limbs;
   const gone = cfg.assemble.plan.filter((e) => FACE_FEATURE_PLAN_TAGS.includes(e[2])).map((e) => e[0]);
   cfg.assemble.plan = cfg.assemble.plan.filter((e) => !FACE_FEATURE_PLAN_TAGS.includes(e[2]));
   if (cfg.assemble.extend_below_crop !== undefined) cfg.assemble.extend_below_crop = cfg.assemble.extend_below_crop.filter((e) => !gone.includes(e.part));
@@ -16083,7 +16157,9 @@ function runChainSuite(): number | null {
       const rigH = expParts.rig_size[1];
       const rigW = expParts.rig_size[0];
       const turnOf = new Map<string, number>();
-      for (const b of builtRig.bones) turnOf.set(b.name, (b.parent === undefined ? 0 : (turnOf.get(b.parent) ?? 0)) + (b.rotation ?? 0));
+      // A bone that does not inherit its parent's rotation (issue #348: a limb's foot, noRotationOrReflection) is turned
+      // by its own rotation alone, as rig-c's poser turns it; issue #372's wind is the first example with one.
+      for (const b of builtRig.bones) turnOf.set(b.name, (b.parent === undefined || b.inherit === 'noRotationOrReflection' || b.inherit === 'onlyTranslation' ? 0 : (turnOf.get(b.parent) ?? 0)) + (b.rotation ?? 0));
       const byBuilt = new Map(builtRig.bones.map((b) => [b.name, b]));
       const links = new Set<string>();
       const offAim: string[] = [];
@@ -16286,8 +16362,8 @@ function runChainSuite(): number | null {
       let proposal: string;
       let proposalOk = false;
       try {
-        const P = readPartSet(out);
-        const prop = propose(P, undefined, null, exampleGridRule(key));
+        const P = readPartSet(exampleProposalParts(ex, out, dir, key));
+        const prop = propose(P, exampleJoints(ex, P), null, exampleGridRule(key), exampleCloth(ex));
         checkProposal(P, prop);
         const d = jsonDiffs(readJsonAt(join(ex, 'proposal.json')), JSON.parse(serializeProposal(prop)) as unknown, () => null);
         proposalOk = d.over.length === 0;
@@ -16299,7 +16375,7 @@ function runChainSuite(): number | null {
         `CH06_PROPOSE_ON_THE_BUILT_PARTS_IS_THE_TRACKED_PROPOSAL[${key}]`,
         proposalOk,
         proposal,
-        "the tracked proposal.json is what the reference proposer wrote from the reference's parts (for scarf, which the reference never saw, this port's proposer on this port's build); the port's proposer on the port's parts must write the same, which is the proposer's half the examples could not reach before a build existed",
+        "the tracked proposal.json is what the reference proposer wrote from the reference's parts (for scarf, which the reference never saw, this port's proposer on this port's build; for wind, with its config's cloth recipe, issue #372); the port's proposer on the port's parts must write the same, which is the proposer's half the examples could not reach before a build existed",
       );
 
       // Issue #265: which grid rule the tracked proposal holds, read both ways — the oracle's is the part rule's and the
@@ -16307,10 +16383,12 @@ function runChainSuite(): number | null {
       let ruleDetail = '';
       let ruleOk = false;
       try {
-        const P = readPartSet(out);
+        const P = readPartSet(exampleProposalParts(ex, out, dir, key));
         const tracked = `${JSON.stringify(JSON.parse(readFileSync(join(ex, 'proposal.json'), 'utf8')), null, 2)}\n`;
-        const asFig = serializeProposal(propose(P)) === tracked;
-        const asPart = serializeProposal(propose(P, undefined, null, 'part')) === tracked;
+        const cloth = exampleCloth(ex);
+        const joints = exampleJoints(ex, P);
+        const asFig = serializeProposal(propose(P, joints, null, DEFAULT_GRID_RULE, cloth)) === tracked;
+        const asPart = serializeProposal(propose(P, joints, null, 'part', cloth)) === tracked;
         const oracle = ORACLE_EXAMPLES.includes(key);
         ruleOk = oracle ? asPart && !asFig : asFig && !asPart;
         ruleDetail = `${oracle ? 'an oracle example' : 'not an oracle example'}: the tracked proposal ${asFig ? 'IS' : 'is not'} the figure rule's and ${asPart ? 'IS' : 'is not'} the part rule's`;
@@ -16324,8 +16402,36 @@ function runChainSuite(): number | null {
         "issue #265: the reference proposals are the oracle and keep the reference's grid rule byte for byte, asked for by name; an example of this port is what an author who asks for nothing gets — each read both ways, so a rule that stopped mattering on either side shows",
       );
 
+      // Issue #372: an example whose config declares a cloth recipe (wind) tracks the proposal `propose --cloth` writes.
+      // CH06 and CH17 propose with the recipe; this reads the other side — the same parts proposed without it are not
+      // the tracked file and write no constraints — so a control that silently dropped the recipe could not pass CH06.
+      const clothOf = exampleCloth(ex);
+      if (clothOf !== null) {
+        let clothDetail = '';
+        let clothOk = false;
+        try {
+          const P = readPartSet(exampleProposalParts(ex, out, dir, key));
+          const tracked = `${JSON.stringify(JSON.parse(readFileSync(join(ex, 'proposal.json'), 'utf8')), null, 2)}\n`;
+          const joints = exampleJoints(ex, P);
+          const withRecipe = propose(P, joints, null, exampleGridRule(key), clothOf);
+          const without = propose(P, joints, null, exampleGridRule(key));
+          const cfgCons = ((readJsonAt(join(ex, 'config.json')) as { constraints?: unknown[] }).constraints ?? []).length;
+          const recipeCons = (withRecipe.constraints ?? []).length;
+          clothOk = serializeProposal(withRecipe) === tracked && serializeProposal(without) !== tracked && without.constraints === undefined && recipeCons > 0 && recipeCons === cfgCons;
+          clothDetail = `cloth recipe on ${Object.keys(clothOf).join(', ')}: with it the proposal ${serializeProposal(withRecipe) === tracked ? 'IS' : 'is not'} the tracked file (${recipeCons} constraint(s); the config holds ${cfgCons}); planted, the recipe left out: ${serializeProposal(without) === tracked ? 'IS the tracked file' : 'not the tracked file'}, constraints ${without.constraints === undefined ? 'absent' : `${without.constraints.length} written`}`;
+        } catch (err) {
+          clothDetail = `refused or crashed: ${(err as Error).message.split('\n')[0]}`;
+        }
+        say(
+          `CH18_A_CLOTH_EXAMPLE_TRACKS_THE_RECIPE_S_PROPOSAL_AND_ITS_CONSTRAINTS_AND_WITHOUT_THE_RECIPE_IT_IS_NOT[${key}]`,
+          clothOk,
+          clothDetail,
+          "issue #372: wind is proposed with `propose --cloth` and its config pastes the recipe's constraints, as the README's paste step says; the proposal on its parts without the recipe is the keyed chains and no constraints, which is what a control that forgot the recipe would compare",
+        );
+      }
+
       runFacelessExample(key, ex, out, dir, say);
-      runExampleDiagnostics(key, ex, out, say);
+      runExampleDiagnostics(key, ex, out, say, dir);
     }
 
     // Issue #74's public scenes, composed from the builds above (each built once, here).
@@ -16531,7 +16637,7 @@ interface LoopRun {
  * `seethrough` without `head_box`, and `assemble.rig_scale`, copied from the
  * example's config.
  */
-function runReadmeLoop(lines: readonly string[], ex: string, work: string, paste: readonly string[], keypoints: string | null = null): LoopRun {
+function runReadmeLoop(lines: readonly string[], ex: string, work: string, paste: readonly string[], keypoints: string | null = null, cloth: unknown = null): LoopRun {
   const inputs = join(ex, 'inputs');
   const painting = readPng(join(inputs, 'painting.png'));
   const recorded = JSON.parse(readFileSync(join(ex, 'config.json'), 'utf8')) as { key: string; seethrough: Record<string, unknown>; assemble: { rig_scale: number } };
@@ -16542,6 +16648,9 @@ function runReadmeLoop(lines: readonly string[], ex: string, work: string, paste
     seethrough,
     assemble: { rig_scale: recorded.assemble.rig_scale },
   };
+  // Issue #372: with a cloth recipe, the block is authored into the config and the drafting `propose --parts` line
+  // takes `--cloth config.json`, as the README's paste step and AUTHORING §3's recipe say.
+  if (cloth !== null) cfg.cloth = cloth;
   mkdirSync(work, { recursive: true });
   const save = (): void => writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`);
   save();
@@ -16564,6 +16673,7 @@ function runReadmeLoop(lines: readonly string[], ex: string, work: string, paste
     const [command, ...rest] = line.split(/\s+/).slice(1);
     const args = [command, ...rest.map(place)];
     if (keypoints !== null && command === 'propose' && args.includes('--parts')) args.push('--keypoints', keypoints);
+    if (cloth !== null && command === 'propose' && args.includes('--parts') && !args.includes('--from-config') && !args.includes('--compare')) args.push('--cloth', configPath);
     if (!known.includes(command)) return { pasted, proposal, ran, refused: { line, status: -1, first: `"${command}" is not a command this control knows how to run; teach runReadmeLoop what the README says to do with it`, fails: [] } };
     const r = runCli(args);
     ran.push(`${command}${args.includes('--head-box') ? ' --head-box' : args.includes('--propose-plan') ? ' --propose-plan' : args.includes('--from-config') ? ' --from-config' : ''} ${r.status}`);
@@ -16667,9 +16777,13 @@ function runReadmeLoopSuite(): number | null {
       say('RL01_THE_README_LOOP_RUNS_IN_ORDER_ON_A_FRESH_CONFIG', false, [lines, paste].filter((x): x is string => typeof x === 'string').join('; '), '');
       return bad();
     }
+    const plainRuns = new Map<string, LoopRun>();
+    /** RL05's runs, by key: the loop with the example's cloth recipe and tracked keypoints, which RL03 reads too. */
+    const clothRuns = new Map<string, LoopRun>();
     for (const ex of found) {
       const key = relative(join(ROOT, 'examples'), ex);
       const r = runReadmeLoop(lines, ex, join(dir, key), paste);
+      plainRuns.set(key, r);
       const end = readmeLoopEnd(ex, lines);
       say(
         `RL01_THE_README_LOOP_RUNS_IN_ORDER_ON_A_FRESH_CONFIG[${key}]`,
@@ -16681,6 +16795,32 @@ function runReadmeLoopSuite(): number | null {
       );
     }
 
+    // Issue #372: the loop again on each fetched example whose tracked config declares a cloth recipe (wind), with the
+    // recipe authored and `--cloth` on the drafting propose line (RL05): it must paste constraints, end where RL01 ends,
+    // and paste exactly the tracked config's sections — the tracked config is the loop's output, uncorrected. RL01's
+    // run on the same example, without the recipe, is the planted negative: it pastes no constraints and is not.
+    for (const ex of found) {
+      const tracked = readJsonAt(join(ex, 'config.json')) as Record<string, unknown>;
+      if (tracked.cloth === undefined) continue;
+      const key = relative(join(ROOT, 'examples'), ex);
+      const end = readmeLoopEnd(ex, lines);
+      // An example that tracks its keypoints (wind) drafted its limbs from them, so the loop takes them too.
+      const r = runReadmeLoop(lines, ex, join(dir, `cloth-${key}`), paste, exampleKeypointsFile(ex), tracked.cloth);
+      clothRuns.set(key, r);
+      const plain = plainRuns.get(key) ?? null;
+      const built = existsSync(join(dir, `cloth-${key}`, 'config.json')) ? (readJsonAt(join(dir, `cloth-${key}`, 'config.json')) as Record<string, unknown>) : {};
+      const sameAs = (cfg: Record<string, unknown>, keys: readonly string[]): boolean => keys.every((k) => JSON.stringify(cfg[k]) === JSON.stringify(tracked[k]));
+      const sections = PROPOSAL_CONFIG_SECTIONS.filter((k) => tracked[k] !== undefined);
+      const plainCfg = plain === null ? {} : Object.fromEntries(plain.pasted.map((k) => [k, plain.proposal?.[k]]));
+      const plainSame = plain !== null && plain.pasted.join(',') === sections.join(',') && sameAs(plainCfg, sections);
+      say(
+        `RL05_THE_README_LOOP_WITH_THE_CLOTH_RECIPE_PASTES_ITS_CONSTRAINTS_AND_IS_THE_TRACKED_CONFIG[${key}]`,
+        end.reached(r) && r.pasted.includes('constraints') && r.pasted.join(',') === sections.join(',') && sameAs(built, sections) && plain !== null && !plain.pasted.includes('constraints') && !plainSame,
+        `--cloth config.json on the drafting propose line${exampleKeypointsFile(ex) === null ? '' : ` and --keypoints ${key}/keypoints.json on both propose --parts lines`}, the tracked cloth block (${Object.keys(tracked.cloth as Record<string, unknown>).join(', ')}) authored: ${loopReport(r, lines)}; pasted ${r.pasted.join(', ') || 'nothing'} against the tracked config's ${sections.join(', ')}: ${sameAs(built, sections) ? 'every section equal' : `DIFFERENT in ${sections.filter((k) => JSON.stringify(built[k]) !== JSON.stringify(tracked[k])).join(', ')}`}; planted, RL01's run without the recipe: pasted ${plain?.pasted.join(', ') ?? 'no run'}, ${plainSame ? 'EQUAL to the tracked config' : 'not the tracked config'}${end.describe}`,
+        "issue #372: the README's paste step names constraints, which only `propose --cloth` writes, and RL01 runs the loop without a recipe; wind is the example proposed with one, so the loop is run here as its author ran it and must give its tracked config back, section for section",
+      );
+    }
+
     // Issue #375: the loop again, with --keypoints, on each fetched example that tracks the pose file it was painted
     // on, pasting the sections the README names (RL03) — and the README's old four-section list planted (RL04).
     const posed = found.filter((ex) => existsSync(join(ex, 'pose.json')));
@@ -16689,14 +16829,19 @@ function runReadmeLoopSuite(): number | null {
     }
     for (const ex of posed) {
       const key = relative(join(ROOT, 'examples'), ex);
-      const kp = poseKeypoints(ex, join(dir, `kp-${key}`)) as string;
+      // Issue #372: an example that tracks the joints read off its painting (wind's keypoints.json) is run with those;
+      // the pose file scaled is the control skeleton, not where the limbs were painted.
+      const kp = exampleKeypointsFile(ex) ?? (poseKeypoints(ex, join(dir, `kp-${key}`)) as string);
       const end = readmeLoopEnd(ex, lines);
-      const r = runReadmeLoop(lines, ex, join(dir, `kp-${key}`), paste, kp);
+      // Issue #372: an example whose config declares a cloth recipe (wind) is proposed with it, and its uncorrected
+      // keyed-chain skirt stops at --from-config on a LINT line the recipe's trees replace; its keypoints run is RL05's,
+      // the loop with the recipe and these joints, read here for what it pasted.
+      const r = clothRuns.get(key) ?? runReadmeLoop(lines, ex, join(dir, `kp-${key}`), paste, kp);
       const drafted = PROPOSAL_CONFIG_SECTIONS.filter((k) => r.proposal?.[k] !== undefined);
       say(
         `RL03_THE_README_LOOP_WITH_KEYPOINTS_PASTES_EVERY_SECTION_THE_PROPOSAL_WROTE[${key}]`,
         r.proposal !== null && r.proposal.limbs !== undefined && r.pasted.join(',') === drafted.join(',') && end.reached(r),
-        `--keypoints from ${key}/pose.json on both propose --parts lines: the proposal wrote ${drafted.join(', ') || '(no proposal)'}${r.proposal?.limbs === undefined ? ' (no limbs, so this run cannot show the paste list holds them)' : ''}; the README's list pasted ${r.pasted.join(', ') || 'nothing'}; ${loopReport(r, lines)}${end.describe}`,
+        `--keypoints from ${exampleKeypointsFile(ex) === null ? `${key}/pose.json, scaled to the painting,` : `${key}/keypoints.json`} on both propose --parts lines${clothRuns.has(key) ? ' (and --cloth config.json: RL05\'s run)' : ''}: the proposal wrote ${drafted.join(', ') || '(no proposal)'}${r.proposal?.limbs === undefined ? ' (no limbs, so this run cannot show the paste list holds them)' : ''}; the README's list pasted ${r.pasted.join(', ') || 'nothing'}; ${loopReport(r, lines)}${end.describe}`,
         "issue #375: with --keypoints the proposal also drafts limbs (#349), which the README's paste step did not name, and a config without them is refused at the next step; RL01 runs without keypoints and could not see it. The joints are the generation's control skeleton scaled to the painting, not read off it: this proves what the loop pastes, not where the joints are. The run must end where RL01 ends on the same example",
       );
 
@@ -20394,9 +20539,20 @@ function layerSetMismatch(seen: ReadonlySet<string>, expected: PartsFile): strin
  * cut's piece its from part's), in the order the stage draws them
  * (`drawOrder`: "back" patches and cuts, each plan part after the patches and
  * cuts drawn before it, "front" patches and cuts). With neither that is the plan.
+ * With `limbs` (issue #372: wind's), the order is the stage's `limbOrder`: each
+ * part a limb takes leaves it, and the limb's segments, each `<run>:<tag>` of
+ * the part it takes, stand where its first segment's part stood.
  */
-function planMismatch(plan: ReadonlyArray<readonly [string, string, string]>, expected: PartsFile, patches: readonly Patch[] = [], cuts: readonly Cut[] = []): string[] {
-  const want = drawOrder(plan.map(([name]) => name), patches, cuts).map((d) => {
+function planMismatch(plan: ReadonlyArray<readonly [string, string, string]>, expected: PartsFile, patches: readonly Patch[] = [], cuts: readonly Cut[] = [], limbs: Readonly<Record<string, Limb>> = {}): string[] {
+  const limbParts: LimbPart[] = Object.entries(limbs).flatMap(([l, limb]) =>
+    limb.segments.map((sg, k) => ({ limb: l, segment: k, part: sg.part, of: sg.from, record: { name: l, segment: k, of: sg.from, bone: sg.bone } })),
+  );
+  const order = limbOrder(drawOrder(plan.map(([name]) => name), patches, cuts), plan as PlanEntry[], cuts, limbParts);
+  const want = order.map((d) => {
+    if ('limb' in d) {
+      const from = plan.find(([name]) => name === limbParts[d.limb].of);
+      return `${limbParts[d.limb].part}=${from === undefined ? '?' : `${from[1]}:${from[2]}`}`;
+    }
     if ('plan' in d) return `${plan[d.plan][0]}=${plan[d.plan][1]}:${plan[d.plan][2]}`;
     if ('cut' in d) {
       const from = plan.find(([name]) => name === cuts[d.cut].from);
@@ -20423,6 +20579,8 @@ function runExamplesHalf(keys: ExampleKeys, say: (name: string, ok: boolean, det
   const configFailed: string[] = [];
   /** Every `<key>/<patch>` a fetched example's config cuts from the painting. */
   const patched: string[] = [];
+  /** On each fetched example with limbs, the plan comparison with its limbs left out (it must be named). */
+  const limbPlants: string[] = [];
   for (const key of keys.fetched) {
     const inputs = join(EXAMPLES_DIR, key, 'inputs');
     const absentFiles = EXAMPLE_INPUT_FILES.filter((f) => !existsSync(join(inputs, f)));
@@ -20456,7 +20614,9 @@ function runExamplesHalf(keys: ExampleKeys, say: (name: string, ok: boolean, det
         const config = loadConfig(join(EXAMPLES_DIR, key, 'config.json'));
         const patches = config.assemble.patches ?? [];
         patched.push(...patches.map((q) => `${key}/${q.name}`));
-        const miss = planMismatch(config.assemble.plan, expected, patches, config.assemble.cuts ?? []);
+        const miss = planMismatch(config.assemble.plan, expected, patches, config.assemble.cuts ?? [], config.limbs ?? {});
+        // Issue #372: on an example with limbs, the same comparison with the limbs left out must name the difference.
+        if (config.limbs !== undefined) limbPlants.push(`${key}: limbs left out -> ${planMismatch(config.assemble.plan, expected, patches, config.assemble.cuts ?? []).join('; ') || 'NOT NAMED'}`);
         const extendTags = (config.assemble.extend_below_crop ?? []).map((e) => `${e.run}:${e.tag}`).filter((t) => readAll && !seen.has(t));
         if (miss.length === 0 && extendTags.length === 0) configs.push(`${key} ${config.assemble.plan.length} part(s)${patches.length > 0 ? ` and ${patches.length} patch(es)` : ''}`);
         else configFailed.push(`${key}: ${[...miss, ...(extendTags.length > 0 ? [`extend_below_crop takes ${extendTags.join(', ')}, which no layer read here is`] : [])].join('; ')}`);
@@ -20493,8 +20653,8 @@ function runExamplesHalf(keys: ExampleKeys, say: (name: string, ok: boolean, det
   const plantPlan = planMismatch([['face', 'head', 'nose']], plantParts).length;
   say(
     'CO05_EVERY_FETCHED_EXAMPLE_CONFIG_LOADS_AND_ITS_PLAN_IS_THE_EXPECTED_PART_LIST',
-    keys.fetched.length > 0 && configFailed.length === 0 && configs.length === keys.fetched.length && plantPlan > 0 && planMismatch([['face', 'head', 'face']], plantParts).length === 0,
-    `${configs.length} of ${keys.fetched.length} config(s) load and match${configs.length > 0 ? ` (${configs.join('; ')})` : ''}${configFailed.length > 0 ? `; refused: ${configFailed.join(' | ')}` : ''}; a planted plan taking the wrong tag is named (${plantPlan} problem(s))`,
+    keys.fetched.length > 0 && configFailed.length === 0 && configs.length === keys.fetched.length && plantPlan > 0 && planMismatch([['face', 'head', 'face']], plantParts).length === 0 && limbPlants.every((l) => !l.endsWith('NOT NAMED')),
+    `${configs.length} of ${keys.fetched.length} config(s) load and match${configs.length > 0 ? ` (${configs.join('; ')})` : ''}${configFailed.length > 0 ? `; refused: ${configFailed.join(' | ')}` : ''}; a planted plan taking the wrong tag is named (${plantPlan} problem(s))${limbPlants.length > 0 ? `; planted: ${limbPlants.join('; ')}` : ''}`,
     "each example's config is what made expected/parts.json (for demo and sample the reference's, converted to this schema; for scarf this port's own build): its plan and patches, in the stage's draw order, are the parts list, so a conversion or an edit that lost or reordered a part shows here",
   );
 
@@ -20993,6 +21153,32 @@ function runStructureSuite(): number {
     why('a file is a rig.json because it says rigc-rig/1, a config because it has a key, a proposal because it has bones and neither; its name is never read'),
   );
 
+  // ST31 — issue #372: a proposal `propose --keypoints --cloth` wrote carries `limbs` and `constraints`; it reads as a
+  // proposal under the loader's rules for both, and a limb or a constraint on a bone it does not declare, or a key no
+  // proposal has, is still named. Read on wind's tracked proposal.json too, which is such a file.
+  const clothProp = { ...base(), constraints: [{ type: 'physics', name: 'eye_physics', bone: 'eye', rotate: 1 }] };
+  const clothForm = refusals(() => readSkeleton(clothProp, 'p.json'));
+  const clothRead = clothForm === null ? readSkeleton(clothProp, 'p.json').form : 'refused';
+  const strayCons = refusals(() => readSkeleton({ ...base(), constraints: [{ type: 'physics', name: 'wing_physics', bone: 'wing', rotate: 1 }] }, 'p.json'));
+  const strayLimb = refusals(() => readSkeleton({ ...base(), limbs: { arm: { segments: [{ part: 'upper', from: 'sleeve', bone: 'wing' }, { part: 'lower', from: 'sleeve', bone: 'eye', joint: 'elbow' }] } } }, 'p.json'));
+  const strayKey = refusals(() => readSkeleton({ ...base(), drape: 1 }, 'p.json'));
+  const windPath = join(EXAMPLES_DIR, 'wind', 'proposal.json');
+  const windRaw = readJsonAt(windPath) as Record<string, unknown>;
+  const windErr = refusals(() => readSkeleton(windRaw, 'wind/proposal.json'));
+  const windHas = ['limbs', 'constraints'].filter((k) => windRaw[k] !== undefined);
+  say(
+    'ST31_A_PROPOSAL_WITH_LIMBS_AND_THE_CLOTH_RECIPE_S_CONSTRAINTS_READS_AS_A_PROPOSAL_AND_A_BAD_ONE_IS_NAMED',
+    clothForm === null &&
+      clothRead === 'proposal' &&
+      codes(strayCons) === 'CONFIG_NAME_RESOLVES p.json proposal.constraints[0].bone' &&
+      (strayLimb?.problems.some((q) => q.code === 'CONFIG_NAME_RESOLVES' && q.object === 'p.json proposal.limbs.arm.segments[0].bone') ?? false) &&
+      codes(strayKey) === 'CONFIG_KEY_KNOWN p.json proposal.drape' &&
+      windErr === null &&
+      windHas.length === 2,
+    `a proposal with one physics constraint on "eye" -> ${clothForm === null ? `reads, form ${clothRead}` : codes(clothForm)}; wind's tracked proposal (holding ${windHas.join(' and ') || 'neither'}) -> ${windErr === null ? 'reads' : codes(windErr)}; planted: the constraint on "wing", which it does not declare -> ${codes(strayCons)}; a limb on "wing" -> ${codes(strayLimb)}; a key no proposal has -> ${codes(strayKey)}`,
+    "issue #372: wind's tracked proposal.json is what `propose --keypoints --cloth` wrote, limbs (issue #349) and constraints (issue #364) included, and this suite's ST25 reads it beside the config; before #372 the proposal reader took only bones, meshes, regions, motion and notes, so the file propose wrote was refused by the comparison that reads it",
+  );
+
   // ST21 — a rig spec rigc refuses, and names a rig resolves to nothing.
   const noName = armRig();
   delete noName.name;
@@ -21059,22 +21245,26 @@ function runStructureSuite(): number {
   // keeps the bang chains it was built with (the reference-* configs are the oracle; demo's and scarf's bang physics
   // was tuned on theirs in #224, and on these upright heads the move is 2-7 px). Exactly these chains may differ from
   // the proposal in every example — each by at least one row, so a stale entry is loud — and no other chain may.
-  const DRIFTED_CHAINS: { chains: readonly string[]; issue: string } = { chains: ['bang_r', 'bang_c', 'bang_l'], issue: '#249' };
-  const handMoved = (proposalPath: string, configPath: string, chains: readonly string[], issue = '#196') => {
+  // Issue #372: the declaration is for the examples tracked before #249; an example made after it (wind) is its
+  // proposal's in the fringe too, so on it no bang chain may differ — the same rows, required empty.
+  const DRIFTED_CHAINS: { chains: readonly string[]; issue: string; examples: readonly string[] } = { chains: ['bang_r', 'bang_c', 'bang_l'], issue: '#249', examples: ['demo', 'reference-demo', 'reference-sample', 'scarf'] };
+  const handMoved = (proposalPath: string, configPath: string, chains: readonly string[], issue = '#196', drift = true) => {
     const propCfg = loadComparison(proposalPath, configPath, null);
     const drifted = propCfg.rows.map((r) => r.left).filter((n) => DRIFTED_CHAINS.chains.some((c) => n.startsWith(c) && /^[0-9]+$/.test(n.slice(c.length))));
     const driftRows = loudRows(propCfg).filter((row) => drifted.includes(row.split(' ')[0]));
-    const everyDrifted = DRIFTED_CHAINS.chains.every((c) => driftRows.some((row) => row.startsWith(c)));
+    const everyDrifted = drift ? DRIFTED_CHAINS.chains.every((c) => driftRows.some((row) => row.startsWith(c))) : driftRows.length === 0;
     const cfgBones = (readJsonAt(configPath) as { bones?: Array<{ chain?: string; points?: unknown[]; note?: unknown }> }).bones ?? [];
     const entries = chains.map((c) => cfgBones.find((b) => b.chain === c));
     const links = entries.flatMap((b) => (b === undefined ? [] : (b.points ?? []).map((_, i) => `${b.chain}${i}`)));
     const noted = entries.every((b) => b !== undefined && typeof b.note === 'string' && b.note.includes(issue));
     const loud = loudRows(propCfg).filter((row) => links.includes(row.split(' ')[0]));
     const allMoved = links.every((n) => loud.some((row) => row.startsWith(`${n} `)));
-    const rest = loudRows(propCfg, [...links, ...drifted]).length;
+    const rest = loudRows(propCfg, [...links, ...(drift ? drifted : [])]).length;
     const text =
       `proposal vs config loud rows ${rest} off the hand-moved chains (${chains.length === 0 ? 'none' : `${chains.join(', ')}: ${loud.length} row(s) over ${links.length} link(s), every link moved ${allMoved}, note citing ${issue} ${noted ? 'present' : 'ABSENT'}`})` +
-      ` and the ${DRIFTED_CHAINS.issue} chains (${DRIFTED_CHAINS.chains.join(', ')}: ${driftRows.length} row(s) over ${drifted.length} link(s), each chain differs ${everyDrifted})`;
+      (drift
+        ? ` and the ${DRIFTED_CHAINS.issue} chains (${DRIFTED_CHAINS.chains.join(', ')}: ${driftRows.length} row(s) over ${drifted.length} link(s), each chain differs ${everyDrifted})`
+        : ` and no ${DRIFTED_CHAINS.issue} drift (made after it: ${DRIFTED_CHAINS.chains.join(', ')} ${driftRows.length} row(s) over ${drifted.length} link(s), none required)`);
     return { propCfg, ok: rest === 0 && noted && allMoved && everyDrifted, text };
   };
   const exampleLines: string[] = [];
@@ -21082,7 +21272,7 @@ function runStructureSuite(): number {
   for (const key of exampleKeys().all) {
     const dir = join(EXAMPLES_DIR, key);
     const cfgRig = loadComparison(join(dir, 'config.json'), join(dir, 'expected', 'rig.json'), null);
-    const moved = handMoved(join(dir, 'proposal.json'), join(dir, 'config.json'), HAND_MOVED_CHAINS[key]?.chains ?? [], HAND_MOVED_CHAINS[key]?.issue);
+    const moved = handMoved(join(dir, 'proposal.json'), join(dir, 'config.json'), HAND_MOVED_CHAINS[key]?.chains ?? [], HAND_MOVED_CHAINS[key]?.issue, DRIFTED_CHAINS.examples.includes(key));
     const propCfg = moved.propCfg;
     // Issue #183: a bone the config authors beyond the proposal is allowed only as a physics constraint's own bone
     // (sample's chest_jiggle and hip_jiggle): propose writes no constraint, so it cannot have proposed that bone.
@@ -21138,15 +21328,25 @@ function runStructureSuite(): number {
     const sr = handMoved(join(exDir, 'proposal.json'), skirtPath, HAND_MOVED_CHAINS.scarf.chains, HAND_MOVED_CHAINS.scarf.issue);
     exampleOk &&= !sr.ok && skirt !== undefined;
     planted.push(`skirt_c0 moved 1 px (a chain the #249 declaration does not name) -> ${sr.ok ? 'PASSED' : 'refused'} (${sr.text})`);
+    // Issue #372: on an example made after #249 (wind) the bang chains are the proposal's — one moved 1 px is loud.
+    const windDir = join(EXAMPLES_DIR, 'wind');
+    const wcfg = readJsonAt(join(windDir, 'config.json')) as { bones: Array<Record<string, unknown>> };
+    const bang = wcfg.bones.find((b) => b.chain === 'bang_c') as { points: Array<[number, number]> } | undefined;
+    if (bang !== undefined) bang.points = bang.points.map((q, i) => (i === 0 ? [q[0] + 1, q[1]] : q));
+    const bangPath = join(plantDir, 'wind-bang_c.json');
+    writeFileSync(bangPath, `${JSON.stringify(wcfg, null, 2)}\n`);
+    const br = handMoved(join(windDir, 'proposal.json'), bangPath, [], undefined, DRIFTED_CHAINS.examples.includes('wind'));
+    exampleOk &&= !br.ok && bang !== undefined;
+    planted.push(`wind's bang_c0 moved 1 px (an example made after #249) -> ${br.ok ? 'PASSED' : 'refused'} (${br.text})`);
   } finally {
     rmSync(plantDir, { recursive: true, force: true });
   }
-  exampleLines.push(`planted on a temp copy of scarf: ${planted.join('; ')}`);
+  exampleLines.push(`planted on temp copies of scarf and wind: ${planted.join('; ')}`);
   say(
     'ST25_EACH_TRACKED_EXAMPLE_S_CONFIG_IS_ITS_RIG_JSON_THROUGH_THE_STAGE_AND_ITS_PROPOSAL_IS_ITS_CONFIG',
     exampleOk && exampleLines.length > 0,
     exampleLines.join('; '),
-    why('expected/rig.json is a flat rig — the reference\'s, or for an example the reference never built (scarf) this port\'s build carried to the flat form by flattenRig — every offset a difference of integer landmarks at 3 places, so the stage rule must give every origin exactly 0; the only parents not the same are the rig stage\'s controls, one bone up; the tracked proposal and config carry equal bones (the reference used only to score) but for a physics constraint\'s own bone, which the config authors and propose cannot write (issue #183), and the links of a chain the example moves by hand, each link moved and the move\'s reason in the entry\'s note (scarf\'s robe_r, put onto its tie, issue #196); and the fringe\'s bang chains in every example, which the configs keep from before the proposer turned the fringe into the head\'s frame (issue #249) — those three by name, each differing, and no other'),
+    why('expected/rig.json is a flat rig — the reference\'s, or for an example the reference never built (scarf, wind) this port\'s build carried to the flat form by flattenRig — every offset a difference of integer landmarks at 3 places, so the stage rule must give every origin exactly 0; the only parents not the same are the rig stage\'s controls, one bone up; the tracked proposal and config carry equal bones (the reference used only to score) but for a physics constraint\'s own bone, which the config authors and propose cannot write (issue #183), and the links of a chain the example moves by hand, each link moved and the move\'s reason in the entry\'s note (scarf\'s robe_r, put onto its tie, issue #196); and the fringe\'s bang chains in every example tracked before the proposer turned the fringe into the head\'s frame (issue #249), whose configs keep them — those three by name, each differing, and no other; an example made after it (wind, issue #372) differs in none'),
   );
 
   // ST26 — the printout and its determinism.

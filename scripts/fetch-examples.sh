@@ -48,9 +48,10 @@ set -euo pipefail
 REPO_URL="https://github.com/rig-c/parts-examples"
 # ⚠️ PLACEHOLDER. Set this to the full 40-character commit of parts-examples
 # these fixtures were compared against. The script refuses to run until it is.
-# PIN: <commit> — the examples repository's commit that renames demo/ and sample/ to
-# reference-demo/ and reference-sample/ and adds the repainted demo/ (issue #227).
-PINNED_COMMIT=842c5b373fb155e588c51e458efa6eb5d5db6c73
+# PIN: <commit> — the examples repository's commit that adds wind/, the figure painted
+# to pass `rig-parts painting` and to serve a wind demo (issue #372); demo/, scarf/,
+# reference-demo/ and reference-sample/ are as at 842c5b3 (issue #227).
+PINNED_COMMIT=ba99e403d4058fc1cfe40699bdcde8aaf00a90c0
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/examples"

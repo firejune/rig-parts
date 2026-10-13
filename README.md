@@ -266,12 +266,17 @@ from a config holding only what the first step reads (`RL01`). On `demo` the
 proposal pasted uncorrected stops at the last step, naming its `bottomwear` on
 `CHECK_TIP_OVER_ROOT` — the correction its tracked config records there, the two outer
 skirt chains moved (issue #227, [its README](examples/demo/README.md)); on `scarf`,
-since issue #262, it builds green.
+since issue #262, it builds green, and on `wind` too. `wind`'s config declares the cloth
+recipe and its limbs, so the block runs on it again with that `cloth` block authored,
+`--cloth config.json` on the drafting `propose` line and its tracked `keypoints.json` on both
+`propose --parts` lines (`RL05`): it pastes `limbs` and `constraints` with the rest and gives
+back the tracked config, section for section ([its README](examples/wind/README.md)).
 On `demo`, which tracks the pose file it was painted on, the block runs again with
 `--keypoints` on both `propose --parts` lines (`RL03`): the proposal then also drafts
 `limbs`, the step's list carries them, and the run ends where `RL01` ends. The joints
 are that pose file scaled to the painting, not read off it, so this shows what the
-loop carries, not where the joints are. The list as it stood before issue #375, four
+loop carries, not where the joints are. On `wind`, which tracks the joints read off its
+painting (`keypoints.json`), `RL03` runs with those. The list as it stood before issue #375, four
 sections, stops at `--from-config` naming every limb part (`RL04`).
 
 `propose` is deliberately not a step of `build`: the proposal is a draft to correct
