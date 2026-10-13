@@ -425,12 +425,12 @@
   },
   {
    "name": "handwear_l",
-   "bone": "chest",
+   "bone": "sleeve_l0",
    "attachment": "handwear_l"
   },
   {
    "name": "handwear_r",
-   "bone": "chest",
+   "bone": "sleeve_r0",
    "attachment": "handwear_r"
   },
   {
@@ -5721,64 +5721,58 @@
      "weights": [
       [
        {
-        "bone": "chest",
-        "x": 48,
-        "y": 83,
-        "weight": 0.57045
-       },
-       {
         "bone": "sleeve_l0",
         "x": -27,
         "y": 19,
-        "weight": 0.42955
+        "weight": 0.93855
+       },
+       {
+        "bone": "sleeve_l1",
+        "x": -67,
+        "y": 140,
+        "weight": 0.06145
        }
       ],
       [
-       {
-        "bone": "chest",
-        "x": 69,
-        "y": 83,
-        "weight": 0.74752
-       },
        {
         "bone": "sleeve_l0",
         "x": -6,
         "y": 19,
-        "weight": 0.25248
+        "weight": 0.96691
+       },
+       {
+        "bone": "sleeve_l1",
+        "x": -46,
+        "y": 140,
+        "weight": 0.03309
        }
       ],
       [
-       {
-        "bone": "chest",
-        "x": 90,
-        "y": 83,
-        "weight": 0.64174
-       },
        {
         "bone": "sleeve_l0",
         "x": 15,
         "y": 19,
-        "weight": 0.35826
+        "weight": 0.95399
+       },
+       {
+        "bone": "sleeve_l1",
+        "x": -25,
+        "y": 140,
+        "weight": 0.04601
        }
       ],
       [
        {
-        "bone": "chest",
-        "x": 111,
-        "y": 83,
-        "weight": 0.51954
-       },
-       {
         "bone": "sleeve_l0",
         "x": 36,
         "y": 19,
-        "weight": 0.43238
+        "weight": 0.89993
        },
        {
         "bone": "sleeve_l1",
         "x": -4,
         "y": 140,
-        "weight": 0.04808
+        "weight": 0.10007
        }
       ],
       [
@@ -5786,19 +5780,13 @@
         "bone": "sleeve_l0",
         "x": 36,
         "y": -2,
-        "weight": 0.49885
-       },
-       {
-        "bone": "chest",
-        "x": 111,
-        "y": 62,
-        "weight": 0.44607
+        "weight": 0.90057
        },
        {
         "bone": "sleeve_l1",
         "x": -4,
         "y": 119,
-        "weight": 0.05508
+        "weight": 0.09943
        }
       ],
       [
@@ -5806,19 +5794,13 @@
         "bone": "sleeve_l0",
         "x": 36,
         "y": -23,
-        "weight": 0.61868
-       },
-       {
-        "bone": "chest",
-        "x": 111,
-        "y": 41,
-        "weight": 0.31154
+        "weight": 0.89865
        },
        {
         "bone": "sleeve_l1",
         "x": -4,
         "y": 98,
-        "weight": 0.06978
+        "weight": 0.10135
        }
       ],
       [
@@ -5826,25 +5808,19 @@
         "bone": "sleeve_l0",
         "x": 57,
         "y": -23,
-        "weight": 0.5082
-       },
-       {
-        "bone": "chest",
-        "x": 132,
-        "y": 41,
-        "weight": 0.32646
+        "weight": 0.75452
        },
        {
         "bone": "sleeve_l1",
         "x": 17,
         "y": 98,
-        "weight": 0.13499
+        "weight": 0.20042
        },
        {
         "bone": "sleeve_l2",
         "x": -18,
         "y": 219,
-        "weight": 0.03035
+        "weight": 0.04506
        }
       ],
       [
@@ -5852,25 +5828,19 @@
         "bone": "sleeve_l0",
         "x": 57,
         "y": -44,
-        "weight": 0.57042
-       },
-       {
-        "bone": "chest",
-        "x": 132,
-        "y": 20,
-        "weight": 0.21778
+        "weight": 0.72923
        },
        {
         "bone": "sleeve_l1",
         "x": 17,
         "y": 77,
-        "weight": 0.17969
+        "weight": 0.22972
        },
        {
         "bone": "sleeve_l2",
         "x": -18,
         "y": 198,
-        "weight": 0.03211
+        "weight": 0.04105
        }
       ],
       [
@@ -5878,25 +5848,19 @@
         "bone": "sleeve_l0",
         "x": 57,
         "y": -65,
-        "weight": 0.60271
+        "weight": 0.68849
        },
        {
         "bone": "sleeve_l1",
         "x": 17,
         "y": 56,
-        "weight": 0.24122
-       },
-       {
-        "bone": "chest",
-        "x": 132,
-        "y": -1,
-        "weight": 0.12458
+        "weight": 0.27555
        },
        {
         "bone": "sleeve_l2",
         "x": -18,
         "y": 177,
-        "weight": 0.03149
+        "weight": 0.03596
        }
       ],
       [
@@ -5904,25 +5868,19 @@
         "bone": "sleeve_l0",
         "x": 78,
         "y": -65,
-        "weight": 0.47393
+        "weight": 0.56142
        },
        {
         "bone": "sleeve_l1",
         "x": 38,
         "y": 56,
-        "weight": 0.31647
-       },
-       {
-        "bone": "chest",
-        "x": 153,
-        "y": -1,
-        "weight": 0.15584
+        "weight": 0.37489
        },
        {
         "bone": "sleeve_l2",
         "x": 3,
         "y": 177,
-        "weight": 0.05376
+        "weight": 0.06369
        }
       ],
       [
@@ -5930,25 +5888,19 @@
         "bone": "sleeve_l0",
         "x": 78,
         "y": -86,
-        "weight": 0.45972
+        "weight": 0.50772
        },
        {
         "bone": "sleeve_l1",
         "x": 38,
         "y": 35,
-        "weight": 0.39268
-       },
-       {
-        "bone": "chest",
-        "x": 153,
-        "y": -22,
-        "weight": 0.09454
+        "weight": 0.43368
        },
        {
         "bone": "sleeve_l2",
         "x": 3,
         "y": 156,
-        "weight": 0.05306
+        "weight": 0.0586
        }
       ],
       [
@@ -5956,25 +5908,19 @@
         "bone": "sleeve_l0",
         "x": 99,
         "y": -86,
-        "weight": 0.40543
+        "weight": 0.46151
        },
        {
         "bone": "sleeve_l1",
         "x": 59,
         "y": 35,
-        "weight": 0.38892
-       },
-       {
-        "bone": "chest",
-        "x": 174,
-        "y": -22,
-        "weight": 0.12151
+        "weight": 0.44271
        },
        {
         "bone": "sleeve_l2",
         "x": 24,
         "y": 156,
-        "weight": 0.08414
+        "weight": 0.09578
        }
       ],
       [
@@ -5982,25 +5928,19 @@
         "bone": "sleeve_l1",
         "x": 59,
         "y": 14,
-        "weight": 0.41144
+        "weight": 0.44951
        },
        {
         "bone": "sleeve_l0",
         "x": 99,
         "y": -107,
-        "weight": 0.41059
+        "weight": 0.44859
        },
        {
         "bone": "sleeve_l2",
         "x": 24,
         "y": 135,
-        "weight": 0.09326
-       },
-       {
-        "bone": "chest",
-        "x": 174,
-        "y": -43,
-        "weight": 0.08471
+        "weight": 0.1019
        }
       ],
       [
@@ -6008,25 +5948,19 @@
         "bone": "sleeve_l1",
         "x": 59,
         "y": -7,
-        "weight": 0.44101
+        "weight": 0.47044
        },
        {
         "bone": "sleeve_l0",
         "x": 99,
         "y": -128,
-        "weight": 0.38271
+        "weight": 0.40825
        },
        {
         "bone": "sleeve_l2",
         "x": 24,
         "y": 114,
-        "weight": 0.11373
-       },
-       {
-        "bone": "chest",
-        "x": 174,
-        "y": -64,
-        "weight": 0.06255
+        "weight": 0.12131
        }
       ],
       [
@@ -6034,25 +5968,19 @@
         "bone": "sleeve_l1",
         "x": 59,
         "y": -28,
-        "weight": 0.49813
+        "weight": 0.52333
        },
        {
         "bone": "sleeve_l0",
         "x": 99,
         "y": -149,
-        "weight": 0.30241
+        "weight": 0.3177
        },
        {
         "bone": "sleeve_l2",
         "x": 24,
         "y": 93,
-        "weight": 0.15132
-       },
-       {
-        "bone": "chest",
-        "x": 174,
-        "y": -85,
-        "weight": 0.04814
+        "weight": 0.15897
        }
       ],
       [
@@ -6060,25 +5988,19 @@
         "bone": "sleeve_l1",
         "x": 59,
         "y": -49,
-        "weight": 0.5524
+        "weight": 0.57302
        },
        {
         "bone": "sleeve_l2",
         "x": 24,
         "y": 72,
-        "weight": 0.20774
+        "weight": 0.21549
        },
        {
         "bone": "sleeve_l0",
         "x": 99,
         "y": -170,
-        "weight": 0.20388
-       },
-       {
-        "bone": "chest",
-        "x": 174,
-        "y": -106,
-        "weight": 0.03598
+        "weight": 0.21149
        }
       ],
       [
@@ -6586,25 +6508,19 @@
         "bone": "sleeve_l1",
         "x": -25,
         "y": -91,
-        "weight": 0.50612
+        "weight": 0.52485
        },
        {
         "bone": "sleeve_l2",
         "x": -60,
         "y": 30,
-        "weight": 0.2972
+        "weight": 0.3082
        },
        {
         "bone": "sleeve_l0",
         "x": 15,
         "y": -212,
-        "weight": 0.16099
-       },
-       {
-        "bone": "chest",
-        "x": 90,
-        "y": -148,
-        "weight": 0.03569
+        "weight": 0.16695
        }
       ],
       [
@@ -6612,25 +6528,19 @@
         "bone": "sleeve_l1",
         "x": -25,
         "y": -70,
-        "weight": 0.54833
+        "weight": 0.57015
        },
        {
         "bone": "sleeve_l0",
         "x": 15,
         "y": -191,
-        "weight": 0.21737
+        "weight": 0.22602
        },
        {
         "bone": "sleeve_l2",
         "x": -60,
         "y": 51,
-        "weight": 0.19604
-       },
-       {
-        "bone": "chest",
-        "x": 90,
-        "y": -127,
-        "weight": 0.03826
+        "weight": 0.20383
        }
       ],
       [
@@ -6638,25 +6548,19 @@
         "bone": "sleeve_l1",
         "x": -46,
         "y": -70,
-        "weight": 0.44867
+        "weight": 0.47747
        },
        {
         "bone": "sleeve_l0",
         "x": -6,
         "y": -191,
-        "weight": 0.27512
+        "weight": 0.29279
        },
        {
         "bone": "sleeve_l2",
         "x": -81,
         "y": 51,
-        "weight": 0.21588
-       },
-       {
-        "bone": "chest",
-        "x": 69,
-        "y": -127,
-        "weight": 0.06033
+        "weight": 0.22974
        }
       ],
       [
@@ -6664,25 +6568,19 @@
         "bone": "sleeve_l1",
         "x": -46,
         "y": -49,
-        "weight": 0.4475
+        "weight": 0.47793
        },
        {
         "bone": "sleeve_l0",
         "x": -6,
         "y": -170,
-        "weight": 0.34387
+        "weight": 0.36725
        },
        {
         "bone": "sleeve_l2",
         "x": -81,
         "y": 72,
-        "weight": 0.14496
-       },
-       {
-        "bone": "chest",
-        "x": 69,
-        "y": -106,
-        "weight": 0.06367
+        "weight": 0.15482
        }
       ],
       [
@@ -6690,25 +6588,19 @@
         "bone": "sleeve_l1",
         "x": -46,
         "y": -28,
-        "weight": 0.4337
+        "weight": 0.46441
        },
        {
         "bone": "sleeve_l0",
         "x": -6,
         "y": -149,
-        "weight": 0.4081
+        "weight": 0.437
        },
        {
         "bone": "sleeve_l2",
         "x": -81,
         "y": 93,
-        "weight": 0.09206
-       },
-       {
-        "bone": "chest",
-        "x": 69,
-        "y": -85,
-        "weight": 0.06614
+        "weight": 0.09859
        }
       ],
       [
@@ -6716,25 +6608,19 @@
         "bone": "sleeve_l0",
         "x": -6,
         "y": -128,
-        "weight": 0.43913
+        "weight": 0.4734
        },
        {
         "bone": "sleeve_l1",
         "x": -46,
         "y": -7,
-        "weight": 0.4288
-       },
-       {
-        "bone": "chest",
-        "x": 69,
-        "y": -64,
-        "weight": 0.0724
+        "weight": 0.46226
        },
        {
         "bone": "sleeve_l2",
         "x": -81,
         "y": 114,
-        "weight": 0.05967
+        "weight": 0.06434
        }
       ],
       [
@@ -6742,25 +6628,19 @@
         "bone": "sleeve_l0",
         "x": -27,
         "y": -128,
-        "weight": 0.40526
+        "weight": 0.46018
        },
        {
         "bone": "sleeve_l1",
         "x": -67,
         "y": -7,
-        "weight": 0.38894
-       },
-       {
-        "bone": "chest",
-        "x": 48,
-        "y": -64,
-        "weight": 0.11934
+        "weight": 0.44165
        },
        {
         "bone": "sleeve_l2",
         "x": -102,
         "y": 114,
-        "weight": 0.08646
+        "weight": 0.09817
        }
       ],
       [
@@ -6768,25 +6648,19 @@
         "bone": "sleeve_l0",
         "x": -27,
         "y": -107,
-        "weight": 0.44247
+        "weight": 0.52016
        },
        {
         "bone": "sleeve_l1",
         "x": -67,
         "y": 14,
-        "weight": 0.34332
-       },
-       {
-        "bone": "chest",
-        "x": 48,
-        "y": -43,
-        "weight": 0.14937
+        "weight": 0.4036
        },
        {
         "bone": "sleeve_l2",
         "x": -102,
         "y": 135,
-        "weight": 0.06484
+        "weight": 0.07624
        }
       ],
       [
@@ -6794,25 +6668,19 @@
         "bone": "sleeve_l0",
         "x": -27,
         "y": -86,
-        "weight": 0.49212
+        "weight": 0.61339
        },
        {
         "bone": "sleeve_l1",
         "x": -67,
         "y": 35,
-        "weight": 0.26121
-       },
-       {
-        "bone": "chest",
-        "x": 48,
-        "y": -22,
-        "weight": 0.1977
+        "weight": 0.32558
        },
        {
         "bone": "sleeve_l2",
         "x": -102,
         "y": 156,
-        "weight": 0.04897
+        "weight": 0.06103
        }
       ],
       [
@@ -6820,25 +6688,19 @@
         "bone": "sleeve_l0",
         "x": -27,
         "y": -65,
-        "weight": 0.52719
-       },
-       {
-        "bone": "chest",
-        "x": 48,
-        "y": -1,
-        "weight": 0.26559
+        "weight": 0.71784
        },
        {
         "bone": "sleeve_l1",
         "x": -67,
         "y": 56,
-        "weight": 0.17212
+        "weight": 0.23437
        },
        {
         "bone": "sleeve_l2",
         "x": -102,
         "y": 177,
-        "weight": 0.0351
+        "weight": 0.04779
        }
       ],
       [
@@ -6846,19 +6708,19 @@
         "bone": "sleeve_l0",
         "x": -27,
         "y": -44,
-        "weight": 0.53588
-       },
-       {
-        "bone": "chest",
-        "x": 48,
-        "y": 20,
-        "weight": 0.36217
+        "weight": 0.8104
        },
        {
         "bone": "sleeve_l1",
         "x": -67,
         "y": 77,
-        "weight": 0.10195
+        "weight": 0.15418
+       },
+       {
+        "bone": "sleeve_l2",
+        "x": -102,
+        "y": 198,
+        "weight": 0.03542
        }
       ],
       [
@@ -6866,47 +6728,35 @@
         "bone": "sleeve_l0",
         "x": -27,
         "y": -23,
-        "weight": 0.48879
-       },
-       {
-        "bone": "chest",
-        "x": 48,
-        "y": 41,
-        "weight": 0.45871
+        "weight": 0.90301
        },
        {
         "bone": "sleeve_l1",
         "x": -67,
         "y": 98,
-        "weight": 0.0525
+        "weight": 0.09699
        }
       ],
       [
-       {
-        "bone": "chest",
-        "x": 48,
-        "y": 62,
-        "weight": 0.50103
-       },
        {
         "bone": "sleeve_l0",
         "x": -27,
         "y": -2,
-        "weight": 0.49897
+        "weight": 0.94214
+       },
+       {
+        "bone": "sleeve_l1",
+        "x": -67,
+        "y": 119,
+        "weight": 0.05786
        }
       ],
       [
        {
-        "bone": "chest",
-        "x": 69,
-        "y": 62,
-        "weight": 0.5107
-       },
-       {
         "bone": "sleeve_l0",
         "x": -6,
         "y": -2,
-        "weight": 0.4893
+        "weight": 1
        }
       ],
       [
@@ -6914,13 +6764,7 @@
         "bone": "sleeve_l0",
         "x": 15,
         "y": -2,
-        "weight": 0.5297
-       },
-       {
-        "bone": "chest",
-        "x": 90,
-        "y": 62,
-        "weight": 0.4703
+        "weight": 1
        }
       ],
       [
@@ -6928,13 +6772,13 @@
         "bone": "sleeve_l0",
         "x": -6,
         "y": -23,
-        "weight": 0.66446
+        "weight": 0.96625
        },
        {
-        "bone": "chest",
-        "x": 69,
-        "y": 41,
-        "weight": 0.33554
+        "bone": "sleeve_l1",
+        "x": -46,
+        "y": 98,
+        "weight": 0.03375
        }
       ],
       [
@@ -6942,13 +6786,7 @@
         "bone": "sleeve_l0",
         "x": 15,
         "y": -23,
-        "weight": 0.82514
-       },
-       {
-        "bone": "chest",
-        "x": 90,
-        "y": 41,
-        "weight": 0.17486
+        "weight": 1
        }
       ],
       [
@@ -6956,19 +6794,13 @@
         "bone": "sleeve_l0",
         "x": -6,
         "y": -44,
-        "weight": 0.71906
-       },
-       {
-        "bone": "chest",
-        "x": 69,
-        "y": 20,
-        "weight": 0.22095
+        "weight": 0.92299
        },
        {
         "bone": "sleeve_l1",
         "x": -46,
         "y": 77,
-        "weight": 0.05999
+        "weight": 0.07701
        }
       ],
       [
@@ -6984,19 +6816,13 @@
         "bone": "sleeve_l0",
         "x": 36,
         "y": -44,
-        "weight": 0.75479
-       },
-       {
-        "bone": "chest",
-        "x": 111,
-        "y": 20,
-        "weight": 0.15739
+        "weight": 0.89577
        },
        {
         "bone": "sleeve_l1",
         "x": -4,
         "y": 77,
-        "weight": 0.08782
+        "weight": 0.10423
        }
       ],
       [
@@ -7004,19 +6830,13 @@
         "bone": "sleeve_l0",
         "x": -6,
         "y": -65,
-        "weight": 0.70355
-       },
-       {
-        "bone": "chest",
-        "x": 69,
-        "y": -1,
-        "weight": 0.16587
+        "weight": 0.84346
        },
        {
         "bone": "sleeve_l1",
         "x": -46,
         "y": 56,
-        "weight": 0.13058
+        "weight": 0.15654
        }
       ],
       [
@@ -7024,19 +6844,13 @@
         "bone": "sleeve_l0",
         "x": 15,
         "y": -65,
-        "weight": 0.91852
+        "weight": 0.9556
        },
        {
         "bone": "sleeve_l1",
         "x": -25,
         "y": 56,
-        "weight": 0.04268
-       },
-       {
-        "bone": "chest",
-        "x": 90,
-        "y": -1,
-        "weight": 0.0388
+        "weight": 0.0444
        }
       ],
       [
@@ -7044,19 +6858,13 @@
         "bone": "sleeve_l0",
         "x": 36,
         "y": -65,
-        "weight": 0.83314
+        "weight": 0.89105
        },
        {
         "bone": "sleeve_l1",
         "x": -4,
         "y": 56,
-        "weight": 0.10187
-       },
-       {
-        "bone": "chest",
-        "x": 111,
-        "y": -1,
-        "weight": 0.06499
+        "weight": 0.10895
        }
       ],
       [
@@ -7064,25 +6872,19 @@
         "bone": "sleeve_l0",
         "x": -6,
         "y": -86,
-        "weight": 0.6096
+        "weight": 0.69426
        },
        {
         "bone": "sleeve_l1",
         "x": -46,
         "y": 35,
-        "weight": 0.23743
-       },
-       {
-        "bone": "chest",
-        "x": 69,
-        "y": -22,
-        "weight": 0.12194
+        "weight": 0.2704
        },
        {
         "bone": "sleeve_l2",
         "x": -81,
         "y": 156,
-        "weight": 0.03103
+        "weight": 0.03534
        }
       ],
       [
@@ -7090,19 +6892,13 @@
         "bone": "sleeve_l0",
         "x": 15,
         "y": -86,
-        "weight": 0.81429
+        "weight": 0.85114
        },
        {
         "bone": "sleeve_l1",
         "x": -25,
         "y": 35,
-        "weight": 0.14241
-       },
-       {
-        "bone": "chest",
-        "x": 90,
-        "y": -22,
-        "weight": 0.0433
+        "weight": 0.14886
        }
       ],
       [
@@ -7124,19 +6920,13 @@
         "bone": "sleeve_l0",
         "x": 57,
         "y": -86,
-        "weight": 0.59686
+        "weight": 0.63752
        },
        {
         "bone": "sleeve_l1",
         "x": 17,
         "y": 35,
-        "weight": 0.33936
-       },
-       {
-        "bone": "chest",
-        "x": 132,
-        "y": -22,
-        "weight": 0.06378
+        "weight": 0.36248
        }
       ],
       [
@@ -7144,25 +6934,19 @@
         "bone": "sleeve_l0",
         "x": -6,
         "y": -107,
-        "weight": 0.50547
+        "weight": 0.5557
        },
        {
         "bone": "sleeve_l1",
         "x": -46,
         "y": 14,
-        "weight": 0.3616
-       },
-       {
-        "bone": "chest",
-        "x": 69,
-        "y": -43,
-        "weight": 0.09039
+        "weight": 0.39754
        },
        {
         "bone": "sleeve_l2",
         "x": -81,
         "y": 135,
-        "weight": 0.04254
+        "weight": 0.04676
        }
       ],
       [
@@ -7170,19 +6954,13 @@
         "bone": "sleeve_l0",
         "x": 15,
         "y": -107,
-        "weight": 0.61453
+        "weight": 0.63833
        },
        {
         "bone": "sleeve_l1",
         "x": -25,
         "y": 14,
-        "weight": 0.34819
-       },
-       {
-        "bone": "chest",
-        "x": 90,
-        "y": -43,
-        "weight": 0.03728
+        "weight": 0.36167
        }
       ],
       [
@@ -7218,25 +6996,19 @@
         "bone": "sleeve_l0",
         "x": 78,
         "y": -107,
-        "weight": 0.44597
+        "weight": 0.47235
        },
        {
         "bone": "sleeve_l1",
         "x": 38,
         "y": 14,
-        "weight": 0.44556
-       },
-       {
-        "bone": "chest",
-        "x": 153,
-        "y": -43,
-        "weight": 0.05585
+        "weight": 0.47192
        },
        {
         "bone": "sleeve_l2",
         "x": 3,
         "y": 135,
-        "weight": 0.05262
+        "weight": 0.05573
        }
       ],
       [
@@ -7244,25 +7016,19 @@
         "bone": "sleeve_l0",
         "x": 15,
         "y": -128,
-        "weight": 0.46976
+        "weight": 0.48481
        },
        {
         "bone": "sleeve_l1",
         "x": -25,
         "y": -7,
-        "weight": 0.46901
-       },
-       {
-        "bone": "chest",
-        "x": 90,
-        "y": -64,
-        "weight": 0.03105
+        "weight": 0.48404
        },
        {
         "bone": "sleeve_l2",
         "x": -60,
         "y": 114,
-        "weight": 0.03018
+        "weight": 0.03115
        }
       ],
       [
@@ -7298,25 +7064,19 @@
         "bone": "sleeve_l1",
         "x": 38,
         "y": -7,
-        "weight": 0.49064
+        "weight": 0.50985
        },
        {
         "bone": "sleeve_l0",
         "x": 78,
         "y": -128,
-        "weight": 0.41019
+        "weight": 0.42625
        },
        {
         "bone": "sleeve_l2",
         "x": 3,
         "y": 114,
-        "weight": 0.06149
-       },
-       {
-        "bone": "chest",
-        "x": 153,
-        "y": -64,
-        "weight": 0.03768
+        "weight": 0.0639
        }
       ],
       [
@@ -7324,25 +7084,19 @@
         "bone": "sleeve_l1",
         "x": -25,
         "y": -28,
-        "weight": 0.51219
+        "weight": 0.53059
        },
        {
         "bone": "sleeve_l0",
         "x": 15,
         "y": -149,
-        "weight": 0.39361
+        "weight": 0.40775
        },
        {
         "bone": "sleeve_l2",
         "x": -60,
         "y": 93,
-        "weight": 0.05952
-       },
-       {
-        "bone": "chest",
-        "x": 90,
-        "y": -85,
-        "weight": 0.03468
+        "weight": 0.06166
        }
       ],
       [
@@ -7398,25 +7152,19 @@
         "bone": "sleeve_l1",
         "x": -25,
         "y": -49,
-        "weight": 0.55381
+        "weight": 0.57578
        },
        {
         "bone": "sleeve_l0",
         "x": 15,
         "y": -170,
-        "weight": 0.29392
+        "weight": 0.30557
        },
        {
         "bone": "sleeve_l2",
         "x": -60,
         "y": 72,
-        "weight": 0.11412
-       },
-       {
-        "bone": "chest",
-        "x": 90,
-        "y": -106,
-        "weight": 0.03815
+        "weight": 0.11865
        }
       ],
       [
@@ -8410,98 +8158,92 @@
      "weights": [
       [
        {
-        "bone": "chest",
-        "x": -119,
-        "y": 83,
-        "weight": 0.51123
-       },
-       {
         "bone": "sleeve_r0",
         "x": -39,
         "y": 19,
-        "weight": 0.435
+        "weight": 0.86172
        },
        {
         "bone": "sleeve_r1",
         "x": 0,
         "y": 140,
-        "weight": 0.05377
+        "weight": 0.1065
+       },
+       {
+        "bone": "sleeve_r2",
+        "x": 38,
+        "y": 261,
+        "weight": 0.03178
        }
       ],
       [
-       {
-        "bone": "chest",
-        "x": -98,
-        "y": 83,
-        "weight": 0.61751
-       },
        {
         "bone": "sleeve_r0",
         "x": -18,
         "y": 19,
-        "weight": 0.38249
+        "weight": 0.94825
+       },
+       {
+        "bone": "sleeve_r1",
+        "x": 21,
+        "y": 140,
+        "weight": 0.05175
        }
       ],
       [
-       {
-        "bone": "chest",
-        "x": -77,
-        "y": 83,
-        "weight": 0.78376
-       },
        {
         "bone": "sleeve_r0",
         "x": 3,
         "y": 19,
-        "weight": 0.21624
+        "weight": 0.96795
+       },
+       {
+        "bone": "sleeve_r1",
+        "x": 42,
+        "y": 140,
+        "weight": 0.03205
        }
       ],
       [
-       {
-        "bone": "chest",
-        "x": -56,
-        "y": 83,
-        "weight": 0.58278
-       },
        {
         "bone": "sleeve_r0",
         "x": 24,
         "y": 19,
-        "weight": 0.41722
+        "weight": 0.94393
+       },
+       {
+        "bone": "sleeve_r1",
+        "x": 63,
+        "y": 140,
+        "weight": 0.05607
        }
       ],
       [
-       {
-        "bone": "chest",
-        "x": -56,
-        "y": 62,
-        "weight": 0.50126
-       },
        {
         "bone": "sleeve_r0",
         "x": 24,
         "y": -2,
-        "weight": 0.49874
+        "weight": 0.94963
+       },
+       {
+        "bone": "sleeve_r1",
+        "x": 63,
+        "y": 119,
+        "weight": 0.05037
        }
       ],
       [
        {
-        "bone": "chest",
-        "x": -50,
-        "y": 62,
-        "weight": 0.4837
-       },
-       {
         "bone": "sleeve_r0",
         "x": 30,
         "y": -2,
-        "weight": 0.48205
+        "weight": 0.93366
        },
        {
         "bone": "sleeve_r1",
         "x": 69,
         "y": 119,
-        "weight": 0.03425
+        "weight": 0.06634
        }
       ],
       [
@@ -8509,19 +8251,13 @@
         "bone": "sleeve_r0",
         "x": 30,
         "y": -23,
-        "weight": 0.48168
-       },
-       {
-        "bone": "chest",
-        "x": -50,
-        "y": 41,
-        "weight": 0.46058
+        "weight": 0.89297
        },
        {
         "bone": "sleeve_r1",
         "x": 69,
         "y": 98,
-        "weight": 0.05774
+        "weight": 0.10703
        }
       ],
       [
@@ -8529,19 +8265,19 @@
         "bone": "sleeve_r0",
         "x": 30,
         "y": -44,
-        "weight": 0.52201
-       },
-       {
-        "bone": "chest",
-        "x": -50,
-        "y": 20,
-        "weight": 0.37029
+        "weight": 0.79752
        },
        {
         "bone": "sleeve_r1",
         "x": 69,
         "y": 77,
-        "weight": 0.1077
+        "weight": 0.16454
+       },
+       {
+        "bone": "sleeve_r2",
+        "x": 107,
+        "y": 198,
+        "weight": 0.03794
        }
       ],
       [
@@ -8549,19 +8285,19 @@
         "bone": "sleeve_r0",
         "x": 24,
         "y": -44,
-        "weight": 0.5558
-       },
-       {
-        "bone": "chest",
-        "x": -56,
-        "y": 20,
-        "weight": 0.34712
+        "weight": 0.82433
        },
        {
         "bone": "sleeve_r1",
         "x": 63,
         "y": 77,
-        "weight": 0.09708
+        "weight": 0.14398
+       },
+       {
+        "bone": "sleeve_r2",
+        "x": 101,
+        "y": 198,
+        "weight": 0.03169
        }
       ],
       [
@@ -8569,25 +8305,19 @@
         "bone": "sleeve_r0",
         "x": 24,
         "y": -65,
-        "weight": 0.54749
-       },
-       {
-        "bone": "chest",
-        "x": -56,
-        "y": -1,
-        "weight": 0.25141
+        "weight": 0.73136
        },
        {
         "bone": "sleeve_r1",
         "x": 63,
         "y": 56,
-        "weight": 0.16868
+        "weight": 0.22533
        },
        {
         "bone": "sleeve_r2",
         "x": 101,
         "y": 177,
-        "weight": 0.03242
+        "weight": 0.04331
        }
       ],
       [
@@ -8595,25 +8325,19 @@
         "bone": "sleeve_r0",
         "x": 24,
         "y": -86,
-        "weight": 0.50755
+        "weight": 0.623
        },
        {
         "bone": "sleeve_r1",
         "x": 63,
         "y": 35,
-        "weight": 0.26181
-       },
-       {
-        "bone": "chest",
-        "x": -56,
-        "y": -22,
-        "weight": 0.18531
+        "weight": 0.32136
        },
        {
         "bone": "sleeve_r2",
         "x": 101,
         "y": 156,
-        "weight": 0.04533
+        "weight": 0.05564
        }
       ],
       [
@@ -8621,25 +8345,19 @@
         "bone": "sleeve_r0",
         "x": 24,
         "y": -107,
-        "weight": 0.45189
+        "weight": 0.52468
        },
        {
         "bone": "sleeve_r1",
         "x": 63,
         "y": 14,
-        "weight": 0.34946
-       },
-       {
-        "bone": "chest",
-        "x": -56,
-        "y": -43,
-        "weight": 0.13874
+        "weight": 0.40575
        },
        {
         "bone": "sleeve_r2",
         "x": 101,
         "y": 135,
-        "weight": 0.05991
+        "weight": 0.06957
        }
       ],
       [
@@ -8647,25 +8365,19 @@
         "bone": "sleeve_r0",
         "x": 24,
         "y": -128,
-        "weight": 0.41191
+        "weight": 0.4631
        },
        {
         "bone": "sleeve_r1",
         "x": 63,
         "y": -7,
-        "weight": 0.39749
-       },
-       {
-        "bone": "chest",
-        "x": -56,
-        "y": -64,
-        "weight": 0.11054
+        "weight": 0.4469
        },
        {
         "bone": "sleeve_r2",
         "x": 101,
         "y": 114,
-        "weight": 0.08006
+        "weight": 0.09
        }
       ],
       [
@@ -8673,25 +8385,19 @@
         "bone": "sleeve_r1",
         "x": 63,
         "y": -28,
-        "weight": 0.39842
+        "weight": 0.44069
        },
        {
         "bone": "sleeve_r0",
         "x": 24,
         "y": -149,
-        "weight": 0.39387
+        "weight": 0.43565
        },
        {
         "bone": "sleeve_r2",
         "x": 101,
         "y": 93,
-        "weight": 0.1118
-       },
-       {
-        "bone": "chest",
-        "x": -56,
-        "y": -85,
-        "weight": 0.09591
+        "weight": 0.12366
        }
       ],
       [
@@ -8699,25 +8405,19 @@
         "bone": "sleeve_r1",
         "x": 63,
         "y": -49,
-        "weight": 0.39896
+        "weight": 0.43731
        },
        {
         "bone": "sleeve_r0",
         "x": 24,
         "y": -170,
-        "weight": 0.35509
+        "weight": 0.38922
        },
        {
         "bone": "sleeve_r2",
         "x": 101,
         "y": 72,
-        "weight": 0.15825
-       },
-       {
-        "bone": "chest",
-        "x": -56,
-        "y": -106,
-        "weight": 0.0877
+        "weight": 0.17347
        }
       ],
       [
@@ -8725,25 +8425,19 @@
         "bone": "sleeve_r1",
         "x": 42,
         "y": -49,
-        "weight": 0.4587
+        "weight": 0.48772
        },
        {
         "bone": "sleeve_r0",
         "x": 3,
         "y": -170,
-        "weight": 0.34475
+        "weight": 0.36656
        },
        {
         "bone": "sleeve_r2",
         "x": 80,
         "y": 72,
-        "weight": 0.13706
-       },
-       {
-        "bone": "chest",
-        "x": -77,
-        "y": -106,
-        "weight": 0.05949
+        "weight": 0.14572
        }
       ],
       [
@@ -8751,25 +8445,19 @@
         "bone": "sleeve_r1",
         "x": 42,
         "y": -70,
-        "weight": 0.45933
+        "weight": 0.48734
        },
        {
         "bone": "sleeve_r0",
         "x": 3,
         "y": -191,
-        "weight": 0.27434
+        "weight": 0.29107
        },
        {
         "bone": "sleeve_r2",
         "x": 80,
         "y": 51,
-        "weight": 0.20886
-       },
-       {
-        "bone": "chest",
-        "x": -77,
-        "y": -127,
-        "weight": 0.05747
+        "weight": 0.22159
        }
       ],
       [
@@ -8777,25 +8465,19 @@
         "bone": "sleeve_r1",
         "x": 21,
         "y": -70,
-        "weight": 0.56659
+        "weight": 0.58765
        },
        {
         "bone": "sleeve_r0",
         "x": -18,
         "y": -191,
-        "weight": 0.21031
+        "weight": 0.21813
        },
        {
         "bone": "sleeve_r2",
         "x": 59,
         "y": 51,
-        "weight": 0.18726
-       },
-       {
-        "bone": "chest",
-        "x": -98,
-        "y": -127,
-        "weight": 0.03584
+        "weight": 0.19422
        }
       ],
       [
@@ -8803,25 +8485,19 @@
         "bone": "sleeve_r1",
         "x": 21,
         "y": -91,
-        "weight": 0.5185
+        "weight": 0.53676
        },
        {
         "bone": "sleeve_r2",
         "x": 59,
         "y": 30,
-        "weight": 0.29071
+        "weight": 0.30095
        },
        {
         "bone": "sleeve_r0",
         "x": -18,
         "y": -212,
-        "weight": 0.15676
-       },
-       {
-        "bone": "chest",
-        "x": -98,
-        "y": -148,
-        "weight": 0.03403
+        "weight": 0.16229
        }
       ],
       [
@@ -9341,25 +9017,19 @@
         "bone": "sleeve_r1",
         "x": -42,
         "y": -28,
-        "weight": 0.5954
+        "weight": 0.61477
        },
        {
         "bone": "sleeve_r0",
         "x": -81,
         "y": -149,
-        "weight": 0.27854
+        "weight": 0.2876
        },
        {
         "bone": "sleeve_r2",
         "x": -4,
         "y": 93,
-        "weight": 0.09455
-       },
-       {
-        "bone": "chest",
-        "x": -161,
-        "y": -85,
-        "weight": 0.03151
+        "weight": 0.09763
        }
       ],
       [
@@ -9367,25 +9037,19 @@
         "bone": "sleeve_r1",
         "x": -63,
         "y": -28,
-        "weight": 0.48931
+        "weight": 0.51565
        },
        {
         "bone": "sleeve_r0",
         "x": -102,
         "y": -149,
-        "weight": 0.29693
+        "weight": 0.31291
        },
        {
         "bone": "sleeve_r2",
         "x": -25,
         "y": 93,
-        "weight": 0.16268
-       },
-       {
-        "bone": "chest",
-        "x": -182,
-        "y": -85,
-        "weight": 0.05108
+        "weight": 0.17144
        }
       ],
       [
@@ -9393,25 +9057,19 @@
         "bone": "sleeve_r1",
         "x": -63,
         "y": -7,
-        "weight": 0.43585
+        "weight": 0.46706
        },
        {
         "bone": "sleeve_r0",
         "x": -102,
         "y": -128,
-        "weight": 0.37347
+        "weight": 0.40023
        },
        {
         "bone": "sleeve_r2",
         "x": -25,
         "y": 114,
-        "weight": 0.12384
-       },
-       {
-        "bone": "chest",
-        "x": -182,
-        "y": -64,
-        "weight": 0.06684
+        "weight": 0.13271
        }
       ],
       [
@@ -9419,25 +9077,19 @@
         "bone": "sleeve_r1",
         "x": -63,
         "y": 14,
-        "weight": 0.40533
+        "weight": 0.44551
        },
        {
         "bone": "sleeve_r0",
         "x": -102,
         "y": -107,
-        "weight": 0.40272
+        "weight": 0.44265
        },
        {
         "bone": "sleeve_r2",
         "x": -25,
         "y": 135,
-        "weight": 0.10175
-       },
-       {
-        "bone": "chest",
-        "x": -182,
-        "y": -43,
-        "weight": 0.0902
+        "weight": 0.11184
        }
       ],
       [
@@ -9445,25 +9097,19 @@
         "bone": "sleeve_r0",
         "x": -102,
         "y": -86,
-        "weight": 0.39791
+        "weight": 0.45573
        },
        {
         "bone": "sleeve_r1",
         "x": -63,
         "y": 35,
-        "weight": 0.38457
-       },
-       {
-        "bone": "chest",
-        "x": -182,
-        "y": -22,
-        "weight": 0.12689
+        "weight": 0.44046
        },
        {
         "bone": "sleeve_r2",
         "x": -25,
         "y": 156,
-        "weight": 0.09063
+        "weight": 0.10381
        }
       ],
       [
@@ -9471,25 +9117,19 @@
         "bone": "sleeve_r0",
         "x": -81,
         "y": -86,
-        "weight": 0.44722
+        "weight": 0.49742
        },
        {
         "bone": "sleeve_r1",
         "x": -42,
         "y": 35,
-        "weight": 0.39332
-       },
-       {
-        "bone": "chest",
-        "x": -161,
-        "y": -22,
-        "weight": 0.10093
+        "weight": 0.43747
        },
        {
         "bone": "sleeve_r2",
         "x": -4,
         "y": 156,
-        "weight": 0.05853
+        "weight": 0.06511
        }
       ],
       [
@@ -9497,25 +9137,19 @@
         "bone": "sleeve_r0",
         "x": -81,
         "y": -65,
-        "weight": 0.45894
+        "weight": 0.54715
        },
        {
         "bone": "sleeve_r1",
         "x": -42,
         "y": 56,
-        "weight": 0.32182
-       },
-       {
-        "bone": "chest",
-        "x": -161,
-        "y": -1,
-        "weight": 0.16122
+        "weight": 0.38367
        },
        {
         "bone": "sleeve_r2",
         "x": -4,
         "y": 177,
-        "weight": 0.05802
+        "weight": 0.06918
        }
       ],
       [
@@ -9523,25 +9157,19 @@
         "bone": "sleeve_r0",
         "x": -60,
         "y": -65,
-        "weight": 0.57388
+        "weight": 0.66171
        },
        {
         "bone": "sleeve_r1",
         "x": -21,
         "y": 56,
-        "weight": 0.25835
-       },
-       {
-        "bone": "chest",
-        "x": -140,
-        "y": -1,
-        "weight": 0.13272
+        "weight": 0.29788
        },
        {
         "bone": "sleeve_r2",
         "x": 17,
         "y": 177,
-        "weight": 0.03505
+        "weight": 0.04041
        }
       ],
       [
@@ -9549,25 +9177,19 @@
         "bone": "sleeve_r0",
         "x": -60,
         "y": -44,
-        "weight": 0.54817
-       },
-       {
-        "bone": "chest",
-        "x": -140,
-        "y": 20,
-        "weight": 0.22432
+        "weight": 0.7067
        },
        {
         "bone": "sleeve_r1",
         "x": -21,
         "y": 77,
-        "weight": 0.19235
+        "weight": 0.24797
        },
        {
         "bone": "sleeve_r2",
         "x": 17,
         "y": 198,
-        "weight": 0.03516
+        "weight": 0.04533
        }
       ],
       [
@@ -9575,19 +9197,13 @@
         "bone": "sleeve_r0",
         "x": -39,
         "y": -44,
-        "weight": 0.72157
-       },
-       {
-        "bone": "chest",
-        "x": -119,
-        "y": 20,
-        "weight": 0.17461
+        "weight": 0.87421
        },
        {
         "bone": "sleeve_r1",
         "x": 0,
         "y": 77,
-        "weight": 0.10382
+        "weight": 0.12579
        }
       ],
       [
@@ -9595,19 +9211,13 @@
         "bone": "sleeve_r0",
         "x": -39,
         "y": -23,
-        "weight": 0.59861
-       },
-       {
-        "bone": "chest",
-        "x": -119,
-        "y": 41,
-        "weight": 0.32161
+        "weight": 0.88239
        },
        {
         "bone": "sleeve_r1",
         "x": 0,
         "y": 98,
-        "weight": 0.07978
+        "weight": 0.11761
        }
       ],
       [
@@ -9615,19 +9225,13 @@
         "bone": "sleeve_r0",
         "x": -39,
         "y": -2,
-        "weight": 0.49378
-       },
-       {
-        "bone": "chest",
-        "x": -119,
-        "y": 62,
-        "weight": 0.44381
+        "weight": 0.88779
        },
        {
         "bone": "sleeve_r1",
         "x": 0,
         "y": 119,
-        "weight": 0.06241
+        "weight": 0.11221
        }
       ],
       [
@@ -9635,27 +9239,21 @@
         "bone": "sleeve_r0",
         "x": -18,
         "y": -2,
-        "weight": 0.52819
+        "weight": 0.96281
        },
        {
-        "bone": "chest",
-        "x": -98,
-        "y": 62,
-        "weight": 0.47181
+        "bone": "sleeve_r1",
+        "x": 21,
+        "y": 119,
+        "weight": 0.03719
        }
       ],
       [
        {
-        "bone": "chest",
-        "x": -77,
-        "y": 62,
-        "weight": 0.51916
-       },
-       {
         "bone": "sleeve_r0",
         "x": 3,
         "y": -2,
-        "weight": 0.48084
+        "weight": 1
        }
       ],
       [
@@ -9663,13 +9261,7 @@
         "bone": "sleeve_r0",
         "x": -18,
         "y": -23,
-        "weight": 0.78691
-       },
-       {
-        "bone": "chest",
-        "x": -98,
-        "y": 41,
-        "weight": 0.21309
+        "weight": 1
        }
       ],
       [
@@ -9677,13 +9269,7 @@
         "bone": "sleeve_r0",
         "x": 3,
         "y": -23,
-        "weight": 0.7185
-       },
-       {
-        "bone": "chest",
-        "x": -77,
-        "y": 41,
-        "weight": 0.2815
+        "weight": 1
        }
       ],
       [
@@ -9691,19 +9277,13 @@
         "bone": "sleeve_r0",
         "x": 24,
         "y": -23,
-        "weight": 0.49975
-       },
-       {
-        "bone": "chest",
-        "x": -56,
-        "y": 41,
-        "weight": 0.45225
+        "weight": 0.91236
        },
        {
         "bone": "sleeve_r1",
         "x": 63,
         "y": 98,
-        "weight": 0.048
+        "weight": 0.08764
        }
       ],
       [
@@ -9711,13 +9291,7 @@
         "bone": "sleeve_r0",
         "x": -18,
         "y": -44,
-        "weight": 0.94935
-       },
-       {
-        "bone": "chest",
-        "x": -98,
-        "y": 20,
-        "weight": 0.05065
+        "weight": 1
        }
       ],
       [
@@ -9725,19 +9299,13 @@
         "bone": "sleeve_r0",
         "x": 3,
         "y": -44,
-        "weight": 0.76056
-       },
-       {
-        "bone": "chest",
-        "x": -77,
-        "y": 20,
-        "weight": 0.18717
+        "weight": 0.93569
        },
        {
         "bone": "sleeve_r1",
         "x": 42,
         "y": 77,
-        "weight": 0.05227
+        "weight": 0.06431
        }
       ],
       [
@@ -9745,19 +9313,13 @@
         "bone": "sleeve_r0",
         "x": -39,
         "y": -65,
-        "weight": 0.79272
+        "weight": 0.86043
        },
        {
         "bone": "sleeve_r1",
         "x": 0,
         "y": 56,
-        "weight": 0.12859
-       },
-       {
-        "bone": "chest",
-        "x": -119,
-        "y": -1,
-        "weight": 0.07869
+        "weight": 0.13957
        }
       ],
       [
@@ -9773,19 +9335,13 @@
         "bone": "sleeve_r0",
         "x": 3,
         "y": -65,
-        "weight": 0.73713
-       },
-       {
-        "bone": "chest",
-        "x": -77,
-        "y": -1,
-        "weight": 0.14347
+        "weight": 0.86059
        },
        {
         "bone": "sleeve_r1",
         "x": 42,
         "y": 56,
-        "weight": 0.1194
+        "weight": 0.13941
        }
       ],
       [
@@ -9793,25 +9349,19 @@
         "bone": "sleeve_r0",
         "x": -60,
         "y": -86,
-        "weight": 0.54991
+        "weight": 0.5906
        },
        {
         "bone": "sleeve_r1",
         "x": -21,
         "y": 35,
-        "weight": 0.34967
-       },
-       {
-        "bone": "chest",
-        "x": -140,
-        "y": -22,
-        "weight": 0.0689
+        "weight": 0.37555
        },
        {
         "bone": "sleeve_r2",
         "x": 17,
         "y": 156,
-        "weight": 0.03152
+        "weight": 0.03385
        }
       ],
       [
@@ -9819,19 +9369,13 @@
         "bone": "sleeve_r0",
         "x": -39,
         "y": -86,
-        "weight": 0.80714
+        "weight": 0.83249
        },
        {
         "bone": "sleeve_r1",
         "x": 0,
         "y": 35,
-        "weight": 0.16241
-       },
-       {
-        "bone": "chest",
-        "x": -119,
-        "y": -22,
-        "weight": 0.03045
+        "weight": 0.16751
        }
       ],
       [
@@ -9839,19 +9383,13 @@
         "bone": "sleeve_r0",
         "x": -18,
         "y": -86,
-        "weight": 0.85383
+        "weight": 0.88167
        },
        {
         "bone": "sleeve_r1",
         "x": 21,
         "y": 35,
-        "weight": 0.1146
-       },
-       {
-        "bone": "chest",
-        "x": -98,
-        "y": -22,
-        "weight": 0.03157
+        "weight": 0.11833
        }
       ],
       [
@@ -9859,19 +9397,19 @@
         "bone": "sleeve_r0",
         "x": 3,
         "y": -86,
-        "weight": 0.6538
+        "weight": 0.71241
        },
        {
         "bone": "sleeve_r1",
         "x": 42,
         "y": 35,
-        "weight": 0.2358
+        "weight": 0.25693
        },
        {
-        "bone": "chest",
-        "x": -77,
-        "y": -22,
-        "weight": 0.1104
+        "bone": "sleeve_r2",
+        "x": 80,
+        "y": 156,
+        "weight": 0.03066
        }
       ],
       [
@@ -9879,25 +9417,19 @@
         "bone": "sleeve_r0",
         "x": -81,
         "y": -107,
-        "weight": 0.43895
+        "weight": 0.46802
        },
        {
         "bone": "sleeve_r1",
         "x": -42,
         "y": 14,
-        "weight": 0.43892
-       },
-       {
-        "bone": "chest",
-        "x": -161,
-        "y": -43,
-        "weight": 0.06211
+        "weight": 0.46798
        },
        {
         "bone": "sleeve_r2",
         "x": -4,
         "y": 135,
-        "weight": 0.06002
+        "weight": 0.064
        }
       ],
       [
@@ -9905,19 +9437,13 @@
         "bone": "sleeve_r0",
         "x": -60,
         "y": -107,
-        "weight": 0.49739
+        "weight": 0.51416
        },
        {
         "bone": "sleeve_r1",
         "x": -21,
         "y": 14,
-        "weight": 0.46998
-       },
-       {
-        "bone": "chest",
-        "x": -140,
-        "y": -43,
-        "weight": 0.03263
+        "weight": 0.48584
        }
       ],
       [
@@ -9953,25 +9479,19 @@
         "bone": "sleeve_r0",
         "x": 3,
         "y": -107,
-        "weight": 0.51828
+        "weight": 0.56308
        },
        {
         "bone": "sleeve_r1",
         "x": 42,
         "y": 14,
-        "weight": 0.36458
-       },
-       {
-        "bone": "chest",
-        "x": -77,
-        "y": -43,
-        "weight": 0.07955
+        "weight": 0.39609
        },
        {
         "bone": "sleeve_r2",
         "x": 80,
         "y": 135,
-        "weight": 0.03759
+        "weight": 0.04083
        }
       ],
       [
@@ -9979,25 +9499,19 @@
         "bone": "sleeve_r1",
         "x": -42,
         "y": -7,
-        "weight": 0.48484
+        "weight": 0.50632
        },
        {
         "bone": "sleeve_r0",
         "x": -81,
         "y": -128,
-        "weight": 0.40211
+        "weight": 0.41992
        },
        {
         "bone": "sleeve_r2",
         "x": -4,
         "y": 114,
-        "weight": 0.07063
-       },
-       {
-        "bone": "chest",
-        "x": -161,
-        "y": -64,
-        "weight": 0.04242
+        "weight": 0.07376
        }
       ],
       [
@@ -10047,25 +9561,19 @@
         "bone": "sleeve_r0",
         "x": 3,
         "y": -128,
-        "weight": 0.44552
+        "weight": 0.47591
        },
        {
         "bone": "sleeve_r1",
         "x": 42,
         "y": -7,
-        "weight": 0.43766
-       },
-       {
-        "bone": "chest",
-        "x": -77,
-        "y": -64,
-        "weight": 0.06385
+        "weight": 0.46751
        },
        {
         "bone": "sleeve_r2",
         "x": 80,
         "y": 114,
-        "weight": 0.05297
+        "weight": 0.05658
        }
       ],
       [
@@ -10107,25 +9615,19 @@
         "bone": "sleeve_r1",
         "x": 21,
         "y": -28,
-        "weight": 0.53223
+        "weight": 0.54881
        },
        {
         "bone": "sleeve_r0",
         "x": -18,
         "y": -149,
-        "weight": 0.38504
+        "weight": 0.39704
        },
        {
         "bone": "sleeve_r2",
         "x": 59,
         "y": 93,
-        "weight": 0.05252
-       },
-       {
-        "bone": "chest",
-        "x": -98,
-        "y": -85,
-        "weight": 0.03021
+        "weight": 0.05415
        }
       ],
       [
@@ -10133,25 +9635,19 @@
         "bone": "sleeve_r1",
         "x": 42,
         "y": -28,
-        "weight": 0.44261
+        "weight": 0.47087
        },
        {
         "bone": "sleeve_r0",
         "x": 3,
         "y": -149,
-        "weight": 0.41308
+        "weight": 0.43946
        },
        {
         "bone": "sleeve_r2",
         "x": 80,
         "y": 93,
-        "weight": 0.08428
-       },
-       {
-        "bone": "chest",
-        "x": -77,
-        "y": -85,
-        "weight": 0.06003
+        "weight": 0.08967
        }
       ],
       [
@@ -10193,25 +9689,19 @@
         "bone": "sleeve_r1",
         "x": 21,
         "y": -49,
-        "weight": 0.57605
+        "weight": 0.59679
        },
        {
         "bone": "sleeve_r0",
         "x": -18,
         "y": -170,
-        "weight": 0.28355
+        "weight": 0.29376
        },
        {
         "bone": "sleeve_r2",
         "x": 59,
         "y": 72,
-        "weight": 0.10564
-       },
-       {
-        "bone": "chest",
-        "x": -98,
-        "y": -106,
-        "weight": 0.03476
+        "weight": 0.10945
        }
       ],
       [

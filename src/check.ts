@@ -111,6 +111,7 @@ import {
   setupToFrame,
   stillReading,
   stillTolerance,
+  type StretchAt,
   stretchFigures,
   stretchSeverity,
   sweptBox,
@@ -1723,6 +1724,8 @@ export interface CheckFigures {
   [FOLD_LINE]?: FoldsLine;
   /** Written only where a `footwear` part rides a bone with a parent and motion.json holds an animation (issue #348): {@link LevelLine}. */
   [LEVEL_LINE]?: LevelLine;
+  /** Written whenever parts.json names a `handwear` part and the motion has an idle (issue #347): {@link STRESS_LINE}. */
+  [STRESS_LINE]?: JudgementLine;
   RECOMPOSITE_HOLES: ReportedLine;
   /** Written only under `--source` (issue #77): the setup pose against the painting, REPORTED. */
   SETUP_POSE_VS_SOURCE?: ReportedLine;
@@ -1819,15 +1822,49 @@ export const LEVEL_BAR_DEGREES = 10;
 /** Where the bar comes from, as the line and check.json state it. */
 export const LEVEL_BAR_SOURCE = "HQ's line (rig-c/parts#347 ruling 4), not a figure measured here";
 
+/**
+ * The bar on a sleeve whose mesh is weighted to a bone off its chain (issue
+ * #347). The chain's first link is turned through {@link STRESS_TURNS} on a
+ * throwaway copy of the rig; rigc poses each turn and writes its
+ * `geometry.json`; the part's worst edge, max(ratio, 1/ratio) against the
+ * setup pose ({@link stretchFigures}, the quantity `TEXTURE_STRETCH` reads),
+ * must read {@link STRESS_RIGID} at {@link STRESS_PLACES} places. A part
+ * weighted to its chain alone turns rigidly with the link, so it reads exactly
+ * that; a vertex weighted to a bone the turn does not move is pulled between
+ * the two, and the line names that bone — the segment on it in the config's
+ * `meshes.<part>.segments`.
+ *
+ * - **The bar is the rigid reading, not a margin.** Measured for issue #347
+ *   (rigc 2.47.1, scratch runs, not tracked): the `handwear_*` parts of
+ *   `demo` and of the exam-01 test rig, their chest segment dropped, read
+ *   1.0000038 to 1.0000090 over the three turns of each sleeve — float32 bone
+ *   arithmetic — and 1.0000 at four places; with the segment, 2.41 to 1498.
+ * - **The turns are interim** (issue #347, HQ's ruling 1): ±90° and 180° on
+ *   the first link, the card's arm raised, arm across and arm behind the head,
+ *   until a config block names each limb and its joint's declared range — the
+ *   stress check then poses each limb at its range's ends.
+ * - **Which parts: those from a See-through `handwear` layer**
+ *   ({@link STRESS_TAGS}) whose weights ride exactly one chain the idle keys
+ *   ({@link chainsCarrying}). A part riding two chains (one mesh for both
+ *   sleeves) stretches between them by construction when one turns, and is
+ *   listed as not read with that reason. The scope is the tag and not every
+ *   one-chain part: `reference-demo`'s `hairpin` rides its tassel's chain and
+ *   the pin's bone, a pendant the idle swings a few degrees, and reads 23.7
+ *   with its tassel turned 180° (issue #347, scratch run) — a figure for the
+ *   limbs block to scope, not a defect this line was asked to name.
+ */
+export const STRESS_LINE = 'STRESS_OFF_CHAIN';
+
 /** The bars `PASS` reads, in the order the summary counts them: the gate, the reference's two, then the judgement lines. */
 export const BARS = ['gate', 'loop', 'seam', ...JUDGEMENT_LINES] as const;
 
 /**
  * The bars a character's own check may have failed and `compose --accept`
  * still take (issue #203): every bar of {@link BARS} but the gate, which is
- * rig-c's and never accepted, and {@link FOLD_LINE} (issue #320).
+ * rig-c's and never accepted, {@link FOLD_LINE} (issue #320) and
+ * {@link STRESS_LINE} (issue #347).
  */
-export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== 'gate'), FOLD_LINE, LEVEL_LINE];
+export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== 'gate'), FOLD_LINE, LEVEL_LINE, STRESS_LINE];
 
 /**
  * The bars a `check.json`, as `check` writes it, says were not met, in
@@ -1835,7 +1872,7 @@ export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== '
  * loop when `loop_max_diff` is a number other than {@link LOOP_MAX_BAR}, the
  * seam when its figures fail {@link seamFails}, and each judgement line whose
  * status is `FAIL`, then {@link FOLD_LINE} when it is written and `FAIL`
- * (issue #320), then {@link LEVEL_LINE} the same way (issue #348). A bar that measured nothing (null figures, `SKIP`) is not
+ * (issue #320), then {@link LEVEL_LINE} the same way (issue #348), then {@link STRESS_LINE} likewise (issue #347). A bar that measured nothing (null figures, `SKIP`) is not
  * one of them. Read off the file rather than its problems, because the file is
  * all a finished build leaves (issue #203).
  */
@@ -1846,7 +1883,7 @@ export function barsNotMet(fig: Readonly<Record<string, unknown>>): string[] {
   // A check.json written before issue #216 has no seam_frame_scale; it is read by the frame count, the bar it was written under.
   const scale = typeof fig.seam_frame_scale === 'number' ? fig.seam_frame_scale : 1;
   if (typeof fig.seam_mean === 'number' && typeof fig.seam_px_over_40 === 'number' && seamFails(fig.seam_mean, fig.seam_px_over_40, scale)) out.push('seam');
-  for (const n of [...JUDGEMENT_LINES, FOLD_LINE, LEVEL_LINE]) {
+  for (const n of [...JUDGEMENT_LINES, FOLD_LINE, LEVEL_LINE, STRESS_LINE]) {
     const l = fig[n];
     if (typeof l === 'object' && l !== null && (l as { status?: unknown }).status === 'FAIL') out.push(n);
   }
@@ -2261,6 +2298,218 @@ export function levelLine(feet: readonly LevelFoot[], rig: Record<string, unknow
   return line;
 }
 
+// ---------------------------------------------------------------------------
+// a part on one chain, posed large (issue #347)
+// ---------------------------------------------------------------------------
+
+
+/** The first link's turns, degrees from its setup rotation (issue #347's card: ±90° and 180°), interim until limbs are declared. */
+export const STRESS_TURNS: readonly number[] = [90, -90, 180];
+
+/** The parts the line reads (issue #347): from a See-through layer of these tags. */
+export const STRESS_TAGS: readonly BaseTag[] = ['handwear'];
+
+/** The reading a part riding its chain rigidly gives: max(ratio, 1/ratio) of 1. */
+export const STRESS_RIGID = 1;
+
+/** The places the reading is held to {@link STRESS_RIGID} at: four, where the rigid parts' float32 noise (at most 9.0e-6 measured) rounds away. */
+export const STRESS_PLACES = 4;
+
+/** The stress render, under `--out`; removed before the stage returns. */
+const STRESS_SCRATCH = '_stress';
+
+/** The animation one turn of one first link is posed by on the throwaway copy. */
+export function stressAnimationName(link: string, turn: number): string {
+  return `stress ${link} ${turn}`;
+}
+
+/**
+ * The stress render's geometry, by animation: `frames.json` names each set's
+ * directory and how many frames it wrote, and each `geometry.json` is read by
+ * {@link readGeometry}. A set or a file missing is refused
+ * (`CHECK_GEOMETRY_FILE`), every one at once.
+ */
+export function readStressSets(dir: string, named: readonly string[]): Map<string, IdleGeometry> {
+  const problems: Problem[] = [];
+  const sidecar = readJson(join(dir, 'frames.json'), problems);
+  const sets = sidecar !== null && Array.isArray(sidecar.sets) ? sidecar.sets.filter(isRecord) : [];
+  const out = new Map<string, IdleGeometry>();
+  for (const name of named) {
+    const set = sets.find((x) => x.animation === name);
+    if (set === undefined || typeof set.dir !== 'string' || typeof set.written !== 'number') {
+      problems.push({ code: 'CHECK_GEOMETRY_FILE', object: join(dir, 'frames.json'), detail: `names no frame set for animation ${JSON.stringify(name)} with its directory and frame count; \`rigc render --geometry\` over the turned copy writes one per animation` });
+      continue;
+    }
+    const path = join(dir, set.dir, GEOMETRY_FILE);
+    const geo = readGeometry(path, set.written);
+    if (geo === null) problems.push({ code: 'CHECK_GEOMETRY_FILE', object: path, detail: 'does not exist; `rigc render --geometry` writes it, and the stress line reads the part\'s posed mesh from it' });
+    else out.set(name, geo);
+  }
+  refuseIfAny(problems);
+  return out;
+}
+
+/** A part the line reads: its chain's links from the root, and the bones it is weighted to off that chain, each with how many of its vertices carry it and the largest weight. */
+export interface StressPart {
+  part: string;
+  chain: string[];
+  off_chain: Array<{ bone: string; vertices: number; of: number; largest_weight: number }>;
+}
+
+/** The parts a handwear tag names that the line reads, and those it does not with the reason. */
+export interface StressPlan {
+  read: StressPart[];
+  notRead: Array<{ part: string; reason: string }>;
+}
+
+/**
+ * Which handwear parts the line reads (see {@link STRESS_LINE}): a weighted
+ * mesh whose bones ride exactly one chain of the idle; for each, the bones
+ * off that chain — neither a link nor under one — with their vertex counts
+ * and largest weight, read off `rig.json`'s default skin.
+ */
+export function stressPlan(rig: Record<string, unknown>, motion: Record<string, unknown>, parts: readonly PartRecord[]): StressPlan {
+  const read: StressPart[] = [];
+  const notRead: StressPlan['notRead'] = [];
+  const bones = (Array.isArray(rig.bones) ? rig.bones : []).filter(isRecord).filter((b) => typeof b.name === 'string');
+  const parent = new Map(bones.map((b) => [String(b.name), typeof b.parent === 'string' ? b.parent : null]));
+  const skins = isRecord(rig.skins) ? rig.skins : {};
+  const skin = isRecord(skins.default) ? skins.default : {};
+  for (const p of parts) {
+    const onSlot = skin[p.name];
+    const atts: unknown[] = isRecord(onSlot) ? Object.values(onSlot) : [];
+    const weighted = atts.filter((a): a is Record<string, unknown> & { weights: unknown[] } => isRecord(a) && Array.isArray(a.weights));
+    if (weighted.length === 0) {
+      notRead.push({ part: p.name, reason: 'it is not a weighted mesh, so it rides one bone whole and cannot stretch' });
+      continue;
+    }
+    const { found } = chainsCarrying(rig, motion, p.name);
+    if (found.length !== 1) {
+      notRead.push({
+        part: p.name,
+        reason:
+          found.length === 0
+            ? 'its weights ride no chain the idle keys, so there is no chain to turn'
+            : `its weights ride ${found.length} chains (${found.map((c) => `"${c[0]}"`).join(', ')}): turning one stretches the part toward the other by construction; a part riding one chain is read until a limbs block names each limb`,
+      });
+      continue;
+    }
+    const chain = found[0];
+    const onChain = (b: string): boolean => {
+      const seen = new Set<string>();
+      for (let x: string | null = b; x !== null && !seen.has(x); x = parent.get(x) ?? null) {
+        if (chain.includes(x)) return true;
+        seen.add(x);
+      }
+      return false;
+    };
+    const off = new Map<string, { vertices: number; largest: number }>();
+    let of = 0;
+    for (const a of weighted) {
+      for (const v of a.weights) {
+        of++;
+        const ws = (Array.isArray(v) ? v : []).filter(isRecord).filter((w) => typeof w.bone === 'string' && typeof w.weight === 'number') as Array<{ bone: string; weight: number }>;
+        for (const w of ws) {
+          if (onChain(w.bone) || w.weight <= 0) continue;
+          const e = off.get(w.bone) ?? { vertices: 0, largest: 0 };
+          e.vertices++;
+          e.largest = Math.max(e.largest, w.weight);
+          off.set(w.bone, e);
+        }
+      }
+    }
+    read.push({ part: p.name, chain, off_chain: [...off].map(([bone, e]) => ({ bone, vertices: e.vertices, of, largest_weight: e.largest })) });
+  }
+  return { read, notRead };
+}
+
+/** The throwaway copy's animations: one per first link and turn, a single `rotate` key at time 0, duration 0. */
+export function stressAnimations(plan: StressPlan): Record<string, { duration: number; tracks: Array<{ bone: string; property: string; keys: Array<{ t: number; v: number[] }> }> }> {
+  const out: ReturnType<typeof stressAnimations> = {};
+  for (const r of plan.read) {
+    for (const turn of STRESS_TURNS) out[stressAnimationName(r.chain[0], turn)] = { duration: 0, tracks: [{ bone: r.chain[0], property: 'rotate', keys: [{ t: 0, v: [turn] }] }] };
+  }
+  return out;
+}
+
+/** {@link STRESS_PLACES} places. */
+function roundStress(x: number): number {
+  const k = 10 ** STRESS_PLACES;
+  return Math.round(x * k) / k;
+}
+
+/**
+ * The line from the renders: `geometry` maps each stress animation to its
+ * `geometry.json` read by {@link readGeometry}. Per part and turn, the
+ * worst edge of the part's mesh; a reading above {@link STRESS_RIGID} at
+ * {@link STRESS_PLACES} places is a `CHECK_STRESS_OFF_CHAIN` problem naming
+ * the part, the link and turn, the edge, and the bones off the chain. SKIP,
+ * with every part's reason, when no handwear part is read.
+ */
+export function stressLine(plan: StressPlan, geometry: (animation: string) => IdleGeometry, problems: Problem[]): JudgementLine {
+  if (plan.read.length === 0) return skip(plan.notRead.map((n) => `"${n.part}": ${n.reason}`).join('; '));
+  const rows: Array<Record<string, unknown>> = [];
+  let worst: { part: string; link: string; turn: number; reading: number } | null = null;
+  let failed = false;
+  for (const r of plan.read) {
+    const poses: Array<Record<string, unknown>> = [];
+    for (const turn of STRESS_TURNS) {
+      const name = stressAnimationName(r.chain[0], turn);
+      const geo = geometry(name);
+      const m = stretchFigures(
+        geo.meshes.filter((x) => x.slot === r.part),
+        geo.frames,
+      );
+      const seen = m.filter((x) => x.max !== null && x.min !== null);
+      if (seen.length === 0) {
+        poses.push({ turn, unmeasured: `the "${name}" render shows no mesh on slot "${r.part}"` });
+        failed = true;
+        problems.push({ code: `CHECK_${STRESS_LINE}`, object: `mesh "${r.part}" with "${r.chain[0]}" turned ${turn}°`, detail: `the "${name}" render shows no mesh on slot "${r.part}", so its stretch was not read; a part not read is not a pass` });
+        continue;
+      }
+      let at: StretchAt | null = null;
+      let reading = 0;
+      for (const x of seen) {
+        for (const s of [x.max as StretchAt, x.min as StretchAt]) {
+          const v = stretchSeverity(s.ratio);
+          if (v > reading) {
+            reading = v;
+            at = s;
+          }
+        }
+      }
+      const shown = roundStress(reading);
+      const a = at as StretchAt;
+      poses.push({ turn, reading: shown, worst: { triangle: a.triangle, edge: a.edge, ratio: round3(a.ratio) } });
+      if (worst === null || reading > worst.reading) worst = { part: r.part, link: r.chain[0], turn, reading };
+      if (shown > STRESS_RIGID) {
+        failed = true;
+        const bones = r.off_chain.length === 0 ? 'no vertex is weighted off the chain, so a bone under the chain or the render moves it' : r.off_chain.map((o) => `"${o.bone}" (${o.vertices} of ${o.of} vertices, largest weight ${round3(o.largest_weight)})`).join(', ');
+        problems.push({
+          code: `CHECK_${STRESS_LINE}`,
+          object: `mesh "${r.part}" with chain link "${r.chain[0]}" turned ${turn}°`,
+          detail:
+            `its worst edge, triangle ${a.triangle} edge ${a.edge.join('-')}, is ${round3(a.ratio)} times its rest length (max(ratio, 1/ratio) ${shown}); ${STRESS_RIGID.toFixed(STRESS_PLACES)}, the part turning rigidly with its chain, is required — ` +
+            `it is weighted off the chain to ${bones}: a segment on ${r.off_chain.length === 1 ? `"${r.off_chain[0].bone}"` : 'each of those bones'} in meshes.${r.part}.segments pins the part while the chain turns; drop it, so the part rides its chain alone`,
+        });
+      }
+    }
+    rows.push({ part: r.part, link: r.chain[0], links: r.chain.length, off_chain: r.off_chain.map((o) => ({ ...o, largest_weight: round3(o.largest_weight) })), poses });
+  }
+  const w = worst as { part: string; link: string; turn: number; reading: number } | null;
+  return {
+    status: failed ? 'FAIL' : 'PASS',
+    tags: [...STRESS_TAGS],
+    turns: [...STRESS_TURNS],
+    parts_read: plan.read.length,
+    reading: w === null ? null : roundStress(w.reading),
+    worst: w === null ? null : { part: w.part, link: w.link, turn: w.turn },
+    bar: STRESS_RIGID,
+    per_part: rows,
+    not_read: plan.notRead,
+  };
+}
+
 /**
  * One `CHECK_RIGC_GREEN` per line that says why `rigc <what>` was not green:
  * its FAIL and compile-error lines, or, when there are none, {@link causeLines}.
@@ -2512,6 +2761,33 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     if (full !== null) still = stillLine(full, idle, geometry, geometryPath, problems, notPlanted);
   }
 
+  // 3c. a sleeve on one chain, its first link turned large (issue #347): a throwaway copy, physics left out, posed by rigc
+  let stress: JudgementLine | null = null;
+  const stressProblems: Problem[] = [];
+  const stressTagged = full === null || idle === null ? [] : partsTagged(full.parts, STRESS_TAGS);
+  if (stressTagged.length > 0) {
+    const plan = stressPlan(inp.rig, inp.motion, stressTagged);
+    const stressDir = join(out, STRESS_SCRATCH);
+    rmSync(stressDir, { recursive: true, force: true });
+    try {
+      if (plan.read.length > 0) {
+        mkdirSync(stressDir, { recursive: true });
+        const base = stripped === null ? inp.rig : stripped.rig;
+        const images = typeof inp.rig.images === 'string' ? resolve(inp.rigDir, inp.rig.images) : inp.rig.images;
+        writeFileSync(join(stressDir, 'rig.json'), JSON.stringify({ ...base, images }));
+        writeFileSync(join(stressDir, 'motion.json'), JSON.stringify({ ...(stripped === null ? inp.motion : stripped.motion), animations: stressAnimations(plan) }));
+        const sb = rigc(['build', '--rig', join(stressDir, 'rig.json'), '--motion', join(stressDir, 'motion.json'), '--out', join(stressDir, 'build'), '--profile', 'spine']);
+        if (sb.status !== 0) refuseIfAny(rigcFailed(`build (${STRESS_LINE}'s turned copy)`, sb, buildGateLines(sb.out)));
+        const sr = rigc(['render', '--candidate', join(stressDir, 'build'), '--fps', String(IDLE_FPS), '--max', String(FOLD_RENDER_MAX), '--geometry', '--out', join(stressDir, 'render')]);
+        if (sr.status !== 0) refuseIfAny(rigcFailed(`render --geometry (${STRESS_LINE}'s turned copy)`, sr, sr.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+      }
+      const sets = plan.read.length > 0 ? readStressSets(join(stressDir, 'render'), Object.keys(stressAnimations(plan))) : new Map<string, IdleGeometry>();
+      stress = stressLine(plan, (a) => sets.get(a) as IdleGeometry, stressProblems);
+    } finally {
+      rmSync(stressDir, { recursive: true, force: true });
+    }
+  }
+
   // 4. the setup pose as a one-key throwaway animation — the seam reads it against the parts, the source line against
   // the painting — and, beside it, the same pose with the eyes shut
   let seam: SeamFigures | null = null;
@@ -2621,6 +2897,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     TEXTURE_STRETCH: stretch,
     ...(folds === null ? {} : { [FOLD_LINE]: folds }),
     ...(level === null ? {} : { [LEVEL_LINE]: level }),
+    ...(stress === null ? {} : { [STRESS_LINE]: stress }),
     RECOMPOSITE_HOLES: inp.parts === null ? { status: 'SKIP', reason: inp.noParts ?? '' } : holesLine(inp.parts),
     ...(sourceRead === null ? {} : { [SOURCE_LINE]: sourceRead }),
     ...(Object.keys(skipped).length === 0 ? {} : { skipped }),
@@ -2652,7 +2929,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   const rank = (q: Problem): number => JUDGEMENT_LINES.findIndex((n) => q.code === `CHECK_${n}`);
   problems.sort((a, b) => rank(a) - rank(b));
   problems.unshift(...barProblems);
-  problems.push(...foldProblems, ...levelProblems, ...reqProblems);
+  problems.push(...foldProblems, ...levelProblems, ...stressProblems, ...reqProblems);
   figures.PASS = problems.length === 0;
   write('check.json', `${JSON.stringify(figures, null, 1)}\n`);
   const bars: CheckReport['bars'] = { measured: ['gate'], skipped: [] };
@@ -2670,6 +2947,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   if (folds !== null) tally(FOLD_LINE, null);
   // Issue #348: the level bar where it is written; a line whose every foot no frame posed says SKIP and is not measured.
   if (level !== null) tally(LEVEL_LINE, level.status === 'SKIP' ? (level.reason ?? '') : null);
+  // Issue #347: the stress bar is counted where it is written — on every rig with a handwear part and an idle.
+  if (stress !== null) tally(STRESS_LINE, stress.status === 'SKIP' ? stress.reason : null);
   return {
     figures,
     gateHtml,

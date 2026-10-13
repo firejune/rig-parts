@@ -180,7 +180,7 @@ import {
 } from './src/assemble.ts';
 import { chainDirection } from './src/check.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics, BREATH_TORSO_MEAN_FLOOR } from './src/check.ts';
-import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, drawingTurn, FOLD_LINE, LEVEL_BAR_DEGREES, LEVEL_LINE, foldsLine, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, packageRigc, rigcIdentity, rigcRunnerAt, type RigcSpawn, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
+import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, drawingTurn, FOLD_LINE, LEVEL_BAR_DEGREES, LEVEL_LINE, foldsLine, STRESS_LINE, STRESS_RIGID, STRESS_TURNS, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, packageRigc, rigcIdentity, rigcRunnerAt, type RigcSpawn, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { baseTagOf, blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
@@ -6170,8 +6170,9 @@ function runProposeSuite(): number {
     const segs = (m: string): string => JSON.stringify(prop.meshes[m]?.segments ?? null);
     const regionsOk = JSON.stringify(prop.regions) === '{"face":"head"}';
     const meshOk =
-      segs('sleeve_a') === '[["chest",[30,101],[30,117]],"sleeve_r"]' &&
-      segs('sleeve_b') === '[["chest",[170,101],[170,117]],"sleeve_l"]' &&
+      // Issue #347: the two-blob rule drafts no chest stub, so each sleeve rides its chain alone.
+      segs('sleeve_a') === '["sleeve_r"]' &&
+      segs('sleeve_b') === '["sleeve_l"]' &&
       segs('skirt') === '[["hip",[67,162],[133,162]],"skirt_r","skirt_c","skirt_l"]';
     const bytes = serializeProposal(prop);
     const again = serializeProposal(propose(readPartSet(dir)));
@@ -6503,7 +6504,7 @@ function runProposeSuite(): number {
         sleeveChains(wide).join(',') === 'sleeve_r,sleeve_l' &&
         'hands' in wide.meshes &&
         sleeveChains(prop).join(',') === 'sleeve_r,sleeve_l' &&
-        prop.notes.includes('handwear is two blobs: one sleeve chain per mesh, chest only at the shoulder'),
+        prop.notes.includes('handwear is two blobs: one sleeve chain per mesh, and nothing on chest'),
       `clasped: region ${robe.regions.hands ?? 'none'}, sleeve chains [${sleeveChains(robe).join(', ')}], note ${claspedNote === undefined ? 'ABSENT' : 'present'}; off the axis: [${sleeveChains(offAxis).join(', ')}]; 50 px wide: [${sleeveChains(wide).join(', ')}]; two blobs (PR01): [${sleeveChains(prop).join(', ')}]`,
       'issue #23: hands clasped in front of the waist are one small blob at the midline, and the one-blob rule read it as both sleeves — two chains on one vertical line, six LINT lines once pasted. Two sleeves hanging from the shoulders are at least as wide as them, so a blob half as wide cannot be both',
     );
@@ -7544,8 +7545,8 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
 
   // Standing (fixtures/poses.ts): neck (100, 98); hips (90, 160) and (110, 160) -> hip (100, 160); chest half way along
   // neck -> hip = (100, 129); head stays the rule's, axis 100 (the eyewhites' centres 91 and 109), 40 + 0.88*50 = 84.
-  // Sleeves: r (30,104) -> (30,130), tip (30,152); l (170,104) -> (170,130), tip (170,152). The stub runs along the upper
-  // arm, d = (0, 1): from 104 - 14 = 90 to 104 + 2 = 106. Skirt chains hang from hip y + 20 = 180 to 250 - 4 = 246,
+  // Sleeves: r (30,104) -> (30,130), tip (30,152); l (170,104) -> (170,130), tip (170,152). The sleeve mesh rides its chain
+  // alone (issue #347: the chest stub along the upper arm pinned the puff). Skirt chains hang from hip y + 20 = 180 to 250 - 4 = 246,
   // three steps of 22: 180, 202, 224 (x as in PR01).
   const wantSt: Record<string, string> = {
     hip: '[100,160]',
@@ -7565,7 +7566,7 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
   say(
     'PR55_STANDING_JOINTS_PLACE_NECK_HIP_CHEST_AND_EACH_SLEEVE_AS_GIVEN',
     wrongSt.length === 0 &&
-      stSegs === '[["chest",[30,90],[30,106]],"sleeve_r"]' &&
+      stSegs === '["sleeve_r"]' &&
       stTracks === '[["sleeve_r",[0.2,0.6]],["sleeve_l",[-0.2,-0.6]]]' &&
       stLint.findings.length === 0 &&
       stLint.basis?.torso.read === true &&
@@ -7594,7 +7595,7 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
   say(
     'PR56_SEATED_JOINTS_PLACE_THE_HIP_AT_THE_HIPS_AND_EACH_SLEEVE_ALONG_ITS_BENT_ARM',
     wrongSe.length === 0 &&
-      seSegs === '[["chest",[134,70],[134,86]],"sleeve_l"]' &&
+      seSegs === '["sleeve_l"]' &&
       seLint === "LINT leg0 at [100, 145] is off the art of mesh 'legs'" &&
       boneAt(seRule.bones, 'hip') === '[100,117]' &&
       boneAt(seRule.bones, 'chest') === '[100,96]' &&
@@ -7605,8 +7606,8 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
   );
 
   // Lying (landscape 300x200): neck (62, 100); hips (150, 92) and (150, 108) -> (150, 100); chest (106, 100). The arms lie
-  // along the body: r (75,67) -> (110,67), tip (145,67) on arm_a; l (75,133) -> (110,133), tip (145,133) on arm_b. The
-  // stub runs along d = (1, 0): 75 - 14 = 61 to 75 + 2 = 77. Read by screen y, this correct torso is a LINT line: hip y 100
+  // along the body: r (75,67) -> (110,67), tip (145,67) on arm_a; l (75,133) -> (110,133), tip (145,133) on arm_b, each
+  // mesh on its chain alone (issue #347). Read by screen y, this correct torso is a LINT line: hip y 100
   // is not larger than chest y 100.
   const wantLy: Record<string, string> = {
     hip: '[150,100]',
@@ -7623,7 +7624,7 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
   say(
     'PR57_LYING_JOINTS_PLACE_THE_TORSO_ALONG_THE_BODY_AND_LINT_READS_IT_THERE',
     wrongLy.length === 0 &&
-      lySegs === '[["chest",[61,67],[77,67]],"sleeve_r"]' &&
+      lySegs === '["sleeve_r"]' &&
       lyJoint.findings.length === 0 &&
       lyJoint.basis?.chains.every((c) => c.line !== null) === true &&
       lyScreen.join('|') === 'LINT hip at [150, 100] is not below chest at [106, 100]: the hip must have the larger y, or breathing and the skirt hang from the shoulders' &&
@@ -8352,7 +8353,7 @@ function runWristSnapCases(dir: string, SE: string, Pe: PartSet, Je: RigJoints, 
 
   // One handwear part, `arms`, holding both of the seated figure's arms: two components (forearms 60..89 and 110..139
   // apart), so not clasped hands. Both wrists (84, 124) and (116, 124) lie on its art, so both chains are placed on it as
-  // before, the stubs along each upper arm (d = (0, 1): 84 - 14 = 70 to 84 + 2 = 86), and the note says the part is shared.
+  // before, the mesh on the two chains alone (issue #347: no chest stub), and the note says the part is shared.
   const odir = join(dir, 'pose-seated-one-piece');
   const arms = SEATED_PARTS.filter((p) => p.name === 'arm_a' || p.name === 'arm_b');
   writeProposeFixture(odir, [...SEATED_PARTS.filter((p) => !arms.includes(p)), { name: 'arms', from: 'full:handwear-r', x: 60, y: 80, w: 80, h: 50, colour: [240, 240, 240], rects: arms.flatMap((p) => p.rects ?? []) }], SEATED_RIG, true);
@@ -8365,7 +8366,7 @@ function runWristSnapCases(dir: string, SE: string, Pe: PartSet, Je: RigJoints, 
     'PR75_ONE_HANDWEAR_PART_HOLDING_BOTH_WRISTS_IS_SAID_AND_POINTS_AT_ASSEMBLE_CUTS',
     boneAt(one.bones, 'sleeve_r') === '[[66,84],[66,124]]->[84,124]' &&
       boneAt(one.bones, 'sleeve_l') === '[[134,84],[134,124]]->[116,124]' &&
-      JSON.stringify(one.meshes.arms?.segments ?? null) === '[["chest",[66,70],[66,86]],"sleeve_r",["chest",[134,70],[134,86]],"sleeve_l"]' &&
+      JSON.stringify(one.meshes.arms?.segments ?? null) === '["sleeve_r","sleeve_l"]' &&
       jointNoteLines(one).includes(shared) &&
       sharedOf(one) === 1 &&
       sharedOf(se) === 0 &&
@@ -11498,6 +11499,7 @@ function runCheckSuite(): number {
   );
   runAnimationFoldCases(say);
   runFeetLevelCases(say);
+  runStressCases(say);
   runRigcIdentityCases(say);
   return bad();
 }
@@ -11962,6 +11964,132 @@ function runAnimationFoldCases(say: (name: string, ok: boolean, detail: string, 
         idleStaleFail.includes('reads no folded triangle on slot "cloth" in animation "idle"'),
       `declared on the bent idle: exit ${idleDeclared.status}, ${String(foldOf(idleDeclared.fig)?.status)}, row ${JSON.stringify(idleDeclaredRows.map((r) => [r.animation, r.declared]))}; declared on the calm idle: exit ${idleStale.status}, ${idleStaleFail?.trim().slice(0, 220) ?? 'no FAIL line'}`,
       "issue #333: idle is an animation name in may_fold like any other — before it, the requirements file refused it (REQUIREMENTS_MAY_FOLD, the bar did not read it); a fold the art means in the idle is named with its why and not held, and an idle declaration that excepts nothing fails as CK244's does",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Issue #347: STRESS_OFF_CHAIN, through the CLI on the rig stage's own fixture
+ * (fixtures/rig.ts) with `cloth` declared a sleeve — from a `handwear-r` layer.
+ * The positive control is the fixture as written: `cloth` weighted to the chain
+ * `hem` alone, so turning `hem0` (its control, `hem0_ctl`, the bone the idle
+ * keys) carries every vertex rigidly and the worst edge reads 1.0000 at every
+ * turn. The planted puff adds an explicit segment on `body`, a bone off the
+ * chain, along the part's left edge ([10, 10] to [10, 18], rig px): the
+ * vertices near it keep part of their weight on `body`, which the turn does not
+ * move, so the part is pulled between the two and the line names `body`. How
+ * far it stretches is rigc's posing and is not asserted; that it reads above
+ * 1.0000 at every turn, names the bone and passes without it, is.
+ */
+function runStressCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('stress-off-chain');
+  try {
+    const sleeveParts = (): PartsFile => {
+      const p = rigParts();
+      return { ...p, parts: p.parts.map((x) => (x.name === 'cloth' ? { ...x, from: 'full:handwear-r' } : x)) };
+    };
+    const rigged = (name: string, segments: unknown[] | null): { rig: string; parts: string; status: number; out: string } => {
+      const c = rigConfig();
+      (c.assemble as { plan: string[][] }).plan[0] = ['cloth', 'full', 'handwear-r'];
+      if (segments === null) {
+        // Not a mesh: cloth rides `body` whole, a region.
+        delete (c.meshes as Record<string, unknown>).cloth;
+        (c.regions as Record<string, unknown>).cloth = 'body';
+      } else (c.meshes as Record<string, { segments: unknown[] }>).cloth.segments = segments;
+      const f = writeRigFixture(join(dir, name), c, rigImages(), sleeveParts());
+      const r = runCli(['rig', '--config', f.config, '--parts', f.parts, '--out', join(dir, name, 'rig')]);
+      return { rig: join(dir, name, 'rig'), parts: f.parts, status: r.status, out: r.out };
+    };
+    const checked = (label: string, rig: { rig: string; parts: string }): { status: number; out: string; fig: Record<string, unknown> | null; outDir: string } => {
+      const outDir = join(dir, `${label}-out`);
+      const r = runCli(['check', '--rig', rig.rig, '--parts', rig.parts, '--out', outDir]);
+      return { ...r, fig: readJsonFile(join(outDir, 'check.json')), outDir };
+    };
+    const lineOf = (fig: Record<string, unknown> | null): Record<string, unknown> | null => {
+      const l = fig?.[STRESS_LINE];
+      return typeof l === 'object' && l !== null ? (l as Record<string, unknown>) : null;
+    };
+    const readings = (fig: Record<string, unknown> | null): number[] => {
+      const rows = lineOf(fig)?.per_part;
+      if (!Array.isArray(rows) || rows.length !== 1) return [];
+      const poses = (rows[0] as { poses?: unknown }).poses;
+      return Array.isArray(poses) ? poses.map((p) => Number((p as { reading?: unknown }).reading)) : [];
+    };
+    const offChain = (fig: Record<string, unknown> | null): string => {
+      const rows = lineOf(fig)?.per_part;
+      return Array.isArray(rows) && rows.length === 1 ? JSON.stringify(((rows[0] as { off_chain?: unknown[] }).off_chain ?? []).map((o) => (o as { bone?: unknown }).bone)) : 'no row';
+    };
+    const fails = (out: string): string[] => out.split('\n').filter((l) => l.startsWith(`  FAIL  CHECK_${STRESS_LINE}: `));
+    const summary = (out: string): string => out.split('\n').find((l) => l.startsWith('check: ')) ?? 'no summary';
+
+    // CK366 — the positive control: the sleeve on its chain alone.
+    const calm = rigged('calm', ['hem']);
+    const ok = checked('calm', calm);
+    const okKeys = ok.fig === null ? [] : Object.keys(ok.fig);
+    const okPrinted = ok.out.split('\n').find((l) => l.startsWith(`  ${STRESS_LINE}: `)) ?? '';
+    say(
+      'CK366_A_SLEEVE_ON_ITS_CHAIN_ALONE_TURNS_RIGIDLY_AND_READS_ONE_AT_EVERY_STRESS_TURN',
+      calm.status === 0 &&
+        lineOf(ok.fig)?.status === 'PASS' &&
+        lineOf(ok.fig)?.parts_read === 1 &&
+        JSON.stringify(lineOf(ok.fig)?.turns) === JSON.stringify(STRESS_TURNS) &&
+        readings(ok.fig).length === STRESS_TURNS.length &&
+        readings(ok.fig).every((r) => r === STRESS_RIGID) &&
+        offChain(ok.fig) === '[]' &&
+        fails(ok.out).length === 0 &&
+        okKeys.indexOf(STRESS_LINE) === okKeys.indexOf(FOLD_LINE) + 1 &&
+        okKeys.indexOf('RECOMPOSITE_HOLES') === okKeys.indexOf(STRESS_LINE) + 1 &&
+        okPrinted.startsWith(`  ${STRESS_LINE}: PASS — `) &&
+        !existsSync(join(ok.outDir, '_stress')),
+      `rig exit ${calm.status}; check exit ${ok.status}; ${STRESS_LINE} ${String(lineOf(ok.fig)?.status)}, parts read ${String(lineOf(ok.fig)?.parts_read)}, readings ${JSON.stringify(readings(ok.fig))} at turns ${JSON.stringify(lineOf(ok.fig)?.turns)}, off the chain ${offChain(ok.fig)}; key after ${okKeys[okKeys.indexOf(STRESS_LINE) - 1] ?? 'nothing'}, before ${okKeys[okKeys.indexOf(STRESS_LINE) + 1] ?? 'nothing'}; "${summary(ok.out)}"; scratch ${existsSync(join(ok.outDir, '_stress')) ? 'LEFT' : 'removed'}`,
+      "issue #347's positive control: a part weighted to its chain alone turns with the chain's first link as one piece, so every edge keeps its rest length and the reading is the rigid one, 1.0000 — the bar is that reading, not a margin, and a part that meets it must not fail",
+    );
+
+    // CK367 — the planted puff: a segment on `body`, off the chain, pins the part's left edge.
+    const pinned = rigged('pinned', ['hem', ['body', [10, 10], [10, 18]]]);
+    const red = checked('pinned', pinned);
+    const redFails = fails(red.out);
+    const want = STRESS_TURNS.map((t) => `mesh "cloth" with chain link "hem0_ctl" turned ${t}°`);
+    say(
+      'CK367_A_SLEEVE_PINNED_BY_A_SEGMENT_ON_A_BONE_OFF_ITS_CHAIN_FAILS_AT_EVERY_TURN_NAMING_THAT_BONE',
+      pinned.status === 0 &&
+        red.status === 1 &&
+        lineOf(red.fig)?.status === 'FAIL' &&
+        readings(red.fig).length === STRESS_TURNS.length &&
+        readings(red.fig).every((r) => r > STRESS_RIGID) &&
+        offChain(red.fig) === '["body"]' &&
+        redFails.length === STRESS_TURNS.length &&
+        want.every((w, i) => redFails[i].startsWith(`  FAIL  CHECK_${STRESS_LINE}: ${w} — its worst edge, triangle `)) &&
+        redFails.every((l) => l.includes('1.0000, the part turning rigidly with its chain, is required') && l.includes('it is weighted off the chain to "body" (') && l.includes('a segment on "body" in meshes.cloth.segments pins the part') && l.endsWith(`(see rig-parts guide CHECK_${STRESS_LINE})`)) &&
+        barsNotMet(red.fig ?? {}).includes(STRESS_LINE) &&
+        ACCEPTABLE_BARS.includes(STRESS_LINE),
+      `rig exit ${pinned.status}; check exit ${red.status}; ${STRESS_LINE} ${String(lineOf(red.fig)?.status)}, readings ${JSON.stringify(readings(red.fig))}, off the chain ${offChain(red.fig)}; ${redFails.length} FAIL line(s), the first: ${redFails[0]?.trim().slice(0, 400) ?? 'none'}; bars not met ${JSON.stringify(barsNotMet(red.fig ?? {}))}`,
+      "issue #347: the exam-01 test rig's sleeve puff was pinned to the chest by a 16 px chest segment in its handwear mesh, as the public demo's and scarf's were, and nothing posed the rig far enough to show it; the planted segment on another bone is that shape, and the line must name the bone so the author knows which segment to drop",
+    );
+
+    // CK368 — what the line does not read: a sleeve that is a region (SKIP, the reason), and the fixture as the rig stage
+    // writes it, cloth from a topwear layer (no handwear part: the key is not written).
+    const region = rigged('region', null);
+    const reg = checked('region', region);
+    const plain = writeRigFixture(join(dir, 'plain'), rigConfig());
+    const plainRig = runCli(['rig', '--config', plain.config, '--parts', plain.parts, '--out', join(dir, 'plain', 'rig')]);
+    const pl = checked('plain', { rig: join(dir, 'plain', 'rig'), parts: plain.parts });
+    const regLine = lineOf(reg.fig);
+    say(
+      'CK368_A_SLEEVE_THAT_IS_NOT_A_MESH_IS_NOT_READ_AND_SAYS_WHY_AND_A_RIG_WITHOUT_A_SLEEVE_WRITES_NO_STRESS_KEY',
+      region.status === 0 &&
+        regLine?.status === 'SKIP' &&
+        String(regLine?.reason) === '"cloth": it is not a weighted mesh, so it rides one bone whole and cannot stretch' &&
+        fails(reg.out).length === 0 &&
+        summary(reg.out).includes(`, ${STRESS_LINE})`) &&
+        plainRig.status === 0 &&
+        pl.fig !== null &&
+        !(STRESS_LINE in pl.fig) &&
+        !pl.out.includes(`${STRESS_LINE}:`),
+      `a region sleeve: ${String(regLine?.status)} — ${String(regLine?.reason ?? '')}; "${summary(reg.out)}"; no handwear part: key ${pl.fig !== null && STRESS_LINE in pl.fig ? 'WRITTEN' : 'absent'}, "${summary(pl.out)}"`,
+      'a part that is not read is not a pass: the line says SKIP with each part\'s reason and the summary counts it skipped; a rig with no sleeve has nothing for the line to read, and a check.json that never had the key keeps the keys it always wrote',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -18748,7 +18876,9 @@ function runDiagnosticsSuite(): number {
     const links = (c: string, m: string, others: readonly string[] = []): string[] => [0, 1, 2].map((k) => `${c}${k} checked, clean [deforms] read=${off(m)}${sq(m, others)} lint=0 why=`);
     const wantCov = [
       'hip checked, clean [deforms] read=hip-not-below-chest|hip-too-high lint=0 why=',
-      'chest checked, clean [deforms] read=hip-not-below-chest lint=0 why=',
+      // Issue #347: the sleeves draft no chest stub, and nothing else on this figure is weighted to chest (the skirt hangs
+      // from the hip since #262), so chest binds nothing: a control the breath keys, still read by the torso rule.
+      'chest checked, clean [control] read=hip-not-below-chest lint=0 why=',
       'neck not checked [control] read= lint=0 why=its role is control (binds nothing; keyed by motion.tracks[3]): it binds nothing, so there is no art to hold it to, and a control may sit off the art by design',
       "head not checked [deforms] read= lint=0 why=bound rigidly by regions.face: no check reads a region's bone",
       ...links('sleeve_r', 'sleeve_a'),
@@ -18767,9 +18897,9 @@ function runDiagnosticsSuite(): number {
       'DG01_COVERAGE_ON_THE_HAND_BUILT_FIGURE_IS_THE_HAND_DERIVED_TABLE_AND_A_LINK_OFF_THE_ART_IS_CHECKED_WITH_A_LINT_LINE',
       gotCov.length === wantCov.length &&
         wrongCov.length === 0 &&
-        summary === 'coverage: 19 bone(s) — 17 checked and clean, 0 checked with a LINT line, 2 not checked; roles 0 target, 18 deforms, 1 control, 0 unclassified' &&
+        summary === 'coverage: 19 bone(s) — 17 checked and clean, 0 checked with a LINT line, 2 not checked; roles 0 target, 17 deforms, 2 control, 0 unclassified' &&
         movedLines.includes("coverage skirt_c1 [deforms]: checked, LINT — read by off-art on mesh 'skirt', squeeze with skirt_r on mesh 'skirt', squeeze with skirt_l on mesh 'skirt'; named by 1 LINT line(s)") &&
-        movedLines.at(-1) === 'coverage: 19 bone(s) — 14 checked and clean, 3 checked with a LINT line, 2 not checked; roles 0 target, 18 deforms, 1 control, 0 unclassified',
+        movedLines.at(-1) === 'coverage: 19 bone(s) — 14 checked and clean, 3 checked with a LINT line, 2 not checked; roles 0 target, 17 deforms, 2 control, 0 unclassified',
       `${gotCov.length} record(s) (want ${wantCov.length}); ${wrongCov.length === 0 ? 'every one as derived' : `NOT as derived: ${wrongCov.join(' || ')}`}; ${summary}; planted skirt_c at x 190: ${movedLines.at(-1)}`,
       'the card: "checked, clean" and "not checked" are different lines and the summary counts both — 4 single bones and 5 three-link chains are 19 bones, 15 links and hip and chest read, neck and head not; the planted control moves three links off the art, and they turn from clean to LINT without leaving the checked count',
     );
@@ -18872,9 +19002,10 @@ function runDiagnosticsSuite(): number {
       'DG06_WITHOUT_HIP_THE_CHEST_SAYS_WHY_IT_IS_NOT_CHECKED_AND_WITH_JOINTS_THE_TORSO_RULES_READ_HIP_AND_CHEST',
       noHip !== undefined &&
         noHip.why.join('\n') ===
-          // Issue #262: the skirt hangs from the hip and no longer binds chest; the two sleeve stubs still do.
-          'bound by the explicit [bone, from, to] segments meshes.sleeve_a.segments[0], meshes.sleeve_b.segments[0]: a segment is a line, not an origin, and the off-art check reads origins\nthe torso checks read chest beside a single bone "hip", which the bones do not hold' &&
-        at('chest') === 'chest checked, clean [deforms] read=chest-not-between|hip-not-past-chest lint=0 why=' &&
+          // Issue #262: the skirt hangs from the hip and no longer binds chest; since issue #347 the sleeves draft no chest
+          // stub either, so chest binds nothing and is a control the breath keys.
+          'its role is control (binds nothing; keyed by motion.tracks[0] (+1 more)): it binds nothing, so there is no art to hold it to, and a control may sit off the art by design\nthe torso checks read chest beside a single bone "hip", which the bones do not hold' &&
+        at('chest') === 'chest checked, clean [control] read=chest-not-between|hip-not-past-chest lint=0 why=' &&
         at('hip') === 'hip checked, clean [deforms] read=hip-not-past-chest|hip-nearer-neck lint=0 why=' &&
         at('neck').startsWith('neck not checked [control]'),
       `no hip: ${noHip === undefined ? 'chest absent' : coverageRow(noHip)}; standing with joints: ${at('hip')}; ${at('chest')}; ${at('neck').slice(0, 40)}…`,
@@ -18889,7 +19020,7 @@ function runDiagnosticsSuite(): number {
     say(
       'DG07_UNDER_KEYPOINTS_A_CHAIN_THE_JOINTS_DECLARE_NO_LINE_FOR_SAYS_SO_ON_EVERY_UNREAD_LINK',
       noWrist !== undefined &&
-        noWrist.why.join('\n') === 'its chain is named by meshes.cuff.segments[1] (mesh "cuff"), which names no part in parts.json\nlint chain sleeve_r: not read against the joints (r_wrist missing)' &&
+        noWrist.why.join('\n') === 'its chain is named by meshes.cuff.segments[0] (mesh "cuff"), which names no part in parts.json\nlint chain sleeve_r: not read against the joints (r_wrist missing)' &&
         withWrist !== undefined &&
         coverageRow(withWrist) === 'sleeve_r1 checked, clean [deforms] read=chain-not-advancing along r_shoulder -> r_wrist lint=0 why=',
       `r_wrist missing: ${noWrist === undefined ? 'absent' : coverageRow(noWrist)}; planted (wrist given): ${withWrist === undefined ? 'absent' : coverageRow(withWrist)}`,

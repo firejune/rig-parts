@@ -266,6 +266,10 @@
   "declared_not_folding": [],
   "bar": 0
  },
+ "STRESS_OFF_CHAIN": {
+  "status": "SKIP",
+  "reason": "\"sleeves\": its weights ride 2 chains (\"sleeve_r0_ctl\", \"sleeve_l0_ctl\"): turning one stretches the part toward the other by construction; a part riding one chain is read until a limbs block names each limb"
+ },
  "RECOMPOSITE_HOLES": {
   "status": "REPORTED",
   "error_px": 4359,

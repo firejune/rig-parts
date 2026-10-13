@@ -151,6 +151,18 @@ here (gitignored).
   either, and `check.json`'s `animations` gains `"idle"` first — nothing else moved. With the physics in, at 12 fps, `hop` folds `bottomwear` (3
   of 308 triangles, frames 7–8) — and at none of 10, 15, 24, 30, 36, 48 or 60 fps: the
   physics step's, which is why the bar reads the keys.
+  Issue #347 dropped the 16 px `chest` segment at the shoulder from `handwear_r` and
+  `handwear_l`, in `proposal.json` (the two-blob rule no longer drafts it, and its note
+  reads `…, and nothing on chest`) and in the config with it: with the stub, each sleeve's
+  first link turned 90°, −90° and 180° stretched its worst edge 4.25 to 1,498 times, and
+  without it the sleeve turns rigidly (1.0000). That moved `rig.json` (the two meshes'
+  weights, no vertex on `chest`), `mesh_report.json` (those two rows: bones `chest` gone,
+  `max_influences` 4 to 3, `mean_influences` 2.22 to 1.98 and 2.18 to 1.94) and
+  `check.json`: the new `STRESS_OFF_CHAIN` key after `ANIMATIONS_DO_NOT_FOLD`, PASS on both
+  sleeves, `TIP_OVER_ROOT` `handwear_r` root 2.449 to 2.45 and `handwear_l` 2.456 to 2.46
+  (root 2.459 to 2.456), and `TEXTURE_STRETCH` `handwear_r` 1.021 to 1.029 (now triangle
+  119, frames 5 and 25); the seam (mean 0.206, 2 px over 40), the pack and every status as
+  before. `parts.json` and `gate_spine-html.txt` did not move.
 
 ## The four patches
 

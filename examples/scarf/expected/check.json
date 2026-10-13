@@ -249,15 +249,15 @@
   "parts": [
    {
     "part": "handwear_r",
-    "root_rig_px": 2.449,
+    "root_rig_px": 2.45,
     "tip_rig_px": 6.447,
     "ratio": 2.632
    },
    {
     "part": "handwear_l",
-    "root_rig_px": 2.459,
+    "root_rig_px": 2.456,
     "tip_rig_px": 6.041,
-    "ratio": 2.456
+    "ratio": 2.46
    },
    {
     "part": "bottomwear",
@@ -353,11 +353,11 @@
    {
     "slot": "handwear_r",
     "triangles": 642,
-    "max_ratio": 1.021,
-    "max_at": "triangle 259 (vertices 223 26 25), edge 26-25, idle frame 6",
-    "min_ratio": 0.987,
-    "min_at": "triangle 259 (vertices 223 26 25), edge 26-25, idle frame 26",
-    "severity": 1.021
+    "max_ratio": 1.029,
+    "max_at": "triangle 119 (vertices 163 16 15), edge 16-15, idle frame 5",
+    "min_ratio": 0.979,
+    "min_at": "triangle 119 (vertices 163 16 15), edge 16-15, idle frame 25",
+    "severity": 1.029
    },
    {
     "slot": "handwear_l",
@@ -415,6 +415,116 @@
   "folding_undeclared": 0,
   "declared_not_folding": [],
   "bar": 0
+ },
+ "STRESS_OFF_CHAIN": {
+  "status": "PASS",
+  "tags": [
+   "handwear"
+  ],
+  "turns": [
+   90,
+   -90,
+   180
+  ],
+  "parts_read": 2,
+  "reading": 1,
+  "worst": {
+   "part": "handwear_l",
+   "link": "sleeve_l0_ctl",
+   "turn": 180
+  },
+  "bar": 1,
+  "per_part": [
+   {
+    "part": "handwear_r",
+    "link": "sleeve_r0_ctl",
+    "links": 3,
+    "off_chain": [],
+    "poses": [
+     {
+      "turn": 90,
+      "reading": 1,
+      "worst": {
+       "triangle": 513,
+       "edge": [
+        336,
+        337
+       ],
+       "ratio": 1
+      }
+     },
+     {
+      "turn": -90,
+      "reading": 1,
+      "worst": {
+       "triangle": 461,
+       "edge": [
+        315,
+        309
+       ],
+       "ratio": 1
+      }
+     },
+     {
+      "turn": 180,
+      "reading": 1,
+      "worst": {
+       "triangle": 577,
+       "edge": [
+        73,
+        72
+       ],
+       "ratio": 1
+      }
+     }
+    ]
+   },
+   {
+    "part": "handwear_l",
+    "link": "sleeve_l0_ctl",
+    "links": 3,
+    "off_chain": [],
+    "poses": [
+     {
+      "turn": 90,
+      "reading": 1,
+      "worst": {
+       "triangle": 278,
+       "edge": [
+        25,
+        24
+       ],
+       "ratio": 1
+      }
+     },
+     {
+      "turn": -90,
+      "reading": 1,
+      "worst": {
+       "triangle": 353,
+       "edge": [
+        104,
+        284
+       ],
+       "ratio": 1
+      }
+     },
+     {
+      "turn": 180,
+      "reading": 1,
+      "worst": {
+       "triangle": 278,
+       "edge": [
+        25,
+        24
+       ],
+       "ratio": 1
+      }
+     }
+    ]
+   }
+  ],
+  "not_read": []
  },
  "RECOMPOSITE_HOLES": {
   "status": "REPORTED",

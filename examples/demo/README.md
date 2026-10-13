@@ -121,6 +121,17 @@ here (gitignored).
   no mesh. That added the key to `check.json` after `TEXTURE_STRETCH`, and nothing else in
   it or any other file moved. Issue #333 reads the idle in the same run: it folds no mesh
   either, and `check.json`'s `animations` gains `"idle"` first — nothing else moved.
+  Issue #347 dropped the 16 px `chest` segment at the shoulder from `handwear_r` and
+  `handwear_l`, in `proposal.json` (the two-blob rule no longer drafts it, and its note
+  reads `…, and nothing on chest`) and in the config with it: with the stub, each sleeve's
+  first link turned 90°, −90° and 180° stretched its worst edge 2.46 to 254.7 times, and
+  without it the sleeve turns rigidly (1.0000). That moved `rig.json` (the two meshes'
+  weights, no vertex on `chest`), `mesh_report.json` (those two rows: bones `chest` gone,
+  `max_influences` 4 to 3, `mean_influences` 2.73 to 2.34) and `check.json`: the new
+  `STRESS_OFF_CHAIN` key after `ANIMATIONS_DO_NOT_FOLD`, PASS on both sleeves, and
+  `TIP_OVER_ROOT` `handwear_l` 4.791 to 4.761 (root 1.468 to 1.478) and `handwear_r`
+  4.836 to 4.835; the seam (mean 0.147, 0 px over 40), the pack and every status as
+  before. `parts.json` and `gate_spine-html.txt` did not move.
 
 ## The two corrections
 
@@ -174,7 +185,7 @@ The README loop pasted uncorrected stops where the README says to read
 
 ## The build, by figure
 
-`check` 10 of 10 bars measured, PASS (the tenth, issues #320 and #333, reads the idle and the clips beside it for folds):
+`check` 11 of 11 bars measured, PASS (the tenth, issues #320 and #333, reads the idle and the clips beside it for folds; the eleventh, issue #347, turns each sleeve's chain far):
 
 | | |
 | --- | --- |
@@ -186,6 +197,7 @@ The README loop pasted uncorrected stops where the README says to read
 | `TEXTURE_STRETCH` | severity 1.097, `hair_front` (ceiling 1.926544) |
 | `BLINK_NO_HOLE` | idle frame 29 closed, hole 0 px |
 | `ANIMATIONS_DO_NOT_FOLD` | the idle and the seven clips at 12 fps, the 29 physics constraints left out: no folding mesh |
+| `STRESS_OFF_CHAIN` | `handwear_r` and `handwear_l`, each chain's first link turned 90°, −90° and 180°: 1.0000 at every turn (bar 1.0000) |
 | `RECOMPOSITE_HOLES` | error px 14,570; uncovered 2,939 in 1,020 holes, the largest 48 px at 204,519 27x25 beside `bottomwear` |
 | meshes | 9, 1,192 vertices (`mesh_report.json`) |
 

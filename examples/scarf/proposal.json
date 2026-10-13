@@ -344,17 +344,6 @@
       "grid": 30,
       "r": 4,
       "segments": [
-        [
-          "chest",
-          [
-            339,
-            264
-          ],
-          [
-            339,
-            280
-          ]
-        ],
         "sleeve_r"
       ]
     },
@@ -362,17 +351,6 @@
       "grid": 30,
       "r": 3,
       "segments": [
-        [
-          "chest",
-          [
-            493,
-            263
-          ],
-          [
-            493,
-            279
-          ]
-        ],
         "sleeve_l"
       ]
     },
@@ -616,7 +594,7 @@
     "head pitch: the nose sits — (not read: no part tagged nose) of the way from the eye midpoint to the mouth (frontal 0.474..0.630); the stem, eye midpoint -> mouth, is 0.675 of the bar (frontal 0.510..0.675); frontal ranges read on demo, scarf, the rig-c/trailer character; the turn is not reported (src/propose.ts FRONTAL_REFERENCE says why)",
     "breath: chest translatey 10.78 px peak to peak (amp 5.39, base 5.39) = 2.5 % of the torso's length, 431.0 px (neck [412, 226] -> hip [414, 657]), once per 40-frame idle at 12 fps",
     "hair_front (head:front hair): bang_r, bang_c, bang_l are a template, not its locks — columns at 0.25, 0.5 and 0.75 of the face box's width, along the head's down axis (the eye line's perpendicular, roll 2.663 degrees), each rooted on the part's art; the opaque shape does not separate the locks painted inside one mass of hair, so a lock that runs elsewhere is not followed — move the chains onto the locks",
-    "handwear is two blobs: one sleeve chain per mesh, chest only at the shoulder",
+    "handwear is two blobs: one sleeve chain per mesh, and nothing on chest",
     "bottomwear (full:bottomwear): its art starts 200.9 px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root",
     "hair_side_r (painting:hair_side_r): a painting patch has no tag, so no rule -> region on head, the nearest trunk bone; config.regions.hair_side_r is the bone it rides",
     "hair_side_l (painting:hair_side_l): a painting patch has no tag, so no rule -> region on head, the nearest trunk bone; config.regions.hair_side_l is the bone it rides",
