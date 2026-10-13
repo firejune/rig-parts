@@ -45,7 +45,8 @@
  * 1.6.0 has none, and still reads. `limb`, written only on a part a
  * `config.limbs` segment made (issue #349), names the limb, the segment's
  * index (0 the upper), the part it was cut from (`of`), the one bone it rides
- * and, below a joint, the joint and its cap ({@link LimbRecord}).
+ * and, below a joint, the joint, its declared `range` when there is one
+ * (issue #360) and its cap ({@link LimbRecord}).
  *
  * ⭐ **A patch is 100 % source.** Every pixel of a `painting:` part is the
  * painting's own, so it is all visible (the painting shows it; nothing of it
@@ -118,7 +119,9 @@ export interface PartRecord {
 /**
  * A limb segment's provenance (issue #349): the limb, the segment's index
  * (0 the upper), the part its pixels were cut from (`of`), the bone it rides
- * with weight 1, and, on a segment below a joint, the joint's name and its cap.
+ * with weight 1, and, on a segment below a joint, the joint's name, the
+ * `range` its config segment declares (issue #360: `[min, max]` degrees from
+ * rest, written only when declared; `check` poses the joint there) and its cap.
  */
 export interface LimbRecord {
   name: string;
@@ -126,6 +129,7 @@ export interface LimbRecord {
   of: string;
   bone: string;
   joint?: string;
+  range?: [number, number];
   cap?: CapRecord;
 }
 
@@ -149,7 +153,7 @@ export interface CapRecord {
   missing_px: number;
 }
 
-const LIMB_KEYS = ['name', 'segment', 'of', 'bone', 'joint', 'cap'] as const;
+const LIMB_KEYS = ['name', 'segment', 'of', 'bone', 'joint', 'range', 'cap'] as const;
 const CAP_KEYS = ['at', 'width', 'radius', 'box', 'layer_px', 'image_px', 'image_layer', 'missing_px'] as const;
 
 /** The limb record with its keys in the fixed order, so two runs write the same bytes. */
@@ -470,6 +474,14 @@ function checkParts(raw: unknown, path: string): PartsFile {
       const below = isCount(q.segment) && q.segment > 0;
       if (below !== ('joint' in q) || below !== ('cap' in q)) fail('PARTS_FIELD_PRESENT', object, `segment ${show(q.segment)} with${'joint' in q ? '' : 'out'} a joint and with${'cap' in q ? '' : 'out'} a cap; a segment below a joint (index above 0) has both, the upper segment neither`);
       if ('joint' in q && !(typeof q.joint === 'string' && q.joint !== '')) fail('PARTS_FIELD_TYPE', `${object} "joint"`, `is ${show(q.joint)}; the joint's name is required`);
+      // Issue #360: a declared range rides below a joint only, and holds the loader's rule — two degrees, rest in it.
+      if ('range' in q) {
+        const r = q.range;
+        if (!below) fail('PARTS_FIELD_PRESENT', `${object} "range"`, `is on segment ${show(q.segment)}; a range is the bend of a joint, so only a segment below one (index above 0) carries it`);
+        else if (!(Array.isArray(r) && r.length === 2 && r.every((n) => typeof n === 'number' && Number.isFinite(n)) && (r[0] as number) <= 0 && 0 <= (r[1] as number))) {
+          fail('PARTS_FIELD_TYPE', `${object} "range"`, `is ${show(r)}; [min, max], two finite degrees from rest with min <= 0 <= max, is required — config.limbs' rule (CONFIG_LIMB_RANGE)`);
+        }
+      }
       if ('cap' in q) {
         const c = q.cap;
         const co = typeof c === 'object' && c !== null && !Array.isArray(c) ? (c as Record<string, unknown>) : null;

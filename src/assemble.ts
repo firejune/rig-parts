@@ -1926,7 +1926,7 @@ function cutLimbs(
   const parts: LimbPart[] = [];
   for (const l of names) {
     limbs[l].segments.forEach((sg, k) =>
-      parts.push({ limb: l, segment: k, part: sg.part, of: sg.from, record: { name: l, segment: k, of: sg.from, bone: sg.bone, ...(k === 0 ? {} : { joint: sg.joint as string }) } }),
+      parts.push({ limb: l, segment: k, part: sg.part, of: sg.from, record: { name: l, segment: k, of: sg.from, bone: sg.bone, ...(k === 0 ? {} : { joint: sg.joint as string, ...(sg.range === undefined ? {} : { range: [sg.range[0], sg.range[1]] as [number, number] }) }) } }),
     );
   }
   const polylines = new Map(names.map((l) => [l, limbPolyline(limbs[l], places)]));
