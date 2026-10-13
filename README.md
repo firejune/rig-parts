@@ -250,7 +250,8 @@ rig-parts assemble --source painting.png --full layers/full --head layers/head -
 #    -> a large red hole neither run holds? add an assemble.patches entry (cut from the painting) and assemble again
 rig-parts propose --parts work/rig --source painting.png --out work
 #    -> proposal.json, basis.json (what each bone rests on) and render/landmarks.png; per-bone coverage lines;
-#       correct it, copy bones/meshes/regions/motion into config.json
+#       correct it, copy bones/meshes/regions/limbs/motion/turn into config.json, each it wrote
+#       (limbs only with --keypoints, turn only with --full/--head; a limbs block left out is refused next)
 rig-parts propose --parts work/rig --source painting.png --out work --from-config config.json
 #    -> LINT lines; exit 1 while any remain
 rig-parts build --config config.json --source painting.png --full layers/full --head layers/head --out out --loop
@@ -265,6 +266,12 @@ proposal pasted uncorrected stops at the last step, naming its `bottomwear` on
 `CHECK_TIP_OVER_ROOT` — the correction its tracked config records there, the two outer
 skirt chains moved (issue #227, [its README](examples/demo/README.md)); on `scarf`,
 since issue #262, it builds green.
+On `demo`, which tracks the pose file it was painted on, the block runs again with
+`--keypoints` on both `propose --parts` lines (`RL03`): the proposal then also drafts
+`limbs`, the step's list carries them, and the run ends where `RL01` ends. The joints
+are that pose file scaled to the painting, not read off it, so this shows what the
+loop carries, not where the joints are. The list as it stood before issue #375, four
+sections, stops at `--from-config` naming every limb part (`RL04`).
 
 `propose` is deliberately not a step of `build`: the proposal is a draft to correct
 against its overlay, and a config with bones is `build`'s input. `rig`, `check` and

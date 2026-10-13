@@ -84,9 +84,11 @@ under that.
    `work/render/recomposite_error_rig.png`; a large red hole between two parts is a
    gap See-through left (a skirt split into two legs), fixed in the plan or the layers,
    not in the rig. Then `rig-parts propose --parts work/rig
-   --source <painting> --out work` → copy `bones`, `meshes`, `regions`, `motion`
-   from `proposal.json` into the config. `assemble` needs the plan and none of
-   those four; do not stub them to get past it (AUTHORING §4 says what each step
+   --source <painting> --out work` → copy `bones`, `meshes`, `regions`, `limbs`,
+   `motion`, `turn` from `proposal.json` into the config, each it wrote (`limbs`
+   only with `--keypoints`, `turn` only with `--full`/`--head`; a `limbs` block left
+   out is refused at the next step). `assemble` needs the plan and none of
+   those sections; do not stub them to get past it (AUTHORING §4 says what each step
    requires). If an `uncovered hole` stays large with the plan right — a piece
    of the figure neither run holds, red in `recomposite_error_rig.png` — add an
    `assemble.patches` entry (a rig-pixel box, `alpha: "silhouette"`, drawn

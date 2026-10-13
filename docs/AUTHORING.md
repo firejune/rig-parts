@@ -1582,7 +1582,13 @@ full loader before its assemble stage writes anything.
    no later stage can see — then
    `rig-parts propose --parts work/rig --source inputs/painting.png --out work` →
    `work/proposal.json` and `work/render/landmarks.png` (+ `_head`). Copy
-   `bones`, `meshes`, `regions` and `motion` into the config. Then read what
+   each of `bones`, `meshes`, `regions`, `limbs`, `motion` and `turn` it wrote into the
+   config: `limbs` is written only with `--keypoints` and `turn` only with
+   `--full`/`--head` (`PROPOSAL_CONFIG_SECTIONS` in `src/propose.ts` is the list,
+   and the selftest's `TY18` holds this sentence to it). A `limbs` block left out
+   is refused at step 8 by the name of every part it cuts: `CONFIG_NAME_RESOLVES`
+   on each limb part the meshes or regions attach, `CONFIG_PART_ATTACHED` on the
+   layer it would have cut (`RL04`). Then read what
    was looked at. After the LINT summary, one `coverage <bone> [<role>]:` line
    per bone says `checked, clean` (and which checks read it), `checked, LINT`,
    or `not checked` and why — its role (a `control` binds nothing and may sit
