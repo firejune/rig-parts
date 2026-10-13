@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.17.0](https://github.com/rig-c/parts/compare/v1.16.0...v1.17.0) (2026-10-13)
+
+
+### Features
+
+* **assemble:** cut a declared limb at its joints into rigid parts, each lower part carrying a cap ([#362](https://github.com/rig-c/parts/issues/362)) ([5b6ce94](https://github.com/rig-c/parts/commit/5b6ce94a03c99e858e69f6e82a9460db6d2cecf9)), closes [#349](https://github.com/rig-c/parts/issues/349)
+* **check:** STRESS_OFF_CHAIN turns each sleeve's chain far and refuses a part weighted off it; propose drafts no chest stub on a sleeve ([#358](https://github.com/rig-c/parts/issues/358)) ([6122be7](https://github.com/rig-c/parts/commit/6122be7bb1590435cb9cba07517f27d9bcd86513)), closes [#347](https://github.com/rig-c/parts/issues/347)
+* **config:** expose a bone's inherit mode, and hold the feet level while the leg is posed ([#357](https://github.com/rig-c/parts/issues/357)) ([6bbee3a](https://github.com/rig-c/parts/commit/6bbee3abc58d60f85f6c7220b5976a36b7b26605)), closes [#348](https://github.com/rig-c/parts/issues/348)
+
+
+### Bug Fixes
+
+* **docs:** say what rig_scale trades, inline demo's wave and where a drafted sleeve bends, and give the idle's strand lag and the topwear arm limit ([#353](https://github.com/rig-c/parts/issues/353)) ([eebfbbf](https://github.com/rig-c/parts/commit/eebfbbf2cf60dd90a58bf18f2a0b8b78ee73acbb)), closes [#345](https://github.com/rig-c/parts/issues/345)
+
 ## [1.16.0](https://github.com/rig-c/parts/compare/v1.15.0...v1.16.0) (2026-10-13)
 
 
