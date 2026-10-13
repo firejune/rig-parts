@@ -58,8 +58,9 @@ rig-c under it, to convert that silence into named failures.
   dependency, so the round trip runs here; an install of `@rig-c/parts` carries
   no Spine runtime and runs rigc's own gate, and `check.json` records which
   gated the build. `build`'s gate is the one gate: rigc runs it once over the
-  compile and once over the packed pages on disk, under `spine-html`, which
-  holds every rule `spine` measures (selftest `CH09`), so no stage runs a
+  compile and once over the packed pages on disk, under `rig-play` (rig-c's renderer
+  profile, named `spine-html` before rig-c 2.50.0; `CK20` holds every call this package
+  makes to the name rigc keeps), which holds every rule `spine` measures (selftest `CH09`), so no stage runs a
   second `rigc validate`. There must never be a path in this package that
   produces skeleton data without that gate, nor a flag or environment escape
   that skips it, and nothing here re-implements what rigc validates.
