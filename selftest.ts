@@ -8891,6 +8891,45 @@ function runPaintingSuite(): number {
       `pass -> exit ${ok.status}, same bytes twice: ${ok.out === again.out}; legs together -> exit ${legs.status}, ${fails.length} FAIL line(s): ${fails[0]?.trim() ?? 'none'}; guide PAINTING_LEGS_APART -> exit ${guide.status}; no --keypoints -> exit ${noKp.status}; a 60x100 painting under a 120x200 file -> exit ${size.status}, ${size.out.split('\n').find((l) => l.includes('FAIL'))?.trim() ?? 'no FAIL line'}`,
       'the check is for an agent that cannot see the painting: its answer is the exit code and the named lines, each with the command that prints what to change, and a keypoint file measured on another image is not read against this one',
     );
+
+    // PG10-PG12 (issue #372): a hip under a skirt is `occluded`, the honest state, and is read when the arm's line from it is
+    // well defined — the hip carries a position (inside the image, KEYPOINTS_POSITION_INSIDE) and its pixel is figure.
+    const occludedHips = { ...paintJoints(), r_hip: { state: 'occluded', at: [52, 95] }, l_hip: { state: 'occluded', at: [68, 95] } };
+    const occ = judge(PAINT_FIGURE, occludedHips);
+    const strip = (l: string): string => l.replace(/ \((?:r|l)_hip occluded, read at its position\)$/, '');
+    say(
+      'PG10_OCCLUDED_HIPS_WITH_A_POSITION_ON_THE_FIGURE_ARE_READ_AND_PASS_WITH_THE_SAME_GAPS',
+      occ.problems.length === 0 &&
+        occ.lines[1] === '  joints: 14 observed, 2 occluded with a position (r_hip, l_hip), 16 on the figure' &&
+        occ.lines.length === pass.lines.length &&
+        occ.lines[2] === `${pass.lines[2]} (r_hip occluded, read at its position)` &&
+        occ.lines[3] === `${pass.lines[3]} (l_hip occluded, read at its position)` &&
+        occ.lines.slice(2).map(strip).join('|') === pass.lines.slice(2).join('|'),
+      `${occ.lines.map((l) => l.trim()).join(' | ')}; refusals: ${codeList(occ)}`,
+      'a skirt hides the hips on most clothed figures (issue #372: every candidate of 24), and the keypoint spec says so with "occluded"; refusing that state taught a writer to call an estimate "observed". The arm gap read from an occluded hip with a position is the same line, so it must count the same pixels as the observed hip did',
+    );
+    const unplaced = { ...paintJoints(), r_hip: { state: 'occluded' }, l_hip: { state: 'missing' }, l_knee: { state: 'occluded', at: [68, 140] } };
+    const un = judge(PAINT_FIGURE, unplaced);
+    say(
+      'PG11_A_HIP_WITH_NO_POSITION_IS_STILL_REFUSED_AND_ONLY_A_HIP_MAY_BE_OCCLUDED',
+      codeList(un) === 'PAINTING_JOINTS_STATED kp.json person "a" joint r_hip; PAINTING_JOINTS_STATED kp.json person "a" joint l_hip; PAINTING_JOINTS_STATED kp.json person "a" joint l_knee' &&
+        un.problems[0].detail.startsWith('is occluded with no position; observed or occluded with a position is required') &&
+        un.problems[1].detail.startsWith('is missing with no position;') &&
+        un.problems[2].detail.startsWith('is occluded at [68, 140]; observed with a position is required') &&
+        un.lines.filter((l) => l.startsWith('  gap ')).length === 2,
+      `${codeList(un)}; details: ${un.problems.map((p) => p.detail.split(';')[0]).join(' / ')}; ${un.lines.filter((l) => l.startsWith('  gap ')).length} gap line(s) read`,
+      'an occluded hip with no position gives the arm rule no line, and a rule with no line reads nothing and passes; a knee is not a hip — an occluded knee is a leg the knee gap cannot be read on, so it stays refused',
+    );
+    const offHip = { ...paintJoints(), r_hip: { state: 'occluded', at: [40, 95] } };
+    const off = judge(PAINT_FIGURE, offHip);
+    say(
+      'PG12_AN_OCCLUDED_HIP_ON_THE_BACKGROUND_IS_REFUSED_AND_DOES_NOT_MAKE_THE_ARM_GAP',
+      codeList(off) === 'PAINTING_JOINT_ON_FIGURE kp.json person "a" joint r_hip' &&
+        off.problems[0].detail.startsWith('is occluded at [40, 95], and pixel [40, 95] is background') &&
+        off.problems[0].detail.endsWith("an occluded hip is read only from a point on the figure, or the arm's gap would be the hip's own background"),
+      `${codeList(off)}${off.problems[0] === undefined ? '' : ` — ${off.problems[0].detail}`}`,
+      'an estimated hip placed in the gap between the arm and the torso would put a background pixel at the end of the arm\'s own line: the arm rule would pass on the estimate, not on the painting',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

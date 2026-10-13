@@ -262,3 +262,24 @@ and writes nothing; no other command changed, and no byte any build writes moves
 | the README's input bullet for the painting | one sentence | the requirements, linked to `docs/PAINTING.md`, which ships in the package |
 
 What to do: nothing. Run `painting` on a new painting before See-through.
+
+### And `painting` reads an occluded hip (issue #372)
+
+A skirt hides the hips on most clothed figures, and the keypoint file says so with
+`occluded`. `painting` refused that state, which taught a writer to call an
+estimated hip `observed`. It now reads an occluded hip when the arm's gap from it is
+well defined: the hip carries a position (inside the image, as the keypoint reader
+holds every position) and that position's pixel is figure (PAINTING.md, *An occluded
+hip*). No other command changed, and no byte any build writes moves.
+
+| change | before | after |
+| --- | --- | --- |
+| a hip `occluded` with a position, on the figure | `PAINTING_JOINTS_STATED` (exit 1) | read: its arm's gap is measured from it, and the run passes or fails on the gaps |
+| a hip `occluded` with a position, on the background | `PAINTING_JOINTS_STATED` | `PAINTING_JOINT_ON_FIGURE`, as an observed joint there is |
+| a hip `occluded` with no position, or `missing` | `PAINTING_JOINTS_STATED` | the same rule; the detail now says a hip may be occluded with a position |
+| a wrist, knee or ankle `occluded` | `PAINTING_JOINTS_STATED` | unchanged; the detail adds that only a hip may be occluded |
+| the `joints:` line | `joints: <n> observed, <m> on the figure` | the same when no hip is occluded; otherwise `joints: <n> observed, <k> occluded with a position (<hips>), <m> on the figure` |
+| a gap line read from an occluded hip | — | ends ` (<hip> occluded, read at its position)` |
+
+What to do: write a hip a skirt hides as `occluded` with its estimate. A file that
+wrote it `observed` reads the same gaps as before.

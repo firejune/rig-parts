@@ -33,11 +33,20 @@
  *   background is what makes the figure readable at all; a border pixel that is
  *   not ground is scenery, a floor, a gradient, or the figure cut by the frame.
  * - `PAINTING_JOINTS_STATED` — the eight joints the gap rules read (wrists,
- *   hips, knees, ankles) are `observed` with a position. An occluded wrist is a
- *   hand the painting does not show.
- * - `PAINTING_JOINT_ON_FIGURE` — every observed joint's pixel is figure, not
- *   background. A joint off the figure is a keypoint file for another painting,
- *   or a limb the painting does not hold where the file says.
+ *   hips, knees, ankles) are `observed` with a position, except that a hip may
+ *   be `occluded` with a position (issue #372). An occluded wrist is a hand the
+ *   painting does not show; an occluded hip is the honest state of a hip under
+ *   a skirt, and the arm's gap read from it is **well defined** when the hip
+ *   carries a position — which the keypoint reader holds inside the image
+ *   (`KEYPOINTS_POSITION_INSIDE`), so every sample of the wrist-to-hip line is
+ *   a pixel of the painting — and that position's pixel is figure (the next
+ *   rule). A hip with no position is still refused: there is no line to read.
+ * - `PAINTING_JOINT_ON_FIGURE` — every observed joint's pixel, and every
+ *   occluded hip's, is figure, not background. A joint off the figure is a
+ *   keypoint file for another painting, or a limb the painting does not hold
+ *   where the file says; an occluded hip on the background would also put a
+ *   background pixel at the end of the arm's line, a gap the hip's own position
+ *   makes rather than one between the arm and the body.
  * - `PAINTING_ARM_CLEAR` — on each side, a gap between the wrist and the hip
  *   of the same side. None is an arm painted against the body.
  * - `PAINTING_HANDS_APART` — a gap between the two wrists. None is hands
@@ -55,6 +64,15 @@ import type { KeypointName } from './skeleton.ts';
 
 /** The joints the gap rules read, in the order a refusal lists them. */
 export const PAINTING_JOINTS: readonly KeypointName[] = ['r_wrist', 'l_wrist', 'r_hip', 'l_hip', 'r_knee', 'l_knee', 'r_ankle', 'l_ankle'];
+
+/** The joints that may be `occluded` with a position and still be read (issue #372): a skirt hides the hips on most clothed figures. */
+export const PAINTING_OCCLUDABLE: readonly KeypointName[] = ['r_hip', 'l_hip'];
+
+/** Whether the check reads joint `name` as given: observed with a position, or an occludable joint occluded with one. */
+function readable(name: KeypointName, j: KeypointPerson['joints'][KeypointName]): j is KeypointPerson['joints'][KeypointName] & { at: [number, number] } {
+  if (j.at === null) return false;
+  return j.state === 'observed' || (j.state === 'occluded' && PAINTING_OCCLUDABLE.includes(name));
+}
 
 /** The four gap rules' pairs: the rule, the two joints, and what the pair is called in a line. */
 export const PAINTING_GAPS: ReadonlyArray<readonly [string, KeypointName, KeypointName, string]> = [
@@ -94,9 +112,9 @@ export interface PaintingReading {
   firstBorderNotGround: [number, number] | null;
   backgroundPx: number;
   figurePx: number;
-  /** Every observed joint, its pixel, and whether that pixel is figure. */
-  joints: Array<{ name: KeypointName; at: [number, number]; pixel: [number, number]; onFigure: boolean }>;
-  /** The gap readings whose two joints are both observed with a position. */
+  /** Every observed joint and every occluded hip with a position, its state, its pixel, and whether that pixel is figure. */
+  joints: Array<{ name: KeypointName; state: 'observed' | 'occluded'; at: [number, number]; pixel: [number, number]; onFigure: boolean }>;
+  /** The gap readings whose two joints are both read as given (observed with a position, or an occluded hip with one). */
   gaps: GapReading[];
 }
 
@@ -174,15 +192,15 @@ export function readPainting(r: Raster, person: KeypointPerson): PaintingReading
   for (const v of bg) backgroundPx += v;
   const joints: PaintingReading['joints'] = [];
   for (const [name, j] of Object.entries(person.joints) as Array<[KeypointName, KeypointPerson['joints'][KeypointName]]>) {
-    if (j.state !== 'observed' || j.at === null) continue;
+    if (!readable(name, j)) continue;
     const pixel = pixelOf(j.at, w, h);
-    joints.push({ name, at: j.at, pixel, onFigure: bg[pixel[1] * w + pixel[0]] === 0 });
+    joints.push({ name, state: j.state === 'observed' ? 'observed' : 'occluded', at: j.at, pixel, onFigure: bg[pixel[1] * w + pixel[0]] === 0 });
   }
   const gaps: GapReading[] = [];
   for (const [rule, a, b, what] of PAINTING_GAPS) {
     const ja = person.joints[a];
     const jb = person.joints[b];
-    if (ja.state !== 'observed' || jb.state !== 'observed' || ja.at === null || jb.at === null) continue;
+    if (!readable(a, ja) || !readable(b, jb)) continue;
     const line = linePixels(ja.at, jb.at, w, h);
     let background = 0;
     for (const [x, y] of line) background += bg[y * w + x];
@@ -206,11 +224,14 @@ export function paintingProblems(reading: PaintingReading, person: KeypointPerso
   }
   for (const n of PAINTING_JOINTS) {
     const j = person.joints[n];
-    if (j.state === 'observed' && j.at !== null) continue;
+    if (readable(n, j)) continue;
+    const hip = PAINTING_OCCLUDABLE.includes(n);
     problems.push({
       code: 'PAINTING_JOINTS_STATED',
       object: `${keypoints} person "${person.id}" joint ${n}`,
-      detail: `is ${j.listed ? j.state : 'not listed'}${j.at === null ? '' : ` at ${pt(j.at)}`}; observed with a position is required — the gap rules read ${PAINTING_JOINTS.join(', ')}, and a joint the painting does not show is a limb it cannot rig`,
+      detail: hip
+        ? `is ${j.listed ? j.state : 'not listed'} with no position; observed or occluded with a position is required — the arm's gap is read on the line from the wrist to this hip, and a hip with no position gives no line to read`
+        : `is ${j.listed ? j.state : 'not listed'}${j.at === null ? '' : ` at ${pt(j.at)}`}; observed with a position is required — the gap rules read ${PAINTING_JOINTS.join(', ')}, and a joint the painting does not show is a limb it cannot rig (only a hip may be occluded, with a position)`,
     });
   }
   for (const j of reading.joints) {
@@ -218,7 +239,7 @@ export function paintingProblems(reading: PaintingReading, person: KeypointPerso
     problems.push({
       code: 'PAINTING_JOINT_ON_FIGURE',
       object: `${keypoints} person "${person.id}" joint ${j.name}`,
-      detail: `is at ${pt(j.at)}, and pixel ${pt(j.pixel)} is background (ground connected to the painting's edge); a joint on the figure is required — a file measured on another painting, or a limb that is not where the file says`,
+      detail: `is ${j.state === 'occluded' ? 'occluded ' : ''}at ${pt(j.at)}, and pixel ${pt(j.pixel)} is background (ground connected to the painting's edge); a joint on the figure is required — a file measured on another painting, or a limb that is not where the file says${j.state === 'occluded' ? '; an occluded hip is read only from a point on the figure, or the arm\'s gap would be the hip\'s own background' : ''}`,
     });
   }
   for (const g of reading.gaps) {
@@ -238,8 +259,14 @@ export function paintingLines(reading: PaintingReading): string[] {
     `  painting ${reading.width}x${reading.height}: background ${reading.backgroundPx} px, figure ${reading.figurePx} px; border ${reading.border} px, ${reading.borderNotGround} not background-coloured`,
   ];
   const on = reading.joints.filter((j) => j.onFigure).length;
-  out.push(`  joints: ${reading.joints.length} observed, ${on} on the figure${on === reading.joints.length ? '' : ` (off: ${reading.joints.filter((j) => !j.onFigure).map((j) => j.name).join(', ')})`}`);
-  for (const g of reading.gaps) out.push(`  gap ${g.what}: ${g.background} of ${g.samples} sampled pixels are background`);
+  const observed = reading.joints.filter((j) => j.state === 'observed').length;
+  const occluded = reading.joints.filter((j) => j.state === 'occluded').map((j) => j.name);
+  const occ = occluded.length === 0 ? '' : `, ${occluded.length} occluded with a position (${occluded.join(', ')})`;
+  out.push(`  joints: ${observed} observed${occ}, ${on} on the figure${on === reading.joints.length ? '' : ` (off: ${reading.joints.filter((j) => !j.onFigure).map((j) => j.name).join(', ')})`}`);
+  for (const g of reading.gaps) {
+    const hidden = [g.a, g.b].filter((n) => occluded.includes(n));
+    out.push(`  gap ${g.what}: ${g.background} of ${g.samples} sampled pixels are background${hidden.length === 0 ? '' : ` (${hidden.join(', ')} occluded, read at its position)`}`);
+  }
   return out;
 }
 
