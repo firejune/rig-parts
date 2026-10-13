@@ -35,8 +35,9 @@ Exit codes are part of the interface: **0** the command did what it says, **1** 
 refused its input (every reason a `FAIL` line), **2** a usage error or a command
 this version does not implement. No command is unimplemented at 1.0.0 (`LATER`
 in `cli.ts` is empty). A refusal line has the shape
-`  FAIL  <RULE>: <object> — <value found>; <value required>`: the rule name is a
-stable identifier, and the detail after it is prose that may be reworded. A command
+`  FAIL  <RULE>: <object> — <value found>; <value required> (see rig-parts guide <RULE>)`:
+the rule name is a stable identifier, the pointer at the end is fixed text, and the
+detail between them is prose that may be reworded. A command
 also answers to the alias `spine-parts` as long as the install keeps it
 ([MIGRATION.md](MIGRATION.md)). `-h`, `help` and `-v` are the short forms of
 `--help` and `--version`. The flags' meanings are `rig-parts --help`'s; their
@@ -60,6 +61,7 @@ defaults are the help's too, and none is guessed from the art.
 | `build` | `--config`, `--source`, `--full`, `--head`, `--out`; optional `--seam`, `--project`, `--page-edges`, `--pack-shape`, `--loop`, `--lead-in`, `--requirements`, `--idle-keys`, `--seam-pairs`, `--keep-stills` |
 | `compose` | `--scene`, `--out`; optional `--requirements`, `--accept` |
 | `mesh-draft` | `--config`, `--parts`, `--out`; optional `--requirements`, `--idle-keys` (ctl, direct), `--page-edges` (pot, free), `--pack-shape` (rect, polygon), `--more-triangles` |
+| `guide` | one positional argument: a rule name, `§<n>`, `§<n>.<m>` or `§<n>.<m>.<k>` |
 | (none) | `--version`, `--help` |
 <!-- /stable:commands -->
 

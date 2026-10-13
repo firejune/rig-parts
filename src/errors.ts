@@ -23,6 +23,22 @@ export function problemLine(p: Problem): string {
   return `${p.code}: ${p.object} — ${p.detail}`;
 }
 
+/**
+ * The end of every FAIL line: the command that prints the guide's row for its
+ * rule (issue #343). This is the one place that writes it, so every line has the
+ * same form, and rig-c's lines have the same form with its own command. A line
+ * that quotes a rigc failure keeps rigc's pointer inside the quote, and this one
+ * goes after it.
+ */
+export function guidePointer(code: string): string {
+  return ` (see rig-parts guide ${code})`;
+}
+
+/** A refusal as it is printed: `  FAIL  RULE: object — detail (see rig-parts guide RULE)`. */
+export function failLine(p: Problem): string {
+  return `  FAIL  ${problemLine(p)}${guidePointer(p.code)}`;
+}
+
 export class PartsError extends Error {
   readonly problems: readonly Problem[];
 

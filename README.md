@@ -291,9 +291,13 @@ agent skill.
 | `loop --frames <dir> --out <file.gif \| file.png> [--palette]` | encode a rendered idle as a looping GIF, lossless APNG, or indexed APNG (`--palette`) |
 | `build --config --source --full --head --out [--seam] [--project] [--loop] [--lead-in <periods>] [--requirements] [--seam-pairs] [--keep-stills] [--idle-keys ctl\|direct]` | assemble, rig and check in one process, stopping at the first refusal; `--requirements`, `--seam-pairs` and `--keep-stills` are forwarded to check, `--idle-keys` to rig; `--lead-in` (with `--loop`) encodes the loop from the last of n + 1 idle periods played back to back, for a rig whose physics does not end where the render starts it |
 | `compose --scene <scene.json> --out [--requirements] [--accept]` | bind several characters' green builds into one rig (or, under `--accept`, builds failing only the bars named — for looking, not shipping): every name prefixed `<id>:` under one shared root, each character's offset added at its first-level bones, an optional background plate (its provenance recorded, judged by nothing) drawn first, and the draw order between the characters' slots as the scene file declares it — nothing inferred, nothing scaled; gated through rig-c as `rig` is, then checked ([AUTHORING §7](docs/AUTHORING.md), *Composing several characters*) |
+| `guide <RULE \| §<n> \| §<n>.<m> \| §<n>.<m>.<k>>` | print the one row of [docs/AUTHORING.md](docs/AUTHORING.md) that names a rule (a refusal and the bar it enforces, `CHECK_<LINE>` and `<LINE>`, print together), or one section, `###` subsection or `####` under it, read from the installed file when it runs |
 
 `rig-parts --help` has every flag. Exit codes: 0 done, 1 input refused (every
 reason is a FAIL line), 2 a usage error or a command this version does not implement.
+Every FAIL line ends with `(see rig-parts guide <RULE>)`, the command that prints the
+guide's row for that rule, and each row is anchored on the web as
+`docs/AUTHORING.md#<RULE>`.
 
 What 1.0.0 holds stable — these commands and their flags, the config
 fields, the files a build writes and their spec ids, the environment, and what this

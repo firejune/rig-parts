@@ -95,7 +95,7 @@ import { checkStage, gateThroughRigc, type Log } from './build.ts';
 import { ACCEPTABLE_BARS, barsNotMet, type CheckReport, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, type PackMode, requirementsNotPass, type RigcRunner } from './check.ts';
 import { CONSTRAINT_BONE_FIELDS, ROOT_BONE } from './config.ts';
 import { cropToSpineY } from './coords.ts';
-import { PartsError, type Problem, problemLine, refuseIfAny } from './errors.ts';
+import { failLine, PartsError, type Problem, refuseIfAny } from './errors.ts';
 import type { MotionSpec } from './motion.ts';
 import { readPng } from './raster/png.ts';
 import { readRequirements, type RequirementsFile } from './requirements.ts';
@@ -1353,7 +1353,7 @@ export function composeStage(input: ComposeInput, run: ComposeRunners, log: Log)
   const refused = (stage: ComposeStage, err: unknown, composed: ComposedScene | null = null): ComposeResult => {
     if (!(err instanceof PartsError)) throw err;
     const p = prefix(stage);
-    for (const x of err.problems) p(`  FAIL  ${problemLine(x)}`);
+    for (const x of err.problems) p(failLine(x));
     p(`refused: ${err.problems.length} problem(s)`);
     log(`compose: stopped at ${stage}; nothing ${stage === 'compose' ? 'was written' : 'after the check was written'}`);
     return { stoppedAt: stage, composed, check: null };

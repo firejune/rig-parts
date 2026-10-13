@@ -13,6 +13,13 @@ rig-c, which compiles, gates, packs and renders. You cannot see the painting,
 the layers or the rig. The printed lines, `docs/AUTHORING.md` and the files each
 stage writes are the whole interface.
 
+**A FAIL line ends with the command that prints its row of the guide:**
+`FAIL  RULE: object — detail (see rig-parts guide RULE)`. Run that command before
+anything else. It prints the one row of `docs/AUTHORING.md` that maps the rule to
+what has to change, read from the installed file. `rig-parts guide §<n>` prints a
+section, `§<n>.<m>` the m-th `###` under it and `§<n>.<m>.<k>` the k-th `####`
+under that.
+
 ## Non-negotiables
 
 - **rig-c's gate is never bypassed.** rig-parts writes no Spine data
@@ -26,7 +33,7 @@ stage writes are the whole interface.
   because the tool refused.
 - **The refusal is the instruction.** `FAIL  RULE: object — detail` names the object,
   the value found and the value required; AUTHORING §6 maps every rule to the field
-  or input that has to change.
+  or input that has to change, and `rig-parts guide RULE` prints that row.
 - **Green is not "looks right".** `check` measures the gates, the seam, the loop and
   six judgement lines (`BREATH_VISIBLE`, `BLINK_NO_HOLE`, `CHAIN_LAG`,
   `TIP_OVER_ROOT`, `STILL_REGIONS_DARK` — its face half in the head's own frame —
