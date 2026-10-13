@@ -70,7 +70,7 @@ import {
   splitSchedule,
   untestedIntervals,
 } from './autoreplay.ts';
-import { besideIdleLine, FOLD_LINE, type FoldsLine, LEVEL_LINE, type LevelLine, LIMB_LINE, type LimbLine, STRESS_LINE, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, rigcIdentity, rigcRanClause, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
+import { besideIdleLine, FOLD_LINE, type FoldsLine, LEVEL_LINE, type LevelLine, LIMB_LINE, type LimbLine, STRESS_LINE, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, GATE_PROFILE, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, rigcIdentity, rigcRanClause, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
 import { type Cut, type Limb, loadConfig, loadConfigAndAnimations, loadEarlyConfig } from './config.ts';
 import { failLine, PartsError, type Problem, refuseIfAny } from './errors.ts';
 import type { MeshQualityReport, MotionSchedule } from 'rig-c/mesh';
@@ -365,7 +365,7 @@ function gateRun(label: string, rigc: RigcRunner, args: string[]): GateRun {
  * written anywhere, so packing them was work nobody read. No render is asked
  * of rigc by either build.
  */
-export const REFERENCE_BUILD_ARGS: readonly string[] = ['--profile', 'spine-html'];
+export const REFERENCE_BUILD_ARGS: readonly string[] = ['--profile', GATE_PROFILE];
 
 /** The reference build's label, as the rig stage prints it. */
 export const REFERENCE_BUILD_LABEL = `build ${REFERENCE_BUILD_ARGS.join(' ')}`;

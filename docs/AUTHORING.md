@@ -822,7 +822,7 @@ unreduced source on the rig's idle and passes the author's bounds (step 4). The 
 4. **Motion** — the rig stage builds the rig twice through rigc's gate: as written (the
    **candidate**, the reduced mesh, packed as `--out` receives it) and with that one attachment
    swapped for the unreduced source — its UVs, triangles and hull as `reduceMesh` was handed them,
-   its own weights bound the same way (the **reference**, `build --profile spine-html` without
+   its own weights bound the same way (the **reference**, `build --profile rig-play` without
    `--pack`: the same gate over the compile, and nothing reads a reference's pages). rig-c's
    `compareMeshesInMotion` (`rig-c/meshcompare`) poses both model documents on the idle
    exactly as `check` renders it — `idle` at 12 fps over its duration, physics reset at 0 and
@@ -991,7 +991,7 @@ wall time goes to standard error, not into the table).
 | `boundaryRuns` | optional, `{ maxVertices }`, a whole number 2 or more, no default: each removal pass first tries to replace a run of 2 to `maxVertices` consecutive source-hull vertices with one chord, as one step held to every declared row (below) |
 | `retriangulate` | optional, `"delaunay"`: once the reduction ends, the kept vertices are re-triangulated by Delaunay flips, taken whole only when every declared row still passes (below) |
 | `removalOrder` | optional, `"deformation-load"`: the single removals are tried in ascending predicted load instead of ascending source index (below) |
-| `stimulus` | optional (issue #196), `{ "chain", "degrees" }` or a non-empty list of them: a bend the motion gate measures the part against, for a part no idle key deforms (*A part only physics moves*, after the physics recipe). `chain` is a chain this mesh's `segments` name, each named once; `degrees` a number above 0. Each link of the chain is turned by +`degrees` and by −`degrees` about its joint — a `rotate` key on the link, so the chain curls — in two animations of duration 0 (`stimulus <chain> +<degrees>`, `stimulus <chain> -<degrees>`) that only the comparison's builds carry: the reference and a candidate built from the written rig with them added (`build --profile spine-html` without `--pack`, one more gated build per part); `rig/motion.json` never holds them. Each is walked at time 0, right after the physics reset, so the pose is the declared bend and no constraint has moved it; the idle is walked as before, so where idle keys also move the part both are measured, against the one `motion` bound. The acceptance loop's probes walk them too, as `selection` beside the grid frames. The row echoes `stimulus` (chain, degrees, links, the two animation names); absent, nothing is added and every byte is the same. A chain the segments do not name is `CONFIG_NAME_RESOLVES`, `degrees` that is not a number above 0 `CONFIG_FIELD_TYPE`, both at the field; an animation of `motion.animations_from` already called by one of the two names is `AUTO_MESH_MOTION_INPUT`. The amplitude (*The allocation rows*) is still derived from the idle alone |
+| `stimulus` | optional (issue #196), `{ "chain", "degrees" }` or a non-empty list of them: a bend the motion gate measures the part against, for a part no idle key deforms (*A part only physics moves*, after the physics recipe). `chain` is a chain this mesh's `segments` name, each named once; `degrees` a number above 0. Each link of the chain is turned by +`degrees` and by −`degrees` about its joint — a `rotate` key on the link, so the chain curls — in two animations of duration 0 (`stimulus <chain> +<degrees>`, `stimulus <chain> -<degrees>`) that only the comparison's builds carry: the reference and a candidate built from the written rig with them added (`build --profile rig-play` without `--pack`, one more gated build per part); `rig/motion.json` never holds them. Each is walked at time 0, right after the physics reset, so the pose is the declared bend and no constraint has moved it; the idle is walked as before, so where idle keys also move the part both are measured, against the one `motion` bound. The acceptance loop's probes walk them too, as `selection` beside the grid frames. The row echoes `stimulus` (chain, degrees, links, the two animation names); absent, nothing is added and every byte is the same. A chain the segments do not name is `CONFIG_NAME_RESOLVES`, `degrees` that is not a number above 0 `CONFIG_FIELD_TYPE`, both at the field; an animation of `motion.animations_from` already called by one of the two names is `AUTO_MESH_MOTION_INPUT`. The amplitude (*The allocation rows*) is still derived from the idle alone |
 
 **A bound declared absent.** `maxOvershoot` and `maxUndercut`, in `sourceBounds` and in
 `targets.artFit`, each take a number of px 0 or more or `null`. `null` means *measured and
@@ -2086,7 +2086,7 @@ skip); the pose costs 14.8 against 15.3 us per frame (reference-demo) and 8.3 ag
 (reference-sample), the difference all in `updateWorldTransform`; the rendered idle frames
 differ by at most one level in a channel. The default stays `ctl`: the examples'
 `expected/rig.json` and `motion.json` are the reference's output, and the
-declaration is in the rig spec only, so `rigc validate <build> --profile spine-html`
+declaration is in the rig spec only, so `rigc validate <build> --profile rig-play`
 run on a `direct` build (it has no rig spec to read) refuses A15 once per keyed
 bone. No stage runs `validate`: the gate is `rigc build`, which reads the rig spec
 and its declaration, and is green on both (`RG19`).
@@ -3152,7 +3152,7 @@ What is composed:
   play. Each is read with the idle's own key lists, so a key compose does not know
   how to prefix is `SCENE_BUILD_FIELD_KNOWN`, as it is on the idle, and a track of
   one that keys `root` is `SCENE_ROOT_SHARED` (issue #183).
-- **Gated as `rig` gates its own:** `rigc build --profile spine-html --pack`, the
+- **Gated as `rig` gates its own:** `rigc build --profile rig-play --pack`, the
   compile and the packed pages on disk, in a scratch directory; `--out` receives
   `rig/` (`rig.json`, `motion.json`, `images/`) and `scene.json` only when it is
   green. Then `check` runs over `rig/` into `check/`, as on any rig it did not

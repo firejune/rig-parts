@@ -53,7 +53,7 @@ it quoted, kept here with the fixture they describe:
   `propose --head-box` now makes that shift itself), and `hair_back` taken from the
   full run, because the twin tails leave the head crop sideways (a plan edit).
 - `check` printed, verbatim:
-  `50 assertions: 24 measured (24 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"`;
+  `50 assertions: 24 measured (24 passed, 0 failed), 26 skipped, 0 not in profile "rig-play"`;
   `loop: idle 49 frame(s) at 12 fps, f0000 vs f0048 (t = 4s): max |d| 0 (0 required)`;
   `seam: setup pose at 714x1216, scale 0.9422: mean |d| 0.234 (<= 1.0), 2 px over 40, 2.25 rig px (the count / s²; <= 50), 0 px over 80 (reported)`;
   `pack: skeleton.png 922x1348, 22 region(s), 94.9% covered, padding 2, page edges free, shape polygon`.

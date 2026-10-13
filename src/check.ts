@@ -30,7 +30,7 @@
  *
  * | output | what |
  * | --- | --- |
- * | `build/` | `rigc build --profile spine-html --pack --page-edges free --pack-shape polygon` (or `pot`, `rect`, when the caller names them; {@link PAGE_EDGES}, {@link PACK_SHAPES}) — the packed atlas is the final artifact |
+ * | `build/` | `rigc build --profile rig-play --pack --page-edges free --pack-shape polygon` (or `pot`, `rect`, when the caller names them; {@link PAGE_EDGES}, {@link PACK_SHAPES}) — the packed atlas is the final artifact |
  * | `gate_spine-html.txt` | that build's gate lines, verbatim — the one gate: rigc's `build` runs it once over the compile and once over the packed pages on disk, and `spine-html` holds every rule `spine` measures (selftest `CH09`) |
  * | `idle_frames/` | `rigc render --animation idle --fps 12 --max 640 --geometry`: `frames.json` + `idle/f*.png` + `idle/geometry.json` (each mesh's skinned vertices, which `TEXTURE_STRETCH` reads, every attachment's posed triangles, which `TIP_OVER_ROOT` and both halves of `STILL_REGIONS_DARK` read since issues #118 and #123, and every bone's world transform, which the face half reads its head bone from) |
  * | `contact.png` | rigc's own contact sheet of that render, copied out |
@@ -304,9 +304,17 @@ export interface PackMode {
 /** Both defaults, {@link DEFAULT_PAGE_EDGES} and {@link DEFAULT_PACK_SHAPE}. */
 export const DEFAULT_PACK_MODE: PackMode = { pageEdges: DEFAULT_PAGE_EDGES, packShape: DEFAULT_PACK_SHAPE };
 
+/**
+ * The profile every rigc build this package runs is gated under. rig-c 2.50.0
+ * renamed `spine-html` to `rig-play` and runs the same rules under it; the old
+ * name is accepted only until a later minor release and prints a deprecation
+ * line on stderr (selftest `CK20` holds every stage's build to the new name).
+ */
+export const GATE_PROFILE = 'rig-play';
+
 /** The packed build's rigc arguments after `--out <dir>`, as every stage that packs passes them. */
 export function packedBuildArgs(mode: PackMode): string[] {
-  return ['--profile', 'spine-html', '--pack', '--page-edges', mode.pageEdges, '--pack-shape', mode.packShape];
+  return ['--profile', GATE_PROFILE, '--pack', '--page-edges', mode.pageEdges, '--pack-shape', mode.packShape];
 }
 
 /** The packed build as a label: the rigc command line that was run, after `rigc`. */
