@@ -351,9 +351,13 @@ usage:
       holds an animation, ANIMATIONS_DO_NOT_FOLD reads each, the idle included,
       with rigc render --folds, physics constraints left out: a mesh triangle turned
       over against the setup pose fails, unless the --requirements file's
-      may_fold declares that slot and animation with a why. The last line says
-      how many of the bars measured — nine, ten with the fold bar — and names
-      the skipped ones.
+      may_fold declares that slot and animation with a why. Where a footwear
+      part rides a bone that hangs from another, FEET_STAY_LEVEL reads the
+      same render's geometry: while a bone above that bone is turned, the
+      part's drawing must stay within ±10 degrees of its setup pose (HQ's
+      line); config.bones' "inherit" on the foot is what keeps it there. The
+      last line says how many of the bars measured — nine, ten with the fold
+      bar, eleven with the feet-level bar — and names the skipped ones.
       --source adds SETUP_POSE_VS_SOURCE: REPORTED, never a FAIL — the setup
       pose against the painting by assemble's own recomposite figures (mean |d|,
       % within 8, error px over 40, uncovered error px where the pose has alpha

@@ -58,7 +58,10 @@
  *   setup by; an unkeyed property is [0, 0], [1, 1] or 0. `pivot` is the
  *   bone's setup joint in the part's drawing frame (crop px less the part's
  *   padded origin, y down). `setup` is the rig's as written: this package
- *   writes no bone scale, shear or inherit mode, so `{ 1, 1, 0, 0, 'normal' }`.
+ *   writes no bone scale or shear, so `{ 1, 1, 0, 0, 'normal' }` — with the
+ *   bone's own `inherit` where config.bones declares one (issue #348), handed
+ *   to rig-c as written, which refuses any mode but `normal` by name
+ *   (`SKINNING_RANGE_UNSUPPORTED`): the residual is then not measurable.
  *   A shear key has no field in `BoneMotionRange`, so a bone keyed by one
  *   makes the residual not measurable (`ENVELOPE_SHEAR_KEYED`); a property
  *   the idle writes and none of the above names is refused the same way.
@@ -86,7 +89,7 @@ import { edgeLength } from './length.ts';
 
 /** What the derivation reads off the rig besides the part: the bones (name, parent), each bone's setup joint in crop px, the idle as written, the constraints. */
 export interface EnvelopeBasis {
-  bones: ReadonlyArray<{ name: string; parent?: string }>;
+  bones: ReadonlyArray<{ name: string; parent?: string; inherit?: string }>;
   joints: ReadonlyMap<string, readonly [number, number]>;
   motion: MotionSpec;
   constraints: readonly ConfigConstraint[];
@@ -105,8 +108,11 @@ export type EnvelopeDerivation = { envelope: SkinningEnvelope } | { stops: Envel
 /** Where a range comes from: the bone's keys, or the kind of the constraint that drives it — which rig-c refuses by name. */
 type RangeSource = 'keys' | 'ik' | 'transform' | 'path' | 'physics';
 
-/** A `BoneMotionRange` whose `source` may name a constraint kind: rig-c reads `source` at run time and certifies `'keys'` alone. */
-type DeclaredRange = Omit<BoneMotionRange, 'source'> & { source: RangeSource };
+/**
+ * A `BoneMotionRange` whose `source` may name a constraint kind, and whose `setup.inherit` may name a declared mode
+ * (issue #348): rig-c reads both at run time and certifies `'keys'` and `'normal'` alone.
+ */
+type DeclaredRange = Omit<BoneMotionRange, 'source' | 'setup'> & { source: RangeSource; setup: Omit<BoneMotionRange['setup'], 'inherit'> & { inherit: string } };
 
 /**
  * rig-c's helper over ranges whose `source` may be a constraint kind. rig-c's type admits only the one value it
@@ -135,6 +141,12 @@ function trackValues(keys: readonly MotionKey[]): number[] {
 }
 
 const SETUP: BoneMotionRange['setup'] = { scaleX: 1, scaleY: 1, shearX: 0, shearY: 0, inherit: 'normal' };
+
+/** The bone's declared inherit mode as the rig writes it (issue #348), or nothing, so {@link SETUP}'s `normal` stands. */
+function inheritOf(basis: EnvelopeBasis, bone: string): { inherit: string } | Record<string, never> {
+  const mode = basis.bones.find((b) => b.name === bone)?.inherit;
+  return mode === undefined ? {} : { inherit: mode };
+}
 
 /** One bone's declared range off the idle, or the stop that names why it has none. */
 export function boneRange(basis: EnvelopeBasis, bone: string, origin: readonly [number, number], driven: ReadonlyMap<string, RangeSource>): DeclaredRange | EnvelopeStop {
@@ -170,7 +182,7 @@ export function boneRange(basis: EnvelopeBasis, bone: string, origin: readonly [
     scaleX,
     scaleY,
     translate: edgeLength(tx, ty),
-    setup: { ...SETUP },
+    setup: { ...SETUP, ...inheritOf(basis, bone) },
   };
 }
 
