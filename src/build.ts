@@ -43,7 +43,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
-import { assemble, type AssembleResult, cutLines, driftLine, limbLines, FIGURE_MASK_FILE, figuresLine, holeLines, type ProjectRule, scenePhrase, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
+import { assemble, type AssembleResult, cutLines, hiddenLines, SINGLE_RUN_FACE_TAGS, driftLine, limbLines, FIGURE_MASK_FILE, figuresLine, holeLines, type ProjectRule, scenePhrase, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
 import { allocationClause, type Reducer, stageBClause, unboundedClause } from './automesh.ts';
 import { residualClause } from './autoenvelope.ts';
 import { type AutoMotionCase, failingRows, idleSchedule, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison, sourceSelfFailure, stimulusMotion, withStimulus } from './automotion.ts';
@@ -106,8 +106,12 @@ export function readSource(path: string): Raster {
   }
 }
 
-/** Read both runs, collecting the refusals of both before throwing. */
-export function readRuns(full: string, head: string): { full: LayerSet; head: LayerSet } {
+/**
+ * Read both runs, collecting the refusals of both before throwing. With no
+ * head run (`head` null, issue #359) the full run is read once and stands for
+ * both, and `single` says so: the stage then holds it to `checkSingleRun`.
+ */
+export function readRuns(full: string, head: string | null): { full: LayerSet; head: LayerSet; single: boolean } {
   const problems: Problem[] = [];
   const one = (path: string): LayerSet | null => {
     try {
@@ -121,15 +125,16 @@ export function readRuns(full: string, head: string): { full: LayerSet; head: La
     }
   };
   const f = one(full);
-  const h = one(head);
+  const h = head === null ? f : one(head);
   if (problems.length > 0) throw new PartsError(problems);
-  return { full: f as LayerSet, head: h as LayerSet };
+  return { full: f as LayerSet, head: h as LayerSet, single: head === null };
 }
 
 export interface AssembleStageInput {
   source: string;
   full: string;
-  head: string;
+  /** The head run, or null for one run that holds the face (issue #359). */
+  head: string | null;
   config: string;
   seam: SeamRule;
   project: ProjectRule;
@@ -236,7 +241,7 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   const runs = readRuns(input.full, input.head);
   // The early door: assemble runs before propose has drafted bones, meshes,
   // regions and motion, so it requires only what it reads (issue #20).
-  const fields = stageFields(loadEarlyConfig(input.config, 'assemble'));
+  const fields = stageFields(loadEarlyConfig(input.config, 'assemble'), runs.single ? { w: src.width, h: src.height } : null);
   const under = readUnders(input.config, fields.cuts);
   const caps = fields.limbs === undefined ? undefined : readCaps(input.config, fields.limbs);
   const result = assemble({ source: src, full: runs.full, head: runs.head, ...fields, under, ...(caps === undefined ? {} : { caps }), seamRule: input.seam, projectRule: input.project });
@@ -254,6 +259,8 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   if (figurePath !== null) writePng(figurePath, result.figure as Raster);
   const [W, H] = result.parts.rig_size;
   log(`rig-parts assemble: ${result.images.length} part(s) on a ${W}x${H} rig (${result.parts.scale_rig_per_source} rig px per source px), seam rule ${result.seamRule}, projection rule ${result.projectRule}`);
+  // Issue #359: one run, said, so a reader of the lines knows no head run was placed.
+  if (runs.single) log(`  one run: ${input.full} holds the face (${SINGLE_RUN_FACE_TAGS.join(', ')}), so no head run is read; every part comes from the full run`);
   for (const p of result.parts.parts) {
     log(
       `  ${p.name.padEnd(11)} ${p.from.padEnd(16)} ${`${p.w}x${p.h}`.padEnd(9)} @${String(p.x).padStart(4)},${String(p.y).padStart(4)} ` +
@@ -268,6 +275,8 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   // Issue #349: one line per part a limb took, and one per joint with its cap's pixels. None without limbs.
   for (const l of limbLines(result.limbs)) log(l);
   for (const l of fringeLines(result.parts.parts)) log(l);
+  // Issue #359: one line per hidden-art layer and what read it. None without one.
+  for (const l of hiddenLines(result.hidden)) log(l);
   const total = (k: 'opaque_px' | 'visible_px' | 'occluded_px' | 'source_px_taken' | 'visible_not_projected_px'): number => result.parts.parts.reduce((a, p) => a + (p[k] ?? 0), 0);
   const [op, vis, occ, taken, unproj] = (['opaque_px', 'visible_px', 'occluded_px', 'source_px_taken', 'visible_not_projected_px'] as const).map(total);
   const pct = (n: number): string => `${((100 * n) / op).toFixed(1)}%`;
@@ -1421,7 +1430,8 @@ export interface BuildInput {
   config: string;
   source: string;
   full: string;
-  head: string;
+  /** The head run, or null for one run that holds the face (issue #359). */
+  head: string | null;
   out: string;
   seam: SeamRule;
   project: ProjectRule;

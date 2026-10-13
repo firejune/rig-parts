@@ -140,11 +140,13 @@ export interface CapRecord {
   box: [number, number, number, number];
   layer_px: number;
   image_px?: number;
+  /** Issue #359: with `image_px`, the hidden-art layer the cap's image came from (`<run>:<layer>:hidden`), when it came from one rather than the config's cap file. */
+  image_layer?: string;
   missing_px: number;
 }
 
 const LIMB_KEYS = ['name', 'segment', 'of', 'bone', 'joint', 'cap'] as const;
-const CAP_KEYS = ['at', 'width', 'radius', 'box', 'layer_px', 'image_px', 'missing_px'] as const;
+const CAP_KEYS = ['at', 'width', 'radius', 'box', 'layer_px', 'image_px', 'image_layer', 'missing_px'] as const;
 
 /** The limb record with its keys in the fixed order, so two runs write the same bytes. */
 function orderedLimb(l: LimbRecord): Record<string, unknown> {
@@ -454,8 +456,9 @@ function checkParts(raw: unknown, path: string): PartsFile {
           pt(co.box, 4) &&
           isCount(co.layer_px) &&
           isCount(co.missing_px) &&
-          (!('image_px' in co) || isCount(co.image_px));
-        if (!ok) fail('PARTS_FIELD_TYPE', `${object} "cap"`, `is ${show(c)}; {at: [x, y], width, radius, box: [x, y, w, h], layer_px, image_px?, missing_px} is required`);
+          (!('image_px' in co) || isCount(co.image_px)) &&
+          (!('image_layer' in co) || ('image_px' in co && typeof co.image_layer === 'string' && co.image_layer !== ''));
+        if (!ok) fail('PARTS_FIELD_TYPE', `${object} "cap"`, `is ${show(c)}; {at: [x, y], width, radius, box: [x, y, w, h], layer_px, image_px?, image_layer? (with image_px), missing_px} is required`);
       }
     }
   }

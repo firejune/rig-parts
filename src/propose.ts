@@ -470,6 +470,7 @@ export function draftTurn(P: PartSet, runs: TurnRuns): { turn: TurnSpec | null; 
   const read: Array<{ part: string; run: 'full' | 'head'; tag: string; base: string | null; own: number; area: number; order: number; piece: boolean }> = [];
   const patches: string[] = [];
   const unread = new Map<string, string[]>();
+  const depthless: Array<{ part: string; from: string; set: LayerSet }> = [];
   P.recs.forEach((r, order) => {
     const [run, tag] = splitFrom(r.from);
     if (run === PAINTING_RUN) {
@@ -487,13 +488,22 @@ export function draftTurn(P: PartSet, runs: TurnRuns): { turn: TurnSpec | null; 
       return;
     }
     if (layer.depth === null) {
-      problems.push({ code: 'PROPOSE_TURN_DEPTH_PRESENT', object: `part "${r.name}" (${r.from})`, detail: `its layer in ${set.source} carries no depth_median (a ${set.form} input); the turn orders parts by See-through's per-layer depth, so a run that carries one is required` });
+      depthless.push({ part: r.name, from: r.from, set });
       return;
     }
     read.push({ part: r.name, run: run as 'full' | 'head', tag, base: 'base' in layer.tag ? layer.tag.base : null, own: layer.depth, area: r.opaque_px, order, piece: r.cut_from !== undefined });
   });
   for (const [run, names] of unread) {
     problems.push({ code: 'PROPOSE_TURN_RUN_GIVEN', object: `the ${run} run`, detail: `part(s) ${names.map((n) => `"${n}"`).join(', ')} came from it and its layers were not given; --${run} <dir | layers.json> is required to read their depth` });
+  }
+  // Issue #359: runs that carry no depth at all (a PSD, or an export of one) are skipped by name, never passed and never
+  // given an invented depth; a run where some parts' layers carry one and others do not is refused part by part.
+  if (problems.length === 0 && read.length === 0 && depthless.length > 0) {
+    const sources = [...new Set(depthless.map((d) => d.set.source))];
+    return { turn: null, notes: [`turn: SKIP — ${sources.join(', ')} carr${sources.length === 1 ? 'ies' : 'y'} no depth_median (${[...new Set(depthless.map((d) => (d.set.form === 'psd' ? 'a PSD carries none' : 'null on every layer')))].join('; ')}), so no turn control is drafted from ${depthless.length} part(s); the turn orders parts by See-through's per-layer depth, and none was measured — a config.turn written by hand sets one`] };
+  }
+  for (const d of depthless) {
+    problems.push({ code: 'PROPOSE_TURN_DEPTH_PRESENT', object: `part "${d.part}" (${d.from})`, detail: `its layer in ${d.set.source} carries no depth_median (a ${d.set.form} input) while other parts' layers carry one; the turn orders parts by See-through's per-layer depth, so a run that carries one for every part — or for none, which skips the turn — is required` });
   }
   refuseIfAny(problems);
   const notes: string[] = [];

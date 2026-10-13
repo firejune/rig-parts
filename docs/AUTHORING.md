@@ -95,7 +95,7 @@ read by no CPU stage).
 | `generation.control.skeleton` | `comfy paint` — the OpenPose control image, drawn at `latent` | **authored**: a built-in standing pose, `"stand_sides"` or `"stand_clasp"`, or (issue #198) any other string, read as a path relative to the config file's directory to a pose file `{"width": W, "height": H, "points": {"nose": [x, y], "neck": [x, y], …}}` — `width` x `height` is the canvas and must be `generation.latent` (the points are not scaled; `CONFIG_POSE_CANVAS`), and `points` holds the 18 body-18 keypoints of `src/skeleton.ts` by name (`nose`, `neck`, `r_shoulder`, `r_elbow`, `r_wrist`, `l_shoulder`, `l_elbow`, `l_wrist`, `r_hip`, `r_knee`, `r_ankle`, `l_hip`, `l_knee`, `l_ankle`, `r_eye`, `l_eye`, `r_ear`, `l_ear`; `r`/`l` the subject's sides), each `[x, y]` in canvas px, x right, y down, `0 <= x <= W`, `0 <= y <= H`. The image is drawn from the file exactly as from a built-in (same renderer, same size), written as `control_pose-<first 12 hex of its sha256>.png`. A pose file carries no words, so `generation.pose` is required beside it (`CONFIG_FIELD_PRESENT`). The file is read wherever the config is read from a path, every problem at once: no such file — a misspelt built-in lands here too — or one that cannot be read (`CONFIG_FILE_PRESENT`), not JSON (`CONFIG_IS_JSON`), not an object, a size that is not a whole positive px count, a point that is not two numbers (`CONFIG_FIELD_TYPE`), a key besides the three (`CONFIG_KEY_KNOWN`) or written twice (`CONFIG_KEY_UNIQUE`), `points` holding other than the 18 names (`CONFIG_POSE_KEYPOINTS`, with the count found and required), a point off the canvas (`CONFIG_POSE_IN_CANVAS`, naming the point and the canvas size) |
 | `seethrough.resolution` | assemble — each run's canvas must be `resolution` square (`ASSEMBLE_RUN_CANVAS`) | recorded from the See-through runs; 1024 in both examples |
 | `seethrough.steps`, `.seed`, `.offload` | no CPU stage | recorded from the runs |
-| `seethrough.head_box` | inputs (cuts the head image there; optional at the first call); assemble — where the head run sits on the painting | **proposed** by `propose --head-box` from the full run, square, source pixels, shifted inside the painting when needed; the head run must then be fed exactly that crop |
+| `seethrough.head_box` | inputs (cuts the head image there; optional at the first call); assemble — where the head run sits on the painting | **proposed** by `propose --head-box` from the full run, square, source pixels, shifted inside the painting when needed; the head run must then be fed exactly that crop. With one run (no `--head`, issue #359: an artist's own file, §4 *For artists*) it is left out — there is no crop to place — and a config that sets it is refused (`ASSEMBLE_SINGLE_RUN_HEAD_BOX`) |
 | `assemble.rig_scale` | assemble — the rig is `trunc(w × rig_scale)` x `trunc(h × rig_scale)`, and every rig-px value after it (`bones`, `meshes`, `motion`, `patches`, `cuts`) is in that rig's pixels; `check --source` (`CHECK_SOURCE_SIZE`) and `compose` (`SCENE_RIG_SCALE_AGREES`) read it back off `parts.json` | authored; rig pixels per source pixel. 0.5 in both examples (a 1664x2432 painting makes an 832x1216 rig). **Keep the figure about 1,100 to 1,200 rig px tall** — the `H` of `propose`'s `mesh spacing:` note, the height of the parts' boxes together — so for another painting, about 1,150 over the figure's height in painting px: that is the size the proposer's spacing divisor was calibrated at (H 1106–1185, the `mesh spacing` note says so) and the size of the two examples `check`'s bars are derived from, and the proposer and `check` also hold fixed rig-px values that do not scale with it (the fringe's 10 px step, the trunk segments' 18, 20, 30 and 100 px, the 15 px wrist tolerance, the 10-row pendant floor, the seam bar's 50 rig px over 40). What else it trades, measured on `demo` with the README loop from a fresh config at 0.25, 0.5 and 1 (issue #345, rig-c 2.47.1): the same plan and the same ten chains; every bar but the one the uncorrected `demo` always fails (`bottomwear` `TIP_OVER_ROOT`, the README loop's `RL01`) passing at all three; the atlas page 418x606, 832x1205 and 1825x2047; the figure's mesh spacing 16, 32 and 64, so 830, 868 and 932 triangles; the breath 2.5 % of a torso that scales with it; and the proposed bones, scaled to 0.5, off the 0.5 proposal's by up to 38 px at 0.25 and 22.5 px at 1 (the hairpin's origin; the skirt roots 20 and 10.5) — the fixed-px values above. Changing it after the rig sections are written is not refused: `demo`'s tracked config built at 0.25 gated green and `check` failed only `TIP_OVER_ROOT` on both sleeves; `propose --from-config` names it (54 `LINT` lines, links off the art) — propose again at the new scale. Absent: `CONFIG_FIELD_PRESENT`; 0, negative or not a number: `CONFIG_FIELD_TYPE`; a rig under 1x1: `ASSEMBLE_RIG_SIZE` |
 | `assemble.plan` | assemble; also the list every `meshes`/`regions` key must come from | **proposed** by `assemble --propose-plan`. `[part name, "full" \| "head", See-through tag]`, in draw order back to front. Names are free; roles come from the tag. A layer the author made and added to a run takes `author:<label>` in the tag's place, and has no role (§5, *A layer the author made*) |
 | `assemble.extend_below_crop` | assemble | **proposed** with the plan: `{part, run, tag}` — a head-run part that reaches the bottom of the head crop is continued from a full-run layer, whole connected components |
@@ -1724,6 +1724,126 @@ The selftest runs this order, with the README's flags, on each fetched example f
 a config holding only `key`, `seethrough` and `assemble.rig_scale`, pasting each
 proposal in as the steps above say (`RL01`); every step must exit 0.
 
+### For artists: your own layered file (issue #359)
+
+An artist's layered file is an input in its own right: you paint the figure in
+layers, the tool reads them, and an agent does the data work. Nothing below asks
+for See-through.
+
+**What to paint.** One pixel layer per part, named by its tag. `rig-parts layers
+--template art.psd --canvas <side>x<side>` writes a PSD holding one empty layer per
+name the rig reads, bottom first: `back hair`, `neck`, `neckwear`, `topwear`,
+`handwear-r`, `handwear-l`, `bottomwear`, `legwear`, `footwear`, `tail`, `wings`,
+`objects`, `headwear`, `face`, `irides-r`, `irides-l`, `eyebrow-r`, `eyebrow-l`,
+`eyewhite-r`, `eyewhite-l`, `eyelash-r`, `eyelash-l`, `eyewear`, `ears-r`, `ears-l`,
+`earwear`, `nose`, `mouth`, `front hair` — 29 names: the 24 See-through tags
+(`src/tags.ts`) less `head`, which upstream never emits and no stage reads, with the
+six split tags as their halves, `-r` being the character's right (the smaller x).
+The order is a starting stack, not a rule. Paint the layers the figure has and
+delete the rest: an empty layer is refused (`PSD_LAYER_HAS_PIXELS`). A layer you
+need that no tag fits is `author:<label>` (§5, *A layer the author made*).
+
+- **The face, separated.** `face`, `eyewhite-r` and `eyewhite-l`, each painted, are
+  what lets one file stand for See-through's two runs: the face box comes from
+  `face`, the eye bones and the blink from the eyewhites. Without them the run is
+  refused (`ASSEMBLE_SINGLE_RUN_FACE`, one line per tag missing).
+- **The stacking order is the draw order**, bottom first. A PSD carries no depth,
+  and none is invented: `layers` prints one `SKIP  depth:` line naming the file,
+  and the turn draft (`propose --full`) skips it (`turn: SKIP`).
+- **Flatten each layer.** Normal blending, 100 % opacity, no clipping layer, no
+  layer mask, 8-bit RGB: each is refused by name (`PSD_LAYER_PLAIN` naming the
+  layer and what it carries, `PSD_IS_RGB8`), because the composite it would make
+  is not one the reader can see. Groups are read through (pass-through or normal
+  blending only). A switched-off layer is refused too, except a hidden-art layer.
+- **Small pieces.** A layer's pieces under 40 px, and under 1 % of its largest
+  piece, are removed as See-through's specks (`GHOST_MIN_AREA`, `assemble`'s
+  `ghost px removed:` line counts them), and `--propose-plan` leaves out a layer
+  under 150 px (a note names it); both are in run pixels, so paint at the size
+  the rig needs.
+- **The canvas.** One run is one canvas: square, its side `seethrough.resolution`
+  (`ASSEMBLE_RUN_CANVAS` otherwise), and the painting — `--source`, the file
+  flattened and saved as an opaque PNG — the same size.
+- **Hidden art.** A layer named `<layer>:hidden` — `handwear-r:hidden`, the forearm
+  under the sleeve; `topwear:hidden`, the shirt under a scarf's tail — is that
+  layer's art where something covers it. It is never drawn and never a part, and
+  it may be switched off in the file. `assemble` reads it as the `under` of a cut
+  of that layer's part (§3, `assemble.cuts`) and as the cap of a limb segment that
+  takes that part (§3, *Limbs*), wherever the config names no file for them; a
+  config that names one as well is refused (`ASSEMBLE_HIDDEN_ONE_SOURCE`), since
+  reading either would be a guess. A cut of a part with hidden art is a cut with an
+  `under`, so its piece is drawn in front of the part (`ASSEMBLE_UNDER_DRAW`
+  otherwise), and a cut the hidden art holds nothing under fills 0 and says so. One `hidden art:` line per such layer names
+  what read it, or says nothing did. Its name is the tag plus a suffix, so it
+  needs no config field to say whose it is; a `:hidden` layer whose layer the file
+  does not hold is refused (`LAYERS_HIDDEN_OF_PRESENT`).
+
+**The commands.** The config holds no `seethrough.head_box`. Leave `--head` out
+everywhere:
+
+```sh
+rig-parts layers art.psd
+rig-parts assemble --propose-plan --source painting.png --full art.psd --config config.json
+rig-parts assemble --source painting.png --full art.psd --config config.json --out .
+rig-parts propose --parts rig --source painting.png --out .
+rig-parts build --config config.json --source painting.png --full art.psd --out build
+```
+
+`--propose-plan` writes every row from the full run, and its first note says the
+file was read as both runs; the assemble stage refuses a row that takes `"head"`
+or an `extend_below_crop` entry (`ASSEMBLE_SINGLE_RUN_PLAN`), and prints `one run:`
+under its first line.
+
+**What you get back.** `parts/<name>.png` and `parts.json` (where every part came
+from and what it measured), `rig.json` and `motion.json`, and from `build` the packed
+atlas — `check/build/skeleton.json`, `.atlas` and `.png` — that a Spine runtime
+loads, with `check/contact.png` and the idle frames to look at.
+
+### The correction loop (issue #359)
+
+A parse can be wrong: a patch painted into the wrong layer, two layers that should
+be one, a split along a painted edge. An agent cannot edit a PSD, so the loop runs
+on the wrapper form instead, which any image library edits:
+
+1. **Export.** `rig-parts layers --export work art.psd` writes `work/layers.json`
+   and one PNG per layer (`<index>_<name>.png`), drawn layers in draw order, then
+   the hidden-art layers; `depth_median` is `null` throughout, which the reader
+   takes as "the manifest's order is the draw order". The export is read back at
+   once and must reproduce the file's reading — layers, boxes, pixels, order — or
+   it is refused (`LAYERS_EXPORT_ROUND_TRIP`).
+2. **Read.** `rig-parts layers work` (the table and its `WARN` lines),
+   `assemble --full work …` (the part lines, `recomposite vs source`, the
+   `uncovered hole` and `uncovered:` lines) and `render/recomposite_error_rig.png`
+   (uncovered error red, covered error blue). A pixel in the wrong layer shows as
+   error where that layer is drawn behind another part and the painting is
+   near-white there (the seam override leaves near-white alone), or as `drift=`
+   and `seam=` counts on the part drawn over it when it is not: projection and the
+   seam override repaint that part to the painting's colour, so the error map
+   stays clean while the part carries the wrong art.
+3. **Fix** the PNGs and `layers.json`: move the pixels, and when a layer's art
+   leaves its box, grow the PNG and the box together (`LAYERS_PNG_MATCHES_BBOX`
+   otherwise).
+4. **Re-run** from step 2 on `work`.
+
+**A worked example** (the selftest's, `fixtures/artist.ts`): a 128-px file whose
+right eyewhite was painted half into `back hair` — the 8 x 10 patch at
+`[52, 22, 60, 32]`, near-white, behind the face. Assembled from the export:
+
+```
+recomposite vs source: mean |d|=0.40, within 8: 99.5%, error px > 40: 80, uncovered error px: 0
+```
+
+80 covered error pixels, blue on the error map, in one 8 x 10 block; the face's
+part line says `drift=60`, the block's pixels inside the face's projection core
+whose colour is more than 90 off the painting's. The fix:
+in `work/00_back_hair.png` clear the block (it is `back hair`'s pixels
+`(20..27, 18..27)`, box `[32, 4, 96, 48]`); widen `work/03_eyewhite-r.png` from
+8 x 10 to 16 x 10, painting the block into its right half; and set that layer's
+`right` from 52 to 60 in `layers.json`. Re-run: `error px > 40: 0`, the clean
+file's figure, and every part is the clean file's but `hair_back`, which keeps an
+80-px hole behind the face where the hair under the eye was never painted — every
+one of them occluded, so nothing shows it at rest; paint it there if the face will
+move off it (`AS245`).
+
 ## 5. After each stage: what to read
 
 | stage | read | green looks like | a common red |
@@ -2134,7 +2254,11 @@ row in this page's `rule` and `line` tables; the selftest holds that (`TY16`).
 | <a id="LAYERS_MANIFEST_PRESENT"></a><a id="LAYERS_MANIFEST_IS_JSON"></a><a id="LAYERS_FIELD_PRESENT"></a><a id="LAYERS_KEY_KNOWN"></a>`LAYERS_MANIFEST_PRESENT`, `LAYERS_MANIFEST_IS_JSON`, `LAYERS_FIELD_PRESENT`, `LAYERS_KEY_KNOWN` | the wrapper's `layers.json` is missing, unparsable, or not the wrapper's shape | the run's output directory; re-export it |
 | <a id="LAYERS_PNG_PRESENT"></a><a id="LAYERS_PNG_UNAMBIGUOUS"></a><a id="LAYERS_PNG_DECODES"></a><a id="LAYERS_PNG_MATCHES_BBOX"></a>`LAYERS_PNG_PRESENT`, `LAYERS_PNG_UNAMBIGUOUS`, `LAYERS_PNG_DECODES`, `LAYERS_PNG_MATCHES_BBOX` | a layer's PNG is missing, found in two places, not a PNG, or not its box's size | the run's files |
 | <a id="LAYERS_TAG_KNOWN"></a><a id="LAYERS_NAME_UNIQUE"></a><a id="LAYERS_BBOX_INSIDE_CANVAS"></a>`LAYERS_TAG_KNOWN`, `LAYERS_NAME_UNIQUE`, `LAYERS_BBOX_INSIDE_CANVAS` | a layer name that is neither a See-through v3 tag nor `author:<label>` (or is `author:` with a label that is empty, starts with `.` or whitespace, ends with whitespace, or holds a slash, backslash or colon — the detail says which), a repeated name, a box off the canvas | the run (these are See-through's own outputs); a layer you added by hand is named `author:<label>` (§5, *A layer the author made*) |
-| <a id="PSD_FILE_PRESENT"></a><a id="PSD_PARSES"></a><a id="PSD_IS_RGB8"></a><a id="PSD_HAS_LAYERS"></a><a id="PSD_LAYER_PLAIN"></a><a id="PSD_LAYER_HAS_PIXELS"></a>`PSD_FILE_PRESENT`, `PSD_PARSES`, `PSD_IS_RGB8`, `PSD_HAS_LAYERS`, `PSD_LAYER_PLAIN`, `PSD_LAYER_HAS_PIXELS` | the `.psd` is missing, unreadable, not 8-bit RGB, has no layer, or has a layer that is hidden, not at full opacity, or without pixels | the `.psd` |
+| <a id="PSD_FILE_PRESENT"></a><a id="PSD_PARSES"></a><a id="PSD_IS_RGB8"></a><a id="PSD_HAS_LAYERS"></a><a id="PSD_LAYER_PLAIN"></a><a id="PSD_LAYER_HAS_PIXELS"></a>`PSD_FILE_PRESENT`, `PSD_PARSES`, `PSD_IS_RGB8`, `PSD_HAS_LAYERS`, `PSD_LAYER_PLAIN`, `PSD_LAYER_HAS_PIXELS` | the `.psd` is missing, unreadable, not 8-bit RGB, has no layer, or has a layer that is hidden (a hidden-art layer, `<layer>:hidden`, may be), not at full opacity, blended other than normal, clipped, masked, or without pixels | the `.psd`; an artist's file: §4, *For artists* |
+| <a id="LAYERS_DEPTH_ALL_OR_NONE"></a>`LAYERS_DEPTH_ALL_OR_NONE` | some drawn layers of a wrapper `layers.json` carry a `depth_median` and others carry `null` (issue #359): a mix has no one draw order | a number on every drawn layer (a See-through run), or `null` on every one (an export of a PSD: the manifest's order is then the draw order) |
+| <a id="LAYERS_HIDDEN_OF_PRESENT"></a><a id="LAYERS_HIDDEN_NO_DEPTH"></a>`LAYERS_HIDDEN_OF_PRESENT`, `LAYERS_HIDDEN_NO_DEPTH` | a hidden-art layer, `<layer>:hidden` (issue #359), belongs to a drawn layer the input does not hold; or, in a wrapper `layers.json`, carries a `depth_median` other than `null` (it is never drawn) | the layer's name, or the layer it names; `depth_median: null` |
+| <a id="LAYERS_EXPORT_DIR_EMPTY"></a>`LAYERS_EXPORT_DIR_EMPTY` | `layers --export <dir>` was given a file, or a directory that is not empty (issue #359): a file left there could be read in place of the one written | a new directory, or empty it |
+| <a id="LAYERS_EXPORT_ROUND_TRIP"></a>`LAYERS_EXPORT_ROUND_TRIP` | the export, read back, differs from the input's reading (the detail names the first difference) — an exporter bug, not an input problem | report it with the input named |
 | <a id="ASSEMBLE_SOURCE_PRESENT"></a><a id="ASSEMBLE_SOURCE_DECODES"></a>`ASSEMBLE_SOURCE_PRESENT`, `ASSEMBLE_SOURCE_DECODES` | the painting is missing or not a PNG | `--source` |
 | <a id="SHEET_SOURCE_PRESENT"></a><a id="SHEET_PNG_PRESENT"></a>`SHEET_SOURCE_PRESENT`, `SHEET_PNG_PRESENT` | `sheet`'s painting, or a part PNG a `parts.json` lists, is missing | `--source`, `--layers` |
 
@@ -2250,6 +2374,9 @@ See-through with another seed.
 | <a id="ASSEMBLE_RIG_SIZE"></a>`ASSEMBLE_RIG_SIZE` | `rig_scale` makes an empty rig | `assemble.rig_scale` |
 | <a id="ASSEMBLE_HEAD_BOX_INSIDE"></a>`ASSEMBLE_HEAD_BOX_INSIDE` | the head box is outside the painting | `head_box` — `propose --head-box` holds it inside |
 | <a id="ASSEMBLE_RUN_CANVAS"></a>`ASSEMBLE_RUN_CANVAS` | a run's canvas is not `resolution` square | `seethrough.resolution`, or the run |
+| <a id="ASSEMBLE_SINGLE_RUN_FACE"></a>`ASSEMBLE_SINGLE_RUN_FACE` | with no `--head` (issue #359), the one run holds no painted layer for one of `face`, `eyewhite-r`, `eyewhite-l` — the parts the head run exists to separate (one problem per tag) | paint the layer, or give the head run with `--head` |
+| <a id="ASSEMBLE_SINGLE_RUN_PLAN"></a>`ASSEMBLE_SINGLE_RUN_PLAN` | with no `--head`, a plan row takes `"head"`, or an `extend_below_crop` entry continues a part below a crop there is not | `"full"` in the row; remove the entry |
+| <a id="ASSEMBLE_SINGLE_RUN_HEAD_BOX"></a>`ASSEMBLE_SINGLE_RUN_HEAD_BOX` | with no `--head`, the config sets `seethrough.head_box`, which places a head run there is not | remove `head_box`, or give the head run with `--head` |
 | <a id="ASSEMBLE_PLAN_TAG_IN_RUN"></a><a id="ASSEMBLE_EXTEND_TAG_IN_RUN"></a>`ASSEMBLE_PLAN_TAG_IN_RUN`, `ASSEMBLE_EXTEND_TAG_IN_RUN` | an entry takes a tag its run does not hold (the detail lists what it does hold) | that entry's run or tag |
 | <a id="ASSEMBLE_PART_OPAQUE"></a>`ASSEMBLE_PART_OPAQUE` | a part ended with no opaque pixel | drop the entry, or take the tag from the other run |
 | <a id="ASSEMBLE_PATCH_BOX_INSIDE"></a>`ASSEMBLE_PATCH_BOX_INSIDE` | a patch's box reaches past the rig (the painting times `rig_scale`; the detail gives the size) | that patch's `box` — it is in rig pixels, not painting pixels |
@@ -2264,6 +2391,7 @@ See-through with another seed.
 | <a id="ASSEMBLE_LIMB_TAKES"></a><a id="ASSEMBLE_LIMB_PIXELS"></a>`ASSEMBLE_LIMB_TAKES`, `ASSEMBLE_LIMB_PIXELS` | a part a limb takes has no opaque pixel, or a limb segment gets none of it — the joint lines through the bones' origins put none of the limb's pixels on it, or another limb's polyline is nearer every one (issue #349) | the bones: their origins on the limb's art, each joint where the limb bends |
 | <a id="ASSEMBLE_LIMB_JOINT"></a><a id="ASSEMBLE_LIMB_JOINT_ON_ART"></a>`ASSEMBLE_LIMB_JOINT`, `ASSEMBLE_LIMB_JOINT_ON_ART` | a joint has no line — the upper bone has no length, or the limb folds straight back on itself — or its bone's origin lies on none of the limb's art within 1 px along the line, so the limb has no width there to size the cap by (issue #349) | the joint's bone: on the limb's art, at the joint |
 | <a id="ASSEMBLE_LIMB_CAP_PRESENT"></a><a id="ASSEMBLE_LIMB_CAP_DECODES"></a><a id="ASSEMBLE_LIMB_CAP_SIZE"></a><a id="ASSEMBLE_LIMB_CAP_EMPTY"></a>`ASSEMBLE_LIMB_CAP_PRESENT`, `ASSEMBLE_LIMB_CAP_DECODES`, `ASSEMBLE_LIMB_CAP_SIZE`, `ASSEMBLE_LIMB_CAP_EMPTY` | a segment's `cap` names no file (relative to the config's directory) or one that is not a PNG; an image not the size of the cap's box (the detail gives both, and the box's corner); or one transparent over every cap pixel (issue #349) | the image: the box the `limb cap:` line prints, `w`x`h`, its pixel `(i, j)` rig pixel `(x + i, y + j)`; to keep the layer's cap, drop `cap` |
+| <a id="ASSEMBLE_HIDDEN_ONE_SOURCE"></a>`ASSEMBLE_HIDDEN_ONE_SOURCE` | a cut's `under`, or a limb segment's `cap`, names a file, and the part it reads also has a hidden-art layer (`<layer>:hidden`, issue #359): reading either would be a guess | remove the file from the config, or the hidden-art layer from the input |
 | <a id="ASSEMBLE_COUNTS_ADD_UP"></a>`ASSEMBLE_COUNTS_ADD_UP` | a part's visible and occluded counts do not add up to its opaque pixels, or a projected pixel is not visible, or a cut part's pieces do not add up to it — an assembler bug, not an input problem | report it with the part named; nothing was written |
 
 ### propose
@@ -2276,7 +2404,7 @@ See-through with another seed.
 | <a id="PROPOSE_CUT_FROM_RECORDED"></a>`PROPOSE_CUT_FROM_RECORDED` | two parts share one layer and none of them records `cut_from`: a `parts.json` an `assemble` before 1.6.0 wrote with `assemble.cuts`. The records are in draw order, so which is the plan part and which the piece cannot be read off the file; the message names the parts and the layer. Every other reader still takes the file | `--parts`: re-run assemble (1.6.0+) to record `cut_from` |
 | <a id="PROPOSE_LIMB_PARTS"></a>`PROPOSE_LIMB_PARTS` | `parts.json` holds parts `config.limbs` cut at their joints (issue #349); the limbs are drafted from the parts before the cut, which the rules read by layer | `--parts` a build assembled with the config's `limbs` left out; keep the block the config holds (its caps and ranges are the author's). `propose --from-config` reads the config's bones on either build |
 | <a id="PROPOSE_ACCESSORY_BODY"></a>`PROPOSE_ACCESSORY_BODY` | an accessory has nothing above its pendant rows to hang its bone on | that part's plan entry, or author its bones by hand |
-| <a id="PROPOSE_TURN_RUN_GIVEN"></a><a id="PROPOSE_TURN_LAYER_PRESENT"></a><a id="PROPOSE_TURN_DEPTH_PRESENT"></a>`PROPOSE_TURN_RUN_GIVEN`, `PROPOSE_TURN_LAYER_PRESENT`, `PROPOSE_TURN_DEPTH_PRESENT` | with `--full`/`--head` (issue #251): a part came from a run whose layers were not given, the run given holds no layer of the part's tag, or its layer carries no `depth_median` (a PSD carries none) | give the run the parts were assembled from, as the wrapper's `layers.json` |
+| <a id="PROPOSE_TURN_RUN_GIVEN"></a><a id="PROPOSE_TURN_LAYER_PRESENT"></a><a id="PROPOSE_TURN_DEPTH_PRESENT"></a>`PROPOSE_TURN_RUN_GIVEN`, `PROPOSE_TURN_LAYER_PRESENT`, `PROPOSE_TURN_DEPTH_PRESENT` | with `--full`/`--head` (issue #251): a part came from a run whose layers were not given, the run given holds no layer of the part's tag, or its layer carries no `depth_median` while another part's layer carries one; a run with no depth on any part's layer (a PSD, or an export of one) is not refused — the turn is skipped, and the note says `turn: SKIP` and names the run (issue #359) | give the run the parts were assembled from, as the wrapper's `layers.json` |
 | <a id="BASIS_RECORDS_EVERY_BONE"></a><a id="BASIS_NAMES_RESOLVE"></a><a id="BASIS_KIND_KNOWN"></a><a id="BASIS_KIND_HOLDS"></a>`BASIS_RECORDS_EVERY_BONE`, `BASIS_NAMES_RESOLVE`, `BASIS_KIND_KNOWN`, `BASIS_KIND_HOLDS` | `propose --keypoints`'s record of how it placed each bone, `basis.json`, does not hold to the proposal it was written with: a proposed bone with no record, one recorded twice or out of the proposal's order; a part, bone or frame quantity it names that is not there; a placement kind outside the known ones; or a placement that does not hold what its kind says (a joint placement with no joint, a non-joint one with a joint, a derived one with no bone, a constant that is not finite). Nothing is written | a proposer bug, not an input problem: report it with the line |
 | <a id="KEYPOINTS_FILE_PRESENT"></a><a id="KEYPOINTS_IS_JSON"></a><a id="KEYPOINTS_KEY_KNOWN"></a><a id="KEYPOINTS_FIELD_PRESENT"></a><a id="KEYPOINTS_FIELD_TYPE"></a>`KEYPOINTS_FILE_PRESENT`, `KEYPOINTS_IS_JSON`, `KEYPOINTS_KEY_KNOWN`, `KEYPOINTS_FIELD_PRESENT`, `KEYPOINTS_FIELD_TYPE` | the `--keypoints` file is absent, not JSON, has a key this reader does not know, lacks one of `spec`, `space`, `width`, `height`, `source`, `people`, or holds a value of the wrong type (a size that is not a whole positive px count, an empty `source`, no people) | the keypoint file (§3, *A posed figure*) |
 | <a id="KEYPOINTS_SPEC_KNOWN"></a><a id="KEYPOINTS_SPACE_STATED"></a>`KEYPOINTS_SPEC_KNOWN`, `KEYPOINTS_SPACE_STATED` | the file is not `spine-parts-keypoints/1`, or states a space other than painting-px, origin top-left, y down | convert the file to that space; it is not read as if it were in it |

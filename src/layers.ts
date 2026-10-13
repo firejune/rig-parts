@@ -31,13 +31,13 @@
  * (`src/tags.ts`, `AUTHOR_PREFIX`): read with `group` "author", it has no
  * role, and its place in the draw order is read like any other layer's.
  */
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { initializeCanvas, type Layer as PsdLayer, readPsd } from 'ag-psd';
+import { initializeCanvas, type Layer as PsdLayer, readPsd, writePsd } from 'ag-psd';
 import { type Problem, refuseIfAny } from './errors.ts';
-import { decodePngBytes } from './raster/png.ts';
+import { decodePngBytes, encodePngBytes } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
-import { type LayerTagReading, layerTagRequirement, readLayerTag } from './tags.ts';
+import { BODY_TAGS, HEAD_TAGS, HIDDEN_NAME_RULE, type LayerTagReading, layerTagRequirement, readHiddenTag, readLayerTag, SPLIT_TAGS } from './tags.ts';
 
 /** Alpha strictly above this counts as painted. The reference uses the same cut for its ghost clean-up and its sheets. */
 export const OPAQUE_ALPHA_ABOVE = 8;
@@ -69,6 +69,26 @@ export interface Layer {
   opaquePx: number;
 }
 
+/**
+ * A hidden-art layer (issue #359, `HIDDEN_SUFFIX` in `src/tags.ts`): the art
+ * of the layer `of` where something covers it. Never drawn and never a part,
+ * so it carries no tag reading, no depth and no draw order.
+ */
+export interface HiddenLayer {
+  /** `<of>:hidden`. */
+  name: string;
+  /** The drawn layer of the same input it belongs to. */
+  of: string;
+  /** The file the pixels came from, or null for a PSD layer. */
+  file: string | null;
+  pixels: Raster;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  opaquePx: number;
+}
+
 export interface LayerSet {
   form: 'wrapper' | 'psd';
   /** The manifest or PSD that was read. */
@@ -76,6 +96,8 @@ export interface LayerSet {
   canvas: { w: number; h: number };
   /** In draw order, back to front. */
   layers: Layer[];
+  /** The hidden-art layers (issue #359), in the order the input lists them; empty when it holds none. */
+  hidden: HiddenLayer[];
 }
 
 function opaque(r: Raster): number {
@@ -100,6 +122,15 @@ const MANIFEST_KEYS = ['prefix', 'timestamp', 'layers', 'width', 'height'] as co
 const MANIFEST_REQUIRED = ['layers', 'width', 'height'] as const;
 const LAYER_KEYS = ['name', 'filename', 'left', 'top', 'right', 'bottom', 'depth_median', 'depth_filename'] as const;
 const LAYER_REQUIRED = ['name', 'filename', 'left', 'top', 'right', 'bottom', 'depth_median'] as const;
+
+/**
+ * What the wrapper form's `depth_median` may be, as a refusal quotes it. A
+ * See-through run writes a number; an input with no depth — a PSD exported by
+ * `layers --export` (issue #359) — writes `null` for every drawn layer, and
+ * its draw order is then the manifest's order, back to front, exactly as a
+ * PSD's is its stacking order. A depth is never invented for it.
+ */
+const DEPTH_RULE = 'a finite number (See-through\'s depth, larger = further back), or null on every drawn layer of an input that carries no depth (the manifest\'s order is then the draw order, back to front)';
 
 /**
  * Read the wrapper form from a directory holding `layers.json`, or from the
@@ -166,6 +197,7 @@ export function readWrapperLayers(path: string): LayerSet {
   if (entries.length === 0) refuse('LAYERS_FIELD_PRESENT', `${manifestPath} field "layers"`, 'is empty; at least one layer is required');
 
   const read: Array<Omit<Layer, 'drawOrder'> & { index: number }> = [];
+  const hidden: HiddenLayer[] = [];
   const seen = new Map<string, number>();
   entries.forEach((entry, index) => {
     const at = `${basename(manifestPath)} layers[${index}]`;
@@ -202,8 +234,9 @@ export function readWrapperLayers(path: string): LayerSet {
       return;
     }
     const name = e.name;
-    const tag = readLayerTag(name);
-    if (tag === null) {
+    const hiddenOf = readHiddenTag(name);
+    const tag = hiddenOf === null ? readLayerTag(name) : null;
+    if (tag === null && hiddenOf === null) {
       refuse('LAYERS_TAG_KNOWN', `layer "${name}"`, layerTagRequirement(name));
       ok = false;
     }
@@ -213,15 +246,20 @@ export function readWrapperLayers(path: string): LayerSet {
         ok = false;
       }
     }
-    if (typeof e.depth_median !== 'number' || !Number.isFinite(e.depth_median)) {
-      refuse('LAYERS_FIELD_PRESENT', `layer "${name}" field "depth_median"`, `is ${describe(e.depth_median)}; a finite number is required`);
+    if (hiddenOf !== null) {
+      if (e.depth_median !== null) {
+        refuse('LAYERS_HIDDEN_NO_DEPTH', `layer "${name}" field "depth_median"`, `is ${describe(e.depth_median)}; a hidden-art layer is never drawn, so it has no depth and null is required`);
+        ok = false;
+      }
+    } else if (e.depth_median !== null && (typeof e.depth_median !== 'number' || !Number.isFinite(e.depth_median))) {
+      refuse('LAYERS_FIELD_PRESENT', `layer "${name}" field "depth_median"`, `is ${describe(e.depth_median)}; ${DEPTH_RULE} is required`);
       ok = false;
     }
     if (typeof e.filename !== 'string' || e.filename === '') {
       refuse('LAYERS_FIELD_PRESENT', `layer "${name}" field "filename"`, `is ${describe(e.filename)}; a file name is required`);
       ok = false;
     }
-    if (!ok || tag === null) return;
+    if (!ok || (tag === null && hiddenOf === null)) return;
     const left = e.left as number;
     const top = e.top as number;
     const right = e.right as number;
@@ -261,29 +299,51 @@ export function readWrapperLayers(path: string): LayerSet {
       );
       return;
     }
+    if (hiddenOf !== null) {
+      hidden.push({ name, of: hiddenOf.of, file: present[0], pixels, left, top, right, bottom, opaquePx: opaque(pixels) });
+      return;
+    }
     read.push({
       name,
-      tag,
+      tag: tag as LayerTagReading,
       file: present[0],
       pixels,
       left,
       top,
       right,
       bottom,
-      depth: e.depth_median as number,
+      depth: e.depth_median as number | null,
       opaquePx: opaque(pixels),
       index,
     });
   });
+  // Issue #359: depth on every drawn layer, or on none — a mix has no one order to draw by.
+  const withDepth = read.filter((l) => l.depth !== null);
+  if (withDepth.length > 0 && withDepth.length < read.length) {
+    const none = read.filter((l) => l.depth === null).map((l) => `"${l.name}"`);
+    refuse('LAYERS_DEPTH_ALL_OR_NONE', manifestPath, `${withDepth.length} drawn layer(s) carry a depth_median and ${none.length} carry null (${none.join(', ')}); a number on every drawn layer, or null on every one, is required — a mix has no one draw order`);
+  }
+  checkHiddenOf(hidden, read.map((l) => l.name), (l) => `layer "${l}"`, refuse);
   refuseIfAny(problems);
-  // Stable: Array.prototype.sort is stable, so equal depths keep manifest order.
-  const ordered = [...read].sort((a, b) => (b.depth as number) - (a.depth as number));
+  // Stable: Array.prototype.sort is stable, so equal depths keep manifest order — and with no depth at all (every
+  // depth null), the manifest's own order is the draw order.
+  const ordered = withDepth.length === 0 ? read : [...read].sort((a, b) => (b.depth as number) - (a.depth as number));
   return {
     form: 'wrapper',
     source: manifestPath,
     canvas: { w: W, h: H },
     layers: ordered.map(({ index: _index, ...rest }, drawOrder) => ({ ...rest, drawOrder })),
+    hidden,
   };
+}
+
+/** Every hidden-art layer must belong to a drawn layer the same input holds (issue #359): `LAYERS_HIDDEN_OF_PRESENT`. */
+function checkHiddenOf(hidden: readonly HiddenLayer[], drawn: readonly string[], label: (name: string) => string, refuse: (code: string, object: string, detail: string) => void): void {
+  for (const h of hidden) {
+    if (!drawn.includes(h.of)) {
+      refuse('LAYERS_HIDDEN_OF_PRESENT', label(h.name), `is the hidden art of "${h.of}", and the input holds no drawn layer of that name — it holds ${drawn.length === 0 ? 'none' : drawn.map((n) => `"${n}"`).join(', ')}; ${HIDDEN_NAME_RULE} is required`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -349,7 +409,9 @@ export function readPsdLayers(path: string): LayerSet {
   const walk = (children: PsdLayer[] | undefined, trail: string): void => {
     for (const layer of children ?? []) {
       const where = `${trail}${layer.name ?? '(unnamed)'}`;
-      if (layer.hidden) refuse('PSD_LAYER_PLAIN', `PSD layer "${where}"`, 'is hidden; every layer of a decomposition is drawn');
+      // A hidden-art layer (issue #359) is never drawn, so it may be switched off in the file; every other layer is drawn.
+      const art = layer.children === undefined && readHiddenTag(layer.name ?? '') !== null;
+      if (layer.hidden && !art) refuse('PSD_LAYER_PLAIN', `PSD layer "${where}"`, 'is hidden; every layer of a decomposition is drawn (only a hidden-art layer, "<layer>:hidden", may be switched off)');
       if (layer.opacity !== undefined && layer.opacity !== 1) {
         refuse('PSD_LAYER_PLAIN', `PSD layer "${where}"`, `has opacity ${layer.opacity}; 1 is required`);
       }
@@ -372,10 +434,12 @@ export function readPsdLayers(path: string): LayerSet {
   if (leaves.length === 0) refuse('PSD_HAS_LAYERS', path, 'holds no pixel layer; one per See-through tag is required');
   const seen = new Set<string>();
   const layers: Layer[] = [];
+  const hidden: HiddenLayer[] = [];
   leaves.forEach((layer) => {
     const name = layer.name ?? '';
-    const tag = readLayerTag(name);
-    if (tag === null) {
+    const hiddenOf = readHiddenTag(name);
+    const tag = hiddenOf === null ? readLayerTag(name) : null;
+    if (tag === null && hiddenOf === null) {
       refuse('LAYERS_TAG_KNOWN', `PSD layer "${name}"`, layerTagRequirement(name));
       return;
     }
@@ -406,9 +470,13 @@ export function readPsdLayers(path: string): LayerSet {
       return;
     }
     const pixels: Raster = { width: img.width, height: img.height, data: new Uint8ClampedArray(img.data) };
+    if (hiddenOf !== null) {
+      hidden.push({ name, of: hiddenOf.of, file: null, pixels, left, top, right, bottom, opaquePx: opaque(pixels) });
+      return;
+    }
     layers.push({
       name,
-      tag,
+      tag: tag as LayerTagReading,
       file: null,
       pixels,
       left,
@@ -420,8 +488,9 @@ export function readPsdLayers(path: string): LayerSet {
       opaquePx: opaque(pixels),
     });
   });
+  checkHiddenOf(hidden, layers.map((l) => l.name), (l) => `PSD layer "${l}"`, refuse);
   refuseIfAny(problems);
-  return { form: 'psd', source: path, canvas: { w: W, h: H }, layers };
+  return { form: 'psd', source: path, canvas: { w: W, h: H }, layers, hidden };
 }
 
 /** Read whichever form `path` is: a `.psd` file, or a wrapper directory / `layers.json`. */
@@ -438,6 +507,135 @@ export function readLayers(path: string): LayerSet {
     },
   ]);
   throw new Error('unreachable');
+}
+
+// ---------------------------------------------------------------------------
+// the export and the template (issue #359)
+// ---------------------------------------------------------------------------
+
+/**
+ * The file a layer is exported to: its index in the manifest, zero-padded to
+ * the width of the last index (at least two digits), then its name with every
+ * character other than a letter, a digit, `-` and `_` written `_`. The index
+ * makes the name unique (`author:a b` and `author:a_b` would otherwise meet),
+ * and the manifest, not the file name, says which layer a file is.
+ */
+export function exportFileName(index: number, count: number, name: string): string {
+  const width = Math.max(2, String(Math.max(0, count - 1)).length);
+  return `${String(index).padStart(width, '0')}_${name.replace(/[^A-Za-z0-9_-]/g, '_')}.png`;
+}
+
+/** The wrapper manifest `exportLayers` writes, as text: fixed key order, two-space indent, a trailing newline. */
+export function exportManifestText(set: LayerSet): string {
+  const all: Array<{ name: string; left: number; top: number; right: number; bottom: number; depth: number | null }> = [
+    ...set.layers.map((l) => ({ name: l.name, left: l.left, top: l.top, right: l.right, bottom: l.bottom, depth: l.depth })),
+    ...set.hidden.map((h) => ({ name: h.name, left: h.left, top: h.top, right: h.right, bottom: h.bottom, depth: null })),
+  ];
+  const manifest = {
+    width: set.canvas.w,
+    height: set.canvas.h,
+    layers: all.map((l, i) => ({ name: l.name, filename: exportFileName(i, all.length, l.name), left: l.left, top: l.top, right: l.right, bottom: l.bottom, depth_median: l.depth })),
+  };
+  return `${JSON.stringify(manifest, null, 2)}\n`;
+}
+
+/**
+ * `layers --export <dir> <input>` (issue #359): write a set as the wrapper
+ * form — `layers.json` beside one RGBA PNG per layer — so an agent can correct
+ * the parse with ordinary file operations and hand the directory back to any
+ * command that reads layers. Drawn layers are listed in draw order, back to
+ * front, then the hidden-art layers in their own order; `depth_median` is the
+ * input's own, so a PSD's is `null` on every layer and the manifest's order is
+ * its draw order ({@link readWrapperLayers}). Reading the directory back gives
+ * the same layers, boxes, pixels and order as the input's reading (selftest
+ * `LW` round trip).
+ *
+ * Refuses a `dir` that exists and is not an empty directory
+ * (`LAYERS_EXPORT_DIR_EMPTY`): a file left there by an earlier export — a
+ * `parts/<name>.png` the reader also looks for — could be read in place of
+ * the one written now. Writes nothing until that has passed.
+ */
+export function exportLayers(set: LayerSet, dir: string): { manifest: string; files: string[] } {
+  if (existsSync(dir) && (!statSync(dir).isDirectory() || readdirSync(dir).length > 0)) {
+    refuseIfAny([
+      {
+        code: 'LAYERS_EXPORT_DIR_EMPTY',
+        object: dir,
+        detail: statSync(dir).isDirectory() ? `holds ${readdirSync(dir).length} entr${readdirSync(dir).length === 1 ? 'y' : 'ies'}; a directory that does not exist yet, or an empty one, is required — a file left there could be read in place of the one written now` : 'is a file; a directory that does not exist yet, or an empty one, is required',
+      },
+    ]);
+  }
+  const text = exportManifestText(set);
+  const entries = (JSON.parse(text) as { layers: Array<{ filename: string }> }).layers;
+  const pixels = [...set.layers.map((l) => l.pixels), ...set.hidden.map((h) => h.pixels)];
+  mkdirSync(dir, { recursive: true });
+  const files = entries.map((e, i) => {
+    const path = join(dir, e.filename);
+    writeFileSync(path, encodePngBytes(pixels[i]));
+    return path;
+  });
+  const manifest = join(dir, 'layers.json');
+  writeFileSync(manifest, text);
+  return { manifest, files };
+}
+
+/**
+ * Where two readings of one decomposition differ, or null when they are the
+ * same: the canvas, then each drawn layer in draw order — name, box, depth,
+ * pixels byte for byte — then each hidden-art layer. The first difference is
+ * named. What the export's round trip is held to (issue #359); the source
+ * path, the form and each layer's file are where it was read from, not what
+ * it holds, and are not compared.
+ */
+export function layerSetDiff(a: LayerSet, b: LayerSet): string | null {
+  if (a.canvas.w !== b.canvas.w || a.canvas.h !== b.canvas.h) return `canvas ${a.canvas.w}x${a.canvas.h} against ${b.canvas.w}x${b.canvas.h}`;
+  const box = (l: { left: number; top: number; right: number; bottom: number }): string => `${l.left},${l.top},${l.right},${l.bottom}`;
+  const same = (x: Raster, y: Raster): boolean => x.width === y.width && x.height === y.height && Buffer.from(x.data).equals(Buffer.from(y.data));
+  if (a.layers.length !== b.layers.length) return `${a.layers.length} drawn layer(s) against ${b.layers.length}`;
+  for (let i = 0; i < a.layers.length; i++) {
+    const x = a.layers[i];
+    const y = b.layers[i];
+    if (x.name !== y.name) return `draw order ${i} is "${x.name}" against "${y.name}"`;
+    if (box(x) !== box(y)) return `layer "${x.name}" box ${box(x)} against ${box(y)}`;
+    if (x.depth !== y.depth) return `layer "${x.name}" depth ${String(x.depth)} against ${String(y.depth)}`;
+    if (!same(x.pixels, y.pixels)) return `layer "${x.name}" pixels differ`;
+  }
+  if (a.hidden.length !== b.hidden.length) return `${a.hidden.length} hidden-art layer(s) against ${b.hidden.length}`;
+  for (let i = 0; i < a.hidden.length; i++) {
+    const x = a.hidden[i];
+    const y = b.hidden[i];
+    if (x.name !== y.name || box(x) !== box(y) || !same(x.pixels, y.pixels)) return `hidden-art layer ${i} "${x.name}" against "${y.name}" (name, box or pixels)`;
+  }
+  return null;
+}
+
+/**
+ * The layer names `layers --template` writes, bottom first (issue #359): every
+ * v3 tag (`src/tags.ts`, 24) less `head` — upstream never emits it as a layer
+ * and no stage reads a role from it — with each of the six split tags written
+ * as its `-r` and `-l` halves, because the rig reads the halves (the eye bones
+ * come from `eyewhite-r` and `eyewhite-l`): 24 − 1 − 6 + 12 = 29 names. The
+ * order is a starting stack — back hair, the body, the face, front hair — and
+ * not a rule: the file's own order is the draw order.
+ */
+export function templateLayerNames(): string[] {
+  const expand = (t: string): string[] => ((SPLIT_TAGS as readonly string[]).includes(t) ? [`${t}-r`, `${t}-l`] : [t]);
+  const body = (BODY_TAGS as readonly string[]).filter((t) => t !== 'head' && t !== 'back hair' && t !== 'front hair');
+  return ['back hair', ...body.flatMap(expand), ...(HEAD_TAGS as readonly string[]).flatMap(expand), 'front hair'];
+}
+
+/**
+ * `layers --template <out.psd> --canvas <W>x<H>`: a PSD of {@link templateLayerNames}'s
+ * layers, each empty, on a `W x H` canvas, written by the same library the
+ * reader uses. The same canvas writes the same bytes. The reader refuses an
+ * empty layer (`PSD_LAYER_HAS_PIXELS`), so the template read back as it is
+ * names every layer once: an artist paints into the layers the figure has and
+ * deletes the rest.
+ */
+export function templatePsdBytes(w: number, h: number): Uint8Array {
+  stubCanvas();
+  const doc = { width: w, height: h, children: templateLayerNames().map((name) => ({ name })) };
+  return new Uint8Array(writePsd(doc, { noBackground: true }));
 }
 
 // ---------------------------------------------------------------------------
@@ -600,4 +798,19 @@ export function ruleSummary(rule: PlausibilityRule): string {
     return `at most ${PLAUSIBLE_BACKGROUND_MAX * 100}% background-coloured (min channel above ${NEAR_WHITE_MIN}), or at most ${PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN * 100}% translucent, ${judged}`;
   }
   return `at most ${PLAUSIBLE_AREA_RATIO_MAX}x the rest of the figure`;
+}
+
+/** The `layers` line for a hidden-art layer (issue #359): whose art it is, its box and pixels, and that it is never drawn. */
+export function hiddenLayerLine(h: HiddenLayer): string {
+  return `hidden art: layer "${h.name}" — "${h.of}"'s art where it is covered, box ${h.left},${h.top} to ${h.right},${h.bottom}, ${h.opaquePx} opaque px; never drawn and never a part: assemble reads it as the under of a cut and the cap of a limb segment that take "${h.of}"'s part`;
+}
+
+/**
+ * The line `layers` prints for an input with no depth (issue #359): a PSD, or
+ * a wrapper export of one. The one reading of depth in this package is the
+ * turn draft (`propose --full/--head`), and it SKIPs such a run — naming it —
+ * rather than drafting a turn from depths nobody measured.
+ */
+export function depthSkipLine(set: LayerSet): string {
+  return `SKIP  depth: ${set.source} carries no depth_median (${set.form === 'psd' ? 'a PSD carries none' : 'null on every layer'}); the draw order is the file's own, and the turn draft (propose --full/--head) skips this run`;
 }
