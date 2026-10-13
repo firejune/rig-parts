@@ -85,9 +85,9 @@ under that.
    gap See-through left (a skirt split into two legs), fixed in the plan or the layers,
    not in the rig. Then `rig-parts propose --parts work/rig
    --source <painting> --out work` → copy `bones`, `meshes`, `regions`, `limbs`,
-   `motion`, `turn` from `proposal.json` into the config, each it wrote (`limbs`
-   only with `--keypoints`, `turn` only with `--full`/`--head`; a `limbs` block left
-   out is refused at the next step). `assemble` needs the plan and none of
+   `motion`, `constraints`, `turn` from `proposal.json` into the config, each it
+   wrote (`limbs` only with `--keypoints`, `constraints` only with `--cloth`, `turn`
+   only with `--full`/`--head`; a `limbs` block left out is refused at the next step). `assemble` needs the plan and none of
    those sections; do not stub them to get past it (AUTHORING §4 says what each step
    requires). If an `uncovered hole` stays large with the plan right — a piece
    of the figure neither run holds, red in `recomposite_error_rig.png` — add an
@@ -110,6 +110,18 @@ under that.
    again, and read each `limb cap:` line for the pixels a cap is missing. A clean
    LINT does not show a seated hip is right; the overlay does. Never write a joint you did not get from an
    estimator or the painting: say `missing` and let the rule stand in.
+   A skirt or hair that must answer the scene (wind, the body moving) rather than
+   loop a keyed swing: add a `cloth` block to the config — one recipe per tag,
+   `bottomwear`, `back hair`, `front hair`: `chains`, `links`, `wind` and `gravity`
+   as `[root, tip]` (multipliers of the consumer's environment, tip >= root), and
+   optionally `split`, `strength`, `damping`/`alternate_damping`, `translate`,
+   and on the skirt `swing.scales` (AUTHORING §3, *Recipe: cloth and hair*) —
+   and propose with `--cloth config.json`; copy its `constraints` too. Every
+   number is yours but `length_ratio` and `strength`, whose defaults the note
+   names. Weights across neighbouring trees are not drafted (issue #378). No
+   stop at the legs is drafted: on the recipe's fixture the environment alone
+   pushed no hem through a thigh, but the consumer's hip motion can
+   (rig-c/core#1413).
 6. Correct against `render/landmarks.png` and `note:` lines; a
    `coverage … not checked` line is a bone no check read (the line says why),
    and `basis.json` beside the proposal says what each bone rests on — check

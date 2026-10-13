@@ -114,9 +114,10 @@ read by no CPU stage).
 | `motion.blink` | rig | **proposed**: `{t, eyes, brows, squash, brow_drop}`; the whole blink, `t` to `t + 0.364` s (`t + 0.314` s without brows: the brows' keys are the ones that end last), must fit inside the idle (`RIG_BLINK_INSIDE_IDLE`). The `eyes` group's `scaley` squashes every part on the eye bones about the bone's origin, the eyewhite's centre. Optional: a figure with no `eyewhite-r`/`-l` part has no eye bone, so `propose` writes no `blink` and notes `no blink: no eyewhite part (looked for: eyewhite-r, eyewhite-l), …`; with eyes and no `eyebrow-r`/`-l` part it writes the blink without `brows` and `brow_drop` and notes `blink without brows: …`. `brows` and `brow_drop` are stated together or not at all (`CONFIG_BLINK_BROWS_PAIRED`), and a group that names no bone is refused (`CONFIG_BLINK_GROUP_MEMBERS`) — rigc would refuse it one stage later, `group "eyes" declares no members` — as is a group that names one bone twice (`CONFIG_BLINK_GROUP_UNIQUE`; rigc: `group "eyes" names member "eye" twice`). An `irides-*` or `eyelash-*` part on a side with no eyewhite has no eye bone to ride: `propose` places it on `head` as a region, which the blink does not move, and notes `no eyewhite part for eye_r (looked for: eyewhite-r): iris (head:irides-r) is placed on head as a region, …`. The timing is fixed, not a field (table below) |
 | `motion.blink.still` | rig | **proposed** only for a lash `propose` notes (below), then checked: `{<part>: {row, bone}}` — the rows of that region part above `row` (rig px, y down) are drawn by a second slot `<part>_still` on `bone` and do not blink; rows from `row` down keep the part's slot and blink. The part must be a region on a bone `eyes` names, `bone` one it does not (`CONFIG_STILL_OFF_THE_BLINK`), and `row` a row of the part with no art across its whole width (`RIG_STILL_ROW_CLEAR`) |
 | `motion.animations_from` | rig; check (named; read for folds) | optional, never proposed (issue #183): a path, relative to the config file's directory, to a file in rig-c's motion-spec shape, `{"spec": "rigc-motion/1", "animations": {"<name>": {"duration": …, "tracks": [...]}, …}}` — an expression, a gesture, anything beside the idle. On every `rig` and `build` each of its animations is written into `rig/motion.json` after `idle`, as read: nothing added, re-keyed or judged here, and each is rigc's to accept or refuse at the rig stage's gate, in rigc's words. It may name what `motion.json` already holds — the bones `bones` declares, the easings `shut` and `open`, the groups `eyes` and `brows` when the blink writes them — and nothing else from the file reaches it. The loader refuses, every problem at once: no such file or one that cannot be read (`CONFIG_FILE_PRESENT`), text that is not JSON (`CONFIG_IS_JSON`), a file that is not an object, a `spec` other than `"rigc-motion/1"`, an `animations` that is not a table of objects (`CONFIG_FIELD_TYPE`), any other key — rig-c's `easings`, `groups`, `setup`, `physics`, `mix`, `archetype` and `cut` included, which would be read and not written (`CONFIG_KEY_KNOWN`), an animation named `idle` (`CONFIG_ANIMATION_NAME_FREE`), and a key written twice in one object of the file, which JSON would fold into its last value without a word (`CONFIG_KEY_UNIQUE`). `check` names the others on one line (`beside the idle: …`) and reads each for folds, with the idle — `ANIMATIONS_DO_NOT_FOLD` (§7, issues #320, #333); every other bar reads the idle. Absent, `motion.json` holds the idle alone, byte for byte as before, and `check` reads that idle for folds |
-| `constraints` | rig (handed to rig-c as `rig.json`'s `constraints`); `compare` and the coverage lines (roles) | **authored**, optional; `propose` writes none. A list of constraints in **rig-c's own rig-spec shape** (`RigConstraint`: `ik`, `transform`, `path`, `physics`, `slider` — rig-c's `src/rig.ts` documents every field), in the order rigc applies them. The loader checks only what this package owns: each entry is an object with a `type` rigc names (`CONFIG_CONSTRAINT_TYPE_KNOWN`) and a non-empty `name`, unique within its kind as rigc finds constraints (`CONFIG_CONSTRAINT_NAME_UNIQUE`; an ik and a transform may share one); every bone it names — `bones`, an ik's `target`, a transform's `source`, a physics or slider constraint's `bone` — is a bone `bones` declares, a chain link as `<chain><i>` (`CONFIG_NAME_RESOLVES`); the bone a constraint follows does not sit under a bone it drives (`CONFIG_CONSTRAINT_TARGET_DETACHED`). Every other field (`mix`, `softness`, `properties`, a path's `slot`, a slider's `animation`) and every value is rigc's to accept or refuse at the rig stage's gate, in rigc's words (`RIG_RIGC_GREEN`) — an ik's `bones` as a shape too: from rig-c 2.15.0 rigc refuses an ik over more than two bones, or over a pair whose second bone is not the first's child (issue #103; this loader refused both itself until then). A note and an `x-` record may ride on an entry; the rig stage leaves them out of what it hands rigc. Under the default `--idle-keys ctl` a two-bone ik whose child link the idle keys is split by that link's control, and rigc refuses the pair: run `rig --idle-keys direct` or `build --idle-keys direct` (the rig stage adds that sentence, naming the flag on the command that ran, to rigc's line; `build` forwards it to its rig stage, issue #95). Each bone a constraint follows is declared to rigc as `invariants.detached` from every bone it drives, which rigc's gate rule `A25` checks |
+| `constraints` | rig (handed to rig-c as `rig.json`'s `constraints`); `compare` and the coverage lines (roles) | **authored**, optional; `propose` writes none, but with `--cloth` (issue #364), where it writes the recipe's physics and swing transforms (*Recipe: cloth and hair that answer the world*, below). A list of constraints in **rig-c's own rig-spec shape** (`RigConstraint`: `ik`, `transform`, `path`, `physics`, `slider` — rig-c's `src/rig.ts` documents every field), in the order rigc applies them. The loader checks only what this package owns: each entry is an object with a `type` rigc names (`CONFIG_CONSTRAINT_TYPE_KNOWN`) and a non-empty `name`, unique within its kind as rigc finds constraints (`CONFIG_CONSTRAINT_NAME_UNIQUE`; an ik and a transform may share one); every bone it names — `bones`, an ik's `target`, a transform's `source`, a physics or slider constraint's `bone` — is a bone `bones` declares, a chain link as `<chain><i>` (`CONFIG_NAME_RESOLVES`); the bone a constraint follows does not sit under a bone it drives (`CONFIG_CONSTRAINT_TARGET_DETACHED`). Every other field (`mix`, `softness`, `properties`, a path's `slot`, a slider's `animation`) and every value is rigc's to accept or refuse at the rig stage's gate, in rigc's words (`RIG_RIGC_GREEN`) — an ik's `bones` as a shape too: from rig-c 2.15.0 rigc refuses an ik over more than two bones, or over a pair whose second bone is not the first's child (issue #103; this loader refused both itself until then). A note and an `x-` record may ride on an entry; the rig stage leaves them out of what it hands rigc. Under the default `--idle-keys ctl` a two-bone ik whose child link the idle keys is split by that link's control, and rigc refuses the pair: run `rig --idle-keys direct` or `build --idle-keys direct` (the rig stage adds that sentence, naming the flag on the command that ran, to rigc's line; `build` forwards it to its rig stage, issue #95). Each bone a constraint follows is declared to rigc as `invariants.detached` from every bone it drives, which rigc's gate rule `A25` checks |
 | `turn` | rig (adds the turn control) | **proposed** only with `propose --full`/`--head` (issue #251), then corrected: `{pivot, depths}`. `depths` holds, per part, the See-through layer's `depth_median` the part came from (larger = further back), read from the run the part was assembled from; a `painting:` patch has none and is not carried. A rider (issue #271) — a part from an `eyewhite`, `irides`, `eyelash`, `eyebrow`, `nose` or `mouth` layer — is drafted at the `face` part's depth, 0.001 nearer when parts.json draws it after the face and 0.001 further when before: See-through makes no depth of its own for the eye group (it cuts them from one depth map of the combined eyes) and clamps nose and mouth to the face's median − 0.001, and the two runs' own medians for these layers disagreed by up to 0.47 and swapped their order against the face. Every other layer — ears, headwear and earwear included — keeps its own median. With no `face` part, or more than one, the riders keep their own and a note says so. One note lists each part's depth and where it came from; a carrier the other run places more than 10 % of `pivot − nearest` away gets a note naming both values and the run read — the two runs are not reconciled. `pivot` is the depth that stays put; `propose` drafts the mean of the parts' depths weighted by `opaque_px`, the one depth at which the painted pixels' centroid does not slide under the dial. The rig stage adds a bone `turn` under `root` at its origin that nothing keys — its local x is the dial, in rig px — and carries each part by `(pivot − depth) / (pivot − nearest depth)` of it: the nearest part all of it, a part behind the pivot the other way, a part at the pivot not at all. Each part rides leaf twins (`turn_<part>_<bone>`, an identity child of every bone its slot and weights bind) moved by one `transform` constraint (`turn_<part>`, after the config's own); the idle's keys, the `<bone>_ctl` controls and a physics constraint stay on the bones, and the dial moves none of them. At rest: with `turn` declared, no pixel differs by more than 1 level at dial 0 (not byte-identical; the cause is float noise in the identity child bones, and the constraints add nothing); without `turn`, byte-identical. Neither field has a default (`CONFIG_FIELD_PRESENT`); the pivot must lie behind the nearest part (`CONFIG_TURN_PIVOT_BEHIND_NEAREST`). Absent, no control is added and no byte of any output moves |
 | `scene` | assemble (the recomposite, its holes and the figure's mask); check, through `parts.json`'s `scene` block (`RECOMPOSITE_HOLES`, the seam) | **authored**, optional; `propose` writes none (issue #242). `{}` declares the painting a scene: the figure and its surroundings in one image, See-through's full run holding only the figure. With it, `assemble` reads the recomposite figures, the hole list and the `uncovered:` lines inside the figure — the rig pixels where any full-run layer's alpha is above 8 (`OPAQUE_ALPHA_ABOVE`, the cut every layer's painted pixels are read by) — each line starting `inside the figure (config.scene: …, <n> of <m> rig px)`; writes that figure as `figure_rig.png` (white on black) beside the recomposite, and a `scene` block in `parts.json`; flags error pixels on the error map inside it only (outside, the painting grey); and `check` leaves out of the seam every frame pixel whose composite sample reaches the painting's outermost row or column, saying how many (`seam_border` in `check.json`, and on the seam line). It takes no field: the figure and its threshold are derived. A key in it other than a record or an annotation is `CONFIG_KEY_KNOWN`. Absent, no byte of any output moves |
+| `cloth` | `propose --cloth` only; no other stage reads it, so it moves no byte of any build | **authored**, optional (issue #364): one recipe per tag, `{"bottomwear": {…}, "back hair": {…}, "front hair": {…}}`, each `{chains, links, wind, gravity, split?, length_ratio?, strength?, damping?, alternate_damping?, translate?, swing?}`. `chains` — trees across the piece (for `back hair`, per side of the eye axis), a whole number, 1 or more; `links` — links from root to tip on every path, 1 or more; `split` — `{at, into}`: the first `at` links are the trunk, which forks into `into` (2 or more) branches; `at` below `links` (`CONFIG_CLOTH_SPLIT_BEFORE_TIP`); `length_ratio` — a path's last link over its first, above 0, default 0.5; `strength` — `{trunk, branch, edge}`, each above 0 and below the spring's stability bound (`CONFIG_CLOTH_SPRING_STABLE`), default 100 / 100 / 50; `damping` — in [0, 1], absent: rig-c's default; `alternate_damping` — the odd trees' damping, in [0, 1], beside `damping` and different from it (`CONFIG_CLOTH_ALTERNATE_DIFFERS`); `wind`, `gravity` — `[root, tip]`, each 0 or more, tip at or above root (`CONFIG_CLOTH_RESPONSE_GROWS_TO_TIP`); `translate` — the x and y mix of a dangling end's flutter, above 0 and at most 1; `swing` — `bottomwear` only, `{scales}`, one positive scale per tree (`CONFIG_CLOTH_SWING_SCALE_PER_TREE`). The two defaults are the recipe's own, measured on its synthetic fixture (the recipe below). The recipe below says what each field drafts |
 
 **A scene target is an ordinary bone.** A target the scene places — a point a hand
 reaches for, a face something turns toward — is a single bone parented to `root`,
@@ -1500,6 +1501,122 @@ is the fix.
   201 to 198 px wide and moved `check.json`'s `BREATH_VISIBLE` `torso_heat_mean` from 7.8 to
   7.705, every status unchanged, although `check` reads the idle alone.
 
+### Recipe: cloth and hair that answer the world
+
+Issue #364. Cloth and hair move **by physics, not by keyed animation** (the owner's
+direction, 2026-10-13), so that a rig in a scene answers the scene — the body under
+it moving, a gust from the side. The config's `cloth` block declares the recipe per
+tag, and `propose --cloth <config.json>` drafts it; the proposal is copied into the
+config as always, `constraints` with the rest. Without `--cloth` nothing the proposer
+writes changes. The recipe makes the rig **respond**; driving it — a hip key, a walk,
+the wind — is the consumer's, and the recipe drafts no key and no stimulus.
+
+```jsonc
+"cloth": {
+  "bottomwear": { "chains": 4, "links": 3, "split": { "at": 1, "into": 2 },
+                  "damping": 0.85, "alternate_damping": 0.7,
+                  "wind": [2, 10], "gravity": [5, 30], "translate": 0.2,
+                  "swing": { "scales": [1.3, 1, 1, 1.3] } },
+  "back hair":  { "chains": 2, "links": 3, "split": { "at": 1, "into": 2 }, "wind": [1, 8], "gravity": [4, 24] },
+  "front hair": { "chains": 1, "links": 3, "wind": [1, 6], "gravity": [2, 12], "translate": 0.2 }
+}
+```
+
+(The selftest's fixture recipe, `fixtures/cloth.ts`: values chosen to exercise every
+rule, not advice. It leaves `length_ratio` and `strength` out, so the recipe's own
+defaults are what is built and measured below.)
+
+What each rule drafts (`src/cloth.ts` holds them):
+
+| rule | drafts | from |
+| --- | --- | --- |
+| where | `bottomwear`: from `hip`, the root row 20 px below hip's y (the keyed chains' row), the tip row 4 px above the part's bottom. `back hair` that reaches below the shoulders: from `head`, per side of the eye axis (twin tails are a side each), the eye line to 4 px above its bottom. `front hair`: each strand that hangs below the chin (the lock rule's), from `head`, 0.22 face heights above the eye line to 5 px below the strand; the fringe's three columns keep their two links and their places | the keyed chains' own rows, which these replace |
+| trees | tree k of `chains` owns the cell k/N .. (k+1)/N of the art's width in every row, and its links sit at the cell's centre in the 24-row band there, so a piece that widens fans its trees. With `split`, the trunk's tip is the fork, and branch b of `into` follows the centre of its share of the cell. Chains are named `<prefix><k>_` (trunk) and `<prefix><k><a, b, …>_` (branches): `skirt`, `hairback_r`/`hairback_l`, `lockt` | `chains`, `links`, `split` |
+| lengths | link j's length is the first's times q^j, q = `length_ratio`^(1/(links − 1)), the whole spanning root row to tip row: the links shorten toward the tip | `length_ratio` (default 0.5, below) |
+| stiffness | a trunk link takes `strength.trunk`, a branch link `strength.branch`, and the edge — the outermost branch on each outer side of the piece (both sides of a skirt or a strand; the outer side of each back-hair side), or without `split` the outermost tree — `strength.edge`; a fringe column is a trunk, its outer two the edge. **Strength does not fall along a chain**: a tip reads soft because each link turns on top of every link above it, so the motion accumulates down the chain at one strength. Only the edge is declared softer | `strength` (default trunk 100, branch 100, edge 50, below) |
+| response | link j of an n-link path takes `wind` and `gravity` at j/(n − 1) of the way from the root value to the tip value; a single-link path takes the tip value. Each is a scalar **multiplier** of the environment the consumer sets (spine-core's skeleton `windX, windY`, `gravityX, gravityY`; rig-c 2.52.0's live track `setEnvironment`, rig-play 1.10.0's `environment()`): no direction is drafted | `wind`, `gravity` |
+| out of phase | the odd trees take `alternate_damping`, the even ones `damping` | `damping`, `alternate_damping` |
+| flutter | the last link of every path gets a second physics constraint, `<bone>_translate`, moving x and y by `translate`, with the link's stiffness and damping and **no** wind or gravity response. spine-core scales a translate spring's response by the skeleton's reference scale (100) and a rotation's by the link's length over it, so one response on both pushes an end about 100/length times further than it turns it (the table below) | `translate` |
+| swing | `bottomwear` only: a bone `<prefix>_swing` under `hip` at the centre of the root row, one link long, straight down, with physics (the trunk's stiffness, the root's response); each tree's first link takes the swing's rotation times its scale — a transform `<swing>_<k>`, local source and target, additive, the swing's setup rotation in hip's frame (−90: hip is drafted unturned) subtracted — and no physics of its own | `swing.scales` |
+
+Every link but a swing-driven first link gets `<bone>_physics` (`rotate` 1), and no
+idle key: the drafted idle keys none of the trees. A recipe that drafts nothing —
+its tag on no part, or `back hair` that ends above the shoulders (a bun) — is refused,
+`PROPOSE_CLOTH_DRAFTED`.
+
+**Every spring is stable at its step (A23's inequality).** Per step spine-core does
+`v += −strength·x·step·massInverse`, `x += v·step`, `v *= d` with d = damping^(60·step);
+in (x, v·step) that is the matrix [[1 − k, 1], [−d·k, d]] with
+k = strength·massInverse·step², and both eigenvalues are inside the unit circle exactly
+when **0 < k < 2(1 + damping^(60·step))**. The recipe sets no `fps` or `mass`, so step is
+1/60 and massInverse 1 (rig-c's defaults), and a damping left out is rig-c's 0.85. The
+loader refuses a strength, declared or default, at or past the bound at any damping the
+recipe runs at (`CONFIG_CLOTH_SPRING_STABLE`). The defaults against it:
+
+| strength | k = strength/3600 | bound at damping 0.85 (rig-c's default) | at 0.7 | at 0 (the lowest) | at 1 |
+| --- | --- | --- | --- | --- | --- |
+| 100 (trunk, branch) | 0.027778 | 3.7 | 3.4 | 2 | 4 |
+| 50 (edge) | 0.013889 | 3.7 | 3.4 | 2 | 4 |
+
+**The defaults are the recipe's own, measured here** on the cloth fixture
+(`fixtures/cloth.ts`: a skirt of four trees on a swing, twin-tail back hair of two trees
+a side, a lock and the fringe; its recipe above; rig-c 2.47.1's build and `check`, and
+for the environment rig-c's live track, `setEnvironment`, which rig-c has from 2.52.0,
+read with 2.53.0). Candidates, each with the others at the
+default (`TEXTURE_STRETCH` severity, ceiling 1.927; then, under wind (1, 0) against
+calm (0, 0), gravity (0, 1) throughout, each held three idle cycles, the largest vertex
+displacement of `hair_back`, `skirt` and `hair_front`, and how far the origin of the last
+link of the right side's outer edge branch, `hairback_r0a_1`, moves against that of the
+inner branch beside it, `hairback_r0b_1`, in rig px):
+
+| candidate | TEXTURE_STRETCH | wind (1, 0) vs calm: hair_back / skirt / hair_front | edge / inner branch |
+| --- | --- | --- | --- |
+| **default: strength 100 / 100 / 50, length_ratio 0.5** | **1.382** | **10.299 / 3.390 / 2.119** | **5.608 / 3.846** |
+| edge 100 (no softer edge) | 1.125 | 8.126 / 2.480 / 1.091 | 3.857 / 3.846 |
+| edge 25 | 2.062, **FAIL** | 14.355 / 4.931 / 4.014 | 8.333 / 3.846 |
+| length_ratio 1 (equal links) | 1.516 | 13.677 / 4.133 / 2.721 | 5.208 / 3.348 |
+| length_ratio 0.25 | 1.217 | 7.841 / 2.762 / 1.731 | 5.513 / 4.083 |
+
+The rule the defaults were chosen by: the edge visibly softer than the branch beside it
+(edge 100 makes them one), every bar green (edge 25 stretches the texture past the
+ceiling), and among the ratios that do shorten the links toward the tip (1 does not) the
+one that answers the wind most. The figures are this fixture's; on other art the same
+reading, `check` and a gust, is how to tune them.
+
+The flutter's split, measured on the same fixture (`TEXTURE_STRETCH` severity, the
+translate mix at 0.2 / 0.5 / 1): as drafted, no response on the translate, 1.382 /
+1.388 / 1.398; given the link's own wind and gravity, 1.65 / 3.233 (**FAIL**) /
+3.814 (**FAIL**).
+
+**What moves them.** Physics answers motion of the bones above it and the environment.
+The drafted idle keys `chest` (the breath) and the head chain, never `hip`, and the
+recipe adds no key: under the idle alone a skirt's trees move only by the environment.
+`rigc render` and `check` pose under spine-core's default, wind (1, 0) and gravity
+(0, 1), so on the fixture `check` reads `check: PASS`, `TEXTURE_STRETCH` 1.382,
+`TIP_OVER_ROOT` ratio 15.06 (root 0.095, tip 1.438 rig px), `CHAIN_LAG` PASS,
+`ANIMATIONS_DO_NOT_FOLD` 0 folding meshes (that bar leaves physics out), and
+`rigc render --folds` on the same build **with** all of its physics constraints reads 0 of 3
+meshes folding at 12, 24 and 60 fps. Under an explicit environment set through the live
+track's `setEnvironment` — wind (1, 0) for one idle cycle, then (−1, 0) for one, then
+calm (0, 0) for one, gravity (0, 1) throughout, on one looping track — the frame at the
+end of each wind phase, against the calm frame at the same idle time, moves `hair_back`
+by up to 10.396 and 10.188, `skirt` 3.390 and 3.382, and `hair_front` 2.131 and 2.104 rig
+px, either way alike; held three cycles each from a fresh track, 10.299 / 10.277,
+3.390 / 3.382 and 2.119 / 2.115.
+
+**Not in this recipe.**
+
+- **Weights across neighbouring chains** (rig-c/core#1415's per-vertex weights, a vertex
+  following the links of several trees): issue #378.
+- **A stop at the legs** is not needed for this recipe. On a copy of the fixture with two
+  thighs drawn behind the skirt, under the environment alone (wind (1, 0), then (−1, 0),
+  then calm) no skirt link that clears the thighs at rest crosses into one: 0 crossings.
+  A consumer's hip motion can make the hem cross: on the same copy, under a hip sway
+  applied to it through the live track (±8 degrees and ±12 px, a 2 s period), skirt links
+  cross on 224 (calm) and 228 (wind (1, 0)) of 360 steps. That case is rig-c/core#1413's; until it lands, a stop is the
+  author's own constraint network in `constraints`. When `--keypoints` drafts leg chains,
+  a note says so.
+
 ## 4. The command order
 
 Two steps are external: the See-through runs (by any route; the optional `comfy seethrough` adapter is only a client for a ComfyUI box). Everything else is this tool.
@@ -1518,6 +1635,7 @@ early loader does not read it.
 | `layers` | 1 and 4 `inputs`, 6 `assemble --propose-plan` | `key`, `seethrough`, `assemble.rig_scale` | `seethrough.head_box`, for `--propose-plan` only (`ASSEMBLE_FIELD_PRESENT`) |
 | `assemble` | 7 `assemble` | `key`, `seethrough`, `assemble.rig_scale`, `assemble.plan` | `seethrough.head_box` (`ASSEMBLE_FIELD_PRESENT`) |
 | `full` | 8 `propose --from-config`, `propose --compare`, `compare` (a side that states a `key`), `rig`, 9 `build` | `key`, `assemble.rig_scale`, `assemble.plan`, `bones`, `meshes`, `regions`, `motion` | for `build`, the `assemble` row's too: its assemble stage reads through that loader after this one |
+| `cloth` | 8 `propose --cloth` (issue #364) | `key`, `cloth` | every other key must still be one a config knows; only `cloth` is vouched for. Every other loader vouches for `cloth` too when it is present |
 
 A missing field is `CONFIG_FIELD_PRESENT` naming it; a missing `generation` names
 the fields the block holds, and a missing `assemble.plan` names
@@ -1582,9 +1700,9 @@ full loader before its assemble stage writes anything.
    no later stage can see — then
    `rig-parts propose --parts work/rig --source inputs/painting.png --out work` →
    `work/proposal.json` and `work/render/landmarks.png` (+ `_head`). Copy
-   each of `bones`, `meshes`, `regions`, `limbs`, `motion` and `turn` it wrote into the
-   config: `limbs` is written only with `--keypoints` and `turn` only with
-   `--full`/`--head` (`PROPOSAL_CONFIG_SECTIONS` in `src/propose.ts` is the list,
+   each of `bones`, `meshes`, `regions`, `limbs`, `motion`, `constraints` and `turn` it
+   wrote into the config: `limbs` is written only with `--keypoints`, `constraints`
+   only with `--cloth` and `turn` only with `--full`/`--head` (`PROPOSAL_CONFIG_SECTIONS` in `src/propose.ts` is the list,
    and the selftest's `TY18` holds this sentence to it). A `limbs` block left out
    is refused at step 8 by the name of every part it cuts: `CONFIG_NAME_RESOLVES`
    on each limb part the meshes or regions attach, `CONFIG_PART_ATTACHED` on the
@@ -2375,6 +2493,11 @@ See-through with another seed.
 | <a id="CONFIG_CONSTRAINT_NAME_UNIQUE"></a>`CONFIG_CONSTRAINT_NAME_UNIQUE` | two `constraints` entries of one kind share a `name`; rigc finds a constraint by its kind and its name, so an ik and a transform may share one | rename one |
 | <a id="CONFIG_CONSTRAINT_TARGET_DETACHED"></a>`CONFIG_CONSTRAINT_TARGET_DETACHED` | the bone an ik follows (`target`) or a transform reads (`source`) is one of the bones that constraint drives, or sits under one (the detail gives the line of parents) — driving them would move what they follow. This package's refusal: rig-c 2.15.0 gates such a rig green when nothing declares the parentage (measured on the selftest's rig fixture, issue #103) | a bone beside the chain; a scene target is a single bone parented to `root` (§3) |
 | <a id="CONFIG_TURN_PIVOT_BEHIND_NEAREST"></a>`CONFIG_TURN_PIVOT_BEHIND_NEAREST` | `turn.pivot` is at or in front of the nearest part's depth: the law `(pivot − depth) / (pivot − nearest)` has no value there, and in front of it every part travels against the dial | a pivot above the smallest depth in `turn.depths` |
+| <a id="CONFIG_CLOTH_SPLIT_BEFORE_TIP"></a>`CONFIG_CLOTH_SPLIT_BEFORE_TIP` | a `cloth` recipe's `split.at` is at or past its `links`: the trunk would leave no link for the branches (issue #364) | `split.at` below `links`, or leave `split` out |
+| <a id="CONFIG_CLOTH_RESPONSE_GROWS_TO_TIP"></a>`CONFIG_CLOTH_RESPONSE_GROWS_TO_TIP` | a `cloth` recipe's `wind` or `gravity` is `[root, tip]` with tip below root: the response grows from the root to the tip, where the motion accumulates down the chain | that pair |
+| <a id="CONFIG_CLOTH_ALTERNATE_DIFFERS"></a>`CONFIG_CLOTH_ALTERNATE_DIFFERS` | a `cloth` recipe's `alternate_damping` without `damping`, or equal to it: neighbouring trees are declared out of phase, and an alternate that alternates nothing declares nothing | `damping` beside it, a different value, or leave `alternate_damping` out |
+| <a id="CONFIG_CLOTH_SWING_SCALE_PER_TREE"></a>`CONFIG_CLOTH_SWING_SCALE_PER_TREE` | `swing` on a tag other than `bottomwear`, or `swing.scales` not one scale per tree (`chains`) | one scale per tree, in tree order across the skirt |
+| <a id="CONFIG_CLOTH_SPRING_STABLE"></a>`CONFIG_CLOTH_SPRING_STABLE` | a `cloth` recipe's strength — declared, or the default 100 / 100 / 50 — whose spring is unstable at a damping the recipe runs at (`damping`, `alternate_damping`, or rig-c's 0.85 when `damping` is left out): k = strength·massInverse·step² at or past 2(1 + damping^(60·step)), step 1/60 and mass 1 (rig-c's defaults; the recipe sets neither). The detail gives k and the bound | a lower strength, or a higher damping |
 | <a id="CONFIG_TURN_BONE_FREE"></a>`CONFIG_TURN_BONE_FREE` | the config has `turn` and `bones` declares a bone named `turn`, the control the rig stage adds | rename that bone |
 
 ### inputs
@@ -2453,6 +2576,7 @@ says why each requirement exists and what breaks without it.
 | <a id="PROPOSE_FACE_PRESENT"></a>`PROPOSE_FACE_PRESENT` | no part comes from a `face` layer, and the face-less fallback cannot derive a face box either: it needs the head run's `neck` and at least one head-run `front hair`/`back hair` part whose top is above the neck's, and the message names the half that is missing. With both, `propose` does not refuse — it derives the box and says so in its first note (§5) | `assemble.plan`: take the face, or the head run's hair and neck |
 | <a id="PROPOSE_CUT_FROM_RECORDED"></a>`PROPOSE_CUT_FROM_RECORDED` | two parts share one layer and none of them records `cut_from`: a `parts.json` an `assemble` before 1.6.0 wrote with `assemble.cuts`. The records are in draw order, so which is the plan part and which the piece cannot be read off the file; the message names the parts and the layer. Every other reader still takes the file | `--parts`: re-run assemble (1.6.0+) to record `cut_from` |
 | <a id="PROPOSE_LIMB_PARTS"></a>`PROPOSE_LIMB_PARTS` | `parts.json` holds parts `config.limbs` cut at their joints (issue #349); the limbs are drafted from the parts before the cut, which the rules read by layer | `--parts` a build assembled with the config's `limbs` left out; keep the block the config holds (its caps and ranges are the author's). `propose --from-config` reads the config's bones on either build |
+| <a id="PROPOSE_CLOTH_DRAFTED"></a>`PROPOSE_CLOTH_DRAFTED` | with `--cloth` (issue #364): the config's `cloth` block holds a recipe for a tag the proposer drafts no chain on — no part has that tag, or every `back hair` part ends above the shoulders (a bun bone, no chain) | leave that recipe out, or assemble the layer it is for |
 | <a id="PROPOSE_ACCESSORY_BODY"></a>`PROPOSE_ACCESSORY_BODY` | an accessory has nothing above its pendant rows to hang its bone on | that part's plan entry, or author its bones by hand |
 | <a id="PROPOSE_TURN_RUN_GIVEN"></a><a id="PROPOSE_TURN_LAYER_PRESENT"></a><a id="PROPOSE_TURN_DEPTH_PRESENT"></a>`PROPOSE_TURN_RUN_GIVEN`, `PROPOSE_TURN_LAYER_PRESENT`, `PROPOSE_TURN_DEPTH_PRESENT` | with `--full`/`--head` (issue #251): a part came from a run whose layers were not given, the run given holds no layer of the part's tag, or its layer carries no `depth_median` while another part's layer carries one; a run with no depth on any part's layer (a PSD, or an export of one) is not refused — the turn is skipped, and the note says `turn: SKIP` and names the run (issue #359) | give the run the parts were assembled from, as the wrapper's `layers.json` |
 | <a id="BASIS_RECORDS_EVERY_BONE"></a><a id="BASIS_NAMES_RESOLVE"></a><a id="BASIS_KIND_KNOWN"></a><a id="BASIS_KIND_HOLDS"></a>`BASIS_RECORDS_EVERY_BONE`, `BASIS_NAMES_RESOLVE`, `BASIS_KIND_KNOWN`, `BASIS_KIND_HOLDS` | `propose --keypoints`'s record of how it placed each bone, `basis.json`, does not hold to the proposal it was written with: a proposed bone with no record, one recorded twice or out of the proposal's order; a part, bone or frame quantity it names that is not there; a placement kind outside the known ones; or a placement that does not hold what its kind says (a joint placement with no joint, a non-joint one with a joint, a derived one with no bone, a constant that is not finite). Nothing is written | a proposer bug, not an input problem: report it with the line |

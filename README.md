@@ -250,8 +250,9 @@ rig-parts assemble --source painting.png --full layers/full --head layers/head -
 #    -> a large red hole neither run holds? add an assemble.patches entry (cut from the painting) and assemble again
 rig-parts propose --parts work/rig --source painting.png --out work
 #    -> proposal.json, basis.json (what each bone rests on) and render/landmarks.png; per-bone coverage lines;
-#       correct it, copy bones/meshes/regions/limbs/motion/turn into config.json, each it wrote
-#       (limbs only with --keypoints, turn only with --full/--head; a limbs block left out is refused next)
+#       correct it, copy bones/meshes/regions/limbs/motion/constraints/turn into config.json, each it wrote
+#       (limbs only with --keypoints, constraints only with --cloth, turn only with --full/--head;
+#       a limbs block left out is refused next)
 rig-parts propose --parts work/rig --source painting.png --out work --from-config config.json
 #    -> LINT lines; exit 1 while any remain
 rig-parts build --config config.json --source painting.png --full layers/full --head layers/head --out out --loop
