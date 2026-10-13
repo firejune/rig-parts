@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/rig-c/parts/compare/v1.18.0...v1.19.0) (2026-10-13)
+
+
+### Features
+
+* **painting:** read an occluded hip, and replace the recipe with one measured painting that passes ([#374](https://github.com/rig-c/parts/issues/374)) ([c521170](https://github.com/rig-c/parts/commit/c521170cb641821d60bfb671b57bcf1ad89499d3)), closes [#372](https://github.com/rig-c/parts/issues/372)
+
 ## [1.18.0](https://github.com/rig-c/parts/compare/v1.17.0...v1.18.0) (2026-10-13)
 
 
