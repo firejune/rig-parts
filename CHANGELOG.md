@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.16.0](https://github.com/rig-c/parts/compare/v1.15.0...v1.16.0) (2026-10-13)
+
+
+### Features
+
+* **cli:** rig-parts guide prints the row a failure line names, and every FAIL line ends with the command ([#346](https://github.com/rig-c/parts/issues/346)) ([db821b9](https://github.com/rig-c/parts/commit/db821b9afaaa165b14b38ab519efc86dec06757d))
+
+
+### Bug Fixes
+
+* **docs:** a stretched edge whose ends disagree on a small share at the 0.03 cut — the failure map names the continuous floor, then heat, and says the exponent only moves the figure ([#342](https://github.com/rig-c/parts/issues/342)) ([2e45bf4](https://github.com/rig-c/parts/commit/2e45bf4541cabd812db9692d6c50330455c6f8ac)), closes [#115](https://github.com/rig-c/parts/issues/115)
+
 ## [1.15.0](https://github.com/rig-c/parts/compare/v1.14.0...v1.15.0) (2026-10-12)
 
 
