@@ -25,7 +25,9 @@
  * - `topwear` -> two outer-robe chains, only when it hangs below the hip line;
  *   a side whose link falls off the art is dropped.
  * - `handwear-*` -> two blobs: one sleeve chain per blob, its mesh taking that
- *   chain and a chest stub at the shoulder; one blob: both chains and the chest
+ *   chain and nothing else (issue #347: a chest stub at the shoulder pinned the
+ *   puff to the torso, so the part stretched when the chain turned; without it the
+ *   part rides its chain rigidly); one blob: both chains and the chest
  *   midline, split at the eye axis — unless the blob is clasped hands (at the
  *   axis and at most half the shoulders' width), which ride `hip` as a region.
  * - `front hair` -> three fringe chains + one lock chain per strand that hangs
@@ -1764,9 +1766,9 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
   } else if (armPlan !== null && armPlan.arms !== null) {
     // Each chain runs shoulder -> elbow with its tip at the wrist: two links,
     // the upper arm and the forearm, each with the amplitude the two-blob rule
-    // gives its link of the same index. Its part's mesh takes the chain and a
-    // chest stub at the shoulder, the two-blob rule's 16 px stub laid along
-    // the upper arm instead of down the screen.
+    // gives its link of the same index. Its part's mesh takes the chain alone,
+    // as the two-blob rule's does since issue #347 (no chest stub: a stub on
+    // chest pinned the puff, and the arm stretched it when it turned).
     for (const a of armPlan.arms) {
       const sgn = a.side === 'r' ? 1 : -1;
       const used = (n: KeypointName): Placement => placement('joint', `the ${n} joint, ${usedAs((joints as RigJoints).joints[n])}`, { joints: [jointRef(n)] });
@@ -1776,18 +1778,15 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
     for (const p of hw) {
       const [g, r] = gridR(p);
       const segs: Segment[] = [];
-      for (const a of armPlan.arms.filter((q) => q.part === p)) {
-        const len = edgeLength(a.elbow[0] - a.shoulder[0], a.elbow[1] - a.shoulder[1]);
-        const d: [number, number] = [(a.elbow[0] - a.shoulder[0]) / len, (a.elbow[1] - a.shoulder[1]) / len];
-        segs.push(['chest', rnd([a.shoulder[0] - 14 * d[0], a.shoulder[1] - 14 * d[1]]), rnd([a.shoulder[0] + 2 * d[0], a.shoulder[1] + 2 * d[1]])], `sleeve_${a.side}`);
-      }
+      for (const a of armPlan.arms.filter((q) => q.part === p)) segs.push(`sleeve_${a.side}`);
       meshes[p.name] = { grid: g, r, segments: segs };
     }
   } else if (hw.length === 2 && sides.size === 2) {
     sleeveRule = 'the two-blob sleeve rule (one chain per handwear blob, down its rows)';
-    // Arms apart: two blobs. Each mesh gets ONLY its own sleeve chain and a
-    // short chest segment at its shoulder; the one-blob recipe made hanging
-    // hands breathe with the sternum.
+    // Arms apart: two blobs. Each mesh gets ONLY its own sleeve chain; the
+    // one-blob recipe made hanging hands breathe with the sternum, and the short
+    // chest segment at the shoulder this rule drafted until issue #347 pinned the
+    // puff to the torso, so the sleeve stretched when its chain turned.
     for (const [s, sgn] of SIDES) {
       const p = (sides.get(s) as PartRecord[])[0];
       const mask = P.alpha(p);
@@ -1809,10 +1808,9 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
       C(`sleeve_${s}`, 'chest', pts, [orSaid(bandX(mask, bot - 6), pts[pts.length - 1][0], "no art in the band: the last link's x", tipWhy), bot - 3], why, tipWhy);
       tracks.push({ chain: `sleeve_${s}`, amps: [sgn * 0.2, sgn * 0.6, sgn * 1.2], period: 4.0, phase: 0.22 + (s === 'l' ? 0.05 : 0), lag: 0.08 });
       const [g, r] = gridR(p);
-      const sx = pts[0][0];
-      meshes[p.name] = { grid: g, r, segments: [['chest', rnd([sx, y0 - 14]), rnd([sx, y0 + 2])], `sleeve_${s}`] };
+      meshes[p.name] = { grid: g, r, segments: [`sleeve_${s}`] };
     }
-    notes.push('handwear is two blobs: one sleeve chain per mesh, chest only at the shoulder');
+    notes.push('handwear is two blobs: one sleeve chain per mesh, and nothing on chest');
   } else if (hw.length > 0) {
     sleeveRule = `the one-blob sleeve rule (both chains in one mesh, split at the eye axis x=${pyFixed(axis, 0)})`;
     const segs: Segment[] = [['chest', rnd([chest[0], chest[1] - 40]), rnd([chest[0], hip[1]])]];

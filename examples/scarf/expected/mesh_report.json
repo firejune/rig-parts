@@ -19,13 +19,12 @@
   "triangles": 642,
   "hull": 120,
   "bones": [
-   "chest",
    "sleeve_r0",
    "sleeve_r1",
    "sleeve_r2"
   ],
-  "max_influences": 4,
-  "mean_influences": 2.22,
+  "max_influences": 3,
+  "mean_influences": 1.98,
   "art_coverage": 1,
   "grid": 9
  },
@@ -35,13 +34,12 @@
   "triangles": 822,
   "hull": 132,
   "bones": [
-   "chest",
    "sleeve_l0",
    "sleeve_l1",
    "sleeve_l2"
   ],
-  "max_influences": 4,
-  "mean_influences": 2.18,
+  "max_influences": 3,
+  "mean_influences": 1.94,
   "art_coverage": 1,
   "grid": 8
  },

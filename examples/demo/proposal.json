@@ -418,17 +418,6 @@
       "grid": 32,
       "r": 9,
       "segments": [
-        [
-          "chest",
-          [
-            336,
-            246
-          ],
-          [
-            336,
-            262
-          ]
-        ],
         "sleeve_r"
       ]
     },
@@ -436,17 +425,6 @@
       "grid": 32,
       "r": 9,
       "segments": [
-        [
-          "chest",
-          [
-            491,
-            246
-          ],
-          [
-            491,
-            262
-          ]
-        ],
         "sleeve_l"
       ]
     },
@@ -677,7 +655,7 @@
     "hair_front (head:front hair): bang_r, bang_c, bang_l are a template, not its locks — columns at 0.25, 0.5 and 0.75 of the face box's width, along the head's down axis (the eye line's perpendicular, roll -0.924 degrees), each rooted on the part's art; the opaque shape does not separate the locks painted inside one mass of hair, so a lock that runs elsewhere is not followed — move the chains onto the locks",
     "hairpin: pendant chain would run off the art -> no tassel chain (add one by hand if it swings)",
     "earring: pendant top is off the art -> rigid bone, no chain",
-    "handwear is two blobs: one sleeve chain per mesh, chest only at the shoulder",
+    "handwear is two blobs: one sleeve chain per mesh, and nothing on chest",
     "topwear ends at y=429 (hip 420): no robe chains -- add a sash chain by hand if one hangs",
     "bottomwear (full:bottomwear): its art starts 75.9 px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root",
     "legwear (full:legwear): no rule -> region on hip",
