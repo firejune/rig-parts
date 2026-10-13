@@ -102,7 +102,7 @@ import { type Problem, refuseIfAny } from './errors.ts';
 import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
 import { padToSquare, squarePad } from './inputs.ts';
 import { type CapRecord, type LimbRecord, PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, type SceneRecord, type SingleRunPad } from './parts.ts';
-import { type BonePlace, bonePlaces, capBox, inDisc, type JointLine, jointLine, limbPolyline, limbWidth, nearestLimb, pastJoint, segmentOf } from './limbs.ts';
+import { type BonePlace, bonePlaces, capBox, coveredRadius, featherWeight, halfWidthAbout, inDisc, jointLine, type JointLine, jointOffsets, limbPolyline, limbRun, nearestLimb, pastJoint, segmentOf } from './limbs.ts';
 import {
   alphaComposite,
   connectedComponents,
@@ -1839,7 +1839,7 @@ export interface LimbCount {
   before: number;
   shares: Array<{ part: string; px: number }>;
   /** The joints whose cap this part's segments carry, in `config.limbs` order. */
-  joints: Array<{ limb: string; joint: string; part: string; cap: CapRecord }>;
+  joints: Array<{ limb: string; joint: string; part: string; upper: string; cap: CapRecord }>;
 }
 
 /**
@@ -1853,13 +1853,22 @@ export function limbLines(counts: readonly LimbCount[]): string[] {
     out.push(`  limb cut: "${c.of}" opaque ${c.before} = ${c.shares.map((q) => `"${q.part}" ${q.px}`).join(' + ')}`);
     for (const j of c.joints) {
       const k = j.cap;
-      const from = k.image_px === undefined ? `${k.layer_px} px from the layer` : `${k.image_px} px from ${k.image_layer === undefined ? 'the cap image' : `the hidden-art layer ${k.image_layer}`}, ${k.layer_px} px from the layer`;
+      const base = k.image_px === undefined ? `${k.layer_px} px from the layer` : `${k.image_px} px from ${k.image_layer === undefined ? 'the cap image' : `the hidden-art layer ${k.image_layer}`}, ${k.layer_px} px from the layer`;
+      // Issue #360: what cap_shape "disc" and edge "feather" did, said only when declared, so a limb without them prints what it did.
+      const from = k.shape === undefined ? base : `${base}, ${k.upper_px ?? 0} px from "${j.upper}"`;
+      const radius =
+        k.shape === undefined
+          ? `a disc of radius ${k.radius} px (the limb ${k.width} px across the joint line)`
+          : `a disc of radius ${k.radius} px (cap_shape "disc": the joint's distance to the nearer side of the limb, ${k.width} px across the joint line)`;
+      const shaped = [
+        ...(k.edge === undefined ? [] : [`edge "feather": ${k.feathered_px ?? 0} px of "${j.upper}" faded across the ${k.feather_radius ?? 0} px about the joint that "${j.part}" covers at every turn`]),
+      ];
       const miss =
         k.missing_px === 0
           ? 'none missing'
           : `${k.missing_px} px missing — the layer has no pixel there (hidden in the painting, or past the limb's outline), and the tool invents none: paint them into a ${k.box[2]}x${k.box[3]} image whose pixel (i, j) is rig pixel (${k.box[0]} + i, ${k.box[1]} + j), and name it in the segment's "cap"`;
       out.push(
-        `  limb cap: "${j.limb}" joint "${j.joint}" at [${k.at[0]}, ${k.at[1]}], on "${j.part}": a disc of radius ${k.radius} px (the limb ${k.width} px across the joint line), box [${k.box.join(', ')}] — on the upper side of the line ${from}, ${miss}`,
+        `  limb cap: "${j.limb}" joint "${j.joint}" at [${k.at[0]}, ${k.at[1]}], on "${j.part}": ${radius}, box [${k.box.join(', ')}] — on the upper side of the line ${from}, ${miss}${shaped.map((q) => `; ${q}`).join('')}`,
       );
     }
   }
@@ -2028,8 +2037,8 @@ function cutLimbs(
         return false;
       };
       const object = `config.limbs.${l}.segments[${k}] (joint "${String(sg.joint)}", part "${sg.part}")`;
-      const width = limbWidth(line, art, [0, 0, W - 1, H - 1]);
-      if (width === null) {
+      const run = limbRun(line, art, [0, 0, W - 1, H - 1]);
+      if (run === null) {
         problems.push({
           code: 'ASSEMBLE_LIMB_JOINT_ON_ART',
           object,
@@ -2038,10 +2047,23 @@ function cutLimbs(
         return;
       }
       // The width to 3 places (src/round.ts): a measured length, and a radius the line and the record print as read.
-      const w3 = pyRound(width, 3);
-      const radius = w3 / 2;
+      const w3 = pyRound(run[1] - run[0] + 1, 3);
+      // Issue #360: under cap_shape "disc" the radius is the half-width about the joint (src/limbs.ts), to 3 places as well.
+      const disc = sg.cap_shape === 'disc';
+      const half = halfWidthAbout(run);
+      if (disc && half <= 0) {
+        problems.push({
+          code: 'ASSEMBLE_LIMB_JOINT_ON_ART',
+          object,
+          detail: `the joint, "${sg.bone}"'s origin at [${line.at.join(', ')}], lies on the edge of the limb's art along its joint line — the run of art reaches ${pyRound(run[1] + 0.5, 3)} px from it one way and ${pyRound(0.5 - run[0], 3)} px the other — so cap_shape "disc" has no half-width about it; a bone origin inside the limb's art is required — move the bone onto the joint`,
+        });
+        return;
+      }
+      const radius = disc ? pyRound(half, 3) : w3 / 2;
       const box = capBox(line.at, radius);
       const at = parts.findIndex((q) => q.limb === l && q.segment === k);
+      const upAt = parts.findIndex((q) => q.limb === l && q.segment === k - 1);
+      const upper = rasters[upAt];
       // Issue #359: the lower segment's part's hidden-art layer is its cap when the segment names no cap image; with one named, a refusal.
       const hidden = hiddenOf(sg.from);
       if (hidden !== null && sg.cap !== undefined) {
@@ -2066,6 +2088,7 @@ function cutLimbs(
       const ownLower = owners.get(sg.from) as Int32Array;
       let layerPx = 0;
       let imagePx = 0;
+      let upperPx = 0;
       let missing = 0;
       for (let y = Math.max(0, box[1]); y < Math.min(H, box[1] + box[3]); y++) {
         for (let x = Math.max(0, box[0]); x < Math.min(W, box[0] + box[2]); x++) {
@@ -2078,6 +2101,10 @@ function cutLimbs(
           } else if (ownLower[p] === li && lowerSrc.r.data[p * 4 + 3] > 0) {
             lower.data.set(lowerSrc.r.data.subarray(p * 4, p * 4 + 4), p * 4);
             layerPx++;
+          } else if (disc && upper.data[p * 4 + 3] > 0) {
+            // Issue #360: the disc is filled from the art — the upper segment's, where the lower's layer has none.
+            lower.data.set(upper.data.subarray(p * 4, p * 4 + 4), p * 4);
+            upperPx++;
           } else missing++;
         }
       }
@@ -2085,11 +2112,43 @@ function cutLimbs(
         problems.push({ code: 'ASSEMBLE_LIMB_CAP_EMPTY', object: `${object}.cap`, detail: `${String(sg.cap)} is transparent over every one of the cap's pixels; an image that gives at least one is required — to keep the layer's cap, drop cap` });
         return;
       }
-      const cap: CapRecord = { at: [line.at[0], line.at[1]], width: w3, radius, box, layer_px: layerPx, ...(img === null ? {} : { image_px: imagePx }), ...(hidden === null ? {} : { image_layer: hidden.layer }), missing_px: missing };
+      // Issue #360: under edge "feather", the upper piece fades out across the cap, over the lower's opaque pixels only.
+      let featheredPx = 0;
+      let band = 0;
+      if (sg.edge === 'feather') {
+        band = pyRound(Math.max(0, coveredRadius(line.at, radius, (x, y) => x >= 0 && y >= 0 && x < W && y < H && lower.data[(y * W + x) * 4 + 3] === 255)), 3);
+        const fb = capBox(line.at, band);
+        for (let y = Math.max(0, fb[1]); y < Math.min(H, fb[1] + fb[3]); y++) {
+          for (let x = Math.max(0, fb[0]); x < Math.min(W, fb[0] + fb[2]); x++) {
+            if (band === 0 || !inDisc(line.at, band, x, y) || pastJoint(line, x, y)) continue;
+            const p = y * W + x;
+            const ua = upper.data[p * 4 + 3];
+            if (ua === 0) continue;
+            const o = jointOffsets(line, x, y);
+            const na = Math.floor(ua * featherWeight(band, o.along, o.across) + 0.5);
+            if (na === ua) continue;
+            if (na === 0) upper.data.fill(0, p * 4, p * 4 + 4);
+            else upper.data[p * 4 + 3] = na;
+            featheredPx++;
+          }
+        }
+      }
+      const cap: CapRecord = {
+        at: [line.at[0], line.at[1]],
+        width: w3,
+        radius,
+        box,
+        layer_px: layerPx,
+        ...(img === null ? {} : { image_px: imagePx }),
+        ...(hidden === null ? {} : { image_layer: hidden.layer }),
+        missing_px: missing,
+        ...(disc ? { shape: 'disc' as const, upper_px: upperPx } : {}),
+        ...(sg.edge === 'feather' ? { edge: 'feather' as const, feather_radius: band, feathered_px: featheredPx } : {}),
+      };
       if (hidden !== null) readHidden(hidden.layer, `config.limbs.${l}.segments[${k}].cap (part "${sg.part}")`);
       parts[at].record.cap = cap;
       const c = counts.find((q) => q.of === sg.from);
-      if (c !== undefined) c.joints.push({ limb: l, joint: String(sg.joint), part: sg.part, cap });
+      if (c !== undefined) c.joints.push({ limb: l, joint: String(sg.joint), part: sg.part, upper: segs[k - 1].part, cap });
     });
   }
   refuseIfAny(problems);

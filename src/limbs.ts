@@ -41,6 +41,27 @@
  *   shows no gap. The tool invents none of them: each is the config's cap
  *   image's where that image is not transparent, else the layer's where the
  *   limb has art there, else missing — counted, and named in the limb line.
+ * - **`cap_shape: "disc"`** (issue #360, items 10 and 12; opt-in on the
+ *   segment below the joint). The radius is the limb's half-width about the
+ *   joint, not half its width: the distance from the joint to the nearer end
+ *   of the same run along the joint line, each end half a pixel past its
+ *   centre ({@link halfWidthAbout}) — so the disc lies on the limb's art
+ *   across the line however far off the run's middle the bone sits. The cap
+ *   takes, after the image's and the layer's, the upper segment's art at a
+ *   pixel the lower's layer has none of: the whole half-disc comes from the
+ *   art. The upper piece's corner at the cut is kept where it is: on a joint
+ *   off the limb's middle, a corner trimmed to the disc leaves a notch at
+ *   rest when nothing takes it, or a stub out of the bent lower piece's
+ *   outline when the lower takes it (issue #360, unit B's sheets).
+ * - **`edge: "feather"`** (issue #360, item 9; opt-in on the segment below the
+ *   joint). The overlap band is the disc about the joint that the lower
+ *   piece covers at every turn ({@link coveredRadius}: the cap's disc, less
+ *   any pixel the cap is missing and a bilinear sample's reach). Inside it,
+ *   on the upper side of the line, the upper piece's alpha is scaled by
+ *   {@link featherWeight}: 0 on the line, 1 on the band's arc. The band fades
+ *   out across its width over art that stays opaque under it at any angle,
+ *   so at rest the two pieces composite to what they did and a bend never
+ *   shows through it what lies behind the limb.
  */
 import type { BoneEntry, Limb } from './config.ts';
 
@@ -144,11 +165,12 @@ export function segmentOf(lines: ReadonlyArray<JointLine | null>, first: number,
 }
 
 /**
- * The limb's width at a joint (module comment): `art(x, y)` says whether the
- * limb has art at a pixel; the box `[x0, y0, x1, y1]` (inclusive) bounds the
- * search. Null when no pixel of the run lies within 1 px of the joint.
+ * The limb's run of art along a joint line (module comment): the offsets
+ * along the line, from the joint, of the first and the last pixel centre of
+ * the run through the joint, `[first, last]` with `first <= last`. Null when
+ * no pixel of the run lies within 1 px of the joint.
  */
-export function limbWidth(line: JointLine, art: (x: number, y: number) => boolean, box: readonly [number, number, number, number]): number | null {
+export function limbRun(line: JointLine, art: (x: number, y: number) => boolean, box: readonly [number, number, number, number]): [number, number] | null {
   const [ax, ay] = line.axis;
   const ts: number[] = [];
   for (let y = box[1]; y <= box[3]; y++) {
@@ -170,7 +192,67 @@ export function limbWidth(line: JointLine, art: (x: number, y: number) => boolea
   let hi = near;
   while (lo > 0 && ts[lo] - ts[lo - 1] <= 1.5) lo--;
   while (hi + 1 < ts.length && ts[hi + 1] - ts[hi] <= 1.5) hi++;
-  return ts[hi] - ts[lo] + 1;
+  return [ts[lo], ts[hi]];
+}
+
+/** The limb's width at a joint (module comment): its run's first to last pixel centre, plus one pixel. Null with no run. */
+export function limbWidth(line: JointLine, art: (x: number, y: number) => boolean, box: readonly [number, number, number, number]): number | null {
+  const r = limbRun(line, art, box);
+  return r === null ? null : r[1] - r[0] + 1;
+}
+
+/**
+ * The limb's half-width about the joint (issue #360, `cap_shape: "disc"`): the
+ * distance from the joint to the nearer end of its run, each end half a pixel
+ * past its centre — `min(last + 0.5, 0.5 - first)`. Half the width when the
+ * joint sits in the middle of the run; less when it sits off it. Zero or below
+ * when the joint sits on the run's edge.
+ */
+export function halfWidthAbout(run: readonly [number, number]): number {
+  return Math.min(run[1] + 0.5, 0.5 - run[0]);
+}
+
+/** Where a pixel's centre lies from a joint: `along` the axis (above 0 past the line), and `across` it (the run's offset). */
+export function jointOffsets(line: JointLine, px: number, py: number): { along: number; across: number } {
+  const dx = px + 0.5 - line.at[0];
+  const dy = py + 0.5 - line.at[1];
+  return { along: dx * line.axis[0] + dy * line.axis[1], across: -dx * line.axis[1] + dy * line.axis[0] };
+}
+
+/**
+ * The radius the feathered edge fades over (issue #360, `edge: "feather"`):
+ * the disc about the joint the lower piece covers at every turn. It is the
+ * distance from the joint to the nearest pixel centre the lower piece does not
+ * hold at alpha 255 (`opaque` false; searched out to `radius` + 2), less
+ * sqrt(2), the farthest a bilinear sample reaches to its four texels — so a
+ * pixel within it, turned by any angle about the joint, still samples only
+ * the lower's opaque art — and at most `radius`. Zero or below: no pixel is
+ * covered at every turn, and nothing is feathered.
+ */
+export function coveredRadius(at: Pt, radius: number, opaque: (x: number, y: number) => boolean): number {
+  const [x0, y0, w, h] = capBox(at, radius + 2);
+  let near = radius + 2;
+  for (let y = y0; y < y0 + h; y++) {
+    for (let x = x0; x < x0 + w; x++) {
+      if (opaque(x, y)) continue;
+      const d = Math.sqrt((x + 0.5 - at[0]) ** 2 + (y + 0.5 - at[1]) ** 2);
+      if (d < near) near = d;
+    }
+  }
+  return Math.min(radius, near - Math.SQRT2);
+}
+
+/**
+ * The feathered edge's weight on the upper piece (issue #360, `edge:
+ * "feather"`) at a pixel inside the joint's disc on the upper side of its line:
+ * its distance above the line over the disc's height there,
+ * `-along / sqrt(radius² - across²)` — 0 on the line, 1 on the disc's arc, so
+ * the overlap band fades out across its width. 1 where the disc has no height.
+ */
+export function featherWeight(radius: number, along: number, across: number): number {
+  const h2 = radius * radius - across * across;
+  if (h2 <= 0) return 1;
+  return Math.max(0, Math.min(1, -along / Math.sqrt(h2)));
 }
 
 /** The box `[x, y, w, h]` (rig px) of the pixels whose centre lies within `radius` of `at`: the cap image's size and place. */

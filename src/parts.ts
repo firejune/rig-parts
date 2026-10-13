@@ -151,10 +151,27 @@ export interface CapRecord {
   /** Issue #359: with `image_px`, the hidden-art layer the cap's image came from (`<run>:<layer>:hidden`), when it came from one rather than the config's cap file. */
   image_layer?: string;
   missing_px: number;
+  /**
+   * Issue #360, written only under the segment's `cap_shape: "disc"`: the
+   * shape; the cap's pixels taken from the upper segment's art where the
+   * lower's layer had none (`upper_px`). `radius` is then the half-width about the
+   * joint, at most half of `width`.
+   */
+  shape?: 'disc';
+  upper_px?: number;
+  /**
+   * Issue #360, written only under the segment's `edge: "feather"`: the edge,
+   * the radius of the band it fades over (the disc the lower piece covers at
+   * every turn, `coveredRadius` in `src/limbs.ts`), and the upper piece's
+   * pixels whose alpha it lowered.
+   */
+  edge?: 'feather';
+  feather_radius?: number;
+  feathered_px?: number;
 }
 
 const LIMB_KEYS = ['name', 'segment', 'of', 'bone', 'joint', 'range', 'cap'] as const;
-const CAP_KEYS = ['at', 'width', 'radius', 'box', 'layer_px', 'image_px', 'image_layer', 'missing_px'] as const;
+const CAP_KEYS = ['at', 'width', 'radius', 'box', 'layer_px', 'image_px', 'image_layer', 'missing_px', 'shape', 'upper_px', 'edge', 'feather_radius', 'feathered_px'] as const;
 
 /** The limb record with its keys in the fixed order, so two runs write the same bytes. */
 function orderedLimb(l: LimbRecord): Record<string, unknown> {
@@ -496,8 +513,17 @@ function checkParts(raw: unknown, path: string): PartsFile {
           isCount(co.layer_px) &&
           isCount(co.missing_px) &&
           (!('image_px' in co) || isCount(co.image_px)) &&
-          (!('image_layer' in co) || ('image_px' in co && typeof co.image_layer === 'string' && co.image_layer !== ''));
-        if (!ok) fail('PARTS_FIELD_TYPE', `${object} "cap"`, `is ${show(c)}; {at: [x, y], width, radius, box: [x, y, w, h], layer_px, image_px?, image_layer? (with image_px), missing_px} is required`);
+          (!('image_layer' in co) || ('image_px' in co && typeof co.image_layer === 'string' && co.image_layer !== '')) &&
+          // Issue #360: a disc cap carries its count, a feathered edge its band and count, and neither carries them alone.
+          ('shape' in co ? co.shape === 'disc' && isCount(co.upper_px) : !('upper_px' in co)) &&
+          ('edge' in co ? co.edge === 'feather' && typeof co.feather_radius === 'number' && Number.isFinite(co.feather_radius) && co.feather_radius >= 0 && isCount(co.feathered_px) : !('feather_radius' in co) && !('feathered_px' in co));
+        if (!ok) {
+          fail(
+            'PARTS_FIELD_TYPE',
+            `${object} "cap"`,
+            `is ${show(c)}; {at: [x, y], width, radius, box: [x, y, w, h], layer_px, image_px?, image_layer? (with image_px), missing_px, shape? ("disc", with upper_px), edge? ("feather", with feather_radius and feathered_px)} is required`,
+          );
+        }
       }
     }
   }
