@@ -646,7 +646,12 @@ export interface ConfigConstraint {
  * from rest, `[min, max]` degrees (carried into `parts.json` and posed by
  * `check`'s `SEAM_OVER_RANGE`, issue #360; not read by rig-c), and `cap` an
  * image, relative to the config's directory, of the cap that overlaps the
- * joint (`limbCaps` in `src/assemble.ts`).
+ * joint (`limbCaps` in `src/assemble.ts`). Two opt-in fields shape the cut at
+ * the joint (issue #360, `src/limbs.ts`): `edge: "feather"` fades the upper
+ * piece out across the cap, and `cap_shape: "disc"` sizes the cap by the
+ * limb's half-width about the joint and fills it from the art, the upper
+ * segment's included. Absent, the cut
+ * is hard and the cap the layer's half-disc of half the limb's width.
  */
 export interface LimbSegment {
   part: string;
@@ -655,6 +660,8 @@ export interface LimbSegment {
   joint?: string;
   range?: [number, number];
   cap?: string;
+  edge?: 'feather';
+  cap_shape?: 'disc';
 }
 
 /** A limb (issue #349): its segments, upper first; each segment's bone is the child of the one before. */
@@ -2166,7 +2173,10 @@ interface LimbNames {
  * the joint, its origin); the first segment has no joint, every other names
  * one (`CONFIG_KEY_KNOWN`, `CONFIG_FIELD_PRESENT`); `range` two finite
  * degrees `[min, max]` with `min <= 0 <= max` (`CONFIG_LIMB_RANGE`: the range
- * is measured from rest, so rest is in it); `cap` a non-empty path. A limb
+ * is measured from rest, so rest is in it); `cap` a non-empty path; `edge`
+ * `"feather"` and `cap_shape` `"disc"` (issue #360), each the one value its
+ * field takes — absent is the hard cut and the layer's half-disc
+ * (`CONFIG_FIELD_TYPE` on any other). A limb
  * has two segments or more. With `names` null (no `bones`), bones are not
  * resolved. Returns the limb parts and the parts the limbs take.
  */
@@ -2191,13 +2201,13 @@ function checkLimbs(c: Check, v: Json, made: { parts: string[]; patches: string[
     const bones: Array<string | null> = [];
     segs.forEach((entry, i) => {
       const sat = `${at}.segments[${i}]`;
-      const e = c.object(sat, entry, ['part', 'from', 'bone'], ['joint', 'range', 'cap']);
+      const e = c.object(sat, entry, ['part', 'from', 'bone'], ['joint', 'range', 'cap', 'edge', 'cap_shape']);
       froms.push(null);
       bones.push(null);
       if (e === null) return;
       // The upper segment sits below no joint; every other sits below one, which it names.
       if (i === 0) {
-        for (const k of ['joint', 'range', 'cap'].filter((q) => q in e)) c.fail('CONFIG_KEY_KNOWN', `${sat}.${k}`, `is not a field on the upper segment; it sits below no joint, so ${k} belongs to the segment below the joint it names (segments[1] and on)`);
+        for (const k of ['joint', 'range', 'cap', 'edge', 'cap_shape'].filter((q) => q in e)) c.fail('CONFIG_KEY_KNOWN', `${sat}.${k}`, `is not a field on the upper segment; it sits below no joint, so ${k} belongs to the segment below the joint it names (segments[1] and on)`);
       } else if (!('joint' in e)) c.fail('CONFIG_FIELD_PRESENT', `${sat}.joint`, 'is absent and required; a segment after the first sits below a joint, at its bone\'s origin, and names it');
       if ('part' in e && c.string(`${sat}.part`, e.part)) {
         const name = e.part;
@@ -2234,6 +2244,13 @@ function checkLimbs(c: Check, v: Json, made: { parts: string[]; patches: string[
       }
       if ('cap' in e && !(typeof e.cap === 'string' && e.cap !== '')) {
         c.fail('CONFIG_FIELD_TYPE', `${sat}.cap`, `is ${show(e.cap)}; a non-empty path to a PNG is required, relative to the config's directory — the cap's image over the box assemble's limb line prints`);
+      }
+      // Issue #360: the cut's geometry at the joint, each field one value; absent is the hard cut and the layer's half-disc.
+      if ('edge' in e && e.edge !== 'feather') {
+        c.fail('CONFIG_FIELD_TYPE', `${sat}.edge`, `is ${show(e.edge)}; "feather" is required — the upper piece fades out across the cap instead of stopping at the joint line; leave edge out for the hard cut`);
+      }
+      if ('cap_shape' in e && e.cap_shape !== 'disc') {
+        c.fail('CONFIG_FIELD_TYPE', `${sat}.cap_shape`, `is ${show(e.cap_shape)}; "disc" is required — the cap a disc of the limb's half-width about the joint, filled from the art, the upper segment's included; leave cap_shape out for the layer's half-disc of half the limb's width`);
       }
     });
     froms.forEach((f, i) => {

@@ -2293,6 +2293,31 @@ function runConfigSuite(): number {
     `the limb fixture loads: ${loads287.map((e) => (e === null ? 'yes' : codes(e))).join(', ')} (full, assemble door); a range [-10, 140] ${rangeOk === null ? 'loads' : codes(rangeOk)}; without limbs, the plan parts attached ${withoutLimbs === null ? 'load' : codes(withoutLimbs)}; at the assemble door with no bones: ${codes(earlyNoBones)}; planted: ${outcomes287.map((o) => `${o.what} ${o.ok ? 'refused once' : `NOT: ${o.got}`}`).join('; ')}`,
     'issue #349: a limb names its parts, the parts they come from, and one bone each, the lower bone hanging from the upper; every name resolves or is refused by name, the part a limb takes is not a part itself, the joint and the range sit on the segment below the joint, and the range is measured from rest so rest is in it',
   );
+
+  // CF440 — issue #360 (unit B): the cut's geometry at a joint, `edge: "feather"` and `cap_shape: "disc"`, on the
+  // segment below it. Both load at both doors; any other value, and either field on the upper segment, is refused
+  // once, by name, at both doors.
+  const shaped440 = limbCfg((c) => Object.assign(seg(c, 'leg_r', 1), { edge: 'feather', cap_shape: 'disc' }));
+  const loads440 = [refusals(() => parseConfig(shaped440)), refusals(() => parseEarlyConfig(shaped440, 'assemble'))];
+  const read440 = parseConfig(shaped440).limbs?.leg_r.segments[1];
+  const planted440: Array<[string, Record<string, unknown>, string, string, string]> = [
+    ['edge "soft"', limbCfg((c) => (seg(c, 'arm_r', 1).edge = 'soft')), 'CONFIG_FIELD_TYPE', 'config.limbs.arm_r.segments[1].edge', 'is "soft"; "feather" is required'],
+    ['edge true', limbCfg((c) => (seg(c, 'arm_r', 1).edge = true)), 'CONFIG_FIELD_TYPE', 'config.limbs.arm_r.segments[1].edge', 'is true; "feather" is required'],
+    ['cap_shape "round"', limbCfg((c) => (seg(c, 'arm_r', 1).cap_shape = 'round')), 'CONFIG_FIELD_TYPE', 'config.limbs.arm_r.segments[1].cap_shape', 'is "round"; "disc" is required'],
+    ['edge on the upper segment', limbCfg((c) => (seg(c, 'arm_r', 0).edge = 'feather')), 'CONFIG_KEY_KNOWN', 'config.limbs.arm_r.segments[0].edge', 'is not a field on the upper segment'],
+    ['cap_shape on the upper segment', limbCfg((c) => (seg(c, 'arm_r', 0).cap_shape = 'disc')), 'CONFIG_KEY_KNOWN', 'config.limbs.arm_r.segments[0].cap_shape', 'is not a field on the upper segment'],
+  ];
+  const outcomes440 = planted440.map(([what, c, code, object, start]) => {
+    const both = [refusals(() => parseConfig(c)), refusals(() => parseEarlyConfig(c, 'assemble'))];
+    const ok = both.every((e) => e !== null && e.problems.length === 1 && e.problems[0].code === code && e.problems[0].object === object && e.problems[0].detail.startsWith(start));
+    return { what, ok, got: both.map((e) => codes(e)).join(' / ') };
+  });
+  say(
+    'CF440_A_LIMB_SEGMENT_S_EDGE_AND_CAP_SHAPE_LOAD_BELOW_A_JOINT_AND_ANY_OTHER_VALUE_OR_PLACE_IS_REFUSED_ONCE_BY_NAME_AT_BOTH_DOORS',
+    loads440.every((e) => e === null) && read440?.edge === 'feather' && read440?.cap_shape === 'disc' && outcomes440.every((o) => o.ok),
+    `edge "feather" and cap_shape "disc" on leg_r's knee: ${loads440.map((e) => (e === null ? 'loads' : codes(e))).join(', ')} (full, assemble door), read as ${JSON.stringify({ edge: read440?.edge, cap_shape: read440?.cap_shape })}; planted: ${outcomes440.map((o) => `${o.what} ${o.ok ? 'refused once at both doors' : `NOT: ${o.got}`}`).join('; ')}`,
+    'issue #360 (unit B): the two fields are the joint\'s, so they sit on the segment below it, as joint, range and cap do; each takes the one value it names, absent being the hard cut and the layer\'s half-disc, so no spelling is read as a nearby one and a field on the upper segment, which sits below no joint, is refused rather than ignored',
+  );
   runClothConfigControls(say);
   return bad();
 }
@@ -10554,6 +10579,212 @@ function runSweepUnitCases(say: (name: string, ok: boolean, detail: string, why:
 }
 
 /**
+ * Issue #360 (unit B): the cut's geometry at a joint, read by SEAM_OVER_RANGE. SEAM_OVER_RANGE's arm (x 12..41,
+ * y 4..60, colour C) with its joint off the arm's middle: chain `sleeve_r` (24, 4) -> (24, 32), tip (24, 60), range
+ * [-60, 120]. By hand:
+ *
+ * - Across the elbow line y = 32 the arm's run is x 12..41, centres -11.5..17.5 about 24: width 30, so the plain cap
+ *   has radius 15 and box [9, 17, 30, 30], and its pixels at x 9..11 are past the arm — missing.
+ * - `cap_shape: "disc"`: the run's ends lie 11.5 + 0.5 = 12 px from the joint on the near side (x 12) and 17.5 + 0.5
+ *   = 18 on the far side (x 41), so the half-width about the joint is the nearer, 12; the cap's box is
+ *   [12, 20, 24, 24], every pixel of its upper half-disc on the arm. The upper arm's corner at the cut stays on
+ *   the upper arm: it keeps its 28 x 30 = 840 px, and the forearm is its 29 x 30 = 870 plus the cap.
+ * - `edge: "feather"`: the band is the disc the forearm holds opaque at every turn, the distance to the nearest
+ *   pixel centre it does not hold at alpha 255, less sqrt(2); found below by a loop of its own over the forearm as
+ *   the definition says it is, not read off the code under test.
+ */
+const DISC_AT: [number, number] = [24, 32];
+const DISC_LIMBS = (extra: Record<string, unknown>): Record<string, unknown> => ({
+  arm_r: {
+    segments: [
+      { part: 'upperarm_r', from: 'arm', bone: 'sleeve_r0' },
+      { part: 'forearm_r', from: 'arm', bone: 'sleeve_r1', joint: 'elbow', range: [-60, 120], ...extra },
+    ],
+  },
+});
+
+function discConfig(extra: Record<string, unknown>): Record<string, unknown> {
+  const cfg = assembleConfig({ plan: [['arm', 'full', 'handwear-r']], extend: [] });
+  return {
+    ...cfg,
+    limbs: DISC_LIMBS(extra),
+    bones: [
+      { name: 'hip', parent: 'root', at: [24, 2] },
+      { chain: 'sleeve_r', parent: 'hip', points: [[24, 4], DISC_AT], tip: [24, 60] },
+    ],
+    regions: { upperarm_r: 'sleeve_r0', forearm_r: 'sleeve_r1' },
+    motion: { duration: 1, tracks: [{ chain: 'sleeve_r', amps: [2, 6], period: 1, phase: 0, lag: 0.08 }] },
+  };
+}
+
+function runDiscCheckCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('disc-check');
+  try {
+    writeRun(join(dir, 'full'), SWEEP_FULL);
+    writeRun(join(dir, 'head'), FRAMED_HEAD);
+    writeFileSync(join(dir, 'painting.png'), encodePngBytes(flatPainting()));
+    const built = (label: string, extra: Record<string, unknown>): { status: number; out: string; fig: Record<string, unknown> | null; parts: PartsFile | null } => {
+      const cfg = join(dir, `${label}.json`);
+      writeFileSync(cfg, JSON.stringify(discConfig(extra)));
+      const r = runCli(['build', '--config', cfg, '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--out', join(dir, label)]);
+      const pj = join(dir, label, 'parts.json');
+      return { ...r, fig: readJsonFile(join(dir, label, 'check', 'check.json')), parts: existsSync(pj) ? readParts(pj) : null };
+    };
+    const hard = built('hard', {});
+    const disc = built('disc', { cap_shape: 'disc' });
+    const feather = built('feather', { edge: 'feather' });
+    const both = built('both', { edge: 'feather', cap_shape: 'disc' });
+    const line = (fig: Record<string, unknown> | null): SweepLine | null => (fig?.[SWEEP_LINE] as SweepLine | undefined) ?? null;
+    const pose = (fig: Record<string, unknown> | null, a: number): SweepPose | undefined => line(fig)?.joints[0]?.poses.find((p) => p.degrees === a);
+    const poses = (fig: Record<string, unknown> | null): string => {
+      const l = line(fig);
+      return l === null ? 'absent' : `${l.status} ${l.joints.map((j) => `${j.shape ?? 'plain'} [${j.poses.map((p) => `${p.degrees}:${p.status}:${p.mean}:${p.px_over_40}`).join(' ')}]`).join('; ')}`;
+    };
+    const rec = (b: { parts: PartsFile | null }, n: string): PartRecord | undefined => b.parts?.parts.find((q) => q.name === n);
+    // By hand, from the definitions: the upper half-disc's pixels (centres within r of the joint, rows above the line).
+    const halfDisc = (r: number, keep: (x: number) => boolean): number => {
+      let n = 0;
+      for (let y = 0; y < 32; y++) for (let x = 0; x < 64; x++) if (keep(x) && (x + 0.5 - 24) ** 2 + (y + 0.5 - 32) ** 2 <= r * r) n++;
+      return n;
+    };
+    const onArm = (x: number): boolean => x >= 12 && x <= 41;
+    const discLayer = halfDisc(12, onArm);
+    const hardLayer = halfDisc(15, onArm);
+    const hardMissing = halfDisc(15, (x) => !onArm(x));
+    const dc = rec(disc, 'forearm_r')?.limb?.cap;
+    const discLine = disc.out.split('\n').map((l) => l.replace(/^\[assemble\] /, '')).find((l) => l.startsWith('  limb cap: "arm_r"')) ?? '';
+    const wantDiscLine = `  limb cap: "arm_r" joint "elbow" at [24, 32], on "forearm_r": a disc of radius 12 px (cap_shape "disc": the joint's distance to the nearer side of the limb, 30 px across the joint line), box [12, 20, 24, 24] — on the upper side of the line ${discLayer} px from the layer, 0 px from "upperarm_r", none missing`;
+    const zero = (fig: Record<string, unknown> | null): boolean => [-60, 30, 120].every((a) => pose(fig, a)?.status === 'PASS' && pose(fig, a)?.px_over_40 === 0);
+    say(
+      'CK440_CAP_SHAPE_DISC_SIZES_THE_CAP_BY_THE_HALF_WIDTH_ABOUT_THE_JOINT_KEEPS_THE_UPPER_S_CORNER_AND_LEAVES_NO_PIXEL_OF_THE_DISC_UNCOVERED_AT_ANY_ANGLE',
+      hard.status === 0 &&
+        disc.status === 0 &&
+        JSON.stringify(rec(hard, 'forearm_r')?.limb?.cap) === `{"at":[24,32],"width":30,"radius":15,"box":[9,17,30,30],"layer_px":${hardLayer},"missing_px":${hardMissing}}` &&
+        JSON.stringify(dc) === `{"at":[24,32],"width":30,"radius":12,"box":[12,20,24,24],"layer_px":${discLayer},"missing_px":0,"shape":"disc","upper_px":0}` &&
+        rec(disc, 'upperarm_r')?.opaque_px === 840 &&
+        rec(disc, 'forearm_r')?.opaque_px === 29 * 30 + discLayer &&
+        discLine === wantDiscLine &&
+        line(disc.fig)?.joints[0]?.shape === 'disc' &&
+        line(hard.fig)?.joints[0]?.shape === undefined &&
+        zero(disc.fig) &&
+        (pose(hard.fig, 120)?.px_over_40 ?? 0) > 0 &&
+        disc.out.includes(`joint "elbow" (arm_r, "forearm_r" on "sleeve_r1", range [-60, 120], cap_shape "disc": no pixel over 40 in the disc) at 120°: PASS — `),
+      `plain cap ${JSON.stringify(rec(hard, 'forearm_r')?.limb?.cap)} (by hand ${hardLayer} from the layer, ${hardMissing} missing); disc cap ${JSON.stringify(dc)} (by hand ${discLayer} from the layer); upper arm ${rec(disc, 'upperarm_r')?.opaque_px} px (by hand 840, its corner kept), forearm ${rec(disc, 'forearm_r')?.opaque_px} (by hand ${29 * 30 + discLayer}); line ${discLine === wantDiscLine ? 'as derived' : `GOT ${discLine}`}; SEAM_OVER_RANGE plain ${poses(hard.fig)}, disc ${poses(disc.fig)}`,
+      'issue #360 items 10 and 12: with the bone off the arm\'s middle the plain cap\'s disc, half the width, runs past the arm on the near side — 19 cap pixels the layer has not got — and the turned forearm uncovers the joint; the disc sized by the half-width about the joint lies on the arm, every pixel of it comes from the art, and the turned forearm covers it at both ends of the range and its middle',
+    );
+
+    // The planted cap: the disc build with 8 cap pixels cleared — rig x 22..25, y 24..25, about 7 px above the joint,
+    // in parts/ and rig/images/ (padded by rig.ts's PAD) — which the upper arm covers at rest, at -60 and at 30 (turned
+    // by 60 degrees or less they stay above the line) and which turn to below the line at 120. 8 rig px is under the
+    // rest-pose seam's 50, so only the disc's bar can see them; the same plant on the plain build is the mutant.
+    const plant = (from: string, to: string): { status: number; out: string; fig: Record<string, unknown> | null; cleared: number } => {
+      const d = join(dir, to);
+      cpSync(join(dir, from), d, { recursive: true });
+      rmSync(join(d, 'check'), { recursive: true, force: true });
+      const fore = readParts(join(d, 'parts.json')).parts.find((p) => p.name === 'forearm_r') as PartRecord;
+      let cleared = 0;
+      for (const [file, x0, y0] of [[join(d, 'parts', 'forearm_r.png'), fore.x, fore.y], [join(d, 'rig', 'images', 'forearm_r.png'), fore.x - PAD, fore.y - PAD]] as const) {
+        const img = readPng(file);
+        for (let y = 24; y <= 25; y++) {
+          for (let x = 22; x <= 25; x++) {
+            const o = ((y - y0) * img.width + (x - x0)) * 4;
+            if (img.data[o + 3] === 255 && file.endsWith(join('parts', 'forearm_r.png'))) cleared++;
+            img.data.fill(0, o, o + 4);
+          }
+        }
+        writeFileSync(file, encodePngBytes(img));
+      }
+      const r = runCli(['check', '--rig', join(d, 'rig'), '--parts', d, '--out', join(d, 'check')]);
+      return { ...r, fig: readJsonFile(join(d, 'check', 'check.json')), cleared };
+    };
+    const holed = plant('disc', 'disc-holed');
+    const plainHoled = plant('hard', 'hard-holed');
+    const red = holed.out.split('\n').map((l) => l.replace(/^\[check\] /, '')).filter((l) => l.startsWith('  FAIL  CHECK_SEAM_OVER_RANGE: '));
+    const hp = pose(holed.fig, 120);
+    say(
+      'CK441_A_DISC_CAP_WITH_A_HOLE_TOO_SMALL_FOR_THE_SEAM_BAR_FAILS_AT_THE_ANGLE_THAT_UNCOVERS_IT_AND_THE_SAME_HOLE_IN_A_PLAIN_CAP_PASSES',
+      holed.cleared === 8 &&
+        plainHoled.cleared === 8 &&
+        holed.status === 1 &&
+        pose(holed.fig, -60)?.status === 'PASS' &&
+        pose(holed.fig, 30)?.status === 'PASS' &&
+        hp?.status === 'FAIL' &&
+        hp.px_over_40 > 0 &&
+        hp.rig_px_over_40 <= SEAM_PX_BAR &&
+        hp.mean <= SEAM_MEAN_BAR &&
+        red.length === 1 &&
+        red[0].startsWith('  FAIL  CHECK_SEAM_OVER_RANGE: joint "elbow" (config.limbs.arm_r segment 1, part "forearm_r", bone "sleeve_r1") bent 120° — ') &&
+        red[0].includes(`the cap is cap_shape "disc", which promises the disc covered at every pose — no pixel of it over 40, under the rest-pose seam's bar as well — and the bend shows what lies behind the limb there`) &&
+        barsNotMet(holed.fig ?? {}).join(',') === SWEEP_LINE &&
+        plainHoled.status === 0 &&
+        pose(plainHoled.fig, 120)?.status === 'PASS',
+      `cleared ${holed.cleared} px of the disc cap; check exit ${holed.status}, ${poses(holed.fig)}; ${red[0]?.trim().slice(0, 260) ?? 'no FAIL line'}; the same hole in the plain cap: exit ${plainHoled.status}, ${poses(plainHoled.fig)}`,
+      'the card\'s bar for the disc: no pixel of it uncovered at the range\'s ends. A hole of 8 rig px is under the rest-pose seam\'s 50, so the seam alone would pass it — the plain cap\'s twin, the mutant, does — and the disc\'s own bar names the joint and the angle the hole turns into view at',
+    );
+
+    // The feathered edge: its band by hand, the opaque forearm as the definitions above make it.
+    const band = (opaque: (x: number, y: number) => boolean, r: number): number => {
+      let near = r + 2;
+      for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) if (!opaque(x, y)) near = Math.min(near, Math.sqrt((x + 0.5 - 24) ** 2 + (y + 0.5 - 32) ** 2));
+      return pyRound(Math.min(r, near - Math.SQRT2), 3);
+    };
+    const inR = (x: number, y: number, r: number): boolean => (x + 0.5 - 24) ** 2 + (y + 0.5 - 32) ** 2 <= r * r;
+    const plainFore = (x: number, y: number): boolean => onArm(x) && y <= 60 && (y >= 32 || (y >= 4 && inR(x, y, 15)));
+    const discFore = (x: number, y: number): boolean => onArm(x) && y <= 60 && (y >= 32 || (y >= 4 && inR(x, y, 12)));
+    const fc = rec(feather, 'forearm_r')?.limb?.cap;
+    const bc = rec(both, 'forearm_r')?.limb?.cap;
+    const means = (b: { fig: Record<string, unknown> | null }): number[] => [-60, 120].map((a) => pose(b.fig, a)?.mean ?? Number.NaN);
+    const notAbove = (a: number[], b: number[]): boolean => a.every((m, i) => m <= b[i]);
+    const recomposite = (label: string): string => readFileSync(join(dir, label, 'recomposite_rig.png')).toString('base64');
+    say(
+      'CK442_A_FEATHERED_EDGE_FADES_OVER_THE_DISC_THE_FOREARM_COVERS_AT_EVERY_TURN_AND_ITS_SEAM_AT_THE_RANGE_S_ENDS_IS_NOT_ABOVE_THE_HARD_CUT_S',
+      feather.status === 0 &&
+        both.status === 0 &&
+        fc?.edge === 'feather' &&
+        fc.feather_radius === band(plainFore, 15) &&
+        (fc.feathered_px ?? 0) > 0 &&
+        bc?.edge === 'feather' &&
+        bc.shape === 'disc' &&
+        bc.feather_radius === band(discFore, 12) &&
+        notAbove(means(feather), means(hard)) &&
+        notAbove(means(both), means(disc)) &&
+        zero(both.fig) &&
+        recomposite('feather') === recomposite('hard') &&
+        recomposite('both') === recomposite('hard'),
+      `feathered over ${fc?.feather_radius} px (by hand ${band(plainFore, 15)}), ${fc?.feathered_px} px faded; with the disc over ${bc?.feather_radius} (by hand ${band(discFore, 12)}); seam mean at -60 and 120: hard ${means(hard).join(', ')}, feather ${means(feather).join(', ')}, disc ${means(disc).join(', ')}, both ${means(both).join(', ')}; the recomposite, feather and both against hard: ${recomposite('feather') === recomposite('hard') && recomposite('both') === recomposite('hard') ? 'the same bytes' : 'DIFFERENT'}`,
+      'issue #360 item 9: the upper arm fades out across the overlap band instead of stopping at the line, but only over the disc the forearm holds opaque at every turn, less a bilinear sample\'s reach — so at rest the two composite to what they did, byte for byte, and no bend shows through the fade what lies behind the limb: the seam at the range\'s ends is the hard cut\'s or below',
+    );
+
+    // parts.json carries the two fields' records back as written, and refuses one no assemble could write.
+    const pj = (label: string): string => join(dir, label, 'parts.json');
+    const back = (label: string): boolean => serializeParts(readParts(pj(label))) === readFileSync(pj(label), 'utf8');
+    const edit = (label: string, f: (cap: Record<string, unknown>) => void): PartsError | null => {
+      const raw = JSON.parse(readFileSync(pj('both'), 'utf8')) as { parts: Array<{ name: string; limb?: { cap?: Record<string, unknown> } }> };
+      f(raw.parts.find((p) => p.name === 'forearm_r')?.limb?.cap as Record<string, unknown>);
+      const p = join(dir, `${label}.parts.json`);
+      writeFileSync(p, JSON.stringify(raw));
+      return refusals(() => readParts(p));
+    };
+    const planted = [
+      ['a shape that is not "disc"', edit('round', (c) => (c.shape = 'round'))],
+      ['a disc without its upper count', edit('noupper', (c) => delete c.upper_px)],
+      ['an upper count without the shape', edit('noshape', (c) => delete c.shape)],
+      ['an edge without its band', edit('noband', (c) => delete c.feather_radius)],
+      ['a feathered count without the edge', edit('noedge', (c) => delete c.edge)],
+    ] as const;
+    const object = 'PARTS_FIELD_TYPE part "forearm_r" field "limb" "cap"';
+    say(
+      'CK443_PARTS_JSON_READS_A_DISC_AND_FEATHER_CAP_BACK_AS_WRITTEN_AND_REFUSES_ONE_NO_ASSEMBLE_COULD_WRITE',
+      ['hard', 'disc', 'feather', 'both'].every(back) && planted.every(([, e]) => codes(e).startsWith(object)),
+      `read back byte for byte: ${['hard', 'disc', 'feather', 'both'].map((l) => `${l} ${back(l) ? 'yes' : 'NO'}`).join(', ')}; planted: ${planted.map(([w, e]) => `${w} -> ${codes(e).slice(0, 70)}`).join('; ')}`,
+      'the two fields ride from config.limbs into parts.json, where check reads the disc\'s; a record whose counts and shape disagree is refused by name rather than read as either',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
  * Issue #349: LIMB_ONE_BONE. The limb fixture (fixtures/assemble_fixture.ts, limbConfig) built through the CLI, its
  * idle a swing of the arm's chain: every limb part is a region on its segment's bone, and the line passes over all
  * eight. The mutant gives the forearm a mesh weighted to its link and to `hip` (a pin, the puff-pin family), and the
@@ -12694,6 +12925,7 @@ function runCheckSuite(): number {
   runLimbCheckCases(say);
   runSweepCheckCases(say);
   runSweepUnitCases(say);
+  runDiscCheckCases(say);
   runRigcIdentityCases(say);
   runClothCheckCases(say);
   return bad();
@@ -16731,6 +16963,130 @@ function runLimbCases(say: (name: string, ok: boolean, detail: string, why: stri
         hlBoth.problems[0].object === 'config.limbs.arm_r.segments[1] (joint "elbow", part "forearm_r").cap',
       `${hlLine.slice(hlLine.indexOf('box'))}; record cap ${JSON.stringify(hlRec?.limb?.cap)}, read back ${JSON.stringify(hlRead?.limb?.cap) === JSON.stringify(hlRec?.limb?.cap) ? 'equal' : 'DIFFERENT'}; a cap file as well -> ${codes(hlBoth)}`,
       'issue #359: the forearm under the sleeve is exactly the art #349\'s cap primitive takes, and an artist has it; read from the layer, the record says which layer gave it, and a second source is refused rather than chosen',
+    );
+
+    // AS440 — issue #360 (unit B): cap_shape "disc" on the limb fixture. The ankle sits between two layers (legwear,
+    // footwear): across its line y = 50 the run is x 29..38 (the shoe's row 50), centres -4.5..4.5 about 34, so the
+    // half-width about the joint is 5, half the width, and the box is AS235's [29, 45, 10, 10]. Its 40 upper-side
+    // pixels, none in the footwear layer, are taken from the shin's art where the shin has any (x 30..37) — counted
+    // below from the definition — and the rest stay missing. The elbow (one layer, the upper arm narrower than the forearm) keeps every figure it had, its
+    // 12 missing pixels included: the upper arm has no art there either, and nothing is invented.
+    const discAt = (limb: string, i: number): Record<string, unknown> => {
+      const limbs = structuredClone(LIMBS) as Record<string, { segments: Array<Record<string, unknown>> }>;
+      limbs[limb].segments[i].cap_shape = 'disc';
+      if (limb === 'leg_r') limbs.arm_r.segments[1].cap_shape = 'disc';
+      return limbConfig(limbs);
+    };
+    const shaped = stage('disc', discAt('leg_r', 2));
+    const sRec = (n: string): PartRecord | undefined => shaped.r.parts.parts.find((q) => q.name === n);
+    let shinPx = 0;
+    let stillMissing = 0;
+    for (let y = 45; y <= 49; y++) {
+      for (let x = 29; x <= 38; x++) {
+        if ((x + 0.5 - 34) ** 2 + (y + 0.5 - 50) ** 2 > 25) continue;
+        if (x >= 30 && x <= 37) shinPx++;
+        else stillMissing++;
+      }
+    }
+    const ankle = shaped.lines.find((l) => l.startsWith('  limb cap: "leg_r" joint "ankle"')) ?? '';
+    const elbowRec = sRec('forearm_r')?.limb?.cap;
+    say(
+      'AS440_CAP_SHAPE_DISC_FILLS_A_CAP_BETWEEN_TWO_LAYERS_FROM_THE_UPPER_SEGMENT_S_ART_AND_INVENTS_NO_PIXEL_NEITHER_SEGMENT_HAS',
+      ankle ===
+        `  limb cap: "leg_r" joint "ankle" at [34, 50], on "foot_r": a disc of radius 5 px (cap_shape "disc": the joint's distance to the nearer side of the limb, 10 px across the joint line), box [29, 45, 10, 10] — on the upper side of the line 0 px from the layer, ${shinPx} px from "shin_r", ${stillMissing} px missing — the layer has no pixel there (hidden in the painting, or past the limb's outline), and the tool invents none: paint them into a 10x10 image whose pixel (i, j) is rig pixel (29 + i, 45 + j), and name it in the segment's "cap"` &&
+        shinPx + stillMissing === 40 &&
+        sRec('foot_r')?.opaque_px === 50 + shinPx &&
+        sRec('foot_l')?.opaque_px === 50 &&
+        JSON.stringify(elbowRec) === '{"at":[15,30],"width":10,"radius":5,"box":[10,25,10,10],"layer_px":28,"missing_px":12,"shape":"disc","upper_px":0}' &&
+        serializeParts(readParts(join(root, 'disc', 'out', 'parts.json'))) === serializeParts(shaped.r.parts),
+      `${ankle.slice(ankle.indexOf('—'))}; by hand ${shinPx} from the shin, ${stillMissing} missing; foot_r ${sRec('foot_r')?.opaque_px} px (50 + ${shinPx}), foot_l ${sRec('foot_l')?.opaque_px}; the elbow ${JSON.stringify(elbowRec)}`,
+      'issue #360 item 12: the disc is derived and filled from the art — the shin painted down to the ankle is what the shoe\'s cap shows when the foot turns — and where neither segment has art the pixel stays missing and named, as #349\'s cap leaves it',
+    );
+
+    // AS441 — the half-width about a joint on the edge of the art: the arm's chain moved to x 10, the forearm's left
+    // edge. Across y = 30 the run is x 10..19, its centres 0.5..9.5 from x 10 on one side: 0 px the near way, 10 the far way. The plain cap
+    // (half the width) assembles; the disc has no half-width and is refused by name.
+    const edgeBones = LIMB_BONES.map((b) => (b.chain === 'sleeve_r' ? { chain: 'sleeve_r', parent: 'hip', points: [[10, 10], [10, 30]], tip: [10, 50] } : b));
+    const edgeLimbs = structuredClone(LIMBS) as Record<string, { segments: Array<Record<string, unknown>> }>;
+    edgeLimbs.arm_r.segments[1].cap_shape = 'disc';
+    const edgePlain = refusedBy('edge-plain', limbConfig(LIMBS, edgeBones));
+    const edgeDisc = refusedBy('edge-disc', limbConfig(edgeLimbs, edgeBones));
+    say(
+      'AS441_CAP_SHAPE_DISC_ON_A_JOINT_AT_THE_EDGE_OF_THE_ART_IS_REFUSED_BY_NAME_WHERE_THE_PLAIN_CAP_ASSEMBLES',
+      edgePlain === 'assembles' &&
+        edgeDisc ===
+          'ASSEMBLE_LIMB_JOINT_ON_ART config.limbs.arm_r.segments[1] (joint "elbow", part "forearm_r"): the joint, "sleeve_r1"\'s origin at [10, 30], lies on the edge of the limb\'s art along its joint line — the run of art reaches 0 px from it one way and 10 px the other — so cap_shape "disc" has no half-width about it; a bone origin inside the limb\'s art is required — move the bone onto the joint',
+      `plain: ${edgePlain}; disc: ${edgeDisc.slice(0, 240)}`,
+      'a disc of no radius would be a cap of no pixel the tool reported as a cap; the half-width is measured, and a measurement of nothing is refused rather than rounded up',
+    );
+
+    // AS442 — edge "feather" on the elbow. The forearm holds alpha 255 over its own rows (x 10..19, y 30..49) and the
+    // cap's 28 layer pixels (x 12..17, centres within 5 of (15, 30)); the nearest centre it does not hold is (11.5,
+    // 29.5) or (18.5, 29.5), sqrt(3.5² + 0.5²) from the joint, so the band is that less sqrt(2), to 3 places. Each
+    // upper-arm pixel within it above the line takes alpha floor(255 * -along / sqrt(band² - across²) + 0.5).
+    const featherCfg = structuredClone(LIMBS) as Record<string, { segments: Array<Record<string, unknown>> }>;
+    featherCfg.arm_r.segments[1].edge = 'feather';
+    const feathered = stage('feather', limbConfig(featherCfg));
+    const fRec = feathered.r.parts.parts.find((q) => q.name === 'forearm_r')?.limb?.cap;
+    const bandR = pyRound(Math.sqrt(3.5 ** 2 + 0.5 ** 2) - Math.SQRT2, 3);
+    const wantAlpha = new Map<string, number>();
+    for (let y = 25; y <= 29; y++) {
+      for (let x = 12; x <= 17; x++) {
+        const along = y + 0.5 - 30;
+        const across = -(x + 0.5 - 15);
+        if (across ** 2 + along ** 2 > bandR * bandR) continue;
+        const a = Math.floor(255 * Math.max(0, Math.min(1, -along / Math.sqrt(bandR * bandR - across * across))) + 0.5);
+        if (a !== 255) wantAlpha.set(`${x},${y}`, a);
+      }
+    }
+    const upperIm = feathered.r.images.find((q) => q.record.name === 'upperarm_r') as PlacedPart;
+    const upperRec = upperIm.record;
+    const gotAlpha = new Map<string, number>();
+    for (let y = 0; y < upperIm.image.height; y++) {
+      for (let x = 0; x < upperIm.image.width; x++) {
+        const a = upperIm.image.data[(y * upperIm.image.width + x) * 4 + 3];
+        if (a !== 255 && a !== 0) gotAlpha.set(`${x + upperRec.x},${y + upperRec.y}`, a);
+      }
+    }
+    const sameAlpha = [...wantAlpha].filter(([, a]) => a > 0).every(([k, a]) => gotAlpha.get(k) === a) && [...gotAlpha].every(([k, a]) => wantAlpha.get(k) === a);
+    const recompositeOf = (label: string): string => readFileSync(join(root, label, 'out', 'recomposite_rig.png')).toString('base64');
+    say(
+      'AS442_EDGE_FEATHER_FADES_THE_UPPER_PART_ACROSS_THE_DISC_THE_LOWER_COVERS_AT_EVERY_TURN_AND_THE_REST_COMPOSITE_KEEPS_ITS_BYTES',
+      fRec?.edge === 'feather' &&
+        fRec.feather_radius === bandR &&
+        fRec.feathered_px === wantAlpha.size &&
+        sameAlpha &&
+        feathered.lines.some((l) => l.endsWith(`; edge "feather": ${wantAlpha.size} px of "upperarm_r" faded across the ${bandR} px about the joint that "forearm_r" covers at every turn`)) &&
+        recompositeOf('feather') === recompositeOf('green'),
+      `band ${fRec?.feather_radius} px (by hand ${bandR}), ${fRec?.feathered_px} px faded (by hand ${wantAlpha.size}: ${[...wantAlpha].map(([k, a]) => `(${k}) ${a}`).join(', ')}); the upper arm's alphas ${sameAlpha ? 'as derived' : `GOT ${[...gotAlpha].map(([k, a]) => `(${k}) ${a}`).join(', ')}`}; the recomposite against the plain build: ${recompositeOf('feather') === recompositeOf('green') ? 'the same bytes' : 'DIFFERENT'}`,
+      'issue #360 item 9: the band fades only over art the forearm holds opaque at any angle — here the elbow\'s cap, narrowed by its 12 missing pixels to the disc they leave whole — so the rest pose composites to the hard cut\'s bytes, and the fade is the definition\'s, pixel by pixel',
+    );
+
+    // AS443 — neither field set is the plain cut: the green build (AS235's figures, byte for byte), and the two fields
+    // on leg_l's knee move no file of any other part — only thigh_l's image (the feathered upper) and shin_l's record;
+    // thigh_l's counts stand, every faded alpha being above 8 (OPAQUE_ALPHA_ABOVE), which the control reads too.
+    const knee = structuredClone(LIMBS) as Record<string, { segments: Array<Record<string, unknown>> }>;
+    Object.assign(knee.leg_l.segments[1], { edge: 'feather', cap_shape: 'disc' });
+    stage('knee', limbConfig(knee));
+    const partFiles = (label: string): Map<string, string> => new Map(readdirSync(join(root, label, 'out', 'parts')).sort().map((f) => [f, readFileSync(join(root, label, 'out', 'parts', f)).toString('base64')]));
+    const plainFiles = partFiles('green');
+    const kneeFiles = partFiles('knee');
+    const movedFiles = [...plainFiles.keys()].filter((f) => kneeFiles.get(f) !== plainFiles.get(f));
+    const plainRecs = readParts(join(root, 'green', 'out', 'parts.json')).parts;
+    const kneeRecs = readParts(join(root, 'knee', 'out', 'parts.json')).parts;
+    const movedRecs = plainRecs.filter((q) => JSON.stringify(kneeRecs.find((k) => k.name === q.name)) !== JSON.stringify(q)).map((q) => q.name);
+    const thighL = readPng(join(root, 'knee', 'out', 'parts', 'thigh_l.png'));
+    const faded = Array.from({ length: thighL.width * thighL.height }, (_, q) => thighL.data[q * 4 + 3]).filter((a) => a > 0 && a < 255);
+    say(
+      'AS443_WITHOUT_EDGE_OR_CAP_SHAPE_A_LIMB_CUTS_AS_BEFORE_AND_WITH_THEM_ON_ONE_JOINT_NO_OTHER_PART_MOVES',
+      gotLines.join('\n') === wantLines.join('\n') &&
+        [...kneeFiles.keys()].join(',') === [...plainFiles.keys()].join(',') &&
+        movedFiles.join(',') === 'thigh_l.png' &&
+        faded.length > 0 &&
+        Math.min(...faded) > 8 &&
+        movedRecs.join(',') === 'shin_l',
+      `the plain build's limb lines ${gotLines.join('\n') === wantLines.join('\n') ? "are AS235's" : 'DIFFER from AS235\'s'}; with both fields on leg_l's knee, part files moved: ${movedFiles.join(', ') || 'none'} (${faded.length} faded alphas, least ${Math.min(...faded)}); records moved: ${movedRecs.join(', ') || 'none'}`,
+      'opt-in by construction: a segment that spells neither field is cut, capped and recorded exactly as #349 did, and the fields act on their own joint only — the knee is centred on the leg, so its disc is the plain one, and what changes is the thigh\'s fade and the shin\'s record of it',
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

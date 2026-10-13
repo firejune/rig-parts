@@ -1144,7 +1144,7 @@ export function sweepCheckLines(line: SweepLine): string[] {
   return [
     `${SWEEP_LINE}: ${line.status} — ${line.joints.length} joint(s) bent to their declared range's ends and middle${line.physics_left_out === 0 ? '' : `, ${line.physics_left_out} physics constraint(s) left out`}; at each, the pose against the same pose with the joint's own art drawn under the limb, on the rest-pose seam's bar (mean |d| <= ${line.bar.mean.toFixed(1)}, <= ${line.bar.rig_px_over_40} rig px over ${line.bar.level})${s === null ? '' : ` at frame scale ${s}`}`,
     ...line.joints.flatMap((j) => {
-      const head = `joint "${j.joint}" (${j.limb}, "${j.part}" on "${j.bone}", range [${j.range.join(', ')}])`;
+      const head = `joint "${j.joint}" (${j.limb}, "${j.part}" on "${j.bone}", range [${j.range.join(', ')}]${j.shape === 'disc' ? `, cap_shape "disc": no pixel over ${line.bar.level} in the disc` : ''})`;
       if (j.unread !== undefined) return [`${head}: FAIL — not read: ${j.unread}`];
       return j.poses.map((p) => `${head} at ${p.degrees}°: ${p.status} — mean |d| ${p.mean}/255, ${p.px_over_40} frame px over ${line.bar.level} (${p.px_over_80} over ${SEAM_PX_LEVEL_HIGH}), ${p.rig_px_over_40.toFixed(2)} rig px`);
     }),

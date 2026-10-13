@@ -1860,6 +1860,13 @@ export const LIMB_LINE = 'LIMB_ONE_BONE';
  *   {@link SEAM_MEAN_BAR}, at most {@link SEAM_PX_BAR} rig px over
  *   {@link SEAM_PX_LEVEL}, the count divided by the frame scale squared. No
  *   threshold is new.
+ * - **A disc cap is held to its promise** (issue #360, unit B). A joint whose
+ *   cap record says `shape: "disc"` (`cap_shape: "disc"` in the config) is
+ *   also a FAIL at a pose where any frame pixel of the comparison is over
+ *   {@link SEAM_PX_LEVEL}: the disc is the cap's whole claim, so one uncovered
+ *   pixel of it is one too many. The level is the seam's; the count's bar is
+ *   the card's ("the joint disc holds no background pixel"), not a figure
+ *   measured here. Its row says `shape: "disc"`; no other row changes.
  * - **Opt-in by construction.** Written only when `parts.json` holds a limb
  *   record with a `range`; a rig without one renders nothing more and writes
  *   what it wrote.
@@ -2648,6 +2655,8 @@ export interface SweepJoint {
   range: [number, number];
   at: [number, number];
   radius: number;
+  /** Issue #360: the cap's record says `shape: "disc"` — the disc is held to no pixel uncovered ({@link sweepLine}). */
+  disc?: true;
 }
 
 /** Every limb record in `parts.json` that declares a `range`, in `parts.json`'s order. */
@@ -2656,7 +2665,7 @@ export function sweepJoints(parts: PartsFile): SweepJoint[] {
   for (const p of parts.parts) {
     const l = p.limb;
     if (l === undefined || l.range === undefined || l.cap === undefined || l.joint === undefined) continue;
-    out.push({ part: p.name, limb: l.name, segment: l.segment, joint: l.joint, bone: l.bone, range: [l.range[0], l.range[1]], at: [l.cap.at[0], l.cap.at[1]], radius: l.cap.radius });
+    out.push({ part: p.name, limb: l.name, segment: l.segment, joint: l.joint, bone: l.bone, range: [l.range[0], l.range[1]], at: [l.cap.at[0], l.cap.at[1]], radius: l.cap.radius, ...(l.cap.shape === 'disc' ? { disc: true as const } : {}) });
   }
   return out;
 }
@@ -2799,6 +2808,8 @@ export interface SweepRow {
   range: [number, number];
   at: [number, number];
   radius: number;
+  /** Issue #360: written only for a joint whose cap is `cap_shape: "disc"`, held to no pixel over the level in its disc. */
+  shape?: 'disc';
   under_px: number;
   status: 'PASS' | 'FAIL';
   poses: SweepPose[];
@@ -2833,7 +2844,7 @@ export function sweepLine(
   const seen: { grid: FrameSet | null } = { grid: null };
   const rows: SweepRow[] = joints.map((j, i) => {
     const object = (at: string): string => `joint "${j.joint}" (config.limbs.${j.limb} segment ${j.segment}, part "${j.part}", bone "${j.bone}") ${at}`;
-    const head = { part: j.part, limb: j.limb, segment: j.segment, joint: j.joint, bone: j.bone, range: j.range, at: j.at, radius: j.radius, under_px: underPx[i] };
+    const head = { part: j.part, limb: j.limb, segment: j.segment, joint: j.joint, bone: j.bone, range: j.range, at: j.at, radius: j.radius, ...(j.disc === true ? { shape: 'disc' as const } : {}), under_px: underPx[i] };
     const why = unread[i];
     if (why !== null) {
       problems.push({ code: `CHECK_${SWEEP_LINE}`, object: object(`over its range [${j.range.join(', ')}]`), detail: `is not read: ${why}; a joint not read is not a pass` });
@@ -2858,8 +2869,18 @@ export function sweepLine(
       const f = seamFigures(under.frames[0].image, bare.frames[0].image, { x: 0, y: 0, width: vp.pixelWidth, height: vp.pixelHeight }, vp, bare.background, { sx: 1, sy: 1, tx: 0, ty: 0 });
       const mean = round3(f.mean);
       const scale = round6(vp.scale);
-      const fail = seamFails(mean, f.over40, scale);
-      if (fail) {
+      // Issue #360: a disc cap promises the disc covered at every pose, so one pixel over the level there is a FAIL of its own.
+      const discFail = j.disc === true && f.over40 > 0 && !seamFails(mean, f.over40, scale);
+      const fail = seamFails(mean, f.over40, scale) || discFail;
+      if (discFail) {
+        problems.push({
+          code: `CHECK_${SWEEP_LINE}`,
+          object: object(`bent ${a}°`),
+          detail:
+            `${f.over40} frame px over ${SEAM_PX_LEVEL} (${f.over80} over ${SEAM_PX_LEVEL_HIGH}) at frame scale ${scale}, mean |d| ${mean}/255, against the same pose with the joint's own art drawn under the limb (${underPx[i]} px, the disc of radius ${j.radius} px about [${j.at.join(', ')}]); ` +
+            `the cap is cap_shape "disc", which promises the disc covered at every pose — no pixel of it over ${SEAM_PX_LEVEL}, under the rest-pose seam's bar as well — and the bend shows what lies behind the limb there: a cap pixel the art did not give ("limb cap:" counts them as missing), or a pixel cleared from "${j.part}" after assemble wrote it`,
+        });
+      } else if (fail) {
         problems.push({
           code: `CHECK_${SWEEP_LINE}`,
           object: object(`bent ${a}°`),
