@@ -93,7 +93,9 @@
  * - **What lies under a piece** (`cuts[].under`, `fillUnder`, issue #193) is
  *   this port's: an authored image the base takes where the cut removed its
  *   pixels, so a piece that swings away leaves no hole. The stage reads that
- *   image only there and never invents a pixel.
+ *   image only there and never invents a pixel. With `under_fill: "colour"`
+ *   (issue #360) the base takes the image's colour only and keeps the alpha
+ *   the cut removed, so the part's silhouette is the uncut layer's.
  *
  * Pure: no clock, no randomness, no file access. The CLI reads and writes.
  */
@@ -1726,22 +1728,28 @@ export interface CutCount {
   under?: number;
   /** With `under` only: the removed pixels the image left empty (its alpha below the alpha removed); `under + underEmpty` is the removed count. */
   underEmpty?: number;
+  /** With `under_fill: "colour"` only (issue #360): the `under` pixels took the image's colour at the alpha the cut removed; absent without it. */
+  underFill?: 'colour';
 }
 
 /**
  * The cut lines the assemble stage prints, one per plan part with cuts, in
  * the `pixels:` line's shape: `  cut: "<from>" opaque <before> = "<from>"
  * <kept> + "<into>" <taken> …`. Empty without cuts, so a config with none
- * prints what it printed before.
+ * prints what it printed before. With a cut of `under_fill: "colour"`
+ * (issue #360) the filled count says how many of its pixels took the colour
+ * only; without one the line is issue #193's.
  */
 export function cutLines(cuts: readonly CutCount[]): string[] {
   const byFrom = new Map<string, CutCount[]>();
   for (const c of cuts) byFrom.set(c.from, [...(byFrom.get(c.from) ?? []), c]);
-  return [...byFrom.entries()].map(
-    ([from, cs]) =>
+  return [...byFrom.entries()].map(([from, cs]) => {
+    const colour = cs.some((c) => c.underFill === 'colour') ? ` (${cs.reduce((a, c) => a + (c.underFill === 'colour' ? (c.under ?? 0) : 0), 0)} colour only, at the alpha the cut removed)` : '';
+    return (
       `  cut: "${from}" opaque ${cs[0].before} = "${from}" ${cs[0].kept} + ${cs.map((c) => `"${c.into}" ${c.taken}`).join(' + ')}; band ${cs.reduce((a, c) => a + c.band, 0)} px held by both` +
-      (cs.some((c) => c.under !== undefined) ? `; under ${cs.reduce((a, c) => a + (c.under ?? 0), 0)} px filled, ${cs.reduce((a, c) => a + (c.underEmpty ?? 0), 0)} px left empty` : ''),
-  );
+      (cs.some((c) => c.under !== undefined) ? `; under ${cs.reduce((a, c) => a + (c.under ?? 0), 0)} px filled${colour}, ${cs.reduce((a, c) => a + (c.underEmpty ?? 0), 0)} px left empty` : '')
+    );
+  });
 }
 
 /**
@@ -1771,8 +1779,14 @@ export function underBox(polygon: ReadonlyArray<readonly [number, number]>): { x
  * is the only place the image is read: its pixels over the band, over pixels
  * the layer never had, and over the box outside the polygon change nothing.
  * `filled + empty` is the removed count.
+ *
+ * With `fill` `"colour"` (issue #360, `cuts[].under_fill`) the same pixels are
+ * filled and left empty, and a filled pixel takes the image's colour at the
+ * alpha the cut removed there instead of the image's alpha: the part's alpha
+ * is the uncut layer's wherever the image fills, so its silhouette does not
+ * grow over a soft edge an opaque image covers.
  */
-export function fillUnder(base: Raster, piece: Raster, band: Mask, under: Raster, box: { x0: number; y0: number }): { filled: number; empty: number } {
+export function fillUnder(base: Raster, piece: Raster, band: Mask, under: Raster, box: { x0: number; y0: number }, fill?: 'colour'): { filled: number; empty: number } {
   const W = base.width;
   let filled = 0;
   let empty = 0;
@@ -1784,7 +1798,10 @@ export function fillUnder(base: Raster, piece: Raster, band: Mask, under: Raster
       empty++;
       continue;
     }
-    base.data.set(under.data.subarray(u, u + 4), p * 4);
+    if (fill === 'colour') {
+      base.data.set(under.data.subarray(u, u + 3), p * 4);
+      base.data[p * 4 + 3] = a;
+    } else base.data.set(under.data.subarray(u, u + 4), p * 4);
     filled++;
   }
   return { filled, empty };
@@ -2436,7 +2453,17 @@ export function assemble(input: AssembleInput): AssembleResult {
     cuts,
   );
   cuts.forEach((q, i) => {
-    if (q.under === undefined) return;
+    if (q.under === undefined) {
+      // Issue #360: under_fill says how an under fills; a cut with no under (no file, no hidden-art layer) has nothing it could say it of.
+      if (q.under_fill !== undefined) {
+        patchProblems.push({
+          code: 'ASSEMBLE_UNDER_FILL_SOURCE',
+          object: `config.assemble.cuts[${i}].under_fill (part "${q.into}")`,
+          detail: `is "${q.under_fill}", and the cut has no under: it names no under file and "${q.from}" has no hidden-art layer; under_fill says how an under fills the pixels the cut removed, so one is required — name under, or drop under_fill`,
+        });
+      }
+      return;
+    }
     const object = `config.assemble.cuts[${i}].under (part "${q.into}")`;
     const u = unders[i];
     if (u === null) {
@@ -2622,7 +2649,8 @@ export function assemble(input: AssembleInput): AssembleResult {
       const u = unders[i];
       if (u === null) return undefined;
       // Filled where the image is at least as opaque as the layer was; left empty elsewhere (`fillUnder`).
-      const f = fillUnder(b.r, (pieces[i] as Built).r, cutBand(cutMasks[i], cuts[i].overlap), u, underBox(cuts[i].polygon));
+      // With under_fill "colour" (issue #360) a filled pixel keeps the alpha the cut removed and takes the image's colour only.
+      const f = fillUnder(b.r, (pieces[i] as Built).r, cutBand(cutMasks[i], cuts[i].overlap), u, underBox(cuts[i].polygon), cuts[i].under_fill);
       // A hidden-art layer (issue #359) is the whole layer's covered art, read by every cut of its part: a cut it holds nothing
       // under fills 0, which the cut line counts, and is not refused as a file made for this one cut would be.
       if (f.filled === 0 && input.cuts[i].under !== undefined) {
@@ -2640,6 +2668,7 @@ export function assemble(input: AssembleInput): AssembleResult {
       if (f !== undefined) {
         c.under = f.filled;
         c.underEmpty = f.empty;
+        if (cuts[i].under_fill === 'colour') c.underFill = 'colour';
       }
       cutCounts.push(c);
     });

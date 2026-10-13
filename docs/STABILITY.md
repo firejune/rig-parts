@@ -123,7 +123,7 @@ part name, `[i]` an entry of a list):
 - **assemble.extend_below_crop[i]** — required: `part`, `run`, `tag`
 - **assemble.patches[i]** — required: `name`, `box`, `alpha`, `draw`
 - **assemble.patches[i].draw**, when an object — required: `before`
-- **assemble.cuts[i]** — required: `from`, `into`, `polygon`, `draw`, `overlap`; optional: `under`
+- **assemble.cuts[i]** — required: `from`, `into`, `polygon`, `draw`, `overlap`; optional: `under`, `under_fill`
 - **assemble.cuts[i].draw**, when an object — required: `before`
 - **limbs.&lt;limb&gt;** — required: `segments` (issue #349)
 - **limbs.&lt;limb&gt;.segments[i]** — required: `part`, `from`, `bone`; required below a joint (i > 0): `joint`; optional below a joint: `range`, `cap`, `edge`, `cap_shape`
