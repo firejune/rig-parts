@@ -636,12 +636,37 @@ export interface ConfigConstraint {
   [field: string]: unknown;
 }
 
+/**
+ * One segment of a limb (issue #349): the part it makes, the part whose
+ * pixels it takes (`from`: a plan part or a cut's piece), and the one bone it
+ * rides with weight 1. Every segment after the first sits below a joint at
+ * its bone's origin: `joint` names it, `range` is the bend the joint may take
+ * from rest, `[min, max]` degrees (metadata: read by the stress readers, not
+ * by rig-c), and `cap` an image, relative to the config's directory, of the
+ * cap that overlaps the joint (`limbCaps` in `src/assemble.ts`).
+ */
+export interface LimbSegment {
+  part: string;
+  from: string;
+  bone: string;
+  joint?: string;
+  range?: [number, number];
+  cap?: string;
+}
+
+/** A limb (issue #349): its segments, upper first; each segment's bone is the child of the one before. */
+export interface Limb {
+  segments: LimbSegment[];
+}
+
 export interface CharacterConfig {
   key: string;
   note?: string;
   generation?: Generation;
   seethrough?: SeeThrough;
   assemble: Assemble;
+  /** Limbs cut at their joints (issue #349): absent, no part is cut at a joint and no byte of any output moves. */
+  limbs?: Record<string, Limb>;
   bones: BoneEntry[];
   meshes: Record<string, MeshSpec>;
   regions: Record<string, string>;
@@ -934,9 +959,12 @@ export interface AssembleConfig {
   seethrough: SeeThrough;
   assemble: Assemble;
   scene?: SceneSpec;
+  /** Issue #349: read with `bones` (the joints are the bones' origins) when present. */
+  limbs?: Record<string, Limb>;
+  bones?: BoneEntry[];
 }
 
-const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'bones', 'meshes', 'regions', 'motion', 'constraints', 'turn', 'scene'] as const;
+const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'limbs', 'bones', 'meshes', 'regions', 'motion', 'constraints', 'turn', 'scene'] as const;
 
 /**
  * The one partial entry point. It validates exactly what its door requires —
@@ -985,8 +1013,14 @@ function parseEarlyConfigFrom(raw: Json, door: EarlyDoor, base: string | null): 
   }
   if (door === 'assemble') {
     if ('seethrough' in t) checkSeeThrough(c, t.seethrough);
-    if ('assemble' in t) checkAssemble(c, t.assemble, door);
+    const made = 'assemble' in t ? checkAssemble(c, t.assemble, door) : { parts: [], patches: [], cuts: [] };
     if ('scene' in t) checkScene(c, t.scene);
+    // Issue #349: the limbs' joints are their bones' origins, so the bones are read with them, and only then.
+    if ('limbs' in t) {
+      if (!('bones' in t)) c.fail('CONFIG_FIELD_PRESENT', 'config.bones', 'is absent; config.limbs names bones, and each joint is its bone\'s origin, so assemble reads the bones with the limbs');
+      const names = 'bones' in t ? checkBones(c, t.bones) : null;
+      checkLimbs(c, t.limbs, made, names);
+    }
   }
   const pose = base === null ? null : poseBeside(c, t.generation, base);
   refuseIfAny(c.problems);
@@ -1133,9 +1167,10 @@ function parseConfigFrom(raw: Json, base: string | null): { config: CharacterCon
   if ('seethrough' in t) checkSeeThrough(c, t.seethrough);
   const { parts, patches, cuts } = 'assemble' in t ? checkAssemble(c, t.assemble, 'full') : { parts: [], patches: [], cuts: [] };
   const names = 'bones' in t ? checkBones(c, t.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>(), parents: new Map<string, string>() };
+  const limbs = 'limbs' in t ? checkLimbs(c, t.limbs, { parts, patches, cuts }, 'bones' in t ? names : null) : null;
   if ('meshes' in t) checkMeshes(c, t.meshes, names.bones, names.chains);
   if ('regions' in t) checkRegions(c, t.regions, names.bones);
-  if ('meshes' in t && 'regions' in t && 'assemble' in t) checkCoverage(c, [...parts, ...cuts], patches, t.meshes, t.regions);
+  if ('meshes' in t && 'regions' in t && 'assemble' in t) checkCoverage(c, [...parts, ...cuts], patches, t.meshes, t.regions, limbs);
   if ('motion' in t) checkMotion(c, t.motion, names.bones, names.chains, 'regions' in t ? t.regions : undefined);
   if ('constraints' in t) checkConstraints(c, t.constraints, names.bones, names.parents);
   if ('turn' in t) checkTurn(c, t.turn, attachedParts(t.meshes, t.regions), names.bones);
@@ -2104,14 +2139,139 @@ function checkRegions(c: Check, v: Json, bones: Set<string>): void {
   }
 }
 
+/** What the loader read off `config.limbs` (issue #349): each limb part with its bone, and each part a limb takes, with the first limb taking it. */
+interface LimbNames {
+  parts: Map<string, { bone: string; at: string }>;
+  consumed: Map<string, string>;
+}
+
+/**
+ * `config.limbs` (issue #349): `{<limb>: {segments: [{part, from, bone}, {part,
+ * from, bone, joint, range?, cap?}, …]}}`, upper segment first. Refused field
+ * by field: `part` a new part name (`CONFIG_PART_NAME`, `CONFIG_PART_UNIQUE`
+ * against the plan, the patches, the cuts and every other limb part); `from`
+ * a plan part or a cut's piece (`CONFIG_NAME_RESOLVES`), the segments of one
+ * limb that take one part consecutive (`CONFIG_LIMB_FROM_RUN`: the cut
+ * between them is a joint line, and a joint line has two sides); `bone` a
+ * declared bone, each segment's bone the child of the one before
+ * (`CONFIG_LIMB_BONES_CHAIN`: a bend is a rotation of the lower bone about
+ * the joint, its origin); the first segment has no joint, every other names
+ * one (`CONFIG_KEY_KNOWN`, `CONFIG_FIELD_PRESENT`); `range` two finite
+ * degrees `[min, max]` with `min <= 0 <= max` (`CONFIG_LIMB_RANGE`: the range
+ * is measured from rest, so rest is in it); `cap` a non-empty path. A limb
+ * has two segments or more. With `names` null (no `bones`), bones are not
+ * resolved. Returns the limb parts and the parts the limbs take.
+ */
+function checkLimbs(c: Check, v: Json, made: { parts: string[]; patches: string[]; cuts: string[] }, names: { bones: Set<string>; parents: Map<string, string> } | null): LimbNames {
+  const out: LimbNames = { parts: new Map(), consumed: new Map() };
+  if (!isPlainObject(v)) {
+    c.fail('CONFIG_FIELD_TYPE', 'config.limbs', `is ${show(v)}; an object of limb name -> {"segments": [...]} is required`);
+    return out;
+  }
+  const sources = new Set([...made.parts, ...made.cuts]);
+  const firstAt = new Map<string, string>();
+  for (const [limb, spec] of Object.entries(v)) {
+    const at = `config.limbs.${limb}`;
+    const o = c.object(at, spec, ['segments'], []);
+    if (o === null || !('segments' in o)) continue;
+    if (!Array.isArray(o.segments) || o.segments.length < 2) {
+      c.fail('CONFIG_FIELD_TYPE', `${at}.segments`, `is ${show(o.segments)}; an array of two segments or more, upper first, is required — a limb is cut at a joint, and a joint has a segment on each side`);
+      continue;
+    }
+    const segs = o.segments as Json[];
+    const froms: Array<string | null> = [];
+    const bones: Array<string | null> = [];
+    segs.forEach((entry, i) => {
+      const sat = `${at}.segments[${i}]`;
+      const e = c.object(sat, entry, ['part', 'from', 'bone'], ['joint', 'range', 'cap']);
+      froms.push(null);
+      bones.push(null);
+      if (e === null) return;
+      // The upper segment sits below no joint; every other sits below one, which it names.
+      if (i === 0) {
+        for (const k of ['joint', 'range', 'cap'].filter((q) => q in e)) c.fail('CONFIG_KEY_KNOWN', `${sat}.${k}`, `is not a field on the upper segment; it sits below no joint, so ${k} belongs to the segment below the joint it names (segments[1] and on)`);
+      } else if (!('joint' in e)) c.fail('CONFIG_FIELD_PRESENT', `${sat}.joint`, 'is absent and required; a segment after the first sits below a joint, at its bone\'s origin, and names it');
+      if ('part' in e && c.string(`${sat}.part`, e.part)) {
+        const name = e.part;
+        if (!partNameOk(name)) c.fail('CONFIG_PART_NAME', `${sat}.part`, `names the part ${show(name)}; a part name is a file name, so it may not be empty, start with "." or hold a slash`);
+        else if (made.parts.includes(name) || made.patches.includes(name) || made.cuts.includes(name)) {
+          c.fail('CONFIG_PART_UNIQUE', `${sat}.part`, `names the part "${name}", which ${made.parts.includes(name) ? 'assemble.plan' : made.patches.includes(name) ? 'assemble.patches' : 'assemble.cuts'} already makes; a limb segment makes a part of its own`);
+        } else if (firstAt.has(name)) c.fail('CONFIG_PART_UNIQUE', `${sat}.part`, `names the part "${name}" again (first at ${firstAt.get(name)})`);
+        else {
+          firstAt.set(name, sat);
+          if ('bone' in e && typeof e.bone === 'string') out.parts.set(name, { bone: e.bone, at: `config.limbs.${limb} segment ${i}` });
+        }
+      }
+      if ('from' in e) {
+        if (typeof e.from !== 'string' || !sources.has(e.from)) {
+          c.fail('CONFIG_NAME_RESOLVES', `${sat}.from`, `is ${show(e.from)}; a part named in assemble.plan or made by an assemble.cuts entry is required — the layer the segment's pixels are cut from`);
+        } else {
+          froms[i] = e.from;
+          if (!out.consumed.has(e.from)) out.consumed.set(e.from, limb);
+        }
+      }
+      if ('bone' in e && c.string(`${sat}.bone`, e.bone)) {
+        if (names !== null && !names.bones.has(e.bone)) c.fail('CONFIG_NAME_RESOLVES', `${sat}.bone`, `is "${e.bone}"; a bone config.bones declares is required (a chain's links are <chain>0, <chain>1, …)`);
+        else bones[i] = e.bone;
+      }
+      if ('joint' in e) c.string(`${sat}.joint`, e.joint);
+      if ('range' in e) {
+        const r = e.range;
+        const ok = Array.isArray(r) && r.length === 2 && r.every((n) => typeof n === 'number' && Number.isFinite(n));
+        if (!ok) c.fail('CONFIG_FIELD_TYPE', `${sat}.range`, `is ${show(r)}; [min, max], two finite numbers of degrees from rest, is required`);
+        else {
+          const [lo, hi] = r as [number, number];
+          if (!(lo <= 0 && 0 <= hi)) c.fail('CONFIG_LIMB_RANGE', `${sat}.range`, `is [${lo}, ${hi}]; min <= 0 <= max is required — the range is the bend from rest, and rest (0) is a pose the joint takes`);
+        }
+      }
+      if ('cap' in e && !(typeof e.cap === 'string' && e.cap !== '')) {
+        c.fail('CONFIG_FIELD_TYPE', `${sat}.cap`, `is ${show(e.cap)}; a non-empty path to a PNG is required, relative to the config's directory — the cap's image over the box assemble's limb line prints`);
+      }
+    });
+    froms.forEach((f, i) => {
+      if (f === null || i === 0 || froms[i - 1] === f) return;
+      const back = froms.slice(0, i - 1).lastIndexOf(f);
+      if (back >= 0) {
+        c.fail('CONFIG_LIMB_FROM_RUN', `${at}.segments[${i}].from`, `is "${f}", which segments[${back}] takes too with another part between them; the segments that take one part must be consecutive — the cut between two of them is the joint line, and it has two sides`);
+      }
+    });
+    if (names !== null) {
+      bones.forEach((b, i) => {
+        if (i === 0 || b === null || bones[i - 1] === null) return;
+        const parent = names.parents.get(b);
+        if (parent !== bones[i - 1]) {
+          c.fail('CONFIG_LIMB_BONES_CHAIN', `${at}.segments[${i}].bone`, `is "${b}", whose parent is ${parent === undefined ? 'not declared' : `"${parent}"`}; "${bones[i - 1]}", the bone of segments[${i - 1}], is required — the lower segment turns about the joint on a bone that hangs from the upper's`);
+        }
+      });
+    }
+  }
+  return out;
+}
+
 /**
  * Every plan part — and every cut's piece, which the caller lists with them —
  * is exactly one of a mesh or a region, every patch is a region, and every
  * mesh or region is one of those parts or a patch.
  */
-function checkCoverage(c: Check, parts: string[], patches: string[], meshes: Json, regions: Json): void {
+function checkCoverage(c: Check, made: string[], patches: string[], meshes: Json, regions: Json, limbs: LimbNames | null = null): void {
   const m = typeof meshes === 'object' && meshes !== null ? Object.keys(meshes) : [];
   const r = typeof regions === 'object' && regions !== null ? Object.keys(regions) : [];
+  // Issue #349: a part a limb takes is cut into the limb's parts and is not made itself; the limb's parts are.
+  const parts = limbs === null ? made : [...made.filter((n) => !limbs.consumed.has(n)), ...limbs.parts.keys()];
+  if (limbs !== null) {
+    for (const name of [...m, ...r]) {
+      const by = limbs.consumed.get(name);
+      if (by !== undefined) {
+        c.fail('CONFIG_NAME_RESOLVES', `config.${m.includes(name) ? 'meshes' : 'regions'}.${name}`, `names "${name}", which config.limbs.${by} cuts into its parts at the joints, so no part of that name is made — attach the limb's parts instead`);
+      }
+    }
+    for (const [part, seg] of limbs.parts) {
+      const bone = isPlainObject(regions) ? regions[part] : undefined;
+      if (typeof bone === 'string' && bone !== seg.bone) {
+        c.fail('CONFIG_LIMB_BONE', `config.regions.${part}`, `is "${bone}"; "${part}" is ${seg.at}, which rides "${seg.bone}" with weight 1, so config.regions.${part} "${seg.bone}" is required`);
+      }
+    }
+  }
   for (const patch of patches) {
     if (m.includes(patch)) c.fail('CONFIG_PART_ATTACHED', `part "${patch}"`, `is an assemble.patches entry and has a meshes entry; a patch is a region — drop config.meshes.${patch} and name its bone in config.regions.${patch}`);
     else if (!r.includes(patch)) c.fail('CONFIG_PART_ATTACHED', `part "${patch}"`, `is an assemble.patches entry with no regions entry; a patch is a region, so config.regions.${patch} naming its bone is required`);
@@ -2123,8 +2283,8 @@ function checkCoverage(c: Check, parts: string[], patches: string[], meshes: Jso
     if (inM && inR) c.fail('CONFIG_PART_ATTACHED', `part "${part}"`, 'has both a meshes entry and a regions entry; exactly one is required');
   }
   for (const name of [...m, ...r]) {
-    if (!parts.includes(name) && !patches.includes(name)) {
-      c.fail('CONFIG_NAME_RESOLVES', `config.${m.includes(name) ? 'meshes' : 'regions'}.${name}`, 'names a part that neither assemble.plan nor assemble.patches makes (nor an assemble.cuts entry)');
+    if (!parts.includes(name) && !patches.includes(name) && !(limbs?.consumed.has(name) ?? false)) {
+      c.fail('CONFIG_NAME_RESOLVES', `config.${m.includes(name) ? 'meshes' : 'regions'}.${name}`, 'names a part that neither assemble.plan nor assemble.patches makes (nor an assemble.cuts entry, nor config.limbs)');
     }
   }
 }

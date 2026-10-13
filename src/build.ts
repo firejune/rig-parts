@@ -43,7 +43,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
-import { assemble, type AssembleResult, cutLines, driftLine, FIGURE_MASK_FILE, figuresLine, holeLines, type ProjectRule, scenePhrase, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
+import { assemble, type AssembleResult, cutLines, driftLine, limbLines, FIGURE_MASK_FILE, figuresLine, holeLines, type ProjectRule, scenePhrase, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
 import { allocationClause, type Reducer, stageBClause, unboundedClause } from './automesh.ts';
 import { residualClause } from './autoenvelope.ts';
 import { type AutoMotionCase, failingRows, idleSchedule, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison, sourceSelfFailure, stimulusMotion, withStimulus } from './automotion.ts';
@@ -70,8 +70,8 @@ import {
   splitSchedule,
   untestedIntervals,
 } from './autoreplay.ts';
-import { besideIdleLine, FOLD_LINE, type FoldsLine, LEVEL_LINE, type LevelLine, STRESS_LINE, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, rigcIdentity, rigcRanClause, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
-import { type Cut, loadConfig, loadConfigAndAnimations, loadEarlyConfig } from './config.ts';
+import { besideIdleLine, FOLD_LINE, type FoldsLine, LEVEL_LINE, type LevelLine, LIMB_LINE, type LimbLine, STRESS_LINE, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, rigcIdentity, rigcRanClause, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
+import { type Cut, type Limb, loadConfig, loadConfigAndAnimations, loadEarlyConfig } from './config.ts';
 import { failLine, PartsError, type Problem, refuseIfAny } from './errors.ts';
 import type { MeshQualityReport, MotionSchedule } from 'rig-c/mesh';
 import { encodeGif } from './gif.ts';
@@ -200,6 +200,36 @@ export function readUnders(configPath: string, cuts: readonly Cut[]): Array<Rast
   return out;
 }
 
+/**
+ * Each limb segment's `cap` image (issue #349), read from its path relative to
+ * the config's directory and keyed `<limb>/<segment index>`. Every one is read
+ * before one refusal names them all: no such file
+ * (`ASSEMBLE_LIMB_CAP_PRESENT`), or a file that does not decode as a PNG
+ * (`ASSEMBLE_LIMB_CAP_DECODES`). The stage holds the image to the cap's box.
+ */
+export function readCaps(configPath: string, limbs: Readonly<Record<string, Limb>>): Map<string, Raster> {
+  const problems: Problem[] = [];
+  const out = new Map<string, Raster>();
+  for (const [l, limb] of Object.entries(limbs)) {
+    limb.segments.forEach((sg, k) => {
+      if (sg.cap === undefined) return;
+      const file = resolve(dirname(resolve(configPath)), sg.cap);
+      const object = `config.limbs.${l}.segments[${k}].cap (part "${sg.part}")`;
+      if (!existsSync(file) || !statSync(file).isFile()) {
+        problems.push({ code: 'ASSEMBLE_LIMB_CAP_PRESENT', object, detail: `names ${file}, which is no such file; a PNG of the cap, its path relative to the config's directory, is required` });
+        return;
+      }
+      try {
+        out.set(`${l}/${k}`, readPng(file));
+      } catch (err) {
+        problems.push({ code: 'ASSEMBLE_LIMB_CAP_DECODES', object, detail: `${file}: ${(err as Error).message.split('\n')[0]}; a PNG is required` });
+      }
+    });
+  }
+  refuseIfAny(problems);
+  return out;
+}
+
 /** Read, assemble, and write only after every refusal has had its chance. Throws a PartsError on a refusal, having written nothing. */
 export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, log: Log): AssembleResult {
   const src = readSource(input.source);
@@ -208,7 +238,8 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   // regions and motion, so it requires only what it reads (issue #20).
   const fields = stageFields(loadEarlyConfig(input.config, 'assemble'));
   const under = readUnders(input.config, fields.cuts);
-  const result = assemble({ source: src, full: runs.full, head: runs.head, ...fields, under, seamRule: input.seam, projectRule: input.project });
+  const caps = fields.limbs === undefined ? undefined : readCaps(input.config, fields.limbs);
+  const result = assemble({ source: src, full: runs.full, head: runs.head, ...fields, under, ...(caps === undefined ? {} : { caps }), seamRule: input.seam, projectRule: input.project });
   // Emit only after green: every refusal above has already thrown.
   mkdirSync(outs.partsDir, { recursive: true });
   mkdirSync(dirname(outs.partsJson), { recursive: true });
@@ -234,6 +265,8 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   for (const l of authorPartLines(result.parts.parts)) log(l);
   // One line per plan part an assemble.cuts entry cut, before the fringe lines: the cut is made first. None without cuts.
   for (const l of cutLines(result.cuts)) log(l);
+  // Issue #349: one line per part a limb took, and one per joint with its cap's pixels. None without limbs.
+  for (const l of limbLines(result.limbs)) log(l);
   for (const l of fringeLines(result.parts.parts)) log(l);
   const total = (k: 'opaque_px' | 'visible_px' | 'occluded_px' | 'source_px_taken' | 'visible_not_projected_px'): number => result.parts.parts.reduce((a, p) => a + (p[k] ?? 0), 0);
   const [op, vis, occ, taken, unproj] = (['opaque_px', 'visible_px', 'occluded_px', 'source_px_taken', 'visible_not_projected_px'] as const).map(total);
@@ -1069,6 +1102,17 @@ export function levelLines(line: LevelLine): string[] {
   ];
 }
 
+/**
+ * The limb line (issue #349) as the console prints it: the status and the bar, then each limb part on a line of its
+ * own — its limb, its bone, and on a FAIL every other bone it is bound to.
+ */
+export function limbCheckLines(line: LimbLine): string[] {
+  return [
+    `${LIMB_LINE}: ${line.status} — ${line.parts.length} limb part(s), each bound in rig.json to its one bone with weight 1 (a region on it, or a mesh weighted to it alone)`,
+    ...line.parts.map((r) => `limb  "${r.part}" (${r.limb}) on "${r.bone}": ${r.status}${r.others.length === 0 ? '' : `, also weighted to ${r.others.map((b) => `"${b}"`).join(', ')}`}`),
+  ];
+}
+
 /** A requirement's line as the console prints it: its name and status, the reason first when NOT MEASURABLE, then its figures as check.json holds them. */
 export function requirementText(name: string, line: RequirementLine): string {
   const rest = Object.entries(line).filter(([k]) => k !== 'status' && k !== 'reason');
@@ -1113,6 +1157,8 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   if (level !== undefined) for (const [i, l] of levelLines(level).entries()) log(`  ${i === 0 ? '' : '  '}${l}`);
   const stress = fig[STRESS_LINE];
   if (stress !== undefined) log(`  ${judgementLine(STRESS_LINE, stress)}`);
+  const limbs = fig[LIMB_LINE];
+  if (limbs !== undefined) for (const [i, l] of limbCheckLines(limbs).entries()) log(`  ${i === 0 ? '' : '  '}${l}`);
   for (const name of REPORTED_LINES) log(`  ${judgementLine(name, fig[name])}`);
   const vsSource = fig[SOURCE_LINE];
   if (vsSource !== undefined) log(`  ${judgementLine(SOURCE_LINE, vsSource)}`);

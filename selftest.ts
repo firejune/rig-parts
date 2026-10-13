@@ -124,8 +124,14 @@ import {
   TAIL_UNCOVERED_ERROR_PX,
   writeAssembleFixture,
   writeRun,
+  LIMB_FULL,
+  LIMB_PLAN,
+  LIMB_BONES,
+  LIMBS,
+  limbConfig,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
+import { capBox, type JointLine, jointLine, limbWidth, nearestLimb, pastJoint, segmentOf } from './src/limbs.ts';
 import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, type CheckFlagInBuild, checkStage, ctlRemedies, driftShare, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
@@ -180,7 +186,7 @@ import {
 } from './src/assemble.ts';
 import { chainDirection } from './src/check.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics, BREATH_TORSO_MEAN_FLOOR } from './src/check.ts';
-import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, drawingTurn, FOLD_LINE, LEVEL_BAR_DEGREES, LEVEL_LINE, foldsLine, STRESS_LINE, STRESS_RIGID, STRESS_TURNS, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, packageRigc, rigcIdentity, rigcRunnerAt, type RigcSpawn, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
+import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, drawingTurn, FOLD_LINE, LEVEL_BAR_DEGREES, LEVEL_LINE, LIMB_LINE, limbLine, foldsLine, STRESS_LINE, STRESS_RIGID, STRESS_TURNS, stressPlan, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, packageRigc, rigcIdentity, rigcRunnerAt, type RigcSpawn, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { baseTagOf, blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
@@ -2088,6 +2094,48 @@ function runConfigSuite(): number {
     `rig-c's table: ${RIG_BONE_INHERIT.join(', ')}; each loads: ${loaded286.map((e) => (e === null ? 'yes' : codes(e))).join(', ')}; passed through as ${String(passed286)}; planted: "NoScale" -> ${codes(folded286)}: ${folded286?.problems[0]?.detail ?? ''}; "sideways" -> ${codes(unknown286)}; 7 -> ${codes(typed286)}; on a chain -> ${codes(chain286)}`,
     "issue #348: rig-c's RigBone.inherit names five modes, and the runtime folds the first letter's case; this loader spells them as rig-c's table does and maps nothing, so a folded spelling is refused with the five listed rather than read as the mode it resembles, and a chain, whose links have no single parent edge to carry it, takes none",
   );
+
+  // CF287 — issue #349: the limbs block. The limb fixture's config (fixtures/assemble_fixture.ts, limbConfig) loads in
+  // the full loader and at the assemble door; each planted entry is refused once, under its code and object.
+  const limbCfg = (edit: (c: Record<string, unknown>) => void = () => {}): Record<string, unknown> => {
+    const c = structuredClone(limbConfig());
+    edit(c);
+    return c;
+  };
+  const seg = (c: Record<string, unknown>, limb: string, i: number): Record<string, unknown> => (c.limbs as Record<string, { segments: Array<Record<string, unknown>> }>)[limb].segments[i];
+  const loads287 = [refusals(() => parseConfig(limbCfg())), refusals(() => parseEarlyConfig(limbCfg(), 'assemble'))];
+  const planted287: Array<[string, Record<string, unknown>, string, string]> = [
+    ['a limb part on another bone', limbCfg((c) => ((c.regions as Record<string, string>).forearm_r = 'sleeve_r0')), 'CONFIG_LIMB_BONE', 'config.regions.forearm_r'],
+    ['a lower bone not under the upper', limbCfg((c) => (seg(c, 'arm_r', 1).bone = 'leg_r1')), 'CONFIG_LIMB_BONES_CHAIN', 'config.limbs.arm_r.segments[1].bone'],
+    ['a part taken twice with another between', limbCfg((c) => (c.limbs as Record<string, unknown>).leg_r = { segments: [{ part: 'thigh_r', from: 'legs', bone: 'leg_r0' }, { part: 'shin_r', from: 'shoes', bone: 'leg_r1', joint: 'knee' }, { part: 'foot_r', from: 'legs', bone: 'foot_r', joint: 'ankle' }] }), 'CONFIG_LIMB_FROM_RUN', 'config.limbs.leg_r.segments[2].from'],
+    ['a range that leaves out rest', limbCfg((c) => (seg(c, 'arm_r', 1).range = [5, 30])), 'CONFIG_LIMB_RANGE', 'config.limbs.arm_r.segments[1].range'],
+    ['a range that is no pair', limbCfg((c) => (seg(c, 'arm_r', 1).range = [-10])), 'CONFIG_FIELD_TYPE', 'config.limbs.arm_r.segments[1].range'],
+    ['a joint on the upper segment', limbCfg((c) => (seg(c, 'arm_r', 0).joint = 'shoulder')), 'CONFIG_KEY_KNOWN', 'config.limbs.arm_r.segments[0].joint'],
+    ['a lower segment with no joint', limbCfg((c) => delete seg(c, 'arm_r', 1).joint), 'CONFIG_FIELD_PRESENT', 'config.limbs.arm_r.segments[1].joint'],
+    ['a limb of one segment', limbCfg((c) => ((c.limbs as Record<string, { segments: unknown[] }>).arm_r.segments = [{ part: 'upperarm_r', from: 'arm', bone: 'sleeve_r0' }])), 'CONFIG_FIELD_TYPE', 'config.limbs.arm_r.segments'],
+    ['a from that is no part', limbCfg((c) => (seg(c, 'arm_r', 0).from = 'sleeve')), 'CONFIG_NAME_RESOLVES', 'config.limbs.arm_r.segments[0].from'],
+    ['a limb part named as a plan part', limbCfg((c) => {
+      seg(c, 'arm_r', 0).part = 'shoes';
+    }), 'CONFIG_PART_UNIQUE', 'config.limbs.arm_r.segments[0].part'],
+    ['the taken part still attached', limbCfg((c) => ((c.regions as Record<string, string>).arm = 'hip')), 'CONFIG_NAME_RESOLVES', 'config.regions.arm'],
+    ['a cap that is no path', limbCfg((c) => (seg(c, 'arm_r', 1).cap = '')), 'CONFIG_FIELD_TYPE', 'config.limbs.arm_r.segments[1].cap'],
+  ];
+  const outcomes287 = planted287.map(([what, c, code, object]) => {
+    const e = refusals(() => parseConfig(c));
+    return { what, ok: e !== null && e.problems.filter((q) => q.code === code && q.object === object).length === 1, got: codes(e) };
+  });
+  const earlyNoBones = refusals(() => parseEarlyConfig(limbCfg((c) => delete c.bones), 'assemble'));
+  const rangeOk = refusals(() => parseConfig(limbCfg((c) => (seg(c, 'arm_r', 1).range = [-10, 140]))));
+  const withoutLimbs = refusals(() => parseConfig(limbCfg((c) => {
+    delete c.limbs;
+    c.regions = { legs: 'hip', shoes: 'hip', arm: 'hip' };
+  })));
+  say(
+    'CF287_A_LIMBS_BLOCK_LOADS_AND_EACH_PLANTED_FAULT_IS_REFUSED_ONCE_BY_NAME',
+    loads287.every((e) => e === null) && outcomes287.every((o) => o.ok) && rangeOk === null && withoutLimbs === null && earlyNoBones !== null && earlyNoBones.problems.some((q) => q.code === 'CONFIG_FIELD_PRESENT' && q.object === 'config.bones'),
+    `the limb fixture loads: ${loads287.map((e) => (e === null ? 'yes' : codes(e))).join(', ')} (full, assemble door); a range [-10, 140] ${rangeOk === null ? 'loads' : codes(rangeOk)}; without limbs, the plan parts attached ${withoutLimbs === null ? 'load' : codes(withoutLimbs)}; at the assemble door with no bones: ${codes(earlyNoBones)}; planted: ${outcomes287.map((o) => `${o.what} ${o.ok ? 'refused once' : `NOT: ${o.got}`}`).join('; ')}`,
+    'issue #349: a limb names its parts, the parts they come from, and one bone each, the lower bone hanging from the upper; every name resolves or is refused by name, the part a limb takes is not a part itself, the joint and the range sit on the segment below the joint, and the range is measured from rest so rest is in it',
+  );
   return bad();
 }
 
@@ -2903,6 +2951,38 @@ function runPartsSuite(): number {
         authorSeen.every((o) => o.ok),
       `full:author:hand with ghost key full:author:hand -> ${authorOk === null ? 'reads' : codes(authorOk)}; tagOf ${authorTag ?? 'null'}, baseTagOf ${String(baseTagOf(authorRec as PartRecord))} (the borrowed full:tail -> ${String(baseTagOf({ ...authorRec, from: 'full:tail' } as PartRecord))}); ${authorSeen.map((o) => `${o.from} -> ${o.got}`).join('; ')}`,
       'issue #256: the provenance is the only thing a role is read from, so a hand-made layer is recorded as one and never as a See-through tag; the borrowed tag beside it is the negative control a role reader does see',
+    );
+
+    // PT127 — issue #349: a limb segment's record. The upper segment names its limb, index, source part and bone; the
+    // lower adds its joint and its cap. Written in the fixed key order whatever order the record was built in, read
+    // back; a lower segment without its joint, an upper with a cap, an unknown key and a cap missing a count are each
+    // refused once.
+    const cap = { at: [15, 30], width: 10, radius: 5, box: [10, 25, 10, 10], layer_px: 28, missing_px: 12 };
+    const upper = { ...baseRec, name: 'upperarm_r', limb: { name: 'arm_r', segment: 0, of: 'arm', bone: 'sleeve_r0' } };
+    const lower = { ...baseRec, name: 'forearm_r', limb: { cap: { missing_px: 12, layer_px: 28, box: [10, 25, 10, 10], radius: 5, width: 10, at: [15, 30] }, joint: 'elbow', bone: 'sleeve_r1', of: 'arm', segment: 1, name: 'arm_r' } };
+    const limbFile = { ...file, parts: [...file.parts, upper, lower] } as PartsFile;
+    const limbText127 = serializeParts(limbFile);
+    writeFileSync(path, limbText127);
+    const limbOk = refusals(() => readParts(path));
+    const limbBack = limbOk === null ? readParts(path).parts.find((q) => q.name === 'forearm_r')?.limb : undefined;
+    const limbFaults: Array<[string, Record<string, unknown>, string]> = [
+      ['a lower segment without its joint', { ...lower, limb: { name: 'arm_r', segment: 1, of: 'arm', bone: 'sleeve_r1', cap } }, 'PARTS_FIELD_PRESENT'],
+      ['an upper segment with a cap', { ...upper, limb: { ...upper.limb, cap } }, 'PARTS_FIELD_PRESENT'],
+      ['an unknown limb key', { ...upper, limb: { ...upper.limb, weight: 1 } }, 'PARTS_KEY_KNOWN'],
+      ['a cap with no missing count', { ...lower, limb: { name: 'arm_r', segment: 1, of: 'arm', bone: 'sleeve_r1', joint: 'elbow', cap: { ...cap, missing_px: undefined } } }, 'PARTS_FIELD_TYPE'],
+    ];
+    const limbSeen = limbFaults.map(([what, rec, code]) => {
+      writeFileSync(path, JSON.stringify({ ...file, parts: [...file.parts, rec] }));
+      const err = refusals(() => readParts(path));
+      return { what, ok: err !== null && err.problems.length === 1 && err.problems[0].code === code, got: codes(err) };
+    });
+    say(
+      'PT127_A_LIMB_SEGMENT_S_RECORD_READS_BACK_IN_ITS_FIXED_ORDER_AND_A_MALFORMED_ONE_IS_REFUSED_BY_NAME',
+      limbOk === null &&
+        JSON.stringify(limbBack) === '{"name":"arm_r","segment":1,"of":"arm","bone":"sleeve_r1","joint":"elbow","cap":{"at":[15,30],"width":10,"radius":5,"box":[10,25,10,10],"layer_px":28,"missing_px":12}}' &&
+        limbSeen.every((o) => o.ok),
+      `the two records ${limbOk === null ? 'read back' : codes(limbOk)}, the lower as ${JSON.stringify(limbBack)}; ${limbSeen.map((o) => `${o.what} -> ${o.got}`).join('; ')}`,
+      'issue #349: check holds a limb part to its bone by this record, and HQ paints the missing cap pixels from its box, so the record is read as strictly as any count: the fields a segment has follow from its place below a joint or not, and the bytes are the same whatever order the stage built it in',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -6115,6 +6195,7 @@ function proposalConfig(parts: readonly ProposeFixturePart[], prop: Proposal): R
     bones: prop.bones,
     meshes: prop.meshes,
     regions: prop.regions,
+    ...(prop.limbs === undefined ? {} : { limbs: prop.limbs }),
     motion: prop.motion,
   };
 }
@@ -7523,6 +7604,12 @@ function poseDir(dir: string, name: PoseName): string {
   return d;
 }
 
+/** A drafted limb (issue #349) as one line: `<part> <from> <bone>[ <joint>]` per segment, or `none`. */
+function limbText(p: Proposal, name: string): string {
+  const l = p.limbs?.[name];
+  return l === undefined ? 'none' : l.segments.map((sg) => [sg.part, sg.from, sg.bone, ...(sg.joint === undefined ? [] : [sg.joint])].join(' ')).join(' | ');
+}
+
 /** The notes `--keypoints` added: everything from the `keypoints:` header on. */
 function jointNoteLines(p: Proposal): string[] {
   const i = p.notes.findIndex((n) => n.startsWith('keypoints: '));
@@ -7545,8 +7632,9 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
 
   // Standing (fixtures/poses.ts): neck (100, 98); hips (90, 160) and (110, 160) -> hip (100, 160); chest half way along
   // neck -> hip = (100, 129); head stays the rule's, axis 100 (the eyewhites' centres 91 and 109), 40 + 0.88*50 = 84.
-  // Sleeves: r (30,104) -> (30,130), tip (30,152); l (170,104) -> (170,130), tip (170,152). The sleeve mesh rides its chain
-  // alone (issue #347: the chest stub along the upper arm pinned the puff). Skirt chains hang from hip y + 20 = 180 to 250 - 4 = 246,
+  // Sleeves: r (30,104) -> (30,130), tip (30,152); l (170,104) -> (170,130), tip (170,152). Issue #349: each arm is a
+  // limb — sleeve_a cut at the elbow into upperarm_r on sleeve_r0 and forearm_r on sleeve_r1, each a region; the part
+  // has no mesh, so no stub (issue #347 had already dropped it). Skirt chains hang from hip y + 20 = 180 to 250 - 4 = 246,
   // three steps of 22: 180, 202, 224 (x as in PR01).
   const wantSt: Record<string, string> = {
     hip: '[100,160]',
@@ -7560,18 +7648,18 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
     skirt_c: '[[100,180],[100,202],[100,224]]->[100,246]',
   };
   const wrongSt = Object.entries(wantSt).filter(([n, v]) => boneAt(st.bones, n) !== v).map(([n, v]) => `${n} ${boneAt(st.bones, n)} (want ${v})`);
-  const stSegs = JSON.stringify(st.meshes.sleeve_a?.segments ?? null);
+  const stSegs = `${limbText(st, 'arm_r')}; ${limbText(st, 'arm_l')}; meshes ${JSON.stringify([st.meshes.sleeve_a ?? null, st.meshes.sleeve_b ?? null])}; regions ${['upperarm_r', 'forearm_r', 'upperarm_l', 'forearm_l'].map((n) => st.regions[n]).join(' ')}`;
   const stTracks = JSON.stringify(st.motion.tracks.filter((t) => 'chain' in t && t.chain.startsWith('sleeve_')).map((t) => ('chain' in t ? [t.chain, t.amps] : null)));
   const stLint = lint(Ps, st, Js);
   say(
     'PR55_STANDING_JOINTS_PLACE_NECK_HIP_CHEST_AND_EACH_SLEEVE_AS_GIVEN',
     wrongSt.length === 0 &&
-      stSegs === '["sleeve_r"]' &&
+      stSegs === 'upperarm_r sleeve_a sleeve_r0 | forearm_r sleeve_a sleeve_r1 elbow; upperarm_l sleeve_b sleeve_l0 | forearm_l sleeve_b sleeve_l1 elbow; meshes [null,null]; regions sleeve_r0 sleeve_r1 sleeve_l0 sleeve_l1' &&
       stTracks === '[["sleeve_r",[0.2,0.6]],["sleeve_l",[-0.2,-0.6]]]' &&
       stLint.findings.length === 0 &&
       stLint.basis?.torso.read === true &&
       refusals(() => checkProposal(Ps, st)) === null,
-    `${wrongSt.length === 0 ? Object.keys(wantSt).map((n) => `${n} ${boneAt(st.bones, n)}`).join(', ') : `wrong: ${wrongSt.join('; ')}`}; sleeve_a ${stSegs}; sleeve tracks ${stTracks}; ${stLint.findings.length} LINT line(s) on the joints' rule set; loads: ${codes(refusals(() => checkProposal(Ps, st)))}`,
+    `${wrongSt.length === 0 ? Object.keys(wantSt).map((n) => `${n} ${boneAt(st.bones, n)}`).join(', ') : `wrong: ${wrongSt.join('; ')}`}; limbs ${stSegs}; sleeve tracks ${stTracks}; ${stLint.findings.length} LINT line(s) on the joints' rule set; loads: ${codes(refusals(() => checkProposal(Ps, st)))}`,
     'issue #75: an observed joint is used as given, so every torso and arm bone sits on the hand-written joint; the hip is the point between two joints, the chest keeps its rule between the placed ends, and the eye bones and head are measurements off the parts, which no joint overrides',
   );
 
@@ -7588,26 +7676,26 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
     sleeve_l: '[[134,84],[134,124]]->[116,124]',
   };
   const wrongSe = Object.entries(wantSe).filter(([n, v]) => boneAt(se.bones, n) !== v).map(([n, v]) => `${n} ${boneAt(se.bones, n)} (want ${v})`);
-  const seSegs = JSON.stringify(se.meshes.arm_b?.segments ?? null);
-  // Issue #241: the seated legs get a leg chain (PR82), rooted at the hips' midpoint (100, 145) — 25 px left of the
-  // thighs' art (x 125; dilated 15 px, 110), so the one LINT line on the joints' rule set is that root, off the art.
+  const seSegs = limbText(se, 'arm_l');
+  // Issue #241: the seated legs get leg chains (PR82); issue #349: each leg is a limb on its part, a region per segment,
+  // so no leg mesh is left for the off-art check to read, and the joints' rule set prints no line.
   const seLint = lint(Pe, se, Je).findings.map(lintLine).join('|');
   say(
     'PR56_SEATED_JOINTS_PLACE_THE_HIP_AT_THE_HIPS_AND_EACH_SLEEVE_ALONG_ITS_BENT_ARM',
     wrongSe.length === 0 &&
-      seSegs === '["sleeve_l"]' &&
-      seLint === "LINT leg0 at [100, 145] is off the art of mesh 'legs'" &&
+      seSegs === 'upperarm_l arm_b sleeve_l0 | forearm_l arm_b sleeve_l1 elbow' &&
+      seLint === '' &&
       boneAt(seRule.bones, 'hip') === '[100,117]' &&
       boneAt(seRule.bones, 'chest') === '[100,96]' &&
       lint(Pe, seRule).findings.length === 0 &&
       refusals(() => checkProposal(Pe, se)) === null,
-    `${wrongSe.length === 0 ? Object.keys(wantSe).map((n) => `${n} ${boneAt(se.bones, n)}`).join(', ') : `wrong: ${wrongSe.join('; ')}`}; arm_b ${seSegs}; with joints: ${seLint || 'no LINT line'}; the rule without joints: hip ${boneAt(seRule.bones, 'hip')}, chest ${boneAt(seRule.bones, 'chest')}, ${lint(Pe, seRule).findings.length} LINT line(s)`,
+    `${wrongSe.length === 0 ? Object.keys(wantSe).map((n) => `${n} ${boneAt(se.bones, n)}`).join(', ') : `wrong: ${wrongSe.join('; ')}`}; arm_l ${seSegs}; with joints: ${seLint || 'no LINT line'}; the rule without joints: hip ${boneAt(seRule.bones, 'hip')}, chest ${boneAt(seRule.bones, 'chest')}, ${lint(Pe, seRule).findings.length} LINT line(s)`,
     'a seated figure\'s hip is where its thighs leave the torso, not the top of the skirt; the rule places it 28 px high and the screen-y lines pass it, because a hip below the chest and inside the figure is all they can ask — the joints say where it is',
   );
 
   // Lying (landscape 300x200): neck (62, 100); hips (150, 92) and (150, 108) -> (150, 100); chest (106, 100). The arms lie
   // along the body: r (75,67) -> (110,67), tip (145,67) on arm_a; l (75,133) -> (110,133), tip (145,133) on arm_b, each
-  // mesh on its chain alone (issue #347). Read by screen y, this correct torso is a LINT line: hip y 100
+  // a limb (issue #349). Read by screen y, this correct torso is a LINT line: hip y 100
   // is not larger than chest y 100.
   const wantLy: Record<string, string> = {
     hip: '[150,100]',
@@ -7618,18 +7706,18 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
     sleeve_l: '[[75,133],[110,133]]->[145,133]',
   };
   const wrongLy = Object.entries(wantLy).filter(([n, v]) => boneAt(ly.bones, n) !== v).map(([n, v]) => `${n} ${boneAt(ly.bones, n)} (want ${v})`);
-  const lySegs = JSON.stringify(ly.meshes.arm_a?.segments ?? null);
+  const lySegs = limbText(ly, 'arm_r');
   const lyJoint = lint(Pl, ly, Jl);
   const lyScreen = lint(Pl, ly).findings.map(lintLine);
   say(
     'PR57_LYING_JOINTS_PLACE_THE_TORSO_ALONG_THE_BODY_AND_LINT_READS_IT_THERE',
     wrongLy.length === 0 &&
-      lySegs === '["sleeve_r"]' &&
+      lySegs === 'upperarm_r arm_a sleeve_r0 | forearm_r arm_a sleeve_r1 elbow' &&
       lyJoint.findings.length === 0 &&
       lyJoint.basis?.chains.every((c) => c.line !== null) === true &&
       lyScreen.join('|') === 'LINT hip at [150, 100] is not below chest at [106, 100]: the hip must have the larger y, or breathing and the skirt hang from the shoulders' &&
       refusals(() => checkProposal(Pl, ly)) === null,
-    `${wrongLy.length === 0 ? Object.keys(wantLy).map((n) => `${n} ${boneAt(ly.bones, n)}`).join(', ') : `wrong: ${wrongLy.join('; ')}`}; arm_a ${lySegs}; on the joints' rule set ${lyJoint.findings.length} LINT line(s); the same proposal read by screen y: ${lyScreen.join(' | ') || 'no line'}`,
+    `${wrongLy.length === 0 ? Object.keys(wantLy).map((n) => `${n} ${boneAt(ly.bones, n)}`).join(', ') : `wrong: ${wrongLy.join('; ')}`}; arm_r ${lySegs}; on the joints' rule set ${lyJoint.findings.length} LINT line(s); the same proposal read by screen y: ${lyScreen.join(' | ') || 'no line'}`,
     'the card\'s case: a reclining figure\'s torso runs across the painting, so "the hip has the larger y" is false of a correct rig; with the joints the torso is read along neck -> hips, and the sleeves follow the arms the joints declare',
   );
 
@@ -7669,7 +7757,7 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
       withKp.status === 0 &&
       printedKp.filter((l) => l.startsWith('LINT ')).length === 0 &&
       printedKp[0]?.startsWith('lint rule set: joints (person "a")') === true &&
-      printedKp[printedKp.length - 1] === '0 LINT line(s) over 3 mesh(es) and the hip',
+      printedKp[printedKp.length - 1] === '0 LINT line(s) over 1 mesh(es) and the hip',
     `without --keypoints: ${printedNoKp.length - 1} LINT line(s), ${printedNoKp.join(' | ') === wantNoKp.join(' | ') ? 'every one as derived' : `NOT as derived: ${printedNoKp.join(' | ')}`}; with them: ${printedKp.join(' | ')}`,
     'the negative control is today\'s behaviour: the card\'s own symptom — the hip not below the chest and the sleeve links off both arms\' art — must still print without the flag, line for line, so nothing about the default changed; with the joints the same figure lints clean',
   );
@@ -7827,26 +7915,21 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
     'the relation checks replace the screen rules only where the joints declare the torso; elsewhere the rules that ran before still run, and the first line says which set ran and on what basis',
   );
 
-  // The three keypoint proposals pasted into configs, through rig and check: every one rigs green, the standing figure
-  // checks PASS, and the joint-placed sleeves of all three swing tip over root. The seated and lying skirts are measured too.
-  const builds = (['standing', 'seated', 'lying'] as const).map((name) => {
-    const d = { standing: SP, seated: SE, lying: LY }[name];
+  // The three keypoint proposals pasted into configs (issue #349): each loads with its limbs block, and every arm part
+  // is a region on its own sleeve link — the upper arm on link 0, the forearm on link 1 — with no mesh for the handwear
+  // layer it is cut from. Building them is the assemble suite's (AS limb controls): the cut needs the layers.
+  const loaded = (['standing', 'seated', 'lying'] as const).map((name) => {
     const p = { standing: st, seated: se, lying: ly }[name];
-    const cfgPath = join(d, 'config-kp.json');
-    writeFileSync(cfgPath, JSON.stringify(proposalConfig(POSES[name].parts, p)));
-    const rig = runCli(['rig', '--config', cfgPath, '--parts', d, '--out', join(d, 'rig-kp')]);
-    const chk = runCli(['check', '--rig', join(d, 'rig-kp'), '--parts', d, '--out', join(d, 'check-kp')]);
-    const tip = (chk.out.split('\n').find((l) => l.includes('TIP_OVER_ROOT:')) ?? '').trim();
-    const ratios = [...tip.matchAll(/part (\w+), root_rig_px [0-9.]+, tip_rig_px [0-9.]+, ratio ([0-9.]+|null)/g)].map((m) => [m[1], m[2]] as const);
-    const floor = Number(/ratio_floor ([0-9.]+)/.exec(tip)?.[1] ?? 'NaN');
-    const arms = ratios.filter(([n]) => POSES[name].parts.some((q) => q.name === n && q.from.includes('handwear')));
-    return { name, rig: rig.status, check: chk.status, verdict: (chk.out.split('\n').find((l) => l.startsWith('check: ')) ?? '').trim(), arms, floor, tip };
+    const cfg = proposalConfig(POSES[name].parts, p);
+    const hand = POSES[name].parts.filter((q) => q.from.includes('handwear')).map((q) => q.name);
+    const regionsOk = ['r', 'l'].every((sd) => p.regions[`upperarm_${sd}`] === `sleeve_${sd}0` && p.regions[`forearm_${sd}`] === `sleeve_${sd}1`);
+    return { name, loads: codes(refusals(() => parseConfig(cfg))), regionsOk, meshed: hand.filter((n) => n in p.meshes || n in p.regions) };
   });
   say(
-    'PR68_THE_THREE_KEYPOINT_PROPOSALS_RIG_GREEN_AND_THEIR_SLEEVES_SWING_TIP_OVER_ROOT',
-    builds.every((b) => b.rig === 0 && b.arms.length === 2 && b.arms.every(([, r]) => r !== 'null' && Number(r) >= b.floor)) && builds[0].check === 0,
-    builds.map((b) => `${b.name}: rig exit ${b.rig}, ${b.verdict}; sleeves ${b.arms.map(([n, r]) => `${n} ${r}`).join(', ')} against ${b.floor}`).join('; '),
-    'the joints place bones a rig must still carry: each proposal clears rigc\'s gate, and each joint-placed sleeve moves more at the hand than at the shoulder; the seated and lying skirts hang down the screen from a hip in the middle of the body and move nothing, with or without keypoints, which check names (TIP_OVER_ROOT) and this card does not change',
+    'PR68_THE_THREE_KEYPOINT_PROPOSALS_LOAD_WITH_THEIR_LIMBS_AND_EACH_ARM_PART_RIDES_ITS_LINK_ALONE',
+    loaded.every((b) => b.loads === 'nothing' && b.regionsOk && b.meshed.length === 0),
+    loaded.map((b) => `${b.name}: loads ${b.loads}; arm regions ${b.regionsOk ? 'on their links' : 'WRONG'}; handwear parts still attached ${JSON.stringify(b.meshed)}`).join('; '),
+    'issue #349: an arm the joints place is cut at the elbow into two parts, each rigid on its link, so a bend is a rotation and nothing can pin it; the handwear layer is the limb\'s source and is not itself a part, so a config that still attached it would be refused (CONFIG_NAME_RESOLVES)',
   );
 
   // Without keypoints nothing moves; with them no bone is authored that the rules did not already name (ruling 8).
@@ -7862,9 +7945,9 @@ function runKeypointPoseCases(dir: string, say: (name: string, ok: boolean, deta
   const moved = cases.filter(([, P, p]) => serializeProposal(p) !== serializeProposal(propose(P)));
   say(
     'PR69_WITHOUT_KEYPOINTS_NOTHING_MOVES_AND_WITH_THEM_NO_BONE_IS_AUTHORED',
-    same.length === 3 && moved.length === 3 && extra.join(',') === 'seated:leg' && plantedExtra.join(',') === 'knee_r',
+    same.length === 3 && moved.length === 3 && extra.join(',') === 'seated:leg_l,seated:leg_r' && plantedExtra.join(',') === 'knee_r',
     `${same.length} of 3 poses propose the same bytes with the parameter absent and no LINT basis; with keypoints ${moved.length} of 3 differ (the comparison can see a move); bones a keypoint run adds: [${extra.join(', ')}]; planted knee_r: [${plantedExtra.join(', ')}]`,
-    'ruling 7 and 8: the default path is the old one, and the joints say where joints are — no auxiliary or control bone is made from them; the one chain a keypoint run adds is the leg rule\'s (issue #241), which runs only with the hips, knees and ankles given, on the one pose with a legwear part (the seated figure, PR82)',
+    'ruling 7 and 8: the default path is the old one, and the joints say where joints are — no auxiliary or control bone is made from them; the chains a keypoint run adds are the leg rule\'s (issue #241), one per leg since issue #349, which runs only with the hips, knees and ankles given, on the one pose with a legwear part (the seated figure, PR82)',
   );
 
   runWristSnapCases(dir, SE, Pe, Je, se, say);
@@ -8200,28 +8283,31 @@ function runLegChainCases(dir: string, Pe: PartSet, Je: RigJoints, se: Proposal,
   const legBones = (p: Proposal): string[] => p.bones.filter((b) => 'chain' in b && b.chain.startsWith('leg')).map((b) => ('chain' in b ? b.chain : ''));
   const legTracks = (p: Proposal): number => p.motion.tracks.filter((t) => 'chain' in t && t.chain.startsWith('leg')).length;
 
-  // Seated, one chain: the knees' midpoint (176.5, 147.5) and the ankles' (176.5, 225) round half to even -> (176, 148)
-  // and (176, 225); link 0 is the hips' midpoint (100, 145). The hip stub runs along the thigh, d = (76.5, 2.5) / 76.54
-  // = (0.9995, 0.0327): 14 px back -> (86.01, 144.54) -> (86, 145), 2 px on -> (102.00, 145.07) -> (102, 145). The
-  // part's box is 60x90: grid round(60 / 10) = 6, r max(3, round(6 * 0.42)) = 3.
-  const seNote = `legs (full:legwear): one leg chain, leg, for both legs — both ankles lie on its art, and its art runs unbroken along the line from r_knee to l_knee and along the line from r_ankle to l_ankle, so the legs touch, cross or overlap in it and a chain per leg would pull one stretch of art two ways; the chain runs hip -> knee -> ankle through the midpoints of the two hips, the two knees and the two ankles, and ${still}`;
-  const seKnee = 'r_knee observed at [175.0, 145.0]: used as given for chain leg, link 1, the midpoint of r_knee and l_knee — a point between two joints, not a joint (the ankles lie on legs)';
+  // Seated (issue #349): a chain per leg, each from its own side's joints — leg_r (90,145) -> (175,145), tip (175,225);
+  // leg_l (110,145) -> (178,150), tip (178,225) — and each leg a limb cut at its knee from the one legs part, a region
+  // per segment: the part has no mesh, so no hip stub, and it is not itself attached.
+  const seNote = `legs (full:legwear): one chain per leg, leg_r and leg_l — both ankles lie on its art; each runs hip -> knee -> ankle from its side's joints, the two limbs split the part between them (each pixel to the leg whose bones pass nearest it), and ${still}`;
+  const seKnee = 'r_knee observed at [175.0, 145.0]: used as given for chain leg_r, link 1 (the ankle lies on legs)';
   const seMesh = JSON.stringify(se.meshes.legs ?? null);
   const unread = jointNoteLines(se).find((n) => n.startsWith('no rule reads ')) ?? '';
+  const seLimbs = `${limbText(se, 'leg_r')}; ${limbText(se, 'leg_l')}`;
   say(
-    'PR82_WITH_HIPS_KNEES_AND_ANKLES_THE_LEGWEAR_PART_IS_MESHED_ON_A_LEG_CHAIN',
-    boneAt(se.bones, 'leg') === '[[100,145],[176,148]]->[176,225]' &&
-      seMesh === '{"grid":6,"r":3,"segments":[["hip",[86,145],[102,145]],"leg"]}' &&
+    'PR82_WITH_HIPS_KNEES_AND_ANKLES_THE_LEGWEAR_PART_IS_CUT_INTO_A_LIMB_PER_LEG',
+    boneAt(se.bones, 'leg_r') === '[[90,145],[175,145]]->[175,225]' &&
+      boneAt(se.bones, 'leg_l') === '[[110,145],[178,150]]->[178,225]' &&
+      seLimbs === 'thigh_r legs leg_r0 | shin_r legs leg_r1 knee; thigh_l legs leg_l0 | shin_l legs leg_l1 knee' &&
+      ['thigh_r', 'shin_r', 'thigh_l', 'shin_l'].map((n) => se.regions[n]).join(',') === 'leg_r0,leg_r1,leg_l0,leg_l1' &&
+      seMesh === 'null' &&
       !('legs' in se.regions) &&
       legTracks(se) === 0 &&
       se.notes.includes(seNote) &&
-      jointNoteLines(se).includes('chain leg: link 0 is the midpoint of r_hip and l_hip, [100.0, 145.0] — the point bone hip stands on') &&
+      jointNoteLines(se).includes('chain leg_r: link 0 is the r_hip joint, [90.0, 145.0]') &&
       jointNoteLines(se).includes(seKnee) &&
       !/knee|ankle/.test(unread) &&
       propose(Pe).regions.legs === 'hip' &&
       refusals(() => checkProposal(Pe, se)) === null,
-    `leg ${boneAt(se.bones, 'leg')}; legs ${seMesh}; region ${se.regions.legs ?? 'none'}; ${legTracks(se)} leg track(s); the rule note ${se.notes.includes(seNote) ? 'as written' : 'ABSENT'}; r_knee ${JSON.stringify(jointNoteLines(se).find((n) => n.startsWith('r_knee')))}; without joints legs rides ${propose(Pe).regions.legs}; loads ${codes(refusals(() => checkProposal(Pe, se)))}`,
-    'issue #241: a seated or lying figure\'s legs are not planted, and the keypoints are what tell it from a standing one — so with the hip, knee and ankle given, the legwear part is meshed on a chain hip -> knee -> ankle as a sleeve is on shoulder -> elbow -> wrist, and the knees and ankles are named as used; the chain carries no idle track, because it is drafted whatever the pose',
+    `leg_r ${boneAt(se.bones, 'leg_r')}, leg_l ${boneAt(se.bones, 'leg_l')}; limbs ${seLimbs}; legs mesh ${seMesh}, region ${se.regions.legs ?? 'none'}; ${legTracks(se)} leg track(s); the rule note ${se.notes.includes(seNote) ? 'as written' : 'ABSENT'}; r_knee ${JSON.stringify(jointNoteLines(se).find((n) => n.startsWith('r_knee')))}; without joints legs rides ${propose(Pe).regions.legs}; loads ${codes(refusals(() => checkProposal(Pe, se)))}`,
+    'issue #241 placed a seated figure\'s legs from its hips, knees and ankles; issue #349 cuts each leg at its knee into a thigh and a shin, each rigid on its link, where #241 meshed the part on one chain with a hip stub that pinned the thigh — the knees and ankles are named as used, and no chain carries an idle track',
   );
 
   // Standing, legs apart: r (90,160) -> (92,230), tip (88,285); l (110,160) -> (108,230), tip (112,285). Stubs: d_r =
@@ -8242,25 +8328,26 @@ function runLegChainCases(dir: string, Pe: PartSet, Je: RigJoints, se: Proposal,
   // The reference's grid rule (issue #265), under which the box arithmetic above derives grid 5.
   const apart = propose(Pa, Ja, null, 'part');
   const joined = propose(Pj, Ja, null, 'part');
-  const apartNote = `legs (full:legwear): one chain per leg, leg_r and leg_l, sharing its mesh — both ankles lie on its art, and its art breaks along the line from r_knee to l_knee and along the line from r_ankle to l_ankle, so the legs are painted apart; each runs hip -> knee -> ankle from its side's joints, and ${still}`;
-  const joinedNote = `legs (full:legwear): one leg chain, leg, for both legs — both ankles lie on its art, and its art runs unbroken along the line from r_knee to l_knee, so the legs touch, cross or overlap in it and a chain per leg would pull one stretch of art two ways; the chain runs hip -> knee -> ankle through the midpoints of the two hips, the two knees and the two ankles, and ${still}`;
+  const apartNote = `legs (full:legwear): one chain per leg, leg_r and leg_l — both ankles lie on its art; each runs hip -> knee -> ankle from its side's joints, the two limbs split the part between them (each pixel to the leg whose bones pass nearest it), and ${still}`;
+  const legLimbs = (p: Proposal): string => `${limbText(p, 'leg_r')}; ${limbText(p, 'leg_l')}`;
+  const wantLimbs = 'thigh_r legs leg_r0 | shin_r legs leg_r1 knee; thigh_l legs leg_l0 | shin_l legs leg_l1 knee';
   say(
-    'PR83_A_LEGWEAR_PART_GETS_A_CHAIN_PER_LEG_ONLY_WHERE_ITS_ART_SEPARATES_THE_KNEES_AND_THE_ANKLES',
-    legBones(apart).join(',') === 'leg_r,leg_l' &&
-      boneAt(apart.bones, 'leg_r') === '[[90,160],[92,230]]->[88,285]' &&
-      boneAt(apart.bones, 'leg_l') === '[[110,160],[108,230]]->[112,285]' &&
-      JSON.stringify(apart.meshes.legs) === '{"grid":5,"r":3,"segments":[["hip",[90,146],[90,162]],"leg_r",["hip",[110,146],[110,162]],"leg_l"]}' &&
-      apart.notes.includes(apartNote) &&
+    'PR83_A_LEGWEAR_PART_GETS_A_CHAIN_AND_A_LIMB_PER_LEG_WHETHER_ITS_ART_SEPARATES_THE_LEGS_OR_NOT',
+    [apart, joined].every(
+      (p) =>
+        legBones(p).join(',') === 'leg_r,leg_l' &&
+        boneAt(p.bones, 'leg_r') === '[[90,160],[92,230]]->[88,285]' &&
+        boneAt(p.bones, 'leg_l') === '[[110,160],[108,230]]->[112,285]' &&
+        legLimbs(p) === wantLimbs &&
+        !('legs' in p.meshes) &&
+        p.notes.includes(apartNote),
+    ) &&
       jointNoteLines(apart).includes('l_ankle observed at [112.0, 285.0]: used as given for chain leg_l, the tip (the ankle lies on legs)') &&
-      legBones(joined).join(',') === 'leg' &&
-      boneAt(joined.bones, 'leg') === '[[100,160],[100,230]]->[100,285]' &&
-      JSON.stringify(joined.meshes.legs) === '{"grid":5,"r":3,"segments":[["hip",[100,146],[100,162]],"leg"]}' &&
-      joined.notes.includes(joinedNote) &&
       legTracks(apart) + legTracks(joined) === 0 &&
       refusals(() => checkProposal(Pa, apart)) === null &&
       refusals(() => checkProposal(Pj, joined)) === null,
-    `apart: ${legBones(apart).map((c) => `${c} ${boneAt(apart.bones, c)}`).join(', ')}, legs ${JSON.stringify(apart.meshes.legs?.segments ?? null)}; joined at the knees: ${legBones(joined).map((c) => `${c} ${boneAt(joined.bones, c)}`).join(', ')}, legs ${JSON.stringify(joined.meshes.legs?.segments ?? null)}; loads ${codes(refusals(() => checkProposal(Pa, apart)))} / ${codes(refusals(() => checkProposal(Pj, joined)))}`,
-    'one chain or two is read off the part and the joints, never a setting: two chains in one mesh weight each vertex to the nearer leg, which is right where the art has a gap between the legs and tears where they touch or cross — so a chain per leg needs a break in the art between the two knees and between the two ankles, and anything less is one chain through the midpoints',
+    `apart: ${legBones(apart).map((c) => `${c} ${boneAt(apart.bones, c)}`).join(', ')}, limbs ${legLimbs(apart)}; joined at the knees: ${legBones(joined).map((c) => `${c} ${boneAt(joined.bones, c)}`).join(', ')}, limbs ${legLimbs(joined)}; loads ${codes(refusals(() => checkProposal(Pa, apart)))} / ${codes(refusals(() => checkProposal(Pj, joined)))}`,
+    'issue #241 drafted one chain through the midpoints when the legs touched, because two chains in one mesh tear the art where they meet; issue #349 cuts the part instead — each pixel to the leg whose bones pass nearest it — so two legs are two limbs whether the art separates them or not, and no midpoint chain stands for both',
   );
 
   // Negative: the seated figure with neither knee listed has no complete leg — no chain, and legs is the trunk rule's
@@ -8297,7 +8384,9 @@ function runLegChainCases(dir: string, Pe: PartSet, Je: RigJoints, se: Proposal,
     'PR85_ONE_COMPLETE_LEG_DRAFTS_ITS_SIDE_AND_AN_ANKLE_OFF_EVERY_LEGWEAR_PART_DRAFTS_NONE_AND_SAYS_WHY',
     legBones(oneLeg).join(',') === 'leg_l' &&
       boneAt(oneLeg.bones, 'leg_l') === '[[110,160],[108,230]]->[112,285]' &&
-      JSON.stringify(oneLeg.meshes.legs?.segments ?? null) === '[["hip",[110,146],[110,162]],"leg_l"]' &&
+      limbText(oneLeg, 'leg_l') === 'thigh_l legs leg_l0 | shin_l legs leg_l1 knee' &&
+      limbText(oneLeg, 'leg_r') === 'none' &&
+      !('legs' in oneLeg.meshes) &&
       oneLeg.notes.includes(`legs (full:legwear): one leg chain, leg_l, hip -> knee -> ankle from the l joints — l_ankle lies on its art and no r leg is bound to it (r_knee has no position); ${still}`) &&
       legBones(offAnkle).length === 0 &&
       offAnkle.regions.legs === 'hip' &&
@@ -8352,27 +8441,28 @@ function runWristSnapCases(dir: string, SE: string, Pe: PartSet, Je: RigJoints, 
   );
 
   // One handwear part, `arms`, holding both of the seated figure's arms: two components (forearms 60..89 and 110..139
-  // apart), so not clasped hands. Both wrists (84, 124) and (116, 124) lie on its art, so both chains are placed on it as
-  // before, the mesh on the two chains alone (issue #347: no chest stub), and the note says the part is shared.
+  // apart), so not clasped hands. Both wrists (84, 124) and (116, 124) lie on its art, so both chains are placed on it and
+  // both arms' limbs take it (issue #349), and the note says the part is shared.
   const odir = join(dir, 'pose-seated-one-piece');
   const arms = SEATED_PARTS.filter((p) => p.name === 'arm_a' || p.name === 'arm_b');
   writeProposeFixture(odir, [...SEATED_PARTS.filter((p) => !arms.includes(p)), { name: 'arms', from: 'full:handwear-r', x: 60, y: 80, w: 80, h: 50, colour: [240, 240, 240], rects: arms.flatMap((p) => p.rects ?? []) }], SEATED_RIG, true);
   const Po = readPartSet(odir);
   const one = propose(Po, Je);
   const shared =
-    'one handwear part holds both wrists: r_wrist and l_wrist both end on arms, so chains sleeve_r and sleeve_l share its mesh and its art bends with both arms; to separate them, cut one sleeve out of arms with an assemble.cuts entry (a polygon round it) and propose again';
+    'one handwear part holds both wrists: r_wrist and l_wrist both end on arms, so limbs arm_r and arm_l both take it, and the cut gives each pixel to the arm whose bones pass nearest it; where the arms touch or cross in its art that split is a line no painting draws — to draw it yourself, cut one sleeve out of arms with an assemble.cuts entry (a polygon round it) and name the piece as that arm\'s from';
   const sharedOf = (p: Proposal): number => p.notes.filter((n) => n.startsWith('one handwear part holds both wrists')).length;
   say(
     'PR75_ONE_HANDWEAR_PART_HOLDING_BOTH_WRISTS_IS_SAID_AND_POINTS_AT_ASSEMBLE_CUTS',
     boneAt(one.bones, 'sleeve_r') === '[[66,84],[66,124]]->[84,124]' &&
       boneAt(one.bones, 'sleeve_l') === '[[134,84],[134,124]]->[116,124]' &&
-      JSON.stringify(one.meshes.arms?.segments ?? null) === '["sleeve_r","sleeve_l"]' &&
+      `${limbText(one, 'arm_r')}; ${limbText(one, 'arm_l')}` === 'upperarm_r arms sleeve_r0 | forearm_r arms sleeve_r1 elbow; upperarm_l arms sleeve_l0 | forearm_l arms sleeve_l1 elbow' &&
+      !('arms' in one.meshes) &&
       jointNoteLines(one).includes(shared) &&
       sharedOf(one) === 1 &&
       sharedOf(se) === 0 &&
       refusals(() => checkProposal(Po, one)) === null,
-    `one piece: sleeve_r ${boneAt(one.bones, 'sleeve_r')}, sleeve_l ${boneAt(one.bones, 'sleeve_l')}, arms ${JSON.stringify(one.meshes.arms?.segments ?? null)}, ${sharedOf(one)} shared-part note(s) ${JSON.stringify(one.notes.filter((n) => n.startsWith('one handwear')))}; two parts: ${sharedOf(se)}; loads ${codes(refusals(() => checkProposal(Po, one)))}`,
-    'issue #199: two sleeves and folded hands decomposed as one piece get both chains on one mesh, so the art between the arms bends with both; the chains are kept (splitting the part is the author\'s), and the note names the part and the config field that separates it, instead of leaving two chains to share it silently',
+    `one piece: sleeve_r ${boneAt(one.bones, 'sleeve_r')}, sleeve_l ${boneAt(one.bones, 'sleeve_l')}, limbs ${limbText(one, 'arm_r')}; ${limbText(one, 'arm_l')}, ${sharedOf(one)} shared-part note(s) ${JSON.stringify(one.notes.filter((n) => n.startsWith('one handwear')))}; two parts: ${sharedOf(se)}; loads ${codes(refusals(() => checkProposal(Po, one)))}`,
+    'issue #199: two sleeves and folded hands decomposed as one piece get both arms; since issue #349 each is a limb the part is split between by the nearest bones, and the note names the part and the config field that draws the split by hand where the arms touch, instead of leaving it unremarked',
   );
 
   // The flag at the door: an integer above the built-in 15, with --keypoints, not with --from-config. The seated parts
@@ -9496,6 +9586,115 @@ function runRequirementCases(dir: string, say: (name: string, ok: boolean, detai
     `exit ${merged.status}; ${failLine(merged.text, 'REQUIREMENTS_')?.trim() ?? 'no REQUIREMENTS_ line'}; build/ ${existsSync(join(merged.outDir, 'build')) ? 'WRITTEN' : 'not written'}`,
     "a seam's pixels are read off parts.json's art; a rig a consumer composed has none (#77), so the declaration cannot be read against it and is refused by name before rigc builds anything — not measured on nothing",
   );
+}
+
+/**
+ * Issue #349: LIMB_ONE_BONE. The limb fixture (fixtures/assemble_fixture.ts, limbConfig) built through the CLI, its
+ * idle a swing of the arm's chain: every limb part is a region on its segment's bone, and the line passes over all
+ * eight. The mutant gives the forearm a mesh weighted to its link and to `hip` (a pin, the puff-pin family), and the
+ * line fails naming the part and `hip`; the same mesh on the link alone passes — a mesh on one bone is as rigid as a
+ * region. Without a limb part the line is not written (every example's check.json, held by the chain suite).
+ */
+function runLimbCheckCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('limb-check');
+  try {
+    writeRun(join(dir, 'full'), LIMB_FULL);
+    writeRun(join(dir, 'head'), FRAMED_HEAD);
+    writeFileSync(join(dir, 'painting.png'), encodePngBytes(flatPainting()));
+    const built = (label: string, edit: (c: Record<string, unknown>) => void = () => {}): { status: number; out: string; fig: Record<string, unknown> | null } => {
+      const c = limbConfig();
+      c.motion = { duration: 1, tracks: [{ chain: 'sleeve_r', amps: [2, 6], period: 1, phase: 0, lag: 0.08 }] };
+      edit(c);
+      const cfg = join(dir, `${label}.json`);
+      writeFileSync(cfg, JSON.stringify(c));
+      const r = runCli(['build', '--config', cfg, '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--out', join(dir, label)]);
+      return { ...r, fig: readJsonFile(join(dir, label, 'check', 'check.json')) };
+    };
+    const forearmMesh = (segments: unknown[]) => (c: Record<string, unknown>): void => {
+      delete (c.regions as Record<string, string>).forearm_r;
+      c.meshes = { forearm_r: { grid: 5, r: 3, segments } };
+    };
+    const rows = (fig: Record<string, unknown> | null): string => {
+      const l = fig?.[LIMB_LINE] as { status?: string; parts?: Array<{ part: string; status: string; others: string[] }> } | undefined;
+      return l === undefined ? 'absent' : `${String(l.status)} ${(l.parts ?? []).map((q) => `${q.part}:${q.status}${q.others.length === 0 ? '' : `+${q.others.join('+')}`}`).join(' ')}`;
+    };
+    const summary = (out: string): string => out.split('\n').map((l) => l.replace(/^\[check\] /, '')).find((l) => l.startsWith('check: ')) ?? 'no summary';
+    const regions = built('regions');
+    const pinned = built('pinned', forearmMesh([['sleeve_r1', [15, 30], [15, 50]], ['hip', [32, 8], [32, 20]]]));
+    const alone = built('alone', forearmMesh([['sleeve_r1', [15, 30], [15, 50]]]));
+    const wantFail =
+      'FAIL  CHECK_LIMB_ONE_BONE: limb part "forearm_r" (config.limbs.arm_r segment 1, bone "sleeve_r1") — is weighted to "hip" besides "sleeve_r1"; a limb part rides its one bone with weight 1 — a bend is a rotation at the joint, never a deformed mesh — so a region on "sleeve_r1" (config.regions.forearm_r), or a mesh whose segments name "sleeve_r1" alone, is required (see rig-parts guide CHECK_LIMB_ONE_BONE)';
+    const failed = (pinned.out.split('\n').find((l) => l.includes('FAIL  CHECK_LIMB_ONE_BONE')) ?? '').replace(/^\[check\] /, '');
+    const all = 'foot_r:PASS shin_r:PASS thigh_r:PASS foot_l:PASS shin_l:PASS thigh_l:PASS forearm_r:PASS upperarm_r:PASS';
+    say(
+      'CK410_A_LIMB_PART_WEIGHTED_TO_A_SECOND_BONE_FAILS_NAMING_THE_PART_AND_THE_BONE_AND_ON_ITS_ONE_BONE_IT_PASSES',
+      regions.status === 0 &&
+        rows(regions.fig) === `PASS ${all}` &&
+        summary(regions.out).startsWith('check: PASS') &&
+        pinned.status === 1 &&
+        rows(pinned.fig) === `FAIL ${all.replace('forearm_r:PASS', 'forearm_r:FAIL+hip')}` &&
+        failed.trim() === wantFail &&
+        summary(pinned.out) === 'check: FAIL — 1 bar(s) not met; 9 of 13 bar(s) measured, 4 skipped (BLINK_NO_HOLE, TIP_OVER_ROOT, FEET_STAY_LEVEL, STRESS_OFF_CHAIN)' &&
+        alone.status === 0 &&
+        rows(alone.fig) === `PASS ${all}` &&
+        barsNotMet(pinned.fig ?? {}).join(',') === LIMB_LINE &&
+        ACCEPTABLE_BARS.includes(LIMB_LINE),
+      `regions: exit ${regions.status}, ${rows(regions.fig)}, "${summary(regions.out)}"; the forearm pinned to hip: exit ${pinned.status}, ${rows(pinned.fig)}, ${failed.trim() || 'no FAIL line'}; "${summary(pinned.out)}"; a mesh on the link alone: exit ${alone.status}, ${rows(alone.fig)}; barsNotMet of the pinned: ${barsNotMet(pinned.fig ?? {}).join(',')}`,
+      'issue #349: a limb part is rigid on its one bone, so a bend is a rotation and a pin or a noodle cannot happen; the check reads what rig.json binds each limb part to, and a second bone is named with the part — the mutant is the chest stub that pinned a sleeve puff, on a cut limb',
+    );
+
+    // STRESS_OFF_CHAIN (issue #347) does not read a limb part: LIMB_ONE_BONE holds it to its one bone. The pinned build's
+    // forearm is a handwear mesh on sleeve_r1 and hip, the one chain the idle keys — the stress line would read it and
+    // fail; it is listed not read, with the reason, and the line says SKIP. The same rig and parts with the limb records
+    // stripped: the forearm is read (the negative control, the reading the skip leaves out).
+    const pinnedParts = readParts(join(dir, 'pinned', 'parts.json'));
+    const pinnedRig = readJsonFile(join(dir, 'pinned', 'rig', 'rig.json')) ?? {};
+    const pinnedMotion = readJsonFile(join(dir, 'pinned', 'rig', 'motion.json')) ?? {};
+    const hand = pinnedParts.parts.filter((q) => q.from === 'full:handwear-r');
+    const skipped = stressPlan(pinnedRig, pinnedMotion, hand);
+    const stripped = stressPlan(pinnedRig, pinnedMotion, hand.map((q) => ({ ...q, limb: undefined })));
+    const stressFig = pinned.fig?.[STRESS_LINE] as { status?: string; reason?: string } | undefined;
+    const forearmWhy = skipped.notRead.find((q) => q.part === 'forearm_r')?.reason ?? '';
+    say(
+      'CK412_STRESS_OFF_CHAIN_DOES_NOT_READ_A_LIMB_PART_AND_THE_SAME_PART_WITHOUT_ITS_LIMB_RECORD_IS_READ',
+      skipped.read.length === 0 &&
+        forearmWhy === 'a limb segment (config.limbs.arm_r), held to its one bone "sleeve_r1" by LIMB_ONE_BONE, so it turns rigidly by construction' &&
+        stressFig?.status === 'SKIP' &&
+        String(stressFig.reason).includes('"forearm_r": a limb segment (config.limbs.arm_r)') &&
+        stripped.read.map((q) => q.part).join(',') === 'forearm_r' &&
+        JSON.stringify(stripped.read[0]?.off_chain.map((o) => o.bone)) === '["hip"]',
+      `with the limb records: read ${skipped.read.map((q) => q.part).join(',') || 'none'}, forearm_r not read because ${forearmWhy}; check.json ${stressFig?.status}; stripped of them: read ${stripped.read.map((q) => `${q.part} off ${q.off_chain.map((o) => o.bone).join('+')}`).join(', ')}`,
+      'issue #349: a limb part is held to its one bone by LIMB_ONE_BONE, read statically off rig.json, so the interim stress turn would only read a second bar for one fact; the stripped run is the reading the skip leaves out, a forearm pinned to hip that the limb bar already fails',
+    );
+
+    // The line by itself: under config.turn a part rides its bone's leaf twin, which counts as the bone; a part with no
+    // slot is bound to nothing; a parts.json with no limb part writes no line.
+    const parts = { rig_size: [64, 64], scale_rig_per_source: 0.5, ghost_px: {}, parts: [{ name: 'forearm_r', from: 'full:handwear-r', x: 0, y: 0, w: 1, h: 1, opaque_px: 1, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0, limb: { name: 'arm_r', segment: 1, of: 'arm', bone: 'sleeve_r1', joint: 'elbow' } }] } as unknown as PartsFile;
+    const rigWith = (slotBone: string | null): Record<string, unknown> => ({ slots: slotBone === null ? [] : [{ name: 'forearm_r', bone: slotBone, attachment: 'forearm_r' }], skins: { default: slotBone === null ? {} : { forearm_r: { forearm_r: { image: 'forearm_r.png' } } } } });
+    const p1: Problem[] = [];
+    const twin = limbLine(parts, rigWith('turn_forearm_r_sleeve_r1'), p1);
+    const p2: Problem[] = [];
+    const noSlot = limbLine(parts, rigWith(null), p2);
+    const p3: Problem[] = [];
+    const other = limbLine(parts, rigWith('sleeve_r0'), p3);
+    const none = limbLine({ ...parts, parts: [{ ...parts.parts[0], limb: undefined }] } as PartsFile, rigWith('sleeve_r1'), []);
+    say(
+      'CK411_A_LIMB_PART_ON_ITS_BONE_S_TURN_TWIN_PASSES_ON_NO_BONE_OR_ANOTHER_FAILS_AND_WITHOUT_LIMBS_NO_LINE_IS_WRITTEN',
+      twin?.status === 'PASS' &&
+        p1.length === 0 &&
+        noSlot?.status === 'FAIL' &&
+        p2.length === 1 &&
+        p2[0].detail.startsWith('is bound to no bone in rig.json') &&
+        other?.status === 'FAIL' &&
+        JSON.stringify(other.parts[0].others) === '["sleeve_r0"]' &&
+        p3[0]?.detail.startsWith('is weighted to "sleeve_r0" besides "sleeve_r1"') === true &&
+        none === null,
+      `on turn_forearm_r_sleeve_r1: ${twin?.status}; no slot: ${noSlot?.status}, ${p2[0]?.detail.slice(0, 60)}; on sleeve_r0: ${other?.status} ${JSON.stringify(other?.parts[0].others)}; no limb part: ${JSON.stringify(none)}`,
+      'the turn control carries a part on an identity twin of its bone, which is the bone; a part bound to nothing or to the wrong bone is not riding its limb bone, and a check with no limb writes what it wrote before',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function runCheckSuite(): number {
@@ -11500,6 +11699,7 @@ function runCheckSuite(): number {
   runAnimationFoldCases(say);
   runFeetLevelCases(say);
   runStressCases(say);
+  runLimbCheckCases(say);
   runRigcIdentityCases(say);
   return bad();
 }
@@ -15029,6 +15229,172 @@ function fixtureInput(dir: string, painting = 'painting.png'): Omit<AssembleInpu
 }
 
 
+/**
+ * Issue #349: limbs cut at their joints, on {@link LIMB_FULL} (fixtures/assemble_fixture.ts). By hand:
+ *
+ * - The arm (`arm`, 320 px): the elbow line is y = 30 (axis (0, 1): the upper and lower bones both point down), so
+ *   y 10..29 is the upper arm, 6 x 20 = 120 px, and y 30..49 the forearm, 200 px. The width: the art within half a
+ *   pixel of the line is rows 29 (x 12..17) and 30 (x 10..19), read along x from the joint's 15: -4.5 .. 4.5, so 10 px,
+ *   radius 5. The cap's box: x ceil(9.5) = 10 .. floor(19.5) = 19, y ceil(24.5) = 25 .. floor(34.5) = 34, 10x10 at
+ *   10,25. Its pixels on the upper side (centre y <= 30, rows 25..29), within 5 of (15, 30): row 25 (dy -4.5) |dx| <=
+ *   2.18, 4 px; row 26 (-3.5) |dx| <= 3.57, 8; row 27 (-2.5) <= 4.33, 8; rows 28 and 29 (-1.5, -0.5) <= 4.77 and 4.97,
+ *   10 each: 40 px. On the upper arm's art (|dx| <= 2.5): 4 + 6 + 6 + 6 + 6 = 28 from the layer, 12 missing.
+ * - The legs (`legs`, 640 px): each pixel goes to the nearer polyline (x 34 or x 48), so each leg is 320 px, split at
+ *   y = 30: 160 + 160. The knee's width: 8 px, radius 4, box x ceil(29.5) = 30 .. 37, y 26..33: [30, 26, 8, 8]; its
+ *   upper-side pixels within 4: rows 26..29 at dy -3.5, -2.5, -1.5, -0.5 hold |dx| <= 1.94, 3.12, 3.71, 3.97: 4 + 6 +
+ *   8 + 8 = 26, every one on the thigh's art (|dx| <= 3.5): 26 from the layer, none missing.
+ * - The shoes (`shoes`, 100 px): each to the nearer leg, 50 + 50, not cut (a segment of another part than the one
+ *   above). The ankle's width reads both parts: row 49 (legwear, -3.5 .. 3.5) and row 50 (footwear, -4.5 .. 4.5), so
+ *   10 px, radius 5, box [29, 45, 10, 10] (right) and [43, 45, 10, 10] (left); the 40 upper-side pixels (as the
+ *   elbow's) lie on rows 45..49, where the footwear has no pixel: 0 from the layer, 40 missing — the shoe starts below
+ *   the ankle line, as on the exam-01 painting.
+ * - Draw order: the plan is legs, shoes, arm; the legs' limbs stand at legs' place, lowest segment first (foot, shin,
+ *   thigh; right leg then left), shoes leaves the order, and the arm's at arm's place: forearm, then upper arm.
+ */
+function runLimbCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const root = temp('assemble-limbs');
+  try {
+    const stage = (label: string, cfg: Record<string, unknown>, files: Record<string, Uint8Array> = {}): { r: ReturnType<typeof assemble>; lines: string[] } => {
+      const d = join(root, label);
+      writeRun(join(d, 'full'), LIMB_FULL);
+      writeRun(join(d, 'head'), FRAMED_HEAD);
+      writeFileSync(join(d, 'painting.png'), encodePngBytes(flatPainting()));
+      for (const [name, bytes] of Object.entries(files)) writeFileSync(join(d, name), bytes);
+      writeFileSync(join(d, 'config.json'), JSON.stringify(cfg));
+      const lines: string[] = [];
+      const out = join(d, 'out');
+      const r = assembleStage(
+        { source: join(d, 'painting.png'), full: join(d, 'full'), head: join(d, 'head'), config: join(d, 'config.json'), seam: 'near-white', project: DEFAULT_PROJECT_RULE },
+        { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, 'recomposite_error_rig.png') },
+        (l) => lines.push(l),
+      );
+      return { r, lines };
+    };
+    const refusedBy = (label: string, cfg: Record<string, unknown>, files: Record<string, Uint8Array> = {}): string => {
+      try {
+        stage(label, cfg, files);
+        return 'assembles';
+      } catch (err) {
+        if (!(err instanceof PartsError)) throw err;
+        return err.problems.map((q) => `${q.code} ${q.object}: ${q.detail}`).join(' | ');
+      }
+    };
+    // The geometry by itself, on the numbers above.
+    const elbow = jointLine([15, 10], [15, 30], [15, 50]);
+    const bent = jointLine([0, 0], [10, 0], [10, 10]);
+    const folded = jointLine([0, 0], [10, 0], [0, 0]);
+    const armArt = (x: number, y: number): boolean => (y >= 10 && y < 30 && x >= 12 && x < 18) || (y >= 30 && y < 50 && x >= 10 && x < 20);
+    const width = elbow === null ? null : limbWidth(elbow, armArt, [0, 0, 63, 63]);
+    const offArt = limbWidth({ at: [40, 30], axis: [0, 1] }, armArt, [0, 0, 63, 63]);
+    const lines2 = [elbow, jointLine([15, 30], [15, 40], null)];
+    const unitOk = (q: JointLine | null, x: number, y: number): boolean => q !== null && Math.abs(q.axis[0] - x) < 1e-12 && Math.abs(q.axis[1] - y) < 1e-12;
+    say(
+      'AS234_A_JOINT_LINE_IS_THE_BISECTOR_THROUGH_THE_LOWER_BONE_S_ORIGIN_AND_THE_WIDTH_IS_THE_RUN_OF_ART_ALONG_IT',
+      unitOk(elbow, 0, 1) &&
+        unitOk(bent, Math.SQRT1_2, Math.SQRT1_2) &&
+        folded === null &&
+        elbow !== null &&
+        !pastJoint(elbow, 15, 29) &&
+        pastJoint(elbow, 15, 30) &&
+        segmentOf([null, ...lines2], 0, 1, 15, 29) === 0 &&
+        segmentOf([null, ...lines2], 0, 1, 15, 31) === 1 &&
+        nearestLimb([[[34, 10], [34, 50]], [[48, 10], [48, 50]]], 40, 20) === 0 &&
+        nearestLimb([[[34, 10], [34, 50]], [[48, 10], [48, 50]]], 41, 20) === 1 &&
+        width === 10 &&
+        offArt === null &&
+        capBox([15, 30], 5).join(',') === '10,25,10,10',
+      `straight elbow axis ${JSON.stringify(elbow?.axis)}; a right-angle bend ${JSON.stringify(bent?.axis)} (the bisector); folded back ${JSON.stringify(folded)}; row 29 past the elbow line ${elbow === null ? '?' : pastJoint(elbow, 15, 29)}, row 30 ${elbow === null ? '?' : pastJoint(elbow, 15, 30)}; x 40 (centre 40.5, 6.5 and 7.5 from the two legs) to limb ${nearestLimb([[[34, 10], [34, 50]], [[48, 10], [48, 50]]], 40, 20)}, x 41 (7.5, 6.5) to ${nearestLimb([[[34, 10], [34, 50]], [[48, 10], [48, 50]]], 41, 20)}; the arm's width at the elbow ${width} (by hand 10), off the art ${offArt}; the cap box ${capBox([15, 30], 5).join(',')} (by hand 10,25,10,10)`,
+      'issue #349: the cut is arithmetic on the declared bones — the line through the joint across the limb, a pixel on it kept above, each pixel to the nearer limb, and the cap sized by the limb\'s own width there — so each figure is one a hand can check, and a joint off the art has no width rather than a guessed one',
+    );
+
+    const green = stage('green', limbConfig());
+    const rec = (n: string): PartRecord | undefined => green.r.parts.parts.find((q) => q.name === n);
+    const wantLines = [
+      '  limb cut: "arm" opaque 320 = "upperarm_r" 120 + "forearm_r" 200',
+      '  limb cap: "arm_r" joint "elbow" at [15, 30], on "forearm_r": a disc of radius 5 px (the limb 10 px across the joint line), box [10, 25, 10, 10] — on the upper side of the line 28 px from the layer, 12 px missing — the layer has no pixel there (hidden in the painting, or past the limb\'s outline), and the tool invents none: paint them into a 10x10 image whose pixel (i, j) is rig pixel (10 + i, 25 + j), and name it in the segment\'s "cap"',
+      '  limb cut: "legs" opaque 640 = "thigh_r" 160 + "shin_r" 160 + "thigh_l" 160 + "shin_l" 160',
+      '  limb cap: "leg_r" joint "knee" at [34, 30], on "shin_r": a disc of radius 4 px (the limb 8 px across the joint line), box [30, 26, 8, 8] — on the upper side of the line 26 px from the layer, none missing',
+      '  limb cap: "leg_l" joint "knee" at [48, 30], on "shin_l": a disc of radius 4 px (the limb 8 px across the joint line), box [44, 26, 8, 8] — on the upper side of the line 26 px from the layer, none missing',
+      '  limb cut: "shoes" opaque 100 = "foot_r" 50 + "foot_l" 50',
+      '  limb cap: "leg_r" joint "ankle" at [34, 50], on "foot_r": a disc of radius 5 px (the limb 10 px across the joint line), box [29, 45, 10, 10] — on the upper side of the line 0 px from the layer, 40 px missing — the layer has no pixel there (hidden in the painting, or past the limb\'s outline), and the tool invents none: paint them into a 10x10 image whose pixel (i, j) is rig pixel (29 + i, 45 + j), and name it in the segment\'s "cap"',
+      '  limb cap: "leg_l" joint "ankle" at [48, 50], on "foot_l": a disc of radius 5 px (the limb 10 px across the joint line), box [43, 45, 10, 10] — on the upper side of the line 0 px from the layer, 40 px missing — the layer has no pixel there (hidden in the painting, or past the limb\'s outline), and the tool invents none: paint them into a 10x10 image whose pixel (i, j) is rig pixel (43 + i, 45 + j), and name it in the segment\'s "cap"',
+    ];
+    const gotLines = green.lines.filter((l) => l.startsWith('  limb '));
+    const order = green.r.parts.parts.map((q) => q.name).join(',');
+    const fore = rec('forearm_r');
+    say(
+      'AS235_A_DECLARED_LIMB_IS_CUT_AT_ITS_JOINTS_EACH_LOWER_PART_CARRIES_ITS_COUNTED_CAP_AND_THE_UPPER_IS_DRAWN_OVER_IT',
+      gotLines.join('\n') === wantLines.join('\n') &&
+        order === 'foot_r,shin_r,thigh_r,foot_l,shin_l,thigh_l,forearm_r,upperarm_r' &&
+        rec('upperarm_r')?.opaque_px === 120 &&
+        fore?.opaque_px === 228 &&
+        [fore?.x, fore?.y, fore?.w, fore?.h].join(',') === '10,25,10,25' &&
+        JSON.stringify(fore?.limb) === '{"name":"arm_r","segment":1,"of":"arm","bone":"sleeve_r1","joint":"elbow","cap":{"at":[15,30],"width":10,"radius":5,"box":[10,25,10,10],"layer_px":28,"missing_px":12}}' &&
+        JSON.stringify(rec('upperarm_r')?.limb) === '{"name":"arm_r","segment":0,"of":"arm","bone":"sleeve_r0"}' &&
+        rec('foot_r')?.from === 'full:footwear' &&
+        rec('arm') === undefined &&
+        rec('legs') === undefined &&
+        rec('shoes') === undefined &&
+        serializeParts(readParts(join(root, 'green', 'out', 'parts.json'))) === serializeParts(green.r.parts),
+      `${gotLines.join(gotLines.join('\n') === wantLines.join('\n') ? ' / ' : ' / ')}; draw order ${order}; upper arm ${rec('upperarm_r')?.opaque_px} px, forearm ${fore?.opaque_px} px (200 + the cap's 28) at ${[fore?.x, fore?.y, fore?.w, fore?.h].join(',')}; forearm record ${JSON.stringify(fore?.limb)}; the taken parts written: ${['arm', 'legs', 'shoes'].filter((n) => rec(n) !== undefined).join(', ') || 'none'}`,
+      'issue #349: a limb is separate parts cut at its joints — the two legs in one legwear layer each with its own cap, which a cut piece could not carry (HQ\'s item 1) — and every cap pixel is counted by where it came from, the missing ones named with the box to paint them into; the upper part is drawn over the lower, and the layers the limbs took are not parts',
+    );
+
+    // The cap image: UB over the whole 10x10 box gives the 40 cap pixels from the image (the layer's 28 replaced, the 12 missing filled) — read
+    // under the upper arm, where the seam pass (which recolours what the painting shows) does not reach; 9x10 is not
+    // the box; all transparent gives none; a path to no file and a file that is no PNG are named by the reader.
+    const UB: [number, number, number, number] = [0, 0, 255, 255];
+    const png = (w: number, h: number, a: number): Uint8Array => {
+      const r = newRaster(w, h);
+      for (let q = 0; q < w * h; q++) r.data.set([0, 0, 255, a], q * 4);
+      return encodePngBytes(r);
+    };
+    const withCap = (cap: string): Record<string, unknown> => {
+      const limbs = structuredClone(LIMBS) as Record<string, { segments: Array<Record<string, unknown>> }>;
+      limbs.arm_r.segments[1].cap = cap;
+      return limbConfig(limbs);
+    };
+    const capped = stage('capped', withCap('elbow.png'), { 'elbow.png': png(10, 10, 255) });
+    const cappedLine = capped.lines.find((l) => l.startsWith('  limb cap: "arm_r"')) ?? '';
+    const cappedRec = capped.r.parts.parts.find((q) => q.name === 'forearm_r');
+    const capIm = (capped.r.images.find((q) => q.record.name === 'forearm_r') as PlacedPart).image;
+    const at = (x: number, y: number): string => Array.from(capIm.data.subarray(((y - 25) * capIm.width + (x - 10)) * 4, ((y - 25) * capIm.width + (x - 10)) * 4 + 4)).join(',');
+    const small = refusedBy('cap-small', withCap('elbow.png'), { 'elbow.png': png(9, 10, 255) });
+    const clear = refusedBy('cap-clear', withCap('elbow.png'), { 'elbow.png': png(10, 10, 0) });
+    const none = refusedBy('cap-none', withCap('nowhere.png'));
+    const notPng = refusedBy('cap-text', withCap('elbow.png'), { 'elbow.png': new TextEncoder().encode('not a png') });
+    say(
+      'AS236_A_CAP_IMAGE_GIVES_THE_CAP_S_PIXELS_WHERE_IT_IS_NOT_TRANSPARENT_AND_ONE_OF_ANOTHER_SIZE_OR_EMPTY_IS_REFUSED_BY_NAME',
+      cappedLine.includes('box [10, 25, 10, 10] — on the upper side of the line 40 px from the cap image, 0 px from the layer, none missing') &&
+        JSON.stringify(cappedRec?.limb?.cap) === '{"at":[15,30],"width":10,"radius":5,"box":[10,25,10,10],"layer_px":0,"image_px":40,"missing_px":0}' &&
+        at(12, 29) === UB.join(',') &&
+        at(15, 25) === UB.join(',') &&
+        at(10, 25) === '0,0,0,0' &&
+        small.startsWith('ASSEMBLE_LIMB_CAP_SIZE config.limbs.arm_r.segments[1] (joint "elbow", part "forearm_r").cap: elbow.png is 9x10; the cap\'s box is 10x10 at 10,25') &&
+        clear.startsWith('ASSEMBLE_LIMB_CAP_EMPTY config.limbs.arm_r.segments[1] (joint "elbow", part "forearm_r").cap: elbow.png is transparent over every one of the cap\'s pixels') &&
+        none.startsWith('ASSEMBLE_LIMB_CAP_PRESENT config.limbs.arm_r.segments[1].cap (part "forearm_r"): names ') &&
+        notPng.startsWith('ASSEMBLE_LIMB_CAP_DECODES config.limbs.arm_r.segments[1].cap (part "forearm_r"): '),
+      `with a 10x10 UB image: ${cappedLine.slice(cappedLine.indexOf('box'))}; rig (12, 29) ${at(12, 29)} and (15, 25) ${at(15, 25)}, under the upper arm, (10, 25) ${at(10, 25)} (outside the disc); 9x10 -> ${small.slice(0, 160)}; transparent -> ${clear.slice(0, 140)}; no file -> ${none.slice(0, 110)}; not a PNG -> ${notPng.slice(0, 100)}`,
+      'issue #349 (HQ\'s item 3): the cap is a primitive that takes supplied art — the missing pixels are painted outside the tool and named in the config, and an image painted over the whole cap replaces the layer\'s copy of the limb\'s outline with art that has none. The tool still invents nothing: an image of the wrong size, or one that gives nothing, is refused with the box it must be',
+    );
+
+    // A joint off the limb's art has no width: the elbow moved to x 30, 10 px right of the forearm. An upper bone of no
+    // length has no direction: sleeve_r with both links at (15, 30). Each is refused by name, and neither assembles.
+    const bonesWith = (chain: Record<string, unknown>): Array<Record<string, unknown>> => LIMB_BONES.map((b) => (b.chain === 'sleeve_r' ? chain : b));
+    const off = refusedBy('joint-off', limbConfig(LIMBS, bonesWith({ chain: 'sleeve_r', parent: 'hip', points: [[15, 10], [30, 30]], tip: [30, 50] })));
+    const flat = refusedBy('joint-flat', limbConfig(LIMBS, bonesWith({ chain: 'sleeve_r', parent: 'hip', points: [[15, 30], [15, 30]], tip: [15, 50] })));
+    say(
+      'AS237_A_JOINT_OFF_THE_LIMB_S_ART_OR_WITH_NO_AXIS_IS_REFUSED_BY_NAME',
+      off.startsWith('ASSEMBLE_LIMB_JOINT_ON_ART config.limbs.arm_r.segments[1] (joint "elbow", part "forearm_r"): the joint, "sleeve_r1"\'s origin at [30, 30], lies on none of the limb\'s art within 1 px along its joint line') &&
+        flat.startsWith('ASSEMBLE_LIMB_JOINT config.limbs.arm_r.segments[1] (joint "elbow"): has no joint line: "sleeve_r0" at [15, 30] and "sleeve_r1" at [15, 30] ending at [15, 50] stand on one point'),
+      `elbow at (30, 30): ${off.slice(0, 200)}; both links at (15, 30): ${flat.slice(0, 200)}`,
+      'a cap sized by a width the limb does not have there, or a line with no direction, would be a value the tool made up; the joint is the bone\'s origin, so the bone is what moves',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 function runAssembleSuite(): number {
   section('assemble: the stage, on generated runs');
   const { say, bad } = counter();
@@ -16183,6 +16549,8 @@ function runAssembleSuite(): number {
       `13 of 77: ${driftShare(13, 77)}; 0 of 0: ${driftShare(0, 0)}; 0 of 5: ${driftShare(0, 5)}; AS62's topwear row: ${driftRow.trim()}`,
       "issue #314: an examinee read drift=21999 on one part, far above the others, and could not tell whether it mattered — the column gave a count with nothing to read it against; it is now read against the candidates it was taken from (no bar reads it: AUTHORING §5)",
     );
+
+    runLimbCases(say);
 
     // Issue #242: a scene painting. The flat fixture is one already — the painting is C everywhere and the full run
     // holds only the figure — so it is the scene fixture as it stands. Its figure, by hand: the union of the full
@@ -19005,6 +19373,7 @@ function runDiagnosticsSuite(): number {
           // Issue #262: the skirt hangs from the hip and no longer binds chest; since issue #347 the sleeves draft no chest
           // stub either, so chest binds nothing and is a control the breath keys.
           'its role is control (binds nothing; keyed by motion.tracks[0] (+1 more)): it binds nothing, so there is no art to hold it to, and a control may sit off the art by design\nthe torso checks read chest beside a single bone "hip", which the bones do not hold' &&
+        // Issue #349: under the joints the arms are limbs, regions on their links, so chest binds no part's art there either.
         at('chest') === 'chest checked, clean [control] read=chest-not-between|hip-not-past-chest lint=0 why=' &&
         at('hip') === 'hip checked, clean [deforms] read=hip-not-past-chest|hip-nearer-neck lint=0 why=' &&
         at('neck').startsWith('neck not checked [control]'),
@@ -19012,15 +19381,15 @@ function runDiagnosticsSuite(): number {
       'the two torso rules are relations, so a chest with no hip has nothing to be read against; with joints the rules that run are the joint-frame ones, and the record names those',
     );
 
-    // ---- under --keypoints, a sleeve chain the joints declare no line for. The sleeve_a mesh renamed (so off-art does
-    // not read sleeve_r) and r_wrist missing: the links say both. Planted: the wrist given -> the joint rule reads them.
-    const rename = (s: SkeletonSections): SkeletonSections => ({ ...s, meshes: Object.fromEntries(Object.entries(s.meshes).map(([k, v]) => [k === 'sleeve_a' ? 'cuff' : k, v])) });
-    const noWrist = lint(Pst, rename(stSpec), poseJoints('standing', (k) => (k.people[0].joints.r_wrist = { state: 'missing' }))).coverage.find((c) => c.bone === 'sleeve_r1');
-    const withWrist = lint(Pst, rename(stSpec), Jst).coverage.find((c) => c.bone === 'sleeve_r1');
+    // ---- under --keypoints, a sleeve chain the joints declare no line for. The arm is a limb (issue #349): its forearm
+    // is a region on sleeve_r1, which no off-art check reads, and with r_wrist missing the links say both. Planted: the
+    // wrist given -> the joint rule reads them.
+    const noWrist = lint(Pst, stSpec, poseJoints('standing', (k) => (k.people[0].joints.r_wrist = { state: 'missing' }))).coverage.find((c) => c.bone === 'sleeve_r1');
+    const withWrist = lint(Pst, stSpec, Jst).coverage.find((c) => c.bone === 'sleeve_r1');
     say(
       'DG07_UNDER_KEYPOINTS_A_CHAIN_THE_JOINTS_DECLARE_NO_LINE_FOR_SAYS_SO_ON_EVERY_UNREAD_LINK',
       noWrist !== undefined &&
-        noWrist.why.join('\n') === 'its chain is named by meshes.cuff.segments[0] (mesh "cuff"), which names no part in parts.json\nlint chain sleeve_r: not read against the joints (r_wrist missing)' &&
+        noWrist.why.join('\n') === "bound rigidly by regions.forearm_r: no check reads a region's bone\nlint chain sleeve_r: not read against the joints (r_wrist missing)" &&
         withWrist !== undefined &&
         coverageRow(withWrist) === 'sleeve_r1 checked, clean [deforms] read=chain-not-advancing along r_shoulder -> r_wrist lint=0 why=',
       `r_wrist missing: ${noWrist === undefined ? 'absent' : coverageRow(noWrist)}; planted (wrist given): ${withWrist === undefined ? 'absent' : coverageRow(withWrist)}`,

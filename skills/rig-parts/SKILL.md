@@ -93,7 +93,9 @@ under that.
    an arm raised, seated in a skirt that does not start at the hip: add
    `--keypoints <file>` (body-18 joints in painting px, each observed, occluded
    or missing; AUTHORING §3, *A posed figure*) so the neck, hip, chest and
-   sleeves follow the pose and LINT reads the joints, not screen y. A clean
+   sleeves follow the pose and LINT reads the joints, not screen y. Each arm and
+   leg it places comes back as `limbs` (AUTHORING §3, *Limbs*): paste it, assemble
+   again, and read each `limb cap:` line for the pixels a cap is missing. A clean
    LINT does not show a seated hip is right; the overlay does. Never write a joint you did not get from an
    estimator or the painting: say `missing` and let the rule stand in.
 6. Correct against `render/landmarks.png` and `note:` lines; a

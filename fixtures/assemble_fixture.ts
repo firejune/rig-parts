@@ -599,3 +599,63 @@ export function writeAssembleFixture(dir: string, config: Record<string, unknown
   writeRun(join(dir, 'head'), runs.head);
   writeFileSync(join(dir, 'config.json'), `${JSON.stringify(config, null, 2)}\n`);
 }
+
+/**
+ * Issue #349: limbs cut at their joints, on the 64x64 flat painting at scale 1 (a run pixel is a rig pixel), every
+ * layer colour C. Each count below is derived in the assemble suite's limb controls (AS234 on).
+ *
+ * - `handwear-r`, one arm: the upper arm x 12..17, y 10..29 (6 x 20 = 120 px), the forearm x 10..19, y 30..49
+ *   (10 x 20 = 200 px). Chain `sleeve_r` (15, 10) -> (15, 30), tip (15, 50): the elbow at (15, 30), its line y = 30.
+ * - `legwear`, two legs in one layer: x 30..37 and x 44..51, y 10..49 (8 x 40 = 320 px each). Chains `leg_r` (34, 10)
+ *   -> (34, 30), tip (34, 50) and `leg_l` (48, 10) -> (48, 30), tip (48, 50).
+ * - `footwear`, two shoes in one layer: x 29..38 and x 43..52, y 50..54 (10 x 5 = 50 px each). Bones `foot_r` at
+ *   (34, 50) under `leg_r1` and `foot_l` at (48, 50) under `leg_l1`, both `noRotationOrReflection`.
+ */
+export const LIMB_FULL: RunLayerSpec[] = [
+  { name: 'legwear', depth: 0.6, rects: [rect(30, 10, 38, 50, C), rect(44, 10, 52, 50, C)] },
+  { name: 'footwear', depth: 0.6, rects: [rect(29, 50, 39, 55, C), rect(43, 50, 53, 55, C)] },
+  { name: 'handwear-r', depth: 0.5, rects: [rect(12, 10, 18, 30, C), rect(10, 30, 20, 50, C)] },
+];
+export const LIMB_PLAN: Array<[string, 'full' | 'head', string]> = [
+  ['legs', 'full', 'legwear'],
+  ['shoes', 'full', 'footwear'],
+  ['arm', 'full', 'handwear-r'],
+];
+export const LIMB_BONES: Array<Record<string, unknown>> = [
+  { name: 'hip', parent: 'root', at: [32, 8] },
+  { chain: 'sleeve_r', parent: 'hip', points: [[15, 10], [15, 30]], tip: [15, 50] },
+  { chain: 'leg_r', parent: 'hip', points: [[34, 10], [34, 30]], tip: [34, 50] },
+  { chain: 'leg_l', parent: 'hip', points: [[48, 10], [48, 30]], tip: [48, 50] },
+  { name: 'foot_r', parent: 'leg_r1', at: [34, 50], inherit: 'noRotationOrReflection' },
+  { name: 'foot_l', parent: 'leg_l1', at: [48, 50], inherit: 'noRotationOrReflection' },
+];
+export const LIMBS: Record<string, { segments: Array<Record<string, unknown>> }> = {
+  arm_r: {
+    segments: [
+      { part: 'upperarm_r', from: 'arm', bone: 'sleeve_r0' },
+      { part: 'forearm_r', from: 'arm', bone: 'sleeve_r1', joint: 'elbow' },
+    ],
+  },
+  leg_r: {
+    segments: [
+      { part: 'thigh_r', from: 'legs', bone: 'leg_r0' },
+      { part: 'shin_r', from: 'legs', bone: 'leg_r1', joint: 'knee' },
+      { part: 'foot_r', from: 'shoes', bone: 'foot_r', joint: 'ankle' },
+    ],
+  },
+  leg_l: {
+    segments: [
+      { part: 'thigh_l', from: 'legs', bone: 'leg_l0' },
+      { part: 'shin_l', from: 'legs', bone: 'leg_l1', joint: 'knee' },
+      { part: 'foot_l', from: 'shoes', bone: 'foot_l', joint: 'ankle' },
+    ],
+  },
+};
+
+/** The limb fixture's config: the plan, the bones and the limbs, every limb part a region on its segment's bone. */
+export function limbConfig(limbs: Record<string, unknown> = LIMBS, bones: Array<Record<string, unknown>> = LIMB_BONES): Record<string, unknown> {
+  const cfg = assembleConfig({ plan: LIMB_PLAN, extend: [] });
+  const regions: Record<string, string> = {};
+  for (const l of Object.values(limbs) as Array<{ segments: Array<Record<string, unknown>> }>) for (const s of l.segments) regions[String(s.part)] = String(s.bone);
+  return { ...cfg, limbs, bones, regions };
+}
