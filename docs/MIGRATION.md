@@ -283,3 +283,23 @@ hip*). No other command changed, and no byte any build writes moves.
 
 What to do: write a hip a skirt hides as `occluded` with its estimate. A file that
 wrote it `observed` reads the same gaps as before.
+
+### And cloth and hair that answer the world (`propose --cloth`, issue #364)
+
+A config may hold a `cloth` block — one recipe per tag, `bottomwear`, `back hair` and
+`front hair` (AUTHORING §3, *Recipe: cloth and hair that answer the world*) — and
+`propose --cloth <config.json>` drafts that tag's pieces as trees of physics links
+in place of the keyed chains. Without `--cloth` nothing the proposer writes moves;
+`rig` and `build` do not read `cloth` at all, so no byte any build writes moves
+either (the examples' `expected/` and every existing control are unchanged).
+
+| change | before | after |
+| --- | --- | --- |
+| `cloth` in a config | refused, `CONFIG_KEY_KNOWN` | vouched by every loader (`CONFIG_FIELD_*`, and the `CONFIG_CLOTH_*` rules of AUTHORING §6), read by `propose --cloth` only |
+| `propose --cloth <config.json>` | a usage error, flag not taken (exit 2) | the recipe's trees, their `constraints` in proposal.json, one note per piece; a recipe that drafts nothing, `PROPOSE_CLOTH_DRAFTED` (exit 1) |
+| `proposal.json` | no `constraints` | `constraints` after `motion`, with `--cloth` only |
+
+What to do: nothing. To draft a skirt or hair that the consumer's wind and gravity move,
+add a `cloth` block and propose with `--cloth`; copy each of `bones`, `meshes`, `regions`,
+`limbs`, `motion`, `constraints` and `turn` the proposal wrote into the config, as before
+(`constraints` is the one `--cloth` adds).
