@@ -57,7 +57,7 @@ export type LedgerKind = (typeof LEDGER_HEADS)[number];
 export interface GuideSection {
   /** `"6"` for `## 6.`, `"6.3"` for the third `###` under it, `"3.6.1"` for the first `####` under §3.6. */
   number: string;
-  /** The heading's text, a `##`'s without its `n. `. */
+  /** The heading's text as written (a `##` keeps its `n. `). */
   title: string;
   start: number;
   end: number;
@@ -124,7 +124,7 @@ export function guideSections(text: string): GuideSection[] {
     const number = h.level === 2 ? chapter : h.level === 3 ? `${chapter}.${counts[1]}` : `${chapter}.${counts[1]}.${counts[2]}`;
     const next = heads.slice(k + 1).find((x) => x.level <= h.level);
     const end = next === undefined ? lines.length + 1 : next.line;
-    const title = h.level === 2 ? h.title.replace(/^\d+\. /, '') : h.title;
+    const title = h.title;
     const body = lines.slice(h.line - 1, end - 1).join('\n');
     out.push({ number, title, start: h.line, end, bytes: utf8Bytes(body) + (next === undefined ? 0 : 1) });
   });
@@ -245,11 +245,11 @@ export function guideSection(text: string, ask: string): GuideAnswer {
     for (let d = asked.length - 1; d >= 1 && parent === undefined; d--) parent = sections.find((s) => s.number === asked.slice(0, d).join('.'));
     const kids = childrenOf(parent?.number ?? null);
     const list = kids.length === 0 ? 'none' : kids.map((s) => `§${s.number}`).join(', ');
-    const deepest = parent === undefined ? `${GUIDE_DOC} itself` : `§${parent.number} "${parent.title}"`;
+    const deepest = parent === undefined ? `the guide itself, ${GUIDE_DOC}` : `§${parent.number} "${parent.title}"`;
     return { problem: { code: 'GUIDE_SECTION_KNOWN', object: `"${ask}"`, detail: `no such section; the deepest that exists is ${deepest}, whose sections are: ${list}` } };
   }
   const lines = text.split('\n');
   const head = [`${GUIDE_DOC} §${hit.number} "${hit.title}", lines ${hit.start}–${hit.end - 1}, ${kb(hit.bytes)}`];
-  for (const s of childrenOf(hit.number)) head.push(`  §${s.number.padEnd(6)} ${kb(s.bytes).padStart(9)}  ${s.title}`);
+  for (const s of childrenOf(hit.number)) head.push(`§${s.number.padEnd(6)} ${kb(s.bytes).padStart(9)}  ${s.title}`);
   return { lines: [...head, '', lines.slice(hit.start - 1, hit.end - 1).join('\n').replace(/\n+$/, '')] };
 }

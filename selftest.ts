@@ -3436,13 +3436,18 @@ function runCliSuite(): number {
   }
   const g10 = deep === null ? null : runCli(['guide', `§${deep.address}`]);
   const g11 = deep === null ? null : runCli(['guide', `§${deep.address.split('.').slice(0, 2).join('.')}`]);
-  const okDeep = deep !== null && g10?.status === 0 && g10.out.split('\n').includes(deep.heading) && g11?.status === 0 && g11.out.split('\n').some((l) => new RegExp(`^ {2}§${(deep?.address ?? '-').replaceAll('.', '\\.')} +\\d+\\.\\d KB {2}`).test(l) && l.endsWith(deep?.heading.slice(5) ?? '-'));
-  const listed = /^ {2}§6\.\d+ +\d+\.\d KB {2}/;
+  const okDeep = deep !== null && g10?.status === 0 && g10.out.split('\n').includes(deep.heading) && g11?.status === 0 && g11.out.split('\n').some((l) => new RegExp(`^§${(deep?.address ?? '-').replaceAll('.', '\\.')} +\\d+\\.\\d KB {2}`).test(l) && l.endsWith(deep?.heading.slice(5) ?? '-'));
+  const listed = /^§6\.\d+ +\d+\.\d KB {2}/;
   const g5Listed = g5.out.split('\n').filter((l) => listed.test(l)).map((l) => l.replace(listed, ''));
   const g6 = runCli(['guide', `§6.${sixSubs.length}`]);
   const g7 = runCli(['guide', `§6.${sixSubs.length + 1}`]);
   const g8 = runCli(['guide']);
   const g9 = runCli(['guide', '--rule']);
+  const g12 = runCli(['guide', '§0']);
+  const sixHeading = guideLines.find((l) => l.startsWith('## 6. ')) ?? '(no ## 6.)';
+  const okVerbatim =
+    g5.out.split('\n')[0].startsWith(`docs/AUTHORING.md §6 "${sixHeading.slice(3)}", lines `) &&
+    g12.status === 1 && g12.out.includes('GUIDE_SECTION_KNOWN: "§0" — no such section; the deepest that exists is the guide itself, docs/AUTHORING.md, whose sections are: §1, ');
   const plantedGuide = guideNow.replace(rowText('CHECK_LOOP_CLOSES'), rowText('CHECK_LOOP_CLOSES').replace('| frame 0', '| PLANTED WORDS frame 0'));
   const plantedRow = guideRule(plantedGuide, 'CHECK_LOOP_CLOSES');
   const sixOne = `### ${sixSubs[0]}\n`;
@@ -3460,13 +3465,13 @@ function runCliSuite(): number {
   const okUnknown =
     g4.status === 1 && g4Fail.length === 1 && g4Split.stdout === '' &&
     /^ {2}FAIL {2}GUIDE_RULE_KNOWN: "CHECK_LOOP_CLOSE" — no row in docs\/AUTHORING\.md names it; the nearest: CHECK_LOOP_CLOSES, [A-Z_]+, [A-Z_]+ \(see rig-parts guide GUIDE_RULE_KNOWN\)$/.test(g4Fail[0]);
-  const okSections = okDeep && g5.status === 0 && sixSubs.length > 0 && g5Listed.join('\n') === sixSubs.join('\n') && g6.status === 0 && g6.out.includes(`\n### ${sixSubs[sixSubs.length - 1]}\n`) && g7.status === 1 && g7.out.includes(`GUIDE_SECTION_KNOWN: "§6.${sixSubs.length + 1}" — no such section; the deepest that exists is §6 "`) && g8.status === 2 && g9.status === 2 && g9.out.includes('guide takes no flag');
+  const okSections = okDeep && okVerbatim && g5.status === 0 && sixSubs.length > 0 && g5Listed.join('\n') === sixSubs.join('\n') && g6.status === 0 && g6.out.includes(`\n### ${sixSubs[sixSubs.length - 1]}\n`) && g7.status === 1 && g7.out.includes(`GUIDE_SECTION_KNOWN: "§6.${sixSubs.length + 1}" — no such section; the deepest that exists is §6 "`) && g8.status === 2 && g9.status === 2 && g9.out.includes('guide takes no flag');
   const okPlants = 'lines' in plantedRow && plantedRow.lines.some((l) => l.includes('PLANTED WORDS')) && 'lines' in plantedSection && plantedSection.lines.join('\n').split('\n').includes(sixOne.trimEnd()) && near.length <= NEAREST_LISTED && near[0] === 'CHECK_LOOP_CLOSES';
   say(
     'CL167_GUIDE_PRINTS_THE_ONE_ROW_A_RULE_NAMES_ITS_PAIR_AND_SECTIONS_READ_FROM_THE_GUIDE_AT_CALL_TIME',
     okRow && okPair && okUnknown && okSections && okPlants,
     `guide CHECK_LOOP_CLOSES -> exit ${g1.status}, ${okRow ? 'where it is, then the row as the file holds it' : `"${g1.out.split('\n')[0]}"`}; CHECK_BREATH_VISIBLE and BREATH_VISIBLE -> exit ${g2.status}, ${g3.status}, ${okPair ? "each one's own row first, then \"paired with\" and its pair's" : 'NOT in that order or form'}` +
-      `; CHECK_LOOP_CLOSE -> exit ${g4.status}, stdout ${g4Split.stdout === '' ? 'empty' : 'NOT empty'}, ${(g4Fail[0] ?? 'no FAIL line').trim().slice(0, 200)}; §6 -> exit ${g5.status}, ${g5Listed.length} subsection(s) listed of the ${sixSubs.length} ### heading(s) under ## 6.; §6.${sixSubs.length} -> exit ${g6.status}; §6.${sixSubs.length + 1} -> exit ${g7.status}; no argument -> exit ${g8.status}; a flag -> exit ${g9.status}; the first #### by hand, ${deep === null ? 'none found' : `§${deep.address}`} -> exit ${g10?.status ?? '-'}, and its ### lists it: ${okDeep}` +
+      `; CHECK_LOOP_CLOSE -> exit ${g4.status}, stdout ${g4Split.stdout === '' ? 'empty' : 'NOT empty'}, ${(g4Fail[0] ?? 'no FAIL line').trim().slice(0, 200)}; §6 -> exit ${g5.status}, ${g5Listed.length} subsection(s) listed of the ${sixSubs.length} ### heading(s) under ## 6.; §6.${sixSubs.length} -> exit ${g6.status}; §6.${sixSubs.length + 1} -> exit ${g7.status}; no argument -> exit ${g8.status}; a flag -> exit ${g9.status}; §6's header carries its heading verbatim and §0 names the guide itself: ${okVerbatim}; the first #### by hand, ${deep === null ? 'none found' : `§${deep.address}`} -> exit ${g10?.status ?? '-'}, and its ### lists it: ${okDeep}` +
       `; planted: words in the row -> ${okPlants ? 'printed' : 'NOT printed'}, a ### inserted before §6.1 -> the old §6.1 is §6.2; nearest to "check_loop_close": ${near.join(', ')}`,
     "issue #343: an agent reads a failure line and needs exactly the row that line names; the guide is one ledger, so every answer is a slice of the installed file taken when the command runs, and a name it does not hold is refused with real names, never a substitute row",
   );
