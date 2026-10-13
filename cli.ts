@@ -30,6 +30,7 @@ import { checkImageSize, choosePerson, KEYPOINTS_SPEC, loadKeypoints, type RigJo
 import { basisLines, checkProposal, compare, compareLines, DEFAULT_GRID_RULE, draftTurn, drawLandmarks, FIGURE_GRID_DIVISOR, FRINGE_STEP_PX, GRID_RULES, type GridRule, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal, withTurn, WRIST_ON_PART_PX } from './src/propose.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { BEND_DEGREES, BEND_WORST_SHARE, DUST_MAX_PX, DUST_MAX_SHARE, IDLE_BOUND_PX, MESH_DRAFT_REPORT, MESH_DRAFT_SPEC, meshDraftStage, MORE_TRIANGLES_FLAG, TOLERANCE_FIGURE_DIVISOR } from './src/meshdraft.ts';
+import { checkPainting } from './src/paintcheck.ts';
 import { readPng, writePng } from './src/raster/png.ts';
 import { REQUIREMENTS_SENTENCE } from './src/requirements.ts';
 import { composeStage, IMAGE_SEP, PLATE, PROVENANCES, SCENE_REPORT_FILE, SCENE_REPORT_SPEC, SCENE_SPEC } from './src/scene.ts';
@@ -636,6 +637,21 @@ usage:
       line and ${SCENE_REPORT_FILE} name what was accepted, and the run exits 1.
       Exit 0 when the check is PASS and nothing was accepted, 1 otherwise.
 
+  rig-parts painting --keypoints <keypoints.json> [--person <id>] <painting.png>
+      Before See-through: read the painting against its body-18 joints (the
+      file propose --keypoints reads, measured on this painting) and refuse,
+      by name, what a rig cannot be cut from. Background is near-white
+      (every channel above 235) or unpainted (alpha 8 or less) ground
+      connected to the edge; the figure is the rest; a gap is one background
+      pixel on the line between two joints. PAINTING_BACKGROUND_PLAIN (a
+      border pixel that is not ground), PAINTING_JOINTS_STATED (a wrist, hip,
+      knee or ankle not observed), PAINTING_JOINT_ON_FIGURE (an observed
+      joint on the background), PAINTING_ARM_CLEAR (no gap from a wrist to
+      its hip), PAINTING_HANDS_APART (none between the wrists),
+      PAINTING_LEGS_APART (none between the knees, or the ankles). Prints the
+      figure, every joint and every gap with its count; writes nothing.
+      docs/PAINTING.md says why each one matters. Exit 0 PASS, 1 refused.
+
   rig-parts guide <RULE | §<n> | §<n>.<m> | §<n>.<m>.<k>>
       Print a slice of ${GUIDE_DOC}, the guide this package ships, read
       from the installed file at the moment of the call; nothing is kept
@@ -757,6 +773,7 @@ const TAKES = {
   build: { valued: ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys', '--lead-in'], switches: ['--loop', '--seam-pairs', '--keep-stills'] },
   compose: { valued: ['--scene', '--out', '--requirements', '--accept'], switches: [] },
   'mesh-draft': { valued: ['--config', '--parts', '--out', '--requirements', '--idle-keys', '--page-edges', '--pack-shape'], switches: ['--more-triangles'] },
+  painting: { valued: ['--keypoints', '--person'], switches: [] },
 } as const satisfies Record<string, { valued: readonly string[]; switches: readonly string[] }>;
 
 type Command = keyof typeof TAKES;
@@ -1514,6 +1531,52 @@ function cmdMeshDraft(args: string[]): number {
   }
 }
 
+/**
+ * `painting --keypoints <k.json> [--person <id>] <painting.png>` (issue #350): what the painting must be before
+ * See-through runs on it, read off its pixels and the body-18 joints `propose --keypoints` reads. Writes nothing.
+ */
+function cmdPainting(args: string[]): number {
+  const flags = new Map<string, string>();
+  const paths: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith('--')) {
+      paths.push(a);
+      continue;
+    }
+    if (!takesValued('painting', a)) return usage(notTaken('painting', a));
+    const value = args[i + 1];
+    if (value === undefined) return usage(`${a} needs a value`);
+    if (flags.has(a)) return usage(`${a} is given twice`);
+    flags.set(a, value);
+    i++;
+  }
+  const kpPath = flags.get('--keypoints');
+  if (kpPath === undefined) return usage('painting needs --keypoints <file>, the body-18 joints of the figure in painting px (the file propose --keypoints reads)');
+  if (paths.length !== 1) return usage(`painting takes one painting path; got ${paths.length}`);
+  const source = paths[0];
+  try {
+    if (!existsSync(source)) throw new PartsError([{ code: 'PAINTING_SOURCE_PRESENT', object: source, detail: 'no such file; the painting to check is required' }]);
+    let painting: ReturnType<typeof readPng>;
+    try {
+      painting = readPng(source);
+    } catch (err) {
+      throw new PartsError([{ code: 'PAINTING_SOURCE_DECODES', object: source, detail: `${(err as Error).message}; a PNG is required` }]);
+    }
+    const kp = loadKeypoints(kpPath);
+    checkImageSize(kp, painting.width, painting.height, kpPath, source);
+    const person = choosePerson(kp, flags.get('--person'), kpPath);
+    console.log(`rig-parts painting: ${source}, joints from ${kpPath} person "${person.id}" (source: ${kp.source})`);
+    const r = checkPainting(painting, person, source, kpPath);
+    for (const l of r.lines) console.log(l);
+    if (r.problems.length > 0) throw new PartsError(r.problems);
+    console.log('  PASS  the painting holds every requirement this check reads (docs/PAINTING.md); what only an eye reads is listed there');
+    return EXIT_OK;
+  } catch (err) {
+    return printRefusal(err);
+  }
+}
+
 function main(argv: string[]): number | Promise<number> {
   const [command, ...rest] = argv;
   if (command === undefined || command === '--help' || command === '-h' || command === 'help') {
@@ -1537,6 +1600,7 @@ function main(argv: string[]): number | Promise<number> {
   if (command === 'build') return cmdBuild(rest);
   if (command === 'compose') return cmdCompose(rest);
   if (command === 'mesh-draft') return cmdMeshDraft(rest);
+  if (command === 'painting') return cmdPainting(rest);
   if (command === 'guide') return cmdGuide(rest);
   const later = LATER.find(([name]) => name === command);
   if (later !== undefined) {

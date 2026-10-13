@@ -1,6 +1,6 @@
 ---
 name: rig-parts
-description: Turn one anime character painting and its See-through layer decomposition into a verified 2D character rig (Spine 4.3 skeleton data) — measured parts, weighted meshes, bone chains and a looping idle — with rig-parts, which gates everything through rig-c before it is written. Use for a request to rig or animate a single character painting, to run or read rig-parts layers, sheet, assemble, propose, rig, check, loop or build, or to write or fix a rig-parts config.json. Not for cutting art into parts by hand, for authoring a rig from loose PNGs (that is the rigc skill), for lip-sync or swapping a part's image, or for running See-through itself.
+description: Turn one anime character painting and its See-through layer decomposition into a verified 2D character rig (Spine 4.3 skeleton data) — measured parts, weighted meshes, bone chains and a looping idle — with rig-parts, which gates everything through rig-c before it is written. Use for a request to rig or animate a single character painting, to check a painting before See-through (rig-parts painting), to run or read rig-parts layers, sheet, assemble, propose, rig, check, loop or build, or to write or fix a rig-parts config.json. Not for cutting art into parts by hand, for authoring a rig from loose PNGs (that is the rigc skill), for lip-sync or swapping a part's image, or for running See-through itself.
 license: MIT
 compatibility: Requires Bun 1.2 or later. The tool is the npm package @rig-c/parts (npm i -D @rig-c/parts, or bun add -d @rig-c/parts), whose command is rig-parts; rig-c is installed with it. See-through is run separately.
 ---
@@ -58,6 +58,15 @@ under that.
 
 ## The loop
 
+0. Before See-through, check the painting: `rig-parts painting --keypoints
+   <k.json> <painting.png>` with the figure's body-18 joints (the file
+   `propose --keypoints` reads, from an estimator or the painting — never a joint
+   you guessed). A `FAIL  PAINTING_…` line names what a rig cannot be cut from —
+   an arm against the body, hands together, legs with no gap, a joint off the
+   figure, a background that is not plain — and the fix is a new painting, not a
+   config field. `docs/PAINTING.md` lists every requirement, the ones only an eye
+   reads (front view, feet, a cape over an elbow), and one generation recipe;
+   report those as not checked.
 1. `rig-parts inputs --source <painting> --config config.json --out <dir>` writes
    `st_input_full.png`, the painting on a white square. The config needs only `key`,
    `seethrough` and `assemble.rig_scale` at this point. Run See-through on it — any
