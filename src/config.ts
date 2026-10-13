@@ -643,9 +643,10 @@ export interface ConfigConstraint {
  * pixels it takes (`from`: a plan part or a cut's piece), and the one bone it
  * rides with weight 1. Every segment after the first sits below a joint at
  * its bone's origin: `joint` names it, `range` is the bend the joint may take
- * from rest, `[min, max]` degrees (metadata: read by the stress readers, not
- * by rig-c), and `cap` an image, relative to the config's directory, of the
- * cap that overlaps the joint (`limbCaps` in `src/assemble.ts`).
+ * from rest, `[min, max]` degrees (carried into `parts.json` and posed by
+ * `check`'s `SEAM_OVER_RANGE`, issue #360; not read by rig-c), and `cap` an
+ * image, relative to the config's directory, of the cap that overlaps the
+ * joint (`limbCaps` in `src/assemble.ts`).
  */
 export interface LimbSegment {
   part: string;

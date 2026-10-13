@@ -303,3 +303,22 @@ What to do: nothing. To draft a skirt or hair that the consumer's wind and gravi
 add a `cloth` block and propose with `--cloth`; copy each of `bones`, `meshes`, `regions`,
 `limbs`, `motion`, `constraints` and `turn` the proposal wrote into the config, as before
 (`constraints` is the one `--cloth` adds).
+
+## After 1.20.0: the seam over a joint's range
+
+Issue #360 (item 13) reads the seam with each limb joint bent, not only at rest. A
+segment's `range` in `config.limbs` was metadata no stage read; it is now carried into
+the lower part's `parts.json` record, and `check` poses the joint at the range's two
+ends and its middle (AUTHORING §7, `SEAM_OVER_RANGE`). Nothing a config without a
+`range` builds changes: no field is written, nothing more is rendered, and no byte any
+existing build writes moves (no public example declares `limbs`; the chain suite holds
+their `parts.json` and `check.json` to `expected/`).
+
+| change | before | after |
+| --- | --- | --- |
+| `parts.json`, a limb segment below a joint whose config segment declares `range` | no `range` | `range` (`[min, max]`, as declared) after `joint` |
+| a `parts.json` with a limb `range` | refused, `PARTS_KEY_KNOWN` | read; on the upper segment `PARTS_FIELD_PRESENT`, not two numbers with `min <= 0 <= max` `PARTS_FIELD_TYPE` |
+| `check` on a rig whose `parts.json` holds a limb `range` | the range not read | `SEAM_OVER_RANGE` in `check.json` after `LIMB_ONE_BONE`, its console lines after the limb lines, one more bar counted in the summary, `CHECK_SEAM_OVER_RANGE` on a pose over the rest-pose seam's bar; `compose --accept` takes it |
+
+What to do: nothing. To have a joint read, declare its `range`; a joint that opens when
+bent wants a cap that covers the turn.

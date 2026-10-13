@@ -129,6 +129,7 @@ import {
   LIMB_BONES,
   LIMBS,
   limbConfig,
+  type RunLayerSpec,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
 import { capBox, type JointLine, jointLine, limbWidth, nearestLimb, pastJoint, segmentOf } from './src/limbs.ts';
@@ -192,7 +193,7 @@ import {
   padSingleRun,
   singleRunHeadBox,
 } from './src/assemble.ts';
-import { chainDirection } from './src/check.ts';
+import { chainDirection, sweepAngles, sweepJoints, type SweepJoint, sweepLine, type SweepLine, SWEEP_LINE, type SweepPose, type Viewport } from './src/check.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics, BREATH_TORSO_MEAN_FLOOR } from './src/check.ts';
 import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, drawingTurn, FOLD_LINE, LEVEL_BAR_DEGREES, LEVEL_LINE, LIMB_LINE, limbLine, foldsLine, STRESS_LINE, STRESS_RIGID, STRESS_TURNS, stressPlan, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, GATE_PROFILE, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, packageRigc, rigcIdentity, rigcRunnerAt, type RigcSpawn, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { baseTagOf, blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
@@ -10287,6 +10288,272 @@ function runRequirementCases(dir: string, say: (name: string, ok: boolean, detai
 }
 
 /**
+ * Issue #360 (unit A): SEAM_OVER_RANGE, the seam bar with each limb joint bent to its declared range's ends and
+ * middle. One straight arm on the 64x64 flat painting at scale 1 (a run pixel is a rig pixel), colour C (100, 60, 40)
+ * over rigc's background (232, 232, 232), so a pixel of the arm against the background differs by 192 in its largest
+ * channel — over both levels, 40 and 80. By hand:
+ *
+ * - `handwear-r` x 12..41, y 4..60, 30 px wide everywhere. Chain `sleeve_r` (27, 4) -> (27, 32), tip (27, 60): the
+ *   elbow at (27, 32), its line y = 32, so the upper arm is rows 4..31 and the forearm rows 32..60.
+ * - The width across the line: rows 31 and 32 (centres 0.5 from it), x 12..41, centres -14.5..14.5 about 27, plus
+ *   one: 30, so the cap's radius is 15. The cap's box is [12, 17, 30, 30], and every pixel of it inside the disc on
+ *   the upper side is the layer's (the arm spans x 12..41): the forearm part carries the whole upper half-disc.
+ * - The underlay: the pixels whose 3x3 neighbourhood lies inside that disc and on the arm — counted below from the
+ *   definition, by a loop of its own, not by the code under test.
+ * - Bent by a degrees (a <= 180) about (27, 32), the forearm leaves the sector of angle a between the elbow line and
+ *   its own top edge, on the outer side: no part covers it unless the cap does. The underlay is a disc about the
+ *   elbow, so that sector holds a / 360 of it, give or take the pixels its two radii and its arc cross: at most
+ *   2 * 15 + 15 * a * pi / 180. With the cap, the turned upper half-disc covers the sector.
+ */
+const SWEEP_AT: [number, number] = [27, 32];
+const SWEEP_R = 15;
+const SWEEP_FULL: RunLayerSpec[] = [{ name: 'handwear-r', depth: 0.5, rects: [{ x0: 12, y0: 4, x1: 42, y1: 61, colour: C }] }];
+const SWEEP_LIMBS = (range: [number, number] | null): Record<string, unknown> => ({
+  arm_r: {
+    segments: [
+      { part: 'upperarm_r', from: 'arm', bone: 'sleeve_r0' },
+      { part: 'forearm_r', from: 'arm', bone: 'sleeve_r1', joint: 'elbow', ...(range === null ? {} : { range }) },
+    ],
+  },
+});
+
+function sweepConfig(range: [number, number] | null): Record<string, unknown> {
+  const cfg = assembleConfig({ plan: [['arm', 'full', 'handwear-r']], extend: [] });
+  return {
+    ...cfg,
+    limbs: SWEEP_LIMBS(range),
+    bones: [
+      { name: 'hip', parent: 'root', at: [27, 2] },
+      { chain: 'sleeve_r', parent: 'hip', points: [[27, 4], [27, 32]], tip: [27, 60] },
+    ],
+    regions: { upperarm_r: 'sleeve_r0', forearm_r: 'sleeve_r1' },
+    motion: { duration: 1, tracks: [{ chain: 'sleeve_r', amps: [2, 6], period: 1, phase: 0, lag: 0.08 }] },
+  };
+}
+
+/** The underlay's pixel count from its definition: each pixel whose 3x3 neighbourhood has every centre within SWEEP_R of the elbow and on the arm. */
+function sweepUnderPx(): number {
+  let n = 0;
+  const on = (x: number, y: number): boolean => x >= 12 && x <= 41 && y >= 4 && y <= 60 && (x + 0.5 - SWEEP_AT[0]) ** 2 + (y + 0.5 - SWEEP_AT[1]) ** 2 <= SWEEP_R * SWEEP_R;
+  for (let y = 0; y < 64; y++) {
+    for (let x = 0; x < 64; x++) {
+      let all = true;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) all = all && on(x + dx, y + dy);
+      if (all) n++;
+    }
+  }
+  return n;
+}
+
+function runSweepCheckCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('sweep-check');
+  try {
+    writeRun(join(dir, 'full'), SWEEP_FULL);
+    writeRun(join(dir, 'head'), FRAMED_HEAD);
+    writeFileSync(join(dir, 'painting.png'), encodePngBytes(flatPainting()));
+    const built = (label: string, range: [number, number] | null): { status: number; out: string; fig: Record<string, unknown> | null } => {
+      const cfg = join(dir, `${label}.json`);
+      writeFileSync(cfg, JSON.stringify(sweepConfig(range)));
+      const r = runCli(['build', '--config', cfg, '--source', join(dir, 'painting.png'), '--full', join(dir, 'full'), '--head', join(dir, 'head'), '--out', join(dir, label)]);
+      return { ...r, fig: readJsonFile(join(dir, label, 'check', 'check.json')) };
+    };
+    const covered = built('covered', [0, 120]);
+    const plain = built('plain', null);
+
+    // The planted cut: the covered build with the forearm's cap cleared — every row of it above the elbow line, in
+    // parts/ and in rig/images/ (padded by rig.ts's PAD) alike — so its two pieces meet at rest and nothing covers the
+    // sector a bend opens. check reads the copy.
+    const planted = join(dir, 'planted');
+    cpSync(join(dir, 'covered'), planted, { recursive: true });
+    rmSync(join(planted, 'check'), { recursive: true, force: true });
+    const fore = readParts(join(planted, 'parts.json')).parts.find((p) => p.name === 'forearm_r') as PartRecord;
+    const clearAbove = (file: string, top: number): number => {
+      const img = readPng(file);
+      let n = 0;
+      for (let y = 0; y < img.height; y++) {
+        if (top + y >= SWEEP_AT[1]) continue;
+        for (let x = 0; x < img.width; x++) {
+          if (img.data[(y * img.width + x) * 4 + 3] > 0) n++;
+          img.data.fill(0, (y * img.width + x) * 4, (y * img.width + x) * 4 + 4);
+        }
+      }
+      writeFileSync(file, encodePngBytes(img));
+      return n;
+    };
+    const clearedParts = clearAbove(join(planted, 'parts', 'forearm_r.png'), fore.y);
+    const clearedRig = clearAbove(join(planted, 'rig', 'images', 'forearm_r.png'), fore.y - PAD);
+    const plantedRun = runCli(['check', '--rig', join(planted, 'rig'), '--parts', planted, '--out', join(planted, 'check')]);
+    const plantedFig = readJsonFile(join(planted, 'check', 'check.json'));
+
+    const line = (fig: Record<string, unknown> | null): SweepLine | null => (fig?.[SWEEP_LINE] as SweepLine | undefined) ?? null;
+    const poses = (fig: Record<string, unknown> | null): string => {
+      const l = line(fig);
+      return l === null ? 'absent' : `${l.status} ${l.joints.map((j) => `${j.joint}[${j.poses.map((p) => `${p.degrees}:${p.status}:${p.rig_px_over_40}`).join(' ')}] under ${j.under_px}`).join('; ')}`;
+    };
+    const underPx = sweepUnderPx();
+    const band = (a: number): [number, number] => {
+      const share = (underPx * a) / 360;
+      const edge = 2 * SWEEP_R + (SWEEP_R * a * Math.PI) / 180;
+      return [share - edge, share + edge];
+    };
+    const pl = line(plantedFig);
+    const at = (l: SweepLine | null, a: number): SweepPose | undefined => l?.joints[0]?.poses.find((p) => p.degrees === a);
+    const inBand = (a: number): boolean => {
+      const p = at(pl, a);
+      const [lo, hi] = band(a);
+      return p !== undefined && p.status === 'FAIL' && p.rig_px_over_40 >= lo && p.rig_px_over_40 <= hi && p.rig_px_over_40 > SEAM_PX_BAR;
+    };
+    const object = (a: number): string => `  FAIL  CHECK_SEAM_OVER_RANGE: joint "elbow" (config.limbs.arm_r segment 1, part "forearm_r", bone "sleeve_r1") bent ${a}° — mean |d| `;
+    const tail = `; mean <= 1.0 and <= 50 rig px over 40 are required, the rest-pose seam's bar — the bend uncovers the joint, and a cap that covers the turn (the limb's art within that radius on the upper side of the joint line, carried by "forearm_r") keeps it covered (see rig-parts guide CHECK_SEAM_OVER_RANGE)`;
+    const red = (a: number): string | undefined => plantedRun.out.split('\n').find((l) => l.startsWith(object(a)));
+    const row = (out: string, a: number): string | undefined => out.split('\n').find((l) => l.includes(`joint "elbow" (arm_r, "forearm_r" on "sleeve_r1", range [0, 120]) at ${a}°: `));
+    say(
+      'CK430_A_CUT_WHOSE_PIECES_MEET_AT_REST_AND_PART_WHEN_BENT_PASSES_AT_REST_AND_FAILS_AT_THE_BENT_ANGLE_NAMING_THE_JOINT_AND_THE_ANGLE',
+      clearedParts > 0 &&
+        clearedRig === clearedParts &&
+        plantedRun.status === 1 &&
+        pl !== null &&
+        pl.status === 'FAIL' &&
+        pl.joints.length === 1 &&
+        pl.joints[0].under_px === underPx &&
+        JSON.stringify(pl.joints[0].poses.map((p) => p.degrees)) === '[0,60,120]' &&
+        at(pl, 0)?.status === 'PASS' &&
+        inBand(60) &&
+        inBand(120) &&
+        red(0) === undefined &&
+        red(60)?.endsWith(tail) === true &&
+        red(120)?.endsWith(tail) === true &&
+        row(plantedRun.out, 0)?.includes(': PASS — ') === true &&
+        row(plantedRun.out, 60)?.includes(': FAIL — ') === true &&
+        barsNotMet(plantedFig ?? {}).join(',') === SWEEP_LINE &&
+        ACCEPTABLE_BARS.includes(SWEEP_LINE),
+      `cleared ${clearedParts} cap px in parts/ and ${clearedRig} in rig/images/; check exit ${plantedRun.status}, ${poses(plantedFig)}; the underlay by its definition ${underPx} px; bands by hand: 60° [${band(60).map((x) => x.toFixed(1)).join(', ')}], 120° [${band(120).map((x) => x.toFixed(1)).join(', ')}]; ${red(60)?.trim().slice(0, 240) ?? 'no FAIL line at 60°'}; barsNotMet ${barsNotMet(plantedFig ?? {}).join(',')}`,
+      'issue #360 item 13: the seam is read at the declared range, not only at rest. A cut with no cap meets at rest and opens the sector the forearm leaves when it turns; the rest pose shows nothing, the bend shows the background where the elbow was. The line names the joint and the angle, and its numbers are the rest-pose seam bar\'s',
+    );
+
+    const cv = line(covered.fig);
+    say(
+      'CK431_A_CAP_THAT_COVERS_THE_TURN_PASSES_AT_EVERY_ANGLE_OF_THE_RANGE',
+      covered.status === 0 &&
+        cv !== null &&
+        cv.status === 'PASS' &&
+        cv.joints[0]?.under_px === underPx &&
+        JSON.stringify(cv.joints[0]?.poses.map((p) => `${p.degrees}:${p.status}`)) === '["0:PASS","60:PASS","120:PASS"]' &&
+        row(covered.out, 120)?.includes(': PASS — ') === true &&
+        covered.out.includes(`  SEAM_OVER_RANGE: PASS — 1 joint(s) bent to their declared range's ends and middle`),
+      `exit ${covered.status}; ${poses(covered.fig)}`,
+      "the positive control and the planted cut's mutant: the same arm with the cap assemble takes from the layer, the whole upper half-disc on the forearm, which turns with it over the sector the bend opens; and the planted cut is this control's mutant, the cap gone, red at 60° and 120°",
+    );
+
+    const keys = (fig: Record<string, unknown> | null): string => Object.keys(fig ?? {}).join(',');
+    const without = covered.fig === null ? null : Object.fromEntries(Object.entries(covered.fig).filter(([k]) => k !== SWEEP_LINE));
+    const plainText = existsSync(join(dir, 'plain', 'check', 'check.json')) ? readFileSync(join(dir, 'plain', 'check', 'check.json'), 'utf8') : '';
+    const coveredParts = readFileSync(join(dir, 'covered', 'parts.json'), 'utf8');
+    const plainParts = readFileSync(join(dir, 'plain', 'parts.json'), 'utf8');
+    say(
+      'CK432_WITHOUT_A_RANGE_NOTHING_IS_POSED_AND_CHECK_WRITES_WHAT_IT_WROTE',
+      plain.status === 0 &&
+        plain.fig !== null &&
+        !(SWEEP_LINE in plain.fig) &&
+        !plain.out.includes(SWEEP_LINE) &&
+        !plainParts.includes('"range"') &&
+        coveredParts.split('\n').filter((l) => l.includes('"range"')).length === 1 &&
+        coveredParts.replace(/,\n\s*"range": \[\n?\s*0,\n?\s*120\n?\s*\]/, '') === plainParts &&
+        `${JSON.stringify(without, null, 1)}\n` === plainText &&
+        !existsSync(join(dir, 'covered', 'check', '_sweep')),
+      `without a range: exit ${plain.status}, keys ${keys(plain.fig)}; with one, less ${SWEEP_LINE}: ${`${JSON.stringify(without, null, 1)}\n` === plainText ? 'the same bytes' : 'DIFFERENT'}; parts.json with the range less it: ${coveredParts.replace(/,\n\s*"range": \[\n?\s*0,\n?\s*120\n?\s*\]/, '') === plainParts ? 'the same bytes' : 'DIFFERENT'}`,
+      'opt-in by construction: a limb with no declared range is not posed, so its check renders, prints and writes exactly what it did; the planted negative is the covered build, which differs from this one by the range in parts.json and the line in check.json, and by nothing else',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Issue #360: the pieces of SEAM_OVER_RANGE that read no render. parts.json's limb `range` is read back as written and
+ * refused by name where a config could not have written it; the angles are the range's ends and middle, each once; a
+ * joint the line cannot read is a FAIL naming why, never a pass; and two renders not on one grid are refused, naming
+ * the render. Every frame set here is two-by-one, made by hand.
+ */
+function runSweepUnitCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('sweep-unit');
+  try {
+    const limb = (segment: number, extra: Record<string, unknown>): Record<string, unknown> => ({ name: 'arm_r', segment, of: 'arm', bone: `sleeve_r${segment}`, ...extra });
+    const cap = { at: [27, 32], width: 30, radius: 15, box: [12, 17, 30, 30], layer_px: 1, missing_px: 0 };
+    const record = (name: string, l: Record<string, unknown>): Record<string, unknown> => ({ name, from: 'full:handwear-r', x: 0, y: 0, w: 1, h: 1, opaque_px: 1, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0, limb: l });
+    const file = (upper: Record<string, unknown>, lower: Record<string, unknown>): string => {
+      const p = join(dir, `parts-${Math.random().toString(36).slice(2)}.json`);
+      writeFileSync(p, JSON.stringify({ rig_size: [64, 64], scale_rig_per_source: 0.5, parts: [record('forearm_r', lower), record('upperarm_r', upper)], ghost_px: {} }));
+      return p;
+    };
+    const good = file(limb(0, {}), limb(1, { joint: 'elbow', range: [-30, 120], cap }));
+    const read = readParts(good);
+    const back = serializeParts(read);
+    const onUpper = refusals(() => readParts(file(limb(0, { range: [0, 90] }), limb(1, { joint: 'elbow', cap }))));
+    const noRest = refusals(() => readParts(file(limb(0, {}), limb(1, { joint: 'elbow', range: [5, 30], cap }))));
+    const notPair = refusals(() => readParts(file(limb(0, {}), limb(1, { joint: 'elbow', range: [-10], cap }))));
+    say(
+      'CK433_PARTS_JSON_READS_A_LIMB_RANGE_BACK_AS_WRITTEN_AND_REFUSES_ONE_NO_CONFIG_COULD_WRITE',
+      JSON.stringify(read.parts[0].limb?.range) === '[-30,120]' &&
+        back.includes('"joint": "elbow",\n        "range": [\n          -30,\n          120\n        ],\n        "cap": {') &&
+        read.parts[1].limb?.range === undefined &&
+        JSON.stringify(sweepJoints(read)) === JSON.stringify([{ part: 'forearm_r', limb: 'arm_r', segment: 1, joint: 'elbow', bone: 'sleeve_r1', range: [-30, 120], at: [27, 32], radius: 15 }]) &&
+        codes(onUpper).startsWith('PARTS_FIELD_PRESENT part "upperarm_r" field "limb" "range"') &&
+        codes(noRest).startsWith('PARTS_FIELD_TYPE part "forearm_r" field "limb" "range"') &&
+        codes(notPair).startsWith('PARTS_FIELD_TYPE part "forearm_r" field "limb" "range"'),
+      `read ${JSON.stringify(read.parts[0].limb?.range)}, joints ${JSON.stringify(sweepJoints(read))}; on the upper segment: ${codes(onUpper)}; [5, 30]: ${codes(noRest)}; [-10]: ${codes(notPair)}`,
+      "the range rides from config.limbs into parts.json, where check reads it; the loader's rules hold there too — a range sits below a joint, and rest (0) lies in it — so a parts.json no config could have written is refused by name rather than posed",
+    );
+
+    // The angles, the unread joint, and the grid.
+    const vp = (scale: number): Viewport => ({ x: 0, y: 0, width: 2, height: 1, scale, pixelWidth: 2, pixelHeight: 1 });
+    const set = (scale: number, px: Array<[number, number, number]>): FrameSet => {
+      const image = newRaster(2, 1);
+      px.forEach((c, i) => image.data.set([...c, 255], i * 4));
+      return { dir, animation: null, fps: 10, sampled: 2, written: 1, stride: 1, duration: 0.1, background: [232, 232, 232, 255], viewport: vp(scale), frames: [{ name: 'f0000.png', index: 0, image }] };
+    };
+    const bg: [number, number, number] = [232, 232, 232];
+    const art: [number, number, number] = [100, 60, 40];
+    const joint: SweepJoint = { part: 'forearm_r', limb: 'arm_r', segment: 1, joint: 'elbow', bone: 'sleeve_r1', range: [0, 90], at: [1, 0], radius: 1 };
+    const pOk: Problem[] = [];
+    const same = sweepLine([joint], [2], [null], () => ({ under: set(1, [art, art]), bare: set(1, [art, art]) }), 0, pOk);
+    const pGap: Problem[] = [];
+    // One pixel of two uncovered at scale 1/8: 1 frame px over 40 is 64 rig px, over the bar of 50; the mean is 192 / 2.
+    const gap = sweepLine([joint], [2], [null], (a) => ({ under: set(0.125, [art, art]), bare: set(0.125, a.endsWith(' 0') ? [art, art] : [bg, art]) }), 0, pGap);
+    const pUnread: Problem[] = [];
+    const unread = sweepLine([joint], [0], ['why'], () => {
+      throw new Error('an unread joint is not rendered');
+    }, 2, pUnread);
+    const offGrid = refusals(() => sweepLine([joint], [2], [null], () => ({ under: set(1, [art, art]), bare: set(0.5, [art, art]) }), 0, []));
+    say(
+      'CK434_THE_ANGLES_ARE_THE_RANGES_ENDS_AND_MIDDLE_AN_UNREAD_JOINT_FAILS_AND_RENDERS_OFF_ONE_GRID_ARE_REFUSED',
+      JSON.stringify(sweepAngles([0, 120])) === '[0,60,120]' &&
+        JSON.stringify(sweepAngles([-30, 30])) === '[-30,0,30]' &&
+        JSON.stringify(sweepAngles([0, 0])) === '[0]' &&
+        same.status === 'PASS' &&
+        pOk.length === 0 &&
+        same.frame_scale === 1 &&
+        JSON.stringify(same.joints[0].poses.map((p) => [p.degrees, p.mean, p.px_over_40])) === '[[0,0,0],[45,0,0],[90,0,0]]' &&
+        gap.status === 'FAIL' &&
+        JSON.stringify(gap.joints[0].poses.map((p) => `${p.degrees}:${p.status}:${p.mean}:${p.px_over_40}:${p.px_over_80}:${p.rig_px_over_40}`)) === '["0:PASS:0:0:0:0","45:FAIL:96:1:1:64","90:FAIL:96:1:1:64"]' &&
+        pGap.map((q) => q.object).join(' | ') === 'joint "elbow" (config.limbs.arm_r segment 1, part "forearm_r", bone "sleeve_r1") bent 45° | joint "elbow" (config.limbs.arm_r segment 1, part "forearm_r", bone "sleeve_r1") bent 90°' &&
+        unread.status === 'FAIL' &&
+        unread.frame_scale === null &&
+        unread.physics_left_out === 2 &&
+        unread.joints[0].unread === 'why' &&
+        unread.joints[0].poses.length === 0 &&
+        pUnread.length === 1 &&
+        pUnread[0].detail === 'is not read: why; a joint not read is not a pass' &&
+        codes(offGrid).startsWith('CHECK_SEAM_OVER_RANGE the render of "seam over range forearm_r 0" with the underlays hidden'),
+      `angles ${JSON.stringify([sweepAngles([0, 120]), sweepAngles([-30, 30]), sweepAngles([0, 0])])}; identical pair: ${same.status}; one pixel uncovered at 1/8: ${JSON.stringify(gap.joints[0].poses)}; unread: ${unread.status}, ${pUnread[0]?.detail}; off one grid: ${codes(offGrid)}`,
+      'the pure half of the line, by hand: the range [0, 120] is posed at 0, 60 and 120, a range with no width once; a pair of identical renders reads nothing; one background pixel where the joint\'s art was, at scale 1/8, is 64 rig px, over the rest-pose bar of 50, with mean 192 / 2 = 96 — the same bar the setup pose reads; a joint the line cannot read fails, never passes; and two renders on different grids are refused before a pixel is compared',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
  * Issue #349: LIMB_ONE_BONE. The limb fixture (fixtures/assemble_fixture.ts, limbConfig) built through the CLI, its
  * idle a swing of the arm's chain: every limb part is a region on its segment's bone, and the line passes over all
  * eight. The mutant gives the forearm a mesh weighted to its link and to `hip` (a pin, the puff-pin family), and the
@@ -12425,6 +12692,8 @@ function runCheckSuite(): number {
   runFeetLevelCases(say);
   runStressCases(say);
   runLimbCheckCases(say);
+  runSweepCheckCases(say);
+  runSweepUnitCases(say);
   runRigcIdentityCases(say);
   runClothCheckCases(say);
   return bad();

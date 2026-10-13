@@ -80,7 +80,8 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { measureRecomposite, type RecompositeFigures, recompositeRecord, scenePhrase, sourceInRig } from './assemble.ts';
-import { cropToSpineY, normaliseDegrees } from './coords.ts';
+import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal } from './coords.ts';
+import { capBox, inDisc } from './limbs.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 import { framesInside, IDLE_FPS, TIME_SLACK } from './motion.ts';
 import {
@@ -1737,6 +1738,8 @@ export interface CheckFigures {
   [STRESS_LINE]?: JudgementLine;
   /** Written only where parts.json holds a part a `config.limbs` segment made (issue #349): {@link LimbLine}. */
   [LIMB_LINE]?: LimbLine;
+  /** Written only where parts.json holds a limb record with a `range` (issue #360): {@link SweepLine}. */
+  [SWEEP_LINE]?: SweepLine;
   RECOMPOSITE_HOLES: ReportedLine;
   /** Written only under `--source` (issue #77): the setup pose against the painting, REPORTED. */
   SETUP_POSE_VS_SOURCE?: ReportedLine;
@@ -1830,6 +1833,39 @@ export const LEVEL_LINE = 'FEET_STAY_LEVEL';
 /** Issue #349: every limb part rides its one bone ({@link limbLine}). */
 export const LIMB_LINE = 'LIMB_ONE_BONE';
 
+/**
+ * `SEAM_OVER_RANGE` (issue #360, item 13): the seam bar read with each limb
+ * joint bent, not only at rest. Every lower segment `parts.json` records with
+ * a `range` — its config segment's, `[min, max]` degrees from rest — is posed
+ * at `min`, at the middle `(min + max) / 2` and at `max`, each angle once in
+ * that order ({@link sweepAngles}), by a `rotate` key on its bone (rigc's
+ * sense: counter-clockwise on screen), one joint per animation, on a throwaway
+ * copy of the rig with its physics constraints left out.
+ *
+ * - **What is compared.** At each pose, two renders of one build on one grid:
+ *   the copy as it is, and the copy with the joint's own art drawn under the
+ *   limb ({@link sweepUnderlay}) — the limb's parts composited at rest,
+ *   inside the cap's disc (`limb.cap.at` and `radius`), one pixel in from
+ *   every edge of what is opaque there — as a region on the bone the joint's
+ *   bone hangs from, so it does not turn, in a slot just before the limb's
+ *   first. Where the bent limb still covers the disc the two are the same
+ *   picture; where the bend uncovers it, the second shows the joint's art and
+ *   the first what lies behind the limb. At rest the limb's parts cover every
+ *   one of those pixels opaquely, and the one-pixel margin is the reach of a
+ *   bilinear sample, so the underlay never half-shows at an edge the limb
+ *   draws.
+ * - **The bar is the rest-pose seam's, unchanged.** {@link seamFigures} on the
+ *   pair — the second render as the reference, on the first's own grid, so the
+ *   map is the identity — and {@link seamFails}: mean |d| at most
+ *   {@link SEAM_MEAN_BAR}, at most {@link SEAM_PX_BAR} rig px over
+ *   {@link SEAM_PX_LEVEL}, the count divided by the frame scale squared. No
+ *   threshold is new.
+ * - **Opt-in by construction.** Written only when `parts.json` holds a limb
+ *   record with a `range`; a rig without one renders nothing more and writes
+ *   what it wrote.
+ */
+export const SWEEP_LINE = 'SEAM_OVER_RANGE';
+
 /** HQ's line (rig-c/parts#347 ruling 4, issue #348): the sole within ±10 degrees of level while the shin is posed. Not measured here. */
 export const LEVEL_BAR_DEGREES = 10;
 
@@ -1878,7 +1914,7 @@ export const BARS = ['gate', 'loop', 'seam', ...JUDGEMENT_LINES] as const;
  * rig-c's and never accepted, {@link FOLD_LINE} (issue #320) and
  * {@link STRESS_LINE} (issue #347).
  */
-export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== 'gate'), FOLD_LINE, LEVEL_LINE, STRESS_LINE, LIMB_LINE];
+export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== 'gate'), FOLD_LINE, LEVEL_LINE, STRESS_LINE, LIMB_LINE, SWEEP_LINE];
 
 /**
  * The bars a `check.json`, as `check` writes it, says were not met, in
@@ -1887,7 +1923,7 @@ export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== '
  * seam when its figures fail {@link seamFails}, and each judgement line whose
  * status is `FAIL`, then {@link FOLD_LINE} when it is written and `FAIL`
  * (issue #320), then {@link LEVEL_LINE} the same way (issue #348), then {@link STRESS_LINE} likewise (issue #347), then
- * {@link LIMB_LINE} (issue #349). A bar that measured nothing (null figures, `SKIP`) is not
+ * {@link LIMB_LINE} (issue #349), then {@link SWEEP_LINE} (issue #360). A bar that measured nothing (null figures, `SKIP`) is not
  * one of them. Read off the file rather than its problems, because the file is
  * all a finished build leaves (issue #203).
  */
@@ -1898,7 +1934,7 @@ export function barsNotMet(fig: Readonly<Record<string, unknown>>): string[] {
   // A check.json written before issue #216 has no seam_frame_scale; it is read by the frame count, the bar it was written under.
   const scale = typeof fig.seam_frame_scale === 'number' ? fig.seam_frame_scale : 1;
   if (typeof fig.seam_mean === 'number' && typeof fig.seam_px_over_40 === 'number' && seamFails(fig.seam_mean, fig.seam_px_over_40, scale)) out.push('seam');
-  for (const n of [...JUDGEMENT_LINES, FOLD_LINE, LEVEL_LINE, STRESS_LINE, LIMB_LINE]) {
+  for (const n of [...JUDGEMENT_LINES, FOLD_LINE, LEVEL_LINE, STRESS_LINE, LIMB_LINE, SWEEP_LINE]) {
     const l = fig[n];
     if (typeof l === 'object' && l !== null && (l as { status?: unknown }).status === 'FAIL') out.push(n);
   }
@@ -2591,6 +2627,261 @@ export function limbLine(parts: PartsFile, rig: Record<string, unknown>, problem
   return { status: rows.some((r) => r.status === 'FAIL') ? 'FAIL' : 'PASS', parts: rows };
 }
 
+// ---------------------------------------------------------------------------
+// the seam over a joint's declared range (issue #360; the rule is {@link SWEEP_LINE}'s)
+// ---------------------------------------------------------------------------
+
+/** The sweep's copy, builds and renders, under `--out`; removed before the stage returns. */
+const SWEEP_SCRATCH = '_sweep';
+
+/** The transparent margin round an underlay image, as `src/rig.ts` gives every part image (its `PAD`), so its edge is sampled against transparency. */
+const UNDER_PAD = 4;
+
+/** One joint the line poses: the lower segment's part and its limb record. */
+export interface SweepJoint {
+  part: string;
+  limb: string;
+  segment: number;
+  joint: string;
+  /** The lower segment's bone: the one the bend turns. */
+  bone: string;
+  range: [number, number];
+  at: [number, number];
+  radius: number;
+}
+
+/** Every limb record in `parts.json` that declares a `range`, in `parts.json`'s order. */
+export function sweepJoints(parts: PartsFile): SweepJoint[] {
+  const out: SweepJoint[] = [];
+  for (const p of parts.parts) {
+    const l = p.limb;
+    if (l === undefined || l.range === undefined || l.cap === undefined || l.joint === undefined) continue;
+    out.push({ part: p.name, limb: l.name, segment: l.segment, joint: l.joint, bone: l.bone, range: [l.range[0], l.range[1]], at: [l.cap.at[0], l.cap.at[1]], radius: l.cap.radius });
+  }
+  return out;
+}
+
+/** The angles a joint is posed at: the range's two ends and its middle, `[min, (min + max) / 2, max]`, each once, in that order. */
+export function sweepAngles(range: readonly [number, number]): number[] {
+  const out: number[] = [];
+  for (const a of [range[0], (range[0] + range[1]) / 2, range[1]]) if (!out.includes(a)) out.push(a);
+  return out;
+}
+
+/** The animation one joint at one angle is posed by on the copy. */
+export function sweepAnimationName(part: string, degrees: number): string {
+  return `seam over range ${part} ${degrees}`;
+}
+
+/** The underlay slot of a joint's lower part: `<part>_under`, with one more `_` for each name the rig already holds. */
+export function underlaySlotName(part: string, taken: ReadonlySet<string>): string {
+  let n = `${part}_under`;
+  while (taken.has(n)) n += '_';
+  return n;
+}
+
+/**
+ * The joint's own art at rest (see {@link SWEEP_LINE}): the limb's parts —
+ * every `parts.json` record whose `limb.name` is the joint's limb — composited
+ * at their boxes in `parts.json`'s order over a transparent canvas, and of that
+ * each pixel that, with its eight neighbours, lies inside the cap's disc
+ * ({@link inDisc}) at alpha 255, cropped to the cap's box ({@link capBox})
+ * and padded by {@link UNDER_PAD}. `box` is the padded image's place in rig
+ * px, `px` the pixels it holds.
+ */
+export function sweepUnderlay(parts: PartsFile, image: (name: string) => Raster, j: SweepJoint): { box: [number, number, number, number]; image: Raster; px: number } {
+  const [W, H] = parts.rig_size;
+  let canvas = newRaster(W, H);
+  for (const p of parts.parts) if (p.limb?.name === j.limb) canvas = alphaComposite(canvas, image(p.name), p.x, p.y);
+  const solid = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < W && y < H && inDisc(j.at, j.radius, x, y) && canvas.data[(y * W + x) * 4 + 3] === 255;
+  const [bx, by, bw, bh] = capBox(j.at, j.radius);
+  const out = newRaster(bw + 2 * UNDER_PAD, bh + 2 * UNDER_PAD);
+  let px = 0;
+  for (let y = by; y < by + bh; y++) {
+    for (let x = bx; x < bx + bw; x++) {
+      let inner = true;
+      for (let dy = -1; dy <= 1 && inner; dy++) for (let dx = -1; dx <= 1 && inner; dx++) inner = solid(x + dx, y + dy);
+      if (!inner) continue;
+      const s = (y * W + x) * 4;
+      out.data.set(canvas.data.subarray(s, s + 4), ((y - by + UNDER_PAD) * out.width + (x - bx + UNDER_PAD)) * 4);
+      px++;
+    }
+  }
+  return { box: [bx - UNDER_PAD, by - UNDER_PAD, out.width, out.height], image: out, px };
+}
+
+/** Why a joint is not read, or null when it is: its bone is not in rig.json with a parent, no slot of rig.json shows one of its limb's parts, or its disc holds no opaque art. */
+export function sweepUnread(j: SweepJoint, rig: Record<string, unknown>, limbSlots: readonly string[], underPx: number): string | null {
+  const bones = (Array.isArray(rig.bones) ? rig.bones : []).filter(isRecord);
+  const own = bones.find((b) => b.name === j.bone);
+  if (own === undefined || typeof own.parent !== 'string' || own.parent === '') return `"${j.bone}" is not a bone of rig.json with a parent, so there is no bone the joint's art can stay on while it turns`;
+  if (limbSlots.length === 0) return `no slot of rig.json shows a part of limb "${j.limb}", so there is no limb to draw the joint's art under`;
+  if (underPx === 0) return `the disc of radius ${j.radius} px about [${j.at.join(', ')}] holds no pixel of limb "${j.limb}"'s parts at rest that is opaque (alpha 255) with its eight neighbours, so a gap the bend opens cannot be seen against the joint's art`;
+  return null;
+}
+
+/**
+ * The throwaway copy (see {@link SWEEP_LINE}): `rig` with one underlay slot per
+ * read joint — a region on the parent of the joint's bone, centred on its box
+ * and turned back by that bone's world rotation so it is drawn upright, as
+ * `src/rig.ts` places a region (rig-c's frames, through `src/coords.ts`) —
+ * just before the first slot of the joint's limb; `motion` with its
+ * animations replaced by one per read joint and angle, a `rotate` key on the
+ * joint's bone held from 0 to the still's duration. `read[i]` is joint `i`'s
+ * underlay, or null when it is not read; `files` the names, less `.png`, the
+ * images directory already holds, which a slot's name avoids as it avoids the
+ * slots ({@link underlaySlotName}). Returns the copy, the underlay slots (for
+ * `--hide`) and their images, each named `<slot>.png`.
+ */
+export function sweepCopy(
+  rig: Record<string, unknown>,
+  motion: Record<string, unknown>,
+  joints: readonly SweepJoint[],
+  read: ReadonlyArray<{ box: [number, number, number, number]; image: Raster } | null>,
+  limbSlots: (limb: string) => string[],
+  stage: StageBox,
+  rigH: number,
+  files: ReadonlySet<string> = new Set(),
+): { rig: Record<string, unknown>; motion: Record<string, unknown>; slots: string[]; images: Array<[string, Raster]> } {
+  const bones = (Array.isArray(rig.bones) ? rig.bones : []).filter(isRecord);
+  const posable: Parameters<typeof computeExactFrameTransforms>[0][number][] = bones.map((b) => ({
+    name: String(b.name),
+    ...(typeof b.parent === 'string' && b.parent !== '' ? { parent: b.parent } : {}),
+    ...Object.fromEntries((['x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY'] as const).filter((k) => typeof b[k] === 'number').map((k) => [k, b[k] as number])),
+    ...(typeof b.inherit === 'string' ? { inherit: b.inherit } : {}),
+  }));
+  const world = computeExactFrameTransforms(posable);
+  const slots = (Array.isArray(rig.slots) ? rig.slots : []).filter(isRecord).map((s) => ({ ...s }));
+  const skins = isRecord(rig.skins) ? rig.skins : {};
+  const skin: Record<string, unknown> = { ...(isRecord(skins.default) ? skins.default : {}) };
+  const taken = new Set([...slots.map((s) => String(s.name)), ...files]);
+  const added: string[] = [];
+  const images: Array<[string, Raster]> = [];
+  const animations: Record<string, unknown> = {};
+  joints.forEach((j, i) => {
+    const u = read[i];
+    if (u === null) return;
+    const parent = String((bones.find((b) => b.name === j.bone) as Record<string, unknown>).parent);
+    const m = world.get(parent) as BoneTransform;
+    const name = underlaySlotName(j.part, taken);
+    taken.add(name);
+    const [x, y] = toBoneLocal(m, stage.x + u.box[0] + u.box[2] / 2, stage.y + cropToSpineY(u.box[1] + u.box[3] / 2, rigH));
+    const turn = normaliseDegrees(-m.worldRotation);
+    skin[name] = { [name]: turn === 0 ? { image: `${name}.png`, x, y } : { image: `${name}.png`, x, y, rotation: turn } };
+    const mine = new Set(limbSlots(j.limb));
+    slots.splice(slots.findIndex((s) => mine.has(String(s.name))), 0, { name, bone: parent, attachment: name });
+    added.push(name);
+    images.push([`${name}.png`, u.image]);
+    for (const a of sweepAngles(j.range)) {
+      animations[sweepAnimationName(j.part, a)] = { duration: STILL_DURATION, loop: false, tracks: [{ bone: j.bone, property: 'rotate', keys: [{ t: 0, v: [a] }, { t: STILL_DURATION, v: [a] }] }] };
+    }
+  });
+  return { rig: { ...rig, slots, skins: { ...skins, default: skin } }, motion: { ...motion, animations }, slots: added, images };
+}
+
+/** One pose of a joint: the angle from rest and the rest-pose seam's figures read there ({@link SWEEP_LINE}). */
+export interface SweepPose {
+  degrees: number;
+  status: 'PASS' | 'FAIL';
+  mean: number;
+  px_over_40: number;
+  px_over_80: number;
+  rig_px_over_40: number;
+}
+
+/** One joint's row: its limb record, its disc, how many of the joint's own art pixels the disc holds, and each pose — or, not read, why. */
+export interface SweepRow {
+  part: string;
+  limb: string;
+  segment: number;
+  joint: string;
+  bone: string;
+  range: [number, number];
+  at: [number, number];
+  radius: number;
+  under_px: number;
+  status: 'PASS' | 'FAIL';
+  poses: SweepPose[];
+  unread?: string;
+}
+
+/** `check.json`'s `SEAM_OVER_RANGE`: the frame scale the counts are divided by (null when no joint was read), the physics constraints left out, the bar, and one row per joint. */
+export interface SweepLine {
+  status: 'PASS' | 'FAIL';
+  frame_scale: number | null;
+  physics_left_out: number;
+  bar: { mean: number; rig_px_over_40: number; level: number };
+  joints: SweepRow[];
+}
+
+/**
+ * The line from the renders: `frames(animation)` gives the pose's two frame
+ * sets, with the joints' art under the limb (`under`) and without it (`bare`).
+ * Every set is on one grid over one background, or the line is refused
+ * (`CHECK_SEAM_OVER_RANGE`): the figures compare them pixel for pixel. Each
+ * pose that fails {@link seamFails}, and each joint not read, adds one
+ * `CHECK_SEAM_OVER_RANGE` problem naming the joint and the angle.
+ */
+export function sweepLine(
+  joints: readonly SweepJoint[],
+  underPx: readonly number[],
+  unread: ReadonlyArray<string | null>,
+  frames: (animation: string) => { under: FrameSet; bare: FrameSet },
+  physicsLeftOut: number,
+  problems: Problem[],
+): SweepLine {
+  const seen: { grid: FrameSet | null } = { grid: null };
+  const rows: SweepRow[] = joints.map((j, i) => {
+    const object = (at: string): string => `joint "${j.joint}" (config.limbs.${j.limb} segment ${j.segment}, part "${j.part}", bone "${j.bone}") ${at}`;
+    const head = { part: j.part, limb: j.limb, segment: j.segment, joint: j.joint, bone: j.bone, range: j.range, at: j.at, radius: j.radius, under_px: underPx[i] };
+    const why = unread[i];
+    if (why !== null) {
+      problems.push({ code: `CHECK_${SWEEP_LINE}`, object: object(`over its range [${j.range.join(', ')}]`), detail: `is not read: ${why}; a joint not read is not a pass` });
+      return { ...head, status: 'FAIL', poses: [], unread: why };
+    }
+    const poses: SweepPose[] = sweepAngles(j.range).map((a) => {
+      const { under, bare } = frames(sweepAnimationName(j.part, a));
+      for (const s of [under, bare]) {
+        const first: FrameSet = seen.grid ?? s;
+        if (!sameViewport(first.viewport, s.viewport) || first.background.join(',') !== s.background.join(',')) {
+          refuseIfAny([
+            {
+              code: `CHECK_${SWEEP_LINE}`,
+              object: `the render of "${sweepAnimationName(j.part, a)}"${s === under ? '' : ' with the underlays hidden'}`,
+              detail: `is on ${JSON.stringify(s.viewport)} over ${JSON.stringify(s.background)}; the sweep's first render is on ${JSON.stringify(first.viewport)} over ${JSON.stringify(first.background)}, and the two renders of a pose are compared pixel for pixel`,
+            },
+          ]);
+        }
+        seen.grid = first;
+      }
+      const vp = bare.viewport;
+      const f = seamFigures(under.frames[0].image, bare.frames[0].image, { x: 0, y: 0, width: vp.pixelWidth, height: vp.pixelHeight }, vp, bare.background, { sx: 1, sy: 1, tx: 0, ty: 0 });
+      const mean = round3(f.mean);
+      const scale = round6(vp.scale);
+      const fail = seamFails(mean, f.over40, scale);
+      if (fail) {
+        problems.push({
+          code: `CHECK_${SWEEP_LINE}`,
+          object: object(`bent ${a}°`),
+          detail:
+            `mean |d| ${mean}/255 and ${f.over40} frame px over ${SEAM_PX_LEVEL} (${f.over80} over ${SEAM_PX_LEVEL_HIGH}) at frame scale ${scale}, ${seamRigPxText(f.over40, scale)} rig px (the count / s²), against the same pose with the joint's own art drawn under the limb (${underPx[i]} px, the disc of radius ${j.radius} px about [${j.at.join(', ')}]); ` +
+            `mean <= ${SEAM_MEAN_BAR.toFixed(1)} and <= ${SEAM_PX_BAR} rig px over ${SEAM_PX_LEVEL} are required, the rest-pose seam's bar — the bend uncovers the joint, and a cap that covers the turn (the limb's art within that radius on the upper side of the joint line, carried by "${j.part}") keeps it covered`,
+        });
+      }
+      return { degrees: a, status: fail ? 'FAIL' : 'PASS', mean, px_over_40: f.over40, px_over_80: f.over80, rig_px_over_40: Number(seamRigPxText(f.over40, scale)) };
+    });
+    return { ...head, status: poses.some((p) => p.status === 'FAIL') ? 'FAIL' : 'PASS', poses };
+  });
+  const g = seen.grid;
+  return {
+    status: rows.some((r) => r.status === 'FAIL') ? 'FAIL' : 'PASS',
+    frame_scale: g === null ? null : round6(g.viewport.scale),
+    physics_left_out: physicsLeftOut,
+    bar: { mean: SEAM_MEAN_BAR, rig_px_over_40: SEAM_PX_BAR, level: SEAM_PX_LEVEL },
+    joints: rows,
+  };
+}
+
 /**
  * One `CHECK_RIGC_GREEN` per line that says why `rigc <what>` was not green:
  * its FAIL and compile-error lines, or, when there are none, {@link causeLines}.
@@ -2872,6 +3163,73 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     }
   }
 
+  // 3d. each limb joint with a declared range, bent to its ends and middle (issue #360): a throwaway copy with the
+  // joints' own art under the limbs, physics left out, rendered twice by rigc on one grid — none without a range
+  let sweep: SweepLine | null = null;
+  const sweepProblems: Problem[] = [];
+  const joints = inp.parts === null ? [] : sweepJoints(inp.parts);
+  if (joints.length > 0) {
+    const parts = inp.parts as PartsFile;
+    const sweepDir = join(out, SWEEP_SCRATCH);
+    rmSync(sweepDir, { recursive: true, force: true });
+    try {
+      const base = stripped === null ? inp.rig : stripped.rig;
+      const slotNames = (Array.isArray(base.slots) ? base.slots : []).filter(isRecord).map((s) => String(s.name));
+      const limbSlots = (limb: string): string[] => {
+        const mine = new Set(parts.parts.filter((p) => p.limb?.name === limb).map((p) => p.name));
+        return slotNames.filter((n) => mine.has(n));
+      };
+      const pngs = new Map<string, Raster>();
+      const png = (name: string): Raster => {
+        const hit = pngs.get(name);
+        if (hit !== undefined) return hit;
+        const r = readPng(join(inp.partsDir, `${name}.png`));
+        pngs.set(name, r);
+        return r;
+      };
+      const under = joints.map((j) => sweepUnderlay(parts, png, j));
+      const unread = joints.map((j, i) => sweepUnread(j, base, limbSlots(j.limb), under[i].px));
+      const imagesFrom = typeof inp.rig.images === 'string' ? resolve(inp.rigDir, inp.rig.images) : null;
+      const imagesDir = join(sweepDir, 'images');
+      mkdirSync(imagesDir, { recursive: true });
+      if (imagesFrom !== null && existsSync(imagesFrom)) cpSync(imagesFrom, imagesDir, { recursive: true });
+      const files = new Set(readdirSync(imagesDir).filter((f) => f.endsWith('.png')).map((f) => f.slice(0, -'.png'.length)));
+      const copy = sweepCopy(base, stripped === null ? inp.motion : stripped.motion, joints, under.map((u, i) => (unread[i] === null ? u : null)), limbSlots, inp.stage, parts.rig_size[1], files);
+      const sets = new Map<string, { under: FrameSet; bare: FrameSet }>();
+      if (copy.slots.length > 0) {
+        for (const [file, image] of copy.images) writePng(join(imagesDir, file), image);
+        writeFileSync(join(sweepDir, 'rig.json'), JSON.stringify({ ...copy.rig, images: imagesDir }));
+        writeFileSync(join(sweepDir, 'motion.json'), JSON.stringify(copy.motion));
+        const sb = rigc(['build', '--rig', join(sweepDir, 'rig.json'), '--motion', join(sweepDir, 'motion.json'), '--out', join(sweepDir, 'build'), '--profile', 'spine']);
+        if (sb.status !== 0) refuseIfAny(rigcFailed(`build (${SWEEP_LINE}'s bent copy)`, sb, buildGateLines(sb.out)));
+        // The stage is the parts' canvas wherever parts.json is read (CHECK_RIG_STAGE_IS_THE_CANVAS), so this is its longest side, as the setup-pose still's.
+        const maxSide = Math.ceil(Math.max(inp.stage.width, inp.stage.height));
+        for (const [label, hide] of [['under', []], ['bare', ['--hide', copy.slots.join(',')]]] as const) {
+          const r = rigc(['render', '--candidate', join(sweepDir, 'build'), '--fps', String(STILL_FPS), '--max', String(maxSide), ...hide, '--out', join(sweepDir, label)]);
+          if (r.status !== 0) refuseIfAny(rigcFailed(`render (${SWEEP_LINE}'s bent copy${hide.length === 0 ? '' : ', the underlays hidden'})`, r, r.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+        }
+        const named = (label: string, animation: string): FrameSet => {
+          const sidecar = join(sweepDir, label, 'frames.json');
+          const raw = readJson(sidecar, []);
+          const listed = raw !== null && Array.isArray(raw.sets) ? raw.sets.filter(isRecord) : [];
+          const s = listed.find((x) => x.animation === animation);
+          if (s === undefined || typeof s.dir !== 'string') return sidecarProblem(sidecar, `names no frame set for animation ${JSON.stringify(animation)}; \`rigc render\` over ${SWEEP_LINE}'s bent copy writes one per animation`);
+          return readFrameSet(join(sweepDir, label, s.dir));
+        };
+        joints.forEach((j, i) => {
+          if (unread[i] !== null) return;
+          for (const a of sweepAngles(j.range)) {
+            const name = sweepAnimationName(j.part, a);
+            sets.set(name, { under: named('under', name), bare: named('bare', name) });
+          }
+        });
+      }
+      sweep = sweepLine(joints, under.map((u) => u.px), unread, (a) => sets.get(a) as { under: FrameSet; bare: FrameSet }, stripped === null ? 0 : stripped.physics.length, sweepProblems);
+    } finally {
+      rmSync(sweepDir, { recursive: true, force: true });
+    }
+  }
+
   // 4. the setup pose as a one-key throwaway animation — the seam reads it against the parts, the source line against
   // the painting — and, beside it, the same pose with the eyes shut
   let seam: SeamFigures | null = null;
@@ -2983,6 +3341,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     ...(level === null ? {} : { [LEVEL_LINE]: level }),
     ...(stress === null ? {} : { [STRESS_LINE]: stress }),
     ...(limbs === null ? {} : { [LIMB_LINE]: limbs }),
+    ...(sweep === null ? {} : { [SWEEP_LINE]: sweep }),
     RECOMPOSITE_HOLES: inp.parts === null ? { status: 'SKIP', reason: inp.noParts ?? '' } : holesLine(inp.parts),
     ...(sourceRead === null ? {} : { [SOURCE_LINE]: sourceRead }),
     ...(Object.keys(skipped).length === 0 ? {} : { skipped }),
@@ -3014,7 +3373,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   const rank = (q: Problem): number => JUDGEMENT_LINES.findIndex((n) => q.code === `CHECK_${n}`);
   problems.sort((a, b) => rank(a) - rank(b));
   problems.unshift(...barProblems);
-  problems.push(...foldProblems, ...levelProblems, ...stressProblems, ...limbProblems, ...reqProblems);
+  problems.push(...foldProblems, ...levelProblems, ...stressProblems, ...limbProblems, ...sweepProblems, ...reqProblems);
   figures.PASS = problems.length === 0;
   write('check.json', `${JSON.stringify(figures, null, 1)}\n`);
   const bars: CheckReport['bars'] = { measured: ['gate'], skipped: [] };
@@ -3036,6 +3395,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   if (stress !== null) tally(STRESS_LINE, stress.status === 'SKIP' ? stress.reason : null);
   // Issue #349: the limb bar where it is written; it reads rig.json, so it always measures.
   if (limbs !== null) tally(LIMB_LINE, null);
+  // Issue #360: the range bar where it is written; a joint it cannot read fails, so it always measures.
+  if (sweep !== null) tally(SWEEP_LINE, null);
   return {
     figures,
     gateHtml,

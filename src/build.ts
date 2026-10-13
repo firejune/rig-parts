@@ -70,7 +70,7 @@ import {
   splitSchedule,
   untestedIntervals,
 } from './autoreplay.ts';
-import { besideIdleLine, FOLD_LINE, type FoldsLine, LEVEL_LINE, type LevelLine, LIMB_LINE, type LimbLine, STRESS_LINE, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, GATE_PROFILE, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, rigcIdentity, rigcRanClause, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
+import { besideIdleLine, FOLD_LINE, type FoldsLine, LEVEL_LINE, type LevelLine, LIMB_LINE, type LimbLine, STRESS_LINE, SWEEP_LINE, type SweepLine, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, GATE_PROFILE, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, rigcIdentity, rigcRanClause, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
 import { type Cut, type Limb, loadConfig, loadConfigAndAnimations, loadEarlyConfig } from './config.ts';
 import { failLine, PartsError, type Problem, refuseIfAny } from './errors.ts';
 import type { MeshQualityReport, MotionSchedule } from 'rig-c/mesh';
@@ -1135,6 +1135,22 @@ export function limbCheckLines(line: LimbLine): string[] {
   ];
 }
 
+/**
+ * The seam over the range (issue #360) as the console prints it: the status, what was posed and the bar, then each
+ * joint at each angle on a line of its own — its status and the seam figures there — or, not read, why.
+ */
+export function sweepCheckLines(line: SweepLine): string[] {
+  const s = line.frame_scale;
+  return [
+    `${SWEEP_LINE}: ${line.status} — ${line.joints.length} joint(s) bent to their declared range's ends and middle${line.physics_left_out === 0 ? '' : `, ${line.physics_left_out} physics constraint(s) left out`}; at each, the pose against the same pose with the joint's own art drawn under the limb, on the rest-pose seam's bar (mean |d| <= ${line.bar.mean.toFixed(1)}, <= ${line.bar.rig_px_over_40} rig px over ${line.bar.level})${s === null ? '' : ` at frame scale ${s}`}`,
+    ...line.joints.flatMap((j) => {
+      const head = `joint "${j.joint}" (${j.limb}, "${j.part}" on "${j.bone}", range [${j.range.join(', ')}])`;
+      if (j.unread !== undefined) return [`${head}: FAIL — not read: ${j.unread}`];
+      return j.poses.map((p) => `${head} at ${p.degrees}°: ${p.status} — mean |d| ${p.mean}/255, ${p.px_over_40} frame px over ${line.bar.level} (${p.px_over_80} over ${SEAM_PX_LEVEL_HIGH}), ${p.rig_px_over_40.toFixed(2)} rig px`);
+    }),
+  ];
+}
+
 /** A requirement's line as the console prints it: its name and status, the reason first when NOT MEASURABLE, then its figures as check.json holds them. */
 export function requirementText(name: string, line: RequirementLine): string {
   const rest = Object.entries(line).filter(([k]) => k !== 'status' && k !== 'reason');
@@ -1181,6 +1197,8 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   if (stress !== undefined) log(`  ${judgementLine(STRESS_LINE, stress)}`);
   const limbs = fig[LIMB_LINE];
   if (limbs !== undefined) for (const [i, l] of limbCheckLines(limbs).entries()) log(`  ${i === 0 ? '' : '  '}${l}`);
+  const sweep = fig[SWEEP_LINE];
+  if (sweep !== undefined) for (const [i, l] of sweepCheckLines(sweep).entries()) log(`  ${i === 0 ? '' : '  '}${l}`);
   for (const name of REPORTED_LINES) log(`  ${judgementLine(name, fig[name])}`);
   const vsSource = fig[SOURCE_LINE];
   if (vsSource !== undefined) log(`  ${judgementLine(SOURCE_LINE, vsSource)}`);
