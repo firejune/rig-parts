@@ -96,7 +96,7 @@ read by no CPU stage).
 | `seethrough.resolution` | assemble — each run's canvas must be `resolution` square (`ASSEMBLE_RUN_CANVAS`) | recorded from the See-through runs; 1024 in both examples |
 | `seethrough.steps`, `.seed`, `.offload` | no CPU stage | recorded from the runs |
 | `seethrough.head_box` | inputs (cuts the head image there; optional at the first call); assemble — where the head run sits on the painting | **proposed** by `propose --head-box` from the full run, square, source pixels, shifted inside the painting when needed; the head run must then be fed exactly that crop |
-| `assemble.rig_scale` | assemble | authored; rig pixels per source pixel. 0.5 in both examples (a 1664x2432 painting makes an 832x1216 rig) |
+| `assemble.rig_scale` | assemble — the rig is `trunc(w × rig_scale)` x `trunc(h × rig_scale)`, and every rig-px value after it (`bones`, `meshes`, `motion`, `patches`, `cuts`) is in that rig's pixels; `check --source` (`CHECK_SOURCE_SIZE`) and `compose` (`SCENE_RIG_SCALE_AGREES`) read it back off `parts.json` | authored; rig pixels per source pixel. 0.5 in both examples (a 1664x2432 painting makes an 832x1216 rig). **Keep the figure about 1,100 to 1,200 rig px tall** — the `H` of `propose`'s `mesh spacing:` note, the height of the parts' boxes together — so for another painting, about 1,150 over the figure's height in painting px: that is the size the proposer's spacing divisor was calibrated at (H 1106–1185, the `mesh spacing` note says so) and the size of the two examples `check`'s bars are derived from, and the proposer and `check` also hold fixed rig-px values that do not scale with it (the fringe's 10 px step, the trunk segments' 18, 20, 30 and 100 px, the 15 px wrist tolerance, the 10-row pendant floor, the seam bar's 50 rig px over 40). What else it trades, measured on `demo` with the README loop from a fresh config at 0.25, 0.5 and 1 (issue #345, rig-c 2.47.1): the same plan and the same ten chains; every bar but the one the uncorrected `demo` always fails (`bottomwear` `TIP_OVER_ROOT`, the README loop's `RL01`) passing at all three; the atlas page 418x606, 832x1205 and 1825x2047; the figure's mesh spacing 16, 32 and 64, so 830, 868 and 932 triangles; the breath 2.5 % of a torso that scales with it; and the proposed bones, scaled to 0.5, off the 0.5 proposal's by up to 38 px at 0.25 and 22.5 px at 1 (the hairpin's origin; the skirt roots 20 and 10.5) — the fixed-px values above. Changing it after the rig sections are written is not refused: `demo`'s tracked config built at 0.25 gated green and `check` failed only `TIP_OVER_ROOT` on both sleeves; `propose --from-config` names it (54 `LINT` lines, links off the art) — propose again at the new scale. Absent: `CONFIG_FIELD_PRESENT`; 0, negative or not a number: `CONFIG_FIELD_TYPE`; a rig under 1x1: `ASSEMBLE_RIG_SIZE` |
 | `assemble.plan` | assemble; also the list every `meshes`/`regions` key must come from | **proposed** by `assemble --propose-plan`. `[part name, "full" \| "head", See-through tag]`, in draw order back to front. Names are free; roles come from the tag. A layer the author made and added to a run takes `author:<label>` in the tag's place, and has no role (§5, *A layer the author made*) |
 | `assemble.extend_below_crop` | assemble | **proposed** with the plan: `{part, run, tag}` — a head-run part that reaches the bottom of the head crop is continued from a full-run layer, whole connected components |
 | `assemble.patches` | assemble; `meshes`/`regions` keys may name them too | **authored**, optional: `[{name, box, alpha, draw}]` — an extra part cut from the **painting** itself, for figure no See-through layer holds (a hem both runs dropped). `box` is `[x0, y0, x1, y1]` in **rig** pixels, `x1`/`y1` exclusive — the space of `parts.json` and `recomposite_rig.png`, where the hole is found; `alpha` is `"silhouette"` (the painting's figure silhouette inside the box, the one `--seam silhouette` uses) or `"box"` (the whole box); `draw` is `"back"`, `"front"` or `{"before": "<plan part>"}`. A patch is always a region: its bone is `regions.<name>`, in the one place every region's bone lives, and a `meshes` entry for it is refused. See §5 for how to place one |
@@ -1171,6 +1171,69 @@ right, at +30 moved its hand bone `sleeve_l2` 43.9 px right and 27.6 px up, at �
 51.9 px right, toward the body — so `demo`'s `wave` raises the image's right arm with
 `sleeve_l0` at +48 (selftest `RG99` holds the sign on the rig fixture).
 
+`demo`'s `wave` in full, as [`examples/demo/animations.json`](https://github.com/rig-c/parts/blob/main/examples/demo/animations.json)
+holds it (`curve` is rig-c's escape from a named easing, its AUTHORING R6): the arm out to the
+side and held, a bend further down the arm, the hand rocked ±10°, back down.
+
+```jsonc
+"wave": {
+  "duration": 2.21,
+  "loop": false,
+  "tracks": [
+    {
+      "bone": "sleeve_l0",
+      "property": "rotate",
+      "keys": [
+        {"t": 0, "v": [0], "curve": [0.0875, 0, 0.2625, 48]},
+        {"t": 0.35, "v": [48], "curve": [0.69, 48, 1.37, 48]},
+        {"t": 1.71, "v": [48], "curve": [1.835, 48, 2.085, 0]},
+        {"t": 2.21, "v": [0]}
+      ]
+    },
+    {
+      "bone": "sleeve_l1",
+      "property": "rotate",
+      "keys": [
+        {"t": 0, "v": [0], "curve": [0.0875, 0, 0.2625, 20]},
+        {"t": 0.35, "v": [20], "curve": [0.69, 20, 1.37, 20]},
+        {"t": 1.71, "v": [20], "curve": [1.835, 20, 2.085, 0]},
+        {"t": 2.21, "v": [0]}
+      ]
+    },
+    {
+      "bone": "sleeve_l2",
+      "property": "rotate",
+      "keys": [
+        {"t": 0, "v": [0], "curve": [0.0875, 0, 0.2625, 0]},
+        {"t": 0.35, "v": [0], "curve": [0.3925, 0, 0.4775, 10]},
+        {"t": 0.52, "v": [10], "curve": [0.605, 10, 0.775, -10]},
+        {"t": 0.86, "v": [-10], "curve": [0.945, -10, 1.115, 10]},
+        {"t": 1.2, "v": [10], "curve": [1.285, 10, 1.455, 0]},
+        {"t": 1.54, "v": [0], "curve": [1.7075, 0, 2.0425, 0]},
+        {"t": 2.21, "v": [0]}
+      ]
+    }
+  ]
+}
+```
+
+**Which link bends where.** A sleeve chain the proposer drafts without `--keypoints` (the
+two-blob rule, `src/propose.ts`) divides the `handwear` part's height in three, not the arm
+at its joints: its links stand at 0, 1/3 and 2/3 of the way from 15 px below the part's top
+row to 6 px above its bottom row, and its tip 3 px above the bottom row. On `demo`, `sleeve_l`'s
+links stand at y 260, 381 and 502, tip 626 (rig px), and on `scarf` at 277, 413 and 550, tip
+689; on both paintings the elbow lies between links 1 and 2 and the wrist between link 2 and
+the tip [observed: the chain drawn over the painting and read by eye, issue #345]. So
+`sleeve_l1` turns the arm part way down the upper arm, and `sleeve_l2` part way down the
+forearm, hand included: `wave`'s +20 on `sleeve_l1` is that bend, not an elbow's. Place the
+links on the joints (`bones`, the chain's `points`) before keying a bend that must read as
+an elbow. Under `--keypoints` the chain is `<s>_shoulder` → `<s>_elbow`, tip at `<s>_wrist`
+(§3, *A posed figure*): two links, the second the forearm from the elbow, and no `sleeve_l2`,
+so a clip keying `sleeve_l2` names a bone that rig lacks. `propose --keypoints` on `demo`'s
+parts, fed its generation control pose doubled to painting px (what was asked of the model,
+not where the joints ended — read for the chain's shape only), wrote `sleeve_l`
+`[[492, 272], [550, 440]]`, tip `[626, 590]`, amplitudes `[-0.2, -0.6]`.
+
 `build` writes `surprised` into `rig/motion.json` after `idle`, gates it with the rig, and
 `check` names it on a line of its own and reads it for folds (`ANIMATIONS_DO_NOT_FOLD`, §7,
 issue #320). [`examples/reference-sample`](https://github.com/rig-c/parts/tree/main/examples/reference-sample), in the repository, carries one such file,
@@ -1231,6 +1294,19 @@ way there, are in their READMEs, in the repository:
 [`examples/demo/README.md`](https://github.com/rig-c/parts/blob/main/examples/demo/README.md) and
 [`examples/scarf/README.md`](https://github.com/rig-c/parts/blob/main/examples/scarf/README.md).
 
+**Under the idle alone** a strand trails by what its constraint's values make of a slow
+swing, and the soft-region recipe's *Limits* (below) is the same finding for a jiggle: a slow
+idle barely moves a stiff spring, and faster keys — a hop, a turn, in a named animation — are
+what it answers. Measured on `demo` (issue #345, rig-c 2.47.1: the idle rendered at 30 fps
+with `--geometry`, the build against the same build with `constraints` removed, each link's
+world angle compared frame by frame): the twin tails' last links (`hairback_r2` and
+`hairback_l2`, inertia 0.8, strength 58.5, the values above) trail their keyed angle by at
+most 2.753° and 1.720° — `hairback_r2`'s tip 9.96 rig px, where the idle swings that link's
+world angle through 9.276°, and 2.612° in the idle's second half, so not the physics reset's
+transient; the bangs' last links (inertia 0.2, strength 130) by at most 0.127°, the skirt's
+0.073°, the sleeves' 0.054°. A strand that reads stiff under the idle is not broken: key it
+in a clip, or soften it as the tails are softened.
+
 **Limits.** Every slot holds one attachment, the part's own image, so an expression moves,
 turns and scales the face's parts and never swaps one for another: there is no second mouth
 or eye shape to key, and no lip-sync. `check` reads an animation beside the idle for folds
@@ -1240,6 +1316,16 @@ examples each clip was read by `check`'s own `TEXTURE_STRETCH` reading applied t
 `rigc render --geometry` (their READMEs give the figures); that is a measurement, not a
 gate, and it is where an arm raised overhead was found to tear `demo`'s elbow (5.327
 against 1.926544).
+
+**A raised arm moves its `handwear` part only.** The proposer meshes each `handwear` part on
+its sleeve chain and the `topwear` part on `chest` and `hip` alone (§3, *the trunk parts'
+segments* and the sleeve rule), so arm art See-through left inside `topwear` — a puff
+sleeve, a shoulder cap — stays with the torso while the arm leaves it. On `demo`, whose puff
+sleeves are in `handwear`, `wave` (rendered at 30 fps with `--geometry`, physics left out,
+issue #345) moves `handwear_l`'s vertices up to 443.2 rig px and every other slot's by 0.
+To make such art follow the arm, cut it out of `topwear` with an `assemble.cuts` entry and
+give the piece a mesh on the `sleeve_<s>` chain (§5, *Cutting a piece out of a layer*, the move
+`scarf`'s `robe_r` measured); that cut has not been measured on a sleeve.
 
 ### Recipe: a soft region driven by physics
 
