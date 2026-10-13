@@ -107,6 +107,16 @@ under that.
    again, and read each `limb cap:` line for the pixels a cap is missing. A clean
    LINT does not show a seated hip is right; the overlay does. Never write a joint you did not get from an
    estimator or the painting: say `missing` and let the rule stand in.
+   A skirt or hair that must answer the scene (wind, the body moving) rather than
+   loop a keyed swing: add a `cloth` block to the config — one recipe per tag,
+   `bottomwear`, `back hair`, `front hair`: `chains`, `links`, `wind` and `gravity`
+   as `[root, tip]` (multipliers of the consumer's environment, tip >= root), and
+   optionally `split`, `strength`, `damping`/`alternate_damping`, `translate`,
+   and on the skirt `swing.scales` (AUTHORING §3, *Recipe: cloth and hair*) —
+   and propose with `--cloth config.json`; copy its `constraints` too. Every
+   number is yours but `length_ratio` and `strength`, whose defaults the note
+   names. No weights across neighbouring trees and no stop at the legs are
+   drafted yet (rig-c/core#1415, #1413).
 6. Correct against `render/landmarks.png` and `note:` lines; a
    `coverage … not checked` line is a bone no check read (the line says why),
    and `basis.json` beside the proposal says what each bone rests on — check

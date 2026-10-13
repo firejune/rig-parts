@@ -87,6 +87,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { RIG_BONE_INHERIT, RIG_SKIN_CONSTRAINT_KEYS, type RigBoneInherit, type RigConstraint, type RigSkinConstraintKey } from 'rig-c/src/rig.ts';
+import { CLOTH_TARGETS, type ClothRecipes } from './cloth.ts';
 import { GRID, MAX_SIDE } from './contour.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { isSkeletonName, KEYPOINT_NAMES, type KeypointName, type PosePoints, SKELETON_NAMES, type SkeletonName } from './skeleton.ts';
@@ -676,6 +677,8 @@ export interface CharacterConfig {
   turn?: TurnSpec;
   /** The painting is a scene (issue #242): absent, no byte of any output moves. */
   scene?: SceneSpec;
+  /** The cloth and hair recipe `propose --cloth` drafts from (issue #364, `src/cloth.ts`): read by propose only, so no byte of any rig output moves with it. */
+  cloth?: ClothRecipes;
 }
 
 /** `config.scene` (issue #242): the declaration that the painting is a scene. It holds no field today. */
@@ -909,7 +912,7 @@ export function loadConfigAndAnimations(path: string): { config: CharacterConfig
 export type EarlyDoor = 'paint' | 'layers' | 'assemble';
 
 /** Every loader: the three early doors, and `full` — `parseConfig`, in front of `rig`, `build` and `propose --from-config`/`--compare`. */
-export type ConfigDoor = EarlyDoor | 'full';
+export type ConfigDoor = EarlyDoor | 'full' | 'cloth';
 
 /**
  * 🔒 The one statement of what each loader requires, as dotted field paths.
@@ -923,6 +926,7 @@ export const CONFIG_REQUIRES: Readonly<Record<ConfigDoor, readonly string[]>> = 
   layers: ['key', 'seethrough', 'assemble.rig_scale'],
   assemble: ['key', 'seethrough', 'assemble.rig_scale', 'assemble.plan'],
   full: ['key', 'assemble.rig_scale', 'assemble.plan', 'bones', 'meshes', 'regions', 'motion'],
+  cloth: ['key', 'cloth'],
 };
 
 /** The top-level keys a loader requires, in `CONFIG_REQUIRES` order. */
@@ -964,7 +968,7 @@ export interface AssembleConfig {
   bones?: BoneEntry[];
 }
 
-const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'limbs', 'bones', 'meshes', 'regions', 'motion', 'constraints', 'turn', 'scene'] as const;
+const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'limbs', 'bones', 'meshes', 'regions', 'motion', 'constraints', 'turn', 'scene', 'cloth'] as const;
 
 /**
  * The one partial entry point. It validates exactly what its door requires —
@@ -1022,6 +1026,7 @@ function parseEarlyConfigFrom(raw: Json, door: EarlyDoor, base: string | null): 
       checkLimbs(c, t.limbs, made, names);
     }
   }
+  if ('cloth' in t) checkCloth(c, t.cloth);
   const pose = base === null ? null : poseBeside(c, t.generation, base);
   refuseIfAny(c.problems);
   return { config: raw as PaintConfig | EarlyConfig | AssembleConfig, pose };
@@ -1175,6 +1180,7 @@ function parseConfigFrom(raw: Json, base: string | null): { config: CharacterCon
   if ('constraints' in t) checkConstraints(c, t.constraints, names.bones, names.parents);
   if ('turn' in t) checkTurn(c, t.turn, attachedParts(t.meshes, t.regions), names.bones);
   if ('scene' in t) checkScene(c, t.scene);
+  if ('cloth' in t) checkCloth(c, t.cloth);
   const from = isPlainObject(t.motion) ? t.motion.animations_from : undefined;
   const animations = base !== null && typeof from === 'string' && from !== '' ? readAnimationsFrom(c, resolve(base, from)) : null;
   if (base !== null) poseBeside(c, t.generation, base);
@@ -2582,6 +2588,116 @@ function attachedParts(meshes: Json, regions: Json): Set<string> {
  * declaration. Not `true`: an object is what a later field can be added to
  * without changing what an existing config means.
  */
+/**
+ * `config.cloth` (issue #364): a recipe per tag `propose --cloth` drafts trees
+ * for. Every field is checked here, and every combination that would draft
+ * something other than what it says is refused by name:
+ *
+ * - a tag that is not one of {@link CLOTH_TARGETS} (`CONFIG_KEY_KNOWN`);
+ * - `split.at` at or past `links` — no link would be left for the branches
+ *   (`CONFIG_CLOTH_SPLIT_BEFORE_TIP`);
+ * - a `wind` or `gravity` pair whose tip is below its root: the response is
+ *   stronger at the soft tip (`CONFIG_CLOTH_RESPONSE_GROWS_TO_TIP`);
+ * - `alternate_damping` without `damping`, or equal to it: neighbouring trees
+ *   are declared out of phase, and an alternate that alternates nothing is
+ *   not a declaration (`CONFIG_CLOTH_ALTERNATE_DIFFERS`);
+ * - `swing` on a tag other than `bottomwear`, or `swing.scales` not one per
+ *   tree (`CONFIG_CLOTH_SWING_SCALE_PER_TREE`).
+ */
+function checkCloth(c: Check, v: Json): void {
+  const at = 'config.cloth';
+  if (!isPlainObject(v)) {
+    c.fail('CONFIG_FIELD_TYPE', at, `is ${show(v)}; an object is required — one recipe per tag, ${CLOTH_TARGETS.map((t) => `"${t}"`).join(', ')}`);
+    return;
+  }
+  // The keys are tags, not fields: read here rather than by c.object, whose lists are field names.
+  for (const key of Object.keys(v)) {
+    if (isRecordKey(key) || (CLOTH_TARGETS as readonly string[]).includes(key)) continue;
+    if (key === 'note' || key.endsWith('_note')) {
+      if (typeof v[key] !== 'string') c.fail('CONFIG_FIELD_TYPE', `${at}.${key}`, `is ${show(v[key])}; an annotation is a string`);
+      continue;
+    }
+    c.fail('CONFIG_KEY_KNOWN', `${at}.${JSON.stringify(key)}`, `is not a tag a recipe is drafted for; known: ${CLOTH_TARGETS.map((t) => `"${t}"`).join(', ')} — ${DOORS}`);
+  }
+  if (Object.keys(v).filter((k) => (CLOTH_TARGETS as readonly string[]).includes(k)).length === 0) {
+    c.fail('CONFIG_FIELD_PRESENT', at, `names no tag; one recipe per tag, ${CLOTH_TARGETS.map((t) => `"${t}"`).join(', ')}, is required (leave cloth out for none)`);
+  }
+  for (const tag of CLOTH_TARGETS) {
+    if (!(tag in v)) continue;
+    const path = `${at}.${JSON.stringify(tag)}`;
+    const r = c.object(path, v[tag], ['chains', 'links', 'wind', 'gravity'], ['split', 'length_ratio', 'strength', 'damping', 'alternate_damping', 'translate', 'swing']);
+    if (r === null) continue;
+    const chains = 'chains' in r && c.int(`${path}.chains`, r.chains, 1) ? (r.chains as number) : null;
+    const links = 'links' in r && c.int(`${path}.links`, r.links, 1) ? (r.links as number) : null;
+    if ('split' in r) {
+      const sp = c.object(`${path}.split`, r.split, ['at', 'into'], []);
+      if (sp !== null) {
+        const sAt = 'at' in sp && c.int(`${path}.split.at`, sp.at, 1) ? (sp.at as number) : null;
+        if ('into' in sp) c.int(`${path}.split.into`, sp.into, 2);
+        if (sAt !== null && links !== null && sAt >= links) {
+          c.fail('CONFIG_CLOTH_SPLIT_BEFORE_TIP', `${path}.split.at`, `is ${sAt} and links is ${links}; the trunk's ${sAt} link(s) would leave no link for the branches — split.at below links is required`);
+        }
+      }
+    }
+    if ('length_ratio' in r) c.number(`${path}.length_ratio`, r.length_ratio, 'positive');
+    if ('strength' in r) {
+      const st = c.object(`${path}.strength`, r.strength, ['trunk', 'branch', 'edge'], []);
+      if (st !== null) for (const k of ['trunk', 'branch', 'edge'] as const) if (k in st) c.number(`${path}.strength.${k}`, st[k], 'positive');
+    }
+    const damping = 'damping' in r && c.number(`${path}.damping`, r.damping, 'unit') ? (r.damping as number) : null;
+    if ('alternate_damping' in r && c.number(`${path}.alternate_damping`, r.alternate_damping, 'unit')) {
+      if (!('damping' in r)) c.fail('CONFIG_CLOTH_ALTERNATE_DIFFERS', `${path}.alternate_damping`, 'is declared and damping is absent; the odd trees take alternate_damping in place of the even trees\' damping, so damping is required beside it');
+      else if (damping !== null && damping === r.alternate_damping) c.fail('CONFIG_CLOTH_ALTERNATE_DIFFERS', `${path}.alternate_damping`, `is ${damping}, the same as damping; neighbouring trees are declared out of phase, so a different value is required (or leave alternate_damping out)`);
+    }
+    for (const k of ['wind', 'gravity'] as const) {
+      if (!(k in r)) continue;
+      const pair = r[k];
+      if (!Array.isArray(pair) || pair.length !== 2 || !pair.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0)) {
+        c.fail('CONFIG_FIELD_TYPE', `${path}.${k}`, `is ${show(pair)}; [root, tip], two numbers at or above 0 — the ${k} response of a path's first link and of its last — is required`);
+        continue;
+      }
+      if ((pair[1] as number) < (pair[0] as number)) {
+        c.fail('CONFIG_CLOTH_RESPONSE_GROWS_TO_TIP', `${path}.${k}`, `is [${pair[0]}, ${pair[1]}]; the response is stronger at the soft tip than at the stiff root, so tip >= root is required`);
+      }
+    }
+    if ('translate' in r && c.number(`${path}.translate`, r.translate, 'unit') && r.translate === 0) {
+      c.fail('CONFIG_FIELD_TYPE', `${path}.translate`, 'is 0; a mix above 0 and at most 1 is required (leave translate out for none)');
+    }
+    if ('swing' in r) {
+      if (tag !== 'bottomwear') {
+        c.fail('CONFIG_CLOTH_SWING_SCALE_PER_TREE', `${path}.swing`, `is declared on "${tag}"; the shared swing is the skirt's (bottomwear) — leave it out here`);
+      } else {
+        const sw = c.object(`${path}.swing`, r.swing, ['scales'], []);
+        if (sw !== null && 'scales' in sw && c.array(`${path}.swing.scales`, sw.scales, true)) {
+          const scales = sw.scales as Json[];
+          scales.forEach((n, i) => c.number(`${path}.swing.scales[${i}]`, n, 'positive'));
+          if (chains !== null && scales.length !== chains) {
+            c.fail('CONFIG_CLOTH_SWING_SCALE_PER_TREE', `${path}.swing.scales`, `holds ${scales.length} scale(s) and chains is ${chains}; one scale per tree, in tree order across the piece, is required`);
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * `propose --cloth`'s loader (issue #364): the `cloth` door — `key` and
+ * `cloth`, under the full loader's rules for each — and nothing else read.
+ * Every other key must still be one a config knows.
+ */
+export function loadClothConfig(path: string): { key: string; cloth: ClothRecipes } {
+  const raw = readConfigFile(path);
+  const c = new Check();
+  const required = topRequired('cloth');
+  const top = c.object('config', raw, required, TOP_KEYS.filter((k) => !required.includes(k)));
+  if (top === null) refuseIfAny(c.problems);
+  const t = top as Record<string, Json>;
+  if ('key' in t) c.string('config.key', t.key);
+  if ('cloth' in t) checkCloth(c, t.cloth);
+  refuseIfAny(c.problems);
+  return raw as { key: string; cloth: ClothRecipes };
+}
+
 function checkScene(c: Check, v: Json): void {
   if (!isPlainObject(v)) {
     c.fail('CONFIG_FIELD_TYPE', 'config.scene', `is ${show(v)}; an object is required — {} declares the painting a scene`);

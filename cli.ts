@@ -19,7 +19,7 @@ import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, t
 import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage, suppliedCheckFlag } from './src/build.ts';
 import { ACCEPTABLE_BARS, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, findRigc, PACK_SHAPES, rigcRunnerAt, type PackShape, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, NO_PARTS_SENTENCE, SEAM_MEAN_BAR, SOURCE_SENTENCE, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
-import { type CharacterConfig, loadConfig, loadEarlyConfig, loadPaintConfig } from './src/config.ts';
+import { type CharacterConfig, loadClothConfig, loadConfig, loadEarlyConfig, loadPaintConfig } from './src/config.ts';
 import { failLine, guidePointer, PartsError } from './src/errors.ts';
 import { GUIDE_DOC, type GuideAnswer, guideRule, guideSection } from './src/guide.ts';
 import { proposeHeadBox } from './src/headbox.ts';
@@ -196,6 +196,20 @@ usage:
       idle moved against the finer lattice, which no bar reads). part: the
       reference's rule, a tenth of the part's short side clamped to 5..36.
       r is the part rule's under both.
+
+  rig-parts propose … [--cloth <config.json>]
+      Draft cloth and hair as trees that answer the world (issue #364), from
+      the config's "cloth" block — a recipe per tag, bottomwear, back hair
+      and front hair (AUTHORING §3, *Recipe: cloth and hair*). Each tagged
+      piece hangs "chains" trees of "links" links from its attachment bone
+      (hip, or head), forked by "split", the links shortening toward the tip;
+      proposal.json's "constraints" puts a physics constraint on every link,
+      its strength by trunk, branch or edge, its wind and gravity response
+      on a ramp from the declared root value to the tip value (multipliers
+      of the consumer's environment — no direction is drafted), and drafts no
+      idle key on them. A bottomwear recipe's "swing" drives each tree's
+      first link from one shared pendulum. A recipe that drafts nothing is
+      refused (PROPOSE_CLOTH_DRAFTED). Without --cloth nothing changes.
 
   rig-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
       Draw the config's CURRENT bones instead (<out>/render/landmarks_config.png
@@ -762,7 +776,7 @@ const TAKES = {
   layers: { valued: ['--export', '--template', '--canvas'], switches: [] },
   sheet: { valued: ['--source', '--layers', '--out', '--cell', '--cols'], switches: [] },
   rig: { valued: ['--config', '--parts', '--out', '--idle-keys', '--page-edges', '--pack-shape'], switches: [] },
-  propose: { valued: ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--head', '--canvas', '--keypoints', '--person', '--wrist-snap', '--grid-rule'], switches: ['--head-box'] },
+  propose: { valued: ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--head', '--canvas', '--keypoints', '--person', '--wrist-snap', '--grid-rule', '--cloth'], switches: ['--head-box'] },
   compare: { valued: ['--left', '--right', '--map'], switches: [] },
   check: { valued: ['--rig', '--out', '--parts', '--source', '--page-edges', '--pack-shape', '--requirements'], switches: ['--seam-pairs', '--keep-stills'] },
   loop: { valued: ['--frames', '--out'], switches: ['--palette'] },
@@ -1123,6 +1137,10 @@ function cmdPropose(args: string[]): number {
     if (ruleArg !== undefined && flags.has('--from-config')) return usage('--grid-rule chooses the drafted spacing; --from-config proposes nothing');
     if (ruleArg !== undefined && !(GRID_RULES as readonly string[]).includes(ruleArg)) return usage(`--grid-rule ${ruleArg}; one of ${GRID_RULES.join(', ')} is required`);
     const gridRule = (ruleArg ?? DEFAULT_GRID_RULE) as GridRule;
+    // Issue #364: the cloth and hair recipe, read from a config's cloth block; without it nothing changes.
+    const clothArg = flags.get('--cloth');
+    if (clothArg !== undefined && flags.has('--from-config')) return usage('--cloth drafts trees while proposing; --from-config proposes nothing');
+    const cloth = clothArg === undefined ? null : loadClothConfig(clothArg).cloth;
     const partsDir = existsSync(partsArg) && statSync(partsArg).isFile() ? dirname(partsArg) : partsArg;
     if (!existsSync(source)) {
       throw new PartsError([{ code: 'PROPOSE_SOURCE_PRESENT', object: source, detail: 'no such file; the painting is drawn under the overlay' }]);
@@ -1150,7 +1168,7 @@ function cmdPropose(args: string[]): number {
     }
     const cmpPath = flags.get('--compare');
     const cfg = cmpPath === undefined ? null : loadConfig(cmpPath);
-    const { proposal: drafted, basis } = proposeWithBasis(P, joints, wristSnap, gridRule);
+    const { proposal: drafted, basis } = proposeWithBasis(P, joints, wristSnap, gridRule, cloth);
     const fullRun = flags.get('--full');
     const headRun = flags.get('--head');
     const prop =

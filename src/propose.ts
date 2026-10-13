@@ -139,6 +139,7 @@ import { AUTHOR_NO_ROLE, isAuthorTag } from './tags.ts';
 import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER_TAGS, turnFractions, turnNearest, turnPivot, turnRiderDepth, type TurnSpec } from './turn.ts';
 import { edgeLength } from './length.ts';
 import { chainSqueezes, type SqueezeFinding } from './squeeze.ts';
+import { CARD_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, swingName, treeConstraints, type TreeChain, type TreeInput } from './cloth.ts';
 import { TEXTURE_STRETCH_CEILING } from './check.ts';
 
 // ---------------------------------------------------------------------------
@@ -264,6 +265,8 @@ export interface Proposal {
     /** Absent when no part feeds the `eyes` group ({@link EYE_GROUP_TAGS}): a blink with nothing to blink is not written. */
     blink?: ProposedBlink;
   };
+  /** Only with `propose --cloth` (issue #364, `src/cloth.ts`): the physics (and a skirt swing's transforms) of the trees it drafted; absent otherwise, so a proposal without it is the one written before it. */
+  constraints?: ConfigConstraint[];
   /** Only with `propose --full`/`--head` (issue #251, {@link draftTurn}); absent otherwise, so a proposal without them is the one written before it. */
   turn?: TurnSpec;
   notes: string[];
@@ -423,6 +426,7 @@ export function checkProposal(P: PartSet, p: Proposal): void {
     regions: p.regions,
     ...(p.limbs === undefined ? {} : { limbs: p.limbs }),
     motion: p.motion,
+    ...(p.constraints === undefined ? {} : { constraints: p.constraints }),
     ...(p.turn === undefined ? {} : { turn: p.turn }),
   });
 }
@@ -588,7 +592,7 @@ export function withTurn(p: Proposal, draft: { turn: TurnSpec | null; notes: str
     }
     turn = { pivot: turn.pivot, depths };
   }
-  return { bones: p.bones, meshes: p.meshes, regions: p.regions, ...(p.limbs === undefined ? {} : { limbs: p.limbs }), motion: p.motion, ...(turn === null ? {} : { turn }), notes: [...p.notes, ...draft.notes] };
+  return { bones: p.bones, meshes: p.meshes, regions: p.regions, ...(p.limbs === undefined ? {} : { limbs: p.limbs }), motion: p.motion, ...(p.constraints === undefined ? {} : { constraints: p.constraints }), ...(turn === null ? {} : { turn }), notes: [...p.notes, ...draft.notes] };
 }
 
 // ---------------------------------------------------------------------------
@@ -1131,8 +1135,8 @@ const SIDES = [
  * which rule stood in; without it every value and note is the one this
  * function wrote before the parameter existed.
  */
-export function propose(P: PartSet, joints?: RigJoints, wristSnap: number | null = null, gridRule: GridRule = DEFAULT_GRID_RULE): Proposal {
-  return proposeWithBasis(P, joints, wristSnap, gridRule).proposal;
+export function propose(P: PartSet, joints?: RigJoints, wristSnap: number | null = null, gridRule: GridRule = DEFAULT_GRID_RULE, cloth: ClothRecipes | null = null): Proposal {
+  return proposeWithBasis(P, joints, wristSnap, gridRule, cloth).proposal;
 }
 
 /**
@@ -1145,7 +1149,13 @@ export function propose(P: PartSet, joints?: RigJoints, wristSnap: number | null
  * `joints`: see {@link armsFromJoints}. `null` is the built-in tolerance
  * alone, and every value and note is the one written before it existed.
  */
-export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: number | null = null, gridRule: GridRule = DEFAULT_GRID_RULE): { proposal: Proposal; basis: ProposalBasis } {
+export function proposeWithBasis(
+  P: PartSet,
+  joints?: RigJoints,
+  wristSnap: number | null = null,
+  gridRule: GridRule = DEFAULT_GRID_RULE,
+  cloth: ClothRecipes | null = null,
+): { proposal: Proposal; basis: ProposalBasis } {
   // Issue #230: a piece is not given its base's rule a second time, which
   // needs to know which part is the piece. A file that cannot say is refused
   // here, and only here: every other reader of parts.json still takes it.
@@ -1304,6 +1314,26 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
     bones.push({ chain, parent, points: pts.map(rnd), tip: rnd(tip) });
     pts.forEach((_, k) => records.push({ bone: `${chain}${k}`, entry: chain, origin: why[k], tip: k === pts.length - 1 ? tipWhy : null }));
   };
+  // Issue #364: the trees a cloth recipe drafts, their constraints, and the tags it was used on.
+  const clothConstraints: ConfigConstraint[] = [];
+  const clothUsed = new Set<ClothTarget>();
+  const recipeOf = (tag: ClothTarget): ClothRecipe | null => cloth?.[tag] ?? null;
+  const T = (p: PartRecord, tag: ClothTarget, r: ClothRecipe, input: TreeInput): TreeChain[] => {
+    const trees = draftTrees(input, r);
+    const constants = [konst('cloth_chains', r.chains), konst('cloth_links', r.links), konst('length_ratio', roundTo(r.length_ratio ?? CARD_LENGTH_RATIO, 6))];
+    for (const t of trees) {
+      C(
+        t.chain,
+        t.parent,
+        t.points,
+        t.tip,
+        t.why.map((w) => placement('mask', w, { parts: [p.name], bones: [input.parent], constants })),
+        placement('mask', t.tipWhy, { parts: [p.name], bones: [input.parent], constants }),
+      );
+    }
+    clothUsed.add(tag);
+    return trees;
+  };
   B('hip', 'root', hip, hipWhy);
   B(
     'chest',
@@ -1444,6 +1474,34 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
       );
       meshes[p.name] = { grid: g, r, segments: [['head', rnd(head), rnd([axis, top + 13])], 'bun'] };
       tracks.push({ bone: 'bun', prop: 'rotate', amp: 0.8, period: 4.0, phase: 0.2 });
+    } else if (recipeOf('back hair') !== null) {
+      // Issue #364: the recipe's trees, per side of the eye axis (twin tails are a side each), from the eye line to
+      // 4 px above the part's bottom, in place of the two keyed chains.
+      const rcp = recipeOf('back hair') as ClothRecipe;
+      const mask = P.alpha(p);
+      const segs: Segment[] = [['head', rnd(head), rnd([axis, top + 13])]];
+      const all: TreeChain[] = [];
+      let n = 0;
+      for (const [side] of SIDES) {
+        const prefix = P.headFirst('back hair').length === 1 ? `hairback_${side}` : `hairback_${p.name}_${side}`;
+        const trees = T(p, 'back hair', rcp, {
+          prefix,
+          parent: 'head',
+          rootY: eyeY,
+          tipY: bot - 4,
+          xAt: (y, f) => bandX(mask, y, { frac: f, side, axis }),
+          fallbackX: () => axis,
+          frame: `${p.name}'s art on the ${side} side of the eye axis (no art there in the band: the eye axis x)`,
+          edges: side,
+        });
+        for (const t of trees) segs.push(t.chain);
+        const made = treeConstraints(trees, rcp, null);
+        clothConstraints.push(...made);
+        n += made.length;
+        all.push(...trees);
+      }
+      notes.push(clothNote(p.name, 'back hair', all, rcp, n, ' per side of the eye axis, from head, rooted on the eye line and tipped 4 px above its bottom'));
+      meshes[p.name] = { grid: g, r, segments: segs };
     } else {
       const mask = P.alpha(p);
       const segs: Segment[] = [['head', rnd(head), rnd([axis, top + 13])]];
@@ -1532,6 +1590,13 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
       );
       segs.push(tag);
       columns.push(tag);
+      const fringeRecipe = recipeOf('front hair');
+      if (fringeRecipe !== null) {
+        // Issue #364: under the recipe the fringe's two links carry physics, an outer column the edge's, and no key.
+        clothConstraints.push(...chainConstraints(tag, 2, columns.length - 1, tag !== 'bang_c', fringeRecipe));
+        clothUsed.add('front hair');
+        continue;
+      }
       const a = tag === 'bang_c' ? 0.8 : 1.0;
       tracks.push({ chain: tag, amps: [a, Number((a * 2.2).toFixed(4))], period: 4.0, phase: 0.18, lag: 0.1 });
     }
@@ -1540,6 +1605,11 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
         `the opaque shape does not separate the locks painted inside one mass of hair, so a lock that runs elsewhere is not followed — move the chains onto the locks` +
         ('none' in roll ? `; no head frame to turn the columns to: ${roll.none}` : ''),
     );
+    if (recipeOf('front hair') !== null) {
+      notes.push(
+        `${p.name} (${p.from}): config.cloth."front hair" -> ${columns.join(', ')} carry physics on both links (bang_r and bang_l the edge's strength, bang_c the trunk's; wind and gravity on the recipe's root-to-tip ramp over their two links) and no idle key; the recipe's chains, links and split shape the hanging strands, not the fringe`,
+      );
+    }
     const below = newMask(P.W, P.H);
     below.data.set(mask.data);
     const [c0, c1] = pySlice(0, pyInt(chin) + 4, P.H);
@@ -1562,6 +1632,26 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
         }
       }
       const name = k === 0 ? 'lock' : `lock${k}_`;
+      const lockRecipe = recipeOf('front hair');
+      if (lockRecipe !== null) {
+        // Issue #364: the strand hangs as the recipe's trees, across its own art, from the same root row to 5 px below it.
+        const trees = T(p, 'front hair', lockRecipe, {
+          prefix: `${name.replace(/_$/, '')}t`,
+          parent: 'head',
+          rootY: y0,
+          tipY: bot + 5,
+          xAt: (y, f) => bandX(cm, y, { frac: f }),
+          fallbackX: () => st.cx,
+          frame: `the strand of ${p.name} that hangs below the chin (with ${p.name}'s art within 25 px of its centre x; no art in the band: the strand's centre x)`,
+          edges: 'both',
+        });
+        for (const t of trees) segs.push(t.chain);
+        const made = treeConstraints(trees, lockRecipe, null);
+        clothConstraints.push(...made);
+        notes.push(clothNote(p.name, 'front hair', trees, lockRecipe, made.length, ` on the strand at x ${pyFixed(st.cx, 0)}, from head, rooted 0.22 face heights above the eye line and tipped 5 px below the strand`));
+        k++;
+        continue;
+      }
       const why: Placement[] = [];
       const pts: Array<[number, number]> = [0, 1, 2, 3].map((j) => {
         const w = placement(
@@ -2019,6 +2109,54 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
         `${p.name} (${p.from}): its art starts ${pyFixed(artTop - chestAt, 1)} px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root`,
       );
     }
+    // Issue #364: with config.cloth.bottomwear, the recipe's trees hang from the hip in place of the three keyed chains.
+    const skirtRecipe = recipeOf('bottomwear');
+    if (skirtRecipe !== null) {
+      const prefix = bw.length === 1 ? 'skirt' : `skirt_${p.name}`;
+      const trees = T(p, 'bottomwear', skirtRecipe, {
+        prefix,
+        parent: 'hip',
+        rootY: y0,
+        tipY: bot - 4,
+        xAt: (y, f) => bandX(mask, y, { frac: f }),
+        fallbackX: (f) => p.x + f * p.w,
+        frame: `${p.name}'s art (no art in the band: that share of its box's width)`,
+        edges: 'both',
+      });
+      for (const t of trees) segs.push(t.chain);
+      let swing: { bone: string; rest: number } | null = null;
+      if (skirtRecipe.swing !== undefined) {
+        // One link long, straight down from the centre of the root row: the hip is drafted with no tip, so it is
+        // unturned and the swing's setup rotation in its frame is its own direction, -90 degrees (Spine, y up).
+        const cx = or(bandX(mask, y0, { frac: 0.5 }), p.x + 0.5 * p.w);
+        const first = trees[0].points.length > 1 ? trees[0].points[1][1] : trees[0].tip[1];
+        const at: [number, number] = [cx, y0];
+        const tipAt: [number, number] = [cx, first];
+        B(
+          swingName(prefix),
+          'hip',
+          at,
+          placement('mask', `the centre of ${p.name}'s art in the 24-row band at the root row (20 px below hip's y)`, { parts: [p.name], bones: ['hip'], constants: [konst('share_across', 0.5)] }),
+          tipAt,
+          placement('derived', `straight down from the swing's origin to the row of the first tree's second link (one link long)`, { bones: [`${trees[0].chain}0`] }),
+        );
+        swing = { bone: swingName(prefix), rest: roundTo((Math.atan2(-(rnd(tipAt)[1] - rnd(at)[1]), rnd(tipAt)[0] - rnd(at)[0]) * 180) / Math.PI, 6) };
+      }
+      const made = treeConstraints(trees, skirtRecipe, swing);
+      clothConstraints.push(...made);
+      notes.push(
+        clothNote(
+          p.name,
+          'bottomwear',
+          trees,
+          skirtRecipe,
+          made.length,
+          `${swing === null ? '' : ` on one shared swing, ${swing.bone} (each tree's first link takes its rotation times ${skirtRecipe.swing?.scales.join('/')}, its setup rotation ${swing.rest} degrees subtracted)`} from hip, rooted 20 px below its y and tipped 4 px above ${p.name}'s bottom, laid down the screen`,
+        ),
+      );
+      meshes[p.name] = { grid: g, r, segments: segs };
+      continue;
+    }
     for (const [tag, f, ph] of [
       ['skirt_r', 0.3, 0.3],
       ['skirt_c', 0.5, 0.34],
@@ -2160,7 +2298,31 @@ export function proposeWithBasis(P: PartSet, joints?: RigJoints, wristSnap: numb
   const scale = IDLE_SECONDS / REFERENCE_IDLE_SECONDS;
   const idleTracks = tracks.map((tr) => ({ ...tr, period: tr.period * scale }));
   const drafted = Object.keys(limbs).length === 0 ? {} : { limbs };
-  return { proposal: { bones, meshes, regions, ...drafted, motion: blink === undefined ? { duration: IDLE_SECONDS, tracks: idleTracks } : { duration: IDLE_SECONDS, tracks: idleTracks, blink }, notes }, basis: { frame, bones: records } };
+  // Issue #364: a recipe that drafted nothing is a declaration that says something false about the rig.
+  if (cloth !== null) {
+    refuseIfAny(
+      CLOTH_TARGETS.filter((t) => cloth[t] !== undefined && !clothUsed.has(t)).map((t) => ({
+        code: 'PROPOSE_CLOTH_DRAFTED',
+        object: `config.cloth."${t}"`,
+        detail:
+          P.byTag(t).length === 0 && P.headFirst(t).length === 0
+            ? `declares a recipe for "${t}", and no part is tagged "${t}"; leave the recipe out, or assemble the layer it is for`
+            : t === 'back hair'
+              ? `declares a recipe for "back hair", and every back hair part ends above the shoulders (0.5 face heights below the neck), which the proposer drafts as a bun bone with no chain; leave the recipe out`
+              : `declares a recipe for "${t}", and the proposer drafted no chain on it`,
+      })),
+    );
+    if (clothUsed.has('bottomwear') && legPlan !== null && legPlan.chains !== null) {
+      notes.push(
+        `stop at the legs: leg chains ${legPlan.chains.map((c) => c.chain).join(', ')} are drafted, and no stop is drafted for the skirt's trees — the named stop-at-the-leg is rig-c/core#1413 (open); until it lands, a stop is the author's own constraint network in config.constraints`,
+      );
+    }
+  }
+  const constrained = clothConstraints.length === 0 ? {} : { constraints: clothConstraints };
+  return {
+    proposal: { bones, meshes, regions, ...drafted, motion: blink === undefined ? { duration: IDLE_SECONDS, tracks: idleTracks } : { duration: IDLE_SECONDS, tracks: idleTracks, blink }, ...constrained, notes },
+    basis: { frame, bones: records },
+  };
 }
 
 /**

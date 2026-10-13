@@ -135,6 +135,8 @@ import { capBox, type JointLine, jointLine, limbWidth, nearestLimb, pastJoint, s
 import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, type CheckFlagInBuild, checkStage, ctlRemedies, driftShare, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
+import { CLOTH_PARTS, CLOTH_RIG, clothRecipe } from './fixtures/cloth.ts';
+import { linkRows } from './src/cloth.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LEVEL_FRINGE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, TILTED_FRINGE_PARTS, TWO_LOCK_PARTS, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
 import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'rig-c/src/render.ts';
@@ -230,7 +232,7 @@ import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { ALIASES, AliasTarballError, compareTarballs, MANIFEST as ALIAS_MANIFEST, packAlias, packInto, renamed } from './scripts/alias_tarball.ts';
 import { blobId, checkExampleInputs, type Copier, FETCH_RECORD, recordText, runSync } from './scripts/example_inputs.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionKey, type MotionSpec, sineTrack, TIME_SLACK } from './src/motion.ts';
-import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, loadClothConfig, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_BONE_INHERIT, RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
@@ -2289,7 +2291,82 @@ function runConfigSuite(): number {
     `the limb fixture loads: ${loads287.map((e) => (e === null ? 'yes' : codes(e))).join(', ')} (full, assemble door); a range [-10, 140] ${rangeOk === null ? 'loads' : codes(rangeOk)}; without limbs, the plan parts attached ${withoutLimbs === null ? 'load' : codes(withoutLimbs)}; at the assemble door with no bones: ${codes(earlyNoBones)}; planted: ${outcomes287.map((o) => `${o.what} ${o.ok ? 'refused once' : `NOT: ${o.got}`}`).join('; ')}`,
     'issue #349: a limb names its parts, the parts they come from, and one bone each, the lower bone hanging from the upper; every name resolves or is refused by name, the part a limb takes is not a part itself, the joint and the range sit on the segment below the joint, and the range is measured from rest so rest is in it',
   );
+  runClothConfigControls(say);
   return bad();
+}
+
+/**
+ * Issue #364: the `cloth` block. CF300 the fixture recipe loads at every door that sees it and through the cloth
+ * door, and every planted fault is refused once by its own rule; CF301 the cloth door reads `key` and `cloth` and
+ * nothing else; CF302 a block read by propose only moves no byte the full loader hands on.
+ */
+function runClothConfigControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('cloth-config');
+  try {
+    const withCloth = (edit: (r: Record<string, Record<string, unknown>>) => void = () => {}): Record<string, unknown> => {
+      const r = JSON.parse(JSON.stringify(clothRecipe())) as Record<string, Record<string, unknown>>;
+      edit(r);
+      return { ...minimalConfig(), cloth: r };
+    };
+    const loads = [
+      refusals(() => parseConfig(withCloth())),
+      refusals(() => parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false }, assemble: { rig_scale: 0.5 }, cloth: clothRecipe() }, 'layers')),
+    ];
+    const planted: Array<[string, string, string, Record<string, unknown>]> = [
+      ['a tag no recipe is for', 'CONFIG_KEY_KNOWN', 'config.cloth."topwear"', withCloth((r) => (r.topwear = { ...r.bottomwear }))],
+      ['split.at at links', 'CONFIG_CLOTH_SPLIT_BEFORE_TIP', 'config.cloth."back hair".split.at', withCloth((r) => (r['back hair'].split = { at: 4, into: 2 }))],
+      ['wind tip below root', 'CONFIG_CLOTH_RESPONSE_GROWS_TO_TIP', 'config.cloth."bottomwear".wind', withCloth((r) => (r.bottomwear.wind = [10, 2]))],
+      ['gravity tip below root', 'CONFIG_CLOTH_RESPONSE_GROWS_TO_TIP', 'config.cloth."front hair".gravity', withCloth((r) => (r['front hair'].gravity = [3, 1]))],
+      ['alternate_damping equal to damping', 'CONFIG_CLOTH_ALTERNATE_DIFFERS', 'config.cloth."bottomwear".alternate_damping', withCloth((r) => (r.bottomwear.alternate_damping = 0.85))],
+      ['alternate_damping without damping', 'CONFIG_CLOTH_ALTERNATE_DIFFERS', 'config.cloth."back hair".alternate_damping', withCloth((r) => (r['back hair'].alternate_damping = 0.7))],
+      ['four scales for five trees', 'CONFIG_CLOTH_SWING_SCALE_PER_TREE', 'config.cloth."bottomwear".swing.scales', withCloth((r) => (r.bottomwear.swing = { scales: [1.2, 1.1, 1.1, 1.2] }))],
+      ['a swing on back hair', 'CONFIG_CLOTH_SWING_SCALE_PER_TREE', 'config.cloth."back hair".swing', withCloth((r) => (r['back hair'].swing = { scales: [1, 1] }))],
+      ['no wind', 'CONFIG_FIELD_PRESENT', 'config.cloth."front hair".wind', withCloth((r) => delete r['front hair'].wind)],
+      ['translate 0', 'CONFIG_FIELD_TYPE', 'config.cloth."bottomwear".translate', withCloth((r) => (r.bottomwear.translate = 0))],
+      ['links 0', 'CONFIG_FIELD_TYPE', 'config.cloth."front hair".links', withCloth((r) => (r['front hair'].links = 0))],
+      ['an empty block', 'CONFIG_FIELD_PRESENT', 'config.cloth', { ...minimalConfig(), cloth: {} }],
+    ];
+    const outcomes = planted.map(([what, code, object, cfg]) => {
+      const e = refusals(() => parseConfig(cfg));
+      return { what, ok: e !== null && e.problems.length === 1 && e.problems[0].code === code && e.problems[0].object === object, got: codes(e) };
+    });
+    say(
+      'CF300_THE_CLOTH_RECIPE_LOADS_AND_EACH_PLANTED_FAULT_IS_REFUSED_ONCE_BY_ITS_RULE',
+      loads.every((e) => e === null) && outcomes.every((o) => o.ok),
+      `the fixture recipe (fixtures/cloth.ts) at the full loader and the layers door: ${loads.map((e) => (e === null ? 'loads' : codes(e))).join(', ')}; planted: ${outcomes.map((o) => `${o.what} ${o.ok ? 'refused once' : `NOT: ${o.got}`}`).join('; ')}`,
+      'issue #364: a recipe that would draft something other than it says — no branch links, a response weaker at the soft tip, an alternate that alternates nothing, a swing scale missing for a tree — is refused by name, not drafted',
+    );
+
+    const at = (name: string, v: unknown): string => {
+      const f = join(dir, name);
+      writeFileSync(f, JSON.stringify(v));
+      return f;
+    };
+    const door = refusals(() => loadClothConfig(at('door.json', { key: 'k', assemble: { rig_scale: 'not read' }, cloth: clothRecipe() })));
+    const noCloth = refusals(() => loadClothConfig(at('none.json', { key: 'k' })));
+    const stray = refusals(() => loadClothConfig(at('stray.json', { key: 'k', cloth: clothRecipe(), drape: 1 })));
+    say(
+      'CF301_THE_CLOTH_DOOR_READS_KEY_AND_CLOTH_AND_REFUSES_NEITHER_ABSENT_NOR_AN_UNKNOWN_KEY_IN_SILENCE',
+      door === null &&
+        noCloth !== null && noCloth.problems.length === 1 && noCloth.problems[0].code === 'CONFIG_FIELD_PRESENT' && noCloth.problems[0].object === 'config.cloth' &&
+        stray !== null && stray.problems.length === 1 && stray.problems[0].code === 'CONFIG_KEY_KNOWN' && stray.problems[0].object === 'config.drape',
+      `key + cloth + an unread assemble: ${door === null ? 'loads' : codes(door)}; no cloth: ${codes(noCloth)}; an unknown top-level key: ${codes(stray)}`,
+      'propose runs before the rig sections exist, so its door requires only what it reads; a config is still never half-known',
+    );
+
+    const plain = parseConfig(minimalConfig());
+    const clothed = parseConfig(withCloth());
+    const same = JSON.stringify({ ...clothed, cloth: undefined }) === JSON.stringify(plain);
+    const changed = JSON.stringify({ ...clothed }) === JSON.stringify(plain);
+    say(
+      'CF302_THE_FULL_LOADER_HANDS_ON_A_CLOTHED_CONFIG_UNCHANGED_BUT_FOR_THE_BLOCK',
+      same && !changed,
+      `the clothed config, cloth left out, equals the plain one: ${same}; with cloth it differs (the comparison can see a block): ${!changed}`,
+      'the loader vouches for cloth and passes it on as written; no stage after propose reads it, and RG200 holds the rig bytes to that',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** A generation block the loader accepts; every value is a fixture's, none is read here. */
@@ -3883,7 +3960,41 @@ function runCliSuite(): number {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+  runClothCliCases(say);
   return bad();
+}
+
+/**
+ * Issue #364, CL200: `propose --cloth` writes the recipe's constraints and one note per piece; beside `--from-config`
+ * it is a usage error before anything is written, and a config whose recipe is refused writes no proposal.
+ */
+function runClothCliCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('cloth-cli');
+  try {
+    const painting = writeProposeFixture(join(dir, 'parts'), CLOTH_PARTS, CLOTH_RIG);
+    const cfg = join(dir, 'config.json');
+    writeFileSync(cfg, JSON.stringify({ key: 'cloth', cloth: clothRecipe() }));
+    const bad = join(dir, 'bad.json');
+    writeFileSync(bad, JSON.stringify({ key: 'cloth', cloth: { bottomwear: { ...clothRecipe().bottomwear, wind: [5, 1] } } }));
+    const base = ['propose', '--parts', join(dir, 'parts'), '--source', painting];
+    const ok = runCli([...base, '--out', join(dir, 'ok'), '--cloth', cfg]);
+    const written = existsSync(join(dir, 'ok', 'proposal.json')) ? (JSON.parse(readFileSync(join(dir, 'ok', 'proposal.json'), 'utf8')) as { constraints?: unknown[] }) : null;
+    const both = runCli([...base, '--out', join(dir, 'both'), '--cloth', cfg, '--from-config', cfg]);
+    const refused = runCli([...base, '--out', join(dir, 'refused'), '--cloth', bad]);
+    const notes = ok.out.split('\n').filter((l) => l.startsWith('note: ') && l.includes('config.cloth.'));
+    say(
+      'CL200_PROPOSE_CLOTH_WRITES_THE_RECIPES_CONSTRAINTS_AND_REFUSES_BEFORE_WRITING',
+      ok.status === 0 &&
+        written !== null && (written.constraints ?? []).length === 89 &&
+        notes.length === 4 &&
+        both.status === 2 && both.out.includes('--cloth drafts trees while proposing; --from-config proposes nothing') && !existsSync(join(dir, 'both')) &&
+        refused.status === 1 && refused.out.includes('CONFIG_CLOTH_RESPONSE_GROWS_TO_TIP') && !existsSync(join(dir, 'refused', 'proposal.json')),
+      `--cloth: exit ${ok.status}, ${written === null ? 'no proposal.json' : `${(written.constraints ?? []).length} constraint(s)`}, ${notes.length} cloth note(s) (want 4: skirt, back hair, fringe, lock); with --from-config: exit ${both.status}; a recipe whose wind falls toward the tip: exit ${refused.status}, ${refused.out.includes('CONFIG_CLOTH_RESPONSE_GROWS_TO_TIP') ? 'CONFIG_CLOTH_RESPONSE_GROWS_TO_TIP' : 'no rule named'}, proposal ${existsSync(join(dir, 'refused', 'proposal.json')) ? 'WRITTEN' : 'not written'}`,
+      'emit only after green: a recipe the loader refuses writes nothing, and a flag beside a mode that proposes nothing is a usage error',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -4534,7 +4645,33 @@ function runRigSuite(): number {
   runAnimationsFromCases(say);
   runTurnRigCases(say);
   runInheritRigCases(say);
+  runClothRigCases(say);
   return bad();
+}
+
+/**
+ * Issue #364: RG200 the rig stage hands the recipe's constraints to rigc as the proposal wrote them, in order, and a
+ * config's `cloth` block moves no byte the rig stage writes; the planted difference — the same config with its
+ * constraints left out — must show in the bytes.
+ */
+function runClothRigCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const root = temp('cloth-rig');
+  try {
+    const a = clothBuild(root, 'plain');
+    const b = clothBuild(root, 'clothed', (cs) => cs, { cloth: clothRecipe() });
+    const c = clothBuild(root, 'bare', () => []);
+    const bytes = (d: string): string => ['rig.json', 'motion.json', 'mesh_report.json'].map((f) => (existsSync(join(d, f)) ? readFileSync(join(d, f), 'utf8') : `no ${f}`)).join('\n');
+    const rig = existsSync(join(a.out, 'rig.json')) ? (JSON.parse(readFileSync(join(a.out, 'rig.json'), 'utf8')) as { constraints?: Array<Record<string, unknown>> }) : {};
+    const handed = JSON.stringify(rig.constraints ?? null) === JSON.stringify(a.config.constraints);
+    say(
+      'RG200_THE_CLOTH_CONSTRAINTS_REACH_RIGC_AS_WRITTEN_AND_THE_CLOTH_BLOCK_MOVES_NO_RIG_BYTE',
+      a.rig.status === 0 && b.rig.status === 0 && c.rig.status === 0 && handed && bytes(a.out) === bytes(b.out) && bytes(a.out) !== bytes(c.out),
+      `rig exits ${a.rig.status}, ${b.rig.status}, ${c.rig.status}; rig.json's constraints are the config's, in order: ${handed} (${(rig.constraints ?? []).length}); with the cloth block, rig.json, motion.json and mesh_report.json ${bytes(a.out) === bytes(b.out) ? 'byte-identical' : 'DIFFERENT'}; with the constraints left out they differ: ${bytes(a.out) !== bytes(c.out)}`,
+      'propose --cloth is the only reader of cloth; what it drafted reaches the rig through constraints and bones, which the config carries as written',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -7096,10 +7233,128 @@ function runProposeSuite(): number {
 
     runGridRuleControls(dir, say);
     runSqueezeControls(say);
+    runClothProposeControls(say);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
   return bad();
+}
+
+/**
+ * Issue #364: the cloth recipe's drafts, on fixtures/cloth.ts, every expected value by hand from its rectangles and
+ * the recipe's numbers (the derivations sit beside each control).
+ */
+function runClothProposeControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  // PR130 — the length rule by hand: links 3, ratio 0.25 -> q 0.5, weights 1, 0.5, 0.25 (sum 1.75) over 0..175: rows 0, 100, 150, 175.
+  const rows = linkRows(0, 175, 3, 0.25);
+  const flat = linkRows(10, 40, 3, 1);
+  const one = linkRows(0, 30, 1, 0.5);
+  say(
+    'PR130_LINK_ROWS_SHORTEN_BY_THE_DECLARED_RATIO_AND_SPAN_ROOT_TO_TIP',
+    JSON.stringify(rows) === '[0,100,150,175]' && JSON.stringify(flat) === '[10,20,30,40]' && JSON.stringify(one) === '[0,30]',
+    `ratio 0.25, 3 links over 0..175 -> ${JSON.stringify(rows)} (want [0,100,150,175]); ratio 1 over 10..40 -> ${JSON.stringify(flat)} (the control: equal links); one link -> ${JSON.stringify(one)}`,
+    'issue #364, comment 2 item 8: links shorten toward the tip; the rule is q^j with q = ratio^(1/(links-1)), and ratio 1 is the planted negative that must give equal links',
+  );
+
+  const dir = temp('cloth-propose');
+  try {
+    writeProposeFixture(dir, CLOTH_PARTS, CLOTH_RIG);
+    const P = readPartSet(dir);
+    const plain = propose(P);
+    const prop = propose(P, undefined, null, DEFAULT_GRID_RULE, clothRecipe());
+    const again = propose(readPartSet(dir), undefined, null, DEFAULT_GRID_RULE, clothRecipe());
+    // By hand (fixtures/cloth.ts): hip (120, 167); root row 187, tip row 276, span 89; 5 links at ratio 35/65:
+    //   q = (7/13)^(1/4) = 0.85661; cumulative 1, 1.85661, 2.59041, 3.21900, of 3.75746 -> rows 210.69 -> 211, 231.00 -> 231,
+    //   248.36 -> 248, 263.25 -> 263. Tree 0's cell centre 0.1: row 187's band (175..199) is the 60 px tier, 90..149:
+    //   90 + 0.1*59 = 95.9 -> 96; row 211's band reaches the 80 px tier, 80..159: 80 + 0.1*79 = 87.9 -> 88; the fork at
+    //   row 231: its band, 219..243, reaches the 100 px tier (row 240 on), 70..169: 70 + 0.1*99 = 79.9 -> 80.
+    //   Branch a of tree 0, 0.05: rows 248 and 263 and the tip at 276, 70 + 0.05*99 = 74.95 -> 75. Branch b of tree 2, 0.5 + 0.25/5 = 0.55:
+    //   70 + 0.55*99 = 124.45 -> 124. The swing: the band's centre at row 187, 90 + 0.5*59 = 119.5 -> 120 (to even), down to row 211.
+    const want: Record<string, string> = {
+      skirt0_: '[[96,187],[88,211]]->[80,231]',
+      skirt0a_: '[[80,231],[75,248],[75,263]]->[75,276]',
+      skirt2b_: '[[120,231],[124,248],[124,263]]->[124,276]',
+      skirt_swing: '[120,187]',
+    };
+    const swingEntry = prop.bones.find((b) => 'name' in b && b.name === 'skirt_swing');
+    const swingTip = swingEntry !== undefined && 'name' in swingEntry ? JSON.stringify(swingEntry.tip) : 'absent';
+    const wrong = Object.entries(want).filter(([n, v]) => boneAt(prop.bones, n) !== v).map(([n, v]) => `${n} ${boneAt(prop.bones, n)} (want ${v})`);
+    const parentOf = (n: string): string | null => {
+      const e = prop.bones.find((b) => ('chain' in b ? b.chain : b.name) === n);
+      return e === undefined ? null : e.parent;
+    };
+    const chains = prop.bones.filter((b) => 'chain' in b && b.chain.startsWith('skirt')).map((b) => ('chain' in b ? b.chain : ''));
+    const keyed = prop.motion.tracks.map((t) => ('chain' in t ? t.chain : t.bone)).filter((n) => /^(skirt|hairback|lock|bang)/.test(n));
+    say(
+      'PR131_THE_SKIRT_HANGS_FIVE_FORKED_TREES_AND_A_SWING_AT_THE_HAND_COMPUTED_POINTS_WITH_NO_IDLE_KEY',
+      wrong.length === 0 && swingTip === '[120,211]' && chains.length === 15 && parentOf('skirt0a_') === 'skirt0_1' && parentOf('skirt4b_') === 'skirt4_1' && parentOf('skirt3_') === 'hip' && keyed.length === 0,
+      `${wrong.length === 0 ? 'every hand-computed chain as derived' : `wrong: ${wrong.join('; ')}`}; skirt_swing's tip ${swingTip} (want [120,211]); ${chains.length} skirt chains (want 15: 5 trunks, 10 branches); skirt0a_ under ${parentOf('skirt0a_')}, skirt4b_ under ${parentOf('skirt4b_')}, skirt3_ under ${parentOf('skirt3_')}; idle tracks on a tree: ${keyed.length === 0 ? 'none' : keyed.join(', ')}`,
+      'issue #364: a stiff trunk from the attachment forking into soft tips, links shortening toward the tip, the trees fanning with the skirt, and physics, not keys — the owner\'s direction',
+    );
+
+    const byName = new Map((prop.constraints ?? []).map((c) => [`${c.type}:${c.name}`, c]));
+    const ph = (bone: string): Record<string, unknown> | undefined => byName.get(`physics:${bone}_physics`);
+    const tr = byName.get('transform:skirt_swing_0') as Record<string, unknown> | undefined;
+    const translates = (prop.constraints ?? []).filter((c) => c.name.endsWith('_translate'));
+    const stiff = [ph('skirt0a_2')?.strength, ph('skirt4b_2')?.strength, ph('skirt2a_1')?.strength, ph('skirt2_1')?.strength, ph('hairback_r0a_1')?.strength, ph('hairback_l1b_1')?.strength, ph('hairback_l0a_1')?.strength];
+    // Depth j of 5 links: wind 2 + 8j/4, gravity 5 + 25j/4 -> skirt2_1 (depth 1) 4 / 11.25; skirt2a_1 (depth 3) 8 / 23.75; skirt2a_2 (depth 4) 10 / 30.
+    const ramps = [ph('skirt2_1'), ph('skirt2a_1'), ph('skirt2a_2')].map((c) => `${c?.wind}/${c?.gravity}`);
+    const damp = [ph('skirt0_1')?.damping, ph('skirt1_1')?.damping, ph('skirt2_1')?.damping];
+    const swingOk =
+      ph('skirt0_0') === undefined &&
+      ph('skirt_swing') !== undefined &&
+      tr !== undefined &&
+      JSON.stringify(tr.properties) === '{"rotate":{"offset":-90,"to":{"rotate":{"scale":1.2}}}}' &&
+      JSON.stringify(tr.bones) === '["skirt0_0"]' &&
+      tr.localSource === true && tr.localTarget === true && tr.additive === true;
+    const loads = refusals(() => checkProposal(P, prop));
+    say(
+      'PR132_EVERY_TREE_LINK_CARRIES_ITS_RULES_PHYSICS_AND_THE_PROPOSAL_LOADS',
+      JSON.stringify(stiff) === '[33,33,70,58,33,33,70]' &&
+        JSON.stringify(ramps) === '["4/11.25","8/23.75","10/30"]' &&
+        JSON.stringify(damp) === '[0.85,0.7,0.85]' &&
+        swingOk &&
+        translates.length === 14 &&
+        translates.every((c) => !('wind' in c) && !('gravity' in c) && c.x === 0.3) &&
+        (prop.constraints ?? []).length === 89 &&
+        loads === null &&
+        serializeProposal(prop) === serializeProposal(again),
+      `strength skirt0a_2, skirt4b_2 (edges), skirt2a_1 (branch), skirt2_1 (trunk), hairback_r0a_1, hairback_l1b_1 (each side's outer edge), hairback_l0a_1 (inner) ${JSON.stringify(stiff)} (want [33,33,70,58,33,33,70]); wind/gravity at depth 1, 3, 4 ${JSON.stringify(ramps)}; damping trees 0, 1, 2 ${JSON.stringify(damp)}; swing: link 0 free of physics, one transform per tree, scale 1.2 for tree 0, rest -90 subtracted ${swingOk}; ${translates.length} translate constraint(s), none with a response (want 14: 10 skirt tips, the lock's, the fringe's 3); ${(prop.constraints ?? []).length} constraints (want 89); the proposal loads as a config: ${codes(loads)}; two runs identical: ${serializeProposal(prop) === serializeProposal(again)}`,
+      'issue #364, comments 1-3: stiffness by trunk, branch and edge; the response growing root to tip; neighbouring trees out of phase; translate on dangling ends without the response that stretches them; one shared swing driving each tree by its scale',
+    );
+
+    const plainAgain = serializeProposal(propose(P, undefined, null, DEFAULT_GRID_RULE, null));
+    say(
+      'PR133_WITHOUT_A_RECIPE_THE_PROPOSAL_IS_THE_ONE_WRITTEN_BEFORE',
+      plainAgain === serializeProposal(plain) && plain.constraints === undefined && boneAt(plain.bones, 'skirt_c') !== 'absent' && serializeProposal(prop) !== serializeProposal(plain),
+      `no recipe: ${plainAgain === serializeProposal(plain) ? 'byte-identical to propose(P)' : 'DIFFERENT'}, constraints ${plain.constraints === undefined ? 'absent' : 'PRESENT'}, the keyed skirt_c ${boneAt(plain.bones, 'skirt_c')}; with the recipe the bytes differ: ${serializeProposal(prop) !== serializeProposal(plain)}`,
+      'opt-in: a config without cloth proposes what it proposed before, so no existing build moves; the recipe run is the planted difference the comparison must see',
+    );
+
+    // PR134 — a recipe that drafts nothing: no bottomwear part; back hair that ends above the shoulders (a bun).
+    const noSkirt = temp('cloth-noskirt');
+    const bun = temp('cloth-bun');
+    try {
+      writeProposeFixture(noSkirt, CLOTH_PARTS.filter((q) => q.name !== 'skirt'), CLOTH_RIG);
+      writeProposeFixture(bun, CLOTH_PARTS.map((q) => (q.name === 'hair_back' ? { ...q, h: 60, rects: [[70, 20, 100, 50], [50, 70, 30, 10], [160, 70, 30, 10]] as Array<[number, number, number, number]> } : q)), CLOTH_RIG);
+      const e1 = refusals(() => propose(readPartSet(noSkirt), undefined, null, DEFAULT_GRID_RULE, clothRecipe()));
+      const e2 = refusals(() => propose(readPartSet(bun), undefined, null, DEFAULT_GRID_RULE, clothRecipe()));
+      const ok = refusals(() => propose(readPartSet(noSkirt), undefined, null, DEFAULT_GRID_RULE, { 'back hair': clothRecipe()['back hair'] }));
+      say(
+        'PR134_A_RECIPE_THAT_DRAFTS_NOTHING_IS_REFUSED_BY_NAME',
+        e1 !== null && e1.problems.length === 1 && e1.problems[0].code === 'PROPOSE_CLOTH_DRAFTED' && e1.problems[0].object === 'config.cloth."bottomwear"' &&
+          e2 !== null && e2.problems.length === 1 && e2.problems[0].code === 'PROPOSE_CLOTH_DRAFTED' && e2.problems[0].object === 'config.cloth."back hair"' && e2.problems[0].detail.includes('bun') &&
+          ok === null,
+        `no bottomwear part: ${codes(e1)}; back hair ending at y 80 (above the shoulders): ${codes(e2)}; the same parts with only the back hair recipe: ${ok === null ? 'proposed' : codes(ok)}`,
+        'a recipe is a declaration about the rig; one that shapes nothing would be read later as a skirt or hair that answers the wind, and nothing would',
+      );
+    } finally {
+      rmSync(noSkirt, { recursive: true, force: true });
+      rmSync(bun, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -12098,7 +12353,83 @@ function runCheckSuite(): number {
   runStressCases(say);
   runLimbCheckCases(say);
   runRigcIdentityCases(say);
+  runClothCheckCases(say);
   return bad();
+}
+
+/**
+ * The cloth fixture (fixtures/cloth.ts) proposed with its recipe, its proposal written as a config (`constraints`
+ * with the rest, each edited by `edit`), built by `rig` and read by `check`. Returns the two commands' outputs and the
+ * directories; `check` is not run when `rig` refused.
+ */
+function clothBuild(root: string, label: string, edit: (cs: ConfigConstraint[]) => ConfigConstraint[] = (cs) => cs, extra: Record<string, unknown> = {}): { rig: { status: number; out: string }; check: { status: number; out: string } | null; parts: string; out: string; checkOut: string; config: Record<string, unknown> } {
+  const parts = join(root, 'parts');
+  if (!existsSync(join(parts, 'parts.json'))) writeProposeFixture(parts, CLOTH_PARTS, CLOTH_RIG);
+  const prop = propose(readPartSet(parts), undefined, null, DEFAULT_GRID_RULE, clothRecipe());
+  const config = { ...proposalConfig(CLOTH_PARTS, prop), constraints: edit(prop.constraints ?? []), ...extra };
+  const cfgPath = join(root, `${label}.json`);
+  writeFileSync(cfgPath, JSON.stringify(config));
+  const out = join(root, `rig-${label}`);
+  const rig = runCli(['rig', '--config', cfgPath, '--parts', parts, '--out', out]);
+  const checkOut = join(root, `check-${label}`);
+  const check = rig.status === 0 ? runCli(['check', '--rig', out, '--parts', parts, '--out', checkOut]) : null;
+  return { rig, check, parts, out, checkOut, config };
+}
+
+/** The status word and the figures `check` printed for one bar, `<BAR>: PASS — …`, cut to `n` characters. */
+function barLine(out: string, bar: string, n = 160): string {
+  const l = out.split('\n').find((x) => x.trim().startsWith(`${bar}:`));
+  return l === undefined ? `${bar}: absent` : l.trim().slice(0, n);
+}
+
+/**
+ * Issue #364: the cloth recipe's trees, built and checked with their physics on. CK420 the fixture's build passes
+ * every bar check measures (TEXTURE_STRETCH, TIP_OVER_ROOT, CHAIN_LAG, ANIMATIONS_DO_NOT_FOLD, the seam) and rigc's
+ * own fold reading WITH the physics reads no fold at 12 fps; CK421 the flutter given the links' response stretches
+ * the texture past the bar, which is why the draft gives it none; CK422 a swing whose setup rotation is not
+ * subtracted turns every tree off its art at the setup pose, and the seam says so.
+ */
+function runClothCheckCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const root = temp('cloth-check');
+  try {
+    const good = clothBuild(root, 'good');
+    const out = good.check?.out ?? good.rig.out;
+    const folds = good.check === null ? null : spawnSync(suiteRigc(), ['render', '--candidate', join(good.checkOut, 'build'), '--folds', '--fps', '12', '--max', '360', '--out', join(root, 'folds')], { encoding: 'utf8', maxBuffer: 1 << 28 });
+    const foldLine = folds === null ? 'not run' : (`${folds.stdout}${folds.stderr}`.split('\n').find((l) => l.includes('folds.json')) ?? 'no folds line').trim();
+    const physics = ((good.config.constraints as ConfigConstraint[]) ?? []).filter((c) => c.type === 'physics').length;
+    say(
+      'CK420_THE_CLOTH_TREES_BUILD_AND_CHECK_GREEN_AND_FOLD_NOWHERE_WITH_THEIR_PHYSICS_ON',
+      good.rig.status === 0 &&
+        good.check !== null &&
+        good.check.status === 0 &&
+        out.includes('check: PASS') &&
+        ['TEXTURE_STRETCH', 'TIP_OVER_ROOT', 'CHAIN_LAG', 'ANIMATIONS_DO_NOT_FOLD'].every((b) => barLine(out, b).includes(': PASS')) &&
+        folds !== null && folds.status === 0 && foldLine.includes('(0 of 3 mesh(es) fold)'),
+      `rig exit ${good.rig.status}, check exit ${good.check?.status ?? 'not run'}; ${['TEXTURE_STRETCH', 'TIP_OVER_ROOT', 'CHAIN_LAG', 'ANIMATIONS_DO_NOT_FOLD'].map((b) => barLine(out, b, 150)).join(' | ')}; rigc render --folds at 12 fps on check's build with its ${physics} physics constraint(s): ${foldLine.replace(/->.*/, '')}`,
+      'issue #364: physics must run fold-free. ANIMATIONS_DO_NOT_FOLD leaves physics out (issue #320), so the build with physics is read by rigc directly beside it; TEXTURE_STRETCH and TIP_OVER_ROOT read the idle frames as rendered, physics on',
+    );
+
+    const flutter = clothBuild(root, 'flutter', (cs) => cs.map((c) => (c.name.endsWith('_translate') ? { ...c, wind: 10, gravity: 30 } : c)));
+    const fOut = flutter.check?.out ?? flutter.rig.out;
+    say(
+      'CK421_A_FLUTTER_GIVEN_THE_LINKS_RESPONSE_STRETCHES_THE_TEXTURE_PAST_THE_BAR',
+      flutter.rig.status === 0 && flutter.check !== null && barLine(fOut, 'TEXTURE_STRETCH').includes(': FAIL') && fOut.includes('FAIL  CHECK_TEXTURE_STRETCH'),
+      `every _translate constraint given wind 10 and gravity 30 (the tips' response): ${barLine(fOut, 'TEXTURE_STRETCH', 200)}`,
+      'the planted negative for the draft\'s split: spine-core scales a translate spring\'s response by the reference scale (100) and a rotation\'s by length/100, so the same response on the translate throws the ends far further than it turns them; the bar has to be seen to catch it',
+    );
+
+    const unrested = clothBuild(root, 'unrested', (cs) => cs.map((c) => (c.type === 'transform' ? { ...c, properties: { rotate: { offset: 0, to: { rotate: { scale: 1 } } } } } : c)));
+    const uOut = unrested.check?.out ?? unrested.rig.out;
+    const seamGood = (good.check?.out ?? '').split('\n').find((l) => l.trim().startsWith('seam:'))?.trim().slice(0, 140) ?? 'no seam line';
+    say(
+      'CK422_A_SWING_WHOSE_SETUP_ROTATION_IS_NOT_SUBTRACTED_TURNS_THE_TREES_OFF_THEIR_ART_AND_THE_SEAM_SAYS_SO',
+      unrested.rig.status === 0 && unrested.check !== null && uOut.includes('FAIL  CHECK_SEAM_WITHIN_BAR') && !(good.check?.out ?? '').includes('CHECK_SEAM_WITHIN_BAR'),
+      `the swing transforms with offset 0: ${(uOut.split('\n').find((l) => l.includes('FAIL  CHECK_SEAM_WITHIN_BAR')) ?? 'no seam FAIL').trim().slice(0, 220)}; the drafted -90: ${seamGood}`,
+      'the transform adds the swing\'s local rotation, which at rest is its own direction (-90 under an unturned hip); unsubtracted, each first link turns by it times its scale before any physics, and the setup render leaves the art',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /**
