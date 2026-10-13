@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.20.0](https://github.com/rig-c/parts/compare/v1.19.0...v1.20.0) (2026-10-13)
+
+
+### Features
+
+* **propose:** draft cloth and hair as physics trees that answer the environment, behind `--cloth` (opt-in) ([#384](https://github.com/rig-c/parts/issues/384)) ([435b906](https://github.com/rig-c/parts/commit/435b90690439a132672735058cba0ecee7d6ae00)), closes [#364](https://github.com/rig-c/parts/issues/364)
+
+
+### Bug Fixes
+
+* **deps:** rig-c ^2.53.0, and pass --profile rig-play, the name rigc keeps ([#379](https://github.com/rig-c/parts/issues/379)) ([ded4011](https://github.com/rig-c/parts/commit/ded40112780b293935992ede9d2e041895349214))
+* **deps:** rig-c ^2.54.0, whose A23 refuses a physics step that cannot settle ([#386](https://github.com/rig-c/parts/issues/386)) ([e2859cf](https://github.com/rig-c/parts/commit/e2859cfb0bb983e0e89db30ba690869c05c897fb))
+* **readme:** name every proposal section in the loop's paste step, held to the proposal's type and run with keypoints ([#383](https://github.com/rig-c/parts/issues/383)) ([7a80326](https://github.com/rig-c/parts/commit/7a80326ffefc2d126e586f57bb33a2cf9f31d3a8)), closes [#375](https://github.com/rig-c/parts/issues/375)
+
 ## [1.19.0](https://github.com/rig-c/parts/compare/v1.18.0...v1.19.0) (2026-10-13)
 
 
