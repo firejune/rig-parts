@@ -269,6 +269,24 @@ export interface Proposal {
   notes: string[];
 }
 
+/**
+ * Every section of a proposal that is a config section, in the order the
+ * proposal writes them: what an author copies into the config (issue #375).
+ * `notes` is the proposal's own and is copied nowhere. Two of them are written
+ * only on request — `limbs` under `--keypoints`, `turn` under `--full`/`--head`
+ * — and a `limbs` block left behind is refused at the next step, by the name of
+ * every part it cuts. {@link checkProposal} reads the proposal through the config
+ * loader by this list, the type below refuses a {@link Proposal} key it does not
+ * hold, and the selftest's `TY18` holds every paste sentence in the documents to it.
+ */
+export const PROPOSAL_CONFIG_SECTIONS = ['bones', 'meshes', 'regions', 'limbs', 'motion', 'turn'] as const satisfies ReadonlyArray<Exclude<keyof Proposal, 'notes'>>;
+
+/** A {@link Proposal} key that is neither `notes` nor in {@link PROPOSAL_CONFIG_SECTIONS}; `never` while the list is whole. */
+type UnlistedProposalSection = Exclude<keyof Proposal, 'notes' | (typeof PROPOSAL_CONFIG_SECTIONS)[number]>;
+
+/** Fails to type-check, naming the key, when a section is added to {@link Proposal} and not to the list. */
+export const PROPOSAL_SECTIONS_LISTED: [UnlistedProposalSection] extends [never] ? true : UnlistedProposalSection = true;
+
 // ---------------------------------------------------------------------------
 // what each proposed bone rests on (issue #86)
 // ---------------------------------------------------------------------------
@@ -415,16 +433,9 @@ export function proposalAssemble(P: PartSet): Record<string, unknown> {
  * refusals.
  */
 export function checkProposal(P: PartSet, p: Proposal): void {
-  parseConfig({
-    key: 'proposal',
-    assemble: proposalAssemble(P),
-    bones: p.bones,
-    meshes: p.meshes,
-    regions: p.regions,
-    ...(p.limbs === undefined ? {} : { limbs: p.limbs }),
-    motion: p.motion,
-    ...(p.turn === undefined ? {} : { turn: p.turn }),
-  });
+  const sections: Record<string, unknown> = {};
+  for (const k of PROPOSAL_CONFIG_SECTIONS) if (p[k] !== undefined) sections[k] = p[k];
+  parseConfig({ key: 'proposal', assemble: proposalAssemble(P), ...sections });
 }
 
 /** Fixed key order, two-space indent, trailing newline: the same inputs write the same bytes. */

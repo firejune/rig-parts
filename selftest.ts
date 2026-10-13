@@ -389,6 +389,7 @@ import {
   FIGURE_GRID_IDLE_PX,
   GRID_RULES,
   type GridRule,
+  PROPOSAL_CONFIG_SECTIONS,
 } from './src/propose.ts';
 import { headFrame } from './src/headframe.ts';
 import { pyFixed } from './src/pyfmt.ts';
@@ -15545,7 +15546,98 @@ function readmeLoopLines(readme: string): string[] | string {
   return lines.length === 0 ? 'the loop block holds no rig-parts line' : lines;
 }
 
+/**
+ * Issue #375: every sentence in `text` that tells an author to copy or paste
+ * proposal sections into the config — `copy` or `paste`, then within 240
+ * characters `into`, with at least one proposal key between them — with its
+ * line and the proposal keys it names, in order. The words read are the
+ * proposal's own keys ({@link PROPOSAL_CONFIG_SECTIONS} and `notes`), so a
+ * sentence about the plan (`paste plan and extend_below_crop into
+ * config.assemble`) is not one.
+ */
+function pasteSites(text: string): Array<{ line: number; names: string[] }> {
+  const vocabulary: readonly string[] = [...PROPOSAL_CONFIG_SECTIONS, 'notes'];
+  const sites: Array<{ line: number; names: string[] }> = [];
+  for (const m of text.matchAll(/\b(?:copy|paste)\b([\s\S]{0,240}?)\binto\b/gi)) {
+    const names = [...m[1].matchAll(/[a-z_]+/g)].map((w) => w[0]).filter((w) => vocabulary.includes(w));
+    if (names.length > 0) sites.push({ line: text.slice(0, m.index).split('\n').length, names });
+  }
+  return sites;
+}
+
+/** The documents that must each hold at least one paste sentence (issue #375): the README's loop, the guide's command order, the skill. */
+const PASTE_DOCS: readonly string[] = ['README.md', 'docs/AUTHORING.md', 'skills/rig-parts/SKILL.md'];
+
+/**
+ * Where a paste sentence in the tracked Markdown disagrees with the sections
+ * the proposal writes (issue #375), one sentence per fault: a sentence that
+ * names a different list, or in another order, and a document of
+ * {@link PASTE_DOCS} that holds none. CHANGELOG.md is history and is not read.
+ */
+function pasteListFaults(docs: ReadonlyArray<readonly [string, string]>, sections: readonly string[]): string[] {
+  const faults: string[] = [];
+  for (const [f, t] of docs) {
+    if (!f.endsWith('.md') || f === 'CHANGELOG.md') continue;
+    for (const s of pasteSites(t)) {
+      if (s.names.join(',') === sections.join(',')) continue;
+      const missing = sections.filter((k) => !s.names.includes(k));
+      const extra = s.names.filter((k) => !sections.includes(k));
+      faults.push(`${f}:${s.line} copies ${s.names.join(', ')}; the proposal's sections are ${sections.join(', ')}${missing.length > 0 ? ` (missing ${missing.join(', ')})` : ''}${extra.length > 0 ? ` (not a section: ${extra.join(', ')})` : ''}${missing.length === 0 && extra.length === 0 ? ' (another order)' : ''}`);
+    }
+  }
+  for (const f of PASTE_DOCS) {
+    const doc = docs.find(([g]) => g === f);
+    if (doc === undefined || pasteSites(doc[1]).length === 0) faults.push(`${f} holds no sentence saying which proposal sections to copy into the config`);
+  }
+  return faults;
+}
+
+/** The sections the README's loop block says to copy from the proposal into the config; a string says why none could be read. */
+function readmePasteSections(readme: string): string[] | string {
+  const at = readme.indexOf('## The loop, for an agent');
+  const open = at < 0 ? -1 : readme.indexOf('```sh\n', at);
+  const close = open < 0 ? -1 : readme.indexOf('\n```', open + 6);
+  if (open < 0 || close < 0) return 'README.md has no "## The loop, for an agent" ```sh block';
+  const sites = pasteSites(readme.slice(open + 6, close));
+  return sites.length === 1 ? sites[0].names : `the loop block holds ${sites.length} sentences saying which proposal sections to copy into the config; one is required`;
+}
+
+/** The README's paste line before issue #375, verbatim: four sections, no `limbs`. RL04 plants it. */
+const OLD_README_PASTE_LINE = '#       correct it, copy bones/meshes/regions/motion into config.json';
+
+/**
+ * A keypoint file for a fetched example, written into `work` from the
+ * example's tracked `pose.json` — the generation's control skeleton, latent px —
+ * scaled to the painting, every listed point `observed`. Not read off the
+ * painting: it places the joints where the painting was asked to put them, so a
+ * run on it proves the plumbing (what `--keypoints` drafts, and what the loop
+ * then pastes), not the inference. Null when the example tracks no pose file.
+ */
+function poseKeypoints(ex: string, work: string): string | null {
+  const posePath = join(ex, 'pose.json');
+  if (!existsSync(posePath)) return null;
+  const pose = JSON.parse(readFileSync(posePath, 'utf8')) as { width: number; height: number; points: Record<string, unknown> };
+  const painting = readPng(join(ex, 'inputs', 'painting.png'));
+  const sx = painting.width / pose.width;
+  const sy = painting.height / pose.height;
+  const joints: Record<string, unknown> = {};
+  for (const [name, at] of Object.entries(pose.points)) {
+    joints[name] = Array.isArray(at) && at.length === 2 && at.every((v) => typeof v === 'number') ? { state: 'observed', at: [(at[0] as number) * sx, (at[1] as number) * sy] } : { state: 'missing' };
+  }
+  const file = join(work, 'keypoints.json');
+  mkdirSync(work, { recursive: true });
+  writeFileSync(
+    file,
+    `${JSON.stringify({ spec: KEYPOINTS_SPEC, space: KEYPOINTS_SPACE, width: painting.width, height: painting.height, source: `${relative(ROOT, posePath)}, the generation's control skeleton, scaled from ${pose.width}x${pose.height} to the painting`, people: [{ id: 'a', joints }] }, null, 2)}\n`,
+  );
+  return file;
+}
+
 interface LoopRun {
+  /** The proposal sections pasted into the config at the drafting `propose` step, in order; empty before it runs. */
+  pasted: string[];
+  /** The drafting `propose` step's proposal as written, or null before it runs. */
+  proposal: Record<string, unknown> | null;
   /** Each step as `command status`, in the order run. */
   ran: string[];
   /** The first step that did not exit 0, its status and its first FAIL line (or its last line, when it printed none), and every `FAIL  ` line it printed. */
@@ -15557,12 +15649,15 @@ interface LoopRun {
  * agent following the README would: the See-through runs are the fetched
  * layers, every relative path in a line lands in `work` except the painting and
  * the two runs, and what a `#    ->` comment says to paste into the config is
- * pasted — the head box, the plan, and the proposal's rig sections, nothing
- * else and nothing corrected. The config starts as the state after the first
- * step's own fields are authored: `key`, `seethrough` without `head_box`, and
- * `assemble.rig_scale`, copied from the example's config.
+ * pasted — the head box, the plan, and of the proposal's sections each that
+ * `paste` names and the proposal wrote (the README's own list, issue #375),
+ * nothing else and nothing corrected. With `keypoints`, every `propose --parts`
+ * line also takes `--keypoints <file>`, as AUTHORING §4 says to. The config
+ * starts as the state after the first step's own fields are authored: `key`,
+ * `seethrough` without `head_box`, and `assemble.rig_scale`, copied from the
+ * example's config.
  */
-function runReadmeLoop(lines: readonly string[], ex: string, work: string): LoopRun {
+function runReadmeLoop(lines: readonly string[], ex: string, work: string, paste: readonly string[], keypoints: string | null = null): LoopRun {
   const inputs = join(ex, 'inputs');
   const painting = readPng(join(inputs, 'painting.png'));
   const recorded = JSON.parse(readFileSync(join(ex, 'config.json'), 'utf8')) as { key: string; seethrough: Record<string, unknown>; assemble: { rig_scale: number } };
@@ -15588,18 +15683,21 @@ function runReadmeLoop(lines: readonly string[], ex: string, work: string): Loop
     return fixed[token] ?? join(work, token);
   };
   const ran: string[] = [];
+  const pasted: string[] = [];
+  let proposal: Record<string, unknown> | null = null;
   const known = ['inputs', 'layers', 'sheet', 'propose', 'assemble', 'build'];
   for (const line of lines) {
     const [command, ...rest] = line.split(/\s+/).slice(1);
     const args = [command, ...rest.map(place)];
-    if (!known.includes(command)) return { ran, refused: { line, status: -1, first: `"${command}" is not a command this control knows how to run; teach runReadmeLoop what the README says to do with it`, fails: [] } };
+    if (keypoints !== null && command === 'propose' && args.includes('--parts')) args.push('--keypoints', keypoints);
+    if (!known.includes(command)) return { pasted, proposal, ran, refused: { line, status: -1, first: `"${command}" is not a command this control knows how to run; teach runReadmeLoop what the README says to do with it`, fails: [] } };
     const r = runCli(args);
     ran.push(`${command}${args.includes('--head-box') ? ' --head-box' : args.includes('--propose-plan') ? ' --propose-plan' : args.includes('--from-config') ? ' --from-config' : ''} ${r.status}`);
     if (r.status !== 0) {
       const printed = r.out.split('\n').filter((l) => l.trim() !== '');
       // A refusal's first FAIL line; for a crash, its first error line rather than the runtime's banner.
       const first = printed.find((l) => /FAIL {2}/.test(l)) ?? printed.find((l) => /\b(?:[A-Z]+[a-z]*Error|E[A-Z]{3,}):/.test(l)) ?? printed[printed.length - 1] ?? '(nothing printed)';
-      return { ran, refused: { line, status: r.status, first: first.trim(), fails: printed.filter((l) => /FAIL {2}[A-Z_]+:/.test(l)).map((l) => l.trim()) } };
+      return { pasted, proposal, ran, refused: { line, status: r.status, first: first.trim(), fails: printed.filter((l) => /FAIL {2}[A-Z_]+:/.test(l)).map((l) => l.trim()) } };
     }
     const out = (): string => args[args.indexOf('--out') + 1];
     if (command === 'propose' && args.includes('--head-box')) {
@@ -15612,12 +15710,68 @@ function runReadmeLoop(lines: readonly string[], ex: string, work: string): Loop
       cfg.assemble.extend_below_crop = p.extend_below_crop;
       save();
     } else if (command === 'propose' && !args.includes('--from-config') && !args.includes('--compare')) {
-      const p = JSON.parse(readFileSync(join(out(), 'proposal.json'), 'utf8')) as Record<string, unknown>;
-      for (const k of ['bones', 'meshes', 'regions', 'motion']) cfg[k] = p[k];
+      proposal = JSON.parse(readFileSync(join(out(), 'proposal.json'), 'utf8')) as Record<string, unknown>;
+      for (const k of paste) {
+        if (proposal[k] === undefined) continue;
+        cfg[k] = proposal[k];
+        pasted.push(k);
+      }
       save();
     }
   }
-  return { ran, refused: null };
+  return { pasted, proposal, ran, refused: null };
+}
+
+/**
+ * Where the README loop, pasted uncorrected, must end on one fetched example
+ * (issue #118, #227): the parts whose correction the example's tracked config
+ * records against its proposal on a part TIP_OVER_ROOT reads, and whether a
+ * run ended there — at the build line, exit 1, naming exactly those parts on
+ * CHECK_TIP_OVER_ROOT; with none, every step exit 0.
+ */
+function readmeLoopEnd(ex: string, lines: readonly string[]): { corrected: string[]; describe: string; reached: (r: LoopRun) => boolean } {
+  // The meshes the example's tracked config moved off the proposal's lattice into contour mode — the one
+  // correction a tracked example records against its proposal's meshes (scarf's bottomwear from issue #118, whose
+  // lattice failed TIP_OVER_ROOT measured from the geometry, until issue #262 removed the chest segment that failed
+  // it and scarf went back to the lattice). Pasted uncorrected, as this control pastes, the build must stop at
+  // check and name exactly those parts on that line, and nothing else; with none, it must build green.
+  type ChainEntry = { chain?: string; points?: unknown; tip?: unknown };
+  const tracked = readJsonAt(join(ex, 'config.json')) as { meshes?: Record<string, Record<string, unknown>>; bones?: ChainEntry[]; assemble?: { plan?: Array<[string, string, string]> } };
+  const proposed = readJsonAt(join(ex, 'proposal.json')) as { meshes?: Record<string, Record<string, unknown>>; bones?: ChainEntry[] };
+  // A contour mesh that declares regions moved off the lattice to carry them (a lattice has none; sample's topwear and
+  // bottomwear, issue #183), not as a TIP_OVER_ROOT correction, so the uncorrected build is not required to stop on it.
+  const moved = Object.keys(tracked.meshes ?? {})
+    .filter((m) => 'contour' in (tracked.meshes?.[m] ?? {}) && 'grid' in (proposed.meshes?.[m] ?? {}))
+    .filter((m) => ((tracked.meshes?.[m]?.contour as { regions?: unknown[] } | undefined)?.regions ?? []).length === 0);
+  // The other correction a tracked example records against TIP_OVER_ROOT (issue #227, the demo's skirt): a chain
+  // whose points or tip the config moves off the proposal's, among the segments of a part TIP_OVER_ROOT reads (a
+  // See-through handwear or bottomwear layer, by the plan's tag). A chain moved on any other part (scarf's robe_r on
+  // topwear, issue #196) is not one, and the uncorrected build is not required to stop on it.
+  const chainAt = (b: ChainEntry): string => JSON.stringify([b.points, b.tip]);
+  const proposedChains = new Map((proposed.bones ?? []).filter((b) => b.chain !== undefined).map((b) => [b.chain as string, chainAt(b)]));
+  const movedChains = new Set((tracked.bones ?? []).filter((b) => b.chain !== undefined && proposedChains.has(b.chain) && proposedChains.get(b.chain) !== chainAt(b)).map((b) => b.chain as string));
+  const swingParts = new Set((tracked.assemble?.plan ?? []).filter((e) => (SWING_TAGS as readonly string[]).includes(readTag(e[2])?.base ?? '')).map((e) => e[0]));
+  const rechained = Object.keys(tracked.meshes ?? {}).filter((m) => swingParts.has(m) && ((tracked.meshes?.[m]?.segments as unknown[] | undefined) ?? []).some((sg) => typeof sg === 'string' && movedChains.has(sg)));
+  const corrected = [...new Set([...moved, ...rechained])].sort();
+  const buildAt = lines.findIndex((l) => /^rig-parts build /.test(l));
+  const reached = (r: LoopRun): boolean => {
+    const named = (r.refused?.fails ?? []).map((l) => /FAIL {2}CHECK_TIP_OVER_ROOT: part "([^"]+)"/.exec(l)?.[1] ?? '');
+    return corrected.length === 0
+      ? r.refused === null && r.ran.length === lines.length
+      : r.refused !== null && r.refused.line === lines[buildAt] && r.refused.status === 1 && r.ran.length === lines.length && [...named].sort().join(',') === corrected.join(',');
+  };
+  const describe =
+    corrected.length === 0
+      ? ''
+      : `; the tracked config corrects [${corrected.join(', ')}] (${[moved.length > 0 ? `to contour mode: ${moved.join(', ')}` : '', rechained.length > 0 ? `its chains moved: ${rechained.join(', ')}` : ''].filter((x) => x !== '').join('; ')}), so the uncorrected build is required to stop there naming exactly those on CHECK_TIP_OVER_ROOT`;
+  return { corrected, describe, reached };
+}
+
+/** A loop run in one line: every step in order with its exit, or the step that stopped and its FAIL lines. */
+function loopReport(r: LoopRun, lines: readonly string[]): string {
+  return r.refused === null
+    ? `${r.ran.length} README step(s) in order, each exit 0: ${r.ran.join(', ')}`
+    : `step ${r.ran.length + (r.refused.status === -1 ? 1 : 0)} of ${lines.length} refused (exit ${r.refused.status}): \`${r.refused.line}\` — ${r.refused.fails.length > 0 ? r.refused.fails.join(' | ') : r.refused.first}`;
 }
 
 function runReadmeLoopSuite(): number | null {
@@ -15630,62 +15784,80 @@ function runReadmeLoopSuite(): number | null {
   }
   const { say, bad } = counter();
   if (!exampleInputsAtPin(found.map((d) => relative(join(ROOT, 'examples'), d)), say, 'RL900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
-  const lines = readmeLoopLines(readFileSync(join(ROOT, 'README.md'), 'utf8'));
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  const lines = readmeLoopLines(readme);
+  const paste = readmePasteSections(readme);
   const dir = temp('readme-loop');
   try {
-    if (typeof lines === 'string') {
-      say('RL01_THE_README_LOOP_RUNS_IN_ORDER_ON_A_FRESH_CONFIG', false, lines, '');
+    if (typeof lines === 'string' || typeof paste === 'string') {
+      say('RL01_THE_README_LOOP_RUNS_IN_ORDER_ON_A_FRESH_CONFIG', false, [lines, paste].filter((x): x is string => typeof x === 'string').join('; '), '');
       return bad();
     }
     for (const ex of found) {
       const key = relative(join(ROOT, 'examples'), ex);
-      const r = runReadmeLoop(lines, ex, join(dir, key));
-      // The meshes the example's tracked config moved off the proposal's lattice into contour mode — the one
-      // correction a tracked example records against its proposal's meshes (scarf's bottomwear from issue #118, whose
-      // lattice failed TIP_OVER_ROOT measured from the geometry, until issue #262 removed the chest segment that failed
-      // it and scarf went back to the lattice). Pasted uncorrected, as this control pastes, the build must stop at
-      // check and name exactly those parts on that line, and nothing else; with none, it must build green.
-      type ChainEntry = { chain?: string; points?: unknown; tip?: unknown };
-      const tracked = readJsonAt(join(ex, 'config.json')) as { meshes?: Record<string, Record<string, unknown>>; bones?: ChainEntry[]; assemble?: { plan?: Array<[string, string, string]> } };
-      const proposed = readJsonAt(join(ex, 'proposal.json')) as { meshes?: Record<string, Record<string, unknown>>; bones?: ChainEntry[] };
-      // A contour mesh that declares regions moved off the lattice to carry them (a lattice has none; sample's topwear and
-      // bottomwear, issue #183), not as a TIP_OVER_ROOT correction, so the uncorrected build is not required to stop on it.
-      const moved = Object.keys(tracked.meshes ?? {})
-        .filter((m) => 'contour' in (tracked.meshes?.[m] ?? {}) && 'grid' in (proposed.meshes?.[m] ?? {}))
-        .filter((m) => ((tracked.meshes?.[m]?.contour as { regions?: unknown[] } | undefined)?.regions ?? []).length === 0);
-      // The other correction a tracked example records against TIP_OVER_ROOT (issue #227, the demo's skirt): a chain
-      // whose points or tip the config moves off the proposal's, among the segments of a part TIP_OVER_ROOT reads (a
-      // See-through handwear or bottomwear layer, by the plan's tag). A chain moved on any other part (scarf's robe_r on
-      // topwear, issue #196) is not one, and the uncorrected build is not required to stop on it.
-      const chainAt = (b: ChainEntry): string => JSON.stringify([b.points, b.tip]);
-      const proposedChains = new Map((proposed.bones ?? []).filter((b) => b.chain !== undefined).map((b) => [b.chain as string, chainAt(b)]));
-      const movedChains = new Set((tracked.bones ?? []).filter((b) => b.chain !== undefined && proposedChains.has(b.chain) && proposedChains.get(b.chain) !== chainAt(b)).map((b) => b.chain as string));
-      const swingParts = new Set((tracked.assemble?.plan ?? []).filter((e) => (SWING_TAGS as readonly string[]).includes(readTag(e[2])?.base ?? '')).map((e) => e[0]));
-      const rechained = Object.keys(tracked.meshes ?? {}).filter((m) => swingParts.has(m) && ((tracked.meshes?.[m]?.segments as unknown[] | undefined) ?? []).some((sg) => typeof sg === 'string' && movedChains.has(sg)));
-      const corrected = [...new Set([...moved, ...rechained])].sort();
-      const buildAt = lines.findIndex((l) => /^rig-parts build /.test(l));
-      const named = (r.refused?.fails ?? []).map((l) => /FAIL {2}CHECK_TIP_OVER_ROOT: part "([^"]+)"/.exec(l)?.[1] ?? '');
-      const ok =
-        corrected.length === 0
-          ? r.refused === null && r.ran.length === lines.length
-          : r.refused !== null && r.refused.line === lines[buildAt] && r.refused.status === 1 && r.ran.length === lines.length && [...named].sort().join(',') === corrected.join(',');
+      const r = runReadmeLoop(lines, ex, join(dir, key), paste);
+      const end = readmeLoopEnd(ex, lines);
       say(
         `RL01_THE_README_LOOP_RUNS_IN_ORDER_ON_A_FRESH_CONFIG[${key}]`,
-        ok,
+        end.reached(r),
         r.refused === null
-          ? `${r.ran.length} README step(s) in order, each exit 0: ${r.ran.join(', ')}; the config started with key, seethrough (no head_box) and assemble.rig_scale, and got the head box, the plan and the proposal's four rig sections pasted, uncorrected`
-          : `step ${r.ran.length + (r.refused.status === -1 ? 1 : 0)} of ${lines.length} refused (exit ${r.refused.status}): \`${r.refused.line}\` — ${r.refused.fails.length > 0 ? r.refused.fails.join(' | ') : r.refused.first}${corrected.length > 0 ? `; the tracked config corrects [${corrected.join(', ')}] (${[moved.length > 0 ? `to contour mode: ${moved.join(', ')}` : '', rechained.length > 0 ? `its chains moved: ${rechained.join(', ')}` : ''].filter((x) => x !== '').join('; ')}), so the uncorrected build is required to stop there naming exactly those on CHECK_TIP_OVER_ROOT` : ''}`,
+          ? `${loopReport(r, lines)}; the config started with key, seethrough (no head_box) and assemble.rig_scale, and got the head box, the plan and the proposal's ${r.pasted.join(', ')} pasted, uncorrected (the README names ${paste.join(', ')})`
+          : `${loopReport(r, lines)}${end.describe}`,
         "issue #20: the README loop is what an agent follows, so it is run as written; plain assemble once refused the config for the four sections the next step drafts, and the only way past was a stub of invented rig fields. Issue #118: where an example's tracked config records a correction against its proposal on a part TIP_OVER_ROOT reads — a mesh moved to contour mode (scarf) or a chain of that mesh moved (the demo's skirt, issue #227) — the uncorrected loop must end where the README says to read check.json, on the FAIL line that names that part and no other",
       );
     }
+
+    // Issue #375: the loop again, with --keypoints, on each fetched example that tracks the pose file it was painted
+    // on, pasting the sections the README names (RL03) — and the README's old four-section list planted (RL04).
+    const posed = found.filter((ex) => existsSync(join(ex, 'pose.json')));
+    if (posed.length === 0) {
+      say('RL03_THE_README_LOOP_WITH_KEYPOINTS_PASTES_EVERY_SECTION_THE_PROPOSAL_WROTE', false, `none of the ${found.length} fetched example(s) tracks a pose.json, so the loop ran with --keypoints on no painting`, '');
+    }
+    for (const ex of posed) {
+      const key = relative(join(ROOT, 'examples'), ex);
+      const kp = poseKeypoints(ex, join(dir, `kp-${key}`)) as string;
+      const end = readmeLoopEnd(ex, lines);
+      const r = runReadmeLoop(lines, ex, join(dir, `kp-${key}`), paste, kp);
+      const drafted = PROPOSAL_CONFIG_SECTIONS.filter((k) => r.proposal?.[k] !== undefined);
+      say(
+        `RL03_THE_README_LOOP_WITH_KEYPOINTS_PASTES_EVERY_SECTION_THE_PROPOSAL_WROTE[${key}]`,
+        r.proposal !== null && r.proposal.limbs !== undefined && r.pasted.join(',') === drafted.join(',') && end.reached(r),
+        `--keypoints from ${key}/pose.json on both propose --parts lines: the proposal wrote ${drafted.join(', ') || '(no proposal)'}${r.proposal?.limbs === undefined ? ' (no limbs, so this run cannot show the paste list holds them)' : ''}; the README's list pasted ${r.pasted.join(', ') || 'nothing'}; ${loopReport(r, lines)}${end.describe}`,
+        "issue #375: with --keypoints the proposal also drafts limbs (#349), which the README's paste step did not name, and a config without them is refused at the next step; RL01 runs without keypoints and could not see it. The joints are the generation's control skeleton scaled to the painting, not read off it: this proves what the loop pastes, not where the joints are. The run must end where RL01 ends on the same example",
+      );
+
+      const oldList = pasteSites(OLD_README_PASTE_LINE)[0]?.names ?? [];
+      const o = runReadmeLoop(lines, ex, join(dir, `kp-old-${key}`), oldList, kp);
+      const fromConfigAt = lines.findIndex((l) => /^rig-parts propose /.test(l) && l.includes('--from-config'));
+      const limbs = (o.proposal?.limbs ?? {}) as Record<string, { segments: Array<{ part: string; from: string }> }>;
+      const segs = Object.values(limbs).flatMap((l) => l.segments);
+      const fails = o.refused?.fails ?? [];
+      const resolves = (part: string): boolean => fails.some((l) => new RegExp(`^FAIL {2}CONFIG_NAME_RESOLVES: config\\.(?:meshes|regions)\\.${part} — `).test(l));
+      const attached = (part: string): boolean => fails.some((l) => l.startsWith(`FAIL  CONFIG_PART_ATTACHED: part "${part}" — `));
+      const otherCodes = fails.filter((l) => !/^FAIL {2}(?:CONFIG_NAME_RESOLVES|CONFIG_PART_ATTACHED):/.test(l));
+      say(
+        `RL04_THE_OLD_FOUR_SECTION_PASTE_WITH_KEYPOINTS_STOPS_AT_FROM_CONFIG_NAMING_EVERY_LIMB_PART[${key}]`,
+        oldList.join(',') === 'bones,meshes,regions,motion' &&
+          o.pasted.join(',') === oldList.join(',') &&
+          segs.length > 0 &&
+          o.refused !== null &&
+          o.refused.line === lines[fromConfigAt] &&
+          o.refused.status === 1 &&
+          segs.every((sg) => resolves(sg.part) && attached(sg.from)) &&
+          otherCodes.length === 0,
+        `planted: the README's old line ${JSON.stringify(OLD_README_PASTE_LINE.trim())} -> pasted ${o.pasted.join(', ') || 'nothing'} of ${PROPOSAL_CONFIG_SECTIONS.filter((k) => o.proposal?.[k] !== undefined).join(', ') || '(no proposal)'}; limb parts ${segs.map((sg) => `${sg.part} (from ${sg.from}): ${resolves(sg.part) ? 'named' : 'NOT named'}, ${sg.from} ${attached(sg.from) ? 'named' : 'NOT named'}`).join('; ') || 'none drafted'}; ${loopReport(o, lines)}`,
+        "issue #375: the control above passes because the list is whole; this is the list it replaced, run the same way, and it must stop at the step after the paste, naming every limb part the meshes and regions attach and every layer the limbs would have cut — and nothing else",
+      );
+    }
+
     // The planted order: assemble before the plan exists. It must stop at
     // that step, name it, and quote the loader's line — the reporter has to be
     // seen naming a refusal, and the refusal has to say which command writes a plan.
     const assembleAt = lines.findIndex((l) => /^rig-parts assemble /.test(l) && !l.includes('--propose-plan'));
     const planAt = lines.findIndex((l) => l.includes('--propose-plan'));
     const early = assembleAt > planAt && planAt >= 0 ? [...lines.slice(0, planAt), lines[assembleAt]] : null;
-    const planted = early === null ? null : runReadmeLoop(early, found[0], join(dir, 'planted'));
-    const unknown = runReadmeLoop(['rig-parts animate --config config.json'], found[0], join(dir, 'unknown'));
+    const planted = early === null ? null : runReadmeLoop(early, found[0], join(dir, 'planted'), paste);
+    const unknown = runReadmeLoop(['rig-parts animate --config config.json'], found[0], join(dir, 'unknown'), paste);
     const plantedLine = planted?.refused?.first ?? '';
     say(
       'RL02_AN_ASSEMBLE_BEFORE_ITS_PLAN_AND_A_LINE_THE_CONTROL_CANNOT_RUN_ARE_NAMED_AS_THE_STEP_THAT_STOPPED',
@@ -22741,6 +22913,37 @@ function runTreeSuite(): number {
     bare17.length === 0 && plants17[0].join() === 'src/plant.ts:1' && plants17[1].length === 0 && plants17[2].join() === 'src/plant.ts:1' && printedFailLine({ code: 'X_Y', object: 'o', detail: 'd' }) === '  FAIL  X_Y: o — d (see rig-parts guide X_Y)',
     `${bare17.length === 0 ? `no FAIL line head in src/ or cli.ts outside failLine or a template ending guidePointer(…)` : `without the pointer: ${bare17.join(', ')}`}; planted: a template -> ${plants17[0].join(', ') || 'not found'}, the same ending guidePointer -> ${plants17[1].join(', ') || 'not flagged'}, a plain string -> ${plants17[2].join(', ') || 'not found'}; failLine writes "${printedFailLine({ code: 'X_Y', object: 'o', detail: 'd' })}"`,
     "issue #343: the pointer is the line's way to its row, in the form rig-c shares word for word; one function writes it, and a FAIL line written by hand elsewhere would be the one line without it",
+  );
+
+  // TY18 — issue #375: every sentence in the documents that says which proposal sections to copy into the config names
+  // exactly the sections the proposal can write, read off src/propose.ts (whose type refuses a Proposal key the list
+  // lacks), so a new section cannot go missing from one copy of the instruction while the others name it.
+  const sections18 = [...PROPOSAL_CONFIG_SECTIONS];
+  const drift18 = pasteListFaults(text, sections18);
+  const sites18 = text.filter(([f]) => f.endsWith('.md') && f !== 'CHANGELOG.md').flatMap(([f, t]) => pasteSites(t).map((s) => `${f}:${s.line}`));
+  const readmeText = text.find(([f]) => f === 'README.md')?.[1] ?? '';
+  const readmeSite = pasteSites(readmeText)[0];
+  const readmeLine = readmeSite === undefined ? '' : readmeText.split('\n')[readmeSite.line - 1];
+  const withDoc = (f: string, edit: (t: string) => string): Array<readonly [string, string]> => text.map(([g, t]) => [g, g === f ? edit(t) : t] as const);
+  const plants18 = [
+    pasteListFaults(withDoc('README.md', (t) => t.replace(readmeLine, OLD_README_PASTE_LINE)), sections18),
+    pasteListFaults(withDoc('skills/rig-parts/SKILL.md', (t) => t.replace(/\bcopy `bones`/, 'take `bones`')), sections18),
+    pasteListFaults([...text, ['examples/plant/README.md', 'Copy `motion`, `bones`, `meshes`, `regions`, `limbs` and `turn` into the config.\n']], sections18),
+    pasteListFaults([...text, ['examples/plant/README.md', 'Paste `bones`, `meshes`, `regions`, `limbs`, `motion`, `turn` and `notes` into the config.\n']], sections18),
+    pasteListFaults([...text.filter(([f]) => f !== 'CHANGELOG.md'), ['CHANGELOG.md', `${OLD_README_PASTE_LINE}\n`], ['examples/plant/README.md', 'paste `plan` and `extend_below_crop` into `config.assemble`\n']], sections18),
+  ];
+  const plantsHit18 =
+    plants18[0].length === 1 && new RegExp(`^README\\.md:${readmeSite?.line ?? -1} copies bones, meshes, regions, motion; .* \\(missing limbs, turn\\)$`).test(plants18[0][0]) &&
+    plants18[1].join() === 'skills/rig-parts/SKILL.md holds no sentence saying which proposal sections to copy into the config' &&
+    plants18[2].length === 1 && plants18[2][0].startsWith('examples/plant/README.md:1 copies motion, bones,') && plants18[2][0].endsWith('(another order)') &&
+    plants18[3].length === 1 && plants18[3][0].endsWith('(not a section: notes)') &&
+    plants18[4].length === 0;
+  say(
+    'TY18_EVERY_PASTE_SENTENCE_NAMES_EVERY_SECTION_THE_PROPOSAL_WRITES',
+    sites18.length >= PASTE_DOCS.length && drift18.length === 0 && plantsHit18,
+    `${drift18.length === 0 ? `${sites18.length} sentence(s) (${sites18.join(', ')}) each name ${sections18.join(', ')}, PROPOSAL_CONFIG_SECTIONS in src/propose.ts` : drift18.join('; ')}` +
+      `; planted: the README's old line -> ${plants18[0].join('; ') || 'not found'} | the skill's sentence gone -> ${plants18[1].join('; ') || 'not found'} | another order -> ${plants18[2].join('; ') || 'not found'} | notes named -> ${plants18[3].join('; ') || 'not found'} | the old line in CHANGELOG.md and the plan's paste sentence -> ${plants18[4].join('; ') || 'not flagged'}`,
+    "issue #375: the README's paste step named four sections after --keypoints began drafting limbs (#349), and a config without them is refused at the next step; the list is read off the proposal's type, so every copy of the instruction is held to it rather than kept by hand",
   );
 
   const self = readFileSync(join(ROOT, 'selftest.ts'), 'utf8');
