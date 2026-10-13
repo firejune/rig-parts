@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.18.0](https://github.com/rig-c/parts/compare/v1.17.0...v1.18.0) (2026-10-13)
+
+
+### Features
+
+* **assemble:** accept a non-square single-run file by padding it to the resolution square, and record the pad ([#373](https://github.com/rig-c/parts/issues/373)) ([a0046e7](https://github.com/rig-c/parts/commit/a0046e7042adbf225f6bd985faf7be64f3e47539)), closes [#366](https://github.com/rig-c/parts/issues/366)
+* **layers:** export a PSD as the wrapper form, build from one run, and read an artist's hidden art as caps ([#365](https://github.com/rig-c/parts/issues/365)) ([13bc120](https://github.com/rig-c/parts/commit/13bc120a20867114c1fdf606b40e34757843cc8c)), closes [#359](https://github.com/rig-c/parts/issues/359)
+* **painting:** say what makes a painting riggable, and check it from the keypoints before See-through ([#371](https://github.com/rig-c/parts/issues/371)) ([af008fe](https://github.com/rig-c/parts/commit/af008fee7570bc183b7619da82da76fb932f915f)), closes [#350](https://github.com/rig-c/parts/issues/350)
+
+
+### Bug Fixes
+
+* **examples:** hold every fetched input to its blob id at the pin, and replace or refuse a stale one by name ([#370](https://github.com/rig-c/parts/issues/370)) ([f96958c](https://github.com/rig-c/parts/commit/f96958c33fd8914c5c41aae062a857928c65d3c6)), closes [#367](https://github.com/rig-c/parts/issues/367)
+
 ## [1.17.0](https://github.com/rig-c/parts/compare/v1.16.0...v1.17.0) (2026-10-13)
 
 
