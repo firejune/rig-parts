@@ -436,7 +436,7 @@ third-party term this package touches, See-through's included.
 bun install
 bun run typecheck        # tsc --noEmit, strict
 bun run lint             # one rule: no explicit any
-bun run fetch-examples   # the public examples' paintings and layers, into examples/*/inputs (needs a network)
+bun run fetch-examples   # the public examples' paintings and layers, into examples/*/inputs (needs a network); each file held to its blob id at the pinned commit, a stale one replaced by name
 bun run selftest         # every gate's controls; with the examples fetched, build on each of them against its expected/
 bun run smoke            # pack, install into an empty directory, run from the install (needs a network)
 ```

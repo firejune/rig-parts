@@ -36,10 +36,11 @@ jobs:
       # examples/*/inputs — so a fresh checkout has none, and without this step
       # the corpus suite reports a HOLE.
       #
-      # Deliberately not cached: the script keeps any file already on disk, so
-      # a restored cache would freeze the inputs at whatever an earlier run
-      # fetched and hide a re-pin that changed them. A yardstick that is never
-      # re-measured is not a yardstick.
+      # Deliberately not cached. The script holds every file on disk to its
+      # blob id at the pinned commit and replaces a stale one by name (issue
+      # #367), so a cache would no longer freeze the inputs, but it would still
+      # be a second copy to reason about, and nothing here has measured what
+      # it would save.
       #
       # ⚠️ The script refuses to run while PINNED_COMMIT is its placeholder, so
       # this step is red until the examples repository has a commit to pin.
