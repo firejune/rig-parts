@@ -62,6 +62,10 @@
  * per source-painting pixel, and `ghost_px` the sub-threshold specks removed
  * from each `<run>:<tag>` layer before anything else.
  *
+ * `single_run_pad` (issue #366), written only for one run whose file is not
+ * the `seethrough.resolution` square, says where the file sat on the run's
+ * square ({@link SingleRunPad}); the rig itself holds no pad.
+ *
  * `recomposite` is the flat stack of every part against the painting (this
  * port's, issue #25; a `parts.json` the reference wrote has none and reads as
  * it did): the four figures the assemble summary prints, the limits they were
@@ -186,6 +190,27 @@ export interface PartsFile {
   recomposite?: RecompositeRecord;
   /** Written only under `config.scene` (issue #242): the recomposite was read inside this figure; absent otherwise. */
   scene?: SceneRecord;
+  /** Written only for one run whose file is not the resolution square (issue #366): where the file sat on the run's square; absent otherwise. */
+  single_run_pad?: SingleRunPad;
+}
+
+/**
+ * `parts.json`'s `single_run_pad` block (issue #366): one run (no `--head`)
+ * whose file — the artist's PSD or its wrapper export — is not the
+ * `seethrough.resolution` square was padded to it, centred, before it was
+ * read: `file_size` is the file's `[w, h]` (and the painting's), `side` the
+ * square's, `left` and `top` the margins (`floor((side - w) / 2)` and
+ * `floor((side - h) / 2)`, `squarePad`'s centring; the right and the bottom
+ * take the remainder). Run pixel `(x, y)` is file pixel `(x - left, y - top)`,
+ * and the rig is the file times `scale_rig_per_source` with no pad in it, so a
+ * part's box over the scale is its box in the file. Absent for two runs and
+ * for a file that is the square, whose run pixel is its file pixel.
+ */
+export interface SingleRunPad {
+  file_size: [number, number];
+  side: number;
+  left: number;
+  top: number;
 }
 
 /**
@@ -201,8 +226,9 @@ export interface SceneRecord {
   figure_mask: string;
 }
 
-const TOP_KEYS = ['rig_size', 'scale_rig_per_source', 'parts', 'ghost_px', 'recomposite', 'scene'] as const;
-const REQUIRED_TOP_KEYS = TOP_KEYS.filter((k) => k !== 'recomposite' && k !== 'scene');
+const TOP_KEYS = ['rig_size', 'scale_rig_per_source', 'parts', 'ghost_px', 'recomposite', 'scene', 'single_run_pad'] as const;
+const REQUIRED_TOP_KEYS = TOP_KEYS.filter((k) => k !== 'recomposite' && k !== 'scene' && k !== 'single_run_pad');
+export const SINGLE_RUN_PAD_KEYS = ['file_size', 'side', 'left', 'top'] as const;
 export const SCENE_KEYS = ['figure_alpha_above', 'figure_px', 'figure_mask'] as const;
 export const RECOMPOSITE_KEYS = ['mean_abs', 'within_limit', 'within_share', 'error_limit', 'error_px', 'covered_alpha', 'uncovered_error_px', 'hole_count', 'holes_listed', 'holes'] as const;
 const RECOMPOSITE_COUNTS = ['within_limit', 'error_limit', 'error_px', 'covered_alpha', 'uncovered_error_px', 'hole_count', 'holes_listed'] as const;
@@ -277,6 +303,7 @@ export function serializeParts(file: PartsFile): string {
           },
         }),
     ...(file.scene === undefined ? {} : { scene: Object.fromEntries(SCENE_KEYS.map((k) => [k, (file.scene as SceneRecord)[k]])) }),
+    ...(file.single_run_pad === undefined ? {} : { single_run_pad: Object.fromEntries(SINGLE_RUN_PAD_KEYS.map((k) => [k, (file.single_run_pad as SingleRunPad)[k]])) }),
   };
   return `${JSON.stringify(ordered, null, 2)}\n`;
 }
@@ -474,6 +501,7 @@ function checkParts(raw: unknown, path: string): PartsFile {
       if (!('recomposite' in o)) fail('PARTS_FIELD_PRESENT', `${path} field "recomposite"`, 'is absent; a scene block says how the recomposite block beside it was measured, so it is required with one');
     }
   }
+  if ('single_run_pad' in o) checkSingleRunPad(o.single_run_pad, path, sizeOk ? (size as [number, number]) : null, typeof scale === 'number' ? scale : null, fail);
   if ('recomposite' in o && sizeOk) {
     const names = Array.isArray(o.parts) ? new Set(o.parts.map((p) => (typeof p === 'object' && p !== null ? (p as Record<string, unknown>).name : undefined)).filter((n): n is string => typeof n === 'string')) : new Set<string>();
     checkRecomposite(o.recomposite, path, size as [number, number], names, fail);
@@ -483,6 +511,51 @@ function checkParts(raw: unknown, path: string): PartsFile {
 }
 
 const isCount = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0;
+
+/**
+ * The `single_run_pad` block (issue #366): every key known and present, each
+ * an integer of its kind, and the block consistent with its definition and
+ * with the rig — the margins are the centring of `file_size` on `side`
+ * (`PARTS_SINGLE_RUN_PAD`, with the margins that centring gives), no side of
+ * the file above `side`, and `rig_size` the file times `scale_rig_per_source`,
+ * truncated, as `assemble` makes it. A record that disagrees would map a part
+ * back to somewhere else in the file.
+ */
+function checkSingleRunPad(r: unknown, path: string, size: [number, number] | null, scale: number | null, fail: (code: string, object: string, detail: string) => void): void {
+  const at = `${path} field "single_run_pad"`;
+  if (typeof r !== 'object' || r === null || Array.isArray(r)) {
+    fail('PARTS_FIELD_TYPE', at, `is ${show(r)}; an object is required`);
+    return;
+  }
+  const o = r as Record<string, unknown>;
+  for (const k of Object.keys(o)) if (!(SINGLE_RUN_PAD_KEYS as readonly string[]).includes(k)) fail('PARTS_KEY_KNOWN', `${path} single_run_pad key "${k}"`, `is not a single_run_pad field; known: ${SINGLE_RUN_PAD_KEYS.join(', ')}`);
+  for (const k of SINGLE_RUN_PAD_KEYS) if (!(k in o)) fail('PARTS_FIELD_PRESENT', `${path} single_run_pad field "${k}"`, 'is absent and required');
+  const fs = o.file_size;
+  const fsOk = Array.isArray(fs) && fs.length === 2 && fs.every((n) => Number.isInteger(n) && (n as number) > 0);
+  if ('file_size' in o && !fsOk) fail('PARTS_FIELD_TYPE', `${path} single_run_pad field "file_size"`, `is ${show(fs)}; [width, height] in positive integers is required`);
+  const sideOk = Number.isInteger(o.side) && (o.side as number) > 0;
+  if ('side' in o && !sideOk) fail('PARTS_FIELD_TYPE', `${path} single_run_pad field "side"`, `is ${show(o.side)}; a positive integer is required`);
+  for (const k of ['left', 'top'] as const) if (k in o && !isCount(o[k])) fail('PARTS_FIELD_TYPE', `${path} single_run_pad field "${k}"`, `is ${show(o[k])}; a non-negative integer is required`);
+  if (!fsOk || !sideOk || !isCount(o.left) || !isCount(o.top)) return;
+  const [w, h] = fs as [number, number];
+  const side = o.side as number;
+  if (w > side || h > side) {
+    fail('PARTS_SINGLE_RUN_PAD', at, `file_size is ${w}x${h} and side ${side}; a file no side of which is above the square it was padded to is required`);
+    return;
+  }
+  if (w === side && h === side) {
+    fail('PARTS_SINGLE_RUN_PAD', at, `file_size is ${w}x${h}, the ${side} square itself; a file that is the square has no pad, and no single_run_pad is written for it`);
+    return;
+  }
+  const left = Math.floor((side - w) / 2);
+  const top = Math.floor((side - h) / 2);
+  if (o.left !== left || o.top !== top) {
+    fail('PARTS_SINGLE_RUN_PAD', at, `has left ${String(o.left)}, top ${String(o.top)}; a ${w}x${h} file centred on a ${side} square is padded left ${left}, top ${top} (each margin floors, the right and the bottom take the remainder), and those are required`);
+  }
+  if (size !== null && scale !== null && (Math.trunc(w * scale) !== size[0] || Math.trunc(h * scale) !== size[1])) {
+    fail('PARTS_SINGLE_RUN_PAD', at, `file_size ${w}x${h} times scale_rig_per_source ${scale} makes a ${Math.trunc(w * scale)}x${Math.trunc(h * scale)} rig, and rig_size is ${size[0]}x${size[1]}; the rig is the file at that scale, so they must agree`);
+  }
+}
 
 /**
  * The `recomposite` block: every key known and present, every figure its

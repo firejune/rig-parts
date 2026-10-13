@@ -93,7 +93,7 @@ read by no CPU stage).
 | `key` | every stage's report | authored; the examples use the directory name |
 | `generation.*` | the optional `comfy` adapter only; no CPU stage | recorded: checkpoint, LoRAs, sampler, prompt parts, `latent`, `seed`, `control` |
 | `generation.control.skeleton` | `comfy paint` — the OpenPose control image, drawn at `latent` | **authored**: a built-in standing pose, `"stand_sides"` or `"stand_clasp"`, or (issue #198) any other string, read as a path relative to the config file's directory to a pose file `{"width": W, "height": H, "points": {"nose": [x, y], "neck": [x, y], …}}` — `width` x `height` is the canvas and must be `generation.latent` (the points are not scaled; `CONFIG_POSE_CANVAS`), and `points` holds the 18 body-18 keypoints of `src/skeleton.ts` by name (`nose`, `neck`, `r_shoulder`, `r_elbow`, `r_wrist`, `l_shoulder`, `l_elbow`, `l_wrist`, `r_hip`, `r_knee`, `r_ankle`, `l_hip`, `l_knee`, `l_ankle`, `r_eye`, `l_eye`, `r_ear`, `l_ear`; `r`/`l` the subject's sides), each `[x, y]` in canvas px, x right, y down, `0 <= x <= W`, `0 <= y <= H`. The image is drawn from the file exactly as from a built-in (same renderer, same size), written as `control_pose-<first 12 hex of its sha256>.png`. A pose file carries no words, so `generation.pose` is required beside it (`CONFIG_FIELD_PRESENT`). The file is read wherever the config is read from a path, every problem at once: no such file — a misspelt built-in lands here too — or one that cannot be read (`CONFIG_FILE_PRESENT`), not JSON (`CONFIG_IS_JSON`), not an object, a size that is not a whole positive px count, a point that is not two numbers (`CONFIG_FIELD_TYPE`), a key besides the three (`CONFIG_KEY_KNOWN`) or written twice (`CONFIG_KEY_UNIQUE`), `points` holding other than the 18 names (`CONFIG_POSE_KEYPOINTS`, with the count found and required), a point off the canvas (`CONFIG_POSE_IN_CANVAS`, naming the point and the canvas size) |
-| `seethrough.resolution` | assemble — each run's canvas must be `resolution` square (`ASSEMBLE_RUN_CANVAS`) | recorded from the See-through runs; 1024 in both examples |
+| `seethrough.resolution` | assemble — each run's canvas must be `resolution` square (`ASSEMBLE_RUN_CANVAS`); with one run (no `--head`, issue #366) the file may be smaller on either side, and is padded to the `resolution` square, centred | recorded from the See-through runs; 1024 in both examples. With one run it is the square the file is read on: at least the file's longer side (`ASSEMBLE_RUN_CANVAS` otherwise), and nothing a part records depends on how much larger |
 | `seethrough.steps`, `.seed`, `.offload` | no CPU stage | recorded from the runs |
 | `seethrough.head_box` | inputs (cuts the head image there; optional at the first call); assemble — where the head run sits on the painting | **proposed** by `propose --head-box` from the full run, square, source pixels, shifted inside the painting when needed; the head run must then be fed exactly that crop. With one run (no `--head`, issue #359: an artist's own file, §4 *For artists*) it is left out — there is no crop to place — and a config that sets it is refused (`ASSEMBLE_SINGLE_RUN_HEAD_BOX`) |
 | `assemble.rig_scale` | assemble — the rig is `trunc(w × rig_scale)` x `trunc(h × rig_scale)`, and every rig-px value after it (`bones`, `meshes`, `motion`, `patches`, `cuts`) is in that rig's pixels; `check --source` (`CHECK_SOURCE_SIZE`) and `compose` (`SCENE_RIG_SCALE_AGREES`) read it back off `parts.json` | authored; rig pixels per source pixel. 0.5 in both examples (a 1664x2432 painting makes an 832x1216 rig). **Keep the figure about 1,100 to 1,200 rig px tall** — the `H` of `propose`'s `mesh spacing:` note, the height of the parts' boxes together — so for another painting, about 1,150 over the figure's height in painting px: that is the size the proposer's spacing divisor was calibrated at (H 1106–1185, the `mesh spacing` note says so) and the size of the two examples `check`'s bars are derived from, and the proposer and `check` also hold fixed rig-px values that do not scale with it (the fringe's 10 px step, the trunk segments' 18, 20, 30 and 100 px, the 15 px wrist tolerance, the 10-row pendant floor, the seam bar's 50 rig px over 40). What else it trades, measured on `demo` with the README loop from a fresh config at 0.25, 0.5 and 1 (issue #345, rig-c 2.47.1): the same plan and the same ten chains; every bar but the one the uncorrected `demo` always fails (`bottomwear` `TIP_OVER_ROOT`, the README loop's `RL01`) passing at all three; the atlas page 418x606, 832x1205 and 1825x2047; the figure's mesh spacing 16, 32 and 64, so 830, 868 and 932 triangles; the breath 2.5 % of a torso that scales with it; and the proposed bones, scaled to 0.5, off the 0.5 proposal's by up to 38 px at 0.25 and 22.5 px at 1 (the hairpin's origin; the skirt roots 20 and 10.5) — the fixed-px values above. Changing it after the rig sections are written is not refused: `demo`'s tracked config built at 0.25 gated green and `check` failed only `TIP_OVER_ROOT` on both sleeves; `propose --from-config` names it (54 `LINT` lines, links off the art) — propose again at the new scale. Absent: `CONFIG_FIELD_PRESENT`; 0, negative or not a number: `CONFIG_FIELD_TYPE`; a rig under 1x1: `ASSEMBLE_RIG_SIZE` |
@@ -1760,9 +1760,19 @@ need that no tag fits is `author:<label>` (§5, *A layer the author made*).
   `ghost px removed:` line counts them), and `--propose-plan` leaves out a layer
   under 150 px (a note names it); both are in run pixels, so paint at the size
   the rig needs.
-- **The canvas.** One run is one canvas: square, its side `seethrough.resolution`
-  (`ASSEMBLE_RUN_CANVAS` otherwise), and the painting — `--source`, the file
-  flattened and saved as an opaque PNG — the same size.
+- **The canvas.** One run is one canvas, of any shape no side of which is above
+  `seethrough.resolution` (`ASSEMBLE_RUN_CANVAS` otherwise: padding cannot shrink a
+  file, so set `resolution` to at least the longer side). The painting — `--source`,
+  the file flattened and saved as an opaque PNG — is the same size
+  (`ASSEMBLE_SINGLE_RUN_SOURCE` otherwise). A file that is not the `resolution`
+  square is padded to it before it is read, the way `inputs` pads a painting for
+  See-through (issue #366): centred, each margin `floor((resolution - side) / 2)`,
+  the odd pixel to the right or the bottom, the pad transparent. The rig holds no
+  pad — it is the file times `rig_scale`, so a part's box over `rig_scale` is its
+  box in the file — and `parts.json` records the pad in `single_run_pad` (§5); a
+  `padded:` line under `one run:` prints the four margins. A 75 x 128 file at
+  resolution 128 is padded left 26, right 27; a square file at the resolution is
+  not padded, and its `parts.json` has no such block.
 - **Hidden art.** A layer named `<layer>:hidden` — `handwear-r:hidden`, the forearm
   under the sleeve; `topwear:hidden`, the shirt under a scarf's tail — is that
   layer's art where something covers it. It is never drawn and never a part, and
@@ -2203,6 +2213,21 @@ note saying so — give it a mesh in `meshes` if it should bend. The one excepti
 sleeve rule, which names its chains by side and takes a cut sleeve as a blob of its own
 (the `one handwear part holds both wrists` note, §3).
 
+With one run whose file is not the `seethrough.resolution` square (issue #366, §4
+*For artists*), `parts.json` ends with a `single_run_pad` block: where the file sat on
+the square it was read on. Two runs and a file that is the square write none.
+
+| field | holds |
+| --- | --- |
+| `file_size` | the file's `[w, h]` — the painting's too |
+| `side` | the square's side, `seethrough.resolution` |
+| `left`, `top` | the margins, `floor((side - w) / 2)` and `floor((side - h) / 2)`; the right and the bottom take the remainder |
+
+Run pixel `(x, y)` is file pixel `(x - left, y - top)`, and a part's box over
+`scale_rig_per_source` is its box in the file. The reader refuses margins that are not
+that centring, a file larger than its square or equal to it, and a `rig_size` that is
+not `file_size` times the scale, truncated (`PARTS_SINGLE_RUN_PAD`).
+
 `visible_px + occluded_px = opaque_px`, and every projected pixel is visible; the stage
 refuses (`ASSEMBLE_COUNTS_ADD_UP`) rather than write counts that break either, and the
 reader refuses a record that breaks them (`PARTS_COUNTS_ADD_UP`). The three visibility
@@ -2391,7 +2416,8 @@ says why each requirement exists and what breaks without it.
 | <a id="ASSEMBLE_FIELD_PRESENT"></a>`ASSEMBLE_FIELD_PRESENT` | `seethrough.head_box` is missing | `propose --head-box` proposes it (§3) |
 | <a id="ASSEMBLE_RIG_SIZE"></a>`ASSEMBLE_RIG_SIZE` | `rig_scale` makes an empty rig | `assemble.rig_scale` |
 | <a id="ASSEMBLE_HEAD_BOX_INSIDE"></a>`ASSEMBLE_HEAD_BOX_INSIDE` | the head box is outside the painting | `head_box` — `propose --head-box` holds it inside |
-| <a id="ASSEMBLE_RUN_CANVAS"></a>`ASSEMBLE_RUN_CANVAS` | a run's canvas is not `resolution` square | `seethrough.resolution`, or the run |
+| <a id="ASSEMBLE_RUN_CANVAS"></a>`ASSEMBLE_RUN_CANVAS` | a run's canvas is not `resolution` square; with one run (issue #366), a side of the file is above `resolution` — a smaller one is padded, a larger one would have to be shrunk | `seethrough.resolution`, or the run |
+| <a id="ASSEMBLE_SINGLE_RUN_SOURCE"></a>`ASSEMBLE_SINGLE_RUN_SOURCE` | with no `--head` (issue #366), the painting `--source` names is not the one run's file's size: the painting is the file flattened, and every part's box maps back to the file through it | the painting — the file flattened, at the file's size |
 | <a id="ASSEMBLE_SINGLE_RUN_FACE"></a>`ASSEMBLE_SINGLE_RUN_FACE` | with no `--head` (issue #359), the one run holds no painted layer for one of `face`, `eyewhite-r`, `eyewhite-l` — the parts the head run exists to separate (one problem per tag) | paint the layer, or give the head run with `--head` |
 | <a id="ASSEMBLE_SINGLE_RUN_PLAN"></a>`ASSEMBLE_SINGLE_RUN_PLAN` | with no `--head`, a plan row takes `"head"`, or an `extend_below_crop` entry continues a part below a crop there is not | `"full"` in the row; remove the entry |
 | <a id="ASSEMBLE_SINGLE_RUN_HEAD_BOX"></a>`ASSEMBLE_SINGLE_RUN_HEAD_BOX` | with no `--head`, the config sets `seethrough.head_box`, which places a head run there is not | remove `head_box`, or give the head run with `--head` |
@@ -2429,7 +2455,7 @@ says why each requirement exists and what breaks without it.
 | <a id="KEYPOINTS_JOINT_KNOWN"></a><a id="KEYPOINTS_JOINT_STATE"></a><a id="KEYPOINTS_POSITION_STATED"></a><a id="KEYPOINTS_POSITION_INSIDE"></a>`KEYPOINTS_JOINT_KNOWN`, `KEYPOINTS_JOINT_STATE`, `KEYPOINTS_POSITION_STATED`, `KEYPOINTS_POSITION_INSIDE` | a joint name outside body-18, a state outside observed / occluded / missing, an observed joint with no `at` or a missing one with one, or a position outside the `width`x`height` image | that joint |
 | <a id="KEYPOINTS_PERSON_UNIQUE"></a><a id="KEYPOINTS_PERSON_CHOSEN"></a>`KEYPOINTS_PERSON_UNIQUE`, `KEYPOINTS_PERSON_CHOSEN` | two people share an id; or the file holds more than one person and no `--person` names one, or `--person` names none of them (the message lists the ids) | `--person <id>` |
 | <a id="KEYPOINTS_IMAGE_SIZE"></a>`KEYPOINTS_IMAGE_SIZE` | the file's `width`x`height` is not the `--source` painting's | a file measured on this painting |
-| <a id="PARTS_FILE_PRESENT"></a><a id="PARTS_IS_JSON"></a><a id="PARTS_KEY_KNOWN"></a><a id="PARTS_FIELD_PRESENT"></a><a id="PARTS_FIELD_TYPE"></a><a id="PARTS_NAME_UNIQUE"></a><a id="PARTS_FROM_KNOWN"></a><a id="PARTS_CUT_FROM_KNOWN"></a><a id="PARTS_BOX_INSIDE_RIG"></a><a id="PARTS_COUNTS_ADD_UP"></a><a id="PARTS_HOLES_LARGEST_FIRST"></a><a id="PARTS_HOLE_PART_KNOWN"></a>`PARTS_*` (`PARTS_FILE_PRESENT`, `PARTS_IS_JSON`, `PARTS_KEY_KNOWN`, `PARTS_FIELD_PRESENT`, `PARTS_FIELD_TYPE`, `PARTS_NAME_UNIQUE`, `PARTS_FROM_KNOWN`, `PARTS_CUT_FROM_KNOWN`, `PARTS_BOX_INSIDE_RIG`, `PARTS_COUNTS_ADD_UP`, `PARTS_HOLES_LARGEST_FIRST`, `PARTS_HOLE_PART_KNOWN`) | the `parts.json` read is not assemble's contract (`PARTS_COUNTS_ADD_UP`: `visible_px + occluded_px` is not `opaque_px`, `visible_not_projected_px` is above `visible_px`, or the `recomposite` block's figures disagree — more uncovered than error pixels, a hole larger than its box, the wrong number of holes listed, listed areas that do not sum to `uncovered_error_px`; the last two codes are the block's order and its border names, §5) | re-run assemble; do not edit `parts.json` |
+| <a id="PARTS_FILE_PRESENT"></a><a id="PARTS_IS_JSON"></a><a id="PARTS_KEY_KNOWN"></a><a id="PARTS_FIELD_PRESENT"></a><a id="PARTS_FIELD_TYPE"></a><a id="PARTS_NAME_UNIQUE"></a><a id="PARTS_FROM_KNOWN"></a><a id="PARTS_CUT_FROM_KNOWN"></a><a id="PARTS_BOX_INSIDE_RIG"></a><a id="PARTS_COUNTS_ADD_UP"></a><a id="PARTS_HOLES_LARGEST_FIRST"></a><a id="PARTS_HOLE_PART_KNOWN"></a><a id="PARTS_SINGLE_RUN_PAD"></a>`PARTS_*` (`PARTS_FILE_PRESENT`, `PARTS_IS_JSON`, `PARTS_KEY_KNOWN`, `PARTS_FIELD_PRESENT`, `PARTS_FIELD_TYPE`, `PARTS_NAME_UNIQUE`, `PARTS_FROM_KNOWN`, `PARTS_CUT_FROM_KNOWN`, `PARTS_BOX_INSIDE_RIG`, `PARTS_COUNTS_ADD_UP`, `PARTS_HOLES_LARGEST_FIRST`, `PARTS_HOLE_PART_KNOWN`, `PARTS_SINGLE_RUN_PAD`) | the `parts.json` read is not assemble's contract (`PARTS_COUNTS_ADD_UP`: `visible_px + occluded_px` is not `opaque_px`, `visible_not_projected_px` is above `visible_px`, or the `recomposite` block's figures disagree — more uncovered than error pixels, a hole larger than its box, the wrong number of holes listed, listed areas that do not sum to `uncovered_error_px`; the last two codes are the block's order and its border names; `PARTS_SINGLE_RUN_PAD`: the `single_run_pad` block's margins are not the centring, its file is not smaller than its square, or `rig_size` is not the file at the scale, issue #366 — §5) | re-run assemble; do not edit `parts.json` |
 
 ### compare
 

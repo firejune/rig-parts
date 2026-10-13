@@ -139,7 +139,7 @@ import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, 
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
 import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'rig-c/src/render.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
-import { ARTIST_PATCH, ARTIST_PLAN, artistConfig, artistLayers, EYE as ARTIST_EYE, writeArtistFixture } from './fixtures/artist.ts';
+import { ARTIST_PATCH, ARTIST_PLAN, ARTIST_PORTRAIT_SHIFT, ARTIST_PORTRAIT_W, ARTIST_SIDE, artistCanvas, artistConfig, artistLayers, EYE as ARTIST_EYE, writeArtistFixture } from './fixtures/artist.ts';
 import { arm, armRig, base, baseRenamed, baseWith, roleRig } from './fixtures/structure.ts';
 import {
   assemble,
@@ -187,6 +187,7 @@ import {
   checkSingleRun,
   proposeSinglePlan,
   SINGLE_RUN_FACE_TAGS,
+  padSingleRun,
   singleRunHeadBox,
 } from './src/assemble.ts';
 import { chainDirection } from './src/check.ts';
@@ -3136,6 +3137,50 @@ function runPartsSuite(): number {
       `the two records ${limbOk === null ? 'read back' : codes(limbOk)}, the lower as ${JSON.stringify(limbBack)}; ${limbSeen.map((o) => `${o.what} -> ${o.got}`).join('; ')}`,
       'issue #349: check holds a limb part to its bone by this record, and HQ paints the missing cap pixels from its box, so the record is read as strictly as any count: the fields a segment has follow from its place below a joint or not, and the bytes are the same whatever order the stage built it in',
     );
+
+    // PT128 — issue #366: a single run's pad. The rig is 32x24 at 0.5, so the file is 64x48; on the 64 square it is
+    // padded left floor(0 / 2) = 0, top floor(16 / 2) = 8. Written last, in its fixed key order whatever order it was
+    // built in, read back as written; a file without it reads as before.
+    const padRec = { top: 8, left: 0, side: 64, file_size: [64, 48] as [number, number] };
+    const padText = serializeParts({ ...file, single_run_pad: padRec });
+    writeFileSync(path, padText);
+    const padOk = refusals(() => readParts(path));
+    const padBack = padOk === null ? readParts(path).single_run_pad : undefined;
+    const padKeys = Object.keys(JSON.parse(padText) as Record<string, unknown>);
+    say(
+      'PT128_A_SINGLE_RUN_PAD_READS_BACK_IN_ITS_FIXED_ORDER_AFTER_EVERY_OTHER_BLOCK',
+      padOk === null &&
+        JSON.stringify(padBack) === '{"file_size":[64,48],"side":64,"left":0,"top":8}' &&
+        padKeys[padKeys.length - 1] === 'single_run_pad' &&
+        !serializeParts(file).includes('single_run_pad'),
+      `${padOk === null ? 'reads' : codes(padOk)} as ${JSON.stringify(padBack)}; top-level keys ${padKeys.join(', ')}; without it the bytes name it ${serializeParts(file).includes('single_run_pad') ? 'SOMEWHERE' : 'nowhere'}`,
+      'issue #366: the pad is what maps a run pixel back to the artist\'s file, so it is read as strictly as any count, written in one order, and absent wherever there was no pad — a square file\'s and every two-run parts.json keep their bytes',
+    );
+
+    // PT129 — issue #366: a pad record that would map a part somewhere else in the file is refused, once each: a margin
+    // that is not the centring (top 7), a file wider than its square, a file that is the square (no pad to record), a
+    // rig that is not the file at the scale (file 60x48 at 0.5 is 30x24, not 32x24), an unknown key, a missing key, and a
+    // side that is not a positive integer.
+    const padFaults: Array<[string, unknown, string]> = [
+      ['a top margin that is not the centring', { ...padRec, top: 7 }, 'PARTS_SINGLE_RUN_PAD'],
+      ['a file wider than its square', { ...padRec, file_size: [66, 48] }, 'PARTS_SINGLE_RUN_PAD'],
+      ['a file that is the square', { file_size: [64, 64], side: 64, left: 0, top: 0 }, 'PARTS_SINGLE_RUN_PAD'],
+      ['a rig that is not the file at the scale', { file_size: [60, 48], side: 64, left: 2, top: 8 }, 'PARTS_SINGLE_RUN_PAD'],
+      ['an unknown key', { ...padRec, right: 0 }, 'PARTS_KEY_KNOWN'],
+      ['a missing key', { file_size: [64, 48], side: 64, left: 0 }, 'PARTS_FIELD_PRESENT'],
+      ['a side of 0', { ...padRec, side: 0 }, 'PARTS_FIELD_TYPE'],
+    ];
+    const padSeen = padFaults.map(([what, rec, code]) => {
+      writeFileSync(path, JSON.stringify({ ...file, single_run_pad: rec }));
+      const err = refusals(() => readParts(path));
+      return { what, ok: err !== null && err.problems.length === 1 && err.problems[0].code === code, got: codes(err) };
+    });
+    say(
+      'PT129_A_SINGLE_RUN_PAD_THAT_DISAGREES_WITH_ITS_DEFINITION_OR_THE_RIG_IS_REFUSED_BY_NAME',
+      padOk === null && padSeen.every((o) => o.ok),
+      `the positive control is PT128's record (${padOk === null ? 'reads' : codes(padOk)}); ${padSeen.map((o) => `${o.what} -> ${o.got}`).join('; ')}`,
+      'issue #366: a reader maps a part back to the file through this block, so a block that disagrees with the centring the stage pads by, or with the rig beside it, would send the part somewhere it never was — each is said rather than read',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -3793,6 +3838,47 @@ function runCliSuite(): number {
       planRows === 'full,full,full,full,full,full',
     `layers on the PSD exit ${shownArt.status}, SKIP depth line ${shownArt.out.includes('  SKIP  depth: ') ? 'printed' : 'MISSING'}; --export exit ${exported.status}, ${exported.out.split('\n').find((l) => l.startsWith('rig-parts layers --export'))?.slice(-80) ?? 'no line'}; --template exit ${tpl.status}, bytes ${existsSync(tplPath) && Buffer.from(readFileSync(tplPath)).equals(Buffer.from(templatePsdBytes(64, 64))) ? 'templatePsdBytes\'s' : 'DIFFERENT'}; no --canvas, a stray --canvas, a path beside --template -> exit ${[noCanvas, strayCanvas, withPath].map((r) => r.status).join(', ')}; --propose-plan with no --head exit ${plan1.status}, runs ${planRows}`,
     'issue #359: an agent drives the artist route from the command line, so each new form is checked there — what it writes, what it prints, and that a form it does not take is a usage error before anything is written',
+  );
+
+  // CL180 — issue #366: the portrait file from the command line. `assemble --propose-plan` with no --head over the
+  // 75x128 PSD prints the square file's rows; `assemble` prints the `padded:` line under `one run:` and exits 0; the
+  // square file at resolution 120 exits 1 with one ASSEMBLE_RUN_CANVAS FAIL line and writes nothing.
+  const artPt = join(dir, 'cl-artist-portrait');
+  writeArtistFixture(artPt, { portrait: true });
+  const ptPsd = join(artPt, 'art.psd');
+  const planPt = runCli(['assemble', '--propose-plan', '--source', join(artPt, 'painting.png'), '--full', ptPsd, '--config', join(artPt, 'config.json')]);
+  let planPtRows = '';
+  try {
+    planPtRows = JSON.stringify((JSON.parse(planPt.out) as { plan: string[][] }).plan);
+  } catch {
+    planPtRows = 'not JSON';
+  }
+  let planSqRows = '';
+  try {
+    planSqRows = JSON.stringify((JSON.parse(plan1.out) as { plan: string[][] }).plan);
+  } catch {
+    planSqRows = 'not JSON';
+  }
+  const asmPt = runCli(['assemble', '--source', join(artPt, 'painting.png'), '--full', ptPsd, '--config', join(artPt, 'config.json'), '--out', join(artPt, 'out')]);
+  const asmLines = asmPt.out.split('\n');
+  const oneAt = asmLines.findIndex((l) => l.startsWith('  one run: '));
+  const over = join(dir, 'cl-artist-over');
+  writeArtistFixture(over, { config: { ...artistConfig(), seethrough: { ...(artistConfig().seethrough as Record<string, unknown>), resolution: 120 } } });
+  const overRun = runCli(['assemble', '--source', join(over, 'painting.png'), '--full', join(over, 'art.psd'), '--config', join(over, 'config.json'), '--out', join(over, 'out')]);
+  const overFail = overRun.out.split('\n').filter((l) => l.includes('FAIL  '));
+  say(
+    'CL180_ASSEMBLE_PROPOSES_AND_PADS_A_PORTRAIT_FILE_FROM_THE_COMMAND_LINE_AND_REFUSES_ONE_WIDER_THAN_THE_SQUARE',
+    planPt.status === 0 &&
+      planPtRows === planSqRows &&
+      asmPt.status === 0 &&
+      oneAt >= 0 &&
+      (asmLines[oneAt + 1] ?? '').startsWith(`  padded: ${ptPsd} is 75x128, centred on the 128x128 run square (left 26, right 27, top 0, bottom 0)`) &&
+      overRun.status === 1 &&
+      overFail.length === 1 &&
+      overFail[0].trim().startsWith(`FAIL  ASSEMBLE_RUN_CANVAS: the full run (${join(over, 'art.psd')}) — has a 128x128 canvas; with one run the file is padded to the 120x120 square`) &&
+      !existsSync(join(over, 'out')),
+    `--propose-plan over the portrait exit ${planPt.status}, rows ${planPtRows === planSqRows ? 'the square file\'s' : planPtRows}; assemble exit ${asmPt.status}, the line under one run: "${(asmLines[oneAt + 1] ?? 'none').trim().slice(0, 100)}…"; resolution 120 over the 128 file exit ${overRun.status}, ${overFail.map((l) => l.trim().slice(0, 120)).join(' | ')}, out ${existsSync(join(over, 'out')) ? 'WRITTEN' : 'not written'}`,
+    'issue #366: an agent reaches the artist route from the command line, so the pad is checked there too — what it prints, and the refusal of the one size padding cannot reach, before anything is written',
   );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -14693,6 +14779,34 @@ function runBuildSuite(): number {
       `no --head: exit ${single.status}, ${single.out.split('\n').find((l) => l.startsWith('build: ')) ?? 'no build line'}; without the face: exit ${faceless.status}, ${facelessFail.map((l) => l.trim().slice(0, 140)).join(' | ')}, --out holds [${entries(join(facelessDir, 'out')).join(', ')}]`,
       'issue #359: the card\'s own test — an artist-style PSD with a separated face builds green as one run, and the refusal when the face is missing names the rule before anything is written',
     );
+
+    // BU168 — issue #366: a portrait single-run build. The artist fixture's 75x128 PSD and painting, no --head: padded
+    // to the 128 square under [assemble], green through rig and check, its parts.json carrying the pad. The same file
+    // with the square file's 128x128 painting stops at [assemble] with ASSEMBLE_SINGLE_RUN_SOURCE and writes nothing.
+    const portDir = join(dir, 'artist-portrait');
+    writeArtistFixture(portDir, { portrait: true });
+    const port = runCli(['build', '--config', join(portDir, 'config.json'), '--source', join(portDir, 'painting.png'), '--full', join(portDir, 'art.psd'), '--out', join(portDir, 'out')]);
+    const portParts = join(portDir, 'out', 'parts.json');
+    const portPad = existsSync(portParts) ? JSON.stringify(readParts(portParts).single_run_pad) : 'no parts.json';
+    const wrongSizeDir = join(dir, 'artist-portrait-square-painting');
+    writeArtistFixture(wrongSizeDir, { portrait: true, painting: {} });
+    const wrongSize = runCli(['build', '--config', join(wrongSizeDir, 'config.json'), '--source', join(wrongSizeDir, 'painting.png'), '--full', join(wrongSizeDir, 'art.psd'), '--out', join(wrongSizeDir, 'out')]);
+    const wrongSizeFail = wrongSize.out.split('\n').filter((l) => l.includes('FAIL  '));
+    say(
+      'BU168_A_PORTRAIT_SINGLE_RUN_BUILD_IS_PADDED_AND_GREEN_AND_ONE_WITH_ANOTHER_SIZE_OF_PAINTING_STOPS_AT_ASSEMBLE',
+      port.status === 0 &&
+        port.out.includes(`\n[assemble]   padded: ${join(portDir, 'art.psd')} is 75x128, centred on the 128x128 run square (left 26, right 27, top 0, bottom 0)`) &&
+        port.out.includes('build: PASS') &&
+        existsSync(join(portDir, 'out', 'check', 'build', 'skeleton.json')) &&
+        portPad === '{"file_size":[75,128],"side":128,"left":26,"top":0}' &&
+        !single.out.includes('padded: ') &&
+        wrongSize.status === 1 &&
+        wrongSizeFail.length === 1 &&
+        wrongSizeFail[0].startsWith('[assemble]   FAIL  ASSEMBLE_SINGLE_RUN_SOURCE: the painting (--source, 128x128) — is not the size of the full run\'s file') &&
+        entries(join(wrongSizeDir, 'out')).length === 0,
+      `portrait: exit ${port.status}, ${port.out.split('\n').find((l) => l.startsWith('build: ')) ?? 'no build line'}, padded line ${port.out.includes('[assemble]   padded: ') ? 'printed' : 'MISSING'}, parts.json single_run_pad ${portPad}; the square build prints ${single.out.includes('padded: ') ? 'A PADDED LINE' : 'no padded line'}; a 128x128 painting: exit ${wrongSize.status}, ${wrongSizeFail.map((l) => l.trim().slice(0, 140)).join(' | ')}, --out holds [${entries(join(wrongSizeDir, 'out')).join(', ')}]`,
+      'issue #366: the card\'s own test — a portrait PSD builds green through the single-run path, and the one thing padding cannot reconcile, a painting of another size, is named before anything is written',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -17221,7 +17335,7 @@ function runAssembleSuite(): number {
 function artistControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
   const root = temp('artist');
   try {
-    const run = (label: string, opts: { planted?: boolean; drop?: readonly string[]; config?: Record<string, unknown>; full?: (d: string) => string; head?: (d: string) => string } = {}): { r: ReturnType<typeof assembleStage>; lines: string[]; dir: string } => {
+    const run = (label: string, opts: { planted?: boolean; drop?: readonly string[]; config?: Record<string, unknown>; portrait?: boolean; painting?: { portrait?: boolean }; full?: (d: string) => string; head?: (d: string) => string } = {}): { r: ReturnType<typeof assembleStage>; lines: string[]; dir: string } => {
       const d = join(root, label);
       writeArtistFixture(d, opts);
       const lines: string[] = [];
@@ -17385,6 +17499,136 @@ function artistControls(say: (name: string, ok: boolean, detail: string, why: st
         fh.visible_px === ch.visible_px,
       `planted: ${pline} (face drift=${pface?.refused_drift_px ?? '?'}); fixed in the PNGs: ${fline}; the clean file: error px ${one.r.figures.errorPx}; every other part ${others(fixed) === others(one.r) ? 'the clean file\'s' : 'DIFFERENT'}; hair_back opaque ${ch.opaque_px} -> ${fh.opaque_px}, occluded ${ch.occluded_px} -> ${fh.occluded_px}, visible ${ch.visible_px} -> ${fh.visible_px}`,
       'issue #359: the export is editable with ordinary file operations, and the recomposite error is the instrument that says the edit worked — a near-white patch behind an opaque part is error the seam override leaves alone, so it shows, and moving it into its layer takes the figure back to the clean file\'s',
+    );
+
+    // AS246 — issue #366: a portrait file as the one run. The 75x128 PSD (fixtures/artist.ts, *The portrait file*) is
+    // padded to the 128 square, left 26, right 27: it assembles green, each part's box is its layer's box in the
+    // portrait file, each part PNG is the square file's byte for byte, each record is the square file's 26 px to the
+    // left, parts.json records the pad, and the `padded:` line says it under `one run:`. The square file writes neither.
+    const portrait = run('portrait', { portrait: true });
+    const pBoxes = portrait.r.parts.parts.map((q) => `${q.name}@${q.x},${q.y},${q.w}x${q.h}`).join(' ');
+    const pWant = ARTIST_PLAN.map(([name, , tag]) => {
+      const l = artistLayers({ portrait: true }).find((x) => x.name === tag) as { box: [number, number, number, number] };
+      return `${name}@${l.box[0]},${l.box[1]},${l.box[2] - l.box[0]}x${l.box[3] - l.box[1]}`;
+    }).join(' ');
+    const shifted = JSON.stringify(one.r.parts.parts.map((q) => ({ ...q, x: q.x - ARTIST_PORTRAIT_SHIFT })));
+    const pPngs = portrait.r.images.every((im, i) => Buffer.from(encodePngBytes(im.image)).equals(Buffer.from(encodePngBytes(one.r.images[i].image))));
+    const pPadLine = `  padded: ${join(portrait.dir, 'art.psd')} is 75x128, centred on the 128x128 run square (left 26, right 27, top 0, bottom 0); parts.json single_run_pad records it, and every part's box is in the file's pixels times scale_rig_per_source`;
+    const oneText = readFileSync(join(one.dir, 'out', 'parts.json'), 'utf8');
+    say(
+      'AS246_A_PORTRAIT_FILE_IS_PADDED_TO_THE_RESOLUTION_SQUARE_AND_ASSEMBLES_GREEN_IN_THE_FILE_S_OWN_PIXELS',
+      pBoxes === pWant &&
+        portrait.r.figures.errorPx === 0 &&
+        JSON.stringify(portrait.r.parts.rig_size) === JSON.stringify(artistCanvas({ portrait: true })) &&
+        JSON.stringify(portrait.r.parts.single_run_pad) === '{"file_size":[75,128],"side":128,"left":26,"top":0}' &&
+        JSON.stringify(portrait.r.parts.parts) === shifted &&
+        pPngs &&
+        portrait.lines[portrait.lines.findIndex((l) => l.startsWith('  one run: ')) + 1] === pPadLine &&
+        one.r.parts.single_run_pad === undefined &&
+        !oneText.includes('single_run_pad') &&
+        !one.lines.some((l) => l.startsWith('  padded: ')),
+      `${ARTIST_PORTRAIT_W}x${ARTIST_SIDE} file: parts ${pBoxes} (by hand ${pBoxes === pWant ? 'the same' : pWant}); rig ${portrait.r.parts.rig_size.join('x')}; error px ${portrait.r.figures.errorPx}; single_run_pad ${JSON.stringify(portrait.r.parts.single_run_pad)}; records ${JSON.stringify(portrait.r.parts.parts) === shifted ? 'the square file\'s 26 px left' : 'DIFFERENT'}, PNGs ${pPngs ? 'identical' : 'DIFFERENT'}; padded line ${portrait.lines.includes(pPadLine) ? 'printed' : 'MISSING'}; the square file: single_run_pad ${oneText.includes('single_run_pad') ? 'WRITTEN' : 'absent'}, padded line ${one.lines.some((l) => l.startsWith('  padded: ')) ? 'PRINTED' : 'absent'}`,
+      'issue #366: an artist\'s PSD is rarely square, and padding it is what inputs already does for See-through, so the file is read as its square would be and mapped back — the rig stays in the file\'s pixels, with no pad in it, and a square file at the resolution is read exactly as before',
+    );
+
+    // AS247 — issue #366: the recorded pad maps a part's box back to its box in the file, exactly. parts.json is read
+    // back from disk; each layer's box in the padded run (padSingleRun at the record's left, top and side), less the
+    // record's margins, times scale_rig_per_source, is the part's box; and the part's box over the scale is the
+    // layer's box in the 75x128 file. Planted: the same map without the pad lands every part 26 px to the right.
+    const onDisk = readParts(join(portrait.dir, 'out', 'parts.json'));
+    const pad = onDisk.single_run_pad;
+    const fileSet = readPsdLayers(join(portrait.dir, 'art.psd'));
+    const padded = pad === undefined ? fileSet : padSingleRun(fileSet, { fullPad: pad.left, fullPadTop: pad.top }, pad.side);
+    const S = onDisk.scale_rig_per_source;
+    const mapBack = (dx: number, dy: number): string[] =>
+      ARTIST_PLAN.map(([name, , tag]) => {
+        const l = padded.layers.find((x) => x.name === tag) as Layer;
+        const q = onDisk.parts.find((x) => x.name === name) as PartRecord;
+        const via = [(l.left - dx) * S, (l.top - dy) * S, (l.right - l.left) * S, (l.bottom - l.top) * S].join(',');
+        const f = fileSet.layers.find((x) => x.name === tag) as Layer;
+        const inFile = [f.left, f.top, f.right - f.left, f.bottom - f.top].join(',');
+        const rec = [q.x, q.y, q.w, q.h].join(',');
+        return via === rec && [q.x / S, q.y / S, q.w / S, q.h / S].join(',') === inFile ? 'exact' : `${name} run-${via} rec-${rec} file-${inFile}`;
+      });
+    const exact = pad === undefined ? ['no pad'] : mapBack(pad.left, pad.top);
+    const unpadded = pad === undefined ? [] : mapBack(0, 0);
+    say(
+      'AS247_THE_RECORDED_PAD_MAPS_EVERY_PART_S_BOX_BACK_TO_ITS_LAYER_S_BOX_IN_THE_FILE_EXACTLY',
+      pad !== undefined &&
+        padded.canvas.w === 128 &&
+        padded.canvas.h === 128 &&
+        exact.every((e) => e === 'exact') &&
+        unpadded.length === ARTIST_PLAN.length &&
+        unpadded.every((e) => e !== 'exact'),
+      `parts.json on disk: single_run_pad ${JSON.stringify(pad)}, scale ${S}; run box less the pad, times the scale -> ${exact.every((e) => e === 'exact') ? `all ${exact.length} exact` : exact.join('; ')}; planted, without the pad -> ${unpadded.filter((e) => e !== 'exact').length} of ${unpadded.length} off`,
+      'issue #366: the pad is written so that a reader holding only parts.json and the file can say where every part came from in the file — that holds only if the record and the map are the same numbers',
+    );
+
+    // AS248 — issue #366: the wrapper form too. The portrait file exported (`layers --export`, a 75x128 layers.json)
+    // and assembled from the directory gives the PSD's parts.json bytes and part PNGs.
+    const pExport = run('portrait-export', {
+      portrait: true,
+      full: (d) => {
+        exportLayers(readPsdLayers(join(d, 'art.psd')), join(d, 'work'));
+        return join(d, 'work');
+      },
+    });
+    const pExportPngs = portrait.r.images.every((im, i) => Buffer.from(encodePngBytes(im.image)).equals(Buffer.from(encodePngBytes(pExport.r.images[i].image))));
+    const pJsonSame = readFileSync(join(pExport.dir, 'out', 'parts.json'), 'utf8') === readFileSync(join(portrait.dir, 'out', 'parts.json'), 'utf8');
+    say(
+      'AS248_THE_EXPORT_OF_A_PORTRAIT_FILE_IS_PADDED_AS_THE_FILE_IS_AND_ASSEMBLES_TO_ITS_PARTS',
+      readWrapperLayers(join(pExport.dir, 'work')).canvas.w === ARTIST_PORTRAIT_W && pJsonSame && pExportPngs,
+      `the export's canvas ${readWrapperLayers(join(pExport.dir, 'work')).canvas.w}x${readWrapperLayers(join(pExport.dir, 'work')).canvas.h}; parts.json ${pJsonSame ? 'identical' : 'DIFFERENT'}, part PNGs ${pExportPngs ? 'identical' : 'DIFFERENT'}`,
+      'issue #366: the correction loop runs on the wrapper form, so a non-square file must be padded the same whichever form it arrives in, or a correction would be measured against another frame',
+    );
+
+    // AS249 — issue #366: a file smaller than the square on both sides. The portrait file at resolution 160 is padded
+    // left floor(85 / 2) = 42, top floor(32 / 2) = 16 — both margins non-zero — and still maps one run px to one source
+    // px, so every part record and PNG is the 128 run's; only the pad record differs. --propose-plan over it writes the
+    // square file's rows.
+    const res160 = { ...artistConfig({ portrait: true }), seethrough: { ...(artistConfig().seethrough as Record<string, unknown>), resolution: 160 } };
+    const small = run('portrait-160', { portrait: true, config: res160 });
+    const smallPngs = portrait.r.images.every((im, i) => Buffer.from(encodePngBytes(im.image)).equals(Buffer.from(encodePngBytes(small.r.images[i].image))));
+    const pSet = readPsdLayers(join(small.dir, 'art.psd'));
+    const sp160 = proposeSinglePlan(pSet, { sourceW: ARTIST_PORTRAIT_W, sourceH: ARTIST_SIDE, resolution: 160, headBox: singleRunHeadBox(ARTIST_PORTRAIT_W, ARTIST_SIDE, 160), rigScale: 1 });
+    const spSquare = proposeSinglePlan(readPsdLayers(join(one.dir, 'art.psd')), { sourceW: 128, sourceH: 128, resolution: 128, headBox: singleRunHeadBox(128, 128), rigScale: 1 });
+    say(
+      'AS249_A_FILE_SMALLER_THAN_THE_SQUARE_ON_BOTH_SIDES_IS_PADDED_ON_BOTH_AND_PROPOSES_AND_ASSEMBLES_AS_THE_SQUARE_FILE',
+      JSON.stringify(small.r.parts.single_run_pad) === '{"file_size":[75,128],"side":160,"left":42,"top":16}' &&
+        JSON.stringify(small.r.parts.parts) === JSON.stringify(portrait.r.parts.parts) &&
+        smallPngs &&
+        small.r.figures.errorPx === 0 &&
+        JSON.stringify(singleRunHeadBox(ARTIST_PORTRAIT_W, ARTIST_SIDE, 160)) === '[-42,-16,118,144]' &&
+        JSON.stringify(sp160.plan) === JSON.stringify(spSquare.plan),
+      `resolution 160: single_run_pad ${JSON.stringify(small.r.parts.single_run_pad)}; records ${JSON.stringify(small.r.parts.parts) === JSON.stringify(portrait.r.parts.parts) ? 'the 128 run\'s' : 'DIFFERENT'}, PNGs ${smallPngs ? 'identical' : 'DIFFERENT'}, error px ${small.r.figures.errorPx}; head box ${JSON.stringify(singleRunHeadBox(ARTIST_PORTRAIT_W, ARTIST_SIDE, 160))}; --propose-plan rows ${JSON.stringify(sp160.plan) === JSON.stringify(spSquare.plan) ? 'the square file\'s' : `DIFFERENT: ${JSON.stringify(sp160.plan)}`}`,
+      'issue #366: the resolution of one run is only the square it is read on, so a file inside it on both sides is padded on both, and the map stays one to one — the parts cannot depend on how much margin the square had',
+    );
+
+    // AS250 — issue #366: what padding cannot fix, each by name, with nothing written. The square file at resolution 120
+    // (a side above the square: ASSEMBLE_RUN_CANVAS on the full run); the portrait file with the square file's painting
+    // (a painting not the file's size: ASSEMBLE_SINGLE_RUN_SOURCE); both at once, both named. The positive control is
+    // AS246.
+    const res120 = { ...artistConfig(), seethrough: { ...(artistConfig().seethrough as Record<string, unknown>), resolution: 120 } };
+    const refusedFull = (label: string, opts: Parameters<typeof run>[1]): { got: string; detail: string; wrote: boolean } => {
+      const e = refusals(() => run(label, opts));
+      return { got: e === null ? 'assembles' : e.problems.map((q) => `${q.code} ${q.object}`).join(' | '), detail: e?.problems[0]?.detail ?? '', wrote: existsSync(join(root, label, 'out')) };
+    };
+    const big = refusedFull('over-120', { config: res120 });
+    const wrongSrc = refusedFull('square-painting', { portrait: true, painting: {} });
+    const both = refusedFull('both', { portrait: true, painting: {}, config: { ...artistConfig({ portrait: true }), seethrough: { ...(artistConfig().seethrough as Record<string, unknown>), resolution: 74 } } });
+    say(
+      'AS250_A_FILE_WIDER_THAN_THE_SQUARE_OR_A_PAINTING_NOT_THE_FILE_S_SIZE_IS_REFUSED_BY_NAME_AND_NOTHING_IS_WRITTEN',
+      big.got === `ASSEMBLE_RUN_CANVAS the full run (${join(root, 'over-120', 'art.psd')})` &&
+        big.detail.includes('no side above 120 is required — a resolution of at least 128') &&
+        wrongSrc.got === 'ASSEMBLE_SINGLE_RUN_SOURCE the painting (--source, 128x128)' &&
+        wrongSrc.detail.includes('75x128 painting is required') &&
+        both.got === `ASSEMBLE_RUN_CANVAS the full run (${join(root, 'both', 'art.psd')}) | ASSEMBLE_SINGLE_RUN_SOURCE the painting (--source, 128x128)` &&
+        !big.wrote &&
+        !wrongSrc.wrote &&
+        !both.wrote &&
+        portrait.r.parts.parts.length === ARTIST_PLAN.length,
+      `resolution 120 over the 128 file -> ${big.got.replaceAll(root, '<root>')} ("${big.detail.slice(-90)}"); the portrait file with a 128x128 painting -> ${wrongSrc.got}; resolution 74 and that painting -> ${both.got.replaceAll(root, '<root>')}; out written: ${[big, wrongSrc, both].map((x) => x.wrote).join(', ')}`,
+      'issue #366: padding fixes a side short of the square and nothing else — a side past it would have to be shrunk, which is a resample nobody declared, and a painting of another size maps no part back to the file — so each is refused before anything is written, naming what to change',
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

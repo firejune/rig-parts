@@ -78,7 +78,7 @@ import { encodeGif } from './gif.ts';
 import { CONTROL_SUFFIX, withAnimations } from './motion.ts';
 import type { PaletteError } from './palette.ts';
 import { type LayerSet, readLayers } from './layers.ts';
-import { type PartRecord, readParts, tagOf, writeParts } from './parts.ts';
+import { type PartRecord, readParts, type SingleRunPad, tagOf, writeParts } from './parts.ts';
 import { encodePngBytes, readPng, writePng } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
 import { readRequirements, type RequirementLine, summaryText } from './requirements.ts';
@@ -261,6 +261,9 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   log(`rig-parts assemble: ${result.images.length} part(s) on a ${W}x${H} rig (${result.parts.scale_rig_per_source} rig px per source px), seam rule ${result.seamRule}, projection rule ${result.projectRule}`);
   // Issue #359: one run, said, so a reader of the lines knows no head run was placed.
   if (runs.single) log(`  one run: ${input.full} holds the face (${SINGLE_RUN_FACE_TAGS.join(', ')}), so no head run is read; every part comes from the full run`);
+  // Issue #366: a file that is not the resolution square was padded to it; said, with where parts.json records it. None for a square file.
+  const pad = result.parts.single_run_pad;
+  if (pad !== undefined) log(singleRunPadLine(input.full, pad));
   for (const p of result.parts.parts) {
     log(
       `  ${p.name.padEnd(11)} ${p.from.padEnd(16)} ${`${p.w}x${p.h}`.padEnd(9)} @${String(p.x).padStart(4)},${String(p.y).padStart(4)} ` +
@@ -293,6 +296,16 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   for (const d of result.drift) log(driftLine(d));
   log(`wrote ${outs.partsJson}, ${result.images.length} PNG(s) in ${outs.partsDir}, ${outs.recomposite}, ${outs.errorMap} (uncovered error px red, covered error px blue, the painting grey)${figurePath === null ? '' : `, ${figurePath} (the figure, white, the recomposite was read inside)`}`);
   return result;
+}
+
+/**
+ * The line `assemble` prints under `one run:` when the file was padded (issue
+ * #366): its size, the square and the four margins, and that `parts.json`'s
+ * `single_run_pad` records them.
+ */
+export function singleRunPadLine(file: string, pad: SingleRunPad): string {
+  const [w, h] = pad.file_size;
+  return `  padded: ${file} is ${w}x${h}, centred on the ${pad.side}x${pad.side} run square (left ${pad.left}, right ${pad.side - w - pad.left}, top ${pad.top}, bottom ${pad.side - h - pad.top}); parts.json single_run_pad records it, and every part's box is in the file's pixels times scale_rig_per_source`;
 }
 
 /**

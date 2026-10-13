@@ -231,6 +231,21 @@ unchanged by it).
 What to do: nothing. A consumer that matched `PROPOSE_TURN_DEPTH_PRESENT` to detect a
 PSD run reads the `turn: SKIP` note instead.
 
+Issue #366 lets that one run be a file that is not square (AUTHORING §4, *For
+artists*: the canvas). Two-run builds and a square file at `seethrough.resolution`
+are read exactly as before — no `single_run_pad` block, no `padded:` line, the same
+bytes (the selftest's existing single-run controls and the examples' `expected/` are
+unchanged by it).
+
+| change | before | after |
+| --- | --- | --- |
+| one run whose file is not the `resolution` square, no side above it | refused, `ASSEMBLE_RUN_CANVAS` | padded to the square, centred (the odd pixel right or bottom), and assembled in the file's pixels; `parts.json` ends with `single_run_pad` (`file_size`, `side`, `left`, `top`) and `assemble` prints a `padded:` line under `one run:` |
+| one run whose file has a side above `resolution` | refused, `ASSEMBLE_RUN_CANVAS` | still refused by that code; the detail now says padding cannot shrink a file and names the resolution that would hold it |
+| one run with a painting of another size than the file | read: the run mapped onto the painting at the painting's scale | refused, `ASSEMBLE_SINGLE_RUN_SOURCE` — §4 already required the same size |
+| a `parts.json` with `single_run_pad` | refused, `PARTS_KEY_KNOWN` | read; a block that is not the centring, or disagrees with `rig_size`, is `PARTS_SINGLE_RUN_PAD` |
+
+What to do: nothing, unless a single-run painting was not the file's own size — pass
+the file flattened.
 
 ### And a check before See-through (`painting`, issue #350)
 
