@@ -75,8 +75,13 @@ this port to.
 
 ## What it takes in
 
-- **One painting** — a PNG of one character, front-facing, full body, taller than
-  wide.
+- **One painting** — a PNG of one character that a rig can be cut from: front view,
+  arms clear of the body, hands apart and open, legs apart with a gap, on a plain
+  light background. [docs/PAINTING.md](docs/PAINTING.md) says what each requirement
+  is for and what breaks without it, gives one generation recipe, and describes
+  `rig-parts painting`, which checks a painting against its body-18 joints before
+  See-through runs. To set up the machine that makes the painting and the layers,
+  see [rig-c/getting-started](https://github.com/rig-c/getting-started).
 - **Its See-through layers, twice**: one run on the whole figure (the painting padded
   white to a square) and one on a square crop around the head, because the eyes of a
   full-figure run are too small to separate. Either form See-through reaches you in

@@ -394,6 +394,8 @@ import { pyFixed } from './src/pyfmt.ts';
 import { SQUEEZE_AMPS, SQUEEZE_TIPS, squeezeConfig, squeezeImages, squeezeParts } from './fixtures/squeeze.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines, serializeBasis } from './src/diagnostics.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeypoints, parseKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
+import { backgroundMask, checkPainting, linePixels, PAINTING_GAPS, PAINTING_JOINTS, pixelOf } from './src/paintcheck.ts';
+import { CANVAS as PAINT_CANVAS, figureJoints as paintJoints, FIGURE as PAINT_FIGURE, keypointFile as paintKeypointFile, mutant as paintMutant, paint as paintFigure } from './fixtures/painting.ts';
 import { LEGS_APART, LEGS_JOINED, LYING_PARTS, LYING_RIG, type PoseName, POSES, SEATED_PARTS, SEATED_RIG } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, constraintConfig, dustImages, dustParts, FACE_EXPECT, faceConfig, faceImages, faceParts, HEAT_STRIP_EXPECT, heatStripConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, shoeConfig, shoeImages, shoeKick, shoeParts, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
@@ -8710,6 +8712,104 @@ function runWristSnapCases(dir: string, SE: string, Pe: PartSet, Je: RigJoints, 
 // ---------------------------------------------------------------------------
 // the keypoint file and the door (issue #75)
 // ---------------------------------------------------------------------------
+
+/**
+ * `painting` (issue #350): the check that runs before See-through, on flat-colour figures whose every gap is counted
+ * by hand (`fixtures/painting.ts`). One passing figure, and a mutant per rule beside it.
+ */
+function runPaintingSuite(): number {
+  section('painting: what a painting must be before See-through runs on it');
+  const { say, bad } = counter();
+  const dir = temp('painting');
+  try {
+    const person = (joints: Record<string, unknown>): ReturnType<typeof choosePerson> => {
+      const f = parseKeypoints(paintKeypointFile(joints as ReturnType<typeof paintJoints>), 'kp.json');
+      return choosePerson(f, undefined, 'kp.json');
+    };
+    const judge = (blocks: Parameters<typeof paintFigure>[0], joints: Record<string, unknown>, ground?: Parameters<typeof paintFigure>[1]): ReturnType<typeof checkPainting> =>
+      checkPainting(paintFigure(blocks, ground), person(joints), 'p.png', 'kp.json');
+    const codeList = (r: ReturnType<typeof checkPainting>): string => r.problems.map((p) => `${p.code} ${p.object}`).join('; ') || 'nothing';
+
+    // PG01: the passing figure, on white and on a transparent ground, with a white highlight enclosed by the torso under a joint.
+    const pass = judge(PAINT_FIGURE, paintJoints());
+    const clear = judge(PAINT_FIGURE, paintJoints(), [0, 0, 0, 0]);
+    const bg = backgroundMask(paintFigure(PAINT_FIGURE));
+    const highlightIsFigure = bg[95 * PAINT_CANVAS[0] + 52] === 0;
+    // By hand: the figure is the blocks' union. head 20x25 = 500, shoulders 70x7 = 490, torso 30x58 = 1740, arms 2 x 8x68 = 1088,
+    // legs 2 x 9x85 = 1530 (the highlight lies inside the torso): 5,348 px of the 24,000.
+    say(
+      'PG01_A_FIGURE_WITH_ARMS_HANDS_AND_LEGS_APART_ON_A_PLAIN_GROUND_PASSES',
+      pass.problems.length === 0 && clear.problems.length === 0 && highlightIsFigure &&
+        pass.lines[0] === '  painting 120x200: background 18652 px, figure 5348 px; border 636 px, 0 not background-coloured' &&
+        pass.lines[1] === '  joints: 16 observed, 16 on the figure' &&
+        pass.lines.length === 2 + PAINTING_GAPS.length,
+      `${pass.lines.map((l) => l.trim()).join(' | ')}; on alpha 0: ${codeList(clear)}; the white highlight under r_hip is figure: ${highlightIsFigure}`,
+      'the positive control: every rule must stay quiet on a figure that holds every requirement, and a white patch the figure encloses (a white blouse inside its line art) is not background, or a joint on it would read as off the figure',
+    );
+
+    // PG02-PG07: one mutant per rule, each refused by name and nothing else.
+    const cases: Array<[string, Parameters<typeof paintMutant>[0], string, string]> = [
+      ['PG02_AN_ARM_PAINTED_AGAINST_THE_BODY_IS_REFUSED_BY_THE_WRIST_TO_HIP_GAP', 'armsDown', 'PAINTING_ARM_CLEAR painting p.png right arm (r_wrist to r_hip)', 'an arm against the body is cut by See-through into a sleeve layer that holds the torso, and no bone can swing it clear; the left arm stays clear, so the line between the wrists still crosses its gap'],
+      ['PG03_CLASPED_HANDS_ARE_REFUSED_AND_SO_ARE_THE_ARMS_THEY_CLOSE_ON_THE_BODY', 'clasped', 'PAINTING_ARM_CLEAR painting p.png right arm (r_wrist to r_hip); PAINTING_ARM_CLEAR painting p.png left arm (l_wrist to l_hip); PAINTING_HANDS_APART painting p.png hands (r_wrist to l_wrist)', 'hands that meet are one handwear layer and two arms that cannot move apart; meeting, they close a loop of arms round the torso, so each arm-to-body gap is enclosed and both arms are refused beside the hands'],
+      ['PG04_LEGS_PAINTED_TOGETHER_ARE_REFUSED_AT_THE_KNEES_AND_THE_ANKLES', 'legsTogether', 'PAINTING_LEGS_APART painting p.png knees (r_knee to l_knee); PAINTING_LEGS_APART painting p.png ankles (r_ankle to l_ankle)', 'the leg chain needs the legs painted apart, and the limb cut (#349) cuts at the knee: two legs that touch are one column See-through cannot split'],
+      ['PG05_A_JOINT_OFF_THE_FIGURE_IS_REFUSED_BY_NAME', 'offFigure', 'PAINTING_JOINT_ON_FIGURE kp.json person "a" joint nose', 'a joint on the background is a keypoint file measured on another painting, or a limb that is not where the file says; every later reading of the joints would be wrong'],
+      ['PG06_A_BACKGROUND_THAT_IS_NOT_PLAIN_IS_REFUSED', 'busy', 'PAINTING_BACKGROUND_PLAIN painting p.png', 'scenery, a floor or a gradient at the edge is read by See-through as more figure; the border is where a plain light background is measured'],
+      ['PG07_A_JOINT_THE_GAP_RULES_READ_THAT_IS_NOT_OBSERVED_IS_REFUSED', 'unstated', 'PAINTING_JOINTS_STATED kp.json person "a" joint r_wrist', 'a wrist the painting does not show is a hand nothing can rig, and a gap rule with no joint would read nothing and pass'],
+    ];
+    for (const [name, kind, want, why] of cases) {
+      const [blocks, joints] = paintMutant(kind);
+      const r = judge(blocks, joints);
+      say(name, codeList(r) === want && pass.problems.length === 0, `${kind}: ${codeList(r)}${r.problems[0] === undefined ? '' : ` — ${r.problems[0].detail}`}`, why);
+    }
+
+    // PG08: the definitions the rules rest on, against hand counts.
+    const line = linePixels([0, 0], [3, 1.5], 10, 10);
+    const edge = pixelOf([120, 200], 120, 200);
+    const flat = linePixels([5, 5], [5, 5], 10, 10);
+    say(
+      'PG08_THE_LINE_IS_SAMPLED_ONCE_PER_PIXEL_CROSSED_AND_A_POINT_ON_THE_EDGE_IS_THE_LAST_PIXEL',
+      JSON.stringify(line) === '[[0,0],[1,0],[2,1],[3,1]]' && JSON.stringify(edge) === '[119,199]' && flat.length === 2 && PAINTING_JOINTS.length === 8,
+      `(0, 0) to (3, 1.5): ${JSON.stringify(line)} (n = ceil(3) = 3, four points: 0, 1, 2, 3 in x; 0, 0.5, 1, 1.5 in y, floored); (120, 200) on 120x200 -> ${JSON.stringify(edge)}; a zero-length line -> ${flat.length} samples`,
+      'a gap is one background pixel on the line, so the line must visit every pixel it crosses; a joint the keypoint reader accepts on the right or bottom edge must read a pixel of the image',
+    );
+
+    // PG09: the command, end to end: the passing figure exits 0, a mutant exits 1 with every FAIL line pointing at its row,
+    // the pointer answers, and a usage error and a painting of another size are refused.
+    const write = (name: string, blocks: Parameters<typeof paintFigure>[0], joints: Record<string, unknown>): [string, string] => {
+      const png = join(dir, `${name}.png`);
+      const kp = join(dir, `${name}.json`);
+      writeFileSync(png, encodePngBytes(paintFigure(blocks)));
+      writeFileSync(kp, JSON.stringify(paintKeypointFile(joints as ReturnType<typeof paintJoints>)));
+      return [png, kp];
+    };
+    const [okPng, okKp] = write('pass', PAINT_FIGURE, paintJoints());
+    const ok = runCli(['painting', '--keypoints', okKp, okPng]);
+    const again = runCli(['painting', '--keypoints', okKp, okPng]);
+    const [legsPng, legsKp] = write('legs', ...paintMutant('legsTogether'));
+    const legs = runCli(['painting', '--keypoints', legsKp, legsPng]);
+    const fails = legs.out.split('\n').filter((l) => l.startsWith('  FAIL  '));
+    const guide = runCli(['guide', 'PAINTING_LEGS_APART']);
+    const noKp = runCli(['painting', okPng]);
+    const small = newRaster(60, 100);
+    small.data.fill(255);
+    const smallPng = join(dir, 'small.png');
+    writeFileSync(smallPng, encodePngBytes(small));
+    const size = runCli(['painting', '--keypoints', okKp, smallPng]);
+    say(
+      'PG09_THE_COMMAND_PASSES_REFUSES_WITH_THE_POINTER_AND_HOLDS_ITS_INPUTS',
+      ok.status === 0 && ok.out === again.out && ok.out.includes('  PASS  the painting holds every requirement') &&
+        legs.status === 1 && fails.length === 2 && fails.every((l) => l.startsWith('  FAIL  PAINTING_LEGS_APART: ') && l.endsWith(' (see rig-parts guide PAINTING_LEGS_APART)')) &&
+        guide.status === 0 && guide.out.includes('<a id="PAINTING_LEGS_APART"></a>') &&
+        noKp.status === 2 && noKp.out.includes('FAIL  USAGE: painting needs --keypoints') &&
+        size.status === 1 && size.out.includes('FAIL  KEYPOINTS_IMAGE_SIZE:'),
+      `pass -> exit ${ok.status}, same bytes twice: ${ok.out === again.out}; legs together -> exit ${legs.status}, ${fails.length} FAIL line(s): ${fails[0]?.trim() ?? 'none'}; guide PAINTING_LEGS_APART -> exit ${guide.status}; no --keypoints -> exit ${noKp.status}; a 60x100 painting under a 120x200 file -> exit ${size.status}, ${size.out.split('\n').find((l) => l.includes('FAIL'))?.trim() ?? 'no FAIL line'}`,
+      'the check is for an agent that cannot see the painting: its answer is the exit code and the named lines, each with the command that prints what to change, and a keypoint file measured on another image is not read against this one',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return bad();
+}
 
 function runKeypointsSuite(): number {
   section('keypoints: the file, the person, the map and the door');
@@ -30841,6 +30941,7 @@ const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number 
   ['winding', runWindingSuite],
   ['propose', runProposeSuite],
   ['keypoints', runKeypointsSuite],
+  ['painting', runPaintingSuite],
   ['propose-corpus', runProposeCorpusSuite],
   ['structure', runStructureSuite],
   ['diagnostics', runDiagnosticsSuite],
@@ -31101,7 +31202,7 @@ async function main(): Promise<void> {
   console.log(
     `rig-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('contour')} contour-mesh, + ${n('contour-wiring')} contour-wiring, + ${n('auto-mesh')} auto-mesh, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('fetch-examples')} fetch-examples, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('scene')} scene, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${autoExamplesClause}${chainClause}${readmeLoopClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('painting')} painting, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('contour')} contour-mesh, + ${n('contour-wiring')} contour-wiring, + ${n('auto-mesh')} auto-mesh, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('fetch-examples')} fetch-examples, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('scene')} scene, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${autoExamplesClause}${chainClause}${readmeLoopClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here

@@ -231,3 +231,19 @@ unchanged by it).
 What to do: nothing. A consumer that matched `PROPOSE_TURN_DEPTH_PRESENT` to detect a
 PSD run reads the `turn: SKIP` note instead.
 
+
+### And a check before See-through (`painting`, issue #350)
+
+A new command, `rig-parts painting --keypoints <k.json> [--person <id>]
+<painting.png>`, reads a painting against its body-18 joints before See-through runs
+and refuses what a rig cannot be cut from (arms against the body, hands together,
+legs without a gap, a joint off the figure, a background that is not plain;
+[PAINTING.md](PAINTING.md)). It reads the keypoint file `propose --keypoints` reads
+and writes nothing; no other command changed, and no byte any build writes moves.
+
+| change | before | after |
+| --- | --- | --- |
+| `rig-parts painting` | a usage error, `unknown command` (exit 2) | the check: exit 0 PASS, 1 with a `FAIL  PAINTING_…` line per refusal |
+| the README's input bullet for the painting | one sentence | the requirements, linked to `docs/PAINTING.md`, which ships in the package |
+
+What to do: nothing. Run `painting` on a new painting before See-through.

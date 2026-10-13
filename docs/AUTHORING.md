@@ -2354,6 +2354,24 @@ See-through with another seed.
 | <a id="INPUTS_PAINTING_OPAQUE"></a>`INPUTS_PAINTING_OPAQUE` | the painting has a pixel below alpha 255 | the painting |
 | <a id="INPUTS_HEAD_BOX_INSIDE"></a>`INPUTS_HEAD_BOX_INSIDE` | `seethrough.head_box` leaves the painting (the crop is not padded) | `head_box` — take `propose --head-box`'s |
 
+### painting
+
+`rig-parts painting --keypoints <k.json> <painting.png>` (issue #350) reads the painting
+before See-through runs on it. *Background* is ground (alpha 8 or less, or every channel
+above 235) connected to the painting's edge; the *figure* is the rest; a *gap* is one
+background pixel on the straight line between two joints. [PAINTING.md](PAINTING.md)
+says why each requirement exists and what breaks without it.
+
+| rule | means | change |
+| --- | --- | --- |
+| <a id="PAINTING_SOURCE_PRESENT"></a><a id="PAINTING_SOURCE_DECODES"></a>`PAINTING_SOURCE_PRESENT`, `PAINTING_SOURCE_DECODES` | the painting is missing or not a PNG | the path |
+| <a id="PAINTING_BACKGROUND_PLAIN"></a>`PAINTING_BACKGROUND_PLAIN` | a border pixel is neither near-white nor unpainted: scenery, a floor, a gradient or a vignette reaches the edge, or the figure is cut by the frame; the detail counts them and names the first | a painting on a plain light background with the whole figure inside the frame (PAINTING.md, *Background*) |
+| <a id="PAINTING_JOINTS_STATED"></a>`PAINTING_JOINTS_STATED` | a wrist, hip, knee or ankle is `occluded` or `missing` in the keypoint file: the gap rules read those eight joints, and a hand or foot the painting does not show is a limb nothing can rig | a painting that shows it; or the joint, if the estimator missed one the painting shows |
+| <a id="PAINTING_JOINT_ON_FIGURE"></a>`PAINTING_JOINT_ON_FIGURE` | an observed joint's pixel is background | the keypoint file (measured on this painting?), or the painting |
+| <a id="PAINTING_ARM_CLEAR"></a>`PAINTING_ARM_CLEAR` | the line from a wrist to the hip of its side crosses no background: the arm is painted against the body. Hands that meet close a loop round the torso, so this fires with `PAINTING_HANDS_APART` on both sides | a painting with the arm held away from the body (PAINTING.md, *Arms*) |
+| <a id="PAINTING_HANDS_APART"></a>`PAINTING_HANDS_APART` | the line between the two wrists crosses no background: hands clasped or touching | a painting with the hands apart and open (PAINTING.md, *Hands*) |
+| <a id="PAINTING_LEGS_APART"></a>`PAINTING_LEGS_APART` | the line between the knees, or between the ankles, crosses no background: the legs are one column there (a long skirt over the knees is refused here too) | a painting with the legs apart and a visible gap at the knees and the ankles (PAINTING.md, *Legs*) |
+
 ### The optional ComfyUI adapter (`comfy paint`, `comfy seethrough`)
 
 | rule | means | change |

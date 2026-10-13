@@ -61,6 +61,7 @@ defaults are the help's too, and none is guessed from the art.
 | `build` | `--config`, `--source`, `--full`, `--out`; optional `--head` (as for `assemble`), `--seam`, `--project`, `--page-edges`, `--pack-shape`, `--loop`, `--lead-in`, `--requirements`, `--idle-keys`, `--seam-pairs`, `--keep-stills` |
 | `compose` | `--scene`, `--out`; optional `--requirements`, `--accept` |
 | `mesh-draft` | `--config`, `--parts`, `--out`; optional `--requirements`, `--idle-keys` (ctl, direct), `--page-edges` (pot, free), `--pack-shape` (rect, polygon), `--more-triangles` |
+| `painting` | one positional path, the painting; `--keypoints`; optional `--person` |
 | `guide` | one positional argument: a rule name, `§<n>`, `§<n>.<m>` or `§<n>.<m>.<k>` |
 | (none) | `--version`, `--help` |
 <!-- /stable:commands -->
