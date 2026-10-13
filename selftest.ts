@@ -60,7 +60,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { inflateSync } from 'node:zlib';
@@ -227,6 +227,7 @@ import {
 import { COMPOSED_HAND_X, COMPOSED_SHOULDER, writeComposedRig, DRIVER_AT, DRIVER_SLIDE, FAR_ABOVE, LOWER_LEN, LURE_ANGLE, OVERREACH_FROM, OVERREACH_TO, POINTER_LEN, REACH_FROM, REACH_TO, REQ_FPS, REQ_STAGE, RIDE_MIX, RIDER_AT, SHOULDER, stageOf, SWING_BROKEN, SWING_PEAK, UPPER_LEN, VANE_AT, VANE_MIX, writeReqRig, writeRequirements } from './fixtures/reqrig.ts';
 import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { ALIASES, AliasTarballError, compareTarballs, MANIFEST as ALIAS_MANIFEST, packAlias, packInto, renamed } from './scripts/alias_tarball.ts';
+import { blobId, checkExampleInputs, type Copier, FETCH_RECORD, recordText, runSync } from './scripts/example_inputs.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionKey, type MotionSpec, sineTrack, TIME_SLACK } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
 import { RIG_BONE_INHERIT, RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
@@ -9099,6 +9100,7 @@ function runProposeCorpusSuite(): number | null {
     return null;
   }
   const { say, bad } = counter();
+  if (!exampleInputsAtPin(examples.map((d) => relative(join(ROOT, 'examples'), d)), say, 'PC900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
   const boxes: string[] = [];
   const wrongBox: string[] = [];
   for (const d of examples) {
@@ -14876,6 +14878,7 @@ function runChainSuite(): number | null {
     return null;
   }
   const { say, bad } = counter();
+  if (!exampleInputsAtPin(found.map((d) => relative(join(ROOT, 'examples'), d)), say, 'CH900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
   const dir = temp('chain');
   let planted: { key: string; out: string; exp: string } | null = null;
   // The green builds by example key: the public scenes of issue #74 compose these, rather than building twice.
@@ -15346,6 +15349,7 @@ function runReadmeLoopSuite(): number | null {
     return null;
   }
   const { say, bad } = counter();
+  if (!exampleInputsAtPin(found.map((d) => relative(join(ROOT, 'examples'), d)), say, 'RL900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
   const lines = readmeLoopLines(readFileSync(join(ROOT, 'README.md'), 'utf8'));
   const dir = temp('readme-loop');
   try {
@@ -18016,6 +18020,7 @@ function runAssembleExamplesSuite(): number | null {
     return null;
   }
   const { say, bad } = counter();
+  if (!exampleInputsAtPin(found.map((d) => relative(join(ROOT, 'examples'), d)), say, 'AE900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
   for (const ex of found) {
     const name = relative(join(ROOT, 'examples'), ex);
     let detail: string;
@@ -18126,6 +18131,7 @@ function runInputsExamplesSuite(): number | null {
     return null;
   }
   const { say, bad } = counter();
+  if (!exampleInputsAtPin(keys, say, 'IE900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
   for (const k of keys) {
     const d = join(EXAMPLES_DIR, k);
     const r = makeInputs(readPng(join(d, 'inputs', 'painting.png')), loadConfig(join(d, 'config.json')), k);
@@ -18645,6 +18651,26 @@ function exampleKeys(): ExampleKeys {
 }
 
 /**
+ * The first case of every suite that reads `examples/<key>/inputs` (issue #367): each input of the examples the suite
+ * reads has the blob id the pinned commit's tree gives it, read through `checkExampleInputs` — the fetch's own check in
+ * `scripts/example_inputs.ts`, not a second one. A suite whose inputs fail it stops there, so a stale painting is this
+ * one named line and not a downstream mismatch that reads as a flake. Hashing all four examples' inputs (260 files,
+ * 95.8 MB) took 168 to 360 ms over three runs on the owner's machine, so each suite checks every file on every run.
+ */
+function exampleInputsAtPin(keys: readonly string[], say: (name: string, ok: boolean, detail: string, why: string) => void, name: string): boolean {
+  const pinned = pinnedExamplesCommit(readFileSync(join(ROOT, 'scripts', 'fetch-examples.sh'), 'utf8'));
+  const problems = keys.flatMap((k) => checkExampleInputs(join(EXAMPLES_DIR, k, 'inputs'), `examples/${k}/inputs`, pinned));
+  const files = problems.length === 0 ? keys.reduce((sum, k) => sum + Object.keys((readJsonAt(join(EXAMPLES_DIR, k, 'inputs', FETCH_RECORD)) as { files: Record<string, string> }).files).length, 0) : 0;
+  say(
+    name,
+    problems.length === 0,
+    problems.length === 0 ? `${keys.join(', ')}: all ${files} input file(s) hold the blob ids of commit ${pinned}` : problems.join(' | '),
+    'issue #367: a painting fetched before #227 survived a fresh fetch, and the example suites failed on demo as a flake; the inputs are held to the pinned tree before anything reads them',
+  );
+  return problems.length === 0;
+}
+
+/**
  * Where what the readers saw disagrees with what the reference's parts.json
  * records. `seen` is every `<run>:<layer name>` the wrapper reader returned for
  * the example's two runs. The reference assembler writes a `ghost_px` entry for
@@ -18809,7 +18835,7 @@ function runCorpusSuite(dir: string | null): number | null {
     return null;
   }
   const { say, bad } = counter();
-  if (keys.fetched.length > 0) runExamplesHalf(keys, say);
+  if (keys.fetched.length > 0 && exampleInputsAtPin(keys.fetched, say, 'CO900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) runExamplesHalf(keys, say);
   if (dir === null) return bad();
   const manifests = findFiles(dir, 'layers.json', CORPUS_DEPTH);
   const partsFiles = findFiles(dir, 'parts.json', CORPUS_DEPTH);
@@ -27658,6 +27684,7 @@ function runAutoMeshExamplesSuite(): number | null {
     return null;
   }
   const { say, bad } = counter();
+  if (!exampleInputsAtPin(['reference-demo'], say, 'AM900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
   const dir = temp('auto-demo');
   try {
     const out = join(dir, 'asm');
@@ -30582,6 +30609,213 @@ function runBuildCostSuite(): number {
   return bad();
 }
 
+/**
+ * The fetch's hash check (issue #367), on a synthetic upstream in a temp directory: no network, no git, no fetched
+ * input. Two examples, `alpha` and `beta`, each a painting, two st_input images and two layer sets (one PNG name with
+ * a space, as See-through writes them); the upstream also holds a README the fetch does not carry and an example this
+ * tree has no config for. The tree listing is written from {@link blobId}, which FX01 holds to the ids git prints.
+ */
+function runFetchExamplesSuite(): number {
+  section('fetch-examples: every fetched input is held to the pinned tree\'s blob id, and a stale one is replaced or refused by name');
+  const { say, bad } = counter();
+  const root = temp('fetch-examples');
+  const PIN = '0123456789abcdef0123456789abcdef01234567';
+  const OTHER = 'fedcba9876543210fedcba9876543210fedcba98';
+  const up = join(root, 'up');
+  const files: Record<string, string> = {
+    'painting.png': 'painting',
+    'inputs/st_input_full.png': 'full',
+    'inputs/st_input_head.png': 'head',
+    'layers/full/layers.json': '{"layers":[]}',
+    'layers/full/parts/back hair.png': 'back hair',
+    'layers/head/layers.json': '{"layers":[]}',
+    'README.md': 'not an input',
+  };
+  const landed = ['layers/full/layers.json', 'layers/full/parts/back hair.png', 'layers/head/layers.json', 'painting.png', 'st_input_full.png', 'st_input_head.png'];
+  const enc = new TextEncoder();
+  let listing = '';
+  for (const key of ['alpha', 'beta', 'gamma']) {
+    for (const [rel, text] of Object.entries(files)) {
+      const p = join(up, key, rel);
+      mkdirSync(dirname(p), { recursive: true });
+      const body = `${key} ${text}`;
+      writeFileSync(p, body);
+      listing += `100644 blob ${blobId(enc.encode(body))}\t${key}/${rel}\0`;
+    }
+  }
+  const treeAt = (name: string, text: string): string => {
+    const p = join(root, name);
+    writeFileSync(p, text);
+    return p;
+  };
+  const tree = treeAt('tree', listing);
+  const fresh = (name: string): string => {
+    const dest = join(root, name);
+    for (const key of ['alpha', 'beta']) {
+      mkdirSync(join(dest, key), { recursive: true });
+      writeFileSync(join(dest, key, 'config.json'), '{}');
+    }
+    return dest;
+  };
+  const sync = (dest: string, args: string[]): { status: number; out: string; err: string } => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const status = runSync(['--upstream', up, '--dest', dest, ...args], (l) => out.push(l), (l) => err.push(l));
+    return { status, out: out.join('\n'), err: err.join('\n') };
+  };
+  const pinned = ['--commit', PIN, '--tree', tree];
+  const check = (dest: string, key: string): string[] => checkExampleInputs(join(dest, key, 'inputs'), `examples/${key}/inputs`, PIN);
+  const oid = (key: string, rel: string): string => blobId(enc.encode(`${key} ${files[rel]}`));
+  const STALE = 'b7376fc12fc66952277ee7ea23ba8b39477b88cb';
+  try {
+    // FX01 — the hash is git's blob id, the id `git ls-tree` prints for a path.
+    const hello = blobId(enc.encode('hello\n'));
+    const empty = blobId(new Uint8Array(0));
+    const stale = blobId(enc.encode('stale'));
+    const bare = createHash('sha1').update('hello\n').digest('hex');
+    say(
+      'FX01_THE_HASH_IS_GITS_BLOB_ID',
+      hello === 'ce013625030ba8dba906f756967f9e9ca394464a' && empty === 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391' && stale === STALE && bare !== hello,
+      `"hello\\n" -> ${hello}, "" -> ${empty}, "stale" -> ${stale}; planted: sha1 over the bytes without git's "blob <n>\\0" header -> ${bare}`,
+      'the constants are what `git hash-object --stdin` printed for the same bytes (git 2.x, 2026-10-13); the required hashes come from the pinned commit\'s tree, so the check must compute the same id',
+    );
+
+    // FX02 — a clean fetch into an empty tree copies every input, writes the record, and the suites' check finds nothing; a second run copies nothing.
+    const clean = fresh('clean');
+    const first = sync(clean, pinned);
+    const recordA = readFileSync(join(clean, 'alpha', 'inputs', FETCH_RECORD), 'utf8');
+    const wantRecord = recordText({ commit: PIN, files: Object.fromEntries(landed.map((rel) => [rel, oid('alpha', rel.startsWith('st_') ? `inputs/${rel}` : rel)])) });
+    const second = sync(clean, pinned);
+    const recordAgain = readFileSync(join(clean, 'alpha', 'inputs', FETCH_RECORD), 'utf8');
+    say(
+      'FX02_A_CLEAN_FETCH_COPIES_EVERY_INPUT_WRITES_THE_RECORD_AND_A_RERUN_COPIES_NOTHING',
+      first.status === 0 && first.out.includes('  alpha: 6 file(s) copied, 0 replaced, 0 kept (blob id matches the pinned tree), 0 removed, 6 in examples/alpha/inputs and its .fetched.json') &&
+        first.out.includes('  beta: 6 file(s) copied') && first.out.includes('note: upstream has "gamma"') && !existsSync(join(clean, 'alpha', 'inputs', 'README.md')) &&
+        recordA === wantRecord && check(clean, 'alpha').length === 0 && check(clean, 'beta').length === 0 &&
+        second.status === 0 && second.out.includes('  alpha: 0 file(s) copied, 0 replaced, 6 kept') && second.out.includes('  beta: 0 file(s) copied, 0 replaced, 6 kept') && recordAgain === recordA &&
+        !second.out.includes('INPUTS_MATCH_PIN'),
+      `first: exit ${first.status}, ${first.out.split('\n').filter((l) => /^ {2}(alpha|beta):/.test(l)).join(' / ')}; record ${recordA === wantRecord ? 'is' : 'is NOT'} the hand-built one; check: alpha ${check(clean, 'alpha').length}, beta ${check(clean, 'beta').length} problem(s); second: exit ${second.status}, ${second.out.split('\n').filter((l) => /^ {2}(alpha|beta):/.test(l)).join(' / ')}`,
+      'issue #367: the clean fetch the planted stale one stands beside; a re-run must stay cheap, copying nothing whose bytes already match',
+    );
+
+    // FX03 — a planted stale input is refused by the suites' check, then replaced by name by the fetch; its clean neighbour is kept.
+    writeFileSync(join(clean, 'beta', 'inputs', 'painting.png'), 'stale');
+    const refused = check(clean, 'beta');
+    const neighbour = check(clean, 'alpha');
+    const replaced = sync(clean, pinned);
+    const wantLine = `  INPUTS_MATCH_PIN replaced examples/beta/inputs/painting.png — the bytes on disk were stale; found blob ${STALE}, required blob ${oid('beta', 'painting.png')} (commit ${PIN}); re-fetched`;
+    say(
+      'FX03_A_PLANTED_STALE_INPUT_IS_REFUSED_BY_THE_SUITES_AND_REPLACED_BY_NAME_BY_THE_FETCH',
+      refused.length === 1 &&
+        refused[0] === `INPUTS_MATCH_PIN: examples/beta/inputs/painting.png — stale; found blob ${STALE}, required blob ${oid('beta', 'painting.png')} (commit ${PIN}); run \`bun run fetch-examples\`` &&
+        neighbour.length === 0 && replaced.status === 0 && replaced.out.includes(wantLine) && replaced.out.includes('  beta: 0 file(s) copied, 1 replaced, 5 kept') &&
+        replaced.out.includes('  alpha: 0 file(s) copied, 0 replaced, 6 kept') && check(clean, 'beta').length === 0,
+      `check before: ${refused.join(' | ') || 'nothing'}; alpha beside it: ${neighbour.length} problem(s); fetch: exit ${replaced.status}, ${replaced.out.split('\n').filter((l) => l.includes('beta')).join(' / ')}; check after: ${check(clean, 'beta').length} problem(s)`,
+      'issue #367: the painting from before #227 was "kept as already on disk" and the suites failed on demo as a flake; now the suites name it and the fetch replaces it, naming both ids',
+    );
+
+    // FX04 — every way the record or the files can disagree with the pin is refused by name; the clean tree beside them passes.
+    const planted = fresh('planted');
+    sync(planted, pinned);
+    const rec = join(planted, 'alpha', 'inputs', FETCH_RECORD);
+    const good = readFileSync(rec, 'utf8');
+    rmSync(rec);
+    const noRecord = check(planted, 'alpha');
+    writeFileSync(rec, good.replace(PIN, OTHER));
+    const otherCommit = check(planted, 'alpha');
+    writeFileSync(rec, good.replace(`"${PIN}"`, 'null'));
+    const unpinnedRecord = check(planted, 'alpha');
+    writeFileSync(rec, '{ not json');
+    const unparsed = check(planted, 'alpha');
+    writeFileSync(rec, good);
+    writeFileSync(join(planted, 'alpha', 'inputs', 'layers', 'full', 'parts', 'extra.png'), 'stale');
+    const extra = check(planted, 'alpha');
+    rmSync(join(planted, 'alpha', 'inputs', 'layers', 'full', 'parts', 'extra.png'));
+    rmSync(join(planted, 'alpha', 'inputs', 'st_input_head.png'));
+    const absent = check(planted, 'alpha');
+    const one = (got: string[], prefix: string, ...parts: string[]): boolean => got.length === 1 && got[0].startsWith(prefix) && parts.every((x) => got[0].includes(x));
+    say(
+      'FX04_A_MISSING_FOREIGN_UNPINNED_OR_UNREADABLE_RECORD_AND_AN_EXTRA_OR_ABSENT_FILE_ARE_REFUSED_BY_NAME',
+      one(noRecord, `INPUTS_FETCH_RECORD: examples/alpha/inputs/${FETCH_RECORD} — absent`, `required one written by a fetch of ${PIN}`) &&
+        one(otherCommit, `INPUTS_FETCH_RECORD: examples/alpha/inputs/${FETCH_RECORD} — fetched at another commit`, `found ${OTHER}, required ${PIN}`) &&
+        one(unpinnedRecord, `INPUTS_FETCH_RECORD: examples/alpha/inputs/${FETCH_RECORD} — written by an UNPINNED copy`, `found commit none, required ${PIN}`) &&
+        one(unparsed, `INPUTS_FETCH_RECORD: examples/alpha/inputs/${FETCH_RECORD} — does not parse`) &&
+        one(extra, 'INPUTS_MATCH_PIN: examples/alpha/inputs/layers/full/parts/extra.png — not in the pinned tree', `found blob ${STALE}, required no file`) &&
+        one(absent, 'INPUTS_MATCH_PIN: examples/alpha/inputs/st_input_head.png — absent', `required blob ${oid('alpha', 'inputs/st_input_head.png')}`) &&
+        check(planted, 'beta').length === 0,
+      [noRecord, otherCommit, unpinnedRecord, unparsed, extra, absent].map((g) => g.join(' | ')).join(' || '),
+      'issue #367: the suites read only inputs a fetch of the pin recorded; a record from before #367, another pin or an UNPINNED copy says nothing about the pin',
+    );
+
+    // FX05 — a stale input the fetch cannot replace is refused by name, with both ids, and that example gets no record; the clean one beside it does.
+    const locked = fresh('locked');
+    sync(locked, pinned);
+    const lockedFile = join(locked, 'beta', 'inputs', 'painting.png');
+    writeFileSync(lockedFile, 'stale');
+    // The copier refuses that one file as a read-only file would on Linux; Bun on macOS writes a large file through a
+    // read-only one, and root writes through any, so a planted chmod would hold on some machines only.
+    const refuse: Copier = (from, to) => {
+      if (to === lockedFile) throw new Error(`EACCES: permission denied, copyfile '${from}' -> '${to}' (planted)`);
+      copyFileSync(from, to);
+    };
+    const out5: string[] = [];
+    const err5: string[] = [];
+    const status5 = runSync(['--upstream', up, '--dest', locked, ...pinned], (l) => out5.push(l), (l) => err5.push(l), refuse);
+    const stuck = { status: status5, out: out5.join('\n'), err: err5.join('\n') };
+    say(
+      'FX05_A_STALE_INPUT_THAT_CANNOT_BE_REFETCHED_IS_REFUSED_BY_NAME_AND_GETS_NO_RECORD',
+      stuck.status === 1 &&
+        stuck.err.includes('fetch-examples: INPUTS_MATCH_PIN: examples/beta/inputs/painting.png — stale and could not be re-fetched (EACCES: permission denied') &&
+        stuck.err.includes(`found blob ${STALE}, required blob ${oid('beta', 'painting.png')} (commit ${PIN})`) &&
+        stuck.out.includes(', NO record written') && !existsSync(join(locked, 'beta', 'inputs', FETCH_RECORD)) &&
+        existsSync(join(locked, 'alpha', 'inputs', FETCH_RECORD)) && !stuck.out.includes('ready under') &&
+        check(locked, 'beta')[0]?.startsWith('INPUTS_FETCH_RECORD') === true,
+      `exit ${stuck.status}; ${stuck.err.split('\n').join(' / ')}; beta record ${existsSync(join(locked, 'beta', 'inputs', FETCH_RECORD)) ? 'WRITTEN' : 'absent'}, alpha record ${existsSync(join(locked, 'alpha', 'inputs', FETCH_RECORD)) ? 'written' : 'ABSENT'}`,
+      'issue #367: "re-fetch it, or refuse by name, naming the file, the hash found and the hash required"; a record is written only after green, so the suites refuse what the fetch could not fix',
+    );
+
+    // FX06 — an upstream file that is not the blob its tree lists is refused before anything is copied from it.
+    const lying = treeAt('lying', listing.replace(`${oid('alpha', 'painting.png')}\talpha/painting.png`, `${STALE}\talpha/painting.png`));
+    const liar = fresh('liar');
+    const told = sync(liar, ['--commit', PIN, '--tree', lying]);
+    say(
+      'FX06_AN_UPSTREAM_FILE_THAT_IS_NOT_ITS_TREES_BLOB_IS_REFUSED_BY_NAME',
+      told.status === 1 && told.err.includes(`FETCH_UPSTREAM_MATCHES_TREE: alpha/painting.png — the checked-out file is blob ${oid('alpha', 'painting.png')}; the tree lists ${STALE}`) &&
+        !existsSync(join(liar, 'alpha', 'inputs', FETCH_RECORD)) && existsSync(join(liar, 'beta', 'inputs', FETCH_RECORD)),
+      `exit ${told.status}; ${told.err.split('\n').join(' / ')}`,
+      'the checkout is held to the pinned tree it came from, so the record can only ever carry the pin\'s ids',
+    );
+
+    // FX07 — an UNPINNED copy fetches, says so, and the suites refuse what it wrote by name.
+    const loose = fresh('loose');
+    const unpinned = sync(loose, ['--unpinned']);
+    const looseCheck = check(loose, 'alpha');
+    say(
+      'FX07_AN_UNPINNED_COPY_SAYS_SO_AND_THE_SUITES_REFUSE_IT_BY_NAME',
+      unpinned.status === 0 && unpinned.out.split('\n').filter((l) => /^ {2}(alpha|beta):/.test(l)).every((l) => l.endsWith('(UNPINNED)')) &&
+        JSON.parse(readFileSync(join(loose, 'alpha', 'inputs', FETCH_RECORD), 'utf8')).commit === null &&
+        looseCheck.length === 1 && looseCheck[0].includes('written by an UNPINNED copy'),
+      `exit ${unpinned.status}; check: ${looseCheck.join(' | ')}`,
+      'a --from copy verifies no commit; the suites compare against expected/ made at the pin, so they cannot read it as the pin',
+    );
+
+    // FX08 — the shell script hands its copy step to this module, with the pinned tree, and keeps nothing unread.
+    const script = readFileSync(join(ROOT, 'scripts', 'fetch-examples.sh'), 'utf8');
+    const handOff = script.includes('bun "$ROOT/scripts/example_inputs.ts" sync --upstream "$upstream" --dest "$DEST" "${pinned_args[@]}"');
+    const listed = script.split('\n').filter((l) => l.includes('ls-tree -r -z "$PINNED_COMMIT"')).length;
+    const unread = ['copy_keep', 'kept as already on disk'].filter((w) => script.includes(w));
+    say(
+      'FX08_THE_FETCH_SCRIPT_COPIES_THROUGH_THIS_CHECK_WITH_THE_PINNED_TREE',
+      handOff && listed === 2 && unread.length === 0,
+      `hand-off ${handOff ? 'present' : 'ABSENT'}; ls-tree of the pin in ${listed} branch(es) (fetch and --from at the pin); the keep-unread step: ${unread.join(', ') || 'gone'}`,
+      'issue #367: one check, read by the fetch and the suites alike; a copy step of its own in the shell would be a second definition of "current"',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return bad();
+}
+
 const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number | null]> = [
   ['raster-components', runComponentsSuite],
   ['raster-morph', runMorphSuite],
@@ -30619,6 +30853,7 @@ const SUITES: ReadonlyArray<readonly [string, (corpus: string | null) => number 
   ['skeleton', runSkeletonSuite],
   ['inputs', runInputsSuite],
   ['inputs-examples', runInputsExamplesSuite],
+  ['fetch-examples', runFetchExamplesSuite],
   ['prompt', runPromptSuite],
   ['comfy', runComfySuite],
   ['build', runBuildSuite],
@@ -30866,7 +31101,7 @@ async function main(): Promise<void> {
   console.log(
     `rig-parts selftest: green — ${tally.total} control(s) over ${ran} suite(s): ${raster} raster-op, + ${n('png')} codec, ` +
       `+ ${n('layers-wrapper')} wrapper-reader, + ${n('layers-psd')} PSD-reader, + ${n('config')} config, + ${n('parts')} parts.json, ` +
-      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('contour')} contour-mesh, + ${n('contour-wiring')} contour-wiring, + ${n('auto-mesh')} auto-mesh, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('scene')} scene, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${autoExamplesClause}${chainClause}${readmeLoopClause}`,
+      `+ ${n('sheet')} sheet, + ${n('cli')} CLI, + ${n('assemble')} assemble, + ${n('plausibility')} plausibility, + ${n('propose')} propose, + ${n('keypoints')} keypoints, + ${n('structure')} structure, + ${n('diagnostics')} diagnostics, + ${n('rig')} rig, + ${n('contour')} contour-mesh, + ${n('contour-wiring')} contour-wiring, + ${n('auto-mesh')} auto-mesh, + ${n('check')} check, + ${n('requirements')} requirements, + ${n('loop')} loop-encoder, + ${n('skeleton')} skeleton, + ${n('inputs')} inputs, + ${n('fetch-examples')} fetch-examples, + ${n('prompt')} prompt, + ${n('comfy')} comfy-adapter, + ${n('build')} build, + ${n('scene')} scene, + ${n('tree')} tree, + ${n('run-tally')} tally${corpusClause}${proposeClause}${assembleExamplesClause}${inputsClause}${autoExamplesClause}${chainClause}${readmeLoopClause}`,
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here

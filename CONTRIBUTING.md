@@ -34,7 +34,11 @@ bun run selftest     # every gate's negative controls, on fixtures it generates
 `bun run selftest` needs no arguments and no assets. Without `--corpus`, and
 without the public examples' inputs fetched (`bun run fetch-examples`, which
 CI runs first), the corpus suite reports a HOLE rather than a result, and the
-summary says so.
+summary says so. With them fetched, every suite that reads them first holds
+each file to its blob id at the commit `scripts/fetch-examples.sh` pins (the
+`…900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE` case, issue #367), and
+a stale or unrecorded input stops that suite on that one named FAIL; re-running
+`bun run fetch-examples` replaces a stale file and names it.
 
 The suites run concurrently, one worker process per suite, as many at once as
 the machine's available parallelism (`RIG_PARTS_SELFTEST_JOBS=<n>` sets the

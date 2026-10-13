@@ -23,10 +23,22 @@
 # UNPINNED on every line it prints about itself. It exists for preparing an
 # upstream change before it is pushed, and for machines with no network.
 #
-# Any file already on disk is KEPT, never overwritten, and the count kept is
-# printed per character. That makes a re-run cheap, and it is also why CI does
-# not cache examples/: a restored cache would freeze the inputs at whatever an
-# earlier run fetched.
+# Every input is held to a hash (issue #367): the blob id git records for it in
+# the pinned commit's tree (`git ls-tree -r`). A file already on disk is kept
+# only when its bytes have that id; one that differs is re-fetched, and a file
+# the tree does not have is removed, each on a line naming the file, the id
+# found and the id required. A file that cannot be replaced is refused by the
+# same name, and no record is written. On success each example gets
+# examples/<key>/inputs/.fetched.json — the commit and every file's blob id —
+# which the example suites in selftest.ts read, through the same check
+# (scripts/example_inputs.ts), so a stale input there is a named FAIL rather
+# than a flake. Before #367 a file on disk was kept unread, and a painting from
+# before #227 survived a fresh fetch. A re-run hashes and copies nothing that
+# matches, so it stays cheap; CI still does not cache examples/.
+#
+# `--from` a clean git checkout of the pinned commit is held to that commit's
+# tree like a fetch; any other `--from` copy is UNPINNED, its record says so,
+# and the example suites refuse it by name.
 #
 # 🚨 The script never reports success on an empty or partial fetch: every
 # character it fetches must end up holding painting.png, both st_input images
@@ -76,8 +88,21 @@ if [ -n "$from" ]; then
     echo "fetch-examples: --from names $from, which is not a directory" >&2
     exit 2
   fi
-  upstream="$(cd "$from" && pwd)"
-  echo "fetch-examples: UNPINNED — copying the working copy at $upstream; no commit is verified"
+  upstream="$(cd "$from" && pwd -P)"
+  work="$(mktemp -d)"
+  # A clean checkout of the pinned commit is as good as a fetch of it: its tree
+  # gives the blob ids, and example_inputs.ts holds every checked-out file to
+  # them. Anything else is UNPINNED.
+  top="$(git -C "$upstream" rev-parse --show-toplevel 2>/dev/null || true)"
+  head="$(git -C "$upstream" rev-parse HEAD 2>/dev/null || true)"
+  if [ "$top" = "$upstream" ] && [ "$head" = "$PINNED_COMMIT" ]; then
+    git -C "$upstream" ls-tree -r -z "$PINNED_COMMIT" > "$work/tree"
+    echo "fetch-examples: --from $upstream, a checkout of the pinned $PINNED_COMMIT; every file is held to that commit's tree"
+    pinned_args=(--commit "$PINNED_COMMIT" --tree "$work/tree")
+  else
+    echo "fetch-examples: UNPINNED — copying the working copy at $upstream; no commit is verified"
+    pinned_args=(--unpinned)
+  fi
 else
   case "$PINNED_COMMIT" in
     __*__ | "")
@@ -105,84 +130,17 @@ else
     echo "fetch-examples: asked for $PINNED_COMMIT and checked out $got" >&2
     exit 1
   fi
+  git -C "$upstream" ls-tree -r -z "$PINNED_COMMIT" > "$work/tree"
   echo "fetch-examples: $REPO_URL at $PINNED_COMMIT"
+  pinned_args=(--commit "$PINNED_COMMIT" --tree "$work/tree")
 fi
 
-# copy_keep <src> <dst> — copy one file unless dst already exists. Prints nothing;
-# the caller counts.
-copied=0
-kept=0
-copy_keep() {
-  if [ -e "$2" ]; then
-    kept=$((kept + 1))
-  else
-    mkdir -p "$(dirname "$2")"
-    cp "$1" "$2"
-    copied=$((copied + 1))
-  fi
-}
-
-# The character keys here are the directories holding a config.json; upstream's
-# are the directories holding a painting.png.
-fetched=0
-missing_upstream=""
-incomplete=""
-for dir in "$DEST"/*/; do
-  key="$(basename "$dir")"
-  [ -f "$DEST/$key/config.json" ] || continue
-  src="$upstream/$key"
-  if [ ! -f "$src/painting.png" ]; then
-    missing_upstream="$missing_upstream $key"
-    continue
-  fi
-  copied=0
-  kept=0
-  out="$DEST/$key/inputs"
-  copy_keep "$src/painting.png" "$out/painting.png"
-  for f in "$src"/inputs/*; do
-    [ -f "$f" ] && copy_keep "$f" "$out/$(basename "$f")"
-  done
-  # layers/<run>/{layers.json,meta.json,parts/*.png}; names hold spaces
-  # ("back hair.png"), so every expansion is quoted.
-  while IFS= read -r rel; do
-    copy_keep "$src/$rel" "$out/$rel"
-  done < <(cd "$src" && find layers -type f | LC_ALL=C sort)
-  gap=""
-  for need in painting.png st_input_full.png st_input_head.png layers/full/layers.json layers/head/layers.json; do
-    [ -f "$out/$need" ] || gap="$gap $need"
-  done
-  if [ -n "$gap" ]; then
-    incomplete="$incomplete $key(missing:$gap)"
-  fi
-  n=$(find "$out" -type f | wc -l | tr -d ' ')
-  echo "  $key: $copied file(s) copied, $kept kept as already on disk, $n in examples/$key/inputs"
-  fetched=$((fetched + 1))
-done
-
-for dir in "$upstream"/*/; do
-  key="$(basename "$dir")"
-  [ -f "$upstream/$key/painting.png" ] || continue
-  [ -f "$DEST/$key/config.json" ] || echo "  note: upstream has \"$key\", which has no examples/$key/config.json here; not fetched"
-done
-
+# The copy and the hash check are scripts/example_inputs.ts, the module the
+# example suites read the same check from: for each examples/<key>/config.json,
+# it copies what is missing, replaces what is stale and removes what the tree
+# lacks — naming each file replaced or removed — refuses by name what it cannot
+# fix, and writes examples/<key>/inputs/.fetched.json only after every file
+# matched. Not `exec`: the EXIT trap removes the clone afterwards.
 status=0
-if [ -n "$missing_upstream" ]; then
-  for key in $missing_upstream; do
-    echo "fetch-examples: WARNING — examples/$key has no counterpart upstream (no $key/painting.png), so its inputs were not fetched" >&2
-  done
-  # A warning and not a failure: the selftest's corpus suite refuses a partial
-  # set of inputs by name, and a fetch that fails here would hide which of the
-  # other examples it did fetch.
-fi
-if [ -n "$incomplete" ]; then
-  echo "fetch-examples: incomplete after the fetch:$incomplete" >&2
-  status=1
-fi
-if [ "$fetched" -eq 0 ]; then
-  echo "fetch-examples: fetched nothing — no examples/<key>/config.json found a counterpart upstream" >&2
-  status=1
-fi
-if [ "$status" -eq 0 ]; then
-  echo "fetch-examples: $fetched example(s) ready under examples/*/inputs${from:+ (UNPINNED)}"
-fi
+bun "$ROOT/scripts/example_inputs.ts" sync --upstream "$upstream" --dest "$DEST" "${pinned_args[@]}" || status=$?
 exit "$status"

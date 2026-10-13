@@ -77,6 +77,7 @@ import {
   type ReducedMesh,
   reduceMesh,
 } from 'rig-c/mesh';
+import { pinnedExamplesCommit } from '../scripts/example_inputs.ts';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE } from '../src/assemble.ts';
 import { type AmplitudeBasis, partAmplitude, withAmplitude } from '../src/autoamplitude.ts';
 import type { MotionSpec } from '../src/motion.ts';
@@ -1404,11 +1405,8 @@ export function renderDocument(d: DocInput): string {
   return `${L.join('\n')}`;
 }
 
-/** The commit `scripts/fetch-examples.sh` pins (its `PINNED_COMMIT=` line), or a named absence. */
-export function pinnedExamplesCommit(script: string): string {
-  const m = /^PINNED_COMMIT=([0-9a-f]{40})\s*$/m.exec(script);
-  return m === null ? 'unread (no 40-character PINNED_COMMIT in scripts/fetch-examples.sh)' : m[1];
-}
+/** The commit `scripts/fetch-examples.sh` pins: one reader, `scripts/example_inputs.ts`'s, which the fetch's hash check also uses. */
+export { pinnedExamplesCommit };
 
 /**
  * "Re-running this evidence": the inputs, the policies by name and number, the
