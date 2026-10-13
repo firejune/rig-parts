@@ -72,7 +72,7 @@ import {
 } from './autoreplay.ts';
 import { besideIdleLine, FOLD_LINE, type FoldsLine, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, rigcIdentity, rigcRanClause, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
 import { type Cut, loadConfig, loadConfigAndAnimations, loadEarlyConfig } from './config.ts';
-import { PartsError, type Problem, problemLine, refuseIfAny } from './errors.ts';
+import { failLine, PartsError, type Problem, refuseIfAny } from './errors.ts';
 import type { MeshQualityReport, MotionSchedule } from 'rig-c/mesh';
 import { encodeGif } from './gif.ts';
 import { CONTROL_SUFFIX, withAnimations } from './motion.ts';
@@ -1095,7 +1095,7 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   }
   log(`  gate: spine-html ${fig.gate_spine_html_green ? 'green' : 'RED'} (${fig.rigc_entry.entry}${fig.rigc_entry.spine_core === null ? ', rigc\'s own validator' : `, the spine-core ${fig.rigc_entry.spine_core} round trip`})`);
   log(`  wrote ${r.written.map((w) => join(input.out, w)).join(', ')}, ${join(input.out, 'build')}/${r.idle === null ? '' : `, ${join(input.out, 'idle_frames')}/`}${r.requirements === null ? '' : `, ${join(input.out, REQUIREMENTS_DIR)}/`}${fig.seam_pairs === undefined ? '' : `, ${join(input.out, SEAM_DIR)}/`}${existsSync(join(input.out, STILL_DIR)) ? `, ${join(input.out, STILL_DIR)}/` : ''}`);
-  for (const p of r.problems) log(`  FAIL  ${problemLine(p)}`);
+  for (const p of r.problems) log(failLine(p));
   const reqNotPass = r.requirements === null ? 0 : r.requirements.summary.declared - r.requirements.summary.pass;
   const notMet = r.requirements === null ? `${r.problems.length} bar(s) not met` : `${r.problems.length - reqNotPass} bar(s) not met, ${reqNotPass} declared requirement(s) not PASS`;
   log(`${fig.PASS ? 'check: PASS' : `check: FAIL — ${notMet}`}; ${barsSummary(r)}`);
@@ -1466,7 +1466,7 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
   const refused = (stage: BuildStage, err: unknown, check: CheckReport | null = null): BuildResult => {
     if (!(err instanceof PartsError)) throw err;
     const say = prefixed(stage);
-    for (const p of err.problems) say(`  FAIL  ${problemLine(p)}`);
+    for (const p of err.problems) say(failLine(p));
     say(`refused: ${err.problems.length} problem(s)`);
     log(`build: stopped at ${stage}; no later stage ran`);
     return { stoppedAt: stage, check, artifact: [] };

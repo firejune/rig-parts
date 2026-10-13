@@ -286,7 +286,8 @@ import { IRR_OFFSET } from 'rig-c/src/core/animation.ts';
 import type { AutoSpec, ConfigConstraint, LatticeMeshSpec, Segment } from './src/config.ts';
 import { DEFAULT_LIMITS, meshLimits, MIN_WEIGHT } from './src/weights.ts';
 import type { AutoMeshReport, MeshReport } from './src/rig.ts';
-import { PartsError, type Problem, problemLine } from './src/errors.ts';
+import { failLine as printedFailLine, PartsError, type Problem, problemLine } from './src/errors.ts';
+import { GUIDE_DOC, guideRule, guideSection, guideSections, ledgerRows, nearestNames, NEAREST_LISTED } from './src/guide.ts';
 import { encodeGif } from './src/gif.ts';
 import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paintingGraph, POSITIVE_HEAD, stripWords } from './src/graphs.ts';
 import { proposeHeadBox } from './src/headbox.ts';
@@ -2941,8 +2942,8 @@ function listDrift(command: string, listed: readonly string[], accepted: readonl
 }
 
 /**
- * Every command `cli.ts` dispatches (comfy by the subcommands its own refusal names; `layers`, which takes a path
- * and no flag, left out), each probed twice over: once with a flag no command takes, whose refusal is read for the
+ * Every command `cli.ts` dispatches (comfy by the subcommands its own refusal names; `layers` and `guide`, which
+ * take one positional argument and no flag, left out), each probed twice over: once with a flag no command takes, whose refusal is read for the
  * flags it lists, and once with each flag `cli.ts` spells, given alone, where a refusal naming that flag as not
  * taken means the parser does not accept it. A flag given alone stops at a usage error before any work.
  */
@@ -2951,7 +2952,7 @@ function usageDrift(run: (args: string[]) => { status: number; out: string }, su
   const faults: string[] = [];
   const commands: string[][] = [];
   for (const c of surface.commands) {
-    if (c === 'layers') continue;
+    if (c === 'layers' || c === 'guide') continue;
     if (c !== 'comfy') {
       commands.push([c]);
       continue;
@@ -2963,7 +2964,7 @@ function usageDrift(run: (args: string[]) => { status: number; out: string }, su
   const rows = commands.map((cmd) => {
     const command = cmd.join(' ');
     const r = run([...cmd, bogus]);
-    const m = new RegExp(`^ {2}FAIL {2}USAGE: ${command} does not take "${bogus}"; it takes (.+)$`, 'm').exec(r.out);
+    const m = new RegExp(`^ {2}FAIL {2}USAGE: ${command} does not take "${bogus}"; it takes (.+) \\(see rig-parts guide USAGE\\)$`, 'm').exec(r.out);
     if (r.status !== 2 || m === null) faults.push(`${command} ${bogus} -> exit ${r.status}, "${r.out.split('\n')[0].trim()}"; a refusal listing the flags it takes was required`);
     const listed = m === null ? [] : m[1].split(', ');
     const accepted = surface.flags.filter((f) => !run([...cmd, f]).out.includes(`does not take "${f}"`));
@@ -3330,9 +3331,9 @@ function runCliSuite(): number {
         runCli(['build', '--config', 'c', '--source', 's', '--full', 'f', '--head', 'h', '--out', join(dir, 'ik-usage-build'), ...extra]),
       ].map((r) => ({ status: r.status, line: r.out.split('\n')[0] }));
     const cases: Array<[string, string[], string]> = [
-      ['a value neither command knows', ['--idle-keys', 'controls'], '  FAIL  USAGE: --idle-keys controls; one of ctl, direct is required'],
-      ['the flag twice', ['--idle-keys', 'ctl', '--idle-keys', 'direct'], '  FAIL  USAGE: --idle-keys is given twice'],
-      ['no value', ['--idle-keys'], '  FAIL  USAGE: --idle-keys needs a value'],
+      ['a value neither command knows', ['--idle-keys', 'controls'], '  FAIL  USAGE: --idle-keys controls; one of ctl, direct is required (see rig-parts guide USAGE)'],
+      ['the flag twice', ['--idle-keys', 'ctl', '--idle-keys', 'direct'], '  FAIL  USAGE: --idle-keys is given twice (see rig-parts guide USAGE)'],
+      ['no value', ['--idle-keys'], '  FAIL  USAGE: --idle-keys needs a value (see rig-parts guide USAGE)'],
     ];
     const got = cases.map(([what, extra, want]) => ({ what, want, runs: both2(extra) }));
     say(
@@ -3351,14 +3352,14 @@ function runCliSuite(): number {
       'CL26_EVERY_UNKNOWN_FLAG_REFUSAL_LISTS_EXACTLY_THE_FLAGS_ITS_PARSER_ACCEPTS',
       usageReport.rows.length > 0 && usageReport.faults.length === 0 && plantedAll,
       `${usageReport.rows.length} command(s) probed with each of the ${usageReport.candidates} flag(s) cli.ts spells: ${usageReport.faults.length === 0 ? usageReport.rows.map((r) => `${r.command} ${r.accepted.length}`).join(', ') : usageReport.faults.join('; ')}` +
-        `; layers takes one positional path and no flag, so it has no refusal to read` +
+        `; layers and guide take one positional argument and no flag, so neither has a refusal to read` +
         `; planted: the last listed flag dropped from each refusal -> ${planted.filter((p) => p.length > 0).length} of ${planted.length} caught (${planted[0]?.[0] ?? 'none'})`,
       'an agent that guesses a flag learns the real ones from the refusal, so a refusal that leaves one out (loop omitted --palette; sheet, rig and assemble listed none) hides a flag the command takes; the accepted set is probed flag by flag, not read from the table the refusal prints',
     );
 
     // CL166 (issue #257): every flag check takes is forwarded by build, taken by build as its own, or refused by build by
     // name with what build reads instead — read off the two refusals and probed, held to CHECK_FLAGS_IN_BUILD.
-    const takenBy = (command: string): string[] => /it takes (.+)$/m.exec(runCli([command, '--not-a-flag']).out)?.[1].split(', ') ?? [];
+    const takenBy = (command: string): string[] => /it takes (.+) \(see rig-parts guide USAGE\)$/m.exec(runCli([command, '--not-a-flag']).out)?.[1].split(', ') ?? [];
     const checkTakes = takenBy('check');
     const buildTakes = takenBy('build');
     const refusalOf = (flag: string): { status: number; line: string } => {
@@ -3371,7 +3372,7 @@ function runCliSuite(): number {
       ...Object.entries(table).flatMap(([f, row]) => {
         if (row.as !== 'supplied') return buildTakes.includes(f) ? [] : [`${f} is ${row.as} and build does not take it`];
         const r = refusalOf(f);
-        const want = `  FAIL  USAGE: build does not take "${f}"; ${row.why}`;
+        const want = `  FAIL  USAGE: build does not take "${f}"; ${row.why} (see rig-parts guide USAGE)`;
         return r.status === 2 && r.line === want && !buildTakes.includes(f) ? [] : [`build ${f} -> exit ${r.status}, "${r.line.trim()}"; "${want.trim()}" was required`];
       }),
     ];
@@ -3395,6 +3396,97 @@ function runCliSuite(): number {
         `; planted: ${lastKey} left out of the table -> ${plantedUnsaid.join('; ') || 'NOT CAUGHT'}; a check flag the table does not know -> ${plantedNewFlag.join('; ') || 'NOT CAUGHT'}; --seam-pairs said refused -> ${plantedDropped.join('; ').slice(0, 120) || 'NOT CAUGHT'}`,
       "issue #257: build forwarded --requirements and silently dropped --seam-pairs, so a build's artifact was checked without what the consumer asked check for; the table is the one statement of what build does with each check flag, held to check's own refusal so a flag check gains is a named fault here until it is forwarded or refused",
     );
+
+  // CL167 — issue #343: `guide` prints a slice of the installed guide, read when it runs.
+  const guidePath = join(ROOT, GUIDE_DOC);
+  const guideNow = readFileSync(guidePath, 'utf8');
+  const guideLines = guideNow.split('\n');
+  const rowText = (name: string): string => guideLines.find((l) => l.startsWith(`| <a id="${name}"></a>`) || l.includes(`<a id="${name}"></a>\``)) ?? '(no row)';
+  const g1 = runCli(['guide', 'CHECK_LOOP_CLOSES']);
+  const g1Want = guideRule(guideNow, 'CHECK_LOOP_CLOSES');
+  const g2 = runCli(['guide', 'CHECK_BREATH_VISIBLE']);
+  const g3 = runCli(['guide', 'BREATH_VISIBLE']);
+  const at = (out: string, line: string): number => out.split('\n').indexOf(line);
+  const g4 = runCli(['guide', 'CHECK_LOOP_CLOSE']);
+  const g4Fail = g4.out.split('\n').filter((l) => l.includes('FAIL'));
+  // The shared form puts an unknown name's refusal on stderr and nothing on stdout.
+  const g4Split = spawnSync('bun', [join(ROOT, 'cli.ts'), 'guide', 'CHECK_LOOP_CLOSE'], { cwd: ROOT, encoding: 'utf8' });
+  const g5 = runCli(['guide', '§6']);
+  let fence = false;
+  let inSix = false;
+  const sixSubs: string[] = [];
+  for (const l of guideLines) {
+    if (l.startsWith('```')) fence = !fence;
+    if (fence) continue;
+    if (l.startsWith('## ')) inSix = l.startsWith('## 6. ');
+    else if (inSix && l.startsWith('### ')) sixSubs.push(l.slice(4));
+  }
+  // The first #### outside a fence, addressed by hand: its ## number, its ###'s place under that, its own under the ###.
+  let fence4 = false;
+  let n4 = '';
+  let m4 = 0;
+  let k4 = 0;
+  let deep: { address: string; heading: string } | null = null;
+  for (const l of guideLines) {
+    if (l.startsWith('```')) fence4 = !fence4;
+    if (fence4 || deep !== null) continue;
+    if (l.startsWith('## ')) [n4, m4, k4] = [/^## (\d+)\. /.exec(l)?.[1] ?? '', 0, 0];
+    else if (l.startsWith('### ')) [m4, k4] = [m4 + 1, 0];
+    else if (l.startsWith('#### ') && n4 !== '' && m4 > 0) deep = { address: `${n4}.${m4}.${++k4}`, heading: l };
+  }
+  const g10 = deep === null ? null : runCli(['guide', `§${deep.address}`]);
+  const g11 = deep === null ? null : runCli(['guide', `§${deep.address.split('.').slice(0, 2).join('.')}`]);
+  const okDeep = deep !== null && g10?.status === 0 && g10.out.split('\n').includes(deep.heading) && g11?.status === 0 && g11.out.split('\n').some((l) => new RegExp(`^§${(deep?.address ?? '-').replaceAll('.', '\\.')} +\\d+\\.\\d KB {2}`).test(l) && l.endsWith(deep?.heading.slice(5) ?? '-'));
+  const listed = /^§6\.\d+ +\d+\.\d KB {2}/;
+  const g5Listed = g5.out.split('\n').filter((l) => listed.test(l)).map((l) => l.replace(listed, ''));
+  const g6 = runCli(['guide', `§6.${sixSubs.length}`]);
+  const g7 = runCli(['guide', `§6.${sixSubs.length + 1}`]);
+  const g8 = runCli(['guide']);
+  const g9 = runCli(['guide', '--rule']);
+  const g12 = runCli(['guide', '§0']);
+  const sixHeading = guideLines.find((l) => l.startsWith('## 6. ')) ?? '(no ## 6.)';
+  const okVerbatim =
+    g5.out.split('\n')[0].startsWith(`docs/AUTHORING.md §6 "${sixHeading.slice(3)}", lines `) &&
+    g12.status === 1 && g12.out.includes('GUIDE_SECTION_KNOWN: "§0" — no such section; the deepest that exists is the guide itself, docs/AUTHORING.md, whose sections are: §1, ');
+  const plantedGuide = guideNow.replace(rowText('CHECK_LOOP_CLOSES'), rowText('CHECK_LOOP_CLOSES').replace('| frame 0', '| PLANTED WORDS frame 0'));
+  const plantedRow = guideRule(plantedGuide, 'CHECK_LOOP_CLOSES');
+  const sixOne = `### ${sixSubs[0]}\n`;
+  const plantedSection = guideSection(guideNow.replace(sixOne, `### Planted\n\nplanted\n\n${sixOne}`), '§6.2');
+  const near = nearestNames(['CHECK_LOOP_CLOSES', 'CHECK_LOOP_LAST_FRAME_AT_DURATION', 'LAYERS_INPUT_KIND'], 'check_loop_close');
+  const g1Lines = g1.out.split('\n');
+  const okRow =
+    'lines' in g1Want && g1.status === 0 && g1.out === `${g1Want.lines.join('\n')}\n` &&
+    /^docs\/AUTHORING\.md §6\.\d+, line \d+ — under "check and build"$/.test(g1Lines[0]) && g1Lines[1] === rowText('CHECK_LOOP_CLOSES') && g1Lines.length === 3;
+  const okPair =
+    g2.status === 0 && g3.status === 0 &&
+    at(g2.out, rowText('CHECK_BREATH_VISIBLE')) > 0 && at(g2.out, rowText('CHECK_BREATH_VISIBLE')) < at(g2.out, rowText('BREATH_VISIBLE')) &&
+    at(g3.out, rowText('BREATH_VISIBLE')) > 0 && at(g3.out, rowText('BREATH_VISIBLE')) < at(g3.out, rowText('CHECK_BREATH_VISIBLE')) &&
+    at(g2.out, 'paired with BREATH_VISIBLE:') === at(g2.out, rowText('CHECK_BREATH_VISIBLE')) + 1 && at(g3.out, 'paired with CHECK_BREATH_VISIBLE:') === at(g3.out, rowText('BREATH_VISIBLE')) + 1;
+  const okUnknown =
+    g4.status === 1 && g4Fail.length === 1 && g4Split.stdout === '' &&
+    /^ {2}FAIL {2}GUIDE_RULE_KNOWN: "CHECK_LOOP_CLOSE" — no row in docs\/AUTHORING\.md names it; the nearest: CHECK_LOOP_CLOSES, [A-Z_]+, [A-Z_]+ \(see rig-parts guide GUIDE_RULE_KNOWN\)$/.test(g4Fail[0]);
+  const okSections = okDeep && okVerbatim && g5.status === 0 && sixSubs.length > 0 && g5Listed.join('\n') === sixSubs.join('\n') && g6.status === 0 && g6.out.includes(`\n### ${sixSubs[sixSubs.length - 1]}\n`) && g7.status === 1 && g7.out.includes(`GUIDE_SECTION_KNOWN: "§6.${sixSubs.length + 1}" — no such section; the deepest that exists is §6 "`) && g8.status === 2 && g9.status === 2 && g9.out.includes('guide takes no flag');
+  const okPlants = 'lines' in plantedRow && plantedRow.lines.some((l) => l.includes('PLANTED WORDS')) && 'lines' in plantedSection && plantedSection.lines.join('\n').split('\n').includes(sixOne.trimEnd()) && near.length <= NEAREST_LISTED && near[0] === 'CHECK_LOOP_CLOSES';
+  say(
+    'CL167_GUIDE_PRINTS_THE_ONE_ROW_A_RULE_NAMES_ITS_PAIR_AND_SECTIONS_READ_FROM_THE_GUIDE_AT_CALL_TIME',
+    okRow && okPair && okUnknown && okSections && okPlants,
+    `guide CHECK_LOOP_CLOSES -> exit ${g1.status}, ${okRow ? 'where it is, then the row as the file holds it' : `"${g1.out.split('\n')[0]}"`}; CHECK_BREATH_VISIBLE and BREATH_VISIBLE -> exit ${g2.status}, ${g3.status}, ${okPair ? "each one's own row first, then \"paired with\" and its pair's" : 'NOT in that order or form'}` +
+      `; CHECK_LOOP_CLOSE -> exit ${g4.status}, stdout ${g4Split.stdout === '' ? 'empty' : 'NOT empty'}, ${(g4Fail[0] ?? 'no FAIL line').trim().slice(0, 200)}; §6 -> exit ${g5.status}, ${g5Listed.length} subsection(s) listed of the ${sixSubs.length} ### heading(s) under ## 6.; §6.${sixSubs.length} -> exit ${g6.status}; §6.${sixSubs.length + 1} -> exit ${g7.status}; no argument -> exit ${g8.status}; a flag -> exit ${g9.status}; §6's header carries its heading verbatim and §0 names the guide itself: ${okVerbatim}; the first #### by hand, ${deep === null ? 'none found' : `§${deep.address}`} -> exit ${g10?.status ?? '-'}, and its ### lists it: ${okDeep}` +
+      `; planted: words in the row -> ${okPlants ? 'printed' : 'NOT printed'}, a ### inserted before §6.1 -> the old §6.1 is §6.2; nearest to "check_loop_close": ${near.join(', ')}`,
+    "issue #343: an agent reads a failure line and needs exactly the row that line names; the guide is one ledger, so every answer is a slice of the installed file taken when the command runs, and a name it does not hold is refused with real names, never a substitute row",
+  );
+
+  // CL168 — issue #343: a refusal at run time ends with the pointer, and the pointer's command answers.
+  const refusals = [runCli(['layers', join(ROOT, 'no-such-layers')]), runCli(['guide', 'NO_SUCH_RULE']), runCli(['guide', '§0']), runCli(['rig', '--not-a-flag'])];
+  const refusalLines = refusals.flatMap((r) => r.out.split('\n').filter((l) => l.includes('FAIL  ')));
+  const pointed = refusalLines.map((l) => /^ {2}FAIL {2}([A-Z][A-Z0-9_]*): .* \(see rig-parts guide ([A-Z][A-Z0-9_]*)\)$/.exec(l)).map((m) => (m !== null && m[1] === m[2] ? m[1] : null));
+  const answered = [...new Set(pointed.filter((c): c is string => c !== null))].map((c) => ({ c, r: runCli(['guide', c]) }));
+  say(
+    'CL168_EVERY_FAIL_LINE_A_REFUSAL_PRINTS_ENDS_WITH_THE_COMMAND_THAT_PRINTS_ITS_ROW',
+    refusalLines.length === refusals.length && pointed.every((c) => c !== null) && answered.length > 0 && answered.every(({ r }) => r.status === 0) && !/\(see rig-parts guide [A-Z_]+\)$/.test('  FAIL  X_Y: o — d'),
+    `${refusalLines.length} FAIL line(s) from ${refusals.length} refusing call(s): ${refusalLines.map((l, i) => `${pointed[i] === null ? 'NO POINTER' : 'pointer'} "${l.trim().slice(0, 90)}…"`).join(' | ')}; guide on each rule -> ${answered.map(({ c, r }) => `${c} exit ${r.status}`).join(', ')}`,
+    "issue #343, in the form rig-c/core#1397 shares: a production consumer lost its time searching the guide for what a line's row already said (#321, #325); the line now says which command prints that row, and the command answers",
+  );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -10705,7 +10797,7 @@ function runCheckSuite(): number {
       hard.status === 1 &&
         hard.fig?.PASS === false &&
         lineStatus(hard.fig, 'TEXTURE_STRETCH') === 'FAIL' &&
-        hardFail === `  FAIL  CHECK_TEXTURE_STRETCH: mesh "${CHECK_PARTS[0].name}" triangle 0 (vertices 0 1 2), edge 1-2, idle frame ${IDLE_FPS / 2} — the edge is 2 times its rest length (max(ratio, 1/ratio) 2); <= ${TEXTURE_STRETCH_CEILING} is required; vertex 1 is weighted to "yoke" 1 and vertex 2 to "hem" 1; none of these bones hangs on a chain of the idle — the texture on it is stretched: the bones this mesh is weighted to move apart (amplitudes too large down a chain), or a vertex blends bones that move against each other` &&
+        hardFail === `  FAIL  CHECK_TEXTURE_STRETCH: mesh "${CHECK_PARTS[0].name}" triangle 0 (vertices 0 1 2), edge 1-2, idle frame ${IDLE_FPS / 2} — the edge is 2 times its rest length (max(ratio, 1/ratio) 2); <= ${TEXTURE_STRETCH_CEILING} is required; vertex 1 is weighted to "yoke" 1 and vertex 2 to "hem" 1; none of these bones hangs on a chain of the idle — the texture on it is stretched: the bones this mesh is weighted to move apart (amplitudes too large down a chain), or a vertex blends bones that move against each other (see rig-parts guide CHECK_TEXTURE_STRETCH)` &&
         others.length === 0,
       `exit ${hard.status}; ${hardFail?.trim().slice(0, 200) ?? 'no CHECK_TEXTURE_STRETCH line'}…; other FAIL lines: ${others.length}`,
       `the side lowered by its own length (${rest} units) doubles; the gate passes it, the loop closes and the seam is the setup pose, so this line is the only one that sees it — and, since issue #314, it names the edge's bones off rig.json: vertex 1 (top-right) is weighted wholly to yoke and vertex 2 (bottom-right) to hem, and the idle keys hem_ctl's translatey and the root's translatex, no rotate, so there is no chain to name`,
@@ -11031,7 +11123,7 @@ function runCheckSuite(): number {
       ['rig', '--config', join(dir, 'absent.json'), '--parts', dir, '--out', join(dir, 'bogus-rig'), '--page-edges', 'square'],
       ['build', '--config', join(dir, 'absent.json'), '--source', join(dir, 'absent.png'), '--full', dir, '--head', dir, '--out', join(dir, 'bogus-build'), '--page-edges', 'square'],
     ].map((args) => ({ command: args[0], r: runCli(args), out: join(dir, `bogus-${args[0]}`) }));
-    const usageLine = '  FAIL  USAGE: --page-edges square; one of pot, free is required';
+    const usageLine = '  FAIL  USAGE: --page-edges square; one of pot, free is required (see rig-parts guide USAGE)';
     say(
       'CK48_AN_UNKNOWN_PAGE_EDGES_VALUE_IS_A_USAGE_ERROR_ON_EVERY_COMMAND_THAT_PACKS',
       bogus.every((b) => b.r.status === 2 && b.r.out.split('\n').includes(usageLine) && !existsSync(b.out)),
@@ -11044,7 +11136,7 @@ function runCheckSuite(): number {
       ['rig', '--config', join(dir, 'absent.json'), '--parts', dir, '--out', join(dir, 'hull-rig'), '--pack-shape', 'hull'],
       ['build', '--config', join(dir, 'absent.json'), '--source', join(dir, 'absent.png'), '--full', dir, '--head', dir, '--out', join(dir, 'hull-build'), '--pack-shape', 'hull'],
     ].map((args) => ({ command: args[0], r: runCli(args), out: join(dir, `hull-${args[0]}`) }));
-    const shapeUsage = '  FAIL  USAGE: --pack-shape hull; one of rect, polygon is required';
+    const shapeUsage = '  FAIL  USAGE: --pack-shape hull; one of rect, polygon is required (see rig-parts guide USAGE)';
     say(
       'CK54_AN_UNKNOWN_PACK_SHAPE_VALUE_IS_A_USAGE_ERROR_ON_EVERY_COMMAND_THAT_PACKS',
       hull.every((b) => b.r.status === 2 && b.r.out.split('\n').includes(shapeUsage) && !existsSync(b.out)),
@@ -20940,6 +21032,55 @@ function runTreeSuite(): number {
     "issue #279: Math.hypot's last bit differs between Bun on macOS and on Linux, which split one check.json between two CI machines on bit-identical geometry (#276); a written byte may not depend on the platform, so the one length is sqrt(dx*dx + dy*dy) and the call is refused by name",
   );
 
+  // TY16 — issue #343: every rule the source can print has exactly one row in the guide's rule/line tables, the row's
+  // first cell starts with one anchor per name, and no row names a rule the source cannot print.
+  const guideText = readFileSync(join(ROOT, GUIDE_DOC), 'utf8');
+  const rigc16 = rigcSources();
+  const drift16 = ledgerDrift(sources, guideText, rigc16);
+  const rowLine = (name: string): string => guideText.split('\n').find((l) => l.includes(`<a id="${name}"></a>`)) ?? '';
+  const loopRow = rowLine('CHECK_LOOP_CLOSES');
+  const usageRow = rowLine('USAGE');
+  const plants16 = [
+    ledgerDrift(sources, guideText.replace(`${rowLine('CHECK_RIGC_PACKAGE')}\n`, ''), rigc16).faults,
+    ledgerDrift(sources, guideText.replace(`${loopRow}\n`, `${loopRow}\n${loopRow}\n`), rigc16).faults,
+    ledgerDrift(sources, guideText.replace(`${usageRow}\n`, `${usageRow}\n| <a id="DEAD_RULE"></a>\`DEAD_RULE\` | planted | nothing |\n`), rigc16).faults,
+    ledgerDrift(sources, guideText.replace(loopRow, loopRow.replace('<a id="CHECK_LOOP_CLOSES"></a>', '')), rigc16).faults,
+    ledgerDrift([...sources, ['src/plant.ts', "export const p = { code: 'PLANTED_RULE', object: 'x', detail: 'y' };\n// code: 'COMMENT_RULE'\n"]], guideText, rigc16).faults,
+    ledgerDrift([...sources, ['src/plant.ts', 'export const q = (n: string) => ({ code: `CHECK_${NOWHERE_DECLARED}`, object: n, detail: n });\n']], guideText, rigc16).faults,
+    ledgerDrift(sources, guideText, [...rigc16, ['src/plant.ts', "function refuse(code: string, m: string): never { throw new MeshReductionError(code, m); }\nrefuse('PLANTED_MESH_CODE', 'x');\n"]]).faults,
+    ledgerDrift(sources.map(([f, s]) => [f, s.replaceAll('instanceof MeshReductionError', 'instanceof Error')] as const), guideText, rigc16).faults,
+  ];
+  const plantsHit16 =
+    plants16[0].length === 1 && plants16[0][0].startsWith('CHECK_RIGC_PACKAGE is printed by src/check.ts:') &&
+    plants16[1].length === 1 && /^CHECK_LOOP_CLOSES is named by 2 rows/.test(plants16[1][0]) &&
+    plants16[2].length === 1 && /^DEAD_RULE is named by the row at line \d+ and the source cannot print it$/.test(plants16[2][0]) &&
+    plants16[3].length === 1 && plants16[3][0].includes('names CHECK_LOOP_CLOSES and its first cell starts with the anchor(s) none') &&
+    plants16[4].join() === 'PLANTED_RULE is printed by src/plant.ts:1 and no row names it' &&
+    plants16[5].length === 1 && plants16[5][0].startsWith('a name template whose constant does not resolve: src/plant.ts:1') &&
+    plants16[6].join() === 'PLANTED_MESH_CODE is printed by rig-c src/plant.ts:2 and no row names it' &&
+    plants16[7].length === drift16.quoted && plants16[7].every((f) => / is named by the row at line \d+ and the source cannot print it$/.test(f));
+  say(
+    'TY16_EVERY_RULE_THE_SOURCE_CAN_PRINT_HAS_EXACTLY_ONE_ANCHORED_ROW_IN_THE_GUIDE',
+    drift16.emitted > 0 && drift16.quoted > 0 && drift16.faults.length === 0 && plantsHit16,
+    `${GUIDE_DOC}: ${drift16.faults.length === 0 ? `the ${drift16.emitted} name(s) the source can print are the ${drift16.named} its ${drift16.rows} rule/line row(s) name, each on one row with its anchor (${drift16.quoted} of them rig-c's mesh codes, which this package quotes in its lines)` : drift16.faults.join('; ')}` +
+      `; planted: a row dropped -> ${plants16[0].join('; ') || 'not found'} | a row twice -> ${plants16[1].join('; ') || 'not found'} | a row for a dead name -> ${plants16[2].join('; ') || 'not found'} | an anchor dropped -> ${plants16[3].join('; ') || 'not found'} | a new code in the source (and one in a comment) -> ${plants16[4].join('; ') || 'not found'} | a name template on an undeclared constant -> ${plants16[5].join('; ') || 'not found'} | a new code rig-c's mesh library throws -> ${plants16[6].join('; ') || 'not found'} | no source catching MeshReductionError -> ${plants16[7].length} row(s) named as for a code nothing prints`,
+    "issue #343: the guide is the one ledger, and a FAIL line's pointer prints the row naming its rule; a rule with no row sends the pointer nowhere, a rule on two rows prints two answers, and a row for a rule nothing prints is advice about a line no build shows. Read in both directions from the syntax tree of src/ and cli.ts, so a comment never counts",
+  );
+
+  // TY17 — issue #343: every FAIL line the source prints ends with the guide's pointer, written by one function.
+  const bare17 = pointerless(sources);
+  const plants17 = [
+    pointerless([['src/plant.ts', 'export const f = (m: string): string => `  FAIL  PLANTED_RULE: ${m}`;\n']]),
+    pointerless([['src/plant.ts', "export const f = (m: string): string => `  FAIL  PLANTED_RULE: ${m}${guidePointer('PLANTED_RULE')}`;\n"]]),
+    pointerless([['src/plant.ts', "export const f = (): string => '  FAIL  PLANTED_RULE: x';\n"]]),
+  ];
+  say(
+    'TY17_EVERY_FAIL_LINE_THE_SOURCE_PRINTS_ENDS_WITH_THE_GUIDE_POINTER',
+    bare17.length === 0 && plants17[0].join() === 'src/plant.ts:1' && plants17[1].length === 0 && plants17[2].join() === 'src/plant.ts:1' && printedFailLine({ code: 'X_Y', object: 'o', detail: 'd' }) === '  FAIL  X_Y: o — d (see rig-parts guide X_Y)',
+    `${bare17.length === 0 ? `no FAIL line head in src/ or cli.ts outside failLine or a template ending guidePointer(…)` : `without the pointer: ${bare17.join(', ')}`}; planted: a template -> ${plants17[0].join(', ') || 'not found'}, the same ending guidePointer -> ${plants17[1].join(', ') || 'not flagged'}, a plain string -> ${plants17[2].join(', ') || 'not found'}; failLine writes "${printedFailLine({ code: 'X_Y', object: 'o', detail: 'd' })}"`,
+    "issue #343: the pointer is the line's way to its row, in the form rig-c shares word for word; one function writes it, and a FAIL line written by hand elsewhere would be the one line without it",
+  );
+
   const self = readFileSync(join(ROOT, 'selftest.ts'), 'utf8');
   const from = self.indexOf(SUMMARY_START);
   const to = from < 0 ? -1 : self.indexOf(SUMMARY_END, from);
@@ -21523,6 +21664,168 @@ function installLineHits(file: string, text: string): string[] {
 
 /** The page that states what 1.0.0-rc.1 holds stable (issue #126 item 7). */
 const STABILITY_DOC = 'docs/STABILITY.md';
+
+// ---------------------------------------------------------------------------
+// the guide's ledger, held to what the source can print (TY16, TY17; issue #343)
+// ---------------------------------------------------------------------------
+
+/**
+ * Names the source spells in an upper-snake string but never prints at the
+ * head of a line, so the guide owes them no row: rig-c's mesh-report row codes
+ * (`MQ_…`), which `src/automesh.ts` and its kin read off rig-c's report; rig-c's
+ * assertion names (`A47_…`), which `src/requirements.ts` matches in rigc's
+ * lines; and the envelope stop codes (`ENVELOPE_…`), printed only inside a
+ * mesh row's `residual not measurable: <bone> <CODE>` clause
+ * (`src/autoenvelope.ts`). Each is a prefix with its reason, so a new name
+ * under it is read the same way, and nothing else is let through.
+ */
+const READ_NOT_PRINTED: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^MQ_/, "rig-c's mesh-report row codes, read off its report"],
+  [/^A\d+_/, "rig-c's assertion names, matched in rigc's lines"],
+  [/^ENVELOPE_/, "the envelope stop codes, printed inside a mesh row's clause, never at a line's head"],
+];
+
+/** A rule name as the source spells one in a code: at least one underscore, so `PASS` and `FAIL` are not names. */
+const SOURCE_RULE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
+
+/**
+ * Every rule name the source can print at the head of a line, read from the
+ * TypeScript syntax tree of each file (so comments are never read):
+ * 1. a string literal, or a template with no substitution, that is a
+ *    {@link SOURCE_RULE} name — a problem's `code`, a check line's name, a
+ *    `WARN` rule — unless {@link READ_NOT_PRINTED} names its prefix;
+ * 2. a problem's `code:` written as a name's head and one constant,
+ *    `` code: `CHECK_${FOLD_LINE}` ``, with the constant resolved to its literal
+ *    anywhere in the sources (one that does not resolve is an `unread` fault,
+ *    never skipped);
+ * 3. the rule a literal `FAIL  RULE:` line head spells (`USAGE`, `NOT_IMPLEMENTED`).
+ */
+function emittableRules(sources: ReadonlyArray<readonly [string, string]>): { names: Map<string, string[]>; unread: string[] } {
+  const names = new Map<string, string[]>();
+  const unread: string[] = [];
+  const consts = new Map<string, string>();
+  const trees = sources.map(([f, t]) => [f, ts.createSourceFile(f, t, ts.ScriptTarget.Latest, true)] as const);
+  const each = (n: ts.Node, visit: (x: ts.Node) => void): void => {
+    visit(n);
+    n.forEachChild((c) => each(c, visit));
+  };
+  for (const [, sf] of trees) {
+    each(sf, (n) => {
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer !== undefined && (ts.isStringLiteral(n.initializer) || ts.isNoSubstitutionTemplateLiteral(n.initializer))) consts.set(n.name.text, n.initializer.text);
+    });
+  }
+  const add = (name: string, at: string): void => {
+    if (READ_NOT_PRINTED.some(([re]) => re.test(name))) return;
+    names.set(name, [...(names.get(name) ?? []), at]);
+  };
+  for (const [f, sf] of trees) {
+    each(sf, (n) => {
+      const at = `${f}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1}`;
+      if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
+        if (SOURCE_RULE.test(n.text)) add(n.text, at);
+        for (const m of n.text.matchAll(/FAIL {2}([A-Z][A-Z0-9_]*): /g)) add(m[1], at);
+      } else if (ts.isTemplateExpression(n)) {
+        for (const part of [n.head.text, ...n.templateSpans.map((s) => s.literal.text)]) for (const m of part.matchAll(/FAIL {2}([A-Z][A-Z0-9_]*): /g)) add(m[1], at);
+        const span = n.templateSpans[0];
+        const isCode = ts.isPropertyAssignment(n.parent) && ts.isIdentifier(n.parent.name) && n.parent.name.text === 'code';
+        if (isCode && n.templateSpans.length === 1 && /^[A-Z][A-Z0-9_]*_$/.test(n.head.text) && span.literal.text === '') {
+          const value = ts.isIdentifier(span.expression) ? consts.get(span.expression.text) : undefined;
+          if (value !== undefined && SOURCE_RULE.test(`${n.head.text}${value}`)) add(`${n.head.text}${value}`, at);
+          else unread.push(`${at} ${n.getText()}`);
+        }
+      }
+    });
+  }
+  return { names, unread };
+}
+
+/**
+ * The codes rig-c's mesh library throws (`MeshReductionError`), which this
+ * package quotes inside its own lines — `AUTO_MESH_INPUT`, `AUTO_MESH_MOTION_INPUT`,
+ * `MESH_DRAFT_COMPARE` and an automatic mesh's residual clause — so their rows
+ * are this package's guide's (HQ's ruling on issue #343). Read from the
+ * installed rig-c's syntax tree: each file that throws one, every string
+ * literal handed as the first argument to `new MeshReductionError(…)` or to the
+ * file's own thrower `refuse(…)`. Empty unless the sources catch the error by
+ * name, since only then is a code quoted.
+ */
+function quotedRigcCodes(rigc: ReadonlyArray<readonly [string, string]>, sources: ReadonlyArray<readonly [string, string]>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  if (!sources.some(([, t]) => /instanceof MeshReductionError\b/.test(t))) return out;
+  for (const [f, t] of rigc) {
+    if (!t.includes('new MeshReductionError(')) continue;
+    const sf = ts.createSourceFile(f, t, ts.ScriptTarget.Latest, true);
+    const visit = (n: ts.Node): void => {
+      const callee = ts.isCallExpression(n) && ts.isIdentifier(n.expression) ? n.expression.text : ts.isNewExpression(n) && ts.isIdentifier(n.expression) ? n.expression.text : null;
+      const first = (ts.isCallExpression(n) || ts.isNewExpression(n)) ? n.arguments?.[0] : undefined;
+      if ((callee === 'refuse' || callee === 'MeshReductionError') && first !== undefined && (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first)) && SOURCE_RULE.test(first.text)) {
+        out.set(first.text, [...(out.get(first.text) ?? []), `rig-c ${f}:${sf.getLineAndCharacterOfPosition(first.getStart()).line + 1}`]);
+      }
+      n.forEachChild(visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
+/** The installed rig-c's source files, as `[path under src/, text]`. */
+function rigcSources(): Array<readonly [string, string]> {
+  const dir = join(ROOT, 'node_modules', 'rig-c', 'src');
+  const out: Array<readonly [string, string]> = [];
+  const walk = (d: string): void => {
+    for (const e of readdirSync(d).sort()) {
+      const abs = join(d, e);
+      if (statSync(abs).isDirectory()) walk(abs);
+      else if (e.endsWith('.ts')) out.push([`src/${relative(dir, abs)}`, readFileSync(abs, 'utf8')]);
+    }
+  };
+  if (existsSync(dir)) walk(dir);
+  return out;
+}
+
+/** What is wrong between the names the source can print (rig-c's quoted mesh codes among them) and the guide's ledger rows, one sentence each. */
+function ledgerDrift(sources: ReadonlyArray<readonly [string, string]>, guide: string, rigc: ReadonlyArray<readonly [string, string]> = []): { faults: string[]; emitted: number; named: number; rows: number; quoted: number } {
+  const { names, unread } = emittableRules(sources);
+  const quoted = quotedRigcCodes(rigc, sources);
+  for (const [n, at] of quoted) names.set(n, [...(names.get(n) ?? []), ...at]);
+  const rows = ledgerRows(guide);
+  const onRows = new Map<string, number[]>();
+  for (const r of rows) for (const n of r.names) onRows.set(n, [...(onRows.get(n) ?? []), r.line]);
+  const faults = [
+    ...unread.map((u) => `a name template whose constant does not resolve: ${u}`),
+    ...[...names.keys()].sort().filter((n) => !onRows.has(n)).map((n) => `${n} is printed by ${names.get(n)?.[0]} and no row names it`),
+    ...[...onRows.keys()].sort().filter((n) => !names.has(n)).map((n) => `${n} is named by the row at line ${onRows.get(n)?.join(', ')} and the source cannot print it`),
+    ...[...onRows].filter(([, ls]) => ls.length > 1).map(([n, ls]) => `${n} is named by ${ls.length} rows, at lines ${ls.join(', ')}; one is required`),
+    ...rows.filter((r) => r.anchors.join() !== r.names.join()).map((r) => `the row at line ${r.line} names ${r.names.join(', ')} and its first cell starts with the anchor(s) ${r.anchors.join(', ') || 'none'}; <a id="NAME"></a> for each name, in order, is required`),
+  ];
+  return { faults, emitted: names.size, named: onRows.size, rows: rows.length, quoted: quoted.size };
+}
+
+/**
+ * The FAIL lines the source prints without the guide's pointer: a string or
+ * template holding `FAIL  ` (two spaces, a line's head) outside `failLine` in
+ * `src/errors.ts`, unless the same template ends with `guidePointer(…)`.
+ */
+function pointerless(sources: ReadonlyArray<readonly [string, string]>): string[] {
+  const out: string[] = [];
+  for (const [f, t] of sources) {
+    const sf = ts.createSourceFile(f, t, ts.ScriptTarget.Latest, true);
+    const visit = (n: ts.Node): void => {
+      const holds = ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) ? n.text.includes('FAIL  ') : ts.isTemplateExpression(n) ? [n.head.text, ...n.templateSpans.map((s) => s.literal.text)].some((x) => x.includes('FAIL  ')) : false;
+      if (holds) {
+        const inFailLine = f === 'src/errors.ts' && ts.findAncestor(n, (a) => ts.isFunctionDeclaration(a) && a.name?.text === 'failLine') !== undefined;
+        const last = ts.isTemplateExpression(n) ? n.templateSpans[n.templateSpans.length - 1] : undefined;
+        const ends = last !== undefined && last.literal.text === '' && ts.isCallExpression(last.expression) && ts.isIdentifier(last.expression.expression) && last.expression.expression.text === 'guidePointer';
+        if (!inFailLine && !ends) out.push(`${f}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1}`);
+        return;
+      }
+      n.forEachChild(visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
 
 /** The text between `<!-- stable:<name> -->` and `<!-- /stable:<name> -->`, or null when either marker is missing. */
 function stableBlock(doc: string, name: string): string | null {

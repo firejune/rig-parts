@@ -20,7 +20,8 @@ import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, 
 import { ACCEPTABLE_BARS, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, findRigc, PACK_SHAPES, rigcRunnerAt, type PackShape, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, NO_PARTS_SENTENCE, SEAM_MEAN_BAR, SOURCE_SENTENCE, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
 import { type CharacterConfig, loadConfig, loadEarlyConfig, loadPaintConfig } from './src/config.ts';
-import { PartsError, problemLine } from './src/errors.ts';
+import { failLine, guidePointer, PartsError } from './src/errors.ts';
+import { GUIDE_DOC, type GuideAnswer, guideRule, guideSection } from './src/guide.ts';
 import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs } from './src/inputs.ts';
 import { idleKeysOf, isIdleKeys } from './src/rig.ts';
@@ -590,6 +591,23 @@ usage:
       line and ${SCENE_REPORT_FILE} name what was accepted, and the run exits 1.
       Exit 0 when the check is PASS and nothing was accepted, 1 otherwise.
 
+  rig-parts guide <RULE | §<n> | §<n>.<m> | §<n>.<m>.<k>>
+      Print a slice of ${GUIDE_DOC}, the guide this package ships, read
+      from the installed file at the moment of the call; nothing is kept
+      apart from it. Every FAIL line ends with the command that prints its
+      rule's row: "(see rig-parts guide <RULE>)". guide <RULE> prints
+      "docs/AUTHORING.md §<addr>, line <N> — under "<heading>"" and the one
+      row naming the rule; a refusal and the bar it enforces (CHECK_<LINE>
+      and <LINE>) print one after the other, joined by "paired with
+      <OTHER>:". A name no row holds is refused on stderr
+      (GUIDE_RULE_KNOWN), with the three nearest names the guide holds,
+      and nothing printed in their place. guide §<n> prints section n,
+      after its subsections' numbers and sizes in KB; §<n>.<m>
+      is the m-th ### heading under it and §<n>.<m>.<k> the k-th #### under
+      that, counted as the file stands (the headings carry no number), and
+      §<n>.<m> lists its ####s as §<n> lists its ###s. Exit 0 printed, 1
+      refused, 2 usage.
+
   rig-parts --version
   rig-parts --help
 
@@ -598,7 +616,7 @@ ${LATER.length === 0 ? '' : `not implemented in this version (each exits 2):\n${
 
 function printRefusal(err: unknown): number {
   if (err instanceof PartsError) {
-    for (const p of err.problems) console.log(`  FAIL  ${problemLine(p)}`);
+    for (const p of err.problems) console.log(failLine(p));
     console.log(`refused: ${err.problems.length} problem(s)`);
     return EXIT_REFUSED;
   }
@@ -606,9 +624,26 @@ function printRefusal(err: unknown): number {
 }
 
 function usage(message: string): number {
-  console.log(`  FAIL  USAGE: ${message}`);
+  console.log(`  FAIL  USAGE: ${message}${guidePointer('USAGE')}`);
   console.log('rig-parts --help lists the commands');
   return EXIT_USAGE;
+}
+
+/** `guide`: one argument, a rule name or a section; the slice printed, or the refusal. */
+function cmdGuide(args: string[]): number {
+  if (args.length !== 1) return usage(`guide takes one rule name or one §<n> / §<n>.<m> / §<n>.<m>.<k>; got ${args.length} argument(s)`);
+  if (args[0].startsWith('-')) return usage(`guide takes no flag; "${args[0]}" is neither a rule name nor §<n> / §<n>.<m>`);
+  const path = join(import.meta.dir, GUIDE_DOC);
+  if (!existsSync(path)) return printRefusal(new PartsError([{ code: 'GUIDE_FILE_PRESENT', object: path, detail: 'no such file; the guide ships in the package beside cli.ts' }]));
+  const text = readFileSync(path, 'utf8');
+  const answer: GuideAnswer = args[0].startsWith('§') ? guideSection(text, args[0]) : guideRule(text, args[0]);
+  // The shared form: an unknown name or section is one coded FAIL line on stderr, exit 1.
+  if ('problem' in answer) {
+    console.error(failLine(answer.problem));
+    return EXIT_REFUSED;
+  }
+  for (const l of answer.lines) console.log(l);
+  return EXIT_OK;
 }
 
 function fixed(v: number | null): string {
@@ -655,7 +690,8 @@ function printLayerTable(set: LayerSet): void {
 /**
  * Every flag each command takes: `valued` flags carry a value, `switches` are bare. Each parser reads its row to
  * decide what it accepts, and {@link notTaken} prints the same row in the unknown-flag refusal, so the refusal
- * lists exactly the flags the parser accepts (CL26). `layers` takes one positional path and no flag, so it has no row.
+ * lists exactly the flags the parser accepts (CL26). `layers` takes one positional path and `guide` one positional
+ * argument, and neither takes a flag, so neither has a row.
  */
 const TAKES = {
   sheet: { valued: ['--source', '--layers', '--out', '--cell', '--cols'], switches: [] },
@@ -1047,7 +1083,7 @@ function cmdCompare(args: string[]): number {
     console.log(`rig-parts compare: left ${left}, right ${right}${map === null ? ', no map' : `, map ${map}`}`);
     for (const l of structureLines(c)) console.log(l);
     const missing = requiredProblems(c, map ?? 'the map');
-    for (const p of missing) console.log(`  FAIL  ${problemLine(p)}`);
+    for (const p of missing) console.log(failLine(p));
     return missing.length > 0 ? EXIT_REFUSED : EXIT_OK;
   } catch (err) {
     return printRefusal(err);
@@ -1398,9 +1434,10 @@ function main(argv: string[]): number | Promise<number> {
   if (command === 'build') return cmdBuild(rest);
   if (command === 'compose') return cmdCompose(rest);
   if (command === 'mesh-draft') return cmdMeshDraft(rest);
+  if (command === 'guide') return cmdGuide(rest);
   const later = LATER.find(([name]) => name === command);
   if (later !== undefined) {
-    console.log(`  FAIL  NOT_IMPLEMENTED: \`rig-parts ${command}\` (${later[1]}) is not implemented in this version, ${version()}`);
+    console.log(`  FAIL  NOT_IMPLEMENTED: \`rig-parts ${command}\` (${later[1]}) is not implemented in this version, ${version()}${guidePointer('NOT_IMPLEMENTED')}`);
     return EXIT_USAGE;
   }
   return usage(`unknown command "${command}"`);
