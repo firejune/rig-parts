@@ -389,7 +389,7 @@ export function writeFieldRig(dir: string, mesh: ComparedMesh, rigc: string): { 
   const motion = { spec: 'rigc-motion/1', archetype: 'field', cut: 'field', easings: {}, groups: {}, animations: { idle: { duration: FIELD_POSES.length, loop: true, tracks } } };
   writeFileSync(join(dir, 'rig.json'), `${JSON.stringify(rig, null, 1)}\n`);
   writeFileSync(join(dir, 'motion.json'), `${JSON.stringify(motion, null, 1)}\n`);
-  const r = spawnSync(rigc, ['build', '--rig', join(dir, 'rig.json'), '--motion', join(dir, 'motion.json'), '--out', join(dir, 'build'), '--profile', 'spine-html', '--pack', '--page-edges', 'free', '--pack-shape', 'polygon'], { encoding: 'utf8', maxBuffer: 1 << 26 });
+  const r = spawnSync(rigc, ['build', '--rig', join(dir, 'rig.json'), '--motion', join(dir, 'motion.json'), '--out', join(dir, 'build'), '--profile', 'rig-play', '--pack', '--page-edges', 'free', '--pack-shape', 'polygon'], { encoding: 'utf8', maxBuffer: 1 << 26 });
   return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }
 

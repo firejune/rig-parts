@@ -1340,7 +1340,7 @@ export interface ComposeResult {
 /**
  * Load the scene and every build, compose, gate the result through rig-c
  * exactly as `rig` and `build` gate theirs ({@link gateThroughRigc}: `build
- * --profile spine-html --pack`, the compile and the packed pages on disk),
+ * --profile rig-play --pack`, the compile and the packed pages on disk),
  * write `rig/` and `scene.json` only when that is green, then run `check` over
  * the composed rig (it reads a rig it did not build, #77; `--requirements`
  * forwarded, #93). Lines go to `log` under `[compose]` and `[check]`, as

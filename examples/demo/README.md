@@ -189,7 +189,7 @@ The README loop pasted uncorrected stops where the README says to read
 
 | | |
 | --- | --- |
-| gate | `50 assertions: 25 measured (25 passed, 0 failed), 25 skipped, 0 not in profile "spine-html"` |
+| gate | `50 assertions: 25 measured (25 passed, 0 failed), 25 skipped, 0 not in profile "rig-play"` |
 | pack | `skeleton.png 1051x972, 23 region(s), 96.9% covered, padding 2, page edges free, shape polygon` |
 | seam | mean 0.147, 0 px over 40, frame scale 0.943777 |
 | loop | max \|d\| 0 |

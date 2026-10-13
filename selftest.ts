@@ -192,7 +192,7 @@ import {
 } from './src/assemble.ts';
 import { chainDirection } from './src/check.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics, BREATH_TORSO_MEAN_FLOOR } from './src/check.ts';
-import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, drawingTurn, FOLD_LINE, LEVEL_BAR_DEGREES, LEVEL_LINE, LIMB_LINE, limbLine, foldsLine, STRESS_LINE, STRESS_RIGID, STRESS_TURNS, stressPlan, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, packageRigc, rigcIdentity, rigcRunnerAt, type RigcSpawn, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
+import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, drawingTurn, FOLD_LINE, LEVEL_BAR_DEGREES, LEVEL_LINE, LIMB_LINE, limbLine, foldsLine, STRESS_LINE, STRESS_RIGID, STRESS_TURNS, stressPlan, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, GATE_PROFILE, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, packageRigc, rigcIdentity, rigcRunnerAt, type RigcSpawn, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { baseTagOf, blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
@@ -4230,7 +4230,7 @@ function runRigSuite(): number {
     const gateLines = run1.out.split('\n').filter((l) => /assertions: \d+ measured \(\d+ passed, 0 failed\)/.test(l));
     say(
       'RG04_THE_RIG_COMMAND_WRITES_ONLY_AFTER_RIG_C_IS_GREEN_ON_IT',
-      run1.status === 0 && run2.status === 0 && wroteAll && gateLines.length >= 2 && /rigc build --profile spine-html --pack --page-edges free --pack-shape polygon: exit 0/.test(run1.out) && !run1.out.includes('rigc validate'),
+      run1.status === 0 && run2.status === 0 && wroteAll && gateLines.length >= 2 && /rigc build --profile rig-play --pack --page-edges free --pack-shape polygon: exit 0/.test(run1.out) && !run1.out.includes('rigc validate'),
       `exit ${run1.status}; wrote ${files1.join(', ')}; ${gateLines.length} green rigc assertion line(s), e.g. "${gateLines[0]?.trim() ?? ''}"`,
       "CLAUDE.md: the rig stages write only after rig-c's round trip has passed — so the command builds the staged spec through rigc before --out sees a byte",
     );
@@ -4263,7 +4263,7 @@ function runRigSuite(): number {
       redLoads === null &&
         redRun.status === 1 &&
         redFail.length === 1 &&
-        /^ {2}FAIL {2}RIG_RIGC_GREEN: rigc build --profile spine-html --pack --page-edges free/.test(redFail[0]) &&
+        /^ {2}FAIL {2}RIG_RIGC_GREEN: rigc build --profile rig-play --pack --page-edges free/.test(redFail[0]) &&
         redFail[0].includes(fullFrame) &&
         !existsSync(join(dir, 'red', 'out')),
       `the fixture config (the loader: ${codes(redLoads)}) with parts.json placing cloth at 0,0 ${RIG_CANVAS[0]}x${RIG_CANVAS[1]} -> exit ${redRun.status}, ${redFail.length} FAIL line(s): ${(redFail[0] ?? '').trim().slice(0, 70)}… ${redFail[0]?.includes(fullFrame) === true ? fullFrame : 'no rigc line naming the full-frame mesh'}; --out exists: ${existsSync(join(dir, 'red', 'out'))}`,
@@ -4285,7 +4285,7 @@ function runRigSuite(): number {
     const silent = deadRun('');
     say(
       'RG41_A_RIGC_THAT_DIES_BEFORE_THE_GATE_PRINTS_IS_QUOTED_BY_ITS_OWN_LINE',
-      died.startsWith('RIG_RIGC_GREEN: rigc build --profile spine-html --pack --page-edges free --pack-shape polygon — exited 1: ') &&
+      died.startsWith('RIG_RIGC_GREEN: rigc build --profile rig-play --pack --page-edges free --pack-shape polygon — exited 1: ') &&
         died.includes(importError) &&
         !died.includes('Bun v1.3.11') &&
         headerOnly.includes('exited 1: ..    rig    /x/rig.json | ..    motion /x/motion.json | ..    22 part page(s):') &&
@@ -5271,7 +5271,7 @@ function runIdleKeysCases(say: (name: string, ok: boolean, detail: string, why: 
     const bogus = run('bones', 'bogus');
     const files = filesUnder(join(dir, 'none'));
     const ctlSame = files.length > 0 && files.join() === filesUnder(join(dir, 'ctl')).join() && files.every((f) => readFileSync(join(dir, 'none', f)).equals(readFileSync(join(dir, 'ctl', f))));
-    const green = (r: { out: string }): boolean => /rigc build --profile spine-html --pack --page-edges free --pack-shape polygon: exit 0/.test(r.out) && !r.out.includes('rigc validate');
+    const green = (r: { out: string }): boolean => /rigc build --profile rig-play --pack --page-edges free --pack-shape polygon: exit 0/.test(r.out) && !r.out.includes('rigc validate');
     const skipLine = direct.out.split('\n').find((l) => l.includes('SKIP  A15_IDLE_NO_MESH_BONE_KEYS')) ?? '';
     const directRig = existsSync(join(dir, 'direct', 'rig.json')) ? (JSON.parse(readFileSync(join(dir, 'direct', 'rig.json'), 'utf8')) as { bones: Array<{ name: string }>; invariants?: unknown }) : null;
     // The planted half: the direct rig with its declaration taken out, built
@@ -5285,7 +5285,7 @@ function runIdleKeysCases(say: (name: string, ok: boolean, detail: string, why: 
       const raw = JSON.parse(readFileSync(join(dir, 'direct', 'rig.json'), 'utf8')) as Record<string, unknown>;
       delete raw.invariants;
       writeFileSync(join(plant, 'rig.json'), JSON.stringify({ ...raw, images: join(dir, 'direct', 'images') }));
-      const r = spawnSync(suiteRigc(), ['build', '--rig', join(plant, 'rig.json'), '--motion', join(dir, 'direct', 'motion.json'), '--out', join(plant, 'build'), '--profile', 'spine-html', '--pack', '--page-edges', DEFAULT_PAGE_EDGES], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      const r = spawnSync(suiteRigc(), ['build', '--rig', join(plant, 'rig.json'), '--motion', join(dir, 'direct', 'motion.json'), '--out', join(plant, 'build'), '--profile', GATE_PROFILE, '--pack', '--page-edges', DEFAULT_PAGE_EDGES], { encoding: 'utf8', maxBuffer: 1 << 26 });
       const fails = `${r.stdout}${r.stderr}`.split('\n').filter((l) => /^ {2}FAIL {2}A15_IDLE_NO_MESH_BONE_KEYS: idle keys bone "/.test(l));
       const distinct = [...new Set(fails)];
       undeclaredRed = r.status !== 0 && distinct.length === a.meshKeyed.length;
@@ -5901,10 +5901,10 @@ function runConstraintRigCases(say: (name: string, ok: boolean, detail: string, 
     say(
       'RG60_RIGCS_A25_PASSES_THE_DECLARED_SCENE_TARGET_AND_FAILS_IT_PARENTED_UNDER_ITS_CHAIN_WHICH_UNDECLARED_IT_ONLY_SKIPS',
       asWritten.status === 0 && asWritten.line === 'PASS  A25_DETACHED_BONE_PARENTAGE' &&
-        under.status === 1 && under.line === 'FAIL  A25_DETACHED_BONE_PARENTAGE: "tgt" is a descendant of "hem1"; it must not be dragged by that bone\'s motion' &&
+        under.status === 1 && under.line === 'FAIL  A25_DETACHED_BONE_PARENTAGE: "tgt" is a descendant of "hem1"; it must not be dragged by that bone\'s motion (see rigc guide A25_DETACHED_BONE_PARENTAGE)' &&
         undeclared.status === 0 && undeclared.line.startsWith('SKIP  A25_DETACHED_BONE_PARENTAGE'),
       `as written: ${asWritten.line}; tgt moved under hem1 in rig.json by hand: ${under.line}; the same with invariants removed: ${undeclared.line}`,
-      'A25 read before it is declared (rig-c 2.10.1, src/assertions/bodies/a25.ts): it fails a declared bone that descends from its notUnder, and a rig that declares nothing is a SKIP — so the declaration is what keeps a scene target measured once the rig leaves this package',
+      'A25 read before it is declared (rig-c 2.10.1, src/assertions/bodies/a25.ts): it fails a declared bone that descends from its notUnder, and a rig that declares nothing is a SKIP — so the declaration is what keeps a scene target measured once the rig leaves this package; from rig-c 2.48.0 every gate FAIL line ends with ` (see rigc guide <RULE>)`, which the line is held to as printed',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -10179,6 +10179,33 @@ function runCheckSuite(): number {
       'determinism is a contract: the same rig must write the same check.json, heat map and gate file, or no diff of them means anything',
     );
 
+    // rig-c 2.50.0 renamed the gate's profile from spine-html to rig-play. The former name still builds, under the
+    // same rules, with a deprecation line on stderr, until a later minor release drops it — which a fresh install
+    // inside this package's range can resolve. Every rigc build a stage runs takes its profile from packedBuildArgs
+    // or REFERENCE_BUILD_ARGS; each is run here as the stages run it and must leave stderr without that line. The
+    // planted build passes the former name and must print it, so the reader is shown to see the line when it is there.
+    const profileBuild = (name: string, args: readonly string[]): { status: number | null; deprecated: string[] } => {
+      const r = spawnSync(suiteRigc(), ['build', '--rig', join(rig, 'rig.json'), '--motion', join(rig, 'motion.json'), '--out', join(dir, 'profile', name, 'build'), ...args], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      return { status: r.status, deprecated: (r.stderr ?? '').split('\n').filter((l) => /deprecated/i.test(l)) };
+    };
+    const packedProfile = profileBuild('packed', packedBuildArgs(DEFAULT_PACK_MODE));
+    const referenceProfile = profileBuild('reference', REFERENCE_BUILD_ARGS);
+    const formerProfile = profileBuild('former', ['--profile', 'spine-html', ...packedBuildArgs(DEFAULT_PACK_MODE).slice(2)]);
+    const profileText = (r: { status: number | null; deprecated: string[] }): string => `exit ${r.status}, ${r.deprecated.length === 0 ? 'no deprecated line' : `"${r.deprecated[0]}"`}`;
+    say(
+      'CK20_EVERY_PROFILE_THIS_PACKAGE_PASSES_TO_RIGC_IS_CURRENT_AND_THE_FORMER_NAME_IS_SEEN_DEPRECATED',
+      packedBuildArgs(DEFAULT_PACK_MODE)[1] === GATE_PROFILE &&
+        REFERENCE_BUILD_ARGS[1] === GATE_PROFILE &&
+        packedProfile.status === 0 &&
+        packedProfile.deprecated.length === 0 &&
+        referenceProfile.status === 0 &&
+        referenceProfile.deprecated.length === 0 &&
+        formerProfile.status === 0 &&
+        formerProfile.deprecated.some((l) => l.includes('--profile spine-html')),
+      `profile ${GATE_PROFILE}; the packed build (${packedBuildArgs(DEFAULT_PACK_MODE).join(' ')}): ${profileText(packedProfile)}; the reference build (${REFERENCE_BUILD_ARGS.join(' ')}): ${profileText(referenceProfile)}; planted, --profile spine-html: ${profileText(formerProfile)}`,
+      'rig-c accepts the former profile name only until a later minor release and says so on stderr, which no stage prints; a package still passing it builds green today and is refused by name on the release that drops it, so the deprecation is read here, where it can be fixed before then. The planted half goes red when rig-c drops the former name: that is the rename finished, and the plant is retired with it',
+    );
+
     const loopRig = join(dir, 'loop');
     writeCheckRig(loopRig, { lastKey: IDLE_PEAK + 1 });
     const loop = runCli(['check', '--rig', loopRig, '--out', join(dir, 'loop-out')]);
@@ -11777,7 +11804,7 @@ function runCheckSuite(): number {
     // At the depth check's own build/ sits (<dir>/<name>/build), so skeleton.json's relative images path is the same text.
     const direct = (name: string, extra: readonly string[]): string => {
       const d = join(dir, name, 'build');
-      spawnSync(suiteRigc(), ['build', '--rig', join(rig, 'rig.json'), '--motion', join(rig, 'motion.json'), '--out', d, '--profile', 'spine-html', '--pack', ...extra], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      spawnSync(suiteRigc(), ['build', '--rig', join(rig, 'rig.json'), '--motion', join(rig, 'motion.json'), '--out', d, '--profile', GATE_PROFILE, '--pack', ...extra], { encoding: 'utf8', maxBuffer: 1 << 26 });
       return d;
     };
     const ARTIFACT = ['skeleton.atlas', 'skeleton.json', 'skeleton.png'];
@@ -11793,7 +11820,7 @@ function runCheckSuite(): number {
         pack[0].pageEdges === 'free' &&
         pack[0].packShape === 'polygon' &&
         pack[0].line.endsWith(', page edges free, shape polygon') &&
-        ok.out.includes('gate spine-html (rigc build --profile spine-html --pack --page-edges free --pack-shape polygon), verbatim:') &&
+        ok.out.includes('gate spine-html (rigc build --profile rig-play --pack --page-edges free --pack-shape polygon), verbatim:') &&
         defaultMode === '{"page_edges":"free","pack_shape":"polygon"}' &&
         freeSame,
       `no --page-edges, no --pack-shape: ${pack[0]?.line ?? 'no pack line'}; the console names "--page-edges free --pack-shape polygon": ${ok.out.includes('--page-edges free --pack-shape polygon), verbatim:')}; check.json pack_mode ${defaultMode}; build/ vs a direct \`rigc build --pack --page-edges free --pack-shape polygon\` of the same rig: ${freeSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
@@ -11817,7 +11844,7 @@ function runCheckSuite(): number {
         potPack[0].line.endsWith(', padding 2, shape rect') &&
         pow2(potPack[0].width) &&
         pow2(potPack[0].height) &&
-        potRun.out.includes('gate spine-html (rigc build --profile spine-html --pack --page-edges pot --pack-shape rect), verbatim:') &&
+        potRun.out.includes('gate spine-html (rigc build --profile rig-play --pack --page-edges pot --pack-shape rect), verbatim:') &&
         potSame,
       `--page-edges pot --pack-shape rect: exit ${potRun.status}, ${potPack[0]?.line ?? 'no pack line'}; build/ vs a direct \`rigc build --pack\` with neither flag (rigc's defaults, the page every build wrote before the flags): ${potSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
       'pot and rect are the opt-outs, so together they must give back exactly the page an earlier build wrote: rigc with neither flag is that build, and pot is a power of two on both edges by rigc\'s own definition',
@@ -11836,7 +11863,7 @@ function runCheckSuite(): number {
         rectPack[0].pageEdges === 'free' &&
         rectPack[0].packShape === 'rect' &&
         rectPack[0].line.endsWith(', page edges free, shape rect') &&
-        rectRun.out.includes('gate spine-html (rigc build --profile spine-html --pack --page-edges free --pack-shape rect), verbatim:') &&
+        rectRun.out.includes('gate spine-html (rigc build --profile rig-play --pack --page-edges free --pack-shape rect), verbatim:') &&
         rectMode === '{"page_edges":"free","pack_shape":"rect"}' &&
         rectSame,
       `--pack-shape rect: exit ${rectRun.status}, ${rectPack[0]?.line ?? 'no pack line'}; check.json pack_mode ${rectMode}; build/ vs a direct \`rigc build --pack --page-edges free\` with no --pack-shape (rigc's default shape, the only one before 2.1): ${rectSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
@@ -24263,7 +24290,7 @@ function runSceneSuite(): number {
     const writtenLeft = writtenRig === null ? ['no rig.json'] : unprefixedNames(writtenRig, readJsonAt(join(out, 'rig', 'motion.json')) as MotionSpec, ['plain', 'reach'], true);
     say(
       'SC20_THE_COMPOSED_SCENE_GATES_GREEN_THROUGH_RIGC_AND_ITS_CHECK_REPORTS_EVERY_BAR',
-      run.status === 0 && written.length === 0 && compiled.join(',') === 'plate,plain:cloth,reach:cloth,plain:eye,reach:eye' && (report?.order as { slots?: string[] } | undefined)?.slots?.join(',') === compiled.join(',') && (report?.plate as { provenance?: string } | undefined)?.provenance === 'generated' && writtenLeft.length === 0 && run.out.includes('[compose]   rigc build --profile spine-html --pack'),
+      run.status === 0 && written.length === 0 && compiled.join(',') === 'plate,plain:cloth,reach:cloth,plain:eye,reach:eye' && (report?.order as { slots?: string[] } | undefined)?.slots?.join(',') === compiled.join(',') && (report?.plate as { provenance?: string } | undefined)?.provenance === 'generated' && writtenLeft.length === 0 && run.out.includes('[compose]   rigc build --profile rig-play --pack'),
       `exit ${run.status}; missing ${written.length === 0 ? 'none' : written.join(', ')}; the compiled skeleton draws ${compiled.join(', ')}; written rig.json unprefixed: ${writtenLeft.length === 0 ? 'none' : writtenLeft.join('; ')}; ${sceneBarLines(run.out, join(out, 'check'))}`,
       'issue #74 §3: the same path build uses — rigc\'s gate on the compile and on the packed pages, emit only after green — then check over a rig it did not build (#77); the order is read off the compiled skeleton, where rigc put it, not off what compose meant',
     );
@@ -30696,7 +30723,7 @@ function runBuildCostSuite(): number {
         JSON.stringify(tail(cand)) === JSON.stringify(packedFlags) &&
         JSON.stringify(tail(ref)) === JSON.stringify(REFERENCE_BUILD_ARGS) &&
         !tail(ref).includes('--pack') &&
-        has(tail(ref), '--profile', 'spine-html') &&
+        has(tail(ref), '--profile', GATE_PROFILE) &&
         pos.log.some((l) => l.includes(`rigc ${REFERENCE_BUILD_LABEL}, reference "cloth"`) && l.endsWith('exit 0')),
       `${lines(pos.e)}; calls ${pos.calls.map((c) => `[${c.args[0]} ${tail(c).join(' ')}]`).join(' ')}`,
       'issue #135, the owner\'s ruling 1: the candidate keeps its packed gate build exactly as before; the reference is compiled under the same spine-html gate without --pack, and the stage asks rigc for no render',

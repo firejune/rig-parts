@@ -37,7 +37,7 @@
  * (`skeleton.json` of the check's own build).
  *
  * `--time` measures the last cost column, the time `rigc render` takes on the idle: per setting the rig is written as
- * above and compiled as `check` compiles it (`rigc build … --profile spine-html --pack`), then the idle is rendered
+ * above and compiled as `check` compiles it (`rigc build … --profile rig-play --pack`), then the idle is rendered
  * `--repeat` times per setting in interleaved order, both as `check` renders it (`--geometry`) and as frames only. Wall
  * clock per call; this is the one figure here that is not deterministic, and it is run with no other job beside it.
  *

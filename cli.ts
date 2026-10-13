@@ -262,7 +262,7 @@ usage:
       written into motion.json as read, for rigc's gate to judge (AUTHORING
       §3). --parts is the
       directory holding parts.json and parts/<name>.png. The result is built
-      through rig-c (profile spine-html, packed with --page-edges and
+      through rig-c (profile rig-play, packed with --page-edges and
       --pack-shape as for check; rigc's build gates the compile and the packed pages on disk) in a
       scratch directory first, and --out receives images/*.png, rig.json,
       motion.json and mesh_report.json only when it is green. Prints one line
@@ -323,7 +323,7 @@ usage:
       builds); an "idle" in it is not.
       ${PARTS_HOME_SENTENCE}; ${NO_PARTS_SENTENCE}.
       Both are only read. Into --out:
-      build/ (rigc build --profile spine-html --pack --page-edges <value>
+      build/ (rigc build --profile rig-play --pack --page-edges <value>
       --pack-shape <value>: the packed atlas is the artifact), gate_spine-html.txt (the gate lines
       verbatim), idle_frames/ (rigc render --animation idle --fps 12 --max 640
       --geometry: the frames and geometry.json, the skinned vertices and
@@ -617,7 +617,7 @@ usage:
       another character without its prefix (SCENE_NAME_PREFIXED); a plate not
       of the canvas size; idles of different durations; a key in a build's
       rig or motion compose does not know. The result is gated through
-      rig-c as rig gates its own (build --profile spine-html --pack, the
+      rig-c as rig gates its own (build --profile rig-play --pack, the
       compile and the packed pages on disk); --out receives rig/ (rig.json,
       motion.json, images/) and ${SCENE_REPORT_FILE} (spec "${SCENE_REPORT_SPEC}":
       every setting, each character's offset, scale, bounds and shift (and what it

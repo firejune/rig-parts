@@ -14,7 +14,7 @@
  * along its chain, so the built rig's offsets are carried back out of the
  * turned frames first) field by field with the reference's, and runs
  * rig-c's gate on the port's output as built, turned:
- * `build --profile spine-html --pack`,
+ * `build --profile rig-play --pack`,
  * `build --profile spine`, and `validate` of each build under its profile.
  *
  * ⛔ A character is printed by name only when `--public` names it; every other
@@ -244,10 +244,10 @@ function main(): number {
       const html = join(out, 'build-html');
       const spine = join(out, 'build-spine');
       const gates: Array<[string, { status: number; lines: string[] }]> = [
-        ['build spine-html --pack', rigc(['build', '--rig', join(out, 'rig.json'), '--motion', join(out, 'motion.json'), '--out', html, '--profile', 'spine-html', '--pack'])],
+        ['build rig-play --pack', rigc(['build', '--rig', join(out, 'rig.json'), '--motion', join(out, 'motion.json'), '--out', html, '--profile', 'rig-play', '--pack'])],
         ['build spine', rigc(['build', '--rig', join(out, 'rig.json'), '--motion', join(out, 'motion.json'), '--out', spine, '--profile', 'spine'])],
       ];
-      gates.push(['validate spine-html', rigc(['validate', html, '--profile', 'spine-html'])]);
+      gates.push(['validate rig-play', rigc(['validate', html, '--profile', 'rig-play'])]);
       gates.push(['validate spine', rigc(['validate', spine, '--profile', 'spine'])]);
       for (const [g, res] of gates) {
         console.log(`  rigc ${g}: exit ${res.status}`);
