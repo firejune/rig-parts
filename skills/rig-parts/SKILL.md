@@ -65,8 +65,9 @@ under that.
    an arm against the body, hands together, legs with no gap, a joint off the
    figure, a background that is not plain — and the fix is a new painting, not a
    config field. `docs/PAINTING.md` lists every requirement, the ones only an eye
-   reads (front view, feet, a cape over an elbow), and one generation recipe;
-   report those as not checked.
+   reads (front view, feet, anything on an elbow: a cape, a sleeve's frill, a
+   bow), and one generation recipe; report those as not checked. A hip a skirt
+   hides is written `occluded` with its estimated position, not `observed`.
 1. `rig-parts inputs --source <painting> --config config.json --out <dir>` writes
    `st_input_full.png`, the painting on a white square. The config needs only `key`,
    `seethrough` and `assemble.rig_scale` at this point. Run See-through on it — any

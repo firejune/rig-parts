@@ -644,10 +644,11 @@ usage:
       (every channel above 235) or unpainted (alpha 8 or less) ground
       connected to the edge; the figure is the rest; a gap is one background
       pixel on the line between two joints. PAINTING_BACKGROUND_PLAIN (a
-      border pixel that is not ground), PAINTING_JOINTS_STATED (a wrist, hip,
-      knee or ankle not observed), PAINTING_JOINT_ON_FIGURE (an observed
-      joint on the background), PAINTING_ARM_CLEAR (no gap from a wrist to
-      its hip), PAINTING_HANDS_APART (none between the wrists),
+      border pixel that is not ground), PAINTING_JOINTS_STATED (a wrist,
+      knee or ankle not observed, or a hip neither observed nor occluded
+      with a position), PAINTING_JOINT_ON_FIGURE (an observed joint, or an
+      occluded hip, on the background), PAINTING_ARM_CLEAR (no gap from a
+      wrist to its hip), PAINTING_HANDS_APART (none between the wrists),
       PAINTING_LEGS_APART (none between the knees, or the ankles). Prints the
       figure, every joint and every gap with its count; writes nothing.
       docs/PAINTING.md says why each one matters. Exit 0 PASS, 1 refused.
