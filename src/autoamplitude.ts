@@ -22,7 +22,7 @@
  *   undeclared, which would leave both rows `not-measurable` (§8: "a pair no
  *   track declares makes both rows not-measurable"). A track moves bone `b`
  *   when a bone it keys is `b` or an ancestor of `b`: Spine bones inherit
- *   their parent's rotation and scale (the rig writes no inherit mode), so a
+ *   their parent's rotation and scale (where the rig writes no inherit mode), so a
  *   pair the track moves together — both under one keyed bone — or not at all
  *   keeps its relative linear part, θ 0 (§8: "a bone that does not move is
  *   declared with θ 0"); a pair it moves on one side only gets the track's θ.
@@ -57,6 +57,11 @@
  *   the author left it out — rig-c 2.29.0 then measures `MQ_DEFORM_LOAD`, which
  *   never read G, and reads `MQ_ALLOCATION_CONTRAST` `not-measurable` naming
  *   the gradation. No value is derived or defaulted here.
+ * - **A declared inherit mode** (issue #348): a bone between a keyed bone and
+ *   a bound one — the bound bone itself included — whose `inherit` is not
+ *   `normal` takes less than the key's rotation or scale, by its mode, so the
+ *   track's θ for that pair is not composed here: the term stops, naming the
+ *   bone and its mode, and the amplitude is not sent.
  * - **Constraints** move bones by what they solve, not by a key: a rig with
  *   any constraint is refused by name, because no declared amplitude bounds
  *   what a constraint does.
@@ -73,7 +78,7 @@ import type { MotionKey, MotionSpec } from './motion.ts';
  * — `rig.json`'s bones, `motion.json`, the config's constraints — so both build the one input `reductionKey` matches.
  */
 export interface AmplitudeBasis {
-  bones: ReadonlyArray<{ name: string; parent?: string }>;
+  bones: ReadonlyArray<{ name: string; parent?: string; inherit?: string }>;
   motion: MotionSpec;
   constraints: number;
 }
@@ -133,7 +138,7 @@ export type AmplitudeDerivation = { amplitude: MotionAmplitude } | { stops: Ampl
  * reason to stop (rig-c 2.29.0 admits null).
  */
 export function deriveMotionAmplitude(args: {
-  bones: ReadonlyArray<{ name: string; parent?: string }>;
+  bones: ReadonlyArray<{ name: string; parent?: string; inherit?: string }>;
   motion: MotionSpec;
   constraints: number;
   bound: readonly string[];
@@ -142,6 +147,13 @@ export function deriveMotionAmplitude(args: {
 }): AmplitudeDerivation {
   const stops: AmplitudeStop[] = [];
   const parent = new Map(args.bones.map((b) => [b.name, b.parent ?? null]));
+  const mode = new Map(args.bones.filter((b) => b.inherit !== undefined && b.inherit !== 'normal').map((b) => [b.name, b.inherit as string]));
+  /** The bones from `bone` up to `k`, `k` left out, that declare an inherit mode other than normal (issue #348). */
+  const declared = (bone: string, k: string): string[] => {
+    const out: string[] = [];
+    for (let b: string | null = bone; b !== null && b !== k; b = parent.get(b) ?? null) if (mode.has(b)) out.push(b);
+    return out;
+  };
   const under = (bone: string, k: string): boolean => {
     for (let b: string | null = bone; b !== null; b = parent.get(b) ?? null) if (b === k) return true;
     return false;
@@ -159,6 +171,14 @@ export function deriveMotionAmplitude(args: {
     const name = `${t.bone ?? t.group ?? '?'}.${t.property}#${i}`;
     const moverOf = (b: string): string[] => keyed.filter((k) => under(b, k));
     if (!bound.some((b) => moverOf(b).length > 0)) return;
+    const through = [...new Set(bound.flatMap((b) => moverOf(b).flatMap((k) => declared(b, k))))];
+    if (through.length > 0) {
+      stops.push({
+        term: `tracks[${name}].pairs[].theta`,
+        detail: `the track keys [${keyed.join(', ')}], and ${through.map((b) => `"${b}" declares inherit "${mode.get(b)}"`).join(', ')} below it, so what the key does to the bones under it is not the key's own rotation or scale; θ is composed here only through bones that inherit normally, and none is invented`,
+      });
+      return;
+    }
     const th = trackTheta(t.property, t.keys);
     if ('refused' in th) {
       stops.push({ term: `tracks[${name}].pairs[].theta`, detail: th.refused });

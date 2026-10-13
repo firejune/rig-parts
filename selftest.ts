@@ -180,7 +180,7 @@ import {
 } from './src/assemble.ts';
 import { chainDirection } from './src/check.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics, BREATH_TORSO_MEAN_FLOOR } from './src/check.ts';
-import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, FOLD_LINE, foldsLine, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, packageRigc, rigcIdentity, rigcRunnerAt, type RigcSpawn, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
+import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, drawingTurn, FOLD_LINE, LEVEL_BAR_DEGREES, LEVEL_LINE, foldsLine, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, packageRigc, rigcIdentity, rigcRunnerAt, type RigcSpawn, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
 import { baseTagOf, blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
@@ -218,7 +218,7 @@ import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { ALIASES, AliasTarballError, compareTarballs, MANIFEST as ALIAS_MANIFEST, packAlias, packInto, renamed } from './scripts/alias_tarball.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionKey, type MotionSpec, sineTrack, TIME_SLACK } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
-import { RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
+import { RIG_BONE_INHERIT, RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, FAINT_ALPHA, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
@@ -383,7 +383,7 @@ import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, checkBasis, coverageLines
 import { checkImageSize, choosePerson, KEYPOINTS_SPACE, KEYPOINTS_SPEC, loadKeypoints, parseKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
 import { LEGS_APART, LEGS_JOINED, LYING_PARTS, LYING_RIG, type PoseName, POSES, SEATED_PARTS, SEATED_RIG } from './fixtures/poses.ts';
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
-import { block, constraintConfig, dustImages, dustParts, FACE_EXPECT, faceConfig, faceImages, faceParts, HEAT_STRIP_EXPECT, heatStripConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
+import { block, constraintConfig, dustImages, dustParts, FACE_EXPECT, faceConfig, faceImages, faceParts, HEAT_STRIP_EXPECT, heatStripConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, shoeConfig, shoeImages, shoeKick, shoeParts, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
 import { blinkHoldProblems, buildRig, DEFAULT_IDLE_KEYS, FACE_TIPS_AXIS_NAME, HEAD_UP_BONE, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigOutput, type RigSpec, roundShares, tipRoundingBound, writtenShares } from './src/rig.ts';
 import { type ComposedScene, composeFromFiles, IMAGE_SEP, PLATE, PLATE_IMAGE, PREFIX_SEP, SCENE_REPORT_FILE, SCENE_SPEC, scaledConstraint, unprefixedNames } from './src/scene.ts';
 import { sceneCharacterRig, sceneText, writeFlatPlate, writeSceneBuild } from './fixtures/scene.ts';
@@ -2053,6 +2053,40 @@ function runConfigSuite(): number {
       one75(auto246, 'CONFIG_STRAY_MODE', SAT246, 'is 4 on an automatic mesh (auto); that mode states the largest island it may leave out in auto.source.stray, which its trace reads — declare it there, or remove stray'),
     `loads: ${loads246.map(show75).join(', ')}; planted: -1 -> ${show75(neg246)}; 1.5 -> ${show75(half246)}; "4" -> ${show75(text246)}; beside contour -> ${show75(contour246)}; beside auto -> ${show75(auto246)}`,
     'issue #303: the lattice gains the contour mode\'s stray with its meaning and its type; beside a mode that already states it elsewhere the field would be read by nothing while its author believed it left islands out, so it is refused naming the place it belongs',
+  );
+
+  // CF286 — issue #348: a single bone's inherit is one of rig-c's five mode names as its table spells them, passed
+  // through as written; a first-letter-folded spelling, any other name, a non-string and an inherit on a chain are refused.
+  const inherited = (v: unknown, onChain = false): ReturnType<typeof refusals> => {
+    const c = minimalConfig();
+    const bs = c.bones as Array<Record<string, unknown>>;
+    (onChain ? bs[3] : bs[1]).inherit = v;
+    return refusals(() => parseConfig(c));
+  };
+  const loaded286 = RIG_BONE_INHERIT.map((m) => inherited(m));
+  const passed286 = (parseConfig((() => {
+    const c = minimalConfig();
+    (c.bones as Array<Record<string, unknown>>)[1].inherit = 'noRotationOrReflection';
+    return c;
+  })()).bones[1] as { inherit?: string }).inherit;
+  const known286 = 'normal, onlyTranslation, noRotationOrReflection, noScale, noScaleOrReflection';
+  const folded286 = inherited('NoScale');
+  const unknown286 = inherited('sideways');
+  const typed286 = inherited(7);
+  const chain286 = inherited('noScale', true);
+  const one286 = (e: ReturnType<typeof refusals>, code: string, object: string, detail?: string): boolean =>
+    e !== null && e.problems.length === 1 && e.problems[0].code === code && e.problems[0].object === object && (detail === undefined || e.problems[0].detail === detail);
+  say(
+    'CF286_A_BONES_INHERIT_IS_ONE_OF_RIG_CS_FIVE_MODES_AS_SPELLED_AND_ANY_OTHER_SPELLING_IS_REFUSED_BY_NAME',
+    RIG_BONE_INHERIT.join(', ') === known286 &&
+      loaded286.every((e) => e === null) &&
+      passed286 === 'noRotationOrReflection' &&
+      one286(folded286, 'CONFIG_BONE_INHERIT', 'config.bones[1].inherit', `is "NoScale"; one of rig-c's inherit modes, spelled as its table spells them, is required — ${known286} (rig-c's RigBone.inherit; nothing here folds a case or maps a name)`) &&
+      one286(unknown286, 'CONFIG_BONE_INHERIT', 'config.bones[1].inherit') &&
+      one286(typed286, 'CONFIG_FIELD_TYPE', 'config.bones[1].inherit') &&
+      one286(chain286, 'CONFIG_KEY_KNOWN', 'config.bones[3].inherit'),
+    `rig-c's table: ${RIG_BONE_INHERIT.join(', ')}; each loads: ${loaded286.map((e) => (e === null ? 'yes' : codes(e))).join(', ')}; passed through as ${String(passed286)}; planted: "NoScale" -> ${codes(folded286)}: ${folded286?.problems[0]?.detail ?? ''}; "sideways" -> ${codes(unknown286)}; 7 -> ${codes(typed286)}; on a chain -> ${codes(chain286)}`,
+    "issue #348: rig-c's RigBone.inherit names five modes, and the runtime folds the first letter's case; this loader spells them as rig-c's table does and maps nothing, so a folded spelling is refused with the five listed rather than read as the mode it resembles, and a chain, whose links have no single parent edge to carry it, takes none",
   );
   return bad();
 }
@@ -4140,7 +4174,62 @@ function runRigSuite(): number {
   runInfluencesCases(say);
   runAnimationsFromCases(say);
   runTurnRigCases(say);
+  runInheritRigCases(say);
   return bad();
+}
+
+/**
+ * Issue #348: config.bones' `inherit` reaches rig.json as written, on the shoe-on-a-shin fixture (fixtures/rig.ts,
+ * every figure derived there): `foot` under `shin`, which its tip turns -90 degrees.
+ */
+function runInheritRigCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const built = (inherit?: string, edit: (c: Record<string, unknown>) => void = () => {}): RigOutput => {
+    const c = shoeConfig(inherit, false);
+    edit(c);
+    return buildRig(parseConfig(c), shoeParts(), shoeImages());
+  };
+  const bone = (r: RigOutput, n: string): string => JSON.stringify(r.rig.bones.find((b) => b.name === n) ?? null);
+  const rest = (r: RigOutput): string => JSON.stringify({ ...r.rig, bones: r.rig.bones.filter((b) => b.name !== 'foot') });
+  const plain = built();
+  const dropped = built('noRotationOrReflection');
+  const only = built('onlyTranslation');
+  const scaled = built('noScale');
+  const flat = flattenRig(dropped.rig).bones.find((b) => b.name === 'foot');
+  say(
+    'RG139_A_DECLARED_INHERIT_REACHES_RIG_JSON_AS_WRITTEN_AND_ITS_ROTATION_IS_READ_OFF_RIG_CS_POSER_WHILE_AN_ABSENT_ONE_WRITES_NO_KEY',
+    bone(plain, 'foot') === '{"name":"foot","parent":"shin","rotation":90,"x":20,"y":0}' &&
+      !JSON.stringify(plain.rig).includes('"inherit"') &&
+      bone(dropped, 'foot') === '{"name":"foot","parent":"shin","x":20,"y":0,"inherit":"noRotationOrReflection"}' &&
+      bone(only, 'foot') === '{"name":"foot","parent":"shin","x":20,"y":0,"inherit":"onlyTranslation"}' &&
+      bone(scaled, 'foot') === '{"name":"foot","parent":"shin","rotation":90,"x":20,"y":0,"inherit":"noScale"}' &&
+      [dropped, only, scaled].every((r) => rest(r) === rest(plain)) &&
+      JSON.stringify(plain.rig.skins.default.shoe) === '{"shoe":{"image":"shoe.png","x":0,"y":-3}}' &&
+      flat?.inherit === 'noRotationOrReflection',
+    `foot: absent ${bone(plain, 'foot')}; noRotationOrReflection ${bone(dropped, 'foot')}; onlyTranslation ${bone(only, 'foot')}; noScale ${bone(scaled, 'foot')}; everything but foot identical to the absent build: ${[dropped, only, scaled].map((r) => rest(r) === rest(plain)).join(', ')}; shoe ${JSON.stringify(plain.rig.skins.default.shoe)}; "inherit" in the absent rig.json: ${JSON.stringify(plain.rig).includes('"inherit"')}; flattenRig keeps ${String(flat?.inherit)}`,
+    "issue #348, by hand (fixtures/rig.ts): under a shin turned -90, a foot inheriting normally stands upright with local rotation 90; a mode that drops the parent's rotation puts it upright with none, and noScale, which keeps the rotation, needs the 90 again — each read off rig-c's poser, not a table of modes here. The shoe region is (0, -3) in every case, and only the declared bone's own row moves; absent, no key is written (the chain suite holds the four examples' rig.json bytes)",
+  );
+
+  // RG140 — the idle keys foot and the shoe is a mesh weighted to it, so foot gets a control: the mode goes on the control.
+  const ctl = built('noRotationOrReflection', (c) => {
+    c.meshes = { shoe: { grid: 8, r: 8, segments: [['foot', [14, 31], [26, 31]]] } };
+    c.regions = { leg: 'shin' };
+    ((c.motion as Record<string, unknown>).tracks as unknown[]).push({ bone: 'foot', prop: 'rotate', amp: 1, period: 4, phase: 0 });
+  });
+  const ctlPlain = built(undefined, (c) => {
+    c.meshes = { shoe: { grid: 8, r: 8, segments: [['foot', [14, 31], [26, 31]]] } };
+    c.regions = { leg: 'shin' };
+    ((c.motion as Record<string, unknown>).tracks as unknown[]).push({ bone: 'foot', prop: 'rotate', amp: 1, period: 4, phase: 0 });
+  });
+  say(
+    'RG140_WHERE_THE_IDLE_GIVES_THE_BONE_A_CONTROL_THE_MODE_GOES_ON_THE_CONTROL_AND_THE_BONE_UNDER_IT_INHERITS_NORMALLY',
+    ctl.rig.bones.map((b) => b.name).join(',') === 'root,shin,foot_ctl,foot,tail' &&
+      bone(ctl, 'foot_ctl') === '{"name":"foot_ctl","parent":"shin","x":20,"y":0,"inherit":"noRotationOrReflection"}' &&
+      bone(ctl, 'foot') === '{"name":"foot","parent":"foot_ctl","x":0,"y":0}' &&
+      bone(ctlPlain, 'foot_ctl') === '{"name":"foot_ctl","parent":"shin","rotation":90,"x":20,"y":0}' &&
+      bone(ctlPlain, 'foot') === '{"name":"foot","parent":"foot_ctl","x":0,"y":0}',
+    `bones ${ctl.rig.bones.map((b) => b.name).join(',')}; declared: foot_ctl ${bone(ctl, 'foot_ctl')}, foot ${bone(ctl, 'foot')}; absent: foot_ctl ${bone(ctlPlain, 'foot_ctl')}, foot ${bone(ctlPlain, 'foot')}`,
+    "issue #348: the control stands between the declared parent and the bone and takes the idle's keys, so it is the bone the parent's rotation reaches; on the bone itself the mode would also drop the control's keyed rotation, and the idle would stop turning it",
+  );
 }
 
 /**
@@ -11408,6 +11497,7 @@ function runCheckSuite(): number {
     "issue #245, from the consumer's lying figure: CHAIN_LAG asked a leg chain for amplitudes growing toward the foot, the end that rests. A chain carrying a part declared rests (its bound bone walked up to the chain, as rises finds its chain) is read the opposite way — non-increasing, the planted growing chain refused at its first link that grows — while the lag is kept, since the declaration says how far the tip moves and not when; a declared part no chain carries relaxes nothing",
   );
   runAnimationFoldCases(say);
+  runFeetLevelCases(say);
   runRigcIdentityCases(say);
   return bad();
 }
@@ -11485,6 +11575,131 @@ function runRigcIdentityCases(say: (name: string, ok: boolean, detail: string, w
         !existsSync(join(dir, 'stage', 'out', 'rig.json')),
       `rig stage through the 2.33.0 fake: ${(stage?.problems ?? []).map((q) => `${q.code}: ${q.object} — ${q.detail}`).join(' | ') || 'accepted'}; rig.json written: ${existsSync(join(dir, 'stage', 'out', 'rig.json'))}`,
       "issue #337: the rig stage's gate is rigc's build, and its refusal is where the face-axis rig's `axes` would be refused by an older rigc; it names that rigc beside rigc's own line, and nothing is written",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Issue #348: FEET_STAY_LEVEL, through the CLI on the shoe-on-a-shin fixture (fixtures/rig.ts, every figure derived
+ * there): `kick` turns `shin` and back over 1 s, so at 12 fps 13 frames are read, of which the 11 between t = 0 and
+ * t = 1 have `shin` turned. Inheriting normally the shoe turns with the shin; with `inherit: "noRotationOrReflection"`
+ * on `foot` it does not. The skeleton stores its numbers as float32, so a turn of 30 reads 30.000001 [observed]; the
+ * controls hold the figure within 0.001 of the hand value for that reason alone.
+ */
+function runFeetLevelCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('feet-level');
+  try {
+    const checked = (label: string, inherit: string | undefined, degrees: number | null, edit: (c: Record<string, unknown>) => void = () => {}): { status: number; out: string; fig: Record<string, unknown> | null } => {
+      const c = shoeConfig(inherit, degrees !== null);
+      edit(c);
+      const f = writeRigFixture(join(dir, label), c, shoeImages(), shoeParts());
+      if (degrees !== null) {
+        mkdirSync(join(dir, label, 'anims'), { recursive: true });
+        writeFileSync(join(dir, label, 'anims', 'extra.json'), `${JSON.stringify(shoeKick(degrees), null, 2)}\n`);
+      }
+      const rr = runCli(['rig', '--config', f.config, '--parts', f.parts, '--out', join(dir, label, 'rig')]);
+      if (rr.status !== 0) return { status: rr.status, out: rr.out, fig: null };
+      const r = runCli(['check', '--rig', join(dir, label, 'rig'), '--parts', f.parts, '--out', join(dir, label, 'out')]);
+      return { ...r, fig: readJsonFile(join(dir, label, 'out', 'check.json')) };
+    };
+    const lineOf = (fig: Record<string, unknown> | null): Record<string, unknown> | null => {
+      const l = fig?.[LEVEL_LINE];
+      return typeof l === 'object' && l !== null ? (l as Record<string, unknown>) : null;
+    };
+    const footOf = (fig: Record<string, unknown> | null): Record<string, unknown> => ((lineOf(fig)?.feet as Array<Record<string, unknown>> | undefined)?.[0] ?? {});
+    const worstOf = (fig: Record<string, unknown> | null): Record<string, unknown> => (footOf(fig).worst as Record<string, unknown> | null) ?? {};
+    const near = (v: unknown, want: number): boolean => typeof v === 'number' && Math.abs(v - want) < 0.001;
+    const summary = (out: string): string => out.split('\n').find((l) => l.startsWith('check: ')) ?? 'no summary';
+    const show = (r: { status: number; out: string; fig: Record<string, unknown> | null }): string =>
+      `exit ${r.status}, ${String(lineOf(r.fig)?.status ?? 'absent')}, foot ${JSON.stringify(footOf(r.fig))}, "${summary(r.out)}"`;
+
+    // CK405 — the planted tilt (the shoe rides the shin) and the positive (inherit declared).
+    const tilted = checked('tilted', undefined, 30);
+    const level = checked('level', 'noRotationOrReflection', 30);
+    const tiltFail = failLine(tilted.out, `CHECK_${LEVEL_LINE}`);
+    const keys = level.fig === null ? [] : Object.keys(level.fig);
+    say(
+      'CK405_A_SHOE_THAT_TURNS_WITH_ITS_SHIN_FAILS_NAMING_THE_BONE_AND_WITH_INHERIT_DECLARED_IT_PASSES',
+      tilted.status === 1 &&
+        lineOf(tilted.fig)?.status === 'FAIL' &&
+        footOf(tilted.fig).bone === 'foot' &&
+        footOf(tilted.fig).hangs_from === 'shin' &&
+        footOf(tilted.fig).frames_posed === 11 &&
+        near(worstOf(tilted.fig).degrees, 30) &&
+        worstOf(tilted.fig).frame === 6 &&
+        worstOf(tilted.fig).turned === 'shin' &&
+        tiltFail !== null &&
+        tiltFail.includes('footwear part "shoe" on bone "foot" (hangs from "shin")') &&
+        tiltFail.includes('"shin" is turned 30 degrees from its setup pose') &&
+        tiltFail.includes(`within ±${LEVEL_BAR_DEGREES} degrees of level (its setup pose) is required`) &&
+        tiltFail.includes("HQ's line (rig-c/parts#347 ruling 4)") &&
+        tiltFail.includes('through "foot" (inherit normal)') &&
+        tiltFail.endsWith(`(see rig-parts guide CHECK_${LEVEL_LINE})`) &&
+        level.status === 0 &&
+        lineOf(level.fig)?.status === 'PASS' &&
+        footOf(level.fig).frames_posed === 11 &&
+        near(worstOf(level.fig).degrees, 0) &&
+        JSON.stringify(worstOf(level.fig).through) === '[{"bone":"foot","inherit":"noRotationOrReflection"}]' &&
+        keys.indexOf(LEVEL_LINE) === keys.indexOf(FOLD_LINE) + 1 &&
+        summary(level.out).startsWith('check: PASS; 7 of 11 bar(s) measured'),
+      `tilted: ${show(tilted)}; ${tiltFail?.trim().slice(0, 400) ?? 'no FAIL line'}… | level: ${show(level)}; key after ${keys[keys.indexOf(LEVEL_LINE) - 1] ?? 'nothing'}`,
+      "issue #348: a foot bone inheriting its shin's rotation tilts the shoe exactly as far as the shin turns (#347's measurement), which no bar saw; read off rig-c's posed geometry, the planted 30-degree kick fails naming the part, the foot bone, the shin and the inherit the turn came through, and the same kick with the foot declared noRotationOrReflection holds the shoe at its setup angle. The bar is HQ's ±10 degrees and is printed as HQ's",
+    );
+
+    // CK406 — the bar reads the angle, not the declaration: an 8-degree kick inheriting normally passes.
+    const small = checked('small', undefined, 8);
+    say(
+      'CK406_A_SHOE_THAT_TURNS_WITH_ITS_SHIN_BY_LESS_THAN_THE_BAR_PASSES_WITH_THE_TURN_WRITTEN',
+      small.status === 0 && lineOf(small.fig)?.status === 'PASS' && near(worstOf(small.fig).degrees, 8) && worstOf(small.fig).turned === 'shin',
+      `8-degree kick, inherit absent: ${show(small)}`,
+      "issue #348: the check holds the drawing's angle, not a mode — a shoe that rides its shin by 8 degrees is within HQ's ±10, and the turn is written so the margin can be read",
+    );
+
+    // CK407 — no frame turns the shin (the idle alone): SKIP with the reason, not counted as measured.
+    const still = checked('still', undefined, null);
+    say(
+      'CK407_WITH_NO_FRAME_TURNING_A_BONE_ABOVE_THE_FOOT_THE_LINE_SAYS_SKIP_AND_IS_NOT_COUNTED',
+      still.status === 0 &&
+        lineOf(still.fig)?.status === 'SKIP' &&
+        String(lineOf(still.fig)?.reason).startsWith('no frame of "idle" turns a bone above "foot" (which "shoe" rides)') &&
+        footOf(still.fig).frames_posed === 0 &&
+        summary(still.out).includes(`skipped (`) &&
+        summary(still.out).includes(LEVEL_LINE),
+      `the idle alone: ${show(still)}; reason ${String(lineOf(still.fig)?.reason)}`,
+      'a foot no frame poses was never seen while its leg moved; that is an absence, said by name, never a pass',
+    );
+
+    // CK408 — a shoe on root hangs from nothing: no line, and the beside-the-idle sentence is the one before #348.
+    const rooted = checked('rooted', undefined, 30, (c) => {
+      c.regions = { leg: 'shin', shoe: 'root' };
+    });
+    const beside = rooted.out.split('\n').find((l) => l.includes('beside the idle:')) ?? '';
+    say(
+      'CK408_A_SHOE_ON_ROOT_HANGS_FROM_NOTHING_SO_NO_LINE_IS_WRITTEN_AND_NOTHING_ELSE_MOVES',
+      rooted.status === 0 && rooted.fig !== null && !(LEVEL_LINE in rooted.fig) && !rooted.out.includes(`${LEVEL_LINE}:`) && beside.endsWith(`${FOLD_LINE} reads each for folds, every other bar here reads the idle`) && summary(rooted.out).startsWith('check: PASS; 6 of 10 bar(s) measured'),
+      `shoe on root: ${show(rooted)}; ${beside.trim()}`,
+      'every public example carries its shoes on root; a rig with no foot under another bone writes the check.json keys and the lines it wrote before (the chain suite holds the examples\' check.json)',
+    );
+
+    // CK409 — the instrument by hand, and the bar's place among the bars.
+    const sq = [-1, -1, 1, -1, 1, 1, -1, 1];
+    const turnBy = (deg: number): number[] => {
+      const a = (deg * Math.PI) / 180;
+      const out: number[] = [];
+      for (let i = 0; i < sq.length; i += 2) out.push(sq[i] * Math.cos(a) - sq[i + 1] * Math.sin(a) + 5, sq[i] * Math.sin(a) + sq[i + 1] * Math.cos(a) - 3);
+      return out;
+    };
+    const t30 = drawingTurn(sq, turnBy(30));
+    const tm12 = drawingTurn(sq, turnBy(-12));
+    const point = drawingTurn([2, 2], [3, 3]);
+    const notMet = barsNotMet({ gate_spine_html_green: true, loop_max_diff: 0, [LEVEL_LINE]: { status: 'FAIL' } });
+    say(
+      'CK409_THE_DRAWINGS_TURN_IS_THE_LEAST_SQUARES_ROTATION_AND_A_FAILED_LEVEL_LINE_IS_A_BAR_NOT_MET',
+      t30 !== null && Math.abs(t30 - 30) < 1e-9 && tm12 !== null && Math.abs(tm12 + 12) < 1e-9 && point === null && JSON.stringify(notMet) === JSON.stringify([LEVEL_LINE]) && ACCEPTABLE_BARS.includes(LEVEL_LINE),
+      `a unit square turned 30 and moved: ${String(t30)}; turned -12: ${String(tm12)}; one point: ${String(point)}; barsNotMet of a FAIL line: ${JSON.stringify(notMet)}; compose may accept it: ${ACCEPTABLE_BARS.includes(LEVEL_LINE)}`,
+      'by definition: a rigid turn of a centred set by a reads back a (atan2 of sin a and cos a times the same sum), whatever it was moved by; one point has no direction. A FAIL is a bar not met, which compose --accept may take as it takes the fold bar',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -25350,6 +25565,17 @@ function runAutoMeshSuite(): number {
     "issue #165 item 1: the derivation under test is deriveEnvelope with the LCA as reference and the slot's bone handed as a bound bone, so every bound bone has a chain the helper composes; the figures are the helper's own definition evaluated by hand, so a reference or chain read wrongly moves one",
   );
 
+  // EV46 — issue #348: a bound bone's declared inherit mode is handed to rig-c as written, and rig-c's own refusal stops the envelope.
+  const basis46: EnvelopeBasis = { ...basisEv, bones: treeEv.map((b) => (b.name === 'neck' ? { ...b, inherit: 'onlyTranslation' } : b)) };
+  const plain46 = deriveEnvelope(basisEv, 'chest', ['chest', 'neck'], [0, 0]);
+  const declared46 = deriveEnvelope(basis46, 'chest', ['chest', 'neck'], [0, 0]);
+  say(
+    'EV46_A_BOUND_BONES_DECLARED_INHERIT_MODE_REACHES_RIG_C_AND_ITS_REFUSAL_STOPS_THE_ENVELOPE',
+    'envelope' in plain46 && 'stops' in declared46 && declared46.stops.length === 1 && declared46.stops[0].code === 'SKINNING_RANGE_UNSUPPORTED' && declared46.stops[0].detail.includes('"onlyTranslation"'),
+    `neck as written -> ${'envelope' in plain46 ? 'an envelope' : JSON.stringify(plain46)}; neck onlyTranslation -> ${'stops' in declared46 ? declared46.stops.map((x) => `${x.bone} ${x.code}: ${x.detail}`).join(' | ') : 'an envelope'}`,
+    "issue #348: this derivation used to write every setup's inherit as normal because the rig wrote none; a declared mode is now carried as the rig writes it, and rig-c, whose helper composes a chain only under normal, refuses it by name",
+  );
+
   // EV03 — where every bound bone hangs below the slot's bone, the LCA is the slot's bone and the LCA derivation is
   // today's byte for byte (the five parts that already send). Planted: skirt_a added to the bound bones — the reference
   // moves to hip and the two derivations must differ. And `reproduces`, the tool's check that its own slot-bone
@@ -27475,6 +27701,26 @@ function runAutoStageBCases(say: (name: string, ok: boolean, detail: string, why
       stopTerms(flat) === 'tracks[].epsilon',
     `fixture: A ${A} deg, θ ${theta1}; derived ${'stops' in d39 ? `stops [${stopTerms(d39)}]` : `${thetas(d39)}, gradation ${d39.amplitude.gradation}`}; with G 1 -> ${thetas(g39)}; row ${JSON.stringify(posRow?.motion_amplitude).slice(0, 300)}; hand rig -> ${thetas(rules)}; Bézier ${JSON.stringify(bez)}; shear -> ${stopTerms(shear)}; group -> ${stopTerms(group)}; constraint -> ${stopTerms(withConstraint)}; ε 0 -> ${stopTerms(flat)}`,
     'issue #126 Q2: parts declares θ and ε from the motion it already declares; θ = ‖M − I‖ of the pair\'s relative linear part (rig-c §8: 2 sin(α/2), |s − 1|; a translation leaves it unchanged), ε the part\'s motion bound; the gradation G is the author\'s or null (rigc#1291), never a reason to stop — every other underivable term still stops the field by name',
+  );
+
+  // MO117 — issue #348: a key that reaches a bound bone through a bone declaring an inherit mode other than normal is
+  // a stopped term naming the bone and its mode; the same bones with "normal" written derive exactly as with none.
+  const inheritBones = (m: string): Array<{ name: string; parent?: string; inherit?: string }> => handBones.map((b) => (b.name === 'b' ? { ...b, inherit: m } : b));
+  const rotA = [{ bone: 'a', property: 'rotate', keys: [key(10)] }];
+  const deriveWith = (m: string): AmplitudeDerivation => deriveMotionAmplitude({ bones: inheritBones(m), motion: handMotion(rotA), constraints: 0, bound: ['a', 'b', 'c'], epsilon: 2, gradation: 0.5 });
+  const dropped117 = deriveWith('noRotationOrReflection');
+  const normal117 = deriveWith('normal');
+  const none117 = deriveMotionAmplitude({ bones: handBones, motion: handMotion(rotA), constraints: 0, bound: ['a', 'b', 'c'], epsilon: 2, gradation: 0.5 });
+  say(
+    'MO117_A_KEY_REACHING_A_BOUND_BONE_THROUGH_A_DECLARED_INHERIT_MODE_STOPS_ITS_TERM_BY_NAME',
+    'stops' in dropped117 &&
+      dropped117.stops.length === 1 &&
+      dropped117.stops[0].term === 'tracks[a.rotate#0].pairs[].theta' &&
+      dropped117.stops[0].detail.includes('"b" declares inherit "noRotationOrReflection"') &&
+      JSON.stringify(normal117) === JSON.stringify(none117) &&
+      'amplitude' in none117,
+    `b noRotationOrReflection -> ${'stops' in dropped117 ? dropped117.stops.map((x) => `${x.term}: ${x.detail}`).join(' | ') : 'derived'}; b "normal" written ${JSON.stringify(normal117) === JSON.stringify(none117) ? 'equals' : 'DIFFERS FROM'} none`,
+    "issue #348: θ is composed on the rule that a bone takes its parent's rotation and scale; a declared mode breaks that rule for every bone under it, so the term is stopped rather than sent understated (rig-c's default, normal, written out, changes nothing)",
   );
 
   // MO40 — the five rows: in the row's residuals as rig-c reports them, none bounded, none the worst residual.

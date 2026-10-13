@@ -108,6 +108,16 @@
  *   keys, a leaf twin of every bone a carried part binds, and one transform
  *   constraint per part carrying its twins `fraction · turn.x` in world x,
  *   after the config's own constraints. Without the field nothing is added.
+ * - **A bone's `inherit`**, only where config.bones declares one (issue
+ *   #348): rig-c's mode name, written to that bone in rig.json as declared.
+ *   The bone's setup rotation is then the turn from where rig-c's own poser
+ *   puts it with a local rotation of 0 — under a mode that drops the parent's
+ *   rotation that is not the parent's turn — so the bone still stands
+ *   upright, or along its tip, at the setup pose. Where the idle gives the
+ *   bone a control, the mode goes on the control, the bone that hangs from the
+ *   declared parent, and the bone under it inherits normally: the idle's keys
+ *   moved onto the control still turn the bone. Without the field no byte of
+ *   any output moves.
  *
  * Every part image is padded by {@link PAD} transparent pixels on each side
  * before it is meshed or placed, and the padded image is what `images/`
@@ -126,6 +136,7 @@ import { type AutoSpec, type BoneEntry, type WeightRule, type CharacterConfig, t
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { eyeLineDegrees } from './headframe.ts';
+import type { RigBoneInherit } from 'rig-c/src/rig.ts';
 import { f32 } from 'rig-c/compile';
 import type { MeshCounts, MeshQualityReport, MeshReductionInput, MotionAmplitude, ReducedMesh, Termination } from 'rig-c/mesh';
 import { type AmplitudeRow, amplitudeRow, partAmplitude, withAmplitude } from './autoamplitude.ts';
@@ -382,6 +393,8 @@ interface Bone {
   parent: string | null;
   x: number;
   y: number;
+  /** config.bones' `inherit`, on the bone that hangs from the declared parent (issue #348); absent when none is declared. */
+  inherit?: RigBoneInherit;
 }
 
 export interface RigBone {
@@ -393,6 +406,8 @@ export interface RigBone {
   rotation?: number;
   x: number;
   y: number;
+  /** rig-c's inherit mode, written only where config.bones declares one (issue #348). */
+  inherit?: RigBoneInherit;
 }
 
 export interface WeightEntry {
@@ -944,7 +959,7 @@ export function buildRig(
       chains.set(e.chain, names);
       chainLines.set(e.chain, polyline);
     } else {
-      B.set(e.name, { name: e.name, parent: e.parent, x: e.at[0], y: e.at[1] });
+      B.set(e.name, { name: e.name, parent: e.parent, x: e.at[0], y: e.at[1], ...(e.inherit === undefined ? {} : { inherit: e.inherit }) });
       if (e.tip !== undefined) {
         if (same(e.at, e.tip)) {
           fail(
@@ -1103,9 +1118,10 @@ export function buildRig(
   // rigc's line (`ctlRemedies`, src/build.ts).
   refuseIfAny(problems);
   for (const k of controls) {
-    const b = B.get(k) as Bone;
+    const { inherit, ...b } = B.get(k) as Bone;
     const ctl = `${k}${CONTROL_SUFFIX}`;
-    B.set(ctl, { name: ctl, parent: b.parent, x: b.x, y: b.y });
+    // Issue #348: the declared mode belongs to the bone hanging from the declared parent, which is now the control.
+    B.set(ctl, { name: ctl, parent: b.parent, x: b.x, y: b.y, ...(inherit === undefined ? {} : { inherit }) });
     B.set(k, { ...b, parent: ctl });
   }
   moveKeysToControls(motion, controls);
@@ -1197,11 +1213,22 @@ export function buildRig(
     const inherits = a === undefined && !faceRoots.has(b.name) && faceFramed.has(b.parent);
     if (faceRoots.has(b.name) || inherits) faceFramed.add(b.name);
     const target = a?.rotation ?? faceTurn.get(b.name) ?? (inherits ? up : 0);
-    const rotation = places(normaliseDegrees(target - up));
-    turn.set(b.name, places(up + rotation));
     const frame = computeExactFrameTransforms(bones).get(b.parent) as BoneTransform;
     const [x, y] = toBoneLocal(frame, spineX(b.x), spineY(b.y));
-    bones.push({ name: b.name, parent: b.parent, ...(a === undefined ? {} : { length: a.length }), ...(a !== undefined || rotation !== 0 ? { rotation } : {}), x: places(x), y: places(y) });
+    if (b.inherit === undefined) {
+      const rotation = places(normaliseDegrees(target - up));
+      turn.set(b.name, places(up + rotation));
+      bones.push({ name: b.name, parent: b.parent, ...(a === undefined ? {} : { length: a.length }), ...(a !== undefined || rotation !== 0 ? { rotation } : {}), x: places(x), y: places(y) });
+      continue;
+    }
+    // Issue #348: where rig-c's poser puts the bone with no rotation of its own, under its declared mode — the
+    // parent's turn under `normal` and the two scale modes, 0 where the mode drops the parent's rotation — and the
+    // turn from there to the target; its world turn is then read back off the same poser, not summed.
+    const placedAt = { name: b.name, parent: b.parent, x: places(x), y: places(y), inherit: b.inherit };
+    const posed = (r: number): BoneTransform => computeExactFrameTransforms([...bones, { ...placedAt, rotation: r }]).get(b.name) as BoneTransform;
+    const rotation = places(normaliseDegrees(target - normaliseDegrees(posed(0).worldRotation)));
+    turn.set(b.name, places(normaliseDegrees(posed(rotation).worldRotation)));
+    bones.push({ name: b.name, parent: b.parent, ...(a === undefined ? {} : { length: a.length }), ...(a !== undefined || rotation !== 0 ? { rotation } : {}), x: places(x), y: places(y), inherit: b.inherit });
   }
   // ---- the head's up axis (issue #250) ----------------------------------
   // `head` keeps its frame, so every key on it and under it — the idle, the blink's brow drop, an authored
@@ -1892,7 +1919,15 @@ export function flattenRig(rig: RigSpec, sense: 1 | -1 = 1): RigSpec {
   const read = rig.bones.map((b) => ({ ...b, rotation: (b.rotation ?? 0) * sense }));
   const world = computeExactFrameTransforms(read);
   const turn = new Map<string, number>();
-  for (const b of rig.bones) turn.set(b.name, placed((b.parent === undefined ? 0 : (turn.get(b.parent) as number)) + (b.rotation ?? 0), OFFSET_PLACES));
+  // A bone with a declared inherit mode (issue #348) is read off rig-c's poser, which honours the mode; every other is the sum, as before.
+  for (const b of rig.bones) {
+    turn.set(
+      b.name,
+      b.inherit === undefined
+        ? placed((b.parent === undefined ? 0 : (turn.get(b.parent) as number)) + (b.rotation ?? 0), OFFSET_PLACES)
+        : placed(normaliseDegrees((world.get(b.name) as BoneTransform).worldRotation), OFFSET_PLACES),
+    );
+  }
   const origin = (bone: string): BoneTransform => world.get(bone) as BoneTransform;
   const out = (m: BoneTransform, x: number, y: number): [number, number] => {
     const [wx, wy] = toWorld(m, x, y);
@@ -1902,7 +1937,7 @@ export function flattenRig(rig: RigSpec, sense: 1 | -1 = 1): RigSpec {
   const bones: RigBone[] = rig.bones.filter((b) => b.name !== HEAD_UP_BONE).map((b) => {
     if (b.parent === undefined) return { name: b.name, x: b.x, y: b.y };
     const [x, y] = out(origin(b.parent), b.x, b.y);
-    return { name: b.name, parent: b.parent, x, y };
+    return { name: b.name, parent: b.parent, x, y, ...(b.inherit === undefined ? {} : { inherit: b.inherit }) };
   });
   const slotBone = new Map(rig.slots.map((s) => [s.name, s.bone]));
   const skin: RigSpec['skins']['default'] = {};

@@ -416,7 +416,8 @@ export function writeMergedCheckRig(dir: string, opts: MergedRigOptions): void {
  * front. `under` is the piece cut off the skirt and sent behind: a region on
  * `root`, on no chain. `body` the torso, `face` the face on a bone `head`.
  * `shoes` the feet, a region on the last link of a leg chain hanging from the
- * knee. `arm` the raised forearm, a region on the first link of an arm chain
+ * knee, whose control declares `inherit: "noRotationOrReflection"` (issue
+ * #348), so the shoes turn by the ankle's own swing alone. `arm` the raised forearm, a region on the first link of an arm chain
  * whose links rise from the elbow at the bottom of its box (crop y 36) to
  * crop y 21: its tip is up.
  */
@@ -490,7 +491,10 @@ export function writeSeatedCheckRig(dir: string, opts: { armHangs?: boolean; arm
     ...armLinks,
     { name: 'leg0_ctl', parent: 'root', x: knee.x, y: knee.y },
     { name: 'leg0', parent: 'leg0_ctl', x: 0, y: 0 },
-    { name: 'leg1_ctl', parent: 'leg0', x: ankle.x - knee.x, y: ankle.y - knee.y },
+    // Issue #348: the ankle link drops the knee's rotation, so the swing turns the shoes by the ankle's own 8 degrees,
+    // within FEET_STAY_LEVEL's ±10; inheriting the knee's too, they turned by up to twice that and failed a bar this
+    // figure was not written to read.
+    { name: 'leg1_ctl', parent: 'leg0', x: ankle.x - knee.x, y: ankle.y - knee.y, inherit: 'noRotationOrReflection' },
     { name: 'leg1', parent: 'leg1_ctl', x: 0, y: 0 },
   ];
   const at: Record<string, { x: number; y: number }> = { root: { x: 0, y: 0 }, head, arm0: elbow, arm1: elbow, leg1: ankle };

@@ -86,7 +86,7 @@
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { RIG_SKIN_CONSTRAINT_KEYS, type RigConstraint, type RigSkinConstraintKey } from 'rig-c/src/rig.ts';
+import { RIG_BONE_INHERIT, RIG_SKIN_CONSTRAINT_KEYS, type RigBoneInherit, type RigConstraint, type RigSkinConstraintKey } from 'rig-c/src/rig.ts';
 import { GRID, MAX_SIDE } from './contour.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { isSkeletonName, KEYPOINT_NAMES, type KeypointName, type PosePoints, SKELETON_NAMES, type SkeletonName } from './skeleton.ts';
@@ -227,6 +227,15 @@ export interface SingleBone {
   parent: string;
   at: Point;
   tip?: Point;
+  /**
+   * What the bone takes from its parent's transform (issue #348): one of rig-c's
+   * own mode names (`RIG_BONE_INHERIT`, rig-c's `RigBone.inherit`), passed to
+   * rig.json as written. Absent, rig.json carries no `inherit` and the bone
+   * takes the parent's whole transform (rig-c's default, `normal`). A spelling
+   * outside rig-c's table is refused by name (`CONFIG_BONE_INHERIT`): the
+   * runtime would fold the first letter, and this loader folds and maps nothing.
+   */
+  inherit?: RigBoneInherit;
 }
 
 export interface ChainBones {
@@ -1651,8 +1660,16 @@ function checkBones(c: Check, v: Json): { bones: Set<string>; chains: Map<string
       }
       return;
     }
-    const b = c.object(at, entry, ['name', 'parent', 'at'], ['tip']);
+    const b = c.object(at, entry, ['name', 'parent', 'at'], ['tip', 'inherit']);
     if (b === null) return;
+    // Issue #348: rig-c's own mode names, as its table spells them; nothing is folded, mapped or defaulted.
+    if ('inherit' in b && c.string(`${at}.inherit`, b.inherit) && !(RIG_BONE_INHERIT as readonly string[]).includes(b.inherit)) {
+      c.fail(
+        'CONFIG_BONE_INHERIT',
+        `${at}.inherit`,
+        `is ${show(b.inherit)}; one of rig-c's inherit modes, spelled as its table spells them, is required — ${RIG_BONE_INHERIT.join(', ')} (rig-c's RigBone.inherit; nothing here folds a case or maps a name)`,
+      );
+    }
     if ('parent' in b && c.string(`${at}.parent`, b.parent) && !bones.has(b.parent)) {
       c.fail('CONFIG_NAME_RESOLVES', `${at}.parent`, `names "${b.parent}", which is not "${ROOT_BONE}" or a bone declared above it; parents come first`);
     }

@@ -543,3 +543,90 @@ export function faceConfig(eyes: ReadonlyArray<'r' | 'l'> = ['r', 'l']): Record<
     motion: { duration: 4, tracks: [], blink: { t: 1, eyes: ['eye_r', 'eye_l'], brows: ['brow_r', 'brow_l'], squash: 0.12, brow_drop: 1 } },
   };
 }
+
+/**
+ * The shoe-on-a-shin fixture (issue #348): one `footwear` part on a foot bone
+ * that hangs from a shin bone, on a 40x40 rig, so `root` stands at (20, 40).
+ *
+ * ## The bones, by hand
+ *
+ * `shin` under `root` at (20, 8) with its tip at (20, 28): in Spine's axes
+ * (x from the canvas centre 20, y up from 40) it stands at (0, 32) and points
+ * at (0, 12), so it is turned **-90 degrees**, **length 20**. `foot` under
+ * `shin` at (20, 28), Spine (0, 12), no tip. Its offset in `shin`'s frame is
+ * the world vector (0, -20) read in a frame turned -90: R(90)(0, -20) =
+ * **(20, 0)**.
+ *
+ * - Inheriting normally, `foot` stands upright (world 0) only with a local
+ *   rotation of 0 - (-90) = **90**.
+ * - With `inherit: "noRotationOrReflection"` (or `"onlyTranslation"`) rig-c's
+ *   poser gives the bone with a local rotation of 0 the world rotation 0, so
+ *   it is written with **no rotation**.
+ *
+ * Either way `foot` is upright at the setup pose, and `shoe` — at (14, 28),
+ * 12x6, centre (20, 31), Spine (0, 9) — is the region **(0, -3)** in its
+ * frame, with no rotation. `leg` (`legwear`, which no line reads) — at
+ * (16, 10), 8x18, centre (20, 19), Spine (0, 21) — rides `shin`: the world
+ * vector (0, -11) in its frame is R(90)(0, -11) = **(11, 0)**, the image
+ * turned back by **90**. Two regions, because rigc's A27 refuses a page
+ * holding one.
+ *
+ * ## The motion
+ *
+ * The idle sways only `tail`, a bone under `root` at (34, 20) that carries
+ * nothing (rigc refuses an idle with no key); the feet hold still, which
+ * BREATH_VISIBLE's feet half requires. {@link shoeKick} turns `shin` by `degrees` at t = 0.5 s and back;
+ * at 12 fps frame 6 is t = 0.5 s exactly. Inheriting normally, `foot` and the
+ * shoe turn by `degrees` with the shin; under a mode that drops the parent's
+ * rotation they turn by **0**.
+ */
+export const SHOE_RIG: [number, number] = [40, 40];
+
+export function shoeParts(): PartsFile {
+  return {
+    rig_size: [...SHOE_RIG],
+    scale_rig_per_source: 0.5,
+    parts: [
+      { name: 'leg', from: 'full:legwear', x: 16, y: 10, w: 8, h: 18, opaque_px: 144, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 },
+      { name: 'shoe', from: 'full:footwear', x: 14, y: 28, w: 12, h: 6, opaque_px: 72, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 },
+    ],
+    ghost_px: {},
+  };
+}
+
+export function shoeImages(): Map<string, Raster> {
+  return new Map([
+    ['leg', block(8, 18)],
+    ['shoe', block(12, 6)],
+  ]);
+}
+
+/** The shoe fixture's config; `inherit` goes on `foot` when given, and `animations_from` names `anims/extra.json` when `withAnimations`. */
+export function shoeConfig(inherit?: string, withAnimations = true): Record<string, unknown> {
+  return {
+    key: 'shoe',
+    assemble: {
+      rig_scale: 0.5,
+      plan: [
+        ['leg', 'full', 'legwear'],
+        ['shoe', 'full', 'footwear'],
+      ],
+    },
+    bones: [
+      { name: 'shin', parent: 'root', at: [20, 8], tip: [20, 28] },
+      { name: 'foot', parent: 'shin', at: [20, 28], ...(inherit === undefined ? {} : { inherit }) },
+      { name: 'tail', parent: 'root', at: [34, 20] },
+    ],
+    meshes: {},
+    regions: { leg: 'shin', shoe: 'foot' },
+    motion: { duration: 4, tracks: [{ bone: 'tail', prop: 'rotate', amp: 1, period: 4, phase: 0 }], ...(withAnimations ? { animations_from: 'anims/extra.json' } : {}) },
+  };
+}
+
+/** A `rigc-motion/1` animations file: `kick` turns `shin` by `degrees` at t = 0.5 s and back, over 1 s. */
+export function shoeKick(degrees: number): Record<string, unknown> {
+  return {
+    spec: 'rigc-motion/1',
+    animations: { kick: { duration: 1, tracks: [{ bone: 'shin', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [degrees] }, { t: 1, v: [0] }] }] } },
+  };
+}

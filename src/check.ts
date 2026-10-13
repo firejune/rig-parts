@@ -59,7 +59,10 @@
  * missing from both. When `motion.json` holds an animation, one more bar,
  * `ANIMATIONS_DO_NOT_FOLD` (issues #320, #333): rigc's own `render --folds`
  * over every animation, the idle included, physics constraints left out
- * ({@link FOLD_LINE}). The part-alone renders, the shut-eye still, the keyed
+ * ({@link FOLD_LINE}). Beside it, where a `footwear` part rides a bone that
+ * hangs from another, `FEET_STAY_LEVEL` (issue #348): the same render, with
+ * `--geometry`, read for how far each such part's drawing turns while a bone
+ * above it is turned ({@link LEVEL_LINE}). The part-alone renders, the shut-eye still, the keyed
  * build and the fold render are scratch (`_isolated/`, `_still/`, `_loop/`,
  * `_folds/`), removed before the stage returns.
  *
@@ -77,7 +80,7 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { measureRecomposite, type RecompositeFigures, recompositeRecord, scenePhrase, sourceInRig } from './assemble.ts';
-import { cropToSpineY } from './coords.ts';
+import { cropToSpineY, normaliseDegrees } from './coords.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 import { framesInside, IDLE_FPS, TIME_SLACK } from './motion.ts';
 import {
@@ -148,6 +151,7 @@ import {
   type SeamPair,
   stretchRequirementLine,
 } from './requirements.ts';
+import { RIG_BONE_INHERIT } from 'rig-c/src/rig.ts';
 import { alphaComposite } from './raster/composite.ts';
 import { readPng, writePng } from './raster/png.ts';
 import { newFloatImage, newRaster, type Raster } from './raster/types.ts';
@@ -1717,6 +1721,8 @@ export interface CheckFigures {
   TEXTURE_STRETCH: JudgementLine;
   /** Written whenever motion.json holds an animation, the idle included (issues #320, #333): {@link FoldsLine}. */
   [FOLD_LINE]?: FoldsLine;
+  /** Written only where a `footwear` part rides a bone with a parent and motion.json holds an animation (issue #348): {@link LevelLine}. */
+  [LEVEL_LINE]?: LevelLine;
   RECOMPOSITE_HOLES: ReportedLine;
   /** Written only under `--source` (issue #77): the setup pose against the painting, REPORTED. */
   SETUP_POSE_VS_SOURCE?: ReportedLine;
@@ -1768,6 +1774,51 @@ export interface RequirementsBlock {
  */
 export const FOLD_LINE = 'ANIMATIONS_DO_NOT_FOLD';
 
+/**
+ * The bar over every animation, the idle included, for a `footwear` part that
+ * rides a bone hanging from another (issue #348): while a bone above the
+ * part's bone is turned, the part's drawing stays within
+ * {@link LEVEL_BAR_DEGREES} of its setup pose.
+ *
+ * ⭐ **What the rig declares, and nothing else.** The feet are the parts
+ * parts.json says come from a See-through `footwear` layer (the feet
+ * `BREATH_VISIBLE` and `STILL_REGIONS_DARK` read); each one's bone is the bone
+ * rig.json's slot of the same name sits on, and "the shin" is whatever bone
+ * that bone hangs from, read off rig.json's `parent` — nothing here knows a
+ * foot or a shin by name. A part on a bone with no parent (`root`, as on every
+ * public example) hangs from nothing, so it is not read; a rig with no such
+ * part, or no animation, writes no line, and its check.json keeps the keys it
+ * always had.
+ *
+ * - **Posed**: a frame on which some bone above the part's bone — its parent,
+ *   or any bone over that up to the root — has a world rotation other than
+ *   its setup pose's, read off the `geometry.json` rig-c's render writes. The
+ *   nearest such bone is named, with its turn. No threshold: a frame is posed
+ *   or it is not.
+ * - **The sole's angle**: the part's drawing has no sole a program can find,
+ *   so what is held is the drawing itself — the turn of the least-squares
+ *   rotation carrying its setup-pose vertices onto the frame's, both centred,
+ *   from the same `geometry.json` ({@link drawingTurn}). For a region, its four
+ *   corners turn rigidly with its bone and this is the bone's turn exactly;
+ *   for a mesh it is the best rotation the skinned vertices admit. Level is
+ *   the setup pose, the painting's own: the check cannot see where the sole is
+ *   drawn, and the setup pose is the art as painted.
+ * - **The bar** is {@link LEVEL_BAR_DEGREES}, HQ's line — not a figure measured
+ *   here, and stated as HQ's wherever it is printed.
+ *
+ * Read off the fold render ({@link FOLD_LINE}), which then also writes
+ * `--geometry`: the same build, with its physics constraints left out, at the
+ * same rate. A part no frame poses says SKIP in its row; a line every row of
+ * which says SKIP says SKIP and is not counted as measured.
+ */
+export const LEVEL_LINE = 'FEET_STAY_LEVEL';
+
+/** HQ's line (rig-c/parts#347 ruling 4, issue #348): the sole within ±10 degrees of level while the shin is posed. Not measured here. */
+export const LEVEL_BAR_DEGREES = 10;
+
+/** Where the bar comes from, as the line and check.json state it. */
+export const LEVEL_BAR_SOURCE = "HQ's line (rig-c/parts#347 ruling 4), not a figure measured here";
+
 /** The bars `PASS` reads, in the order the summary counts them: the gate, the reference's two, then the judgement lines. */
 export const BARS = ['gate', 'loop', 'seam', ...JUDGEMENT_LINES] as const;
 
@@ -1776,7 +1827,7 @@ export const BARS = ['gate', 'loop', 'seam', ...JUDGEMENT_LINES] as const;
  * still take (issue #203): every bar of {@link BARS} but the gate, which is
  * rig-c's and never accepted, and {@link FOLD_LINE} (issue #320).
  */
-export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== 'gate'), FOLD_LINE];
+export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== 'gate'), FOLD_LINE, LEVEL_LINE];
 
 /**
  * The bars a `check.json`, as `check` writes it, says were not met, in
@@ -1784,7 +1835,7 @@ export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== '
  * loop when `loop_max_diff` is a number other than {@link LOOP_MAX_BAR}, the
  * seam when its figures fail {@link seamFails}, and each judgement line whose
  * status is `FAIL`, then {@link FOLD_LINE} when it is written and `FAIL`
- * (issue #320). A bar that measured nothing (null figures, `SKIP`) is not
+ * (issue #320), then {@link LEVEL_LINE} the same way (issue #348). A bar that measured nothing (null figures, `SKIP`) is not
  * one of them. Read off the file rather than its problems, because the file is
  * all a finished build leaves (issue #203).
  */
@@ -1795,7 +1846,7 @@ export function barsNotMet(fig: Readonly<Record<string, unknown>>): string[] {
   // A check.json written before issue #216 has no seam_frame_scale; it is read by the frame count, the bar it was written under.
   const scale = typeof fig.seam_frame_scale === 'number' ? fig.seam_frame_scale : 1;
   if (typeof fig.seam_mean === 'number' && typeof fig.seam_px_over_40 === 'number' && seamFails(fig.seam_mean, fig.seam_px_over_40, scale)) out.push('seam');
-  for (const n of [...JUDGEMENT_LINES, FOLD_LINE]) {
+  for (const n of [...JUDGEMENT_LINES, FOLD_LINE, LEVEL_LINE]) {
     const l = fig[n];
     if (typeof l === 'object' && l !== null && (l as { status?: unknown }).status === 'FAIL') out.push(n);
   }
@@ -1845,9 +1896,10 @@ export interface CheckReport {
  * idle (issue #183), or null when it holds none, so a rig of the idle alone
  * prints what it printed before.
  */
-export function besideIdleLine(names: readonly string[]): string | null {
+export function besideIdleLine(names: readonly string[], level = false): string | null {
   if (names.length === 0) return null;
-  return `beside the idle: ${names.length} animation(s), ${names.join(', ')} — built and gated by rigc with the rig; ${FOLD_LINE} reads each for folds, every other bar here reads the idle`;
+  const readers = level ? `${FOLD_LINE} reads each for folds and ${LEVEL_LINE} for how far the feet turn` : `${FOLD_LINE} reads each for folds`;
+  return `beside the idle: ${names.length} animation(s), ${names.join(', ')} — built and gated by rigc with the rig; ${readers}, every other bar here reads the idle`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2022,6 +2074,193 @@ export function foldsLine(named: readonly string[], fps: number, physicsLeftOut:
   };
 }
 
+// ---------------------------------------------------------------------------
+// the feet stay level while a bone above them turns (issue #348)
+// ---------------------------------------------------------------------------
+
+/** A `footwear` part on a bone that hangs from another, as rig.json declares it. */
+export interface LevelFoot {
+  part: string;
+  /** The bone the part's slot sits on. */
+  bone: string;
+  /** That bone's parent in rig.json. */
+  hangs_from: string;
+}
+
+/** The frame a foot's drawing turned furthest on, among the frames a bone above it was turned. */
+export interface LevelWorst {
+  animation: string;
+  frame: number;
+  time: number;
+  /** The drawing's turn from its setup pose, degrees, CCW, six places. */
+  degrees: number;
+  /** The nearest bone above the part's bone that is turned on that frame, and its turn. */
+  turned: string;
+  turned_degrees: number;
+  /** The bones from the part's bone up to `turned`, `turned` left out, each with its inherit mode as rig.json writes it ("normal", rig-c's default, where it writes none). */
+  through: Array<{ bone: string; inherit: string }>;
+}
+
+export interface LevelRow extends LevelFoot {
+  status: 'PASS' | 'FAIL' | 'SKIP';
+  /** Frames, over every animation, on which a bone above the part's bone is turned and the part is shown. */
+  frames_posed: number;
+  worst: LevelWorst | null;
+}
+
+/** `check.json`'s `FEET_STAY_LEVEL`. */
+export interface LevelLine {
+  status: 'PASS' | 'FAIL' | 'SKIP';
+  /** Only on a SKIP: why nothing was measured. */
+  reason?: string;
+  animations: string[];
+  fps: number;
+  physics_left_out: number;
+  bar_degrees: number;
+  bar: string;
+  feet: LevelRow[];
+}
+
+/** The `footwear` parts the line reads (module comment above {@link LEVEL_LINE}), in parts.json's order: each on a slot of its name whose bone has a parent. */
+export function levelFeet(parts: PartsFile, rig: Record<string, unknown>): LevelFoot[] {
+  const slots = (Array.isArray(rig.slots) ? rig.slots : []).filter(isRecord);
+  const bones = (Array.isArray(rig.bones) ? rig.bones : []).filter(isRecord);
+  const out: LevelFoot[] = [];
+  for (const p of partsTagged(parts, FEET_TAGS)) {
+    const slot = slots.find((sl) => sl.name === p.name);
+    if (slot === undefined || typeof slot.bone !== 'string') continue;
+    const bone = bones.find((b) => b.name === slot.bone);
+    if (bone === undefined || typeof bone.parent !== 'string') continue;
+    out.push({ part: p.name, bone: slot.bone, hangs_from: bone.parent });
+  }
+  return out;
+}
+
+/**
+ * The turn, in degrees CCW (y up), of the least-squares rotation carrying the
+ * points `rest` onto `posed` (flat `x, y` lists, one point per pair), both
+ * centred on their means: atan2(Σ (r × p), Σ (r · p)). Null when the sums are
+ * both 0 — fewer than two distinct points, so no direction to turn.
+ */
+export function drawingTurn(rest: readonly number[], posed: readonly number[]): number | null {
+  const n = rest.length / 2;
+  let rx = 0;
+  let ry = 0;
+  let px = 0;
+  let py = 0;
+  for (let i = 0; i < n; i++) {
+    rx += rest[2 * i];
+    ry += rest[2 * i + 1];
+    px += posed[2 * i];
+    py += posed[2 * i + 1];
+  }
+  rx /= n;
+  ry /= n;
+  px /= n;
+  py /= n;
+  let cross = 0;
+  let dot = 0;
+  for (let i = 0; i < n; i++) {
+    const ax = rest[2 * i] - rx;
+    const ay = rest[2 * i + 1] - ry;
+    const bx = posed[2 * i] - px;
+    const by = posed[2 * i + 1] - py;
+    cross += ax * by - ay * bx;
+    dot += ax * bx + ay * by;
+  }
+  if (cross === 0 && dot === 0) return null;
+  return (Math.atan2(cross, dot) * 180) / Math.PI;
+}
+
+/** A bone's turn from its setup pose to a frame, degrees CCW in (-180, 180], off the two world matrices. */
+export function boneTurn(setup: BoneWorld, frame: BoneWorld): number {
+  return normaliseDegrees(((Math.atan2(frame.c, frame.a) - Math.atan2(setup.c, setup.a)) * 180) / Math.PI);
+}
+
+/** One animation's frames as the fold render wrote them with `--geometry`: the set and its geometry file. */
+export interface LevelReading {
+  animation: string;
+  set: FrameSet;
+  geometryPath: string;
+}
+
+/**
+ * The line from the feet and the readings (module comment above
+ * {@link LEVEL_LINE}); each FAIL row adds one `CHECK_FEET_STAY_LEVEL` problem
+ * naming the part, its bone, the frame and the bones the turn came through.
+ */
+export function levelLine(feet: readonly LevelFoot[], rig: Record<string, unknown>, readings: readonly LevelReading[], fps: number, physicsLeftOut: number, problems: Problem[]): LevelLine {
+  const bones = (Array.isArray(rig.bones) ? rig.bones : []).filter(isRecord);
+  const parentOf = (n: string): string | null => {
+    const b = bones.find((x) => x.name === n);
+    return b !== undefined && typeof b.parent === 'string' ? b.parent : null;
+  };
+  const inheritOf = (n: string): string => {
+    const b = bones.find((x) => x.name === n);
+    return b !== undefined && typeof b.inherit === 'string' ? b.inherit : 'normal';
+  };
+  const rows: LevelRow[] = feet.map((f) => ({ ...f, status: 'SKIP', frames_posed: 0, worst: null }));
+  for (const r of readings) {
+    const geo = readGeometry(r.geometryPath, r.set.written);
+    if (geo === null) geometryProblem(r.geometryPath, `does not exist; \`rigc render --folds --geometry\` writes it, and ${LEVEL_LINE} is read off it`);
+    const shown = attachmentPoses(r.geometryPath, r.set.written);
+    const tracks = new Map<string, BoneTrack>();
+    const track = (n: string): BoneTrack => {
+      const got = tracks.get(n) ?? boneTrackOf(geo, r.geometryPath, r.set, n);
+      if (typeof got === 'string') return geometryProblem(r.geometryPath, got);
+      tracks.set(n, got);
+      return got;
+    };
+    for (const row of rows) {
+      const above: string[] = [];
+      for (let b: string | null = row.hangs_from; b !== null; b = parentOf(b)) above.push(b);
+      r.set.frames.forEach((_, i) => {
+        const turned = above.find((b) => {
+          const t = track(b);
+          return boneTurn(t.setup, t.frames[i]) !== 0;
+        });
+        if (turned === undefined) return;
+        const at = shown[i].get(row.part);
+        if (at === undefined) return;
+        const deg = drawingTurn(at.rest, at.posed);
+        if (deg === null) return;
+        row.frames_posed++;
+        const degrees = round6(deg);
+        if (row.worst !== null && Math.abs(degrees) <= Math.abs(row.worst.degrees)) return;
+        const t = track(turned);
+        const through: Array<{ bone: string; inherit: string }> = [];
+        for (let b: string | null = row.bone; b !== null && b !== turned; b = parentOf(b)) through.push({ bone: b, inherit: inheritOf(b) });
+        row.worst = { animation: r.animation, frame: r.set.frames[i].index, time: t.times[i], degrees, turned, turned_degrees: round6(boneTurn(t.setup, t.frames[i])), through };
+      });
+    }
+  }
+  for (const row of rows) {
+    if (row.worst === null) continue;
+    row.status = Math.abs(row.worst.degrees) > LEVEL_BAR_DEGREES ? 'FAIL' : 'PASS';
+  }
+  const physics = physicsLeftOut === 0 ? '' : `, its ${physicsLeftOut} physics constraint(s) left out`;
+  for (const row of rows) {
+    if (row.status !== 'FAIL' || row.worst === null) continue;
+    const w = row.worst;
+    const how = w.through.map((x) => `"${x.bone}" (inherit ${x.inherit})`).join(', then ');
+    problems.push({
+      code: `CHECK_${LEVEL_LINE}`,
+      object: `footwear part "${row.part}" on bone "${row.bone}" (hangs from "${row.hangs_from}")`,
+      detail:
+        `in animation "${w.animation}" frame ${w.frame} (t = ${w.time}s, rigc render --folds --geometry at ${fps} fps${physics}), "${w.turned}" is turned ${w.turned_degrees} degrees from its setup pose and the part's drawing ${w.degrees} degrees; ` +
+        `within ±${LEVEL_BAR_DEGREES} degrees of level (its setup pose) is required while a bone above it is turned — ${LEVEL_BAR_SOURCE}. ` +
+        `The turn reaches the drawing through ${how}: config.bones' "inherit" on "${row.bone}" says what it takes from "${row.hangs_from}" (rig-c's modes, as its table spells them: ${RIG_BONE_INHERIT.join(', ')})`,
+    });
+  }
+  const status: LevelLine['status'] = rows.some((r) => r.status === 'FAIL') ? 'FAIL' : rows.some((r) => r.status === 'PASS') ? 'PASS' : 'SKIP';
+  const names = readings.map((r) => r.animation);
+  const line: LevelLine = { status, animations: names, fps, physics_left_out: physicsLeftOut, bar_degrees: LEVEL_BAR_DEGREES, bar: LEVEL_BAR_SOURCE, feet: rows };
+  if (status === 'SKIP') {
+    line.reason = `no frame of ${names.map((n) => `"${n}"`).join(', ')} turns a bone above ${rows.map((r) => `"${r.bone}" (which "${r.part}" rides)`).join(', ')}, so no foot was seen while its leg was posed`;
+  }
+  return line;
+}
+
 /**
  * One `CHECK_RIGC_GREEN` per line that says why `rigc <what>` was not green:
  * its FAIL and compile-error lines, or, when there are none, {@link causeLines}.
@@ -2159,6 +2398,10 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   const named = animationNames.filter((n) => n !== 'idle');
   let folds: FoldsLine | null = null;
   const foldProblems: Problem[] = [];
+  // Issue #348: the feet the level line reads, off parts.json and rig.json; none, and nothing below moves.
+  const feet = inp.parts === null ? [] : levelFeet(inp.parts, inp.rig);
+  let level: LevelLine | null = null;
+  const levelProblems: Problem[] = [];
   try {
     if (inp.idleDuration !== null) {
       const render = rigc(['render', '--candidate', buildDir, '--animation', 'idle', '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--geometry', '--out', idleDir]);
@@ -2214,10 +2457,22 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     if (animationNames.length > 0) {
       const fps = IDLE_FPS;
       try {
-        const fr = rigc(['render', '--candidate', keyedBuild('the animations with their physics constraint(s) left out'), '--folds', '--fps', String(fps), '--max', String(FOLD_RENDER_MAX), '--out', foldDir]);
-        if (fr.status !== 0) refuseIfAny(rigcFailed(`render --folds --fps ${fps}${stripped === null ? '' : ' (physics constraint(s) left out)'}`, fr, fr.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+        // Issue #348: with a foot to read, the same render writes each animation's geometry as well.
+        const geometry = feet.length > 0 ? ['--geometry'] : [];
+        const fr = rigc(['render', '--candidate', keyedBuild('the animations with their physics constraint(s) left out'), '--folds', ...geometry, '--fps', String(fps), '--max', String(FOLD_RENDER_MAX), '--out', foldDir]);
+        if (fr.status !== 0) refuseIfAny(rigcFailed(`render --folds${geometry.map((g) => ` ${g}`).join('')} --fps ${fps}${stripped === null ? '' : ' (physics constraint(s) left out)'}`, fr, fr.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
         const readings = readFoldSets(foldDir, animationNames, fps, fr.out);
         folds = foldsLine(animationNames, fps, stripped === null ? 0 : stripped.physics.length, readings, reqFile === null ? [] : reqFile.may_fold, reqFile === null ? null : reqFile.path, foldProblems);
+        if (feet.length > 0) {
+          const sets = readJson(join(foldDir, 'frames.json'), []);
+          const listed = sets !== null && Array.isArray(sets.sets) ? sets.sets.filter(isRecord) : [];
+          // readFoldSets has refused a missing set by name, so each animation has its directory here.
+          const levelReadings = animationNames.map((name) => {
+            const dir = join(foldDir, String((listed.find((x) => x.animation === name) as Record<string, unknown>).dir));
+            return { animation: name, set: readFrameSet(dir), geometryPath: join(dir, GEOMETRY_FILE) };
+          });
+          level = levelLine(feet, inp.rig, levelReadings, fps, stripped === null ? 0 : stripped.physics.length, levelProblems);
+        }
       } finally {
         rmSync(foldDir, { recursive: true, force: true });
       }
@@ -2365,6 +2620,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     STILL_REGIONS_DARK: still,
     TEXTURE_STRETCH: stretch,
     ...(folds === null ? {} : { [FOLD_LINE]: folds }),
+    ...(level === null ? {} : { [LEVEL_LINE]: level }),
     RECOMPOSITE_HOLES: inp.parts === null ? { status: 'SKIP', reason: inp.noParts ?? '' } : holesLine(inp.parts),
     ...(sourceRead === null ? {} : { [SOURCE_LINE]: sourceRead }),
     ...(Object.keys(skipped).length === 0 ? {} : { skipped }),
@@ -2396,7 +2652,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   const rank = (q: Problem): number => JUDGEMENT_LINES.findIndex((n) => q.code === `CHECK_${n}`);
   problems.sort((a, b) => rank(a) - rank(b));
   problems.unshift(...barProblems);
-  problems.push(...foldProblems, ...reqProblems);
+  problems.push(...foldProblems, ...levelProblems, ...reqProblems);
   figures.PASS = problems.length === 0;
   write('check.json', `${JSON.stringify(figures, null, 1)}\n`);
   const bars: CheckReport['bars'] = { measured: ['gate'], skipped: [] };
@@ -2412,6 +2668,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   }
   // Issues #320, #333: the fold bar is counted where it is written — on every rig whose motion holds an animation.
   if (folds !== null) tally(FOLD_LINE, null);
+  // Issue #348: the level bar where it is written; a line whose every foot no frame posed says SKIP and is not measured.
+  if (level !== null) tally(LEVEL_LINE, level.status === 'SKIP' ? (level.reason ?? '') : null);
   return {
     figures,
     gateHtml,

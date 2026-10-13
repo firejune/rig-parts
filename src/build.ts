@@ -70,7 +70,7 @@ import {
   splitSchedule,
   untestedIntervals,
 } from './autoreplay.ts';
-import { besideIdleLine, FOLD_LINE, type FoldsLine, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, rigcIdentity, rigcRanClause, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
+import { besideIdleLine, FOLD_LINE, type FoldsLine, LEVEL_LINE, type LevelLine, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, rigcIdentity, rigcRanClause, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
 import { type Cut, loadConfig, loadConfigAndAnimations, loadEarlyConfig } from './config.ts';
 import { failLine, PartsError, type Problem, refuseIfAny } from './errors.ts';
 import type { MeshQualityReport, MotionSchedule } from 'rig-c/mesh';
@@ -1046,6 +1046,29 @@ export function foldsLines(line: FoldsLine): string[] {
   return [head, ...line.folding.map((r) => `  folds  ${r.line}${r.declared === null ? '' : ` — declared in may_fold: ${r.declared}`}`)];
 }
 
+/**
+ * The feet-level line (issue #348) as the console prints it: the status, what was read, the bar and whose it is, then
+ * each foot on a line of its own — its bone, what that hangs from, how many frames posed it, and the worst turn with
+ * the bone that was turned and the bones it came through. A SKIP prints its reason.
+ */
+export function levelLines(line: LevelLine): string[] {
+  const physics = line.physics_left_out === 0 ? '' : `, its ${line.physics_left_out} physics constraint(s) left out`;
+  const read = `${line.animations.length} animation(s) read by rigc render --folds --geometry at ${line.fps} fps${physics} (${line.animations.join(', ')})`;
+  const head =
+    line.status === 'SKIP'
+      ? `${LEVEL_LINE}: SKIP — ${String(line.reason)}; ${read}`
+      : `${LEVEL_LINE}: ${line.status} — ${read}: each foot's drawing within ±${line.bar_degrees} degrees of its setup pose while a bone above it is turned, ${line.bar}`;
+  return [
+    head,
+    ...line.feet.map((f) => {
+      const at = `foot  "${f.part}" on "${f.bone}" (hangs from "${f.hangs_from}"): ${f.status}, ${f.frames_posed} posed frame(s)`;
+      if (f.worst === null) return `${at}, so nothing was measured`;
+      const w = f.worst;
+      return `${at}; worst ${w.degrees} degrees in "${w.animation}" frame ${w.frame} (t = ${w.time}s), "${w.turned}" turned ${w.turned_degrees}, through ${w.through.map((x) => `${x.bone} (inherit ${x.inherit})`).join(', ')}`;
+    }),
+  ];
+}
+
 /** A requirement's line as the console prints it: its name and status, the reason first when NOT MEASURABLE, then its figures as check.json holds them. */
 export function requirementText(name: string, line: RequirementLine): string {
   const rest = Object.entries(line).filter(([k]) => k !== 'status' && k !== 'reason');
@@ -1072,7 +1095,7 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   if (r.idle === null) log(`  loop: SKIP — ${fig.skipped?.loop ?? ''}`);
   else log(`  ${loopCheckLine(r.idle, fig.loop_max_diff, fig.loop_physics?.length ?? 0)}`);
   if (r.loopPhysics !== null) log(`  ${r.loopPhysics}`);
-  const beside = besideIdleLine(r.besideIdle);
+  const beside = besideIdleLine(r.besideIdle, r.figures[LEVEL_LINE] !== undefined);
   if (beside !== null) log(`  ${beside}`);
   if (r.seamViewport === null || fig.seam_mean === null) log(`  seam: SKIP — ${fig.skipped?.seam ?? ''}`);
   else {
@@ -1086,6 +1109,8 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   for (const name of JUDGEMENT_LINES) log(`  ${judgementLine(name, fig[name])}`);
   const folds = fig[FOLD_LINE];
   if (folds !== undefined) for (const l of foldsLines(folds)) log(`  ${l}`);
+  const level = fig[LEVEL_LINE];
+  if (level !== undefined) for (const [i, l] of levelLines(level).entries()) log(`  ${i === 0 ? '' : '  '}${l}`);
   for (const name of REPORTED_LINES) log(`  ${judgementLine(name, fig[name])}`);
   const vsSource = fig[SOURCE_LINE];
   if (vsSource !== undefined) log(`  ${judgementLine(SOURCE_LINE, vsSource)}`);
