@@ -59,7 +59,17 @@ export interface SquarePad {
  * At most one of the two margins is non-zero.
  */
 export function squarePad(w: number, h: number): SquarePad {
-  const side = Math.max(w, h);
+  return padToSquare(w, h, Math.max(w, h));
+}
+
+/**
+ * The same centring on a square of a given `side` (issue #366): a single run's
+ * file padded to the `seethrough.resolution` square. Each margin floors, so an
+ * odd remainder goes to the right or the bottom, exactly as {@link squarePad};
+ * both margins are non-zero when both sides are below `side`. The caller has
+ * refused a side above `side` — padding cannot shrink a canvas.
+ */
+export function padToSquare(w: number, h: number, side: number): SquarePad {
   return { side, left: Math.floor((side - w) / 2), top: Math.floor((side - h) / 2) };
 }
 

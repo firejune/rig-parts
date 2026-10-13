@@ -42,6 +42,12 @@
  *   run's map carries the vertical pad exactly as it carries the horizontal
  *   one. A portrait painting's vertical pad is 0, so its map is the
  *   reference's.
+ * - **One run's file need not be square** (issue #366): with no head run the
+ *   file is padded to the `resolution` square by the same centring
+ *   (`padToSquare`, `padSingleRun`) and mapped back one run pixel to one
+ *   source pixel, so the rig is the file with no pad in it; `parts.json`
+ *   records the pad (`single_run_pad`) and the painting must be the file's
+ *   size. A file that is the square is read as it was.
  * - **`seamRule: 'silhouette'`** is available beside the faithful
  *   `'near-white'` rule. The reference's seam override skips every pixel whose
  *   painting colour is near-white (min channel above 235), which protects the
@@ -94,8 +100,8 @@
 import type { BoneEntry, CharacterConfig, Cut, EarlyConfig, Extend, Limb, Patch, PlanEntry, Run, SeeThrough } from './config.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
-import { squarePad } from './inputs.ts';
-import { type CapRecord, type LimbRecord, PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, type SceneRecord } from './parts.ts';
+import { padToSquare, squarePad } from './inputs.ts';
+import { type CapRecord, type LimbRecord, PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, type SceneRecord, type SingleRunPad } from './parts.ts';
 import { type BonePlace, bonePlaces, capBox, inDisc, type JointLine, jointLine, limbPolyline, limbWidth, nearestLimb, pastJoint, segmentOf } from './limbs.ts';
 import {
   alphaComposite,
@@ -218,6 +224,10 @@ export interface Geometry {
    * One run, no head crop (issue #359): `headBox` is {@link singleRunHeadBox},
    * the full run's own frame, and is not held inside the painting (on a
    * non-square painting the frame reaches past it). Absent: two runs.
+   *
+   * Issue #366: the run is the artist's file itself, so its frame is the file
+   * centred on the `resolution` square ({@link padToSquare}) at one run pixel
+   * per source pixel, and the painting must be the file's size.
    */
   single?: boolean;
 }
@@ -234,14 +244,48 @@ export const SINGLE_RUN_FACE_TAGS: readonly string[] = ['face', 'eyewhite-r', 'e
 
 /**
  * The head box of a single run (issue #359): the full run's own frame on the
- * painting, `[-left, -top, side - left, side - top]` from {@link squarePad},
+ * painting, `[-left, -top, side - left, side - top]` from {@link padToSquare},
  * so the head run's map is the full run's, pixel for pixel. On a square
  * painting it is `[0, 0, w, h]`. Derived, never read from the config: a
  * single run has no crop.
+ *
+ * `side` is the square the file is padded to, `seethrough.resolution` (issue
+ * #366); left out, it is the longer side, {@link squarePad}'s square — the two
+ * agree whenever the longer side is the resolution.
  */
-export function singleRunHeadBox(w: number, h: number): [number, number, number, number] {
-  const { side, left, top } = squarePad(w, h);
+export function singleRunHeadBox(w: number, h: number, side: number = Math.max(w, h)): [number, number, number, number] {
+  const { left, top } = padToSquare(w, h, side);
   return [-left, -top, side - left, side - top];
+}
+
+/**
+ * A single run's file padded to the `resolution` square (issue #366): every
+ * drawn and hidden-art layer moved by the frame's pad, the canvas the square.
+ * No pixel changes; the pad holds none, so it is transparent. The same set
+ * comes back when there is no pad, so a square file at the resolution is read
+ * exactly as it was.
+ */
+export function padSingleRun(set: LayerSet, frame: Pick<Frame, 'fullPad' | 'fullPadTop'>, resolution: number): LayerSet {
+  const dx = frame.fullPad;
+  const dy = frame.fullPadTop;
+  if (dx === 0 && dy === 0 && set.canvas.w === resolution && set.canvas.h === resolution) return set;
+  return {
+    ...set,
+    canvas: { w: resolution, h: resolution },
+    layers: set.layers.map((l) => ({ ...l, left: l.left + dx, top: l.top + dy, right: l.right + dx, bottom: l.bottom + dy })),
+    hidden: set.hidden.map((l) => ({ ...l, left: l.left + dx, top: l.top + dy, right: l.right + dx, bottom: l.bottom + dy })),
+  };
+}
+
+/**
+ * What `parts.json` records of a single run's pad (issue #366), or null when
+ * there is none — two runs, or a file that is the resolution square — so that
+ * every such `parts.json` keeps its bytes. Run pixel `(x, y)` is file pixel
+ * `(x - left, y - top)`; the rig is the file times `scale_rig_per_source`.
+ */
+export function singleRunPadRecord(single: boolean, sourceW: number, sourceH: number, resolution: number, frame: Pick<Frame, 'fullPad' | 'fullPadTop'>): SingleRunPad | null {
+  if (!single || (sourceW === resolution && sourceH === resolution)) return null;
+  return { file_size: [sourceW, sourceH], side: resolution, left: frame.fullPad, top: frame.fullPadTop };
 }
 
 export interface AssembleInput {
@@ -305,7 +349,8 @@ export function checkGeometry(g: Geometry, runs?: { full: LayerSet; head: LayerS
     problems.push({ code, object, detail });
   };
   const { sourceW: w, sourceH: h, resolution, headBox, rigScale: S } = g;
-  const pad = squarePad(w, h);
+  // Issue #366: one run is the file itself, centred on the resolution square at one run px per source px.
+  const pad = g.single === true ? padToSquare(w, h, resolution) : squarePad(w, h);
   const W = Math.trunc(w * S);
   const H = Math.trunc(h * S);
   if (W < 1 || H < 1) fail('ASSEMBLE_RIG_SIZE', 'config.assemble.rig_scale', `${S} makes a ${W}x${H} rig from a ${w}x${h} painting; at least 1x1 is required`);
@@ -322,8 +367,26 @@ export function checkGeometry(g: Geometry, runs?: { full: LayerSet; head: LayerS
       `bottom ${y1} is rig row ${Math.trunc(y1 * S)}; the crop line (that row - ${HEAD_BOTTOM_INSET}) probes ${CROP_PROBE_ROWS} rows above itself, so a bottom at rig row ${HEAD_BOTTOM_INSET + CROP_PROBE_ROWS} or further down is required`,
     );
   }
-  if (runs !== undefined) {
-    for (const run of g.single === true ? (['full'] as const) : (['full', 'head'] as const)) {
+  if (runs !== undefined && g.single === true) {
+    // Issue #366: a single run's file is padded to the resolution square, so a side below it is fixed; a side above it
+    // is not, and a painting of another size would map no part back to the file.
+    const c = runs.full.canvas;
+    if (c.w > resolution || c.h > resolution) {
+      fail(
+        'ASSEMBLE_RUN_CANVAS',
+        `the full run (${runs.full.source})`,
+        `has a ${c.w}x${c.h} canvas; with one run the file is padded to the ${resolution}x${resolution} square config.seethrough.resolution ${resolution} makes, and padding cannot shrink a canvas, so no side above ${resolution} is required — a resolution of at least ${Math.max(c.w, c.h)}, the file's longer side`,
+      );
+    }
+    if (c.w !== w || c.h !== h) {
+      fail(
+        'ASSEMBLE_SINGLE_RUN_SOURCE',
+        `the painting (--source, ${w}x${h})`,
+        `is not the size of the full run's file (${runs.full.source}), ${c.w}x${c.h}; with one run the painting is that file flattened, and every part's box maps back to the file through it, so a ${c.w}x${c.h} painting is required`,
+      );
+    }
+  } else if (runs !== undefined) {
+    for (const run of ['full', 'head'] as const) {
       const c = runs[run].canvas;
       if (c.w !== resolution || c.h !== resolution) {
         fail('ASSEMBLE_RUN_CANVAS', `the ${run} run (${runs[run].source})`, `has a ${c.w}x${c.h} canvas; config.seethrough.resolution ${resolution} makes ${resolution}x${resolution} required`);
@@ -2205,12 +2268,16 @@ export function checkSingleRun(full: LayerSet, plan: readonly PlanEntry[] | null
  * after this returned writes only after green.
  */
 export function assemble(input: AssembleInput): AssembleResult {
-  const { source, full, head, plan, extend, patches, seamRule, projectRule } = input;
+  const { source, plan, extend, patches, seamRule, projectRule } = input;
   const single = input.single === true;
   const frame = checkGeometry(
     { sourceW: source.width, sourceH: source.height, resolution: input.resolution, headBox: input.headBox, rigScale: input.rigScale, ...(single ? { single: true } : {}) },
-    { full, head },
+    { full: input.full, head: input.head },
   );
+  // Issue #366: one run's file, padded to the resolution square; read as both runs, as before.
+  const full = single ? padSingleRun(input.full, frame, input.resolution) : input.full;
+  const head = single ? full : input.head;
+  const padRecord = singleRunPadRecord(single, source.width, source.height, input.resolution, frame);
   if (single) checkSingleRun(full, plan, extend);
   checkPlanAgainstRuns(plan, extend, full, head);
   const { W, H } = frame;
@@ -2653,7 +2720,15 @@ export function assemble(input: AssembleInput): AssembleResult {
     bodyMinPx(frame),
   );
   return {
-    parts: { rig_size: [W, H], scale_rig_per_source: frame.S, parts: placed.map((p) => p.record), ghost_px: ghost, recomposite: recompositeRecord(figures), ...(sceneRecord === null ? {} : { scene: sceneRecord }) },
+    parts: {
+      rig_size: [W, H],
+      scale_rig_per_source: frame.S,
+      parts: placed.map((p) => p.record),
+      ghost_px: ghost,
+      recomposite: recompositeRecord(figures),
+      ...(sceneRecord === null ? {} : { scene: sceneRecord }),
+      ...(padRecord === null ? {} : { single_run_pad: padRecord }),
+    },
     images: placed,
     recomposite: can,
     errorMap: recompositeErrorMap(can, srcr, placed, inside),
@@ -3136,8 +3211,11 @@ function fmt0(v: number): string {
  * before; each gains one such note per tag left out (demo 6, scarf 9,
  * reference-demo 7, reference-sample 9).
  */
-export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx = PROPOSE_MIN_PX): PlanProposal {
-  const frame = checkGeometry(g, { full, head });
+export function proposePlan(full0: LayerSet, head0: LayerSet, g: Geometry, minPx = PROPOSE_MIN_PX): PlanProposal {
+  const frame = checkGeometry(g, { full: full0, head: head0 });
+  // Issue #366: one run's file, padded to the resolution square as the stage pads it.
+  const full = g.single === true ? padSingleRun(full0, frame, g.resolution) : full0;
+  const head = g.single === true ? full : head0;
   const runs = { full: runLayers(full, g.resolution), head: runLayers(head, g.resolution) };
   const find = (run: Run, tag: string): RunLayer | undefined => runs[run].find((l) => l.tag === tag);
   const figures: Record<Run, LayerFigures[]> = { full: layerFigures(full), head: layerFigures(head) };
@@ -3399,7 +3477,7 @@ export function stageFields(
   const st = cfg.seethrough as SeeThrough;
   return {
     resolution: st.resolution,
-    headBox: single !== null ? singleRunHeadBox(single.w, single.h) : (st.head_box as [number, number, number, number]),
+    headBox: single !== null ? singleRunHeadBox(single.w, single.h, st.resolution) : (st.head_box as [number, number, number, number]),
     ...(single !== null ? { single: true } : {}),
     rigScale: cfg.assemble.rig_scale,
     plan: cfg.assemble.plan,
@@ -3421,7 +3499,7 @@ export function stageFields(
 export function proposeFields(cfg: EarlyConfig, single: { w: number; h: number } | null = null): { resolution: number; headBox: [number, number, number, number]; rigScale: number; single?: boolean } {
   if (single !== null) {
     refuseIfAny(singleRunHeadBoxProblems(cfg.seethrough));
-    return { resolution: cfg.seethrough.resolution, headBox: singleRunHeadBox(single.w, single.h), rigScale: cfg.assemble.rig_scale, single: true };
+    return { resolution: cfg.seethrough.resolution, headBox: singleRunHeadBox(single.w, single.h, cfg.seethrough.resolution), rigScale: cfg.assemble.rig_scale, single: true };
   }
   if (cfg.seethrough.head_box === undefined) {
     refuseIfAny([{ code: 'ASSEMBLE_FIELD_PRESENT', object: 'config.seethrough.head_box', detail: 'is absent; the plan is proposed from both runs, and the head run cannot be placed on the painting without the box it was cropped from — run `propose --head-box` first' }]);

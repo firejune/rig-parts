@@ -38,6 +38,16 @@
  * where the clean file has 0. Moving the 80 px back into `eyewhite-r`'s PNG
  * (and its box back to [44, 22, 60, 32] in `layers.json`) is the worked
  * correction in docs/AUTHORING.md.
+ *
+ * ## The portrait file (issue #366)
+ *
+ * `portrait: true` is the same figure on a `75 x 128` canvas: every box and
+ * rectangle moved left by 26 (`back hair` [6, 4, 70, 48], …, the painting
+ * 75 x 128), and the config's `chest` bone at [38, 40]. One run pads the file
+ * to the 128 square, centred: left `floor((128 - 75) / 2) = 26`, right 27 (the
+ * odd remainder), top and bottom 0 — so the padded run is the square file's
+ * run pixel for pixel, and each part is the square file's part 26 px to the
+ * left, which is its layer's box in the portrait file.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -54,6 +64,9 @@ export const TOP: RGB = [40, 90, 160];
 export const SKIN: RGB = [200, 150, 120];
 export const EYE: RGB = [245, 245, 250];
 export const FRONT: RGB = [40, 30, 120];
+/** The portrait file's width (issue #366), and how far left its figure sits against the square file's. */
+export const ARTIST_PORTRAIT_W = 75;
+export const ARTIST_PORTRAIT_SHIFT = 26;
 /** The planted patch: the right half of the right eye. */
 export const ARTIST_PATCH: Box = [52, 22, 60, 32];
 
@@ -65,8 +78,8 @@ export interface ArtistLayer {
   rects: Array<[Box, RGB]>;
 }
 
-/** The layers, bottom first; with `planted`, the patch moved into `back hair`. With `drop`, those layers left out. */
-export function artistLayers(opts: { planted?: boolean; drop?: readonly string[] } = {}): ArtistLayer[] {
+/** The layers, bottom first; with `planted`, the patch moved into `back hair`. With `drop`, those layers left out. With `portrait`, on the 75-wide canvas. */
+export function artistLayers(opts: { planted?: boolean; drop?: readonly string[]; portrait?: boolean } = {}): ArtistLayer[] {
   const layers: ArtistLayer[] = [
     { name: 'back hair', box: [32, 4, 96, 48], rects: [[[32, 4, 96, 48], HAIR]] },
     { name: 'topwear', box: [40, 40, 88, 100], rects: [[[40, 40, 88, 100], TOP]] },
@@ -79,7 +92,16 @@ export function artistLayers(opts: { planted?: boolean; drop?: readonly string[]
     layers[0].rects.push([ARTIST_PATCH, EYE]);
     layers[3] = { name: 'eyewhite-r', box: [44, 22, 52, 32], rects: [[[44, 22, 52, 32], EYE]] };
   }
-  return layers.filter((l) => !(opts.drop ?? []).includes(l.name));
+  const kept = layers.filter((l) => !(opts.drop ?? []).includes(l.name));
+  if (opts.portrait !== true) return kept;
+  const d = ARTIST_PORTRAIT_SHIFT;
+  const move = (b: Box): Box => [b[0] - d, b[1], b[2] - d, b[3]];
+  return kept.map((l) => ({ name: l.name, box: move(l.box), rects: l.rects.map(([b, c]): [Box, RGB] => [move(b), c]) }));
+}
+
+/** The file's canvas, `[w, h]`: 128 x 128, or 75 x 128 with `portrait`. */
+export function artistCanvas(opts: { portrait?: boolean } = {}): [number, number] {
+  return [opts.portrait === true ? ARTIST_PORTRAIT_W : ARTIST_SIDE, ARTIST_SIDE];
 }
 
 /** A layer's own pixels, `(x1 - x0) x (y1 - y0)`, transparent outside its rectangles. */
@@ -91,10 +113,11 @@ export function artistRaster(l: ArtistLayer): Raster {
 }
 
 /** The clean layers composited bottom first on white: the painting the file flattens to. */
-export function artistPainting(): Raster {
-  const p = newRaster(ARTIST_SIDE, ARTIST_SIDE);
-  for (let i = 0; i < ARTIST_SIDE * ARTIST_SIDE; i++) p.data.set([255, 255, 255, 255], i * 4);
-  for (const l of artistLayers()) for (const [[x0, y0, x1, y1], c] of l.rects) for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) p.data.set([...c, 255], (y * ARTIST_SIDE + x) * 4);
+export function artistPainting(opts: { portrait?: boolean } = {}): Raster {
+  const [w, h] = artistCanvas(opts);
+  const p = newRaster(w, h);
+  for (let i = 0; i < w * h; i++) p.data.set([255, 255, 255, 255], i * 4);
+  for (const l of artistLayers({ portrait: opts.portrait })) for (const [[x0, y0, x1, y1], c] of l.rects) for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) p.data.set([...c, 255], (y * w + x) * 4);
   return p;
 }
 
@@ -113,14 +136,15 @@ export const ARTIST_PLAN: Array<[string, 'full', string]> = [
  * rig `check` passes on this figure — the topwear on a `chest` bone that
  * breathes, everything else on a still anchor.
  */
-export function artistConfig(): Record<string, unknown> {
+export function artistConfig(opts: { portrait?: boolean } = {}): Record<string, unknown> {
+  const dx = opts.portrait === true ? ARTIST_PORTRAIT_SHIFT : 0;
   return {
     key: 'artist-fixture',
     seethrough: { resolution: ARTIST_SIDE, steps: 1, seed: 0, offload: false },
     assemble: { rig_scale: 1, plan: ARTIST_PLAN },
     bones: [
       { name: 'anchor', parent: 'root', at: [0, 0] },
-      { name: 'chest', parent: 'root', at: [64, 40] },
+      { name: 'chest', parent: 'root', at: [64 - dx, 40] },
     ],
     meshes: {},
     regions: { ...Object.fromEntries(ARTIST_PLAN.map((p) => [p[0], 'anchor'])), topwear: 'chest' },
@@ -128,15 +152,19 @@ export function artistConfig(): Record<string, unknown> {
   };
 }
 
-/** The fixture in `dir`: `art.psd`, `painting.png` (always the clean composite) and `config.json`. */
-export function writeArtistFixture(dir: string, opts: { planted?: boolean; drop?: readonly string[]; config?: Record<string, unknown> } = {}): void {
+/**
+ * The fixture in `dir`: `art.psd`, `painting.png` (always the clean composite) and `config.json`. With `portrait`,
+ * the 75 x 128 file, its painting and its config; `painting` writes another file's painting beside it instead.
+ */
+export function writeArtistFixture(dir: string, opts: { planted?: boolean; drop?: readonly string[]; config?: Record<string, unknown>; portrait?: boolean; painting?: { portrait?: boolean } } = {}): void {
   mkdirSync(dir, { recursive: true });
+  const [w, h] = artistCanvas(opts);
   writePsdFixture(
     join(dir, 'art.psd'),
-    ARTIST_SIDE,
-    ARTIST_SIDE,
+    w,
+    h,
     artistLayers(opts).map((l) => ({ name: l.name, left: l.box[0], top: l.box[1], pixels: artistRaster(l) })),
   );
-  writeFileSync(join(dir, 'painting.png'), encodePngBytes(artistPainting()));
-  writeFileSync(join(dir, 'config.json'), `${JSON.stringify(opts.config ?? artistConfig(), null, 2)}\n`);
+  writeFileSync(join(dir, 'painting.png'), encodePngBytes(artistPainting(opts.painting ?? { portrait: opts.portrait })));
+  writeFileSync(join(dir, 'config.json'), `${JSON.stringify(opts.config ?? artistConfig({ portrait: opts.portrait }), null, 2)}\n`);
 }
