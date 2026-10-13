@@ -214,6 +214,34 @@ export interface Geometry {
   headBox: [number, number, number, number];
   /** `assemble.rig_scale`: rig pixels per source pixel. */
   rigScale: number;
+  /**
+   * One run, no head crop (issue #359): `headBox` is {@link singleRunHeadBox},
+   * the full run's own frame, and is not held inside the painting (on a
+   * non-square painting the frame reaches past it). Absent: two runs.
+   */
+  single?: boolean;
+}
+
+/**
+ * The tags a single run must hold, each as a layer with an opaque pixel
+ * (issue #359): `face`, which places the face box, and the eye group
+ * (`EYE_GROUP_TAGS` in `src/propose.ts`, held equal to this list's tail by
+ * the selftest), from which the eye bones, the eye line and the blink come.
+ * The head run exists because See-through cannot separate these at
+ * full-figure scale; a file that already separates them needs no second run.
+ */
+export const SINGLE_RUN_FACE_TAGS: readonly string[] = ['face', 'eyewhite-r', 'eyewhite-l'];
+
+/**
+ * The head box of a single run (issue #359): the full run's own frame on the
+ * painting, `[-left, -top, side - left, side - top]` from {@link squarePad},
+ * so the head run's map is the full run's, pixel for pixel. On a square
+ * painting it is `[0, 0, w, h]`. Derived, never read from the config: a
+ * single run has no crop.
+ */
+export function singleRunHeadBox(w: number, h: number): [number, number, number, number] {
+  const { side, left, top } = squarePad(w, h);
+  return [-left, -top, side - left, side - top];
 }
 
 export interface AssembleInput {
@@ -247,6 +275,8 @@ export interface AssembleInput {
   bones?: BoneEntry[];
   /** Each segment's `cap` image, decoded by the caller, keyed `<limb>/<segment index>`; a segment naming a cap with none here is refused (`ASSEMBLE_LIMB_CAP_PRESENT`). */
   caps?: ReadonlyMap<string, Raster>;
+  /** One run (issue #359): `head` is `full`, `headBox` {@link singleRunHeadBox}, and {@link checkSingleRun} holds the plan to it. Absent: two runs. */
+  single?: boolean;
 }
 
 /** The derived numbers of the two runs' geometry. */
@@ -280,11 +310,12 @@ export function checkGeometry(g: Geometry, runs?: { full: LayerSet; head: LayerS
   const H = Math.trunc(h * S);
   if (W < 1 || H < 1) fail('ASSEMBLE_RIG_SIZE', 'config.assemble.rig_scale', `${S} makes a ${W}x${H} rig from a ${w}x${h} painting; at least 1x1 is required`);
   const [x0, y0, x1, y1] = headBox;
-  if (!(x0 >= 0 && y0 >= 0 && x1 <= w && y1 <= h && x1 > x0 && y1 > y0)) {
+  // A single run (issue #359) has no crop: its box is the full run's frame, derived, and may reach past the painting.
+  if (g.single !== true && !(x0 >= 0 && y0 >= 0 && x1 <= w && y1 <= h && x1 > x0 && y1 > y0)) {
     fail('ASSEMBLE_HEAD_BOX_INSIDE', 'config.seethrough.head_box', `is [${headBox.join(', ')}]; a non-empty box inside the ${w}x${h} painting is required`);
   }
   const headBottom = Math.trunc(y1 * S) - HEAD_BOTTOM_INSET;
-  if (headBottom - CROP_PROBE_ROWS < 0 && y1 > y0) {
+  if (g.single !== true && headBottom - CROP_PROBE_ROWS < 0 && y1 > y0) {
     fail(
       'ASSEMBLE_HEAD_BOX_INSIDE',
       'config.seethrough.head_box',
@@ -292,7 +323,7 @@ export function checkGeometry(g: Geometry, runs?: { full: LayerSet; head: LayerS
     );
   }
   if (runs !== undefined) {
-    for (const run of ['full', 'head'] as const) {
+    for (const run of g.single === true ? (['full'] as const) : (['full', 'head'] as const)) {
       const c = runs[run].canvas;
       if (c.w !== resolution || c.h !== resolution) {
         fail('ASSEMBLE_RUN_CANVAS', `the ${run} run (${runs[run].source})`, `has a ${c.w}x${c.h} canvas; config.seethrough.resolution ${resolution} makes ${resolution}x${resolution} required`);
@@ -321,7 +352,7 @@ export function checkGeometry(g: Geometry, runs?: { full: LayerSet; head: LayerS
  * Place a layer's pixels on its run's `resolution x resolution` canvas.
  * `readWrapperLayers`/`readPsdLayers` already refused a box outside it.
  */
-export function placeLayer(layer: Layer, resolution: number): Raster {
+export function placeLayer(layer: Pick<Layer, 'pixels' | 'left' | 'top'>, resolution: number): Raster {
   const out = newRaster(resolution, resolution);
   const p = layer.pixels;
   for (let y = 0; y < p.height; y++) {
@@ -1759,7 +1790,7 @@ export function limbLines(counts: readonly LimbCount[]): string[] {
     out.push(`  limb cut: "${c.of}" opaque ${c.before} = ${c.shares.map((q) => `"${q.part}" ${q.px}`).join(' + ')}`);
     for (const j of c.joints) {
       const k = j.cap;
-      const from = k.image_px === undefined ? `${k.layer_px} px from the layer` : `${k.image_px} px from the cap image, ${k.layer_px} px from the layer`;
+      const from = k.image_px === undefined ? `${k.layer_px} px from the layer` : `${k.image_px} px from ${k.image_layer === undefined ? 'the cap image' : `the hidden-art layer ${k.image_layer}`}, ${k.layer_px} px from the layer`;
       const miss =
         k.missing_px === 0
           ? 'none missing'
@@ -1822,6 +1853,8 @@ function cutLimbs(
   opaqueOf: (r: Raster) => number,
   mergedIn: (b: Built, region: Mask) => number,
   count: (m: Mask | null, region: Mask) => number,
+  hiddenOf: (part: string) => HiddenArt | null = () => null,
+  readHidden: (layer: string, by: string) => void = () => undefined,
 ): { parts: LimbPart[]; pieces: Built[]; counts: LimbCount[] } {
   const names = Object.keys(limbs);
   if (names.length === 0) return { parts: [], pieces: [], counts: [] };
@@ -1946,7 +1979,13 @@ function cutLimbs(
       const radius = w3 / 2;
       const box = capBox(line.at, radius);
       const at = parts.findIndex((q) => q.limb === l && q.segment === k);
-      const img = sg.cap === undefined ? null : (caps.get(`${l}/${k}`) ?? null);
+      // Issue #359: the lower segment's part's hidden-art layer is its cap when the segment names no cap image; with one named, a refusal.
+      const hidden = hiddenOf(sg.from);
+      if (hidden !== null && sg.cap !== undefined) {
+        problems.push({ code: 'ASSEMBLE_HIDDEN_ONE_SOURCE', object: `${object}.cap`, detail: `names ${sg.cap}, and "${sg.from}" also has the hidden-art layer ${hidden.layer}; one source of the cap's art is required — remove cap, or the hidden-art layer` });
+        return;
+      }
+      const img = sg.cap === undefined ? (hidden === null ? null : boxOf(hidden.raster, box[0], box[1], box[2], box[3])) : (caps.get(`${l}/${k}`) ?? null);
       if (sg.cap !== undefined && img === null) {
         problems.push({ code: 'ASSEMBLE_LIMB_CAP_PRESENT', object: `${object}.cap`, detail: `names ${sg.cap}, and no image was handed to the stage for it; the decoded PNG is required (a caller of assemble() reads the file)` });
         return;
@@ -1979,11 +2018,12 @@ function cutLimbs(
           } else missing++;
         }
       }
-      if (img !== null && imagePx === 0) {
+      if (img !== null && imagePx === 0 && hidden === null) {
         problems.push({ code: 'ASSEMBLE_LIMB_CAP_EMPTY', object: `${object}.cap`, detail: `${String(sg.cap)} is transparent over every one of the cap's pixels; an image that gives at least one is required — to keep the layer's cap, drop cap` });
         return;
       }
-      const cap: CapRecord = { at: [line.at[0], line.at[1]], width: w3, radius, box, layer_px: layerPx, ...(img === null ? {} : { image_px: imagePx }), missing_px: missing };
+      const cap: CapRecord = { at: [line.at[0], line.at[1]], width: w3, radius, box, layer_px: layerPx, ...(img === null ? {} : { image_px: imagePx }), ...(hidden === null ? {} : { image_layer: hidden.layer }), missing_px: missing };
+      if (hidden !== null) readHidden(hidden.layer, `config.limbs.${l}.segments[${k}].cap (part "${sg.part}")`);
       parts[at].record.cap = cap;
       const c = counts.find((q) => q.of === sg.from);
       if (c !== undefined) c.joints.push({ limb: l, joint: String(sg.joint), part: sg.part, cap });
@@ -2015,8 +2055,81 @@ export interface AssembleResult {
   uncovered: UncoveredErrorLayer[];
   /** The parts whose `DRIFT_LIMIT` refusals hold a body another part holds in the draw order (`driftBodies`), in draw order; empty otherwise. */
   drift: DriftBodies[];
+  /** Every hidden-art layer of the runs read (issue #359) and what read it (`hiddenLines`); empty when the runs hold none. */
+  hidden: HiddenArtUse[];
   seamRule: SeamRule;
   projectRule: ProjectRule;
+}
+
+/** A hidden-art layer of a run (issue #359) and what read it: `cuts[i].under`, or a limb segment's cap; none is said. */
+export interface HiddenArtUse {
+  /** `<run>:<layer>:hidden`. */
+  layer: string;
+  readBy: string[];
+}
+
+/** A part's hidden art in rig space (issue #359): the layer's `<run>:<name>`, and the layer warped as its run's layers are. */
+interface HiddenArt {
+  layer: string;
+  raster: Raster;
+}
+
+/**
+ * The hidden art each part may read (issue #359, `HIDDEN_SUFFIX` in
+ * `src/tags.ts`), by part name: a plan part takes the hidden-art layer of
+ * the layer its row takes, from the same run, and a cut's piece takes its
+ * base's. The layer is placed and warped into the rig exactly as its run's
+ * drawn layers are (`placeLayer`, `layerToRig`) — no ghost clean-up, because
+ * it is the artist's own art, not See-through's.
+ */
+export function hiddenArtByPart(plan: readonly PlanEntry[], cuts: readonly Cut[], sets: { full: LayerSet; head: LayerSet }, frame: Frame, resolution: number): Map<string, HiddenArt> {
+  const out = new Map<string, HiddenArt>();
+  const warped = new Map<string, HiddenArt>();
+  for (const [name, run, tag] of plan) {
+    const h = sets[run].hidden.find((x) => x.of === tag);
+    if (h === undefined) continue;
+    const key = `${run}:${h.name}`;
+    let art = warped.get(key);
+    if (art === undefined) {
+      art = { layer: key, raster: layerToRig(placeLayer(h, resolution), frame, run) };
+      warped.set(key, art);
+    }
+    out.set(name, art);
+  }
+  for (const q of cuts) {
+    const art = out.get(q.from);
+    if (art !== undefined) out.set(q.into, art);
+  }
+  return out;
+}
+
+/** `r`'s pixels over the box `[x0, y0, w, h]`, transparent where the box reaches past `r`. */
+function boxOf(r: Raster, x0: number, y0: number, w: number, h: number): Raster {
+  const out = newRaster(w, h);
+  for (let y = 0; y < h; y++) {
+    const sy = y0 + y;
+    if (sy < 0 || sy >= r.height) continue;
+    for (let x = 0; x < w; x++) {
+      const sx = x0 + x;
+      if (sx < 0 || sx >= r.width) continue;
+      out.data.set(r.data.subarray((sy * r.width + sx) * 4, (sy * r.width + sx) * 4 + 4), (y * w + x) * 4);
+    }
+  }
+  return out;
+}
+
+/**
+ * One line per hidden-art layer (issue #359), in the runs' order:
+ * `  hidden art: full:topwear:hidden -> cuts[0].under (part "tail")`, or,
+ * read by nothing, the two places that would read it. No line when the runs
+ * hold none, so an input without one prints what it printed before.
+ */
+export function hiddenLines(uses: readonly HiddenArtUse[]): string[] {
+  return uses.map((u) =>
+    u.readBy.length > 0
+      ? `  hidden art: ${u.layer} -> ${u.readBy.join(', ')}`
+      : `  hidden art: ${u.layer} -> read by nothing: no cut takes a piece of its layer's part and no limb segment below a joint takes that part, so it fills no under and no cap`,
+  );
 }
 
 function tagsOf(set: LayerSet): Set<string> {
@@ -2053,27 +2166,85 @@ export function checkPlanAgainstRuns(plan: PlanEntry[], extend: Extend[], full: 
 }
 
 /**
+ * What a single run (issue #359, no `--head`) is held to, every refusal at
+ * once:
+ *
+ * - `ASSEMBLE_SINGLE_RUN_FACE`: the run holds no layer with an opaque pixel
+ *   for one of {@link SINGLE_RUN_FACE_TAGS} — the parts the head run exists
+ *   to separate. One problem per tag missing.
+ * - `ASSEMBLE_SINGLE_RUN_PLAN`: a plan row takes the head run, or an
+ *   `extend_below_crop` entry continues a part below a head crop. There is
+ *   no head run and no crop; every row takes `full`.
+ *
+ * `plan` and `extend` are null for `--propose-plan`, which writes them.
+ */
+export function checkSingleRun(full: LayerSet, plan: readonly PlanEntry[] | null, extend: readonly Extend[] | null): void {
+  const problems: Problem[] = [];
+  for (const tag of SINGLE_RUN_FACE_TAGS) {
+    const l = full.layers.find((x) => x.name === tag);
+    if (l === undefined || l.opaquePx === 0) {
+      problems.push({
+        code: 'ASSEMBLE_SINGLE_RUN_FACE',
+        object: `the full run (${full.source})`,
+        detail: `${l === undefined ? `holds no layer "${tag}"` : `holds a layer "${tag}" with no opaque pixel (alpha above ${OPAQUE_ALPHA_ABOVE})`}; with no --head, one run must hold the face parts — ${SINGLE_RUN_FACE_TAGS.join(', ')}, each painted — or a head run (--head) is required`,
+      });
+    }
+  }
+  (plan ?? []).forEach(([name, run], i) => {
+    if (run === 'head') problems.push({ code: 'ASSEMBLE_SINGLE_RUN_PLAN', object: `config.assemble.plan[${i}] (part "${name}")`, detail: 'takes the head run, and with no --head there is none; "full" is required — the one run holds every layer' });
+  });
+  (extend ?? []).forEach((e, i) => {
+    problems.push({ code: 'ASSEMBLE_SINGLE_RUN_PLAN', object: `config.assemble.extend_below_crop[${i}] (part "${e.part}")`, detail: 'continues a part below the head crop, and with no --head there is no crop; no extend_below_crop entry is required — remove it' });
+  });
+  refuseIfAny(problems);
+}
+
+/**
  * Run the stage in memory. Everything that can be refused is refused before
  * this returns; nothing here writes a file, so a caller that writes only
  * after this returned writes only after green.
  */
 export function assemble(input: AssembleInput): AssembleResult {
-  const { source, full, head, plan, extend, patches, cuts, seamRule, projectRule } = input;
-  const unders = cuts.map((q, i) => input.under?.[i] ?? null);
+  const { source, full, head, plan, extend, patches, seamRule, projectRule } = input;
+  const single = input.single === true;
   const frame = checkGeometry(
-    { sourceW: source.width, sourceH: source.height, resolution: input.resolution, headBox: input.headBox, rigScale: input.rigScale },
+    { sourceW: source.width, sourceH: source.height, resolution: input.resolution, headBox: input.headBox, rigScale: input.rigScale, ...(single ? { single: true } : {}) },
     { full, head },
   );
+  if (single) checkSingleRun(full, plan, extend);
   checkPlanAgainstRuns(plan, extend, full, head);
   const { W, H } = frame;
   const srcr = sourceInRig(source, W, H);
+  // Issue #359: a part's hidden-art layer is the under of a cut that names none — and, with one named, a refusal, since
+  // reading either would be a guess. Its uses are counted for `hiddenLines`.
+  const hiddenArt = hiddenArtByPart(plan, input.cuts, { full, head }, frame, input.resolution);
+  const hiddenUses = new Map<string, string[]>();
+  for (const [run, set] of single ? ([['full', full]] as const) : ([['full', full], ['head', head]] as const)) for (const h of set.hidden) hiddenUses.set(`${run}:${h.name}`, []);
+  const hiddenProblems: Problem[] = [];
+  const unders = input.cuts.map((q, i) => {
+    const art = hiddenArt.get(q.from);
+    if (art === undefined) return input.under?.[i] ?? null;
+    if (q.under !== undefined) {
+      hiddenProblems.push({ code: 'ASSEMBLE_HIDDEN_ONE_SOURCE', object: `config.assemble.cuts[${i}].under (part "${q.into}")`, detail: `names ${q.under}, and "${q.from}" also has the hidden-art layer ${art.layer}; one source of what lies under the piece is required — remove under, or the hidden-art layer` });
+      return null;
+    }
+    const box = underBox(q.polygon);
+    hiddenUses.get(art.layer)?.push(`cuts[${i}].under (part "${q.into}")`);
+    return boxOf(art.raster, box.x0, box.y0, box.w, box.h);
+  });
+  const cuts = input.cuts.map((q): Cut => {
+    const art = hiddenArt.get(q.from);
+    return art === undefined || q.under !== undefined ? q : { ...q, under: `the hidden-art layer ${art.layer}` };
+  });
+  refuseIfAny(hiddenProblems);
 
   const rig = new Map<string, Raster>();
   const stats = new Map<string, ProjectionStats>();
   const ghost: Record<string, number> = {};
   /** The full run's layers with an opaque pixel, in draw order: the candidates `uncoveredErrorLayers` reads. */
   const fullTags: string[] = [];
-  for (const [run, set] of [['full', full], ['head', head]] as const) {
+  // A single run (issue #359) is read once: there is no head run to place, project or count ghosts for.
+  for (const [run, set] of single ? ([['full', full]] as const) : ([['full', full], ['head', head]] as const)) {
     const layers = runLayers(set, input.resolution);
     if (run === 'full') fullTags.push(...layers.filter((l) => l.opaqueRunPx > 0).map((l) => l.tag));
     const rigLayers = layers.map((l) => layerToRig(l.canvas, frame, run));
@@ -2326,7 +2497,9 @@ export function assemble(input: AssembleInput): AssembleResult {
       if (u === null) return undefined;
       // Filled where the image is at least as opaque as the layer was; left empty elsewhere (`fillUnder`).
       const f = fillUnder(b.r, (pieces[i] as Built).r, cutBand(cutMasks[i], cuts[i].overlap), u, underBox(cuts[i].polygon));
-      if (f.filled === 0) {
+      // A hidden-art layer (issue #359) is the whole layer's covered art, read by every cut of its part: a cut it holds nothing
+      // under fills 0, which the cut line counts, and is not refused as a file made for this one cut would be.
+      if (f.filled === 0 && input.cuts[i].under !== undefined) {
         empty.push({
           code: 'ASSEMBLE_UNDER_EMPTY',
           object: `config.assemble.cuts[${i}].under (part "${cuts[i].into}")`,
@@ -2355,7 +2528,7 @@ export function assemble(input: AssembleInput): AssembleResult {
     if (pi >= 0) return built[pi];
     const ci = cuts.findIndex((q) => q.into === name);
     return ci >= 0 ? pieces[ci] : null;
-  }, opaqueOf, mergedIn, count);
+  }, opaqueOf, mergedIn, count, (name) => hiddenArt.get(name) ?? null, (layer, by) => hiddenUses.get(layer)?.push(by));
   const limbPieces = lim.pieces;
   const order = limbOrder(order0, plan, cuts, lim.parts);
   const pieceAt = (d: { plan: number } | { cut: number } | { limb: number }): { name: string; b: Built } =>
@@ -2490,6 +2663,7 @@ export function assemble(input: AssembleInput): AssembleResult {
     limbs: lim.counts,
     uncovered,
     drift,
+    hidden: [...hiddenUses].map(([layer, readBy]) => ({ layer, readBy })),
     seamRule,
     projectRule,
   };
@@ -3090,6 +3264,27 @@ export function proposePlan(full: LayerSet, head: LayerSet, g: Geometry, minPx =
   return { plan, extend_below_crop: extend, notes: [...notes, ...bodyNotes, ...unplanned, ...dropNotes] };
 }
 
+/**
+ * `--propose-plan` over one run (issue #359): the run is held to
+ * {@link checkSingleRun}, proposed as both runs (`proposePlan(full, full)`,
+ * whose two maps are one when `g` is {@link singleRunHeadBox}'s), and every
+ * row the proposer drafts from the head run is written from the full run —
+ * there is no other. No row is dropped and none moves: the plan is the
+ * proposer's, in its order. The first note says so, because the notes after
+ * it still speak of a head run, meaning this same file.
+ */
+export function proposeSinglePlan(full: LayerSet, g: Geometry, minPx = PROPOSE_MIN_PX): PlanProposal {
+  checkSingleRun(full, null, null);
+  const p = proposePlan(full, full, { ...g, single: true }, minPx);
+  const plan = p.plan.map(([name, , tag]): PlanEntry => [name, 'full', tag]);
+  return {
+    plan,
+    extend_below_crop: p.extend_below_crop,
+    // The proposer's note offering a head-run row for an author-made layer both runs hold is about two runs; with one it offers a row the stage refuses.
+    notes: [`one run: no --head, so ${full.source} is read as both runs; every row is written from the full run, and "the head run" in a note below is this same file`, ...p.notes.filter((n) => !n.includes(': the head run holds a layer of this name too'))],
+  };
+}
+
 /** What every `--propose-plan` note on a layer in no row says its pixel figures are. */
 export const UNPLANNED_PX = 'px: run pixels of alpha above 8 after ghost clean-up';
 
@@ -3177,7 +3372,10 @@ function unplannedNotes(
  * the loader, because `inputs` runs before it exists; `seethrough` too, for a
  * full-loader config, where it is optional.
  */
-export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble' | 'scene'> & { limbs?: Record<string, Limb>; bones?: BoneEntry[] }): {
+export function stageFields(
+  cfg: Pick<CharacterConfig, 'seethrough' | 'assemble' | 'scene'> & { limbs?: Record<string, Limb>; bones?: BoneEntry[] },
+  single: { w: number; h: number } | null = null,
+): {
   resolution: number;
   headBox: [number, number, number, number];
   rigScale: number;
@@ -3188,18 +3386,21 @@ export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble'
   scene?: boolean;
   limbs?: Record<string, Limb>;
   bones?: BoneEntry[];
+  single?: boolean;
 } {
   const problems: Problem[] = [];
   if (cfg.seethrough === undefined) {
     problems.push({ code: 'ASSEMBLE_FIELD_PRESENT', object: 'config.seethrough', detail: 'is absent; assemble reads seethrough.resolution and seethrough.head_box, which place the two runs on the painting' });
-  } else if (cfg.seethrough.head_box === undefined) {
+  } else if (single !== null) problems.push(...singleRunHeadBoxProblems(cfg.seethrough));
+  else if (cfg.seethrough.head_box === undefined) {
     problems.push({ code: 'ASSEMBLE_FIELD_PRESENT', object: 'config.seethrough.head_box', detail: 'is absent; the head run cannot be placed on the painting without the box it was cropped from' });
   }
   refuseIfAny(problems);
   const st = cfg.seethrough as SeeThrough;
   return {
     resolution: st.resolution,
-    headBox: st.head_box as [number, number, number, number],
+    headBox: single !== null ? singleRunHeadBox(single.w, single.h) : (st.head_box as [number, number, number, number]),
+    ...(single !== null ? { single: true } : {}),
     rigScale: cfg.assemble.rig_scale,
     plan: cfg.assemble.plan,
     extend: cfg.assemble.extend_below_crop ?? [],
@@ -3217,9 +3418,29 @@ export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble'
  * loader's rules; what is left here is that this stage needs the head box,
  * which that loader leaves optional.
  */
-export function proposeFields(cfg: EarlyConfig): { resolution: number; headBox: [number, number, number, number]; rigScale: number } {
+export function proposeFields(cfg: EarlyConfig, single: { w: number; h: number } | null = null): { resolution: number; headBox: [number, number, number, number]; rigScale: number; single?: boolean } {
+  if (single !== null) {
+    refuseIfAny(singleRunHeadBoxProblems(cfg.seethrough));
+    return { resolution: cfg.seethrough.resolution, headBox: singleRunHeadBox(single.w, single.h), rigScale: cfg.assemble.rig_scale, single: true };
+  }
   if (cfg.seethrough.head_box === undefined) {
     refuseIfAny([{ code: 'ASSEMBLE_FIELD_PRESENT', object: 'config.seethrough.head_box', detail: 'is absent; the plan is proposed from both runs, and the head run cannot be placed on the painting without the box it was cropped from — run `propose --head-box` first' }]);
   }
   return { resolution: cfg.seethrough.resolution, headBox: cfg.seethrough.head_box as [number, number, number, number], rigScale: cfg.assemble.rig_scale };
+}
+
+/**
+ * A single run's config (issue #359) sets no `seethrough.head_box`: the box
+ * places a head run cut from the painting, and with no `--head` there is none,
+ * so a box there would be a value nothing reads (`ASSEMBLE_SINGLE_RUN_HEAD_BOX`).
+ */
+function singleRunHeadBoxProblems(st: Pick<SeeThrough, 'head_box'>): Problem[] {
+  if (st.head_box === undefined) return [];
+  return [
+    {
+      code: 'ASSEMBLE_SINGLE_RUN_HEAD_BOX',
+      object: 'config.seethrough.head_box',
+      detail: `is [${st.head_box.join(', ')}], and with no --head there is no head run for it to place; no head_box is required with one run — remove it, or give the head run with --head`,
+    },
+  ];
 }

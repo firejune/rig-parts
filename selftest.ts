@@ -139,6 +139,7 @@ import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, 
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
 import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'rig-c/src/render.ts';
 import { CANVAS, flatName, layerRaster, minimalConfig, WRAPPER_LAYERS, writePsdFixture, writeWrapperFixture } from './fixtures/synthetic.ts';
+import { ARTIST_PATCH, ARTIST_PLAN, artistConfig, artistLayers, EYE as ARTIST_EYE, writeArtistFixture } from './fixtures/artist.ts';
 import { arm, armRig, base, baseRenamed, baseWith, roleRig } from './fixtures/structure.ts';
 import {
   assemble,
@@ -183,6 +184,10 @@ import {
   stageFields,
   uncoveredLine,
   visibilityCounts,
+  checkSingleRun,
+  proposeSinglePlan,
+  SINGLE_RUN_FACE_TAGS,
+  singleRunHeadBox,
 } from './src/assemble.ts';
 import { chainDirection } from './src/check.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics, BREATH_TORSO_MEAN_FLOOR } from './src/check.ts';
@@ -298,7 +303,7 @@ import { encodeGif } from './src/gif.ts';
 import { buildPrompts, checkGraph, fillSeeThrough, FRAMING, NEGATIVE_HEAD, paintingGraph, POSITIVE_HEAD, stripWords } from './src/graphs.ts';
 import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs, squarePad } from './src/inputs.ts';
-import { implausibleRules, type Layer, layerFigures, type LayerSet, PLAUSIBLE_AREA_RATIO_MAX, PLAUSIBLE_JUDGED_AREA_RATIO, PLAUSIBLE_TRANSLUCENT_MAX, PLAUSIBLE_BACKGROUND_MAX, PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN, readLayers, readPsdLayers, readWrapperLayers, ruleSummary } from './src/layers.ts';
+import { exportLayers, implausibleRules, type Layer, layerFigures, type LayerSet, layerSetDiff, PLAUSIBLE_AREA_RATIO_MAX, PLAUSIBLE_JUDGED_AREA_RATIO, PLAUSIBLE_TRANSLUCENT_MAX, PLAUSIBLE_BACKGROUND_MAX, PLAUSIBLE_BACKGROUND_TRANSLUCENT_MIN, readLayers, readPsdLayers, readWrapperLayers, ruleSummary, templateLayerNames, templatePsdBytes } from './src/layers.ts';
 import { PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, readFrom, readParts, serializeParts, tagOf, writeParts } from './src/parts.ts';
 import {
   alphaComposite,
@@ -374,6 +379,7 @@ import {
   readPartSet,
   serializeProposal,
   draftTurn,
+  EYE_GROUP_TAGS,
   TURN_DEPTH_CAVEAT,
   withTurn,
   DEFAULT_GRID_RULE,
@@ -403,7 +409,7 @@ import { BEND_DEGREES, BEND_WORST_SHARE, bendAnimationNames, bendAnimations, typ
 import { DRAFT_COARSE_GRID, DRAFT_COSTLY_GRID, DRAFT_FIGURE, DRAFT_FINE_GRID, DRAFT_LINKS, DRAFT_SPECK_ALPHA, draftConfig, draftParts, writeDraftFixture, writeDraftFixtureWithContour, writeDraftIslandsFixture } from './fixtures/meshdraft.ts';
 import { pyRound } from './src/round.ts';
 import { COLORS, isSkeletonName, KEYPOINT_NAMES, renderSkeleton, scaledPoints, SKELETON_BASE, SKELETONS, stickScale } from './src/skeleton.ts';
-import { AUTHOR_LABEL_RULE, AUTHOR_NO_ROLE, authorLayerLine, readAuthorTag, readLayerTag, readTag, type TagReading } from './src/tags.ts';
+import { AUTHOR_LABEL_RULE, AUTHOR_NO_ROLE, authorLayerLine, BODY_TAGS, HEAD_TAGS, HIDDEN_NAME_RULE, readAuthorTag, readLayerTag, readTag, SPLIT_TAGS, type TagReading, V3_TAGS } from './src/tags.ts';
 
 const ROOT = import.meta.dir;
 
@@ -1263,6 +1269,100 @@ function runWrapperSuite(): number {
       `author:hand at depth 0.3 -> group ${hand?.tag.group ?? 'not read'}, order ${aorder}; "author:", "author: hand", "hand" -> ${codes(e125)}`,
       'issue #256: an author who splits a layer by hand had no tag to give it, so a consumer borrowed tail and wings; the author form is read as what it is, and a label that is no part name is refused, not trimmed into one',
     );
+
+    // LW126 — issue #359: a wrapper manifest with depth_median null on every drawn layer reads in the manifest's own
+    // order (no depth invented, every depth null); a mix of numbers and null is refused once, naming the null ones; a
+    // hidden-art layer reads apart from the drawn ones, and one carrying a number, one whose layer the manifest does not
+    // hold, and one whose name before ":hidden" is no layer name are each refused by name.
+    const nulled = (dir: string, edit: (layers: Array<Record<string, unknown>>) => void): void => {
+      const mp = join(dir, 'layers.json');
+      const m = JSON.parse(readFileSync(mp, 'utf8')) as { layers: Array<Record<string, unknown>> };
+      edit(m.layers);
+      writeFileSync(mp, JSON.stringify(m));
+    };
+    const noDepth = fresh('wrapper-no-depth');
+    writeWrapperFixture(noDepth, [...WRAPPER_LAYERS, { ...WRAPPER_LAYERS[0], name: 'face:hidden', layout: 'flat', painted: 40 }]);
+    nulled(noDepth, (ls) => {
+      for (const l of ls) l.depth_median = null;
+    });
+    const nset = readWrapperLayers(noDepth);
+    const norder = nset.layers.map((l) => l.name).join(' < ');
+    const mixed = fresh('wrapper-mixed-depth');
+    writeWrapperFixture(mixed);
+    nulled(mixed, (ls) => {
+      ls[1].depth_median = null;
+      ls[3].depth_median = null;
+    });
+    const eMixed = refusals(() => readWrapperLayers(mixed));
+    const badHidden = fresh('wrapper-hidden-bad');
+    writeWrapperFixture(badHidden, [
+      ...WRAPPER_LAYERS,
+      { ...WRAPPER_LAYERS[0], name: 'face:hidden', layout: 'flat' },
+      { ...WRAPPER_LAYERS[0], name: 'topwear:hidden', layout: 'flat' },
+      { ...WRAPPER_LAYERS[0], name: 'hair:hidden', layout: 'flat' },
+    ]);
+    nulled(badHidden, (ls) => {
+      ls[6].depth_median = null;
+    });
+    const eHidden = refusals(() => readWrapperLayers(badHidden));
+    const hp = (code: string): string => eHidden?.problems.filter((q) => q.code === code).map((q) => `${q.object}: ${q.detail}`).join(' | ') ?? '';
+    say(
+      'LW126_NULL_DEPTH_ON_EVERY_LAYER_READS_IN_MANIFEST_ORDER_A_MIX_IS_REFUSED_AND_HIDDEN_ART_READS_APART',
+      norder === 'face < eyebrow-l < back hair < eyebrow-r < neckwear' &&
+        nset.layers.every((l) => l.depth === null) &&
+        nset.hidden.length === 1 &&
+        nset.hidden[0].of === 'face' &&
+        nset.hidden[0].opaquePx === 40 &&
+        eMixed?.problems.length === 1 &&
+        eMixed.problems[0].code === 'LAYERS_DEPTH_ALL_OR_NONE' &&
+        eMixed.problems[0].detail.startsWith('3 drawn layer(s) carry a depth_median and 2 carry null ("eyebrow-l", "eyebrow-r")') &&
+        eHidden?.problems.length === 3 &&
+        hp('LAYERS_HIDDEN_NO_DEPTH').startsWith('layer "face:hidden" field "depth_median": is 0.5; a hidden-art layer is never drawn') &&
+        hp('LAYERS_HIDDEN_OF_PRESENT').startsWith('layer "topwear:hidden": is the hidden art of "topwear", and the input holds no drawn layer of that name') &&
+        hp('LAYERS_TAG_KNOWN').startsWith(`layer "hair:hidden": is a hidden-art layer's name (issue #359) for "hair", which is no layer name; ${HIDDEN_NAME_RULE}`),
+      `all null -> ${norder}, depth ${[...new Set(nset.layers.map((l) => String(l.depth)))].join(',')}, hidden ${nset.hidden.map((h) => `${h.name} of ${h.of} ${h.opaquePx} px`).join(', ')}; two of five null -> ${codes(eMixed)}: ${eMixed?.problems[0]?.detail.slice(0, 90) ?? ''}; a hidden layer with a depth, one of an absent layer, one of a name no tag -> ${codes(eHidden)}`,
+      'issue #359: an export of a PSD has no depth, and the manifest\'s order is then its draw order exactly as a PSD\'s stacking is; a mix has no one order, so it is refused rather than ordered by a guess, and a hidden-art layer is never drawn, so it has no depth and must belong to a drawn layer',
+    );
+
+    // LW127 — issue #359: the export's round trip. A PSD with a group, an author-made layer and a hidden-art layer
+    // switched off is exported; reading the directory back is the PSD's reading (canvas, every drawn layer's name, box,
+    // depth and pixels in draw order, the hidden-art layer's), every depth null. Planted: one pixel changed in one
+    // exported PNG is named by the diff; exporting into a directory that is not empty is refused and writes nothing.
+    const psdDir = fresh('wrapper-export');
+    const psdPath = join(psdDir, 'in.psd');
+    writePsdFixture(psdPath, CANVAS.w, CANVAS.h, [
+      { name: 'back hair', left: 10, top: 0, pixels: layerRaster(WRAPPER_LAYERS[2]) },
+      { name: 'head parts', left: 0, top: 0, pixels: layerRaster(WRAPPER_LAYERS[0]), children: [{ name: 'face', left: 20, top: 8, pixels: layerRaster(WRAPPER_LAYERS[0]) }, { name: 'eyebrow-l', left: 34, top: 12, pixels: layerRaster(WRAPPER_LAYERS[1]) }] },
+      { name: 'author:lock', left: 24, top: 12, pixels: layerRaster(WRAPPER_LAYERS[3]) },
+      { name: 'face:hidden', left: 20, top: 30, pixels: layerRaster({ ...WRAPPER_LAYERS[1], painted: 9 }), hidden: true },
+    ]);
+    const psdSet = readPsdLayers(psdPath);
+    const exp = join(psdDir, 'export');
+    const written = exportLayers(psdSet, exp);
+    const back = readWrapperLayers(exp);
+    const roundTrip = layerSetDiff(psdSet, back);
+    const xmanifest = JSON.parse(readFileSync(written.manifest, 'utf8')) as { layers: Array<{ name: string; filename: string; depth_median: unknown }> };
+    const brow = join(exp, xmanifest.layers.find((l) => l.name === 'eyebrow-l')?.filename ?? 'none');
+    const browPx = readPng(brow);
+    browPx.data[0] = browPx.data[0] === 0 ? 1 : 0;
+    writeFileSync(brow, encodePngBytes(browPx));
+    const planted = layerSetDiff(psdSet, readWrapperLayers(exp));
+    const again = refusals(() => exportLayers(psdSet, exp));
+    const files = readdirSync(exp).sort().join(',');
+    say(
+      'LW127_A_PSD_EXPORTED_AS_THE_WRAPPER_FORM_READS_BACK_EXACTLY_AND_A_CHANGED_PIXEL_OR_A_USED_DIRECTORY_IS_NAMED',
+      roundTrip === null &&
+        psdSet.layers.length === 4 &&
+        psdSet.hidden.length === 1 &&
+        xmanifest.layers.map((l) => l.filename).join(',') === '00_back_hair.png,01_face.png,02_eyebrow-l.png,03_author_lock.png,04_face_hidden.png' &&
+        xmanifest.layers.every((l) => l.depth_median === null) &&
+        planted === 'layer "eyebrow-l" pixels differ' &&
+        again?.problems.length === 1 &&
+        again.problems[0].code === 'LAYERS_EXPORT_DIR_EMPTY' &&
+        files === '00_back_hair.png,01_face.png,02_eyebrow-l.png,03_author_lock.png,04_face_hidden.png,layers.json',
+      `read back -> ${roundTrip ?? 'the same layers, boxes, depths and pixels'}; files ${xmanifest.layers.map((l) => l.filename).join(', ')}, depth ${[...new Set(xmanifest.layers.map((l) => String(l.depth_median)))].join(',')}; one pixel changed -> ${planted ?? 'NOT SEEN'}; exported again into it -> ${codes(again)}, files ${files}`,
+      'issue #359: the folder of PNGs is the form an agent edits, so it must hold exactly what the PSD held — a reader of the export that saw anything else would correct a parse that never happened — and a directory left by an earlier export could hand the reader a stale file',
+    );
   } finally {
     for (const d of dirs) rmSync(d, { recursive: true, force: true });
   }
@@ -1343,6 +1443,55 @@ function runPsdSuite(): number {
         e122.problems[0].detail.includes(AUTHOR_LABEL_RULE),
       `${anames}; a layer named "author:" -> ${codes(e122)}`,
       'issue #256: the two readers are one contract, so a layer the author made reads the same from a PSD as from the wrapper',
+    );
+
+    // PS123 — issue #359: a hidden-art layer in a PSD is read apart from the drawn layers, switched off or not, and a
+    // switched-off layer that is not one is still refused; one whose layer the file does not hold is refused by name.
+    const art = join(dir, 'hidden-art.psd');
+    writePsdFixture(art, CANVAS.w, CANVAS.h, [
+      { name: 'back hair', left: 10, top: 0, pixels: hair },
+      { name: 'face:hidden', left: 20, top: 30, pixels: brow, hidden: true },
+      { name: 'face', left: 20, top: 8, pixels: face },
+      { name: 'back hair:hidden', left: 10, top: 0, pixels: brow },
+    ]);
+    const hset = readPsdLayers(art);
+    const orphan = join(dir, 'hidden-orphan.psd');
+    writePsdFixture(orphan, CANVAS.w, CANVAS.h, [
+      { name: 'face', left: 20, top: 8, pixels: face, hidden: true },
+      { name: 'topwear:hidden', left: 20, top: 30, pixels: brow },
+    ]);
+    const e123 = refusals(() => readPsdLayers(orphan));
+    say(
+      'PS123_A_HIDDEN_ART_LAYER_READS_APART_SWITCHED_OFF_OR_NOT_AND_ONE_WITHOUT_ITS_LAYER_IS_REFUSED',
+      hset.layers.map((l) => `${l.drawOrder}:${l.name}`).join(' ') === '0:back hair 1:face' &&
+        hset.hidden.map((h) => `${h.name}>${h.of}:${h.opaquePx}`).join(' ') === `face:hidden>face:${WRAPPER_LAYERS[1].painted} back hair:hidden>back hair:${WRAPPER_LAYERS[1].painted}` &&
+        e123?.problems.map((q) => `${q.code} ${q.object}`).join(' | ') === 'PSD_LAYER_PLAIN PSD layer "face" | LAYERS_HIDDEN_OF_PRESENT PSD layer "topwear:hidden"',
+      `drawn ${hset.layers.map((l) => `${l.drawOrder}:${l.name}`).join(' ')}; hidden ${hset.hidden.map((h) => `${h.name} of ${h.of}, ${h.opaquePx} px`).join('; ')}; a switched-off face and a topwear:hidden with no topwear -> ${codes(e123)}`,
+      'issue #359: the art under a sleeve is painted to be read, not drawn, so an artist keeps it switched off; it never enters the draw order, and it must say whose art it is with a layer the file holds',
+    );
+
+    // PS124 — issue #359: the template. Its names are every v3 tag less head, the six split tags as their halves:
+    // 24 - 1 - 6 + 12 = 29, each one readLayerTag accepts; two writes on one canvas are one byte string; read back, every
+    // layer is refused once as empty, in the template's order, and nothing else is.
+    const tnames = templateLayerNames();
+    const derived = [...V3_TAGS].filter((t) => t !== 'head').flatMap((t) => ((SPLIT_TAGS as readonly string[]).includes(t) ? [`${t}-r`, `${t}-l`] : [t]));
+    const tpl = join(dir, 'template.psd');
+    const bytes = templatePsdBytes(48, 48);
+    writeFileSync(tpl, bytes);
+    const e124 = refusals(() => readPsdLayers(tpl));
+    say(
+      'PS124_THE_TEMPLATE_HOLDS_THE_29_NAMES_THE_RIG_READS_IS_DETERMINISTIC_AND_READS_BACK_AS_29_EMPTY_LAYERS',
+      V3_TAGS.length === 24 &&
+        BODY_TAGS.length + HEAD_TAGS.length === 24 &&
+        tnames.length === 29 &&
+        [...tnames].sort().join(',') === [...derived].sort().join(',') &&
+        tnames.every((n) => readLayerTag(n) !== null) &&
+        Buffer.from(bytes).equals(Buffer.from(templatePsdBytes(48, 48))) &&
+        e124?.problems.length === 29 &&
+        e124.problems.every((q) => q.code === 'PSD_LAYER_HAS_PIXELS') &&
+        e124.problems.map((q) => q.object).join('|') === tnames.map((n) => `PSD layer "${n}"`).join('|'),
+      `${V3_TAGS.length} v3 tags (${BODY_TAGS.length} body + ${HEAD_TAGS.length} head) -> ${tnames.length} names, the derivation's set ${[...tnames].sort().join(',') === [...derived].sort().join(',') ? 'equal' : 'DIFFERENT'}; two writes ${Buffer.from(bytes).equals(Buffer.from(templatePsdBytes(48, 48))) ? 'identical' : 'DIFFER'} (${bytes.length} bytes); read back -> ${e124?.problems.length ?? 0} problem(s), ${[...new Set(e124?.problems.map((q) => q.code))].join(', ')}`,
+      'issue #359: the card counted 24 names; the rig reads the split tags by side (the eye bones come from eyewhite-r and eyewhite-l) and never reads head, so the template carries 29, derived from src/tags.ts rather than typed; an empty layer is refused by the reader, so the template says by name which layers are still to paint or delete',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -3066,7 +3215,7 @@ function usageDrift(run: (args: string[]) => { status: number; out: string }, su
   const faults: string[] = [];
   const commands: string[][] = [];
   for (const c of surface.commands) {
-    if (c === 'layers' || c === 'guide') continue;
+    if (c === 'guide') continue;
     if (c !== 'comfy') {
       commands.push([c]);
       continue;
@@ -3466,7 +3615,7 @@ function runCliSuite(): number {
       'CL26_EVERY_UNKNOWN_FLAG_REFUSAL_LISTS_EXACTLY_THE_FLAGS_ITS_PARSER_ACCEPTS',
       usageReport.rows.length > 0 && usageReport.faults.length === 0 && plantedAll,
       `${usageReport.rows.length} command(s) probed with each of the ${usageReport.candidates} flag(s) cli.ts spells: ${usageReport.faults.length === 0 ? usageReport.rows.map((r) => `${r.command} ${r.accepted.length}`).join(', ') : usageReport.faults.join('; ')}` +
-        `; layers and guide take one positional argument and no flag, so neither has a refusal to read` +
+        `; guide takes one positional argument and no flag, so it has no refusal to read` +
         `; planted: the last listed flag dropped from each refusal -> ${planted.filter((p) => p.length > 0).length} of ${planted.length} caught (${planted[0]?.[0] ?? 'none'})`,
       'an agent that guesses a flag learns the real ones from the refusal, so a refusal that leaves one out (loop omitted --palette; sheet, rig and assemble listed none) hides a flag the command takes; the accepted set is probed flag by flag, not read from the table the refusal prints',
     );
@@ -3600,6 +3749,47 @@ function runCliSuite(): number {
     refusalLines.length === refusals.length && pointed.every((c) => c !== null) && answered.length > 0 && answered.every(({ r }) => r.status === 0) && !/\(see rig-parts guide [A-Z_]+\)$/.test('  FAIL  X_Y: o — d'),
     `${refusalLines.length} FAIL line(s) from ${refusals.length} refusing call(s): ${refusalLines.map((l, i) => `${pointed[i] === null ? 'NO POINTER' : 'pointer'} "${l.trim().slice(0, 90)}…"`).join(' | ')}; guide on each rule -> ${answered.map(({ c, r }) => `${c} exit ${r.status}`).join(', ')}`,
     "issue #343, in the form rig-c/core#1397 shares: a production consumer lost its time searching the guide for what a line's row already said (#321, #325); the line now says which command prints that row, and the command answers",
+  );
+
+  // CL169 — issue #359: the artist route from the command line. `layers --export` writes the wrapper form and says it
+  // read it back; `layers` on the PSD says once that it carries no depth; `layers --template` writes the bytes
+  // templatePsdBytes writes; --template without --canvas, --canvas without --template and --template beside a path
+  // are usage errors that write nothing; `assemble --propose-plan` with no --head prints every row from the full run.
+  const artCl = join(dir, 'cl-artist');
+  writeArtistFixture(artCl);
+  const psd = join(artCl, 'art.psd');
+  const shownArt = runCli(['layers', psd]);
+  const exported = runCli(['layers', '--export', join(artCl, 'work'), psd]);
+  const tplPath = join(artCl, 'tpl', 'art.psd');
+  const tpl = runCli(['layers', '--template', tplPath, '--canvas', '64x64']);
+  const noCanvas = runCli(['layers', '--template', join(artCl, 'x.psd')]);
+  const strayCanvas = runCli(['layers', '--canvas', '64x64', psd]);
+  const withPath = runCli(['layers', '--template', join(artCl, 'y.psd'), '--canvas', '64x64', psd]);
+  const plan1 = runCli(['assemble', '--propose-plan', '--source', join(artCl, 'painting.png'), '--full', psd, '--config', join(artCl, 'config.json')]);
+  let planRows = '';
+  try {
+    planRows = (JSON.parse(plan1.out) as { plan: string[][] }).plan.map((r) => r[1]).join(',');
+  } catch {
+    planRows = 'not JSON';
+  }
+  say(
+    'CL169_LAYERS_EXPORTS_AND_WRITES_THE_TEMPLATE_AND_ASSEMBLE_PROPOSES_FROM_ONE_RUN_WITH_NO_HEAD',
+    shownArt.status === 0 &&
+      shownArt.out.includes(`  SKIP  depth: ${psd} carries no depth_median (a PSD carries none)`) &&
+      exported.status === 0 &&
+      exported.out.includes('read back: 6 drawn and 0 hidden-art layer(s), boxes, pixels and order as read') &&
+      layerSetDiff(readPsdLayers(psd), readWrapperLayers(join(artCl, 'work'))) === null &&
+      tpl.status === 0 &&
+      existsSync(tplPath) &&
+      Buffer.from(readFileSync(tplPath)).equals(Buffer.from(templatePsdBytes(64, 64))) &&
+      tpl.out.includes('29 empty layer(s)') &&
+      [noCanvas, strayCanvas, withPath].every((r) => r.status === 2) &&
+      !existsSync(join(artCl, 'x.psd')) &&
+      !existsSync(join(artCl, 'y.psd')) &&
+      plan1.status === 0 &&
+      planRows === 'full,full,full,full,full,full',
+    `layers on the PSD exit ${shownArt.status}, SKIP depth line ${shownArt.out.includes('  SKIP  depth: ') ? 'printed' : 'MISSING'}; --export exit ${exported.status}, ${exported.out.split('\n').find((l) => l.startsWith('rig-parts layers --export'))?.slice(-80) ?? 'no line'}; --template exit ${tpl.status}, bytes ${existsSync(tplPath) && Buffer.from(readFileSync(tplPath)).equals(Buffer.from(templatePsdBytes(64, 64))) ? 'templatePsdBytes\'s' : 'DIFFERENT'}; no --canvas, a stray --canvas, a path beside --template -> exit ${[noCanvas, strayCanvas, withPath].map((r) => r.status).join(', ')}; --propose-plan with no --head exit ${plan1.status}, runs ${planRows}`,
+    'issue #359: an agent drives the artist route from the command line, so each new form is checked there — what it writes, what it prints, and that a form it does not take is a usage error before anything is written',
   );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -6204,6 +6394,7 @@ function proposalConfig(parts: readonly ProposeFixturePart[], prop: Proposal): R
 function headRun(side: number, rects: Array<[string, number, number, number, number]>): LayerSet {
   return {
     form: 'wrapper',
+    hidden: [],
     source: 'fixture layers.json',
     canvas: { w: side, h: side },
     layers: rects.map(([name, left, top, w, h], i) => {
@@ -6657,6 +6848,7 @@ function runProposeSuite(): number {
     ];
     const depthRun = (run: 'full' | 'head', skip: string | null = null, depth: number | null | undefined = undefined): LayerSet => ({
       form: 'wrapper',
+      hidden: [],
       source: `fixture ${run} layers.json`,
       canvas: { w: 1, h: 1 },
       layers: TURN_DEPTHS.filter(([r, tag]) => r === run && tag !== skip).map(([, tag, d], i) => ({ name: tag, tag: readTag(tag) as TagReading, file: null, pixels: newRaster(1, 1), left: 0, top: 0, right: 1, bottom: 1, depth: depth === undefined ? d : depth, drawOrder: i, opaquePx: 1 })),
@@ -6703,6 +6895,22 @@ function runProposeSuite(): number {
         flatDraft.notes.at(-1) === 'turn: every carried part lies at depth 0.5, so none is nearer than the pivot and no turn control is drafted',
       `no head run -> ${noHead?.problems.map((q) => `${q.code} ${q.object}: ${q.detail}`).join(' | ') ?? 'accepted'}; handwear-l missing and a depthless head run -> ${both?.problems.map((q) => `${q.code} ${q.object}`).join(' | ') ?? 'accepted'}; a painting patch -> depths ${JSON.stringify(Object.keys(patchDraft.turn?.depths ?? {}))}, "${patchDraft.notes[0] ?? ''}"; every part at 0.5 -> turn ${JSON.stringify(flatDraft.turn)}, "${flatDraft.notes.at(-1) ?? ''}"`,
       "issue #251: a depth is read off See-through's layer or not at all — never guessed for a part whose run, layer or depth is missing — and a patch, which no layer made, is said to stay rather than given a depth",
+    );
+
+    // PR121 — issue #359: runs that carry no depth at all — every part's layer null, as a PSD's or an export of one —
+    // are skipped by name: no turn, no refusal, one note starting "turn: SKIP" that names the runs. A mix (PR94's
+    // depthless head run beside a full run with depths) is still refused part by part.
+    const psdRun = (run: 'full' | 'head'): LayerSet => ({ ...depthRun(run, null, null), form: 'psd', source: `fixture ${run}.psd` });
+    const skipped = draftTurn(TP, { full: psdRun('full'), head: psdRun('head') });
+    const mixedTurn = refusals(() => draftTurn(TP, { full: depthRun('full'), head: depthRun('head', null, null) }));
+    say(
+      'PR121_RUNS_WITH_NO_DEPTH_ON_ANY_PART_SKIP_THE_TURN_BY_NAME_AND_A_MIX_IS_STILL_REFUSED',
+      skipped.turn === null &&
+        skipped.notes.length === 1 &&
+        skipped.notes[0].startsWith('turn: SKIP — fixture full.psd, fixture head.psd carry no depth_median (a PSD carries none), so no turn control is drafted from 4 part(s)') &&
+        mixedTurn?.problems.map((q) => `${q.code} ${q.object}`).join(' | ') === 'PROPOSE_TURN_DEPTH_PRESENT part "face" (head:face)',
+      `two PSD runs -> turn ${JSON.stringify(skipped.turn)}, "${skipped.notes[0] ?? ''}"; full with depths, head without -> ${mixedTurn?.problems.map((q) => `${q.code} ${q.object}`).join(' | ') ?? 'accepted'}`,
+      'issue #359: a depth-reading check over an input that carries none reports SKIP and names the source — it never passes, and it never refuses an artist\'s file for lacking what no artist\'s file has',
     );
 
     // The CLI: without --full/--head the proposal is the one written before the flags existed; with them it carries
@@ -6753,6 +6961,7 @@ function runProposeSuite(): number {
     ];
     const rideRun = (rows: Array<[string, number]>): LayerSet => ({
       form: 'wrapper',
+      hidden: [],
       source: 'fixture layers.json',
       canvas: { w: 1, h: 1 },
       layers: rows.map(([tag, d], i) => ({ name: tag, tag: readTag(tag) as TagReading, file: null, pixels: newRaster(1, 1), left: 0, top: 0, right: 1, bottom: 1, depth: d, drawOrder: i, opaquePx: 1 })),
@@ -14358,6 +14567,30 @@ function runBuildSuite(): number {
       `--lead-in 1 exit ${lead.status}: ${leadLine.trim() || 'no lead-in line'}; ${encoded(lead.out)} frame(s) encoded against the plain --loop build's ${encoded(green.out)}; repeatIdle keys ${lk.map((k) => k.t).join(',')}, the second copy's curve ${JSON.stringify(lk[2].curve)}; planted: a track ending at 0.5 of 1 -> ${shortErr === null ? 'accepted' : shortErr.problems.map((p) => p.code).join(', ')}; --lead-in without --loop exit ${noLoop.status}; --lead-in 0 exit ${zero.status}`,
       "issue #224's follow-up: rigc's render resets physics at frame 0, so a rig with physics does not end its idle where it starts; the lead-in plays the idle on and keeps the last period. On an idle with nothing to settle the last period is the first, so the flag must change nothing there, and an idle the repeat would have to invent a value for is refused by name",
     );
+
+    // BU167 — issue #359: a single-run build. The artist fixture's PSD as --full and no --head, its config holding no
+    // head_box: assemble, rig and check green, the `one run:` line under [assemble]. The same file without its face
+    // layer stops at [assemble] with ASSEMBLE_SINGLE_RUN_FACE and writes nothing.
+    const artDir = join(dir, 'artist');
+    writeArtistFixture(artDir);
+    const single = runCli(['build', '--config', join(artDir, 'config.json'), '--source', join(artDir, 'painting.png'), '--full', join(artDir, 'art.psd'), '--out', join(artDir, 'out')]);
+    const facelessDir = join(dir, 'artist-faceless');
+    writeArtistFixture(facelessDir, { drop: ['face'], config: { ...artistConfig(), assemble: { rig_scale: 1, plan: ARTIST_PLAN.filter(([, , t]) => t !== 'face') }, regions: Object.fromEntries(ARTIST_PLAN.filter(([, , t]) => t !== 'face').map((p) => [p[0], p[0] === 'topwear' ? 'chest' : 'anchor'])) } });
+    const faceless = runCli(['build', '--config', join(facelessDir, 'config.json'), '--source', join(facelessDir, 'painting.png'), '--full', join(facelessDir, 'art.psd'), '--out', join(facelessDir, 'out')]);
+    const facelessFail = faceless.out.split('\n').filter((l) => l.includes('FAIL  '));
+    say(
+      'BU167_A_SINGLE_RUN_BUILD_FROM_AN_ARTIST_PSD_IS_GREEN_AND_ONE_WITHOUT_ITS_FACE_STOPS_AT_ASSEMBLE',
+      single.status === 0 &&
+        single.out.includes('\n[assemble]   one run: ') &&
+        single.out.includes('build: PASS') &&
+        existsSync(join(artDir, 'out', 'check', 'build', 'skeleton.json')) &&
+        faceless.status === 1 &&
+        facelessFail.length === 1 &&
+        facelessFail[0].startsWith(`[assemble]   FAIL  ASSEMBLE_SINGLE_RUN_FACE: the full run (${join(facelessDir, 'art.psd')}) — holds no layer "face"`) &&
+        entries(join(facelessDir, 'out')).length === 0,
+      `no --head: exit ${single.status}, ${single.out.split('\n').find((l) => l.startsWith('build: ')) ?? 'no build line'}; without the face: exit ${faceless.status}, ${facelessFail.map((l) => l.trim().slice(0, 140)).join(' | ')}, --out holds [${entries(join(facelessDir, 'out')).join(', ')}]`,
+      'issue #359: the card\'s own test — an artist-style PSD with a separated face builds green as one run, and the refusal when the face is missing names the rule before anything is written',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -15390,6 +15623,44 @@ function runLimbCases(say: (name: string, ok: boolean, detail: string, why: stri
       `elbow at (30, 30): ${off.slice(0, 200)}; both links at (15, 30): ${flat.slice(0, 200)}`,
       'a cap sized by a width the limb does not have there, or a line with no direction, would be a value the tool made up; the joint is the bone\'s origin, so the bone is what moves',
     );
+
+    // AS239 — issue #359: a hidden-art layer is the cap of a limb segment that names none. `handwear-r:hidden` is UB
+    // over x 10..19, y 20..29, the forearm painted on up under the sleeve: the elbow's cap box is [10, 25, 10, 10], so
+    // every one of its 40 upper-side pixels comes from the hidden art (AS236's figures for a 10x10 UB file) and the
+    // record names the layer. With a cap file named as well, the segment is refused by name.
+    const hiddenLimb = (label: string, cfg: Record<string, unknown>, files: Record<string, Uint8Array> = {}): { r: ReturnType<typeof assemble>; lines: string[] } => {
+      const d = join(root, label);
+      writeRun(join(d, 'full'), [...LIMB_FULL, { name: 'handwear-r:hidden', depth: null, rects: [{ x0: 10, y0: 20, x1: 20, y1: 30, colour: [0, 0, 255] }] }]);
+      writeRun(join(d, 'head'), FRAMED_HEAD);
+      writeFileSync(join(d, 'painting.png'), encodePngBytes(flatPainting()));
+      for (const [name, bytes] of Object.entries(files)) writeFileSync(join(d, name), bytes);
+      writeFileSync(join(d, 'config.json'), JSON.stringify(cfg));
+      const lines: string[] = [];
+      const out = join(d, 'out');
+      const r = assembleStage(
+        { source: join(d, 'painting.png'), full: join(d, 'full'), head: join(d, 'head'), config: join(d, 'config.json'), seam: 'near-white', project: DEFAULT_PROJECT_RULE },
+        { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, 'recomposite_error_rig.png') },
+        (l) => lines.push(l),
+      );
+      return { r, lines };
+    };
+    const hl = hiddenLimb('hidden-cap', limbConfig());
+    const hlLine = hl.lines.find((l) => l.startsWith('  limb cap: "arm_r"')) ?? '';
+    const hlRec = hl.r.parts.parts.find((q) => q.name === 'forearm_r');
+    const hlRead = readParts(join(root, 'hidden-cap', 'out', 'parts.json')).parts.find((q) => q.name === 'forearm_r');
+    const hlBoth = refusals(() => hiddenLimb('hidden-cap-both', withCap('elbow.png'), { 'elbow.png': png(10, 10, 255) }));
+    say(
+      'AS239_A_HIDDEN_ART_LAYER_IS_THE_CAP_OF_A_LIMB_SEGMENT_THAT_NAMES_NONE_AND_ONE_NAMED_AS_WELL_IS_REFUSED',
+      hlLine.includes('box [10, 25, 10, 10] — on the upper side of the line 40 px from the hidden-art layer full:handwear-r:hidden, 0 px from the layer, none missing') &&
+        JSON.stringify(hlRec?.limb?.cap) === '{"at":[15,30],"width":10,"radius":5,"box":[10,25,10,10],"layer_px":0,"image_px":40,"image_layer":"full:handwear-r:hidden","missing_px":0}' &&
+        JSON.stringify(hlRead?.limb?.cap) === JSON.stringify(hlRec?.limb?.cap) &&
+        hl.lines.includes('  hidden art: full:handwear-r:hidden -> config.limbs.arm_r.segments[1].cap (part "forearm_r")') &&
+        hlBoth?.problems.length === 1 &&
+        hlBoth.problems[0].code === 'ASSEMBLE_HIDDEN_ONE_SOURCE' &&
+        hlBoth.problems[0].object === 'config.limbs.arm_r.segments[1] (joint "elbow", part "forearm_r").cap',
+      `${hlLine.slice(hlLine.indexOf('box'))}; record cap ${JSON.stringify(hlRec?.limb?.cap)}, read back ${JSON.stringify(hlRead?.limb?.cap) === JSON.stringify(hlRec?.limb?.cap) ? 'equal' : 'DIFFERENT'}; a cap file as well -> ${codes(hlBoth)}`,
+      'issue #359: the forearm under the sleeve is exactly the art #349\'s cap primitive takes, and an artist has it; read from the layer, the record says which layer gave it, and a second source is refused rather than chosen',
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -16193,6 +16464,66 @@ function runAssembleSuite(): number {
         `a missing file and a text file -> ${fileLine}; out ${existsSync(fileOut) ? 'WRITTEN' : 'not written'}`,
         'the under image is read relative to the config, as the author named it; a name that reads nothing is said once, for every cut, before the stage writes',
       );
+
+      // AS238 — issue #359: a hidden-art layer is the under of a cut that names none. `topwear:hidden` is UB over
+      // x 20..39, y 10..29 — the triangle's 20x20 box exactly, in a run that maps 1:1 to the rig — so the cut reads what
+      // AS54's 20x20 UB file gave it: 190 px filled, 0 left empty, the base 410 C + 190 UB, and one `hidden art:` line
+      // naming the cut. The knot, a second cut of the same part at y 36..39, lies outside the hidden art: it fills 0 of
+      // its 16 and is not refused (the layer is the whole part's, not a file made for that cut). A `handwear-l:hidden`
+      // nothing reads is said to be read by nothing. A cut that names an under file as well is refused by name.
+      const hiddenCut = (label: string, cuts: Array<Record<string, unknown>>, files: Record<string, Uint8Array> = {}): { r: ReturnType<typeof assemble>; lines: string[] } => {
+        const d = join(cutStage, label);
+        writeRun(join(d, 'full'), [
+          ...cutFull,
+          { name: 'topwear:hidden', depth: null, rects: [{ x0: 20, y0: 10, x1: 40, y1: 30, colour: [0, 0, 255] }] },
+          { name: 'handwear-l:hidden', depth: null, rects: [{ x0: 2, y0: 10, x1: 4, y1: 12, colour: [0, 0, 255] }] },
+        ]);
+        for (const [name, bytes] of Object.entries(files)) writeFileSync(join(d, name), bytes);
+        writeRun(join(d, 'head'), FRAMED_HEAD);
+        writeFileSync(join(d, 'painting.png'), encodePngBytes(flatPainting()));
+        const cfg = assembleConfig({ plan: cutPlan, extend: [] });
+        (cfg.assemble as Record<string, unknown>).cuts = cuts;
+        writeFileSync(join(d, 'config.json'), JSON.stringify(cfg));
+        const lines: string[] = [];
+        const out = join(d, 'out');
+        const r = assembleStage(
+          { source: join(d, 'painting.png'), full: join(d, 'full'), head: join(d, 'head'), config: join(d, 'config.json'), seam: 'near-white', project: DEFAULT_PROJECT_RULE },
+          { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, 'recomposite_error_rig.png') },
+          (l) => lines.push(l),
+        );
+        return { r, lines };
+      };
+      try {
+        const viaHidden = hiddenCut('hidden-under', [TRI_FRONT]);
+        const knotted = hiddenCut('hidden-knot', [TRI_FRONT, { ...KNOT }]);
+        const both = refusals(() => hiddenCut('hidden-both', [{ ...TRI_FRONT, under: 'tie-under.png' }], { 'tie-under.png': encodePngBytes(underPng(20, 20)) }));
+        const hb = (viaHidden.r.images.find((q) => q.record.name === 'topwear') as PlacedPart).image;
+        let hc = 0;
+        let hu = 0;
+        for (let q = 0; q < hb.width * hb.height; q++) {
+          const px = Array.from(hb.data.subarray(q * 4, q * 4 + 4)).join(',');
+          if (px === [...C, 255].join(',')) hc++;
+          else if (px === UB.join(',')) hu++;
+        }
+        const hiddenLinesOf = (x: { lines: string[] }): string[] => x.lines.filter((l) => l.startsWith('  hidden art: '));
+        const knotCut = knotted.r.cuts.find((c) => c.into === 'knot');
+        say(
+          'AS238_A_HIDDEN_ART_LAYER_IS_THE_UNDER_OF_A_CUT_THAT_NAMES_NONE_AND_ONE_NAMED_AS_WELL_IS_REFUSED',
+          (viaHidden.lines.find((l) => l.startsWith('  cut: ')) ?? '') === '  cut: "topwear" opaque 600 = "topwear" 410 + "tie" 190; band 0 px held by both; under 190 px filled, 0 px left empty' &&
+            `${hc} C + ${hu} UB` === '410 C + 190 UB' &&
+            hiddenLinesOf(viaHidden).join(' / ') ===
+              '  hidden art: full:topwear:hidden -> cuts[0].under (part "tie") /   hidden art: full:handwear-l:hidden -> read by nothing: no cut takes a piece of its layer\'s part and no limb segment below a joint takes that part, so it fills no under and no cap' &&
+            knotCut?.under === 0 &&
+            knotCut.underEmpty === 16 &&
+            both?.problems.length === 1 &&
+            both.problems[0].code === 'ASSEMBLE_HIDDEN_ONE_SOURCE' &&
+            both.problems[0].object === 'config.assemble.cuts[0].under (part "tie")',
+          `${viaHidden.lines.find((l) => l.startsWith('  cut: ')) ?? 'no cut line'}; base ${hc} C + ${hu} UB (by hand 410 C + 190 UB); ${hiddenLinesOf(viaHidden).map((l) => l.trim().slice(0, 80)).join(' | ')}; the knot outside it: ${knotCut?.under} filled, ${knotCut?.underEmpty} left empty, not refused; a file named as well -> ${codes(both)}`,
+          'issue #359: an artist who paints what a piece covers gives the tool the art a cut\'s under is, read where the cut removed pixels exactly as a file is; with a file too, which to read would be a guess, and a layer nothing reads is said, not dropped in silence',
+        );
+      } catch (err) {
+        say('AS238_A_HIDDEN_ART_LAYER_IS_THE_UNDER_OF_A_CUT_THAT_NAMES_NONE_AND_ONE_NAMED_AS_WELL_IS_REFUSED', false, `the stage threw: ${(err as Error).message.split('\n')[0]}`, 'the stage must assemble the hidden art green');
+      }
     } finally {
       rmSync(cutStage, { recursive: true, force: true });
     }
@@ -16772,10 +17103,188 @@ function runAssembleSuite(): number {
       rmSync(hemDir, { recursive: true, force: true });
     }
     authorLayerControls(say);
+    artistControls(say);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
   return bad();
+}
+
+/**
+ * Issue #359: an artist's own layered file as the one run (`fixtures/artist.ts`, every figure derived there). The
+ * stage is run through `assembleStage`, as the commands run it, into a temp directory per case.
+ */
+function artistControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const root = temp('artist');
+  try {
+    const run = (label: string, opts: { planted?: boolean; drop?: readonly string[]; config?: Record<string, unknown>; full?: (d: string) => string; head?: (d: string) => string } = {}): { r: ReturnType<typeof assembleStage>; lines: string[]; dir: string } => {
+      const d = join(root, label);
+      writeArtistFixture(d, opts);
+      const lines: string[] = [];
+      const out = join(d, 'out');
+      const r = assembleStage(
+        { source: join(d, 'painting.png'), full: opts.full === undefined ? join(d, 'art.psd') : opts.full(d), head: opts.head === undefined ? null : opts.head(d), config: join(d, 'config.json'), seam: DEFAULT_SEAM_RULE, project: DEFAULT_PROJECT_RULE },
+        { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, 'recomposite_error_rig.png') },
+        (l) => lines.push(l),
+      );
+      return { r, lines, dir: d };
+    };
+    const refusedBy = (label: string, opts: Parameters<typeof run>[1]): string => {
+      const e = refusals(() => run(label, opts));
+      return e === null ? 'assembles' : e.problems.map((q) => `${q.code} ${q.object}`).join(' | ');
+    };
+    const recs = (r: ReturnType<typeof assembleStage>): string => JSON.stringify(r.parts.parts);
+
+    // AS240: one run, green. Every part from the full run, no head-run ghost key, the identity map (each part's box is
+    // its layer's box), a recomposite with no error, and the `one run:` line. The same file given as both runs with
+    // head_box [0, 0, 128, 128] — the measured way it worked before — assembles the same part records.
+    const one = run('one');
+    const twoCfg = { ...artistConfig(), seethrough: { ...(artistConfig().seethrough as Record<string, unknown>), head_box: [0, 0, 128, 128] } };
+    const two = run('two-whole', { config: twoCfg, head: (d) => join(d, 'art.psd') });
+    const boxes = one.r.parts.parts.map((q) => `${q.name}@${q.x},${q.y},${q.w}x${q.h}`).join(' ');
+    const wantBoxes = ARTIST_PLAN.map(([name, , tag]) => {
+      const l = artistLayers().find((x) => x.name === tag) as { box: [number, number, number, number] };
+      return `${name}@${l.box[0]},${l.box[1]},${l.box[2] - l.box[0]}x${l.box[3] - l.box[1]}`;
+    }).join(' ');
+    say(
+      'AS240_ONE_RUN_THAT_HOLDS_THE_FACE_ASSEMBLES_GREEN_FROM_THE_FULL_RUN_ALONE_AS_THE_SAME_FILE_GIVEN_TWICE_WITH_A_WHOLE_CANVAS_BOX_DID',
+      one.r.parts.parts.every((q) => q.from.startsWith('full:')) &&
+        Object.keys(one.r.parts.ghost_px).every((k) => k.startsWith('full:')) &&
+        boxes === wantBoxes &&
+        one.r.figures.errorPx === 0 &&
+        one.lines.some((l) => l.startsWith('  one run: ') && l.includes('holds the face (face, eyewhite-r, eyewhite-l), so no head run is read')) &&
+        recs(two.r) === recs(one.r) &&
+        Object.keys(two.r.parts.ghost_px).some((k) => k.startsWith('head:')),
+      `parts ${boxes} (by hand ${boxes === wantBoxes ? 'the same' : wantBoxes}); from ${[...new Set(one.r.parts.parts.map((q) => q.from.split(':')[0]))].join(',')}; ghost keys ${Object.keys(one.r.parts.ghost_px).length}, all full: ${Object.keys(one.r.parts.ghost_px).every((k) => k.startsWith('full:'))}; error px ${one.r.figures.errorPx}; the file as both runs at head_box [0, 0, 128, 128]: part records ${recs(two.r) === recs(one.r) ? 'identical' : 'DIFFERENT'}`,
+      'issue #359: the head run exists because See-through cannot separate eyes at full-figure scale; an artist\'s file already does, so one run carries the figure, mapped by the full run\'s own frame — the same map a whole-canvas head box gives, which the measurement before this change found exact',
+    );
+
+    // AS241: the measurement that named the danger. The same file given as both runs with a real head crop
+    // [32, 0, 96, 64] is not refused: the head run is mapped into that box at half size, so its parts land at half
+    // size inside it — the face, 48x32 at 40,12 in the file, assembles at 24x16 at 52,6 — and only the recomposite says
+    // so. A single run derives its box and never reads one from the config.
+    const cropCfg: Record<string, unknown> = { ...artistConfig(), seethrough: { ...(artistConfig().seethrough as Record<string, unknown>), head_box: [32, 0, 96, 64] } };
+    (cropCfg.assemble as Record<string, unknown>).plan = ARTIST_PLAN.map(([n, , t]) => [n, n === 'topwear' ? 'full' : 'head', t]);
+    const crop = run('two-crop', { config: cropCfg, head: (d) => join(d, 'art.psd') });
+    const cface = crop.r.parts.parts.find((q) => q.name === 'face');
+    say(
+      'AS241_THE_SAME_FILE_GIVEN_AS_BOTH_RUNS_WITH_A_HEAD_CROP_IS_PLACED_AT_HALF_SIZE_IN_SILENCE_SO_ONE_RUN_DERIVES_ITS_BOX',
+      cface !== undefined &&
+        [cface.x, cface.y, cface.w, cface.h].join(',') === '52,6,24,16' &&
+        crop.r.figures.errorPx > 0 &&
+        JSON.stringify(singleRunHeadBox(128, 128)) === '[0,0,128,128]' &&
+        JSON.stringify(singleRunHeadBox(128, 120)) === '[0,-4,128,124]',
+      `head_box [32, 0, 96, 64] over the same file: face at ${cface === undefined ? 'none' : `${cface.x},${cface.y} ${cface.w}x${cface.h}`} (the file: 40,12 48x32), recomposite error px ${crop.r.figures.errorPx}, no refusal; singleRunHeadBox 128x128 -> ${JSON.stringify(singleRunHeadBox(128, 128))}, 128x120 -> ${JSON.stringify(singleRunHeadBox(128, 120))} (squarePad's frame)`,
+      'issue #359 asked what happens today when one PSD is passed as both runs: it is accepted and misplaced unless the head box is the whole canvas, so the single run takes no head box at all — the frame is derived from the painting, and a config that sets one is refused',
+    );
+
+    // AS242: what a single run refuses, each by name. No face and no eyewhite-l: one problem per tag missing; a plan
+    // row taking "head" and an extend entry; a config that sets head_box.
+    const faceless = refusedBy('faceless', { drop: ['face', 'eyewhite-l'], config: { ...artistConfig(), assemble: { rig_scale: 1, plan: ARTIST_PLAN.filter(([, , t]) => t !== 'face' && t !== 'eyewhite-l') } } });
+    const headRow = { ...artistConfig(), assemble: { rig_scale: 1, plan: ARTIST_PLAN.map(([n, r, t]) => [n, n === 'face' ? 'head' : r, t]), extend_below_crop: [{ part: 'hair_back', run: 'full', tag: 'back hair' }] } };
+    const planned = refusedBy('head-row', { config: headRow });
+    const boxed = refusedBy('boxed', { config: { ...artistConfig(), seethrough: { ...(artistConfig().seethrough as Record<string, unknown>), head_box: [0, 0, 64, 64] } } });
+    say(
+      'AS242_ONE_RUN_WITHOUT_THE_FACE_A_HEAD_ROW_AN_EXTEND_OR_A_HEAD_BOX_IS_REFUSED_BY_NAME',
+      faceless === `ASSEMBLE_SINGLE_RUN_FACE the full run (${join(root, 'faceless', 'art.psd')}) | ASSEMBLE_SINGLE_RUN_FACE the full run (${join(root, 'faceless', 'art.psd')})` &&
+        planned === 'ASSEMBLE_SINGLE_RUN_PLAN config.assemble.plan[2] (part "face") | ASSEMBLE_SINGLE_RUN_PLAN config.assemble.extend_below_crop[0] (part "hair_back")' &&
+        boxed === 'ASSEMBLE_SINGLE_RUN_HEAD_BOX config.seethrough.head_box' &&
+        one.r.parts.parts.length === ARTIST_PLAN.length,
+      `no face, no eyewhite-l -> ${faceless.replaceAll(join(root, 'faceless', 'art.psd'), '<art.psd>')}; a head row and an extend -> ${planned}; a head_box -> ${boxed}; the positive control is AS240's green run`,
+      'issue #359: a file without the face parts is not one See-through\'s head run can be left out of, and a row or a box that names a head run there is not would be read as one — each is said with what to change',
+    );
+
+    // AS243: --propose-plan over one run. Every row from the full run, none dropped against the proposal over the same
+    // file given twice (whose head rows it rewrites), the first note saying so; the face tags are face and the eye group.
+    const set = readPsdLayers(join(one.dir, 'art.psd'));
+    const g = { sourceW: 128, sourceH: 128, resolution: 128, headBox: singleRunHeadBox(128, 128), rigScale: 1 };
+    const sp = proposeSinglePlan(set, g);
+    const twice = proposePlan(set, set, g);
+    const noFace = refusals(() => proposeSinglePlan(readPsdLayers(join(root, 'faceless', 'art.psd')), g));
+    say(
+      'AS243_PROPOSE_PLAN_OVER_ONE_RUN_WRITES_EVERY_ROW_FROM_THE_FULL_RUN_AND_SAYS_SO_AND_REFUSES_A_FILE_WITHOUT_THE_FACE',
+      sp.plan.every((r) => r[1] === 'full') &&
+        JSON.stringify(sp.plan.map(([n, , t]) => [n, t])) === JSON.stringify(twice.plan.map(([n, , t]) => [n, t])) &&
+        twice.plan.some((r) => r[1] === 'head') &&
+        sp.extend_below_crop.length === 0 &&
+        sp.notes[0].startsWith(`one run: no --head, so ${set.source} is read as both runs`) &&
+        noFace?.problems.every((q) => q.code === 'ASSEMBLE_SINGLE_RUN_FACE') === true &&
+        noFace.problems.length === 2 &&
+        JSON.stringify(SINGLE_RUN_FACE_TAGS) === JSON.stringify(['face', ...EYE_GROUP_TAGS]),
+      `rows ${sp.plan.map((r) => r.join(':')).join(', ')}; the same file twice: ${twice.plan.filter((r) => r[1] === 'head').length} head row(s), same names and tags ${JSON.stringify(sp.plan.map(([n, , t]) => [n, t])) === JSON.stringify(twice.plan.map(([n, , t]) => [n, t]))}; first note "${sp.notes[0].slice(0, 60)}…"; no face -> ${codes(noFace)}; face tags ${SINGLE_RUN_FACE_TAGS.join(', ')} = face + EYE_GROUP_TAGS`,
+      'issue #359: the proposer is the one that proposes; one run changes only which run each row names, never which rows there are, and the face tags are the ones the rig reads the face box and the eye bones from',
+    );
+
+    // AS244: the export is an input. The artist file exported and assembled from the directory gives the PSD's parts
+    // byte for byte (from, boxes, counts and the PNGs).
+    const viaExport = run('via-export', {
+      full: (d) => {
+        exportLayers(readPsdLayers(join(d, 'art.psd')), join(d, 'work'));
+        return join(d, 'work');
+      },
+    });
+    const pngsSame = one.r.images.every((im, i) => Buffer.from(encodePngBytes(im.image)).equals(Buffer.from(encodePngBytes(viaExport.r.images[i].image))));
+    say(
+      'AS244_THE_EXPORT_OF_AN_ARTIST_FILE_ASSEMBLES_TO_THE_FILE_S_OWN_PARTS',
+      recs(viaExport.r) === recs(one.r) && pngsSame && viaExport.r.figures.errorPx === 0,
+      `parts.json records ${recs(viaExport.r) === recs(one.r) ? 'identical' : 'DIFFERENT'}, part PNGs ${pngsSame ? 'identical' : 'DIFFERENT'}, error px ${viaExport.r.figures.errorPx}`,
+      'issue #359: the folder is what an agent corrects and hands back, so assembling it must be assembling the file — anything else and a correction would be measured against a different input',
+    );
+
+    // AS245: the correction loop (AUTHORING §4, *The correction loop*). The planted file — the right eye's right half,
+    // 80 px, painted into back hair behind the face — exported: 80 covered error px over 40 where the clean file has 0.
+    // Fixed in the export's own files — the block cleared from 00_back_hair.png, 03_eyewhite-r.png widened to 16x10
+    // with the block in its right half, and that layer's right set to 60 in layers.json — the error is the clean
+    // file's, and every part record is the clean file's but hair_back's, which differs by exactly the cleared block:
+    // 80 px fewer, all of them occluded (behind the face), the hole where the hair under the eye was never painted.
+    const planted = run('planted', { planted: true, full: (d) => {
+      exportLayers(readPsdLayers(join(d, 'art.psd')), join(d, 'work'));
+      return join(d, 'work');
+    } });
+    const work = join(root, 'planted', 'work');
+    const hairPath = join(work, '00_back_hair.png');
+    const eyePath = join(work, '03_eyewhite-r.png');
+    const hairPng = readPng(hairPath);
+    const [px0, py0, px1, py1] = ARTIST_PATCH;
+    for (let y = py0; y < py1; y++) for (let x = px0; x < px1; x++) hairPng.data.set([0, 0, 0, 0], ((y - 4) * hairPng.width + (x - 32)) * 4);
+    writeFileSync(hairPath, encodePngBytes(hairPng));
+    const eyePng = newRaster(16, 10);
+    for (let q = 0; q < 160; q++) eyePng.data.set([...ARTIST_EYE, 255], q * 4);
+    writeFileSync(eyePath, encodePngBytes(eyePng));
+    const mp = join(work, 'layers.json');
+    const m = JSON.parse(readFileSync(mp, 'utf8')) as { layers: Array<{ name: string; right: number }> };
+    (m.layers.find((l) => l.name === 'eyewhite-r') as { right: number }).right = 60;
+    writeFileSync(mp, JSON.stringify(m));
+    const fixedLines: string[] = [];
+    const fixed = assembleStage(
+      { source: join(root, 'planted', 'painting.png'), full: work, head: null, config: join(root, 'planted', 'config.json'), seam: DEFAULT_SEAM_RULE, project: DEFAULT_PROJECT_RULE },
+      { partsJson: join(root, 'planted', 'fixed', 'parts.json'), partsDir: join(root, 'planted', 'fixed', 'parts'), recomposite: join(root, 'planted', 'fixed', 'recomposite_rig.png'), errorMap: join(root, 'planted', 'fixed', 'recomposite_error_rig.png') },
+      (l) => fixedLines.push(l),
+    );
+    const pline = planted.lines.find((l) => l.startsWith('recomposite vs source')) ?? '';
+    const fline = fixedLines.find((l) => l.startsWith('recomposite vs source')) ?? '';
+    const pface = planted.r.parts.parts.find((q) => q.name === 'face');
+    const others = (r: ReturnType<typeof assembleStage>): string => JSON.stringify(r.parts.parts.filter((q) => q.name !== 'hair_back'));
+    const hairOf = (r: ReturnType<typeof assembleStage>): PartRecord => r.parts.parts.find((q) => q.name === 'hair_back') as PartRecord;
+    const [fh, ch] = [hairOf(fixed), hairOf(one.r)];
+    say(
+      'AS245_A_MIS_LAYERED_PATCH_FIXED_IN_THE_EXPORTED_PNGS_BRINGS_THE_RECOMPOSITE_ERROR_TO_THE_CLEAN_FILE_S',
+      planted.r.figures.errorPx === 80 &&
+        planted.r.figures.uncoveredErrorPx === 0 &&
+        pline === 'recomposite vs source: mean |d|=0.40, within 8: 99.5%, error px > 40: 80, uncovered error px: 0' &&
+        (pface?.refused_drift_px ?? 0) > 0 &&
+        fixed.figures.errorPx === one.r.figures.errorPx &&
+        fline === (one.lines.find((l) => l.startsWith('recomposite vs source')) ?? 'none') &&
+        others(fixed) === others(one.r) &&
+        ch.opaque_px - fh.opaque_px === 80 &&
+        (ch.occluded_px ?? 0) - (fh.occluded_px ?? 0) === 80 &&
+        fh.visible_px === ch.visible_px,
+      `planted: ${pline} (face drift=${pface?.refused_drift_px ?? '?'}); fixed in the PNGs: ${fline}; the clean file: error px ${one.r.figures.errorPx}; every other part ${others(fixed) === others(one.r) ? 'the clean file\'s' : 'DIFFERENT'}; hair_back opaque ${ch.opaque_px} -> ${fh.opaque_px}, occluded ${ch.occluded_px} -> ${fh.occluded_px}, visible ${ch.visible_px} -> ${fh.visible_px}`,
+      'issue #359: the export is editable with ordinary file operations, and the recomposite error is the instrument that says the edit worked — a near-white patch behind an opaque part is error the seam override leaves alone, so it shows, and moving it into its layer takes the figure back to the clean file\'s',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -16980,6 +17489,7 @@ function runPlausibilitySuite(): number {
     // 10 (row 2); rest = the other layer's 20.
     const probe: LayerSet = {
       form: 'wrapper',
+      hidden: [],
       source: 'probe',
       canvas: { w: 10, h: 4 },
       layers: [
@@ -17000,6 +17510,7 @@ function runPlausibilitySuite(): number {
     const judge = (t: number, b: number, rest: number, n = 100): string[] => {
       const set: LayerSet = {
         form: 'wrapper',
+        hidden: [],
         source: 'bars',
         canvas: { w: 100, h: 200 },
         layers: [

@@ -114,6 +114,7 @@ under that.
    (rigc refuses the pair the link's control splits, and the line names the flag
    on the command that ran; AUTHORING §3).
 7. `rig-parts build --config … --source … --full … --head … --out out --loop`
+   (no `--head` for an artist's own file, below)
    (add `--idle-keys direct` when step 6 said so).
    It stops at the first stage that refuses, printing that stage's lines under
    `[assemble]`, `[rig]` or `[check]`. Fix what the FAIL line names and build again.
@@ -126,6 +127,23 @@ under that.
    report whatever `PASS` says. The artifact is the three paths the build prints
    last: `check/build/skeleton.json`, `skeleton.atlas` and the packed page. Report
    them with the pack line and the check figures verbatim.
+
+An artist's own layered PSD (issue #359; AUTHORING §4, *For artists*): one run,
+no See-through, no `--head` and no `head_box` in the config. The file must hold
+`face`, `eyewhite-r` and `eyewhite-l`, painted (`ASSEMBLE_SINGLE_RUN_FACE`
+otherwise); its stacking is the draw order and it carries no depth, so `layers`
+prints `SKIP  depth:` and the turn draft says `turn: SKIP` — report those as
+skipped, never as passed. `rig-parts layers --template art.psd --canvas <W>x<H>`
+writes the empty layers an artist paints into. A layer named `<layer>:hidden` is
+that layer's art where something covers it (the forearm under a sleeve): read as a
+cut's `under` and a limb segment's cap, never drawn; a `hidden art:` line names
+what read it. To correct a parse, `rig-parts layers --export work art.psd` writes
+the same layers as `layers.json` and one PNG each; move pixels between the PNGs
+(grow a PNG and its box in `layers.json` together), then pass `--full work` and
+read `recomposite vs source` and the error map again (AUTHORING §4, *The
+correction loop*). A patch in the wrong layer shows as error only where the
+painting is near-white; elsewhere it shows as `drift=`/`seam=` on the part drawn
+over it.
 
 Several characters in one rig: build each one green on its own, then
 `rig-parts compose --scene scene.json --out scene` (spec `spine-parts-scene/1`:

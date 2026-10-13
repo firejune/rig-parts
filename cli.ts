@@ -15,7 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
-import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
+import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, proposeSinglePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
 import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage, suppliedCheckFlag } from './src/build.ts';
 import { ACCEPTABLE_BARS, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, findRigc, PACK_SHAPES, rigcRunnerAt, type PackShape, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, NO_PARTS_SENTENCE, SEAM_MEAN_BAR, SOURCE_SENTENCE, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
@@ -25,7 +25,7 @@ import { GUIDE_DOC, type GuideAnswer, guideRule, guideSection } from './src/guid
 import { proposeHeadBox } from './src/headbox.ts';
 import { makeInputs } from './src/inputs.ts';
 import { idleKeysOf, isIdleKeys } from './src/rig.ts';
-import { figuresPhrase, implausibleRules, layerFigures, type LayerSet, pct, readLayers, ruleSummary, times } from './src/layers.ts';
+import { depthSkipLine, exportLayers, figuresPhrase, hiddenLayerLine, implausibleRules, layerFigures, type LayerSet, layerSetDiff, pct, readLayers, readWrapperLayers, ruleSummary, templateLayerNames, templatePsdBytes, times } from './src/layers.ts';
 import { checkImageSize, choosePerson, KEYPOINTS_SPEC, loadKeypoints, type RigJoints, toRigJoints } from './src/keypoints.ts';
 import { basisLines, checkProposal, compare, compareLines, DEFAULT_GRID_RULE, draftTurn, drawLandmarks, FIGURE_GRID_DIVISOR, FRINGE_STEP_PX, GRID_RULES, type GridRule, HIP_MIN_FRACTION, lint, lintLine, type PartSet, proposeWithBasis, readPartSet, serializeProposal, withTurn, WRIST_ON_PART_PX } from './src/propose.ts';
 import { BASIS_FILE, BASIS_SPEC, basisFile, basisLine, coverageLines, serializeBasis } from './src/diagnostics.ts';
@@ -67,9 +67,31 @@ usage:
       crosses a plausibility rule gets a WARN line naming the rule and the bar;
       --propose-plan leaves it out. A layer named author:<label> is one the
       author made by hand: its group is author, and a line says it has no
-      role. Refuses, by name, a missing file, an unknown tag, a PNG whose
+      role. A layer named <layer>:hidden (issue #359) is that layer's art
+      where something covers it: listed apart, never drawn, never a part. An
+      input with no depth (a PSD, or depth_median null on every layer, whose
+      manifest order is then the draw order) prints one SKIP depth line.
+      Refuses, by name, a missing file, an unknown tag, a PNG whose
       size is not its box, and anything else outside the input contract —
       never a WARN.
+
+  rig-parts layers --export <dir> <dir | layers.json | file.psd>
+      Print the table, then write the input as the wrapper form into <dir>
+      (absent or empty, LAYERS_EXPORT_DIR_EMPTY): layers.json and one RGBA PNG
+      per layer, <index>_<name>.png, drawn layers in draw order then the
+      hidden-art layers, depth_median as read (null for a PSD). The export is
+      read back at once and must hold the same layers, boxes, pixels and order
+      (LAYERS_EXPORT_ROUND_TRIP). Correct the parse there with any image
+      library and hand <dir> to any command that reads layers
+      (docs/AUTHORING.md, the correction loop).
+
+  rig-parts layers --template <out.psd> --canvas <W>x<H>
+      Write a PSD for an artist: one empty layer per tag name the rig reads,
+      bottom first (back hair, the body, the face, front hair; the six split
+      tags as their -r and -l halves; no head). The same canvas writes the
+      same bytes. Read back, every layer is refused as empty
+      (PSD_LAYER_HAS_PIXELS) until painted: paint the ones the figure has,
+      delete the rest.
 
   rig-parts sheet --source <painting.png> --layers <path> [--layers <path> ...]
                     --out <sheet.png> [--cell <px>] [--cols <n>]
@@ -425,7 +447,7 @@ usage:
       onto frame 0 itself. Animated WebP is not written — it needs a VP8/VP8L
       encoder, out of scope.
 
-  rig-parts assemble --source <painting.png> --full <dir|psd> --head <dir|psd>
+  rig-parts assemble --source <painting.png> --full <dir|psd> [--head <dir|psd>]
                        --config <config.json> --out <dir> [--seam near-white|silhouette]
                        [--project core|visible]
       Merge the full-body and head-crop See-through runs into rig-space parts:
@@ -459,7 +481,15 @@ usage:
       and one \`uncovered:\` line per full-run layer the plan does not take from
       the full run whose uncovered error holds a body (5x5-opened, 8-connected,
       at least 150 full-run px in rig px), naming the layer, its pixels and the
-      rule that left it out.
+      rule that left it out. One \`hidden art:\` line per hidden-art layer
+      (<layer>:hidden, issue #359) names what read it: the under of a cut of
+      its layer's part, or the cap of a limb segment below a joint that takes
+      that part, when neither names a file (both: ASSEMBLE_HIDDEN_ONE_SOURCE).
+      With no --head, the full run is the one run (an artist's own file): it
+      must hold face, eyewhite-r and eyewhite-l, painted
+      (ASSEMBLE_SINGLE_RUN_FACE), every plan row takes "full" and none
+      extends below a crop (ASSEMBLE_SINGLE_RUN_PLAN), and the config sets no
+      seethrough.head_box (ASSEMBLE_SINGLE_RUN_HEAD_BOX).
       Writes nothing unless every check passed.
       --seam defaults to ${DEFAULT_SEAM_RULE}. --project says where a layer takes
       the painting's pixel: core (the reference's) erodes every layer's top-most
@@ -468,7 +498,7 @@ usage:
       ${DEFAULT_PROJECT_RULE}.
 
   rig-parts assemble --propose-plan --source <painting.png> --full <dir|psd>
-                       --head <dir|psd> --config <config.json>
+                       [--head <dir|psd>] --config <config.json>
       Print {plan, extend_below_crop, notes} for config.assemble, from the two
       runs. A layer \`layers\` WARNs about (PLAN_LAYER_TRANSLUCENT,
       PLAN_LAYER_BACKGROUND, PLAN_LAYER_OVERSIZED) is not proposed, and a note
@@ -478,7 +508,9 @@ usage:
       rule that skipped it and the continuation; the plan itself is not
       changed. Reads only config.seethrough.head_box,
       config.seethrough.resolution and config.assemble.rig_scale — the rest of
-      the config need not exist yet.
+      the config need not exist yet. With no --head, the one run is held as
+      assemble holds it and every row is written from it, and the first note
+      says so.
 
   rig-parts inputs --source <painting.png> --config <config.json> --out <dir>
       Cut the two images See-through is fed: <out>/st_input_full.png (the
@@ -511,7 +543,7 @@ usage:
       The config needs only key and generation here; the rest comes later.
 
   rig-parts build --config <config.json> --source <painting.png> --full <dir|psd>
-                    --head <dir|psd> --out <dir> [--seam near-white|silhouette]
+                    [--head <dir|psd>] --out <dir> [--seam near-white|silhouette]
                     [--project core|visible] [--page-edges pot|free]
                     [--pack-shape rect|polygon] [--loop] [--requirements <file.json>]
                     [--idle-keys ctl|direct] [--lead-in <periods>] [--seam-pairs] [--keep-stills]
@@ -689,6 +721,10 @@ function printLayerTable(set: LayerSet): void {
   console.log(`  ${set.layers.length} layer(s): ${painted} with opaque pixels, ${set.layers.length - painted} with none`);
   // Issue #256: a layer the author made is said to be one, so it never reads as See-through's. None, no line.
   for (const l of set.layers) if (l.tag.group === 'author') console.log(`  ${authorLayerLine(l.name)}`);
+  // Issue #359: a hidden-art layer is listed apart, never in the drawn table. None, no line.
+  for (const h of set.hidden) console.log(`  ${hiddenLayerLine(h)}`);
+  // Issue #359: an input with no depth is said once, with what reads depth and that it is skipped, never passed.
+  if (set.layers.length > 0 && set.layers.every((l) => l.depth === null)) console.log(`  ${depthSkipLine(set)}`);
   // A reader refuses nothing on plausibility: it says what --propose-plan will leave out, and why.
   let warned = 0;
   for (const f of figures) {
@@ -703,10 +739,11 @@ function printLayerTable(set: LayerSet): void {
 /**
  * Every flag each command takes: `valued` flags carry a value, `switches` are bare. Each parser reads its row to
  * decide what it accepts, and {@link notTaken} prints the same row in the unknown-flag refusal, so the refusal
- * lists exactly the flags the parser accepts (CL26). `layers` takes one positional path and `guide` one positional
- * argument, and neither takes a flag, so neither has a row.
+ * lists exactly the flags the parser accepts (CL26). `guide` takes one positional argument and no flag, so it has
+ * no row; `layers` takes one positional path beside its flags (issue #359).
  */
 const TAKES = {
+  layers: { valued: ['--export', '--template', '--canvas'], switches: [] },
   sheet: { valued: ['--source', '--layers', '--out', '--cell', '--cols'], switches: [] },
   rig: { valued: ['--config', '--parts', '--out', '--idle-keys', '--page-edges', '--pack-shape'], switches: [] },
   propose: { valued: ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--head', '--canvas', '--keypoints', '--person', '--wrist-snap', '--grid-rule'], switches: ['--head-box'] },
@@ -735,10 +772,58 @@ function notTaken(command: Command, flag: string): string {
   return `${command} does not take "${flag}"; it takes ${[...row.valued, ...row.switches].join(', ')}`;
 }
 
+/**
+ * `layers <path>` prints the table; `layers --export <dir> <path>` writes the
+ * set as the wrapper form and reads it back (issue #359); `layers --template
+ * <out.psd> --canvas <W>x<H>` writes the artist's template. One positional
+ * path, except with --template, which reads nothing.
+ */
 function cmdLayers(args: string[]): number {
-  if (args.length !== 1) return usage(`layers takes one path; got ${args.length}`);
+  const flags = new Map<string, string>();
+  const paths: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith('--')) {
+      paths.push(a);
+      continue;
+    }
+    if (!takesValued('layers', a)) return usage(notTaken('layers', a));
+    const value = args[i + 1];
+    if (value === undefined) return usage(`${a} needs a value`);
+    if (flags.has(a)) return usage(`${a} is given twice`);
+    flags.set(a, value);
+    i++;
+  }
+  const template = flags.get('--template');
+  if (template !== undefined) {
+    if (flags.has('--export') || paths.length > 0) return usage(`--template writes a PSD and reads nothing; it takes --canvas only, and got ${[...[...flags.keys()].filter((f) => f !== '--template' && f !== '--canvas'), ...paths].join(', ')}`);
+    const canvasArg = flags.get('--canvas');
+    if (canvasArg === undefined) return usage('--template needs --canvas <W>x<H>, the canvas size in px (with one run, a square of seethrough.resolution)');
+    const canvas = parseCanvas(canvasArg);
+    if (canvas === null) return usage(`--canvas ${canvasArg} is not <W>x<H> in integer px`);
+    if (extname(template).toLowerCase() !== '.psd') return usage(`--template ${template} is not a .psd path`);
+    const names = templateLayerNames();
+    mkdirSync(dirname(template), { recursive: true });
+    writeFileSync(template, templatePsdBytes(canvas.w, canvas.h));
+    console.log(`rig-parts layers --template: wrote ${template}, ${canvas.w}x${canvas.h}, ${names.length} empty layer(s), bottom first: ${names.join(', ')}`);
+    console.log('  paint into the layers the figure has and delete the rest: an empty layer is refused by name (PSD_LAYER_HAS_PIXELS)');
+    return EXIT_OK;
+  }
+  if (flags.has('--canvas')) return usage('--canvas belongs to --template');
+  if (paths.length !== 1) return usage(`layers takes one path; got ${paths.length}`);
   try {
-    printLayerTable(readLayers(args[0]));
+    const set = readLayers(paths[0]);
+    printLayerTable(set);
+    const dir = flags.get('--export');
+    if (dir !== undefined) {
+      const w = exportLayers(set, dir);
+      // The round trip, read now: what was written must read back as what was read.
+      const back = readWrapperLayers(dir);
+      const diff = layerSetDiff(set, back);
+      if (diff !== null) throw new PartsError([{ code: 'LAYERS_EXPORT_ROUND_TRIP', object: w.manifest, detail: `reads back unlike ${paths[0]}: ${diff}; the same layers, boxes, pixels and order are required (a bug in the exporter, not in the input)` }]);
+      console.log(`rig-parts layers --export: wrote ${w.manifest} and ${w.files.length} PNG(s) in ${dir}; read back: ${back.layers.length} drawn and ${back.hidden.length} hidden-art layer(s), boxes, pixels and order as read`);
+      console.log(`  correct it there — move pixels between PNGs, change a box in layers.json with its PNG — and hand ${dir} to any command that reads layers (docs/AUTHORING.md, *The correction loop*)`);
+    }
     return EXIT_OK;
   } catch (err) {
     return printRefusal(err);
@@ -1141,20 +1226,23 @@ function cmdAssemble(args: string[]): number {
     flags.set(flag, value);
     i++;
   }
-  for (const f of ['--source', '--full', '--head', '--config']) if (!flags.has(f)) return usage(`assemble needs ${f}`);
+  // --head is optional (issue #359): without it the full run is the one run, and it must hold the face.
+  for (const f of ['--source', '--full', '--config']) if (!flags.has(f)) return usage(`assemble needs ${f}`);
   if (propose && (flags.has('--out') || flags.has('--seam') || flags.has('--project'))) return usage('--propose-plan prints to the console; it takes none of --out, --seam, --project');
   if (!propose && !flags.has('--out')) return usage('assemble needs --out <dir>');
   const seam = flags.get('--seam') ?? DEFAULT_SEAM_RULE;
   if (!(SEAM_RULES as readonly string[]).includes(seam)) return usage(`--seam ${seam}; one of ${SEAM_RULES.join(', ')} is required`);
   const project = flags.get('--project') ?? DEFAULT_PROJECT_RULE;
   if (!(PROJECT_RULES as readonly string[]).includes(project)) return usage(`--project ${project}; one of ${PROJECT_RULES.join(', ')} is required`);
-  const [source, full, head, config] = ['--source', '--full', '--head', '--config'].map((f) => flags.get(f) as string);
+  const [source, full, config] = ['--source', '--full', '--config'].map((f) => flags.get(f) as string);
+  const head = flags.get('--head') ?? null;
   try {
     if (propose) {
       const src = readSource(source);
       const runs = readRuns(full, head);
-      const g = proposeFields(loadEarlyConfig(config, 'layers'));
-      const proposal = proposePlan(runs.full, runs.head, { sourceW: src.width, sourceH: src.height, ...g });
+      const g = proposeFields(loadEarlyConfig(config, 'layers'), runs.single ? { w: src.width, h: src.height } : null);
+      const geometry = { sourceW: src.width, sourceH: src.height, ...g };
+      const proposal = runs.single ? proposeSinglePlan(runs.full, geometry) : proposePlan(runs.full, runs.head, geometry);
       console.log(JSON.stringify(proposal, null, 2));
       return EXIT_OK;
     }
@@ -1325,7 +1413,8 @@ function cmdBuild(args: string[]): number {
     flags.set(flag, value);
     i++;
   }
-  for (const f of ['--config', '--source', '--full', '--head', '--out']) if (!flags.has(f)) return usage(`build needs ${f}`);
+  // --head is optional (issue #359), as for assemble.
+  for (const f of ['--config', '--source', '--full', '--out']) if (!flags.has(f)) return usage(`build needs ${f}`);
   const seam = flags.get('--seam') ?? DEFAULT_SEAM_RULE;
   if (!(SEAM_RULES as readonly string[]).includes(seam)) return usage(`--seam ${seam}; one of ${SEAM_RULES.join(', ')} is required`);
   const project = flags.get('--project') ?? DEFAULT_PROJECT_RULE;
@@ -1340,7 +1429,8 @@ function cmdBuild(args: string[]): number {
   const leadText = flags.get('--lead-in');
   if (leadText !== undefined && !/^[1-9][0-9]*$/.test(leadText)) return usage(`--lead-in ${leadText}; a whole number of idle periods, 1 or more, is required`);
   if (leadText !== undefined && !loop) return usage('--lead-in needs --loop; it says which frames the loop is encoded from');
-  const [config, source, full, head, out] = ['--config', '--source', '--full', '--head', '--out'].map((f) => flags.get(f) as string);
+  const [config, source, full, out] = ['--config', '--source', '--full', '--out'].map((f) => flags.get(f) as string);
+  const head = flags.get('--head') ?? null;
   let bin: string;
   try {
     bin = findRigc(import.meta.dir, process.env.PATH ?? '');

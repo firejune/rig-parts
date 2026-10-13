@@ -210,3 +210,24 @@ no declared form changed.
 What to do: nothing for a config without `contour.bridges`. A part that declares it and
 holds a faint island no longer draws that island; if those pixels matter, keep the
 lattice for that part.
+
+## After 1.17.0: an artist's own file
+
+Issue #359 makes an artist's layered PSD an input in its own right (AUTHORING §4,
+*For artists* and *The correction loop*). Nothing a config already builds changes:
+every new form was refused or a usage error before, so no byte any existing build
+writes moves (the selftest's existing controls and the examples' `expected/` are
+unchanged by it).
+
+| change | before | after |
+| --- | --- | --- |
+| `assemble`, `--propose-plan` and `build` without `--head` | a usage error (exit 2) | one run: the full run must hold `face`, `eyewhite-r` and `eyewhite-l`, painted (`ASSEMBLE_SINGLE_RUN_FACE`); every row takes `"full"` (`ASSEMBLE_SINGLE_RUN_PLAN`); no `seethrough.head_box` (`ASSEMBLE_SINGLE_RUN_HEAD_BOX`) |
+| `propose --full`/`--head` over runs with no depth on any part's layer (a PSD) | refused, `PROPOSE_TURN_DEPTH_PRESENT` on every part (exit 1) | no `turn`, one note `turn: SKIP — <runs> carry no depth_median …`, the proposal written (exit 0); a run where some parts' layers carry a depth and others do not is still refused part by part, and the detail now says so |
+| a wrapper `layers.json` with `depth_median: null` | refused, `LAYERS_FIELD_PRESENT` | `null` on every drawn layer reads in the manifest's order; a mix is `LAYERS_DEPTH_ALL_OR_NONE` |
+| a layer named `<layer>:hidden` | refused, `LAYERS_TAG_KNOWN` | a hidden-art layer, listed apart and never drawn; read as a cut's `under` and a limb segment's cap where the config names no file (`ASSEMBLE_HIDDEN_ONE_SOURCE` when it names one too) |
+| `layers` on a PSD, or on a manifest with no depth | the table | the table and one `SKIP  depth:` line naming the file |
+| `parts.json`, a limb segment's `cap` | `image_px` with a cap file | `image_layer` after `image_px` when the image was a hidden-art layer |
+
+What to do: nothing. A consumer that matched `PROPOSE_TURN_DEPTH_PRESENT` to detect a
+PSD run reads the `turn: SKIP` note instead.
+

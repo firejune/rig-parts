@@ -251,7 +251,8 @@ export interface Rect {
 
 export interface RunLayerSpec {
   name: string;
-  depth: number;
+  /** `depth_median`; null for a hidden-art layer (issue #359), which is never drawn. */
+  depth: number | null;
   rects: Rect[];
 }
 

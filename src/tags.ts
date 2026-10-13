@@ -187,6 +187,9 @@ export function isAuthorTag(name: string): boolean {
  * other names the accepted v3 tags and the author form.
  */
 export function layerTagRequirement(name: string): string {
+  if (name.endsWith(HIDDEN_SUFFIX)) {
+    return `is a hidden-art layer's name (issue #359) for ${JSON.stringify(name.slice(0, -HIDDEN_SUFFIX.length))}, which is no layer name; ${HIDDEN_NAME_RULE} is required`;
+  }
   if (name.startsWith(AUTHOR_PREFIX)) {
     return `is an author-made layer's name with the label ${JSON.stringify(name.slice(AUTHOR_PREFIX.length))}; ${AUTHOR_LABEL_RULE} is required after "${AUTHOR_PREFIX}"`;
   }
@@ -205,3 +208,47 @@ export const AUTHOR_NO_ROLE =
 export function authorLayerLine(name: string): string {
   return `author-made: layer "${name}" — ${AUTHOR_NO_ROLE}`;
 }
+
+/**
+ * ⭐ **A hidden-art layer** (issue #359) holds the art of a layer where
+ * something else covers it — the forearm under the sleeve, the inside of the
+ * knee, the shirt under a scarf's tail — painted by an artist who has it,
+ * because See-through cannot see it. It is named by the layer it belongs to
+ * and {@link HIDDEN_SUFFIX}: `handwear-r:hidden` is `handwear-r`'s art where
+ * it is covered, `author:hand:hidden` is `author:hand`'s.
+ *
+ * Why this form and not `author:` with a declared target: the name alone says
+ * what the layer is and whose it is, so every reader knows at read time that
+ * it is not a part (the proposer never drafts one from it) and which layer it
+ * belongs to, with no config field to agree with it. The suffix holds a colon,
+ * which no v3 tag holds and an author-made label may not hold
+ * ({@link AUTHOR_LABEL_RULE}), so `<name>:hidden` can never be read as a tag,
+ * a side, or a label.
+ *
+ * It is never drawn and never a part. `assemble` reads it as the art the
+ * layer's part takes where a stage takes art from under something: a cut's
+ * `under` (issue #193) and a limb segment's cap (issue #349) — see
+ * `hiddenArt` in `src/assemble.ts`.
+ */
+export const HIDDEN_SUFFIX = ':hidden';
+
+/** A hidden-art layer's name read: the layer it belongs to. */
+export interface HiddenTagReading {
+  /** The name as the layer carries it: `handwear-r:hidden`. */
+  name: string;
+  /** The layer it belongs to: `handwear-r`, a v3 tag or an author-made layer's name. */
+  of: string;
+}
+
+/**
+ * Read a layer name as a hidden-art layer's, or `null` when it does not end in
+ * {@link HIDDEN_SUFFIX} or what precedes it is no layer name ({@link readLayerTag}).
+ */
+export function readHiddenTag(name: string): HiddenTagReading | null {
+  if (!name.endsWith(HIDDEN_SUFFIX)) return null;
+  const of = name.slice(0, -HIDDEN_SUFFIX.length);
+  return readLayerTag(of) === null ? null : { name, of };
+}
+
+/** What a hidden-art layer's name must be, as a refusal quotes it. */
+export const HIDDEN_NAME_RULE = `"<layer>${HIDDEN_SUFFIX}", where <layer> is a See-through v3 tag or "${AUTHOR_PREFIX}<label>" that the same input also holds`;
