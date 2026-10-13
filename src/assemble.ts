@@ -91,11 +91,12 @@
  *
  * Pure: no clock, no randomness, no file access. The CLI reads and writes.
  */
-import type { CharacterConfig, Cut, EarlyConfig, Extend, Patch, PlanEntry, Run, SeeThrough } from './config.ts';
+import type { BoneEntry, CharacterConfig, Cut, EarlyConfig, Extend, Limb, Patch, PlanEntry, Run, SeeThrough } from './config.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
 import { squarePad } from './inputs.ts';
-import { PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, type SceneRecord } from './parts.ts';
+import { type CapRecord, type LimbRecord, PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, type SceneRecord } from './parts.ts';
+import { type BonePlace, bonePlaces, capBox, inDisc, type JointLine, jointLine, limbPolyline, limbWidth, nearestLimb, pastJoint, segmentOf } from './limbs.ts';
 import {
   alphaComposite,
   connectedComponents,
@@ -240,6 +241,12 @@ export interface AssembleInput {
   projectRule: ProjectRule;
   /** `config.scene` (issue #242): the painting is a scene, so the recomposite is read inside the figure ({@link sceneFigure}). Absent or false: nothing changes. */
   scene?: boolean;
+  /** `config.limbs` (issue #349): the parts cut at their joints ({@link LimbCount}). Absent or empty: nothing changes. */
+  limbs?: Record<string, Limb>;
+  /** `config.bones`, read for the limbs' joints; required with `limbs`. */
+  bones?: BoneEntry[];
+  /** Each segment's `cap` image, decoded by the caller, keyed `<limb>/<segment index>`; a segment naming a cap with none here is refused (`ASSEMBLE_LIMB_CAP_PRESENT`). */
+  caps?: ReadonlyMap<string, Raster>;
 }
 
 /** The derived numbers of the two runs' geometry. */
@@ -1537,7 +1544,10 @@ export function cutPatch(patch: Patch, srcr: Raster, silhouette: Mask | null): {
 }
 
 /** One place in the draw order: a plan part, a patch or a cut's new part, by its index in its list. */
-export type DrawSlot = { plan: number } | { patch: number } | { cut: number };
+export type PlanSlot = { plan: number } | { patch: number } | { cut: number };
+
+/** A slot of the draw order once the limbs are in it (issue #349, {@link limbOrder}). */
+export type DrawSlot = PlanSlot | { limb: number };
 
 /**
  * The draw order of plan parts, patches and cuts together, back to front:
@@ -1548,8 +1558,8 @@ export type DrawSlot = { plan: number } | { patch: number } | { cut: number };
  * order of plan parts and patches it always was. The loader has already
  * refused a `before` that names no plan part.
  */
-export function drawOrder(plan: readonly string[], patches: readonly Patch[], cuts: readonly Cut[] = []): DrawSlot[] {
-  const out: DrawSlot[] = [];
+export function drawOrder(plan: readonly string[], patches: readonly Patch[], cuts: readonly Cut[] = []): PlanSlot[] {
+  const out: PlanSlot[] = [];
   const place = (at: (draw: Patch['draw']) => boolean): void => {
     patches.forEach((q, i) => {
       if (at(q.draw)) out.push({ patch: i });
@@ -1703,6 +1713,286 @@ export function cutBand(polygonMask: Mask, overlap: number): Mask {
   return band;
 }
 
+/** One layer's part as the stage builds it, before it is placed: its key, pixels, projection figures, merge trace and, when the layer is cut, the rig pixels it owns. */
+interface Built {
+  key: string;
+  r: Raster;
+  st: ProjectionStats;
+  extendKeys: string[];
+  trace: MergeTrace;
+  merged: number;
+  /** The rig pixels this piece of the layer owns when the layer is cut, null when it is not: the counts are split by it. */
+  region: Mask | null;
+}
+
+// ---------------------------------------------------------------------------
+// limbs — a declared limb's parts cut at its joints (issue #349, src/limbs.ts)
+// ---------------------------------------------------------------------------
+
+/** One part a limb segment makes, in `config.limbs` order (limb, then segment). */
+export interface LimbPart {
+  limb: string;
+  segment: number;
+  part: string;
+  /** The part whose pixels it takes. */
+  of: string;
+  record: LimbRecord;
+}
+
+/** What the limbs did to one part they took: its opaque pixels and each segment's share (`limbLines`). */
+export interface LimbCount {
+  of: string;
+  before: number;
+  shares: Array<{ part: string; px: number }>;
+  /** The joints whose cap this part's segments carry, in `config.limbs` order. */
+  joints: Array<{ limb: string; joint: string; part: string; cap: CapRecord }>;
+}
+
+/**
+ * The lines `assemble` prints for the limbs (issue #349), one per part a limb
+ * took — `  limb cut: "<of>" opaque <n> = "<part>" <px> + …` — and one per
+ * joint, its cap's pixels by where they came from. Empty without limbs.
+ */
+export function limbLines(counts: readonly LimbCount[]): string[] {
+  const out: string[] = [];
+  for (const c of counts) {
+    out.push(`  limb cut: "${c.of}" opaque ${c.before} = ${c.shares.map((q) => `"${q.part}" ${q.px}`).join(' + ')}`);
+    for (const j of c.joints) {
+      const k = j.cap;
+      const from = k.image_px === undefined ? `${k.layer_px} px from the layer` : `${k.image_px} px from the cap image, ${k.layer_px} px from the layer`;
+      const miss =
+        k.missing_px === 0
+          ? 'none missing'
+          : `${k.missing_px} px missing — the layer has no pixel there (hidden in the painting, or past the limb's outline), and the tool invents none: paint them into a ${k.box[2]}x${k.box[3]} image whose pixel (i, j) is rig pixel (${k.box[0]} + i, ${k.box[1]} + j), and name it in the segment's "cap"`;
+      out.push(
+        `  limb cap: "${j.limb}" joint "${j.joint}" at [${k.at[0]}, ${k.at[1]}], on "${j.part}": a disc of radius ${k.radius} px (the limb ${k.width} px across the joint line), box [${k.box.join(', ')}] — on the upper side of the line ${from}, ${miss}`,
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * The draw order with the limbs in it (issue #349): each part a limb takes
+ * leaves the order, and each limb's parts stand where its first segment's
+ * part stood, lowest segment first (drawn behind), so the upper is drawn over
+ * the lower at every joint; limbs whose first segment takes one part stand
+ * there in `config.limbs` order. Without limbs, `order` as it was.
+ */
+export function limbOrder(order: readonly DrawSlot[], plan: readonly PlanEntry[], cuts: readonly Cut[], parts: readonly LimbPart[]): DrawSlot[] {
+  if (parts.length === 0) return [...order];
+  const nameOf = (d: DrawSlot): string | null => ('plan' in d ? plan[d.plan][0] : 'cut' in d ? cuts[d.cut].into : null);
+  const taken = new Set(parts.map((q) => q.of));
+  const out: DrawSlot[] = [];
+  for (const d of order) {
+    const n = nameOf(d);
+    if (n === null || !taken.has(n)) {
+      out.push(d);
+      continue;
+    }
+    const limbs = [...new Set(parts.filter((q) => q.segment === 0 && q.of === n).map((q) => q.limb))];
+    for (const l of limbs) {
+      const mine = parts.map((q, i) => ({ q, i })).filter(({ q }) => q.limb === l);
+      for (const { i } of [...mine].reverse()) out.push({ limb: i });
+    }
+  }
+  return out;
+}
+
+/**
+ * Cut every declared limb (module comment of `src/limbs.ts`): each part a limb
+ * takes is split among the limbs that take it (nearest polyline), then each
+ * limb's share among its segments (the joint lines), and each segment below a
+ * joint gets its cap. Every refusal is collected and thrown at once:
+ * `ASSEMBLE_LIMB_TAKES` (a limb takes a part with no pixel), `ASSEMBLE_LIMB_JOINT`
+ * (no joint line: the upper bone has no length, or the limb folds back on
+ * itself), `ASSEMBLE_LIMB_JOINT_ON_ART` (the joint is not on the limb's art,
+ * so it has no width), `ASSEMBLE_LIMB_PIXELS` (a segment gets no opaque
+ * pixel), `ASSEMBLE_LIMB_CAP_PRESENT`, `ASSEMBLE_LIMB_CAP_SIZE` and
+ * `ASSEMBLE_LIMB_CAP_EMPTY` (a cap image the caller did not hand over, not the
+ * box's size, or transparent over every cap pixel).
+ */
+function cutLimbs(
+  limbs: Readonly<Record<string, Limb>>,
+  bones: readonly BoneEntry[],
+  caps: ReadonlyMap<string, Raster>,
+  W: number,
+  H: number,
+  builtOf: (name: string) => Built | null,
+  opaqueOf: (r: Raster) => number,
+  mergedIn: (b: Built, region: Mask) => number,
+  count: (m: Mask | null, region: Mask) => number,
+): { parts: LimbPart[]; pieces: Built[]; counts: LimbCount[] } {
+  const names = Object.keys(limbs);
+  if (names.length === 0) return { parts: [], pieces: [], counts: [] };
+  const problems: Problem[] = [];
+  const places = bonePlaces(bones);
+  const parts: LimbPart[] = [];
+  for (const l of names) {
+    limbs[l].segments.forEach((sg, k) =>
+      parts.push({ limb: l, segment: k, part: sg.part, of: sg.from, record: { name: l, segment: k, of: sg.from, bone: sg.bone, ...(k === 0 ? {} : { joint: sg.joint as string }) } }),
+    );
+  }
+  const polylines = new Map(names.map((l) => [l, limbPolyline(limbs[l], places)]));
+  // The joint line above each segment (null above the first).
+  const lines = new Map<string, Array<JointLine | null>>();
+  for (const l of names) {
+    const segs = limbs[l].segments;
+    lines.set(
+      l,
+      segs.map((sg, k) => {
+        if (k === 0) return null;
+        const up = places.get(segs[k - 1].bone) as BonePlace;
+        const me = places.get(sg.bone) as BonePlace;
+        const end = me.end ?? (k + 1 < segs.length ? (places.get(segs[k + 1].bone) as BonePlace).at : null);
+        const line = jointLine(up.at, me.at, end);
+        if (line === null) {
+          problems.push({
+            code: 'ASSEMBLE_LIMB_JOINT',
+            object: `config.limbs.${l}.segments[${k}] (joint "${String(sg.joint)}")`,
+            detail: `has no joint line: "${segs[k - 1].bone}" at [${up.at.join(', ')}] and "${sg.bone}" at [${me.at.join(', ')}]${end === null ? '' : ` ending at [${end.join(', ')}]`} ${up.at[0] === me.at[0] && up.at[1] === me.at[1] ? 'stand on one point, so the upper bone has no direction' : 'point straight back at each other, so the two directions cancel'}; bones that give the limb an axis at the joint are required`,
+          });
+        }
+        return line;
+      }),
+    );
+  }
+  refuseIfAny(problems);
+  // Each part a limb takes, in the order the limbs first take them.
+  const sources = [...new Set(parts.map((q) => q.of))];
+  const pieces: Array<Built | null> = parts.map(() => null);
+  const rasters = parts.map(() => newRaster(W, H));
+  const regions = parts.map(() => newMask(W, H));
+  /** For each part taken, which limb (index into names) owns each pixel, -1 where it has none. */
+  const owners = new Map<string, Int32Array>();
+  const counts: LimbCount[] = [];
+  for (const src of sources) {
+    const b = builtOf(src);
+    if (b === null) continue;
+    const on = names.filter((l) => limbs[l].segments.some((sg) => sg.from === src));
+    const own = new Int32Array(W * H).fill(-1);
+    const before = opaqueOf(b.r);
+    if (before === 0) {
+      problems.push({ code: 'ASSEMBLE_LIMB_TAKES', object: `part "${src}" (config.limbs.${on[0]})`, detail: 'has no opaque pixel to cut; a part with art is required — the limb takes its pixels' });
+      continue;
+    }
+    const lns = on.map((l) => polylines.get(l) as Array<[number, number]>);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const p = y * W + x;
+        if (b.r.data[p * 4 + 3] === 0) continue;
+        const li = on.length === 1 ? 0 : nearestLimb(lns, x, y);
+        const l = on[li];
+        own[p] = names.indexOf(l);
+        const segs = limbs[l].segments;
+        const first = segs.findIndex((sg) => sg.from === src);
+        let last = first;
+        while (last + 1 < segs.length && segs[last + 1].from === src) last++;
+        const k = segmentOf(lines.get(l) as Array<JointLine | null>, first, last, x, y);
+        const at = parts.findIndex((q) => q.limb === l && q.segment === k);
+        rasters[at].data.set(b.r.data.subarray(p * 4, p * 4 + 4), p * 4);
+        if (b.region === null || b.region.data[p] === 1) regions[at].data[p] = 1;
+      }
+    }
+    owners.set(src, own);
+    const shares = parts.map((q, i) => ({ q, i })).filter(({ q }) => q.of === src);
+    const counted = shares.map(({ q, i }) => ({ part: q.part, px: opaqueOf(rasters[i]) }));
+    const sum = counted.reduce((a, c) => a + c.px, 0);
+    if (sum !== before) {
+      problems.push({ code: 'ASSEMBLE_COUNTS_ADD_UP', object: `part "${src}" (config.limbs)`, detail: `opaque px: ${before} before the limbs, ${sum} over their parts; equal is required (a bug in the assembler, not in the inputs)` });
+    }
+    for (const { q, i } of shares) {
+      pieces[i] = { ...b, r: rasters[i], region: regions[i], merged: mergedIn(b, regions[i]) };
+      if (count(regions[i], regions[i]) === 0 && opaqueOf(rasters[i]) === 0) {
+        problems.push({
+          code: 'ASSEMBLE_LIMB_PIXELS',
+          object: `config.limbs.${q.limb}.segments[${q.segment}] (part "${q.part}")`,
+          detail: `takes 0 of "${src}"'s ${before} opaque pixel(s); a segment with art is required — the joint lines through the bones' origins put none of the limb's pixels on this segment, or another limb's polyline lies nearer every one: move the bones onto the limb's art`,
+        });
+      }
+    }
+    counts.push({ of: src, before, shares: counted, joints: [] });
+  }
+  refuseIfAny(problems);
+  // The caps, after every part is split, so a cap reads the limb's art in the layer as the painting has it.
+  for (const l of names) {
+    const segs = limbs[l].segments;
+    segs.forEach((sg, k) => {
+      if (k === 0) return;
+      const line = (lines.get(l) as Array<JointLine | null>)[k] as JointLine;
+      const li = names.indexOf(l);
+      const upFrom = segs[k - 1].from;
+      const art = (x: number, y: number): boolean => {
+        if (x < 0 || y < 0 || x >= W || y >= H) return false;
+        const p = y * W + x;
+        for (const src of new Set([upFrom, sg.from])) {
+          const b = builtOf(src);
+          if (b !== null && owners.get(src)?.[p] === li && b.r.data[p * 4 + 3] > OPAQUE_ALPHA_ABOVE) return true;
+        }
+        return false;
+      };
+      const object = `config.limbs.${l}.segments[${k}] (joint "${String(sg.joint)}", part "${sg.part}")`;
+      const width = limbWidth(line, art, [0, 0, W - 1, H - 1]);
+      if (width === null) {
+        problems.push({
+          code: 'ASSEMBLE_LIMB_JOINT_ON_ART',
+          object,
+          detail: `the joint, "${sg.bone}"'s origin at [${line.at.join(', ')}], lies on none of the limb's art within 1 px along its joint line, so the limb has no width there to size the cap by; a bone origin on the limb's art (alpha above ${OPAQUE_ALPHA_ABOVE}) is required — move the bone onto the joint`,
+        });
+        return;
+      }
+      // The width to 3 places (src/round.ts): a measured length, and a radius the line and the record print as read.
+      const w3 = pyRound(width, 3);
+      const radius = w3 / 2;
+      const box = capBox(line.at, radius);
+      const at = parts.findIndex((q) => q.limb === l && q.segment === k);
+      const img = sg.cap === undefined ? null : (caps.get(`${l}/${k}`) ?? null);
+      if (sg.cap !== undefined && img === null) {
+        problems.push({ code: 'ASSEMBLE_LIMB_CAP_PRESENT', object: `${object}.cap`, detail: `names ${sg.cap}, and no image was handed to the stage for it; the decoded PNG is required (a caller of assemble() reads the file)` });
+        return;
+      }
+      if (img !== null && (img.width !== box[2] || img.height !== box[3])) {
+        problems.push({
+          code: 'ASSEMBLE_LIMB_CAP_SIZE',
+          object: `${object}.cap`,
+          detail: `${String(sg.cap)} is ${img.width}x${img.height}; the cap's box is ${box[2]}x${box[3]} at ${box[0]},${box[1]} (the pixels within ${radius} px of the joint, in rig pixels), and an image of exactly that size is required — its pixel (i, j) is rig pixel (${box[0]} + i, ${box[1]} + j)`,
+        });
+        return;
+      }
+      const lower = rasters[at];
+      const lowerSrc = builtOf(sg.from) as Built;
+      const ownLower = owners.get(sg.from) as Int32Array;
+      let layerPx = 0;
+      let imagePx = 0;
+      let missing = 0;
+      for (let y = Math.max(0, box[1]); y < Math.min(H, box[1] + box[3]); y++) {
+        for (let x = Math.max(0, box[0]); x < Math.min(W, box[0] + box[2]); x++) {
+          if (!inDisc(line.at, radius, x, y) || pastJoint(line, x, y)) continue;
+          const p = y * W + x;
+          const u = img === null ? -1 : ((y - box[1]) * img.width + (x - box[0])) * 4;
+          if (img !== null && img.data[u + 3] > 0) {
+            lower.data.set(img.data.subarray(u, u + 4), p * 4);
+            imagePx++;
+          } else if (ownLower[p] === li && lowerSrc.r.data[p * 4 + 3] > 0) {
+            lower.data.set(lowerSrc.r.data.subarray(p * 4, p * 4 + 4), p * 4);
+            layerPx++;
+          } else missing++;
+        }
+      }
+      if (img !== null && imagePx === 0) {
+        problems.push({ code: 'ASSEMBLE_LIMB_CAP_EMPTY', object: `${object}.cap`, detail: `${String(sg.cap)} is transparent over every one of the cap's pixels; an image that gives at least one is required — to keep the layer's cap, drop cap` });
+        return;
+      }
+      const cap: CapRecord = { at: [line.at[0], line.at[1]], width: w3, radius, box, layer_px: layerPx, ...(img === null ? {} : { image_px: imagePx }), missing_px: missing };
+      parts[at].record.cap = cap;
+      const c = counts.find((q) => q.of === sg.from);
+      if (c !== undefined) c.joints.push({ limb: l, joint: String(sg.joint), part: sg.part, cap });
+    });
+  }
+  refuseIfAny(problems);
+  return { parts, pieces: pieces as Built[], counts };
+}
+
 // ---------------------------------------------------------------------------
 // the stage
 // ---------------------------------------------------------------------------
@@ -1719,6 +2009,8 @@ export interface AssembleResult {
   figures: RecompositeFigures;
   /** What each `assemble.cuts` entry took, counted when it was made (`cutLines`); empty without cuts. */
   cuts: CutCount[];
+  /** What each `config.limbs` limb cut, per part it took and per joint (`limbLines`); empty without limbs (issue #349). */
+  limbs: LimbCount[];
   /** The full-run layers the plan does not take from the full run whose uncovered error holds a body (`uncoveredErrorLayers`); empty otherwise. */
   uncovered: UncoveredErrorLayer[];
   /** The parts whose `DRIFT_LIMIT` refusals hold a body another part holds in the draw order (`driftBodies`), in draw order; empty otherwise. */
@@ -1874,16 +2166,6 @@ export function assemble(input: AssembleInput): AssembleResult {
   });
   refuseIfAny(patchProblems);
 
-  interface Built {
-    key: string;
-    r: Raster;
-    st: ProjectionStats;
-    extendKeys: string[];
-    trace: MergeTrace;
-    merged: number;
-    /** The rig pixels this piece of the layer owns when the layer is cut, null when it is not: the counts are split by it. */
-    region: Mask | null;
-  }
   const built: Array<Built | null> = plan.map(() => null);
   const empty: Problem[] = [];
   /** The part's alpha box and its `alpha > 8` count, over the whole rig. */
@@ -2066,9 +2348,18 @@ export function assemble(input: AssembleInput): AssembleResult {
   refuseIfAny(empty);
   // In cut order, as the config lists them.
   cutCounts.sort((a, b) => cuts.findIndex((q) => q.into === a.into) - cuts.findIndex((q) => q.into === b.into));
-  const order = order0;
-  const pieceAt = (d: { plan: number } | { cut: number }): { name: string; b: Built } =>
-    'plan' in d ? { name: plan[d.plan][0], b: built[d.plan] as Built } : { name: cuts[d.cut].into, b: pieces[d.cut] as Built };
+
+  // Issue #349: the limbs, after the cuts (a limb may take a cut's piece, and a cut's under image fills its base first).
+  const lim = cutLimbs(input.limbs ?? {}, input.bones ?? [], input.caps ?? new Map(), W, H, (name) => {
+    const pi = plan.findIndex((e) => e[0] === name);
+    if (pi >= 0) return built[pi];
+    const ci = cuts.findIndex((q) => q.into === name);
+    return ci >= 0 ? pieces[ci] : null;
+  }, opaqueOf, mergedIn, count);
+  const limbPieces = lim.pieces;
+  const order = limbOrder(order0, plan, cuts, lim.parts);
+  const pieceAt = (d: { plan: number } | { cut: number } | { limb: number }): { name: string; b: Built } =>
+    'plan' in d ? { name: plan[d.plan][0], b: built[d.plan] as Built } : 'cut' in d ? { name: cuts[d.cut].into, b: pieces[d.cut] as Built } : { name: lim.parts[d.limb].part, b: limbPieces[d.limb] as Built };
 
   // Step 4b: push back a fringe the painting shows another part through, over
   // the plan parts still uncropped and the patches, in draw order.
@@ -2098,20 +2389,26 @@ export function assemble(input: AssembleInput): AssembleResult {
   });
   const pushedOf: FringePushed[][] = plan.map(() => []);
   const pushedOfCut: FringePushed[][] = cuts.map(() => []);
+  const pushedOfLimb: FringePushed[][] = lim.parts.map(() => []);
   order.forEach((d, i) => {
     if ('plan' in d) pushedOf[d.plan] = pushedBy[i];
     if ('cut' in d) pushedOfCut[d.cut] = pushedBy[i];
+    if ('limb' in d) pushedOfLimb[d.limb] = pushedBy[i];
   });
 
   const planned: Array<PlacedPart | null> = plan.map(() => null);
   const cutPlaced: Array<PlacedPart | null> = cuts.map(() => null);
   // A cut's piece records the plan part it was cut from (issue #230): parts.json is in draw order, so a piece drawn
   // "back" comes before its base, and nothing else in the file says which of the two is the piece.
-  const pieceList: Array<{ name: string; b: Built; pushed: FringePushed[]; at: string; cutFrom: string | null; set: (p: PlacedPart) => void }> = [
+  const limbPlaced: Array<PlacedPart | null> = lim.parts.map(() => null);
+  // A part a limb takes is not made itself (issue #349): its pixels are the limb's parts'.
+  const taken = new Set(lim.parts.map((q) => q.of));
+  const pieceList: Array<{ name: string; b: Built; pushed: FringePushed[]; at: string; cutFrom: string | null; limb?: LimbRecord; set: (p: PlacedPart) => void }> = [
     ...plan.map(([name], pi) => ({ name, b: built[pi] as Built, pushed: pushedOf[pi], at: `config.assemble.plan[${pi}]`, cutFrom: null, set: (q: PlacedPart) => (planned[pi] = q) })),
     ...cuts.map((q, i) => ({ name: q.into, b: pieces[i] as Built, pushed: pushedOfCut[i], at: `config.assemble.cuts[${i}]`, cutFrom: q.from, set: (pp: PlacedPart) => (cutPlaced[i] = pp) })),
-  ];
-  pieceList.forEach(({ name, b, pushed: pushedHere, at, cutFrom, set }) => {
+    ...lim.parts.map((q, i) => ({ name: q.part, b: limbPieces[i] as Built, pushed: pushedOfLimb[i], at: `config.limbs.${q.limb}.segments[${q.segment}]`, cutFrom: null, limb: q.record, set: (pp: PlacedPart) => (limbPlaced[i] = pp) })),
+  ].filter((q) => !taken.has(q.name));
+  pieceList.forEach(({ name, b, pushed: pushedHere, at, cutFrom, limb, set }) => {
     const { key, r, st, extendKeys, trace, merged, region } = b;
     // A pixel the merge wrote is judged in the extend layer's run, every other
     // in the part's own. Projected = the colour came from projectSource's
@@ -2157,10 +2454,11 @@ export function assemble(input: AssembleInput): AssembleResult {
       seam_override_px: 0,
     };
     if (pushedHere.length > 0) record.fringe_pushed_back = pushedHere;
+    if (limb !== undefined) record.limb = limb;
     set({ record, image: crop(r, x0, y0, record.w, record.h) });
   });
   refuseIfAny(empty);
-  const placed: PlacedPart[] = order.map((d) => ('plan' in d ? planned[d.plan] : 'cut' in d ? cutPlaced[d.cut] : cut[d.patch]) as PlacedPart);
+  const placed: PlacedPart[] = order.map((d) => ('plan' in d ? planned[d.plan] : 'cut' in d ? cutPlaced[d.cut] : 'limb' in d ? limbPlaced[d.limb] : cut[d.patch]) as PlacedPart);
 
   seamOverride(placed, srcr, seamRule, seamRule === 'silhouette' ? silhouette : null);
   const can = recomposite(placed, W, H);
@@ -2189,6 +2487,7 @@ export function assemble(input: AssembleInput): AssembleResult {
     figure: inside === null ? null : figureImage(inside, W, H),
     figures,
     cuts: cutCounts,
+    limbs: lim.counts,
     uncovered,
     drift,
     seamRule,
@@ -2878,7 +3177,7 @@ function unplannedNotes(
  * the loader, because `inputs` runs before it exists; `seethrough` too, for a
  * full-loader config, where it is optional.
  */
-export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble' | 'scene'>): {
+export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble' | 'scene'> & { limbs?: Record<string, Limb>; bones?: BoneEntry[] }): {
   resolution: number;
   headBox: [number, number, number, number];
   rigScale: number;
@@ -2887,6 +3186,8 @@ export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble'
   patches: Patch[];
   cuts: Cut[];
   scene?: boolean;
+  limbs?: Record<string, Limb>;
+  bones?: BoneEntry[];
 } {
   const problems: Problem[] = [];
   if (cfg.seethrough === undefined) {
@@ -2905,6 +3206,7 @@ export function stageFields(cfg: Pick<CharacterConfig, 'seethrough' | 'assemble'
     patches: cfg.assemble.patches ?? [],
     cuts: cfg.assemble.cuts ?? [],
     ...(cfg.scene === undefined ? {} : { scene: true }),
+    ...(cfg.limbs === undefined ? {} : { limbs: cfg.limbs, bones: cfg.bones ?? [] }),
   };
 }
 

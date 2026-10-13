@@ -124,6 +124,7 @@ import {
   type WorldBox,
 } from './instruments.ts';
 import { type PartRecord, type PartsFile, readParts } from './parts.ts';
+import { turnTwin } from './turn.ts';
 import {
   aimLine,
   contactLine,
@@ -1726,6 +1727,8 @@ export interface CheckFigures {
   [LEVEL_LINE]?: LevelLine;
   /** Written whenever parts.json names a `handwear` part and the motion has an idle (issue #347): {@link STRESS_LINE}. */
   [STRESS_LINE]?: JudgementLine;
+  /** Written only where parts.json holds a part a `config.limbs` segment made (issue #349): {@link LimbLine}. */
+  [LIMB_LINE]?: LimbLine;
   RECOMPOSITE_HOLES: ReportedLine;
   /** Written only under `--source` (issue #77): the setup pose against the painting, REPORTED. */
   SETUP_POSE_VS_SOURCE?: ReportedLine;
@@ -1816,6 +1819,9 @@ export const FOLD_LINE = 'ANIMATIONS_DO_NOT_FOLD';
  */
 export const LEVEL_LINE = 'FEET_STAY_LEVEL';
 
+/** Issue #349: every limb part rides its one bone ({@link limbLine}). */
+export const LIMB_LINE = 'LIMB_ONE_BONE';
+
 /** HQ's line (rig-c/parts#347 ruling 4, issue #348): the sole within ±10 degrees of level while the shin is posed. Not measured here. */
 export const LEVEL_BAR_DEGREES = 10;
 
@@ -1864,7 +1870,7 @@ export const BARS = ['gate', 'loop', 'seam', ...JUDGEMENT_LINES] as const;
  * rig-c's and never accepted, {@link FOLD_LINE} (issue #320) and
  * {@link STRESS_LINE} (issue #347).
  */
-export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== 'gate'), FOLD_LINE, LEVEL_LINE, STRESS_LINE];
+export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== 'gate'), FOLD_LINE, LEVEL_LINE, STRESS_LINE, LIMB_LINE];
 
 /**
  * The bars a `check.json`, as `check` writes it, says were not met, in
@@ -1872,7 +1878,8 @@ export const ACCEPTABLE_BARS: readonly string[] = [...BARS.filter((b) => b !== '
  * loop when `loop_max_diff` is a number other than {@link LOOP_MAX_BAR}, the
  * seam when its figures fail {@link seamFails}, and each judgement line whose
  * status is `FAIL`, then {@link FOLD_LINE} when it is written and `FAIL`
- * (issue #320), then {@link LEVEL_LINE} the same way (issue #348), then {@link STRESS_LINE} likewise (issue #347). A bar that measured nothing (null figures, `SKIP`) is not
+ * (issue #320), then {@link LEVEL_LINE} the same way (issue #348), then {@link STRESS_LINE} likewise (issue #347), then
+ * {@link LIMB_LINE} (issue #349). A bar that measured nothing (null figures, `SKIP`) is not
  * one of them. Read off the file rather than its problems, because the file is
  * all a finished build leaves (issue #203).
  */
@@ -1883,7 +1890,7 @@ export function barsNotMet(fig: Readonly<Record<string, unknown>>): string[] {
   // A check.json written before issue #216 has no seam_frame_scale; it is read by the frame count, the bar it was written under.
   const scale = typeof fig.seam_frame_scale === 'number' ? fig.seam_frame_scale : 1;
   if (typeof fig.seam_mean === 'number' && typeof fig.seam_px_over_40 === 'number' && seamFails(fig.seam_mean, fig.seam_px_over_40, scale)) out.push('seam');
-  for (const n of [...JUDGEMENT_LINES, FOLD_LINE, LEVEL_LINE, STRESS_LINE]) {
+  for (const n of [...JUDGEMENT_LINES, FOLD_LINE, LEVEL_LINE, STRESS_LINE, LIMB_LINE]) {
     const l = fig[n];
     if (typeof l === 'object' && l !== null && (l as { status?: unknown }).status === 'FAIL') out.push(n);
   }
@@ -2376,6 +2383,11 @@ export function stressPlan(rig: Record<string, unknown>, motion: Record<string, 
   const skins = isRecord(rig.skins) ? rig.skins : {};
   const skin = isRecord(skins.default) ? skins.default : {};
   for (const p of parts) {
+    // Issue #349: a limb segment is held to its one bone by LIMB_ONE_BONE, read off rig.json, so it turns rigidly by construction.
+    if (p.limb !== undefined) {
+      notRead.push({ part: p.name, reason: `a limb segment (config.limbs.${p.limb.name}), held to its one bone "${p.limb.bone}" by ${LIMB_LINE}, so it turns rigidly by construction` });
+      continue;
+    }
     const onSlot = skin[p.name];
     const atts: unknown[] = isRecord(onSlot) ? Object.values(onSlot) : [];
     const weighted = atts.filter((a): a is Record<string, unknown> & { weights: unknown[] } => isRecord(a) && Array.isArray(a.weights));
@@ -2508,6 +2520,67 @@ export function stressLine(plan: StressPlan, geometry: (animation: string) => Id
     per_part: rows,
     not_read: plan.notRead,
   };
+}
+
+// ---------------------------------------------------------------------------
+// a limb segment rides one bone (issue #349)
+// ---------------------------------------------------------------------------
+
+/**
+ * `LIMB_ONE_BONE` (issue #349): every part a `config.limbs` segment made —
+ * `parts.json`'s records that carry `limb` — is bound in `rig.json` to its
+ * limb bone alone, with weight 1: a region on a slot whose bone is that bone,
+ * or a mesh whose every weight names it. A bend is a rotation at the joint,
+ * never a deformed mesh, and a second bone is the pin (a puff held by the
+ * chest) or the noodle (a forearm blended along a chain) the cut retires.
+ * Under `config.turn` a part rides the leaf twin of its bone
+ * (`turnTwin`), an identity child, and the twin counts as the bone. Read off
+ * `rig.json` and `parts.json` alone: nothing is rendered. Written only when
+ * `parts.json` holds a limb part, so a check with none writes what it wrote.
+ * The name is {@link LIMB_LINE}.
+ */
+
+/** One limb part's row of the line. */
+export interface LimbRow {
+  part: string;
+  limb: string;
+  bone: string;
+  status: 'PASS' | 'FAIL';
+  /** The bones besides its own the part is bound to, in rig.json's order; empty on a PASS. */
+  others: string[];
+}
+
+/** `check.json`'s `LIMB_ONE_BONE`. */
+export interface LimbLine {
+  status: 'PASS' | 'FAIL';
+  parts: LimbRow[];
+}
+
+/** The line from parts.json's limb records and rig.json's slots and skins; each FAIL row adds one `CHECK_LIMB_ONE_BONE` problem naming the part and every second bone. Null when no part is a limb's. */
+export function limbLine(parts: PartsFile, rig: Record<string, unknown>, problems: Problem[]): LimbLine | null {
+  const limbParts = parts.parts.filter((p) => p.limb !== undefined);
+  if (limbParts.length === 0) return null;
+  const slots = (Array.isArray(rig.slots) ? rig.slots : []).filter(isRecord);
+  const rows: LimbRow[] = limbParts.map((p) => {
+    const l = p.limb as NonNullable<PartRecord['limb']>;
+    const own = new Set([l.bone, turnTwin(p.name, l.bone)]);
+    const slot = slots.find((sl) => sl.name === p.name);
+    const bound = slot === undefined ? new Set<string>() : boundBones(rig, p.name);
+    const others = [...bound].filter((b) => !own.has(b));
+    const fail = others.length > 0 || bound.size === 0;
+    if (fail) {
+      problems.push({
+        code: `CHECK_${LIMB_LINE}`,
+        object: `limb part "${p.name}" (config.limbs.${l.name} segment ${l.segment}, bone "${l.bone}")`,
+        detail:
+          bound.size === 0
+            ? `is bound to no bone in rig.json (no slot of its name, or no attachment); its one bone "${l.bone}", with weight 1, is required`
+            : `is weighted to ${others.map((b) => `"${b}"`).join(', ')} besides "${l.bone}"; a limb part rides its one bone with weight 1 — a bend is a rotation at the joint, never a deformed mesh — so a region on "${l.bone}" (config.regions.${p.name}), or a mesh whose segments name "${l.bone}" alone, is required`,
+      });
+    }
+    return { part: p.name, limb: l.name, bone: l.bone, status: fail ? 'FAIL' : 'PASS', others };
+  });
+  return { status: rows.some((r) => r.status === 'FAIL') ? 'FAIL' : 'PASS', parts: rows };
 }
 
 /**
@@ -2650,6 +2723,9 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   // Issue #348: the feet the level line reads, off parts.json and rig.json; none, and nothing below moves.
   const feet = inp.parts === null ? [] : levelFeet(inp.parts, inp.rig);
   let level: LevelLine | null = null;
+  // Issue #349: the limb parts' bones, off rig.json and parts.json; none, and nothing is written.
+  const limbProblems: Problem[] = [];
+  const limbs = inp.parts === null ? null : limbLine(inp.parts, inp.rig, limbProblems);
   const levelProblems: Problem[] = [];
   try {
     if (inp.idleDuration !== null) {
@@ -2898,6 +2974,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     ...(folds === null ? {} : { [FOLD_LINE]: folds }),
     ...(level === null ? {} : { [LEVEL_LINE]: level }),
     ...(stress === null ? {} : { [STRESS_LINE]: stress }),
+    ...(limbs === null ? {} : { [LIMB_LINE]: limbs }),
     RECOMPOSITE_HOLES: inp.parts === null ? { status: 'SKIP', reason: inp.noParts ?? '' } : holesLine(inp.parts),
     ...(sourceRead === null ? {} : { [SOURCE_LINE]: sourceRead }),
     ...(Object.keys(skipped).length === 0 ? {} : { skipped }),
@@ -2929,7 +3006,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   const rank = (q: Problem): number => JUDGEMENT_LINES.findIndex((n) => q.code === `CHECK_${n}`);
   problems.sort((a, b) => rank(a) - rank(b));
   problems.unshift(...barProblems);
-  problems.push(...foldProblems, ...levelProblems, ...stressProblems, ...reqProblems);
+  problems.push(...foldProblems, ...levelProblems, ...stressProblems, ...limbProblems, ...reqProblems);
   figures.PASS = problems.length === 0;
   write('check.json', `${JSON.stringify(figures, null, 1)}\n`);
   const bars: CheckReport['bars'] = { measured: ['gate'], skipped: [] };
@@ -2949,6 +3026,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   if (level !== null) tally(LEVEL_LINE, level.status === 'SKIP' ? (level.reason ?? '') : null);
   // Issue #347: the stress bar is counted where it is written — on every rig with a handwear part and an idle.
   if (stress !== null) tally(STRESS_LINE, stress.status === 'SKIP' ? stress.reason : null);
+  // Issue #349: the limb bar where it is written; it reads rig.json, so it always measures.
+  if (limbs !== null) tally(LIMB_LINE, null);
   return {
     figures,
     gateHtml,
@@ -3412,6 +3491,11 @@ function tipLine(inp: FullInputs, geometryPath: string, frames: number, problems
   for (const p of swing) {
     if (excepted.not_swinging.includes(p.name)) {
       rows.push({ part: p.name, unmeasured: "declared not swinging by the scene file's not_swinging, so it is not held to the bar" });
+      continue;
+    }
+    // Issue #349: a limb segment is rigid on its one bone and turns at its joint; it does not hang, so no tip trails a root.
+    if (p.limb !== undefined) {
+      rows.push({ part: p.name, unmeasured: `a limb segment (config.limbs.${p.limb.name}), rigid on its one bone "${p.limb.bone}": it turns at its joint and does not hang, so it is not held to the bar` });
       continue;
     }
     const rises = excepted.rises.includes(p.name);

@@ -137,7 +137,11 @@ usage:
       hip (the midpoint of r_hip and l_hip), the chest half way along neck ->
       hip, and each sleeve chain shoulder -> elbow with its tip at the wrist
       when every handwear part holds a wrist; a missing joint leaves its bone to
-      the rule. One note per joint says which. LINT then reads the torso along
+      the rule. One note per joint says which. Each arm and leg so placed is a
+      limb (issue #349): proposal.json's "limbs" cuts its layer at the elbow or
+      the knee into parts rigid on its links (and, when every ankle lies on a
+      footwear part, a foot on a bone of its own at the ankle that keeps its
+      setup angle); assemble with the block makes the cut. LINT then reads the torso along
       the neck -> hips line and each sleeve chain along shoulder -> wrist
       instead of by screen y, and prints the rule set it used first. Without
       --keypoints nothing changes. A wrist holds a part when it lies within
@@ -435,11 +439,16 @@ usage:
       drawn "back", "front" or {"before": <plan part>}, recorded in parts.json
       as from "painting:<name>" and counted 100 % source — and .cuts — a plan
       part's pixels inside a rig-pixel polygon taken into a new part, drawn the
-      same way, recorded with the plan part's from — and no rig section:
+      same way, recorded with the plan part's from — and .limbs (issue #349),
+      with the bones they name: each limb's layer cut at its joints into one
+      part per segment, each lower part carrying a cap past its joint, the
+      upper drawn over the lower — and no other rig section:
       bones, meshes, regions and motion need not exist yet, because propose
       drafts them from these parts (AUTHORING §4, the table).
       Prints one line per part, one \`cut:\` line per part a cut split (its
-      opaque pixels = what it kept + what each cut took), the seam override
+      opaque pixels = what it kept + what each cut took), one \`limb cut:\`
+      line per part a limb took and one \`limb cap:\` line per joint (the cap's
+      pixels from the layer and missing, and the box to paint them into), the seam override
       counts, the \`pixels:\` totals
       (opaque = visible + occluded; taken from the painting; visible but not
       projected), and \`recomposite vs source\` (mean |d| and % within 8 over the

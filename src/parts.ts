@@ -42,7 +42,10 @@
  * cut from, which shares its `from`. The record is in draw order, and a piece
  * drawn `"back"` comes before its base, so order cannot say which of two parts
  * sharing a layer is the piece; this field does. A `parts.json` written before
- * 1.6.0 has none, and still reads.
+ * 1.6.0 has none, and still reads. `limb`, written only on a part a
+ * `config.limbs` segment made (issue #349), names the limb, the segment's
+ * index (0 the upper), the part it was cut from (`of`), the one bone it rides
+ * and, below a joint, the joint and its cap ({@link LimbRecord}).
  *
  * ⭐ **A patch is 100 % source.** Every pixel of a `painting:` part is the
  * painting's own, so it is all visible (the painting shows it; nothing of it
@@ -104,6 +107,49 @@ export interface PartRecord {
   seam_override_px: number;
   /** Absent when the part had no fringe pushed back (and in a `parts.json` the reference wrote). */
   fringe_pushed_back?: Array<{ part: string; px: number }>;
+  /** Written only on a part a `config.limbs` segment made (issue #349). */
+  limb?: LimbRecord;
+}
+
+/**
+ * A limb segment's provenance (issue #349): the limb, the segment's index
+ * (0 the upper), the part its pixels were cut from (`of`), the bone it rides
+ * with weight 1, and, on a segment below a joint, the joint's name and its cap.
+ */
+export interface LimbRecord {
+  name: string;
+  segment: number;
+  of: string;
+  bone: string;
+  joint?: string;
+  cap?: CapRecord;
+}
+
+/**
+ * The cap a lower segment carries past its joint (issue #349): the disc's
+ * centre (the joint, rig px), its radius (half the limb's width across the
+ * joint line, `width`), the box its image covers `[x, y, w, h]`, and its
+ * pixels on the upper side of the joint line counted by where each came from
+ * — the layer (`layer_px`), the config's cap image (`image_px`, only with one)
+ * — or none (`missing_px`: no pixel in the layer and none in an image).
+ */
+export interface CapRecord {
+  at: [number, number];
+  width: number;
+  radius: number;
+  box: [number, number, number, number];
+  layer_px: number;
+  image_px?: number;
+  missing_px: number;
+}
+
+const LIMB_KEYS = ['name', 'segment', 'of', 'bone', 'joint', 'cap'] as const;
+const CAP_KEYS = ['at', 'width', 'radius', 'box', 'layer_px', 'image_px', 'missing_px'] as const;
+
+/** The limb record with its keys in the fixed order, so two runs write the same bytes. */
+function orderedLimb(l: LimbRecord): Record<string, unknown> {
+  const cap = l.cap === undefined ? undefined : Object.fromEntries(CAP_KEYS.filter((k) => (l.cap as CapRecord)[k] !== undefined).map((k) => [k, (l.cap as CapRecord)[k]]));
+  return Object.fromEntries(LIMB_KEYS.filter((k) => (k === 'cap' ? cap : l[k]) !== undefined).map((k) => [k, k === 'cap' ? cap : l[k]]));
 }
 
 /** One listed hole: its area, its box in rig pixels, and the parts beside it (`src/assemble.ts` `uncoveredHoles`). */
@@ -178,15 +224,18 @@ export const PART_KEYS = [
   'merged_px',
   'seam_override_px',
   'fringe_pushed_back',
+  'limb',
 ] as const;
 /** The one part field that is not a count: a list of `{part, px}`, written only when it is not empty. */
 const FRINGE_KEY = 'fringe_pushed_back';
 /** The one part field that names another part: a cut's piece names its base, written only on a piece. */
 const CUT_FROM_KEY = 'cut_from';
-const COUNT_KEYS = PART_KEYS.slice(2).filter((k) => k !== FRINGE_KEY && k !== CUT_FROM_KEY) as ReadonlyArray<(typeof PART_KEYS)[number]>;
+/** The one part field that is a record of its own: a limb segment's provenance (issue #349), written only on one. */
+const LIMB_KEY = 'limb';
+const COUNT_KEYS = PART_KEYS.slice(2).filter((k) => k !== FRINGE_KEY && k !== CUT_FROM_KEY && k !== LIMB_KEY) as ReadonlyArray<(typeof PART_KEYS)[number]>;
 /** The port's own counts: all three or none (none = a record the reference wrote). */
 export const VISIBILITY_KEYS = ['visible_px', 'occluded_px', 'visible_not_projected_px'] as const;
-const REQUIRED_KEYS = PART_KEYS.filter((k) => !(VISIBILITY_KEYS as readonly string[]).includes(k) && k !== FRINGE_KEY && k !== CUT_FROM_KEY);
+const REQUIRED_KEYS = PART_KEYS.filter((k) => !(VISIBILITY_KEYS as readonly string[]).includes(k) && k !== FRINGE_KEY && k !== CUT_FROM_KEY && k !== LIMB_KEY);
 
 /** Where a part came from: a See-through run and a v3 tag or an author-made layer's `author:<label>` (issue #256), or the painting itself for a patch. */
 export type From = { run: 'full' | 'head'; tag: string } | { run: 'painting'; patch: string };
@@ -214,7 +263,7 @@ export function serializeParts(file: PartsFile): string {
     rig_size: file.rig_size,
     scale_rig_per_source: file.scale_rig_per_source,
     parts: file.parts.map((p) =>
-      Object.fromEntries(PART_KEYS.filter((k) => p[k] !== undefined).map((k) => [k, k === FRINGE_KEY ? (p.fringe_pushed_back ?? []).map((q) => ({ part: q.part, px: q.px })) : p[k]])),
+      Object.fromEntries(PART_KEYS.filter((k) => p[k] !== undefined).map((k) => [k, k === FRINGE_KEY ? (p.fringe_pushed_back ?? []).map((q) => ({ part: q.part, px: q.px })) : k === LIMB_KEY ? orderedLimb(p.limb as LimbRecord) : p[k]])),
     ),
     ghost_px: Object.fromEntries(Object.keys(file.ghost_px).sort().map((k) => [k, file.ghost_px[k]])),
     ...(file.recomposite === undefined
@@ -372,6 +421,42 @@ function checkParts(raw: unknown, path: string): PartsFile {
       else if (base === r.name) fail('PARTS_CUT_FROM_KNOWN', object, `names the piece itself; the plan part the cut took it from is required`);
       else if (CUT_FROM_KEY in b) fail('PARTS_CUT_FROM_KNOWN', object, `names "${base}", which is itself a piece (cut from ${show(b[CUT_FROM_KEY])}); a plan part is required, as a cut of a cut has no single layer behind it`);
       else if (b.from !== r.from) fail('PARTS_CUT_FROM_KNOWN', object, `names "${base}", whose from is ${show(b.from)}; this piece's is ${show(r.from)}, and a piece shares its base's layer`);
+    }
+  }
+  if (Array.isArray(o.parts)) {
+    // A limb segment (issue #349) names its limb, its index, the part it was cut from, its bone, and below a joint the joint and its cap.
+    for (const p of o.parts) {
+      if (typeof p !== 'object' || p === null || Array.isArray(p) || !(LIMB_KEY in p)) continue;
+      const r = p as Record<string, unknown>;
+      const object = `part "${String(r.name)}" field "${LIMB_KEY}"`;
+      const l = r[LIMB_KEY];
+      if (typeof l !== 'object' || l === null || Array.isArray(l)) {
+        fail('PARTS_FIELD_TYPE', object, `is ${show(l)}; an object {name, segment, of, bone, joint?, cap?} is required`);
+        continue;
+      }
+      const q = l as Record<string, unknown>;
+      for (const k of Object.keys(q)) if (!(LIMB_KEYS as readonly string[]).includes(k)) fail('PARTS_KEY_KNOWN', `${object} key "${k}"`, `is not a limb field; known: ${LIMB_KEYS.join(', ')}`);
+      for (const k of ['name', 'of', 'bone'] as const) if (!(typeof q[k] === 'string' && q[k] !== '')) fail('PARTS_FIELD_TYPE', `${object} "${k}"`, `is ${show(q[k])}; a non-empty string is required`);
+      if (!isCount(q.segment)) fail('PARTS_FIELD_TYPE', `${object} "segment"`, `is ${show(q.segment)}; the segment's index, a non-negative integer, is required`);
+      const below = isCount(q.segment) && q.segment > 0;
+      if (below !== ('joint' in q) || below !== ('cap' in q)) fail('PARTS_FIELD_PRESENT', object, `segment ${show(q.segment)} with${'joint' in q ? '' : 'out'} a joint and with${'cap' in q ? '' : 'out'} a cap; a segment below a joint (index above 0) has both, the upper segment neither`);
+      if ('joint' in q && !(typeof q.joint === 'string' && q.joint !== '')) fail('PARTS_FIELD_TYPE', `${object} "joint"`, `is ${show(q.joint)}; the joint's name is required`);
+      if ('cap' in q) {
+        const c = q.cap;
+        const co = typeof c === 'object' && c !== null && !Array.isArray(c) ? (c as Record<string, unknown>) : null;
+        const pt = (v: unknown, n: number): boolean => Array.isArray(v) && v.length === n && v.every((x) => typeof x === 'number' && Number.isFinite(x));
+        const ok =
+          co !== null &&
+          Object.keys(co).every((k) => (CAP_KEYS as readonly string[]).includes(k)) &&
+          pt(co.at, 2) &&
+          typeof co.width === 'number' &&
+          typeof co.radius === 'number' &&
+          pt(co.box, 4) &&
+          isCount(co.layer_px) &&
+          isCount(co.missing_px) &&
+          (!('image_px' in co) || isCount(co.image_px));
+        if (!ok) fail('PARTS_FIELD_TYPE', `${object} "cap"`, `is ${show(c)}; {at: [x, y], width, radius, box: [x, y, w, h], layer_px, image_px?, missing_px} is required`);
+      }
     }
   }
   if ('scene' in o) {
