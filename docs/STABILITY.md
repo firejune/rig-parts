@@ -147,7 +147,7 @@ part name, `[i]` an entry of a list):
 - **meshes.&lt;part&gt;.auto.regions[i]** — required: `name`, `shape`, `maxEdgeLength`, `transition`, `grade`, `minArtSamples`, and `cx`, `cy`, `r` for a circle or `points` for a polygon; optional: `bone`, `band` (both or neither; with neither the region is density only)
 - **meshes.&lt;part&gt;.auto.boundaryRuns** — required: `maxVertices`
 - **meshes.&lt;part&gt;.auto.stimulus**, or each entry of it when a list — required: `chain`, `degrees`
-- **cloth.&lt;tag&gt;**, the tag bottomwear, back hair or front hair (issue #364; read by propose --cloth only) — required: `chains`, `links`, `wind`, `gravity`; optional: `split`, `length_ratio`, `strength`, `damping`, `alternate_damping`, `translate`, `swing` (on bottomwear only)
+- **cloth.&lt;tag&gt;**, the tag bottomwear, back hair or front hair (issue #364; read by propose --cloth only) — required: `chains`, `links`, `wind`, `gravity`; optional: `split`, `length_ratio`, `strength`, `damping`, `alternate_damping`, `translate`, `swing` (on bottomwear only), `part` (on bottomwear only)
 - **cloth.&lt;tag&gt;.split** — required: `at`, `into`
 - **cloth.&lt;tag&gt;.strength** — required: `trunk`, `branch`, `edge`
 - **cloth.&lt;tag&gt;.swing** — required: `scales`

@@ -821,6 +821,42 @@ export const HIP_MIN_FRACTION = 0.25;
 export const WAIST_MAX_OF_SHOULDERS = 0.8;
 
 /**
+ * A `topwear` part hangs below the hip when its box reaches this many face
+ * heights below the hip's y: above it, the topwear rule reads a bodice that
+ * stops at the waist and drafts no robe chains (the reference's line). Issue
+ * #402 reads the same line for a skirt held inside `topwear` (a dress), so
+ * the two rules cannot disagree about which topwear hangs.
+ */
+export const TOPWEAR_HANGS_FACE_HEIGHTS = 0.25;
+
+/**
+ * Issue #402: the note naming a `topwear` part shaped like a skirt — its box
+ * hanging {@link TOPWEAR_HANGS_FACE_HEIGHTS} face heights past the hip, and
+ * its art wider across its last 24 rows than in the 24-row band at the hip
+ * (the band the robe rule reads) — or null when it is not. The cloth recipe
+ * finds a skirt by the `bottomwear` tag alone, and the shape cannot tell a
+ * dress from an outer robe over a skirt, so the proposer drafts nothing on
+ * the strength of it: the note names the part, its art's rows below the hip
+ * and the field, `cloth.bottomwear.part`, by which the author declares it.
+ */
+function skirtInsideNote(p: PartRecord, mask: Mask, hipY: number, fh: number): string | null {
+  const bot = p.y + p.h;
+  const line = hipY + TOPWEAR_HANGS_FACE_HEIGHTS * fh;
+  if (bot < line) return null;
+  const span = (xs: number[]): number => (xs.length === 0 ? 0 : xs[xs.length - 1] - xs[0] + 1);
+  const atHip = span(colsAny(mask, pyInt(hipY) - 12, pyInt(hipY) + 12));
+  const atBottom = span(colsAny(mask, bot - 24, bot));
+  if (!(atBottom > atHip)) return null;
+  const hipRow = pyRound(hipY);
+  let last = bot - 1;
+  while (last > p.y && colsAny(mask, last, last + 1).length === 0) last--;
+  return (
+    `${p.name} (${p.from}): shaped like a skirt — its art's rows ${hipRow + 1} to ${last} lie below hip (y ${hipRow}), past hip + ${TOPWEAR_HANGS_FACE_HEIGHTS} face heights (y ${pyFixed(line, 1)}), and it is wider across its last 24 rows (${atBottom} px) than in the 24-row band at the hip (${atHip} px); ` +
+    `the cloth recipe finds a skirt by the bottomwear tag alone, so it drafted no skirt trees on ${p.name}, and the topwear rule drafts it instead. If See-through returned the skirt inside it (a dress), declare config.cloth.bottomwear.part: "${p.name}", and the bottomwear recipe's trees hang from hip over its art below the hip`
+  );
+}
+
+/**
  * One handwear blob is clasped hands, not two sleeves, when it is at most this
  * fraction of the shoulders' width: two sleeves that hang from the shoulders
  * are at least as wide as them (the examples' one-blob sleeves are 1.506 and
@@ -2022,8 +2058,42 @@ export function proposeWithBasis(
     if (hw.length === 1) notes.push(`handwear is one blob (${hw[0].name}): both sleeves in one mesh, split at the eye axis x=${pyFixed(axis, 0)}`);
   }
 
+  // Issue #402: the topwear part config.cloth.bottomwear.part names takes the skirt's rule and recipe below; every
+  // other topwear shaped like a skirt is named in a note when a recipe is in play, never drafted on by its shape.
+  const namedSkirt = ((): PartRecord | null => {
+    const name = recipeOf('bottomwear')?.part;
+    if (name === undefined) return null;
+    const refuse = (detail: string): never => {
+      throw new PartsError([{ code: 'PROPOSE_CLOTH_PART', object: 'config.cloth."bottomwear".part', detail }]);
+    };
+    const q = P.recs.find((x) => x.name === name);
+    if (q === undefined) return refuse(`names "${name}", which is no part in parts.json; a topwear part whose art hangs below the hip (a dress) is required`);
+    if (q.cut_from !== undefined) return refuse(`names "${name}", a piece an assemble.cuts entry took from ${q.cut_from}; name the part the plan made, ${q.cut_from}, or leave part out`);
+    if (!tw.includes(q)) {
+      return refuse(
+        `names "${name}", from ${q.from}; ${splitFrom(q.from)[1] === 'bottomwear' ? 'a bottomwear part takes the recipe by its tag already — leave part out' : "only a topwear part takes the skirt's recipe by name (a skirt See-through returned inside topwear, a dress)"}`,
+      );
+    }
+    const line = hip[1] + TOPWEAR_HANGS_FACE_HEIGHTS * fh;
+    if (q.y + q.h < line) {
+      return refuse(`names "${name}", whose box ends at y=${q.y + q.h}, above hip + ${TOPWEAR_HANGS_FACE_HEIGHTS} face heights (y=${pyFixed(line, 1)}), where the topwear rule reads a bodice that stops at the waist: no skirt hangs below the hip to hang trees on`);
+    }
+    return q;
+  })();
+  const skirtHints = new Map<string, string>();
+  if (cloth !== null) {
+    for (const p of tw) {
+      if (p === namedSkirt) continue;
+      const hint = skirtInsideNote(p, P.alpha(p), hip[1], fh);
+      if (hint !== null) skirtHints.set(p.name, hint);
+    }
+  }
+
   // ---- outer robe (topwear)
   for (const p of tw) {
+    if (p === namedSkirt) continue;
+    const hint = skirtHints.get(p.name);
+    if (hint !== undefined) notes.push(hint);
     const [g, r] = gridR(p);
     const mask = P.alpha(p);
     const top = chest[1] - 0.3 * fh;
@@ -2039,7 +2109,7 @@ export function proposeWithBasis(
             ['chest', rnd(along(hip, trunk.u, artExtent(mask, p, hip, trunk.u)[0])), rnd(along(hip, trunk.u, -20))],
             ['hip', rnd(along(hip, trunk.u, -20)), rnd(along(hip, trunk.u, 100))],
           ];
-    if (bw.length > 0 && bot < hip[1] + 0.25 * fh) {
+    if (bw.length > 0 && bot < hip[1] + TOPWEAR_HANGS_FACE_HEIGHTS * fh) {
       // A bodice that stops at the waist: robe chains down to the hem would fall off the art.
       meshes[p.name] = { grid: g, r, segments: segs };
       notes.push(`${p.name} ends at y=${bot} (hip ${pyFixed(hip[1], 0)}): no robe chains -- add a sash chain by hand if one hangs`);
@@ -2086,8 +2156,9 @@ export function proposeWithBasis(
     meshes[p.name] = { grid: g, r, segments: segs };
   }
 
-  // ---- skirt (bottomwear)
-  for (const p of bw) {
+  // ---- skirt (bottomwear, and the topwear part config.cloth.bottomwear.part names: issue #402)
+  const skirts = namedSkirt === null ? bw : [...bw, namedSkirt];
+  for (const p of skirts) {
     const [g, r] = gridR(p);
     const mask = P.alpha(p);
     const bot = p.y + p.h;
@@ -2122,7 +2193,7 @@ export function proposeWithBasis(
     // Issue #364: with config.cloth.bottomwear, the recipe's trees hang from the hip in place of the three keyed chains.
     const skirtRecipe = recipeOf('bottomwear');
     if (skirtRecipe !== null) {
-      const prefix = bw.length === 1 ? 'skirt' : `skirt_${p.name}`;
+      const prefix = skirts.length === 1 ? 'skirt' : `skirt_${p.name}`;
       const trees = T(p, 'bottomwear', skirtRecipe, {
         prefix,
         parent: 'hip',
@@ -2162,6 +2233,7 @@ export function proposeWithBasis(
           skirtRecipe,
           made.length,
           `${swing === null ? '' : ` on one shared swing, ${swing.bone} (each tree's first link takes its rotation times ${skirtRecipe.swing?.scales.join('/')}, its setup rotation ${swing.rest} degrees subtracted)`} from hip, rooted 20 px below its y and tipped 4 px above ${p.name}'s bottom, laid down the screen`,
+          p === namedSkirt ? p.from : undefined,
         ),
       );
       meshes[p.name] = { grid: g, r, segments: segs };
@@ -2316,7 +2388,9 @@ export function proposeWithBasis(
         object: `config.cloth."${t}"`,
         detail:
           P.byTag(t).length === 0 && P.headFirst(t).length === 0
-            ? `declares a recipe for "${t}", and no part is tagged "${t}"; leave the recipe out, or assemble the layer it is for`
+            ? t === 'bottomwear' && skirtHints.size > 0
+              ? `declares a recipe for "${t}", and no part is tagged "${t}"; leave the recipe out, assemble the layer it is for, or name the part that holds the skirt — ${[...skirtHints.values()].join('; ')}`
+              : `declares a recipe for "${t}", and no part is tagged "${t}"; leave the recipe out, or assemble the layer it is for`
             : t === 'back hair'
               ? `declares a recipe for "back hair", and every back hair part ends above the shoulders (0.5 face heights below the neck), which the proposer drafts as a bun bone with no chain; leave the recipe out`
               : `declares a recipe for "${t}", and the proposer drafted no chain on it`,

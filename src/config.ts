@@ -2663,6 +2663,11 @@ function attachedParts(meshes: Json, regions: Json): Set<string> {
  *   not a declaration (`CONFIG_CLOTH_ALTERNATE_DIFFERS`);
  * - `swing` on a tag other than `bottomwear`, or `swing.scales` not one per
  *   tree (`CONFIG_CLOTH_SWING_SCALE_PER_TREE`);
+ * - `part` on a tag other than `bottomwear` (`CONFIG_CLOTH_PART_ON_BOTTOMWEAR`):
+ *   the field hands the skirt's recipe to a part of another tag (issue #402),
+ *   and only the skirt has a recipe that part can take; whether the part
+ *   exists, and is a `topwear` that hangs below the hip, is read off the parts
+ *   by `propose` (`PROPOSE_CLOTH_PART`);
  * - a strength, declared or the recipe's default, whose spring is unstable at
  *   a damping the recipe runs at — k = strength·massInverse·step² at or past
  *   2(1 + damping^(60·step)), rig-c's default fps 60 and mass 1, the damping
@@ -2690,7 +2695,7 @@ function checkCloth(c: Check, v: Json): void {
   for (const tag of CLOTH_TARGETS) {
     if (!(tag in v)) continue;
     const path = `${at}.${JSON.stringify(tag)}`;
-    const r = c.object(path, v[tag], ['chains', 'links', 'wind', 'gravity'], ['split', 'length_ratio', 'strength', 'damping', 'alternate_damping', 'translate', 'swing']);
+    const r = c.object(path, v[tag], ['chains', 'links', 'wind', 'gravity'], ['split', 'length_ratio', 'strength', 'damping', 'alternate_damping', 'translate', 'swing', 'part']);
     if (r === null) continue;
     const chains = 'chains' in r && c.int(`${path}.chains`, r.chains, 1) ? (r.chains as number) : null;
     const links = 'links' in r && c.int(`${path}.links`, r.links, 1) ? (r.links as number) : null;
@@ -2742,6 +2747,11 @@ function checkCloth(c: Check, v: Json): void {
     }
     if ('translate' in r && c.number(`${path}.translate`, r.translate, 'unit') && r.translate === 0) {
       c.fail('CONFIG_FIELD_TYPE', `${path}.translate`, 'is 0; a mix above 0 and at most 1 is required (leave translate out for none)');
+    }
+    if ('part' in r) {
+      if (tag !== 'bottomwear') {
+        c.fail('CONFIG_CLOTH_PART_ON_BOTTOMWEAR', `${path}.part`, `is declared on "${tag}"; part hands the skirt's recipe (bottomwear) to a topwear part that holds a skirt (a dress) — leave it out here`);
+      } else c.string(`${path}.part`, r.part);
     }
     if ('swing' in r) {
       if (tag !== 'bottomwear') {
