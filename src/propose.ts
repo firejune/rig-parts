@@ -21,7 +21,10 @@
  *   hip would sit above `HIP_MIN_FRACTION` of the figure's height (a long
  *   robe tagged `bottomwear` starts at the collar): then `hip` is the waist,
  *   the narrowest torso row between the shoulder line and the figure's
- *   middle, and 0.32 of the figure height when no row narrows enough.
+ *   middle, and 0.32 of the figure height when no row narrows enough. With
+ *   `cloth.bottomwear.part` naming a dress (issue #402), a `bottomwear` part
+ *   lying on the dress's tree links rides them (issue #416), by the rule a
+ *   layer on a tail does (below), and gets no trees of its own.
  * - `topwear` -> two outer-robe chains, only when it hangs below the hip line;
  *   a side whose link falls off the art is dropped.
  * - `handwear-*` -> two blobs: one sleeve chain per blob, its mesh taking that
@@ -144,7 +147,7 @@ import { AUTHOR_NO_ROLE, isAuthorTag } from './tags.ts';
 import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER_TAGS, turnFractions, turnNearest, turnPivot, turnRiderDepth, type TurnSpec } from './turn.ts';
 import { edgeLength } from './length.ts';
 import { chainSqueezes, type SqueezeFinding } from './squeeze.ts';
-import { RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, swingName, type Tail, tailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput } from './cloth.ts';
+import { RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, swingName, type Tail, tailOverlap, type TailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput } from './cloth.ts';
 import { TEXTURE_STRETCH_CEILING } from './check.ts';
 
 // ---------------------------------------------------------------------------
@@ -2204,12 +2207,8 @@ export function proposeWithBasis(
   }
 
   // ---- skirt (bottomwear, and the topwear part config.cloth.bottomwear.part names: issue #402)
-  const skirts = namedSkirt === null ? bw : [...bw, namedSkirt];
-  for (const p of skirts) {
-    const [g, r] = gridR(p);
-    const mask = P.alpha(p);
-    const bot = p.y + p.h;
-    const y0 = hip[1] + 20;
+  // The fixed segments of a skirt's mesh, and the note when it hangs from the waist (pushed by the drafting loop only).
+  const skirtFrame = (p: PartRecord, mask: Mask): { segs: Segment[]; hangs: string | null } => {
     let segs: Segment[] = [
       ['chest', rnd([chest[0], chest[1] - 30]), rnd([chest[0], hip[1] - 20])],
       ['hip', rnd([p.x + 0.09 * p.w, hip[1] + 5]), rnd([p.x + 0.91 * p.w, hip[1] + 5])],
@@ -2231,26 +2230,67 @@ export function proposeWithBasis(
     const down: readonly [number, number] = trunk === null ? [0, 1] : trunk.u;
     const artTop = artExtent(mask, p, hip, down)[0];
     const chestAt = (chest[0] - hip[0]) * down[0] + (chest[1] - hip[1]) * down[1];
-    if (artTop >= chestAt) {
-      segs = segs.filter((s) => typeof s === 'string' || s[0] !== 'chest');
-      notes.push(
-        `${p.name} (${p.from}): its art starts ${pyFixed(artTop - chestAt, 1)} px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root`,
-      );
+    if (artTop < chestAt) return { segs, hangs: null };
+    return {
+      segs: segs.filter((s) => typeof s === 'string' || s[0] !== 'chest'),
+      hangs: `${p.name} (${p.from}): its art starts ${pyFixed(artTop - chestAt, 1)} px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root`,
+    };
+  };
+  // Where the recipe's trees hang on a skirt: from 20 px below the hip to 4 px above the part's bottom, across its art.
+  const skirtInput = (p: PartRecord, mask: Mask, prefix: string): TreeInput => ({
+    prefix,
+    parent: 'hip',
+    rootY: hip[1] + 20,
+    tipY: p.y + p.h - 4,
+    xAt: (y, f) => bandX(mask, y, { frac: f }),
+    fallbackX: (f) => p.x + f * p.w,
+    frame: `${p.name}'s art (no art in the band: that share of its box's width)`,
+    edges: 'both',
+  });
+  // Issue #416: a bottomwear part lying on the trees of the dress config.cloth.bottomwear.part names (a ruffle hem
+  // See-through returned on its own) rides the links it overlaps, as a layer wrapped round a tail does (issue #391),
+  // and gets no trees of its own: one skirt carries one set of trees. The dress's mesh is the tail — its fixed
+  // segments and every tree link, in segment order — and the links are read off the overlap, never off the part's
+  // name. Which parts ride is read here, before any bone is named, off the trees as the recipe places them (a tree's
+  // points do not depend on its prefix); a part over no link keeps its own trees below. Only with the field.
+  const dressTail = (p: PartRecord, segs: readonly Segment[], trees: readonly TreeChain[]): Tail => {
+    const spans: TailSpan[] = [];
+    for (const s of segs) if (typeof s !== 'string') spans.push({ bone: s[0], a: s[1], b: s[2], link: false });
+    for (const t of trees) {
+      const line = [...t.points, t.tip];
+      t.points.forEach((q, i) => spans.push({ bone: `${t.chain}${i}`, a: q, b: line[i + 1], link: true }));
     }
+    return { part: p.name, mask: P.alpha(p), spans };
+  };
+  const overLinks = (tail: Tail, q: PartRecord): { o: TailOverlap; rides: boolean } => {
+    const o = tailOverlap(tail, P.alpha(q), q);
+    return { o, rides: tail.spans.some((sp, k) => sp.link && o.counts[k] > 0) };
+  };
+  const dressRecipe = recipeOf('bottomwear');
+  const riders: PartRecord[] =
+    namedSkirt === null || dressRecipe === null
+      ? []
+      : ((): PartRecord[] => {
+          const mask = P.alpha(namedSkirt);
+          const tail = dressTail(namedSkirt, skirtFrame(namedSkirt, mask).segs, draftTrees(skirtInput(namedSkirt, mask, 'skirt'), dressRecipe));
+          return bw.filter((q) => overLinks(tail, q).rides);
+        })();
+  let dressDrafted: Tail | null = null;
+  const skirts = namedSkirt === null ? bw : [...bw.filter((q) => !riders.includes(q)), namedSkirt];
+  for (const p of skirts) {
+    const [g, r] = gridR(p);
+    const mask = P.alpha(p);
+    const bot = p.y + p.h;
+    const y0 = hip[1] + 20;
+    const { segs, hangs } = skirtFrame(p, mask);
+    if (hangs !== null) notes.push(hangs);
     // Issue #364: with config.cloth.bottomwear, the recipe's trees hang from the hip in place of the three keyed chains.
     const skirtRecipe = recipeOf('bottomwear');
     if (skirtRecipe !== null) {
       const prefix = skirts.length === 1 ? 'skirt' : `skirt_${p.name}`;
-      const trees = T(p, 'bottomwear', skirtRecipe, {
-        prefix,
-        parent: 'hip',
-        rootY: y0,
-        tipY: bot - 4,
-        xAt: (y, f) => bandX(mask, y, { frac: f }),
-        fallbackX: (f) => p.x + f * p.w,
-        frame: `${p.name}'s art (no art in the band: that share of its box's width)`,
-        edges: 'both',
-      });
+      const fixed = [...segs];
+      const trees = T(p, 'bottomwear', skirtRecipe, skirtInput(p, mask, prefix));
+      if (p === namedSkirt) dressDrafted = dressTail(p, fixed, trees);
       for (const t of trees) segs.push(t.chain);
       let swing: { bone: string; rest: number } | null = null;
       if (skirtRecipe.swing !== undefined) {
@@ -2307,6 +2347,28 @@ export function proposeWithBasis(
       tracks.push({ chain: tag, amps: [0.15, 0.35, 0.7], period: 4.0, phase: ph, lag: 0.07 });
     }
     meshes[p.name] = { grid: g, r, segments: segs };
+  }
+  // Issue #416: each rider's mesh takes the dress's spans its pixels over the dress's art fall nearest — a link by its
+  // bone, a fixed segment written out as the dress's mesh writes it — so every vertex weights by the rule the dress's
+  // own art does, and the note names each span with its pixel count.
+  for (const q of riders) {
+    const tail = dressDrafted as Tail | null;
+    if (tail === null) break;
+    const { o } = overLinks(tail, q);
+    const segments: Segment[] = [];
+    const links: string[] = [];
+    const on: string[] = [];
+    tail.spans.forEach((sp, k) => {
+      if (o.counts[k] === 0) return;
+      on.push(`${sp.link ? sp.bone : `${sp.bone}'s fixed segment`} ${o.counts[k]}`);
+      segments.push(sp.link ? sp.bone : [sp.bone, sp.a, sp.b]);
+      if (sp.link) links.push(sp.bone);
+    });
+    const [g, r] = gridR(q);
+    meshes[q.name] = { grid: g, r, segments };
+    notes.push(
+      `${q.name} (${q.from}): lies on the trees of ${tail.part}, which config.cloth."bottomwear".part names — ${o.over} of its ${o.total} px lie over ${tail.part}'s art, nearest its spans ${on.join(', ')} px — so its mesh's segments are those spans and it rides the links ${links.join(', ')} with the dress; no trees of its own are drafted for it, so the skirt carries one set (issue #416)`,
+    );
   }
 
   // ---- legs (issue #241)

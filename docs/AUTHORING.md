@@ -1589,7 +1589,7 @@ What each rule drafts (`src/cloth.ts` holds them):
 | response | link j of an n-link path takes `wind` and `gravity` at j/(n − 1) of the way from the root value to the tip value; a single-link path takes the tip value. Each is a scalar **multiplier** of the environment the consumer sets (spine-core's skeleton `windX, windY`, `gravityX, gravityY`; rig-c 2.52.0's live track `setEnvironment`, rig-play 1.10.0's `environment()`): no direction is drafted | `wind`, `gravity` |
 | out of phase | the odd trees take `alternate_damping`, the even ones `damping` | `damping`, `alternate_damping` |
 | flutter | the last link of every path gets a second physics constraint, `<bone>_translate`, moving x and y by `translate`, with the link's stiffness and damping and **no** wind or gravity response. spine-core scales a translate spring's response by the skeleton's reference scale (100) and a rotation's by the link's length over it, so one response on both pushes an end about 100/length times further than it turns it (the table below) | `translate` |
-| part | `bottomwear` only (issue #402): the named `topwear` part takes the skirt's rule as the `bottomwear` parts do — trees from `hip` over its art below the hip, its waist line, and, as its art reaches above the chest, the chest segment the long-robe `bottomwear` keeps — in place of the two robe chains the topwear rule drafts; the prefix is `skirt` when it is the only skirt, `skirt_<part>` beside another | `part` |
+| part | `bottomwear` only (issue #402): the named `topwear` part takes the skirt's rule as the `bottomwear` parts do — trees from `hip` over its art below the hip, its waist line, and, as its art reaches above the chest, the chest segment the long-robe `bottomwear` keeps — in place of the two robe chains the topwear rule drafts; the prefix is `skirt` when it is the only skirt, `skirt_<part>` beside another. A `bottomwear` part lying on the named part's tree links rides them and drafts no trees of its own (issue #416, *What rides a dress* below) | `part` |
 | swing | `bottomwear` only: a bone `<prefix>_swing` under `hip` at the centre of the root row, one link long, straight down, with physics (the trunk's stiffness, the root's response); each tree's first link takes the swing's rotation times its scale — a transform `<swing>_<k>`, local source and target, additive, the swing's setup rotation in hip's frame (−90: hip is drafted unturned) subtracted — and no physics of its own | `swing.scales` |
 
 Every link but a swing-driven first link gets `<bone>_physics` (`rotate` 1), and no
@@ -1622,6 +1622,26 @@ no idle key. Neither is barred here; both are the dress's to weigh before declar
 Since issue #411 the bar reads the breath alone, and on that fixture the breath moves
 the dress 0.106 and the robe-chained dress 2.62: both fail, and the 3.9 was the robe
 chains' keyed swing below the hip, not the breath (the CK502 and CK503 controls).
+
+**What rides a dress** (issue #416). With `part` declared, a `bottomwear` part lying on
+the dress — a ruffle hem See-through returned as a layer of its own — rides the dress's
+tree links by the rule a part wrapped round a tail does (*What rides a tail*, below): each
+of its pixels over the dress's art is given to the span of the dress's mesh nearest it
+(a fixed segment, chest or the waist line, or one tree link), and the part rides when one
+of those spans is a link. Its mesh's segments are then the spans it lies on, it drafts
+no trees of its own, and a note names each span with its pixel count; a `bottomwear` part
+over no link keeps its own trees. Before, the hem took the skirt's recipe by its tag as
+well, so one skirt carried two sets of trees, each on its own physics. Measured once on
+the selftest's dress fixture with a 112x26 hem across its last tier (`fixtures/cloth.ts`,
+`HEM`; the hip from joints at y 164; rig-c 2.54.0, `check`'s idle, physics on), before
+this rule and with it: the trees drafted went from four (`skirt_hem0_`, `skirt_hem1_`,
+`skirt_dress0_`, `skirt_dress1_`) to two (`skirt0_`, `skirt1_`), and their physics
+constraints from 8 to 4; `TEXTURE_STRETCH` read 1.275 both ways (its worst mesh is the
+back hair), the hem's own mesh 1.034 with its own trees and 1.045 riding, and the largest
+opening of the hem's seam with the dress 0.502 and 0.432 px (CK510 holds the one set and
+the pass). The hip rule still reads a `bottomwear` part's top edge as the waist, so a
+hem and no hip joints put the hip at the hem: on the same fixture without joints, y 277,
+and the dress's trees run up from y 297 to 286. Without `part` nothing here runs.
 
 **What rides a tail** (issue #391). An accessory wrapped round a tail the `back hair`
 recipe drafts — a ribbon, in See-through's `headwear` or `earwear` layer — rides that

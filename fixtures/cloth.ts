@@ -18,6 +18,8 @@
  * line (11 px above it) and tipped 5 px below it (y 154).
  */
 import type { ClothRecipes } from '../src/cloth.ts';
+import type { RigJoints } from '../src/keypoints.ts';
+import { KEYPOINT_NAMES } from '../src/skeleton.ts';
 import type { ProposeFixturePart } from './propose.ts';
 
 export const CLOTH_RIG = { w: 240, h: 360 };
@@ -152,4 +154,34 @@ export function dressParts(topwear: ProposeFixturePart): ProposeFixturePart[] {
       ],
     },
   ];
+}
+
+/**
+ * Issue #416: a ruffle hem See-through returned as a `bottomwear` layer of its own, across the dress's last tier
+ * and 6 rows past it: x 64..175, y 270..295, 112x26 = 2912 px. Flat colour; nothing here is art.
+ *
+ * A `bottomwear` part puts the hip at its top edge + 0.14 face heights (src/propose.ts), which for a hem is not the
+ * waist, so the figure is proposed with the hip from joints ({@link dressHipJoints}): r_hip (110, 164) and l_hip
+ * (130, 164), whose midpoint is the hip the dress fixture reads without a bottomwear, (120, 164); every figure of the
+ * dress's trees is then PR482's (fixtures/cloth.ts's dress: skirt0_ [[105,184],[94,252]] -> [94,286], skirt1_
+ * [[134,184],[145,252]] -> [145,286]).
+ *
+ * By hand: the hem's pixels over the dress's art are rows 270..289 of the last tier, x 68..171, 104 x 20 = 2080 of
+ * its 2912. Each is nearest the link skirt0_1 (x 94, rows 252..286) or skirt1_1 (x 145): for a pixel in rows
+ * 270..286 the distances are |x - 94| and |x - 145|, and in rows 287..289 both segments end at row 286, so the row
+ * term is the same for both; the split is x 119 | 120 (119.5 is the midpoint), 52 columns a side, 1040 px each. No
+ * other span is nearer: the first links end at row 252, at least 18 rows above, and the waist line is at row 169.
+ * {@link HEM_BELOW} is the same hem moved under the dress's box (y 300..325): over none of its art.
+ */
+export const HEM: ProposeFixturePart = { name: 'hem', from: 'full:bottomwear', x: 64, y: 270, w: 112, h: 26, colour: [240, 240, 240], rects: [[64, 270, 112, 26]] };
+
+export const HEM_BELOW: ProposeFixturePart = { ...HEM, y: 300, rects: [[64, 300, 112, 26]] };
+
+/** The dress figure's two hip joints, rig px, every other joint missing: the hip at their midpoint, (120, 164). */
+export function dressHipJoints(): RigJoints {
+  const missing = { state: 'missing' as const, at: null, score: null, listed: false };
+  const joints = Object.fromEntries(KEYPOINT_NAMES.map((n) => [n, missing])) as RigJoints['joints'];
+  joints.r_hip = { state: 'observed', at: [110, 164], score: null, listed: true };
+  joints.l_hip = { state: 'observed', at: [130, 164], score: null, listed: true };
+  return { person: 'fixture', source: 'fixtures/cloth.ts', painting: [DRESS_RIG.w, DRESS_RIG.h], rig: [DRESS_RIG.w, DRESS_RIG.h], joints };
 }
