@@ -146,7 +146,7 @@ import { configRoles, type RoleOf } from './structure.ts';
 import { AUTHOR_NO_ROLE, isAuthorTag } from './tags.ts';
 import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER_TAGS, turnFractions, turnNearest, turnPivot, turnRiderDepth, type TurnSpec } from './turn.ts';
 import { edgeLength } from './length.ts';
-import { chainSqueezes, type SqueezeFinding } from './squeeze.ts';
+import { type BranchSqueezeFinding, branchSqueezes, chainSqueezes, type SqueezeFinding } from './squeeze.ts';
 import { RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, swingName, type Tail, tailOverlap, type TailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput } from './cloth.ts';
 import { TEXTURE_STRETCH_CEILING } from './check.ts';
 
@@ -1557,7 +1557,7 @@ export function proposeWithBasis(
         all.push(...trees);
       }
       notes.push(clothNote(p.name, 'back hair', all, rcp, n, ' per side of the eye axis, from head, rooted on the eye line and tipped 4 px above its bottom'));
-      meshes[p.name] = { grid: g, r, segments: segs };
+      meshes[p.name] = { grid: g, r: rcp.split?.hold_tip === true ? Math.max(r, g) : r, segments: segs };
       // Issue #391: the spans are this mesh's segments, the head's fixed one and every tree link, in segment order.
       const spans: TailSpan[] = [{ bone: 'head', a: rnd(head), b: rnd([axis, top + 13]), link: false }];
       for (const t of all) {
@@ -1731,7 +1731,8 @@ export function proposeWithBasis(
       tracks.push({ chain: name, amps: [0.8, 1.6, 2.6, 3.6], period: 4.0, phase: 0.16, lag: 0.07 });
       k++;
     }
-    meshes[p.name] = { grid: g, r, segments: segs };
+    const frontRcp = recipeOf('front hair');
+    meshes[p.name] = { grid: g, r: frontRcp?.split?.hold_tip === true && k > 0 ? Math.max(r, g) : r, segments: segs };
   }
 
   // ---- accessories: rigid body + pendant chain where the part narrows, or one pendulum chain per hanging strand
@@ -2323,7 +2324,7 @@ export function proposeWithBasis(
           p === namedSkirt ? p.from : undefined,
         ),
       );
-      meshes[p.name] = { grid: g, r, segments: segs };
+      meshes[p.name] = { grid: g, r: skirtRecipe.split?.hold_tip === true ? Math.max(r, g) : r, segments: segs };
       continue;
     }
     for (const [tag, f, ph] of [
@@ -3325,6 +3326,8 @@ export interface LintResult {
   missingTorsoBones: string[];
   /** Issue #314: the pairs of keyed chains on one mesh the squeeze check could not build a lattice for, and why. Empty when it read every pair or had none. */
   squeezeUnread: string[];
+  /** Issue #403: sibling branch pairs on a fork whose cell-boundary weights and spring strengths are unheld. */
+  branchSqueezes: BranchSqueezeFinding[];
   /** Present only under `--keypoints`: the rule set that read the torso and the chains. */
   basis?: LintBasis;
   /** One record per bone of the spec, in its bone order (chain links as `<chain><i>`): which checks read it, or why none did (issue #86). */
@@ -3534,7 +3537,8 @@ export function lint(
   }
   // Issue #314: every pair of keyed chains a lattice mesh names, swung on the rig stage's own lattice and weights, held
   // to check's TEXTURE_STRETCH bar (src/squeeze.ts). Only with a motion: without one nothing swings.
-  const sq = chainSqueezes({ bones: spec.bones, meshes: spec.meshes, motion: spec.motion }, new Map(P.recs.filter((p) => P.images.has(p.name)).map((p) => [p.name, { x: p.x, y: p.y, image: P.images.get(p.name) as Raster }])));
+  const partImages = new Map(P.recs.filter((p) => P.images.has(p.name)).map((p) => [p.name, { x: p.x, y: p.y, image: P.images.get(p.name) as Raster }]));
+  const sq = chainSqueezes({ bones: spec.bones, meshes: spec.meshes, motion: spec.motion }, partImages);
   for (const { mesh, a, b } of sq.read) {
     for (const [c, other] of [[a, b], [b, a]]) {
       const e = spec.bones.find((x) => 'chain' in x && x.chain === c);
@@ -3543,10 +3547,11 @@ export function lint(
   }
   for (const f of sq.findings) findings.push({ kind: 'squeeze', ...f });
   const squeezeUnread = sq.unread;
+  const branchSq = branchSqueezes({ bones: spec.bones, meshes: spec.meshes, constraints: spec.constraints }, partImages);
   const coverage = lintCoverage(spec, byName, read, findings, unknownMeshes, basis);
   return basis === undefined
-    ? { findings, unknownMeshes, lockUnread, missingTorsoBones, squeezeUnread, coverage }
-    : { findings, unknownMeshes, lockUnread, missingTorsoBones, squeezeUnread, basis, coverage };
+    ? { findings, unknownMeshes, lockUnread, missingTorsoBones, squeezeUnread, branchSqueezes: branchSq, coverage }
+    : { findings, unknownMeshes, lockUnread, missingTorsoBones, squeezeUnread, branchSqueezes: branchSq, basis, coverage };
 }
 
 /** The bones a finding names: the off-art link; hip and chest for a relation between them; a chain's last link for its tip. */
@@ -3763,6 +3768,23 @@ function squeezeLine(f: SqueezeLintFinding): string {
     `edge ${e.edge.join('-')} of triangle ${e.triangle} ${e.ratio >= 1 ? 'opens' : 'closes'} to ${pyFixed(e.ratio, 3)} times its rest length at idle frame ${e.frame} (max(ratio, 1/ratio) ${pyFixed(f.both.severity, 3)}; ` +
     `<= ${C} is required, check's TEXTURE_STRETCH bar) — ${rides}; alone, ${f.a.chain} reads ${pyFixed(f.aloneA, 3)} and ${f.b.chain} ${pyFixed(f.aloneB, 3)}. ` +
     `Their tips are ${pyFixed(f.tipGap, 1)} px apart and ${said}: ${remedy}`
+  );
+}
+
+/**
+ * Issue #403: the note line naming a branch tip's squeezed triangle, the bones (`a` and `b` forked from `parent`),
+ * the mechanism (`the weights where two branches' cells meet` and, when present, unequal spring strength on the fork),
+ * and the setting (`split.hold_tip: true`) that holds the tip.
+ */
+export function branchSqueezeLine(f: BranchSqueezeFinding): string {
+  const stiff =
+    f.strengthA !== null && f.strengthB !== null && f.strengthA !== f.strengthB
+      ? ` and unequal spring strength on the fork (${f.a} ${f.strengthA} vs ${f.b} ${f.strengthB})`
+      : '';
+  return (
+    `LINT ${f.a} and ${f.b} (forked from ${f.parent}) on mesh ${pyRepr(f.mesh)} squeeze their tip: triangle ${f.triangle} across edge ${f.edge[0]}-${f.edge[1]} (tips ${pyFixed(f.tipGap, 1)} px apart) ` +
+    `is squeezed by the weights where two branches' cells meet (vertex ${f.edge[0]} rides ${f.a} ${pyFixed(f.weightA, 5)}, vertex ${f.edge[1]} rides ${f.b} ${pyFixed(f.weightB, 5)} at r=${f.r} on a ${f.grid} px lattice)${stiff} — ` +
+    `set split.hold_tip: true to hold the branch tips (keeps branch strength across the fork and raises r to grid)`
   );
 }
 

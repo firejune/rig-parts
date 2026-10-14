@@ -150,7 +150,7 @@ part name, `[i]` an entry of a list):
 - **meshes.&lt;part&gt;.auto.boundaryRuns** — required: `maxVertices`
 - **meshes.&lt;part&gt;.auto.stimulus**, or each entry of it when a list — required: `chain`, `degrees`
 - **cloth.&lt;tag&gt;**, the tag bottomwear, back hair or front hair (issue #364; read by propose --cloth only) — required: `chains`, `links`, `wind`, `gravity`; optional: `split`, `length_ratio`, `strength`, `damping`, `alternate_damping`, `translate`, `swing` (on bottomwear only), `part` (on bottomwear only)
-- **cloth.&lt;tag&gt;.split** — required: `at`, `into`
+- **cloth.&lt;tag&gt;.split** — required: `at`, `into`; optional: `hold_tip`
 - **cloth.&lt;tag&gt;.strength** — required: `trunk`, `branch`, `edge`
 - **cloth.&lt;tag&gt;.swing** — required: `scales`
 - **regions.&lt;part&gt;** — a bone name

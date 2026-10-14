@@ -84,7 +84,7 @@ export interface ClothStrength {
 export interface ClothRecipe {
   chains: number;
   links: number;
-  split?: { at: number; into: number };
+  split?: { at: number; into: number; hold_tip?: boolean };
   length_ratio?: number;
   strength?: ClothStrength;
   damping?: number;
@@ -260,7 +260,7 @@ export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
         depths: [],
         last: [],
       };
-      const edge = outerSide(k, b);
+      const edge = r.split?.hold_tip === true ? false : outerSide(k, b);
       for (let j = trunkLinks; j < r.links; j++) {
         ch.points.push(j === trunkLinks ? trunk.tip : pt(rows[j], fb));
         ch.why.push(j === trunkLinks ? `the fork: the trunk ${trunk.chain}'s tip` : `${rowRule(j)}, ${pyRound(fb, 6)} of the way across ${input.frame} in the 24-row band there (branch ${b} of ${into} of tree ${k})`);
@@ -386,7 +386,7 @@ export function clothNote(part: string, tag: ClothTarget, trees: readonly TreeCh
   const defaults: string[] = [];
   if (r.length_ratio === undefined) defaults.push(`length_ratio ${RECIPE_LENGTH_RATIO}`);
   if (r.strength === undefined) defaults.push(`strength ${RECIPE_STRENGTH.trunk}/${RECIPE_STRENGTH.branch}/${RECIPE_STRENGTH.edge}`);
-  const shape = r.split === undefined ? `${r.links} link(s) each` : `a ${r.split.at}-link trunk forking into ${r.split.into} branches, ${r.links} links root to tip`;
+  const shape = r.split === undefined ? `${r.links} link(s) each` : `a ${r.split.at}-link trunk forking into ${r.split.into} branches${r.split.hold_tip === true ? ' (tip held)' : ''}, ${r.links} links root to tip`;
   return (
     `${part} (${via === undefined ? tag : `${via}, which config.cloth."${tag}".part names`}): config.cloth."${tag}" -> ${r.chains} tree(s)${extra}, ${shape} (${trees.map((t) => t.chain).join(', ')}); ` +
     `${constraints} constraint(s), physics on every link, wind ${r.wind[0]} -> ${r.wind[1]} and gravity ${r.gravity[0]} -> ${r.gravity[1]} root to tip (multipliers of the consumer's environment; no direction is drafted), no idle key` +
