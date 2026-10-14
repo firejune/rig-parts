@@ -146,6 +146,7 @@ import { configRoles, type RoleOf } from './structure.ts';
 import { AUTHOR_NO_ROLE, isAuthorTag } from './tags.ts';
 import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER_TAGS, turnFractions, turnNearest, turnPivot, turnRiderDepth, type TurnSpec } from './turn.ts';
 import { edgeLength } from './length.ts';
+import { limbWidth } from './limbs.ts';
 import { type BranchSqueezeFinding, branchSqueezes, chainSqueezes, type SqueezeFinding } from './squeeze.ts';
 import { RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, swingName, type Tail, tailOverlap, type TailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput } from './cloth.ts';
 import { TEXTURE_STRETCH_CEILING } from './check.ts';
@@ -3306,7 +3307,45 @@ export interface ChainNotAdvancingFinding {
 /** Issue #314: two chains on one lattice whose own swing closes or opens an edge between them past check's TEXTURE_STRETCH bar (`src/squeeze.ts`). */
 export type SqueezeLintFinding = { kind: 'squeeze' } & SqueezeFinding;
 
-export type LintFinding = OffArtFinding | OffLockFinding | HipAboveChestFinding | HipTooHighFinding | ChestNotBetweenFinding | HipNotPastChestFinding | HipNearerNeckFinding | ChainNotAdvancingFinding | SqueezeLintFinding;
+/**
+ * Issue #400: a hand layer (`handwear-r` or `handwear-l`, un-cut) whose side's wrist keypoint is placed is held to at
+ * least this share of the other hand layer's opaque pixel count (`ceil(HAND_MIN_OF_OTHER * other.opaque_px)`), or, when
+ * the other side has no hand layer and the side's elbow and wrist keypoints are placed, to a square of the forearm's
+ * width (`ceil(width²)`). On issue #400's overlapping-hands decomposition, See-through put 1,923 px into `handwear_l`
+ * and 123 px of finger slivers into `handwear_r` (6.4 % of the other hand, below `ceil(0.25 * 1923) = 481` px); on two
+ * separate hands (`standing` 1,200 / 1,200, `seated` 816 / 816, `lying` 1,120 / 1,120) the two layers are equal.
+ */
+export const HAND_MIN_OF_OTHER = 0.25;
+
+/**
+ * Issue #400: a hand layer holding fewer opaque pixels than the bar derived from the other hand layer or from the
+ * forearm's width, while its side's wrist keypoint says a hand is there.
+ */
+export interface NearEmptyHandFinding {
+  kind: 'near-empty-hand';
+  part: string;
+  from: string;
+  side: 'r' | 'l';
+  wrist: KeypointName;
+  wristAt: [number, number];
+  opaquePx: number;
+  bar: number;
+  basis:
+    | { kind: 'other-hand'; otherPart: string; otherFrom: string; otherPx: number; share: number }
+    | { kind: 'forearm-width'; width: number };
+}
+
+export type LintFinding =
+  | OffArtFinding
+  | OffLockFinding
+  | HipAboveChestFinding
+  | HipTooHighFinding
+  | ChestNotBetweenFinding
+  | HipNotPastChestFinding
+  | HipNearerNeckFinding
+  | ChainNotAdvancingFinding
+  | SqueezeLintFinding
+  | NearEmptyHandFinding;
 
 /** Which rule set read the torso and the sleeve chains, under `--keypoints`. */
 export interface LintBasis {
@@ -3535,6 +3574,64 @@ export function lint(
       }
     }
   }
+  // Issue #400: when a hand layer holds fewer opaque pixels than the bar derived from the other hand layer, or from the
+  // forearm's width when the other side has no hand layer, while the wrist keypoint says a hand is there.
+  if (joints !== undefined) {
+    const handOf = (s: 'r' | 'l'): PartRecord | null => {
+      const ps = P.byTag(`handwear-${s}`).filter((p) => p.limb === undefined);
+      return ps.length === 1 ? ps[0] : null;
+    };
+    for (const s of ['r', 'l'] as const) {
+      const wrist: KeypointName = `${s}_wrist`;
+      const wristAt = joints.joints[wrist].at;
+      const part = handOf(s);
+      if (wristAt === null || part === null) continue;
+      const other = handOf(s === 'r' ? 'l' : 'r');
+      if (other !== null) {
+        const bar = Math.ceil(HAND_MIN_OF_OTHER * other.opaque_px);
+        if (part.opaque_px < bar) {
+          findings.push({
+            kind: 'near-empty-hand',
+            part: part.name,
+            from: part.from,
+            side: s,
+            wrist,
+            wristAt: [wristAt[0], wristAt[1]],
+            opaquePx: part.opaque_px,
+            bar,
+            basis: { kind: 'other-hand', otherPart: other.name, otherFrom: other.from, otherPx: other.opaque_px, share: HAND_MIN_OF_OTHER },
+          });
+        }
+        continue;
+      }
+      const elAt = joints.joints[`${s}_elbow`].at;
+      if (elAt === null) continue;
+      const dx = wristAt[0] - elAt[0];
+      const dy = wristAt[1] - elAt[1];
+      const len = edgeLength(dx, dy);
+      if (len === 0) continue;
+      const armMasks = [...P.byTag('topwear'), part].map((p) => P.alpha(p));
+      const art = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < P.W && y < P.H && armMasks.some((m) => m.data[y * P.W + x] === 1);
+      const mid: [number, number] = [(elAt[0] + wristAt[0]) / 2, (elAt[1] + wristAt[1]) / 2];
+      const axis: [number, number] = [dx / len, dy / len];
+      const w = limbWidth({ at: mid, axis }, art, [0, 0, P.W - 1, P.H - 1]) ?? limbWidth({ at: elAt, axis }, art, [0, 0, P.W - 1, P.H - 1]);
+      if (w === null) continue;
+      const bar = Math.ceil(w * w);
+      if (part.opaque_px < bar) {
+        findings.push({
+          kind: 'near-empty-hand',
+          part: part.name,
+          from: part.from,
+          side: s,
+          wrist,
+          wristAt: [wristAt[0], wristAt[1]],
+          opaquePx: part.opaque_px,
+          bar,
+          basis: { kind: 'forearm-width', width: w },
+        });
+      }
+    }
+  }
   // Issue #314: every pair of keyed chains a lattice mesh names, swung on the rig stage's own lattice and weights, held
   // to check's TEXTURE_STRETCH bar (src/squeeze.ts). Only with a motion: without one nothing swings.
   const partImages = new Map(P.recs.filter((p) => P.images.has(p.name)).map((p) => [p.name, { x: p.x, y: p.y, image: P.images.get(p.name) as Raster }]));
@@ -3570,6 +3667,8 @@ function findingBones(f: LintFinding, bones: readonly BoneEntry[]): string[] {
       return ['chest'];
     case 'squeeze':
       return [...new Set(f.vertices.map((v) => v.weights[0]?.bone).filter((n): n is string => n !== undefined))];
+    case 'near-empty-hand':
+      return [];
     case 'chain-not-advancing': {
       if (!f.point.endsWith(' tip')) return [f.point];
       const chain = f.point.slice(0, -' tip'.length);
@@ -3737,6 +3836,13 @@ export function lintLine(f: LintFinding): string {
       return `LINT hip at ${pyIntList(f.hip)} is nearer the neck joint ${fmtAt(f.neck)} (${pyFixed(f.dNeck, 1)} px) than the midpoint of the hip joints ${fmtAt(f.hips)} (${pyFixed(f.dHips, 1)} px): a hip at the shoulders`;
     case 'squeeze':
       return squeezeLine(f);
+    case 'near-empty-hand': {
+      const why =
+        f.basis.kind === 'other-hand'
+          ? `${f.basis.share} of ${f.basis.otherPart} (${f.basis.otherFrom}), ${f.basis.otherPx} px`
+          : `forearm width ${pyFixed(f.basis.width, 1)} px squared`;
+      return `LINT ${f.part} (${f.from}) holds ${f.opaquePx} opaque px while ${f.wrist} at ${fmtAt(f.wristAt)} says a hand is there — below the bar of ${f.bar} px (${why}): the hands may overlap in the other layer and leave finger slivers here`;
+    }
     case 'chain-not-advancing':
       return `LINT ${f.point} at ${pyIntList(f.at)} does not advance from ${f.fromJoint} toward ${f.toJoint}: it falls ${pyFixed(f.t, 1)} px along that line and ${f.previous} ${pyFixed(f.tPrevious, 1)} px, and each must fall further than the one before`;
   }

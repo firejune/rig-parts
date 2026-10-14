@@ -81,6 +81,17 @@
  *   cap's disc and the limb's width stay where the bone's origin puts them;
  *   only the line that splits the pixels between the two pieces moves, and
  *   the cap takes the disc's pixels on the upper side of that line.
+ * - **Overlapping hands** (issue #400, {@link assignOverlappingHands}). When
+ *   two forearm segments (`joint: "elbow"`, with a wrist end) share a part,
+ *   each hand's keypoint region is the disc of radius half its forearm's
+ *   length (`L / 2`) about its wrist, and its cuff is the line across the
+ *   forearm at `L - L / 2 = L / 2` from the elbow, where that disc meets the
+ *   bone's axis. When the two hand discs overlap, the overlapping hand region
+ *   goes to the front piece (the limb `config.limbs` declares later, which
+ *   `limbOrder` draws in front) in one piece, and the back piece ends at its
+ *   cuff; any 4-connected island on a forearm piece that leaves its own hand's
+ *   keypoint region is transferred to the other forearm piece, so no slivers
+ *   are cut out of the front hand for the back arm.
  */
 import type { BoneEntry, Limb } from './config.ts';
 
@@ -429,3 +440,163 @@ export function capBox(at: Pt, radius: number): [number, number, number, number]
 export function inDisc(at: Pt, radius: number, px: number, py: number): boolean {
   return (px + 0.5 - at[0]) ** 2 + (py + 0.5 - at[1]) ** 2 <= radius * radius;
 }
+
+/** A forearm segment on a shared part, for {@link assignOverlappingHands} (issue #400). */
+export interface ForearmShare {
+  /** The limb's index in `Object.keys(limbs)`. */
+  limb: number;
+  /** The forearm segment's index in `limbs[limb].segments`. */
+  seg: number;
+  /** The elbow bone origin, in rig px. */
+  elbow: Pt;
+  /** The wrist bone end (`tip`), in rig px. */
+  wrist: Pt;
+  /** Whether pixel `(x, y)` on `limb` falls on this forearm segment (`segmentOf === seg`). */
+  isSeg: (x: number, y: number) => boolean;
+}
+
+/**
+ * Issue #400: when two forearm segments (`back` and `front`, in `config.limbs`
+ * order so `front` is drawn over `back`) share a part, each hand's keypoint
+ * region is the disc of radius `r = L / 2` about its wrist (`L` the forearm
+ * bone's length), and `back`'s cuff is the line across the forearm at
+ * `L - r = L / 2` from `back.elbow`. When the two wrist discs overlap, `back`'s
+ * pixels past its cuff (or inside `front`'s hand disc) go to `front`'s forearm
+ * in one piece so `back` ends at its cuff; and any 4-connected island on a
+ * forearm piece that leaves its own hand's keypoint region goes to the other
+ * forearm piece. Mutates `own` and `segOverride` in place.
+ */
+export function assignOverlappingHands(back: ForearmShare, front: ForearmShare, W: number, H: number, own: Int32Array, segOverride: Int32Array): void {
+  const dx0 = back.wrist[0] - back.elbow[0];
+  const dy0 = back.wrist[1] - back.elbow[1];
+  const L0 = Math.sqrt(dx0 * dx0 + dy0 * dy0);
+  const dx1 = front.wrist[0] - front.elbow[0];
+  const dy1 = front.wrist[1] - front.elbow[1];
+  const L1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+  if (L0 === 0 || L1 === 0) return;
+  const r0 = L0 / 2;
+  const r1 = L1 / 2;
+  const u0x = dx0 / L0;
+  const u0y = dy0 / L0;
+  const cuff0 = L0 - r0;
+  const proj0 = (x: number, y: number): number => (x + 0.5 - back.elbow[0]) * u0x + (y + 0.5 - back.elbow[1]) * u0y;
+  const onSeg = (f: ForearmShare, p: number): boolean => own[p] === f.limb && (segOverride[p] === f.seg || (segOverride[p] === -1 && f.isSeg(p % W, Math.floor(p / W))));
+  const wristsOverlap = (back.wrist[0] - front.wrist[0]) ** 2 + (back.wrist[1] - front.wrist[1]) ** 2 <= (r0 + r1) ** 2;
+  if (wristsOverlap) {
+    let cuffHasArt = false;
+    for (let y = 0; y < H && !cuffHasArt; y++) {
+      for (let x = 0; x < W && !cuffHasArt; x++) {
+        if (onSeg(back, y * W + x) && proj0(x, y) <= cuff0) cuffHasArt = true;
+      }
+    }
+    if (cuffHasArt) {
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const p = y * W + x;
+          if (onSeg(back, p) && (proj0(x, y) > cuff0 || inDisc(front.wrist, r1, x, y)) && !inDisc(back.elbow, r0 / 2, x, y)) {
+            own[p] = front.limb;
+            segOverride[p] = front.seg;
+          } else if (own[p] === back.limb && inDisc(front.wrist, r1, x, y) && !inDisc(back.elbow, r0, x, y)) {
+            own[p] = front.limb;
+            segOverride[p] = front.seg;
+          }
+        }
+      }
+    }
+  }
+  const componentsOf = (f: ForearmShare): number[][] => {
+    const seen = new Uint8Array(W * H);
+    const comps: number[][] = [];
+    for (let p = 0; p < W * H; p++) {
+      if (seen[p] === 1 || !onSeg(f, p)) continue;
+      seen[p] = 1;
+      const comp: number[] = [p];
+      for (let h = 0; h < comp.length; h++) {
+        const q = comp[h];
+        const x = q % W;
+        const y = (q - x) / W;
+        for (const [nx, ny] of [
+          [x - 1, y],
+          [x + 1, y],
+          [x, y - 1],
+          [x, y + 1],
+        ]) {
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const np = ny * W + nx;
+          if (seen[np] === 0 && onSeg(f, np)) {
+            seen[np] = 1;
+            comp.push(np);
+          }
+        }
+      }
+      comps.push(comp);
+    }
+    return comps;
+  };
+  const elbowDist2 = (comp: readonly number[], elbow: Pt): number => {
+    let best = Infinity;
+    for (const p of comp) {
+      const x = p % W;
+      const y = (p - x) / W;
+      const d = (x + 0.5 - elbow[0]) ** 2 + (y + 0.5 - elbow[1]) ** 2;
+      if (d < best) best = d;
+    }
+    return best;
+  };
+  const backComps = componentsOf(back);
+  if (backComps.length > 1) {
+    let main = 0;
+    let mainD = elbowDist2(backComps[0], back.elbow);
+    for (let i = 1; i < backComps.length; i++) {
+      const d = elbowDist2(backComps[i], back.elbow);
+      if (d < mainD) {
+        mainD = d;
+        main = i;
+      }
+    }
+    backComps.forEach((comp, i) => {
+      if (i === main) return;
+      const leavesBack = comp.some((p) => !inDisc(back.wrist, r0, p % W, Math.floor(p / W)));
+      const inFront = comp.some((p) => inDisc(front.wrist, r1, p % W, Math.floor(p / W)));
+      if (wristsOverlap || leavesBack || inFront) {
+        for (const p of comp) {
+          own[p] = front.limb;
+          segOverride[p] = front.seg;
+        }
+      }
+    });
+  }
+  const frontComps = componentsOf(front);
+  if (frontComps.length > 1) {
+    let main = 0;
+    let mainD = elbowDist2(frontComps[0], front.elbow);
+    for (let i = 1; i < frontComps.length; i++) {
+      const d = elbowDist2(frontComps[i], front.elbow);
+      if (d < mainD) {
+        mainD = d;
+        main = i;
+      }
+    }
+    frontComps.forEach((comp, i) => {
+      if (i === main) return;
+      const leavesFront = comp.some((p) => !inDisc(front.wrist, r1, p % W, Math.floor(p / W)));
+      const touchesBack = comp.some((p) => {
+        const x = p % W;
+        const y = (p - x) / W;
+        return (
+          (x > 0 && onSeg(back, p - 1)) ||
+          (x + 1 < W && onSeg(back, p + 1)) ||
+          (y > 0 && onSeg(back, p - W)) ||
+          (y + 1 < H && onSeg(back, p + W))
+        );
+      });
+      if (leavesFront && touchesBack) {
+        for (const p of comp) {
+          own[p] = back.limb;
+          segOverride[p] = back.seg;
+        }
+      }
+    });
+  }
+}
+
