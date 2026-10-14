@@ -661,7 +661,10 @@ export interface ConfigConstraint {
  * piece out across the cap, and `cap_shape: "disc"` sizes the cap by the
  * limb's half-width about the joint and fills it from the art, the upper
  * segment's included. Absent, the cut
- * is hard and the cap the layer's half-disc of half the limb's width.
+ * is hard and the cap the layer's half-disc of half the limb's width. A third,
+ * `cut_band: N` (issue #360, item 14), places the cut on the line within N px
+ * of the joint line that crosses the fewest stroke pixels; absent, the cut is
+ * the joint line.
  */
 export interface LimbSegment {
   part: string;
@@ -672,6 +675,8 @@ export interface LimbSegment {
   cap?: string;
   edge?: 'feather';
   cap_shape?: 'disc';
+  /** Issue #360 (item 14): the half-width, whole rig px, of the band about the joint line the cut is placed in (`placeCut` in `src/limbs.ts`). Absent, the cut is the joint line. */
+  cut_band?: number;
 }
 
 /** A limb (issue #349): its segments, upper first; each segment's bone is the child of the one before. */
@@ -2202,7 +2207,9 @@ interface LimbNames {
  * is measured from rest, so rest is in it); `cap` a non-empty path; `edge`
  * `"feather"` and `cap_shape` `"disc"` (issue #360), each the one value its
  * field takes — absent is the hard cut and the layer's half-disc
- * (`CONFIG_FIELD_TYPE` on any other). A limb
+ * (`CONFIG_FIELD_TYPE` on any other); `cut_band` a whole number of px, 1 or
+ * more (`CONFIG_FIELD_TYPE`), on a segment that takes the segment above's
+ * part (`CONFIG_KEY_KNOWN`: between two layers nothing is cut). A limb
  * has two segments or more. With `names` null (no `bones`), bones are not
  * resolved. Returns the limb parts and the parts the limbs take.
  */
@@ -2227,13 +2234,13 @@ function checkLimbs(c: Check, v: Json, made: { parts: string[]; patches: string[
     const bones: Array<string | null> = [];
     segs.forEach((entry, i) => {
       const sat = `${at}.segments[${i}]`;
-      const e = c.object(sat, entry, ['part', 'from', 'bone'], ['joint', 'range', 'cap', 'edge', 'cap_shape']);
+      const e = c.object(sat, entry, ['part', 'from', 'bone'], ['joint', 'range', 'cap', 'edge', 'cap_shape', 'cut_band']);
       froms.push(null);
       bones.push(null);
       if (e === null) return;
       // The upper segment sits below no joint; every other sits below one, which it names.
       if (i === 0) {
-        for (const k of ['joint', 'range', 'cap', 'edge', 'cap_shape'].filter((q) => q in e)) c.fail('CONFIG_KEY_KNOWN', `${sat}.${k}`, `is not a field on the upper segment; it sits below no joint, so ${k} belongs to the segment below the joint it names (segments[1] and on)`);
+        for (const k of ['joint', 'range', 'cap', 'edge', 'cap_shape', 'cut_band'].filter((q) => q in e)) c.fail('CONFIG_KEY_KNOWN', `${sat}.${k}`, `is not a field on the upper segment; it sits below no joint, so ${k} belongs to the segment below the joint it names (segments[1] and on)`);
       } else if (!('joint' in e)) c.fail('CONFIG_FIELD_PRESENT', `${sat}.joint`, 'is absent and required; a segment after the first sits below a joint, at its bone\'s origin, and names it');
       if ('part' in e && c.string(`${sat}.part`, e.part)) {
         const name = e.part;
@@ -2277,6 +2284,14 @@ function checkLimbs(c: Check, v: Json, made: { parts: string[]; patches: string[
       }
       if ('cap_shape' in e && e.cap_shape !== 'disc') {
         c.fail('CONFIG_FIELD_TYPE', `${sat}.cap_shape`, `is ${show(e.cap_shape)}; "disc" is required — the cap a disc of the limb's half-width about the joint, filled from the art, the upper segment's included; leave cap_shape out for the layer's half-disc of half the limb's width`);
+      }
+      // Issue #360 (item 14): the band the cut is placed in, whole px, on a joint whose two segments take one part.
+      if ('cut_band' in e && i > 0) {
+        if (!(typeof e.cut_band === 'number' && Number.isInteger(e.cut_band) && e.cut_band >= 1)) {
+          c.fail('CONFIG_FIELD_TYPE', `${sat}.cut_band`, `is ${show(e.cut_band)}; a whole number of rig px, 1 or more, is required — the half-width of the band about the joint line the cut is placed in (the line there that crosses the fewest stroke pixels); leave cut_band out to cut at the joint line`);
+        } else if (typeof e.from === 'string' && typeof froms[i - 1] === 'string' && froms[i - 1] !== e.from) {
+          c.fail('CONFIG_KEY_KNOWN', `${sat}.cut_band`, `is not a field on a segment whose from ("${e.from}") is not the segment above's ("${String(froms[i - 1])}"); no line is cut between two layers — each segment takes its own part whole — so there is no cut to place`);
+        }
       }
     });
     froms.forEach((f, i) => {

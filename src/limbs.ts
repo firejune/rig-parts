@@ -62,6 +62,25 @@
  *   out across its width over art that stays opaque under it at any angle,
  *   so at rest the two pieces composite to what they did and a bend never
  *   shows through it what lies behind the limb.
+ * - **`cut_band: N`** (issue #360, item 14; opt-in on the segment below a
+ *   joint between two segments that take one part). The cut is placed, not
+ *   moved by hand: of the lines parallel to the joint line at whole-pixel
+ *   offsets `-N .. N` along the axis, the one that crosses the fewest stroke
+ *   pixels ({@link placeCut}). A line crosses the pixels a joint line runs
+ *   through, as {@link limbRun} reads them: the limb's art whose centre lies
+ *   within half a pixel of it, across the run of art through its point. A
+ *   **stroke pixel** is one of those, over the whole band, whose luma (the
+ *   integer BT.601 `(299 R + 587 G + 114 B + 500) / 1000` truncated, the
+ *   luma `recompositeErrorMap` in `src/assemble.ts` reads) is at or below the
+ *   Otsu split of their luma histogram ({@link otsuDarkMax}: the dark class
+ *   of the two that maximise the between-class variance). The split is
+ *   derived from the band's own art and no number is typed: art of one luma
+ *   has no split and so no stroke. A tie goes to the line nearer the joint,
+ *   then to the one on the upper side, so with no stroke in the band the
+ *   joint line itself is chosen. The bone does not move: the joint, the
+ *   cap's disc and the limb's width stay where the bone's origin puts them;
+ *   only the line that splits the pixels between the two pieces moves, and
+ *   the cap takes the disc's pixels on the upper side of that line.
  */
 import type { BoneEntry, Limb } from './config.ts';
 
@@ -181,6 +200,11 @@ export function limbRun(line: JointLine, art: (x: number, y: number) => boolean,
       ts.push(-dx * ay + dy * ax);
     }
   }
+  return runOfOffsets(ts);
+}
+
+/** The run through 0 of the offsets `ts` along a line ({@link limbRun}): sorted, the nearest within 1 px, grown while neighbours are at most 1.5 apart. Sorts `ts` in place. */
+function runOfOffsets(ts: number[]): [number, number] | null {
   if (ts.length === 0) return null;
   ts.sort((a, b) => a - b);
   let near = 0;
@@ -249,10 +273,147 @@ export function coveredRadius(at: Pt, radius: number, opaque: (x: number, y: num
  * `-along / sqrt(radius² - across²)` — 0 on the line, 1 on the disc's arc, so
  * the overlap band fades out across its width. 1 where the disc has no height.
  */
-export function featherWeight(radius: number, along: number, across: number): number {
+export function featherWeight(radius: number, along: number, across: number, offset = 0): number {
   const h2 = radius * radius - across * across;
   if (h2 <= 0) return 1;
+  // Issue #360 (cut_band): with the cut `offset` px along the axis, the fade runs from the cut's line to the arc.
+  if (offset !== 0) {
+    const span = offset + Math.sqrt(h2);
+    return span <= 0 ? 1 : Math.max(0, Math.min(1, (offset - along) / span));
+  }
   return Math.max(0, Math.min(1, -along / Math.sqrt(h2)));
+}
+
+/** The integer BT.601 luma of a colour, `(299 R + 587 G + 114 B + 500) / 1000` truncated (the one `recompositeErrorMap` reads). */
+export function luma601(r: number, g: number, b: number): number {
+  return Math.floor((299 * r + 587 * g + 114 * b + 500) / 1000);
+}
+
+/**
+ * The Otsu split of a luma histogram (`hist[v]` pixels of luma `v`): the
+ * largest luma of the dark class, among the splits `luma <= T | luma > T`
+ * with a pixel on each side, that maximises the between-class variance
+ * `(T's dark sum · n − dark count · total sum)² / (dark count · light count)`
+ * (the variance times n², which ranks the splits alike). Compared exactly, in
+ * integers; a tie goes to the lower `T`. Null when no split has a pixel on
+ * each side — every pixel of one luma — or when every split's variance is 0.
+ */
+export function otsuDarkMax(hist: ArrayLike<number>): number | null {
+  let n = 0;
+  let sum = 0;
+  for (let v = 0; v < hist.length; v++) {
+    n += hist[v];
+    sum += v * hist[v];
+  }
+  const N = BigInt(n);
+  const S = BigInt(sum);
+  let best: number | null = null;
+  let bestNum = 0n;
+  let bestDen = 1n;
+  let n0 = 0;
+  let s0 = 0;
+  for (let t = 0; t + 1 < hist.length; t++) {
+    n0 += hist[t];
+    s0 += t * hist[t];
+    const n1 = n - n0;
+    if (n0 === 0 || n1 === 0) continue;
+    const d = BigInt(s0) * N - BigInt(n0) * S;
+    const num = d * d;
+    const den = BigInt(n0) * BigInt(n1);
+    if (num === 0n) continue;
+    if (best === null || num * bestDen > bestNum * den) {
+      best = t;
+      bestNum = num;
+      bestDen = den;
+    }
+  }
+  return best;
+}
+
+/** A joint line moved `offset` px along its axis (issue #360, `cut_band`): the same axis, through `at + offset · axis`. */
+export function shiftedLine(line: JointLine, offset: number): JointLine {
+  return offset === 0 ? line : { at: [line.at[0] + offset * line.axis[0], line.at[1] + offset * line.axis[1]], axis: line.axis };
+}
+
+/** One line of a cut's band (issue #360, `cut_band`): its offset along the axis from the joint, and the stroke pixels it crosses. */
+export interface CutCandidate {
+  offset: number;
+  crossed: number;
+}
+
+/** Where `cut_band` put the cut (module comment), or why it could not. */
+export type CutPlacement =
+  | {
+      ok: true;
+      /** The chosen line's offset along the axis from the joint (above 0: past it, toward the lower segment). */
+      offset: number;
+      line: JointLine;
+      crossed: number;
+      /** The stroke pixels the joint line itself crosses. */
+      jointCrossed: number;
+      /** The Otsu split's dark class's largest luma, or null when the band's art has no split (no stroke). */
+      strokeLumaMax: number | null;
+      /** The art pixels the band's lines cross, counted once each. */
+      bandPx: number;
+      candidates: CutCandidate[];
+    }
+  | { ok: false; offset: number };
+
+/**
+ * Place a joint's cut within `band` px of its line (module comment, `cut_band`):
+ * every whole offset `-band .. band` is a candidate line; each crosses the
+ * art pixels (`art`) whose centre lies within half a pixel of it, across the
+ * run of art through its point ({@link limbRun}); the stroke pixels are those
+ * at or below the Otsu split of the luma (`luma`) of every pixel the band's
+ * lines cross. The fewest stroke pixels wins, then the smaller offset, then the
+ * negative one (the upper side). `{ok: false, offset}` names the offset nearest
+ * the joint (the negative one on a tie) whose line crosses no run of art: the
+ * band reaches past the limb there, and a band of `|offset| - 1` would not.
+ */
+export function placeCut(
+  line: JointLine,
+  band: number,
+  art: (x: number, y: number) => boolean,
+  luma: (x: number, y: number) => number,
+  box: readonly [number, number, number, number],
+): CutPlacement {
+  const W = box[2] - box[0] + 1;
+  // One pass over the box: the art within band + 1 px of the joint line, a margin past every candidate's half pixel.
+  const near: Array<[number, number]> = [];
+  for (let y = box[1]; y <= box[3]; y++) {
+    for (let x = box[0]; x <= box[2]; x++) {
+      if (Math.abs(jointOffsets(line, x, y).along) <= band + 1 && art(x, y)) near.push([x, y]);
+    }
+  }
+  const crossedBy: Array<number[] | null> = [];
+  for (let t = -band; t <= band; t++) {
+    const l = shiftedLine(line, t);
+    // The pixels limbRun reads on this line, with their offsets across it.
+    const on = near.map(([x, y]) => ({ x, y, o: jointOffsets(l, x, y) })).filter((q) => Math.abs(q.o.along) <= 0.5);
+    const run = runOfOffsets(on.map((q) => q.o.across));
+    crossedBy.push(run === null ? null : on.filter((q) => q.o.across >= run[0] && q.o.across <= run[1]).map((q) => (q.y - box[1]) * W + (q.x - box[0])));
+  }
+  // A line off the limb's art is no candidate: the one nearest the joint is named (the upper side first on a tie).
+  const off = crossedBy.map((px, i) => (px === null ? i - band : null)).filter((t): t is number => t !== null);
+  if (off.length > 0) return { ok: false, offset: off.reduce((a, t) => (Math.abs(t) < Math.abs(a) ? t : a)) };
+  const lines = crossedBy as number[][];
+  const lumaAt = (p: number): number => luma(box[0] + (p % W), box[1] + Math.floor(p / W));
+  const seen = new Set<number>();
+  const hist = new Array<number>(256).fill(0);
+  for (const px of lines) {
+    for (const p of px) {
+      if (seen.has(p)) continue;
+      seen.add(p);
+      hist[lumaAt(p)]++;
+    }
+  }
+  const split = otsuDarkMax(hist);
+  const candidates = lines.map((px, i) => ({ offset: i - band, crossed: split === null ? 0 : px.filter((p) => lumaAt(p) <= split).length }));
+  let best = candidates[band];
+  for (const c of candidates) {
+    if (c.crossed < best.crossed || (c.crossed === best.crossed && (Math.abs(c.offset) < Math.abs(best.offset) || (Math.abs(c.offset) === Math.abs(best.offset) && c.offset < best.offset)))) best = c;
+  }
+  return { ok: true, offset: best.offset, line: shiftedLine(line, best.offset), crossed: best.crossed, jointCrossed: candidates[band].crossed, strokeLumaMax: split, bandPx: seen.size, candidates };
 }
 
 /** The box `[x, y, w, h]` (rig px) of the pixels whose centre lies within `radius` of `at`: the cap image's size and place. */

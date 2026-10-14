@@ -132,7 +132,7 @@ import {
   type RunLayerSpec,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
-import { capBox, type JointLine, jointLine, limbWidth, nearestLimb, pastJoint, segmentOf } from './src/limbs.ts';
+import { capBox, featherWeight, type JointLine, jointLine, limbWidth, nearestLimb, pastJoint, segmentOf } from './src/limbs.ts';
 import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, type CheckFlagInBuild, checkStage, ctlRemedies, driftShare, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
@@ -235,7 +235,7 @@ import { buildHeaderProblem } from './tools/atlas_population.ts';
 import { ALIASES, AliasTarballError, compareTarballs, MANIFEST as ALIAS_MANIFEST, packAlias, packInto, renamed } from './scripts/alias_tarball.ts';
 import { blobId, checkExampleInputs, type Copier, FETCH_RECORD, recordText, runSync } from './scripts/example_inputs.ts';
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionKey, type MotionSpec, sineTrack, TIME_SLACK } from './src/motion.ts';
-import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type Limb, loadClothConfig, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, type SkeletonSections } from './src/config.ts';
+import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type Limb, loadClothConfig, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, parseProposalSections, type SkeletonSections } from './src/config.ts';
 import { RIG_BONE_INHERIT, RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
@@ -2346,6 +2346,37 @@ function runConfigSuite(): number {
     loads440.every((e) => e === null) && read440?.edge === 'feather' && read440?.cap_shape === 'disc' && outcomes440.every((o) => o.ok),
     `edge "feather" and cap_shape "disc" on leg_r's knee: ${loads440.map((e) => (e === null ? 'loads' : codes(e))).join(', ')} (full, assemble door), read as ${JSON.stringify({ edge: read440?.edge, cap_shape: read440?.cap_shape })}; planted: ${outcomes440.map((o) => `${o.what} ${o.ok ? 'refused once at both doors' : `NOT: ${o.got}`}`).join('; ')}`,
     'issue #360 (unit B): the two fields are the joint\'s, so they sit on the segment below it, as joint, range and cap do; each takes the one value it names, absent being the hard cut and the layer\'s half-disc, so no spelling is read as a nearby one and a field on the upper segment, which sits below no joint, is refused rather than ignored',
+  );
+
+  // CF470 — issue #360 (unit D, item 14): `cut_band`, the band the cut is placed in, on the segment below a joint whose
+  // two segments take one part. It loads at the three doors that read config.limbs (the full loader, the assemble door,
+  // and the proposal sections `compare` reads); a band that is not a whole number of px from 1, one on the upper
+  // segment, and one on a joint between two layers (leg_r's ankle: the shin takes "legs", the foot "shoes") are each
+  // refused once, by name, at all three.
+  const proposal470 = (c: Record<string, unknown>): Record<string, unknown> => ({ bones: c.bones, meshes: c.meshes, regions: c.regions, motion: c.motion, limbs: c.limbs });
+  const banded470 = limbCfg((c) => (seg(c, 'arm_r', 1).cut_band = 3));
+  const doors470 = (c: Record<string, unknown>): Array<ReturnType<typeof refusals>> => [refusals(() => parseConfig(c)), refusals(() => parseEarlyConfig(c, 'assemble')), refusals(() => parseProposalSections(proposal470(c)))];
+  const loads470 = doors470(banded470);
+  const read470 = parseConfig(banded470).limbs?.arm_r.segments[1].cut_band;
+  const planted470: Array<[string, Record<string, unknown>, string, string, string]> = [
+    ['cut_band 0', limbCfg((c) => (seg(c, 'arm_r', 1).cut_band = 0)), 'CONFIG_FIELD_TYPE', 'config.limbs.arm_r.segments[1].cut_band', 'is 0; a whole number of rig px, 1 or more, is required'],
+    ['cut_band 2.5', limbCfg((c) => (seg(c, 'arm_r', 1).cut_band = 2.5)), 'CONFIG_FIELD_TYPE', 'config.limbs.arm_r.segments[1].cut_band', 'is 2.5; a whole number of rig px, 1 or more, is required'],
+    ['cut_band "3"', limbCfg((c) => (seg(c, 'arm_r', 1).cut_band = '3')), 'CONFIG_FIELD_TYPE', 'config.limbs.arm_r.segments[1].cut_band', 'is "3"; a whole number of rig px, 1 or more, is required'],
+    ['cut_band on the upper segment', limbCfg((c) => (seg(c, 'arm_r', 0).cut_band = 3)), 'CONFIG_KEY_KNOWN', 'config.limbs.arm_r.segments[0].cut_band', 'is not a field on the upper segment'],
+    ['cut_band between two layers', limbCfg((c) => (seg(c, 'leg_r', 2).cut_band = 3)), 'CONFIG_KEY_KNOWN', 'config.limbs.leg_r.segments[2].cut_band', 'is not a field on a segment whose from ("shoes") is not the segment above\'s ("legs"); no line is cut between two layers'],
+  ];
+  const outcomes470 = planted470.map(([what, c, code, object, start]) => {
+    const all = doors470(c);
+    // The proposal sections are read under their own root, "proposal." for "config.".
+    const objects = [object, object, object.replace(/^config\./, 'proposal.')];
+    const ok = all.every((e, i) => e !== null && e.problems.length === 1 && e.problems[0].code === code && e.problems[0].object === objects[i] && e.problems[0].detail.startsWith(start));
+    return { what, ok, got: all.map((e) => codes(e)).join(' / ') };
+  });
+  say(
+    'CF470_A_LIMB_SEGMENT_S_CUT_BAND_LOADS_BELOW_A_JOINT_IN_ONE_PART_AND_A_BAND_OF_NO_WHOLE_PX_OR_IN_THE_WRONG_PLACE_IS_REFUSED_ONCE_BY_NAME_AT_EVERY_DOOR',
+    loads470.every((e) => e === null) && read470 === 3 && outcomes470.every((o) => o.ok),
+    `cut_band 3 on arm_r's elbow: ${loads470.map((e) => (e === null ? 'loads' : codes(e))).join(', ')} (full, assemble door, proposal sections), read as ${String(read470)}; planted: ${outcomes470.map((o) => `${o.what} ${o.ok ? 'refused once at every door' : `NOT: ${o.got}`}`).join('; ')}`,
+    'issue #360 (unit D): the band is the author\'s, a count of whole pixels the placement steps through, so no fraction or string is read as a nearby number; it is the joint\'s, so it sits below the joint; and a joint between two layers has no cut line to place, so a band there is refused rather than read by nothing',
   );
   runClothConfigControls(say);
   return bad();
@@ -17260,9 +17291,206 @@ function runLimbCases(say: (name: string, ok: boolean, detail: string, why: stri
       `the plain build's limb lines ${gotLines.join('\n') === wantLines.join('\n') ? "are AS235's" : 'DIFFER from AS235\'s'}; with both fields on leg_l's knee, part files moved: ${movedFiles.join(', ') || 'none'} (${faded.length} faded alphas, least ${Math.min(...faded)}); records moved: ${movedRecs.join(', ') || 'none'}`,
       'opt-in by construction: a segment that spells neither field is cut, capped and recorded exactly as #349 did, and the fields act on their own joint only — the knee is centred on the leg, so its disc is the plain one, and what changes is the thigh\'s fade and the shin\'s record of it',
     );
+
+    runCutBandCases(say, root);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+/**
+ * Issue #360 (unit D, item 14): `cut_band`, the cut placed within a band about the joint line on the line that crosses
+ * the fewest stroke pixels. The limb fixture with its arm's layer replaced: the upper arm x 13..16 over rows 10..29 (4
+ * px a row), the forearm x 10..19 over rows 30..49 (10 px a row), the elbow at (15, 30), axis (0, 1). The line at
+ * offset t runs through the pixels of rows 29 + t and 30 + t — the two rows whose centres lie half a pixel from
+ * y = 30 + t — so every figure below is a row count by hand. A stroke is painted NAVY into the arm's layer, the rest of
+ * it C, and the painting stays C. The upper arm, 4 px wide, has no core for the stage's `core` projection (the layer's
+ * alpha >= 250 pixels eroded by a 5x5 square, src/assemble.ts), and the forearm's starts at row 32 (the square at rows
+ * 30..31 reaches the upper arm's rows), so every pixel of rows 10..31 holds its layer's colour and rows 32 on hold C:
+ * the band's art has two lumas, 25 (NAVY) and 70 (C) by the integer BT.601 formula, and the Otsu split of two values
+ * is the lower one. (The seam pass recolours the written images to the painting afterwards; the placement reads the
+ * layer as the cut splits it, as the cap does.)
+ */
+function runCutBandCases(say: (name: string, ok: boolean, detail: string, why: string) => void, root: string): void {
+  const luma = (c: readonly [number, number, number]): number => Math.floor((299 * c[0] + 587 * c[1] + 114 * c[2] + 500) / 1000);
+  const navy = luma(NAVY);
+  /** The limb fixture, its arm as above, with `strokes` (rig px rectangles [x0, y0, x1, y1), NAVY) in the arm's layer and cut_band on the elbow. */
+  const banded = (label: string, band: number | null, strokes: Array<[number, number, number, number]>): { r: ReturnType<typeof assemble>; lines: string[]; out: string } => {
+    const d = join(root, label);
+    const arm = [{ x0: 13, y0: 10, x1: 17, y1: 30, colour: C }, { x0: 10, y0: 30, x1: 20, y1: 50, colour: C }, ...strokes.map(([x0, y0, x1, y1]) => ({ x0, y0, x1, y1, colour: NAVY }))];
+    writeRun(join(d, 'full'), LIMB_FULL.map((l) => (l.name === 'handwear-r' ? { ...l, rects: arm } : l)));
+    writeRun(join(d, 'head'), FRAMED_HEAD);
+    writeFileSync(join(d, 'painting.png'), encodePngBytes(flatPainting()));
+    const limbs = structuredClone(LIMBS) as Record<string, { segments: Array<Record<string, unknown>> }>;
+    if (band !== null) limbs.arm_r.segments[1].cut_band = band;
+    writeFileSync(join(d, 'config.json'), JSON.stringify(limbConfig(limbs)));
+    const lines: string[] = [];
+    const out = join(d, 'out');
+    const r = assembleStage(
+      { source: join(d, 'painting.png'), full: join(d, 'full'), head: join(d, 'head'), config: join(d, 'config.json'), seam: 'near-white', project: DEFAULT_PROJECT_RULE },
+      { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, 'recomposite_error_rig.png') },
+      (l) => lines.push(l),
+    );
+    return { r, lines, out };
+  };
+  const cap = (b: { r: ReturnType<typeof assemble> }): Record<string, unknown> | undefined => b.r.parts.parts.find((q) => q.name === 'forearm_r')?.limb?.cap as Record<string, unknown> | undefined;
+  const opaque = (b: { r: ReturnType<typeof assemble> }, n: string): number | undefined => b.r.parts.parts.find((q) => q.name === n)?.opaque_px;
+  const capLine = (b: { lines: string[] }): string => b.lines.find((l) => l.startsWith('  limb cap: "arm_r"')) ?? '';
+  const tail = (l: string): string => l.slice(l.indexOf('; cut_band'));
+  /** One control: its figures computed inside, so a throw is that control's FAIL, named, and the next still runs. */
+  const guarded = (name: string, why: string, run: () => [boolean, string]): void => {
+    let got: [boolean, string];
+    try {
+      got = run();
+    } catch (err) {
+      got = [false, `the stage threw: ${(err as Error).message.split('\n')[0]}`];
+    }
+    say(name, got[0], got[1], why);
+  };
+  // AS470 — a stroke planted across the joint row: NAVY over rows 29 (the upper arm's last, 4 px) and 30 (the
+  // forearm's first, 10 px). With cut_band 3 the lines at -3..3 cross rows 26,27 / 27,28 / 28,29 / 29,30 / 30,31 /
+  // 31,32 / 32,33: 8, 8, 8, 14, 20, 20, 20 art px — 56 in all (rows 26..29 x 4 + rows 30..33 x 10) — of which stroke
+  // 0, 0, 4, 14, 10, 0, 0. The fewest is 0, at -3, -2, 2 and 3; the nearest are -2 and 2, and the upper side wins the
+  // tie: the cut runs through (15, 28), between rows 27 and 28, so the upper arm keeps rows 10..27 (18 x 4 = 72) and
+  // the forearm takes rows 28..49 (200 + 8), the whole stroke with them, plus its cap: the disc of radius 5 (the
+  // elbow's run is still 10 px) above the cut, rows 25..27, on the layer's x 13..16 — 4 + 4 + 4 = 12: 220. With
+  // cut_band 1 the lines at -1, 0, 1 cross 4, 14 and 10 stroke px — 28 art px in all — so no line misses it, and the
+  // fewest, 4 at -1, is chosen and named: the upper arm keeps rows 10..28 (76), the forearm rows 29..49 (204) plus the
+  // disc's layer pixels at rows 25..28 (16): 220. Under edge "feather" the fade runs from the placed line to the arc:
+  // on the axis of a disc of radius 5 with the cut 2 px before the joint, weight (-2 - along) / (-2 + 5) — 0 at the
+  // cut (along -2), 0.5 at along -3.5, 1 on the arc (along -5); at offset 0 it is #360 unit B's -along / 5.
+  const stroke: Array<[number, number, number, number]> = [[13, 29, 17, 30], [10, 30, 20, 31]];
+  guarded(
+    'AS470_CUT_BAND_PLACES_THE_CUT_OFF_A_STROKE_PLANTED_ACROSS_THE_JOINT_ROW_AND_THE_LINE_NAMES_THE_ROW_AND_WHAT_IT_CROSSED',
+    'issue #360 item 14: the cut is placed where the art crosses the fewest strokes, so a fold line drawn across the elbow rides whole on one piece instead of being split at the seam; the line says which line was chosen and what it and the joint line cross, and with no line clear of the stroke it still takes the fewest and says how many',
+    () => {
+      const three = banded('cut-stroke', 3, stroke);
+      const one = banded('cut-stroke-1', 1, stroke);
+      const want3 = `; cut_band 3: the cut 2 px before the joint line (toward "upperarm_r"), through [15, 28], crosses 0 stroke px; the joint line crosses 14 (stroke: luma ${navy} or below, the Otsu split of the 56 px of the limb's art the band's lines cross)`;
+      const want1 = `; cut_band 1: the cut 1 px before the joint line (toward "upperarm_r"), through [15, 29], crosses 4 stroke px; the joint line crosses 14 (stroke: luma ${navy} or below, the Otsu split of the 28 px of the limb's art the band's lines cross)`;
+      const c3 = cap(three);
+      const c1 = cap(one);
+      return [
+        tail(capLine(three)) === want3 &&
+          tail(capLine(one)) === want1 &&
+          c3?.cut_band === 3 &&
+          c3.cut_offset === -2 &&
+          JSON.stringify(c3.cut_at) === '[15,28]' &&
+          c3.cut_crossed === 0 &&
+          c3.joint_crossed === 14 &&
+          c3.band_px === 56 &&
+          c3.stroke_luma_max === navy &&
+          JSON.stringify(c3.at) === '[15,30]' &&
+          c3.radius === 5 &&
+          c3.layer_px === 12 &&
+          c1?.cut_offset === -1 &&
+          c1.cut_crossed === 4 &&
+          c1.layer_px === 16 &&
+          opaque(three, 'upperarm_r') === 72 &&
+          opaque(three, 'forearm_r') === 220 &&
+          opaque(one, 'upperarm_r') === 76 &&
+          opaque(one, 'forearm_r') === 220 &&
+          featherWeight(5, -2, 0, -2) === 0 &&
+          featherWeight(5, -3.5, 0, -2) === 0.5 &&
+          featherWeight(5, -5, 0, -2) === 1 &&
+          featherWeight(5, -2.5, 0, 0) === 0.5 &&
+          serializeParts(readParts(join(three.out, 'parts.json'))) === serializeParts(three.r.parts),
+        `band 3: ${tail(capLine(three))}; band 1: ${tail(capLine(one))}; upper arm / forearm ${opaque(three, 'upperarm_r')} / ${opaque(three, 'forearm_r')} px (by hand 72 / 220), with band 1 ${opaque(one, 'upperarm_r')} / ${opaque(one, 'forearm_r')} (76 / 220); cap layer px ${String(c3?.layer_px)} and ${String(c1?.layer_px)} (12 and 16); the fade from a cut 2 px before the joint at along -2, -3.5, -5: ${[-2, -3.5, -5].map((a) => featherWeight(5, a, 0, -2)).join(', ')} (by hand 0, 0.5, 1); record ${JSON.stringify(c3)}`,
+      ];
+    },
+  );
+
+  // AS471 — no stroke in the band, no drift. The plain arm (C everywhere) with cut_band 3: the 56 px the band's lines
+  // cross hold one luma, so nothing splits, every line crosses 0, and the joint line (offset 0) wins — every part
+  // image and the recomposite are the build without cut_band's bytes, and parts.json differs only by forearm_r's cut
+  // keys. A stroke outside the band (NAVY over rows 40 and 41, 10 rows past the joint) changes nothing of that: the
+  // band's art is still one luma.
+  guarded(
+    'AS471_WITH_NO_STROKE_IN_THE_BAND_THE_JOINT_ROW_IS_CHOSEN_AND_EVERY_PART_IS_THE_PLAIN_CUT_S_BYTES',
+    'a placement that drifts with nothing to avoid is a cut the art did not ask for: with no stroke the band\'s lines tie at 0 and the tie goes to the joint line, so declaring cut_band on art with nothing to avoid builds what the joint line builds, and says so',
+    () => {
+      const plain = banded('cut-none-plain', null, []);
+      const flat = banded('cut-none', 3, []);
+      const far = banded('cut-far', 3, [[10, 40, 20, 42]]);
+      const farPlain = banded('cut-far-plain', null, [[10, 40, 20, 42]]);
+      const files = (b: { out: string }): Map<string, string> =>
+        new Map([...readdirSync(join(b.out, 'parts')).sort().map((f) => [f, readFileSync(join(b.out, 'parts', f)).toString('base64')] as [string, string]), ['recomposite', readFileSync(join(b.out, 'recomposite_rig.png')).toString('base64')]]);
+      const sameFiles = (a: { out: string }, b: { out: string }): boolean => {
+        const fa = files(a);
+        const fb = files(b);
+        return [...fa.keys()].join() === [...fb.keys()].join() && [...fa].every(([k, v]) => fb.get(k) === v);
+      };
+      const cutKeys = ['cut_band', 'cut_offset', 'cut_at', 'cut_crossed', 'joint_crossed', 'band_px', 'stroke_luma_max'];
+      const stripped = (b: { out: string }): string => {
+        const raw = JSON.parse(readFileSync(join(b.out, 'parts.json'), 'utf8')) as { parts: Array<{ name: string; limb?: { cap?: Record<string, unknown> } }> };
+        for (const q of raw.parts) if (q.limb?.cap !== undefined) for (const k of cutKeys) delete q.limb.cap[k];
+        return JSON.stringify(raw);
+      };
+      const wantFlat = `; cut_band 3: the cut on the joint line, through [15, 30], crosses 0 stroke px; the joint line crosses 0 (no stroke: the 56 px of the limb's art the band's lines cross hold one luma, so nothing splits from it)`;
+      const cf = cap(flat);
+      return [
+        tail(capLine(flat)) === wantFlat &&
+          cf?.cut_offset === 0 &&
+          !('stroke_luma_max' in cf) &&
+          tail(capLine(far)) === wantFlat &&
+          sameFiles(flat, plain) &&
+          sameFiles(far, farPlain) &&
+          stripped(flat) === stripped(plain) &&
+          stripped(far) === stripped(farPlain) &&
+          readFileSync(join(flat.out, 'parts.json'), 'utf8') !== readFileSync(join(plain.out, 'parts.json'), 'utf8'),
+        `flat arm: ${tail(capLine(flat))}; a stroke 10 rows past the joint: ${tail(capLine(far))}; part images and recomposite against the build without cut_band: ${sameFiles(flat, plain) ? 'the same bytes' : 'DIFFERENT'}, with the far stroke ${sameFiles(far, farPlain) ? 'the same bytes' : 'DIFFERENT'}; parts.json without the cut keys ${stripped(flat) === stripped(plain) && stripped(far) === stripped(farPlain) ? 'the same' : 'DIFFERENT'}`,
+      ];
+    },
+  );
+
+  // AS472 — a band past the limb. The line at -21 runs through rows 8 and 9, above the upper arm (rows 10..29); the
+  // one at 21 through rows 50 and 51, below the forearm (rows 30..49): neither crosses any of the arm's art, and the
+  // nearer the joint on the upper side is named, with the band that would not reach it (20, whose lines at -20 and 20
+  // still cross row 10 and row 49). cut_band 20 assembles.
+  guarded(
+    'AS472_A_CUT_BAND_THAT_REACHES_PAST_THE_LIMB_S_ART_IS_REFUSED_BY_NAME_WITH_THE_BAND_THAT_WOULD_NOT',
+    'a line off the art crosses no stroke, so it would win every band it sat in and cut nothing; it is no candidate, and the band that holds one is refused with the widest that does not',
+    () => {
+      const past = refusals(() => banded('cut-past', 21, []));
+      const edge = refusals(() => banded('cut-edge', 20, []));
+      return [
+        past !== null &&
+          past.problems.length === 1 &&
+          past.problems[0].code === 'ASSEMBLE_LIMB_CUT_BAND' &&
+          past.problems[0].object === 'config.limbs.arm_r.segments[1] (joint "elbow", part "forearm_r").cut_band' &&
+          past.problems[0].detail === "is 21, and the line 21 px before the joint line, through [15, 9], crosses none of the limb's art within 1 px of that point — the band reaches past the limb there, and a cut placed off the art is no cut; a band whose every line crosses the limb is required — cut_band 20 or less" &&
+          edge === null,
+        `cut_band 21: ${codes(past)}: ${past?.problems[0]?.detail ?? ''}; cut_band 20: ${edge === null ? 'assembles' : codes(edge)}`,
+      ];
+    },
+  );
+
+  // AS473 — parts.json carries the placed cut back as written (AS470's band-3 build), and refuses a record no
+  // assemble could write: an offset outside its band, a crossing count above the joint line's (the joint line is a
+  // candidate, so the chosen line crosses no more), a luma past 255, and a cut key without cut_band.
+  guarded(
+    'AS473_PARTS_JSON_READS_A_PLACED_CUT_BACK_AS_WRITTEN_AND_REFUSES_ONE_NO_ASSEMBLE_COULD_WRITE',
+    'the placement rides from config.limbs into parts.json beside the cap it shapes; a record whose line lies outside its band, or that claims a worse line than the joint line it was chosen over, is refused by name rather than read',
+    () => {
+      const pj = join(banded('cut-stroke-read', 3, stroke).out, 'parts.json');
+      const edit = (label: string, f: (c: Record<string, unknown>) => void): PartsError | null => {
+        const raw = JSON.parse(readFileSync(pj, 'utf8')) as { parts: Array<{ name: string; limb?: { cap?: Record<string, unknown> } }> };
+        f(raw.parts.find((q) => q.name === 'forearm_r')?.limb?.cap as Record<string, unknown>);
+        const p = join(root, `${label}.parts.json`);
+        writeFileSync(p, JSON.stringify(raw));
+        return refusals(() => readParts(p));
+      };
+      const planted = [
+        ['an offset outside the band', edit('cut-off-band', (c) => (c.cut_offset = -4))],
+        ['more crossed than the joint line', edit('cut-more', (c) => (c.cut_crossed = 15))],
+        ['a luma past 255', edit('cut-luma', (c) => (c.stroke_luma_max = 256))],
+        ['an offset without the band', edit('cut-alone', (c) => delete c.cut_band)],
+      ] as const;
+      const object = 'PARTS_FIELD_TYPE part "forearm_r" field "limb" "cap"';
+      const back = serializeParts(readParts(pj)) === readFileSync(pj, 'utf8');
+      return [back && planted.every(([, e]) => codes(e).startsWith(object)), `read back byte for byte: ${back ? 'yes' : 'NO'}; planted: ${planted.map(([w, e]) => `${w} -> ${codes(e).slice(0, 70)}`).join('; ')}`];
+    },
+  );
 }
 
 function runAssembleSuite(): number {
