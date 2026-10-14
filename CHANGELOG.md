@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.21.0](https://github.com/rig-c/parts/compare/v1.20.0...v1.21.0) (2026-10-14)
+
+
+### Features
+
+* **assemble:** `cuts[].under_fill: "colour"` fills a cut's under with its colour at the alpha the cut removed ([#394](https://github.com/rig-c/parts/issues/394)) ([c5b4937](https://github.com/rig-c/parts/commit/c5b4937c56c2c651dc24b797103c2a678012a854)), closes [#360](https://github.com/rig-c/parts/issues/360)
+* **assemble:** edge "feather" and cap_shape "disc" on a limb joint, the disc held to no uncovered pixel by SEAM_OVER_RANGE ([#389](https://github.com/rig-c/parts/issues/389)) ([e4c16e7](https://github.com/rig-c/parts/commit/e4c16e7284c4c7e8e62b85210e610ac95671d9f0)), closes [#360](https://github.com/rig-c/parts/issues/360)
+* **check:** read the seam with each limb joint bent to its declared range (SEAM_OVER_RANGE) ([#387](https://github.com/rig-c/parts/issues/387)) ([5b5b204](https://github.com/rig-c/parts/commit/5b5b2047cc6633e5fa9381287e78c577342cd67b)), closes [#360](https://github.com/rig-c/parts/issues/360)
+* **examples:** add `wind`, the first example built with the cloth recipe and limbs, at parts-examples ba99e40 ([#393](https://github.com/rig-c/parts/issues/393)) ([d3e7454](https://github.com/rig-c/parts/commit/d3e74542d0c67e4ab123575d34a9911ad431561d))
+
 ## [1.20.0](https://github.com/rig-c/parts/compare/v1.19.0...v1.20.0) (2026-10-13)
 
 
