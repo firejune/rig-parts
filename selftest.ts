@@ -252,6 +252,7 @@ import { blobId, checkExampleInputs, type Copier, FETCH_RECORD, recordText, runS
 import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type MotionKey, type MotionSpec, sineTrack, TIME_SLACK } from './src/motion.ts';
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type Limb, loadClothConfig, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, parseProposalSections, type SkeletonSections } from './src/config.ts';
 import { RIG_BONE_INHERIT, RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
+import { expandStops } from 'rig-c/src/stop.ts';
 import { TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, FAINT_ALPHA, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
@@ -2395,7 +2396,86 @@ function runConfigSuite(): number {
   );
   runClothConfigControls(say);
   runSkirtPartConfigControls(say);
+  runStopConfigControls(say);
   return bad();
+}
+
+/**
+ * Issue #404: `config.stops`, rig-c's `RigStop` declarations (`rig-c/src/stop.ts`) carried in the character config and
+ * proposal sections. CF490 loads an entry with explicit `links`, `lower`, `note` and `x-` and one that defaults `links`
+ * to its chain's links, at both `parseConfig` and `parseProposalSections`, and refuses each planted structural or
+ * resolution fault once by name at both doors.
+ */
+function runStopConfigControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const withStops = (stops: unknown): Record<string, unknown> => ({
+    ...minimalConfig(),
+    stops,
+  });
+  const propOf = (c: Record<string, unknown>): Record<string, unknown> => ({
+    bones: c.bones,
+    meshes: c.meshes,
+    regions: c.regions,
+    motion: c.motion,
+    ...(c.stops === undefined ? {} : { stops: c.stops }),
+  });
+  const validStops = [
+    {
+      chain: 'hem',
+      against: 'hip',
+      at: [10, 0],
+      inward: 0,
+      outward: 60,
+      lower: { inward: 0, outward: 30 },
+      note: 'right leg stop',
+      'x-author': 'test',
+    },
+    {
+      chain: 'hem',
+      links: ['hem0'],
+      against: 'hip',
+      at: [12, -2],
+      inward: -5,
+      outward: 45,
+    },
+  ];
+  const fullLoad = refusals(() => parseConfig(withStops(validStops)));
+  const propLoad = refusals(() => parseProposalSections(propOf(withStops(validStops))));
+  const parsed = fullLoad === null ? parseConfig(withStops(validStops)).stops : undefined;
+  const planted: Array<[string, unknown, string, string, string]> = [
+    ['stops not an array', 'none', 'CONFIG_FIELD_TYPE', 'config.stops', 'is "none"; an array'],
+    ['unknown key on stop', [{ ...validStops[1], extra: 1 }], 'CONFIG_KEY_KNOWN', 'config.stops[0].extra', 'is not a field here'],
+    ['unknown key on lower', [{ ...validStops[0], lower: { inward: 0, outward: 30, extra: 1 } }], 'CONFIG_KEY_KNOWN', 'config.stops[0].lower.extra', 'is not a field here'],
+    ['chain is a single bone', [{ ...validStops[1], chain: 'hip' }], 'CONFIG_NAME_RESOLVES', 'config.stops[0].chain', 'names "hip", which config.bones does not declare as a chain'],
+    ['chain unknown', [{ ...validStops[1], chain: 'nowhere' }], 'CONFIG_NAME_RESOLVES', 'config.stops[0].chain', 'names "nowhere", which config.bones does not declare as a chain'],
+    ['against unknown', [{ ...validStops[1], against: 'nowhere' }], 'CONFIG_NAME_RESOLVES', 'config.stops[0].against', 'names "nowhere", which config.bones does not declare'],
+    ['empty links', [{ ...validStops[0], links: [] }], 'CONFIG_FIELD_TYPE', 'config.stops[0].links', 'is []; a non-empty array is required'],
+    ['unknown link bone', [{ ...validStops[1], links: ['nowhere'] }], 'CONFIG_NAME_RESOLVES', 'config.stops[0].links[0]', 'names "nowhere", which config.bones does not declare'],
+    ['at not a pair', [{ ...validStops[1], at: [10] }], 'CONFIG_FIELD_TYPE', 'config.stops[0].at', 'is [10]; a point [x, y] in rig pixels is required'],
+    ['inward above outward', [{ ...validStops[1], inward: 50, outward: 10 }], 'CONFIG_FIELD_TYPE', 'config.stops[0].inward', 'is 50, above outward 10; inward <= outward is required'],
+    ['lower missing on 2-link stop', [{ chain: 'hem', against: 'hip', at: [10, 0], inward: 0, outward: 60 }], 'CONFIG_FIELD_PRESENT', 'config.stops[0].lower', 'is absent and required when the stop holds 2 links'],
+    ['lower present on 1-link stop', [{ ...validStops[1], lower: { inward: 0, outward: 30 } }], 'CONFIG_FIELD_TYPE', 'config.stops[0].lower', 'is {"inward":0,"outward":30} on a 1-link stop'],
+    ['lower missing outward', [{ ...validStops[0], lower: { inward: 0 } }], 'CONFIG_FIELD_PRESENT', 'config.stops[0].lower.outward', 'is absent and required'],
+  ];
+  const outcomes = planted.map(([what, s, code, object, start]) => {
+    const c = withStops(s);
+    const e1 = refusals(() => parseConfig(c));
+    const e2 = refusals(() => parseProposalSections(propOf(c)));
+    const obj2 = object.replace(/^config\./, 'proposal.');
+    const ok1 = e1 !== null && e1.problems.length === 1 && e1.problems[0].code === code && e1.problems[0].object === object && e1.problems[0].detail.startsWith(start);
+    const ok2 = e2 !== null && e2.problems.length === 1 && e2.problems[0].code === code && e2.problems[0].object === obj2 && e2.problems[0].detail.startsWith(start);
+    return { what, ok: ok1 && ok2, got: `${codes(e1)} (${e1?.problems[0]?.detail ?? ''}) / ${codes(e2)}` };
+  });
+  say(
+    'CF490_STOPS_LOAD_WITH_EXPLICIT_OR_DEFAULT_CHAIN_LINKS_AND_REFUSE_UNKNOWN_OR_UNRESOLVED_FIELDS_AT_BOTH_DOORS',
+    fullLoad === null &&
+      propLoad === null &&
+      parsed?.length === 2 &&
+      parsed[0].links === undefined &&
+      JSON.stringify(parsed[1].links) === '["hem0"]' &&
+      outcomes.every((o) => o.ok),
+    `valid stops: parseConfig ${fullLoad === null ? 'loads' : codes(fullLoad)}, parseProposalSections ${propLoad === null ? 'loads' : codes(propLoad)}, count ${parsed?.length ?? 0}; planted: ${outcomes.map((o) => `${o.what} ${o.ok ? 'refused once at both doors' : `NOT: ${o.got}`}`).join('; ')}`,
+    'issue #404: a stop names a chain in config.bones, optionally its links, and an against bone; unknown keys, single bones named as chains, unknown bones and missing or inverted bounds are refused at the config and proposal doors before rigc runs',
+  );
 }
 
 /**
@@ -4794,7 +4874,211 @@ function runRigSuite(): number {
   runInheritRigCases(say);
   runClothRigCases(say);
   runSkirtInsideRigCases(say);
+  runStopRigCases(say);
   return bad();
+}
+
+/**
+ * Issue #404: `config.stops` carried through `buildRig` into `rig.json` as `stops`, with every slot, mesh weight and
+ * child bone on a stopped link moved onto `${link}_d`, and expanded by `withoutPhysics` in `src/check.ts` before
+ * physics constraints are stripped.
+ * - RG490 (Bar 1): a synthetic skirt (`full:bottomwear`) over two leg chains (`leg_r`, `leg_l`, `full:legwear`) under
+ *   hip sway with physics on the skirt chains builds through `rig` and `check`, and `rigc render --pass-through`
+ *   reports fewer pass-through frames under a partial stop and 0 pass-through frames under a holding stop than without
+ *   `stops`.
+ * - RG491 (Bar 2): `buildRig` refuses an unresolved stop chain or bone (`RIG_NAME_RESOLVES`, `CONFIG_STOP_CHAIN`,
+ *   `CONFIG_STOP_LINK_IN_CHAIN`), and `rig` refuses a stop `rigc` rejects (`RIG_RIGC_GREEN`) with nothing written.
+ * - RG492 (Bar 3): without `stops`, `rig.json`, `motion.json` and `mesh_report.json` are byte-identical, and
+ *   `flattenRig` maps `${link}_d` back to `link`'s setup frame with zero world gap.
+ */
+function runStopRigCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const root = temp('stop-rig');
+  try {
+    const W = 120;
+    const H = 160;
+    const rec = (name: string, from: string, x: number, y: number, w: number, h: number): PartsFile['parts'][number] => ({
+      name,
+      from,
+      x,
+      y,
+      w,
+      h,
+      opaque_px: w * h,
+      projected_core_px: 0,
+      source_px_taken: 0,
+      refused_drift_px: 0,
+      merged_px: 0,
+      seam_override_px: 0,
+    });
+    const partsFile: PartsFile = {
+      rig_size: [W, H],
+      scale_rig_per_source: 1,
+      parts: [
+        rec('leg_r', 'full:legwear', 32, 80, 20, 64),
+        rec('leg_l', 'full:author:leg_l', 68, 80, 20, 64),
+        rec('skirt', 'full:bottomwear', 24, 70, 72, 68),
+      ],
+      ghost_px: {},
+    };
+    const images = new Map<string, Raster>([
+      ['leg_r', block(20, 64)],
+      ['leg_l', block(20, 64)],
+      ['skirt', block(72, 68)],
+    ]);
+    const stopConfig = (stops?: unknown): Record<string, unknown> => ({
+      key: 'stop_probe',
+      assemble: {
+        rig_scale: 1,
+        plan: [
+          ['leg_r', 'full', 'legwear'],
+          ['leg_l', 'full', 'author:leg_l'],
+          ['skirt', 'full', 'bottomwear'],
+        ],
+      },
+      bones: [
+        { name: 'hip', parent: 'root', at: [60, 72] },
+        { chain: 'leg_r', parent: 'hip', points: [[42, 80], [42, 112]], tip: [42, 140] },
+        { chain: 'leg_l', parent: 'hip', points: [[78, 80], [78, 112]], tip: [78, 140] },
+        { chain: 'skirt_r', parent: 'hip', points: [[34, 78], [34, 108]], tip: [34, 134] },
+        { chain: 'skirt_l', parent: 'hip', points: [[86, 78], [86, 108]], tip: [86, 134] },
+      ],
+      meshes: {
+        leg_r: { grid: 8, r: 8, segments: ['leg_r'] },
+        leg_l: { grid: 8, r: 8, segments: ['leg_l'] },
+        skirt: { grid: 8, r: 10, segments: ['skirt_r', 'skirt_l', ['hip', [34, 74], [86, 74]]] },
+      },
+      regions: {},
+      constraints: [
+        { name: 'skirt_r0_physics', type: 'physics', bone: 'skirt_r0', rotate: 1, inertia: 0.5, strength: 60, damping: 0.85, wind: 2, gravity: 5, mass: 1, mix: 1 },
+        { name: 'skirt_r1_physics', type: 'physics', bone: 'skirt_r1', rotate: 1, inertia: 0.5, strength: 40, damping: 0.85, wind: 8, gravity: 15, mass: 1, mix: 1 },
+        { name: 'skirt_l0_physics', type: 'physics', bone: 'skirt_l0', rotate: 1, inertia: 0.5, strength: 60, damping: 0.85, wind: -2, gravity: 5, mass: 1, mix: 1 },
+        { name: 'skirt_l1_physics', type: 'physics', bone: 'skirt_l1', rotate: 1, inertia: 0.5, strength: 40, damping: 0.85, wind: -8, gravity: 15, mass: 1, mix: 1 },
+      ],
+      ...(stops === undefined ? {} : { stops }),
+      motion: {
+        duration: 2,
+        tracks: [{ bone: 'hip', prop: 'translatex', amp: 16, period: 2, phase: 0 }],
+      },
+    });
+    const rigc = suiteRigc();
+    const runVariant = (label: string, stops?: unknown): { rigStatus: number; ptFrames: number; ptMaxPx: number; rig: RigSpec | null; motion: Record<string, unknown> | null } => {
+      const fx = writeRigFixture(join(root, label), stopConfig(stops), images, partsFile);
+      const rigOut = join(root, label, 'rig');
+      const r = runCli(['rig', '--config', fx.config, '--parts', fx.parts, '--out', rigOut]);
+      if (r.status !== 0) return { rigStatus: r.status, ptFrames: -1, ptMaxPx: -1, rig: null, motion: null };
+      const rig = JSON.parse(readFileSync(join(rigOut, 'rig.json'), 'utf8')) as RigSpec;
+      const motion = JSON.parse(readFileSync(join(rigOut, 'motion.json'), 'utf8')) as Record<string, unknown>;
+      const buildDir = join(root, label, 'build');
+      const b = spawnSync(rigc, ['build', '--rig', join(rigOut, 'rig.json'), '--motion', join(rigOut, 'motion.json'), '--out', buildDir, ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      if (b.status !== 0) return { rigStatus: r.status, ptFrames: -1, ptMaxPx: -1, rig, motion };
+      const renderDir = join(root, label, 'render');
+      const rd = spawnSync(rigc, ['render', '--candidate', buildDir, '--animation', 'idle', '--fps', '12', '--pass-through', 'skirt:leg_r', '--out', renderDir], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      if (rd.status !== 0) return { rigStatus: r.status, ptFrames: -1, ptMaxPx: -1, rig, motion };
+      const pt = JSON.parse(readFileSync(join(renderDir, 'idle', 'pass-through.json'), 'utf8')) as { pairs: Array<{ frames: Array<{ depth: number }>; deepest: { depth: number } | null }> };
+      const pair = pt.pairs[0];
+      return {
+        rigStatus: r.status,
+        ptFrames: pair?.frames.length ?? -1,
+        ptMaxPx: pair !== undefined && pair.frames.length === 0 ? 0 : (pair?.deepest?.depth ?? -1),
+        rig,
+        motion,
+      };
+    };
+
+    // By hand: leg_r0 stands at (42, 80)->(42, 112), setup rotation -90 in Spine y-up, so its local +x runs straight
+    // down; at: [54, 0] places skirt_r_touch at crop (42, 134), to the right of skirt_r0's rest line (x = 34). Turning
+    // skirt_r toward the aim line (right, into leg_r) is inward; outward is away (left). Symmetrically for skirt_l on
+    // leg_l0 at x = 78.
+    const heldStops = [
+      { chain: 'skirt_r', against: 'leg_r0', at: [54, 0], inward: 0, outward: 60, lower: { inward: 0, outward: 30 } },
+      { chain: 'skirt_l', links: ['skirt_l0', 'skirt_l1'], against: 'leg_l0', at: [54, 0], inward: 0, outward: 60, lower: { inward: 0, outward: 30 } },
+    ];
+    const looseStops = [
+      { chain: 'skirt_r', against: 'leg_r0', at: [54, 0], inward: -6, outward: 60, lower: { inward: -6, outward: 30 } },
+      { chain: 'skirt_l', against: 'leg_l0', at: [54, 0], inward: -6, outward: 60, lower: { inward: -6, outward: 30 } },
+    ];
+    const free = runVariant('free');
+    const loose = runVariant('loose', looseStops);
+    const held = runVariant('held', heldStops);
+    const stripped = held.rig !== null && held.motion !== null ? withoutPhysics(held.rig as unknown as Record<string, unknown>, held.motion) : null;
+    const strippedNames = ((stripped?.rig.constraints as Array<{ name: string }> | undefined) ?? []).map((c) => c.name);
+    const skirtSlotBone = held.rig?.slots.find((s) => s.name === 'skirt')?.bone;
+    const skirtWeightBones = [...new Set(((held.rig?.skins.default.skirt.skirt as MeshAttachment | undefined)?.weights ?? []).flatMap((v) => v.map((w) => w.bone)))].sort();
+    const r1Parent = held.rig?.bones.find((b) => b.name === 'skirt_r1')?.parent;
+    say(
+      'RG490_A_SYNTHETIC_SKIRT_WITH_STOPS_BUILDS_THROUGH_RIG_AND_CHECK_AND_HOLDS_PASS_THROUGH_BELOW_THE_UNSTOPPED_BUILD',
+      free.rigStatus === 0 &&
+        loose.rigStatus === 0 &&
+        held.rigStatus === 0 &&
+        stripped !== null &&
+        !('stops' in stripped.rig) &&
+        strippedNames.length === 8 &&
+        strippedNames.includes('skirt_r0_clamp') &&
+        free.ptFrames > 0 &&
+        loose.ptFrames >= 0 &&
+        loose.ptFrames < free.ptFrames &&
+        held.ptFrames === 0 &&
+        held.ptMaxPx === 0 &&
+        skirtSlotBone === 'skirt_r0_d' &&
+        JSON.stringify(skirtWeightBones) === '["hip","skirt_l0_d","skirt_l1_d","skirt_r0_d","skirt_r1_d"]' &&
+        r1Parent === 'skirt_r0_d' &&
+        held.rig?.stops?.length === 2,
+      `without stops: rig exit ${free.rigStatus}, pass-through skirt:leg_r ${free.ptFrames} frame(s) (max ${free.ptMaxPx.toFixed(2)} px); loose stop (inward -6): ${loose.ptFrames} frame(s) (max ${loose.ptMaxPx.toFixed(2)} px); held stop (inward 0): rig exit ${held.rigStatus}, pass-through ${held.ptFrames} frame(s) (max ${held.ptMaxPx} px); slot skirt on ${String(skirtSlotBone)}, weights on ${JSON.stringify(skirtWeightBones)}, skirt_r1 parent ${String(r1Parent)}, withoutPhysics constraints ${strippedNames.length}`,
+      'issue #404 (Bar 1): buildRig rebinds the stopped links\' slots, mesh weights and child links onto <link>_d and passes stops to rig.json, while withoutPhysics expands stops before stripping physics so check\'s loop and fold builds keep the stop constraints',
+    );
+
+    // RG491 (Bar 2) — direct buildRig refusal on unresolved chain/bone/link, and rig stage refusal when rigc rejects a stop rule.
+    const rawStop = (stops: unknown): PartsError | null =>
+      refusals(() => buildRig({ ...(parseConfig(stopConfig()) as unknown as Record<string, unknown>), stops } as unknown as CharacterConfig, partsFile, images));
+    const badChain = rawStop([{ chain: 'ghost', against: 'leg_r0', at: [54, 0], inward: 0, outward: 60 }]);
+    const singleChain = rawStop([{ chain: 'hip', against: 'leg_r0', at: [54, 0], inward: 0, outward: 60 }]);
+    const badAgainst = rawStop([{ chain: 'skirt_r', against: 'ghost', at: [54, 0], inward: 0, outward: 60 }]);
+    const badLink = rawStop([{ chain: 'skirt_r', links: ['ghost'], against: 'leg_r0', at: [54, 0], inward: 0, outward: 60 }]);
+    const selfStopFx = writeRigFixture(
+      join(root, 'self-stop'),
+      stopConfig([{ chain: 'skirt_r', against: 'skirt_r0', at: [54, 0], inward: 0, outward: 60, lower: { inward: 0, outward: 30 } }]),
+      images,
+      partsFile,
+    );
+    const selfStopOut = join(root, 'self-stop', 'rig');
+    const selfStopRun = runCli(['rig', '--config', selfStopFx.config, '--parts', selfStopFx.parts, '--out', selfStopOut]);
+    const selfStopLine = selfStopRun.out.split('\n').find((l) => l.includes('RIG_RIGC_GREEN')) ?? '';
+    say(
+      'RG491_AN_UNRESOLVED_STOP_BONE_IS_REFUSED_BY_BUILDRIG_AND_A_STOP_RIGC_REJECTS_STOPS_RIG_WITH_NOTHING_WRITTEN',
+      codes(badChain) === 'RIG_NAME_RESOLVES config.stops[0].chain' &&
+        codes(singleChain) === 'RIG_NAME_RESOLVES config.stops[0].chain' &&
+        codes(badAgainst) === 'RIG_NAME_RESOLVES config.stops[0].against' &&
+        codes(badLink) === 'RIG_NAME_RESOLVES config.stops[0].links[0]' &&
+        selfStopRun.status === 1 &&
+        selfStopLine.includes('stop "skirt_r"') &&
+        selfStopLine.includes('hangs below "skirt_r0"') &&
+        !existsSync(selfStopOut),
+      `buildRig direct: unknown chain -> ${codes(badChain)}, single bone as chain -> ${codes(singleChain)}, unknown against -> ${codes(badAgainst)}, unknown link -> ${codes(badLink)}; rig CLI with against "skirt_r0" -> exit ${selfStopRun.status}, "${selfStopLine.trim().slice(0, 180)}", out exists: ${existsSync(selfStopOut)}`,
+      'issue #404 (Bar 2): buildRig checks stop chains, links and against bones for callers that skip the loader, and rigc\'s own stop rules gate the build before anything is written',
+    );
+
+    // RG492 (Bar 3) — without stops, no byte moves; flattenRig maps <link>_d back to <link>'s setup frame with zero world gap.
+    const plainA = buildRig(rigCfg(), rigParts(), rigImages());
+    const plainB = buildRig({ ...rigCfg(), stops: undefined }, rigParts(), rigImages());
+    const samePlain =
+      rigJsonText(plainA.rig) === rigJsonText(plainB.rig) &&
+      rigJsonText(plainA.motion) === rigJsonText(plainB.motion) &&
+      rigJsonText(plainA.meshReport) === rigJsonText(plainB.meshReport) &&
+      !rigJsonText(plainA.rig).includes('"stops"');
+    const stoppedBuilt = buildRig(parseConfig(stopConfig(heldStops)), partsFile, images);
+    const expandForWorld = (spec: RigSpec): RigSpec =>
+      expandStops(spec as unknown as Parameters<typeof expandStops>[0], 'rig.json') as unknown as RigSpec;
+    const flatStopped = flattenRig(stoppedBuilt.rig);
+    const worldGap = worldGaps(setupWorld(expandForWorld(stoppedBuilt.rig)), setupWorld(expandForWorld(flatStopped)), 1e-5);
+    say(
+      'RG492_WITHOUT_STOPS_NO_BYTE_MOVES_AND_FLATTENRIG_CARRIES_STOPPED_LINKS_WITH_ZERO_SETUP_WORLD_GAP',
+      samePlain && worldGap.off.length === 0,
+      `without stops: rig.json, motion.json and mesh_report.json byte-identical (${samePlain}), "stops" absent; flattenRig on the stopped rig: ${worldGap.off.length} object(s) off, max world gap ${worldGap.max.toExponential(2)}`,
+      'issue #404 (Bar 3): a config without stops writes the bytes it always wrote, and flattenRig maps each <link>_d weight and slot back through its link\'s setup frame so the flat form places every vertex at the same setup world point',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /**

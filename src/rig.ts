@@ -132,11 +132,11 @@
  * touches the disk, and the same inputs give the same bytes (key order is the
  * order the objects are built in, and every number is rounded by `pyRound`).
  */
-import { type AutoSpec, type BoneEntry, type WeightRule, type CharacterConfig, type ConfigConstraint, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, type RibsSpec, ROOT_BONE, weightsABone } from './config.ts';
+import { type AutoSpec, type BoneEntry, type WeightRule, type CharacterConfig, type ConfigConstraint, type ConfigStop, CONSTRAINT_FOLLOWS, constraintForRig, type ContourSpec, type Point, type RibsSpec, ROOT_BONE, stopForRig, weightsABone } from './config.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from './coords.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { eyeLineDegrees } from './headframe.ts';
-import type { RigBoneInherit } from 'rig-c/src/rig.ts';
+import type { RigBoneInherit, RigStop } from 'rig-c/src/rig.ts';
 import { f32 } from 'rig-c/compile';
 import type { MeshCounts, MeshQualityReport, MeshReductionInput, MotionAmplitude, ReducedMesh, Termination } from 'rig-c/mesh';
 import { type AmplitudeRow, amplitudeRow, partAmplitude, withAmplitude } from './autoamplitude.ts';
@@ -450,6 +450,12 @@ export interface RigSpec {
    * when the config has the field.
    */
   constraints?: Array<Record<string, unknown>>;
+  /**
+   * `config.stops` (issue #404), in the order written, each with its `links`
+   * expanded from `chain` when omitted and its records and annotations left out
+   * ({@link stopForRig}). Written only when the config has the field.
+   */
+  stops?: RigStop[];
   /**
    * `idleDrivesMeshes`: written only under `idleKeys: 'direct'`, and only when
    * the idle keys a mesh-driving bone. `detached`: written only when a
@@ -1032,6 +1038,17 @@ export function buildRig(
   for (const [part, bone] of Object.entries(cfg.regions)) {
     if (!byPart.has(part)) fail('RIG_PART_PRESENT', `config.regions.${part}`, `names the part "${part}", which is not in parts.json; ${where(part)}`);
     if (!B.has(bone)) fail('RIG_NAME_RESOLVES', `config.regions.${part}`, `names the bone "${bone}", which config.bones does not declare`);
+  }
+  if (cfg.stops !== undefined) {
+    cfg.stops.forEach((s, i) => {
+      const at = `config.stops[${i}]`;
+      if (!chains.has(s.chain)) fail('RIG_NAME_RESOLVES', `${at}.chain`, `names the chain "${s.chain}", which config.bones does not declare`);
+      const links = s.links ?? chains.get(s.chain) ?? [];
+      links.forEach((l, k) => {
+        if (!B.has(l)) fail('RIG_NAME_RESOLVES', `${at}.links[${k}]`, `names the bone "${l}", which config.bones does not declare`);
+      });
+      if (!B.has(s.against)) fail('RIG_NAME_RESOLVES', `${at}.against`, `names the bone "${s.against}", which config.bones does not declare`);
+    });
   }
   for (const p of parts.parts) {
     const inM = p.name in cfg.meshes;
@@ -1852,6 +1869,10 @@ export function buildRig(
     });
   }
   refuseIfAny(problems);
+  // ---- leg stops (issue #404) --------------------------------------------
+  // Only when the config has `stops`: each link after the first (and any bone hanging from a stopped link) hangs
+  // from the drawn link `<link>_d` above it, and slots and weights on a stopped link bind `<link>_d`.
+  const stops = cfg.stops === undefined ? null : applyStops(cfg.stops, chains, bones, slots, skin);
   // ---- the turn control (issue #251) -------------------------------------
   // Only when the config has `turn`: every other build adds nothing here, so no byte moves.
   const turned = cfg.turn === undefined ? null : applyTurn(cfg.turn, parts.parts.map((p) => p.name), bones, slots, skin, cfg.constraints ?? []);
@@ -1868,6 +1889,7 @@ export function buildRig(
   };
   if (cfg.constraints !== undefined) rig.constraints = cfg.constraints.map(constraintForRig);
   if (turned !== null) rig.constraints = [...(rig.constraints ?? []), ...turned.constraints];
+  if (stops !== null) rig.stops = stops;
   const detached = [...detachedRules(cfg.constraints ?? []), ...(turned?.detached ?? [])];
   if (idleKeys === 'direct' && meshKeyed.length > 0) rig.invariants = { idleDrivesMeshes: { why: IDLE_DRIVES_MESHES_WHY } };
   if (detached.length > 0) rig.invariants = { ...rig.invariants, detached };
@@ -1878,6 +1900,49 @@ export function buildRig(
   const axes = [faceAxis.axis, faceAxis.tipAxis].flatMap((x) => (x === null ? [] : [x]));
   if (axes.length > 0) rig.invariants = { ...rig.invariants, axes };
   return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses, autoMotion, faceAxis, turn: turned?.rows ?? null };
+}
+
+/**
+ * Re-parent every bone that hangs from a stopped link onto that link's drawn
+ * link `<link>_d`, move slots and mesh weights from a stopped link onto
+ * `<link>_d`, and return `rig.json`'s `stops` array (issue #404). At the setup
+ * pose `<link>_d` has the same world origin and rotation as `<link>`, so every
+ * local offset and bind coordinate is unchanged.
+ */
+function applyStops(
+  stops: readonly ConfigStop[],
+  chains: ReadonlyMap<string, readonly string[]>,
+  bones: RigBone[],
+  slots: RigSpec['slots'],
+  skin: RigSpec['skins']['default'],
+): RigStop[] {
+  const out: RigStop[] = [];
+  const drawn = new Map<string, string>();
+  for (const s of stops) {
+    const links = s.links ?? chains.get(s.chain) ?? [];
+    for (const l of links) drawn.set(l, `${l}_d`);
+    out.push(stopForRig(s, links));
+  }
+  for (const b of bones) {
+    const d = b.parent === undefined ? undefined : drawn.get(b.parent);
+    if (d !== undefined) b.parent = d;
+  }
+  for (const s of slots) {
+    const d = drawn.get(s.bone);
+    if (d !== undefined) s.bone = d;
+  }
+  for (const atts of Object.values(skin)) {
+    for (const att of Object.values(atts)) {
+      if (!('type' in att)) continue;
+      for (const v of att.weights) {
+        for (const w of v) {
+          const d = drawn.get(w.bone);
+          if (d !== undefined) w.bone = d;
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -1926,7 +1991,10 @@ export function rigJsonText(value: unknown): string {
  */
 export function flattenRig(rig: RigSpec, sense: 1 | -1 = 1): RigSpec {
   const problems: Problem[] = [];
-  const read = rig.bones.map((b) => ({ ...b, rotation: (b.rotation ?? 0) * sense }));
+  const undrawn = new Map<string, string>();
+  for (const s of rig.stops ?? []) for (const l of s.links) undrawn.set(`${l}_d`, l);
+  const realBone = (n: string): string => undrawn.get(n) ?? n;
+  const read = rig.bones.map((b) => ({ ...b, ...(b.parent === undefined ? {} : { parent: realBone(b.parent) }), rotation: (b.rotation ?? 0) * sense }));
   const world = computeExactFrameTransforms(read);
   const turn = new Map<string, number>();
   // A bone with a declared inherit mode (issue #348) is read off rig-c's poser, which honours the mode; every other is the sum, as before.
@@ -1934,11 +2002,11 @@ export function flattenRig(rig: RigSpec, sense: 1 | -1 = 1): RigSpec {
     turn.set(
       b.name,
       b.inherit === undefined
-        ? placed((b.parent === undefined ? 0 : (turn.get(b.parent) as number)) + (b.rotation ?? 0), OFFSET_PLACES)
+        ? placed((b.parent === undefined ? 0 : (turn.get(realBone(b.parent)) as number)) + (b.rotation ?? 0), OFFSET_PLACES)
         : placed(normaliseDegrees((world.get(b.name) as BoneTransform).worldRotation), OFFSET_PLACES),
     );
   }
-  const origin = (bone: string): BoneTransform => world.get(bone) as BoneTransform;
+  const origin = (bone: string): BoneTransform => world.get(realBone(bone)) as BoneTransform;
   const out = (m: BoneTransform, x: number, y: number): [number, number] => {
     const [wx, wy] = toWorld(m, x, y);
     return [placed(wx - m.worldX, FLAT_PLACES), placed(wy - m.worldY, FLAT_PLACES)];
@@ -1962,12 +2030,12 @@ export function flattenRig(rig: RigSpec, sense: 1 | -1 = 1): RigSpec {
         })) };
         continue;
       }
-      const left = normaliseDegrees((turn.get(bone) as number) + (att.rotation ?? 0));
+      const left = normaliseDegrees((turn.get(realBone(bone)) as number) + (att.rotation ?? 0));
       if (Math.abs(left) > 1e-6) {
         problems.push({
           code: 'FLATTEN_REGION_UPRIGHT',
           object: `skins.default.${slot}.${name}`,
-          detail: `rides "${bone}", turned ${turn.get(bone)} degrees, with rotation ${att.rotation ?? 'absent'}, so it is drawn turned ${placed(left, OFFSET_PLACES)} degrees; the flat form draws every region upright, so the region's rotation must cancel its bone's turn`,
+          detail: `rides "${bone}", turned ${turn.get(realBone(bone))} degrees, with rotation ${att.rotation ?? 'absent'}, so it is drawn turned ${placed(left, OFFSET_PLACES)} degrees; the flat form draws every region upright, so the region's rotation must cancel its bone's turn`,
         });
         continue;
       }
@@ -1988,6 +2056,9 @@ export function flattenRig(rig: RigSpec, sense: 1 | -1 = 1): RigSpec {
       const offset = typeof rotate.offset === 'number' ? rotate.offset : 0;
       return { ...c, properties: { ...props, rotate: { ...rotate, offset: placed(offset - turned, OFFSET_PLACES) } } };
     });
+  }
+  if (rig.stops !== undefined) {
+    flat.stops = rig.stops.map((s) => ({ ...s, at: out(origin(s.against), s.at[0], s.at[1]) }));
   }
   if (rig.invariants?.axes !== undefined) {
     const { axes: _axes, ...rest } = rig.invariants;

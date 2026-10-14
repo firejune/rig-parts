@@ -86,7 +86,7 @@
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { RIG_BONE_INHERIT, RIG_SKIN_CONSTRAINT_KEYS, type RigBoneInherit, type RigConstraint, type RigSkinConstraintKey } from 'rig-c/src/rig.ts';
+import { RIG_BONE_INHERIT, RIG_SKIN_CONSTRAINT_KEYS, type RigBoneInherit, type RigConstraint, type RigSkinConstraintKey, type RigStop } from 'rig-c/src/rig.ts';
 import { pyRound } from './round.ts';
 import { CLOTH_TARGETS, type ClothRecipes, RECIPE_STRENGTH, RIGC_DEFAULT_DAMPING, springStable } from './cloth.ts';
 import { GRID, MAX_SIDE } from './contour.ts';
@@ -649,6 +649,26 @@ export interface ConfigConstraint {
 }
 
 /**
+ * One entry of `config.stops` (issue #404): rig-c's `RigStop` (`rig-c` 2.56.0),
+ * a cloth chain's rotation clamped against a leg bone so the skirt cannot swing
+ * into the leg. `chain` names a chain declared in `config.bones`; `links` is
+ * the stopped links along it (when omitted, every link of `chain` in link
+ * order); `against` is the leg bone the point rides on; `at` is `[x, y]` in
+ * `against`'s local space; `inward` and `outward` are the first link's clamp
+ * bounds in degrees (positive away from `against`), and `lower` the lower
+ * links' bounds when more than one link is stopped.
+ */
+export interface ConfigStop {
+  chain: string;
+  links?: string[];
+  against: string;
+  at: Point;
+  inward: number;
+  outward: number;
+  lower?: { inward: number; outward: number };
+}
+
+/**
  * One segment of a limb (issue #349): the part it makes, the part whose
  * pixels it takes (`from`: a plan part or a cut's piece), and the one bone it
  * rides with weight 1. Every segment after the first sits below a joint at
@@ -697,6 +717,8 @@ export interface CharacterConfig {
   regions: Record<string, string>;
   motion: Motion;
   constraints?: ConfigConstraint[];
+  /** Leg stops (issue #404, rig-c 2.56.0's `RigStop`): absent, no stop is added and no byte of any output moves. */
+  stops?: ConfigStop[];
   /** The turn control (issue #251, `src/turn.ts`): absent, no control is added and no byte of any output moves. */
   turn?: TurnSpec;
   /** The painting is a scene (issue #242): absent, no byte of any output moves. */
@@ -758,6 +780,23 @@ export function constraintForRig(c: ConfigConstraint): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(c)) if (!isDoorKey(key)) out[key] = value;
   return out;
+}
+
+/**
+ * A stop as the rig stage hands it to rigc (issue #404): its fields in
+ * `RigStop` order, `links` expanded from `chain` when omitted, and any records
+ * (`x-…`) or annotations (`note`, `…_note`) left out.
+ */
+export function stopForRig(s: ConfigStop, links: readonly string[]): RigStop {
+  return {
+    chain: s.chain,
+    links: [...links],
+    against: s.against,
+    at: [s.at[0], s.at[1]],
+    inward: s.inward,
+    outward: s.outward,
+    ...(s.lower === undefined ? {} : { lower: { inward: s.lower.inward, outward: s.lower.outward } }),
+  };
 }
 
 /** The single-value bone properties a sine track may drive — rigc's one-channel bone timelines. */
@@ -992,7 +1031,7 @@ export interface AssembleConfig {
   bones?: BoneEntry[];
 }
 
-const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'limbs', 'bones', 'meshes', 'regions', 'motion', 'constraints', 'turn', 'scene', 'cloth'] as const;
+const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'limbs', 'bones', 'meshes', 'regions', 'motion', 'constraints', 'stops', 'turn', 'scene', 'cloth'] as const;
 
 /**
  * The one partial entry point. It validates exactly what its door requires —
@@ -1202,6 +1241,7 @@ function parseConfigFrom(raw: Json, base: string | null): { config: CharacterCon
   if ('meshes' in t && 'regions' in t && 'assemble' in t) checkCoverage(c, [...parts, ...cuts], patches, t.meshes, t.regions, limbs);
   if ('motion' in t) checkMotion(c, t.motion, names.bones, names.chains, 'regions' in t ? t.regions : undefined);
   if ('constraints' in t) checkConstraints(c, t.constraints, names.bones, names.parents);
+  if ('stops' in t) checkStops(c, t.stops, names.bones, names.chains);
   if ('turn' in t) checkTurn(c, t.turn, attachedParts(t.meshes, t.regions), names.bones);
   if ('scene' in t) checkScene(c, t.scene);
   if ('cloth' in t) checkCloth(c, t.cloth);
@@ -1374,9 +1414,9 @@ export interface SkeletonSections {
  * both before writing (`checkProposal`). A key the loader would not take is
  * refused by name, as in a config. Refusals name the fields `proposal.…`.
  */
-export function parseProposalSections(raw: Json): SkeletonSections & { limbs?: Record<string, Limb>; constraints?: ConfigConstraint[] } {
+export function parseProposalSections(raw: Json): SkeletonSections & { limbs?: Record<string, Limb>; constraints?: ConfigConstraint[]; stops?: ConfigStop[] } {
   const c = new Check();
-  const top = c.object('config', raw, ['bones', 'meshes', 'regions', 'motion'], ['notes', 'limbs', 'constraints']);
+  const top = c.object('config', raw, ['bones', 'meshes', 'regions', 'motion'], ['notes', 'limbs', 'constraints', 'stops']);
   if (top !== null) {
     const names = 'bones' in top ? checkBones(c, top.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>(), parents: new Map<string, string>() };
     if ('limbs' in top) {
@@ -1389,10 +1429,11 @@ export function parseProposalSections(raw: Json): SkeletonSections & { limbs?: R
     if ('regions' in top) checkRegions(c, top.regions, names.bones);
     if ('motion' in top) checkMotion(c, top.motion, names.bones, names.chains, 'regions' in top ? top.regions : undefined);
     if ('constraints' in top) checkConstraints(c, top.constraints, names.bones, names.parents);
+    if ('stops' in top) checkStops(c, top.stops, names.bones, names.chains);
     if ('notes' in top && c.array('config.notes', top.notes, false)) (top.notes as Json[]).forEach((n, i) => c.string(`config.notes[${i}]`, n, false));
   }
   refuseIfAny(c.problems.map((p) => ({ ...p, object: p.object.replace(/^config\b/, 'proposal') })));
-  return raw as SkeletonSections & { limbs?: Record<string, Limb>; constraints?: ConfigConstraint[] };
+  return raw as SkeletonSections & { limbs?: Record<string, Limb>; constraints?: ConfigConstraint[]; stops?: ConfigStop[] };
 }
 
 /**
@@ -2610,6 +2651,65 @@ function checkConstraints(c: Check, v: Json, bones: Set<string>, parents: Map<st
           `${where}; the bone a constraint follows must not move with the bones it drives, or driving them moves what they follow — a scene target is a bone parented to "${ROOT_BONE}"`,
         );
       }
+    }
+  });
+}
+
+/**
+ * `config.stops` (issue #404): rig-c 2.56.0's `RigStop` entries, each holding
+ * a swinging chain off a leg bone (`against`). `chain` resolves against the
+ * chains `config.bones` declares; `links` (when given) and `against` resolve
+ * against the bones `config.bones` declares (`CONFIG_NAME_RESOLVES`).
+ */
+function checkStops(c: Check, v: Json, bones: Set<string>, chains: Map<string, number>): void {
+  const p = 'config.stops';
+  if (!c.array(p, v, false)) return;
+  const declaredBones = [...bones].join(', ');
+  const declaredChains = [...chains.keys()].join(', ') || 'none';
+  (v as Json[]).forEach((entry, i) => {
+    const at = `${p}[${i}]`;
+    const o = c.object(at, entry, ['chain', 'against', 'at', 'inward', 'outward'], ['links', 'lower']);
+    if (o === null) return;
+    let chainLinks: number | undefined;
+    if ('chain' in o && c.string(`${at}.chain`, o.chain)) {
+      chainLinks = chains.get(o.chain);
+      if (chainLinks === undefined) {
+        c.fail('CONFIG_NAME_RESOLVES', `${at}.chain`, `names "${o.chain}", which config.bones does not declare as a chain; the chains that exist: ${declaredChains}`);
+      }
+    }
+    let linkCount = chainLinks ?? 0;
+    if ('links' in o && c.array(`${at}.links`, o.links, true)) {
+      const list = o.links as Json[];
+      linkCount = list.length;
+      list.forEach((l, k) => {
+        if (c.string(`${at}.links[${k}]`, l) && !bones.has(l)) {
+          c.fail('CONFIG_NAME_RESOLVES', `${at}.links[${k}]`, `names "${l}", which config.bones does not declare; the bones that exist: ${declaredBones}`);
+        }
+      });
+    }
+    if ('against' in o && c.string(`${at}.against`, o.against) && !bones.has(o.against)) {
+      c.fail('CONFIG_NAME_RESOLVES', `${at}.against`, `names "${o.against}", which config.bones does not declare; the bones that exist: ${declaredBones}`);
+    }
+    if ('at' in o) c.point(`${at}.at`, o.at);
+    const inward = 'inward' in o && c.number(`${at}.inward`, o.inward) ? (o.inward as number) : null;
+    const outward = 'outward' in o && c.number(`${at}.outward`, o.outward) ? (o.outward as number) : null;
+    if (inward !== null && outward !== null && inward > outward) {
+      c.fail('CONFIG_FIELD_TYPE', `${at}.inward`, `is ${inward}, above outward ${outward}; inward <= outward is required`);
+    }
+    if ('lower' in o) {
+      const lo = c.object(`${at}.lower`, o.lower, ['inward', 'outward'], []);
+      if (lo !== null) {
+        const li = 'inward' in lo && c.number(`${at}.lower.inward`, lo.inward) ? (lo.inward as number) : null;
+        const loOut = 'outward' in lo && c.number(`${at}.lower.outward`, lo.outward) ? (lo.outward as number) : null;
+        if (li !== null && loOut !== null && li > loOut) {
+          c.fail('CONFIG_FIELD_TYPE', `${at}.lower.inward`, `is ${li}, above lower.outward ${loOut}; inward <= outward is required`);
+        }
+      }
+      if (linkCount === 1) {
+        c.fail('CONFIG_FIELD_TYPE', `${at}.lower`, `is ${show(o.lower)} on a 1-link stop; lower holds the links below the first, so leave lower out when links has 1 bone`);
+      }
+    } else if (linkCount > 1) {
+      c.fail('CONFIG_FIELD_PRESENT', `${at}.lower`, `is absent and required when the stop holds ${linkCount} links (more than 1); state lower: { inward, outward } for the links below the first`);
     }
   });
 }
