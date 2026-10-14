@@ -53,14 +53,15 @@
  *
  * ## Control bones — `A15_IDLE_NO_MESH_BONE_KEYS`
  *
- * rig-c's `spine-html` profile refuses an `idle` that keys a bone a mesh
- * is weighted to (the player skips idle work on meshes). The reference's
- * answer, ported as is and still the default (`rig --idle-keys ctl`): for
- * every keyed bone that some mesh names among its candidates, add a parent
- * `<bone>_ctl` at the SAME origin, re-parent the bone under it, and move the
- * keys to the control. The pose is the same up to float rounding: the
- * extra bone in each chain moves the rendered idle frames by at most one
- * level in a channel (measured on both public examples, rig-parts #13).
+ * rig-c's `rig-play` profile (named `spine-html` before rig-c 2.50.0)
+ * refuses an `idle` that keys a bone a mesh is weighted to (the player skips
+ * idle work on meshes). The reference's answer, ported as is and still the
+ * default (`rig --idle-keys ctl`): for every keyed bone that some mesh names
+ * among its candidates, add a parent `<bone>_ctl` at the SAME origin,
+ * re-parent the bone under it, and move the keys to the control. The pose is
+ * the same up to float rounding: the extra bone in each chain moves the
+ * rendered idle frames by at most one level in a channel (measured on both
+ * public examples, rig-parts #13).
  *
  * ⚠️ **This satisfies the rule's wording only.** The meshes are still
  * deformed every frame — by the control's motion, through the bone they are

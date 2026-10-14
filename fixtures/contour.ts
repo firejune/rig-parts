@@ -252,7 +252,7 @@ export const NOTCHED: ContourCase = { name: 'notched', mask: blocks(60, 60, [[10
 
 /**
  * The cases that build, in order. The gate proof (selftest `CT27`) carries all
- * but FULL, whose PNG has no transparent texel — which rig-c's spine-html
+ * but FULL, whose PNG has no transparent texel — which rig-c's rig-play
  * profile refuses for the image (A19), whatever attachment draws it.
  */
 export const BUILDING: readonly ContourCase[] = [CONVEX, CONCAVE, SPIKE, FEATHERED, HOLE, REGION, FULL];

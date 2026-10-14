@@ -76,7 +76,7 @@ export function shiftRight(src: Raster, dx: number): Raster {
 export interface CheckRigOptions {
   /** The idle's last `translatex` key; 0 closes the loop. */
   lastKey?: number;
-  /** Write `images/front.png` fully opaque, which rig-c's A19 refuses under spine-html. */
+  /** Write `images/front.png` fully opaque, which rig-c's A19 refuses under rig-play. */
   opaqueFront?: boolean;
   /** The two parts' `from`, back then front — the See-through tags the judgement lines choose regions by. Default both `full:topwear`. */
   from?: readonly [string, string];
