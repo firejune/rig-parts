@@ -24,7 +24,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Measured: main's test job ran 18m49s (2026-10-13, two runs), against a
+    # 20-minute ceiling; adding the `wind` example (#372) took it past and the
+    # run was cancelled. 40 leaves room while the suite's time is cut down.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
