@@ -55,6 +55,13 @@ also holds the licence; `bun run fetch-examples` copies the inputs into `inputs/
 - `sheets/` — `rig-parts sheet` contact sheets: the painting with the full run's
   layers, with the head run's layers, and with the 28 parts of the `expected/` build
   (the 22 the plan makes, the four limb layers cut into ten).
+- `expected/rig.json` is the flat form: every bone unturned, which is `flattenRig`
+  (`src/rig.ts`) of the built rig. A build's `rig/rig.json` turns each chain link along
+  its chain, so it carries `rotation` and `length` on the links, and the offsets under
+  them in the turned frame, where this file holds unturned offsets only: a plain diff of
+  the two shows those bones and the weights bound to them as changed, and the build is
+  not broken. The chain suite (`CH03`) compares this file with `flattenRig(built)`, not
+  with the built file; compare the same way.
 - `expected/` — **this port's own build**: `rig-parts build --config
   examples/wind/config.json --source inputs/painting.png --full inputs/layers/full
   --head inputs/layers/head --out <dir>`, the call the chain suite makes. No reference

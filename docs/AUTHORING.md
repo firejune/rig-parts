@@ -29,6 +29,12 @@ kept as fixtures because their `expected/` is that implementation's own output; 
 figure this guide quotes for them was measured on them. `demo` is the painting the
 README shows since issue #227 and `scarf` the hanging-element example; both have
 `expected/` from this port's own build, and a figure quoted for them says so.
+In every example, `expected/rig.json` is the flat form: every bone unturned, which is
+`flattenRig` (`src/rig.ts`) of the built rig. A build's `rig/rig.json` carries
+`rotation` and `length` on its chain links, and the offsets under them in the turned
+frame (§5, the `rig` row), where that file holds unturned offsets only, so the two
+differ as text and not as a rig: the chain suite (`CH03`) compares `expected/rig.json`
+with `flattenRig(built)`, not with the built file.
 
 ## 1. Prerequisites
 

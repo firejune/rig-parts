@@ -6,6 +6,15 @@ about it changed. Its `expected/` is the reference implementation's own output, 
 its `config.json` keeps `"key": "sample"`, the key the reference named its skeleton
 after (`sample_painting`, which `expected/` carries).
 
+`expected/rig.json` is the flat form: every bone unturned, which is `flattenRig`
+(`src/rig.ts`) of the built rig and the form the reference implementation wrote. A
+build's `rig/rig.json` turns each chain link along its chain, so it carries `rotation`
+and `length` on the links, and the offsets under them in the turned frame, where this
+file holds unturned offsets only: a plain diff of the two shows those bones and the
+weights bound to them as changed, and the build is not broken. The chain suite (`CH03`)
+compares this file with `flattenRig(built)`, not with the built file; compare the same
+way.
+
 
 A generated full-body character — prompted as an adult woman with long wavy
 hair in a cream blouse and a navy pinafore dress, standing with her hands
