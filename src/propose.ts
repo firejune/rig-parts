@@ -43,7 +43,12 @@
  *   layer with hanging strands ({@link Strand}) gets one pendulum chain per
  *   strand instead of the single pendant chain, and one note naming every
  *   strand and what became of it — a strand left without a chain is never
- *   silent (issue #24).
+ *   silent (issue #24). Under the `back hair` cloth recipe (issue #391) a
+ *   layer of either tag lying on a drafted tail rides the links it overlaps
+ *   instead: its pixels over the tail's art are each given to the nearest span
+ *   of the back hair's mesh (`tailOverlap`, `src/cloth.ts`), and when one is a
+ *   link the part's mesh takes those spans as its segments and no rule above
+ *   runs for it; a note names each span with its pixel count.
  * - anything no rule claims rides its nearest trunk bone as a region —
  *   including every part from an author-made layer (`<run>:author:<label>`,
  *   issue #256), which is no See-through tag and so has no role: no rule
@@ -139,7 +144,7 @@ import { AUTHOR_NO_ROLE, isAuthorTag } from './tags.ts';
 import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER_TAGS, turnFractions, turnNearest, turnPivot, turnRiderDepth, type TurnSpec } from './turn.ts';
 import { edgeLength } from './length.ts';
 import { chainSqueezes, type SqueezeFinding } from './squeeze.ts';
-import { RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, swingName, treeConstraints, type TreeChain, type TreeInput } from './cloth.ts';
+import { RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, swingName, type Tail, tailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput } from './cloth.ts';
 import { TEXTURE_STRETCH_CEILING } from './check.ts';
 
 // ---------------------------------------------------------------------------
@@ -1364,6 +1369,8 @@ export function proposeWithBasis(
   const clothConstraints: ConfigConstraint[] = [];
   const clothUsed = new Set<ClothTarget>();
   const recipeOf = (tag: ClothTarget): ClothRecipe | null => cloth?.[tag] ?? null;
+  // Issue #391: the tails the back hair recipe drafts, each with its mesh's spans, which an accessory wrapped round one rides.
+  const tails: Tail[] = [];
   const T = (p: PartRecord, tag: ClothTarget, r: ClothRecipe, input: TreeInput): TreeChain[] => {
     const trees = draftTrees(input, r);
     const constants = [konst('cloth_chains', r.chains), konst('cloth_links', r.links), konst('length_ratio', roundTo(r.length_ratio ?? RECIPE_LENGTH_RATIO, 6))];
@@ -1548,6 +1555,13 @@ export function proposeWithBasis(
       }
       notes.push(clothNote(p.name, 'back hair', all, rcp, n, ' per side of the eye axis, from head, rooted on the eye line and tipped 4 px above its bottom'));
       meshes[p.name] = { grid: g, r, segments: segs };
+      // Issue #391: the spans are this mesh's segments, the head's fixed one and every tree link, in segment order.
+      const spans: TailSpan[] = [{ bone: 'head', a: rnd(head), b: rnd([axis, top + 13]), link: false }];
+      for (const t of all) {
+        const line = [...t.points, t.tip];
+        t.points.forEach((q, i) => spans.push({ bone: `${t.chain}${i}`, a: q, b: line[i + 1], link: true }));
+      }
+      tails.push({ part: p.name, mask, spans });
     } else {
       const mask = P.alpha(p);
       const segs: Segment[] = [['head', rnd(head), rnd([axis, top + 13])]];
@@ -1726,7 +1740,39 @@ export function proposeWithBasis(
     // gets the bone and chain, the rest ride the head rigidly. A stable sort,
     // as Python's `sorted` is.
     const cands = [...P.byTag(tag)].sort((a, b) => b.opaque_px - a.opaque_px);
+    // Issue #391: a layer of the tag lying on a tail the back hair recipe drafted rides the links it overlaps — the
+    // spans of the tail its pixels over the tail's art fall nearest — and not head: its mesh names those bones and no
+    // others, so every vertex weights by the rule the tail's own art does. The links are read off the overlap, never
+    // off the part's name. A layer over no link keeps its rule below. Only with the recipe: without it no tail moves
+    // by the world, and nothing here runs.
+    const rides = (q: PartRecord): boolean => {
+      const segments: Segment[] = [];
+      const links: string[] = [];
+      const said: string[] = [];
+      for (const tail of tails) {
+        const o = tailOverlap(tail, P.alpha(q), q);
+        if (!tail.spans.some((sp, k) => sp.link && o.counts[k] > 0)) continue;
+        const on: string[] = [];
+        tail.spans.forEach((sp, k) => {
+          if (o.counts[k] === 0) return;
+          on.push(`${sp.link ? sp.bone : `${sp.bone}'s fixed segment`} ${o.counts[k]}`);
+          // A link is named, so its segment is the link as the bones declare it; the head's span is written out, as the tail's mesh writes it.
+          segments.push(sp.link ? sp.bone : [sp.bone, sp.a, sp.b]);
+          if (sp.link) links.push(sp.bone);
+        });
+        said.push(`${o.over} of its ${o.total} px lie over ${tail.part}'s art, nearest ${tail.part}'s spans ${on.join(', ')} px`);
+      }
+      if (links.length === 0) return false;
+      const [g, r] = gridR(q);
+      delete regions[q.name];
+      meshes[q.name] = { grid: g, r, segments };
+      notes.push(
+        `${q.name} (${q.from}): wraps a tail config.cloth."back hair" drafts — ${said.join('; ')} — so its mesh's segments are those spans and it rides the links ${links.join(', ')} with the tail, not head; no ${tag} bone, pendant or strand chain is drafted for it (issue #391)`,
+      );
+      return true;
+    };
     for (const q of cands.slice(1)) {
+      if (rides(q)) continue;
       regions[q.name] = 'head';
       notes.push(`${q.name} (${q.from}): second ${tag} layer, rigid on head`);
       // A region cannot swing, so strands found on it are only said.
@@ -1735,6 +1781,7 @@ export function proposeWithBasis(
       if (strands.length > 0) notes.push(strandNote(q, strands, [], strands, 'it rides the head as a region'));
     }
     for (const p of cands.slice(0, 1)) {
+      if (rides(p)) continue;
       const [g, r] = gridR(p);
       const fullMask = dilate(P.alpha(p), 7);
       const onArt = (pts: ReadonlyArray<readonly [number, number]>): boolean => pts.every((q) => isOn(fullMask, q[0], q[1]));

@@ -234,13 +234,13 @@
  "seam_mean": 0.138,
  "seam_px_over_40": 7,
  "seam_px_over_80": 0,
- "seam_frame_scale": 0.959869,
+ "seam_frame_scale": 0.959664,
  "BREATH_VISIBLE": {
   "status": "PASS",
   "torso_parts": [
    "topwear"
   ],
-  "torso_heat_mean": 12.053,
+  "torso_heat_mean": 12.243,
   "torso_floor": 3.809,
   "feet_parts": [
    "foot_r",
@@ -264,14 +264,13 @@
   "box_px": 2576,
   "hole_px": 0,
   "hole_bar": 0,
-  "patch_max": 15,
+  "patch_max": 23,
   "patch_px_over_40": 0
  },
  "CHAIN_LAG": {
   "status": "PASS",
   "chains": [
    "neck > head_ctl: period 3.333s, phase 0.080 0.120, amp 0.350 0.900",
-   "hairpin_tassel0_ctl > hairpin_tassel1_ctl: period 1.667s, phase 0.200 0.320, amp 4.000 7.000",
    "sleeve_r0 > sleeve_r1: period 3.333s, phase 0.220 0.300, amp 0.200 0.600",
    "sleeve_l0 > sleeve_l1: period 3.333s, phase 0.770 0.850, amp 0.200 0.600",
    "robe_r0_ctl > robe_r1_ctl > robe_r2_ctl > robe_r3_ctl: period 3.333s, phase 0.250 0.320 0.390 0.460, amp 0.120 0.300 0.600 1.100",
@@ -279,7 +278,6 @@
   ],
   "lags": [
    "neck > head_ctl +0.040",
-   "hairpin_tassel0_ctl > hairpin_tassel1_ctl +0.120",
    "sleeve_r0 > sleeve_r1 +0.080",
    "sleeve_l0 > sleeve_l1 +0.080",
    "robe_r0_ctl > robe_r1_ctl +0.070",
@@ -291,9 +289,7 @@
   ],
   "min_step": 0.04,
   "step_floor": 0.001,
-  "other_period": [
-   "head_ctl > hairpin_tassel0_ctl"
-  ],
+  "other_period": [],
   "unread": [],
   "first_violation": null
  },
@@ -417,11 +413,11 @@
    {
     "slot": "hairpin",
     "triangles": 182,
-    "max_ratio": 1.144,
-    "max_at": "triangle 108 (vertices 124 127 73), edge 127-73, idle frame 10",
-    "min_ratio": 0.875,
-    "min_at": "triangle 108 (vertices 124 127 73), edge 127-73, idle frame 0",
-    "severity": 1.144
+    "max_ratio": 1.158,
+    "max_at": "triangle 112 (vertices 41 40 42), edge 40-42, idle frame 5",
+    "min_ratio": 0.773,
+    "min_at": "triangle 46 (vertices 13 111 14), edge 14-13, idle frame 5",
+    "severity": 1.294
    },
    {
     "slot": "neck",

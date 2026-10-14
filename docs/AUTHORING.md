@@ -1620,6 +1620,25 @@ to 0.258 of its weight on the trees; and `check`'s `BREATH_VISIBLE`, which reads
 3.809, where the same dress with the robe chains read 3.9 — the half on the trees has
 no idle key. Neither is barred here; both are the dress's to weigh before declaring it.
 
+**What rides a tail** (issue #391). An accessory wrapped round a tail the `back hair`
+recipe drafts — a ribbon, in See-through's `headwear` or `earwear` layer — rides that
+tail's links, not `head`: under the recipe the tail moves by the world, and a part left on
+`head` stays where the tail was. Which links is read off the overlap, never off the
+part's name: each of the part's pixels over the tail's art is given to the span of the
+back hair's mesh nearest it (its fixed segment on `head`, or one tree link, the distance
+the weights read), and the part rides when one of those spans is a link. Its mesh's
+segments are then the spans it lies on — each link by name, the head's span written
+out — so every vertex weights by the rule the tail's own art does, the pixels off the
+tail (a ribbon's loops) included; no accessory bone, pendant or strand chain is drafted
+for it, and a note names each span with its pixel count. A part over no link keeps the
+accessory rule. It is part of the recipe's drafting, not a field: the rule reads only
+the art, and without the recipe no tail moves by the world and nothing here runs. On
+`wind` (rig-c 2.54.0, `rigc render --environment`, idle frame 200 of 200 at 60 fps,
+0.916 px per rig px), the ribbon pixels painted over the tail that are drawn where the
+tail has no hair went from 2,429 at calm and 8,363 at wind (10, 0) to 30 and 230; the
+230 all lie within 3.6 px of the hair's edge, where the ribbon's mesh and the hair's are
+two different lattices.
+
 **Every spring is stable at its step (A23's inequality).** Per step spine-core does
 `v += −strength·x·step·massInverse`, `x += v·step`, `v *= d` with d = damping^(60·step);
 in (x, v·step) that is the matrix [[1 − k, 1], [−d·k, d]] with

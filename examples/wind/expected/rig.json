@@ -177,36 +177,6 @@
    "y": -38
   },
   {
-   "name": "hairpin",
-   "parent": "head",
-   "x": 126,
-   "y": -96
-  },
-  {
-   "name": "hairpin_tassel0_ctl",
-   "parent": "hairpin",
-   "x": 4,
-   "y": -267
-  },
-  {
-   "name": "hairpin_tassel0",
-   "parent": "hairpin_tassel0_ctl",
-   "x": 0,
-   "y": 0
-  },
-  {
-   "name": "hairpin_tassel1_ctl",
-   "parent": "hairpin_tassel0",
-   "x": 0,
-   "y": -10
-  },
-  {
-   "name": "hairpin_tassel1",
-   "parent": "hairpin_tassel1_ctl",
-   "x": 0,
-   "y": 0
-  },
-  {
    "name": "sleeve_r0",
    "parent": "chest",
    "x": -76,
@@ -499,7 +469,7 @@
   },
   {
    "name": "hairpin",
-   "bone": "hairpin",
+   "bone": "head",
    "attachment": "hairpin"
   },
   {
@@ -7120,2528 +7090,2978 @@
      "weights": [
       [
        {
-        "bone": "hairpin",
-        "x": -230,
-        "y": 272,
-        "weight": 0.69113
+        "bone": "head",
+        "x": -104,
+        "y": 176,
+        "weight": 0.50247
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -234,
-        "y": 539,
-        "weight": 0.15677
+        "bone": "hairback_r0_0",
+        "x": 19,
+        "y": 126,
+        "weight": 0.36211
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -234,
-        "y": 549,
-        "weight": 0.1521
+        "bone": "hairback_l0_0",
+        "x": -223,
+        "y": 126,
+        "weight": 0.09992
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": 65,
+        "y": 435,
+        "weight": 0.0355
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -194,
-        "y": 272,
-        "weight": 0.68161
+        "bone": "head",
+        "x": -68,
+        "y": 176,
+        "weight": 0.69217
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -198,
-        "y": 539,
-        "weight": 0.16171
+        "bone": "hairback_r0_0",
+        "x": 55,
+        "y": 126,
+        "weight": 0.21957
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -198,
-        "y": 549,
-        "weight": 0.15668
+        "bone": "hairback_l0_0",
+        "x": -187,
+        "y": 126,
+        "weight": 0.08826
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -158,
-        "y": 272,
-        "weight": 0.67321
+        "bone": "head",
+        "x": -32,
+        "y": 176,
+        "weight": 0.86369
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -162,
-        "y": 539,
-        "weight": 0.16608
+        "bone": "hairback_r0_0",
+        "x": 91,
+        "y": 126,
+        "weight": 0.0827
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -162,
-        "y": 549,
-        "weight": 0.16071
+        "bone": "hairback_l0_0",
+        "x": -151,
+        "y": 126,
+        "weight": 0.05361
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -122,
-        "y": 272,
-        "weight": 0.66616
+        "bone": "head",
+        "x": 4,
+        "y": 176,
+        "weight": 0.93484
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -126,
-        "y": 539,
-        "weight": 0.16976
+        "bone": "hairback_l0_0",
+        "x": -115,
+        "y": 126,
+        "weight": 0.034
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -126,
-        "y": 549,
-        "weight": 0.16408
+        "bone": "hairback_r0_0",
+        "x": 127,
+        "y": 126,
+        "weight": 0.03116
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -86,
-        "y": 272,
-        "weight": 0.66066
+        "bone": "head",
+        "x": 40,
+        "y": 176,
+        "weight": 0.82913
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -90,
-        "y": 539,
-        "weight": 0.17262
+        "bone": "hairback_l0_0",
+        "x": -79,
+        "y": 126,
+        "weight": 0.11033
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -90,
-        "y": 549,
-        "weight": 0.16672
+        "bone": "hairback_r0_0",
+        "x": 163,
+        "y": 126,
+        "weight": 0.06054
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -50,
-        "y": 272,
-        "weight": 0.6569
+        "bone": "head",
+        "x": 76,
+        "y": 176,
+        "weight": 0.64991
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -54,
-        "y": 539,
-        "weight": 0.17459
+        "bone": "hairback_l0_0",
+        "x": -43,
+        "y": 126,
+        "weight": 0.2594
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -54,
-        "y": 549,
-        "weight": 0.16851
+        "bone": "hairback_r0_0",
+        "x": 199,
+        "y": 126,
+        "weight": 0.09069
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -14,
-        "y": 272,
-        "weight": 0.65498
+        "bone": "head",
+        "x": 112,
+        "y": 176,
+        "weight": 0.47145
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": 539,
-        "weight": 0.17559
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": 126,
+        "weight": 0.39214
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 549,
-        "weight": 0.16943
+        "bone": "hairback_r0_0",
+        "x": 235,
+        "y": 126,
+        "weight": 0.09855
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": -62,
+        "y": 435,
+        "weight": 0.03786
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -14,
-        "y": 236,
-        "weight": 0.68483
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": 90,
+        "weight": 0.52462
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": 503,
-        "weight": 0.16059
+        "bone": "head",
+        "x": 112,
+        "y": 140,
+        "weight": 0.36046
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 513,
-        "weight": 0.15458
+        "bone": "hairback_r0_0",
+        "x": 235,
+        "y": 90,
+        "weight": 0.08177
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": -62,
+        "y": 399,
+        "weight": 0.03315
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -14,
-        "y": 200,
-        "weight": 0.71975
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": 54,
+        "weight": 0.72855
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": 467,
-        "weight": 0.143
+        "bone": "head",
+        "x": 112,
+        "y": 104,
+        "weight": 0.21788
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 477,
-        "weight": 0.13725
+        "bone": "hairback_r0_0",
+        "x": 235,
+        "y": 54,
+        "weight": 0.05357
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -14,
-        "y": 164,
-        "weight": 0.76066
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": 18,
+        "weight": 0.93197
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": 431,
-        "weight": 0.12232
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 441,
-        "weight": 0.11702
+        "bone": "head",
+        "x": 112,
+        "y": 68,
+        "weight": 0.06803
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 22,
-        "y": 164,
-        "weight": 0.75767
+        "bone": "hairback_l0_0",
+        "x": 29,
+        "y": 18,
+        "weight": 0.91671
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": 431,
-        "weight": 0.12385
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": 441,
-        "weight": 0.11848
+        "bone": "head",
+        "x": 148,
+        "y": 68,
+        "weight": 0.08329
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 22,
-        "y": 200,
-        "weight": 0.71748
+        "bone": "hairback_l0_0",
+        "x": 29,
+        "y": 54,
+        "weight": 0.7529
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": 467,
-        "weight": 0.14415
+        "bone": "head",
+        "x": 148,
+        "y": 104,
+        "weight": 0.16495
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": 477,
-        "weight": 0.13837
+        "bone": "hairback_r0_0",
+        "x": 271,
+        "y": 54,
+        "weight": 0.05164
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": -26,
+        "y": 363,
+        "weight": 0.03051
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 58,
-        "y": 200,
-        "weight": 0.73028
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": 54,
+        "weight": 0.7082
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": 467,
-        "weight": 0.13759
+        "bone": "head",
+        "x": 184,
+        "y": 104,
+        "weight": 0.17707
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": 477,
-        "weight": 0.13213
+        "bone": "hairback_r0_0",
+        "x": 307,
+        "y": 54,
+        "weight": 0.06569
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": 363,
+        "weight": 0.04904
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 58,
-        "y": 164,
-        "weight": 0.7695
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": 18,
+        "weight": 0.77217
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": 431,
-        "weight": 0.11777
+        "bone": "head",
+        "x": 184,
+        "y": 68,
+        "weight": 0.13254
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": 441,
-        "weight": 0.11273
+        "bone": "hairback_r0_0",
+        "x": 307,
+        "y": 18,
+        "weight": 0.05046
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": 327,
+        "weight": 0.04483
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 94,
-        "y": 164,
-        "weight": 0.78937
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": 18,
+        "weight": 0.67456
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 90,
-        "y": 431,
-        "weight": 0.10756
+        "bone": "head",
+        "x": 220,
+        "y": 68,
+        "weight": 0.1689
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 90,
-        "y": 441,
-        "weight": 0.10307
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": 327,
+        "weight": 0.07827
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": 327,
+        "weight": 0.07827
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 94,
-        "y": 128,
-        "weight": 0.83742
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": -18,
+        "weight": 0.67448
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 90,
-        "y": 395,
-        "weight": 0.08316
+        "bone": "head",
+        "x": 220,
+        "y": 32,
+        "weight": 0.15125
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 90,
-        "y": 405,
-        "weight": 0.07942
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": 291,
+        "weight": 0.08713
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": 291,
+        "weight": 0.08714
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 94,
-        "y": 92,
-        "weight": 0.88984
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": -54,
+        "weight": 0.66989
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 90,
-        "y": 359,
-        "weight": 0.05645
+        "bone": "head",
+        "x": 220,
+        "y": -4,
+        "weight": 0.13363
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 90,
-        "y": 369,
-        "weight": 0.05371
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": 255,
+        "weight": 0.09824
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": 255,
+        "weight": 0.09824
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 94,
-        "y": 56,
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": -90,
+        "weight": 0.66117
+       },
+       {
+        "bone": "head",
+        "x": 220,
+        "y": -40,
+        "weight": 0.11305
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": 219,
+        "weight": 0.11289
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": 219,
+        "weight": 0.11289
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": 124,
+        "y": -90,
+        "weight": 0.58566
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 69,
+        "y": 219,
+        "weight": 0.14404
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 69,
+        "y": 219,
+        "weight": 0.14404
+       },
+       {
+        "bone": "head",
+        "x": 243,
+        "y": -40,
+        "weight": 0.12626
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": 124,
+        "y": -126,
+        "weight": 0.56229
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 69,
+        "y": 183,
+        "weight": 0.1677
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 69,
+        "y": 183,
+        "weight": 0.1677
+       },
+       {
+        "bone": "head",
+        "x": 243,
+        "y": -76,
+        "weight": 0.10231
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": 124,
+        "y": -162,
+        "weight": 0.52663
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 69,
+        "y": 147,
+        "weight": 0.19772
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 69,
+        "y": 147,
+        "weight": 0.19772
+       },
+       {
+        "bone": "head",
+        "x": 243,
+        "y": -112,
+        "weight": 0.07793
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": 124,
+        "y": -198,
+        "weight": 0.47518
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 69,
+        "y": 111,
+        "weight": 0.23465
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 69,
+        "y": 111,
+        "weight": 0.23465
+       },
+       {
+        "bone": "head",
+        "x": 243,
+        "y": -148,
+        "weight": 0.05552
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": 124,
+        "y": -234,
+        "weight": 0.40969
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 69,
+        "y": 75,
+        "weight": 0.27667
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 69,
+        "y": 75,
+        "weight": 0.27667
+       },
+       {
+        "bone": "head",
+        "x": 243,
+        "y": -184,
+        "weight": 0.03697
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": 124,
+        "y": -270,
+        "weight": 0.35538
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 69,
+        "y": 39,
+        "weight": 0.32231
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 69,
+        "y": 39,
+        "weight": 0.32231
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": 124,
+        "y": -306,
+        "weight": 0.33333
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 69,
+        "y": 3,
+        "weight": 0.33333
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 69,
+        "y": 3,
+        "weight": 0.33334
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": -306,
+        "weight": 0.33333
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": 3,
+        "weight": 0.33333
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": 3,
+        "weight": 0.33334
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": -33,
+        "weight": 0.34994
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": -33,
+        "weight": 0.33611
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": -342,
+        "weight": 0.31395
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": -69,
+        "weight": 0.39672
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": -69,
+        "weight": 0.35866
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": -378,
+        "weight": 0.24462
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": -105,
+        "weight": 0.43427
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": -105,
+        "weight": 0.37476
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": -414,
+        "weight": 0.19097
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": -105,
+        "weight": 0.5143
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": -105,
+        "weight": 0.39308
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -414,
+        "weight": 0.09262
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": -131,
+        "weight": 0.52677
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": -131,
+        "weight": 0.39146
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -440,
+        "weight": 0.08177
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0b_0",
+        "x": -26,
+        "y": -131,
+        "weight": 0.67416
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": -26,
+        "y": -131,
+        "weight": 0.32584
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0a_0",
+        "x": -62,
+        "y": -131,
+        "weight": 0.64426
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": -62,
+        "y": -131,
+        "weight": 0.35574
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0a_0",
+        "x": -62,
+        "y": -105,
+        "weight": 0.57136
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": -62,
+        "y": -105,
+        "weight": 0.38077
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": -414,
+        "weight": 0.04787
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0a_0",
+        "x": -62,
+        "y": -69,
+        "weight": 0.49523
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": -62,
+        "y": -69,
+        "weight": 0.39254
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": -378,
+        "weight": 0.11223
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0a_0",
+        "x": -26,
+        "y": -69,
+        "weight": 0.63581
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": -26,
+        "y": -69,
+        "weight": 0.36419
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0a_0",
+        "x": -26,
+        "y": -33,
+        "weight": 0.4806
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": -26,
+        "y": -33,
+        "weight": 0.39586
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": 29,
+        "y": -342,
+        "weight": 0.12354
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0a_0",
+        "x": -62,
+        "y": -33,
+        "weight": 0.41032
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": -62,
+        "y": -33,
+        "weight": 0.36577
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": -342,
+        "weight": 0.22391
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0a_0",
+        "x": -62,
+        "y": 3,
+        "weight": 0.33932
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": -306,
+        "weight": 0.3314
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": -62,
+        "y": 3,
+        "weight": 0.32928
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": -270,
+        "weight": 0.4348
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": -62,
+        "y": 39,
+        "weight": 0.26742
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": -62,
+        "y": 39,
+        "weight": 0.26742
+       },
+       {
+        "bone": "head",
+        "x": 112,
+        "y": -220,
+        "weight": 0.03036
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": -234,
+        "weight": 0.58761
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": -62,
+        "y": 75,
+        "weight": 0.1843
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": -62,
+        "y": 75,
+        "weight": 0.1843
+       },
+       {
+        "bone": "head",
+        "x": 112,
+        "y": -184,
+        "weight": 0.04379
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": -198,
+        "weight": 0.71604
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": -62,
+        "y": 111,
+        "weight": 0.11349
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": -62,
+        "y": 111,
+        "weight": 0.11349
+       },
+       {
+        "bone": "head",
+        "x": 112,
+        "y": -148,
+        "weight": 0.05698
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": 29,
+        "y": -198,
         "weight": 1
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 117,
-        "y": 56,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": 117,
-        "y": 20,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": 117,
-        "y": -16,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": 117,
-        "y": -52,
-        "weight": 0.84927
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -198,
+        "weight": 0.80293
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 113,
-        "y": 215,
-        "weight": 0.07792
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": 111,
+        "weight": 0.09853
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 113,
-        "y": 225,
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": 111,
+        "weight": 0.09854
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -162,
+        "weight": 0.80477
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": 147,
+        "weight": 0.0782
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": 147,
+        "weight": 0.0782
+       },
+       {
+        "bone": "head",
+        "x": 184,
+        "y": -112,
+        "weight": 0.03883
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": 29,
+        "y": -162,
+        "weight": 1
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": -162,
+        "weight": 0.79996
+       },
+       {
+        "bone": "head",
+        "x": 112,
+        "y": -112,
+        "weight": 0.06727
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": -62,
+        "y": 147,
+        "weight": 0.06639
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": -62,
+        "y": 147,
+        "weight": 0.06638
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": -126,
+        "weight": 0.85126
+       },
+       {
+        "bone": "head",
+        "x": 112,
+        "y": -76,
         "weight": 0.07281
+       },
+       {
+        "bone": "hairback_l0a_0",
+        "x": -62,
+        "y": 183,
+        "weight": 0.03796
+       },
+       {
+        "bone": "hairback_l0b_0",
+        "x": -62,
+        "y": 183,
+        "weight": 0.03797
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 117,
-        "y": -88,
-        "weight": 0.67642
-       },
-       {
-        "bone": "hairpin_tassel0",
-        "x": 113,
-        "y": 179,
-        "weight": 0.16776
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 113,
-        "y": 189,
-        "weight": 0.15582
+        "bone": "hairback_l0_0",
+        "x": 29,
+        "y": -126,
+        "weight": 1
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 117,
-        "y": -124,
-        "weight": 0.48119
-       },
-       {
-        "bone": "hairpin_tassel0",
-        "x": 113,
-        "y": 143,
-        "weight": 0.26964
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 113,
-        "y": 153,
-        "weight": 0.24917
+        "bone": "hairback_l0_0",
+        "x": 29,
+        "y": -90,
+        "weight": 1
        }
       ],
       [
        {
-        "bone": "hairpin_tassel0",
-        "x": 113,
-        "y": 107,
-        "weight": 0.35753
+        "bone": "hairback_l0_0",
+        "x": 29,
+        "y": -54,
+        "weight": 0.95812
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 113,
-        "y": 117,
-        "weight": 0.32976
-       },
-       {
-        "bone": "hairpin",
-        "x": 117,
-        "y": -160,
-        "weight": 0.31271
+        "bone": "head",
+        "x": 148,
+        "y": -4,
+        "weight": 0.04188
        }
       ],
       [
        {
-        "bone": "hairpin_tassel0",
-        "x": 90,
-        "y": 107,
-        "weight": 0.3737
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": -54,
+        "weight": 0.94261
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 90,
-        "y": 117,
-        "weight": 0.33874
-       },
-       {
-        "bone": "hairpin",
-        "x": 94,
-        "y": -160,
-        "weight": 0.28756
+        "bone": "head",
+        "x": 112,
+        "y": -4,
+        "weight": 0.05739
        }
       ],
       [
        {
-        "bone": "hairpin_tassel0",
-        "x": 90,
-        "y": 71,
-        "weight": 0.43783
+        "bone": "hairback_l0_0",
+        "x": -7,
+        "y": -18,
+        "weight": 0.96256
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 90,
-        "y": 81,
+        "bone": "head",
+        "x": 112,
+        "y": 32,
+        "weight": 0.03744
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": -43,
+        "y": -18,
+        "weight": 0.6574
+       },
+       {
+        "bone": "head",
+        "x": 76,
+        "y": 32,
+        "weight": 0.29047
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": 199,
+        "y": -18,
+        "weight": 0.05213
+       }
+      ],
+      [
+       {
+        "bone": "hairback_l0_0",
+        "x": -43,
+        "y": 18,
+        "weight": 0.64904
+       },
+       {
+        "bone": "head",
+        "x": 76,
+        "y": 68,
+        "weight": 0.29756
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": 199,
+        "y": 18,
+        "weight": 0.0534
+       }
+      ],
+      [
+       {
+        "bone": "head",
+        "x": 40,
+        "y": 68,
+        "weight": 0.703
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -79,
+        "y": 18,
+        "weight": 0.23063
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": 163,
+        "y": 18,
+        "weight": 0.06637
+       }
+      ],
+      [
+       {
+        "bone": "head",
+        "x": 40,
+        "y": 104,
+        "weight": 0.74982
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -79,
+        "y": 54,
+        "weight": 0.18512
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": 163,
+        "y": 54,
+        "weight": 0.06506
+       }
+      ],
+      [
+       {
+        "bone": "head",
+        "x": 40,
+        "y": 140,
+        "weight": 0.8056
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -79,
+        "y": 90,
+        "weight": 0.1342
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": 163,
+        "y": 90,
+        "weight": 0.0602
+       }
+      ],
+      [
+       {
+        "bone": "head",
+        "x": 4,
+        "y": 140,
+        "weight": 1
+       }
+      ],
+      [
+       {
+        "bone": "head",
+        "x": -32,
+        "y": 140,
+        "weight": 0.85563
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": 91,
+        "y": 90,
+        "weight": 0.09244
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -151,
+        "y": 90,
+        "weight": 0.05193
+       }
+      ],
+      [
+       {
+        "bone": "head",
+        "x": -32,
+        "y": 104,
+        "weight": 0.81755
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": 91,
+        "y": 54,
+        "weight": 0.12373
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -151,
+        "y": 54,
+        "weight": 0.05872
+       }
+      ],
+      [
+       {
+        "bone": "head",
+        "x": -68,
+        "y": 104,
+        "weight": 0.5078
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": 55,
+        "y": 54,
+        "weight": 0.41261
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -187,
+        "y": 54,
+        "weight": 0.07959
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": 55,
+        "y": 18,
+        "weight": 0.52636
+       },
+       {
+        "bone": "head",
+        "x": -68,
+        "y": 68,
+        "weight": 0.40572
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -187,
+        "y": 18,
+        "weight": 0.06792
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": 55,
+        "y": -18,
+        "weight": 0.532
+       },
+       {
+        "bone": "head",
+        "x": -68,
+        "y": 32,
+        "weight": 0.4009
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -187,
+        "y": -18,
+        "weight": 0.0671
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": 55,
+        "y": -54,
+        "weight": 0.4819
+       },
+       {
+        "bone": "head",
+        "x": -68,
+        "y": -4,
+        "weight": 0.41736
+       },
+       {
+        "bone": "hairback_l0_0",
+        "x": -187,
+        "y": -54,
+        "weight": 0.06628
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": 101,
+        "y": 255,
+        "weight": 0.03446
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": 19,
+        "y": -54,
+        "weight": 0.89055
+       },
+       {
+        "bone": "head",
+        "x": -104,
+        "y": -4,
+        "weight": 0.10945
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": 19,
+        "y": -18,
+        "weight": 0.91425
+       },
+       {
+        "bone": "head",
+        "x": -104,
+        "y": 32,
+        "weight": 0.08575
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": -18,
+        "weight": 0.96581
+       },
+       {
+        "bone": "head",
+        "x": -140,
+        "y": 32,
+        "weight": 0.03419
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": -54,
+        "weight": 1
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": -90,
+        "weight": 1
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": -126,
+        "weight": 1
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": -162,
+        "weight": 1
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -162,
+        "weight": 0.84579
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": 147,
+        "weight": 0.06105
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": 147,
+        "weight": 0.06105
+       },
+       {
+        "bone": "head",
+        "x": -176,
+        "y": -112,
+        "weight": 0.03211
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -198,
+        "weight": 0.84471
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": 111,
+        "weight": 0.07765
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": 111,
+        "weight": 0.07764
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": -198,
+        "weight": 0.91842
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": 29,
+        "y": 111,
+        "weight": 0.04079
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": 29,
+        "y": 111,
+        "weight": 0.04079
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": -234,
+        "weight": 0.81033
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": 29,
+        "y": 75,
+        "weight": 0.09484
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": 29,
+        "y": 75,
+        "weight": 0.09483
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": -270,
+        "weight": 0.58419
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": 29,
+        "y": 39,
+        "weight": 0.2079
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": 29,
+        "y": 39,
+        "weight": 0.20791
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": -306,
+        "weight": 0.34154
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": 29,
+        "y": 3,
+        "weight": 0.33077
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": 29,
+        "y": 3,
+        "weight": 0.32769
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0b_0",
+        "x": 29,
+        "y": -33,
+        "weight": 0.45546
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": 29,
+        "y": -33,
+        "weight": 0.37526
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": -342,
+        "weight": 0.16928
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0b_0",
+        "x": 29,
+        "y": -69,
+        "weight": 0.57735
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": 29,
+        "y": -69,
+        "weight": 0.36692
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": -378,
+        "weight": 0.05573
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0b_0",
+        "x": 29,
+        "y": -105,
+        "weight": 0.70069
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": 29,
+        "y": -105,
+        "weight": 0.29931
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0b_0",
+        "x": 29,
+        "y": -131,
+        "weight": 0.74499
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": 29,
+        "y": -131,
+        "weight": 0.25501
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": -131,
+        "weight": 0.60919
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": -131,
+        "weight": 0.34843
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -440,
+        "weight": 0.04238
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": -105,
+        "weight": 0.59009
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": -105,
+        "weight": 0.35916
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -414,
+        "weight": 0.05075
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": -105,
+        "weight": 0.47928
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": -105,
+        "weight": 0.37444
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": -414,
+        "weight": 0.14628
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": -69,
+        "weight": 0.43113
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": -69,
+        "weight": 0.36388
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": -378,
+        "weight": 0.20499
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": -33,
+        "weight": 0.36707
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": -33,
+        "weight": 0.33985
+       },
+       {
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": -342,
+        "weight": 0.29308
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": -306,
+        "weight": 0.33333
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": 3,
+        "weight": 0.33333
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": 3,
+        "weight": 0.33334
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -125,
+        "y": -306,
+        "weight": 0.33333
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": -79,
+        "y": 3,
+        "weight": 0.33333
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": -79,
+        "y": 3,
+        "weight": 0.33334
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -125,
+        "y": -270,
+        "weight": 0.35216
+       },
+       {
+        "bone": "hairback_r0a_0",
+        "x": -79,
+        "y": 39,
+        "weight": 0.32392
+       },
+       {
+        "bone": "hairback_r0b_0",
+        "x": -79,
+        "y": 39,
+        "weight": 0.32392
+       }
+      ],
+      [
+       {
+        "bone": "hairback_r0_0",
+        "x": -125,
+        "y": -234,
         "weight": 0.39732
        },
        {
-        "bone": "hairpin",
-        "x": 94,
-        "y": -196,
-        "weight": 0.16485
-       }
-      ],
-      [
-       {
-        "bone": "hairpin_tassel0",
-        "x": 90,
-        "y": 35,
-        "weight": 0.46802
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 90,
-        "y": 45,
-        "weight": 0.43575
-       },
-       {
-        "bone": "hairpin",
-        "x": 94,
-        "y": -232,
-        "weight": 0.09623
-       }
-      ],
-      [
-       {
-        "bone": "hairpin_tassel0",
-        "x": 90,
-        "y": -1,
-        "weight": 0.46919
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 90,
-        "y": 9,
-        "weight": 0.46521
-       },
-       {
-        "bone": "hairpin",
-        "x": 94,
-        "y": -268,
-        "weight": 0.0656
-       }
-      ],
-      [
-       {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": -1,
-        "weight": 0.48941
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": 9,
-        "weight": 0.47901
-       },
-       {
-        "bone": "hairpin",
-        "x": 58,
-        "y": -268,
-        "weight": 0.03158
-       }
-      ],
-      [
-       {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": -17,
-        "weight": 0.51691
-       },
-       {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": -27,
-        "weight": 0.48309
-       }
-      ],
-      [
-       {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": -17,
-        "weight": 0.58219
-       },
-       {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": -27,
-        "weight": 0.41781
-       }
-      ],
-      [
-       {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": -17,
-        "weight": 0.58219
-       },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": -27,
-        "weight": 0.41781
-       }
-      ],
-      [
-       {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": -1,
-        "weight": 0.53116
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 9,
-        "weight": 0.46884
-       }
-      ],
-      [
-       {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": 35,
-        "weight": 0.55876
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 45,
-        "weight": 0.40988
-       },
-       {
-        "bone": "hairpin",
-        "x": -14,
-        "y": -232,
-        "weight": 0.03136
-       }
-      ],
-      [
-       {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": 35,
-        "weight": 0.55887
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": 45,
-        "weight": 0.40995
-       },
-       {
-        "bone": "hairpin",
-        "x": 22,
-        "y": -232,
-        "weight": 0.03118
-       }
-      ],
-      [
-       {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": 71,
-        "weight": 0.49569
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": 81,
-        "weight": 0.40212
-       },
-       {
-        "bone": "hairpin",
-        "x": 22,
-        "y": -196,
-        "weight": 0.10219
-       }
-      ],
-      [
-       {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": 71,
-        "weight": 0.49526
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 81,
-        "weight": 0.40178
-       },
-       {
-        "bone": "hairpin",
-        "x": -14,
-        "y": -196,
-        "weight": 0.10296
-       }
-      ],
-      [
-       {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": 107,
-        "weight": 0.40472
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 117,
-        "weight": 0.34702
-       },
-       {
-        "bone": "hairpin",
-        "x": -14,
-        "y": -160,
-        "weight": 0.24826
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -14,
-        "y": -124,
-        "weight": 0.47458
-       },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": 143,
-        "weight": 0.27859
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 153,
-        "weight": 0.24683
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -14,
-        "y": -88,
-        "weight": 0.72766
+        "bone": "hairback_r0a_0",
+        "x": -79,
+        "y": 75,
+        "weight": 0.28078
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": 179,
-        "weight": 0.14295
+        "bone": "hairback_r0b_0",
+        "x": -79,
+        "y": 75,
+        "weight": 0.28078
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 189,
-        "weight": 0.12939
+        "bone": "head",
+        "x": -248,
+        "y": -184,
+        "weight": 0.04112
        }
       ],
       [
-       {
-        "bone": "hairpin",
-        "x": -14,
-        "y": -52,
-        "weight": 0.91192
-       },
        {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": 215,
-        "weight": 0.0459
+        "bone": "hairback_r0_0",
+        "x": -125,
+        "y": -198,
+        "weight": 0.45916
        },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 225,
-        "weight": 0.04218
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": 22,
-        "y": -52,
-        "weight": 0.90639
+        "bone": "hairback_r0a_0",
+        "x": -79,
+        "y": 111,
+        "weight": 0.24061
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": 215,
-        "weight": 0.04879
+        "bone": "hairback_r0b_0",
+        "x": -79,
+        "y": 111,
+        "weight": 0.24061
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": 225,
-        "weight": 0.04482
+        "bone": "head",
+        "x": -248,
+        "y": -148,
+        "weight": 0.05962
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 58,
-        "y": -52,
-        "weight": 0.88061
+        "bone": "hairback_r0_0",
+        "x": -125,
+        "y": -162,
+        "weight": 0.51115
        },
-       {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": 215,
-        "weight": 0.0621
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": 225,
-        "weight": 0.05729
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": 58,
-        "y": -16,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": 22,
-        "y": -16,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -14,
-        "y": -16,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -14,
-        "y": 20,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": 22,
-        "y": 20,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": 22,
-        "y": 56,
-        "weight": 0.91255
+        "bone": "hairback_r0a_0",
+        "x": -79,
+        "y": 147,
+        "weight": 0.20358
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": 323,
-        "weight": 0.045
+        "bone": "hairback_r0b_0",
+        "x": -79,
+        "y": 147,
+        "weight": 0.20358
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": 333,
-        "weight": 0.04245
+        "bone": "head",
+        "x": -248,
+        "y": -112,
+        "weight": 0.08169
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 22,
-        "y": 92,
-        "weight": 0.85695
+        "bone": "hairback_r0_0",
+        "x": -125,
+        "y": -126,
+        "weight": 0.54963
        },
-       {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": 359,
-        "weight": 0.07341
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": 369,
-        "weight": 0.06964
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -14,
-        "y": 92,
-        "weight": 0.86272
+        "bone": "hairback_r0a_0",
+        "x": -79,
+        "y": 183,
+        "weight": 0.17255
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": 359,
-        "weight": 0.07044
+        "bone": "hairback_r0b_0",
+        "x": -79,
+        "y": 183,
+        "weight": 0.17255
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 369,
-        "weight": 0.06684
+        "bone": "head",
+        "x": -248,
+        "y": -76,
+        "weight": 0.10527
        }
       ],
       [
-       {
-        "bone": "hairpin",
-        "x": -14,
-        "y": 128,
-        "weight": 0.80834
-       },
        {
-        "bone": "hairpin_tassel0",
-        "x": -18,
-        "y": 395,
-        "weight": 0.09814
+        "bone": "hairback_r0_0",
+        "x": -125,
+        "y": -90,
+        "weight": 0.57675
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -18,
-        "y": 405,
-        "weight": 0.09352
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -50,
-        "y": 128,
-        "weight": 0.81072
+        "bone": "hairback_r0a_0",
+        "x": -79,
+        "y": 219,
+        "weight": 0.14765
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -54,
-        "y": 395,
-        "weight": 0.09688
+        "bone": "hairback_r0b_0",
+        "x": -79,
+        "y": 219,
+        "weight": 0.14765
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -54,
-        "y": 405,
-        "weight": 0.0924
+        "bone": "head",
+        "x": -248,
+        "y": -40,
+        "weight": 0.12795
        }
       ],
       [
-       {
-        "bone": "hairpin",
-        "x": -50,
-        "y": 164,
-        "weight": 0.76303
-       },
        {
-        "bone": "hairpin_tassel0",
-        "x": -54,
-        "y": 431,
-        "weight": 0.12107
+        "bone": "hairback_r0_0",
+        "x": -125,
+        "y": -54,
+        "weight": 0.59648
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -54,
-        "y": 441,
-        "weight": 0.1159
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -86,
-        "y": 164,
-        "weight": 0.76764
+        "bone": "head",
+        "x": -248,
+        "y": -4,
+        "weight": 0.14724
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -90,
-        "y": 431,
-        "weight": 0.11865
+        "bone": "hairback_r0a_0",
+        "x": -79,
+        "y": 255,
+        "weight": 0.12814
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -90,
-        "y": 441,
-        "weight": 0.11371
+        "bone": "hairback_r0b_0",
+        "x": -79,
+        "y": 255,
+        "weight": 0.12814
        }
       ],
       [
-       {
-        "bone": "hairpin",
-        "x": -86,
-        "y": 200,
-        "weight": 0.7264
-       },
        {
-        "bone": "hairpin_tassel0",
-        "x": -90,
-        "y": 467,
-        "weight": 0.13951
+        "bone": "hairback_r0_0",
+        "x": -125,
+        "y": -18,
+        "weight": 0.61106
        },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -90,
-        "y": 477,
-        "weight": 0.13409
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -86,
-        "y": 236,
-        "weight": 0.69102
+        "bone": "head",
+        "x": -248,
+        "y": 32,
+        "weight": 0.16337
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -90,
-        "y": 503,
-        "weight": 0.15736
+        "bone": "hairback_r0a_0",
+        "x": -79,
+        "y": 291,
+        "weight": 0.11278
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -90,
-        "y": 513,
-        "weight": 0.15162
+        "bone": "hairback_r0b_0",
+        "x": -79,
+        "y": 291,
+        "weight": 0.11279
        }
       ],
       [
-       {
-        "bone": "hairpin",
-        "x": -122,
-        "y": 236,
-        "weight": 0.69696
-       },
        {
-        "bone": "hairpin_tassel0",
-        "x": -126,
-        "y": 503,
-        "weight": 0.15425
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": -18,
+        "weight": 0.71104
        },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -126,
-        "y": 513,
-        "weight": 0.14879
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -158,
-        "y": 236,
-        "weight": 0.70454
+        "bone": "head",
+        "x": -212,
+        "y": 32,
+        "weight": 0.13904
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -162,
-        "y": 503,
-        "weight": 0.1503
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": 291,
+        "weight": 0.07496
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -162,
-        "y": 513,
-        "weight": 0.14516
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": 291,
+        "weight": 0.07496
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -158,
-        "y": 200,
-        "weight": 0.74075
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": 18,
+        "weight": 0.71147
        },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -162,
-        "y": 467,
-        "weight": 0.13201
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -162,
-        "y": 477,
-        "weight": 0.12724
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -194,
-        "y": 200,
-        "weight": 0.75011
+        "bone": "head",
+        "x": -212,
+        "y": 68,
+        "weight": 0.15456
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -198,
-        "y": 467,
-        "weight": 0.12713
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": 327,
+        "weight": 0.06698
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -198,
-        "y": 477,
-        "weight": 0.12276
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": 327,
+        "weight": 0.06699
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -194,
-        "y": 164,
-        "weight": 0.79188
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": 18,
+        "weight": 0.8108
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -198,
-        "y": 431,
-        "weight": 0.10598
+        "bone": "head",
+        "x": -176,
+        "y": 68,
+        "weight": 0.11195
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -198,
-        "y": 441,
-        "weight": 0.10214
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -194,
-        "y": 128,
-        "weight": 0.83877
-       },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -198,
-        "y": 395,
-        "weight": 0.08218
+        "bone": "hairback_l0_0",
+        "x": -295,
+        "y": 18,
+        "weight": 0.04235
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -198,
-        "y": 405,
-        "weight": 0.07905
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": 327,
+        "weight": 0.0349
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -194,
-        "y": 92,
-        "weight": 0.88949
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": 54,
+        "weight": 0.73221
        },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -198,
-        "y": 359,
-        "weight": 0.05639
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -198,
-        "y": 369,
-        "weight": 0.05412
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -230,
-        "y": 92,
-        "weight": 0.89746
+        "bone": "head",
+        "x": -176,
+        "y": 104,
+        "weight": 0.16498
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -234,
-        "y": 359,
-        "weight": 0.05223
+        "bone": "hairback_l0_0",
+        "x": -295,
+        "y": 54,
+        "weight": 0.0607
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -234,
-        "y": 369,
-        "weight": 0.05031
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": 363,
+        "weight": 0.04211
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -230,
-        "y": 128,
-        "weight": 0.84838
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": 54,
+        "weight": 0.78182
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -234,
-        "y": 395,
-        "weight": 0.07718
+        "bone": "head",
+        "x": -140,
+        "y": 104,
+        "weight": 0.16689
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -234,
-        "y": 405,
-        "weight": 0.07444
+        "bone": "hairback_l0_0",
+        "x": -259,
+        "y": 54,
+        "weight": 0.05129
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -266,
-        "y": 128,
-        "weight": 0.85822
+        "bone": "hairback_r0_0",
+        "x": 19,
+        "y": 54,
+        "weight": 0.68685
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -270,
-        "y": 395,
-        "weight": 0.07207
+        "bone": "head",
+        "x": -104,
+        "y": 104,
+        "weight": 0.25315
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -270,
-        "y": 405,
-        "weight": 0.06971
+        "bone": "hairback_l0_0",
+        "x": -223,
+        "y": 54,
+        "weight": 0.06
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -266,
-        "y": 92,
-        "weight": 0.90541
+        "bone": "hairback_r0_0",
+        "x": 19,
+        "y": 90,
+        "weight": 0.48811
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -270,
-        "y": 359,
-        "weight": 0.04811
+        "bone": "head",
+        "x": -104,
+        "y": 140,
+        "weight": 0.39451
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -270,
-        "y": 369,
-        "weight": 0.04648
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -266,
-        "y": 56,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -266,
-        "y": 20,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -266,
-        "y": -16,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -302,
-        "y": -16,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -302,
-        "y": -52,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -266,
-        "y": -52,
-        "weight": 0.9363
+        "bone": "hairback_l0_0",
+        "x": -223,
+        "y": 90,
+        "weight": 0.0856
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -270,
-        "y": 215,
-        "weight": 0.0324
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -270,
-        "y": 225,
-        "weight": 0.0313
+        "bone": "hairback_r0a_0",
+        "x": 65,
+        "y": 399,
+        "weight": 0.03178
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -266,
-        "y": -88,
-        "weight": 0.84624
+        "bone": "head",
+        "x": -68,
+        "y": 140,
+        "weight": 0.61967
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -270,
-        "y": 179,
-        "weight": 0.07815
+        "bone": "hairback_r0_0",
+        "x": 55,
+        "y": 90,
+        "weight": 0.29412
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -270,
-        "y": 189,
-        "weight": 0.07561
+        "bone": "hairback_l0_0",
+        "x": -187,
+        "y": 90,
+        "weight": 0.08621
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -266,
-        "y": -124,
-        "weight": 0.72961
+        "bone": "head",
+        "x": 76,
+        "y": 140,
+        "weight": 0.5615
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -270,
-        "y": 143,
-        "weight": 0.13721
+        "bone": "hairback_l0_0",
+        "x": -43,
+        "y": 90,
+        "weight": 0.35315
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -270,
-        "y": 153,
-        "weight": 0.13318
+        "bone": "hairback_r0_0",
+        "x": 199,
+        "y": 90,
+        "weight": 0.08535
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -266,
-        "y": -160,
-        "weight": 0.60661
+        "bone": "hairback_l0_0",
+        "x": -43,
+        "y": 54,
+        "weight": 0.50076
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -270,
-        "y": 107,
-        "weight": 0.19914
+        "bone": "head",
+        "x": 76,
+        "y": 104,
+        "weight": 0.42698
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -270,
-        "y": 117,
-        "weight": 0.19425
+        "bone": "hairback_r0_0",
+        "x": 199,
+        "y": 54,
+        "weight": 0.07226
        }
       ],
       [
-       {
-        "bone": "hairpin",
-        "x": -266,
-        "y": -196,
-        "weight": 0.49516
-       },
        {
-        "bone": "hairpin_tassel0",
-        "x": -270,
-        "y": 71,
-        "weight": 0.25473
+        "bone": "hairback_r0_0",
+        "x": -17,
+        "y": 18,
+        "weight": 0.93827
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -270,
-        "y": 81,
-        "weight": 0.25011
+        "bone": "head",
+        "x": -140,
+        "y": 68,
+        "weight": 0.06173
        }
       ],
       [
-       {
-        "bone": "hairpin",
-        "x": -266,
-        "y": -232,
-        "weight": 0.40466
-       },
        {
-        "bone": "hairpin_tassel0",
-        "x": -270,
-        "y": 35,
-        "weight": 0.29918
+        "bone": "hairback_r0_0",
+        "x": 19,
+        "y": 18,
+        "weight": 0.89309
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -270,
-        "y": 45,
-        "weight": 0.29616
+        "bone": "head",
+        "x": -104,
+        "y": 68,
+        "weight": 0.10691
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -266,
-        "y": -268,
-        "weight": 0.33659
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -18,
+        "weight": 0.83018
        },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -270,
-        "y": -1,
-        "weight": 0.33188
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -270,
-        "y": 9,
-        "weight": 0.33153
-       }
-      ],
-      [
        {
-        "bone": "hairpin_tassel1",
-        "x": -270,
-        "y": -17,
-        "weight": 0.35118
+        "bone": "head",
+        "x": -176,
+        "y": 32,
+        "weight": 0.09547
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -270,
-        "y": -27,
-        "weight": 0.34998
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": 291,
+        "weight": 0.03718
        },
        {
-        "bone": "hairpin",
-        "x": -266,
-        "y": -294,
-        "weight": 0.29884
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": 291,
+        "weight": 0.03717
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -302,
-        "y": -294,
-        "weight": 0.35084
+        "bone": "hairback_l0_0",
+        "x": 29,
+        "y": -18,
+        "weight": 0.94213
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -306,
-        "y": -17,
-        "weight": 0.32502
-       },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -306,
-        "y": -27,
-        "weight": 0.32414
+        "bone": "head",
+        "x": 148,
+        "y": 32,
+        "weight": 0.05787
        }
       ],
       [
-       {
-        "bone": "hairpin",
-        "x": -302,
-        "y": -268,
-        "weight": 0.39156
-       },
        {
-        "bone": "hairpin_tassel0",
-        "x": -306,
-        "y": -1,
-        "weight": 0.30434
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -18,
+        "weight": 0.78867
        },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -306,
-        "y": 9,
-        "weight": 0.3041
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -338,
-        "y": -268,
-        "weight": 0.44319
+        "bone": "head",
+        "x": 184,
+        "y": 32,
+        "weight": 0.11455
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -342,
-        "y": -1,
-        "weight": 0.2785
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": 291,
+        "weight": 0.04839
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -342,
-        "y": 9,
-        "weight": 0.27831
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": 291,
+        "weight": 0.04839
        }
       ],
       [
-       {
-        "bone": "hairpin",
-        "x": -338,
-        "y": -232,
-        "weight": 0.51419
-       },
        {
-        "bone": "hairpin_tassel0",
-        "x": -342,
-        "y": 35,
-        "weight": 0.24369
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": -54,
+        "weight": 0.70577
        },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -342,
-        "y": 45,
-        "weight": 0.24212
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -338,
-        "y": -196,
-        "weight": 0.59988
+        "bone": "head",
+        "x": -212,
+        "y": -4,
+        "weight": 0.12377
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -342,
-        "y": 71,
-        "weight": 0.20125
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": 255,
+        "weight": 0.08523
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -342,
-        "y": 81,
-        "weight": 0.19887
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": 255,
+        "weight": 0.08523
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -338,
-        "y": -160,
-        "weight": 0.69647
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -54,
+        "weight": 0.83761
        },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -342,
-        "y": 107,
-        "weight": 0.15302
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -342,
-        "y": 117,
-        "weight": 0.15051
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -374,
-        "y": -160,
-        "weight": 0.73206
+        "bone": "head",
+        "x": -176,
+        "y": -4,
+        "weight": 0.08117
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -378,
-        "y": 107,
-        "weight": 0.1349
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": 255,
+        "weight": 0.04061
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -378,
-        "y": 117,
-        "weight": 0.13304
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": 255,
+        "weight": 0.04061
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -374,
-        "y": -124,
-        "weight": 0.82076
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -54,
+        "weight": 0.79715
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -378,
-        "y": 143,
-        "weight": 0.0904
+        "bone": "head",
+        "x": 184,
+        "y": -4,
+        "weight": 0.09728
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -378,
-        "y": 153,
-        "weight": 0.08884
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -374,
-        "y": -88,
-        "weight": 0.8991
-       },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -378,
-        "y": 179,
-        "weight": 0.05096
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": 255,
+        "weight": 0.05279
        },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -378,
-        "y": 189,
-        "weight": 0.04994
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -374,
-        "y": -52,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -374,
-        "y": -16,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -374,
-        "y": 20,
-        "weight": 1
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -374,
-        "y": 56,
-        "weight": 1
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": 255,
+        "weight": 0.05278
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -374,
-        "y": 92,
-        "weight": 0.92696
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": -90,
+        "weight": 0.6966
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -378,
-        "y": 359,
-        "weight": 0.03699
+        "bone": "head",
+        "x": -212,
+        "y": -40,
+        "weight": 0.10546
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -378,
-        "y": 369,
-        "weight": 0.03605
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -374,
-        "y": 128,
-        "weight": 0.88641
-       },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -378,
-        "y": 395,
-        "weight": 0.05752
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": 219,
+        "weight": 0.09897
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -378,
-        "y": 405,
-        "weight": 0.05607
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": 219,
+        "weight": 0.09897
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -338,
-        "y": 128,
-        "weight": 0.87749
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -90,
+        "weight": 0.84469
        },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -342,
-        "y": 395,
-        "weight": 0.06211
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -342,
-        "y": 405,
-        "weight": 0.0604
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -338,
-        "y": 164,
-        "weight": 0.83482
+        "bone": "head",
+        "x": -176,
+        "y": -40,
+        "weight": 0.06486
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -342,
-        "y": 431,
-        "weight": 0.08373
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": 219,
+        "weight": 0.04522
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -342,
-        "y": 441,
-        "weight": 0.08145
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": 219,
+        "weight": 0.04523
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -302,
-        "y": 164,
-        "weight": 0.82394
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -90,
+        "weight": 0.80488
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -306,
-        "y": 431,
-        "weight": 0.08935
+        "bone": "head",
+        "x": 184,
+        "y": -40,
+        "weight": 0.07784
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -306,
-        "y": 441,
-        "weight": 0.08671
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -302,
-        "y": 200,
-        "weight": 0.78294
-       },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -306,
-        "y": 467,
-        "weight": 0.11011
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": 219,
+        "weight": 0.05864
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -306,
-        "y": 477,
-        "weight": 0.10695
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": 219,
+        "weight": 0.05864
        }
       ],
       [
-       {
-        "bone": "hairpin",
-        "x": -266,
-        "y": 200,
-        "weight": 0.77152
-       },
        {
-        "bone": "hairpin_tassel0",
-        "x": -270,
-        "y": 467,
-        "weight": 0.11602
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": -126,
+        "weight": 0.68023
        },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -270,
-        "y": 477,
-        "weight": 0.11246
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -230,
-        "y": 200,
-        "weight": 0.76047
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": 183,
+        "weight": 0.11782
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -234,
-        "y": 467,
-        "weight": 0.12175
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": 183,
+        "weight": 0.11782
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -234,
-        "y": 477,
-        "weight": 0.11778
+        "bone": "head",
+        "x": -212,
+        "y": -76,
+        "weight": 0.08413
        }
       ],
       [
-       {
-        "bone": "hairpin",
-        "x": -230,
-        "y": 236,
-        "weight": 0.72354
-       },
        {
-        "bone": "hairpin_tassel0",
-        "x": -234,
-        "y": 503,
-        "weight": 0.14042
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -126,
+        "weight": 0.84921
        },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -234,
-        "y": 513,
-        "weight": 0.13604
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -194,
-        "y": 236,
-        "weight": 0.7135
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": 183,
+        "weight": 0.05166
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -198,
-        "y": 503,
-        "weight": 0.14563
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": 183,
+        "weight": 0.05166
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -198,
-        "y": 513,
-        "weight": 0.14087
+        "bone": "head",
+        "x": -176,
+        "y": -76,
+        "weight": 0.04747
        }
       ],
       [
-       {
-        "bone": "hairpin",
-        "x": -50,
-        "y": 236,
-        "weight": 0.68692
-       },
        {
-        "bone": "hairpin_tassel0",
-        "x": -54,
-        "y": 503,
-        "weight": 0.1595
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -126,
+        "weight": 0.80941
        },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -54,
-        "y": 513,
-        "weight": 0.15358
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -50,
-        "y": 200,
-        "weight": 0.722
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": 183,
+        "weight": 0.06669
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -54,
-        "y": 467,
-        "weight": 0.14182
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": 183,
+        "weight": 0.06669
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -54,
-        "y": 477,
-        "weight": 0.13618
+        "bone": "head",
+        "x": 184,
+        "y": -76,
+        "weight": 0.05721
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -266,
-        "y": 164,
-        "weight": 0.81298
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": -126,
+        "weight": 0.64511
        },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -270,
-        "y": 431,
-        "weight": 0.09502
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -270,
-        "y": 441,
-        "weight": 0.092
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -230,
-        "y": 164,
-        "weight": 0.80219
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": 183,
+        "weight": 0.13262
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -234,
-        "y": 431,
-        "weight": 0.10062
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": 183,
+        "weight": 0.13262
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -234,
-        "y": 441,
-        "weight": 0.09719
+        "bone": "head",
+        "x": 220,
+        "y": -76,
+        "weight": 0.08965
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -302,
-        "y": 128,
-        "weight": 0.868
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": -162,
+        "weight": 0.64937
        },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -306,
-        "y": 395,
-        "weight": 0.06701
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -306,
-        "y": 405,
-        "weight": 0.06499
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": 22,
-        "y": 128,
-        "weight": 0.80426
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": 147,
+        "weight": 0.14396
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": 395,
-        "weight": 0.10022
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": 147,
+        "weight": 0.14396
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": 405,
-        "weight": 0.09552
+        "bone": "head",
+        "x": -212,
+        "y": -112,
+        "weight": 0.06271
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 58,
-        "y": 128,
-        "weight": 0.81496
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": -162,
+        "weight": 0.6149
        },
-       {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": 395,
-        "weight": 0.09471
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": 405,
-        "weight": 0.09033
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -338,
-        "y": 92,
-        "weight": 0.92037
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": 147,
+        "weight": 0.15935
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -342,
-        "y": 359,
-        "weight": 0.04038
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": 147,
+        "weight": 0.15935
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -342,
-        "y": 369,
-        "weight": 0.03925
+        "bone": "head",
+        "x": 220,
+        "y": -112,
+        "weight": 0.0664
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -302,
-        "y": 92,
-        "weight": 0.9131
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": -198,
+        "weight": 0.59507
        },
-       {
-        "bone": "hairpin_tassel0",
-        "x": -306,
-        "y": 359,
-        "weight": 0.04413
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": -306,
-        "y": 369,
-        "weight": 0.04277
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": 58,
-        "y": 92,
-        "weight": 0.86655
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": 111,
+        "weight": 0.18076
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": 359,
-        "weight": 0.06845
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": 111,
+        "weight": 0.18076
        },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": 369,
-        "weight": 0.065
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -338,
-        "y": 56,
-        "weight": 1
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": -302,
-        "y": 56,
-        "weight": 1
+        "bone": "head",
+        "x": -212,
+        "y": -148,
+        "weight": 0.04341
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 58,
-        "y": 56,
-        "weight": 0.92191
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": -198,
+        "weight": 0.56268
        },
-       {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": 323,
-        "weight": 0.04015
-       },
-       {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": 333,
-        "weight": 0.03794
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -338,
-        "y": 20,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -302,
-        "y": 20,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": 58,
-        "y": 20,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": 94,
-        "y": 20,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -338,
-        "y": -16,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": 94,
-        "y": -16,
-        "weight": 1
-       }
-      ],
-      [
-       {
-        "bone": "hairpin",
-        "x": -338,
-        "y": -52,
-        "weight": 1
-       }
-      ],
-      [
        {
-        "bone": "hairpin",
-        "x": 94,
-        "y": -52,
-        "weight": 0.85965
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": 111,
+        "weight": 0.19586
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 90,
-        "y": 215,
-        "weight": 0.07274
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": 111,
+        "weight": 0.19586
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 90,
-        "y": 225,
-        "weight": 0.06761
+        "bone": "head",
+        "x": 220,
+        "y": -148,
+        "weight": 0.0456
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -338,
-        "y": -88,
-        "weight": 0.88463
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": -234,
+        "weight": 0.52253
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -342,
-        "y": 179,
-        "weight": 0.05836
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": 75,
+        "weight": 0.23873
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -342,
-        "y": 189,
-        "weight": 0.05701
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": 75,
+        "weight": 0.23874
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -302,
-        "y": -88,
-        "weight": 0.86709
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -234,
+        "weight": 0.78963
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -306,
-        "y": 179,
-        "weight": 0.06737
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": 75,
+        "weight": 0.10519
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -306,
-        "y": 189,
-        "weight": 0.06554
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": 75,
+        "weight": 0.10518
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 22,
-        "y": -88,
-        "weight": 0.71885
+        "bone": "hairback_l0_0",
+        "x": 29,
+        "y": -234,
+        "weight": 0.85525
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": 179,
-        "weight": 0.14757
+        "bone": "hairback_l0a_0",
+        "x": -26,
+        "y": 75,
+        "weight": 0.07237
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": 189,
-        "weight": 0.13358
+        "bone": "hairback_l0b_0",
+        "x": -26,
+        "y": 75,
+        "weight": 0.07238
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 58,
-        "y": -88,
-        "weight": 0.69129
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -234,
+        "weight": 0.74012
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": 179,
-        "weight": 0.16151
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": 75,
+        "weight": 0.12994
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": 189,
-        "weight": 0.1472
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": 75,
+        "weight": 0.12994
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 94,
-        "y": -88,
-        "weight": 0.67851
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": -234,
+        "weight": 0.49582
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 90,
-        "y": 179,
-        "weight": 0.16731
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": 75,
+        "weight": 0.25209
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 90,
-        "y": 189,
-        "weight": 0.15418
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": 75,
+        "weight": 0.25209
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -338,
-        "y": -124,
-        "weight": 0.79546
+        "bone": "hairback_r0_0",
+        "x": -89,
+        "y": -270,
+        "weight": 0.39993
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -342,
-        "y": 143,
-        "weight": 0.10332
+        "bone": "hairback_r0a_0",
+        "x": -43,
+        "y": 39,
+        "weight": 0.30003
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -342,
-        "y": 153,
-        "weight": 0.10122
+        "bone": "hairback_r0b_0",
+        "x": -43,
+        "y": 39,
+        "weight": 0.30004
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -302,
-        "y": -124,
-        "weight": 0.76525
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -270,
+        "weight": 0.66091
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -306,
-        "y": 143,
-        "weight": 0.11881
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": 39,
+        "weight": 0.16955
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -306,
-        "y": 153,
-        "weight": 0.11594
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": 39,
+        "weight": 0.16954
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 22,
-        "y": -124,
-        "weight": 0.46914
+        "bone": "hairback_l0_0",
+        "x": 29,
+        "y": -270,
+        "weight": 0.62674
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": 143,
-        "weight": 0.28147
+        "bone": "hairback_l0a_0",
+        "x": -26,
+        "y": 39,
+        "weight": 0.18663
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": 153,
-        "weight": 0.24939
+        "bone": "hairback_l0b_0",
+        "x": -26,
+        "y": 39,
+        "weight": 0.18663
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 58,
-        "y": -124,
-        "weight": 0.4587
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -270,
+        "weight": 0.6034
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": 143,
-        "weight": 0.28537
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": 39,
+        "weight": 0.1983
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": 153,
-        "weight": 0.25593
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": 39,
+        "weight": 0.1983
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": 94,
-        "y": -124,
-        "weight": 0.46832
+        "bone": "hairback_l0_0",
+        "x": 101,
+        "y": -270,
+        "weight": 0.38627
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": 90,
-        "y": 143,
-        "weight": 0.2779
+        "bone": "hairback_l0a_0",
+        "x": 46,
+        "y": 39,
+        "weight": 0.30687
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 90,
-        "y": 153,
-        "weight": 0.25378
+        "bone": "hairback_l0b_0",
+        "x": 46,
+        "y": 39,
+        "weight": 0.30686
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -302,
-        "y": -160,
-        "weight": 0.65482
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -306,
+        "weight": 0.3383
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -306,
-        "y": 107,
-        "weight": 0.17433
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": 3,
+        "weight": 0.33085
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -306,
-        "y": 117,
-        "weight": 0.17085
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": 3,
+        "weight": 0.33085
        }
       ],
       [
        {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": 107,
-        "weight": 0.40599
+        "bone": "hairback_l0_0",
+        "x": 29,
+        "y": -306,
+        "weight": 0.34075
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": 117,
-        "weight": 0.34811
+        "bone": "hairback_l0a_0",
+        "x": -26,
+        "y": 3,
+        "weight": 0.33244
        },
        {
-        "bone": "hairpin",
-        "x": 22,
-        "y": -160,
-        "weight": 0.2459
+        "bone": "hairback_l0b_0",
+        "x": -26,
+        "y": 3,
+        "weight": 0.32681
        }
       ],
       [
        {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": 107,
-        "weight": 0.39534
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -306,
+        "weight": 0.33455
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": 117,
-        "weight": 0.34739
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": 3,
+        "weight": 0.33273
        },
        {
-        "bone": "hairpin",
-        "x": 58,
-        "y": -160,
-        "weight": 0.25727
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": 3,
+        "weight": 0.33272
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -302,
-        "y": -196,
-        "weight": 0.55065
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": -33,
+        "weight": 0.47851
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -306,
-        "y": 71,
-        "weight": 0.22631
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": -33,
+        "weight": 0.38394
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -306,
-        "y": 81,
-        "weight": 0.22304
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -342,
+        "weight": 0.13755
        }
       ],
       [
        {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": 71,
-        "weight": 0.47026
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": -33,
+        "weight": 0.43006
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": 81,
-        "weight": 0.40453
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": -33,
+        "weight": 0.37877
        },
        {
-        "bone": "hairpin",
-        "x": 58,
-        "y": -196,
-        "weight": 0.12521
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -342,
+        "weight": 0.19117
        }
       ],
       [
        {
-        "bone": "hairpin",
-        "x": -302,
-        "y": -232,
-        "weight": 0.46191
+        "bone": "hairback_r0a_0",
+        "x": -7,
+        "y": -69,
+        "weight": 0.55131
        },
        {
-        "bone": "hairpin_tassel0",
-        "x": -306,
-        "y": 35,
-        "weight": 0.27012
+        "bone": "hairback_r0b_0",
+        "x": -7,
+        "y": -69,
+        "weight": 0.37569
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": -306,
-        "y": 45,
-        "weight": 0.26797
+        "bone": "hairback_r0_0",
+        "x": -53,
+        "y": -378,
+        "weight": 0.073
        }
       ],
       [
        {
-        "bone": "hairpin_tassel0",
-        "x": 54,
-        "y": 35,
-        "weight": 0.50559
+        "bone": "hairback_l0b_0",
+        "x": 10,
+        "y": -69,
+        "weight": 0.48698
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 54,
-        "y": 45,
-        "weight": 0.4376
+        "bone": "hairback_l0a_0",
+        "x": 10,
+        "y": -69,
+        "weight": 0.39301
        },
        {
-        "bone": "hairpin",
-        "x": 58,
-        "y": -232,
-        "weight": 0.05681
+        "bone": "hairback_l0_0",
+        "x": 65,
+        "y": -378,
+        "weight": 0.12001
        }
       ],
       [
        {
-        "bone": "hairpin_tassel0",
-        "x": 18,
-        "y": -1,
-        "weight": 0.53116
+        "bone": "hairback_l0b_0",
+        "x": -26,
+        "y": -105,
+        "weight": 0.69218
        },
        {
-        "bone": "hairpin_tassel1",
-        "x": 18,
-        "y": 9,
-        "weight": 0.46884
+        "bone": "hairback_l0a_0",
+        "x": -26,
+        "y": -105,
+        "weight": 0.30782
        }
       ]
      ]
