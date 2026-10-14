@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.24.0](https://github.com/rig-c/parts/compare/v1.23.0...v1.24.0) (2026-10-14)
+
+
+### Features
+
+* **propose:** a ribbon wrapped round a tail the cloth recipe drafts rides the tail's links ([#414](https://github.com/rig-c/parts/issues/414)) ([fbd638d](https://github.com/rig-c/parts/commit/fbd638d23d8644444f853d6c2c911b819cc849f9)), closes [#391](https://github.com/rig-c/parts/issues/391)
+
+
+### Bug Fixes
+
+* **check:** BREATH_VISIBLE reads the breath alone, so keyed cloth swing cannot pass it ([#418](https://github.com/rig-c/parts/issues/418)) ([babd373](https://github.com/rig-c/parts/commit/babd373085cee541cd3e13d26ca06c04e6295c04)), closes [#411](https://github.com/rig-c/parts/issues/411)
+
 ## [1.23.0](https://github.com/rig-c/parts/compare/v1.22.0...v1.23.0) (2026-10-14)
 
 
