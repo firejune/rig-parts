@@ -1394,6 +1394,31 @@ export function buildRig(
       return [{ chain, points: line.map(([x, y]) => [x - ox, y - oy] as [number, number]), stations: declared.stations }];
     });
   };
+  // Issue #417: on a declared dress (a topwear mesh carrying chest, hip and hip-rooted skirt tree chains, as
+  // cloth.bottomwear.part drafts), skirt tree links carry no weight on vertices above the hip line (wy < hip.y): the
+  // bodice is weighted by the torso's own bones (chest, hip, and any local region like a bust) at any influences cap;
+  // below the hip line nothing changes.
+  const hipChainLinks = new Set<string>();
+  for (const links of chains.values()) {
+    for (const l of links) {
+      let cur: string | null = B.get(l)?.parent ?? null;
+      while (cur !== null && cur !== 'hip' && cur !== 'chest') cur = B.get(cur)?.parent ?? null;
+      if (cur === 'hip') hipChainLinks.add(l);
+    }
+  }
+  const dressSegsAt = (p: PartsFile['parts'][number], segs: Segment[]): ((wy: number) => Segment[]) => {
+    const hipBone = B.get('hip');
+    if (hipBone === undefined) return () => segs;
+    const isDress =
+      tagOf(p.from) === 'topwear' &&
+      segs.some((s) => s.bone === 'chest') &&
+      segs.some((s) => s.bone === 'hip') &&
+      segs.some((s) => hipChainLinks.has(s.bone));
+    if (!isDress) return () => segs;
+    const torso = segs.filter((s) => !hipChainLinks.has(s.bone));
+    if (torso.length === 0) return () => segs;
+    return (wy: number): Segment[] => (wy < hipBone.y ? torso : segs);
+  };
   // A contour mesh (issue #84): `src/contour.ts` over the padded image, every refusal collected with the others;
   // the weights by `src/localweights.ts`; slot, uvs, bind positions and by-name weights written as the lattice's.
   // The config's region numbers are rig px; the part image's are rig px less (p.x − PAD, p.y − PAD) — a
@@ -1437,6 +1462,7 @@ export function buildRig(
       out.push(...heat);
       return null;
     }
+    const segsAt = dressSegsAt(p, segs);
     const weights: WeightEntry[][] = [];
     const reached = regions.map(() => 0);
     const whole = regions.map(() => 0);
@@ -1448,7 +1474,8 @@ export function buildRig(
     cm.vertices.forEach(([vx, vy], vi) => {
       const wx = vx + ox;
       const wy = vy + oy;
-      const li = localInfluences([wx, wy], segs, r, regions, limits, exponent ?? DISTANCE_EXPONENT, heat === null ? undefined : heatInfluences(heat, [vx, vy], limits));
+      const vSegs = segsAt(wy);
+      const li = localInfluences([wx, wy], vSegs, r, regions, limits, exponent ?? DISTANCE_EXPONENT, heat === null ? undefined : heatInfluences(heat, [vx, vy], limits));
       if ('first' in li) {
         if (!overlapped) {
           out.push({
@@ -1462,7 +1489,7 @@ export function buildRig(
       }
       if (li.influences.length === 0) {
         // issue #284: a declared cut that keeps no bone (nothingKeptProblem says when that can be); a region's bone would be kept.
-        if (emptied === null) emptied = { vertex: vi, at: [wx, wy], capped: heat === null ? influences([wx, wy], segs, r, { maxInfluences: limits.maxInfluences, minWeight: 0 }, exponent ?? DISTANCE_EXPONENT) : heatInfluences(heat, [vx, vy], { maxInfluences: limits.maxInfluences, minWeight: 0 }) };
+        if (emptied === null) emptied = { vertex: vi, at: [wx, wy], capped: heat === null ? influences([wx, wy], vSegs, r, { maxInfluences: limits.maxInfluences, minWeight: 0 }, exponent ?? DISTANCE_EXPONENT) : heatInfluences(heat, [vx, vy], { maxInfluences: limits.maxInfluences, minWeight: 0 }) };
         else emptiedMore++;
         return;
       }
@@ -1568,7 +1595,7 @@ export function buildRig(
       out.push(...heat);
       return null;
     }
-    const sw = sourceWeights(source.vertices, ox, oy, segs, r, spec, exponent ?? DISTANCE_EXPONENT, heat);
+    const sw = sourceWeights(source.vertices, ox, oy, segs, r, spec, exponent ?? DISTANCE_EXPONENT, heat, dressSegsAt(p, segs));
     if ('overlap' in sw) {
       out.push({
         code: 'RIG_CONTOUR_REGIONS_OVERLAP',
@@ -1824,15 +1851,17 @@ export function buildRig(
     let maxInfl = 0;
     // issue #284: the mesh's declared cap and floor form, or DEFAULT_LIMITS itself when it declares none.
     const limits: InfluenceLimits = meshLimits(mesh.influences);
+    const segsAt = dressSegsAt(p, segs);
     let emptied: { vertex: number; at: Point; capped: Influence[] } | null = null;
     let emptiedMore = 0;
     for (const [vi, [vx0, vy0]] of lm.vertices.entries()) {
       const wx = vx0 + ox;
       const wy = vy0 + oy;
-      const shares = heat === null ? influences([wx, wy], segs, mesh.r, limits, mesh.exponent ?? DISTANCE_EXPONENT) : heatInfluences(heat, [vx0, vy0], limits);
+      const vSegs = segsAt(wy);
+      const shares = heat === null ? influences([wx, wy], vSegs, mesh.r, limits, mesh.exponent ?? DISTANCE_EXPONENT) : heatInfluences(heat, [vx0, vy0], limits);
       if (shares.length === 0) {
         // issue #284: a declared cut that keeps no bone (nothingKeptProblem says when that can be).
-        if (emptied === null) emptied = { vertex: vi, at: [wx, wy], capped: heat === null ? influences([wx, wy], segs, mesh.r, { maxInfluences: limits.maxInfluences, minWeight: 0 }, mesh.exponent ?? DISTANCE_EXPONENT) : heatInfluences(heat, [vx0, vy0], { maxInfluences: limits.maxInfluences, minWeight: 0 }) };
+        if (emptied === null) emptied = { vertex: vi, at: [wx, wy], capped: heat === null ? influences([wx, wy], vSegs, mesh.r, { maxInfluences: limits.maxInfluences, minWeight: 0 }, mesh.exponent ?? DISTANCE_EXPONENT) : heatInfluences(heat, [vx0, vy0], { maxInfluences: limits.maxInfluences, minWeight: 0 }) };
         else emptiedMore++;
         continue;
       }
