@@ -104,7 +104,7 @@ import { type Problem, refuseIfAny } from './errors.ts';
 import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
 import { padToSquare, squarePad } from './inputs.ts';
 import { type CapRecord, type LimbRecord, PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, type SceneRecord, type SingleRunPad } from './parts.ts';
-import { type BonePlace, bonePlaces, capBox, coveredRadius, featherWeight, halfWidthAbout, inDisc, jointLine, type JointLine, jointOffsets, limbPolyline, limbRun, nearestLimb, pastJoint, segmentOf } from './limbs.ts';
+import { type BonePlace, bonePlaces, capBox, coveredRadius, type CutPlacement, featherWeight, halfWidthAbout, inDisc, jointLine, type JointLine, jointOffsets, limbPolyline, limbRun, luma601, nearestLimb, pastJoint, placeCut, segmentOf } from './limbs.ts';
 import {
   alphaComposite,
   connectedComponents,
@@ -1860,6 +1860,22 @@ export interface LimbCount {
 }
 
 /**
+ * What `cut_band` did at a joint (issue #360, item 14), for the `limb cap:`
+ * line: the line chosen — its offset from the joint line and a point it
+ * passes through — the stroke pixels it crosses, those the joint line
+ * crosses, and the split that made a pixel a stroke.
+ */
+function cutPhrase(k: CapRecord, upper: string, lower: string): string {
+  const off = k.cut_offset ?? 0;
+  const where = off === 0 ? 'on the joint line' : `${Math.abs(off)} px ${off < 0 ? `before the joint line (toward "${upper}")` : `past the joint line (toward "${lower}")`}`;
+  const stroke =
+    k.stroke_luma_max === undefined
+      ? `no stroke: the ${k.band_px ?? 0} px of the limb's art the band's lines cross hold one luma, so nothing splits from it`
+      : `stroke: luma ${k.stroke_luma_max} or below, the Otsu split of the ${k.band_px ?? 0} px of the limb's art the band's lines cross`;
+  return `cut_band ${k.cut_band ?? 0}: the cut ${where}, through [${(k.cut_at ?? k.at).join(', ')}], crosses ${k.cut_crossed ?? 0} stroke px; the joint line crosses ${k.joint_crossed ?? 0} (${stroke})`;
+}
+
+/**
  * The lines `assemble` prints for the limbs (issue #349), one per part a limb
  * took — `  limb cut: "<of>" opaque <n> = "<part>" <px> + …` — and one per
  * joint, its cap's pixels by where they came from. Empty without limbs.
@@ -1879,6 +1895,7 @@ export function limbLines(counts: readonly LimbCount[]): string[] {
           : `a disc of radius ${k.radius} px (cap_shape "disc": the joint's distance to the nearer side of the limb, ${k.width} px across the joint line)`;
       const shaped = [
         ...(k.edge === undefined ? [] : [`edge "feather": ${k.feathered_px ?? 0} px of "${j.upper}" faded across the ${k.feather_radius ?? 0} px about the joint that "${j.part}" covers at every turn`]),
+        ...(k.cut_band === undefined ? [] : [cutPhrase(k, j.upper, j.part)]),
       ];
       const miss =
         k.missing_px === 0
@@ -1917,6 +1934,11 @@ export function limbOrder(order: readonly DrawSlot[], plan: readonly PlanEntry[]
     }
   }
   return out;
+}
+
+/** The point a joint line moved `offset` px along its axis passes through, to 3 places (issue #360, `cut_band`). */
+function shiftedAt(line: JointLine, offset: number): [number, number] {
+  return [pyRound(line.at[0] + offset * line.axis[0], 3), pyRound(line.at[1] + offset * line.axis[1], 3)];
 }
 
 /**
@@ -1980,6 +2002,9 @@ function cutLimbs(
     );
   }
   refuseIfAny(problems);
+  // The line each segment's pixels are split by: the joint line, or where cut_band placed the cut (issue #360).
+  const cutLines = new Map([...lines].map(([l, ls]) => [l, [...ls]]));
+  const placements = new Map<string, Extract<CutPlacement, { ok: true }>>();
   // Each part a limb takes, in the order the limbs first take them.
   const sources = [...new Set(parts.map((q) => q.of))];
   const pieces: Array<Built | null> = parts.map(() => null);
@@ -2003,14 +2028,42 @@ function cutLimbs(
       for (let x = 0; x < W; x++) {
         const p = y * W + x;
         if (b.r.data[p * 4 + 3] === 0) continue;
-        const li = on.length === 1 ? 0 : nearestLimb(lns, x, y);
-        const l = on[li];
-        own[p] = names.indexOf(l);
+        own[p] = names.indexOf(on[on.length === 1 ? 0 : nearestLimb(lns, x, y)]);
+      }
+    }
+    // Issue #360 (item 14): each joint of this part that declares cut_band has its cut placed, on the limb's own art.
+    for (const l of on) {
+      const li = names.indexOf(l);
+      limbs[l].segments.forEach((sg, k) => {
+        if (k === 0 || sg.cut_band === undefined || sg.from !== src || limbs[l].segments[k - 1].from !== src) return;
+        const line = (lines.get(l) as Array<JointLine | null>)[k] as JointLine;
+        const art = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < W && y < H && own[y * W + x] === li && b.r.data[(y * W + x) * 4 + 3] > OPAQUE_ALPHA_ABOVE;
+        const luma = (x: number, y: number): number => luma601(b.r.data[(y * W + x) * 4], b.r.data[(y * W + x) * 4 + 1], b.r.data[(y * W + x) * 4 + 2]);
+        // The joint line on no art is ASSEMBLE_LIMB_JOINT_ON_ART at the caps; nothing is placed about it.
+        if (limbRun(line, art, [0, 0, W - 1, H - 1]) === null) return;
+        const placed = placeCut(line, sg.cut_band, art, luma, [0, 0, W - 1, H - 1]);
+        if (!placed.ok) {
+          problems.push({
+            code: 'ASSEMBLE_LIMB_CUT_BAND',
+            object: `config.limbs.${l}.segments[${k}] (joint "${String(sg.joint)}", part "${sg.part}").cut_band`,
+            detail: `is ${sg.cut_band}, and the line ${Math.abs(placed.offset)} px ${placed.offset < 0 ? 'before' : 'past'} the joint line, through [${shiftedAt(line, placed.offset).join(', ')}], crosses none of the limb's art within 1 px of that point — the band reaches past the limb there, and a cut placed off the art is no cut; a band whose every line crosses the limb is required — ${Math.abs(placed.offset) > 1 ? `cut_band ${Math.abs(placed.offset) - 1} or less` : 'leave cut_band out'}`,
+          });
+          return;
+        }
+        (cutLines.get(l) as Array<JointLine | null>)[k] = placed.line;
+        placements.set(`${l}/${k}`, placed);
+      });
+    }
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const p = y * W + x;
+        if (b.r.data[p * 4 + 3] === 0) continue;
+        const l = names[own[p]];
         const segs = limbs[l].segments;
         const first = segs.findIndex((sg) => sg.from === src);
         let last = first;
         while (last + 1 < segs.length && segs[last + 1].from === src) last++;
-        const k = segmentOf(lines.get(l) as Array<JointLine | null>, first, last, x, y);
+        const k = segmentOf(cutLines.get(l) as Array<JointLine | null>, first, last, x, y);
         const at = parts.findIndex((q) => q.limb === l && q.segment === k);
         rasters[at].data.set(b.r.data.subarray(p * 4, p * 4 + 4), p * 4);
         if (b.region === null || b.region.data[p] === 1) regions[at].data[p] = 1;
@@ -2102,6 +2155,9 @@ function cutLimbs(
       }
       const lower = rasters[at];
       const lowerSrc = builtOf(sg.from) as Built;
+      // Issue #360 (cut_band): the cap's pixels are the disc's on the upper side of the cut, wherever it was placed.
+      const cut = (cutLines.get(l) as Array<JointLine | null>)[k] as JointLine;
+      const placed = placements.get(`${l}/${k}`);
       const ownLower = owners.get(sg.from) as Int32Array;
       let layerPx = 0;
       let imagePx = 0;
@@ -2109,7 +2165,7 @@ function cutLimbs(
       let missing = 0;
       for (let y = Math.max(0, box[1]); y < Math.min(H, box[1] + box[3]); y++) {
         for (let x = Math.max(0, box[0]); x < Math.min(W, box[0] + box[2]); x++) {
-          if (!inDisc(line.at, radius, x, y) || pastJoint(line, x, y)) continue;
+          if (!inDisc(line.at, radius, x, y) || pastJoint(cut, x, y)) continue;
           const p = y * W + x;
           const u = img === null ? -1 : ((y - box[1]) * img.width + (x - box[0])) * 4;
           if (img !== null && img.data[u + 3] > 0) {
@@ -2137,12 +2193,12 @@ function cutLimbs(
         const fb = capBox(line.at, band);
         for (let y = Math.max(0, fb[1]); y < Math.min(H, fb[1] + fb[3]); y++) {
           for (let x = Math.max(0, fb[0]); x < Math.min(W, fb[0] + fb[2]); x++) {
-            if (band === 0 || !inDisc(line.at, band, x, y) || pastJoint(line, x, y)) continue;
+            if (band === 0 || !inDisc(line.at, band, x, y) || pastJoint(cut, x, y)) continue;
             const p = y * W + x;
             const ua = upper.data[p * 4 + 3];
             if (ua === 0) continue;
             const o = jointOffsets(line, x, y);
-            const na = Math.floor(ua * featherWeight(band, o.along, o.across) + 0.5);
+            const na = Math.floor(ua * featherWeight(band, o.along, o.across, placed?.offset ?? 0) + 0.5);
             if (na === ua) continue;
             if (na === 0) upper.data.fill(0, p * 4, p * 4 + 4);
             else upper.data[p * 4 + 3] = na;
@@ -2161,6 +2217,17 @@ function cutLimbs(
         missing_px: missing,
         ...(disc ? { shape: 'disc' as const, upper_px: upperPx } : {}),
         ...(sg.edge === 'feather' ? { edge: 'feather' as const, feather_radius: band, feathered_px: featheredPx } : {}),
+        ...(placed === undefined
+          ? {}
+          : {
+              cut_band: sg.cut_band as number,
+              cut_offset: placed.offset,
+              cut_at: shiftedAt(line, placed.offset),
+              cut_crossed: placed.crossed,
+              joint_crossed: placed.jointCrossed,
+              band_px: placed.bandPx,
+              ...(placed.strokeLumaMax === null ? {} : { stroke_luma_max: placed.strokeLumaMax }),
+            }),
       };
       if (hidden !== null) readHidden(hidden.layer, `config.limbs.${l}.segments[${k}].cap (part "${sg.part}")`);
       parts[at].record.cap = cap;

@@ -168,10 +168,49 @@ export interface CapRecord {
   edge?: 'feather';
   feather_radius?: number;
   feathered_px?: number;
+  /**
+   * Issue #360 (item 14), written only under the segment's `cut_band`: the
+   * band; the chosen line's offset along the axis from the joint (above 0:
+   * past it, toward the lower segment) and a point it passes through; the
+   * stroke pixels it crosses and those the joint line crosses; the art
+   * pixels the band's lines cross, each once; and the stroke class's largest
+   * luma, absent when the band's art has no split (`placeCut` in
+   * `src/limbs.ts`). `at`, `width` and `radius` stay the joint's.
+   */
+  cut_band?: number;
+  cut_offset?: number;
+  cut_at?: [number, number];
+  cut_crossed?: number;
+  joint_crossed?: number;
+  band_px?: number;
+  stroke_luma_max?: number;
 }
 
 const LIMB_KEYS = ['name', 'segment', 'of', 'bone', 'joint', 'range', 'cap'] as const;
-const CAP_KEYS = ['at', 'width', 'radius', 'box', 'layer_px', 'image_px', 'image_layer', 'missing_px', 'shape', 'upper_px', 'edge', 'feather_radius', 'feathered_px'] as const;
+const CAP_KEYS = [
+  'at',
+  'width',
+  'radius',
+  'box',
+  'layer_px',
+  'image_px',
+  'image_layer',
+  'missing_px',
+  'shape',
+  'upper_px',
+  'edge',
+  'feather_radius',
+  'feathered_px',
+  'cut_band',
+  'cut_offset',
+  'cut_at',
+  'cut_crossed',
+  'joint_crossed',
+  'band_px',
+  'stroke_luma_max',
+] as const;
+/** The cap keys only `cut_band` writes (issue #360, item 14). */
+const CUT_KEYS = ['cut_offset', 'cut_at', 'cut_crossed', 'joint_crossed', 'band_px', 'stroke_luma_max'] as const;
 
 /** The limb record with its keys in the fixed order, so two runs write the same bytes. */
 function orderedLimb(l: LimbRecord): Record<string, unknown> {
@@ -516,12 +555,25 @@ function checkParts(raw: unknown, path: string): PartsFile {
           (!('image_layer' in co) || ('image_px' in co && typeof co.image_layer === 'string' && co.image_layer !== '')) &&
           // Issue #360: a disc cap carries its count, a feathered edge its band and count, and neither carries them alone.
           ('shape' in co ? co.shape === 'disc' && isCount(co.upper_px) : !('upper_px' in co)) &&
-          ('edge' in co ? co.edge === 'feather' && typeof co.feather_radius === 'number' && Number.isFinite(co.feather_radius) && co.feather_radius >= 0 && isCount(co.feathered_px) : !('feather_radius' in co) && !('feathered_px' in co));
+          ('edge' in co ? co.edge === 'feather' && typeof co.feather_radius === 'number' && Number.isFinite(co.feather_radius) && co.feather_radius >= 0 && isCount(co.feathered_px) : !('feather_radius' in co) && !('feathered_px' in co)) &&
+          // Issue #360 (item 14): a placed cut carries its band, line and counts, the line inside the band; none of them rides alone.
+          ('cut_band' in co
+            ? isCount(co.cut_band) &&
+              co.cut_band >= 1 &&
+              Number.isInteger(co.cut_offset) &&
+              Math.abs(co.cut_offset as number) <= co.cut_band &&
+              pt(co.cut_at, 2) &&
+              isCount(co.cut_crossed) &&
+              isCount(co.joint_crossed) &&
+              isCount(co.band_px) &&
+              (co.cut_crossed as number) <= (co.joint_crossed as number) &&
+              (!('stroke_luma_max' in co) || (isCount(co.stroke_luma_max) && co.stroke_luma_max <= 255))
+            : CUT_KEYS.every((k) => !(k in co)));
         if (!ok) {
           fail(
             'PARTS_FIELD_TYPE',
             `${object} "cap"`,
-            `is ${show(c)}; {at: [x, y], width, radius, box: [x, y, w, h], layer_px, image_px?, image_layer? (with image_px), missing_px, shape? ("disc", with upper_px), edge? ("feather", with feather_radius and feathered_px)} is required`,
+            `is ${show(c)}; {at: [x, y], width, radius, box: [x, y, w, h], layer_px, image_px?, image_layer? (with image_px), missing_px, shape? ("disc", with upper_px), edge? ("feather", with feather_radius and feathered_px), cut_band? (with cut_offset inside the band, cut_at, cut_crossed at most joint_crossed, band_px, stroke_luma_max? 0..255)} is required`,
           );
         }
       }
