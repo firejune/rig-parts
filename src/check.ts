@@ -101,6 +101,7 @@ import {
   FACE_FEATURE_TAGS,
   FACE_TAGS,
   FEET_TAGS,
+  breathHeat,
   frameBox,
   heatField,
   partsTagged,
@@ -3133,13 +3134,40 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     if (r.status !== 0) refuseIfAny(rigcFailed(`render --animation idle --slot ${ps.map((p) => p.name).join(',')}`, r, r.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
     return readFrameSet(dir);
   };
+  // Issue #411: the breath alone — a throwaway copy of the build carrying, beside every animation, the idle with its
+  // breath tracks held at rest; the torso rendered alone in both idles, from that one build, so the two share a grid.
+  const breathPair = (ps: readonly PartRecord[]): BreathPair | null => {
+    const tracks = breathTracks(inp.motion);
+    if (tracks.length === 0) return null;
+    const dir = join(isoDir, BREATH_SCRATCH);
+    const anims = isRecord(inp.motion.animations) ? inp.motion.animations : {};
+    const idleAnim = isRecord(anims.idle) ? anims.idle : {};
+    let name = BREATH_ANIMATION;
+    while (name in anims) name = `${name}_`;
+    // Each breath track held at rest over its own span: the idle without the breath, still keyed to its end, which rigc
+    // requires of an animation's last key.
+    const kept = (Array.isArray(idleAnim.tracks) ? idleAnim.tracks : []).map((t) => (isRecord(t) && isBreathTrack(t, tracks) ? heldTrack(t) : t));
+    mkdirSync(dir, { recursive: true });
+    const images = typeof inp.rig.images === 'string' ? resolve(inp.rigDir, inp.rig.images) : inp.rig.images;
+    writeFileSync(join(dir, 'rig.json'), JSON.stringify({ ...inp.rig, images }));
+    writeFileSync(join(dir, 'motion.json'), JSON.stringify({ ...inp.motion, animations: { ...anims, [name]: { ...idleAnim, tracks: kept } } }));
+    const b = rigc(['build', '--rig', join(dir, 'rig.json'), '--motion', join(dir, 'motion.json'), '--out', join(dir, 'build'), ...packedBuildArgs(mode)]);
+    if (b.status !== 0) refuseIfAny(rigcFailed(`${packedBuildLabel(mode)} (BREATH_VISIBLE's copy, the idle beside it with its breath tracks held at rest)`, b, buildGateLines(b.out)));
+    const slots = ps.map((p) => p.name).join(',');
+    const render = (animation: string, label: string): FrameSet => {
+      const r = rigc(['render', '--candidate', join(dir, 'build'), '--animation', animation, '--fps', String(IDLE_FPS), '--max', String(IDLE_MAX_PX), '--slot', slots, '--out', join(dir, label)]);
+      if (r.status !== 0) refuseIfAny(rigcFailed(`render --animation ${animation} --slot ${slots} (BREATH_VISIBLE's copy)`, r, r.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+      return readFrameSet(join(dir, label));
+    };
+    return { with: render('idle', 'with'), without: render(name, 'without'), tracks: tracks.map((t) => `${t.bone} ${t.property}`) };
+  };
   // Issue #231: the footwear parts the scene file declares not planted; none without --requirements or the field.
   const notPlanted = reqFile === null ? [] : reqFile.not_planted;
   let breath: JudgementLine = skip(lacking);
   let tip: JudgementLine = skip(lacking);
   if (full !== null) {
     try {
-      breath = breathLine(full, isolated, problems, notPlanted);
+      breath = breathLine(full, isolated, breathPair, problems, notPlanted);
       if (idle !== null) tip = tipLine(full, join(idle.dir, GEOMETRY_FILE), idle.written, problems, reqFile === null ? NO_TIP_EXCEPTIONS : { path: reqFile.path, not_swinging: reqFile.not_swinging, rises: reqFile.rises, rests: reqFile.rests });
     } finally {
       rmSync(isoDir, { recursive: true, force: true });
@@ -3701,33 +3729,32 @@ function noneHeldText(declared: readonly string[]): string {
  * `SKIP` with its reason — so a half nobody read never passes by being silent.
  * With neither, the line is the SKIP it was. A run that measured both halves
  * writes the keys it always wrote.
+ *
+ * Issue #411: the torso half reads the breath alone ({@link torsoBreath}):
+ * `torso_heat_mean` is the heat the breath makes, the idle rendered with and
+ * without its breath tracks, on the same box and against the same floor.
+ * Until #411 it was the whole idle's heat over the box, so a keyed cloth swing
+ * or a physics response to the world inside the torso's box passed the bar
+ * for a torso that did not breathe.
  */
-function breathLine(inp: FullInputs, isolated: Isolate, problems: Problem[], notPlanted: readonly string[] = []): JudgementLine {
+function breathLine(inp: FullInputs, isolated: Isolate, pair: BreathPairRender, problems: Problem[], notPlanted: readonly string[] = []): JudgementLine {
   const torso = partsTagged(inp.parts, TORSO_TAGS);
   const { all: allFeet, held: feet, declared } = plantedFeet(inp.parts, notPlanted);
   const noTorso = `no part comes from a See-through ${tagWords(TORSO_TAGS)} layer, so there is no torso to see breathe`;
   const noFeet = `no part comes from a See-through ${tagWords(FEET_TAGS)} layer, so there are no feet to hold still`;
   // Issue #323: a figure without one of the two halves still has the other read; with neither, the SKIP it always was.
   if (torso.length === 0 && feet.length === 0) return skip(`${noTorso}${declared.length === 0 ? '' : `; ${declared.map((n) => `"${n}"`).join(', ')} declared not planted`}`);
-  if (torso.length === 0) return oneHalf(inp, isolated, problems, 'feet', feet, noTorso, declared);
-  if (allFeet.length === 0) return oneHalf(inp, isolated, problems, 'torso', torso, noFeet, []);
+  if (torso.length === 0) return oneHalf(inp, isolated, pair, problems, 'feet', feet, noTorso, declared);
+  if (allFeet.length === 0) return oneHalf(inp, isolated, pair, problems, 'torso', torso, noFeet, []);
   const H = inp.parts.rig_size[1];
-  const ts = isolated('torso', torso);
+  const tr = torsoBreath(inp, torso, pair);
   const fs = feet.length === 0 ? null : isolated('feet', feet);
-  const tb = frameBox(torso, H, inp.stage, ts.viewport);
   const fb = fs === null ? null : frameBox(feet, H, inp.stage, fs.viewport);
-  if (tb === null || (fs !== null && fb === null)) return skip(`the ${tb === null ? 'torso' : 'feet'} box falls outside the idle frame`);
-  const th = regionHeat(heatField(ts.frames.map((f) => f.image)), ts.viewport.pixelWidth, tb);
+  if ('skip' in tr || (fs !== null && fb === null)) return skip(`the ${'skip' in tr ? 'torso' : 'feet'} box falls outside the idle frame`);
   const fh = fs === null || fb === null ? null : regionHeat(heatField(fs.frames.map((f) => f.image)), fs.viewport.pixelWidth, fb);
-  const mean = round3(th.mean);
+  const mean = tr.mean;
   const ok = mean >= BREATH_TORSO_MEAN_FLOOR && (fh === null || fh.max <= BREATH_FEET_MAX_CEILING);
-  if (mean < BREATH_TORSO_MEAN_FLOOR) {
-    problems.push({
-      code: 'CHECK_BREATH_VISIBLE',
-      object: `torso ${quoteParts(torso)} rendered alone, frame box ${boxLabel(tb)}`,
-      detail: `heat mean ${mean}/255 over the idle; >= ${BREATH_TORSO_MEAN_FLOOR} is required — the chest's breath track moves too little, or the torso is not weighted to the bone it keys`,
-    });
-  }
+  if (mean < BREATH_TORSO_MEAN_FLOOR) problems.push(torsoProblem(torso, tr, ''));
   if (fh !== null && fb !== null && fh.max > BREATH_FEET_MAX_CEILING) {
     problems.push({
       code: 'CHECK_BREATH_VISIBLE',
@@ -3755,22 +3782,15 @@ function breathLine(inp: FullInputs, isolated: Isolate, problems: Problem[], not
  * `halves_measured`, says `1 of 2` — after `declared_not_planted` when the scene
  * file declares some of the feet read (issue #231), which stays the first.
  */
-function oneHalf(inp: FullInputs, isolated: Isolate, problems: Problem[], half: 'torso' | 'feet', ps: readonly PartRecord[], reason: string, declared: readonly string[]): JudgementLine {
+function oneHalf(inp: FullInputs, isolated: Isolate, pair: BreathPairRender, problems: Problem[], half: 'torso' | 'feet', ps: readonly PartRecord[], reason: string, declared: readonly string[]): JudgementLine {
   const H = inp.parts.rig_size[1];
-  const fs = isolated(half, ps);
-  const box = frameBox(ps, H, inp.stage, fs.viewport);
-  if (box === null) return skip(`the ${half} box falls outside the idle frame, and ${reason}`);
-  const heat = regionHeat(heatField(fs.frames.map((f) => f.image)), fs.viewport.pixelWidth, box);
   if (half === 'torso') {
-    const mean = round3(heat.mean);
+    // Issue #411: the torso half is the breath alone.
+    const tr = torsoBreath(inp, ps, pair);
+    if ('skip' in tr) return skip(`the ${half} box falls outside the idle frame, and ${reason}`);
+    const mean = tr.mean;
     const ok = mean >= BREATH_TORSO_MEAN_FLOOR;
-    if (!ok) {
-      problems.push({
-        code: 'CHECK_BREATH_VISIBLE',
-        object: `torso ${quoteParts(ps)} rendered alone, frame box ${boxLabel(box)}; the feet half not measured: ${reason}`,
-        detail: `heat mean ${mean}/255 over the idle; >= ${BREATH_TORSO_MEAN_FLOOR} is required — the chest's breath track moves too little, or the torso is not weighted to the bone it keys`,
-      });
-    }
+    if (!ok) problems.push(torsoProblem(ps, tr, `; the feet half not measured: ${reason}`));
     return {
       status: ok ? 'PASS' : 'FAIL',
       halves_measured: '1 of 2',
@@ -3782,6 +3802,10 @@ function oneHalf(inp: FullInputs, isolated: Isolate, problems: Problem[], half: 
       feet_reason: reason,
     };
   }
+  const fs = isolated(half, ps);
+  const box = frameBox(ps, H, inp.stage, fs.viewport);
+  if (box === null) return skip(`the ${half} box falls outside the idle frame, and ${reason}`);
+  const heat = regionHeat(heatField(fs.frames.map((f) => f.image)), fs.viewport.pixelWidth, box);
   const ok = heat.max <= BREATH_FEET_MAX_CEILING;
   if (!ok) {
     problems.push({
@@ -3800,6 +3824,130 @@ function oneHalf(inp: FullInputs, isolated: Isolate, problems: Problem[], half: 
     feet_parts: ps.map((p) => p.name),
     feet_heat_max: heat.max,
     feet_ceiling: BREATH_FEET_MAX_CEILING,
+  };
+}
+
+/** The throwaway animation BREATH_VISIBLE adds beside the idle (issue #411): the idle with its breath tracks held at rest; a trailing `_` is added while the rig already has an animation of the name. */
+export const BREATH_ANIMATION = 'idle_without_breath';
+/** Where BREATH_VISIBLE's copy is built and rendered, under the stage's scratch; removed before the stage returns. */
+const BREATH_SCRATCH = 'breath';
+
+/** The idle track properties that make up the breath on a breath bone (issue #411): it moves and it swells; the drafted breath is `chest` `translatey` and `scalex` (src/propose.ts). */
+const BREATH_TRACK_PROPS: readonly string[] = ['translate', 'translatex', 'translatey', 'scale', 'scalex', 'scaley'];
+
+/**
+ * The breath's tracks (issue #411), in the idle's order: the breath bones are
+ * every bone an idle track translates ({@link BREATH_PROPS}, issue #262), and
+ * their breath tracks every idle track that translates or scales one of them
+ * ({@link BREATH_TRACK_PROPS}). A track that turns a breath bone, a group's
+ * track and every track on another bone are not the breath. Empty when no
+ * idle track translates a bone.
+ */
+export function breathTracks(motion: Record<string, unknown>): Array<{ bone: string; property: string }> {
+  const anims = isRecord(motion.animations) ? motion.animations : {};
+  const idle = isRecord(anims.idle) ? anims.idle : {};
+  const tracks = (Array.isArray(idle.tracks) ? idle.tracks : []).filter(isRecord).filter((t) => typeof t.bone === 'string' && typeof t.property === 'string');
+  const bones = new Set(tracks.filter((t) => BREATH_PROPS.includes(String(t.property))).map((t) => String(t.bone)));
+  return tracks.filter((t) => bones.has(String(t.bone)) && BREATH_TRACK_PROPS.includes(String(t.property))).map((t) => ({ bone: String(t.bone), property: String(t.property) }));
+}
+
+/**
+ * A breath track held at rest (issue #411): the setup pose's value — 0 for a translate, 1 for a scale, one per axis
+ * the track's first key gives — at its first and last key times, no curve. That is the track removed, as the bone
+ * stands without it, while the idle stays keyed to its end: a dropped track could leave the idle's last key before
+ * its duration, which rigc refuses. (Held at its first key instead, the bone would stand offset from frame 0 on and
+ * the physics under it would answer that start, which is not the idle without its breath.)
+ */
+function heldTrack(t: Record<string, unknown>): Record<string, unknown> {
+  const keys = (Array.isArray(t.keys) ? t.keys : []).filter(isRecord);
+  if (keys.length === 0) return t;
+  const first = keys[0];
+  const last = keys[keys.length - 1];
+  const rest = String(t.property).startsWith('scale') ? 1 : 0;
+  const v = (Array.isArray(first.v) ? first.v : [first.v]).map(() => rest);
+  return { ...t, keys: keys.length === 1 ? [{ t: first.t, v }] : [{ t: first.t, v }, { t: last.t, v }] };
+}
+
+function isBreathTrack(t: Record<string, unknown>, tracks: ReadonlyArray<{ bone: string; property: string }>): boolean {
+  return tracks.some((b) => b.bone === t.bone && b.property === t.property);
+}
+
+/** The torso rendered alone twice from one build (issue #411): the idle (`with`) and the idle less its breath tracks (`without`), and those tracks as `bone property`. */
+export interface BreathPair {
+  with: FrameSet;
+  without: FrameSet;
+  tracks: string[];
+}
+
+/** Renders {@link BreathPair} for the torso parts; null when the idle has no breath track. */
+export type BreathPairRender = (ps: readonly PartRecord[]) => BreathPair | null;
+
+/**
+ * Why the two renders of a {@link BreathPair} cannot be compared pixel for
+ * pixel, or null when they can: one grid (the viewport), one background, the
+ * same number of frames, each of one size. Both come from one build, so a
+ * difference is rigc's, refused by name (`CHECK_BREATH_VISIBLE`) rather than
+ * read.
+ */
+export function breathPairProblem(pair: BreathPair): Problem | null {
+  const a = pair.with;
+  const b = pair.without;
+  const size = (s: FrameSet): string => [...new Set(s.frames.map((f) => `${f.image.width}x${f.image.height}`))].join(',');
+  if (sameViewport(a.viewport, b.viewport) && a.background.join(',') === b.background.join(',') && a.frames.length === b.frames.length && size(a) === size(b) && !size(a).includes(',')) return null;
+  return {
+    code: 'CHECK_BREATH_VISIBLE',
+    object: `the torso's two idle renders (with and without the breath tracks ${pair.tracks.join(', ')})`,
+    detail: `are ${a.frames.length} frame(s) of ${size(a)} on ${JSON.stringify(a.viewport)} over ${JSON.stringify(a.background)} and ${b.frames.length} frame(s) of ${size(b)} on ${JSON.stringify(b.viewport)} over ${JSON.stringify(b.background)}; the breath is read pixel for pixel between them, which needs one grid, one background and one frame count`,
+  };
+}
+
+/** The torso half's reading (issue #411): the breath's heat mean over the box, the whole idle's beside it, and the breath tracks; `none` when the idle has no breath track. */
+type TorsoBreath = { box: PixelBox; mean: number; whole: number; tracks: string[] } | { none: string; mean: number } | { skip: true };
+
+/**
+ * `BREATH_VISIBLE`'s torso half (issue #411): the breath alone. The breath
+ * bones are every bone an idle track translates, and the breath tracks every
+ * idle track that translates or scales one of them ({@link breathTracks}).
+ * The torso is rendered alone, idle at its rate and size, from one throwaway
+ * build carrying every animation of the rig and, beside them, the idle with
+ * its breath tracks held at rest ({@link heldTrack}: the bone as it stands
+ * without them, the idle still keyed to its end) — so both renders share a
+ * grid. Per pixel, the largest
+ * |(with_t - with_0) - (without_t - without_0)| over the frames and the RGB
+ * channels ({@link breathHeat}), meaned over the torso's frame box. Motion that
+ * is not the breath's — a keyed cloth swing, physics answering the world, a
+ * head turn — is in both renders and cancels; physics the breath sets moving
+ * is counted. The whole idle's heat over the same box, the reading until #411,
+ * is carried for the refusal's sentence only.
+ *
+ * With no breath track the figure is 0, by the definition (the idle with and
+ * without its breath is one idle), and the bar fails naming why: a torso with
+ * no breath is what the bar exists to find, so it is not a SKIP; nothing is
+ * rendered.
+ */
+function torsoBreath(inp: FullInputs, ps: readonly PartRecord[], pair: BreathPairRender): TorsoBreath {
+  const got = pair(ps);
+  if (got === null) return { none: 'no idle track translates a bone, so the rig has no breath to read (the breath bones are every bone an idle track translates); whatever else the idle moves is not counted', mean: 0 };
+  const grid = breathPairProblem(got);
+  if (grid !== null) refuseIfAny([grid]);
+  const box = frameBox(ps, inp.parts.rig_size[1], inp.stage, got.with.viewport);
+  if (box === null) return { skip: true };
+  const width = got.with.viewport.pixelWidth;
+  const withFrames = got.with.frames.map((f) => f.image);
+  const mean = round3(regionHeat(breathHeat(withFrames, got.without.frames.map((f) => f.image)), width, box).mean);
+  const whole = round3(regionHeat(heatField(withFrames), width, box).mean);
+  return { box, mean, whole, tracks: got.tracks };
+}
+
+/** The torso half's refusal (issue #411): the breath's figure, the tracks it was read from, and the whole idle's beside it. */
+function torsoProblem(ps: readonly PartRecord[], tr: Exclude<TorsoBreath, { skip: true }>, tail: string): Problem {
+  if ('none' in tr) {
+    return { code: 'CHECK_BREATH_VISIBLE', object: `torso ${quoteParts(ps)}${tail}`, detail: `breath heat mean 0/255: ${tr.none}; >= ${BREATH_TORSO_MEAN_FLOOR} is required — key the chest's breath (a translate track on the bone the torso is weighted to)` };
+  }
+  return {
+    code: 'CHECK_BREATH_VISIBLE',
+    object: `torso ${quoteParts(ps)} rendered alone, frame box ${boxLabel(tr.box)}${tail}`,
+    detail: `breath heat mean ${tr.mean}/255 over the idle — the idle with and without its breath tracks (${tr.tracks.join(', ')}), on one grid; the whole idle reads ${tr.whole} over the box, and what is not the breath's is not counted; >= ${BREATH_TORSO_MEAN_FLOOR} is required — the chest's breath track moves too little, or the torso is not weighted to the bone it keys`,
   };
 }
 

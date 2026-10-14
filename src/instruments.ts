@@ -137,6 +137,38 @@ export function heatField(frames: readonly Raster[]): Uint8Array {
   return d;
 }
 
+/**
+ * The breath alone (issue #411): each pixel's largest per-channel RGB change
+ * that the breath makes, read off the idle rendered twice on one grid — with
+ * its breath tracks (`withBreath`) and without them (`withoutBreath`). At
+ * frame t the breath's own change at a pixel is (with_t - with_0) -
+ * (without_t - without_0): motion that is the same in both renders (a keyed
+ * cloth swing, a physics response to the world, a head turn) cancels, and so
+ * does a constant offset the breath holds from frame 0 on, while physics that
+ * the breath sets moving stays. The field is that change's largest magnitude
+ * over the frames and the three channels, capped at 255 — {@link heatField}'s
+ * reading when the render without the breath does not move. Both lists hold
+ * the same number of frames of one size; the caller holds the grid.
+ */
+export function breathHeat(withBreath: readonly Raster[], withoutBreath: readonly Raster[]): Uint8Array {
+  const w0 = withBreath[0].data;
+  const o0 = withoutBreath[0].data;
+  const n = withBreath[0].width * withBreath[0].height;
+  const d = new Uint8Array(n);
+  withBreath.forEach((f, i) => {
+    const w = f.data;
+    const o = withoutBreath[i].data;
+    for (let p = 0; p < n; p++) {
+      for (let c = 0; c < 3; c++) {
+        const k = p * 4 + c;
+        const v = Math.min(255, Math.abs(w[k] - w0[k] - (o[k] - o0[k])));
+        if (v > d[p]) d[p] = v;
+      }
+    }
+  });
+  return d;
+}
+
 export interface RegionHeat {
   /** Pixels measured. */
   px: number;

@@ -210,10 +210,10 @@ import {
   padSingleRun,
   singleRunHeadBox,
 } from './src/assemble.ts';
-import { chainDirection, sweepAngles, sweepJoints, type SweepJoint, sweepLine, type SweepLine, SWEEP_LINE, type SweepPose, type Viewport } from './src/check.ts';
+import { BREATH_ANIMATION, type BreathPair, breathPairProblem, breathTracks, chainDirection, sweepAngles, sweepJoints, type SweepJoint, sweepLine, type SweepLine, SWEEP_LINE, type SweepPose, type Viewport } from './src/check.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics, BREATH_TORSO_MEAN_FLOOR } from './src/check.ts';
 import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, drawingTurn, FOLD_LINE, LEVEL_BAR_DEGREES, LEVEL_LINE, LIMB_LINE, limbLine, foldsLine, STRESS_LINE, STRESS_RIGID, STRESS_TURNS, stressPlan, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, GATE_PROFILE, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, packageRigc, rigcIdentity, rigcRunnerAt, type RigcSpawn, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
-import { baseTagOf, blinkFigures, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
+import { baseTagOf, blinkFigures, breathHeat, heatField, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
   contactLine,
@@ -13279,6 +13279,7 @@ function runCheckSuite(): number {
   runRigcIdentityCases(say);
   runClothCheckCases(say);
   runRiderCheckCases(say);
+  runBreathAloneCases(say);
   return bad();
 }
 
@@ -13501,6 +13502,128 @@ function runClothCheckCases(say: (name: string, ok: boolean, detail: string, why
       unrested.rig.status === 0 && unrested.check !== null && uOut.includes('FAIL  CHECK_SEAM_WITHIN_BAR') && !(good.check?.out ?? '').includes('CHECK_SEAM_WITHIN_BAR'),
       `the swing transforms with offset 0: ${(uOut.split('\n').find((l) => l.includes('FAIL  CHECK_SEAM_WITHIN_BAR')) ?? 'no seam FAIL').trim().slice(0, 220)}; the drafted -90: ${seamGood}`,
       'the transform adds the swing\'s local rotation, which at rest is its own direction (-90 under an unturned hip); unsubtracted, each first link turns by it times its scale before any physics, and the setup render leaves the art',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Issue #411: BREATH_VISIBLE reads the breath alone. CK500 the instrument by hand; CK501 which idle tracks are the
+ * breath; CK502 the robe-chained dress, which the whole idle passes, is refused for its breath, naming both figures;
+ * CK503 the declared dress is refused for its breath, not its skirt; CK504 an idle with no breath track fails by
+ * name and renders nothing.
+ */
+function runBreathAloneCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  // CK500 — three pixels, two frames, every value by hand. Pixel 0: the breath adds 10 over motion of 10 the other
+  // tracks make (with 10 -> 30, without 10 -> 20): |20 - 10| = 10. Pixel 1: the breath holds a constant 40 from frame 0
+  // on (with 50 -> 50, without 10 -> 10): 0. Pixel 2: motion that is not the breath's (10 -> 40 in both): 0, where the
+  // whole idle's heat reads 30.
+  const ras = (vals: number[]): Raster => {
+    const r = newRaster(vals.length, 1);
+    vals.forEach((v, i) => r.data.set([v, v, v, 255], i * 4));
+    return r;
+  };
+  const withB = [ras([10, 50, 10]), ras([30, 50, 40])];
+  const withoutB = [ras([10, 10, 10]), ras([20, 10, 40])];
+  const alone = [...breathHeat(withB, withoutB)];
+  const whole = [...heatField(withB)];
+  const none = [...breathHeat(withB, withB)];
+  const vp = { x: 0, y: 0, width: 3, height: 1, scale: 1, pixelWidth: 3, pixelHeight: 1 };
+  const set = (frames: Raster[], v: typeof vp = vp): FrameSet => ({ dir: 'x', animation: 'idle', fps: 12, sampled: frames.length, written: frames.length, stride: 1, duration: 1, background: [0, 0, 0, 0], viewport: v, frames: frames.map((image, index) => ({ name: `f${index}.png`, index, image })) });
+  const pairOf = (a: FrameSet, b: FrameSet): BreathPair => ({ with: a, without: b, tracks: ['chest_ctl translatey'] });
+  const sameGrid = breathPairProblem(pairOf(set(withB), set(withoutB)));
+  const offGrid = breathPairProblem(pairOf(set(withB), set(withoutB, { ...vp, scale: 2 })));
+  const shortSet = breathPairProblem(pairOf(set(withB), set(withoutB.slice(0, 1))));
+  say(
+    'CK500_THE_BREATH_IS_READ_AS_THE_CHANGE_WITH_IT_LESS_THE_CHANGE_WITHOUT_IT_ON_ONE_GRID',
+    JSON.stringify(alone) === '[10,0,0]' && JSON.stringify(whole) === '[20,0,30]' && JSON.stringify(none) === '[0,0,0]' && sameGrid === null && offGrid !== null && offGrid.code === 'CHECK_BREATH_VISIBLE' && offGrid.detail.includes('one grid') && shortSet !== null && shortSet.detail.startsWith('are 2 frame(s)'),
+    `breath alone [${alone.join(', ')}], the whole idle [${whole.join(', ')}], the same idle twice [${none.join(', ')}]; one grid: ${sameGrid === null ? 'compared' : 'REFUSED'}; another scale: ${offGrid?.code ?? 'NOT refused'}; one frame against two: ${shortSet === null ? 'NOT refused' : shortSet.detail.slice(0, 40)}`,
+    'issue #411: the breath\'s change is what the idle changes with its breath tracks less what it changes without them, frame by frame from each one\'s frame 0 — so motion in both cancels, a constant offset cancels, and two renders off one grid are refused rather than subtracted',
+  );
+
+  // CK501 — the breath bones are every bone an idle track translates; the breath tracks those bones' translate and
+  // scale tracks, in the idle's order. A turn of a breath bone, a group's track and a turn elsewhere are not.
+  const motionOf = (tracks: Array<Record<string, unknown>>): Record<string, unknown> => ({ animations: { idle: { tracks }, wave: { tracks: [{ bone: 'arm', property: 'translatex' }] } } });
+  const drafted = breathTracks(motionOf([
+    { bone: 'chest_ctl', property: 'translatey' },
+    { bone: 'chest_ctl', property: 'scalex' },
+    { bone: 'chest_ctl', property: 'rotate' },
+    { bone: 'head_ctl', property: 'rotate' },
+    { group: 'brows', property: 'translatey' },
+    { bone: 'hem_ctl', property: 'translatex' },
+    { bone: 'head_ctl', property: 'scaley' },
+  ])).map((t) => `${t.bone} ${t.property}`);
+  const turnsOnly = breathTracks(motionOf([{ bone: 'robe0_ctl', property: 'rotate' }, { bone: 'chest_ctl', property: 'scalex' }]));
+  say(
+    'CK501_THE_BREATH_TRACKS_ARE_THE_TRANSLATE_AND_SCALE_TRACKS_OF_EVERY_BONE_AN_IDLE_TRACK_TRANSLATES',
+    JSON.stringify(drafted) === JSON.stringify(['chest_ctl translatey', 'chest_ctl scalex', 'hem_ctl translatex']) && turnsOnly.length === 0,
+    `drafted idle: [${drafted.join(', ')}]; an idle that turns a chain and scales the chest but translates nothing: ${turnsOnly.length} track(s)`,
+    "issue #262's breath bone (every bone an idle track translates) with the drafted breath's two tracks (translatey and scalex on chest); another animation's tracks are not the idle's, and a scale with no translate beside it on its bone is no breath bone",
+  );
+
+  // CK502, CK503 — the dress fixture (fixtures/cloth.ts) proposed without the field (robe chains, keyed rotate swing)
+  // and with cloth.bottomwear.part: "dress" (the skirt's trees), each built by rig and read by check.
+  const root = temp('breath-alone');
+  try {
+    const parts = join(root, 'parts');
+    const fixture = dressParts(DRESS);
+    writeProposeFixture(parts, fixture, DRESS_RIG);
+    const P = readPartSet(parts);
+    const hair: ClothRecipes = { 'back hair': clothRecipe()['back hair'], 'front hair': clothRecipe()['front hair'] };
+    const checked = (label: string, cloth: ClothRecipes): { rig: number; status: number; out: string; fig: Record<string, unknown> | null } => {
+      const prop = propose(P, undefined, null, DEFAULT_GRID_RULE, cloth);
+      const cfg = join(root, `${label}.json`);
+      writeFileSync(cfg, JSON.stringify({ ...proposalConfig(fixture, prop), constraints: prop.constraints ?? [] }));
+      const dir = join(root, `rig-${label}`);
+      const r = runCli(['rig', '--config', cfg, '--parts', parts, '--out', dir]);
+      if (r.status !== 0) return { rig: r.status, status: -1, out: r.out, fig: null };
+      const c = runCli(['check', '--rig', dir, '--parts', parts, '--out', join(root, `check-${label}`)]);
+      return { rig: 0, ...c, fig: readJsonFile(join(root, `check-${label}`, 'check.json')) };
+    };
+    const figures = (out: string): { breath: number; whole: number; tracks: string } | null => {
+      const m = /breath heat mean ([0-9.]+)\/255 over the idle — the idle with and without its breath tracks \(([^)]*)\), on one grid; the whole idle reads ([0-9.]+) over the box/.exec(failLine(out, 'CHECK_BREATH_VISIBLE') ?? '');
+      return m === null ? null : { breath: Number(m[1]), whole: Number(m[3]), tracks: m[2] };
+    };
+    const breathOf = (fig: Record<string, unknown> | null): Record<string, unknown> => (fig?.BREATH_VISIBLE ?? {}) as Record<string, unknown>;
+    const robe = checked('robe', hair);
+    const rf = figures(robe.out);
+    const rb = breathOf(robe.fig);
+    say(
+      'CK502_A_TORSO_THE_WHOLE_IDLE_PASSES_ON_ITS_KEYED_ROBE_SWING_IS_REFUSED_FOR_ITS_BREATH_NAMING_BOTH_FIGURES',
+      robe.rig === 0 && robe.status === 1 && rf !== null && rf.whole >= BREATH_TORSO_MEAN_FLOOR && rf.breath < BREATH_TORSO_MEAN_FLOOR && rf.tracks === 'chest_ctl translatey, chest_ctl scalex' && rb.torso_status === 'FAIL' && rb.torso_heat_mean === rf.breath,
+      `rig exit ${robe.rig}, check exit ${robe.status}; ${rf === null ? `no breath figures in "${(failLine(robe.out, 'CHECK_BREATH_VISIBLE') ?? 'no CHECK_BREATH_VISIBLE line').trim().slice(0, 160)}"` : `the breath alone ${rf.breath}, the whole idle ${rf.whole}, against the floor ${BREATH_TORSO_MEAN_FLOOR}; tracks ${rf.tracks}`}; check.json torso_heat_mean ${String(rb.torso_heat_mean)}, torso_status ${String(rb.torso_status)}`,
+      "issue #411: the robe's chains are keyed rotate tracks, the swing below the hip; the whole idle's heat over the box cleared the floor on them while the bodice above the hip barely moved, so the bar counted keyed cloth motion as breath. Read alone, the breath is under the floor and the refusal says what the whole idle read, so the author sees why it changed",
+    );
+    const named = checked('dress', { ...hair, bottomwear: { chains: 2, links: 2, wind: [1, 4], gravity: [2, 8], part: 'dress' } });
+    const nf = figures(named.out);
+    const nb = breathOf(named.fig);
+    say(
+      'CK503_THE_DECLARED_DRESS_IS_REFUSED_FOR_ITS_BREATH_NOT_FOR_ITS_SKIRT',
+      named.rig === 0 && named.status === 1 && nf !== null && rf !== null && nf.breath < BREATH_TORSO_MEAN_FLOOR && nf.breath < nf.whole && nb.torso_heat_mean === nf.breath && nb.torso_status === 'FAIL' && nf.breath < rf.breath,
+      `rig exit ${named.rig}, check exit ${named.status}; ${nf === null ? `no breath figures in "${(failLine(named.out, 'CHECK_BREATH_VISIBLE') ?? 'no CHECK_BREATH_VISIBLE line').trim().slice(0, 160)}"` : `the breath alone ${nf.breath}, the whole idle ${nf.whole} (the skirt's trees answering the world, in both renders); the robe-chained dress's breath ${rf?.breath ?? 'not read'}`}; check.json torso_heat_mean ${String(nb.torso_heat_mean)}`,
+      "issue #411: the declared dress's whole-idle figure was mostly its skirt's physics, which moves with the breath and without it alike; the figure that fails it is the breath's own, under the robe dress's, because its bodice hangs part of its weight on the trees and the hip",
+    );
+
+    // CK504 — the check fixture's idle with its one translate track (root translatex) turned into a rotate: no breath
+    // track. The bar fails naming why with figure 0, nothing is rendered for it; the untouched fixture reads its slide.
+    const bare = join(root, 'no-breath');
+    writeCheckRig(bare, { from: ['full:topwear', 'full:topwear'] });
+    const m = JSON.parse(readFileSync(join(bare, 'motion.json'), 'utf8')) as { animations: { idle: { tracks: Array<Record<string, unknown>> } } };
+    m.animations.idle.tracks = m.animations.idle.tracks.map((t) => (t.property === 'translatex' ? { ...t, property: 'rotate' } : t));
+    writeFileSync(join(bare, 'motion.json'), JSON.stringify(m));
+    const nb2 = runCli(['check', '--rig', bare, '--out', join(root, 'no-breath-out')]);
+    const nfig = breathOf(readJsonFile(join(root, 'no-breath-out', 'check.json')));
+    const nline = failLine(nb2.out, 'CHECK_BREATH_VISIBLE') ?? '';
+    const slid = join(root, 'slide');
+    writeCheckRig(slid, { from: ['full:topwear', 'full:topwear'] });
+    const sl = runCli(['check', '--rig', slid, '--out', join(root, 'slide-out')]);
+    const sfig = breathOf(readJsonFile(join(root, 'slide-out', 'check.json')));
+    say(
+      'CK504_AN_IDLE_WITH_NO_BREATH_TRACK_FAILS_BREATH_VISIBLE_BY_NAME_AND_RENDERS_NOTHING_FOR_IT',
+      nb2.status === 1 && nfig.torso_status === 'FAIL' && nfig.torso_heat_mean === 0 && nline.includes('no idle track translates a bone') && !existsSync(join(root, 'no-breath-out', '_isolated')) && sl.status === 0 && sfig.torso_status === 'PASS' && typeof sfig.torso_heat_mean === 'number' && sfig.torso_heat_mean >= BREATH_TORSO_MEAN_FLOOR && !existsSync(join(root, 'slide-out', '_isolated')),
+      `no breath track: exit ${nb2.status}, torso ${String(nfig.torso_status)} ${String(nfig.torso_heat_mean)}; "${nline.trim().slice(0, 150)}"; the fixture as written (root translatex, the breath bone): exit ${sl.status}, torso ${String(sfig.torso_status)} ${String(sfig.torso_heat_mean)}; scratch left: ${existsSync(join(root, 'no-breath-out', '_isolated')) || existsSync(join(root, 'slide-out', '_isolated'))}`,
+      `issue #411: with no idle track that translates a bone there is no breath, and a torso that does not breathe is what the bar finds — a FAIL naming why, at 0 by the definition (the idle with and without its breath is one idle), never a SKIP that would let it through; the throwaway animation (${BREATH_ANIMATION}) and its build are made only when there is a breath, and removed with the stage's scratch`,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
