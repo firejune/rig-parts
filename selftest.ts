@@ -150,7 +150,7 @@ import { capBox, featherWeight, type JointLine, jointLine, limbWidth, nearestLim
 import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, type CheckFlagInBuild, checkStage, ctlRemedies, driftShare, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
-import { BLOUSE, CLOTH_PARTS, CLOTH_RIG, clothRecipe, DRESS, DRESS_RIG, dressParts, SHIFT } from './fixtures/cloth.ts';
+import { BLOUSE, CLOTH_PARTS, CLOTH_RIG, clothRecipe, DRESS, DRESS_RIG, dressHipJoints, dressParts, HEM, HEM_BELOW, SHIFT } from './fixtures/cloth.ts';
 import { RIDER_RIG, RIDER_STRIP, riderParts, riderRecipe } from './fixtures/rider.ts';
 import { type ClothRecipes, linkRows } from './src/cloth.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LEVEL_FRINGE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, TILTED_FRINGE_PARTS, TWO_LOCK_PARTS, writeProposeFixture } from './fixtures/propose.ts';
@@ -7473,6 +7473,8 @@ function runSkirtInsideProposeControls(say: (name: string, ok: boolean, detail: 
   const pieceDir = temp('skirt-inside-piece');
   const skirtDir = temp('skirt-inside-skirt');
   const shiftDir = temp('skirt-inside-shift');
+  const hemDir = temp('skirt-inside-hem');
+  const belowDir = temp('skirt-inside-hem-below');
   try {
     writeProposeFixture(shiftDir, dressParts(SHIFT), DRESS_RIG);
     writeProposeFixture(dressDir, dressParts(DRESS), DRESS_RIG);
@@ -7559,8 +7561,30 @@ function runSkirtInsideProposeControls(say: (name: string, ok: boolean, detail: 
       `${outcomes.map((o) => `${o.what}: ${o.ok ? 'refused once' : `NOT: ${o.got}`}`).join('; ')}; the dress named beside its cut piece: ${pieceOk === null ? 'proposed' : codes(pieceOk)}`,
       'issue #402: a declaration that names nothing, a part of another tag, a piece whose base already takes its layer\'s rule, or a topwear that stops at the waist would draft something other than it says — so it is refused by name, not drafted',
     );
+
+    // PR510 — issue #416, by hand in fixtures/cloth.ts (HEM): the hem's 2080 px over the dress's art split 1040 / 1040
+    // between skirt0_1 and skirt1_1, so it rides those two links, and the dress's trees are the only set.
+    writeProposeFixture(hemDir, [...dressParts(DRESS), HEM], DRESS_RIG);
+    writeProposeFixture(belowDir, [...dressParts(DRESS), HEM_BELOW], DRESS_RIG);
+    const hemOn = propose(readPartSet(hemDir), dressHipJoints(), null, DEFAULT_GRID_RULE, skirt('dress'));
+    const hemOff = propose(readPartSet(belowDir), dressHipJoints(), null, DEFAULT_GRID_RULE, skirt('dress'));
+    const skirtChains = (pr: Proposal): string => chainsOf(pr).filter((c) => c.startsWith('skirt')).join(',');
+    const treePhysics = (pr: Proposal): number => (pr.constraints ?? []).filter((c) => String(c.bone).startsWith('skirt')).length;
+    const rideNote = (pr: Proposal): string | undefined => pr.notes.find((n) => n.startsWith('hem (full:bottomwear): lies on the trees of dress'));
+    const onNote = rideNote(hemOn) ?? '';
+    const onWrong = Object.entries(want).filter(([n, v]) => boneAt(hemOn.bones, n) !== v);
+    const hemLoads = refusals(() => checkProposal(readPartSet(hemDir), hemOn));
+    say(
+      'PR510_A_BOTTOMWEAR_HEM_ON_A_DECLARED_DRESS_RIDES_THE_DRESS_S_LINKS_AND_ONE_SET_OF_TREES_IS_DRAFTED',
+      skirtChains(hemOn) === 'skirt0_,skirt1_' && onWrong.length === 0 && treePhysics(hemOn) === 4 &&
+        JSON.stringify(hemOn.meshes.hem?.segments ?? null) === '["skirt0_1","skirt1_1"]' && !('hem' in hemOn.regions) &&
+        onNote.includes('2080 of its 2912 px lie over dress\'s art, nearest its spans skirt0_1 1040, skirt1_1 1040 px') && onNote.includes('rides the links skirt0_1, skirt1_1') && hemLoads === null &&
+        skirtChains(hemOff) === 'skirt_hem0_,skirt_hem1_,skirt_dress0_,skirt_dress1_' && treePhysics(hemOff) === 8 && rideNote(hemOff) === undefined,
+      `the hem across the dress's last tier: trees ${skirtChains(hemOn)}${onWrong.length === 0 ? ' at PR482\'s points' : ` WRONG: ${onWrong.map(([n]) => `${n} ${boneAt(hemOn.bones, n)}`).join('; ')}`}, ${treePhysics(hemOn)} tree constraint(s); hem segments ${JSON.stringify(hemOn.meshes.hem?.segments ?? null)}; note: ${onNote.slice(onNote.indexOf('—'), onNote.indexOf('—') + 120) || 'ABSENT'}…; loads ${codes(hemLoads)}. Planted, the same hem under the dress's box (over none of its art): trees ${skirtChains(hemOff)}, ${treePhysics(hemOff)} tree constraint(s), rider note ${rideNote(hemOff) === undefined ? 'none' : 'WRITTEN'}`,
+      "issue #416: a hem See-through returned on its own took the skirt's recipe by its tag beside the declared dress, so one skirt carried two sets of trees, each on its own physics; on the dress it rides the dress's links by the overlap a part on a tail rides by (#391), and a bottomwear part over no link keeps its own trees",
+    );
   } finally {
-    for (const d of [dressDir, blouseDir, pieceDir, skirtDir, shiftDir]) rmSync(d, { recursive: true, force: true });
+    for (const d of [dressDir, blouseDir, pieceDir, skirtDir, shiftDir, hemDir, belowDir]) rmSync(d, { recursive: true, force: true });
   }
 }
 
@@ -13280,7 +13304,54 @@ function runCheckSuite(): number {
   runClothCheckCases(say);
   runRiderCheckCases(say);
   runBreathAloneCases(say);
+  runDressRiderCheckCases(say);
   return bad();
+}
+
+/**
+ * Issue #416, built by rigc and read by `check`. CK510: the dress fixture with its ruffle hem (fixtures/cloth.ts,
+ * HEM), proposed with `cloth.bottomwear.part: "dress"` and the hip from joints, builds through the gate with one set
+ * of trees in rig.json and the hem weighted to the dress's links skirt0_1 and skirt1_1 alone, and `check` reads
+ * TEXTURE_STRETCH PASS on it with the physics on; the planted negative, the hem under the dress's box (HEM_BELOW, on
+ * no link), builds with its own trees beside the dress's and the hem weighted to them. The other bars `check` prints
+ * on this figure are not this card's and are not read here: BREATH_VISIBLE reads the dress's idle heat (AUTHORING,
+ * *A skirt inside topwear*), and TIP_OVER_ROOT reads the hem's two halves.
+ */
+function runDressRiderCheckCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const root = temp('dress-rider-check');
+  try {
+    const hair: ClothRecipes = { 'back hair': clothRecipe()['back hair'], 'front hair': clothRecipe()['front hair'] };
+    const recipe: ClothRecipes = { ...hair, bottomwear: { chains: 2, links: 2, wind: [1, 4], gravity: [2, 8], part: 'dress' } };
+    const build = (label: string, hem: ProposeFixturePart, checked: boolean): { rig: number; check: { status: number; out: string } | null; bones: string[]; hemBones: string[] } => {
+      const fixture = [...dressParts(DRESS), hem];
+      const parts = join(root, `parts-${label}`);
+      writeProposeFixture(parts, fixture, DRESS_RIG);
+      const prop = propose(readPartSet(parts), dressHipJoints(), null, DEFAULT_GRID_RULE, recipe);
+      const cfg = join(root, `${label}.json`);
+      writeFileSync(cfg, JSON.stringify({ ...proposalConfig(fixture, prop), constraints: prop.constraints ?? [] }));
+      const out = join(root, `rig-${label}`);
+      const rig = runCli(['rig', '--config', cfg, '--parts', parts, '--out', out]);
+      if (rig.status !== 0 || !existsSync(join(out, 'rig.json'))) return { rig: rig.status, check: null, bones: [], hemBones: [] };
+      const r = JSON.parse(readFileSync(join(out, 'rig.json'), 'utf8')) as { bones: Array<{ name: string }>; skins: Record<string, Record<string, Record<string, { weights?: Array<Array<{ bone: string; weight: number }>> }>>> };
+      const ws = r.skins.default?.hem?.hem?.weights ?? [];
+      const hemBones = [...new Set(ws.flatMap((v) => v.filter((w) => w.weight > 0).map((w) => w.bone)))].sort();
+      const check = checked ? runCli(['check', '--rig', out, '--parts', parts, '--out', join(root, `check-${label}`)]) : null;
+      return { rig: rig.status, check, bones: r.bones.map((b) => b.name), hemBones };
+    };
+    const on = build('on', HEM, true);
+    const below = build('below', HEM_BELOW, false);
+    const trees = (bones: readonly string[]): string => [...new Set(bones.filter((b) => /^skirt.*_\d+$/.test(b)).map((b) => b.replace(/\d+$/, '')))].join(',');
+    const stretch = on.check === null ? 'check not run' : barLine(on.check.out, 'TEXTURE_STRETCH', 120);
+    say(
+      'CK510_THE_HEM_ON_THE_DECLARED_DRESS_BUILDS_ON_ONE_SET_OF_TREES_WEIGHTED_TO_THE_DRESS_S_LINKS_AND_TEXTURE_STRETCH_PASSES',
+      on.rig === 0 && trees(on.bones) === 'skirt0_,skirt1_' && on.hemBones.join(',') === 'skirt0_1,skirt1_1' && stretch.startsWith('TEXTURE_STRETCH: PASS') &&
+        below.rig === 0 && trees(below.bones) === 'skirt_hem0_,skirt_hem1_,skirt_dress0_,skirt_dress1_' && below.hemBones.some((b) => b.startsWith('skirt_hem')),
+      `rig exit ${on.rig}; rig.json's trees ${trees(on.bones)}; the hem's vertices weighted to ${on.hemBones.join(', ') || 'nothing'}; ${stretch}. Planted, the hem under the dress's box: rig exit ${below.rig}; trees ${trees(below.bones)}; the hem weighted to ${below.hemBones.join(', ') || 'nothing'}`,
+      "issue #416's bars on its fixture: exactly one set of trees, and TEXTURE_STRETCH passes with the hem riding (the consumer read 2.143 with two sets; this fixture read 1.275 both ways when measured, its worst mesh the back hair, so the bar here is the pass, not a difference); the plant is the form #416 replaces, a bottomwear part on its own trees",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /** One bone's world transform, or one slot's posed vertices, as rigc's `render --geometry` writes them. */

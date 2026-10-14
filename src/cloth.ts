@@ -48,6 +48,9 @@
  *   hip, by the skirt's own rule, in place of the robe chains the topwear rule
  *   drafts; its art above the hip stays on the chest. The proposer never picks
  *   such a part by itself: it names a candidate, and the author declares it.
+ *   A `bottomwear` part lying on that part's tree links (a hem returned as a
+ *   layer of its own) rides them, as a layer on a tail does ({@link tailOverlap}),
+ *   and gets no trees of its own (issue #416): one skirt, one set of trees.
  * - **Swing** (`bottomwear` only). `swing.scales` declares one shared pendulum:
  *   a bone `<prefix>swing` under the attachment at the centre of the root row,
  *   one link long, with physics; each tree's first link takes the swing's
