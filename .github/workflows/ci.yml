@@ -22,42 +22,83 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  # The selftest, in three shards (issue #395). One job could not finish it under
+  # 15 minutes: main's test job ran 17m49s on 2026-10-14 (0aaf7c7, 4 workers on
+  # 4 cores), about 3926 s of suite time on 4 cores, and readme-loop alone held
+  # a core for 1027.5 s. So the selftest's units — a suite, or one public
+  # example of a suite that builds every example — run across three jobs, as
+  # `selftest.ts`'s SHARDS assigns them, and `test` below merges their records.
+  # A shard judges nothing: its record holds every line its units printed, and
+  # the merge prints and counts them as one whole run would.
+  #
+  # ⚠️ The matrix names the shards SHARDS names. A shard here and not there is
+  # refused when it starts; one there and not here leaves no record, which the
+  # merge refuses by name.
+  shard:
+    name: selftest shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # Measured: main's test job ran 18m49s (2026-10-13, two runs), against a
-    # 20-minute ceiling; adding the `wind` example (#372) took it past and the
-    # run was cancelled. 40 leaves room while the suite's time is cut down.
-    timeout-minutes: 40
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1', '2', '3']
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
 
       # The public examples' heavy inputs (paintings, See-through layer sets)
-      # live in the spine-parts-examples repository and are fetched, at the
-      # commit scripts/fetch-examples.sh pins, into the gitignored
-      # examples/*/inputs — so a fresh checkout has none, and without this step
-      # the corpus suite reports a HOLE.
+      # live in the parts-examples repository and are fetched, at the commit
+      # scripts/fetch-examples.sh pins, into the gitignored examples/*/inputs —
+      # so a fresh checkout has none, and without this step every suite that
+      # reads them reports a HOLE.
       #
       # Deliberately not cached. The script holds every file on disk to its
       # blob id at the pinned commit and replaces a stale one by name (issue
       # #367), so a cache would no longer freeze the inputs, but it would still
       # be a second copy to reason about, and nothing here has measured what
       # it would save.
-      #
-      # ⚠️ The script refuses to run while PINNED_COMMIT is its placeholder, so
-      # this step is red until the examples repository has a commit to pin.
       - name: Fetch the public example inputs
         run: bun run fetch-examples
 
+      # Its units run in worker processes, as many at once as the runner has
+      # cores; the step is red when a unit wrote no result or failed, and the
+      # record is uploaded either way, so the merge can name what went wrong.
+      - name: Run this shard's units
+        run: bun selftest.ts --shard ${{ matrix.shard }} --record shards/shard-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest-shard-${{ matrix.shard }}
+          path: shards/shard-${{ matrix.shard }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # The required check. It waits on every shard and runs even when one failed
+  # (`always()`): a job skipped because a shard was red would report as
+  # skipped, and a skipped required check does not block a merge. The merge
+  # holds the records to every unit exactly once — a unit no shard recorded, or
+  # recorded twice, exits 2 before anything is replayed — then prints every
+  # suite's lines in SUITES order, each split suite's examples in their own
+  # order, through the run tally, so its output is a whole run's.
+  test:
+    needs: shard
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run lint
-      # Every suite but the corpus one is self-contained: no network, no
-      # private repository. The corpus suite reads the inputs fetched above.
-      # It runs its suites in worker processes, as many at once as the runner
-      # has cores, and prints them in order as one run (issue #99) — one job,
-      # one check name, every suite.
-      - run: bun run selftest
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: selftest-shard-*
+          path: shards
+          merge-multiple: true
+      - name: Merge the shards into one selftest run
+        run: bun selftest.ts --merge shards
 
   # Whether the PACKAGE runs, which nothing else here asks. `prepublishOnly`
   # gates the source tree and the `ships` job below reads packed path lists;
