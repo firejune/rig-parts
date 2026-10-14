@@ -213,6 +213,16 @@ export interface Cut {
    * pixels; it is read nowhere else. Absent: the base keeps only its band.
    */
   under?: string;
+  /**
+   * Issue #360 (item 11), optional, one value: `"colour"` — where the under
+   * fills a removed pixel, the base takes the under's colour and keeps the
+   * alpha the cut removed there, so the part's silhouette is the uncut
+   * layer's and never grows. The under is `under`'s image or the part's
+   * hidden-art layer (issue #359); a cut with neither is refused by the
+   * assemble stage (`ASSEMBLE_UNDER_FILL_SOURCE`). Absent: the base takes the
+   * under's colour and alpha, issue #193's rule.
+   */
+  under_fill?: 'colour';
 }
 
 export interface Assemble {
@@ -1556,7 +1566,9 @@ function checkAssemble(c: Check, v: Json, door: 'assemble' | 'full'): { parts: s
 /**
  * `assemble.cuts` (issue #170): each entry `{from, into, polygon, draw, overlap}`
  * and optionally `under` (issue #193, a non-empty path string; the assemble
- * stage reads the file), refused field by field. `from` must be a plan part — a cut of a patch or of
+ * stage reads the file) and `under_fill` (issue #360, the one value
+ * `"colour"`; whether the cut has an under to fill with is the assemble
+ * stage's to judge, since a hidden-art layer can be one), refused field by field. `from` must be a plan part — a cut of a patch or of
  * another cut's piece is refused, so every piece's provenance is one layer and
  * one polygon. `into` is a new part name: not a plan part, not a patch, not
  * another cut's. Returns the names the cuts make, in order.
@@ -1568,10 +1580,13 @@ function checkCuts(c: Check, v: Json, plan: string[], patches: string[]): string
   const seen = new Map<string, number>();
   (v as Json[]).forEach((entry, i) => {
     const at = `${p}[${i}]`;
-    const e = c.object(at, entry, ['from', 'into', 'polygon', 'draw', 'overlap'], ['under']);
+    const e = c.object(at, entry, ['from', 'into', 'polygon', 'draw', 'overlap'], ['under', 'under_fill']);
     if (e === null) return;
     if ('under' in e && !(typeof e.under === 'string' && e.under !== '')) {
       c.fail('CONFIG_FIELD_TYPE', `${at}.under`, `is ${show(e.under)}; a non-empty path to a PNG is required, relative to the config's directory — the image of what lies under the piece, in rig pixels over the polygon's bounding box`);
+    }
+    if ('under_fill' in e && e.under_fill !== 'colour') {
+      c.fail('CONFIG_FIELD_TYPE', `${at}.under_fill`, `is ${show(e.under_fill)}; "colour" is required — the base takes the under's colour and keeps the alpha the cut removed, so its silhouette does not grow; leave under_fill out for the under's colour and alpha`);
     }
     if ('overlap' in e && !(typeof e.overlap === 'number' && Number.isInteger(e.overlap) && e.overlap >= 0)) {
       c.fail('CONFIG_FIELD_TYPE', `${at}.overlap`, `is ${show(e.overlap)}; a non-negative integer of rig pixels is required — the band inside the cut's edge the part keeps under the piece, 0 for none`);

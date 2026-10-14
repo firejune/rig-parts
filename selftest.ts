@@ -1758,6 +1758,33 @@ function runConfigSuite(): number {
     'issue #193: the fill under a piece is the author\'s image, named by path; anything but a path is refused at the field, and an absent field is #170\'s cut exactly',
   );
 
+  // CF450 — issue #360 (unit C): a cut's under_fill is optional and, when present, the one value "colour", through both
+  // doors. The loader does not ask whether the cut has an under to fill with — a hidden-art layer can be one, and only
+  // the assemble stage reads the layers (ASSEMBLE_UNDER_FILL_SOURCE, AS452) — so "colour" with no under file loads here.
+  const fillOf = (f: unknown, door: 'full' | 'assemble' = 'full', under: string | null = 'under/tie.png'): string => {
+    const entry: Record<string, unknown> = { ...tie, ...(under === null ? {} : { under }), under_fill: f };
+    const e = refusals(() => (door === 'full' ? parseConfig(cutCfg([entry])) : parseEarlyConfig(early([entry]), 'assemble')));
+    return e === null ? 'loads' : e.problems.map((q) => `${q.code} ${q.object}: ${q.detail}`).join('; ');
+  };
+  const fl = {
+    colour: fillOf('colour'),
+    early: fillOf('colour', 'assemble'),
+    bare: fillOf('colour', 'full', null),
+    alpha: fillOf('alpha'),
+    color: fillOf('color'),
+    blank: fillOf(''),
+    num: fillOf(1),
+    nul: fillOf(null),
+    earlyAlpha: fillOf('alpha', 'assemble'),
+  };
+  const fillRefused = (x: string): boolean => x.startsWith('CONFIG_FIELD_TYPE config.assemble.cuts[0].under_fill: is ') && x.includes('; "colour" is required') && !x.includes('; CONFIG_');
+  say(
+    'CF450_A_CUT_S_UNDER_FILL_IS_THE_ONE_VALUE_COLOUR_THROUGH_EITHER_DOOR_AND_ANY_OTHER_IS_REFUSED_AT_THE_FIELD',
+    fl.colour === 'loads' && fl.early === 'loads' && fl.bare === 'loads' && [fl.alpha, fl.color, fl.blank, fl.num, fl.nul, fl.earlyAlpha].every(fillRefused) && fl.alpha.startsWith('CONFIG_FIELD_TYPE config.assemble.cuts[0].under_fill: is "alpha"'),
+    `"colour" -> ${fl.colour} (plain assemble's door: ${fl.early}; with no under file: ${fl.bare}); "alpha" -> ${fl.alpha}; "color" -> ${fl.color.split(': ')[0]}; "" -> ${fl.blank.split(': ')[0]}; 1 -> ${fl.num.split(': ')[0]}; null -> ${fl.nul.split(': ')[0]}; "alpha" through plain assemble's door -> ${fl.earlyAlpha.split(': ')[0]}; absent -> CF78's cuts`,
+    'issue #360 item 11: the colour-only fill is opt-in and has one spelling; a near miss ("color", "alpha") would otherwise be read as the absent field and fill the alpha the author asked to keep, so it is refused at the field, through the full loader and plain assemble\'s alike',
+  );
+
   runBlinkConfigCases(say);
   runRecordConfigCases(say);
   runConstraintConfigCases(say);
@@ -17950,6 +17977,122 @@ function runAssembleSuite(): number {
         );
       } catch (err) {
         say('AS238_A_HIDDEN_ART_LAYER_IS_THE_UNDER_OF_A_CUT_THAT_NAMES_NONE_AND_ONE_NAMED_AS_WELL_IS_REFUSED', false, `the stage threw: ${(err as Error).message.split('\n')[0]}`, 'the stage must assemble the hidden art green');
+      }
+
+      // AS450–AS452 — issue #360 (unit C, item 11): `under_fill: "colour"`, the under's colour at the alpha the cut
+      // removed. The fixture is AS54's triangle (drawn "front", overlap 0) with one change to topwear's layer: its first
+      // row, rig y 10 (x 20..39), is alpha 128 instead of 255. The run maps one run pixel to one rig pixel, so by hand
+      // the triangle removes 190 px (AS49), of which row 10's x 20..38 — 19 px (u = 0..18 at v = 0) — are at alpha 128
+      // and the other 171 at 255. The under image is UB (0, 0, 255, 255) over the 20x20 box, at least as opaque as the
+      // alpha removed at every one of the 190: all are filled and none left empty, under either fill.
+      // - "colour" (AS450): each of the 190 holds (0, 0, 255) at the alpha removed — 19 at 128, 171 at 255 — and the
+      //   base's alpha channel, read over the whole rig, is byte for byte the uncut run's: 0 alpha bytes differ.
+      // - absent (AS451; issue #193's rule, the planted mix-up — alpha filled too): each of the 190 holds UB at 255, so
+      //   the 19 soft pixels read 255 where the uncut base reads 128: 19 alpha bytes differ and AS450's bar is red on
+      //   it. Its RGB is the colour run's everywhere and its alpha differs only at those 19, so the field changes no
+      //   byte but the alpha it was asked to keep; without the field the stage is #193's, which AS54, AS55 and AS238
+      //   hold by hand.
+      const softRun = (label: string, cuts: Array<Record<string, unknown>>, files: Record<string, Uint8Array> = {}): { r: ReturnType<typeof assemble>; lines: string[] } => {
+        const d = join(cutStage, label);
+        writeRun(join(d, 'full'), cutFull);
+        const layer = join(d, 'full', 'parts', 'topwear.png');
+        const im = readPng(layer);
+        for (let i = 0; i < im.width; i++) im.data[i * 4 + 3] = 128;
+        writeFileSync(layer, encodePngBytes(im));
+        for (const [name, bytes] of Object.entries(files)) writeFileSync(join(d, name), bytes);
+        writeRun(join(d, 'head'), FRAMED_HEAD);
+        writeFileSync(join(d, 'painting.png'), encodePngBytes(flatPainting()));
+        const cfg = assembleConfig({ plan: cutPlan, extend: [] });
+        if (cuts.length > 0) (cfg.assemble as Record<string, unknown>).cuts = cuts;
+        writeFileSync(join(d, 'config.json'), JSON.stringify(cfg));
+        const lines: string[] = [];
+        const out = join(d, 'out');
+        const r = assembleStage(
+          { source: join(d, 'painting.png'), full: join(d, 'full'), head: join(d, 'head'), config: join(d, 'config.json'), seam: 'near-white', project: DEFAULT_PROJECT_RULE },
+          { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, 'recomposite_error_rig.png') },
+          (l) => lines.push(l),
+        );
+        return { r, lines };
+      };
+      /** topwear's image laid on the 64x64 rig: its RGBA at each rig pixel, transparent off the part's box. */
+      const onRig = (r: ReturnType<typeof assemble>): Uint8Array => {
+        const placed = r.images.find((q) => q.record.name === 'topwear') as PlacedPart;
+        const out = new Uint8Array(64 * 64 * 4);
+        for (let y = 0; y < placed.record.h; y++) for (let x = 0; x < placed.record.w; x++) out.set(placed.image.data.subarray((y * placed.record.w + x) * 4, (y * placed.record.w + x) * 4 + 4), ((placed.record.y + y) * 64 + placed.record.x + x) * 4);
+        return out;
+      };
+      /** The rig pixels whose byte at channel offset `ch` (3 = alpha; [0, 1, 2] = RGB) differs between two images. */
+      const differ = (a: Uint8Array, b: Uint8Array, chs: readonly number[]): number[] => {
+        const out: number[] = [];
+        for (let q = 0; q < 64 * 64; q++) if (chs.some((ch) => a[q * 4 + ch] !== b[q * 4 + ch])) out.push(q);
+        return out;
+      };
+      // The 190 removed pixels by hand: u + v < 19 over the box at 20,10.
+      const removed: number[] = [];
+      for (let v = 0; v < 19; v++) for (let u = 0; u + v < 19; u++) removed.push((10 + v) * 64 + 20 + u);
+      /** The removed pixels' RGBA in a run, tallied: `<count>x<r,g,b,a>` per distinct value, in first-seen order. */
+      const removedTally = (img: Uint8Array): string => {
+        const n = new Map<string, number>();
+        for (const q of removed) {
+          const k = Array.from(img.subarray(q * 4, q * 4 + 4)).join(',');
+          n.set(k, (n.get(k) ?? 0) + 1);
+        }
+        return [...n.entries()].map(([k, c]) => `${c}x(${k})`).join(' ');
+      };
+      try {
+        const uncut = softRun('fill-uncut', []);
+        const colour = softRun('fill-colour', [{ ...TRI_FRONT, under: 'tie-under.png', under_fill: 'colour' }], { 'tie-under.png': encodePngBytes(underPng(20, 20)) });
+        const both = softRun('fill-absent', [{ ...TRI_FRONT, under: 'tie-under.png' }], { 'tie-under.png': encodePngBytes(underPng(20, 20)) });
+        const [u0, c0, b0] = [onRig(uncut.r), onRig(colour.r), onRig(both.r)];
+        const softRow = removed.filter((q) => Math.floor(q / 64) === 10);
+        // The fixture holds what the comment says: the uncut base is 128 on the 19 removed pixels of row 10 and 255 on the other 171.
+        const fixtureOk = softRow.length === 19 && removed.length === 190 && removed.every((q) => u0[q * 4 + 3] === (Math.floor(q / 64) === 10 ? 128 : 255));
+        const colourAlphaDiff = differ(c0, u0, [3]);
+        const colourLine = '  cut: "topwear" opaque 600 = "topwear" 410 + "tie" 190; band 0 px held by both; under 190 px filled (190 colour only, at the alpha the cut removed), 0 px left empty';
+        const cl = colour.lines.find((l) => l.startsWith('  cut: ')) ?? 'NONE';
+        say(
+          'AS450_UNDER_FILL_COLOUR_FILLS_THE_REMOVED_PIXELS_WITH_THE_UNDER_S_COLOUR_AND_THE_PART_S_ALPHA_IS_THE_UNCUT_LAYER_S_BYTE_FOR_BYTE',
+          fixtureOk && removedTally(c0) === '19x(0,0,255,128) 171x(0,0,255,255)' && colourAlphaDiff.length === 0 && cl === colourLine &&
+            JSON.stringify(colour.r.cuts) === '[{"from":"topwear","into":"tie","before":600,"kept":410,"taken":190,"band":0,"under":190,"underEmpty":0,"underFill":"colour"}]',
+          `fixture: ${removed.length} removed px, ${softRow.length} at alpha 128 in the uncut base (by hand 190 and 19) ${fixtureOk ? 'as built' : 'NOT as built'}; colour only: the removed pixels hold ${removedTally(c0)} (by hand 19x(0,0,255,128) 171x(0,0,255,255)); alpha bytes differing from the uncut base over the 64x64 rig: ${colourAlphaDiff.length} (by hand 0); ${cl}`,
+          'issue #360 item 11: an opaque cap made a soft edge opaque and stepped the contour even at rest; the colour-only fill takes what lies under the piece and keeps the silhouette the layer had, so the part\'s alpha is the uncut layer\'s exactly where the under fills',
+        );
+        const bothAlphaDiff = differ(b0, u0, [3]);
+        const rgbDiff = differ(b0, c0, [0, 1, 2]);
+        const alphaVsColour = differ(b0, c0, [3]);
+        const bothLine = '  cut: "topwear" opaque 600 = "topwear" 410 + "tie" 190; band 0 px held by both; under 190 px filled, 0 px left empty';
+        const bl = both.lines.find((l) => l.startsWith('  cut: ')) ?? 'NONE';
+        say(
+          'AS451_A_PLANTED_MODE_MIX_UP_THE_ALPHA_FILLED_TOO_TURNS_AS450_S_BAR_RED_AND_WITHOUT_UNDER_FILL_ONLY_THAT_ALPHA_MOVES',
+          removedTally(b0) === '190x(0,0,255,255)' && bothAlphaDiff.length === 19 && bothAlphaDiff.every((q) => softRow.includes(q)) &&
+            rgbDiff.length === 0 && alphaVsColour.join() === softRow.join() && bl === bothLine &&
+            JSON.stringify(both.r.cuts) === '[{"from":"topwear","into":"tie","before":600,"kept":410,"taken":190,"band":0,"under":190,"underEmpty":0}]',
+          `under_fill absent (colour and alpha, issue #193): the removed pixels hold ${removedTally(b0)} (by hand 190x(0,0,255,255)); alpha bytes differing from the uncut base: ${bothAlphaDiff.length} (by hand 19, row 10's soft pixels: ${bothAlphaDiff.every((q) => softRow.includes(q)) ? 'all of them' : 'NOT those'}) — AS450's bar reads RED on it; against the colour-only run: ${rgbDiff.length} RGB bytes differ, alpha differs at ${alphaVsColour.length} px (by hand 0 and 19, the soft row); ${bl}`,
+          'the bar has to see the one mistake it exists for: an under that also fills the alpha grows the silhouette over a soft edge, and here it is 19 bytes the comparison names; the absent field writes #193\'s pixels (AS54–AS55) and its cut record carries no new key',
+        );
+      } catch (err) {
+        const why = `the stage threw: ${(err as Error).message.split('\n')[0]}`;
+        say('AS450_UNDER_FILL_COLOUR_FILLS_THE_REMOVED_PIXELS_WITH_THE_UNDER_S_COLOUR_AND_THE_PART_S_ALPHA_IS_THE_UNCUT_LAYER_S_BYTE_FOR_BYTE', false, why, 'the stage must assemble the colour-only fill green');
+        say('AS451_A_PLANTED_MODE_MIX_UP_THE_ALPHA_FILLED_TOO_TURNS_AS450_S_BAR_RED_AND_WITHOUT_UNDER_FILL_ONLY_THAT_ALPHA_MOVES', false, `not measured: ${why}`, 'the runs AS450 reads are the ones compared here');
+      }
+
+      // AS452 — under_fill with nothing to fill from: no under file and no hidden-art layer is refused by name, before
+      // any pixel work; with the part's hidden-art layer (AS238's, UB over the triangle's box, opaque like the layer) the
+      // field applies to it as to a file: 190 filled, all colour only, none left empty.
+      try {
+        const none = underCut({ under: undefined, under_fill: 'colour' }, null);
+        const viaHidden = hiddenCut('hidden-colour', [{ ...TRI_FRONT, under_fill: 'colour' }]);
+        const hl = viaHidden.lines.find((l) => l.startsWith('  cut: ')) ?? 'NONE';
+        const want = '  cut: "topwear" opaque 600 = "topwear" 410 + "tie" 190; band 0 px held by both; under 190 px filled (190 colour only, at the alpha the cut removed), 0 px left empty';
+        say(
+          'AS452_UNDER_FILL_ON_A_CUT_WITH_NO_UNDER_IS_REFUSED_BY_NAME_AND_A_HIDDEN_ART_LAYER_IS_FILLED_COLOUR_ONLY_AS_A_FILE_IS',
+          none.startsWith('ASSEMBLE_UNDER_FILL_SOURCE config.assemble.cuts[0].under_fill (part "tie"): is "colour", and the cut has no under: it names no under file and "topwear" has no hidden-art layer') &&
+            !none.includes(' | ') && hl === want,
+          `under_fill "colour" with no under -> ${none}; with topwear:hidden as the under -> ${hl}`,
+          'a field nothing reads is a silent no-op the author believes in; the hidden-art layer is an under like a file, so the colour-only fill reads it the same way',
+        );
+      } catch (err) {
+        say('AS452_UNDER_FILL_ON_A_CUT_WITH_NO_UNDER_IS_REFUSED_BY_NAME_AND_A_HIDDEN_ART_LAYER_IS_FILLED_COLOUR_ONLY_AS_A_FILE_IS', false, `the stage threw: ${(err as Error).message.split('\n')[0]}`, 'the stage must assemble the hidden art colour-only green');
       }
     } finally {
       rmSync(cutStage, { recursive: true, force: true });
