@@ -32967,6 +32967,22 @@ function startWorkers(order: readonly string[], jobs: number, launch: (key: stri
   return runs;
 }
 
+/**
+ * Each worker's wall time, for the run's log (issue #395: the CI log carried no per-suite time, so which suites hold
+ * the job's minutes could not be read off it). Written to stderr only: the tally observes stdout, nothing compares
+ * stderr, and a time is the one thing two runs of the same tree never agree on. One line per suite in `keys` order:
+ * its seconds, then when its worker started and ended, from the parent's start.
+ */
+function workerClockText(keys: readonly string[], clock: ReadonlyMap<string, readonly [number, number]>, jobs: number, wallMs: number): string {
+  const s = (ms: number): string => (ms / 1000).toFixed(1);
+  const lines = [`selftest clock (stderr, never tallied): ${jobs} worker(s) at once on ${availableParallelism()} available core(s); every worker done at ${s(wallMs)} s`];
+  for (const key of keys) {
+    const at = clock.get(key);
+    lines.push(at === undefined ? `  clock  ${key}  no worker finished` : `  clock  ${key}  ${s(at[1] - at[0])} s  (+${s(at[0])} .. +${s(at[1])})`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 async function main(): Promise<void> {
   if (process.argv.includes(WORKER_FLAG)) {
     workerMain(process.argv);
@@ -32981,7 +32997,14 @@ async function main(): Promise<void> {
   }
   const jobs = workerCount();
   const results = temp('workers');
-  const runs = startWorkers(order, jobs, (key) => launchWorker(key, corpus, results));
+  const clock = new Map<string, readonly [number, number]>();
+  const t0 = performance.now();
+  const runs = startWorkers(order, jobs, async (key) => {
+    const began = performance.now() - t0;
+    const run = await launchWorker(key, corpus, results);
+    clock.set(key, [began, performance.now() - t0]);
+    return run;
+  });
   const tally = new RunTally();
   const printLine = console.log;
   console.log = (...args: unknown[]): void => {
@@ -32999,6 +33022,7 @@ async function main(): Promise<void> {
   } finally {
     rmSync(results, { recursive: true, force: true });
   }
+  printErr(workerClockText(keys, clock, jobs, performance.now() - t0));
   tally.of(TALLY_SUITE, () => runTallySuite(tally));
   console.log = printLine;
 
