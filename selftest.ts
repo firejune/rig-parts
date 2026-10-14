@@ -16627,6 +16627,32 @@ function pasteListFaults(docs: ReadonlyArray<readonly [string, string]>, section
   return faults;
 }
 
+/**
+ * Issue #397: the words an example README says `expected/rig.json` is stored
+ * flat in. That file is `flattenRig` of the built rig, every bone unturned,
+ * and a build's `rig/rig.json` carries `rotation` and `length` on its chain
+ * links, so a reader who diffs the two without being told sees a broken
+ * build. TY19 reads the phrase with every run of whitespace as one space, so
+ * a line wrap inside it does not hide it.
+ */
+const FLAT_FORM_PHRASE = '`expected/rig.json` is the flat form';
+
+/**
+ * Every README under `examples/` in `docs` that names `expected/rig.json` and
+ * does not say {@link FLAT_FORM_PHRASE} (issue #397), one fault per README,
+ * and the READMEs that name it.
+ */
+function flatFormFaults(docs: ReadonlyArray<readonly [string, string]>): { named: string[]; faults: string[] } {
+  const named: string[] = [];
+  const faults: string[] = [];
+  for (const [f, t] of docs) {
+    if (!f.startsWith('examples/') || !f.endsWith('/README.md') || !t.includes('expected/rig.json')) continue;
+    named.push(f);
+    if (!t.replace(/\s+/g, ' ').includes(FLAT_FORM_PHRASE)) faults.push(`${f} names expected/rig.json and never says "${FLAT_FORM_PHRASE}"`);
+  }
+  return { named, faults };
+}
+
 /** The sections the README's loop block says to copy from the proposal into the config; a string says why none could be read. */
 function readmePasteSections(readme: string): string[] | string {
   const at = readme.indexOf('## The loop, for an agent');
@@ -24527,6 +24553,29 @@ function runTreeSuite(): number {
     `${drift18.length === 0 ? `${sites18.length} sentence(s) (${sites18.join(', ')}) each name ${sections18.join(', ')}, PROPOSAL_CONFIG_SECTIONS in src/propose.ts` : drift18.join('; ')}` +
       `; planted: the README's old line -> ${plants18[0].join('; ') || 'not found'} | the skill's sentence gone -> ${plants18[1].join('; ') || 'not found'} | another order -> ${plants18[2].join('; ') || 'not found'} | notes named -> ${plants18[3].join('; ') || 'not found'} | the old line in CHANGELOG.md and the plan's paste sentence -> ${plants18[4].join('; ') || 'not flagged'}`,
     "issue #375: the README's paste step named four sections after --keypoints began drafting limbs (#349), and a config without them is refused at the next step; the list is read off the proposal's type, so every copy of the instruction is held to it rather than kept by hand",
+  );
+
+  // TY19 — issue #397: every README under examples/ that names expected/rig.json says it is the flat form, so a reader
+  // who diffs a build's rig/rig.json against it is told why the chain links differ before concluding the build is broken.
+  const flat19 = flatFormFaults(text);
+  const demoReadme19 = 'examples/demo/README.md';
+  const plants19 = [
+    flatFormFaults([...text, ['examples/plant/README.md', '`expected/` holds `parts.json` and `expected/rig.json`, the build as written.\n']]).faults,
+    flatFormFaults([...text, ['examples/plant/README.md', '`expected/rig.json` is the\nflat form: every bone unturned.\n']]).faults,
+    flatFormFaults(withDoc(demoReadme19, (t) => t.replaceAll(FLAT_FORM_PHRASE, '`expected/rig.json` is the reference form'))).faults,
+    flatFormFaults([...text, ['README.md', 'Diff your build against `expected/rig.json`.\n']]).faults,
+  ];
+  const plantsHit19 =
+    plants19[0].join() === `examples/plant/README.md names expected/rig.json and never says "${FLAT_FORM_PHRASE}"` &&
+    plants19[1].length === 0 &&
+    plants19[2].join() === `${demoReadme19} names expected/rig.json and never says "${FLAT_FORM_PHRASE}"` &&
+    plants19[3].length === 0;
+  say(
+    'TY19_EVERY_EXAMPLE_README_NAMING_EXPECTED_RIG_JSON_SAYS_IT_IS_THE_FLAT_FORM',
+    flat19.named.length > 0 && flat19.faults.length === 0 && plantsHit19,
+    `${flat19.faults.length === 0 ? `${flat19.named.length} README(s) under examples/ name expected/rig.json (${flat19.named.join(', ')}), each saying "${FLAT_FORM_PHRASE}"` : flat19.faults.join('; ')}` +
+      `; planted: a README naming it without the phrase -> ${plants19[0].join('; ') || 'not found'} | the phrase wrapped across a line -> ${plants19[1].join('; ') || 'not flagged'} | the phrase gone from the demo README -> ${plants19[2].join('; ') || 'not found'} | the root README naming it -> ${plants19[3].join('; ') || 'not flagged'}`,
+    "issue #397: expected/rig.json is flattenRig of the built rig, every bone unturned, and a build's rig/rig.json carries rotation and length on its chain links; a reader who built wind at 1.21.0 and diffed the two read thousands of differing lines as a broken package, where flattenRig of that build matched exactly",
   );
 
   const self = readFileSync(join(ROOT, 'selftest.ts'), 'utf8');

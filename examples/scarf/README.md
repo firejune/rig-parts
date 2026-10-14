@@ -72,6 +72,13 @@ here (gitignored).
   and reference-sample's are the reference implementation's JPEGs): the painting with the full
   run's layers, the painting with the head run's layers, and the painting with the
   24 assembled parts of the `expected/` build.
+- `expected/rig.json` is the flat form: every bone unturned, which is `flattenRig`
+  (`src/rig.ts`) of the built rig. A build's `rig/rig.json` turns each chain link along
+  its chain, so it carries `rotation` and `length` on the links, and the offsets under
+  them in the turned frame, where this file holds unturned offsets only: a plain diff of
+  the two shows those bones and the weights bound to them as changed, and the build is
+  not broken. The chain suite (`CH03`) compares this file with `flattenRig(built)`, not
+  with the built file; compare the same way.
 - `expected/` — **this port's own build**, rebuilt by issue #118 (which moved
   `bottomwear` to contour mode and `TIP_OVER_ROOT` to the geometry; `parts.json` did
   not move) and by issue #196 (which moved `robe_r` onto the tie: `rig.json`,

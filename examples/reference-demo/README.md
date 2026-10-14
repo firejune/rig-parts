@@ -9,6 +9,15 @@ scene and auto-mesh suites hold this port to it. Its `config.json` keeps
 `expected/` carries that name. The display `demo` is a different painting
 (`examples/demo`).
 
+`expected/rig.json` is the flat form: every bone unturned, which is `flattenRig`
+(`src/rig.ts`) of the built rig and the form the reference implementation wrote. A
+build's `rig/rig.json` turns each chain link along its chain, so it carries `rotation`
+and `length` on the links, and the offsets under them in the turned frame, where this
+file holds unturned offsets only: a plain diff of the two shows those bones and the
+weights bound to them as changed, and the build is not broken. The chain suite (`CH03`)
+compares this file with `flattenRig(built)`, not with the built file; compare the same
+way.
+
 
 A generated full-body character — prompted as an adult woman in a white and
 pink frilled idol dress, with very long twin tails, a large ribbon hair bow, a
