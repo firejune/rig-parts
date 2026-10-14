@@ -376,6 +376,7 @@ import {
   type BoneBasis,
   type BoneCoverage,
   basisLines,
+  branchSqueezeLine,
   BREATH_FRACTION,
   checkProposal,
   compare,
@@ -2532,11 +2533,13 @@ function runClothConfigControls(say: (name: string, ok: boolean, detail: string,
     const loads = [
       refusals(() => parseConfig(withCloth())),
       refusals(() => parseConfig(withCloth((r) => (r['front hair'].strength = { trunk: 100, branch: 100, edge: 13300 })))),
+      refusals(() => parseConfig(withCloth((r) => (r.bottomwear.split = { at: 1, into: 2, hold_tip: true })))),
       refusals(() => parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false }, assemble: { rig_scale: 0.5 }, cloth: clothRecipe() }, 'layers')),
     ];
     const planted: Array<[string, string, string, Record<string, unknown>]> = [
       ['a tag no recipe is for', 'CONFIG_KEY_KNOWN', 'config.cloth."topwear"', withCloth((r) => (r.topwear = { ...r.bottomwear }))],
       ['split.at at links', 'CONFIG_CLOTH_SPLIT_BEFORE_TIP', 'config.cloth."back hair".split.at', withCloth((r) => (r['back hair'].split = { at: 3, into: 2 }))],
+      ['split.hold_tip not a boolean', 'CONFIG_FIELD_TYPE', 'config.cloth."bottomwear".split.hold_tip', withCloth((r) => (r.bottomwear.split = { at: 1, into: 2, hold_tip: 'yes' }))],
       ['wind tip below root', 'CONFIG_CLOTH_RESPONSE_GROWS_TO_TIP', 'config.cloth."bottomwear".wind', withCloth((r) => (r.bottomwear.wind = [10, 2]))],
       ['gravity tip below root', 'CONFIG_CLOTH_RESPONSE_GROWS_TO_TIP', 'config.cloth."front hair".gravity', withCloth((r) => (r['front hair'].gravity = [3, 1]))],
       ['alternate_damping equal to damping', 'CONFIG_CLOTH_ALTERNATE_DIFFERS', 'config.cloth."bottomwear".alternate_damping', withCloth((r) => (r.bottomwear.alternate_damping = 0.85))],
@@ -7984,6 +7987,70 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
       rmSync(noSkirt, { recursive: true, force: true });
       rmSync(bun, { recursive: true, force: true });
     }
+
+    // PR515 — issue #403: on fixtures/cloth.ts, the forked trees' outer branch takes edge strength 50 while its inner
+    // sibling keeps branch strength 100 across the cell boundary at r < grid, so lint names the fork's bones and the
+    // mechanism ("the weights where two branches' cells meet"); split.hold_tip: true holds sibling branches to branch
+    // strength (100) and raises r to grid, clearing the lint, and an unbranched recipe has no branch squeeze.
+    const defaultLint = lint(P, prop);
+    const skirtSq = defaultLint.branchSqueezes.find((b) => b.mesh === 'skirt') ?? null;
+    const skirtLine = skirtSq === null ? '' : branchSqueezeLine(skirtSq);
+    const baseRecipe = clothRecipe();
+    const heldRecipe: ClothRecipes = {
+      ...baseRecipe,
+      'back hair': {
+        ...baseRecipe['back hair']!,
+        split: { ...baseRecipe['back hair']!.split!, hold_tip: true },
+      },
+      bottomwear: {
+        ...baseRecipe.bottomwear!,
+        split: { ...baseRecipe.bottomwear!.split!, hold_tip: true },
+      },
+    };
+    const unsplitRecipe: ClothRecipes = {
+      ...baseRecipe,
+      'back hair': { ...baseRecipe['back hair']!, split: undefined },
+      bottomwear: { ...baseRecipe.bottomwear!, split: undefined },
+    };
+    const heldProp = propose(P, undefined, null, DEFAULT_GRID_RULE, heldRecipe);
+    const heldLint = lint(P, heldProp);
+    const unsplitProp = propose(P, undefined, null, DEFAULT_GRID_RULE, unsplitRecipe);
+    const unsplitLint = lint(P, unsplitProp);
+    const heldByName = new Map((heldProp.constraints ?? []).map((c) => [`${c.type}:${c.name}`, c]));
+    const heldPh = (bone: string): Record<string, unknown> | undefined => heldByName.get(`physics:${bone}_physics`);
+    const heldStiff = [heldPh('skirt0a_1')?.strength, heldPh('skirt0b_1')?.strength, heldPh('skirt3a_1')?.strength, heldPh('skirt3b_1')?.strength, heldPh('hairback_r0a_1')?.strength, heldPh('hairback_l1b_1')?.strength];
+    const skirtMeshHeld = heldProp.meshes.skirt as { grid: number; r: number };
+    const hairMeshHeld = heldProp.meshes.hair_back as { grid: number; r: number };
+    const heldLoads = refusals(() => checkProposal(P, heldProp));
+    say(
+      'PR515_A_BRANCHED_TREE_S_SQUEEZED_TIP_IS_NAMED_BY_BONES_AND_MECHANISM_AND_HELD_BY_HOLD_TIP',
+      defaultLint.branchSqueezes.length === 3 &&
+        skirtSq !== null &&
+        skirtSq.parent === 'skirt0_0' &&
+        skirtSq.a === 'skirt0a_1' &&
+        skirtSq.b === 'skirt0b_1' &&
+        skirtSq.tipGap === 13 &&
+        skirtSq.r === 4 &&
+        skirtSq.grid === 10 &&
+        skirtSq.strengthA === 50 &&
+        skirtSq.strengthB === 100 &&
+        skirtSq.triangle === 218 &&
+        JSON.stringify(skirtSq.edge) === '[134,135]' &&
+        skirtLine.startsWith("LINT skirt0a_1 and skirt0b_1 (forked from skirt0_0) on mesh 'skirt' squeeze their tip:") &&
+        skirtLine.includes("the weights where two branches' cells meet") &&
+        skirtLine.includes('split.hold_tip: true') &&
+        heldLint.branchSqueezes.length === 0 &&
+        JSON.stringify(heldStiff) === '[100,100,100,100,100,100]' &&
+        skirtMeshHeld.r === skirtMeshHeld.grid &&
+        skirtMeshHeld.r === 10 &&
+        hairMeshHeld.r === hairMeshHeld.grid &&
+        hairMeshHeld.r === 14 &&
+        heldProp.notes.some((n) => n.includes('a 1-link trunk forking into 2 branches (tip held)')) &&
+        heldLoads === null &&
+        unsplitLint.branchSqueezes.length === 0,
+      `default split: ${defaultLint.branchSqueezes.length} branch squeeze(s), skirt line ${JSON.stringify(skirtLine.slice(0, 180))}…; with hold_tip: true -> ${heldLint.branchSqueezes.length} branch squeeze(s), strengths ${JSON.stringify(heldStiff)}, skirt r ${skirtMeshHeld.r}/${skirtMeshHeld.grid}, hair_back r ${hairMeshHeld.r}/${hairMeshHeld.grid}, loads ${codes(heldLoads)}; unsplit -> ${unsplitLint.branchSqueezes.length} branch squeeze(s)`,
+      'issue #403: at r < grid on a forked tree whose outer branch takes edge strength 50 while its inner sibling keeps branch strength 100, the cell boundary between their tips closes under wind and sway (0.7073 / 0.6622 vs 0.8776 / 0.8260 unsplit); lint names the fork\'s bones and the mechanism, and split.hold_tip: true keeps branch strength across the fork and raises r to grid (0.9170 / 0.8561)',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

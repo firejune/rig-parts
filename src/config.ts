@@ -2800,10 +2800,11 @@ function checkCloth(c: Check, v: Json): void {
     const chains = 'chains' in r && c.int(`${path}.chains`, r.chains, 1) ? (r.chains as number) : null;
     const links = 'links' in r && c.int(`${path}.links`, r.links, 1) ? (r.links as number) : null;
     if ('split' in r) {
-      const sp = c.object(`${path}.split`, r.split, ['at', 'into'], []);
+      const sp = c.object(`${path}.split`, r.split, ['at', 'into'], ['hold_tip']);
       if (sp !== null) {
         const sAt = 'at' in sp && c.int(`${path}.split.at`, sp.at, 1) ? (sp.at as number) : null;
         if ('into' in sp) c.int(`${path}.split.into`, sp.into, 2);
+        if ('hold_tip' in sp && typeof sp.hold_tip !== 'boolean') c.fail('CONFIG_FIELD_TYPE', `${path}.split.hold_tip`, `is ${show(sp.hold_tip)}; true or false is required`);
         if (sAt !== null && links !== null && sAt >= links) {
           c.fail('CONFIG_CLOTH_SPLIT_BEFORE_TIP', `${path}.split.at`, `is ${sAt} and links is ${links}; the trunk's ${sAt} link(s) would leave no link for the branches — split.at below links is required`);
         }

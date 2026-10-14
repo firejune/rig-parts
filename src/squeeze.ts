@@ -37,7 +37,7 @@
  * its own figure too. A remedy whose figure is past the bar is not offered.
  */
 import { TEXTURE_STRETCH_CEILING } from './check.ts';
-import type { BoneEntry, MeshSpec, Motion, Point } from './config.ts';
+import type { BoneEntry, ConfigConstraint, MeshSpec, Motion, Point } from './config.ts';
 import { stretchFigures, stretchSeverity, type StretchAt } from './instruments.ts';
 import { edgeLength } from './length.ts';
 import { ART_ALPHA, latticeMesh, latticeStray } from './mesh.ts';
@@ -75,6 +75,27 @@ export interface SqueezeFinding {
   aloneB: number;
   /** Both opposed link for link: the worst edge with the second chain's signs turned. Null when they are not opposed. */
   turned: number | null;
+}
+
+/**
+ * Issue #403: two sibling branch tips forked from the same trunk link on a lattice mesh whose cell-boundary weights
+ * pin adjacent vertices to different branch links (or whose fork gives the two branches unequal spring strength), so
+ * the triangles where the two branches' cells meet are squeezed under the environment or a hip sway.
+ */
+export interface BranchSqueezeFinding {
+  mesh: string;
+  parent: string;
+  a: string;
+  b: string;
+  tipGap: number;
+  triangle: number;
+  edge: [number, number];
+  weightA: number;
+  weightB: number;
+  strengthA: number | null;
+  strengthB: number | null;
+  r: number;
+  grid: number;
 }
 
 export interface SqueezeResult {
@@ -271,4 +292,143 @@ export function chainSqueezes(
     }
   }
   return { findings, unread, read };
+}
+
+/**
+ * Issue #403: sibling branch chains forked from the same trunk link on a lattice mesh under the distance rule.
+ * When `m.r < m.grid` concentrates a cell-boundary edge's weights on each branch's tip link (above 0.85), or when
+ * physics constraints give two sibling branches of one fork unequal `strength` (such as `edge` 50 beside `branch` 100),
+ * the triangles where the two branches' cells meet squeeze under the environment or a hip sway. Returns one finding per
+ * unheld sibling pair on a fork; quiet on an unbranched mesh or when `split.hold_tip: true` holds the fork.
+ */
+export function branchSqueezes(
+  spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>>; constraints?: readonly ConfigConstraint[] },
+  parts: ReadonlyMap<string, { x: number; y: number; image: Raster }>,
+): BranchSqueezeFinding[] {
+  const out: BranchSqueezeFinding[] = [];
+  const chains = new Map<string, { points: Point[]; tip: Point; parent: string }>();
+  for (const e of spec.bones) if ('chain' in e) chains.set(e.chain, { points: e.points, tip: e.tip, parent: e.parent });
+  const linkOf = new Set<string>();
+  for (const [c, e] of chains) e.points.forEach((_, i) => linkOf.add(`${c}${i}`));
+  const strengthOf = new Map<string, number>();
+  for (const c of spec.constraints ?? []) {
+    if (c.type === 'physics' && typeof c.bone === 'string' && c.rotate !== undefined && typeof c.strength === 'number') {
+      strengthOf.set(c.bone, c.strength);
+    }
+  }
+
+  for (const [mname, m] of Object.entries(spec.meshes)) {
+    if ('contour' in m || 'auto' in m || m.rule === 'heat') continue;
+    const byFork = new Map<string, string[]>();
+    for (const sp of m.segments) {
+      if (typeof sp !== 'string') continue;
+      const c = chains.get(sp);
+      if (c === undefined || !linkOf.has(c.parent)) continue;
+      const list = byFork.get(c.parent) ?? [];
+      list.push(sp);
+      byFork.set(c.parent, list);
+    }
+    const forks = [...byFork.entries()].filter(([, list]) => list.length >= 2);
+    if (forks.length === 0) continue;
+    const part = parts.get(mname);
+    if (part === undefined) continue;
+    const segs: Segment[] = [];
+    let unresolved = false;
+    for (const sp of m.segments) {
+      if (typeof sp !== 'string') {
+        segs.push({ bone: sp[0], a: [sp[1][0], sp[1][1]], b: [sp[2][0], sp[2][1]] });
+        continue;
+      }
+      const c = chains.get(sp);
+      if (c !== undefined) {
+        const line = [...c.points, c.tip];
+        c.points.forEach((q, i) => segs.push({ bone: `${sp}${i}`, a: [q[0], q[1]], b: [line[i + 1][0], line[i + 1][1]] }));
+        continue;
+      }
+      const single = spec.bones.find((e) => 'name' in e && e.name === sp);
+      if (single === undefined || !('name' in single) || single.tip === undefined) {
+        unresolved = true;
+        break;
+      }
+      segs.push({ bone: sp, a: [single.at[0], single.at[1]], b: [single.tip[0], single.tip[1]] });
+    }
+    if (unresolved) continue;
+    const img = pad(part.image, PAD, PAD, PAD, PAD, [0, 0, 0, 0]);
+    const allArt = alphaAbove(img, ART_ALPHA);
+    const art = m.stray === undefined ? allArt : latticeStray(allArt, m.stray).art;
+    const lm = latticeMesh(mname, art, m.grid);
+    if ('code' in lm) continue;
+    const ox = part.x - PAD;
+    const oy = part.y - PAD;
+    const limits = meshLimits(m.influences);
+    const rest: Array<[number, number]> = lm.vertices.map(([x, y]) => [x + ox, y + oy]);
+    const weights = rest.map((p) => {
+      const shares = influences(p, segs, m.r, limits, m.exponent ?? DISTANCE_EXPONENT);
+      return shares.length === 0 ? [] : limits.floor === 'continuous' ? roundShares(shares) : latticeShares(shares);
+    });
+    const topOf = (vi: number): { bone: string; weight: number } | null => {
+      const w = weights[vi];
+      if (w.length === 0) return null;
+      return [...w].sort((p, q) => q.weight - p.weight)[0];
+    };
+    for (const [parent, siblings] of forks) {
+      for (let i = 0; i + 1 < siblings.length; i++) {
+        const aChain = siblings[i];
+        const bChain = siblings[i + 1];
+        const ca = chains.get(aChain) as { points: Point[]; tip: Point };
+        const cb = chains.get(bChain) as { points: Point[]; tip: Point };
+        const aLast = `${aChain}${ca.points.length - 1}`;
+        const bLast = `${bChain}${cb.points.length - 1}`;
+        let best: { triangle: number; edge: [number, number]; weightA: number; weightB: number; y: number } | null = null;
+        for (let t = 0; t + 2 < lm.triangles.length; t += 3) {
+          const tri = [lm.triangles[t], lm.triangles[t + 1], lm.triangles[t + 2]];
+          const triIdx = t / 3;
+          const meanY = (rest[tri[0]][1] + rest[tri[1]][1] + rest[tri[2]][1]) / 3;
+          for (const [u, v] of [
+            [tri[0], tri[1]],
+            [tri[1], tri[2]],
+            [tri[2], tri[0]],
+          ] as const) {
+            const tu = topOf(u);
+            const tv = topOf(v);
+            if (tu === null || tv === null) continue;
+            const match =
+              tu.bone === aLast && tv.bone === bLast
+                ? { edge: [u, v] as [number, number], weightA: tu.weight, weightB: tv.weight }
+                : tu.bone === bLast && tv.bone === aLast
+                  ? { edge: [v, u] as [number, number], weightA: tv.weight, weightB: tu.weight }
+                  : null;
+            if (match === null) continue;
+            const peak = Math.max(match.weightA, match.weightB);
+            const bestPeak = best === null ? -1 : Math.max(best.weightA, best.weightB);
+            if (best === null || peak > bestPeak || (peak === bestPeak && meanY > best.y)) {
+              best = { triangle: triIdx, edge: match.edge, weightA: match.weightA, weightB: match.weightB, y: meanY };
+            }
+          }
+        }
+        if (best === null) continue;
+        const strengthA = strengthOf.get(aLast) ?? null;
+        const strengthB = strengthOf.get(bLast) ?? null;
+        const unequalStrength = strengthA !== null && strengthB !== null && strengthA !== strengthB;
+        const narrowReach = m.r < m.grid && Math.max(best.weightA, best.weightB) > 0.85;
+        if (!unequalStrength && !narrowReach) continue;
+        out.push({
+          mesh: mname,
+          parent,
+          a: aLast,
+          b: bLast,
+          tipGap: edgeLength(ca.tip[0] - cb.tip[0], ca.tip[1] - cb.tip[1]),
+          triangle: best.triangle,
+          edge: best.edge,
+          weightA: best.weightA,
+          weightB: best.weightB,
+          strengthA,
+          strengthB,
+          r: m.r,
+          grid: m.grid,
+        });
+      }
+    }
+  }
+  return out;
 }
