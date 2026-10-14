@@ -100,7 +100,7 @@ These are AUTHORING §3's recipe block, value for value, but for `back hair`'s
 - **`front hair`.** No strand of this fringe hangs below the chin, so the recipe drafts
   no lock; the fringe's three columns, `bang_r`, `bang_c` and `bang_l`, take physics on
   both links (the edge's strength on the outer two), as the recipe says.
-- **The rig.** 81 bones, 28 slots, 6 meshes (the limb parts are regions, each rigid on
+- **The rig.** 76 bones, 28 slots, 6 meshes (the limb parts are regions, each rigid on
   its one bone); 44 physics constraints (one per tree link
   but the skirt trees' first links, which the swing drives; one on the swing; and a
   translate flutter on the last link of each of the eight skirt branches and the three
@@ -136,11 +136,16 @@ gravity (0, 1), so `check.json`'s figures are the idle under that breeze:
 
 ## Known limits
 
-- **The ribbons do not follow the tails.** The ribbons wrapped round the tails are
-  See-through's `headwear` layer, the part `hairpin`, which rides `head` and its own
-  `hairpin_tassel` chain; the recipe drafts nothing for `headwear`. Under wind the tails
-  move out from under them, visibly at wind (3, 0) and far at (10, 0): there the left
-  ribbon hangs over the sleeve with no hair under it (issue #391).
+- **The ribbons' loops are painted beside the tails.** The ribbons wrapped round the
+  tails are See-through's `headwear` layer, the part `hairpin`; since issue #391 it rides
+  the links of the tails it lies on — `head`'s span, `hairback_r0_0`, `hairback_r0a_0`,
+  `hairback_r0b_0`, `hairback_l0_0`, `hairback_l0a_0` and `hairback_l0b_0`, read off the
+  overlap — and has no bone or pendant of its own. Of its 32,314 px, 17,264 lie off the
+  hair as painted, so they are drawn over no hair at calm too. Of the ribbon painted over
+  the tail, the pixels drawn where the tail has no hair (rig-c 2.54.0, `rigc render
+  --environment`, idle frame 200 of 200 at 60 fps, 0.916 px per rig px) are 30 at calm
+  and 230 at wind (10, 0) — before the change, 2,429 and 8,363 — every one of the 230
+  within 3.6 px of the hair's edge, where the two meshes' lattices differ.
 - **A strong wind lengthens the tails instead of bending them.** At wind (10, 0) the
   right tail's tip stretches into a wisp and the skirt's right frill edge shears
   (issue #392). The hem's largest move against calm, as a share of the skirt's 178 rig

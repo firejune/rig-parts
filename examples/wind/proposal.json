@@ -227,36 +227,6 @@
       ]
     },
     {
-      "name": "hairpin",
-      "parent": "head",
-      "at": [
-        537,
-        308
-      ],
-      "tip": [
-        168,
-        308
-      ]
-    },
-    {
-      "chain": "hairpin_tassel",
-      "parent": "hairpin",
-      "points": [
-        [
-          541,
-          575
-        ],
-        [
-          541,
-          585
-        ]
-      ],
-      "tip": [
-        541,
-        597
-      ]
-    },
-    {
       "chain": "sleeve_r",
       "parent": "chest",
       "points": [
@@ -660,28 +630,22 @@
       "r": 15,
       "segments": [
         [
-          "hairpin",
+          "head",
           [
-            537,
-            308
+            411,
+            212
           ],
           [
-            168,
-            308
+            411,
+            56
           ]
         ],
-        [
-          "hairpin",
-          [
-            649,
-            296
-          ],
-          [
-            537,
-            326
-          ]
-        ],
-        "hairpin_tassel"
+        "hairback_r0_0",
+        "hairback_r0a_0",
+        "hairback_r0b_0",
+        "hairback_l0_0",
+        "hairback_l0a_0",
+        "hairback_l0b_0"
       ]
     },
     "neck": {
@@ -902,16 +866,6 @@
         "amp": 0.35,
         "period": 3.3333333333333335,
         "phase": 0.08
-      },
-      {
-        "chain": "hairpin_tassel",
-        "amps": [
-          4,
-          7
-        ],
-        "period": 1.6666666666666667,
-        "phase": 0.2,
-        "lag": 0.12
       },
       {
         "chain": "sleeve_r",
@@ -1479,6 +1433,7 @@
     "hair_back (back hair): config.cloth.\"back hair\" -> 1 tree(s) per side of the eye axis, from head, rooted on the eye line and tipped 4 px above its bottom, a 1-link trunk forking into 2 branches, 3 links root to tip (hairback_r0_, hairback_r0a_, hairback_r0b_, hairback_l0_, hairback_l0a_, hairback_l0b_); 10 constraint(s), physics on every link, wind 1 -> 8 and gravity 4 -> 24 root to tip (multipliers of the consumer's environment; no direction is drafted), no idle key; the recipe's own defaults, measured on its synthetic fixture (AUTHORING §3): length_ratio 0.5, strength 100/100/50",
     "hair_front (head:front hair): bang_r, bang_c, bang_l are a template, not its locks — columns at 0.25, 0.5 and 0.75 of the face box's width, along the head's down axis (the eye line's perpendicular, roll 3.468 degrees), each rooted on the part's art; the opaque shape does not separate the locks painted inside one mass of hair, so a lock that runs elsewhere is not followed — move the chains onto the locks",
     "hair_front (head:front hair): config.cloth.\"front hair\" -> bang_r, bang_c, bang_l carry physics on both links (bang_r and bang_l the edge's strength, bang_c the trunk's; wind and gravity on the recipe's root-to-tip ramp over their two links) and no idle key; the recipe's chains, links and split shape the hanging strands, not the fringe",
+    "hairpin (full:headwear): wraps a tail config.cloth.\"back hair\" drafts — 15050 of its 32314 px lie over hair_back's art, nearest hair_back's spans head's fixed segment 943, hairback_r0_0 5721, hairback_r0a_0 819, hairback_r0b_0 398, hairback_l0_0 5630, hairback_l0a_0 419, hairback_l0b_0 1120 px — so its mesh's segments are those spans and it rides the links hairback_r0_0, hairback_r0a_0, hairback_r0b_0, hairback_l0_0, hairback_l0a_0, hairback_l0b_0 with the tail, not head; no headwear bone, pendant or strand chain is drafted for it (issue #391)",
     "limb arm_r: handwear_r (full:handwear-r) is cut at the r_elbow joint into upperarm_r on sleeve_r0 and forearm_r (with the hand) on sleeve_r1, each rigid on its link with weight 1 — a bend is a rotation at the joint; assemble with this limbs block cuts the layer, and the forearm carries a cap past the elbow (its line counts the cap's pixels, and names any the layer does not hold)",
     "limb arm_l: handwear_l (full:handwear-l) is cut at the l_elbow joint into upperarm_l on sleeve_l0 and forearm_l (with the hand) on sleeve_l1, each rigid on its link with weight 1 — a bend is a rotation at the joint; assemble with this limbs block cuts the layer, and the forearm carries a cap past the elbow (its line counts the cap's pixels, and names any the layer does not hold)",
     "bottomwear (full:bottomwear): its art starts 181.0 px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root",

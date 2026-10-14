@@ -151,6 +151,7 @@ import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, 
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
 import { BLOUSE, CLOTH_PARTS, CLOTH_RIG, clothRecipe, DRESS, DRESS_RIG, dressParts, SHIFT } from './fixtures/cloth.ts';
+import { RIDER_RIG, RIDER_STRIP, riderParts, riderRecipe } from './fixtures/rider.ts';
 import { type ClothRecipes, linkRows } from './src/cloth.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LEVEL_FRINGE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, TILTED_FRINGE_PARTS, TWO_LOCK_PARTS, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
@@ -7678,6 +7679,65 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+  runRiderProposeControls(say);
+}
+
+/**
+ * Issue #391: a part wrapped round a tail the back hair recipe drafts rides the links its pixels overlap. On
+ * fixtures/rider.ts, by hand: the strip's 312 px over the right tail all lie nearest link 1, `hairback_r0_1`, so its
+ * mesh's one segment is that link, and nothing of the accessory rule (its bone, its pendant) is drafted; the knot's
+ * 200 px over the cap all lie nearest the head's span, so it overlaps no link and stays the region on head the
+ * accessory rule makes of the second headwear layer. Planted beside them: the strip moved off every tail (x 200..237,
+ * right of the left tail's x 164..189) overlaps nothing and takes the accessory rule; the fixture proposed without the
+ * recipe drafts no tail, so nothing rides; and the strip renamed to a name that says nothing of tails rides the same
+ * link — the link is read off the overlap, never off the part's name.
+ */
+function runRiderProposeControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const root = temp('rider-propose');
+  try {
+    const at = (label: string, strip = RIDER_STRIP): PartSet => {
+      const d = join(root, label);
+      writeProposeFixture(d, riderParts(strip), RIDER_RIG);
+      return readPartSet(d);
+    };
+    const prop = propose(at('on'), undefined, null, DEFAULT_GRID_RULE, riderRecipe());
+    const rides = (pr: Proposal, part: string): string[] => pr.notes.filter((n) => n.startsWith(`${part} (`) && n.includes('wraps a tail'));
+    const segs = (pr: Proposal, part: string): string => JSON.stringify(pr.meshes[part]?.segments ?? null);
+    const accessory = (pr: Proposal): string[] => pr.bones.flatMap((b) => ('name' in b ? [b.name] : [b.chain])).filter((n) => n.startsWith('hairpin'));
+    const note = rides(prop, 'strip')[0] ?? '';
+    say(
+      'PR490_A_STRIP_ON_A_DRAFTED_TAIL_RIDES_THE_ONE_LINK_ITS_PIXELS_OVERLAP_AND_A_PART_ON_NO_LINK_STAYS_ON_HEAD',
+      segs(prop, 'strip') === '["hairback_r0_1"]' &&
+        !('strip' in prop.regions) &&
+        accessory(prop).length === 0 &&
+        note.includes('312 of its 456 px') &&
+        note.includes('hairback_r0_1 312 px') &&
+        prop.regions.knot === 'head' &&
+        !('knot' in prop.meshes) &&
+        rides(prop, 'knot').length === 0,
+      `strip: segments ${segs(prop, 'strip')} (want ["hairback_r0_1"]), accessory bones ${JSON.stringify(accessory(prop))} (want none), note "${note.slice(0, 150)}…"; knot: region ${String(prop.regions.knot)} (want head), rider note ${rides(prop, 'knot').length === 0 ? 'absent' : 'WRITTEN'}`,
+      "issue #391: under the recipe the tails move by the world, and a ribbon on head stays where the tail was; the strip's 312 px over the tail (26 columns x 12 rows) fall nearest link 1 and none nearest link 0, which ends 30 rows above it, so link 1 is the one segment; the knot lies on the head's span only and is the negative that must not move",
+    );
+
+    const off = propose(at('off', { ...RIDER_STRIP, x: 200 }), undefined, null, DEFAULT_GRID_RULE, riderRecipe());
+    const plain = propose(at('plain'), undefined, null, DEFAULT_GRID_RULE, null);
+    const renamed = propose(at('renamed', { ...RIDER_STRIP, name: 'band7' }), undefined, null, DEFAULT_GRID_RULE, riderRecipe());
+    const offSegs = segs(off, 'strip');
+    say(
+      'PR491_A_STRIP_OVER_NO_LINK_OR_WITHOUT_THE_RECIPE_TAKES_THE_ACCESSORY_RULE_AND_THE_LINK_IS_READ_OFF_THE_OVERLAP_NOT_THE_NAME',
+      rides(off, 'strip').length === 0 &&
+        !offSegs.includes('hairback') &&
+        accessory(off).includes('hairpin') &&
+        rides(plain, 'strip').length === 0 &&
+        accessory(plain).includes('hairpin') &&
+        segs(renamed, 'band7') === '["hairback_r0_1"]' &&
+        rides(renamed, 'band7').length === 1,
+      `strip at x 200..237: rider note ${rides(off, 'strip').length === 0 ? 'absent' : 'WRITTEN'}, segments ${offSegs.slice(0, 80)}, accessory bones ${JSON.stringify(accessory(off))}; without the recipe: rider note ${rides(plain, 'strip').length === 0 ? 'absent' : 'WRITTEN'}, accessory bones ${JSON.stringify(accessory(plain))}; renamed band7 on the tail: segments ${segs(renamed, 'band7')}`,
+      'the planted negatives: a part over no link is not moved off its rule, the rule runs only where the recipe drafts a tail, and the name carries nothing — the overlap is the only input',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -13218,7 +13278,149 @@ function runCheckSuite(): number {
   runDiscCheckCases(say);
   runRigcIdentityCases(say);
   runClothCheckCases(say);
+  runRiderCheckCases(say);
   return bad();
+}
+
+/** One bone's world transform, or one slot's posed vertices, as rigc's `render --geometry` writes them. */
+interface RiderPose {
+  bones: Array<{ name: string; a: number; b: number; c: number; d: number; worldX: number; worldY: number }>;
+  attachments: Array<{ slot: string; vertices?: number[] }>;
+}
+
+/**
+ * Issue #391's fixture (fixtures/rider.ts) proposed with its recipe, written as a config whose idle keys one thing:
+ * the right tail's chain, `hairback_r0_`, amplitudes 0 and 30 degrees over the idle's own period, so link 1 bends 30
+ * degrees at the quarter period and link 0 and head do not move; no physics constraint is written, so the pose is the
+ * keys'. `edit` changes the config before it is written. Rigged by `rig`, compiled and rendered with `--geometry` by
+ * rigc at 12 fps; returns the setup pose and the frames, or why there are none.
+ */
+function riderGeometry(root: string, label: string, edit: (c: Record<string, unknown>) => void = () => {}): { setup: RiderPose; frames: RiderPose[] } | string {
+  const parts = join(root, 'parts');
+  if (!existsSync(join(parts, 'parts.json'))) writeProposeFixture(parts, riderParts(), RIDER_RIG);
+  const prop = propose(readPartSet(parts), undefined, null, DEFAULT_GRID_RULE, riderRecipe());
+  const config = JSON.parse(JSON.stringify(proposalConfig(riderParts(), prop))) as Record<string, unknown>;
+  config.motion = { ...prop.motion, tracks: [{ chain: 'hairback_r0_', amps: [0, 30], period: prop.motion.duration, phase: 0, lag: 0 }] };
+  edit(config);
+  const cfgPath = join(root, `${label}.json`);
+  writeFileSync(cfgPath, JSON.stringify(config));
+  const out = join(root, `rig-${label}`);
+  const rig = runCli(['rig', '--config', cfgPath, '--parts', parts, '--out', out]);
+  if (rig.status !== 0) return `rig exit ${rig.status}: ${lastLines(rig.out, 2).join(' | ')}`;
+  const b = spawnSync(suiteRigc(), ['build', '--rig', join(out, 'rig.json'), '--motion', join(out, 'motion.json'), '--out', join(out, 'build')], { encoding: 'utf8', maxBuffer: 1 << 26 });
+  if (b.status !== 0) return `rigc build exit ${b.status}: ${`${b.stdout}${b.stderr}`.trim().split('\n').slice(-2).join(' | ')}`;
+  const r = spawnSync(suiteRigc(), ['render', '--candidate', join(out, 'build'), '--fps', String(IDLE_FPS), '--geometry', '--out', join(out, 'render')], { encoding: 'utf8', maxBuffer: 1 << 26 });
+  if (r.status !== 0) return `rigc render exit ${r.status}: ${`${r.stdout}${r.stderr}`.trim().split('\n').slice(-2).join(' | ')}`;
+  const g = readJsonAt(join(out, 'render', 'idle', 'geometry.json')) as { setup: RiderPose; frames: RiderPose[] };
+  return { setup: g.setup, frames: g.frames };
+}
+
+/**
+ * How a slot's posed vertices sit against one bone's carriage, over every frame: `dev` the largest distance from where
+ * the bone would carry each setup vertex rigidly (its frame transform times the inverse of its setup transform), `move`
+ * the largest distance from the setup vertex, `turn` the bone's largest turn from its setup rotation, degrees. Null
+ * when the bone or the slot is not in the pose.
+ */
+function riderCarriage(g: { setup: RiderPose; frames: RiderPose[] }, bone: string, slot: string): { dev: number; move: number; turn: number } | null {
+  const sb = g.setup.bones.find((x) => x.name === bone);
+  const sv = g.setup.attachments.find((x) => x.slot === slot)?.vertices;
+  if (sb === undefined || sv === undefined) return null;
+  const det = sb.a * sb.d - sb.b * sb.c;
+  let dev = 0;
+  let move = 0;
+  let turn = 0;
+  for (const f of g.frames) {
+    const fb = f.bones.find((x) => x.name === bone);
+    const v = f.attachments.find((x) => x.slot === slot)?.vertices;
+    if (fb === undefined || v === undefined || v.length !== sv.length) return null;
+    turn = Math.max(turn, Math.abs(wrapDegrees(((Math.atan2(fb.c, fb.a) - Math.atan2(sb.c, sb.a)) * 180) / Math.PI)));
+    for (let i = 0; i < v.length; i += 2) {
+      const lx = (sb.d * (sv[i] - sb.worldX) - sb.b * (sv[i + 1] - sb.worldY)) / det;
+      const ly = (-sb.c * (sv[i] - sb.worldX) + sb.a * (sv[i + 1] - sb.worldY)) / det;
+      const ex = fb.a * lx + fb.b * ly + fb.worldX;
+      const ey = fb.c * lx + fb.d * ly + fb.worldY;
+      dev = Math.max(dev, Math.sqrt((v[i] - ex) * (v[i] - ex) + (v[i + 1] - ey) * (v[i + 1] - ey)));
+      move = Math.max(move, Math.sqrt((v[i] - sv[i]) * (v[i] - sv[i]) + (v[i + 1] - sv[i + 1]) * (v[i + 1] - sv[i + 1])));
+    }
+  }
+  return { dev, move, turn };
+}
+
+/** The largest distance between one slot's vertices in two poses of the same mesh; null when either lacks it or the counts differ. */
+function riderSlotGap(a: RiderPose, b: RiderPose, slot: string): number | null {
+  const va = a.attachments.find((x) => x.slot === slot)?.vertices;
+  const vb = b.attachments.find((x) => x.slot === slot)?.vertices;
+  if (va === undefined || vb === undefined || va.length !== vb.length) return null;
+  let m = 0;
+  for (let i = 0; i < va.length; i += 2) m = Math.max(m, Math.sqrt((va[i] - vb[i]) * (va[i] - vb[i]) + (va[i + 1] - vb[i + 1]) * (va[i + 1] - vb[i + 1])));
+  return m;
+}
+
+/**
+ * A hundredth of a rig pixel: the distance under which two posed vertices draw the same pixel at any frame scale
+ * the renders use (at most about 1, `seam_frame_scale` in the examples' check.json). Not measured: a definition of
+ * "the same place" for a vertex.
+ */
+const RIDER_SAME_PX = 0.01;
+
+/**
+ * Issue #391, posed by rigc. CK490 (bar 1 on the fixture, and its negative): with link 1 of the right tail bent 30
+ * degrees, the strip that rides it is carried by it rigidly — every vertex where the link carries it, at every frame —
+ * so it stays over the tail, while the knot, on no link, does not move. CK491 (the old own-chain ribbon planted, and
+ * the restated bar 2): the strip given back the accessory rule's form — its own bone on head and a pendant chain under
+ * it, the mesh on those — is left behind by the bend, by as far as the strip moves when it rides; and against that
+ * plant, every other slot is where it was at every frame and the strip itself is where it was at the setup pose: the
+ * change moves the ribbon and nothing else.
+ */
+function runRiderCheckCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const root = temp('rider-check');
+  try {
+    const good = riderGeometry(root, 'rides');
+    const rides = typeof good === 'string' ? null : riderCarriage(good, 'hairback_r0_1', 'strip');
+    const knot = typeof good === 'string' ? null : riderCarriage(good, 'head', 'knot');
+    const f = (x: number): string => pyRound(x, 6).toString();
+    say(
+      'CK490_A_STRIP_ON_A_BENT_LINK_IS_CARRIED_BY_IT_AND_A_PART_ON_NO_LINK_STAYS_PUT',
+      rides !== null && knot !== null && Math.abs(rides.turn - 30) < 1e-3 && rides.dev <= RIDER_SAME_PX && rides.move > RIDER_SAME_PX && knot.move <= RIDER_SAME_PX,
+      typeof good === 'string'
+        ? good
+        : `hairback_r0_1 turns at most ${rides === null ? 'n/a' : f(rides.turn)} degrees (want 30, the key's amplitude at the quarter period, frame 10 of 40 at ${IDLE_FPS} fps); the strip: at most ${rides === null ? 'n/a' : f(rides.dev)} rig px from the link's carriage (want <= ${RIDER_SAME_PX}), moving up to ${rides === null ? 'n/a' : f(rides.move)} rig px; the knot moves at most ${knot === null ? 'n/a' : f(knot.move)} rig px (want <= ${RIDER_SAME_PX})`,
+      "issue #391's bar on a synthetic fixture: a strip overlapping a two-link tail follows the tail at a bend, and one that overlaps no link stays where it is; nothing keys head, so the knot's figure is the negative's own",
+    );
+
+    const old = riderGeometry(root, 'own-chain', (c) => {
+      // The accessory rule's form on this strip, as main drafted it before #391: a bone on head across the strip's
+      // middle row, a two-link pendant chain under it down the tail's column, and the mesh on the two.
+      (c.bones as unknown[]).push({ name: 'hairpin', parent: 'head', at: [44, 255], tip: [81, 255] }, { chain: 'hairpin_tassel', parent: 'hairpin', points: [[62, 256], [62, 258]], tip: [62, 261] });
+      const meshes = c.meshes as Record<string, Record<string, unknown>>;
+      meshes.strip = { ...meshes.strip, segments: [['hairpin', [44, 255], [81, 255]], 'hairpin_tassel'] };
+    });
+    const left = typeof old === 'string' ? null : riderCarriage(old, 'hairback_r0_1', 'strip');
+    const others = ['hair_back', 'knot', 'face'];
+    let otherGap: number | null = 0;
+    if (typeof good !== 'string' && typeof old !== 'string') {
+      if (good.frames.length !== old.frames.length) otherGap = null;
+      else {
+        for (let i = 0; i < good.frames.length && otherGap !== null; i++) {
+          for (const s of others) {
+            const gap = riderSlotGap(good.frames[i], old.frames[i], s);
+            otherGap = gap === null || otherGap === null ? null : Math.max(otherGap, gap);
+          }
+        }
+      }
+    }
+    const setupGap = typeof good === 'string' || typeof old === 'string' ? null : riderSlotGap(good.setup, old.setup, 'strip');
+    say(
+      'CK491_THE_OLD_OWN_CHAIN_RIBBON_IS_LEFT_OFF_THE_BENT_TAIL_AND_AGAINST_IT_ONLY_THE_RIBBON_MOVES_AND_NOT_AT_THE_SETUP_POSE',
+      left !== null && rides !== null && left.dev > RIDER_SAME_PX && left.move <= RIDER_SAME_PX && otherGap !== null && otherGap <= RIDER_SAME_PX && setupGap !== null && setupGap <= RIDER_SAME_PX,
+      typeof old === 'string'
+        ? old
+        : `the planted own-chain strip: up to ${left === null ? 'n/a' : f(left.dev)} rig px from the bent link's carriage (the rider: ${rides === null ? 'n/a' : f(rides.dev)}), moving ${left === null ? 'n/a' : f(left.move)} rig px — left where the tail was; ${others.join(', ')} against the rider's build at every one of ${old.frames.length} frames: at most ${otherGap === null ? 'not comparable' : f(otherGap)} rig px apart; the strip at the setup pose: ${setupGap === null ? 'not comparable' : f(setupGap)} rig px apart (each want <= ${RIDER_SAME_PX})`,
+      "the plant is the form #391 replaces, which must be seen to fail CK490's reading — it survives its own mutant by naming the distance, not by crashing; and the restated bar 2 (the card's still calm does not exist: the tails move under gravity and the old ribbon swung on its own keyed pendant): every slot but the ribbon is identical in every frame, and the ribbon is identical at the setup pose",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /**

@@ -449,36 +449,6 @@
       ]
     },
     {
-      "name": "hairpin",
-      "parent": "head",
-      "at": [
-        537,
-        308
-      ],
-      "tip": [
-        168,
-        308
-      ]
-    },
-    {
-      "chain": "hairpin_tassel",
-      "parent": "hairpin",
-      "points": [
-        [
-          541,
-          575
-        ],
-        [
-          541,
-          585
-        ]
-      ],
-      "tip": [
-        541,
-        597
-      ]
-    },
-    {
       "chain": "sleeve_r",
       "parent": "chest",
       "points": [
@@ -882,28 +852,22 @@
       "r": 15,
       "segments": [
         [
-          "hairpin",
+          "head",
           [
-            537,
-            308
+            411,
+            212
           ],
           [
-            168,
-            308
+            411,
+            56
           ]
         ],
-        [
-          "hairpin",
-          [
-            649,
-            296
-          ],
-          [
-            537,
-            326
-          ]
-        ],
-        "hairpin_tassel"
+        "hairback_r0_0",
+        "hairback_r0a_0",
+        "hairback_r0b_0",
+        "hairback_l0_0",
+        "hairback_l0a_0",
+        "hairback_l0b_0"
       ]
     },
     "neck": {
@@ -1124,16 +1088,6 @@
         "amp": 0.35,
         "period": 3.3333333333333335,
         "phase": 0.08
-      },
-      {
-        "chain": "hairpin_tassel",
-        "amps": [
-          4,
-          7
-        ],
-        "period": 1.6666666666666667,
-        "phase": 0.2,
-        "lag": 0.12
       },
       {
         "chain": "sleeve_r",

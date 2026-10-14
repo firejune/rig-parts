@@ -62,7 +62,9 @@
  * Pure: no clock, no randomness; every value is a function of its inputs.
  */
 import type { ConfigConstraint, Point } from './config.ts';
+import type { Mask } from './raster/types.ts';
 import { pyRound } from './round.ts';
+import { segmentDistance } from './weights.ts';
 
 /** The tags a `cloth` recipe may name: the parts the proposer drafts chains on that hang. */
 export const CLOTH_TARGETS = ['bottomwear', 'back hair', 'front hair'] as const;
@@ -387,4 +389,68 @@ export function clothNote(part: string, tag: ClothTarget, trees: readonly TreeCh
     `${constraints} constraint(s), physics on every link, wind ${r.wind[0]} -> ${r.wind[1]} and gravity ${r.gravity[0]} -> ${r.gravity[1]} root to tip (multipliers of the consumer's environment; no direction is drafted), no idle key` +
     (defaults.length === 0 ? '' : `; the recipe's own defaults, measured on its synthetic fixture (AUTHORING §3): ${defaults.join(', ')}`)
   );
+}
+
+/**
+ * Issue #391: a part wrapped round a tail the recipe drafted rides that tail's links. One span of the tail: a segment
+ * of the back hair's mesh as the recipe drafts it — the head's fixed segment, or one tree link from its origin to the
+ * next link (the last to the chain's tip), named by the link's bone.
+ */
+export interface TailSpan {
+  bone: string;
+  a: Point;
+  b: Point;
+  /** Whether the span is a tree link (false: the head's fixed segment). */
+  link: boolean;
+}
+
+/** A tail the recipe drafted: the back hair part, its opaque mask on the rig canvas, and its mesh's spans in segment order. */
+export interface Tail {
+  part: string;
+  mask: Mask;
+  spans: TailSpan[];
+}
+
+/** Where a part's opaque pixels lie against a drafted tail. */
+export interface TailOverlap {
+  /** Per span, in the tail's order: the part's pixels over the tail's art whose nearest span it is. */
+  counts: number[];
+  /** The part's pixels over the tail's art (the sum of `counts`). */
+  over: number;
+  /** The part's opaque pixels in all. */
+  total: number;
+}
+
+/**
+ * Which span of the tail each of the part's pixels over the tail's art belongs to: every pixel where both masks are
+ * set is given to the span nearest it — the distance the weights read (`segmentDistance`, `src/weights.ts`), so a
+ * span here is the art the tail's own weights give mostly to that bone — the first in the tail's order on a tie. No
+ * threshold: a span the part touches by one pixel is one the part overlaps, and the counts are said in the note.
+ * Pure; the part's mask and the tail's are on the same canvas.
+ */
+export function tailOverlap(tail: Tail, part: Mask, box: { x: number; y: number; w: number; h: number }): TailOverlap {
+  const counts = tail.spans.map(() => 0);
+  let over = 0;
+  let total = 0;
+  const W = part.width;
+  for (let y = box.y; y < box.y + box.h; y++) {
+    for (let x = box.x; x < box.x + box.w; x++) {
+      const i = y * W + x;
+      if (part.data[i] === 0) continue;
+      total++;
+      if (tail.mask.data[i] === 0) continue;
+      over++;
+      let best = 0;
+      let bd = Infinity;
+      tail.spans.forEach((s, k) => {
+        const d = segmentDistance([x, y], s.a, s.b);
+        if (d < bd) {
+          bd = d;
+          best = k;
+        }
+      });
+      counts[best]++;
+    }
+  }
+  return { counts, over, total };
 }
