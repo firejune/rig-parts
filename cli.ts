@@ -209,7 +209,10 @@ usage:
       of the consumer's environment — no direction is drafted), and drafts no
       idle key on them. A bottomwear recipe's "swing" drives each tree's
       first link from one shared pendulum. A recipe that drafts nothing is
-      refused (PROPOSE_CLOTH_DRAFTED). Without --cloth nothing changes.
+      refused (PROPOSE_CLOTH_DRAFTED). A topwear part shaped like a skirt (a
+      dress) is named in a note, never drafted on its shape; a bottomwear
+      recipe's "part" declares it, and its trees hang from the hip over the
+      part's art below it (PROPOSE_CLOTH_PART). Without --cloth nothing changes.
 
   rig-parts propose --parts <dir> --source <painting.png> --out <dir> --from-config <config.json>
       Draw the config's CURRENT bones instead (<out>/render/landmarks_config.png

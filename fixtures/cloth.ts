@@ -90,3 +90,66 @@ export function clothRecipe(): ClothRecipes {
     'front hair': { chains: 1, links: 3, wind: [1, 6], gravity: [2, 12], translate: 0.2 },
   };
 }
+
+/**
+ * Issue #402: a dress — a skirt See-through returned inside `topwear` — on a
+ * 240x480 rig, beside the same figure in a waist-length `topwear` (a blouse).
+ * There is no `bottomwear` part. Flat rectangles; nothing here is art.
+ *
+ * By hand: the face, the hair and the eye axis are the cloth fixture's (axis
+ * x 120, fh 50, neck y 100). The figure runs from the back hair's top row, y
+ * 20, to the legs' last, y 470, so with no bottomwear the hip is 0.32 of that
+ * height below its top: 20 + 0.32 × 450 = 164, on the axis; chest y 100 +
+ * 0.5 × 64 = 132. The topwear rule's waist line is hip + 0.25 face heights,
+ * y 176.5.
+ *
+ * The dress is a bodice x 96..143 (rows 100..169) over three tiers widening
+ * to 60, 80 and 104 px (rows 170..209, 210..249, 250..289); its box ends at y
+ * 290, past 176.5, so it hangs. Its art across the 24-row band at the hip,
+ * rows 152..175, is x 90..149 (the bodice and the first tier's top rows): 60
+ * px; across its last 24 rows, 266..289, x 68..171: 104 px, wider. Its art's
+ * rows below the hip are 165 to 289. The blouse is the bodice alone: its box
+ * ends at y 170, above 176.5, so it does not hang. The shift is the bodice
+ * carried straight down to y 290 (a straight coat): it hangs, and is 48 px
+ * across at the hip and across its last 24 rows alike, so it is not wider.
+ */
+export const DRESS_RIG = { w: 240, h: 480 };
+
+const DRESS_BODICE: [number, number, number, number] = [96, 100, 48, 70];
+
+export const DRESS: ProposeFixturePart = {
+  name: 'dress',
+  from: 'full:topwear',
+  x: 68,
+  y: 100,
+  w: 104,
+  h: 190,
+  colour: [200, 72, 90],
+  rects: [DRESS_BODICE, [90, 170, 60, 40], [80, 210, 80, 40], [68, 250, 104, 40]],
+};
+
+export const SHIFT: ProposeFixturePart = { name: 'shift', from: 'full:topwear', x: 96, y: 100, w: 48, h: 190, colour: [200, 72, 90], rects: [[96, 100, 48, 190]] };
+
+export const BLOUSE: ProposeFixturePart = { name: 'blouse', from: 'full:topwear', x: 96, y: 100, w: 48, h: 70, colour: [200, 72, 90], rects: [DRESS_BODICE] };
+
+/** The figure around the topwear: the cloth fixture's head (its face and both hairs) and two legs down to y 470. */
+export function dressParts(topwear: ProposeFixturePart): ProposeFixturePart[] {
+  const head = CLOTH_PARTS.filter((p) => p.name !== 'skirt');
+  return [
+    ...head,
+    topwear,
+    {
+      name: 'legs',
+      from: 'full:legwear',
+      x: 100,
+      y: 290,
+      w: 40,
+      h: 181,
+      colour: [60, 60, 60],
+      rects: [
+        [100, 290, 14, 181],
+        [126, 290, 14, 181],
+      ],
+    },
+  ];
+}

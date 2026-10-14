@@ -150,7 +150,7 @@ import { capBox, featherWeight, type JointLine, jointLine, limbWidth, nearestLim
 import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, type CheckFlagInBuild, checkStage, ctlRemedies, driftShare, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
-import { CLOTH_PARTS, CLOTH_RIG, clothRecipe } from './fixtures/cloth.ts';
+import { BLOUSE, CLOTH_PARTS, CLOTH_RIG, clothRecipe, DRESS, DRESS_RIG, dressParts, SHIFT } from './fixtures/cloth.ts';
 import { type ClothRecipes, linkRows } from './src/cloth.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LEVEL_FRINGE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, TILTED_FRINGE_PARTS, TWO_LOCK_PARTS, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
@@ -2393,7 +2393,46 @@ function runConfigSuite(): number {
     'issue #360 (unit D): the band is the author\'s, a count of whole pixels the placement steps through, so no fraction or string is read as a nearby number; it is the joint\'s, so it sits below the joint; and a joint between two layers has no cut line to place, so a band there is refused rather than read by nothing',
   );
   runClothConfigControls(say);
+  runSkirtPartConfigControls(say);
   return bad();
+}
+
+/**
+ * Issue #402: `cloth.bottomwear.part`, the field that hands the skirt's recipe to a topwear part holding a skirt (a
+ * dress). CF480 it loads on the skirt's recipe at the full loader and through the cloth door; planted, it is refused
+ * once by name on another tag's recipe, empty, or not a string. Whether the part exists is propose's (PR483).
+ */
+function runSkirtPartConfigControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('skirt-part-config');
+  try {
+    const withPart = (tag: 'bottomwear' | 'back hair', v: unknown): Record<string, unknown> => {
+      const r = JSON.parse(JSON.stringify(clothRecipe())) as Record<string, Record<string, unknown>>;
+      r[tag].part = v;
+      return r;
+    };
+    const door = join(dir, 'door.json');
+    writeFileSync(door, JSON.stringify({ key: 'k', cloth: withPart('bottomwear', 'dress') }));
+    const read = refusals(() => loadClothConfig(door));
+    const loads = [refusals(() => parseConfig({ ...minimalConfig(), cloth: withPart('bottomwear', 'dress') })), read];
+    const readBack = read === null ? loadClothConfig(door).cloth.bottomwear?.part : 'refused';
+    const planted: Array<[string, string, string, Record<string, unknown>]> = [
+      ['part on back hair', 'CONFIG_CLOTH_PART_ON_BOTTOMWEAR', 'config.cloth."back hair".part', withPart('back hair', 'dress')],
+      ['an empty name', 'CONFIG_FIELD_TYPE', 'config.cloth."bottomwear".part', withPart('bottomwear', '')],
+      ['a number', 'CONFIG_FIELD_TYPE', 'config.cloth."bottomwear".part', withPart('bottomwear', 3)],
+    ];
+    const outcomes = planted.map(([what, code, object, cloth]) => {
+      const e = refusals(() => parseConfig({ ...minimalConfig(), cloth }));
+      return { what, ok: e !== null && e.problems.length === 1 && e.problems[0].code === code && e.problems[0].object === object, got: codes(e) };
+    });
+    say(
+      'CF480_CLOTH_BOTTOMWEAR_PART_LOADS_ON_THE_SKIRT_S_RECIPE_AND_IS_REFUSED_ONCE_BY_NAME_ELSEWHERE',
+      loads.every((e) => e === null) && readBack === 'dress' && outcomes.every((o) => o.ok),
+      `the fixture recipe with bottomwear.part "dress": full loader ${loads[0] === null ? 'loads' : codes(loads[0])}, cloth door ${loads[1] === null ? 'loads' : codes(loads[1])}, read back as ${JSON.stringify(readBack)}; planted: ${outcomes.map((o) => `${o.what} ${o.ok ? 'refused once' : `NOT: ${o.got}`}`).join('; ')}`,
+      'issue #402: a skirt See-through returns inside topwear (a dress) is declared by the author, not guessed from its shape; the declaration names a part, so it is a non-empty string, and only the skirt has a recipe it can hand over',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -4753,7 +4792,58 @@ function runRigSuite(): number {
   runTurnRigCases(say);
   runInheritRigCases(say);
   runClothRigCases(say);
+  runSkirtInsideRigCases(say);
   return bad();
+}
+
+/**
+ * Issue #402: RG480 the dress fixture (fixtures/cloth.ts) proposed with `cloth.bottomwear.part: "dress"` builds through
+ * the rig stage and rigc's gate, one lattice weighted to chest, hip and the skirt's trees — no mesh split — while the
+ * same figure proposed without the field weights no vertex of the dress to a tree (the planted difference). How far
+ * the trees reach into the bodice is printed, not barred: the figure is the lattice weighting's, measured here once.
+ */
+function runSkirtInsideRigCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const root = temp('skirt-inside-rig');
+  try {
+    const parts = join(root, 'parts');
+    const fixture = dressParts(DRESS);
+    writeProposeFixture(parts, fixture, DRESS_RIG);
+    const P = readPartSet(parts);
+    const hair: ClothRecipes = { 'back hair': clothRecipe()['back hair'], 'front hair': clothRecipe()['front hair'] };
+    const build = (label: string, cloth: ClothRecipes): { status: number; out: string; dir: string } => {
+      const prop = propose(P, undefined, null, DEFAULT_GRID_RULE, cloth);
+      const cfg = join(root, `${label}.json`);
+      writeFileSync(cfg, JSON.stringify({ ...proposalConfig(fixture, prop), constraints: prop.constraints ?? [] }));
+      const dir = join(root, `rig-${label}`);
+      return { ...runCli(['rig', '--config', cfg, '--parts', parts, '--out', dir]), dir };
+    };
+    const named = build('named', { ...hair, bottomwear: { chains: 2, links: 2, wind: [1, 4], gravity: [2, 8], part: 'dress' } });
+    const robe = build('robe', hair);
+    type W = { bone: string; weight: number };
+    const mesh = (dir: string): { weights: W[][]; uvs: number[]; height: number } | null => {
+      if (!existsSync(join(dir, 'rig.json'))) return null;
+      const r = JSON.parse(readFileSync(join(dir, 'rig.json'), 'utf8')) as { skins: Record<string, Record<string, Record<string, { weights?: W[][]; uvs?: number[]; height?: number }>>> };
+      const m = r.skins.default?.dress?.dress;
+      return m?.weights === undefined || m.uvs === undefined || m.height === undefined ? null : { weights: m.weights, uvs: m.uvs, height: m.height };
+    };
+    const tree = (ws: W[]): number => ws.filter((w) => w.bone.startsWith('skirt')).reduce((a, w) => a + w.weight, 0);
+    const m = mesh(named.dir);
+    const r0 = mesh(robe.dir);
+    const onChest = m === null ? 0 : m.weights.filter((ws) => ws.some((w) => w.bone === 'chest')).length;
+    const onTree = m === null ? 0 : m.weights.filter((ws) => tree(ws) > 0).length;
+    // The image is the part's box padded equally above and below; a vertex's rig y is its top plus v times the height.
+    const top = DRESS.y - (m === null ? 0 : (m.height - DRESS.h) / 2);
+    const leak = m === null ? [] : m.weights.map((ws, i) => ({ y: top + m.uvs[2 * i + 1] * m.height, t: tree(ws) })).filter((v) => v.y < 164);
+    const leakMax = leak.reduce((a, v) => Math.max(a, v.t), 0);
+    say(
+      'RG480_THE_DECLARED_DRESS_BUILDS_ONE_LATTICE_ON_CHEST_HIP_AND_ITS_TREES_WITH_NO_MESH_SPLIT',
+      named.status === 0 && robe.status === 0 && m !== null && r0 !== null && onChest > 0 && onTree > 0 && r0.weights.every((ws) => tree(ws) === 0),
+      `rig exit ${named.status} with the field, ${robe.status} without; the dress mesh with the field: ${m === null ? 'absent' : `${m.weights.length} vertices, ${onChest} weighted to chest, ${onTree} to a skirt tree`}; above the hip (y < 164): ${leak.length} vertices, ${leak.filter((v) => v.t > 0).length} carrying tree weight, at most ${pyRound(leakMax, 3)} of a vertex; without the field, vertices on a tree: ${r0 === null ? 'no mesh' : r0.weights.filter((ws) => tree(ws) > 0).length}`,
+      "issue #402: the skirt's trees on part of a part need no split of the mesh — the rig stage weights one lattice by its segments, as it does the long-robe bottomwear — and the gate passes; the bodice is not held wholly to the chest (the printed reach), which is why the proposer never drafts this on a shape alone",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -7359,10 +7449,118 @@ function runProposeSuite(): number {
     runGridRuleControls(dir, say);
     runSqueezeControls(say);
     runClothProposeControls(say);
+    runSkirtInsideProposeControls(say);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
   return bad();
+}
+
+/**
+ * Issue #402: a skirt See-through returned inside `topwear`, on the dress fixture (fixtures/cloth.ts, every figure
+ * derived there: hip y 164, the waist line 176.5, the dress's art 60 px across at the hip and 104 px across its last 24
+ * rows, its rows below the hip 165 to 289; the blouse's box ends at y 170; the shift hangs but is 48 px across at both). PR480 with a recipe in play the dress is
+ * named in a note — the part, its rows below the hip and the field — and nothing is drafted on its shape; the blouse,
+ * the shift, and the dress with no recipe, get no such note. PR481 a bottomwear recipe with no part tagged bottomwear is refused as
+ * before, the dress's line in the refusal, the blouse's refusal word for word the one written before. PR482 the
+ * declared part takes the skirt's trees at the hand-computed points, in place of the robe chains. PR483 a part the
+ * field cannot hand the recipe to is refused once by name.
+ */
+function runSkirtInsideProposeControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dressDir = temp('skirt-inside-dress');
+  const blouseDir = temp('skirt-inside-blouse');
+  const pieceDir = temp('skirt-inside-piece');
+  const skirtDir = temp('skirt-inside-skirt');
+  const shiftDir = temp('skirt-inside-shift');
+  try {
+    writeProposeFixture(shiftDir, dressParts(SHIFT), DRESS_RIG);
+    writeProposeFixture(dressDir, dressParts(DRESS), DRESS_RIG);
+    writeProposeFixture(blouseDir, dressParts(BLOUSE), DRESS_RIG);
+    writeProposeFixture(pieceDir, [...dressParts(DRESS), { ...DRESS, name: 'hem', cut_from: 'dress', y: 250, h: 40, rects: [[68, 250, 104, 40]] }], DRESS_RIG);
+    writeProposeFixture(skirtDir, CLOTH_PARTS, CLOTH_RIG);
+    const dress = readPartSet(dressDir);
+    const blouse = readPartSet(blouseDir);
+    const hair: ClothRecipes = { 'back hair': clothRecipe()['back hair'], 'front hair': clothRecipe()['front hair'] };
+    const skirt = (part?: string): ClothRecipes => ({ ...hair, bottomwear: { chains: 2, links: 2, wind: [1, 4], gravity: [2, 8], ...(part === undefined ? {} : { part }) } });
+    const shaped = (notes: readonly string[]): string[] => notes.filter((n) => n.includes('shaped like a skirt'));
+    const names = (n: string): boolean =>
+      n.startsWith('dress (full:topwear): shaped like a skirt') && n.includes("its art's rows 165 to 289 lie below hip (y 164)") && n.includes('(104 px)') && n.includes('(60 px)') && n.includes('config.cloth.bottomwear.part: "dress"');
+
+    const dHair = propose(dress, undefined, null, DEFAULT_GRID_RULE, hair);
+    const dPlain = propose(dress);
+    const bHair = propose(blouse, undefined, null, DEFAULT_GRID_RULE, hair);
+    const sHair = propose(readPartSet(shiftDir), undefined, null, DEFAULT_GRID_RULE, hair);
+    const dNotes = shaped(dHair.notes);
+    const chainsOf = (pr: Proposal): string[] => pr.bones.filter((b) => 'chain' in b).map((b) => ('chain' in b ? b.chain : ''));
+    say(
+      'PR480_WITH_A_RECIPE_IN_PLAY_A_TOPWEAR_SHAPED_LIKE_A_SKIRT_IS_NAMED_AND_NOTHING_IS_DRAFTED_ON_ITS_SHAPE',
+      dNotes.length === 1 && names(dNotes[0]) &&
+        chainsOf(dHair).includes('robe_r') && chainsOf(dHair).includes('robe_l') && !chainsOf(dHair).some((c) => c.startsWith('skirt')) && (dHair.constraints ?? []).every((c) => !String(c.bone).startsWith('skirt')) &&
+        shaped(dPlain.notes).length === 0 && shaped(bHair.notes).length === 0 && !bHair.notes.some((n) => n.includes('bottomwear.part')) && shaped(sHair.notes).length === 0,
+      `dress, hair recipes only: ${dNotes.length} note(s) — ${dNotes.length === 1 ? dNotes[0].slice(0, 230) : 'none'}…; its chains ${chainsOf(dHair).filter((c) => /^(robe|skirt)/.test(c)).join(', ')}; dress with no recipe: ${shaped(dPlain.notes).length} such note(s); blouse (box ends at y 170, above 176.5) with the hair recipes: ${shaped(bHair.notes).length} such note(s); shift (hangs to y 290, 48 px across at the hip and at its bottom) with the hair recipes: ${shaped(sHair.notes).length} such note(s)`,
+      'issue #402: the recipe found the skirt by the bottomwear tag alone and said nothing when See-through returned it inside topwear. The shape cannot tell a dress from an outer robe over a skirt (the public scarf\'s topwear passes it), so it is a name, not a draft; a topwear that ends at the waist is not named, and without --cloth no recipe is in play and nothing changes',
+    );
+
+    const dRef = refusals(() => propose(dress, undefined, null, DEFAULT_GRID_RULE, skirt()));
+    const bRef = refusals(() => propose(blouse, undefined, null, DEFAULT_GRID_RULE, skirt()));
+    const before = 'declares a recipe for "bottomwear", and no part is tagged "bottomwear"; leave the recipe out, or assemble the layer it is for';
+    const one = (e: PartsError | null): boolean => e !== null && e.problems.length === 1 && e.problems[0].code === 'PROPOSE_CLOTH_DRAFTED' && e.problems[0].object === 'config.cloth."bottomwear"';
+    say(
+      'PR481_A_SKIRT_RECIPE_WITH_NO_BOTTOMWEAR_PART_NAMES_THE_DRESS_IN_ITS_REFUSAL_AND_ONLY_THEN',
+      one(dRef) && (dRef as PartsError).problems[0].detail.includes('or name the part that holds the skirt — ') && names((dRef as PartsError).problems[0].detail.slice((dRef as PartsError).problems[0].detail.indexOf('dress (full:topwear)'))) &&
+        one(bRef) && (bRef as PartsError).problems[0].detail === before,
+      `dress: ${codes(dRef)} — …${(dRef?.problems[0]?.detail ?? '').slice(110, 260)}…; blouse: ${codes(bRef)}, detail ${(bRef?.problems[0]?.detail ?? '') === before ? 'word for word the one written before' : `CHANGED: ${bRef?.problems[0]?.detail ?? 'none'}`}`,
+      'issue #402: the refusal that told the author to assemble the layer is where the dress was lost; it now names the part and the field, and where no topwear is shaped like a skirt it says what it said before',
+    );
+
+    // By hand (fixtures/cloth.ts): the trees root 20 px below hip, y 184, and tip 4 px above the dress's box bottom,
+    // y 286. Two links at length_ratio 0.5: q = 0.5, lengths 1 : 0.5 of the 102 px span, so link 1 starts at
+    // 184 + 102/1.5 = 252. Tree 0 at 1/4 of the art's width, tree 1 at 3/4, in the 24-row band at each row: row 184's
+    // band (172..195) is the first tier, x 90..149: 90 + 0.25*59 = 104.75 -> 105 and 134.25 -> 134; rows 252 and 286
+    // reach the last tier, x 68..171: 68 + 0.25*103 = 93.75 -> 94 and 145.25 -> 145. The dress's art starts above the
+    // chest (y 100 against 132), so it keeps the chest segment, chest y - 30 = 102 down to hip - 20 = 144, and the
+    // waist line runs at hip + 5 = 169 over 0.09 .. 0.91 of its box's width, 68 + 9.36 -> 77 to 68 + 94.64 -> 163. Two
+    // trees with no split are both the edge: strength 50 (the recipe's default edge), wind 1 -> 4, gravity 2 -> 8.
+    const named = propose(dress, undefined, null, DEFAULT_GRID_RULE, skirt('dress'));
+    const want: Record<string, string> = { skirt0_: '[[105,184],[94,252]]->[94,286]', skirt1_: '[[134,184],[145,252]]->[145,286]' };
+    const wrong = Object.entries(want).filter(([n, v]) => boneAt(named.bones, n) !== v).map(([n, v]) => `${n} ${boneAt(named.bones, n)} (want ${v})`);
+    const segs = JSON.stringify(named.meshes.dress?.segments ?? null);
+    const phys = (named.constraints ?? []).filter((c) => String(c.bone).startsWith('skirt')).map((c) => `${String(c.bone)} ${String(c.strength)} ${String(c.wind)}/${String(c.gravity)}`);
+    const note = named.notes.find((n) => n.startsWith('dress (full:topwear, which config.cloth."bottomwear".part names): config.cloth."bottomwear" -> 2 tree(s) from hip'));
+    const loads = refusals(() => checkProposal(dress, named));
+    say(
+      'PR482_THE_DECLARED_PART_TAKES_THE_SKIRT_S_TREES_AT_THE_HAND_COMPUTED_POINTS_IN_PLACE_OF_THE_ROBE_CHAINS',
+      wrong.length === 0 &&
+        !chainsOf(named).some((c) => c.startsWith('robe')) &&
+        segs === '[["chest",[120,102],[120,144]],["hip",[77,169],[163,169]],"skirt0_","skirt1_"]' &&
+        JSON.stringify(phys) === '["skirt0_0 50 1/2","skirt0_1 50 4/8","skirt1_0 50 1/2","skirt1_1 50 4/8"]' &&
+        note !== undefined && shaped(named.notes).length === 0 && loads === null,
+      `${wrong.length === 0 ? 'skirt0_ and skirt1_ as derived' : `wrong: ${wrong.join('; ')}`}; robe chains ${chainsOf(named).filter((c) => c.startsWith('robe')).join(', ') || 'none'}; dress segments ${segs}; physics ${JSON.stringify(phys)}; the recipe's note ${note === undefined ? 'ABSENT' : 'written, naming the field'}; skirt-shape notes ${shaped(named.notes).length}; the proposal loads: ${codes(loads)}`,
+      "issue #402: the author's declaration hands the skirt's rule and recipe to the part — trees from the hip over its art below it, the bodice on the chest segment as the long-robe bottomwear already is — with no mesh split: one lattice, weighted by its segments",
+    );
+
+    const piece = readPartSet(pieceDir);
+    const cases: Array<[string, PartSet, string, string]> = [
+      ['a name no part has', dress, 'gown', 'names "gown", which is no part in parts.json'],
+      ['the face', dress, 'face', 'names "face", from head:face; only a topwear part'],
+      ['a bottomwear part', readPartSet(skirtDir), 'skirt', 'names "skirt", from full:bottomwear; a bottomwear part takes the recipe by its tag already'],
+      ['a cut piece', piece, 'hem', 'names "hem", a piece an assemble.cuts entry took from dress'],
+      ['the blouse, ending above the waist line', blouse, 'blouse', 'names "blouse", whose box ends at y=170, above hip + 0.25 face heights (y=176.5)'],
+    ];
+    const outcomes = cases.map(([what, parts, part, start]) => {
+      const e = refusals(() => propose(parts, undefined, null, DEFAULT_GRID_RULE, skirt(part)));
+      return { what, ok: e !== null && e.problems.length === 1 && e.problems[0].code === 'PROPOSE_CLOTH_PART' && e.problems[0].object === 'config.cloth."bottomwear".part' && e.problems[0].detail.startsWith(start), got: codes(e) };
+    });
+    const pieceOk = refusals(() => propose(piece, undefined, null, DEFAULT_GRID_RULE, skirt('dress')));
+    say(
+      'PR483_A_PART_THE_FIELD_CANNOT_HAND_THE_RECIPE_TO_IS_REFUSED_ONCE_BY_NAME',
+      outcomes.every((o) => o.ok) && pieceOk === null,
+      `${outcomes.map((o) => `${o.what}: ${o.ok ? 'refused once' : `NOT: ${o.got}`}`).join('; ')}; the dress named beside its cut piece: ${pieceOk === null ? 'proposed' : codes(pieceOk)}`,
+      'issue #402: a declaration that names nothing, a part of another tag, a piece whose base already takes its layer\'s rule, or a topwear that stops at the waist would draft something other than it says — so it is refused by name, not drafted',
+    );
+  } finally {
+    for (const d of [dressDir, blouseDir, pieceDir, skirtDir, shiftDir]) rmSync(d, { recursive: true, force: true });
+  }
 }
 
 /**

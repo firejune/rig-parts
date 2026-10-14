@@ -42,6 +42,12 @@
  * - **Translate.** `translate`, when declared, is the `x` and `y` mix of a
  *   second physics constraint on the last link of every path, beside its
  *   rotation, with no wind or gravity response ({@link physics} says why).
+ * - **Part** (`bottomwear` only, issue #402). `part` names a `topwear` part
+ *   that takes the skirt's recipe as well: a skirt See-through returned inside
+ *   `topwear` (a dress). Its trees hang from the hip over its art below the
+ *   hip, by the skirt's own rule, in place of the robe chains the topwear rule
+ *   drafts; its art above the hip stays on the chest. The proposer never picks
+ *   such a part by itself: it names a candidate, and the author declares it.
  * - **Swing** (`bottomwear` only). `swing.scales` declares one shared pendulum:
  *   a bone `<prefix>swing` under the attachment at the centre of the root row,
  *   one link long, with physics; each tree's first link takes the swing's
@@ -84,6 +90,8 @@ export interface ClothRecipe {
   gravity: [number, number];
   translate?: number;
   swing?: { scales: number[] };
+  /** `bottomwear` only (issue #402): a `topwear` part the skirt's trees are drafted on as well — a dress. */
+  part?: string;
 }
 
 export type ClothRecipes = Partial<Record<ClothTarget, ClothRecipe>>;
@@ -364,14 +372,18 @@ export function chainConstraints(chain: string, links: number, tree: number, edg
   return out;
 }
 
-/** The one note a piece drafted by the recipe gets. */
-export function clothNote(part: string, tag: ClothTarget, trees: readonly TreeChain[], r: ClothRecipe, constraints: number, extra: string): string {
+/**
+ * The one note a piece drafted by the recipe gets. `via` is the part's own
+ * `from` when the recipe reached it by `part` rather than by its tag
+ * (issue #402); absent, the note is the one written before the field existed.
+ */
+export function clothNote(part: string, tag: ClothTarget, trees: readonly TreeChain[], r: ClothRecipe, constraints: number, extra: string, via?: string): string {
   const defaults: string[] = [];
   if (r.length_ratio === undefined) defaults.push(`length_ratio ${RECIPE_LENGTH_RATIO}`);
   if (r.strength === undefined) defaults.push(`strength ${RECIPE_STRENGTH.trunk}/${RECIPE_STRENGTH.branch}/${RECIPE_STRENGTH.edge}`);
   const shape = r.split === undefined ? `${r.links} link(s) each` : `a ${r.split.at}-link trunk forking into ${r.split.into} branches, ${r.links} links root to tip`;
   return (
-    `${part} (${tag}): config.cloth."${tag}" -> ${r.chains} tree(s)${extra}, ${shape} (${trees.map((t) => t.chain).join(', ')}); ` +
+    `${part} (${via === undefined ? tag : `${via}, which config.cloth."${tag}".part names`}): config.cloth."${tag}" -> ${r.chains} tree(s)${extra}, ${shape} (${trees.map((t) => t.chain).join(', ')}); ` +
     `${constraints} constraint(s), physics on every link, wind ${r.wind[0]} -> ${r.wind[1]} and gravity ${r.gravity[0]} -> ${r.gravity[1]} root to tip (multipliers of the consumer's environment; no direction is drafted), no idle key` +
     (defaults.length === 0 ? '' : `; the recipe's own defaults, measured on its synthetic fixture (AUTHORING §3): ${defaults.join(', ')}`)
   );
