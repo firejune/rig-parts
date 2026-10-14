@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.0](https://github.com/rig-c/parts/compare/v1.21.0...v1.22.0) (2026-10-14)
+
+
+### Features
+
+* **assemble:** `cut_band` places a limb joint's cut on the line in the band that crosses the fewest stroke pixels ([#398](https://github.com/rig-c/parts/issues/398)) ([e20f56f](https://github.com/rig-c/parts/commit/e20f56fa0f7c71b62f2144da8f14c77b226c542b)), closes [#360](https://github.com/rig-c/parts/issues/360)
+
 ## [1.21.0](https://github.com/rig-c/parts/compare/v1.20.0...v1.21.0) (2026-10-14)
 
 
