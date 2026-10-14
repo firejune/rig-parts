@@ -146,7 +146,7 @@ import {
   type RunLayerSpec,
 } from './fixtures/assemble_fixture.ts';
 import { type AnimFrame, chunkTypes, encodeApng, encodeIndexedApng } from './src/apng.ts';
-import { capBox, featherWeight, type JointLine, jointLine, limbWidth, nearestLimb, pastJoint, segmentOf } from './src/limbs.ts';
+import { assignOverlappingHands, capBox, featherWeight, type JointLine, jointLine, limbWidth, nearestLimb, pastJoint, segmentOf } from './src/limbs.ts';
 import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, type CheckFlagInBuild, checkStage, ctlRemedies, driftShare, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
@@ -387,8 +387,10 @@ import {
   FACELESS_RATIOS,
   faceBoxOf,
   type FacelessRatios,
+  HAND_MIN_OF_OTHER,
   lint,
   lintLine,
+  type NearEmptyHandFinding,
   FRINGE_STEP_PX,
   FRONTAL_REFERENCE,
   headFrameNotes,
@@ -8055,6 +8057,88 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
     rmSync(dir, { recursive: true, force: true });
   }
   runRiderProposeControls(say);
+  runNearEmptyHandControls(say);
+}
+
+/**
+ * Issue #400: when a wrist keypoint says a hand is present on a side (`r_wrist` or `l_wrist`) and that side's
+ * `handwear` part holds fewer opaque pixels than the bar — `ceil(0.25 * other.opaque_px)` when the other `handwear`
+ * part is present, or `ceil(w * w)` from the forearm width `w` read by `limbWidth` when it is not — `lint` names the
+ * part, its tag, its opaque pixel count, the wrist keypoint and the bar.
+ *
+ * - Negative control: `standing` (`1200` vs `1200`, bar `300`), `seated` (`816` vs `816`, bar `204`) and `lying`
+ *   (`1120` vs `1120`, bar `280`) each hold well above 25 % of the other handwear layer and emit 0 `near-empty-hand`
+ *   findings; when `r_wrist` is missing (`at: null`), a 15-px `sleeve_a` emits 0 `near-empty-hand` findings.
+ * - Positive control (other-hand bar): on `standing`, shrinking `sleeve_a` (`full:handwear-r`) to `3x5 = 15` px at
+ *   `(29, 150)` around `r_wrist [30, 152]` while `sleeve_b` (`full:handwear-l`) holds `1200` px emits 1
+ *   `near-empty-hand` finding with `opaquePx === 15` and `bar === 300` (`ceil(0.25 * 1200)`).
+ * - Positive control (forearm-width bar): on `standing` with `sleeve_b` omitted, `coat` (`full:topwear`) added at
+ *   `24,100 12x50` (12 px wide across the right forearm from `r_elbow [30, 130]` to `r_wrist [30, 152]`), and
+ *   `sleeve_a` shrunk to `3x5 = 15` px, `lint` falls back to `ceil(12 * 12) = 144` px and emits 1 `near-empty-hand`
+ *   finding with `bar === 144`.
+ */
+function runNearEmptyHandControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const root = temp('near-empty-hand');
+  try {
+    const runPose = (label: string, parts: ProposeFixturePart[], rig: { w: number; h: number }, kp: Record<string, unknown>): NearEmptyHandFinding[] => {
+      const d = join(root, label);
+      writeProposeFixture(d, parts, rig);
+      const P = readPartSet(d);
+      const kf = parseKeypoints(kp, label);
+      const j = toRigJoints(kf, kf.people[0]!, rig.w, rig.h);
+      const prop = propose(P, j);
+      return lint(P, prop, j).findings.filter((f): f is NearEmptyHandFinding => f.kind === 'near-empty-hand');
+    };
+    const cleanPoses = (['standing', 'seated', 'lying'] as const).map((k) => [k, runPose(`clean-${k}`, POSES[k].parts, POSES[k].rig, POSES[k].keypoints).length] as const);
+    const sliverParts = POSES.standing.parts.map((p) => (p.name === 'sleeve_a' ? { ...p, x: 29, y: 150, w: 3, h: 5 } : p));
+    const otherFindings = runPose('sliver-other', sliverParts, POSES.standing.rig, POSES.standing.keypoints);
+    const otherF = otherFindings[0] ?? null;
+    const otherLine = otherF !== null ? lintLine(otherF) : '';
+    const wantOtherLine =
+      'LINT sleeve_a (full:handwear-r) holds 15 opaque px while r_wrist at [30.0, 152.0] says a hand is there — below the bar of 300 px (0.25 of sleeve_b (full:handwear-l), 1200 px): the hands may overlap in the other layer and leave finger slivers here';
+    const missingWristKp = structuredClone(POSES.standing.keypoints) as { people: Array<{ joints: Record<string, unknown> }> };
+    missingWristKp.people[0]!.joints.r_wrist = { state: 'missing' };
+    const noWristFindings = runPose('sliver-no-wrist', sliverParts, POSES.standing.rig, missingWristKp);
+
+    const widthParts: ProposeFixturePart[] = [
+      ...sliverParts.filter((p) => p.name !== 'sleeve_b'),
+      { name: 'coat', from: 'full:topwear', x: 24, y: 100, w: 12, h: 50, colour: [150, 60, 60] },
+    ];
+    const widthFindings = runPose('sliver-width', widthParts, POSES.standing.rig, POSES.standing.keypoints);
+    const widthF = widthFindings[0] ?? null;
+    const widthLine = widthF !== null ? lintLine(widthF) : '';
+    const wantWidthLine =
+      'LINT sleeve_a (full:handwear-r) holds 15 opaque px while r_wrist at [30.0, 152.0] says a hand is there — below the bar of 144 px (forearm width 12.0 px squared): the hands may overlap in the other layer and leave finger slivers here';
+
+    say(
+      'PR516_NEAR_EMPTY_HAND_LAYER_IS_NAMED_AGAINST_OTHER_HAND_OR_FOREARM_WIDTH_WHEN_WRIST_KEYPOINT_IS_PRESENT',
+      HAND_MIN_OF_OTHER === 0.25 &&
+        cleanPoses.every(([, n]) => n === 0) &&
+        otherFindings.length === 1 &&
+        otherF !== null &&
+        otherF.part === 'sleeve_a' &&
+        otherF.from === 'full:handwear-r' &&
+        otherF.opaquePx === 15 &&
+        otherF.wrist === 'r_wrist' &&
+        JSON.stringify(otherF.wristAt) === '[30,152]' &&
+        otherF.bar === 300 &&
+        otherF.basis.kind === 'other-hand' &&
+        otherF.basis.otherPart === 'sleeve_b' &&
+        otherF.basis.otherPx === 1200 &&
+        otherLine === wantOtherLine &&
+        noWristFindings.length === 0 &&
+        widthFindings.length === 1 &&
+        widthF !== null &&
+        widthF.bar === 144 &&
+        widthF.basis.kind === 'forearm-width' &&
+        widthF.basis.width === 12 &&
+        widthLine === wantWidthLine,
+      `clean poses: ${cleanPoses.map(([k, n]) => `${k}=${n}`).join(', ')}; with other hand (1200 px): ${otherFindings.length} finding(s), line ${JSON.stringify(otherLine)}; without r_wrist: ${noWristFindings.length} finding(s); forearm-width fallback (12 px): ${widthFindings.length} finding(s), line ${JSON.stringify(widthLine)}`,
+      'issue #400: when both hands are drawn together and See-through puts both hands into one handwear layer while leaving a finger sliver in the other, a placed wrist keypoint exposes the near-empty handwear layer against 25 % of the other handwear layer (or forearm width squared when there is no other handwear layer)',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -18301,6 +18385,7 @@ function runLimbCases(say: (name: string, ok: boolean, detail: string, why: stri
     );
 
     runCutBandCases(say, root);
+    runOverlappingHandsCases(say, root);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -18498,6 +18583,148 @@ function runCutBandCases(say: (name: string, ok: boolean, detail: string, why: s
       const back = serializeParts(readParts(pj)) === readFileSync(pj, 'utf8');
       return [back && planted.every(([, e]) => codes(e).startsWith(object)), `read back byte for byte: ${back ? 'yes' : 'NO'}; planted: ${planted.map(([w, e]) => `${w} -> ${codes(e).slice(0, 70)}`).join('; ')}`];
     },
+  );
+}
+
+/**
+ * Issue #400: when two forearms cut from the same source part (`arm`, `handwear-r`) have overlapping hand keypoint
+ * regions (`r = L / 2` around each wrist), `assignOverlappingHands` gives the overlapping hand region and any finger
+ * sliver island that leaves `back`'s hand disc to `front`'s forearm whole, and ends `back`'s forearm at its cuff
+ * (`L - r = L / 2` from `back`'s elbow).
+ *
+ * Here `sleeve_r1` runs `[15, 30] -> [27, 46]` (`dx = 12, dy = 16`, so `L0 = 20`, unit axis `(0.6, 0.8)`, wrist disc
+ * `r0 = 10` around `[27, 46]`, cuff at `proj0 = 10`) and `sleeve_l1` runs `[45, 30] -> [33, 46]` (`dx = -12, dy = 16`,
+ * `L1 = 20`, wrist disc `r1 = 10` around `[33, 46]`). The wrists are 6 px apart (`6 <= 20`), the two hands overlap
+ * across `21..39 x 39..52`, and a finger sliver at `15..21 x 41..44` touches the hand block at `x = 21` while reaching
+ * `(15, 41)` where `proj0 = 8.8 <= 10` and `(15 - 27)^2 + (41 - 46)^2 = 169 > 100`.
+ */
+function runOverlappingHandsCases(say: (name: string, ok: boolean, detail: string, why: string) => void, root: string): void {
+  const d = join(root, 'overlapping-hands');
+  const armRects = [
+    { x0: 12, y0: 10, x1: 18, y1: 30, colour: C },
+    { x0: 42, y0: 10, x1: 48, y1: 30, colour: C },
+    { x0: 13, y0: 30, x1: 20, y1: 39, colour: C },
+    { x0: 39, y0: 30, x1: 47, y1: 42, colour: C },
+    { x0: 21, y0: 39, x1: 39, y1: 52, colour: C },
+    { x0: 15, y0: 41, x1: 21, y1: 44, colour: C },
+  ];
+  writeRun(join(d, 'full'), LIMB_FULL.map((l) => (l.name === 'handwear-r' ? { ...l, rects: armRects } : l)));
+  writeRun(join(d, 'head'), FRAMED_HEAD);
+  writeFileSync(join(d, 'painting.png'), encodePngBytes(flatPainting()));
+  const bones: Array<Record<string, unknown>> = [
+    { name: 'hip', parent: 'root', at: [32, 8] },
+    { chain: 'sleeve_r', parent: 'hip', points: [[15, 10], [15, 30]], tip: [27, 46] },
+    { chain: 'sleeve_l', parent: 'hip', points: [[45, 10], [45, 30]], tip: [33, 46] },
+    { chain: 'leg_r', parent: 'hip', points: [[34, 10], [34, 30]], tip: [34, 50] },
+    { chain: 'leg_l', parent: 'hip', points: [[48, 10], [48, 30]], tip: [48, 50] },
+    { name: 'foot_r', parent: 'leg_r1', at: [34, 50], inherit: 'noRotationOrReflection' },
+    { name: 'foot_l', parent: 'leg_l1', at: [48, 50], inherit: 'noRotationOrReflection' },
+  ];
+  const limbs: Record<string, { segments: Array<Record<string, unknown>> }> = {
+    ...structuredClone(LIMBS),
+    arm_l: {
+      segments: [
+        { part: 'upperarm_l', from: 'arm', bone: 'sleeve_l0' },
+        { part: 'forearm_l', from: 'arm', bone: 'sleeve_l1', joint: 'elbow' },
+      ],
+    },
+  };
+  writeFileSync(join(d, 'config.json'), JSON.stringify(limbConfig(limbs, bones)));
+  const out = join(d, 'out');
+  const stageOut = assembleStage(
+    { source: join(d, 'painting.png'), full: join(d, 'full'), head: join(d, 'head'), config: join(d, 'config.json'), seam: 'near-white', project: DEFAULT_PROJECT_RULE },
+    { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, 'recomposite_error_rig.png') },
+    () => {},
+  );
+  const placed = (name: string): PlacedPart => stageOut.images.find((q) => q.record.name === name) as PlacedPart;
+  const forearmR = placed('forearm_r');
+  const forearmL = placed('forearm_l');
+  const maskOf = (p: PlacedPart): Mask => {
+    const m = newMask(p.image.width, p.image.height);
+    for (let i = 0; i < m.data.length; i++) if (p.image.data[i * 4 + 3] > 0) m.data[i] = 1;
+    return m;
+  };
+  const rComps = connectedComponents(maskOf(forearmR), 4).count - 1;
+  const lComps = connectedComponents(maskOf(forearmL), 4).count - 1;
+
+  // Check every opaque rig pixel of forearm_r below the elbow line (y >= 30, i.e. outside its elbow cap):
+  // none may exceed cuff0 = 10 along sleeve_r1, and none may lie inside either wrist disc (r = 10 around [27, 46] or [33, 46]).
+  let rPastCuff = 0;
+  let rInHandDisc = 0;
+  for (let y = 0; y < forearmR.image.height; y++) {
+    for (let x = 0; x < forearmR.image.width; x++) {
+      if (forearmR.image.data[(y * forearmR.image.width + x) * 4 + 3] === 0) continue;
+      const rx = forearmR.record.x + x + 0.5;
+      const ry = forearmR.record.y + y + 0.5;
+      if (ry >= 30 && 0.6 * (rx - 15) + 0.8 * (ry - 30) > 10 + 1e-9) rPastCuff++;
+      const d0 = (rx - 27) * (rx - 27) + (ry - 46) * (ry - 46);
+      const d1 = (rx - 33) * (rx - 33) + (ry - 46) * (ry - 46);
+      if (d0 <= 100 || d1 <= 100) rInHandDisc++;
+    }
+  }
+  // Check that forearm_l holds the entire overlapping hand block (21..39 x 39..52) and finger sliver (15..21 x 41..44).
+  const lHas = (rx: number, ry: number): boolean => {
+    const lx = rx - forearmL.record.x;
+    const ly = ry - forearmL.record.y;
+    if (lx < 0 || ly < 0 || lx >= forearmL.image.width || ly >= forearmL.image.height) return false;
+    return forearmL.image.data[(ly * forearmL.image.width + lx) * 4 + 3] === 255;
+  };
+  let lHandMissing = 0;
+  for (let y = 39; y < 52; y++) for (let x = 21; x < 39; x++) if (!lHas(x, y)) lHandMissing++;
+  for (let y = 41; y < 44; y++) for (let x = 15; x < 21; x++) if (!lHas(x, y)) lHandMissing++;
+
+  // Planted mutant: plain nearestLimb + segmentOf without assignOverlappingHands splits the hand down x = 30, giving
+  // forearm_r pixels inside the wrist disc, and clipping only proj0 > 10 without transferring outside-disc islands
+  // leaves the finger sliver pixels at x 15..16, y 41..42 (where proj0 <= 10) as a 2nd component on forearm_r.
+  const chains: ReadonlyArray<readonly [number, number][]> = [
+    [[15, 10], [15, 30], [27, 46]],
+    [[45, 10], [45, 30], [33, 46]],
+  ];
+  const jR = [null, jointLine([15, 10], [15, 30], [27, 46])];
+  const jL = [null, jointLine([45, 10], [45, 30], [33, 46])];
+  let plainRInHandDisc = 0;
+  let cuffOnlyRIslands = 0;
+  const cuffOnlyMask = newMask(64, 64);
+  for (const q of armRects) {
+    for (let y = q.y0; y < q.y1; y++) {
+      for (let x = q.x0; x < q.x1; x++) {
+        const lb = nearestLimb(chains, x, y);
+        const sg = segmentOf(lb === 0 ? jR : jL, 0, 1, x, y);
+        if (lb === 0 && sg === 1) {
+          if ((x + 0.5 - 27) * (x + 0.5 - 27) + (y + 0.5 - 46) * (y + 0.5 - 46) <= 100) plainRInHandDisc++;
+          if (0.6 * (x + 0.5 - 15) + 0.8 * (y + 0.5 - 30) <= 10) cuffOnlyMask.data[y * 64 + x] = 1;
+        }
+      }
+    }
+  }
+  cuffOnlyRIslands = connectedComponents(cuffOnlyMask, 4).count - 1;
+
+  // Negative control: when the wrists are far apart ([15, 50] and [45, 50], distance 30 > 10 + 10 = 20),
+  // assignOverlappingHands leaves own and segOverride untouched.
+  const apartOwn = new Int32Array(16).fill(0);
+  const apartSeg = new Int32Array(16).fill(-1);
+  assignOverlappingHands(
+    { limb: 0, seg: 1, elbow: [15, 30], wrist: [15, 50], isSeg: () => true },
+    { limb: 1, seg: 1, elbow: [45, 30], wrist: [45, 50], isSeg: () => true },
+    4,
+    4,
+    apartOwn,
+    apartSeg,
+  );
+
+  say(
+    'AS474_OVERLAPPING_HANDS_GO_TO_THE_FRONT_FOREARM_WHOLE_WITH_BACK_ENDING_AT_ITS_CUFF_AND_ZERO_ISLANDS',
+    rPastCuff === 0 &&
+      rInHandDisc === 0 &&
+      rComps === 1 &&
+      lHandMissing === 0 &&
+      lComps === 1 &&
+      plainRInHandDisc > 0 &&
+      cuffOnlyRIslands === 2 &&
+      apartOwn.every((v) => v === 0) &&
+      apartSeg.every((v) => v === -1),
+    `with assignOverlappingHands: forearm_r past cuff=${rPastCuff}, in hand disc=${rInHandDisc}, components=${rComps}; forearm_l missing hand/sliver px=${lHandMissing}, components=${lComps}; planted plain nearestLimb forearm_r in hand disc=${plainRInHandDisc}, cuff-only forearm_r components=${cuffOnlyRIslands}; wrists apart untouched=${apartSeg.every((v) => v === -1)}`,
+    'issue #400: when two forearms cut from one part have overlapping wrist discs (r = L/2), nearestLimb splits the clasped hands down the middle and leaves finger slivers behind; assignOverlappingHands ends the back forearm at its cuff (L - r) and hands the overlapping hand region and any outside-disc island to the front forearm whole',
   );
 }
 

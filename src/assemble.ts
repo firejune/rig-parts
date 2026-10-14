@@ -104,7 +104,7 @@ import { type Problem, refuseIfAny } from './errors.ts';
 import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
 import { padToSquare, squarePad } from './inputs.ts';
 import { type CapRecord, type LimbRecord, PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, type SceneRecord, type SingleRunPad } from './parts.ts';
-import { type BonePlace, bonePlaces, capBox, coveredRadius, type CutPlacement, featherWeight, halfWidthAbout, inDisc, jointLine, type JointLine, jointOffsets, limbPolyline, limbRun, luma601, nearestLimb, pastJoint, placeCut, segmentOf } from './limbs.ts';
+import { assignOverlappingHands, type BonePlace, bonePlaces, capBox, coveredRadius, type CutPlacement, featherWeight, halfWidthAbout, inDisc, jointLine, type JointLine, jointOffsets, limbPolyline, limbRun, luma601, nearestLimb, pastJoint, placeCut, segmentOf } from './limbs.ts';
 import {
   alphaComposite,
   connectedComponents,
@@ -2054,16 +2054,35 @@ function cutLimbs(
         placements.set(`${l}/${k}`, placed);
       });
     }
+    const segOverride = new Int32Array(W * H).fill(-1);
+    const segAt = (l: string, x: number, y: number): number => {
+      const segs = limbs[l].segments;
+      const first = segs.findIndex((sg) => sg.from === src);
+      let last = first;
+      while (last + 1 < segs.length && segs[last + 1].from === src) last++;
+      return segmentOf(cutLines.get(l) as Array<JointLine | null>, first, last, x, y);
+    };
+    // Issue #400: when two forearm segments share `src` and their hand regions overlap, the overlap goes to the front
+    // piece (the limb later in config.limbs) in one piece, and the back piece ends at its cuff.
+    const forearms = on.flatMap((l) => {
+      const li = names.indexOf(l);
+      return limbs[l].segments.flatMap((sg, k) => {
+        if (k === 0 || sg.joint !== 'elbow' || sg.from !== src) return [];
+        const me = places.get(sg.bone) as BonePlace;
+        return me.end === null ? [] : [{ limb: li, seg: k, elbow: me.at, wrist: me.end, isSeg: (x: number, y: number): boolean => segAt(l, x, y) === k }];
+      });
+    });
+    for (let i = 0; i < forearms.length; i++) {
+      for (let j = i + 1; j < forearms.length; j++) {
+        assignOverlappingHands(forearms[i], forearms[j], W, H, own, segOverride);
+      }
+    }
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const p = y * W + x;
         if (b.r.data[p * 4 + 3] === 0) continue;
         const l = names[own[p]];
-        const segs = limbs[l].segments;
-        const first = segs.findIndex((sg) => sg.from === src);
-        let last = first;
-        while (last + 1 < segs.length && segs[last + 1].from === src) last++;
-        const k = segmentOf(cutLines.get(l) as Array<JointLine | null>, first, last, x, y);
+        const k = segOverride[p] >= 0 ? segOverride[p] : segAt(l, x, y);
         const at = parts.findIndex((q) => q.limb === l && q.segment === k);
         rasters[at].data.set(b.r.data.subarray(p * 4, p * 4 + 4), p * 4);
         if (b.region === null || b.region.data[p] === 1) regions[at].data[p] = 1;
