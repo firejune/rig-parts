@@ -208,6 +208,15 @@ private repository. The rules that hold it together:
   suite's `SUITE_CRASHED` FAIL (`RT06`); the suites tallied are held to
   `SUITES`, every one once and in order (`RT08`). Only `run-tally` runs in the
   parent, last, because it reads the live tally.
+- **CI runs the suites in shards and merges them.** A suite that builds every
+  public example (`SPLIT_SUITES`) splits into one unit per example and a
+  closing unit; whole, it prints those blocks in the same order. CI's three
+  shard jobs run the units `SHARDS` assigns (`--shard`), and the `test` job
+  replays their records (`--merge`) through the same tally, so the merged
+  stdout is a whole run's. Every unit is in exactly one shard (`RT09`), every
+  unit is recorded exactly once (`RT10`), and a split suite's units replay end
+  to end in order (`RT11`). A unit shares nothing with another unit either:
+  one that needs another example's build builds it.
 - **An absent input is a HOLE.** The corpus suite with neither a named corpus
   nor any fetched `examples/*/inputs` opens its section, prints `SKIP` and a HOLE line, counts as not run, and the summary
   names it.
