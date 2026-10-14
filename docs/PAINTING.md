@@ -113,9 +113,10 @@ Anyone with a different generator reads the requirements above, not this. This i
 one way that passes `painting`: the `generation` block and the pose file of seed
 372108, painted by `rig-parts comfy paint` for issue #372 as one of 24 candidates,
 and chosen to be the next public example — a character for a wind demo, where hair
-and cloth move by physics under a side gust. Its painting and See-through layers are
-not yet published; when they are, its record joins the others in
-[parts-examples](https://github.com/rig-c/parts-examples). The block:
+and cloth move by physics under a side gust. It is the public example `wind`: its
+painting, See-through layers and generation record are in
+[parts-examples](https://github.com/rig-c/parts-examples) (`wind/`), and its config,
+proposal and build are [`examples/wind`](../examples/wind/README.md). The block:
 
 ```json
 "generation": {

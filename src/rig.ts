@@ -1911,6 +1911,16 @@ export function rigJsonText(value: unknown): string {
  * (`FLATTEN_REGION_UPRIGHT`) rather than flattened into an upright one the
  * oriented rig does not draw.
  *
+ * A transform constraint that reads its source's **local** rotation and adds
+ * it to its targets' local rotations (`localSource`, `localTarget`,
+ * `additive`: the cloth recipe's swing, issue #364) reads the source's setup
+ * rotation, which the flat form drops; spine-core takes the source's rotation
+ * less the `rotate` property's `offset`, so the flat form's offset is the
+ * offset less that setup rotation, and the targets turn by the same amount in
+ * both forms (issue #372: copied as written, the swing turned every skirt tree
+ * 90 degrees in the flat form of the `wind` example). Every other constraint
+ * is copied as written.
+ *
  * `sense` is the direction rotations are read in: 1, always, but for the
  * planted control that shows a flatten turning the wrong way is caught.
  */
@@ -1968,6 +1978,17 @@ export function flattenRig(rig: RigSpec, sense: 1 | -1 = 1): RigSpec {
   }
   refuseIfAny(problems);
   const flat: RigSpec = { ...rig, bones, skins: { default: skin } };
+  if (rig.constraints !== undefined) {
+    const setup = new Map(read.map((b) => [b.name, b.rotation]));
+    flat.constraints = rig.constraints.map((c) => {
+      const props = c.properties as Record<string, Record<string, unknown>> | undefined;
+      const rotate = props?.rotate;
+      const turned = typeof c.source === 'string' ? (setup.get(c.source) ?? 0) : 0;
+      if (c.type !== 'transform' || c.localSource !== true || c.localTarget !== true || c.additive !== true || rotate === undefined || turned === 0) return c;
+      const offset = typeof rotate.offset === 'number' ? rotate.offset : 0;
+      return { ...c, properties: { ...props, rotate: { ...rotate, offset: placed(offset - turned, OFFSET_PLACES) } } };
+    });
+  }
   if (rig.invariants?.axes !== undefined) {
     const { axes: _axes, ...rest } = rig.invariants;
     if (Object.keys(rest).length > 0) flat.invariants = rest;

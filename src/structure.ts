@@ -15,7 +15,8 @@
  * - a **config**: an object with a `key`, read by the full config loader;
  * - a **proposal**: an object with `bones` and no `key` or `spec`, as
  *   `propose` writes it, read by `parseProposalSections` (the loader's rules
- *   for bones, meshes, regions and motion).
+ *   for bones, meshes, regions and motion, and for the constraints
+ *   `propose --cloth` writes).
  *
  * Anything else is refused by name. A file's name is never read.
  *

@@ -1358,25 +1358,36 @@ export interface SkeletonSections {
 
 /**
  * A `proposal.json` as `propose` writes it — `bones`, `meshes`, `regions`,
- * `motion` and `notes` (strings) — under the full loader's own rules for the
- * four rig sections (issue #85). There is no plan to hold the meshes and
- * regions against, so the coverage rule (every plan part exactly one of a
- * mesh or a region) is the one rule not run; `propose` held its proposal to
- * it before writing (`checkProposal`). A key the loader would not take is
+ * `motion` and `notes` (strings), `limbs` when `propose --keypoints` drafted
+ * them (issue #349) and `constraints` when `propose --cloth` did (issue #364;
+ * both read here since issue #372, whose `wind` example tracks such a
+ * proposal) — under the full loader's own rules for those sections (issue
+ * #85). There is no plan to hold the meshes, regions and limbs against, so
+ * the coverage rule (every plan part exactly one of a mesh or a region) is
+ * not run, and a limb segment's `from` is held to no plan part (the parts
+ * the limbs take are the ones they name); `propose` held its proposal to
+ * both before writing (`checkProposal`). A key the loader would not take is
  * refused by name, as in a config. Refusals name the fields `proposal.…`.
  */
-export function parseProposalSections(raw: Json): SkeletonSections {
+export function parseProposalSections(raw: Json): SkeletonSections & { limbs?: Record<string, Limb>; constraints?: ConfigConstraint[] } {
   const c = new Check();
-  const top = c.object('config', raw, ['bones', 'meshes', 'regions', 'motion'], ['notes']);
+  const top = c.object('config', raw, ['bones', 'meshes', 'regions', 'motion'], ['notes', 'limbs', 'constraints']);
   if (top !== null) {
     const names = 'bones' in top ? checkBones(c, top.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>(), parents: new Map<string, string>() };
+    if ('limbs' in top) {
+      const taken = isPlainObject(top.limbs)
+        ? Object.values(top.limbs).flatMap((l) => (isPlainObject(l) && Array.isArray(l.segments) ? l.segments.flatMap((sg) => (isPlainObject(sg) && typeof sg.from === 'string' ? [sg.from] : [])) : []))
+        : [];
+      checkLimbs(c, top.limbs, { parts: [...new Set(taken)], patches: [], cuts: [] }, names);
+    }
     if ('meshes' in top) checkMeshes(c, top.meshes, names.bones, names.chains);
     if ('regions' in top) checkRegions(c, top.regions, names.bones);
     if ('motion' in top) checkMotion(c, top.motion, names.bones, names.chains, 'regions' in top ? top.regions : undefined);
+    if ('constraints' in top) checkConstraints(c, top.constraints, names.bones, names.parents);
     if ('notes' in top && c.array('config.notes', top.notes, false)) (top.notes as Json[]).forEach((n, i) => c.string(`config.notes[${i}]`, n, false));
   }
   refuseIfAny(c.problems.map((p) => ({ ...p, object: p.object.replace(/^config\b/, 'proposal') })));
-  return raw as SkeletonSections;
+  return raw as SkeletonSections & { limbs?: Record<string, Limb>; constraints?: ConfigConstraint[] };
 }
 
 /**
