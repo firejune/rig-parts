@@ -45,6 +45,14 @@ the machine's available parallelism (`RIG_PARTS_SELFTEST_JOBS=<n>` sets the
 number; the former `SPINE_PARTS_SELFTEST_JOBS` is read when it is not set). What the run prints is the same either way: each suite's lines, in
 the suites' own order, one suite after another.
 
+CI runs the same suites in three jobs (issue #395): each job runs one shard
+(`bun selftest.ts --shard <name> --record <file>`), and the `test` job merges
+the records (`bun selftest.ts --merge <dir>`) into what a whole run prints. A
+shard's unit is a suite, or one public example of a suite that builds every
+example (`SPLIT_SUITES` in `selftest.ts`). A new example adds a unit to each of
+those suites, and the run tally (`RT09`) stays red until each one is placed in
+`SHARDS`.
+
 A fourth needs a network, because it installs packages:
 
 ```bash

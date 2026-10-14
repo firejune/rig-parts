@@ -54,6 +54,20 @@
  * suite runs last in the parent: it reads the live tally of every suite
  * before it. `RIG_PARTS_SELFTEST_JOBS=1` runs one worker at a time.
  *
+ * ## CI runs the suites in shards, and merges them into one run
+ *
+ *   bun selftest.ts --shard <name> --record <file>   one shard's units, recorded
+ *   bun selftest.ts --merge <dir>                     every shard's record, as one run
+ *
+ * A unit is a suite, or for a suite that builds every public example
+ * (`SPLIT_SUITES`), one example of it and a closing unit (issue #395). CI runs
+ * the units `SHARDS` gives each shard in a job of its own, and `test` merges the
+ * records: every unit exactly once (`RT09` holds the partition, `RT10` the
+ * records), each suite's units end to end in their own order (`RT11`), through
+ * the same tally, run-tally suite and summary as a whole run, so the merged
+ * stdout is a whole run's. A whole run, with neither flag, runs each suite in one
+ * worker as before.
+ *
  * Both variables were renamed with the package (`ENV_TWINS`): each new name is
  * read first and its former `SPINE_PARTS_` name is the fallback, so a script
  * written before the rename keeps working.
@@ -16130,15 +16144,18 @@ function runFacelessExample(key: string, ex: string, out: string, dir: string, s
 }
 
 function runChainSuite(): number | null {
-  section('chain: build on every fetched example, against its expected/');
+  // Issue #395: split into one unit per example and a closing unit (SPLIT_SUITES); the first opens the section.
+  const part = splitPart('chain');
+  if (part.head) section('chain: build on every fetched example, against its expected/');
   const found = exampleDirs().filter((d) => existsSync(join(d, 'inputs', 'layers', 'head')));
   if (found.length === 0) {
+    if (!part.head) return null;
     console.log('  SKIP  no fetched example (examples/<key>/config.json + inputs/painting.png + inputs/layers/{full,head}), so the chain assemble -> rig -> check ran on no real painting');
     console.log('          ⚠️ This is a HOLE in this run, not a pass — run `bun run fetch-examples` (CI does) to compare the whole chain with each expected/.');
     return null;
   }
   const { say, bad } = counter();
-  if (!exampleInputsAtPin(found.map((d) => relative(join(ROOT, 'examples'), d)), say, 'CH900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
+  if (!exampleInputsAtPin(found.map((d) => relative(join(ROOT, 'examples'), d)), part.head ? say : quietSay, 'CH900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
   const dir = temp('chain');
   let planted: { key: string; out: string; exp: string } | null = null;
   // The green builds by example key: the public scenes of issue #74 compose these, rather than building twice.
@@ -16146,6 +16163,10 @@ function runChainSuite(): number | null {
   try {
     for (const ex of found) {
       const key = relative(join(ROOT, 'examples'), ex);
+      // Issue #395: a unit runs its own example. The closing unit builds, saying nothing, what the scenes and the
+      // planted comparators below read — the first green build and the scenes' two — since no unit reads another's.
+      const mine = part.has(key);
+      if (!mine && !(part.tail && (planted === null || Object.values(PUBLIC_SCENE_FOLDERS).includes(key)))) continue;
       const exp = join(ex, 'expected');
       const out = join(dir, key);
       const inputs = join(ex, 'inputs');
@@ -16153,7 +16174,7 @@ function runChainSuite(): number | null {
       const tail = lastLines(r.out, 4);
       const stopped = r.out.split('\n').find((l) => l.startsWith('build: stopped at')) ?? null;
       const refusal = r.out.split('\n').filter((l) => /^\[[a-z]+\] {3}FAIL {2}/.test(l)).slice(0, 3);
-      say(
+      (mine ? say : quietSay)(
         `CH01_BUILD_IS_GREEN_AND_ENDS_WITH_THE_ARTIFACT[${key}]`,
         r.status === 0 && tail.length === 4 && tail[0].trim().startsWith('pack: ') && tail.slice(1).every((l) => existsSync(l.trim())),
         r.status === 0 ? `exit 0; ${tail.map((l) => l.trim().replace(`${out}/`, '')).join(' | ')}` : `exit ${r.status}; ${stopped ?? 'no stop line'}; ${refusal.join(' | ') || lastLines(r.out, 3).join(' | ')}`,
@@ -16162,6 +16183,7 @@ function runChainSuite(): number | null {
       if (r.status !== 0) continue;
       greenBuilds.set(key, out);
       if (planted === null) planted = { key, out, exp };
+      if (!mine) continue;
 
       const expParts = readParts(join(exp, 'parts.json'));
       const parts = jsonDiffs(readJsonAt(join(exp, 'parts.json')), readJsonAt(join(out, 'parts.json')), chainTolerance('parts.json'));
@@ -16464,8 +16486,10 @@ function runChainSuite(): number | null {
       runFacelessExample(key, ex, out, dir, say);
       runExampleDiagnostics(key, ex, out, say, dir);
     }
+    if (!part.tail) return bad();
 
-    // Issue #74's public scenes, composed from the builds above (each built once, here).
+    // Issue #74's public scenes, composed from the builds above (each built once, here; in a sharded run, by the
+    // closing unit).
     runPublicScenes(greenBuilds, dir, say);
 
     // CH09's comparator, planted: a validate line set carrying a rule the build's set lacks is named, and the
@@ -16790,28 +16814,33 @@ function loopReport(r: LoopRun, lines: readonly string[]): string {
 }
 
 function runReadmeLoopSuite(): number | null {
-  section('readme-loop: the README\'s loop, in order, on a fresh config, on every fetched example');
+  // Issue #395: split into one unit per example and a closing unit (SPLIT_SUITES); the first opens the section.
+  const part = splitPart('readme-loop');
+  if (part.head) section('readme-loop: the README\'s loop, in order, on a fresh config, on every fetched example');
   const found = exampleDirs().filter((d) => existsSync(join(d, 'inputs', 'layers', 'head')));
   if (found.length === 0) {
+    if (!part.head) return null;
     console.log('  SKIP  no fetched example (examples/<key>/config.json + inputs/painting.png + inputs/layers/{full,head}), so the README loop ran on no painting');
     console.log('          ⚠️ This is a HOLE in this run, not a pass — run `bun run fetch-examples` (CI does) to follow the README from a fresh config.');
     return null;
   }
   const { say, bad } = counter();
-  if (!exampleInputsAtPin(found.map((d) => relative(join(ROOT, 'examples'), d)), say, 'RL900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
+  if (!exampleInputsAtPin(found.map((d) => relative(join(ROOT, 'examples'), d)), part.head ? say : quietSay, 'RL900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
   const lines = readmeLoopLines(readme);
   const paste = readmePasteSections(readme);
   const dir = temp('readme-loop');
   try {
     if (typeof lines === 'string' || typeof paste === 'string') {
-      say('RL01_THE_README_LOOP_RUNS_IN_ORDER_ON_A_FRESH_CONFIG', false, [lines, paste].filter((x): x is string => typeof x === 'string').join('; '), '');
+      (part.head ? say : quietSay)('RL01_THE_README_LOOP_RUNS_IN_ORDER_ON_A_FRESH_CONFIG', false, [lines, paste].filter((x): x is string => typeof x === 'string').join('; '), '');
       return bad();
     }
     const plainRuns = new Map<string, LoopRun>();
     /** RL05's runs, by key: the loop with the example's cloth recipe and tracked keypoints, which RL03 reads too. */
     const clothRuns = new Map<string, LoopRun>();
-    for (const ex of found) {
+    // Issue #395: an example's runs are one block — RL01, then RL05 where it has a cloth recipe, then RL03 and RL04
+    // where it tracks a pose — so the suite split one unit per example prints what the whole suite prints.
+    const plainStep = (ex: string): void => {
       const key = relative(join(ROOT, 'examples'), ex);
       const r = runReadmeLoop(lines, ex, join(dir, key), paste);
       plainRuns.set(key, r);
@@ -16824,15 +16853,15 @@ function runReadmeLoopSuite(): number | null {
           : `${loopReport(r, lines)}${end.describe}`,
         "issue #20: the README loop is what an agent follows, so it is run as written; plain assemble once refused the config for the four sections the next step drafts, and the only way past was a stub of invented rig fields. Issue #118: where an example's tracked config records a correction against its proposal on a part TIP_OVER_ROOT reads — a mesh moved to contour mode (scarf) or a chain of that mesh moved (the demo's skirt, issue #227) — the uncorrected loop must end where the README says to read check.json, on the FAIL line that names that part and no other",
       );
-    }
+    };
 
     // Issue #372: the loop again on each fetched example whose tracked config declares a cloth recipe (wind), with the
     // recipe authored and `--cloth` on the drafting propose line (RL05): it must paste constraints, end where RL01 ends,
     // and paste exactly the tracked config's sections — the tracked config is the loop's output, uncorrected. RL01's
     // run on the same example, without the recipe, is the planted negative: it pastes no constraints and is not.
-    for (const ex of found) {
+    const clothStep = (ex: string): void => {
       const tracked = readJsonAt(join(ex, 'config.json')) as Record<string, unknown>;
-      if (tracked.cloth === undefined) continue;
+      if (tracked.cloth === undefined) return;
       const key = relative(join(ROOT, 'examples'), ex);
       const end = readmeLoopEnd(ex, lines);
       // An example that tracks its keypoints (wind) drafted its limbs from them, so the loop takes them too.
@@ -16850,15 +16879,12 @@ function runReadmeLoopSuite(): number | null {
         `--cloth config.json on the drafting propose line${exampleKeypointsFile(ex) === null ? '' : ` and --keypoints ${key}/keypoints.json on both propose --parts lines`}, the tracked cloth block (${Object.keys(tracked.cloth as Record<string, unknown>).join(', ')}) authored: ${loopReport(r, lines)}; pasted ${r.pasted.join(', ') || 'nothing'} against the tracked config's ${sections.join(', ')}: ${sameAs(built, sections) ? 'every section equal' : `DIFFERENT in ${sections.filter((k) => JSON.stringify(built[k]) !== JSON.stringify(tracked[k])).join(', ')}`}; planted, RL01's run without the recipe: pasted ${plain?.pasted.join(', ') ?? 'no run'}, ${plainSame ? 'EQUAL to the tracked config' : 'not the tracked config'}${end.describe}`,
         "issue #372: the README's paste step names constraints, which only `propose --cloth` writes, and RL01 runs the loop without a recipe; wind is the example proposed with one, so the loop is run here as its author ran it and must give its tracked config back, section for section",
       );
-    }
+    };
 
     // Issue #375: the loop again, with --keypoints, on each fetched example that tracks the pose file it was painted
     // on, pasting the sections the README names (RL03) — and the README's old four-section list planted (RL04).
     const posed = found.filter((ex) => existsSync(join(ex, 'pose.json')));
-    if (posed.length === 0) {
-      say('RL03_THE_README_LOOP_WITH_KEYPOINTS_PASTES_EVERY_SECTION_THE_PROPOSAL_WROTE', false, `none of the ${found.length} fetched example(s) tracks a pose.json, so the loop ran with --keypoints on no painting`, '');
-    }
-    for (const ex of posed) {
+    const poseStep = (ex: string): void => {
       const key = relative(join(ROOT, 'examples'), ex);
       // Issue #372: an example that tracks the joints read off its painting (wind's keypoints.json) is run with those;
       // the pose file scaled is the control skeleton, not where the limbs were painted.
@@ -16898,6 +16924,17 @@ function runReadmeLoopSuite(): number | null {
         `planted: the README's old line ${JSON.stringify(OLD_README_PASTE_LINE.trim())} -> pasted ${o.pasted.join(', ') || 'nothing'} of ${PROPOSAL_CONFIG_SECTIONS.filter((k) => o.proposal?.[k] !== undefined).join(', ') || '(no proposal)'}; limb parts ${segs.map((sg) => `${sg.part} (from ${sg.from}): ${resolves(sg.part) ? 'named' : 'NOT named'}, ${sg.from} ${attached(sg.from) ? 'named' : 'NOT named'}`).join('; ') || 'none drafted'}; ${loopReport(o, lines)}`,
         "issue #375: the control above passes because the list is whole; this is the list it replaced, run the same way, and it must stop at the step after the paste, naming every limb part the meshes and regions attach and every layer the limbs would have cut — and nothing else",
       );
+    };
+
+    for (const ex of found) {
+      if (!part.has(relative(join(ROOT, 'examples'), ex))) continue;
+      plainStep(ex);
+      clothStep(ex);
+      if (posed.includes(ex)) poseStep(ex);
+    }
+    if (!part.tail) return bad();
+    if (posed.length === 0) {
+      say('RL03_THE_README_LOOP_WITH_KEYPOINTS_PASTES_EVERY_SECTION_THE_PROPOSAL_WROTE', false, `none of the ${found.length} fetched example(s) tracks a pose.json, so the loop ran with --keypoints on no painting`, '');
     }
 
     // The planted order: assemble before the plan exists. It must stop at
@@ -20081,17 +20118,21 @@ function runInputsSuite(): number {
  * and `inputs/layers/{full,head}` from `bun run fetch-examples`).
  */
 function runAssembleExamplesSuite(): number | null {
-  section('assemble: the public examples (examples/<key>/inputs)');
+  // Issue #395: split into one unit per example (SPLIT_SUITES); the first opens the section and checks the inputs.
+  const part = splitPart('assemble-examples');
+  if (part.head) section('assemble: the public examples (examples/<key>/inputs)');
   const found = exampleDirs().filter((d) => existsSync(join(d, 'inputs', 'layers', 'head')));
   if (found.length === 0) {
+    if (!part.head) return null;
     console.log('  SKIP  no fetched example (examples/<key>/config.json + inputs/painting.png + inputs/layers/{full,head}); run bun run fetch-examples');
     console.log('          ⚠️ This is a HOLE in this run, not a pass — assemble-examples measured no real painting.');
     return null;
   }
   const { say, bad } = counter();
-  if (!exampleInputsAtPin(found.map((d) => relative(join(ROOT, 'examples'), d)), say, 'AE900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
+  if (!exampleInputsAtPin(found.map((d) => relative(join(ROOT, 'examples'), d)), part.head ? say : quietSay, 'AE900_THE_FETCHED_EXAMPLE_INPUTS_MATCH_THE_PINNED_TREE')) return bad();
   for (const ex of found) {
     const name = relative(join(ROOT, 'examples'), ex);
+    if (!part.has(name)) continue;
     let detail: string;
     let ok = false;
     try {
@@ -25478,6 +25519,101 @@ function runTallySuite(live: RunTally): number {
     `the ${liveKeys.length} suite(s) tallied before this one against the run's ${keys.length}: ${liveSet.length === 0 ? 'no fault' : liveSet.join('; ')}; png dropped -> ${dropped.join('; ') || 'no fault'}; the first two swapped -> ${swapped.join('; ') || 'no fault'}; an extra suite -> ${stray.join('; ') || 'no fault'}`,
     'issue #99: the union of what the workers ran must be the whole run; a suite nobody dispatched and nobody replayed leaves no line at all, so its absence is held against the list of suites rather than against what was printed',
   );
+
+  // Issue #395: CI runs the units in three shard jobs and `test` merges their records. The partition is held to every
+  // unit of this tree once; the plants take one example unit out of every shard, put it in a second, and name a unit
+  // that does not exist.
+  const units = runUnits(keys, exampleKeys().all);
+  const unitList = typeof units === 'string' ? [] : units;
+  const placed = typeof units === 'string' ? [units] : shardFaults(SHARDS, unitList);
+  const plantUnit = unitList.filter((u) => u.includes(UNIT_MARK) && !u.endsWith(`${UNIT_MARK}${END_UNIT}`)).at(-1) ?? unitList.at(-1) ?? 'tree';
+  const home = SHARDS.findIndex(([, us]) => us.includes(plantUnit));
+  const second = SHARDS.findIndex((_, i) => i !== home);
+  const unplaced = shardFaults(SHARDS.map(([n, us]) => [n, us.filter((u) => u !== plantUnit)] as const), unitList);
+  const twicePlaced = shardFaults(SHARDS.map(([n, us], i) => [n, i === second ? [...us, plantUnit] : us] as const), unitList);
+  const noUnit = shardFaults(SHARDS.map(([n, us], i) => [n, i === 0 ? [...us, 'readme_loop@demo'] : us] as const), unitList);
+  say(
+    'RT09_EVERY_UNIT_OF_THE_RUN_IS_IN_EXACTLY_ONE_SHARD_AND_ONE_IN_NONE_OR_IN_TWO_FAULTS',
+    placed.length === 0 &&
+      unitList.length >= keys.length &&
+      unplaced.length === 1 &&
+      unplaced[0].includes(`"${plantUnit}" is in no shard`) &&
+      twicePlaced.length === 1 &&
+      twicePlaced[0].includes(`"${plantUnit}" is placed 2 times`) &&
+      noUnit.length === 1 &&
+      noUnit[0].includes('"readme_loop@demo"'),
+    `${unitList.length} unit(s) for ${keys.length} suite(s) (${SPLIT_SUITES.join(', ')} one per tracked example and a closing one) over ${SHARDS.length} shard(s): ${placed.length === 0 ? 'every unit once' : placed.join('; ')}; ${plantUnit} taken out of every shard -> ${unplaced.join('; ') || 'no fault'}; placed in a second shard -> ${twicePlaced.join('; ') || 'no fault'}; a unit that does not exist -> ${noUnit.join('; ') || 'no fault'}`,
+    "issue #395: a unit added to the run — a new example adds one to each split suite — and to no shard would be run by no CI job and leave no line; one in two shards would be counted twice. Every run, whole or sharded, holds the partition to the tree's units",
+  );
+
+  // The merge: the shards' records together must be every unit once. The healthy set is the partition itself; the
+  // plants drop the same unit from its record and record it a second time, at the function and through a real
+  // `--merge` run in a child process, which must exit 2 naming the unit before it replays anything.
+  const recorded = (shard: string, us: readonly string[]): ShardRecord => ({
+    spec: SHARD_RECORD_SPEC,
+    shard,
+    jobs: 1,
+    cores: 1,
+    units: us.map((u) => ({ key: u, status: 0, stdout: '', stderr: '', result: JSON.stringify({ key: u, returned: 0 }), began: 0, ended: 0 })),
+  });
+  const healthyRecords = SHARDS.map(([n, us]) => recorded(n, us));
+  const dropRecord = healthyRecords.map((r) => ({ ...r, units: r.units.filter((u) => u.key !== plantUnit) }));
+  const dupRecord = healthyRecords.map((r, i) => (i === second ? { ...r, units: [...r.units, ...recorded(r.shard, [plantUnit]).units] } : r));
+  const healthyMerge = recordFaults(healthyRecords, SHARDS, unitList);
+  const missingAt = recordFaults(dropRecord, SHARDS, unitList);
+  const twiceAt = recordFaults(dupRecord, SHARDS, unitList);
+  const shardGone = recordFaults(healthyRecords.slice(1), SHARDS, unitList);
+  const unreadable = parseShardRecord(JSON.stringify({ spec: SHARD_RECORD_SPEC, shard: '1', jobs: 1, cores: 1, units: [{ key: plantUnit }] }));
+  const mergeDir = temp('merge-plant');
+  const mergeChild = (label: string, set: readonly ShardRecord[]): { status: number | null; err: string } => {
+    const d = join(mergeDir, label);
+    mkdirSync(d, { recursive: true });
+    for (const r of set) writeFileSync(join(d, `shard-${r.shard}.json`), `${JSON.stringify(r)}\n`);
+    const c = spawnSync(process.execPath, [join(ROOT, 'selftest.ts'), MERGE_FLAG, d], { encoding: 'utf8', maxBuffer: 1 << 26 });
+    return { status: c.status, err: `${c.stdout ?? ''}${c.stderr ?? ''}` };
+  };
+  let childMissing: { status: number | null; err: string };
+  let childTwice: { status: number | null; err: string };
+  try {
+    childMissing = mergeChild('missing', dropRecord);
+    childTwice = mergeChild('twice', dupRecord);
+  } finally {
+    rmSync(mergeDir, { recursive: true, force: true });
+  }
+  const wantMissing = `the unit "${plantUnit}" was recorded by no shard`;
+  const wantTwice = `the unit "${plantUnit}" was recorded 2 times`;
+  say(
+    'RT10_THE_MERGE_REFUSES_A_UNIT_NO_SHARD_RECORDED_AND_ONE_RECORDED_TWICE',
+    healthyMerge.length === 0 &&
+      missingAt.some((f) => f.includes(wantMissing)) &&
+      twiceAt.some((f) => f.includes(wantTwice)) &&
+      shardGone.some((f) => f.includes(`the shard "${SHARDS[0][0]}" left no record`)) &&
+      typeof unreadable === 'string' &&
+      childMissing.status === 2 &&
+      childMissing.err.includes(wantMissing) &&
+      !childMissing.err.includes('── ') &&
+      childTwice.status === 2 &&
+      childTwice.err.includes(wantTwice) &&
+      !childTwice.err.includes('── '),
+    `the partition recorded as it stands -> ${healthyMerge.length === 0 ? 'no fault' : healthyMerge.join('; ')}; ${plantUnit} recorded by no shard -> ${missingAt.find((f) => f.includes(wantMissing)) ?? `NOT refused (${missingAt.join('; ') || 'no fault'})`}; recorded twice -> ${twiceAt.find((f) => f.includes(wantTwice)) ?? `NOT refused (${twiceAt.join('; ') || 'no fault'})`}; shard ${SHARDS[0][0]}'s record gone -> ${shardGone.find((f) => f.includes('left no record')) ?? 'NOT refused'}; a unit entry with no lines -> ${typeof unreadable === 'string' ? unreadable : 'read'}; ${MERGE_FLAG} in a child process: the unit missing -> exit ${childMissing.status}${childMissing.err.includes(wantMissing) ? ', named' : ', NOT named'}${childMissing.err.includes('── ') ? ', and it replayed a section' : ', nothing replayed'}; the unit twice -> exit ${childTwice.status}${childTwice.err.includes(wantTwice) ? ', named' : ', NOT named'}${childTwice.err.includes('── ') ? ', and it replayed a section' : ', nothing replayed'}`,
+    "issue #395: `test` is the merge of the shard jobs' records, so the merge is where a unit nobody ran and a unit run twice must each go red — before a line is replayed, since a missing unit's lines would otherwise just be absent and a twice-run unit's counted twice",
+  );
+
+  // The replay of a split suite: its units' lines end to end in unit order, their failure counts summed; units that
+  // all had nothing to read are a suite that did not run; units that disagree, or a unit with no worker, throw.
+  const unitRun = (key: string, stdout: string, returned: number | null): WorkerRun => ({ key, status: 0, stdout, stderr: '', result: JSON.stringify({ key, returned }) });
+  const twoUnits = ['alpha@a', 'alpha@end'];
+  const joined: string[] = [];
+  const sum = replayUnits('alpha', twoUnits, [unitRun('alpha@a', '── alpha ──\n  FAIL  A01: x\n', 1), unitRun('alpha@end', '  PASS  A02\n', 0)], (l) => joined.push(l), () => {});
+  const none = replayUnits('alpha', twoUnits, [unitRun('alpha@a', '── alpha ──\n  SKIP  nothing\n', null), unitRun('alpha@end', '', null)], () => {}, () => {});
+  const split = threw(() => replayUnits('alpha', twoUnits, [unitRun('alpha@a', '', 0), unitRun('alpha@end', '', null)], () => {}, () => {}));
+  const gone = threw(() => replayUnits('alpha', twoUnits, [unitRun('alpha@a', '', 0), undefined], () => {}, () => {}));
+  say(
+    'RT11_A_SPLIT_SUITE_REPLAYS_ITS_UNITS_IN_ORDER_AND_SUMS_THEM_AND_UNITS_THAT_DISAGREE_THROW',
+    sum === 1 && joined.join('\n') === '── alpha ──\n  FAIL  A01: x\n  PASS  A02' && none === null && split !== null && split.includes('disagree') && gone !== null && gone.includes('no worker ran the suite "alpha@end"'),
+    `two units -> ${joined.length} line(s) in unit order, count ${String(sum)}; both with nothing to read -> ${String(none)}; one null beside one count -> ${split ?? 'accepted'}; the closing unit's worker absent -> ${gone ?? 'accepted'}`,
+    "issue #395: a split suite is one block of the tally, so its units' lines are put end to end in the order a whole run prints them and its count is theirs; a unit that did not run beside one that did is not a skipped suite",
+  );
   return bad();
 }
 
@@ -26167,14 +26303,19 @@ function runSceneSuite(): number {
  * each example alone at its own stage, which must compose to its build
  * renamed only. Every compose runs the real gate and the real check.
  */
+/**
+ * The two reference fixtures the public scenes compose (issue #227 took them off display as examples/reference-demo
+ * and reference-sample); the scenes keep calling them demo and sample, the ids every name is prefixed with. The chain's
+ * closing unit builds these two when the suite is split (issue #395).
+ */
+const PUBLIC_SCENE_FOLDERS: Readonly<Record<string, string>> = { demo: 'reference-demo', sample: 'reference-sample' };
+
 function runPublicScenes(green: ReadonlyMap<string, string>, dir: string, say: (name: string, ok: boolean, detail: string, why: string) => void): void {
-  // The two reference fixtures (issue #227 took them off display as examples/reference-demo and reference-sample); the
-  // scenes keep calling them demo and sample, the ids every name below is prefixed with.
-  const FOLDER: Readonly<Record<string, string>> = { demo: 'reference-demo', sample: 'reference-sample' };
+  const FOLDER = PUBLIC_SCENE_FOLDERS;
   const demo = green.get(FOLDER.demo);
   const sample = green.get(FOLDER.sample);
   if (demo === undefined || sample === undefined) {
-    say('SC30_DEMO_AND_SAMPLE_SIDE_BY_SIDE_WITH_A_GENERATED_PLATE_GATE_GREEN_AND_CHECK', false, `green builds: ${[...green.keys()].join(', ') || 'none'}; reference-demo and reference-sample are both required`, 'the chain ran, so both public examples were fetched and must have built green');
+    say('SC30_DEMO_AND_SAMPLE_SIDE_BY_SIDE_WITH_A_GENERATED_PLATE_GATE_GREEN_AND_CHECK', false, `green builds: ${Object.values(FOLDER).map((f) => `${f} ${green.has(f) ? 'green' : 'NOT green'}`).join(', ')}; reference-demo and reference-sample are both required`, 'the chain ran, so both public examples were fetched and must have built green');
     return;
   }
   const sd = join(dir, 'scenes');
@@ -33039,8 +33180,75 @@ const TALLY_SUITE = 'run-tally';
  */
 const STARTED_FIRST: readonly string[] = ['readme-loop', 'chain', 'build', 'check', 'scene', 'assemble-examples', 'propose', 'rig', 'auto-mesh-examples', 'auto-motion', 'build-cost', 'auto-mesh'];
 
-/** The argument that makes this file run one suite as a worker, for the parent run, and nothing else. */
+/** The argument that makes this file run one suite, or one unit of a split suite, as a worker, for the parent run, and nothing else. */
 const WORKER_FLAG = '--suite-worker';
+
+/**
+ * Issue #395: the suites whose work is one block per public example, which a sharded run splits into one unit per
+ * tracked example (`<suite>@<example>`) and one closing unit (`<suite>@end`). The first unit opens the suite's section
+ * and runs what comes before the examples; the closing unit runs what comes after them. Each unit is its own process,
+ * so a unit that needs another example's build (the chain's public scenes) builds it itself. Whole, as `bun run
+ * selftest` runs it, such a suite prints those same blocks in that order, so the units' lines put end to end in
+ * {@link suiteUnits} order are the whole suite's.
+ */
+const SPLIT_SUITES: readonly string[] = ['assemble-examples', 'chain', 'readme-loop'];
+
+/** What joins a split suite's key to the example its unit runs, and the closing unit's name. */
+const UNIT_MARK = '@';
+const END_UNIT = 'end';
+
+/**
+ * The units of one suite, in the order their lines are printed: the suite itself, or for a split suite one unit per
+ * tracked example (`exampleKeys().all`, fetched or not — a unit whose example was not fetched prints nothing) and the
+ * closing unit.
+ */
+function suiteUnits(key: string, examples: readonly string[]): string[] {
+  return SPLIT_SUITES.includes(key) ? [...examples.map((e) => `${key}${UNIT_MARK}${e}`), `${key}${UNIT_MARK}${END_UNIT}`] : [key];
+}
+
+/** Every unit of a run over `keys`, in print order; a string names why there is no such list. */
+function runUnits(keys: readonly string[], examples: readonly string[]): string[] | string {
+  if (examples.includes(END_UNIT)) return `an example is named "${END_UNIT}", which is the name of every split suite's closing unit`;
+  const unknown = SPLIT_SUITES.filter((k) => !keys.includes(k));
+  if (unknown.length > 0) return `the split suite(s) ${unknown.map((k) => `"${k}"`).join(', ')} are no suite of this run`;
+  return keys.flatMap((k) => suiteUnits(k, examples));
+}
+
+/**
+ * The CI shards (issue #395): each is one job of `.github/workflows/ci.yml` running `--shard <name>`, and `test`
+ * merges their records. Every unit of the run is in exactly one shard (`RT09`), and a shard starts its units in the
+ * order listed here, longest first. The assignment balances the per-unit worker times the run's clock line printed;
+ * the table and the estimate are in the pull request that closed issue #395. A new example adds a unit to each split
+ * suite, and every run fails `RT09` until each of them is placed here.
+ */
+const SHARDS: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ['1', ['check']],
+  ['2', ['readme-loop@wind', 'chain@scarf', 'chain@wind', 'rig', 'readme-loop@reference-demo', 'readme-loop@reference-sample', 'readme-loop@scarf', 'assemble-examples@demo', 'assemble-examples@reference-demo', 'assemble-examples@reference-sample', 'auto-motion', 'propose', 'readme-loop@end', 'auto-mesh-examples', 'inputs-examples', 'build-cost', 'loop', 'assemble', 'contour-wiring', 'config', 'structure', 'inputs', 'plausibility', 'skeleton', 'assemble-examples@end', 'winding', 'fetch-examples', 'prompt', 'layers-psd', 'parts', 'raster-components', 'raster-morph', 'raster-blur', 'raster-poly', 'raster-composite', 'requirements']],
+  ['3', ['readme-loop@demo', 'chain@end', 'build', 'chain@demo', 'chain@reference-demo', 'chain@reference-sample', 'cli', 'assemble-examples@scarf', 'assemble-examples@wind', 'mesh-draft', 'scene', 'tree', 'auto-mesh', 'corpus', 'propose-corpus', 'keypoints', 'contour', 'comfy', 'diagnostics', 'painting', 'sheet', 'layers-wrapper', 'raster-resize', 'raster-warp', 'png']],
+];
+
+/**
+ * The part of a split suite this worker runs (issue #395): null when it runs the whole suite, else the example its
+ * unit names or {@link END_UNIT}. Set once, by {@link workerMain}, before the suite starts.
+ */
+let unitPart: string | null = null;
+
+/** What one run of a split suite does: open the section and run what precedes the examples, run one example, run what follows them. */
+interface SplitPart {
+  head: boolean;
+  has: (example: string) => boolean;
+  tail: boolean;
+}
+
+/** {@link SplitPart} for the suite `key` in this worker: everything when the suite runs whole, else its unit's share. */
+function splitPart(key: string): SplitPart {
+  const part = unitPart;
+  if (part === null) return { head: true, has: () => true, tail: true };
+  return { head: suiteUnits(key, exampleKeys().all)[0] === `${key}${UNIT_MARK}${part}`, has: (e) => e === part, tail: part === END_UNIT };
+}
+
+/** A `say` that prints and counts nothing: what a unit runs to reach a value another unit reports. */
+const quietSay = (): void => {};
 
 /**
  * The environment variables renamed with the package: each pair is the name
@@ -33132,16 +33340,24 @@ function suiteSetFaults(tallied: readonly string[], expected: readonly string[])
   return faults;
 }
 
-/** The worker's whole job: run the one suite named after `WORKER_FLAG`, let it print, and write what it handed back. */
+/**
+ * The worker's whole job: run the one suite, or the one unit of a split suite, named after `WORKER_FLAG`, let it
+ * print, and write what it handed back under that name.
+ */
 function workerMain(argv: readonly string[]): void {
   const key = argv[argv.indexOf(WORKER_FLAG) + 1];
   const at = argv.indexOf('--result');
   const result = at === -1 ? undefined : argv[at + 1];
-  const suite = SUITES.find(([k]) => k === key);
-  if (suite === undefined || result === undefined) {
-    console.error(`selftest: ${WORKER_FLAG} needs one of this run's suites and --result <file>; got ${JSON.stringify(key)} and ${JSON.stringify(result)}`);
+  const mark = key === undefined ? -1 : key.indexOf(UNIT_MARK);
+  const suiteKey = mark === -1 ? key : key.slice(0, mark);
+  const suite = SUITES.find(([k]) => k === suiteKey);
+  const units = runUnits(SUITES.map(([k]) => k), exampleKeys().all);
+  const known = mark === -1 || (typeof units !== 'string' && units.includes(key));
+  if (suite === undefined || !known || result === undefined) {
+    console.error(`selftest: ${WORKER_FLAG} needs one of this run's suites or units and --result <file>; got ${JSON.stringify(key)} and ${JSON.stringify(result)}${typeof units === 'string' ? ` (${units})` : ''}`);
     process.exit(2);
   }
+  unitPart = mark === -1 ? null : key.slice(mark + 1);
   let record: { key: string; returned: number | null } | { key: string; crash: string };
   try {
     record = { key, returned: suite[1](corpusDir()) };
@@ -33211,28 +33427,143 @@ function workerClockText(keys: readonly string[], clock: ReadonlyMap<string, rea
   return `${lines.join('\n')}\n`;
 }
 
-async function main(): Promise<void> {
-  if (process.argv.includes(WORKER_FLAG)) {
-    workerMain(process.argv);
-    return;
+/**
+ * Where a partition of the run's units into shards is not every unit once (issue #395): a unit in no shard, a unit
+ * placed twice, a name that is no unit, a shard named twice, a shard with no unit. Empty is agreement.
+ */
+function shardFaults(shards: ReadonlyArray<readonly [string, readonly string[]]>, units: readonly string[]): string[] {
+  const faults: string[] = [];
+  const names = shards.map(([n]) => n);
+  const twiceNamed = [...new Set(names.filter((n, i) => names.indexOf(n) !== i))];
+  if (twiceNamed.length > 0) faults.push(`the shard(s) ${twiceNamed.map((n) => `"${n}"`).join(', ')} are named twice`);
+  for (const [n, us] of shards) if (us.length === 0) faults.push(`the shard "${n}" holds no unit`);
+  const placed = shards.flatMap(([n, us]) => us.map((u) => [n, u] as const));
+  for (const u of units) {
+    const at = placed.filter(([, x]) => x === u).map(([n]) => `"${n}"`);
+    if (at.length === 0) faults.push(`the unit "${u}" is in no shard, so a sharded run would never run it`);
+    if (at.length > 1) faults.push(`the unit "${u}" is placed ${at.length} times (shard ${at.join(', ')}), so a sharded run would run it ${at.length} times`);
   }
-  const corpus = corpusDir();
-  const keys = SUITES.map(([k]) => k);
-  const order = dispatchOrder(keys, STARTED_FIRST);
-  if (typeof order === 'string') {
-    console.error(`selftest: ${order}`);
+  const unknown = placed.filter(([, u]) => !units.includes(u));
+  if (unknown.length > 0) faults.push(`the shard entr(ies) ${unknown.map(([n, u]) => `"${u}" in shard "${n}"`).join(', ')} are no unit of this run`);
+  return faults;
+}
+
+/** One unit's worker as a shard recorded it: the run, and when its worker started and ended, in ms from the shard's start. */
+interface RecordedUnit extends WorkerRun {
+  began: number;
+  ended: number;
+}
+
+/** One shard's record, as `--record` writes it and `--merge` reads it. */
+interface ShardRecord {
+  spec: string;
+  shard: string;
+  jobs: number;
+  cores: number;
+  units: RecordedUnit[];
+}
+
+const SHARD_RECORD_SPEC = 'rig-parts-selftest-shard/1';
+
+/** A shard record read from its text, or what is wrong with it. */
+function parseShardRecord(text: string): ShardRecord | string {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return 'not JSON';
+  }
+  if (typeof raw !== 'object' || raw === null) return 'not a JSON object';
+  const r = raw as Partial<ShardRecord>;
+  if (r.spec !== SHARD_RECORD_SPEC) return `spec ${JSON.stringify(r.spec ?? null)}; "${SHARD_RECORD_SPEC}" is required`;
+  if (typeof r.shard !== 'string' || typeof r.jobs !== 'number' || typeof r.cores !== 'number' || !Array.isArray(r.units)) return 'shard, jobs, cores or units is absent or of the wrong type';
+  for (const u of r.units as unknown[]) {
+    const x = (typeof u === 'object' && u !== null ? u : {}) as Partial<RecordedUnit>;
+    const ok =
+      typeof x.key === 'string' &&
+      (x.status === null || typeof x.status === 'number') &&
+      typeof x.stdout === 'string' &&
+      typeof x.stderr === 'string' &&
+      (x.result === null || typeof x.result === 'string') &&
+      typeof x.began === 'number' &&
+      typeof x.ended === 'number';
+    if (!ok) return `the unit entry ${JSON.stringify(x.key ?? null)} lacks one of key, status, stdout, stderr, result, began and ended, or holds one of the wrong type`;
+  }
+  return r as ShardRecord;
+}
+
+/**
+ * Where a set of shard records is not one run of every unit once (issue #395): a shard with no record or with two, a
+ * record for no shard, a record whose units are not its shard's, and — across every record — a unit recorded by no
+ * shard or by two, and a recorded unit that is no unit of this run. Empty is agreement, and only then does the merge
+ * replay anything.
+ */
+function recordFaults(records: readonly ShardRecord[], shards: ReadonlyArray<readonly [string, readonly string[]]>, units: readonly string[]): string[] {
+  const faults: string[] = [];
+  for (const [n] of shards) {
+    const count = records.filter((r) => r.shard === n).length;
+    if (count === 0) faults.push(`the shard "${n}" left no record`);
+    if (count > 1) faults.push(`the shard "${n}" left ${count} records`);
+  }
+  for (const r of records) {
+    const def = shards.find(([n]) => n === r.shard);
+    if (def === undefined) {
+      faults.push(`a record names the shard "${r.shard}", which is no shard of this run`);
+      continue;
+    }
+    const ran = r.units.map((u) => u.key);
+    if ([...ran].sort().join('\n') !== [...def[1]].sort().join('\n')) faults.push(`the shard "${r.shard}" recorded ${ran.join(', ') || 'no unit'}, not its units ${def[1].join(', ')}`);
+  }
+  const recorded = records.flatMap((r) => r.units.map((u) => [r.shard, u.key] as const));
+  for (const u of units) {
+    const by = recorded.filter(([, k]) => k === u).map(([s]) => `"${s}"`);
+    if (by.length === 0) faults.push(`the unit "${u}" was recorded by no shard, so nothing it would have printed was read`);
+    if (by.length > 1) faults.push(`the unit "${u}" was recorded ${by.length} times (shard ${by.join(', ')}), so its lines would be counted ${by.length} times`);
+  }
+  const strangers = [...new Set(recorded.map(([, k]) => k).filter((k) => !units.includes(k)))];
+  if (strangers.length > 0) faults.push(`the record(s) hold ${strangers.map((k) => `"${k}"`).join(', ')}, which are no unit of this run`);
+  return faults;
+}
+
+/**
+ * Hand one suite's units to the tally as if the suite had run here (issue #395): each unit's lines, in `units` order,
+ * through {@link replayWorker}, and the sum of their failure counts. A suite that ran whole is its one unit. The units
+ * of a suite that had nothing to read all hand back null, and so does the suite; units that disagree throw, as a
+ * worker that cannot account for itself does.
+ */
+function replayUnits(key: string, units: readonly string[], runs: ReadonlyArray<WorkerRun | undefined>, print: (line: string) => void, printErr: (text: string) => void): number | null {
+  const values = units.map((u, i) => replayWorker(u, runs[i], print, printErr));
+  const counts = values.filter((v): v is number => v !== null);
+  if (counts.length === 0) return null;
+  if (counts.length < values.length) {
+    throw new Error(`the units of the suite "${key}" disagree whether it ran: ${units.filter((_, i) => values[i] === null).join(', ')} handed back null and ${units.filter((_, i) => values[i] !== null).join(', ')} a count`);
+  }
+  return counts.reduce((sum, v) => sum + v, 0);
+}
+
+/** The arguments that run one shard of the units and write its record, and that merge every shard's record into one run (issue #395). */
+const SHARD_FLAG = '--shard';
+const RECORD_FLAG = '--record';
+const MERGE_FLAG = '--merge';
+
+/** The value after `flag` on the command line, null when the flag is absent; the run exits 2 when the flag has no value. */
+function flagValue(argv: readonly string[], flag: string): string | null {
+  const at = argv.indexOf(flag);
+  if (at === -1) return null;
+  const value = argv[at + 1];
+  if (value === undefined || value.startsWith('--')) {
+    console.error(`selftest: ${flag} needs a value`);
     process.exit(2);
   }
-  const jobs = workerCount();
-  const results = temp('workers');
-  const clock = new Map<string, readonly [number, number]>();
-  const t0 = performance.now();
-  const runs = startWorkers(order, jobs, async (key) => {
-    const began = performance.now() - t0;
-    const run = await launchWorker(key, corpus, results);
-    clock.set(key, [began, performance.now() - t0]);
-    return run;
-  });
+  return value;
+}
+
+/**
+ * The run's verdict from its suites' workers: every suite's units replayed through one tally in `keys` order, the
+ * tally's own suite, the floor, and the summary. A whole run reads its live workers; a merge reads the shards' records.
+ * Both print the same stdout for the same worker lines, because it is this one function.
+ */
+async function reportRun(keys: readonly string[], unitsOf: (key: string) => readonly string[], runOf: (unit: string) => Promise<WorkerRun | undefined>, clockText: () => string, cleanup: () => void): Promise<void> {
   const tally = new RunTally();
   const printLine = console.log;
   console.log = (...args: unknown[]): void => {
@@ -33244,13 +33575,15 @@ async function main(): Promise<void> {
   };
   try {
     for (const key of keys) {
-      const run = await runs.get(key);
-      tally.of(key, () => replayWorker(key, run, (line) => console.log(line), printErr));
+      const units = unitsOf(key);
+      const runs: Array<WorkerRun | undefined> = [];
+      for (const unit of units) runs.push(await runOf(unit));
+      tally.of(key, () => replayUnits(key, units, runs, (line) => console.log(line), printErr));
     }
   } finally {
-    rmSync(results, { recursive: true, force: true });
+    cleanup();
   }
-  printErr(workerClockText(keys, clock, jobs, performance.now() - t0));
+  printErr(clockText());
   tally.of(TALLY_SUITE, () => runTallySuite(tally));
   console.log = printLine;
 
@@ -33285,6 +33618,147 @@ async function main(): Promise<void> {
   );
   if (holes.length > 0) console.log(`  ⚠️ HOLE: ${holes.join(', ')} did not run, so this run does not cover ${holes.length === 1 ? 'it' : 'them'}.`);
   // the summary ends here
+}
+
+/**
+ * `--shard <name> --record <file>` (issue #395): run the units {@link SHARDS} gives the shard, as workers, `jobs` at a
+ * time in the order listed, and write every worker's lines, result and clock to `file`. The shard judges nothing — the
+ * merge does — but it prints its units' lines in run order for its own log, its clock on stderr, and exits 1 when a
+ * unit wrote no result, exited non-zero or handed back a failure, so the job that ran a red unit is red too.
+ */
+async function shardMain(shard: string, record: string): Promise<void> {
+  const mine = SHARDS.find(([n]) => n === shard)?.[1];
+  if (mine === undefined) {
+    console.error(`selftest: ${SHARD_FLAG} ${JSON.stringify(shard)} is no shard; the shards are ${SHARDS.map(([n]) => `"${n}"`).join(', ')}`);
+    process.exit(2);
+  }
+  const corpus = corpusDir();
+  const jobs = workerCount();
+  const results = temp('workers');
+  const clock = new Map<string, readonly [number, number]>();
+  const t0 = performance.now();
+  const runs = startWorkers(mine, jobs, async (unit) => {
+    const began = performance.now() - t0;
+    const run = await launchWorker(unit, corpus, results);
+    clock.set(unit, [began, performance.now() - t0]);
+    return run;
+  });
+  const done: RecordedUnit[] = [];
+  try {
+    for (const unit of mine) {
+      const run = (await runs.get(unit)) as WorkerRun;
+      const [began, ended] = clock.get(unit) ?? [0, 0];
+      done.push({ ...run, began, ended });
+    }
+  } finally {
+    rmSync(results, { recursive: true, force: true });
+  }
+  const units = runUnits(SUITES.map(([k]) => k), exampleKeys().all) as string[];
+  const ordered = [...done].sort((a, b) => units.indexOf(a.key) - units.indexOf(b.key));
+  for (const u of ordered) process.stdout.write(u.stdout);
+  process.stderr.write(workerClockText(mine, clock, jobs, performance.now() - t0));
+  mkdirSync(dirname(record), { recursive: true });
+  const text: ShardRecord = { spec: SHARD_RECORD_SPEC, shard, jobs, cores: availableParallelism(), units: done };
+  writeFileSync(record, `${JSON.stringify(text)}\n`);
+  const red = done.filter((u) => {
+    if (u.status !== 0 || u.result === null) return true;
+    const r = JSON.parse(u.result) as { returned?: unknown; crash?: unknown };
+    return typeof r.crash === 'string' || (typeof r.returned === 'number' && r.returned > 0);
+  });
+  if (red.length > 0) {
+    console.error(`rig-parts selftest: shard ${shard}: ${red.map((u) => u.key).join(', ')} did not run green; the merge names what failed`);
+    process.exit(1);
+  }
+}
+
+/**
+ * `--merge <dir>` (issue #395): read every shard record in `dir`, hold them together to every unit once
+ * ({@link recordFaults}), then replay them through {@link reportRun} — the same tally, run-tally suite, floor and summary
+ * a whole run prints, so the merged stdout is a whole run's. A record that cannot be read, or a set that is not every
+ * unit once, exits 2 before anything is replayed.
+ */
+async function mergeMain(dir: string, keys: readonly string[], units: readonly string[], examples: readonly string[]): Promise<void> {
+  const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.json')).sort() : [];
+  const records: ShardRecord[] = [];
+  const faults: string[] = [];
+  if (!existsSync(dir)) faults.push(`${MERGE_FLAG} names ${dir}, which does not exist, so no shard's record was read`);
+  for (const f of files) {
+    const r = parseShardRecord(readFileSync(join(dir, f), 'utf8'));
+    if (typeof r === 'string') faults.push(`${f} is no shard record: ${r}`);
+    else records.push(r);
+  }
+  faults.push(...recordFaults(records, SHARDS, units));
+  process.stderr.write(`rig-parts selftest: merging ${records.length} shard record(s) from ${dir}: ${records.map((r) => `shard ${r.shard} (${r.units.length} unit(s), ${r.jobs} worker(s) at once on ${r.cores} core(s))`).join(', ') || 'none'}\n`);
+  if (faults.length > 0) {
+    console.error('rig-parts selftest: the shard records are not one run of every unit once — that is not a pass, it is an empty gate');
+    for (const f of faults) console.error(`  ${f}`);
+    process.exit(2);
+  }
+  const byUnit = new Map(records.flatMap((r) => r.units.map((u) => [u.key, { shard: r.shard, run: u }] as const)));
+  const clockText = (): string => {
+    const s = (ms: number): string => (ms / 1000).toFixed(1);
+    const lines = ['selftest clock (stderr, never tallied): the merged shards, each unit\'s worker from its shard\'s start'];
+    for (const r of records) lines.push(`  shard ${r.shard}  ${r.units.length} unit(s), ${r.jobs} worker(s) at once on ${r.cores} core(s), every worker done at ${s(Math.max(0, ...r.units.map((u) => u.ended)))} s`);
+    for (const u of units) {
+      const at = byUnit.get(u);
+      lines.push(at === undefined ? `  clock  ${u}  not recorded` : `  clock  ${u}  ${s(at.run.ended - at.run.began)} s  (+${s(at.run.began)} .. +${s(at.run.ended)})  shard ${at.shard}`);
+    }
+    return `${lines.join('\n')}\n`;
+  };
+  await reportRun(keys, (key) => suiteUnits(key, examples), async (unit) => byUnit.get(unit)?.run, clockText, () => {});
+}
+
+async function main(): Promise<void> {
+  if (process.argv.includes(WORKER_FLAG)) {
+    workerMain(process.argv);
+    return;
+  }
+  const keys = SUITES.map(([k]) => k);
+  const argv = process.argv.slice(2);
+  const shard = flagValue(argv, SHARD_FLAG);
+  const record = flagValue(argv, RECORD_FLAG);
+  const merge = flagValue(argv, MERGE_FLAG);
+  if (shard !== null || record !== null || merge !== null) {
+    if ((shard === null) !== (record === null) || (merge !== null && shard !== null)) {
+      console.error(`selftest: ${SHARD_FLAG} <name> takes ${RECORD_FLAG} <file>, and ${MERGE_FLAG} <dir> stands alone`);
+      process.exit(2);
+    }
+    // The partition is held to every unit once before anything starts, in a shard and in the merge alike.
+    const examples = exampleKeys().all;
+    const units = runUnits(keys, examples);
+    const partition = typeof units === 'string' ? [units] : shardFaults(SHARDS, units);
+    if (typeof units === 'string' || partition.length > 0) {
+      console.error('rig-parts selftest: the shards are not every unit of the run once');
+      for (const f of partition) console.error(`  ${f}`);
+      process.exit(2);
+    }
+    if (shard !== null && record !== null) await shardMain(shard, resolve(record));
+    else if (merge !== null) await mergeMain(resolve(merge), keys, units, examples);
+    return;
+  }
+  const corpus = corpusDir();
+  const order = dispatchOrder(keys, STARTED_FIRST);
+  if (typeof order === 'string') {
+    console.error(`selftest: ${order}`);
+    process.exit(2);
+  }
+  const jobs = workerCount();
+  const results = temp('workers');
+  const clock = new Map<string, readonly [number, number]>();
+  const t0 = performance.now();
+  const runs = startWorkers(order, jobs, async (key) => {
+    const began = performance.now() - t0;
+    const run = await launchWorker(key, corpus, results);
+    clock.set(key, [began, performance.now() - t0]);
+    return run;
+  });
+  await reportRun(
+    keys,
+    (key) => [key],
+    (key) => runs.get(key) ?? Promise.resolve(undefined),
+    () => workerClockText(keys, clock, jobs, performance.now() - t0),
+    () => rmSync(results, { recursive: true, force: true }),
+  );
 }
 
 await main();
