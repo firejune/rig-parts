@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.23.0](https://github.com/rig-c/parts/compare/v1.22.0...v1.23.0) (2026-10-14)
+
+
+### Features
+
+* **propose:** name a topwear shaped like a skirt, and let `cloth.bottomwear.part` hand it the skirt's trees ([#410](https://github.com/rig-c/parts/issues/410)) ([330cf52](https://github.com/rig-c/parts/commit/330cf52f06ef1e849901a069a2847dc99ad0f639)), closes [#402](https://github.com/rig-c/parts/issues/402)
+
+
+### Bug Fixes
+
+* **check:** name the renderer profile rig-play where the tree speaks in its own words ([#405](https://github.com/rig-c/parts/issues/405)) ([2d01057](https://github.com/rig-c/parts/commit/2d01057639c9c3d41f48d8f0e86931d362974c1a)), closes [#380](https://github.com/rig-c/parts/issues/380)
+* **docs:** say that every example's expected/rig.json is the flat form, held by tree rule TY19 ([#408](https://github.com/rig-c/parts/issues/408)) ([fd60e34](https://github.com/rig-c/parts/commit/fd60e349c6333ba661ff7a1d23cb4ce44a2ee172)), closes [#397](https://github.com/rig-c/parts/issues/397)
+
 ## [1.22.0](https://github.com/rig-c/parts/compare/v1.21.0...v1.22.0) (2026-10-14)
 
 
