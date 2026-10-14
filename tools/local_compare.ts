@@ -346,7 +346,7 @@ export function writeFieldRig(dir: string, mesh: ComparedMesh, rigc: string): { 
   const mask = fieldMask();
   const img = newRaster(FIELD_W, FIELD_H);
   for (let i = 0; i < mask.alpha.length; i++) img.data.set([180, 120, 90, mask.alpha[i]], i * 4);
-  // The one image is named for the page rigc packs it on: spine-html's A27 refuses a lone region named otherwise.
+  // The one image is named for the page rigc packs it on: rig-play's A27 refuses a lone region named otherwise.
   writeFileSync(join(dir, 'images', 'skeleton.png'), encodePngBytes(img));
   const Y = (y: number): number => FIELD_H - y;
   const at = new Map(FIELD_BONES.map((b) => [b.name, b.at]));

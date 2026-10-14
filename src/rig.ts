@@ -615,7 +615,7 @@ function applyTurn(
  * work. `ctl` stays the default because the examples' expected `rig.json` and
  * `motion.json` are the reference implementation's output, and because the
  * declaration lives in the rig spec only: `rigc validate <build> --profile
- * spine-html`, which has no rig spec to read, refuses a `direct` build once
+ * rig-play`, which has no rig spec to read, refuses a `direct` build once
  * per keyed mesh bone.
  */
 export const IDLE_KEYS = ['ctl', 'direct'] as const;

@@ -2239,8 +2239,8 @@ reference's so the examples stay comparable with it. `build` takes both flags.
 **`rig --idle-keys ctl|direct`** (and `build --idle-keys`, which forwards the
 value to its rig stage; without the flag, or with `ctl`, a build writes and prints
 what it did before `build` took the flag). rig-c's `A15_IDLE_NO_MESH_BONE_KEYS`
-(profile `spine-html`) refuses an idle that keys a bone a mesh is weighted to. `ctl`
-(the default, the reference's answer) gives every such bone a same-origin
+(profile `rig-play`, named `spine-html` before rig-c 2.50.0) refuses an idle that
+keys a bone a mesh is weighted to. `ctl` (the default, the reference's answer) gives every such bone a same-origin
 `<bone>_ctl` parent and moves its keys there, which passes A15 on any rig-c;
 the stage prints `idle keys ctl: N mesh-driving bone(s) keyed …`. `direct` keys the
 bones themselves and writes `invariants.idleDrivesMeshes: { "why": … }` into
@@ -2800,8 +2800,8 @@ implementation's bars) — each one that measured; a rig with no `parts.json` or
 assemble*, at the end of this section):
 
 - `gate_spine-html.txt`: every summary line `(N passed, 0 failed)` — the packed build
-  under the `spine-html` profile, gated once over the compile and once over the packed
-  pages on disk. There is no `spine` gate of its own: `spine-html` holds every rule
+  under the `rig-play` profile, gated once over the compile and once over the packed
+  pages on disk. There is no `spine` gate of its own: `rig-play` holds every rule
   `spine` measures (on reference-demo, rigc 1.5.1 and 2.0.3: `validate --profile spine`'s 14
   measured rules are all among the build's 23, the 15 others not in `spine`; rigc
   2.1.3 and 2.10.1: the same 14 among the build's 24, which adds

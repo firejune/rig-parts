@@ -31,7 +31,7 @@
  * | output | what |
  * | --- | --- |
  * | `build/` | `rigc build --profile rig-play --pack --page-edges free --pack-shape polygon` (or `pot`, `rect`, when the caller names them; {@link PAGE_EDGES}, {@link PACK_SHAPES}) — the packed atlas is the final artifact |
- * | `gate_spine-html.txt` | that build's gate lines, verbatim — the one gate: rigc's `build` runs it once over the compile and once over the packed pages on disk, and `spine-html` holds every rule `spine` measures (selftest `CH09`) |
+ * | `gate_spine-html.txt` | that build's gate lines, verbatim — the one gate: rigc's `build` runs it once over the compile and once over the packed pages on disk, and `rig-play` holds every rule `spine` measures (selftest `CH09`) |
  * | `idle_frames/` | `rigc render --animation idle --fps 12 --max 640 --geometry`: `frames.json` + `idle/f*.png` + `idle/geometry.json` (each mesh's skinned vertices, which `TEXTURE_STRETCH` reads, every attachment's posed triangles, which `TIP_OVER_ROOT` and both halves of `STILL_REGIONS_DARK` read since issues #118 and #123, and every bone's world transform, which the face half reads its head bone from) |
  * | `contact.png` | rigc's own contact sheet of that render, copied out |
  * | `motion_heat.png` | frame 0 in grey with each pixel's largest change across the idle in red |

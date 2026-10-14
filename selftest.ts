@@ -4231,7 +4231,7 @@ interface FlatFormRender {
 
 /**
  * Two rig specs that share a motion spec and an images directory, each built
- * as `check` builds it (the packed spine-html build) and rendered by the
+ * as `check` builds it (the packed rig-play build) and rendered by the
  * installed rigc — the setup pose (a throwaway `still` animation keying the
  * root by 0) and every idle frame at `IDLE_FPS`, `IDLE_MAX_PX` — and compared
  * frame for frame. A string is the reason nothing was compared.
@@ -4447,7 +4447,7 @@ function runRigSuite(): number {
     // issue #49 made the loader refuse two tracks on one bone property
     // (CONFIG_BONE_PROPERTY_KEYED_ONCE, RG42). Now the config is the fixture's
     // own and the fault is in parts.json, which no config loader reads: the
-    // cloth mesh's box is the whole 40x40 rig, and rigc's spine-html profile
+    // cloth mesh's box is the whole 40x40 rig, and rigc's rig-play profile
     // refuses a mesh spanning the whole stage (A14_NO_FULL_FRAME_MESH). The
     // loader's acceptance and the absence of any rig-parts refusal are
     // asserted, so the day this repository learns the rule too, this control
@@ -10217,7 +10217,7 @@ function runRequirementCases(dir: string, say: (name: string, ok: boolean, detai
   const unknown = run('unknown', { requirements: [{ name: 'HAND', kind: 'contact', animation: 'reach', bone: 'hand', point: 'tip', target: grip, within_px: 1 }] });
   say(
     'CK76_AN_UNRESOLVED_NAME_IS_REFUSED_BEFORE_ANYTHING_IS_BUILT',
-    unknown.status === 1 && failLine(unknown.text, 'REQUIREMENTS_RESOLVES: requirement "HAND" (contact)') !== null && !existsSync(join(unknown.outDir, 'build')) && unknown.fig === null && !unknown.text.includes('gate spine-html'),
+    unknown.status === 1 && failLine(unknown.text, 'REQUIREMENTS_RESOLVES: requirement "HAND" (contact)') !== null && !existsSync(join(unknown.outDir, 'build')) && unknown.fig === null && !unknown.text.includes('gate rig-play'),
     `exit ${unknown.status}; ${failLine(unknown.text, 'REQUIREMENTS_RESOLVES')?.trim() ?? 'no REQUIREMENTS_RESOLVES line'}; build/ ${existsSync(join(unknown.outDir, 'build')) ? 'WRITTEN' : 'not written'}`,
     'a bone the rig does not declare is refused by name with the ones it does, before rigc builds anything — a requirement on a name that misses would otherwise be measured on nothing',
   );
@@ -11003,7 +11003,7 @@ function runCheckSuite(): number {
         lineStatus(fig, 'RECOMPOSITE_HOLES') === 'SKIP' &&
         ok.out.includes('  RECOMPOSITE_HOLES: SKIP — parts.json has no "recomposite" block'),
       `exit ${ok.status}; check.json ${fig === null ? 'absent' : JSON.stringify(fig).slice(0, 220)}…; judgement lines ${JUDGEMENT_LINES.map((n) => `${n} ${lineStatus(fig, n) ?? 'absent'}`).join(', ')}; RECOMPOSITE_HOLES ${lineStatus(fig, 'RECOMPOSITE_HOLES') ?? 'absent'}; missing outputs: ${missing.join(', ') || 'none'}; pack ${pack.map((p) => p.line).join(' | ') || 'none'} for ${CHECK_PARTS.length} part(s); --rig ${listing(rig).join('|') === before.join('|') ? 'unchanged' : 'CHANGED'}`,
-      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from the spine-html gate, with the reference's check.json keys in its order (gate_spine_green gone with the second gate, rigc_entry after the gate, pack_mode after it) and the six judgement lines, the fold bar over the idle (issue #333) and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line but BREATH_VISIBLE has nothing to read (and neither part is a mesh, so neither has TEXTURE_STRETCH) and must say SKIP, by name, with its reason — never PASS — while BREATH_VISIBLE reads its torso half and says it measured 1 of 2 halves (issue #323) — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
+      "the positive control: a two-part, one-bone rig with a closed idle and an exact stack must come back green from the rig-play gate, with the reference's check.json keys in its order (gate_spine_green gone with the second gate, rigc_entry after the gate, pack_mode after it) and the six judgement lines, the fold bar over the idle (issue #333) and the reported line between the seam and PASS, the packed page as the build, and nothing written into the input; its two parts are both topwear, so every judgement line but BREATH_VISIBLE has nothing to read (and neither part is a mesh, so neither has TEXTURE_STRETCH) and must say SKIP, by name, with its reason — never PASS — while BREATH_VISIBLE reads its torso half and says it measured 1 of 2 halves (issue #323) — and its hand-written parts.json has no recomposite block, so RECOMPOSITE_HOLES says SKIP too",
     );
 
     const again = runCli(['check', '--rig', rig, '--out', join(dir, 'out2')]);
@@ -11750,7 +11750,7 @@ function runCheckSuite(): number {
       'CK05_A_RIG_RIGC_REFUSES_SURFACES_RIGCS_ASSERTION_BY_NAME_AND_WRITES_NO_VERDICT',
       red.status === 1 && rl !== null && rl.includes('A19_OVERLAY_PNGS_HAVE_ALPHA') && gateFile.includes('A19_OVERLAY_PNGS_HAVE_ALPHA') && !existsSync(join(dir, 'red-out', 'check.json')),
       `exit ${red.status}; ${rl === null ? 'no CHECK_RIGC_GREEN line' : rl.trim().slice(0, 140)}…; gate file ${gateFile.includes('A19_') ? 'quotes A19' : 'does not quote A19'}; check.json ${existsSync(join(dir, 'red-out', 'check.json')) ? 'WRITTEN' : 'not written'}`,
-      "an opaque part is refused by rigc's own A19 under spine-html; the refusal an agent reads has to be rigc's line, not a paraphrase of it, and a red build leaves no check.json that could be mistaken for a verdict",
+      "an opaque part is refused by rigc's own A19 under rig-play; the refusal an agent reads has to be rigc's line, not a paraphrase of it, and a red build leaves no check.json that could be mistaken for a verdict",
     );
 
     const holeRig = join(dir, 'hole');
@@ -12658,7 +12658,7 @@ function runCheckSuite(): number {
         pack[0].pageEdges === 'free' &&
         pack[0].packShape === 'polygon' &&
         pack[0].line.endsWith(', page edges free, shape polygon') &&
-        ok.out.includes('gate spine-html (rigc build --profile rig-play --pack --page-edges free --pack-shape polygon), verbatim:') &&
+        ok.out.includes('gate rig-play (rigc build --profile rig-play --pack --page-edges free --pack-shape polygon), verbatim:') &&
         defaultMode === '{"page_edges":"free","pack_shape":"polygon"}' &&
         freeSame,
       `no --page-edges, no --pack-shape: ${pack[0]?.line ?? 'no pack line'}; the console names "--page-edges free --pack-shape polygon": ${ok.out.includes('--page-edges free --pack-shape polygon), verbatim:')}; check.json pack_mode ${defaultMode}; build/ vs a direct \`rigc build --pack --page-edges free --pack-shape polygon\` of the same rig: ${freeSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
@@ -12682,7 +12682,7 @@ function runCheckSuite(): number {
         potPack[0].line.endsWith(', padding 2, shape rect') &&
         pow2(potPack[0].width) &&
         pow2(potPack[0].height) &&
-        potRun.out.includes('gate spine-html (rigc build --profile rig-play --pack --page-edges pot --pack-shape rect), verbatim:') &&
+        potRun.out.includes('gate rig-play (rigc build --profile rig-play --pack --page-edges pot --pack-shape rect), verbatim:') &&
         potSame,
       `--page-edges pot --pack-shape rect: exit ${potRun.status}, ${potPack[0]?.line ?? 'no pack line'}; build/ vs a direct \`rigc build --pack\` with neither flag (rigc's defaults, the page every build wrote before the flags): ${potSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
       'pot and rect are the opt-outs, so together they must give back exactly the page an earlier build wrote: rigc with neither flag is that build, and pot is a power of two on both edges by rigc\'s own definition',
@@ -12701,7 +12701,7 @@ function runCheckSuite(): number {
         rectPack[0].pageEdges === 'free' &&
         rectPack[0].packShape === 'rect' &&
         rectPack[0].line.endsWith(', page edges free, shape rect') &&
-        rectRun.out.includes('gate spine-html (rigc build --profile rig-play --pack --page-edges free --pack-shape rect), verbatim:') &&
+        rectRun.out.includes('gate rig-play (rigc build --profile rig-play --pack --page-edges free --pack-shape rect), verbatim:') &&
         rectMode === '{"page_edges":"free","pack_shape":"rect"}' &&
         rectSame,
       `--pack-shape rect: exit ${rectRun.status}, ${rectPack[0]?.line ?? 'no pack line'}; check.json pack_mode ${rectMode}; build/ vs a direct \`rigc build --pack --page-edges free\` with no --pack-shape (rigc's default shape, the only one before 2.1): ${rectSame ? `${ARTIFACT.join(', ')} byte-identical` : 'DIFFERENT'}`,
@@ -16375,7 +16375,7 @@ function runChainSuite(): number | null {
         "issue #2's control: the pack line is one of the gate lines, so its page size, region count and coverage are held exactly (tolerance 0), and one region per part is asserted by itself",
       );
 
-      // The one gate: rigc's build under spine-html measures every rule validate under spine would. Run here,
+      // The one gate: rigc's build under rig-play measures every rule validate under spine would. Run here,
       // where spine-core is present (the full entry), on this example's own rig; validate is not a stage any more.
       const subsetDir = join(dir, `${key}-subset`);
       const subBuild = spawnSync(suiteRigc(), ['build', '--rig', join(out, 'rig', 'rig.json'), '--motion', join(out, 'rig', 'motion.json'), '--out', subsetDir, ...packedBuildArgs(DEFAULT_PACK_MODE)], { encoding: 'utf8', maxBuffer: 1 << 28 });
@@ -16384,10 +16384,10 @@ function runChainSuite(): number | null {
       const validRules = measuredRules(`${subValidate.stdout ?? ''}${subValidate.stderr ?? ''}`);
       const outside = validRules.filter((r) => !builtRules.includes(r));
       say(
-        `CH09_VALIDATE_UNDER_SPINE_MEASURES_NO_RULE_THE_SPINE_HTML_BUILD_DOES_NOT[${key}]`,
+        `CH09_VALIDATE_UNDER_SPINE_MEASURES_NO_RULE_THE_RIG_PLAY_BUILD_DOES_NOT[${key}]`,
         subBuild.status === 0 && subValidate.status === 0 && builtRules.length > 0 && validRules.length > 0 && outside.length === 0,
         `build exit ${subBuild.status}, ${builtRules.length} rule(s) measured; validate --profile spine exit ${subValidate.status}, ${validRules.length} rule(s) measured; ${outside.length === 0 ? 'every one of them is in the build\'s set' : `outside the build's set: ${outside.join(', ')}`}`,
-        "the rig and check stages dropped their second gate, `rigc validate <build> --profile spine`, because it measured nothing the build had not; this control is that measurement, run on every fetched example, so the day spine gains a rule spine-html lacks it goes red here rather than being lost",
+        "the rig and check stages dropped their second gate, `rigc validate <build> --profile spine`, because it measured nothing the build had not; this control is that measurement, run on every fetched example, so the day spine gains a rule rig-play lacks it goes red here rather than being lost",
       );
 
       let proposal: string;
@@ -16469,7 +16469,7 @@ function runChainSuite(): number | null {
     runPublicScenes(greenBuilds, dir, say);
 
     // CH09's comparator, planted: a validate line set carrying a rule the build's set lacks is named, and the
-    // spine-html superset (the measured shape, PROF and SKIP lines not counted) is not.
+    // rig-play superset (the measured shape, PROF and SKIP lines not counted) is not.
     const plantBuild = '  PASS  A07_ATLAS_TEXT_SHAPE\n  PASS  A15_IDLE_NO_MESH_BONE_KEYS\n  SKIP  A13_MESH_BUDGET: none\n  ..    2 assertions: 2 measured (2 passed, 0 failed)\n  PASS  A07_ATLAS_TEXT_SHAPE\n';
     const plantSubset = measuredRules('  PASS  A07_ATLAS_TEXT_SHAPE\n  PROF  A15_IDLE_NO_MESH_BONE_KEYS: renderer rule, not in profile "spine"\n').filter((r) => !measuredRules(plantBuild).includes(r));
     const plantExtra = measuredRules('  PASS  A07_ATLAS_TEXT_SHAPE\n  FAIL  A99_A_RULE_ONLY_SPINE_HAS: x\n').filter((r) => !measuredRules(plantBuild).includes(r));
@@ -22294,7 +22294,7 @@ function writeContourRig(dir: string, meshes: ReadonlyArray<readonly [ContourCas
     spec: 'rigc-rig/1',
     name: 'contour_probe',
     images: 'images',
-    // Twice the largest image, so no mesh spans the stage (spine-html's A14 is about the stage, not the mesh).
+    // Twice the largest image, so no mesh spans the stage (rig-play's A14 is about the stage, not the mesh).
     skeleton: { x: 0, y: 0, width: 2 * W, height: 2 * H },
     bones: [{ name: 'root', x: 0, y: 0 }],
     slots: meshes.map(([c]) => ({ name: c.name, bone: 'root', attachment: c.name })),
@@ -22681,7 +22681,7 @@ function runContourSuite(): number {
   // CT27, CT28 — rig-c's real gate takes every mesh above, and refuses the same mesh listed out of order.
   const dir = temp('contour');
   try {
-    // FULL is left out: its PNG has no transparent texel, which spine-html's A19 refuses for the image whatever draws it.
+    // FULL is left out: its PNG has no transparent texel, which rig-play's A19 refuses for the image whatever draws it.
     const meshes = all.filter((p): p is readonly [ContourCase, ContourMesh] => p[1] !== null && p[0] !== FULL);
     const rigc = suiteRigc();
     const gate = (sub: string, list: ReadonlyArray<readonly [ContourCase, ContourMesh]>): { status: number; lines: string[]; out: string } => {
@@ -23212,7 +23212,7 @@ function runOutlineInRegionControls(say: (name: string, ok: boolean, detail: str
   const dir = temp('contour-outline-regions');
   try {
     const rigc = suiteRigc();
-    // The convex block rides along: spine-html's A27 refuses a lone region on a page not named for it.
+    // The convex block rides along: rig-play's A27 refuses a lone region on a page not named for it.
     const convex = built(contourOf(CONVEX));
     const gate = (sub: string, m: ContourMesh): { status: number; lines: string[] } => {
       const d = join(dir, sub);
@@ -32471,7 +32471,7 @@ function runBuildCostSuite(): number {
         has(tail(ref), '--profile', GATE_PROFILE) &&
         pos.log.some((l) => l.includes(`rigc ${REFERENCE_BUILD_LABEL}, reference "cloth"`) && l.endsWith('exit 0')),
       `${lines(pos.e)}; calls ${pos.calls.map((c) => `[${c.args[0]} ${tail(c).join(' ')}]`).join(' ')}`,
-      'issue #135, the owner\'s ruling 1: the candidate keeps its packed gate build exactly as before; the reference is compiled under the same spine-html gate without --pack, and the stage asks rigc for no render',
+      'issue #135, the owner\'s ruling 1: the candidate keeps its packed gate build exactly as before; the reference is compiled under the same rig-play gate without --pack, and the stage asks rigc for no render',
     );
 
     // BC02 — the reference is still gated: a red reference compile refuses the part by name, and nothing is written.

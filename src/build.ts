@@ -357,13 +357,13 @@ function gateRun(label: string, rigc: RigcRunner, args: string[]): GateRun {
 
 /**
  * The motion gate's reference build (issue #135): rigc's `build` under the
- * spine-html profile and nothing else — the same gate over the compile that
- * the candidate's build runs, without `--pack`. Its model document is all the
- * comparison reads, and it differs from a packed build's only in where the
- * atlas puts each region (its `pages`), which rig-c's comparison
- * allowlists as atlas layout; the pages a reference would pack are never
- * written anywhere, so packing them was work nobody read. No render is asked
- * of rigc by either build.
+ * `rig-play` profile (named `spine-html` before rig-c 2.50.0) and nothing
+ * else — the same gate over the compile that the candidate's build runs,
+ * without `--pack`. Its model document is all the comparison reads, and it
+ * differs from a packed build's only in where the atlas puts each region (its
+ * `pages`), which rig-c's comparison allowlists as atlas layout; the pages a
+ * reference would pack are never written anywhere, so packing them was work
+ * nobody read. No render is asked of rigc by either build.
  */
 export const REFERENCE_BUILD_ARGS: readonly string[] = ['--profile', GATE_PROFILE];
 
@@ -372,9 +372,9 @@ export const REFERENCE_BUILD_LABEL = `build ${REFERENCE_BUILD_ARGS.join(' ')}`;
 
 /**
  * rig-c's gate over the rig in a scratch directory: `build` under the
- * spine-html profile with `--pack --page-edges <edges> --pack-shape <shape>`, which runs the gate
+ * rig-play profile with `--pack --page-edges <edges> --pack-shape <shape>`, which runs the gate
  * once over the compile and once over the packed pages on disk. There is no
- * second `validate --profile spine` run: spine-html holds every rule spine
+ * second `validate --profile spine` run: rig-play holds every rule spine
  * measures (selftest `CH09`). The files are staged exactly as `--out` will
  * receive them, so what passed is what is written. The scratch directory is
  * the caller's, and is emptied here before and after. `images` are the PNG
@@ -506,7 +506,7 @@ function modelAt(buildDir: string): string | null {
  * The motion gate of every automatic part (issue #126, item 3): for each, the
  * reference rig — `rig` with that part's attachment swapped for its unreduced
  * source and nothing else — through rigc's gate ({@link REFERENCE_BUILD_ARGS}:
- * the stage's `build` under spine-html, without packing, issue #135), then
+ * the stage's `build` under rig-play, without packing, issue #135), then
  * rig-c's comparison of its `skeleton.model.json` with the candidate's
  * (`candidateModel`, the stage's own gate build). A part refused before
  * compiling (no `motion`, no stimulus) costs no build.
@@ -1170,7 +1170,7 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   log(`  ${rigcIdentity(bin, v)}${entryLine === undefined ? '' : `; ${entryLine}`}`);
   const mode: PackMode = { pageEdges: input.pageEdges ?? DEFAULT_PAGE_EDGES, packShape: input.packShape ?? DEFAULT_PACK_SHAPE };
   const r = runCheck(input.rig, input.out, rigc, input.parts, mode, input.source, input.requirements, input.seamPairs === true, input.keepStills === true);
-  log(`  gate spine-html (rigc ${packedBuildLabel(mode)}), verbatim:`);
+  log(`  gate rig-play (rigc ${packedBuildLabel(mode)}), verbatim:`);
   for (const l of r.gateHtml) log(l);
   for (const l of packLines(r)) log(`  ${l}`);
   const fig = r.figures;
@@ -1206,7 +1206,7 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
     for (const [name, line] of Object.entries(r.requirements.lines)) log(`  ${requirementText(name, line)}`);
     log(`  ${summaryText(r.requirements.summary)}`);
   }
-  log(`  gate: spine-html ${fig.gate_spine_html_green ? 'green' : 'RED'} (${fig.rigc_entry.entry}${fig.rigc_entry.spine_core === null ? ', rigc\'s own validator' : `, the spine-core ${fig.rigc_entry.spine_core} round trip`})`);
+  log(`  gate: rig-play ${fig.gate_spine_html_green ? 'green' : 'RED'} (${fig.rigc_entry.entry}${fig.rigc_entry.spine_core === null ? ', rigc\'s own validator' : `, the spine-core ${fig.rigc_entry.spine_core} round trip`})`);
   log(`  wrote ${r.written.map((w) => join(input.out, w)).join(', ')}, ${join(input.out, 'build')}/${r.idle === null ? '' : `, ${join(input.out, 'idle_frames')}/`}${r.requirements === null ? '' : `, ${join(input.out, REQUIREMENTS_DIR)}/`}${fig.seam_pairs === undefined ? '' : `, ${join(input.out, SEAM_DIR)}/`}${existsSync(join(input.out, STILL_DIR)) ? `, ${join(input.out, STILL_DIR)}/` : ''}`);
   for (const p of r.problems) log(failLine(p));
   const reqNotPass = r.requirements === null ? 0 : r.requirements.summary.declared - r.requirements.summary.pass;
