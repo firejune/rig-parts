@@ -112,7 +112,7 @@ The fields, object by object (a bold path is where the object sits; `<part>` is 
 part name, `[i]` an entry of a list):
 
 <!-- stable:config -->
-- **config** — required by the full loader, in front of rig and build: `key`, `assemble`, `bones`, `meshes`, `regions`, `motion`; optional: `generation`, `seethrough`, `limbs`, `constraints`, `turn`, `scene`, `cloth`
+- **config** — required by the full loader, in front of rig and build: `key`, `assemble`, `bones`, `meshes`, `regions`, `motion`; optional: `generation`, `seethrough`, `limbs`, `constraints`, `stops`, `turn`, `scene`, `cloth`
 - **generation** — required: `checkpoint`, `loras`, `trigger`, `identity`, `sampler`, `costume`, `negative_extra`, `style`, `negative_pose`, `latent`, `seed`; optional: `pose`, `control`
 - **generation.loras[i]** — required: `name`, `strength`; optional: `strength_clip`
 - **generation.sampler** — required: `steps`, `cfg`, `sampler`, `scheduler`
@@ -129,6 +129,8 @@ part name, `[i]` an entry of a list):
 - **limbs.&lt;limb&gt;.segments[i]** — required: `part`, `from`, `bone`; required below a joint (i > 0): `joint`; optional below a joint: `range`, `cap`, `edge`, `cap_shape`, `cut_band`
 - **bones[i]**, a single bone — required: `name`, `parent`, `at`; optional: `tip`, `inherit`
 - **bones[i]**, a chain — required: `chain`, `parent`, `points`, `tip`
+- **stops[i]** — required: `chain`, `against`, `at`, `inward`, `outward`; optional: `links`, `lower` (issue #404)
+- **stops[i].lower** — required: `inward`, `outward`
 - **meshes.&lt;part&gt;** — exactly one of `grid`, `contour`, `auto`; required in every mode: `r`, `segments`; optional in every mode: `exponent`, `rule`; optional with `contour` or `auto`: `ribs`; optional with `grid` or `contour`: `influences` (issue #284; beside `auto` it is refused, CONFIG_INFLUENCES_MODE); optional with `grid`: `stray` (issue #303; beside `contour` or `auto` it is refused, CONFIG_STRAY_MODE)
 - **meshes.&lt;part&gt;.influences** — optional, at least one: `maxInfluences` (a whole number, 1 or more, or null for no cap), `floor` ("cut" or "continuous")
 - **meshes.&lt;part&gt;.ribs.&lt;chain&gt;** — required: `stations`
@@ -161,7 +163,7 @@ part name, `[i]` an entry of a list):
 - **turn** — required: `pivot`, `depths`
 - **turn.depths.&lt;part&gt;** — a See-through depth
 - **scene** — no field (`{}`; a record or an annotation only)
-- **proposal.json**, the file propose writes — `bones`, `meshes`, `regions`, `limbs` under `--keypoints` where an arm or a leg is drafted from its joints (issue #349), `motion` under the rules above, `turn` with `--full`/`--head`, and `notes`
+- **proposal.json**, the file propose writes — `bones`, `meshes`, `regions`, `limbs` under `--keypoints` where an arm or a leg is drafted from its joints (issue #349), `stops` when supplied, `motion` under the rules above, `turn` with `--full`/`--head`, and `notes`
 <!-- /stable:config -->
 
 `TY14` holds the set of field names in backticks above to the set of names the

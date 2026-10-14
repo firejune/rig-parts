@@ -155,7 +155,8 @@ import {
   type SeamPair,
   stretchRequirementLine,
 } from './requirements.ts';
-import { RIG_BONE_INHERIT } from 'rig-c/src/rig.ts';
+import { RIG_BONE_INHERIT, type RigSpec as RigcRigSpec } from 'rig-c/src/rig.ts';
+import { expandStops } from 'rig-c/src/stop.ts';
 import { alphaComposite } from './raster/composite.ts';
 import { readPng, writePng } from './raster/png.ts';
 import { newFloatImage, newRaster, type Raster } from './raster/types.ts';
@@ -1068,9 +1069,11 @@ export function withoutPhysics(rig: Record<string, unknown>, motion: Record<stri
   const table = isRecord(motion.physics) ? motion.physics : null;
   if (table !== null) for (const [name, e] of Object.entries(table)) physics.push({ name, bone: isRecord(e) ? String(e.bone) : '', in: 'motion.json' });
   if (physics.length === 0) return null;
-  const r: Record<string, unknown> = { ...rig };
-  if (constraints !== null) {
-    const kept = constraints.filter((c) => !(isRecord(c) && c.type === 'physics'));
+  const expanded = Array.isArray(rig.stops) ? (expandStops(rig as unknown as RigcRigSpec, 'rig.json') as unknown as Record<string, unknown>) : rig;
+  const r: Record<string, unknown> = { ...expanded };
+  delete r.stops;
+  if (Array.isArray(r.constraints)) {
+    const kept = r.constraints.filter((c) => !(isRecord(c) && c.type === 'physics'));
     if (kept.length > 0) r.constraints = kept;
     else delete r.constraints;
   }
