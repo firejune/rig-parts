@@ -2417,10 +2417,11 @@ function runProposedRigScaleConfigControls(say: (name: string, ok: boolean, deta
     writeFileSync(pPath, `${JSON.stringify({ ...rawParts, scale_rig_per_source: 0.5 }, null, 2)}\n`);
     const P = readPartSet(dir);
     const prop = propose(P);
+    const min = minimalConfig();
     const baseCfg = {
-      ...minimalConfig(),
+      ...min,
       seethrough: { resolution: 64, steps: 1, seed: 1, offload: false, head_box: [0, 0, 8, 8] },
-      assemble: { rig_scale: 0.5, plan: [['cloth', 'full', 'topwear'], ['eye', 'head', 'face']] },
+      assemble: { ...(min.assemble as Record<string, unknown>), rig_scale: 0.5 },
     };
     const handAuthored = [refusals(() => parseEarlyConfig(baseCfg, 'assemble')), refusals(() => parseConfig(baseCfg))];
     const matchingCfg = { ...baseCfg, proposed_rig_scale: prop.proposed_rig_scale };

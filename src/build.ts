@@ -237,11 +237,12 @@ export function readCaps(configPath: string, limbs: Readonly<Record<string, Limb
 
 /** Read, assemble, and write only after every refusal has had its chance. Throws a PartsError on a refusal, having written nothing. */
 export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, log: Log): AssembleResult {
-  const src = readSource(input.source);
-  const runs = readRuns(input.full, input.head);
   // The early door: assemble runs before propose has drafted bones, meshes,
   // regions and motion, so it requires only what it reads (issue #20).
-  const fields = stageFields(loadEarlyConfig(input.config, 'assemble'), runs.single ? { w: src.width, h: src.height } : null);
+  const cfg = loadEarlyConfig(input.config, 'assemble');
+  const src = readSource(input.source);
+  const runs = readRuns(input.full, input.head);
+  const fields = stageFields(cfg, runs.single ? { w: src.width, h: src.height } : null);
   const under = readUnders(input.config, fields.cuts);
   const caps = fields.limbs === undefined ? undefined : readCaps(input.config, fields.limbs);
   const result = assemble({ source: src, full: runs.full, head: runs.head, ...fields, under, ...(caps === undefined ? {} : { caps }), seamRule: input.seam, projectRule: input.project });
