@@ -43,7 +43,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
-import { assemble, type AssembleResult, cutLines, hiddenLines, SINGLE_RUN_FACE_TAGS, driftLine, limbLines, FIGURE_MASK_FILE, figuresLine, holeLines, type ProjectRule, scenePhrase, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
+import { assemble, type AssembleResult, cutLines, hiddenLines, SINGLE_RUN_FACE_TAGS, driftLine, limbLines, FIGURE_MASK_FILE, figuresLine, holeKindsLine, holeLines, type ProjectRule, scenePhrase, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
 import { allocationClause, type Reducer, stageBClause, unboundedClause } from './automesh.ts';
 import { residualClause } from './autoenvelope.ts';
 import { type AutoMotionCase, failingRows, idleSchedule, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison, sourceSelfFailure, stimulusMotion, withStimulus } from './automotion.ts';
@@ -293,6 +293,7 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   const scene = result.parts.scene === undefined ? null : scenePhrase(result.parts.scene, W * H);
   log(figuresLine(result.figures, scene));
   for (const l of holeLines(result.figures, scene)) log(l);
+  if (result.figures.uncoveredErrorPx > 0) log(holeKindsLine(result.holeKinds, scene));
   for (const u of result.uncovered) log(uncoveredLine(u, scene));
   for (const d of result.drift) log(driftLine(d));
   log(`wrote ${outs.partsJson}, ${result.images.length} PNG(s) in ${outs.partsDir}, ${outs.recomposite}, ${outs.errorMap} (uncovered error px red, covered error px blue, the painting grey)${figurePath === null ? '' : `, ${figurePath} (the figure, white, the recomposite was read inside)`}`);
