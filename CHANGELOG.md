@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.26.0](https://github.com/rig-c/parts/compare/v1.25.0...v1.26.0) (2026-10-15)
+
+
+### Features
+
+* **check:** judge folds with physics on and report physics on/off side by side ([#425](https://github.com/rig-c/parts/issues/425)) ([8d92181](https://github.com/rig-c/parts/commit/8d921814294a2d8c9e71e07e28cdb4a50e4dcf9f)), closes [#363](https://github.com/rig-c/parts/issues/363)
+* **cloth:** accept explicitly named topwear skirt cuts ([#430](https://github.com/rig-c/parts/issues/430)) ([bfdc4c4](https://github.com/rig-c/parts/commit/bfdc4c443625b6eb4e214ccac93c7fd435670fe4)), closes [#412](https://github.com/rig-c/parts/issues/412)
+* **config:** refuse assemble.rig_scale mismatch against proposed_rig_scale ([#354](https://github.com/rig-c/parts/issues/354)) ([#427](https://github.com/rig-c/parts/issues/427)) ([7e16e68](https://github.com/rig-c/parts/commit/7e16e6806b5c3efd91a7ef1db690a69f20b3e423))
+* **rig:** allow explicit inheritance on named chain links ([#429](https://github.com/rig-c/parts/issues/429)) ([63c776a](https://github.com/rig-c/parts/commit/63c776aa51af00a3cfd85dd7c1d359691279d5c3)), closes [#369](https://github.com/rig-c/parts/issues/369)
+
+
+### Bug Fixes
+
+* **check,headbox,assemble:** name root carrier, back-hair box growth, behind drift and hole causes ([#351](https://github.com/rig-c/parts/issues/351)) ([#435](https://github.com/rig-c/parts/issues/435)) ([f1c735f](https://github.com/rig-c/parts/commit/f1c735f9d4f73b1ada273dd07f38f686eb48182f))
+* **cloth,rig:** hold forked trees under strong wind and smooth fork shares ([#392](https://github.com/rig-c/parts/issues/392)) ([#432](https://github.com/rig-c/parts/issues/432)) ([a5ce8d6](https://github.com/rig-c/parts/commit/a5ce8d6b8d9be74a8fb6be67694ce37904c8c133))
+* **propose:** derive back-hair tree count from root-row tail width and refuse off-art chains ([#390](https://github.com/rig-c/parts/issues/390)) ([#433](https://github.com/rig-c/parts/issues/433)) ([a75f82c](https://github.com/rig-c/parts/commit/a75f82cc2280d3ff89e0e52f8dae8a3f74ed951c))
+* **scene:** carry and scale member stops in compose ([#431](https://github.com/rig-c/parts/issues/431)) ([#434](https://github.com/rig-c/parts/issues/434)) ([bc5b737](https://github.com/rig-c/parts/commit/bc5b73733bdf73c2cc9f45fbbac9f14eea51981a))
+
 ## [1.25.0](https://github.com/rig-c/parts/compare/v1.24.0...v1.25.0) (2026-10-15)
 
 
