@@ -42,6 +42,20 @@ export const HEAD_LAYER_MIN_PX = 150;
 
 export type Box = [number, number, number, number];
 
+export interface HeadBoxOptions {
+  /** Whether `"back hair"` is included in the union (issue #351); default `true`. */
+  backHair?: boolean;
+}
+
+export interface HeadBoxWithoutBackHair {
+  /** The square box's side in source px without `"back hair"`. */
+  edge: number;
+  /** The box without `"back hair"` before clamping to the painting. */
+  unclamped: Box;
+  /** The box without `"back hair"` held inside the painting, or `null` when `edge` exceeds a canvas side. */
+  head_box: Box | null;
+}
+
 export interface HeadBoxProposal {
   /** The square box, inside the painting: what goes into `seethrough.head_box`. */
   head_box: Box;
@@ -49,8 +63,10 @@ export interface HeadBoxProposal {
   unclamped: Box;
   /** How far the box was moved to stay inside, in source px. */
   shift: [number, number];
-  /** The layers that contributed, with their opaque pixel counts after the clean-up. */
+  /** The layers that contributed, with their opaque pixel counts after the ghost clean-up. */
   layers: Array<[string, number]>;
+  /** Present when `"back hair"` contributed (with `backHair !== false`, issue #351): the box without `"back hair"`. */
+  without_back_hair?: HeadBoxWithoutBackHair;
 }
 
 /**
@@ -90,7 +106,7 @@ function cleanedOpaque(pixels: { width: number; height: number; data: Uint8Clamp
  * `source.w` x `source.h` pixels. Every refusal names the value found and the
  * value required.
  */
-export function proposeHeadBox(full: LayerSet, source: { w: number; h: number }): HeadBoxProposal {
+export function proposeHeadBox(full: LayerSet, source: { w: number; h: number }, opts?: HeadBoxOptions): HeadBoxProposal {
   const problems: Problem[] = [];
   if (!(Number.isInteger(source.w) && Number.isInteger(source.h) && source.w > 0 && source.h > 0)) {
     problems.push({ code: 'HEADBOX_CANVAS_SIZE', object: '--canvas', detail: `is ${source.w}x${source.h}; the painting's size in positive integer pixels is required` });
@@ -102,12 +118,14 @@ export function proposeHeadBox(full: LayerSet, source: { w: number; h: number })
 
   const pad = squarePad(source.w, source.h);
   const k = pad.side / full.canvas.w;
+  const includeBackHair = opts?.backHair !== false;
   // The union does not depend on the order the layers are read in; a name
   // that appears twice is last-wins in draw order (the reference's dict was
   // last-wins in manifest order, and no wrapper output read so far repeats one).
   const boxes = new Map<string, { left: number; top: number; xs: number[]; ys: number[] }>();
   for (const L of full.layers) {
     if (!(HEAD_LAYERS as readonly string[]).includes(L.name)) continue;
+    if (!includeBackHair && L.name === 'back hair') continue;
     const { xs, ys } = cleanedOpaque(L.pixels);
     if (xs.length < HEAD_LAYER_MIN_PX) continue;
     boxes.set(L.name, { left: L.left, top: L.top, xs, ys });
@@ -130,44 +148,60 @@ export function proposeHeadBox(full: LayerSet, source: { w: number; h: number })
     if (f.top + y > fy1) fy1 = f.top + y;
   }
   const cut = fy1 + 0.35 * (fy1 - fy0);
-  let x0 = Infinity;
-  let x1 = -Infinity;
-  let y0 = Infinity;
-  let y1 = -Infinity;
-  for (const b of boxes.values()) {
-    for (let i = 0; i < b.xs.length; i++) {
-      const y = b.top + b.ys[i];
-      if (y > cut) continue;
-      const x = b.left + b.xs[i];
-      if (x < x0) x0 = x;
-      if (x > x1) x1 = x;
-      if (y < y0) y0 = y;
-      if (y > y1) y1 = y;
+  const measureUnion = (entries: Iterable<{ left: number; top: number; xs: number[]; ys: number[] }>): { edge: number; unclamped: Box; shift: [number, number]; head_box: Box | null } => {
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    for (const b of entries) {
+      for (let i = 0; i < b.xs.length; i++) {
+        const y = b.top + b.ys[i];
+        if (y > cut) continue;
+        const x = b.left + b.xs[i];
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
     }
-  }
-  const size = Math.max(x1 - x0, y1 - y0) * 1.12;
-  const cx = (x0 + x1) / 2;
-  const cy = (y0 + y1) / 2;
-  // Each edge rounded as the reference rounds it; then the side is the larger
-  // of the two rounded extents, so the box is square, never holds less than
-  // the reference's, and equals it wherever the reference's was square.
-  const ex = [pyRound((cx - size / 2) * k), pyRound((cx + size / 2) * k)];
-  const ey = [pyRound((cy - size / 2) * k), pyRound((cy + size / 2) * k)];
-  const edge = Math.max(ex[1] - ex[0], ey[1] - ey[0]);
-  const bx = ex[0] - pad.left;
-  const by = ey[0] - pad.top;
-  const unclamped: Box = [bx, by, bx + edge, by + edge];
-  if (edge > source.w || edge > source.h) {
+    const size = Math.max(x1 - x0, y1 - y0) * 1.12;
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    // Each edge rounded as the reference rounds it; then the side is the larger
+    // of the two rounded extents, so the box is square, never holds less than
+    // the reference's, and equals it wherever the reference's was square.
+    const ex = [pyRound((cx - size / 2) * k), pyRound((cx + size / 2) * k)];
+    const ey = [pyRound((cy - size / 2) * k), pyRound((cy + size / 2) * k)];
+    const edge = Math.max(ex[1] - ex[0], ey[1] - ey[0]);
+    const bx = ex[0] - pad.left;
+    const by = ey[0] - pad.top;
+    const unclamped: Box = [bx, by, bx + edge, by + edge];
+    if (edge > source.w || edge > source.h) return { edge, unclamped, shift: [0, 0], head_box: null };
+    const hold = (lo: number, extent: number): number => (lo < 0 ? -lo : lo + edge > extent ? extent - edge - lo : 0);
+    const shift: [number, number] = [hold(bx, source.w), hold(by, source.h)];
+    const head_box: Box = [bx + shift[0], by + shift[1], bx + shift[0] + edge, by + shift[1] + edge];
+    return { edge, unclamped, shift, head_box };
+  };
+  const main = measureUnion(boxes.values());
+  const without = includeBackHair && boxes.has('back hair') ? measureUnion([...boxes.entries()].filter(([n]) => n !== 'back hair').map(([, b]) => b)) : null;
+  if (main.head_box === null) {
+    const hairNote =
+      without !== null && without.edge < main.edge
+        ? ` ("back hair" grew the side from ${without.edge} to ${main.edge} px; without it${without.head_box !== null ? `, [${without.head_box.join(', ')}] (${without.edge}x${without.edge}) fits —` : ''} pass --no-back-hair)`
+        : '';
     refuseIfAny([
       {
         code: 'HEADBOX_FITS_CANVAS',
         object: 'head box',
-        detail: `is ${edge}x${edge} source px, proposed at [${unclamped.join(', ')}]; the ${source.w}x${source.h} painting cannot hold it at that size, and shrinking it would cut the head`,
+        detail: `is ${main.edge}x${main.edge} source px, proposed at [${main.unclamped.join(', ')}]; the ${source.w}x${source.h} painting cannot hold it at that size, and shrinking it would cut the head${hairNote}`,
       },
     ]);
   }
-  const hold = (lo: number, extent: number): number => (lo < 0 ? -lo : lo + edge > extent ? extent - edge - lo : 0);
-  const shift: [number, number] = [hold(bx, source.w), hold(by, source.h)];
-  const head_box: Box = [bx + shift[0], by + shift[1], bx + shift[0] + edge, by + shift[1] + edge];
-  return { head_box, unclamped, shift, layers: [...boxes.entries()].map(([n, b]) => [n, b.xs.length]) };
+  return {
+    head_box: main.head_box as Box,
+    unclamped: main.unclamped,
+    shift: main.shift,
+    layers: [...boxes.entries()].map(([n, b]) => [n, b.xs.length]),
+    ...(without === null ? {} : { without_back_hair: { edge: without.edge, unclamped: without.unclamped, head_box: without.head_box } }),
+  };
 }

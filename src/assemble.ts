@@ -1561,6 +1561,61 @@ export function holeLines(f: RecompositeFigures, scene: string | null = null): s
   ];
 }
 
+/** One kind of uncovered error pixel (issue #351): total pixel count, 8-connected component count, and largest component box. */
+export interface HoleKindSummary {
+  px: number;
+  count: number;
+  largest: { px: number; x: number; y: number; w: number; h: number } | null;
+}
+
+/**
+ * The partition of uncovered error pixels into two disjoint causes (issue #351):
+ * - `noLayer`: pixels where no See-through layer in either run has `alpha > OPAQUE_ALPHA_ABOVE` (an `assemble.patches` box from the painting is the only repair).
+ * - `betweenLayers`: pixels where at least one See-through layer has `alpha > OPAQUE_ALPHA_ABOVE`, but no placed part covers the pixel at `alpha > COVERED_ALPHA`.
+ */
+export interface HoleKinds {
+  noLayer: HoleKindSummary;
+  betweenLayers: HoleKindSummary;
+}
+
+function summarizeKindMask(mask: Mask): HoleKindSummary {
+  let px = 0;
+  for (let p = 0; p < mask.data.length; p++) px += mask.data[p];
+  if (px === 0) return { px: 0, count: 0, largest: null };
+  const cc = connectedComponents(mask, 8);
+  const all = cc.stats.slice(1).filter((s) => s.area > 0);
+  all.sort((a, b) => b.area - a.area || a.top - b.top || a.left - b.left);
+  const s = all[0];
+  return { px, count: all.length, largest: s === undefined ? null : { px: s.area, x: s.left, y: s.top, w: s.width, h: s.height } };
+}
+
+export function holeKinds(err: Uint8Array, covered: Uint8Array, anyLayer: Uint8Array, W: number, H: number): HoleKinds {
+  const noLayerMask = newMask(W, H);
+  const betweenMask = newMask(W, H);
+  for (let p = 0; p < W * H; p++) {
+    if (err[p] !== 1 || covered[p] !== 0) continue;
+    if (anyLayer[p] === 0) noLayerMask.data[p] = 1;
+    else betweenMask.data[p] = 1;
+  }
+  return { noLayer: summarizeKindMask(noLayerMask), betweenLayers: summarizeKindMask(betweenMask) };
+}
+
+/**
+ * The summary line under `holeLines` (issue #351): partitions `uncoveredErrorPx`
+ * into pixels where no See-through layer has `alpha > 8` (`noLayer`, repaired
+ * only by `assemble.patches`) and pixels where a layer has `alpha > 8` (`betweenLayers`).
+ */
+export function holeKindsLine(k: HoleKinds, scene: string | null = null): string {
+  const fmt = (s: HoleKindSummary): string =>
+    s.px === 0 || s.largest === null
+      ? '0 px'
+      : `${s.px} px in ${s.count} component(s) (largest ${s.largest.px} px at ${s.largest.x},${s.largest.y} ${s.largest.w}x${s.largest.h})`;
+  return (
+    `${scene === null ? '' : `${scene}: `}uncovered error by cause: no layer (alpha <= ${OPAQUE_ALPHA_ABOVE} on every layer; only assemble.patches from the painting can cover): ${fmt(k.noLayer)}; ` +
+    `on a layer (alpha > ${OPAQUE_ALPHA_ABOVE} on a layer, below covered alpha ${COVERED_ALPHA} in the parts): ${fmt(k.betweenLayers)}`
+  );
+}
+
 /** The `parts.json` `recomposite` block: the four figures, the limits they were measured at, and the listed holes. */
 export function recompositeRecord(f: RecompositeFigures): RecompositeRecord {
   return {
@@ -2278,6 +2333,8 @@ export interface AssembleResult {
   limbs: LimbCount[];
   /** The full-run layers the plan does not take from the full run whose uncovered error holds a body (`uncoveredErrorLayers`); empty otherwise. */
   uncovered: UncoveredErrorLayer[];
+  /** The partition of uncovered error pixels into no-layer and on-a-layer components (`holeKinds`, issue #351). */
+  holeKinds: HoleKinds;
   /** The parts whose `DRIFT_LIMIT` refusals hold a body another part holds in the draw order (`driftBodies`), in draw order; empty otherwise. */
   drift: DriftBodies[];
   /** Every hidden-art layer of the runs read (issue #359) and what read it (`hiddenLines`); empty when the runs hold none. */
@@ -2792,13 +2849,26 @@ export function assemble(input: AssembleInput): AssembleResult {
   });
   const stackNames = stack.map((q) => q.record.name);
   const drift: DriftBodies[] = [];
-  order.forEach((d) => {
+  order.forEach((d, orderIdx) => {
     if ('patch' in d) return;
     const { name, b } = pieceAt(d);
     if (b.st.refusedMask === null) return;
     const refused = newMask(W, H);
     for (let p = 0; p < W * H; p++) if (b.st.refusedMask.data[p] === 1 && (b.region === null || b.region.data[p] === 1)) refused.data[p] = 1;
-    const found = driftBodies(name, b.key, refused, bodyMinPx(frame), holderAt, stackNames);
+    const behindAt = new Int32Array(W * H).fill(-1);
+    for (let j = 0; j < orderIdx; j++) {
+      const under = stack[j].image.data;
+      for (let p = 0; p < W * H; p++) {
+        if (under[p * 4 + 3] < CORE_ALPHA) continue;
+        const dMax = Math.max(
+          Math.abs(under[p * 4] - srcr.data[p * 4]),
+          Math.abs(under[p * 4 + 1] - srcr.data[p * 4 + 1]),
+          Math.abs(under[p * 4 + 2] - srcr.data[p * 4 + 2]),
+        );
+        if (dMax <= DRIFT_LIMIT) behindAt[p] = j;
+      }
+    }
+    const found = driftBodies(name, b.key, refused, bodyMinPx(frame), holderAt, stackNames, behindAt);
     if (found !== null) drift.push(found);
   });
   const pushedOf: FringePushed[][] = plan.map(() => []);
@@ -2880,11 +2950,16 @@ export function assemble(input: AssembleInput): AssembleResult {
   const inside = input.scene === true ? sceneFigure([...rig.entries()].filter(([k]) => k.startsWith('full:')).map(([, r]) => r), W, H) : null;
   const sceneRecord: SceneRecord | null = inside === null ? null : { figure_alpha_above: OPAQUE_ALPHA_ABOVE, figure_px: inside.reduce((a, b) => a + b, 0), figure_mask: FIGURE_MASK_FILE };
   const figures = measureRecomposite(can, srcr, placed, inside);
+  const covered = coveredMask(placed, W, H);
+  const err = errorMask(can, srcr, inside);
+  const anyLayer = new Uint8Array(W * H);
+  for (const r of rig.values()) for (let p = 0; p < W * H; p++) if (r.data[p * 4 + 3] > OPAQUE_ALPHA_ABOVE) anyLayer[p] = 1;
+  const kinds = holeKinds(err, covered, anyLayer, W, H);
   const fullRig = fullTags.map((tag) => ({ tag, rig: rig.get(`full:${tag}`) as Raster }));
   const uncovered = uncoveredErrorLayers(
     fullRig,
-    coveredMask(placed, W, H),
-    errorMask(can, srcr, inside),
+    covered,
+    err,
     figures.uncoveredErrorPx,
     plan,
     extend,
@@ -2911,6 +2986,7 @@ export function assemble(input: AssembleInput): AssembleResult {
     cuts: cutCounts,
     limbs: lim.counts,
     uncovered,
+    holeKinds: kinds,
     drift,
     hidden: [...hiddenUses].map(([layer, readBy]) => ({ layer, readBy })),
     seamRule,
@@ -2939,11 +3015,18 @@ export interface DriftBodies {
    * (`seamCandidates`) — with its pixel count, most first, then by name.
    */
   holders: Array<{ part: string; px: number }>;
+  /**
+   * Over every pixel of the bodies, the top-most part drawn behind `part` at
+   * alpha >= `CORE_ALPHA` whose colour is within `DRIFT_LIMIT` of the painting
+   * (issue #351), with its pixel count, most first, then by name.
+   */
+  behind?: Array<{ part: string; px: number }>;
 }
 
 /**
  * A part's refused bodies that another part holds in the draw order (issue
- * #255).
+ * #255) or that a part drawn behind it matches within `DRIFT_LIMIT` of the
+ * painting (issue #351).
  *
  * ⚖️ Invariant: `refused` is the part's projection core pixels whose layer
  * colour is more than `DRIFT_LIMIT` off the painting (`projectSource`'s
@@ -2953,32 +3036,36 @@ export interface DriftBodies {
  * uncovered layer's, and the stage passes the same bar (`bodyMinPx`).
  * `holderAt` is, per rig pixel, the index into `names` of the top-most part
  * at alpha >= `CORE_ALPHA` in draw order (-1: none), as the seam pass reads a
- * holder. The result is non-null exactly when the bodies hold a pixel whose
- * holder is another part: the plan draws that part over the body, which is
- * the signature of "this layer is not the owner here".
- *
- * Not every body: a body the part holds itself, with nothing drawn over it,
- * is See-through's colour for the part's own pixels disagreeing with the
- * painting, and on four of the five public paintings it holds bodies of
- * hundreds to tens of thousands of pixels that no other part touches (the
- * pull request that added this has the figures); a line there would name no
- * owner, which is what the line exists to name.
+ * holder. `behindAt` (optional) is, per rig pixel, the index into `names` of
+ * the top-most part drawn behind `part` at alpha >= `CORE_ALPHA` whose colour
+ * is within `DRIFT_LIMIT` of the painting (-1: none). The result is non-null
+ * exactly when the bodies hold a pixel whose holder is another part or whose
+ * `behindAt` names a part drawn behind `part` that matches the painting.
  */
-export function driftBodies(part: string, from: string, refused: Mask, minPx: number, holderAt: Int32Array, names: readonly string[]): DriftBodies | null {
+export function driftBodies(part: string, from: string, refused: Mask, minPx: number, holderAt: Int32Array, names: readonly string[], behindAt?: Int32Array): DriftBodies | null {
   let refusedPx = 0;
   for (let p = 0; p < refused.data.length; p++) refusedPx += refused.data[p];
   if (refusedPx === 0) return null;
   const { bodies, pixels } = bodiesWithPixels(refused, minPx);
   if (bodies.length === 0) return null;
   const count = new Map<string, number>();
+  const behindCount = new Map<string, number>();
   for (let p = 0; p < pixels.data.length; p++) {
-    if (pixels.data[p] === 0 || holderAt[p] < 0) continue;
-    const n = names[holderAt[p]];
-    count.set(n, (count.get(n) ?? 0) + 1);
+    if (pixels.data[p] === 0) continue;
+    if (holderAt[p] >= 0) {
+      const n = names[holderAt[p]];
+      count.set(n, (count.get(n) ?? 0) + 1);
+    }
+    if (behindAt !== undefined && behindAt[p] >= 0) {
+      const b = names[behindAt[p]];
+      if (b !== part) behindCount.set(b, (behindCount.get(b) ?? 0) + 1);
+    }
   }
-  if (![...count.keys()].some((n) => n !== part)) return null;
+  const hasFront = [...count.keys()].some((n) => n !== part);
+  if (!hasFront && behindCount.size === 0) return null;
   const holders = [...count.entries()].map(([q, px]) => ({ part: q, px })).sort((a, b) => b.px - a.px || (a.part < b.part ? -1 : a.part > b.part ? 1 : 0));
-  return { part, from, refusedPx, minPx, bodies, holders };
+  const behind = [...behindCount.entries()].map(([q, px]) => ({ part: q, px })).sort((a, b) => b.px - a.px || (a.part < b.part ? -1 : a.part > b.part ? 1 : 0));
+  return { part, from, refusedPx, minPx, bodies, holders, ...(behind.length > 0 ? { behind } : {}) };
 }
 
 /**
@@ -2988,15 +3075,22 @@ export function driftBodies(part: string, from: string, refused: Mask, minPx: nu
  * off the painting, max channel), in a body of 196 px at 16,12 14x14 (at
  * least 150 px past a 5x5 opening); by the plan's draw order "face" holds 196
  * px of it (the top-most part at alpha >= 250), drawn in front of "topwear"`.
+ * When `behind` is non-empty (issue #351), names the part(s) drawn behind
+ * `part` whose colour is within `DRIFT_LIMIT` of the painting.
  */
 export function driftLine(d: DriftBodies): string {
   const total = d.bodies.reduce((a, b) => a + b.px, 0);
   const big = d.bodies[0];
   const held = d.bodies.length > 1 ? `${d.bodies.length} bodies of ${total} px, the largest ${big.px} px at ${bodyBox(big)}` : `a body of ${big.px} px at ${bodyBox(big)}`;
   const others = d.holders.filter((h) => h.part !== d.part).map((h) => `"${h.part}"`);
+  const frontClause = others.length > 0 ? `, ${others.join(', ')} drawn in front of "${d.part}"` : '';
+  const behindClause =
+    d.behind !== undefined && d.behind.length > 0
+      ? `; the painting is within ${DRIFT_LIMIT} of ${d.behind.map((h) => `"${h.part}" (${h.px} px at alpha >= ${CORE_ALPHA}, drawn behind "${d.part}")`).join(', ')}`
+      : '';
   return (
     `drift: "${d.part}" refuses ${d.refusedPx} px of ${d.from} (its colour more than ${DRIFT_LIMIT} off the painting, max channel), in ${held} (at least ${fmtPx(d.minPx)} px past a ${BODY_KERNEL}x${BODY_KERNEL} opening); ` +
-    `by the plan's draw order ${d.holders.map((h) => `"${h.part}" holds ${h.px} px`).join(', ')} of it (the top-most part at alpha >= ${CORE_ALPHA}), ${others.join(', ')} drawn in front of "${d.part}"`
+    `by the plan's draw order ${d.holders.map((h) => `"${h.part}" holds ${h.px} px`).join(', ')} of it (the top-most part at alpha >= ${CORE_ALPHA})${frontClause}${behindClause}`
   );
 }
 

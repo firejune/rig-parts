@@ -7560,6 +7560,49 @@ function runProposeSuite(): number {
       'the CLI refused a landscape --canvas by HEADBOX_CANVAS_PORTRAIT before issue #78; its answer is the one PR42 derives by hand',
     );
 
+    // Issue #351 item 2: when "back hair" grows the union, without_back_hair is reported and --no-back-hair leaves it out;
+    // when "back hair" pushes the box past the canvas, HEADBOX_FITS_CANVAS names the growth and --no-back-hair.
+    const withBackHairRun = headRun(100, [
+      ['face', 40, 40, 20, 20],
+      ['back hair', 20, 20, 60, 60],
+    ]);
+    const withBack = proposeHeadBox(withBackHairRun, { w: 100, h: 100 });
+    const noBack = proposeHeadBox(withBackHairRun, { w: 100, h: 100 }, { backHair: false });
+    const overBackHairRun = headRun(100, [
+      ['face', 40, 40, 20, 20],
+      ['back hair', 4, 4, 92, 92],
+    ]);
+    const overBack = refusals(() => proposeHeadBox(overBackHairRun, { w: 100, h: 100 }));
+    const overNoBack = proposeHeadBox(overBackHairRun, { w: 100, h: 100 }, { backHair: false });
+    const backHairDir = join(dir, 'back-hair-full');
+    writeRun(
+      backHairDir,
+      [
+        { name: 'face', depth: 0.5, rects: [{ x0: 40, y0: 40, x1: 60, y1: 60, colour: C }] },
+        { name: 'back hair', depth: 0.9, rects: [{ x0: 20, y0: 20, x1: 80, y1: 80, colour: C }] },
+      ],
+      100,
+    );
+    const backCli = runCli(['propose', '--head-box', '--full', backHairDir, '--canvas', '100x100']);
+    const noBackCli = runCli(['propose', '--head-box', '--full', backHairDir, '--canvas', '100x100', '--no-back-hair']);
+    const noBackJson = noBackCli.out.split('\n').filter((ln) => ln.trim() !== '').pop() ?? '';
+    say(
+      'PR45_PROPOSE_HEAD_BOX_NAMES_BACK_HAIR_CONTRIBUTION_AND_HONOURS_NO_BACK_HAIR',
+      withBack.head_box.join(',') === '16,9,83,76' &&
+        withBack.without_back_hair?.head_box?.join(',') === '39,39,60,60' &&
+        noBack.head_box.join(',') === '39,39,60,60' &&
+        noBack.without_back_hair === undefined &&
+        overBack?.problems[0].code === 'HEADBOX_FITS_CANVAS' &&
+        overBack.problems[0].detail.includes('("back hair" grew the side from 21 to 101 px; without it, [39, 39, 60, 60] (21x21) fits — pass --no-back-hair)') &&
+        overNoBack.head_box.join(',') === '39,39,60,60' &&
+        backCli.status === 0 &&
+        backCli.out.includes('back hair: without "back hair" the box is [39, 39, 60, 60], 21x21 ("back hair" adds 46 px to the side, 90% of the box\'s area; pass --no-back-hair to leave it out)') &&
+        noBackCli.status === 0 &&
+        noBackJson === '{"head_box":[39,39,60,60]}',
+      `with back hair: [${withBack.head_box.join(', ')}] (without: [${withBack.without_back_hair?.head_box?.join(', ') ?? ''}]); --no-back-hair: ${noBackJson}; 92x92 back hair -> ${overBack?.problems[0].detail ?? 'none'}`,
+      'issue #351: waist-length back hair in HEAD_TAGS can double the head crop or push it past the canvas; proposeHeadBox reports the box without "back hair" whenever it grows the union, names it in HEADBOX_FITS_CANVAS, and drops it under --no-back-hair',
+    );
+
     const cliOut = join(dir, 'cli');
     const cli = runCli(['propose', '--parts', dir, '--source', join(dir, 'painting.png'), '--out', cliOut, '--compare', cfgClean]);
     const written = existsSync(join(cliOut, 'proposal.json')) ? readFileSync(join(cliOut, 'proposal.json'), 'utf8') : '';
@@ -12982,6 +13025,38 @@ function runCheckSuite(): number {
         !tipFail.includes('travels with the breath'),
       `carried: exit ${carriedRun.status}; ${carriedFail?.trim() ?? 'no CHECK_TIP_OVER_ROOT line'}; row ${JSON.stringify(carriedRow ?? null)} | no sway: ${stillHemFail?.trim() ?? 'no CHECK_TIP_OVER_ROOT line'} | CK11's slide: ${tipFail?.trim().slice(-120) ?? 'no line'}`,
       "issue #262: scarf's skirt failed at 0.300 because its waistband rode chest, and the line blamed the chain's amplitudes; the line now names the carrier when the part posed with the breath held still passes the bar — the bar's own margin — and keeps the chain's words when it does not",
+    );
+
+    // Issue #351 item 1: when the breath carries the root AND the part with the breath's translate held still is still
+    // below the bar (because the top vertices also share weight with `hem` so the chain's tip/root ratio is < 1.4725),
+    // the refusal names both the breath carrier (`chest`) and the still-below-the-bar ratio instead of hiding the
+    // carrier behind the generic chain words.
+    const bothDir = join(dir, 'tip-carried-both');
+    writeCheckRig(bothDir, { from: ['full:bottomwear', 'full:topwear'], peak: 0, carried: { breath: 4, sway: 1 } });
+    const bothRig = JSON.parse(readFileSync(join(bothDir, 'rig.json'), 'utf8')) as {
+      skins: { default: { back: { back: { weights: Array<Array<{ bone: string; x: number; y: number; weight: number }>> } } } };
+    };
+    const w0 = bothRig.skins.default.back.back.weights;
+    w0[0] = [
+      { ...w0[0][0], weight: 0.5 },
+      { ...w0[3][0], y: w0[0][0].y, weight: 0.5 },
+    ];
+    w0[1] = [
+      { ...w0[1][0], weight: 0.5 },
+      { ...w0[2][0], y: w0[1][0].y, weight: 0.5 },
+    ];
+    writeFileSync(join(bothDir, 'rig.json'), `${JSON.stringify(bothRig, null, 2)}\n`);
+    const bothRes = runCli(['check', '--rig', bothDir, '--out', join(dir, 'tip-carried-both-out')]);
+    const bothFail = failLine(bothRes.out, 'CHECK_TIP_OVER_ROOT');
+    say(
+      'CK118_A_BREATH_CARRIED_ROOT_WHOSE_HELD_CHAIN_IS_STILL_BELOW_THE_BAR_NAMES_BOTH_CAUSES',
+      bothRes.status === 1 &&
+        bothFail !== null &&
+        bothFail.includes('it is carried by `chest`, which moves it more than the tip') &&
+        bothFail.includes('which is still below the bar (ratio ') &&
+        bothFail.includes('drop the segment on `chest` from `meshes.back.segments`'),
+      `exit ${bothRes.status}; ${bothFail?.trim() ?? 'no CHECK_TIP_OVER_ROOT line'}`,
+      'issue #351: when the breath carries the root and the held-still mesh is also below the bar, breathCarrier previously returned null and blamed only the chain\'s amplitudes; it now names the carrier and the held-still ratio together',
     );
 
     // Issue #245: a tip at rest. CK116's skirt with no sway is the case — its waistband rides `chest`, which the idle
@@ -20472,6 +20547,28 @@ function runAssembleSuite(): number {
       scatterRefused === DRIFT_SCATTER_PX && scatterRun.drift.length === 0 && result.parts.parts.find((q) => q.name === 'bottomwear')?.refused_drift_px === 200 && result.drift.length === 0 && overRun.drift.length === 0,
       `a Z checkerboard over topwear's core: ${scatterRefused} px refused (more than the 150 px bar), ${scatterRun.drift.length} drift line(s); the flat fixture's all-Z bottomwear, a 200-px body nothing is drawn over: ${result.drift.length}; the overlap fixture (NAVY inside the limit): ${overRun.drift.length}`,
       'a See-through layer disagrees with the painting a pixel here and there all over a real figure, and size alone would print on every part — the 5x5 opening keeps the line to a body; a body the part holds itself names no owner, and on four of five public paintings such bodies exist on parts nothing is drawn over',
+    );
+
+    // Issue #351 items 3 and 5: when a part holds its own refused body and a part drawn behind it matches the painting
+    // within DRIFT_LIMIT, driftBodies names the behind part; and holeKinds partitions uncoveredErrorPx into no-layer
+    // and on-a-layer components.
+    const behindDir = join(dir, 'drift-behind');
+    writeAssembleFixture(behindDir, assembleConfig({ plan: [['face', 'head', 'face'], ['topwear', 'full', 'topwear']], extend: [] }), flatPainting(), { full: DRIFT_FULL, head: DRIFT_HEAD });
+    const behindRun = assemble({ ...fixtureInput(behindDir), seamRule: 'near-white' });
+    const behindLines = behindRun.drift.map(driftLine);
+    const behindWant =
+      `drift: "topwear" refuses ${db.px} px of full:topwear (its colour more than 90 off the painting, max channel), in a body of ${db.px} px at ${db.x},${db.y} ${db.w}x${db.h} (at least 150 px past a 5x5 opening); ` +
+      `by the plan's draw order "topwear" holds ${db.px} px of it (the top-most part at alpha >= 250); the painting is within 90 of "face" (${db.px} px at alpha >= 250, drawn behind "topwear")`;
+    say(
+      'AS64_A_REFUSED_BODY_MATCHED_BY_A_PART_DRAWN_BEHIND_IT_IS_NAMED_AND_HOLE_KINDS_PARTITIONS_UNCOVERED_ERROR',
+      behindLines.length === 1 &&
+        behindLines[0] === behindWant &&
+        result.holeKinds.noLayer.px + result.holeKinds.betweenLayers.px === result.figures.uncoveredErrorPx &&
+        result.holeKinds.noLayer.px === 2443 &&
+        result.holeKinds.betweenLayers.px === 168 &&
+        r1.out.includes('uncovered error by cause: no layer (alpha <= 8 on every layer; only assemble.patches from the painting can cover): 2443 px in 1 component(s) (largest 2443 px at 0,0 64x64); on a layer (alpha > 8 on a layer, below covered alpha 128 in the parts): 168 px in 1 component(s) (largest 168 px at 4,2 16x12)'),
+      `behind drift: ${behindLines[0] ?? 'none'}; holeKinds on flat fixture: noLayer=${result.holeKinds.noLayer.px} + betweenLayers=${result.holeKinds.betweenLayers.px} = ${result.figures.uncoveredErrorPx}`,
+      'issue #351: when a part drawn in front refuses a body whose painting colour matches a part drawn behind it, driftLine names that behind part; and holeKindsLine splits uncoveredErrorPx into pixels where no See-through layer has alpha > 8 (only assemble.patches can cover) vs pixels on a layer',
     );
 
     // Issue #314: the per-part line's drift= carries its scale — refused_drift_px against the part's projection

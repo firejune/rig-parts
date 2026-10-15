@@ -4196,12 +4196,17 @@ function tipLine(inp: FullInputs, geometryPath: string, frames: number, problems
     } else if (!ok) {
       failed = true;
       // Issue #262: a root the breath carries is named with its carrier, not blamed on the chain.
+      // Issue #351: when the breath carries the root and the chain is also below the bar, or when the mesh is weighted
+      // off its chain without a breath carrier, name that too instead of only blaming the chain's amplitudes.
       const carry = breathCarrier(inp.rig, inp.motion, p.name, geometryPath, frames, { art, box: p, stage: inp.stage, shown, toward: rises ? 'up' : 'down', root: t.root, tip: t.tip });
       if (carry !== null) rows[rows.length - 1] = { ...rows[rows.length - 1], carried_by: carry.bone, breath_rig_px: round3(carry.breath), root_without_breath_rig_px: round3(carry.root), tip_without_breath_rig_px: round3(carry.tip) };
+      const offChain = carry === null && round3(t.tip) > 0 ? offChainClause(inp.rig, inp.motion, p.name) : null;
       const why =
         carry === null
-          ? "the chain's amplitudes do not grow toward the tip, or the mesh is not weighted to the chain"
-          : `the root travels with the breath (${round3(t.root)} px of ${round3(carry.breath)} px): it is carried by \`${carry.bone}\`, which moves it more than the tip; with \`${carry.keyed}\`'s translate held still the root travels ${round3(carry.root)} rig px and the tip ${round3(carry.tip)}, which the bar passes (ratio ${carry.root > 0 ? round3(carry.tip / carry.root) : 'undefined: the root moves only with it'}) — bind the root to the bone the part hangs from, not to \`${carry.bone}\``;
+          ? `the chain's amplitudes do not grow toward the tip, or the mesh is not weighted to the chain${offChain === null ? '' : `; ${offChain}`}`
+          : carry.passes
+            ? `the root travels with the breath (${round3(t.root)} px of ${round3(carry.breath)} px): it is carried by \`${carry.bone}\`, which moves it more than the tip; with \`${carry.keyed}\`'s translate held still the root travels ${round3(carry.root)} rig px and the tip ${round3(carry.tip)}, which the bar passes (ratio ${carry.root > 0 ? round3(carry.tip / carry.root) : 'undefined: the root moves only with it'}) — bind the root to the bone the part hangs from, not to \`${carry.bone}\``
+            : `the root travels with the breath (${round3(t.root)} px of ${round3(carry.breath)} px): it is carried by \`${carry.bone}\`, which moves it more than the tip; with \`${carry.keyed}\`'s translate held still the root travels ${round3(carry.root)} rig px and the tip ${round3(carry.tip)}, which is still below the bar (ratio ${carry.root > 0 ? round3(carry.tip / carry.root) : 'undefined: the root moves only with it'}, < ${TIP_RATIO_FLOOR}) — drop the segment on \`${carry.bone}\` from \`meshes.${p.name}.segments\` (or bind the root to the bone the part hangs from, not to \`${carry.bone}\`) and grow the chain's amplitudes toward the tip`;
       problems.push({
         code: 'CHECK_TIP_OVER_ROOT',
         object: `part "${p.name}", box ${p.x},${p.y} ${p.w}x${p.h} rig px, posed by the idle's geometry${rises ? ', declared rises' : ''}`,
@@ -4216,6 +4221,52 @@ function tipLine(inp: FullInputs, geometryPath: string, frames: number, problems
   };
   if (measured === 0) return { status: 'SKIP', reason: `none of ${quoteParts(swing)} could be measured: ${rows.map((r) => `${String(r.part)}: ${String(r.unmeasured)}`).join('; ')}` };
   return { status: failed ? 'FAIL' : 'PASS', ...declared, instrument: TIP_INSTRUMENT, parts: rows, ratio_floor: TIP_RATIO_FLOOR, ...(excepted.rests.length === 0 ? {} : { rest_ratio_ceiling: TIP_REST_RATIO_CEILING }) };
+}
+
+/**
+ * When a failing weighted mesh rides a chain (`chainsCarrying`) and also carries positive weight on a bone off that
+ * chain (neither a link nor under one, as {@link stressPlan} reads it), name the off-chain bones and their vertex
+ * counts so `CHECK_TIP_OVER_ROOT` does not only blame the chain's amplitudes (issue #351).
+ */
+function offChainClause(rig: Record<string, unknown>, motion: Record<string, unknown>, part: string): string | null {
+  const bones = (Array.isArray(rig.bones) ? rig.bones : []).filter(isRecord).filter((b) => typeof b.name === 'string');
+  const parent = new Map(bones.map((b) => [String(b.name), typeof b.parent === 'string' ? b.parent : null]));
+  const skins = isRecord(rig.skins) ? rig.skins : {};
+  const skin = isRecord(skins.default) ? skins.default : {};
+  const onSlot = skin[part];
+  const atts: unknown[] = isRecord(onSlot) ? Object.values(onSlot) : [];
+  const weighted = atts.filter((a): a is Record<string, unknown> & { weights: unknown[] } => isRecord(a) && Array.isArray(a.weights));
+  if (weighted.length === 0) return null;
+  const { found } = chainsCarrying(rig, motion, part);
+  if (found.length === 0) return null;
+  const links = new Set(found.flat());
+  const onChain = (b: string): boolean => {
+    const seen = new Set<string>();
+    for (let x: string | null = b; x !== null && !seen.has(x); x = parent.get(x) ?? null) {
+      if (links.has(x)) return true;
+      seen.add(x);
+    }
+    return false;
+  };
+  const off = new Map<string, { vertices: number; largest: number }>();
+  let of = 0;
+  for (const a of weighted) {
+    for (const v of a.weights) {
+      of++;
+      const ws = (Array.isArray(v) ? v : []).filter(isRecord).filter((w) => typeof w.bone === 'string' && typeof w.weight === 'number') as Array<{ bone: string; weight: number }>;
+      for (const w of ws) {
+        if (onChain(w.bone) || w.weight <= 0) continue;
+        const e = off.get(w.bone) ?? { vertices: 0, largest: 0 };
+        e.vertices++;
+        e.largest = Math.max(e.largest, w.weight);
+        off.set(w.bone, e);
+      }
+    }
+  }
+  if (off.size === 0) return null;
+  const list = [...off].map(([bone, e]) => `"${bone}" (${e.vertices} of ${of} vertices, largest weight ${round3(e.largest)})`).join(', ');
+  const drop = off.size === 1 ? `"${[...off.keys()][0]}"` : 'each of those bones';
+  return `it is weighted off the chain to ${list} — drop the segment on ${drop} in \`meshes.${part}.segments\`, or grow the chain's amplitudes toward the tip`;
 }
 
 /**
@@ -4239,17 +4290,16 @@ function boundBones(rig: Record<string, unknown>, part: string): Set<string> {
 const BREATH_PROPS: readonly string[] = ['translate', 'translatex', 'translatey'];
 
 /**
- * The bone a failing part's root travels with, when that is the breath's (issue #262). The breath is every idle
+ * The bone a failing part's root travels with, when that is the breath's (issues #262, #351). The breath is every idle
  * track that translates a bone ({@link BREATH_PROPS}), each read on its own: `K` the bone it keys. Its motion is
  * `K`'s world origin less where `K`'s parent carries `K`'s setup position, frame by frame — what the translate keys
  * add — and the breath's travel is that, less its frame-0 value, at its largest. The part (one weighted mesh; a
  * region is carried whole and cannot stretch) is posed again with that motion taken out of every vertex in
  * proportion to its weight on `K` and the bones under it, and its halves measured as {@link halfTravels} measures
- * them. The root travels with the breath when the breath adds more to the root's travel than to the tip's and, held
- * still, the halves pass the bar: tip >= {@link TIP_RATIO_FLOOR} x root, the tip above 0 at the line's precision
- * (round3). The margin is the bar's own, so the line names the carrier exactly when the breath is what fails it;
- * the carrier named is the bone the part is bound to ({@link boundBones}) at or under `K` that no other such bone is
- * above (the sleeve's links ride `chest`, which is the carrier). Null otherwise.
+ * them. The root travels with the breath when the breath adds more to the root's travel than to the tip's and the tip
+ * moves above 0 at the line's precision (round3); `passes` records whether, held still, the halves pass the bar
+ * (tip >= {@link TIP_RATIO_FLOOR} x root). The carrier named is the bone the part is bound to ({@link boundBones}) at
+ * or under `K` that no other such bone is above (the sleeve's links ride `chest`, which is the carrier). Null otherwise.
  */
 function breathCarrier(
   rig: Record<string, unknown>,
@@ -4258,7 +4308,7 @@ function breathCarrier(
   geometryPath: string,
   frames: number,
   m: { art: ArtMask; box: { x: number; y: number; w: number; h: number }; stage: StageBox; shown: ReadonlyArray<PosedAttachment | null>; toward: 'down' | 'up'; root: number; tip: number },
-): { bone: string; keyed: string; breath: number; root: number; tip: number } | null {
+): { bone: string; keyed: string; breath: number; root: number; tip: number; passes: boolean } | null {
   const anims = isRecord(motion.animations) ? motion.animations : {};
   const idle = isRecord(anims.idle) ? anims.idle : {};
   const keyed = [...new Set((Array.isArray(idle.tracks) ? idle.tracks : []).filter(isRecord).filter((t) => typeof t.bone === 'string' && typeof t.property === 'string' && BREATH_PROPS.includes(t.property)).map((t) => String(t.bone)))];
@@ -4316,8 +4366,8 @@ function breathCarrier(
     const held = m.shown.map((f, i) => (f === null ? null : { rest: f.rest, triangles: f.triangles, posed: f.posed.map((v, j) => v - share[j >> 1] * delta[i][j & 1]) }));
     const t = halfTravels(m.art, m.box, m.stage, held, m.toward);
     if (t.root === null || t.tip === null) continue;
-    if (!(m.root - t.root > m.tip - t.tip) || round3(t.tip) === 0 || !(t.tip >= TIP_RATIO_FLOOR * t.root)) continue;
-    return { bone: carrier, keyed: k, breath, root: t.root, tip: t.tip };
+    if (!(m.root - t.root > Math.max(0, m.tip - t.tip)) || round3(t.tip) === 0) continue;
+    return { bone: carrier, keyed: k, breath, root: t.root, tip: t.tip, passes: t.tip >= TIP_RATIO_FLOOR * t.root };
   }
   return null;
 }

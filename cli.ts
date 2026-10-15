@@ -220,11 +220,13 @@ usage:
       coverage lines after them; no ${BASIS_FILE}, as nothing is proposed.
       Exits 1 when any LINT line is printed.
 
-  rig-parts propose --head-box --full <dir | layers.json | file.psd> --canvas <W>x<H>
+  rig-parts propose --head-box --full <dir | layers.json | file.psd> --canvas <W>x<H> [--no-back-hair]
       Propose seethrough.head_box (source px, square) from the full run's
       layers for a painting of WxH px (portrait or landscape: the full run is
       mapped back through the pad inputs added), held inside the painting; a
-      shift is printed when one was needed.
+      shift is printed when one was needed. When "back hair" contributes, prints
+      the box without it and how much of the side and area it took;
+      --no-back-hair leaves "back hair" out of the box.
 
   rig-parts compare --left <file> --right <file> [--map <bonemap.json>]
       Compare two skeletons bone by bone. Each file is a config, a proposal.json
@@ -780,7 +782,7 @@ const TAKES = {
   layers: { valued: ['--export', '--template', '--canvas'], switches: [] },
   sheet: { valued: ['--source', '--layers', '--out', '--cell', '--cols'], switches: [] },
   rig: { valued: ['--config', '--parts', '--out', '--idle-keys', '--page-edges', '--pack-shape'], switches: [] },
-  propose: { valued: ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--head', '--canvas', '--keypoints', '--person', '--wrist-snap', '--grid-rule', '--cloth'], switches: ['--head-box'] },
+  propose: { valued: ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--head', '--canvas', '--keypoints', '--person', '--wrist-snap', '--grid-rule', '--cloth'], switches: ['--head-box', '--no-back-hair'] },
   compare: { valued: ['--left', '--right', '--map'], switches: [] },
   check: { valued: ['--rig', '--out', '--parts', '--source', '--page-edges', '--pack-shape', '--requirements'], switches: ['--seam-pairs', '--keep-stills'] },
   loop: { valued: ['--frames', '--out'], switches: ['--palette'] },
@@ -1081,10 +1083,16 @@ function printLint(P: PartSet, spec: { bones: CharacterConfig['bones']; meshes: 
 function cmdPropose(args: string[]): number {
   const flags = new Map<string, string>();
   let headBox = false;
+  let noBackHair = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--head-box') {
       headBox = true;
+      continue;
+    }
+    if (flag === '--no-back-hair') {
+      if (noBackHair) return usage('--no-back-hair is given twice');
+      noBackHair = true;
       continue;
     }
     if (!takesValued('propose', flag)) return usage(notTaken('propose', flag));
@@ -1104,16 +1112,23 @@ function cmdPropose(args: string[]): number {
       if (canvasArg === undefined) return usage('--head-box needs --canvas <W>x<H>, the painting\'s size in px');
       const canvas = parseCanvas(canvasArg);
       if (canvas === null) return usage(`--canvas ${canvasArg} is not <W>x<H> in integer px`);
-      const r = proposeHeadBox(readLayers(full), canvas);
+      const r = proposeHeadBox(readLayers(full), canvas, { backHair: !noBackHair });
       console.log(`rig-parts propose --head-box: ${full}`);
       console.log(`  painting ${canvas.w}x${canvas.h}; head layers ${r.layers.map(([n, c]) => `${n} ${c} px`).join(', ')}`);
       if (r.shift[0] !== 0 || r.shift[1] !== 0) {
         console.log(`  clamped: the proposed box [${r.unclamped.join(', ')}] leaves the ${canvas.w}x${canvas.h} painting; shifted by ${r.shift[0]},${r.shift[1]} px at the same size`);
       } else console.log('  inside the painting, no shift');
-      console.log(`  head_box [${r.head_box.join(', ')}], ${r.head_box[2] - r.head_box[0]}x${r.head_box[3] - r.head_box[1]}`);
+      const edge = r.head_box[2] - r.head_box[0];
+      const w = r.without_back_hair;
+      if (w !== undefined) {
+        const share = edge > 0 ? Math.round((1 - (w.edge * w.edge) / (edge * edge)) * 100) : 0;
+        console.log(`  back hair: without "back hair" the box is ${w.head_box !== null ? `[${w.head_box.join(', ')}], ` : ''}${w.edge}x${w.edge} ("back hair" adds ${edge - w.edge} px to the side, ${share}% of the box's area; pass --no-back-hair to leave it out)`);
+      }
+      console.log(`  head_box [${r.head_box.join(', ')}], ${edge}x${r.head_box[3] - r.head_box[1]}`);
       console.log(JSON.stringify({ head_box: r.head_box }));
       return EXIT_OK;
     }
+    if (noBackHair) return usage('--no-back-hair belongs to --head-box');
     if (flags.has('--canvas')) return usage('--canvas belongs to --head-box');
     const partsArg = flags.get('--parts');
     const source = flags.get('--source');
