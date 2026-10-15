@@ -14614,7 +14614,7 @@ function runAnimationFoldCases(say: (name: string, ok: boolean, detail: string, 
       "issue #320, HQ's reading: a fold the art means (a sleeve hidden behind the body) is the author's to accept, by slot and animation with a reason, as rig-c's invariants.deformMayFold is — and, as rig-c refuses an exemption that exempts nothing, an entry that matches no fold fails rather than sitting in the file after the fold it excused is gone",
     );
 
-    // CK245 — with a physics constraint the folds are read from the keyed build, which still sees the keys' fold.
+    // CK245 — with a physics constraint the folds are read with physics on and off side by side, and the keys' fold still fails.
     const physical = join(dir, 'folded', 'rig');
     const rigText = readFileSync(join(physical, 'rig.json'), 'utf8');
     const withPhys = JSON.parse(rigText) as { constraints?: unknown[] };
@@ -14623,19 +14623,114 @@ function runAnimationFoldCases(say: (name: string, ok: boolean, detail: string, 
     const phys = checked('physics', folded);
     writeFileSync(join(physical, 'rig.json'), rigText);
     const physFail = failLine(phys.out, `CHECK_${FOLD_LINE}`);
+    const physRow = rows(phys.fig)[0];
     say(
-      'CK245_WITH_A_PHYSICS_CONSTRAINT_THE_FOLDS_ARE_READ_FROM_THE_KEYED_BUILD_AND_THE_KEYS_FOLD_STILL_FAILS',
+      'CK245_WITH_A_PHYSICS_CONSTRAINT_THE_FOLDS_ARE_READ_WITH_PHYSICS_ON_AND_OFF_SIDE_BY_SIDE_AND_THE_KEYS_FOLD_STILL_FAILS',
       phys.status === 1 &&
         foldOf(phys.fig)?.physics_left_out === 1 &&
         rows(phys.fig).length === 1 &&
-        rows(phys.fig)[0].animation === 'bend' &&
+        physRow?.animation === 'bend' &&
+        physRow?.physics_on !== null &&
+        physRow?.physics_off !== null &&
+        Array.isArray(physRow?.physics_constraints) &&
+        physRow.physics_constraints.length === 0 &&
         physFail !== null &&
-        physFail.includes('rigc render --folds at 12 fps, its 1 physics constraint(s) left out: "bend": mesh "cloth"') &&
+        physFail.includes('rigc render --folds at 12 fps, with its 1 physics constraint(s) on and off (physics on: ') &&
+        physFail.includes('; physics off: ') &&
+        physFail.includes('): "bend": mesh "cloth"') &&
         Array.isArray(phys.fig?.loop_physics) &&
         !existsSync(join(phys.outDir, '_loop')) &&
         !existsSync(join(phys.outDir, '_folds')),
-      `exit ${phys.status}; physics_left_out ${String(foldOf(phys.fig)?.physics_left_out)}; ${physFail?.trim().slice(0, 200) ?? 'no FAIL line'}…; loop_physics ${JSON.stringify(phys.fig?.loop_physics ?? null)}; scratch _loop ${existsSync(join(phys.outDir, '_loop')) ? 'LEFT' : 'removed'}`,
-      "issue #320: rig-c's render steps physics by 1/fps from frame 0, so a physics fold is the sampling rate's (on the public scarf, hop folds bottomwear at 12 fps and at none of 10, 15, 24, 30, 36, 48 or 60, and at no rate with its physics left out [measured for issue #320]); the fold bar reads the keys from the one build the loop already reads them from, and leaving the physics out must not hide a fold the keys make",
+      `exit ${phys.status}; physics_left_out ${String(foldOf(phys.fig)?.physics_left_out)}; ${physFail?.trim().slice(0, 220) ?? 'no FAIL line'}…; loop_physics ${JSON.stringify(phys.fig?.loop_physics ?? null)}; scratch _loop ${existsSync(join(phys.outDir, '_loop')) ? 'LEFT' : 'removed'}`,
+      'issue #320, #363: when the rig declares a physics constraint, check poses the animations with physics on and off side by side, reporting both in check.json and the console, and a fold present with physics on and off alike still fails',
+    );
+
+    // CK505 — issue #363: a physics constraint tuned to flip a skirt (inertia 0.75, strength 100, damping 0.975 on all
+    // nine links) fails ANIMATIONS_DO_NOT_FOLD naming the mesh, the physics constraints on its bones, and the worst
+    // frame, with physics_on and physics_off reported side by side; the demo's skirt physics (inertia 0.2, strength
+    // 180 / 148.5 / 117, damping 0.85 on all nine links) passes on the same hop.
+    const skirtDir = join(dir, 'skirt-phys');
+    mkdirSync(skirtDir, { recursive: true });
+    const skirtParts = join(skirtDir, 'parts');
+    writeProposeFixture(skirtParts, CLOTH_PARTS, CLOTH_RIG);
+    const skirtProp = propose(readPartSet(skirtParts), undefined, null, DEFAULT_GRID_RULE, undefined);
+    const skirtHop = {
+      duration: 1.0,
+      tracks: [{ bone: 'root', property: 'translatey', keys: [{ t: 0, v: [0] }, { t: 0.25, v: [48] }, { t: 0.5, v: [0] }, { t: 1.0, v: [0] }] }],
+    };
+    writeFileSync(join(skirtDir, 'animations.json'), `${JSON.stringify({ spec: 'rigc-motion/1', animations: { hop: skirtHop } }, null, 2)}\n`);
+    const skirtLinks = ['skirt_r0', 'skirt_r1', 'skirt_r2', 'skirt_c0', 'skirt_c1', 'skirt_c2', 'skirt_l0', 'skirt_l1', 'skirt_l2'];
+    const skirtRig = (label: string, inertia: number, strength: number | readonly number[], damping: number): { rig: string; parts: string; status: number } => {
+      const constraints = skirtLinks.map((b, i) => ({
+        type: 'physics',
+        name: `${b}_phys`,
+        bone: b,
+        rotate: 1,
+        inertia,
+        strength: typeof strength === 'number' ? strength : strength[i % 3],
+        damping,
+        mass: 1,
+        mix: 1,
+      }));
+      const cfg = {
+        key: label,
+        assemble: { rig_scale: 0.5, plan: CLOTH_PARTS.map((p) => { const [r, t] = p.from.split(':'); return [p.name, r, t]; }) },
+        bones: skirtProp.bones,
+        meshes: skirtProp.meshes,
+        regions: skirtProp.regions,
+        constraints,
+        motion: { ...skirtProp.motion, animations_from: 'animations.json' },
+      };
+      const cfgPath = join(skirtDir, `${label}.json`);
+      writeFileSync(cfgPath, `${JSON.stringify(cfg, null, 2)}\n`);
+      const outRig = join(skirtDir, `rig-${label}`);
+      const r = runCli(['rig', '--config', cfgPath, '--parts', skirtParts, '--out', outRig]);
+      return { rig: outRig, parts: skirtParts, status: r.status };
+    };
+    const demoSkirt = skirtRig('demo-skirt', 0.2, [180, 148.5, 117], 0.85);
+    const flipSkirt = skirtRig('flip-skirt', 0.75, 100, 0.975);
+    const demoChk = checked('demo-skirt', demoSkirt);
+    const flipChk = checked('flip-skirt', flipSkirt);
+    const flipRow = rows(flipChk.fig)[0] as {
+      animation?: string;
+      slot?: string;
+      attachment?: string;
+      frames?: number;
+      worst_frame?: number;
+      worst_triangles?: number;
+      triangles?: number;
+      physics_on?: { frames?: number; worst_frame?: number; worst_triangles?: number; line?: string } | null;
+      physics_off?: unknown;
+      physics_constraints?: string[];
+    } | undefined;
+    const flipFail = failLine(flipChk.out, `CHECK_${FOLD_LINE}`);
+    const expectedPhysNames = skirtLinks.map((b) => `${b}_phys on ${b}`);
+    say(
+      'CK505_A_PHYSICS_CONSTRAINT_THAT_FLIPS_A_SKIRT_FAILS_ANIMATIONS_DO_NOT_FOLD_WITH_ON_AND_OFF_SIDE_BY_SIDE_AND_THE_DEMOS_PHYSICS_PASSES',
+      demoSkirt.status === 0 &&
+        flipSkirt.status === 0 &&
+        demoChk.status === 0 &&
+        foldOf(demoChk.fig)?.status === 'PASS' &&
+        foldOf(demoChk.fig)?.physics_left_out === 9 &&
+        rows(demoChk.fig).length === 0 &&
+        flipChk.status === 1 &&
+        foldOf(flipChk.fig)?.status === 'FAIL' &&
+        foldOf(flipChk.fig)?.physics_left_out === 9 &&
+        rows(flipChk.fig).length === 1 &&
+        flipRow?.animation === 'hop' &&
+        flipRow?.slot === 'skirt' &&
+        flipRow?.attachment === 'skirt' &&
+        flipRow?.physics_on !== null &&
+        flipRow?.physics_on !== undefined &&
+        (flipRow.physics_on.frames ?? 0) > 0 &&
+        flipRow?.physics_off === null &&
+        JSON.stringify(flipRow?.physics_constraints) === JSON.stringify(expectedPhysNames) &&
+        flipFail !== null &&
+        flipFail.includes('animation "hop", mesh "skirt" (slot "skirt")') &&
+        flipFail.includes(`physics on: ${String(flipRow?.frames)} frame(s), worst frame ${String(flipRow?.worst_frame)} (${String(flipRow?.worst_triangles)}/${String(flipRow?.triangles)} triangle(s)); physics off: 0 frame(s); physics constraint(s) on mesh "skirt": ${expectedPhysNames.join(', ')}`) &&
+        foldPrinted(flipChk.out).some((l) => l.includes('physics on:') && l.includes('physics off: 0 frame(s)') && l.includes(`physics constraint(s): ${expectedPhysNames.join(', ')}`)),
+      `demo skirt physics (inertia 0.2, strength 180/148.5/117, damping 0.85): exit ${demoChk.status}, ${String(foldOf(demoChk.fig)?.status)}, ${rows(demoChk.fig).length} folding row(s); planted skirt-flipping physics (inertia 0.75, strength 100, damping 0.975 on all 9 links): exit ${flipChk.status}, ${String(foldOf(flipChk.fig)?.status)}, physics_on ${JSON.stringify(flipRow?.physics_on ?? null)}, physics_off ${JSON.stringify(flipRow?.physics_off ?? null)}, constraints ${JSON.stringify(flipRow?.physics_constraints ?? null)}; ${flipFail?.trim().slice(0, 260) ?? 'no FAIL line'}…`,
+      'issue #363: ANIMATIONS_DO_NOT_FOLD poses the animations with physics stepping on the render clock, reports physics_on and physics_off side by side, and fails a fold that appears only with physics on naming the mesh, the physics constraints on its bones and the worst frame',
     );
 
     // CK246 — the reader: a set rigc did not write, or a folding mesh rigc printed no line for, is refused by name.

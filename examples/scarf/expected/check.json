@@ -261,9 +261,9 @@
    },
    {
     "part": "bottomwear",
-    "root_rig_px": 0.041,
+    "root_rig_px": 0.04,
     "tip_rig_px": 0.139,
-    "ratio": 3.437
+    "ratio": 3.436
    }
   ],
   "ratio_floor": 1.4725

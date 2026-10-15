@@ -1088,17 +1088,29 @@ export function judgementLine(name: string, line: JudgementLine | ReportedLine):
 }
 
 /**
- * The fold line (issues #320, #333) as the console prints it: the status, what was
- * read and at what rate, and then each folding mesh on a line of its own,
- * rigc's own words, with the declaration's why where `may_fold` takes it.
+ * The fold line (issues #320, #333, #363) as the console prints it: the status,
+ * what was read and at what rate, and then each folding mesh on a line of its
+ * own, with physics on and off side by side (and its physics constraints named
+ * when only physics folds it), rigc's own words, and the declaration's why
+ * where `may_fold` takes it.
  */
 export function foldsLines(line: FoldsLine): string[] {
-  const physics = line.physics_left_out === 0 ? '' : `, its ${line.physics_left_out} physics constraint(s) left out`;
+  const physics = line.physics_left_out === 0 ? '' : `, with its ${line.physics_left_out} physics constraint(s) on and off`;
   const head =
     `${FOLD_LINE}: ${line.status} — ${line.animations.length} animation(s) read by rigc render --folds at ${line.fps} fps${physics} (${line.animations.join(', ')}): ` +
     `${line.folding.length} folding mesh(es), ${line.folding_undeclared} not declared in may_fold (<= ${line.bar})` +
     (line.declared_not_folding.length === 0 ? '' : `; may_fold declares ${line.declared_not_folding.map((d) => `slot "${d.slot}" in "${d.animation}"`).join(', ')}, which do(es) not fold`);
-  return [head, ...line.folding.map((r) => `  folds  ${r.line}${r.declared === null ? '' : ` — declared in may_fold: ${r.declared}`}`)];
+  return [
+    head,
+    ...line.folding.map((r) => {
+      const side =
+        line.physics_left_out === 0
+          ? ''
+          : ` — physics on: ${r.physics_on === null ? '0 frame(s)' : `${r.physics_on.frames} frame(s), worst frame ${r.physics_on.worst_frame} (${r.physics_on.worst_triangles}/${r.triangles} triangle(s))`}; physics off: ${r.physics_off === null ? '0 frame(s)' : `${r.physics_off.frames} frame(s), worst frame ${r.physics_off.worst_frame} (${r.physics_off.worst_triangles}/${r.triangles} triangle(s))`}` +
+            (r.physics_constraints.length === 0 ? '' : `; physics constraint(s): ${r.physics_constraints.join(', ')}`);
+      return `  folds  ${r.line}${side}${r.declared === null ? '' : ` — declared in may_fold: ${r.declared}`}`;
+    }),
+  ];
 }
 
 /**
