@@ -957,7 +957,8 @@ export function buildRig(
       }
       e.points.forEach(([x, y], k) => {
         const n = `${e.chain}${k}`;
-        B.set(n, { name: n, parent: k === 0 ? e.parent : names[names.length - 1], x, y });
+        const inherit = e.link_inherit?.[n];
+        B.set(n, { name: n, parent: k === 0 ? e.parent : names[names.length - 1], x, y, ...(inherit === undefined ? {} : { inherit }) });
         if (names.length > 0) child.set(names[names.length - 1], [x, y]);
         names.push(n);
       });

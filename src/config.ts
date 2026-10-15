@@ -256,6 +256,8 @@ export interface ChainBones {
   parent: string;
   points: Point[];
   tip: Point;
+  /** Expanded link name -> rig-c inherit mode (issue #369); absent links keep normal inheritance. */
+  link_inherit?: Record<string, RigBoneInherit>;
 }
 
 export type BoneEntry = SingleBone | ChainBones;
@@ -1791,7 +1793,7 @@ function checkBones(c: Check, v: Json): { bones: Set<string>; chains: Map<string
     const at = `config.bones[${i}]`;
     const isChain = typeof entry === 'object' && entry !== null && 'chain' in entry;
     if (isChain) {
-      const b = c.object(at, entry, ['chain', 'parent', 'points', 'tip'], []);
+      const b = c.object(at, entry, ['chain', 'parent', 'points', 'tip'], ['link_inherit']);
       if (b === null) return;
       if ('parent' in b && c.string(`${at}.parent`, b.parent) && !bones.has(b.parent)) {
         c.fail('CONFIG_NAME_RESOLVES', `${at}.parent`, `names "${b.parent}", which is not "${ROOT_BONE}" or a bone declared above it; parents come first`);
@@ -1809,6 +1811,21 @@ function checkBones(c: Check, v: Json): { bones: Set<string>; chains: Map<string
           else if (typeof b.parent === 'string' && !parents.has(`${name}0`)) parents.set(`${name}0`, b.parent);
         });
         chains.set(name, points.length);
+        if ('link_inherit' in b) {
+          const path = `${at}.link_inherit`;
+          const links = points.map((_, k) => `${name}${k}`);
+          if (!isPlainObject(b.link_inherit)) {
+            c.fail('CONFIG_FIELD_TYPE', path, `is ${show(b.link_inherit)}; an object mapping this chain's expanded link names to rig-c inherit modes is required`);
+          } else {
+            for (const [link, mode] of Object.entries(b.link_inherit)) {
+              const field = `${path}.${link}`;
+              if (!links.includes(link)) c.fail('CONFIG_NAME_RESOLVES', field, `names "${link}", which is not a link of chain "${name}"; its declared links are ${links.map((n) => `"${n}"`).join(', ')}`);
+              if (c.string(field, mode) && !(RIG_BONE_INHERIT as readonly string[]).includes(mode)) {
+                c.fail('CONFIG_BONE_INHERIT', field, `is ${show(mode)}; one of rig-c's inherit modes, spelled as its table spells them, is required — ${RIG_BONE_INHERIT.join(', ')} (rig-c's RigBone.inherit; nothing here folds a case or maps a name)`);
+              }
+            }
+          }
+        }
       }
       return;
     }
