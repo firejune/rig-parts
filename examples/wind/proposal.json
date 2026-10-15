@@ -584,7 +584,7 @@
   "meshes": {
     "hair_back": {
       "grid": 36,
-      "r": 15,
+      "r": 36,
       "segments": [
         [
           "head",
@@ -708,7 +708,7 @@
     },
     "bottomwear": {
       "grid": 31,
-      "r": 8,
+      "r": 31,
       "segments": [
         [
           "hip",
@@ -941,7 +941,7 @@
       "name": "hairback_r0a_0_physics",
       "bone": "hairback_r0a_0",
       "rotate": 1,
-      "strength": 50,
+      "strength": 68,
       "wind": 4.5,
       "gravity": 14
     },
@@ -950,7 +950,7 @@
       "name": "hairback_r0a_1_physics",
       "bone": "hairback_r0a_1",
       "rotate": 1,
-      "strength": 50,
+      "strength": 68,
       "wind": 8,
       "gravity": 24
     },
@@ -959,7 +959,7 @@
       "name": "hairback_r0b_0_physics",
       "bone": "hairback_r0b_0",
       "rotate": 1,
-      "strength": 100,
+      "strength": 68,
       "wind": 4.5,
       "gravity": 14
     },
@@ -968,7 +968,7 @@
       "name": "hairback_r0b_1_physics",
       "bone": "hairback_r0b_1",
       "rotate": 1,
-      "strength": 100,
+      "strength": 68,
       "wind": 8,
       "gravity": 24
     },
@@ -986,7 +986,7 @@
       "name": "hairback_l0a_0_physics",
       "bone": "hairback_l0a_0",
       "rotate": 1,
-      "strength": 100,
+      "strength": 68,
       "wind": 4.5,
       "gravity": 14
     },
@@ -995,7 +995,7 @@
       "name": "hairback_l0a_1_physics",
       "bone": "hairback_l0a_1",
       "rotate": 1,
-      "strength": 100,
+      "strength": 68,
       "wind": 8,
       "gravity": 24
     },
@@ -1004,7 +1004,7 @@
       "name": "hairback_l0b_0_physics",
       "bone": "hairback_l0b_0",
       "rotate": 1,
-      "strength": 50,
+      "strength": 68,
       "wind": 4.5,
       "gravity": 14
     },
@@ -1013,7 +1013,7 @@
       "name": "hairback_l0b_1_physics",
       "bone": "hairback_l0b_1",
       "rotate": 1,
-      "strength": 50,
+      "strength": 68,
       "wind": 8,
       "gravity": 24
     },
@@ -1100,7 +1100,7 @@
       "name": "skirt_swing_physics",
       "bone": "skirt_swing",
       "rotate": 1,
-      "strength": 100,
+      "strength": 50,
       "damping": 0.85,
       "wind": 2,
       "gravity": 5
@@ -1198,7 +1198,7 @@
       "name": "skirt0a_0_physics",
       "bone": "skirt0a_0",
       "rotate": 1,
-      "strength": 50,
+      "strength": 45,
       "damping": 0.85,
       "wind": 6,
       "gravity": 17.5
@@ -1208,7 +1208,7 @@
       "name": "skirt0a_1_physics",
       "bone": "skirt0a_1",
       "rotate": 1,
-      "strength": 50,
+      "strength": 45,
       "damping": 0.85,
       "wind": 10,
       "gravity": 30
@@ -1219,7 +1219,7 @@
       "bone": "skirt0a_1",
       "x": 0.2,
       "y": 0.2,
-      "strength": 50,
+      "strength": 45,
       "damping": 0.85
     },
     {
@@ -1227,7 +1227,7 @@
       "name": "skirt0b_0_physics",
       "bone": "skirt0b_0",
       "rotate": 1,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.85,
       "wind": 6,
       "gravity": 17.5
@@ -1237,7 +1237,7 @@
       "name": "skirt0b_1_physics",
       "bone": "skirt0b_1",
       "rotate": 1,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.85,
       "wind": 10,
       "gravity": 30
@@ -1248,7 +1248,7 @@
       "bone": "skirt0b_1",
       "x": 0.2,
       "y": 0.2,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.85
     },
     {
@@ -1256,7 +1256,7 @@
       "name": "skirt1a_0_physics",
       "bone": "skirt1a_0",
       "rotate": 1,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.7,
       "wind": 6,
       "gravity": 17.5
@@ -1266,7 +1266,7 @@
       "name": "skirt1a_1_physics",
       "bone": "skirt1a_1",
       "rotate": 1,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.7,
       "wind": 10,
       "gravity": 30
@@ -1277,7 +1277,7 @@
       "bone": "skirt1a_1",
       "x": 0.2,
       "y": 0.2,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.7
     },
     {
@@ -1285,7 +1285,7 @@
       "name": "skirt1b_0_physics",
       "bone": "skirt1b_0",
       "rotate": 1,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.7,
       "wind": 6,
       "gravity": 17.5
@@ -1295,7 +1295,7 @@
       "name": "skirt1b_1_physics",
       "bone": "skirt1b_1",
       "rotate": 1,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.7,
       "wind": 10,
       "gravity": 30
@@ -1306,7 +1306,7 @@
       "bone": "skirt1b_1",
       "x": 0.2,
       "y": 0.2,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.7
     },
     {
@@ -1314,7 +1314,7 @@
       "name": "skirt2a_0_physics",
       "bone": "skirt2a_0",
       "rotate": 1,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.85,
       "wind": 6,
       "gravity": 17.5
@@ -1324,7 +1324,7 @@
       "name": "skirt2a_1_physics",
       "bone": "skirt2a_1",
       "rotate": 1,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.85,
       "wind": 10,
       "gravity": 30
@@ -1335,7 +1335,7 @@
       "bone": "skirt2a_1",
       "x": 0.2,
       "y": 0.2,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.85
     },
     {
@@ -1343,7 +1343,7 @@
       "name": "skirt2b_0_physics",
       "bone": "skirt2b_0",
       "rotate": 1,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.85,
       "wind": 6,
       "gravity": 17.5
@@ -1353,7 +1353,7 @@
       "name": "skirt2b_1_physics",
       "bone": "skirt2b_1",
       "rotate": 1,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.85,
       "wind": 10,
       "gravity": 30
@@ -1364,7 +1364,7 @@
       "bone": "skirt2b_1",
       "x": 0.2,
       "y": 0.2,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.85
     },
     {
@@ -1372,7 +1372,7 @@
       "name": "skirt3a_0_physics",
       "bone": "skirt3a_0",
       "rotate": 1,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.7,
       "wind": 6,
       "gravity": 17.5
@@ -1382,7 +1382,7 @@
       "name": "skirt3a_1_physics",
       "bone": "skirt3a_1",
       "rotate": 1,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.7,
       "wind": 10,
       "gravity": 30
@@ -1393,7 +1393,7 @@
       "bone": "skirt3a_1",
       "x": 0.2,
       "y": 0.2,
-      "strength": 100,
+      "strength": 110,
       "damping": 0.7
     },
     {
@@ -1401,7 +1401,7 @@
       "name": "skirt3b_0_physics",
       "bone": "skirt3b_0",
       "rotate": 1,
-      "strength": 50,
+      "strength": 45,
       "damping": 0.7,
       "wind": 6,
       "gravity": 17.5
@@ -1411,7 +1411,7 @@
       "name": "skirt3b_1_physics",
       "bone": "skirt3b_1",
       "rotate": 1,
-      "strength": 50,
+      "strength": 45,
       "damping": 0.7,
       "wind": 10,
       "gravity": 30
@@ -1422,7 +1422,7 @@
       "bone": "skirt3b_1",
       "x": 0.2,
       "y": 0.2,
-      "strength": 50,
+      "strength": 45,
       "damping": 0.7
     }
   ],
@@ -1431,14 +1431,14 @@
     "head frame: the bar runs through eye_r [378.0, 164.0] and eye_l [444.0, 160.0], the eye bones' origins, 66.121 px; roll 3.468 degrees (Spine's, counter-clockwise) — the line the rig turns the face bones to and declares as invariants.axes; eye midpoint [411.0, 162.0]",
     "head pitch: the nose sits — (not read: no part tagged nose) of the way from the eye midpoint to the mouth (frontal 0.474..0.630); the stem, eye midpoint -> mouth, is 0.571 of the bar (frontal 0.510..0.675); frontal ranges read on demo, scarf, the rig-c/trailer character; the turn is not reported (src/propose.ts FRONTAL_REFERENCE says why)",
     "breath: chest translatey 9.00 px peak to peak (amp 4.50, base 4.50) = 2.5 % of the torso's length, 360.0 px (neck [416, 252] -> hip [416, 612]), once per 40-frame idle at 12 fps",
-    "hair_back (back hair): config.cloth.\"back hair\" -> 1 tree(s) per side of the eye axis, from head, rooted on the eye line and tipped 4 px above its bottom, a 1-link trunk forking into 2 branches, 3 links root to tip (hairback_r0_, hairback_r0a_, hairback_r0b_, hairback_l0_, hairback_l0a_, hairback_l0b_); 10 constraint(s), physics on every link, wind 1 -> 8 and gravity 4 -> 24 root to tip (multipliers of the consumer's environment; no direction is drafted), no idle key; the recipe's own defaults, measured on its synthetic fixture (AUTHORING §3): length_ratio 0.5, strength 100/100/50",
+    "hair_back (back hair): config.cloth.\"back hair\" -> 1 tree(s) per side of the eye axis, from head, rooted on the eye line and tipped 4 px above its bottom, a 1-link trunk forking into 2 branches (tip held), 3 links root to tip (hairback_r0_, hairback_r0a_, hairback_r0b_, hairback_l0_, hairback_l0a_, hairback_l0b_); 10 constraint(s), physics on every link, wind 1 -> 8 and gravity 4 -> 24 root to tip (multipliers of the consumer's environment; no direction is drafted), no idle key; the recipe's own defaults, measured on its synthetic fixture (AUTHORING §3): length_ratio 0.5",
     "hair_front (head:front hair): bang_r, bang_c, bang_l are a template, not its locks — columns at 0.25, 0.5 and 0.75 of the face box's width, along the head's down axis (the eye line's perpendicular, roll 3.468 degrees), each rooted on the part's art; the opaque shape does not separate the locks painted inside one mass of hair, so a lock that runs elsewhere is not followed — move the chains onto the locks",
     "hair_front (head:front hair): config.cloth.\"front hair\" -> bang_r, bang_c, bang_l carry physics on both links (bang_r and bang_l the edge's strength, bang_c the trunk's; wind and gravity on the recipe's root-to-tip ramp over their two links) and no idle key; the recipe's chains, links and split shape the hanging strands, not the fringe",
     "hairpin (full:headwear): wraps a tail config.cloth.\"back hair\" drafts — 15050 of its 32314 px lie over hair_back's art, nearest hair_back's spans head's fixed segment 943, hairback_r0_0 5721, hairback_r0a_0 819, hairback_r0b_0 398, hairback_l0_0 5630, hairback_l0a_0 419, hairback_l0b_0 1120 px — so its mesh's segments are those spans and it rides the links hairback_r0_0, hairback_r0a_0, hairback_r0b_0, hairback_l0_0, hairback_l0a_0, hairback_l0b_0 with the tail, not head; no headwear bone, pendant or strand chain is drafted for it (issue #391)",
     "limb arm_r: handwear_r (full:handwear-r) is cut at the r_elbow joint into upperarm_r on sleeve_r0 and forearm_r (with the hand) on sleeve_r1, each rigid on its link with weight 1 — a bend is a rotation at the joint; assemble with this limbs block cuts the layer, and the forearm carries a cap past the elbow (its line counts the cap's pixels, and names any the layer does not hold)",
     "limb arm_l: handwear_l (full:handwear-l) is cut at the l_elbow joint into upperarm_l on sleeve_l0 and forearm_l (with the hand) on sleeve_l1, each rigid on its link with weight 1 — a bend is a rotation at the joint; assemble with this limbs block cuts the layer, and the forearm carries a cap past the elbow (its line counts the cap's pixels, and names any the layer does not hold)",
     "bottomwear (full:bottomwear): its art starts 181.0 px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root",
-    "bottomwear (bottomwear): config.cloth.\"bottomwear\" -> 4 tree(s) on one shared swing, skirt_swing (each tree's first link takes its rotation times 1.3/1/1/1.3, its setup rotation -90 degrees subtracted) from hip, rooted 20 px below its y and tipped 4 px above bottomwear's bottom, laid down the screen, a 1-link trunk forking into 2 branches, 3 links root to tip (skirt0_, skirt0a_, skirt0b_, skirt1_, skirt1a_, skirt1b_, skirt2_, skirt2a_, skirt2b_, skirt3_, skirt3a_, skirt3b_); 29 constraint(s), physics on every link, wind 2 -> 10 and gravity 5 -> 30 root to tip (multipliers of the consumer's environment; no direction is drafted), no idle key; the recipe's own defaults, measured on its synthetic fixture (AUTHORING §3): length_ratio 0.5, strength 100/100/50",
+    "bottomwear (bottomwear): config.cloth.\"bottomwear\" -> 4 tree(s) on one shared swing, skirt_swing (each tree's first link takes its rotation times 1.3/1/1/1.3, its setup rotation -90 degrees subtracted) from hip, rooted 20 px below its y and tipped 4 px above bottomwear's bottom, laid down the screen, a 1-link trunk forking into 2 branches (tip held), 3 links root to tip (skirt0_, skirt0a_, skirt0b_, skirt1_, skirt1a_, skirt1b_, skirt2_, skirt2a_, skirt2b_, skirt3_, skirt3a_, skirt3b_); 29 constraint(s), physics on every link, wind 2 -> 10 and gravity 5 -> 30 root to tip (multipliers of the consumer's environment; no direction is drafted), no idle key; the recipe's own defaults, measured on its synthetic fixture (AUTHORING §3): length_ratio 0.5",
     "limb leg_r: legwear (full:legwear) is cut at the r_knee joint into thigh_r on leg_r0 and shin_r on leg_r1, each rigid on its link with weight 1, and foot_r, shoes's share below the ankle, on bone foot_r at the r_ankle joint under leg_r1 with inherit \"noRotationOrReflection\" — the shoe keeps its setup angle while the leg turns (FEET_STAY_LEVEL); the shin carries a cap past the knee",
     "limb leg_l: legwear (full:legwear) is cut at the l_knee joint into thigh_l on leg_l0 and shin_l on leg_l1, each rigid on its link with weight 1, and foot_l, shoes's share below the ankle, on bone foot_l at the l_ankle joint under leg_l1 with inherit \"noRotationOrReflection\" — the shoe keeps its setup angle while the leg turns (FEET_STAY_LEVEL); the shin carries a cap past the knee",
     "legwear (full:legwear): one chain per leg, leg_r and leg_l — both ankles lie on its art; each runs hip -> knee -> ankle from its side's joints, the two limbs split the part between them (each pixel to the leg whose bones pass nearest it), and no idle track is written for it: the chain is drafted whatever the pose, and whether the legs move is the scene's to key or drive",

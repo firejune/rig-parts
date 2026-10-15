@@ -260,7 +260,7 @@ export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
         depths: [],
         last: [],
       };
-      const edge = r.split?.hold_tip === true ? false : outerSide(k, b);
+      const edge = r.split?.hold_tip === true && r.strength === undefined ? false : outerSide(k, b);
       for (let j = trunkLinks; j < r.links; j++) {
         ch.points.push(j === trunkLinks ? trunk.tip : pt(rows[j], fb));
         ch.why.push(j === trunkLinks ? `the fork: the trunk ${trunk.chain}'s tip` : `${rowRule(j)}, ${pyRound(fb, 6)} of the way across ${input.frame} in the 24-row band there (branch ${b} of ${into} of tree ${k})`);

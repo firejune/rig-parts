@@ -318,7 +318,7 @@ export function branchSqueezes(
   }
 
   for (const [mname, m] of Object.entries(spec.meshes)) {
-    if ('contour' in m || 'auto' in m || m.rule === 'heat') continue;
+    if ('contour' in m || 'auto' in m || m.rule === 'heat' || m.r >= m.grid) continue;
     const byFork = new Map<string, string[]>();
     for (const sp of m.segments) {
       if (typeof sp !== 'string') continue;

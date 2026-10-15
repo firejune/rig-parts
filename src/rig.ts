@@ -388,6 +388,57 @@ export function roundShares(list: readonly Influence[]): Influence[] {
   return kept;
 }
 
+/**
+ * Issue #392: on a lattice mesh whose segments include sibling branch chains
+ * forked from the same chain link with `r >= grid` (`split.hold_tip: true`),
+ * the distance rule still concentrates weights along the fork row where the
+ * trunk splits into branches and across adjacent trees' ruffled hem steps.
+ * Four Laplacian passes (`FORK_SMOOTH_PASSES`, self share 0.5, floor 0.005, cap
+ * 8 influences) diffuse each vertex's shares across its triangle neighbours
+ * before rounding with {@link roundShares}.
+ */
+export const FORK_SMOOTH_PASSES = 4;
+export const FORK_SMOOTH_SELF = 0.5;
+export const FORK_SMOOTH_FLOOR = 0.005;
+export const FORK_SMOOTH_MAX_INFLUENCES = 8;
+
+export function smoothForkShares(raw: ReadonlyArray<readonly Influence[]>, triangles: readonly number[]): Influence[][] {
+  const adj: number[][] = raw.map(() => []);
+  const addEdge = (u: number, v: number): void => {
+    if (!adj[u].includes(v)) adj[u].push(v);
+    if (!adj[v].includes(u)) adj[v].push(u);
+  };
+  for (let i = 0; i + 2 < triangles.length; i += 3) {
+    const a = triangles[i];
+    const b = triangles[i + 1];
+    const c = triangles[i + 2];
+    addEdge(a, b);
+    addEdge(b, c);
+    addEdge(c, a);
+  }
+  let cur: Influence[][] = raw.map((s) => [...s]);
+  for (let p = 0; p < FORK_SMOOTH_PASSES; p++) {
+    cur = cur.map((own, vi) => {
+      const nb = adj[vi];
+      if (nb.length === 0) return own;
+      const m = new Map<string, number>();
+      for (const { bone, weight } of own) m.set(bone, weight * FORK_SMOOTH_SELF);
+      const nbShare = (1 - FORK_SMOOTH_SELF) / nb.length;
+      for (const u of nb) {
+        for (const { bone, weight } of cur[u]) m.set(bone, (m.get(bone) ?? 0) + weight * nbShare);
+      }
+      const kept = [...m.entries()]
+        .filter(([, w]) => w >= FORK_SMOOTH_FLOOR)
+        .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+        .slice(0, FORK_SMOOTH_MAX_INFLUENCES);
+      const sum = kept.reduce((s, [, w]) => s + w, 0);
+      return roundShares(kept.map(([bone, w]) => ({ bone, weight: w / sum })));
+    });
+  }
+  return cur;
+}
+
+
 interface Bone {
   name: string;
   parent: string | null;
@@ -1855,6 +1906,7 @@ export function buildRig(
     const segsAt = dressSegsAt(p, segs);
     let emptied: { vertex: number; at: Point; capped: Influence[] } | null = null;
     let emptiedMore = 0;
+    const rawShares: Influence[][] = [];
     for (const [vi, [vx0, vy0]] of lm.vertices.entries()) {
       const wx = vx0 + ox;
       const wy = vy0 + oy;
@@ -1866,17 +1918,32 @@ export function buildRig(
         else emptiedMore++;
         continue;
       }
-      const ent: WeightEntry[] = (limits.floor === 'continuous' ? roundShares(shares) : latticeShares(shares)).map(({ bone, weight }) => {
+      rawShares.push(limits.floor === 'continuous' ? roundShares(shares) : latticeShares(shares));
+    }
+    if (emptied !== null) {
+      problems.push(nothingKeptProblem(p.name, limits.floor, emptied, emptiedMore));
+      continue;
+    }
+    const allChainLinks = new Set([...chains.values()].flat());
+    const forkCounts = new Map<string, number>();
+    for (const sp of mesh.segments) {
+      if (typeof sp !== 'string') continue;
+      const links = chains.get(sp);
+      const par = links !== undefined && links.length > 0 ? (B.get(links[0])?.parent ?? null) : null;
+      if (par !== null && allChainLinks.has(par)) forkCounts.set(par, (forkCounts.get(par) ?? 0) + 1);
+    }
+    const heldFork = heat === null && mesh.r >= mesh.grid && mesh.influences === undefined && [...forkCounts.values()].some((c) => c >= 2);
+    const finalShares = heldFork ? smoothForkShares(rawShares, lm.triangles) : rawShares;
+    for (const [vi, [vx0, vy0]] of lm.vertices.entries()) {
+      const wx = vx0 + ox;
+      const wy = vy0 + oy;
+      const ent: WeightEntry[] = finalShares[vi].map(({ bone, weight }) => {
         const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
         return { bone, x: places(x), y: places(y), weight };
       });
       weights.push(ent);
       infl += ent.length;
       maxInfl = Math.max(maxInfl, ent.length);
-    }
-    if (emptied !== null) {
-      problems.push(nothingKeptProblem(p.name, limits.floor, emptied, emptiedMore));
-      continue;
     }
     const uvs: number[] = [];
     for (const [x, y] of lm.vertices) uvs.push(pyRound(x / w, 6), pyRound(y / h, 6));
