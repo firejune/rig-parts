@@ -2813,7 +2813,7 @@ function attachedParts(meshes: Json, regions: Json): Set<string> {
  * - `part` on a tag other than `bottomwear` (`CONFIG_CLOTH_PART_ON_BOTTOMWEAR`):
  *   the field hands the skirt's recipe to a part of another tag (issue #402),
  *   and only the skirt has a recipe that part can take; whether the part
- *   exists, and is a `topwear` that hangs below the hip, is read off the parts
+ *   exists, and is a `topwear` part or its cut piece hanging below the hip, is read off the assembled parts
  *   by `propose` (`PROPOSE_CLOTH_PART`);
  * - a strength, declared or the recipe's default, whose spring is unstable at
  *   a damping the recipe runs at — k = strength·massInverse·step² at or past
@@ -2898,7 +2898,7 @@ function checkCloth(c: Check, v: Json): void {
     }
     if ('part' in r) {
       if (tag !== 'bottomwear') {
-        c.fail('CONFIG_CLOTH_PART_ON_BOTTOMWEAR', `${path}.part`, `is declared on "${tag}"; part hands the skirt's recipe (bottomwear) to a topwear part that holds a skirt (a dress) — leave it out here`);
+        c.fail('CONFIG_CLOTH_PART_ON_BOTTOMWEAR', `${path}.part`, `is declared on "${tag}"; part hands the skirt's recipe (bottomwear) to a topwear part or its cut skirt piece (a dress) — leave it out here`);
       } else c.string(`${path}.part`, r.part);
     }
     if ('swing' in r) {

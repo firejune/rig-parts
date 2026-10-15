@@ -2124,9 +2124,10 @@ export function proposeWithBasis(
       throw new PartsError([{ code: 'PROPOSE_CLOTH_PART', object: 'config.cloth."bottomwear".part', detail }]);
     };
     const q = P.recs.find((x) => x.name === name);
-    if (q === undefined) return refuse(`names "${name}", which is no part in parts.json; a topwear part whose art hangs below the hip (a dress) is required`);
-    if (q.cut_from !== undefined) return refuse(`names "${name}", a piece an assemble.cuts entry took from ${q.cut_from}; name the part the plan made, ${q.cut_from}, or leave part out`);
-    if (!tw.includes(q)) {
+    if (q === undefined) return refuse(`names "${name}", which is no part in parts.json; a topwear part or its cut skirt piece whose art hangs below the hip (a dress) is required`);
+    // An explicit name may select a topwear cut piece; automatic tag rules still exclude pieces.
+    const [run, tag] = splitFrom(q.from);
+    if (run === PAINTING_RUN || tag !== 'topwear') {
       return refuse(
         `names "${name}", from ${q.from}; ${splitFrom(q.from)[1] === 'bottomwear' ? 'a bottomwear part takes the recipe by its tag already — leave part out' : "only a topwear part takes the skirt's recipe by name (a skirt See-through returned inside topwear, a dress)"}`,
       );
@@ -2166,8 +2167,8 @@ export function proposeWithBasis(
             ['chest', rnd(along(hip, trunk.u, artExtent(mask, p, hip, trunk.u)[0])), rnd(along(hip, trunk.u, -20))],
             ['hip', rnd(along(hip, trunk.u, -20)), rnd(along(hip, trunk.u, 100))],
           ];
-    if (bw.length > 0 && bot < hip[1] + TOPWEAR_HANGS_FACE_HEIGHTS * fh) {
-      // A bodice that stops at the waist: robe chains down to the hem would fall off the art.
+    if ((bw.length > 0 || namedSkirt?.cut_from === p.name) && bot < hip[1] + TOPWEAR_HANGS_FACE_HEIGHTS * fh) {
+      // A bodice above bottomwear, including its explicitly named cut skirt: robe chains would fall off the art.
       meshes[p.name] = { grid: g, r, segments: segs };
       notes.push(`${p.name} ends at y=${bot} (hip ${pyFixed(hip[1], 0)}): no robe chains -- add a sash chain by hand if one hangs`);
       continue;

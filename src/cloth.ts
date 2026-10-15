@@ -95,7 +95,7 @@ export interface ClothRecipe {
   gravity: [number, number];
   translate?: number;
   swing?: { scales: number[] };
-  /** `bottomwear` only (issue #402): a `topwear` part the skirt's trees are drafted on as well — a dress. */
+  /** `bottomwear` only: a `topwear` part or its named cut skirt piece the skirt's trees are drafted on. */
   part?: string;
 }
 
