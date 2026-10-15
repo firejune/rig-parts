@@ -428,7 +428,7 @@ import { LEGS_APART, LEGS_JOINED, LYING_PARTS, LYING_RIG, type PoseName, POSES, 
 import { buildSheet, tileImage, tilesFrom } from './src/sheet.ts';
 import { block, constraintConfig, dustImages, dustParts, FACE_EXPECT, faceConfig, faceImages, faceParts, HEAT_STRIP_EXPECT, heatStripConfig, islandImages, LASH_CREASE, LASH_RIG, LASH_ROW, lashConfig, lashImages, lashParts, RIG_CANVAS, RIG_EXPECT, rigConfig, rigImages, rigParts, SCENE_TARGET, shoeConfig, shoeImages, shoeKick, shoeParts, TURNED_EXPECT, turnedConfig, writeRigFixture } from './fixtures/rig.ts';
 import { blinkHoldProblems, buildRig, DEFAULT_IDLE_KEYS, FACE_TIPS_AXIS_NAME, HEAD_UP_BONE, flattenRig, IDLE_DRIVES_MESHES_WHY, type MeshAttachment, PAD, type RegionAttachment, rigJsonText, type RigOutput, type RigSpec, roundShares, tipRoundingBound, writtenShares } from './src/rig.ts';
-import { type ComposedScene, composeFromFiles, IMAGE_SEP, PLATE, PLATE_IMAGE, PREFIX_SEP, SCENE_REPORT_FILE, SCENE_SPEC, scaledConstraint, unprefixedNames } from './src/scene.ts';
+import { type ComposedScene, composeFromFiles, IMAGE_SEP, PLATE, PLATE_IMAGE, PREFIX_SEP, SCENE_REPORT_FILE, SCENE_SPEC, scaledConstraint, scaledStop, unprefixedNames } from './src/scene.ts';
 import { sceneCharacterRig, sceneText, writeFlatPlate, writeSceneBuild } from './fixtures/scene.ts';
 import { localInfluences, regionWeight } from './src/localweights.ts';
 import { boneHeat as solveBoneHeat, HEAT_MAX_ITERATIONS, HEAT_SOURCE_BAND, HEAT_TOLERANCE, latticeSilhouette } from './src/heat.ts';
@@ -27942,6 +27942,363 @@ function runSceneSuite(): number {
       `--accept LOOP,gate,"" -> ${badCli.err?.problems.length ?? 0} problem(s): ${badCli.err === null ? 'none' : problemLine(badCli.err.problems[0]).slice(0, 200)}; a character's accept ["CHECK_LOOP_CLOSES"] and another's "loop" -> ${codes(badFile.err)}; on the command line, --accept loop,nope -> exit ${badRun.status}, ${(composeFail(badRun.out, 'SCENE_ACCEPT_KNOWN') ?? 'no line').slice(0, 120)}`,
       "issue #203: never invent a value — a misspelt bar, a problem code in place of the bar's name, or the gate would otherwise accept nothing, or everything, silently; the names are check's own BARS list less the gate",
     );
+
+    // ---- stops on composed characters (issue #431) -------------------------
+    {
+      const stopPhys = [
+        {
+          type: 'physics',
+          name: 'hem0_phys',
+          bone: 'hem0',
+          rotate: 1,
+          inertia: 0.5,
+          strength: 50,
+          damping: 0.85,
+          wind: 0,
+          gravity: 0,
+          mass: 1,
+          mix: 1,
+        },
+        {
+          type: 'physics',
+          name: 'hem1_phys',
+          bone: 'hem1',
+          rotate: 1,
+          inertia: 0.5,
+          strength: 50,
+          damping: 0.85,
+          wind: 0,
+          gravity: 0,
+          mass: 1,
+          mix: 1,
+        },
+      ];
+      const stop1Entry = {
+        chain: 'hem',
+        links: ['hem0'] as [string],
+        against: 'tgt',
+        at: [4, 12] as [number, number],
+        inward: 0,
+        outward: 45,
+      };
+      const stop2Entry = {
+        chain: 'hem',
+        links: ['hem0', 'hem1'] as [string, string],
+        against: 'tgt',
+        at: [4, 12] as [number, number],
+        inward: 0,
+        outward: 45,
+        lower: { inward: 0, outward: 30 },
+      };
+      const applyStopMotion = (m: Record<string, unknown>): void => {
+        const tracks = (
+          m.animations as {
+            idle: {
+              tracks: Array<{
+                bone?: string;
+                property: string;
+                keys: Array<{ t: number; v: number[] }>;
+              }>;
+            };
+          }
+        ).idle.tracks;
+        for (const t of tracks) {
+          if ((t.bone === 'hem0' || t.bone === 'hem0_ctl') && t.property === 'rotate') {
+            for (const k of t.keys) k.v = [(k.v[0] ?? 0) * 35];
+          } else if ((t.bone === 'hem1' || t.bone === 'hem1_ctl') && t.property === 'rotate') {
+            for (const k of t.keys) k.v = [(k.v[0] ?? 0) * 15];
+          }
+        }
+        tracks.push({
+          bone: 'tgt',
+          property: 'translatex',
+          keys: [
+            { t: 0, v: [0] },
+            { t: 1, v: [8] },
+            { t: 2, v: [0] },
+            { t: 3, v: [-8] },
+            { t: 4, v: [0] },
+          ],
+        });
+      };
+      const writeStopBuild = (
+        outDir: string,
+        stops: unknown[] | undefined,
+        constraints: unknown[],
+      ): void => {
+        const raw = {
+          ...constraintConfig(constraints),
+          ...(stops === undefined ? {} : { stops }),
+        };
+        const out = buildRig(
+          parseConfig(raw as Parameters<typeof parseConfig>[0]),
+          rigParts(),
+          rigImages(),
+        );
+        const rig = JSON.parse(rigJsonText(out.rig)) as Record<string, unknown>;
+        const motion = JSON.parse(rigJsonText(out.motion)) as Record<string, unknown>;
+        applyStopMotion(motion);
+        mkdirSync(join(outDir, 'rig', 'images'), { recursive: true });
+        for (const [file, img] of out.images) {
+          writeFileSync(join(outDir, 'rig', 'images', file), encodePngBytes(img));
+        }
+        writeFileSync(join(outDir, 'rig', 'rig.json'), rigJsonText(rig));
+        writeFileSync(join(outDir, 'rig', 'motion.json'), rigJsonText(motion));
+        writeFileSync(
+          join(outDir, 'parts.json'),
+          serializeParts({ ...rigParts(), scale_rig_per_source: 0.5 }),
+        );
+        mkdirSync(join(outDir, 'check'), { recursive: true });
+        writeFileSync(
+          join(outDir, 'check', 'check.json'),
+          `${JSON.stringify({ gate_spine_html_green: true, PASS: true }, null, 1)}\n`,
+        );
+      };
+      writeStopBuild(join(dir, 'stop1'), [stop1Entry], stopPhys.slice(0, 1));
+      writeStopBuild(join(dir, 'stop2'), [stop2Entry], stopPhys);
+      writeStopBuild(join(dir, 'nostop'), undefined, stopPhys.slice(0, 1));
+
+      const stopSceneBody = two({
+        characters: [
+          { id: 'a', build: 'stop1', offset: [0, 20], scale: 0.5 },
+          { id: 'b', build: 'stop2', offset: [50, 10], scale: 1 },
+        ],
+        order: ['a', 'b'],
+      });
+      const stopComp = compose(stopSceneBody);
+      const stopOut = join(dir, 'composed-stops');
+      const stopCli = runCli(['compose', '--scene', scene(stopSceneBody), '--out', stopOut]);
+      const stopUnpref =
+        stopComp.ok === null
+          ? ['not-composed']
+          : unprefixedNames(stopComp.ok.rig, stopComp.ok.motion, ['a', 'b'], true);
+      const soloStop = compose({
+        canvas: { width: 40, height: 40 },
+        characters: [{ id: 'solo', build: 'stop2', offset: [0, 0], scale: 1 }],
+        order: ['solo'],
+      }).ok;
+      const soloStopWant = readFileSync(join(dir, 'stop2', 'rig', 'rig.json'), 'utf8');
+      const soloStopGot =
+        soloStop === null
+          ? ''
+          : rigJsonText(
+              sceneUnrenamed(soloStop.rig, 'solo', sceneCharacterRig('reach').rig.name, false),
+            );
+      const expectedStops = [
+        {
+          chain: 'a:hem',
+          links: ['a:hem0'],
+          against: 'a:tgt',
+          at: [2, 6],
+          inward: 0,
+          outward: 45,
+        },
+        {
+          chain: 'b:hem',
+          links: ['b:hem0', 'b:hem1'],
+          against: 'b:tgt',
+          at: [4, 12],
+          inward: 0,
+          outward: 45,
+          lower: { inward: 0, outward: 30 },
+        },
+      ];
+      say(
+        'SC43_COMPOSE_CARRIES_1_LINK_AND_2_LINK_STOPS_WITH_PREFIXED_NAMES_AND_SCALED_AGAINST_LOCAL_OFFSET',
+        stopComp.err === null &&
+          stopCli.status === 0 &&
+          stopUnpref.length === 0 &&
+          scaledStop(stop1Entry, 1) === stop1Entry &&
+          JSON.stringify(stopComp.ok?.rig.stops) === JSON.stringify(expectedStops) &&
+          soloStopWant === soloStopGot,
+        `compose exit ${stopCli.status}; unprefixed: ${stopUnpref.length === 0 ? 'none' : stopUnpref.join(', ')}; stops: ${JSON.stringify(stopComp.ok?.rig.stops)}; solo identity: ${soloStopWant === soloStopGot ? 'byte-identical' : firstLineDiff(soloStopWant, soloStopGot) ?? 'differs'}`,
+        'issue #431: stops are part of rig-c RigInput and must compose with prefixed chain/links/against names and against-local contact offsets scaled by the character scale',
+      );
+
+      // SC44: pose verification across the idle cycle — each composed member's
+      // stop-driven bone world rotation matches its standalone build at every
+      // frame, differs from the unclamped build, and diverges when stop.at is
+      // left unscaled at scale 0.5.
+      interface PoseGeom {
+        frames: Array<{
+          bones: Array<{
+            name: string;
+            a: number;
+            c: number;
+          }>;
+        }>;
+      }
+      const rigcBin = findRigc(ROOT, process.env.PATH ?? '');
+      const renderGeom = (rigDir: string, label: string): PoseGeom => {
+        const bDir = join(dir, `build-${label}`);
+        const rDir = join(dir, `render-${label}`);
+        const bRes = spawnSync(
+          rigcBin,
+          [
+            'build',
+            '--rig',
+            join(rigDir, 'rig.json'),
+            '--motion',
+            join(rigDir, 'motion.json'),
+            '--out',
+            bDir,
+            ...packedBuildArgs(DEFAULT_PACK_MODE),
+          ],
+          { encoding: 'utf8', maxBuffer: 1 << 26 },
+        );
+        if (bRes.status !== 0) {
+          throw new Error(`rigc build (${label}) failed: ${bRes.stdout}\n${bRes.stderr}`);
+        }
+        const rRes = spawnSync(
+          rigcBin,
+          [
+            'render',
+            '--candidate',
+            bDir,
+            '--animation',
+            'idle',
+            '--fps',
+            '12',
+            '--geometry',
+            '--out',
+            rDir,
+          ],
+          { encoding: 'utf8', maxBuffer: 1 << 26 },
+        );
+        if (rRes.status !== 0) {
+          throw new Error(`rigc render (${label}) failed: ${rRes.stdout}\n${rRes.stderr}`);
+        }
+        return JSON.parse(readFileSync(join(rDir, 'idle', 'geometry.json'), 'utf8')) as PoseGeom;
+      };
+      const g1 = renderGeom(join(dir, 'stop1', 'rig'), 'g1');
+      const g2 = renderGeom(join(dir, 'stop2', 'rig'), 'g2');
+      const gNo = renderGeom(join(dir, 'nostop', 'rig'), 'gno');
+      const gComp = JSON.parse(
+        readFileSync(join(stopOut, 'check', 'idle_frames', 'idle', 'geometry.json'), 'utf8'),
+      ) as PoseGeom;
+      const rotSeries = (g: PoseGeom, boneName: string): number[] =>
+        g.frames.map((f) => {
+          const b = f.bones.find((x) => x.name === boneName);
+          if (!b) throw new Error(`missing bone ${boneName}`);
+          return (Math.atan2(b.c, b.a) * 180) / Math.PI;
+        });
+      const maxDiff = (xs: number[], ys: number[]): number =>
+        xs.reduce((m, x, i) => Math.max(m, Math.abs(x - (ys[i] ?? 0))), 0);
+      const s1Rot = rotSeries(g1, 'hem0_d');
+      const s2Rot0 = rotSeries(g2, 'hem0_d');
+      const s2Rot1 = rotSeries(g2, 'hem1_d');
+      const noRot = rotSeries(gNo, 'hem0');
+      const compARot = rotSeries(gComp, 'a:hem0_d');
+      const compBRot0 = rotSeries(gComp, 'b:hem0_d');
+      const compBRot1 = rotSeries(gComp, 'b:hem1_d');
+      const diffA = maxDiff(s1Rot, compARot);
+      const diffB0 = maxDiff(s2Rot0, compBRot0);
+      const diffB1 = maxDiff(s2Rot1, compBRot1);
+      const clampDelta = maxDiff(s1Rot, noRot);
+
+      const unscaledRigDir = join(dir, 'composed-stops-unscaled');
+      cpSync(join(stopOut, 'rig'), unscaledRigDir, { recursive: true });
+      const unscaledRig = JSON.parse(
+        readFileSync(join(unscaledRigDir, 'rig.json'), 'utf8'),
+      ) as RigSpec;
+      if (unscaledRig.stops?.[0]) {
+        unscaledRig.stops[0].at = [4, 12];
+      }
+      writeFileSync(join(unscaledRigDir, 'rig.json'), rigJsonText(unscaledRig));
+      const gUnscaled = renderGeom(unscaledRigDir, 'gunscaled');
+      const unscaledDelta = maxDiff(s1Rot, rotSeries(gUnscaled, 'a:hem0_d'));
+
+      say(
+        'SC44_COMPOSED_STOP_CLAMPING_MATCHES_STANDALONE_WORLD_ROTATIONS_UNDER_OFFSET_AND_SCALE_AND_DIVERGES_IF_AT_IS_UNSCALED',
+        diffA < 1e-3 &&
+          diffB0 < 1e-3 &&
+          diffB1 < 1e-3 &&
+          clampDelta > 5 &&
+          unscaledDelta > 2,
+        `max |d rot|: a:hem0_d vs standalone ${diffA.toFixed(6)} deg, b:hem0_d ${diffB0.toFixed(6)} deg, b:hem1_d ${diffB1.toFixed(6)} deg; clamped vs unclamped ${clampDelta.toFixed(2)} deg; unscaled at [4, 12] on scale 0.5 character -> ${unscaledDelta.toFixed(2)} deg error`,
+        'issue #431: stop.at is in the against bone local frame, so scaling by character scale (and not shifting by scene offset) preserves the stop aim geometry across every posed frame',
+      );
+
+      // SC45: planted malformed stops and unresolvable/other-character/root
+      // references in stops are all collected and refused by name.
+      writeSceneBuild(join(dir, 'stop-bad-shape'), 'reach', {
+        rig: (r) => {
+          r.stops = [
+            {
+              chain: 'hem',
+              links: ['hem0'],
+              against: 'tgt',
+              at: [4, 12],
+              inward: 30,
+              outward: 10,
+              extra: 1,
+              lower: { inward: 0, outward: 10 },
+            },
+            {
+              chain: 'hem2',
+              links: ['hem0', 'hem1'],
+              against: 'tgt',
+              at: [4, 12],
+              inward: 0,
+              outward: 20,
+            },
+          ];
+        },
+      });
+      writeSceneBuild(join(dir, 'stop-bad-ref'), 'plain', {
+        rig: (r) => {
+          r.stops = [
+            {
+              chain: 'hem',
+              links: ['root'],
+              against: 'tgt',
+              at: [4, 12],
+              inward: 0,
+              outward: 45,
+            },
+            {
+              chain: 'hem2',
+              links: ['ghost_link'],
+              against: 'ghost_against',
+              at: [4, 12],
+              inward: 0,
+              outward: 45,
+            },
+          ];
+        },
+      });
+      const badStopShape = compose(
+        two({
+          characters: [
+            { id: 'a', build: 'stop-bad-shape', offset: [0, 20] },
+            { id: 'b', build: 'reach', offset: [50, 10] },
+          ],
+          order: ['a', 'b'],
+        }),
+      );
+      const badStopRef = compose(
+        two({
+          characters: [
+            { id: 'a', build: 'stop-bad-ref', offset: [0, 20] },
+            { id: 'b', build: 'reach', offset: [50, 10] },
+          ],
+          order: ['a', 'b'],
+        }),
+      );
+      say(
+        'SC45_MALFORMED_STOP_FIELDS_OTHER_CHARACTER_STOP_BONES_UNKNOWN_STOP_BONES_AND_ROOT_IN_STOPS_ARE_REFUSED_BY_NAME',
+        has(badStopShape.err, 'SCENE_BUILD_FIELD_KNOWN', 'stops[0].extra') &&
+          has(badStopShape.err, 'SCENE_BUILD_FIELD_KNOWN', 'is 30, above outward 10; inward <= outward is required') &&
+          has(badStopShape.err, 'SCENE_BUILD_FIELD_KNOWN', 'on a 1-link stop; lower holds the links below the first') &&
+          has(badStopShape.err, 'SCENE_BUILD_FIELD_KNOWN', 'is absent and required when the stop holds 2 links') &&
+          has(badStopRef.err, 'SCENE_NAME_PREFIXED', 'character "a" rig.json stops[0] (stop "hem").against') &&
+          has(badStopRef.err, 'SCENE_ROOT_SHARED', 'character "a" rig.json stops[0] (stop "hem")') &&
+          has(badStopRef.err, 'SCENE_NAME_RESOLVES', 'character "a" rig.json stops[1] (stop "hem2").links[0]') &&
+          has(badStopRef.err, 'SCENE_NAME_RESOLVES', 'character "a" rig.json stops[1] (stop "hem2").against'),
+        `bad shape -> ${codes(badStopShape.err)} (${badStopShape.err?.problems.length ?? 0}); bad refs -> ${codes(badStopRef.err)} (${badStopRef.err?.problems.length ?? 0})`,
+        'issue #431: every stop shape fault, bone belonging to another character, unresolvable bone reference, and shared-root reference in stops is collected and refused with its rule and field name',
+      );
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

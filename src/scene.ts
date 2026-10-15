@@ -16,12 +16,13 @@
  * `rig/images/`, `parts.json` and `check/check.json`:
  *
  * - **Names, totally.** Every bone, slot, attachment (skin entry), constraint
- *   (its name and every bone or slot it names), `invariants.detached` bone,
+ *   (its name and every bone or slot it names), `stops` entry (its `chain`,
+ *   its `links` and its `against`; issue #431), `invariants.detached` bone,
  *   `invariants.axes` entry (its name, its `through` and its `bones`; issue #239),
  *   track, group and easing of character `<id>` is renamed `<id>:<name>`
  *   ({@link prefixed}); `root` is the one shared root. A name resolves to
  *   exactly one character, and nothing resolves across characters without its
- *   prefix: a constraint naming a bone its own build does not declare is
+ *   prefix: a constraint or stop naming a bone its own build does not declare is
  *   refused (`SCENE_NAME_PREFIXED` when another character has it,
  *   `SCENE_NAME_RESOLVES` when none does).
  * - **Images are the one name that cannot carry `:`.** rig-c names an
@@ -44,8 +45,8 @@
  *   is local to a bone the shift already moved. In Spine's axes it is the
  *   character's stage corner carried to the canvas's ({@link rootShift}),
  *   through `src/coords.ts`. The root is shared, so a character whose idle
- *   keys it, or whose constraint names it, is refused (`SCENE_ROOT_SHARED`):
- *   it would move every character.
+ *   keys it, or whose constraint or stop names it, is refused
+ *   (`SCENE_ROOT_SHARED`): it would move every character.
  * - **The scale, with the offset (issue #197).** `characters[].scale`, a
  *   positive number and 1 when absent, sizes the character about its stage's
  *   top-left corner: a point p of its root frame lands at `scale * p + shift`
@@ -53,7 +54,8 @@
  *   Spine's own loader multiplies by its `scale` (`SkeletonJson.js`): bone
  *   `x`, `y`, `length`; region `x`, `y` (and its drawn size, through
  *   `scaleX`/`scaleY`); each weight's bind `x`, `y`; the constraints' lengths
- *   ({@link scaledConstraint}); the translate keys and their curves'
+ *   ({@link scaledConstraint}); each stop's `at` offset in its `against` bone's
+ *   local frame ({@link scaledStop}; issue #431); the translate keys and their curves'
  *   values. Spine also scales the skeleton's `referenceScale`, which the
  *   composed skeleton holds once for every character, so a physics
  *   constraint with a nonzero `wind` or `gravity` cannot be scaled per
@@ -91,6 +93,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import type { RigStop } from 'rig-c/src/rig.ts';
 import { checkStage, gateThroughRigc, type Log } from './build.ts';
 import { ACCEPTABLE_BARS, barsNotMet, type CheckReport, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, type PackMode, requirementsNotPass, type RigcRunner } from './check.ts';
 import { CONSTRAINT_BONE_FIELDS, ROOT_BONE } from './config.ts';
@@ -382,7 +385,9 @@ export interface CharacterBuild {
 const BONE_KEYS = ['name', 'parent', 'length', 'rotation', 'x', 'y'];
 const SLOT_KEYS = ['name', 'bone', 'attachment'];
 const ATTACHMENT_KEYS = ['type', 'image', 'width', 'height', 'uvs', 'triangles', 'hull', 'weights', 'x', 'y', 'rotation'];
-const RIG_KEYS = ['spec', 'name', 'images', 'skeleton', 'bones', 'slots', 'skins', 'constraints', 'invariants'];
+const RIG_KEYS = ['spec', 'name', 'images', 'skeleton', 'bones', 'slots', 'skins', 'constraints', 'stops', 'invariants'];
+const STOP_KEYS = ['chain', 'links', 'against', 'at', 'inward', 'outward', 'lower'];
+const STOP_LOWER_KEYS = ['inward', 'outward'];
 const INVARIANT_KEYS = ['idleDrivesMeshes', 'detached', 'axes'];
 const MOTION_KEYS = ['spec', 'archetype', 'cut', 'easings', 'groups', 'animations'];
 const IDLE_KEYS = ['duration', 'loop', 'note', 'tracks'];
@@ -501,6 +506,48 @@ export function readCharacterBuild(c: SceneCharacter, problems: Problem[], accep
         problems.push({ code: 'SCENE_BUILD_FIELD_KNOWN', object: `${who} rig.json bones[0]`, detail: `is ${show(root)}; {"name": "${ROOT_BONE}", "x": 0, "y": 0}, as the rig stage writes it, is required — the composed root is shared, so a character's root must carry no transform of its own` });
       }
       (Array.isArray(r.slots) ? r.slots : []).forEach((s, i) => unknown(`rig.json slots[${i}]`, s, SLOT_KEYS));
+      if ('stops' in r) {
+        if (!Array.isArray(r.stops)) {
+          problems.push({ code: 'SCENE_BUILD_FIELD_KNOWN', object: `${who} rig.json stops`, detail: `is ${show(r.stops)}; an array of stop entries is required` });
+        } else {
+          r.stops.forEach((st, i) => {
+            const where = `rig.json stops[${i}]`;
+            unknown(where, st, STOP_KEYS);
+            if (!isRecord(st)) return;
+            if (typeof st.chain !== 'string' || st.chain === '') {
+              problems.push({ code: 'SCENE_BUILD_FIELD_KNOWN', object: `${who} ${where}.chain`, detail: `is ${show(st.chain)}; a non-empty chain name is required` });
+            }
+            if (!(Array.isArray(st.links) && st.links.length > 0 && st.links.every((l) => typeof l === 'string' && l !== ''))) {
+              problems.push({ code: 'SCENE_BUILD_FIELD_KNOWN', object: `${who} ${where}.links`, detail: `is ${show(st.links)}; a non-empty list of bone names is required` });
+            }
+            if (!('against' in st)) {
+              problems.push({ code: 'SCENE_BUILD_FIELD_KNOWN', object: `${who} ${where}.against`, detail: 'is absent; a bone name is required' });
+            }
+            if (!(Array.isArray(st.at) && st.at.length === 2 && st.at.every((n) => typeof n === 'number' && Number.isFinite(n)))) {
+              problems.push({ code: 'SCENE_BUILD_FIELD_KNOWN', object: `${who} ${where}.at`, detail: `is ${show(st.at)}; [x, y], two finite numbers in against's local frame, is required` });
+            }
+            const checkBounds = (bWhere: string, bObj: Record<string, unknown>): void => {
+              const inOk = typeof bObj.inward === 'number' && Number.isFinite(bObj.inward);
+              const outOk = typeof bObj.outward === 'number' && Number.isFinite(bObj.outward);
+              if (!inOk) problems.push({ code: 'SCENE_BUILD_FIELD_KNOWN', object: `${who} ${bWhere}.inward`, detail: `is ${show(bObj.inward)}; a finite number of degrees is required` });
+              if (!outOk) problems.push({ code: 'SCENE_BUILD_FIELD_KNOWN', object: `${who} ${bWhere}.outward`, detail: `is ${show(bObj.outward)}; a finite number of degrees is required` });
+              if (inOk && outOk && (bObj.inward as number) > (bObj.outward as number)) {
+                problems.push({ code: 'SCENE_BUILD_FIELD_KNOWN', object: `${who} ${bWhere}.inward`, detail: `is ${String(bObj.inward)}, above outward ${String(bObj.outward)}; inward <= outward is required` });
+              }
+            };
+            checkBounds(where, st);
+            if ('lower' in st) {
+              unknown(`${where}.lower`, st.lower, STOP_LOWER_KEYS);
+              if (isRecord(st.lower)) checkBounds(`${where}.lower`, st.lower);
+              if (Array.isArray(st.links) && st.links.length === 1) {
+                problems.push({ code: 'SCENE_BUILD_FIELD_KNOWN', object: `${who} ${where}.lower`, detail: `is ${show(st.lower)} on a 1-link stop; lower holds the links below the first, so leave lower out when links has 1 bone` });
+              }
+            } else if (Array.isArray(st.links) && st.links.length > 1) {
+              problems.push({ code: 'SCENE_BUILD_FIELD_KNOWN', object: `${who} ${where}.lower`, detail: `is absent and required when the stop holds ${st.links.length} links (more than 1); state lower: { inward, outward } for the links below the first` });
+            }
+          });
+        }
+      }
       if (isRecord(r.invariants)) unknown('rig.json invariants', r.invariants, INVARIANT_KEYS);
       const skins = isRecord(r.skins) ? r.skins : {};
       unknown('rig.json skins', skins, ['default']);
@@ -730,6 +777,12 @@ export function scaledConstraint(con: Record<string, unknown>, s: number): Recor
       break;
   }
   return out;
+}
+
+/** A stop of a character at scale `s` (issue #431): its `at` offset in `against`'s local frame scaled by `s`, its degree bounds unchanged; `s` 1 returns `stop` as given. */
+export function scaledStop(stop: RigStop, s: number): RigStop {
+  if (s === 1) return stop;
+  return { ...stop, at: [scaledBy(stop.at[0], s), scaledBy(stop.at[1], s)] };
 }
 
 /** A bone track's keys at scale `s`: a length property's values, and its curve's value control points, scaled; any other track as given. */
@@ -962,6 +1015,11 @@ export function composeScene(
         fail('SCENE_NAME_RESOLVES', `${where}.slot`, `names the slot "${con.slot}", which character "${b.id}" does not declare`);
       }
     });
+    (b.rig.stops ?? []).forEach((st, k) => {
+      const where = `character "${b.id}" rig.json stops[${k}] (stop "${String(st.chain)}")`;
+      st.links.forEach((n, j) => ownBone(b.id, n, `${where}.links[${j}]`));
+      ownBone(b.id, st.against, `${where}.against`);
+    });
     for (const [k, d] of (b.rig.invariants?.detached ?? []).entries()) {
       ownBone(b.id, d.bone, `character "${b.id}" rig.json invariants.detached[${k}].bone`);
       ownBone(b.id, d.notUnder, `character "${b.id}" rig.json invariants.detached[${k}].notUnder`);
@@ -987,6 +1045,11 @@ export function composeScene(
         return Array.isArray(v) ? v : [v];
       });
       if (named.includes(ROOT_BONE)) fail('SCENE_ROOT_SHARED', `${where} rig.json constraints[${k}] (${String(con.type)} "${String(con.name)}")`, `names "${ROOT_BONE}", which the scene shares by every character; a constraint on it, or following it, would reach every character — name a bone of the character's own`);
+    });
+    (b.rig.stops ?? []).forEach((st, k) => {
+      if ([...st.links, st.against].includes(ROOT_BONE)) {
+        fail('SCENE_ROOT_SHARED', `${where} rig.json stops[${k}] (stop "${String(st.chain)}")`, `names "${ROOT_BONE}", which the scene shares by every character; a stop on it, or against it, would reach every character — name a bone of the character's own`);
+      }
     });
   }
   const whys = [...new Set(ready.map((b) => b.rig.invariants?.idleDrivesMeshes?.why).filter((w): w is string => w !== undefined))];
@@ -1034,6 +1097,7 @@ export function composeScene(
     images.push([PLATE_IMAGE, plate.bytes]);
   }
   const constraints: Array<Record<string, unknown>> = [];
+  const stops: RigStop[] = [];
   const detached: NonNullable<NonNullable<RigSpec['invariants']>['detached']> = [];
   const axes: NonNullable<NonNullable<RigSpec['invariants']>['axes']> = [];
   scene.characters.forEach((c) => {
@@ -1043,7 +1107,8 @@ export function composeScene(
     const [dx, dy] = rootShift(b.rig.skeleton, stage, c.offset, s);
     // At a scale other than 1 every length the character carries is scaled (issue #197): each bone's x, y and length,
     // each region's x, y (and its drawn size, by scaleX/scaleY), each weight's bind x, y, the constraints' lengths
-    // (scaledConstraint) and the translate keys (scaledTrack); what sits in root's own frame is then shifted.
+    // (scaledConstraint), each stop's at offset in against's local frame (scaledStop; issue #431) and the translate keys
+    // (scaledTrack); what sits in root's own frame is then shifted.
     for (const bone of b.rig.bones) {
       if (bone.name === ROOT_BONE) continue;
       const first = bone.parent === ROOT_BONE;
@@ -1095,6 +1160,15 @@ export function composeScene(
       if (type === 'path' && typeof con.slot === 'string') out.slot = prefixed(id, con.slot);
       constraints.push(out);
     }
+    for (const st of b.rig.stops ?? []) {
+      const scaled = scaledStop(st, s);
+      stops.push({
+        ...scaled,
+        chain: prefixed(id, st.chain),
+        links: st.links.map((l) => P(id, l)),
+        against: P(id, st.against),
+      });
+    }
     for (const d of b.rig.invariants?.detached ?? []) detached.push({ ...d, bone: P(id, d.bone), notUnder: P(id, d.notUnder) });
     // An axis entry's name is unique within one rig, and two characters each carry a "face": the name is prefixed too.
     for (const ax of b.rig.invariants?.axes ?? []) axes.push({ name: prefixed(id, ax.name), through: [P(id, ax.through[0]), P(id, ax.through[1])], bones: ax.bones.map((n) => P(id, n)), tolerance: ax.tolerance });
@@ -1106,6 +1180,7 @@ export function composeScene(
   const name = ids.join('+');
   const rig: RigSpec = { spec: 'rigc-rig/1', name, images: 'images', skeleton: stage, bones, slots, skins: { default: skin as unknown as RigSpec['skins']['default'] } };
   if (constraints.length > 0) rig.constraints = constraints;
+  if (stops.length > 0) rig.stops = stops;
   const invariants: NonNullable<RigSpec['invariants']> = {};
   if (whys.length === 1) invariants.idleDrivesMeshes = { why: whys[0] };
   if (detached.length > 0) invariants.detached = detached;
@@ -1250,6 +1325,11 @@ export function unprefixedNames(rig: RigSpec, motion: MotionSpec, ids: readonly 
       else if (Array.isArray(v)) for (const n of v) name(`constraint ${String(c.name)} ${field}`, n, false);
     }
     if (c.type === 'path') name(`constraint ${String(c.name)} slot`, c.slot, false);
+  }
+  for (const s of rig.stops ?? []) {
+    name('stop chain', s.chain, false);
+    for (const l of s.links) name(`stop ${s.chain} link`, l, false);
+    name(`stop ${s.chain} against`, s.against, false);
   }
   for (const d of rig.invariants?.detached ?? []) {
     name('invariants.detached bone', d.bone, false);
