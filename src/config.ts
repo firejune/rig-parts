@@ -725,6 +725,8 @@ export interface CharacterConfig {
   scene?: SceneSpec;
   /** The cloth and hair recipe `propose --cloth` drafts from (issue #364, `src/cloth.ts`): read by propose only, so no byte of any rig output moves with it. */
   cloth?: ClothRecipes;
+  /** The `assemble.rig_scale` (`parts.json`'s `scale_rig_per_source`) `propose` drafted the rig sections at (issue #354): absent on a hand-authored config, held equal to `assemble.rig_scale` when present. */
+  proposed_rig_scale?: number;
 }
 
 /** `config.scene` (issue #242): the declaration that the painting is a scene. It holds no field today. */
@@ -1029,9 +1031,11 @@ export interface AssembleConfig {
   /** Issue #349: read with `bones` (the joints are the bones' origins) when present. */
   limbs?: Record<string, Limb>;
   bones?: BoneEntry[];
+  /** Issue #354: the `rig_scale` `propose` drafted the rig sections at, held equal to `assemble.rig_scale` when present. */
+  proposed_rig_scale?: number;
 }
 
-const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'limbs', 'bones', 'meshes', 'regions', 'motion', 'constraints', 'stops', 'turn', 'scene', 'cloth'] as const;
+const TOP_KEYS = ['key', 'generation', 'seethrough', 'assemble', 'limbs', 'bones', 'meshes', 'regions', 'motion', 'constraints', 'stops', 'turn', 'scene', 'cloth', 'proposed_rig_scale'] as const;
 
 /**
  * The one partial entry point. It validates exactly what its door requires —
@@ -1081,6 +1085,7 @@ function parseEarlyConfigFrom(raw: Json, door: EarlyDoor, base: string | null): 
   if (door === 'assemble') {
     if ('seethrough' in t) checkSeeThrough(c, t.seethrough);
     const made = 'assemble' in t ? checkAssemble(c, t.assemble, door) : { parts: [], patches: [], cuts: [] };
+    checkProposedRigScale(c, t);
     if ('scene' in t) checkScene(c, t.scene);
     // Issue #349: the limbs' joints are their bones' origins, so the bones are read with them, and only then.
     if ('limbs' in t) {
@@ -1234,6 +1239,7 @@ function parseConfigFrom(raw: Json, base: string | null): { config: CharacterCon
   if ('generation' in t) checkGeneration(c, t.generation);
   if ('seethrough' in t) checkSeeThrough(c, t.seethrough);
   const { parts, patches, cuts } = 'assemble' in t ? checkAssemble(c, t.assemble, 'full') : { parts: [], patches: [], cuts: [] };
+  checkProposedRigScale(c, t);
   const names = 'bones' in t ? checkBones(c, t.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>(), parents: new Map<string, string>() };
   const limbs = 'limbs' in t ? checkLimbs(c, t.limbs, { parts, patches, cuts }, 'bones' in t ? names : null) : null;
   if ('meshes' in t) checkMeshes(c, t.meshes, names.bones, names.chains);
@@ -1250,6 +1256,29 @@ function parseConfigFrom(raw: Json, base: string | null): { config: CharacterCon
   if (base !== null) poseBeside(c, t.generation, base);
   refuseIfAny(c.problems);
   return { config: raw as CharacterConfig, animations };
+}
+
+/**
+ * Issue #354: `propose` records `parts.json`'s `scale_rig_per_source` on the
+ * proposal as `proposed_rig_scale`, and pasting the proposal into `config.json`
+ * carries it. When present, `assemble`, `rig` and `build` compare it against
+ * `assemble.rig_scale` and refuse a mismatch: the bones, mesh spacings, segment
+ * coordinates and motion amplitudes are in the proposed rig canvas's pixels and
+ * do not scale when `assemble.rig_scale` changes. A hand-authored config with
+ * no `proposed_rig_scale` is not refused.
+ */
+function checkProposedRigScale(c: Check, t: Record<string, Json>): void {
+  if (!('proposed_rig_scale' in t)) return;
+  if (!c.number('config.proposed_rig_scale', t.proposed_rig_scale, 'positive')) return;
+  const a = isPlainObject(t.assemble) ? t.assemble : null;
+  if (a === null || !('rig_scale' in a) || !(typeof a.rig_scale === 'number' && Number.isFinite(a.rig_scale) && a.rig_scale > 0)) return;
+  if (t.proposed_rig_scale !== a.rig_scale) {
+    c.fail(
+      'CONFIG_PROPOSED_RIG_SCALE',
+      'config.proposed_rig_scale',
+      `is ${t.proposed_rig_scale}, and config.assemble.rig_scale is ${a.rig_scale} — the bones, meshes, limbs and motion were proposed at rig_scale ${t.proposed_rig_scale} and are in that rig canvas's pixels, so they do not scale when assemble.rig_scale changes; re-run assemble and propose at rig_scale ${a.rig_scale} and paste the new proposal, or restore config.assemble.rig_scale to ${t.proposed_rig_scale}`,
+    );
+  }
 }
 
 function isPlainObject(v: Json): v is Record<string, Json> {
@@ -1404,9 +1433,9 @@ export interface SkeletonSections {
 /**
  * A `proposal.json` as `propose` writes it — `bones`, `meshes`, `regions`,
  * `motion` and `notes` (strings), `limbs` when `propose --keypoints` drafted
- * them (issue #349) and `constraints` when `propose --cloth` did (issue #364;
+ * them (issue #349), `constraints` when `propose --cloth` did (issue #364;
  * both read here since issue #372, whose `wind` example tracks such a
- * proposal) — under the full loader's own rules for those sections (issue
+ * proposal), and `proposed_rig_scale` (issue #354) — under the full loader's own rules for those sections (issue
  * #85). There is no plan to hold the meshes, regions and limbs against, so
  * the coverage rule (every plan part exactly one of a mesh or a region) is
  * not run, and a limb segment's `from` is held to no plan part (the parts
@@ -1414,9 +1443,9 @@ export interface SkeletonSections {
  * both before writing (`checkProposal`). A key the loader would not take is
  * refused by name, as in a config. Refusals name the fields `proposal.…`.
  */
-export function parseProposalSections(raw: Json): SkeletonSections & { limbs?: Record<string, Limb>; constraints?: ConfigConstraint[]; stops?: ConfigStop[] } {
+export function parseProposalSections(raw: Json): SkeletonSections & { limbs?: Record<string, Limb>; constraints?: ConfigConstraint[]; stops?: ConfigStop[]; proposed_rig_scale?: number } {
   const c = new Check();
-  const top = c.object('config', raw, ['bones', 'meshes', 'regions', 'motion'], ['notes', 'limbs', 'constraints', 'stops']);
+  const top = c.object('config', raw, ['bones', 'meshes', 'regions', 'motion'], ['notes', 'limbs', 'constraints', 'stops', 'proposed_rig_scale']);
   if (top !== null) {
     const names = 'bones' in top ? checkBones(c, top.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>(), parents: new Map<string, string>() };
     if ('limbs' in top) {
@@ -1430,10 +1459,11 @@ export function parseProposalSections(raw: Json): SkeletonSections & { limbs?: R
     if ('motion' in top) checkMotion(c, top.motion, names.bones, names.chains, 'regions' in top ? top.regions : undefined);
     if ('constraints' in top) checkConstraints(c, top.constraints, names.bones, names.parents);
     if ('stops' in top) checkStops(c, top.stops, names.bones, names.chains);
+    if ('proposed_rig_scale' in top) c.number('config.proposed_rig_scale', top.proposed_rig_scale, 'positive');
     if ('notes' in top && c.array('config.notes', top.notes, false)) (top.notes as Json[]).forEach((n, i) => c.string(`config.notes[${i}]`, n, false));
   }
   refuseIfAny(c.problems.map((p) => ({ ...p, object: p.object.replace(/^config\b/, 'proposal') })));
-  return raw as SkeletonSections & { limbs?: Record<string, Limb>; constraints?: ConfigConstraint[]; stops?: ConfigStop[] };
+  return raw as SkeletonSections & { limbs?: Record<string, Limb>; constraints?: ConfigConstraint[]; stops?: ConfigStop[]; proposed_rig_scale?: number };
 }
 
 /**

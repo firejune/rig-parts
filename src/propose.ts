@@ -278,20 +278,23 @@ export interface Proposal {
   constraints?: ConfigConstraint[];
   /** Only with `propose --full`/`--head` (issue #251, {@link draftTurn}); absent otherwise, so a proposal without them is the one written before it. */
   turn?: TurnSpec;
+  /** The `assemble.rig_scale` (`parts.json`'s `scale_rig_per_source`) its coordinates were drafted at (issue #354). */
+  proposed_rig_scale: number;
   notes: string[];
 }
 
 /**
  * Every section of a proposal that is a config section, in the order the
  * proposal writes them: what an author copies into the config (issue #375).
- * `notes` is the proposal's own and is copied nowhere. Two of them are written
- * only on request — `limbs` under `--keypoints`, `turn` under `--full`/`--head`
- * — and a `limbs` block left behind is refused at the next step, by the name of
- * every part it cuts. {@link checkProposal} reads the proposal through the config
- * loader by this list, the type below refuses a {@link Proposal} key it does not
- * hold, and the selftest's `TY18` holds every paste sentence in the documents to it.
+ * `notes` is the proposal's own and is copied nowhere. Three of them are written
+ * only on request — `limbs` under `--keypoints`, `constraints` under `--cloth`,
+ * `turn` under `--full`/`--head` — and a `limbs` block left behind is refused
+ * at the next step, by the name of every part it cuts. {@link checkProposal} reads
+ * the proposal through the config loader by this list, the type below refuses a
+ * {@link Proposal} key it does not hold, and the selftest's `TY18` holds every
+ * paste sentence in the documents to it.
  */
-export const PROPOSAL_CONFIG_SECTIONS = ['bones', 'meshes', 'regions', 'limbs', 'motion', 'constraints', 'turn'] as const satisfies ReadonlyArray<Exclude<keyof Proposal, 'notes'>>;
+export const PROPOSAL_CONFIG_SECTIONS = ['bones', 'meshes', 'regions', 'limbs', 'motion', 'constraints', 'turn', 'proposed_rig_scale'] as const satisfies ReadonlyArray<Exclude<keyof Proposal, 'notes'>>;
 
 /** A {@link Proposal} key that is neither `notes` nor in {@link PROPOSAL_CONFIG_SECTIONS}; `never` while the list is whole. */
 type UnlistedProposalSection = Exclude<keyof Proposal, 'notes' | (typeof PROPOSAL_CONFIG_SECTIONS)[number]>;
@@ -414,7 +417,7 @@ export function proposalAssemble(P: PartSet): Record<string, unknown> {
   const planned = run.filter((r) => r.cut_from === undefined && firstOf.get(r.from) === r.name);
   const pieces = run.filter((r) => r.cut_from !== undefined || firstOf.get(r.from) !== r.name);
   return {
-    rig_scale: 1,
+    rig_scale: P.rigScale,
     plan: planned.map((r) => [r.name, ...splitFrom(r.from)]),
     patches: painted.map((r) => ({ name: r.name, box: [r.x, r.y, r.x + r.w, r.y + r.h], alpha: 'box', draw: 'front' })),
     ...(pieces.length === 0
@@ -611,7 +614,7 @@ export function withTurn(p: Proposal, draft: { turn: TurnSpec | null; notes: str
     }
     turn = { pivot: turn.pivot, depths };
   }
-  return { bones: p.bones, meshes: p.meshes, regions: p.regions, ...(p.limbs === undefined ? {} : { limbs: p.limbs }), motion: p.motion, ...(p.constraints === undefined ? {} : { constraints: p.constraints }), ...(turn === null ? {} : { turn }), notes: [...p.notes, ...draft.notes] };
+  return { bones: p.bones, meshes: p.meshes, regions: p.regions, ...(p.limbs === undefined ? {} : { limbs: p.limbs }), motion: p.motion, ...(p.constraints === undefined ? {} : { constraints: p.constraints }), ...(turn === null ? {} : { turn }), proposed_rig_scale: p.proposed_rig_scale, notes: [...p.notes, ...draft.notes] };
 }
 
 // ---------------------------------------------------------------------------
@@ -622,12 +625,14 @@ export function withTurn(p: Proposal, draft: { turn: TurnSpec | null; notes: str
 export class PartSet {
   readonly W: number;
   readonly H: number;
+  readonly rigScale: number;
   readonly recs: readonly PartRecord[];
   readonly images: ReadonlyMap<string, Raster>;
   private readonly masks = new Map<string, Mask>();
 
   constructor(file: PartsFile, images: ReadonlyMap<string, Raster>) {
     [this.W, this.H] = file.rig_size;
+    this.rigScale = file.scale_rig_per_source;
     this.recs = file.parts;
     this.images = images;
   }
@@ -2515,7 +2520,7 @@ export function proposeWithBasis(
   }
   const constrained = clothConstraints.length === 0 ? {} : { constraints: clothConstraints };
   return {
-    proposal: { bones, meshes, regions, ...drafted, motion: blink === undefined ? { duration: IDLE_SECONDS, tracks: idleTracks } : { duration: IDLE_SECONDS, tracks: idleTracks, blink }, ...constrained, notes },
+    proposal: { bones, meshes, regions, ...drafted, motion: blink === undefined ? { duration: IDLE_SECONDS, tracks: idleTracks } : { duration: IDLE_SECONDS, tracks: idleTracks, blink }, ...constrained, proposed_rig_scale: P.rigScale, notes },
     basis: { frame, bones: records },
   };
 }

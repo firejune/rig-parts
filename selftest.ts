@@ -2400,7 +2400,58 @@ function runConfigSuite(): number {
   runClothConfigControls(say);
   runSkirtPartConfigControls(say);
   runStopConfigControls(say);
+  runProposedRigScaleConfigControls(say);
   return bad();
+}
+
+/**
+ * Issue #354: `propose` records `parts.json`'s `scale_rig_per_source` on the proposal as `proposed_rig_scale`, and
+ * `assemble`, `rig` and `build` compare it against `assemble.rig_scale` when present and refuse a mismatch by name.
+ */
+function runProposedRigScaleConfigControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const dir = temp('proposed-rig-scale');
+  try {
+    writeProposeFixture(dir);
+    const pPath = join(dir, 'parts.json');
+    const rawParts = JSON.parse(readFileSync(pPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(pPath, `${JSON.stringify({ ...rawParts, scale_rig_per_source: 0.5 }, null, 2)}\n`);
+    const P = readPartSet(dir);
+    const prop = propose(P);
+    const baseCfg = {
+      ...minimalConfig(),
+      seethrough: { resolution: 64, steps: 1, seed: 1, offload: false, head_box: [0, 0, 8, 8] },
+      assemble: { rig_scale: 0.5, plan: [['cloth', 'full', 'topwear'], ['eye', 'head', 'face']] },
+    };
+    const handAuthored = [refusals(() => parseEarlyConfig(baseCfg, 'assemble')), refusals(() => parseConfig(baseCfg))];
+    const matchingCfg = { ...baseCfg, proposed_rig_scale: prop.proposed_rig_scale };
+    const matching = [refusals(() => parseEarlyConfig(matchingCfg, 'assemble')), refusals(() => parseConfig(matchingCfg)), refusals(() => checkProposal(P, prop))];
+    const mismatchedCfg = { ...matchingCfg, assemble: { ...baseCfg.assemble, rig_scale: 1.0 } };
+    const misAssemble = refusals(() => parseEarlyConfig(mismatchedCfg, 'assemble'));
+    const misFull = refusals(() => parseConfig(mismatchedCfg));
+    const cfgPath = join(dir, 'mismatch.json');
+    writeFileSync(cfgPath, `${JSON.stringify(mismatchedCfg, null, 2)}\n`);
+    const cliAssemble = runCli(['assemble', '--config', cfgPath, '--source', join(dir, 'none.png'), '--full', dir, '--head', dir, '--out', join(dir, 'out-a')]);
+    const cliRig = runCli(['rig', '--config', cfgPath, '--parts', dir, '--out', join(dir, 'out-r')]);
+    const cliBuild = runCli(['build', '--config', cfgPath, '--source', join(dir, 'none.png'), '--full', dir, '--head', dir, '--out', join(dir, 'out-b')]);
+    const badType = refusals(() => parseConfig({ ...baseCfg, proposed_rig_scale: 0 }));
+    const badProp = refusals(() => parseProposalSections({ bones: prop.bones, meshes: prop.meshes, regions: prop.regions, motion: prop.motion, proposed_rig_scale: -0.5 }));
+    const wantDetail = 'is 0.5, and config.assemble.rig_scale is 1 — the bones, meshes, limbs and motion were proposed at rig_scale 0.5 and are in that rig canvas\'s pixels, so they do not scale when assemble.rig_scale changes; re-run assemble and propose at rig_scale 1 and paste the new proposal, or restore config.assemble.rig_scale to 0.5';
+    say(
+      'CF495_PROPOSED_RIG_SCALE_IS_RECORDED_BY_PROPOSE_AND_REFUSED_ON_MISMATCH_AT_ASSEMBLE_RIG_AND_BUILD',
+      prop.proposed_rig_scale === 0.5 &&
+        handAuthored.every((e) => e === null) &&
+        matching.every((e) => e === null) &&
+        misAssemble !== null && misAssemble.problems.length === 1 && misAssemble.problems[0].code === 'CONFIG_PROPOSED_RIG_SCALE' && misAssemble.problems[0].object === 'config.proposed_rig_scale' && misAssemble.problems[0].detail === wantDetail &&
+        misFull !== null && misFull.problems.length === 1 && misFull.problems[0].code === 'CONFIG_PROPOSED_RIG_SCALE' && misFull.problems[0].detail === wantDetail &&
+        [cliAssemble, cliRig, cliBuild].every((r) => r.status === 1 && r.out.includes('FAIL  CONFIG_PROPOSED_RIG_SCALE: config.proposed_rig_scale — is 0.5, and config.assemble.rig_scale is 1') && r.out.includes('re-run assemble and propose at rig_scale 1')) &&
+        badType !== null && badType.problems.length === 1 && badType.problems[0].code === 'CONFIG_FIELD_TYPE' && badType.problems[0].object === 'config.proposed_rig_scale' &&
+        badProp !== null && badProp.problems.length === 1 && badProp.problems[0].code === 'CONFIG_FIELD_TYPE' && badProp.problems[0].object === 'proposal.proposed_rig_scale',
+      `propose at scale_rig_per_source 0.5 -> proposed_rig_scale ${prop.proposed_rig_scale}; positive: at 0.5 -> ${matching.map((e) => (e === null ? 'loads' : codes(e))).join('/')}, hand-authored without the field -> ${handAuthored.map((e) => (e === null ? 'loads' : codes(e))).join('/')}; planted: assemble.rig_scale 1.0 -> assemble ${codes(misAssemble)}, full ${codes(misFull)}, CLI assemble/rig/build exits ${cliAssemble.status}/${cliRig.status}/${cliBuild.status} (${(cliBuild.out.split('\n').find((l) => l.includes('FAIL')) ?? '').trim()}); 0 / -0.5 -> ${codes(badType)} / ${codes(badProp)}`,
+      'issue #354: every coordinate propose writes is in the rig pixels of the assemble.rig_scale it read from parts.json, and changing rig_scale later leaves the bones and meshes at the old canvas size without a refusal unless the proposed scale is carried and checked',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -7752,7 +7803,7 @@ function runProposeSuite(): number {
         tNote.includes('Pivot depth 0.657258') &&
         JSON.stringify(draft.notes.slice(-TURN_DEPTH_CAVEAT.length)) === JSON.stringify(TURN_DEPTH_CAVEAT) &&
         tNote.includes('skirt -0.227723 (depth 0.75), sleeve_a 0.386139 (depth 0.5), sleeve_b -0.534654 (depth 0.875), face 1 (depth 0.25)') &&
-        JSON.stringify(Object.keys(turned)) === JSON.stringify(['bones', 'meshes', 'regions', 'motion', 'turn', 'notes']) &&
+        JSON.stringify(Object.keys(turned)) === JSON.stringify(['bones', 'meshes', 'regions', 'motion', 'turn', 'proposed_rig_scale', 'notes']) &&
         serializeProposal(withTurn(tprop, { turn: null, notes: [] })) === serializeProposal(tprop) &&
         tLoad === null,
       `turn ${JSON.stringify(draft.turn)}; note "${tNote}"; keys ${Object.keys(turned).join(', ')}; the proposal with it ${tLoad === null ? 'loads' : `is refused: ${codes(tLoad)}`}`,
@@ -19572,7 +19623,7 @@ function runAssembleSuite(): number {
         // part whose layer it shares, holds it to the attachment rule by its own name, and the rig-side readers read it.
         const set = readPartSet(split.out);
         const anchorBones = [{ name: 'anchor', parent: 'root', at: [0, 0] as [number, number] }];
-        const proposal = (regions: Record<string, string>): Proposal => ({ bones: anchorBones, meshes: {}, regions, motion: { duration: 1, tracks: [] }, notes: [] });
+        const proposal = (regions: Record<string, string>): Proposal => ({ bones: anchorBones, meshes: {}, regions, motion: { duration: 1, tracks: [] }, proposed_rig_scale: set.rigScale, notes: [] });
         const takes = refusals(() => checkProposal(set, proposal({ handwear_l: 'anchor', topwear: 'anchor', tie: 'anchor', knot: 'anchor' })));
         const loose = refusals(() => checkProposal(set, proposal({ handwear_l: 'anchor', topwear: 'anchor', tie: 'anchor' })));
         const looseLine = loose === null ? 'loads' : loose.problems.map((q) => `${q.code} ${q.object}`).join('; ');
@@ -25958,12 +26009,12 @@ function runTreeSuite(): number {
   const plants18 = [
     pasteListFaults(withDoc('README.md', (t) => t.replace(readmeLine, OLD_README_PASTE_LINE)), sections18),
     pasteListFaults(withDoc('skills/rig-parts/SKILL.md', (t) => t.replace(/\bcopy `bones`/, 'take `bones`')), sections18),
-    pasteListFaults([...text, ['examples/plant/README.md', 'Copy `motion`, `bones`, `meshes`, `regions`, `limbs`, `constraints` and `turn` into the config.\n']], sections18),
-    pasteListFaults([...text, ['examples/plant/README.md', 'Paste `bones`, `meshes`, `regions`, `limbs`, `motion`, `constraints`, `turn` and `notes` into the config.\n']], sections18),
+    pasteListFaults([...text, ['examples/plant/README.md', 'Copy `motion`, `bones`, `meshes`, `regions`, `limbs`, `constraints`, `turn` and `proposed_rig_scale` into the config.\n']], sections18),
+    pasteListFaults([...text, ['examples/plant/README.md', 'Paste `bones`, `meshes`, `regions`, `limbs`, `motion`, `constraints`, `turn`, `proposed_rig_scale` and `notes` into the config.\n']], sections18),
     pasteListFaults([...text.filter(([f]) => f !== 'CHANGELOG.md'), ['CHANGELOG.md', `${OLD_README_PASTE_LINE}\n`], ['examples/plant/README.md', 'paste `plan` and `extend_below_crop` into `config.assemble`\n']], sections18),
   ];
   const plantsHit18 =
-    plants18[0].length === 1 && new RegExp(`^README\\.md:${readmeSite?.line ?? -1} copies bones, meshes, regions, motion; .* \\(missing limbs, constraints, turn\\)$`).test(plants18[0][0]) &&
+    plants18[0].length === 1 && new RegExp(`^README\\.md:${readmeSite?.line ?? -1} copies bones, meshes, regions, motion; .* \\(missing limbs, constraints, turn, proposed_rig_scale\\)$`).test(plants18[0][0]) &&
     plants18[1].join() === 'skills/rig-parts/SKILL.md holds no sentence saying which proposal sections to copy into the config' &&
     plants18[2].length === 1 && plants18[2][0].startsWith('examples/plant/README.md:1 copies motion, bones,') && plants18[2][0].endsWith('(another order)') &&
     plants18[3].length === 1 && plants18[3][0].endsWith('(not a section: notes)') && !plants18[3][0].includes('(missing') &&
