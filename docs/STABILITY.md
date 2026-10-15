@@ -128,7 +128,7 @@ part name, `[i]` an entry of a list):
 - **limbs.&lt;limb&gt;** — required: `segments` (issue #349)
 - **limbs.&lt;limb&gt;.segments[i]** — required: `part`, `from`, `bone`; required below a joint (i > 0): `joint`; optional below a joint: `range`, `cap`, `edge`, `cap_shape`, `cut_band`
 - **bones[i]**, a single bone — required: `name`, `parent`, `at`; optional: `tip`, `inherit`
-- **bones[i]**, a chain — required: `chain`, `parent`, `points`, `tip`
+- **bones[i]**, a chain — required: `chain`, `parent`, `points`, `tip`; optional: `link_inherit`
 - **stops[i]** — required: `chain`, `against`, `at`, `inward`, `outward`; optional: `links`, `lower` (issue #404)
 - **stops[i].lower** — required: `inward`, `outward`
 - **meshes.&lt;part&gt;** — exactly one of `grid`, `contour`, `auto`; required in every mode: `r`, `segments`; optional in every mode: `exponent`, `rule`; optional with `contour` or `auto`: `ribs`; optional with `grid` or `contour`: `influences` (issue #284; beside `auto` it is refused, CONFIG_INFLUENCES_MODE); optional with `grid`: `stray` (issue #303; beside `contour` or `auto` it is refused, CONFIG_STRAY_MODE)
