@@ -80,9 +80,9 @@ export interface ClothStrength {
   edge: number;
 }
 
-/** One target's recipe, as `config.cloth.<tag>` declares it. */
+/** One target's recipe, as `config.cloth.<tag>` declares it (`chains` may be omitted on `"back hair"`, where it is derived from the tail's width at the root row). */
 export interface ClothRecipe {
-  chains: number;
+  chains?: number;
   links: number;
   split?: { at: number; into: number; hold_tip?: boolean };
   length_ratio?: number;
@@ -100,6 +100,18 @@ export interface ClothRecipe {
 }
 
 export type ClothRecipes = Partial<Record<ClothTarget, ClothRecipe>>;
+
+/**
+ * 📐 The recipe's default maximum back-hair tree count per side when `chains`
+ * is omitted on `config.cloth."back hair"` (issue #390): 2 trees per side when
+ * the tail's opaque width at the root row holds at least two mesh-grid cells
+ * (`floor(width / grid) >= 2`, `fixtures/cloth.ts`: 48 px on a 14 px grid) and
+ * every tree root lies inside the art, and fewer when the tail at the root row
+ * is narrower or a root falls off the art (`examples/wind`: 45 px on the r side
+ * and 61 px on the l side at y=162 on a 28 px grid, with inner roots at
+ * [323, 162] and [496, 162] on alpha 0 -> 1 tree per side).
+ */
+export const RECIPE_BACK_HAIR_CHAINS = 2;
 
 /**
  * 📐 The default ratio of a path's last link to its first: 0.5, the recipe's
@@ -206,7 +218,7 @@ const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
 
 /** The trees of one piece, in tree order, each trunk before its branches. */
 export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
-  const n = r.chains;
+  const n = r.chains ?? RECIPE_BACK_HAIR_CHAINS;
   const ratio = r.length_ratio ?? RECIPE_LENGTH_RATIO;
   const rows = linkRows(input.rootY, input.tipY, r.links, ratio);
   const at = r.split === undefined ? r.links : r.split.at;

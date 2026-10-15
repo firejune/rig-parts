@@ -2842,8 +2842,9 @@ function checkCloth(c: Check, v: Json): void {
   for (const tag of CLOTH_TARGETS) {
     if (!(tag in v)) continue;
     const path = `${at}.${JSON.stringify(tag)}`;
-    const r = c.object(path, v[tag], ['chains', 'links', 'wind', 'gravity'], ['split', 'length_ratio', 'strength', 'damping', 'alternate_damping', 'translate', 'swing', 'part']);
+    const r = c.object(path, v[tag], ['links', 'wind', 'gravity'], ['chains', 'split', 'length_ratio', 'strength', 'damping', 'alternate_damping', 'translate', 'swing', 'part']);
     if (r === null) continue;
+    if (tag !== 'back hair' && !('chains' in r)) c.fail('CONFIG_FIELD_PRESENT', `${path}.chains`, 'is absent and required');
     const chains = 'chains' in r && c.int(`${path}.chains`, r.chains, 1) ? (r.chains as number) : null;
     const links = 'links' in r && c.int(`${path}.links`, r.links, 1) ? (r.links as number) : null;
     if ('split' in r) {
