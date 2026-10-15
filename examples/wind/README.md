@@ -79,16 +79,16 @@ answers and does not key.
 
 ```json
 "cloth": {
-  "bottomwear": { "chains": 4, "links": 3, "split": { "at": 1, "into": 2 }, "damping": 0.85, "alternate_damping": 0.7,
-                  "wind": [2, 10], "gravity": [5, 30], "translate": 0.2, "swing": { "scales": [1.3, 1, 1, 1.3] } },
-  "back hair":  { "chains": 1, "links": 3, "split": { "at": 1, "into": 2 }, "wind": [1, 8], "gravity": [4, 24] },
+  "bottomwear": { "chains": 4, "links": 3, "split": { "at": 1, "into": 2, "hold_tip": true }, "damping": 0.85,
+                  "alternate_damping": 0.7, "strength": { "trunk": 50, "branch": 110, "edge": 45 }, "wind": [2, 10],
+                  "gravity": [5, 30], "translate": 0.2, "swing": { "scales": [1.3, 1, 1, 1.3] } },
+  "back hair":  { "chains": 1, "links": 3, "split": { "at": 1, "into": 2, "hold_tip": true },
+                  "strength": { "trunk": 100, "branch": 68, "edge": 68 }, "wind": [1, 8], "gravity": [4, 24] },
   "front hair": { "chains": 1, "links": 3, "wind": [1, 6], "gravity": [2, 12], "translate": 0.2 }
 }
 ```
 
-These are AUTHORING §3's recipe block, value for value, but for `back hair`'s
-`chains`; `length_ratio` and `strength` are left out, so the recipe's own defaults
-(0.5; 100 / 100 / 50) are what is built.
+These are AUTHORING §3's recipe block, with `back hair` at one tree a side, `split.hold_tip: true` on both forked regions so `propose` sets `r` to `grid` (`1.6`) and `rig` smooths sibling fork shares across the mesh, and explicit `strength` on `bottomwear` (`50 / 110 / 45`) and `back hair` (`100 / 68 / 68`); `length_ratio` is left out, so the recipe's own default (`0.5`) is what is built.
 
 - **`back hair`, one tree a side.** With the block's two trees a side, the inner tree of
   each side roots on the eye line over the face, where the back hair has no pixel, and
@@ -125,14 +125,14 @@ about 683 rig px from its root to its tip.
 | setting | hem, largest move against calm | of the skirt's height | hem's largest rise | back hair tip, largest move (at t = 3.333 s) |
 | --- | --- | --- | --- | --- |
 | calm, wind (0, 0) | 0 | 0 % | 0 | 0 |
-| wind (1, 0) | 15.310 rig px | 8.60 % | 6.690 rig px | 90.661 rig px (77.496) |
-| wind (3, 0) | 49.435 rig px | 27.77 % | 19.500 rig px | 257.892 rig px (218.312) |
-| wind (10, 0) | 141.114 rig px | 79.28 % | 49.593 rig px | 603.549 rig px (485.442) |
+| wind (1, 0) | 12.639 rig px | 7.10 % | 3.902 rig px | 84.640 rig px (70.319) |
+| wind (3, 0) | 39.921 rig px | 22.43 % | 14.934 rig px | 245.648 rig px (202.980) |
+| wind (10, 0) | 120.454 rig px | 67.67 % | 59.501 rig px | 599.524 rig px (479.203) |
 
 `rigc render` and `check` pose under spine-core's default world, wind (1, 0) and
 gravity (0, 1), so `check.json`'s figures are the idle under that breeze:
-`TEXTURE_STRETCH` severity 1.727 (`bottomwear`, ceiling 1.926544), `TIP_OVER_ROOT`
-`bottomwear` ratio 3.622.
+`TEXTURE_STRETCH` severity 1.283 (`hairpin`, ceiling 1.926544; `bottomwear` 1.282, `hair_back` 1.082), `TIP_OVER_ROOT`
+`bottomwear` ratio 1.816.
 
 ## Known limits
 
@@ -146,12 +146,17 @@ gravity (0, 1), so `check.json`'s figures are the idle under that breeze:
   --environment`, idle frame 200 of 200 at 60 fps, 0.916 px per rig px) are 30 at calm
   and 230 at wind (10, 0) — before the change, 2,429 and 8,363 — every one of the 230
   within 3.6 px of the hair's edge, where the two meshes' lattices differ.
-- **A strong wind lengthens the tails instead of bending them.** At wind (10, 0) the
-  right tail's tip stretches into a wisp and the skirt's right frill edge shears
-  (issue #392). The hem's largest move against calm, as a share of the skirt's 178 rig
-  px, is 8.6 % at wind 1, 27.8 % at wind 3 and 79.3 % at wind 10; the back hair's tip
-  moves 90.7, 257.9 and 603.5 rig px (rig-c 2.54.0 `render --environment`, gravity
-  (0, 1), idle frame 200 of 200 at 60 fps).
+- **Strong wind across forked trees.** Before issue #392, at wind (10, 0) the right tail's
+  tip stretched into a wisp and the skirt's right frill edge sheared (`TEXTURE_STRETCH`
+  14.432 on `hair_back` and 3.339 on `bottomwear` over the 201-frame 60 fps idle). With
+  `split.hold_tip: true`, fork-share Laplacian smoothing across held-fork meshes and the
+  branched `strength` settings (`50 / 110 / 45` on `bottomwear`, `100 / 68 / 68` on `back
+  hair`), worst `TEXTURE_STRETCH` over all 201 frames at 60 fps under wind (10, 0) is
+  1.439 on `hair_back` and 1.908 on `bottomwear`, both within `check`'s ceiling
+  (1.926544). The hem's largest move against calm, as a share of the skirt's 178 rig px,
+  is 7.1 % at wind 1, 22.4 % at wind 3 and 67.7 % at wind 10; the back hair's tip moves
+  84.6, 245.6 and 599.5 rig px (rig-c 2.54.0 `render --environment`, gravity (0, 1),
+  201 frames at 60 fps).
 - **One back-hair tree per side, not the recipe's documented two.** With two per side
   `propose` printed two LINT lines, the inner trees' roots off the hair; whether the
   default or the LINT is wrong is issue #390.

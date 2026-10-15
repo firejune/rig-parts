@@ -240,7 +240,7 @@
   "torso_parts": [
    "topwear"
   ],
-  "torso_heat_mean": 12.801,
+  "torso_heat_mean": 12.717,
   "torso_floor": 3.809,
   "feet_parts": [
    "foot_r",
@@ -315,9 +315,9 @@
    },
    {
     "part": "bottomwear",
-    "root_rig_px": 1.338,
-    "tip_rig_px": 4.844,
-    "ratio": 3.622
+    "root_rig_px": 2.463,
+    "tip_rig_px": 4.472,
+    "ratio": 1.816
    }
   ],
   "ratio_floor": 1.4725
@@ -381,43 +381,43 @@
   "meshes": 6,
   "triangles": 946,
   "frames": 41,
-  "severity": 1.727,
+  "severity": 1.283,
   "severity_ceiling": 1.926544,
   "worst": {
-   "slot": "bottomwear",
-   "triangle": 196,
+   "slot": "hairpin",
+   "triangle": 46,
    "vertices": [
-    126,
-    33,
-    127
+    13,
+    111,
+    14
    ],
    "edge": [
-    126,
-    33
+    14,
+    13
    ],
-   "frame": 40,
-   "ratio": 1.727
+   "frame": 5,
+   "ratio": 0.779
   },
-  "max_ratio": 1.727,
-  "min_ratio": 0.763,
+  "max_ratio": 1.282,
+  "min_ratio": 0.779,
   "per_mesh": [
    {
     "slot": "hair_back",
     "triangles": 256,
-    "max_ratio": 1.278,
-    "max_at": "triangle 207 (vertices 48 196 30), edge 196-30, idle frame 7",
-    "min_ratio": 0.799,
-    "min_at": "triangle 49 (vertices 12 162 13), edge 162-13, idle frame 5",
-    "severity": 1.278
+    "max_ratio": 1.068,
+    "max_at": "triangle 221 (vertices 126 125 200), edge 126-125, idle frame 5",
+    "min_ratio": 0.925,
+    "min_at": "triangle 47 (vertices 159 161 162), edge 161-162, idle frame 5",
+    "severity": 1.082
    },
    {
     "slot": "hairpin",
     "triangles": 182,
-    "max_ratio": 1.158,
+    "max_ratio": 1.166,
     "max_at": "triangle 112 (vertices 41 40 42), edge 40-42, idle frame 5",
-    "min_ratio": 0.773,
+    "min_ratio": 0.779,
     "min_at": "triangle 46 (vertices 13 111 14), edge 14-13, idle frame 5",
-    "severity": 1.294
+    "severity": 1.283
    },
    {
     "slot": "neck",
@@ -431,11 +431,11 @@
    {
     "slot": "bottomwear",
     "triangles": 204,
-    "max_ratio": 1.727,
-    "max_at": "triangle 196 (vertices 126 33 127), edge 126-33, idle frame 40",
-    "min_ratio": 0.763,
-    "min_at": "triangle 99 (vertices 23 99 24), edge 24-23, idle frame 40",
-    "severity": 1.727
+    "max_ratio": 1.282,
+    "max_at": "triangle 192 (vertices 124 35 125), edge 124-35, idle frame 40",
+    "min_ratio": 0.811,
+    "min_at": "triangle 98 (vertices 22 99 23), edge 23-22, idle frame 40",
+    "severity": 1.282
    },
    {
     "slot": "topwear",

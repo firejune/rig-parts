@@ -8262,6 +8262,75 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
       `default split: ${defaultLint.branchSqueezes.length} branch squeeze(s), skirt line ${JSON.stringify(skirtLine.slice(0, 180))}…; with hold_tip: true -> ${heldLint.branchSqueezes.length} branch squeeze(s), strengths ${JSON.stringify(heldStiff)}, skirt r ${skirtMeshHeld.r}/${skirtMeshHeld.grid}, hair_back r ${hairMeshHeld.r}/${hairMeshHeld.grid}, loads ${codes(heldLoads)}; unsplit -> ${unsplitLint.branchSqueezes.length} branch squeeze(s)`,
       'issue #403: at r < grid on a forked tree whose outer branch takes edge strength 50 while its inner sibling keeps branch strength 100, the cell boundary between their tips closes under wind and sway (0.7073 / 0.6622 vs 0.8776 / 0.8260 unsplit); lint names the fork\'s bones and the mechanism, and split.hold_tip: true keeps branch strength across the fork and raises r to grid (0.9170 / 0.8561)',
     );
+
+    // PR517 — issue #392: when split.hold_tip: true is paired with an explicit strength block, the outer branches take
+    // the declared strength.edge while r >= grid holds the fork free of branch-squeeze lint, and buildRig smooths sibling
+    // fork shares across mesh edges (FORK_SMOOTH_PASSES = 4, up to FORK_SMOOTH_MAX_INFLUENCES = 8) unless r < grid or
+    // explicit influences are declared.
+    const expRecipe: ClothRecipes = {
+      ...baseRecipe,
+      bottomwear: {
+        ...baseRecipe.bottomwear!,
+        split: { ...baseRecipe.bottomwear!.split!, hold_tip: true },
+        strength: { trunk: 50, branch: 110, edge: 45 },
+      },
+      'back hair': {
+        ...baseRecipe['back hair']!,
+        split: { ...baseRecipe['back hair']!.split!, hold_tip: true },
+        strength: { trunk: 100, branch: 68, edge: 68 },
+      },
+    };
+    const expProp = propose(P, undefined, null, DEFAULT_GRID_RULE, expRecipe);
+    const expLint = lint(P, expProp);
+    const expByName = new Map((expProp.constraints ?? []).map((c) => [`${c.type}:${c.name}`, c]));
+    const expPh = (bone: string): Record<string, unknown> | undefined => expByName.get(`physics:${bone}_physics`);
+    const expStiff = [expPh('skirt0a_1')?.strength, expPh('skirt0b_1')?.strength, expPh('skirt3a_1')?.strength, expPh('skirt3b_1')?.strength, expPh('hairback_r0_0')?.strength, expPh('hairback_r0a_1')?.strength, expPh('hairback_r0b_1')?.strength];
+    const toClothCfg = (pr: Proposal): CharacterConfig =>
+      parseConfig({
+        key: 'cloth',
+        assemble: { rig_scale: 1, plan: CLOTH_PARTS.map((p) => [p.name, ...p.from.split(':')]) },
+        bones: pr.bones,
+        meshes: pr.meshes,
+        regions: pr.regions,
+        motion: pr.motion,
+        constraints: pr.constraints,
+      });
+    const clothPartsFile: PartsFile = { rig_size: [P.W, P.H], scale_rig_per_source: P.rigScale, parts: [...P.recs], ghost_px: {} };
+    const unheldRig = buildRig(toClothCfg(prop), clothPartsFile, P.images);
+    const heldRig = buildRig(toClothCfg(expProp), clothPartsFile, P.images);
+    const cappedProp = JSON.parse(JSON.stringify(expProp)) as Proposal;
+    (cappedProp.meshes.skirt as { influences?: { maxInfluences?: number } }).influences = { maxInfluences: 2 };
+    const cappedRig = buildRig(toClothCfg(cappedProp), clothPartsFile, P.images);
+    const weightStats = (built: ReturnType<typeof buildRig>, slot: string): { mx: number; over4: number; both0: number } => {
+      const att = built.rig.skins.default[slot][slot] as MeshAttachment;
+      const w = att.weights;
+      const mx = Math.max(...w.map((vw) => vw.length));
+      const over4 = w.filter((vw) => vw.length > 4).length;
+      const both0 = w.filter((vw) => vw.some((b) => b.bone.startsWith('skirt0a_')) && vw.some((b) => b.bone.startsWith('skirt0b_'))).length;
+      return { mx, over4, both0 };
+    };
+    const uSkirt = weightStats(unheldRig, 'skirt');
+    const hSkirt = weightStats(heldRig, 'skirt');
+    const hHair = weightStats(heldRig, 'hair_back');
+    const cSkirt = weightStats(cappedRig, 'skirt');
+    say(
+      'PR517_EXPLICIT_STRENGTH_WITH_HOLD_TIP_KEEPS_DECLARED_EDGE_AND_HELD_FORK_MESHES_SMOOTH_SIBLING_SHARES',
+      JSON.stringify(expStiff) === '[45,110,110,45,100,68,68]' &&
+        expLint.branchSqueezes.length === 0 &&
+        uSkirt.mx === 4 &&
+        uSkirt.over4 === 0 &&
+        uSkirt.both0 === 29 &&
+        hSkirt.mx === 8 &&
+        hSkirt.over4 === 136 &&
+        hSkirt.both0 === 45 &&
+        hHair.mx === 8 &&
+        hHair.over4 === 133 &&
+        cSkirt.mx === 2 &&
+        cSkirt.over4 === 0 &&
+        cSkirt.both0 === 11,
+      `explicit strengths with hold_tip: ${JSON.stringify(expStiff)} (want [45,110,110,45,100,68,68]), ${expLint.branchSqueezes.length} branch squeeze(s); unheld skirt weights max ${uSkirt.mx} (${uSkirt.over4} > 4, ${uSkirt.both0} sharing skirt0a/b); held skirt max ${hSkirt.mx} (${hSkirt.over4} > 4, ${hSkirt.both0} sharing skirt0a/b), held hair_back max ${hHair.mx} (${hHair.over4} > 4); capped (maxInfluences 2) max ${cSkirt.mx} (${cSkirt.over4} > 4, ${cSkirt.both0} sharing skirt0a/b)`,
+      'issue #392: when strength is omitted, split.hold_tip: true holds outer branches to branch strength (100, PR515), and when strength is written explicitly its edge value is honoured while r >= grid keeps the fork held; in buildRig, a held-fork mesh (r >= grid, forked chains sharing a parent, no explicit influences) smooths each fork\'s branch shares across mesh edges (4 passes, floor 0.005, cap 8), while an unheld mesh (r < grid) or one with explicit influences keeps its cap',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
