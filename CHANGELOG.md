@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.25.0](https://github.com/rig-c/parts/compare/v1.24.0...v1.25.0) (2026-10-15)
+
+
+### Features
+
+* **config:** declare rig-c leg stops and pass through to rig.json ([#404](https://github.com/rig-c/parts/issues/404)) ([#421](https://github.com/rig-c/parts/issues/421)) ([3f16c50](https://github.com/rig-c/parts/commit/3f16c50c0f5ac3d12a29f41e1d21088ed40bc540))
+* **limbs:** keep overlapping hands whole on front forearm ([#400](https://github.com/rig-c/parts/issues/400)) ([#423](https://github.com/rig-c/parts/issues/423)) ([cf1346b](https://github.com/rig-c/parts/commit/cf1346bf585c590822c7a0f272fe0e459e34a633))
+* **propose:** a bottomwear piece lying on a declared dress rides the dress's trees, so one skirt carries one set ([#419](https://github.com/rig-c/parts/issues/419)) ([6355ce5](https://github.com/rig-c/parts/commit/6355ce52c9d126ce179fd5fea08e8a9f80bd0e79)), closes [#416](https://github.com/rig-c/parts/issues/416)
+
+
+### Bug Fixes
+
+* **cloth:** name branched tip squeeze and hold tips via split.hold_tip ([#403](https://github.com/rig-c/parts/issues/403)) ([#422](https://github.com/rig-c/parts/issues/422)) ([0e246bd](https://github.com/rig-c/parts/commit/0e246bdf508111caaf297db255bbf18dd99a34c7))
+* **rig:** keep skirt tree weights off declared dress bodice above hip ([#417](https://github.com/rig-c/parts/issues/417)) ([#424](https://github.com/rig-c/parts/issues/424)) ([e753fea](https://github.com/rig-c/parts/commit/e753fea120ebb8a27472caaf7220062a2d629418))
+
 ## [1.24.0](https://github.com/rig-c/parts/compare/v1.23.0...v1.24.0) (2026-10-14)
 
 
