@@ -212,6 +212,7 @@ export function sourceWeights(
   spec: AutoSpec,
   exponent: number = DISTANCE_EXPONENT,
   heat: HeatField | null = null,
+  segsAt: (wy: number) => readonly Segment[] = () => segs,
 ): { weights: Influence[][]; local: LocalInfluence[] } | { overlap: RegionOverlap; vertex: number; at: Point } {
   const all = spec.regions ?? [];
   const index: number[] = [];
@@ -225,7 +226,7 @@ export function sourceWeights(
   const local: LocalInfluence[] = [];
   for (let v = 0; v < vertices.length; v++) {
     const at: Point = [vertices[v][0] + ox, vertices[v][1] + oy];
-    const li = localInfluences(at, segs, r, regions, spec.influences, exponent, heat === null ? undefined : heatInfluences(heat, [vertices[v][0], vertices[v][1]], spec.influences));
+    const li = localInfluences(at, segsAt(at[1]), r, regions, spec.influences, exponent, heat === null ? undefined : heatInfluences(heat, [vertices[v][0], vertices[v][1]], spec.influences));
     if ('first' in li) return { overlap: { ...li, first: index[li.first], second: index[li.second] }, vertex: v, at };
     weights.push(li.influences.map((e) => ({ bone: e.bone, weight: e.weight })));
     local.push(li.region < 0 ? li : { ...li, region: index[li.region] });

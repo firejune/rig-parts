@@ -5131,6 +5131,160 @@ function runSkirtInsideRigCases(say: (name: string, ok: boolean, detail: string,
       `rig exit ${named.status} with the field, ${robe.status} without; the dress mesh with the field: ${m === null ? 'absent' : `${m.weights.length} vertices, ${onChest} weighted to chest, ${onTree} to a skirt tree`}; above the hip (y < 164): ${leak.length} vertices, ${leak.filter((v) => v.t > 0).length} carrying tree weight, at most ${pyRound(leakMax, 3)} of a vertex; without the field, vertices on a tree: ${r0 === null ? 'no mesh' : r0.weights.filter((ws) => tree(ws) > 0).length}`,
       "issue #402: the skirt's trees on part of a part need no split of the mesh — the rig stage weights one lattice by its segments, as it does the long-robe bottomwear — and the gate passes; the bodice is not held wholly to the chest (the printed reach), which is why the proposer never drafts this on a shape alone",
     );
+
+    const partsFile = readParts(join(parts, 'parts.json'));
+    const plantedPartsFile: PartsFile = {
+      ...partsFile,
+      parts: partsFile.parts.map((p) => (p.name === 'dress' ? { ...p, from: 'full:bottomwear' } : p)),
+    };
+    const images = new Map<string, Raster>();
+    for (const p of partsFile.parts) images.set(p.name, readPng(join(parts, 'parts', `${p.name}.png`)));
+    const hipY = 164;
+    const weightOf = (ws: W[], bone: string): number => ws.find((w) => w.bone === bone)?.weight ?? 0;
+    const firstTreeVertex = (wsList: W[][], coords: [number, number][]): string | null => {
+      for (let i = 0; i < wsList.length; i++) {
+        if (coords[i][1] >= hipY) continue;
+        const hit = wsList[i].find((w) => w.bone.startsWith('skirt') && w.weight > 0);
+        if (hit !== undefined) return `vertex ${i} at (${coords[i][0]}, ${coords[i][1]}): bone "${hit.bone}" (${hit.weight})`;
+      }
+      return null;
+    };
+    let bar12Ok = true;
+    let maxCapDiff = 0;
+    let plantedHit: string | null = null;
+    for (const [chains, links] of [[2, 2], [4, 3]] as const) {
+      const prop = propose(P, undefined, null, DEFAULT_GRID_RULE, {
+        ...hair,
+        bottomwear: { chains, links, wind: [1, 4], gravity: [2, 8], part: 'dress' },
+      });
+      const baseRaw: Record<string, unknown> = { ...proposalConfig(fixture, prop), constraints: prop.constraints ?? [] };
+      const baseMeshes = prop.meshes as unknown as Record<string, Record<string, unknown>>;
+      for (const floor of ['cut', 'continuous'] as const) {
+        const buildCap = (maxInfluences: number, pf: PartsFile): { att: MeshAttachment; coords: [number, number][] } => {
+          const raw = {
+            ...baseRaw,
+            meshes: {
+              ...baseMeshes,
+              dress: { ...baseMeshes.dress, influences: { maxInfluences, floor } },
+            },
+          };
+          const { rig } = buildRig(parseConfig(raw), pf, images);
+          const att = rig.skins.default.dress.dress as MeshAttachment;
+          const ox = DRESS.x - (att.width - DRESS.w) / 2;
+          const oy = DRESS.y - (att.height - DRESS.h) / 2;
+          const coords: [number, number][] = [];
+          for (let i = 0; i < att.weights.length; i++) {
+            coords.push([Math.round(ox + att.uvs[2 * i] * att.width), Math.round(oy + att.uvs[2 * i + 1] * att.height)]);
+          }
+          return { att, coords };
+        };
+        const c5 = buildCap(5, partsFile);
+        const c8 = buildCap(8, partsFile);
+        const ref5 = buildCap(5, plantedPartsFile);
+        const ref8 = buildCap(8, plantedPartsFile);
+        if (firstTreeVertex(c5.att.weights, c5.coords) !== null || firstTreeVertex(c8.att.weights, c8.coords) !== null) bar12Ok = false;
+        for (let i = 0; i < c5.coords.length; i++) {
+          const [, wy] = c5.coords[i];
+          if (wy < hipY) {
+            const dc = Math.abs(weightOf(c8.att.weights[i], 'chest') - weightOf(c5.att.weights[i], 'chest'));
+            const dh = Math.abs(weightOf(c8.att.weights[i], 'hip') - weightOf(c5.att.weights[i], 'hip'));
+            maxCapDiff = Math.max(maxCapDiff, dc, dh);
+            if (dc > 1e-4 || dh > 1e-4) bar12Ok = false;
+          } else if (
+            JSON.stringify(c5.att.weights[i]) !== JSON.stringify(ref5.att.weights[i]) ||
+            JSON.stringify(c8.att.weights[i]) !== JSON.stringify(ref8.att.weights[i])
+          ) {
+            bar12Ok = false;
+          }
+        }
+        if (chains === 4 && links === 3 && floor === 'cut') {
+          plantedHit = firstTreeVertex(ref8.att.weights, ref8.coords);
+        }
+      }
+    }
+    // Bar 3: synthetic bust region on 4x3 declared dress (contour mode, cut floor) under a chest upward translation (dy = -10 px).
+    const prop4x3 = propose(P, undefined, null, DEFAULT_GRID_RULE, {
+      ...hair,
+      bottomwear: { chains: 4, links: 3, wind: [1, 4], gravity: [2, 8], part: 'dress' },
+    });
+    const base4x3: Record<string, unknown> = { ...proposalConfig(fixture, prop4x3), constraints: prop4x3.constraints ?? [] };
+    const base4x3Meshes = prop4x3.meshes as unknown as Record<string, Record<string, unknown>>;
+    const base4x3Bones = prop4x3.bones as unknown as Array<Record<string, unknown>>;
+    const buildBust = (maxInfluences: number, pf: PartsFile): { att: MeshAttachment; coords: [number, number][] } => {
+      const { grid: _g, ...dressRest } = base4x3Meshes.dress;
+      void _g;
+      const raw = {
+        ...base4x3,
+        bones: [...base4x3Bones, { name: 'chest_jiggle', parent: 'chest', at: [100, 132] }],
+        meshes: {
+          ...base4x3Meshes,
+          dress: {
+            ...dressRest,
+            influences: { maxInfluences, floor: 'cut' },
+            contour: {
+              tolerance: 0,
+              margin: 1,
+              spacing: 12,
+              regions: [{ name: 'bust', shape: 'circle', cx: 100, cy: 132, r: 4, spacing: 12, band: 16, bone: 'chest_jiggle' }],
+            },
+          },
+        },
+      };
+      const { rig } = buildRig(parseConfig(raw), pf, images);
+      const att = rig.skins.default.dress.dress as MeshAttachment;
+      const ox = DRESS.x - (att.width - DRESS.w) / 2;
+      const oy = DRESS.y - (att.height - DRESS.h) / 2;
+      const coords: [number, number][] = [];
+      for (let i = 0; i < att.weights.length; i++) {
+        coords.push([ox + att.uvs[2 * i] * att.width, oy + att.uvs[2 * i + 1] * att.height]);
+      }
+      return { att, coords };
+    };
+    const bustRatioDiff = (pf: PartsFile): { r5: number; r8: number; diff: number } => {
+      const b5 = buildBust(5, pf);
+      const b8 = buildBust(8, pf);
+      const distFromBust = ([wx, wy]: [number, number]): number => edgeLength(wx - 100, wy - 132) - 4;
+      const posedY = (att: MeshAttachment, coords: [number, number][], i: number): number => {
+        const moveShare = att.weights[i]
+          .filter((w) => w.bone === 'chest' || w.bone === 'chest_jiggle')
+          .reduce((a, w) => a + w.weight, 0);
+        return coords[i][1] - 10 * moveShare;
+      };
+      const edgeRatio = (b: { att: MeshAttachment; coords: [number, number][] }, u: number, v: number): number => {
+        const rest = edgeLength(b.coords[u][0] - b.coords[v][0], b.coords[u][1] - b.coords[v][1]);
+        const posed = edgeLength(b.coords[u][0] - b.coords[v][0], posedY(b.att, b.coords, u) - posedY(b.att, b.coords, v));
+        return posed / rest;
+      };
+      let best = { r5: 1, r8: 1, diff: 0 };
+      const tris = b5.att.triangles;
+      for (let t = 0; t < tris.length; t += 3) {
+        const edges: [number, number][] = [
+          [tris[t], tris[t + 1]],
+          [tris[t + 1], tris[t + 2]],
+          [tris[t + 2], tris[t]],
+        ];
+        for (const [u, v] of edges) {
+          if (b5.coords[u][1] >= hipY || b5.coords[v][1] >= hipY) continue;
+          const du = distFromBust(b5.coords[u]);
+          const dv = distFromBust(b5.coords[v]);
+          const crossesOuterBand = (du > 0 && du < 16 && dv >= 16) || (dv > 0 && dv < 16 && du >= 16);
+          if (!crossesOuterBand) continue;
+          const r5 = edgeRatio(b5, u, v);
+          const r8 = edgeRatio(b8, u, v);
+          const diff = Math.abs(r8 - r5);
+          if (diff >= best.diff) best = { r5, r8, diff };
+        }
+      }
+      return best;
+    };
+    const bustFixed = bustRatioDiff(partsFile);
+    const bustPlanted = bustRatioDiff(plantedPartsFile);
+    say(
+      'RG481_ON_A_DECLARED_DRESS_SKIRT_TREES_CARRY_NO_WEIGHT_ABOVE_THE_HIP_LINE_AND_HOLD_THE_BUST_BAND_RATIO_ACROSS_CAPS',
+      bar12Ok && maxCapDiff <= 1e-4 && bustFixed.diff <= 1e-4 && plantedHit !== null && bustPlanted.diff > 1e-2,
+      `above hip (wy < ${hipY}) across 2x2/4x3 x cut/continuous x cap 5/8: tree vertices = 0, max |w(cap 8) - w(cap 5)| = ${pyRound(maxCapDiff, 6)}; bust band edge ratio cap 5 = ${pyRound(bustFixed.r5, 6)}, cap 8 = ${pyRound(bustFixed.r8, 6)} (|diff| = ${pyRound(bustFixed.diff, 6)}); planted allSegs: first bodice tree hit [${plantedHit ?? 'none'}], bust ratio cap 5 = ${pyRound(bustPlanted.r5, 6)} vs cap 8 = ${pyRound(bustPlanted.r8, 6)} (|diff| = ${pyRound(bustPlanted.diff, 6)})`,
+      'issue #417: on a declared dress (topwear drafted onto hip-rooted skirt chains), vertices above the hip line weight only against the torso segments, keeping bodice weights and circular region boundaries invariant under maxInfluences',
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
