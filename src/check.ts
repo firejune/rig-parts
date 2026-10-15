@@ -2017,12 +2017,24 @@ export const FOLD_RENDER_MAX = 16;
 /** The fold render, under `--out`; removed before the stage returns. */
 const FOLD_SCRATCH = '_folds';
 
-/** One mesh that folds in one animation: rigc's figures, the declaration that takes it if any, and rigc's own line. */
+/** One side of a mesh's fold reading (with physics on or off): rigc's figures and its printed line. */
+export interface FoldSide {
+  /** How many frames show a folded triangle. */
+  frames: number;
+  /** The frame with the most, the earliest on a tie (rigc's `worst`). */
+  worst_frame: number;
+  /** How many triangles are folded on that frame. */
+  worst_triangles: number;
+  /** rigc's printed line for the mesh, verbatim (`rigc render --folds`). */
+  line: string;
+}
+
+/** One mesh that folds in one animation: rigc's figures, with physics on and off side by side, its physics constraints when only physics folds it, the declaration that takes it if any, and rigc's own line. */
 export interface FoldRow {
   animation: string;
   slot: string;
   attachment: string;
-  /** How many frames show a folded triangle. */
+  /** How many frames show a folded triangle (the active reading, physics on when the rig has physics). */
   frames: number;
   /** The frame with the most, the earliest on a tie (rigc's `worst`). */
   worst_frame: number;
@@ -2030,6 +2042,12 @@ export interface FoldRow {
   worst_triangles: number;
   /** How many triangles the mesh has. */
   triangles: number;
+  /** The reading with physics on, or null when the mesh folds only with physics off. */
+  physics_on: FoldSide | null;
+  /** The reading with physics off, or null when the mesh folds only with physics on. */
+  physics_off: FoldSide | null;
+  /** When the mesh folds only with physics on (`physics_on !== null && physics_off === null`), the physics constraints on its bones (`<name> on <bone>`); empty otherwise. */
+  physics_constraints: string[];
   /** The `may_fold` entry's why when the requirements file declares this slot and animation; null when nothing does. */
   declared: string | null;
   /** rigc's printed line for the mesh, verbatim (`rigc render --folds`). */
@@ -2042,7 +2060,7 @@ export interface FoldsLine {
   /** Every animation, the idle included, in motion.json's order: each one read. */
   animations: string[];
   fps: number;
-  /** How many physics constraints the read build left out ({@link withoutPhysics}); 0 when the rig has none. */
+  /** How many physics constraints the rig declares ({@link withoutPhysics}) — stepped in `physics_on` and left out in `physics_off`; 0 when the rig has none. */
   physics_left_out: number;
   /** Every mesh that folds in an animation read, in that animation's order and rigc's mesh order. */
   folding: FoldRow[];
@@ -2130,26 +2148,118 @@ export function readFoldSets(dir: string, named: readonly string[], fps: number,
 }
 
 /**
- * The fold line (issue #320) from the reading: every folding mesh a row, a
- * row no `may_fold` entry takes a `CHECK_ANIMATIONS_DO_NOT_FOLD` problem
- * naming the animation, the slot and rigc's line, and an entry no row
- * matches a problem of its own — a declaration that excepts nothing.
+ * The physics constraints on the bones a mesh attachment is bound to (or their
+ * ancestors, or `<bone>` when a stopped link is bound as `<bone>_d`), in
+ * {@link withoutPhysics} order, formatted `"<name> on <bone>"`.
  */
-export function foldsLine(named: readonly string[], fps: number, physicsLeftOut: number, readings: ReadonlyMap<string, readonly FoldingMesh[]>, mayFold: readonly MayFold[], requirementsPath: string | null, problems: Problem[]): FoldsLine {
-  const folding: FoldRow[] = [];
-  for (const name of named) {
-    for (const m of readings.get(name) ?? []) {
-      const entry = mayFold.find((e) => e.slot === m.slot && e.animation === name);
-      folding.push({ animation: name, slot: m.slot, attachment: m.attachment, frames: m.frames, worst_frame: m.worstFrame, worst_triangles: m.worstTriangles, triangles: m.triangleCount, declared: entry === undefined ? null : entry.why, line: m.line });
+export function meshPhysicsConstraints(rig: Record<string, unknown>, slot: string, attachment: string, physics: readonly LoopPhysics[]): string[] {
+  if (physics.length === 0) return [];
+  const bones = (Array.isArray(rig.bones) ? rig.bones : []).filter(isRecord).filter((b) => typeof b.name === 'string');
+  const parent = new Map(bones.map((b) => [String(b.name), typeof b.parent === 'string' ? b.parent : null]));
+  const skins = isRecord(rig.skins) ? rig.skins : {};
+  const skin = isRecord(skins.default) ? skins.default : {};
+  const onSlot = isRecord(skin[slot]) ? skin[slot] : {};
+  const att = isRecord(onSlot[attachment]) ? onSlot[attachment] : null;
+  const bound = new Set<string>();
+  const addWithAncestors = (start: string): void => {
+    for (let b: string | null = start; b !== null && !bound.has(b); b = parent.get(b) ?? null) {
+      bound.add(b);
+      if (b.endsWith('_d')) bound.add(b.slice(0, -2));
+    }
+  };
+  if (att !== null && Array.isArray(att.weights)) {
+    for (const v of att.weights) {
+      if (!Array.isArray(v)) continue;
+      for (const w of v) if (isRecord(w) && typeof w.bone === 'string' && typeof w.weight === 'number' && w.weight > 0) addWithAncestors(w.bone);
     }
   }
-  const physics = physicsLeftOut === 0 ? '' : `, its ${physicsLeftOut} physics constraint(s) left out`;
+  if (bound.size === 0) {
+    const slotRec = (Array.isArray(rig.slots) ? rig.slots : []).filter(isRecord).find((s) => s.name === slot);
+    if (slotRec !== undefined && typeof slotRec.bone === 'string') addWithAncestors(slotRec.bone);
+  }
+  const direct = physics.filter((p) => bound.has(p.bone));
+  return (direct.length > 0 ? direct : physics).map((p) => `${p.name} on ${p.bone}`);
+}
+
+/**
+ * The fold line (issues #320, #333, #363) from the reading: posed with physics
+ * stepping on the render clock (`readings`, and `readingsWithoutPhysics`
+ * beside it when the rig declares physics constraints), every folding mesh a
+ * row reporting `physics_on` and `physics_off` side by side, a row no
+ * `may_fold` entry takes a `CHECK_ANIMATIONS_DO_NOT_FOLD` problem naming the
+ * animation, the slot, the physics constraint(s) on its bones and the worst
+ * frame when the fold appears only with physics on, and rigc's line, and an
+ * entry no row matches a problem of its own — a declaration that excepts
+ * nothing.
+ */
+export function foldsLine(
+  named: readonly string[],
+  fps: number,
+  physicsLeftOut: number,
+  readings: ReadonlyMap<string, readonly FoldingMesh[]>,
+  mayFold: readonly MayFold[],
+  requirementsPath: string | null,
+  problems: Problem[],
+  readingsWithoutPhysics: ReadonlyMap<string, readonly FoldingMesh[]> = readings,
+  rig: Record<string, unknown> = {},
+  physicsList: readonly LoopPhysics[] = [],
+): FoldsLine {
+  const toSide = (m: FoldingMesh | undefined): FoldSide | null =>
+    m === undefined ? null : { frames: m.frames, worst_frame: m.worstFrame, worst_triangles: m.worstTriangles, line: m.line };
+  const folding: FoldRow[] = [];
+  for (const name of named) {
+    const onList = readings.get(name) ?? [];
+    const offList = readingsWithoutPhysics.get(name) ?? [];
+    const seen = new Set<string>();
+    const keys: Array<{ slot: string; attachment: string }> = [];
+    for (const m of [...onList, ...offList]) {
+      const k = `${m.slot}\0${m.attachment}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        keys.push({ slot: m.slot, attachment: m.attachment });
+      }
+    }
+    for (const { slot, attachment } of keys) {
+      const on = onList.find((m) => m.slot === slot && m.attachment === attachment);
+      const off = offList.find((m) => m.slot === slot && m.attachment === attachment);
+      const primary = (on ?? off) as FoldingMesh;
+      const entry = mayFold.find((e) => e.slot === slot && e.animation === name);
+      const onlyPhysicsOn = on !== undefined && off === undefined;
+      const constraints = onlyPhysicsOn ? meshPhysicsConstraints(rig, slot, attachment, physicsList) : [];
+      folding.push({
+        animation: name,
+        slot,
+        attachment,
+        frames: primary.frames,
+        worst_frame: primary.worstFrame,
+        worst_triangles: primary.worstTriangles,
+        triangles: primary.triangleCount,
+        physics_on: toSide(on),
+        physics_off: toSide(off),
+        physics_constraints: constraints,
+        declared: entry === undefined ? null : entry.why,
+        line: primary.line,
+      });
+    }
+  }
+  const physics =
+    physicsLeftOut === 0
+      ? ''
+      : `, with its ${physicsLeftOut} physics constraint(s) on and off`;
   for (const r of folding) {
     if (r.declared !== null) continue;
+    const sideClause =
+      r.physics_on !== null && r.physics_off === null && physicsLeftOut > 0
+        ? ` (physics on: ${r.physics_on.frames} frame(s), worst frame ${r.physics_on.worst_frame} (${r.physics_on.worst_triangles}/${r.triangles} triangle(s)); physics off: 0 frame(s); physics constraint(s) on mesh "${r.attachment}": ${r.physics_constraints.join(', ')})`
+        : r.physics_on !== null && r.physics_off !== null && physicsLeftOut > 0
+          ? ` (physics on: ${r.physics_on.frames} frame(s), worst frame ${r.physics_on.worst_frame}; physics off: ${r.physics_off.frames} frame(s), worst frame ${r.physics_off.worst_frame})`
+          : r.physics_on === null && r.physics_off !== null && physicsLeftOut > 0
+            ? ` (physics on: 0 frame(s); physics off: ${r.physics_off.frames} frame(s), worst frame ${r.physics_off.worst_frame})`
+            : '';
     problems.push({
       code: `CHECK_${FOLD_LINE}`,
       object: `animation "${r.animation}", mesh "${r.attachment}" (slot "${r.slot}")`,
-      detail: `rigc render --folds at ${fps} fps${physics}: ${r.line}; no triangle turned over against the setup pose is required — a fold the art means is declared in the --requirements file's may_fold, { "slot": "${r.slot}", "animation": "${r.animation}", "why": … }`,
+      detail: `rigc render --folds at ${fps} fps${physics}${sideClause}: ${r.line}; no triangle turned over against the setup pose is required — a fold the art means is declared in the --requirements file's may_fold, { "slot": "${r.slot}", "animation": "${r.animation}", "why": … }`,
     });
   }
   const declaredNotFolding = mayFold.filter((e) => !folding.some((r) => r.slot === e.slot && r.animation === e.animation)).map((e) => ({ slot: e.slot, animation: e.animation }));
@@ -3101,26 +3211,46 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
       written.push('motion_heat.png');
     }
 
-    // 3a. every animation, the idle included, read for folds by rigc (issues #320, #333) — only when there is one; at
-    // the idle's rate whatever --requirements says, so a requirements file moves only what it declares (CK78), from the keyed build
+    // 3a. every animation, the idle included, read for folds by rigc (issues #320, #333, #363) — only when there is one; at
+    // the idle's rate whatever --requirements says, so a requirements file moves only what it declares (CK78), with physics on and off
     if (animationNames.length > 0) {
       const fps = IDLE_FPS;
       try {
-        // Issue #348: with a foot to read, the same render writes each animation's geometry as well.
+        // Issue #348: with a foot to read, the keyed render writes each animation's geometry as well.
         const geometry = feet.length > 0 ? ['--geometry'] : [];
-        const fr = rigc(['render', '--candidate', keyedBuild('the animations with their physics constraint(s) left out'), '--folds', ...geometry, '--fps', String(fps), '--max', String(FOLD_RENDER_MAX), '--out', foldDir]);
-        if (fr.status !== 0) refuseIfAny(rigcFailed(`render --folds${geometry.map((g) => ` ${g}`).join('')} --fps ${fps}${stripped === null ? '' : ' (physics constraint(s) left out)'}`, fr, fr.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
-        const readings = readFoldSets(foldDir, animationNames, fps, fr.out);
-        folds = foldsLine(animationNames, fps, stripped === null ? 0 : stripped.physics.length, readings, reqFile === null ? [] : reqFile.may_fold, reqFile === null ? null : reqFile.path, foldProblems);
-        if (feet.length > 0) {
-          const sets = readJson(join(foldDir, 'frames.json'), []);
-          const listed = sets !== null && Array.isArray(sets.sets) ? sets.sets.filter(isRecord) : [];
-          // readFoldSets has refused a missing set by name, so each animation has its directory here.
-          const levelReadings = animationNames.map((name) => {
-            const dir = join(foldDir, String((listed.find((x) => x.animation === name) as Record<string, unknown>).dir));
-            return { animation: name, set: readFrameSet(dir), geometryPath: join(dir, GEOMETRY_FILE) };
-          });
-          level = levelLine(feet, inp.rig, levelReadings, fps, stripped === null ? 0 : stripped.physics.length, levelProblems);
+        if (stripped === null) {
+          const fr = rigc(['render', '--candidate', buildDir, '--folds', ...geometry, '--fps', String(fps), '--max', String(FOLD_RENDER_MAX), '--out', foldDir]);
+          if (fr.status !== 0) refuseIfAny(rigcFailed(`render --folds${geometry.map((g) => ` ${g}`).join('')} --fps ${fps}`, fr, fr.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+          const readings = readFoldSets(foldDir, animationNames, fps, fr.out);
+          folds = foldsLine(animationNames, fps, 0, readings, reqFile === null ? [] : reqFile.may_fold, reqFile === null ? null : reqFile.path, foldProblems, readings, inp.rig, []);
+          if (feet.length > 0) {
+            const sets = readJson(join(foldDir, 'frames.json'), []);
+            const listed = sets !== null && Array.isArray(sets.sets) ? sets.sets.filter(isRecord) : [];
+            const levelReadings = animationNames.map((name) => {
+              const dir = join(foldDir, String((listed.find((x) => x.animation === name) as Record<string, unknown>).dir));
+              return { animation: name, set: readFrameSet(dir), geometryPath: join(dir, GEOMETRY_FILE) };
+            });
+            level = levelLine(feet, inp.rig, levelReadings, fps, 0, levelProblems);
+          }
+        } else {
+          const onDir = join(foldDir, 'on');
+          const offDir = join(foldDir, 'off');
+          const frOn = rigc(['render', '--candidate', buildDir, '--folds', '--fps', String(fps), '--max', String(FOLD_RENDER_MAX), '--out', onDir]);
+          if (frOn.status !== 0) refuseIfAny(rigcFailed(`render --folds --fps ${fps}`, frOn, frOn.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+          const frOff = rigc(['render', '--candidate', keyedBuild('the animations with their physics constraint(s) left out'), '--folds', ...geometry, '--fps', String(fps), '--max', String(FOLD_RENDER_MAX), '--out', offDir]);
+          if (frOff.status !== 0) refuseIfAny(rigcFailed(`render --folds${geometry.map((g) => ` ${g}`).join('')} --fps ${fps} (physics constraint(s) left out)`, frOff, frOff.out.split('\n').filter((l) => l.includes('FAIL') || l.includes('rigc:'))));
+          const readingsOn = readFoldSets(onDir, animationNames, fps, frOn.out);
+          const readingsOff = readFoldSets(offDir, animationNames, fps, frOff.out);
+          folds = foldsLine(animationNames, fps, stripped.physics.length, readingsOn, reqFile === null ? [] : reqFile.may_fold, reqFile === null ? null : reqFile.path, foldProblems, readingsOff, inp.rig, stripped.physics);
+          if (feet.length > 0) {
+            const sets = readJson(join(offDir, 'frames.json'), []);
+            const listed = sets !== null && Array.isArray(sets.sets) ? sets.sets.filter(isRecord) : [];
+            const levelReadings = animationNames.map((name) => {
+              const dir = join(offDir, String((listed.find((x) => x.animation === name) as Record<string, unknown>).dir));
+              return { animation: name, set: readFrameSet(dir), geometryPath: join(dir, GEOMETRY_FILE) };
+            });
+            level = levelLine(feet, inp.rig, levelReadings, fps, stripped.physics.length, levelProblems);
+          }
         }
       } finally {
         rmSync(foldDir, { recursive: true, force: true });

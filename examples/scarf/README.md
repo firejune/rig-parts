@@ -222,7 +222,8 @@ falling down the links to 0.65 of the root link's:
 | strands | inertia | strength (root link) | damping | mix |
 | --- | --- | --- | --- | --- |
 | scarf ends `robe_r`, `robe_l` | 0.7 | 70 | 0.85 | 1 |
-| bangs `bang_r`, `bang_c`, `bang_l`; skirt `skirt_r`, `skirt_c`, `skirt_l` | 0.12 | 300 | 0.85 | 1 |
+| bangs `bang_r`, `bang_c`, `bang_l` | 0.12 | 300 | 0.85 | 1 |
+| skirt `skirt_r`, `skirt_c`, `skirt_l` (issue #363: was 0.12, which folded 3 of 308 triangles of `bottomwear` on frames 7–8 of `hop` at 12 fps) | 0.1 | 300 | 0.85 | 1 |
 | arms (sleeves) `sleeve_r`, `sleeve_l` | 0.15 | 250 | 0.85 | 0.6 |
 | the bun, `bun` (no length: translation only, `x` 0.5, `y` 1) | 0.15 | 300 | 0.85 | 1 |
 
