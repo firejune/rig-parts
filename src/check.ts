@@ -4366,7 +4366,7 @@ function breathCarrier(
     const held = m.shown.map((f, i) => (f === null ? null : { rest: f.rest, triangles: f.triangles, posed: f.posed.map((v, j) => v - share[j >> 1] * delta[i][j & 1]) }));
     const t = halfTravels(m.art, m.box, m.stage, held, m.toward);
     if (t.root === null || t.tip === null) continue;
-    if (!(m.root - t.root > m.tip - t.tip) || round3(t.tip) === 0) continue;
+    if (!(m.root - t.root > Math.max(0, m.tip - t.tip)) || round3(t.tip) === 0) continue;
     return { bone: carrier, keyed: k, breath, root: t.root, tip: t.tip, passes: t.tip >= TIP_RATIO_FLOOR * t.root };
   }
   return null;

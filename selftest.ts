@@ -7588,15 +7588,15 @@ function runProposeSuite(): number {
     const noBackJson = noBackCli.out.split('\n').filter((ln) => ln.trim() !== '').pop() ?? '';
     say(
       'PR45_PROPOSE_HEAD_BOX_NAMES_BACK_HAIR_CONTRIBUTION_AND_HONOURS_NO_BACK_HAIR',
-      withBack.head_box.join(',') === '16,16,83,83' &&
+      withBack.head_box.join(',') === '16,9,83,76' &&
         withBack.without_back_hair?.head_box?.join(',') === '39,39,60,60' &&
         noBack.head_box.join(',') === '39,39,60,60' &&
         noBack.without_back_hair === undefined &&
         overBack?.problems[0].code === 'HEADBOX_FITS_CANVAS' &&
-        overBack.problems[0].detail.includes('"back hair" grew the side from 21 to 102 px; without it the box is [39, 39, 60, 60], 21x21 px — pass --no-back-hair') &&
+        overBack.problems[0].detail.includes('("back hair" grew the side from 21 to 101 px; without it, [39, 39, 60, 60] (21x21) fits — pass --no-back-hair)') &&
         overNoBack.head_box.join(',') === '39,39,60,60' &&
         backCli.status === 0 &&
-        backCli.out.includes('without "back hair": [39, 39, 60, 60] (21x21 px; pass --no-back-hair)') &&
+        backCli.out.includes('back hair: without "back hair" the box is [39, 39, 60, 60], 21x21 ("back hair" adds 46 px to the side, 90% of the box\'s area; pass --no-back-hair to leave it out)') &&
         noBackCli.status === 0 &&
         noBackJson === '{"head_box":[39,39,60,60]}',
       `with back hair: [${withBack.head_box.join(', ')}] (without: [${withBack.without_back_hair?.head_box?.join(', ') ?? ''}]); --no-back-hair: ${noBackJson}; 92x92 back hair -> ${overBack?.problems[0].detail ?? 'none'}`,
@@ -13028,17 +13028,28 @@ function runCheckSuite(): number {
     );
 
     // Issue #351 item 1: when the breath carries the root AND the part with the breath's translate held still is still
-    // below the bar (because another track also moves the root more than the tip), the refusal names both the breath
-    // carrier (`chest`) and the still-below-the-bar ratio instead of hiding the carrier behind the generic chain words.
+    // below the bar (because the top vertices also share weight with `hem` so the chain's tip/root ratio is < 1.4725),
+    // the refusal names both the breath carrier (`chest`) and the still-below-the-bar ratio instead of hiding the
+    // carrier behind the generic chain words.
     const bothDir = join(dir, 'tip-carried-both');
     writeCheckRig(bothDir, { from: ['full:bottomwear', 'full:topwear'], peak: 0, carried: { breath: 4, sway: 1 } });
-    const bothMotion = JSON.parse(readFileSync(join(bothDir, 'motion.json'), 'utf8')) as { animations: { idle: { tracks: unknown[] } } };
-    bothMotion.animations.idle.tracks.push({ bone: 'chest_ctl', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [12] }, { t: 1, v: [0] }] });
-    writeFileSync(join(bothDir, 'motion.json'), `${JSON.stringify(bothMotion, null, 2)}\n`);
+    const bothRig = JSON.parse(readFileSync(join(bothDir, 'rig.json'), 'utf8')) as {
+      skins: { default: { back: { back: { weights: Array<Array<{ bone: string; x: number; y: number; weight: number }>> } } } };
+    };
+    const w0 = bothRig.skins.default.back.back.weights;
+    w0[0] = [
+      { ...w0[0][0], weight: 0.5 },
+      { ...w0[3][0], y: w0[0][0].y, weight: 0.5 },
+    ];
+    w0[1] = [
+      { ...w0[1][0], weight: 0.5 },
+      { ...w0[2][0], y: w0[1][0].y, weight: 0.5 },
+    ];
+    writeFileSync(join(bothDir, 'rig.json'), `${JSON.stringify(bothRig, null, 2)}\n`);
     const bothRes = runCli(['check', '--rig', bothDir, '--out', join(dir, 'tip-carried-both-out')]);
     const bothFail = failLine(bothRes.out, 'CHECK_TIP_OVER_ROOT');
     say(
-      'CK117_A_BREATH_CARRIED_ROOT_WHOSE_HELD_CHAIN_IS_STILL_BELOW_THE_BAR_NAMES_BOTH_CAUSES',
+      'CK118_A_BREATH_CARRIED_ROOT_WHOSE_HELD_CHAIN_IS_STILL_BELOW_THE_BAR_NAMES_BOTH_CAUSES',
       bothRes.status === 1 &&
         bothFail !== null &&
         bothFail.includes('it is carried by `chest`, which moves it more than the tip') &&
@@ -20553,9 +20564,9 @@ function runAssembleSuite(): number {
       behindLines.length === 1 &&
         behindLines[0] === behindWant &&
         result.holeKinds.noLayer.px + result.holeKinds.betweenLayers.px === result.figures.uncoveredErrorPx &&
-        result.holeKinds.noLayer.px === 2434 &&
-        result.holeKinds.betweenLayers.px === 177 &&
-        r1.out.includes('uncovered error by cause: no layer (alpha <= 8 on every layer; only assemble.patches from the painting can cover): 2434 px in 1 component(s) (largest 2434 px at 0,0 64x64); on a layer (alpha > 8 on a layer, below covered alpha 128 in the parts): 177 px in 2 component(s) (largest 168 px at 4,2 16x12)'),
+        result.holeKinds.noLayer.px === 2443 &&
+        result.holeKinds.betweenLayers.px === 168 &&
+        r1.out.includes('uncovered error by cause: no layer (alpha <= 8 on every layer; only assemble.patches from the painting can cover): 2443 px in 1 component(s) (largest 2443 px at 0,0 64x64); on a layer (alpha > 8 on a layer, below covered alpha 128 in the parts): 168 px in 1 component(s) (largest 168 px at 4,2 16x12)'),
       `behind drift: ${behindLines[0] ?? 'none'}; holeKinds on flat fixture: noLayer=${result.holeKinds.noLayer.px} + betweenLayers=${result.holeKinds.betweenLayers.px} = ${result.figures.uncoveredErrorPx}`,
       'issue #351: when a part drawn in front refuses a body whose painting colour matches a part drawn behind it, driftLine names that behind part; and holeKindsLine splits uncoveredErrorPx into pixels where no See-through layer has alpha > 8 (only assemble.patches can cover) vs pixels on a layer',
     );
