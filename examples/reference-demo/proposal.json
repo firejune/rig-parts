@@ -682,6 +682,7 @@
    "brow_drop": 1.2
   }
  },
+ "proposed_rig_scale": 0.5,
  "notes": [
   "head frame: the bar runs through eye_r [387.0, 164.0] and eye_l [440.0, 161.0], the eye bones' origins, 53.085 px; roll 3.240 degrees (Spine's, counter-clockwise) — the line the rig turns the face bones to and declares as invariants.axes; eye midpoint [413.5, 162.5]",
   "head pitch: the nose sits — (not read: no part tagged nose) of the way from the eye midpoint to the mouth (frontal 0.474..0.630); the stem, eye midpoint -> mouth, is 0.565 of the bar (frontal 0.510..0.675); frontal ranges read on demo, scarf, the rig-c/trailer character; the turn is not reported (src/propose.ts FRONTAL_REFERENCE says why)",

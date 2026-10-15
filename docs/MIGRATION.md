@@ -301,7 +301,7 @@ either (the examples' `expected/` and every existing control are unchanged).
 
 What to do: nothing. To draft a skirt or hair that the consumer's wind and gravity move,
 add a `cloth` block and propose with `--cloth`; copy each of `bones`, `meshes`, `regions`,
-`limbs`, `motion`, `constraints` and `turn` the proposal wrote into the config, as before
+`limbs`, `motion`, `constraints`, `turn` and `proposed_rig_scale` the proposal wrote into the config, as before
 (`constraints` is the one `--cloth` adds).
 
 ## After 1.20.0: the seam over a joint's range
