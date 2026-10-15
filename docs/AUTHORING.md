@@ -2866,8 +2866,8 @@ and stay absent).
 | <a id="SCENE_CHARACTER_INSIDE_CANVAS"></a>`SCENE_CHARACTER_INSIDE_CANVAS` | a character's part boxes, placed at its offset, leave the canvas (the boxes and the canvas px quoted) | the offset, or the canvas |
 | <a id="SCENE_ORDER_RESOLVES"></a>`SCENE_ORDER_RESOLVES` | an order entry names no character, or `<id>:<slot>` names a slot that character does not have (its slots listed) | the entry |
 | <a id="SCENE_ORDER_ONCE"></a><a id="SCENE_ORDER_COMPLETE"></a>`SCENE_ORDER_ONCE`, `SCENE_ORDER_COMPLETE` | a slot is drawn twice (a slot entry repeated, or an id listed twice), or never (the character's id is absent and some of its slots are named nowhere — they are listed) | name each slot once, or the id for the slots not named elsewhere |
-| <a id="SCENE_NAME_PREFIXED"></a><a id="SCENE_NAME_RESOLVES"></a>`SCENE_NAME_PREFIXED`, `SCENE_NAME_RESOLVES` | a build's constraint or `invariants.detached` names a bone its own character does not declare — one another character does (`…_PREFIXED`, naming the prefixed names it could have meant) or none does (`…_RESOLVES`); or a `--requirements` name (bone, target bone, constraint, slot, attachment, seam part) is a bare name some character holds, which the composed rig holds only prefixed | a bone of the same character; in a requirements file, `<id>:<name>` |
-| <a id="SCENE_ROOT_SHARED"></a>`SCENE_ROOT_SHARED` | a character's idle keys `root` (a track, or a group holding it), or one of its constraints names `root`: the root is every character's, so either would move or reach them all | key or constrain a bone of the character's own |
+| <a id="SCENE_NAME_PREFIXED"></a><a id="SCENE_NAME_RESOLVES"></a>`SCENE_NAME_PREFIXED`, `SCENE_NAME_RESOLVES` | a build's constraint, `stops` entry or `invariants.detached` names a bone its own character does not declare — one another character does (`…_PREFIXED`, naming the prefixed names it could have meant) or none does (`…_RESOLVES`); or a `--requirements` name (bone, target bone, constraint, slot, attachment, seam part) is a bare name some character holds, which the composed rig holds only prefixed | a bone of the same character; in a requirements file, `<id>:<name>` |
+| <a id="SCENE_ROOT_SHARED"></a>`SCENE_ROOT_SHARED` | a character's idle keys `root` (a track, or a group holding it), or one of its constraints or `stops` entries names `root`: the root is every character's, so either would move or reach them all | key, constrain or stop a bone of the character's own |
 | <a id="SCENE_INVARIANT_AGREES"></a>`SCENE_INVARIANT_AGREES` | two characters declare `invariants.idleDrivesMeshes` with different `why`s | rebuild with this package's `--idle-keys direct`, whose `why` is one sentence |
 | <a id="SCENE_IMAGE_NAME_FREE"></a>`SCENE_IMAGE_NAME_FREE` | two images compose to one file name (`<id>.<file>`: an id `x` with an image `y.cloth.png`, and an id `x.y` with `cloth.png`) | another id |
 | <a id="COMPOSE_RIGC_GREEN"></a>`COMPOSE_RIGC_GREEN` | rig-c refused the composed rig; its line is quoted. A field compose carries as written (a constraint's `mix`, a slot's setup attachment) is rigc's to judge | the build whose field it names |
@@ -3370,7 +3370,7 @@ single-character path (§4, steps 0–9) on its own, already isolated input to a
 | --- | --- |
 | `canvas` | the shared stage, canvas px, y down. The composed rig's stage is the canvas, `root` at its bottom centre, as a single character's is its own |
 | `plate` | optional. `image` (relative to the scene file) is a PNG of exactly the canvas's size; `provenance` is `observed` (the painting's own pixels), `generated` or `unknown` (a residual after the people were removed is `unknown` where they stood, and the author says so); `note` is free text. Both are copied into `scene.json` and **judged by nothing** |
-| `characters[].id` | the prefix: every bone, slot, attachment (skin entry), constraint (its name, and every bone and path slot it names), `invariants.detached` bone, track, group and easing of that character is renamed `<id>:<name>`. `root` is the one shared root. A name resolves to exactly one character, and nothing resolves across characters without its prefix |
+| `characters[].id` | the prefix: every bone, slot, attachment (skin entry), constraint (its name, and every bone and path slot it names), `stops` entry (its `chain`, `links` and `against`, issue #431), `invariants.detached` bone, track, group and easing of that character is renamed `<id>:<name>`. `root` is the one shared root. A name resolves to exactly one character, and nothing resolves across characters without its prefix |
 | `characters[].build` | a `build --out` directory (relative to the scene file) whose own `check/check.json` is green |
 | `characters[].offset` | `[x, y]`, a translation from the build's rig px to canvas px. Every character is built at one `assemble.rig_scale`, so its rig px are canvas px at scale 1 |
 | `characters[].scale` | optional, a positive number; absent is 1, and 1 composes to the bytes a scene without the key writes. The character's size on the canvas, about its stage's top-left corner: a rig px `p` lands at canvas px `scale * p + offset` (issue #197). A character scaled up past its art is drawn soft — the art is not resampled; rebuild it at a higher `assemble.rig_scale` if that matters |
@@ -3394,7 +3394,7 @@ What is composed:
   local to a bone the shift already moved. In Spine's axes the shift is the
   character's stage corner carried to its canvas place — `scene.json` records it per
   character, with what it moved. The root is shared, so a character whose idle keys
-  it, or whose constraint names it, is refused (`SCENE_ROOT_SHARED`): it would move
+  it, or whose constraint or stop names it, is refused (`SCENE_ROOT_SHARED`): it would move
   every character.
 - **The scale** (issue #197) is applied with the offset: every length the character
   carries is multiplied by it exactly where Spine's own loader multiplies by its
@@ -3405,18 +3405,19 @@ What is composed:
   the `offset` and `max` of an `x`/`y` target, its `scale` by the target's unit over
   the source's; a path's `position` under `positionMode` Fixed and its `spacing` under
   `spacingMode` Length or Fixed; a physics `limit`; a slider driven by a bone's `x` or
-  `y`, its `from` scaled and its `scale` divided; and the translate keys (`translate`,
+  `y`, its `from` scaled and its `scale` divided; each stop's `at` offset in its
+  `against` bone's local frame (issue #431); and the translate keys (`translate`,
   `translatex`, `translatey`), their curves' values with them. An absent field whose
   Spine default is not 0 (a physics `limit`, 5000; a transform target's `max`, 1; a
   slider's `scale`, 1) is written as that default scaled. Degrees, mixes, ratios,
-  physics rates and a mesh's `width`/`height` (its image's, nonessential) are not
+  physics rates, a stop's `inward`/`outward` bounds and a mesh's `width`/`height` (its image's, nonessential) are not
   lengths and stay. Then what sits in `root`'s own frame takes the shift, so the
   character's stage corner lands at `offset`. `scene.json` writes `scale` beside the
   offset only when it is not 1, and the `[compose]` line always prints it.
 - **The plate** is a region on the bone `plate` under `root`, the first slot, its
   image at canvas (0, 0).
 - **One `idle`** holds every character's tracks; the characters' idles must be of one
-  duration. Constraints are carried in character order with their
+  duration. Constraints and `stops` entries are carried in character order with their
   `invariants.detached`; `invariants.idleDrivesMeshes` once, when any character
   declares it.
 - **Every animation beside a character's idle** — what `motion.animations_from`
