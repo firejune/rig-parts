@@ -79,6 +79,7 @@ import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import ts from 'typescript';
+import { runNamedCutSkirtChecks } from './tools/check_named_cut_skirt.ts';
 import {
   assembleConfig,
   AUTHOR_PART,
@@ -7946,6 +7947,8 @@ function runProposeSuite(): number {
     runSqueezeControls(say);
     runClothProposeControls(say);
     runSkirtInsideProposeControls(say);
+    runNamedCutSkirtChecks(join(dir, 'named-cut-skirt'), (name, ok, detail) => say(name, ok, detail,
+      'issue #412: real waist-cut selection, unchanged automatic exclusion, exact named refusals, hem riders and independently posed attachment geometry'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -8042,7 +8045,6 @@ function runSkirtInsideProposeControls(say: (name: string, ok: boolean, detail: 
       ['a name no part has', dress, 'gown', 'names "gown", which is no part in parts.json'],
       ['the face', dress, 'face', 'names "face", from head:face; only a topwear part'],
       ['a bottomwear part', readPartSet(skirtDir), 'skirt', 'names "skirt", from full:bottomwear; a bottomwear part takes the recipe by its tag already'],
-      ['a cut piece', piece, 'hem', 'names "hem", a piece an assemble.cuts entry took from dress'],
       ['the blouse, ending above the waist line', blouse, 'blouse', 'names "blouse", whose box ends at y=170, above hip + 0.25 face heights (y=176.5)'],
     ];
     const outcomes = cases.map(([what, parts, part, start]) => {
@@ -8054,7 +8056,7 @@ function runSkirtInsideProposeControls(say: (name: string, ok: boolean, detail: 
       'PR483_A_PART_THE_FIELD_CANNOT_HAND_THE_RECIPE_TO_IS_REFUSED_ONCE_BY_NAME',
       outcomes.every((o) => o.ok) && pieceOk === null,
       `${outcomes.map((o) => `${o.what}: ${o.ok ? 'refused once' : `NOT: ${o.got}`}`).join('; ')}; the dress named beside its cut piece: ${pieceOk === null ? 'proposed' : codes(pieceOk)}`,
-      'issue #402: a declaration that names nothing, a part of another tag, a piece whose base already takes its layer\'s rule, or a topwear that stops at the waist would draft something other than it says — so it is refused by name, not drafted',
+      'issue #402: a declaration that names nothing, a part of another tag or a topwear that stops at the waist would draft something other than it says — so it is refused by name, not drafted',
     );
 
     // PR510 — issue #416, by hand in fixtures/cloth.ts (HEM): the hem's 2080 px over the dress's art split 1040 / 1040
