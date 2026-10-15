@@ -148,7 +148,7 @@ import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER
 import { edgeLength } from './length.ts';
 import { limbWidth } from './limbs.ts';
 import { type BranchSqueezeFinding, branchSqueezes, chainSqueezes, type SqueezeFinding } from './squeeze.ts';
-import { RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, swingName, type Tail, tailOverlap, type TailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput } from './cloth.ts';
+import { RECIPE_BACK_HAIR_CHAINS, RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, swingName, type Tail, tailOverlap, type TailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput } from './cloth.ts';
 import { TEXTURE_STRETCH_CEILING } from './check.ts';
 
 // ---------------------------------------------------------------------------
@@ -1382,7 +1382,7 @@ export function proposeWithBasis(
   const tails: Tail[] = [];
   const T = (p: PartRecord, tag: ClothTarget, r: ClothRecipe, input: TreeInput): TreeChain[] => {
     const trees = draftTrees(input, r);
-    const constants = [konst('cloth_chains', r.chains), konst('cloth_links', r.links), konst('length_ratio', roundTo(r.length_ratio ?? RECIPE_LENGTH_RATIO, 6))];
+    const constants = [konst('cloth_chains', r.chains ?? RECIPE_BACK_HAIR_CHAINS), konst('cloth_links', r.links), konst('length_ratio', roundTo(r.length_ratio ?? RECIPE_LENGTH_RATIO, 6))];
     for (const t of trees) {
       C(
         t.chain,
@@ -1539,13 +1539,69 @@ export function proposeWithBasis(
     } else if (recipeOf('back hair') !== null) {
       // Issue #364: the recipe's trees, per side of the eye axis (twin tails are a side each), from the eye line to
       // 4 px above the part's bottom, in place of the two keyed chains.
-      const rcp = recipeOf('back hair') as ClothRecipe;
+      // Issue #390: the tree count per side derives from the tail's opaque width at the root row (`floor(width / grid)`
+      // on each side, and every tree root inside the 15 px dilated art); a declared count that does not fit is refused
+      // by name (`PROPOSE_CLOTH_BACK_HAIR_CHAINS`).
+      const rawRcp = recipeOf('back hair') as ClothRecipe;
       const mask = P.alpha(p);
+      const dilated = dilate(mask, 31);
+      const y0 = pyRound(eyeY);
+      const sideOpaqueWidth = (s: 'r' | 'l'): number => {
+        if (y0 < 0 || y0 >= mask.height) return 0;
+        let w = 0;
+        for (let x = 0; x < mask.width; x++) {
+          if ((s === 'r' ? x < axis : x >= axis) && mask.data[y0 * mask.width + x]) w++;
+        }
+        return w;
+      };
+      const prefixOf = (s: 'r' | 'l'): string => (P.headFirst('back hair').length === 1 ? `hairback_${s}` : `hairback_${p.name}_${s}`);
+      const offRootsAt = (cnt: number, s: 'r' | 'l'): Array<{ bone: string; at: Point; alpha: number }> => {
+        const pref = prefixOf(s);
+        const im = P.images.get(p.name) as Raster;
+        const off: Array<{ bone: string; at: Point; alpha: number }> = [];
+        for (let k = 0; k < cnt; k++) {
+          const fc = (k + 0.5) / cnt;
+          const rx = pyRound(bandX(mask, eyeY, { frac: fc, side: s, axis }) ?? axis);
+          if (!isOn(dilated, rx, y0)) {
+            const lx = rx - p.x;
+            const ly = y0 - p.y;
+            const alpha = lx >= 0 && lx < p.w && ly >= 0 && ly < p.h ? im.data[(ly * p.w + lx) * 4 + 3] : 0;
+            off.push({ bone: `${pref}${k}_0`, at: [rx, y0], alpha });
+          }
+        }
+        return off;
+      };
+      const wR = sideOpaqueWidth('r');
+      const wL = sideOpaqueWidth('l');
+      const widthCap = Math.max(1, Math.min(Math.floor(wR / g), Math.floor(wL / g)));
+      let maxFit = 1;
+      for (let cnt = widthCap; cnt >= 1; cnt--) {
+        if (offRootsAt(cnt, 'r').length === 0 && offRootsAt(cnt, 'l').length === 0) {
+          maxFit = cnt;
+          break;
+        }
+      }
+      if (rawRcp.chains !== undefined) {
+        const offRoots = [...offRootsAt(rawRcp.chains, 'r'), ...offRootsAt(rawRcp.chains, 'l')];
+        if (rawRcp.chains > widthCap || offRoots.length > 0) {
+          throw new PartsError([
+            {
+              code: 'PROPOSE_CLOTH_BACK_HAIR_CHAINS',
+              object: 'config.cloth."back hair".chains',
+              detail:
+                `declares ${rawRcp.chains} tree(s) per side on "${p.name}", and at the root row y=${y0} the tail is ${wR} px wide on the r side and ${wL} px on the l side on a ${g} px mesh grid (at most ${maxFit} tree(s) per side fit inside the art` +
+                (offRoots.length > 0 ? `; off the art: ${offRoots.map((o) => `${o.bone} at [${o.at[0]}, ${o.at[1]}] (alpha ${o.alpha})`).join(', ')}` : '') +
+                `) — set chains to at most ${maxFit}, or leave chains out to derive it from the tail's width`,
+            },
+          ]);
+        }
+      }
+      const rcp: ClothRecipe = { ...rawRcp, chains: rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit) };
       const segs: Segment[] = [['head', rnd(head), rnd([axis, top + 13])]];
       const all: TreeChain[] = [];
       let n = 0;
       for (const [side] of SIDES) {
-        const prefix = P.headFirst('back hair').length === 1 ? `hairback_${side}` : `hairback_${p.name}_${side}`;
+        const prefix = prefixOf(side);
         const trees = T(p, 'back hair', rcp, {
           prefix,
           parent: 'head',

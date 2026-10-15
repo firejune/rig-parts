@@ -82,21 +82,22 @@ answers and does not key.
   "bottomwear": { "chains": 4, "links": 3, "split": { "at": 1, "into": 2, "hold_tip": true }, "damping": 0.85,
                   "alternate_damping": 0.7, "strength": { "trunk": 50, "branch": 110, "edge": 45 }, "wind": [2, 10],
                   "gravity": [5, 30], "translate": 0.2, "swing": { "scales": [1.3, 1, 1, 1.3] } },
-  "back hair":  { "chains": 1, "links": 3, "split": { "at": 1, "into": 2, "hold_tip": true },
+  "back hair":  { "links": 3, "split": { "at": 1, "into": 2, "hold_tip": true },
                   "strength": { "trunk": 100, "branch": 68, "edge": 68 }, "wind": [1, 8], "gravity": [4, 24] },
   "front hair": { "chains": 1, "links": 3, "wind": [1, 6], "gravity": [2, 12], "translate": 0.2 }
 }
 ```
 
-These are AUTHORING §3's recipe block, with `back hair` at one tree a side, `split.hold_tip: true` on both forked regions so `propose` sets `r` to `grid` (`1.6`) and `rig` smooths sibling fork shares across the mesh, and explicit `strength` on `bottomwear` (`50 / 110 / 45`) and `back hair` (`100 / 68 / 68`); `length_ratio` is left out, so the recipe's own default (`0.5`) is what is built.
+These are AUTHORING §3's recipe block, with `back hair`'s `chains` omitted so `propose --cloth` derives one tree a side from the tails' root-row widths, `split.hold_tip: true` on both forked regions so `propose` sets `r` to `grid` (`1.6`) and `rig` smooths sibling fork shares across the mesh, and explicit `strength` on `bottomwear` (`50 / 110 / 45`) and `back hair` (`100 / 68 / 68`); `length_ratio` is left out, so the recipe's own default (`0.5`) is what is built.
 
-- **`back hair`, one tree a side.** With the block's two trees a side, the inner tree of
-  each side roots on the eye line over the face, where the back hair has no pixel, and
-  `propose` prints two LINT lines: `hairback_r1_0 at [323, 162] is off the art of mesh
-  'hair_back'` and `hairback_l0_0 at [496, 162] is off the art of mesh 'hair_back'`, so
-  the loop's `--from-config` step exits 1. One tree a side — one per tail — roots at
-  `[288, 162]` and `[530, 162]` and prints none; each tail forks into two branches after
-  its first link.
+- **`back hair`, one tree a side derived from tail width (issue #390).** At the root row
+  (`y = 162`, the eye line), the right tail has 45 opaque px and the left tail 61 on a
+  28 px mesh grid (`floor(45 / 28) = 1`), and with two trees a side the inner roots
+  `hairback_r1_0` at `[323, 162]` and `hairback_l0_0` at `[496, 162]` land over the face
+  at alpha 0 (outside the 15 px dilated art mask). Declaring `"chains": 2` is refused by
+  `PROPOSE_CLOTH_BACK_HAIR_CHAINS`; leaving `chains` out derives `min(2, 1) = 1` tree per
+  side, rooted at `[288, 162]` and `[530, 162]`, each forking into two branches after its
+  first link.
 - **`front hair`.** No strand of this fringe hangs below the chin, so the recipe drafts
   no lock; the fringe's three columns, `bang_r`, `bang_c` and `bang_l`, take physics on
   both links (the edge's strength on the outer two), as the recipe says.
@@ -157,9 +158,6 @@ gravity (0, 1), so `check.json`'s figures are the idle under that breeze:
   is 7.1 % at wind 1, 22.4 % at wind 3 and 67.7 % at wind 10; the back hair's tip moves
   84.6, 245.6 and 599.5 rig px (rig-c 2.54.0 `render --environment`, gravity (0, 1),
   201 frames at 60 fps).
-- **One back-hair tree per side, not the recipe's documented two.** With two per side
-  `propose` printed two LINT lines, the inner trees' roots off the hair; whether the
-  default or the LINT is wrong is issue #390.
 - **The idle does not close with its physics.** As for every example with physics, the
   loop bar reads the idle's ends with the 44 physics constraints left out
   (`loop physics:`), and `build --loop --lead-in <n>` is how to encode a loop that

@@ -2590,6 +2590,7 @@ function runClothConfigControls(say: (name: string, ok: boolean, detail: string,
       refusals(() => parseConfig(withCloth())),
       refusals(() => parseConfig(withCloth((r) => (r['front hair'].strength = { trunk: 100, branch: 100, edge: 13300 })))),
       refusals(() => parseConfig(withCloth((r) => (r.bottomwear.split = { at: 1, into: 2, hold_tip: true })))),
+      refusals(() => parseConfig(withCloth((r) => delete r['back hair'].chains))),
       refusals(() => parseEarlyConfig({ key: 'k', seethrough: { resolution: 64, steps: 1, seed: 0, offload: false }, assemble: { rig_scale: 0.5 }, cloth: clothRecipe() }, 'layers')),
     ];
     const planted: Array<[string, string, string, Record<string, unknown>]> = [
@@ -2607,6 +2608,8 @@ function runClothConfigControls(say: (name: string, ok: boolean, detail: string,
       ['a strength past the bound', 'CONFIG_CLOTH_SPRING_STABLE', 'config.cloth."front hair".strength.edge', withCloth((r) => (r['front hair'].strength = { trunk: 100, branch: 100, edge: 13400 }))],
       ['a strength past the alternate damping\'s bound only', 'CONFIG_CLOTH_SPRING_STABLE', 'config.cloth."bottomwear".strength.branch', withCloth((r) => (r.bottomwear.strength = { trunk: 100, branch: 12300, edge: 50 }))],
       ['a swing on back hair', 'CONFIG_CLOTH_SWING_SCALE_PER_TREE', 'config.cloth."back hair".swing', withCloth((r) => (r['back hair'].swing = { scales: [1, 1] }))],
+      ['no chains on bottomwear', 'CONFIG_FIELD_PRESENT', 'config.cloth."bottomwear".chains', withCloth((r) => delete r.bottomwear.chains)],
+      ['no chains on front hair', 'CONFIG_FIELD_PRESENT', 'config.cloth."front hair".chains', withCloth((r) => delete r['front hair'].chains)],
       ['no wind', 'CONFIG_FIELD_PRESENT', 'config.cloth."front hair".wind', withCloth((r) => delete r['front hair'].wind)],
       ['translate 0', 'CONFIG_FIELD_TYPE', 'config.cloth."bottomwear".translate', withCloth((r) => (r.bottomwear.translate = 0))],
       ['links 0', 'CONFIG_FIELD_TYPE', 'config.cloth."front hair".links', withCloth((r) => (r['front hair'].links = 0))],
@@ -8330,6 +8333,63 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
         cSkirt.both0 === 11,
       `explicit strengths with hold_tip: ${JSON.stringify(expStiff)} (want [45,110,110,45,100,68,68]), ${expLint.branchSqueezes.length} branch squeeze(s); unheld skirt weights max ${uSkirt.mx} (${uSkirt.over4} > 4, ${uSkirt.both0} sharing skirt0a/b); held skirt max ${hSkirt.mx} (${hSkirt.over4} > 4, ${hSkirt.both0} sharing skirt0a/b), held hair_back max ${hHair.mx} (${hHair.over4} > 4); capped (maxInfluences 2) max ${cSkirt.mx} (${cSkirt.over4} > 4, ${cSkirt.both0} sharing skirt0a/b)`,
       'issue #392: when strength is omitted, split.hold_tip: true holds outer branches to branch strength (100, PR515), and when strength is written explicitly its edge value is honoured while r >= grid keeps the fork held; in buildRig, a held-fork mesh (r >= grid, forked chains sharing a parent, no explicit influences) smooths each fork\'s branch shares across mesh edges (4 passes, floor 0.005, cap 8), while an unheld mesh (r < grid) or one with explicit influences keeps its cap',
+    );
+
+    // PR518 — issue #390: omitting `chains` on `back hair` derives the tree count per side from the root-row tail widths
+    // (2 on the wide-crown fixture where wR = wL = 48 px on a 14 px grid, 1 on narrow or gapped twin tails), and an
+    // explicit `chains` that exceeds floor(width / grid) or roots a tree outside the 15 px dilated art mask is refused
+    // by PROPOSE_CLOTH_BACK_HAIR_CHAINS.
+    const omittedWideRecipe: ClothRecipes = {
+      ...baseRecipe,
+      'back hair': { links: 3, split: { at: 1, into: 2 }, wind: [1, 8], gravity: [4, 24] },
+    };
+    const omittedWideProp = propose(P, undefined, null, DEFAULT_GRID_RULE, omittedWideRecipe);
+    const wideTooManyErr = refusals(() =>
+      propose(P, undefined, null, DEFAULT_GRID_RULE, {
+        ...baseRecipe,
+        'back hair': { ...baseRecipe['back hair']!, chains: 4 },
+      }),
+    );
+    // Twin tails with a gapped root row (outer tail 14 px + inner 2 px + temple 14 px = 30 px per side, floor(30/14) = 2,
+    // but the 32 px gap x = 86..117 puts the 2-tree inner roots at [103, 69] and [138, 69] at alpha 0, 17 px from art > 15 px).
+    const gappedParts = CLOTH_PARTS.map((p) =>
+      p.name === 'hair_back'
+        ? {
+            ...p,
+            rects: [
+              [50, 20, 14, 280] as [number, number, number, number],
+              [85, 69, 2, 1] as [number, number, number, number],
+              [118, 69, 2, 1] as [number, number, number, number],
+              [121, 69, 2, 1] as [number, number, number, number],
+              [154, 69, 2, 1] as [number, number, number, number],
+              [176, 20, 14, 280] as [number, number, number, number],
+              [50, 72, 26, 228] as [number, number, number, number],
+              [164, 72, 26, 228] as [number, number, number, number],
+            ],
+          }
+        : p,
+    );
+    const gappedDir = join(dir, 'gapped');
+    writeProposeFixture(gappedDir, gappedParts, CLOTH_RIG);
+    const gappedP = readPartSet(gappedDir);
+    const gappedOmittedProp = propose(gappedP, undefined, null, DEFAULT_GRID_RULE, omittedWideRecipe);
+    const gappedLint = lint(gappedP, gappedOmittedProp);
+    const gappedTwoErr = refusals(() => propose(gappedP, undefined, null, DEFAULT_GRID_RULE, baseRecipe));
+    say(
+      'PR518_BACK_HAIR_CHAINS_DERIVED_FROM_ROOT_ROW_TAIL_WIDTH_AND_EXCESS_OR_OFF_ART_REFUSED',
+      JSON.stringify(omittedWideProp) === JSON.stringify(prop) &&
+        wideTooManyErr !== null &&
+        wideTooManyErr.problems.length === 1 &&
+        wideTooManyErr.problems[0].code === 'PROPOSE_CLOTH_BACK_HAIR_CHAINS' &&
+        wideTooManyErr.problems[0].detail.includes('at the root row y=69 the tail is 48 px wide on the r side and 48 px on the l side on a 14 px mesh grid (at most 3 tree(s) per side fit inside the art)') &&
+        gappedOmittedProp.meshes.hair_back.segments.slice(1).join(',') === 'hairback_r0_,hairback_r0a_,hairback_r0b_,hairback_l0_,hairback_l0a_,hairback_l0b_' &&
+        gappedLint.findings.length === 0 &&
+        gappedTwoErr !== null &&
+        gappedTwoErr.problems.length === 1 &&
+        gappedTwoErr.problems[0].code === 'PROPOSE_CLOTH_BACK_HAIR_CHAINS' &&
+        gappedTwoErr.problems[0].detail.includes('off the art: hairback_r1_0 at [102, 69] (alpha 0), hairback_l0_0 at [138, 69] (alpha 0)'),
+      `wide crown (48 px/side on 14 px grid) with chains omitted -> byte-identical to chains: 2 (${JSON.stringify(omittedWideProp) === JSON.stringify(prop)}); chains: 4 -> ${codes(wideTooManyErr)} (${wideTooManyErr?.problems[0]?.detail ?? 'none'}); gapped twin tails with chains omitted -> tree segments [${gappedOmittedProp.meshes.hair_back.segments.slice(1).join(', ')}], ${gappedLint.findings.length} lint finding(s); with chains: 2 -> ${codes(gappedTwoErr)} (${gappedTwoErr?.problems[0]?.detail ?? 'none'})`,
+      'issue #390: when cloth."back hair".chains is omitted, propose --cloth derives min(2, maxFit) trees per side from the eye-line root row\'s opaque widths and 15 px dilated art mask (2 on wide hair, 1 on narrow or gapped twin tails), and an explicit count that exceeds the width cap or places a root off the art is refused by PROPOSE_CLOTH_BACK_HAIR_CHAINS',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
