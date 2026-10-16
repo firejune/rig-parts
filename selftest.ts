@@ -20132,6 +20132,203 @@ function runCrossedLimbFeatherCases(say: (name: string, ok: boolean, detail: str
     `one-run (and disc+feather) vs two-run proposal+turn identical=${onePropMatch}, basis identical=${oneBasisMatch}, rig from oneRunOut vs two-run identical=${rigMatch}; standalone forearm_r -> ${codes(loneForearmErr)}`,
     'issue #440: one assemble run with config.limbs yields the exact proposal, turn, basis and rig of the two-run path, while handing a limb part to propose on its own still refuses by name with PROPOSE_LIMB_PARTS',
   );
+
+  // Issue #446: two legs painted in one legwear layer that cross in an X at [41, 30] — leg_r from (31, 10) through
+  // (36, 20) to (51, 50) (covered) and leg_l from (51, 10) through (46, 20) to (31, 50) (covering).
+  // Without split, nearest-bone cuts a vertical bisector x = 41 across the crossing and steals a wedge of leg_l's
+  // silhouette into shin_r, and lint emits a crossed-limbs LINT line naming [41, 30]. With split: { line: ... } or
+  // split: { edge: "painting" } on leg_l, the seam follows leg_l's edge across the crossing (0 stolen pixels, 0 leaked
+  // pixels), leg_l's parts stand after leg_r's in the draw order, recomposite and setup pose match the painting, and
+  // lint emits 0 crossed-limbs findings.
+  const cxR446 = (y: number): number => 31 + 0.5 * (y + 0.5 - 10);
+  const cxL446 = (y: number): number => 51 - 0.5 * (y + 0.5 - 10);
+  const inR446 = (x: number, y: number): boolean => y >= 10 && y < 50 && Math.abs(x + 0.5 - cxR446(y)) <= 4.0;
+  const inL446 = (x: number, y: number): boolean => y >= 10 && y < 50 && Math.abs(x + 0.5 - cxL446(y)) <= 4.0;
+  const crossedLegwearRects: Array<{ x0: number; y0: number; x1: number; y1: number; colour: [number, number, number] }> = [];
+  const crossedPaintRas = newRaster(64, 64);
+  for (let i = 0; i < 64 * 64; i++) crossedPaintRas.data.set([C[0], C[1], C[2], 255], i * 4);
+  for (let y = 10; y < 50; y++) {
+    for (let x = 25; x < 58; x++) {
+      const p = (y * 64 + x) * 4;
+      if (inL446(x, y)) {
+        const stroke = Math.abs(x + 0.5 - cxL446(y)) > 2.6;
+        const col: [number, number, number] = stroke ? [24, 24, 32] : [210, 190, 205];
+        crossedLegwearRects.push({ x0: x, y0: y, x1: x + 1, y1: y + 1, colour: col });
+        crossedPaintRas.data.set([col[0], col[1], col[2], 255], p);
+      } else if (inR446(x, y)) {
+        const stroke = Math.abs(x + 0.5 - cxR446(y)) > 2.6;
+        const col: [number, number, number] = stroke ? [24, 24, 32] : [195, 175, 190];
+        crossedLegwearRects.push({ x0: x, y0: y, x1: x + 1, y1: y + 1, colour: col });
+        crossedPaintRas.data.set([col[0], col[1], col[2], 255], p);
+      } else {
+        crossedPaintRas.data.set([255, 255, 255, 255], p);
+      }
+    }
+  }
+  const crossedFullLayers446 = LIMB_FULL.map((l) => (l.name === 'legwear' ? { ...l, rects: crossedLegwearRects } : l));
+  const crossedBones446 = [
+    { name: 'hip', parent: 'root', at: [41, 8] },
+    { name: 'head', parent: 'hip', at: [22, 14] },
+    { chain: 'sleeve_r', parent: 'hip', points: [[15, 10], [15, 30]], tip: [15, 50] },
+    { chain: 'leg_r', parent: 'hip', points: [[31, 10], [36, 20]], tip: [51, 50] },
+    { chain: 'leg_l', parent: 'hip', points: [[51, 10], [46, 20]], tip: [31, 50] },
+  ];
+  const makeLimbs446 = (splitL?: Record<string, unknown>, splitR?: Record<string, unknown>): Record<string, unknown> => ({
+    leg_r: {
+      ...(splitR === undefined ? {} : { split: splitR }),
+      segments: [
+        { part: 'thigh_r', from: 'legs', bone: 'leg_r0' },
+        { part: 'shin_r', from: 'legs', bone: 'leg_r1', joint: 'knee' },
+      ],
+    },
+    leg_l: {
+      ...(splitL === undefined ? {} : { split: splitL }),
+      segments: [
+        { part: 'thigh_l', from: 'legs', bone: 'leg_l0' },
+        { part: 'shin_l', from: 'legs', bone: 'leg_l1', joint: 'knee' },
+      ],
+    },
+  });
+  const runCrossed446 = (label: string, limbsBlock: Record<string, unknown>): { r: ReturnType<typeof assemble>; out: string } => {
+    const d = join(root, label);
+    writeRun(join(d, 'full'), crossedFullLayers446);
+    writeRun(join(d, 'head'), HEAD_LAYERS);
+    writeFileSync(join(d, 'painting.png'), encodePngBytes(crossedPaintRas));
+    const plan: Array<[string, 'full' | 'head', string]> = [
+      ['legs', 'full', 'legwear'],
+      ['arm', 'full', 'handwear-r'],
+      ['face', 'head', 'face'],
+    ];
+    const baseCfg = assembleConfig({ plan, extend: [], rigScale: 1, headBox: [16, 0, 48, 32] });
+    const regions446: Record<string, string> = {
+      face: 'head',
+      arm: 'sleeve_r0',
+      thigh_r: 'leg_r0',
+      shin_r: 'leg_r1',
+      thigh_l: 'leg_l0',
+      shin_l: 'leg_l1',
+    };
+    writeFileSync(join(d, 'config.json'), JSON.stringify({ ...baseCfg, limbs: limbsBlock, bones: crossedBones446, regions: regions446 }));
+    const out = join(d, 'out');
+    const r = assembleStage(
+      { source: join(d, 'painting.png'), full: join(d, 'full'), head: join(d, 'head'), config: join(d, 'config.json'), seam: 'near-white', project: DEFAULT_PROJECT_RULE },
+      { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, 'recomposite_error_rig.png') },
+      () => {},
+    );
+    return { r, out };
+  };
+  const noSplit446 = runCrossed446('crossed-no-split', makeLimbs446());
+  const lineSplit446 = runCrossed446('crossed-line-split', makeLimbs446({ line: [[47, 10], [27, 50]] }));
+  const edgeSplit446 = runCrossed446('crossed-edge-split', makeLimbs446({ edge: 'painting' }));
+  const countLegSeamFaults = (res: ReturnType<typeof assemble>): { stolenFromL: number; leakedIntoL: number } => {
+    const hasAlpha = (partName: string, x: number, y: number): boolean => {
+      const pl = res.images.find((q) => q.record.name === partName);
+      if (pl === undefined) return false;
+      const lx = x - pl.record.x;
+      const ly = y - pl.record.y;
+      if (lx < 0 || ly < 0 || lx >= pl.record.w || ly >= pl.record.h) return false;
+      return pl.image.data[(ly * pl.record.w + lx) * 4 + 3] > 0;
+    };
+    let stolenFromL = 0;
+    let leakedIntoL = 0;
+    for (let y = 21; y < 49; y++) {
+      for (let x = 25; x < 58; x++) {
+        const onL = hasAlpha('thigh_l', x, y) || hasAlpha('shin_l', x, y);
+        const onR = hasAlpha('thigh_r', x, y) || hasAlpha('shin_r', x, y);
+        if (inL446(x, y) && !onL && onR) stolenFromL++;
+        if (!inL446(x, y) && inR446(x, y) && onL) leakedIntoL++;
+      }
+    }
+    return { stolenFromL, leakedIntoL };
+  };
+  const faultsNoSplit = countLegSeamFaults(noSplit446.r);
+  const faultsLine = countLegSeamFaults(lineSplit446.r);
+  const faultsEdge = countLegSeamFaults(edgeSplit446.r);
+  const orderLine446 = lineSplit446.r.parts.parts.map((q) => q.name).join(',');
+  const orderEdge446 = edgeSplit446.r.parts.parts.map((q) => q.name).join(',');
+  const PnoSplit446 = readPartSet(noSplit446.out);
+  const PlineSplit446 = readPartSet(lineSplit446.out);
+  const PedgeSplit446 = readPartSet(edgeSplit446.out);
+  const lintNoSplit = lint(PnoSplit446, {
+    bones: crossedBones446 as BoneEntry[],
+    meshes: {},
+    regions: { face: 'head', arm: 'sleeve_r0', thigh_r: 'leg_r0', shin_r: 'leg_r1', thigh_l: 'leg_l0', shin_l: 'leg_l1' },
+    limbs: makeLimbs446() as Record<string, Limb>,
+  });
+  const lintWithLine = lint(PlineSplit446, {
+    bones: crossedBones446 as BoneEntry[],
+    meshes: {},
+    regions: { face: 'head', arm: 'sleeve_r0', thigh_r: 'leg_r0', shin_r: 'leg_r1', thigh_l: 'leg_l0', shin_l: 'leg_l1' },
+    limbs: makeLimbs446({ line: [[47, 10], [27, 50]] }) as Record<string, Limb>,
+  });
+  const lintWithEdge = lint(PedgeSplit446, {
+    bones: crossedBones446 as BoneEntry[],
+    meshes: {},
+    regions: { face: 'head', arm: 'sleeve_r0', thigh_r: 'leg_r0', shin_r: 'leg_r1', thigh_l: 'leg_l0', shin_l: 'leg_l1' },
+    limbs: makeLimbs446({ edge: 'painting' }) as Record<string, Limb>,
+  });
+  const maxLegCompositeDiff = (res: ReturnType<typeof assemble>): number => {
+    let maxD = 0;
+    for (let y = 10; y < 50; y++) {
+      for (let x = 25; x < 58; x++) {
+        if (!inL446(x, y) && !inR446(x, y)) continue;
+        const p = (y * 64 + x) * 4;
+        for (let c = 0; c < 3; c++) {
+          maxD = Math.max(maxD, Math.abs(res.recomposite.data[p + c] - crossedPaintRas.data[p + c]));
+        }
+      }
+    }
+    return maxD;
+  };
+  const legDiffLine = maxLegCompositeDiff(lineSplit446.r);
+  const legDiffEdge = maxLegCompositeDiff(edgeSplit446.r);
+  const crossedFindingsNoSplit = lintNoSplit.findings.filter((f) => f.kind === 'crossed-limbs');
+  const crossedFindingsLine = lintWithLine.findings.filter((f) => f.kind === 'crossed-limbs');
+  const crossedFindingsEdge = lintWithEdge.findings.filter((f) => f.kind === 'crossed-limbs');
+  const crossedLintText = crossedFindingsNoSplit.map((f) => lintLine(f)).join(' | ');
+  // Negative config refusals for invalid split declarations.
+  const badSplitEmpty = refusals(() => parseConfig(limbConfig({ ...LIMBS, leg_l: { ...LIMBS.leg_l, split: {} } })));
+  const badSplitBoth = refusals(() => parseConfig(limbConfig({ ...LIMBS, leg_l: { ...LIMBS.leg_l, split: { line: [[40, 10], [40, 50]], edge: 'painting' } } })));
+  const badSplitZeroLen = refusals(() => parseConfig(limbConfig({ ...LIMBS, leg_l: { ...LIMBS.leg_l, split: { line: [[40, 10], [40, 10]] } } })));
+  const badSplitUnshared = refusals(() => parseConfig(limbConfig({ ...LIMBS, arm_r: { ...LIMBS.arm_r, split: { edge: 'painting' } } })));
+  const badSplitTwoCover = refusals(() =>
+    parseConfig(
+      limbConfig({
+        ...LIMBS,
+        leg_r: { ...LIMBS.leg_r, split: { edge: 'painting' } },
+        leg_l: { ...LIMBS.leg_l, split: { edge: 'painting' } },
+      }),
+    ),
+  );
+  say(
+    'AS477_CROSSED_LEGS_IN_ONE_LAYER_SPLIT_ALONG_THE_COVERING_LEG_WHEN_DECLARED_AND_EMIT_A_CROSSED_LIMBS_LINT_WHEN_NOT',
+    faultsNoSplit.stolenFromL > 0 &&
+      faultsLine.stolenFromL === 0 &&
+      faultsLine.leakedIntoL === 0 &&
+      faultsEdge.stolenFromL === 0 &&
+      faultsEdge.leakedIntoL === 0 &&
+      orderLine446 === 'shin_r,thigh_r,shin_l,thigh_l,arm,face' &&
+      orderEdge446 === 'shin_r,thigh_r,shin_l,thigh_l,arm,face' &&
+      legDiffLine === 0 &&
+      legDiffEdge === 0 &&
+      crossedFindingsNoSplit.length === 1 &&
+      crossedLintText ===
+        'LINT leg_r and leg_l on legs (full:legwear) cross at [41.0, 30.0] with no per-limb split: nearest-bone splitting cuts a straight line through the crossing; declare config.limbs.<covering>.split (line: [[x, y], ...] or edge: "painting") on the covering limb so the seam follows the limb' &&
+      crossedFindingsLine.length === 0 &&
+      crossedFindingsEdge.length === 0 &&
+      badSplitEmpty?.problems[0]?.code === 'CONFIG_FIELD_TYPE' &&
+      badSplitEmpty.problems[0].object === 'config.limbs.leg_l.split' &&
+      badSplitBoth?.problems[0]?.code === 'CONFIG_FIELD_TYPE' &&
+      badSplitBoth.problems[0].object === 'config.limbs.leg_l.split' &&
+      badSplitZeroLen?.problems[0]?.code === 'CONFIG_FIELD_TYPE' &&
+      badSplitZeroLen.problems[0].object === 'config.limbs.leg_l.split.line' &&
+      badSplitUnshared?.problems[0]?.code === 'CONFIG_FIELD_TYPE' &&
+      badSplitUnshared.problems[0].object === 'config.limbs.arm_r.split' &&
+      badSplitTwoCover?.problems[0]?.code === 'CONFIG_FIELD_TYPE' &&
+      badSplitTwoCover.problems[0].object === 'config.limbs.leg_r.split',
+    `without split: ${faultsNoSplit.stolenFromL} px of leg_l stolen by leg_r, lint="${crossedLintText}"; with split.line: stolen=${faultsLine.stolenFromL}, leaked=${faultsLine.leakedIntoL}, maxLegDiff=${legDiffLine}, lint=${crossedFindingsLine.length}; with split.edge="painting": stolen=${faultsEdge.stolenFromL}, leaked=${faultsEdge.leakedIntoL}, maxLegDiff=${legDiffEdge}, lint=${crossedFindingsEdge.length}; order=${orderLine446}; refusals=${[codes(badSplitEmpty), codes(badSplitBoth), codes(badSplitZeroLen), codes(badSplitUnshared), codes(badSplitTwoCover)].join(',')}`,
+    'issue #446: crossed legs in one legwear layer split along the covering leg\'s declared line or painted outline edge instead of a nearest-bone bisector, draw the covering leg in front, and emit a crossed-limbs LINT when no split is declared',
+  );
 }
 
 function runAssembleSuite(): number {

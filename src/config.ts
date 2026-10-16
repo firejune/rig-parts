@@ -721,9 +721,21 @@ export interface LimbSegment {
   cut_band?: number;
 }
 
+/**
+ * Issue #446: a per-limb split declared on the covering limb where two limbs
+ * share one part and cross: either `line` (a polyline of two or more `[x, y]`
+ * points in rig px along the covering limb's seam) or `edge: "painting"`
+ * (traces the covering limb's painted stroke or silhouette across the crossing).
+ */
+export interface LimbSplit {
+  line?: Array<[number, number]>;
+  edge?: 'painting';
+}
+
 /** A limb (issue #349): its segments, upper first; each segment's bone is the child of the one before. */
 export interface Limb {
   segments: LimbSegment[];
+  split?: LimbSplit;
 }
 
 export interface CharacterConfig {
@@ -2378,10 +2390,39 @@ function checkLimbs(c: Check, v: Json, made: { parts: string[]; patches: string[
   }
   const sources = new Set([...made.parts, ...made.cuts]);
   const firstAt = new Map<string, string>();
+  const limbFroms = new Map<string, Set<string>>();
+  const splitLimbs: string[] = [];
   for (const [limb, spec] of Object.entries(v)) {
     const at = `config.limbs.${limb}`;
-    const o = c.object(at, spec, ['segments'], []);
-    if (o === null || !('segments' in o)) continue;
+    const o = c.object(at, spec, ['segments'], ['split']);
+    if (o === null) continue;
+    if ('split' in o) {
+      const sp = c.object(`${at}.split`, o.split, [], ['line', 'edge']);
+      if (sp !== null) {
+        const hasLine = 'line' in sp;
+        const hasEdge = 'edge' in sp;
+        if ((hasLine && hasEdge) || (!hasLine && !hasEdge)) {
+          c.fail('CONFIG_FIELD_TYPE', `${at}.split`, `is ${show(o.split)}; either "line" (a polyline of two or more [x, y] points in rig px) or "edge": "painting" is required, not both and not neither`);
+        } else if (hasLine) {
+          const pts = sp.line;
+          const ok =
+            Array.isArray(pts) &&
+            pts.length >= 2 &&
+            pts.every((p) => Array.isArray(p) && p.length === 2 && typeof p[0] === 'number' && Number.isFinite(p[0]) && typeof p[1] === 'number' && Number.isFinite(p[1]));
+          if (!ok) {
+            c.fail('CONFIG_FIELD_TYPE', `${at}.split.line`, `is ${show(pts)}; an array of two or more [x, y] points in rig px is required`);
+          } else {
+            const typed = pts as Array<[number, number]>;
+            if (typed.every((p) => p[0] === typed[0][0] && p[1] === typed[0][1])) {
+              c.fail('CONFIG_FIELD_TYPE', `${at}.split.line`, `is ${show(pts)}; a polyline with non-zero length is required — all points stand on [${typed[0].join(', ')}]`);
+            } else splitLimbs.push(limb);
+          }
+        } else if (sp.edge !== 'painting') {
+          c.fail('CONFIG_FIELD_TYPE', `${at}.split.edge`, `is ${show(sp.edge)}; "painting" is required — traces the covering limb's edge across the crossing from the painting's own stroke or silhouette`);
+        } else splitLimbs.push(limb);
+      }
+    }
+    if (!('segments' in o)) continue;
     if (!Array.isArray(o.segments) || o.segments.length < 2) {
       c.fail('CONFIG_FIELD_TYPE', `${at}.segments`, `is ${show(o.segments)}; an array of two segments or more, upper first, is required — a limb is cut at a joint, and a joint has a segment on each side`);
       continue;
@@ -2451,6 +2492,7 @@ function checkLimbs(c: Check, v: Json, made: { parts: string[]; patches: string[
         }
       }
     });
+    limbFroms.set(limb, new Set(froms.filter((f): f is string => f !== null)));
     froms.forEach((f, i) => {
       if (f === null || i === 0 || froms[i - 1] === f) return;
       const back = froms.slice(0, i - 1).lastIndexOf(f);
@@ -2466,6 +2508,20 @@ function checkLimbs(c: Check, v: Json, made: { parts: string[]; patches: string[
           c.fail('CONFIG_LIMB_BONES_CHAIN', `${at}.segments[${i}].bone`, `is "${b}", whose parent is ${parent === undefined ? 'not declared' : `"${parent}"`}; "${bones[i - 1]}", the bone of segments[${i - 1}], is required — the lower segment turns about the joint on a bone that hangs from the upper's`);
         }
       });
+    }
+  }
+  for (const limb of splitLimbs) {
+    const myFroms = limbFroms.get(limb) ?? new Set<string>();
+    if (myFroms.size === 0) continue;
+    const sharers = [...limbFroms.entries()].filter(([other, fs]) => other !== limb && [...myFroms].some((f) => fs.has(f)));
+    if (sharers.length === 0) {
+      c.fail('CONFIG_FIELD_TYPE', `config.limbs.${limb}.split`, `is declared on "${limb}", whose from part(s) (${[...myFroms].map((f) => `"${f}"`).join(', ')}) no other limb takes; a per-limb split divides a part shared by two limbs`);
+    } else {
+      const otherSplit = sharers.find(([other]) => splitLimbs.includes(other));
+      if (otherSplit !== undefined) {
+        const sharedFrom = [...myFroms].find((f) => otherSplit[1].has(f)) as string;
+        c.fail('CONFIG_FIELD_TYPE', `config.limbs.${limb}.split`, `is declared on "${limb}" and on "${otherSplit[0]}", which both take "${sharedFrom}"; declare split on the covering limb alone`);
+      }
     }
   }
   return out;

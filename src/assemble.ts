@@ -104,7 +104,7 @@ import { type Problem, refuseIfAny } from './errors.ts';
 import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
 import { padToSquare, squarePad } from './inputs.ts';
 import { type CapRecord, type LimbRecord, PAINTING_RUN, type PartRecord, type PartsFile, type RecompositeRecord, type SceneRecord, type SingleRunPad } from './parts.ts';
-import { assignOverlappingHands, type BonePlace, bonePlaces, capBox, coveredRadius, type CutPlacement, featherWeight, halfWidthAbout, inDisc, jointLine, type JointLine, jointOffsets, limbPolyline, limbRun, luma601, nearestLimb, pastJoint, placeCut, segmentOf } from './limbs.ts';
+import { assignCrossedLimbs, assignOverlappingHands, type BonePlace, bonePlaces, capBox, coveredRadius, type CutPlacement, featherWeight, halfWidthAbout, inDisc, jointLine, type JointLine, jointOffsets, limbPolyline, limbRun, luma601, nearestLimb, pastJoint, placeCut, segmentOf } from './limbs.ts';
 import {
   alphaComposite,
   connectedComponents,
@@ -2141,6 +2141,8 @@ export interface LimbPart {
   part: string;
   /** The part whose pixels it takes. */
   of: string;
+  /** Issue #446: true when this limb declares `split` and covers the other limb(s) taking `of`. */
+  covering?: boolean;
   record: LimbRecord;
 }
 
@@ -2208,7 +2210,8 @@ export function limbLines(counts: readonly LimbCount[]): string[] {
  * leaves the order, and each limb's parts stand where its first segment's
  * part stood, lowest segment first (drawn behind), so the upper is drawn over
  * the lower at every joint; limbs whose first segment takes one part stand
- * there in `config.limbs` order. Without limbs, `order` as it was.
+ * there in `config.limbs` order (or with the `split` covering limb drawn in
+ * front, issue #446). Without limbs, `order` as it was.
  */
 export function limbOrder(order: readonly DrawSlot[], plan: readonly PlanEntry[], cuts: readonly Cut[], parts: readonly LimbPart[]): DrawSlot[] {
   if (parts.length === 0) return [...order];
@@ -2221,7 +2224,9 @@ export function limbOrder(order: readonly DrawSlot[], plan: readonly PlanEntry[]
       out.push(d);
       continue;
     }
-    const limbs = [...new Set(parts.filter((q) => q.segment === 0 && q.of === n).map((q) => q.limb))];
+    const limbs = [...new Set(parts.filter((q) => q.segment === 0 && q.of === n).map((q) => q.limb))].sort(
+      (a, b) => (parts.some((q) => q.limb === a && q.of === n && q.covering === true) ? 1 : 0) - (parts.some((q) => q.limb === b && q.of === n && q.covering === true) ? 1 : 0),
+    );
     for (const l of limbs) {
       const mine = parts.map((q, i) => ({ q, i })).filter(({ q }) => q.limb === l);
       for (const { i } of [...mine].reverse()) out.push({ limb: i });
@@ -2267,8 +2272,9 @@ function cutLimbs(
   const places = bonePlaces(bones);
   const parts: LimbPart[] = [];
   for (const l of names) {
+    const covering = limbs[l].split !== undefined;
     limbs[l].segments.forEach((sg, k) =>
-      parts.push({ limb: l, segment: k, part: sg.part, of: sg.from, record: { name: l, segment: k, of: sg.from, bone: sg.bone, ...(k === 0 ? {} : { joint: sg.joint as string, ...(sg.range === undefined ? {} : { range: [sg.range[0], sg.range[1]] as [number, number] }) }) } }),
+      parts.push({ limb: l, segment: k, part: sg.part, of: sg.from, ...(covering ? { covering: true } : {}), record: { name: l, segment: k, of: sg.from, bone: sg.bone, ...(k === 0 ? {} : { joint: sg.joint as string, ...(sg.range === undefined ? {} : { range: [sg.range[0], sg.range[1]] as [number, number] }) }) } }),
     );
   }
   const polylines = new Map(names.map((l) => [l, limbPolyline(limbs[l], places)]));
@@ -2324,6 +2330,16 @@ function cutLimbs(
         if (b.r.data[p * 4 + 3] === 0) continue;
         own[p] = names.indexOf(on[on.length === 1 ? 0 : nearestLimb(lns, x, y)]);
       }
+    }
+    // Issue #446: when a covering limb on `src` declares `split` (`line` or `edge: "painting"`), reassign `own` so
+    // the covering limb's pixels across the crossing stay on the covering limb and the seam follows the declared split.
+    const coverLimb = on.find((l) => limbs[l].split !== undefined);
+    if (coverLimb !== undefined && on.length >= 2) {
+      const coverIdx = names.indexOf(coverLimb);
+      const underNames = on.filter((l) => l !== coverLimb);
+      const underIndices = underNames.map((l) => names.indexOf(l));
+      const underPolys = underNames.map((l) => polylines.get(l) as Array<[number, number]>);
+      assignCrossedLimbs(coverIdx, polylines.get(coverLimb) as Array<[number, number]>, limbs[coverLimb].split as NonNullable<Limb['split']>, underIndices, underPolys, b.r, OPAQUE_ALPHA_ABOVE, own);
     }
     // Issue #360 (item 14): each joint of this part that declares cut_band has its cut placed, on the limb's own art.
     for (const l of on) {
@@ -2419,8 +2435,18 @@ function cutLimbs(
         }
         return false;
       };
+      const sharedArt = (x: number, y: number): boolean => {
+        if (x < 0 || y < 0 || x >= W || y >= H) return false;
+        const p = y * W + x;
+        for (const src of new Set([upFrom, sg.from])) {
+          const b = builtOf(src);
+          if (b !== null && b.r.data[p * 4 + 3] > OPAQUE_ALPHA_ABOVE) return true;
+        }
+        return false;
+      };
+      const hasCoverSplit = names.some((other) => other !== l && limbs[other].split !== undefined && limbs[other].segments.some((osg) => osg.from === upFrom || osg.from === sg.from));
       const object = `config.limbs.${l}.segments[${k}] (joint "${String(sg.joint)}", part "${sg.part}")`;
-      const run = limbRun(line, art, [0, 0, W - 1, H - 1]);
+      const run = limbRun(line, art, [0, 0, W - 1, H - 1]) ?? (hasCoverSplit ? limbRun(line, sharedArt, [0, 0, W - 1, H - 1]) : null);
       if (run === null) {
         problems.push({
           code: 'ASSEMBLE_LIMB_JOINT_ON_ART',

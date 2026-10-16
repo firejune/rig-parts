@@ -92,8 +92,19 @@
  *   cuff; any 4-connected island on a forearm piece that leaves its own hand's
  *   keypoint region is transferred to the other forearm piece, so no slivers
  *   are cut out of the front hand for the back arm.
+ * - **Crossed limbs** (issue #446, {@link limbCrossing},
+ *   {@link assignCrossedLimbs}). When two limbs share a part and cross in an X,
+ *   the covering limb may declare `split` (`line` or `edge: "painting"`):
+ *   under `line`, rays from the covering limb's bone polyline split pixels at
+ *   the declared polyline (and its matching half-width on the opposite side
+ *   when one edge is given); under `edge: "painting"`, each ray from the
+ *   covering limb's bone polyline walks outward through the covering limb's
+ *   interior fill and stops at the outer edge of its dark stroke (`luma <=` the
+ *   part's Otsu split) or transparent silhouette. Without `split`,
+ *   {@link nearestLimb} stays as it was and `propose`'s `LINT` names the
+ *   crossing.
  */
-import type { BoneEntry, Limb } from './config.ts';
+import type { BoneEntry, Limb, LimbSplit } from './config.ts';
 
 export type Pt = [number, number];
 
@@ -597,6 +608,215 @@ export function assignOverlappingHands(back: ForearmShare, front: ForearmShare, 
         }
       }
     });
+  }
+}
+
+/**
+ * Issue #446: the crossing point `[x, y]` (rig px) where two limb polylines `a`
+ * and `b` cross in an X, or `null` when they do not cross. Two polylines cross
+ * when a segment of `a` and a segment of `b` intersect in their interiors
+ * (`0 < ta < 1` and `0 < tb < 1`), or meet at an interior joint vertex while
+ * the two polylines' start-to-end chords cross in their interiors.
+ */
+export function limbCrossing(a: readonly Pt[], b: readonly Pt[]): Pt | null {
+  if (a.length < 2 || b.length < 2) return null;
+  const segHit = (p0: Pt, p1: Pt, q0: Pt, q1: Pt): { at: Pt; ta: number; tb: number } | null => {
+    const dax = p1[0] - p0[0];
+    const day = p1[1] - p0[1];
+    const dbx = q1[0] - q0[0];
+    const dby = q1[1] - q0[1];
+    const denom = dax * dby - day * dbx;
+    if (Math.abs(denom) <= 1e-9) return null;
+    const rx = q0[0] - p0[0];
+    const ry = q0[1] - p0[1];
+    const ta = (rx * dby - ry * dbx) / denom;
+    const tb = (rx * day - ry * dax) / denom;
+    if (ta < -1e-6 || ta > 1 + 1e-6 || tb < -1e-6 || tb > 1 + 1e-6) return null;
+    return { at: [p0[0] + ta * dax, p0[1] + ta * day], ta, tb };
+  };
+  const chordHit = segHit(a[0], a[a.length - 1], b[0], b[b.length - 1]);
+  if (chordHit === null || chordHit.ta <= 1e-6 || chordHit.ta >= 1 - 1e-6 || chordHit.tb <= 1e-6 || chordHit.tb >= 1 - 1e-6) return null;
+  for (let i = 0; i + 1 < a.length; i++) {
+    for (let j = 0; j + 1 < b.length; j++) {
+      const hit = segHit(a[i], a[i + 1], b[j], b[j + 1]);
+      if (hit !== null) return hit.at;
+    }
+  }
+  return chordHit.at;
+}
+
+/** The point on polyline `pts` nearest `(x, y)`. */
+function closestOnPolyline(pts: readonly Pt[], x: number, y: number): Pt {
+  if (pts.length === 1) return [pts[0][0], pts[0][1]];
+  let bestD = Infinity;
+  let best: Pt = [pts[0][0], pts[0][1]];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const [ax, ay] = pts[i];
+    const dx = pts[i + 1][0] - ax;
+    const dy = pts[i + 1][1] - ay;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / len2));
+    const qx = ax + t * dx;
+    const qy = ay + t * dy;
+    const d = (x - qx) ** 2 + (y - qy) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = [qx, qy];
+    }
+  }
+  return best;
+}
+
+/**
+ * Issue #446: assign pixels of a shared part `r` between the covering limb
+ * (`coverIdx`, polyline `coverPoly`, declaring `split`) and the covered limb(s)
+ * (`underIndices`, polylines `underPolys`). Mutates `own` in place.
+ */
+export function assignCrossedLimbs(
+  coverIdx: number,
+  coverPoly: readonly Pt[],
+  split: LimbSplit,
+  underIndices: readonly number[],
+  underPolys: ReadonlyArray<readonly Pt[]>,
+  r: { width: number; height: number; data: ArrayLike<number> },
+  opaqueAlphaAbove: number,
+  own: Int32Array,
+): void {
+  if (underIndices.length === 0 || coverPoly.length === 0) return;
+  const W = r.width;
+  const H = r.height;
+  const nearestOwn = new Int32Array(own);
+  const underOf = (x: number, y: number): number => underIndices[underIndices.length === 1 ? 0 : nearestLimb(underPolys, x, y)];
+
+  if (split.line !== undefined) {
+    const line = split.line;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const p = y * W + x;
+        if (r.data[p * 4 + 3] === 0) continue;
+        const px = x + 0.5;
+        const py = y + 0.5;
+        const c = closestOnPolyline(coverPoly, px, py);
+        const dx = px - c[0];
+        const dy = py - c[1];
+        const dP = Math.sqrt(dx * dx + dy * dy);
+        if (dP <= 1e-9) {
+          own[p] = coverIdx;
+          continue;
+        }
+        const ux = dx / dP;
+        const uy = dy / dP;
+        let hitPos: number | null = null;
+        let hitNeg: number | null = null;
+        for (let j = 0; j + 1 < line.length; j++) {
+          const sx = line[j + 1][0] - line[j][0];
+          const sy = line[j + 1][1] - line[j][1];
+          const denom = ux * sy - uy * sx;
+          if (Math.abs(denom) <= 1e-9) continue;
+          const rx = line[j][0] - c[0];
+          const ry = line[j][1] - c[1];
+          const s = (rx * sy - ry * sx) / denom;
+          const v = (rx * uy - ry * ux) / denom;
+          if (v < -1e-6 || v > 1 + 1e-6) continue;
+          if (s > 1e-6 && (hitPos === null || s < hitPos)) hitPos = s;
+          else if (s < -1e-6 && (hitNeg === null || -s < hitNeg)) hitNeg = -s;
+        }
+        if (hitPos !== null) {
+          own[p] = dP <= hitPos + 1e-9 ? coverIdx : underOf(x, y);
+        } else if (hitNeg !== null) {
+          own[p] = dP <= hitNeg + 1e-9 ? coverIdx : underOf(x, y);
+        }
+      }
+    }
+    return;
+  }
+
+  const hist = new Array<number>(256).fill(0);
+  for (let p = 0; p < W * H; p++) {
+    if (r.data[p * 4 + 3] > opaqueAlphaAbove) {
+      hist[luma601(r.data[p * 4], r.data[p * 4 + 1], r.data[p * 4 + 2])]++;
+    }
+  }
+  const strokeLumaMax = otsuDarkMax(hist);
+
+  const hasGapAlong = (c: Pt, px: number, py: number, dP: number): boolean => {
+    const steps = Math.max(1, Math.ceil(dP * 2));
+    const dx = px - c[0];
+    const dy = py - c[1];
+    for (let s = 0; s <= steps; s++) {
+      const sx = Math.min(W - 1, Math.max(0, Math.floor(c[0] + (dx * s) / steps)));
+      const sy = Math.min(H - 1, Math.max(0, Math.floor(c[1] + (dy * s) / steps)));
+      if (r.data[(sy * W + sx) * 4 + 3] <= opaqueAlphaAbove) return true;
+    }
+    return false;
+  };
+
+  let maxUncrossedHalfWidth = 0;
+  let maxFallbackHalfWidth = 0;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const p = y * W + x;
+      if (r.data[p * 4 + 3] <= opaqueAlphaAbove || nearestOwn[p] !== coverIdx) continue;
+      const px = x + 0.5;
+      const py = y + 0.5;
+      const c = closestOnPolyline(coverPoly, px, py);
+      const dP = Math.sqrt((px - c[0]) ** 2 + (py - c[1]) ** 2);
+      if (hasGapAlong(c, px, py, dP)) continue;
+      if (dP > maxFallbackHalfWidth) maxFallbackHalfWidth = dP;
+      const dUnder = Math.sqrt(Math.min(...underPolys.map((up) => polylineDist2(up, px, py))));
+      if (dUnder > dP + 1.5 && dP > maxUncrossedHalfWidth) maxUncrossedHalfWidth = dP;
+    }
+  }
+  if (maxUncrossedHalfWidth === 0) maxUncrossedHalfWidth = maxFallbackHalfWidth;
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const p = y * W + x;
+      if (r.data[p * 4 + 3] === 0) continue;
+      const px = x + 0.5;
+      const py = y + 0.5;
+      const c = closestOnPolyline(coverPoly, px, py);
+      const dx = px - c[0];
+      const dy = py - c[1];
+      const dP = Math.sqrt(dx * dx + dy * dy);
+      if (dP <= 0.5) {
+        own[p] = coverIdx;
+        continue;
+      }
+      const steps = Math.max(1, Math.ceil(dP * 2));
+      let hitGap = false;
+      let seenFill = false;
+      let inStroke = false;
+      let exitedStroke = false;
+      for (let s = 0; s <= steps; s++) {
+        const sx = Math.min(W - 1, Math.max(0, Math.floor(c[0] + (dx * s) / steps)));
+        const sy = Math.min(H - 1, Math.max(0, Math.floor(c[1] + (dy * s) / steps)));
+        const sp = sy * W + sx;
+        if (r.data[sp * 4 + 3] <= opaqueAlphaAbove) {
+          hitGap = true;
+          break;
+        }
+        if (strokeLumaMax !== null) {
+          const l = luma601(r.data[sp * 4], r.data[sp * 4 + 1], r.data[sp * 4 + 2]);
+          if (l > strokeLumaMax) {
+            if (inStroke) {
+              exitedStroke = true;
+              break;
+            }
+            seenFill = true;
+          } else if (seenFill) {
+            inStroke = true;
+          }
+        }
+      }
+      if (hitGap) {
+        own[p] = nearestOwn[p];
+      } else if (strokeLumaMax !== null) {
+        own[p] = !exitedStroke && dP <= maxUncrossedHalfWidth + 1e-6 ? coverIdx : underOf(x, y);
+      } else {
+        own[p] = dP <= maxUncrossedHalfWidth + 1e-6 ? coverIdx : underOf(x, y);
+      }
+    }
   }
 }
 
