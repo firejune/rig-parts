@@ -3472,7 +3472,10 @@ function artDistance(m: Mask, at: readonly [number, number]): number {
  * carries one: a part left to the rule beside parts placed from joints would
  * be read by two rules at once. Sides come from the joints, not from the eye
  * axis, so a figure seen from behind or lying across the axis is paired by
- * where its wrists are.
+ * where its wrists are. Issue #458: when pre-separated `handwear-r` and
+ * `handwear-l` parts cross so that `<s>_wrist` lies on the opaque art of its
+ * own side's `handwear-<s>` part and also within 15 px of the opposite side's
+ * `handwear-<other>` part, it resolves to its own side's part.
  *
  * Issue #199: a wrist on no part within that tolerance is measured to every
  * part by the same Chebyshev distance ({@link artDistance}). With
@@ -3499,7 +3502,18 @@ function armsFromJoints(P: PartSet, hw: readonly PartRecord[], joints: RigJoints
   const near = new Map(hw.map((p) => [p, dilate(P.alpha(p), 2 * WRIST_ON_PART_PX + 1)]));
   const arms: JointArm[] = [];
   for (const a of complete) {
-    const on = hw.filter((p) => isOn(near.get(p) as Mask, a.wrist[0], a.wrist[1]));
+    const raw = hw.filter((p) => isOn(near.get(p) as Mask, a.wrist[0], a.wrist[1]));
+    const ownTag = `handwear-${a.side}`;
+    const oppTag = `handwear-${a.side === 'r' ? 'l' : 'r'}`;
+    const own =
+      raw.length > 1 &&
+      raw.every((p) => {
+        const t = splitFrom(p.from)[1];
+        return t === ownTag || t === oppTag;
+      })
+        ? raw.filter((p) => splitFrom(p.from)[1] === ownTag && isOn(P.alpha(p), a.wrist[0], a.wrist[1]))
+        : [];
+    const on = own.length === 1 ? own : raw;
     if (on.length > 1) return { arms: null, why: `${a.side}_wrist at ${fmtAt(a.wrist)} lies on the art of ${on.length} handwear parts (${on.map((p) => p.name).join(', ')}), so it does not say which sleeve it ends` };
     if (on.length === 1) {
       arms.push({ ...a, part: on[0], snap: null });

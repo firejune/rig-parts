@@ -10946,6 +10946,89 @@ function runWristSnapCases(dir: string, SE: string, Pe: PartSet, Je: RigJoints, 
     `reconstructed proposal identical=${limbedPropOk}, basis & checkProposal identical=${limbedBasisOk}; standalone lower -> ${loneLower}; standalone upper -> ${loneUpper}; missing cap -> ${noCapLower}; source part still present -> ${withSource}`,
     'issue #440: a complete assemble output with config.limbs reconstructs the pre-limb part set so propose, checkProposal and checkBasis yield the exact bytes of the two-run path in one run, while a limb part handed to propose on its own (or without its sibling segment or cap record, or alongside its uncut source part) still refuses by name with PROPOSE_LIMB_PARTS',
   );
+
+  // Issue #458: pre-separated crossed arms (`handwear_r` from `full:handwear-r` and `handwear_l` from `full:handwear-l`)
+  // whose pixels overlap at `r_wrist` [106, 176] resolve `r_wrist` to `handwear_r` (its own side), emit `limbs` with both
+  // `arm_r` and `arm_l`, and produce 0 LINT off-art lines; when both parts carry the same side tag (`full:handwear-r`,
+  // separated by `cut_from`), `r_wrist` lies on two parts of the same side and reproduces the 6-LINT, no-`limbs` refusal.
+  const cdir = join(dir, 'pose-seated-crossed-handwear');
+  const crossedParts = [
+    { name: 'face', from: 'head:face', x: 80, y: 20, w: 40, h: 50, colour: [240, 210, 190] as [number, number, number] },
+    { name: 'dress', from: 'full:bottomwear', x: 75, y: 110, w: 50, h: 80, colour: [70, 110, 200] as [number, number, number] },
+    {
+      name: 'handwear_r',
+      from: 'full:handwear-r',
+      x: 30,
+      y: 80,
+      w: 82,
+      h: 100,
+      colour: [240, 240, 240] as [number, number, number],
+      rects: [
+        [30, 80, 12, 92],
+        [30, 172, 82, 8],
+      ] as Array<[number, number, number, number]>,
+    },
+    {
+      name: 'handwear_l',
+      from: 'full:handwear-l',
+      x: 28,
+      y: 80,
+      w: 140,
+      h: 100,
+      colour: [220, 220, 240] as [number, number, number],
+      rects: [
+        [156, 80, 12, 92],
+        [28, 172, 140, 8],
+      ] as Array<[number, number, number, number]>,
+    },
+  ];
+  writeProposeFixture(cdir, crossedParts, SEATED_RIG, true);
+  const Jc = poseJoints('seated', (k) => {
+    delete k.people[0].joints.r_knee;
+    delete k.people[0].joints.r_ankle;
+    delete k.people[0].joints.l_knee;
+    delete k.people[0].joints.l_ankle;
+    k.people[0].joints.r_shoulder = { state: 'observed', at: [36, 86] };
+    k.people[0].joints.r_elbow = { state: 'observed', at: [36, 176] };
+    k.people[0].joints.r_wrist = { state: 'observed', at: [106, 176] };
+    k.people[0].joints.l_shoulder = { state: 'observed', at: [162, 86] };
+    k.people[0].joints.l_elbow = { state: 'observed', at: [162, 176] };
+    k.people[0].joints.l_wrist = { state: 'observed', at: [120, 176] };
+  });
+  const Pc = readPartSet(cdir);
+  const crossed = propose(Pc, Jc);
+  const crossedLint = lint(Pc, crossed, Jc).findings.map(lintLine);
+  const cdirSame = join(dir, 'pose-seated-crossed-same-side');
+  writeProposeFixture(
+    cdirSame,
+    crossedParts.map((p) => (p.name === 'handwear_l' ? { ...p, from: 'full:handwear-r' } : p)),
+    SEATED_RIG,
+    true,
+  );
+  const pfSame = JSON.parse(readFileSync(join(cdirSame, 'parts.json'), 'utf8')) as PartsFile;
+  const hwLSame = pfSame.parts.find((r) => r.name === 'handwear_l');
+  if (hwLSame !== undefined) hwLSame.cut_from = 'handwear_r';
+  writeFileSync(join(cdirSame, 'parts.json'), JSON.stringify(pfSame));
+  const PcSame = readPartSet(cdirSame);
+  const sameSide = propose(PcSame, Jc);
+  const sameSideLint = lint(PcSame, sameSide, Jc).findings.map(lintLine);
+  say(
+    'PR523_CROSSED_PRE_SEPARATED_HANDWEAR_RESOLVES_WRIST_TO_ITS_OWN_SIDE_AND_SAME_SIDE_OVERLAP_REFUSES',
+    jointNoteLines(crossed).includes('r_wrist observed at [106.0, 176.0]: used as given for chain sleeve_r, the tip (the wrist lies on handwear_r)') &&
+      jointNoteLines(crossed).includes('l_wrist observed at [120.0, 176.0]: used as given for chain sleeve_l, the tip (the wrist lies on handwear_l)') &&
+      `${limbText(crossed, 'arm_r')}; ${limbText(crossed, 'arm_l')}` ===
+        'upperarm_r handwear_r sleeve_r0 | forearm_r handwear_r sleeve_r1 elbow; upperarm_l handwear_l sleeve_l0 | forearm_l handwear_l sleeve_l1 elbow' &&
+      crossedLint.length === 0 &&
+      refusals(() => checkProposal(Pc, crossed)) === null &&
+      jointNoteLines(sameSide).includes(
+        'r_wrist observed at [106.0, 176.0]: not used — r_wrist at [106.0, 176.0] lies on the art of 2 handwear parts (handwear_r, handwear_l), so it does not say which sleeve it ends; the one-blob sleeve rule (both chains in one mesh, split at the eye axis x=100) stands in',
+      ) &&
+      sameSide.limbs === undefined &&
+      sameSideLint.length === 6 &&
+      sameSideLint.every((l) => l.includes("is off the art of mesh 'handwear_")),
+    `opposite-side tags: limbs ${Object.keys(crossed.limbs ?? {}).join(',')}, ${crossedLint.length} LINT line(s), r_wrist -> ${JSON.stringify(jointNoteLines(crossed).find((n) => n.startsWith('r_wrist')))}; same-side tags: limbs ${String(sameSide.limbs)}, ${sameSideLint.length} LINT line(s) (${sameSideLint.join(' | ')})`,
+    'issue #458: when pre-separated handwear-r and handwear-l parts overlap at a wrist (crossed arms), the wrist resolves to the part of its own side, proposing both arm limbs with 0 off-art LINT lines; two parts of the same side tag holding the wrist still refuse to guess and hand every sleeve to the rule',
+  );
 }
 
 // ---------------------------------------------------------------------------
