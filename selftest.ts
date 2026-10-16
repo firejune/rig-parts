@@ -10820,6 +10820,86 @@ function runWristSnapCases(dir: string, SE: string, Pe: PartSet, Je: RigJoints, 
     `overlapping component: ${gatheredOverlap.length} finding(s) -> ${JSON.stringify(overlapText)}; separate sleeve components in one layer (PR75): ${separateOverlap.length} finding(s)`,
     'issue #439: when both hands/arms meet in one connected component of a single handwear layer without seethrough.arm_split declared, propose emits one LINT line naming the part, both wrists, and the declaration that separates them into two layers; two non-overlapping sleeve components on one layer stay clean',
   );
+
+  // Issue #440: when a PartSet holds complete assembled limbs (every segment 0..n-1 with cap on k >= 1 and the source
+  // part replaced), proposeWithBasis, checkProposal and checkBasis reconstruct the pre-limb parts in the same run and
+  // yield the exact proposal and basis bytes of the uncut part set; handing a standalone or incomplete limb part to
+  // propose on its own still refuses by name with PROPOSE_LIMB_PARTS.
+  const seWithBasis = proposeWithBasis(Pe, Je);
+  const armCap = { at: [66, 124] as [number, number], width: 12, radius: 6, box: [60, 118, 12, 12] as [number, number, number, number], layer_px: 36, missing_px: 0 };
+  const armLCap = { at: [134, 124] as [number, number], width: 12, radius: 6, box: [128, 118, 12, 12] as [number, number, number, number], layer_px: 36, missing_px: 0 };
+  const legRCap = { at: [175, 145] as [number, number], width: 10, radius: 5, box: [170, 140, 10, 10] as [number, number, number, number], layer_px: 25, missing_px: 0 };
+  const legLCap = { at: [178, 150] as [number, number], width: 10, radius: 5, box: [173, 145, 10, 10] as [number, number, number, number], layer_px: 25, missing_px: 0 };
+  const limbedRecs: PartRecord[] = [];
+  const limbedImages = new Map<string, Raster>(Pe.images);
+  for (const r of Pe.recs) {
+    if (r.name === 'arm_a') {
+      const m = Pe.alpha(r);
+      const upR = newRaster(12, 38);
+      const loR = newRaster(30, 12);
+      for (let y = 80; y < 118; y++) for (let x = 60; x < 72; x++) if (m.data[y * Pe.W + x]) upR.data[((y - 80) * 12 + (x - 60)) * 4 + 3] = 255;
+      for (let y = 118; y < 130; y++) for (let x = 60; x < 90; x++) if (m.data[y * Pe.W + x]) loR.data[((y - 118) * 30 + (x - 60)) * 4 + 3] = 255;
+      limbedImages.set('upperarm_r', upR);
+      limbedImages.set('forearm_r', loR);
+      limbedRecs.push(
+        { ...r, name: 'forearm_r', x: 60, y: 118, w: 30, h: 12, opaque_px: 360, limb: { name: 'arm_r', segment: 1, of: 'arm_a', bone: 'sleeve_r1', joint: 'elbow', cap: armCap } },
+        { ...r, name: 'upperarm_r', x: 60, y: 80, w: 12, h: 38, opaque_px: 456, limb: { name: 'arm_r', segment: 0, of: 'arm_a', bone: 'sleeve_r0' } },
+      );
+    } else if (r.name === 'arm_b') {
+      const m = Pe.alpha(r);
+      const upL = newRaster(12, 38);
+      const loL = newRaster(30, 12);
+      for (let y = 80; y < 118; y++) for (let x = 128; x < 140; x++) if (m.data[y * Pe.W + x]) upL.data[((y - 80) * 12 + (x - 128)) * 4 + 3] = 255;
+      for (let y = 118; y < 130; y++) for (let x = 110; x < 140; x++) if (m.data[y * Pe.W + x]) loL.data[((y - 118) * 30 + (x - 110)) * 4 + 3] = 255;
+      limbedImages.set('upperarm_l', upL);
+      limbedImages.set('forearm_l', loL);
+      limbedRecs.push(
+        { ...r, name: 'forearm_l', x: 110, y: 118, w: 30, h: 12, opaque_px: 360, limb: { name: 'arm_l', segment: 1, of: 'arm_b', bone: 'sleeve_l1', joint: 'elbow', cap: armLCap } },
+        { ...r, name: 'upperarm_l', x: 128, y: 80, w: 12, h: 38, opaque_px: 456, limb: { name: 'arm_l', segment: 0, of: 'arm_b', bone: 'sleeve_l0' } },
+      );
+    } else if (r.name === 'legs') {
+      const im = Pe.images.get('legs') as Raster;
+      for (const n of ['shin_r', 'thigh_r', 'shin_l', 'thigh_l']) limbedImages.set(n, im);
+      limbedRecs.push(
+        { ...r, name: 'shin_r', limb: { name: 'leg_r', segment: 1, of: 'legs', bone: 'leg_r1', joint: 'knee', cap: legRCap } },
+        { ...r, name: 'thigh_r', limb: { name: 'leg_r', segment: 0, of: 'legs', bone: 'leg_r0' } },
+        { ...r, name: 'shin_l', limb: { name: 'leg_l', segment: 1, of: 'legs', bone: 'leg_l1', joint: 'knee', cap: legLCap } },
+        { ...r, name: 'thigh_l', limb: { name: 'leg_l', segment: 0, of: 'legs', bone: 'leg_l0' } },
+      );
+    } else {
+      limbedRecs.push(r);
+    }
+  }
+  const Plimbed = new PartSet({ rig_size: [Pe.W, Pe.H], scale_rig_per_source: Pe.rigScale, ghost_px: {}, parts: limbedRecs }, limbedImages);
+  const limbedOut = proposeWithBasis(Plimbed, Je);
+  const limbedPropOk = serializeProposal(limbedOut.proposal) === serializeProposal(seWithBasis.proposal);
+  const limbedBasisOk =
+    refusals(() => checkProposal(Plimbed, limbedOut.proposal)) === null &&
+    refusals(() => checkBasis(Plimbed, limbedOut.proposal, limbedOut.basis)) === null &&
+    serializeBasis(basisFile(Plimbed, limbedOut.proposal, limbedOut.basis, null)) === serializeBasis(basisFile(Pe, seWithBasis.proposal, seWithBasis.basis, null));
+  const standaloneOf = (recs: PartRecord[]): string => {
+    const Psub = new PartSet({ rig_size: [Pe.W, Pe.H], scale_rig_per_source: Pe.rigScale, ghost_px: {}, parts: recs }, limbedImages);
+    const err = refusals(() => propose(Psub, Je));
+    return err === null ? 'accepted' : err.problems.map((q) => `${q.code} ${q.object}`).join('; ');
+  };
+  const nonArmA = Pe.recs.filter((r) => r.name !== 'arm_a');
+  const foreRec = limbedRecs.find((r) => r.name === 'forearm_r') as PartRecord;
+  const upRec = limbedRecs.find((r) => r.name === 'upperarm_r') as PartRecord;
+  const loneLower = standaloneOf([...nonArmA, foreRec]);
+  const loneUpper = standaloneOf([...nonArmA, upRec]);
+  const noCapLower = standaloneOf([...nonArmA, upRec, { ...foreRec, limb: { name: 'arm_r', segment: 1, of: 'arm_a', bone: 'sleeve_r1', joint: 'elbow' } }]);
+  const withSource = standaloneOf([...Pe.recs, upRec, foreRec]);
+  say(
+    'PR522_COMPLETE_LIMB_PARTS_PROPOSE_IN_ONE_RUN_IDENTICAL_TO_UNCUT_AND_STANDALONE_LIMB_PARTS_REFUSE_BY_NAME',
+    limbedPropOk &&
+      limbedBasisOk &&
+      loneLower === 'PROPOSE_LIMB_PARTS parts "forearm_r"' &&
+      loneUpper === 'PROPOSE_LIMB_PARTS parts "upperarm_r"' &&
+      noCapLower === 'PROPOSE_LIMB_PARTS parts "upperarm_r", "forearm_r"' &&
+      withSource === 'PROPOSE_LIMB_PARTS parts "upperarm_r", "forearm_r"',
+    `reconstructed proposal identical=${limbedPropOk}, basis & checkProposal identical=${limbedBasisOk}; standalone lower -> ${loneLower}; standalone upper -> ${loneUpper}; missing cap -> ${noCapLower}; source part still present -> ${withSource}`,
+    'issue #440: a complete assemble output with config.limbs reconstructs the pre-limb part set so propose, checkProposal and checkBasis yield the exact bytes of the two-run path in one run, while a limb part handed to propose on its own (or without its sibling segment or cap record, or alongside its uncut source part) still refuses by name with PROPOSE_LIMB_PARTS',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -18065,25 +18145,12 @@ function exampleJoints(ex: string, P: PartSet): RigJoints | undefined {
 }
 
 /**
- * The parts an example's proposal is drafted on. A config with `limbs` cuts its limb layers at assemble, and the
- * proposer drafts limbs from the parts before the cut (PROPOSE_LIMB_PARTS refuses the cut ones), so for such an
- * example (wind, issue #372) the parts are its config assembled again with `limbs` left out, into `dir`; for every
- * other example they are the build's own, `out`.
+ * Issue #440: the parts an example's proposal is drafted on are the build's own (`out`), even when the config declares
+ * `limbs` (wind, issue #372): `propose` reconstructs the pre-limb layers from the cut limb segments in the same run,
+ * without a second `assemble` with `limbs` left out.
  */
-function exampleProposalParts(ex: string, out: string, dir: string, key: string): string {
-  const cfg = readJsonAt(join(ex, 'config.json')) as Record<string, unknown> & { generation?: { control?: { skeleton?: string } } };
-  if (cfg.limbs === undefined) return out;
-  const vdir = join(dir, `${key}-uncut`);
-  if (existsSync(join(vdir, 'rig', 'parts.json'))) return join(vdir, 'rig');
-  delete cfg.limbs;
-  const control = cfg.generation?.control;
-  if (control?.skeleton !== undefined && existsSync(join(ex, control.skeleton))) control.skeleton = join(ex, control.skeleton);
-  mkdirSync(vdir, { recursive: true });
-  writeFileSync(join(vdir, 'config.json'), JSON.stringify(cfg));
-  const inputs = join(ex, 'inputs');
-  const r = runCli(['assemble', '--source', join(inputs, 'painting.png'), '--full', join(inputs, 'layers', 'full'), '--head', join(inputs, 'layers', 'head'), '--config', join(vdir, 'config.json'), '--out', vdir]);
-  if (r.status !== 0) throw new Error(`${key}: assemble with the config's limbs left out exited ${r.status}: ${lastLines(r.out, 2).join(' | ')}`);
-  return join(vdir, 'rig');
+function exampleProposalParts(_ex: string, out: string, _dir: string, _key: string): string {
+  return out;
 }
 
 /** The face-feature tags issue #76's measurement removes from an example's plan (its variant B): the face and everything on it. */
@@ -19949,6 +20016,121 @@ function runCrossedLimbFeatherCases(say: (name: string, ok: boolean, detail: str
       mutantBRefusal?.problems[0]?.code === 'ASSEMBLE_COUNTS_ADD_UP',
     `band=${band} px, sub-opaque taken on y=29: ${subOpaqueTaken} px; upperarm_r opaque=${upperRec.opaque_px} (visible=${upperRec.visible_px} + occluded=${upperRec.occluded_px}), taken=${upperRec.source_px_taken}, visible_not_projected=${upperRec.visible_not_projected_px}; max seam diff vs uncrossed=${maxSeamDiff}; disc opaque=${discUpperRec.opaque_px}, shape=${discForeRec.limb?.cap?.shape}; mutant A -> ${codes(mutantARefusal)} (${mutantARefusal?.problems[0]?.detail.slice(0, 60) ?? ''}); pushBackFringe alpha with/without featheredMask=${guardedAlpha}/${unguardedAlpha}, mutant B -> ${codes(mutantBRefusal)}`,
     'issue #444: when edge "feather" lowers upper-piece pixels to alpha <= OPAQUE_ALPHA_ABOVE (8), they leave the upper piece\'s region (the lower segment\'s cap holds the opacity there), and the rest of the feather ramp is protected in pushBackFringe so crossed limbs do not trip ASSEMBLE_COUNTS_ADD_UP or lose their joint fade',
+  );
+
+  // Issue #440: on the limb assemble fixture with a face part, one assemble call with limbs yields the exact same
+  // proposal, turn, basis and built rig as the two-run path (assembling without limbs first, proposing, then assembling
+  // with limbs), including under cap_shape "disc" across two layers and edge "feather", while a limb part handed to
+  // propose on its own still refuses by name with PROPOSE_LIMB_PARTS.
+  const draftedLimbs: Record<string, { segments: Array<Record<string, unknown>> }> = {
+    leg_r: { segments: LIMBS.leg_r.segments.slice(0, 2) },
+    leg_l: { segments: LIMBS.leg_l.segments.slice(0, 2) },
+  };
+  const run440 = (label: string, limbsBlock: Record<string, unknown> | null): string => {
+    const d = join(root, label);
+    writeRun(join(d, 'full'), LIMB_FULL);
+    writeRun(join(d, 'head'), HEAD_LAYERS);
+    writeFileSync(join(d, 'painting.png'), encodePngBytes(flatPainting()));
+    const plan: Array<[string, 'full' | 'head', string]> = [...LIMB_PLAN, ['face', 'head', 'face']];
+    const baseCfg = assembleConfig({ plan, extend: [] });
+    const bones440 = [...LIMB_BONES, { name: 'head', parent: 'hip', at: [22, 14] }];
+    const regions440: Record<string, string> = { face: 'head' };
+    if (limbsBlock !== null) {
+      const taken = new Set<string>();
+      for (const l of Object.values(limbsBlock) as Array<{ segments: Array<Record<string, unknown>> }>) {
+        for (const s of l.segments) {
+          regions440[String(s.part)] = String(s.bone);
+          taken.add(String(s.from));
+        }
+      }
+      for (const [n] of LIMB_PLAN) if (!taken.has(n)) regions440[n] = 'hip';
+    } else {
+      for (const [n] of LIMB_PLAN) regions440[n] = 'hip';
+    }
+    writeFileSync(join(d, 'config.json'), JSON.stringify({ ...baseCfg, ...(limbsBlock === null ? {} : { limbs: limbsBlock }), bones: bones440, regions: regions440 }));
+    const out = join(d, 'out');
+    assembleStage(
+      { source: join(d, 'painting.png'), full: join(d, 'full'), head: join(d, 'head'), config: join(d, 'config.json'), seam: 'near-white', project: DEFAULT_PROJECT_RULE },
+      { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, 'recomposite_error_rig.png') },
+      () => {},
+    );
+    return out;
+  };
+  const discFeatherLimbs = structuredClone(LIMBS) as Record<string, { segments: Array<Record<string, unknown>> }>;
+  discFeatherLimbs.arm_r.segments[1].edge = 'feather';
+  discFeatherLimbs.leg_r.segments[2].cap_shape = 'disc';
+  const oneRunOut = run440('one-run-limbs', draftedLimbs);
+  const discFeatherOut = run440('one-run-disc-feather', discFeatherLimbs);
+  const twoRunUncutOut = run440('two-run-uncut', null);
+  const Pone = readPartSet(oneRunOut);
+  const Pdisc = readPartSet(discFeatherOut);
+  const Ptwo = readPartSet(twoRunUncutOut);
+  const kp440 = parseKeypoints(
+    {
+      spec: KEYPOINTS_SPEC,
+      space: KEYPOINTS_SPACE,
+      width: 64,
+      height: 64,
+      source: 'limb-fixture',
+      people: [
+        {
+          id: 'p0',
+          joints: {
+            r_hip: { state: 'observed', at: [34, 10] },
+            r_knee: { state: 'observed', at: [34, 30] },
+            r_ankle: { state: 'observed', at: [34, 50] },
+            l_hip: { state: 'observed', at: [48, 10] },
+            l_knee: { state: 'observed', at: [48, 30] },
+            l_ankle: { state: 'observed', at: [48, 50] },
+          },
+        },
+      ],
+    },
+    'kp440.json',
+  );
+  const J440 = toRigJoints(kp440, kp440.people[0], 64, 64);
+  const runs440 = { full: readLayers(join(root, 'one-run-limbs', 'full')), head: readLayers(join(root, 'one-run-limbs', 'head')) };
+  const oneProp = proposeWithBasis(Pone, J440);
+  const discProp = proposeWithBasis(Pdisc, J440);
+  const twoProp = proposeWithBasis(Ptwo, J440);
+  const oneFullProp = withTurn(oneProp.proposal, draftTurn(Pone, runs440));
+  const discFullProp = withTurn(discProp.proposal, draftTurn(Pdisc, runs440));
+  const twoFullProp = withTurn(twoProp.proposal, draftTurn(Ptwo, runs440));
+  const onePropMatch = serializeProposal(oneFullProp) === serializeProposal(twoFullProp) && serializeProposal(discFullProp) === serializeProposal(twoFullProp);
+  const oneBasisMatch =
+    refusals(() => checkProposal(Pone, oneFullProp)) === null &&
+    refusals(() => checkProposal(Pdisc, discFullProp)) === null &&
+    refusals(() => checkBasis(Pone, oneProp.proposal, oneProp.basis)) === null &&
+    serializeBasis(basisFile(Pone, oneProp.proposal, oneProp.basis, null)) === serializeBasis(basisFile(Ptwo, twoProp.proposal, twoProp.basis, null));
+  // Build the rig directly from the single assemble run (oneRunOut) using the proposal drafted on it, vs from the two-run path's second assemble.
+  const cfg440 = parseConfig({
+    ...assembleConfig({ plan: [...LIMB_PLAN, ['face', 'head', 'face']], extend: [] }),
+    bones: oneFullProp.bones,
+    meshes: oneFullProp.meshes,
+    regions: oneFullProp.regions,
+    limbs: oneFullProp.limbs,
+    motion: oneFullProp.motion,
+  });
+  const secondOut = run440('two-run-second', twoFullProp.limbs as Record<string, unknown>);
+  const rigOne = buildRig(cfg440, readParts(join(oneRunOut, 'parts.json')), Pone.images);
+  const rigTwo = buildRig(cfg440, readParts(join(secondOut, 'parts.json')), readPartSet(secondOut).images);
+  const rigMatch = JSON.stringify(rigOne.rig) === JSON.stringify(rigTwo.rig) && JSON.stringify(rigOne.motion) === JSON.stringify(rigTwo.motion);
+  const loneForearm = new PartSet(
+    { rig_size: [64, 64], scale_rig_per_source: 1, ghost_px: {}, parts: Pdisc.recs.filter((r) => r.name === 'face' || r.name === 'forearm_r') },
+    Pdisc.images,
+  );
+  const loneForearmErr = refusals(() => propose(loneForearm, J440));
+  say(
+    'AS476_ONE_ASSEMBLE_WITH_LIMBS_YIELDS_THE_TWO_RUN_PROPOSAL_TURN_AND_RIG_AND_REFUSES_A_STANDALONE_LIMB_PART',
+    onePropMatch &&
+      oneBasisMatch &&
+      rigMatch &&
+      loneForearmErr !== null &&
+      loneForearmErr.problems.length === 1 &&
+      loneForearmErr.problems[0].code === 'PROPOSE_LIMB_PARTS' &&
+      loneForearmErr.problems[0].object === 'parts "forearm_r"',
+    `one-run (and disc+feather) vs two-run proposal+turn identical=${onePropMatch}, basis identical=${oneBasisMatch}, rig from oneRunOut vs two-run identical=${rigMatch}; standalone forearm_r -> ${codes(loneForearmErr)}`,
+    'issue #440: one assemble run with config.limbs yields the exact proposal, turn, basis and rig of the two-run path, while handing a limb part to propose on its own still refuses by name with PROPOSE_LIMB_PARTS',
   );
 }
 

@@ -397,6 +397,7 @@ function konst(name: string, value: number): BasisConstant {
  * plan part and which as the piece (issue #230).
  */
 export function proposalAssemble(P: PartSet): Record<string, unknown> {
+  P = P.beforeLimbs();
   // A patch is not a plan entry; it goes back as the patches entry it came
   // from, so the loader holds it to its own rule (a region, never a mesh).
   // Its box, alpha and draw are the record's own box and placeholders the
@@ -492,6 +493,7 @@ export type TurnRuns = Partial<Record<'full' | 'head', LayerSet>>;
  * span away.
  */
 export function draftTurn(P: PartSet, runs: TurnRuns): { turn: TurnSpec | null; notes: string[] } {
+  P = P.beforeLimbs();
   const problems: Problem[] = [];
   const read: Array<{ part: string; run: 'full' | 'head'; tag: string; base: string | null; own: number; area: number; order: number; piece: boolean }> = [];
   const patches: string[] = [];
@@ -629,6 +631,7 @@ export class PartSet {
   readonly recs: readonly PartRecord[];
   readonly images: ReadonlyMap<string, Raster>;
   private readonly masks = new Map<string, Mask>();
+  private preLimbs: PartSet | null = null;
 
   constructor(file: PartsFile, images: ReadonlyMap<string, Raster>) {
     [this.W, this.H] = file.rig_size;
@@ -662,6 +665,170 @@ export class PartSet {
     const by = new Map<string, string[]>();
     for (const p of this.layered()) if (p.cut_from === undefined && p.limb === undefined) by.set(p.from, [...(by.get(p.from) ?? []), p.name]);
     return [...by.entries()].filter(([, names]) => names.length > 1).map(([from, parts]) => ({ from, parts }));
+  }
+
+  /**
+   * Issue #440: limb records (`r.limb !== undefined`) that cannot be reassembled
+   * into their pre-limb source parts (`r.limb.of`) — a limb part handed to
+   * `propose` on its own or with an incomplete segment chain (fewer than two
+   * segments, a segment index missing from `0..n-1`, a lower segment without
+   * its `cap` record, or the source part `of` still present beside the limb
+   * parts). When every limb in `parts.json` is complete, returns `[]` and
+   * {@link beforeLimbs} reconstructs the pre-limb part set.
+   */
+  standaloneLimbParts(): PartRecord[] {
+    const limbed = this.recs.filter((r) => r.limb !== undefined);
+    if (limbed.length === 0) return [];
+    const nonLimbNames = new Set(this.recs.filter((r) => r.limb === undefined).map((r) => r.name));
+    const byLimb = new Map<string, PartRecord[]>();
+    for (const r of limbed) {
+      const l = r.limb as NonNullable<PartRecord['limb']>;
+      byLimb.set(l.name, [...(byLimb.get(l.name) ?? []), r]);
+    }
+    const badLimbs = new Set<string>();
+    const badOf = new Set<string>();
+    for (const [name, segs] of byLimb) {
+      const sorted = [...segs].sort((a, b) => (a.limb?.segment ?? 0) - (b.limb?.segment ?? 0));
+      const complete =
+        sorted.length >= 2 &&
+        sorted.every((s, i) => {
+          const l = s.limb as NonNullable<PartRecord['limb']>;
+          return l.segment === i && (i === 0 ? l.cap === undefined : l.cap !== undefined) && !nonLimbNames.has(l.of);
+        });
+      if (!complete) {
+        badLimbs.add(name);
+        for (const s of segs) badOf.add((s.limb as NonNullable<PartRecord['limb']>).of);
+      }
+    }
+    return limbed.filter((r) => {
+      const l = r.limb as NonNullable<PartRecord['limb']>;
+      return badLimbs.has(l.name) || badOf.has(l.of);
+    });
+  }
+
+  /**
+   * Issue #440: when `parts.json` came from an `assemble` run with `config.limbs`
+   * (every limb complete, {@link standaloneLimbParts} empty), reconstruct the
+   * pre-limb part set so `propose`, `draftTurn`, `checkProposal` and
+   * `checkBasis` read the whole layer each limb took in a single run. Without
+   * limb records (or when a standalone limb part will be refused by
+   * `PROPOSE_LIMB_PARTS`), returns `this`.
+   */
+  beforeLimbs(): PartSet {
+    if (this.preLimbs !== null) return this.preLimbs;
+    if (!this.recs.some((r) => r.limb !== undefined) || this.standaloneLimbParts().length > 0) {
+      this.preLimbs = this;
+      return this;
+    }
+    const segsByOf = new Map<string, PartRecord[]>();
+    const segByLimb = new Map<string, PartRecord>();
+    for (const r of this.recs) {
+      if (r.limb === undefined) continue;
+      segsByOf.set(r.limb.of, [...(segsByOf.get(r.limb.of) ?? []), r]);
+      segByLimb.set(`${r.limb.name}:${r.limb.segment}`, r);
+    }
+    const buildOf = (ofName: string): { rec: PartRecord; raster: Raster } => {
+      const segs = segsByOf.get(ofName) as PartRecord[];
+      const union = new Uint8Array(this.W * this.H);
+      for (const s of segs) {
+        const m = this.alpha(s);
+        const l = s.limb as NonNullable<PartRecord['limb']>;
+        const up = l.segment > 0 ? segByLimb.get(`${l.name}:${l.segment - 1}`) : undefined;
+        const dropUpperCap = up !== undefined && up.limb?.of !== ofName && (l.cap?.upper_px ?? 0) > 0 && (l.cap?.layer_px ?? 0) === 0 ? this.alpha(up) : null;
+        const box = l.cap?.box;
+        for (let y = s.y; y < s.y + s.h; y++) {
+          for (let x = s.x; x < s.x + s.w; x++) {
+            const p = y * this.W + x;
+            if (!m.data[p]) continue;
+            if (dropUpperCap !== null && box !== undefined && x >= box[0] && x < box[0] + box[2] && y >= box[1] && y < box[1] + box[3] && dropUpperCap.data[p]) continue;
+            union[p] = 1;
+          }
+        }
+      }
+      let x0 = this.W;
+      let y0 = this.H;
+      let x1 = -1;
+      let y1 = -1;
+      let opaquePx = 0;
+      for (let y = 0; y < this.H; y++) {
+        for (let x = 0; x < this.W; x++) {
+          if (!union[y * this.W + x]) continue;
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
+          opaquePx++;
+        }
+      }
+      const first = segs[0];
+      if (x1 < x0) {
+        x0 = first.x;
+        y0 = first.y;
+        x1 = first.x + first.w - 1;
+        y1 = first.y + first.h - 1;
+      }
+      const w = x1 - x0 + 1;
+      const h = y1 - y0 + 1;
+      const raster = newRaster(w, h);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (union[(y0 + y) * this.W + x0 + x]) raster.data[(y * w + x) * 4 + 3] = 255;
+        }
+      }
+      const sum = (f: (r: PartRecord) => number): number => segs.reduce((acc, r) => acc + f(r), 0);
+      const hasVis = segs.every((r) => r.visible_px !== undefined && r.occluded_px !== undefined);
+      const rec: PartRecord = {
+        name: ofName,
+        from: first.from,
+        ...(first.cut_from === undefined ? {} : { cut_from: first.cut_from }),
+        x: x0,
+        y: y0,
+        w,
+        h,
+        opaque_px: opaquePx,
+        ...(hasVis ? { visible_px: sum((r) => r.visible_px as number), occluded_px: sum((r) => r.occluded_px as number) } : {}),
+        projected_core_px: sum((r) => r.projected_core_px),
+        source_px_taken: sum((r) => r.source_px_taken),
+        ...(segs.some((r) => r.visible_not_projected_px !== undefined) ? { visible_not_projected_px: sum((r) => r.visible_not_projected_px ?? 0) } : {}),
+        refused_drift_px: sum((r) => r.refused_drift_px),
+        merged_px: sum((r) => r.merged_px),
+        seam_override_px: sum((r) => r.seam_override_px),
+      };
+      return { rec, raster };
+    };
+    const recs: PartRecord[] = [];
+    const images = new Map<string, Raster>();
+    const emittedOf = new Set<string>();
+    for (const r of this.recs) {
+      if (r.limb === undefined) {
+        recs.push(r);
+        const im = this.images.get(r.name);
+        if (im !== undefined) images.set(r.name, im);
+        continue;
+      }
+      const seg0 = segByLimb.get(`${r.limb.name}:0`) as PartRecord;
+      const rootOf = (seg0.limb as NonNullable<PartRecord['limb']>).of;
+      if (emittedOf.has(rootOf)) continue;
+      const groupLimbs = new Set(
+        this.recs.filter((q) => q.limb !== undefined && q.limb.segment === 0 && q.limb.of === rootOf).map((q) => (q.limb as NonNullable<PartRecord['limb']>).name),
+      );
+      const minSegByOf = new Map<string, number>();
+      for (const q of this.recs) {
+        if (q.limb === undefined || !groupLimbs.has(q.limb.name)) continue;
+        const prev = minSegByOf.get(q.limb.of);
+        if (prev === undefined || q.limb.segment < prev) minSegByOf.set(q.limb.of, q.limb.segment);
+      }
+      const orderedOfs = [...minSegByOf.entries()].sort((a, b) => a[1] - b[1]).map(([n]) => n);
+      for (const ofName of orderedOfs) {
+        if (emittedOf.has(ofName)) continue;
+        emittedOf.add(ofName);
+        const built = buildOf(ofName);
+        recs.push(built.rec);
+        images.set(ofName, built.raster);
+      }
+    }
+    this.preLimbs = new PartSet({ rig_size: [this.W, this.H], scale_rig_per_source: this.rigScale, ghost_px: {}, parts: recs }, images);
+    return this.preLimbs;
   }
 
   /** The See-through parts: every part but the `painting:` patches. */
@@ -1226,8 +1393,10 @@ export function proposeWithBasis(
       detail: `share one layer and none of them records cut_from, so which is the plan part and which the piece an assemble.cuts entry took cannot be read off parts.json (it is in draw order, and a piece drawn "back" comes before its base); re-run assemble (1.6.0+) to record cut_from`,
     })),
   );
-  // Issue #349: limbs are drafted from the parts before their cut — the layer each limb takes is what the rules read.
-  const limbed = P.recs.filter((r) => r.limb !== undefined);
+  // Issue #349, #440: limbs are drafted from the parts before their cut — a complete assemble with config.limbs
+  // reconstructs its pre-limb parts here in the same run; a standalone or incomplete limb part handed to propose
+  // on its own is refused by name.
+  const limbed = P.standaloneLimbParts();
   refuseIfAny(
     limbed.length === 0
       ? []
@@ -1235,10 +1404,11 @@ export function proposeWithBasis(
           {
             code: 'PROPOSE_LIMB_PARTS',
             object: `parts ${limbed.map((r) => `"${r.name}"`).join(', ')}`,
-            detail: `were cut at their joints by config.limbs (from ${[...new Set(limbed.map((r) => `"${(r.limb as NonNullable<PartRecord['limb']>).of}"`))].join(', ')}), and propose drafts the limbs from the parts before the cut; assemble with the config's limbs left out, propose from that build, and keep the limbs block (and any caps, ranges) the config already holds — or read the config's bones with propose --from-config`,
+            detail: `were cut at their joints by config.limbs (from ${[...new Set(limbed.map((r) => `"${(r.limb as NonNullable<PartRecord['limb']>).of}"`))].join(', ')}), and propose drafts the limbs from the whole layer each limb takes; hand propose the complete assemble output (every segment of each limb, with its cap record) so the source part can be reconstructed in one run, or assemble with config.limbs left out — or read the config's bones with propose --from-config`,
           },
         ],
   );
+  P = P.beforeLimbs();
   const bones: BoneEntry[] = [];
   const records: BoneBasis[] = [];
   /** Issue #349: the limbs `--keypoints` drafts, and the parts they take (not made, so not given a mesh or a region). */

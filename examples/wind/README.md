@@ -49,9 +49,9 @@ also holds the licence; `bun run fetch-examples` copies the inputs into `inputs/
   painting is the control skeleton, not where the limbs were painted, and with it the
   loop's `--from-config` step prints a LINT line.
 - `proposal.json` — what `rig-parts propose --parts <parts> --source painting.png
-  --keypoints keypoints.json --cloth config.json` writes, where `<parts>` is this
-  config assembled with `limbs` left out: the proposer drafts limbs from the parts
-  before their cut (selftest `CH06`, `CH18`, `PR52`).
+  --keypoints keypoints.json --cloth config.json` writes on the built parts (issue
+  #440: `propose` reconstructs the pre-limb layers from the cut limb segments in the
+  same run; selftest `CH06`, `CH18`, `PR52`).
 - `sheets/` — `rig-parts sheet` contact sheets: the painting with the full run's
   layers, with the head run's layers, and with the 28 parts of the `expected/` build
   (the 22 the plan makes, the four limb layers cut into ten).
