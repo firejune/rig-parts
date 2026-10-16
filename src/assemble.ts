@@ -1208,7 +1208,7 @@ function keepArtWhole(part: PlacedPart, cleared: Cleared[], holderAt: (q: number
  * hold the pixel after it); and every pixel at alpha >= `CORE_ALPHA`, which
  * is the seam override's.
  */
-export function pushBackFringe(parts: PlacedPart[], srcr: Raster, rule: SeamRule, silhouette: Mask | null): FringePushed[][] {
+export function pushBackFringe(parts: PlacedPart[], srcr: Raster, rule: SeamRule, silhouette: Mask | null, feathered: ReadonlyArray<Mask | null> | null = null): FringePushed[][] {
   const { width: W } = srcr;
   const { holder, cand } = seamCandidates(parts, srcr, rule, silhouette);
   const at = (i: number, d: number): number => {
@@ -1226,6 +1226,7 @@ export function pushBackFringe(parts: PlacedPart[], srcr: Raster, rule: SeamRule
     // cover itself the loop below has nothing to clear, and the seam override acts on the pixel as before.
     if (cand[d] === 0 || !shows(d)) continue;
     for (let i = holder[d] + 1; i < parts.length; i++) {
+      if (feathered?.[i]?.data[d] === 1) continue;
       const s = at(i, d);
       if (s < 0) continue;
       const img = parts[i].image.data;
@@ -1889,6 +1890,8 @@ interface Built {
   merged: number;
   /** The rig pixels this piece of the layer owns when the layer is cut, null when it is not: the counts are split by it. */
   region: Mask | null;
+  /** The rig pixels on an upper limb segment whose alpha `edge: "feather"` scaled down (issue #444). */
+  feathered?: Mask;
 }
 
 // ---------------------------------------------------------------------------
@@ -2263,6 +2266,9 @@ function cutLimbs(
       let featheredPx = 0;
       let band = 0;
       if (sg.edge === 'feather') {
+        const upperRegion = regions[upAt];
+        const upPiece = pieces[upAt] as Built;
+        const featheredMask = (upPiece.feathered ??= newMask(W, H));
         band = pyRound(Math.max(0, coveredRadius(line.at, radius, (x, y) => x >= 0 && y >= 0 && x < W && y < H && lower.data[(y * W + x) * 4 + 3] === 255)), 3);
         const fb = capBox(line.at, band);
         for (let y = Math.max(0, fb[1]); y < Math.min(H, fb[1] + fb[3]); y++) {
@@ -2276,6 +2282,11 @@ function cutLimbs(
             if (na === ua) continue;
             if (na === 0) upper.data.fill(0, p * 4, p * 4 + 4);
             else upper.data[p * 4 + 3] = na;
+            // Issue #444: a pixel the feather ramp fades to alpha <= OPAQUE_ALPHA_ABOVE is no longer opaque on the
+            // upper piece (its opacity is carried by the lower segment's opaque cap beneath), so it leaves the upper
+            // piece's region and its remaining ramp is marked feathered so pushBackFringe does not clear the fade.
+            if (na <= OPAQUE_ALPHA_ABOVE) upperRegion.data[p] = 0;
+            else featheredMask.data[p] = 1;
             featheredPx++;
           }
         }
@@ -2840,7 +2851,8 @@ export function assemble(input: AssembleInput): AssembleResult {
     const whole: PartRecord = { name, from: b.key, x: 0, y: 0, w: W, h: H, opaque_px: 0, projected_core_px: 0, source_px_taken: 0, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 };
     return { record: whole, image: b.r };
   });
-  const pushedBy = pushBackFringe(stack, srcr, seamRule, seamRule === 'silhouette' ? silhouette : null);
+  const featheredInOrder: Array<Mask | null> = order.map((d) => ('patch' in d ? null : (pieceAt(d).b.feathered ?? null)));
+  const pushedBy = pushBackFringe(stack, srcr, seamRule, seamRule === 'silhouette' ? silhouette : null, featheredInOrder);
   // Issue #255: a part's drift refusals in a body, and who holds the body in the draw order (the push-back clears
   // only fringe below CORE_ALPHA, and the seam override only recolours, so the holders read here are final).
   const holderAt = new Int32Array(W * H).fill(-1);

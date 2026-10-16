@@ -19126,6 +19126,7 @@ function runLimbCases(say: (name: string, ok: boolean, detail: string, why: stri
 
     runCutBandCases(say, root);
     runOverlappingHandsCases(say, root);
+    runCrossedLimbFeatherCases(say, root);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -19465,6 +19466,172 @@ function runOverlappingHandsCases(say: (name: string, ok: boolean, detail: strin
       apartSeg.every((v) => v === -1),
     `with assignOverlappingHands: forearm_r past cuff=${rPastCuff}, in hand disc=${rInHandDisc}, components=${rComps}; forearm_l missing hand/sliver px=${lHandMissing}, components=${lComps}; planted plain nearestLimb forearm_r in hand disc=${plainRInHandDisc}, cuff-only forearm_r components=${cuffOnlyRIslands}; wrists apart untouched=${apartSeg.every((v) => v === -1)}`,
     'issue #400: when two forearms cut from one part have overlapping wrist discs (r = L/2), nearestLimb splits the clasped hands down the middle and leaves finger slivers behind; assignOverlappingHands ends the back forearm at its cuff (L - r) and hands the overlapping hand region and any outside-disc island to the front forearm whole',
+  );
+}
+
+/**
+ * Issue #444: on a wide limb covered by another crossed limb in front, `edge: "feather"` scales the upper piece's
+ * pixels closest to the joint line (`along = -0.5`) down to alpha <= `OPAQUE_ALPHA_ABOVE` (8) and lowers the rest of
+ * the feather ramp below `CORE_ALPHA` (250). Here `arm_r` (`full:handwear-r`) is 36 px wide (`x 2..38, y 8..52`,
+ * elbow at `[20, 30]`, radius 18, `feather_radius` 16.093 px), so row `y = 29` (`along = -0.5`) has pixels faded to
+ * alpha 7..8 (`<= 8`), and `arm_l` (`full:author:handwear-l`, drawn after `arm` in the plan) crosses in front over
+ * `x 2..18, y 22..52`, covering the left side of `arm_r`'s elbow while leaving `x 18..38, y 14..30` uncrossed.
+ */
+function runCrossedLimbFeatherCases(say: (name: string, ok: boolean, detail: string, why: string) => void, root: string): void {
+  const armRRects = [{ x0: 2, y0: 8, x1: 38, y1: 52, colour: C }];
+  const armLRects = [{ x0: 2, y0: 22, x1: 18, y1: 52, colour: C }];
+  const baseLayers = [{ name: 'handwear-r', depth: 0.5, rects: armRRects }];
+  const crossedLayers = [...baseLayers, { name: 'author:handwear-l', depth: 0.4, rects: armLRects }];
+
+  const buildCase = (
+    label: string,
+    crossed: boolean,
+    forearmREdge: { edge?: 'feather'; cap_shape?: 'disc' },
+  ): { r: ReturnType<typeof assemble>; out: string } => {
+    const d = join(root, label);
+    writeRun(join(d, 'full'), crossed ? crossedLayers : baseLayers);
+    writeRun(join(d, 'head'), FRAMED_HEAD);
+    writeFileSync(join(d, 'painting.png'), encodePngBytes(flatPainting()));
+    const plan: Array<[string, 'full' | 'head', string]> = crossed
+      ? [['arm', 'full', 'handwear-r'], ['arm_l_src', 'full', 'author:handwear-l']]
+      : [['arm', 'full', 'handwear-r']];
+    const bones: Array<Record<string, unknown>> = [
+      { name: 'hip', parent: 'root', at: [32, 8] },
+      { chain: 'sleeve_r', parent: 'hip', points: [[20, 8], [20, 30]], tip: [20, 52] },
+      ...(crossed ? [{ chain: 'sleeve_l', parent: 'hip', points: [[10, 22], [10, 38]], tip: [10, 52] }] : []),
+    ];
+    const limbs: Record<string, { segments: Array<Record<string, unknown>> }> = {
+      arm_r: {
+        segments: [
+          { part: 'upperarm_r', from: 'arm', bone: 'sleeve_r0' },
+          { part: 'forearm_r', from: 'arm', bone: 'sleeve_r1', joint: 'elbow', ...forearmREdge },
+        ],
+      },
+      ...(crossed
+        ? {
+            arm_l: {
+              segments: [
+                { part: 'upperarm_l', from: 'arm_l_src', bone: 'sleeve_l0' },
+                { part: 'forearm_l', from: 'arm_l_src', bone: 'sleeve_l1', joint: 'elbow' },
+              ],
+            },
+          }
+        : {}),
+    };
+    const cfg = assembleConfig({ plan, extend: [] });
+    const regions: Record<string, string> = {};
+    for (const l of Object.values(limbs)) for (const s of l.segments) regions[String(s.part)] = String(s.bone);
+    writeFileSync(join(d, 'config.json'), JSON.stringify({ ...cfg, limbs, bones, regions }));
+    const out = join(d, 'out');
+    const r = assembleStage(
+      { source: join(d, 'painting.png'), full: join(d, 'full'), head: join(d, 'head'), config: join(d, 'config.json'), seam: 'near-white', project: DEFAULT_PROJECT_RULE },
+      { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, 'recomposite_error_rig.png') },
+      () => {},
+    );
+    return { r, out };
+  };
+
+  // Bar 1: crossed limb parts with edge: "feather" on the back limb's elbow.
+  const crossedFeather = buildCase('crossed-feather', true, { edge: 'feather' });
+  const uncrossedFeather = buildCase('uncrossed-feather', false, { edge: 'feather' });
+  const upperRec = crossedFeather.r.parts.parts.find((q) => q.name === 'upperarm_r') as PartRecord;
+  const foreRec = crossedFeather.r.parts.parts.find((q) => q.name === 'forearm_r') as PartRecord;
+  const upperPlaced = crossedFeather.r.images.find((q) => q.record.name === 'upperarm_r') as PlacedPart;
+
+  // Count the pixels on row y = 29 in the uncrossed taken core (x 20..35, outside arm_l's 5x5 rim x < 20 and arm_r's
+  // outer 5x5 rim x >= 36) whose feathered alpha was scaled down to <= OPAQUE_ALPHA_ABOVE (8).
+  const band = foreRec.limb?.cap?.feather_radius ?? 0;
+  let subOpaqueTaken = 0;
+  for (let x = 20; x < 36; x++) {
+    const along = 29 + 0.5 - 30;
+    const across = -(x + 0.5 - 20);
+    if (across * across + along * along > band * band) continue;
+    const na = Math.floor(255 * featherWeight(band, along, across, 0) + 0.5);
+    if (na <= 8) subOpaqueTaken++;
+  }
+
+  // Compare the rendered seam across the uncrossed half of the elbow feather (x 18..38, y 14..30) against the uncrossed build.
+  let maxSeamDiff = 0;
+  for (let y = 14; y < 30; y++) {
+    for (let x = 18; x < 38; x++) {
+      const p = (y * 64 + x) * 4;
+      for (let c = 0; c < 4; c++) {
+        maxSeamDiff = Math.max(maxSeamDiff, Math.abs(crossedFeather.r.recomposite.data[p + c] - uncrossedFeather.r.recomposite.data[p + c]));
+      }
+    }
+  }
+
+  // Bar 2: the same crossed-arms fixture with cap_shape: "disc" on forearm_r.
+  const crossedDisc = buildCase('crossed-disc', true, { cap_shape: 'disc' });
+  const discUpperRec = crossedDisc.r.parts.parts.find((q) => q.name === 'upperarm_r') as PartRecord;
+  const discForeRec = crossedDisc.r.parts.parts.find((q) => q.name === 'forearm_r') as PartRecord;
+
+  // Bar 3 (Mutant A): leaving the sub-opaque feathered pixels in `projected` makes visibilityCounts fire ASSEMBLE_COUNTS_ADD_UP.
+  const fullUpper = newRaster(64, 64);
+  for (let y = 0; y < upperPlaced.record.h; y++) {
+    for (let x = 0; x < upperPlaced.record.w; x++) {
+      const s = (y * upperPlaced.record.w + x) * 4;
+      const d = ((upperPlaced.record.y + y) * 64 + (upperPlaced.record.x + x)) * 4;
+      fullUpper.data.set(upperPlaced.image.data.subarray(s, s + 4), d);
+    }
+  }
+  const visMask = newMask(64, 64);
+  const badProjMask = newMask(64, 64);
+  for (let y = 8; y < 30; y++) {
+    for (let x = 2; x < 38; x++) {
+      const p = y * 64 + x;
+      const clear = !(x >= 2 && x < 18 && y >= 22 && y < 52);
+      if (fullUpper.data[p * 4 + 3] > 8 && clear) visMask.data[p] = 1;
+      // Pre-fix bug: takenMask on the uncrossed core (x 20..35, y 10..29) stayed in projected even where feather scaled alpha <= 8.
+      if (x >= 20 && x < 36 && y >= 10 && y < 30) badProjMask.data[p] = 1;
+    }
+  }
+  const mutantARefusal = refusals(() => visibilityCounts('part "upperarm_r" (full:handwear-r)', fullUpper, visMask, badProjMask));
+
+  // Bar 3 (Mutant B): when a feathered ramp pixel (8 < alpha < 250) has drifted colour [250, 250, 250] over forearm_r's C cap,
+  // pushBackFringe with featheredMask preserves the ramp, whereas without featheredMask (null) it zeroes the pixel
+  // and makes visibilityCounts fire ASSEMBLE_COUNTS_ADD_UP.
+  const makeStack = (): { stack: PlacedPart[]; fMask: Mask; src: Raster } => {
+    const src = newRaster(4, 4);
+    const low = newRaster(4, 4);
+    const up = newRaster(4, 4);
+    const fMask = newMask(4, 4);
+    for (let p = 0; p < 16; p++) {
+      src.data.set([C[0], C[1], C[2], 255], p * 4);
+      low.data.set([C[0], C[1], C[2], 255], p * 4);
+      up.data.set([250, 250, 250, 120], p * 4);
+      fMask.data[p] = 1;
+    }
+    const rec = (name: string): PartRecord => ({ name, from: 'full:handwear-r', x: 0, y: 0, w: 4, h: 4, opaque_px: 16, projected_core_px: 16, source_px_taken: 16, refused_drift_px: 0, merged_px: 0, seam_override_px: 0 });
+    return { stack: [{ record: rec('forearm_r'), image: low }, { record: rec('upperarm_r'), image: up }], fMask, src };
+  };
+  const guardedStack = makeStack();
+  pushBackFringe(guardedStack.stack, guardedStack.src, 'near-white', null, [null, guardedStack.fMask]);
+  const guardedAlpha = guardedStack.stack[1].image.data[3];
+  const unguardedStack = makeStack();
+  pushBackFringe(unguardedStack.stack, unguardedStack.src, 'near-white', null, null);
+  const unguardedAlpha = unguardedStack.stack[1].image.data[3];
+  const ones = newMask(4, 4);
+  ones.data.fill(1);
+  const zeros = newMask(4, 4);
+  const mutantBRefusal = refusals(() => visibilityCounts('part "upperarm_r" (full:handwear-r)', unguardedStack.stack[1].image, zeros, ones));
+
+  say(
+    'AS475_A_FEATHERED_JOINT_ON_A_CROSSED_LIMB_KEEPS_COUNTS_CONSISTENT_AND_MATCHES_THE_UNCROSSED_SEAM',
+    subOpaqueTaken > 0 &&
+      (upperRec.visible_px ?? 0) + (upperRec.occluded_px ?? 0) === upperRec.opaque_px &&
+      (upperRec.visible_not_projected_px ?? -1) === (upperRec.visible_px ?? 0) - upperRec.source_px_taken &&
+      maxSeamDiff <= 1 &&
+      discUpperRec.opaque_px === 36 * 22 &&
+      discForeRec.limb?.cap?.shape === 'disc' &&
+      discForeRec.limb?.cap?.feathered_px === undefined &&
+      mutantARefusal?.problems[0]?.code === 'ASSEMBLE_COUNTS_ADD_UP' &&
+      mutantARefusal.problems[0].detail.startsWith(`${subOpaqueTaken} of `) &&
+      guardedAlpha === 120 &&
+      unguardedAlpha === 0 &&
+      mutantBRefusal?.problems[0]?.code === 'ASSEMBLE_COUNTS_ADD_UP',
+    `band=${band} px, sub-opaque taken on y=29: ${subOpaqueTaken} px; upperarm_r opaque=${upperRec.opaque_px} (visible=${upperRec.visible_px} + occluded=${upperRec.occluded_px}), taken=${upperRec.source_px_taken}, visible_not_projected=${upperRec.visible_not_projected_px}; max seam diff vs uncrossed=${maxSeamDiff}; disc opaque=${discUpperRec.opaque_px}, shape=${discForeRec.limb?.cap?.shape}; mutant A -> ${codes(mutantARefusal)} (${mutantARefusal?.problems[0]?.detail.slice(0, 60) ?? ''}); pushBackFringe alpha with/without featheredMask=${guardedAlpha}/${unguardedAlpha}, mutant B -> ${codes(mutantBRefusal)}`,
+    'issue #444: when edge "feather" lowers upper-piece pixels to alpha <= OPAQUE_ALPHA_ABOVE (8), they leave the upper piece\'s region (the lower segment\'s cap holds the opacity there), and the rest of the feather ramp is protected in pushBackFringe so crossed limbs do not trip ASSEMBLE_COUNTS_ADD_UP or lose their joint fade',
   );
 }
 
