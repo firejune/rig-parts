@@ -127,7 +127,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { drawText, GLYPH_H } from 'rig-c/tools/font5x7.ts';
-import { type BoneEntry, type ConfigConstraint, type Limb, type MeshSpec, parseConfig, type Point, type Segment, type SkeletonSections } from './config.ts';
+import { type BoneEntry, type ConfigConstraint, type ConfigStop, type Limb, type MeshSpec, parseConfig, type Point, type Segment, type SkeletonSections } from './config.ts';
+import { computeExactFrameTransforms, cropToSpineY, normaliseDegrees, toWorld } from './coords.ts';
 import { PartsError, type Problem, refuseIfAny } from './errors.ts';
 import { eyeLineDegrees, type FrameFeature, headAxes, type HeadAxes, headFrame, type HeadFrame } from './headframe.ts';
 import { type LayerSet, OPAQUE_ALPHA_ABOVE } from './layers.ts';
@@ -4166,6 +4167,23 @@ export interface CrossedLimbsFinding {
   at: [number, number];
 }
 
+/**
+ * Issue #447: a stop's contact point `<chain>_touch` (`at` in `against`'s local frame) lies above the first stopped
+ * link's root (`links[0]` at `[x0, y0]`) in rig pixels (`ty < y0`, i.e. higher Spine y), so `<chain>_rest` aims
+ * upward into the upper half-plane (`|rest| > 90°`) and `|rest| + outward > 180°` wraps past ±180° (`RIG_STOP_BOUNDS`).
+ */
+export interface StopTouchAboveRootFinding {
+  kind: 'stop-touch-above-root';
+  chain: string;
+  firstLink: string;
+  rootAt: [number, number];
+  against: string;
+  at: [number, number];
+  touchAt: [number, number];
+  rest: number;
+  outward: number;
+}
+
 export type LintFinding =
   | OffArtFinding
   | OffLockFinding
@@ -4179,7 +4197,8 @@ export type LintFinding =
   | NearEmptyHandFinding
   | BackHairMassesFinding
   | OverlappingArmsFinding
-  | CrossedLimbsFinding;
+  | CrossedLimbsFinding
+  | StopTouchAboveRootFinding;
 
 /** Which rule set read the torso and the sleeve chains, under `--keypoints`. */
 export interface LintBasis {
@@ -4279,7 +4298,7 @@ export function coverageOutcome(c: BoneCoverage): CoverageOutcome {
  */
 export function lint(
   P: PartSet,
-  spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>>; regions?: Readonly<Record<string, string>>; motion?: SkeletonSections['motion']; constraints?: readonly ConfigConstraint[]; limbs?: Readonly<Record<string, Limb>> },
+  spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>>; regions?: Readonly<Record<string, string>>; motion?: SkeletonSections['motion']; constraints?: readonly ConfigConstraint[]; limbs?: Readonly<Record<string, Limb>>; stops?: readonly ConfigStop[] },
   joints?: RigJoints,
 ): LintResult {
   const { byName } = expand(spec.bones);
@@ -4648,6 +4667,61 @@ export function lint(
       }
     }
   }
+  // Issue #447: when a stop's contact point `<chain>_touch` (`at` in `against`'s local frame) lies above the first
+  // stopped link's root (`links[0]`) in rig pixels (`ty < y0`, i.e. higher Spine y), `<chain>_rest` aims into the
+  // upper half-plane (`|rest| > 90°`) and `|rest| + outward > 180°` wraps past ±180° (`RIG_STOP_BOUNDS`).
+  if (spec.stops !== undefined && spec.stops.length > 0) {
+    const boneEnds = new Map<string, Point>();
+    const chainLinks = new Map<string, string[]>();
+    for (const e of spec.bones) {
+      if ('chain' in e) {
+        const names = e.points.map((_, k) => `${e.chain}${k}`);
+        chainLinks.set(e.chain, names);
+        e.points.forEach((_, k) => {
+          boneEnds.set(names[k], k + 1 < e.points.length ? e.points[k + 1] : e.tip);
+        });
+      } else if (e.tip !== undefined) {
+        boneEnds.set(e.name, e.tip);
+      }
+    }
+    for (const s of spec.stops) {
+      const links = s.links ?? chainLinks.get(s.chain) ?? [];
+      if (links.length === 0) continue;
+      const firstLink = links[0];
+      const rootBone = byName.get(firstLink);
+      const againstBone = byName.get(s.against);
+      if (rootBone === undefined || againstBone === undefined) continue;
+      const againstEnd = boneEnds.get(s.against);
+      let againstRot = 0;
+      if (againstEnd !== undefined) {
+        const dx = againstEnd[0] - againstBone.x;
+        const dy = cropToSpineY(againstEnd[1], P.H) - cropToSpineY(againstBone.y, P.H);
+        if (dx !== 0 || dy !== 0) againstRot = (Math.atan2(dy, dx) * 180) / Math.PI;
+      }
+      const frame = computeExactFrameTransforms([
+        { name: s.against, x: againstBone.x, y: cropToSpineY(againstBone.y, P.H), rotation: againstRot },
+      ]).get(s.against)!;
+      const [wx, wy] = toWorld(frame, s.at[0], s.at[1]);
+      const touchAt: [number, number] = [pyRound(wx * 10) / 10, pyRound(cropToSpineY(wy, P.H) * 10) / 10];
+      const aimDx = wx - rootBone.x;
+      const aimDy = wy - cropToSpineY(rootBone.y, P.H);
+      if (aimDx === 0 && aimDy === 0) continue;
+      const rest = pyRound(normaliseDegrees((Math.atan2(aimDy, aimDx) * 180) / Math.PI) * 100) / 100;
+      if (touchAt[1] < rootBone.y || Math.abs(rest) + s.outward > 180) {
+        findings.push({
+          kind: 'stop-touch-above-root',
+          chain: s.chain,
+          firstLink,
+          rootAt: [rootBone.x, rootBone.y],
+          against: s.against,
+          at: [s.at[0], s.at[1]],
+          touchAt,
+          rest,
+          outward: s.outward,
+        });
+      }
+    }
+  }
   // Issue #314: every pair of keyed chains a lattice mesh names, swung on the rig stage's own lattice and weights, held
   // to check's TEXTURE_STRETCH bar (src/squeeze.ts). Only with a motion: without one nothing swings.
   const partImages = new Map(P.recs.filter((p) => P.images.has(p.name)).map((p) => [p.name, { x: p.x, y: p.y, image: P.images.get(p.name) as Raster }]));
@@ -4686,6 +4760,7 @@ function findingBones(f: LintFinding, bones: readonly BoneEntry[]): string[] {
     case 'near-empty-hand':
     case 'overlapping-arms':
     case 'crossed-limbs':
+    case 'stop-touch-above-root':
       return [];
     case 'back-hair-masses': {
       const out = new Set<string>();
@@ -4878,6 +4953,8 @@ export function lintLine(f: LintFinding): string {
       return `LINT ${f.part} (${f.from}) holds both arms in one ${f.opaquePx} px component (r_wrist at ${fmtAt(f.rAt)}, l_wrist at ${fmtAt(f.lAt)}): declare config.seethrough.arm_split (x or line, and order: ["handwear-r", "handwear-l"] or ["handwear-l", "handwear-r"]) to separate the overlapping arms into two layers`;
     case 'crossed-limbs':
       return `LINT ${f.a} and ${f.b} on ${f.part}${f.from === '' ? '' : ` (${f.from})`} cross at ${fmtAt(f.at)} with no per-limb split: nearest-bone splitting cuts a straight line through the crossing; declare config.limbs.<covering>.split (line: [[x, y], ...] or edge: "painting") on the covering limb so the seam follows the limb`;
+    case 'stop-touch-above-root':
+      return `LINT stop on ${f.chain} (${f.firstLink} at ${fmtAt(f.rootAt)}) against ${f.against} (at ${fmtAt(f.at)}) places ${f.chain}_touch at ${fmtAt(f.touchAt)}, above ${f.firstLink}'s root (rest ${pyFixed(f.rest, 2)} deg, |rest| + outward ${pyFixed(Math.abs(f.rest) + f.outward, 2)} deg): stop against the descending limb bone below ${f.firstLink}, set links to start at a link below ${f.chain}_touch, or omit the stop on a rising limb`;
     case 'back-hair-masses': {
       const massDesc =
         f.masses.length === 0
