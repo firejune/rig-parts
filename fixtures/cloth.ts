@@ -185,3 +185,72 @@ export function dressHipJoints(): RigJoints {
   joints.l_hip = { state: 'observed', at: [130, 164], score: null, listed: true };
   return { person: 'fixture', source: 'fixtures/cloth.ts', painting: [DRESS_RIG.w, DRESS_RIG.h], rig: [DRESS_RIG.w, DRESS_RIG.h], joints };
 }
+
+/**
+ * Issue #437: a tail split into two draw layers on {@link CLOTH_RIG} (240x360) —
+ * `hair_back` drawn behind the skirt (`x 57..68, y 56..244`, 12x189 px) and
+ * `hair_back_front` drawn in front of the skirt (`x 57..68, y 245..299`, 12x55 px) —
+ * spanned by one 3-link tree `hairback_r0_` (`[63, 69] -> [63, 172] -> [63, 245] -> [63, 296]`):
+ * links 0 and 1 cross `hair_back` (103 and 73 px, 0 on `hair_back_front`) and
+ * link 2 crosses `hair_back_front` (51 px, 0 on `hair_back`).
+ */
+export const SPLIT_TAIL_PARTS: ProposeFixturePart[] = [
+  {
+    name: 'hair_back',
+    from: 'full:back hair',
+    x: 57,
+    y: 56,
+    w: 12,
+    h: 189,
+    colour: [90, 60, 40],
+    rects: [[57, 56, 12, 189]],
+  },
+  CLOTH_PARTS[1]!,
+  CLOTH_PARTS[2]!,
+  {
+    name: 'hair_front',
+    from: 'head:front hair',
+    x: 90,
+    y: 25,
+    w: 60,
+    h: 34,
+    colour: [110, 72, 50],
+    rects: [[90, 25, 60, 34]],
+  },
+  {
+    name: 'hair_back_front',
+    from: 'full:back hair',
+    cut_from: 'hair_back',
+    x: 57,
+    y: 245,
+    w: 12,
+    h: 55,
+    colour: [90, 60, 40],
+    rects: [[57, 245, 12, 55]],
+  },
+];
+
+/** An uncrossed headwear part above the eye line (`y 20..35`), for the negative control on `cloth."back hair".parts`. */
+export const SPLIT_TAIL_UNCROSSED: ProposeFixturePart = {
+  name: 'knot',
+  from: 'head:headwear',
+  x: 108,
+  y: 20,
+  w: 24,
+  h: 16,
+  colour: [200, 60, 80],
+  rects: [[108, 20, 24, 16]],
+};
+
+export function splitTailRecipe(parts: string[] = ['hair_back', 'hair_back_front']): ClothRecipes {
+  return {
+    'back hair': {
+      chains: 1,
+      links: 3,
+      wind: [1, 8],
+      gravity: [4, 24],
+      parts,
+    },
+  };
+}
+

@@ -2842,7 +2842,7 @@ function checkCloth(c: Check, v: Json): void {
   for (const tag of CLOTH_TARGETS) {
     if (!(tag in v)) continue;
     const path = `${at}.${JSON.stringify(tag)}`;
-    const r = c.object(path, v[tag], ['links', 'wind', 'gravity'], ['chains', 'split', 'length_ratio', 'strength', 'damping', 'alternate_damping', 'translate', 'swing', 'part']);
+    const r = c.object(path, v[tag], ['links', 'wind', 'gravity'], ['chains', 'split', 'length_ratio', 'strength', 'damping', 'alternate_damping', 'translate', 'swing', 'part', 'parts']);
     if (r === null) continue;
     if (tag !== 'back hair' && !('chains' in r)) c.fail('CONFIG_FIELD_PRESENT', `${path}.chains`, 'is absent and required');
     const chains = 'chains' in r && c.int(`${path}.chains`, r.chains, 1) ? (r.chains as number) : null;
@@ -2897,10 +2897,31 @@ function checkCloth(c: Check, v: Json): void {
     if ('translate' in r && c.number(`${path}.translate`, r.translate, 'unit') && r.translate === 0) {
       c.fail('CONFIG_FIELD_TYPE', `${path}.translate`, 'is 0; a mix above 0 and at most 1 is required (leave translate out for none)');
     }
+    const checkPartList = (fieldPath: string, list: Json): void => {
+      if (!c.array(fieldPath, list, true)) return;
+      const seen = new Set<string>();
+      (list as Json[]).forEach((item, i) => {
+        if (c.string(`${fieldPath}[${i}]`, item)) {
+          const s = item as string;
+          if (seen.has(s)) {
+            c.fail('CONFIG_CLOTH_PARTS_UNIQUE', `${fieldPath}[${i}]`, `repeats "${s}"; each part in the list must be named once, in order from root to tip`);
+          }
+          seen.add(s);
+        }
+      });
+    };
+    if ('part' in r && 'parts' in r) {
+      c.fail('CONFIG_CLOTH_PARTS_UNIQUE', `${path}.parts`, 'is declared beside part; declare either parts (a list of parts from root to tip) or part, not both');
+    }
     if ('part' in r) {
-      if (tag !== 'bottomwear') {
+      if (Array.isArray(r.part)) {
+        checkPartList(`${path}.part`, r.part);
+      } else if (tag !== 'bottomwear') {
         c.fail('CONFIG_CLOTH_PART_ON_BOTTOMWEAR', `${path}.part`, `is declared on "${tag}"; part hands the skirt's recipe (bottomwear) to a topwear part or its cut skirt piece (a dress) — leave it out here`);
       } else c.string(`${path}.part`, r.part);
+    }
+    if ('parts' in r) {
+      checkPartList(`${path}.parts`, r.parts);
     }
     if ('swing' in r) {
       if (tag !== 'bottomwear') {

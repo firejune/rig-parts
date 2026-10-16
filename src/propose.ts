@@ -148,7 +148,7 @@ import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER
 import { edgeLength } from './length.ts';
 import { limbWidth } from './limbs.ts';
 import { type BranchSqueezeFinding, branchSqueezes, chainSqueezes, type SqueezeFinding } from './squeeze.ts';
-import { RECIPE_BACK_HAIR_CHAINS, RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, swingName, type Tail, tailOverlap, type TailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput } from './cloth.ts';
+import { RECIPE_BACK_HAIR_CHAINS, RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, spanCrosses, swingName, type Tail, tailOverlap, type TailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput } from './cloth.ts';
 import { TEXTURE_STRETCH_CEILING } from './check.ts';
 
 // ---------------------------------------------------------------------------
@@ -1377,10 +1377,31 @@ export function proposeWithBasis(
   // Issue #364: the trees a cloth recipe drafts, their constraints, and the tags it was used on.
   const clothConstraints: ConfigConstraint[] = [];
   const clothUsed = new Set<ClothTarget>();
+  const multiPartClaimed = new Set<string>();
   const recipeOf = (tag: ClothTarget): ClothRecipe | null => cloth?.[tag] ?? null;
+  const declaredPartsOf = (tag: ClothTarget): { field: 'parts' | 'part'; list: PartRecord[] } | null => {
+    const rcp = recipeOf(tag);
+    if (rcp === null) return null;
+    const raw = rcp.parts !== undefined ? { field: 'parts' as const, names: rcp.parts } : Array.isArray(rcp.part) ? { field: 'part' as const, names: rcp.part } : null;
+    if (raw === null) return null;
+    const object = `config.cloth.${JSON.stringify(tag)}.${raw.field}`;
+    const list: PartRecord[] = [];
+    for (const name of raw.names) {
+      const q = P.recs.find((x) => x.name === name);
+      if (q === undefined) {
+        throw new PartsError([{ code: 'PROPOSE_CLOTH_PART', object, detail: `names "${name}", which is no part in parts.json; every part in the list must exist in parts.json` }]);
+      }
+      if (splitFrom(q.from)[0] === PAINTING_RUN) {
+        throw new PartsError([{ code: 'PROPOSE_CLOTH_PART', object, detail: `names "${name}", from ${q.from}; a painting patch has no layer tag and cannot be part of a cloth tree` }]);
+      }
+      list.push(q);
+    }
+    return { field: raw.field, list };
+  };
   // Issue #391: the tails the back hair recipe drafts, each with its mesh's spans, which an accessory wrapped round one rides.
   const tails: Tail[] = [];
-  const T = (p: PartRecord, tag: ClothTarget, r: ClothRecipe, input: TreeInput): TreeChain[] => {
+  const T = (p: PartRecord | readonly PartRecord[], tag: ClothTarget, r: ClothRecipe, input: TreeInput): TreeChain[] => {
+    const partNames = Array.isArray(p) ? p.map((x) => x.name) : [(p as PartRecord).name];
     const trees = draftTrees(input, r);
     const constants = [konst('cloth_chains', r.chains ?? RECIPE_BACK_HAIR_CHAINS), konst('cloth_links', r.links), konst('length_ratio', roundTo(r.length_ratio ?? RECIPE_LENGTH_RATIO, 6))];
     for (const t of trees) {
@@ -1389,8 +1410,8 @@ export function proposeWithBasis(
         t.parent,
         t.points,
         t.tip,
-        t.why.map((w) => placement('mask', w, { parts: [p.name], bones: [input.parent], constants })),
-        placement('mask', t.tipWhy, { parts: [p.name], bones: [input.parent], constants }),
+        t.why.map((w) => placement('mask', w, { parts: partNames, bones: [input.parent], constants })),
+        placement('mask', t.tipWhy, { parts: partNames, bones: [input.parent], constants }),
       );
     }
     clothUsed.add(tag);
@@ -1521,7 +1542,225 @@ export function proposeWithBasis(
   };
 
   // ---- back hair
+  const backHairParts = declaredPartsOf('back hair');
+  const backHairSingleSame =
+    backHairParts !== null &&
+    backHairParts.list.length === 1 &&
+    P.headFirst('back hair').length === 1 &&
+    backHairParts.list[0] === P.headFirst('back hair')[0] &&
+    SIDES.every(([s]) => {
+      const m = P.alpha(backHairParts.list[0]);
+      for (let y = 0; y < m.height; y++) {
+        for (let x = 0; x < m.width; x++) {
+          if ((s === 'r' ? x < axis : x >= axis) && m.data[y * m.width + x] !== 0) return true;
+        }
+      }
+      return false;
+    });
+  if (backHairSingleSame) {
+    const p0 = backHairParts.list[0];
+    if (p0.y + p0.h < neckY + 0.5 * fh) {
+      throw new PartsError([
+        {
+          code: 'PROPOSE_CLOTH_PART',
+          object: `config.cloth."back hair".${backHairParts.field}`,
+          detail: `names "${p0.name}" (${p0.from}, box y=${p0.y}..${p0.y + p0.h}), which ends above the shoulders (y=${pyFixed(neckY + 0.5 * fh, 1)}), where the proposer drafts a bun bone with no tree links — no tree link crosses "${p0.name}"`,
+        },
+      ]);
+    }
+  } else if (backHairParts !== null) {
+    const { field, list } = backHairParts;
+    const object = `config.cloth."back hair".${field}`;
+    const rawRcp = recipeOf('back hair') as ClothRecipe;
+    const p0 = list[0];
+    const m0 = P.alpha(p0);
+    const shoulderLine = neckY + 0.5 * fh;
+    const sideHasBelow = (m: Mask, s: 'r' | 'l', yMin: number): boolean => {
+      const r0 = Math.max(0, Math.ceil(yMin));
+      for (let y = r0; y < m.height; y++) {
+        for (let x = 0; x < m.width; x++) {
+          if ((s === 'r' ? x < axis : x >= axis) && m.data[y * m.width + x] !== 0) return true;
+        }
+      }
+      return false;
+    };
+    const activeSides = SIDES.filter(([s]) => list.some((q) => sideHasBelow(P.alpha(q), s, shoulderLine)));
+    if (activeSides.length === 0) {
+      throw new PartsError([
+        {
+          code: 'PROPOSE_CLOTH_PART',
+          object,
+          detail: `names "${p0.name}" (${p0.from}, box y=${p0.y}..${p0.y + p0.h}), which has no art below the shoulders (y=${pyFixed(shoulderLine, 1)}) — no back hair tree link crosses "${p0.name}"`,
+        },
+      ]);
+    }
+    const unionMask = newMask(P.W, P.H);
+    unionMask.data.set(m0.data);
+    for (let idx = 1; idx < list.length; idx++) {
+      const mq = P.alpha(list[idx]);
+      for (const [s] of activeSides) {
+        for (let y = 0; y < P.H; y++) {
+          let p0HasRow = false;
+          for (let x = 0; x < P.W; x++) {
+            if ((s === 'r' ? x < axis : x >= axis) && m0.data[y * P.W + x] !== 0) {
+              p0HasRow = true;
+              break;
+            }
+          }
+          if (p0HasRow) continue;
+          for (let x = 0; x < P.W; x++) {
+            if ((s === 'r' ? x < axis : x >= axis) && mq.data[y * P.W + x] !== 0) {
+              unionMask.data[y * P.W + x] = 1;
+            }
+          }
+        }
+      }
+    }
+    const uRows = rowsAny(unionMask);
+    const top = uRows.length > 0 ? uRows[0] : p0.y;
+    const bot = uRows.length > 0 ? uRows[uRows.length - 1] + 1 : p0.y + p0.h;
+    const [g, r] = gridR(p0);
+    const dilated = dilate(unionMask, 31);
+    const y0 = pyRound(eyeY);
+    const sideOpaqueWidth = (s: 'r' | 'l'): number => {
+      if (y0 < 0 || y0 >= unionMask.height) return 0;
+      let w = 0;
+      for (let x = 0; x < unionMask.width; x++) {
+        if ((s === 'r' ? x < axis : x >= axis) && unionMask.data[y0 * unionMask.width + x]) w++;
+      }
+      return w;
+    };
+    const prefixOf = (s: 'r' | 'l'): string => `hairback_${s}`;
+    const offRootsAt = (cnt: number, s: 'r' | 'l'): Array<{ bone: string; at: Point; alpha: number }> => {
+      const pref = prefixOf(s);
+      const im = P.images.get(p0.name) as Raster;
+      const off: Array<{ bone: string; at: Point; alpha: number }> = [];
+      for (let k = 0; k < cnt; k++) {
+        const fc = (k + 0.5) / cnt;
+        const rx = pyRound(bandX(unionMask, eyeY, { frac: fc, side: s, axis }) ?? axis);
+        if (!isOn(dilated, rx, y0)) {
+          const lx = rx - p0.x;
+          const ly = y0 - p0.y;
+          const alpha = lx >= 0 && lx < p0.w && ly >= 0 && ly < p0.h ? im.data[(ly * p0.w + lx) * 4 + 3] : 0;
+          off.push({ bone: `${pref}${k}_0`, at: [rx, y0], alpha });
+        }
+      }
+      return off;
+    };
+    const sideWidths = activeSides.map(([s]) => sideOpaqueWidth(s));
+    const widthCap = Math.max(1, Math.min(...sideWidths.map((w) => Math.floor(w / g))));
+    let maxFit = 1;
+    for (let cnt = widthCap; cnt >= 1; cnt--) {
+      if (activeSides.every(([s]) => offRootsAt(cnt, s).length === 0)) {
+        maxFit = cnt;
+        break;
+      }
+    }
+    if (rawRcp.chains !== undefined) {
+      const offRoots = activeSides.flatMap(([s]) => offRootsAt(rawRcp.chains as number, s));
+      if (rawRcp.chains > widthCap || offRoots.length > 0) {
+        const wR = sideOpaqueWidth('r');
+        const wL = sideOpaqueWidth('l');
+        throw new PartsError([
+          {
+            code: 'PROPOSE_CLOTH_BACK_HAIR_CHAINS',
+            object: 'config.cloth."back hair".chains',
+            detail:
+              `declares ${rawRcp.chains} tree(s) per side on "${p0.name}", and at the root row y=${y0} the tail is ${wR} px wide on the r side and ${wL} px on the l side on a ${g} px mesh grid (at most ${maxFit} tree(s) per side fit inside the art` +
+              (offRoots.length > 0 ? `; off the art: ${offRoots.map((o) => `${o.bone} at [${o.at[0]}, ${o.at[1]}] (alpha ${o.alpha})`).join(', ')}` : '') +
+              `) — set chains to at most ${maxFit}, or leave chains out to derive it from the tail's width`,
+          },
+        ]);
+      }
+    }
+    const rcp: ClothRecipe = { ...rawRcp, chains: rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit) };
+    const all: TreeChain[] = [];
+    let n = 0;
+    const partNamesLabel = list.map((q) => q.name).join(' -> ');
+    for (const [side] of activeSides) {
+      const prefix = prefixOf(side);
+      const trees = T(list, 'back hair', rcp, {
+        prefix,
+        parent: 'head',
+        rootY: eyeY,
+        tipY: bot - 4,
+        xAt: (y, f) => bandX(unionMask, y, { frac: f, side, axis }),
+        fallbackX: () => axis,
+        frame: `${partNamesLabel}'s art on the ${side} side of the eye axis (no art there in the band: the eye axis x)`,
+        edges: side,
+      });
+      const made = treeConstraints(trees, rcp, null);
+      clothConstraints.push(...made);
+      n += made.length;
+      all.push(...trees);
+    }
+    const spans: Array<TailSpan & { depth: number }> = [{ bone: 'head', a: rnd(head), b: rnd([axis, top + 13]), link: false, depth: -1 }];
+    for (const t of all) {
+      const line = [...t.points, t.tip];
+      t.points.forEach((q, i) => spans.push({ bone: `${t.chain}${i}`, a: q, b: line[i + 1], link: true, depth: t.depths[i] }));
+    }
+    let prevMinD = -1;
+    let prevMaxD = -1;
+    const linkSummary: string[] = [];
+    for (let idx = 0; idx < list.length; idx++) {
+      const q = list[idx];
+      const mq = P.alpha(q);
+      const crossedLinks = spans.filter((sp) => sp.link && spanCrosses(sp, mq) > 0);
+      if (crossedLinks.length === 0) {
+        const linkDesc = spans
+          .filter((sp) => sp.link)
+          .map((sp) => `${sp.bone} [${sp.a[0]}, ${sp.a[1]}]->[${sp.b[0]}, ${sp.b[1]}]`)
+          .join(', ');
+        throw new PartsError([
+          {
+            code: 'PROPOSE_CLOTH_PART',
+            object,
+            detail: `names "${q.name}" (${q.from}, box x=${q.x}..${q.x + q.w}, y=${q.y}..${q.y + q.h}), which no link of the drafted tree crosses (${linkDesc}: 0 px on "${q.name}") — every part in ${field} must be crossed by at least one link of the tree`,
+          },
+        ]);
+      }
+      const minD = Math.min(...crossedLinks.map((sp) => sp.depth));
+      const maxD = Math.max(...crossedLinks.map((sp) => sp.depth));
+      if (idx > 0 && (minD < prevMinD || maxD < prevMaxD)) {
+        throw new PartsError([
+          {
+            code: 'PROPOSE_CLOTH_PART',
+            object,
+            detail: `names "${q.name}" after "${list[idx - 1].name}", and "${q.name}" is crossed at link depth ${minD}..${maxD} while "${list[idx - 1].name}" is crossed at depth ${prevMinD}..${prevMaxD} — list parts in order from root to tip`,
+          },
+        ]);
+      }
+      prevMinD = minD;
+      prevMaxD = maxD;
+      const [gq, rq] = q === p0 ? [g, r] : gridR(q);
+      const qSegs: Segment[] = [];
+      const crossedDesc: string[] = [];
+      for (const sp of spans) {
+        const px = spanCrosses(sp, mq);
+        if (px > 0) {
+          qSegs.push(sp.link ? sp.bone : [sp.bone, sp.a, sp.b]);
+          if (sp.link) crossedDesc.push(`${sp.bone} (${px} px)`);
+        }
+      }
+      linkSummary.push(`${q.name}: ${crossedDesc.join(', ')}`);
+      delete regions[q.name];
+      meshes[q.name] = { grid: gq, r: rcp.split?.hold_tip === true ? Math.max(rq, gq) : rq, segments: qSegs };
+      multiPartClaimed.add(q.name);
+    }
+    notes.push(
+      clothNote(
+        partNamesLabel,
+        'back hair',
+        all,
+        rcp,
+        n,
+        ` across ${list.length} parts in root-to-tip order (${linkSummary.join('; ')}), from head, rooted on the eye line and tipped 4 px above ${list[list.length - 1].name}'s bottom`,
+      ),
+    );
+    tails.push({ part: p0.name, mask: unionMask, spans });
+  }
   for (const p of P.headFirst('back hair')) {
+    if (multiPartClaimed.has(p.name)) continue;
     const [g, r] = gridR(p);
     const top = p.y;
     const bot = p.y + p.h;
@@ -1536,7 +1775,7 @@ export function proposeWithBasis(
       );
       meshes[p.name] = { grid: g, r, segments: [['head', rnd(head), rnd([axis, top + 13])], 'bun'] };
       tracks.push({ bone: 'bun', prop: 'rotate', amp: 0.8, period: 4.0, phase: 0.2 });
-    } else if (recipeOf('back hair') !== null) {
+    } else if (recipeOf('back hair') !== null && (backHairParts === null || backHairSingleSame)) {
       // Issue #364: the recipe's trees, per side of the eye axis (twin tails are a side each), from the eye line to
       // 4 px above the part's bottom, in place of the two keyed chains.
       // Issue #390: the tree count per side derives from the tail's opaque width at the root row (`floor(width / grid)`
@@ -1660,6 +1899,7 @@ export function proposeWithBasis(
   const turned = 'none' in roll ? 'on the page' : `along the head's down axis (the eye line's perpendicular, roll ${pyFixed(roll.degrees, 3)} degrees)`;
   const rollBones = 'none' in roll ? [] : ['eye_r', 'eye_l'];
   for (const p of P.headFirst('front hair')) {
+    if (multiPartClaimed.has(p.name)) continue;
     const [g, r] = gridR(p);
     const mask = P.alpha(p);
     const top = p.y;
@@ -1805,7 +2045,7 @@ export function proposeWithBasis(
     // Every part with the tag (a plan may take both runs' layers): the biggest
     // gets the bone and chain, the rest ride the head rigidly. A stable sort,
     // as Python's `sorted` is.
-    const cands = [...P.byTag(tag)].sort((a, b) => b.opaque_px - a.opaque_px);
+    const cands = [...P.byTag(tag)].filter((q) => !multiPartClaimed.has(q.name)).sort((a, b) => b.opaque_px - a.opaque_px);
     // Issue #391: a layer of the tag lying on a tail the back hair recipe drafted rides the links it overlaps — the
     // spans of the tail its pixels over the tail's art fall nearest — and not head: its mesh names those bones and no
     // others, so every vertex weights by the rule the tail's own art does. The links are read off the overlap, never
@@ -2173,31 +2413,65 @@ export function proposeWithBasis(
 
   // Issue #402: the topwear part config.cloth.bottomwear.part names takes the skirt's rule and recipe below; every
   // other topwear shaped like a skirt is named in a note when a recipe is in play, never drafted on by its shape.
+  const bottomwearParts = declaredPartsOf('bottomwear');
+  const bottomwearSingleSame =
+    bottomwearParts !== null &&
+    bottomwearParts.list.length === 1 &&
+    bw.length === 1 &&
+    bottomwearParts.list[0] === bw[0];
   const namedSkirt = ((): PartRecord | null => {
-    const name = recipeOf('bottomwear')?.part;
-    if (name === undefined) return null;
-    const refuse = (detail: string): never => {
-      throw new PartsError([{ code: 'PROPOSE_CLOTH_PART', object: 'config.cloth."bottomwear".part', detail }]);
-    };
-    const q = P.recs.find((x) => x.name === name);
-    if (q === undefined) return refuse(`names "${name}", which is no part in parts.json; a topwear part or its cut skirt piece whose art hangs below the hip (a dress) is required`);
-    // An explicit name may select a topwear cut piece; automatic tag rules still exclude pieces.
-    const [run, tag] = splitFrom(q.from);
-    if (run === PAINTING_RUN || tag !== 'topwear') {
-      return refuse(
-        `names "${name}", from ${q.from}; ${splitFrom(q.from)[1] === 'bottomwear' ? 'a bottomwear part takes the recipe by its tag already — leave part out' : "only a topwear part takes the skirt's recipe by name (a skirt See-through returned inside topwear, a dress)"}`,
-      );
+    const rawPart = recipeOf('bottomwear')?.part;
+    if (typeof rawPart === 'string') {
+      const name = rawPart;
+      const refuse = (detail: string): never => {
+        throw new PartsError([{ code: 'PROPOSE_CLOTH_PART', object: 'config.cloth."bottomwear".part', detail }]);
+      };
+      const q = P.recs.find((x) => x.name === name);
+      if (q === undefined) return refuse(`names "${name}", which is no part in parts.json; a topwear part or its cut skirt piece whose art hangs below the hip (a dress) is required`);
+      // An explicit name may select a topwear cut piece; automatic tag rules still exclude pieces.
+      const [run, tag] = splitFrom(q.from);
+      if (run === PAINTING_RUN || tag !== 'topwear') {
+        return refuse(
+          `names "${name}", from ${q.from}; ${splitFrom(q.from)[1] === 'bottomwear' ? 'a bottomwear part takes the recipe by its tag already — leave part out' : "only a topwear part takes the skirt's recipe by name (a skirt See-through returned inside topwear, a dress)"}`,
+        );
+      }
+      const line = hip[1] + TOPWEAR_HANGS_FACE_HEIGHTS * fh;
+      if (q.y + q.h < line) {
+        return refuse(`names "${name}", whose box ends at y=${q.y + q.h}, above hip + ${TOPWEAR_HANGS_FACE_HEIGHTS} face heights (y=${pyFixed(line, 1)}), where the topwear rule reads a bodice that stops at the waist: no skirt hangs below the hip to hang trees on`);
+      }
+      return q;
     }
-    const line = hip[1] + TOPWEAR_HANGS_FACE_HEIGHTS * fh;
-    if (q.y + q.h < line) {
-      return refuse(`names "${name}", whose box ends at y=${q.y + q.h}, above hip + ${TOPWEAR_HANGS_FACE_HEIGHTS} face heights (y=${pyFixed(line, 1)}), where the topwear rule reads a bodice that stops at the waist: no skirt hangs below the hip to hang trees on`);
+    if (bottomwearParts !== null && bottomwearParts.list.length === 1 && !bottomwearSingleSame) {
+      const q = bottomwearParts.list[0];
+      const object = `config.cloth."bottomwear".${bottomwearParts.field}`;
+      const [run, tag] = splitFrom(q.from);
+      if (run === PAINTING_RUN || tag !== 'topwear') {
+        throw new PartsError([
+          {
+            code: 'PROPOSE_CLOTH_PART',
+            object,
+            detail: `names "${q.name}" (${q.from}, box x=${q.x}..${q.x + q.w}, y=${q.y}..${q.y + q.h}), which no link of the skirt's trees crosses`,
+          },
+        ]);
+      }
+      const line = hip[1] + TOPWEAR_HANGS_FACE_HEIGHTS * fh;
+      if (q.y + q.h < line) {
+        throw new PartsError([
+          {
+            code: 'PROPOSE_CLOTH_PART',
+            object,
+            detail: `names "${q.name}", whose box ends at y=${q.y + q.h}, above hip + ${TOPWEAR_HANGS_FACE_HEIGHTS} face heights (y=${pyFixed(line, 1)}), where the topwear rule reads a bodice that stops at the waist: no skirt hangs below the hip to hang trees on`,
+          },
+        ]);
+      }
+      return q;
     }
-    return q;
+    return null;
   })();
   const skirtHints = new Map<string, string>();
   if (cloth !== null) {
     for (const p of tw) {
-      if (p === namedSkirt) continue;
+      if (p === namedSkirt || multiPartClaimed.has(p.name)) continue;
       const hint = skirtInsideNote(p, P.alpha(p), hip[1], fh);
       if (hint !== null) skirtHints.set(p.name, hint);
     }
@@ -2205,7 +2479,7 @@ export function proposeWithBasis(
 
   // ---- outer robe (topwear)
   for (const p of tw) {
-    if (p === namedSkirt) continue;
+    if (p === namedSkirt || multiPartClaimed.has(p.name)) continue;
     const hint = skirtHints.get(p.name);
     if (hint !== undefined) notes.push(hint);
     const [g, r] = gridR(p);
@@ -2331,16 +2605,145 @@ export function proposeWithBasis(
     return { o, rides: tail.spans.some((sp, k) => sp.link && o.counts[k] > 0) };
   };
   const dressRecipe = recipeOf('bottomwear');
+  if (bottomwearParts !== null && bottomwearParts.list.length >= 2 && dressRecipe !== null) {
+    const { field, list } = bottomwearParts;
+    const object = `config.cloth."bottomwear".${field}`;
+    const p0 = list[0];
+    const m0 = P.alpha(p0);
+    const y0 = hip[1] + 20;
+    const unionMask = newMask(P.W, P.H);
+    unionMask.data.set(m0.data);
+    for (let idx = 1; idx < list.length; idx++) {
+      const mq = P.alpha(list[idx]);
+      for (let y = p0.y; y < P.H; y++) {
+        let p0HasRow = false;
+        for (let x = 0; x < P.W; x++) {
+          if (m0.data[y * P.W + x] !== 0) {
+            p0HasRow = true;
+            break;
+          }
+        }
+        if (p0HasRow) continue;
+        for (let x = 0; x < P.W; x++) {
+          if (mq.data[y * P.W + x] !== 0) unionMask.data[y * P.W + x] = 1;
+        }
+      }
+    }
+    const uRows = rowsAny(unionMask);
+    const bot = uRows.length > 0 ? uRows[uRows.length - 1] + 1 : p0.y + p0.h;
+    if (bot - 4 <= y0) {
+      throw new PartsError([
+        {
+          code: 'PROPOSE_CLOTH_PART',
+          object,
+          detail: `names "${p0.name}" (${p0.from}, box y=${p0.y}..${p0.y + p0.h}), which ends above the skirt root row (y=${pyFixed(y0, 1)}) — no skirt tree link crosses "${p0.name}"`,
+        },
+      ]);
+    }
+    const [g, r] = gridR(p0);
+    const { segs: fixedSegs, hangs } = skirtFrame(p0, m0);
+    if (hangs !== null) notes.push(hangs);
+    const prefix = 'skirt';
+    const partNamesLabel = list.map((q) => q.name).join(' -> ');
+    const trees = T(list, 'bottomwear', dressRecipe, {
+      ...skirtInput(p0, unionMask, prefix),
+      tipY: bot - 4,
+      frame: `${partNamesLabel}'s art (no art in the band: that share of ${p0.name}'s box width)`,
+    });
+    let swing: { bone: string; rest: number } | null = null;
+    if (dressRecipe.swing !== undefined) {
+      const cx = or(bandX(unionMask, y0, { frac: 0.5 }), p0.x + 0.5 * p0.w);
+      const first = trees[0].points.length > 1 ? trees[0].points[1][1] : trees[0].tip[1];
+      const at: [number, number] = [cx, y0];
+      const tipAt: [number, number] = [cx, first];
+      B(
+        swingName(prefix),
+        'hip',
+        at,
+        placement('mask', `the centre of ${partNamesLabel}'s art in the 24-row band at the root row (20 px below hip's y)`, { parts: list.map((q) => q.name), bones: ['hip'], constants: [konst('share_across', 0.5)] }),
+        tipAt,
+        placement('derived', `straight down from the swing's origin to the row of the first tree's second link (one link long)`, { bones: [`${trees[0].chain}0`] }),
+      );
+      swing = { bone: swingName(prefix), rest: roundTo((Math.atan2(-(rnd(tipAt)[1] - rnd(at)[1]), rnd(tipAt)[0] - rnd(at)[0]) * 180) / Math.PI, 6) };
+    }
+    const made = treeConstraints(trees, dressRecipe, swing);
+    clothConstraints.push(...made);
+    const spans: Array<TailSpan & { depth: number }> = [];
+    for (const s of fixedSegs) if (typeof s !== 'string') spans.push({ bone: s[0], a: s[1], b: s[2], link: false, depth: -1 });
+    for (const t of trees) {
+      const line = [...t.points, t.tip];
+      t.points.forEach((q, i) => spans.push({ bone: `${t.chain}${i}`, a: q, b: line[i + 1], link: true, depth: t.depths[i] }));
+    }
+    let prevMinD = -1;
+    let prevMaxD = -1;
+    const linkSummary: string[] = [];
+    for (let idx = 0; idx < list.length; idx++) {
+      const q = list[idx];
+      const mq = P.alpha(q);
+      const crossedLinks = spans.filter((sp) => sp.link && spanCrosses(sp, mq) > 0);
+      if (crossedLinks.length === 0) {
+        const linkDesc = spans
+          .filter((sp) => sp.link)
+          .map((sp) => `${sp.bone} [${sp.a[0]}, ${sp.a[1]}]->[${sp.b[0]}, ${sp.b[1]}]`)
+          .join(', ');
+        throw new PartsError([
+          {
+            code: 'PROPOSE_CLOTH_PART',
+            object,
+            detail: `names "${q.name}" (${q.from}, box x=${q.x}..${q.x + q.w}, y=${q.y}..${q.y + q.h}), which no link of the drafted tree crosses (${linkDesc}: 0 px on "${q.name}") — every part in ${field} must be crossed by at least one link of the tree`,
+          },
+        ]);
+      }
+      const minD = Math.min(...crossedLinks.map((sp) => sp.depth));
+      const maxD = Math.max(...crossedLinks.map((sp) => sp.depth));
+      if (idx > 0 && (minD < prevMinD || maxD < prevMaxD)) {
+        throw new PartsError([
+          {
+            code: 'PROPOSE_CLOTH_PART',
+            object,
+            detail: `names "${q.name}" after "${list[idx - 1].name}", and "${q.name}" is crossed at link depth ${minD}..${maxD} while "${list[idx - 1].name}" is crossed at depth ${prevMinD}..${prevMaxD} — list parts in order from root to tip`,
+          },
+        ]);
+      }
+      prevMinD = minD;
+      prevMaxD = maxD;
+      const [gq, rq] = q === p0 ? [g, r] : gridR(q);
+      const qSegs: Segment[] = idx === 0 ? [...fixedSegs] : [];
+      const crossedDesc: string[] = [];
+      for (const sp of spans) {
+        if (!sp.link) continue;
+        const px = spanCrosses(sp, mq);
+        if (px > 0) {
+          qSegs.push(sp.bone);
+          crossedDesc.push(`${sp.bone} (${px} px)`);
+        }
+      }
+      linkSummary.push(`${q.name}: ${crossedDesc.join(', ')}`);
+      delete regions[q.name];
+      meshes[q.name] = { grid: gq, r: dressRecipe.split?.hold_tip === true ? Math.max(rq, gq) : rq, segments: qSegs };
+      multiPartClaimed.add(q.name);
+    }
+    notes.push(
+      clothNote(
+        partNamesLabel,
+        'bottomwear',
+        trees,
+        dressRecipe,
+        made.length,
+        `${swing === null ? '' : ` on one shared swing, ${swing.bone} (each tree's first link takes its rotation times ${dressRecipe.swing?.scales.join('/')}, its setup rotation ${swing.rest} degrees subtracted)`} across ${list.length} parts in root-to-tip order (${linkSummary.join('; ')}) from hip, rooted 20 px below its y and tipped 4 px above ${list[list.length - 1].name}'s bottom, laid down the screen`,
+      ),
+    );
+  }
   const riders: PartRecord[] =
     namedSkirt === null || dressRecipe === null
       ? []
       : ((): PartRecord[] => {
           const mask = P.alpha(namedSkirt);
           const tail = dressTail(namedSkirt, skirtFrame(namedSkirt, mask).segs, draftTrees(skirtInput(namedSkirt, mask, 'skirt'), dressRecipe));
-          return bw.filter((q) => overLinks(tail, q).rides);
+          return bw.filter((q) => !multiPartClaimed.has(q.name) && overLinks(tail, q).rides);
         })();
   let dressDrafted: Tail | null = null;
-  const skirts = namedSkirt === null ? bw : [...bw.filter((q) => !riders.includes(q)), namedSkirt];
+  const skirts = (namedSkirt === null ? bw : [...bw.filter((q) => !riders.includes(q)), namedSkirt]).filter((q) => !multiPartClaimed.has(q.name));
   for (const p of skirts) {
     const [g, r] = gridR(p);
     const mask = P.alpha(p);
