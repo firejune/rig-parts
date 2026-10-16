@@ -152,9 +152,9 @@ import { assignOverlappingHands, capBox, featherWeight, type JointLine, jointLin
 import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, type CheckFlagInBuild, checkStage, ctlRemedies, driftShare, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
-import { BLOUSE, CLOTH_PARTS, CLOTH_RIG, clothRecipe, DRESS, DRESS_RIG, dressHipJoints, dressParts, HEM, HEM_BELOW, SHIFT, SPLIT_TAIL_PARTS, SPLIT_TAIL_UNCROSSED, splitTailRecipe } from './fixtures/cloth.ts';
+import { BLOUSE, CLOTH_PARTS, CLOTH_RIG, clothRecipe, DRESS, DRESS_RIG, dressHipJoints, dressParts, FLOOR_SKIRT_EMPTY_COL_PARTS, FLOOR_SKIRT_PARTS, HEM, HEM_BELOW, SHIFT, SPLIT_TAIL_PARTS, SPLIT_TAIL_UNCROSSED, splitTailRecipe } from './fixtures/cloth.ts';
 import { RIDER_RIG, RIDER_STRIP, riderParts, riderRecipe } from './fixtures/rider.ts';
-import { type ClothRecipes, linkRows } from './src/cloth.ts';
+import { type ClothRecipes, draftTrees, linkRows } from './src/cloth.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LEVEL_FRINGE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, TILTED_FRINGE_PARTS, TWO_LOCK_PARTS, writeProposeFixture } from './fixtures/propose.ts';
 // The runtime's own posing, for the one control that measures where a mesh's pixels go (PR14): a second opinion about a weighted vertex is what a measurement must not carry.
 import { type BoneSnapshot, type Frame, loadPosable, type Mesh, sampleAnimation, sampleSetupPose } from 'rig-c/src/render.ts';
@@ -8799,6 +8799,111 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
       bar1Ok && bar2Ok && bar3Ok && bar4Ok,
       `Bar 1 (weights): hair_back segments [${splitProp.meshes.hair_back.segments.join(', ')}] (bones ${hbBones}), hair_back_front segments [${splitProp.meshes.hair_back_front?.segments.join(', ') ?? 'none'}] (bones ${hbfBones}); Bar 2 (wind gust seam): joined max ${pyRound(joinedSeam.maxSeam, 3)} rig px (axis ${pyRound(joinedSeam.axisSeam, 3)} px, <= 1.0 required) vs unjoined ${pyRound(unjoinedSeam.maxSeam, 3)} rig px; Bar 3 (refusals): knot -> ${codes(errKnot)} (${errKnot?.problems[0]?.detail ?? 'none'}), reversed -> ${codes(errOrder)}, unknown -> ${codes(errUnknown)}, single uncrossed -> ${codes(errSingleUncrossed)}; Bar 4 (single-part SHA-256): ${bar4Ok ? `all 4 match ${baseSha.slice(0, 12)}` : 'MISMATCH'}`,
       'issue #437: a cloth recipe declaring parts in root-to-tip order drafts one tree across their union, weights each part only to the links whose span crosses its opaque art, holds the inter-part seam within 1 rig px under wind, refuses an uncrossed or out-of-order part by name (PROPOSE_CLOTH_PART), and leaves single-part recipes byte-identical',
+    );
+
+    // PR519 — issue #438: on FLOOR_SKIRT_PARTS (floor-spread skirt with wings reaching y=279 and middle hem ending at
+    // y=229 above bare thighs on `legs` at y=215..334), every bottomwear tree and branch tip sits on an opaque cloth
+    // pixel (`skirt` alpha 255, 0 tips on bare skin or background, Bar 1), the existing recipe fixtures stay at 0 px
+    // tip movement (Bar 2, verified by PR131 / PR482 / PR513 / PR520 / CH06[wind]), the 2 off-art LINT lines on the
+    // middle trees (`skirt1b_1 at [110, 256]` and `skirt2a_1 at [129, 256]`) are reproduced under a uniform part-box
+    // bottom row (`tipY = 276`) and absent when placed from the cloth's own alpha (Bar 3), and a column with no cloth
+    // below the root row (`FLOOR_SKIRT_EMPTY_COL_PARTS`, column 3) gets no tree drafted there and emits a note.
+    const floorDir = join(dir, 'floor-skirt');
+    writeProposeFixture(floorDir, FLOOR_SKIRT_PARTS, CLOTH_RIG);
+    const floorP = readPartSet(floorDir);
+    const floorProp = propose(floorP, undefined, null, DEFAULT_GRID_RULE, baseRecipe);
+    const floorLint = lint(floorP, floorProp);
+    const floorSkirtPart = floorP.byTag('bottomwear')[0]!;
+    const floorSkirtMask = floorP.alpha(floorSkirtPart);
+    const floorLegsMask = floorP.alpha(floorP.byTag('legwear')[0]!);
+    const floorSkirtChains = floorProp.bones.filter(
+      (b): b is Extract<BoneEntry, { chain: string }> => 'chain' in b && b.chain.startsWith('skirt'),
+    );
+    const floorBranchChains = floorSkirtChains.filter((b) => /[ab]_$/.test(b.chain));
+    const floorTipReport = floorBranchChains.map((b) => {
+      const [tx, ty] = b.tip;
+      const sa = floorSkirtMask.data[ty * floorP.W + tx] * 255;
+      const la = floorLegsMask.data[ty * floorP.W + tx] * 255;
+      return `${b.chain}[${tx},${ty}]=(skirt:${sa},legs:${la})`;
+    });
+    const allTipsOnCloth =
+      floorSkirtChains.length === 12 &&
+      floorSkirtChains.every((b) => {
+        const [tx, ty] = b.tip;
+        return floorSkirtMask.data[ty * floorP.W + tx] === 1;
+      }) &&
+      boneAt(floorProp.bones, 'skirt0a_') === '[[60,227],[50,256]]->[50,276]' &&
+      boneAt(floorProp.bones, 'skirt0b_') === '[[60,227],[70,256]]->[70,276]' &&
+      boneAt(floorProp.bones, 'skirt1a_') === '[[100,205],[90,217]]->[90,226]' &&
+      boneAt(floorProp.bones, 'skirt1b_') === '[[100,205],[110,217]]->[110,226]' &&
+      boneAt(floorProp.bones, 'skirt2a_') === '[[139,205],[129,217]]->[129,226]' &&
+      boneAt(floorProp.bones, 'skirt2b_') === '[[139,205],[149,217]]->[149,226]' &&
+      boneAt(floorProp.bones, 'skirt3a_') === '[[179,227],[169,256]]->[169,276]' &&
+      boneAt(floorProp.bones, 'skirt3b_') === '[[179,227],[189,256]]->[189,276]';
+    const unfixedTrees = draftTrees(
+      {
+        prefix: 'skirt',
+        parent: 'hip',
+        rootY: 187,
+        tipY: floorSkirtPart.y + floorSkirtPart.h - 4,
+        xAt: (y, f) => {
+          const a = Math.max(0, Math.floor(y - 12));
+          const b = Math.min(floorP.H, Math.floor(y + 12));
+          let x0 = floorP.W;
+          let x1 = -1;
+          for (let yy = a; yy < b; yy++) {
+            for (let x = 0; x < floorP.W; x++) {
+              if (floorSkirtMask.data[yy * floorP.W + x] !== 0) {
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+              }
+            }
+          }
+          return x1 < x0 ? null : x0 + f * (x1 - x0);
+        },
+        fallbackX: (f) => floorSkirtPart.x + f * floorSkirtPart.w,
+        frame: 'skirt',
+        edges: 'both',
+      },
+      baseRecipe.bottomwear!,
+    );
+    const unfixedProp: Proposal = JSON.parse(JSON.stringify(floorProp)) as Proposal;
+    for (const t of unfixedTrees) {
+      const idx = unfixedProp.bones.findIndex((b) => 'chain' in b && b.chain === t.chain);
+      if (idx >= 0) unfixedProp.bones[idx] = { chain: t.chain, parent: t.parent, points: t.points, tip: t.tip };
+    }
+    const unfixedMiddleTipsOnBareThigh = unfixedTrees
+      .filter((t) => /^skirt[12][ab]_$/.test(t.chain))
+      .every((t) => {
+        const [tx, ty] = t.tip;
+        return floorSkirtMask.data[ty * floorP.W + tx] === 0 && floorLegsMask.data[ty * floorP.W + tx] === 1;
+      });
+    const unfixedOffArtLines = lint(floorP, unfixedProp)
+      .findings.filter((f) => f.kind === 'off-art')
+      .map(lintLine);
+    const fixedOffArtLines = floorLint.findings.filter((f) => f.kind === 'off-art').map(lintLine);
+
+    const emptyColDir = join(dir, 'floor-empty-col');
+    writeProposeFixture(emptyColDir, FLOOR_SKIRT_EMPTY_COL_PARTS, CLOTH_RIG);
+    const emptyColP = readPartSet(emptyColDir);
+    const emptyColProp = propose(emptyColP, undefined, null, DEFAULT_GRID_RULE, baseRecipe);
+    const emptyColSkirtNames = emptyColProp.bones
+      .filter((b): b is Extract<BoneEntry, { chain: string }> => 'chain' in b && b.chain.startsWith('skirt'))
+      .map((b) => b.chain)
+      .join(',');
+    const emptyColNote = emptyColProp.notes.find((n) => n.includes('holds no cloth below the root row')) ?? '';
+    say(
+      'PR519_BOTTOMWEAR_TREE_TIPS_SIT_ON_CLOTH_ALPHA_AND_EMPTY_COLUMNS_SKIP_WITH_NOTE',
+      allTipsOnCloth &&
+        unfixedMiddleTipsOnBareThigh &&
+        unfixedOffArtLines.length === 2 &&
+        unfixedOffArtLines[0] === "LINT skirt1b_1 at [110, 256] is off the art of mesh 'skirt'" &&
+        unfixedOffArtLines[1] === "LINT skirt2a_1 at [129, 256] is off the art of mesh 'skirt'" &&
+        fixedOffArtLines.length === 0 &&
+        emptyColSkirtNames === 'skirt0_,skirt0a_,skirt0b_,skirt1_,skirt1a_,skirt1b_,skirt2_,skirt2a_,skirt2b_' &&
+        emptyColNote === 'skirt (bottomwear): column 3 of 4 (x=160..199, share 0.875) holds no cloth below the root row y=187 — no tree drafted there',
+      `Bar 1 (tip coordinates & alpha): ${floorTipReport.join(', ')}; Bar 2 (existing fixtures): 0 px delta across CLOTH_PARTS/DRESS/HEM/SPLIT_TAIL_PARTS/wind; Bar 3 (off-art LINT): before=${JSON.stringify(unfixedOffArtLines)} (4 middle tips on bare thigh: ${unfixedMiddleTipsOnBareThigh}), after=${JSON.stringify(fixedOffArtLines)}; empty column 3: chains=[${emptyColSkirtNames}], note=${JSON.stringify(emptyColNote)}`,
+      "issue #438: bottomwear tree tips are placed from the cloth's own alpha at the row where the cloth ends under each tree's column rather than the part box's bottom row, so on a floor-spread skirt middle trees stop at the hem instead of landing on bare thigh, and a column with no cloth below the root row drafts no tree there and says so",
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
