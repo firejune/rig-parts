@@ -146,7 +146,7 @@ import { configRoles, type RoleOf } from './structure.ts';
 import { AUTHOR_NO_ROLE, isAuthorTag } from './tags.ts';
 import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER_TAGS, turnFractions, turnNearest, turnPivot, turnRiderDepth, type TurnSpec } from './turn.ts';
 import { edgeLength } from './length.ts';
-import { limbWidth } from './limbs.ts';
+import { bonePlaces, limbCrossing, limbPolyline, limbWidth } from './limbs.ts';
 import { type BranchSqueezeFinding, branchSqueezes, chainSqueezes, type SqueezeFinding } from './squeeze.ts';
 import { backHairMasses, type BackHairMass, RECIPE_BACK_HAIR_CHAINS, RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, spanCrosses, swingName, type Tail, tailOverlap, type TailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput, type TreeMassInput } from './cloth.ts';
 import { TEXTURE_STRETCH_CEILING } from './check.ts';
@@ -4153,6 +4153,19 @@ export interface OverlappingArmsFinding {
   opaquePx: number;
 }
 
+/**
+ * Issue #446: two limbs sharing one part (`from`) cross in an X at `at` with no `config.limbs.<limb>.split`
+ * declared on the covering limb, so `nearestLimb` cuts a straight line through the crossing.
+ */
+export interface CrossedLimbsFinding {
+  kind: 'crossed-limbs';
+  part: string;
+  from: string;
+  a: string;
+  b: string;
+  at: [number, number];
+}
+
 export type LintFinding =
   | OffArtFinding
   | OffLockFinding
@@ -4165,7 +4178,8 @@ export type LintFinding =
   | SqueezeLintFinding
   | NearEmptyHandFinding
   | BackHairMassesFinding
-  | OverlappingArmsFinding;
+  | OverlappingArmsFinding
+  | CrossedLimbsFinding;
 
 /** Which rule set read the torso and the sleeve chains, under `--keypoints`. */
 export interface LintBasis {
@@ -4265,7 +4279,7 @@ export function coverageOutcome(c: BoneCoverage): CoverageOutcome {
  */
 export function lint(
   P: PartSet,
-  spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>>; regions?: Readonly<Record<string, string>>; motion?: SkeletonSections['motion']; constraints?: readonly ConfigConstraint[] },
+  spec: { bones: readonly BoneEntry[]; meshes: Readonly<Record<string, MeshSpec>>; regions?: Readonly<Record<string, string>>; motion?: SkeletonSections['motion']; constraints?: readonly ConfigConstraint[]; limbs?: Readonly<Record<string, Limb>> },
   joints?: RigJoints,
 ): LintResult {
   const { byName } = expand(spec.bones);
@@ -4575,6 +4589,65 @@ export function lint(
       if (!(err instanceof PartsError)) throw err;
     }
   }
+  // Issue #446: when two limbs sharing one part cross in an X without a per-limb split declared on the covering limb,
+  // nearest-bone splitting cuts a straight line through the crossing.
+  {
+    const baseP = P.beforeLimbs();
+    const places = bonePlaces(spec.bones);
+    if (spec.limbs !== undefined) {
+      const limbNames = Object.keys(spec.limbs);
+      const fromParts = [...new Set(limbNames.flatMap((l) => spec.limbs![l].segments.map((sg) => sg.from)))];
+      for (const src of fromParts) {
+        const on = limbNames.filter((l) => spec.limbs![l].segments.some((sg) => sg.from === src));
+        if (on.length < 2 || on.some((l) => spec.limbs![l].split !== undefined)) continue;
+        const valid = on.filter((l) => spec.limbs![l].segments.every((sg) => places.has(sg.bone)));
+        if (valid.length < 2) continue;
+        const rec = baseP.recs.find((r) => r.name === src);
+        for (let i = 0; i < valid.length; i++) {
+          const polyA = limbPolyline(spec.limbs[valid[i]], places);
+          for (let j = i + 1; j < valid.length; j++) {
+            const polyB = limbPolyline(spec.limbs[valid[j]], places);
+            const cross = limbCrossing(polyA, polyB);
+            if (cross !== null) {
+              findings.push({
+                kind: 'crossed-limbs',
+                part: src,
+                from: rec?.from ?? '',
+                a: valid[i],
+                b: valid[j],
+                at: cross,
+              });
+            }
+          }
+        }
+      }
+    } else {
+      const legR = spec.bones.find((b): b is Extract<BoneEntry, { chain: string }> => 'chain' in b && b.chain === 'leg_r' && b.points.length >= 2);
+      const legL = spec.bones.find((b): b is Extract<BoneEntry, { chain: string }> => 'chain' in b && b.chain === 'leg_l' && b.points.length >= 2);
+      if (legR !== undefined && legL !== undefined) {
+        const polyR: Array<[number, number]> = [...legR.points.map((p): [number, number] => [p[0], p[1]]), [legR.tip[0], legR.tip[1]]];
+        const polyL: Array<[number, number]> = [...legL.points.map((p): [number, number] => [p[0], p[1]]), [legL.tip[0], legL.tip[1]]];
+        const cross = limbCrossing(polyR, polyL);
+        if (cross !== null) {
+          const lwParts = baseP.byTag('legwear');
+          const shared = lwParts.find((p: PartRecord) => {
+            const near = dilate(baseP.alpha(p), 2 * WRIST_ON_PART_PX + 1);
+            return isOn(near, legR.tip[0], legR.tip[1]) && isOn(near, legL.tip[0], legL.tip[1]);
+          });
+          if (shared !== undefined) {
+            findings.push({
+              kind: 'crossed-limbs',
+              part: shared.name,
+              from: shared.from,
+              a: 'leg_r',
+              b: 'leg_l',
+              at: cross,
+            });
+          }
+        }
+      }
+    }
+  }
   // Issue #314: every pair of keyed chains a lattice mesh names, swung on the rig stage's own lattice and weights, held
   // to check's TEXTURE_STRETCH bar (src/squeeze.ts). Only with a motion: without one nothing swings.
   const partImages = new Map(P.recs.filter((p) => P.images.has(p.name)).map((p) => [p.name, { x: p.x, y: p.y, image: P.images.get(p.name) as Raster }]));
@@ -4612,6 +4685,7 @@ function findingBones(f: LintFinding, bones: readonly BoneEntry[]): string[] {
       return [...new Set(f.vertices.map((v) => v.weights[0]?.bone).filter((n): n is string => n !== undefined))];
     case 'near-empty-hand':
     case 'overlapping-arms':
+    case 'crossed-limbs':
       return [];
     case 'back-hair-masses': {
       const out = new Set<string>();
@@ -4802,6 +4876,8 @@ export function lintLine(f: LintFinding): string {
     }
     case 'overlapping-arms':
       return `LINT ${f.part} (${f.from}) holds both arms in one ${f.opaquePx} px component (r_wrist at ${fmtAt(f.rAt)}, l_wrist at ${fmtAt(f.lAt)}): declare config.seethrough.arm_split (x or line, and order: ["handwear-r", "handwear-l"] or ["handwear-l", "handwear-r"]) to separate the overlapping arms into two layers`;
+    case 'crossed-limbs':
+      return `LINT ${f.a} and ${f.b} on ${f.part}${f.from === '' ? '' : ` (${f.from})`} cross at ${fmtAt(f.at)} with no per-limb split: nearest-bone splitting cuts a straight line through the crossing; declare config.limbs.<covering>.split (line: [[x, y], ...] or edge: "painting") on the covering limb so the seam follows the limb`;
     case 'back-hair-masses': {
       const massDesc =
         f.masses.length === 0
