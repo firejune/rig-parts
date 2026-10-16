@@ -22,5 +22,5 @@
  * `flattenRig` goes back through `toWorld`. No rotation matrix is written out
  * by hand in this package.
  */
-export { computeExactFrameTransforms, computeWorldTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toWorld } from 'rig-c/src/transform.ts';
+export { computeExactFrameTransforms, computeWorldTransforms, cropToSpineY, normaliseDegrees, toBoneLocal, toBoneLocalVector, toWorld } from 'rig-c/src/transform.ts';
 export type { BoneTransform } from 'rig-c/src/transform.ts';

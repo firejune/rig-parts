@@ -160,8 +160,9 @@ part name, `[i]` an entry of a list):
 - **motion.blink** — required: `t`, `eyes`, `squash`; optional: `brows`, `brow_drop`, `still`
 - **motion.blink.still.&lt;part&gt;** — required: `row`, `bone`
 - **motion.animations_from**, the file it names — required: `spec`, `animations`
-- **turn** — required: `pivot`, `depths`
+- **turn** — required: `pivot`, `depths`; optional: `deform`
 - **turn.depths.&lt;part&gt;** — a See-through depth
+- **turn.deform.&lt;key&gt;** — a per-degree fraction or coupling share (`FACE_DEFORM_FRACTIONS`, issue #436)
 - **scene** — no field (`{}`; a record or an annotation only)
 - **proposal.json**, the file propose writes — `bones`, `meshes`, `regions`, `limbs` under `--keypoints` where an arm or a leg is drafted from its joints (issue #349), `stops` when supplied, `motion` under the rules above, `turn` with `--full`/`--head`, `proposed_rig_scale` (issue #354), and `notes`
 <!-- /stable:config -->

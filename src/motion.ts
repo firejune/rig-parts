@@ -145,16 +145,26 @@ export interface MotionSpec {
   animations: { idle: { duration: number; loop: true; note: string; tracks: MotionTrack[] } };
 }
 
+const FACE_DEFORM_HOOK = new WeakMap<MotionSpec, (merged: MotionSpec & { animations: Record<string, unknown> }) => void>();
+
+/** Attach a face-surface-deform hook to `motion` so {@link withAnimations} applies it when `turn`/`tilt` slider animations are merged (issue #436). */
+export function bindFaceSurfaceDeform(motion: MotionSpec, hook: (merged: MotionSpec & { animations: Record<string, unknown> }) => void): void {
+  FACE_DEFORM_HOOK.set(motion, hook);
+}
+
 /**
  * The motion `motion.json` holds: the idle, and after it every animation the
- * file `config.motion.animations_from` names, as read (issue #183) — nothing
- * added, nothing re-keyed, nothing judged; each is rigc's to accept at the
- * gate. With none, `motion` itself, so a config that names no file writes the
- * bytes it wrote before the field existed.
+ * file `config.motion.animations_from` names, as read (issue #183) — plus, when
+ * those animations hold `turn` or `tilt` slider `derive` keys, the Set B ×2.5
+ * face surface deform (issue #436). With none, `motion` itself, so a config
+ * that names no file writes the bytes it wrote before the field existed.
  */
 export function withAnimations(motion: MotionSpec, extra: Readonly<Record<string, unknown>> | null): MotionSpec | Record<string, unknown> {
   if (extra === null) return motion;
-  return { ...motion, animations: { ...motion.animations, ...extra } };
+  const merged = { ...motion, animations: { ...motion.animations, ...extra } };
+  const hook = FACE_DEFORM_HOOK.get(motion);
+  if (hook !== undefined) hook(merged);
+  return merged;
 }
 
 /** One sine channel over an idle of `duration` seconds. */
