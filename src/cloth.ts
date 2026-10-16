@@ -65,7 +65,9 @@
  * Pure: no clock, no randomness; every value is a function of its inputs.
  */
 import type { ConfigConstraint, Point } from './config.ts';
-import type { Mask } from './raster/types.ts';
+import { connectedComponents } from './raster/components.ts';
+import { dilate } from './raster/morph.ts';
+import { type Mask, newMask } from './raster/types.ts';
 import { pyRound } from './round.ts';
 import { segmentDistance } from './weights.ts';
 
@@ -80,7 +82,7 @@ export interface ClothStrength {
   edge: number;
 }
 
-/** One target's recipe, as `config.cloth.<tag>` declares it (`chains` may be omitted on `"back hair"`, where it is derived from the tail's width at the root row). */
+/** One target's recipe, as `config.cloth.<tag>` declares it (`chains` may be omitted on `"back hair"`, where it is derived from the visible hair masses below the root row, issue #445). */
 export interface ClothRecipe {
   chains?: number;
   links: number;
@@ -104,14 +106,12 @@ export interface ClothRecipe {
 export type ClothRecipes = Partial<Record<ClothTarget, ClothRecipe>>;
 
 /**
- * 📐 The recipe's default maximum back-hair tree count per side when `chains`
- * is omitted on `config.cloth."back hair"` (issue #390): 2 trees per side when
- * the tail's opaque width at the root row holds at least two mesh-grid cells
- * (`floor(width / grid) >= 2`, `fixtures/cloth.ts`: 48 px on a 14 px grid) and
- * every tree root lies inside the art, and fewer when the tail at the root row
- * is narrower or a root falls off the art (`examples/wind`: 45 px on the r side
- * and 61 px on the l side at y=162 on a 28 px grid, with inner roots at
- * [323, 162] and [496, 162] on alpha 0 -> 1 tree per side).
+ * 📐 The fallback tree count when `draftTrees` is called without `chains` or
+ * `masses` (issues #390, #445). When `chains` is omitted on
+ * `config.cloth."back hair"`, `propose` derives the count per side from the
+ * visible hair masses ({@link backHairMasses}): connected components of the
+ * back-hair part's alpha below the root row (merged when they touch within one
+ * grid cell), one tree per mass, rooted at that mass's own top row.
  */
 export const RECIPE_BACK_HAIR_CHAINS = 2;
 
@@ -185,6 +185,15 @@ export interface TreeChain {
 /** Which outer sides of the piece are edges: both (a skirt, a lock), or one side of the eye axis (back hair). */
 export type EdgeSides = 'both' | 'r' | 'l';
 
+/** Issue #445: one visible hair mass's own frame for a single tree rooted at that mass's top row. */
+export interface TreeMassInput {
+  rootY: number;
+  tipY: number;
+  xAt: (y: number, frac: number) => number | null;
+  fallbackX: (frac: number) => number;
+  frame: string;
+}
+
 export interface TreeInput {
   /** The chains' name prefix: tree k's trunk is `<prefix><k>_`, its branches `<prefix><k><a|b|…>_`. */
   prefix: string;
@@ -199,6 +208,8 @@ export interface TreeInput {
   /** What the cell's frame is, for the rules: "skirt's art", "the r side of back's art". */
   frame: string;
   edges: EdgeSides;
+  /** Issue #445: when present, one entry per visible hair mass; tree k sits inside `masses[k]` rather than cell [k/n, (k+1)/n] of the whole side. */
+  masses?: readonly TreeMassInput[];
 }
 
 /** The rows the n links of a path start at, then its tip's: lengths in the ratio q^j, from root row to tip row. */
@@ -220,23 +231,26 @@ const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
 
 /** The trees of one piece, in tree order, each trunk before its branches. */
 export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
-  const n = r.chains ?? RECIPE_BACK_HAIR_CHAINS;
+  const n = input.masses !== undefined ? input.masses.length : (r.chains ?? RECIPE_BACK_HAIR_CHAINS);
   const ratio = r.length_ratio ?? RECIPE_LENGTH_RATIO;
-  const rows = linkRows(input.rootY, input.tipY, r.links, ratio);
+  const baseRows = linkRows(input.rootY, input.tipY, r.links, ratio);
   const at = r.split === undefined ? r.links : r.split.at;
   const into = r.split === undefined ? 1 : r.split.into;
   const out: TreeChain[] = [];
-  const x = (y: number, f: number): number => input.xAt(y, f) ?? input.fallbackX(f);
-  const pt = (y: number, f: number): Point => [pyRound(x(y, f), 0), pyRound(y, 0)];
-  const rowRule = (j: number): string =>
-    `link ${j}'s row: ${j === 0 ? 'the root row' : `the root row + ${pyRound((rows[j] - rows[0]) / (rows[r.links] - rows[0]), 4)} of the span to the tip row`} (lengths in the ratio ${pyRound(ratio, 6)} last to first)`;
   const outerSide = (k: number, b: number): boolean => {
     const left = k === 0 && b === 0;
     const right = k === n - 1 && b === into - 1;
     return input.edges === 'both' ? left || right : input.edges === 'r' ? left : right;
   };
   for (let k = 0; k < n; k++) {
-    const fc = (k + 0.5) / n;
+    const mass = input.masses?.[k];
+    const rows = mass === undefined ? baseRows : linkRows(mass.rootY, mass.tipY, r.links, ratio);
+    const frame = mass === undefined ? input.frame : mass.frame;
+    const x = (y: number, f: number): number => (mass === undefined ? input.xAt(y, f) ?? input.fallbackX(f) : mass.xAt(y, f) ?? mass.fallbackX(f));
+    const pt = (y: number, f: number): Point => [pyRound(x(y, f), 0), pyRound(y, 0)];
+    const rowRule = (j: number): string =>
+      `link ${j}'s row: ${j === 0 ? 'the root row' : `the root row + ${pyRound((rows[j] - rows[0]) / (rows[r.links] - rows[0]), 4)} of the span to the tip row`} (lengths in the ratio ${pyRound(ratio, 6)} last to first)`;
+    const fc = mass === undefined ? (k + 0.5) / n : 0.5;
     const trunkLinks = Math.min(at, r.links);
     const trunkEdge = into === 1 && outerSide(k, 0);
     const trunk: TreeChain = {
@@ -245,7 +259,7 @@ export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
       points: [],
       tip: pt(rows[trunkLinks], fc),
       why: [],
-      tipWhy: `${trunkLinks === r.links ? 'the tip row' : `link ${trunkLinks}'s row, the fork`}, ${pyRound(fc, 6)} of the way across ${input.frame} (tree ${k} of ${n}, the centre of its cell)`,
+      tipWhy: `${trunkLinks === r.links ? 'the tip row' : `link ${trunkLinks}'s row, the fork`}, ${pyRound(fc, 6)} of the way across ${frame} (tree ${k} of ${n}, the centre of its cell)`,
       tree: k,
       roles: [],
       depths: [],
@@ -253,7 +267,7 @@ export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
     };
     for (let j = 0; j < trunkLinks; j++) {
       trunk.points.push(pt(rows[j], fc));
-      trunk.why.push(`${rowRule(j)}, ${pyRound(fc, 6)} of the way across ${input.frame} in the 24-row band there (tree ${k} of ${n}, the centre of its cell)`);
+      trunk.why.push(`${rowRule(j)}, ${pyRound(fc, 6)} of the way across ${frame} in the 24-row band there (tree ${k} of ${n}, the centre of its cell)`);
       trunk.roles.push(into === 1 ? (trunkEdge ? 'edge' : 'trunk') : 'trunk');
       trunk.depths.push(j);
       trunk.last.push(into === 1 && j === trunkLinks - 1);
@@ -261,14 +275,14 @@ export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
     out.push(trunk);
     if (into === 1) continue;
     for (let b = 0; b < into; b++) {
-      const fb = (k + (b + 0.5) / into) / n;
+      const fb = mass === undefined ? (k + (b + 0.5) / into) / n : (b + 0.5) / into;
       const ch: TreeChain = {
         chain: `${input.prefix}${k}${LETTERS[b]}_`,
         parent: `${trunk.chain}${trunkLinks - 1}`,
         points: [],
         tip: pt(rows[r.links], fb),
         why: [],
-        tipWhy: `the tip row, ${pyRound(fb, 6)} of the way across ${input.frame} (branch ${b} of ${into} of tree ${k}, the centre of its share of the cell)`,
+        tipWhy: `the tip row, ${pyRound(fb, 6)} of the way across ${frame} (branch ${b} of ${into} of tree ${k}, the centre of its share of the cell)`,
         tree: k,
         roles: [],
         depths: [],
@@ -277,7 +291,7 @@ export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
       const edge = r.split?.hold_tip === true && r.strength === undefined ? false : outerSide(k, b);
       for (let j = trunkLinks; j < r.links; j++) {
         ch.points.push(j === trunkLinks ? trunk.tip : pt(rows[j], fb));
-        ch.why.push(j === trunkLinks ? `the fork: the trunk ${trunk.chain}'s tip` : `${rowRule(j)}, ${pyRound(fb, 6)} of the way across ${input.frame} in the 24-row band there (branch ${b} of ${into} of tree ${k})`);
+        ch.why.push(j === trunkLinks ? `the fork: the trunk ${trunk.chain}'s tip` : `${rowRule(j)}, ${pyRound(fb, 6)} of the way across ${frame} in the 24-row band there (branch ${b} of ${into} of tree ${k})`);
         ch.roles.push(edge ? 'edge' : 'branch');
         ch.depths.push(j);
         ch.last.push(j === r.links - 1);
@@ -496,3 +510,215 @@ export function spanCrosses(span: Pick<TailSpan, 'a' | 'b'>, mask: Mask): number
   return count;
 }
 
+/**
+ * Issue #445: one visible hair mass on a side (`r`: `x < axis`, `l`: `x >= axis`)
+ * of the back-hair part's alpha below the root row.
+ */
+export interface BackHairMass {
+  side: 'r' | 'l';
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  area: number;
+  mask: Mask;
+}
+
+/**
+ * Issue #445: the visible hair masses on one side of the eye axis (`r`: `x < axis`,
+ * `l`: `x >= axis`) — 8-connected components of the back-hair part's alpha below
+ * the root row (`y > y0`, after any undivided crown rows above `shoulderLine` that
+ * bridge continuously across `axis`, with row `y0` attached when a component touches
+ * `y0` at `y0 + 1`), merged when an above-shoulder crown/nape remnant sits beside a
+ * hanging tail on that side or when two components touch within one grid cell
+ * (`grid` px), sorted left-to-right by `minX`.
+ */
+export function backHairMasses(mask: Mask, side: 'r' | 'l', axis: number, y0: number, shoulderLine: number, grid: number): BackHairMass[] {
+  const W = mask.width;
+  const H = mask.height;
+  const onSide = (x: number): boolean => (side === 'r' ? x < axis : x >= axis);
+  const axL = Math.max(0, Math.floor(axis) - 1);
+  const axR = Math.min(W - 1, Math.floor(axis));
+  let yStart = Math.max(0, y0 + 1);
+  const shoulderRow = Math.min(H, Math.floor(shoulderLine));
+  while (yStart < shoulderRow && mask.data[yStart * W + axL] !== 0 && mask.data[yStart * W + axR] !== 0) {
+    yStart++;
+  }
+  const hasAnyFrom = (yFrom: number): boolean => {
+    for (let y = yFrom; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (onSide(x) && mask.data[y * W + x] !== 0) return true;
+      }
+    }
+    return false;
+  };
+  if (!hasAnyFrom(yStart)) yStart = Math.max(0, y0 + 1);
+  const sub = newMask(W, H);
+  for (let y = yStart; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (onSide(x) && mask.data[y * W + x] !== 0) sub.data[y * W + x] = 1;
+    }
+  }
+  const cc = connectedComponents(sub, 8);
+  const comps: Array<{ minX: number; maxX: number; minY: number; maxY: number; area: number; mask: Mask }> = [];
+  for (let i = 1; i < cc.count; i++) {
+    const st = cc.stats[i];
+    const m = newMask(W, H);
+    let minX = st.left;
+    let maxX = st.left + st.width - 1;
+    let minY = st.top;
+    const maxY = st.top + st.height - 1;
+    let area = st.area;
+    for (let y = st.top; y <= maxY; y++) {
+      for (let x = st.left; x <= maxX; x++) {
+        if (cc.labels[y * W + x] === i) m.data[y * W + x] = 1;
+      }
+    }
+    if (yStart === y0 + 1 && minY === y0 + 1 && y0 >= 0 && y0 < H) {
+      let touched = false;
+      for (let x = 0; x < W; x++) {
+        if (!onSide(x) || mask.data[y0 * W + x] === 0) continue;
+        if (
+          m.data[(y0 + 1) * W + x] !== 0 ||
+          (x > 0 && m.data[(y0 + 1) * W + (x - 1)] !== 0) ||
+          (x + 1 < W && m.data[(y0 + 1) * W + (x + 1)] !== 0)
+        ) {
+          m.data[y0 * W + x] = 1;
+          touched = true;
+        }
+      }
+      if (touched) {
+        for (let x = 1; x < W; x++) {
+          if (onSide(x) && mask.data[y0 * W + x] !== 0 && m.data[y0 * W + (x - 1)] !== 0) m.data[y0 * W + x] = 1;
+        }
+        for (let x = W - 2; x >= 0; x--) {
+          if (onSide(x) && mask.data[y0 * W + x] !== 0 && m.data[y0 * W + (x + 1)] !== 0) m.data[y0 * W + x] = 1;
+        }
+        minY = y0;
+        for (let x = 0; x < W; x++) {
+          if (m.data[y0 * W + x] !== 0) {
+            minX = Math.min(minX, x);
+            maxX = Math.max(maxX, x);
+            area++;
+          }
+        }
+      }
+    }
+    comps.push({ minX, maxX, minY, maxY, area, mask: m });
+  }
+  if (comps.length === 0) return [];
+  const par = comps.map((_, i) => i);
+  const find = ( idx: number): number => {
+    let cur = idx;
+    while (par[cur] !== cur) {
+      par[cur] = par[par[cur]];
+      cur = par[cur];
+    }
+    return cur;
+  };
+  const unite = (a: number, b: number): void => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) par[rb] = ra;
+  };
+  const dilatedCache = new Map<number, Mask>();
+  const dilatedOf = (idx: number): Mask => {
+    let d = dilatedCache.get(idx);
+    if (d === undefined) {
+      d = dilate(comps[idx].mask, Math.max(1, 2 * grid + 1));
+      dilatedCache.set(idx, d);
+    }
+    return d;
+  };
+  const touchesWithinGrid = (ia: number, ib: number): boolean => {
+    const a = comps[ia];
+    const b = comps[ib];
+    if (a.maxX + grid < b.minX || b.maxX + grid < a.minX || a.maxY + grid < b.minY || b.maxY + grid < a.minY) return false;
+    const da = dilatedOf(ia);
+    for (let y = b.minY; y <= b.maxY; y++) {
+      for (let x = b.minX; x <= b.maxX; x++) {
+        if (b.mask.data[y * W + x] !== 0 && da.data[y * W + x] !== 0) return true;
+      }
+    }
+    return false;
+  };
+  for (let i = 0; i < comps.length; i++) {
+    for (let j = i + 1; j < comps.length; j++) {
+      if (find(i) !== find(j) && touchesWithinGrid(i, j)) unite(i, j);
+    }
+  }
+  const groups = new Map<number, typeof comps>();
+  for (let i = 0; i < comps.length; i++) {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    (groups.get(r) as typeof comps).push(comps[i]);
+  }
+  const merged: BackHairMass[] = [];
+  for (const list of groups.values()) {
+    const m = newMask(W, H);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    let area = 0;
+    for (const c of list) {
+      minX = Math.min(minX, c.minX);
+      maxX = Math.max(maxX, c.maxX);
+      minY = Math.min(minY, c.minY);
+      maxY = Math.max(maxY, c.maxY);
+      area += c.area;
+      for (let y = c.minY; y <= c.maxY; y++) {
+        for (let x = c.minX; x <= c.maxX; x++) {
+          if (c.mask.data[y * W + x] !== 0) m.data[y * W + x] = 1;
+        }
+      }
+    }
+    merged.push({ side, minX, maxX, minY, maxY, area, mask: m });
+  }
+  const hanging = merged.filter((c) => c.maxY + 1 >= shoulderLine);
+  const out = hanging.length > 0 ? hanging : merged;
+  for (const h of out) {
+    if (h.minY <= y0) {
+      for (let y = Math.max(0, y0 - 12); y < h.minY; y++) {
+        for (let x = h.minX; x <= h.maxX; x++) {
+          if (onSide(x) && mask.data[y * W + x] !== 0) h.mask.data[y * W + x] = 1;
+        }
+      }
+    }
+  }
+  if (hanging.length === 1 && hanging[0].minY <= y0) {
+    const h = hanging[0];
+    const upper = merged.filter((c) => c.maxY + 1 < shoulderLine);
+    if (upper.length > 0) {
+      const a = Math.max(0, y0 - 12);
+      const b = Math.min(H, Math.max(0, y0 + 12));
+      let uMinX = h.minX;
+      let uMaxX = h.maxX;
+      for (let yy = a; yy < b; yy++) {
+        for (let x = 0; x < W; x++) {
+          if (onSide(x) && mask.data[yy * W + x] !== 0) {
+            uMinX = Math.min(uMinX, x);
+            uMaxX = Math.max(uMaxX, x);
+          }
+        }
+      }
+      const rootMid = pyRound(uMinX + 0.5 * (uMaxX - uMinX), 0);
+      if (rootMid >= h.minX && rootMid <= h.maxX) {
+        for (const u of upper) {
+          for (let y = u.minY; y <= u.maxY; y++) {
+            for (let x = u.minX; x <= u.maxX; x++) {
+              if (u.mask.data[y * W + x] !== 0) h.mask.data[y * W + x] = 1;
+            }
+          }
+        }
+        for (let y = Math.max(0, y0 - 12); y < y0; y++) {
+          for (let x = 0; x < W; x++) {
+            if (onSide(x) && mask.data[y * W + x] !== 0) h.mask.data[y * W + x] = 1;
+          }
+        }
+      }
+    }
+  }
+  out.sort((a, b) => a.minX - b.minX);
+  return out;
+}

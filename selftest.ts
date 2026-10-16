@@ -8493,15 +8493,51 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
       'issue #392: when strength is omitted, split.hold_tip: true holds outer branches to branch strength (100, PR515), and when strength is written explicitly its edge value is honoured while r >= grid keeps the fork held; in buildRig, a held-fork mesh (r >= grid, forked chains sharing a parent, no explicit influences) smooths each fork\'s branch shares across mesh edges (4 passes, floor 0.005, cap 8), while an unheld mesh (r < grid) or one with explicit influences keeps its cap',
     );
 
-    // PR518 — issue #390: omitting `chains` on `back hair` derives the tree count per side from the root-row tail widths
-    // (2 on the wide-crown fixture where wR = wL = 48 px on a 14 px grid, 1 on narrow or gapped twin tails), and an
-    // explicit `chains` that exceeds floor(width / grid) or roots a tree outside the 15 px dilated art mask is refused
-    // by PROPOSE_CLOTH_BACK_HAIR_CHAINS.
+    // PR518 — issues #390, #445: omitting `chains` on `back hair` derives the tree count per side from the visible hair
+    // masses (connected components below the root row, merged within one grid cell), one tree per mass rooted at that
+    // mass's top row and inside its columns (1 per side on the wide-crown fixture where wR = wL = 48 px > 2 grid cells
+    // at y=69 and one tail mass hangs per side at x=50..75 / x=164..189, y=72..299; 2 on the r side and 1 on the l side
+    // when two separated masses hang on r), `lint` names the masses and their columns when trees exceed the mass count
+    // or leave a mass's columns, and an explicit `chains` that exceeds floor(width / grid) or roots a tree outside the
+    // 15 px dilated art mask is refused by PROPOSE_CLOTH_BACK_HAIR_CHAINS.
     const omittedWideRecipe: ClothRecipes = {
       ...baseRecipe,
       'back hair': { links: 3, split: { at: 1, into: 2 }, wind: [1, 8], gravity: [4, 24] },
     };
     const omittedWideProp = propose(P, undefined, null, DEFAULT_GRID_RULE, omittedWideRecipe);
+    const omittedWideLint = lint(P, omittedWideProp);
+    const wideForcedLintLines = defaultLint.findings.filter((f) => f.kind === 'back-hair-masses').map(lintLine);
+    const omittedWideChains = omittedWideProp.bones.filter((b): b is Extract<BoneEntry, { chain: string }> => 'chain' in b && b.chain.startsWith('hairback_'));
+    const rChainsWide = omittedWideChains.filter((b) => b.chain.startsWith('hairback_r'));
+    const lChainsWide = omittedWideChains.filter((b) => b.chain.startsWith('hairback_l'));
+    const rInsideMass = rChainsWide.every((c) => [...c.points, c.tip].every(([x]) => x >= 50 && x <= 75));
+    const lInsideMass = lChainsWide.every((c) => [...c.points, c.tip].every(([x]) => x >= 164 && x <= 189));
+    // Two separated hanging masses on the r side (x=30..45, y=72..299 and x=64..79, y=80..299, 18 px apart > 14 px grid)
+    // and one on the l side (x=164..189, y=72..299).
+    const twoMassParts = CLOTH_PARTS.map((p) =>
+      p.name === 'hair_back'
+        ? {
+            ...p,
+            x: 30,
+            w: 160,
+            rects: [
+              [72, 20, 96, 52] as [number, number, number, number],
+              [30, 72, 16, 228] as [number, number, number, number],
+              [64, 80, 16, 220] as [number, number, number, number],
+              [164, 72, 26, 228] as [number, number, number, number],
+            ],
+          }
+        : p,
+    );
+    const twoMassDir = join(dir, 'two-mass');
+    writeProposeFixture(twoMassDir, twoMassParts, CLOTH_RIG);
+    const twoMassP = readPartSet(twoMassDir);
+    const twoMassProp = propose(twoMassP, undefined, null, DEFAULT_GRID_RULE, omittedWideRecipe);
+    const twoMassLint = lint(twoMassP, twoMassProp);
+    const twoMassChains = twoMassProp.bones.filter((b): b is Extract<BoneEntry, { chain: string }> => 'chain' in b && b.chain.startsWith('hairback_'));
+    const r0Inside = twoMassChains.filter((b) => b.chain.startsWith('hairback_r0')).every((c) => [...c.points, c.tip].every(([x]) => x >= 30 && x <= 45));
+    const r1Inside = twoMassChains.filter((b) => b.chain.startsWith('hairback_r1')).every((c) => [...c.points, c.tip].every(([x]) => x >= 64 && x <= 79));
+    const l0Inside = twoMassChains.filter((b) => b.chain.startsWith('hairback_l0')).every((c) => [...c.points, c.tip].every(([x]) => x >= 164 && x <= 189));
     const wideTooManyErr = refusals(() =>
       propose(P, undefined, null, DEFAULT_GRID_RULE, {
         ...baseRecipe,
@@ -8535,7 +8571,26 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
     const gappedTwoErr = refusals(() => propose(gappedP, undefined, null, DEFAULT_GRID_RULE, baseRecipe));
     say(
       'PR518_BACK_HAIR_CHAINS_DERIVED_FROM_ROOT_ROW_TAIL_WIDTH_AND_EXCESS_OR_OFF_ART_REFUSED',
-      JSON.stringify(omittedWideProp) === JSON.stringify(prop) &&
+      omittedWideProp.meshes.hair_back.segments.slice(1).join(',') === 'hairback_r0_,hairback_r0a_,hairback_r0b_,hairback_l0_,hairback_l0a_,hairback_l0b_' &&
+        boneAt(omittedWideProp.bones, 'hairback_r0_') === '[[62,72]]->[62,173]' &&
+        boneAt(omittedWideProp.bones, 'hairback_l0_') === '[[176,72]]->[176,173]' &&
+        rInsideMass &&
+        lInsideMass &&
+        omittedWideLint.findings.length === 0 &&
+        wideForcedLintLines.length === 2 &&
+        wideForcedLintLines[0] ===
+          "LINT hairback_r0_, hairback_r1_ on mesh 'hair_back' (side r): 2 tree(s) for 1 visible hair mass(es) (mass 0 columns x=50..75, y=72..299); outside mass columns: hairback_r1_0 at [102, 69] (outside x=50..75) — draft one tree per visible hair mass, rooted at that mass's top row and inside its columns" &&
+        wideForcedLintLines[1] ===
+          "LINT hairback_l0_, hairback_l1_ on mesh 'hair_back' (side l): 2 tree(s) for 1 visible hair mass(es) (mass 0 columns x=164..189, y=72..299); outside mass columns: hairback_l0_0 at [137, 69] (outside x=164..189) — draft one tree per visible hair mass, rooted at that mass's top row and inside its columns" &&
+        twoMassProp.meshes.hair_back.segments.slice(1).join(',') ===
+          'hairback_r0_,hairback_r0a_,hairback_r0b_,hairback_r1_,hairback_r1a_,hairback_r1b_,hairback_l0_,hairback_l0a_,hairback_l0b_' &&
+        boneAt(twoMassProp.bones, 'hairback_r0_') === '[[38,72]]->[38,173]' &&
+        boneAt(twoMassProp.bones, 'hairback_r1_') === '[[72,80]]->[72,178]' &&
+        boneAt(twoMassProp.bones, 'hairback_l0_') === '[[176,72]]->[176,173]' &&
+        r0Inside &&
+        r1Inside &&
+        l0Inside &&
+        twoMassLint.findings.length === 0 &&
         wideTooManyErr !== null &&
         wideTooManyErr.problems.length === 1 &&
         wideTooManyErr.problems[0].code === 'PROPOSE_CLOTH_BACK_HAIR_CHAINS' &&
@@ -8546,8 +8601,8 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
         gappedTwoErr.problems.length === 1 &&
         gappedTwoErr.problems[0].code === 'PROPOSE_CLOTH_BACK_HAIR_CHAINS' &&
         gappedTwoErr.problems[0].detail.includes('off the art: hairback_r1_0 at [102, 69] (alpha 0), hairback_l0_0 at [138, 69] (alpha 0)'),
-      `wide crown (48 px/side on 14 px grid) with chains omitted -> byte-identical to chains: 2 (${JSON.stringify(omittedWideProp) === JSON.stringify(prop)}); chains: 4 -> ${codes(wideTooManyErr)} (${wideTooManyErr?.problems[0]?.detail ?? 'none'}); gapped twin tails with chains omitted -> tree segments [${gappedOmittedProp.meshes.hair_back.segments.slice(1).join(', ')}], ${gappedLint.findings.length} lint finding(s); with chains: 2 -> ${codes(gappedTwoErr)} (${gappedTwoErr?.problems[0]?.detail ?? 'none'})`,
-      'issue #390: when cloth."back hair".chains is omitted, propose --cloth derives min(2, maxFit) trees per side from the eye-line root row\'s opaque widths and 15 px dilated art mask (2 on wide hair, 1 on narrow or gapped twin tails), and an explicit count that exceeds the width cap or places a root off the art is refused by PROPOSE_CLOTH_BACK_HAIR_CHAINS',
+      `wide crown (48 px/side on 14 px grid, 1 tail mass/side) with chains omitted -> 1 tree/side rooted on mass top row (hairback_r0_ ${boneAt(omittedWideProp.bones, 'hairback_r0_')} in x=50..75: ${rInsideMass}, hairback_l0_ ${boneAt(omittedWideProp.bones, 'hairback_l0_')} in x=164..189: ${lInsideMass}), ${omittedWideLint.findings.length} lint finding(s); forced chains: 2 -> lint ${JSON.stringify(wideForcedLintLines)}; two masses on r + one on l -> [${twoMassProp.meshes.hair_back.segments.slice(1).join(', ')}] (r0 ${boneAt(twoMassProp.bones, 'hairback_r0_')}, r1 ${boneAt(twoMassProp.bones, 'hairback_r1_')}, l0 ${boneAt(twoMassProp.bones, 'hairback_l0_')}), ${twoMassLint.findings.length} lint finding(s); chains: 4 -> ${codes(wideTooManyErr)}; gapped twin tails chains: 2 -> ${codes(gappedTwoErr)}`,
+      'issues #390, #445: when cloth."back hair".chains is omitted, propose --cloth derives the tree count per side from the visible hair masses (connected components below the root row, merged within one grid cell), one tree per mass rooted at that mass\'s top row and inside its columns; lint names the masses and their columns when trees exceed the mass count or leave a mass\'s columns, and an explicit count that exceeds the width cap or places a root off the art is refused by PROPOSE_CLOTH_BACK_HAIR_CHAINS',
     );
 
     // PR520 — issue #437: a declared cloth tree over a list of parts (["hair_back", "hair_back_front"]) drafts one

@@ -148,7 +148,7 @@ import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER
 import { edgeLength } from './length.ts';
 import { limbWidth } from './limbs.ts';
 import { type BranchSqueezeFinding, branchSqueezes, chainSqueezes, type SqueezeFinding } from './squeeze.ts';
-import { RECIPE_BACK_HAIR_CHAINS, RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, spanCrosses, swingName, type Tail, tailOverlap, type TailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput } from './cloth.ts';
+import { backHairMasses, type BackHairMass, RECIPE_BACK_HAIR_CHAINS, RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, spanCrosses, swingName, type Tail, tailOverlap, type TailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput, type TreeMassInput } from './cloth.ts';
 import { TEXTURE_STRETCH_CEILING } from './check.ts';
 
 // ---------------------------------------------------------------------------
@@ -1403,7 +1403,7 @@ export function proposeWithBasis(
   const T = (p: PartRecord | readonly PartRecord[], tag: ClothTarget, r: ClothRecipe, input: TreeInput): TreeChain[] => {
     const partNames = Array.isArray(p) ? p.map((x) => x.name) : [(p as PartRecord).name];
     const trees = draftTrees(input, r);
-    const constants = [konst('cloth_chains', r.chains ?? RECIPE_BACK_HAIR_CHAINS), konst('cloth_links', r.links), konst('length_ratio', roundTo(r.length_ratio ?? RECIPE_LENGTH_RATIO, 6))];
+    const constants = [konst('cloth_chains', input.masses !== undefined ? input.masses.length : (r.chains ?? RECIPE_BACK_HAIR_CHAINS)), konst('cloth_links', r.links), konst('length_ratio', roundTo(r.length_ratio ?? RECIPE_LENGTH_RATIO, 6))];
     for (const t of trees) {
       C(
         t.chain,
@@ -1673,27 +1673,45 @@ export function proposeWithBasis(
         ]);
       }
     }
-    const rcp: ClothRecipe = { ...rawRcp, chains: rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit) };
+    const massesBySide = new Map<'r' | 'l', BackHairMass[]>(activeSides.map(([s]) => [s, backHairMasses(unionMask, s, axis, y0, shoulderLine, g)]));
+    const useMasses = rawRcp.chains === undefined;
     const all: TreeChain[] = [];
     let n = 0;
     const partNamesLabel = list.map((q) => q.name).join(' -> ');
     for (const [side] of activeSides) {
       const prefix = prefixOf(side);
-      const trees = T(list, 'back hair', rcp, {
+      const sideMasses = massesBySide.get(side) ?? [];
+      if (useMasses && sideMasses.length === 0) continue;
+      const sideRcp: ClothRecipe = { ...rawRcp, chains: useMasses ? sideMasses.length : (rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit)) };
+      const frame = `${partNamesLabel}'s art on the ${side} side of the eye axis (no art there in the band: the eye axis x)`;
+      const trees = T(list, 'back hair', sideRcp, {
         prefix,
         parent: 'head',
         rootY: eyeY,
         tipY: bot - 4,
         xAt: (y, f) => bandX(unionMask, y, { frac: f, side, axis }),
         fallbackX: () => axis,
-        frame: `${partNamesLabel}'s art on the ${side} side of the eye axis (no art there in the band: the eye axis x)`,
+        frame,
         edges: side,
+        masses: useMasses
+          ? sideMasses.map((m): TreeMassInput => ({
+              rootY: m.minY <= y0 ? eyeY : m.minY,
+              tipY: m.maxY >= bot - 12 ? bot - 4 : Math.max(m.minY + 4, m.maxY - 3),
+              xAt: (y, f) => bandX(m.mask, y, { frac: f, side, axis }),
+              fallbackX: m.minY <= y0 && sideMasses.length === 1 ? () => axis : (f) => pyRound(m.minX + f * (m.maxX - m.minX)),
+              frame,
+            }))
+          : undefined,
       });
-      const made = treeConstraints(trees, rcp, null);
+      const made = treeConstraints(trees, sideRcp, null);
       clothConstraints.push(...made);
       n += made.length;
       all.push(...trees);
     }
+    const rcp: ClothRecipe = {
+      ...rawRcp,
+      chains: useMasses ? Math.max(1, ...(activeSides.map(([s]) => (massesBySide.get(s) ?? []).length))) : (rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit)),
+    };
     const spans: Array<TailSpan & { depth: number }> = [{ bone: 'head', a: rnd(head), b: rnd([axis, top + 13]), link: false, depth: -1 }];
     for (const t of all) {
       const line = [...t.points, t.tip];
@@ -1778,9 +1796,11 @@ export function proposeWithBasis(
     } else if (recipeOf('back hair') !== null && (backHairParts === null || backHairSingleSame)) {
       // Issue #364: the recipe's trees, per side of the eye axis (twin tails are a side each), from the eye line to
       // 4 px above the part's bottom, in place of the two keyed chains.
-      // Issue #390: the tree count per side derives from the tail's opaque width at the root row (`floor(width / grid)`
-      // on each side, and every tree root inside the 15 px dilated art); a declared count that does not fit is refused
-      // by name (`PROPOSE_CLOTH_BACK_HAIR_CHAINS`).
+      // Issue #390: an explicit tree count per side that exceeds `floor(width / grid)` at the root row or roots a tree
+      // outside the 15 px dilated art is refused by name (`PROPOSE_CLOTH_BACK_HAIR_CHAINS`).
+      // Issue #445: when `chains` is omitted, the tree count on each side is the number of visible hair masses on that
+      // side (connected components below the root row, merged within one grid cell), one tree per mass, rooted at that
+      // mass's top row and inside its columns.
       const rawRcp = recipeOf('back hair') as ClothRecipe;
       const mask = P.alpha(p);
       const dilated = dilate(mask, 31);
@@ -1835,30 +1855,66 @@ export function proposeWithBasis(
           ]);
         }
       }
-      const rcp: ClothRecipe = { ...rawRcp, chains: rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit) };
+      const shoulderLine = neckY + 0.5 * fh;
+      const rMasses = backHairMasses(mask, 'r', axis, y0, shoulderLine, g);
+      const lMasses = backHairMasses(mask, 'l', axis, y0, shoulderLine, g);
+      const massesBySide = new Map<'r' | 'l', BackHairMass[]>([
+        ['r', rMasses],
+        ['l', lMasses],
+      ]);
+      const useMasses = rawRcp.chains === undefined;
       const segs: Segment[] = [['head', rnd(head), rnd([axis, top + 13])]];
       const all: TreeChain[] = [];
       let n = 0;
       for (const [side] of SIDES) {
         const prefix = prefixOf(side);
-        const trees = T(p, 'back hair', rcp, {
+        const sideMasses = massesBySide.get(side) ?? [];
+        if (useMasses && sideMasses.length === 0) continue;
+        const sideRcp: ClothRecipe = { ...rawRcp, chains: useMasses ? sideMasses.length : (rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit)) };
+        const frame = `${p.name}'s art on the ${side} side of the eye axis (no art there in the band: the eye axis x)`;
+        const trees = T(p, 'back hair', sideRcp, {
           prefix,
           parent: 'head',
           rootY: eyeY,
           tipY: bot - 4,
           xAt: (y, f) => bandX(mask, y, { frac: f, side, axis }),
           fallbackX: () => axis,
-          frame: `${p.name}'s art on the ${side} side of the eye axis (no art there in the band: the eye axis x)`,
+          frame,
           edges: side,
+          masses: useMasses
+            ? sideMasses.map((m): TreeMassInput => ({
+                rootY: m.minY <= y0 ? eyeY : m.minY,
+                tipY: m.maxY >= bot - 12 ? bot - 4 : Math.max(m.minY + 4, m.maxY - 3),
+                xAt: (y, f) => bandX(m.mask, y, { frac: f, side, axis }),
+                fallbackX: m.minY <= y0 && sideMasses.length === 1 ? () => axis : (f) => pyRound(m.minX + f * (m.maxX - m.minX)),
+                frame,
+              }))
+            : undefined,
         });
         for (const t of trees) segs.push(t.chain);
-        const made = treeConstraints(trees, rcp, null);
+        const made = treeConstraints(trees, sideRcp, null);
         clothConstraints.push(...made);
         n += made.length;
         all.push(...trees);
       }
-      notes.push(clothNote(p.name, 'back hair', all, rcp, n, ' per side of the eye axis, from head, rooted on the eye line and tipped 4 px above its bottom'));
-      meshes[p.name] = { grid: g, r: rcp.split?.hold_tip === true ? Math.max(r, g) : r, segments: segs };
+      const sameSideCounts = !useMasses || rMasses.length === lMasses.length;
+      const noteRcp: ClothRecipe = {
+        ...rawRcp,
+        chains: useMasses ? (sameSideCounts ? rMasses.length : rMasses.length + lMasses.length) : (rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit)),
+      };
+      notes.push(
+        clothNote(
+          p.name,
+          'back hair',
+          all,
+          noteRcp,
+          n,
+          sameSideCounts
+            ? ' per side of the eye axis, from head, rooted on the eye line and tipped 4 px above its bottom'
+            : ` (${rMasses.length} on the r side and ${lMasses.length} on the l side of the eye axis, one per visible hair mass), from head, rooted on each mass's top row and tipped 4 px above its bottom`,
+        ),
+      );
+      meshes[p.name] = { grid: g, r: rawRcp.split?.hold_tip === true ? Math.max(r, g) : r, segments: segs };
       // Issue #391: the spans are this mesh's segments, the head's fixed one and every tree link, in segment order.
       const spans: TailSpan[] = [{ bone: 'head', a: rnd(head), b: rnd([axis, top + 13]), link: false }];
       for (const t of all) {
@@ -3800,6 +3856,19 @@ export interface NearEmptyHandFinding {
     | { kind: 'forearm-width'; width: number };
 }
 
+/**
+ * Issue #445: back-hair cloth trees on one side of the eye axis whose count does not match the side's visible hair
+ * masses or whose link or tip leaves its mass's column range.
+ */
+export interface BackHairMassesFinding {
+  kind: 'back-hair-masses';
+  mesh: string;
+  side: 'r' | 'l';
+  trunks: string[];
+  masses: Array<{ minX: number; maxX: number; minY: number; maxY: number }>;
+  outside: Array<{ point: string; at: [number, number]; minX: number; maxX: number }>;
+}
+
 export type LintFinding =
   | OffArtFinding
   | OffLockFinding
@@ -3810,7 +3879,8 @@ export type LintFinding =
   | HipNearerNeckFinding
   | ChainNotAdvancingFinding
   | SqueezeLintFinding
-  | NearEmptyHandFinding;
+  | NearEmptyHandFinding
+  | BackHairMassesFinding;
 
 /** Which rule set read the torso and the sleeve chains, under `--keypoints`. */
 export interface LintBasis {
@@ -4097,6 +4167,87 @@ export function lint(
       }
     }
   }
+  // Issue #445: back-hair cloth trees (trunks `hairback_..._<r|l><k>_` hung from head) are held to the visible hair
+  // masses on each side of the eye axis — one tree per mass, every link and tip inside that mass's column range.
+  const bhParts = P.headFirst('back hair').filter((p) => spec.meshes[p.name] !== undefined);
+  if (bhParts.length > 0) {
+    try {
+      const [fx0, fy0, fw, fh] = faceBoxOf(P).box;
+      const ewR = P.byTag('eyewhite-r')[0] ?? null;
+      const ewL = P.byTag('eyewhite-l')[0] ?? null;
+      const axis = ewR !== null && ewL !== null ? (center(ewR)[0] + center(ewL)[0]) / 2 : fx0 + fw / 2;
+      const eyeYs = [ewR, ewL].filter((x): x is PartRecord => x !== null).map((x) => center(x)[1]);
+      const eyeY = eyeYs.length > 0 ? npMean(eyeYs) : fy0 + 0.5 * fh;
+      const chin = fy0 + fh;
+      const neckp = P.headFirst('neck');
+      const neckY = joints?.joints.neck.at?.[1] ?? (neckp.length > 0 ? (chin + neckp[0].y + neckp[0].h) / 2 : chin + 0.12 * fh);
+      const shoulderLine = neckY + 0.5 * fh;
+      const y0 = pyRound(eyeY);
+      const seenGroups = new Set<string>();
+      for (const part of bhParts) {
+        const m = spec.meshes[part.name];
+        const segStrings = m.segments.filter((sp): sp is string => typeof sp === 'string');
+        const trunkMatch = segStrings.map((sp) => /^(hairback_(?:.+_)?)(r|l)(\d+)_$/.exec(sp)).find((x) => x !== null) ?? null;
+        if (trunkMatch === null) continue;
+        const basePrefix = trunkMatch[1];
+        if (seenGroups.has(basePrefix)) continue;
+        seenGroups.add(basePrefix);
+        const groupParts = bhParts.filter((q) =>
+          spec.meshes[q.name].segments.some((sp) => typeof sp === 'string' && sp.startsWith(basePrefix) && /^(r|l)\d+_$/.test(sp.slice(basePrefix.length))),
+        );
+        const mask = groupParts.length === 1 ? P.alpha(part) : newMask(P.W, P.H);
+        if (groupParts.length > 1) {
+          for (const q of groupParts) {
+            const mq = P.alpha(q);
+            for (let i = 0; i < mask.data.length; i++) if (mq.data[i]) mask.data[i] = 1;
+          }
+        }
+        const m0 = spec.meshes[groupParts[0].name];
+        const g = 'grid' in m0 ? m0.grid : partGrid(groupParts[0])[0];
+        for (const side of ['r', 'l'] as const) {
+          const trunkRe = new RegExp(`^${basePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${side}(\\d+)_$`);
+          const sideTrunks = spec.bones
+            .filter((b): b is Extract<BoneEntry, { chain: string }> => 'chain' in b && b.parent === 'head' && trunkRe.test(b.chain) && groupParts.some((q) => spec.meshes[q.name].segments.includes(b.chain)))
+            .sort((a, b) => Number(trunkRe.exec(a.chain)![1]) - Number(trunkRe.exec(b.chain)![1]));
+          if (sideTrunks.length === 0) continue;
+          const masses = backHairMasses(mask, side, axis, y0, shoulderLine, g);
+          const outside: Array<{ point: string; at: [number, number]; minX: number; maxX: number }> = [];
+          const sideMinX = masses.length > 0 ? Math.min(...masses.map((x) => x.minX)) : 0;
+          const sideMaxX = masses.length > 0 ? Math.max(...masses.map((x) => x.maxX)) : P.W - 1;
+          sideTrunks.forEach((tr, k) => {
+            const target = k < masses.length ? masses[k] : null;
+            const minX = target !== null ? target.minX : sideMinX;
+            const maxX = target !== null ? target.maxX : sideMaxX;
+            const treeBase = tr.chain.slice(0, -1);
+            const treeRe = new RegExp(`^${treeBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[a-z]*_$`);
+            const treeChains = spec.bones.filter((b): b is Extract<BoneEntry, { chain: string }> => 'chain' in b && treeRe.test(b.chain));
+            for (const c of treeChains) {
+              c.points.forEach((pt, idx) => {
+                const px = pyInt(pt[0]);
+                const py = pyInt(pt[1]);
+                if (px < minX || px > maxX) outside.push({ point: `${c.chain}${idx}`, at: [px, py], minX, maxX });
+              });
+              const tx = pyInt(c.tip[0]);
+              const ty = pyInt(c.tip[1]);
+              if (tx < minX || tx > maxX) outside.push({ point: `${c.chain} tip`, at: [tx, ty], minX, maxX });
+            }
+          });
+          if (sideTrunks.length !== masses.length || outside.length > 0) {
+            findings.push({
+              kind: 'back-hair-masses',
+              mesh: groupParts.map((q) => q.name).join(' -> '),
+              side,
+              trunks: sideTrunks.map((t) => t.chain),
+              masses: masses.map((x) => ({ minX: x.minX, maxX: x.maxX, minY: x.minY, maxY: x.maxY })),
+              outside,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      if (!(err instanceof PartsError)) throw err;
+    }
+  }
   // Issue #314: every pair of keyed chains a lattice mesh names, swung on the rig stage's own lattice and weights, held
   // to check's TEXTURE_STRETCH bar (src/squeeze.ts). Only with a motion: without one nothing swings.
   const partImages = new Map(P.recs.filter((p) => P.images.has(p.name)).map((p) => [p.name, { x: p.x, y: p.y, image: P.images.get(p.name) as Raster }]));
@@ -4134,6 +4285,19 @@ function findingBones(f: LintFinding, bones: readonly BoneEntry[]): string[] {
       return [...new Set(f.vertices.map((v) => v.weights[0]?.bone).filter((n): n is string => n !== undefined))];
     case 'near-empty-hand':
       return [];
+    case 'back-hair-masses': {
+      const out = new Set<string>();
+      for (const o of f.outside) {
+        if (!o.point.endsWith(' tip')) out.add(o.point);
+        else {
+          const chain = o.point.slice(0, -' tip'.length);
+          const e = bones.find((b) => 'chain' in b && b.chain === chain);
+          if (e !== undefined && 'chain' in e) out.add(`${chain}${e.points.length - 1}`);
+        }
+      }
+      if (out.size === 0) for (const t of f.trunks) out.add(`${t}0`);
+      return [...out];
+    }
     case 'chain-not-advancing': {
       if (!f.point.endsWith(' tip')) return [f.point];
       const chain = f.point.slice(0, -' tip'.length);
@@ -4307,6 +4471,17 @@ export function lintLine(f: LintFinding): string {
           ? `${f.basis.share} of ${f.basis.otherPart} (${f.basis.otherFrom}), ${f.basis.otherPx} px`
           : `forearm width ${pyFixed(f.basis.width, 1)} px squared`;
       return `LINT ${f.part} (${f.from}) holds ${f.opaquePx} opaque px while ${f.wrist} at ${fmtAt(f.wristAt)} says a hand is there — below the bar of ${f.bar} px (${why}): the hands may overlap in the other layer and leave finger slivers here`;
+    }
+    case 'back-hair-masses': {
+      const massDesc =
+        f.masses.length === 0
+          ? 'none'
+          : f.masses.map((m, i) => `mass ${i} columns x=${m.minX}..${m.maxX}, y=${m.minY}..${m.maxY}`).join('; ');
+      const outDesc =
+        f.outside.length === 0
+          ? ''
+          : `; outside mass columns: ${f.outside.map((o) => `${o.point} at ${pyIntList(o.at)} (outside x=${o.minX}..${o.maxX})`).join(', ')}`;
+      return `LINT ${f.trunks.join(', ')} on mesh ${pyRepr(f.mesh)} (side ${f.side}): ${f.trunks.length} tree(s) for ${f.masses.length} visible hair mass(es) (${massDesc})${outDesc} — draft one tree per visible hair mass, rooted at that mass's top row and inside its columns`;
     }
     case 'chain-not-advancing':
       return `LINT ${f.point} at ${pyIntList(f.at)} does not advance from ${f.fromJoint} toward ${f.toJoint}: it falls ${pyFixed(f.t, 1)} px along that line and ${f.previous} ${pyFixed(f.tPrevious, 1)} px, and each must fall further than the one before`;
