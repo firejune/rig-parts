@@ -152,7 +152,7 @@ import { assignOverlappingHands, capBox, featherWeight, type JointLine, jointLin
 import { artifactPaths, assembleStage, build, BUILD_OWNS, CHECK_FLAGS_IN_BUILD, type CheckFlagInBuild, checkStage, ctlRemedies, driftShare, faceAxisLine, fringeLines, turnLine, LEAD_IN_ANIMATION, REFERENCE_BUILD_ARGS, repeatIdle, REFERENCE_BUILD_LABEL, RIGC_MODEL_DOCUMENT, rigStage } from './src/build.ts';
 import { CHECK_PARTS, CHECK_RIG, checkPartRaster, IDLE_PEAK, MERGED_STAGE, mergedCores, type MergedRigOptions, mergedStack, SEATED_CHECK_PARTS, shiftRight, writeCheckRig, writeMergedCheckRig, writeSeatedCheckRig } from './fixtures/checkrig.ts';
 import { fakePainting } from './fixtures/fakecomfy.ts';
-import { BLOUSE, CLOTH_PARTS, CLOTH_RIG, clothRecipe, DRESS, DRESS_RIG, dressHipJoints, dressParts, HEM, HEM_BELOW, SHIFT } from './fixtures/cloth.ts';
+import { BLOUSE, CLOTH_PARTS, CLOTH_RIG, clothRecipe, DRESS, DRESS_RIG, dressHipJoints, dressParts, HEM, HEM_BELOW, SHIFT, SPLIT_TAIL_PARTS, SPLIT_TAIL_UNCROSSED, splitTailRecipe } from './fixtures/cloth.ts';
 import { RIDER_RIG, RIDER_STRIP, riderParts, riderRecipe } from './fixtures/rider.ts';
 import { type ClothRecipes, linkRows } from './src/cloth.ts';
 import { BARE_CROWN_PARTS, CUT_BASE_PARTS, CUT_PARTS, eyeParts, FACELESS_PARTS, IRIS_NO_EYEWHITE_PARTS, LEVEL_FRINGE_PARTS, LONG_ROBE_PARTS, LONG_ROBE_RIG, MIXED_STRAND_PARTS, NO_BROW_PARTS, NO_EYE_PARTS, ONE_EYEWHITE_PARTS, PROPOSE_PARTS, PROPOSE_RIG, type ProposeFixturePart, STRAND_PARTS, STRAND_RIG, TILTED_FRINGE_PARTS, TWO_LOCK_PARTS, writeProposeFixture } from './fixtures/propose.ts';
@@ -2567,6 +2567,42 @@ function runSkirtPartConfigControls(say: (name: string, ok: boolean, detail: str
       loads.every((e) => e === null) && readBack === 'dress' && outcomes.every((o) => o.ok),
       `the fixture recipe with bottomwear.part "dress": full loader ${loads[0] === null ? 'loads' : codes(loads[0])}, cloth door ${loads[1] === null ? 'loads' : codes(loads[1])}, read back as ${JSON.stringify(readBack)}; planted: ${outcomes.map((o) => `${o.what} ${o.ok ? 'refused once' : `NOT: ${o.got}`}`).join('; ')}`,
       'issue #402: a skirt See-through returns inside topwear (a dress) is declared by the author, not guessed from its shape; the declaration names a part, so it is a non-empty string, and only the skirt has a recipe it can hand over',
+    );
+    const withParts = (tag: 'bottomwear' | 'back hair', field: 'parts' | 'part', v: unknown): Record<string, unknown> => {
+      const r = JSON.parse(JSON.stringify(clothRecipe())) as Record<string, Record<string, unknown>>;
+      r[tag][field] = v;
+      return r;
+    };
+    const partsDoor = join(dir, 'parts-door.json');
+    writeFileSync(partsDoor, JSON.stringify({ key: 'k', cloth: withParts('back hair', 'parts', ['hair_back', 'hair_back_front']) }));
+    const partsLoads = [
+      refusals(() => parseConfig({ ...minimalConfig(), cloth: withParts('back hair', 'parts', ['hair_back', 'hair_back_front']) })),
+      refusals(() => parseConfig({ ...minimalConfig(), cloth: withParts('back hair', 'part', ['hair_back', 'hair_back_front']) })),
+      refusals(() => parseConfig({ ...minimalConfig(), cloth: withParts('back hair', 'parts', ['hair_back']) })),
+      refusals(() => loadClothConfig(partsDoor)),
+    ];
+    const partsReadBack = partsLoads[3] === null ? loadClothConfig(partsDoor).cloth['back hair']?.parts : null;
+    const bothFields = ((): Record<string, unknown> => {
+      const r = JSON.parse(JSON.stringify(clothRecipe())) as Record<string, Record<string, unknown>>;
+      r.bottomwear.part = 'dress';
+      r.bottomwear.parts = ['dress'];
+      return r;
+    })();
+    const partsPlanted: Array<[string, string, string, Record<string, unknown>]> = [
+      ['empty parts list', 'CONFIG_FIELD_TYPE', 'config.cloth."back hair".parts', withParts('back hair', 'parts', [])],
+      ['empty string in parts list', 'CONFIG_FIELD_TYPE', 'config.cloth."back hair".parts[1]', withParts('back hair', 'parts', ['hair_back', ''])],
+      ['duplicate part in parts list', 'CONFIG_CLOTH_PARTS_UNIQUE', 'config.cloth."back hair".parts[1]', withParts('back hair', 'parts', ['hair_back', 'hair_back'])],
+      ['both part and parts declared', 'CONFIG_CLOTH_PARTS_UNIQUE', 'config.cloth."bottomwear".parts', bothFields],
+    ];
+    const partsOutcomes = partsPlanted.map(([what, code, object, cloth]) => {
+      const e = refusals(() => parseConfig({ ...minimalConfig(), cloth }));
+      return { what, ok: e !== null && e.problems.length === 1 && e.problems[0].code === code && e.problems[0].object === object, got: codes(e) };
+    });
+    say(
+      'CF482_CLOTH_PARTS_LIST_LOADS_ON_ANY_TAG_AND_DUPLICATES_OR_EMPTY_LISTS_ARE_REFUSED_ONCE_BY_NAME',
+      partsLoads.every((e) => e === null) && JSON.stringify(partsReadBack) === '["hair_back","hair_back_front"]' && partsOutcomes.every((o) => o.ok),
+      `multi-part and 1-element lists load (${partsLoads.map((e) => (e === null ? 'ok' : codes(e))).join(', ')}), read back ${JSON.stringify(partsReadBack)}; planted: ${partsOutcomes.map((o) => `${o.what} ${o.ok ? 'refused once' : `NOT: ${o.got}`}`).join('; ')}`,
+      'issue #437: a declared tree accepts a list of parts in order from root to tip (parts or array part), the single-part form stays as the one-element list, and an empty list, non-string entry, duplicate part name, or both part and parts together is refused once by name',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -8433,6 +8469,202 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
         gappedTwoErr.problems[0].detail.includes('off the art: hairback_r1_0 at [102, 69] (alpha 0), hairback_l0_0 at [138, 69] (alpha 0)'),
       `wide crown (48 px/side on 14 px grid) with chains omitted -> byte-identical to chains: 2 (${JSON.stringify(omittedWideProp) === JSON.stringify(prop)}); chains: 4 -> ${codes(wideTooManyErr)} (${wideTooManyErr?.problems[0]?.detail ?? 'none'}); gapped twin tails with chains omitted -> tree segments [${gappedOmittedProp.meshes.hair_back.segments.slice(1).join(', ')}], ${gappedLint.findings.length} lint finding(s); with chains: 2 -> ${codes(gappedTwoErr)} (${gappedTwoErr?.problems[0]?.detail ?? 'none'})`,
       'issue #390: when cloth."back hair".chains is omitted, propose --cloth derives min(2, maxFit) trees per side from the eye-line root row\'s opaque widths and 15 px dilated art mask (2 on wide hair, 1 on narrow or gapped twin tails), and an explicit count that exceeds the width cap or places a root off the art is refused by PROPOSE_CLOTH_BACK_HAIR_CHAINS',
+    );
+
+    // PR520 — issue #437: a declared cloth tree over a list of parts (["hair_back", "hair_back_front"]) drafts one
+    // chain across the union, weights each part only to the links whose span crosses its opaque art (Bar 1), holds the
+    // seam between consecutive parts within <= 1 rig px under the wind example's gust (Bar 2), refuses any part in the
+    // list that no link crosses by name with PROPOSE_CLOTH_PART (Bar 3), and keeps single-part declarations
+    // byte-identical (Bar 4).
+    const splitDir = join(dir, 'split-tail');
+    writeProposeFixture(splitDir, SPLIT_TAIL_PARTS, CLOTH_RIG);
+    const splitP = readPartSet(splitDir);
+    const splitProp = propose(splitP, undefined, null, DEFAULT_GRID_RULE, splitTailRecipe(['hair_back', 'hair_back_front']));
+    const splitUnjoinedProp = propose(splitP, undefined, null, DEFAULT_GRID_RULE, splitTailRecipe(['hair_back']));
+    const splitCfgPath = join(splitDir, 'config-joined.json');
+    writeFileSync(splitCfgPath, JSON.stringify({ ...proposalConfig(SPLIT_TAIL_PARTS, splitProp), assemble: proposalAssemble(splitP), constraints: splitProp.constraints ?? [] }));
+    const splitRigDir = join(splitDir, 'rig-joined');
+    const splitRigRun = runCli(['rig', '--config', splitCfgPath, '--parts', splitDir, '--out', splitRigDir]);
+    const splitBuildDir = join(splitDir, 'build-joined');
+    mkdirSync(splitBuildDir, { recursive: true });
+    const rigcRun = rigcRunnerAt(suiteRigc(), spawnRigc);
+    const splitRigcRun = rigcRun(['build', '--rig', join(splitRigDir, 'rig.json'), '--motion', join(splitRigDir, 'motion.json'), '--out', splitBuildDir, '--profile', 'spine']);
+
+    const unjoinedCfgPath = join(splitDir, 'config-unjoined.json');
+    writeFileSync(unjoinedCfgPath, JSON.stringify({ ...proposalConfig(SPLIT_TAIL_PARTS, splitUnjoinedProp), assemble: proposalAssemble(splitP), constraints: splitUnjoinedProp.constraints ?? [] }));
+    const unjoinedRigDir = join(splitDir, 'rig-unjoined');
+    runCli(['rig', '--config', unjoinedCfgPath, '--parts', splitDir, '--out', unjoinedRigDir]);
+    const unjoinedBuildDir = join(splitDir, 'build-unjoined');
+    mkdirSync(unjoinedBuildDir, { recursive: true });
+    rigcRun(['build', '--rig', join(unjoinedRigDir, 'rig.json'), '--motion', join(unjoinedRigDir, 'motion.json'), '--out', unjoinedBuildDir, '--profile', 'spine']);
+
+    type W437 = { bone: string; weight: number };
+    const splitRigJson = JSON.parse(readFileSync(join(splitRigDir, 'rig.json'), 'utf8')) as {
+      skins: Record<string, Record<string, Record<string, { weights?: W437[][] }>>>;
+    };
+    const hbWeights = splitRigJson.skins.default?.hair_back?.hair_back?.weights ?? [];
+    const hbfWeights = splitRigJson.skins.default?.hair_back_front?.hair_back_front?.weights ?? [];
+    const hbBones = [...new Set(hbWeights.flatMap((ws) => ws.filter((w) => w.weight > 0).map((w) => w.bone)))].sort().join(',');
+    const hbfBones = [...new Set(hbfWeights.flatMap((ws) => ws.filter((w) => w.weight > 0).map((w) => w.bone)))].sort().join(',');
+    const bar1Ok =
+      splitRigRun.status === 0 &&
+      splitRigcRun.status === 0 &&
+      splitProp.meshes.hair_back.segments.join(',') === 'hairback_r0_0,hairback_r0_1' &&
+      splitProp.meshes.hair_back_front?.segments.join(',') === 'hairback_r0_2' &&
+      !('hair_back_front' in splitProp.regions) &&
+      hbBones === 'hairback_r0_0,hairback_r0_1' &&
+      hbfBones === 'hairback_r0_2' &&
+      hbfWeights.length > 0 &&
+      hbfWeights.every((ws) => ws.length === 1 && ws[0].bone === 'hairback_r0_2' && ws[0].weight === 1);
+
+    const measureSeamUnderWind = (bDir: string): { maxSeam: number; axisSeam: number } => {
+      const { data } = loadPosable(join(bDir, 'skeleton.json'), join(bDir, 'skeleton.atlas'), bDir);
+      const locateCropPoint = (setupFrame: Frame, slotName: string, cx: number, cy: number) => {
+        const piece = setupFrame.pieces.find((q) => q.slot === slotName);
+        if (!piece) throw new Error(`missing slot ${slotName}`);
+        const rootSnap = (setupFrame.bones ?? []).find((b) => b.name === 'root')!;
+        const ox = rootSnap.worldX - CLOTH_RIG.w / 2;
+        const oy = rootSnap.worldY;
+        const X = cx + ox;
+        const Y = cropToSpineY(cy, CLOTH_RIG.h) + oy;
+        if (piece.kind === 'region') {
+          const w = piece.world;
+          const tri = [0, 1, 2, 0, 2, 3];
+          for (let t = 0; t < tri.length; t += 3) {
+            const [i, j, l] = [tri[t], tri[t + 1], tri[t + 2]];
+            const det = (w[2 * j + 1] - w[2 * l + 1]) * (w[2 * i] - w[2 * l]) + (w[2 * l] - w[2 * j]) * (w[2 * i + 1] - w[2 * l + 1]);
+            const u = ((w[2 * j + 1] - w[2 * l + 1]) * (X - w[2 * l]) + (w[2 * l] - w[2 * j]) * (Y - w[2 * l + 1])) / det;
+            const v = ((w[2 * l + 1] - w[2 * i + 1]) * (X - w[2 * l]) + (w[2 * i] - w[2 * l]) * (Y - w[2 * l + 1])) / det;
+            if (u >= -0.05 && v >= -0.05 && 1 - u - v >= -0.05) return { slotName, i, j, l, u, v };
+          }
+          throw new Error(`point (${cx},${cy}) not in region ${slotName}`);
+        }
+        const s0 = piece.world;
+        const tri = piece.triangles;
+        let best: { slotName: string; i: number; j: number; l: number; u: number; v: number; minBary: number } | null = null;
+        for (let t = 0; t < tri.length; t += 3) {
+          const [i, j, l] = [tri[t], tri[t + 1], tri[t + 2]];
+          const det = (s0[2 * j + 1] - s0[2 * l + 1]) * (s0[2 * i] - s0[2 * l]) + (s0[2 * l] - s0[2 * j]) * (s0[2 * i + 1] - s0[2 * l + 1]);
+          if (Math.abs(det) < 1e-12) continue;
+          const u = ((s0[2 * j + 1] - s0[2 * l + 1]) * (X - s0[2 * l]) + (s0[2 * l] - s0[2 * j]) * (Y - s0[2 * l + 1])) / det;
+          const v = ((s0[2 * l + 1] - s0[2 * i + 1]) * (X - s0[2 * l]) + (s0[2 * i] - s0[2 * l]) * (Y - s0[2 * l + 1])) / det;
+          const w = 1 - u - v;
+          const minBary = Math.min(u, v, w);
+          if (best === null || minBary > best.minBary) best = { slotName, i, j, l, u, v, minBary };
+        }
+        if (!best || best.minBary < -0.2) throw new Error(`point (${cx},${cy}) not in mesh ${slotName}`);
+        return best;
+      };
+      const evalLoc = (f: Frame, loc: { slotName: string; i: number; j: number; l: number; u: number; v: number }): [number, number] => {
+        const piece = f.pieces.find((q) => q.slot === loc.slotName)!;
+        const w = piece.world;
+        return [
+          loc.u * w[2 * loc.i] + loc.v * w[2 * loc.j] + (1 - loc.u - loc.v) * w[2 * loc.l],
+          loc.u * w[2 * loc.i + 1] + loc.v * w[2 * loc.j + 1] + (1 - loc.u - loc.v) * w[2 * loc.l + 1],
+        ];
+      };
+      const setupFrame = sampleSetupPose(data, { bones: true })[0];
+      const seamXs = [57.5, 60, 63, 66, 68.5];
+      const pairs = seamXs.map((cx) => ({
+        cx,
+        a: locateCropPoint(setupFrame, 'hair_back', cx, 245),
+        b: locateCropPoint(setupFrame, 'hair_back_front', cx, 245),
+      }));
+      const windAt = (t: number): number => {
+        const s = (u: number): number => u * u * (3 - 2 * u);
+        if (t < 0.3) return 0;
+        if (t < 0.6) return 1.0 * s((t - 0.3) / 0.3);
+        if (t < 1.3) return 1.0;
+        if (t < 1.7) return 1.0 - 1.7 * s((t - 1.3) / 0.4);
+        if (t < 2.2) return -0.7;
+        if (t < 2.6) return -0.7 * (1 - s((t - 2.2) / 0.4));
+        return 0;
+      };
+      const fps = 60;
+      const environment: Array<{ t: number; wind: [number, number]; gravity: [number, number] }> = [];
+      for (let i = 0; i <= 200; i++) {
+        const t = i / fps;
+        environment.push({ t, wind: [windAt(t), 0], gravity: [0, 1] });
+      }
+      const frames = sampleAnimation(data, 'idle', fps, { bones: true, environment });
+      let maxSeam = 0;
+      let axisSeam = 0;
+      for (const f of frames) {
+        for (const p of pairs) {
+          const [ax, ay] = evalLoc(f, p.a);
+          const [bx, by] = evalLoc(f, p.b);
+          const d = edgeLength(ax - bx, ay - by);
+          if (d > maxSeam) maxSeam = d;
+          if (p.cx === 63 && d > axisSeam) axisSeam = d;
+        }
+      }
+      return { maxSeam, axisSeam };
+    };
+    const joinedSeam = measureSeamUnderWind(splitBuildDir);
+    const unjoinedSeam = measureSeamUnderWind(unjoinedBuildDir);
+    const bar2Ok = joinedSeam.maxSeam <= 1.0 && joinedSeam.axisSeam <= 0.5 && unjoinedSeam.maxSeam > 10.0;
+
+    // Bar 3: uncrossed part in list -> PROPOSE_CLOTH_PART naming the part.
+    const uncrossedDir = join(dir, 'split-uncrossed');
+    writeProposeFixture(uncrossedDir, [...SPLIT_TAIL_PARTS, SPLIT_TAIL_UNCROSSED], CLOTH_RIG);
+    const uncrossedP = readPartSet(uncrossedDir);
+    const errKnot = refusals(() =>
+      propose(uncrossedP, undefined, null, DEFAULT_GRID_RULE, splitTailRecipe(['hair_back', 'knot', 'hair_back_front'])),
+    );
+    const errOrder = refusals(() =>
+      propose(splitP, undefined, null, DEFAULT_GRID_RULE, splitTailRecipe(['hair_back_front', 'hair_back'])),
+    );
+    const errUnknown = refusals(() =>
+      propose(splitP, undefined, null, DEFAULT_GRID_RULE, splitTailRecipe(['hair_back', 'missing_piece'])),
+    );
+    const errSingleUncrossed = refusals(() =>
+      propose(splitP, undefined, null, DEFAULT_GRID_RULE, splitTailRecipe(['face'])),
+    );
+    const bar3Ok =
+      errKnot !== null &&
+      errKnot.problems.length === 1 &&
+      errKnot.problems[0].code === 'PROPOSE_CLOTH_PART' &&
+      errKnot.problems[0].detail.includes('"knot"') &&
+      errKnot.problems[0].detail.includes('which no link of the drafted tree crosses') &&
+      errOrder !== null &&
+      errOrder.problems[0].code === 'PROPOSE_CLOTH_PART' &&
+      errUnknown !== null &&
+      errUnknown.problems[0].code === 'PROPOSE_CLOTH_PART' &&
+      errUnknown.problems[0].detail.includes('"missing_piece"') &&
+      errSingleUncrossed !== null &&
+      errSingleUncrossed.problems[0].code === 'PROPOSE_CLOTH_PART' &&
+      errSingleUncrossed.problems[0].detail.includes('"face"');
+
+    // Bar 4: single-part declarations (omitted parts, parts: ["hair_back"], part: ["hair_back"], bottomwear parts: ["skirt"])
+    // produce byte-identical proposals (SHA-256).
+    const sha = (p: Proposal): string => createHash('sha256').update(serializeProposal(p)).digest('hex');
+    const baseSha = sha(prop);
+    const singleBackListSha = sha(
+      propose(P, undefined, null, DEFAULT_GRID_RULE, {
+        ...baseRecipe,
+        'back hair': { ...baseRecipe['back hair']!, parts: ['hair_back'] },
+      }),
+    );
+    const singleBackPartArrSha = sha(
+      propose(P, undefined, null, DEFAULT_GRID_RULE, {
+        ...baseRecipe,
+        'back hair': { ...baseRecipe['back hair']!, part: ['hair_back'] },
+      }),
+    );
+    const singleSkirtListSha = sha(
+      propose(P, undefined, null, DEFAULT_GRID_RULE, {
+        ...baseRecipe,
+        bottomwear: { ...baseRecipe.bottomwear!, parts: ['skirt'] },
+      }),
+    );
+    const bar4Ok =
+      baseSha === singleBackListSha && baseSha === singleBackPartArrSha && baseSha === singleSkirtListSha;
+
+    say(
+      'PR520_MULTI_PART_CLOTH_TREE_WEIGHTS_PER_CROSSED_LINK_HOLDS_SEAM_AND_REFUSES_UNCROSSED_PART',
+      bar1Ok && bar2Ok && bar3Ok && bar4Ok,
+      `Bar 1 (weights): hair_back segments [${splitProp.meshes.hair_back.segments.join(', ')}] (bones ${hbBones}), hair_back_front segments [${splitProp.meshes.hair_back_front?.segments.join(', ') ?? 'none'}] (bones ${hbfBones}); Bar 2 (wind gust seam): joined max ${pyRound(joinedSeam.maxSeam, 3)} rig px (axis ${pyRound(joinedSeam.axisSeam, 3)} px, <= 1.0 required) vs unjoined ${pyRound(unjoinedSeam.maxSeam, 3)} rig px; Bar 3 (refusals): knot -> ${codes(errKnot)} (${errKnot?.problems[0]?.detail ?? 'none'}), reversed -> ${codes(errOrder)}, unknown -> ${codes(errUnknown)}, single uncrossed -> ${codes(errSingleUncrossed)}; Bar 4 (single-part SHA-256): ${bar4Ok ? `all 4 match ${baseSha.slice(0, 12)}` : 'MISMATCH'}`,
+      'issue #437: a cloth recipe declaring parts in root-to-tip order drafts one tree across their union, weights each part only to the links whose span crosses its opaque art, holds the inter-part seam within 1 rig px under wind, refuses an uncrossed or out-of-order part by name (PROPOSE_CLOTH_PART), and leaves single-part recipes byte-identical',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

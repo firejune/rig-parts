@@ -95,8 +95,10 @@ export interface ClothRecipe {
   gravity: [number, number];
   translate?: number;
   swing?: { scales: number[] };
-  /** `bottomwear` only: a `topwear` part or its named cut skirt piece the skirt's trees are drafted on. */
-  part?: string;
+  /** `bottomwear` only when a string (a `topwear` part or its cut skirt piece, issue #402); on any target when a list of parts the recipe's trees run through from root to tip (issue #437; the single-part form is the one-element list). */
+  part?: string | string[];
+  /** A list of parts the recipe's trees run through in order from root to tip, one chain across the union and each link weighted to the part whose pixels it crosses (issue #437; the single-part form is the one-element list). */
+  parts?: string[];
 }
 
 export type ClothRecipes = Partial<Record<ClothTarget, ClothRecipe>>;
@@ -469,3 +471,28 @@ export function tailOverlap(tail: Tail, part: Mask, box: { x: number; y: number;
   }
   return { counts, over, total };
 }
+
+/**
+ * Issue #437: how many interior pixel steps along `span` (`a -> b`, sampled at
+ * `(s + 0.5) / ceil(|b - a|)` for `s = 0 .. ceil(|b - a|) - 1`) land on an
+ * opaque pixel of `mask`. Consecutive vertical links `[y0, y1]`, `[y1, y2]`
+ * sample half-open row intervals `[y0, y1)`, `[y1, y2)` with no shared boundary
+ * pixel at the joint `y1`, so a link strictly on one side of a horizontal seam
+ * takes 0 pixels on the other part.
+ */
+export function spanCrosses(span: Pick<TailSpan, 'a' | 'b'>, mask: Mask): number {
+  const [x0, y0] = span.a;
+  const [x1, y1] = span.b;
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const steps = Math.max(1, Math.ceil(Math.sqrt(dx * dx + dy * dy)));
+  let count = 0;
+  for (let s = 0; s < steps; s++) {
+    const t = (s + 0.5) / steps;
+    const x = Math.floor(x0 + t * dx);
+    const y = Math.floor(y0 + t * dy);
+    if (x >= 0 && x < mask.width && y >= 0 && y < mask.height && mask.data[y * mask.width + x] !== 0) count++;
+  }
+  return count;
+}
+
