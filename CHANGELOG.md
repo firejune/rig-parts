@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.30.0](https://github.com/rig-c/parts/compare/v1.29.0...v1.30.0) (2026-10-16)
+
+
+### Features
+
+* **propose:** lint stop against rising limb placing touch above first link ([#457](https://github.com/rig-c/parts/issues/457)) ([4525539](https://github.com/rig-c/parts/commit/4525539765e50de4745642bf1053e73697549e9c)), closes [#447](https://github.com/rig-c/parts/issues/447)
+
+
+### Bug Fixes
+
+* **propose:** resolve wrist on crossed opposite-side handwear parts to own side ([#458](https://github.com/rig-c/parts/issues/458)) ([#460](https://github.com/rig-c/parts/issues/460)) ([1cf29eb](https://github.com/rig-c/parts/commit/1cf29eb922bd536e30719c866dc607e017a013cb))
+
 ## [1.29.0](https://github.com/rig-c/parts/compare/v1.28.0...v1.29.0) (2026-10-16)
 
 
