@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.0](https://github.com/rig-c/parts/compare/v1.27.0...v1.28.0) (2026-10-16)
+
+
+### Features
+
+* **turn:** deform face and hair meshes along turn and tilt sliders ([#436](https://github.com/rig-c/parts/issues/436)) ([#443](https://github.com/rig-c/parts/issues/443)) ([5c81e79](https://github.com/rig-c/parts/commit/5c81e79d37d35682c41f8122c8f62c08cadd4f87))
+
 ## [1.27.0](https://github.com/rig-c/parts/compare/v1.26.0...v1.27.0) (2026-10-16)
 
 
