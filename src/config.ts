@@ -245,6 +245,17 @@ export interface Cut {
   under_fill?: 'colour';
 }
 
+export interface AlternateSetConfig {
+  name: string;
+  source?: string;
+  full?: string;
+  head?: string;
+  parts?: string[];
+  hides?: string[];
+  head_box?: [number, number, number, number];
+  cuts?: Cut[];
+}
+
 export interface Assemble {
   /** Rig pixels per source pixel. */
   rig_scale: number;
@@ -252,6 +263,7 @@ export interface Assemble {
   extend_below_crop?: Extend[];
   patches?: Patch[];
   cuts?: Cut[];
+  alternates?: AlternateSetConfig[];
 }
 
 export interface SingleBone {
@@ -1112,7 +1124,7 @@ function parseEarlyConfigFrom(raw: Json, door: EarlyDoor, base: string | null): 
   if (door === 'layers') {
     if ('seethrough' in t) checkSeeThrough(c, t.seethrough);
     if ('assemble' in t) {
-      const a = c.object('config.assemble', t.assemble, sectionRequired(door, 'assemble'), ['plan', 'extend_below_crop', 'patches', 'cuts']);
+      const a = c.object('config.assemble', t.assemble, sectionRequired(door, 'assemble'), ['plan', 'extend_below_crop', 'patches', 'cuts', 'alternates']);
       if (a !== null && 'rig_scale' in a) c.number('config.assemble.rig_scale', a.rig_scale, 'positive');
     }
   }
@@ -1122,10 +1134,14 @@ function parseEarlyConfigFrom(raw: Json, door: EarlyDoor, base: string | null): 
     checkProposedRigScale(c, t);
     if ('scene' in t) checkScene(c, t.scene);
     // Issue #349: the limbs' joints are their bones' origins, so the bones are read with them, and only then.
+    let limbs: LimbNames | null = null;
     if ('limbs' in t) {
       if (!('bones' in t)) c.fail('CONFIG_FIELD_PRESENT', 'config.bones', 'is absent; config.limbs names bones, and each joint is its bone\'s origin, so assemble reads the bones with the limbs');
       const names = 'bones' in t ? checkBones(c, t.bones) : null;
-      checkLimbs(c, t.limbs, made, names);
+      limbs = checkLimbs(c, t.limbs, made, names);
+    }
+    if (isPlainObject(t.assemble) && 'alternates' in t.assemble) {
+      checkAlternates(c, t.assemble.alternates, made, limbs);
     }
   }
   if ('cloth' in t) checkCloth(c, t.cloth);
@@ -1276,6 +1292,9 @@ function parseConfigFrom(raw: Json, base: string | null): { config: CharacterCon
   checkProposedRigScale(c, t);
   const names = 'bones' in t ? checkBones(c, t.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>(), parents: new Map<string, string>() };
   const limbs = 'limbs' in t ? checkLimbs(c, t.limbs, { parts, patches, cuts }, 'bones' in t ? names : null) : null;
+  if (isPlainObject(t.assemble) && 'alternates' in t.assemble) {
+    checkAlternates(c, t.assemble.alternates, { parts, patches, cuts }, limbs);
+  }
   if ('meshes' in t) checkMeshes(c, t.meshes, names.bones, names.chains);
   if ('regions' in t) checkRegions(c, t.regions, names.bones);
   if ('meshes' in t && 'regions' in t && 'assemble' in t) checkCoverage(c, [...parts, ...cuts], patches, t.meshes, t.regions, limbs);
@@ -1602,6 +1621,17 @@ function checkGeneration(c: Check, v: Json): void {
   }
 }
 
+function checkHeadBox(c: Check, path: string, b: Json): void {
+  const ints = Array.isArray(b) && b.length === 4 && b.every((n) => typeof n === 'number' && Number.isInteger(n));
+  if (!ints) c.fail('CONFIG_FIELD_TYPE', path, `is ${show(b)}; [x0, y0, x1, y1] in integer source pixels is required`);
+  else {
+    const [x0, y0, x1, y1] = b as number[];
+    if (!(x1 > x0 && y1 > y0 && x1 - x0 === y1 - y0)) {
+      c.fail('CONFIG_HEAD_BOX_SQUARE', path, `is ${x1 - x0}x${y1 - y0}; a non-empty square is required (the head run is fed a square crop)`);
+    }
+  }
+}
+
 function checkSeeThrough(c: Check, v: Json): void {
   const s = c.object('config.seethrough', v, ['resolution', 'steps', 'seed', 'offload'], ['head_box', 'arm_split']);
   if (s === null) return;
@@ -1610,17 +1640,7 @@ function checkSeeThrough(c: Check, v: Json): void {
   if ('steps' in s) c.int(`${p}.steps`, s.steps, 1);
   if ('seed' in s) c.int(`${p}.seed`, s.seed, 0);
   if ('offload' in s && typeof s.offload !== 'boolean') c.fail('CONFIG_FIELD_TYPE', `${p}.offload`, `is ${show(s.offload)}; true or false is required`);
-  if ('head_box' in s) {
-    const b = s.head_box;
-    const ints = Array.isArray(b) && b.length === 4 && b.every((n) => typeof n === 'number' && Number.isInteger(n));
-    if (!ints) c.fail('CONFIG_FIELD_TYPE', `${p}.head_box`, `is ${show(b)}; [x0, y0, x1, y1] in integer source pixels is required`);
-    else {
-      const [x0, y0, x1, y1] = b as number[];
-      if (!(x1 > x0 && y1 > y0 && x1 - x0 === y1 - y0)) {
-        c.fail('CONFIG_HEAD_BOX_SQUARE', `${p}.head_box`, `is ${x1 - x0}x${y1 - y0}; a non-empty square is required (the head run is fed a square crop)`);
-      }
-    }
-  }
+  if ('head_box' in s) checkHeadBox(c, `${p}.head_box`, s.head_box);
   if ('arm_split' in s) checkArmSplit(c, `${p}.arm_split`, s.arm_split, res);
 }
 
@@ -1689,7 +1709,7 @@ function checkRunTag(c: Check, path: string, run: Json, tag: Json): void {
  */
 function checkAssemble(c: Check, v: Json, door: 'assemble' | 'full'): { parts: string[]; patches: string[]; cuts: string[] } {
   const required = sectionRequired(door, 'assemble');
-  const a = c.object('config.assemble', v, required.filter((k) => k !== 'plan'), ['plan', 'extend_below_crop', 'patches', 'cuts']);
+  const a = c.object('config.assemble', v, required.filter((k) => k !== 'plan'), ['plan', 'extend_below_crop', 'patches', 'cuts', 'alternates']);
   if (a === null) return { parts: [], patches: [], cuts: [] };
   if (required.includes('plan') && !('plan' in a)) {
     c.fail('CONFIG_FIELD_PRESENT', 'config.assemble.plan', 'is absent and required; `assemble --propose-plan` prints one from the two runs — paste its plan and extend_below_crop into config.assemble');
@@ -1743,8 +1763,7 @@ function checkAssemble(c: Check, v: Json, door: 'assemble' | 'full'): { parts: s
  * one polygon. `into` is a new part name: not a plan part, not a patch, not
  * another cut's. Returns the names the cuts make, in order.
  */
-function checkCuts(c: Check, v: Json, plan: string[], patches: string[]): string[] {
-  const p = 'config.assemble.cuts';
+function checkCuts(c: Check, v: Json, plan: string[], patches: string[], p = 'config.assemble.cuts'): string[] {
   const names: string[] = [];
   if (!c.array(p, v, false)) return names;
   const seen = new Map<string, number>();
@@ -1794,6 +1813,56 @@ function checkCuts(c: Check, v: Json, plan: string[], patches: string[]): string
     }
   });
   return names;
+}
+
+function checkAlternates(
+  c: Check,
+  v: Json,
+  made: { parts: string[]; patches: string[]; cuts: string[] },
+  limbs: LimbNames | null,
+): void {
+  const p = 'config.assemble.alternates';
+  if (!c.array(p, v, true)) return;
+  const allSlots = new Set<string>([...made.parts, ...made.patches, ...made.cuts, ...(limbs?.parts.keys() ?? [])]);
+  const seenNames = new Map<string, number>();
+  (v as Json[]).forEach((entry, i) => {
+    const at = `${p}[${i}]`;
+    const e = c.object(at, entry, ['name'], ['source', 'full', 'head', 'parts', 'hides', 'head_box', 'cuts']);
+    if (e === null) return;
+    if ('name' in e && c.string(`${at}.name`, e.name)) {
+      if (!partNameOk(e.name)) c.fail('CONFIG_PART_NAME', `${at}.name`, `names the set ${show(e.name)}; a set name is a file prefix, so it may not be empty, start with "." or hold a slash`);
+      if (seenNames.has(e.name)) c.fail('CONFIG_PART_UNIQUE', `${at}.name`, `names the set "${e.name}" again (first at alternates[${seenNames.get(e.name)}])`);
+      else seenNames.set(e.name, i);
+    }
+    for (const k of ['source', 'full', 'head'] as const) {
+      if (k in e) c.string(`${at}.${k}`, e[k]);
+    }
+    if ('head_box' in e) checkHeadBox(c, `${at}.head_box`, e.head_box);
+    const altCuts = 'cuts' in e ? checkCuts(c, e.cuts, made.parts, [], `${at}.cuts`) : [];
+    const validParts = new Set<string>([...allSlots, ...altCuts]);
+    if ('parts' in e && c.array(`${at}.parts`, e.parts, true)) {
+      const seen = new Set<string>();
+      (e.parts as Json[]).forEach((pn, k) => {
+        if (!c.string(`${at}.parts[${k}]`, pn)) return;
+        if (!validParts.has(pn)) {
+          c.fail('CONFIG_NAME_RESOLVES', `${at}.parts[${k}]`, `is ${show(pn)}; a slot of the base rig (or a part made by this alternate's cuts) is required`);
+        } else if (seen.has(pn)) {
+          c.fail('CONFIG_PART_UNIQUE', `${at}.parts[${k}]`, `repeats "${pn}"; each covered part is named once`);
+        } else seen.add(pn);
+      });
+    }
+    if ('hides' in e && c.array(`${at}.hides`, e.hides, false)) {
+      const seen = new Set<string>();
+      (e.hides as Json[]).forEach((hn, k) => {
+        if (!c.string(`${at}.hides[${k}]`, hn)) return;
+        if (!allSlots.has(hn)) {
+          c.fail('CONFIG_NAME_RESOLVES', `${at}.hides[${k}]`, `is ${show(hn)}; a slot of the base rig is required`);
+        } else if (seen.has(hn)) {
+          c.fail('CONFIG_PART_UNIQUE', `${at}.hides[${k}]`, `repeats "${hn}"; each hidden slot is named once`);
+        } else seen.add(hn);
+      });
+    }
+  });
 }
 
 /**

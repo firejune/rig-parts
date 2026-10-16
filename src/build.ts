@@ -43,7 +43,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
-import { assemble, type AssembleResult, cutLines, hiddenLines, SINGLE_RUN_FACE_TAGS, driftLine, limbLines, FIGURE_MASK_FILE, figuresLine, holeKindsLine, holeLines, type ProjectRule, scenePhrase, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
+import { assemble, type AssembleResult, cutLines, hiddenLines, SINGLE_RUN_FACE_TAGS, singleRunHeadBox, driftLine, limbLines, FIGURE_MASK_FILE, figuresLine, holeKindsLine, holeLines, type ProjectRule, scenePhrase, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
 import { allocationClause, type Reducer, stageBClause, unboundedClause } from './automesh.ts';
 import { residualClause } from './autoenvelope.ts';
 import { type AutoMotionCase, failingRows, idleSchedule, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison, sourceSelfFailure, stimulusMotion, withStimulus } from './automotion.ts';
@@ -71,18 +71,18 @@ import {
   untestedIntervals,
 } from './autoreplay.ts';
 import { besideIdleLine, FOLD_LINE, type FoldsLine, LEVEL_LINE, type LevelLine, LIMB_LINE, type LimbLine, STRESS_LINE, SWEEP_LINE, type SweepLine, buildGateLines, causeLines, IDLE_FPS, IDLE_MAX_PX, maxRgbDiff, REQUIREMENTS_DIR, type CheckReport, type PackLine, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, GATE_PROFILE, JUDGEMENT_LINES, type JudgementLine, packedBuildArgs, packedBuildLabel, type PackMode, type PackShape, type PageEdges, readFrameSet, rigcFailed, rigcIdentity, rigcRanClause, REPORTED_LINES, type ReportedLine, type RigcRunner, runCheck, SEAM_DIR, SEAM_MEAN_BAR, seamPairText, seamRigPxText, SOURCE_LINE, SEAM_PX_BAR, SEAM_PX_LEVEL, SEAM_PX_LEVEL_HIGH, SPINEBOY_YARDSTICK, STILL_DIR } from './check.ts';
-import { type Cut, type Limb, loadConfig, loadConfigAndAnimations, loadEarlyConfig } from './config.ts';
+import { type Cut, type Extend, type Limb, loadConfig, loadConfigAndAnimations, loadEarlyConfig, type Patch, type PlanEntry } from './config.ts';
 import { failLine, PartsError, type Problem, refuseIfAny } from './errors.ts';
 import type { MeshQualityReport, MotionSchedule } from 'rig-c/mesh';
 import { encodeGif } from './gif.ts';
 import { CONTROL_SUFFIX, withAnimations } from './motion.ts';
 import type { PaletteError } from './palette.ts';
 import { type LayerSet, readLayers } from './layers.ts';
-import { type PartRecord, readParts, type SingleRunPad, tagOf, writeParts } from './parts.ts';
+import { type AlternatePartsRecord, type PartRecord, readParts, type RecompositeRecord, type SingleRunPad, tagOf, writeParts } from './parts.ts';
 import { encodePngBytes, readPng, writePng } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
 import { readRequirements, type RequirementLine, summaryText } from './requirements.ts';
-import { type AutoMeshReport, buildRig, DEFAULT_IDLE_KEYS, type FaceAxis, type IdleKeys, type MeshReport, type RigCommand, rigJsonText, type RigOutput, type RigSpec, type StrayCleared, type TurnRow } from './rig.ts';
+import { type AutoMeshReport, buildRig, DEFAULT_IDLE_KEYS, type FaceAxis, type IdleKeys, type MeshReport, type RigCommand, rigJsonText, type RigOutput, type RigSpec, SETS_FILE, type StrayCleared, type TurnRow } from './rig.ts';
 import { AUTHOR_NO_ROLE, isAuthorTag } from './tags.ts';
 import { TURN_BONE } from './turn.ts';
 import { pyRound } from './round.ts';
@@ -130,6 +130,14 @@ export function readRuns(full: string, head: string | null): { full: LayerSet; h
   return { full: f as LayerSet, head: h as LayerSet, single: head === null };
 }
 
+/** One `--alt <name>=<source>:<full>[:<head>]` argument (issue #454). */
+export interface AlternateCliInput {
+  name: string;
+  source: string;
+  full: string;
+  head?: string;
+}
+
 export interface AssembleStageInput {
   source: string;
   full: string;
@@ -138,6 +146,8 @@ export interface AssembleStageInput {
   config: string;
   seam: SeamRule;
   project: ProjectRule;
+  /** `--alt` entries, merged with `config.assemble.alternates` by set name (issue #454). */
+  alts?: readonly AlternateCliInput[];
 }
 
 /** Where the assemble stage writes: `parts.json`, the directory of part PNGs, the recomposite, and its error map. */
@@ -246,6 +256,191 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   const under = readUnders(input.config, fields.cuts);
   const caps = fields.limbs === undefined ? undefined : readCaps(input.config, fields.limbs);
   const result = assemble({ source: src, full: runs.full, head: runs.head, ...fields, under, ...(caps === undefined ? {} : { caps }), seamRule: input.seam, projectRule: input.project });
+
+  // Issue #454: alternate painting sets, assembled before any file is written.
+  const configDir = dirname(resolve(input.config));
+  const cliAlts = input.alts ?? [];
+  const cfgAlts = cfg.assemble.alternates ?? [];
+  const cliByName = new Map<string, AlternateCliInput>();
+  for (const a of cliAlts) cliByName.set(a.name, a);
+  const mergedAlts: Array<{
+    name: string;
+    at: string;
+    source?: string;
+    full?: string;
+    head?: string;
+    parts?: string[];
+    hides?: string[];
+    head_box?: [number, number, number, number];
+    cuts?: Cut[];
+  }> = cfgAlts.map((a, i) => {
+    const cli = cliByName.get(a.name);
+    if (cli !== undefined) cliByName.delete(a.name);
+    return {
+      name: a.name,
+      at: `config.assemble.alternates[${i}] (set "${a.name}")`,
+      source: cli?.source ?? (a.source === undefined ? undefined : resolve(configDir, a.source)),
+      full: cli?.full ?? (a.full === undefined ? undefined : resolve(configDir, a.full)),
+      head: cli !== undefined ? cli.head : a.head === undefined ? undefined : resolve(configDir, a.head),
+      parts: a.parts,
+      hides: a.hides,
+      head_box: a.head_box,
+      cuts: a.cuts,
+    };
+  });
+  for (const cli of cliByName.values()) {
+    mergedAlts.push({
+      name: cli.name,
+      at: `--alt ${cli.name}`,
+      source: cli.source,
+      full: cli.full,
+      head: cli.head,
+    });
+  }
+
+  const altProblems: Problem[] = [];
+  const altBuilt: Array<{ record: AlternatePartsRecord; images: Array<{ name: string; image: Raster }> }> = [];
+  const baseSlots = result.parts.parts.map((p) => p.name);
+  for (const alt of mergedAlts) {
+    if (alt.source === undefined || alt.full === undefined) {
+      altProblems.push({
+        code: 'ASSEMBLE_ALT_INPUT_PRESENT',
+        object: alt.at,
+        detail: 'is missing source or full; declare source and full on the alternate set in config.assemble.alternates, or supply --alt <name>=<source>:<full>[:<head>]',
+      });
+      continue;
+    }
+    if (!existsSync(alt.source)) {
+      altProblems.push({
+        code: 'ASSEMBLE_ALT_INPUT_PRESENT',
+        object: `${alt.source} (alternate set "${alt.name}")`,
+        detail: 'no such file; the alternate painting is required',
+      });
+      continue;
+    }
+    if (!existsSync(alt.full)) {
+      altProblems.push({
+        code: 'ASSEMBLE_ALT_INPUT_PRESENT',
+        object: `${alt.full} (alternate set "${alt.name}")`,
+        detail: 'no such file or directory; the alternate full run is required',
+      });
+      continue;
+    }
+    if (alt.head !== undefined && !existsSync(alt.head)) {
+      altProblems.push({
+        code: 'ASSEMBLE_ALT_INPUT_PRESENT',
+        object: `${alt.head} (alternate set "${alt.name}")`,
+        detail: 'no such file or directory; the alternate head run is required when named',
+      });
+      continue;
+    }
+    const altSrc = readSource(alt.source);
+    if (altSrc.width !== src.width || altSrc.height !== src.height) {
+      altProblems.push({
+        code: 'ASSEMBLE_ALT_CANVAS_SIZE',
+        object: `${alt.source} (alternate set "${alt.name}")`,
+        detail: `is ${altSrc.width}x${altSrc.height}, while the primary painting ${input.source} is ${src.width}x${src.height}; an alternate painting must share the primary painting's canvas size so its parts land in the same rig frame`,
+      });
+      continue;
+    }
+    const altRuns = readRuns(alt.full, alt.head ?? null);
+    const hidesSet = new Set(alt.hides ?? []);
+    const declaredSlots = alt.parts !== undefined ? alt.parts.filter((p) => !hidesSet.has(p)) : baseSlots.filter((p) => !hidesSet.has(p));
+    const coveredSet = new Set(declaredSlots);
+    const rawCuts = alt.cuts !== undefined ? alt.cuts : fields.cuts.filter((c) => coveredSet.has(c.into) && coveredSet.has(c.from)).map((c) => ({ ...c, under: undefined }));
+    const altLimbs: Record<string, Limb> = {};
+    if (fields.limbs !== undefined) {
+      for (const [ln, limb] of Object.entries(fields.limbs)) {
+        if (limb.segments.every((sg) => coveredSet.has(sg.part))) {
+          altLimbs[ln] = { ...limb, segments: limb.segments.map((sg) => ({ ...sg, cap: undefined })) };
+        }
+      }
+    }
+    const neededPlan = new Set<string>();
+    for (const [name] of fields.plan) {
+      if (
+        coveredSet.has(name) ||
+        rawCuts.some((c) => c.from === name) ||
+        Object.values(altLimbs).some((l) => l.segments.some((sg) => sg.from === name))
+      ) {
+        neededPlan.add(name);
+      }
+    }
+    const altPlan: PlanEntry[] = fields.plan
+      .filter(([name]) => neededPlan.has(name))
+      .map(([name, run, tag]): PlanEntry => (altRuns.single ? [name, 'full', tag] : [name, run, tag]));
+    let missingLayer = false;
+    for (const [name, run, tag] of altPlan) {
+      const l = altRuns[run].layers.find((x) => x.name === tag);
+      if (l === undefined || l.opaquePx === 0) {
+        altProblems.push({
+          code: 'ASSEMBLE_ALT_INPUT_PRESENT',
+          object: `alternate set "${alt.name}" (part "${name}")`,
+          detail: `takes ${run}:${tag}, which ${l === undefined ? 'is absent' : 'has 0 opaque pixels'} in ${altRuns[run].source}; every covered part of the alternate set must be present in its runs, or listed in hides`,
+        });
+        missingLayer = true;
+      }
+    }
+    if (missingLayer) continue;
+    const altPlanNames = new Set(altPlan.map((e) => e[0]));
+    const remapDraw = (d: Patch['draw']): Patch['draw'] => {
+      if (typeof d !== 'object') return d;
+      if (altPlanNames.has(d.before)) return d;
+      const baseIdx = fields.plan.findIndex((e) => e[0] === d.before);
+      for (let i = Math.max(0, baseIdx); i < fields.plan.length; i++) {
+        if (altPlanNames.has(fields.plan[i][0])) return { before: fields.plan[i][0] };
+      }
+      return 'front';
+    };
+    const altExtend: Extend[] = altRuns.single ? [] : fields.extend.filter((e) => altPlanNames.has(e.part));
+    const altPatches: Patch[] = fields.patches.filter((p) => coveredSet.has(p.name)).map((p) => ({ ...p, draw: remapDraw(p.draw) }));
+    const altCuts: Cut[] = rawCuts.map((c) => ({ ...c, draw: remapDraw(c.draw) }));
+    const altUnder = alt.cuts !== undefined ? readUnders(input.config, altCuts) : altCuts.map(() => null);
+    const altHeadBox = alt.head_box ?? (altRuns.single ? singleRunHeadBox(altSrc.width, altSrc.height, fields.resolution) : fields.headBox);
+    const altRes = assemble({
+      source: altSrc,
+      full: altRuns.full,
+      head: altRuns.head,
+      resolution: fields.resolution,
+      headBox: altHeadBox,
+      rigScale: fields.rigScale,
+      plan: altPlan,
+      extend: altExtend,
+      patches: altPatches,
+      cuts: altCuts,
+      under: altUnder,
+      ...(Object.keys(altLimbs).length > 0 ? { limbs: altLimbs, bones: fields.bones } : {}),
+      ...(fields.scene === undefined ? {} : { scene: fields.scene }),
+      ...(fields.armSplit !== undefined && altPlan.some((e) => e[1] === 'full' && (e[2] === 'handwear-r' || e[2] === 'handwear-l')) ? { armSplit: fields.armSplit } : {}),
+      seamRule: input.seam,
+      projectRule: input.project,
+    });
+    const keptImages = altRes.images
+      .filter(({ record }) => coveredSet.has(record.name))
+      .map(({ record, image }) => ({ name: `${alt.name}_${record.name}`, image }));
+    const keptRecords = altRes.parts.parts.filter((p) => coveredSet.has(p.name));
+    const slots: Record<string, string> = {};
+    for (const r of keptRecords) slots[r.name] = `${alt.name}_${r.name}`;
+    altBuilt.push({
+      record: {
+        name: alt.name,
+        ...(alt.parts === undefined ? {} : { parts: [...alt.parts] }),
+        ...(alt.hides === undefined || alt.hides.length === 0 ? {} : { hides: [...alt.hides] }),
+        slots,
+        records: keptRecords,
+        ghost_px: altRes.parts.ghost_px,
+        recomposite: altRes.parts.recomposite as RecompositeRecord,
+        ...(altRes.parts.scene === undefined ? {} : { scene: altRes.parts.scene }),
+        ...(altRes.parts.single_run_pad === undefined ? {} : { single_run_pad: altRes.parts.single_run_pad }),
+      },
+      images: keptImages,
+    });
+  }
+  refuseIfAny(altProblems);
+  if (altBuilt.length > 0) {
+    result.parts.alternates = altBuilt.map((b) => b.record);
+  }
+
   // Emit only after green: every refusal above has already thrown.
   mkdirSync(outs.partsDir, { recursive: true });
   mkdirSync(dirname(outs.partsJson), { recursive: true });
@@ -253,6 +448,9 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
   mkdirSync(dirname(outs.errorMap), { recursive: true });
   writeParts(outs.partsJson, result.parts);
   for (const { record, image } of result.images) writePng(join(outs.partsDir, `${record.name}.png`), image);
+  for (const b of altBuilt) {
+    for (const { name, image } of b.images) writePng(join(outs.partsDir, `${name}.png`), image);
+  }
   writePng(outs.recomposite, result.recomposite);
   writePng(outs.errorMap, result.errorMap);
   // Issue #242: under config.scene, the figure the recomposite was read inside, beside the recomposite.
@@ -820,11 +1018,19 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     const png = join(input.parts, 'parts', `${p.name}.png`);
     if (existsSync(png)) images.set(p.name, readPng(png));
   }
+  for (const alt of parts.alternates ?? []) {
+    for (const p of alt.records) {
+      const attName = `${alt.name}_${p.name}`;
+      const png = join(input.parts, 'parts', `${attName}.png`);
+      if (existsSync(png)) images.set(attName, readPng(png));
+    }
+  }
   const first = buildRig(cfg, parts, images, undefined, input.idleKeys ?? DEFAULT_IDLE_KEYS, input.reduce);
   const textsOf = (r: RigOutput): Array<[string, string]> => [
     ['rig.json', rigJsonText(r.rig)],
     ['motion.json', rigJsonText(withAnimations(r.motion, from === null ? null : from.table))],
     ['mesh_report.json', rigJsonText(r.meshReport)],
+    ...(r.sets === undefined ? [] : [[SETS_FILE, rigJsonText(r.sets)] as [string, string]]),
   ];
   const firstTexts = textsOf(first);
   // The gate runs before the lines are printed, and its lines print where they always did: an automatic part's motion
@@ -855,7 +1061,7 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
   const replays = new Map<string, ReplayRow | MultiIntervalRow>();
   if (settled) {
     const swapped = JSON.parse(rigJsonText(first.rig)) as RigSpec;
-    for (const k of chosen) swapped.skins.default[k.part] = { [k.part]: k.candidate.attachment };
+    for (const k of chosen) swapped.skins.default[k.part] = { ...swapped.skins.default[k.part], [k.part]: k.candidate.attachment };
     rig = { ...first, rig: swapped, meshReport: first.meshReport.map((m) => chosen.find((k) => k.part === m.part)?.candidate.row ?? m) };
     texts = textsOf(rig);
     let model: string | null = null;
@@ -1499,6 +1705,8 @@ export interface BuildInput {
   seamPairs?: boolean;
   /** `--keep-stills`, forwarded to the check as `check` takes it (issue #257): the setup-pose still under `check/setup_still/`; absent, nothing moves. */
   keepStills?: boolean;
+  /** `--alt`, forwarded to the assemble stage as `assemble` takes it (issue #454). */
+  alts?: readonly AlternateCliInput[];
 }
 
 /** What `build` does with one flag `check` takes: hands it to its check stage, takes it as its own, or refuses it because build supplies the value itself. */
@@ -1617,7 +1825,7 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
     // The same for the requirements file's own shape; its names resolve against the rig, in the check, before it builds.
     if (input.requirements !== undefined) readRequirements(input.requirements);
     assembleStage(
-      { source: input.source, full: input.full, head: input.head, config: input.config, seam: input.seam, project: input.project },
+      { source: input.source, full: input.full, head: input.head, config: input.config, seam: input.seam, project: input.project, ...(input.alts === undefined ? {} : { alts: input.alts }) },
       { partsJson: join(out, 'parts.json'), partsDir: join(out, 'parts'), recomposite: join(out, 'recomposite_rig.png'), errorMap: join(out, ERROR_MAP_FILE) },
       prefixed('assemble'),
     );
