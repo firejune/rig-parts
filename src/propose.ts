@@ -2630,17 +2630,118 @@ export function proposeWithBasis(
       hangs: `${p.name} (${p.from}): its art starts ${pyFixed(artTop - chestAt, 1)} px below chest's origin, so it hangs from the waist — its mesh takes the hip line and its skirt chains, no chest segment, and the breath does not carry its root`,
     };
   };
-  // Where the recipe's trees hang on a skirt: from 20 px below the hip to 4 px above the part's bottom, across its art.
-  const skirtInput = (p: PartRecord, mask: Mask, prefix: string): TreeInput => ({
-    prefix,
-    parent: 'hip',
-    rootY: hip[1] + 20,
-    tipY: p.y + p.h - 4,
-    xAt: (y, f) => bandX(mask, y, { frac: f }),
-    fallbackX: (f) => p.x + f * p.w,
-    frame: `${p.name}'s art (no art in the band: that share of its box's width)`,
-    edges: 'both',
-  });
+  // Where the recipe's trees hang on a skirt: from 20 px below the hip to 4 px above the cloth's bottom under each column, across its art.
+  const skirtInput = (p: PartRecord, mask: Mask, prefix: string, r: ClothRecipe, bot = p.y + p.h, emitNotes = true): TreeInput => {
+    const y0 = hip[1] + 20;
+    const y0Int = Math.max(0, pyInt(y0));
+    const botInt = Math.min(mask.height, pyInt(bot));
+    const n = r.chains ?? RECIPE_BACK_HAIR_CHAINS;
+    const into = r.split === undefined ? 1 : r.split.into;
+    const traceLastOpaqueY = (f: number): number => {
+      let lastY = -1;
+      for (let y = y0Int; y < botInt; y++) {
+        const bx = bandX(mask, y, { frac: f }) ?? p.x + f * p.w;
+        const rx = Math.max(0, Math.min(mask.width - 1, pyRound(bx)));
+        if (mask.data[y * mask.width + rx] !== 0) {
+          lastY = y;
+        } else if (lastY >= y0Int) {
+          let gapContinues = false;
+          for (let yy = y + 1; yy <= Math.min(botInt - 1, y + 12); yy++) {
+            if (mask.data[yy * mask.width + rx] !== 0) {
+              gapContinues = true;
+              break;
+            }
+          }
+          if (!gapContinues) break;
+        }
+      }
+      return lastY;
+    };
+    const shares: number[] = [];
+    for (let k = 0; k < n; k++) {
+      shares.push((k + 0.5) / n);
+      if (into > 1) {
+        for (let b = 0; b < into; b++) shares.push((k + (b + 0.5) / into) / n);
+      }
+    }
+    const uniformBottom = shares.every((f) => {
+      const lastY = traceLastOpaqueY(f);
+      if (lastY >= botInt - 4) return true;
+      if (lastY < botInt - 36 || lastY < y0Int + 4) return false;
+      const txBot = Math.max(0, Math.min(mask.width - 1, pyRound(bandX(mask, bot - 4, { frac: f }) ?? p.x + f * p.w)));
+      for (let yy = Math.max(y0Int, botInt - 16); yy < botInt; yy++) {
+        if (mask.data[yy * mask.width + txBot] !== 0) return true;
+      }
+      return false;
+    });
+    const notedEmpty = new Set<number>();
+    const cappedXAt = (maxY: number) => (y: number, f: number): number | null => {
+      const yi = Math.min(maxY, Math.max(0, pyRound(y)));
+      const a = Math.max(0, pyInt(y - 12));
+      const b = Math.min(maxY + 1, pyInt(y + 12));
+      let x0 = mask.width;
+      let x1 = -1;
+      for (let yy = a; yy < b; yy++) {
+        for (let x = 0; x < mask.width; x++) {
+          if (mask.data[yy * mask.width + x] !== 0) {
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+          }
+        }
+      }
+      const raw = x1 < x0 ? (bandX(mask, yi, { frac: f }) ?? p.x + f * p.w) : x0 + f * (x1 - x0);
+      const rx = Math.max(0, Math.min(mask.width - 1, pyRound(raw)));
+      if (mask.data[yi * mask.width + rx] !== 0) return raw;
+      let bestX: number | null = null;
+      let bestDist = mask.width + 1;
+      for (let x = 0; x < mask.width; x++) {
+        if (mask.data[yi * mask.width + x] !== 0) {
+          const d = Math.abs(x - rx);
+          if (d < bestDist) {
+            bestDist = d;
+            bestX = x;
+          }
+        }
+      }
+      return bestX ?? raw;
+    };
+    return {
+      prefix,
+      parent: 'hip',
+      rootY: y0,
+      tipY: bot - 4,
+      xAt: (y, f) => bandX(mask, y, { frac: f }),
+      fallbackX: (f) => p.x + f * p.w,
+      frame: `${p.name}'s art (no art in the band: that share of its box's width)`,
+      edges: 'both',
+      columnTip: (k, f) => {
+        const col0 = Math.floor(p.x + (k / n) * p.w);
+        const col1 = Math.max(col0, Math.ceil(p.x + ((k + 1) / n) * p.w) - 1);
+        let colMaxY = -1;
+        for (let y = y0Int; y < botInt; y++) {
+          for (let x = col0; x <= col1; x++) {
+            if (mask.data[y * mask.width + x] !== 0) colMaxY = y;
+          }
+        }
+        const fc = (k + 0.5) / n;
+        const trunkLastY = traceLastOpaqueY(fc);
+        if (colMaxY < y0Int + 4 || trunkLastY < y0Int + 4) {
+          if (emitNotes && !notedEmpty.has(k)) {
+            notedEmpty.add(k);
+            notes.push(
+              `${p.name} (${p === namedSkirt ? p.from : 'bottomwear'}): column ${k} of ${n} (x=${col0}..${col1}, share ${roundTo(fc, 6)}) holds no cloth below the root row y=${y0Int} — no tree drafted there`,
+            );
+          }
+          return null;
+        }
+        if (uniformBottom) return { tipY: bot - 4 };
+        const rawLastY = traceLastOpaqueY(f);
+        const lastY = rawLastY >= y0Int + 4 ? rawLastY : trunkLastY;
+        const tipY = Math.min(bot - 4, Math.max(y0Int + 4, lastY - 3));
+        return { tipY, xAt: cappedXAt(lastY) };
+      },
+    };
+  };
   // Issue #416: a bottomwear part lying on the trees of the dress config.cloth.bottomwear.part names (a ruffle hem
   // See-through returned on its own) rides the links it overlaps, as a layer wrapped round a tail does (issue #391),
   // and gets no trees of its own: one skirt carries one set of trees. The dress's mesh is the tail — its fixed
@@ -2702,12 +2803,12 @@ export function proposeWithBasis(
     const prefix = 'skirt';
     const partNamesLabel = list.map((q) => q.name).join(' -> ');
     const trees = T(list, 'bottomwear', dressRecipe, {
-      ...skirtInput(p0, unionMask, prefix),
+      ...skirtInput(p0, unionMask, prefix, dressRecipe, bot),
       tipY: bot - 4,
       frame: `${partNamesLabel}'s art (no art in the band: that share of ${p0.name}'s box width)`,
     });
     let swing: { bone: string; rest: number } | null = null;
-    if (dressRecipe.swing !== undefined) {
+    if (dressRecipe.swing !== undefined && trees.length > 0) {
       const cx = or(bandX(unionMask, y0, { frac: 0.5 }), p0.x + 0.5 * p0.w);
       const first = trees[0].points.length > 1 ? trees[0].points[1][1] : trees[0].tip[1];
       const at: [number, number] = [cx, y0];
@@ -2795,7 +2896,7 @@ export function proposeWithBasis(
       ? []
       : ((): PartRecord[] => {
           const mask = P.alpha(namedSkirt);
-          const tail = dressTail(namedSkirt, skirtFrame(namedSkirt, mask).segs, draftTrees(skirtInput(namedSkirt, mask, 'skirt'), dressRecipe));
+          const tail = dressTail(namedSkirt, skirtFrame(namedSkirt, mask).segs, draftTrees(skirtInput(namedSkirt, mask, 'skirt', dressRecipe, namedSkirt.y + namedSkirt.h, false), dressRecipe));
           return bw.filter((q) => !multiPartClaimed.has(q.name) && overLinks(tail, q).rides);
         })();
   let dressDrafted: Tail | null = null;
@@ -2812,11 +2913,11 @@ export function proposeWithBasis(
     if (skirtRecipe !== null) {
       const prefix = skirts.length === 1 ? 'skirt' : `skirt_${p.name}`;
       const fixed = [...segs];
-      const trees = T(p, 'bottomwear', skirtRecipe, skirtInput(p, mask, prefix));
+      const trees = T(p, 'bottomwear', skirtRecipe, skirtInput(p, mask, prefix, skirtRecipe));
       if (p === namedSkirt) dressDrafted = dressTail(p, fixed, trees);
       for (const t of trees) segs.push(t.chain);
       let swing: { bone: string; rest: number } | null = null;
-      if (skirtRecipe.swing !== undefined) {
+      if (skirtRecipe.swing !== undefined && trees.length > 0) {
         // One link long, straight down from the centre of the root row: the hip is drafted with no tip, so it is
         // unturned and the swing's setup rotation in its frame is its own direction, -90 degrees (Spine, y up).
         const cx = or(bandX(mask, y0, { frac: 0.5 }), p.x + 0.5 * p.w);

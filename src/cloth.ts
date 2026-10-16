@@ -194,6 +194,11 @@ export interface TreeMassInput {
   frame: string;
 }
 
+export interface TreeColumnTip {
+  tipY: number;
+  xAt?: (y: number, frac: number) => number | null;
+}
+
 export interface TreeInput {
   /** The chains' name prefix: tree k's trunk is `<prefix><k>_`, its branches `<prefix><k><a|b|…>_`. */
   prefix: string;
@@ -210,6 +215,12 @@ export interface TreeInput {
   edges: EdgeSides;
   /** Issue #445: when present, one entry per visible hair mass; tree k sits inside `masses[k]` rather than cell [k/n, (k+1)/n] of the whole side. */
   masses?: readonly TreeMassInput[];
+  /**
+   * Issue #438: when present, resolves the tip row (and an optional `xAt` bounded to that column's cloth rows) for
+   * column `k` (`0 <= k < n`) and share `frac` (`0 <= frac <= 1`), or returns `null` when column `k` holds no cloth
+   * below `rootY` (skipping tree `k`).
+   */
+  columnTip?: (k: number, frac: number) => TreeColumnTip | null;
 }
 
 /** The rows the n links of a path start at, then its tip's: lengths in the ratio q^j, from root row to tip row. */
@@ -237,27 +248,55 @@ export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
   const at = r.split === undefined ? r.links : r.split.at;
   const into = r.split === undefined ? 1 : r.split.into;
   const out: TreeChain[] = [];
+  const activeTrees: number[] = [];
+  const trunkCols = new Map<number, TreeColumnTip | null>();
+  for (let k = 0; k < n; k++) {
+    if (input.masses === undefined && input.columnTip !== undefined) {
+      const col = input.columnTip(k, (k + 0.5) / n);
+      trunkCols.set(k, col);
+      if (col === null) continue;
+    }
+    activeTrees.push(k);
+  }
+  const firstTree = activeTrees.length > 0 ? activeTrees[0] : 0;
+  const lastTree = activeTrees.length > 0 ? activeTrees[activeTrees.length - 1] : n - 1;
   const outerSide = (k: number, b: number): boolean => {
-    const left = k === 0 && b === 0;
-    const right = k === n - 1 && b === into - 1;
+    const left = k === firstTree && b === 0;
+    const right = k === lastTree && b === into - 1;
     return input.edges === 'both' ? left || right : input.edges === 'r' ? left : right;
   };
-  for (let k = 0; k < n; k++) {
+  for (const k of activeTrees) {
     const mass = input.masses?.[k];
-    const rows = mass === undefined ? baseRows : linkRows(mass.rootY, mass.tipY, r.links, ratio);
-    const frame = mass === undefined ? input.frame : mass.frame;
-    const x = (y: number, f: number): number => (mass === undefined ? input.xAt(y, f) ?? input.fallbackX(f) : mass.xAt(y, f) ?? mass.fallbackX(f));
-    const pt = (y: number, f: number): Point => [pyRound(x(y, f), 0), pyRound(y, 0)];
-    const rowRule = (j: number): string =>
-      `link ${j}'s row: ${j === 0 ? 'the root row' : `the root row + ${pyRound((rows[j] - rows[0]) / (rows[r.links] - rows[0]), 4)} of the span to the tip row`} (lengths in the ratio ${pyRound(ratio, 6)} last to first)`;
     const fc = mass === undefined ? (k + 0.5) / n : 0.5;
+    const trunkCol = trunkCols.get(k) ?? null;
+    const branchCols: Array<TreeColumnTip | null> = [];
+    if (into > 1 && mass === undefined && input.columnTip !== undefined) {
+      for (let b = 0; b < into; b++) {
+        branchCols.push(input.columnTip(k, (k + (b + 0.5) / into) / n));
+      }
+    }
+    const trunkTipY =
+      mass !== undefined
+        ? mass.tipY
+        : trunkCol === null
+          ? input.tipY
+          : branchCols.length > 0
+            ? Math.min(trunkCol.tipY, ...branchCols.map((bc) => bc?.tipY ?? trunkCol.tipY))
+            : trunkCol.tipY;
+    const rows = mass !== undefined ? linkRows(mass.rootY, mass.tipY, r.links, ratio) : trunkTipY === input.tipY ? baseRows : linkRows(input.rootY, trunkTipY, r.links, ratio);
+    const frame = mass === undefined ? input.frame : mass.frame;
+    const xWith = (col: TreeColumnTip | null, y: number, f: number): number =>
+      mass !== undefined ? (mass.xAt(y, f) ?? mass.fallbackX(f)) : ((col?.xAt ?? input.xAt)(y, f) ?? input.fallbackX(f));
+    const ptWith = (col: TreeColumnTip | null, y: number, f: number): Point => [pyRound(xWith(col, y, f), 0), pyRound(y, 0)];
+    const rowRuleFor = (pathRows: readonly number[], j: number): string =>
+      `link ${j}'s row: ${j === 0 ? 'the root row' : `the root row + ${pyRound((pathRows[j] - pathRows[0]) / (pathRows[r.links] - pathRows[0]), 4)} of the span to the tip row`} (lengths in the ratio ${pyRound(ratio, 6)} last to first)`;
     const trunkLinks = Math.min(at, r.links);
     const trunkEdge = into === 1 && outerSide(k, 0);
     const trunk: TreeChain = {
       chain: `${input.prefix}${k}_`,
       parent: input.parent,
       points: [],
-      tip: pt(rows[trunkLinks], fc),
+      tip: ptWith(trunkCol, rows[trunkLinks], fc),
       why: [],
       tipWhy: `${trunkLinks === r.links ? 'the tip row' : `link ${trunkLinks}'s row, the fork`}, ${pyRound(fc, 6)} of the way across ${frame} (tree ${k} of ${n}, the centre of its cell)`,
       tree: k,
@@ -266,8 +305,8 @@ export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
       last: [],
     };
     for (let j = 0; j < trunkLinks; j++) {
-      trunk.points.push(pt(rows[j], fc));
-      trunk.why.push(`${rowRule(j)}, ${pyRound(fc, 6)} of the way across ${frame} in the 24-row band there (tree ${k} of ${n}, the centre of its cell)`);
+      trunk.points.push(ptWith(trunkCol, rows[j], fc));
+      trunk.why.push(`${rowRuleFor(rows, j)}, ${pyRound(fc, 6)} of the way across ${frame} in the 24-row band there (tree ${k} of ${n}, the centre of its cell)`);
       trunk.roles.push(into === 1 ? (trunkEdge ? 'edge' : 'trunk') : 'trunk');
       trunk.depths.push(j);
       trunk.last.push(into === 1 && j === trunkLinks - 1);
@@ -276,11 +315,14 @@ export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
     if (into === 1) continue;
     for (let b = 0; b < into; b++) {
       const fb = mass === undefined ? (k + (b + 0.5) / into) / n : (b + 0.5) / into;
+      const bCol = branchCols[b] ?? trunkCol;
+      const bTipY = bCol?.tipY ?? trunkTipY;
+      const bRows = bTipY === trunkTipY ? rows : linkRows(input.rootY, bTipY, r.links, ratio);
       const ch: TreeChain = {
         chain: `${input.prefix}${k}${LETTERS[b]}_`,
         parent: `${trunk.chain}${trunkLinks - 1}`,
         points: [],
-        tip: pt(rows[r.links], fb),
+        tip: ptWith(bCol, bRows[r.links], fb),
         why: [],
         tipWhy: `the tip row, ${pyRound(fb, 6)} of the way across ${frame} (branch ${b} of ${into} of tree ${k}, the centre of its share of the cell)`,
         tree: k,
@@ -290,8 +332,8 @@ export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
       };
       const edge = r.split?.hold_tip === true && r.strength === undefined ? false : outerSide(k, b);
       for (let j = trunkLinks; j < r.links; j++) {
-        ch.points.push(j === trunkLinks ? trunk.tip : pt(rows[j], fb));
-        ch.why.push(j === trunkLinks ? `the fork: the trunk ${trunk.chain}'s tip` : `${rowRule(j)}, ${pyRound(fb, 6)} of the way across ${frame} in the 24-row band there (branch ${b} of ${into} of tree ${k})`);
+        ch.points.push(j === trunkLinks ? trunk.tip : ptWith(bCol, bRows[j], fb));
+        ch.why.push(j === trunkLinks ? `the fork: the trunk ${trunk.chain}'s tip` : `${rowRuleFor(bRows, j)}, ${pyRound(fb, 6)} of the way across ${frame} in the 24-row band there (branch ${b} of ${into} of tree ${k})`);
         ch.roles.push(edge ? 'edge' : 'branch');
         ch.depths.push(j);
         ch.last.push(j === r.links - 1);

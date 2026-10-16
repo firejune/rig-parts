@@ -254,3 +254,69 @@ export function splitTailRecipe(parts: string[] = ['hair_back', 'hair_back_front
   };
 }
 
+/**
+ * Issue #438: a floor-spread skirt on {@link CLOTH_RIG} (240x360) whose side
+ * wings spread out on the floor (`x 40..79` and `x 160..199, y 230..279`) while
+ * the middle hem ends at `y 229` above bare thighs (`legs` at `x 84..115` and
+ * `x 124..155, y 215..334`). Under a uniform `tipY = p.y + p.h - 4 = 276`, the
+ * middle trees' branch tips (`[90, 276]`, `[110, 276]`, `[129, 276]`, `[149, 276]`)
+ * land on bare thigh (`skirt` alpha 0, `legs` alpha 255) and their middle links
+ * (`skirt1b_1` at `[110, 256]`, `skirt2a_1` at `[129, 256]`) trigger the two
+ * `LINT <bone> at [x, y] is off the art of mesh 'skirt'` lines; when each column
+ * places its tip from the cloth's own alpha row (`y = 226` for trees 1 and 2,
+ * `y = 276` for trees 0 and 3), every tip sits on opaque cloth (`alpha = 255`)
+ * and all off-art LINT lines are absent.
+ */
+export const FLOOR_SKIRT_PARTS: ProposeFixturePart[] = [
+  CLOTH_PARTS[0]!,
+  {
+    name: 'legs',
+    from: 'full:legwear',
+    x: 84,
+    y: 215,
+    w: 72,
+    h: 120,
+    colour: [240, 210, 190],
+    rects: [
+      [84, 215, 32, 120],
+      [124, 215, 32, 120],
+    ],
+  },
+  {
+    name: 'skirt',
+    from: 'full:bottomwear',
+    x: 40,
+    y: 160,
+    w: 160,
+    h: 120,
+    colour: [72, 110, 200],
+    rects: [
+      [80, 160, 80, 35],
+      [40, 195, 160, 35],
+      [40, 230, 40, 50],
+      [160, 230, 40, 50],
+    ],
+  },
+  CLOTH_PARTS[2]!,
+  CLOTH_PARTS[3]!,
+];
+
+/**
+ * Issue #438: a variant of {@link FLOOR_SKIRT_PARTS} whose rightmost column
+ * (`k = 3`, `x = 160..199`) holds cloth only in the waistband above the root row
+ * (`y = 160..186 < rootY = 187`), so column 3 has no cloth below `rootY` and
+ * gets no tree drafted there, with a note saying so.
+ */
+export const FLOOR_SKIRT_EMPTY_COL_PARTS: ProposeFixturePart[] = FLOOR_SKIRT_PARTS.map((p) =>
+  p.name === 'skirt'
+    ? {
+        ...p,
+        rects: [
+          [80, 160, 120, 27],
+          [40, 187, 120, 43],
+          [40, 230, 40, 50],
+        ],
+      }
+    : p,
+);
+
