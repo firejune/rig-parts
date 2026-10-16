@@ -79,6 +79,7 @@ export interface BasisFile {
  * `derived` placement names at least one bone; a constant is a finite number.
  */
 export function checkBasis(P: PartSet, proposal: Proposal, basis: ProposalBasis): void {
+  P = P.beforeLimbs();
   const problems: Problem[] = [];
   const names = [...expand(proposal.bones).byName.keys()];
   const bones = new Set(names);
