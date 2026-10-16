@@ -8955,6 +8955,52 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
       `Bar 1 (tip coordinates & alpha): ${floorTipReport.join(', ')}; Bar 2 (existing fixtures): 0 px delta across CLOTH_PARTS/DRESS/HEM/SPLIT_TAIL_PARTS/wind; Bar 3 (off-art LINT): before=${JSON.stringify(unfixedOffArtLines)} (4 middle tips on bare thigh: ${unfixedMiddleTipsOnBareThigh}), after=${JSON.stringify(fixedOffArtLines)}; empty column 3: chains=[${emptyColSkirtNames}], note=${JSON.stringify(emptyColNote)}`,
       "issue #438: bottomwear tree tips are placed from the cloth's own alpha at the row where the cloth ends under each tree's column rather than the part box's bottom row, so on a floor-spread skirt middle trees stop at the hem instead of landing on bare thigh, and a column with no cloth below the root row drafts no tree there and says so",
     );
+
+    // PR521 — issue #447: on a prone/rising-limb rig where leg_r0 descends [94, 180] -> [94, 230] and leg_r1 bends back
+    // toward the ceiling [94, 230] -> [94, 175], a stop on skirt0_ (firstLink skirt0_0 at [97, 187]) against leg_r1 with
+    // at: [55, 0] places skirt0__touch at [94, 175], above skirt0_0's root (dx = -3, dy = +12 in Spine y-up -> rest
+    // 104.04 deg, |rest| + outward 80 = 184.04 deg > 180 deg, wrapping the limit arc through -90 deg), and emits a
+    // stop-touch-above-root LINT line; the same stop against descending leg_r0 with at: [25, 0] places skirt0__touch at
+    // [94, 205] below skirt0_0 (rest -99.46 deg, |rest| + 80 = 179.46 deg <= 180 deg) and emits 0 stop findings.
+    const proneBones: BoneEntry[] = [
+      ...prop.bones,
+      { chain: 'leg_r', parent: 'hip', points: [[94, 180], [94, 230]], tip: [94, 175] },
+    ];
+    const stopLinks = ['skirt0_0', 'skirt0a_0', 'skirt0a_1'];
+    const descendingStops = [{ chain: 'skirt0_', links: stopLinks, against: 'leg_r0', at: [25, 0] as [number, number], outward: 80, inward: 0, lower: { inward: 0, outward: 80 } }];
+    const risingStops = [{ chain: 'skirt0_', links: stopLinks, against: 'leg_r1', at: [55, 0] as [number, number], outward: 80, inward: 0, lower: { inward: 0, outward: 80 } }];
+    const descendingStopFindings = lint(P, { bones: proneBones, meshes: prop.meshes, stops: descendingStops }).findings.filter(
+      (f) => f.kind === 'stop-touch-above-root',
+    );
+    const risingStopFindings = lint(P, { bones: proneBones, meshes: prop.meshes, stops: risingStops }).findings.filter(
+      (f) => f.kind === 'stop-touch-above-root',
+    );
+    const risingStopLine = risingStopFindings.map(lintLine).join(' | ');
+    const wantRisingStopLine =
+      "LINT stop on skirt0_ (skirt0_0 at [97.0, 187.0]) against leg_r1 (at [55.0, 0.0]) places skirt0__touch at [94.0, 175.0], above skirt0_0's root (rest 104.04 deg, |rest| + outward 184.04 deg): stop against the descending limb bone below skirt0_0, set links to start at a link below skirt0__touch, or omit the stop on a rising limb";
+    const stopCfgPath = join(dir, 'rising-stop.json');
+    writeFileSync(
+      stopCfgPath,
+      JSON.stringify({
+        ...proposalConfig(CLOTH_PARTS, prop),
+        bones: proneBones,
+        constraints: prop.constraints ?? [],
+        stops: risingStops,
+      }),
+    );
+    const stopCli = runCli(['propose', '--parts', dir, '--source', join(dir, 'painting.png'), '--out', join(dir, 'stop-out'), '--from-config', stopCfgPath]);
+    const stopCliPrinted = stopCli.out.split('\n').filter((l) => l.startsWith('LINT stop on '));
+    say(
+      'PR521_A_STOP_AGAINST_A_RISING_LIMB_PLACING_TOUCH_ABOVE_THE_FIRST_LINK_EMITS_A_LINT_LINE',
+      descendingStopFindings.length === 0 &&
+        risingStopFindings.length === 1 &&
+        risingStopLine === wantRisingStopLine &&
+        stopCli.status === 1 &&
+        stopCliPrinted.length === 1 &&
+        stopCliPrinted[0] === wantRisingStopLine,
+      `against descending leg_r0 (at [25, 0] -> touch [94, 205]): ${descendingStopFindings.length} finding(s); against rising leg_r1 (at [55, 0] -> touch [94, 175] above skirt0_0 [97, 187]): ${risingStopFindings.length} finding(s), line=${JSON.stringify(risingStopLine)}, --from-config exit ${stopCli.status}`,
+      'issue #447: when a stop is declared against a rising limb bone whose local frame places <chain>_touch above links[0], the aim vector points into the upper half-plane (|rest| > 90 deg) and |rest| + outward > 180 deg wraps the limit arc across the +-180 deg branch cut through straight down (-90 deg); lint names the stop, both coordinates and the angles',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
