@@ -512,7 +512,10 @@ layers, as follows; every step is arithmetic on the declared bones and the layer
   upper pixel inside it, above the line, keeps alpha × (its distance above the line ÷ the band's
   height there): 0 on the line, 1 on the band's arc. Over art that stays opaque under it at any
   angle, the rest pose composites to the hard cut's bytes and no bend shows through the fade what
-  lies behind the limb. The `limb cap:` line adds `edge "feather": N px of "<upper>" faded …`, and
+  lies behind the limb. A pixel the fade lowers to alpha 8 or below (`OPAQUE_ALPHA_ABOVE`) leaves the
+  upper piece's region (its opacity is held by the lower piece's cap beneath), and the rest of the
+  ramp is kept through `pushBackFringe` when another limb crosses in front of the joint (issue #444).
+  The `limb cap:` line adds `edge "feather": N px of "<upper>" faded …`, and
   the record `edge`, `feather_radius` and `feathered_px`.
 - **`cut_band: N`** (issue #360, opt-in on the segment below a joint whose two segments take one
   part). The cut is placed rather than typed: of the lines parallel to the joint line at whole-pixel
