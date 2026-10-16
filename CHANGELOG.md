@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.29.0](https://github.com/rig-c/parts/compare/v1.28.0...v1.29.0) (2026-10-16)
+
+
+### Features
+
+* **assemble:** separate overlapping arms via seethrough.arm_split ([#439](https://github.com/rig-c/parts/issues/439)) ([#453](https://github.com/rig-c/parts/issues/453)) ([fbe3027](https://github.com/rig-c/parts/commit/fbe3027274ae23a70039757d0935b43a75266803))
+* **limbs:** add declared per-limb split for crossed legs in one layer ([#446](https://github.com/rig-c/parts/issues/446)) ([#456](https://github.com/rig-c/parts/issues/456)) ([5a705f1](https://github.com/rig-c/parts/commit/5a705f1432769391861c318be422ebfb44c16f73))
+* **propose:** reconstruct pre-limb parts in one run ([#440](https://github.com/rig-c/parts/issues/440)) ([#455](https://github.com/rig-c/parts/issues/455)) ([eb05790](https://github.com/rig-c/parts/commit/eb05790f4f4537dee3a0305830b02cf545d28be8))
+
+
+### Bug Fixes
+
+* **cloth:** derive back-hair tree count from visible hanging masses ([322484a](https://github.com/rig-c/parts/commit/322484a8af85672832493bb6aed1506fe7e52ba5))
+* **cloth:** derive back-hair tree count from visible hanging masses ([1e87ff1](https://github.com/rig-c/parts/commit/1e87ff1307b7606e99cf0c177d0ff6718bf35bf8)), closes [#445](https://github.com/rig-c/parts/issues/445)
+* **cloth:** place bottomwear tree tips on each column's own cloth alpha ([#438](https://github.com/rig-c/parts/issues/438)) ([#452](https://github.com/rig-c/parts/issues/452)) ([48542f1](https://github.com/rig-c/parts/commit/48542f10d30a63786e5d33895085c7282e4c87aa))
+
 ## [1.28.0](https://github.com/rig-c/parts/compare/v1.27.0...v1.28.0) (2026-10-16)
 
 
