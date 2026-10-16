@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.27.0](https://github.com/rig-c/parts/compare/v1.26.0...v1.27.0) (2026-10-16)
+
+
+### Features
+
+* **cloth:** allow a declared tree to span a list of parts ([#437](https://github.com/rig-c/parts/issues/437)) ([#441](https://github.com/rig-c/parts/issues/441)) ([d9343cb](https://github.com/rig-c/parts/commit/d9343cb19f2e06f33a2887456a3ad3025b10de75))
+
+
+### Bug Fixes
+
+* **assemble:** keep counts consistent on feathered joints of crossed limbs ([#448](https://github.com/rig-c/parts/issues/448)) ([956a8a6](https://github.com/rig-c/parts/commit/956a8a62bb73f4803fa83fcd30a9d0cebf589ac4)), closes [#444](https://github.com/rig-c/parts/issues/444)
+
 ## [1.26.0](https://github.com/rig-c/parts/compare/v1.25.0...v1.26.0) (2026-10-15)
 
 
