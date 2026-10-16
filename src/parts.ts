@@ -241,6 +241,23 @@ export interface RecompositeRecord {
   holes: HoleRecord[];
 }
 
+export interface AlternateSetMap {
+  slots: Record<string, string>;
+  hides?: string[];
+}
+
+export interface AlternatePartsRecord {
+  name: string;
+  parts?: string[];
+  hides?: string[];
+  slots: Record<string, string>;
+  records: PartRecord[];
+  ghost_px: Record<string, number>;
+  recomposite: RecompositeRecord;
+  scene?: SceneRecord;
+  single_run_pad?: SingleRunPad;
+}
+
 export interface PartsFile {
   rig_size: [number, number];
   scale_rig_per_source: number;
@@ -252,6 +269,8 @@ export interface PartsFile {
   scene?: SceneRecord;
   /** Written only for one run whose file is not the resolution square (issue #366): where the file sat on the run's square; absent otherwise. */
   single_run_pad?: SingleRunPad;
+  /** Written only when alternate painting sets were assembled (issue #454); absent otherwise. */
+  alternates?: AlternatePartsRecord[];
 }
 
 /**
@@ -286,8 +305,8 @@ export interface SceneRecord {
   figure_mask: string;
 }
 
-const TOP_KEYS = ['rig_size', 'scale_rig_per_source', 'parts', 'ghost_px', 'recomposite', 'scene', 'single_run_pad'] as const;
-const REQUIRED_TOP_KEYS = TOP_KEYS.filter((k) => k !== 'recomposite' && k !== 'scene' && k !== 'single_run_pad');
+const TOP_KEYS = ['rig_size', 'scale_rig_per_source', 'parts', 'ghost_px', 'recomposite', 'scene', 'single_run_pad', 'alternates'] as const;
+const REQUIRED_TOP_KEYS = TOP_KEYS.filter((k) => k !== 'recomposite' && k !== 'scene' && k !== 'single_run_pad' && k !== 'alternates');
 export const SINGLE_RUN_PAD_KEYS = ['file_size', 'side', 'left', 'top'] as const;
 export const SCENE_KEYS = ['figure_alpha_above', 'figure_px', 'figure_mask'] as const;
 export const RECOMPOSITE_KEYS = ['mean_abs', 'within_limit', 'within_share', 'error_limit', 'error_px', 'covered_alpha', 'uncovered_error_px', 'hole_count', 'holes_listed', 'holes'] as const;
@@ -346,24 +365,43 @@ export function tagOf(from: string): string | null {
   return f === null || f.run === 'painting' ? null : f.tag;
 }
 
+function serializePartList(parts: readonly PartRecord[]): Array<Record<string, unknown>> {
+  return parts.map((p) =>
+    Object.fromEntries(PART_KEYS.filter((k) => p[k] !== undefined).map((k) => [k, k === FRINGE_KEY ? (p.fringe_pushed_back ?? []).map((q) => ({ part: q.part, px: q.px })) : k === LIMB_KEY ? orderedLimb(p.limb as LimbRecord) : p[k]])),
+  );
+}
+
+function serializeRecomposite(r: RecompositeRecord): Record<string, unknown> {
+  return {
+    ...Object.fromEntries(RECOMPOSITE_KEYS.filter((k) => k !== 'holes').map((k) => [k, r[k]])),
+    holes: r.holes.map((h) => ({ ...Object.fromEntries(HOLE_KEYS.filter((k) => k !== 'borders').map((k) => [k, h[k]])), borders: h.borders.map((b) => ({ part: b.part, px: b.px })) })),
+  };
+}
+
 export function serializeParts(file: PartsFile): string {
   const ordered = {
     rig_size: file.rig_size,
     scale_rig_per_source: file.scale_rig_per_source,
-    parts: file.parts.map((p) =>
-      Object.fromEntries(PART_KEYS.filter((k) => p[k] !== undefined).map((k) => [k, k === FRINGE_KEY ? (p.fringe_pushed_back ?? []).map((q) => ({ part: q.part, px: q.px })) : k === LIMB_KEY ? orderedLimb(p.limb as LimbRecord) : p[k]])),
-    ),
+    parts: serializePartList(file.parts),
     ghost_px: Object.fromEntries(Object.keys(file.ghost_px).sort().map((k) => [k, file.ghost_px[k]])),
-    ...(file.recomposite === undefined
-      ? {}
-      : {
-          recomposite: {
-            ...Object.fromEntries(RECOMPOSITE_KEYS.filter((k) => k !== 'holes').map((k) => [k, (file.recomposite as RecompositeRecord)[k]])),
-            holes: file.recomposite.holes.map((h) => ({ ...Object.fromEntries(HOLE_KEYS.filter((k) => k !== 'borders').map((k) => [k, h[k]])), borders: h.borders.map((b) => ({ part: b.part, px: b.px })) })),
-          },
-        }),
+    ...(file.recomposite === undefined ? {} : { recomposite: serializeRecomposite(file.recomposite) }),
     ...(file.scene === undefined ? {} : { scene: Object.fromEntries(SCENE_KEYS.map((k) => [k, (file.scene as SceneRecord)[k]])) }),
     ...(file.single_run_pad === undefined ? {} : { single_run_pad: Object.fromEntries(SINGLE_RUN_PAD_KEYS.map((k) => [k, (file.single_run_pad as SingleRunPad)[k]])) }),
+    ...(file.alternates === undefined
+      ? {}
+      : {
+          alternates: file.alternates.map((a) => ({
+            name: a.name,
+            ...(a.parts === undefined ? {} : { parts: a.parts }),
+            ...(a.hides === undefined ? {} : { hides: a.hides }),
+            slots: a.slots,
+            records: serializePartList(a.records),
+            ghost_px: Object.fromEntries(Object.keys(a.ghost_px).sort().map((k) => [k, a.ghost_px[k]])),
+            recomposite: serializeRecomposite(a.recomposite),
+            ...(a.scene === undefined ? {} : { scene: Object.fromEntries(SCENE_KEYS.map((k) => [k, (a.scene as SceneRecord)[k]])) }),
+            ...(a.single_run_pad === undefined ? {} : { single_run_pad: Object.fromEntries(SINGLE_RUN_PAD_KEYS.map((k) => [k, (a.single_run_pad as SingleRunPad)[k]])) }),
+          })),
+        }),
   };
   return `${JSON.stringify(ordered, null, 2)}\n`;
 }
@@ -595,6 +633,9 @@ function checkParts(raw: unknown, path: string): PartsFile {
   if ('recomposite' in o && sizeOk) {
     const names = Array.isArray(o.parts) ? new Set(o.parts.map((p) => (typeof p === 'object' && p !== null ? (p as Record<string, unknown>).name : undefined)).filter((n): n is string => typeof n === 'string')) : new Set<string>();
     checkRecomposite(o.recomposite, path, size as [number, number], names, fail);
+  }
+  if ('alternates' in o && !Array.isArray(o.alternates)) {
+    fail('PARTS_FIELD_TYPE', `${path} field "alternates"`, `is ${show(o.alternates)}; an array of alternate set records is required`);
   }
   refuseIfAny(problems);
   return raw as PartsFile;

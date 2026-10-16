@@ -2569,7 +2569,7 @@ export function stressPlan(rig: Record<string, unknown>, motion: Record<string, 
       continue;
     }
     const onSlot = skin[p.name];
-    const atts: unknown[] = isRecord(onSlot) ? Object.values(onSlot) : [];
+    const atts: unknown[] = isRecord(onSlot) ? (isRecord(onSlot[p.name]) ? [onSlot[p.name]] : Object.values(onSlot)) : [];
     const weighted = atts.filter((a): a is Record<string, unknown> & { weights: unknown[] } => isRecord(a) && Array.isArray(a.weights));
     if (weighted.length === 0) {
       notRead.push({ part: p.name, reason: 'it is not a weighted mesh, so it rides one bone whole and cannot stretch' });
@@ -4252,7 +4252,7 @@ function offChainClause(rig: Record<string, unknown>, motion: Record<string, unk
   const skins = isRecord(rig.skins) ? rig.skins : {};
   const skin = isRecord(skins.default) ? skins.default : {};
   const onSlot = skin[part];
-  const atts: unknown[] = isRecord(onSlot) ? Object.values(onSlot) : [];
+  const atts: unknown[] = isRecord(onSlot) ? (isRecord(onSlot[part]) ? [onSlot[part]] : Object.values(onSlot)) : [];
   const weighted = atts.filter((a): a is Record<string, unknown> & { weights: unknown[] } => isRecord(a) && Array.isArray(a.weights));
   if (weighted.length === 0) return null;
   const { found } = chainsCarrying(rig, motion, part);
@@ -4295,7 +4295,8 @@ function boundBones(rig: Record<string, unknown>, part: string): Set<string> {
   const slot = (Array.isArray(rig.slots) ? rig.slots : []).filter(isRecord).find((sl) => sl.name === part);
   const skins = isRecord(rig.skins) ? rig.skins : {};
   const skin = isRecord(skins.default) ? skins.default : {};
-  const atts = isRecord(skin[part]) ? Object.values(skin[part]) : [];
+  const onSlot = skin[part];
+  const atts = isRecord(onSlot) ? (isRecord(onSlot[part]) ? [onSlot[part]] : Object.values(onSlot)) : [];
   const bound = new Set<string>();
   for (const a of atts) {
     if (isRecord(a) && Array.isArray(a.weights)) for (const v of a.weights) for (const w of Array.isArray(v) ? v : []) if (isRecord(w) && typeof w.bone === 'string') bound.add(w.bone);
@@ -4345,7 +4346,8 @@ function breathCarrier(
   // The one weighted mesh the part draws, its weights in the order of the geometry's vertices.
   const skins = isRecord(rig.skins) ? rig.skins : {};
   const skin = isRecord(skins.default) ? skins.default : {};
-  const atts = isRecord(skin[part]) ? Object.values(skin[part]) : [];
+  const onSlot = skin[part];
+  const atts = isRecord(onSlot) ? (isRecord(onSlot[part]) ? [onSlot[part]] : Object.values(onSlot)) : [];
   const first = m.shown[0];
   if (atts.length !== 1 || first === null || first === undefined) return null;
   const att = atts[0];

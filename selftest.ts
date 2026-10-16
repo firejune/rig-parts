@@ -18108,6 +18108,52 @@ function runBuildSuite(): number {
       `portrait: exit ${port.status}, ${port.out.split('\n').find((l) => l.startsWith('build: ')) ?? 'no build line'}, padded line ${port.out.includes('[assemble]   padded: ') ? 'printed' : 'MISSING'}, parts.json single_run_pad ${portPad}; the square build prints ${single.out.includes('padded: ') ? 'A PADDED LINE' : 'no padded line'}; a 128x128 painting: exit ${wrongSize.status}, ${wrongSizeFail.map((l) => l.trim().slice(0, 140)).join(' | ')}, --out holds [${entries(join(wrongSizeDir, 'out')).join(', ')}]`,
       'issue #366: the card\'s own test — a portrait PSD builds green through the single-run path, and the one thing padding cannot reconcile, a painting of another size, is named before anything is written',
     );
+
+    // BU169 — issue #454: alternate paintings cut and built as <set>_<part> attachment sets under the same bones, with
+    // sets.json emitted beside rig.json; both subset sets (parts + hides in config.assemble.alternates) and full sets
+    // (--alt on the CLI) are covered, while a build without alternates writes no sets.json, and a missing input or a
+    // mismatched canvas size is refused at [assemble] with ASSEMBLE_ALT_INPUT_PRESENT or ASSEMBLE_ALT_CANVAS_SIZE.
+    const altDir = join(dir, 'alt-sets');
+    const altCfg = JSON.parse(JSON.stringify(moving)) as Record<string, unknown>;
+    (altCfg.assemble as Record<string, unknown>).alternates = [
+      {
+        name: 'head_side',
+        source: 'painting.png',
+        full: 'full',
+        head: 'head',
+        parts: ['face'],
+        hides: ['shoes'],
+      },
+    ];
+    writeAssembleFixture(altDir, altCfg);
+    const altOut = join(altDir, 'out');
+    const altRun = runCli([...buildArgs(altDir, altOut), '--alt', `body_side=${join(altDir, 'painting.png')}:${join(altDir, 'full')}:${join(altDir, 'head')}`]);
+    const altSetsPath = join(altOut, 'rig', 'sets.json');
+    const altSets = existsSync(altSetsPath) ? readJsonFile(altSetsPath) : null;
+    const altAtlas = existsSync(join(altOut, 'check', 'build', 'skeleton.atlas')) ? readFileSync(join(altOut, 'check', 'build', 'skeleton.atlas'), 'utf8') : '';
+    const missingAlt = runCli([...buildArgs(dir, join(dir, 'alt-missing')), '--alt', `side=${join(dir, 'no-such.png')}:${join(dir, 'full')}:${join(dir, 'head')}`]);
+    const canvasAlt = runCli([...buildArgs(dir, join(dir, 'alt-canvas')), '--alt', `side=${join(portDir, 'painting.png')}:${join(dir, 'full')}:${join(dir, 'head')}`]);
+    say(
+      'BU169_ALTERNATE_PAINTINGS_EMIT_SUBSET_AND_FULL_ATTACHMENT_SETS_AND_SETS_JSON_AND_REFUSE_MISSING_OR_MISMATCHED_INPUTS',
+      altRun.status === 0 &&
+        existsSync(join(altOut, 'parts', 'head_side_face.png')) &&
+        !existsSync(join(altOut, 'parts', 'head_side_topwear.png')) &&
+        existsSync(join(altOut, 'parts', 'body_side_topwear.png')) &&
+        altSets !== null &&
+        altSets.spec === 'rig-parts-sets/1' &&
+        JSON.stringify(altSets.sets) === '{"head_side":{"slots":{"face":"head_side_face"},"hides":["shoes"]},"body_side":{"slots":{"hair_back":"body_side_hair_back","topwear":"body_side_topwear","bottomwear":"body_side_bottomwear","shoes":"body_side_shoes","face":"body_side_face"}}}' &&
+        altAtlas.includes('\nhead_side_face\n') &&
+        altAtlas.includes('\nbody_side_topwear\n') &&
+        !existsSync(join(out, 'rig', 'sets.json')) &&
+        missingAlt.status === 1 &&
+        missingAlt.out.includes('FAIL  ASSEMBLE_ALT_INPUT_PRESENT:') &&
+        entries(join(dir, 'alt-missing')).length === 0 &&
+        canvasAlt.status === 1 &&
+        canvasAlt.out.includes('FAIL  ASSEMBLE_ALT_CANVAS_SIZE:') &&
+        entries(join(dir, 'alt-canvas')).length === 0,
+      `alt build exit ${altRun.status}, sets.json ${JSON.stringify(altSets?.sets ?? null)}, plain build has sets.json: ${existsSync(join(out, 'rig', 'sets.json'))}; missing input exit ${missingAlt.status}; wrong canvas exit ${canvasAlt.status}`,
+      'issue #454: a subset alternate set cuts only its declared parts and records its hides, a full alternate set cuts every plan slot, both pack into the single atlas and write sets.json, a build with no alternates is untouched, and missing inputs or mismatched canvas sizes fail before anything is written',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

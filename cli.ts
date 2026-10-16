@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { DEFAULT_PROJECT_RULE, DEFAULT_SEAM_RULE, HOLES_LISTED, PROJECT_RULES, type ProjectRule, proposeFields, proposePlan, proposeSinglePlan, SEAM_RULES, type SeamRule } from './src/assemble.ts';
-import { assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage, suppliedCheckFlag } from './src/build.ts';
+import { type AlternateCliInput, assembleStage, build, checkStage, ERROR_MAP_FILE, loopStage, readRuns, readSource, rigStage, suppliedCheckFlag } from './src/build.ts';
 import { ACCEPTABLE_BARS, DEFAULT_PACK_SHAPE, DEFAULT_PAGE_EDGES, findRigc, PACK_SHAPES, rigcRunnerAt, type PackShape, PAGE_EDGES, type PageEdges, PARTS_HOME_SENTENCE, RIGC_GEOMETRY_VERSION, type RigcRunner, NO_PARTS_SENTENCE, SEAM_MEAN_BAR, SOURCE_SENTENCE, SEAM_PX_BAR, SEAM_PX_LEVEL, SPINEBOY_YARDSTICK, TEXTURE_STRETCH_CEILING } from './src/check.ts';
 import { ComfyClient, resolveHost, runPainting, runSeeThrough } from './src/comfy/index.ts';
 import { type CharacterConfig, loadClothConfig, loadConfig, loadEarlyConfig, loadPaintConfig } from './src/config.ts';
@@ -469,7 +469,7 @@ usage:
 
   rig-parts assemble --source <painting.png> --full <dir|psd> [--head <dir|psd>]
                        --config <config.json> --out <dir> [--seam near-white|silhouette]
-                       [--project core|visible]
+                       [--project core|visible] [--alt <name>=<source>:<full>[:<head>]]
       Merge the full-body and head-crop See-through runs into rig-space parts:
       <out>/rig/parts/<name>.png (each cropped to its alpha box), <out>/rig/parts.json,
       <out>/render/recomposite_rig.png and <out>/render/${ERROR_MAP_FILE} (the error
@@ -567,6 +567,7 @@ usage:
                     [--project core|visible] [--page-edges pot|free]
                     [--pack-shape rect|polygon] [--loop] [--requirements <file.json>]
                     [--idle-keys ctl|direct] [--lead-in <periods>] [--seam-pairs] [--keep-stills]
+                    [--alt <name>=<source>:<full>[:<head>]]
       assemble, then rig, then check, in one process, each stage's own lines
       printed under [assemble], [rig] and [check]; the first stage that refuses
       stops the build with its own FAIL lines. The config must already carry
@@ -786,11 +787,11 @@ const TAKES = {
   compare: { valued: ['--left', '--right', '--map'], switches: [] },
   check: { valued: ['--rig', '--out', '--parts', '--source', '--page-edges', '--pack-shape', '--requirements'], switches: ['--seam-pairs', '--keep-stills'] },
   loop: { valued: ['--frames', '--out'], switches: ['--palette'] },
-  assemble: { valued: ['--source', '--full', '--head', '--config', '--out', '--seam', '--project'], switches: ['--propose-plan'] },
+  assemble: { valued: ['--source', '--full', '--head', '--config', '--out', '--seam', '--project', '--alt'], switches: ['--propose-plan'] },
   'comfy seethrough': { valued: ['--image', '--out', '--resolution', '--steps', '--seed', '--prefix', '--host', '--wait', '--timeout', '--poll'], switches: ['--offload', '--lama', '--nf4'] },
   'comfy paint': { valued: ['--config', '--out', '--seeds', '--seed0', '--host', '--wait', '--timeout', '--poll'], switches: [] },
   inputs: { valued: ['--source', '--config', '--out'], switches: [] },
-  build: { valued: ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys', '--lead-in'], switches: ['--loop', '--seam-pairs', '--keep-stills'] },
+  build: { valued: ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys', '--lead-in', '--alt'], switches: ['--loop', '--seam-pairs', '--keep-stills'] },
   compose: { valued: ['--scene', '--out', '--requirements', '--accept'], switches: [] },
   'mesh-draft': { valued: ['--config', '--parts', '--out', '--requirements', '--idle-keys', '--page-edges', '--pack-shape'], switches: ['--more-triangles'] },
   painting: { valued: ['--keypoints', '--person'], switches: [] },
@@ -807,6 +808,20 @@ function takesValued(command: Command, flag: string): boolean {
 function notTaken(command: Command, flag: string): string {
   const row = TAKES[command];
   return `${command} does not take "${flag}"; it takes ${[...row.valued, ...row.switches].join(', ')}`;
+}
+
+/** Parse `--alt <name>=<source>:<full>[:<head>]` (issue #454), or return a usage message. */
+function parseAltArg(value: string): AlternateCliInput | string {
+  const eq = value.indexOf('=');
+  if (eq <= 0) return `--alt "${value}" is not <name>=<source>:<full>[:<head>]`;
+  const name = value.slice(0, eq);
+  if (name.startsWith('.') || name.includes('/') || name.includes('\\')) return `--alt set name "${name}" may not start with "." or hold a slash`;
+  const rest = value.slice(eq + 1);
+  const parts = rest.split(':');
+  if (parts.length < 2 || parts.length > 3 || parts[0].length === 0 || parts[1].length === 0 || (parts.length === 3 && parts[2].length === 0)) {
+    return `--alt "${value}" is not <name>=<source>:<full>[:<head>]`;
+  }
+  return { name, source: parts[0], full: parts[1], ...(parts.length === 3 ? { head: parts[2] } : {}) };
 }
 
 /**
@@ -1267,6 +1282,7 @@ function cmdLoop(args: string[]): number {
 
 function cmdAssemble(args: string[]): number {
   const flags = new Map<string, string>();
+  const alts: AlternateCliInput[] = [];
   let propose = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
@@ -1277,13 +1293,21 @@ function cmdAssemble(args: string[]): number {
     if (!takesValued('assemble', flag)) return usage(notTaken('assemble', flag));
     const value = args[i + 1];
     if (value === undefined) return usage(`${flag} needs a value`);
+    if (flag === '--alt') {
+      const parsed = parseAltArg(value);
+      if (typeof parsed === 'string') return usage(parsed);
+      if (alts.some((a) => a.name === parsed.name)) return usage(`--alt set "${parsed.name}" is given twice`);
+      alts.push(parsed);
+      i++;
+      continue;
+    }
     if (flags.has(flag)) return usage(`${flag} is given twice`);
     flags.set(flag, value);
     i++;
   }
   // --head is optional (issue #359): without it the full run is the one run, and it must hold the face.
   for (const f of ['--source', '--full', '--config']) if (!flags.has(f)) return usage(`assemble needs ${f}`);
-  if (propose && (flags.has('--out') || flags.has('--seam') || flags.has('--project'))) return usage('--propose-plan prints to the console; it takes none of --out, --seam, --project');
+  if (propose && (flags.has('--out') || flags.has('--seam') || flags.has('--project') || alts.length > 0)) return usage('--propose-plan prints to the console; it takes none of --out, --seam, --project, --alt');
   if (!propose && !flags.has('--out')) return usage('assemble needs --out <dir>');
   const seam = flags.get('--seam') ?? DEFAULT_SEAM_RULE;
   if (!(SEAM_RULES as readonly string[]).includes(seam)) return usage(`--seam ${seam}; one of ${SEAM_RULES.join(', ')} is required`);
@@ -1303,7 +1327,7 @@ function cmdAssemble(args: string[]): number {
     }
     const out = flags.get('--out') as string;
     assembleStage(
-      { source, full, head, config, seam: seam as SeamRule, project: project as ProjectRule },
+      { source, full, head, config, seam: seam as SeamRule, project: project as ProjectRule, ...(alts.length === 0 ? {} : { alts }) },
       { partsJson: join(out, 'rig', 'parts.json'), partsDir: join(out, 'rig', 'parts'), recomposite: join(out, 'render', 'recomposite_rig.png'), errorMap: join(out, 'render', ERROR_MAP_FILE) },
       console.log,
     );
@@ -1448,6 +1472,7 @@ function cmdInputs(args: string[]): number {
 
 function cmdBuild(args: string[]): number {
   const flags = new Map<string, string>();
+  const alts: AlternateCliInput[] = [];
   // The bare switches build takes: --loop its own, --seam-pairs and --keep-stills check's, forwarded (issue #257).
   const on = new Set<string>();
   const switches: readonly string[] = TAKES.build.switches;
@@ -1464,6 +1489,14 @@ function cmdBuild(args: string[]): number {
     if (!takesValued('build', flag)) return usage(notTaken('build', flag));
     const value = args[i + 1];
     if (value === undefined) return usage(`${flag} needs a value`);
+    if (flag === '--alt') {
+      const parsed = parseAltArg(value);
+      if (typeof parsed === 'string') return usage(parsed);
+      if (alts.some((a) => a.name === parsed.name)) return usage(`--alt set "${parsed.name}" is given twice`);
+      alts.push(parsed);
+      i++;
+      continue;
+    }
     if (flags.has(flag)) return usage(`${flag} is given twice`);
     flags.set(flag, value);
     i++;
@@ -1495,7 +1528,7 @@ function cmdBuild(args: string[]): number {
   const scratch = mkdtempSync(join(tmpdir(), 'rig-parts-build-'));
   try {
     const r = build(
-      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape, ...(flags.has('--requirements') ? { requirements: flags.get('--requirements') as string } : {}), idleKeys: keys, ...(leadText === undefined ? {} : { leadIn: Number(leadText) }), seamPairs: on.has('--seam-pairs'), keepStills: on.has('--keep-stills') },
+      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape, ...(flags.has('--requirements') ? { requirements: flags.get('--requirements') as string } : {}), idleKeys: keys, ...(leadText === undefined ? {} : { leadIn: Number(leadText) }), seamPairs: on.has('--seam-pairs'), keepStills: on.has('--keep-stills'), ...(alts.length === 0 ? {} : { alts }) },
       { rig: rigcRunner(bin), check: rigcRunner(bin), checkBin: bin, scratch: join(scratch, 'rig-gate') },
       console.log,
     );

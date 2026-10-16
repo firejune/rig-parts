@@ -166,7 +166,7 @@ import { type ContourChainRibs, type ContourReport, contourMesh, type ContourReg
 import { type LocalInfluence, localInfluences } from './localweights.ts';
 import { artCoverage, ART_ALPHA, latticeMesh, latticeStray, ONE_LOOP_PASSES } from './mesh.ts';
 import { bindFaceSurfaceDeform, BLINK, blinkHoldMisses, blinkSpan, CONTROL_SUFFIX, controlledBones, IDLE_FPS, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
-import { PAINTING_RUN, type PartsFile, readFrom, tagOf } from './parts.ts';
+import { type AlternateSetMap, PAINTING_RUN, type PartsFile, readFrom, tagOf } from './parts.ts';
 import { EYE_GROUP_TAGS } from './propose.ts';
 import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
@@ -896,6 +896,20 @@ export interface AutoMeshReport {
   motion_report?: unknown;
 }
 
+export const SETS_SPEC = 'rig-parts-sets/1';
+export const SETS_FILE = 'sets.json';
+
+/**
+ * `sets.json` (issue #454): the machine-readable map from each alternate
+ * painting set to its `<set>_<part>` attachment on each slot it covers and
+ * the slots it hides. Written beside `rig.json` only when `parts.json` carries
+ * `alternates`.
+ */
+export interface AttachmentSetsFile {
+  spec: typeof SETS_SPEC;
+  sets: Record<string, AlternateSetMap>;
+}
+
 export interface RigOutput {
   rig: RigSpec;
   motion: MotionSpec;
@@ -915,6 +929,8 @@ export interface RigOutput {
   faceAxis: FaceAxis;
   /** The turn control's parts (issue #251), in parts.json order; null when the config has no `turn`. */
   turn: TurnRow[] | null;
+  /** `sets.json` (issue #454), present only when `parts.alternates` is non-empty. */
+  sets?: AttachmentSetsFile;
 }
 
 /**
@@ -1966,6 +1982,93 @@ export function buildRig(
     });
   }
   refuseIfAny(problems);
+  // ---- alternate painting sets (issue #454) -------------------------------
+  // Only when `parts.alternates` is present: each alternate set's `<set>_<part>`
+  // attachments are added to `skins.default[<part>]` on the existing bones and
+  // slots before `applyStops` and `applyTurn`, so stopped links and turn twins
+  // carry the alternate attachments alongside the base ones.
+  let sets: AttachmentSetsFile | undefined;
+  if (parts.alternates !== undefined && parts.alternates.length > 0) {
+    const setEntries: Record<string, AlternateSetMap> = {};
+    for (const alt of parts.alternates) {
+      for (const p of alt.records) {
+        const attName = `${alt.name}_${p.name}`;
+        const rawImg = images.get(attName);
+        if (rawImg === undefined) continue;
+        const img = pad(rawImg, PAD, PAD, PAD, PAD, [0, 0, 0, 0]);
+        const file = `${attName}.png`;
+        outImages.push([file, img]);
+        const mesh = cfg.meshes[p.name];
+        if (mesh === undefined) {
+          const bone = B.get(cfg.regions[p.name]) as Bone;
+          skin[p.name][attName] = region(file, bone.name, p.x + p.w / 2, p.y + p.h / 2);
+          continue;
+        }
+        const fullSegs = meshSegments.get(p.name) as Segment[];
+        const baseAtt = skin[p.name]?.[p.name];
+        const baseBones = baseAtt !== undefined && 'type' in baseAtt ? new Set(baseAtt.weights.flatMap((v) => v.map((e) => e.bone))) : null;
+        const filteredSegs = baseBones !== null && baseBones.size > 0 ? fullSegs.filter((s) => baseBones.has(s.bone)) : fullSegs;
+        const segs = filteredSegs.length > 0 ? filteredSegs : fullSegs;
+        const allArt = alphaAbove(img, ART_ALPHA);
+        const strayVal = 'auto' in mesh ? mesh.auto.source.stray : ('contour' in mesh ? mesh.contour.stray : mesh.stray);
+        const stray = strayVal === undefined ? null : latticeStray(allArt, strayVal);
+        const art = stray === null ? allArt : stray.art;
+        const grid = 'grid' in mesh ? mesh.grid : 28;
+        const r = 'r' in mesh ? mesh.r : 80;
+        const lm = latticeMesh(attName, art, grid, maxLoopPasses);
+        if ('code' in lm) {
+          skin[p.name][attName] = region(file, segs[0].bone, p.x + p.w / 2, p.y + p.h / 2);
+          continue;
+        }
+        const ox = p.x - PAD;
+        const oy = p.y - PAD;
+        const w = img.width;
+        const h = img.height;
+        const limits: InfluenceLimits = meshLimits('influences' in mesh ? mesh.influences : undefined);
+        const segsAt = dressSegsAt(p, segs);
+        const exponent = mesh.exponent ?? DISTANCE_EXPONENT;
+        const rawShares: Influence[][] = [];
+        for (const [vx0, vy0] of lm.vertices) {
+          const wx = vx0 + ox;
+          const wy = vy0 + oy;
+          const vSegs = segsAt(wy);
+          let shares = influences([wx, wy], vSegs, r, limits, exponent);
+          if (shares.length === 0) {
+            shares = influences([wx, wy], vSegs, Infinity, { maxInfluences: 1, minWeight: 0 }, exponent);
+          }
+          rawShares.push(limits.floor === 'continuous' ? roundShares(shares) : latticeShares(shares));
+        }
+        const weights: WeightEntry[][] = [];
+        for (const [vi, [vx0, vy0]] of lm.vertices.entries()) {
+          const wx = vx0 + ox;
+          const wy = vy0 + oy;
+          const ent: WeightEntry[] = rawShares[vi].map(({ bone, weight }) => {
+            const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
+            return { bone, x: places(x), y: places(y), weight };
+          });
+          weights.push(ent);
+        }
+        const uvs: number[] = [];
+        for (const [x, y] of lm.vertices) uvs.push(pyRound(x / w, 6), pyRound(y / h, 6));
+        skin[p.name][attName] = { type: 'mesh', image: file, width: w, height: h, uvs, triangles: lm.triangles, hull: lm.hull, weights };
+      }
+      const slotMap: Record<string, string> = {};
+      for (const [slotName, att] of Object.entries(alt.slots)) slotMap[slotName] = att;
+      const hideList: string[] = [];
+      for (const h of alt.hides ?? []) {
+        if (!hideList.includes(h)) hideList.push(h);
+        if (stills[h] !== undefined && !hideList.includes(`${h}${STILL_SUFFIX}`)) hideList.push(`${h}${STILL_SUFFIX}`);
+      }
+      for (const slotName of Object.keys(alt.slots)) {
+        if (stills[slotName] !== undefined && !hideList.includes(`${slotName}${STILL_SUFFIX}`)) hideList.push(`${slotName}${STILL_SUFFIX}`);
+      }
+      setEntries[alt.name] = {
+        slots: slotMap,
+        ...(hideList.length > 0 ? { hides: hideList } : {}),
+      };
+    }
+    sets = { spec: SETS_SPEC, sets: setEntries };
+  }
   // ---- leg stops (issue #404) --------------------------------------------
   // Only when the config has `stops`: each link after the first (and any bone hanging from a stopped link) hangs
   // from the drawn link `<link>_d` above it, and slots and weights on a stopped link bind `<link>_d`.
@@ -2007,7 +2110,20 @@ export function buildRig(
       overrides: cfg.turn?.deform,
     });
   });
-  return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses, autoMotion, faceAxis, turn: turned?.rows ?? null };
+  return {
+    rig,
+    motion,
+    meshReport,
+    images: outImages,
+    controls,
+    meshKeyed,
+    idleKeys,
+    loopPasses,
+    autoMotion,
+    faceAxis,
+    turn: turned?.rows ?? null,
+    ...(sets === undefined ? {} : { sets }),
+  };
 }
 
 /**
