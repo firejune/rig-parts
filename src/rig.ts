@@ -165,13 +165,13 @@ import {
 import { type ContourChainRibs, type ContourReport, contourMesh, type ContourRegion, type ContourRib } from './contour.ts';
 import { type LocalInfluence, localInfluences } from './localweights.ts';
 import { artCoverage, ART_ALPHA, latticeMesh, latticeStray, ONE_LOOP_PASSES } from './mesh.ts';
-import { BLINK, blinkHoldMisses, blinkSpan, CONTROL_SUFFIX, controlledBones, IDLE_FPS, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
+import { bindFaceSurfaceDeform, BLINK, blinkHoldMisses, blinkSpan, CONTROL_SUFFIX, controlledBones, IDLE_FPS, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
 import { PAINTING_RUN, type PartsFile, readFrom, tagOf } from './parts.ts';
 import { EYE_GROUP_TAGS } from './propose.ts';
 import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
 import { boneHeat, type HeatDust, heatInfluences, HEAT_LIMITS, heatRow, type HeatRow, latticeSilhouette, tracedSilhouette } from './heat.ts';
-import { TURN_BONE, type TurnSpec, turnConstraintName, turnFractions, turnTwin } from './turn.ts';
+import { applyFaceSurfaceDeform, TURN_BONE, type TurnSpec, turnConstraintName, turnFractions, turnTwin } from './turn.ts';
 import { DISTANCE_EXPONENT, type FloorForm, type Influence, influences, type InfluenceLimits, type MeshInfluences, meshLimits, type Segment } from './weights.ts';
 
 /** Transparent pixels added round every part image — the reference's `PAD`. */
@@ -1996,6 +1996,17 @@ export function buildRig(
   // issue #239: the face's line, written only when the face bones were turned to one, so no other rig moves.
   const axes = [faceAxis.axis, faceAxis.tipAxis].flatMap((x) => (x === null ? [] : [x]));
   if (axes.length > 0) rig.invariants = { ...rig.invariants, axes };
+  const faceImg = outImages.find(([k]) => k === 'face.png')?.[1];
+  const facePart = parts.parts.find((p) => p.name === 'face');
+  bindFaceSurfaceDeform(motion, (merged) => {
+    applyFaceSurfaceDeform(rig, merged, {
+      imageWidth: faceImg?.width,
+      imageHeight: faceImg?.height,
+      opaqueWidth: facePart?.w,
+      opaqueHeight: facePart?.h,
+      overrides: cfg.turn?.deform,
+    });
+  });
   return { rig, motion, meshReport, images: outImages, controls, meshKeyed, idleKeys, loopPasses, autoMotion, faceAxis, turn: turned?.rows ?? null };
 }
 

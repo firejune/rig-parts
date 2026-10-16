@@ -93,7 +93,7 @@ import { GRID, MAX_SIDE } from './contour.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { isSkeletonName, KEYPOINT_NAMES, type KeypointName, type PosePoints, SKELETON_NAMES, type SkeletonName } from './skeleton.ts';
 import { acceptedTagNames, AUTHOR_LABEL_RULE, AUTHOR_PREFIX, readLayerTag } from './tags.ts';
-import { TURN_BONE, type TurnSpec, turnNearest } from './turn.ts';
+import { FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, type FaceDeformKey, TURN_BONE, type TurnSpec, turnNearest } from './turn.ts';
 import { FLOOR_FORMS, type FloorForm, type MeshInfluences } from './weights.ts';
 
 export type Point = [number, number];
@@ -2975,7 +2975,7 @@ function checkScene(c: Check, v: Json): void {
 
 function checkTurn(c: Check, v: Json, attached: Set<string>, bones: Set<string>): void {
   const at = 'config.turn';
-  const o = c.object(at, v, ['pivot', 'depths'], []);
+  const o = c.object(at, v, ['pivot', 'depths'], ['deform']);
   if (o === null) return;
   const pivot = 'pivot' in o && c.number(`${at}.pivot`, o.pivot) ? (o.pivot as number) : null;
   const depths: Record<string, number> = {};
@@ -2993,6 +2993,35 @@ function checkTurn(c: Check, v: Json, attached: Set<string>, bones: Set<string>)
         }
         if (c.number(`${at}.depths.${part}`, depth)) depths[part] = depth;
         else depthsOk = false;
+      }
+    }
+  }
+  if ('deform' in o) {
+    const df = o.deform;
+    if (!isPlainObject(df)) {
+      c.fail('CONFIG_FIELD_TYPE', `${at}.deform`, `is ${show(df)}; an object of face deform key -> per-degree fraction is required`);
+    } else {
+      const known = Object.keys(FACE_DEFORM_FRACTIONS);
+      for (const [key, val] of Object.entries(df)) {
+        if (isRecordKey(key)) continue;
+        if (key === 'note' || key.endsWith('_note')) {
+          if (typeof val !== 'string') c.fail('CONFIG_FIELD_TYPE', `${at}.deform.${key}`, `is ${show(val)}; an annotation is a string`);
+          continue;
+        }
+        if (!Object.hasOwn(FACE_DEFORM_FRACTIONS, key)) {
+          c.fail('CONFIG_KEY_KNOWN', `${at}.deform.${key}`, `is not a known face deform fraction; expected one of ${known.join(', ')} — ${DOORS}`);
+          continue;
+        }
+        if (c.number(`${at}.deform.${key}`, val)) {
+          const [lo, hi] = FACE_DEFORM_RANGES[key as FaceDeformKey];
+          if (val < lo || val > hi) {
+            c.fail(
+              'CONFIG_TURN_DEFORM_RANGE',
+              `${at}.deform.${key}`,
+              `is ${val}; a per-degree fraction in [${lo}, ${hi}] is required (default ${FACE_DEFORM_FRACTIONS[key as FaceDeformKey]})`,
+            );
+          }
+        }
       }
     }
   }

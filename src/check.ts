@@ -1046,6 +1046,21 @@ export interface LoopPhysics {
 }
 
 /**
+ * A throwaway copy of `rig` whose accompanying `motion` replaces `animations`
+ * with a synthetic set (`still`, `blink_shut`, `stress ...`, `sweep ...`) omits
+ * any `slider` constraint whose target animation is not in that set.
+ */
+function withoutSliders(rig: Record<string, unknown>, animations: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(rig.constraints)) return rig;
+  const kept = rig.constraints.filter((c) => !(isRecord(c) && c.type === 'slider' && typeof c.animation === 'string' && !(c.animation in animations)));
+  if (kept.length === rig.constraints.length) return rig;
+  const out: Record<string, unknown> = { ...rig };
+  if (kept.length > 0) out.constraints = kept;
+  else delete out.constraints;
+  return out;
+}
+
+/**
  * The rig spec and motion spec with every physics constraint left out, and
  * the constraints it left out; null when there is none, so a rig without one
  * is measured from the very build and render it always was.
@@ -3331,8 +3346,9 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
         mkdirSync(stressDir, { recursive: true });
         const base = stripped === null ? inp.rig : stripped.rig;
         const images = typeof inp.rig.images === 'string' ? resolve(inp.rigDir, inp.rig.images) : inp.rig.images;
-        writeFileSync(join(stressDir, 'rig.json'), JSON.stringify({ ...base, images }));
-        writeFileSync(join(stressDir, 'motion.json'), JSON.stringify({ ...(stripped === null ? inp.motion : stripped.motion), animations: stressAnimations(plan) }));
+        const stressAnims = stressAnimations(plan);
+        writeFileSync(join(stressDir, 'rig.json'), JSON.stringify({ ...withoutSliders(base, stressAnims), images }));
+        writeFileSync(join(stressDir, 'motion.json'), JSON.stringify({ ...(stripped === null ? inp.motion : stripped.motion), animations: stressAnims }));
         const sb = rigc(['build', '--rig', join(stressDir, 'rig.json'), '--motion', join(stressDir, 'motion.json'), '--out', join(stressDir, 'build'), '--profile', 'spine']);
         if (sb.status !== 0) refuseIfAny(rigcFailed(`build (${STRESS_LINE}'s turned copy)`, sb, buildGateLines(sb.out)));
         const sr = rigc(['render', '--candidate', join(stressDir, 'build'), '--fps', String(IDLE_FPS), '--max', String(FOLD_RENDER_MAX), '--geometry', '--out', join(stressDir, 'render')]);
@@ -3380,7 +3396,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
       const sets = new Map<string, { under: FrameSet; bare: FrameSet }>();
       if (copy.slots.length > 0) {
         for (const [file, image] of copy.images) writePng(join(imagesDir, file), image);
-        writeFileSync(join(sweepDir, 'rig.json'), JSON.stringify({ ...copy.rig, images: imagesDir }));
+        const sweepAnims = isRecord(copy.motion.animations) ? copy.motion.animations : {};
+        writeFileSync(join(sweepDir, 'rig.json'), JSON.stringify({ ...withoutSliders(copy.rig, sweepAnims), images: imagesDir }));
         writeFileSync(join(sweepDir, 'motion.json'), JSON.stringify(copy.motion));
         const sb = rigc(['build', '--rig', join(sweepDir, 'rig.json'), '--motion', join(sweepDir, 'motion.json'), '--out', join(sweepDir, 'build'), '--profile', 'spine']);
         if (sb.status !== 0) refuseIfAny(rigcFailed(`build (${SWEEP_LINE}'s bent copy)`, sb, buildGateLines(sb.out)));
@@ -3423,7 +3440,6 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     try {
       mkdirSync(stillDir, { recursive: true });
       const images = typeof inp.rig.images === 'string' ? resolve(inp.rigDir, inp.rig.images) : inp.rig.images;
-      writeFileSync(join(stillDir, 'rig.json'), JSON.stringify({ ...inp.rig, images }));
       const eyes = full === null ? [] : partsTagged(full.parts, EYE_TAGS);
       const slotBone = new Map((Array.isArray(inp.rig.slots) ? inp.rig.slots : []).filter(isRecord).map((sl) => [String(sl.name), String(sl.bone)]));
       const shut = full === null ? [] : blinkTracks(inp.motion, eyeBones(inp.rig, eyes.map((p) => slotBone.get(p.name) ?? '')));
@@ -3437,6 +3453,8 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
           tracks: shut.map((b) => ({ ...b.target, property: 'scaley', keys: [{ t: 0, v: [b.closed] }, { t: STILL_DURATION, v: [b.closed] }] })),
         };
       }
+      const stillRig = { ...withoutSliders(inp.rig, animations), images };
+      writeFileSync(join(stillDir, 'rig.json'), JSON.stringify(stillRig));
       writeFileSync(join(stillDir, 'motion.json'), JSON.stringify({ ...inp.motion, animations }));
       const sb = rigc(['build', '--rig', join(stillDir, 'rig.json'), '--motion', join(stillDir, 'motion.json'), '--out', join(stillDir, 'build'), '--profile', 'spine']);
       if (sb.status !== 0) refuseIfAny(rigcFailed('build (the setup-pose still)', sb, buildGateLines(sb.out)));
@@ -3460,7 +3478,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
       }
       if (inp.source !== null) {
         // The same pose with every slot tinted black, built with the same animations so rigc fits the same grid.
-        writeFileSync(join(stillDir, BLACK_RIG), JSON.stringify(blackRig({ ...inp.rig, images })));
+        writeFileSync(join(stillDir, BLACK_RIG), JSON.stringify(blackRig(stillRig)));
         const kb = rigc(['build', '--rig', join(stillDir, BLACK_RIG), '--motion', join(stillDir, 'motion.json'), '--out', join(stillDir, 'black_build'), '--profile', 'spine']);
         if (kb.status !== 0) refuseIfAny(rigcFailed('build (the setup-pose still, every slot tinted black)', kb, buildGateLines(kb.out)));
         const kr = rigc(['render', '--candidate', join(stillDir, 'black_build'), '--animation', 'still', '--fps', String(STILL_FPS), '--max', String(maxSide), '--out', join(stillDir, 'black')]);

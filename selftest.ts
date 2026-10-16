@@ -255,7 +255,7 @@ import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type Mo
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type Limb, loadClothConfig, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, parseProposalSections, type SkeletonSections } from './src/config.ts';
 import { RIG_BONE_INHERIT, RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { expandStops } from 'rig-c/src/stop.ts';
-import { TURN_BONE } from './src/turn.ts';
+import { applyFaceSurfaceDeform, FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, resolveFaceDeformFractions, TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, FAINT_ALPHA, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FAINT, FAINT_AT_LINE, FAR, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NEAR, NOTCH, NOTCH_CUT, NOTCHED, PAIR, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRAND, STRAND_CHAIN, STRIP } from './fixtures/contour.ts';
@@ -2125,6 +2125,33 @@ function runConfigSuite(): number {
       noTurn85 === null,
     `pivot 0.4 -> ${show75(at85)}; 0.3 -> ${show75(front85)}; 0.400001 -> ${show75(just85)}; a bone "turn" with a turn -> ${show75(bone85)}; without one -> ${show75(noTurn85)}`,
     "issue #251: the fraction law (pivot − depth) / (pivot − nearest) has no value when the pivot is the nearest depth and points every part against the dial in front of it, so the bad pivot is refused by the rule's name, not clamped",
+  );
+
+  // CF86 — issue #436: turn.deform overrides any entry in FACE_DEFORM_FRACTIONS; a value outside FACE_DEFORM_RANGES is
+  // refused by name (CONFIG_TURN_DEFORM_RANGE), an unknown key by CONFIG_KEY_KNOWN, and a valid override loads and
+  // resolves.
+  const okDeform86 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4 }, deform: { tilt_mid_y: -0.005, turn_mid_x: -0.007, note: 'custom fraction' } })));
+  const outLow86 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4 }, deform: { tilt_mid_y: -0.05 } })));
+  const outHigh86 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4 }, deform: { turn_ear_x: 2.0 } })));
+  const unknownDeform86 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4 }, deform: { no_such_fraction: 0.001 } })));
+  const resolved86 = resolveFaceDeformFractions({ tilt_mid_y: -0.005 });
+  const rangeKeysMatch86 = Object.keys(FACE_DEFORM_FRACTIONS).every((k) => {
+    const [lo, hi] = FACE_DEFORM_RANGES[k as keyof typeof FACE_DEFORM_FRACTIONS];
+    const d = FACE_DEFORM_FRACTIONS[k as keyof typeof FACE_DEFORM_FRACTIONS];
+    return d >= lo && d <= hi;
+  });
+  say(
+    'CF86_TURN_DEFORM_ACCEPTS_OVERRIDES_IN_RANGE_AND_REFUSES_OUT_OF_RANGE_BY_NAME',
+    okDeform86 === null &&
+      one75(outLow86, 'CONFIG_TURN_DEFORM_RANGE', 'config.turn.deform.tilt_mid_y', 'is -0.05; a per-degree fraction in [-0.02, 0] is required (default -0.0047)') &&
+      one75(outHigh86, 'CONFIG_TURN_DEFORM_RANGE', 'config.turn.deform.turn_ear_x', 'is 2; a per-degree fraction in [0, 1.5] is required (default 0.85)') &&
+      one75(unknownDeform86, 'CONFIG_KEY_KNOWN', 'config.turn.deform.no_such_fraction') &&
+      resolved86.tilt_mid_y === -0.005 &&
+      resolved86.turn_mid_x === FACE_DEFORM_FRACTIONS.turn_mid_x &&
+      rangeKeysMatch86 &&
+      typeof applyFaceSurfaceDeform === 'function',
+    `in range -> ${show75(okDeform86)}; tilt_mid_y -0.05 -> ${show75(outLow86)}; turn_ear_x 2.0 -> ${show75(outHigh86)}; unknown -> ${show75(unknownDeform86)}; defaults inside ranges: ${rangeKeysMatch86}`,
+    'issue #436: the Set B x2.5 per-degree fractions live in FACE_DEFORM_FRACTIONS with explicit [min, max] bounds in FACE_DEFORM_RANGES, and an override outside those bounds is refused by CONFIG_TURN_DEFORM_RANGE',
   );
 
   // CF125 — issue #242: config.scene is an object with no field. {} and one holding only a record and an annotation
@@ -6594,6 +6621,58 @@ function runTurnRigCases(say: (name: string, ok: boolean, detail: string, why: s
         turnLine(atPivot.turn ?? []).includes('cloth stays (depth 0.6, the pivot\'s)'),
       `a config bone "turn_eye_eye" -> ${codes(twinTaken)}: ${twinTaken?.problems[0]?.object ?? ''}; a config transform "turn_eye" -> ${codes(cTaken)}: ${cTaken?.problems[0]?.object ?? ''}; pivot 0.6 = cloth's depth -> added ${pivotAdded.join(', ')}; ${turnLine(atPivot.turn ?? []).trim()}`,
       'issue #251: a twin or a constraint the turn writes under a name the rig already holds would shadow it, so it is refused by name; a part at the pivot depth travels 0 of the dial and is said to stay rather than given a twin that does nothing',
+    );
+
+    const probeRig90 = {
+      bones: [
+        { name: 'root', x: 0, y: 0 },
+        { name: 'head', parent: 'root', x: 2, y: 945 },
+      ],
+      skins: {
+        default: {
+          face: { face: { image: 'face.png', x: -1, y: 49 } },
+        },
+      },
+      invariants: { meshSlots: 0, meshTriangles: 0 },
+    };
+    const noSliderRig90 = structuredClone(probeRig90);
+    const noSliderMot90 = { animations: { idle: { duration: 1, tracks: [] } } };
+    applyFaceSurfaceDeform(noSliderRig90, noSliderMot90);
+    const sliderRig90 = structuredClone(probeRig90);
+    const sliderMot90: { groups: Record<string, string[]>; animations: Record<string, unknown> } = {
+      groups: { features: ['head'] },
+      animations: {
+        tilt: {
+          duration: 2.5,
+          tracks: [{ group: 'features', property: 'translatey', keys: [{ t: 0, derive: { kind: 'pitch', degrees: -25, about: 48, depth: 36 } }, { t: 1.25, v: [0] }, { t: 2.0, derive: { kind: 'pitch', degrees: 15, about: 48, depth: 36 } }] }],
+        },
+        turn: {
+          duration: 3.0,
+          tracks: [{ group: 'features', property: 'translatex', keys: [{ t: 0, derive: { kind: 'yaw', degrees: -30, about: -1.5, depth: 36 } }, { t: 1.5, v: [0] }, { t: 2.25, derive: { kind: 'yaw', degrees: 15, about: -1.5, depth: 36 } }] }],
+        },
+      },
+    };
+    applyFaceSurfaceDeform(sliderRig90, sliderMot90);
+    const faceMesh90 = sliderRig90.skins.default.face.face as unknown as { type: string; weights: unknown[]; triangles: unknown[]; hull: number };
+    const tiltDef90 = (sliderMot90.animations.tilt as { deform: Array<{ slot: string; keys: Array<{ t: number; vertices?: number[] }> }> }).deform;
+    const turnDef90 = (sliderMot90.animations.turn as { deform: Array<{ slot: string; keys: Array<{ t: number; vertices?: number[] }> }> }).deform;
+    say(
+      'RG90_FACE_SURFACE_DEFORM_PROMOTES_THE_FACE_REGION_TO_A_5X5_MESH_AND_KEYS_SLIDER_DEFORMS_WHILE_LEAVING_NON_SLIDER_BUILDS_BYTE_IDENTICAL',
+      JSON.stringify(noSliderRig90) === JSON.stringify(probeRig90) &&
+        faceMesh90.type === 'mesh' &&
+        faceMesh90.weights.length === 25 &&
+        faceMesh90.triangles.length === 96 &&
+        faceMesh90.hull === 16 &&
+        sliderRig90.invariants.meshSlots === 1 &&
+        sliderRig90.invariants.meshTriangles === 32 &&
+        tiltDef90[0]?.slot === 'face' &&
+        tiltDef90[0]?.keys[2]?.vertices === undefined &&
+        (tiltDef90[0]?.keys[3]?.vertices?.length ?? 0) === 50 &&
+        turnDef90[0]?.slot === 'face' &&
+        turnDef90[0]?.keys[2]?.vertices === undefined &&
+        (turnDef90[0]?.keys[3]?.vertices?.length ?? 0) === 50,
+      `without slider derive: rig unchanged=${JSON.stringify(noSliderRig90) === JSON.stringify(probeRig90)}; with slider derive: face mesh vertices=${faceMesh90.weights.length}, triangles=${faceMesh90.triangles.length / 3}, hull=${faceMesh90.hull}, tilt0 vertices=${String(tiltDef90[0]?.keys[2]?.vertices)}, tilt+15 floats=${tiltDef90[0]?.keys[3]?.vertices?.length ?? 0}, turn+15 floats=${turnDef90[0]?.keys[3]?.vertices?.length ?? 0}`,
+      'issue #436: applyFaceSurfaceDeform promotes the face region on head to the 5x5 grid mesh and populates tilt and turn deform keys at Set B x2.5 while leaving rest (dial 0) and non-slider builds untouched',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
