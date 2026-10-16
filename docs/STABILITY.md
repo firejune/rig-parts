@@ -118,7 +118,8 @@ part name, `[i]` an entry of a list):
 - **generation.sampler** — required: `steps`, `cfg`, `sampler`, `scheduler`
 - **generation.control** — required: `skeleton`, `strength`, `end_percent`; optional: `model`
 - **generation.control.skeleton**, the pose file it names when it is no built-in — required: `width`, `height`, `points`
-- **seethrough** — required: `resolution`, `steps`, `seed`, `offload`; optional: `head_box`
+- **seethrough** — required: `resolution`, `steps`, `seed`, `offload`; optional: `head_box`, `arm_split`
+- **seethrough.arm_split** — required: `order`, and one of `x` or `line` (issue #439)
 - **assemble** — required: `rig_scale`, `plan` (from plain `assemble` on); optional: `extend_below_crop`, `patches`, `cuts`
 - **assemble.extend_below_crop[i]** — required: `part`, `run`, `tag`
 - **assemble.patches[i]** — required: `name`, `box`, `alpha`, `draw`

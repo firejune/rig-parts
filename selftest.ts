@@ -2430,7 +2430,57 @@ function runConfigSuite(): number {
   runSkirtPartConfigControls(say);
   runStopConfigControls(say);
   runProposedRigScaleConfigControls(say);
+  runArmSplitConfigControls(say);
   return bad();
+}
+
+/**
+ * Issue #439: `config.seethrough.arm_split`, an optional declaration separating overlapping arms in a single handwear
+ * layer by a column `x` or a polyline `line` and an explicit draw `order`.
+ */
+function runArmSplitConfigControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const withArmSplit = (arm_split: unknown): Record<string, unknown> => ({
+    ...minimalConfig(),
+    seethrough: { resolution: 64, steps: 1, seed: 1, offload: false, head_box: [0, 0, 8, 8], arm_split },
+  });
+  const xCfg = withArmSplit({ x: 32, order: ['handwear-r', 'handwear-l'] });
+  const lineCfg = withArmSplit({ line: [[30, 0], [34, 64]], order: ['handwear-l', 'handwear-r'] });
+  const loads = [
+    refusals(() => parseConfig(xCfg)),
+    refusals(() => parseEarlyConfig(xCfg, 'layers')),
+    refusals(() => parseEarlyConfig(xCfg, 'assemble')),
+    refusals(() => parseConfig(lineCfg)),
+    refusals(() => parseEarlyConfig(lineCfg, 'assemble')),
+  ];
+  const readX = parseConfig(xCfg).seethrough?.arm_split;
+  const readLine = parseConfig(lineCfg).seethrough?.arm_split;
+  const planted: Array<[string, unknown, string, string, string]> = [
+    ['arm_split not an object', 'none', 'CONFIG_FIELD_TYPE', 'config.seethrough.arm_split', 'is "none"; an object'],
+    ['unknown key on arm_split', { x: 32, order: ['handwear-r', 'handwear-l'], extra: 1 }, 'CONFIG_KEY_KNOWN', 'config.seethrough.arm_split.extra', 'is not a field here'],
+    ['missing order', { x: 32 }, 'CONFIG_FIELD_PRESENT', 'config.seethrough.arm_split.order', 'is absent and required'],
+    ['duplicate tag in order', { x: 32, order: ['handwear-r', 'handwear-r'] }, 'CONFIG_FIELD_TYPE', 'config.seethrough.arm_split.order', 'is ["handwear-r","handwear-r"]'],
+    ['neither x nor line', { order: ['handwear-r', 'handwear-l'] }, 'CONFIG_FIELD_PRESENT', 'config.seethrough.arm_split', 'has neither x nor line'],
+    ['both x and line', { x: 32, line: [[30, 0], [34, 64]], order: ['handwear-r', 'handwear-l'] }, 'CONFIG_FIELD_TYPE', 'config.seethrough.arm_split.line', 'is set alongside x'],
+    ['x below 0', { x: -1, order: ['handwear-r', 'handwear-l'] }, 'CONFIG_FIELD_TYPE', 'config.seethrough.arm_split.x', 'is -1; a number at or above 0'],
+    ['x above resolution', { x: 65, order: ['handwear-r', 'handwear-l'] }, 'CONFIG_FIELD_TYPE', 'config.seethrough.arm_split.x', 'is 65; a column inside the 64x64 run canvas'],
+    ['line with 1 point', { line: [[32, 0]], order: ['handwear-r', 'handwear-l'] }, 'CONFIG_FIELD_TYPE', 'config.seethrough.arm_split.line', 'is [[32,0]]; an array of at least 2 [x, y] points'],
+    ['line point outside resolution', { line: [[32, 0], [65, 64]], order: ['handwear-r', 'handwear-l'] }, 'CONFIG_FIELD_TYPE', 'config.seethrough.arm_split.line[1]', 'is [65, 64]; a point inside the 64x64 run canvas'],
+  ];
+  const outcomes = planted.map(([what, s, code, object, start]) => {
+    const c = withArmSplit(s);
+    const both = [refusals(() => parseConfig(c)), refusals(() => parseEarlyConfig(c, 'assemble'))];
+    const ok = both.every((e) => e !== null && e.problems.length === 1 && e.problems[0].code === code && e.problems[0].object === object && e.problems[0].detail.startsWith(start));
+    return { what, ok, got: both.map((e) => codes(e)).join(' / ') };
+  });
+  say(
+    'CF496_SEETHROUGH_ARM_SPLIT_LOADS_WITH_X_OR_LINE_AND_ORDER_AND_REFUSES_BOTH_NEITHER_BAD_COORDINATES_OR_BAD_ORDER',
+    loads.every((e) => e === null) &&
+      JSON.stringify(readX) === '{"x":32,"order":["handwear-r","handwear-l"]}' &&
+      JSON.stringify(readLine) === '{"line":[[30,0],[34,64]],"order":["handwear-l","handwear-r"]}' &&
+      outcomes.every((o) => o.ok),
+    `x and line load at full/layers/assemble doors (${loads.map((e) => (e === null ? 'ok' : codes(e))).join(', ')}), read back ${JSON.stringify(readX)} and ${JSON.stringify(readLine)}; planted: ${outcomes.map((o) => `${o.what} ${o.ok ? 'refused once at both doors' : `NOT: ${o.got}`}`).join('; ')}`,
+    'issue #439: seethrough.arm_split declares either a split x or a polyline in seethrough.resolution coordinates and the two-tag draw order; declaring both, neither, a coordinate outside [0, resolution], a polyline of fewer than two points, or a draw order that does not name handwear-r and handwear-l once each is refused by name',
+  );
 }
 
 /**
@@ -10741,6 +10791,34 @@ function runWristSnapCases(dir: string, SE: string, Pe: PartSet, Je: RigJoints, 
       fromCfg.out.includes('USAGE: --wrist-snap binds a wrist while proposing; --from-config proposes nothing'),
     `21: exit ${withSnap.status}, snap note ${withSnap.out.includes('note: wrist snap:') ? 'printed' : 'ABSENT'}; no flag: exit ${without.status}, ${without.out.includes('(--wrist-snap 21 would bind it)') ? 'names 21' : 'does NOT name 21'}; refused: [${bad.map((b) => `${JSON.stringify(b.v)} ${b.ok ? 'by name' : 'NOT'}`).join(', ')}]; without --keypoints exit ${noKp.status}; with --from-config exit ${fromCfg.status}`,
     'issue #199: a tolerance is counted in whole px, so a fraction would bind exactly what its floor binds, and one at or under 15 binds nothing the built-in does not; each is refused by name with the value found and the value required, as is the flag where there is no wrist to bind (no --keypoints) or no proposal to bind it in (--from-config)',
+  );
+
+  // Issue #439: when both arms overlap in one 8-connected component of a single handwear layer, lint emits one
+  // overlapping-arms finding naming the part, both wrists, and config.seethrough.arm_split; when the single handwear
+  // part holds two separate sleeve components (Po above), it emits 0.
+  const gdir = join(dir, 'pose-seated-gathered-arms');
+  writeProposeFixture(
+    gdir,
+    [
+      ...SEATED_PARTS.filter((p) => !arms.includes(p)),
+      { name: 'arms', from: 'full:handwear-r', x: 60, y: 80, w: 80, h: 50, colour: [240, 240, 240], rects: [...arms.flatMap((p) => p.rects ?? []), [89, 118, 21, 12]] },
+    ],
+    SEATED_RIG,
+    true,
+  );
+  const Pg = readPartSet(gdir);
+  const gathered = propose(Pg, Je);
+  const gatheredOverlap = lint(Pg, gathered, Je).findings.filter((f) => f.kind === 'overlapping-arms');
+  const separateOverlap = lint(Po, one, Je).findings.filter((f) => f.kind === 'overlapping-arms');
+  const overlapText = gatheredOverlap.length === 1 ? lintLine(gatheredOverlap[0]) : '';
+  say(
+    'PR521_OVERLAPPING_ARMS_IN_ONE_HANDWEAR_COMPONENT_EMIT_ONE_LINT_LINE_NAMING_SEETHROUGH_ARM_SPLIT_WHILE_SEPARATE_SLEEVE_COMPONENTS_DO_NOT',
+    gatheredOverlap.length === 1 &&
+      separateOverlap.length === 0 &&
+      overlapText ===
+        'LINT arms (full:handwear-r) holds both arms in one 1872 px component (r_wrist at [84.0, 124.0], l_wrist at [116.0, 124.0]): declare config.seethrough.arm_split (x or line, and order: ["handwear-r", "handwear-l"] or ["handwear-l", "handwear-r"]) to separate the overlapping arms into two layers',
+    `overlapping component: ${gatheredOverlap.length} finding(s) -> ${JSON.stringify(overlapText)}; separate sleeve components in one layer (PR75): ${separateOverlap.length} finding(s)`,
+    'issue #439: when both hands/arms meet in one connected component of a single handwear layer without seethrough.arm_split declared, propose emits one LINT line naming the part, both wrists, and the declaration that separates them into two layers; two non-overlapping sleeve components on one layer stay clean',
   );
 }
 
@@ -21888,6 +21966,70 @@ function authorLayerControls(say: (name: string, ok: boolean, detail: string, wh
         JSON.stringify(only.notes) === JSON.stringify([EXPECTED_HEADWEAR_NOTE, lockNote, ...EXPECTED_UNPLANNED_NOTES]),
       `both runs: plan ${JSON.stringify(both.plan.map((e) => e[0]))}, notes ${both.notes.length} (last: ${both.notes[both.notes.length - 1] ?? '-'}); the head run alone: plan ${JSON.stringify(only.plan.map((e) => `${e[0]}<-${e[1]}:${e[2]}`))}`,
       'issue #256: one part per layer the proposer drafts, so a name both runs hold would otherwise be proposed twice under one part name; a layer only the head run holds is drafted from it, at its place in that run\'s draw order (here last, depth 0.3 under the face\'s 0.5), as a full-run one is',
+    );
+
+    // AS255 — issue #439: seethrough.arm_split separates overlapping arms in a single handwear layer into two layers
+    // in the declared draw order, by x or by polyline, and refuses a split that cuts one arm's pixel run into two parts.
+    const headP = readWrapperLayers(join(plain, 'head'));
+    const fullGathered = runIn('full-gathered', [
+      ...FULL_LAYERS,
+      {
+        name: 'handwear-r',
+        depth: 0.35,
+        rects: [
+          { x0: 10, y0: 4, x1: 34, y1: 12, colour: C },
+          { x0: 10, y0: 12, x1: 18, y1: 20, colour: C },
+          { x0: 26, y0: 12, x1: 34, y1: 20, colour: C },
+        ],
+      },
+    ]);
+    const baseAssemble = {
+      source: flatPainting(),
+      full: fullGathered,
+      head: headP,
+      resolution: RESOLUTION,
+      headBox: HEAD_BOX,
+      rigScale: RIG_SCALE,
+      patches: [],
+      cuts: [],
+      seamRule: DEFAULT_SEAM_RULE,
+      projectRule: DEFAULT_PROJECT_RULE,
+    };
+    const unsplitPlan = proposePlan(fullGathered, headP, geometry);
+    const unsplitOut = assemble({ ...baseAssemble, plan: unsplitPlan.plan, extend: unsplitPlan.extend_below_crop });
+    const splitXSpec = { x: 22, order: ['handwear-l', 'handwear-r'] as ['handwear-l', 'handwear-r'] };
+    const splitXPlan = proposePlan(fullGathered, headP, { ...geometry, armSplit: splitXSpec });
+    const splitXOut = assemble({ ...baseAssemble, armSplit: splitXSpec, plan: splitXPlan.plan, extend: splitXPlan.extend_below_crop });
+    const splitLineSpec = { line: [[20, 4], [24, 12]] as Array<[number, number]>, order: ['handwear-r', 'handwear-l'] as ['handwear-r', 'handwear-l'] };
+    const splitLinePlan = proposePlan(fullGathered, headP, { ...geometry, armSplit: splitLineSpec });
+    const splitLineOut = assemble({ ...baseAssemble, armSplit: splitLineSpec, plan: splitLinePlan.plan, extend: splitLinePlan.extend_below_crop });
+    const cutArmRefusal = refusals(() => proposePlan(fullGathered, headP, { ...geometry, armSplit: { x: 14, order: ['handwear-r', 'handwear-l'] } }));
+    const zigzagRefusal = refusals(() => proposePlan(fullGathered, headP, { ...geometry, armSplit: { line: [[14, 8], [30, 8], [14, 8]], order: ['handwear-r', 'handwear-l'] } }));
+    const emptySideRefusal = refusals(() => proposePlan(fullGathered, headP, { ...geometry, armSplit: { x: 5, order: ['handwear-r', 'handwear-l'] } }));
+    const xArmParts = splitXOut.parts.parts.filter((p) => p.from.startsWith('full:handwear-'));
+    const lineArmParts = splitLineOut.parts.parts.filter((p) => p.from.startsWith('full:handwear-'));
+    const unsplitArmParts = unsplitOut.parts.parts.filter((p) => p.from.startsWith('full:handwear-'));
+    say(
+      'AS255_SEETHROUGH_ARM_SPLIT_SEPARATES_OVERLAPPING_ARMS_INTO_TWO_LAYERS_IN_DECLARED_ORDER_AND_REFUSES_A_CUT_INTO_MORE_THAN_TWO_RUNS',
+      unsplitArmParts.length === 1 &&
+        unsplitArmParts[0].name === 'sleeves' &&
+        unsplitArmParts[0].opaque_px === 320 &&
+        JSON.stringify(xArmParts.map((p) => [p.name, p.from, p.opaque_px])) === '[["handwear_l","full:handwear-l",160],["handwear_r","full:handwear-r",160]]' &&
+        JSON.stringify(splitXPlan.plan.filter((e) => e[2].startsWith('handwear-'))) === '[["handwear_l","full","handwear-l"],["handwear_r","full","handwear-r"]]' &&
+        splitXOut.figures.errorPx === unsplitOut.figures.errorPx &&
+        JSON.stringify(lineArmParts.map((p) => [p.name, p.from])) === '[["handwear_r","full:handwear-r"],["handwear_l","full:handwear-l"]]' &&
+        lineArmParts[0].opaque_px + lineArmParts[1].opaque_px === 320 &&
+        cutArmRefusal !== null &&
+        cutArmRefusal.problems.length === 1 &&
+        cutArmRefusal.problems[0].code === 'ASSEMBLE_ARM_SPLIT_CUTS_ARM' &&
+        zigzagRefusal !== null &&
+        zigzagRefusal.problems.length === 1 &&
+        zigzagRefusal.problems[0].code === 'ASSEMBLE_ARM_SPLIT_CUTS_ARM' &&
+        emptySideRefusal !== null &&
+        emptySideRefusal.problems.length === 1 &&
+        emptySideRefusal.problems[0].code === 'ASSEMBLE_ARM_SPLIT_CUTS_ARM',
+      `unsplit: ${JSON.stringify(unsplitArmParts.map((p) => `${p.name}:${p.opaque_px}`))}; x=22 order [l,r]: ${JSON.stringify(xArmParts.map((p) => `${p.name}(${p.from}):${p.opaque_px}`))}, errorPx ${splitXOut.figures.errorPx} vs ${unsplitOut.figures.errorPx}; line order [r,l]: ${JSON.stringify(lineArmParts.map((p) => `${p.name}(${p.from}):${p.opaque_px}`))}; planted x=14 cutting right forearm run -> ${codes(cutArmRefusal)}, zigzag -> ${codes(zigzagRefusal)}, empty side -> ${codes(emptySideRefusal)}`,
+      'issue #439: without arm_split both overlapping arms land on one sleeves part; with arm_split (x or line) they separate into handwear_r and handwear_l in the declared draw order with every pixel assigned to one side, and a line that cuts one arm\'s pixel run into two parts is refused by ASSEMBLE_ARM_SPLIT_CUTS_ARM',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

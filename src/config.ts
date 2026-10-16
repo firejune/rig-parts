@@ -139,9 +139,29 @@ export interface Generation {
   control?: Control;
 }
 
+export type ArmSplitTag = 'handwear-r' | 'handwear-l';
+export const ARM_SPLIT_TAGS: readonly ArmSplitTag[] = ['handwear-r', 'handwear-l'];
+
+/**
+ * Issue #439: an optional declaration on `config.seethrough` that separates
+ * overlapping arms in the full run into `handwear-r` (smaller image x, the
+ * character's right as they face the viewer) and `handwear-l` (larger image x,
+ * the character's left) in the draw order `order` states, back to front.
+ * Exactly one of `x` (an integer column on the full run's canvas) or `line`
+ * (a polyline of at least two `[x, y]` integer points on the full run's
+ * canvas) is given.
+ */
+export interface ArmSplit {
+  x?: number;
+  line?: Array<[number, number]>;
+  order: ['handwear-r', 'handwear-l'] | ['handwear-l', 'handwear-r'];
+}
+
 export interface SeeThrough {
   /** Square crop `[x0, y0, x1, y1]` in source pixels for the second, head-only run. */
   head_box?: [number, number, number, number];
+  /** Issue #439: arm separation when both arms overlap in the full run. */
+  arm_split?: ArmSplit;
   resolution: number;
   steps: number;
   seed: number;
@@ -1571,10 +1591,10 @@ function checkGeneration(c: Check, v: Json): void {
 }
 
 function checkSeeThrough(c: Check, v: Json): void {
-  const s = c.object('config.seethrough', v, ['resolution', 'steps', 'seed', 'offload'], ['head_box']);
+  const s = c.object('config.seethrough', v, ['resolution', 'steps', 'seed', 'offload'], ['head_box', 'arm_split']);
   if (s === null) return;
   const p = 'config.seethrough';
-  if ('resolution' in s) c.int(`${p}.resolution`, s.resolution, 1);
+  const res = 'resolution' in s && c.int(`${p}.resolution`, s.resolution, 1) ? (s.resolution as number) : null;
   if ('steps' in s) c.int(`${p}.steps`, s.steps, 1);
   if ('seed' in s) c.int(`${p}.seed`, s.seed, 0);
   if ('offload' in s && typeof s.offload !== 'boolean') c.fail('CONFIG_FIELD_TYPE', `${p}.offload`, `is ${show(s.offload)}; true or false is required`);
@@ -1587,6 +1607,55 @@ function checkSeeThrough(c: Check, v: Json): void {
       if (!(x1 > x0 && y1 > y0 && x1 - x0 === y1 - y0)) {
         c.fail('CONFIG_HEAD_BOX_SQUARE', `${p}.head_box`, `is ${x1 - x0}x${y1 - y0}; a non-empty square is required (the head run is fed a square crop)`);
       }
+    }
+  }
+  if ('arm_split' in s) checkArmSplit(c, `${p}.arm_split`, s.arm_split, res);
+}
+
+function checkArmSplit(c: Check, path: string, v: Json, resolution: number | null): void {
+  const a = c.object(path, v, ['order'], ['x', 'line']);
+  if (a === null) return;
+  if (!('x' in a) && !('line' in a)) {
+    c.fail('CONFIG_FIELD_PRESENT', path, 'has neither x nor line; a split column ("x") or a polyline ("line") is required to separate the arms');
+  } else if ('x' in a && 'line' in a) {
+    c.fail('CONFIG_FIELD_TYPE', `${path}.line`, 'is set alongside x; give either a split column ("x") or a polyline ("line"), not both');
+  }
+  if ('x' in a && c.number(`${path}.x`, a.x, 'non-negative')) {
+    const x = a.x as number;
+    if (resolution !== null && x > resolution) {
+      c.fail('CONFIG_FIELD_TYPE', `${path}.x`, `is ${x}; a column inside the ${resolution}x${resolution} run canvas (0 <= x <= ${resolution}) is required`);
+    }
+  }
+  if ('line' in a) {
+    const l = a.line;
+    if (!Array.isArray(l) || l.length < 2) {
+      c.fail('CONFIG_FIELD_TYPE', `${path}.line`, `is ${show(l)}; an array of at least 2 [x, y] points in run pixels is required`);
+    } else {
+      l.forEach((pt, i) => {
+        const ok = Array.isArray(pt) && pt.length === 2 && pt.every((n) => typeof n === 'number' && Number.isFinite(n));
+        if (!ok) {
+          c.fail('CONFIG_FIELD_TYPE', `${path}.line[${i}]`, `is ${show(pt)}; a point [x, y] in run pixels is required`);
+          return;
+        }
+        const [px, py] = pt as [number, number];
+        if (px < 0 || py < 0 || (resolution !== null && (px > resolution || py > resolution))) {
+          c.fail(
+            'CONFIG_FIELD_TYPE',
+            `${path}.line[${i}]`,
+            `is [${px}, ${py}]; ${resolution !== null ? `a point inside the ${resolution}x${resolution} run canvas (0 <= x, y <= ${resolution})` : 'x >= 0 and y >= 0'} is required`,
+          );
+        }
+      });
+    }
+  }
+  if ('order' in a) {
+    const o = a.order;
+    const valid =
+      Array.isArray(o) &&
+      o.length === 2 &&
+      ((o[0] === 'handwear-r' && o[1] === 'handwear-l') || (o[0] === 'handwear-l' && o[1] === 'handwear-r'));
+    if (!valid) {
+      c.fail('CONFIG_FIELD_TYPE', `${path}.order`, `is ${show(o)}; ["handwear-r", "handwear-l"] or ["handwear-l", "handwear-r"] (back to front) is required`);
     }
   }
 }
