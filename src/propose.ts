@@ -3970,6 +3970,19 @@ export interface BackHairMassesFinding {
   outside: Array<{ point: string; at: [number, number]; minX: number; maxX: number }>;
 }
 
+/**
+ * Issue #439: both arms overlap in one 8-connected component of a single handwear layer (`handwear-r` or `handwear-l`),
+ * resolved by declaring `config.seethrough.arm_split` (`x` or `line`, and `order`).
+ */
+export interface OverlappingArmsFinding {
+  kind: 'overlapping-arms';
+  part: string;
+  from: string;
+  rAt: [number, number];
+  lAt: [number, number];
+  opaquePx: number;
+}
+
 export type LintFinding =
   | OffArtFinding
   | OffLockFinding
@@ -3981,7 +3994,8 @@ export type LintFinding =
   | ChainNotAdvancingFinding
   | SqueezeLintFinding
   | NearEmptyHandFinding
-  | BackHairMassesFinding;
+  | BackHairMassesFinding
+  | OverlappingArmsFinding;
 
 /** Which rule set read the torso and the sleeve chains, under `--keypoints`. */
 export interface LintBasis {
@@ -4268,6 +4282,48 @@ export function lint(
       }
     }
   }
+  // Issue #439: when both arms overlap in one 8-connected component of a single handwear layer, name the overlap and
+  // the config.seethrough.arm_split declaration that separates them into two layers.
+  if (joints !== undefined && joints.joints.r_wrist.at !== null && joints.joints.l_wrist.at !== null) {
+    const hwParts = [...P.byTag('handwear-r', undefined, true), ...P.byTag('handwear-l', undefined, true)].filter((p) => p.limb === undefined);
+    if (hwParts.length === 1) {
+      const part = hwParts[0];
+      const rAt: [number, number] = [joints.joints.r_wrist.at[0], joints.joints.r_wrist.at[1]];
+      const lAt: [number, number] = [joints.joints.l_wrist.at[0], joints.joints.l_wrist.at[1]];
+      {
+        const cc = connectedComponents(P.alpha(part), 8);
+        const compsNear = (pt: readonly [number, number]): Set<number> => {
+          const hit = new Set<number>();
+          const px = pyInt(pt[0]);
+          const py = pyInt(pt[1]);
+          const x0 = Math.max(0, px - WRIST_ON_PART_PX);
+          const x1 = Math.min(P.W - 1, px + WRIST_ON_PART_PX);
+          const y0 = Math.max(0, py - WRIST_ON_PART_PX);
+          const y1 = Math.min(P.H - 1, py + WRIST_ON_PART_PX);
+          for (let y = y0; y <= y1; y++) {
+            for (let x = x0; x <= x1; x++) {
+              const l = cc.labels[y * P.W + x];
+              if (l > 0) hit.add(l);
+            }
+          }
+          return hit;
+        };
+        const rComps = compsNear(rAt);
+        const lComps = compsNear(lAt);
+        const shared = [...rComps].find((l) => lComps.has(l));
+        if (shared !== undefined) {
+          findings.push({
+            kind: 'overlapping-arms',
+            part: part.name,
+            from: part.from,
+            rAt,
+            lAt,
+            opaquePx: cc.stats[shared].area,
+          });
+        }
+      }
+    }
+  }
   // Issue #445: back-hair cloth trees (trunks `hairback_..._<r|l><k>_` hung from head) are held to the visible hair
   // masses on each side of the eye axis — one tree per mass, every link and tip inside that mass's column range.
   const bhParts = P.headFirst('back hair').filter((p) => spec.meshes[p.name] !== undefined);
@@ -4385,6 +4441,7 @@ function findingBones(f: LintFinding, bones: readonly BoneEntry[]): string[] {
     case 'squeeze':
       return [...new Set(f.vertices.map((v) => v.weights[0]?.bone).filter((n): n is string => n !== undefined))];
     case 'near-empty-hand':
+    case 'overlapping-arms':
       return [];
     case 'back-hair-masses': {
       const out = new Set<string>();
@@ -4573,6 +4630,8 @@ export function lintLine(f: LintFinding): string {
           : `forearm width ${pyFixed(f.basis.width, 1)} px squared`;
       return `LINT ${f.part} (${f.from}) holds ${f.opaquePx} opaque px while ${f.wrist} at ${fmtAt(f.wristAt)} says a hand is there — below the bar of ${f.bar} px (${why}): the hands may overlap in the other layer and leave finger slivers here`;
     }
+    case 'overlapping-arms':
+      return `LINT ${f.part} (${f.from}) holds both arms in one ${f.opaquePx} px component (r_wrist at ${fmtAt(f.rAt)}, l_wrist at ${fmtAt(f.lAt)}): declare config.seethrough.arm_split (x or line, and order: ["handwear-r", "handwear-l"] or ["handwear-l", "handwear-r"]) to separate the overlapping arms into two layers`;
     case 'back-hair-masses': {
       const massDesc =
         f.masses.length === 0

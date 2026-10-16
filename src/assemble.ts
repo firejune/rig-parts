@@ -99,7 +99,7 @@
  *
  * Pure: no clock, no randomness, no file access. The CLI reads and writes.
  */
-import type { BoneEntry, CharacterConfig, Cut, EarlyConfig, Extend, Limb, Patch, PlanEntry, Run, SeeThrough } from './config.ts';
+import type { ArmSplit, BoneEntry, CharacterConfig, Cut, EarlyConfig, Extend, Limb, Patch, PlanEntry, Run, SeeThrough } from './config.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { figuresPhrase, implausibleRules, type Layer, type LayerFigures, layerFigures, type LayerSet, NEAR_WHITE_MIN, OPAQUE_ALPHA_ABOVE, ruleSummary } from './layers.ts';
 import { padToSquare, squarePad } from './inputs.ts';
@@ -123,7 +123,7 @@ import {
   warpAffine,
 } from './raster/index.ts';
 import { pyRound } from './round.ts';
-import { AUTHOR_NO_ROLE, readAuthorTag } from './tags.ts';
+import { AUTHOR_NO_ROLE, type LayerTagReading, readAuthorTag, readLayerTag } from './tags.ts';
 
 const f32 = Math.fround;
 
@@ -232,6 +232,8 @@ export interface Geometry {
    * per source pixel, and the painting must be the file's size.
    */
   single?: boolean;
+  /** `seethrough.arm_split` (issue #439): separates overlapping arms on the full run into `handwear-r` and `handwear-l` in the declared order. */
+  armSplit?: ArmSplit;
 }
 
 /**
@@ -323,6 +325,8 @@ export interface AssembleInput {
   caps?: ReadonlyMap<string, Raster>;
   /** One run (issue #359): `head` is `full`, `headBox` {@link singleRunHeadBox}, and {@link checkSingleRun} holds the plan to it. Absent: two runs. */
   single?: boolean;
+  /** `seethrough.arm_split` (issue #439): separates overlapping arms on the full run into `handwear-r` and `handwear-l` in the declared order. */
+  armSplit?: ArmSplit;
 }
 
 /** The derived numbers of the two runs' geometry. */
@@ -487,6 +491,238 @@ export function runLayers(set: LayerSet, resolution: number): RunLayer[] {
     for (let i = 3; i < canvas.data.length; i += 4) if (canvas.data[i] > OPAQUE_ALPHA_ABOVE) opaqueRunPx++;
     return { tag: layer.name, canvas, drawOrder: layer.drawOrder, ghostPx, opaqueRunPx };
   });
+}
+
+/**
+ * The integer split column(s) `armSplit` defines on run row `y`: pixels with
+ * `x < col` lie on the `handwear-r` side (left of the split in the image) and
+ * pixels with `x >= col` lie on the `handwear-l` side.
+ */
+function splitColumnsAtRow(y: number, armSplit: ArmSplit): number[] {
+  if (armSplit.x !== undefined) return [Math.ceil(armSplit.x)];
+  const pts = armSplit.line ?? [];
+  if (pts.length === 0) return [0];
+  const cols: number[] = [];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const [xA, yA] = pts[i];
+    const [xB, yB] = pts[i + 1];
+    if (y < Math.min(yA, yB) || y > Math.max(yA, yB)) continue;
+    if (yA === yB) {
+      cols.push(Math.ceil(Math.min(xA, xB)));
+      if (xA !== xB) cols.push(Math.ceil(Math.max(xA, xB)));
+    } else {
+      cols.push(Math.ceil(xA + ((y - yA) * (xB - xA)) / (yB - yA)));
+    }
+  }
+  if (cols.length === 0) {
+    let minY = pts[0][1];
+    let minX = pts[0][0];
+    let maxY = pts[0][1];
+    let maxX = pts[0][0];
+    for (const [px, py] of pts) {
+      if (py < minY) {
+        minY = py;
+        minX = px;
+      }
+      if (py > maxY) {
+        maxY = py;
+        maxX = px;
+      }
+    }
+    cols.push(Math.ceil(y < minY ? minX : maxX));
+  }
+  return [...new Set(cols)].sort((a, b) => a - b);
+}
+
+/**
+ * Separate an overlapping handwear layer of the full run into `handwear-r` and
+ * `handwear-l` along `seethrough.arm_split` (issue #439), placed in the draw
+ * order `armSplit.order` declares.
+ *
+ * Refuses under `ASSEMBLE_ARM_SPLIT_CUTS_ARM` when:
+ * - the polyline crosses a single horizontal opaque run at two or more columns;
+ * - on a row where the two arms already have separate horizontal opaque runs,
+ *   the split falls strictly inside one of those runs;
+ * - either resulting arm layer is left with 0 opaque pixels, or an arm is cut
+ *   into disconnected components.
+ */
+export function applyArmSplit(set: LayerSet, resolution: number, armSplit: ArmSplit): LayerSet {
+  const handLayers = set.layers.filter((l) => l.name === 'handwear-r' || l.name === 'handwear-l');
+  if (handLayers.length === 0) {
+    refuseIfAny([
+      {
+        code: 'ASSEMBLE_ARM_SPLIT_CUTS_ARM',
+        object: 'config.seethrough.arm_split',
+        detail: `the full run (${set.source}) holds neither "handwear-r" nor "handwear-l"; a handwear layer with opaque pixels on both sides of the split is required`,
+      },
+    ]);
+  }
+  const combinedRaw = newRaster(resolution, resolution);
+  for (const l of handLayers) {
+    const { canvas } = cleanGhosts(placeLayer(l, resolution));
+    for (let p = 0; p < resolution * resolution; p++) {
+      if (canvas.data[p * 4 + 3] > 0) combinedRaw.data.set(canvas.data.subarray(p * 4, p * 4 + 4), p * 4);
+    }
+  }
+  const { canvas: combined } = cleanGhosts(combinedRaw);
+  const rightCanvas = newRaster(resolution, resolution);
+  const leftCanvas = newRaster(resolution, resolution);
+  let firstCutRun: { y: number; rx0: number; rx1: number; col: number } | null = null;
+  for (let y = 0; y < resolution; y++) {
+    const runs: Array<[number, number]> = [];
+    let x = 0;
+    while (x < resolution) {
+      if (combined.data[(y * resolution + x) * 4 + 3] <= OPAQUE_ALPHA_ABOVE) {
+        x++;
+        continue;
+      }
+      const rx0 = x;
+      while (x + 1 < resolution && combined.data[(y * resolution + x + 1) * 4 + 3] > OPAQUE_ALPHA_ABOVE) x++;
+      runs.push([rx0, x]);
+      x++;
+    }
+    const cols = splitColumnsAtRow(y, armSplit);
+    for (const [rx0, rx1] of runs) {
+      const cutting = cols.filter((c) => rx0 < c && c <= rx1);
+      if (cutting.length >= 2) {
+        refuseIfAny([
+          {
+            code: 'ASSEMBLE_ARM_SPLIT_CUTS_ARM',
+            object: 'config.seethrough.arm_split',
+            detail: `cuts the pixel run x = ${rx0}..${rx1} on run row ${y} at columns ${cutting.join(', ')}, splitting one arm's pixel run into multiple parts; a line that crosses each horizontal pixel run at most once is required`,
+          },
+        ]);
+      }
+      if (runs.length >= 2 && cutting.length > 0) {
+        refuseIfAny([
+          {
+            code: 'ASSEMBLE_ARM_SPLIT_CUTS_ARM',
+            object: 'config.seethrough.arm_split',
+            detail: `cuts the pixel run x = ${rx0}..${rx1} on run row ${y} at column ${cutting[0]} into ${rx0}..${cutting[0] - 1} and ${cutting[0]}..${rx1} (row ${y} holds separate arm runs ${runs.map(([a, b]) => `${a}..${b}`).join(', ')}); a split between the arms (${runs[0][1] + 1} <= x <= ${runs[runs.length - 1][0]}) is required so no pixel run of one arm is cut into two parts`,
+          },
+        ]);
+      }
+      if (cutting.length === 1 && firstCutRun === null) firstCutRun = { y, rx0, rx1, col: cutting[0] };
+    }
+    const col = (runs.length === 1 ? cols.find((c) => runs[0][0] < c && c <= runs[0][1]) : undefined) ?? cols[0];
+    for (let cx = 0; cx < resolution; cx++) {
+      const p = (y * resolution + cx) * 4;
+      if (combined.data[p + 3] === 0) continue;
+      const dst = cx < col ? rightCanvas.data : leftCanvas.data;
+      dst.set(combined.data.subarray(p, p + 4), p);
+    }
+  }
+  const maskOf = (r: Raster): { mask: Mask; opaque: number; x0: number; y0: number; x1: number; y1: number } => {
+    const mask = newMask(resolution, resolution);
+    let opaque = 0;
+    let x0 = resolution;
+    let y0 = resolution;
+    let x1 = -1;
+    let y1 = -1;
+    for (let y = 0; y < resolution; y++) {
+      for (let x = 0; x < resolution; x++) {
+        const a = r.data[(y * resolution + x) * 4 + 3];
+        if (a > OPAQUE_ALPHA_ABOVE) {
+          mask.data[y * resolution + x] = 1;
+          opaque++;
+        }
+        if (a > 0) {
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
+        }
+      }
+    }
+    return { mask, opaque, x0, y0, x1, y1 };
+  };
+  const mr = maskOf(rightCanvas);
+  const ml = maskOf(leftCanvas);
+  if (mr.opaque === 0 || ml.opaque === 0) {
+    const emptyTag = mr.opaque === 0 ? 'handwear-r' : 'handwear-l';
+    const fullTag = mr.opaque === 0 ? 'handwear-l' : 'handwear-r';
+    refuseIfAny([
+      {
+        code: 'ASSEMBLE_ARM_SPLIT_CUTS_ARM',
+        object: 'config.seethrough.arm_split',
+        detail: `leaves "${emptyTag}" with 0 opaque pixels and "${fullTag}" with ${mr.opaque + ml.opaque}; a split that separates the overlapping handwear into two non-empty arm layers is required`,
+      },
+    ]);
+  }
+  const ccR = connectedComponents(mr.mask, 8);
+  const ccL = connectedComponents(ml.mask, 8);
+  for (const [tag, cc] of [
+    ['handwear-r', ccR],
+    ['handwear-l', ccL],
+  ] as const) {
+    const comps = cc.count - 1;
+    if (comps > 1) {
+      const cutNote = firstCutRun !== null ? ` (cutting pixel run x = ${firstCutRun.rx0}..${firstCutRun.rx1} on run row ${firstCutRun.y} at column ${firstCutRun.col})` : '';
+      refuseIfAny([
+        {
+          code: 'ASSEMBLE_ARM_SPLIT_CUTS_ARM',
+          object: 'config.seethrough.arm_split',
+          detail: `cuts "${tag}" into ${comps} disconnected components${cutNote}; a split that separates the two arms without cutting one arm into two parts is required`,
+        },
+      ]);
+    }
+  }
+  const refLayer = handLayers.reduce((best, l) => (l.opaquePx > best.opaquePx ? l : best), handLayers[0]);
+  const makeLayer = (name: 'handwear-r' | 'handwear-l', canvas: Raster, m: ReturnType<typeof maskOf>): Layer => ({
+    name,
+    tag: readLayerTag(name) as LayerTagReading,
+    file: refLayer.file,
+    pixels: crop(canvas, m.x0, m.y0, m.x1 - m.x0 + 1, m.y1 - m.y0 + 1),
+    left: m.x0,
+    top: m.y0,
+    right: m.x1 + 1,
+    bottom: m.y1 + 1,
+    depth: refLayer.depth,
+    drawOrder: 0,
+    opaquePx: m.opaque,
+  });
+  const byTag = {
+    'handwear-r': makeLayer('handwear-r', rightCanvas, mr),
+    'handwear-l': makeLayer('handwear-l', leftCanvas, ml),
+  };
+  const insertAt = set.layers.findIndex((l) => l === refLayer);
+  const nextLayers: Layer[] = [];
+  set.layers.forEach((l, i) => {
+    if (i === insertAt) nextLayers.push(byTag[armSplit.order[0]], byTag[armSplit.order[1]]);
+    if (l.name !== 'handwear-r' && l.name !== 'handwear-l') nextLayers.push({ ...l });
+  });
+  nextLayers.forEach((l, i) => {
+    l.drawOrder = i;
+  });
+  return { ...set, layers: nextLayers };
+}
+
+/**
+ * Apply `seethrough.arm_split`'s draw order to `assemble.plan` (issue #439):
+ * a lone `full:handwear-*` row is expanded into `[handwear_r, handwear_l]` in
+ * `armSplit.order`, and two `full:handwear-*` rows are ordered as `armSplit.order`
+ * declares.
+ */
+function armSplitPlan(plan: readonly PlanEntry[], armSplit: ArmSplit | undefined): PlanEntry[] {
+  if (armSplit === undefined) return [...plan];
+  const fullHwIndices = plan.map((e, i) => (e[1] === 'full' && (e[2] === 'handwear-r' || e[2] === 'handwear-l') ? i : -1)).filter((i) => i >= 0);
+  if (fullHwIndices.length === 1) {
+    const idx = fullHwIndices[0];
+    const [t0, t1] = armSplit.order;
+    return [...plan.slice(0, idx), [aliasOf(t0), 'full', t0], [aliasOf(t1), 'full', t1], ...plan.slice(idx + 1)];
+  }
+  if (fullHwIndices.length === 2) {
+    const [i0, i1] = fullHwIndices;
+    const e0 = plan[i0];
+    const e1 = plan[i1];
+    if (e0[2] !== e1[2] && e0[2] !== armSplit.order[0]) {
+      const out = [...plan];
+      out[i0] = e1;
+      out[i1] = e0;
+      return out;
+    }
+  }
+  return [...plan];
 }
 
 // ---------------------------------------------------------------------------
@@ -2498,15 +2734,18 @@ export function checkSingleRun(full: LayerSet, plan: readonly PlanEntry[] | null
  * after this returned writes only after green.
  */
 export function assemble(input: AssembleInput): AssembleResult {
-  const { source, plan, extend, patches, seamRule, projectRule } = input;
+  const { source, extend, patches, seamRule, projectRule } = input;
   const single = input.single === true;
   const frame = checkGeometry(
     { sourceW: source.width, sourceH: source.height, resolution: input.resolution, headBox: input.headBox, rigScale: input.rigScale, ...(single ? { single: true } : {}) },
     { full: input.full, head: input.head },
   );
   // Issue #366: one run's file, padded to the resolution square; read as both runs, as before.
-  const full = single ? padSingleRun(input.full, frame, input.resolution) : input.full;
+  const fullPadded = single ? padSingleRun(input.full, frame, input.resolution) : input.full;
+  // Issue #439: when seethrough.arm_split is declared, split the full run's overlapping handwear into handwear-r and handwear-l.
+  const full = input.armSplit === undefined ? fullPadded : applyArmSplit(fullPadded, input.resolution, input.armSplit);
   const head = single ? full : input.head;
+  const plan = armSplitPlan(input.plan, input.armSplit);
   const padRecord = singleRunPadRecord(single, source.width, source.height, input.resolution, frame);
   if (single) checkSingleRun(full, plan, extend);
   checkPlanAgainstRuns(plan, extend, full, head);
@@ -3494,7 +3733,9 @@ function fmt0(v: number): string {
 export function proposePlan(full0: LayerSet, head0: LayerSet, g: Geometry, minPx = PROPOSE_MIN_PX): PlanProposal {
   const frame = checkGeometry(g, { full: full0, head: head0 });
   // Issue #366: one run's file, padded to the resolution square as the stage pads it.
-  const full = g.single === true ? padSingleRun(full0, frame, g.resolution) : full0;
+  const fullPadded = g.single === true ? padSingleRun(full0, frame, g.resolution) : full0;
+  // Issue #439: when seethrough.arm_split is declared, split the full run's overlapping handwear into handwear-r and handwear-l.
+  const full = g.armSplit === undefined ? fullPadded : applyArmSplit(fullPadded, g.resolution, g.armSplit);
   const head = g.single === true ? full : head0;
   const runs = { full: runLayers(full, g.resolution), head: runLayers(head, g.resolution) };
   const find = (run: Run, tag: string): RunLayer | undefined => runs[run].find((l) => l.tag === tag);
@@ -3745,6 +3986,7 @@ export function stageFields(
   limbs?: Record<string, Limb>;
   bones?: BoneEntry[];
   single?: boolean;
+  armSplit?: ArmSplit;
 } {
   const problems: Problem[] = [];
   if (cfg.seethrough === undefined) {
@@ -3759,6 +4001,7 @@ export function stageFields(
     resolution: st.resolution,
     headBox: single !== null ? singleRunHeadBox(single.w, single.h, st.resolution) : (st.head_box as [number, number, number, number]),
     ...(single !== null ? { single: true } : {}),
+    ...(st.arm_split === undefined ? {} : { armSplit: st.arm_split }),
     rigScale: cfg.assemble.rig_scale,
     plan: cfg.assemble.plan,
     extend: cfg.assemble.extend_below_crop ?? [],
@@ -3776,15 +4019,19 @@ export function stageFields(
  * loader's rules; what is left here is that this stage needs the head box,
  * which that loader leaves optional.
  */
-export function proposeFields(cfg: EarlyConfig, single: { w: number; h: number } | null = null): { resolution: number; headBox: [number, number, number, number]; rigScale: number; single?: boolean } {
+export function proposeFields(
+  cfg: EarlyConfig,
+  single: { w: number; h: number } | null = null,
+): { resolution: number; headBox: [number, number, number, number]; rigScale: number; single?: boolean; armSplit?: ArmSplit } {
+  const armSplit = cfg.seethrough.arm_split === undefined ? {} : { armSplit: cfg.seethrough.arm_split };
   if (single !== null) {
     refuseIfAny(singleRunHeadBoxProblems(cfg.seethrough));
-    return { resolution: cfg.seethrough.resolution, headBox: singleRunHeadBox(single.w, single.h, cfg.seethrough.resolution), rigScale: cfg.assemble.rig_scale, single: true };
+    return { resolution: cfg.seethrough.resolution, headBox: singleRunHeadBox(single.w, single.h, cfg.seethrough.resolution), rigScale: cfg.assemble.rig_scale, single: true, ...armSplit };
   }
   if (cfg.seethrough.head_box === undefined) {
     refuseIfAny([{ code: 'ASSEMBLE_FIELD_PRESENT', object: 'config.seethrough.head_box', detail: 'is absent; the plan is proposed from both runs, and the head run cannot be placed on the painting without the box it was cropped from — run `propose --head-box` first' }]);
   }
-  return { resolution: cfg.seethrough.resolution, headBox: cfg.seethrough.head_box as [number, number, number, number], rigScale: cfg.assemble.rig_scale };
+  return { resolution: cfg.seethrough.resolution, headBox: cfg.seethrough.head_box as [number, number, number, number], rigScale: cfg.assemble.rig_scale, ...armSplit };
 }
 
 /**
