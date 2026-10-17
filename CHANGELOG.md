@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.31.0](https://github.com/rig-c/parts/compare/v1.30.0...v1.31.0) (2026-10-17)
+
+
+### Features
+
+* **assemble:** emit alternate paintings as attachment sets on the same bones ([#462](https://github.com/rig-c/parts/issues/462)) ([af697f3](https://github.com/rig-c/parts/commit/af697f3e57b96ab0200492e6f8d6a9354faec4b3)), closes [#454](https://github.com/rig-c/parts/issues/454)
+
+
+### Bug Fixes
+
+* **cloth:** place back-hair trees inside each visible mass by root-row width ([#464](https://github.com/rig-c/parts/issues/464)) ([89d55fd](https://github.com/rig-c/parts/commit/89d55fd0f56768eb3880fad1b640ba5b8e408e51)), closes [#461](https://github.com/rig-c/parts/issues/461)
+
 ## [1.30.0](https://github.com/rig-c/parts/compare/v1.29.0...v1.30.0) (2026-10-16)
 
 
