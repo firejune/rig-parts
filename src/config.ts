@@ -3296,14 +3296,22 @@ function checkFaceAnimationBand(c: Check, animations: AnimationsFrom, hasAltFace
 
 function checkTurn(c: Check, v: Json, attached: Set<string>, bones: Set<string>, hasAltFace: boolean): void {
   const at = 'config.turn';
-  const o = c.object(at, v, ['pivot', 'depths'], ['head', 'deform', 'band']);
+  const o = c.object(at, v, ['pivot', 'depths'], ['head', 'deform', 'band', 'radius', 'surface']);
   if (o === null) return;
   const pivot = 'pivot' in o && c.number(`${at}.pivot`, o.pivot) ? (o.pivot as number) : null;
+  if ('radius' in o) c.number(`${at}.radius`, o.radius, 'positive');
+  if ('surface' in o) {
+    const so = c.object(`${at}.surface`, o.surface, [], ['radius']);
+    if (so !== null && 'radius' in so) c.number(`${at}.surface.radius`, so.radius, 'positive');
+  }
   let headPivot: number | null = null;
   if ('head' in o) {
-    const ho = c.object(`${at}.head`, o.head, [], ['pivot']);
-    if (ho !== null && 'pivot' in ho && c.number(`${at}.head.pivot`, ho.pivot)) {
-      headPivot = ho.pivot as number;
+    const ho = c.object(`${at}.head`, o.head, [], ['pivot', 'radius']);
+    if (ho !== null) {
+      if ('pivot' in ho && c.number(`${at}.head.pivot`, ho.pivot)) {
+        headPivot = ho.pivot as number;
+      }
+      if ('radius' in ho) c.number(`${at}.head.radius`, ho.radius, 'positive');
     }
   }
   const depths: Record<string, number> = {};

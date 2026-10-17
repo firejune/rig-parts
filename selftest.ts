@@ -255,7 +255,7 @@ import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type Mo
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type Limb, loadClothConfig, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, parseProposalSections, type SkeletonSections } from './src/config.ts';
 import { RIG_BONE_INHERIT, RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { expandStops } from 'rig-c/src/stop.ts';
-import { applyFaceSurfaceDeform, DEFAULT_HEAD_TURN_PARTS, EAR_DEPTH_RANGE, evalYawFaceSurface, FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, FACE_RATED_BAND, FACE_RATED_PITCH_BAND, FACE_RATED_YAW_BAND, headTurnFraction, headTurnPivot, resolveFaceDeformFractions, TURN_BONE } from './src/turn.ts';
+import { applyFaceSurfaceDeform, cylinderYawDx, DEFAULT_HEAD_TURN_PARTS, EAR_DEPTH_RANGE, evalYawFaceSurface, FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, FACE_RATED_BAND, FACE_RATED_PITCH_BAND, FACE_RATED_YAW_BAND, headTurnFraction, headTurnPivot, resolveFaceDeformFractions, TURN_BONE, turnSurfaceRadius } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, FAINT_ALPHA, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FAINT, FAINT_AT_LINE, FAR, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NEAR, NOTCH, NOTCH_CUT, NOTCHED, PAIR, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRAND, STRAND_CHAIN, STRIP } from './fixtures/contour.ts';
@@ -2307,6 +2307,25 @@ function runConfigSuite(): number {
         !deformKeys89.includes('turn_hair_back_cheek_x'),
       `no config.turn -> ${show75(noTurnRef89)}; missing hair_back depth -> ${show75(missingHeadPartRef89)}; head.pivot 0.6 -> ${show75(headPivotOk89)}; head.pivot 0.4 -> ${show75(headPivotBad89)}; turn_hair_back_cheek_x in FACE_DEFORM_FRACTIONS=${deformKeys89.includes('turn_hair_back_cheek_x')}`,
       'issue #478: face turn/tilt derive keys require config.turn and depths for attached face/hair_front/hair_back (CONFIG_TURN_REQUIRED), turn.head.pivot is checked behind the nearest part (CONFIG_TURN_PIVOT_BEHIND_NEAREST), and turn_hair_back_cheek_x is removed from FACE_DEFORM_FRACTIONS',
+    );
+
+    // CF90 — issue #479: turn.radius, turn.surface.radius and turn.head.radius accept positive numbers and refuse 0 / negative / unknown keys.
+    const radOkTop90 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4, robe: 0.7 }, radius: 53 })));
+    const radOkSurf90 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4, robe: 0.7 }, surface: { radius: 106.5 } })));
+    const radOkHead90 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4, robe: 0.7 }, head: { pivot: 0.6, radius: 80 } })));
+    const radZero90 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4, robe: 0.7 }, radius: 0 })));
+    const radNegSurf90 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4, robe: 0.7 }, surface: { radius: -10 } })));
+    const radUnkSurf90 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4, robe: 0.7 }, surface: { radius: 53, extra: 1 } })));
+    say(
+      'CF90_TURN_SURFACE_RADIUS_VALIDATES_POSITIVE_AND_REFUSES_NON_POSITIVE_OR_UNKNOWN_KEYS',
+      radOkTop90 === null &&
+        radOkSurf90 === null &&
+        radOkHead90 === null &&
+        one75(radZero90, 'CONFIG_FIELD_TYPE', 'config.turn.radius', 'is 0; a number > 0 is required') &&
+        one75(radNegSurf90, 'CONFIG_FIELD_TYPE', 'config.turn.surface.radius', 'is -10; a number > 0 is required') &&
+        one75(radUnkSurf90, 'CONFIG_KEY_KNOWN', 'config.turn.surface.extra', 'is not a config.turn.surface field; allowed: radius'),
+      `radius 53 -> ${show75(radOkTop90)}; surface.radius 106.5 -> ${show75(radOkSurf90)}; head.radius 80 -> ${show75(radOkHead90)}; radius 0 -> ${show75(radZero90)}; surface.radius -10 -> ${show75(radNegSurf90)}; surface.extra -> ${show75(radUnkSurf90)}`,
+      'issue #479: config.turn accepts positive radius, surface.radius and head.radius for the cylinder face projection and refuses non-positive values (CONFIG_FIELD_TYPE) or unknown surface keys (CONFIG_KEY_KNOWN)',
     );
   } finally {
     rmSync(bandDir87, { recursive: true, force: true });
@@ -7094,8 +7113,8 @@ function runTurnRigCases(say: (name: string, ok: boolean, detail: string, why: s
       [53, 80],
       [-55, 48],
       [53, 48],
-      [-55, 10],
-      [53, 10],
+      [-45, 10],
+      [43, 10],
     ];
     const hfRestPts144: Array<[number, number]> = [
       [-30, 112], // top of crown (above hyCrownStart = 48 + (24/128)*128 = 72)
@@ -7271,6 +7290,88 @@ function runTurnRigCases(say: (name: string, ok: boolean, detail: string, why: s
         DEFAULT_HEAD_TURN_PARTS.includes('hair_back'),
       `headPivot=${pyRound(hp144, 6)} (vs body pivot ${turnLook144.pivot}, face ${turnLook144.depths.face}); frac hair_back=${pyRound(hbFrac144, 4)}, hairpin=${pyRound(hpFrac144, 4)}; width Δw: -15°=${pyRound(dwM15, 2)}%, +15°=${pyRound(dwP15, 2)}%; yaw -15°: iris=${pyRound(irisDxM15, 2)}, hair_back=${pyRound(hbDxM15, 2)}, hairpin=${pyRound(hpDxM15, 2)}, crown=${pyRound(crownDxM15, 2)}, bang=${pyRound(bangDxM15, 2)}; mutant hair_back=${pyRound(mutHbDxM15, 2)} / ${pyRound(mutHbDxP15, 2)} (bar2=${mutBar2Pass144}); missing turn -> ${missingTurnRef144?.problems[0]?.code ?? 'none'}`,
       'issue #478: headTurnPivot weights only the head parts so hair_back and hairpin behind the head pivot counter-translate opposite to the irises, keeping head outline width within ±2% and the crown stationary while the sign-flip mutant fails Bar 2',
+    );
+
+    // RG145 — issue #479: cylinder projection slides irises within ±20% of cylinderYawDx, widens the trailing cheek
+    // strip >= 1.10x, holds the leading jaw edge at 0 px (<= 3 px), scales with configured radius, and the flat-table
+    // mutant (flatYawTableMutant: true) fails both Bar 1 and Bar 2.
+    const rDefault145 = turnSurfaceRadius(turnLook144, 106);
+    const rCustom145 = turnSurfaceRadius({ ...turnLook144, surface: { radius: 80 } }, 106);
+    const rig145Flat = structuredClone(rig144Base);
+    const mot145Flat = structuredClone(mot144Base);
+    applyFaceSurfaceDeform(rig145Flat, mot145Flat, {
+      turn: turnLook144,
+      partAreas: opaquePx144,
+      requireTurn: true,
+      flatYawTableMutant: true,
+    });
+    const rig145Rad80 = structuredClone(rig144Base);
+    const mot145Rad80 = structuredClone(mot144Base);
+    applyFaceSurfaceDeform(rig145Rad80, mot145Rad80, {
+      turn: { ...turnLook144, surface: { radius: 80 } },
+      partAreas: opaquePx144,
+      requireTurn: true,
+    });
+
+    const cylIrisM15 = 0.5 * (cylinderYawDx(-21 - (-1), -15, rDefault145) + cylinderYawDx(21 - (-1), -15, rDefault145));
+    const cylIrisP15 = 0.5 * (cylinderYawDx(-21 - (-1), 15, rDefault145) + cylinderYawDx(21 - (-1), 15, rDefault145));
+    const errCylM15Pct = Math.abs((irisDxM15 - cylIrisM15) / cylIrisM15) * 100;
+    const errCylP15Pct = Math.abs((irisDxP15 - cylIrisP15) / cylIrisP15) * 100;
+
+    const featTxFlat145 = (mot145Flat.animations.turn as { tracks: Array<{ group?: string; property: string; keys: Array<{ v?: Record<string, number[]> }> }> }).tracks.find(
+      (tr) => tr.group === 'features' && tr.property === 'translatex',
+    );
+    const flatIrisDxM15 = ((featTxFlat145?.keys[0]?.v?.eye_r?.[0] ?? 0) + (featTxFlat145?.keys[0]?.v?.eye_l?.[0] ?? 0)) / 2;
+    const flatIrisDxP15 = ((featTxFlat145?.keys[2]?.v?.eye_r?.[0] ?? 0) + (featTxFlat145?.keys[2]?.v?.eye_l?.[0] ?? 0)) / 2;
+    const errFlatM15Pct = Math.abs((flatIrisDxM15 - cylIrisM15) / cylIrisM15) * 100;
+    const errFlatP15Pct = Math.abs((flatIrisDxP15 - cylIrisP15) / cylIrisP15) * 100;
+
+    const featTxRad80 = (mot145Rad80.animations.turn as { tracks: Array<{ group?: string; property: string; keys: Array<{ v?: Record<string, number[]> }> }> }).tracks.find(
+      (tr) => tr.group === 'features' && tr.property === 'translatex',
+    );
+    const rad80IrisDxP15 = ((featTxRad80?.keys[2]?.v?.eye_r?.[0] ?? 0) + (featTxRad80?.keys[2]?.v?.eye_l?.[0] ?? 0)) / 2;
+    const cylIrisRad80P15 = 0.5 * (cylinderYawDx(-21 - (-1), 15, 80) + cylinderYawDx(21 - (-1), 15, 80));
+    const errRad80P15Pct = Math.abs((rad80IrisDxP15 - cylIrisRad80P15) / cylIrisRad80P15) * 100;
+
+    // buildFaceGrid indices: r=2 (mid-cheek) has c=0->14, c=1->19, c=3->21, c=4->6; r=3 (jaw) has c=0->13, c=4->7.
+    const measureCheekAndJaw145 = (mot: typeof mot144, keyIdx: number, yawDeg: number) => {
+      const fVerts = getTurnDeform144(mot, 'face')?.keys[keyIdx]?.vertices ?? [];
+      const xAt = (idx: number) => restFaceXs144[idx]! + (fVerts[idx * 2] ?? 0);
+      if (yawDeg > 0) {
+        const restStrip = restFaceXs144[6]! - restFaceXs144[21]!;
+        const posedStrip = xAt(6) - xAt(21);
+        const leadJawShift = Math.abs(xAt(13) - restFaceXs144[13]!);
+        return { ratio: posedStrip / restStrip, leadJawShift };
+      }
+      const restStrip = restFaceXs144[19]! - restFaceXs144[14]!;
+      const posedStrip = xAt(19) - xAt(14);
+      const leadJawShift = Math.abs(xAt(7) - restFaceXs144[7]!);
+      return { ratio: posedStrip / restStrip, leadJawShift };
+    };
+    const cylM15Cheek = measureCheekAndJaw145(mot144, 0, -15);
+    const cylP15Cheek = measureCheekAndJaw145(mot144, 2, 15);
+    const flatM15Cheek = measureCheekAndJaw145(mot145Flat, 0, -15);
+    const flatP15Cheek = measureCheekAndJaw145(mot145Flat, 2, 15);
+
+    const bar1Pass145 = errCylM15Pct <= 20 && errCylP15Pct <= 20 && errRad80P15Pct <= 20 && Math.abs(rad80IrisDxP15) > Math.abs(irisDxP15) * 1.3;
+    const bar2Pass145 =
+      cylM15Cheek.ratio >= 1.1 &&
+      cylP15Cheek.ratio >= 1.1 &&
+      cylM15Cheek.leadJawShift <= 3 &&
+      cylP15Cheek.leadJawShift <= 3;
+    const mutFailsBar1_145 = errFlatM15Pct > 20 && errFlatP15Pct > 20;
+    const mutFailsBar2_145 = flatM15Cheek.ratio < 1.1 && flatP15Cheek.ratio < 1.1 && flatM15Cheek.leadJawShift > 3 && flatP15Cheek.leadJawShift > 3;
+
+    say(
+      'RG145_CYLINDER_FACE_SURFACE_SLIDES_IRIS_WIDENS_TRAILING_CHEEK_AND_HOLDS_LEADING_JAW_WHILE_FLAT_TABLE_MUTANT_FAILS',
+      rDefault145 === 53 &&
+        rCustom145 === 80 &&
+        bar1Pass145 &&
+        bar2Pass145 &&
+        mutFailsBar1_145 &&
+        mutFailsBar2_145,
+      `R=${rDefault145} (custom=${rCustom145}); iris -15°=${pyRound(irisDxM15, 2)} vs cyl ${pyRound(cylIrisM15, 2)} (${pyRound(errCylM15Pct, 2)}%), +15°=${pyRound(irisDxP15, 2)} vs cyl ${pyRound(cylIrisP15, 2)} (${pyRound(errCylP15Pct, 2)}%), R=80 +15°=${pyRound(rad80IrisDxP15, 2)} vs cyl ${pyRound(cylIrisRad80P15, 2)} (${pyRound(errRad80P15Pct, 2)}%); cheek ratio=${pyRound(cylM15Cheek.ratio, 3)}x/${pyRound(cylP15Cheek.ratio, 3)}x, lead jaw=${pyRound(cylM15Cheek.leadJawShift, 2)}/${pyRound(cylP15Cheek.leadJawShift, 2)} px; mutant iris=${pyRound(flatIrisDxM15, 2)}/${pyRound(flatIrisDxP15, 2)} (${pyRound(errFlatM15Pct, 2)}%/${pyRound(errFlatP15Pct, 2)}%), cheek=${pyRound(flatM15Cheek.ratio, 3)}x, jaw=${pyRound(flatM15Cheek.leadJawShift, 2)} px`,
+      'issue #479: cylinder projection moves irises within ±20% of cylinderYawDx for the configured radius, widens the trailing cheek >= 1.10x, holds the leading jaw <= 3 px, and the flat-table mutant fails both Bar 1 and Bar 2',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

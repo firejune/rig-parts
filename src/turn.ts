@@ -211,13 +211,43 @@ export const DEFAULT_HEAD_TURN_PARTS: readonly string[] = [
   'topknot',
 ];
 
-/** `config.turn`: the pivot depth, each carried part's See-through `depth_median`, optional head-only pivot override, optional rated band, and optional face surface deform overrides. */
+/** `config.turn`: the pivot depth, each carried part's See-through `depth_median`, optional head-only pivot override, optional curved-surface cylinder radius, optional rated band, and optional face surface deform overrides. */
 export interface TurnSpec {
   pivot: number;
   depths: Record<string, number>;
-  head?: { pivot?: number };
+  head?: { pivot?: number; radius?: number };
+  surface?: { radius?: number };
+  radius?: number;
   band?: number | { yaw?: number; pitch?: number };
   deform?: Partial<FaceDeformFractions>;
+}
+
+/**
+ * Issue #479: the cylinder radius `R` (in rig px) for the curved-surface face
+ * yaw projection — `spec.surface.radius`, `spec.radius`, or `spec.head.radius`
+ * when declared, defaulting to half the face plate's opaque width (`W / 2`).
+ */
+export function turnSurfaceRadius(spec: TurnSpec | null | undefined, W: number): number {
+  const r = spec?.surface?.radius ?? spec?.radius ?? spec?.head?.radius;
+  return typeof r === 'number' && Number.isFinite(r) && r > 0 ? r : W / 2;
+}
+
+/**
+ * Issue #479: horizontal displacement `Δx` of a point at rest offset `x`
+ * (`hx - X0`) on a vertical cylinder of radius `radius` turned by `deg`
+ * degrees of yaw (`θ = deg · π / 180`), with the rotated surface angle clamped
+ * to the visible limb `[-π/2, π/2]`. At the leading limb (`u = -sign(deg)`),
+ * `Δx = 0` so the leading outline holds fixed; across the interior (`|u| < 1`),
+ * points slide toward the leading side (`-radius · sin θ` at `x = 0`), widening
+ * the trailing cheek and foreshortening the leading cheek.
+ */
+export function cylinderYawDx(x: number, deg: number, radius: number): number {
+  if (deg === 0 || !(radius > 0)) return 0;
+  const theta = (deg * Math.PI) / 180;
+  const u = Math.max(-1, Math.min(1, x / radius));
+  const phi0 = Math.asin(u);
+  const phi1 = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, phi0 - theta));
+  return radius * (Math.sin(phi1) - u);
 }
 
 /** One carried part: its depth and the fraction of the control's offset it travels. */
@@ -347,7 +377,10 @@ export function evalPitchFaceSurface(
 
 /**
  * Evaluate the yaw (`turn`) surface deformation field `(dx, dy)` in `head`
- * space at `(hx, hy)` for `deg` degrees of yaw.
+ * space at `(hx, hy)` for `deg` degrees of yaw (issue #479: cylinder projection
+ * of radius `radius`, default `W / 2`, with lower-face jaw taper so the leading
+ * jaw edge holds and the trailing cheek widens; `flatYawTable: true` restores
+ * the flat yaw table for the Bar 4 negative control or explicit fraction overrides).
  */
 export function evalYawFaceSurface(
   hx: number,
@@ -358,16 +391,28 @@ export function evalYawFaceSurface(
   X0: number,
   Y0: number,
   f: Readonly<FaceDeformFractions> = FACE_DEFORM_FRACTIONS,
+  radius?: number,
+  flatYawTable = false,
 ): [number, number] {
   if (deg === 0) return [0, 0];
   const s = Math.sign(deg);
   const ux = Math.max(-1.35, Math.min(1.35, (hx - X0) / (W / 2)));
   const uy = Math.max(-1.35, Math.min(1.35, (hy - Y0) / (H / 2)));
-  const uLead = Math.min(1.2, Math.max(0, -s * ux));
-  const uTrail = Math.min(1.2, Math.max(0, s * ux));
-  const fracXPerDeg = unmult(f.turn_mid_x) + unmult(f.turn_lead_compress_x) * Math.pow(uLead, 1.2) + unmult(f.turn_trail_shift_x) * Math.pow(uTrail, 1.2);
   const fracYPerDeg = unmult(f.turn_cheek_arch_y) * (-s * ux) * Math.max(0, 1 - Math.abs(uy));
-  return [FACE_DEFORM_MULT * deg * W * fracXPerDeg, FACE_DEFORM_MULT * deg * H * fracYPerDeg];
+  const dy = FACE_DEFORM_MULT * deg * H * fracYPerDeg;
+  if (flatYawTable) {
+    const uLead = Math.min(1.2, Math.max(0, -s * ux));
+    const uTrail = Math.min(1.2, Math.max(0, s * ux));
+    const fracXPerDeg = unmult(f.turn_mid_x) + unmult(f.turn_lead_compress_x) * Math.pow(uLead, 1.2) + unmult(f.turn_trail_shift_x) * Math.pow(uTrail, 1.2);
+    return [FACE_DEFORM_MULT * deg * W * fracXPerDeg, dy];
+  }
+  const R = radius !== undefined && radius > 0 ? radius : W / 2;
+  const rawDx = cylinderYawDx(hx - X0, deg, R);
+  const absUx = Math.abs((hx - X0) / (W / 2));
+  const tOutline = Math.max(0, Math.min(1, (absUx - 0.7) / (1.0 - 0.7)));
+  const wOutline = 1 - tOutline * tOutline * (3 - 2 * tOutline);
+  const dx = rawDx * wOutline;
+  return [dx, dy];
 }
 
 export interface FaceSurfaceDeformOptions {
@@ -388,7 +433,7 @@ export interface FaceSurfaceDeformOptions {
    * transform constraints holding the dial bones to `[-15, 15]` and `[-12, 12]`.
    */
   hasAlternateFaceSet?: boolean;
-  /** Issue #478: `config.turn` holding `pivot`, `depths` and optional `head.pivot`. */
+  /** Issue #478: `config.turn` holding `pivot`, `depths` and optional `head.pivot` / `radius`. */
   turn?: TurnSpec | null;
   /** Issue #478: each part's `opaque_px` from `parts.json` for weighting the head-only pivot. */
   partAreas?: Readonly<Record<string, number>>;
@@ -402,6 +447,16 @@ export interface FaceSurfaceDeformOptions {
    * sign so `hair_back` and `hairpin` move with the face instead of against it.
    */
   flipBackLayerSignMutant?: boolean;
+  /**
+   * Issue #479: explicit cylinder radius override in rig px (defaults to
+   * `turnSurfaceRadius(turn, W)` = `W / 2`).
+   */
+  surfaceRadius?: number;
+  /**
+   * Issue #479 Bar 4 negative control: when true, restore the flat yaw table
+   * instead of the cylinder projection.
+   */
+  flatYawTableMutant?: boolean;
 }
 
 interface DeformWeight {
@@ -539,7 +594,9 @@ export function applyFaceSurfaceDeform(
       'turn' in options ||
       'partAreas' in options ||
       'requireTurn' in options ||
-      'flipBackLayerSignMutant' in options);
+      'flipBackLayerSignMutant' in options ||
+      'surfaceRadius' in options ||
+      'flatYawTableMutant' in options);
   const opts: FaceSurfaceDeformOptions = isOpts ? (options as FaceSurfaceDeformOptions) : { overrides: options as Readonly<Partial<FaceDeformFractions>> | null | undefined };
 
   // Issue #477 & #478: refuse an out-of-range ear derive.depth or missing config.turn by name before touching rig or motion.
@@ -604,6 +661,13 @@ export function applyFaceSurfaceDeform(
   if (turnAnim !== undefined) motion.animations.turn = turnAnim;
 
   const f = resolveFaceDeformFractions(opts.overrides);
+  const hasFlatYawOverride =
+    opts.overrides !== undefined &&
+    opts.overrides !== null &&
+    (opts.overrides.turn_mid_x !== undefined ||
+      opts.overrides.turn_lead_compress_x !== undefined ||
+      opts.overrides.turn_trail_shift_x !== undefined);
+  const useFlatYaw = opts.flatYawTableMutant === true || hasFlatYawOverride;
 
   // Issue #472: when no alternate face set is declared, clamp dial bones to the single-plate rated band (±15° yaw, ±12° pitch).
   if (!opts.hasAlternateFaceSet && Array.isArray(rig.constraints)) {
@@ -709,6 +773,10 @@ export function applyFaceSurfaceDeform(
   const H = opts.opaqueHeight ?? faceH - 8;
   const X0 = faceRegX;
   const Y0 = faceRegY - 1;
+  const cylRadius =
+    opts.surfaceRadius !== undefined && Number.isFinite(opts.surfaceRadius) && opts.surfaceRadius > 0
+      ? opts.surfaceRadius
+      : turnSurfaceRadius(opts.turn, W);
 
   const boneOrder = new Map<string, number>(rig.bones.map((b, i) => [b.name, i]));
   for (const slotName of ['hair_front', 'hair_back', 'hairpin']) {
@@ -1085,14 +1153,35 @@ export function applyFaceSurfaceDeform(
             const dFrac = zRef > 0 ? z / zRef : 1;
             const ux = Math.max(-1, Math.min(1, (bx - X0) / (W / 2)));
             const effDeg = deg * (1 + (dFrac - 1) * Math.max(0, 1 - ux * ux));
-            const [dxL] = evalYawFaceSurface(bx - featRx, by, effDeg, W, H, X0, Y0, f);
-            const [dxR] = evalYawFaceSurface(bx + featRx, by, effDeg, W, H, X0, Y0, f);
+            const [dxL] = evalYawFaceSurface(bx - featRx, by, effDeg, W, H, X0, Y0, f, cylRadius, useFlatYaw);
+            const [dxR] = evalYawFaceSurface(bx + featRx, by, effDeg, W, H, X0, Y0, f, cylRadius, useFlatYaw);
             const rawDelta = (dxR - dxL) / (2 * featRx);
             const isTrailing = s * (bx - X0) > featRx * 0.5;
-            const sx = isTrailing ? 1 + Math.abs(rawDelta) : Math.max(0.2, 1 + rawDelta);
-            const dx = isTrailing
-              ? (s > 0 ? dxR - featRx * (sx - 1) : dxL + featRx * (sx - 1))
-              : 0.5 * (dxL + dxR);
+            let sx: number;
+            if (!useFlatYaw && isTrailing) {
+              const cylL = cylinderYawDx(bx - X0 - featRx * 0.5, effDeg, cylRadius);
+              const cylR = cylinderYawDx(bx - X0 + featRx * 0.5, effDeg, cylRadius);
+              sx = 1 + Math.abs((cylR - cylL) / featRx);
+            } else {
+              sx = isTrailing ? 1 + Math.abs(rawDelta) : Math.max(0.2, 1 + rawDelta);
+            }
+            let dx: number;
+            if (useFlatYaw) {
+              dx = isTrailing
+                ? (s > 0 ? dxR - featRx * (sx - 1) : dxL + featRx * (sx - 1))
+                : 0.5 * (dxL + dxR);
+            } else {
+              const [dxCenter] = evalYawFaceSurface(bx, by, effDeg, W, H, X0, Y0, f, cylRadius, false);
+              if (Math.abs(deg) > FACE_RATED_YAW_BAND) {
+                const [plateLeftDx] = evalYawFaceSurface(X0 - W / 2, by, deg, W, H, X0, Y0, f, cylRadius, false);
+                const [plateRightDx] = evalYawFaceSurface(X0 + W / 2, by, deg, W, H, X0, Y0, f, cylRadius, false);
+                const plateMinX = X0 - W / 2 + plateLeftDx;
+                const plateMaxX = X0 + W / 2 + plateRightDx;
+                dx = Math.max(plateMinX - bx + featRx * sx, Math.min(plateMaxX - bx - featRx * sx, dxCenter));
+              } else {
+                dx = dxCenter;
+              }
+            }
             if (tr.property === 'translatex') {
               vMap[bname] = [pyRound(dx, 4)];
             } else {
@@ -1134,7 +1223,7 @@ export function applyFaceSurfaceDeform(
           keys: refTurnKeys.map((k) => {
             const deg = k.derive?.degrees ?? 0;
             if (deg === 0) return { t: k.t, v: [0] };
-            const [dxCheekEdge] = evalYawFaceSurface(earHx, hyEar, deg, W, H, X0, Y0, f);
+            const [dxCheekEdge] = evalYawFaceSurface(earHx, hyEar, deg, W, H, X0, Y0, f, cylRadius, useFlatYaw);
             return { t: k.t, v: [pyRound(dxCheekEdge * f.turn_ear_x, 4)] };
           }),
         });
@@ -1176,7 +1265,7 @@ export function applyFaceSurfaceDeform(
         slot: 'face',
         attachment: 'face',
         keys: turnKeys.map(({ t, deg }) =>
-          deg === 0 ? { t } : { t, vertices: expandToDeform(faceVerts, (v) => evalYawFaceSurface(v.hx, v.hy, deg, W, H, X0, Y0, f)) },
+          deg === 0 ? { t } : { t, vertices: expandToDeform(faceVerts, (v) => evalYawFaceSurface(v.hx, v.hy, deg, W, H, X0, Y0, f, cylRadius, useFlatYaw)) },
         ),
       },
     ];
@@ -1190,7 +1279,7 @@ export function applyFaceSurfaceDeform(
             : {
                 t,
                 vertices: expandToDeform(hairFrontVerts, (v) => {
-                  const [dxSurf, dySurf] = evalYawFaceSurface(v.hx, v.hy, deg, W, H, X0, Y0, f);
+                  const [dxSurf, dySurf] = evalYawFaceSurface(v.hx, v.hy, deg, W, H, X0, Y0, f, cylRadius, useFlatYaw);
                   const [bx, by] = getVertexBoneDelta(v, turnAnim.tracks, t);
                   const uBang = Math.max(0, Math.min(1, (v.hy - hyTurnBangBottom) / hyTurnBangSpan));
                   const bangParallaxX = (deg / 15) * pyRound(f.turn_bang_parallax_x * 15 * W, 8) * uBang;
@@ -1218,7 +1307,7 @@ export function applyFaceSurfaceDeform(
                 t,
                 vertices: expandToDeform(hairBackVerts, (v) => {
                   const [bx, by] = getVertexBoneDelta(v, turnAnim.tracks, t);
-                  const [, dyCheek] = evalYawFaceSurface(v.hx, v.hy, deg, W, H, X0, Y0, f);
+                  const [, dyCheek] = evalYawFaceSurface(v.hx, v.hy, deg, W, H, X0, Y0, f, cylRadius, useFlatYaw);
                   const uBun = Math.max(0, Math.min(1, (v.hy - hyCrown) / hyBunSpan));
                   const wBun =
                     (v.boneWeights.bun ?? 0) +
