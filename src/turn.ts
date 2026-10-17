@@ -328,7 +328,7 @@ interface DeriveSpec {
 
 interface SliderKey {
   t: number;
-  v?: number[];
+  v?: number[] | Record<string, number[]>;
   derive?: DeriveSpec;
 }
 
@@ -390,9 +390,9 @@ function buildFaceGrid(width: number, height: number): { points: Array<[number, 
 /**
  * Promote the `face` region on `head` to a 5×5 grid mesh and populate the
  * `tilt` and `turn` slider animations with the Set B ×2.5 face and hair mesh
- * deform timelines and ear/topknot tracks (issue #436). When `motion` holds
- * neither `tilt` nor `turn` with slider `derive` keys, neither `rig` nor
- * `motion` is touched.
+ * deform timelines, feature field-sampled tracks (#468) and ear/topknot tracks
+ * (issue #436). When `motion` holds neither `tilt` nor `turn` with slider
+ * `derive` keys, neither `rig` nor `motion` is touched.
  */
 export function applyFaceSurfaceDeform(
   rig: {
@@ -443,7 +443,7 @@ export function applyFaceSurfaceDeform(
         bone: 'head',
         x: pyRound(faceRegX - faceW / 2 + px, 6),
         y: pyRound(faceRegY + faceH / 2 - py, 6),
-        weight: 1,
+      weight: 1,
       },
     ]);
     faceSlot.face = {
@@ -533,6 +533,7 @@ export function applyFaceSurfaceDeform(
   const boneMap = new Map(rig.bones.map((b) => [b.name, b]));
   const evalDeriveKey = (boneName: string, k: SliderKey): number => {
     if (Array.isArray(k.v)) return k.v[0] ?? 0;
+    if (k.v !== undefined && typeof k.v === 'object') return k.v[boneName]?.[0] ?? 0;
     const d = k.derive;
     if (d === undefined) return 0;
     const b = boneMap.get(boneName);
@@ -598,6 +599,21 @@ export function applyFaceSurfaceDeform(
   const hyEar = Y0 - (16 / 128) * H;
   const earRx = boneMap.get('ear_r')?.x ?? -51;
   const earLx = boneMap.get('ear_l')?.x ?? 47.5;
+  const featRx = (24 / 106) * W;
+  const featRy = (12 / 128) * H;
+  const featMembers = motion.groups?.features ?? [];
+
+  const minDepthOf = (depth: number | Readonly<Record<string, number>> | undefined, fallback: number): number => {
+    if (typeof depth === 'number') return depth > 0 ? depth : fallback;
+    if (depth === undefined) return fallback;
+    const vals = Object.values(depth).filter((v): v is number => typeof v === 'number' && v > 0);
+    return vals.length > 0 ? Math.min(...vals) : fallback;
+  };
+
+  const memberDepthOf = (depth: number | Readonly<Record<string, number>> | undefined, boneName: string, zRef: number): number => {
+    if (typeof depth === 'number') return depth;
+    return depth?.[boneName] ?? zRef;
+  };
 
   if (tiltAnim !== undefined) {
     const origTiltTracks = tiltAnim.tracks.map((tr) => ({ ...tr, keys: [...tr.keys] }));
@@ -657,6 +673,31 @@ export function applyFaceSurfaceDeform(
       });
     }
     for (const tr of tiltAnim.tracks) {
+      if (tr.group === 'features' && (tr.property === 'translatey' || tr.property === 'scaley') && featMembers.length > 0) {
+        const zRef = minDepthOf(tr.keys[0]?.derive?.depth, 34);
+        tr.keys = tr.keys.map((k) => {
+          const deg = k.derive?.degrees ?? 0;
+          if (deg === 0) return { t: k.t, v: tr.property === 'scaley' ? [1] : [0] };
+          const vMap: Record<string, number[]> = {};
+          for (const bname of featMembers) {
+            const b = boneMap.get(bname);
+            const bx = b?.x ?? 0;
+            const by = b?.y ?? Y0;
+            const z = memberDepthOf(k.derive?.depth, bname, zRef);
+            const dFrac = zRef > 0 ? z / zRef : 1;
+            const uy = Math.max(-1, Math.min(1, (by - Y0) / (H / 2)));
+            const effDeg = deg * (1 + (dFrac - 1) * Math.max(0, 1 - uy * uy));
+            const [, dyD] = evalPitchFaceSurface(bx, by - featRy, effDeg, W, H, X0, Y0, f);
+            const [, dyU] = evalPitchFaceSurface(bx, by + featRy, effDeg, W, H, X0, Y0, f);
+            if (tr.property === 'translatey') {
+              vMap[bname] = [pyRound(0.5 * (dyD + dyU), 4)];
+            } else {
+              vMap[bname] = [pyRound(Math.max(0.2, 1 + (dyU - dyD) / (2 * featRy)), 4)];
+            }
+          }
+          return { t: k.t, v: vMap };
+        });
+      }
       if (tr.group === 'ears' && tr.property === 'translatey') {
         tr.keys = tr.keys.map((k) => {
           const deg = k.derive?.degrees ?? 0;
@@ -757,6 +798,40 @@ export function applyFaceSurfaceDeform(
     turnAnim.tracks = turnAnim.tracks.filter(
       (tr) => !(tr.group === 'ears' && tr.property === 'translatex') && !(tr.group === 'topknot' && tr.property === 'translatex'),
     );
+    for (const tr of turnAnim.tracks) {
+      if (tr.group === 'features' && (tr.property === 'translatex' || tr.property === 'scalex') && featMembers.length > 0) {
+        const zRef = minDepthOf(tr.keys[0]?.derive?.depth, 36);
+        tr.keys = tr.keys.map((k) => {
+          const deg = k.derive?.degrees ?? 0;
+          if (deg === 0) return { t: k.t, v: tr.property === 'scalex' ? [1] : [0] };
+          const vMap: Record<string, number[]> = {};
+          const s = Math.sign(deg);
+          for (const bname of featMembers) {
+            const b = boneMap.get(bname);
+            const bx = b?.x ?? X0;
+            const by = b?.y ?? Y0;
+            const z = memberDepthOf(k.derive?.depth, bname, zRef);
+            const dFrac = zRef > 0 ? z / zRef : 1;
+            const ux = Math.max(-1, Math.min(1, (bx - X0) / (W / 2)));
+            const effDeg = deg * (1 + (dFrac - 1) * Math.max(0, 1 - ux * ux));
+            const [dxL] = evalYawFaceSurface(bx - featRx, by, effDeg, W, H, X0, Y0, f);
+            const [dxR] = evalYawFaceSurface(bx + featRx, by, effDeg, W, H, X0, Y0, f);
+            const rawDelta = (dxR - dxL) / (2 * featRx);
+            const isTrailing = s * (bx - X0) > featRx * 0.5;
+            const sx = isTrailing ? 1 + Math.abs(rawDelta) : Math.max(0.2, 1 + rawDelta);
+            const dx = isTrailing
+              ? (s > 0 ? dxR - featRx * (sx - 1) : dxL + featRx * (sx - 1))
+              : 0.5 * (dxL + dxR);
+            if (tr.property === 'translatex') {
+              vMap[bname] = [pyRound(dx, 4)];
+            } else {
+              vMap[bname] = [pyRound(sx, 4)];
+            }
+          }
+          return { t: k.t, v: vMap };
+        });
+      }
+    }
     for (const [earBone, earHx] of [
       ['ear_r', earRx],
       ['ear_l', earLx],
