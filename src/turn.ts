@@ -1165,6 +1165,7 @@ export function applyFaceSurfaceDeform(
             } else {
               sx = isTrailing ? 1 + Math.abs(rawDelta) : Math.max(0.2, 1 + rawDelta);
             }
+            sx = pyRound(sx, 4);
             let dx: number;
             if (useFlatYaw) {
               dx = isTrailing
@@ -1177,7 +1178,9 @@ export function applyFaceSurfaceDeform(
                 const [plateRightDx] = evalYawFaceSurface(X0 + W / 2, by, deg, W, H, X0, Y0, f, cylRadius, false);
                 const plateMinX = X0 - W / 2 + plateLeftDx;
                 const plateMaxX = X0 + W / 2 + plateRightDx;
-                dx = Math.max(plateMinX - bx + featRx * sx, Math.min(plateMaxX - bx - featRx * sx, dxCenter));
+                const minDx = Math.ceil((plateMinX - bx + featRx * sx - 1e-9) * 10000) / 10000;
+                const maxDx = Math.floor((plateMaxX - bx - featRx * sx + 1e-9) * 10000) / 10000;
+                dx = Math.max(minDx, Math.min(maxDx, dxCenter));
               } else {
                 dx = dxCenter;
               }
@@ -1185,7 +1188,7 @@ export function applyFaceSurfaceDeform(
             if (tr.property === 'translatex') {
               vMap[bname] = [pyRound(dx, 4)];
             } else {
-              vMap[bname] = [pyRound(sx, 4)];
+              vMap[bname] = [sx];
             }
           }
           return { t: k.t, v: vMap };

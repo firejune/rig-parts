@@ -2321,9 +2321,14 @@ function runConfigSuite(): number {
       radOkTop90 === null &&
         radOkSurf90 === null &&
         radOkHead90 === null &&
-        one75(radZero90, 'CONFIG_FIELD_TYPE', 'config.turn.radius', 'is 0; a number > 0 is required') &&
-        one75(radNegSurf90, 'CONFIG_FIELD_TYPE', 'config.turn.surface.radius', 'is -10; a number > 0 is required') &&
-        one75(radUnkSurf90, 'CONFIG_KEY_KNOWN', 'config.turn.surface.extra', 'is not a config.turn.surface field; allowed: radius'),
+        one75(radZero90, 'CONFIG_FIELD_TYPE', 'config.turn.radius', 'is 0; a number above 0 is required') &&
+        one75(radNegSurf90, 'CONFIG_FIELD_TYPE', 'config.turn.surface.radius', 'is -10; a number above 0 is required') &&
+        one75(
+          radUnkSurf90,
+          'CONFIG_KEY_KNOWN',
+          'config.turn.surface.extra',
+          'is not a field here; known: radius — a project\'s own record goes under a key beginning "x-" (any JSON, read by nothing), a remark under note or <name>_note (a string)',
+        ),
       `radius 53 -> ${show75(radOkTop90)}; surface.radius 106.5 -> ${show75(radOkSurf90)}; head.radius 80 -> ${show75(radOkHead90)}; radius 0 -> ${show75(radZero90)}; surface.radius -10 -> ${show75(radNegSurf90)}; surface.extra -> ${show75(radUnkSurf90)}`,
       'issue #479: config.turn accepts positive radius, surface.radius and head.radius for the cylinder face projection and refuses non-positive values (CONFIG_FIELD_TYPE) or unknown surface keys (CONFIG_KEY_KNOWN)',
     );
