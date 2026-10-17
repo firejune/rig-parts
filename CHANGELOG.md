@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.0](https://github.com/rig-c/parts/compare/v1.31.0...v1.32.0) (2026-10-17)
+
+
+### Features
+
+* **alternates:** compensate drawn bone angles on posed alternate sets ([#467](https://github.com/rig-c/parts/issues/467)) ([3d60f8f](https://github.com/rig-c/parts/commit/3d60f8f6d87014108ccf0e95ba047c5f0c6898f0)), closes [#465](https://github.com/rig-c/parts/issues/465)
+
 ## [1.31.0](https://github.com/rig-c/parts/compare/v1.30.0...v1.31.0) (2026-10-17)
 
 
