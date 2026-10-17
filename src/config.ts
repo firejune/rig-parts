@@ -254,6 +254,8 @@ export interface AlternateSetConfig {
   hides?: string[];
   head_box?: [number, number, number, number];
   cuts?: Cut[];
+  skeleton?: string;
+  drawn?: Record<string, number>;
 }
 
 export interface Assemble {
@@ -773,6 +775,8 @@ export interface CharacterConfig {
   cloth?: ClothRecipes;
   /** The `assemble.rig_scale` (`parts.json`'s `scale_rig_per_source`) `propose` drafted the rig sections at (issue #354): absent on a hand-authored config, held equal to `assemble.rig_scale` when present. */
   proposed_rig_scale?: number;
+  /** Alternate painting sets (issue #454): absent, no alternate sets are assembled or emitted. */
+  alternates?: AlternateSetConfig[];
 }
 
 /** `config.scene` (issue #242): the declaration that the painting is a scene. It holds no field today. */
@@ -1141,7 +1145,7 @@ function parseEarlyConfigFrom(raw: Json, door: EarlyDoor, base: string | null): 
       limbs = checkLimbs(c, t.limbs, made, names);
     }
     if (isPlainObject(t.assemble) && 'alternates' in t.assemble) {
-      checkAlternates(c, t.assemble.alternates, made, limbs);
+      checkAlternates(c, t.assemble.alternates, made, limbs, null);
     }
   }
   if ('cloth' in t) checkCloth(c, t.cloth);
@@ -1293,7 +1297,7 @@ function parseConfigFrom(raw: Json, base: string | null): { config: CharacterCon
   const names = 'bones' in t ? checkBones(c, t.bones) : { bones: new Set<string>([ROOT_BONE]), chains: new Map<string, number>(), parents: new Map<string, string>() };
   const limbs = 'limbs' in t ? checkLimbs(c, t.limbs, { parts, patches, cuts }, 'bones' in t ? names : null) : null;
   if (isPlainObject(t.assemble) && 'alternates' in t.assemble) {
-    checkAlternates(c, t.assemble.alternates, { parts, patches, cuts }, limbs);
+    checkAlternates(c, t.assemble.alternates, { parts, patches, cuts }, limbs, names.bones);
   }
   if ('meshes' in t) checkMeshes(c, t.meshes, names.bones, names.chains);
   if ('regions' in t) checkRegions(c, t.regions, names.bones);
@@ -1820,6 +1824,7 @@ function checkAlternates(
   v: Json,
   made: { parts: string[]; patches: string[]; cuts: string[] },
   limbs: LimbNames | null,
+  bones: Set<string> | null = null,
 ): void {
   const p = 'config.assemble.alternates';
   if (!c.array(p, v, true)) return;
@@ -1827,15 +1832,28 @@ function checkAlternates(
   const seenNames = new Map<string, number>();
   (v as Json[]).forEach((entry, i) => {
     const at = `${p}[${i}]`;
-    const e = c.object(at, entry, ['name'], ['source', 'full', 'head', 'parts', 'hides', 'head_box', 'cuts']);
+    const e = c.object(at, entry, ['name'], ['source', 'full', 'head', 'parts', 'hides', 'head_box', 'cuts', 'skeleton', 'drawn']);
     if (e === null) return;
     if ('name' in e && c.string(`${at}.name`, e.name)) {
       if (!partNameOk(e.name)) c.fail('CONFIG_PART_NAME', `${at}.name`, `names the set ${show(e.name)}; a set name is a file prefix, so it may not be empty, start with "." or hold a slash`);
       if (seenNames.has(e.name)) c.fail('CONFIG_PART_UNIQUE', `${at}.name`, `names the set "${e.name}" again (first at alternates[${seenNames.get(e.name)}])`);
       else seenNames.set(e.name, i);
     }
-    for (const k of ['source', 'full', 'head'] as const) {
+    for (const k of ['source', 'full', 'head', 'skeleton'] as const) {
       if (k in e) c.string(`${at}.${k}`, e[k]);
+    }
+    if ('drawn' in e) {
+      const d = e.drawn;
+      if (!isPlainObject(d) || Object.keys(d).length === 0) {
+        c.fail('CONFIG_FIELD_TYPE', `${at}.drawn`, `is ${show(d)}; a non-empty object of bone name -> drawn world angle in Spine degrees is required`);
+      } else {
+        for (const [bName, deg] of Object.entries(d)) {
+          if (bones !== null && !bones.has(bName)) {
+            c.fail('CONFIG_NAME_RESOLVES', `${at}.drawn.${bName}`, `names "${bName}", which config.bones does not declare`);
+          }
+          c.number(`${at}.drawn.${bName}`, deg);
+        }
+      }
     }
     if ('head_box' in e) checkHeadBox(c, `${at}.head_box`, e.head_box);
     const altCuts = 'cuts' in e ? checkCuts(c, e.cuts, made.parts, [], `${at}.cuts`) : [];

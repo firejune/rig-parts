@@ -18283,6 +18283,95 @@ function runBuildSuite(): number {
       `alt build exit ${altRun.status}, sets.json ${JSON.stringify(altSets?.sets ?? null)}, plain build has sets.json: ${existsSync(join(out, 'rig', 'sets.json'))}; missing input exit ${missingAlt.status}; wrong canvas exit ${canvasAlt.status}`,
       'issue #454: a subset alternate set cuts only its declared parts and records its hides, a full alternate set cuts every plan slot, both pack into the single atlas and write sets.json, a build with no alternates is untouched, and missing inputs or mismatched canvas sizes fail before anything is written',
     );
+
+    // BU170 — issue #465: an alternate painted in a pose carries drawn rest angles (from drawn or skeleton) in
+    // parts.json and sets.json, and its <set>_* region and mesh attachments are emitted in the bone-local frame of
+    // poseRigBonesForDrawn(bones, drawn), so check --set / --all-sets passes CHECK_SEAM_WITHIN_BAR and an animation
+    // posing the bones to drawn has 0 folds on the alternate mesh; a mutant that drops the compensation fails both
+    // CHECK_SEAM_WITHIN_BAR and CHECK_ANIMATIONS_DO_NOT_FOLD.
+    const posedDir = join(dir, 'alt-posed');
+    const posedCfg = assembleConfig();
+    posedCfg.bones = [
+      { name: 'anchor', parent: 'root', at: [0, 0] },
+      { name: 'chest', parent: 'root', at: [torsoTop.x + torsoTop.w / 2, torsoTop.y], tip: [torsoTop.x + torsoTop.w / 2, torsoTop.y + 10] },
+      { chain: 'skirt', parent: 'root', points: [[skirtBox.x + skirtBox.w / 2, skirtBox.y], [skirtBox.x + skirtBox.w / 2, skirtBox.y + 12]], tip: [skirtBox.x + skirtBox.w / 2, skirtBox.y + skirtBox.h] },
+    ];
+    const posedRegs: Record<string, string> = { ...(posedCfg.regions as Record<string, string>), topwear: 'chest' };
+    delete posedRegs.bottomwear;
+    posedCfg.regions = posedRegs;
+    posedCfg.meshes = {
+      bottomwear: {
+        grid: 6,
+        r: 1,
+        influences: { maxInfluences: 1 },
+        segments: ['skirt'],
+      },
+    };
+    posedCfg.motion = {
+      duration: 1,
+      tracks: [
+        { bone: 'chest', prop: 'translatey', amp: 1, period: 1, phase: 0 },
+        { chain: 'skirt', amps: [1, 2], period: 1, phase: 0, lag: 0.1 },
+      ],
+      animations_from: 'pose_set.json',
+    };
+    (posedCfg.assemble as Record<string, unknown>).alternates = [
+      {
+        name: 'posed',
+        source: 'painting.png',
+        full: 'full',
+        head: 'head',
+        drawn: { skirt0: -90, skirt1: 80 },
+      },
+    ];
+    writeAssembleFixture(posedDir, posedCfg);
+    writeFileSync(
+      join(posedDir, 'pose_set.json'),
+      `${JSON.stringify(
+        {
+          spec: 'rigc-motion/1',
+          animations: {
+            pose_set: {
+              duration: 1,
+              tracks: [
+                { slot: 'bottomwear', property: 'attachment', keys: [{ t: 0, v: 'posed_bottomwear' }, { t: 1, v: 'posed_bottomwear' }] },
+                { bone: 'skirt1', property: 'rotate', keys: [{ t: 0, v: [170] }, { t: 1, v: [170] }] },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const posedOut = join(posedDir, 'out');
+    const posedRun = runCli([...buildArgs(posedDir, posedOut), '--all-sets']);
+    const posedSets = existsSync(join(posedOut, 'rig', 'sets.json')) ? readJsonFile(join(posedOut, 'rig', 'sets.json')) : null;
+    const posedSetDrawn = (posedSets?.sets as Record<string, Record<string, unknown>> | undefined)?.posed?.drawn;
+    const badSetRun = runCli(['check', '--rig', join(posedOut, 'rig'), '--parts', posedOut, '--out', join(posedDir, 'bad-set'), '--set', 'no_such_set']);
+    const posedRigPath = join(posedOut, 'rig', 'rig.json');
+    const posedRigDoc = JSON.parse(readFileSync(posedRigPath, 'utf8')) as { skins: { default: Record<string, Record<string, unknown>> } };
+    posedRigDoc.skins.default.bottomwear.posed_bottomwear = {
+      ...(posedRigDoc.skins.default.bottomwear.bottomwear as Record<string, unknown>),
+      image: 'posed_bottomwear.png',
+    };
+    writeFileSync(posedRigPath, `${JSON.stringify(posedRigDoc, null, 2)}\n`);
+    const uncompRun = runCli(['check', '--rig', join(posedOut, 'rig'), '--parts', posedOut, '--out', join(posedDir, 'uncomp-check'), '--set', 'posed']);
+    say(
+      'BU170_POSED_ALTERNATE_SET_COMPENSATES_DRAWN_BONE_ANGLES_AND_DROPPING_COMPENSATION_FAILS_SEAM_AND_FOLDS',
+      posedRun.status === 0 &&
+        posedRun.out.includes('[check]   seam (posed): setup pose at ') &&
+        posedRun.out.includes('0 px over 40, 0.00 rig px') &&
+        posedRun.out.includes('ANIMATIONS_DO_NOT_FOLD: PASS') &&
+        JSON.stringify(posedSetDrawn) === '{"skirt0":-90,"skirt1":80}' &&
+        badSetRun.status === 1 &&
+        badSetRun.out.includes('FAIL  CHECK_INPUT_PRESENT:') &&
+        uncompRun.status === 1 &&
+        uncompRun.out.includes('FAIL  CHECK_SEAM_WITHIN_BAR: the setup-pose render of set "posed"') &&
+        uncompRun.out.includes('FAIL  CHECK_ANIMATIONS_DO_NOT_FOLD: animation "pose_set", mesh "posed_bottomwear"'),
+      `compensated build --all-sets exit ${posedRun.status}, sets.json drawn ${JSON.stringify(posedSetDrawn ?? null)}; unknown --set exit ${badSetRun.status}; uncompensated mutant check --set posed exit ${uncompRun.status} (seam fail: ${uncompRun.out.includes('FAIL  CHECK_SEAM_WITHIN_BAR:')}, fold fail: ${uncompRun.out.includes('FAIL  CHECK_ANIMATIONS_DO_NOT_FOLD:')})`,
+      'issue #465: an alternate set painted in a pose records its drawn bone angles in sets.json and emits its attachments in the posed bones\' local frame, so check --set / --all-sets and posed animations stay seam-clean and fold-free; dropping the compensation fails both CHECK_SEAM_WITHIN_BAR and CHECK_ANIMATIONS_DO_NOT_FOLD',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

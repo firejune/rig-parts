@@ -164,13 +164,14 @@ import {
 } from './automesh.ts';
 import { type ContourChainRibs, type ContourReport, contourMesh, type ContourRegion, type ContourRib } from './contour.ts';
 import { type LocalInfluence, localInfluences } from './localweights.ts';
-import { artCoverage, ART_ALPHA, latticeMesh, latticeStray, ONE_LOOP_PASSES } from './mesh.ts';
+import { artCoverage, ART_ALPHA, latticeCells, latticeMesh, latticeStray, ONE_LOOP_PASSES } from './mesh.ts';
 import { bindFaceSurfaceDeform, BLINK, blinkHoldMisses, blinkSpan, CONTROL_SUFFIX, controlledBones, IDLE_FPS, idleMotion, type MotionSpec, moveKeysToControls } from './motion.ts';
 import { type AlternateSetMap, PAINTING_RUN, type PartsFile, readFrom, tagOf } from './parts.ts';
 import { EYE_GROUP_TAGS } from './propose.ts';
 import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
 import { boneHeat, type HeatDust, heatInfluences, HEAT_LIMITS, heatRow, type HeatRow, latticeSilhouette, tracedSilhouette } from './heat.ts';
+import type { PosePoints } from './skeleton.ts';
 import { applyFaceSurfaceDeform, TURN_BONE, type TurnSpec, turnConstraintName, turnFractions, turnTwin } from './turn.ts';
 import { DISTANCE_EXPONENT, type FloorForm, type Influence, influences, type InfluenceLimits, type MeshInfluences, meshLimits, type Segment } from './weights.ts';
 
@@ -931,6 +932,93 @@ export interface RigOutput {
   turn: TurnRow[] | null;
   /** `sets.json` (issue #454), present only when `parts.alternates` is non-empty. */
   sets?: AttachmentSetsFile;
+}
+
+/**
+ * Issue #465: pose a rig's bones so each bone named in `drawn` reaches that
+ * world rotation (in Spine degrees, CCW, y up), adjusting its local `rotation`
+ * from its parent's posed transform. Bones are walked in parent-first order.
+ */
+export function poseRigBonesForDrawn(
+  bones: readonly RigBone[],
+  drawn: Readonly<Record<string, number>>,
+  stops?: ReadonlyArray<{ links: readonly string[] }>,
+): RigBone[] {
+  const undrawn = new Map<string, string>();
+  for (const s of stops ?? []) for (const l of s.links) undrawn.set(`${l}_d`, l);
+  const realBone = (n: string): string => undrawn.get(n) ?? n;
+  const posed: RigBone[] = [];
+  const posedRead: RigBone[] = [];
+  for (const b of bones) {
+    const readB: RigBone = { ...b, ...(b.parent === undefined ? {} : { parent: realBone(b.parent) }) };
+    const target = drawn[b.name];
+    if (target === undefined) {
+      posed.push({ ...b });
+      posedRead.push(readB);
+      continue;
+    }
+    const m0 = computeExactFrameTransforms([...posedRead, { ...readB, rotation: 0 }]).get(b.name) as BoneTransform;
+    const rotation = places(normaliseDegrees(target - normaliseDegrees(m0.worldRotation)));
+    posed.push({ ...b, rotation });
+    posedRead.push({ ...readB, rotation });
+  }
+  return posed;
+}
+
+/**
+ * Issue #465: derive the alternate's `drawn` bone world rotations (in Spine
+ * degrees, CCW, y up) from its body-18 skeleton read (`pts`, in rig pixels, y
+ * down) against the base rig's setup bone origins (`B`) and setup world turns
+ * (`turn`).
+ */
+export function deriveAlternateDrawn(
+  pts: PosePoints,
+  B: ReadonlyMap<string, { x: number; y: number }>,
+  turn: ReadonlyMap<string, number>,
+  CX: number,
+  H: number,
+): Record<string, number> {
+  const sx = (x: number): number => x - CX;
+  const sy = (y: number): number => cropToSpineY(y, H);
+  const deg = (a: readonly [number, number], b: readonly [number, number]): number =>
+    (Math.atan2(sy(b[1]) - sy(a[1]), sx(b[0]) - sx(a[0])) * 180) / Math.PI;
+  const mid = (a: readonly [number, number], b: readonly [number, number]): [number, number] => [
+    (a[0] + b[0]) / 2,
+    (a[1] + b[1]) / 2,
+  ];
+  const out: Record<string, number> = {};
+  if (B.has('chest') && B.has('hip') && B.has('sleeve_r0') && B.has('sleeve_l0')) {
+    const hip = B.get('hip') as { x: number; y: number };
+    const sr0 = B.get('sleeve_r0') as { x: number; y: number };
+    const sl0 = B.get('sleeve_l0') as { x: number; y: number };
+    const setupTrunkAim = deg([hip.x, hip.y], mid([sr0.x, sr0.y], [sl0.x, sl0.y]));
+    const altTrunkAim = deg(mid(pts.r_hip, pts.l_hip), mid(pts.r_shoulder, pts.l_shoulder));
+    out.chest = places(normaliseDegrees((turn.get('chest') ?? 0) + (altTrunkAim - setupTrunkAim)));
+  }
+  if (B.has('head') && B.has('eye_r') && B.has('eye_l')) {
+    const er = B.get('eye_r') as { x: number; y: number };
+    const el = B.get('eye_l') as { x: number; y: number };
+    const setupEyeAim = deg([er.x, er.y], [el.x, el.y]);
+    const altEyeAim = deg(pts.r_eye, pts.l_eye);
+    out.head = places(normaliseDegrees((turn.get('head') ?? 0) + (altEyeAim - setupEyeAim)));
+  }
+  const limbPairs: ReadonlyArray<readonly [string, readonly [number, number], readonly [number, number]]> = [
+    ['sleeve_r0', pts.r_shoulder, pts.r_elbow],
+    ['sleeve_r1', pts.r_elbow, pts.r_wrist],
+    ['sleeve_l0', pts.l_shoulder, pts.l_elbow],
+    ['sleeve_l1', pts.l_elbow, pts.l_wrist],
+    ['leg_r0', pts.r_hip, pts.r_knee],
+    ['leg_r1', pts.r_knee, pts.r_ankle],
+    ['leg_l0', pts.l_hip, pts.l_knee],
+    ['leg_l1', pts.l_knee, pts.l_ankle],
+  ];
+  for (const [bone, a, b] of limbPairs) {
+    if (B.has(bone)) out[bone] = places(normaliseDegrees(deg(a, b)));
+  }
+  for (const foot of ['foot_r', 'foot_l'] as const) {
+    if (B.has(foot)) out[foot] = places(normaliseDegrees(turn.get(foot) ?? 0));
+  }
+  return out;
 }
 
 /**
@@ -1982,15 +2070,51 @@ export function buildRig(
     });
   }
   refuseIfAny(problems);
-  // ---- alternate painting sets (issue #454) -------------------------------
+  // ---- alternate painting sets (issues #454, #465) ------------------------
   // Only when `parts.alternates` is present: each alternate set's `<set>_<part>`
   // attachments are added to `skins.default[<part>]` on the existing bones and
   // slots before `applyStops` and `applyTurn`, so stopped links and turn twins
-  // carry the alternate attachments alongside the base ones.
+  // carry the alternate attachments alongside the base ones. When the alternate
+  // carries a skeleton read (`alt.skeleton`) or explicit `drawn` angles, its
+  // attachments are bound in the posed bone frames (`altWorld`) and `sets.json`
+  // records `drawn` so a retarget does not pose the art a second time.
   let sets: AttachmentSetsFile | undefined;
   if (parts.alternates !== undefined && parts.alternates.length > 0) {
     const setEntries: Record<string, AlternateSetMap> = {};
-    for (const alt of parts.alternates) {
+    for (const [altIdx, alt] of parts.alternates.entries()) {
+      const cfgAlt = cfg.alternates?.find((a) => a.name === alt.name);
+      const explicitDrawn = alt.drawn ?? cfgAlt?.drawn;
+      if (explicitDrawn !== undefined) {
+        for (const boneName of Object.keys(explicitDrawn)) {
+          if (!B.has(boneName)) {
+            fail('RIG_NAME_RESOLVES', `config.alternates[${altIdx}].drawn.${boneName}`, `names the bone "${boneName}", which config.bones does not declare`);
+          }
+        }
+      }
+      refuseIfAny(problems);
+      const derived = alt.skeleton === undefined ? undefined : deriveAlternateDrawn(alt.skeleton, B, turn, CX, H);
+      const drawn: Record<string, number> | undefined =
+        derived === undefined && explicitDrawn === undefined
+          ? undefined
+          : {
+              ...(derived ?? {}),
+              ...Object.fromEntries(Object.entries(explicitDrawn ?? {}).map(([k, v]) => [k, places(normaliseDegrees(v))])),
+            };
+      const posedBones = drawn === undefined ? null : poseRigBonesForDrawn(bones, drawn);
+      const altWorld = posedBones === null ? world : computeExactFrameTransforms(posedBones);
+      const altTurn = new Map<string, number>();
+      if (posedBones !== null) {
+        for (const b of posedBones) {
+          altTurn.set(b.name, places(normaliseDegrees((altWorld.get(b.name) as BoneTransform).worldRotation)));
+        }
+      } else {
+        for (const [k, v] of turn) altTurn.set(k, v);
+      }
+      const altRegion = (image: string, bone: string, cx: number, cy: number): RegionAttachment => {
+        const [x, y] = toBoneLocal(altWorld.get(bone) as BoneTransform, spineX(cx), spineY(cy));
+        const deg = altTurn.get(bone) as number;
+        return deg === 0 ? { image, x: places(x), y: places(y) } : { image, x: places(x), y: places(y), rotation: places(normaliseDegrees(-deg)) };
+      };
       for (const p of alt.records) {
         const attName = `${alt.name}_${p.name}`;
         const rawImg = images.get(attName);
@@ -2001,14 +2125,45 @@ export function buildRig(
         const mesh = cfg.meshes[p.name];
         if (mesh === undefined) {
           const bone = B.get(cfg.regions[p.name]) as Bone;
-          skin[p.name][attName] = region(file, bone.name, p.x + p.w / 2, p.y + p.h / 2);
+          skin[p.name][attName] = altRegion(file, bone.name, p.x + p.w / 2, p.y + p.h / 2);
           continue;
         }
         const fullSegs = meshSegments.get(p.name) as Segment[];
         const baseAtt = skin[p.name]?.[p.name];
         const baseBones = baseAtt !== undefined && 'type' in baseAtt ? new Set(baseAtt.weights.flatMap((v) => v.map((e) => e.bone))) : null;
         const filteredSegs = baseBones !== null && baseBones.size > 0 ? fullSegs.filter((s) => baseBones.has(s.bone)) : fullSegs;
-        const segs = filteredSegs.length > 0 ? filteredSegs : fullSegs;
+        let segs = filteredSegs.length > 0 ? filteredSegs : fullSegs;
+        if (drawn !== undefined) {
+          const movePt = (bone: string, pt0: Point): Point => {
+            const m0 = world.get(bone) as BoneTransform;
+            const m1 = altWorld.get(bone) as BoneTransform;
+            const [lx, ly] = toBoneLocal(m0, spineX(pt0[0]), spineY(pt0[1]));
+            const [wx, wy] = toWorld(m1, lx, ly);
+            return [wx + CX, cropToSpineY(wy, H)];
+          };
+          const pt = (q: readonly [number, number]): Point => [q[0], q[1]];
+          const skSegs: Record<string, [Point, Point]> | null =
+            alt.skeleton === undefined
+              ? null
+              : {
+                  sleeve_r0: [pt(alt.skeleton.r_shoulder), pt(alt.skeleton.r_elbow)],
+                  sleeve_r1: [pt(alt.skeleton.r_elbow), pt(alt.skeleton.r_wrist)],
+                  sleeve_l0: [pt(alt.skeleton.l_shoulder), pt(alt.skeleton.l_elbow)],
+                  sleeve_l1: [pt(alt.skeleton.l_elbow), pt(alt.skeleton.l_wrist)],
+                  leg_r0: [pt(alt.skeleton.r_hip), pt(alt.skeleton.r_knee)],
+                  leg_r1: [pt(alt.skeleton.r_knee), pt(alt.skeleton.r_ankle)],
+                  leg_l0: [pt(alt.skeleton.l_hip), pt(alt.skeleton.l_knee)],
+                  leg_l1: [pt(alt.skeleton.l_knee), pt(alt.skeleton.l_ankle)],
+                };
+          segs = segs.map((s) => {
+            const skPair = skSegs?.[s.bone];
+            return skPair !== undefined ? { bone: s.bone, a: skPair[0], b: skPair[1] } : { bone: s.bone, a: movePt(s.bone, s.a), b: movePt(s.bone, s.b) };
+          });
+          const nonSkirt = segs.filter((s) => !hipChainLinks.has(s.bone));
+          if (nonSkirt.length > 0) segs = nonSkirt;
+          const yOverlapping = segs.filter((s) => Math.max(s.a[1], s.b[1]) >= p.y && Math.min(s.a[1], s.b[1]) <= p.y + p.h);
+          segs = yOverlapping.length > 0 ? yOverlapping : [segs[0]];
+        }
         const allArt = alphaAbove(img, ART_ALPHA);
         const strayVal = 'auto' in mesh ? mesh.auto.source.stray : ('contour' in mesh ? mesh.contour.stray : mesh.stray);
         const stray = strayVal === undefined ? null : latticeStray(allArt, strayVal);
@@ -2017,7 +2172,7 @@ export function buildRig(
         const r = 'r' in mesh ? mesh.r : 80;
         const lm = latticeMesh(attName, art, grid, maxLoopPasses);
         if ('code' in lm) {
-          skin[p.name][attName] = region(file, segs[0].bone, p.x + p.w / 2, p.y + p.h / 2);
+          skin[p.name][attName] = altRegion(file, segs[0].bone, p.x + p.w / 2, p.y + p.h / 2);
           continue;
         }
         const ox = p.x - PAD;
@@ -2027,6 +2182,22 @@ export function buildRig(
         const limits: InfluenceLimits = meshLimits('influences' in mesh ? mesh.influences : undefined);
         const segsAt = dressSegsAt(p, segs);
         const exponent = mesh.exponent ?? DISTANCE_EXPONENT;
+        let touchesArt: boolean[] | null = null;
+        if (drawn !== undefined && limits.maxInfluences === 1) {
+          const lc = latticeCells(art, grid);
+          touchesArt = lm.vertices.map(([vx0, vy0]) => {
+            const ii = Math.round(vx0 / grid);
+            const jj = Math.round(vy0 / grid);
+            for (const di of [-1, 0]) {
+              for (const dj of [-1, 0]) {
+                const ci = ii + di;
+                const cj = jj + dj;
+                if (ci >= 0 && ci < lc.nx && cj >= 0 && cj < lc.ny && lc.cells.data[cj * lc.nx + ci] === 1) return true;
+              }
+            }
+            return false;
+          });
+        }
         const rawShares: Influence[][] = [];
         for (const [vx0, vy0] of lm.vertices) {
           const wx = vx0 + ox;
@@ -2038,12 +2209,26 @@ export function buildRig(
           }
           rawShares.push(limits.floor === 'continuous' ? roundShares(shares) : latticeShares(shares));
         }
+        if (touchesArt !== null) {
+          let firstArtBone: string | null = null;
+          for (let vi = 0; vi < lm.vertices.length; vi++) {
+            if (touchesArt[vi] && rawShares[vi].length > 0) {
+              firstArtBone = rawShares[vi][0].bone;
+              break;
+            }
+          }
+          if (firstArtBone !== null) {
+            for (let vi = 0; vi < lm.vertices.length; vi++) {
+              if (!touchesArt[vi]) rawShares[vi] = [{ bone: firstArtBone, weight: 1 }];
+            }
+          }
+        }
         const weights: WeightEntry[][] = [];
         for (const [vi, [vx0, vy0]] of lm.vertices.entries()) {
           const wx = vx0 + ox;
           const wy = vy0 + oy;
           const ent: WeightEntry[] = rawShares[vi].map(({ bone, weight }) => {
-            const [x, y] = toBoneLocal(world.get(bone) as BoneTransform, spineX(wx), spineY(wy));
+            const [x, y] = toBoneLocal(altWorld.get(bone) as BoneTransform, spineX(wx), spineY(wy));
             return { bone, x: places(x), y: places(y), weight };
           });
           weights.push(ent);
@@ -2065,6 +2250,7 @@ export function buildRig(
       setEntries[alt.name] = {
         slots: slotMap,
         ...(hideList.length > 0 ? { hides: hideList } : {}),
+        ...(drawn === undefined ? {} : { drawn }),
       };
     }
     sets = { spec: SETS_SPEC, sets: setEntries };

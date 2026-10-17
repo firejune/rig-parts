@@ -43,7 +43,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { type AnimFrame, EncodeError, encodeApng, encodeIndexedApng, INDEXED_DEFAULTS } from './apng.ts';
-import { assemble, type AssembleResult, cutLines, hiddenLines, SINGLE_RUN_FACE_TAGS, singleRunHeadBox, driftLine, limbLines, FIGURE_MASK_FILE, figuresLine, holeKindsLine, holeLines, type ProjectRule, scenePhrase, type SeamRule, stageFields, uncoveredLine } from './assemble.ts';
+import { assemble, type AssembleResult, cutLines, hiddenLines, SINGLE_RUN_FACE_TAGS, singleRunHeadBox, driftLine, limbLines, FIGURE_MASK_FILE, figuresLine, holeKindsLine, holeLines, measureRecomposite, type ProjectRule, recomposite, recompositeRecord, scenePhrase, type SeamRule, sourceInRig, stageFields, uncoveredLine } from './assemble.ts';
 import { allocationClause, type Reducer, stageBClause, unboundedClause } from './automesh.ts';
 import { residualClause } from './autoenvelope.ts';
 import { type AutoMotionCase, failingRows, idleSchedule, localRow, motionClause, motionDeformation, motionDocument, motionInput, motionRowText, motionStimulus, motionVerdict, noStimulusProblem, type ReplayCandidate, runComparison, sourceSelfFailure, stimulusMotion, withStimulus } from './automotion.ts';
@@ -83,6 +83,7 @@ import { encodePngBytes, readPng, writePng } from './raster/png.ts';
 import type { Raster } from './raster/types.ts';
 import { readRequirements, type RequirementLine, summaryText } from './requirements.ts';
 import { type AutoMeshReport, buildRig, DEFAULT_IDLE_KEYS, type FaceAxis, type IdleKeys, type MeshReport, type RigCommand, rigJsonText, type RigOutput, type RigSpec, SETS_FILE, type StrayCleared, type TurnRow } from './rig.ts';
+import { KEYPOINT_NAMES, type KeypointName, type PosePoints } from './skeleton.ts';
 import { AUTHOR_NO_ROLE, isAuthorTag } from './tags.ts';
 import { TURN_BONE } from './turn.ts';
 import { pyRound } from './round.ts';
@@ -273,6 +274,8 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
     hides?: string[];
     head_box?: [number, number, number, number];
     cuts?: Cut[];
+    skeleton?: string;
+    drawn?: Record<string, number>;
   }> = cfgAlts.map((a, i) => {
     const cli = cliByName.get(a.name);
     if (cli !== undefined) cliByName.delete(a.name);
@@ -286,6 +289,8 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
       hides: a.hides,
       head_box: a.head_box,
       cuts: a.cuts,
+      skeleton: a.skeleton === undefined ? undefined : resolve(configDir, a.skeleton),
+      drawn: a.drawn,
     };
   });
   for (const cli of cliByName.values()) {
@@ -333,6 +338,48 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
         detail: 'no such file or directory; the alternate head run is required when named',
       });
       continue;
+    }
+    let altSkeleton: PosePoints | undefined;
+    if (alt.skeleton !== undefined) {
+      if (!existsSync(alt.skeleton) || !statSync(alt.skeleton).isFile()) {
+        altProblems.push({
+          code: 'ASSEMBLE_ALT_INPUT_PRESENT',
+          object: `${alt.skeleton} (alternate set "${alt.name}")`,
+          detail: 'no such file; the alternate pose skeleton is required when named',
+        });
+        continue;
+      }
+      try {
+        const rawSkel: unknown = JSON.parse(readFileSync(alt.skeleton, 'utf8'));
+        const skObj = typeof rawSkel === 'object' && rawSkel !== null && !Array.isArray(rawSkel) ? (rawSkel as Record<string, unknown>) : null;
+        const sw = skObj !== null && typeof skObj.width === 'number' && skObj.width > 0 ? skObj.width : null;
+        const sh = skObj !== null && typeof skObj.height === 'number' && skObj.height > 0 ? skObj.height : null;
+        const spts = skObj !== null && typeof skObj.points === 'object' && skObj.points !== null && !Array.isArray(skObj.points) ? (skObj.points as Record<string, unknown>) : null;
+        if (sw === null || sh === null || spts === null || KEYPOINT_NAMES.some((k) => !Array.isArray(spts[k]) || (spts[k] as unknown[]).length !== 2)) {
+          altProblems.push({
+            code: 'ASSEMBLE_ALT_SKELETON',
+            object: `${alt.skeleton} (alternate set "${alt.name}")`,
+            detail: 'must hold {"width": W, "height": H, "points": {…the 18 body-18 keypoints}}',
+          });
+          continue;
+        }
+        const [rW, rH] = result.parts.rig_size;
+        const sx = rW / sw;
+        const sy = rH / sh;
+        const scaled = {} as Record<KeypointName, readonly [number, number]>;
+        for (const k of KEYPOINT_NAMES) {
+          const [px, py] = spts[k] as [number, number];
+          scaled[k] = [pyRound(px * sx, 6), pyRound(py * sy, 6)];
+        }
+        altSkeleton = scaled;
+      } catch (err) {
+        altProblems.push({
+          code: 'ASSEMBLE_ALT_SKELETON',
+          object: `${alt.skeleton} (alternate set "${alt.name}")`,
+          detail: `does not parse as JSON: ${(err as Error).message}`,
+        });
+        continue;
+      }
     }
     const altSrc = readSource(alt.source);
     if (altSrc.width !== src.width || altSrc.height !== src.height) {
@@ -421,6 +468,17 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
     const keptRecords = altRes.parts.parts.filter((p) => coveredSet.has(p.name));
     const slots: Record<string, string> = {};
     for (const r of keptRecords) slots[r.name] = `${alt.name}_${r.name}`;
+    let altRecomposite = altRes.parts.recomposite as RecompositeRecord;
+    if (alt.parts !== undefined) {
+      const [rW, rH] = result.parts.rig_size;
+      const altByName = new Map(altRes.images.map((x) => [x.record.name, x]));
+      const fullSetPlaced = result.images
+        .filter(({ record }) => !hidesSet.has(record.name))
+        .map((baseItem) => altByName.get(baseItem.record.name) ?? baseItem);
+      const altSrcRig = sourceInRig(altSrc, rW, rH);
+      const altCan = recomposite(fullSetPlaced, rW, rH);
+      altRecomposite = recompositeRecord(measureRecomposite(altCan, altSrcRig, fullSetPlaced));
+    }
     altBuilt.push({
       record: {
         name: alt.name,
@@ -429,9 +487,11 @@ export function assembleStage(input: AssembleStageInput, outs: AssembleOutputs, 
         slots,
         records: keptRecords,
         ghost_px: altRes.parts.ghost_px,
-        recomposite: altRes.parts.recomposite as RecompositeRecord,
+        recomposite: altRecomposite,
         ...(altRes.parts.scene === undefined ? {} : { scene: altRes.parts.scene }),
         ...(altRes.parts.single_run_pad === undefined ? {} : { single_run_pad: altRes.parts.single_run_pad }),
+        ...(altSkeleton === undefined ? {} : { skeleton: altSkeleton }),
+        ...(alt.drawn === undefined ? {} : { drawn: { ...alt.drawn } }),
       },
       images: keptImages,
     });
@@ -1210,6 +1270,10 @@ export interface CheckStageInput {
   seamPairs?: boolean;
   /** `check --keep-stills` (issue #209): leave the setup-pose still and its `frames.json` under {@link STILL_DIR}. */
   keepStills?: boolean;
+  /** `check --set <name>` (issue #454): measure one declared alternate set's setup-pose seam and recomposite figures. */
+  set?: string;
+  /** `check --all-sets` (issue #454): measure every declared alternate set's setup-pose seam and recomposite figures. */
+  allSets?: boolean;
 }
 
 /**
@@ -1389,7 +1453,7 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   const entryLine = versionLines.find((l) => l.startsWith('entry:'));
   log(`  ${rigcIdentity(bin, v)}${entryLine === undefined ? '' : `; ${entryLine}`}`);
   const mode: PackMode = { pageEdges: input.pageEdges ?? DEFAULT_PAGE_EDGES, packShape: input.packShape ?? DEFAULT_PACK_SHAPE };
-  const r = runCheck(input.rig, input.out, rigc, input.parts, mode, input.source, input.requirements, input.seamPairs === true, input.keepStills === true);
+  const r = runCheck(input.rig, input.out, rigc, input.parts, mode, input.source, input.requirements, input.seamPairs === true, input.keepStills === true, input.set, input.allSets === true);
   log(`  gate rig-play (rigc ${packedBuildLabel(mode)}), verbatim:`);
   for (const l of r.gateHtml) log(l);
   for (const l of packLines(r)) log(`  ${l}`);
@@ -1407,6 +1471,16 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
     );
     const pairs = fig.seam_pairs ?? [];
     pairs.forEach((row, i) => log(`  seam pair ${i + 1} of ${pairs.length}: ${seamPairText(row)}`));
+    if (fig.sets !== undefined) {
+      for (const [setName, setFig] of Object.entries(fig.sets)) {
+        log(
+          `  seam (${setName})${setFig.seam_border === undefined ? '' : ` (config.scene: ${setFig.seam_border.frame_px_left_out} frame px on the painting's border rows and columns left out, ${setFig.seam_border.px_over_40_left_out} of them over ${SEAM_PX_LEVEL})`}: setup pose at ${setFig.render_px}, scale ${setFig.seam_frame_scale.toFixed(4)}: mean |d| ${setFig.seam_mean} (<= ${SEAM_MEAN_BAR.toFixed(1)}), ` +
+            `${setFig.seam_px_over_40} px over ${SEAM_PX_LEVEL}, ${seamRigPxText(setFig.seam_px_over_40, setFig.seam_frame_scale)} rig px (the count / s²; <= ${SEAM_PX_BAR}), ${setFig.seam_px_over_80} px over ${SEAM_PX_LEVEL_HIGH} (reported)`,
+        );
+        const setPairs = setFig.seam_pairs ?? [];
+        setPairs.forEach((row, i) => log(`  seam pair (${setName}) ${i + 1} of ${setPairs.length}: ${seamPairText(row)}`));
+      }
+    }
   }
   for (const name of JUDGEMENT_LINES) log(`  ${judgementLine(name, fig[name])}`);
   const folds = fig[FOLD_LINE];
@@ -1420,6 +1494,11 @@ export function checkStage(input: CheckStageInput, rigc: RigcRunner, bin: string
   const sweep = fig[SWEEP_LINE];
   if (sweep !== undefined) for (const [i, l] of sweepCheckLines(sweep).entries()) log(`  ${i === 0 ? '' : '  '}${l}`);
   for (const name of REPORTED_LINES) log(`  ${judgementLine(name, fig[name])}`);
+  if (fig.sets !== undefined) {
+    for (const [setName, setFig] of Object.entries(fig.sets)) {
+      log(`  ${judgementLine(`RECOMPOSITE_HOLES (${setName})`, setFig.RECOMPOSITE_HOLES)}`);
+    }
+  }
   const vsSource = fig[SOURCE_LINE];
   if (vsSource !== undefined) log(`  ${judgementLine(SOURCE_LINE, vsSource)}`);
   if (r.requirements !== null) {
@@ -1707,6 +1786,10 @@ export interface BuildInput {
   keepStills?: boolean;
   /** `--alt`, forwarded to the assemble stage as `assemble` takes it (issue #454). */
   alts?: readonly AlternateCliInput[];
+  /** `--set <name>`, forwarded to the check as `check` takes it (issue #454). */
+  set?: string;
+  /** `--all-sets`, forwarded to the check as `check` takes it (issue #454). */
+  allSets?: boolean;
 }
 
 /** What `build` does with one flag `check` takes: hands it to its check stage, takes it as its own, or refuses it because build supplies the value itself. */
@@ -1729,6 +1812,8 @@ export const CHECK_FLAGS_IN_BUILD: Readonly<Record<string, CheckFlagInBuild>> = 
   '--page-edges': { as: 'forwarded' },
   '--pack-shape': { as: 'forwarded' },
   '--requirements': { as: 'forwarded' },
+  '--set': { as: 'forwarded' },
+  '--all-sets': { as: 'forwarded' },
   '--seam-pairs': { as: 'forwarded' },
   '--keep-stills': { as: 'forwarded' },
 };
@@ -1841,7 +1926,7 @@ export function build(input: BuildInput, run: BuildRunners, log: Log): BuildResu
 
   let report: CheckReport;
   try {
-    report = checkStage({ rig: join(out, 'rig'), parts: out, out: join(out, 'check'), pageEdges: input.pageEdges, packShape: input.packShape, ...(input.requirements === undefined ? {} : { requirements: input.requirements }), seamPairs: input.seamPairs === true, keepStills: input.keepStills === true }, run.check, run.checkBin, prefixed('check'));
+    report = checkStage({ rig: join(out, 'rig'), parts: out, out: join(out, 'check'), pageEdges: input.pageEdges, packShape: input.packShape, ...(input.requirements === undefined ? {} : { requirements: input.requirements }), seamPairs: input.seamPairs === true, keepStills: input.keepStills === true, ...(input.set === undefined ? {} : { set: input.set }), allSets: input.allSets === true }, run.check, run.checkBin, prefixed('check'));
   } catch (err) {
     return refused('check', err);
   }
