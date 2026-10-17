@@ -107,11 +107,13 @@ export type ClothRecipes = Partial<Record<ClothTarget, ClothRecipe>>;
 
 /**
  * 📐 The fallback tree count when `draftTrees` is called without `chains` or
- * `masses` (issues #390, #445). When `chains` is omitted on
+ * `masses` (issues #390, #445, #461). When `chains` is omitted on
  * `config.cloth."back hair"`, `propose` derives the count per side from the
- * visible hair masses ({@link backHairMasses}): connected components of the
- * back-hair part's alpha below the root row (merged when they touch within one
- * grid cell), one tree per mass, rooted at that mass's own top row.
+ * visible hair masses ({@link backHairMasses}, {@link backHairMassTrees}):
+ * connected components of the back-hair part's alpha below the root row (merged
+ * when they touch within one grid cell), with `max(1, floor(w / (4 * grid)) + 1)`
+ * trees per mass across its root-row width `w`, rooted at that mass's own top
+ * row and inside its columns.
  */
 export const RECIPE_BACK_HAIR_CHAINS = 2;
 
@@ -185,13 +187,16 @@ export interface TreeChain {
 /** Which outer sides of the piece are edges: both (a skirt, a lock), or one side of the eye axis (back hair). */
 export type EdgeSides = 'both' | 'r' | 'l';
 
-/** Issue #445: one visible hair mass's own frame for a single tree rooted at that mass's top row. */
+/** Issue #445, #461: one visible hair mass's own frame for a tree rooted at that mass's top row. */
 export interface TreeMassInput {
   rootY: number;
   tipY: number;
   xAt: (y: number, frac: number) => number | null;
   fallbackX: (frac: number) => number;
   frame: string;
+  /** Issue #461: tree index within this mass (0-based, default 0) and total trees in this mass (default 1). */
+  treeInMass?: number;
+  treesInMass?: number;
 }
 
 export interface TreeColumnTip {
@@ -213,7 +218,7 @@ export interface TreeInput {
   /** What the cell's frame is, for the rules: "skirt's art", "the r side of back's art". */
   frame: string;
   edges: EdgeSides;
-  /** Issue #445: when present, one entry per visible hair mass; tree k sits inside `masses[k]` rather than cell [k/n, (k+1)/n] of the whole side. */
+  /** Issue #445: when present, one entry per drafted back-hair tree; tree k sits inside `masses[k]` rather than cell [k/n, (k+1)/n] of the whole side. */
   masses?: readonly TreeMassInput[];
   /**
    * Issue #438: when present, resolves the tip row (and an optional `xAt` bounded to that column's cloth rows) for
@@ -267,7 +272,9 @@ export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
   };
   for (const k of activeTrees) {
     const mass = input.masses?.[k];
-    const fc = mass === undefined ? (k + 0.5) / n : 0.5;
+    const tInMass = mass?.treeInMass ?? 0;
+    const nInMass = mass?.treesInMass ?? 1;
+    const fc = mass === undefined ? (k + 0.5) / n : (tInMass + 0.5) / nInMass;
     const trunkCol = trunkCols.get(k) ?? null;
     const branchCols: Array<TreeColumnTip | null> = [];
     if (into > 1 && mass === undefined && input.columnTip !== undefined) {
@@ -314,7 +321,7 @@ export function draftTrees(input: TreeInput, r: ClothRecipe): TreeChain[] {
     out.push(trunk);
     if (into === 1) continue;
     for (let b = 0; b < into; b++) {
-      const fb = mass === undefined ? (k + (b + 0.5) / into) / n : (b + 0.5) / into;
+      const fb = mass === undefined ? (k + (b + 0.5) / into) / n : (tInMass + (b + 0.5) / into) / nInMass;
       const bCol = branchCols[b] ?? trunkCol;
       const bTipY = bCol?.tipY ?? trunkTipY;
       const bRows = bTipY === trunkTipY ? rows : linkRows(input.rootY, bTipY, r.links, ratio);
@@ -764,3 +771,48 @@ export function backHairMasses(mask: Mask, side: 'r' | 'l', axis: number, y0: nu
   out.sort((a, b) => a.minX - b.minX);
   return out;
 }
+
+/**
+ * 📐 The horizontal influence reach of one back-hair tree in mesh grid cells: 4
+ * (2 grid cells on each side of the trunk, issue #461).
+ *
+ * Under the segment weight rule `w = 1 / (d + r)^2` (`src/weights.ts`) with
+ * `partGrid`'s falloff `r ≈ 0.42 * grid` and cutoff `MIN_WEIGHT = 0.03`, a
+ * tree's weight relative to `d = 0` (`(r / (d + r))^2`) drops to `MIN_WEIGHT`
+ * at `d = (1 / sqrt(0.03) - 1) * r = 4.7735 * 0.42 * grid = 2.0049 * grid ≈ 2 * grid`
+ * on each side of the trunk — a horizontal span of `4 * grid` per tree. Beyond
+ * that span a single tree leaves outer columns weighted to the static `head`
+ * segment while adjacent columns move with the tree, stretching the triangles
+ * across the boundary.
+ */
+export const BACK_HAIR_TREE_REACH_CELLS = 4;
+
+/**
+ * Opaque pixel count of a visible hair mass `m` along its own root row `m.minY`
+ * (issue #461).
+ */
+export function backHairMassRootWidth(m: BackHairMass): number {
+  const W = m.mask.width;
+  const H = m.mask.height;
+  if (m.minY < 0 || m.minY >= H) return 0;
+  let w = 0;
+  for (let x = m.minX; x <= m.maxX; x++) {
+    if (m.mask.data[m.minY * W + x] !== 0) w++;
+  }
+  return w > 0 ? w : m.maxX - m.minX + 1;
+}
+
+/**
+ * Number of trees placed inside one visible hair mass `m` on a `grid` px mesh
+ * (issue #461): `max(1, floor(w / (4 * grid)) + 1)` where `w` is the mass's
+ * root-row opaque width ({@link backHairMassRootWidth}).
+ *
+ * A narrow mass (`w < 4 * grid`) gets 1 tree; a wide undivided tail spanning
+ * `4 * grid <= w < 8 * grid` gets 2 trees; `8 * grid <= w < 12 * grid` gets 3.
+ */
+export function backHairMassTrees(m: BackHairMass, grid: number): number {
+  const step = Math.max(1, BACK_HAIR_TREE_REACH_CELLS * grid);
+  const w = backHairMassRootWidth(m);
+  return Math.max(1, Math.floor(w / step) + 1);
+}
+

@@ -149,7 +149,7 @@ import { TURN_BONE, TURN_CARRIER_TAG, TURN_PLACES, TURN_RIDER_OFFSET, TURN_RIDER
 import { edgeLength } from './length.ts';
 import { bonePlaces, limbCrossing, limbPolyline, limbWidth } from './limbs.ts';
 import { type BranchSqueezeFinding, branchSqueezes, chainSqueezes, type SqueezeFinding } from './squeeze.ts';
-import { backHairMasses, type BackHairMass, RECIPE_BACK_HAIR_CHAINS, RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, spanCrosses, swingName, type Tail, tailOverlap, type TailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput, type TreeMassInput } from './cloth.ts';
+import { backHairMasses, type BackHairMass, backHairMassTrees, RECIPE_BACK_HAIR_CHAINS, RECIPE_LENGTH_RATIO, chainConstraints, clothNote, type ClothRecipe, type ClothRecipes, type ClothTarget, CLOTH_TARGETS, draftTrees, spanCrosses, swingName, type Tail, tailOverlap, type TailOverlap, type TailSpan, treeConstraints, type TreeChain, type TreeInput, type TreeMassInput } from './cloth.ts';
 import { TEXTURE_STRETCH_CEILING } from './check.ts';
 
 // ---------------------------------------------------------------------------
@@ -1849,12 +1849,29 @@ export function proposeWithBasis(
     const all: TreeChain[] = [];
     let n = 0;
     const partNamesLabel = list.map((q) => q.name).join(' -> ');
+    const sideTreeCounts: number[] = [];
     for (const [side] of activeSides) {
       const prefix = prefixOf(side);
       const sideMasses = massesBySide.get(side) ?? [];
       if (useMasses && sideMasses.length === 0) continue;
-      const sideRcp: ClothRecipe = { ...rawRcp, chains: useMasses ? sideMasses.length : (rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit)) };
       const frame = `${partNamesLabel}'s art on the ${side} side of the eye axis (no art there in the band: the eye axis x)`;
+      const sideMassInputs: TreeMassInput[] | undefined = useMasses
+        ? sideMasses.flatMap((m): TreeMassInput[] => {
+            const count = backHairMassTrees(m, g);
+            return Array.from({ length: count }, (_, t): TreeMassInput => ({
+              rootY: m.minY <= y0 ? eyeY : m.minY,
+              tipY: m.maxY >= bot - 12 ? bot - 4 : Math.max(m.minY + 4, m.maxY - 3),
+              xAt: (y, f) => bandX(m.mask, y, { frac: f, side, axis }),
+              fallbackX: m.minY <= y0 && sideMasses.length === 1 && count === 1 ? () => axis : (f) => pyRound(m.minX + f * (m.maxX - m.minX)),
+              frame,
+              treeInMass: t,
+              treesInMass: count,
+            }));
+          })
+        : undefined;
+      const sideCount = sideMassInputs !== undefined ? sideMassInputs.length : (rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit));
+      sideTreeCounts.push(sideCount);
+      const sideRcp: ClothRecipe = { ...rawRcp, chains: sideCount };
       const trees = T(list, 'back hair', sideRcp, {
         prefix,
         parent: 'head',
@@ -1864,15 +1881,7 @@ export function proposeWithBasis(
         fallbackX: () => axis,
         frame,
         edges: side,
-        masses: useMasses
-          ? sideMasses.map((m): TreeMassInput => ({
-              rootY: m.minY <= y0 ? eyeY : m.minY,
-              tipY: m.maxY >= bot - 12 ? bot - 4 : Math.max(m.minY + 4, m.maxY - 3),
-              xAt: (y, f) => bandX(m.mask, y, { frac: f, side, axis }),
-              fallbackX: m.minY <= y0 && sideMasses.length === 1 ? () => axis : (f) => pyRound(m.minX + f * (m.maxX - m.minX)),
-              frame,
-            }))
-          : undefined,
+        masses: sideMassInputs,
       });
       const made = treeConstraints(trees, sideRcp, null);
       clothConstraints.push(...made);
@@ -1881,7 +1890,7 @@ export function proposeWithBasis(
     }
     const rcp: ClothRecipe = {
       ...rawRcp,
-      chains: useMasses ? Math.max(1, ...(activeSides.map(([s]) => (massesBySide.get(s) ?? []).length))) : (rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit)),
+      chains: useMasses ? Math.max(1, ...sideTreeCounts) : (rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit)),
     };
     const spans: Array<TailSpan & { depth: number }> = [{ bone: 'head', a: rnd(head), b: rnd([axis, top + 13]), link: false, depth: -1 }];
     for (const t of all) {
@@ -2037,12 +2046,32 @@ export function proposeWithBasis(
       const segs: Segment[] = [['head', rnd(head), rnd([axis, top + 13])]];
       const all: TreeChain[] = [];
       let n = 0;
+      const treeCountBySide = new Map<'r' | 'l', number>([
+        ['r', 0],
+        ['l', 0],
+      ]);
       for (const [side] of SIDES) {
         const prefix = prefixOf(side);
         const sideMasses = massesBySide.get(side) ?? [];
         if (useMasses && sideMasses.length === 0) continue;
-        const sideRcp: ClothRecipe = { ...rawRcp, chains: useMasses ? sideMasses.length : (rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit)) };
         const frame = `${p.name}'s art on the ${side} side of the eye axis (no art there in the band: the eye axis x)`;
+        const sideMassInputs: TreeMassInput[] | undefined = useMasses
+          ? sideMasses.flatMap((m): TreeMassInput[] => {
+              const count = backHairMassTrees(m, g);
+              return Array.from({ length: count }, (_, t): TreeMassInput => ({
+                rootY: m.minY <= y0 ? eyeY : m.minY,
+                tipY: m.maxY >= bot - 12 ? bot - 4 : Math.max(m.minY + 4, m.maxY - 3),
+                xAt: (y, f) => bandX(m.mask, y, { frac: f, side, axis }),
+                fallbackX: m.minY <= y0 && sideMasses.length === 1 && count === 1 ? () => axis : (f) => pyRound(m.minX + f * (m.maxX - m.minX)),
+                frame,
+                treeInMass: t,
+                treesInMass: count,
+              }));
+            })
+          : undefined;
+        const sideCount = sideMassInputs !== undefined ? sideMassInputs.length : (rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit));
+        treeCountBySide.set(side, sideCount);
+        const sideRcp: ClothRecipe = { ...rawRcp, chains: sideCount };
         const trees = T(p, 'back hair', sideRcp, {
           prefix,
           parent: 'head',
@@ -2052,15 +2081,7 @@ export function proposeWithBasis(
           fallbackX: () => axis,
           frame,
           edges: side,
-          masses: useMasses
-            ? sideMasses.map((m): TreeMassInput => ({
-                rootY: m.minY <= y0 ? eyeY : m.minY,
-                tipY: m.maxY >= bot - 12 ? bot - 4 : Math.max(m.minY + 4, m.maxY - 3),
-                xAt: (y, f) => bandX(m.mask, y, { frac: f, side, axis }),
-                fallbackX: m.minY <= y0 && sideMasses.length === 1 ? () => axis : (f) => pyRound(m.minX + f * (m.maxX - m.minX)),
-                frame,
-              }))
-            : undefined,
+          masses: sideMassInputs,
         });
         for (const t of trees) segs.push(t.chain);
         const made = treeConstraints(trees, sideRcp, null);
@@ -2068,11 +2089,14 @@ export function proposeWithBasis(
         n += made.length;
         all.push(...trees);
       }
-      const sameSideCounts = !useMasses || rMasses.length === lMasses.length;
+      const rTreeCount = treeCountBySide.get('r') ?? 0;
+      const lTreeCount = treeCountBySide.get('l') ?? 0;
+      const sameSideCounts = !useMasses || rTreeCount === lTreeCount;
       const noteRcp: ClothRecipe = {
         ...rawRcp,
-        chains: useMasses ? (sameSideCounts ? rMasses.length : rMasses.length + lMasses.length) : (rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit)),
+        chains: useMasses ? (sameSideCounts ? rTreeCount : rTreeCount + lTreeCount) : (rawRcp.chains ?? Math.min(RECIPE_BACK_HAIR_CHAINS, maxFit)),
       };
+      const massReason = rTreeCount === rMasses.length && lTreeCount === lMasses.length ? 'one per visible hair mass' : 'across the visible hair masses by root-row width';
       notes.push(
         clothNote(
           p.name,
@@ -2082,7 +2106,7 @@ export function proposeWithBasis(
           n,
           sameSideCounts
             ? ' per side of the eye axis, from head, rooted on the eye line and tipped 4 px above its bottom'
-            : ` (${rMasses.length} on the r side and ${lMasses.length} on the l side of the eye axis, one per visible hair mass), from head, rooted on each mass's top row and tipped 4 px above its bottom`,
+            : ` (${rTreeCount} on the r side and ${lTreeCount} on the l side of the eye axis, ${massReason}), from head, rooted on each mass's top row and tipped 4 px above its bottom`,
         ),
       );
       meshes[p.name] = { grid: g, r: rawRcp.split?.hold_tip === true ? Math.max(r, g) : r, segments: segs };
@@ -4585,11 +4609,12 @@ export function lint(
             .sort((a, b) => Number(trunkRe.exec(a.chain)![1]) - Number(trunkRe.exec(b.chain)![1]));
           if (sideTrunks.length === 0) continue;
           const masses = backHairMasses(mask, side, axis, y0, shoulderLine, g);
+          const massSlots = masses.flatMap((x) => Array.from({ length: backHairMassTrees(x, g) }, () => x));
           const outside: Array<{ point: string; at: [number, number]; minX: number; maxX: number }> = [];
           const sideMinX = masses.length > 0 ? Math.min(...masses.map((x) => x.minX)) : 0;
           const sideMaxX = masses.length > 0 ? Math.max(...masses.map((x) => x.maxX)) : P.W - 1;
           sideTrunks.forEach((tr, k) => {
-            const target = k < masses.length ? masses[k] : null;
+            const target = k < massSlots.length ? massSlots[k] : null;
             const minX = target !== null ? target.minX : sideMinX;
             const maxX = target !== null ? target.maxX : sideMaxX;
             const treeBase = tr.chain.slice(0, -1);
@@ -4606,7 +4631,7 @@ export function lint(
               if (tx < minX || tx > maxX) outside.push({ point: `${c.chain} tip`, at: [tx, ty], minX, maxX });
             }
           });
-          if (sideTrunks.length !== masses.length || outside.length > 0) {
+          if (sideTrunks.length !== massSlots.length || outside.length > 0) {
             findings.push({
               kind: 'back-hair-masses',
               mesh: groupParts.map((q) => q.name).join(' -> '),
