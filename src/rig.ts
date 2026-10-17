@@ -2296,6 +2296,8 @@ export function buildRig(
   if (axes.length > 0) rig.invariants = { ...rig.invariants, axes };
   const faceImg = outImages.find(([k]) => k === 'face.png')?.[1];
   const facePart = parts.parts.find((p) => p.name === 'face');
+  const partAreas: Record<string, number> = {};
+  for (const p of parts.parts) partAreas[p.name] = p.opaque_px;
   bindFaceSurfaceDeform(motion, (merged) => {
     applyFaceSurfaceDeform(rig, merged, {
       imageWidth: faceImg?.width,
@@ -2304,6 +2306,9 @@ export function buildRig(
       opaqueHeight: facePart?.h,
       overrides: cfg.turn?.deform,
       hasAlternateFaceSet,
+      turn: cfg.turn,
+      partAreas,
+      requireTurn: true,
     });
     if (sets !== undefined && (merged.animations.turn !== undefined || merged.animations.tilt !== undefined)) {
       for (const entry of Object.values(sets.sets)) {

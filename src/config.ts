@@ -1305,13 +1305,14 @@ function parseConfigFrom(raw: Json, base: string | null): { config: CharacterCon
   if ('motion' in t) checkMotion(c, t.motion, names.bones, names.chains, 'regions' in t ? t.regions : undefined);
   if ('constraints' in t) checkConstraints(c, t.constraints, names.bones, names.parents);
   if ('stops' in t) checkStops(c, t.stops, names.bones, names.chains);
+  const attached = attachedParts(t.meshes, t.regions);
   const hasAltFace = hasAlternateFaceSet(t.assemble, [...parts, ...cuts]);
-  if ('turn' in t) checkTurn(c, t.turn, attachedParts(t.meshes, t.regions), names.bones, hasAltFace);
+  if ('turn' in t) checkTurn(c, t.turn, attached, names.bones, hasAltFace);
   if ('scene' in t) checkScene(c, t.scene);
   if ('cloth' in t) checkCloth(c, t.cloth);
   const from = isPlainObject(t.motion) ? t.motion.animations_from : undefined;
   const animations = base !== null && typeof from === 'string' && from !== '' ? readAnimationsFrom(c, resolve(base, from)) : null;
-  if (animations !== null) checkFaceAnimationBand(c, animations, hasAltFace);
+  if (animations !== null) checkFaceAnimationBand(c, animations, hasAltFace, t.turn, attached);
   if (base !== null) poseBeside(c, t.generation, base);
   refuseIfAny(c.problems);
   return { config: raw as CharacterConfig, animations };
@@ -3219,10 +3220,29 @@ function maxDeriveDegrees(anim: unknown): number {
   return maxDeg;
 }
 
-function checkFaceAnimationBand(c: Check, animations: AnimationsFrom, hasAltFace: boolean): void {
+function checkFaceAnimationBand(c: Check, animations: AnimationsFrom, hasAltFace: boolean, turn?: Json, attached?: Set<string>): void {
   const at = `config.motion.animations_from (${animations.file}).animations`;
   const maxYaw = maxDeriveDegrees(animations.table.turn);
   const maxPitch = maxDeriveDegrees(animations.table.tilt);
+  if (maxYaw > 0 || maxPitch > 0) {
+    if (turn === undefined) {
+      c.fail(
+        'CONFIG_TURN_REQUIRED',
+        'config.turn',
+        "is absent and required when motion.animations_from carries a turn or tilt slider animation with derive keys; copy the turn block propose drafted into config.turn so the head pivot and each head part's depth are declared",
+      );
+    } else if (isPlainObject(turn) && isPlainObject(turn.depths) && attached !== undefined) {
+      for (const reqPart of ['face', 'hair_front', 'hair_back'] as const) {
+        if (attached.has(reqPart) && !(reqPart in turn.depths)) {
+          c.fail(
+            'CONFIG_TURN_REQUIRED',
+            `config.turn.depths.${reqPart}`,
+            `is absent and required when motion.animations_from carries a turn or tilt slider animation with derive keys and "${reqPart}" is attached; include "${reqPart}"'s See-through depth_median in config.turn.depths so the head pivot and fraction are defined`,
+          );
+        }
+      }
+    }
+  }
   if (maxYaw > FACE_RATED_YAW_BAND && !hasAltFace) {
     c.fail(
       'CONFIG_FACE_BAND_EXCEEDED',
@@ -3276,9 +3296,16 @@ function checkFaceAnimationBand(c: Check, animations: AnimationsFrom, hasAltFace
 
 function checkTurn(c: Check, v: Json, attached: Set<string>, bones: Set<string>, hasAltFace: boolean): void {
   const at = 'config.turn';
-  const o = c.object(at, v, ['pivot', 'depths'], ['deform', 'band']);
+  const o = c.object(at, v, ['pivot', 'depths'], ['head', 'deform', 'band']);
   if (o === null) return;
   const pivot = 'pivot' in o && c.number(`${at}.pivot`, o.pivot) ? (o.pivot as number) : null;
+  let headPivot: number | null = null;
+  if ('head' in o) {
+    const ho = c.object(`${at}.head`, o.head, [], ['pivot']);
+    if (ho !== null && 'pivot' in ho && c.number(`${at}.head.pivot`, ho.pivot)) {
+      headPivot = ho.pivot as number;
+    }
+  }
   const depths: Record<string, number> = {};
   let depthsOk = false;
   if ('depths' in o) {
@@ -3366,6 +3393,16 @@ function checkTurn(c: Check, v: Json, attached: Set<string>, bones: Set<string>,
         'CONFIG_TURN_PIVOT_BEHIND_NEAREST',
         `${at}.pivot`,
         `is ${pivot}; the nearest part, "${nearest.part}", lies at depth ${nearest.depth}, and a pivot above that (further back) is required — each part travels (pivot − depth) / (pivot − ${nearest.depth}) of the control's offset, which has no value at the nearest depth and turns every part against the dial in front of it`,
+      );
+    }
+  }
+  if (headPivot !== null && depthsOk) {
+    const nearest = turnNearest(depths);
+    if (nearest !== null && !(headPivot > nearest.depth)) {
+      c.fail(
+        'CONFIG_TURN_PIVOT_BEHIND_NEAREST',
+        `${at}.head.pivot`,
+        `is ${headPivot}; the nearest part, "${nearest.part}", lies at depth ${nearest.depth}, and a head pivot above that (further back) is required`,
       );
     }
   }

@@ -109,8 +109,6 @@ export const FACE_DEFORM_FRACTIONS = {
   tilt_topknot_y: 0.5,
   /** Forehead bang forward parallax per degree of yaw (`W/deg`; `-3.50 px` at `+15°` on `W = 106`). */
   turn_bang_parallax_x: -(3.5 / 15) / 106,
-  /** Share of the cheek yaw horizontal field carried by lower `hair_back` (`0.90×` of `dxCheek`). */
-  turn_hair_back_cheek_x: 0.9,
   /** Rear bun counter-parallax per degree of yaw (`W/deg`; `+8.00 px` at `+15°` on `W = 106`). */
   turn_bun_counter_x: 8.0 / 15 / 106,
   /** Rear hairpin counter-parallax per degree of yaw (`W/deg`; `+6.00 px` at `+15°` on `W = 106`). */
@@ -144,7 +142,6 @@ export const FACE_DEFORM_RANGES: Readonly<Record<FaceDeformKey, readonly [number
   tilt_ear_y: [0, 1.5],
   tilt_topknot_y: [0, 1.5],
   turn_bang_parallax_x: [-0.015, 0],
-  turn_hair_back_cheek_x: [0, 1.5],
   turn_bun_counter_x: [0, 0.02],
   turn_hairpin_counter_x: [0, 0.02],
   turn_ear_x: [0, 1.5],
@@ -184,10 +181,41 @@ export const FACE_RATED_BAND = { yaw: FACE_RATED_YAW_BAND, pitch: FACE_RATED_PIT
  */
 export const EAR_DEPTH_RANGE: readonly [number, number] = [-50, 0];
 
-/** `config.turn`: the pivot depth, each carried part's See-through `depth_median`, optional rated band, and optional face surface deform overrides. */
+/** Default part names belonging to the `head` subtree when computing the head-only turn pivot (issue #478). */
+export const DEFAULT_HEAD_TURN_PARTS: readonly string[] = [
+  'face',
+  'nose',
+  'mouth',
+  'eyewhite_r',
+  'eyewhite_l',
+  'iris_r',
+  'iris_l',
+  'irides_r',
+  'irides_l',
+  'lash_r',
+  'lash_l',
+  'eyelash_r',
+  'eyelash_l',
+  'brow_r',
+  'brow_l',
+  'eyebrow_r',
+  'eyebrow_l',
+  'ear_r',
+  'ear_l',
+  'ears',
+  'hair_front',
+  'hair_back',
+  'hairpin',
+  'headwear',
+  'bun',
+  'topknot',
+];
+
+/** `config.turn`: the pivot depth, each carried part's See-through `depth_median`, optional head-only pivot override, optional rated band, and optional face surface deform overrides. */
 export interface TurnSpec {
   pivot: number;
   depths: Record<string, number>;
+  head?: { pivot?: number };
   band?: number | { yaw?: number; pitch?: number };
   deform?: Partial<FaceDeformFractions>;
 }
@@ -236,6 +264,48 @@ export function turnPivot(rows: ReadonlyArray<{ depth: number; area: number }>):
     ad += r.area * r.depth;
   }
   return a > 0 ? pyRound(ad / a, TURN_PLACES) : null;
+}
+
+/**
+ * Issue #478: the head-only turn pivot — either `spec.head.pivot` when
+ * declared, or the `opaque_px`-weighted mean of `spec.depths` restricted to the
+ * `head` subtree parts (`headParts`). Neck and torso parts are excluded so a
+ * front-heavy body does not pull the head's rotation axis forward of the skull.
+ */
+export function headTurnPivot(
+  spec: TurnSpec,
+  headParts: ReadonlySet<string> = new Set(DEFAULT_HEAD_TURN_PARTS),
+  partAreas?: Readonly<Record<string, number>>,
+): number | null {
+  if (typeof spec.head?.pivot === 'number' && Number.isFinite(spec.head.pivot)) {
+    return pyRound(spec.head.pivot, TURN_PLACES);
+  }
+  const headEntries = Object.entries(spec.depths).filter(([part, d]) => headParts.has(part) && typeof d === 'number' && Number.isFinite(d));
+  const entries = headEntries.length > 0 ? headEntries : Object.entries(spec.depths).filter(([, d]) => typeof d === 'number' && Number.isFinite(d));
+  return turnPivot(entries.map(([part, depth]) => ({ depth, area: partAreas?.[part] ?? 1 })));
+}
+
+/**
+ * Issue #478: a head-mounted part's turn fraction `(headPivot − depth) / (headPivot − headNearest)`
+ * about the head-only pivot. Parts behind `headPivot` (`hair_back`, rear `hairpin`)
+ * receive a negative fraction and move opposite to the face and irises.
+ */
+export function headTurnFraction(
+  spec: TurnSpec,
+  part: string,
+  headParts: ReadonlySet<string> = new Set(DEFAULT_HEAD_TURN_PARTS),
+  partAreas?: Readonly<Record<string, number>>,
+): number | null {
+  const depth = spec.depths[part];
+  if (typeof depth !== 'number' || !Number.isFinite(depth)) return null;
+  const pivot = headTurnPivot(spec, headParts, partAreas);
+  const headDepths: Record<string, number> = {};
+  for (const [p, d] of Object.entries(spec.depths)) {
+    if (headParts.has(p) && typeof d === 'number' && Number.isFinite(d)) headDepths[p] = d;
+  }
+  const nearest = turnNearest(Object.keys(headDepths).length > 0 ? headDepths : spec.depths);
+  if (pivot === null || nearest === null || !(pivot > nearest.depth)) return null;
+  return turnFraction(pivot, nearest.depth, depth);
 }
 
 /** The leaf bone that carries `part`'s share of `bone` under the turn: an identity child of `bone`, so it follows everything `bone` does. */
@@ -318,6 +388,20 @@ export interface FaceSurfaceDeformOptions {
    * transform constraints holding the dial bones to `[-15, 15]` and `[-12, 12]`.
    */
   hasAlternateFaceSet?: boolean;
+  /** Issue #478: `config.turn` holding `pivot`, `depths` and optional `head.pivot`. */
+  turn?: TurnSpec | null;
+  /** Issue #478: each part's `opaque_px` from `parts.json` for weighting the head-only pivot. */
+  partAreas?: Readonly<Record<string, number>>;
+  /**
+   * Issue #478: when true, refuse by `CONFIG_TURN_REQUIRED` if `turn` is absent
+   * or missing `depths` for attached `face`, `hair_front`, or `hair_back`.
+   */
+  requireTurn?: boolean;
+  /**
+   * Issue #478 Bar 4 negative control: when true, flip the back-layer fraction
+   * sign so `hair_back` and `hairpin` move with the face instead of against it.
+   */
+  flipBackLayerSignMutant?: boolean;
 }
 
 interface DeformWeight {
@@ -418,8 +502,8 @@ function buildFaceGrid(width: number, height: number): { points: Array<[number, 
  * Promote the `face` region on `head` to a 5×5 grid mesh and populate the
  * `tilt` and `turn` slider animations with the Set B ×2.5 face and hair mesh
  * deform timelines, feature field-sampled tracks (#468) and ear/topknot tracks
- * (issue #436). When `motion` holds neither `tilt` nor `turn` with slider
- * `derive` keys, neither `rig` nor `motion` is touched.
+ * (issues #436, #477, #478). When `motion` holds neither `tilt` nor `turn` with
+ * slider `derive` keys, neither `rig` nor `motion` is touched.
  */
 export function applyFaceSurfaceDeform(
   rig: {
@@ -443,8 +527,42 @@ export function applyFaceSurfaceDeform(
     (rawTurn?.tracks?.some((tr) => tr.keys?.some((k) => k.derive !== undefined)) ?? false);
   if (!hasDerive) return;
 
-  // Issue #477: refuse an out-of-range ear derive.depth by name before touching rig or motion.
-  const earProblems: Problem[] = [];
+  const isOpts =
+    options !== undefined &&
+    options !== null &&
+    ('imageWidth' in options ||
+      'imageHeight' in options ||
+      'opaqueWidth' in options ||
+      'opaqueHeight' in options ||
+      'overrides' in options ||
+      'hasAlternateFaceSet' in options ||
+      'turn' in options ||
+      'partAreas' in options ||
+      'requireTurn' in options ||
+      'flipBackLayerSignMutant' in options);
+  const opts: FaceSurfaceDeformOptions = isOpts ? (options as FaceSurfaceDeformOptions) : { overrides: options as Readonly<Partial<FaceDeformFractions>> | null | undefined };
+
+  // Issue #477 & #478: refuse an out-of-range ear derive.depth or missing config.turn by name before touching rig or motion.
+  const preProblems: Problem[] = [];
+  if (opts.requireTurn === true) {
+    if (opts.turn === undefined || opts.turn === null) {
+      preProblems.push({
+        code: 'CONFIG_TURN_REQUIRED',
+        object: 'config.turn',
+        detail: 'is absent and required when motion.animations_from carries a turn or tilt slider animation with derive keys; copy the turn block propose drafted into config.turn so the head pivot and each head part\'s depth are declared',
+      });
+    } else {
+      for (const reqPart of ['face', 'hair_front', 'hair_back'] as const) {
+        if (rig.skins.default[reqPart]?.[reqPart] !== undefined && !(reqPart in opts.turn.depths)) {
+          preProblems.push({
+            code: 'CONFIG_TURN_REQUIRED',
+            object: `config.turn.depths.${reqPart}`,
+            detail: `is absent and required when motion.animations_from carries a turn or tilt slider animation with derive keys and "${reqPart}" is attached; include "${reqPart}"'s See-through depth_median in config.turn.depths so the head pivot and fraction are defined`,
+          });
+        }
+      }
+    }
+  }
   const [earLo, earHi] = EAR_DEPTH_RANGE;
   for (const [animName, anim] of [
     ['tilt', rawTilt],
@@ -458,7 +576,7 @@ export function applyFaceSurfaceDeform(
         const d = k.derive?.depth;
         if (typeof d === 'number') {
           if (d < earLo || d > earHi) {
-            earProblems.push({
+            preProblems.push({
               code: 'CONFIG_TURN_EAR_DEPTH_RANGE',
               object: `animations.${animName}.tracks[${ti}].keys[${ki}].derive.depth`,
               detail: `is ${d}; an ear depth in [${earLo}, ${earHi}] (at or behind the head pivot) is required`,
@@ -467,7 +585,7 @@ export function applyFaceSurfaceDeform(
         } else if (d !== undefined && typeof d === 'object') {
           for (const [member, val] of Object.entries(d)) {
             if (typeof val === 'number' && (val < earLo || val > earHi)) {
-              earProblems.push({
+              preProblems.push({
                 code: 'CONFIG_TURN_EAR_DEPTH_RANGE',
                 object: `animations.${animName}.tracks[${ti}].keys[${ki}].derive.depth.${member}`,
                 detail: `is ${val}; an ear depth in [${earLo}, ${earHi}] (at or behind the head pivot) is required`,
@@ -478,23 +596,13 @@ export function applyFaceSurfaceDeform(
       });
     });
   }
-  refuseIfAny(earProblems);
+  refuseIfAny(preProblems);
 
   const tiltAnim = rawTilt === undefined ? undefined : structuredClone(rawTilt);
   const turnAnim = rawTurn === undefined ? undefined : structuredClone(rawTurn);
   if (tiltAnim !== undefined) motion.animations.tilt = tiltAnim;
   if (turnAnim !== undefined) motion.animations.turn = turnAnim;
 
-  const isOpts =
-    options !== undefined &&
-    options !== null &&
-    ('imageWidth' in options ||
-      'imageHeight' in options ||
-      'opaqueWidth' in options ||
-      'opaqueHeight' in options ||
-      'overrides' in options ||
-      'hasAlternateFaceSet' in options);
-  const opts: FaceSurfaceDeformOptions = isOpts ? (options as FaceSurfaceDeformOptions) : { overrides: options as Readonly<Partial<FaceDeformFractions>> | null | undefined };
   const f = resolveFaceDeformFractions(opts.overrides);
 
   // Issue #472: when no alternate face set is declared, clamp dial bones to the single-plate rated band (±15° yaw, ±12° pitch).
@@ -592,8 +700,8 @@ export function applyFaceSurfaceDeform(
       sumY += w[0]?.y ?? 0;
     }
     if (faceAtt.weights.length > 0) {
-      faceRegX = Math.round(sumX / faceAtt.weights.length);
-      faceRegY = Math.round(sumY / faceAtt.weights.length);
+      faceRegX = Math.round((sumX / faceAtt.weights.length) * 2) / 2;
+      faceRegY = Math.round((sumY / faceAtt.weights.length) * 2) / 2;
     }
   }
 
@@ -603,7 +711,7 @@ export function applyFaceSurfaceDeform(
   const Y0 = faceRegY - 1;
 
   const boneOrder = new Map<string, number>(rig.bones.map((b, i) => [b.name, i]));
-  for (const slotName of ['hair_front', 'hair_back']) {
+  for (const slotName of ['hair_front', 'hair_back', 'hairpin']) {
     const slotObj = rig.skins.default[slotName];
     const att = slotObj?.[slotName];
     if (att !== undefined && 'type' in att) {
@@ -701,18 +809,34 @@ export function applyFaceSurfaceDeform(
   };
 
   const getBoneDeltaAtTime = (tracks: readonly SliderTrack[], t: number, boneName: string): [number, number] => {
-    const baseBone = boneName.replace(/^turn_[^_]+_/, '');
-    const driver = mapParent[baseBone] ?? baseBone;
+    const drivers = new Set<string>();
+    let cur: string | undefined = boneName;
+    const visited = new Set<string>();
+    while (cur !== undefined && !visited.has(cur) && cur !== 'head' && cur !== 'turn_face_head' && cur !== 'root') {
+      visited.add(cur);
+      if (!cur.startsWith('turn_')) {
+        drivers.add(mapParent[cur] ?? cur);
+      }
+      cur = boneMap.get(cur)?.parent;
+    }
+    if (drivers.size === 0) {
+      const stripped = boneName.replace(/^turn_[^_]+_/, '');
+      if (stripped !== 'head' && stripped !== 'root') {
+        drivers.add(mapParent[stripped] ?? stripped);
+      }
+    }
     let dx = 0;
     let dy = 0;
-    for (const tr of tracks) {
-      const inGroup = tr.group !== undefined && (motion.groups?.[tr.group]?.includes(driver) ?? false);
-      if (tr.bone !== driver && !inGroup) continue;
-      const key = tr.keys.find((k) => Math.abs(k.t - t) < 1e-6);
-      if (key === undefined) continue;
-      const val = evalDeriveKey(driver, key);
-      if (tr.property === 'translatex') dx = val;
-      if (tr.property === 'translatey') dy = val;
+    for (const driver of drivers) {
+      for (const tr of tracks) {
+        const inGroup = tr.group !== undefined && (motion.groups?.[tr.group]?.includes(driver) ?? false);
+        if (tr.bone !== driver && !inGroup) continue;
+        const key = tr.keys.find((k) => Math.abs(k.t - t) < 1e-6);
+        if (key === undefined) continue;
+        const val = evalDeriveKey(driver, key);
+        if (tr.property === 'translatex') dx += val;
+        if (tr.property === 'translatey') dy += val;
+      }
     }
     return [dx, dy];
   };
@@ -732,10 +856,14 @@ export function applyFaceSurfaceDeform(
   const faceVerts = getMeshSetup(faceMesh);
   const hairFrontAtt = rig.skins.default.hair_front?.hair_front;
   const hairBackAtt = rig.skins.default.hair_back?.hair_back;
+  const hairpinAtt = rig.skins.default.hairpin?.hairpin;
   const hairFrontVerts = hairFrontAtt !== undefined && 'type' in hairFrontAtt ? getMeshSetup(hairFrontAtt) : null;
   const hairBackVerts = hairBackAtt !== undefined && 'type' in hairBackAtt ? getMeshSetup(hairBackAtt) : null;
+  const hairpinVerts = hairpinAtt !== undefined && 'type' in hairpinAtt && !boneMap.has('hairpin') ? getMeshSetup(hairpinAtt) : null;
 
   const hyCrown = Y0 + (67 / 128) * H;
+  const hyCrownStart = Y0 + (24 / 128) * H;
+  const hyCrownZero = Y0 + (48 / 128) * H;
   const hyBunSpan = (85 / 128) * H;
   const hyBangBottom = Y0 - (68 / 128) * H;
   const hyBangSpan = (130 / 128) * H;
@@ -901,57 +1029,39 @@ export function applyFaceSurfaceDeform(
           { t: 3.0, deg: 30 },
         ]
       : (refTurnTrack?.keys ?? []).map((k) => ({ t: k.t, deg: k.derive?.degrees ?? 0 }));
-    const turnDeform: DeformTimelineEntry[] = [
-      {
-        slot: 'face',
-        attachment: 'face',
-        keys: turnKeys.map(({ t, deg }) =>
-          deg === 0 ? { t } : { t, vertices: expandToDeform(faceVerts, (v) => evalYawFaceSurface(v.hx, v.hy, deg, W, H, X0, Y0, f)) },
-        ),
-      },
-    ];
-    if (hairFrontVerts !== null) {
-      turnDeform.push({
-        slot: 'hair_front',
-        attachment: 'hair_front',
-        keys: turnKeys.map(({ t, deg }) =>
-          deg === 0
-            ? { t }
-            : {
-                t,
-                vertices: expandToDeform(hairFrontVerts, (v) => {
-                  const [dxSurf, dySurf] = evalYawFaceSurface(v.hx, v.hy, deg, W, H, X0, Y0, f);
-                  const [bx, by] = getVertexBoneDelta(v, origTurnTracks, t);
-                  const uBang = Math.max(0, Math.min(1, (v.hy - hyTurnBangBottom) / hyTurnBangSpan));
-                  const bangParallaxX = (deg / 15) * pyRound(f.turn_bang_parallax_x * 15 * W, 8) * uBang;
-                  return [bangParallaxX + dxSurf - bx, dySurf - by];
-                }),
-              },
-        ),
-      });
-    }
-    if (hairBackVerts !== null) {
-      turnDeform.push({
-        slot: 'hair_back',
-        attachment: 'hair_back',
-        keys: turnKeys.map(({ t, deg }) =>
-          deg === 0
-            ? { t }
-            : {
-                t,
-                vertices: expandToDeform(hairBackVerts, (v) => {
-                  const [bx, by] = getVertexBoneDelta(v, origTurnTracks, t);
-                  const [dxCheek, dyCheek] = evalYawFaceSurface(v.hx, v.hy, deg, W, H, X0, Y0, f);
-                  const uBun = Math.max(0, Math.min(1, (v.hy - hyCrown) / hyBunSpan));
-                  const bunCounterX = FACE_DEFORM_MULT * (deg / 15) * pyRound((f.turn_bun_counter_x * 15 * W) / FACE_DEFORM_MULT, 8);
-                  const targetDx = (1 - uBun) * (dxCheek * f.turn_hair_back_cheek_x) + uBun * bunCounterX;
-                  return [targetDx - bx, (1 - uBun) * dyCheek - by];
-                }),
-              },
-        ),
-      });
-    }
     const refTurnKeys = refTurnTrack?.keys ?? [];
+
+    // Issue #478: compute head-subtree turn fractions about the head-only pivot.
+    const headParts = new Set<string>(DEFAULT_HEAD_TURN_PARTS);
+
+    const backSign = opts.flipBackLayerSignMutant === true ? -1 : 1;
+    const rawBackFrac = opts.turn != null ? headTurnFraction(opts.turn, 'hair_back', headParts, opts.partAreas) : null;
+    const rawHairpinFrac = opts.turn != null ? headTurnFraction(opts.turn, 'hairpin', headParts, opts.partAreas) : null;
+    const hairpinRidesBack =
+      hairpinAtt !== undefined &&
+      'type' in hairpinAtt &&
+      hairpinAtt.weights.some((infls) => infls.some((w) => w.bone.includes('hairback_')));
+
+    const dxFaceCenterAt = (deg: number): number => FACE_DEFORM_MULT * deg * W * unmult(f.turn_mid_x);
+    const dxBunAt = (deg: number): number =>
+      backSign * FACE_DEFORM_MULT * (deg / 15) * pyRound((f.turn_bun_counter_x * 15 * W) / FACE_DEFORM_MULT, 8);
+    const dxBackAt = (deg: number): number => {
+      if (rawBackFrac !== null) {
+        return backSign * rawBackFrac * dxFaceCenterAt(deg);
+      }
+      return dxBunAt(deg);
+    };
+    const dxHairpinAt = (deg: number): number => {
+      if (rawHairpinFrac !== null && rawHairpinFrac < 0) {
+        return backSign * rawHairpinFrac * dxFaceCenterAt(deg);
+      }
+      if (hairpinRidesBack && rawBackFrac !== null) {
+        const ratio = f.turn_bun_counter_x > 0 ? f.turn_hairpin_counter_x / f.turn_bun_counter_x : 0.75;
+        return dxBackAt(deg) * ratio;
+      }
+      return backSign * FACE_DEFORM_MULT * (deg / 15) * pyRound((f.turn_hairpin_counter_x * 15 * W) / FACE_DEFORM_MULT, 8);
+    };
+
     const earMembers = motion.groups?.ears ?? ['ear_r', 'ear_l'].filter((b) => boneMap.has(b));
     const hasAuthoredEarTurnTx = turnAnim.tracks.some(
       (tr) => tr.property === 'translatex' && (tr.group === 'ears' || tr.bone === 'ear_r' || tr.bone === 'ear_l'),
@@ -1030,9 +1140,9 @@ export function applyFaceSurfaceDeform(
         });
       }
     }
-    for (const [tkBone, tkFrac] of [
-      ['bun_ctl', f.turn_bun_counter_x],
-      ['hairpin', f.turn_hairpin_counter_x],
+    for (const [tkBone, evalTkDx] of [
+      ['bun_ctl', dxBunAt],
+      ['hairpin', dxHairpinAt],
     ] as const) {
       if (!boneMap.has(tkBone)) continue;
       turnAnim.tracks.push({
@@ -1041,9 +1151,109 @@ export function applyFaceSurfaceDeform(
         keys: refTurnKeys.map((k) => {
           const deg = k.derive?.degrees ?? 0;
           if (deg === 0) return { t: k.t, v: [0] };
-          const tkPx = pyRound((tkFrac * 15 * W) / FACE_DEFORM_MULT, 8);
-          return { t: k.t, v: [pyRound(FACE_DEFORM_MULT * (deg / 15) * tkPx, 4)] };
+          return { t: k.t, v: [pyRound(evalTkDx(deg), 4)] };
         }),
+      });
+    }
+    // Issue #478: cloth chain roots parented to head on hair_back follow hair_back's counter-parallax fraction.
+    for (const b of rig.bones) {
+      if (b.parent === 'head' && b.name.startsWith('hairback_') && b.name.endsWith('_0')) {
+        if (turnAnim.tracks.some((tr) => tr.bone === b.name && tr.property === 'translatex')) continue;
+        turnAnim.tracks.push({
+          bone: b.name,
+          property: 'translatex',
+          keys: refTurnKeys.map((k) => {
+            const deg = k.derive?.degrees ?? 0;
+            if (deg === 0) return { t: k.t, v: [0] };
+            return { t: k.t, v: [pyRound(dxBackAt(deg), 4)] };
+          }),
+        });
+      }
+    }
+
+    const turnDeform: DeformTimelineEntry[] = [
+      {
+        slot: 'face',
+        attachment: 'face',
+        keys: turnKeys.map(({ t, deg }) =>
+          deg === 0 ? { t } : { t, vertices: expandToDeform(faceVerts, (v) => evalYawFaceSurface(v.hx, v.hy, deg, W, H, X0, Y0, f)) },
+        ),
+      },
+    ];
+    if (hairFrontVerts !== null) {
+      turnDeform.push({
+        slot: 'hair_front',
+        attachment: 'hair_front',
+        keys: turnKeys.map(({ t, deg }) =>
+          deg === 0
+            ? { t }
+            : {
+                t,
+                vertices: expandToDeform(hairFrontVerts, (v) => {
+                  const [dxSurf, dySurf] = evalYawFaceSurface(v.hx, v.hy, deg, W, H, X0, Y0, f);
+                  const [bx, by] = getVertexBoneDelta(v, turnAnim.tracks, t);
+                  const uBang = Math.max(0, Math.min(1, (v.hy - hyTurnBangBottom) / hyTurnBangSpan));
+                  const bangParallaxX = (deg / 15) * pyRound(f.turn_bang_parallax_x * 15 * W, 8) * uBang;
+                  const hyFrontCrownStart = Y0 + (36 / 128) * H;
+                  const hyFrontCrownZero = Y0 + (60 / 128) * H;
+                  const tCrown = Math.max(0, Math.min(1, (v.hy - hyFrontCrownStart) / (hyFrontCrownZero - hyFrontCrownStart)));
+                  const wCrown = 1 - tCrown * tCrown * (3 - 2 * tCrown);
+                  const absUx = Math.abs((v.hx - X0) / (W / 2));
+                  const tLat = Math.max(0, Math.min(1, (absUx - 0.96) / (1.28 - 0.96)));
+                  const wLat = 1 - tLat * tLat * (3 - 2 * tLat);
+                  return [(bangParallaxX + dxSurf) * wCrown * wLat - bx, dySurf * wCrown * wLat - by];
+                }),
+              },
+        ),
+      });
+    }
+    if (hairBackVerts !== null) {
+      turnDeform.push({
+        slot: 'hair_back',
+        attachment: 'hair_back',
+        keys: turnKeys.map(({ t, deg }) =>
+          deg === 0
+            ? { t }
+            : {
+                t,
+                vertices: expandToDeform(hairBackVerts, (v) => {
+                  const [bx, by] = getVertexBoneDelta(v, turnAnim.tracks, t);
+                  const [, dyCheek] = evalYawFaceSurface(v.hx, v.hy, deg, W, H, X0, Y0, f);
+                  const uBun = Math.max(0, Math.min(1, (v.hy - hyCrown) / hyBunSpan));
+                  const wBun =
+                    (v.boneWeights.bun ?? 0) +
+                    (v.boneWeights.bun_ctl ?? 0) +
+                    (v.boneWeights.turn_hair_back_bun ?? 0) +
+                    (v.boneWeights.turn_hair_back_bun_ctl ?? 0);
+                  const wTopBun = Math.max(uBun, wBun);
+                  const tCrown = Math.max(0, Math.min(1, (v.hy - hyCrownStart) / (hyCrownZero - hyCrownStart)));
+                  const wCrown = 1 - tCrown * tCrown * (3 - 2 * tCrown);
+                  const tCraniumY = Math.max(0, Math.min(1, (v.hy - (Y0 - (24 / 128) * H)) / ((32 / 128) * H)));
+                  const absUx = Math.abs((v.hx - X0) / (W / 2));
+                  const tLat = Math.max(0, Math.min(1, (absUx - 0.55) / (0.95 - 0.55)));
+                  const wLatCranium = 1 - tCraniumY * (tLat * tLat * (3 - 2 * tLat));
+                  const targetDx = (1 - wTopBun) * (dxBackAt(deg) * wCrown * wLatCranium) + wTopBun * dxBunAt(deg);
+                  return [targetDx - bx, (1 - wTopBun) * dyCheek * wCrown - by];
+                }),
+              },
+        ),
+      });
+    }
+    if (hairpinVerts !== null) {
+      turnDeform.push({
+        slot: 'hairpin',
+        attachment: 'hairpin',
+        keys: turnKeys.map(({ t, deg }) =>
+          deg === 0
+            ? { t }
+            : {
+                t,
+                vertices: expandToDeform(hairpinVerts, (v) => {
+                  const [bx, by] = getVertexBoneDelta(v, turnAnim.tracks, t);
+                  return [dxHairpinAt(deg) - bx, -by];
+                }),
+              },
+        ),
       });
     }
     turnAnim.deform = turnDeform;

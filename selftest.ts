@@ -255,7 +255,7 @@ import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type Mo
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type Limb, loadClothConfig, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, parseProposalSections, type SkeletonSections } from './src/config.ts';
 import { RIG_BONE_INHERIT, RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { expandStops } from 'rig-c/src/stop.ts';
-import { applyFaceSurfaceDeform, EAR_DEPTH_RANGE, evalYawFaceSurface, FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, FACE_RATED_BAND, FACE_RATED_PITCH_BAND, FACE_RATED_YAW_BAND, resolveFaceDeformFractions, TURN_BONE } from './src/turn.ts';
+import { applyFaceSurfaceDeform, DEFAULT_HEAD_TURN_PARTS, EAR_DEPTH_RANGE, evalYawFaceSurface, FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, FACE_RATED_BAND, FACE_RATED_PITCH_BAND, FACE_RATED_YAW_BAND, headTurnFraction, headTurnPivot, resolveFaceDeformFractions, TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, FAINT_ALPHA, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FAINT, FAINT_AT_LINE, FAR, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NEAR, NOTCH, NOTCH_CUT, NOTCHED, PAIR, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRAND, STRAND_CHAIN, STRIP } from './fixtures/contour.ts';
@@ -2187,7 +2187,7 @@ function runConfigSuite(): number {
       }),
     );
     const animSinglePath87 = join(bandDir87, 'single.config.json');
-    const animSingleCfg87 = turned84({ pivot: 0.5, depths: { face: 0.4 } });
+    const animSingleCfg87 = turned84({ pivot: 0.5, depths: { face: 0.4, hair_back: 0.7 } });
     (animSingleCfg87.motion as Record<string, unknown>).animations_from = 'over.motion.json';
     writeFileSync(animSinglePath87, JSON.stringify(animSingleCfg87));
     const animSingleRef87 = refusals(() => loadConfigAndAnimations(animSinglePath87));
@@ -2230,7 +2230,7 @@ function runConfigSuite(): number {
       }),
     );
     const earOkCfgPath88 = join(bandDir87, 'ear_ok.config.json');
-    const earOkCfg88 = turned84({ pivot: 0.5, depths: { face: 0.4 } });
+    const earOkCfg88 = turned84({ pivot: 0.5, depths: { face: 0.4, hair_back: 0.7 } });
     (earOkCfg88.motion as Record<string, unknown>).animations_from = 'ear_ok.motion.json';
     writeFileSync(earOkCfgPath88, JSON.stringify(earOkCfg88));
     const earOk88 = refusals(() => loadConfigAndAnimations(earOkCfgPath88));
@@ -2249,7 +2249,7 @@ function runConfigSuite(): number {
       }),
     );
     const earBadCfgPath88 = join(bandDir87, 'ear_bad.config.json');
-    const earBadCfg88 = turned84({ pivot: 0.5, depths: { face: 0.4 } });
+    const earBadCfg88 = turned84({ pivot: 0.5, depths: { face: 0.4, hair_back: 0.7 } });
     (earBadCfg88.motion as Record<string, unknown>).animations_from = 'ear_bad.motion.json';
     writeFileSync(earBadCfgPath88, JSON.stringify(earBadCfg88));
     const earBad88 = refusals(() => loadConfigAndAnimations(earBadCfgPath88));
@@ -2263,6 +2263,50 @@ function runConfigSuite(): number {
         JSON.stringify(EAR_DEPTH_RANGE) === JSON.stringify([-50, 0]),
       `depth -14 -> ${show75(earOk88)}; depth 20 & -80 -> ${show75(earBad88)}`,
       'issue #477: an authored ear derive.depth in [-50, 0] loads, and a depth outside [-50, 0] is refused by CONFIG_TURN_EAR_DEPTH_RANGE naming the value found and the allowed interval',
+    );
+
+    // CF89 — issue #478: animations_from with turn/tilt derive keys requires config.turn (CONFIG_TURN_REQUIRED) and
+    // requires any attached head part (face, hair_front, hair_back) to appear in config.turn.depths; turn.head.pivot
+    // loads when behind the nearest part and is refused by CONFIG_TURN_PIVOT_BEHIND_NEAREST when at or in front of it.
+    const noTurnCfgPath89 = join(bandDir87, 'no_turn.config.json');
+    const noTurnCfg89 = minimalConfig() as Record<string, unknown>;
+    (noTurnCfg89.motion as Record<string, unknown>).animations_from = 'ear_ok.motion.json';
+    writeFileSync(noTurnCfgPath89, JSON.stringify(noTurnCfg89));
+    const noTurnRef89 = refusals(() => loadConfigAndAnimations(noTurnCfgPath89));
+
+    const missingHeadPartCfgPath89 = join(bandDir87, 'missing_head_part.config.json');
+    const missingHeadPartCfg89 = turned84({ pivot: 0.6, depths: { face: 0.4 } });
+    (missingHeadPartCfg89.motion as Record<string, unknown>).animations_from = 'ear_ok.motion.json';
+    writeFileSync(missingHeadPartCfgPath89, JSON.stringify(missingHeadPartCfg89));
+    const missingHeadPartRef89 = refusals(() => loadConfigAndAnimations(missingHeadPartCfgPath89));
+
+    const headPivotOk89 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4, robe: 0.7 }, head: { pivot: 0.6 } })));
+    const headPivotBad89 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4, robe: 0.7 }, head: { pivot: 0.4 } })));
+    const deformKeys89 = Object.keys(FACE_DEFORM_FRACTIONS);
+    say(
+      'CF89_TURN_SLIDER_DERIVE_REQUIRES_CONFIG_TURN_AND_ATTACHED_HEAD_DEPTHS_AND_VALIDATES_HEAD_PIVOT',
+      one75(
+        noTurnRef89,
+        'CONFIG_TURN_REQUIRED',
+        'config.turn',
+        "is absent and required when motion.animations_from carries a turn or tilt slider animation with derive keys; copy the turn block propose drafted into config.turn so the head pivot and each head part's depth are declared",
+      ) &&
+        one75(
+          missingHeadPartRef89,
+          'CONFIG_TURN_REQUIRED',
+          'config.turn.depths.hair_back',
+          'is absent and required when motion.animations_from carries a turn or tilt slider animation with derive keys and "hair_back" is attached; include "hair_back"\'s See-through depth_median in config.turn.depths so the head pivot and fraction are defined',
+        ) &&
+        headPivotOk89 === null &&
+        one75(
+          headPivotBad89,
+          'CONFIG_TURN_PIVOT_BEHIND_NEAREST',
+          'config.turn.head.pivot',
+          'is 0.4; the nearest part, "face", lies at depth 0.4, and a head pivot above that (further back) is required',
+        ) &&
+        !deformKeys89.includes('turn_hair_back_cheek_x'),
+      `no config.turn -> ${show75(noTurnRef89)}; missing hair_back depth -> ${show75(missingHeadPartRef89)}; head.pivot 0.6 -> ${show75(headPivotOk89)}; head.pivot 0.4 -> ${show75(headPivotBad89)}; turn_hair_back_cheek_x in FACE_DEFORM_FRACTIONS=${deformKeys89.includes('turn_hair_back_cheek_x')}`,
+      'issue #478: face turn/tilt derive keys require config.turn and depths for attached face/hair_front/hair_back (CONFIG_TURN_REQUIRED), turn.head.pivot is checked behind the nearest part (CONFIG_TURN_PIVOT_BEHIND_NEAREST), and turn_hair_back_cheek_x is removed from FACE_DEFORM_FRACTIONS',
     );
   } finally {
     rmSync(bandDir87, { recursive: true, force: true });
@@ -7014,6 +7058,219 @@ function runTurnRigCases(say: (name: string, ok: boolean, detail: string, why: s
         earBadRef143.problems[0]?.code === 'CONFIG_TURN_EAR_DEPTH_RANGE',
       `honoured (-14): yaw -15 ear_r=${gotM15.ear_r?.[0]} (rule ${expRM15}), ear_l=${gotM15.ear_l?.[0]} (rule ${expLM15}); yaw +15 ear_r=${gotP15.ear_r?.[0]} (rule ${expRP15}), ear_l=${gotP15.ear_l?.[0]} (rule ${expLP15}); dial 0=${JSON.stringify(got0)}; mutant dropped ear_l at +15=${mutEarLP15} (err ${pyRound(Math.abs(mutEarLP15 - expLP15), 4)} px > 1 px, bar 1=${bar1MutantPasses}); depth 25 -> ${earBadRef143?.problems[0]?.code ?? 'none'}`,
       'issue #477: applyFaceSurfaceDeform honours the authored ears derive.depth via the depth rule, keeps dial 0 byte-identical, refuses an out-of-range ear depth by CONFIG_TURN_EAR_DEPTH_RANGE, and fails bar 1 when the dropping mutant is restored',
+    );
+
+    // Issue #478: headTurnPivot computes the opaque_px-weighted mean over the head parts (ignoring torso/skirt depths
+    // that pull the whole-body turn.pivot in front of the face), hair_back behind headPivot counter-translates opposite
+    // to the irises to conserve the head silhouette width (|Δw| <= 2%) while the crown of hair_front stays put, and
+    // flipping the back-layer sign (flipBackLayerSignMutant) fails Bar 2 and collapses the silhouette width.
+    const turnLook144 = {
+      pivot: 0.436252, // whole-body pivot pulled in front of face (0.50636) by torso/arms
+      depths: {
+        hair_front: 0.411035,
+        face: 0.50636,
+        hairpin: 0.785,
+        hair_back: 0.712119,
+        topwear: 0.25,
+      },
+    };
+    const opaquePx144 = {
+      hair_front: 112640,
+      face: 162163,
+      hairpin: 18400,
+      hair_back: 189440,
+      topwear: 500000,
+    };
+    const hp144 = headTurnPivot(turnLook144, undefined, opaquePx144) ?? 0;
+    const hbFrac144 = headTurnFraction(turnLook144, 'hair_back', undefined, opaquePx144) ?? 0;
+    const hpFrac144 = headTurnFraction(turnLook144, 'hairpin', undefined, opaquePx144) ?? 0;
+
+    // Build a probe rig with face, hair_front (crown + bang vertices), hair_back (extending slightly past the cheeks so
+    // the combined head outline spans max(face, hair_back)), and hairpin on head.
+    const headMeshWeights = (pts: Array<[number, number]>): Array<{ bone: string; weight: number; x: number; y: number }> =>
+      pts.map(([x, y]) => ({ bone: 'head', weight: 1, x, y }));
+    const hbRestPts144: Array<[number, number]> = [
+      [-55, 80],
+      [53, 80],
+      [-55, 48],
+      [53, 48],
+      [-55, 10],
+      [53, 10],
+    ];
+    const hfRestPts144: Array<[number, number]> = [
+      [-30, 112], // top of crown (above hyCrownStart = 48 + (24/128)*128 = 72)
+      [28, 112],
+      [-40, 48],  // mid-face bang
+      [38, 48],
+    ];
+    const rig144Base = {
+      ...structuredClone(probeRig90),
+      bones: [
+        ...structuredClone(probeRig90.bones),
+        { name: 'hairpin_r', parent: 'head', x: -48, y: 78 },
+        { name: 'hairpin_l', parent: 'head', x: 46, y: 78 },
+      ],
+      skins: {
+        default: {
+          face: { face: { image: 'face.png', x: -1, y: 48, width: 106, height: 128 } },
+          hair_front: {
+            hair_front: {
+              type: 'mesh' as const,
+              image: 'hair_front.png',
+              width: 100,
+              height: 100,
+              uvs: [0, 0, 1, 0, 0, 1, 1, 1],
+              triangles: [0, 2, 1, 1, 2, 3],
+              weights: [headMeshWeights([hfRestPts144[0]!]), headMeshWeights([hfRestPts144[1]!]), headMeshWeights([hfRestPts144[2]!]), headMeshWeights([hfRestPts144[3]!])],
+              hull: 4,
+            },
+          },
+          hair_back: {
+            hair_back: {
+              type: 'mesh' as const,
+              image: 'hair_back.png',
+              width: 108,
+              height: 70,
+              uvs: [0, 0, 1, 0, 0, 0.5, 1, 0.5, 0, 1, 1, 1],
+              triangles: [0, 2, 1, 1, 2, 3, 2, 4, 3, 3, 4, 5],
+              weights: hbRestPts144.map((pt) => headMeshWeights([pt])),
+              hull: 6,
+            },
+          },
+          hairpin: {
+            hairpin: {
+              type: 'mesh' as const,
+              image: 'hairpin.png',
+              width: 94,
+              height: 20,
+              uvs: [0, 0, 1, 0, 0, 1],
+              triangles: [0, 1, 2],
+              weights: [
+                [{ bone: 'hairpin_r', weight: 1, x: 0, y: 0 }],
+                [{ bone: 'hairpin_l', weight: 1, x: 0, y: 0 }],
+                [{ bone: 'head', weight: 1, x: -1, y: 78 }],
+              ],
+              hull: 3,
+            },
+          },
+        },
+      },
+      invariants: { meshSlots: 3, meshTriangles: 7 },
+    };
+    const mot144Base = structuredClone(rawSliderMot90);
+    // Replace turn keys with [-15, 0, +15] to measure at the rated ±15° yaw boundary.
+    for (const tr of (mot144Base.animations.turn as { tracks: Array<{ property: string; keys: Array<Record<string, unknown>> }> }).tracks) {
+      if (tr.property === 'translatex') {
+        tr.keys = [
+          { t: 0, derive: { kind: 'yaw', degrees: -15, about: -1, depth: featDepthYaw90 } },
+          { t: 1.5, v: [0] },
+          { t: 3.0, derive: { kind: 'yaw', degrees: 15, about: -1, depth: featDepthYaw90 } },
+        ];
+      } else if (tr.property === 'scalex') {
+        tr.keys = [
+          { t: 0, derive: { kind: 'yaw', degrees: -15, about: -1, depth: featDepthYaw90 } },
+          { t: 1.5, v: [1] },
+          { t: 3.0, derive: { kind: 'yaw', degrees: 15, about: -1, depth: featDepthYaw90 } },
+        ];
+      }
+    }
+
+    const rig144 = structuredClone(rig144Base);
+    const mot144 = structuredClone(mot144Base);
+    applyFaceSurfaceDeform(rig144, mot144, { turn: turnLook144, partAreas: opaquePx144, requireTurn: true });
+
+    const rig144Mut = structuredClone(rig144Base);
+    const mot144Mut = structuredClone(mot144Base);
+    applyFaceSurfaceDeform(rig144Mut, mot144Mut, {
+      turn: turnLook144,
+      partAreas: opaquePx144,
+      requireTurn: true,
+      flipBackLayerSignMutant: true,
+    });
+
+    const missingTurnRef144 = refusals(() =>
+      applyFaceSurfaceDeform(structuredClone(rig144Base), structuredClone(mot144Base), { requireTurn: true }),
+    );
+
+    const getTurnDeform144 = (mot: typeof mot144, slot: string) =>
+      (mot.animations.turn as { deform: Array<{ slot: string; keys: Array<{ t: number; vertices?: number[] }> }> }).deform.find((d) => d.slot === slot);
+    const faceWeights144 = (rig144.skins.default.face.face as unknown as { weights: Array<Array<{ x: number; y: number }>> }).weights;
+    const restFaceXs144 = faceWeights144.map((w) => w[0]!.x);
+    const restHbXs144 = hbRestPts144.map((p) => p[0]);
+    const restMinX144 = Math.min(...restFaceXs144, ...restHbXs144);
+    const restMaxX144 = Math.max(...restFaceXs144, ...restHbXs144);
+    const restWidth144 = restMaxX144 - restMinX144;
+
+    const measureHeadOutlineWidthPct = (mot: typeof mot144, keyIdx: number): number => {
+      const fVerts = getTurnDeform144(mot, 'face')?.keys[keyIdx]?.vertices ?? [];
+      const hbVerts = getTurnDeform144(mot, 'hair_back')?.keys[keyIdx]?.vertices ?? [];
+      const fXs = restFaceXs144.map((rx, i) => rx + (fVerts[i * 2] ?? 0));
+      const hbXs = restHbXs144.map((rx, i) => rx + (hbVerts[i * 2] ?? 0));
+      const minX = Math.min(...fXs, ...hbXs);
+      const maxX = Math.max(...fXs, ...hbXs);
+      return (((maxX - minX) - restWidth144) / restWidth144) * 100;
+    };
+    const meanDx = (verts: number[] | undefined): number => {
+      if (!verts || verts.length === 0) return 0;
+      let s = 0;
+      const n = verts.length / 2;
+      for (let i = 0; i < n; i++) s += verts[i * 2]!;
+      return s / n;
+    };
+
+    const dwM15 = measureHeadOutlineWidthPct(mot144, 0);
+    const dwP15 = measureHeadOutlineWidthPct(mot144, 2);
+    const mutDwM15 = measureHeadOutlineWidthPct(mot144Mut, 0);
+
+    const featTx144 = (mot144.animations.turn as { tracks: Array<{ group?: string; property: string; keys: Array<{ v?: Record<string, number[]> }> }> }).tracks.find(
+      (tr) => tr.group === 'features' && tr.property === 'translatex',
+    );
+    const irisDxM15 = ((featTx144?.keys[0]?.v?.eye_r?.[0] ?? 0) + (featTx144?.keys[0]?.v?.eye_l?.[0] ?? 0)) / 2;
+    const irisDxP15 = ((featTx144?.keys[2]?.v?.eye_r?.[0] ?? 0) + (featTx144?.keys[2]?.v?.eye_l?.[0] ?? 0)) / 2;
+    const hbDxM15 = meanDx(getTurnDeform144(mot144, 'hair_back')?.keys[0]?.vertices);
+    const hbDxP15 = meanDx(getTurnDeform144(mot144, 'hair_back')?.keys[2]?.vertices);
+    const hpDxM15 = meanDx(getTurnDeform144(mot144, 'hairpin')?.keys[0]?.vertices);
+    const hpDxP15 = meanDx(getTurnDeform144(mot144, 'hairpin')?.keys[2]?.vertices);
+    const mutHbDxM15 = meanDx(getTurnDeform144(mot144Mut, 'hair_back')?.keys[0]?.vertices);
+    const mutHbDxP15 = meanDx(getTurnDeform144(mot144Mut, 'hair_back')?.keys[2]?.vertices);
+
+    // Crown vertices are indices 0 and 1 of hair_front (at hy = 112 >= hyCrownStart = 72).
+    const hfVertsM15 = getTurnDeform144(mot144, 'hair_front')?.keys[0]?.vertices ?? [];
+    const crownDxM15 = ((hfVertsM15[0] ?? 0) + (hfVertsM15[2] ?? 0)) / 2;
+    const bangDxM15 = ((hfVertsM15[4] ?? 0) + (hfVertsM15[6] ?? 0)) / 2;
+
+    const dial0Empty144 =
+      getTurnDeform144(mot144, 'face')?.keys[1]?.vertices === undefined &&
+      getTurnDeform144(mot144, 'hair_front')?.keys[1]?.vertices === undefined &&
+      getTurnDeform144(mot144, 'hair_back')?.keys[1]?.vertices === undefined &&
+      getTurnDeform144(mot144, 'hairpin')?.keys[1]?.vertices === undefined;
+
+    const bar1Pass144 = Math.abs(dwM15) <= 2.0 && Math.abs(dwP15) <= 2.0;
+    const bar2Pass144 =
+      irisDxM15 * hbDxM15 < 0 &&
+      irisDxP15 * hbDxP15 < 0 &&
+      irisDxM15 * hpDxM15 < 0 &&
+      irisDxP15 * hpDxP15 < 0 &&
+      Math.abs(hbDxM15) >= 3.0 &&
+      Math.abs(hbDxP15) >= 3.0 &&
+      Math.abs(crownDxM15) === 0 &&
+      Math.abs(bangDxM15) > 3.0;
+    const mutBar2Pass144 = irisDxM15 * mutHbDxM15 < 0 && irisDxP15 * mutHbDxP15 < 0;
+
+    say(
+      'RG144_HEAD_TURN_PIVOT_MOVES_HAIR_BACK_AND_HAIRPIN_AGAINST_THE_FACE_CONSERVING_HEAD_WIDTH_WHILE_MUTANT_FAILS_BAR_TWO',
+      hp144 > turnLook144.depths.face &&
+        hbFrac144 < -0.4 &&
+        hpFrac144 < hbFrac144 &&
+        bar1Pass144 &&
+        bar2Pass144 &&
+        dial0Empty144 &&
+        !mutBar2Pass144 &&
+        missingTurnRef144 !== null &&
+        missingTurnRef144.problems[0]?.code === 'CONFIG_TURN_REQUIRED' &&
+        DEFAULT_HEAD_TURN_PARTS.includes('hair_back'),
+      `headPivot=${pyRound(hp144, 6)} (vs body pivot ${turnLook144.pivot}, face ${turnLook144.depths.face}); frac hair_back=${pyRound(hbFrac144, 4)}, hairpin=${pyRound(hpFrac144, 4)}; width Δw: -15°=${pyRound(dwM15, 2)}%, +15°=${pyRound(dwP15, 2)}%; yaw -15°: iris=${pyRound(irisDxM15, 2)}, hair_back=${pyRound(hbDxM15, 2)}, hairpin=${pyRound(hpDxM15, 2)}, crown=${pyRound(crownDxM15, 2)}, bang=${pyRound(bangDxM15, 2)}; mutant hair_back=${pyRound(mutHbDxM15, 2)} / ${pyRound(mutHbDxP15, 2)} (bar2=${mutBar2Pass144}); missing turn -> ${missingTurnRef144?.problems[0]?.code ?? 'none'}`,
+      'issue #478: headTurnPivot weights only the head parts so hair_back and hairpin behind the head pivot counter-translate opposite to the irises, keeping head outline width within ±2% and the crown stationary while the sign-flip mutant fails Bar 2',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
