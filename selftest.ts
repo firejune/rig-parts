@@ -255,7 +255,7 @@ import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type Mo
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type Limb, loadClothConfig, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, parseProposalSections, type SkeletonSections } from './src/config.ts';
 import { RIG_BONE_INHERIT, RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { expandStops } from 'rig-c/src/stop.ts';
-import { applyFaceSurfaceDeform, FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, resolveFaceDeformFractions, TURN_BONE } from './src/turn.ts';
+import { applyFaceSurfaceDeform, evalYawFaceSurface, FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, resolveFaceDeformFractions, TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, FAINT_ALPHA, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FAINT, FAINT_AT_LINE, FAR, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NEAR, NOTCH, NOTCH_CUT, NOTCHED, PAIR, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRAND, STRAND_CHAIN, STRIP } from './fixtures/contour.ts';
@@ -6677,6 +6677,9 @@ function runTurnRigCases(say: (name: string, ok: boolean, detail: string, why: s
       bones: [
         { name: 'root', x: 0, y: 0 },
         { name: 'head', parent: 'root', x: 2, y: 945 },
+        { name: 'eye_r', parent: 'head', x: -21.9, y: 53.3 },
+        { name: 'eye_l', parent: 'head', x: 21.1, y: 52.8 },
+        { name: 'nose', parent: 'head', x: 0.5, y: 39.2 },
       ],
       skins: {
         default: {
@@ -6689,23 +6692,68 @@ function runTurnRigCases(say: (name: string, ok: boolean, detail: string, why: s
     const noSliderMot90 = { animations: { idle: { duration: 1, tracks: [] } } };
     applyFaceSurfaceDeform(noSliderRig90, noSliderMot90);
     const sliderRig90 = structuredClone(probeRig90);
+    const featDepthYaw90 = { eye_r: 36, eye_l: 36, nose: 50 };
+    const featDepthPitch90 = { eye_r: 34, eye_l: 34, nose: 46 };
     const sliderMot90: { groups: Record<string, string[]>; animations: Record<string, unknown> } = {
-      groups: { features: ['head'] },
+      groups: { features: ['eye_r', 'eye_l', 'nose'] },
       animations: {
         tilt: {
           duration: 2.5,
-          tracks: [{ group: 'features', property: 'translatey', keys: [{ t: 0, derive: { kind: 'pitch', degrees: -25, about: 48, depth: 36 } }, { t: 1.25, v: [0] }, { t: 2.0, derive: { kind: 'pitch', degrees: 15, about: 48, depth: 36 } }] }],
+          tracks: [
+            { group: 'features', property: 'translatey', keys: [{ t: 0, derive: { kind: 'pitch', degrees: -25, about: 48, depth: featDepthPitch90 } }, { t: 1.25, v: [0] }, { t: 2.0, derive: { kind: 'pitch', degrees: 15, about: 48, depth: featDepthPitch90 } }, { t: 2.5, derive: { kind: 'pitch', degrees: 25, about: 48, depth: featDepthPitch90 } }] },
+            { group: 'features', property: 'scaley', keys: [{ t: 0, v: [0.9] }, { t: 1.25, v: [1] }, { t: 2.0, v: [0.9] }, { t: 2.5, v: [0.85] }] },
+          ],
         },
         turn: {
           duration: 3.0,
-          tracks: [{ group: 'features', property: 'translatex', keys: [{ t: 0, derive: { kind: 'yaw', degrees: -30, about: -1.5, depth: 36 } }, { t: 1.5, v: [0] }, { t: 2.25, derive: { kind: 'yaw', degrees: 15, about: -1.5, depth: 36 } }] }],
+          tracks: [
+            { group: 'features', property: 'translatex', keys: [{ t: 0, derive: { kind: 'yaw', degrees: -30, about: -1.5, depth: featDepthYaw90 } }, { t: 1.5, v: [0] }, { t: 2.25, derive: { kind: 'yaw', degrees: 15, about: -1.5, depth: featDepthYaw90 } }, { t: 3.0, derive: { kind: 'yaw', degrees: 30, about: -1.5, depth: featDepthYaw90 } }] },
+            { group: 'features', property: 'scalex', keys: [{ t: 0, v: [0.9] }, { t: 1.5, v: [1] }, { t: 2.25, v: [0.9] }, { t: 3.0, v: [0.85] }] },
+          ],
         },
       },
     };
+    // Populate scalex/scaley derive metadata on the non-zero keys so applyFaceSurfaceDeform evaluates them alongside translate.
+    for (const tr of (sliderMot90.animations.tilt as { tracks: Array<{ property: string; keys: Array<{ t: number; v?: unknown; derive?: unknown }> }> }).tracks) {
+      if (tr.property === 'scaley') {
+        tr.keys = [
+          { t: 0, derive: { kind: 'pitch', degrees: -25, about: 48, depth: featDepthPitch90 } },
+          { t: 1.25, v: [1] },
+          { t: 2.0, derive: { kind: 'pitch', degrees: 15, about: 48, depth: featDepthPitch90 } },
+          { t: 2.5, derive: { kind: 'pitch', degrees: 25, about: 48, depth: featDepthPitch90 } },
+        ];
+      }
+    }
+    for (const tr of (sliderMot90.animations.turn as { tracks: Array<{ property: string; keys: Array<{ t: number; v?: unknown; derive?: unknown }> }> }).tracks) {
+      if (tr.property === 'scalex') {
+        tr.keys = [
+          { t: 0, derive: { kind: 'yaw', degrees: -30, about: -1.5, depth: featDepthYaw90 } },
+          { t: 1.5, v: [1] },
+          { t: 2.25, derive: { kind: 'yaw', degrees: 15, about: -1.5, depth: featDepthYaw90 } },
+          { t: 3.0, derive: { kind: 'yaw', degrees: 30, about: -1.5, depth: featDepthYaw90 } },
+        ];
+      }
+    }
     applyFaceSurfaceDeform(sliderRig90, sliderMot90);
     const faceMesh90 = sliderRig90.skins.default.face.face as unknown as { type: string; weights: unknown[]; triangles: unknown[]; hull: number };
     const tiltDef90 = (sliderMot90.animations.tilt as { deform: Array<{ slot: string; keys: Array<{ t: number; vertices?: number[] }> }> }).deform;
     const turnDef90 = (sliderMot90.animations.turn as { deform: Array<{ slot: string; keys: Array<{ t: number; vertices?: number[] }> }> }).deform;
+    const turnTracks90 = (sliderMot90.animations.turn as { tracks: Array<{ group?: string; property: string; keys: Array<{ t: number; v?: number[] | Record<string, number[]> }> }> }).tracks;
+    const turnTx90 = turnTracks90.find((tr) => tr.group === 'features' && tr.property === 'translatex');
+    const turnSx90 = turnTracks90.find((tr) => tr.group === 'features' && tr.property === 'scalex');
+    const tx30 = (turnTx90?.keys[3]?.v ?? {}) as Record<string, number[]>;
+    const sx30 = (turnSx90?.keys[3]?.v ?? {}) as Record<string, number[]>;
+    const eyeRSx30 = sx30.eye_r?.[0] ?? 1;
+    const eyeLSx30 = sx30.eye_l?.[0] ?? 1;
+    const eyeRDx30 = tx30.eye_r?.[0] ?? 0;
+    const eyeLDx30 = tx30.eye_l?.[0] ?? 0;
+    const noseDx30 = tx30.nose?.[0] ?? 0;
+    const [plateLeftDx30] = evalYawFaceSurface(-54, 53.3, 30, 106, 128, -1, 48);
+    const [plateRightDx30] = evalYawFaceSurface(52, 52.8, 30, 106, 128, -1, 48);
+    const plateMinX30 = -54 + plateLeftDx30;
+    const plateMaxX30 = 52 + plateRightDx30;
+    const eyeRLeftEdge30 = -21.9 + eyeRDx30 - 24 * eyeRSx30;
+    const eyeLRightEdge30 = 21.1 + eyeLDx30 + 24 * eyeLSx30;
     say(
       'RG90_FACE_SURFACE_DEFORM_PROMOTES_THE_FACE_REGION_TO_A_5X5_MESH_AND_KEYS_SLIDER_DEFORMS_WHILE_LEAVING_NON_SLIDER_BUILDS_BYTE_IDENTICAL',
       JSON.stringify(noSliderRig90) === JSON.stringify(probeRig90) &&
@@ -6723,6 +6771,18 @@ function runTurnRigCases(say: (name: string, ok: boolean, detail: string, why: s
         (turnDef90[0]?.keys[3]?.vertices?.length ?? 0) === 50,
       `without slider derive: rig unchanged=${JSON.stringify(noSliderRig90) === JSON.stringify(probeRig90)}; with slider derive: face mesh vertices=${faceMesh90.weights.length}, triangles=${faceMesh90.triangles.length / 3}, hull=${faceMesh90.hull}, tilt0 vertices=${String(tiltDef90[0]?.keys[2]?.vertices)}, tilt+15 floats=${tiltDef90[0]?.keys[3]?.vertices?.length ?? 0}, turn+15 floats=${turnDef90[0]?.keys[3]?.vertices?.length ?? 0}`,
       'issue #436: applyFaceSurfaceDeform promotes the face region on head to the 5x5 grid mesh and populates tilt and turn deform keys at Set B x2.5 while leaving rest (dial 0) and non-slider builds untouched',
+    );
+    say(
+      'RG141_FACE_SURFACE_DEFORM_SAMPLES_FEATURES_FROM_THE_PLATE_FIELD_WITH_FORESHORTENING_AND_CONTAINMENT',
+      JSON.stringify(turnTx90?.keys[1]) === JSON.stringify({ t: 1.5, v: [0] }) &&
+        JSON.stringify(turnSx90?.keys[1]) === JSON.stringify({ t: 1.5, v: [1] }) &&
+        eyeRSx30 < 0.65 &&
+        eyeLSx30 > 1.0 &&
+        Math.abs(noseDx30) > Math.abs(eyeRDx30) &&
+        eyeRLeftEdge30 >= plateMinX30 &&
+        eyeLRightEdge30 <= plateMaxX30,
+      `dial 0: tx=${JSON.stringify(turnTx90?.keys[1]?.v)}, sx=${JSON.stringify(turnSx90?.keys[1]?.v)}; yaw +30: eye_r (far) dx=${eyeRDx30}, sx=${eyeRSx30} (left edge ${pyRound(eyeRLeftEdge30, 2)} >= plate ${pyRound(plateMinX30, 2)}); eye_l (near) dx=${eyeLDx30}, sx=${eyeLSx30} (right edge ${pyRound(eyeLRightEdge30, 2)} <= plate ${pyRound(plateMaxX30, 2)}); nose dx=${noseDx30}`,
+      'issue #468: features ride the face plate deform field across their span, narrowing on the far side and widening slightly on the near side while staying inside the deformed plate bounds across the rated band',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
