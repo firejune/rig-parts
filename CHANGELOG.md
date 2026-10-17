@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.33.0](https://github.com/rig-c/parts/compare/v1.32.0...v1.33.0) (2026-10-17)
+
+
+### Features
+
+* **turn:** rate single-plate face turn to ±15° yaw / ±12° pitch ([#472](https://github.com/rig-c/parts/issues/472)) ([#481](https://github.com/rig-c/parts/issues/481)) ([790e5dc](https://github.com/rig-c/parts/commit/790e5dc849f8d5168891700a8817794619bcfea4))
+* **turn:** sample face surface deform field for features with foreshortening ([#468](https://github.com/rig-c/parts/issues/468)) ([#470](https://github.com/rig-c/parts/issues/470)) ([27370c1](https://github.com/rig-c/parts/commit/27370c10cf841cb8eae849faec83c77097e4ea60))
+
+
+### Bug Fixes
+
+* **propose:** draft two chains for separated short side twintails ([#466](https://github.com/rig-c/parts/issues/466)) ([#480](https://github.com/rig-c/parts/issues/480)) ([b3bac18](https://github.com/rig-c/parts/commit/b3bac1876023fba0cf614aedd9560cc983427d0e))
+* **turn:** honour authored ear depth in turn or refuse out-of-range by name ([#477](https://github.com/rig-c/parts/issues/477)) ([#482](https://github.com/rig-c/parts/issues/482)) ([c313cee](https://github.com/rig-c/parts/commit/c313ceec08ca31b767ec7b617e1a1bf54e236406))
+
 ## [1.32.0](https://github.com/rig-c/parts/compare/v1.31.0...v1.32.0) (2026-10-17)
 
 
