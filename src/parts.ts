@@ -83,6 +83,7 @@
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { type Problem, refuseIfAny } from './errors.ts';
+import { KEYPOINT_NAMES, type PosePoints } from './skeleton.ts';
 import { readLayerTag } from './tags.ts';
 
 export interface PartRecord {
@@ -244,6 +245,7 @@ export interface RecompositeRecord {
 export interface AlternateSetMap {
   slots: Record<string, string>;
   hides?: string[];
+  drawn?: Record<string, number>;
 }
 
 export interface AlternatePartsRecord {
@@ -256,6 +258,8 @@ export interface AlternatePartsRecord {
   recomposite: RecompositeRecord;
   scene?: SceneRecord;
   single_run_pad?: SingleRunPad;
+  skeleton?: PosePoints;
+  drawn?: Record<string, number>;
 }
 
 export interface PartsFile {
@@ -400,6 +404,8 @@ export function serializeParts(file: PartsFile): string {
             recomposite: serializeRecomposite(a.recomposite),
             ...(a.scene === undefined ? {} : { scene: Object.fromEntries(SCENE_KEYS.map((k) => [k, (a.scene as SceneRecord)[k]])) }),
             ...(a.single_run_pad === undefined ? {} : { single_run_pad: Object.fromEntries(SINGLE_RUN_PAD_KEYS.map((k) => [k, (a.single_run_pad as SingleRunPad)[k]])) }),
+            ...(a.skeleton === undefined ? {} : { skeleton: Object.fromEntries(KEYPOINT_NAMES.map((k) => [k, (a.skeleton as PosePoints)[k]])) }),
+            ...(a.drawn === undefined ? {} : { drawn: a.drawn }),
           })),
         }),
   };

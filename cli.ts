@@ -335,6 +335,7 @@ usage:
   rig-parts check --rig <dir> --out <dir> [--parts <dir>] [--source <painting.png>]
                     [--page-edges pot|free] [--pack-shape rect|polygon]
                     [--requirements <file.json>] [--seam-pairs] [--keep-stills]
+                    [--set <name> | --all-sets]
       Build, gate, render and measure a rig through rig-c's CLI (the rigc at
       node_modules/.bin/rigc, or on PATH). --rig holds rig.json and motion.json:
       a rig spec, which rigc build compiles, not a compiled skeleton.json.
@@ -567,7 +568,7 @@ usage:
                     [--project core|visible] [--page-edges pot|free]
                     [--pack-shape rect|polygon] [--loop] [--requirements <file.json>]
                     [--idle-keys ctl|direct] [--lead-in <periods>] [--seam-pairs] [--keep-stills]
-                    [--alt <name>=<source>:<full>[:<head>]]
+                    [--alt <name>=<source>:<full>[:<head>]] [--set <name> | --all-sets]
       assemble, then rig, then check, in one process, each stage's own lines
       printed under [assemble], [rig] and [check]; the first stage that refuses
       stops the build with its own FAIL lines. The config must already carry
@@ -785,13 +786,13 @@ const TAKES = {
   rig: { valued: ['--config', '--parts', '--out', '--idle-keys', '--page-edges', '--pack-shape'], switches: [] },
   propose: { valued: ['--parts', '--source', '--out', '--from-config', '--compare', '--full', '--head', '--canvas', '--keypoints', '--person', '--wrist-snap', '--grid-rule', '--cloth'], switches: ['--head-box', '--no-back-hair'] },
   compare: { valued: ['--left', '--right', '--map'], switches: [] },
-  check: { valued: ['--rig', '--out', '--parts', '--source', '--page-edges', '--pack-shape', '--requirements'], switches: ['--seam-pairs', '--keep-stills'] },
+  check: { valued: ['--rig', '--out', '--parts', '--source', '--page-edges', '--pack-shape', '--requirements', '--set'], switches: ['--seam-pairs', '--keep-stills', '--all-sets'] },
   loop: { valued: ['--frames', '--out'], switches: ['--palette'] },
   assemble: { valued: ['--source', '--full', '--head', '--config', '--out', '--seam', '--project', '--alt'], switches: ['--propose-plan'] },
   'comfy seethrough': { valued: ['--image', '--out', '--resolution', '--steps', '--seed', '--prefix', '--host', '--wait', '--timeout', '--poll'], switches: ['--offload', '--lama', '--nf4'] },
   'comfy paint': { valued: ['--config', '--out', '--seeds', '--seed0', '--host', '--wait', '--timeout', '--poll'], switches: [] },
   inputs: { valued: ['--source', '--config', '--out'], switches: [] },
-  build: { valued: ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys', '--lead-in', '--alt'], switches: ['--loop', '--seam-pairs', '--keep-stills'] },
+  build: { valued: ['--config', '--source', '--full', '--head', '--out', '--seam', '--project', '--page-edges', '--pack-shape', '--requirements', '--idle-keys', '--lead-in', '--alt', '--set'], switches: ['--loop', '--seam-pairs', '--keep-stills', '--all-sets'] },
   compose: { valued: ['--scene', '--out', '--requirements', '--accept'], switches: [] },
   'mesh-draft': { valued: ['--config', '--parts', '--out', '--requirements', '--idle-keys', '--page-edges', '--pack-shape'], switches: ['--more-triangles'] },
   painting: { valued: ['--keypoints', '--person'], switches: [] },
@@ -1037,17 +1038,20 @@ function flags(args: string[], command: Command, required: readonly string[]): M
 }
 
 function cmdCheck(args: string[]): number {
-  // The two switches check takes (issues #202, #209): they carry no value, so they are taken out before the valued flags are read.
+  // The switches check takes (issues #202, #209, #454): they carry no value, so they are taken out before the valued flags are read.
   const seamPairs = args.filter((a) => a === '--seam-pairs').length;
   if (seamPairs > 1) return usage('--seam-pairs is given twice');
   const keepStills = args.filter((a) => a === '--keep-stills').length;
   if (keepStills > 1) return usage('--keep-stills is given twice');
+  const allSets = args.filter((a) => a === '--all-sets').length;
+  if (allSets > 1) return usage('--all-sets is given twice');
   const f = flags(
-    args.filter((a) => a !== '--seam-pairs' && a !== '--keep-stills'),
+    args.filter((a) => a !== '--seam-pairs' && a !== '--keep-stills' && a !== '--all-sets'),
     'check',
     ['--rig', '--out'],
   );
   if (typeof f === 'string') return usage(f);
+  if (allSets === 1 && f.has('--set')) return usage('--set and --all-sets are two modes; give one');
   const rig = f.get('--rig') as string;
   const out = f.get('--out') as string;
   const edges = pageEdgesOf(f.get('--page-edges'));
@@ -1057,7 +1061,7 @@ function cmdCheck(args: string[]): number {
   try {
     const bin = findRigc(import.meta.dir, process.env.PATH ?? '');
     const r = checkStage(
-      { rig, parts: f.get('--parts'), source: f.get('--source'), out, pageEdges: edges, packShape: shape, requirements: f.get('--requirements'), seamPairs: seamPairs === 1, keepStills: keepStills === 1 },
+      { rig, parts: f.get('--parts'), source: f.get('--source'), out, pageEdges: edges, packShape: shape, requirements: f.get('--requirements'), seamPairs: seamPairs === 1, keepStills: keepStills === 1, ...(f.has('--set') ? { set: f.get('--set') as string } : {}), allSets: allSets === 1 },
       rigcRunner(bin),
       bin,
       console.log,
@@ -1503,6 +1507,7 @@ function cmdBuild(args: string[]): number {
   }
   // --head is optional (issue #359), as for assemble.
   for (const f of ['--config', '--source', '--full', '--out']) if (!flags.has(f)) return usage(`build needs ${f}`);
+  if (on.has('--all-sets') && flags.has('--set')) return usage('--set and --all-sets are two modes; give one');
   const seam = flags.get('--seam') ?? DEFAULT_SEAM_RULE;
   if (!(SEAM_RULES as readonly string[]).includes(seam)) return usage(`--seam ${seam}; one of ${SEAM_RULES.join(', ')} is required`);
   const project = flags.get('--project') ?? DEFAULT_PROJECT_RULE;
@@ -1528,7 +1533,7 @@ function cmdBuild(args: string[]): number {
   const scratch = mkdtempSync(join(tmpdir(), 'rig-parts-build-'));
   try {
     const r = build(
-      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape, ...(flags.has('--requirements') ? { requirements: flags.get('--requirements') as string } : {}), idleKeys: keys, ...(leadText === undefined ? {} : { leadIn: Number(leadText) }), seamPairs: on.has('--seam-pairs'), keepStills: on.has('--keep-stills'), ...(alts.length === 0 ? {} : { alts }) },
+      { config, source, full, head, out, seam: seam as SeamRule, project: project as ProjectRule, loop, pageEdges: edges, packShape: shape, ...(flags.has('--requirements') ? { requirements: flags.get('--requirements') as string } : {}), idleKeys: keys, ...(leadText === undefined ? {} : { leadIn: Number(leadText) }), seamPairs: on.has('--seam-pairs'), keepStills: on.has('--keep-stills'), ...(alts.length === 0 ? {} : { alts }), ...(flags.has('--set') ? { set: flags.get('--set') as string } : {}), allSets: on.has('--all-sets') },
       { rig: rigcRunner(bin), check: rigcRunner(bin), checkBin: bin, scratch: join(scratch, 'rig-gate') },
       console.log,
     );

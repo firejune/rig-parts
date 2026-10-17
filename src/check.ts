@@ -125,7 +125,8 @@ import {
   type Toward,
   type WorldBox,
 } from './instruments.ts';
-import { type PartRecord, type PartsFile, readParts } from './parts.ts';
+import { type AlternatePartsRecord, type PartRecord, type PartsFile, readParts } from './parts.ts';
+import { poseRigBonesForDrawn, type RigBone, SETS_FILE } from './rig.ts';
 import { turnTwin } from './turn.ts';
 import {
   aimLine,
@@ -622,7 +623,7 @@ function readJson(path: string, problems: Problem[]): Record<string, unknown> | 
  * duration. `sourcePath` is `--source`, read and held to the stage here, so a
  * painting that is not this rig's is refused before anything is built.
  */
-export function readCheckInputs(rigDir: string, partsHome?: string, sourcePath?: string): CheckInputs {
+export function readCheckInputs(rigDir: string, partsHome?: string, sourcePath?: string, set?: string, allSets = false): CheckInputs {
   const dir = resolve(rigDir);
   const named = partsHome !== undefined;
   const home = resolve(partsHome ?? rigDir);
@@ -672,6 +673,43 @@ export function readCheckInputs(rigDir: string, partsHome?: string, sourcePath?:
       const im = readPng(png);
       if (im.width !== p.w || im.height !== p.h) {
         problems.push({ code: 'CHECK_PART_PNG_MATCHES_BOX', object: `part "${p.name}"`, detail: `${png} is ${im.width}x${im.height}; parts.json's box is ${p.w}x${p.h}` });
+      }
+    }
+    for (const alt of parts.alternates ?? []) {
+      for (const r of alt.records) {
+        const png = join(partsDir, `${alt.name}_${r.name}.png`);
+        if (!existsSync(png)) {
+          problems.push({ code: 'CHECK_PART_PNG_PRESENT', object: `set "${alt.name}" part "${r.name}"`, detail: `${png} does not exist; parts.json lists it` });
+          continue;
+        }
+        const im = readPng(png);
+        if (im.width !== r.w || im.height !== r.h) {
+          problems.push({ code: 'CHECK_PART_PNG_MATCHES_BOX', object: `set "${alt.name}" part "${r.name}"`, detail: `${png} is ${im.width}x${im.height}; parts.json's box is ${r.w}x${r.h}` });
+        }
+      }
+    }
+  }
+  if (set !== undefined || allSets) {
+    if (parts === null) {
+      problems.push({
+        code: 'CHECK_INPUT_PRESENT',
+        object: set !== undefined ? `--set ${set}` : '--all-sets',
+        detail: `${partsPath} was not read; alternate sets are read from parts.json's "alternates"`,
+      });
+    } else {
+      const alts = parts.alternates ?? [];
+      if (set !== undefined && !alts.some((a) => a.name === set)) {
+        problems.push({
+          code: 'CHECK_INPUT_PRESENT',
+          object: `--set ${set}`,
+          detail: `${partsPath} has no alternate set "${set}" in "alternates" (${alts.length === 0 ? 'none declared' : alts.map((a) => `"${a.name}"`).join(', ')})`,
+        });
+      } else if (allSets && alts.length === 0) {
+        problems.push({
+          code: 'CHECK_INPUT_PRESENT',
+          object: '--all-sets',
+          detail: `${partsPath} declares no alternate sets in "alternates"`,
+        });
       }
     }
   }
@@ -1193,6 +1231,72 @@ export function flatComposite(parts: PartsFile, partsDir: string, background: re
   for (let i = 0; i < W * H; i++) canvas.data.set(background, i * 4);
   for (const p of parts.parts) canvas = alphaComposite(canvas, readPng(join(partsDir, `${p.name}.png`)), p.x, p.y);
   return canvas;
+}
+
+/**
+ * The flat stack of parts for an alternate set (issue #454), in `parts.parts`
+ * slot order: hidden slots skipped, covered slots drawn from `alt.records` at
+ * their box, uncovered base slots drawn at their base box.
+ */
+export function flatCompositeForSet(parts: PartsFile, alt: AlternatePartsRecord, partsDir: string, background: readonly [number, number, number, number]): Raster {
+  const [W, H] = parts.rig_size;
+  let canvas = newRaster(W, H);
+  for (let i = 0; i < W * H; i++) canvas.data.set(background, i * 4);
+  const hides = new Set(alt.hides ?? []);
+  const byName = new Map(alt.records.map((r) => [r.name, r]));
+  for (const p of parts.parts) {
+    if (hides.has(p.name)) continue;
+    const rec = byName.get(p.name);
+    const pngName = rec === undefined ? p.name : `${alt.name}_${rec.name}`;
+    const box = rec ?? p;
+    canvas = alphaComposite(canvas, readPng(join(partsDir, `${pngName}.png`)), box.x, box.y);
+  }
+  return canvas;
+}
+
+/**
+ * The setup-pose rig spec with an alternate set applied (issues #454, #465):
+ * hidden slots (and `<slot>_still` for any hidden or covered slot) have no
+ * setup attachment, covered slots have `alt.slots[slot]`, and when the set
+ * carries `drawn` bone rotations its bones are posed at those world rotations
+ * so the throwaway still renders the alternate in the pose it was painted in.
+ */
+export function stillRigForSet(
+  rig: Record<string, unknown>,
+  alt: AlternatePartsRecord,
+  drawn: Readonly<Record<string, number>> | undefined = alt.drawn,
+): Record<string, unknown> {
+  const hides = new Set(alt.hides ?? []);
+  const slots = (Array.isArray(rig.slots) ? rig.slots : []).map((s) => {
+    if (!isRecord(s) || typeof s.name !== 'string') return s;
+    const stillBase = s.name.endsWith('_still') ? s.name.slice(0, -'_still'.length) : null;
+    if (hides.has(s.name) || (stillBase !== null && (hides.has(stillBase) || Object.hasOwn(alt.slots, stillBase)))) {
+      return { ...s, attachment: null };
+    }
+    if (Object.hasOwn(alt.slots, s.name)) return { ...s, attachment: alt.slots[s.name] };
+    return s;
+  });
+  if (drawn === undefined || Object.keys(drawn).length === 0) return { ...rig, slots };
+  const rawBones = (Array.isArray(rig.bones) ? rig.bones : []).filter(isRecord).map((b) => ({
+    name: String(b.name),
+    ...(typeof b.parent === 'string' && b.parent !== '' ? { parent: b.parent } : {}),
+    ...(typeof b.length === 'number' ? { length: b.length } : {}),
+    ...(typeof b.rotation === 'number' ? { rotation: b.rotation } : {}),
+    x: typeof b.x === 'number' ? b.x : 0,
+    y: typeof b.y === 'number' ? b.y : 0,
+    ...(typeof b.inherit === 'string' ? { inherit: b.inherit as RigBone['inherit'] } : {}),
+  }));
+  const stops = (Array.isArray(rig.stops) ? rig.stops : []).filter(isRecord).map((s) => ({
+    links: Array.isArray(s.links) ? s.links.filter((l): l is string => typeof l === 'string') : [],
+  }));
+  const bones = poseRigBonesForDrawn(rawBones, drawn, stops);
+  const out: Record<string, unknown> = { ...rig, bones, slots };
+  if (isRecord(out.invariants)) {
+    const { axes: _axes, ...rest } = out.invariants;
+    if (Object.keys(rest).length > 0) out.invariants = rest;
+    else delete out.invariants;
+  }
+  return out;
 }
 
 /**
@@ -1770,8 +1874,23 @@ export interface CheckFigures {
    * the keys it always wrote.
    */
   skipped?: { loop?: string; seam?: string };
+  /** Written only under `--set` or `--all-sets` (issue #454): each checked alternate set's setup-pose seam and recomposite figures, keyed by set name. */
+  sets?: Record<string, SetCheckFigures>;
   /** Written only under `--requirements` (issue #93): the file's fps, the summary, and one line per declared requirement, by name. */
   requirements?: RequirementsBlock;
+  PASS: boolean;
+}
+
+/** One alternate set's setup-pose check record under `--set` or `--all-sets` (issue #454). */
+export interface SetCheckFigures {
+  render_px: string;
+  seam_mean: number;
+  seam_px_over_40: number;
+  seam_px_over_80: number;
+  seam_frame_scale: number;
+  seam_border?: { frame_px_left_out: number; px_over_40_left_out: number };
+  seam_pairs?: SeamPairRow[];
+  RECOMPOSITE_HOLES: ReportedLine;
   PASS: boolean;
 }
 
@@ -1959,7 +2078,10 @@ export function barsNotMet(fig: Readonly<Record<string, unknown>>): string[] {
   if (typeof fig.loop_max_diff === 'number' && fig.loop_max_diff !== LOOP_MAX_BAR) out.push('loop');
   // A check.json written before issue #216 has no seam_frame_scale; it is read by the frame count, the bar it was written under.
   const scale = typeof fig.seam_frame_scale === 'number' ? fig.seam_frame_scale : 1;
-  if (typeof fig.seam_mean === 'number' && typeof fig.seam_px_over_40 === 'number' && seamFails(fig.seam_mean, fig.seam_px_over_40, scale)) out.push('seam');
+  const setFailed =
+    isRecord(fig.sets) &&
+    Object.values(fig.sets).some((s) => isRecord(s) && typeof s.seam_mean === 'number' && typeof s.seam_px_over_40 === 'number' && seamFails(s.seam_mean, s.seam_px_over_40, typeof s.seam_frame_scale === 'number' ? s.seam_frame_scale : 1));
+  if ((typeof fig.seam_mean === 'number' && typeof fig.seam_px_over_40 === 'number' && seamFails(fig.seam_mean, fig.seam_px_over_40, scale)) || setFailed) out.push('seam');
   for (const n of [...JUDGEMENT_LINES, FOLD_LINE, LEVEL_LINE, STRESS_LINE, LIMB_LINE, SWEEP_LINE]) {
     const l = fig[n];
     if (typeof l === 'object' && l !== null && (l as { status?: unknown }).status === 'FAIL') out.push(n);
@@ -3072,11 +3194,11 @@ export function rigcFailed(what: string, call: RigcCall, lines: readonly string[
  * MEASURABLE is a problem. Without it nothing here reads, writes or prints
  * anything it did not before.
  */
-export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome?: string, mode: PackMode = DEFAULT_PACK_MODE, source?: string, requirements?: string, seamPairsAsked = false, keepStills = false): CheckReport {
+export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, partsHome?: string, mode: PackMode = DEFAULT_PACK_MODE, source?: string, requirements?: string, seamPairsAsked = false, keepStills = false, set?: string, allSets = false): CheckReport {
   let inp: CheckInputs;
   let reqFile: RequirementsFile | null = null;
   let seams: Map<string, SeamPair[]> | null = null;
-  if (requirements === undefined) inp = readCheckInputs(rigDir, partsHome, source);
+  if (requirements === undefined) inp = readCheckInputs(rigDir, partsHome, source, set, allSets);
   else {
     // Both readers collect every problem; one refusal names both sets.
     const refused: Problem[] = [];
@@ -3089,7 +3211,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
         return null;
       }
     };
-    const got = take(() => readCheckInputs(rigDir, partsHome, source));
+    const got = take(() => readCheckInputs(rigDir, partsHome, source, set, allSets));
     reqFile = take(() => readRequirements(requirements));
     refuseIfAny(refused);
     inp = got as CheckInputs;
@@ -3436,6 +3558,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
   let seamViewport: Viewport | null = null;
   let blink: JudgementLine = skip(lacking);
   let sourceRead: ReportedLine | null = null;
+  const setsFigures: Record<string, SetCheckFigures> = {};
   if (inp.parts !== null || inp.source !== null) {
     try {
       mkdirSync(stillDir, { recursive: true });
@@ -3474,6 +3597,71 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
           mkdirSync(seamDir, { recursive: true });
           for (const { row, pixels } of split) writePng(join(out, row.picture), seamPicture(stillSet.frames[0].image, row, pixels));
           seamPairs = split.map((x) => x.row);
+        }
+        if (set !== undefined || allSets) {
+          const alts = allSets ? (inp.parts.alternates ?? []) : (inp.parts.alternates ?? []).filter((a) => a.name === set);
+          const setStillAnimations: Record<string, unknown> = { still: animations.still };
+          const setStillBase = { ...withoutSliders(inp.rig, setStillAnimations), images };
+          const setsJsonPath = join(inp.rigDir, SETS_FILE);
+          const setsJsonRaw = existsSync(setsJsonPath) ? readJson(setsJsonPath, []) : null;
+          const setsMap = setsJsonRaw !== null && isRecord(setsJsonRaw.sets) ? setsJsonRaw.sets : null;
+          for (const alt of alts) {
+            const setEntry: Record<string, unknown> | null =
+              setsMap !== null && isRecord(setsMap[alt.name]) ? (setsMap[alt.name] as Record<string, unknown>) : null;
+            const setDrawn: Record<string, number> | undefined =
+              setEntry !== null && isRecord(setEntry.drawn)
+                ? Object.fromEntries(
+                    Object.entries(setEntry.drawn).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1])),
+                  )
+                : alt.drawn;
+            const setDir = join(stillDir, `set_${alt.name}`);
+            mkdirSync(setDir, { recursive: true });
+            writeFileSync(join(setDir, 'rig.json'), JSON.stringify(stillRigForSet(setStillBase, alt, setDrawn)));
+            writeFileSync(join(setDir, 'motion.json'), JSON.stringify({ ...inp.motion, animations: setStillAnimations }));
+            const asb = rigc(['build', '--rig', join(setDir, 'rig.json'), '--motion', join(setDir, 'motion.json'), '--out', join(setDir, 'build'), '--profile', 'spine']);
+            if (asb.status !== 0) refuseIfAny(rigcFailed(`build (the setup-pose still of set "${alt.name}")`, asb, buildGateLines(asb.out)));
+            const asr = rigc(['render', '--candidate', join(setDir, 'build'), '--animation', 'still', '--fps', String(STILL_FPS), '--max', String(maxSide), '--out', join(setDir, 'render')]);
+            if (asr.status !== 0) refuseIfAny(rigcFailed(`render (the setup-pose still of set "${alt.name}")`, asr, asr.out.split('\n').filter((l) => l.includes('FAIL'))));
+            const altStillSet = readFrameSet(join(setDir, 'render'));
+            if (keepStills) cpSync(join(setDir, 'render'), join(keptDir, alt.name), { recursive: true });
+            const altComposite = flatCompositeForSet(inp.parts, alt, inp.partsDir, altStillSet.background);
+            const altSeam = seamFigures(altComposite, altStillSet.frames[0].image, inp.stage, altStillSet.viewport, altStillSet.background, undefined, alt.scene !== undefined);
+            const altMean = round3(altSeam.mean);
+            const altScale = round6(altStillSet.viewport.scale);
+            const altFailed = seamFails(altMean, altSeam.over40, altScale);
+            let altPairs: SeamPairRow[] | null = null;
+            if (seamPairsAsked || altFailed) {
+              const hides = new Set(alt.hides ?? []);
+              const byName = new Map(alt.records.map((r) => [r.name, r]));
+              const placed = inp.parts.parts
+                .filter((p) => !hides.has(p.name))
+                .map((p) => {
+                  const rec = byName.get(p.name);
+                  const pngName = rec === undefined ? p.name : `${alt.name}_${rec.name}`;
+                  const box = rec ?? p;
+                  return { name: p.name, from: box.from, x: box.x, y: box.y, image: readPng(join(inp.partsDir, `${pngName}.png`)) };
+                });
+              const split = seamPairRows(altSeam, placed, inp.parts.rig_size, altStillSet.viewport);
+              const altSeamDir = join(seamDir, alt.name);
+              mkdirSync(altSeamDir, { recursive: true });
+              for (const { row, pixels } of split) {
+                row.picture = `${SEAM_DIR}/${alt.name}/${basename(row.picture)}`;
+                writePng(join(out, row.picture), seamPicture(altStillSet.frames[0].image, row, pixels));
+              }
+              altPairs = split.map((x) => x.row);
+            }
+            setsFigures[alt.name] = {
+              render_px: `${altStillSet.viewport.pixelWidth}x${altStillSet.viewport.pixelHeight}`,
+              seam_mean: altMean,
+              seam_px_over_40: altSeam.over40,
+              seam_px_over_80: altSeam.over80,
+              seam_frame_scale: altScale,
+              ...(altSeam.border === null ? {} : { seam_border: { frame_px_left_out: altSeam.border.framePx, px_over_40_left_out: altSeam.border.over40 } }),
+              ...(altPairs === null ? {} : { seam_pairs: altPairs }),
+              RECOMPOSITE_HOLES: altHolesLine(inp.parts, alt),
+              PASS: !altFailed,
+            };
+          }
         }
       }
       if (inp.source !== null) {
@@ -3545,6 +3733,7 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
     RECOMPOSITE_HOLES: inp.parts === null ? { status: 'SKIP', reason: inp.noParts ?? '' } : holesLine(inp.parts),
     ...(sourceRead === null ? {} : { [SOURCE_LINE]: sourceRead }),
     ...(Object.keys(skipped).length === 0 ? {} : { skipped }),
+    ...(Object.keys(setsFigures).length === 0 ? {} : { sets: setsFigures }),
     ...(reqBlock === null ? {} : { requirements: reqBlock }),
     PASS: false,
   };
@@ -3569,6 +3758,20 @@ export function runCheck(rigDir: string, outDir: string, rigc: RigcRunner, parts
           ? `; no pixel is over ${SEAM_PX_LEVEL}, so the mean alone fails and there is no pair to name`
           : `; worst of ${(seamPairs as SeamPairRow[]).length} pair(s): ${seamPairText(worst)} — every pair is a \`seam pair\` line above and a row of check.json's seam_pairs`),
     });
+  }
+  for (const [setName, setFig] of Object.entries(setsFigures)) {
+    if (!setFig.PASS) {
+      const worst = setFig.seam_pairs === undefined || setFig.seam_pairs.length === 0 ? null : setFig.seam_pairs[0];
+      barProblems.push({
+        code: 'CHECK_SEAM_WITHIN_BAR',
+        object: `the setup-pose render of set "${setName}" vs the flat composite of parts/`,
+        detail:
+          `mean |d| ${setFig.seam_mean}/255 and ${setFig.seam_px_over_40} frame px over ${SEAM_PX_LEVEL} (${setFig.seam_px_over_80} over ${SEAM_PX_LEVEL_HIGH}) at frame scale ${setFig.seam_frame_scale}, ${seamRigPxText(setFig.seam_px_over_40, setFig.seam_frame_scale)} rig px (the count / s²); mean <= ${SEAM_MEAN_BAR.toFixed(1)} and <= ${SEAM_PX_BAR} rig px over ${SEAM_PX_LEVEL} are required` +
+          (worst === null
+            ? `; no pixel is over ${SEAM_PX_LEVEL}, so the mean alone fails and there is no pair to name`
+            : `; worst of ${(setFig.seam_pairs as SeamPairRow[]).length} pair(s): ${seamPairText(worst)}`),
+      });
+    }
   }
   const rank = (q: Problem): number => JUDGEMENT_LINES.findIndex((n) => q.code === `CHECK_${n}`);
   problems.sort((a, b) => rank(a) - rank(b));
@@ -3768,6 +3971,20 @@ export function holesLine(parts: PartsFile): ReportedLine {
     status: 'REPORTED',
     // Issue #242: a scene's figures were read inside the figure, and the line says so first.
     ...(parts.scene === undefined ? {} : { declared_scene: scenePhrase(parts.scene, parts.rig_size[0] * parts.rig_size[1]) }),
+    error_px: r.error_px,
+    uncovered_error_px: r.uncovered_error_px,
+    hole_count: r.hole_count,
+    largest: r.holes.length === 0 ? null : { px: r.holes[0].px, box: boxText(r.holes[0]), borders: r.holes[0].borders.map((b) => `${b.part} ${b.px} px`) },
+  };
+}
+
+/** `RECOMPOSITE_HOLES` for an alternate set (issue #454), carrying its assemble `mean_abs` and hole figures. */
+export function altHolesLine(parts: PartsFile, alt: AlternatePartsRecord): ReportedLine {
+  const r = alt.recomposite;
+  return {
+    status: 'REPORTED',
+    ...(alt.scene === undefined ? {} : { declared_scene: scenePhrase(alt.scene, parts.rig_size[0] * parts.rig_size[1]) }),
+    mean_abs: r.mean_abs,
     error_px: r.error_px,
     uncovered_error_px: r.uncovered_error_px,
     hole_count: r.hole_count,
