@@ -29,6 +29,7 @@
  * one piece. Pure: no file, no clock.
  */
 import { computeWorldTransforms, toBoneLocalVector, toWorld, type BoneTransform } from './coords.ts';
+import { type Problem, refuseIfAny } from './errors.ts';
 import { pyRound } from './round.ts';
 
 /**
@@ -174,6 +175,14 @@ export function resolveFaceDeformFractions(overrides?: Readonly<Partial<FaceDefo
 export const FACE_RATED_YAW_BAND = 15;
 export const FACE_RATED_PITCH_BAND = 12;
 export const FACE_RATED_BAND = { yaw: FACE_RATED_YAW_BAND, pitch: FACE_RATED_PITCH_BAND } as const;
+
+/**
+ * Issue #477: allowed `[min, max]` range (in rig px) for an authored ear
+ * `derive.depth` in `turn` or `tilt`. Ears sit at or behind the head pivot
+ * (`depth <= 0`, where `-14` moves the ears slightly against the face turn); a
+ * depth outside `[-50, 0]` is refused by `CONFIG_TURN_EAR_DEPTH_RANGE`.
+ */
+export const EAR_DEPTH_RANGE: readonly [number, number] = [-50, 0];
 
 /** `config.turn`: the pivot depth, each carried part's See-through `depth_median`, optional rated band, and optional face surface deform overrides. */
 export interface TurnSpec {
@@ -433,6 +442,44 @@ export function applyFaceSurfaceDeform(
     (rawTilt?.tracks?.some((tr) => tr.keys?.some((k) => k.derive !== undefined)) ?? false) ||
     (rawTurn?.tracks?.some((tr) => tr.keys?.some((k) => k.derive !== undefined)) ?? false);
   if (!hasDerive) return;
+
+  // Issue #477: refuse an out-of-range ear derive.depth by name before touching rig or motion.
+  const earProblems: Problem[] = [];
+  const [earLo, earHi] = EAR_DEPTH_RANGE;
+  for (const [animName, anim] of [
+    ['tilt', rawTilt],
+    ['turn', rawTurn],
+  ] as const) {
+    if (anim === undefined) continue;
+    anim.tracks.forEach((tr, ti) => {
+      const isEarTrack = tr.group === 'ears' || tr.bone === 'ear_r' || tr.bone === 'ear_l';
+      if (!isEarTrack) return;
+      tr.keys.forEach((k, ki) => {
+        const d = k.derive?.depth;
+        if (typeof d === 'number') {
+          if (d < earLo || d > earHi) {
+            earProblems.push({
+              code: 'CONFIG_TURN_EAR_DEPTH_RANGE',
+              object: `animations.${animName}.tracks[${ti}].keys[${ki}].derive.depth`,
+              detail: `is ${d}; an ear depth in [${earLo}, ${earHi}] (at or behind the head pivot) is required`,
+            });
+          }
+        } else if (d !== undefined && typeof d === 'object') {
+          for (const [member, val] of Object.entries(d)) {
+            if (typeof val === 'number' && (val < earLo || val > earHi)) {
+              earProblems.push({
+                code: 'CONFIG_TURN_EAR_DEPTH_RANGE',
+                object: `animations.${animName}.tracks[${ti}].keys[${ki}].derive.depth.${member}`,
+                detail: `is ${val}; an ear depth in [${earLo}, ${earHi}] (at or behind the head pivot) is required`,
+              });
+            }
+          }
+        }
+      });
+    });
+  }
+  refuseIfAny(earProblems);
+
   const tiltAnim = rawTilt === undefined ? undefined : structuredClone(rawTilt);
   const turnAnim = rawTurn === undefined ? undefined : structuredClone(rawTurn);
   if (tiltAnim !== undefined) motion.animations.tilt = tiltAnim;
@@ -905,8 +952,12 @@ export function applyFaceSurfaceDeform(
       });
     }
     const refTurnKeys = refTurnTrack?.keys ?? [];
+    const earMembers = motion.groups?.ears ?? ['ear_r', 'ear_l'].filter((b) => boneMap.has(b));
+    const hasAuthoredEarTurnTx = turnAnim.tracks.some(
+      (tr) => tr.property === 'translatex' && (tr.group === 'ears' || tr.bone === 'ear_r' || tr.bone === 'ear_l'),
+    );
     turnAnim.tracks = turnAnim.tracks.filter(
-      (tr) => !(tr.group === 'ears' && tr.property === 'translatex') && !(tr.group === 'topknot' && tr.property === 'translatex'),
+      (tr) => !(tr.group === 'topknot' && tr.property === 'translatex'),
     );
     for (const tr of turnAnim.tracks) {
       if (tr.group === 'features' && (tr.property === 'translatex' || tr.property === 'scalex') && featMembers.length > 0) {
@@ -940,23 +991,44 @@ export function applyFaceSurfaceDeform(
           }
           return { t: k.t, v: vMap };
         });
+      } else if (tr.group === 'ears' && tr.property === 'translatex' && earMembers.length > 0) {
+        tr.keys = tr.keys.map((k) => {
+          if (k.derive === undefined) return k;
+          const deg = k.derive.degrees;
+          if (deg === 0) return { t: k.t, v: [0] };
+          const vMap: Record<string, number[]> = {};
+          for (const bname of earMembers) {
+            vMap[bname] = [evalDeriveKey(bname, k)];
+          }
+          return { t: k.t, v: vMap };
+        });
+      } else if ((tr.bone === 'ear_r' || tr.bone === 'ear_l') && tr.property === 'translatex') {
+        const bname = tr.bone;
+        tr.keys = tr.keys.map((k) => {
+          if (k.derive === undefined) return k;
+          const deg = k.derive.degrees;
+          if (deg === 0) return { t: k.t, v: [0] };
+          return { t: k.t, v: [evalDeriveKey(bname, k)] };
+        });
       }
     }
-    for (const [earBone, earHx] of [
-      ['ear_r', earRx],
-      ['ear_l', earLx],
-    ] as const) {
-      if (!boneMap.has(earBone)) continue;
-      turnAnim.tracks.push({
-        bone: earBone,
-        property: 'translatex',
-        keys: refTurnKeys.map((k) => {
-          const deg = k.derive?.degrees ?? 0;
-          if (deg === 0) return { t: k.t, v: [0] };
-          const [dxCheekEdge] = evalYawFaceSurface(earHx, hyEar, deg, W, H, X0, Y0, f);
-          return { t: k.t, v: [pyRound(dxCheekEdge * f.turn_ear_x, 4)] };
-        }),
-      });
+    if (!hasAuthoredEarTurnTx) {
+      for (const [earBone, earHx] of [
+        ['ear_r', earRx],
+        ['ear_l', earLx],
+      ] as const) {
+        if (!boneMap.has(earBone)) continue;
+        turnAnim.tracks.push({
+          bone: earBone,
+          property: 'translatex',
+          keys: refTurnKeys.map((k) => {
+            const deg = k.derive?.degrees ?? 0;
+            if (deg === 0) return { t: k.t, v: [0] };
+            const [dxCheekEdge] = evalYawFaceSurface(earHx, hyEar, deg, W, H, X0, Y0, f);
+            return { t: k.t, v: [pyRound(dxCheekEdge * f.turn_ear_x, 4)] };
+          }),
+        });
+      }
     }
     for (const [tkBone, tkFrac] of [
       ['bun_ctl', f.turn_bun_counter_x],

@@ -93,7 +93,7 @@ import { GRID, MAX_SIDE } from './contour.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { isSkeletonName, KEYPOINT_NAMES, type KeypointName, type PosePoints, SKELETON_NAMES, type SkeletonName } from './skeleton.ts';
 import { acceptedTagNames, AUTHOR_LABEL_RULE, AUTHOR_PREFIX, readLayerTag } from './tags.ts';
-import { FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, type FaceDeformKey, FACE_RATED_PITCH_BAND, FACE_RATED_YAW_BAND, TURN_BONE, type TurnSpec, turnNearest } from './turn.ts';
+import { EAR_DEPTH_RANGE, FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, type FaceDeformKey, FACE_RATED_PITCH_BAND, FACE_RATED_YAW_BAND, TURN_BONE, type TurnSpec, turnNearest } from './turn.ts';
 import { FLOOR_FORMS, type FloorForm, type MeshInfluences } from './weights.ts';
 
 export type Point = [number, number];
@@ -3236,6 +3236,41 @@ function checkFaceAnimationBand(c: Check, animations: AnimationsFrom, hasAltFace
       `${at}.tilt`,
       `rates pitch ±${maxPitch}° on a single face plate; the rated band for one face plate is yaw ±${FACE_RATED_YAW_BAND}° / pitch ±${FACE_RATED_PITCH_BAND}° — declare an alternate face set in config.assemble.alternates to go beyond ±${FACE_RATED_YAW_BAND}° / ±${FACE_RATED_PITCH_BAND}°`,
     );
+  }
+  const [earLo, earHi] = EAR_DEPTH_RANGE;
+  for (const [animName, anim] of [
+    ['tilt', animations.table.tilt],
+    ['turn', animations.table.turn],
+  ] as const) {
+    if (!isPlainObject(anim) || !Array.isArray(anim.tracks)) continue;
+    anim.tracks.forEach((tr, ti) => {
+      if (!isPlainObject(tr) || !Array.isArray(tr.keys)) return;
+      const isEarTrack = tr.group === 'ears' || tr.bone === 'ear_r' || tr.bone === 'ear_l';
+      if (!isEarTrack) return;
+      tr.keys.forEach((k, ki) => {
+        if (!isPlainObject(k) || !isPlainObject(k.derive)) return;
+        const d = k.derive.depth;
+        if (typeof d === 'number' && Number.isFinite(d)) {
+          if (d < earLo || d > earHi) {
+            c.fail(
+              'CONFIG_TURN_EAR_DEPTH_RANGE',
+              `${at}.${animName}.tracks[${ti}].keys[${ki}].derive.depth`,
+              `is ${d}; an ear depth in [${earLo}, ${earHi}] (at or behind the head pivot) is required`,
+            );
+          }
+        } else if (isPlainObject(d)) {
+          for (const [member, val] of Object.entries(d)) {
+            if (typeof val === 'number' && Number.isFinite(val) && (val < earLo || val > earHi)) {
+              c.fail(
+                'CONFIG_TURN_EAR_DEPTH_RANGE',
+                `${at}.${animName}.tracks[${ti}].keys[${ki}].derive.depth.${member}`,
+                `is ${val}; an ear depth in [${earLo}, ${earHi}] (at or behind the head pivot) is required`,
+              );
+            }
+          }
+        }
+      });
+    });
   }
 }
 

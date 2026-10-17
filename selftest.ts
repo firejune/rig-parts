@@ -255,7 +255,7 @@ import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type Mo
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type Limb, loadClothConfig, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, parseProposalSections, type SkeletonSections } from './src/config.ts';
 import { RIG_BONE_INHERIT, RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { expandStops } from 'rig-c/src/stop.ts';
-import { applyFaceSurfaceDeform, evalYawFaceSurface, FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, FACE_RATED_BAND, FACE_RATED_PITCH_BAND, FACE_RATED_YAW_BAND, resolveFaceDeformFractions, TURN_BONE } from './src/turn.ts';
+import { applyFaceSurfaceDeform, EAR_DEPTH_RANGE, evalYawFaceSurface, FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, FACE_RATED_BAND, FACE_RATED_PITCH_BAND, FACE_RATED_YAW_BAND, resolveFaceDeformFractions, TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, FAINT_ALPHA, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FAINT, FAINT_AT_LINE, FAR, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NEAR, NOTCH, NOTCH_CUT, NOTCHED, PAIR, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRAND, STRAND_CHAIN, STRIP } from './fixtures/contour.ts';
@@ -2212,6 +2212,57 @@ function runConfigSuite(): number {
         FACE_RATED_PITCH_BAND === 12,
       `band {15,12} -> ${show75(okBand87)}; band 30 -> ${show75(numBand87)}; yaw 20 -> ${show75(yawBand87)}; pitch 25 -> ${show75(pitchBand87)}; animations ±30/±25 without alt -> ${show75(animSingleRef87)}; with alt covering face -> ${show75(animAltOk87)}`,
       'issue #472: one front-facing face plate is rated to ±15° yaw / ±12° pitch; a config or motion file requesting a wider band without an alternate face set is refused by CONFIG_FACE_BAND_EXCEEDED naming the angle, the limit and the remedy',
+    );
+
+    // CF88 — issue #477: an ear track in animations_from turn/tilt with derive.depth in EAR_DEPTH_RANGE ([-50, 0]) loads,
+    // and one outside [-50, 0] is refused by CONFIG_TURN_EAR_DEPTH_RANGE naming the value found and the allowed range.
+    const earOkMotionPath88 = join(bandDir87, 'ear_ok.motion.json');
+    writeFileSync(
+      earOkMotionPath88,
+      JSON.stringify({
+        spec: 'rigc-motion/1',
+        animations: {
+          turn: {
+            duration: 1.5,
+            tracks: [{ group: 'ears', property: 'translatex', keys: [{ t: 0, derive: { kind: 'yaw', degrees: -15, depth: { ear_r: -14, ear_l: -14 } } }, { t: 0.75, v: [0] }, { t: 1.5, derive: { kind: 'yaw', degrees: 15, depth: { ear_r: -14, ear_l: -14 } } }] }],
+          },
+        },
+      }),
+    );
+    const earOkCfgPath88 = join(bandDir87, 'ear_ok.config.json');
+    const earOkCfg88 = turned84({ pivot: 0.5, depths: { face: 0.4 } });
+    (earOkCfg88.motion as Record<string, unknown>).animations_from = 'ear_ok.motion.json';
+    writeFileSync(earOkCfgPath88, JSON.stringify(earOkCfg88));
+    const earOk88 = refusals(() => loadConfigAndAnimations(earOkCfgPath88));
+
+    const earBadMotionPath88 = join(bandDir87, 'ear_bad.motion.json');
+    writeFileSync(
+      earBadMotionPath88,
+      JSON.stringify({
+        spec: 'rigc-motion/1',
+        animations: {
+          turn: {
+            duration: 1.5,
+            tracks: [{ group: 'ears', property: 'translatex', keys: [{ t: 0, derive: { kind: 'yaw', degrees: -15, depth: 20 } }, { t: 0.75, v: [0] }, { t: 1.5, derive: { kind: 'yaw', degrees: 15, depth: { ear_r: -80, ear_l: -14 } } }] }],
+          },
+        },
+      }),
+    );
+    const earBadCfgPath88 = join(bandDir87, 'ear_bad.config.json');
+    const earBadCfg88 = turned84({ pivot: 0.5, depths: { face: 0.4 } });
+    (earBadCfg88.motion as Record<string, unknown>).animations_from = 'ear_bad.motion.json';
+    writeFileSync(earBadCfgPath88, JSON.stringify(earBadCfg88));
+    const earBad88 = refusals(() => loadConfigAndAnimations(earBadCfgPath88));
+    const earBadProblems88 = earBad88?.problems.filter((p) => p.code === 'CONFIG_TURN_EAR_DEPTH_RANGE') ?? [];
+    say(
+      'CF88_TURN_EAR_DEPTH_IN_RANGE_LOADS_AND_OUT_OF_RANGE_IS_REFUSED_BY_NAME',
+      earOk88 === null &&
+        earBadProblems88.length === 2 &&
+        earBadProblems88[0]?.detail === 'is 20; an ear depth in [-50, 0] (at or behind the head pivot) is required' &&
+        earBadProblems88[1]?.detail === 'is -80; an ear depth in [-50, 0] (at or behind the head pivot) is required' &&
+        JSON.stringify(EAR_DEPTH_RANGE) === JSON.stringify([-50, 0]),
+      `depth -14 -> ${show75(earOk88)}; depth 20 & -80 -> ${show75(earBad88)}`,
+      'issue #477: an authored ear derive.depth in [-50, 0] loads, and a depth outside [-50, 0] is refused by CONFIG_TURN_EAR_DEPTH_RANGE naming the value found and the allowed interval',
     );
   } finally {
     rmSync(bandDir87, { recursive: true, force: true });
@@ -6888,6 +6939,81 @@ function runTurnRigCases(say: (name: string, ok: boolean, detail: string, why: s
         JSON.stringify(FACE_RATED_BAND) === JSON.stringify({ yaw: 15, pitch: 12 }),
       `single-plate constraints: ${JSON.stringify(cNamesSingle)} (yaw_clamp [-15,15], pitch_clamp [-12,12]); with alternate face set: ${JSON.stringify(cNamesAlt)}; motion inside band byte-identical: ${JSON.stringify(clampMotSingle) === JSON.stringify(clampMotAlt)}`,
       'issue #472: driving a single-plate rig past ±15° yaw or ±12° pitch clamps at the rated boundary via yaw_clamp and pitch_clamp while leaving poses inside the band byte-identical; an alternate face set omits the clamps',
+    );
+
+    // Issue #477: an authored ears translatex track in turn has its derive.depth honoured (within 1 rig px of the depth
+    // rule (coord - about) * (cos(rad) - 1) - (depth - carried) * sin(rad)), dial 0 is byte-identical, an out-of-range
+    // ear depth is refused by CONFIG_TURN_EAR_DEPTH_RANGE, and the mutant that drops the authored ears track fails Bar 1.
+    const earProbeRig = {
+      ...structuredClone(probeRig90),
+      bones: [
+        ...structuredClone(probeRig90.bones),
+        { name: 'ear_r', parent: 'head', x: -51, y: 32 },
+        { name: 'ear_l', parent: 'head', x: 47.5, y: 32 },
+      ],
+    };
+    const earMotHonoured = structuredClone(rawSliderMot90);
+    earMotHonoured.groups.ears = ['ear_r', 'ear_l'];
+    (earMotHonoured.animations.turn as { tracks: Array<Record<string, unknown>> }).tracks.push({
+      group: 'ears',
+      property: 'translatex',
+      keys: [
+        { t: 0, derive: { kind: 'yaw', degrees: -15, about: -1.5, depth: { ear_r: -14, ear_l: -14 } } },
+        { t: 1.5, v: [0] },
+        { t: 2.25, derive: { kind: 'yaw', degrees: 15, about: -1.5, depth: { ear_r: -14, ear_l: -14 } } },
+      ],
+    });
+    const earRigHonoured = structuredClone(earProbeRig);
+    applyFaceSurfaceDeform(earRigHonoured, earMotHonoured);
+    const earTrack143 = (earMotHonoured.animations.turn as { tracks: Array<{ group?: string; property: string; keys: Array<{ t: number; v?: number[] | Record<string, number[]> }> }> }).tracks.find(
+      (tr) => tr.group === 'ears' && tr.property === 'translatex',
+    );
+    const expectedEarDepthRule = (coord: number, about: number, depth: number, deg: number): number => {
+      const rad = (deg * Math.PI) / 180;
+      const val = (coord - about) * (Math.cos(rad) - 1) - depth * Math.sin(rad);
+      return Math.round(val * 1e6) / 1e6;
+    };
+    const expRM15 = expectedEarDepthRule(-51, -1.5, -14, -15);
+    const expLM15 = expectedEarDepthRule(47.5, -1.5, -14, -15);
+    const expRP15 = expectedEarDepthRule(-51, -1.5, -14, 15);
+    const expLP15 = expectedEarDepthRule(47.5, -1.5, -14, 15);
+    const gotM15 = (earTrack143?.keys[0]?.v ?? {}) as Record<string, number[]>;
+    const got0 = earTrack143?.keys[1]?.v;
+    const gotP15 = (earTrack143?.keys[2]?.v ?? {}) as Record<string, number[]>;
+    const bar1Honoured =
+      Math.abs((gotM15.ear_r?.[0] ?? 999) - expRM15) <= 1 &&
+      Math.abs((gotM15.ear_l?.[0] ?? 999) - expLM15) <= 1 &&
+      Math.abs((gotP15.ear_r?.[0] ?? 999) - expRP15) <= 1 &&
+      Math.abs((gotP15.ear_l?.[0] ?? 999) - expLP15) <= 1;
+
+    // Mutant: restore the dropping behaviour (remove the authored ears translatex track so the fallback runs).
+    const earRigMutant = structuredClone(earProbeRig);
+    const earMotMutant = structuredClone(rawSliderMot90);
+    applyFaceSurfaceDeform(earRigMutant, earMotMutant);
+    const mutEarLTrack = (earMotMutant.animations.turn as { tracks: Array<{ bone?: string; property: string; keys: Array<{ t: number; v?: number[] }> }> }).tracks.find(
+      (tr) => tr.bone === 'ear_l' && tr.property === 'translatex',
+    );
+    const mutEarLP15 = mutEarLTrack?.keys[2]?.v?.[0] ?? 0;
+    const bar1MutantPasses = Math.abs(mutEarLP15 - expLP15) <= 1;
+
+    // Out-of-range ear depth handed directly to applyFaceSurfaceDeform is refused by CONFIG_TURN_EAR_DEPTH_RANGE.
+    const earBadMot143 = structuredClone(rawSliderMot90);
+    (earBadMot143.animations.turn as { tracks: Array<Record<string, unknown>> }).tracks.push({
+      group: 'ears',
+      property: 'translatex',
+      keys: [{ t: 0, derive: { kind: 'yaw', degrees: -15, depth: 25 } }, { t: 1.5, v: [0] }],
+    });
+    const earBadRef143 = refusals(() => applyFaceSurfaceDeform(structuredClone(earProbeRig), earBadMot143));
+    say(
+      'RG143_TURN_HONOURS_AUTHORED_EAR_DEPTH_WITHIN_ONE_RIG_PX_AND_MUTANT_DROPPING_IT_FAILS_BAR_ONE',
+      bar1Honoured &&
+        JSON.stringify(got0) === JSON.stringify([0]) &&
+        !bar1MutantPasses &&
+        earBadRef143 !== null &&
+        earBadRef143.problems.length === 1 &&
+        earBadRef143.problems[0]?.code === 'CONFIG_TURN_EAR_DEPTH_RANGE',
+      `honoured (-14): yaw -15 ear_r=${gotM15.ear_r?.[0]} (rule ${expRM15}), ear_l=${gotM15.ear_l?.[0]} (rule ${expLM15}); yaw +15 ear_r=${gotP15.ear_r?.[0]} (rule ${expRP15}), ear_l=${gotP15.ear_l?.[0]} (rule ${expLP15}); dial 0=${JSON.stringify(got0)}; mutant dropped ear_l at +15=${mutEarLP15} (err ${pyRound(Math.abs(mutEarLP15 - expLP15), 4)} px > 1 px, bar 1=${bar1MutantPasses}); depth 25 -> ${earBadRef143?.problems[0]?.code ?? 'none'}`,
+      'issue #477: applyFaceSurfaceDeform honours the authored ears derive.depth via the depth rule, keeps dial 0 byte-identical, refuses an out-of-range ear depth by CONFIG_TURN_EAR_DEPTH_RANGE, and fails bar 1 when the dropping mutant is restored',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
