@@ -246,6 +246,7 @@ export interface AlternateSetMap {
   slots: Record<string, string>;
   hides?: string[];
   drawn?: Record<string, number>;
+  threshold?: { yaw: number; pitch: number };
 }
 
 export interface AlternatePartsRecord {

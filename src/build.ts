@@ -1086,12 +1086,15 @@ export function rigStage(input: RigStageInput, rigc: RigcRunner, scratch: string
     }
   }
   const first = buildRig(cfg, parts, images, undefined, input.idleKeys ?? DEFAULT_IDLE_KEYS, input.reduce);
-  const textsOf = (r: RigOutput): Array<[string, string]> => [
-    ['rig.json', rigJsonText(r.rig)],
-    ['motion.json', rigJsonText(withAnimations(r.motion, from === null ? null : from.table))],
-    ['mesh_report.json', rigJsonText(r.meshReport)],
-    ...(r.sets === undefined ? [] : [[SETS_FILE, rigJsonText(r.sets)] as [string, string]]),
-  ];
+  const textsOf = (r: RigOutput): Array<[string, string]> => {
+    const mergedMotion = withAnimations(r.motion, from === null ? null : from.table);
+    return [
+      ['rig.json', rigJsonText(r.rig)],
+      ['motion.json', rigJsonText(mergedMotion)],
+      ['mesh_report.json', rigJsonText(r.meshReport)],
+      ...(r.sets === undefined ? [] : [[SETS_FILE, rigJsonText(r.sets)] as [string, string]]),
+    ];
+  };
   const firstTexts = textsOf(first);
   // The gate runs before the lines are printed, and its lines print where they always did: an automatic part's motion
   // gate compares the model document of this very build, the one written (issue #126 item 3). mesh_report.json is staged

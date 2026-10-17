@@ -172,7 +172,7 @@ import { alphaAbove, crop, pad, type Raster } from './raster/index.ts';
 import { pyRound } from './round.ts';
 import { boneHeat, type HeatDust, heatInfluences, HEAT_LIMITS, heatRow, type HeatRow, latticeSilhouette, tracedSilhouette } from './heat.ts';
 import type { PosePoints } from './skeleton.ts';
-import { applyFaceSurfaceDeform, TURN_BONE, type TurnSpec, turnConstraintName, turnFractions, turnTwin } from './turn.ts';
+import { applyFaceSurfaceDeform, FACE_RATED_BAND, TURN_BONE, type TurnSpec, turnConstraintName, turnFractions, turnTwin } from './turn.ts';
 import { DISTANCE_EXPONENT, type FloorForm, type Influence, influences, type InfluenceLimits, type MeshInfluences, meshLimits, type Segment } from './weights.ts';
 
 /** Transparent pixels added round every part image — the reference's `PAD`. */
@@ -908,6 +908,7 @@ export const SETS_FILE = 'sets.json';
  */
 export interface AttachmentSetsFile {
   spec: typeof SETS_SPEC;
+  threshold?: { yaw: number; pitch: number };
   sets: Record<string, AlternateSetMap>;
 }
 
@@ -2247,14 +2248,22 @@ export function buildRig(
       for (const slotName of Object.keys(alt.slots)) {
         if (stills[slotName] !== undefined && !hideList.includes(`${slotName}${STILL_SUFFIX}`)) hideList.push(`${slotName}${STILL_SUFFIX}`);
       }
+      const coversFace = Object.hasOwn(slotMap, 'face');
       setEntries[alt.name] = {
         slots: slotMap,
         ...(hideList.length > 0 ? { hides: hideList } : {}),
         ...(drawn === undefined ? {} : { drawn }),
+        ...(coversFace && cfg.turn !== undefined ? { threshold: { ...FACE_RATED_BAND } } : {}),
       };
     }
-    sets = { spec: SETS_SPEC, sets: setEntries };
+    const anyCoversFace = Object.values(setEntries).some((e) => Object.hasOwn(e.slots, 'face'));
+    sets = {
+      spec: SETS_SPEC,
+      ...(anyCoversFace ? { threshold: { ...FACE_RATED_BAND } } : {}),
+      sets: setEntries,
+    };
   }
+  const hasAlternateFaceSet = sets !== undefined && Object.values(sets.sets).some((e) => Object.hasOwn(e.slots, 'face'));
   // ---- leg stops (issue #404) --------------------------------------------
   // Only when the config has `stops`: each link after the first (and any bone hanging from a stopped link) hangs
   // from the drawn link `<link>_d` above it, and slots and weights on a stopped link bind `<link>_d`.
@@ -2294,7 +2303,15 @@ export function buildRig(
       opaqueWidth: facePart?.w,
       opaqueHeight: facePart?.h,
       overrides: cfg.turn?.deform,
+      hasAlternateFaceSet,
     });
+    if (sets !== undefined && (merged.animations.turn !== undefined || merged.animations.tilt !== undefined)) {
+      for (const entry of Object.values(sets.sets)) {
+        if (Object.hasOwn(entry.slots, 'face')) {
+          entry.threshold = { ...FACE_RATED_BAND };
+        }
+      }
+    }
   });
   return {
     rig,
