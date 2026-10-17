@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.34.0](https://github.com/rig-c/parts/compare/v1.33.0...v1.34.0) (2026-10-17)
+
+
+### Features
+
+* **turn:** counter-translate back of head about head-only pivot ([#478](https://github.com/rig-c/parts/issues/478)) ([#483](https://github.com/rig-c/parts/issues/483)) ([dee31cc](https://github.com/rig-c/parts/commit/dee31ccd61d97f543212a7a6ff6bbf376fa67ecb))
+* **turn:** project yaw face surface on a cylinder with fixed outline ([#479](https://github.com/rig-c/parts/issues/479)) ([#485](https://github.com/rig-c/parts/issues/485)) ([b8a5f6f](https://github.com/rig-c/parts/commit/b8a5f6fdb98973033dfde4315bd4ceb97082232a))
+
 ## [1.33.0](https://github.com/rig-c/parts/compare/v1.32.0...v1.33.0) (2026-10-17)
 
 
