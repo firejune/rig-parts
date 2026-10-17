@@ -1962,7 +1962,7 @@ export function proposeWithBasis(
     const [g, r] = gridR(p);
     const top = p.y;
     const bot = p.y + p.h;
-    if (bot < neckY + 0.5 * fh) {
+    if (bot < neckY + 0.5 * fh && isOn(dilate(P.alpha(p), 31), pyRound(axis), pyRound(bot - 0.1 * p.h))) {
       B(
         'bun',
         'head',

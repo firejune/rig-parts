@@ -8215,6 +8215,54 @@ function runProposeSuite(): number {
       'issue #271: a rider is carried by the face part; where there is none, its own median is the only depth there is, and the draft says so rather than inventing a carrier',
     );
 
+    // Issue #466: short back hair ending above neckY + 0.5 * fh (shoulder line, y 121 on PROPOSE_PARTS) drafts a single
+    // central `bun` bone when its 31 px dilated mask bridges the eye axis near its bottom ([axis, bot - 0.1 * p.h]), and
+    // drafts two-side back-hair chains (`hairback_r` / `hairback_l`, or `hairback_r0_` / `hairback_l0_` under `--cloth`)
+    // when separated into two side twintails with a gap across the eye axis.
+    const bunDir120 = join(dir, 'short-bun');
+    writeProposeFixture(bunDir120, [
+      { name: 'hair_back', from: 'head:back hair', x: 70, y: 40, w: 60, h: 60, colour: [80, 60, 50] },
+      ...PROPOSE_PARTS,
+    ]);
+    const bunProp120 = propose(readPartSet(bunDir120));
+    const twinDir120 = join(dir, 'short-twintails');
+    writeProposeFixture(twinDir120, [
+      {
+        name: 'hair_back',
+        from: 'head:back hair',
+        x: 10,
+        y: 40,
+        w: 180,
+        h: 60,
+        colour: [80, 60, 50],
+        rects: [
+          [10, 40, 30, 60],
+          [160, 40, 30, 60],
+        ],
+      },
+      ...PROPOSE_PARTS,
+    ]);
+    const twinPartSet120 = readPartSet(twinDir120);
+    const twinProp120 = propose(twinPartSet120);
+    const twinClothProp120 = propose(twinPartSet120, undefined, null, DEFAULT_GRID_RULE, {
+      'back hair': { chains: 1, links: 3, wind: [0.3, 1.0], gravity: [0.1, 0.4] },
+    });
+    const twinChainNames120 = twinProp120.bones.filter((b): b is Extract<BoneEntry, { chain: string }> => 'chain' in b).map((b) => b.chain);
+    const twinClothChainNames120 = twinClothProp120.bones.filter((b): b is Extract<BoneEntry, { chain: string }> => 'chain' in b).map((b) => b.chain);
+    const bunExistsOnBridged = bunProp120.bones.some((b: BoneEntry) => 'name' in b && b.name === 'bun');
+    const bunExistsOnTwin = twinProp120.bones.some((b: BoneEntry) => 'name' in b && b.name === 'bun');
+    say(
+      'PR120_SHORT_BACK_HAIR_BRIDGING_THE_AXIS_MAKES_A_BUN_AND_SEPARATED_SIDE_TWINTAILS_MAKE_TWO_CHAINS',
+      bunExistsOnBridged &&
+        !bunExistsOnTwin &&
+        twinChainNames120.includes('hairback_r') &&
+        twinChainNames120.includes('hairback_l') &&
+        twinClothChainNames120.includes('hairback_r0_') &&
+        twinClothChainNames120.includes('hairback_l0_'),
+      `bridged short back hair: bun=${bunExistsOnBridged}; separated short side twintails (cols 10..40 and 160..190, gap 120 px across axis 100): bun=${bunExistsOnTwin}, chains=${JSON.stringify(twinChainNames120)}, cloth chains=${JSON.stringify(twinClothChainNames120)}`,
+      'issue #466: short back hair above the shoulder line is a central bun only when its dilated silhouette bridges the eye axis; separated side twintails take the two-side back-hair chain and cloth rules',
+    );
+
     runGridRuleControls(dir, say);
     runSqueezeControls(say);
     runClothProposeControls(say);
