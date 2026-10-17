@@ -215,7 +215,7 @@ import {
 import { BREATH_ANIMATION, type BreathPair, breathPairProblem, breathTracks, chainDirection, sweepAngles, sweepJoints, type SweepJoint, sweepLine, type SweepLine, SWEEP_LINE, type SweepPose, type Viewport } from './src/check.ts';
 import { barsNotMet, flatComposite, frameToRigMap, maxRgbDiff, rigToFrameMap, SEAM_BOX, SEAM_PX_BAR, SEAM_PX_LEVEL, seamRigPx, seamRigPxText, SEAM_MEAN_BAR, SEAM_DIR, SEAM_MARK, SEAM_NO_ART, seamFigures, type SeamFigures, seamPairRows, seamPairText, STILL_DIR, withoutPhysics, BREATH_TORSO_MEAN_FLOOR } from './src/check.ts';
 import { ACCEPTABLE_BARS, BARS, besideIdleLine, blackRig, drawingTurn, FOLD_LINE, LEVEL_BAR_DEGREES, LEVEL_LINE, LIMB_LINE, limbLine, foldsLine, STRESS_LINE, STRESS_RIGID, STRESS_TURNS, stressPlan, readFoldSets, edgeBonesText, buildGateLines, holesLine, causeLines, chainLine, measuredRules, SOURCE_LINE, sourceFigures, sourceSizeProblem, packedBuildArgs, GATE_PROFILE, DEFAULT_PACK_MODE, DEFAULT_PAGE_EDGES, findRigc, packageRigc, rigcIdentity, rigcRunnerAt, type RigcSpawn, type PackMode, type PageEdges, type FrameSet, GEOMETRY_FILE, gateGreen, headBoneOf, IDLE_MAX_PX, type JudgementLine, JUDGEMENT_LINES, packEdgeProblems, PARTS_HOME_SENTENCE, parsePackLines, readBoneTrack, readCheckInputs, readFrameSet, readGeometry, readRigcEntry, REPORTED_LINES, requireRigcVersion, RIGC_ENTRY_VERSION, RIGC_GEOMETRY_VERSION, rigcFailed, type RigcRunner, runCheck, SPINEBOY_YARDSTICK, stretchLine, TEXTURE_STRETCH_CEILING, TIP_RATIO_FLOOR, TIP_REST_RATIO_CEILING, attachmentPoses, stillLine, STILL_INSTRUMENT } from './src/check.ts';
-import { baseTagOf, blinkFigures, breathHeat, heatField, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
+import { baseTagOf, blinkFigures, breathHeat, heatField, type BoneWorld, chainToward, edgeLength, frameBox, type GeometryPose, halfTravels, type MeshRest, stretchFigures, stretchSeverity, lagStep, readSine, setupToFrame, stillReading, stillTolerance, STILL_ROUNDINGS, SWING_TAGS, ulpOf } from './src/instruments.ts';
 import {
   aimLine,
   contactLine,
@@ -8543,13 +8543,15 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
       'issue #392: when strength is omitted, split.hold_tip: true holds outer branches to branch strength (100, PR515), and when strength is written explicitly its edge value is honoured while r >= grid keeps the fork held; in buildRig, a held-fork mesh (r >= grid, forked chains sharing a parent, no explicit influences) smooths each fork\'s branch shares across mesh edges (4 passes, floor 0.005, cap 8), while an unheld mesh (r < grid) or one with explicit influences keeps its cap',
     );
 
-    // PR518 — issues #390, #445: omitting `chains` on `back hair` derives the tree count per side from the visible hair
-    // masses (connected components below the root row, merged within one grid cell), one tree per mass rooted at that
-    // mass's top row and inside its columns (1 per side on the wide-crown fixture where wR = wL = 48 px > 2 grid cells
-    // at y=69 and one tail mass hangs per side at x=50..75 / x=164..189, y=72..299; 2 on the r side and 1 on the l side
-    // when two separated masses hang on r), `lint` names the masses and their columns when trees exceed the mass count
-    // or leave a mass's columns, and an explicit `chains` that exceeds floor(width / grid) or roots a tree outside the
-    // 15 px dilated art mask is refused by PROPOSE_CLOTH_BACK_HAIR_CHAINS.
+    // PR518 — issues #390, #445, #461: omitting `chains` on `back hair` derives the tree count per side from the visible
+    // hair masses (connected components below the root row, merged within one grid cell) and places
+    // max(1, floor(w / (4 * grid)) + 1) trees inside each mass across its root-row width w, rooted at that mass's top
+    // row and inside its columns (1 per side on the narrow-tail fixture where w = 26 px < 4 * 14; 2 on the r side and 1
+    // on the l side when two separated narrow masses hang on r; 2 per side on a 98 px = 7 * 14 wide tail mass per side
+    // and 3 on a 118 px = 8.4 * 14 wide tail mass, holding TEXTURE_STRETCH on hair_back at or below the 1.26.0 plate's
+    // value for the same triangle), `lint` names the masses and their columns when trees do not match the width-derived
+    // mass count or leave a mass's columns, and an explicit `chains` that exceeds floor(width / grid) or roots a tree
+    // outside the 15 px dilated art mask is refused by PROPOSE_CLOTH_BACK_HAIR_CHAINS.
     const omittedWideRecipe: ClothRecipes = {
       ...baseRecipe,
       'back hair': { links: 3, split: { at: 1, into: 2 }, wind: [1, 8], gravity: [4, 24] },
@@ -8588,6 +8590,120 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
     const r0Inside = twoMassChains.filter((b) => b.chain.startsWith('hairback_r0')).every((c) => [...c.points, c.tip].every(([x]) => x >= 30 && x <= 45));
     const r1Inside = twoMassChains.filter((b) => b.chain.startsWith('hairback_r1')).every((c) => [...c.points, c.tip].every(([x]) => x >= 64 && x <= 79));
     const l0Inside = twoMassChains.filter((b) => b.chain.startsWith('hairback_l0')).every((c) => [...c.points, c.tip].every(([x]) => x >= 164 && x <= 189));
+    // Issue #461 (Bars 1 & 4): a wide single-mass back-hair tail on each side of the eye axis below an undivided crown
+    // (x=20..117, y=72..299 on r, w=98 = 7*14 px; x=122..219, y=72..299 on l, w=98 = 7*14 px; and an 8.4-grid-cell mass
+    // x=2..119, w=118 px on r).
+    const wideTailParts = CLOTH_PARTS.map((p) =>
+      p.name === 'hair_back'
+        ? {
+            ...p,
+            x: 20,
+            w: 200,
+            rects: [
+              [72, 20, 96, 52] as [number, number, number, number],
+              [20, 72, 98, 228] as [number, number, number, number],
+              [122, 72, 98, 228] as [number, number, number, number],
+            ],
+          }
+        : p,
+    );
+    const wideTailDir = join(dir, 'wide-tail');
+    writeProposeFixture(wideTailDir, wideTailParts, CLOTH_RIG);
+    const wideTailP = readPartSet(wideTailDir);
+    const wideTailProp = propose(wideTailP, undefined, null, DEFAULT_GRID_RULE, omittedWideRecipe);
+    const wideTailLint = lint(wideTailP, wideTailProp);
+    const wideTail126Prop = propose(wideTailP, undefined, null, DEFAULT_GRID_RULE, baseRecipe);
+    const wideTail130Prop = propose(wideTailP, undefined, null, DEFAULT_GRID_RULE, {
+      ...baseRecipe,
+      'back hair': { ...omittedWideRecipe['back hair']!, chains: 1 },
+    });
+    for (const b of wideTail130Prop.bones) {
+      if ('chain' in b && b.chain === 'hairback_r0_') b.points[0] = [68, 72];
+      if ('chain' in b && b.chain === 'hairback_l0_') b.points[0] = [171, 72];
+    }
+    const wideTailChains = wideTailProp.bones.filter((b): b is Extract<BoneEntry, { chain: string }> => 'chain' in b && b.chain.startsWith('hairback_'));
+    const wideRInside = wideTailChains.filter((b) => b.chain.startsWith('hairback_r')).every((c) => [...c.points, c.tip].every(([x]) => x >= 20 && x <= 117));
+    const wideLInside = wideTailChains.filter((b) => b.chain.startsWith('hairback_l')).every((c) => [...c.points, c.tip].every(([x]) => x >= 122 && x <= 219));
+    const threeTreeParts = CLOTH_PARTS.map((p) =>
+      p.name === 'hair_back'
+        ? {
+            ...p,
+            x: 0,
+            y: 20,
+            w: 220,
+            h: 140,
+            rects: [
+              [72, 20, 96, 52] as [number, number, number, number],
+              [0, 72, 118, 88] as [number, number, number, number],
+              [122, 72, 98, 88] as [number, number, number, number],
+            ],
+          }
+        : p,
+    );
+    const threeTreeDir = join(dir, 'three-tree-tail');
+    writeProposeFixture(threeTreeDir, threeTreeParts, CLOTH_RIG);
+    const threeTreeP = readPartSet(threeTreeDir);
+    const threeTreeProp = propose(threeTreeP, undefined, null, DEFAULT_GRID_RULE, omittedWideRecipe);
+    const threeTreeLint = lint(threeTreeP, threeTreeProp);
+    const threeTreeRInside = threeTreeProp.bones
+      .filter((b): b is Extract<BoneEntry, { chain: string }> => 'chain' in b && b.chain.startsWith('hairback_r'))
+      .every((c) => [...c.points, c.tip].every(([x]) => x >= 0 && x <= 117));
+    const rigcRunWide = rigcRunnerAt(suiteRigc(), spawnRigc);
+    const measureWideTailStretch = (label: string, pr: Proposal): { severity: number; tri269: number; tri271: number } => {
+      const sub = join(wideTailDir, label);
+      mkdirSync(join(sub, 'images'), { recursive: true });
+      const cfg = parseConfig({
+        key: 'cloth',
+        assemble: { rig_scale: 1, plan: wideTailParts.map((p) => [p.name, ...p.from.split(':')]) },
+        bones: pr.bones,
+        meshes: pr.meshes,
+        regions: pr.regions,
+        motion: pr.motion,
+        constraints: pr.constraints,
+      });
+      const pf: PartsFile = { rig_size: [wideTailP.W, wideTailP.H], scale_rig_per_source: wideTailP.rigScale, parts: [...wideTailP.recs], ghost_px: {} };
+      const out = buildRig(cfg, pf, wideTailP.images);
+      for (const [file, img] of out.images) writeFileSync(join(sub, 'images', file), encodePngBytes(img));
+      const rigPath = join(sub, 'rig.json');
+      const motionPath = join(sub, 'motion.json');
+      writeFileSync(rigPath, JSON.stringify(out.rig));
+      writeFileSync(motionPath, JSON.stringify(out.motion));
+      const bSub = join(sub, 'build');
+      mkdirSync(bSub, { recursive: true });
+      rigcRunWide(['build', '--rig', rigPath, '--motion', motionPath, '--out', bSub, '--profile', 'spine']);
+      const { data } = loadPosable(join(bSub, 'skeleton.json'), join(bSub, 'skeleton.atlas'), bSub);
+      const setup = sampleSetupPose(data, { bones: true })[0];
+      const hbPiece = setup.pieces.find((q) => q.slot === 'hair_back') as Mesh;
+      const meshes: MeshRest[] = [
+        {
+          slot: 'hair_back',
+          attachment: 'hair_back',
+          vertices: Array.from(hbPiece.world),
+          triangles: Array.from(hbPiece.triangles),
+        },
+      ];
+      const idleFrames = sampleAnimation(data, 'idle', 12, { bones: true });
+      const geoFrames: GeometryPose[] = idleFrames.map((f, idx) => ({
+        index: idx,
+        attachments: [
+          {
+            slot: 'hair_back',
+            attachment: 'hair_back',
+            vertices: Array.from((f.pieces.find((q) => q.slot === 'hair_back') as Mesh).world),
+          },
+        ],
+      }));
+      const fig = stretchFigures(meshes, geoFrames)[0];
+      const severity = Math.max(stretchSeverity(fig.max!.ratio), stretchSeverity(fig.min!.ratio));
+      return {
+        severity,
+        tri269: fig.min!.triangle === 269 ? stretchSeverity(fig.min!.ratio) : severity,
+        tri271: fig.max!.triangle === 271 ? stretchSeverity(fig.max!.ratio) : severity,
+      };
+    };
+    const stretchWidth = measureWideTailStretch('width-461', wideTailProp);
+    const stretch126 = measureWideTailStretch('plate-126', wideTail126Prop);
+    const stretch130 = measureWideTailStretch('one-tree-130', wideTail130Prop);
     const wideTooManyErr = refusals(() =>
       propose(P, undefined, null, DEFAULT_GRID_RULE, {
         ...baseRecipe,
@@ -8641,6 +8757,19 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
         r1Inside &&
         l0Inside &&
         twoMassLint.findings.length === 0 &&
+        wideTailProp.meshes.hair_back.segments.slice(1).join(',') ===
+          'hairback_r0_,hairback_r0a_,hairback_r0b_,hairback_r1_,hairback_r1a_,hairback_r1b_,hairback_l0_,hairback_l0a_,hairback_l0b_,hairback_l1_,hairback_l1a_,hairback_l1b_' &&
+        wideRInside &&
+        wideLInside &&
+        wideTailLint.findings.length === 0 &&
+        threeTreeProp.meshes.hair_back.segments.filter((s): s is string => typeof s === 'string' && /^hairback_r\d+_$/.test(s)).join(',') ===
+          'hairback_r0_,hairback_r1_,hairback_r2_' &&
+        threeTreeRInside &&
+        threeTreeLint.findings.length === 0 &&
+        stretchWidth.severity <= stretch126.severity &&
+        stretchWidth.tri269 <= stretch126.tri269 &&
+        stretchWidth.tri271 <= stretch126.tri271 &&
+        stretchWidth.severity < stretch130.severity &&
         wideTooManyErr !== null &&
         wideTooManyErr.problems.length === 1 &&
         wideTooManyErr.problems[0].code === 'PROPOSE_CLOTH_BACK_HAIR_CHAINS' &&
@@ -8651,8 +8780,8 @@ function runClothProposeControls(say: (name: string, ok: boolean, detail: string
         gappedTwoErr.problems.length === 1 &&
         gappedTwoErr.problems[0].code === 'PROPOSE_CLOTH_BACK_HAIR_CHAINS' &&
         gappedTwoErr.problems[0].detail.includes('off the art: hairback_r1_0 at [102, 69] (alpha 0), hairback_l0_0 at [138, 69] (alpha 0)'),
-      `wide crown (48 px/side on 14 px grid, 1 tail mass/side) with chains omitted -> 1 tree/side rooted on mass top row (hairback_r0_ ${boneAt(omittedWideProp.bones, 'hairback_r0_')} in x=50..75: ${rInsideMass}, hairback_l0_ ${boneAt(omittedWideProp.bones, 'hairback_l0_')} in x=164..189: ${lInsideMass}), ${omittedWideLint.findings.length} lint finding(s); forced chains: 2 -> lint ${JSON.stringify(wideForcedLintLines)}; two masses on r + one on l -> [${twoMassProp.meshes.hair_back.segments.slice(1).join(', ')}] (r0 ${boneAt(twoMassProp.bones, 'hairback_r0_')}, r1 ${boneAt(twoMassProp.bones, 'hairback_r1_')}, l0 ${boneAt(twoMassProp.bones, 'hairback_l0_')}), ${twoMassLint.findings.length} lint finding(s); chains: 4 -> ${codes(wideTooManyErr)}; gapped twin tails chains: 2 -> ${codes(gappedTwoErr)}`,
-      'issues #390, #445: when cloth."back hair".chains is omitted, propose --cloth derives the tree count per side from the visible hair masses (connected components below the root row, merged within one grid cell), one tree per mass rooted at that mass\'s top row and inside its columns; lint names the masses and their columns when trees exceed the mass count or leave a mass\'s columns, and an explicit count that exceeds the width cap or places a root off the art is refused by PROPOSE_CLOTH_BACK_HAIR_CHAINS',
+      `narrow tail (26 px/side on 14 px grid) -> 1 tree/side (hairback_r0_ ${boneAt(omittedWideProp.bones, 'hairback_r0_')} in x=50..75: ${rInsideMass}, hairback_l0_ ${boneAt(omittedWideProp.bones, 'hairback_l0_')} in x=164..189: ${lInsideMass}), ${omittedWideLint.findings.length} lint finding(s); forced chains: 2 -> lint ${JSON.stringify(wideForcedLintLines)}; two masses on r + one on l -> [${twoMassProp.meshes.hair_back.segments.slice(1).join(', ')}], ${twoMassLint.findings.length} lint finding(s); wide tail (98 px = 7*14 px/side) -> 2 trees/side inside x=20..117 & x=122..219 (${wideRInside && wideLInside}), ${wideTailLint.findings.length} lint, stretch ${pyRound(stretchWidth.severity, 4)} <= 1.26.0 plate ${pyRound(stretch126.severity, 4)} < 1-tree 1.30.0 ${pyRound(stretch130.severity, 4)} (tri 269: ${pyRound(stretchWidth.tri269, 4)} <= ${pyRound(stretch126.tri269, 4)}, tri 271: ${pyRound(stretchWidth.tri271, 4)} <= ${pyRound(stretch126.tri271, 4)}); 118 px (8.4*14) mass -> 3 trees (${threeTreeRInside}, ${threeTreeLint.findings.length} lint); chains: 4 -> ${codes(wideTooManyErr)}; gapped twin tails chains: 2 -> ${codes(gappedTwoErr)}`,
+      'issues #390, #445, #461: when cloth."back hair".chains is omitted, propose --cloth derives the tree count per side from the visible hair masses and places max(1, floor(w / (4 * grid)) + 1) trees across each mass\'s root-row width w, rooted at that mass\'s top row and inside its columns, holding TEXTURE_STRETCH on a wide single-mass tail at or below the 1.26.0 plate; lint names the masses and their columns when trees do not match or leave a mass\'s columns, and an explicit count that exceeds the width cap or places a root off the art is refused by PROPOSE_CLOTH_BACK_HAIR_CHAINS',
     );
 
     // PR520 — issue #437: a declared cloth tree over a list of parts (["hair_back", "hair_back_front"]) drafts one
