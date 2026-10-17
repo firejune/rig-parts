@@ -255,7 +255,7 @@ import { BLINK, blinkHoldMisses, CONTROL_SUFFIX, framesInside, IDLE_FPS, type Mo
 import { type BoneEntry, type CharacterConfig, CONFIG_REQUIRES, type Limb, loadClothConfig, type ContourRegionSpec, type Cut, type Extend, type PlanEntry, type Patch, type Point, type ConfigDoor, CONSTRAINT_BONE_FIELDS, type Generation, isDoorKey, loadConfig, loadConfigAndAnimations, loadEarlyConfig, loadPaintConfig, parseConfig, parseEarlyConfig, parseProposalSections, type SkeletonSections } from './src/config.ts';
 import { RIG_BONE_INHERIT, RIG_KEYS, RIG_SKIN_CONSTRAINT_KEYS } from 'rig-c/src/rig.ts';
 import { expandStops } from 'rig-c/src/stop.ts';
-import { applyFaceSurfaceDeform, evalYawFaceSurface, FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, resolveFaceDeformFractions, TURN_BONE } from './src/turn.ts';
+import { applyFaceSurfaceDeform, evalYawFaceSurface, FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, FACE_RATED_BAND, FACE_RATED_PITCH_BAND, FACE_RATED_YAW_BAND, resolveFaceDeformFractions, TURN_BONE } from './src/turn.ts';
 import { type BoneTransform, computeExactFrameTransforms, cropToSpineY, toWorld } from './src/coords.ts';
 import { artMask, contourFit, type ContourMesh, contourMesh, FAINT_ALPHA, contourOutline, type ContourParams, type ContourRegion, contourTopologyProblems, delaunayViolations, GRID, growSilhouette, inCircle, keepPoints, MAX_SIDE, marginDisc, outlineInRegions, withinMarginSquared } from './src/contour.ts';
 import { BASE, blockOutline, blocks, BOTTLE, BUILDING, CONCAVE, type ContourCase, CONVEX, EMPTY, FAINT, FAINT_AT_LINE, FAR, FEATHERED, FEATHERED_CORE, FULL, HOLE, ISLANDS, NEAR, NOTCH, NOTCH_CUT, NOTCHED, PAIR, PINCH, REGION, REGION_FAR_BACKGROUND, SPIKE, STRAND, STRAND_CHAIN, STRIP } from './fixtures/contour.ts';
@@ -2153,6 +2153,69 @@ function runConfigSuite(): number {
     `in range -> ${show75(okDeform86)}; tilt_mid_y -0.05 -> ${show75(outLow86)}; turn_ear_x 2.0 -> ${show75(outHigh86)}; unknown -> ${show75(unknownDeform86)}; defaults inside ranges: ${rangeKeysMatch86}`,
     'issue #436: the Set B x2.5 per-degree fractions live in FACE_DEFORM_FRACTIONS with explicit [min, max] bounds in FACE_DEFORM_RANGES, and an override outside those bounds is refused by CONFIG_TURN_DEFORM_RANGE',
   );
+
+  // CF87 — issue #472: single-plate rated band is ±15° yaw / ±12° pitch (FACE_RATED_BAND). Declaring turn.band or
+  // animations_from turn/tilt derive.degrees above that without an assemble.alternates entry covering "face" is refused
+  // by CONFIG_FACE_BAND_EXCEEDED; declaring an alternate face set accepts the wider band.
+  const bandDir87 = temp('cf87-face-band');
+  try {
+    const okBand87 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4 }, band: { yaw: 15, pitch: 12 } })));
+    const numBand87 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4 }, band: 30 })));
+    const yawBand87 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4 }, band: { yaw: 20, pitch: 12 } })));
+    const pitchBand87 = refusals(() => parseConfig(turned84({ pivot: 0.5, depths: { face: 0.4 }, band: { yaw: 15, pitch: 25 } })));
+    const altCfg87 = turned84({ pivot: 0.5, depths: { face: 0.4 }, band: { yaw: 30, pitch: 25 } });
+    (altCfg87.assemble as Record<string, unknown>).alternates = [{ name: 'three_quarter', parts: ['face'] }];
+    const okAltBand87 = refusals(() => parseConfig(altCfg87));
+    const hiddenAltCfg87 = turned84({ pivot: 0.5, depths: { face: 0.4 }, band: { yaw: 30, pitch: 25 } });
+    (hiddenAltCfg87.assemble as Record<string, unknown>).alternates = [{ name: 'faceless', hides: ['face'] }];
+    const hiddenAltBand87 = refusals(() => parseConfig(hiddenAltCfg87));
+    const animOverPath87 = join(bandDir87, 'over.motion.json');
+    writeFileSync(
+      animOverPath87,
+      JSON.stringify({
+        spec: 'rigc-motion/1',
+        animations: {
+          turn: {
+            duration: 3,
+            tracks: [{ group: 'features', property: 'translatex', keys: [{ t: 0, derive: { kind: 'yaw', degrees: -30, depth: 36 } }, { t: 1.5, v: [0] }, { t: 3, derive: { kind: 'yaw', degrees: 30, depth: 36 } }] }],
+          },
+          tilt: {
+            duration: 2.5,
+            tracks: [{ group: 'features', property: 'translatey', keys: [{ t: 0, derive: { kind: 'pitch', degrees: -25, depth: 34 } }, { t: 1.25, v: [0] }, { t: 2.5, derive: { kind: 'pitch', degrees: 25, depth: 34 } }] }],
+          },
+        },
+      }),
+    );
+    const animSinglePath87 = join(bandDir87, 'single.config.json');
+    const animSingleCfg87 = turned84({ pivot: 0.5, depths: { face: 0.4 } });
+    (animSingleCfg87.motion as Record<string, unknown>).animations_from = 'over.motion.json';
+    writeFileSync(animSinglePath87, JSON.stringify(animSingleCfg87));
+    const animSingleRef87 = refusals(() => loadConfigAndAnimations(animSinglePath87));
+    const animAltPath87 = join(bandDir87, 'alt.config.json');
+    const animAltCfg87 = structuredClone(animSingleCfg87);
+    (animAltCfg87.assemble as Record<string, unknown>).alternates = [{ name: 'three_quarter', parts: ['face'] }];
+    writeFileSync(animAltPath87, JSON.stringify(animAltCfg87));
+    const animAltOk87 = refusals(() => loadConfigAndAnimations(animAltPath87));
+    say(
+      'CF87_SINGLE_PLATE_FACE_BAND_EXCEEDING_15_YAW_OR_12_PITCH_IS_REFUSED_UNLESS_AN_ALTERNATE_FACE_SET_IS_DECLARED',
+      okBand87 === null &&
+        one75(numBand87, 'CONFIG_FACE_BAND_EXCEEDED', 'config.turn.band', 'rates yaw ±30° on a single face plate; the rated band for one face plate is yaw ±15° / pitch ±12° — declare an alternate face set in config.assemble.alternates to go beyond ±15° / ±12°') &&
+        one75(yawBand87, 'CONFIG_FACE_BAND_EXCEEDED', 'config.turn.band', 'rates yaw ±20° / pitch ±12° on a single face plate; the rated band for one face plate is yaw ±15° / pitch ±12° — declare an alternate face set in config.assemble.alternates to go beyond ±15° / ±12°') &&
+        one75(pitchBand87, 'CONFIG_FACE_BAND_EXCEEDED', 'config.turn.band', 'rates yaw ±15° / pitch ±25° on a single face plate; the rated band for one face plate is yaw ±15° / pitch ±12° — declare an alternate face set in config.assemble.alternates to go beyond ±15° / ±12°') &&
+        okAltBand87 === null &&
+        hiddenAltBand87 !== null &&
+        hiddenAltBand87.problems.some((p) => p.code === 'CONFIG_FACE_BAND_EXCEEDED') &&
+        animSingleRef87 !== null &&
+        animSingleRef87.problems.filter((p) => p.code === 'CONFIG_FACE_BAND_EXCEEDED').length === 2 &&
+        animAltOk87 === null &&
+        FACE_RATED_YAW_BAND === 15 &&
+        FACE_RATED_PITCH_BAND === 12,
+      `band {15,12} -> ${show75(okBand87)}; band 30 -> ${show75(numBand87)}; yaw 20 -> ${show75(yawBand87)}; pitch 25 -> ${show75(pitchBand87)}; animations ±30/±25 without alt -> ${show75(animSingleRef87)}; with alt covering face -> ${show75(animAltOk87)}`,
+      'issue #472: one front-facing face plate is rated to ±15° yaw / ±12° pitch; a config or motion file requesting a wider band without an alternate face set is refused by CONFIG_FACE_BAND_EXCEEDED naming the angle, the limit and the remedy',
+    );
+  } finally {
+    rmSync(bandDir87, { recursive: true, force: true });
+  }
 
   // CF125 — issue #242: config.scene is an object with no field. {} and one holding only a record and an annotation
   // load, through the full loader and plain assemble's door alike; `true` is not an object; a field — here the
@@ -6734,6 +6797,7 @@ function runTurnRigCases(say: (name: string, ok: boolean, detail: string, why: s
         ];
       }
     }
+    const rawSliderMot90 = structuredClone(sliderMot90);
     applyFaceSurfaceDeform(sliderRig90, sliderMot90);
     const faceMesh90 = sliderRig90.skins.default.face.face as unknown as { type: string; weights: unknown[]; triangles: unknown[]; hull: number };
     const tiltDef90 = (sliderMot90.animations.tilt as { deform: Array<{ slot: string; keys: Array<{ t: number; vertices?: number[] }> }> }).deform;
@@ -6783,6 +6847,47 @@ function runTurnRigCases(say: (name: string, ok: boolean, detail: string, why: s
         eyeLRightEdge30 <= plateMaxX30,
       `dial 0: tx=${JSON.stringify(turnTx90?.keys[1]?.v)}, sx=${JSON.stringify(turnSx90?.keys[1]?.v)}; yaw +30: eye_r (far) dx=${eyeRDx30}, sx=${eyeRSx30} (left edge ${pyRound(eyeRLeftEdge30, 2)} >= plate ${pyRound(plateMinX30, 2)}); eye_l (near) dx=${eyeLDx30}, sx=${eyeLSx30} (right edge ${pyRound(eyeLRightEdge30, 2)} <= plate ${pyRound(plateMaxX30, 2)}); nose dx=${noseDx30}`,
       'issue #468: features ride the face plate deform field across their span, narrowing on the far side and widening slightly on the near side while staying inside the deformed plate bounds across the rated band',
+    );
+
+    // Issue #472: without an alternate face set, applyFaceSurfaceDeform prepends yaw_clamp ([-15, 15]) and pitch_clamp
+    // ([-12, 12]) before the yaw and pitch slider constraints; with hasAlternateFaceSet: true, no clamp constraints are
+    // added and sets.json records threshold: { yaw: 15, pitch: 12 }.
+    const clampProbeRig = {
+      ...structuredClone(probeRig90),
+      bones: [
+        ...structuredClone(probeRig90.bones),
+        { name: 'yaw_dial', parent: 'root', x: 0, y: 0 },
+        { name: 'pitch_dial', parent: 'root', x: 0, y: 0 },
+      ],
+      constraints: [
+        { name: 'yaw', type: 'slider', bone: 'yaw_dial', property: 'rotate', from: -15, scale: 1 / 16, animation: 'turn' },
+        { name: 'pitch', type: 'slider', bone: 'pitch_dial', property: 'rotate', from: -12, scale: 1 / 16, animation: 'tilt' },
+      ] as Array<Record<string, unknown>>,
+    };
+    const clampRigSingle = structuredClone(clampProbeRig);
+    const clampMotSingle = structuredClone(rawSliderMot90);
+    applyFaceSurfaceDeform(clampRigSingle, clampMotSingle, { hasAlternateFaceSet: false });
+    const clampRigAlt = structuredClone(clampProbeRig);
+    const clampMotAlt = structuredClone(rawSliderMot90);
+    applyFaceSurfaceDeform(clampRigAlt, clampMotAlt, { hasAlternateFaceSet: true });
+    const cNamesSingle = clampRigSingle.constraints.map((c) => c.name);
+    const cNamesAlt = clampRigAlt.constraints.map((c) => c.name);
+    const yawClamp142 = clampRigSingle.constraints.find((c) => c.name === 'yaw_clamp') as { clamp?: boolean; properties?: { rotate?: { offset?: number; to?: { rotate?: { offset?: number; max?: number } } } } } | undefined;
+    const pitchClamp142 = clampRigSingle.constraints.find((c) => c.name === 'pitch_clamp') as { clamp?: boolean; properties?: { rotate?: { offset?: number; to?: { rotate?: { offset?: number; max?: number } } } } } | undefined;
+    say(
+      'RG142_SINGLE_PLATE_FACE_DEFORM_CLAMPS_YAW_AND_PITCH_TO_15_AND_12_AND_ALTERNATE_FACE_SET_OMITS_CLAMPS',
+      JSON.stringify(cNamesSingle) === JSON.stringify(['yaw_clamp', 'yaw', 'pitch_clamp', 'pitch']) &&
+        JSON.stringify(cNamesAlt) === JSON.stringify(['yaw', 'pitch']) &&
+        yawClamp142?.clamp === true &&
+        yawClamp142.properties?.rotate?.offset === -15 &&
+        yawClamp142.properties?.rotate?.to?.rotate?.max === 15 &&
+        pitchClamp142?.clamp === true &&
+        pitchClamp142.properties?.rotate?.offset === -12 &&
+        pitchClamp142.properties?.rotate?.to?.rotate?.max === 12 &&
+        JSON.stringify(clampMotSingle) === JSON.stringify(clampMotAlt) &&
+        JSON.stringify(FACE_RATED_BAND) === JSON.stringify({ yaw: 15, pitch: 12 }),
+      `single-plate constraints: ${JSON.stringify(cNamesSingle)} (yaw_clamp [-15,15], pitch_clamp [-12,12]); with alternate face set: ${JSON.stringify(cNamesAlt)}; motion inside band byte-identical: ${JSON.stringify(clampMotSingle) === JSON.stringify(clampMotAlt)}`,
+      'issue #472: driving a single-plate rig past ±15° yaw or ±12° pitch clamps at the rated boundary via yaw_clamp and pitch_clamp while leaving poses inside the band byte-identical; an alternate face set omits the clamps',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

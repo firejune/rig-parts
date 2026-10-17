@@ -93,7 +93,7 @@ import { GRID, MAX_SIDE } from './contour.ts';
 import { type Problem, refuseIfAny } from './errors.ts';
 import { isSkeletonName, KEYPOINT_NAMES, type KeypointName, type PosePoints, SKELETON_NAMES, type SkeletonName } from './skeleton.ts';
 import { acceptedTagNames, AUTHOR_LABEL_RULE, AUTHOR_PREFIX, readLayerTag } from './tags.ts';
-import { FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, type FaceDeformKey, TURN_BONE, type TurnSpec, turnNearest } from './turn.ts';
+import { FACE_DEFORM_FRACTIONS, FACE_DEFORM_RANGES, type FaceDeformKey, FACE_RATED_PITCH_BAND, FACE_RATED_YAW_BAND, TURN_BONE, type TurnSpec, turnNearest } from './turn.ts';
 import { FLOOR_FORMS, type FloorForm, type MeshInfluences } from './weights.ts';
 
 export type Point = [number, number];
@@ -1305,11 +1305,13 @@ function parseConfigFrom(raw: Json, base: string | null): { config: CharacterCon
   if ('motion' in t) checkMotion(c, t.motion, names.bones, names.chains, 'regions' in t ? t.regions : undefined);
   if ('constraints' in t) checkConstraints(c, t.constraints, names.bones, names.parents);
   if ('stops' in t) checkStops(c, t.stops, names.bones, names.chains);
-  if ('turn' in t) checkTurn(c, t.turn, attachedParts(t.meshes, t.regions), names.bones);
+  const hasAltFace = hasAlternateFaceSet(t.assemble, [...parts, ...cuts]);
+  if ('turn' in t) checkTurn(c, t.turn, attachedParts(t.meshes, t.regions), names.bones, hasAltFace);
   if ('scene' in t) checkScene(c, t.scene);
   if ('cloth' in t) checkCloth(c, t.cloth);
   const from = isPlainObject(t.motion) ? t.motion.animations_from : undefined;
   const animations = base !== null && typeof from === 'string' && from !== '' ? readAnimationsFrom(c, resolve(base, from)) : null;
+  if (animations !== null) checkFaceAnimationBand(c, animations, hasAltFace);
   if (base !== null) poseBeside(c, t.generation, base);
   refuseIfAny(c.problems);
   return { config: raw as CharacterConfig, animations };
@@ -3185,9 +3187,61 @@ function checkScene(c: Check, v: Json): void {
   }
 }
 
-function checkTurn(c: Check, v: Json, attached: Set<string>, bones: Set<string>): void {
+function hasAlternateFaceSet(assemble: Json, planParts: readonly string[]): boolean {
+  if (!isPlainObject(assemble) || !Array.isArray(assemble.alternates)) return false;
+  const allParts = new Set(planParts);
+  for (const alt of assemble.alternates) {
+    if (!isPlainObject(alt)) continue;
+    const hides = Array.isArray(alt.hides) ? alt.hides : [];
+    if (Array.isArray(alt.parts)) {
+      if (alt.parts.includes('face') && !hides.includes('face')) return true;
+    } else if (allParts.has('face') && !hides.includes('face')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function maxDeriveDegrees(anim: unknown): number {
+  if (!isPlainObject(anim) || !Array.isArray(anim.tracks)) return 0;
+  let maxDeg = 0;
+  for (const tr of anim.tracks) {
+    if (!isPlainObject(tr) || !Array.isArray(tr.keys)) continue;
+    for (const k of tr.keys) {
+      if (!isPlainObject(k) || !isPlainObject(k.derive)) continue;
+      const deg = k.derive.degrees;
+      if (typeof deg === 'number' && Number.isFinite(deg)) {
+        const a = Math.abs(deg);
+        if (a > maxDeg) maxDeg = a;
+      }
+    }
+  }
+  return maxDeg;
+}
+
+function checkFaceAnimationBand(c: Check, animations: AnimationsFrom, hasAltFace: boolean): void {
+  const at = `config.motion.animations_from (${animations.file}).animations`;
+  const maxYaw = maxDeriveDegrees(animations.table.turn);
+  const maxPitch = maxDeriveDegrees(animations.table.tilt);
+  if (maxYaw > FACE_RATED_YAW_BAND && !hasAltFace) {
+    c.fail(
+      'CONFIG_FACE_BAND_EXCEEDED',
+      `${at}.turn`,
+      `rates yaw ±${maxYaw}° on a single face plate; the rated band for one face plate is yaw ±${FACE_RATED_YAW_BAND}° / pitch ±${FACE_RATED_PITCH_BAND}° — declare an alternate face set in config.assemble.alternates to go beyond ±${FACE_RATED_YAW_BAND}° / ±${FACE_RATED_PITCH_BAND}°`,
+    );
+  }
+  if (maxPitch > FACE_RATED_PITCH_BAND && !hasAltFace) {
+    c.fail(
+      'CONFIG_FACE_BAND_EXCEEDED',
+      `${at}.tilt`,
+      `rates pitch ±${maxPitch}° on a single face plate; the rated band for one face plate is yaw ±${FACE_RATED_YAW_BAND}° / pitch ±${FACE_RATED_PITCH_BAND}° — declare an alternate face set in config.assemble.alternates to go beyond ±${FACE_RATED_YAW_BAND}° / ±${FACE_RATED_PITCH_BAND}°`,
+    );
+  }
+}
+
+function checkTurn(c: Check, v: Json, attached: Set<string>, bones: Set<string>, hasAltFace: boolean): void {
   const at = 'config.turn';
-  const o = c.object(at, v, ['pivot', 'depths'], ['deform']);
+  const o = c.object(at, v, ['pivot', 'depths'], ['deform', 'band']);
   if (o === null) return;
   const pivot = 'pivot' in o && c.number(`${at}.pivot`, o.pivot) ? (o.pivot as number) : null;
   const depths: Record<string, number> = {};
@@ -3206,6 +3260,39 @@ function checkTurn(c: Check, v: Json, attached: Set<string>, bones: Set<string>)
         if (c.number(`${at}.depths.${part}`, depth)) depths[part] = depth;
         else depthsOk = false;
       }
+    }
+  }
+  if ('band' in o) {
+    const b = o.band;
+    if (typeof b === 'number' && Number.isFinite(b) && b > 0) {
+      if (b > FACE_RATED_YAW_BAND && !hasAltFace) {
+        c.fail(
+          'CONFIG_FACE_BAND_EXCEEDED',
+          `${at}.band`,
+          `rates yaw ±${b}° on a single face plate; the rated band for one face plate is yaw ±${FACE_RATED_YAW_BAND}° / pitch ±${FACE_RATED_PITCH_BAND}° — declare an alternate face set in config.assemble.alternates to go beyond ±${FACE_RATED_YAW_BAND}° / ±${FACE_RATED_PITCH_BAND}°`,
+        );
+      }
+    } else if (isPlainObject(b)) {
+      const bo = c.object(`${at}.band`, b, [], ['yaw', 'pitch']);
+      if (bo !== null) {
+        const yawOk = !('yaw' in bo) || c.number(`${at}.band.yaw`, bo.yaw, 'positive');
+        const pitchOk = !('pitch' in bo) || c.number(`${at}.band.pitch`, bo.pitch, 'positive');
+        const yawVal = yawOk && typeof bo.yaw === 'number' ? bo.yaw : null;
+        const pitchVal = pitchOk && typeof bo.pitch === 'number' ? bo.pitch : null;
+        if (!hasAltFace && ((yawVal !== null && yawVal > FACE_RATED_YAW_BAND) || (pitchVal !== null && pitchVal > FACE_RATED_PITCH_BAND))) {
+          const foundParts = [
+            ...(yawVal !== null ? [`yaw ±${yawVal}°`] : []),
+            ...(pitchVal !== null ? [`pitch ±${pitchVal}°`] : []),
+          ];
+          c.fail(
+            'CONFIG_FACE_BAND_EXCEEDED',
+            `${at}.band`,
+            `rates ${foundParts.join(' / ')} on a single face plate; the rated band for one face plate is yaw ±${FACE_RATED_YAW_BAND}° / pitch ±${FACE_RATED_PITCH_BAND}° — declare an alternate face set in config.assemble.alternates to go beyond ±${FACE_RATED_YAW_BAND}° / ±${FACE_RATED_PITCH_BAND}°`,
+          );
+        }
+      }
+    } else {
+      c.fail('CONFIG_FIELD_TYPE', `${at}.band`, `is ${show(b)}; a positive yaw number or {yaw, pitch} is required`);
     }
   }
   if ('deform' in o) {

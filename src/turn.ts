@@ -165,10 +165,21 @@ export function resolveFaceDeformFractions(overrides?: Readonly<Partial<FaceDefo
   return out;
 }
 
-/** `config.turn`: the pivot depth, each carried part's See-through `depth_median`, and optional face surface deform overrides. */
+/**
+ * Issue #472: the rated band of a single face plate — yaw `±15°`, pitch `±12°`.
+ * Beyond this band on one plate, the foreshortened far eye runs out of cheek to
+ * sit on; going further takes an alternate face set (`assemble.alternates`),
+ * whose swap threshold is this band edge.
+ */
+export const FACE_RATED_YAW_BAND = 15;
+export const FACE_RATED_PITCH_BAND = 12;
+export const FACE_RATED_BAND = { yaw: FACE_RATED_YAW_BAND, pitch: FACE_RATED_PITCH_BAND } as const;
+
+/** `config.turn`: the pivot depth, each carried part's See-through `depth_median`, optional rated band, and optional face surface deform overrides. */
 export interface TurnSpec {
   pivot: number;
   depths: Record<string, number>;
+  band?: number | { yaw?: number; pitch?: number };
   deform?: Partial<FaceDeformFractions>;
 }
 
@@ -291,6 +302,13 @@ export interface FaceSurfaceDeformOptions {
   opaqueHeight?: number;
   /** Recipe overrides for {@link FACE_DEFORM_FRACTIONS}. */
   overrides?: Readonly<Partial<FaceDeformFractions>> | null;
+  /**
+   * Issue #472: true when `assemble.alternates` declares an alternate face set
+   * for the overflow beyond `±15°` yaw / `±12°` pitch. When false or absent,
+   * any `yaw` / `pitch` slider constraints on the rig are preceded by clamping
+   * transform constraints holding the dial bones to `[-15, 15]` and `[-12, 12]`.
+   */
+  hasAlternateFaceSet?: boolean;
 }
 
 interface DeformWeight {
@@ -397,7 +415,9 @@ function buildFaceGrid(width: number, height: number): { points: Array<[number, 
 export function applyFaceSurfaceDeform(
   rig: {
     bones: Array<{ name: string; parent?: string; x: number; y: number; rotation?: number; length?: number; inherit?: string }>;
+    slots?: Array<{ name: string; bone: string }>;
     skins: { default: Record<string, Record<string, DeformMeshAttachment | DeformRegionAttachment>> };
+    constraints?: Array<Record<string, unknown>>;
     invariants?: Record<string, unknown>;
   },
   motion: {
@@ -421,9 +441,62 @@ export function applyFaceSurfaceDeform(
   const isOpts =
     options !== undefined &&
     options !== null &&
-    ('imageWidth' in options || 'imageHeight' in options || 'opaqueWidth' in options || 'opaqueHeight' in options || 'overrides' in options);
+    ('imageWidth' in options ||
+      'imageHeight' in options ||
+      'opaqueWidth' in options ||
+      'opaqueHeight' in options ||
+      'overrides' in options ||
+      'hasAlternateFaceSet' in options);
   const opts: FaceSurfaceDeformOptions = isOpts ? (options as FaceSurfaceDeformOptions) : { overrides: options as Readonly<Partial<FaceDeformFractions>> | null | undefined };
   const f = resolveFaceDeformFractions(opts.overrides);
+
+  // Issue #472: when no alternate face set is declared, clamp dial bones to the single-plate rated band (±15° yaw, ±12° pitch).
+  if (!opts.hasAlternateFaceSet && Array.isArray(rig.constraints)) {
+    const nextConstraints: Array<Record<string, unknown>> = [];
+    const existingNames = new Set(rig.constraints.map((c) => c.name));
+    const makeClampConstraint = (name: string, bone: string, prop: unknown, band: number): Record<string, unknown> => {
+      const useX = prop === 'x' || prop === 'translatex';
+      const key = useX ? 'x' : 'rotate';
+      const mixKey = useX ? 'mixX' : 'mixRotate';
+      return {
+        name,
+        type: 'transform',
+        source: bone,
+        bones: [bone],
+        localSource: true,
+        localTarget: true,
+        clamp: true,
+        properties: {
+          [key]: {
+            offset: -band,
+            to: {
+              [key]: {
+                offset: -band,
+                max: band,
+                scale: 1,
+              },
+            },
+          },
+        },
+        [mixKey]: 1,
+      };
+    };
+    for (const c of rig.constraints) {
+      if (c.type === 'slider' && typeof c.bone === 'string') {
+        const isYaw = c.name === 'yaw' || c.animation === 'turn';
+        const isPitch = c.name === 'pitch' || c.animation === 'tilt';
+        if (isYaw && !existingNames.has('yaw_clamp')) {
+          existingNames.add('yaw_clamp');
+          nextConstraints.push(makeClampConstraint('yaw_clamp', c.bone, c.property, FACE_RATED_YAW_BAND));
+        } else if (isPitch && !existingNames.has('pitch_clamp')) {
+          existingNames.add('pitch_clamp');
+          nextConstraints.push(makeClampConstraint('pitch_clamp', c.bone, c.property, FACE_RATED_PITCH_BAND));
+        }
+      }
+      nextConstraints.push(c);
+    }
+    rig.constraints = nextConstraints;
+  }
 
   const faceSlot = rig.skins.default.face;
   if (faceSlot === undefined || faceSlot.face === undefined) return;
@@ -434,16 +507,18 @@ export function applyFaceSurfaceDeform(
   let faceRegX = -1;
   let faceRegY = 49;
 
+  const faceBone = rig.slots?.find((s) => s.name === 'face')?.bone ?? (rig.bones.some((b) => b.name === 'turn_face_head') ? 'turn_face_head' : 'head');
+
   if (!('type' in faceAtt)) {
     faceRegX = faceAtt.x;
     faceRegY = faceAtt.y;
     const grid = buildFaceGrid(faceW, faceH);
     const faceWeights: DeformWeight[][] = grid.points.map(([px, py]) => [
       {
-        bone: 'head',
+        bone: faceBone,
         x: pyRound(faceRegX - faceW / 2 + px, 6),
         y: pyRound(faceRegY + faceH / 2 - py, 6),
-      weight: 1,
+        weight: 1,
       },
     ]);
     faceSlot.face = {
@@ -531,6 +606,28 @@ export function applyFaceSurfaceDeform(
   };
 
   const boneMap = new Map(rig.bones.map((b) => [b.name, b]));
+  const referencedGroups = new Set<string>();
+  for (const anim of [tiltAnim, turnAnim]) {
+    for (const tr of anim?.tracks ?? []) {
+      if (tr.group !== undefined) referencedGroups.add(tr.group);
+    }
+  }
+  const defaultGroups: Readonly<Record<string, readonly string[]>> = {
+    features: ['eye_r', 'eye_l', 'brow_r', 'brow_l', 'pupil_r', 'pupil_l', 'eyelash_r', 'eyelash_l', 'eyebrow_r', 'eyebrow_l', 'nose', 'mouth'],
+    ears: ['ear_r', 'ear_l'],
+    bangs: ['bang_r0', 'bang_c0', 'bang_l0'].map((b) => (boneMap.has(`${b}_ctl`) ? `${b}_ctl` : b)),
+    topknot: ['bun_ctl', 'hairpin', 'headwear'],
+  };
+  for (const g of referencedGroups) {
+    if (motion.groups?.[g] === undefined && defaultGroups[g] !== undefined) {
+      const members = defaultGroups[g].filter((b) => boneMap.has(b));
+      if (members.length > 0) {
+        motion.groups ??= {};
+        motion.groups[g] = members;
+      }
+    }
+  }
+
   const evalDeriveKey = (boneName: string, k: SliderKey): number => {
     if (Array.isArray(k.v)) return k.v[0] ?? 0;
     if (k.v !== undefined && typeof k.v === 'object') return k.v[boneName]?.[0] ?? 0;
@@ -547,17 +644,18 @@ export function applyFaceSurfaceDeform(
   };
 
   const mapParent: Readonly<Record<string, string>> = {
-    bang_r0: 'bang_r0_ctl',
-    bang_r1: 'bang_r0_ctl',
-    bang_c0: 'bang_c0_ctl',
-    bang_c1: 'bang_c0_ctl',
-    bang_l0: 'bang_l0_ctl',
-    bang_l1: 'bang_l0_ctl',
-    bun: 'bun_ctl',
+    bang_r0: boneMap.has('bang_r0_ctl') ? 'bang_r0_ctl' : 'bang_r0',
+    bang_r1: boneMap.has('bang_r0_ctl') ? 'bang_r0_ctl' : 'bang_r0',
+    bang_c0: boneMap.has('bang_c0_ctl') ? 'bang_c0_ctl' : 'bang_c0',
+    bang_c1: boneMap.has('bang_c0_ctl') ? 'bang_c0_ctl' : 'bang_c0',
+    bang_l0: boneMap.has('bang_l0_ctl') ? 'bang_l0_ctl' : 'bang_l0',
+    bang_l1: boneMap.has('bang_l0_ctl') ? 'bang_l0_ctl' : 'bang_l0',
+    bun: boneMap.has('bun_ctl') ? 'bun_ctl' : 'bun',
   };
 
   const getBoneDeltaAtTime = (tracks: readonly SliderTrack[], t: number, boneName: string): [number, number] => {
-    const driver = mapParent[boneName] ?? boneName;
+    const baseBone = boneName.replace(/^turn_[^_]+_/, '');
+    const driver = mapParent[baseBone] ?? baseBone;
     let dx = 0;
     let dy = 0;
     for (const tr of tracks) {
@@ -617,13 +715,19 @@ export function applyFaceSurfaceDeform(
 
   if (tiltAnim !== undefined) {
     const origTiltTracks = tiltAnim.tracks.map((tr) => ({ ...tr, keys: [...tr.keys] }));
-    const tiltKeys: Array<{ t: number; deg: number }> = [
-      { t: 0, deg: -25 },
-      { t: 0.75, deg: -10 },
-      { t: 1.25, deg: 0 },
-      { t: 2.0, deg: 15 },
-      { t: 2.5, deg: 25 },
-    ];
+    const refTiltTrack = origTiltTracks.find((tr) => tr.keys.some((k) => k.derive !== undefined)) ?? origTiltTracks[0];
+    const isLegacyTilt =
+      tiltAnim.duration === 2.5 &&
+      Math.abs(refTiltTrack?.keys[0]?.derive?.degrees ?? 0) === 25;
+    const tiltKeys: Array<{ t: number; deg: number }> = isLegacyTilt
+      ? [
+          { t: 0, deg: -25 },
+          { t: 0.75, deg: -10 },
+          { t: 1.25, deg: 0 },
+          { t: 2.0, deg: 15 },
+          { t: 2.5, deg: 25 },
+        ]
+      : (refTiltTrack?.keys ?? []).map((k) => ({ t: k.t, deg: k.derive?.degrees ?? 0 }));
     const tiltDeform: DeformTimelineEntry[] = [
       {
         slot: 'face',
@@ -715,7 +819,7 @@ export function applyFaceSurfaceDeform(
         });
       }
     }
-    const refTiltKeys = origTiltTracks[0]?.keys ?? [];
+    const refTiltKeys = refTiltTrack?.keys ?? [];
     for (const [earBone, earHx] of [
       ['ear_r', earRx],
       ['ear_l', earLx],
@@ -737,13 +841,19 @@ export function applyFaceSurfaceDeform(
 
   if (turnAnim !== undefined) {
     const origTurnTracks = turnAnim.tracks.map((tr) => ({ ...tr, keys: [...tr.keys] }));
-    const turnKeys: Array<{ t: number; deg: number }> = [
-      { t: 0, deg: -30 },
-      { t: 0.75, deg: -15 },
-      { t: 1.5, deg: 0 },
-      { t: 2.25, deg: 15 },
-      { t: 3.0, deg: 30 },
-    ];
+    const refTurnTrack = origTurnTracks.find((tr) => tr.keys.some((k) => k.derive !== undefined)) ?? origTurnTracks[0];
+    const isLegacyTurn =
+      turnAnim.duration === 3.0 &&
+      Math.abs(refTurnTrack?.keys[0]?.derive?.degrees ?? 0) === 30;
+    const turnKeys: Array<{ t: number; deg: number }> = isLegacyTurn
+      ? [
+          { t: 0, deg: -30 },
+          { t: 0.75, deg: -15 },
+          { t: 1.5, deg: 0 },
+          { t: 2.25, deg: 15 },
+          { t: 3.0, deg: 30 },
+        ]
+      : (refTurnTrack?.keys ?? []).map((k) => ({ t: k.t, deg: k.derive?.degrees ?? 0 }));
     const turnDeform: DeformTimelineEntry[] = [
       {
         slot: 'face',
@@ -794,7 +904,7 @@ export function applyFaceSurfaceDeform(
         ),
       });
     }
-    const refTurnKeys = origTurnTracks[0]?.keys ?? [];
+    const refTurnKeys = refTurnTrack?.keys ?? [];
     turnAnim.tracks = turnAnim.tracks.filter(
       (tr) => !(tr.group === 'ears' && tr.property === 'translatex') && !(tr.group === 'topknot' && tr.property === 'translatex'),
     );
